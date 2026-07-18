@@ -8,7 +8,7 @@ SRC      := $(wildcard src/*.mm) $(wildcard src/*.cpp)
 
 CXX      := clang++
 CXXFLAGS := -std=c++17 -fobjc-arc -Wall -Wextra -O2 -Isrc
-LDFLAGS  := -framework Cocoa -framework WebKit
+LDFLAGS  := -framework Cocoa -framework WebKit -framework CoreServices
 
 .PHONY: all app run clean
 

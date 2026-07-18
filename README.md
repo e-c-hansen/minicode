@@ -6,7 +6,7 @@ I built it because I wanted a lightweight place to browse a folder, read and edi
 
 ## What it does
 
-You open a folder and get a file tree on the left, much like the explorer in VS Code. Click a file and it opens in the main pane. Source files are syntax highlighted based on their extension, so Python, C, C++, Objective-C, JavaScript, TypeScript, JSON, shell scripts, and a handful of others get colored keywords, strings, comments, numbers, and so on. Markdown files render as formatted text right in the window, and you can flip between the rendered view and the raw source when you want to edit them.
+You open a folder and get a file tree on the left, much like the explorer in VS Code. Click a file and it opens in the main pane. The tree is live, so anything you create, rename, or delete elsewhere, in the built in terminal, in git, or in another program, shows up on its own within a moment, because it watches the folder with FSEvents rather than taking a one time snapshot. You can also manage files from the tree directly, right click for new file, new folder, rename, move to trash, and reveal in Finder, or use the same items from the File menu. Source files are syntax highlighted based on their extension, so Python, C, C++, Objective-C, JavaScript, TypeScript, JSON, shell scripts, and a handful of others get colored keywords, strings, comments, numbers, and so on. Markdown files render as formatted text right in the window, and you can flip between the rendered view and the raw source when you want to edit them.
 
 Files are editable, not just viewable. Type into a file and the highlighting updates as you go, save with Command S, and undo and redo work as you would expect. The title bar shows a dot when you have unsaved changes.
 
@@ -56,6 +56,9 @@ Click hello.py and sample.cpp to see the syntax coloring, then click README.md t
 | Command 1 | Focus the editor |
 | Up, Down, Return | Browse the tree and open the selected file |
 | Control Tab | Jump to the previous file |
+| Control Command N | New file |
+| Command Delete | Move the selected file to the Trash |
+| Command R | Refresh the file tree |
 | Control backtick | Toggle terminal |
 | Shift Command B | Toggle browser |
 | Shift Command P | Toggle Markdown preview |

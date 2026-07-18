@@ -3,6 +3,7 @@
 #import "EditorController.h"
 #import "Terminal.h"
 #import "Browser.h"
+#import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #include "SyntaxHighlighter.h"
 #include "MarkdownParser.h"
 #include <string>
@@ -67,6 +68,42 @@
     [self.children addObjectsFromArray:dirs];
     [self.children addObjectsFromArray:files];
 }
+
+// Re-scan this directory, reusing existing child objects for paths that still
+// exist so the outline keeps its expanded and selected state. Recurses into
+// any subdirectory that was already loaded.
+- (void)refresh {
+    if (!self.isDir || !self.loaded) return;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray *entries = [[fm contentsOfDirectoryAtPath:self.path error:nil]
+        sortedArrayUsingComparator:^(NSString *a, NSString *b) {
+            return [a caseInsensitiveCompare:b];
+        }];
+
+    NSMutableDictionary<NSString *, FileItem *> *existing =
+        [NSMutableDictionary dictionary];
+    for (FileItem *c in self.children) existing[c.path] = c;
+
+    NSMutableArray *dirs = [NSMutableArray array];
+    NSMutableArray *files = [NSMutableArray array];
+    for (NSString *entry in entries) {
+        if ([entry hasPrefix:@"."]) continue;
+        NSString *full = [self.path stringByAppendingPathComponent:entry];
+        BOOL d = NO;
+        [fm fileExistsAtPath:full isDirectory:&d];
+        FileItem *item = existing[full];
+        if (!item || item.isDir != d) {          // new, or type changed
+            item = [FileItem new];
+            item.path = full; item.isDir = d;
+        }
+        [(d ? dirs : files) addObject:item];
+    }
+    self.children = [NSMutableArray array];
+    [self.children addObjectsFromArray:dirs];
+    [self.children addObjectsFromArray:files];
+    for (FileItem *c in self.children)           // recurse into open subdirs
+        if (c.isDir && c.loaded) [c refresh];
+}
 @end
 
 // ---------------------------------------------------------------------------
@@ -127,6 +164,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
 @interface EditorController () {
     FileItem *_root;
     NSMutableArray<NSString *> *_recent;   // most-recently-opened files, front = newest
+    FSEventStreamRef _fsStream;            // watches the open folder for changes
 }
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) ClickOutline *outline;
@@ -218,6 +256,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     self.outline.rowSizeStyle = NSTableViewRowSizeStyleMedium;
     self.outline.indentationPerLevel = 14;
     self.outline.floatsGroupRows = NO;
+    self.outline.menu = [self buildTreeContextMenu];
     treeScroll.documentView = self.outline;
 
     // --- editor pane
@@ -275,6 +314,24 @@ static NSColor *ColorForStyle(TokenStyle s) {
     [split adjustSubviews];
     [split setPosition:260 ofDividerAtIndex:0];
     [self.outline sizeLastColumnToFit];
+
+    [self startWatching:_root.path];   // live tree updates
+}
+
+- (void)dealloc { [self stopWatching]; }
+
+- (NSMenu *)buildTreeContextMenu {
+    NSMenu *m = [[NSMenu alloc] init];
+    [m addItemWithTitle:@"New File…" action:@selector(newFile:) keyEquivalent:@""];
+    [m addItemWithTitle:@"New Folder…" action:@selector(newFolder:) keyEquivalent:@""];
+    [m addItem:[NSMenuItem separatorItem]];
+    [m addItemWithTitle:@"Rename…" action:@selector(renameSelected:) keyEquivalent:@""];
+    [m addItemWithTitle:@"Move to Trash" action:@selector(deleteSelected:) keyEquivalent:@""];
+    [m addItem:[NSMenuItem separatorItem]];
+    [m addItemWithTitle:@"Reveal in Finder" action:@selector(revealInFinder:) keyEquivalent:@""];
+    [m addItemWithTitle:@"Refresh" action:@selector(refreshTree:) keyEquivalent:@""];
+    for (NSMenuItem *it in m.itemArray) it.target = self;
+    return m;
 }
 
 // -------------------------------------------------------- status bar + hints
@@ -534,6 +591,214 @@ static NSColor *ColorForStyle(TokenStyle s) {
     // _recent is most-recent-first; index 1 is the file before the current one.
     if (_recent.count < 2) { NSBeep(); return; }
     [self openFileAtPath:_recent[1]];
+}
+
+// ------------------------------------------------ live file-tree (FSEvents)
+static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
+                       void *paths, const FSEventStreamEventFlags flags[],
+                       const FSEventStreamEventId ids[]) {
+    (void)stream; (void)n; (void)paths; (void)flags; (void)ids;
+    EditorController *self = (__bridge EditorController *)info;
+    [self refreshTree:nil];
+}
+
+- (void)startWatching:(NSString *)path {
+    [self stopWatching];
+    if (!path) return;
+    FSEventStreamContext ctx = {0, (__bridge void *)self, NULL, NULL, NULL};
+    CFStringRef cfPath = (__bridge CFStringRef)path;
+    CFArrayRef paths = CFArrayCreate(NULL, (const void **)&cfPath, 1, NULL);
+    _fsStream = FSEventStreamCreate(
+        NULL, &FSCallback, &ctx, paths, kFSEventStreamEventIdSinceNow,
+        0.3 /* seconds of coalescing */, kFSEventStreamCreateFlagNone);
+    CFRelease(paths);
+    if (_fsStream) {
+        FSEventStreamSetDispatchQueue(_fsStream, dispatch_get_main_queue());
+        FSEventStreamStart(_fsStream);
+    }
+}
+
+- (void)stopWatching {
+    if (!_fsStream) return;
+    FSEventStreamStop(_fsStream);
+    FSEventStreamInvalidate(_fsStream);
+    FSEventStreamRelease(_fsStream);
+    _fsStream = NULL;
+}
+
+// Re-scan the tree, keeping expanded folders and the selection where possible.
+- (void)refreshTree:(id)sender {
+    NSString *selPath = nil;
+    if (self.outline.selectedRow >= 0)
+        selPath = [(FileItem *)[self.outline itemAtRow:self.outline.selectedRow] path];
+
+    NSMutableSet<NSString *> *expanded = [NSMutableSet set];
+    for (NSInteger r = 0; r < self.outline.numberOfRows; r++) {
+        FileItem *it = [self.outline itemAtRow:r];
+        if ([self.outline isItemExpanded:it]) [expanded addObject:it.path];
+    }
+
+    [_root refresh];
+    [self.outline reloadData];
+    [self reExpand:_root usingSet:expanded];
+
+    if (selPath) {
+        for (NSInteger r = 0; r < self.outline.numberOfRows; r++) {
+            if ([[(FileItem *)[self.outline itemAtRow:r] path] isEqual:selPath]) {
+                [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:r]
+                          byExtendingSelection:NO];
+                break;
+            }
+        }
+    }
+}
+
+- (void)reExpand:(FileItem *)node usingSet:(NSSet<NSString *> *)expanded {
+    for (FileItem *child in node.children) {
+        if (child.isDir && [expanded containsObject:child.path]) {
+            [self.outline expandItem:child];
+            [self reExpand:child usingSet:expanded];
+        }
+    }
+}
+
+// -------------------------------------------------- file operations (tree)
+// Where a new file/folder should go: the selected folder, the selected file's
+// folder, or the tree root.
+- (NSString *)targetDirectory {
+    NSInteger row = self.outline.clickedRow >= 0 ? self.outline.clickedRow
+                                                 : self.outline.selectedRow;
+    if (row < 0) return _root.path;
+    FileItem *node = [self.outline itemAtRow:row];
+    return node.isDir ? node.path : [node.path stringByDeletingLastPathComponent];
+}
+
+- (FileItem *)clickedOrSelectedItem {
+    NSInteger row = self.outline.clickedRow >= 0 ? self.outline.clickedRow
+                                                 : self.outline.selectedRow;
+    return row >= 0 ? [self.outline itemAtRow:row] : nil;
+}
+
+// A simple modal name prompt. Returns nil if cancelled or empty.
+- (NSString *)promptForName:(NSString *)title default:(NSString *)initial {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = title;
+    [a addButtonWithTitle:@"OK"];
+    [a addButtonWithTitle:@"Cancel"];
+    NSTextField *field =
+        [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 260, 24)];
+    field.stringValue = initial ?: @"";
+    a.accessoryView = field;
+    [a.window setInitialFirstResponder:field];
+    if ([a runModal] != NSAlertFirstButtonReturn) return nil;
+    NSString *name = [field.stringValue stringByTrimmingCharactersInSet:
+                      [NSCharacterSet whitespaceCharacterSet]];
+    return name.length ? name : nil;
+}
+
+- (void)newFile:(id)sender {
+    NSString *name = [self promptForName:@"New file name:" default:@""];
+    if (!name) return;
+    NSString *path = [[self targetDirectory] stringByAppendingPathComponent:name];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([fm fileExistsAtPath:path]) { [self warn:@"A file with that name already exists."]; return; }
+    if (![fm createFileAtPath:path contents:[NSData data] attributes:nil]) {
+        [self warn:@"Could not create the file."]; return;
+    }
+    [self refreshTree:nil];
+    [self revealPath:path andOpen:YES];
+}
+
+- (void)newFolder:(id)sender {
+    NSString *name = [self promptForName:@"New folder name:" default:@""];
+    if (!name) return;
+    NSString *path = [[self targetDirectory] stringByAppendingPathComponent:name];
+    NSError *err = nil;
+    if (![[NSFileManager defaultManager] createDirectoryAtPath:path
+            withIntermediateDirectories:NO attributes:nil error:&err]) {
+        [self warn:err.localizedDescription]; return;
+    }
+    [self refreshTree:nil];
+    [self revealPath:path andOpen:NO];
+}
+
+- (void)renameSelected:(id)sender {
+    FileItem *node = [self clickedOrSelectedItem];
+    if (!node) { NSBeep(); return; }
+    NSString *name = [self promptForName:@"Rename to:"
+                                 default:node.path.lastPathComponent];
+    if (!name) return;
+    NSString *dst = [[node.path stringByDeletingLastPathComponent]
+                        stringByAppendingPathComponent:name];
+    NSError *err = nil;
+    if (![[NSFileManager defaultManager] moveItemAtPath:node.path
+                                                 toPath:dst error:&err]) {
+        [self warn:err.localizedDescription]; return;
+    }
+    if ([self.currentPath isEqual:node.path]) self.currentPath = dst;  // keep editor in sync
+    [self refreshTree:nil];
+    [self revealPath:dst andOpen:NO];
+}
+
+- (void)deleteSelected:(id)sender {
+    FileItem *node = [self clickedOrSelectedItem];
+    if (!node) { NSBeep(); return; }
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = [NSString stringWithFormat:@"Move “%@” to the Trash?",
+                     node.path.lastPathComponent];
+    [a addButtonWithTitle:@"Move to Trash"];
+    [a addButtonWithTitle:@"Cancel"];
+    if ([a runModal] != NSAlertFirstButtonReturn) return;
+    NSError *err = nil;
+    NSURL *url = [NSURL fileURLWithPath:node.path];
+    if (![[NSFileManager defaultManager] trashItemAtURL:url
+                                       resultingItemURL:nil error:&err]) {
+        [self warn:err.localizedDescription]; return;
+    }
+    if ([self.currentPath isEqual:node.path]) {   // the open file went away
+        self.currentPath = nil; self.dirty = NO;
+        [self showWelcome]; [self updateTitle];
+    }
+    [self refreshTree:nil];
+}
+
+- (void)revealInFinder:(id)sender {
+    FileItem *node = [self clickedOrSelectedItem];
+    NSString *p = node ? node.path : _root.path;
+    [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:
+        @[[NSURL fileURLWithPath:p]]];
+}
+
+// Expand ancestor folders down to path, select it, and optionally open it.
+- (void)revealPath:(NSString *)path andOpen:(BOOL)open {
+    NSArray<NSString *> *rootParts = _root.path.pathComponents;
+    NSArray<NSString *> *parts = path.pathComponents;
+    FileItem *node = _root;
+    NSString *acc = _root.path;
+    for (NSUInteger i = rootParts.count; i < parts.count; i++) {
+        acc = [acc stringByAppendingPathComponent:parts[i]];
+        [node loadChildren];
+        FileItem *next = nil;
+        for (FileItem *c in node.children)
+            if ([c.path isEqual:acc]) { next = c; break; }
+        if (!next) break;
+        if (next.isDir && i < parts.count - 1) [self.outline expandItem:next];
+        node = next;
+    }
+    NSInteger row = [self.outline rowForItem:node];
+    if (row >= 0) {
+        [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:row]
+                  byExtendingSelection:NO];
+        [self.outline scrollRowToVisible:row];
+    }
+    if (open && !node.isDir) [self openFileAtPath:node.path];
+}
+
+- (void)warn:(NSString *)msg {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = msg;
+    [a addButtonWithTitle:@"OK"];
+    [a runModal];
 }
 
 
@@ -866,6 +1131,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
         [self.outline reloadData];
         [self showWelcome];
         [self.terminal setDirectory:dir];   // keep terminal cwd in sync
+        [self startWatching:dir];           // watch the new folder
         self.window.title = [NSString stringWithFormat:@"MiniCode — %@",
                              dir.lastPathComponent];
     }

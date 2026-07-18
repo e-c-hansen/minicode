@@ -20,4 +20,9 @@
 - (void)focusTree:(id)sender;         // Cmd+0 move keyboard focus to file tree
 - (void)focusEditor:(id)sender;       // Cmd+1 move keyboard focus to editor
 - (void)switchToPreviousFile:(id)sender;  // Ctrl+Tab jump to previous file
+- (void)newFile:(id)sender;
+- (void)newFolder:(id)sender;
+- (void)renameSelected:(id)sender;
+- (void)deleteSelected:(id)sender;
+- (void)refreshTree:(id)sender;
 @end

@@ -81,6 +81,11 @@
 - (void)switchToPreviousFile:(id)sender {
     [[self current] switchToPreviousFile:sender];
 }
+- (void)newFile:(id)sender         { [[self current] newFile:sender]; }
+- (void)newFolder:(id)sender       { [[self current] newFolder:sender]; }
+- (void)renameSelected:(id)sender  { [[self current] renameSelected:sender]; }
+- (void)deleteSelected:(id)sender  { [[self current] deleteSelected:sender]; }
+- (void)refreshTree:(id)sender     { [[self current] refreshTree:sender]; }
 
 @end
 
@@ -114,6 +119,26 @@ static void BuildMenu(void) {
     [fileMenu addItemWithTitle:@"Save"
                         action:@selector(saveCurrentFile:)
                  keyEquivalent:@"s"];
+    [fileMenu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *newFile =
+        [[NSMenuItem alloc] initWithTitle:@"New File…"
+                                   action:@selector(newFile:) keyEquivalent:@"n"];
+    newFile.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagControl;
+    [fileMenu addItem:newFile];
+    [fileMenu addItemWithTitle:@"New Folder…"
+                        action:@selector(newFolder:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Rename…"
+                        action:@selector(renameSelected:) keyEquivalent:@""];
+    NSMenuItem *trash =
+        [[NSMenuItem alloc] initWithTitle:@"Move to Trash"
+                                   action:@selector(deleteSelected:)
+                            keyEquivalent:@"\b"];   // Cmd+Delete
+    trash.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    [fileMenu addItem:trash];
+    [fileMenu addItemWithTitle:@"Refresh File Tree"
+                        action:@selector(refreshTree:) keyEquivalent:@"r"];
     [fileMenu addItem:[NSMenuItem separatorItem]];
 
     // Cmd+W closes the focused window.
