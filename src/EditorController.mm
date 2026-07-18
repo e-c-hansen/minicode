@@ -124,6 +124,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
 @property(nonatomic, assign) BOOL isMarkdown;
 @property(nonatomic, assign) BOOL previewMode;       // markdown: rendered vs source
 @property(nonatomic, assign) BOOL dirty;             // unsaved changes
+@property(nonatomic, strong) NSDate *fileModDate;    // on-disk mtime we last saw
 @property(nonatomic, strong) NSView *statusBar;
 @property(nonatomic, strong) NSView *hintsPanel;
 @property(nonatomic, strong) NSTextField *hintsLabel;
@@ -496,6 +497,10 @@ static NSColor *ColorForStyle(TokenStyle s) {
 // ------------------------------------------------------------ file rendering
 - (void)openFileAtPath:(NSString *)path {
     if ([path isEqualToString:self.currentPath]) return;  // avoid double-render
+    if (![self confirmProceedPastUnsavedChanges]) {
+        [self reselectCurrentFileInTree];   // undo the tree's selection move
+        return;
+    }
     self.currentPath = path;
     NSError *err = nil;
     NSString *content = [NSString stringWithContentsOfFile:path
@@ -515,8 +520,86 @@ static NSColor *ColorForStyle(TokenStyle s) {
                       [ext isEqualToString:@"markdown"];
     self.previewMode = self.isMarkdown;   // markdown opens rendered by default
     self.dirty = NO;
+    [self recordModDate];
     [self refreshDisplay];
     [self updateTitle];
+}
+
+// The on-disk modification time of the current file, or nil.
+- (NSDate *)diskModDateFor:(NSString *)path {
+    if (!path) return nil;
+    NSDictionary *attrs = [[NSFileManager defaultManager]
+        attributesOfItemAtPath:path error:nil];
+    return attrs.fileModificationDate;
+}
+- (void)recordModDate { self.fileModDate = [self diskModDateFor:self.currentPath]; }
+
+- (void)reselectCurrentFileInTree {
+    for (NSInteger row = 0; row < self.outline.numberOfRows; row++) {
+        FileItem *node = [self.outline itemAtRow:row];
+        if ([node.path isEqualToString:self.currentPath]) {
+            [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:row]
+                      byExtendingSelection:NO];
+            return;
+        }
+    }
+}
+
+// Returns YES if it is safe to replace the current buffer. Prompts on dirty.
+- (BOOL)confirmProceedPastUnsavedChanges {
+    if (!self.dirty) return YES;
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = [NSString stringWithFormat:@"Save changes to “%@”?",
+                     self.currentPath.lastPathComponent ?: @"this file"];
+    a.informativeText = @"Your changes will be lost if you don't save them.";
+    [a addButtonWithTitle:@"Save"];         // 1000
+    [a addButtonWithTitle:@"Don't Save"];   // 1001
+    [a addButtonWithTitle:@"Cancel"];       // 1002
+    NSModalResponse r = [a runModal];
+    if (r == NSAlertFirstButtonReturn) { [self saveCurrentFile:nil]; return !self.dirty; }
+    if (r == NSAlertSecondButtonReturn) return YES;   // discard
+    return NO;                                          // cancel
+}
+
+// Called when the window regains focus: reconcile with on-disk changes.
+- (void)checkExternalChange {
+    if (!self.currentPath) return;
+    NSDate *disk = [self diskModDateFor:self.currentPath];
+    if (!disk || !self.fileModDate) return;
+    if ([disk isEqualToDate:self.fileModDate]) return;   // unchanged
+
+    self.fileModDate = disk;
+    if (!self.dirty) {                       // no local edits: reload quietly
+        NSString *fresh = [NSString stringWithContentsOfFile:self.currentPath
+                                                    encoding:NSUTF8StringEncoding
+                                                       error:nil];
+        if (fresh) { self.sourceText = fresh; [self refreshDisplay]; }
+        return;
+    }
+    NSAlert *a = [[NSAlert alloc] init];     // local edits AND disk changed
+    a.messageText = [NSString stringWithFormat:
+        @"“%@” changed on disk.", self.currentPath.lastPathComponent];
+    a.informativeText = @"You have unsaved changes here. Keep your version, "
+                         "or reload the file from disk and lose them?";
+    [a addButtonWithTitle:@"Keep Mine"];     // 1000
+    [a addButtonWithTitle:@"Reload"];        // 1001
+    if ([a runModal] == NSAlertSecondButtonReturn) {
+        NSString *fresh = [NSString stringWithContentsOfFile:self.currentPath
+                                                    encoding:NSUTF8StringEncoding
+                                                       error:nil];
+        if (fresh) {
+            self.sourceText = fresh; self.dirty = NO;
+            [self refreshDisplay]; [self updateTitle];
+        }
+    }
+}
+
+// -------------------------------------------------------- NSWindowDelegate
+- (BOOL)windowShouldClose:(NSWindow *)sender {
+    return [self confirmProceedPastUnsavedChanges];
+}
+- (void)windowDidBecomeKey:(NSNotification *)note {
+    [self checkExternalChange];
 }
 
 - (BOOL)canTogglePreview { return self.isMarkdown; }
@@ -595,6 +678,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     if (ok) {
         self.sourceText = text;
         self.dirty = NO;
+        [self recordModDate];   // so our own save doesn't look like an external change
         [self updateTitle];
     } else {
         NSAlert *a = [NSAlert alertWithError:err];
@@ -722,6 +806,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
 
 // ------------------------------------------------------------- open folder
 - (void)openFolder:(id)sender {
+    if (![self confirmProceedPastUnsavedChanges]) return;
     NSOpenPanel *panel = [NSOpenPanel openPanel];
     panel.canChooseDirectories = YES;
     panel.canChooseFiles = NO;
@@ -732,6 +817,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
         _root.path = dir; _root.isDir = YES;
         [_root loadChildren];
         self.currentPath = nil;
+        self.dirty = NO;
         [self.outline reloadData];
         [self showWelcome];
         [self.terminal setDirectory:dir];   // keep terminal cwd in sync
