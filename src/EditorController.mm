@@ -380,6 +380,24 @@ static NSColor *ColorForStyle(TokenStyle s) {
     [container addSubview:self.hintsPanel];
 }
 
+// Set the hint text and size the panel to fit it, anchored to the top-right.
+- (void)updateHints {
+    if (!self.hintsLabel) return;
+    NSString *text = [self hintsText];
+    self.hintsLabel.stringValue = text;
+
+    NSView *container = self.hintsPanel.superview;
+    const CGFloat pw = 380, pad = 16, margin = 18;
+    NSRect textRect = [text boundingRectWithSize:NSMakeSize(pw - 2 * pad, 10000)
+        options:NSStringDrawingUsesLineFragmentOrigin
+     attributes:@{NSFontAttributeName: self.hintsLabel.font}];
+    CGFloat ph = ceil(textRect.size.height) + 2 * pad;
+    self.hintsPanel.frame = NSMakeRect(
+        container.bounds.size.width - pw - margin,
+        container.bounds.size.height - ph - margin, pw, ph);
+    self.hintsLabel.frame = NSMakeRect(pad, pad, pw - 2 * pad, ph - 2 * pad);
+}
+
 // Context-aware shortcut list.
 - (NSString *)hintsText {
     NSMutableString *s = [NSMutableString string];
@@ -407,7 +425,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
 
 - (void)toggleHints:(id)sender {
     self.hintsVisible = !self.hintsVisible;
-    if (self.hintsVisible) self.hintsLabel.stringValue = [self hintsText];
+    if (self.hintsVisible) [self updateHints];
     self.hintsPanel.hidden = !self.hintsVisible;
     self.statusLabel.stringValue =
         self.hintsVisible ? @"⌃H  Hide shortcuts" : @"⌃H  Shortcuts";
@@ -462,7 +480,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     self.terminalVisible = !self.terminalVisible;
     [self relayoutRightArea];
     if (self.terminalVisible) [self.terminal focusInput];
-    if (self.hintsVisible) self.hintsLabel.stringValue = [self hintsText];
+    if (self.hintsVisible) [self updateHints];
 }
 
 - (void)toggleBrowser:(id)sender {
@@ -474,7 +492,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     self.browserVisible = !self.browserVisible;
     [self relayoutRightArea];
     if (self.browserVisible) [self.browser focusURLBar];
-    if (self.hintsVisible) self.hintsLabel.stringValue = [self hintsText];
+    if (self.hintsVisible) [self updateHints];
 }
 
 // ---- NSSplitViewDelegate: keep the sidebar a sane, fixed-ish width ----
@@ -1014,7 +1032,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     self.window.title = [NSString stringWithFormat:@"%@%@ — MiniCode%@",
                          flag, name, mode];
     self.window.documentEdited = self.dirty;
-    if (self.hintsVisible) self.hintsLabel.stringValue = [self hintsText];
+    if (self.hintsVisible) [self updateHints];
 }
 
 // UTF-8 byte offset -> UTF-16 code-unit offset. ASCII-fast, correct for UTF-8.
