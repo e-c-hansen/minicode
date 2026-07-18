@@ -1,0 +1,10 @@
+# Build output
+build/
+MiniCode.app/
+
+# macOS
+.DS_Store
+
+# Temp
+*.o
+*.tmp

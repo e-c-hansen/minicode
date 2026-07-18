@@ -1,0 +1,20 @@
+// EditorController.h — Cocoa window: file tree (left) + editor/preview (right).
+#import <Cocoa/Cocoa.h>
+
+@interface EditorController : NSObject <NSOutlineViewDataSource,
+                                        NSOutlineViewDelegate,
+                                        NSSplitViewDelegate,
+                                        NSTextViewDelegate,
+                                        NSWindowDelegate>
+@property(nonatomic, readonly) BOOL canTogglePreview;
+@property(nonatomic, readonly, strong) NSWindow *window;
+@property(nonatomic, readonly, copy) NSString *rootPath;
+- (instancetype)initWithRootPath:(NSString *)path;
+- (void)showWindow;
+- (void)openFolder:(id)sender;    // menu action
+- (void)saveCurrentFile:(id)sender;   // Cmd+S
+- (void)togglePreview:(id)sender;     // Markdown: source <-> rendered
+- (void)toggleHints:(id)sender;       // Ctrl+H shortcut-hints overlay
+- (void)toggleTerminal:(id)sender;    // Ctrl+` bottom terminal dock
+- (void)toggleBrowser:(id)sender;     // Shift+Cmd+B embedded browser
+@end
