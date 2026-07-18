@@ -76,6 +76,7 @@
 // ---------------------------------------------------------------------------
 @interface ClickOutline : NSOutlineView
 @property(nonatomic, copy) void (^onRowClick)(NSInteger row, NSPoint pointInView);
+@property(nonatomic, copy) void (^onActivate)(NSInteger row);   // Return / Enter
 @end
 
 @implementation ClickOutline
@@ -84,6 +85,18 @@
     NSInteger row = [self rowAtPoint:p];
     if (row >= 0 && self.onRowClick) self.onRowClick(row, p);
     [super mouseDown:event];   // keep native selection / expansion visuals
+}
+- (void)keyDown:(NSEvent *)event {
+    NSString *chars = event.charactersIgnoringModifiers;
+    if (chars.length == 1) {
+        unichar c = [chars characterAtIndex:0];
+        if ((c == NSCarriageReturnCharacter || c == NSEnterCharacter) &&
+            self.onActivate) {
+            self.onActivate(self.selectedRow);
+            return;
+        }
+    }
+    [super keyDown:event];   // arrows, left/right expand-collapse stay native
 }
 @end
 
@@ -113,6 +126,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
 // ---------------------------------------------------------------------------
 @interface EditorController () {
     FileItem *_root;
+    NSMutableArray<NSString *> *_recent;   // most-recently-opened files, front = newest
 }
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) ClickOutline *outline;
@@ -147,6 +161,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
         _root.path = path; _root.isDir = YES;
         [_root loadChildren];
         _terminalHeight = 220;
+        _recent = [NSMutableArray array];
     }
     return self;
 }
@@ -184,6 +199,9 @@ static NSColor *ColorForStyle(TokenStyle s) {
     __weak EditorController *weakSelf = self;
     self.outline.onRowClick = ^(NSInteger row, NSPoint pt) {
         [weakSelf handleRowClick:row atPoint:pt];
+    };
+    self.outline.onActivate = ^(NSInteger row) {
+        [weakSelf activateRow:row];
     };
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"file"];
     col.editable = NO;
@@ -314,6 +332,8 @@ static NSColor *ColorForStyle(TokenStyle s) {
     [s appendString:@"⌘S    Save\n"];
     [s appendString:@"⌘Z    Undo      ⇧⌘Z  Redo\n"];
     [s appendString:@"⌘C    Copy      ⌘A   Select All\n"];
+    [s appendString:@"⌘0    Focus tree   ⌘1  Focus editor\n"];
+    [s appendString:@"↑ ↓   Browse tree  ⏎   Open   ⌃⇥  Previous file\n"];
     [s appendFormat:@"⌃`    Terminal  (%@)\n",
         self.terminalVisible ? @"open" : @"hidden"];
     [s appendFormat:@"⇧⌘B   Browser   (%@)\n",
@@ -484,13 +504,36 @@ static NSColor *ColorForStyle(TokenStyle s) {
     [self openFileAtPath:node.path];
 }
 
-// Secondary path: keyboard arrow-key navigation also opens the highlighted file.
-- (void)outlineViewSelectionDidChange:(NSNotification *)note {
-    NSInteger row = self.outline.selectedRow;
+// Keyboard activation (Return in the tree): open a file, or toggle a folder.
+// Arrow keys only move the selection; they do not open, so you can browse
+// freely without triggering loads or unsaved-changes prompts.
+- (void)activateRow:(NSInteger)row {
     if (row < 0) return;
     FileItem *node = [self.outline itemAtRow:row];
-    if (node.isDir) return;
+    if (!node) return;
+    if (node.isDir) {
+        if ([self.outline isItemExpanded:node]) [self.outline collapseItem:node];
+        else                                    [self.outline expandItem:node];
+        return;
+    }
     [self openFileAtPath:node.path];
+    [self focusEditor:nil];   // opened it to work on it
+}
+
+// --------------------------------------------------- keyboard focus + switch
+- (void)focusTree:(id)sender {
+    if (self.outline.selectedRow < 0 && self.outline.numberOfRows > 0)
+        [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:0]
+                  byExtendingSelection:NO];
+    [self.window makeFirstResponder:self.outline];
+}
+- (void)focusEditor:(id)sender {
+    [self.window makeFirstResponder:self.textView];
+}
+- (void)switchToPreviousFile:(id)sender {
+    // _recent is most-recent-first; index 1 is the file before the current one.
+    if (_recent.count < 2) { NSBeep(); return; }
+    [self openFileAtPath:_recent[1]];
 }
 
 
@@ -521,6 +564,8 @@ static NSColor *ColorForStyle(TokenStyle s) {
     self.previewMode = self.isMarkdown;   // markdown opens rendered by default
     self.dirty = NO;
     [self recordModDate];
+    [_recent removeObject:path];
+    [_recent insertObject:path atIndex:0];   // newest first
     [self refreshDisplay];
     [self updateTitle];
 }

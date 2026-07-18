@@ -17,4 +17,7 @@
 - (void)toggleHints:(id)sender;       // Ctrl+H shortcut-hints overlay
 - (void)toggleTerminal:(id)sender;    // Ctrl+` bottom terminal dock
 - (void)toggleBrowser:(id)sender;     // Shift+Cmd+B embedded browser
+- (void)focusTree:(id)sender;         // Cmd+0 move keyboard focus to file tree
+- (void)focusEditor:(id)sender;       // Cmd+1 move keyboard focus to editor
+- (void)switchToPreviousFile:(id)sender;  // Ctrl+Tab jump to previous file
 @end

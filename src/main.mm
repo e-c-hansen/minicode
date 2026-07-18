@@ -76,6 +76,11 @@
 - (void)toggleHints:(id)sender     { [[self current] toggleHints:sender]; }
 - (void)toggleTerminal:(id)sender  { [[self current] toggleTerminal:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
+- (void)focusTree:(id)sender       { [[self current] focusTree:sender]; }
+- (void)focusEditor:(id)sender     { [[self current] focusEditor:sender]; }
+- (void)switchToPreviousFile:(id)sender {
+    [[self current] switchToPreviousFile:sender];
+}
 
 @end
 
@@ -173,6 +178,24 @@ static void BuildMenu(void) {
     [viewMenu addItem:browser];
 
     viewItem.submenu = viewMenu;
+
+    // Navigate menu — keyboard-driven movement.
+    NSMenuItem *navItem = [[NSMenuItem alloc] init];
+    [menubar addItem:navItem];
+    NSMenu *navMenu = [[NSMenu alloc] initWithTitle:@"Navigate"];
+    [navMenu addItemWithTitle:@"Focus File Tree"
+                       action:@selector(focusTree:)
+                keyEquivalent:@"0"];
+    [navMenu addItemWithTitle:@"Focus Editor"
+                       action:@selector(focusEditor:)
+                keyEquivalent:@"1"];
+    NSMenuItem *prev =
+        [[NSMenuItem alloc] initWithTitle:@"Previous File"
+                                   action:@selector(switchToPreviousFile:)
+                            keyEquivalent:@"\t"];
+    prev.keyEquivalentModifierMask = NSEventModifierFlagControl;
+    [navMenu addItem:prev];
+    navItem.submenu = navMenu;
 }
 
 int main(int argc, const char *argv[]) {

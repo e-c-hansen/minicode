@@ -52,6 +52,10 @@ Click hello.py and sample.cpp to see the syntax coloring, then click README.md t
 | Command Z, Shift Command Z | Undo, redo |
 | Command W | Close window |
 | Shift Command W | Close application |
+| Command 0 | Focus the file tree |
+| Command 1 | Focus the editor |
+| Up, Down, Return | Browse the tree and open the selected file |
+| Control Tab | Jump to the previous file |
 | Control backtick | Toggle terminal |
 | Shift Command B | Toggle browser |
 | Shift Command P | Toggle Markdown preview |
