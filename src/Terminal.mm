@@ -23,12 +23,19 @@ static NSColor *THex(unsigned int rgb) {
 }
 @end
 
+// Unique marker printed after each command so we know when its output ends,
+// and can read back the exit status and the working directory.
+static NSString *const kSentinel = @"__MC_DONE_a1b2c3d4__";
+
 @interface TerminalView () <NSTextFieldDelegate> {
     NSString *_cwd;
-    NSTask   *_running;
     NSMutableArray<NSString *> *_history;
     NSInteger _historyIdx;
-    NSDictionary<NSString *, NSString *> *_shellEnv;  // captured login env
+
+    NSTask *_shell;              // one long-lived login shell
+    NSFileHandle *_writeHandle;  // its stdin
+    NSMutableString *_pending;   // output not yet scanned for the sentinel
+    BOOL _running;               // a command is in flight
 }
 @property(nonatomic, strong) NSScrollView *outScroll;
 @property(nonatomic, strong) TerminalOutputView *output;
@@ -43,16 +50,15 @@ static NSColor *THex(unsigned int rgb) {
         _cwd = dir.length ? dir : NSHomeDirectory();
         _history = [NSMutableArray array];
         _historyIdx = 0;
-        // Seed with our own env immediately; upgrade to the full login env async.
-        _shellEnv = [[NSProcessInfo processInfo] environment];
+        _pending = [NSMutableString string];
         self.wantsLayer = YES;
         self.layer.backgroundColor = THex(0x181818).CGColor;
         [self buildViews];
-        [self appendLine:@"MiniCode terminal — quick command runner. "
+        [self appendLine:@"MiniCode terminal — a persistent zsh session. "
                           "Type `clear` to reset."
                    color:THex(0x6A9955)];
         [self updatePrompt];
-        [self captureLoginEnvironment];
+        [self startShell];
     }
     return self;
 }
@@ -124,7 +130,11 @@ static NSColor *THex(unsigned int rgb) {
 }
 
 - (void)setDirectory:(NSString *)dir {
-    if (dir.length) { _cwd = dir; [self updatePrompt]; }
+    if (!dir.length) return;
+    _cwd = dir;
+    [self updatePrompt];
+    if (_writeHandle && !_running)   // move the live shell too
+        [self sendRaw:[NSString stringWithFormat:@"cd %@\n", [self quote:dir]]];
 }
 
 - (void)updatePrompt {
@@ -165,6 +175,63 @@ static NSColor *THex(unsigned int rgb) {
     return NO;
 }
 
+// ------------------------------------------------------- persistent shell
+- (void)dealloc {
+    _shell.terminationHandler = nil;   // don't auto-restart on teardown
+    [_shell terminate];
+}
+
+- (void)startShell {
+    _shell = [[NSTask alloc] init];
+    _shell.executableURL = [NSURL fileURLWithPath:@"/bin/zsh"];
+    _shell.arguments = @[@"-l"];   // login shell, reads commands from stdin
+    NSPipe *inPipe = [NSPipe pipe];
+    NSPipe *outPipe = [NSPipe pipe];
+    _shell.standardInput = inPipe;
+    _shell.standardOutput = outPipe;
+    _shell.standardError = outPipe;   // merge stderr into stdout for natural order
+    _writeHandle = inPipe.fileHandleForWriting;
+
+    __weak TerminalView *weakSelf = self;
+    outPipe.fileHandleForReading.readabilityHandler = ^(NSFileHandle *h) {
+        NSData *d = h.availableData;
+        if (!d.length) return;
+        NSString *chunk = [[NSString alloc] initWithData:d
+                                                encoding:NSUTF8StringEncoding];
+        if (!chunk) return;
+        dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf ingest:chunk]; });
+    };
+    _shell.terminationHandler = ^(NSTask *t) {
+        (void)t;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            TerminalView *s = weakSelf;
+            if (!s) return;
+            [s appendLine:@"[shell exited — restarting]" color:THex(0x6A9955)];
+            [s startShell];
+            s.input.enabled = YES;
+            s->_running = NO;
+        });
+    };
+
+    NSError *err = nil;
+    if (![_shell launchAndReturnError:&err]) {
+        [self appendLine:[@"Could not start shell: "
+            stringByAppendingString:err.localizedDescription] color:THex(0xF48771)];
+        return;
+    }
+    // Move the shell to the starting directory (echoes no output).
+    [self sendRaw:[NSString stringWithFormat:@"cd %@\n", [self quote:_cwd]]];
+}
+
+- (NSString *)quote:(NSString *)s {   // single-quote for the shell
+    return [NSString stringWithFormat:@"'%@'",
+            [s stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"]];
+}
+
+- (void)sendRaw:(NSString *)text {
+    [_writeHandle writeData:[text dataUsingEncoding:NSUTF8StringEncoding]];
+}
+
 // ---------------------------------------------------------------- running
 - (void)runCommand:(NSString *)cmd {
     NSString *abbrev = [_cwd stringByAbbreviatingWithTildeInPath];
@@ -173,122 +240,76 @@ static NSColor *THex(unsigned int rgb) {
 
     NSString *trimmed = [cmd stringByTrimmingCharactersInSet:
                          [NSCharacterSet whitespaceCharacterSet]];
-    if (trimmed.length == 0) return;
-    if ([trimmed isEqualToString:@"clear"]) {
+    if ([trimmed isEqualToString:@"clear"]) {   // handled locally
         self.output.string = @"";
         return;
     }
-    if ([trimmed isEqualToString:@"cd"] || [trimmed hasPrefix:@"cd "]) {
-        [self changeDirectory:trimmed];
+    if (!_writeHandle) return;
+
+    _running = YES;
+    self.input.enabled = NO;
+
+    // Run the command with stdin from /dev/null so it can't swallow the control
+    // stream, then print the sentinel with the exit status and the new cwd.
+    // The braces keep `cd` and `export` in the shell itself (not a subshell).
+    [self sendRaw:[NSString stringWithFormat:@"{ %@ ; } </dev/null\n", cmd]];
+    [self sendRaw:[NSString stringWithFormat:
+        @"printf '%%s%%d\\t%%s\\n' '%@' \"$?\" \"$PWD\"\n", kSentinel]];
+}
+
+// Scan incoming shell output for the sentinel; display everything before it.
+- (void)ingest:(NSString *)chunk {
+    [_pending appendString:chunk];
+
+    NSRange mark = [_pending rangeOfString:kSentinel];
+    if (mark.location == NSNotFound) {
+        // No sentinel yet: flush all but a tail that might be a partial marker.
+        NSUInteger hold = kSentinel.length;
+        if (_pending.length > hold) {
+            NSString *safe = [_pending substringToIndex:_pending.length - hold];
+            [self appendOutput:safe];
+            [_pending deleteCharactersInRange:
+                NSMakeRange(0, _pending.length - hold)];
+        }
         return;
     }
 
-    NSTask *task = [[NSTask alloc] init];
-    task.executableURL = [NSURL fileURLWithPath:@"/bin/zsh"];
-    task.arguments = @[@"-c", cmd];            // non-login: no per-command startup tax
-    task.environment = _shellEnv;              // full login env, captured once
-    task.currentDirectoryURL = [NSURL fileURLWithPath:_cwd];
-    NSPipe *pipe = [NSPipe pipe];
-    task.standardOutput = pipe;
-    task.standardError = pipe;
-    _running = task;
-    self.input.enabled = NO;
+    // Everything before the marker is command output.
+    [self appendOutput:[_pending substringToIndex:mark.location]];
 
-    __weak TerminalView *weakSelf = self;
-    NSFileHandle *rh = pipe.fileHandleForReading;
-    rh.readabilityHandler = ^(NSFileHandle *h) {
-        NSData *d = h.availableData;
-        if (!d.length) return;
-        NSString *chunk = [[NSString alloc] initWithData:d
-                                                encoding:NSUTF8StringEncoding];
-        if (!chunk) return;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [weakSelf appendANSI:chunk];
-        });
-    };
-    task.terminationHandler = ^(NSTask *finished) {
-        (void)finished;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            TerminalView *strong = weakSelf;
-            if (!strong) return;
-            rh.readabilityHandler = nil;
-            strong.input.enabled = YES;
-            strong->_running = nil;
-            [strong focusInput];
-        });
-    };
+    // After the marker: "<rc>\t<pwd>\n". Parse, then keep any remainder.
+    NSString *rest = [_pending substringFromIndex:NSMaxRange(mark)];
+    NSRange nl = [rest rangeOfString:@"\n"];
+    if (nl.location == NSNotFound) return;   // wait for the full status line
+    NSString *status = [rest substringToIndex:nl.location];
+    [_pending setString:[rest substringFromIndex:NSMaxRange(nl)]];
 
-    NSError *err = nil;
-    if (![task launchAndReturnError:&err]) {
-        [self appendLine:err.localizedDescription color:THex(0xF48771)];
-        self.input.enabled = YES;
-        _running = nil;
-    }
-}
-
-- (void)changeDirectory:(NSString *)cmd {
-    NSString *arg = @"";
-    if ([cmd hasPrefix:@"cd "])
-        arg = [[cmd substringFromIndex:3] stringByTrimmingCharactersInSet:
-               [NSCharacterSet whitespaceCharacterSet]];
-    NSString *target;
-    if (arg.length == 0 || [arg isEqualToString:@"~"]) {
-        target = NSHomeDirectory();
-    } else if ([arg hasPrefix:@"/"]) {
-        target = arg;
-    } else if ([arg hasPrefix:@"~"]) {
-        target = [arg stringByExpandingTildeInPath];
-    } else {
-        target = [_cwd stringByAppendingPathComponent:arg];
-    }
-    target = [target stringByStandardizingPath];
-    BOOL isDir = NO;
-    if ([[NSFileManager defaultManager] fileExistsAtPath:target
-                                             isDirectory:&isDir] && isDir) {
-        _cwd = target;
+    NSArray<NSString *> *parts = [status componentsSeparatedByString:@"\t"];
+    if (parts.count >= 2 && [parts[1] length]) {
+        _cwd = parts[1];
         [self updatePrompt];
-    } else {
-        [self appendLine:[NSString stringWithFormat:@"cd: no such directory: %@",
-                          arg] color:THex(0xF48771)];
     }
+    [self commandFinished];
+
+    // A second command's output could already be buffered; process it.
+    if ([_pending rangeOfString:kSentinel].location != NSNotFound)
+        [self ingest:@""];
 }
 
-// One-time capture of the login-shell environment (PATH, etc.) on a background
-// queue, so subsequent commands can use plain `zsh -c` and stay instant.
-- (void)captureLoginEnvironment {
-    __weak TerminalView *weakSelf = self;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        NSTask *t = [[NSTask alloc] init];
-        t.executableURL = [NSURL fileURLWithPath:@"/bin/zsh"];
-        t.arguments = @[@"-lc", @"env"];
-        NSPipe *p = [NSPipe pipe];
-        t.standardOutput = p;
-        t.standardError = [NSPipe pipe];
-        if (![t launchAndReturnError:nil]) return;
-        NSData *d = [p.fileHandleForReading readDataToEndOfFile];
-        [t waitUntilExit];
-        NSString *s = [[NSString alloc] initWithData:d
-                                            encoding:NSUTF8StringEncoding];
-        NSMutableDictionary *env = [NSMutableDictionary dictionary];
-        for (NSString *line in [s componentsSeparatedByString:@"\n"]) {
-            NSRange eq = [line rangeOfString:@"="];
-            if (eq.location != NSNotFound && eq.location > 0) {
-                env[[line substringToIndex:eq.location]] =
-                    [line substringFromIndex:eq.location + 1];
-            }
-        }
-        if (env.count == 0) return;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            TerminalView *strong = weakSelf;
-            if (strong) strong->_shellEnv = env;
-        });
-    });
+- (void)commandFinished {
+    // Ensure the next prompt starts on its own line.
+    NSString *s = self.output.string;
+    if (s.length && ![s hasSuffix:@"\n"]) [self appendOutput:@"\n"];
+    _running = NO;
+    self.input.enabled = YES;
+    [self focusInput];
 }
 
 // ---------------------------------------------------------------- output
 // Strip ANSI escape sequences; keep the plain text. (Color SGR could be parsed
 // here later — for now we favor clean, readable output.)
-- (void)appendANSI:(NSString *)text {
+- (void)appendOutput:(NSString *)text {
+    if (!text.length) return;
     static NSRegularExpression *re = nil;
     if (!re)
         re = [NSRegularExpression

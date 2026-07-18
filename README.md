@@ -10,7 +10,7 @@ You open a folder and get a file tree on the left, much like the explorer in VS 
 
 Files are editable, not just viewable. Type into a file and the highlighting updates as you go, save with Command S, and undo and redo work as you would expect. The title bar shows a dot when you have unsaved changes.
 
-There is a terminal you can pull up at the bottom with Control backtick. It is deliberately simple, a quick command runner rather than a full terminal emulator. It runs each command through zsh, keeps track of the working directory, remembers your history, and stays out of your way. There is also an embedded browser you can toggle with Shift Command B, which is a real WebKit view with a URL bar and back, forward, and reload buttons.
+There is a terminal you can pull up at the bottom with Control backtick, and you can drag the bar above it to resize. It runs a single persistent zsh session, so it behaves like a normal shell across commands. Change directory and you stay there, export a variable or define a function and it is still around for the next command. It keeps your command history on the up and down arrows, and clicking anywhere in the panel drops the cursor on the input line. It is still meant as a quick command runner rather than a full terminal emulator, so it does not host interactive full screen programs like vim or htop, but for the everyday things you reach for, git, make, ls, running a script, it works the way you would want. There is also an embedded browser you can toggle with Shift Command B, which is a real WebKit view with a URL bar and back, forward, and reload buttons.
 
 If you ever forget a shortcut, press Control H and a small panel lists the ones available in your current context. The panel is aware of what you are doing, so the Markdown preview toggle only shows up when a Markdown file is open, for instance.
 
@@ -65,7 +65,7 @@ The graphical layer is Objective-C++, which is the normal way to drive AppKit fr
 
 ## Honest limitations
 
-This is an MVP, and it is scoped like one. The terminal runs each command as its own process, so shell state other than the directory does not carry across commands, which means an export or a shell function will not persist. Interactive programs like vim or htop will not work there. The Markdown parser covers the common cases rather than the whole CommonMark spec. Syntax highlighting is based on file extension and covers a fixed set of languages. None of these are hard to extend, they are just where the line got drawn for a first version.
+This is an MVP, and it is scoped like one. The terminal keeps a persistent shell so state carries across commands, but it runs each command with its input closed, which means interactive full screen programs like vim or htop are out of scope, and it strips color and other escape codes rather than rendering them. The Markdown parser covers the common cases rather than the whole CommonMark spec. Syntax highlighting is based on file extension and covers a fixed set of languages. None of these are hard to extend, they are just where the line got drawn for a first version.
 
 ## License
 
