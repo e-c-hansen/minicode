@@ -11,6 +11,10 @@
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
     self.controllers = [NSMutableArray array];
 
+    // Keep each window independent. Otherwise macOS auto-merges them into
+    // native tabs, and Cmd+W closes the whole tab group instead of one window.
+    [NSWindow setAllowsAutomaticWindowTabbing:NO];
+
     // Drop a controller when its window closes so it can be released.
     [[NSNotificationCenter defaultCenter]
         addObserver:self
