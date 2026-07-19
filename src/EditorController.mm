@@ -1076,6 +1076,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
             font = [NSFont boldSystemFontOfSize:sizes[r.heading]];
             color = Hex(0xFFFFFF);
             ps.paragraphSpacing = 8.0;
+            ps.paragraphSpacingBefore = r.heading <= 2 ? 18.0 : 12.0;  // gap above
         }
         if (r.codeBlock || r.code) {
             font = mono;
