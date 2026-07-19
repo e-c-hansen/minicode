@@ -13,7 +13,7 @@ LDFLAGS  := -framework Cocoa -framework WebKit -framework CoreServices
 # The pure-C++ core, testable on its own (no frameworks, no Objective-C).
 CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp
 
-.PHONY: all app run test clean
+.PHONY: all app run test dmg clean
 
 all: app
 
@@ -41,5 +41,9 @@ test:
 		-o build/run_tests
 	@./build/run_tests
 
+# Package the app into a distributable (unsigned) disk image.
+dmg:
+	./scripts/make-dmg.sh
+
 clean:
-	rm -rf build $(BUNDLE)
+	rm -rf build $(BUNDLE) $(APP).dmg

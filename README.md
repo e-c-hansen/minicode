@@ -76,6 +76,19 @@ The graphical layer is Objective-C++, which is the normal way to drive AppKit fr
 
 Because the highlighter and the Markdown parser are plain C++ with no dependencies, they can be tested on their own, away from the GUI. Run make test to build and run the suite in tests/run_tests.cpp, which checks the tokenizer against a few languages and the parser against headings, inline styles, code blocks, lists, tables, and block separation. The harness is a handful of macros, no test framework, and it exits non zero if anything fails.
 
+## Distributing it
+
+There are two ways to get MiniCode onto someone else's Mac, and which you need depends on who they are.
+
+The simplest is to hand them the source and let them build it. A locally built app is not quarantined by Gatekeeper, so git clone, make, open MiniCode.app just works with no signing involved. This fits the from-scratch spirit of the project and costs nothing, and it is the recommended path for sharing with a few people who are comfortable running make.
+
+If you want something a stranger can download and double-click, you need to sign and notarize it, which requires an Apple Developer Program membership. The steps are scripted:
+
+- make dmg builds MiniCode.app and packages it into MiniCode.dmg. This works today with no account, but because the app is unsigned, whoever downloads it has to right-click and choose Open the first time rather than double-clicking.
+- scripts/sign-and-notarize.sh does the full path: it signs the app with your Developer ID and the hardened runtime, submits the disk image to Apple for notarization, and staples the result so it opens cleanly on any Mac with no warnings. Read the comments at the top of that script for the one-time certificate and credential setup.
+
+So the honest summary is that distribution is a solved, scripted problem here, and the only thing standing between the current state and a double-click-clean download is the Apple Developer membership and running one script.
+
 ## Honest limitations
 
 This is an MVP, and it is scoped like one. The terminal keeps a persistent shell so state carries across commands, but it runs each command with its input closed, which means interactive full screen programs like vim or htop are out of scope, and it strips color and other escape codes rather than rendering them. The Markdown parser covers the common cases rather than the whole CommonMark spec. Syntax highlighting is based on file extension and covers a fixed set of languages. None of these are hard to extend, they are just where the line got drawn for a first version.
