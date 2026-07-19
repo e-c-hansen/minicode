@@ -86,7 +86,9 @@ You can also hand out a prebuilt app for free, without any Apple Developer accou
 
     xattr -dr com.apple.quarantine MiniCode.app
 
-That is the normal path for free and open-source Mac apps, and it is all that is needed. Homebrew is another option: publish a cask in your own tap and people install with brew.
+That is the normal path for free and open-source Mac apps, and it is all that is needed.
+
+Homebrew can make even that step disappear. Homebrew quarantines downloads by default, so a plain cask would still warn, but because it is your own tap you control the cask, and it can clear the quarantine flag itself right after install. There is a ready cask at packaging/minicode.rb that does exactly this in a postflight step, so brew install --cask your-tap/minicode opens cleanly with no right-click and no notarization. See the comment at the top of that file for how to publish the tap. Users who prefer not to use a custom cask can also just pass brew install --cask --no-quarantine.
 
 The only thing free distribution cannot give you is a clean, warning-free double-click for people who download it, because that specifically requires notarization, which requires the paid Apple Developer Program membership. If you want that, the whole flow is scripted: scripts/sign-and-notarize.sh signs the app with your Developer ID and the hardened runtime, submits the disk image to Apple for notarization, and staples the result so it opens cleanly on any Mac. Read the comments at the top of that script for the one-time certificate and credential setup.
 
