@@ -22,6 +22,39 @@
                name:NSWindowWillCloseNotification
              object:nil];
 
+    // Custom hotkeys that aren't standard responder actions (Ctrl+`, Cmd+B)
+    // must work no matter which pane holds focus — the terminal input, the
+    // browser URL bar, the editor, or the tree. A local key monitor sees every
+    // keystroke before it is dispatched, so focus never blocks these.
+    [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+                                          handler:^NSEvent *(NSEvent *e) {
+        EditorController *c = [self controllerForWindow:e.window];
+        if (!c) return e;
+        NSEventModifierFlags m = e.modifierFlags;
+        BOOL cmd = (m & NSEventModifierFlagCommand) != 0;
+        BOOL shift = (m & NSEventModifierFlagShift) != 0;
+        BOOL ctrl = (m & NSEventModifierFlagControl) != 0;
+        BOOL opt = (m & NSEventModifierFlagOption) != 0;
+        NSString *ch = e.charactersIgnoringModifiers.lowercaseString;
+        if (ctrl && !cmd && !opt && [ch isEqualToString:@"`"]) {
+            [c toggleTerminal:nil];
+            return nil;   // consume
+        }
+        if (cmd && !shift && !ctrl && !opt && [ch isEqualToString:@"b"]) {
+            [c toggleSidebar:nil];
+            return nil;
+        }
+        if (cmd && ctrl && !shift && !opt && [ch isEqualToString:@"n"]) {
+            [c newFile:nil];           // Ctrl+Cmd+N
+            return nil;
+        }
+        if (cmd && shift && !ctrl && !opt && [ch isEqualToString:@"n"]) {
+            [c newFolder:nil];         // Shift+Cmd+N
+            return nil;
+        }
+        return e;
+    }];
+
     // Open the folder passed on the command line, else the cwd.
     NSArray *args = [[NSProcessInfo processInfo] arguments];
     NSString *root = [[NSFileManager defaultManager] currentDirectoryPath];
@@ -50,12 +83,17 @@
     return c;
 }
 
+// The controller owning a specific window, or nil.
+- (EditorController *)controllerForWindow:(NSWindow *)w {
+    for (EditorController *c in self.controllers)
+        if (c.window == w) return c;
+    return nil;
+}
+
 // The controller whose window is frontmost (menu actions target it).
 - (EditorController *)current {
     NSWindow *w = NSApp.keyWindow ?: NSApp.mainWindow;
-    for (EditorController *c in self.controllers)
-        if (c.window == w) return c;
-    return self.controllers.lastObject;
+    return [self controllerForWindow:w] ?: self.controllers.lastObject;
 }
 
 - (void)windowClosing:(NSNotification *)note {
@@ -126,13 +164,12 @@ static void BuildMenu(void) {
                  keyEquivalent:@"s"];
     [fileMenu addItem:[NSMenuItem separatorItem]];
 
-    NSMenuItem *newFile =
-        [[NSMenuItem alloc] initWithTitle:@"New File…"
-                                   action:@selector(newFile:) keyEquivalent:@"n"];
-    newFile.keyEquivalentModifierMask =
-        NSEventModifierFlagCommand | NSEventModifierFlagControl;
-    [fileMenu addItem:newFile];
-    [fileMenu addItemWithTitle:@"New Folder…"
+    // New File / New Folder shortcuts are handled by the global key monitor
+    // (see applicationDidFinishLaunching), since Cmd+N is already New Window and
+    // menu matching is unreliable for keys that differ only by a modifier.
+    [fileMenu addItemWithTitle:@"New File…  (⌃⌘N)"
+                        action:@selector(newFile:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"New Folder…  (⇧⌘N)"
                         action:@selector(newFolder:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Rename…"
                         action:@selector(renameSelected:) keyEquivalent:@""];
@@ -220,12 +257,11 @@ static void BuildMenu(void) {
 
     [viewMenu addItem:[NSMenuItem separatorItem]];
 
-    NSMenuItem *sidebar =
-        [[NSMenuItem alloc] initWithTitle:@"Toggle Sidebar"
-                                   action:@selector(toggleSidebar:)
-                            keyEquivalent:@"b"];
-    sidebar.keyEquivalentModifierMask = NSEventModifierFlagCommand;
-    [viewMenu addItem:sidebar];
+    // Cmd+B is handled by the global key monitor (see applicationDidFinishLaunching)
+    // so it works in every pane; the menu item is here for discoverability.
+    [viewMenu addItemWithTitle:@"Toggle Sidebar (Cmd+B)"
+                        action:@selector(toggleSidebar:)
+                 keyEquivalent:@""];
 
     // Terminal: Cmd+T in the menu; Ctrl+` also works, caught in the view (see
     // EditorController performKeyEquivalent).

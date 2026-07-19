@@ -17,18 +17,6 @@
 - (void)setFrameSize:(NSSize)s { [super setFrameSize:s]; if (self.onLayout) self.onLayout(); }
 @end
 
-// Window container that lets us catch a key equivalent (Ctrl+`) that isn't in
-// the menu, regardless of which view holds first responder.
-@interface KeyContainer : NSView
-@property(nonatomic, copy) BOOL (^onKeyEquiv)(NSEvent *);
-@end
-@implementation KeyContainer
-- (BOOL)performKeyEquivalent:(NSEvent *)event {
-    if (self.onKeyEquiv && self.onKeyEquiv(event)) return YES;
-    return [super performKeyEquivalent:event];
-}
-@end
-
 // A thin horizontal drag handle for resizing the terminal dock. Reports the
 // dragged Y position (in its superview's coordinates) to a block.
 @interface DragBar : NSView
@@ -314,23 +302,9 @@ static NSColor *ColorForStyle(TokenStyle s) {
     [split addSubview:self.rightArea];
 
     // Container holds: split view (top) + status bar (bottom) + hints overlay.
-    KeyContainer *container = [[KeyContainer alloc] initWithFrame:frame];
-    container.onKeyEquiv = ^BOOL(NSEvent *e) {
-        NSEventModifierFlags m = e.modifierFlags;
-        BOOL cmd   = (m & NSEventModifierFlagCommand) != 0;
-        BOOL shift = (m & NSEventModifierFlagShift) != 0;
-        BOOL ctrl  = (m & NSEventModifierFlagControl) != 0;
-        NSString *ch = e.charactersIgnoringModifiers.lowercaseString;
-        if (ctrl && [ch isEqualToString:@"`"]) {        // Ctrl+` -> terminal
-            [weakSelf toggleTerminal:nil];
-            return YES;
-        }
-        if (cmd && !shift && !ctrl && [ch isEqualToString:@"b"]) {  // Cmd+B -> sidebar
-            [weakSelf toggleSidebar:nil];
-            return YES;
-        }
-        return NO;
-    };
+    // Custom hotkeys (Ctrl+`, Cmd+B) are handled by a global key monitor in the
+    // app delegate, so they work regardless of which pane has focus.
+    NSView *container = [[NSView alloc] initWithFrame:frame];
     const CGFloat barH = 24;
     split.frame = NSMakeRect(0, barH, frame.size.width, frame.size.height - barH);
     split.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -438,21 +412,27 @@ static NSColor *ColorForStyle(TokenStyle s) {
     NSMutableString *s = [NSMutableString string];
     [s appendString:@"Keyboard Shortcuts\n"];
     [s appendString:@"──────────────────────────\n"];
-    [s appendString:@"⌘O    Open Folder\n"];
-    [s appendString:@"⌘S    Save\n"];
-    [s appendString:@"⌘Z    Undo      ⇧⌘Z  Redo\n"];
-    [s appendString:@"⌘C    Copy      ⌘A   Select All\n"];
-    [s appendString:@"⌘0    Focus tree   ⌘1  Focus editor\n"];
-    [s appendString:@"↑ ↓   Browse tree  ⏎   Open   ⌃⇥  Previous file\n"];
+    [s appendString:@"⌘N    New window     ⌘O   Open folder\n"];
+    [s appendString:@"⌘S    Save           ⌘F   Find\n"];
+    [s appendString:@"⌘Z    Undo           ⇧⌘Z  Redo\n"];
+    [s appendString:@"⌘C    Copy           ⌘A   Select all\n"];
+
+    [s appendString:@"\nFiles\n"];
+    [s appendString:@"──────────────────────────\n"];
+    [s appendString:@"⌃⌘N   New file       ⇧⌘N  New folder\n"];
+    [s appendString:@"⌘⌫    Move to trash   ⌘R   Refresh tree\n"];
+
+    [s appendString:@"\nNavigation & panes\n"];
+    [s appendString:@"──────────────────────────\n"];
+    [s appendString:@"⌘0    Focus tree      ⌘1   Focus editor\n"];
+    [s appendString:@"↑ ↓   Browse tree     ⏎    Open   ⌃⇥  Previous\n"];
     [s appendString:@"⌘B    Toggle sidebar\n"];
     [s appendFormat:@"⌘T / ⌃`   Terminal  (%@)\n",
         self.terminalVisible ? @"open" : @"hidden"];
     [s appendFormat:@"⇧⌘B   Browser   (%@)\n",
         self.browserVisible ? @"open" : @"hidden"];
     if (self.isMarkdown) {
-        [s appendString:@"\nMarkdown\n"];
-        [s appendString:@"──────────────────────────\n"];
-        [s appendFormat:@"⇧⌘P   Toggle Preview  (now: %@)\n",
+        [s appendFormat:@"⇧⌘P   Markdown preview  (now: %@)\n",
             self.previewMode ? @"rendered" : @"source"];
     }
     [s appendString:@"\n⇧⌘H   Hide these hints"];

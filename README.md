@@ -59,6 +59,7 @@ Click hello.py and sample.cpp to see the syntax coloring, then click README.md t
 | Up, Down, Return | Browse the tree and open the selected file |
 | Control Tab | Jump to the previous file |
 | Control Command N | New file |
+| Shift Command N | New folder |
 | Command Delete | Move the selected file to the Trash |
 | Command R | Refresh the file tree |
 | Command B | Collapse or restore the sidebar |
