@@ -290,6 +290,8 @@ static NSColor *ColorForStyle(TokenStyle s) {
     self.textView.allowsUndo = YES;
     self.textView.automaticSpellingCorrectionEnabled = NO;
     self.textView.automaticDashSubstitutionEnabled = NO;
+    self.textView.usesFindBar = YES;               // Cmd+F find bar
+    self.textView.incrementalSearchingEnabled = YES;
     self.textView.backgroundColor = Hex(0x1E1E1E);
     self.textView.textColor = Hex(0xD4D4D4);
     self.textView.insertionPointColor = Hex(0xD4D4D4);
@@ -1031,7 +1033,16 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 - (void)textDidChange:(NSNotification *)note {
     self.sourceText = self.textView.string;
     if (!self.dirty) { self.dirty = YES; [self updateTitle]; }
-    if (!(self.isMarkdown && self.previewMode)) [self applyHighlighting];
+    if (!(self.isMarkdown && self.previewMode)) {
+        // Coalesce rapid keystrokes: re-highlight ~120ms after typing pauses
+        // instead of re-lexing the whole file on every keypress.
+        [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                                 selector:@selector(applyHighlighting)
+                                                   object:nil];
+        [self performSelector:@selector(applyHighlighting)
+                   withObject:nil
+                   afterDelay:0.12];
+    }
 }
 
 - (void)saveCurrentFile:(id)sender {

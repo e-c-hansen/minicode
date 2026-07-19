@@ -50,6 +50,8 @@ Click hello.py and sample.cpp to see the syntax coloring, then click README.md t
 | Command O | Open folder |
 | Command S | Save |
 | Command Z, Shift Command Z | Undo, redo |
+| Command F | Find in the current file |
+| Command G, Shift Command G | Find next, find previous |
 | Command W | Close window |
 | Shift Command W | Close application |
 | Command 0 | Focus the file tree |

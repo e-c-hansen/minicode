@@ -166,9 +166,36 @@ static void BuildMenu(void) {
     NSMenuItem *editItem = [[NSMenuItem alloc] init];
     [menubar addItem:editItem];
     NSMenu *editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+    [editMenu addItemWithTitle:@"Undo" action:@selector(undo:) keyEquivalent:@"z"];
+    NSMenuItem *redo = [editMenu addItemWithTitle:@"Redo"
+                                           action:@selector(redo:)
+                                    keyEquivalent:@"z"];
+    redo.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [editMenu addItem:[NSMenuItem separatorItem]];
+    [editMenu addItemWithTitle:@"Cut" action:@selector(cut:) keyEquivalent:@"x"];
     [editMenu addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@"c"];
+    [editMenu addItemWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@"v"];
     [editMenu addItemWithTitle:@"Select All"
                         action:@selector(selectAll:) keyEquivalent:@"a"];
+    [editMenu addItem:[NSMenuItem separatorItem]];
+
+    // Find bar (handled by NSTextView via performTextFinderAction:; the tag is
+    // the NSTextFinderAction raw value).
+    NSMenuItem *find = [editMenu addItemWithTitle:@"Find…"
+                                           action:@selector(performTextFinderAction:)
+                                    keyEquivalent:@"f"];
+    find.tag = 1;   // NSTextFinderActionShowFindInterface
+    NSMenuItem *findNext = [editMenu addItemWithTitle:@"Find Next"
+                                               action:@selector(performTextFinderAction:)
+                                        keyEquivalent:@"g"];
+    findNext.tag = 2;   // NSTextFinderActionNextMatch
+    NSMenuItem *findPrev = [editMenu addItemWithTitle:@"Find Previous"
+                                               action:@selector(performTextFinderAction:)
+                                        keyEquivalent:@"g"];
+    findPrev.tag = 3;   // NSTextFinderActionPreviousMatch
+    findPrev.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
     editItem.submenu = editMenu;
 
     // View menu
