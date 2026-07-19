@@ -8,3 +8,7 @@ MiniCode.app/
 # Temp
 *.o
 *.tmp
+
+# Release artifacts
+*.zip
+*.dmg
