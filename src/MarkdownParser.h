@@ -13,6 +13,7 @@ struct MdRun {
     bool codeBlock = false;  // part of a ``` fenced block
     bool quote     = false;  // blockquote line
     bool rule      = false;  // horizontal rule (--- )
+    bool table     = false;  // a preformatted table row
     int  listDepth = 0;      // 0 = not a list; >=1 indent level
     bool ordered   = false;  // ordered list item marker
     bool link      = false;  // link text

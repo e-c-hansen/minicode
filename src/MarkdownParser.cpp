@@ -2,6 +2,7 @@
 // Supports: ATX headings, fenced code blocks, blockquotes, unordered/ordered
 // lists, horizontal rules, and inline **bold**, *italic*, `code`, [text](url).
 #include "MarkdownParser.h"
+#include <algorithm>
 #include <cctype>
 #include <sstream>
 
@@ -111,6 +112,50 @@ void pushBreak(std::vector<MdRun>& out) {
     MdRun r; r.text = "\n"; out.push_back(r);
 }
 
+// Ensure the next run begins on a fresh line, so a block element that isn't
+// preceded by a blank line does not get glued onto the previous text.
+void ensureLineStart(std::vector<MdRun>& out) {
+    if (out.empty()) return;
+    const std::string& t = out.back().text;
+    if (!t.empty() && t.back() == '\n') return;
+    pushBreak(out);
+}
+
+std::string trim(const std::string& s) {
+    size_t a = 0, b = s.size();
+    while (a < b && std::isspace((unsigned char)s[a])) a++;
+    while (b > a && std::isspace((unsigned char)s[b - 1])) b--;
+    return s.substr(a, b - a);
+}
+
+// A GitHub table separator row: pipes, dashes, colons and spaces, with at
+// least one dash. e.g. "| --- | :--: |".
+bool isTableSeparator(const std::string& s) {
+    bool dash = false, pipe = false;
+    for (char c : s) {
+        if (c == '-') dash = true;
+        else if (c == '|') pipe = true;
+        else if (c != ':' && c != ' ' && c != '\t') return false;
+    }
+    return dash && pipe;
+}
+
+// Split "| a | b |" into {"a","b"}, trimming cells and outer pipes.
+std::vector<std::string> splitTableRow(const std::string& line) {
+    std::string s = trim(line);
+    if (!s.empty() && s.front() == '|') s.erase(s.begin());
+    if (!s.empty() && s.back() == '|') s.pop_back();
+    std::vector<std::string> cells;
+    std::string cur;
+    for (size_t i = 0; i < s.size(); i++) {
+        if (s[i] == '\\' && i + 1 < s.size() && s[i + 1] == '|') { cur += '|'; i++; }
+        else if (s[i] == '|') { cells.push_back(trim(cur)); cur.clear(); }
+        else cur += s[i];
+    }
+    cells.push_back(trim(cur));
+    return cells;
+}
+
 } // namespace
 
 std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
@@ -125,8 +170,9 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
         int indent = 0;
         std::string trimmed = ltrim(raw, indent);
         if (trimmed.rfind("```", 0) == 0) {
+            if (!inFence) ensureLineStart(out);   // opening a block
             inFence = !inFence;
-            if (!inFence) pushBreak(out);
+            if (!inFence) pushBreak(out);         // closing
             continue;
         }
         if (inFence) {
@@ -141,9 +187,60 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
 
         // Horizontal rule.
         if (isRule(trimmed)) {
+            ensureLineStart(out);
             MdRun r; r.rule = true; r.text = "\n"; out.push_back(r);
             pushBreak(out);
             continue;
+        }
+
+        // GitHub table: a "| ... |" header line followed by a separator row.
+        if (trimmed.find('|') != std::string::npos && idx + 1 < lines.size()) {
+            int ind2; std::string nextLine = ltrim(lines[idx + 1], ind2);
+            if (isTableSeparator(nextLine)) {
+                ensureLineStart(out);
+                std::vector<std::vector<std::string>> rows;
+                rows.push_back(splitTableRow(trimmed));
+                size_t j = idx + 2;
+                while (j < lines.size()) {
+                    int ind3; std::string row = ltrim(lines[j], ind3);
+                    if (row.empty() || row.find('|') == std::string::npos) break;
+                    rows.push_back(splitTableRow(row));
+                    j++;
+                }
+                idx = j - 1;   // outer loop will ++
+
+                size_t cols = 0;
+                for (auto& r : rows) cols = std::max(cols, r.size());
+                std::vector<size_t> width(cols, 0);
+                for (auto& r : rows)
+                    for (size_t c = 0; c < r.size(); c++)
+                        width[c] = std::max(width[c], r[c].size());
+
+                for (size_t ri = 0; ri < rows.size(); ri++) {
+                    std::string line;
+                    for (size_t c = 0; c < cols; c++) {
+                        std::string cell = c < rows[ri].size() ? rows[ri][c] : "";
+                        if (cell.size() < width[c])
+                            cell.append(width[c] - cell.size(), ' ');
+                        line += cell;
+                        if (c + 1 < cols) line += "  ";
+                    }
+                    MdRun r; r.table = true; r.text = line + "\n";
+                    if (ri == 0) r.bold = true;   // header
+                    out.push_back(r);
+                    if (ri == 0) {                // underline under the header
+                        std::string sep;
+                        for (size_t c = 0; c < cols; c++) {
+                            sep.append(width[c], '-');
+                            if (c + 1 < cols) sep += "  ";
+                        }
+                        MdRun s; s.table = true; s.text = sep + "\n";
+                        out.push_back(s);
+                    }
+                }
+                pushBreak(out);
+                continue;
+            }
         }
 
         // Headings.
@@ -152,6 +249,7 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
             while (level < (int)trimmed.size() && trimmed[level] == '#') level++;
             if (level <= 6 && level < (int)trimmed.size() &&
                 trimmed[level] == ' ') {
+                ensureLineStart(out);
                 MdRun base; base.heading = level;
                 parseInline(trimmed.substr(level + 1), base, out);
                 pushBreak(out);
@@ -161,6 +259,7 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
 
         // Blockquote.
         if (trimmed[0] == '>') {
+            ensureLineStart(out);
             MdRun base; base.quote = true;
             std::string body = trimmed.substr(1);
             int r2; body = ltrim(body, r2);
@@ -172,6 +271,7 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
         // Unordered list.
         if ((trimmed[0] == '-' || trimmed[0] == '*' || trimmed[0] == '+') &&
             trimmed.size() > 1 && trimmed[1] == ' ') {
+            ensureLineStart(out);
             MdRun base; base.listDepth = 1 + indent / 2;
             MdRun bullet; bullet.listDepth = base.listDepth;
             bullet.text = std::string(base.listDepth * 2, ' ') + "• ";
@@ -188,6 +288,7 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
                 p++;
             if (p < trimmed.size() && (trimmed[p] == '.' || trimmed[p] == ')') &&
                 p + 1 < trimmed.size() && trimmed[p+1] == ' ') {
+                ensureLineStart(out);
                 MdRun base; base.ordered = true; base.listDepth = 1 + indent / 2;
                 MdRun num; num.listDepth = base.listDepth;
                 num.text = std::string(base.listDepth * 2, ' ') +
