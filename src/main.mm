@@ -80,6 +80,7 @@
 - (void)toggleHints:(id)sender     { [[self current] toggleHints:sender]; }
 - (void)toggleTerminal:(id)sender  { [[self current] toggleTerminal:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
+- (void)toggleSidebar:(id)sender   { [[self current] toggleSidebar:sender]; }
 - (void)focusTree:(id)sender       { [[self current] focusTree:sender]; }
 - (void)focusEditor:(id)sender     { [[self current] focusEditor:sender]; }
 - (void)switchToPreviousFile:(id)sender {
@@ -186,16 +187,25 @@ static void BuildMenu(void) {
         [[NSMenuItem alloc] initWithTitle:@"Toggle Shortcut Hints"
                                    action:@selector(toggleHints:)
                             keyEquivalent:@"h"];
-    hints.keyEquivalentModifierMask = NSEventModifierFlagControl;
+    hints.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     [viewMenu addItem:hints];
 
     [viewMenu addItem:[NSMenuItem separatorItem]];
 
+    NSMenuItem *sidebar =
+        [[NSMenuItem alloc] initWithTitle:@"Toggle Sidebar"
+                                   action:@selector(toggleSidebar:)
+                            keyEquivalent:@"b"];
+    sidebar.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    [viewMenu addItem:sidebar];
+
+    // Terminal: Cmd+T in the menu; Ctrl+` also works, caught in the view (see
+    // EditorController performKeyEquivalent).
     NSMenuItem *term =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Terminal"
                                    action:@selector(toggleTerminal:)
-                            keyEquivalent:@"`"];
-    term.keyEquivalentModifierMask = NSEventModifierFlagControl;
+                            keyEquivalent:@"t"];
+    term.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     [viewMenu addItem:term];
 
     NSMenuItem *browser =

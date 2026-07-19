@@ -17,6 +17,18 @@
 - (void)setFrameSize:(NSSize)s { [super setFrameSize:s]; if (self.onLayout) self.onLayout(); }
 @end
 
+// Window container that lets us catch a key equivalent (Ctrl+`) that isn't in
+// the menu, regardless of which view holds first responder.
+@interface KeyContainer : NSView
+@property(nonatomic, copy) BOOL (^onKeyEquiv)(NSEvent *);
+@end
+@implementation KeyContainer
+- (BOOL)performKeyEquivalent:(NSEvent *)event {
+    if (self.onKeyEquiv && self.onKeyEquiv(event)) return YES;
+    return [super performKeyEquivalent:event];
+}
+@end
+
 // A thin horizontal drag handle for resizing the terminal dock. Reports the
 // dragged Y position (in its superview's coordinates) to a block.
 @interface DragBar : NSView
@@ -189,6 +201,8 @@ static NSColor *ColorForStyle(TokenStyle s) {
 @property(nonatomic, assign) BOOL terminalVisible;
 @property(nonatomic, assign) BOOL browserVisible;
 @property(nonatomic, assign) CGFloat terminalHeight;
+@property(nonatomic, strong) NSSplitView *splitView;
+@property(nonatomic, strong) NSScrollView *sidebarScroll;
 @end
 
 @implementation EditorController
@@ -222,6 +236,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
 
     // --- split view: sidebar | editor
     NSSplitView *split = [[NSSplitView alloc] initWithFrame:frame];
+    self.splitView = split;
     split.vertical = YES;
     split.dividerStyle = NSSplitViewDividerStyleThin;
     split.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -229,6 +244,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
 
     // --- sidebar (file tree)
     NSScrollView *treeScroll = [[NSScrollView alloc] init];
+    self.sidebarScroll = treeScroll;
     treeScroll.hasVerticalScroller = YES;
     treeScroll.drawsBackground = YES;
     treeScroll.backgroundColor = Hex(0x252526);
@@ -295,7 +311,15 @@ static NSColor *ColorForStyle(TokenStyle s) {
     [split addSubview:self.rightArea];
 
     // Container holds: split view (top) + status bar (bottom) + hints overlay.
-    NSView *container = [[NSView alloc] initWithFrame:frame];
+    KeyContainer *container = [[KeyContainer alloc] initWithFrame:frame];
+    container.onKeyEquiv = ^BOOL(NSEvent *e) {   // Ctrl+` toggles the terminal
+        if ((e.modifierFlags & NSEventModifierFlagControl) &&
+            [e.charactersIgnoringModifiers isEqualToString:@"`"]) {
+            [weakSelf toggleTerminal:nil];
+            return YES;
+        }
+        return NO;
+    };
     const CGFloat barH = 24;
     split.frame = NSMakeRect(0, barH, frame.size.width, frame.size.height - barH);
     split.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -342,7 +366,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     self.statusBar.layer.backgroundColor = Hex(0x007ACC).CGColor;  // VS Code blue
     self.statusBar.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;
 
-    NSTextField *label = [NSTextField labelWithString:@"⌃H  Shortcuts"];
+    NSTextField *label = [NSTextField labelWithString:@"⌘H  Shortcuts"];
     label.textColor = [NSColor whiteColor];
     label.font = [NSFont systemFontOfSize:11];
     label.backgroundColor = [NSColor clearColor];
@@ -409,7 +433,8 @@ static NSColor *ColorForStyle(TokenStyle s) {
     [s appendString:@"⌘C    Copy      ⌘A   Select All\n"];
     [s appendString:@"⌘0    Focus tree   ⌘1  Focus editor\n"];
     [s appendString:@"↑ ↓   Browse tree  ⏎   Open   ⌃⇥  Previous file\n"];
-    [s appendFormat:@"⌃`    Terminal  (%@)\n",
+    [s appendString:@"⌘B    Toggle sidebar\n"];
+    [s appendFormat:@"⌘T / ⌃`   Terminal  (%@)\n",
         self.terminalVisible ? @"open" : @"hidden"];
     [s appendFormat:@"⇧⌘B   Browser   (%@)\n",
         self.browserVisible ? @"open" : @"hidden"];
@@ -419,7 +444,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
         [s appendFormat:@"⇧⌘P   Toggle Preview  (now: %@)\n",
             self.previewMode ? @"rendered" : @"source"];
     }
-    [s appendString:@"\n⌃H    Hide these hints"];
+    [s appendString:@"\n⌘H    Hide these hints"];
     return s;
 }
 
@@ -428,7 +453,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     if (self.hintsVisible) [self updateHints];
     self.hintsPanel.hidden = !self.hintsVisible;
     self.statusLabel.stringValue =
-        self.hintsVisible ? @"⌃H  Hide shortcuts" : @"⌃H  Shortcuts";
+        self.hintsVisible ? @"⌘H  Hide shortcuts" : @"⌘H  Shortcuts";
 }
 
 // -------------------------------------------------------- terminal + browser
@@ -507,7 +532,18 @@ static NSColor *ColorForStyle(TokenStyle s) {
     constrainMaxCoordinate:(CGFloat)max
                ofSubviewAt:(NSInteger)i { return 480; }
 - (BOOL)splitView:(NSSplitView *)sv canCollapseSubview:(NSView *)view {
-    return NO;   // sidebar can't be dragged shut to nothing
+    return view == sv.subviews.firstObject;   // sidebar can collapse (Cmd+B)
+}
+
+// Cmd+B: collapse or restore the file-tree sidebar.
+- (void)toggleSidebar:(id)sender {
+    NSView *sidebar = self.splitView.subviews.firstObject;
+    if ([self.splitView isSubviewCollapsed:sidebar]) {
+        [self.splitView setPosition:260 ofDividerAtIndex:0];
+    } else {
+        [self.splitView setPosition:0 ofDividerAtIndex:0];   // below min -> collapses
+    }
+    [self.splitView adjustSubviews];
 }
 
 // ------------------------------------------------------- NSOutlineView source

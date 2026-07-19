@@ -59,10 +59,11 @@ Click hello.py and sample.cpp to see the syntax coloring, then click README.md t
 | Control Command N | New file |
 | Command Delete | Move the selected file to the Trash |
 | Command R | Refresh the file tree |
-| Control backtick | Toggle terminal |
+| Command B | Collapse or restore the sidebar |
+| Command T, or Control backtick | Toggle terminal |
 | Shift Command B | Toggle browser |
 | Shift Command P | Toggle Markdown preview |
-| Control H | Toggle the shortcut hints |
+| Command H | Toggle the shortcut hints |
 
 ## How it is put together
 
