@@ -313,10 +313,18 @@ static NSColor *ColorForStyle(TokenStyle s) {
 
     // Container holds: split view (top) + status bar (bottom) + hints overlay.
     KeyContainer *container = [[KeyContainer alloc] initWithFrame:frame];
-    container.onKeyEquiv = ^BOOL(NSEvent *e) {   // Ctrl+` toggles the terminal
-        if ((e.modifierFlags & NSEventModifierFlagControl) &&
-            [e.charactersIgnoringModifiers isEqualToString:@"`"]) {
+    container.onKeyEquiv = ^BOOL(NSEvent *e) {
+        NSEventModifierFlags m = e.modifierFlags;
+        BOOL cmd   = (m & NSEventModifierFlagCommand) != 0;
+        BOOL shift = (m & NSEventModifierFlagShift) != 0;
+        BOOL ctrl  = (m & NSEventModifierFlagControl) != 0;
+        NSString *ch = e.charactersIgnoringModifiers.lowercaseString;
+        if (ctrl && [ch isEqualToString:@"`"]) {        // Ctrl+` -> terminal
             [weakSelf toggleTerminal:nil];
+            return YES;
+        }
+        if (cmd && !shift && !ctrl && [ch isEqualToString:@"b"]) {  // Cmd+B -> sidebar
+            [weakSelf toggleSidebar:nil];
             return YES;
         }
         return NO;
@@ -540,7 +548,6 @@ static NSColor *ColorForStyle(TokenStyle s) {
     self.sidebarCollapsed = !self.sidebarCollapsed;
     [self.splitView setPosition:(self.sidebarCollapsed ? 0 : 260)
                ofDividerAtIndex:0];
-    self.sidebarScroll.hidden = self.sidebarCollapsed;
 }
 
 // ------------------------------------------------------- NSOutlineView source
