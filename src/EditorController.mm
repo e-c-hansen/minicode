@@ -203,6 +203,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
 @property(nonatomic, assign) CGFloat terminalHeight;
 @property(nonatomic, strong) NSSplitView *splitView;
 @property(nonatomic, strong) NSScrollView *sidebarScroll;
+@property(nonatomic, assign) BOOL sidebarCollapsed;
 @end
 
 @implementation EditorController
@@ -527,23 +528,19 @@ static NSColor *ColorForStyle(TokenStyle s) {
 }
 - (CGFloat)splitView:(NSSplitView *)sv
     constrainMinCoordinate:(CGFloat)min
-               ofSubviewAt:(NSInteger)i { return 160; }
+               ofSubviewAt:(NSInteger)i {
+    return self.sidebarCollapsed ? 0 : 160;   // allow full collapse via Cmd+B
+}
 - (CGFloat)splitView:(NSSplitView *)sv
     constrainMaxCoordinate:(CGFloat)max
                ofSubviewAt:(NSInteger)i { return 480; }
-- (BOOL)splitView:(NSSplitView *)sv canCollapseSubview:(NSView *)view {
-    return view == sv.subviews.firstObject;   // sidebar can collapse (Cmd+B)
-}
 
 // Cmd+B: collapse or restore the file-tree sidebar.
 - (void)toggleSidebar:(id)sender {
-    NSView *sidebar = self.splitView.subviews.firstObject;
-    if ([self.splitView isSubviewCollapsed:sidebar]) {
-        [self.splitView setPosition:260 ofDividerAtIndex:0];
-    } else {
-        [self.splitView setPosition:0 ofDividerAtIndex:0];   // below min -> collapses
-    }
-    [self.splitView adjustSubviews];
+    self.sidebarCollapsed = !self.sidebarCollapsed;
+    [self.splitView setPosition:(self.sidebarCollapsed ? 0 : 260)
+               ofDividerAtIndex:0];
+    self.sidebarScroll.hidden = self.sidebarCollapsed;
 }
 
 // ------------------------------------------------------- NSOutlineView source
