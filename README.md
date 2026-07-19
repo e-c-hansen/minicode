@@ -71,6 +71,8 @@ The parts that do not need a graphical interface are plain C++. The syntax token
 
 The graphical layer is Objective-C++, which is the normal way to drive AppKit from C++. EditorController.mm owns the window, the file tree, and the editor, and it translates the ranges from the C++ core into colored text. Terminal.mm is the command runner, built on NSTask. Browser.mm wraps a WKWebView. The file tree, the panels, and the resizable terminal dock are laid out by hand rather than through nested split views, which turned out to be more predictable.
 
+Because the highlighter and the Markdown parser are plain C++ with no dependencies, they can be tested on their own, away from the GUI. Run make test to build and run the suite in tests/run_tests.cpp, which checks the tokenizer against a few languages and the parser against headings, inline styles, code blocks, lists, tables, and block separation. The harness is a handful of macros, no test framework, and it exits non zero if anything fails.
+
 ## Honest limitations
 
 This is an MVP, and it is scoped like one. The terminal keeps a persistent shell so state carries across commands, but it runs each command with its input closed, which means interactive full screen programs like vim or htop are out of scope, and it strips color and other escape codes rather than rendering them. The Markdown parser covers the common cases rather than the whole CommonMark spec. Syntax highlighting is based on file extension and covers a fixed set of languages. None of these are hard to extend, they are just where the line got drawn for a first version.

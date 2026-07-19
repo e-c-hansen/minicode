@@ -10,7 +10,10 @@ CXX      := clang++
 CXXFLAGS := -std=c++17 -fobjc-arc -Wall -Wextra -O2 -Isrc
 LDFLAGS  := -framework Cocoa -framework WebKit -framework CoreServices
 
-.PHONY: all app run clean
+# The pure-C++ core, testable on its own (no frameworks, no Objective-C).
+CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp
+
+.PHONY: all app run test clean
 
 all: app
 
@@ -30,6 +33,13 @@ app: $(BIN)
 # Launch, opening the given folder (defaults to current directory).
 run: app
 	./$(BUNDLE)/Contents/MacOS/$(APP) $(or $(DIR),.)
+
+# Unit-test the pure-C++ core (syntax highlighter + markdown parser).
+test:
+	@mkdir -p build
+	$(CXX) -std=c++17 -Wall -Wextra -Isrc tests/run_tests.cpp $(CORE_SRC) \
+		-o build/run_tests
+	@./build/run_tests
 
 clean:
 	rm -rf build $(BUNDLE)
