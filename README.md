@@ -63,7 +63,7 @@ Click hello.py and sample.cpp to see the syntax coloring, then click README.md t
 | Command T, or Control backtick | Toggle terminal |
 | Shift Command B | Toggle browser |
 | Shift Command P | Toggle Markdown preview |
-| Command H | Toggle the shortcut hints |
+| Shift Command H | Toggle the shortcut hints |
 
 ## How it is put together
 

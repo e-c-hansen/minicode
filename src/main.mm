@@ -187,7 +187,8 @@ static void BuildMenu(void) {
         [[NSMenuItem alloc] initWithTitle:@"Toggle Shortcut Hints"
                                    action:@selector(toggleHints:)
                             keyEquivalent:@"h"];
-    hints.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    hints.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:hints];
 
     [viewMenu addItem:[NSMenuItem separatorItem]];

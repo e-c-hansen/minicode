@@ -366,7 +366,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     self.statusBar.layer.backgroundColor = Hex(0x007ACC).CGColor;  // VS Code blue
     self.statusBar.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;
 
-    NSTextField *label = [NSTextField labelWithString:@"⌘H  Shortcuts"];
+    NSTextField *label = [NSTextField labelWithString:@"⇧⌘H  Shortcuts"];
     label.textColor = [NSColor whiteColor];
     label.font = [NSFont systemFontOfSize:11];
     label.backgroundColor = [NSColor clearColor];
@@ -444,7 +444,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
         [s appendFormat:@"⇧⌘P   Toggle Preview  (now: %@)\n",
             self.previewMode ? @"rendered" : @"source"];
     }
-    [s appendString:@"\n⌘H    Hide these hints"];
+    [s appendString:@"\n⇧⌘H   Hide these hints"];
     return s;
 }
 
@@ -453,7 +453,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     if (self.hintsVisible) [self updateHints];
     self.hintsPanel.hidden = !self.hintsVisible;
     self.statusLabel.stringValue =
-        self.hintsVisible ? @"⌘H  Hide shortcuts" : @"⌘H  Shortcuts";
+        self.hintsVisible ? @"⇧⌘H  Hide shortcuts" : @"⇧⌘H  Shortcuts";
 }
 
 // -------------------------------------------------------- terminal + browser
