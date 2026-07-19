@@ -28,6 +28,10 @@ app: $(BIN)
 	@cp $(BIN) $(BUNDLE)/Contents/MacOS/$(APP)
 	@cp Info.plist $(BUNDLE)/Contents/Info.plist
 	@echo "APPL????" > $(BUNDLE)/Contents/PkgInfo
+	@# Ad-hoc signature (free, no Apple account). Required to run on Apple
+	@# Silicon and keeps granted permissions stable across launches. It does
+	@# NOT remove the Gatekeeper download warning — only notarization does.
+	@codesign --force --sign - $(BUNDLE) 2>/dev/null || true
 	@echo "Built $(BUNDLE)"
 
 # Launch, opening the given folder (defaults to current directory).
@@ -45,5 +49,10 @@ test:
 dmg:
 	./scripts/make-dmg.sh
 
+# Zip the app for a GitHub Release (preserves the bundle correctly).
+dist-zip: app
+	@ditto -c -k --sequesterRsrc --keepParent $(BUNDLE) $(APP).zip
+	@echo "Created $(APP).zip"
+
 clean:
-	rm -rf build $(BUNDLE) $(APP).dmg
+	rm -rf build $(BUNDLE) $(APP).dmg $(APP).zip

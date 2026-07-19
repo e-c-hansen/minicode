@@ -82,12 +82,15 @@ There are two ways to get MiniCode onto someone else's Mac, and which you need d
 
 The simplest is to hand them the source and let them build it. A locally built app is not quarantined by Gatekeeper, so git clone, make, open MiniCode.app just works with no signing involved. This fits the from-scratch spirit of the project and costs nothing, and it is the recommended path for sharing with a few people who are comfortable running make.
 
-If you want something a stranger can download and double-click, you need to sign and notarize it, which requires an Apple Developer Program membership. The steps are scripted:
+You can also hand out a prebuilt app for free, without any Apple Developer account. make builds an ad-hoc signed app (free, and required to run at all on Apple Silicon), and make dist-zip or make dmg packages it for a GitHub Release. The one catch is that macOS quarantines anything downloaded from the internet, so the first time a recipient opens an unsigned build they need to either right-click the app and choose Open, or run this once:
 
-- make dmg builds MiniCode.app and packages it into MiniCode.dmg. This works today with no account, but because the app is unsigned, whoever downloads it has to right-click and choose Open the first time rather than double-clicking.
-- scripts/sign-and-notarize.sh does the full path: it signs the app with your Developer ID and the hardened runtime, submits the disk image to Apple for notarization, and staples the result so it opens cleanly on any Mac with no warnings. Read the comments at the top of that script for the one-time certificate and credential setup.
+    xattr -dr com.apple.quarantine MiniCode.app
 
-So the honest summary is that distribution is a solved, scripted problem here, and the only thing standing between the current state and a double-click-clean download is the Apple Developer membership and running one script.
+That is the normal path for free and open-source Mac apps, and it is all that is needed. Homebrew is another option: publish a cask in your own tap and people install with brew.
+
+The only thing free distribution cannot give you is a clean, warning-free double-click for people who download it, because that specifically requires notarization, which requires the paid Apple Developer Program membership. If you want that, the whole flow is scripted: scripts/sign-and-notarize.sh signs the app with your Developer ID and the hardened runtime, submits the disk image to Apple for notarization, and staples the result so it opens cleanly on any Mac. Read the comments at the top of that script for the one-time certificate and credential setup.
+
+So the honest summary is that distribution is a solved, scripted problem here. Free build-from-source or a downloadable zip with the one-line unquarantine step covers almost everyone, and the only thing behind the paywall is the zero-friction double-click.
 
 ## Honest limitations
 
