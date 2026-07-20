@@ -42,6 +42,9 @@
 @property(nonatomic, assign) BOOL loaded;
 @end
 
+// When NO, entries beginning with "." are hidden from the tree (default).
+static BOOL gShowHidden = NO;
+
 @implementation FileItem
 - (NSString *)name { return self.path.lastPathComponent; }
 
@@ -57,7 +60,7 @@
     NSMutableArray *dirs = [NSMutableArray array];
     NSMutableArray *files = [NSMutableArray array];
     for (NSString *entry in entries) {
-        if ([entry hasPrefix:@"."]) continue;               // hide dotfiles
+        if (!gShowHidden && [entry hasPrefix:@"."]) continue;   // hide dotfiles
         NSString *full = [self.path stringByAppendingPathComponent:entry];
         BOOL d = NO;
         [fm fileExistsAtPath:full isDirectory:&d];
@@ -87,7 +90,7 @@
     NSMutableArray *dirs = [NSMutableArray array];
     NSMutableArray *files = [NSMutableArray array];
     for (NSString *entry in entries) {
-        if ([entry hasPrefix:@"."]) continue;
+        if (!gShowHidden && [entry hasPrefix:@"."]) continue;
         NSString *full = [self.path stringByAppendingPathComponent:entry];
         BOOL d = NO;
         [fm fileExistsAtPath:full isDirectory:&d];
@@ -530,6 +533,12 @@ static NSColor *ColorForStyle(TokenStyle s) {
     self.sidebarCollapsed = !self.sidebarCollapsed;
     [self.splitView setPosition:(self.sidebarCollapsed ? 0 : 260)
                ofDividerAtIndex:0];
+}
+
+// Cmd+Shift+. : show or hide dotfiles in the tree (like Finder).
+- (void)toggleHiddenFiles:(id)sender {
+    gShowHidden = !gShowHidden;
+    [self refreshTree:nil];
 }
 
 // ------------------------------------------------------- NSOutlineView source

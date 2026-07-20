@@ -119,6 +119,7 @@
 - (void)toggleTerminal:(id)sender  { [[self current] toggleTerminal:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
 - (void)toggleSidebar:(id)sender   { [[self current] toggleSidebar:sender]; }
+- (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
 - (void)focusTree:(id)sender       { [[self current] focusTree:sender]; }
 - (void)focusEditor:(id)sender     { [[self current] focusEditor:sender]; }
 - (void)switchToPreviousFile:(id)sender {
@@ -262,6 +263,14 @@ static void BuildMenu(void) {
     [viewMenu addItemWithTitle:@"Toggle Sidebar (Cmd+B)"
                         action:@selector(toggleSidebar:)
                  keyEquivalent:@""];
+
+    NSMenuItem *hidden =
+        [[NSMenuItem alloc] initWithTitle:@"Show Hidden Files"
+                                   action:@selector(toggleHiddenFiles:)
+                            keyEquivalent:@"."];
+    hidden.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [viewMenu addItem:hidden];
 
     // Terminal: Cmd+T in the menu; Ctrl+` also works, caught in the view (see
     // EditorController performKeyEquivalent).
