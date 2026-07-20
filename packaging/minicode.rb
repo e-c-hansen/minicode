@@ -2,18 +2,16 @@
 #
 #   brew install --cask e-c-hansen/tap/minicode
 #
-# To publish this: create a repo named "homebrew-tap" under your GitHub account,
-# put this file at Casks/minicode.rb, cut a GitHub Release that includes the
-# MiniCode.zip from `make dist-zip`, and fill in the real version and sha256
-# (get it with: shasum -a 256 MiniCode.zip).
+# This is a reference copy; the live cask lives in the homebrew-tap repo and is
+# updated by scripts/release.sh. To cut a new version: scripts/release.sh 1.2.0
 cask "minicode" do
-  version "1.0.0"
-  sha256 :no_check   # replace with the real zip sha256 for a published release
+  version "1.1.0"
+  sha256 "494de1eff9885991b69fc89fdfb672555712fdee97fd62c287e161397de13360"
 
-  url "https://github.com/e-c-hansen/minicode/releases/download/v#{version}/MiniCode.zip"
+  url "https://github.com/e-c-hansen/homebrew-tap/releases/download/v#{version}/MiniCode.zip"
   name "MiniCode"
   desc "Tiny native macOS code editor, no Electron, no dependencies"
-  homepage "https://github.com/e-c-hansen/minicode"
+  homepage "https://github.com/e-c-hansen/homebrew-tap"
 
   app "MiniCode.app"
   binary "#{appdir}/MiniCode.app/Contents/Resources/minicode"   # `minicode` on PATH
