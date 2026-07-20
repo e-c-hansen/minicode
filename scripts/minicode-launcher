@@ -1,0 +1,17 @@
+#!/bin/bash
+# CLI launcher for MiniCode, installed onto PATH as `minicode`.
+#   minicode            open the current directory
+#   minicode ~/project  open a folder
+# Launches detached so your terminal is free immediately.
+
+# Resolve this script's real location, following the Homebrew symlink.
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  src="$(readlink "$src")"
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+dir="$(cd -P "$(dirname "$src")" && pwd)"
+
+# The launcher lives in Contents/Resources; the binary is in Contents/MacOS.
+"$dir/../MacOS/MiniCode" "${1:-$PWD}" >/dev/null 2>&1 &

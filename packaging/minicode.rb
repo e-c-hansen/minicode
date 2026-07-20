@@ -16,6 +16,7 @@ cask "minicode" do
   homepage "https://github.com/e-c-hansen/minicode"
 
   app "MiniCode.app"
+  binary "#{appdir}/MiniCode.app/Contents/Resources/minicode"   # `minicode` on PATH
 
   # MiniCode is ad-hoc signed but not notarized (no paid Apple account), so macOS
   # quarantines the download and would show a Gatekeeper warning on first launch.
