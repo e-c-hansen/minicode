@@ -85,7 +85,10 @@ static NSColor *SHex(unsigned int rgb) {
     self.table = [[NSTableView alloc] init];
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"hit"];
     col.resizingMask = NSTableColumnAutoresizingMask;
+    col.minWidth = 240;
     [self.table addTableColumn:col];
+    self.table.columnAutoresizingStyle =
+        NSTableViewLastColumnOnlyAutoresizingStyle;   // fill the width
     self.table.headerView = nil;
     self.table.rowHeight = 20;
     self.table.dataSource = self;
@@ -98,8 +101,19 @@ static NSColor *SHex(unsigned int rgb) {
 
 - (void)show {
     [self.window makeKeyAndOrderFront:nil];
+    [self.table sizeLastColumnToFit];
     [self.window makeFirstResponder:self.field];
 }
+
+// Search as the user types (debounced), so results appear without needing to
+// press Return — and it doesn't depend on the field's action firing.
+- (void)controlTextDidChange:(NSNotification *)note {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(runSearchNow)
+                                               object:nil];
+    [self performSelector:@selector(runSearchNow) withObject:nil afterDelay:0.22];
+}
+- (void)runSearchNow { [self runSearch:nil]; }
 
 // ------------------------------------------------------------------ search
 - (void)runSearch:(id)sender {
