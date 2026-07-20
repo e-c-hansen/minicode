@@ -4,6 +4,7 @@
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
+@property(nonatomic, strong) id keyMonitor;
 @end
 
 @implementation AppDelegate
@@ -22,39 +23,22 @@
                name:NSWindowWillCloseNotification
              object:nil];
 
-    // Custom hotkeys that aren't standard responder actions (Ctrl+`, Cmd+B)
-    // must work no matter which pane holds focus — the terminal input, the
-    // browser URL bar, the editor, or the tree. A local key monitor sees every
-    // keystroke before it is dispatched, so focus never blocks these.
-    [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+    // Ctrl+` (toggle terminal) is the one shortcut that isn't a clean menu key
+    // equivalent, so a local key monitor handles it regardless of focus. The
+    // monitor object is retained so it stays installed. Everything else is a
+    // normal menu shortcut, which works in every pane (like Cmd+C does).
+    self.keyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
                                           handler:^NSEvent *(NSEvent *e) {
         EditorController *c = [self controllerForWindow:e.window];
         if (!c) return e;
         NSEventModifierFlags m = e.modifierFlags;
         BOOL cmd = (m & NSEventModifierFlagCommand) != 0;
-        BOOL shift = (m & NSEventModifierFlagShift) != 0;
         BOOL ctrl = (m & NSEventModifierFlagControl) != 0;
         BOOL opt = (m & NSEventModifierFlagOption) != 0;
         NSString *ch = e.charactersIgnoringModifiers.lowercaseString;
         if (ctrl && !cmd && !opt && [ch isEqualToString:@"`"]) {
             [c toggleTerminal:nil];
             return nil;   // consume
-        }
-        if (cmd && !shift && !ctrl && !opt && [ch isEqualToString:@"b"]) {
-            [c toggleSidebar:nil];
-            return nil;
-        }
-        if (cmd && ctrl && !shift && !opt && [ch isEqualToString:@"n"]) {
-            [c newFile:nil];           // Ctrl+Cmd+N
-            return nil;
-        }
-        if (cmd && shift && !ctrl && !opt && [ch isEqualToString:@"n"]) {
-            [c newFolder:nil];         // Shift+Cmd+N
-            return nil;
-        }
-        if (cmd && shift && !ctrl && !opt && [ch isEqualToString:@"f"]) {
-            [c openSearch:nil];        // Shift+Cmd+F project-wide search
-            return nil;
         }
         return e;
     }];
@@ -170,13 +154,18 @@ static void BuildMenu(void) {
                  keyEquivalent:@"s"];
     [fileMenu addItem:[NSMenuItem separatorItem]];
 
-    // New File / New Folder shortcuts are handled by the global key monitor
-    // (see applicationDidFinishLaunching), since Cmd+N is already New Window and
-    // menu matching is unreliable for keys that differ only by a modifier.
-    [fileMenu addItemWithTitle:@"New File…  (⌃⌘N)"
-                        action:@selector(newFile:) keyEquivalent:@""];
-    [fileMenu addItemWithTitle:@"New Folder…  (⇧⌘N)"
-                        action:@selector(newFolder:) keyEquivalent:@""];
+    NSMenuItem *newFile =
+        [[NSMenuItem alloc] initWithTitle:@"New File…"
+                                   action:@selector(newFile:) keyEquivalent:@"n"];
+    newFile.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagControl;
+    [fileMenu addItem:newFile];
+    NSMenuItem *newFolder =
+        [[NSMenuItem alloc] initWithTitle:@"New Folder…"
+                                   action:@selector(newFolder:) keyEquivalent:@"n"];
+    newFolder.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [fileMenu addItem:newFolder];
     [fileMenu addItemWithTitle:@"Rename…"
                         action:@selector(renameSelected:) keyEquivalent:@""];
     NSMenuItem *trash =
@@ -239,9 +228,12 @@ static void BuildMenu(void) {
     findPrev.tag = 3;   // NSTextFinderActionPreviousMatch
     findPrev.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
-    // Cmd+Shift+F is handled by the global key monitor (shares "f" with Cmd+F).
-    [editMenu addItemWithTitle:@"Find in Folder…  (⇧⌘F)"
-                        action:@selector(openSearch:) keyEquivalent:@""];
+    NSMenuItem *findInFolder =
+        [[NSMenuItem alloc] initWithTitle:@"Find in Folder…"
+                                   action:@selector(openSearch:) keyEquivalent:@"f"];
+    findInFolder.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [editMenu addItem:findInFolder];
     editItem.submenu = editMenu;
 
     // View menu
@@ -266,11 +258,12 @@ static void BuildMenu(void) {
 
     [viewMenu addItem:[NSMenuItem separatorItem]];
 
-    // Cmd+B is handled by the global key monitor (see applicationDidFinishLaunching)
-    // so it works in every pane; the menu item is here for discoverability.
-    [viewMenu addItemWithTitle:@"Toggle Sidebar (Cmd+B)"
-                        action:@selector(toggleSidebar:)
-                 keyEquivalent:@""];
+    NSMenuItem *sidebar =
+        [[NSMenuItem alloc] initWithTitle:@"Toggle Sidebar"
+                                   action:@selector(toggleSidebar:)
+                            keyEquivalent:@"b"];
+    sidebar.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    [viewMenu addItem:sidebar];
 
     NSMenuItem *hidden =
         [[NSMenuItem alloc] initWithTitle:@"Show Hidden Files"
