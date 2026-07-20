@@ -3,6 +3,7 @@
 #import "EditorController.h"
 #import "Terminal.h"
 #import "Browser.h"
+#import "Search.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #include "SyntaxHighlighter.h"
 #include "MarkdownParser.h"
@@ -195,6 +196,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
 @property(nonatomic, strong) NSSplitView *splitView;
 @property(nonatomic, strong) NSScrollView *sidebarScroll;
 @property(nonatomic, assign) BOOL sidebarCollapsed;
+@property(nonatomic, strong) SearchPanel *searchPanel;
 @end
 
 @implementation EditorController
@@ -416,14 +418,15 @@ static NSColor *ColorForStyle(TokenStyle s) {
     [s appendString:@"Keyboard Shortcuts\n"];
     [s appendString:@"──────────────────────────\n"];
     [s appendString:@"⌘N    New window     ⌘O   Open folder\n"];
-    [s appendString:@"⌘S    Save           ⌘F   Find\n"];
-    [s appendString:@"⌘Z    Undo           ⇧⌘Z  Redo\n"];
+    [s appendString:@"⌘S    Save           ⌘F   Find in file\n"];
+    [s appendString:@"⇧⌘F   Find in folder  ⌘Z   Undo   ⇧⌘Z  Redo\n"];
     [s appendString:@"⌘C    Copy           ⌘A   Select all\n"];
 
     [s appendString:@"\nFiles\n"];
     [s appendString:@"──────────────────────────\n"];
     [s appendString:@"⌃⌘N   New file       ⇧⌘N  New folder\n"];
     [s appendString:@"⌘⌫    Move to trash   ⌘R   Refresh tree\n"];
+    [s appendString:@"⇧⌘.   Show hidden files\n"];
 
     [s appendString:@"\nNavigation & panes\n"];
     [s appendString:@"──────────────────────────\n"];
@@ -539,6 +542,42 @@ static NSColor *ColorForStyle(TokenStyle s) {
 - (void)toggleHiddenFiles:(id)sender {
     gShowHidden = !gShowHidden;
     [self refreshTree:nil];
+}
+
+// Cmd+Shift+F : project-wide text search.
+- (void)openSearch:(id)sender {
+    if (!self.searchPanel) {
+        __weak EditorController *weakSelf = self;
+        self.searchPanel = [[SearchPanel alloc]
+            initWithRoot:_root.path
+             openHandler:^(NSString *path, NSInteger line) {
+                EditorController *s = weakSelf;
+                [s openFileAtPath:path];
+                [s jumpToLine:line];
+                [s.window makeKeyAndOrderFront:nil];
+            }];
+    }
+    [self.searchPanel show];
+}
+
+// Move the editor selection to a 1-based line and reveal it.
+- (void)jumpToLine:(NSInteger)line {
+    if (line < 1) return;
+    NSString *s = self.textView.string;
+    __block NSUInteger loc = NSNotFound;
+    __block NSInteger n = 1;
+    [s enumerateSubstringsInRange:NSMakeRange(0, s.length)
+                          options:NSStringEnumerationByLines
+                       usingBlock:^(NSString *sub, NSRange r, NSRange e, BOOL *stop) {
+        (void)sub; (void)e;
+        if (n == line) { loc = r.location; *stop = YES; }
+        n++;
+    }];
+    if (loc == NSNotFound) return;
+    NSRange lineRange = [s lineRangeForRange:NSMakeRange(loc, 0)];
+    [self.textView setSelectedRange:lineRange];
+    [self.textView scrollRangeToVisible:lineRange];
+    [self.window makeFirstResponder:self.textView];
 }
 
 // ------------------------------------------------------- NSOutlineView source

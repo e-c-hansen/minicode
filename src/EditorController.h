@@ -19,6 +19,7 @@
 - (void)toggleBrowser:(id)sender;     // Shift+Cmd+B embedded browser
 - (void)toggleSidebar:(id)sender;     // Cmd+B collapse/restore file tree
 - (void)toggleHiddenFiles:(id)sender; // Cmd+Shift+. show/hide dotfiles
+- (void)openSearch:(id)sender;        // Cmd+Shift+F project-wide search
 - (void)focusTree:(id)sender;         // Cmd+0 move keyboard focus to file tree
 - (void)focusEditor:(id)sender;       // Cmd+1 move keyboard focus to editor
 - (void)switchToPreviousFile:(id)sender;  // Ctrl+Tab jump to previous file

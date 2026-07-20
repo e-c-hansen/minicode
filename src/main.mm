@@ -52,6 +52,10 @@
             [c newFolder:nil];         // Shift+Cmd+N
             return nil;
         }
+        if (cmd && shift && !ctrl && !opt && [ch isEqualToString:@"f"]) {
+            [c openSearch:nil];        // Shift+Cmd+F project-wide search
+            return nil;
+        }
         return e;
     }];
 
@@ -120,6 +124,7 @@
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
 - (void)toggleSidebar:(id)sender   { [[self current] toggleSidebar:sender]; }
 - (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
+- (void)openSearch:(id)sender      { [[self current] openSearch:sender]; }
 - (void)focusTree:(id)sender       { [[self current] focusTree:sender]; }
 - (void)focusEditor:(id)sender     { [[self current] focusEditor:sender]; }
 - (void)switchToPreviousFile:(id)sender {
@@ -234,6 +239,9 @@ static void BuildMenu(void) {
     findPrev.tag = 3;   // NSTextFinderActionPreviousMatch
     findPrev.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    // Cmd+Shift+F is handled by the global key monitor (shares "f" with Cmd+F).
+    [editMenu addItemWithTitle:@"Find in Folder…  (⇧⌘F)"
+                        action:@selector(openSearch:) keyEquivalent:@""];
     editItem.submenu = editMenu;
 
     // View menu

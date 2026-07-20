@@ -59,6 +59,7 @@ Click hello.py and sample.cpp to see the syntax coloring, then click README.md t
 | Command S | Save |
 | Command Z, Shift Command Z | Undo, redo |
 | Command F | Find in the current file |
+| Shift Command F | Find across the whole folder |
 | Command G, Shift Command G | Find next, find previous |
 | Command W | Close window |
 | Shift Command W | Close application |
@@ -70,6 +71,7 @@ Click hello.py and sample.cpp to see the syntax coloring, then click README.md t
 | Shift Command N | New folder |
 | Command Delete | Move the selected file to the Trash |
 | Command R | Refresh the file tree |
+| Shift Command . | Show or hide dotfiles |
 | Command B | Collapse or restore the sidebar |
 | Command T, or Control backtick | Toggle terminal |
 | Shift Command B | Toggle browser |
