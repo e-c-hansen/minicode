@@ -557,6 +557,13 @@ static NSColor *ColorForStyle(TokenStyle s) {
                 [s.window makeKeyAndOrderFront:nil];
             }];
     }
+    // If a folder is selected in the tree, scope the search to it; otherwise
+    // leave the scope as it is (the opened folder by default).
+    NSInteger row = self.outline.selectedRow;
+    if (row >= 0) {
+        FileItem *node = [self.outline itemAtRow:row];
+        if (node.isDir) [self.searchPanel setScope:node.path];
+    }
     [self.searchPanel show];
 }
 

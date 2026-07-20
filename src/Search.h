@@ -5,4 +5,5 @@
 - (instancetype)initWithRoot:(NSString *)root
                  openHandler:(void (^)(NSString *path, NSInteger line))handler;
 - (void)show;
+- (void)setScope:(NSString *)dir;   // point search at a specific folder
 @end

@@ -25,8 +25,10 @@ static NSColor *SHex(unsigned int rgb) {
     void (^_open)(NSString *, NSInteger);
     NSMutableArray<SearchHit *> *_hits;
     NSUInteger _searchGeneration;   // cancels a stale in-flight search
+    NSString *_scope;               // directory currently being searched
 }
 @property(nonatomic, strong) NSWindow *window;
+@property(nonatomic, strong) NSTextField *scopeField;
 @property(nonatomic, strong) NSTextField *field;
 @property(nonatomic, strong) NSTextField *status;
 @property(nonatomic, strong) NSTableView *table;
@@ -38,6 +40,7 @@ static NSColor *SHex(unsigned int rgb) {
                  openHandler:(void (^)(NSString *, NSInteger))handler {
     if ((self = [super init])) {
         _root = root;
+        _scope = root;
         _open = [handler copy];
         _hits = [NSMutableArray array];
         [self build];
@@ -47,22 +50,47 @@ static NSColor *SHex(unsigned int rgb) {
 
 - (void)build {
     NSRect frame = NSMakeRect(0, 0, 680, 460);
+    CGFloat W = frame.size.width, H = frame.size.height;
     self.window = [[NSWindow alloc]
         initWithContentRect:frame
                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                              NSWindowStyleMaskResizable)
                     backing:NSBackingStoreBuffered
                       defer:NO];
-    self.window.title = [NSString stringWithFormat:@"Search in %@",
-                         _root.lastPathComponent];
+    self.window.title = @"Search";
     self.window.releasedWhenClosed = NO;
     [self.window center];
 
     NSView *content = self.window.contentView;
 
+    // --- scope row: "Folder:" [ editable path ] [ Choose… ] ---
+    NSTextField *label = [NSTextField labelWithString:@"Folder:"];
+    label.frame = NSMakeRect(12, H - 37, 48, 18);
+    label.textColor = SHex(0x9CA3AF);
+    label.font = [NSFont systemFontOfSize:11];
+    label.autoresizingMask = NSViewMinYMargin;
+    [content addSubview:label];
+
+    self.scopeField = [[NSTextField alloc]
+        initWithFrame:NSMakeRect(62, H - 39, W - 62 - 12 - 92, 22)];
+    self.scopeField.font = [NSFont systemFontOfSize:11];
+    self.scopeField.delegate = self;
+    self.scopeField.target = self;
+    self.scopeField.action = @selector(scopeEntered:);
+    self.scopeField.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
+    [content addSubview:self.scopeField];
+
+    NSButton *choose = [NSButton buttonWithTitle:@"Choose…"
+                                          target:self action:@selector(chooseScope:)];
+    choose.frame = NSMakeRect(W - 12 - 90, H - 41, 90, 26);
+    choose.bezelStyle = NSBezelStyleRounded;
+    choose.autoresizingMask = NSViewMinXMargin | NSViewMinYMargin;
+    [content addSubview:choose];
+
+    // --- query field ---
     self.field = [[NSTextField alloc]
-        initWithFrame:NSMakeRect(12, frame.size.height - 40, frame.size.width - 24, 24)];
-    self.field.placeholderString = @"Search text across the folder, then press Return";
+        initWithFrame:NSMakeRect(12, H - 70, W - 24, 24)];
+    self.field.placeholderString = @"Search text in this folder…";
     self.field.delegate = self;
     self.field.target = self;
     self.field.action = @selector(runSearch:);
@@ -70,14 +98,16 @@ static NSColor *SHex(unsigned int rgb) {
     [content addSubview:self.field];
 
     self.status = [NSTextField labelWithString:@""];
-    self.status.frame = NSMakeRect(12, frame.size.height - 62, frame.size.width - 24, 16);
+    self.status.frame = NSMakeRect(12, H - 90, W - 24, 16);
     self.status.textColor = SHex(0x9CA3AF);
     self.status.font = [NSFont systemFontOfSize:11];
     self.status.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
     [content addSubview:self.status];
 
+    [self updateScopeField];
+
     NSScrollView *scroll = [[NSScrollView alloc]
-        initWithFrame:NSMakeRect(12, 12, frame.size.width - 24, frame.size.height - 82)];
+        initWithFrame:NSMakeRect(12, 12, W - 24, H - 110)];
     scroll.hasVerticalScroller = YES;
     scroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     scroll.borderType = NSBezelBorder;
@@ -105,27 +135,80 @@ static NSColor *SHex(unsigned int rgb) {
     [self.window makeFirstResponder:self.field];
 }
 
-// Search as the user types (debounced), so results appear without needing to
-// press Return — and it doesn't depend on the field's action firing.
+// ------------------------------------------------------------------- scope
+- (void)updateScopeField {
+    self.scopeField.stringValue = [_scope stringByAbbreviatingWithTildeInPath];
+}
+
+// Point the search at a directory and re-run the current query.
+- (void)setScope:(NSString *)dir {
+    if (dir.length) _scope = dir;
+    [self updateScopeField];
+    [self runSearch:nil];
+}
+
+// The user typed a path into the scope field.
+- (void)scopeEntered:(id)sender {
+    NSString *entered = [self.scopeField.stringValue stringByTrimmingCharactersInSet:
+                         [NSCharacterSet whitespaceCharacterSet]];
+    NSString *path;
+    if ([entered hasPrefix:@"~"]) path = [entered stringByExpandingTildeInPath];
+    else if ([entered hasPrefix:@"/"]) path = entered;
+    else path = [_root stringByAppendingPathComponent:entered];  // relative to root
+    path = [path stringByStandardizingPath];
+    BOOL isDir = NO;
+    if ([[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir]
+        && isDir) {
+        _scope = path;
+        [self updateScopeField];
+        [self runSearch:nil];
+    } else {
+        self.status.stringValue = @"Not a folder";
+        [self updateScopeField];   // revert to the valid scope
+    }
+}
+
+// Pick a folder with a standard open panel.
+- (void)chooseScope:(id)sender {
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.canChooseDirectories = YES;
+    panel.canChooseFiles = NO;
+    panel.allowsMultipleSelection = NO;
+    panel.directoryURL = [NSURL fileURLWithPath:_scope];
+    if ([panel runModal] == NSModalResponseOK) {
+        _scope = panel.URLs.firstObject.path;
+        [self updateScopeField];
+        [self runSearch:nil];
+    }
+}
+
+// Search as the user types, but only after a longer pause and for queries of a
+// few characters, so we don't kick off a full folder scan on every keypress.
 - (void)controlTextDidChange:(NSNotification *)note {
+    if (note.object != self.field) return;   // scope field handled separately
     [NSObject cancelPreviousPerformRequestsWithTarget:self
                                              selector:@selector(runSearchNow)
                                                object:nil];
-    [self performSelector:@selector(runSearchNow) withObject:nil afterDelay:0.22];
+    [self performSelector:@selector(runSearchNow) withObject:nil afterDelay:0.35];
 }
 - (void)runSearchNow { [self runSearch:nil]; }
 
 // ------------------------------------------------------------------ search
 - (void)runSearch:(id)sender {
+    // Cancel any in-flight search immediately (bumps the generation).
+    ++_searchGeneration;
     NSString *query = [self.field.stringValue stringByTrimmingCharactersInSet:
                        [NSCharacterSet whitespaceCharacterSet]];
     [_hits removeAllObjects];
     [self.table reloadData];
-    if (query.length == 0) { self.status.stringValue = @""; return; }
+    if (query.length < 2) {   // avoid scanning on 0–1 characters
+        self.status.stringValue = query.length ? @"Type at least 2 characters" : @"";
+        return;
+    }
 
     self.status.stringValue = @"Searching…";
-    NSUInteger gen = ++_searchGeneration;
-    NSString *root = _root;
+    NSUInteger gen = _searchGeneration;
+    NSString *root = _scope;   // search only within the chosen folder
     __weak SearchPanel *weakSelf = self;
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
@@ -176,6 +259,7 @@ static NSColor *SHex(unsigned int rgb) {
         [stack removeLastObject];
         NSArray *entries = [fm contentsOfDirectoryAtPath:dir error:nil];
         for (NSString *entry in entries) {
+            if (!isCurrent()) return hits;   // a newer search superseded us
             if ([entry hasPrefix:@"."]) continue;
             NSString *full = [dir stringByAppendingPathComponent:entry];
             BOOL isDir = NO;
@@ -224,7 +308,7 @@ static NSColor *SHex(unsigned int rgb) {
     }
     SearchHit *h = _hits[row];
     NSString *rel = [h.path substringFromIndex:
-        MIN(h.path.length, _root.length + 1)];
+        MIN(h.path.length, _scope.length + 1)];
     NSMutableAttributedString *a = [[NSMutableAttributedString alloc] init];
     NSString *loc = [NSString stringWithFormat:@"%@:%ld  ", rel, (long)h.line];
     [a appendAttributedString:[[NSAttributedString alloc] initWithString:loc
