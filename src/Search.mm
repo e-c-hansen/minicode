@@ -10,6 +10,25 @@ static NSColor *SHex(unsigned int rgb) {
                                alpha:1.0];
 }
 
+// Strip ANSI escape sequences and stray control characters so a matched line
+// from a file that contains terminal color codes renders as plain text.
+static NSString *CleanLine(NSString *s) {
+    static NSRegularExpression *ansi;
+    if (!ansi)
+        ansi = [NSRegularExpression
+            regularExpressionWithPattern:@"\x1b[@-_][0-?]*[ -/]*[@-~]"
+                                 options:0 error:nil];
+    s = [ansi stringByReplacingMatchesInString:s options:0
+                                         range:NSMakeRange(0, s.length)
+                                  withTemplate:@""];
+    // Drop any remaining control characters (lone ESC, bells, etc.).
+    NSCharacterSet *ctrl = [NSCharacterSet controlCharacterSet];
+    if ([s rangeOfCharacterFromSet:ctrl].location != NSNotFound)
+        s = [[s componentsSeparatedByCharactersInSet:ctrl]
+                componentsJoinedByString:@""];
+    return s;
+}
+
 // One match: file path, 1-based line number, and the line's text.
 @interface SearchHit : NSObject
 @property(nonatomic, copy) NSString *path;
@@ -282,9 +301,9 @@ static NSColor *SHex(unsigned int rgb) {
                     SearchHit *h = [SearchHit new];
                     h.path = full;
                     h.line = lineNo;
-                    h.text = [line stringByTrimmingCharactersInSet:
-                              [NSCharacterSet whitespaceCharacterSet]];
-                    if (h.text.length > 200) h.text = [h.text substringToIndex:200];
+                    NSString *clean = CleanLine([line stringByTrimmingCharactersInSet:
+                              [NSCharacterSet whitespaceCharacterSet]]);
+                    h.text = clean.length > 200 ? [clean substringToIndex:200] : clean;
                     [hits addObject:h];
                     if (hits.count >= kMaxHits) *stop = YES;
                 }
