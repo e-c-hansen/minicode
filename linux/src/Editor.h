@@ -14,6 +14,10 @@ public:
     // The scrolled widget to drop into the layout.
     GtkWidget* widget() const { return scroller_; }
 
+    // The GtkTextView / GtkTextBuffer themselves, for the shell's find bar.
+    GtkWidget*     textView() const { return view_; }
+    GtkTextBuffer* buffer()   const { return buffer_; }
+
     // Load a file from disk into the buffer, detect its extension and
     // re-highlight. Returns false if the file could not be read.
     bool openFile(const std::string& path);
@@ -43,6 +47,7 @@ private:
     void renderPreview();        // build the Markdown preview into the buffer
     void loadRawIntoBuffer();    // put source_ back as editable, highlighted text
     void ensureTags();           // create the per-style + markdown GtkTextTags once
+    void setProseFont(bool prose);  // proportional for preview/messages, mono for code
     void markDirty(bool d);
 
     static void onBufferChanged(GtkTextBuffer* buf, gpointer self);

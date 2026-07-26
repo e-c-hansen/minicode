@@ -12,7 +12,9 @@
 
 CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -O2
-BUILD    := build
+# Deliberately not `build`: that is Meson's directory, and `make clean` would
+# delete it out from under a Meson tree in the same checkout.
+BUILD    := build-make
 BIN      := $(BUILD)/minicode
 
 # Shared portable core (never copied — compiled straight from ../src).
@@ -37,12 +39,14 @@ ifeq ($(BROWSER),1)
   DEFS += -DMINICODE_ENABLE_BROWSER
 endif
 
-PKG_CFLAGS := $(shell pkg-config --cflags $(PKGS))
-PKG_LIBS   := $(shell pkg-config --libs   $(PKGS))
+# Lazily expanded (=, not :=) so `make test`, which needs no GTK, does not
+# invoke pkg-config and complain about missing packages.
+PKG_CFLAGS = $(shell pkg-config --cflags $(PKGS))
+PKG_LIBS   = $(shell pkg-config --libs   $(PKGS))
 
 INCLUDES := -Isrc -I../src
 
-.PHONY: all run clean
+.PHONY: all run test clean
 all: $(BIN)
 
 $(BIN): $(SRCS)
@@ -53,6 +57,16 @@ $(BIN): $(SRCS)
 DIR ?= .
 run: $(BIN)
 	$(BIN) $(DIR)
+
+# Pure-C++ tests for the port: no GTK headers, no display, no libraries. These
+# run anywhere g++ does, which is the only automated check available for a GUI
+# this environment cannot drive.
+TEST_BIN := $(BUILD)/run_tests
+test:
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) tests/run_tests.cpp \
+	    ../src/SyntaxHighlighter.cpp -o $(TEST_BIN)
+	@$(TEST_BIN)
 
 clean:
 	rm -rf $(BUILD)

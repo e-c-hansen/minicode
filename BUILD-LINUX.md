@@ -11,61 +11,74 @@ untouched.
 
 ## What is verified, and what is not
 
-Be clear-eyed about this before you start.
+The port now builds clean and runs. It was brought up on Ubuntu 26.04 with GTK
+4.22.4 and VTE 0.84.0, compiling without a single warning at `warning_level=2`.
+
+Verified by running it:
 
 - The portable C++ core (`src/SyntaxHighlighter.{h,cpp}` and
-  `src/MarkdownParser.{h,cpp}`) was compiled and unit-tested with `g++` on the
-  development machine. All 38 checks pass. This code is shared verbatim with the
-  macOS build and is solid.
-- The GTK4 GUI (everything under `linux/src/`) was written **without being
-  compiled or run**. The development machine is a Mac with no GTK headers and no
-  display, so none of the GTK code could be exercised there. Treat it as a
-  careful first draft, not working software. It will almost certainly need fixes
-  before it builds and runs on real hardware.
+  `src/MarkdownParser.{h,cpp}`) compiles and passes all 38 checks under `g++`.
+  This code is shared verbatim with the macOS build.
+- The port's own pure-C++ piece, the byte-to-character offset conversion in
+  `linux/src/Utf8Offsets.h`, passes 47 checks (`cd linux && make test`).
+- The window, file tree, editor, syntax highlighting, Markdown preview, the
+  binary-file guard and the VTE terminal panel were all confirmed on screen.
+  Highlighting was checked against source containing accented Latin, CJK and
+  4-byte emoji, and the colors land on the correct spans.
+- All 11 window actions are registered with the intended accelerators, and the
+  sidebar, dotfile, terminal and preview toggles were confirmed to change the
+  state they claim to.
 
-The intended workflow is: build it on your Ubuntu laptop, paste the compiler
-errors back, and iterate. The structure and the wiring are all in place; what
-remains is shaking out GTK API details that can only be checked against real
-headers.
+Not verified:
 
-### The most likely things to fix first
+- **The browser panel has never been compiled.** `libwebkitgtk-6.0-dev` was not
+  installed on the machine used to bring this up, so `webkitgtk-6.0` was absent
+  and the panel compiled out. `linux/src/Browser.cpp` is still a first draft.
+  Its five WebKit entry points do exist in the installed `libwebkitgtk-6.0.so.4`,
+  so it is likely close, but expect to fix something.
+- Everything driven by real keyboard and mouse input. Actions were activated
+  programmatically, which proves the wiring but not the key handling.
+- Saving, creating files and folders, and the Open Folder dialog.
 
-1. **Byte vs. character offsets in the editor highlighter.**
-   `SyntaxHighlighter` returns byte offsets into the UTF-8 text, but
-   `GtkTextBuffer` iterators are indexed by character. `linux/src/Editor.cpp`
-   converts byte offsets to character offsets with `g_utf8_pointer_to_offset`.
-   The logic is marked with a comment. Test it with a file that contains
-   multi-byte UTF-8 (accented letters, emoji, CJK) and confirm colors land on
-   the right spans. This is the single most likely bug.
+### Notes on the things that were most at risk
 
-2. **The file tree model API.** `linux/src/FileTree.cpp` uses
-   `GtkDirectoryList` + `GtkTreeListModel` + `GtkListView`. Getting the `GFile`
-   back off a `GFileInfo` relies on the `"standard::file"` attribute, which is
-   the documented idiom but is worth verifying against your installed GTK. The
-   `create_child` / filter / factory callback signatures are also a place where
-   GTK 4.x point releases have shifted slightly.
+The four concerns below were the ones flagged before the port had ever been
+compiled. All four turned out fine, and the details are recorded here so nobody
+re-investigates them.
 
-3. **VTE and WebKit API drift.** `vte_terminal_spawn_async` and the
-   `webkitgtk-6.0` entry points change across releases. These panels are behind
-   feature flags, so the core viewer builds without them; enable them once the
-   core is up.
+1. **Byte vs. character offsets.** This was the real one, though not in the way
+   expected. `SyntaxHighlighter` returns byte offsets into UTF-8 text and
+   `GtkTextBuffer` iterators are indexed by character. The original conversion
+   used `g_utf8_pointer_to_offset`, which counts from the start of the string on
+   every call, making a full re-lex O(n^2) and stalling the editor on large
+   files. It is now a single forward-only pass (`Utf8OffsetCursor`), which is
+   valid because the lexer is one left-to-right scan and its tokens are
+   therefore strictly ascending. That invariant is asserted by the tests, so it
+   cannot silently rot.
 
-4. **GtkTextTag setup and CSS.** The tag properties (`size-points`,
-   `pixels-above-lines`, and so on) and the CSS node selectors for theming the
-   `GtkTextView` (`.minicode-editor text { ... }`) are the kind of thing that is
-   easy to get subtly wrong. If highlighting or the dark theme looks off, start
-   here.
+2. **The file tree model API.** `"standard::file"` is correct: GTK really does
+   set that attribute on every `GFileInfo` a `GtkDirectoryList` produces. Lazy
+   expansion through `create_child` works, and the filter and factory callback
+   signatures are unchanged.
 
-5. **Menu, actions, accelerators.** Action names are `win.*`; if a shortcut or
-   menu item does nothing, check that the action is registered on the window and
-   that the accel string matches.
+3. **VTE.** `vte_terminal_spawn_async` works as written. The panel spawns
+   `$SHELL` in the opened folder.
+
+4. **GtkTextTag setup and CSS.** The tag properties and the
+   `.minicode-editor text { ... }` node selector are all correct; the editor and
+   Markdown preview render with the intended VS Code dark palette.
 
 ## Install the dependencies
 
-On Ubuntu 24.04:
+On Ubuntu 24.04 and 26.04:
 
     sudo apt install build-essential meson libgtk-4-dev \
         libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev pkg-config
+
+Check afterwards that all three actually landed, since apt will happily install
+the runtime library while leaving the `-dev` package out:
+
+    pkg-config --modversion gtk4 vte-2.91-gtk4 webkitgtk-6.0
 
 Notes on package names, which drift between Ubuntu versions:
 
@@ -87,6 +100,7 @@ absent.
     cd linux
     meson setup build
     meson compile -C build
+    meson test -C build
     ./build/minicode ~/some/project
 
 Meson auto-detects VTE and WebKit. Watch the configure output: it prints whether
@@ -109,6 +123,7 @@ If you would rather not use Meson:
     make BROWSER=1            # add the browser panel
     make TERMINAL=1 BROWSER=1
     make run DIR=~/some/project
+    make test                 # pure-C++ tests; needs no GTK and no display
 
 Meson is the better-tested path; the Makefile exists so a minimal install can
 get the core viewer up quickly.

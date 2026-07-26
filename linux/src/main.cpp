@@ -24,6 +24,8 @@
 #include "Terminal.h"
 #include "Browser.h"
 
+#include <glib/gstdio.h>   // g_mkdir_with_parents
+
 #include <string>
 #include <unistd.h>
 #include <limits.h>
@@ -170,31 +172,58 @@ static void act_focus_tree(GSimpleAction*, GVariant*, gpointer userp) {
 
 // ---------------------------------------------------------------- find impl
 
-static void onSearchChanged(GtkSearchEntry*, gpointer userp) {
-    App* app = static_cast<App*>(userp);
+// Find the next match at or after `from`, wrapping to the top of the buffer.
+static void findFrom(App* app, const GtkTextIter& from) {
     const char* q = gtk_editable_get_text(GTK_EDITABLE(app->searchEntry));
     if (!q || !*q) return;
-    GtkTextBuffer* buf =
-        gtk_text_view_get_buffer(GTK_TEXT_VIEW(
-            gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(app->editor->widget()))));
-    GtkTextIter start, mstart, mend;
-    GtkTextMark* insert = gtk_text_buffer_get_insert(buf);
-    gtk_text_buffer_get_iter_at_mark(buf, &start, insert);
-    if (gtk_text_iter_forward_search(&start, q,
-            GTK_TEXT_SEARCH_CASE_INSENSITIVE, &mstart, &mend, nullptr)) {
-        gtk_text_buffer_select_range(buf, &mstart, &mend);
-        GtkWidget* view =
-            gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(app->editor->widget()));
-        gtk_text_view_scroll_to_iter(GTK_TEXT_VIEW(view), &mstart,
-                                     0.1, FALSE, 0, 0);
-    } else {
-        // Wrap to top.
+
+    GtkTextBuffer* buf = app->editor->buffer();
+    GtkTextIter mstart, mend;
+    gboolean found = gtk_text_iter_forward_search(
+        &from, q, GTK_TEXT_SEARCH_CASE_INSENSITIVE, &mstart, &mend, nullptr);
+    if (!found) {
         GtkTextIter top;
         gtk_text_buffer_get_start_iter(buf, &top);
-        if (gtk_text_iter_forward_search(&top, q,
-                GTK_TEXT_SEARCH_CASE_INSENSITIVE, &mstart, &mend, nullptr)) {
-            gtk_text_buffer_select_range(buf, &mstart, &mend);
-        }
+        found = gtk_text_iter_forward_search(
+            &top, q, GTK_TEXT_SEARCH_CASE_INSENSITIVE, &mstart, &mend, nullptr);
+    }
+    if (!found) return;
+
+    gtk_text_buffer_select_range(buf, &mstart, &mend);
+    gtk_text_view_scroll_to_iter(GTK_TEXT_VIEW(app->editor->textView()),
+                                 &mstart, 0.1, FALSE, 0, 0);
+}
+
+// Typing in the find bar re-searches from the start of the current selection,
+// so the match under the cursor keeps growing with the query instead of the
+// search jumping ahead on every keystroke.
+static void onSearchChanged(GtkSearchEntry*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    GtkTextBuffer* buf = app->editor->buffer();
+    GtkTextIter start;
+    gtk_text_buffer_get_iter_at_mark(buf, &start,
+                                     gtk_text_buffer_get_selection_bound(buf));
+    GtkTextIter insert;
+    gtk_text_buffer_get_iter_at_mark(buf, &insert,
+                                     gtk_text_buffer_get_insert(buf));
+    if (gtk_text_iter_compare(&insert, &start) < 0) start = insert;
+    findFrom(app, start);
+}
+
+// Enter means "next match": start one character past the current selection,
+// otherwise forward_search finds the same match again and Enter does nothing.
+static void onSearchNext(GtkSearchEntry*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    GtkTextBuffer* buf = app->editor->buffer();
+    GtkTextIter selStart, selEnd;
+    if (gtk_text_buffer_get_selection_bounds(buf, &selStart, &selEnd)) {
+        gtk_text_iter_forward_char(&selStart);
+        findFrom(app, selStart);
+    } else {
+        GtkTextIter insert;
+        gtk_text_buffer_get_iter_at_mark(buf, &insert,
+                                         gtk_text_buffer_get_insert(buf));
+        findFrom(app, insert);
     }
 }
 
@@ -205,6 +234,10 @@ static void loadCss() {
     const char* style =
         ".minicode-editor text { background-color: " "#1E1E1E" "; color: " "#D4D4D4" "; }"
         ".minicode-editor text selection { background-color: #264F78; }"
+        // Markdown preview and plain messages: proportional body text at the
+        // macOS body size (15pt). Code and table runs re-apply monospace via
+        // their GtkTextTags.
+        ".minicode-prose text { font-family: sans-serif; font-size: 15pt; }"
         ".minicode-sidebar { background-color: " "#252526" "; }"
         ".minicode-tree { background-color: " "#252526" "; }"
         ".minicode-tree-label { color: " "#CCCCCC" "; }"
@@ -232,10 +265,12 @@ static void buildMenu(App* app) {
     g_menu_append(fileMenu, "New Folder", "win.newfolder");
     g_menu_append(fileMenu, "Save", "win.save");
     g_menu_append_submenu(menuBar, "File", G_MENU_MODEL(fileMenu));
+    g_object_unref(fileMenu);   // menuBar holds it now
 
     GMenu* editMenu = g_menu_new();
     g_menu_append(editMenu, "Find", "win.find");
     g_menu_append_submenu(menuBar, "Edit", G_MENU_MODEL(editMenu));
+    g_object_unref(editMenu);
 
     GMenu* viewMenu = g_menu_new();
     g_menu_append(viewMenu, "Toggle Markdown Preview", "win.togglepreview");
@@ -245,14 +280,17 @@ static void buildMenu(App* app) {
     g_menu_append(viewMenu, "Show/Hide Dotfiles", "win.togglehidden");
     g_menu_append(viewMenu, "Focus File Tree", "win.focustree");
     g_menu_append_submenu(menuBar, "View", G_MENU_MODEL(viewMenu));
+    g_object_unref(viewMenu);
 
     gtk_application_set_menubar(app->gapp, G_MENU_MODEL(menuBar));
+    g_object_unref(menuBar);
 }
 
 static void addAction(App* app, const char* name, GCallback cb) {
     GSimpleAction* a = g_simple_action_new(name, nullptr);
     g_signal_connect(a, "activate", cb, app);
     g_action_map_add_action(G_ACTION_MAP(app->window), G_ACTION(a));
+    g_object_unref(a);   // the action map holds its own ref now
 }
 
 static void setAccels(App* app) {
@@ -306,7 +344,11 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     g_signal_connect(app->searchEntry, "search-changed",
                      G_CALLBACK(onSearchChanged), app);
     g_signal_connect(app->searchEntry, "activate",
-                     G_CALLBACK(onSearchChanged), app);
+                     G_CALLBACK(onSearchNext), app);
+    g_signal_connect(app->searchEntry, "next-match",
+                     G_CALLBACK(onSearchNext), app);
+    // Deliberately no gtk_search_bar_set_key_capture_widget: in an editor that
+    // would auto-reveal the find bar on any keystroke and swallow typing.
     gtk_box_append(GTK_BOX(rightBox), app->searchBar);
 
     gtk_box_append(GTK_BOX(rightBox), app->editor->widget());

@@ -44,6 +44,7 @@ private:
     GtkWidget*   scroller_ = nullptr;
     GtkWidget*   listView_ = nullptr;
     GtkFilter*   filter_   = nullptr;     // shared dotfile filter
+    GtkSorter*   sorter_   = nullptr;     // shared dirs-first, name-order sorter
     GtkTreeListModel* treeModel_ = nullptr;
 
     OpenCb openCb_   = nullptr;

@@ -5,6 +5,7 @@
 #include "Palette.h"
 #include "Markdown.h"
 #include "SyntaxHighlighter.h"
+#include "Utf8Offsets.h"
 
 #include <algorithm>
 #include <cctype>
@@ -83,13 +84,16 @@ void Editor::ensureTags() {
                                    "pixels-below-lines", 8,
                                    NULL);
     }
+    // Code and tables are monospace at 13pt; everything else inherits the
+    // proportional preview font. Mirrors the macOS body/mono split.
     gtk_text_buffer_create_tag(buffer_, "md_code",
                                "foreground", pal::MdCode,
                                "background", pal::MdCodeBg,
-                               "family", "monospace", NULL);
+                               "family", "monospace",
+                               "size-points", 13.0, NULL);
     gtk_text_buffer_create_tag(buffer_, "md_quote",
                                "foreground", pal::MdQuote,
-                               "left-margin", 24,
+                               "left-margin", 16,   // macOS headIndent
                                "style", PANGO_STYLE_ITALIC, NULL);
     gtk_text_buffer_create_tag(buffer_, "md_rule",
                                "foreground", pal::MdRule, NULL);
@@ -98,7 +102,8 @@ void Editor::ensureTags() {
                                "underline", PANGO_UNDERLINE_SINGLE, NULL);
     gtk_text_buffer_create_tag(buffer_, "md_table",
                                "foreground", pal::EditorText,
-                               "family", "monospace", NULL);
+                               "family", "monospace",
+                               "size-points", 13.0, NULL);   // keeps columns aligned
     gtk_text_buffer_create_tag(buffer_, "md_bold",
                                "weight", PANGO_WEIGHT_BOLD, NULL);
     gtk_text_buffer_create_tag(buffer_, "md_italic",
@@ -116,15 +121,35 @@ bool Editor::openFile(const std::string& path) {
     if (!f) { showMessage(std::string("\n  Could not open: ") + path); return false; }
     std::ostringstream ss;
     ss << f.rdbuf();
-    source_ = ss.str();
+    std::string content = ss.str();
 
     path_ = path;
+
+    // gtk_text_buffer_set_text requires valid UTF-8; handing it a binary file
+    // spews GTK criticals and leaves the buffer truncated at the first bad
+    // byte. Refuse up front, with the same wording as the macOS build.
+    if (!g_utf8_validate(content.data(), (gssize)content.size(), nullptr)) {
+        auto slash = path.find_last_of('/');
+        std::string base = slash == std::string::npos ? path : path.substr(slash + 1);
+        source_.clear();
+        ext_.clear();
+        isMarkdown_ = false;
+        preview_ = false;
+        markDirty(false);
+        showMessage("\n  Cannot display “" + base + "”.\n\n"
+                    "  (Binary file or unsupported encoding.)");
+        return false;
+    }
+
+    source_ = content;
     ext_  = extOf(path);
     isMarkdown_ = (ext_ == "md" || ext_ == "markdown");
-    preview_ = false;
+    // Markdown opens rendered, matching the macOS build.
+    preview_ = isMarkdown_;
     markDirty(false);
 
-    loadRawIntoBuffer();
+    if (preview_) renderPreview();
+    else          loadRawIntoBuffer();
     return true;
 }
 
@@ -148,9 +173,21 @@ bool Editor::save() {
 
 // ---------------------------------------------------------------- buffer fills
 
+// Source code is monospace; the Markdown preview and the plain messages use the
+// proportional UI font, with monospace reapplied per-tag for code and tables.
+// The macOS build gets this from per-run NSFonts; GtkTextView needs the widget
+// font switched, because a tag can add a family but the view's monospace flag
+// would otherwise force every run to it.
+void Editor::setProseFont(bool prose) {
+    gtk_text_view_set_monospace(GTK_TEXT_VIEW(view_), prose ? FALSE : TRUE);
+    if (prose) gtk_widget_add_css_class(view_, "minicode-prose");
+    else       gtk_widget_remove_css_class(view_, "minicode-prose");
+}
+
 void Editor::loadRawIntoBuffer() {
     // Temporarily block change signals so filling the buffer doesn't mark dirty.
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
+    setProseFont(false);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), TRUE);
     gtk_text_buffer_set_text(buffer_, source_.c_str(), (int)source_.size());
     g_signal_handlers_unblock_by_func(buffer_, (gpointer)onBufferChanged, this);
@@ -165,6 +202,7 @@ void Editor::loadRawIntoBuffer() {
 void Editor::showMessage(const std::string& msg) {
     ensureTags();
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
+    setProseFont(true);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), FALSE);
     gtk_text_buffer_set_text(buffer_, msg.c_str(), (int)msg.size());
     GtkTextIter a, b;
@@ -175,11 +213,11 @@ void Editor::showMessage(const std::string& msg) {
 
 // ---------------------------------------------------------------- highlighting
 
-// LIKELY BUG SITE. SyntaxHighlighter emits BYTE offsets into the UTF-8 source.
-// GtkTextBuffer iterators index by CHARACTER, not byte. We convert each byte
-// offset to a character offset with g_utf8_pointer_to_offset over the buffer
-// text. This is correct for any UTF-8 content but is O(n) per lookup; for very
-// large files it may need the running-iterator optimization noted below.
+// SyntaxHighlighter emits BYTE offsets into the UTF-8 source; GtkTextBuffer
+// iterators index by CHARACTER. Utf8OffsetCursor does the conversion with a
+// single forward-only pass over the whole token stream (see Utf8Offsets.h — it
+// is unit-tested in linux/tests/run_tests.cpp, including against real token
+// streams over accented, CJK and emoji text).
 void Editor::rehighlight() {
     if (ext_.empty() || !SyntaxHighlighter::supports(ext_)) return;
 
@@ -187,29 +225,27 @@ void Editor::rehighlight() {
     gtk_text_buffer_get_bounds(buffer_, &a, &b);
     char* ctext = gtk_text_buffer_get_text(buffer_, &a, &b, FALSE);
     std::string text = ctext ? ctext : "";
+    g_free(ctext);
 
     // Reset baseline color across the whole buffer, then apply tags.
     gtk_text_buffer_remove_all_tags(buffer_, &a, &b);
 
     std::vector<Token> tokens = SyntaxHighlighter::highlight(text, ext_);
-    const char* base = ctext ? ctext : "";
     const long nbytes = (long)text.size();
+    Utf8OffsetCursor cursor(text);
 
     for (const Token& t : tokens) {
         long sb = (long)t.start;
         long eb = (long)(t.start + t.length);
         if (sb < 0 || eb > nbytes || eb <= sb) continue;
-        // Byte offset -> character offset. g_utf8_pointer_to_offset counts the
-        // characters between two pointers into the same NUL-terminated string.
-        int cstart = (int)g_utf8_pointer_to_offset(base, base + sb);
-        int cend   = (int)g_utf8_pointer_to_offset(base, base + eb);
+        int cstart = (int)cursor.charOffset(sb);
+        int cend   = (int)cursor.charOffset(eb);
         GtkTextIter ts, te;
         gtk_text_buffer_get_iter_at_offset(buffer_, &ts, cstart);
         gtk_text_buffer_get_iter_at_offset(buffer_, &te, cend);
         gtk_text_buffer_apply_tag_by_name(buffer_,
                                           TagNameForStyle(t.style), &ts, &te);
     }
-    g_free(ctext);
 }
 
 // ---------------------------------------------------------------- preview
@@ -232,6 +268,7 @@ void Editor::togglePreview() {
 
 void Editor::renderPreview() {
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
+    setProseFont(true);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), FALSE);
     Markdown::render(buffer_, source_);
     g_signal_handlers_unblock_by_func(buffer_, (gpointer)onBufferChanged, this);

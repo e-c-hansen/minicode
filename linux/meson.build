@@ -57,3 +57,12 @@ executable('minicode',
   dependencies : deps,
   cpp_args : cpp_args,
   install : true)
+
+# --- tests: the pure-C++ pieces, no GTK and no display required -------------
+# Covers the byte-offset -> character-offset conversion that maps
+# SyntaxHighlighter output onto GtkTextBuffer iterators.
+port_tests = executable('minicode-linux-tests',
+  sources : ['tests/run_tests.cpp', core_dir / 'SyntaxHighlighter.cpp'],
+  include_directories : inc,
+  install : false)
+test('linux port core', port_tests)
