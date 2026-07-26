@@ -80,6 +80,10 @@ synthetic clicks/keys. So:
   min 2 chars, generation bumped up front + per-file cancellation, ANSI stripped
   from result lines.
 - **Highlighting** is a debounced full re-lex, not incremental.
+- **Crash on window close**: `NSWindow` defaults to `releasedWhenClosed = YES`,
+  a legacy manual release. With ARC also owning the window through a `strong`
+  property, closing double-frees it ("MiniCode quit unexpectedly"). Set
+  `window.releasedWhenClosed = NO` so ARC is the sole owner.
 
 ## Distribution
 

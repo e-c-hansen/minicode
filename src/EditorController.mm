@@ -224,6 +224,10 @@ static NSColor *ColorForStyle(TokenStyle s) {
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
     self.window.title = @"MiniCode";
+    // ARC owns the window through the strong `window` property. NSWindow defaults
+    // to releasedWhenClosed=YES, which adds a legacy unbalanced release on close;
+    // combined with the ARC release that's a double-free that crashes on close.
+    self.window.releasedWhenClosed = NO;
     self.window.delegate = self;
     self.window.minSize = NSMakeSize(640, 400);
     [self.window center];
