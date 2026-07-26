@@ -1,0 +1,7 @@
+# Feature toggles. 'auto' = build the panel if its library is present, and
+# silently skip it otherwise. Force on with -Dterminal=enabled (configure will
+# then fail if the library is missing); force off with -Dterminal=disabled.
+option('terminal', type : 'feature', value : 'auto',
+       description : 'Bottom terminal panel via VTE (vte-2.91-gtk4)')
+option('browser',  type : 'feature', value : 'auto',
+       description : 'Browser panel via WebKitGTK (webkitgtk-6.0)')
