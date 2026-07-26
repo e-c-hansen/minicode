@@ -10,9 +10,13 @@
 //         [end]   right vbox
 //                   editor find-bar (GtkSearchBar)
 //                   Editor (GtkTextView, vexpand)
-//                   terminal revealer   (#ifdef MINICODE_ENABLE_TERMINAL)
 //                   browser  revealer   (#ifdef MINICODE_ENABLE_BROWSER)
+//                   terminal revealer   (#ifdef MINICODE_ENABLE_TERMINAL)
 //       status bar (GtkLabel, VS Code blue)
+//
+// The editor and the browser share the upper area — showing the browser hides
+// the editor — and the terminal is docked below both. That mirrors the macOS
+// -relayoutRightArea, which is why the browser is appended before the terminal.
 //
 // The always-built target is the tree + editor + markdown viewer. Terminal and
 // Browser only exist when their libraries were found at configure time.
@@ -130,6 +134,15 @@ static void act_toggle_browser(GSimpleAction*, GVariant*, gpointer userp) {
     if (!app->browserRevealer) return;
     gboolean shown = gtk_revealer_get_reveal_child(GTK_REVEALER(app->browserRevealer));
     gtk_revealer_set_reveal_child(GTK_REVEALER(app->browserRevealer), !shown);
+    // The macOS build docks the terminal at the bottom and lets the editor OR
+    // the browser fill the area above it (EditorController.mm
+    // -relayoutRightArea). Hide the editor while the browser is up; otherwise
+    // the browser's vexpand squeezes the editor down to a single line.
+    gtk_widget_set_visible(app->editor->widget(), shown);
+    // The web view's vexpand propagates up to the revealer, so a collapsed
+    // revealer would still claim half the leftover space and leave a dead gap
+    // under the editor. Only let it expand while it is actually revealed.
+    gtk_widget_set_vexpand(app->browserRevealer, !shown);
 #ifdef MINICODE_ENABLE_BROWSER
     if (!shown && app->browser) app->browser->focusUrlBar();
 #endif
@@ -353,6 +366,18 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
 
     gtk_box_append(GTK_BOX(rightBox), app->editor->widget());
 
+    // Order matters: the browser sits with the editor in the upper area and the
+    // terminal is docked below both, the same arrangement the macOS build lays
+    // out by hand in -relayoutRightArea.
+#ifdef MINICODE_ENABLE_BROWSER
+    app->browser = new Browser("https://duckduckgo.com");
+    app->browserRevealer = gtk_revealer_new();
+    gtk_revealer_set_child(GTK_REVEALER(app->browserRevealer),
+                           app->browser->widget());
+    gtk_revealer_set_reveal_child(GTK_REVEALER(app->browserRevealer), FALSE);
+    gtk_widget_set_vexpand(app->browserRevealer, FALSE);  // see act_toggle_browser
+    gtk_box_append(GTK_BOX(rightBox), app->browserRevealer);
+#endif
 #ifdef MINICODE_ENABLE_TERMINAL
     app->terminal = new Terminal(app->rootDir);
     app->termRevealer = gtk_revealer_new();
@@ -360,14 +385,6 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
                            app->terminal->widget());
     gtk_revealer_set_reveal_child(GTK_REVEALER(app->termRevealer), FALSE);
     gtk_box_append(GTK_BOX(rightBox), app->termRevealer);
-#endif
-#ifdef MINICODE_ENABLE_BROWSER
-    app->browser = new Browser("https://duckduckgo.com");
-    app->browserRevealer = gtk_revealer_new();
-    gtk_revealer_set_child(GTK_REVEALER(app->browserRevealer),
-                           app->browser->widget());
-    gtk_revealer_set_reveal_child(GTK_REVEALER(app->browserRevealer), FALSE);
-    gtk_box_append(GTK_BOX(rightBox), app->browserRevealer);
 #endif
 
     // Sidebar | editor split.

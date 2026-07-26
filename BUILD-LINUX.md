@@ -11,8 +11,9 @@ untouched.
 
 ## What is verified, and what is not
 
-The port now builds clean and runs. It was brought up on Ubuntu 26.04 with GTK
-4.22.4 and VTE 0.84.0, compiling without a single warning at `warning_level=2`.
+The port now builds clean and runs, with every panel enabled. It was brought up
+on Ubuntu 26.04 with GTK 4.22.4, VTE 0.84.0 and WebKitGTK 2.52.3, compiling
+without a single warning at `warning_level=2`.
 
 Verified by running it:
 
@@ -22,23 +23,25 @@ Verified by running it:
 - The port's own pure-C++ piece, the byte-to-character offset conversion in
   `linux/src/Utf8Offsets.h`, passes 47 checks (`cd linux && make test`).
 - The window, file tree, editor, syntax highlighting, Markdown preview, the
-  binary-file guard and the VTE terminal panel were all confirmed on screen.
-  Highlighting was checked against source containing accented Latin, CJK and
-  4-byte emoji, and the colors land on the correct spans.
+  binary-file guard, the VTE terminal and the WebKit browser panel were all
+  confirmed on screen. Highlighting was checked against source containing
+  accented Latin, CJK and 4-byte emoji, and the colors land on the correct
+  spans.
+- The browser panel loads and renders a page, its URL entry navigates, and
+  showing or hiding it leaves the editor filling the right area correctly with
+  the terminal still docked underneath.
 - All 11 window actions are registered with the intended accelerators, and the
-  sidebar, dotfile, terminal and preview toggles were confirmed to change the
-  state they claim to.
+  sidebar, dotfile, terminal, browser and preview toggles were confirmed to
+  change the state they claim to.
 
 Not verified:
 
-- **The browser panel has never been compiled.** `libwebkitgtk-6.0-dev` was not
-  installed on the machine used to bring this up, so `webkitgtk-6.0` was absent
-  and the panel compiled out. `linux/src/Browser.cpp` is still a first draft.
-  Its five WebKit entry points do exist in the installed `libwebkitgtk-6.0.so.4`,
-  so it is likely close, but expect to fix something.
 - Everything driven by real keyboard and mouse input. Actions were activated
   programmatically, which proves the wiring but not the key handling.
 - Saving, creating files and folders, and the Open Folder dialog.
+- The browser against a real website. It was pointed at a local `file://` page,
+  which is what proves our own code works; loading over the network exercises
+  nothing of ours that a local page does not.
 
 ### Notes on the things that were most at risk
 
@@ -61,8 +64,13 @@ re-investigates them.
    expansion through `create_child` works, and the filter and factory callback
    signatures are unchanged.
 
-3. **VTE.** `vte_terminal_spawn_async` works as written. The panel spawns
-   `$SHELL` in the opened folder.
+3. **VTE and WebKit.** `vte_terminal_spawn_async` and the `webkitgtk-6.0` entry
+   points all work as written; neither needed a change. The terminal spawns
+   `$SHELL` in the opened folder. What did need fixing was the browser panel's
+   layout rather than its API: the web view sets `vexpand`, which propagates up
+   through its `GtkRevealer`, so the panel both squashed the editor when shown
+   and held onto half the space when hidden. The editor is now hidden while the
+   browser is up, and the revealer only expands while revealed.
 
 4. **GtkTextTag setup and CSS.** The tag properties and the
    `.minicode-editor text { ... }` node selector are all correct; the editor and

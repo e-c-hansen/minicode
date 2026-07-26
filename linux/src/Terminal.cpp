@@ -9,7 +9,7 @@
 
 Terminal::Terminal(const std::string& cwd) : cwd_(cwd) {
     root_ = gtk_scrolled_window_new();
-    gtk_widget_set_size_request(root_, -1, 200);
+    gtk_widget_set_size_request(root_, -1, 220);   // macOS default terminalHeight
 
     vte_ = vte_terminal_new();
     vte_terminal_set_scrollback_lines(VTE_TERMINAL(vte_), 10000);
