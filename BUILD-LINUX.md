@@ -27,9 +27,12 @@ Verified by running it:
   confirmed on screen. Highlighting was checked against source containing
   accented Latin, CJK and 4-byte emoji, and the colors land on the correct
   spans.
-- The browser panel loads and renders a page, its URL entry navigates, and
-  showing or hiding it leaves the editor filling the right area correctly with
-  the terminal still docked underneath.
+- The browser panel loads and renders real pages over the network, its URL
+  entry navigates, plain words are sent to a web search rather than mangled
+  into a URL, the URL bar follows redirects and back/forward navigation, and
+  the back and forward buttons grey out correctly. Showing or hiding the panel
+  leaves the editor filling the right area with the terminal still docked
+  underneath.
 - All 11 window actions are registered with the intended accelerators, and the
   sidebar, dotfile, terminal, browser and preview toggles were confirmed to
   change the state they claim to.
@@ -39,9 +42,6 @@ Not verified:
 - Everything driven by real keyboard and mouse input. Actions were activated
   programmatically, which proves the wiring but not the key handling.
 - Saving, creating files and folders, and the Open Folder dialog.
-- The browser against a real website. It was pointed at a local `file://` page,
-  which is what proves our own code works; loading over the network exercises
-  nothing of ours that a local page does not.
 
 ### Notes on the things that were most at risk
 
