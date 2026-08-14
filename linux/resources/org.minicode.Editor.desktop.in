@@ -1,0 +1,21 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=MiniCode
+GenericName=Code Editor
+Comment=Small native code editor with a file tree, terminal and browser panel
+# Absolute path: GNOME launches desktop entries from the systemd user session,
+# whose PATH does not reliably include ~/.local/bin.
+Exec=@BINDIR@/minicode %f
+Icon=org.minicode.Editor
+Terminal=false
+Categories=Development;TextEditor;IDE;
+Keywords=code;editor;text;programming;
+# Only directories: main() treats argv[1] as the folder to open as the project
+# root, so handing it a plain file would not do what the user meant.
+MimeType=inode/directory;
+StartupNotify=true
+# Wayland matches the window by its GTK application id, which is already
+# org.minicode.Editor (= this file's name). This line is the X11/Xwayland
+# fallback so the window still groups under the same dock icon there.
+StartupWMClass=org.minicode.Editor

@@ -136,6 +136,57 @@ If you would rather not use Meson:
 Meson is the better-tested path; the Makefile exists so a minimal install can
 get the core viewer up quickly.
 
+## Install it as a real desktop app
+
+Building leaves the binary in `linux/build`. To get `minicode` on your PATH and
+a launcher in the app grid (so it can be pinned to the dock), install into your
+home prefix:
+
+    cd linux
+    meson setup build --prefix=$HOME/.local   # or: meson configure build --prefix=...
+    meson install -C build
+
+That installs three things:
+
+- `~/.local/bin/minicode` — the binary. Ubuntu already puts `~/.local/bin` on
+  the PATH for login shells.
+- `~/.local/share/applications/org.minicode.Editor.desktop` — the launcher.
+- `~/.local/share/icons/hicolor/*/apps/org.minicode.Editor.png` — the icon, at
+  five sizes, extracted from the macOS `resources/AppIcon.icns`.
+
+Then refresh the caches, or log out and back in:
+
+    update-desktop-database ~/.local/share/applications
+    gtk4-update-icon-cache -f -t ~/.local/share/icons/hicolor
+
+The launcher, the icons, and the GTK application id are all named
+`org.minicode.Editor` on purpose. A Wayland compositor matches a window back to
+its launcher by application id, so if those names drift apart the dock shows a
+second, generic icon for the running window instead of lighting up the pinned
+one.
+
+The `Exec=` line uses the absolute path to the binary rather than bare
+`minicode`. GNOME starts desktop entries from the systemd user session, whose
+PATH does not reliably include `~/.local/bin`.
+
+To pin it: launch it once, then right-click its dock icon and choose "Pin to
+Dash". The equivalent from a shell is
+
+    gsettings set org.gnome.shell favorite-apps \
+        "$(gsettings get org.gnome.shell favorite-apps \
+           | sed "s/]$/, 'org.minicode.Editor.desktop']/")"
+
+Installing to `/usr/local` with `sudo meson install` works the same way and puts
+the app in every user's menu.
+
+### Sudden second copy of the app?
+
+`minicode` is a single-instance GApplication. Launching it again while it is
+running does not start a second process; the running one just opens another
+window, and that window uses the directory the *first* process was given. So
+`minicode ~/other-project` from a terminal will not open `~/other-project` if an
+instance is already up. Quit it first, or open the folder with Ctrl O.
+
 ## Running
 
     ./build/minicode [directory]

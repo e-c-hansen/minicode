@@ -58,6 +58,32 @@ executable('minicode',
   cpp_args : cpp_args,
   install : true)
 
+# --- desktop integration ----------------------------------------------------
+# Installs the launcher and its icons so the app shows up in the GNOME app grid
+# and can be pinned to the dock. The .desktop file and the icon files are both
+# named after the GTK application id (org.minicode.Editor) because that is how
+# Wayland compositors match a window back to its launcher; get the name wrong
+# and the dock shows a second, generic icon for the running window.
+app_id = 'org.minicode.Editor'
+
+desktop_conf = configuration_data()
+desktop_conf.set('BINDIR', get_option('prefix') / get_option('bindir'))
+
+configure_file(
+  input         : 'resources' / (app_id + '.desktop.in'),
+  output        : app_id + '.desktop',
+  configuration : desktop_conf,
+  install       : true,
+  install_dir   : get_option('datadir') / 'applications')
+
+# PNGs extracted from the macOS resources/AppIcon.icns, which stays the single
+# source of truth for the artwork.
+foreach size : ['32x32', '64x64', '128x128', '256x256', '512x512']
+  install_data(
+    'resources' / 'icons' / size / (app_id + '.png'),
+    install_dir : get_option('datadir') / 'icons' / 'hicolor' / size / 'apps')
+endforeach
+
 # --- tests: the pure-C++ pieces, no GTK and no display required -------------
 # Covers the byte-offset -> character-offset conversion that maps
 # SyntaxHighlighter output onto GtkTextBuffer iterators.

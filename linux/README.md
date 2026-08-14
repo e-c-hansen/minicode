@@ -27,6 +27,11 @@ is not verified, see `../BUILD-LINUX.md`.
 - `src/Browser.{h,cpp}` — WebKitGTK browser panel, behind
   `MINICODE_ENABLE_BROWSER`.
 - `src/Palette.h` — the dark color palette, mirrored from the macOS build.
+- `resources/org.minicode.Editor.desktop.in` — the desktop launcher, with the
+  binary path filled in at configure time from the install prefix.
+- `resources/icons/` — PNG icons at five sizes, extracted from the macOS
+  `../resources/AppIcon.icns`, which stays the single source of truth for the
+  artwork.
 
 ## Feature flags
 
