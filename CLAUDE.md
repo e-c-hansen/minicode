@@ -5,6 +5,10 @@ no third-party dependencies. It links only Apple system frameworks (Cocoa,
 WebKit, CoreServices) plus the C++ standard library. This file is the handoff
 for future sessions: architecture, workflow, and the hard-won gotchas.
 
+There is also a GTK4 Linux port under `linux/`, sharing the portable C++ core
+verbatim. It has its own handoff notes in `BUILD-LINUX.md` and `linux/README.md`;
+this file covers the macOS app except where it says otherwise.
+
 ## Build / test / run / release
 
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
@@ -38,8 +42,15 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 
 ## Verification reality (important)
 
-This environment cannot exercise the GUI: no screen capture, no reliable
-synthetic clicks/keys. So:
+How much of the GUI you can actually check depends on which port you are
+working on, and on whether the session is running on a machine with a display.
+Check first; do not assume either answer.
+
+Neither port gives you screen capture or reliable synthetic clicks and keys.
+Pixels, layout and anything interactive still need the user's eyes. What
+differs is whether you can get the app running at all.
+
+**The macOS app: blind.** Sessions on it have no display.
 
 - Test the pure-C++ core with `make test`.
 - For GUI logic, add a temporary `getenv("MINICODE_*TEST")` block in `main.mm`
@@ -48,6 +59,30 @@ synthetic clicks/keys. So:
 - Otherwise confirm the app builds clean and launches without crashing, and
   tell the user which behavior needs their eyes. Do not claim GUI behavior is
   verified when it was only compiled.
+
+**The GTK port on the user's Ubuntu machine: a live session.** As of August
+2026 the primary Linux box is Ubuntu 26.04 on a ThinkPad T480, GNOME on
+Wayland, and a session there has `$WAYLAND_DISPLAY` set and can really launch
+the app. Confirm with `echo $WAYLAND_DISPLAY` before relying on this. When it
+holds, these give real runtime evidence rather than compile-only evidence:
+
+- `meson test -C build` for the shared core.
+- Launch detached (`setsid gtk-launch org.minicode.Editor &`, or run the binary
+  directly) and check with `pgrep -a minicode` that it is still alive a few
+  seconds later. This is not free: a window really does appear on the user's
+  screen, so say what you are doing and do not leave strays running.
+- `busctl --user list | grep minicode` shows the GApplication registered its id
+  on the session bus.
+- `systemctl --user list-units --type=scope | grep minicode` is the useful one.
+  A launch through the desktop entry lands in
+  `app-gnome-org.minicode.Editor-*.scope`, and that scope name is precisely how
+  GNOME Shell ties the window back to its launcher, so seeing it proves the
+  dock association works. A nested `vte-spawn-*.scope` proves the VTE terminal
+  panel actually came up.
+- `journalctl --user --since "-15 min" | grep -i minicode` catches a process
+  that started and then died.
+- Do not bother with `org.gnome.Shell.Introspect.GetWindows`; it answers
+  `AccessDenied` for callers that are not whitelisted.
 
 ## Gotchas already paid for (don't rediscover these)
 
