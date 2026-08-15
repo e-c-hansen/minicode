@@ -265,6 +265,17 @@ static void BuildMenu(void) {
     sidebar.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     [viewMenu addItem:sidebar];
 
+    // Collapse the editor entirely so the terminal owns the right area. The
+    // terminal's drag handle stops at 120px of editor, which is right for a
+    // drag and wrong for wanting only the terminal.
+    NSMenuItem *editorPane =
+        [[NSMenuItem alloc] initWithTitle:@"Toggle Editor"
+                                   action:@selector(toggleEditor:)
+                            keyEquivalent:@"e"];
+    editorPane.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [viewMenu addItem:editorPane];
+
     NSMenuItem *hidden =
         [[NSMenuItem alloc] initWithTitle:@"Show Hidden Files"
                                    action:@selector(toggleHiddenFiles:)

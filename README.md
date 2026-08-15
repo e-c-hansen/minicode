@@ -12,7 +12,7 @@ Files are editable, not just viewable. Type into a file and the highlighting upd
 
 There is a terminal you can pull up at the bottom with Control backtick, and you can drag the bar above it to resize. It runs a single persistent zsh session, so it behaves like a normal shell across commands. Change directory and you stay there, export a variable or define a function and it is still around for the next command. It keeps your command history on the up and down arrows, and clicking anywhere in the panel drops the cursor on the input line. It is still meant as a quick command runner rather than a full terminal emulator, so it does not host interactive full screen programs like vim or htop, but for the everyday things you reach for, git, make, ls, running a script, it works the way you would want. There is also an embedded browser you can toggle with Shift Command B, which is a real WebKit view with a URL bar and back, forward, and reload buttons.
 
-If you ever forget a shortcut, press Control H and a small panel lists the ones available in your current context. The panel is aware of what you are doing, so the Markdown preview toggle only shows up when a Markdown file is open, for instance.
+If you ever forget a shortcut, press Shift Command H and a small panel lists the ones available in your current context. The panel is aware of what you are doing, so the Markdown preview toggle only shows up when a Markdown file is open, for instance.
 
 ## Installing and building
 
@@ -73,6 +73,7 @@ Click hello.py and sample.cpp to see the syntax coloring, then click README.md t
 | Command R | Refresh the file tree |
 | Shift Command . | Show or hide dotfiles |
 | Command B | Collapse or restore the sidebar |
+| Shift Command E | Collapse the editor so the terminal fills the window |
 | Command T, or Control backtick | Toggle terminal |
 | Shift Command B | Toggle browser |
 | Shift Command P | Toggle Markdown preview |

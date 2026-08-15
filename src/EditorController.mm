@@ -193,6 +193,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
 @property(nonatomic, assign) BOOL terminalVisible;
 @property(nonatomic, assign) BOOL browserVisible;
 @property(nonatomic, assign) CGFloat terminalHeight;
+@property(nonatomic, assign) BOOL editorCollapsed;   // terminal owns the area
 @property(nonatomic, strong) NSSplitView *splitView;
 @property(nonatomic, strong) NSScrollView *sidebarScroll;
 @property(nonatomic, assign) BOOL sidebarCollapsed;
@@ -437,6 +438,8 @@ static NSColor *ColorForStyle(TokenStyle s) {
     [s appendString:@"⌘0    Focus tree      ⌘1   Focus editor\n"];
     [s appendString:@"↑ ↓   Browse tree     ⏎    Open   ⌃⇥  Previous\n"];
     [s appendString:@"⌘B    Toggle sidebar\n"];
+    [s appendFormat:@"⇧⌘E   Editor    (%@)\n",
+        self.editorCollapsed ? @"collapsed" : @"shown"];
     [s appendFormat:@"⌘T / ⌃`   Terminal  (%@)\n",
         self.terminalVisible ? @"open" : @"hidden"];
     [s appendFormat:@"⇧⌘B   Browser   (%@)\n",
@@ -464,17 +467,23 @@ static NSColor *ColorForStyle(TokenStyle s) {
     CGFloat W = b.size.width, H = b.size.height;
     BOOL showTerm = self.terminalVisible && self.terminal != nil;
 
+    // Collapsing only means anything when there is a terminal to hand the space
+    // to. Requiring showTerm here is also the backstop that keeps an
+    // inconsistent state from producing an empty window.
+    BOOL collapsed = self.editorCollapsed && showTerm;
+
     CGFloat termH = 0;
-    if (showTerm) termH = MIN(MAX(self.terminalHeight, 80), MAX(120, H - 120));
+    if (collapsed)     termH = H;
+    else if (showTerm) termH = MIN(MAX(self.terminalHeight, 80), MAX(120, H - 120));
     CGFloat topH = MAX(0, H - termH);
     NSRect topRect = NSMakeRect(0, termH, W, topH);
 
     BOOL showBrowser = self.browserVisible && self.browser != nil;
     self.editorScroll.frame = topRect;
-    self.editorScroll.hidden = showBrowser;
+    self.editorScroll.hidden = showBrowser || collapsed;
     if (self.browser) {
         self.browser.frame = topRect;
-        self.browser.hidden = !showBrowser;
+        self.browser.hidden = !showBrowser || collapsed;
     }
     if (self.terminal) {
         self.terminal.frame = NSMakeRect(0, 0, W, termH);
@@ -482,8 +491,36 @@ static NSColor *ColorForStyle(TokenStyle s) {
     }
     if (self.termDivider) {
         self.termDivider.frame = NSMakeRect(0, termH - 3, W, 6);
-        self.termDivider.hidden = !showTerm;
+        // Nothing above the terminal to size against while collapsed, so the
+        // drag handle would only be a way to get into a confusing state.
+        self.termDivider.hidden = !showTerm || collapsed;
     }
+}
+
+// Give the terminal the whole right area. The drag handle deliberately stops at
+// 120px of editor, which is right for dragging and wrong for "I want the
+// terminal and nothing else"; this is the separate gesture for the latter, the
+// same way Cmd+B collapses the sidebar past the split's own 160px minimum.
+- (void)toggleEditor:(id)sender {
+    if (self.editorCollapsed) {
+        self.editorCollapsed = NO;
+    } else {
+        // Collapsing with nothing below would leave an empty window.
+        if (!self.terminalVisible) [self toggleTerminal:nil];
+        self.editorCollapsed = YES;
+    }
+    [self relayoutRightArea];
+    if (self.editorCollapsed) [self.terminal focusInput];
+    if (self.hintsVisible) [self updateHints];
+}
+
+// The single place the editor comes back, so it cannot stay hidden behind
+// content that has nowhere to appear.
+- (void)restoreEditorArea {
+    if (!self.editorCollapsed) return;
+    self.editorCollapsed = NO;
+    [self relayoutRightArea];
+    if (self.hintsVisible) [self updateHints];
 }
 
 - (void)toggleTerminal:(id)sender {
@@ -504,6 +541,9 @@ static NSColor *ColorForStyle(TokenStyle s) {
         [self.rightArea addSubview:self.termDivider];
     }
     self.terminalVisible = !self.terminalVisible;
+    // Closing the terminal while the editor is collapsed would leave an empty
+    // window, so the editor comes back with it.
+    if (!self.terminalVisible) self.editorCollapsed = NO;
     [self relayoutRightArea];
     if (self.terminalVisible) [self.terminal focusInput];
     if (self.hintsVisible) [self updateHints];
@@ -516,6 +556,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
         [self.rightArea addSubview:self.browser];
     }
     self.browserVisible = !self.browserVisible;
+    self.editorCollapsed = NO;   // the browser lives in the top area too
     [self relayoutRightArea];
     if (self.browserVisible) [self.browser focusURLBar];
     if (self.hintsVisible) [self updateHints];
@@ -903,6 +944,9 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 
 // ------------------------------------------------------------ file rendering
 - (void)openFileAtPath:(NSString *)path {
+    // Before the early return: clicking the already-open file while the editor
+    // is collapsed is a request to see it again, not a no-op.
+    [self restoreEditorArea];
     if ([path isEqualToString:self.currentPath]) return;  // avoid double-render
     if (![self confirmProceedPastUnsavedChanges]) {
         [self reselectCurrentFileInTree];   // undo the tree's selection move

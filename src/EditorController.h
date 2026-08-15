@@ -14,10 +14,11 @@
 - (void)openFolder:(id)sender;    // menu action
 - (void)saveCurrentFile:(id)sender;   // Cmd+S
 - (void)togglePreview:(id)sender;     // Markdown: source <-> rendered
-- (void)toggleHints:(id)sender;       // Ctrl+H shortcut-hints overlay
+- (void)toggleHints:(id)sender;       // Shift+Cmd+H shortcut-hints overlay
 - (void)toggleTerminal:(id)sender;    // Ctrl+` bottom terminal dock
 - (void)toggleBrowser:(id)sender;     // Shift+Cmd+B embedded browser
 - (void)toggleSidebar:(id)sender;     // Cmd+B collapse/restore file tree
+- (void)toggleEditor:(id)sender;      // Shift+Cmd+E give the terminal the window
 - (void)toggleHiddenFiles:(id)sender; // Cmd+Shift+. show/hide dotfiles
 - (void)openSearch:(id)sender;        // Cmd+Shift+F project-wide search
 - (void)focusTree:(id)sender;         // Cmd+0 move keyboard focus to file tree
