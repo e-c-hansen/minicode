@@ -15,12 +15,20 @@
 
 class Terminal {
 public:
+    // Height limits for the draggable divider above the panel. The macOS build
+    // clamps a terminal drag to 80…H-120 and opens at 220 (EditorController.mm
+    // -relayoutRightArea / -mouseDragged); the Linux paned uses the same
+    // numbers, so the panel feels the same on both platforms.
+    static constexpr int kMinHeight     = 80;
+    static constexpr int kDefaultHeight = 220;
+
     explicit Terminal(const std::string& cwd);
     GtkWidget* widget() const { return root_; }
     void focus();
 
 private:
     void spawnShell();
+    void applyTheme();
     std::string cwd_;
     GtkWidget*  root_ = nullptr;   // container
     GtkWidget*  vte_  = nullptr;   // VteTerminal

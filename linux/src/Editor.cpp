@@ -38,6 +38,7 @@ Editor::Editor() {
     gtk_widget_add_css_class(view_, "minicode-editor");
 
     scroller_ = gtk_scrolled_window_new();
+    gtk_widget_add_css_class(scroller_, "minicode-scroller");
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller_), view_);
     gtk_widget_set_hexpand(scroller_, TRUE);
     gtk_widget_set_vexpand(scroller_, TRUE);

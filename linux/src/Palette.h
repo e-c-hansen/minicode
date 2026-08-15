@@ -16,6 +16,14 @@ namespace pal {
     constexpr const char* StatusBg   = "#007ACC";  // status bar (VS Code blue)
     constexpr const char* StatusText = "#FFFFFF";
     constexpr const char* Divider    = "#333333";  // pane dividers
+    constexpr const char* Selection  = "#264F78";  // selected text, editor and terminal
+
+    // Terminal panel. The background is a shade darker than the editor so the
+    // panel reads as a separate surface, matching the macOS terminal
+    // (src/Terminal.mm, THex(0x181818)).
+    constexpr const char* TermBg     = "#181818";
+    constexpr const char* TermText   = "#D4D4D4";
+    constexpr const char* TermCursor = "#AEAFAD";
 
     // Markdown preview colors.
     constexpr const char* MdHeading  = "#FFFFFF";

@@ -33,7 +33,16 @@ Verified by running it:
   the back and forward buttons grey out correctly. Showing or hiding the panel
   leaves the editor filling the right area with the terminal still docked
   underneath.
-- All 11 window actions are registered with the intended accelerators, and the
+- The terminal panel's top edge is a real `GtkPaned` divider. Moving it resizes
+  the panel, the size survives closing and reopening it, and the clamps hold at
+  both ends: the terminal will not go below 80px and the editor above it will
+  not go below 120px, the same limits the macOS drag handler enforces.
+- Collapsing the editor (Ctrl Shift E) gives the terminal the entire window, and
+  the split comes back exactly where it was. The window can never be left empty:
+  collapsing the editor opens the terminal if it was closed, and closing the
+  terminal while the editor is collapsed brings the editor back. Opening a file
+  or the browser while collapsed restores the editor too.
+- All 12 window actions are registered with the intended accelerators, and the
   sidebar, dotfile, terminal, browser and preview toggles were confirmed to
   change the state they claim to.
 
@@ -208,6 +217,7 @@ These mirror the macOS set, with Ctrl standing in for Command.
 | Ctrl F            | Find in the current file   |
 | Ctrl Shift P      | Toggle Markdown preview    |
 | Ctrl B            | Toggle the sidebar         |
+| Ctrl Shift E      | Collapse or restore the editor |
 | Ctrl T            | Toggle the terminal panel  |
 | Ctrl Shift B      | Toggle the browser panel   |
 | Ctrl H            | Show or hide dotfiles      |
