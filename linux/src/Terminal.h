@@ -11,6 +11,7 @@
 #ifdef MINICODE_ENABLE_TERMINAL
 
 #include <gtk/gtk.h>
+#include <vte/vte.h>   // VteTerminal appears in the signal handler signatures
 #include <string>
 
 class Terminal {
@@ -29,9 +30,19 @@ public:
 private:
     void spawnShell();
     void applyTheme();
+    void feedNotice(const std::string& text);
+
+    // The shell is restarted in place when it exits, so Ctrl+D does not leave a
+    // dead panel behind. lastSpawn_/rapidExits_ break the loop a shell that
+    // cannot start would otherwise spin in.
+    static void onChildExited(VteTerminal* term, gint status, gpointer self);
+    static void onSpawned(VteTerminal* term, GPid pid, GError* error, gpointer self);
+
     std::string cwd_;
     GtkWidget*  root_ = nullptr;   // container
     GtkWidget*  vte_  = nullptr;   // VteTerminal
+    gint64      lastSpawn_ = 0;    // g_get_monotonic_time of the last spawn
+    int         rapidExits_ = 0;   // consecutive exits inside a second
 };
 
 #endif // MINICODE_ENABLE_TERMINAL

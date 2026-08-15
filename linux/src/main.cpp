@@ -69,9 +69,21 @@ struct App {
     Browser* browser = nullptr;
 #endif
 
+    // The floating shortcut list and the status-bar label that advertises it.
+    GtkWidget* hintsPanel = nullptr;
+    GtkWidget* hintsLabel = nullptr;
+    GtkWidget* hintsHint  = nullptr;
+
     std::string rootDir;
     bool sidebarVisible = true;
 };
+
+// Defined with the rest of the hints panel further down; the pane toggles call
+// it so an open panel never reports stale state.
+static void refreshHints(App* app);
+
+static const char* kHintsHintShow = "Ctrl+Shift+H  Shortcuts";
+static const char* kHintsHintHide = "Ctrl+Shift+H  Hide shortcuts";
 
 // ------------------------------------------------- the editor/terminal split
 #ifdef MINICODE_ENABLE_TERMINAL
@@ -110,6 +122,7 @@ static void showEditorArea(App* app) {
 #ifdef MINICODE_ENABLE_TERMINAL
     placeTerminalDivider(app);
 #endif
+    refreshHints(app);
 }
 
 // ---------------------------------------------------------------- helpers
@@ -133,6 +146,7 @@ static void openFileCb(const std::string& path, void* userp) {
     showEditorArea(app);   // opening a file must not disappear into a hidden pane
     app->editor->openFile(path);
     updateTitle(app);
+    refreshHints(app);   // the Markdown line depends on the open file
 }
 
 // ---------------------------------------------------------------- actions
@@ -162,12 +176,14 @@ static void act_save(GSimpleAction*, GVariant*, gpointer userp) {
 static void act_toggle_preview(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     app->editor->togglePreview();
+    refreshHints(app);
 }
 
 static void act_toggle_sidebar(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     app->sidebarVisible = !app->sidebarVisible;
     gtk_widget_set_visible(app->tree->widget(), app->sidebarVisible);
+    refreshHints(app);
 }
 
 static void act_toggle_hidden(GSimpleAction*, GVariant*, gpointer userp) {
@@ -189,6 +205,7 @@ static void act_toggle_terminal(GSimpleAction*, GVariant*, gpointer userp) {
         placeTerminalDivider(app);
         if (app->terminal) app->terminal->focus();
     }
+    refreshHints(app);
 #endif
 }
 
@@ -208,6 +225,7 @@ static void act_toggle_editor(GSimpleAction*, GVariant*, gpointer userp) {
     else gtk_widget_set_visible(app->termPanel, TRUE);
     gtk_widget_set_visible(app->upperBox, FALSE);
     if (app->terminal) app->terminal->focus();
+    refreshHints(app);
 #endif
 }
 
@@ -229,6 +247,7 @@ static void act_toggle_browser(GSimpleAction*, GVariant*, gpointer userp) {
 #ifdef MINICODE_ENABLE_BROWSER
     if (!shown && app->browser) app->browser->focusUrlBar();
 #endif
+    refreshHints(app);
 }
 
 static void act_find(GSimpleAction*, GVariant*, gpointer userp) {
@@ -323,6 +342,94 @@ static void onSearchNext(GtkSearchEntry*, gpointer userp) {
     }
 }
 
+// ---------------------------------------------------------- shortcut hints
+
+// The macOS build floats a shortcut list over the top-right of the window
+// (EditorController.mm -buildHintsPanelInContainer) and advertises it from the
+// status bar, because nothing else in the UI tells you the bindings exist. This
+// is that panel, with the Linux accelerators and Ctrl+Shift+H instead of ⇧⌘H —
+// Ctrl+H is taken here, and rightly so, since it is the usual Linux binding for
+// showing hidden files.
+static std::string hintsText(App* app) {
+    std::string s;
+    s += "Keyboard Shortcuts\n";
+    s += "────────────────────────────────────────\n";
+    s += "Ctrl O         Open folder\n";
+    s += "Ctrl S         Save\n";
+    s += "Ctrl F         Find in file\n";
+    s += "Ctrl 0         Focus the file tree\n";
+
+    s += "\nFiles\n";
+    s += "────────────────────────────────────────\n";
+    s += "Ctrl Alt N     New file\n";
+    s += "Ctrl Shift N   New folder\n";
+    s += "Ctrl H         Show or hide dotfiles\n";
+
+    s += "\nPanes\n";
+    s += "────────────────────────────────────────\n";
+    s += "Ctrl B         Sidebar\n";
+    s += std::string("Ctrl Shift E   Editor      (") +
+         (gtk_widget_get_visible(app->upperBox) ? "shown" : "collapsed") + ")\n";
+#ifdef MINICODE_ENABLE_TERMINAL
+    s += std::string("Ctrl T         Terminal    (") +
+         (app->termPanel && gtk_widget_get_visible(app->termPanel) ? "open" : "hidden") +
+         ")\n";
+#endif
+#ifdef MINICODE_ENABLE_BROWSER
+    s += std::string("Ctrl Shift B   Browser     (") +
+         (app->browserRevealer &&
+          gtk_revealer_get_reveal_child(GTK_REVEALER(app->browserRevealer))
+              ? "open" : "hidden") + ")\n";
+#endif
+    if (app->editor->isMarkdown()) {
+        s += std::string("Ctrl Shift P   Markdown    (") +
+             (app->editor->inPreview() ? "rendered" : "source") + ")\n";
+    }
+
+    s += "\nCtrl Shift H   Hide these hints";
+    return s;
+}
+
+static GtkWidget* buildHintsPanel(App* app) {
+    app->hintsLabel = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(app->hintsLabel), 0.0);
+
+    app->hintsPanel = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_add_css_class(app->hintsPanel, "minicode-hints");
+    gtk_box_append(GTK_BOX(app->hintsPanel), app->hintsLabel);
+
+    // Float it in the top-right corner, the same corner macOS puts it in, and
+    // keep it from stretching to fill the overlay.
+    gtk_widget_set_halign(app->hintsPanel, GTK_ALIGN_END);
+    gtk_widget_set_valign(app->hintsPanel, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(app->hintsPanel, 18);
+    gtk_widget_set_margin_end(app->hintsPanel, 18);
+    // The panel is a reference card, not a control: clicks belong to whatever is
+    // underneath it.
+    gtk_widget_set_can_target(app->hintsPanel, FALSE);
+    gtk_widget_set_visible(app->hintsPanel, FALSE);
+    return app->hintsPanel;
+}
+
+// Half the panel's value is reporting which panes are currently up, so a toggle
+// while it is open has to redraw it. The macOS build refreshes from the same
+// four places (EditorController.mm).
+static void refreshHints(App* app) {
+    if (app->hintsPanel && gtk_widget_get_visible(app->hintsPanel))
+        gtk_label_set_text(GTK_LABEL(app->hintsLabel), hintsText(app).c_str());
+}
+
+static void act_toggle_hints(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    const bool showing = !gtk_widget_get_visible(app->hintsPanel);
+    // Rebuilt on every open, not once at startup: half its value is reporting
+    // which panels are currently up.
+    if (showing) gtk_label_set_text(GTK_LABEL(app->hintsLabel), hintsText(app).c_str());
+    gtk_widget_set_visible(app->hintsPanel, showing);
+    gtk_label_set_text(GTK_LABEL(app->hintsHint),
+                       showing ? kHintsHintHide : kHintsHintShow);
+}
+
 // ---------------------------------------------------------------- css
 
 static void loadCss() {
@@ -366,7 +473,18 @@ static void loadCss() {
         "  background-color: rgba(255,255,255,0.22);"
         "  border: none; min-width: 8px; min-height: 8px; }"
         ".minicode-scroller scrollbar slider:hover {"
-        "  background-color: rgba(255,255,255,0.38); }";
+        "  background-color: rgba(255,255,255,0.38); }"
+
+        // The floating shortcut list. Nearly opaque rather than fully so, to
+        // read as an overlay on top of the editor rather than a pane of it.
+        ".minicode-hints {"
+        "  background-color: " "#252526" ";"
+        "  border: 1px solid " "#333333" ";"
+        "  border-radius: 8px;"
+        "  padding: 14px 18px;"
+        "  color: " "#D4D4D4" ";"
+        "  font-family: monospace;"
+        "  box-shadow: 0 6px 20px rgba(0,0,0,0.55); }";
     gtk_css_provider_load_from_string(css, style);
     gtk_style_context_add_provider_for_display(
         gdk_display_get_default(),
@@ -395,6 +513,7 @@ static void buildMenu(App* app) {
 
     GMenu* viewMenu = g_menu_new();
     g_menu_append(viewMenu, "Toggle Markdown Preview", "win.togglepreview");
+    g_menu_append(viewMenu, "Toggle Shortcut Hints", "win.togglehints");
     g_menu_append(viewMenu, "Toggle Sidebar", "win.togglesidebar");
     g_menu_append(viewMenu, "Toggle Editor", "win.toggleeditor");
     g_menu_append(viewMenu, "Toggle Terminal", "win.toggleterminal");
@@ -423,6 +542,7 @@ static void setAccels(App* app) {
         {"win.newfolder",       "<Ctrl><Shift>n"},
         {"win.find",            "<Ctrl>f"},
         {"win.togglepreview",   "<Ctrl><Shift>p"},
+        {"win.togglehints",     "<Ctrl><Shift>h"},
         {"win.togglesidebar",   "<Ctrl>b"},
         {"win.toggleeditor",    "<Ctrl><Shift>e"},
         {"win.toggleterminal",  "<Ctrl>t"},
@@ -522,15 +642,32 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     gtk_paned_set_resize_start_child(GTK_PANED(app->hpaned), FALSE);
     gtk_widget_set_vexpand(app->hpaned, TRUE);
 
-    // Status bar.
+    // Status bar: the current path on the left, and the hint that advertises the
+    // shortcuts panel on the right. The macOS build carries the same pair, and
+    // that right-hand label is the only thing that makes the panel discoverable.
     app->statusLabel = gtk_label_new("Ready");
     gtk_label_set_xalign(GTK_LABEL(app->statusLabel), 0.0);
-    gtk_widget_add_css_class(app->statusLabel, "minicode-status");
+    gtk_label_set_ellipsize(GTK_LABEL(app->statusLabel), PANGO_ELLIPSIZE_MIDDLE);
+    gtk_widget_set_hexpand(app->statusLabel, TRUE);
+
+    app->hintsHint = gtk_label_new(kHintsHintShow);
+    gtk_label_set_xalign(GTK_LABEL(app->hintsHint), 1.0);
+
+    GtkWidget* statusBar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_widget_add_css_class(statusBar, "minicode-status");
+    gtk_box_append(GTK_BOX(statusBar), app->statusLabel);
+    gtk_box_append(GTK_BOX(statusBar), app->hintsHint);
 
     GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_box_append(GTK_BOX(vbox), app->hpaned);
-    gtk_box_append(GTK_BOX(vbox), app->statusLabel);
-    gtk_window_set_child(GTK_WINDOW(app->window), vbox);
+    gtk_box_append(GTK_BOX(vbox), statusBar);
+
+    // The hints panel floats over the whole window rather than displacing it,
+    // so it needs a GtkOverlay between the window and the layout.
+    GtkWidget* overlay = gtk_overlay_new();
+    gtk_overlay_set_child(GTK_OVERLAY(overlay), vbox);
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), buildHintsPanel(app));
+    gtk_window_set_child(GTK_WINDOW(app->window), overlay);
 
     // Actions, menu, accelerators.
     addAction(app, "open",           G_CALLBACK(act_open));
@@ -539,6 +676,7 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     addAction(app, "newfolder",      G_CALLBACK(act_new_folder));
     addAction(app, "find",           G_CALLBACK(act_find));
     addAction(app, "togglepreview",  G_CALLBACK(act_toggle_preview));
+    addAction(app, "togglehints",    G_CALLBACK(act_toggle_hints));
     addAction(app, "togglesidebar",  G_CALLBACK(act_toggle_sidebar));
     addAction(app, "toggleeditor",   G_CALLBACK(act_toggle_editor));
     addAction(app, "toggleterminal", G_CALLBACK(act_toggle_terminal));
@@ -548,7 +686,8 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     buildMenu(app);
     setAccels(app);
 
-    gtk_window_present(GTK_WINDOW(app->window));}
+    gtk_window_present(GTK_WINDOW(app->window));
+}
 
 // ---------------------------------------------------------------- main
 

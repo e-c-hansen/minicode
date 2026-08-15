@@ -42,7 +42,12 @@ Verified by running it:
   collapsing the editor opens the terminal if it was closed, and closing the
   terminal while the editor is collapsed brings the editor back. Opening a file
   or the browser while collapsed restores the editor too.
-- All 12 window actions are registered with the intended accelerators, and the
+- The shortcut hints panel (Ctrl Shift H) opens and closes, reports which panes
+  are currently up, and refreshes when they change. The status bar advertises it.
+- The shell restarts in place when it exits. Confirmed by sending `exit` to the
+  child and reading the terminal buffer back: the notice line, a fresh prompt,
+  and a command run successfully in the new shell.
+- All 13 window actions are registered with the intended accelerators, and the
   sidebar, dotfile, terminal, browser and preview toggles were confirmed to
   change the state they claim to.
 
@@ -216,6 +221,7 @@ These mirror the macOS set, with Ctrl standing in for Command.
 | Ctrl Shift N      | New folder                 |
 | Ctrl F            | Find in the current file   |
 | Ctrl Shift P      | Toggle Markdown preview    |
+| Ctrl Shift H      | Show or hide the shortcut hints |
 | Ctrl B            | Toggle the sidebar         |
 | Ctrl Shift E      | Collapse or restore the editor |
 | Ctrl T            | Toggle the terminal panel  |
