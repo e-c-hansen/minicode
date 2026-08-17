@@ -179,8 +179,22 @@ bool Editor::save() {
 // The macOS build gets this from per-run NSFonts; GtkTextView needs the widget
 // font switched, because a tag can add a family but the view's monospace flag
 // would otherwise force every run to it.
+//
+// Prose also has to WRAP, and that is not cosmetic. MarkdownParser joins every
+// consecutive non-blank line of a paragraph into one logical line, so with
+// GTK_WRAP_NONE a paragraph became a single unwrapped line as wide as the whole
+// paragraph is long. Pango measures in 1/1024 px stored in a signed int, which
+// caps a line at 2^31/1024 = 2,097,152 px, about 281k characters at the preview
+// font. Past that the width calculation overflows and the paragraph's layout
+// collapses: the text goes missing and the view misreports its own size.
+// Wrapping bounds every display line to the viewport width, so the overflow
+// cannot be reached. Source keeps GTK_WRAP_NONE, where long lines are wanted
+// and lines are bounded by the file's own line breaks. macOS gets the same
+// behavior from textContainer.widthTracksTextView = YES.
 void Editor::setProseFont(bool prose) {
     gtk_text_view_set_monospace(GTK_TEXT_VIEW(view_), prose ? FALSE : TRUE);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view_),
+                                prose ? GTK_WRAP_WORD_CHAR : GTK_WRAP_NONE);
     if (prose) gtk_widget_add_css_class(view_, "minicode-prose");
     else       gtk_widget_remove_css_class(view_, "minicode-prose");
 }
