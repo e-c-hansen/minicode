@@ -75,6 +75,9 @@ struct App {
     GtkWidget* hintsHint  = nullptr;
 
     std::string rootDir;
+    // Set when the command line named a file rather than a directory: the file
+    // to show once the window exists. See resolveStartupPath.
+    std::string startupFile;
     bool sidebarVisible = true;
 };
 
@@ -686,29 +689,115 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     buildMenu(app);
     setAccels(app);
 
+    // A file named on the command line opens before the window is shown, so it
+    // is already rendered when the window appears rather than flashing the
+    // welcome text first. Markdown arrives rendered, the same as a click in the
+    // sidebar would give (Editor::openFile decides that).
+    if (!app->startupFile.empty()) openFileCb(app->startupFile, app);
+
     gtk_window_present(GTK_WINDOW(app->window));
 }
 
 // ---------------------------------------------------------------- main
 
+// Work out what to open from argv[1]. It may be a directory, or a single file:
+// `minicode notes.md` should show that file, not make the user name its folder.
+// A file roots the tree at its parent, so the sidebar still lists the files
+// alongside it and New File / New Folder land somewhere sensible.
+//
+// The path is canonicalized because the tree, the terminal's working directory
+// and the editor all keep it, and a relative "." or "../thing" would otherwise
+// be re-resolved against whatever the process's cwd happened to be later on.
+// `cwd` is passed in rather than read here because a second `minicode foo.md`
+// is answered by the already-running process, and the path has to be resolved
+// against the directory the user typed it in, not that process's cwd.
+// Returns a message to show the user if the path did not exist, else empty. It
+// is returned rather than printed because the caller may be a remote invocation,
+// whose output has to be sent back over the command line object to reach the
+// terminal the user actually typed in.
+static std::string resolveStartupPath(App& app, const char* arg,
+                                      const char* cwdIn) {
+    char cwdBuf[PATH_MAX];
+    const std::string cwd = (cwdIn && *cwdIn) ? cwdIn
+        : (getcwd(cwdBuf, sizeof(cwdBuf)) ? cwdBuf : ".");
+
+    app.startupFile.clear();
+    if (!arg || !*arg) { app.rootDir = cwd; return ""; }
+
+    char* canon = g_canonicalize_filename(arg, cwd.c_str());
+    const std::string path = canon ? canon : arg;
+    g_free(canon);
+
+    if (g_file_test(path.c_str(), G_FILE_TEST_IS_DIR)) {
+        app.rootDir = path;
+        return "";
+    }
+
+    if (g_file_test(path.c_str(), G_FILE_TEST_EXISTS)) {
+        char* parent = g_path_get_dirname(path.c_str());
+        app.rootDir = parent ? parent : cwd;
+        g_free(parent);
+        app.startupFile = path;
+        return "";
+    }
+
+    // Neither a directory nor an existing file. Root the tree at the parent if
+    // that at least exists, so a typo in the filename still lands in the right
+    // folder instead of dumping the user somewhere unrelated.
+    char* parent = g_path_get_dirname(path.c_str());
+    const bool parentOk = parent && g_file_test(parent, G_FILE_TEST_IS_DIR);
+    app.rootDir = parentOk ? parent : cwd;
+    g_free(parent);
+    return std::string("minicode: ") + arg + ": no such file or directory";
+}
+
+// Handles both the first launch and every later `minicode <path>` typed while a
+// window is already open. GApplication is single-instance, so without this the
+// second invocation just raised the existing window and threw the argument away
+// — the file never appeared, which is no use from a shell prompt.
+//
+// HANDLES_COMMAND_LINE (rather than HANDLES_OPEN) is what lets us keep parsing
+// argv[1] ourselves: it can be a directory or a file, and GApplication must not
+// guess which.
+static int onCommandLine(GApplication* gapp, GApplicationCommandLine* cl,
+                         gpointer userp) {
+    App* app = static_cast<App*>(userp);
+
+    int n = 0;
+    char** args = g_application_command_line_get_arguments(cl, &n);
+    const std::string err = resolveStartupPath(
+        *app, n > 1 ? args[1] : nullptr,
+        g_application_command_line_get_cwd(cl));
+    g_strfreev(args);
+
+    // printerr on the command line object, not g_printerr: for a second
+    // `minicode <path>` this routes the message back to the shell that ran it
+    // instead of the stderr of the process that happens to own the window.
+    if (!err.empty()) g_application_command_line_printerr(cl, "%s\n", err.c_str());
+
+    if (!app->window) {
+        onActivate(GTK_APPLICATION(gapp), app);   // first run: build the window
+        return 0;
+    }
+
+    // Already running: re-root the sidebar on what was asked for, show the file
+    // if one was named, and raise the window so the command visibly did something.
+    app->tree->setRoot(app->rootDir);
+    if (!app->startupFile.empty()) openFileCb(app->startupFile, app);
+    gtk_window_present(GTK_WINDOW(app->window));
+    return 0;
+}
+
 int main(int argc, char** argv) {
     App app;
 
-    // argv[1] = directory to open; default = current working directory.
-    if (argc > 1) {
-        app.rootDir = argv[1];
-    } else {
-        char cwd[PATH_MAX];
-        app.rootDir = getcwd(cwd, sizeof(cwd)) ? cwd : ".";
-    }
-
-    GtkApplication* gapp =
-        gtk_application_new("org.minicode.Editor", G_APPLICATION_DEFAULT_FLAGS);
-    g_signal_connect(gapp, "activate", G_CALLBACK(onActivate), &app);
-    // We consume argv[1] ourselves (the directory to open) and do NOT register
-    // G_APPLICATION_HANDLES_OPEN, so hand GApplication only the program name to
-    // avoid it treating the directory arg as a file to open.
-    int status = g_application_run(G_APPLICATION(gapp), 1, argv);
+    GtkApplication* gapp = gtk_application_new("org.minicode.Editor",
+                                              G_APPLICATION_HANDLES_COMMAND_LINE);
+    // argv[1] = a directory to open, or a file to open; default = cwd. The real
+    // argc/argv go to g_application_run so that a remote invocation forwards
+    // them to the running instance; onCommandLine is where they are read.
+    g_signal_connect(gapp, "command-line", G_CALLBACK(onCommandLine), &app);
+    int status = g_application_run(G_APPLICATION(gapp), argc, argv);
     g_object_unref(gapp);
     return status;
 }
