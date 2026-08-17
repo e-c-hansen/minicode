@@ -195,19 +195,31 @@ the app in every user's menu.
 
 ### Sudden second copy of the app?
 
-`minicode` is a single-instance GApplication. Launching it again while it is
-running does not start a second process; the running one just opens another
-window, and that window uses the directory the *first* process was given. So
-`minicode ~/other-project` from a terminal will not open `~/other-project` if an
-instance is already up. Quit it first, or open the folder with Ctrl O.
+`minicode` is a single-instance GApplication, so launching it again while it is
+running does not start a second process. It does still do what you asked:
+the argument is forwarded to the running instance, which re-roots its sidebar,
+opens the file if you named one, and raises its window. There is only ever one
+window, so a second invocation reuses it rather than opening another.
 
 ## Running
 
-    ./build/minicode [directory]
+    ./build/minicode [path]
 
-With no argument it opens the current working directory. The window shows the
-file tree on the left and the editor on the right, with a status bar along the
-bottom.
+The path can be a directory or a single file. A directory becomes the root of
+the sidebar. A file is opened in the editor, with the sidebar rooted at the
+directory containing it, so `minicode notes/todo.md` shows the file and its
+neighbours without you having to name the folder separately. Markdown opens
+rendered, the same as clicking it in the sidebar. With no argument at all it
+opens the current working directory.
+
+Relative paths are resolved against the shell you typed them in, including when
+an instance is already running. A path that does not exist reports
+`no such file or directory` on the terminal you ran the command from, and the
+sidebar opens on the parent directory so a mistyped filename still lands in the
+right place.
+
+The window shows the file tree on the left and the editor on the right, with a
+status bar along the bottom.
 
 ## Keyboard shortcuts
 
