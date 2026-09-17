@@ -40,15 +40,71 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 - `src/Browser.{h,mm}` — WKWebView panel.
 - `src/Search.{h,mm}` — scoped, project-wide text search window.
 
+## UI map (read this before UI work)
+
+Window content view (`EditorController`, built in `init`):
+
+```
+container (NSView)
+├── NSSplitView (vertical, thin divider)          sidebar | right pane
+│   ├── treeScroll → ClickOutline (NSOutlineView)  file tree, bg #252526
+│   └── rightArea (PanelHost, laid out by hand in relayoutRightArea)
+│       ├── editorScroll → textView (NSTextView)   top slot, bg #1E1E1E
+│       ├── browser (BrowserView)                  top slot when open
+│       ├── terminal (TerminalView)                docked bottom, bg #181818
+│       └── termDivider (DragBar)                  kept topmost
+├── status bar (buildStatusBarInContainer)        bottom strip
+└── hintsPanel (buildHintsPanelInContainer)       Shift+Cmd+H overlay
+```
+
+- Colors are VS Code Dark+ values, but there is **no shared palette**: each file
+  has its own hex helper (`Hex` in EditorController, `THex` Terminal, `BHex`
+  Browser, `SHex` Search) and literals are inline. Main ones: text #D4D4D4,
+  editor bg #1E1E1E, sidebar #252526, terminal bg #181818, input #232323,
+  accent/link #4EA1F7, muted #9CA3AF, divider line #333333. The terminal's ANSI
+  palette lives in `TermColor::rgb()` (C++). A theme pass should start by
+  centralizing these; `linux/src/Palette.h` mirrors the macOS values.
+- Layout is manual frames, not Auto Layout (see gotchas for why). Pane state
+  flags: `sidebarCollapsed`, `editorHidden`, `terminalVisible`,
+  `browserVisible`, plus NSSplitView's own collapse of `rightArea`.
+- A new shortcut goes in three places: the menu in `main.mm` (plus a
+  forwarding method on `AppDelegate`), `hintsText` in EditorController, and the
+  README shortcut table.
+- Fonts: system font for Markdown/UI, `monospacedSystemFontOfSize:` 12-13 for
+  code and terminal.
+
+## Current state (handoff, 2026-09-17)
+
+- Branch `linux-port`, 5 commits ahead of `main`, **not pushed**: the GTK port
+  draft, Markdown tables, pty terminal, resize-bar fix, terminal colors, and
+  the editor-hide/pane dividers. All tests pass (142), build is warning-free.
+- The user has confirmed in the running app: tables, the pty terminal
+  (Ctrl+C, sudo, aliases), colors, the terminal bar, Shift+Cmd+E, and both
+  divider drags.
+- Linux port has not caught up: it still has its own VTE terminal (fine), but
+  none of the pane-hiding shortcuts. Only the table fix touched `linux/`.
+- Next up per the user: UI changes.
+
 ## Verification reality (important)
 
-This environment cannot exercise the GUI: no screen capture, no reliable
-synthetic clicks/keys. So:
+This environment cannot take screenshots or send real input to the app. So:
 
 - Test the pure-C++ core with `make test`.
 - For GUI logic, add a temporary `getenv("MINICODE_*TEST")` block in `main.mm`
-  that drives the code path and NSLogs the result, run it headless, then remove
-  it. This pattern found the zero-width sidebar, the search data path, etc.
+  that drives the code path and NSLogs PASS/FAIL, run the binary headless in
+  the background with a poll-and-kill loop (there is no `timeout` on macOS),
+  then remove the block. Techniques that proved reliable:
+  - Read state via KVC (`[controller valueForKey:@"rightArea"]`).
+  - Key shortcuts: build an `NSEvent keyEventWithType:` and send it through
+    `[window performKeyEquivalent:]` then `[NSApp.mainMenu performKeyEquivalent:]`.
+  - Mouse drags on views with their own tracking loop (NSSplitView): post
+    LeftMouseDragged/LeftMouseUp with `[NSApp postEvent:atStart:NO]`, then call
+    `mouseDown:`. For simple views (DragBar) call mouseDown/Dragged/Up directly.
+  - Use `hitTest:` at pixel offsets to measure real grab areas.
+  - Terminal tests must set `HOME` and `ZDOTDIR` to scratch dirs, or test
+    commands land in the user's real `~/.zsh_history`.
+- When a check fails, print the actual output before changing code: most
+  failures in this session were wrong checks, not wrong code.
 - Otherwise confirm the app builds clean and launches without crashing, and
   tell the user which behavior needs their eyes. Do not claim GUI behavior is
   verified when it was only compiled.
