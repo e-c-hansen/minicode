@@ -1134,12 +1134,65 @@ void testLatexDoc() {
     CHECK(doc.spanForClick({7}, "Introduction")->display == "Introduction");
     // Without a usable word, the nearest span still wins.
     CHECK(doc.spanForClick({12}, "")->display == "First thing");
-    CHECK(doc.spanForClick({12}, "nowhere")->display == "First thing");
+    CHECK(doc.spanForClick({12}, "nowhere") == nullptr);   // refuses to guess
     CHECK(doc.spanForClick({}, "First") == nullptr);
     // The PDF reads math back without its markup, so matching ignores it.
     CHECK(doc.spanForClick({10}, "x2")->kind == LatexSpanKind::Math);
     CHECK(doc.spanForClick({10}, "paragraph,")->display == "Another paragraph,");
     CHECK(doc.spanForClick({900}, "First") == nullptr);
+
+    GROUP("latex:real-documents");
+    // Real documents wrap their text in all sorts of commands, including the
+    // author's own macros. Text the reader cannot see is text the preview
+    // cannot edit, so unknown commands are looked through, not skipped.
+    LatexDoc wild = LatexDoc::parse(
+        "\\begin{document}\n"
+        "\\normalfont{Post-training of Gemini}\n"
+        "\\raisebox{0.5em}{\\textit{Senior Engineer} @ Google}\n"
+        "\\makebox[8em][l]{\\includegraphics[scale=0.1]{GDM.png}}\n"
+        "\\twemoji{globe} \\href{https://echansen.org}{echansen.org}\n"
+        "\\todo{Bullet 2 -- scale and adoption}\n"
+        "\\vspace*{-\\baselineskip}\n"
+        "\\setlength{\\parskip}{1em}\n"
+        "\\multicolumn{2}{c}{Total}\n"
+        "\\end{document}\n");
+    CHECK(hasSpanText(wild, "Post-training of Gemini"));
+    CHECK(hasSpanText(wild, "Senior Engineer"));
+    CHECK(hasSpanText(wild, "@ Google"));
+    CHECK(hasSpanText(wild, "Bullet 2 -- scale and adoption"));   // a user macro
+    CHECK(hasSpanText(wild, "Total"));
+    // ... while arguments that are machinery stay out of reach.
+    CHECK(!hasSpanText(wild, "GDM.png"));
+    CHECK(!hasSpanText(wild, "https://echansen.org"));
+    CHECK(hasSpanText(wild, "echansen.org"));     // the link text, not its URL
+    CHECK(!hasSpanText(wild, "0.5em"));
+    CHECK(!hasSpanText(wild, "1em"));
+    CHECK(!hasSpanText(wild, "8em"));
+    CHECK(!hasSpanText(wild, "l"));
+    CHECK(!hasSpanText(wild, "c"));
+    CHECK(!hasSpanText(wild, "2"));
+    // A date is text even though it has no letters in it.
+    LatexDoc dates = LatexDoc::parse(
+        "\\begin{document}\\raisebox{0.5em}{\\textit{2014 - 2019}}"
+        "\\normalfont{11/2025 - ...}\\end{document}");
+    CHECK(hasSpanText(dates, "2014 - 2019"));
+    CHECK(hasSpanText(dates, "11/2025 - ..."));
+    CHECK(!hasSpanText(dates, "0.5em"));
+    LatexDoc refs = LatexDoc::parse(
+        "\\begin{document}\\label{sec:intro}\\cite{knuth1984}"
+        "\\includegraphics{fig.pdf}\\input{chapter}Real text\\end{document}");
+    CHECK(refs.spans.size() == 1 && refs.spans[0].display == "Real text");
+
+    GROUP("latex:click-refuses");
+    // A click on something the reader does not know must not open the nearest
+    // text instead: editing the wrong line is worse than editing nothing.
+    CHECK(doc.spanForClick({12, 13}, "Photograph") == nullptr);
+    CHECK(doc.spanForClick({7}, "Introduction") != nullptr);
+    // With nothing to match on (a logo, a glyph the PDF cannot name), the
+    // nearest span is still offered.
+    CHECK(doc.spanForClick({12}, "") != nullptr);
+    // A click that reports a whole line finds the span inside it.
+    CHECK(doc.spanForClick({12}, "First thing and more")->display == "First thing");
 
     GROUP("latex:verbatim");
     LatexDoc verb = LatexDoc::parse(

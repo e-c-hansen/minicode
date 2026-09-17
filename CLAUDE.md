@@ -141,6 +141,18 @@ same way Markdown does; `LatexView` takes the editor's slot in
 - **Compiles are debounced (0.6s) and generation-counted**; a result from a
   stale run is dropped. The scroll position and zoom are restored by page index
   and point, since the `PDFDestination` belongs to the old document.
+- **Unknown commands are looked through, not skipped.** Real documents (and
+  custom classes like an Overleaf resume) wrap their text in `\normalfont{}`,
+  `\raisebox{}{}`, `\href{}{}` and the author's own macros; text the reader
+  cannot see is text the preview cannot edit, and the click then lands on the
+  wrong line. So `LatexDoc` skips only a list of known machinery commands
+  (`\label`, `\includegraphics`, `\setlength`, ...) and otherwise enters the
+  first braced argument that `looksLikeProse` accepts. That heuristic is what
+  keeps `{0.5em}`, `{l}`, `{sec:intro}`, `{GDM.png}` and URLs out, while
+  letting `{2014 - 2019}` (digits plus spaces) in.
+- **A click that matches nothing refuses.** `spanForClick` returns null rather
+  than the nearest span whenever there was a real word to match on, because
+  opening the wrong text for editing is worse than opening none.
 - **Click to source**: PDFKit gives the page point and the word under it,
   SyncTeX gives candidate lines, `LatexDoc::spanForClick` picks the span.
   **TeX reports the line a paragraph *closed* on**, usually one or two past the

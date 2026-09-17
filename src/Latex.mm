@@ -563,10 +563,16 @@ static const CGFloat kStatusHeight = 26;
     for (const SyncTexHit &h : hits)
         if (tag == 0 || h.tag == tag) lines.push_back(h.line);
 
-    PDFSelection *word = [page selectionForWordAtPoint:pagePoint];
-    const LatexSpan *span = _doc.spanForClick(lines, Utf8(word.string ?: @""));
+    // The word under the pointer names what was clicked. When the PDF cannot
+    // give one (a glyph from a picture font, a logo), fall back to the whole
+    // line, which the matcher can still place.
+    NSString *clicked = [page selectionForWordAtPoint:pagePoint].string ?: @"";
+    if (clicked.length < 2)
+        clicked = [page selectionForLineAtPoint:pagePoint].string ?: clicked;
+    const LatexSpan *span = _doc.spanForClick(lines, Utf8(clicked));
     if (!span) {
-        [self setStatus:@"That part of the page is not editable text" busy:NO];
+        [self setStatus:@"That is not text MiniCode can trace back to the source"
+                   busy:NO];
         return;
     }
 

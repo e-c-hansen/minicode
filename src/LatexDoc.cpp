@@ -33,11 +33,20 @@ const char *const kFieldCommands[] = {
     "subsubsection", "paragraph", "subparagraph", "caption", "thanks",
     "institute", "subtitle", "titlerunning", "authorrunning", nullptr};
 
-// Commands we look *through*: their content is ordinary prose, so it becomes
-// Text spans of its own rather than being skipped with the command.
-const char *const kTransparentCommands[] = {
-    "textbf", "textit", "emph", "texttt", "textsc", "textrm", "textsf",
-    "underline", "footnote", "mbox", "text", "textnormal", "uline", nullptr};
+// Commands whose braced arguments are never prose: file names, labels, lengths,
+// package options. Everything else is looked *through*, because a real document
+// wraps its text in all sorts of commands, including the author's own macros,
+// and text the reader cannot see is text the preview cannot edit.
+const char *const kSkipCommands[] = {
+    "label", "ref", "eqref", "pageref", "cite", "citep", "citet", "nocite",
+    "includegraphics", "usepackage", "documentclass", "input", "include",
+    "bibliography", "bibliographystyle", "pagestyle", "thispagestyle",
+    "setlength", "addtolength", "setcounter", "addtocounter", "vspace",
+    "hspace", "rule", "hyphenation", "graphicspath", "hypersetup",
+    "definecolor", "pagenumbering", "newcommand", "renewcommand",
+    "providecommand", "newenvironment", "renewenvironment", "DeclareRobustCommand",
+    "DeclareMathOperator", "geometry", "bibitem", "url", "hyperref",
+    "newcolumntype", "columnwidth", "multicolumn", nullptr};
 
 // Content that must be passed over verbatim.
 const char *const kVerbatimEnvs[] = {"verbatim", "Verbatim", "lstlisting",
@@ -54,6 +63,50 @@ const char *const kListEnvs[] = {"itemize", "enumerate", "description",
 // Environments that take a column specification we must not read as text.
 const char *const kSpecEnvs[] = {"tabular", "tabularx", "array", "longtable",
                                  "tabulary", nullptr};
+
+// Is this braced argument a piece of prose, or a machine argument that happens
+// to sit in braces? Commands vary too much to tabulate, so judge the content:
+// "Senior Research Engineer" is text, "0.5em", "l", "sec:intro",
+// "https://example.com" and "GDM.png" are not.
+bool looksLikeProse(const std::string &g) {
+    if (g.empty()) return false;
+    bool hasLetter = false, hasSpace = false, hasColon = false, hasDigit = false;
+    for (char c : g) {
+        if (isLetter(c)) hasLetter = true;
+        else if (c == ' ' || c == '\n' || c == '\t') hasSpace = true;
+        else if (c == ':') hasColon = true;
+        else if (c >= '0' && c <= '9') hasDigit = true;
+    }
+    // Letters, or a span of digits with spaces in it: "2014 - 2019" is text a
+    // reader would want to change, "2" is an argument.
+    if (!hasLetter && !(hasDigit && hasSpace)) return false;
+    if (hasColon && !hasSpace) return false;      // labels, URLs, mailto:
+    if (g.find("://") != std::string::npos) return false;
+
+    // A length: digits, then a unit, with nothing else.
+    std::size_t k = 0;
+    if (k < g.size() && (g[k] == '-' || g[k] == '+')) k++;
+    std::size_t digits = k;
+    while (k < g.size() && ((g[k] >= '0' && g[k] <= '9') || g[k] == '.')) k++;
+    if (k > digits) {
+        std::string unit = g.substr(k);
+        static const char *const kUnits[] = {"pt", "em", "ex", "cm", "mm", "in",
+                                             "bp", "sp", "mu", "px", "", nullptr};
+        if (contains(kUnits, unit)) return false;
+    }
+    // A file name for an image or another source file.
+    std::size_t dot = g.find_last_of('.');
+    if (dot != std::string::npos && !hasSpace) {
+        static const char *const kExts[] = {"png", "jpg", "jpeg", "pdf", "eps",
+                                            "tex", "bib", "cls", "sty", nullptr};
+        std::string ext = g.substr(dot + 1);
+        for (char &c : ext) c = (char)std::tolower((unsigned char)c);
+        if (contains(kExts, ext)) return false;
+    }
+    // A single letter is a column or alignment specifier, not a word.
+    if (g.size() == 1) return false;
+    return true;
+}
 
 // The whitespace at the start of the line containing `off`.
 std::string lineIndent(const std::string &s, std::size_t off) {
@@ -256,18 +309,30 @@ struct Parser {
                 i = save;
             return;
         }
-        if (contains(kTransparentCommands, name)) {
+        if (contains(kSkipCommands, name)) {
+            // Its arguments are machinery; step over them whole.
             skipOptionalArgs();
-            std::size_t save = i;
-            skipSpace();
-            if (i < n && s[i] == '{') i++;     // step inside; '}' ends the run
-            else i = save;
+            skipBraceArgs(2);
             return;
         }
-        // Anything else: step over its arguments so their contents (file
-        // names, labels, package options) are never offered as text.
+        // Everything else is looked through: \normalfont{...}, \raisebox{1em}{...},
+        // \href{url}{text} and the author's own macros all wrap prose we want to
+        // reach. Arguments that are clearly not prose are stepped over, and the
+        // first one that is gets entered, so its text becomes a span of its own
+        // (the matching '}' ends the run, in the main loop).
         skipOptionalArgs();
-        skipBraceArgs(2);
+        for (int arg = 0; arg < 3; arg++) {
+            std::size_t save = i;
+            skipBlanks();
+            if (!(i < n && s[i] == '{')) { i = save; return; }
+            std::size_t a = 0, b = 0, open = i;
+            group('{', '}', &a, &b);
+            if (looksLikeProse(s.substr(a, b - a))) {
+                i = open + 1;                  // step inside and read it as text
+                return;
+            }
+            skipOptionalArgs();                // e.g. \makebox[8em][l]{...}
+        }
     }
 
     void beginEnv(std::size_t cmdStart) {
@@ -386,21 +451,29 @@ const LatexSpan *LatexDoc::spanForClick(const std::vector<int> &lines,
     const LatexSpan *firstSeen = nullptr;
 
     for (int pass = 0; pass < 2; pass++) {
-        // Pass 0 insists on the clicked word; pass 1 takes the nearest span.
-        if (pass == 1 && needle.empty()) break;
+        // Pass 0 insists on the clicked text. Pass 1 takes the nearest span,
+        // but only when there was nothing usable to match on: opening the
+        // wrong text for editing is worse than refusing to open any.
+        if (pass == 1 && needle.size() >= 2) break;
         for (int line : lines) {
             for (int delta : kNearby) {
                 for (const LatexSpan *sp : spansOnLine(line + delta)) {
                     if (!firstSeen) firstSeen = sp;
                     if (pass == 1) return sp;
-                    if (!needle.empty() &&
-                        normalized(sp->display).find(needle) != std::string::npos)
+                    if (needle.empty()) continue;
+                    std::string hay = normalized(sp->display);
+                    if (hay.find(needle) != std::string::npos) return sp;
+                    // The click may report a whole line, which several spans
+                    // together make up; then the span is inside the clicked
+                    // text rather than the other way round.
+                    if (hay.size() >= 4 && needle.find(hay) != std::string::npos)
                         return sp;
                 }
             }
         }
     }
-    return firstSeen;
+    // Nothing matched what was clicked: refuse rather than offer the wrong text.
+    return (needle.size() >= 2) ? nullptr : firstSeen;
 }
 
 int LatexDoc::lineAt(const std::string &src, std::size_t offset) {
