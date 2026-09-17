@@ -3,6 +3,7 @@
 #import "EditorController.h"
 #import "Terminal.h"
 #import "Browser.h"
+#import "Latex.h"
 #import "Search.h"
 #import "AppSettings.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
@@ -276,6 +277,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
 @property(nonatomic, copy)   NSString *sourceText;   // raw file text (edited)
 @property(nonatomic, copy)   NSString *currentExt;
 @property(nonatomic, assign) BOOL isMarkdown;
+@property(nonatomic, assign) BOOL isLatex;
 @property(nonatomic, assign) BOOL previewMode;       // markdown: rendered vs source
 @property(nonatomic, assign) BOOL dirty;             // unsaved changes
 @property(nonatomic, strong) NSDate *fileModDate;    // on-disk mtime we last saw
@@ -288,6 +290,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
 @property(nonatomic, strong) TerminalView *terminal;
 @property(nonatomic, strong) DragBar *termDivider;
 @property(nonatomic, strong) BrowserView *browser;
+@property(nonatomic, strong) LatexView *latex;
 @property(nonatomic, assign) BOOL terminalVisible;
 @property(nonatomic, assign) BOOL browserVisible;
 @property(nonatomic, assign) CGFloat terminalHeight;
@@ -559,6 +562,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     }];
 
     self.editorScroll.panelColor = [cfg background:Surface::Editor];
+    [self.latex applySettings];
     self.textView.insertionPointColor = [cfg text:Surface::Editor];
     [self recolorEditor];
 
@@ -723,6 +727,9 @@ static NSColor *ColorForStyle(TokenStyle s) {
     if (self.isMarkdown) {
         [s appendFormat:@"⇧⌘P   Markdown preview  (now: %@)\n",
             self.previewMode ? @"rendered" : @"source"];
+    } else if (self.isLatex) {
+        [s appendFormat:@"⇧⌘P   LaTeX preview  (now: %@)\n",
+            self.previewMode ? @"typeset" : @"source"];
     }
     [s appendString:@"\n⇧⌘H   Hide these hints"];
     return s;
@@ -759,8 +766,15 @@ static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hide
                          : H;
     NSRect topRect = NSMakeRect(0, termH, W, MAX(0, H - termH));
 
+    // The LaTeX preview sits in the editor's slot, in place of the text view.
+    BOOL showLatex = showEditor && self.latex != nil && self.isLatex &&
+                     self.previewMode;
     self.editorScroll.frame = topRect;
-    self.editorScroll.hidden = !showEditor;
+    self.editorScroll.hidden = !showEditor || showLatex;
+    if (self.latex) {
+        self.latex.frame = topRect;
+        self.latex.hidden = !showLatex;
+    }
     if (self.browser) {
         self.browser.frame = topRect;
         self.browser.hidden = !showBrowser;
@@ -1320,7 +1334,10 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     self.currentExt = ext;
     self.isMarkdown = [ext isEqualToString:@"md"] ||
                       [ext isEqualToString:@"markdown"];
-    self.previewMode = self.isMarkdown;   // markdown opens rendered by default
+    self.isLatex = [ext isEqualToString:@"tex"] || [ext isEqualToString:@"ltx"] ||
+                   [ext isEqualToString:@"latex"];
+    // Markdown and LaTeX both open in their preview.
+    self.previewMode = self.isMarkdown || self.isLatex;
     self.dirty = NO;
     [self recordModDate];
     [_recent removeObject:path];
@@ -1406,17 +1423,72 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     [self checkExternalChange];
 }
 
-- (BOOL)canTogglePreview { return self.isMarkdown; }
+- (BOOL)canTogglePreview { return self.isMarkdown || self.isLatex; }
 
 // Decide what to show for the current file/mode.
 - (void)refreshDisplay {
     self.showingMessage = NO;
+    if (self.isLatex && self.previewMode) {
+        [self showLatexPreview];
+        return;
+    }
+    if (self.latex) { self.latex.hidden = YES; [self relayoutRightArea]; }
     if (self.isMarkdown && self.previewMode) {
         self.textView.editable = NO;
         [self renderMarkdown:self.sourceText];
     } else {
         [self displaySourceEditable];
     }
+}
+
+// Typeset the current buffer and show the PDF where the editor sits. The
+// preview keeps its own copy of the source; edits made in it come back through
+// onSourceEdited and land in the buffer exactly as typing would.
+- (void)showLatexPreview {
+    self.textView.editable = NO;
+    if (!self.latex) {
+        self.latex = [[LatexView alloc] initWithPath:self.currentPath
+                                              source:self.sourceText ?: @""];
+        __weak EditorController *weakSelf = self;
+        self.latex.onSourceEdited = ^(NSString *newSource) {
+            [weakSelf latexDidEditSource:newSource];
+        };
+        [self.rightArea addSubview:self.latex];
+    } else {
+        [self.latex setPath:self.currentPath source:self.sourceText ?: @""];
+    }
+    [self relayoutRightArea];
+    [self.window makeFirstResponder:self.latex];
+}
+
+// Cmd+Z with the preview open steps back through the edits made in it. The
+// text view handles undo itself whenever it has focus, so this only runs when
+// the responder chain got as far as the window's delegate.
+- (BOOL)latexIsShowing {
+    return self.latex != nil && !self.latex.isHidden;
+}
+- (void)undo:(id)sender {
+    if ([self latexIsShowing]) [self.latex undoEdit];
+    else NSBeep();
+}
+- (void)redo:(id)sender {
+    if ([self latexIsShowing]) [self.latex redoEdit];
+    else NSBeep();
+}
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(undo:))
+        return [self latexIsShowing] && [self.latex canUndoEdit];
+    if (item.action == @selector(redo:))
+        return [self latexIsShowing] && [self.latex canRedoEdit];
+    return YES;
+}
+
+// An edit made in the PDF preview leaves the buffer dirty, like any typing.
+- (void)latexDidEditSource:(NSString *)newSource {
+    if ([newSource isEqualToString:self.sourceText]) return;
+    self.sourceText = newSource;
+    self.dirty = YES;
+    [self updateTitle];
 }
 
 // Show the raw text as an editable, monospaced, syntax-highlighted document.
@@ -1639,7 +1711,7 @@ static NSColor *ContrastColor(const Rgba &c) {
 }
 
 - (void)togglePreview:(id)sender {
-    if (!self.isMarkdown) {
+    if (!self.canTogglePreview) {
         NSBeep();
         return;
     }
@@ -1653,7 +1725,7 @@ static NSColor *ContrastColor(const Rgba &c) {
 - (void)updateTitle {
     NSString *name = self.currentPath.lastPathComponent ?: @"MiniCode";
     NSString *flag = self.dirty ? @"● " : @"";
-    NSString *mode = (self.isMarkdown && self.previewMode) ? @"  [Preview]" : @"";
+    NSString *mode = (self.canTogglePreview && self.previewMode) ? @"  [Preview]" : @"";
     self.window.title = [NSString stringWithFormat:@"%@%@ — MiniCode%@",
                          flag, name, mode];
     self.window.documentEdited = self.dirty;

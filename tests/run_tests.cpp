@@ -5,7 +5,10 @@
 #include "TerminalStream.h"
 #include "Settings.h"
 #include "LineComments.h"
+#include "LatexDoc.h"
+#include "SyncTex.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -986,6 +989,259 @@ void testSettingsColorEditing() {
     CHECK(colorIs(Settings::parse(narrow(line)).text(Surface::Terminal), 0xFF0000));
 }
 
+// ------------------------------------------------------------------- latex
+
+// The span covering `text`, or nullptr.
+const LatexSpan *spanWithText(const LatexDoc &doc, const std::string &text) {
+    for (const LatexSpan &sp : doc.spans)
+        if (sp.display == text) return &sp;
+    return nullptr;
+}
+
+bool hasSpanText(const LatexDoc &doc, const std::string &text) {
+    return spanWithText(doc, text) != nullptr;
+}
+
+const char *kSampleTex =
+    "\\documentclass{article}\n"                       // 1
+    "\\usepackage{amsmath}\n"                          // 2
+    "\\title{My Paper}\n"                              // 3
+    "\\author{A. Writer}\n"                            // 4
+    "\\begin{document}\n"                              // 5
+    "\\maketitle\n"                                    // 6
+    "\\section{Introduction}\\label{sec:intro}\n"       // 7
+    "Some prose with \\textbf{bold} inside.\n"          // 8
+    "\n"                                               // 9
+    "Another paragraph, $x^2 + 1$ included.\n"          // 10
+    "\\begin{itemize}\n"                               // 11
+    "  \\item First thing\n"                           // 12
+    "  \\item Second thing\n"                          // 13
+    "\\end{itemize}\n"                                 // 14
+    "\\end{document}\n";                               // 15
+
+void testLatexDoc() {
+    std::string src = kSampleTex;
+    LatexDoc doc = LatexDoc::parse(src);
+
+    GROUP("latex:fields");
+    const LatexSpan *title = spanWithText(doc, "My Paper");
+    CHECK(title != nullptr);
+    CHECK(title && title->kind == LatexSpanKind::Field);
+    CHECK(title && title->command == "title");
+    CHECK(title && title->line == 3);
+    CHECK(title && src.substr(title->start, title->end - title->start) == "My Paper");
+    const LatexSpan *sec = spanWithText(doc, "Introduction");
+    CHECK(sec && sec->command == "section" && sec->line == 7);
+    CHECK(hasSpanText(doc, "A. Writer"));
+
+    GROUP("latex:skips-machinery");
+    // Package options, labels and class names are not prose, so are not offered.
+    CHECK(!hasSpanText(doc, "amsmath"));
+    CHECK(!hasSpanText(doc, "sec:intro"));
+    CHECK(!hasSpanText(doc, "article"));
+
+    GROUP("latex:text-runs");
+    // A styling command splits the run; its content is editable on its own.
+    CHECK(hasSpanText(doc, "Some prose with"));
+    CHECK(hasSpanText(doc, "bold"));
+    CHECK(hasSpanText(doc, "inside."));
+    // A blank line ends a paragraph.
+    const LatexSpan *para = spanWithText(doc, "Another paragraph,");
+    CHECK(para != nullptr);
+    CHECK(para && para->line == 10);
+    // Nothing before \begin{document} is treated as body text.
+    for (const LatexSpan &sp : doc.spans)
+        if (sp.kind == LatexSpanKind::Text) CHECK(sp.line >= 6);
+
+    GROUP("latex:math");
+    const LatexSpan *math = nullptr;
+    for (const LatexSpan &sp : doc.spans)
+        if (sp.kind == LatexSpanKind::Math) math = &sp;
+    CHECK(math != nullptr);
+    CHECK(math && src.substr(math->start, math->end - math->start) == "x^2 + 1");
+    LatexDoc envMath = LatexDoc::parse(
+        "\\begin{document}\\begin{align}\na &= b\n\\end{align}\\end{document}");
+    CHECK(envMath.spans.size() == 1);
+    CHECK(envMath.spans[0].kind == LatexSpanKind::Math);
+    CHECK(envMath.spans[0].display.find("a") != std::string::npos);
+
+    GROUP("latex:lists");
+    CHECK(doc.lists.size() == 1);
+    const LatexList &list = doc.lists[0];
+    CHECK(list.environment == "itemize");
+    CHECK(list.itemBodyStart.size() == 2);
+    CHECK(list.itemBodyEnd.size() == 2);
+    CHECK(list.indent == "  ");
+    const LatexSpan *first = spanWithText(doc, "First thing");
+    CHECK(first != nullptr);
+    CHECK(first && first->listIndex == 0 && first->itemIndex == 0);
+    const LatexSpan *second = spanWithText(doc, "Second thing");
+    CHECK(second && second->itemIndex == 1);
+
+    GROUP("latex:lines");
+    CHECK(LatexDoc::lineAt(src, 0) == 1);
+    CHECK(doc.spansOnLine(12).size() == 1);
+    CHECK(doc.spansOnLine(999).empty());
+
+    GROUP("latex:display-text");
+    CHECK(LatexDoc::displayText("a  b\n  c") == "a b c");
+    CHECK(LatexDoc::displayText("50\\% off \\& more") == "50% off & more");
+    CHECK(LatexDoc::displayText("a~b") == "a b");
+    CHECK(LatexDoc::displayText("The \\emph{fun} part") == "The fun part");
+    CHECK(LatexDoc::displayText("x % a comment\ny") == "x y");
+
+    GROUP("latex:replace");
+    LatexDoc::Edit e = LatexDoc::replaceSpan(src, *title, "A Better Title");
+    CHECK(e.source.find("\\title{A Better Title}") != std::string::npos);
+    CHECK(e.source.find("My Paper") == std::string::npos);
+    CHECK(e.source.substr(e.start, e.end - e.start) == "A Better Title");
+    // The rest of the file is untouched, byte for byte.
+    CHECK(e.source.substr(0, title->start) == src.substr(0, title->start));
+    CHECK(e.source.substr(e.end) == src.substr(title->end));
+    // Re-parsing the result finds the new text where the old one was.
+    LatexDoc after = LatexDoc::parse(e.source);
+    CHECK(hasSpanText(after, "A Better Title"));
+
+    GROUP("latex:add-item");
+    LatexDoc::Edit add = LatexDoc::addItem(src, list, 1, "Third thing");
+    CHECK(add.source.find("  \\item Second thing\n  \\item Third thing\n"
+                          "\\end{itemize}") != std::string::npos);
+    CHECK(add.source.substr(add.start, add.end - add.start) == "Third thing");
+    LatexDoc addedDoc = LatexDoc::parse(add.source);
+    CHECK(addedDoc.lists.size() == 1 && addedDoc.lists[0].itemBodyStart.size() == 3);
+    CHECK(hasSpanText(addedDoc, "Third thing"));
+    // Inserting in the middle keeps the order.
+    LatexDoc::Edit mid = LatexDoc::addItem(src, list, 0, "Middle");
+    CHECK(mid.source.find("First thing\n  \\item Middle\n  \\item Second") !=
+          std::string::npos);
+    // A list written on one line still gets a well-formed new item.
+    std::string oneLine =
+        "\\begin{document}\\begin{itemize}\\item one\\end{itemize}\\end{document}";
+    LatexDoc oneDoc = LatexDoc::parse(oneLine);
+    CHECK(oneDoc.lists.size() == 1);
+    LatexDoc::Edit oneAdd = LatexDoc::addItem(oneLine, oneDoc.lists[0], 0, "two");
+    CHECK(LatexDoc::parse(oneAdd.source).lists[0].itemBodyStart.size() == 2);
+    CHECK(hasSpanText(LatexDoc::parse(oneAdd.source), "two"));
+
+    GROUP("latex:click");
+    // SyncTeX names the line a paragraph closed on, one past the prose here.
+    const LatexSpan *hit = doc.spanForClick({9}, "prose");
+    CHECK(hit && hit->display == "Some prose with");
+    // The word decides between two items whose lines both look plausible.
+    CHECK(doc.spanForClick({13, 14}, "First")->display == "First thing");
+    CHECK(doc.spanForClick({13, 14}, "Second")->display == "Second thing");
+    // A heading is found on its own line.
+    CHECK(doc.spanForClick({7}, "Introduction")->display == "Introduction");
+    // Without a usable word, the nearest span still wins.
+    CHECK(doc.spanForClick({12}, "")->display == "First thing");
+    CHECK(doc.spanForClick({12}, "nowhere")->display == "First thing");
+    CHECK(doc.spanForClick({}, "First") == nullptr);
+    // The PDF reads math back without its markup, so matching ignores it.
+    CHECK(doc.spanForClick({10}, "x2")->kind == LatexSpanKind::Math);
+    CHECK(doc.spanForClick({10}, "paragraph,")->display == "Another paragraph,");
+    CHECK(doc.spanForClick({900}, "First") == nullptr);
+
+    GROUP("latex:verbatim");
+    LatexDoc verb = LatexDoc::parse(
+        "\\begin{document}\\begin{verbatim}\n\\section{no}\n"
+        "\\end{verbatim}\nafter\\end{document}");
+    CHECK(!hasSpanText(verb, "no"));
+    CHECK(hasSpanText(verb, "after"));
+
+    GROUP("latex:tabular");
+    LatexDoc tab = LatexDoc::parse(
+        "\\begin{document}\\begin{tabular}{|l|r|}\nApples & 3 \\\\\n"
+        "\\end{tabular}\\end{document}");
+    CHECK(!hasSpanText(tab, "|l|r|"));
+    CHECK(hasSpanText(tab, "Apples"));   // each cell is editable on its own
+    CHECK(hasSpanText(tab, "3"));
+
+    GROUP("latex:description");
+    LatexDoc desc = LatexDoc::parse(
+        "\\begin{document}\\begin{description}\n\\item[Term] meaning\n"
+        "\\end{description}\\end{document}");
+    CHECK(hasSpanText(desc, "Term"));
+    CHECK(hasSpanText(desc, "meaning"));
+    CHECK(desc.lists.size() == 1 && desc.lists[0].itemBodyStart.size() == 1);
+
+    GROUP("latex:robustness");
+    // Unterminated input must not hang or read past the end.
+    CHECK(LatexDoc::parse("\\section{unclosed").spans.size() == 1);
+    CHECK(LatexDoc::parse("\\begin{itemize}\\item x").lists.size() == 1);
+    CHECK(LatexDoc::parse("$x").spans.size() <= 1);
+    CHECK(LatexDoc::parse("").spans.empty());
+    CHECK(LatexDoc::parse("\\").spans.empty());
+}
+
+// ------------------------------------------------------------------ synctex
+
+// Two boxes on page 1: source line 7 near the top, line 12 lower down.
+// Values are scaled points (1pt = 65536sp); y is the baseline of the box.
+const char *kSampleSyncTex =
+    "SyncTeX Version:1\n"
+    "Input:1:/tmp/doc.tex\n"
+    "Input:2:/tmp/other.tex\n"
+    "Output:pdf\n"
+    "Magnification:1000\n"
+    "Unit:1\n"
+    "X Offset:0\n"
+    "Y Offset:0\n"
+    "Content:\n"
+    "!753\n"
+    "{1\n"
+    "[1,7:4718592,6553600:19660800,655360,0\n"   // x=72 y=100 w=300 h=10
+    "h1,7:4718592,6553600:19660800,655360,0\n"
+    "[1,12:4718592,19660800:13107200,655360,0\n" // x=72 y=300 w=200 h=10
+    "]\n"
+    "]\n"
+    "}1\n"
+    "Postamble:\n";
+
+void testSyncTex() {
+    SyncTexIndex idx = SyncTexIndex::parse(kSampleSyncTex);
+
+    GROUP("synctex:parse");
+    CHECK(idx.valid());
+    CHECK(idx.recordCount() == 3);
+    CHECK(idx.pathForTag(1) == "/tmp/doc.tex");
+    CHECK(idx.tagForPath("/tmp/doc.tex") == 1);
+    CHECK(idx.tagForPath("doc.tex") == 1);          // matched by file name
+    CHECK(idx.tagForPath("/elsewhere/other.tex") == 2);
+    CHECK(idx.tagForPath("missing.tex") == 0);
+
+    GROUP("synctex:hit");
+    // A point inside the first box resolves to its line.
+    std::vector<SyncTexHit> hits = idx.hitsAtPoint(1, 100, 95);
+    CHECK(!hits.empty());
+    CHECK(!hits.empty() && hits[0].line == 7);
+    CHECK(!hits.empty() && hits[0].distance == 0.0);
+    CHECK(!hits.empty() && hits[0].tag == 1);
+    // The box is reported in points, measured from the top-left of the page.
+    CHECK(!hits.empty() && std::abs(hits[0].x - 72.0) < 0.01);
+    CHECK(!hits.empty() && std::abs(hits[0].width - 300.0) < 0.01);
+    CHECK(!hits.empty() && std::abs(hits[0].y - 90.0) < 0.01);
+
+    // Inside the second box.
+    hits = idx.hitsAtPoint(1, 100, 295);
+    CHECK(!hits.empty() && hits[0].line == 12);
+
+    // Between them: nothing contains the point, so the nearest box wins, and
+    // the other line is still offered as a candidate.
+    hits = idx.hitsAtPoint(1, 100, 260);
+    CHECK(hits.size() == 2);
+    CHECK(!hits.empty() && hits[0].line == 12);
+    CHECK(hits.size() > 1 && hits[1].line == 7);
+
+    // One hit per source line, and never from another page.
+    CHECK(idx.hitsAtPoint(1, 100, 95).size() == 2);
+    CHECK(idx.hitsAtPoint(2, 100, 95).empty());
+
+    GROUP("synctex:robustness");
+    CHECK(!SyncTexIndex::parse("").valid());
+    CHECK(!SyncTexIndex::parse("SyncTeX Version:1\nContent:\n{1\nnonsense\n").valid());
+    CHECK(SyncTexIndex::parse(kSampleSyncTex).hitsAtPoint(1, 0, 0, 1).size() == 1);
+}
+
 }  // namespace
 
 int main() {
@@ -996,6 +1252,8 @@ int main() {
     testSettings();
     testSettingsColorEditing();
     testLineComments();
+    testLatexDoc();
+    testSyncTex();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -5,7 +5,8 @@
                                         NSOutlineViewDelegate,
                                         NSSplitViewDelegate,
                                         NSTextViewDelegate,
-                                        NSWindowDelegate>
+                                        NSWindowDelegate,
+                                        NSMenuItemValidation>
 @property(nonatomic, readonly) BOOL canTogglePreview;
 @property(nonatomic, readonly, strong) NSWindow *window;
 @property(nonatomic, readonly, copy) NSString *rootPath;
@@ -14,6 +15,8 @@
 - (void)openFolder:(id)sender;    // menu action
 - (void)saveCurrentFile:(id)sender;   // Cmd+S
 - (void)togglePreview:(id)sender;     // Markdown: source <-> rendered
+- (void)undo:(id)sender;              // Cmd+Z; the text view handles its own
+- (void)redo:(id)sender;              // Shift+Cmd+Z
 - (void)toggleHints:(id)sender;       // Shift+Cmd+H shortcut-hints overlay
 - (void)toggleTerminal:(id)sender;    // Ctrl+` bottom terminal dock
 - (void)toggleBrowser:(id)sender;     // Shift+Cmd+B embedded browser

@@ -251,7 +251,7 @@ static void BuildMenu(void) {
     [menubar addItem:viewItem];
     NSMenu *viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
     NSMenuItem *toggle =
-        [[NSMenuItem alloc] initWithTitle:@"Toggle Markdown Preview"
+        [[NSMenuItem alloc] initWithTitle:@"Toggle Preview"
                                    action:@selector(togglePreview:)
                             keyEquivalent:@"p"];
     toggle.keyEquivalentModifierMask =

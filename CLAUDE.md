@@ -34,6 +34,13 @@ isolation. Keep them dependency-free.
   per-line errors, defaults, and the resolved color of every surface
   (opacity applied, fallbacks from `window.*`). All color decisions live here
   so they are unit-tested; the GUI only converts `Rgba` to NSColor.
+- `src/LatexDoc.{h,cpp}` — LaTeX source -> the byte ranges that hold editable
+  text (fields, prose runs, list items, math), plus the two edits the preview
+  can make (replace a span, add an `\item`). A structural reader, not a
+  typesetter: it reports only what it understands, and an edit replaces exactly
+  one byte range, so unknown macros can never be damaged.
+- `src/SyncTex.{h,cpp}` — reads the `.synctex` file TeX writes beside the PDF:
+  a point on a page -> candidate source lines, best first.
 - `src/TerminalStream.{h,cpp}` — pty byte stream -> styled lines (SGR colors,
   in-line cursor movement) + shell-integration events (OSC 133 marks, OSC 7
   cwd). A line model, not a screen: handles sequences and UTF-8 split across
@@ -52,6 +59,8 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
   and posts `MCSettingsDidChangeNotification`.
 - `src/Terminal.{h,mm}` — shell panel: zsh on a pty via forkpty, log-style view.
 - `src/Browser.{h,mm}` — WKWebView panel.
+- `src/Latex.{h,mm}` — LaTeX preview: runs tectonic, shows the PDF with PDFKit,
+  and turns a double-click into a popover editing the source behind that text.
 - `src/Search.{h,mm}` — scoped, project-wide text search window.
 
 ## UI map (read this before UI work)
@@ -67,6 +76,7 @@ container (PanelHost, laid out by hand in layoutContainer)
 │   └── rightArea (PanelHost, laid out by hand in relayoutRightArea)
 │       ├── editorScroll → textView (NSTextView)   top slot, bg #1E1E1E
 │       ├── browser (BrowserView)                  top slot when open
+│       ├── latex (LatexView)                     editor's slot, .tex preview
 │       ├── terminal (TerminalView)                docked bottom, bg #181818
 │       └── termDivider (DragBar)                  kept topmost
 ├── status bar (buildStatusBarInContainer)        bottom strip
@@ -114,6 +124,43 @@ container (PanelHost, laid out by hand in layoutContainer)
 - Fonts: system font for Markdown/UI, `monospacedSystemFontOfSize:` 12-13 for
   code and terminal.
 
+## LaTeX preview (read before touching it)
+
+Opening a `.tex`/`.ltx`/`.latex` file sets `isLatex` and opens in preview, the
+same way Markdown does; `LatexView` takes the editor's slot in
+`relayoutRightArea` (the text view hides, the split logic is unchanged).
+
+- **tectonic does the typesetting.** Found via `MINICODE_TECTONIC`, then
+  `~/Library/Application Support/MiniCode/bin`, then PATH and the Homebrew
+  directories (a Finder-launched app has a short PATH). If it is missing the
+  panel offers to download the pinned release into Application Support.
+- **The buffer is typeset from a hidden sibling** `.<name>.minicode.tex` in the
+  document's own folder, so relative `\input`/`\includegraphics` still resolve
+  and the user's file is never written. It is deleted when tectonic exits.
+  Output (PDF + `.synctex.gz`) goes to `NSTemporaryDirectory()/MiniCode-latex`.
+- **Compiles are debounced (0.6s) and generation-counted**; a result from a
+  stale run is dropped. The scroll position and zoom are restored by page index
+  and point, since the `PDFDestination` belongs to the old document.
+- **Click to source**: PDFKit gives the page point and the word under it,
+  SyncTeX gives candidate lines, `LatexDoc::spanForClick` picks the span.
+  **TeX reports the line a paragraph *closed* on**, usually one or two past the
+  text, so nearby lines are searched and the word decides between them. The
+  word match is normalized to letters and digits, because the PDF reads math
+  back as `x2` where the source says `x^2`.
+- **Edits are byte splices.** The popover holds the span's own LaTeX source
+  (not plain text), so no escaping is invented and nothing is re-serialized.
+  Edits arrive back at `EditorController` through `onSourceEdited`, mark the
+  buffer dirty, and are saved only by Cmd+S. Preview edits have their own undo
+  stack inside `LatexView` (source snapshots, capped at 50), reached through
+  `undo:`/`redo:` on the responder chain, with `EditorController` forwarding
+  when focus never got as far as the preview. The text view keeps its own undo
+  for typing; the two stacks are separate.
+- Headless testing worked well here: drive `openEditorForPage:point:`,
+  `startAddItem:` and `commitEdit:` directly from a `MINICODE_LATEXTEST` block,
+  finding page points with `[PDFDocument findString:]`. Point
+  `MINICODE_TECTONIC` and `TECTONIC_CACHE_DIR` at scratch copies so the test
+  neither needs the network nor touches the user's cache.
+
 ## Current state (handoff, 2026-09-17)
 
 - Everything is merged to `main` and pushed (`linux-port` points at the same
@@ -127,7 +174,14 @@ container (PanelHost, laid out by hand in layoutContainer)
 - Linux port has caught up: settings file with transparency and swatches,
   Ctrl+/, Ctrl+Shift+T, divider drags, built and checked in Docker (see
   Verification). Blur and live color picking remain macOS-only.
-- Next up per the user: UI changes.
+- New since then (macOS only, not yet in `linux/`): the LaTeX preview. 479 core
+  checks pass, the build is warning-free, and a headless run of the app checked
+  38 things end to end (typeset, click a heading/item/equation, edit, add an
+  item, undo and redo, the log on a bad document, the missing-tectonic panel,
+  no scratch file left behind). tectonic 0.17.0 is installed at
+  `~/Library/Application Support/MiniCode/bin/tectonic`, put there by the app's
+  own Download button, which was exercised the same way.
+- Next up per the user: the Linux port of the LaTeX preview, tested in Docker.
 
 ## Verification reality (important)
 

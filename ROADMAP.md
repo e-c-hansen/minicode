@@ -4,6 +4,18 @@ A running list of things not yet built, roughly ordered by value. Nothing here
 is required for the current version to stand on its own; this is where it could
 go next.
 
+## LaTeX (done, with room to grow)
+
+Shipped: tectonic typesets the buffer, PDFKit shows it, and double-clicking
+text on the page edits the source behind it, including adding list entries.
+What is left, roughly in order of value:
+
+- Add a table row the way a list entry is added now (the column count and the
+  `&` separators are already in reach of `LatexDoc`).
+- Click the page to move the cursor to that line in the source view.
+- A LaTeX grammar for the syntax highlighter, so the source view is colored.
+- Error markers in the source view from tectonic's log, instead of a log pane.
+
 ## Media rendering (images and video)
 
 Open an image or video file and see it, instead of the "binary file" message.
