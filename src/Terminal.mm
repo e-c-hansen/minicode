@@ -9,7 +9,10 @@
 //     hooks just before the first prompt. The hooks emit OSC 133 marks (prompt,
 //     command start, command end + status) and OSC 7 (cwd), and blank the
 //     prompt text, since the panel draws its own.
-//   * TerminalStream (pure C++) turns the pty bytes into text and those events.
+//   * TerminalStream (pure C++) turns the pty bytes into styled lines and
+//     those events. The last line of the output view is "live": the stream
+//     re-sends it whole whenever it changes (colors, \r progress lines,
+//     erase-in-line), and the view replaces it until a newline ends it.
 //   * Typed lines go to the pty. At the prompt they are commands; while a
 //     command runs they are that program's input. Echo is off while zsh reads
 //     a command (the panel shows it in the header instead) and on while a
@@ -125,7 +128,7 @@ static NSString *IntegrationDirectory(void) {
     BOOL _atPrompt;              // zsh is waiting for a command
     BOOL _commandStarted;        // saw 133;C for the command in flight
     BOOL _userCommand;           // the command in flight came from the input
-    BOOL _overwriteLine;         // saw a lone \r; next text replaces the line
+    NSUInteger _liveStart;       // where the live line begins in the output
 }
 @property(nonatomic, strong) NSScrollView *outScroll;
 @property(nonatomic, strong) TerminalOutputView *output;
@@ -285,6 +288,8 @@ static NSString *IntegrationDirectory(void) {
     _historyIdx = _history.count;
     if ([trimmed isEqualToString:@"clear"]) {   // handled locally
         self.output.string = @"";
+        _liveStart = 0;
+        _stream.breakLine();
         return;
     }
 
@@ -433,6 +438,7 @@ static NSString *IntegrationDirectory(void) {
         }
         if (key == "TERM" || key == "TERM_PROGRAM" ||
             key == "TERM_PROGRAM_VERSION" || key == "TERM_SESSION_ID" ||
+            key == "COLORTERM" ||
             key == "COLUMNS" || key == "LINES" ||
             key == "MINICODE_USER_ZDOTDIR")
             continue;
@@ -440,7 +446,10 @@ static NSString *IntegrationDirectory(void) {
             hasLocale = true;
         env.push_back(kv);
     }
-    env.push_back("TERM=dumb");            // no screen emulator (yet)
+    // Colors and in-line cursor movement are understood, so programs may use
+    // them. Full-screen programs will still misdraw: there is no screen model.
+    env.push_back("TERM=xterm-256color");
+    env.push_back("COLORTERM=truecolor");
     env.push_back("TERM_PROGRAM=MiniCode");
     env.push_back("PAGER=cat");
     env.push_back("GIT_PAGER=cat");
@@ -463,7 +472,6 @@ static NSString *IntegrationDirectory(void) {
     _atPrompt = NO;
     _commandStarted = NO;
     _userCommand = NO;
-    _overwriteLine = NO;
     _winsize = {};
     [self updateWindowSize];
     struct winsize ws = _winsize;
@@ -580,20 +588,12 @@ static NSString *IntegrationDirectory(void) {
 - (void)receive:(NSData *)data generation:(int)generation {
     if (generation != _generation) return;
     auto events = _stream.feed((const char *)data.bytes, data.length);
+    NSTextStorage *ts = self.output.textStorage;
+    [ts beginEditing];
     for (const TermEvent &e : events) {
         switch (e.kind) {
-        case TermEvent::Text: {
-            NSString *s = [[NSString alloc] initWithBytes:e.text.data()
-                                                   length:e.text.size()
-                                                 encoding:NSUTF8StringEncoding];
-            if (s) [self appendOutput:s];
-            break;
-        }
-        case TermEvent::CarriageReturn:
-            _overwriteLine = YES;
-            break;
-        case TermEvent::Backspace:
-            [self eraseLastCharacter];
+        case TermEvent::Line:
+            [self replaceLiveLine:e.runs ended:e.ended];
             break;
         case TermEvent::PromptStart:
             _atPrompt = YES;
@@ -619,60 +619,97 @@ static NSString *IntegrationDirectory(void) {
             break;
         }
     }
+    [ts endEditing];
+    [self scrollToEnd];
     [self updateSecureInput];
 }
 
-- (void)appendOutput:(NSString *)text {
-    if (!text.length) return;
-    if (_overwriteLine) {
-        _overwriteLine = NO;
-        // "\r\n" never gets here (the stream folds it), but "\r" then a later
-        // newline can: that only ends the line, it doesn't erase it.
-        if (![text hasPrefix:@"\n"]) [self eraseCurrentLine];
+// ---------------------------------------------------------------- styling
+static NSFont *TermFont(BOOL bold, BOOL italic) {
+    static NSFont *fonts[4];
+    int i = (bold ? 1 : 0) | (italic ? 2 : 0);
+    if (!fonts[i]) {
+        NSFont *f = [NSFont monospacedSystemFontOfSize:12
+            weight:bold ? NSFontWeightBold : NSFontWeightRegular];
+        if (italic) {
+            NSFontDescriptor *d = [f.fontDescriptor fontDescriptorWithSymbolicTraits:
+                f.fontDescriptor.symbolicTraits | NSFontDescriptorTraitItalic];
+            f = [NSFont fontWithDescriptor:d size:12] ?: f;
+        }
+        fonts[i] = f;
     }
-    [self append:text color:THex(0xD4D4D4)];
+    return fonts[i];
 }
 
-// Start of the last line in the output.
-- (NSUInteger)currentLineStart {
-    NSString *s = self.output.textStorage.string;
-    NSRange nl = [s rangeOfString:@"\n" options:NSBackwardsSearch];
-    return nl.location == NSNotFound ? 0 : NSMaxRange(nl);
+static const unsigned kDefaultFg = 0xD4D4D4, kDefaultBg = 0x181818;
+
+- (NSDictionary *)attributesForStyle:(const TermStyle &)st {
+    unsigned fg = st.fg.kind == TermColor::Default ? kDefaultFg : st.fg.rgb();
+    bool hasBg = st.bg.kind != TermColor::Default;
+    unsigned bg = hasBg ? st.bg.rgb() : kDefaultBg;
+    if (st.inverse) { std::swap(fg, bg); hasBg = true; }
+
+    NSMutableDictionary *a = [NSMutableDictionary dictionary];
+    a[NSFontAttributeName] = TermFont(st.bold, st.italic);
+    NSColor *fgColor = THex(fg);
+    if (st.dim) fgColor = [fgColor colorWithAlphaComponent:0.6];
+    a[NSForegroundColorAttributeName] = fgColor;
+    if (hasBg) a[NSBackgroundColorAttributeName] = THex(bg);
+    if (st.underline) a[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle);
+    if (st.strike) a[NSStrikethroughStyleAttributeName] = @(NSUnderlineStyleSingle);
+    return a;
 }
 
-- (void)eraseCurrentLine {
+// ---------------------------------------------------------------- output
+// Replace the live line (everything from _liveStart on) with `runs`. If the
+// line ended, add its newline and start the next live line after it.
+- (void)replaceLiveLine:(const std::vector<TermRun> &)runs ended:(bool)ended {
+    NSMutableAttributedString *line = [[NSMutableAttributedString alloc] init];
+    for (const TermRun &r : runs) {
+        NSString *s = [[NSString alloc] initWithBytes:r.text.data()
+                                               length:r.text.size()
+                                             encoding:NSUTF8StringEncoding];
+        if (!s.length) continue;
+        [line appendAttributedString:[[NSAttributedString alloc]
+            initWithString:s attributes:[self attributesForStyle:r.style]]];
+    }
+    if (ended)
+        [line appendAttributedString:[[NSAttributedString alloc]
+            initWithString:@"\n" attributes:[self attributesForStyle:TermStyle()]]];
+
     NSTextStorage *ts = self.output.textStorage;
-    NSUInteger start = [self currentLineStart];
-    if (start < ts.length)
-        [ts deleteCharactersInRange:NSMakeRange(start, ts.length - start)];
+    if (_liveStart > ts.length) _liveStart = ts.length;
+    [ts replaceCharactersInRange:NSMakeRange(_liveStart, ts.length - _liveStart)
+            withAttributedString:line];
+    if (ended) _liveStart = ts.length;
 }
 
-- (void)eraseLastCharacter {
-    NSTextStorage *ts = self.output.textStorage;
-    if (ts.length == 0 || ts.length <= [self currentLineStart]) return;
-    NSRange last = [ts.string rangeOfComposedCharacterSequenceAtIndex:
-                    ts.length - 1];
-    [ts deleteCharactersInRange:last];
-}
-
+// Panel text (headers, statuses) goes below a live line that has content, so
+// end that line first and tell the stream it now starts afresh.
 - (void)ensureNewline {
-    NSString *s = self.output.string;
-    if (s.length && ![s hasSuffix:@"\n"]) [self append:@"\n" color:THex(0xD4D4D4)];
-    _overwriteLine = NO;
+    NSTextStorage *ts = self.output.textStorage;
+    if (_liveStart < ts.length) {
+        [ts appendAttributedString:[[NSAttributedString alloc]
+            initWithString:@"\n" attributes:[self attributesForStyle:TermStyle()]]];
+        _stream.breakLine();
+    }
+    _liveStart = ts.length;
 }
 
 - (void)appendLine:(NSString *)line color:(NSColor *)color {
-    [self append:[line stringByAppendingString:@"\n"] color:color];
-}
-
-- (void)append:(NSString *)text color:(NSColor *)color {
+    [self ensureNewline];
     NSDictionary *attrs = @{
-        NSFontAttributeName:
-            [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular],
+        NSFontAttributeName: TermFont(NO, NO),
         NSForegroundColorAttributeName: color,
     };
-    [self.output.textStorage appendAttributedString:
-        [[NSAttributedString alloc] initWithString:text attributes:attrs]];
+    NSTextStorage *ts = self.output.textStorage;
+    [ts appendAttributedString:[[NSAttributedString alloc]
+        initWithString:[line stringByAppendingString:@"\n"] attributes:attrs]];
+    _liveStart = ts.length;
+    [self scrollToEnd];
+}
+
+- (void)scrollToEnd {
     [self.output scrollRangeToVisible:
         NSMakeRange(self.output.textStorage.length, 0)];
 }

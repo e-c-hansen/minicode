@@ -10,7 +10,7 @@ for future sessions: architecture, workflow, and the hard-won gotchas.
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
   run on Apple Silicon and to keep granted permissions stable).
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  99 checks over the tokenizer, Markdown parser, and terminal output stream. Exits non-zero on failure.
+  142 checks over the tokenizer, Markdown parser, and terminal output stream. Exits non-zero on failure.
 - `make run [DIR=~/path]` — build and launch.
 - `make icon` — regenerate `resources/AppIcon.icns` from `tools/makeicon.m`.
 - `make dist-zip` / `make dmg` — package for distribution.
@@ -25,9 +25,10 @@ isolation. Keep them dependency-free.
 - `src/SyntaxHighlighter.{h,cpp}` — hand-rolled lexer, grammar chosen by file
   extension. Emits `{start, length, style}` tokens.
 - `src/MarkdownParser.{h,cpp}` — CommonMark subset -> flat list of styled runs.
-- `src/TerminalStream.{h,cpp}` — pty byte stream -> text + shell-integration
-  events (OSC 133 marks, OSC 7 cwd). Handles sequences and UTF-8 split
-  across reads.
+- `src/TerminalStream.{h,cpp}` — pty byte stream -> styled lines (SGR colors,
+  in-line cursor movement) + shell-integration events (OSC 133 marks, OSC 7
+  cwd). A line model, not a screen: handles sequences and UTF-8 split across
+  reads.
 
 The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 
@@ -87,8 +88,12 @@ synthetic clicks/keys. So:
   ECHO flag, read from the master with `tcgetattr`, tells us when a program
   wants hidden input. Everything the child needs is built before `fork`: only
   async-signal-safe calls between fork and exec. `PROMPT_SP` prints before
-  precmd, so it is unset in .zshenv. `TERM=dumb` and pagers are `cat` until
-  there is a screen emulator. When testing headless, give the shell a scratch
+  precmd, so it is unset in .zshenv. `TERM=xterm-256color` so tools emit
+  color; pagers stay `cat` because there is no screen model. The last line of
+  the output view is "live": the stream re-sends it whole on every change and
+  the view replaces text from `_liveStart`. Panel-written lines (headers,
+  exit statuses) must go through `ensureNewline`, which ends the live line and
+  calls `breakLine()` on the stream, or the next update overwrites them. When testing headless, give the shell a scratch
   `HOME` and `ZDOTDIR`: `/etc/zshrc` sets `HISTFILE` from them, and test
   commands otherwise land in the user's real `~/.zsh_history`.
 - **Markdown**: block elements call `ensureLineStart` so they aren't glued to

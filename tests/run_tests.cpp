@@ -286,155 +286,272 @@ void testMarkdown() {
 // ---------------------------------------------------------- terminal stream
 namespace {
 
-// All Text events joined, as the view would show them (ignoring \r/\b).
-std::string streamText(const std::vector<TermEvent> &events) {
-    std::string s;
-    for (const TermEvent &e : events)
-        if (e.kind == TermEvent::Text) s += e.text;
-    return s;
+// Plays events back the way the panel does: ended lines are committed, the
+// live line is replaced by each new Line event.
+struct Panel {
+    std::vector<std::vector<TermRun>> lines;   // ended lines
+    std::vector<TermRun> live;
+    std::string events;                        // trace: L l A C D P
+    int lastStatus = -1;
+    std::string lastDir;
+
+    void apply(const std::vector<TermEvent> &evs) {
+        for (const TermEvent &e : evs) {
+            switch (e.kind) {
+            case TermEvent::Line:
+                events += e.ended ? 'L' : 'l';
+                if (e.ended) { lines.push_back(e.runs); live.clear(); }
+                else live = e.runs;
+                break;
+            case TermEvent::PromptStart:  events += 'A'; break;
+            case TermEvent::CommandStart: events += 'C'; break;
+            case TermEvent::CommandEnd:
+                events += 'D'; lastStatus = e.status; break;
+            case TermEvent::Directory:
+                events += 'P'; lastDir = e.text; break;
+            }
+        }
+    }
+    static std::string plain(const std::vector<TermRun> &runs) {
+        std::string s;
+        for (const TermRun &r : runs) s += r.text;
+        return s;
+    }
+    // Everything on screen as plain text, lines joined with \n.
+    std::string text() const {
+        std::string s;
+        for (const auto &l : lines) s += plain(l) + "\n";
+        return s + plain(live);
+    }
+};
+
+Panel run(const std::string &input) {
+    TerminalStream ts;
+    Panel p;
+    p.apply(ts.feed(input));
+    return p;
 }
 
 // Feed `input` one byte at a time, the worst case for split sequences.
-std::vector<TermEvent> feedBytewise(const std::string &input) {
+Panel runBytewise(const std::string &input) {
     TerminalStream ts;
-    std::vector<TermEvent> all;
-    for (char c : input) {
-        auto part = ts.feed(&c, 1);
-        all.insert(all.end(), part.begin(), part.end());
-    }
-    return all;
+    Panel p;
+    for (char c : input) p.apply(ts.feed(&c, 1));
+    return p;
 }
 
-// A compact trace of event kinds: T=text R=\r B=\b A C D P(ath).
-std::string kinds(const std::vector<TermEvent> &events) {
-    std::string s;
-    for (const TermEvent &e : events) {
-        switch (e.kind) {
-            case TermEvent::Text:           s += 'T'; break;
-            case TermEvent::CarriageReturn: s += 'R'; break;
-            case TermEvent::Backspace:      s += 'B'; break;
-            case TermEvent::PromptStart:    s += 'A'; break;
-            case TermEvent::CommandStart:   s += 'C'; break;
-            case TermEvent::CommandEnd:     s += 'D'; break;
-            case TermEvent::Directory:      s += 'P'; break;
-        }
-    }
-    return s;
+// The style of the run containing `needle` anywhere in the panel.
+const TermStyle *styleOf(const Panel &p, const std::string &needle) {
+    auto search = [&](const std::vector<TermRun> &runs) -> const TermStyle * {
+        for (const TermRun &r : runs)
+            if (r.text.find(needle) != std::string::npos) return &r.style;
+        return nullptr;
+    };
+    for (const auto &l : p.lines)
+        if (const TermStyle *s = search(l)) return s;
+    return search(p.live);
 }
 
-const TermEvent *firstOf(const std::vector<TermEvent> &events,
-                         TermEvent::Kind kind) {
-    for (const TermEvent &e : events) if (e.kind == kind) return &e;
-    return nullptr;
+bool isIndexed(const TermColor &c, int index) {
+    return c.kind == TermColor::Indexed && c.index == index;
 }
 
 void testTerminalStream() {
     GROUP("term:text");
     {
-        TerminalStream ts;
-        auto ev = ts.feed("hello\r\nworld\r\n");
-        CHECK(streamText(ev) == "hello\nworld\n");   // \r\n becomes \n
-        CHECK(kinds(ev) == "T");
+        Panel p = run("hello\r\nworld\r\n");
+        CHECK(p.text() == "hello\nworld\n");    // \r\n ends a line
+        CHECK(p.events == "LL");
+        Panel partial = run("prompt> ");       // no newline: a live line
+        CHECK(partial.events == "l" && partial.text() == "prompt> ");
+        CHECK(run("a\r\n\r\nb").text() == "a\n\nb");   // empty lines survive
     }
 
     GROUP("term:escapes-dropped");
     {
-        TerminalStream ts;
-        // SGR color, erase line, cursor move, private mode, charset select.
-        auto ev = ts.feed("\x1b[1;31mred\x1b[0m \x1b[K\x1b[10;5H\x1b[?25lok\x1b(B!");
-        CHECK(streamText(ev) == "red ok!");
+        // Cursor visibility, other-line movement, charset select: no text.
+        CHECK(run("\x1b[?25lok\x1b[2A\x1b[10;5H\x1b(B!\x1b[?25h").text() == "ok!");
         // An OSC we don't use (window title) and a DCS string vanish too.
-        auto ev2 = ts.feed("\x1b]0;my title\x07" "a\x1bPq#0;2\x1b\\b");
-        CHECK(streamText(ev2) == "ab");
-        CHECK(kinds(ev2) == "T");
+        CHECK(run("\x1b]0;my title\x07" "a\x1bPq#0;2\x1b\\b").text() == "ab");
+    }
+
+    GROUP("term:sgr-basic");
+    {
+        Panel p = run("\x1b[31mred\x1b[0m plain \x1b[1;4;32mbold\x1b[22m under\x1b[m\n");
+        CHECK(p.text() == "red plain bold under\n");
+        const TermStyle *red = styleOf(p, "red");
+        CHECK(red && isIndexed(red->fg, 1) && !red->bold);
+        const TermStyle *plain = styleOf(p, "plain");
+        CHECK(plain && *plain == TermStyle());
+        const TermStyle *bold = styleOf(p, "bold");
+        CHECK(bold && bold->bold && bold->underline && isIndexed(bold->fg, 2));
+        const TermStyle *under = styleOf(p, "under");   // 22 ends bold only
+        CHECK(under && !under->bold && under->underline && isIndexed(under->fg, 2));
+        CHECK(p.lines.size() == 1 && p.lines[0].size() == 4);  // one run per style
+    }
+
+    GROUP("term:sgr-colors");
+    {
+        // Bright, 256-color (both separators), truecolor, backgrounds, resets.
+        Panel p = run("\x1b[91ma\x1b[38;5;213mb\x1b[38:5:81mc"
+                      "\x1b[38;2;10;20;30md\x1b[38:2::1:2:3me"
+                      "\x1b[44;103mf\x1b[39;49mg\x1b[2;3;7;9mh\x1b[23;27;29mi");
+        CHECK(p.text() == "abcdefghi");
+        CHECK(isIndexed(styleOf(p, "a")->fg, 9));
+        CHECK(isIndexed(styleOf(p, "b")->fg, 213));
+        CHECK(isIndexed(styleOf(p, "c")->fg, 81));
+        const TermColor &d = styleOf(p, "d")->fg;
+        CHECK(d.kind == TermColor::RGB && d.r == 10 && d.g == 20 && d.b == 30);
+        const TermColor &e = styleOf(p, "e")->fg;
+        CHECK(e.kind == TermColor::RGB && e.r == 1 && e.g == 2 && e.b == 3);
+        const TermStyle *f = styleOf(p, "f");
+        CHECK(isIndexed(f->bg, 11) && e.kind == TermColor::RGB);
+        const TermStyle *g = styleOf(p, "g");
+        CHECK(g->fg.kind == TermColor::Default && g->bg.kind == TermColor::Default);
+        const TermStyle *h = styleOf(p, "h");
+        CHECK(h->dim && h->italic && h->inverse && h->strike);
+        const TermStyle *i = styleOf(p, "i");
+        CHECK(i->dim && !i->italic && !i->inverse && !i->strike);
+        // Style carries across lines, as in a real terminal.
+        Panel carry = run("\x1b[35mone\ntwo\x1b[0m");
+        CHECK(isIndexed(styleOf(carry, "two")->fg, 5));
+        // A malformed extended color is ignored rather than misread.
+        Panel bad = run("\x1b[38;5mx");
+        CHECK(styleOf(bad, "x")->fg.kind == TermColor::Default);
+    }
+
+    GROUP("term:palette");
+    {
+        TermColor c; c.kind = TermColor::Indexed;
+        c.index = 1;   CHECK(c.rgb() == 0xCD3131);
+        c.index = 16;  CHECK(c.rgb() == 0x000000);   // cube corner
+        c.index = 196; CHECK(c.rgb() == 0xFF0000);   // cube pure red
+        c.index = 213; CHECK(c.rgb() == 0xFF87FF);
+        c.index = 232; CHECK(c.rgb() == 0x080808);   // gray ramp ends
+        c.index = 255; CHECK(c.rgb() == 0xEEEEEE);
+        TermColor rgb; rgb.kind = TermColor::RGB; rgb.r = 1; rgb.g = 2; rgb.b = 3;
+        CHECK(rgb.rgb() == 0x010203);
+    }
+
+    GROUP("term:line-editing");
+    {
+        // \r then text overwrites in place; leftovers stay unless erased.
+        CHECK(run("10%\r20%\n").text() == "20%\n");
+        CHECK(run("abcdef\rXY\n").text() == "XYcdef\n");
+        CHECK(run("downloading 99%\r\x1b[Kdone\n").text() == "done\n");
+        // Erase to start of line, whole line, and N characters.
+        CHECK(run("abcdef\x1b[3D\x1b[1K\n").text() == "    ef\n");
+        CHECK(run("abcdef\x1b[2Kxy\n").text() == "      xy\n");
+        CHECK(run("abcdef\r\x1b[2C\x1b[2X\n").text() == "ab  ef\n");
+        // Backspace moves left; the next character overwrites.
+        CHECK(run("ab\bc\n").text() == "ac\n");
+        CHECK(run("|\b/\b-\n").text() == "-\n");
+        // Cursor to column (1-based), forward past the end pads with spaces.
+        CHECK(run("hello\x1b[1GJ\n").text() == "Jello\n");
+        CHECK(run("a\x1b[3Cb\n").text() == "a   b\n");
+        // Tabs move to the next multiple of 8, filling only past the end.
+        CHECK(run("ab\tc\n").text() == "ab      c\n");
+        CHECK(run("abcdefghij\r\tX\n").text() == "abcdefghXj\n");
+        // A spinner redraw keeps its color on the rewritten character.
+        Panel spin = run("\x1b[36m|\x1b[0m\r\x1b[36m/\x1b[0m");
+        CHECK(spin.text() == "/" && isIndexed(styleOf(spin, "/")->fg, 6));
+        // Combining marks join the previous character's cell.
+        CHECK(run("e\xCC\x81x\b!\n").text() == "e\xCC\x81!\n");
+    }
+
+    GROUP("term:live-line-updates");
+    {
+        // Across reads, the live line is re-sent whole and replaced.
+        TerminalStream ts;
+        Panel p;
+        p.apply(ts.feed("50%"));
+        p.apply(ts.feed("\r75%"));
+        CHECK(p.events == "ll" && p.text() == "75%");
+        p.apply(ts.feed("\r\n"));
+        CHECK(p.events == "llL" && p.text() == "75%\n");
+        // Moving the cursor alone changes nothing on screen: no event.
+        CHECK(ts.feed("\r").empty());
+        // The host breaking the line starts a fresh one.
+        p.apply(ts.feed("typed"));
+        ts.breakLine();
+        Panel q;
+        q.apply(ts.feed("next"));
+        CHECK(q.text() == "next");
+        // A huge unbroken line is ended automatically.
+        Panel big = run(std::string(TerminalStream::kMaxLineCells + 10, 'x'));
+        CHECK(big.lines.size() == 1 &&
+              Panel::plain(big.lines[0]).size() == TerminalStream::kMaxLineCells);
+        CHECK(Panel::plain(big.live).size() == 10);
     }
 
     GROUP("term:split-across-reads");
     {
-        // Byte-at-a-time delivery must give the same result as one read.
-        std::string input = "\x1b[32mgreen\x1b[0m caf\xC3\xA9 \xE2\x9C\x93\r\n"
+        std::string input = "\x1b[38;5;213mpink\x1b[0m caf\xC3\xA9 \xE2\x9C\x93\r\n"
+                            "50%\r\x1b[Kdone\r\n"
                             "\x1b]133;D;7\x07\x1b]7;file://h/tmp\x1b\\";
-        TerminalStream whole;
-        auto a = whole.feed(input);
-        auto b = feedBytewise(input);
-        CHECK(streamText(a) == "green caf\xC3\xA9 \xE2\x9C\x93\n");
-        CHECK(streamText(b) == streamText(a));
-        const TermEvent *end = firstOf(b, TermEvent::CommandEnd);
-        CHECK(end && end->status == 7);
-        const TermEvent *dir = firstOf(b, TermEvent::Directory);
-        CHECK(dir && dir->text == "/tmp");
-        // Half a UTF-8 character is held back, not emitted as garbage.
+        Panel whole = run(input);
+        Panel bytes = runBytewise(input);
+        CHECK(whole.text() == "pink caf\xC3\xA9 \xE2\x9C\x93\ndone\n");
+        CHECK(bytes.text() == whole.text());
+        CHECK(isIndexed(styleOf(bytes, "pink")->fg, 213));
+        CHECK(bytes.lastStatus == 7 && bytes.lastDir == "/tmp");
+        // Half a UTF-8 character is held back, not shown as garbage.
         TerminalStream ts;
-        auto first = ts.feed("x\xE2\x9C");
-        CHECK(streamText(first) == "x");
-        CHECK(streamText(ts.feed("\x93")) == "\xE2\x9C\x93");
+        Panel p;
+        p.apply(ts.feed("x\xE2\x9C"));
+        CHECK(p.text() == "x");
+        p.apply(ts.feed("\x93"));
+        CHECK(p.text() == "x\xE2\x9C\x93");
     }
 
     GROUP("term:invalid-utf8");
     {
-        TerminalStream ts;
-        auto ev = ts.feed("a\xFF" "b\xC0\xAF" "c\r\n");
-        CHECK(streamText(ev) == "a\xEF\xBF\xBD" "b\xEF\xBF\xBD\xEF\xBF\xBD" "c\n");
+        CHECK(run("a\xFF" "b\xC0\xAF" "c\n").text() ==
+              "a\xEF\xBF\xBD" "b\xEF\xBF\xBD\xEF\xBF\xBD" "c\n");
+        // A sequence cut short by ESC or ASCII becomes one replacement.
+        CHECK(run("\xE2\x9C" "a\xE2\x1b[31mb\n").text() ==
+              "\xEF\xBF\xBD" "a\xEF\xBF\xBD" "b\n");
+        CHECK(run("\xED\xA0\x80!\n").text() == "\xEF\xBF\xBD!\n");  // surrogate
     }
 
     GROUP("term:shell-integration");
     {
         TerminalStream ts;
-        auto ev = ts.feed("\x1b]133;A\x07");
-        CHECK(kinds(ev) == "A");
-        ev = ts.feed("\x1b]133;C\x07out\r\n\x1b]133;D;130\x07"
-                     "\x1b]7;file://Host.local/Users/me/my%20dir%25\x07\x1b]133;A\x07");
-        CHECK(kinds(ev) == "CTDPA");                 // order is preserved
-        CHECK(streamText(ev) == "out\n");
-        const TermEvent *end = firstOf(ev, TermEvent::CommandEnd);
-        CHECK(end && end->status == 130);
-        const TermEvent *dir = firstOf(ev, TermEvent::Directory);
-        CHECK(dir && dir->text == "/Users/me/my dir%");
+        Panel p;
+        p.apply(ts.feed("\x1b]133;A\x07"));
+        CHECK(p.events == "A");
+        p.apply(ts.feed("\x1b]133;C\x07out\r\npartial\x1b]133;D;130\x07"
+                        "\x1b]7;file://Host.local/Users/me/my%20dir%25\x07\x1b]133;A\x07"));
+        CHECK(p.events == "ACLlDPA");    // the live line is sent before D
+        CHECK(p.text() == "out\npartial");
+        CHECK(p.lastStatus == 130);
+        CHECK(p.lastDir == "/Users/me/my dir%");
         // D without a status, and ST (ESC \) instead of BEL as terminator.
         auto noStatus = ts.feed("\x1b]133;D\x1b\\");
-        CHECK(kinds(noStatus) == "D" && noStatus[0].status == 0);
-        // 133;B (end of prompt) is recognized and ignored.
-        CHECK(ts.feed("\x1b]133;B\x07").empty());
-        // A malformed OSC 7 doesn't produce a directory.
-        CHECK(!firstOf(ts.feed("\x1b]7;file://nohostpath\x07"),
-                       TermEvent::Directory));
-    }
-
-    GROUP("term:carriage-return");
-    {
-        TerminalStream ts;
-        auto ev = ts.feed("10%\r20%\r\n");
-        CHECK(kinds(ev) == "TRT");
-        CHECK(ev.size() == 3 && ev[0].text == "10%" && ev[2].text == "20%\n");
-        // \r split from its \n across reads is still just a line ending.
-        TerminalStream ts2;
-        auto a = ts2.feed("line\r");
-        auto b = ts2.feed("\nnext");
-        CHECK(kinds(a) == "T" && kinds(b) == "T");
-        CHECK(streamText(a) + streamText(b) == "line\nnext");
-        // \r followed by an escape sequence still counts as a return.
-        TerminalStream ts3;
-        CHECK(kinds(ts3.feed("50%\r\x1b[Kdone")) == "TRT");
-        // Backspace is reported so a spinner can erase its last character.
-        TerminalStream ts4;
-        CHECK(kinds(ts4.feed("|\b/")) == "TBT");
+        CHECK(noStatus.size() == 1 && noStatus[0].kind == TermEvent::CommandEnd &&
+              noStatus[0].status == 0);
+        CHECK(ts.feed("\x1b]133;B\x07").empty());   // recognized, ignored
+        CHECK(ts.feed("\x1b]7;file://nohostpath\x07").empty());
     }
 
     GROUP("term:robustness");
     {
-        // An OSC that never terminates is abandoned, and output resumes after
-        // its eventual terminator instead of being swallowed forever.
+        // An OSC that never terminates is abandoned; output resumes after its
+        // eventual terminator instead of being swallowed forever.
         TerminalStream ts;
-        std::string runaway = "\x1b]133;" + std::string(20000, 'x');
-        auto ev = ts.feed(runaway);
-        CHECK(streamText(ev).empty());
-        CHECK(streamText(ts.feed("\x07visible")) == "visible");
-        // ESC inside an OSC starts a new sequence rather than ending the text.
-        TerminalStream ts2;
-        CHECK(kinds(ts2.feed("\x1b]0;title\x1b]133;A\x07")) == "A");
-        // Other control characters are dropped; tabs are kept.
-        TerminalStream ts3;
-        CHECK(streamText(ts3.feed("a\x07\x01\tb")) == "a\tb");
+        Panel p;
+        p.apply(ts.feed("\x1b]133;" + std::string(20000, 'x')));
+        CHECK(p.text().empty());
+        p.apply(ts.feed("\x07visible"));
+        CHECK(p.text() == "visible");
+        // ESC inside an OSC starts a new sequence.
+        CHECK(run("\x1b]0;title\x1b]133;A\x07").events == "A");
+        // An overlong CSI is ignored whole, not half-applied.
+        std::string longCsi = "\x1b[" + std::string(200, '1') + "mz";
+        Panel lc = run(longCsi);
+        CHECK(lc.text() == "z" && *styleOf(lc, "z") == TermStyle());
+        // Other control characters are dropped.
+        CHECK(run("a\x07\x01" "b").text() == "ab");
     }
 }
 
