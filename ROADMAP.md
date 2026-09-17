@@ -55,7 +55,9 @@ macOS, and its terminal is VTE rather than the shared `TerminalStream`.
 
 ## Smaller polish
 
-- Settings: font size, theme, tab width.
+- Settings: the file (colors, opacity, blur) exists; font size, tab width and
+  the terminal's ANSI palette are natural next keys. The Search window and the
+  hints overlay don't follow it yet.
 - Search panel: live regex, and find-and-replace across files.
 - A `make release` is already scripted; a GitHub Action to run it on a tag would
   fully automate cutting versions.

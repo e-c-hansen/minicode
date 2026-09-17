@@ -4,9 +4,11 @@
 #import "Terminal.h"
 #import "Browser.h"
 #import "Search.h"
+#import "AppSettings.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #include "SyntaxHighlighter.h"
 #include "MarkdownParser.h"
+#include "LineComments.h"
 #include <string>
 
 // A plain container that relays every resize to a layout block, so we can
@@ -89,6 +91,36 @@ static const CGFloat kDragBarHeight = 12;
            : [NSColor colorWithSRGBRed:0x33 / 255.0 green:0x33 / 255.0
                                   blue:0x33 / 255.0 alpha:1]) set];
     NSRectFill(line);
+}
+@end
+
+// A scroll view whose panel background is a plain layer color behind the clip
+// view, which itself draws nothing. A clip view's own translucent
+// backgroundColor comes out opaque; a layer color composites correctly over
+// the blur or the desktop. NSScrollView lays out only its own parts, so the
+// backdrop is sized in tile.
+@interface PanelScrollView : NSScrollView
+@property(nonatomic, strong) NSColor *panelColor;
+@end
+@implementation PanelScrollView {
+    NSView *_backdrop;
+}
+- (instancetype)initWithFrame:(NSRect)frame {
+    if ((self = [super initWithFrame:frame])) {
+        self.drawsBackground = NO;
+        _backdrop = [[NSView alloc] initWithFrame:self.bounds];
+        _backdrop.wantsLayer = YES;
+        [self addSubview:_backdrop positioned:NSWindowBelow relativeTo:self.contentView];
+    }
+    return self;
+}
+- (void)tile {
+    [super tile];
+    _backdrop.frame = self.bounds;
+}
+- (void)setPanelColor:(NSColor *)color {
+    _panelColor = color;
+    _backdrop.layer.backgroundColor = color.CGColor;
 }
 @end
 
@@ -210,17 +242,24 @@ static NSColor *Hex(unsigned int rgb) {
                                alpha:1.0];
 }
 
+static const CGFloat kStatusBarHeight = 24;
+
+static std::u16string U16(NSString *s) {
+    std::u16string u(s.length, u'\0');
+    [s getCharacters:(unichar *)u.data() range:NSMakeRange(0, s.length)];
+    return u;
+}
+static NSString *FromU16(const std::u16string &u) {
+    return [NSString stringWithCharacters:(const unichar *)u.data() length:u.size()];
+}
+
+// Link value marking a clickable color in the settings file.
+static NSString *const kColorLink = @"minicode-color";
+
+// Panel, text and syntax colors come from the settings file (AppSettings);
+// Hex is for the fixed accents that aren't configurable.
 static NSColor *ColorForStyle(TokenStyle s) {
-    switch (s) {
-        case TokenStyle::Keyword:      return Hex(0x569CD6);
-        case TokenStyle::Type:         return Hex(0x4EC9B0);
-        case TokenStyle::String:       return Hex(0xCE9178);
-        case TokenStyle::Comment:      return Hex(0x6A9955);
-        case TokenStyle::Number:       return Hex(0xB5CEA8);
-        case TokenStyle::Preprocessor: return Hex(0xC586C0);
-        case TokenStyle::Function:     return Hex(0xDCDCAA);
-        default:                       return Hex(0xD4D4D4);
-    }
+    return [[AppSettings shared] syntax:s];
 }
 
 // ---------------------------------------------------------------------------
@@ -245,7 +284,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
 @property(nonatomic, strong) NSTextField *hintsLabel;
 @property(nonatomic, assign) BOOL hintsVisible;
 @property(nonatomic, strong) PanelHost *rightArea;
-@property(nonatomic, strong) NSScrollView *editorScroll;
+@property(nonatomic, strong) PanelScrollView *editorScroll;
 @property(nonatomic, strong) TerminalView *terminal;
 @property(nonatomic, strong) DragBar *termDivider;
 @property(nonatomic, strong) BrowserView *browser;
@@ -253,11 +292,18 @@ static NSColor *ColorForStyle(TokenStyle s) {
 @property(nonatomic, assign) BOOL browserVisible;
 @property(nonatomic, assign) CGFloat terminalHeight;
 @property(nonatomic, strong) NSSplitView *splitView;
-@property(nonatomic, strong) NSScrollView *sidebarScroll;
+@property(nonatomic, strong) PanelScrollView *sidebarScroll;
 @property(nonatomic, assign) BOOL sidebarCollapsed;
 @property(nonatomic, assign) CGFloat sidebarWidthBeforeCollapse;
 @property(nonatomic, assign) BOOL editorHidden;   // Shift+Cmd+E: file view hidden
 @property(nonatomic, strong) SearchPanel *searchPanel;
+@property(nonatomic, strong) NSVisualEffectView *blurView;   // window.blur
+@property(nonatomic, strong) NSView *titlebarView;   // drawn when customTitlebar
+@property(nonatomic, strong) NSTextField *titleLabel;
+@property(nonatomic, strong) NSTextField *settingsLabel;     // settings errors
+@property(nonatomic, assign) BOOL showingMessage;   // welcome/binary text shown
+@property(nonatomic, assign) NSUInteger colorLineStart;   // line the color panel edits
+@property(nonatomic, copy)   NSString *colorEditPath;
 @end
 
 @implementation EditorController
@@ -279,7 +325,11 @@ static NSColor *ColorForStyle(TokenStyle s) {
 - (void)showWindow {
     NSRect frame = NSMakeRect(0, 0, 1100, 720);
     NSUInteger style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                       NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
+                       NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable |
+                       // Content runs under the title bar, so MiniCode can draw
+                       // it (see applySettings); layoutContainer keeps the
+                       // panels below it.
+                       NSWindowStyleMaskFullSizeContentView;
     self.window = [[NSWindow alloc] initWithContentRect:frame
                                               styleMask:style
                                                 backing:NSBackingStoreBuffered
@@ -302,11 +352,10 @@ static NSColor *ColorForStyle(TokenStyle s) {
     split.delegate = self;   // pins sidebar width, prevents collapse-to-zero
 
     // --- sidebar (file tree)
-    NSScrollView *treeScroll = [[NSScrollView alloc] init];
+    PanelScrollView *treeScroll = [[PanelScrollView alloc] init];
     self.sidebarScroll = treeScroll;
     treeScroll.hasVerticalScroller = YES;
-    treeScroll.drawsBackground = YES;
-    treeScroll.backgroundColor = Hex(0x252526);
+    treeScroll.automaticallyAdjustsContentInsets = NO;   // colored in applySettings
 
     self.outline = [[ClickOutline alloc] init];
     __weak EditorController *weakSelf = self;
@@ -327,7 +376,9 @@ static NSColor *ColorForStyle(TokenStyle s) {
     self.outline.headerView = nil;
     self.outline.dataSource = self;
     self.outline.delegate = self;
-    self.outline.backgroundColor = Hex(0x252526);
+    // Clear, so the scroll view's color is the only one (a translucent color
+    // drawn twice would look more opaque than configured).
+    self.outline.backgroundColor = [NSColor clearColor];
     self.outline.rowSizeStyle = NSTableViewRowSizeStyleMedium;
     self.outline.indentationPerLevel = 14;
     self.outline.floatsGroupRows = NO;
@@ -335,11 +386,12 @@ static NSColor *ColorForStyle(TokenStyle s) {
     treeScroll.documentView = self.outline;
 
     // --- editor pane
-    NSScrollView *textScroll = [[NSScrollView alloc] init];
+    PanelScrollView *textScroll = [[PanelScrollView alloc] init];
     self.editorScroll = textScroll;
     textScroll.hasVerticalScroller = YES;
     textScroll.hasHorizontalScroller = YES;
     textScroll.autohidesScrollers = YES;
+    textScroll.automaticallyAdjustsContentInsets = NO;
 
     self.textView = [[NSTextView alloc] initWithFrame:frame];
     self.textView.editable = YES;
@@ -349,10 +401,14 @@ static NSColor *ColorForStyle(TokenStyle s) {
     self.textView.automaticSpellingCorrectionEnabled = NO;
     self.textView.automaticDashSubstitutionEnabled = NO;
     self.textView.usesFindBar = YES;               // Cmd+F find bar
+    // Links are only used for the color swatches in the settings file; keep
+    // their own colors and just show a pointing hand.
+    self.textView.linkTextAttributes =
+        @{NSCursorAttributeName: [NSCursor pointingHandCursor]};
     self.textView.incrementalSearchingEnabled = YES;
-    self.textView.backgroundColor = Hex(0x1E1E1E);
-    self.textView.textColor = Hex(0xD4D4D4);
-    self.textView.insertionPointColor = Hex(0xD4D4D4);
+    // The backdrop paints the background over the whole scroll view; the text
+    // view drawing it too would double a translucent color.
+    self.textView.drawsBackground = NO;
     self.textView.textContainerInset = NSMakeSize(8, 8);
     self.textView.automaticQuoteSubstitutionEnabled = NO;
     self.textView.minSize = NSMakeSize(0, 0);
@@ -371,18 +427,28 @@ static NSColor *ColorForStyle(TokenStyle s) {
     [split addSubview:treeScroll];
     [split addSubview:self.rightArea];
 
-    // Container holds: split view (top) + status bar (bottom) + hints overlay.
-    // Custom hotkeys (Ctrl+`, Cmd+B) are handled by a global key monitor in the
-    // app delegate, so they work regardless of which pane has focus.
-    NSView *container = [[NSView alloc] initWithFrame:frame];
-    const CGFloat barH = 24;
-    split.frame = NSMakeRect(0, barH, frame.size.width, frame.size.height - barH);
-    split.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    // Container holds, back to front: the blur, the title bar strip, the split
+    // view, the status bar (bottom) and the hints overlay. layoutContainer
+    // places them by hand.
+    PanelHost *container = [[PanelHost alloc] initWithFrame:frame];
+    self.blurView = [[NSVisualEffectView alloc] initWithFrame:frame];
+    self.blurView.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+    self.blurView.state = NSVisualEffectStateActive;   // stays frosted when inactive
+    self.blurView.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+    [container addSubview:self.blurView];
+    [self buildTitlebarInContainer:container];
     [container addSubview:split];
-    [self buildStatusBarInContainer:container height:barH];
+    [self buildStatusBarInContainer:container height:kStatusBarHeight];
     [self buildHintsPanelInContainer:container];
 
     self.window.contentView = container;
+    container.onLayout = ^{ [weakSelf layoutContainer]; };
+    [self applySettings];
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self selector:@selector(applySettings)
+               name:MCSettingsDidChangeNotification object:nil];
+    [self.window addObserver:self forKeyPath:@"title"
+                     options:NSKeyValueObservingOptionInitial context:NULL];
     [self showWelcome];
     [self.window makeKeyAndOrderFront:nil];
     [self.outline reloadData];
@@ -390,6 +456,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     // Set the divider AFTER the window is on screen and laid out — otherwise
     // autoresizing collapses the sidebar to zero width.
     [self.window layoutIfNeeded];
+    [self layoutContainer];
     [split adjustSubviews];
     [split setPosition:260 ofDividerAtIndex:0];
     [self.outline sizeLastColumnToFit];
@@ -397,7 +464,149 @@ static NSColor *ColorForStyle(TokenStyle s) {
     [self startWatching:_root.path];   // live tree updates
 }
 
-- (void)dealloc { [self stopWatching]; }
+- (void)dealloc {
+    [self stopWatching];
+    [self.window removeObserver:self forKeyPath:@"title"];
+}
+
+// The drawn title bar shows the window's title, which is set in several places.
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
+                        change:(NSDictionary *)change context:(void *)context {
+    if (object == self.window && [keyPath isEqualToString:@"title"])
+        self.titleLabel.stringValue = self.window.title ?: @"";
+    else
+        [super observeValueForKeyPath:keyPath ofObject:object change:change
+                              context:context];
+}
+
+// ------------------------------------------------------------ layout + look
+// Height of the title bar the content runs under (0 in full screen). Before
+// the window is on screen contentLayoutRect is empty, so ask the frame math.
+- (CGFloat)titlebarHeight {
+    NSWindow *w = self.window;
+    NSRect layout = w.contentLayoutRect;
+    if (NSIsEmptyRect(layout)) {
+        NSRect frame = w.frame;
+        return MAX(0, frame.size.height -
+                      [NSWindow contentRectForFrameRect:frame
+                                              styleMask:w.styleMask &
+                                  ~NSWindowStyleMaskFullSizeContentView].size.height);
+    }
+    return MAX(0, NSMaxY(w.contentView.bounds) - NSMaxY(layout));
+}
+
+- (void)layoutContainer {
+    NSView *c = self.window.contentView;
+    if (!c || !self.splitView) return;
+    CGFloat W = c.bounds.size.width, H = c.bounds.size.height;
+    CGFloat titleH = [self titlebarHeight];
+    self.blurView.frame = c.bounds;
+    self.titlebarView.frame = NSMakeRect(0, H - titleH, W, titleH);
+    // Traffic lights on the left; keep the title centered on the window.
+    self.titleLabel.frame = NSMakeRect(80, floor((titleH - 16) / 2), MAX(0, W - 160), 16);
+    self.splitView.frame = NSMakeRect(0, kStatusBarHeight, W,
+                                      MAX(0, H - kStatusBarHeight - titleH));
+    self.statusBar.frame = NSMakeRect(0, 0, W, kStatusBarHeight);
+    if (self.hintsVisible) [self updateHints];
+}
+
+- (void)buildTitlebarInContainer:(NSView *)container {
+    self.titlebarView = [[NSView alloc] initWithFrame:NSZeroRect];
+    self.titlebarView.wantsLayer = YES;
+    NSTextField *label = [NSTextField labelWithString:@""];
+    label.font = [NSFont titleBarFontOfSize:0];
+    label.alignment = NSTextAlignmentCenter;
+    label.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    self.titleLabel = label;
+    [self.titlebarView addSubview:label];
+    [container addSubview:self.titlebarView];
+}
+
+// Apply the settings file: window transparency and blur, the title bar, and
+// each panel's background and text colors. Runs at startup and whenever the
+// file changes.
+- (void)applySettings {
+    AppSettings *cfg = [AppSettings shared];
+    const Settings &st = cfg.settings;
+    NSWindow *w = self.window;
+
+    BOOL opaque = st.windowIsOpaque();
+    w.opaque = opaque;
+    w.backgroundColor = opaque ? [NSColor windowBackgroundColor]
+                               : [NSColor clearColor];
+    self.blurView.hidden = !st.blur();
+    self.blurView.material = cfg.material;
+
+    BOOL custom = st.customTitlebar();
+    w.titlebarAppearsTransparent = custom;
+    w.titleVisibility = custom ? NSWindowTitleHidden : NSWindowTitleVisible;
+    w.titlebarSeparatorStyle = custom ? NSTitlebarSeparatorStyleNone
+                                      : NSTitlebarSeparatorStyleAutomatic;
+    self.titlebarView.hidden = !custom;
+    self.titlebarView.layer.backgroundColor = [cfg background:Surface::Titlebar].CGColor;
+    self.titleLabel.textColor = [cfg text:Surface::Titlebar];
+
+    self.sidebarScroll.panelColor = [cfg background:Surface::Sidebar];
+    NSColor *treeText = [cfg text:Surface::Sidebar];
+    [self.outline enumerateAvailableRowViewsUsingBlock:^(NSTableRowView *row,
+                                                         NSInteger r) {
+        (void)r;
+        for (NSInteger i = 0; i < row.numberOfColumns; i++) {
+            NSTableCellView *cell = [row viewAtColumn:i];
+            if ([cell isKindOfClass:[NSTableCellView class]])
+                cell.textField.textColor = treeText;
+        }
+    }];
+
+    self.editorScroll.panelColor = [cfg background:Surface::Editor];
+    self.textView.insertionPointColor = [cfg text:Surface::Editor];
+    [self recolorEditor];
+
+    self.statusBar.layer.backgroundColor = [cfg background:Surface::Statusbar].CGColor;
+    self.statusLabel.textColor = [cfg text:Surface::Statusbar];
+    self.settingsLabel.textColor = [cfg text:Surface::Statusbar];
+    NSArray<NSString *> *errors = cfg.errors;
+    self.settingsLabel.stringValue = errors.count == 0 ? @"" :
+        [NSString stringWithFormat:@"Settings %@%@", errors.firstObject,
+            errors.count > 1
+                ? [NSString stringWithFormat:@" (and %lu more)",
+                   (unsigned long)errors.count - 1] : @""];
+    self.settingsLabel.toolTip = errors.count
+        ? [NSString stringWithFormat:@"%@\n\n%@", cfg.path,
+           [errors componentsJoinedByString:@"\n"]] : nil;
+
+    [w invalidateShadow];
+    [self layoutContainer];
+}
+
+// Redraw the open document in the current colors, keeping the scroll
+// position and selection.
+- (void)recolorEditor {
+    if (self.showingMessage || !self.currentPath) return;
+    if (self.isMarkdown && self.previewMode) {
+        NSPoint origin = self.editorScroll.contentView.bounds.origin;
+        [self renderMarkdown:self.sourceText];
+        [self.editorScroll.contentView scrollToPoint:origin];
+        [self.editorScroll reflectScrolledClipView:self.editorScroll.contentView];
+    } else {
+        NSMutableDictionary *typing = [self.textView.typingAttributes mutableCopy];
+        typing[NSForegroundColorAttributeName] =
+            [[AppSettings shared] text:Surface::Editor];
+        self.textView.typingAttributes = typing;
+        [self applyHighlighting];
+    }
+}
+
+// Cmd+, : open the settings file in this window, creating it first.
+- (void)openSettings:(id)sender {
+    AppSettings *cfg = [AppSettings shared];
+    if (![cfg ensureFileExists]) {
+        [self warn:[NSString stringWithFormat:@"Could not create %@.", cfg.path]];
+        return;
+    }
+    [self openFileAtPath:cfg.path];
+    [self focusEditor:nil];
+}
 
 - (NSMenu *)buildTreeContextMenu {
     NSMenu *m = [[NSMenu alloc] init];
@@ -417,12 +626,10 @@ static NSColor *ColorForStyle(TokenStyle s) {
 - (void)buildStatusBarInContainer:(NSView *)container height:(CGFloat)barH {
     self.statusBar = [[NSView alloc]
         initWithFrame:NSMakeRect(0, 0, container.bounds.size.width, barH)];
-    self.statusBar.wantsLayer = YES;
-    self.statusBar.layer.backgroundColor = Hex(0x007ACC).CGColor;  // VS Code blue
+    self.statusBar.wantsLayer = YES;   // colors set in applySettings
     self.statusBar.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;
 
     NSTextField *label = [NSTextField labelWithString:@"⇧⌘H  Shortcuts"];
-    label.textColor = [NSColor whiteColor];
     label.font = [NSFont systemFontOfSize:11];
     label.backgroundColor = [NSColor clearColor];
     label.frame = NSMakeRect(0, 3, container.bounds.size.width - 12, 16);
@@ -430,6 +637,15 @@ static NSColor *ColorForStyle(TokenStyle s) {
     label.autoresizingMask = NSViewWidthSizable;
     self.statusLabel = label;
     [self.statusBar addSubview:label];
+
+    // Left side: the first problem in the settings file, if any.
+    NSTextField *errors = [NSTextField labelWithString:@""];
+    errors.font = [NSFont systemFontOfSize:11];
+    errors.frame = NSMakeRect(12, 3, container.bounds.size.width * 0.6, 16);
+    errors.autoresizingMask = NSViewWidthSizable;
+    errors.lineBreakMode = NSLineBreakByTruncatingTail;
+    self.settingsLabel = errors;
+    [self.statusBar addSubview:errors];
     [container addSubview:self.statusBar];
 }
 
@@ -473,7 +689,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     CGFloat ph = ceil(textRect.size.height) + 2 * pad;
     self.hintsPanel.frame = NSMakeRect(
         container.bounds.size.width - pw - margin,
-        container.bounds.size.height - ph - margin, pw, ph);
+        container.bounds.size.height - [self titlebarHeight] - ph - margin, pw, ph);
     self.hintsLabel.frame = NSMakeRect(pad, pad, pw - 2 * pad, ph - 2 * pad);
 }
 
@@ -486,6 +702,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     [s appendString:@"⌘S    Save           ⌘F   Find in file\n"];
     [s appendString:@"⇧⌘F   Find in folder  ⌘Z   Undo   ⇧⌘Z  Redo\n"];
     [s appendString:@"⌘C    Copy           ⌘A   Select all\n"];
+    [s appendString:@"⌘/    Toggle comment  ⌘,   Settings\n"];
 
     [s appendString:@"\nFiles\n"];
     [s appendString:@"──────────────────────────\n"];
@@ -499,7 +716,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     [s appendString:@"↑ ↓   Browse tree     ⏎    Open   ⌃⇥  Previous\n"];
     [s appendFormat:@"⌘B    Toggle sidebar  ⇧⌘E  Editor  (%@)\n",
         self.editorHidden ? @"hidden" : @"open"];
-    [s appendFormat:@"⌘T / ⌃`   Terminal  (%@)\n",
+    [s appendFormat:@"⇧⌘T / ⌃` Terminal  (%@)\n",
         self.terminalVisible ? @"open" : @"hidden"];
     [s appendFormat:@"⇧⌘B   Browser   (%@)\n",
         self.browserVisible ? @"open" : @"hidden"];
@@ -809,7 +1026,7 @@ static const CGFloat kDividerGrabSlop = 5;
         ]];
     }
     cell.textField.stringValue = [node name];
-    cell.textField.textColor = Hex(0xCCCCCC);
+    cell.textField.textColor = [[AppSettings shared] text:Surface::Sidebar];
     cell.textField.font = [NSFont systemFontOfSize:12.5];
     NSString *sym = node.isDir ? @"folder.fill" : @"doc.text";
     NSImage *img = [NSImage imageWithSystemSymbolName:sym
@@ -1193,6 +1410,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 
 // Decide what to show for the current file/mode.
 - (void)refreshDisplay {
+    self.showingMessage = NO;
     if (self.isMarkdown && self.previewMode) {
         self.textView.editable = NO;
         [self renderMarkdown:self.sourceText];
@@ -1209,7 +1427,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     ps.lineSpacing = 2.0;
     NSDictionary *base = @{
         NSFontAttributeName: mono,
-        NSForegroundColorAttributeName: Hex(0xD4D4D4),
+        NSForegroundColorAttributeName: [[AppSettings shared] text:Surface::Editor],
         NSParagraphStyleAttributeName: ps,
     };
     NSString *content = self.sourceText ?: @"";
@@ -1225,16 +1443,18 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 // Recolor the current text storage in place (preserves cursor/selection).
 - (void)applyHighlighting {
     std::string cext = self.currentExt.UTF8String ? self.currentExt.UTF8String : "";
-    if (!SyntaxHighlighter::supports(cext)) return;
-
     NSTextStorage *storage = self.textView.textStorage;
     std::string text = storage.string.UTF8String ? storage.string.UTF8String : "";
-    std::vector<Token> tokens = SyntaxHighlighter::highlight(text, cext);
+    std::vector<Token> tokens;
+    if (SyntaxHighlighter::supports(cext))
+        tokens = SyntaxHighlighter::highlight(text, cext);
 
     [storage beginEditing];
     NSRange full = NSMakeRange(0, storage.length);
-    [storage addAttribute:NSForegroundColorAttributeName
-                    value:Hex(0xD4D4D4) range:full];   // reset baseline
+    [storage addAttribute:NSForegroundColorAttributeName   // reset baseline
+                    value:[[AppSettings shared] text:Surface::Editor] range:full];
+    [storage removeAttribute:NSBackgroundColorAttributeName range:full];
+    [storage removeAttribute:NSLinkAttributeName range:full];
     for (const Token &t : tokens) {
         NSUInteger a = [self utf16IndexForByte:t.start inUTF8:text];
         NSUInteger b = [self utf16IndexForByte:t.start + t.length inUTF8:text];
@@ -1243,7 +1463,149 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
                         value:ColorForStyle(t.style)
                         range:NSMakeRange(a, b - a)];
     }
+    if ([self isSettingsFile]) [self decorateColorsIn:storage];
     [storage endEditing];
+}
+
+// ------------------------------------------------ settings file: color swatches
+- (BOOL)isSettingsFile {
+    if (!self.currentPath) return NO;
+    NSString *mine = self.currentPath.stringByResolvingSymlinksInPath;
+    return [mine isEqualToString:
+        [AppSettings shared].path.stringByResolvingSymlinksInPath];
+}
+
+// Readable text over a swatch: black or white, judged against the color as it
+// appears over the editor background.
+static NSColor *ContrastColor(const Rgba &c) {
+    Rgba bg = [AppSettings shared].settings.background(Surface::Editor);
+    auto mix = [&](uint8_t v, uint8_t under) { return c.a * v + (1 - c.a) * under; };
+    double lum = (0.299 * mix(c.r, bg.r) + 0.587 * mix(c.g, bg.g) +
+                  0.114 * mix(c.b, bg.b)) / 255;
+    return lum > 0.55 ? [NSColor blackColor] : [NSColor whiteColor];
+}
+
+// Show every color value as a swatch of itself, clickable to pick a new one.
+- (void)decorateColorsIn:(NSTextStorage *)storage {
+    NSString *str = storage.string;
+    [str enumerateSubstringsInRange:NSMakeRange(0, str.length)
+                            options:NSStringEnumerationByLines
+                         usingBlock:^(NSString *line, NSRange lr, NSRange er, BOOL *stop) {
+        (void)er; (void)stop;
+        ColorSpan span;
+        if (!Settings::findColor(U16(line), span)) return;
+        [storage addAttributes:@{
+            NSBackgroundColorAttributeName: MCColor(span.color),
+            NSForegroundColorAttributeName: ContrastColor(span.color),
+            NSLinkAttributeName: kColorLink,
+        } range:NSMakeRange(lr.location + span.start, span.length)];
+    }];
+}
+
+- (BOOL)textView:(NSTextView *)tv clickedOnLink:(id)link atIndex:(NSUInteger)i {
+    if (![link isEqual:kColorLink]) return NO;
+    [self pickColorAtIndex:i];
+    return YES;
+}
+
+// Open the system color panel on the color at character index i. Picks
+// rewrite that line (uncommenting it if needed) and save, so the change
+// shows up live.
+- (void)pickColorAtIndex:(NSUInteger)i {
+    NSString *str = self.textView.string;
+    if (i > str.length) return;
+    NSUInteger start, contentsEnd;
+    [str getLineStart:&start end:NULL contentsEnd:&contentsEnd
+             forRange:NSMakeRange(i, 0)];
+    ColorSpan span;
+    if (!Settings::findColor(U16([str substringWithRange:
+            NSMakeRange(start, contentsEnd - start)]), span)) return;
+    self.colorLineStart = start;
+    self.colorEditPath = self.currentPath;
+    // Picks from this panel session undo together, apart from earlier typing.
+    [self.textView breakUndoCoalescing];
+    // Caret on the color, so nothing is selected when the panel also sends
+    // changeColor: to the text view.
+    [self.textView setSelectedRange:NSMakeRange(start + span.start, 0)];
+
+    NSColorPanel *panel = [NSColorPanel sharedColorPanel];
+    panel.showsAlpha = YES;
+    panel.continuous = YES;
+    panel.target = nil;   // setting the starting color must not count as a pick
+    panel.action = NULL;
+    panel.color = MCColor(span.color);
+    panel.target = self;
+    panel.action = @selector(colorPicked:);
+    [panel orderFront:nil];
+}
+
+- (void)colorPicked:(NSColorPanel *)panel {
+    NSTextView *tv = self.textView;
+    if (!self.colorEditPath || ![self.currentPath isEqualToString:self.colorEditPath] ||
+        !tv.editable)
+        return;
+    NSColor *c = [panel.color colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+    if (!c) return;
+    auto byte = [](CGFloat v) { return (uint8_t)lround(MIN(MAX(v, 0.0), 1.0) * 255); };
+    Rgba rgba;
+    rgba.r = byte(c.redComponent);
+    rgba.g = byte(c.greenComponent);
+    rgba.b = byte(c.blueComponent);
+    rgba.a = MIN(MAX(c.alphaComponent, 0.0), 1.0);
+
+    NSString *str = tv.string;
+    if (self.colorLineStart > str.length) return;
+    NSUInteger start, contentsEnd;
+    [str getLineStart:&start end:NULL contentsEnd:&contentsEnd
+             forRange:NSMakeRange(self.colorLineStart, 0)];
+    NSRange lineRange = NSMakeRange(start, contentsEnd - start);
+    std::u16string line = U16([str substringWithRange:lineRange]);
+    ColorSpan span;
+    if (!Settings::findColor(line, span)) return;   // the line was edited away
+    std::u16string updated = Settings::setColor(line, rgba);
+    if (updated == line) return;
+    NSString *replacement = FromU16(updated);
+    if (![tv shouldChangeTextInRange:lineRange replacementString:replacement]) return;
+    [tv.textStorage replaceCharactersInRange:lineRange withString:replacement];
+    [tv didChangeText];
+    [tv.undoManager setActionName:@"Change Color"];
+    ColorSpan now;
+    if (Settings::findColor(updated, now))
+        [tv setSelectedRange:NSMakeRange(start + now.start, 0)];
+    [self applyHighlighting];
+
+    // Save shortly after the last change, so dragging around the color wheel
+    // doesn't write the file dozens of times a second.
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(saveCurrentFile:)
+                                               object:nil];
+    [self performSelector:@selector(saveCurrentFile:) withObject:nil afterDelay:0.15];
+}
+
+// Cmd+/ : comment or uncomment the lines the selection touches.
+- (void)toggleComment:(id)sender {
+    NSTextView *tv = self.textView;
+    std::string marker = self.currentPath
+        ? LineComments::markerFor(self.currentPath.UTF8String) : "";
+    if (self.window.firstResponder != tv || !tv.editable || marker.empty()) {
+        NSBeep();
+        return;
+    }
+    NSRange sel = tv.selectedRange;
+    LineComments::Result r = LineComments::toggle(U16(tv.string), sel.location,
+                                                  NSMaxRange(sel), marker);
+    if (!r.changed) return;
+    NSRange range = NSMakeRange(r.replaceStart, r.replaceLength);
+    NSString *replacement = FromU16(r.replacement);
+    // Each toggle is its own undo step, not merged with typing or the last
+    // toggle.
+    [tv breakUndoCoalescing];
+    if (![tv shouldChangeTextInRange:range replacementString:replacement]) return;
+    [tv.textStorage replaceCharactersInRange:range withString:replacement];
+    [tv didChangeText];
+    [tv breakUndoCoalescing];
+    [tv.undoManager setActionName:@"Toggle Comment"];
+    [tv setSelectedRange:NSMakeRange(r.selStart, r.selEnd - r.selStart)];
 }
 
 // -------------------------------------------------------------- editing hooks
@@ -1336,28 +1698,31 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
         ps.lineSpacing = 3.0; ps.paragraphSpacing = 4.0;
 
+        AppSettings *cfg = [AppSettings shared];
         NSFont *font = body;
-        NSColor *color = Hex(0xD4D4D4);
+        NSColor *color = [cfg text:Surface::Editor];
         NSMutableDictionary *a = [NSMutableDictionary dictionary];
 
         if (r.heading > 0) {
             CGFloat sizes[7] = {0, 26, 22, 19, 17, 15, 14};
             font = [NSFont boldSystemFontOfSize:sizes[r.heading]];
-            color = Hex(0xFFFFFF);
+            color = [cfg markdown:MarkdownColor::Heading];
             ps.paragraphSpacing = 8.0;
             ps.paragraphSpacingBefore = r.heading <= 2 ? 18.0 : 12.0;  // gap above
         }
         if (r.codeBlock || r.code) {
             font = mono;
-            color = Hex(0xCE9178);
-            a[NSBackgroundColorAttributeName] = Hex(0x2A2A2A);
+            color = [cfg markdown:MarkdownColor::Code];
+            a[NSBackgroundColorAttributeName] =
+                MCColor(cfg.settings.markdownCodeBackground());
         }
         if (r.table) {
             font = mono;   // monospace keeps the padded columns aligned
-            if (!r.code) color = r.bold ? Hex(0xFFFFFF) : Hex(0xD4D4D4);
+            if (!r.code) color = r.bold ? [cfg markdown:MarkdownColor::Heading]
+                                        : [cfg text:Surface::Editor];
         }
         if (r.quote) {
-            color = Hex(0x9CA3AF);
+            color = [cfg markdown:MarkdownColor::Quote];
             ps.headIndent = 16; ps.firstLineHeadIndent = 16;
         }
         if (r.rule) {
@@ -1365,7 +1730,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
             s = @"────────────────────────────────";
             color = Hex(0x555555);
         }
-        if (r.link) { color = Hex(0x4EA1F7); a[NSUnderlineStyleAttributeName] =
+        if (r.link) { color = [cfg markdown:MarkdownColor::Link]; a[NSUnderlineStyleAttributeName] =
             @(NSUnderlineStyleSingle); }
 
         NSFontManager *fm = [NSFontManager sharedFontManager];
@@ -1390,6 +1755,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     };
     [self.textView.textStorage setAttributedString:
         [[NSAttributedString alloc] initWithString:msg attributes:a]];
+    self.showingMessage = YES;
 }
 
 - (void)showWelcome {

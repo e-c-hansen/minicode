@@ -3,6 +3,9 @@
 #include "SyntaxHighlighter.h"
 #include "MarkdownParser.h"
 #include "TerminalStream.h"
+#include "Settings.h"
+#include "LineComments.h"
+#include <algorithm>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -557,11 +560,431 @@ void testTerminalStream() {
 
 }  // namespace
 
+// --------------------------------------------------------------- settings
+namespace {
+
+bool near(double a, double b) { return a - b < 1e-9 && b - a < 1e-9; }
+
+bool colorIs(const Rgba &c, uint32_t rgb, double alpha = 1.0) {
+    return c.rgb() == rgb && near(c.a, alpha);
+}
+
+Settings parseSettings(const std::string &text,
+                       std::vector<SettingsError> *errors = nullptr) {
+    return Settings::parse(text, errors);
+}
+
+// Every line of `text` that reads "# key = value" with the "# " removed, so
+// the documented keys in the default file can be checked against the parser.
+std::string uncommentKeys(const std::string &text) {
+    std::string out, line;
+    for (size_t i = 0; i <= text.size(); i++) {
+        if (i < text.size() && text[i] != '\n') { line += text[i]; continue; }
+        // "# group.field = value", not prose that happens to contain " = ".
+        size_t eq = line.find(" = ");
+        std::string key = eq == std::string::npos ? "" : line.substr(2, eq - 2);
+        bool isKey = line.rfind("# ", 0) == 0 && key.find('.') != std::string::npos;
+        for (char ch : key)
+            if (!(ch == '.' || (ch >= 'a' && ch <= 'z'))) isKey = false;
+        if (isKey) out += line.substr(2) + "\n";
+        line.clear();
+    }
+    return out;
+}
+
+void testSettings() {
+    GROUP("settings:colors");
+    Rgba c;
+    CHECK(Settings::parseColor("#1E1E1E", c) && colorIs(c, 0x1E1E1E));
+    CHECK(Settings::parseColor("#1e1e1e", c) && colorIs(c, 0x1E1E1E));
+    CHECK(Settings::parseColor("#fff", c) && colorIs(c, 0xFFFFFF));
+    CHECK(Settings::parseColor("#0A0", c) && colorIs(c, 0x00AA00));
+    CHECK(Settings::parseColor("#00000080", c) && colorIs(c, 0x000000, 128 / 255.0));
+    CHECK(Settings::parseColor("#FFFFFF00", c) && near(c.a, 0));
+    CHECK(!Settings::parseColor("1E1E1E", c));      // no #
+    CHECK(!Settings::parseColor("#12", c));
+    CHECK(!Settings::parseColor("#12345", c));
+    CHECK(!Settings::parseColor("#1234567", c));
+    CHECK(!Settings::parseColor("#GGGGGG", c));
+    CHECK(!Settings::parseColor("#", c));
+    CHECK(!Settings::parseColor("", c));
+    CHECK(!Settings::parseColor("red", c));
+
+    GROUP("settings:opacity");
+    double o = -1;
+    CHECK(Settings::parseOpacity("0.5", o) && near(o, 0.5));
+    CHECK(Settings::parseOpacity(".25", o) && near(o, 0.25));
+    CHECK(Settings::parseOpacity("1", o) && near(o, 1));
+    CHECK(Settings::parseOpacity("0", o) && near(o, 0));
+    CHECK(Settings::parseOpacity("80%", o) && near(o, 0.8));
+    CHECK(Settings::parseOpacity("100%", o) && near(o, 1));
+    CHECK(Settings::parseOpacity("12.5%", o) && near(o, 0.125));
+    CHECK(!Settings::parseOpacity("1.5", o));
+    CHECK(!Settings::parseOpacity("80", o));        // a bare 80 is not 80%
+    CHECK(!Settings::parseOpacity("-0.1", o));
+    CHECK(!Settings::parseOpacity("101%", o));
+    CHECK(!Settings::parseOpacity("%", o));
+    CHECK(!Settings::parseOpacity("half", o));
+    CHECK(!Settings::parseOpacity("0.5.0", o));
+    CHECK(!Settings::parseOpacity("", o));
+
+    GROUP("settings:defaults");
+    Settings d = parseSettings("");
+    CHECK(colorIs(d.background(Surface::Editor), 0x1E1E1E));
+    CHECK(colorIs(d.background(Surface::Sidebar), 0x252526));
+    CHECK(colorIs(d.background(Surface::Terminal), 0x181818));
+    CHECK(colorIs(d.background(Surface::Statusbar), 0x007ACC));
+    CHECK(colorIs(d.background(Surface::Browser), 0x2A2A2A));
+    CHECK(colorIs(d.text(Surface::Editor), 0xD4D4D4));
+    CHECK(colorIs(d.text(Surface::Sidebar), 0xCCCCCC));
+    CHECK(colorIs(d.text(Surface::Statusbar), 0xFFFFFF));
+    CHECK(colorIs(d.syntax(TokenStyle::Keyword), 0x569CD6));
+    CHECK(colorIs(d.syntax(TokenStyle::Comment), 0x6A9955));
+    CHECK(colorIs(d.syntax(TokenStyle::Plain), 0xD4D4D4));
+    CHECK(colorIs(d.markdown(MarkdownColor::Link), 0x4EA1F7));
+    CHECK(colorIs(d.markdownCodeBackground(), 0x2A2A2A));
+    CHECK(colorIs(d.terminalInputBackground(), 0x232323));
+    CHECK(colorIs(d.terminalInputText(), 0xEDEDED));
+    CHECK(near(d.opacity(Surface::Editor), 1));
+    CHECK(!d.blur());
+    CHECK(d.material() == "under-window");
+    CHECK(d.windowIsOpaque());
+    CHECK(!d.customTitlebar());
+    CHECK(!d.textIsSet(Surface::Browser));
+    CHECK(std::string(Settings::surfaceName(Surface::Statusbar)) == "statusbar");
+
+    GROUP("settings:panel-opacity");
+    Settings p = parseSettings("editor.opacity = 0.6\nsidebar.opacity = 40%\n");
+    CHECK(colorIs(p.background(Surface::Editor), 0x1E1E1E, 0.6));
+    CHECK(colorIs(p.background(Surface::Sidebar), 0x252526, 0.4));
+    CHECK(colorIs(p.background(Surface::Terminal), 0x181818, 1));  // untouched
+    CHECK(colorIs(p.text(Surface::Editor), 0xD4D4D4, 1));          // text stays solid
+    CHECK(near(p.markdownCodeBackground().a, 0.6));                // follows editor
+    CHECK(near(p.terminalInputBackground().a, 1));
+    CHECK(!p.windowIsOpaque());
+    CHECK(p.customTitlebar());   // a see-through window draws its own title bar
+    CHECK(near(p.background(Surface::Titlebar).a, 1));
+
+    GROUP("settings:window-opacity");
+    Settings w = parseSettings("window.opacity = 0.5\nterminal.opacity = 0.9\n");
+    CHECK(near(w.opacity(Surface::Editor), 0.5));
+    CHECK(near(w.opacity(Surface::Titlebar), 0.5));
+    CHECK(near(w.opacity(Surface::Statusbar), 0.5));
+    CHECK(near(w.opacity(Surface::Terminal), 0.9));      // its own wins
+    CHECK(near(w.terminalInputBackground().a, 0.9));
+    // Order doesn't matter: the panel's own opacity wins either way.
+    Settings w2 = parseSettings("terminal.opacity = 0.9\nwindow.opacity = 0.5\n");
+    CHECK(near(w2.opacity(Surface::Terminal), 0.9));
+    // A panel can be fully opaque inside a see-through window.
+    Settings w3 = parseSettings("window.opacity = 0.3\neditor.opacity = 1\n");
+    CHECK(near(w3.background(Surface::Editor).a, 1));
+    CHECK(near(w3.background(Surface::Sidebar).a, 0.3));
+
+    GROUP("settings:background-alpha");
+    // A color's own alpha multiplies with the opacity.
+    Settings ba = parseSettings("editor.background = #10203080\n"
+                                "editor.opacity = 0.5\n");
+    CHECK(ba.background(Surface::Editor).rgb() == 0x102030);
+    CHECK(near(ba.background(Surface::Editor).a, (128 / 255.0) * 0.5));
+    Settings bb = parseSettings("statusbar.background = #333\n");
+    CHECK(colorIs(bb.background(Surface::Statusbar), 0x333333));
+    CHECK(bb.windowIsOpaque());
+    Settings bc = parseSettings("sidebar.background = #25252600\n");
+    CHECK(!bc.windowIsOpaque());
+
+    GROUP("settings:text");
+    Settings t = parseSettings("window.text = #EEEEEE\neditor.text = #00FF00\n"
+                               "sidebar.text = #FF000080\n");
+    CHECK(colorIs(t.text(Surface::Editor), 0x00FF00));
+    CHECK(colorIs(t.text(Surface::Sidebar), 0xFF0000, 128 / 255.0));
+    CHECK(colorIs(t.text(Surface::Terminal), 0xEEEEEE));   // window.text fallback
+    CHECK(colorIs(t.text(Surface::Statusbar), 0xEEEEEE));
+    CHECK(colorIs(t.syntax(TokenStyle::Plain), 0x00FF00)); // plain = editor.text
+    CHECK(colorIs(t.terminalInputText(), 0xEEEEEE));
+    CHECK(t.textIsSet(Surface::Browser));
+    CHECK(t.windowIsOpaque());          // text alone never makes it see-through
+    CHECK(!t.customTitlebar());
+    Settings t2 = parseSettings("browser.text = #111111\n");
+    CHECK(t2.textIsSet(Surface::Browser));
+    CHECK(!t2.textIsSet(Surface::Editor));
+
+    GROUP("settings:syntax-markdown");
+    Settings sy = parseSettings("syntax.keyword = #FF0000\nsyntax.function = #00F\n"
+                                "markdown.heading = #ABCDEF\nmarkdown.quote = #123\n");
+    CHECK(colorIs(sy.syntax(TokenStyle::Keyword), 0xFF0000));
+    CHECK(colorIs(sy.syntax(TokenStyle::Function), 0x0000FF));
+    CHECK(colorIs(sy.syntax(TokenStyle::String), 0xCE9178));   // default kept
+    CHECK(colorIs(sy.markdown(MarkdownColor::Heading), 0xABCDEF));
+    CHECK(colorIs(sy.markdown(MarkdownColor::Quote), 0x112233));
+    CHECK(colorIs(sy.markdown(MarkdownColor::Code), 0xCE9178));
+    std::vector<SettingsError> se;
+    parseSettings("syntax.plain = #FFFFFF\n", &se);   // plain is editor.text
+    CHECK(se.size() == 1);
+
+    GROUP("settings:window");
+    Settings bl = parseSettings("window.blur = true\nwindow.material = HUD\n");
+    CHECK(bl.blur());
+    CHECK(bl.material() == "hud");
+    CHECK(!bl.windowIsOpaque());
+    CHECK(bl.customTitlebar());
+    for (const char *v : {"on", "yes", "1", "TRUE"})
+        CHECK(parseSettings(std::string("window.blur = ") + v).blur());
+    for (const char *v : {"off", "no", "0", "false"})
+        CHECK(!parseSettings(std::string("window.blur = true\nwindow.blur = ") + v).blur());
+    Settings tb = parseSettings("titlebar.background = #000000\n");
+    CHECK(tb.customTitlebar());          // any titlebar key takes it over
+    CHECK(tb.windowIsOpaque());
+    CHECK(colorIs(tb.background(Surface::Titlebar), 0x000000));
+    Settings tb2 = parseSettings("titlebar.opacity = 0\n");
+    CHECK(tb2.customTitlebar());
+    CHECK(!tb2.windowIsOpaque());        // the title bar counts once it's ours
+
+    GROUP("settings:syntax-of-file");
+    std::vector<SettingsError> e1;
+    Settings f = parseSettings(
+        "# a comment\n"
+        "   \n"
+        "  # indented comment\n"
+        "EDITOR.Opacity=0.5\n"                      // case, no spaces
+        "sidebar.opacity =\t25%   # trailing comment\n"
+        "statusbar.background = #FF0000#not-a-comment-space\n"
+        "terminal.text = #00FF00\r\n"               // CRLF
+        "editor.opacity = 0.7", &e1);               // no final newline
+    CHECK(near(f.opacity(Surface::Editor), 0.7));   // last one wins
+    CHECK(near(f.opacity(Surface::Sidebar), 0.25));
+    CHECK(colorIs(f.text(Surface::Terminal), 0x00FF00));
+    CHECK(e1.size() == 1);   // "#FF0000#not..." is not a color
+    CHECK(e1.size() == 1 && e1[0].line == 6);
+    CHECK(colorIs(f.background(Surface::Statusbar), 0x007ACC));  // default kept
+
+    GROUP("settings:errors");
+    std::vector<SettingsError> e2;
+    Settings bad = parseSettings(
+        "editor.opacity = 0.5\n"         // 1 ok
+        "editor.opacity = 2\n"           // 2 out of range
+        "editr.opacity = 0.5\n"          // 3 unknown surface
+        "editor.color = #FFFFFF\n"       // 4 unknown field
+        "just some words\n"              // 5 no '='
+        "= #FFFFFF\n"                    // 6 no key
+        "editor.text =\n"                // 7 no value
+        "editor.text = #FFF extra\n"     // 8 junk after value
+        "sidebar.text = white\n"         // 9 not a color
+        "window.blur = maybe\n"          // 10 not a bool
+        "window.material = glass\n"      // 11 unknown material
+        "editor.opacity = 80\n"          // 12 bare percentage
+        "editr.opacity = abc\n",         // 13 unknown beats bad value
+        &e2);
+    CHECK(e2.size() == 12);
+    std::vector<int> lines;
+    for (const SettingsError &e : e2) lines.push_back(e.line);
+    CHECK((lines == std::vector<int>{2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}));
+    CHECK(near(bad.opacity(Surface::Editor), 0.5));      // bad lines ignored
+    CHECK(colorIs(bad.text(Surface::Sidebar), 0xCCCCCC));
+    CHECK(!bad.blur());
+    CHECK(bad.material() == "under-window");
+    auto has = [&](size_t i, const char *needle) {
+        return i < e2.size() && e2[i].message.find(needle) != std::string::npos;
+    };
+    CHECK(has(0, "not an opacity"));
+    CHECK(has(1, "unknown setting 'editr.opacity'"));
+    CHECK(has(2, "unknown setting 'editor.color'"));
+    CHECK(has(3, "expected key = value"));
+    CHECK(has(7, "not a color"));
+    CHECK(has(8, "not true or false"));
+    CHECK(has(9, "unknown material"));
+    CHECK(has(10, "80%"));                               // hints at the fix
+    CHECK(has(11, "unknown setting"));
+    parseSettings("editor.opacity = 2\n");              // null errors is fine
+
+    GROUP("settings:default-file");
+    std::vector<SettingsError> e3;
+    Settings df = parseSettings(Settings::defaultFileText(), &e3);
+    CHECK(e3.empty());
+    CHECK(df.windowIsOpaque() && !df.customTitlebar() && !df.blur());
+    // Every documented key, uncommented, is one the parser accepts, and its
+    // documented value is the real default.
+    std::string keys = uncommentKeys(Settings::defaultFileText());
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 33);   // 4 window, 18 panel, 7 syntax, 4 markdown
+    std::vector<SettingsError> e4;
+    Settings un = parseSettings(keys, &e4);
+    CHECK(e4.empty());
+    for (const SettingsError &e : e4)
+        std::printf("    line %d: %s\n", e.line, e.message.c_str());
+    for (int i = 0; i < kSurfaceCount; i++) {
+        Surface s = (Surface)i;
+        CHECK(un.background(s) == d.background(s));
+        CHECK(un.text(s) == d.text(s));
+    }
+    for (int i = 1; i < 8; i++)
+        CHECK(un.syntax((TokenStyle)i) == d.syntax((TokenStyle)i));
+    for (int i = 0; i < kMarkdownColorCount; i++)
+        CHECK(un.markdown((MarkdownColor)i) == d.markdown((MarkdownColor)i));
+    CHECK(un.material() == d.material() && un.blur() == d.blur());
+}
+
+}  // namespace
+
+// ------------------------------------------------------------ line comments
+namespace {
+
+std::string narrow(const std::u16string &s) {
+    std::string out;
+    for (char16_t c : s) out += c < 0x80 ? (char)c : '?';
+    return out;
+}
+
+// Toggle with the selection written into the text as [ and ] (or a single |
+// for a caret), and return the result written the same way.
+std::string toggled(const std::string &marked, const std::string &marker) {
+    std::u16string text;
+    size_t a = std::string::npos, b = std::string::npos;
+    for (char c : marked) {
+        if (c == '|') { a = b = text.size(); continue; }
+        if (c == '[') { a = text.size(); continue; }
+        if (c == ']') { b = text.size(); continue; }
+        text += (char16_t)(unsigned char)c;
+    }
+    LineComments::Result r = LineComments::toggle(text, a, b, marker);
+    // The single-replacement form must describe the same edit.
+    std::u16string viaReplace = text;
+    if (r.changed)
+        viaReplace.replace(r.replaceStart, r.replaceLength, r.replacement);
+    if (viaReplace != r.text) return "replacement mismatch";
+    std::string out = narrow(r.text);
+    if (r.selStart == r.selEnd) return out.insert(r.selStart, "|");
+    out.insert(r.selEnd, "]");
+    return out.insert(r.selStart, "[");
+}
+
+void testLineComments() {
+    using LineComments::markerFor;
+    GROUP("comments:markers");
+    CHECK(markerFor("a.py") == "#");
+    CHECK(markerFor("settings.conf") == "#");
+    CHECK(markerFor("/Users/x/.config/minicode/settings.conf") == "#");
+    CHECK(markerFor("main.CPP") == "//");
+    CHECK(markerFor("App.mm") == "//");
+    CHECK(markerFor("index.tsx") == "//");
+    CHECK(markerFor("query.sql") == "--");
+    CHECK(markerFor("init.lua") == "--");
+    CHECK(markerFor("setup.ini") == ";");
+    CHECK(markerFor("Makefile") == "#");
+    CHECK(markerFor("src/Dockerfile") == "#");
+    CHECK(markerFor(".zshrc") == "#");
+    CHECK(markerFor("paper.tex") == "%");
+    CHECK(markerFor("data.json") == "");      // JSON has no comments
+    CHECK(markerFor("README.md") == "");
+    CHECK(markerFor("LICENSE") == "");
+    CHECK(markerFor("") == "");
+
+    GROUP("comments:single-line");
+    CHECK(toggled("x = 1|", "#") == "# x = 1|");
+    CHECK(toggled("x| = 1", "#") == "# x| = 1");
+    CHECK(toggled("|x = 1", "#") == "# |x = 1");       // caret follows the text
+    CHECK(toggled("# x = 1|", "#") == "x = 1|");
+    CHECK(toggled("#x = 1|", "#") == "x = 1|");        // no space after marker
+    CHECK(toggled("#  x|", "#") == " x|");             // only one space removed
+    CHECK(toggled("    return 0;|", "//") == "    // return 0;|");
+    CHECK(toggled("    // return 0;|", "//") == "    return 0;|");
+    CHECK(toggled("  // |a", "//") == "  |a");         // caret inside removed marker
+    CHECK(toggled("\tint a;|", "//") == "\t// int a;|");
+    CHECK(toggled("a\nb|\nc", "#") == "a\n# b|\nc");   // only the caret's line
+    CHECK(toggled("|", "#") == "# |");                 // empty line
+    CHECK(toggled("a\n|", "#") == "a\n# |");
+    CHECK(toggled("   |", "#") == "   # |");
+    CHECK(toggled("SELECT 1|", "--") == "-- SELECT 1|");
+
+    GROUP("comments:multi-line");
+    CHECK(toggled("[a\nb\nc]", "#") == "[# a\n# b\n# c]");
+    CHECK(toggled("[# a\n# b\n# c]", "#") == "[a\nb\nc]");
+    // Mixed: anything uncommented means comment them all.
+    CHECK(toggled("[# a\nb]", "#") == "[# # a\n# b]");
+    // Inserted at the smallest indentation, keeping the block aligned.
+    CHECK(toggled("[  if x:\n    y\n  z]", "#") == "[  # if x:\n  #   y\n  # z]");
+    CHECK(toggled("[  # if x:\n  #   y\n  # z]", "#") == "[  if x:\n    y\n  z]");
+    // Blank lines are skipped, in both directions.
+    CHECK(toggled("[a\n\nb]", "//") == "[// a\n\n// b]");
+    CHECK(toggled("[// a\n   \n// b]", "//") == "[a\n   \nb]");
+    // A selection that ends at the start of a line leaves that line alone.
+    CHECK(toggled("[a\nb\n]c", "#") == "[# a\n# b\n]c");
+    // Selection starting mid-line keeps its place in the text.
+    CHECK(toggled("ab[c\nd]e", "#") == "# ab[c\n# d]e");
+    CHECK(toggled("# ab[c\n# d]e", "#") == "ab[c\nd]e");
+    // Surrounding lines are untouched.
+    CHECK(toggled("keep\n[a\nb]\nkeep", "//") == "keep\n[// a\n// b]\nkeep");
+    // Backwards selection is fine.
+    std::u16string t = u"a\nb";
+    LineComments::Result r = LineComments::toggle(t, 3, 0, "#");
+    CHECK(narrow(r.text) == "# a\n# b");
+
+    GROUP("comments:non-ascii");
+    // UTF-16 offsets: an emoji is two units, and the caret stays after it.
+    std::u16string emoji = u"x = \U0001F600";
+    LineComments::Result e = LineComments::toggle(emoji, emoji.size(), emoji.size(), "#");
+    CHECK(e.text == u"# x = \U0001F600");
+    CHECK(e.selStart == e.text.size());
+
+    GROUP("comments:no-marker");
+    LineComments::Result n = LineComments::toggle(u"abc", 1, 1, "");
+    CHECK(!n.changed && n.text == u"abc" && n.selStart == 1);
+    // Out-of-range selections are clamped rather than crashing.
+    LineComments::Result o = LineComments::toggle(u"abc", 99, 99, "#");
+    CHECK(o.changed && o.text == u"# abc");
+}
+
+void testSettingsColorEditing() {
+    GROUP("settings:find-color");
+    ColorSpan span;
+    CHECK(Settings::findColor(u"editor.text = #D4D4D4", span) &&
+          span.start == 14 && span.length == 7 && colorIs(span.color, 0xD4D4D4));
+    CHECK(Settings::findColor(u"# editor.text = #D4D4D4", span) && span.start == 16);
+    CHECK(Settings::findColor(u"sidebar.background=#12345680  # note", span) &&
+          span.start == 19 && span.length == 9 && near(span.color.a, 128 / 255.0));
+    CHECK(Settings::findColor(u"x = #abc\r", span) && span.length == 4);
+    CHECK(!Settings::findColor(u"editor.opacity = 0.5", span));
+    CHECK(!Settings::findColor(u"# Colors are #RRGGBB, or #RRGGBBAA", span));
+    CHECK(!Settings::findColor(u"# Each line is key = value, and", span));
+    CHECK(!Settings::findColor(u"x = #GGG", span));
+    CHECK(!Settings::findColor(u"", span));
+
+    GROUP("settings:format-color");
+    CHECK(Settings::formatColor(Rgba::hex(0x0a0b0c)) == "#0A0B0C");
+    CHECK(Settings::formatColor(Rgba::hex(0xFFFFFF, 0.5)) == "#FFFFFF80");
+    CHECK(Settings::formatColor(Rgba::hex(0x000000, 0)) == "#00000000");
+    CHECK(Settings::formatColor(Rgba::hex(0x123456, 0.999)) == "#123456");
+    Rgba back;
+    CHECK(Settings::parseColor(Settings::formatColor(Rgba::hex(0x336699, 0.25)), back) &&
+          back.rgb() == 0x336699 && back.a > 0.24 && back.a < 0.26);
+
+    GROUP("settings:set-color");
+    Rgba red = Rgba::hex(0xFF0000);
+    CHECK(Settings::setColor(u"editor.text = #D4D4D4", red) == u"editor.text = #FF0000");
+    // A commented-out setting is switched on.
+    CHECK(Settings::setColor(u"# editor.text = #D4D4D4", red) == u"editor.text = #FF0000");
+    CHECK(Settings::setColor(u"#editor.text = #D4D4D4", red) == u"editor.text = #FF0000");
+    CHECK(Settings::setColor(u"  # editor.text = #D4D4D4", red) == u"  editor.text = #FF0000");
+    // Trailing comments and alpha survive.
+    CHECK(Settings::setColor(u"sidebar.text = #FFF  # mine", Rgba::hex(0x00FF00, 0.5)) ==
+          u"sidebar.text = #00FF0080  # mine");
+    // Lines without a color, or prose, are left alone.
+    CHECK(Settings::setColor(u"editor.opacity = 0.5", red) == u"editor.opacity = 0.5");
+    CHECK(Settings::setColor(u"# Colors are #RRGGBB", red) == u"# Colors are #RRGGBB");
+    CHECK(Settings::setColor(u"# a note, x y = #FFFFFF", red) == u"# a note, x y = #FF0000");
+    // The result parses as the new setting.
+    std::u16string line = Settings::setColor(u"# terminal.text = #D4D4D4", red);
+    CHECK(colorIs(Settings::parse(narrow(line)).text(Surface::Terminal), 0xFF0000));
+}
+
+}  // namespace
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
     testMarkdown();
     testTerminalStream();
+    testSettings();
+    testSettingsColorEditing();
+    testLineComments();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -29,4 +29,6 @@
 - (void)renameSelected:(id)sender;
 - (void)deleteSelected:(id)sender;
 - (void)refreshTree:(id)sender;
+- (void)openSettings:(id)sender;       // Cmd+, open the settings file
+- (void)toggleComment:(id)sender;      // Cmd+/ comment or uncomment lines
 @end

@@ -120,6 +120,8 @@
 - (void)renameSelected:(id)sender  { [[self current] renameSelected:sender]; }
 - (void)deleteSelected:(id)sender  { [[self current] deleteSelected:sender]; }
 - (void)refreshTree:(id)sender     { [[self current] refreshTree:sender]; }
+- (void)openSettings:(id)sender    { [[self current] openSettings:sender]; }
+- (void)toggleComment:(id)sender   { [[self current] toggleComment:sender]; }
 
 @end
 
@@ -134,6 +136,10 @@ static void BuildMenu(void) {
     [appMenu addItemWithTitle:@"About MiniCode"
                        action:@selector(orderFrontStandardAboutPanel:)
                 keyEquivalent:@""];
+    [appMenu addItem:[NSMenuItem separatorItem]];
+    [appMenu addItemWithTitle:@"Settings…"
+                       action:@selector(openSettings:)
+                keyEquivalent:@","];
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Quit MiniCode"
                        action:@selector(terminate:)
@@ -212,6 +218,9 @@ static void BuildMenu(void) {
     [editMenu addItemWithTitle:@"Select All"
                         action:@selector(selectAll:) keyEquivalent:@"a"];
     [editMenu addItem:[NSMenuItem separatorItem]];
+    [editMenu addItemWithTitle:@"Toggle Comment"
+                        action:@selector(toggleComment:) keyEquivalent:@"/"];
+    [editMenu addItem:[NSMenuItem separatorItem]];
 
     // Find bar (handled by NSTextView via performTextFinderAction:; the tag is
     // the NSTextFinderAction raw value).
@@ -282,13 +291,14 @@ static void BuildMenu(void) {
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:hidden];
 
-    // Terminal: Cmd+T in the menu; Ctrl+` also works, caught in the view (see
-    // EditorController performKeyEquivalent).
+    // Terminal: Shift+Cmd+T in the menu, like the other pane toggles; Ctrl+`
+    // also works, caught by the local key monitor above.
     NSMenuItem *term =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Terminal"
                                    action:@selector(toggleTerminal:)
                             keyEquivalent:@"t"];
-    term.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    term.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:term];
 
     NSMenuItem *browser =

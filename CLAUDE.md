@@ -10,7 +10,8 @@ for future sessions: architecture, workflow, and the hard-won gotchas.
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
   run on Apple Silicon and to keep granted permissions stable).
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  142 checks over the tokenizer, Markdown parser, and terminal output stream. Exits non-zero on failure.
+  370 checks over the tokenizer, Markdown parser, terminal output stream,
+  settings parser, and comment toggling. Exits non-zero on failure.
 - `make run [DIR=~/path]` — build and launch.
 - `make icon` — regenerate `resources/AppIcon.icns` from `tools/makeicon.m`.
 - `make dist-zip` / `make dmg` — package for distribution.
@@ -25,6 +26,10 @@ isolation. Keep them dependency-free.
 - `src/SyntaxHighlighter.{h,cpp}` — hand-rolled lexer, grammar chosen by file
   extension. Emits `{start, length, style}` tokens.
 - `src/MarkdownParser.{h,cpp}` — CommonMark subset -> flat list of styled runs.
+- `src/Settings.{h,cpp}` — the settings file (`key = value`): parsing with
+  per-line errors, defaults, and the resolved color of every surface
+  (opacity applied, fallbacks from `window.*`). All color decisions live here
+  so they are unit-tested; the GUI only converts `Rgba` to NSColor.
 - `src/TerminalStream.{h,cpp}` — pty byte stream -> styled lines (SGR colors,
   in-line cursor movement) + shell-integration events (OSC 133 marks, OSC 7
   cwd). A line model, not a screen: handles sequences and UTF-8 split across
@@ -36,6 +41,11 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
   local key monitor (only for Ctrl+`).
 - `src/EditorController.{h,mm}` — the window: file tree, editor, data-safety,
   Markdown rendering, find, scope of most features. This is the big file.
+- `src/LineComments.{h,cpp}` — Cmd+/: comment marker per file name, and the
+  toggle itself, in UTF-16 offsets so results map straight onto NSRange.
+- `src/AppSettings.{h,mm}` — singleton that loads
+  `~/.config/minicode/settings.conf` (or `$MINICODE_SETTINGS`), watches it,
+  and posts `MCSettingsDidChangeNotification`.
 - `src/Terminal.{h,mm}` — shell panel: zsh on a pty via forkpty, log-style view.
 - `src/Browser.{h,mm}` — WKWebView panel.
 - `src/Search.{h,mm}` — scoped, project-wide text search window.
@@ -45,7 +55,9 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 Window content view (`EditorController`, built in `init`):
 
 ```
-container (NSView)
+container (PanelHost, laid out by hand in layoutContainer)
+├── blurView (NSVisualEffectView)                 window.blur, whole window
+├── titlebarView + titleLabel                     drawn when customTitlebar
 ├── NSSplitView (vertical, thin divider)          sidebar | right pane
 │   ├── treeScroll → ClickOutline (NSOutlineView)  file tree, bg #252526
 │   └── rightArea (PanelHost, laid out by hand in relayoutRightArea)
@@ -57,13 +69,38 @@ container (NSView)
 └── hintsPanel (buildHintsPanelInContainer)       Shift+Cmd+H overlay
 ```
 
-- Colors are VS Code Dark+ values, but there is **no shared palette**: each file
-  has its own hex helper (`Hex` in EditorController, `THex` Terminal, `BHex`
-  Browser, `SHex` Search) and literals are inline. Main ones: text #D4D4D4,
-  editor bg #1E1E1E, sidebar #252526, terminal bg #181818, input #232323,
-  accent/link #4EA1F7, muted #9CA3AF, divider line #333333. The terminal's ANSI
-  palette lives in `TermColor::rgb()` (C++). A theme pass should start by
-  centralizing these; `linux/src/Palette.h` mirrors the macOS values.
+- Panel backgrounds, panel text, syntax and Markdown colors come from
+  `Settings` (defaults are the VS Code Dark+ values in `Settings.cpp`). Each
+  view has an `applySettings` method that runs at startup and on
+  `MCSettingsDidChangeNotification`; it must recolor what is already on
+  screen (editor re-highlights, Markdown re-renders keeping scroll, terminal
+  output marked with `MCTerminalDefaultForeground` gets the new color). A new
+  setting goes in `Settings.cpp` (parser + default + the commented
+  `defaultFileText`, which a unit test checks key by key) and the view's
+  `applySettings`.
+- Not yet configurable, still inline hex helpers (`Hex`, `THex`, `SHex`):
+  accents (#4EA1F7), muted #9CA3AF, divider line #333333, hints overlay,
+  terminal panel messages, the Search window, and the ANSI palette in
+  `TermColor::rgb()`. `linux/src/Palette.h` mirrors the macOS defaults.
+- The window uses `NSWindowStyleMaskFullSizeContentView` always, so content
+  runs under the title bar. `layoutContainer` keeps the split view below it
+  using `contentLayoutRect` (empty before the window is shown, so
+  `titlebarHeight` falls back to frame math, or the split comes out 0px tall).
+  With a custom title bar (any `titlebar.*` key, or a non-opaque window) the
+  system title is hidden and `titleLabel` mirrors `window.title` via KVO.
+- Translucency: a translucent color must be painted once, and as a plain
+  layer color. The tree and editor use `PanelScrollView`, which draws no
+  scroll/clip background and sizes a layer-backed backdrop view in `tile`.
+  Two traps paid for here: a clip view's translucent `backgroundColor` still
+  renders opaque, and NSScrollView never resizes extra subviews (a backdrop
+  added with autoresizing stays 0x0). Property checks passed both times; only
+  a pixel capture caught it (see verification below).
+- Settings file in the editor: `applyHighlighting` gives each color value a
+  swatch (background = the color, `NSLinkAttributeName` = `minicode-color`).
+  `textView:clickedOnLink:` opens NSColorPanel; `colorPicked:` rewrites the
+  line with `Settings::setColor` (which uncomments it) and saves after
+  150 ms. `linkTextAttributes` is only a pointing-hand cursor so swatches
+  keep their colors.
 - Layout is manual frames, not Auto Layout (see gotchas for why). Pane state
   flags: `sidebarCollapsed`, `editorHidden`, `terminalVisible`,
   `browserVisible`, plus NSSplitView's own collapse of `rightArea`.
@@ -75,9 +112,13 @@ container (NSView)
 
 ## Current state (handoff, 2026-09-17)
 
-- Branch `linux-port`, 5 commits ahead of `main`, **not pushed**: the GTK port
-  draft, Markdown tables, pty terminal, resize-bar fix, terminal colors, and
-  the editor-hide/pane dividers. All tests pass (142), build is warning-free.
+- Branch `linux-port`, pushed to origin through the editor-hide work. On top
+  of that, uncommitted until the user tries it: the settings file with
+  per-panel opacity, blur, title bar and text colors (Cmd+,), and the
+  terminal toggle moved from Cmd+T to Shift+Cmd+T, Cmd+/ comment toggle, and
+  clickable color swatches in the settings file. The user confirmed terminal
+  and title bar opacity; editor and sidebar opacity were broken and are now
+  fixed and pixel-verified. All tests pass (370), build is warning-free.
 - The user has confirmed in the running app: tables, the pty terminal
   (Ctrl+C, sudo, aliases), colors, the terminal bar, Shift+Cmd+E, and both
   divider drags.
@@ -103,6 +144,17 @@ This environment cannot take screenshots or send real input to the app. So:
   - Use `hitTest:` at pixel offsets to measure real grab areas.
   - Terminal tests must set `HOME` and `ZDOTDIR` to scratch dirs, or test
     commands land in the user's real `~/.zsh_history`.
+- Pixels: `/usr/sbin/screencapture -x -o -l<windowNumber> out.png` run from
+  inside the app captures the window with its alpha channel, and
+  `NSBitmapImageRep colorAtX:y:` reads it (y from the top, scale for Retina).
+  This is the only way to verify transparency; view properties can look right
+  while nothing is drawn. `CGWindowListCreateImage` is gone in the macOS 15 SDK.
+- Undo in tests: everything run from one callback lands in one undo group
+  (`groupingLevel` stays 1). Wrap each simulated key press in
+  begin/endUndoGrouping with `groupsByEvent` off. Programmatic edits call
+  `breakUndoCoalescing` so each Cmd+/ is its own step for real users.
+- Cleaning up temp test blocks: remove them by exact text, not by searching
+  for a marker comment that also appears on the `getenv` line.
 - When a check fails, print the actual output before changing code: most
   failures in this session were wrong checks, not wrong code.
 - Otherwise confirm the app builds clean and launches without crashing, and
@@ -141,7 +193,7 @@ This environment cannot take screenshots or send real input to the app. So:
 - **Custom hotkeys**: prefer real MENU items with key equivalents. They work in
   every pane (like Cmd+C) and for shift-variants that share a letter (Cmd+G vs
   Cmd+Shift+G both work). A local key monitor was flaky; it now handles only
-  Ctrl+` (which is awkward as a clean menu item alongside Cmd+T).
+  Ctrl+` (which is awkward as a clean menu item alongside Shift+Cmd+T).
 - **Window tabbing**: `setAllowsAutomaticWindowTabbing:NO`, otherwise macOS
   merges windows into tabs and Cmd+W closes the whole group.
 - **Two app instances**: launching the `.app` twice just activates the existing

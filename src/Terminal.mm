@@ -19,6 +19,7 @@
 //     command runs, so a program that turns echo off (a password prompt) gets
 //     a secure input field.
 #import "Terminal.h"
+#import "AppSettings.h"
 #include "TerminalStream.h"
 
 #include <util.h>
@@ -110,6 +111,10 @@ static NSString *IntegrationDirectory(void) {
 }
 @end
 
+// Marks output drawn in the default foreground (value: whether it is dim), so
+// a settings change can recolor it in place.
+static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
+
 @interface TerminalView () <NSTextFieldDelegate> {
     NSString *_cwd;
     NSMutableArray<NSString *> *_history;
@@ -148,8 +153,11 @@ static NSString *IntegrationDirectory(void) {
         _ioQueue = dispatch_queue_create("minicode.terminal.io",
                                          DISPATCH_QUEUE_SERIAL);
         self.wantsLayer = YES;
-        self.layer.backgroundColor = THex(0x181818).CGColor;
         [self buildViews];
+        [self applySettings];
+        [[NSNotificationCenter defaultCenter]
+            addObserver:self selector:@selector(applySettings)
+                   name:MCSettingsDidChangeNotification object:nil];
         [self appendLine:@"MiniCode terminal — zsh on a pty. Ctrl+C interrupts, "
                           "`clear` resets the panel."
                    color:THex(0x6A9955)];
@@ -162,8 +170,6 @@ static NSString *IntegrationDirectory(void) {
 - (NSTextField *)makeInputField:(Class)cls {
     NSTextField *f = [[cls alloc] init];
     f.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
-    f.textColor = THex(0xEDEDED);
-    f.backgroundColor = THex(0x232323);
     f.bezeled = NO;
     f.focusRingType = NSFocusRingTypeNone;
     f.bordered = NO;
@@ -209,6 +215,31 @@ static NSString *IntegrationDirectory(void) {
         [self makeInputField:[NSSecureTextField class]];
     self.secureInput.placeholderString = @"Hidden input (the program turned echo off)";
     self.secureInput.hidden = YES;
+}
+
+// Colors from the settings file. Output already on screen in the default
+// foreground is recolored too; explicitly colored output keeps its colors.
+- (void)applySettings {
+    AppSettings *cfg = [AppSettings shared];
+    self.layer.backgroundColor = [cfg background:Surface::Terminal].CGColor;
+    NSColor *inputBg = MCColor(cfg.settings.terminalInputBackground());
+    NSColor *inputText = MCColor(cfg.settings.terminalInputText());
+    for (NSTextField *f in @[self.input, self.secureInput]) {
+        f.backgroundColor = inputBg;
+        f.textColor = inputText;
+    }
+    NSTextStorage *ts = self.output.textStorage;
+    NSColor *fg = [cfg text:Surface::Terminal];
+    [ts beginEditing];
+    [ts enumerateAttribute:kDefaultFgAttribute inRange:NSMakeRange(0, ts.length)
+                   options:0 usingBlock:^(id dim, NSRange r, BOOL *stop) {
+        (void)stop;
+        if (!dim) return;
+        NSColor *c = [dim boolValue]
+            ? [fg colorWithAlphaComponent:fg.alphaComponent * 0.6] : fg;
+        [ts addAttribute:NSForegroundColorAttributeName value:c range:r];
+    }];
+    [ts endEditing];
 }
 
 // Manual layout — reliable regardless of how the host sizes us.
@@ -641,20 +672,23 @@ static NSFont *TermFont(BOOL bold, BOOL italic) {
     return fonts[i];
 }
 
-static const unsigned kDefaultFg = 0xD4D4D4, kDefaultBg = 0x181818;
-
 - (NSDictionary *)attributesForStyle:(const TermStyle &)st {
-    unsigned fg = st.fg.kind == TermColor::Default ? kDefaultFg : st.fg.rgb();
+    const Settings &cfg = [AppSettings shared].settings;
+    bool defaultFg = st.fg.kind == TermColor::Default;
+    Rgba fg = defaultFg ? cfg.text(Surface::Terminal) : Rgba::hex(st.fg.rgb());
     bool hasBg = st.bg.kind != TermColor::Default;
-    unsigned bg = hasBg ? st.bg.rgb() : kDefaultBg;
-    if (st.inverse) { std::swap(fg, bg); hasBg = true; }
+    // Inverse text gets a solid background even on a see-through panel.
+    Rgba bg = Rgba::hex(hasBg ? st.bg.rgb()
+                              : cfg.background(Surface::Terminal).rgb());
+    if (st.inverse) { std::swap(fg, bg); hasBg = true; defaultFg = false; }
 
     NSMutableDictionary *a = [NSMutableDictionary dictionary];
     a[NSFontAttributeName] = TermFont(st.bold, st.italic);
-    NSColor *fgColor = THex(fg);
-    if (st.dim) fgColor = [fgColor colorWithAlphaComponent:0.6];
+    NSColor *fgColor = MCColor(fg);
+    if (st.dim) fgColor = [fgColor colorWithAlphaComponent:fg.a * 0.6];
     a[NSForegroundColorAttributeName] = fgColor;
-    if (hasBg) a[NSBackgroundColorAttributeName] = THex(bg);
+    if (defaultFg) a[kDefaultFgAttribute] = @(st.dim);
+    if (hasBg) a[NSBackgroundColorAttributeName] = MCColor(bg);
     if (st.underline) a[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle);
     if (st.strike) a[NSStrikethroughStyleAttributeName] = @(NSUnderlineStyleSingle);
     return a;
