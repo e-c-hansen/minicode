@@ -1175,7 +1175,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         }
         if (r.table) {
             font = mono;   // monospace keeps the padded columns aligned
-            color = r.bold ? Hex(0xFFFFFF) : Hex(0xD4D4D4);
+            if (!r.code) color = r.bold ? Hex(0xFFFFFF) : Hex(0xD4D4D4);
         }
         if (r.quote) {
             color = Hex(0x9CA3AF);

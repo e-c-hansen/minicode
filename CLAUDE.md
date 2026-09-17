@@ -10,7 +10,7 @@ for future sessions: architecture, workflow, and the hard-won gotchas.
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
   run on Apple Silicon and to keep granted permissions stable).
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  38 checks over the tokenizer and Markdown parser. Exits non-zero on failure.
+  69 checks over the tokenizer and Markdown parser. Exits non-zero on failure.
 - `make run [DIR=~/path]` — build and launch.
 - `make icon` — regenerate `resources/AppIcon.icns` from `tools/makeicon.m`.
 - `make dist-zip` / `make dmg` — package for distribution.
@@ -75,7 +75,9 @@ synthetic clicks/keys. So:
   stripped for display.
 - **Markdown**: block elements call `ensureLineStart` so they aren't glued to
   the previous paragraph; headings get `paragraphSpacingBefore`; tables render
-  as aligned monospace.
+  as aligned monospace. Table cells are inline-parsed and padded by *display*
+  width (code points, CJK/emoji = 2), never UTF-8 byte length, or any
+  non-ASCII cell knocks the columns out of line.
 - **Search**: scoped to a folder (default = open folder or selected folder),
   min 2 chars, generation bumped up front + per-file cancellation, ANSI stripped
   from result lines.

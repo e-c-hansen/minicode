@@ -83,6 +83,11 @@ void Editor::ensureTags() {
                                    "pixels-below-lines", 8,
                                    NULL);
     }
+    // Created before md_code/md_link: later tags win, so a code span or link
+    // inside a table cell keeps its own color.
+    gtk_text_buffer_create_tag(buffer_, "md_table",
+                               "foreground", pal::EditorText,
+                               "family", "monospace", NULL);
     gtk_text_buffer_create_tag(buffer_, "md_code",
                                "foreground", pal::MdCode,
                                "background", pal::MdCodeBg,
@@ -96,9 +101,6 @@ void Editor::ensureTags() {
     gtk_text_buffer_create_tag(buffer_, "md_link",
                                "foreground", pal::MdLink,
                                "underline", PANGO_UNDERLINE_SINGLE, NULL);
-    gtk_text_buffer_create_tag(buffer_, "md_table",
-                               "foreground", pal::EditorText,
-                               "family", "monospace", NULL);
     gtk_text_buffer_create_tag(buffer_, "md_bold",
                                "weight", PANGO_WEIGHT_BOLD, NULL);
     gtk_text_buffer_create_tag(buffer_, "md_italic",
