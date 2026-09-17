@@ -2,6 +2,7 @@
 // Build/run with `make test`. Exits non-zero if any check fails.
 #include "SyntaxHighlighter.h"
 #include "MarkdownParser.h"
+#include "TerminalStream.h"
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -282,10 +283,168 @@ void testMarkdown() {
 
 }  // namespace
 
+// ---------------------------------------------------------- terminal stream
+namespace {
+
+// All Text events joined, as the view would show them (ignoring \r/\b).
+std::string streamText(const std::vector<TermEvent> &events) {
+    std::string s;
+    for (const TermEvent &e : events)
+        if (e.kind == TermEvent::Text) s += e.text;
+    return s;
+}
+
+// Feed `input` one byte at a time, the worst case for split sequences.
+std::vector<TermEvent> feedBytewise(const std::string &input) {
+    TerminalStream ts;
+    std::vector<TermEvent> all;
+    for (char c : input) {
+        auto part = ts.feed(&c, 1);
+        all.insert(all.end(), part.begin(), part.end());
+    }
+    return all;
+}
+
+// A compact trace of event kinds: T=text R=\r B=\b A C D P(ath).
+std::string kinds(const std::vector<TermEvent> &events) {
+    std::string s;
+    for (const TermEvent &e : events) {
+        switch (e.kind) {
+            case TermEvent::Text:           s += 'T'; break;
+            case TermEvent::CarriageReturn: s += 'R'; break;
+            case TermEvent::Backspace:      s += 'B'; break;
+            case TermEvent::PromptStart:    s += 'A'; break;
+            case TermEvent::CommandStart:   s += 'C'; break;
+            case TermEvent::CommandEnd:     s += 'D'; break;
+            case TermEvent::Directory:      s += 'P'; break;
+        }
+    }
+    return s;
+}
+
+const TermEvent *firstOf(const std::vector<TermEvent> &events,
+                         TermEvent::Kind kind) {
+    for (const TermEvent &e : events) if (e.kind == kind) return &e;
+    return nullptr;
+}
+
+void testTerminalStream() {
+    GROUP("term:text");
+    {
+        TerminalStream ts;
+        auto ev = ts.feed("hello\r\nworld\r\n");
+        CHECK(streamText(ev) == "hello\nworld\n");   // \r\n becomes \n
+        CHECK(kinds(ev) == "T");
+    }
+
+    GROUP("term:escapes-dropped");
+    {
+        TerminalStream ts;
+        // SGR color, erase line, cursor move, private mode, charset select.
+        auto ev = ts.feed("\x1b[1;31mred\x1b[0m \x1b[K\x1b[10;5H\x1b[?25lok\x1b(B!");
+        CHECK(streamText(ev) == "red ok!");
+        // An OSC we don't use (window title) and a DCS string vanish too.
+        auto ev2 = ts.feed("\x1b]0;my title\x07" "a\x1bPq#0;2\x1b\\b");
+        CHECK(streamText(ev2) == "ab");
+        CHECK(kinds(ev2) == "T");
+    }
+
+    GROUP("term:split-across-reads");
+    {
+        // Byte-at-a-time delivery must give the same result as one read.
+        std::string input = "\x1b[32mgreen\x1b[0m caf\xC3\xA9 \xE2\x9C\x93\r\n"
+                            "\x1b]133;D;7\x07\x1b]7;file://h/tmp\x1b\\";
+        TerminalStream whole;
+        auto a = whole.feed(input);
+        auto b = feedBytewise(input);
+        CHECK(streamText(a) == "green caf\xC3\xA9 \xE2\x9C\x93\n");
+        CHECK(streamText(b) == streamText(a));
+        const TermEvent *end = firstOf(b, TermEvent::CommandEnd);
+        CHECK(end && end->status == 7);
+        const TermEvent *dir = firstOf(b, TermEvent::Directory);
+        CHECK(dir && dir->text == "/tmp");
+        // Half a UTF-8 character is held back, not emitted as garbage.
+        TerminalStream ts;
+        auto first = ts.feed("x\xE2\x9C");
+        CHECK(streamText(first) == "x");
+        CHECK(streamText(ts.feed("\x93")) == "\xE2\x9C\x93");
+    }
+
+    GROUP("term:invalid-utf8");
+    {
+        TerminalStream ts;
+        auto ev = ts.feed("a\xFF" "b\xC0\xAF" "c\r\n");
+        CHECK(streamText(ev) == "a\xEF\xBF\xBD" "b\xEF\xBF\xBD\xEF\xBF\xBD" "c\n");
+    }
+
+    GROUP("term:shell-integration");
+    {
+        TerminalStream ts;
+        auto ev = ts.feed("\x1b]133;A\x07");
+        CHECK(kinds(ev) == "A");
+        ev = ts.feed("\x1b]133;C\x07out\r\n\x1b]133;D;130\x07"
+                     "\x1b]7;file://Host.local/Users/me/my%20dir%25\x07\x1b]133;A\x07");
+        CHECK(kinds(ev) == "CTDPA");                 // order is preserved
+        CHECK(streamText(ev) == "out\n");
+        const TermEvent *end = firstOf(ev, TermEvent::CommandEnd);
+        CHECK(end && end->status == 130);
+        const TermEvent *dir = firstOf(ev, TermEvent::Directory);
+        CHECK(dir && dir->text == "/Users/me/my dir%");
+        // D without a status, and ST (ESC \) instead of BEL as terminator.
+        auto noStatus = ts.feed("\x1b]133;D\x1b\\");
+        CHECK(kinds(noStatus) == "D" && noStatus[0].status == 0);
+        // 133;B (end of prompt) is recognized and ignored.
+        CHECK(ts.feed("\x1b]133;B\x07").empty());
+        // A malformed OSC 7 doesn't produce a directory.
+        CHECK(!firstOf(ts.feed("\x1b]7;file://nohostpath\x07"),
+                       TermEvent::Directory));
+    }
+
+    GROUP("term:carriage-return");
+    {
+        TerminalStream ts;
+        auto ev = ts.feed("10%\r20%\r\n");
+        CHECK(kinds(ev) == "TRT");
+        CHECK(ev.size() == 3 && ev[0].text == "10%" && ev[2].text == "20%\n");
+        // \r split from its \n across reads is still just a line ending.
+        TerminalStream ts2;
+        auto a = ts2.feed("line\r");
+        auto b = ts2.feed("\nnext");
+        CHECK(kinds(a) == "T" && kinds(b) == "T");
+        CHECK(streamText(a) + streamText(b) == "line\nnext");
+        // \r followed by an escape sequence still counts as a return.
+        TerminalStream ts3;
+        CHECK(kinds(ts3.feed("50%\r\x1b[Kdone")) == "TRT");
+        // Backspace is reported so a spinner can erase its last character.
+        TerminalStream ts4;
+        CHECK(kinds(ts4.feed("|\b/")) == "TBT");
+    }
+
+    GROUP("term:robustness");
+    {
+        // An OSC that never terminates is abandoned, and output resumes after
+        // its eventual terminator instead of being swallowed forever.
+        TerminalStream ts;
+        std::string runaway = "\x1b]133;" + std::string(20000, 'x');
+        auto ev = ts.feed(runaway);
+        CHECK(streamText(ev).empty());
+        CHECK(streamText(ts.feed("\x07visible")) == "visible");
+        // ESC inside an OSC starts a new sequence rather than ending the text.
+        TerminalStream ts2;
+        CHECK(kinds(ts2.feed("\x1b]0;title\x1b]133;A\x07")) == "A");
+        // Other control characters are dropped; tabs are kept.
+        TerminalStream ts3;
+        CHECK(streamText(ts3.feed("a\x07\x01\tb")) == "a\tb");
+    }
+}
+
+}  // namespace
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
     testMarkdown();
+    testTerminalStream();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

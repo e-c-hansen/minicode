@@ -10,7 +10,7 @@ for future sessions: architecture, workflow, and the hard-won gotchas.
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
   run on Apple Silicon and to keep granted permissions stable).
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  69 checks over the tokenizer and Markdown parser. Exits non-zero on failure.
+  99 checks over the tokenizer, Markdown parser, and terminal output stream. Exits non-zero on failure.
 - `make run [DIR=~/path]` — build and launch.
 - `make icon` — regenerate `resources/AppIcon.icns` from `tools/makeicon.m`.
 - `make dist-zip` / `make dmg` — package for distribution.
@@ -25,6 +25,9 @@ isolation. Keep them dependency-free.
 - `src/SyntaxHighlighter.{h,cpp}` — hand-rolled lexer, grammar chosen by file
   extension. Emits `{start, length, style}` tokens.
 - `src/MarkdownParser.{h,cpp}` — CommonMark subset -> flat list of styled runs.
+- `src/TerminalStream.{h,cpp}` — pty byte stream -> text + shell-integration
+  events (OSC 133 marks, OSC 7 cwd). Handles sequences and UTF-8 split
+  across reads.
 
 The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 
@@ -32,7 +35,7 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
   local key monitor (only for Ctrl+`).
 - `src/EditorController.{h,mm}` — the window: file tree, editor, data-safety,
   Markdown rendering, find, scope of most features. This is the big file.
-- `src/Terminal.{h,mm}` — persistent-shell command runner (NSTask).
+- `src/Terminal.{h,mm}` — shell panel: zsh on a pty via forkpty, log-style view.
 - `src/Browser.{h,mm}` — WKWebView panel.
 - `src/Search.{h,mm}` — scoped, project-wide text search window.
 
@@ -69,10 +72,20 @@ synthetic clicks/keys. So:
 - **Two app instances**: launching the `.app` twice just activates the existing
   one. The CLI launcher (`Contents/Resources/minicode`) runs the raw binary
   detached, which does start a separate process.
-- **Terminal**: one long-lived `zsh -l` fed over a pipe. A sentinel line after
-  each command delimits output and carries back `$?` and `$PWD`. Commands run as
-  `{ cmd ; } </dev/null` so they can't swallow the control stream. ANSI is
-  stripped for display.
+- **Terminal**: `zsh -l -i +Z` (interactive, line editor off) on a pty from
+  `forkpty`. `ZDOTDIR` points at a generated `.zshenv` (in
+  `NSTemporaryDirectory()/MiniCode-zsh`) that hands `ZDOTDIR` straight back to
+  the user, loads their files, and on the first `precmd` installs hooks that
+  emit OSC 133 A/C/D + OSC 7 and blank `PS1`. Installing at first precmd is
+  what keeps the hook last, after .zshrc. Echo is off while zsh reads a
+  command (precmd `stty -echo`) and on while it runs (preexec), so the pty's
+  ECHO flag, read from the master with `tcgetattr`, tells us when a program
+  wants hidden input. Everything the child needs is built before `fork`: only
+  async-signal-safe calls between fork and exec. `PROMPT_SP` prints before
+  precmd, so it is unset in .zshenv. `TERM=dumb` and pagers are `cat` until
+  there is a screen emulator. When testing headless, give the shell a scratch
+  `HOME` and `ZDOTDIR`: `/etc/zshrc` sets `HISTFILE` from them, and test
+  commands otherwise land in the user's real `~/.zsh_history`.
 - **Markdown**: block elements call `ensureLineStart` so they aren't glued to
   the previous paragraph; headings get `paragraphSpacingBefore`; tables render
   as aligned monospace. Table cells are inline-parsed and padded by *display*
