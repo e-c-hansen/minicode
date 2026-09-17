@@ -176,9 +176,11 @@ the Linux box) gets none of this, only a compile.
   verified when it was only compiled.
 
 **The GTK port from the Mac: a Docker container.** Docker Desktop is installed
-on the Mac. An `ubuntu:26.04` image with the CI packages plus `xvfb xcompmgr
-x11-xserver-utils xdotool imagemagick dbus-x11` builds the port with meson and
-runs it for real:
+on the Mac (start it with `open -a Docker`). `linux/dev/gtk-dev.sh` builds the
+image (`linux/dev/Dockerfile`: ubuntu:26.04, the CI packages, Xvfb, xcompmgr,
+xdotool, ImageMagick), starts a container with the repo mounted, and builds and
+tests the port; `/tools/launch.sh` inside it runs the app. `linux/dev/README.md`
+has the workflow. The details behind it:
 
 - Mount the repo (`-v ~/MiniCode:/work`) and build into a container-local
   directory (`meson setup /build`), not `linux/build`.

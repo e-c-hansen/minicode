@@ -48,7 +48,8 @@ Verified by running it:
 - The settings file, Ctrl+/, and the divider drags (September 2026). These were
   checked in an Ubuntu 26.04 Docker container on the Mac, on a virtual X display
   with a compositor, driven with real key presses and mouse drags from
-  `xdotool` and checked from screenshots:
+  `xdotool` and checked from screenshots. `linux/dev/` has that setup
+  (`linux/dev/gtk-dev.sh`, see its README):
   - Ctrl+, creates `~/.config/minicode/settings.conf` with every setting
     commented out and opens it, with each color shown as a swatch. Clicking a
     swatch opens the GTK color dialog, and the choice is written into the line,
