@@ -55,7 +55,7 @@ LanguageDef makeDef(const std::string& ext) {
         d.lineComments = {"//"}; d.blockStart = "/*"; d.blockEnd = "*/";
         d.stringDelims = "\"'`"; d.keywords = kJs; d.types = kCTypes;
     } else if (ext == "sh" || ext == "bash" || ext == "zsh" || ext == "yml" ||
-               ext == "yaml" || ext == "toml") {
+               ext == "yaml" || ext == "toml" || ext == "conf") {
         d.lineComments = {"#"}; d.stringDelims = "\"'";
     } else { // c, cpp, cc, h, hpp, m, mm, java, go, rs, ...
         d.lineComments = {"//"}; d.blockStart = "/*"; d.blockEnd = "*/";
@@ -77,7 +77,7 @@ bool matchesAt(const std::string& s, size_t i, const std::string& tok) {
 bool SyntaxHighlighter::supports(const std::string& ext) {
     static const std::unordered_set<std::string> known = {
         "py","js","ts","jsx","tsx","json","c","cpp","cc","cxx","h","hpp","hxx",
-        "m","mm","java","go","rs","sh","bash","zsh","yml","yaml","toml"};
+        "m","mm","java","go","rs","sh","bash","zsh","yml","yaml","toml","conf"};
     return known.count(ext) > 0;
 }
 

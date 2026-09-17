@@ -1,9 +1,10 @@
 // MarkdownParser.cpp — a compact CommonMark-subset parser. Pure C++.
 // Supports: ATX headings, fenced code blocks, blockquotes, unordered/ordered
-// lists, horizontal rules, and inline **bold**, *italic*, `code`, [text](url).
+// lists, horizontal rules, GitHub tables, and inline **bold**, *italic*, `code`, [text](url).
 #include "MarkdownParser.h"
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <sstream>
 
 namespace {
@@ -128,23 +129,17 @@ std::string trim(const std::string& s) {
     return s.substr(a, b - a);
 }
 
-// A GitHub table separator row: pipes, dashes, colons and spaces, with at
-// least one dash. e.g. "| --- | :--: |".
-bool isTableSeparator(const std::string& s) {
-    bool dash = false, pipe = false;
-    for (char c : s) {
-        if (c == '-') dash = true;
-        else if (c == '|') pipe = true;
-        else if (c != ':' && c != ' ' && c != '\t') return false;
-    }
-    return dash && pipe;
-}
+// Column alignment taken from a table's separator row.
+enum class Align { Left, Center, Right };
 
-// Split "| a | b |" into {"a","b"}, trimming cells and outer pipes.
+// Split "| a | b |" into {"a","b"}, trimming cells and outer pipes. An escaped
+// pipe (\|) is a literal character inside a cell, not a column boundary.
 std::vector<std::string> splitTableRow(const std::string& line) {
     std::string s = trim(line);
     if (!s.empty() && s.front() == '|') s.erase(s.begin());
-    if (!s.empty() && s.back() == '|') s.pop_back();
+    if (!s.empty() && s.back() == '|' &&
+        !(s.size() >= 2 && s[s.size() - 2] == '\\'))
+        s.pop_back();
     std::vector<std::string> cells;
     std::string cur;
     for (size_t i = 0; i < s.size(); i++) {
@@ -154,6 +149,111 @@ std::vector<std::string> splitTableRow(const std::string& line) {
     }
     cells.push_back(trim(cur));
     return cells;
+}
+
+// A GitHub table separator row, e.g. "| --- | :--: | --: |". It needs at least
+// one pipe, and every cell must be dashes with optional colons at either end.
+// On success the per-column alignments are written to `aligns`.
+bool parseTableSeparator(const std::string& line, std::vector<Align>& aligns) {
+    if (line.find('|') == std::string::npos) return false;
+    aligns.clear();
+    for (const std::string& cell : splitTableRow(line)) {
+        if (cell.empty()) return false;
+        bool left = cell.front() == ':';
+        bool right = cell.size() > 1 && cell.back() == ':';
+        size_t a = left ? 1 : 0, b = cell.size() - (right ? 1 : 0);
+        if (a >= b) return false;
+        for (size_t i = a; i < b; i++)
+            if (cell[i] != '-') return false;
+        aligns.push_back(left && right ? Align::Center
+                         : right       ? Align::Right
+                                       : Align::Left);
+    }
+    return true;
+}
+
+// How many monospace columns a UTF-8 string occupies. Counts code points, not
+// bytes; combining marks and variation selectors take no space, while East
+// Asian wide characters and most emoji take two.
+size_t displayWidth(const std::string& s) {
+    size_t width = 0, i = 0, n = s.size();
+    while (i < n) {
+        unsigned char c = (unsigned char)s[i];
+        uint32_t cp; int len;
+        if (c < 0x80)                { cp = c;        len = 1; }
+        else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; len = 2; }
+        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; len = 3; }
+        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; len = 4; }
+        else                         { cp = c;        len = 1; }  // stray byte
+        for (int k = 1; k < len; k++) {
+            if (i + k >= n || ((unsigned char)s[i + k] & 0xC0) != 0x80) {
+                len = k; break;                 // truncated sequence
+            }
+            cp = (cp << 6) | ((unsigned char)s[i + k] & 0x3F);
+        }
+        i += len;
+
+        if ((cp >= 0x0300 && cp <= 0x036F) || (cp >= 0x200B && cp <= 0x200F) ||
+            (cp >= 0x20D0 && cp <= 0x20FF) || (cp >= 0xFE00 && cp <= 0xFE0F))
+            continue;                           // zero width
+        bool wide =
+            (cp >= 0x1100 && cp <= 0x115F) || (cp >= 0x2E80 && cp <= 0xA4CF) ||
+            (cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0xF900 && cp <= 0xFAFF) ||
+            (cp >= 0xFE30 && cp <= 0xFE4F) || (cp >= 0xFF00 && cp <= 0xFF60) ||
+            (cp >= 0xFFE0 && cp <= 0xFFE6) || (cp >= 0x1F300 && cp <= 0x1FAFF) ||
+            (cp >= 0x20000 && cp <= 0x3FFFD);
+        width += wide ? 2 : 1;
+    }
+    return width;
+}
+
+// Render a GitHub table as aligned monospace rows. Cells keep their inline
+// styling (bold, code, links); padding is computed from the visible text, so
+// markup characters that don't display don't throw the columns off.
+void emitTable(const std::vector<std::vector<std::string>>& rows,
+               const std::vector<Align>& aligns, std::vector<MdRun>& out) {
+    size_t cols = aligns.size();
+
+    // Inline-parse every cell once, and measure what will actually show.
+    std::vector<std::vector<std::vector<MdRun>>> cells(rows.size());
+    std::vector<size_t> width(cols, 1);
+    for (size_t ri = 0; ri < rows.size(); ri++) {
+        cells[ri].resize(cols);
+        for (size_t c = 0; c < cols; c++) {
+            MdRun base; base.table = true; base.bold = (ri == 0);
+            if (c < rows[ri].size()) parseInline(rows[ri][c], base, cells[ri][c]);
+            size_t w = 0;
+            for (const MdRun& r : cells[ri][c]) w += displayWidth(r.text);
+            width[c] = std::max(width[c], w);
+        }
+    }
+
+    auto plain = [&](const std::string& text) {
+        MdRun r; r.table = true; r.text = text; out.push_back(r);
+    };
+
+    for (size_t ri = 0; ri < rows.size(); ri++) {
+        for (size_t c = 0; c < cols; c++) {
+            if (c > 0) plain(" \xE2\x94\x82 ");          // " │ "
+            size_t w = 0;
+            for (const MdRun& r : cells[ri][c]) w += displayWidth(r.text);
+            size_t pad = width[c] - w, before = 0;
+            if (aligns[c] == Align::Right) before = pad;
+            else if (aligns[c] == Align::Center) before = pad / 2;
+            if (before) plain(std::string(before, ' '));
+            for (const MdRun& r : cells[ri][c]) out.push_back(r);
+            if (pad - before) plain(std::string(pad - before, ' '));
+        }
+        plain("\n");
+        if (ri == 0) {                                  // rule under the header
+            std::string sep;
+            for (size_t c = 0; c < cols; c++) {
+                if (c > 0) sep += "\xE2\x94\x80\xE2\x94\xBC\xE2\x94\x80";  // ─┼─
+                for (size_t k = 0; k < width[c]; k++) sep += "\xE2\x94\x80";
+            }
+            plain(sep + "\n");
+        }
+    }
 }
 
 } // namespace
@@ -193,51 +293,24 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
             continue;
         }
 
-        // GitHub table: a "| ... |" header line followed by a separator row.
+        // GitHub table: a header line with pipes, then a separator row with
+        // the same number of columns.
         if (trimmed.find('|') != std::string::npos && idx + 1 < lines.size()) {
-            int ind2; std::string nextLine = ltrim(lines[idx + 1], ind2);
-            if (isTableSeparator(nextLine)) {
+            std::vector<Align> aligns;
+            std::vector<std::string> header = splitTableRow(trimmed);
+            if (parseTableSeparator(trim(lines[idx + 1]), aligns) &&
+                aligns.size() == header.size()) {
                 ensureLineStart(out);
-                std::vector<std::vector<std::string>> rows;
-                rows.push_back(splitTableRow(trimmed));
+                std::vector<std::vector<std::string>> rows{header};
                 size_t j = idx + 2;
                 while (j < lines.size()) {
-                    int ind3; std::string row = ltrim(lines[j], ind3);
+                    std::string row = trim(lines[j]);
                     if (row.empty() || row.find('|') == std::string::npos) break;
                     rows.push_back(splitTableRow(row));
                     j++;
                 }
                 idx = j - 1;   // outer loop will ++
-
-                size_t cols = 0;
-                for (auto& r : rows) cols = std::max(cols, r.size());
-                std::vector<size_t> width(cols, 0);
-                for (auto& r : rows)
-                    for (size_t c = 0; c < r.size(); c++)
-                        width[c] = std::max(width[c], r[c].size());
-
-                for (size_t ri = 0; ri < rows.size(); ri++) {
-                    std::string line;
-                    for (size_t c = 0; c < cols; c++) {
-                        std::string cell = c < rows[ri].size() ? rows[ri][c] : "";
-                        if (cell.size() < width[c])
-                            cell.append(width[c] - cell.size(), ' ');
-                        line += cell;
-                        if (c + 1 < cols) line += "  ";
-                    }
-                    MdRun r; r.table = true; r.text = line + "\n";
-                    if (ri == 0) r.bold = true;   // header
-                    out.push_back(r);
-                    if (ri == 0) {                // underline under the header
-                        std::string sep;
-                        for (size_t c = 0; c < cols; c++) {
-                            sep.append(width[c], '-');
-                            if (c + 1 < cols) sep += "  ";
-                        }
-                        MdRun s; s.table = true; s.text = sep + "\n";
-                        out.push_back(s);
-                    }
-                }
+                emitTable(rows, aligns, out);
                 pushBreak(out);
                 continue;
             }

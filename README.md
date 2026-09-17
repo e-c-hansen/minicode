@@ -10,9 +10,28 @@ You open a folder and get a file tree on the left, much like the explorer in VS 
 
 Files are editable, not just viewable. Type into a file and the highlighting updates as you go, save with Command S, and undo and redo work as you would expect. The title bar shows a dot when you have unsaved changes.
 
-There is a terminal you can pull up at the bottom with Control backtick, and you can drag the bar above it to resize. It runs a single persistent zsh session, so it behaves like a normal shell across commands. Change directory and you stay there, export a variable or define a function and it is still around for the next command. It keeps your command history on the up and down arrows, and clicking anywhere in the panel drops the cursor on the input line. It is still meant as a quick command runner rather than a full terminal emulator, so it does not host interactive full screen programs like vim or htop, but for the everyday things you reach for, git, make, ls, running a script, it works the way you would want. There is also an embedded browser you can toggle with Shift Command B, which is a real WebKit view with a URL bar and back, forward, and reload buttons.
+There is a terminal you can pull up at the bottom with Control backtick, and you can drag the bar above it to resize. It runs a single persistent zsh session on a real pseudo terminal, with your own startup files loaded, so aliases and functions from your .zshrc are there and state carries across commands. Output streams in as it is printed, Control C interrupts whatever is running, and programs that ask for input get it, including password prompts, which switch the input line to hidden text. A command that fails shows its exit status underneath. It keeps your command history on the up and down arrows, and clicking anywhere in the panel drops the cursor on the input line. Colors come through, so git, ls, test runners, and anything else that styles its output look the way they do in any other terminal, and progress lines that redraw themselves update in place. It shows output as a scrolling log rather than emulating a screen, so full screen programs like vim or htop are still out of reach, but for the everyday things you reach for, git, make, ls, running a script, it works the way you would want. There is also an embedded browser you can toggle with Shift Command B, which is a real WebKit view with a URL bar and back, forward, and reload buttons.
 
 If you ever forget a shortcut, press Shift Command H and a small panel lists the ones available in your current context. The panel is aware of what you are doing, so the Markdown preview toggle only shows up when a Markdown file is open, for instance.
+
+## Settings and transparency
+
+Press Command comma to open the settings file, which lives at ~/.config/minicode/settings.conf. The first time, MiniCode writes it out with every setting listed, commented out, and set to its default, so you can see what is available and uncomment what you want. Changes apply as soon as the file is saved, whether you save it in MiniCode or in any other editor, and every open window picks them up.
+
+Each part of the window, the title bar, the file tree, the editor, the terminal, the browser toolbar, and the status bar, has its own background color, opacity, and text color. Opacity applies only to the background, so text stays solid while whatever is behind the window shows through. Setting window.opacity changes every panel at once, and a panel's own opacity overrides it. Turning on window.blur frosts what is behind the window, the way the macOS sidebar and Terminal do, which keeps text readable over a busy desktop. The syntax highlighting colors and the Markdown heading, link, code, and quote colors can be changed too.
+
+```
+window.blur = true
+editor.opacity = 70%
+sidebar.opacity = 0.5
+terminal.opacity = 0.6
+terminal.text = #E0E0E0
+titlebar.opacity = 0.4
+```
+
+You don't need to think in hex codes. In the settings file every color is shown as a small swatch of itself, and clicking one opens the macOS color picker. As you pick, the line is rewritten, switched on if it was commented out, and saved, so the window changes while you drag around the color wheel. The opacity slider in the picker writes the alpha channel too.
+
+If a line has a mistake in it, that line is ignored, and the status bar says which line and why. The rest of the file still applies. The system menu bar at the very top of the screen belongs to macOS, so apps cannot change it, but the window's own title bar is fully configurable.
 
 ## Installing and building
 
@@ -73,19 +92,21 @@ Click hello.py and sample.cpp to see the syntax coloring, then click README.md t
 | Command R | Refresh the file tree |
 | Shift Command . | Show or hide dotfiles |
 | Command B | Collapse or restore the sidebar |
-| Shift Command E | Collapse the editor so the terminal fills the window |
-| Command T, or Control backtick | Toggle terminal |
+| Shift Command E | Hide or restore the file editor; the terminal and browser take its space |
+| Shift Command T, or Control backtick | Toggle terminal |
 | Shift Command B | Toggle browser |
 | Shift Command P | Toggle Markdown preview |
 | Shift Command H | Toggle the shortcut hints |
+| Command comma | Open the settings file |
+| Command slash | Comment or uncomment the selected lines |
 
 ## How it is put together
 
-The parts that do not need a graphical interface are plain C++. The syntax tokenizer lives in SyntaxHighlighter.h and .cpp, and it is a small hand written lexer that picks a grammar from the file extension and walks the text once, emitting colored ranges. The Markdown parser lives in MarkdownParser.h and .cpp, and it handles the common subset of Markdown, headings, bold and italic, inline and fenced code, lists, blockquotes, rules, and links.
+The parts that do not need a graphical interface are plain C++. LineComments.cpp works out which comment marker a file uses and toggles comments across a selection, keeping the block's indentation lined up. The syntax tokenizer lives in SyntaxHighlighter.h and .cpp, and it is a small hand written lexer that picks a grammar from the file extension and walks the text once, emitting colored ranges. The Markdown parser lives in MarkdownParser.h and .cpp, and it handles the common subset of Markdown, headings, bold and italic, inline and fenced code, lists, blockquotes, rules, and links.
 
-The graphical layer is Objective-C++, which is the normal way to drive AppKit from C++. EditorController.mm owns the window, the file tree, and the editor, and it translates the ranges from the C++ core into colored text. Terminal.mm is the command runner, built on NSTask. Browser.mm wraps a WKWebView. The file tree, the panels, and the resizable terminal dock are laid out by hand rather than through nested split views, which turned out to be more predictable.
+The graphical layer is Objective-C++, which is the normal way to drive AppKit from C++. EditorController.mm owns the window, the file tree, and the editor, and it translates the ranges from the C++ core into colored text. Terminal.mm runs zsh on a pseudo terminal, and TerminalStream.cpp, which is plain C++ with its own unit tests, reads the output and picks out the markers the shell sends to say where each command starts and ends. Browser.mm wraps a WKWebView. Settings.cpp, also plain C++ and unit tested, parses the settings file and works out the final color of each panel, and AppSettings.mm watches the file and tells the windows to redraw when it changes. The file tree, the panels, and the resizable terminal dock are laid out by hand rather than through nested split views, which turned out to be more predictable.
 
-Because the highlighter and the Markdown parser are plain C++ with no dependencies, they can be tested on their own, away from the GUI. Run make test to build and run the suite in tests/run_tests.cpp, which checks the tokenizer against a few languages and the parser against headings, inline styles, code blocks, lists, tables, and block separation. The harness is a handful of macros, no test framework, and it exits non zero if anything fails.
+Because the highlighter and the Markdown parser are plain C++ with no dependencies, they can be tested on their own, away from the GUI. Run make test to build and run the suite in tests/run_tests.cpp, which checks the tokenizer against a few languages, the parser against headings, inline styles, code blocks, lists, tables, and block separation, the terminal output reader, and the settings parser, including a check that every setting documented in the default file is one the parser accepts. The harness is a handful of macros, no test framework, and it exits non zero if anything fails.
 
 ## Distributing it
 
@@ -107,7 +128,7 @@ So the honest summary is that distribution is a solved, scripted problem here. F
 
 ## Honest limitations
 
-This is an MVP, and it is scoped like one. The terminal keeps a persistent shell so state carries across commands, but it runs each command with its input closed, which means interactive full screen programs like vim or htop are out of scope, and it strips color and other escape codes rather than rendering them. The Markdown parser covers the common cases rather than the whole CommonMark spec. Syntax highlighting is based on file extension and covers a fixed set of languages. None of these are hard to extend, they are just where the line got drawn for a first version.
+This is an MVP, and it is scoped like one. The terminal runs a real shell on a pseudo terminal, but it shows output as a log instead of emulating a screen, which means full screen programs like vim or htop are out of scope. It renders colors and cursor movement within a line, but ignores movement between lines. The Markdown parser covers the common cases rather than the whole CommonMark spec. Syntax highlighting is based on file extension and covers a fixed set of languages. None of these are hard to extend, they are just where the line got drawn for a first version.
 
 ## License
 

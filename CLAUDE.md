@@ -14,7 +14,8 @@ this file covers the macOS app except where it says otherwise.
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
   run on Apple Silicon and to keep granted permissions stable).
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  38 checks over the tokenizer and Markdown parser. Exits non-zero on failure.
+  370 checks over the tokenizer, Markdown parser, terminal output stream,
+  settings parser, and comment toggling. Exits non-zero on failure.
 - `make run [DIR=~/path]` — build and launch.
 - `make icon` — regenerate `resources/AppIcon.icns` from `tools/makeicon.m`.
 - `make dist-zip` / `make dmg` — package for distribution.
@@ -29,6 +30,14 @@ isolation. Keep them dependency-free.
 - `src/SyntaxHighlighter.{h,cpp}` — hand-rolled lexer, grammar chosen by file
   extension. Emits `{start, length, style}` tokens.
 - `src/MarkdownParser.{h,cpp}` — CommonMark subset -> flat list of styled runs.
+- `src/Settings.{h,cpp}` — the settings file (`key = value`): parsing with
+  per-line errors, defaults, and the resolved color of every surface
+  (opacity applied, fallbacks from `window.*`). All color decisions live here
+  so they are unit-tested; the GUI only converts `Rgba` to NSColor.
+- `src/TerminalStream.{h,cpp}` — pty byte stream -> styled lines (SGR colors,
+  in-line cursor movement) + shell-integration events (OSC 133 marks, OSC 7
+  cwd). A line model, not a screen: handles sequences and UTF-8 split across
+  reads.
 
 The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 
@@ -36,9 +45,91 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
   local key monitor (only for Ctrl+`).
 - `src/EditorController.{h,mm}` — the window: file tree, editor, data-safety,
   Markdown rendering, find, scope of most features. This is the big file.
-- `src/Terminal.{h,mm}` — persistent-shell command runner (NSTask).
+- `src/LineComments.{h,cpp}` — Cmd+/: comment marker per file name, and the
+  toggle itself, in UTF-16 offsets so results map straight onto NSRange.
+- `src/AppSettings.{h,mm}` — singleton that loads
+  `~/.config/minicode/settings.conf` (or `$MINICODE_SETTINGS`), watches it,
+  and posts `MCSettingsDidChangeNotification`.
+- `src/Terminal.{h,mm}` — shell panel: zsh on a pty via forkpty, log-style view.
 - `src/Browser.{h,mm}` — WKWebView panel.
 - `src/Search.{h,mm}` — scoped, project-wide text search window.
+
+## UI map (read this before UI work)
+
+Window content view (`EditorController`, built in `init`):
+
+```
+container (PanelHost, laid out by hand in layoutContainer)
+├── blurView (NSVisualEffectView)                 window.blur, whole window
+├── titlebarView + titleLabel                     drawn when customTitlebar
+├── NSSplitView (vertical, thin divider)          sidebar | right pane
+│   ├── treeScroll → ClickOutline (NSOutlineView)  file tree, bg #252526
+│   └── rightArea (PanelHost, laid out by hand in relayoutRightArea)
+│       ├── editorScroll → textView (NSTextView)   top slot, bg #1E1E1E
+│       ├── browser (BrowserView)                  top slot when open
+│       ├── terminal (TerminalView)                docked bottom, bg #181818
+│       └── termDivider (DragBar)                  kept topmost
+├── status bar (buildStatusBarInContainer)        bottom strip
+└── hintsPanel (buildHintsPanelInContainer)       Shift+Cmd+H overlay
+```
+
+- Panel backgrounds, panel text, syntax and Markdown colors come from
+  `Settings` (defaults are the VS Code Dark+ values in `Settings.cpp`). Each
+  view has an `applySettings` method that runs at startup and on
+  `MCSettingsDidChangeNotification`; it must recolor what is already on
+  screen (editor re-highlights, Markdown re-renders keeping scroll, terminal
+  output marked with `MCTerminalDefaultForeground` gets the new color). A new
+  setting goes in `Settings.cpp` (parser + default + the commented
+  `defaultFileText`, which a unit test checks key by key) and the view's
+  `applySettings`.
+- Not yet configurable, still inline hex helpers (`Hex`, `THex`, `SHex`):
+  accents (#4EA1F7), muted #9CA3AF, divider line #333333, hints overlay,
+  terminal panel messages, the Search window, and the ANSI palette in
+  `TermColor::rgb()`. `linux/src/Palette.h` mirrors the macOS defaults.
+- The window uses `NSWindowStyleMaskFullSizeContentView` always, so content
+  runs under the title bar. `layoutContainer` keeps the split view below it
+  using `contentLayoutRect` (empty before the window is shown, so
+  `titlebarHeight` falls back to frame math, or the split comes out 0px tall).
+  With a custom title bar (any `titlebar.*` key, or a non-opaque window) the
+  system title is hidden and `titleLabel` mirrors `window.title` via KVO.
+- Translucency: a translucent color must be painted once, and as a plain
+  layer color. The tree and editor use `PanelScrollView`, which draws no
+  scroll/clip background and sizes a layer-backed backdrop view in `tile`.
+  Two traps paid for here: a clip view's translucent `backgroundColor` still
+  renders opaque, and NSScrollView never resizes extra subviews (a backdrop
+  added with autoresizing stays 0x0). Property checks passed both times; only
+  a pixel capture caught it (see verification below).
+- Settings file in the editor: `applyHighlighting` gives each color value a
+  swatch (background = the color, `NSLinkAttributeName` = `minicode-color`).
+  `textView:clickedOnLink:` opens NSColorPanel; `colorPicked:` rewrites the
+  line with `Settings::setColor` (which uncomments it) and saves after
+  150 ms. `linkTextAttributes` is only a pointing-hand cursor so swatches
+  keep their colors.
+- Layout is manual frames, not Auto Layout (see gotchas for why). Pane state
+  flags: `sidebarCollapsed`, `editorHidden`, `terminalVisible`,
+  `browserVisible`, plus NSSplitView's own collapse of `rightArea`.
+- A new shortcut goes in three places: the menu in `main.mm` (plus a
+  forwarding method on `AppDelegate`), `hintsText` in EditorController, and the
+  README shortcut table.
+- Fonts: system font for Markdown/UI, `monospacedSystemFontOfSize:` 12-13 for
+  code and terminal.
+
+## Current state (handoff, 2026-09-17)
+
+- Branch `linux-port`, pushed to origin through the editor-hide work. On top
+  of that, uncommitted until the user tries it: the settings file with
+  per-panel opacity, blur, title bar and text colors (Cmd+,), and the
+  terminal toggle moved from Cmd+T to Shift+Cmd+T, Cmd+/ comment toggle, and
+  clickable color swatches in the settings file. The user confirmed terminal
+  and title bar opacity; editor and sidebar opacity were broken and are now
+  fixed and pixel-verified. All tests pass (370), build is warning-free.
+- The user has confirmed in the running app: tables, the pty terminal
+  (Ctrl+C, sudo, aliases), colors, the terminal bar, Shift+Cmd+E, and both
+  divider drags.
+- Linux port (worked on from the Ubuntu machine, merged from `main`) has its
+  own editor collapse, VTE terminal, hints panel and desktop launcher. It has
+  no settings file, Cmd+/ equivalent, or transparency yet.
+- Next up per the user: UI changes.
 
 ## Verification reality (important)
 
@@ -46,16 +137,42 @@ How much of the GUI you can actually check depends on which port you are
 working on, and on whether the session is running on a machine with a display.
 Check first; do not assume either answer.
 
-Neither port gives you screen capture or reliable synthetic clicks and keys.
-Pixels, layout and anything interactive still need the user's eyes. What
-differs is whether you can get the app running at all.
+**The macOS app, in a session on the user's Mac: more than it looks.** The
+app really launches (a window appears on the user's screen, so keep runs short
+and never leave strays). Synthetic key and mouse events sent from inside the
+app work, and so does capturing the app's own window as pixels. What stays
+out of reach is judging the look: a pixel value can be read, but whether it
+looks right is the user's call. A session on a machine without a display (CI,
+the Linux box) gets none of this, only a compile.
 
-**The macOS app: blind.** Sessions on it have no display.
 
 - Test the pure-C++ core with `make test`.
 - For GUI logic, add a temporary `getenv("MINICODE_*TEST")` block in `main.mm`
-  that drives the code path and NSLogs the result, run it headless, then remove
-  it. This pattern found the zero-width sidebar, the search data path, etc.
+  that drives the code path and NSLogs PASS/FAIL, run the binary headless in
+  the background with a poll-and-kill loop (there is no `timeout` on macOS),
+  then remove the block. Techniques that proved reliable:
+  - Read state via KVC (`[controller valueForKey:@"rightArea"]`).
+  - Key shortcuts: build an `NSEvent keyEventWithType:` and send it through
+    `[window performKeyEquivalent:]` then `[NSApp.mainMenu performKeyEquivalent:]`.
+  - Mouse drags on views with their own tracking loop (NSSplitView): post
+    LeftMouseDragged/LeftMouseUp with `[NSApp postEvent:atStart:NO]`, then call
+    `mouseDown:`. For simple views (DragBar) call mouseDown/Dragged/Up directly.
+  - Use `hitTest:` at pixel offsets to measure real grab areas.
+  - Terminal tests must set `HOME` and `ZDOTDIR` to scratch dirs, or test
+    commands land in the user's real `~/.zsh_history`.
+- Pixels: `/usr/sbin/screencapture -x -o -l<windowNumber> out.png` run from
+  inside the app captures the window with its alpha channel, and
+  `NSBitmapImageRep colorAtX:y:` reads it (y from the top, scale for Retina).
+  This is the only way to verify transparency; view properties can look right
+  while nothing is drawn. `CGWindowListCreateImage` is gone in the macOS 15 SDK.
+- Undo in tests: everything run from one callback lands in one undo group
+  (`groupingLevel` stays 1). Wrap each simulated key press in
+  begin/endUndoGrouping with `groupsByEvent` off. Programmatic edits call
+  `breakUndoCoalescing` so each Cmd+/ is its own step for real users.
+- Cleaning up temp test blocks: remove them by exact text, not by searching
+  for a marker comment that also appears on the `getenv` line.
+- When a check fails, print the actual output before changing code: most
+  failures in this session were wrong checks, not wrong code.
 - Otherwise confirm the app builds clean and launches without crashing, and
   tell the user which behavior needs their eyes. Do not claim GUI behavior is
   verified when it was only compiled.
@@ -93,24 +210,58 @@ holds, these give real runtime evidence rather than compile-only evidence:
   positioned AFTER the window is on screen and laid out. The editor / terminal /
   browser are laid out by hand in a `PanelHost` view, not nested split views —
   that was far more predictable.
+- **Terminal resize bar**: the `DragBar` is a 12px grab area drawing a 1px
+  line, and `relayoutRightArea` re-raises it to the top of `rightArea`.
+  Otherwise a panel added later (the browser) covers half of it. Its cursor
+  comes from a tracking area, because cursor rects lose to the overlapping
+  text views.
 - **Cmd+B collapse** fought the split delegate's 160px min; a `sidebarCollapsed`
   flag lets the minimum drop to 0.
+- **Hiding panes**: two separate mechanisms. (1) Dragging the sidebar divider
+  far right collapses the whole right pane via NSSplitView
+  (`canCollapseSubview:` YES for `rightArea`; `effectiveRect:` widens the 1px
+  divider's grab area to 5px each side; min pane width 150 so the drag doesn't
+  visibly stall). (2) Shift+Cmd+E, or dragging the terminal bar to the top,
+  sets `editorHidden`: only the file editor goes, and `relayoutRightArea`
+  gives the terminal the full height (bar pinned at the top edge so it can be
+  dragged back down). If that leaves the pane empty, `collapseRightAreaIfEmpty`
+  collapses it. Opening a file, Cmd+1 and the preview toggle call
+  `revealEditor`; showing the terminal/browser calls `showRightArea`. Headless,
+  a real split-view drag can be tested by posting LeftMouseDragged/Up events
+  with `postEvent:` and then calling the split view's `mouseDown:` (its
+  tracking loop dequeues them).
 - **Custom hotkeys**: prefer real MENU items with key equivalents. They work in
   every pane (like Cmd+C) and for shift-variants that share a letter (Cmd+G vs
   Cmd+Shift+G both work). A local key monitor was flaky; it now handles only
-  Ctrl+` (which is awkward as a clean menu item alongside Cmd+T).
+  Ctrl+` (which is awkward as a clean menu item alongside Shift+Cmd+T).
 - **Window tabbing**: `setAllowsAutomaticWindowTabbing:NO`, otherwise macOS
   merges windows into tabs and Cmd+W closes the whole group.
 - **Two app instances**: launching the `.app` twice just activates the existing
   one. The CLI launcher (`Contents/Resources/minicode`) runs the raw binary
   detached, which does start a separate process.
-- **Terminal**: one long-lived `zsh -l` fed over a pipe. A sentinel line after
-  each command delimits output and carries back `$?` and `$PWD`. Commands run as
-  `{ cmd ; } </dev/null` so they can't swallow the control stream. ANSI is
-  stripped for display.
+- **Terminal**: `zsh -l -i +Z` (interactive, line editor off) on a pty from
+  `forkpty`. `ZDOTDIR` points at a generated `.zshenv` (in
+  `NSTemporaryDirectory()/MiniCode-zsh`) that hands `ZDOTDIR` straight back to
+  the user, loads their files, and on the first `precmd` installs hooks that
+  emit OSC 133 A/C/D + OSC 7 and blank `PS1`. Installing at first precmd is
+  what keeps the hook last, after .zshrc. Echo is off while zsh reads a
+  command (precmd `stty -echo`) and on while it runs (preexec), so the pty's
+  ECHO flag, read from the master with `tcgetattr`, tells us when a program
+  wants hidden input. Everything the child needs is built before `fork`: only
+  async-signal-safe calls between fork and exec. `PROMPT_SP` prints before
+  precmd, so it is unset in .zshenv. `TERM=xterm-256color` so tools emit
+  color; pagers stay `cat` because there is no screen model. The last line of
+  the output view is "live": the stream re-sends it whole on every change and
+  the view replaces text from `_liveStart`. Panel-written lines (headers,
+  exit statuses) must go through `ensureNewline`, which ends the live line and
+  calls `breakLine()` on the stream, or the next update overwrites them. When testing headless, give the shell a scratch
+  `HOME` and `ZDOTDIR`: `/etc/zshrc` sets `HISTFILE` from them, and test
+  commands otherwise land in the user's real `~/.zsh_history`.
 - **Markdown**: block elements call `ensureLineStart` so they aren't glued to
   the previous paragraph; headings get `paragraphSpacingBefore`; tables render
-  as aligned monospace.
+  as aligned monospace. Table cells are inline-parsed and padded by *display*
+  width (code points, CJK/emoji = 2), never UTF-8 byte length, or any
+  non-ASCII cell knocks the columns out of line.
 - **Search**: scoped to a folder (default = open folder or selected folder),
   min 2 chars, generation bumped up front + per-file cancellation, ANSI stripped
   from result lines.

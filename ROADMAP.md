@@ -35,9 +35,29 @@ thesis because MiniCode would only implement the JSON-RPC client.
 - Broader, more correct syntax highlighting (the scalable answer is tree-sitter,
   which would be the one place to weigh a dependency).
 
+## Terminal
+
+Now a real shell on a pty with colors and in-line cursor movement, shown as a
+log. What remains is a screen model:
+
+- A cell grid with cursor addressing across lines, scroll regions and the
+  alternate screen, so vim, htop, less and multi-line progress bars work. The
+  parser in `TerminalStream` already recognizes those sequences; it would feed
+  a grid instead of a single live line. Then pagers no longer need to be `cat`.
+- Keys sent straight to the pty (arrows, Tab completion, Ctrl+R) instead of a
+  line-based input field.
+- Selection-aware copy, clickable links (OSC 8), bash/fish integration.
+
+## Linux port parity
+
+The GTK port lacks the editor-hide shortcut and the dividers behavior added on
+macOS, and its terminal is VTE rather than the shared `TerminalStream`.
+
 ## Smaller polish
 
-- Settings: font size, theme, tab width.
+- Settings: the file (colors, opacity, blur) exists; font size, tab width and
+  the terminal's ANSI palette are natural next keys. The Search window and the
+  hints overlay don't follow it yet.
 - Search panel: live regex, and find-and-replace across files.
 - A `make release` is already scripted; a GitHub Action to run it on a tag would
   fully automate cutting versions.

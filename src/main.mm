@@ -107,6 +107,7 @@
 - (void)toggleTerminal:(id)sender  { [[self current] toggleTerminal:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
 - (void)toggleSidebar:(id)sender   { [[self current] toggleSidebar:sender]; }
+- (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
 - (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
 - (void)openSearch:(id)sender      { [[self current] openSearch:sender]; }
 - (void)focusTree:(id)sender       { [[self current] focusTree:sender]; }
@@ -119,6 +120,8 @@
 - (void)renameSelected:(id)sender  { [[self current] renameSelected:sender]; }
 - (void)deleteSelected:(id)sender  { [[self current] deleteSelected:sender]; }
 - (void)refreshTree:(id)sender     { [[self current] refreshTree:sender]; }
+- (void)openSettings:(id)sender    { [[self current] openSettings:sender]; }
+- (void)toggleComment:(id)sender   { [[self current] toggleComment:sender]; }
 
 @end
 
@@ -133,6 +136,10 @@ static void BuildMenu(void) {
     [appMenu addItemWithTitle:@"About MiniCode"
                        action:@selector(orderFrontStandardAboutPanel:)
                 keyEquivalent:@""];
+    [appMenu addItem:[NSMenuItem separatorItem]];
+    [appMenu addItemWithTitle:@"Settings…"
+                       action:@selector(openSettings:)
+                keyEquivalent:@","];
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Quit MiniCode"
                        action:@selector(terminate:)
@@ -211,6 +218,9 @@ static void BuildMenu(void) {
     [editMenu addItemWithTitle:@"Select All"
                         action:@selector(selectAll:) keyEquivalent:@"a"];
     [editMenu addItem:[NSMenuItem separatorItem]];
+    [editMenu addItemWithTitle:@"Toggle Comment"
+                        action:@selector(toggleComment:) keyEquivalent:@"/"];
+    [editMenu addItem:[NSMenuItem separatorItem]];
 
     // Find bar (handled by NSTextView via performTextFinderAction:; the tag is
     // the NSTextFinderAction raw value).
@@ -265,9 +275,6 @@ static void BuildMenu(void) {
     sidebar.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     [viewMenu addItem:sidebar];
 
-    // Collapse the editor entirely so the terminal owns the right area. The
-    // terminal's drag handle stops at 120px of editor, which is right for a
-    // drag and wrong for wanting only the terminal.
     NSMenuItem *editorPane =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Editor"
                                    action:@selector(toggleEditor:)
@@ -284,13 +291,14 @@ static void BuildMenu(void) {
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:hidden];
 
-    // Terminal: Cmd+T in the menu; Ctrl+` also works, caught in the view (see
-    // EditorController performKeyEquivalent).
+    // Terminal: Shift+Cmd+T in the menu, like the other pane toggles; Ctrl+`
+    // also works, caught by the local key monitor above.
     NSMenuItem *term =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Terminal"
                                    action:@selector(toggleTerminal:)
                             keyEquivalent:@"t"];
-    term.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    term.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:term];
 
     NSMenuItem *browser =

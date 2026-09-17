@@ -1,13 +1,7 @@
 // Browser.mm — embedded browser panel. Objective-C++.
 #import "Browser.h"
+#import "AppSettings.h"
 #import <WebKit/WebKit.h>
-
-static NSColor *BHex(unsigned int rgb) {
-    return [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0
-                               green:((rgb >> 8)  & 0xFF) / 255.0
-                                blue:( rgb        & 0xFF) / 255.0
-                               alpha:1.0];
-}
 
 @interface BrowserView () <WKNavigationDelegate, NSTextFieldDelegate>
 @property(nonatomic, strong) WKWebView   *web;
@@ -22,11 +16,23 @@ static NSColor *BHex(unsigned int rgb) {
 - (instancetype)initWithHomeURL:(NSString *)url {
     if ((self = [super initWithFrame:NSMakeRect(0, 0, 600, 400)])) {
         self.wantsLayer = YES;
-        self.layer.backgroundColor = BHex(0x2A2A2A).CGColor;
         [self buildChrome];
+        [self applySettings];
+        [[NSNotificationCenter defaultCenter]
+            addObserver:self selector:@selector(applySettings)
+                   name:MCSettingsDidChangeNotification object:nil];
         [self navigateToString:url];
     }
     return self;
+}
+
+// The toolbar follows the settings file. The URL field keeps the system's
+// colors unless a text color is set, since its background is the system's.
+- (void)applySettings {
+    AppSettings *cfg = [AppSettings shared];
+    self.layer.backgroundColor = [cfg background:Surface::Browser].CGColor;
+    self.urlBar.textColor = cfg.settings.textIsSet(Surface::Browser)
+        ? [cfg text:Surface::Browser] : [NSColor controlTextColor];
 }
 
 - (NSButton *)navButton:(NSString *)title action:(SEL)sel {
