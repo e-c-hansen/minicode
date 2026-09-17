@@ -61,6 +61,11 @@ synthetic clicks/keys. So:
   positioned AFTER the window is on screen and laid out. The editor / terminal /
   browser are laid out by hand in a `PanelHost` view, not nested split views —
   that was far more predictable.
+- **Terminal resize bar**: the `DragBar` is a 12px grab area drawing a 1px
+  line, and `relayoutRightArea` re-raises it to the top of `rightArea`.
+  Otherwise a panel added later (the browser) covers half of it. Its cursor
+  comes from a tracking area, because cursor rects lose to the overlapping
+  text views.
 - **Cmd+B collapse** fought the split delegate's 160px min; a `sidebarCollapsed`
   flag lets the minimum drop to 0.
 - **Custom hotkeys**: prefer real MENU items with key equivalents. They work in

@@ -18,18 +18,77 @@
 - (void)setFrameSize:(NSSize)s { [super setFrameSize:s]; if (self.onLayout) self.onLayout(); }
 @end
 
-// A thin horizontal drag handle for resizing the terminal dock. Reports the
-// dragged Y position (in its superview's coordinates) to a block.
+// Drag handle for resizing the terminal dock. The view is a generous grab
+// area centered on the boundary but draws only a 1px line, which lights up
+// while hovered or dragged. Reports the new boundary Y (in its superview's
+// coordinates) to a block, keeping the offset where the bar was grabbed so it
+// doesn't jump. The host must keep it above neighboring views, or they take
+// the clicks.
 @interface DragBar : NSView
 @property(nonatomic, copy) void (^onDrag)(CGFloat yInSuperview);
 @end
-@implementation DragBar
+@implementation DragBar {
+    CGFloat _grabOffset;   // pointer Y minus boundary Y at mouseDown
+    BOOL _hot;             // hovered or dragging
+    BOOL _dragging;
+}
+static const CGFloat kDragBarHeight = 12;
+
+- (BOOL)isFlipped { return NO; }
+- (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
+- (BOOL)mouseDownCanMoveWindow { return NO; }
+
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    for (NSTrackingArea *a in self.trackingAreas) [self removeTrackingArea:a];
+    [self addTrackingArea:[[NSTrackingArea alloc]
+        initWithRect:NSZeroRect
+             options:NSTrackingMouseEnteredAndExited | NSTrackingCursorUpdate |
+                     NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
+               owner:self userInfo:nil]];
+}
+
+// Cursor rects lose to overlapping text views; a tracking-area cursor update
+// goes to whichever view is on top under the pointer.
+- (void)cursorUpdate:(NSEvent *)event { [[NSCursor resizeUpDownCursor] set]; }
+
+- (void)setHot:(BOOL)hot {
+    if (hot == _hot) return;
+    _hot = hot;
+    self.needsDisplay = YES;
+}
+- (void)mouseEntered:(NSEvent *)event { [self setHot:YES]; }
+- (void)mouseExited:(NSEvent *)event { if (!_dragging) [self setHot:NO]; }
+
+- (CGFloat)boundaryY { return NSMidY(self.frame); }
+
+- (void)mouseDown:(NSEvent *)event {
+    NSPoint p = [self.superview convertPoint:event.locationInWindow fromView:nil];
+    _grabOffset = p.y - [self boundaryY];
+    _dragging = YES;
+    [self setHot:YES];
+    [[NSCursor resizeUpDownCursor] set];
+}
 - (void)mouseDragged:(NSEvent *)event {
     NSPoint p = [self.superview convertPoint:event.locationInWindow fromView:nil];
-    if (self.onDrag) self.onDrag(p.y);
+    [[NSCursor resizeUpDownCursor] set];
+    if (self.onDrag) self.onDrag(p.y - _grabOffset);
 }
-- (void)resetCursorRects {
-    [self addCursorRect:self.bounds cursor:[NSCursor resizeUpDownCursor]];
+- (void)mouseUp:(NSEvent *)event {
+    _dragging = NO;
+    NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+    [self setHot:NSPointInRect(p, self.bounds)];
+}
+
+- (void)drawRect:(NSRect)dirty {
+    NSRect b = self.bounds;
+    CGFloat h = _hot ? 2 : 1;
+    NSRect line = NSMakeRect(0, floor(NSMidY(b) - h / 2), b.size.width, h);
+    [(_hot ? [NSColor colorWithSRGBRed:0x4E / 255.0 green:0xA1 / 255.0
+                                  blue:0xF7 / 255.0 alpha:1]
+           : [NSColor colorWithSRGBRed:0x33 / 255.0 green:0x33 / 255.0
+                                  blue:0x33 / 255.0 alpha:1]) set];
+    NSRectFill(line);
 }
 @end
 
@@ -481,8 +540,14 @@ static NSColor *ColorForStyle(TokenStyle s) {
         self.terminal.hidden = !showTerm;
     }
     if (self.termDivider) {
-        self.termDivider.frame = NSMakeRect(0, termH - 3, W, 6);
+        self.termDivider.frame =
+            NSMakeRect(0, termH - kDragBarHeight / 2, W, kDragBarHeight);
         self.termDivider.hidden = !showTerm;
+        // Views added later (the browser) would otherwise sit on top of the
+        // bar and swallow the clicks meant for it.
+        if (self.rightArea.subviews.lastObject != self.termDivider)
+            [self.rightArea addSubview:self.termDivider
+                            positioned:NSWindowAbove relativeTo:nil];
     }
 }
 
@@ -492,8 +557,6 @@ static NSColor *ColorForStyle(TokenStyle s) {
         [self.rightArea addSubview:self.terminal];
 
         self.termDivider = [[DragBar alloc] initWithFrame:NSZeroRect];
-        self.termDivider.wantsLayer = YES;
-        self.termDivider.layer.backgroundColor = Hex(0x333333).CGColor;
         __weak EditorController *weakSelf = self;
         self.termDivider.onDrag = ^(CGFloat y) {
             EditorController *s = weakSelf;
