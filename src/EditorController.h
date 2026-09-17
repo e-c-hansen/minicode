@@ -18,6 +18,7 @@
 - (void)toggleTerminal:(id)sender;    // Ctrl+` bottom terminal dock
 - (void)toggleBrowser:(id)sender;     // Shift+Cmd+B embedded browser
 - (void)toggleSidebar:(id)sender;     // Cmd+B collapse/restore file tree
+- (void)toggleEditor:(id)sender;      // Shift+Cmd+E hide/restore the file editor
 - (void)toggleHiddenFiles:(id)sender; // Cmd+Shift+. show/hide dotfiles
 - (void)openSearch:(id)sender;        // Cmd+Shift+F project-wide search
 - (void)focusTree:(id)sender;         // Cmd+0 move keyboard focus to file tree

@@ -73,6 +73,7 @@ Click hello.py and sample.cpp to see the syntax coloring, then click README.md t
 | Command R | Refresh the file tree |
 | Shift Command . | Show or hide dotfiles |
 | Command B | Collapse or restore the sidebar |
+| Shift Command E | Hide or restore the file editor; the terminal and browser take its space |
 | Command T, or Control backtick | Toggle terminal |
 | Shift Command B | Toggle browser |
 | Shift Command P | Toggle Markdown preview |

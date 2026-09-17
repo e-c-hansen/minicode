@@ -69,6 +69,19 @@ synthetic clicks/keys. So:
   text views.
 - **Cmd+B collapse** fought the split delegate's 160px min; a `sidebarCollapsed`
   flag lets the minimum drop to 0.
+- **Hiding panes**: two separate mechanisms. (1) Dragging the sidebar divider
+  far right collapses the whole right pane via NSSplitView
+  (`canCollapseSubview:` YES for `rightArea`; `effectiveRect:` widens the 1px
+  divider's grab area to 5px each side; min pane width 150 so the drag doesn't
+  visibly stall). (2) Shift+Cmd+E, or dragging the terminal bar to the top,
+  sets `editorHidden`: only the file editor goes, and `relayoutRightArea`
+  gives the terminal the full height (bar pinned at the top edge so it can be
+  dragged back down). If that leaves the pane empty, `collapseRightAreaIfEmpty`
+  collapses it. Opening a file, Cmd+1 and the preview toggle call
+  `revealEditor`; showing the terminal/browser calls `showRightArea`. Headless,
+  a real split-view drag can be tested by posting LeftMouseDragged/Up events
+  with `postEvent:` and then calling the split view's `mouseDown:` (its
+  tracking loop dequeues them).
 - **Custom hotkeys**: prefer real MENU items with key equivalents. They work in
   every pane (like Cmd+C) and for shift-variants that share a letter (Cmd+G vs
   Cmd+Shift+G both work). A local key monitor was flaky; it now handles only

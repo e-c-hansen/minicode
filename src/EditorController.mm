@@ -255,6 +255,8 @@ static NSColor *ColorForStyle(TokenStyle s) {
 @property(nonatomic, strong) NSSplitView *splitView;
 @property(nonatomic, strong) NSScrollView *sidebarScroll;
 @property(nonatomic, assign) BOOL sidebarCollapsed;
+@property(nonatomic, assign) CGFloat sidebarWidthBeforeCollapse;
+@property(nonatomic, assign) BOOL editorHidden;   // Shift+Cmd+E: file view hidden
 @property(nonatomic, strong) SearchPanel *searchPanel;
 @end
 
@@ -495,7 +497,8 @@ static NSColor *ColorForStyle(TokenStyle s) {
     [s appendString:@"──────────────────────────\n"];
     [s appendString:@"⌘0    Focus tree      ⌘1   Focus editor\n"];
     [s appendString:@"↑ ↓   Browse tree     ⏎    Open   ⌃⇥  Previous\n"];
-    [s appendString:@"⌘B    Toggle sidebar\n"];
+    [s appendFormat:@"⌘B    Toggle sidebar  ⇧⌘E  Editor  (%@)\n",
+        self.editorHidden ? @"hidden" : @"open"];
     [s appendFormat:@"⌘T / ⌃`   Terminal  (%@)\n",
         self.terminalVisible ? @"open" : @"hidden"];
     [s appendFormat:@"⇧⌘B   Browser   (%@)\n",
@@ -518,19 +521,29 @@ static NSColor *ColorForStyle(TokenStyle s) {
 
 // -------------------------------------------------------- terminal + browser
 // Dock the terminal at the bottom; the editor OR the browser fills the top.
+// The top slot holds the browser when it's open, else the file editor unless
+// that is hidden. The terminal docks below it, or fills the pane when the top
+// slot is empty.
+static const CGFloat kMinTopSlotHeight = 40;   // smallest editor while dragging
+static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hides it
+
 - (void)relayoutRightArea {
     NSRect b = self.rightArea.bounds;
     CGFloat W = b.size.width, H = b.size.height;
     BOOL showTerm = self.terminalVisible && self.terminal != nil;
+    BOOL showBrowser = self.browserVisible && self.browser != nil;
+    BOOL showEditor = !showBrowser && !self.editorHidden;
+    BOOL topShown = showBrowser || showEditor;
 
     CGFloat termH = 0;
-    if (showTerm) termH = MIN(MAX(self.terminalHeight, 80), MAX(120, H - 120));
-    CGFloat topH = MAX(0, H - termH);
-    NSRect topRect = NSMakeRect(0, termH, W, topH);
+    if (showTerm)
+        termH = topShown ? MIN(MAX(self.terminalHeight, 80),
+                               MAX(80, H - kMinTopSlotHeight))
+                         : H;
+    NSRect topRect = NSMakeRect(0, termH, W, MAX(0, H - termH));
 
-    BOOL showBrowser = self.browserVisible && self.browser != nil;
     self.editorScroll.frame = topRect;
-    self.editorScroll.hidden = showBrowser;
+    self.editorScroll.hidden = !showEditor;
     if (self.browser) {
         self.browser.frame = topRect;
         self.browser.hidden = !showBrowser;
@@ -540,8 +553,11 @@ static NSColor *ColorForStyle(TokenStyle s) {
         self.terminal.hidden = !showTerm;
     }
     if (self.termDivider) {
-        self.termDivider.frame =
-            NSMakeRect(0, termH - kDragBarHeight / 2, W, kDragBarHeight);
+        // With the top slot empty the bar sits at the top edge, still inside
+        // the pane, so it can be dragged back down.
+        CGFloat barY = topShown ? termH - kDragBarHeight / 2
+                                : H - kDragBarHeight;
+        self.termDivider.frame = NSMakeRect(0, barY, W, kDragBarHeight);
         self.termDivider.hidden = !showTerm;
         // Views added later (the browser) would otherwise sit on top of the
         // bar and swallow the clicks meant for it.
@@ -549,6 +565,27 @@ static NSColor *ColorForStyle(TokenStyle s) {
             [self.rightArea addSubview:self.termDivider
                             positioned:NSWindowAbove relativeTo:nil];
     }
+}
+
+// Dragging the terminal bar. Near the top it hides whatever is above the
+// terminal (editor, and the browser if open); dragging down again brings the
+// editor back.
+- (void)terminalBarDraggedTo:(CGFloat)y {
+    CGFloat H = self.rightArea.bounds.size.height;
+    BOOL topShown = (self.browserVisible && self.browser) || !self.editorHidden;
+    if (y >= H - kTopSnapDistance) {
+        if (topShown) {
+            self.editorHidden = YES;
+            self.browserVisible = NO;
+            [self.window makeFirstResponder:self.terminal];
+            [self.terminal focusInput];
+        }
+    } else {
+        if (!topShown) self.editorHidden = NO;
+        self.terminalHeight = MIN(MAX(y, 80), MAX(80, H - kMinTopSlotHeight));
+    }
+    [self relayoutRightArea];
+    if (self.hintsVisible) [self updateHints];
 }
 
 - (void)toggleTerminal:(id)sender {
@@ -559,16 +596,15 @@ static NSColor *ColorForStyle(TokenStyle s) {
         self.termDivider = [[DragBar alloc] initWithFrame:NSZeroRect];
         __weak EditorController *weakSelf = self;
         self.termDivider.onDrag = ^(CGFloat y) {
-            EditorController *s = weakSelf;
-            CGFloat H = s.rightArea.bounds.size.height;
-            s.terminalHeight = MIN(MAX(y, 80), MAX(120, H - 120));
-            [s relayoutRightArea];
+            [weakSelf terminalBarDraggedTo:y];
         };
         [self.rightArea addSubview:self.termDivider];
     }
     self.terminalVisible = !self.terminalVisible;
+    if (self.terminalVisible) [self showRightArea];
     [self relayoutRightArea];
     if (self.terminalVisible) [self.terminal focusInput];
+    else [self collapseRightAreaIfEmpty];
     if (self.hintsVisible) [self updateHints];
 }
 
@@ -579,15 +615,37 @@ static NSColor *ColorForStyle(TokenStyle s) {
         [self.rightArea addSubview:self.browser];
     }
     self.browserVisible = !self.browserVisible;
+    if (self.browserVisible) [self showRightArea];
     [self relayoutRightArea];
     if (self.browserVisible) [self.browser focusURLBar];
+    else [self collapseRightAreaIfEmpty];
     if (self.hintsVisible) [self updateHints];
 }
 
-// ---- NSSplitViewDelegate: keep the sidebar a sane, fixed-ish width ----
+// ---- NSSplitViewDelegate: sidebar | right pane ----
+// The right pane (rightArea: editor, terminal, browser) shrinks down to this
+// width as the divider is dragged right; NSSplitView collapses it once the
+// pointer is past the midpoint of what's left, like the GTK port's paned.
+static const CGFloat kMinRightAreaWidth = 150;
+// The thin divider is drawn 1px wide; this much on each side also grabs it.
+// NSSplitView's default is 2px, which is easy to miss.
+static const CGFloat kDividerGrabSlop = 5;
+
+- (BOOL)rightAreaCollapsed {
+    return [self.splitView isSubviewCollapsed:self.rightArea];
+}
 - (BOOL)splitView:(NSSplitView *)sv shouldAdjustSizeOfSubview:(NSView *)view {
-    // On window resize, grow/shrink the editor, not the sidebar.
+    // On window resize, grow/shrink the right pane, not the sidebar, unless
+    // the right pane is collapsed; then the sidebar takes the whole window.
+    if (self.rightAreaCollapsed) return view != self.rightArea;
     return view != sv.subviews.firstObject;
+}
+- (NSRect)splitView:(NSSplitView *)sv effectiveRect:(NSRect)proposed
+          forDrawnRect:(NSRect)drawn ofDividerAtIndex:(NSInteger)i {
+    return NSInsetRect(drawn, -kDividerGrabSlop, 0);
+}
+- (BOOL)splitView:(NSSplitView *)sv canCollapseSubview:(NSView *)view {
+    return view == self.rightArea;
 }
 - (CGFloat)splitView:(NSSplitView *)sv
     constrainMinCoordinate:(CGFloat)min
@@ -596,7 +654,62 @@ static NSColor *ColorForStyle(TokenStyle s) {
 }
 - (CGFloat)splitView:(NSSplitView *)sv
     constrainMaxCoordinate:(CGFloat)max
-               ofSubviewAt:(NSInteger)i { return 480; }
+               ofSubviewAt:(NSInteger)i {
+    return MAX(160, sv.bounds.size.width - kMinRightAreaWidth);
+}
+
+// Shift+Cmd+E: hide or restore the file editor/preview only. The terminal and
+// browser stay put and take over its space.
+- (void)toggleEditor:(id)sender {
+    if (self.editorHidden || self.rightAreaCollapsed) {
+        [self revealEditor];
+        [self.window makeFirstResponder:self.textView];
+        return;
+    }
+    self.editorHidden = YES;
+    [self relayoutRightArea];
+    if (self.terminalVisible && self.terminal) [self.terminal focusInput];
+    else if (!(self.browserVisible && self.browser))
+        [self.window makeFirstResponder:self.outline];
+    [self collapseRightAreaIfEmpty];
+    if (self.hintsVisible) [self updateHints];
+}
+
+// Show the file editor again: unhide it and uncollapse the right pane. Called
+// by anything that puts a file in front of the user, so opening a file never
+// appears to do nothing.
+- (void)revealEditor {
+    BOOL wasHidden = self.editorHidden;
+    self.editorHidden = NO;
+    [self showRightArea];
+    if (wasHidden) [self relayoutRightArea];
+    if (self.hintsVisible) [self updateHints];
+}
+
+// Uncollapse the right pane if it was dragged or toggled shut.
+- (void)showRightArea {
+    if (!self.rightAreaCollapsed) return;
+    CGFloat W = self.splitView.bounds.size.width;
+    CGFloat width = self.sidebarWidthBeforeCollapse;
+    if (width < 160) width = 260;
+    width = MIN(width, MAX(160, W - kMinRightAreaWidth));
+    [self.splitView setPosition:width ofDividerAtIndex:0];
+}
+
+// With the editor hidden and no terminal or browser, the right pane would be
+// an empty panel; collapse it so the file tree fills the window.
+- (void)collapseRightAreaIfEmpty {
+    BOOL empty = self.editorHidden && !(self.terminalVisible && self.terminal) &&
+                 !(self.browserVisible && self.browser);
+    if (!empty || self.rightAreaCollapsed) return;
+    NSView *sidebar = self.splitView.subviews.firstObject;
+    self.sidebarWidthBeforeCollapse = sidebar.frame.size.width;
+    self.sidebarCollapsed = NO;   // never leave the window with nothing in it
+    // With canCollapseSubview:, moving the divider to the far edge collapses.
+    [self.splitView setPosition:self.splitView.bounds.size.width
+               ofDividerAtIndex:0];
+    [self.window makeFirstResponder:self.outline];
+}
 
 // Cmd+B: collapse or restore the file-tree sidebar.
 - (void)toggleSidebar:(id)sender {
@@ -747,6 +860,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     [self.window makeFirstResponder:self.outline];
 }
 - (void)focusEditor:(id)sender {
+    [self revealEditor];
     [self.window makeFirstResponder:self.textView];
 }
 - (void)switchToPreviousFile:(id)sender {
@@ -966,6 +1080,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 
 // ------------------------------------------------------------ file rendering
 - (void)openFileAtPath:(NSString *)path {
+    [self revealEditor];
     if ([path isEqualToString:self.currentPath]) return;  // avoid double-render
     if (![self confirmProceedPastUnsavedChanges]) {
         [self reselectCurrentFileInTree];   // undo the tree's selection move
@@ -1172,6 +1287,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         NSBeep();
         return;
     }
+    [self revealEditor];
     if (self.textView.editable) self.sourceText = self.textView.string;  // keep edits
     self.previewMode = !self.previewMode;
     [self refreshDisplay];

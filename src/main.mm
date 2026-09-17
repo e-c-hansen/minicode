@@ -107,6 +107,7 @@
 - (void)toggleTerminal:(id)sender  { [[self current] toggleTerminal:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
 - (void)toggleSidebar:(id)sender   { [[self current] toggleSidebar:sender]; }
+- (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
 - (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
 - (void)openSearch:(id)sender      { [[self current] openSearch:sender]; }
 - (void)focusTree:(id)sender       { [[self current] focusTree:sender]; }
@@ -264,6 +265,14 @@ static void BuildMenu(void) {
                             keyEquivalent:@"b"];
     sidebar.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     [viewMenu addItem:sidebar];
+
+    NSMenuItem *editorPane =
+        [[NSMenuItem alloc] initWithTitle:@"Toggle Editor"
+                                   action:@selector(toggleEditor:)
+                            keyEquivalent:@"e"];
+    editorPane.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [viewMenu addItem:editorPane];
 
     NSMenuItem *hidden =
         [[NSMenuItem alloc] initWithTitle:@"Show Hidden Files"
