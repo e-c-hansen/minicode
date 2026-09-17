@@ -6,6 +6,8 @@
 #include <gtk/gtk.h>
 #include <string>
 
+#include "Settings.h"
+
 class Editor {
 public:
     Editor();
@@ -42,6 +44,19 @@ public:
     // Show a plain gray message (welcome screen / errors), not editable.
     void showMessage(const std::string& msg);
 
+    // Colors from the settings file: syntax and Markdown tags, and the swatches
+    // shown while the settings file itself is open. The panel background and
+    // text come from the stylesheet (ThemeCss).
+    void applySettings(const Settings& s);
+    // The settings file's path. While that file is open its color values are
+    // clickable swatches that open a color picker.
+    void setSettingsPath(const std::string& path) { settingsPath_ = path; }
+
+    // Ctrl+/ : comment or uncomment the lines the selection touches. Returns
+    // false when there is nothing to do it to (preview, message, a file type
+    // with no line comments).
+    bool toggleComment();
+
 private:
     void rehighlight();          // full re-lex of the raw buffer
     void renderPreview();        // build the Markdown preview into the buffer
@@ -51,6 +66,14 @@ private:
     void markDirty(bool d);
 
     static void onBufferChanged(GtkTextBuffer* buf, gpointer self);
+
+    bool isSettingsFile() const;
+    void decorateColors();                       // swatch tags over color values
+    bool swatchAt(double x, double y, int* line) const;   // widget coords
+    void pickColor(int line);
+    void setLineColor(int line, const Rgba& c);
+    static void onPressed(GtkGestureClick* g, int n, double x, double y, gpointer self);
+    static void onMotion(GtkEventControllerMotion* m, double x, double y, gpointer self);
 
     GtkWidget*     scroller_ = nullptr;
     GtkWidget*     view_     = nullptr;   // GtkTextView
@@ -64,6 +87,10 @@ private:
     bool        dirty_      = false;
     bool        tagsReady_  = false;
     guint       rehiTimer_  = 0;  // debounce id for re-highlight
+
+    std::string settingsPath_;
+    Settings    settings_;    // for tag colors and swatch text contrast
+    bool        overSwatch_ = false;
 
     TitleCb titleCb_ = nullptr;
     void*   titleUser_ = nullptr;

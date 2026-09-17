@@ -296,6 +296,14 @@ bool Settings::apply(const std::string& key, const std::string& value,
     return false;
 }
 
+Rgba Settings::contrastText(const Rgba& c) const {
+    Rgba bg = background(Surface::Editor);
+    auto mix = [&](uint8_t v, uint8_t under) { return c.a * v + (1 - c.a) * under; };
+    double lum = (0.299 * mix(c.r, bg.r) + 0.587 * mix(c.g, bg.g) +
+                  0.114 * mix(c.b, bg.b)) / 255;
+    return Rgba::hex(lum > 0.55 ? 0x000000 : 0xFFFFFF);
+}
+
 double Settings::opacity(Surface s) const {
     const SurfaceSettings& ss = surfaces_[(int)s];
     if (ss.opacity) return *ss.opacity;
@@ -374,13 +382,14 @@ const char* Settings::defaultFileText() {
 # window.opacity = 1
 # window.text = #D4D4D4
 # Blur what is behind the window, like frosted glass. Pair it with panel
-# opacity below 1, or the panels cover it up.
+# opacity below 1, or the panels cover it up. macOS only; Linux desktops
+# don't offer apps a way to blur behind a window, so it is ignored there.
 # window.blur = false
-# The blur's look: under-window, window, content, titlebar, header, sidebar,
-# menu, popover, hud, sheet, fullscreen, or tooltip.
+# The blur's look (macOS only): under-window, window, content, titlebar,
+# header, sidebar, menu, popover, hud, sheet, fullscreen, or tooltip.
 # window.material = under-window
 
-# The title bar across the top of the window.
+# The title bar across the top of the window, and on Linux the menu bar.
 # titlebar.background = #323233
 # titlebar.opacity = 1
 # titlebar.text = #CCCCCC

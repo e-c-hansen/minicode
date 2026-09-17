@@ -956,6 +956,17 @@ void testSettingsColorEditing() {
     CHECK(Settings::parseColor(Settings::formatColor(Rgba::hex(0x336699, 0.25)), back) &&
           back.rgb() == 0x336699 && back.a > 0.24 && back.a < 0.26);
 
+    GROUP("settings:contrast");
+    Settings dark = Settings::parse("");
+    CHECK(dark.contrastText(Rgba::hex(0xFFFFFF)).rgb() == 0x000000);
+    CHECK(dark.contrastText(Rgba::hex(0xD4D4D4)).rgb() == 0x000000);
+    CHECK(dark.contrastText(Rgba::hex(0x1E1E1E)).rgb() == 0xFFFFFF);
+    CHECK(dark.contrastText(Rgba::hex(0x007ACC)).rgb() == 0xFFFFFF);
+    // A see-through white swatch over the dark editor mostly shows the editor.
+    CHECK(dark.contrastText(Rgba::hex(0xFFFFFF, 0.1)).rgb() == 0xFFFFFF);
+    Settings light = Settings::parse("editor.background = #FFFFFF\n");
+    CHECK(light.contrastText(Rgba::hex(0x000000, 0.1)).rgb() == 0x000000);
+
     GROUP("settings:set-color");
     Rgba red = Rgba::hex(0xFF0000);
     CHECK(Settings::setColor(u"editor.text = #D4D4D4", red) == u"editor.text = #FF0000");

@@ -12,6 +12,8 @@ core_dir = meson.current_source_dir() / '..' / 'src'
 core_sources = [
   core_dir / 'SyntaxHighlighter.cpp',
   core_dir / 'MarkdownParser.cpp',
+  core_dir / 'Settings.cpp',
+  core_dir / 'LineComments.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -24,6 +26,8 @@ gui_sources = [
   # #ifdef-guarded, so without the feature macros they are empty and harmless.
   'src/Terminal.cpp',
   'src/Browser.cpp',
+  'src/AppSettings.cpp',
+  'src/ThemeCss.cpp',
 ]
 
 inc = include_directories('src', '../src')
@@ -88,7 +92,9 @@ endforeach
 # Covers the byte-offset -> character-offset conversion that maps
 # SyntaxHighlighter output onto GtkTextBuffer iterators.
 port_tests = executable('minicode-linux-tests',
-  sources : ['tests/run_tests.cpp', core_dir / 'SyntaxHighlighter.cpp'],
+  sources : ['tests/run_tests.cpp', 'src/ThemeCss.cpp',
+             core_dir / 'SyntaxHighlighter.cpp', core_dir / 'Settings.cpp',
+             core_dir / 'LineComments.cpp'],
   include_directories : inc,
   install : false)
 test('linux port core', port_tests)

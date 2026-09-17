@@ -11,10 +11,9 @@ Browser::Browser(const std::string& homeUrl) {
 
     // Toolbar: back / forward / reload / url entry.
     GtkWidget* bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-    gtk_widget_set_margin_top(bar, 4);
-    gtk_widget_set_margin_bottom(bar, 4);
-    gtk_widget_set_margin_start(bar, 4);
-    gtk_widget_set_margin_end(bar, 4);
+    gtk_widget_add_css_class(bar, "minicode-browser-bar");   // colors: ThemeCss
+    // Inset comes from CSS padding, not margins, so the toolbar's background
+    // color reaches its edges.
 
     back_ = gtk_button_new_from_icon_name("go-previous-symbolic");
     fwd_  = gtk_button_new_from_icon_name("go-next-symbolic");

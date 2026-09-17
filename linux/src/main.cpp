@@ -28,12 +28,23 @@
 // box the same way is how the terminal gets the whole window (win.toggleeditor);
 // showEditorArea is the single place that brings it back.
 //
+// Both dividers can be dragged all the way: the terminal's to the top of the
+// window, which snaps the editor shut, and the sidebar's to the right edge,
+// which collapses the right side and leaves the file tree. Anything that needs
+// to show something there opens it again (showEditorArea, showRightArea).
+//
+// Colors come from the settings file (AppSettings, shared Settings parser):
+// ThemeCss turns them into the stylesheet, and the editor tags and VTE colors
+// are set directly. The file is watched, so edits apply live.
+//
 // The always-built target is the tree + editor + markdown viewer. Terminal and
 // Browser only exist when their libraries were found at configure time.
 #include <gtk/gtk.h>
 
+#include "AppSettings.h"
 #include "Editor.h"
 #include "FileTree.h"
+#include "ThemeCss.h"
 #include "Palette.h"
 #include "Terminal.h"
 #include "Browser.h"
@@ -51,6 +62,12 @@ struct App {
     GtkWidget*      statusLabel = nullptr;
     GtkWidget*      searchBar = nullptr;
     GtkWidget*      searchEntry = nullptr;
+    GtkWidget*      settingsLabel = nullptr;   // first problem in the settings file
+
+    AppSettings*    settings = nullptr;
+    GtkCssProvider* css = nullptr;
+    int  sidebarWidth = 240;      // where the sidebar divider was before collapsing
+    bool adjustingPaned = false;  // a snap is moving a divider; ignore the notify
 
     Editor*   editor = nullptr;
     FileTree* tree = nullptr;
@@ -82,6 +99,11 @@ struct App {
 // it so an open panel never reports stale state.
 static void refreshHints(App* app);
 
+// A divider dragged this close to the top (terminal) or the right edge
+// (sidebar) snaps the rest of the way.
+static const int kTopSnap = 40;
+static const int kRightSnap = 60;
+
 static const char* kHintsHintShow = "Ctrl+Shift+H  Shortcuts";
 static const char* kHintsHintHide = "Ctrl+Shift+H  Hide shortcuts";
 
@@ -109,18 +131,91 @@ static void placeTerminalDivider(App* app) {
 static void rememberTerminalSplit(App* app) {
     const int H = gtk_widget_get_height(app->vpaned);
     const int pos = gtk_paned_get_position(GTK_PANED(app->vpaned));
-    if (H > 0 && H - pos >= Terminal::kMinHeight) app->termSplit = H - pos;
+    // Not while the editor is snapped shut: that is not a height to come back to.
+    if (H > 0 && pos >= kTopSnap && H - pos >= Terminal::kMinHeight)
+        app->termSplit = H - pos;
 }
 #endif
+
+// The editor half is out of the way: hidden by Ctrl+Shift+E, or dragged shut.
+static bool editorCollapsed(App* app) {
+    if (!gtk_widget_get_visible(app->upperBox)) return true;
+    return app->termPanel && gtk_widget_get_visible(app->termPanel) &&
+           gtk_paned_get_position(GTK_PANED(app->vpaned)) < kTopSnap;
+}
+
+// Dragging the terminal's divider near the top closes the editor completely,
+// instead of leaving a sliver of it. The divider stays at the top edge, so it
+// can be dragged back down.
+static void onVpanedPosition(GObject*, GParamSpec*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->adjustingPaned || !app->termPanel ||
+        !gtk_widget_get_visible(app->termPanel))
+        return;
+    int pos = gtk_paned_get_position(GTK_PANED(app->vpaned));
+    if (pos > 0 && pos < kTopSnap) {
+        app->adjustingPaned = true;
+        gtk_paned_set_position(GTK_PANED(app->vpaned), 0);
+        app->adjustingPaned = false;
+    }
+    refreshHints(app);
+}
+
+// ------------------------------------------------- the sidebar/right split
+static bool rightCollapsed(App* app) {
+    int maxPos = 0;
+    g_object_get(app->hpaned, "max-position", &maxPos, NULL);
+    return gtk_widget_get_visible(app->tree->widget()) && maxPos > 0 &&
+           gtk_paned_get_position(GTK_PANED(app->hpaned)) >= maxPos;
+}
+
+// Dragging the sidebar's divider to the right edge collapses the editor,
+// terminal and browser, leaving the file tree.
+static void onHpanedPosition(GObject*, GParamSpec*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->adjustingPaned) return;
+    int maxPos = 0;
+    g_object_get(app->hpaned, "max-position", &maxPos, NULL);
+    int pos = gtk_paned_get_position(GTK_PANED(app->hpaned));
+    if (maxPos <= 0) return;
+    if (pos < maxPos && maxPos - pos < kRightSnap) {
+        app->adjustingPaned = true;
+        gtk_paned_set_position(GTK_PANED(app->hpaned), maxPos);
+        app->adjustingPaned = false;
+    }
+}
+
+// Remember the sidebar width when a drag starts, so collapsing and reopening
+// comes back to the width it had, not somewhere along the way.
+static void onHpanedPressed(GtkGestureClick*, int, double, double, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!rightCollapsed(app))
+        app->sidebarWidth = gtk_paned_get_position(GTK_PANED(app->hpaned));
+}
+
+// Bring the right side back if it was dragged shut.
+static void showRightArea(App* app) {
+    if (!rightCollapsed(app)) return;
+    int maxPos = 0;
+    g_object_get(app->hpaned, "max-position", &maxPos, NULL);
+    int width = app->sidebarWidth;
+    if (width <= 0 || width > maxPos - kRightSnap) width = MIN(240, maxPos / 3);
+    app->adjustingPaned = true;
+    gtk_paned_set_position(GTK_PANED(app->hpaned), width);
+    app->adjustingPaned = false;
+}
 
 // Bring the editor/browser half back after it was collapsed, restoring the
 // terminal to the height it had. Anything that needs to show something up there
 // calls this first, so the editor cannot stay hidden behind new content.
 static void showEditorArea(App* app) {
-    if (gtk_widget_get_visible(app->upperBox)) return;
+    showRightArea(app);
+    if (!editorCollapsed(app)) return;
     gtk_widget_set_visible(app->upperBox, TRUE);
 #ifdef MINICODE_ENABLE_TERMINAL
+    app->adjustingPaned = true;
     placeTerminalDivider(app);
+    app->adjustingPaned = false;
 #endif
     refreshHints(app);
 }
@@ -181,6 +276,8 @@ static void act_toggle_preview(GSimpleAction*, GVariant*, gpointer userp) {
 
 static void act_toggle_sidebar(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
+    // Hiding the tree with the right side collapsed would leave nothing.
+    if (app->sidebarVisible) showRightArea(app);
     app->sidebarVisible = !app->sidebarVisible;
     gtk_widget_set_visible(app->tree->widget(), app->sidebarVisible);
     refreshHints(app);
@@ -201,6 +298,7 @@ static void act_toggle_terminal(GSimpleAction*, GVariant*, gpointer userp) {
         // empty window, so the editor comes back with it.
         showEditorArea(app);
     } else {
+        showRightArea(app);
         gtk_widget_set_visible(app->termPanel, TRUE);
         placeTerminalDivider(app);
         if (app->terminal) app->terminal->focus();
@@ -217,7 +315,7 @@ static void act_toggle_terminal(GSimpleAction*, GVariant*, gpointer userp) {
 // split's 160px minimum drop to zero.
 static void act_toggle_editor(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    if (!gtk_widget_get_visible(app->upperBox)) { showEditorArea(app); return; }
+    if (editorCollapsed(app) || rightCollapsed(app)) { showEditorArea(app); return; }
 
 #ifdef MINICODE_ENABLE_TERMINAL
     if (!app->termPanel) return;   // nothing else could fill the window
@@ -248,6 +346,27 @@ static void act_toggle_browser(GSimpleAction*, GVariant*, gpointer userp) {
     if (!shown && app->browser) app->browser->focusUrlBar();
 #endif
     refreshHints(app);
+}
+
+// Ctrl+/ : only when the editor has the keyboard, so the shortcut never edits
+// a file you are not looking at.
+static void act_toggle_comment(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    GtkWidget* view = app->editor->textView();
+    if (!gtk_widget_has_focus(view) || !app->editor->toggleComment())
+        gtk_widget_error_bell(view);
+}
+
+// Ctrl+, : open the settings file, writing the commented defaults first.
+static void act_settings(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!app->settings->ensureFileExists()) {
+        gtk_label_set_text(GTK_LABEL(app->settingsLabel),
+                           ("Could not create " + app->settings->path()).c_str());
+        return;
+    }
+    openFileCb(app->settings->path(), app);
+    gtk_widget_grab_focus(app->editor->textView());
 }
 
 static void act_find(GSimpleAction*, GVariant*, gpointer userp) {
@@ -357,6 +476,8 @@ static std::string hintsText(App* app) {
     s += "Ctrl O         Open folder\n";
     s += "Ctrl S         Save\n";
     s += "Ctrl F         Find in file\n";
+    s += "Ctrl /         Toggle comment\n";
+    s += "Ctrl ,         Settings\n";
     s += "Ctrl 0         Focus the file tree\n";
 
     s += "\nFiles\n";
@@ -369,9 +490,9 @@ static std::string hintsText(App* app) {
     s += "────────────────────────────────────────\n";
     s += "Ctrl B         Sidebar\n";
     s += std::string("Ctrl Shift E   Editor      (") +
-         (gtk_widget_get_visible(app->upperBox) ? "shown" : "collapsed") + ")\n";
+         (editorCollapsed(app) ? "collapsed" : "shown") + ")\n";
 #ifdef MINICODE_ENABLE_TERMINAL
-    s += std::string("Ctrl T         Terminal    (") +
+    s += std::string("Ctrl Shift T   Terminal    (") +
          (app->termPanel && gtk_widget_get_visible(app->termPanel) ? "open" : "hidden") +
          ")\n";
 #endif
@@ -430,68 +551,40 @@ static void act_toggle_hints(GSimpleAction*, GVariant*, gpointer userp) {
                        showing ? kHintsHintHide : kHintsHintShow);
 }
 
-// ---------------------------------------------------------------- css
+// ---------------------------------------------------------------- settings
 
-static void loadCss() {
-    GtkCssProvider* css = gtk_css_provider_new();
-    const char* style =
-        ".minicode-editor text { background-color: " "#1E1E1E" "; color: " "#D4D4D4" "; }"
-        ".minicode-editor text selection { background-color: #264F78; }"
-        // Markdown preview and plain messages: proportional body text at the
-        // macOS body size (15pt). Code and table runs re-apply monospace via
-        // their GtkTextTags.
-        ".minicode-prose text { font-family: sans-serif; font-size: 15pt; }"
-        ".minicode-sidebar { background-color: " "#252526" "; }"
-        ".minicode-tree { background-color: " "#252526" "; }"
-        ".minicode-tree-label { color: " "#CCCCCC" "; }"
-        ".minicode-dir-icon  { color: " "#C09553" "; }"
-        ".minicode-file-icon { color: " "#8A99A8" "; }"
-        ".minicode-status {"
-        "  background-color: " "#007ACC" ";"
-        "  color: #FFFFFF; padding: 2px 8px; font-size: 12px; }"
-
-        // Terminal panel. A shade darker than the editor so it reads as its own
-        // surface, with the same 6px inset the macOS terminal uses
-        // (Terminal.mm, textContainerInset). VTE takes its inner border from
-        // the CSS padding.
-        ".minicode-terminal { background-color: " "#181818" "; }"
-        ".minicode-terminal vte-terminal { padding: 6px; }"
-
-        // Pane dividers. GTK's default is a hairline in the desktop theme's
-        // color: invisible against dark chrome, and a poor drag target. 4px in
-        // the divider gray, lighting up blue under the pointer, says "drag me".
-        ".minicode-split > separator {"
-        "  min-width: 4px; min-height: 4px;"
-        "  background-color: " "#333333" "; }"
-        ".minicode-split > separator:hover {"
-        "  background-color: " "#007ACC" "; }"
-
-        // Scrollbars over the dark panels. The desktop theme's are tuned for a
-        // light background and all but disappear on #1E1E1E.
-        ".minicode-scroller scrollbar { background-color: transparent; border: none; }"
-        ".minicode-scroller scrollbar slider {"
-        "  background-color: rgba(255,255,255,0.22);"
-        "  border: none; min-width: 8px; min-height: 8px; }"
-        ".minicode-scroller scrollbar slider:hover {"
-        "  background-color: rgba(255,255,255,0.38); }"
-
-        // The floating shortcut list. Nearly opaque rather than fully so, to
-        // read as an overlay on top of the editor rather than a pane of it.
-        ".minicode-hints {"
-        "  background-color: " "#252526" ";"
-        "  border: 1px solid " "#333333" ";"
-        "  border-radius: 8px;"
-        "  padding: 14px 18px;"
-        "  color: " "#D4D4D4" ";"
-        "  font-family: monospace;"
-        "  box-shadow: 0 6px 20px rgba(0,0,0,0.55); }";
-    gtk_css_provider_load_from_string(css, style);
-    gtk_style_context_add_provider_for_display(
-        gdk_display_get_default(),
-        GTK_STYLE_PROVIDER(css),
-        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    g_object_unref(css);
+// Apply the settings file everywhere: the stylesheet, the editor's tags, the
+// terminal's colors, and the status-bar note about any bad lines.
+static void applySettings(App* app) {
+    const Settings& st = app->settings->settings();
+    if (!app->css) {
+        app->css = gtk_css_provider_new();
+        gtk_style_context_add_provider_for_display(
+            gdk_display_get_default(), GTK_STYLE_PROVIDER(app->css),
+            GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    }
+    gtk_css_provider_load_from_string(app->css, theme::stylesheet(st).c_str());
+    if (app->editor) app->editor->applySettings(st);
+#ifdef MINICODE_ENABLE_TERMINAL
+    if (app->terminal) app->terminal->applySettings(st);
+#endif
+    if (app->settingsLabel) {
+        const auto& errors = app->settings->errors();
+        std::string note;
+        if (!errors.empty()) {
+            note = "Settings " + errors.front();
+            if (errors.size() > 1)
+                note += " (and " + std::to_string(errors.size() - 1) + " more)";
+        }
+        gtk_label_set_text(GTK_LABEL(app->settingsLabel), note.c_str());
+        std::string tip;
+        for (const auto& e : errors) tip += (tip.empty() ? "" : "\n") + e;
+        gtk_widget_set_tooltip_text(app->settingsLabel,
+            errors.empty() ? nullptr : (app->settings->path() + "\n\n" + tip).c_str());
+    }
 }
+
+static void onSettingsChanged(void* userp) { applySettings(static_cast<App*>(userp)); }
 
 // ---------------------------------------------------------------- menu / accels
 
@@ -508,6 +601,8 @@ static void buildMenu(App* app) {
 
     GMenu* editMenu = g_menu_new();
     g_menu_append(editMenu, "Find", "win.find");
+    g_menu_append(editMenu, "Toggle Comment", "win.togglecomment");
+    g_menu_append(editMenu, "Settings…", "win.settings");
     g_menu_append_submenu(menuBar, "Edit", G_MENU_MODEL(editMenu));
     g_object_unref(editMenu);
 
@@ -545,7 +640,9 @@ static void setAccels(App* app) {
         {"win.togglehints",     "<Ctrl><Shift>h"},
         {"win.togglesidebar",   "<Ctrl>b"},
         {"win.toggleeditor",    "<Ctrl><Shift>e"},
-        {"win.toggleterminal",  "<Ctrl>t"},
+        {"win.toggleterminal",  "<Ctrl><Shift>t"},
+        {"win.togglecomment",   "<Ctrl>slash"},
+        {"win.settings",        "<Ctrl>comma"},
         {"win.togglebrowser",   "<Ctrl><Shift>b"},
         {"win.togglehidden",    "<Ctrl>h"},
         {"win.focustree",       "<Ctrl>0"},
@@ -562,9 +659,12 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     App* app = static_cast<App*>(userp);
     app->gapp = gapp;
 
-    loadCss();
+    app->settings = new AppSettings();
+    app->settings->setChangeCallback(onSettingsChanged, app);
+    applySettings(app);   // the stylesheet, before any widget is drawn
 
     app->window = gtk_application_window_new(gapp);
+    gtk_widget_add_css_class(app->window, "minicode-window");
     gtk_window_set_default_size(GTK_WINDOW(app->window), 1100, 720);
     gtk_window_set_title(GTK_WINDOW(app->window), "MiniCode");
     gtk_application_window_set_show_menubar(
@@ -575,6 +675,7 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     app->tree->setOpenCallback(openFileCb, app);
     app->editor = new Editor();
     app->editor->setTitleCallback(updateTitle, app);
+    app->editor->setSettingsPath(app->settings->path());
 
     // Right side: find bar + editor + collapsible panels.
     GtkWidget* rightBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -599,10 +700,6 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     // out by hand in -relayoutRightArea.
     GtkWidget* upperBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     app->upperBox = upperBox;
-    // A GtkTextView will happily shrink to nothing, so without a floor here the
-    // divider could be dragged to the top of the window and leave a 12px sliver
-    // of editor. 120px is the floor the macOS drag handler keeps.
-    gtk_widget_set_size_request(upperBox, -1, 120);
     gtk_box_append(GTK_BOX(upperBox), app->editor->widget());
 #ifdef MINICODE_ENABLE_BROWSER
     app->browser = new Browser("https://duckduckgo.com");
@@ -621,7 +718,11 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     // dragged to. Neither may be shrunk past its minimum, which is what stops a
     // drag from collapsing the terminal into an unusable sliver.
     gtk_paned_set_resize_start_child(GTK_PANED(app->vpaned), TRUE);
-    gtk_paned_set_shrink_start_child(GTK_PANED(app->vpaned), FALSE);
+    // The editor may be dragged all the way shut; onVpanedPosition snaps a
+    // near-miss the rest of the way so no sliver is left.
+    gtk_paned_set_shrink_start_child(GTK_PANED(app->vpaned), TRUE);
+    g_signal_connect(app->vpaned, "notify::position",
+                     G_CALLBACK(onVpanedPosition), app);
     gtk_widget_set_vexpand(app->vpaned, TRUE);
 #ifdef MINICODE_ENABLE_TERMINAL
     app->terminal = new Terminal(app->rootDir);
@@ -629,7 +730,7 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     gtk_paned_set_end_child(GTK_PANED(app->vpaned), app->termPanel);
     gtk_paned_set_resize_end_child(GTK_PANED(app->vpaned), FALSE);
     gtk_paned_set_shrink_end_child(GTK_PANED(app->vpaned), FALSE);
-    gtk_widget_set_visible(app->termPanel, FALSE);   // opens on Ctrl+T
+    gtk_widget_set_visible(app->termPanel, FALSE);   // opens on Ctrl+Shift+T
 #endif
     gtk_box_append(GTK_BOX(rightBox), app->vpaned);
 
@@ -640,6 +741,14 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     gtk_paned_set_end_child(GTK_PANED(app->hpaned), rightBox);
     gtk_paned_set_position(GTK_PANED(app->hpaned), 240);
     gtk_paned_set_resize_start_child(GTK_PANED(app->hpaned), FALSE);
+    gtk_paned_set_shrink_end_child(GTK_PANED(app->hpaned), TRUE);
+    g_signal_connect(app->hpaned, "notify::position",
+                     G_CALLBACK(onHpanedPosition), app);
+    GtkGesture* hpanedPress = gtk_gesture_click_new();
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(hpanedPress),
+                                               GTK_PHASE_CAPTURE);
+    g_signal_connect(hpanedPress, "pressed", G_CALLBACK(onHpanedPressed), app);
+    gtk_widget_add_controller(app->hpaned, GTK_EVENT_CONTROLLER(hpanedPress));
     gtk_widget_set_vexpand(app->hpaned, TRUE);
 
     // Status bar: the current path on the left, and the hint that advertises the
@@ -650,12 +759,16 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     gtk_label_set_ellipsize(GTK_LABEL(app->statusLabel), PANGO_ELLIPSIZE_MIDDLE);
     gtk_widget_set_hexpand(app->statusLabel, TRUE);
 
+    app->settingsLabel = gtk_label_new("");
+    gtk_label_set_ellipsize(GTK_LABEL(app->settingsLabel), PANGO_ELLIPSIZE_END);
+
     app->hintsHint = gtk_label_new(kHintsHintShow);
     gtk_label_set_xalign(GTK_LABEL(app->hintsHint), 1.0);
 
     GtkWidget* statusBar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     gtk_widget_add_css_class(statusBar, "minicode-status");
     gtk_box_append(GTK_BOX(statusBar), app->statusLabel);
+    gtk_box_append(GTK_BOX(statusBar), app->settingsLabel);
     gtk_box_append(GTK_BOX(statusBar), app->hintsHint);
 
     GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -683,8 +796,11 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     addAction(app, "togglebrowser",  G_CALLBACK(act_toggle_browser));
     addAction(app, "togglehidden",   G_CALLBACK(act_toggle_hidden));
     addAction(app, "focustree",      G_CALLBACK(act_focus_tree));
+    addAction(app, "togglecomment",  G_CALLBACK(act_toggle_comment));
+    addAction(app, "settings",       G_CALLBACK(act_settings));
     buildMenu(app);
     setAccels(app);
+    applySettings(app);   // now that the editor, terminal and status bar exist
 
     gtk_window_present(GTK_WINDOW(app->window));
 }

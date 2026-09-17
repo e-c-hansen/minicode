@@ -1475,14 +1475,8 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         [AppSettings shared].path.stringByResolvingSymlinksInPath];
 }
 
-// Readable text over a swatch: black or white, judged against the color as it
-// appears over the editor background.
 static NSColor *ContrastColor(const Rgba &c) {
-    Rgba bg = [AppSettings shared].settings.background(Surface::Editor);
-    auto mix = [&](uint8_t v, uint8_t under) { return c.a * v + (1 - c.a) * under; };
-    double lum = (0.299 * mix(c.r, bg.r) + 0.587 * mix(c.g, bg.g) +
-                  0.114 * mix(c.b, bg.b)) / 255;
-    return lum > 0.55 ? [NSColor blackColor] : [NSColor whiteColor];
+    return MCColor([AppSettings shared].settings.contrastText(c));
 }
 
 // Show every color value as a swatch of itself, clickable to pick a new one.

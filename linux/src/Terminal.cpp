@@ -101,19 +101,13 @@ Terminal::Terminal(const std::string& cwd) : cwd_(cwd) {
 void Terminal::applyTheme() {
     VteTerminal* term = VTE_TERMINAL(vte_);
 
-    GdkRGBA fg, bg, cursor, cursorFg, highlight;
-    gdk_rgba_parse(&fg,        pal::TermText);
-    gdk_rgba_parse(&bg,        pal::TermBg);
+    GdkRGBA cursor, highlight;
     gdk_rgba_parse(&cursor,    pal::TermCursor);
-    gdk_rgba_parse(&cursorFg,  pal::TermBg);
     gdk_rgba_parse(&highlight, pal::Selection);   // same blue as editor selection
+    for (int i = 0; i < 16; ++i) gdk_rgba_parse(&palette_[i], kAnsiPalette[i]);
 
-    GdkRGBA palette[16];
-    for (int i = 0; i < 16; ++i) gdk_rgba_parse(&palette[i], kAnsiPalette[i]);
-
-    vte_terminal_set_colors(term, &fg, &bg, palette, 16);
+    applySettings(Settings::parse(""));   // the defaults until the app applies its own
     vte_terminal_set_color_cursor(term, &cursor);
-    vte_terminal_set_color_cursor_foreground(term, &cursorFg);
     vte_terminal_set_color_highlight(term, &highlight);
     // Bold text picks the bright slot instead of only thickening, which is what
     // makes the usual colored shell prompts look right.
@@ -122,6 +116,19 @@ void Terminal::applyTheme() {
     PangoFontDescription* font = systemMonospaceFont();
     vte_terminal_set_font(term, font);
     pango_font_description_free(font);
+}
+
+void Terminal::applySettings(const Settings& s) {
+    auto gdk = [](const Rgba& c) {
+        return GdkRGBA{c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, (float)c.a};
+    };
+    const Rgba bgColor = s.background(Surface::Terminal);
+    GdkRGBA fg = gdk(s.text(Surface::Terminal));
+    GdkRGBA bg = gdk(bgColor);
+    // The block cursor's text is the background color, solid so it stays legible.
+    GdkRGBA cursorFg = gdk(Rgba::hex(bgColor.rgb()));
+    vte_terminal_set_colors(VTE_TERMINAL(vte_), &fg, &bg, palette_, 16);
+    vte_terminal_set_color_cursor_foreground(VTE_TERMINAL(vte_), &cursorFg);
 }
 
 // Write a status line of our own into the terminal, in the palette's green —

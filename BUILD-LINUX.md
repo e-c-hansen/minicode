@@ -2,8 +2,9 @@
 
 MiniCode began as a native macOS editor. This is a port of the same editor to
 Ubuntu Linux using GTK4. It reuses the exact same portable C++ core (the syntax
-highlighter and the Markdown parser) that the macOS build uses, so highlighting
-and Markdown rendering behave identically. Only the GUI layer is rewritten, from
+highlighter, the Markdown parser, the settings file parser and the comment
+toggle) that the macOS build uses, so highlighting, Markdown rendering,
+settings and Ctrl+/ behave identically. Only the GUI layer is rewritten, from
 AppKit to GTK4.
 
 Everything for the Linux port lives under `linux/`. The macOS build is
@@ -44,6 +45,26 @@ Verified by running it:
   or the browser while collapsed restores the editor too.
 - The shortcut hints panel (Ctrl Shift H) opens and closes, reports which panes
   are currently up, and refreshes when they change. The status bar advertises it.
+- The settings file, Ctrl+/, and the divider drags (September 2026). These were
+  checked in an Ubuntu 26.04 Docker container on the Mac, on a virtual X display
+  with a compositor, driven with real key presses and mouse drags from
+  `xdotool` and checked from screenshots:
+  - Ctrl+, creates `~/.config/minicode/settings.conf` with every setting
+    commented out and opens it, with each color shown as a swatch. Clicking a
+    swatch opens the GTK color dialog, and the choice is written into the line,
+    uncommented, and saved.
+  - Edits to the file apply while the app runs. Per-panel opacity was measured
+    in screenshot pixels against a known backdrop and matches the setting for
+    the editor, file tree, terminal, status bar and menu bar. Text colors, the
+    title bar (with client-side decorations), the browser toolbar and Markdown
+    heading colors change live. A bad line shows in the status bar.
+  - Ctrl+/ comments and uncomments the caret's line and a selected block, one
+    Ctrl+Z undoes it, and it does nothing to the file while the terminal has
+    focus. Ctrl+Shift+T toggles the terminal from any focus.
+  - Dragging the terminal divider to the top snaps the editor shut and dragging
+    it down brings it back; dragging the sidebar divider to the right edge
+    leaves only the file tree, and opening a file restores the right side at
+    its earlier width.
 - The shell restarts in place when it exits. Confirmed by sending `exit` to the
   child and reading the terminal buffer back: the notice line, a fresh prompt,
   and a command run successfully in the new shell.
@@ -213,6 +234,14 @@ bottom.
 
 These mirror the macOS set, with Ctrl standing in for Command.
 
+The settings file (Ctrl+,) is the same `~/.config/minicode/settings.conf` the
+macOS build reads (it follows `$XDG_CONFIG_HOME`). Every panel's background,
+opacity and text color work the same way, with two differences: on Linux the
+title bar settings also color the menu bar, and `window.blur` is ignored,
+because Linux desktops don't give apps a way to blur what is behind a window.
+Transparency needs a compositor, which GNOME always has. GTK's color dialog
+applies a picked color when you press Select, rather than live while you drag.
+
 | Shortcut          | Action                     |
 | ----------------- | -------------------------- |
 | Ctrl O            | Open folder                |
@@ -224,7 +253,9 @@ These mirror the macOS set, with Ctrl standing in for Command.
 | Ctrl Shift H      | Show or hide the shortcut hints |
 | Ctrl B            | Toggle the sidebar         |
 | Ctrl Shift E      | Collapse or restore the editor |
-| Ctrl T            | Toggle the terminal panel  |
+| Ctrl Shift T      | Toggle the terminal panel  |
+| Ctrl /            | Comment or uncomment the selected lines |
+| Ctrl ,            | Open the settings file     |
 | Ctrl Shift B      | Toggle the browser panel   |
 | Ctrl H            | Show or hide dotfiles      |
 | Ctrl 0            | Focus the file tree        |

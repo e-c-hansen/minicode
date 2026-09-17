@@ -76,6 +76,9 @@ public:
     // commented-out setting ("# editor.text = #D4D4D4"), so a picked color
     // takes effect. Lines without a color come back unchanged.
     static std::u16string setColor(const std::u16string& line, const Rgba& c);
+    // Black or white text, whichever reads better on a swatch of `c` drawn
+    // over the editor background.
+    Rgba contrastText(const Rgba& c) const;
 
     // A surface's background color with its opacity applied.
     Rgba background(Surface s) const;

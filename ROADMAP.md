@@ -50,28 +50,13 @@ log. What remains is a screen model:
 
 ## Linux port parity
 
-What macOS has that the GTK port doesn't yet. The shared C++ core already does
-the hard parts, so most of this is wiring on the GTK side.
+The GTK port now has the settings file, per-panel transparency, color swatches,
+Ctrl+/, Ctrl+Shift+T and the divider drags. What is left:
 
-- **Settings file.** Load `~/.config/minicode/settings.conf` with the shared
-  `Settings.cpp` (already pure C++ and tested), watch it with `GFileMonitor`,
-  and apply colors through CSS providers and the text buffer tags that
-  `Palette.h` currently hardcodes. Cmd+, becomes Ctrl+,.
-- **Transparency.** Per-panel opacity via RGBA CSS backgrounds on an RGBA
-  window. This needs a compositor; GNOME on Wayland has one. `window.blur` has
-  no portable GTK equivalent (KDE can blur, GNOME can't), so ignore it there
-  and say so in the default file.
-- **Color swatches.** Clickable color values in the settings file opening
-  `GtkColorDialog`, rewriting the line with `Settings::setColor`.
-- **Comment toggle.** Ctrl+/ using the shared `LineComments.cpp`; its UTF-16
-  offsets need converting to GTK's character offsets (`Utf8Offsets.h` is the
-  place for that).
-- **Shortcut alignment.** macOS moved the terminal to Shift+Cmd+T; the port
-  still uses Ctrl+T. Ctrl+Shift+T matches the other pane toggles, and frees
-  Ctrl+T.
-- **Dividers.** The macOS behavior of dragging the terminal bar to the top to
-  hide the editor, and the sidebar divider to the edge to collapse the right
-  side. The port has its own editor collapse (Ctrl+Shift+E) already.
+- **Blur.** No portable GTK equivalent (KDE can blur behind windows, GNOME
+  can't), so `window.blur` is ignored on Linux.
+- **Live color picking.** GTK's color dialog only reports a color when it
+  closes. A popover with a `GtkColorChooserWidget` could apply picks live.
 - **Terminal.** VTE rather than the shared `TerminalStream`, which is fine;
   VTE is a real emulator.
 

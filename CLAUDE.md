@@ -14,7 +14,7 @@ this file covers the macOS app except where it says otherwise.
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
   run on Apple Silicon and to keep granted permissions stable).
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  370 checks over the tokenizer, Markdown parser, terminal output stream,
+  376 checks over the tokenizer, Markdown parser, terminal output stream,
   settings parser, and comment toggling. Exits non-zero on failure.
 - `make run [DIR=~/path]` — build and launch.
 - `make icon` — regenerate `resources/AppIcon.icns` from `tools/makeicon.m`.
@@ -116,19 +116,17 @@ container (PanelHost, laid out by hand in layoutContainer)
 
 ## Current state (handoff, 2026-09-17)
 
-- Branch `linux-port`, pushed to origin through the editor-hide work. On top
-  of that, uncommitted until the user tries it: the settings file with
-  per-panel opacity, blur, title bar and text colors (Cmd+,), and the
-  terminal toggle moved from Cmd+T to Shift+Cmd+T, Cmd+/ comment toggle, and
-  clickable color swatches in the settings file. The user confirmed terminal
-  and title bar opacity; editor and sidebar opacity were broken and are now
-  fixed and pixel-verified. All tests pass (370), build is warning-free.
+- Everything is merged to `main` and pushed (`linux-port` points at the same
+  commit). macOS has the settings file (Cmd+,) with per-panel opacity, blur,
+  title bar and text colors and clickable color swatches, Cmd+/, and the
+  terminal on Shift+Cmd+T. Tests: 376 core, 110 Linux port; builds are
+  warning-free on both.
 - The user has confirmed in the running app: tables, the pty terminal
   (Ctrl+C, sudo, aliases), colors, the terminal bar, Shift+Cmd+E, and both
   divider drags.
-- Linux port (worked on from the Ubuntu machine, merged from `main`) has its
-  own editor collapse, VTE terminal, hints panel and desktop launcher. It has
-  no settings file, Cmd+/ equivalent, or transparency yet.
+- Linux port has caught up: settings file with transparency and swatches,
+  Ctrl+/, Ctrl+Shift+T, divider drags, built and checked in Docker (see
+  Verification). Blur and live color picking remain macOS-only.
 - Next up per the user: UI changes.
 
 ## Verification reality (important)
@@ -176,6 +174,31 @@ the Linux box) gets none of this, only a compile.
 - Otherwise confirm the app builds clean and launches without crashing, and
   tell the user which behavior needs their eyes. Do not claim GUI behavior is
   verified when it was only compiled.
+
+**The GTK port from the Mac: a Docker container.** Docker Desktop is installed
+on the Mac. An `ubuntu:26.04` image with the CI packages plus `xvfb xcompmgr
+x11-xserver-utils xdotool imagemagick dbus-x11` builds the port with meson and
+runs it for real:
+
+- Mount the repo (`-v ~/MiniCode:/work`) and build into a container-local
+  directory (`meson setup /build`), not `linux/build`.
+- `Xvfb :99 -screen 0 1280x800x24` plus `xcompmgr` gives a composited display,
+  so translucency works. Launch with `GDK_BACKEND=x11 GTK_A11Y=none` under
+  `dbus-run-session`, a scratch `HOME`/`XDG_CONFIG_HOME`, and
+  `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` (WebKit's bubblewrap sandbox
+  cannot start in a container and aborts the whole app). `GTK_CSD=1` draws
+  GTK's own title bar, since there is no window manager.
+- Drive it with `xdotool key ctrl+shift+t`, `xdotool mousemove X Y click 1`,
+  and drags as `mousedown`, a few `mousemove`s, `mouseup`. Capture with
+  `import -window root` and read pixels with
+  `convert img -format '%[pixel:p{X,Y}]' info:`. The compositor's backdrop is
+  gray 128, so a see-through panel's alpha can be computed from the blend.
+- `docker cp` screenshots out and look at them. Stray dotted glyph debris in
+  root captures is xcompmgr damage, not the app: it vanishes after a resize
+  and never appears in `import -window <id>`.
+- In helper scripts use `pkill -x minicode`, never `pkill -f` with a path: it
+  matches the `docker exec bash -c` command line and kills the script.
+- Disk on the Mac is tight (it had 730 MB free); the image is about 1.8 GB.
 
 **The GTK port on the user's Ubuntu machine: a live session.** As of August
 2026 the primary Linux box is Ubuntu 26.04 on a ThinkPad T480, GNOME on

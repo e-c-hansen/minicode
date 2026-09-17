@@ -2,6 +2,7 @@
 #include "LineComments.h"
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <unordered_map>
 #include <vector>
 

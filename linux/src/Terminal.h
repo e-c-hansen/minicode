@@ -14,6 +14,8 @@
 #include <vte/vte.h>   // VteTerminal appears in the signal handler signatures
 #include <string>
 
+#include "Settings.h"
+
 class Terminal {
 public:
     // Height limits for the draggable divider above the panel. The macOS build
@@ -26,6 +28,9 @@ public:
     explicit Terminal(const std::string& cwd);
     GtkWidget* widget() const { return root_; }
     void focus();
+    // Background (with its opacity) and text color from the settings file.
+    // VTE redraws everything already on screen in the new colors.
+    void applySettings(const Settings& s);
 
 private:
     void spawnShell();
@@ -43,6 +48,7 @@ private:
     GtkWidget*  vte_  = nullptr;   // VteTerminal
     gint64      lastSpawn_ = 0;    // g_get_monotonic_time of the last spawn
     int         rapidExits_ = 0;   // consecutive exits inside a second
+    GdkRGBA     palette_[16];
 };
 
 #endif // MINICODE_ENABLE_TERMINAL

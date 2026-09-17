@@ -13,6 +13,7 @@
 // O(n^2) over the file, which stalls the UI on large sources.
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 class Utf8OffsetCursor {
@@ -48,3 +49,102 @@ private:
     long bytePos_ = 0;
     long charPos_ = 0;
 };
+
+// ------------------------------------------------ UTF-16 <-> characters
+// The shared LineComments and Settings editing helpers work in UTF-16 code
+// units (they line up with NSString on macOS). GtkTextBuffer counts
+// characters, which differ only where a character outside the Basic
+// Multilingual Plane (most emoji) takes two UTF-16 units.
+
+namespace utf16 {
+
+inline bool isHigh(char16_t c) { return c >= 0xD800 && c <= 0xDBFF; }
+inline bool isLow(char16_t c)  { return c >= 0xDC00 && c <= 0xDFFF; }
+
+// Character offset of UTF-16 offset `u16`. An offset between the halves of a
+// pair counts as the character's start.
+inline long toCharOffset(const std::u16string& s, size_t u16) {
+    long chars = 0;
+    size_t i = 0;
+    while (i < u16 && i < s.size()) {
+        size_t step = (isHigh(s[i]) && i + 1 < s.size() && isLow(s[i + 1])) ? 2 : 1;
+        if (i + step > u16) break;
+        i += step;
+        ++chars;
+    }
+    return chars;
+}
+
+// UTF-16 offset of character offset `chars` (clamped to the end).
+inline size_t fromCharOffset(const std::u16string& s, long chars) {
+    size_t i = 0;
+    for (long n = 0; n < chars && i < s.size(); ++n)
+        i += (isHigh(s[i]) && i + 1 < s.size() && isLow(s[i + 1])) ? 2 : 1;
+    return i;
+}
+
+// Decode UTF-8. Invalid bytes become U+FFFD, one per byte, so offsets stay
+// predictable (GtkTextBuffer only ever holds valid UTF-8 anyway).
+inline std::u16string fromUtf8(const std::string& in) {
+    std::u16string out;
+    out.reserve(in.size());
+    size_t i = 0;
+    while (i < in.size()) {
+        unsigned char c = (unsigned char)in[i];
+        char32_t cp;
+        size_t len;
+        if (c < 0x80)                { cp = c; len = 1; }
+        else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; len = 2; }
+        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; len = 3; }
+        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; len = 4; }
+        else { out += u'\uFFFD'; ++i; continue; }
+        bool ok = i + len <= in.size();
+        for (size_t k = 1; ok && k < len; ++k) {
+            unsigned char cc = (unsigned char)in[i + k];
+            if ((cc & 0xC0) != 0x80) ok = false;
+            else cp = (cp << 6) | (cc & 0x3F);
+        }
+        if (!ok) { out += u'\uFFFD'; ++i; continue; }
+        if (cp >= 0x10000) {
+            cp -= 0x10000;
+            out += (char16_t)(0xD800 + (cp >> 10));
+            out += (char16_t)(0xDC00 + (cp & 0x3FF));
+        } else {
+            out += (char16_t)cp;
+        }
+        i += len;
+    }
+    return out;
+}
+
+inline std::string toUtf8(const std::u16string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); ++i) {
+        char32_t cp = in[i];
+        if (isHigh(in[i]) && i + 1 < in.size() && isLow(in[i + 1])) {
+            cp = 0x10000 + ((in[i] - 0xD800) << 10) + (in[i + 1] - 0xDC00);
+            ++i;
+        } else if (isHigh(in[i]) || isLow(in[i])) {
+            cp = 0xFFFD;   // an unpaired surrogate
+        }
+        if (cp < 0x80) {
+            out += (char)cp;
+        } else if (cp < 0x800) {
+            out += (char)(0xC0 | (cp >> 6));
+            out += (char)(0x80 | (cp & 0x3F));
+        } else if (cp < 0x10000) {
+            out += (char)(0xE0 | (cp >> 12));
+            out += (char)(0x80 | ((cp >> 6) & 0x3F));
+            out += (char)(0x80 | (cp & 0x3F));
+        } else {
+            out += (char)(0xF0 | (cp >> 18));
+            out += (char)(0x80 | ((cp >> 12) & 0x3F));
+            out += (char)(0x80 | ((cp >> 6) & 0x3F));
+            out += (char)(0x80 | (cp & 0x3F));
+        }
+    }
+    return out;
+}
+
+}  // namespace utf16

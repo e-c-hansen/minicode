@@ -18,12 +18,13 @@ BUILD    := build-make
 BIN      := $(BUILD)/minicode
 
 # Shared portable core (never copied — compiled straight from ../src).
-CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp
+CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp \
+        ../src/Settings.cpp ../src/LineComments.cpp
 
 # GUI sources. Terminal.cpp / Browser.cpp are always listed but compile to
 # nothing unless their feature macro is defined.
 GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Markdown.cpp \
-       src/Terminal.cpp src/Browser.cpp
+       src/Terminal.cpp src/Browser.cpp src/AppSettings.cpp src/ThemeCss.cpp
 
 SRCS := $(GUI) $(CORE)
 
@@ -64,8 +65,9 @@ run: $(BIN)
 TEST_BIN := $(BUILD)/run_tests
 test:
 	@mkdir -p $(BUILD)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) tests/run_tests.cpp \
-	    ../src/SyntaxHighlighter.cpp -o $(TEST_BIN)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) tests/run_tests.cpp src/ThemeCss.cpp \
+	    ../src/SyntaxHighlighter.cpp ../src/Settings.cpp ../src/LineComments.cpp \
+	    -o $(TEST_BIN)
 	@$(TEST_BIN)
 
 clean:
