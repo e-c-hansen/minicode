@@ -1323,9 +1323,20 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
                                                   encoding:NSUTF8StringEncoding
                                                      error:&err];
     if (!content) {
+        // Nothing of the previous file may survive into this one: a stale
+        // preview would stay on screen, and an editable text view would let
+        // Cmd+S write this message over the binary file.
+        self.isMarkdown = NO;
+        self.isLatex = NO;
+        self.previewMode = NO;
+        self.sourceText = nil;
+        self.dirty = NO;
+        self.textView.editable = NO;
         [self setPlainMessage:[NSString stringWithFormat:
             @"Cannot display “%@”.\n\n(Binary file or unsupported encoding.)",
             path.lastPathComponent]];
+        [self relayoutRightArea];
+        [self updateTitle];
         [self setStatus:path];
         return;
     }
@@ -1691,7 +1702,8 @@ static NSColor *ContrastColor(const Rgba &c) {
 }
 
 - (void)saveCurrentFile:(id)sender {
-    if (!self.currentPath) return;
+    // A message (welcome, binary file) is not the file's contents.
+    if (!self.currentPath || self.showingMessage) return;
     // In markdown preview mode the text view holds rendered text, not source;
     // save the tracked source instead.
     NSString *text = self.textView.editable ? self.textView.string

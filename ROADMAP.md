@@ -29,7 +29,9 @@ Both are doable natively with no third-party dependency, so VLC is not needed:
 
 The work is a new media view in `EditorController` that the open path routes to
 based on file extension, the same way it already routes `.md` to the Markdown
-renderer. Modest effort, no new dependencies.
+renderer and `.tex` to the LaTeX preview. Modest effort, no new dependencies.
+Images are next; `CLAUDE.md` ("Next task") has the concrete plan and the
+traps in the open path.
 
 ## LSP client
 

@@ -2,7 +2,10 @@
 
 MiniCode is a small native macOS code editor built from scratch, no Electron,
 no third-party dependencies. It links only Apple system frameworks (Cocoa,
-WebKit, CoreServices) plus the C++ standard library. This file is the handoff
+WebKit, CoreServices, Quartz for PDFKit) plus the C++ standard library and the
+system zlib. The LaTeX preview runs tectonic, an external binary the user
+installs or the app downloads on request, the way an LSP client would use
+language servers. This file is the handoff
 for future sessions: architecture, workflow, and the hard-won gotchas.
 
 There is also a GTK4 Linux port under `linux/`, sharing the portable C++ core
@@ -14,8 +17,9 @@ this file covers the macOS app except where it says otherwise.
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
   run on Apple Silicon and to keep granted permissions stable).
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  376 checks over the tokenizer, Markdown parser, terminal output stream,
-  settings parser, and comment toggling. Exits non-zero on failure.
+  501 checks over the tokenizer, Markdown parser, terminal output stream,
+  settings parser, comment toggling, and the LaTeX and SyncTeX readers.
+  Exits non-zero on failure.
 - `make run [DIR=~/path]` — build and launch.
 - `make icon` — regenerate `resources/AppIcon.icns` from `tools/makeicon.m`.
 - `make dist-zip` / `make dmg` — package for distribution.
@@ -167,33 +171,88 @@ same way Markdown does; `LatexView` takes the editor's slot in
   `undo:`/`redo:` on the responder chain, with `EditorController` forwarding
   when focus never got as far as the preview. The text view keeps its own undo
   for typing; the two stacks are separate.
+- **Packages missing from tectonic's bundle.** tectonic's bundle is an
+  older TeX Live than Overleaf's. The user's resume needed `twemojis`, which the
+  bundle lacks; the fix was to put `twemojis.sty` and `all-twemojis.pdf` in the
+  document's own folder (TeX looks there first). tectonic cannot generate a
+  `.sty` from a `.dtx`/`.ins` itself: its virtual filesystem throws away files
+  docstrip writes. A short script that keeps the `.dtx`'s code lines (not
+  starting with `%`, outside other guards) produced a working `.sty`.
+- **Spacing differs from Overleaf by design.** Overleaf defaults to pdfLaTeX,
+  tectonic is XeTeX; fonts and line breaking differ, and `\hfill`-built lines
+  show it most. The user was told to switch Overleaf to XeLaTeX to compare.
 - Headless testing worked well here: drive `openEditorForPage:point:`,
   `startAddItem:` and `commitEdit:` directly from a `MINICODE_LATEXTEST` block,
   finding page points with `[PDFDocument findString:]`. Point
   `MINICODE_TECTONIC` and `TECTONIC_CACHE_DIR` at scratch copies so the test
   neither needs the network nor touches the user's cache.
 
-## Current state (handoff, 2026-09-17)
+## Current state (handoff, 2026-09-18)
 
-- Everything is merged to `main` and pushed (`linux-port` points at the same
-  commit). macOS has the settings file (Cmd+,) with per-panel opacity, blur,
-  title bar and text colors and clickable color swatches, Cmd+/, and the
-  terminal on Shift+Cmd+T. Tests: 376 core, 110 Linux port; builds are
-  warning-free on both.
-- The user has confirmed in the running app: tables, the pty terminal
-  (Ctrl+C, sudo, aliases), colors, the terminal bar, Shift+Cmd+E, and both
-  divider drags.
-- Linux port has caught up: settings file with transparency and swatches,
-  Ctrl+/, Ctrl+Shift+T, divider drags, built and checked in Docker (see
-  Verification). Blur and live color picking remain macOS-only.
-- New since then (macOS only, not yet in `linux/`): the LaTeX preview. 479 core
-  checks pass, the build is warning-free, and a headless run of the app checked
-  38 things end to end (typeset, click a heading/item/equation, edit, add an
-  item, undo and redo, the log on a bad document, the missing-tectonic panel,
-  no scratch file left behind). tectonic 0.17.0 is installed at
-  `~/Library/Application Support/MiniCode/bin/tectonic`, put there by the app's
-  own Download button, which was exercised the same way.
-- Next up per the user: the Linux port of the LaTeX preview, tested in Docker.
+- Branch `linux-port`, three commits ahead of `origin/main` (`c346f8a`), **not
+  pushed**: the LaTeX preview (`666c7a2`), click tracing through real-world
+  commands (`9a92379`), and the binary-file fix described below. `main` has
+  none of the LaTeX work yet. 501 core checks pass; the build is warning-free.
+- The LaTeX preview is macOS only; `linux/` has not been touched for it. The
+  user has used it on an Overleaf resume at
+  `~/Documents/Resume-September-2026` (their personal document: do not edit
+  it or commit anything from it) and reported the wrong-text clicks that led to
+  `9a92379`. Launch: `make run DIR=~/Documents/Resume-September-2026`.
+- tectonic 0.17.0 lives at
+  `~/Library/Application Support/MiniCode/bin/tectonic` (installed by the
+  app's own Download button) with its package cache in
+  `~/Library/Caches/Tectonic`.
+- Fixed on the way out: opening a file that is not UTF-8 (every PNG) left the
+  previous file's mode in place. After a `.tex` the stale PDF stayed on screen;
+  after any text file the view stayed editable, and **Cmd+S wrote the "Cannot
+  display" message over the binary file**. The binary branch of
+  `openFileAtPath:` now resets `isMarkdown`/`isLatex`/`previewMode`/
+  `sourceText`/`dirty`, makes the text view read-only and relays out, and
+  `saveCurrentFile:` returns early while `showingMessage` is set. A headless
+  test (8 checks) failed 5 before the fix and passed 8 after.
+- Next up per the user: **rendering PNG files** (see the next section). After
+  that, the Linux port of the LaTeX preview, tested in Docker.
+
+## Next task: render images when they are opened (PNG first)
+
+Clicking a `.png` in the tree today shows "Cannot display ... (Binary file or
+unsupported encoding.)". The goal is to show the image instead. PNGs *inside*
+a LaTeX document already render (tectonic embeds them in the PDF, verified on
+the resume's logos); this is about opening an image file directly.
+
+The plan in `ROADMAP.md` (Media rendering) holds: an `NSImageView`, which is
+AppKit, so no new dependency. How it fits what exists:
+
+- **Route by extension before reading the file as text.** `openFileAtPath:`
+  currently tries `stringWithContentsOfFile:` first and falls into the binary
+  branch when that fails. Check the extension (png, jpg, jpeg, gif, tiff, bmp,
+  heic, webp; `NSImage imageTypes` lists what the system decodes) before that
+  read, so an image never reaches the text path.
+- **Reset the previous file's mode**, exactly as the binary branch now does,
+  or the old preview and an editable text view survive into the image. Several
+  places set these flags by hand now; a single `resetViewMode` helper called at
+  the top of `openFileAtPath:` would be the tidy way.
+- **Take the editor's slot the way `LatexView` does.** Add the view to
+  `rightArea` lazily, and in `relayoutRightArea` give it `topRect` and hide
+  `editorScroll` while it shows (see `showLatex` there). Terminal, browser,
+  Shift+Cmd+E and the divider drags then keep working unchanged.
+- **Nothing to save.** Set `showingMessage` (or an `isImage` flag checked the
+  same way in `saveCurrentFile:`) so Cmd+S cannot write text over the image,
+  and keep the text view read-only.
+- Scale to fit, never up past 100% for small images (`NSImageScaleProportionallyDown`),
+  on the editor background from `Settings` (`[cfg background:Surface::Editor]`,
+  and re-apply in `applySettings`). A status line with pixel size is cheap and
+  useful. Scrolling/zoom for large images can come later.
+- `canTogglePreview` stays NO for images; hints and README need a line.
+- **Verify** with a temporary `MINICODE_*TEST` block in `main.mm` (see below):
+  open a `.tex`, then a `.png`, then a `.txt`, and check which view is visible,
+  that the image view's `image.size` matches the file, that Cmd+S leaves the
+  PNG's bytes unchanged, and that returning to a text file restores an
+  editable editor. Capture the window with `screencapture -l` to confirm the
+  image actually draws, then leave the visual judgment to the user.
+- **Linux**: the same gap exists in `linux/src/Editor.cpp` (the
+  `g_utf8_validate` branch). GTK4's `GtkPicture` is the equivalent there. Do the
+  macOS side first; the user tests Linux in Docker afterwards.
 
 ## Verification reality (important)
 
@@ -383,6 +442,6 @@ holds, these give real runtime evidence rather than compile-only evidence:
 
 ## What's next
 
-See `ROADMAP.md`. Biggest items: image/video rendering (native, easy), then an
-LSP client (the feature that would make it a daily driver), then real
-incremental highlighting.
+See `ROADMAP.md`. Immediate: image rendering (the section above), then the
+LaTeX preview on Linux. After that: video/audio, an LSP client (the feature
+that would make it a daily driver), and real incremental highlighting.
