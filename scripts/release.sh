@@ -74,4 +74,4 @@ echo "==> Tagging and pushing the source"
 git tag -a "v$VERSION" -m "MiniCode $VERSION"
 git push -q origin main "v$VERSION"
 
-echo "==> Done. brew upgrade --cask $TAP_REPO/minicode will now pull $VERSION."
+echo "==> Done. brew upgrade --cask e-c-hansen/tap/minicode will now pull $VERSION."

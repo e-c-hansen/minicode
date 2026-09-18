@@ -434,7 +434,11 @@ holds, these give real runtime evidence rather than compile-only evidence:
 - Homebrew tap: `e-c-hansen/homebrew-tap` (PUBLIC). The compiled zip is hosted
   on that tap's GitHub Releases (keeps source private, binary installable).
 - Install: `brew install --cask e-c-hansen/tap/minicode`. The cask clears the
-  quarantine flag in a postflight, so the unsigned app opens cleanly. A
+  quarantine flag in `postflight_steps` (Homebrew 7 deprecated the `postflight`
+  block; `{{appdir}}` is the template token in step arguments), so the
+  unsigned app opens cleanly. `brew style Casks/minicode.rb` in the tap
+  checkout (`/opt/homebrew/Library/Taps/e-c-hansen/homebrew-tap`) should report
+  no offenses. A
   reference copy of the cask is `packaging/minicode.rb`.
 - Not notarized (that needs the paid Apple Developer Program). The full sign +
   notarize flow is scripted in `scripts/sign-and-notarize.sh` for when/if paid.
