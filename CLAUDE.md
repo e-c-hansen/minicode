@@ -23,8 +23,12 @@ this file covers the macOS app except where it says otherwise.
 - `make run [DIR=~/path]` — build and launch.
 - `make icon` — regenerate `resources/AppIcon.icns` from `tools/makeicon.m`.
 - `make dist-zip` / `make dmg` — package for distribution.
-- `scripts/release.sh 1.2.0` — cut a release: builds the zip, publishes it on
-  the Homebrew tap repo, and bumps the cask's version + sha256 in one shot.
+- `scripts/release.sh 1.2.0` — cut a release from a clean `main`: runs the
+  tests, stamps the version into `Info.plist` and `packaging/minicode.rb` and
+  commits that, builds the zip and checks the built app reports the version,
+  publishes it on the Homebrew tap repo, bumps the cask's version + sha256,
+  then tags `v1.2.0` and pushes `main` with the tag. The version on the
+  command line is the only place a version is typed; never edit it by hand.
 
 ## Layout of the code
 
@@ -191,13 +195,11 @@ same way Markdown does; `LatexView` takes the editor's slot in
 
 ## Current state (handoff, 2026-09-18)
 
-- Branch `linux-port`, four commits ahead of `origin/main` (`c346f8a`), **not
-  pushed**: the LaTeX preview (`666c7a2`), click tracing through real-world
-  commands (`9a92379`), the binary-file fix described below (`d7a82e5`), and
-  the shortcut hints laid out on tab stops. The Homebrew cask is still 1.1.0
-  (July 2026): nothing since then has been released. `Info.plist` still says
-  1.0; `scripts/release.sh` is the way to cut 1.2.0 when the user asks. `main` has
-  none of the LaTeX work yet. 501 core checks pass; the build is warning-free.
+- All of this work is on `main` (the earlier notes that said `linux-port`
+  were wrong; that branch still sits at `c346f8a`, behind `main`). Released as
+  **1.2.0** to the Homebrew tap on 2026-09-18, the first release since 1.1.0
+  in July, with `main` pushed and tagged `v1.2.0`. 501 core checks pass; the
+  build is warning-free.
 - The LaTeX preview is macOS only; `linux/` has not been touched for it. The
   user has used it on an Overleaf resume at
   `~/Documents/Resume-September-2026` (their personal document: do not edit
