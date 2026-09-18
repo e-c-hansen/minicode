@@ -123,8 +123,10 @@ container (PanelHost, laid out by hand in layoutContainer)
   flags: `sidebarCollapsed`, `editorHidden`, `terminalVisible`,
   `browserVisible`, plus NSSplitView's own collapse of `rightArea`.
 - A new shortcut goes in three places: the menu in `main.mm` (plus a
-  forwarding method on `AppDelegate`), `hintsText` in EditorController, and the
-  README shortcut table.
+  forwarding method on `AppDelegate`), `hintsText` in EditorController (one
+  `appendHintsRow:` call), and the README shortcut table. The hints panel is an
+  attributed string on tab stops; never line it up with spaces, because the key
+  glyphs (⌘ ⇧ ⌃ ⌫ ⏎) differ in width even in a monospaced font.
 - Fonts: system font for Markdown/UI, `monospacedSystemFontOfSize:` 12-13 for
   code and terminal.
 
@@ -189,9 +191,12 @@ same way Markdown does; `LatexView` takes the editor's slot in
 
 ## Current state (handoff, 2026-09-18)
 
-- Branch `linux-port`, three commits ahead of `origin/main` (`c346f8a`), **not
+- Branch `linux-port`, four commits ahead of `origin/main` (`c346f8a`), **not
   pushed**: the LaTeX preview (`666c7a2`), click tracing through real-world
-  commands (`9a92379`), and the binary-file fix described below. `main` has
+  commands (`9a92379`), the binary-file fix described below (`d7a82e5`), and
+  the shortcut hints laid out on tab stops. The Homebrew cask is still 1.1.0
+  (July 2026): nothing since then has been released. `Info.plist` still says
+  1.0; `scripts/release.sh` is the way to cut 1.2.0 when the user asks. `main` has
   none of the LaTeX work yet. 501 core checks pass; the build is warning-free.
 - The LaTeX preview is macOS only; `linux/` has not been touched for it. The
   user has used it on an Overleaf resume at

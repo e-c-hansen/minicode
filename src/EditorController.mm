@@ -682,14 +682,13 @@ static NSColor *ColorForStyle(TokenStyle s) {
 // Set the hint text and size the panel to fit it, anchored to the top-right.
 - (void)updateHints {
     if (!self.hintsLabel) return;
-    NSString *text = [self hintsText];
-    self.hintsLabel.stringValue = text;
+    NSAttributedString *text = [self hintsText];
+    self.hintsLabel.attributedStringValue = text;
 
     NSView *container = self.hintsPanel.superview;
-    const CGFloat pw = 380, pad = 16, margin = 18;
+    const CGFloat pw = kHintsWidth, pad = 16, margin = 18;
     NSRect textRect = [text boundingRectWithSize:NSMakeSize(pw - 2 * pad, 10000)
-        options:NSStringDrawingUsesLineFragmentOrigin
-     attributes:@{NSFontAttributeName: self.hintsLabel.font}];
+        options:NSStringDrawingUsesLineFragmentOrigin];
     CGFloat ph = ceil(textRect.size.height) + 2 * pad;
     self.hintsPanel.frame = NSMakeRect(
         container.bounds.size.width - pw - margin,
@@ -697,41 +696,138 @@ static NSColor *ColorForStyle(TokenStyle s) {
     self.hintsLabel.frame = NSMakeRect(pad, pad, pw - 2 * pad, ph - 2 * pad);
 }
 
-// Context-aware shortcut list.
-- (NSString *)hintsText {
-    NSMutableString *s = [NSMutableString string];
-    [s appendString:@"Keyboard Shortcuts\n"];
-    [s appendString:@"──────────────────────────\n"];
-    [s appendString:@"⌘N    New window     ⌘O   Open folder\n"];
-    [s appendString:@"⌘S    Save           ⌘F   Find in file\n"];
-    [s appendString:@"⇧⌘F   Find in folder  ⌘Z   Undo   ⇧⌘Z  Redo\n"];
-    [s appendString:@"⌘C    Copy           ⌘A   Select all\n"];
-    [s appendString:@"⌘/    Toggle comment  ⌘,   Settings\n"];
+// The hints are laid out on tab stops, never with spaces: the key glyphs
+// (⌘ ⇧ ⌃ ⌫ ⏎) have different widths even in a monospaced font, so padding with
+// spaces leaves every column ragged. A row holds one or two shortcuts:
+//   key | label | key | label       (two shortcuts)
+//   key | label | state             (a pane, with whether it is open)
+static const CGFloat kHintsWidth = 420;
+static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
 
-    [s appendString:@"\nFiles\n"];
-    [s appendString:@"──────────────────────────\n"];
-    [s appendString:@"⌃⌘N   New file       ⇧⌘N  New folder\n"];
-    [s appendString:@"⌘⌫    Move to trash   ⌘R   Refresh tree\n"];
-    [s appendString:@"⇧⌘.   Show hidden files\n"];
+- (void)appendHintsHeading:(NSString *)title to:(NSMutableAttributedString *)s {
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.paragraphSpacingBefore = s.length ? 10 : 0;
+    ps.paragraphSpacing = 4;
+    [s appendAttributedString:[[NSAttributedString alloc]
+        initWithString:[title.uppercaseString stringByAppendingString:@"\n"]
+            attributes:@{
+                NSFontAttributeName: [NSFont systemFontOfSize:10
+                                                       weight:NSFontWeightSemibold],
+                NSForegroundColorAttributeName: Hex(0x9CA3AF),
+                NSKernAttributeName: @0.6,
+                NSParagraphStyleAttributeName: ps,
+            }]];
+}
 
-    [s appendString:@"\nNavigation & panes\n"];
-    [s appendString:@"──────────────────────────\n"];
-    [s appendString:@"⌘0    Focus tree      ⌘1   Focus editor\n"];
-    [s appendString:@"↑ ↓   Browse tree     ⏎    Open   ⌃⇥  Previous\n"];
-    [s appendFormat:@"⌘B    Toggle sidebar  ⇧⌘E  Editor  (%@)\n",
-        self.editorHidden ? @"hidden" : @"open"];
-    [s appendFormat:@"⇧⌘T / ⌃` Terminal  (%@)\n",
-        self.terminalVisible ? @"open" : @"hidden"];
-    [s appendFormat:@"⇧⌘B   Browser   (%@)\n",
-        self.browserVisible ? @"open" : @"hidden"];
-    if (self.isMarkdown) {
-        [s appendFormat:@"⇧⌘P   Markdown preview  (now: %@)\n",
-            self.previewMode ? @"rendered" : @"source"];
-    } else if (self.isLatex) {
-        [s appendFormat:@"⇧⌘P   LaTeX preview  (now: %@)\n",
-            self.previewMode ? @"typeset" : @"source"];
+// One row. `key2`/`label2` may be nil; `state` (muted) takes the second
+// column instead, for panes.
+- (void)appendHintsRow:(NSMutableAttributedString *)s
+                   key:(NSString *)key1 label:(NSString *)label1
+                  key2:(NSString *)key2 label2:(NSString *)label2
+                 state:(NSString *)state {
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.tabStops = @[
+        [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft
+                                        location:kHintsLabel1 options:@{}],
+        [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft
+                                        location:kHintsKey2 options:@{}],
+        [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft
+                                        location:kHintsLabel2 options:@{}],
+    ];
+    ps.lineSpacing = 3;
+    NSDictionary *keyAttr = @{
+        NSFontAttributeName: [NSFont monospacedSystemFontOfSize:12
+                                                         weight:NSFontWeightMedium],
+        NSForegroundColorAttributeName: Hex(0x4EA1F7),
+        NSParagraphStyleAttributeName: ps,
+    };
+    NSDictionary *labelAttr = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:12],
+        NSForegroundColorAttributeName: Hex(0xE0E0E0),
+        NSParagraphStyleAttributeName: ps,
+    };
+    NSDictionary *stateAttr = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:12],
+        NSForegroundColorAttributeName: Hex(0x9CA3AF),
+        NSParagraphStyleAttributeName: ps,
+    };
+    void (^add)(NSString *, NSDictionary *) = ^(NSString *t, NSDictionary *a) {
+        [s appendAttributedString:[[NSAttributedString alloc] initWithString:t
+                                                                  attributes:a]];
+    };
+    add(key1, keyAttr);
+    add([@"\t" stringByAppendingString:label1], labelAttr);
+    if (key2) {
+        add([@"\t" stringByAppendingString:key2], keyAttr);
+        add([@"\t" stringByAppendingString:label2 ?: @""], labelAttr);
+    } else if (state) {
+        add([@"\t" stringByAppendingString:state], stateAttr);
     }
-    [s appendString:@"\n⇧⌘H   Hide these hints"];
+    add(@"\n", labelAttr);
+}
+
+// Context-aware shortcut list.
+- (NSAttributedString *)hintsText {
+    NSMutableAttributedString *s = [NSMutableAttributedString new];
+    NSString *(^openOr)(BOOL) = ^NSString *(BOOL open) {
+        return open ? @"open" : @"hidden";
+    };
+
+    [self appendHintsHeading:@"Editing" to:s];
+    [self appendHintsRow:s key:@"⌘N" label:@"New window"
+                    key2:@"⌘O" label2:@"Open folder" state:nil];
+    [self appendHintsRow:s key:@"⌘S" label:@"Save"
+                    key2:@"⌘F" label2:@"Find in file" state:nil];
+    [self appendHintsRow:s key:@"⌘Z" label:@"Undo"
+                    key2:@"⇧⌘Z" label2:@"Redo" state:nil];
+    [self appendHintsRow:s key:@"⌘C" label:@"Copy"
+                    key2:@"⌘A" label2:@"Select all" state:nil];
+    [self appendHintsRow:s key:@"⌘/" label:@"Toggle comment"
+                    key2:@"⇧⌘F" label2:@"Find in folder" state:nil];
+    [self appendHintsRow:s key:@"⌘," label:@"Settings"
+                    key2:nil label2:nil state:nil];
+
+    [self appendHintsHeading:@"Files" to:s];
+    [self appendHintsRow:s key:@"⌃⌘N" label:@"New file"
+                    key2:@"⇧⌘N" label2:@"New folder" state:nil];
+    [self appendHintsRow:s key:@"⌘⌫" label:@"Move to trash"
+                    key2:@"⌘R" label2:@"Refresh tree" state:nil];
+    [self appendHintsRow:s key:@"⇧⌘." label:@"Show hidden files"
+                    key2:nil label2:nil state:nil];
+
+    [self appendHintsHeading:@"Navigation" to:s];
+    [self appendHintsRow:s key:@"⌘0" label:@"Focus tree"
+                    key2:@"⌘1" label2:@"Focus editor" state:nil];
+    [self appendHintsRow:s key:@"↑ ↓" label:@"Browse tree"
+                    key2:@"⏎" label2:@"Open file" state:nil];
+    [self appendHintsRow:s key:@"⌃⇥" label:@"Previous file"
+                    key2:@"⌘B" label2:@"Toggle sidebar" state:nil];
+
+    [self appendHintsHeading:@"Panes" to:s];
+    [self appendHintsRow:s key:@"⇧⌘E" label:@"Editor"
+                    key2:nil label2:nil state:openOr(!self.editorHidden)];
+    [self appendHintsRow:s key:@"⇧⌘T" label:@"Terminal  (also ⌃`)"
+                    key2:nil label2:nil state:openOr(self.terminalVisible)];
+    [self appendHintsRow:s key:@"⇧⌘B" label:@"Browser"
+                    key2:nil label2:nil state:openOr(self.browserVisible)];
+    if (self.isMarkdown) {
+        [self appendHintsRow:s key:@"⇧⌘P" label:@"Markdown preview"
+                        key2:nil label2:nil
+                       state:self.previewMode ? @"rendered" : @"source"];
+    } else if (self.isLatex) {
+        [self appendHintsRow:s key:@"⇧⌘P" label:@"LaTeX preview"
+                        key2:nil label2:nil
+                       state:self.previewMode ? @"typeset" : @"source"];
+    }
+
+    // A short gap, not a whole empty heading, before the way out.
+    [s appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"
+        attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:6]}]];
+    [self appendHintsRow:s key:@"⇧⌘H" label:@"Hide these hints"
+                    key2:nil label2:nil state:nil];
+    // No trailing newline, or the panel sizes itself one empty line too tall.
+    if ([s.string hasSuffix:@"\n"])
+        [s deleteCharactersInRange:NSMakeRange(s.length - 1, 1)];
     return s;
 }
 
