@@ -315,7 +315,7 @@ xdotool, ImageMagick), starts a container with the repo mounted, and builds and
 tests the port; `/tools/launch.sh` inside it runs the app. `linux/dev/README.md`
 has the workflow. The details behind it:
 
-- Mount the repo (`-v ~/MiniCode:/work`) and build into a container-local
+- Mount the repo (`-v ~/Code/public/minicode:/work`) and build into a container-local
   directory (`meson setup /build`), not `linux/build`.
 - `Xvfb :99 -screen 0 1280x800x24` plus `xcompmgr` gives a composited display,
   so translucency works. Launch with `GDK_BACKEND=x11 GTK_A11Y=none` under
