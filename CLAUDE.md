@@ -195,11 +195,12 @@ same way Markdown does; `LatexView` takes the editor's slot in
 
 ## Current state (handoff, 2026-09-18)
 
-- All of this work is on `main` (the earlier notes that said `linux-port`
-  were wrong; that branch still sits at `c346f8a`, behind `main`). Released as
-  **1.2.0** to the Homebrew tap on 2026-09-18, the first release since 1.1.0
-  in July, with `main` pushed and tagged `v1.2.0`. 501 core checks pass; the
-  build is warning-free.
+- Everything lives on `main`; there are no other branches any more. The merged
+  ones (`linux-port`, `feat/open-file-from-cli`,
+  `fix/markdown-preview-large-files`) were deleted on 2026-09-20 once their
+  work was in `main`. Released as **1.2.1** to the Homebrew tap that day, the
+  first release since 1.1.0 in July. 501 core checks pass; the build is
+  warning-free.
 - The LaTeX preview is macOS only; `linux/` has not been touched for it. The
   user has used it on an Overleaf resume at
   `~/Documents/Resume-September-2026` (their personal document: do not edit
