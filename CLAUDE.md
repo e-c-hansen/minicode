@@ -430,18 +430,22 @@ holds, these give real runtime evidence rather than compile-only evidence:
 
 ## Distribution
 
-- Source repo: `e-c-hansen/minicode` (PRIVATE).
-- Homebrew tap: `e-c-hansen/homebrew-tap` (PUBLIC). The compiled zip is hosted
-  on that tap's GitHub Releases (keeps source private, binary installable).
-- Install: `brew install --cask e-c-hansen/tap/minicode`. The cask clears the
-  quarantine flag in `postflight_steps` (Homebrew 7 deprecated the `postflight`
-  block; `{{appdir}}` is the template token in step arguments), so the
-  unsigned app opens cleanly. `brew style Casks/minicode.rb` in the tap
-  checkout (`/opt/homebrew/Library/Taps/e-c-hansen/homebrew-tap`) should report
-  no offenses. A
-  reference copy of the cask is `packaging/minicode.rb`.
+- Source repo: `e-c-hansen/minicode` (PUBLIC). The release zip is published on
+  this repo's own Releases, attached to the `vX.Y.Z` tag it was built from.
+- Homebrew tap: `e-c-hansen/homebrew-tap` (PUBLIC), which holds nothing but
+  `Casks/minicode.rb`. That file is *written* by `scripts/release.sh` from
+  `packaging/minicode.rb`, which is the only copy anyone edits; the tap exists
+  because `brew install --cask e-c-hansen/tap/minicode` needs a repo called
+  `homebrew-<something>`, and nothing more.
+- The cask clears the quarantine flag in `postflight_steps` (Homebrew 7
+  deprecated the `postflight` block; `{{appdir}}` is the template token in step
+  arguments), so the unsigned app opens cleanly. After editing the cask, check
+  it with `brew style` from a tap checkout
+  (`/opt/homebrew/Library/Taps/e-c-hansen/homebrew-tap`).
 - Not notarized (that needs the paid Apple Developer Program). The full sign +
   notarize flow is scripted in `scripts/sign-and-notarize.sh` for when/if paid.
+- Homebrew is the only way MiniCode updates: the app has no updater, so the
+  cask must NOT declare `auto_updates`, or a plain `brew upgrade` would skip it.
 
 ## Conventions
 

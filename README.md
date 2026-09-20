@@ -132,7 +132,7 @@ You can also hand out a prebuilt app for free, without any Apple Developer accou
 
 That is the normal path for free and open-source Mac apps, and it is all that is needed.
 
-Homebrew makes even that step disappear. It is published as a tap, so anyone can install with brew install --cask e-c-hansen/tap/minicode. Homebrew quarantines downloads by default, but because it is a private tap the cask clears the quarantine flag itself in a postflight step, so the app opens cleanly with no right-click and no notarization. The cask lives in the tap repo; a copy is kept at packaging/minicode.rb for reference.
+Homebrew makes even that step disappear. It is published as a tap, so anyone can install with brew install --cask e-c-hansen/tap/minicode. Homebrew quarantines downloads by default, so the cask clears the quarantine flag itself after installing, and the app opens cleanly with no right-click and no notarization. The build itself is attached to this repository's releases, next to the tag it came from, and the tap holds only the cask, which is written from packaging/minicode.rb when a release is cut.
 
 The only thing free distribution cannot give you is a clean, warning-free double-click for people who download it, because that specifically requires notarization, which requires the paid Apple Developer Program membership. If you want that, the whole flow is scripted: scripts/sign-and-notarize.sh signs the app with your Developer ID and the hardened runtime, submits the disk image to Apple for notarization, and staples the result so it opens cleanly on any Mac. Read the comments at the top of that script for the one-time certificate and credential setup.
 
