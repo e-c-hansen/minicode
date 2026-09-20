@@ -13,12 +13,79 @@ void applyTag(GtkTextBuffer* buf, const char* name, int startOffset, int endOffs
     gtk_text_buffer_get_iter_at_offset(buf, &b, endOffset);
     gtk_text_buffer_apply_tag_by_name(buf, name, &a, &b);
 }
+
+// Longest logical line (one Pango paragraph) we will hand GtkTextView.
+//
+// MarkdownParser deliberately joins every consecutive non-blank line of a
+// paragraph into one logical line, because that is what lets the paragraph
+// reflow to the window width instead of keeping the source's hard wrapping.
+// GtkTextView lays out each logical line as a single PangoLayout, and past a
+// few hundred thousand characters that layout fails outright: the paragraph is
+// measured as zero-height and simply does not render, so a big document opens
+// to a blank preview. Wrapping does not save it -- the limit is on the length
+// of the paragraph, not its on-screen width.
+//
+// Breaking the logical line every so often costs nothing on real documents (no
+// hand-written paragraph comes close) and keeps generated or minified Markdown
+// readable rather than invisible.
+const int kMaxLogicalLine = 32000;
+
+// Rewrite `text` so that, appended to a logical line already `lineLen`
+// characters long, no logical line exceeds kMaxLogicalLine. Breaks are made at
+// a space where one is available on the current line, otherwise at the nearest
+// UTF-8 character boundary. `lineLen` is left holding the length of the
+// trailing logical line. Real documents never trip this, so the common path is
+// a plain copy.
+std::string boundLogicalLines(const std::string& text, int& lineLen) {
+    const long chars = g_utf8_strlen(text.c_str(), (gssize)text.size());
+    if (lineLen + chars <= kMaxLogicalLine &&
+        text.find('\n') == std::string::npos) {
+        lineLen += (int)chars;
+        return text;
+    }
+
+    std::string out;
+    out.reserve(text.size() + 16);
+    size_t lastSpace = std::string::npos;   // byte index in `out`, or npos
+    const char* p = text.c_str();
+    const char* end = p + text.size();
+    while (p < end) {
+        const char* next = g_utf8_find_next_char(p, end);
+        if (!next || next <= p) next = p + 1;   // defensive: never stall
+
+        if (*p == '\n') {
+            out.append(p, next - p);
+            lineLen = 0;
+            lastSpace = std::string::npos;
+        } else {
+            if (lineLen >= kMaxLogicalLine) {
+                if (lastSpace != std::string::npos) {
+                    out[lastSpace] = '\n';      // break at the last space
+                    lineLen = (int)g_utf8_strlen(out.c_str() + lastSpace + 1, -1);
+                } else {
+                    out.push_back('\n');        // no space to break at
+                    lineLen = 0;
+                }
+                lastSpace = std::string::npos;
+            }
+            if (*p == ' ') lastSpace = out.size();
+            out.append(p, next - p);
+            lineLen++;
+        }
+        p = next;
+    }
+    return out;
+}
 } // namespace
 
 void Markdown::render(GtkTextBuffer* buffer, const std::string& source) {
     gtk_text_buffer_set_text(buffer, "", 0);
 
     std::vector<MdRun> runs = MarkdownParser::parse(source);
+
+    // Characters emitted since the last newline, i.e. the length of the logical
+    // line being built up.
+    int lineLen = 0;
 
     for (const MdRun& r : runs) {
         std::string text = r.text;
@@ -34,6 +101,8 @@ void Markdown::render(GtkTextBuffer* buffer, const std::string& source) {
                            "\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80"
                            "\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\n";
         if (text.empty()) continue;
+
+        text = boundLogicalLines(text, lineLen);
 
         // Insert at end, remembering the char offset span we just added.
         GtkTextIter end;
