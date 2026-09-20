@@ -7,7 +7,7 @@
 # it here and never there. To cut a new version: scripts/release.sh 1.2.1
 cask "minicode" do
   version "1.2.1"
-  sha256 "2c9dd2383e96890b71d8484c22586c919922984c0836ff074c5523c2dbaa39c9"
+  sha256 "b056fcccf3d624ad70f7c28ce439c231804286a7d185eca9a7f7ab76c8b9429d"
 
   url "https://github.com/e-c-hansen/minicode/releases/download/v#{version}/MiniCode.zip"
   name "MiniCode"
