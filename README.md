@@ -1,6 +1,6 @@
 # MiniCode
 
-MiniCode is a small code editor for macOS, written from scratch in C++ and Objective-C++, with no Electron and no third-party dependencies. It links only against frameworks that ship with the operating system (Cocoa, WebKit, PDFKit, CoreServices) and the system zlib. The compiled binary is about 1 MB.
+MiniCode is a small code editor for macOS and Linux, written from scratch in C++, with no Electron and no third-party dependencies. The macOS app is written in C++ and Objective-C++ and links only against frameworks that ship with the operating system (Cocoa, WebKit, PDFKit, CoreServices) and the system zlib. The compiled binary is about 1 MB. The Linux version is a GTK4 port that shares the same C++ core; see [Linux](#linux) below for what it covers so far. The rest of this README describes the macOS app.
 
 I built it because I wanted a lightweight place to browse a folder, read and edit files with syntax highlighting, preview Markdown and LaTeX, and have a terminal and a browser one keystroke away, without pulling in a few hundred megabytes of runtime to do it.
 
@@ -11,6 +11,10 @@ Clicking through the demo folder: the README rendered, then shown as source with
 ## What it does
 
 You open a folder and get a file tree on the left, much like the explorer in VS Code. Click a file and it opens in the main pane. The tree is live, so anything you create, rename, or delete elsewhere, in the built in terminal, in git, or in another program, shows up on its own within a moment, because it watches the folder with FSEvents rather than taking a one time snapshot. You can also manage files from the tree directly, right click for new file, new folder, rename, move to trash, reveal in Finder, and copy the item's full path, or use the same items from the File menu. Source files are syntax highlighted based on their extension, so Python, C, C++, Objective-C, JavaScript, TypeScript, JSON, shell scripts, and a handful of others get colored keywords, strings, comments, numbers, and so on. Markdown files render as formatted text right in the window, and you can flip between the rendered view and the raw source when you want to edit them. LaTeX files are typeset to a PDF in the same pane, and you can edit the document by double clicking the text on the page. Images, PNG, JPEG, GIF, HEIC, WebP, TIFF and the like, open in the same pane too, scaled down to fit and never blown up past their real size, with their pixel dimensions in the title bar. Animated GIFs play. PDFs open there as well, as scrolling pages you can zoom and select text from, and if the file is rewritten while it is open, by running tectonic in the terminal for instance, it reloads on the same page when you come back to the window.
+
+![Opening a PNG and then a PDF from the file tree](docs/demos/files.gif)
+
+Opening the app icon from the images folder, shown at its real size with its pixel dimensions in the title bar, and then a PDF, which scrolls and zooms in place of the editor.
 
 Files are editable, not just viewable. Type into a file and the highlighting updates as you go, save with Command S, and undo and redo work as you would expect. The title bar shows a dot when you have unsaved changes.
 
@@ -111,6 +115,25 @@ minicode ~/some/project/notes.md
 ```
 
 There is also a make run target that opens the current directory, and you can pass a folder with make run DIR=~/some/project.
+
+## Linux
+
+There is a Linux version built on GTK4, in the linux folder. It shares the portable C++ core with the macOS app, so syntax highlighting, the Markdown parser, the settings file, and comment toggling behave the same on both. Around that core it has the file tree, the editor, the Markdown preview, per-panel colors and transparency from the same settings file, a terminal panel built on VTE, and a WebKitGTK browser panel. It is developed on Ubuntu 26.04, and CI builds and tests it alongside the macOS app on every change to main. Shortcuts use Control where the Mac uses Command.
+
+It is behind the macOS app on the newer features. The LaTeX preview, the language server client, image and PDF viewing, and incremental highlighting are macOS only for now, and bringing them over is the next thing on the list. The terminal needs no catching up, since VTE is a full terminal emulator already.
+
+To build it on Ubuntu:
+
+```
+sudo apt install build-essential meson libgtk-4-dev \
+    libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev pkg-config
+cd linux
+meson setup build
+meson compile -C build
+./build/minicode ~/some/project
+```
+
+Only GTK4 is required; the terminal and browser panels are left out automatically if their libraries are missing. BUILD-LINUX.md has the details, including installing it as a desktop app, and what has and has not been verified.
 
 ## A quick tour
 

@@ -501,6 +501,15 @@ with the Read tool. Scenes: tour, terminal, settings, latex, lsp, vim.
   `demo/paper/notes.tex` free of math: the cache has no math fonts, and
   tectonic would go to the network.
 
+- Seven scenes as of 2026-09-21: tour, terminal, settings, latex, lsp, vim,
+  files. `files` opens `demo/images/icon.png` (the app icon at 256 px, made
+  with `sips` from `resources/AppIcon.icns`) and `demo/paper/notes.pdf` (the
+  demo's own notes.tex typeset by tectonic; rebuild it with tectonic if that
+  file changes). All seven were re-recorded that day so the tree and git log
+  match the current demo folder. To look at frames without re-recording, read
+  the GIF with ImageIO and composite frames in order (frames after the first
+  store only the changed region).
+
 ## Verification reality (important)
 
 How much of the GUI you can actually check depends on which port you are

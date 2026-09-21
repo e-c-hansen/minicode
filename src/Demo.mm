@@ -1004,6 +1004,23 @@ static void SceneVim(MCDemo *d) {
     [d pause:1.2];
 }
 
+// Images and PDFs open where the editor sits.
+static void SceneFiles(MCDemo *d) {
+    [d pause:0.6];
+    [d clickFile:@"images/icon.png"];
+    [d caption:@"Images open in the editor pane, never enlarged"];
+    [d hidePointer];
+    [d pause:2.4];
+    [d poster];
+    [d clickFile:@"paper/notes.pdf"];
+    [d caption:@"PDFs too, with the page count in the title"];
+    [d hidePointer];
+    [d pause:2.6];
+    [d clickFile:@"sample.cpp"];
+    [d hidePointer];
+    [d pause:1.6];
+}
+
 typedef void (*MCSceneBuilder)(MCDemo *d);
 static const struct { const char *name; MCSceneBuilder build; } kScenes[] = {
     {"tour", SceneTour},
@@ -1012,6 +1029,7 @@ static const struct { const char *name; MCSceneBuilder build; } kScenes[] = {
     {"latex", SceneLatex},
     {"lsp", SceneLsp},
     {"vim", SceneVim},
+    {"files", SceneFiles},
 };
 
 // ------------------------------------------------------------ entry points

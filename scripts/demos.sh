@@ -63,6 +63,7 @@ prepare_project() {
         commit "Write the demo README" README.md
         commit "Add field notes in LaTeX" paper
         commit "Add a small vector type for the LSP demo" vec
+        commit "Add the app icon" images
     )
     cp "$REPO/tools/demo-settings.conf" "$WORK/settings.conf"
     # For the vim scene: line numbers and color, nothing else.
