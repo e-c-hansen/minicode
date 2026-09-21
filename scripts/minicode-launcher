@@ -2,6 +2,7 @@
 # CLI launcher for MiniCode, installed onto PATH as `minicode`.
 #   minicode            open the current directory
 #   minicode ~/project  open a folder
+#   minicode notes.md   open a file, with its folder in the sidebar
 # Launches detached so your terminal is free immediately.
 
 # Resolve this script's real location, following the Homebrew symlink.
@@ -12,6 +13,11 @@ while [ -L "$src" ]; do
   case "$src" in /*) ;; *) src="$dir/$src" ;; esac
 done
 dir="$(cd -P "$(dirname "$src")" && pwd)"
+
+# The app's own output is discarded below, so say here if the path is wrong.
+if [ -n "$1" ] && [ ! -e "$1" ]; then
+  echo "minicode: $1: no such file or directory" >&2
+fi
 
 # The launcher lives in Contents/Resources; the binary is in Contents/MacOS.
 "$dir/../MacOS/MiniCode" "${1:-$PWD}" >/dev/null 2>&1 &

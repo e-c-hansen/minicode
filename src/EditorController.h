@@ -12,6 +12,7 @@
 @property(nonatomic, readonly, copy) NSString *rootPath;
 - (instancetype)initWithRootPath:(NSString *)path;
 - (void)showWindow;
+- (void)revealPath:(NSString *)path andOpen:(BOOL)open;  // select in tree
 - (void)openFolder:(id)sender;    // menu action
 - (void)saveCurrentFile:(id)sender;   // Cmd+S
 - (void)togglePreview:(id)sender;     // Markdown: source <-> rendered

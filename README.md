@@ -69,6 +69,13 @@ That produces MiniCode.app in the project directory. You can double click it in 
 ./MiniCode.app/Contents/MacOS/MiniCode ~/some/project
 ```
 
+The Homebrew install also puts a minicode command on your PATH. Give it a folder to open that folder, or a file to open that file with its folder listed in the sidebar. With no argument it opens the current directory.
+
+```
+minicode ~/some/project
+minicode ~/some/project/notes.md
+```
+
 There is also a make run target that opens the current directory, and you can pass a folder with make run DIR=~/some/project.
 
 ## A quick tour

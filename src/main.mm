@@ -43,19 +43,35 @@
         return e;
     }];
 
-    // Open the folder passed on the command line, else the cwd.
+    // Open what the command line names, else the cwd. A directory becomes the
+    // tree's root; a file opens in the editor with the tree rooted at the
+    // folder holding it, so its neighbours are still listed. A path that does
+    // not exist roots the tree at its parent when that exists, so a mistyped
+    // filename still lands in the right folder.
     NSArray *args = [[NSProcessInfo processInfo] arguments];
-    NSString *root = [[NSFileManager defaultManager] currentDirectoryPath];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *root = fm.currentDirectoryPath;
+    NSString *file = nil;
     if (args.count > 1) {
-        NSString *arg = args[1];
+        NSString *arg = [args[1] stringByExpandingTildeInPath];
         if (![arg hasPrefix:@"/"])
             arg = [root stringByAppendingPathComponent:arg];
+        // Resolved so the root and the file agree on one spelling (/tmp vs
+        // /private/tmp), which revealPath: needs to walk from one to the other.
+        arg = [arg stringByResolvingSymlinksInPath];
         BOOL dir = NO;
-        if ([[NSFileManager defaultManager] fileExistsAtPath:arg isDirectory:&dir]
-            && dir)
-            root = arg;
+        if ([fm fileExistsAtPath:arg isDirectory:&dir]) {
+            if (dir) root = arg;
+            else { root = arg.stringByDeletingLastPathComponent; file = arg; }
+        } else {
+            NSString *parent = arg.stringByDeletingLastPathComponent;
+            if ([fm fileExistsAtPath:parent isDirectory:&dir] && dir) root = parent;
+            fprintf(stderr, "minicode: %s: no such file or directory\n",
+                    [args[1] UTF8String]);
+        }
     }
-    [self openWindowAtPath:root];
+    EditorController *c = [self openWindowAtPath:root];
+    if (file) [c revealPath:file andOpen:YES];
     [NSApp activateIgnoringOtherApps:YES];
 }
 
