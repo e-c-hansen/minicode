@@ -17,8 +17,9 @@ this file covers the macOS app except where it says otherwise.
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
   run on Apple Silicon and to keep granted permissions stable).
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  501 checks over the tokenizer, Markdown parser, terminal output stream,
-  settings parser, comment toggling, and the LaTeX and SyncTeX readers.
+  655 checks over the tokenizer, Markdown parser, terminal output stream and
+  screen grid, settings parser, comment toggling, and the LaTeX and SyncTeX
+  readers.
   Exits non-zero on failure.
 - `make run [DIR=~/path]` — build and launch.
 - `make icon` — regenerate `resources/AppIcon.icns` from `tools/makeicon.m`.
@@ -52,7 +53,14 @@ isolation. Keep them dependency-free.
 - `src/TerminalStream.{h,cpp}` — pty byte stream -> styled lines (SGR colors,
   in-line cursor movement) + shell-integration events (OSC 133 marks, OSC 7
   cwd). A line model, not a screen: handles sequences and UTF-8 split across
-  reads.
+  reads, and leaves alternate-screen text out of the log. Also home to the
+  shared pieces: `TermParser` (the DEC/ANSI state machine, with a Handler
+  interface), `applySgr`, `termCharWidth`.
+- `src/TerminalScreen.{h,cpp}` — the cell grid for full-screen programs
+  (xterm subset: CUP/CUU.., ED/EL/ECH, IL/DL/ICH/DCH, DECSTBM + IND/RI/SU/SD,
+  alt screen 47/1047/1049, DECSC/DECRC, pending wrap, tabs, wide chars, DEC
+  line drawing, DECCKM/keypad/bracketed paste, DSR/DA replies, resize), plus
+  key/paste encoding. Tests replay bytes recorded from vim and less.
 
 The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 
@@ -65,7 +73,10 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 - `src/AppSettings.{h,mm}` — singleton that loads
   `~/.config/minicode/settings.conf` (or `$MINICODE_SETTINGS`), watches it,
   and posts `MCSettingsDidChangeNotification`.
-- `src/Terminal.{h,mm}` — shell panel: zsh on a pty via forkpty, log-style view.
+- `src/Terminal.{h,mm}` — shell panel: zsh on a pty via forkpty; a log view
+  with a line input, swapped for the grid while a program needs a screen.
+- `src/TerminalGridView.{h,mm}` — draws a `TerminalScreen` and encodes keys
+  (via `TerminalScreen::encodeKey`/`encodeChar`) straight to the pty.
 - `src/Browser.{h,mm}` — WKWebView panel.
 - `src/Latex.{h,mm}` — LaTeX preview: runs tectonic, shows the PDF with PDFKit,
   and turns a double-click into a popover editing the source behind that text.
@@ -408,13 +419,34 @@ holds, these give real runtime evidence rather than compile-only evidence:
   wants hidden input. Everything the child needs is built before `fork`: only
   async-signal-safe calls between fork and exec. `PROMPT_SP` prints before
   precmd, so it is unset in .zshenv. `TERM=xterm-256color` so tools emit
-  color; pagers stay `cat` because there is no screen model. The last line of
+  color. Pagers are no longer forced to `cat` (the grid runs them). The last line of
   the output view is "live": the stream re-sends it whole on every change and
   the view replaces text from `_liveStart`. Panel-written lines (headers,
   exit statuses) must go through `ensureNewline`, which ends the live line and
   calls `breakLine()` on the stream, or the next update overwrites them. When testing headless, give the shell a scratch
   `HOME` and `ZDOTDIR`: `/etc/zshrc` sets `HISTFILE` from them, and test
   commands otherwise land in the user's real `~/.zsh_history`.
+- **Terminal grid mode** (`feat/terminal-screen`): every pty chunk goes to
+  BOTH `TerminalStream` (log) and `TerminalScreen` (grid), so either is
+  current when shown and no mid-chunk handoff is needed. `updateMode` shows
+  the grid while `_screen.altScreen()`, or while `_stickyGrid`: a 0.1 s timer
+  (running only between OSC 133 C and A) reads termios from the master, and a
+  command that stays out of ICANON for two polls without the alt screen
+  (git's `less -FRX`, python REPL, ssh) keeps the grid until its command
+  ends. The two-poll debounce is what stops `less -F` on short output from
+  flashing the grid. The pty size comes from the panel bounds and the grid's
+  cell metrics in both modes (the log's `lineFragmentPadding` is 0 so its
+  wrap column matches), so switching modes never sends SIGWINCH. Tiny or
+  collapsed bounds keep the old size, or the screen would be cut to 20x5.
+  Screen replies (`\e[6n` -> CPR) are written back after each chunk; vim
+  sends two DSRs at startup. `TerminalScreen` must stay copyable: an earlier
+  version kept a `Grid*` into itself and every copy drew the original's grid.
+- **Synthetic key events in tests**: Shift+Cmd+H only matches the menu with
+  `charactersIgnoringModifiers:@"h"` (lowercase). An arrow key event needs
+  `characters` = the function-key character (U+F701 etc.); an empty string
+  makes `-[NSMenu performKeyEquivalent:]` throw and abort the app. Drive
+  keys with `[NSApp sendEvent:]` from a background thread via dispatch_sync
+  to main; that exercises the real menu-then-first-responder routing.
 - **Markdown**: block elements call `ensureLineStart` so they aren't glued to
   the previous paragraph; headings get `paragraphSpacingBefore`; tables render
   as aligned monospace. Table cells are inline-parsed and padded by *display*
