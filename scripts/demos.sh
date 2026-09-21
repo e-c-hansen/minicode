@@ -62,8 +62,11 @@ prepare_project() {
         commit "Add a C++ sample" sample.cpp
         commit "Write the demo README" README.md
         commit "Add field notes in LaTeX" paper
+        commit "Add a small vector type for the LSP demo" vec
     )
     cp "$REPO/tools/demo-settings.conf" "$WORK/settings.conf"
+    # For the vim scene: line numbers and color, nothing else.
+    printf 'syntax on\nset number\nset laststatus=2\n' >"$WORK/home/.vimrc"
 }
 
 if [ $# -gt 0 ]; then
@@ -125,6 +128,11 @@ for scene in "${SCENES[@]}"; do
     if [ "$rc" -ne 0 ] || ! grep -q "^end " "$frames/manifest.txt" 2>/dev/null; then
         echo "demos: $scene failed (exit $rc)" >&2
         grep -i "minicode demo" "$WORK/$scene.log" >&2 || tail -5 "$WORK/$scene.log" >&2
+        # A failed run's frames and log are what show where it stopped.
+        if [ -n "${DEMO_KEEP_FRAMES:-}" ]; then
+            cp -R "$frames" "$DEMO_KEEP_FRAMES/" 2>/dev/null || true
+            cp "$WORK/$scene.log" "$DEMO_KEEP_FRAMES/" || true
+        fi
         status=1
         continue
     fi

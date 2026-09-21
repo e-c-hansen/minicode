@@ -412,20 +412,27 @@ AppKit, so no new dependency. How it fits what exists:
 ## Demo GIFs (`make demos`)
 
 `scripts/demos.sh` builds a scratch world under `/private/tmp/minicode-demo`
-(a copy of `demo/` made into a 4-commit git repo with fixed dates, so hashes
+(a copy of `demo/` made into a 5-commit git repo with fixed dates, so hashes
 are stable; a scratch HOME/ZDOTDIR; `tools/demo-settings.conf` as
-`MINICODE_SETTINGS`; a copy of the tectonic cache), launches the raw binary
+`MINICODE_SETTINGS`; a copy of the tectonic cache; a tiny `.vimrc` in the
+scratch home for the vim scene), launches the raw binary
 with `MINICODE_DEMO=<scene>` under `env -i`, polls and kills after 2 min,
 then runs `build/makegif`. It only ever kills its own pid (the user often has
 MiniCode open) and deletes the scratch folder on exit. The scene list comes
 from `MINICODE_DEMO=list`. `DEMO_KEEP_FRAMES=<dir>` keeps the raw frames and
-the app's log for debugging; look at frames with the Read tool.
+the app's log for debugging (also when the scene fails); look at frames
+with the Read tool. Scenes: tour, terminal, settings, latex, lsp, vim.
 
 - **A scene** is a function in `src/Demo.mm` calling builder methods
   (`clickFile:`, `type:`, `key:caption:`, `clickAt:`, `doubleClickAt:`,
   `scrollEditorTo:`, `waitFor:timeout:recorded:`, `run:`, `pause:`,
   `hidePointer`, `poster`) plus a row in `kScenes`. Steps are queued and
   played in order; points are resolved lazily when the step runs.
+  `key:` also knows `f12`, `left`/`right`/`up`/`down`, `space`, `esc` and
+  `return`; function and arrow keys get the function-key character and the
+  flags a real keyboard sends. `pointForText:` goes through
+  `firstRectForCharacterRange:`, never `tv.layoutManager`, which would
+  switch the editor to TextKit 1 for the rest of the run.
 - **Input is real events.** Clicks and keys are `NSEvent`s posted with
   `postEvent:`, so they go through the tree's `mouseDown:`, the text input
   system (US key codes, shift for capitals/symbols), the Ctrl+` key monitor
@@ -453,11 +460,27 @@ the app's log for debugging; look at frames with the Read tool.
   median-cut palette for the whole animation (sqrt-count weighting so text
   anti-aliasing gets colors), merges identical frames, stores only the
   changed rectangle with unchanged pixels transparent (disposal 1), and LZW
-  encodes. The four GIFs total about 1.1 MB at 960 px wide.
+  encodes. The six GIFs total about 1.6 MB at 960 px wide.
 - **Paths in frames.** `NSHomeDirectory()` ignores `$HOME`, so the terminal
   prompt shows the real cwd; that is why the project lives under /tmp, not
   a fake home. `stringByResolvingSymlinksInPath` turns `/private/tmp/...`
   into `/tmp/...`, so the tree root is `/tmp/minicode-demo/demo`.
+- **The display must be awake.** With the screen asleep (it was, after the
+  Mac idled), `screencapture` returns black full-screen images and
+  `-l<wid>` fails with "could not create image from window", which the
+  recorder reports as a Screen Recording permission problem.
+  `caffeinate -u -d -t 200 &` wakes the display and keeps it on for a run.
+- **lsp scene**: clangd on `demo/vec` (main.cpp + vec.h). There is no
+  compile_commands.json, so clangd writes no index into the project
+  (checked: nothing appears in the scratch copy or the scratch home). It
+  saves with Cmd+S before F12, or leaving the dirty file raises the "Save
+  changes?" alert and the scene hangs until the 2-minute kill. It stops with
+  a message if the status says no server was found.
+- **vim scene**: sets `terminalHeight` via KVC before opening the panel (as
+  if the bar had been dragged), and waits on the terminal's `gridMode` and
+  `atPrompt` ivars (KVC reads them directly). Never press Esc in the
+  *editor* in a scene: NSTextView maps it to `complete:`, which opens the
+  LSP completion list.
 - The LaTeX scene is skipped (exit 3) when tectonic is missing. Keep
   `demo/paper/notes.tex` free of math: the cache has no math fonts, and
   tectonic would go to the network.
