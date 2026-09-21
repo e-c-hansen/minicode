@@ -410,6 +410,13 @@ edit, and a PDF would show only its first page.
   png, then bin, then txt, view visibility, image and title sizes including a
   2x-dpi PNG, Cmd+S leaving the PNG bytes unchanged, a pixel read from a
   `screencapture -l` of a large image, and the text file coming back editable.
+- **PDFs** (`showPDFAtPath:`) take the slot the same way, in a `PDFView`
+  (autoscaled, single page continuous, editor background), with the page
+  count in the title bar. `isPDF` is cleared by `resetViewMode`, blocks
+  `saveCurrentFile:`, and `checkExternalChange` reloads it keeping the page,
+  point and (if the user zoomed) scale. Only compiled when added (1.3.2);
+  the GUI check was left to the user, who asked not to have test windows
+  popping up while they work.
 - Not yet: zoom and scrolling for large images, and the Linux side
   (`linux/src/Editor.cpp`, the `g_utf8_validate` branch; `GtkPicture` is the
   equivalent).

@@ -321,6 +321,8 @@ private:
 @property(nonatomic, strong) NSImageView *imageView;   // editor's slot, for images
 @property(nonatomic, assign) BOOL isImage;
 @property(nonatomic, assign) NSSize imagePixels;       // for the title bar
+@property(nonatomic, strong) PDFView *pdfView;         // editor's slot, for PDFs
+@property(nonatomic, assign) BOOL isPDF;
 @property(nonatomic, assign) BOOL terminalVisible;
 @property(nonatomic, assign) BOOL browserVisible;
 @property(nonatomic, assign) CGFloat terminalHeight;
@@ -616,6 +618,7 @@ private:
     self.editorScroll.panelColor = [cfg background:Surface::Editor];
     [self.latex applySettings];
     self.imageView.layer.backgroundColor = [cfg background:Surface::Editor].CGColor;
+    self.pdfView.backgroundColor = [cfg background:Surface::Editor];
     self.textView.insertionPointColor = [cfg text:Surface::Editor];
     [self recolorEditor];
 
@@ -936,8 +939,13 @@ static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hide
                      self.previewMode;
     // So does an image, in place of the text view.
     BOOL showImage = showEditor && self.imageView != nil && self.isImage;
+    BOOL showPDF = showEditor && self.pdfView != nil && self.isPDF;
     self.editorScroll.frame = topRect;
-    self.editorScroll.hidden = !showEditor || showLatex || showImage;
+    self.editorScroll.hidden = !showEditor || showLatex || showImage || showPDF;
+    if (self.pdfView) {
+        self.pdfView.frame = topRect;
+        self.pdfView.hidden = !showPDF;
+    }
     if (self.imageView) {
         self.imageView.frame = topRect;
         self.imageView.hidden = !showImage;
@@ -1494,15 +1502,18 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     self.isMarkdown = NO;
     self.isLatex = NO;
     self.isImage = NO;
+    self.isPDF = NO;
     self.previewMode = NO;
     self.sourceText = nil;
     self.dirty = NO;
     self.textView.editable = NO;
     self.imageView.image = nil;
+    self.pdfView.document = nil;
 }
 
-// Formats the system can decode that are worth showing as a picture. SVG and
-// PDF are left out: SVG is source people edit, and a PDF is more than a page.
+// Formats the system can decode that are worth showing as a picture. SVG is
+// left out because it is source people edit, and PDF has its own viewer
+// (showPDFAtPath:), since a picture of it would be only its first page.
 + (BOOL)isImagePath:(NSString *)path {
     static NSSet<NSString *> *exts;
     static dispatch_once_t once;
@@ -1554,6 +1565,47 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     return YES;
 }
 
+// Show a PDF in the editor's slot with PDFKit, the same way an image is shown.
+// A reload (the file changed on disk, say tectonic run in the terminal) keeps
+// the page and the zoom. Returns NO if PDFKit can't read it, and the caller
+// falls through to the "Cannot display" message.
+- (BOOL)showPDFAtPath:(NSString *)path {
+    PDFDocument *doc = [[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]];
+    if (!doc) return NO;
+    if (!self.pdfView) {
+        PDFView *v = [[PDFView alloc] initWithFrame:NSZeroRect];
+        v.autoScales = YES;
+        v.displayMode = kPDFDisplaySinglePageContinuous;
+        v.backgroundColor = [[AppSettings shared] background:Surface::Editor];
+        [self.rightArea addSubview:v positioned:NSWindowBelow
+                        relativeTo:self.termDivider];
+        self.pdfView = v;
+    }
+    BOOL reload = self.isPDF && self.pdfView.document != nil;
+    NSUInteger pageIndex = 0;
+    NSPoint point = NSZeroPoint;
+    CGFloat scale = self.pdfView.scaleFactor;
+    BOOL autoScales = self.pdfView.autoScales;
+    if (reload) {
+        PDFDestination *was = self.pdfView.currentDestination;
+        pageIndex = [self.pdfView.document indexForPage:was.page];
+        point = was.point;
+    }
+    self.pdfView.document = doc;
+    if (reload && pageIndex < doc.pageCount) {
+        if (!autoScales) self.pdfView.scaleFactor = scale;
+        [self.pdfView goToDestination:[[PDFDestination alloc]
+            initWithPage:[doc pageAtIndex:pageIndex] atPoint:point]];
+    }
+    self.isPDF = YES;
+    self.currentExt = @"pdf";
+    [self setPlainMessage:@""];   // nothing in the text view to save
+    [self relayoutRightArea];
+    [self.lsp documentOpened:nil];
+    [self updateTitle];
+    return YES;
+}
+
 - (void)openFileAtPath:(NSString *)path {
     [self revealEditor];
     if ([path isEqualToString:self.currentPath]) return;  // avoid double-render
@@ -1565,6 +1617,13 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     [self resetViewMode];
     // Images are routed by extension before any attempt to read them as text.
     if ([EditorController isImagePath:path] && [self showImageAtPath:path]) {
+        [self recordModDate];
+        [_recent removeObject:path];
+        [_recent insertObject:path atIndex:0];
+        return;
+    }
+    if ([path.pathExtension.lowercaseString isEqualToString:@"pdf"] &&
+        [self showPDFAtPath:path]) {
         [self recordModDate];
         [_recent removeObject:path];
         [_recent insertObject:path atIndex:0];
@@ -1651,6 +1710,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 
     self.fileModDate = disk;
     if (self.isImage) { [self showImageAtPath:self.currentPath]; return; }
+    if (self.isPDF) { [self showPDFAtPath:self.currentPath]; return; }
     if (!self.dirty) {                       // no local edits: reload quietly
         NSString *fresh = [NSString stringWithContentsOfFile:self.currentPath
                                                     encoding:NSUTF8StringEncoding
@@ -2140,7 +2200,7 @@ static NSColor *ContrastColor(const Rgba &c) {
 
 - (void)saveCurrentFile:(id)sender {
     // A message (welcome, binary file) is not the file's contents.
-    if (!self.currentPath || self.showingMessage || self.isImage) return;
+    if (!self.currentPath || self.showingMessage || self.isImage || self.isPDF) return;
     // In markdown preview mode the text view holds rendered text, not source;
     // save the tracked source instead.
     NSString *text = self.textView.editable ? self.textView.string
@@ -2179,6 +2239,11 @@ static NSColor *ContrastColor(const Rgba &c) {
     if (self.isImage)
         mode = [NSString stringWithFormat:@"  %.0f × %.0f",
                 self.imagePixels.width, self.imagePixels.height];
+    if (self.isPDF) {
+        NSUInteger n = self.pdfView.document.pageCount;
+        mode = n == 1 ? @"  1 page"
+                      : [NSString stringWithFormat:@"  %lu pages", (unsigned long)n];
+    }
     self.window.title = [NSString stringWithFormat:@"%@%@ — MiniCode%@",
                          flag, name, mode];
     self.window.documentEdited = self.dirty;
