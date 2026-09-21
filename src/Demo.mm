@@ -574,13 +574,13 @@ static void After(double seconds, dispatch_block_t block) {
     }
     NSRange r = [s rangeOfString:needle options:0 range:from];
     if (r.location == NSNotFound) [self fail:[NSString stringWithFormat:@"no “%@” in the editor", needle]];
-    NSLayoutManager *lm = tv.layoutManager;
-    NSRange glyphs = [lm glyphRangeForCharacterRange:r actualCharacterRange:NULL];
-    NSRect rect = [lm boundingRectForGlyphRange:glyphs inTextContainer:tv.textContainer];
-    rect = NSOffsetRect(rect, tv.textContainerOrigin.x, tv.textContainerOrigin.y);
-    NSPoint p = atEnd ? NSMakePoint(NSMaxX(rect) + 1, NSMidY(rect))
-                      : NSMakePoint(NSMidX(rect), NSMidY(rect));
-    return [tv convertPoint:p toView:nil];
+    // Through the text input API rather than tv.layoutManager: touching the
+    // layout manager switches the view to TextKit 1 for good, and the editor
+    // is meant to run on TextKit 2 (the LSP squiggles are drawn that way).
+    NSRect screen = [tv firstRectForCharacterRange:r actualRange:NULL];
+    NSRect rect = [tv.window convertRectFromScreen:screen];
+    return atEnd ? NSMakePoint(NSMaxX(rect) + 1, NSMidY(rect))
+                 : NSMakePoint(NSMidX(rect), NSMidY(rect));
 }
 
 // Scroll the editor so the line holding `text` is near the top, smoothly.
@@ -689,8 +689,29 @@ static BOOL KeyFor(unichar c, unsigned short *code, BOOL *shift) {
         NSString *k = parts.lastObject;
         unsigned short code = 0; BOOL shift = NO;
         NSString *chars = k;
+        // Function and arrow keys carry the character AppKit gives them and
+        // the flags a real keyboard sets (an empty string would make the
+        // menu's performKeyEquivalent: throw).
+        static const struct { const char *name; unichar c; unsigned short code; } special[] = {
+            {"f12", NSF12FunctionKey, 111},
+            {"left", NSLeftArrowFunctionKey, 123}, {"right", NSRightArrowFunctionKey, 124},
+            {"down", NSDownArrowFunctionKey, 125}, {"up", NSUpArrowFunctionKey, 126},
+        };
         if ([k isEqualToString:@"return"]) { chars = @"\r"; code = 36; }
         else if ([k isEqualToString:@"esc"]) { chars = @"\x1b"; code = 53; }
+        else if ([k isEqualToString:@"space"]) { chars = @" "; code = 49; }
+        else if (k.length > 1) {
+            BOOL found = NO;
+            for (const auto &sp : special) {
+                if (![k isEqualToString:@(sp.name)]) continue;
+                chars = [NSString stringWithCharacters:&sp.c length:1];
+                code = sp.code;
+                flags |= NSEventModifierFlagFunction;
+                if (sp.code != 111) flags |= NSEventModifierFlagNumericPad;
+                found = YES;
+            }
+            if (!found) [d fail:[NSString stringWithFormat:@"unknown key %@", k]];
+        }
         else KeyFor([k characterAtIndex:0], &code, &shift);
         if (caption.length) [d showCaption:caption for:1.8];
         [d postKey:chars ignoring:chars code:code flags:flags];
@@ -881,12 +902,116 @@ static void SceneLatex(MCDemo *d) {
     [d pause:2.4];
 }
 
+// The language server's status text ("clangd: 1 error"), as the status bar has it.
+static NSString *LspStatus(MCDemo *m) {
+    return [[m ui:@"lsp"] valueForKey:@"statusText"] ?: @"";
+}
+
+static void SceneLsp(MCDemo *d) {
+    [d pause:0.4];
+    [d clickFile:@"vec/main.cpp"];
+    [d hidePointer];
+    // clangd parses the file before it has anything to say.
+    [d waitFor:^BOOL(MCDemo *m) {
+        if ([LspStatus(m) hasPrefix:@"No "])
+            [m fail:@"the lsp scene needs clangd (the Xcode command line tools)"];
+        return [LspStatus(m) hasSuffix:@"no problems"];
+    } timeout:40 recorded:NO];
+    [d pause:0.5];
+    [d clickAt:^NSPoint { return [d pointForText:@"scaled(2);" after:nil atEnd:YES]; }];
+    [d hidePointer];
+    [d type:@"\n    double d = p."];
+    [d waitFor:^BOOL(MCDemo *m) {
+        return [[[m ui:@"lsp"] valueForKey:@"completionVisible"] boolValue];
+    } timeout:10 recorded:YES];
+    [d pause:0.8];
+    [d type:@"le"];
+    [d pause:0.5];
+    [d key:@"return" caption:@"⏎  Complete"];
+    [d pause:0.3];
+    // Without the parentheses: clangd says so as you type.
+    [d type:@";"];
+    [d waitFor:^BOOL(MCDemo *m) { return [LspStatus(m) hasSuffix:@"1 error"]; }
+       timeout:10 recorded:YES];
+    [d poster];
+    [d pause:1.2];
+    [d clickAt:^NSPoint { return [d pointForText:@"lengthSquared;" after:nil atEnd:NO]; }];
+    [d hidePointer];
+    [d pause:0.1];
+    [d key:@"cmd+i" caption:@"⌘I  What is wrong here"];
+    [d pause:2.2];
+    [d run:^(MCDemo *m) { [[[m ui:@"lsp"] valueForKey:@"hover"] close]; }];
+    [d clickAt:^NSPoint { return [d pointForText:@"lengthSquared" after:@"double d" atEnd:YES]; }];
+    [d hidePointer];
+    [d type:@"()"];
+    [d waitFor:^BOOL(MCDemo *m) { return [LspStatus(m) hasSuffix:@"no problems"]; }
+       timeout:10 recorded:YES];
+    [d pause:0.5];
+    [d clickAt:^NSPoint { return [d pointForText:@"scaled" after:nil atEnd:NO]; }];
+    [d hidePointer];
+    [d key:@"cmd+i" caption:@"⌘I  Hover info"];
+    [d pause:2.0];
+    [d run:^(MCDemo *m) { [[[m ui:@"lsp"] valueForKey:@"hover"] close]; }];
+    // Saved first, or leaving the file asks about the unsaved edit.
+    [d key:@"cmd+s" caption:@"⌘S  Save"];
+    [d pause:0.4];
+    [d key:@"f12" caption:@"F12  Go to definition"];
+    [d waitFor:^BOOL(MCDemo *m) {
+        return [[[m ui:@"textView"] string] hasPrefix:@"#pragma once"];
+    } timeout:10 recorded:YES];
+    [d pause:1.6];
+}
+
+static void SceneVim(MCDemo *d) {
+    [d pause:0.6];
+    [d clickFile:@"README.md"];
+    [d hidePointer];
+    // A taller panel than the default, as if the divider had been dragged up.
+    [d run:^(MCDemo *m) { [m.controller setValue:@370 forKey:@"terminalHeight"]; }];
+    [d key:@"ctrl+`" caption:@"⌃`  Terminal"];
+    [d waitFor:^BOOL(MCDemo *m) {
+        return [[[m ui:@"terminal"] valueForKey:@"atPrompt"] boolValue];
+    } timeout:15 recorded:NO];
+    [d pause:0.3];
+    auto grid = ^BOOL(MCDemo *m) {
+        return [[[m ui:@"terminal"] valueForKey:@"gridMode"] boolValue];
+    };
+    auto log = ^BOOL(MCDemo *m) {
+        return ![[[m ui:@"terminal"] valueForKey:@"gridMode"] boolValue] &&
+               [[[m ui:@"terminal"] valueForKey:@"atPrompt"] boolValue];
+    };
+    [d type:@"vim todo.md\n"];
+    [d waitFor:grid timeout:10 recorded:YES];
+    [d pause:0.5];
+    [d type:@"i# Today\n\n- Try the LSP demo\n- Read the git log"];
+    [d pause:0.4];
+    [d poster];
+    [d key:@"esc" caption:nil];
+    [d type:@":wq"];
+    [d pause:0.3];
+    [d key:@"return" caption:nil];
+    [d waitFor:log timeout:10 recorded:YES];
+    [d pause:0.4];
+    [d type:@"cat todo.md\n"];
+    [d pause:1.2];
+    [d type:@"git log\n"];
+    [d waitFor:grid timeout:10 recorded:YES];
+    [d pause:1.4];
+    [d key:@"space" caption:@"Space  Next page"];
+    [d pause:1.2];
+    [d key:@"q" caption:@"q  Quit the pager"];
+    [d waitFor:log timeout:10 recorded:YES];
+    [d pause:1.2];
+}
+
 typedef void (*MCSceneBuilder)(MCDemo *d);
 static const struct { const char *name; MCSceneBuilder build; } kScenes[] = {
     {"tour", SceneTour},
     {"terminal", SceneTerminal},
     {"settings", SceneSettings},
     {"latex", SceneLatex},
+    {"lsp", SceneLsp},
+    {"vim", SceneVim},
 };
 
 // ------------------------------------------------------------ entry points

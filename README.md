@@ -20,6 +20,10 @@ There is a terminal you can pull up at the bottom with Control backtick, and you
 
 The terminal under a Python file, running ls, git log and the script itself, with the colors each command prints.
 
+![Writing a short list in vim inside the terminal panel, then paging through git log](docs/demos/vim.gif)
+
+Vim running in the terminal panel on the character grid. A short list is typed and saved with :wq, and the panel goes back to the log with the same shell, where cat shows the file. Then git log opens in its pager, Space turns the page and q quits.
+
 If you ever forget a shortcut, press Shift Command H and a small panel lists the ones available in your current context. The panel is aware of what you are doing, so the preview toggle only shows up when a Markdown or LaTeX file is open, for instance.
 
 ## LaTeX
@@ -43,6 +47,10 @@ While it is previewing, MiniCode typesets a hidden copy of the buffer next to yo
 MiniCode speaks the Language Server Protocol, so if you have a language server installed it gives you completion, go to definition, and error underlines as you type. MiniCode only implements the client; the servers are separate programs, the same way tectonic is for LaTeX. It knows these out of the box: clangd for C, C++ and Objective-C, which comes with the Xcode command line tools, pyright or pylsp for Python, gopls for Go, rust-analyzer for Rust, and typescript-language-server for JavaScript and TypeScript. It looks for them on your PATH and in the usual Homebrew, Cargo and Go folders, since an app started from the Dock gets a much shorter PATH than your shell.
 
 Open a file and its server starts in the background, rooted at the folder the window has open. Problems show as a squiggly underline, red for errors and yellow for warnings, and resting the pointer on one shows the message. The status bar says which server is running and how many errors and warnings the file has. Typing a dot, an arrow, or a double colon opens a completion list, and Control Space opens it anywhere. Use the arrows to move through it, Return or Tab to take an item, and Escape to close it. F12, or Command click on a name, jumps to its definition, opening another file if that is where it lives. Command I shows the type and documentation of whatever is under the cursor.
+
+![clangd flagging an error, completing a member, showing hover info and jumping to a definition](docs/demos/lsp.gif)
+
+clangd on a small C++ example. Typing p. opens the completion list, and taking lengthSquared without its parentheses gets a red underline and an error count in the status bar. Command I explains the error, adding the parentheses clears it, and on scaled Command I shows the comment from the header before F12 jumps there.
 
 If a language has no server installed, nothing changes except a short note in the status bar. You can choose a different server, or turn one off, in the settings file, for example lsp.python = pylsp, or lsp.go = off, and lsp.enabled = false turns the whole thing off. Servers are shut down when their window closes and when MiniCode quits.
 
@@ -104,7 +112,7 @@ There is also a make run target that opens the current directory, and you can pa
 
 ## A quick tour
 
-The repo includes a demo folder with a Python file, a C++ file, a Markdown file, and a short LaTeX document in demo/paper, so you can see the highlighting and the previews right away. Launch the app against it and click through the three files.
+The repo includes a demo folder with a Python file, a C++ file, a Markdown file, a short LaTeX document in demo/paper, and a two file C++ example in demo/vec for trying clangd, so you can see the highlighting and the previews right away. Launch the app against it and click through the three files.
 
 ```
 make run DIR=demo
@@ -123,7 +131,7 @@ make demos SCENES="tour latex"
 
 Each scene is a short script in src/Demo.mm that clicks files in the tree, types, and presses shortcuts the way a person would, through the same events a keyboard and mouse send. It only runs when the MINICODE_DEMO environment variable names a scene, which scripts/demos.sh does, so a normal launch never touches it. While a scene plays, the window is captured about ten times a second, and tools/makegif.m turns the frames into a GIF with a single palette, repeated frames merged, and only the changed part of each frame stored, which keeps each one well under a megabyte. The pointer and the key captions in the GIFs are drawn by the demo, since a window capture shows neither.
 
-A window really does appear on screen for each scene, for about twenty seconds, and keyboard and mouse input from you is ignored while it plays. Everything the app reads is a scratch copy: a copy of the demo folder under /tmp, turned into a small git repository for the terminal scene, a separate home folder for the shell, the settings in tools/demo-settings.conf, and a copy of the tectonic cache. So nothing from your own home folder can show up in a frame. The LaTeX scene is skipped if tectonic is not installed. Recording needs the Screen Recording permission for the terminal you run make from. Set POSTERS=1 to also write a still PNG of each scene next to its GIF.
+A window really does appear on screen for each scene, for about twenty seconds, and keyboard and mouse input from you is ignored while it plays. Everything the app reads is a scratch copy: a copy of the demo folder under /tmp, turned into a small git repository for the terminal scene, a separate home folder for the shell, the settings in tools/demo-settings.conf, and a copy of the tectonic cache. So nothing from your own home folder can show up in a frame. The LaTeX scene is skipped if tectonic is not installed, and the language server scene stops with a message if clangd is missing. The display has to be awake while recording, since a sleeping screen gives no window captures. Recording needs the Screen Recording permission for the terminal you run make from. Set POSTERS=1 to also write a still PNG of each scene next to its GIF.
 
 Adding a scene is a function of a few lines in src/Demo.mm and an entry in its scene table; make demos picks it up from there.
 
