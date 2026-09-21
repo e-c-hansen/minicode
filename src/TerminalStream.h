@@ -4,9 +4,13 @@
 // It is a line model, not a screen emulator: it tracks colors and attributes
 // (SGR) and the cursor within the current line (\r, \b, tab, erase-in-line,
 // cursor forward/back/column), which covers colored output and progress lines.
-// Movement to other lines, scroll regions and the alternate screen are
-// recognized and ignored. The stream is parsed incrementally, so sequences
-// and UTF-8 characters split across reads are handled.
+// Movement to other lines and scroll regions are recognized and ignored, and
+// text drawn on the alternate screen is left out (TerminalScreen, the cell
+// grid, shows that). The stream is parsed incrementally, so sequences and
+// UTF-8 characters split across reads are handled.
+//
+// The escape-sequence parser (TermParser) and the SGR reader live here and are
+// shared with TerminalScreen, so both models read the bytes the same way.
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -49,6 +53,53 @@ struct TermRun {
     TermStyle style;
 };
 
+// Columns a code point takes on a terminal: 0 for combining marks and other
+// zero-width characters, 2 for East Asian wide characters and most emoji.
+int termCharWidth(uint32_t cp);
+
+// Apply an SGR parameter string (the body of "CSI ... m") to a style.
+void applySgr(TermStyle& style, const std::string& params);
+
+// The DEC/ANSI escape-sequence parser (the state machine Paul Williams
+// documented on vt100.net), trimmed to what MiniCode needs. It decodes UTF-8,
+// recognizes every sequence so none leaks into the text, and hands each piece
+// to a Handler. Input may be split anywhere across feed() calls.
+class TermParser {
+public:
+    struct Handler {
+        virtual ~Handler() = default;
+        // A printable character (U+FFFD for invalid UTF-8).
+        virtual void print(uint32_t cp, const std::string& utf8) = 0;
+        // A C0 control byte other than ESC, or DEL.
+        virtual void control(unsigned char c) = 0;
+        // CSI: `params` is everything between "ESC [" and the final byte,
+        // including a private marker ("?25") and intermediates (" q").
+        virtual void csi(const std::string& params, unsigned char final) = 0;
+        // Other escapes: "ESC 7" has no intermediates, "ESC ( B" has "(".
+        virtual void esc(const std::string& intermediates, unsigned char final) = 0;
+        // An OSC body, terminated by BEL or ST.
+        virtual void osc(const std::string& body) = 0;
+    };
+
+    void feed(const char* data, size_t length, Handler& h);
+
+    // Split CSI parameters on ';'. Each parameter keeps its ':' sub-parameters.
+    // Empty values are -1 (meaning "default"). Other bytes are skipped.
+    static std::vector<std::vector<int>> params(const std::string& s);
+
+private:
+    enum class State { Ground, Escape, EscapeIntermediate, Csi, Osc, OscEscape,
+                       String, StringEscape };
+    State state_ = State::Ground;
+    std::string osc_;            // body of the OSC sequence being read
+    std::string seq_;            // CSI parameters, or ESC intermediates
+    bool csiOverflow_ = false;
+    std::string utf8_;           // bytes of a UTF-8 character in progress
+    int utf8Need_ = 0;           // total bytes that character needs
+
+    void finishUtf8(bool abandon, Handler& h);
+};
+
 struct TermEvent {
     enum Kind {
         Line,            // the current line's full content (see `ended`)
@@ -82,36 +133,33 @@ public:
     // line without emitting anything. The current style is kept.
     void breakLine();
 
+    // True while the program is drawing on the alternate screen, whose text
+    // is kept out of the log.
+    bool altScreen() const { return alt_; }
+
     // Longest a line may grow before it is ended automatically, so one huge
     // unbroken line doesn't get re-rendered on every chunk.
     static constexpr size_t kMaxLineCells = 8192;
 
 private:
-    enum class State { Ground, Escape, EscapeIntermediate, Csi, Osc, OscEscape,
-                       String, StringEscape };
     struct Cell {
         std::string ch;          // one code point, plus any combining marks
         TermStyle style;
     };
+    struct Sink;                 // routes the parser's callbacks here
 
-    State state_ = State::Ground;
-    std::string osc_;            // body of the OSC sequence being read
-    std::string csi_;            // parameters/intermediates of the CSI
-    bool csiOverflow_ = false;
-    std::string utf8_;           // bytes of a UTF-8 character in progress
-    int utf8Need_ = 0;           // total bytes that character needs
-
+    TermParser parser_;
     TermStyle style_;
     std::vector<Cell> line_;
     size_t col_ = 0;
     bool dirty_ = false;         // the live line changed since last emitted
+    bool alt_ = false;           // on the alternate screen
 
     void printCodepoint(uint32_t cp, const std::string& utf8);
-    void finishUtf8(bool abandon);
     void newline(std::vector<TermEvent>& out);
     void flushLine(std::vector<TermEvent>& out);
     void moveTo(size_t col);
-    void finishCsi(unsigned char final);
-    void applySgr();
-    void finishOsc(std::vector<TermEvent>& out);
+    void control(unsigned char c, std::vector<TermEvent>& out);
+    void finishCsi(const std::string& params, unsigned char final);
+    void finishOsc(const std::string& body, std::vector<TermEvent>& out);
 };

@@ -51,16 +51,25 @@ thesis because MiniCode would only implement the JSON-RPC client.
 
 ## Terminal
 
-Now a real shell on a pty with colors and in-line cursor movement, shown as a
-log. What remains is a screen model:
+A real shell on a pty. Ordinary output is a colored log with a line input;
+full-screen programs (vim, less, man, htop, git's pager, REPLs, ssh) get a
+cell grid (`TerminalScreen`, drawn by `TerminalGridView`) with keys sent
+straight to the pty, and pagers are no longer forced to `cat`. What remains:
 
-- A cell grid with cursor addressing across lines, scroll regions and the
-  alternate screen, so vim, htop, less and multi-line progress bars work. The
-  parser in `TerminalStream` already recognizes those sequences; it would feed
-  a grid instead of a single live line. Then pagers no longer need to be `cat`.
-- Keys sent straight to the pty (arrows, Tab completion, Ctrl+R) instead of a
-  line-based input field.
-- Selection-aware copy, clickable links (OSC 8), bash/fish integration.
+- Mouse reporting (modes 1000/1002/1006), so clicks and drags reach vim,
+  htop and tmux. Today the grid keeps the mouse for its own selection.
+- Scrollback while the grid shows. In the alternate screen the wheel sends
+  arrow keys (like xterm's alternateScroll); in the raw-mode fallback (git's
+  `less -X`, a REPL) lines scrolled off the top are only in the log.
+- Multi-line progress bars in the log view: they redraw with cursor-up, which
+  the log ignores. Rendering the last screenful of the grid under the log
+  would fix it.
+- Keys at the log prompt (Tab completion, Ctrl+R) still go through the line
+  input; the grid only takes over for programs that ask for raw input.
+- Input methods (dead keys, CJK input) in the grid: it reads `characters`
+  from the key event rather than going through NSTextInputClient.
+- Word/line selection by double/triple click, clickable links (OSC 8),
+  bash/fish integration.
 
 ## Linux port parity
 

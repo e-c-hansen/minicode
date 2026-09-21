@@ -3,6 +3,7 @@
 #include "SyntaxHighlighter.h"
 #include "MarkdownParser.h"
 #include "TerminalStream.h"
+#include "TerminalScreen.h"
 #include "Settings.h"
 #include "LineComments.h"
 #include "LatexDoc.h"
@@ -558,6 +559,498 @@ void testTerminalStream() {
         CHECK(lc.text() == "z" && *styleOf(lc, "z") == TermStyle());
         // Other control characters are dropped.
         CHECK(run("a\x07\x01" "b").text() == "ab");
+    }
+}
+
+}  // namespace
+
+// ------------------------------------------------------- terminal screen
+namespace {
+
+// Real output, recorded with `script -q` from programs on a 40x10 terminal
+// with TERM=xterm-256color.
+//
+// vim -u NONE -N -i NONE f.txt (f.txt = "line one\nline two\n"), typed:
+// "iHello <Esc>:wq<Enter>".
+const std::string kVimEdit =
+    "\033[\?1049h\033[>4;2m\033[\?1h\033=\033[\?2004h\033[\?1004h\033["
+    "1;10r\033[\?12h\033[\?12l\033[22;2t\033[22;1t\033[27m\033[23m\033"
+    "[29m\033[m\033[H\033[2J\033[\?25l\033[10;1H\"f.txt\" 2L, 18B\033["
+    "2;1H\342\226\275\033[6n\033[2;1H  \033[3;1H\033Pzz\033\\\033[0%m\033"
+    "[6n\033[3;1H           \033[1;1H\033[>c\033[1;1Hline one\r\n"
+    "line two\033[2;9H\033[K\033[3;1H\033[94m~                        "
+    "               \033[4;1H~                                       \033"
+    "[5;1H~                                       \033[6;1H~          "
+    "                             \033[7;1H~                          "
+    "             \033[8;1H~                                       \033"
+    "[9;1H~                                       \033[1;1H\033[\?25h\033"
+    "[\?4m\033[\?25l\033[m\033[10;1H\033[1m-- INSERT --\033[m\033[10;1"
+    "3H\033[K\033[10;1H\033[K\033[1;6H\rHello line one\033[10;1H\033[1"
+    "m-- INSERT --\033[1;7H\033[m\033[10;30H^[\033[1;6H\033[\?25h\033["
+    "\?25l\033[10;30H  \033[1;7H\033[10;1H\033[K\033[1;6H\033[\?25h\033"
+    "[\?25l\033[10;1H:wq\r\033[\?2004l\033[>4;m\"f.txt\" 2L, 24B writt"
+    "en\r\033[23;2t\033[23;1t\r\r\n"
+    "\033[\?1004l\033[\?2004l\033[\?1l\033>\033[\?1049l\033[\?25h\033["
+    ">4;m";
+
+// vim on a 100-line file ("row 1".."row 100"), typed: Ctrl+E three times,
+// "dd", "Onew<Esc>", ":q!<Enter>". Scrolls with a scroll region and redraws
+// lines by overwriting only the characters that differ.
+const std::string kVimScroll =
+    "\033[\?1049h\033[>4;2m\033[\?1h\033=\033[\?2004h\033[\?1004h\033["
+    "1;10r\033[\?12h\033[\?12l\033[22;2t\033[22;1t\033[27m\033[23m\033"
+    "[29m\033[m\033[H\033[2J\033[\?25l\033[10;1H\"long2.txt\" 100L, 69"
+    "2B\033[2;1H\342\226\275\033[6n\033[2;1H  \033[3;1H\033Pzz\033\\\033"
+    "[0%m\033[6n\033[3;1H           \033[1;1H\033[>c\033[1;1Hrow 1\r\n"
+    "row 2\033[2;6H\033[K\033[3;1Hrow 3\033[3;6H\033[K\033[4;1Hrow 4\r"
+    "\n"
+    "row 5\r\n"
+    "row 6\r\n"
+    "row 7\r\n"
+    "row 8\r\n"
+    "row 9\033[1;1H\033[\?25h\033[\?4m\033[\?25l\033[1;9r\033[9;1H\r\n"
+    "\033[1;10r\033[9;1Hrow 10\033[10;1H\033[K\033[1;1H\033[\?25h\033["
+    "\?25l\033[1;9r\033[9;1H\r\n"
+    "\033[1;10r\033[9;1Hrow 11\033[1;1H\033[\?25h\033[\?25l\033[10;30H"
+    "^E\033[1;1H\033[10;30H  \033[1;1H\033[1;9r\033[9;1H\r\n"
+    "\033[1;10r\033[9;1Hrow 12\033[1;1H\033[\?25h\033[\?25l\033[10;30H"
+    "dd\033[1;1H\033[10;30H  \033[1;1H\033[1;9r\033[9;1H\r\n"
+    "\033[1;10r\033[9;1Hrow 13\033[1;1H\033[\?25h\033[\?25l\033[10;1H\033"
+    "[1m-- INSERT --\033[m\033[10;1H\033[K\033[1;3H\rne\033[1;5H\033[K"
+    "\033[2;5H5\r\n"
+    "row 6\r\n"
+    "row 7\r\n"
+    "row 8\r\n"
+    "row 9\033[6;6H\033[K\033[7;6H0\033[8;6H1\033[9;6H2\r\n"
+    "\033[1m-- INSERT --\033[1;4H\033[m\033[10;30H^[\033[1;3H\033[\?25"
+    "h\033[\?25l\033[10;30H  \033[1;4H\033[10;1H\033[K\033[1;3H\033[\?"
+    "25h\033[\?25l\033[10;1H:q!\r\033[\?2004l\033[>4;m\033[23;2t\033[2"
+    "3;1t\033[10;1H\033[K\033[10;1H\033[\?1004l\033[\?2004l\033[\?1l\033"
+    ">\033[\?1049l\033[\?25h\033[>4;m";
+
+// less on the same 100-line file, typed: Space, q.
+const std::string kLess =
+    "\033[\?1049h\033[10;1H\033[\?1h\033=\rrow 1\r\n"
+    "row 2\r\nrow 3\r\nrow 4\r\nrow 5\r\nrow 6\r\nrow 7\r\nrow 8\r\nrow 9\r\n"
+    "\033[7mlong.txt\033[27m\033[K\r\033[Krow 10\r\n"
+    "row 11\r\nrow 12\r\nrow 13\r\nrow 14\r\nrow 15\r\nrow 16\r\nrow 17\r\n"
+    "row 18\r\n"
+    ":\033[K\r\033[K\033[\?1l\033>\033[\?1049l";
+
+// Feed `data` up to (not including) the first `marker`.
+void feedUntil(TerminalScreen &s, const std::string &data, const std::string &marker) {
+    size_t at = data.find(marker);
+    s.feed(data.substr(0, at));
+}
+
+// Rows [from, to) as text, one string per row.
+std::vector<std::string> rowsOf(const TerminalScreen &s, int from, int to) {
+    std::vector<std::string> out;
+    for (int r = from; r < to; r++) out.push_back(s.rowText(r));
+    return out;
+}
+
+std::vector<std::string> numberedRows(const std::string &prefix, int first, int last) {
+    std::vector<std::string> out;
+    for (int i = first; i <= last; i++) out.push_back(prefix + std::to_string(i));
+    return out;
+}
+
+TerminalScreen screenAfter(const std::string &bytes, int cols = 10, int rows = 4) {
+    TerminalScreen s(cols, rows);
+    s.feed(bytes);
+    return s;
+}
+
+void testTerminalScreen() {
+    GROUP("screen:vim-capture");
+    {
+        TerminalScreen s(40, 10);
+        feedUntil(s, kVimEdit, "\033[10;1H:wq");
+        CHECK(s.altScreen());
+        CHECK(s.appCursorKeys() && s.appKeypad() && s.bracketedPaste());
+        CHECK(s.rowText(0) == "Hello line one");
+        CHECK(s.rowText(1) == "line two");
+        bool tildes = true;
+        for (int r = 2; r <= 8; r++) tildes = tildes && s.rowText(r) == "~";
+        CHECK(tildes);
+        CHECK(s.rowText(9) == "");             // "-- INSERT --" was erased
+        CHECK(isIndexed(s.cell(2, 0).style.fg, 12));   // ~ in bright blue
+        CHECK(s.cell(0, 0).style == TermStyle());
+        CHECK(s.cursorRow() == 0 && s.cursorCol() == 5);
+        // vim asked where the cursor was (after an ambiguous-width probe).
+        CHECK(s.takeReplies() == "\033[2;2R\033[3;1R");
+        CHECK(s.takeReplies().empty());
+        // "\e[0%m" and "\e[>4;2m" are not SGR: nothing turned bold or odd.
+        CHECK(!s.cell(0, 0).style.bold && !s.cell(0, 0).style.underline);
+        s.feed(kVimEdit.substr(kVimEdit.find("\033[10;1H:wq")));
+        CHECK(!s.altScreen());
+        CHECK(!s.appCursorKeys() && !s.appKeypad() && !s.bracketedPaste());
+        CHECK(s.cursorVisible());
+        CHECK(s.text().empty());               // the shell's screen, untouched
+        CHECK(s.cursorRow() == 0 && s.cursorCol() == 0);
+    }
+
+    GROUP("screen:vim-scroll-capture");
+    {
+        TerminalScreen s(40, 10);
+        feedUntil(s, kVimScroll, "\033[10;30Hdd");
+        CHECK(rowsOf(s, 0, 9) == numberedRows("row ", 4, 12));   // three Ctrl+E
+        CHECK(s.scrollTop() == 0 && s.scrollBottom() == 9);
+        feedUntil(s, kVimScroll.substr(kVimScroll.find("\033[10;30Hdd")),
+                  "\033[1m-- INSERT --");
+        CHECK(rowsOf(s, 0, 9) == numberedRows("row ", 5, 13));   // dd
+        TerminalScreen whole(40, 10);
+        feedUntil(whole, kVimScroll, "\033[10;1H:q!");
+        std::vector<std::string> want = {"new"};
+        for (const std::string &r : numberedRows("row ", 5, 12)) want.push_back(r);
+        CHECK(rowsOf(whole, 0, 9) == want);                      // Onew<Esc>
+        CHECK(whole.cursorRow() == 0 && whole.cursorCol() == 2);
+        // Byte at a time gives the same screen.
+        TerminalScreen bytes(40, 10);
+        std::string upTo = kVimScroll.substr(0, kVimScroll.find("\033[10;1H:q!"));
+        for (char c : upTo) bytes.feed(&c, 1);
+        CHECK(bytes.text() == whole.text());
+        whole.feed(kVimScroll.substr(kVimScroll.find("\033[10;1H:q!")));
+        CHECK(!whole.altScreen() && whole.text().empty());
+    }
+
+    GROUP("screen:less-capture");
+    {
+        TerminalScreen s(40, 10);
+        s.feed("$ ls\r\nhello\r\n$ ");                 // on the main screen first
+        feedUntil(s, kLess, "\033[\?1049l");
+        CHECK(s.altScreen());
+        CHECK(rowsOf(s, 0, 9) == numberedRows("row ", 10, 18));
+        s.feed("\033[\?1049l");
+        CHECK(!s.altScreen());
+        CHECK(s.text() == "$ ls\nhello\n$");         // main screen restored
+        CHECK(s.cursorRow() == 2 && s.cursorCol() == 2);
+        // The log model keeps less's pages out of the scrollback.
+        TerminalStream ts;
+        std::string logged;
+        for (const TermEvent &e : ts.feed("before\r\n" + kLess + "after\r\n"))
+            if (e.kind == TermEvent::Line)
+                for (const TermRun &r : e.runs) logged += r.text + (e.ended ? "|" : "");
+        CHECK(logged.find("row") == std::string::npos);
+        CHECK(logged.find("before") != std::string::npos &&
+              logged.find("after") != std::string::npos);
+        CHECK(!ts.altScreen());
+    }
+
+    GROUP("screen:cursor-addressing");
+    {
+        TerminalScreen s(10, 5);
+        s.feed("\033[3;4HX");                  // CUP is 1-based
+        CHECK(s.rowText(2) == "   X" && s.cursorRow() == 2 && s.cursorCol() == 4);
+        s.feed("\033[2AY");                    // CUU
+        CHECK(s.rowText(0) == "    Y");
+        s.feed("\033[9BZ");                    // CUD clamps to the last row
+        CHECK(s.rowText(4) == "     Z");
+        s.feed("\033[3D!");                    // CUB
+        CHECK(s.rowText(4) == "   ! Z");
+        s.feed("\033[20C#");                   // CUF clamps to the last column
+        CHECK(s.cell(4, 9).ch == "#");
+        s.feed("\033[1G<\033[2d^");            // CHA, VPA
+        CHECK(s.rowText(4)[0] == '<' && s.rowText(1) == " ^");
+        s.feed("\033[H\033[2E.\033[F,");       // CNL, CPL move to column 0
+        CHECK(s.rowText(2) == ".  X" && s.rowText(1) == ",^");
+        s.feed("\033[;5H*");                   // empty parameter = default
+        CHECK(s.rowText(0) == "    *");
+        s.feed("\033[99;99H");
+        CHECK(s.cursorRow() == 4 && s.cursorCol() == 9);
+    }
+
+    GROUP("screen:erase");
+    {
+        auto s = screenAfter("abcdefghij\r\nklmnopqrst\r\nuvwxyz\033[2;5H");
+        TerminalScreen el0 = s; el0.feed("\033[K");
+        CHECK(el0.rowText(1) == "klmn");
+        TerminalScreen el1 = s; el1.feed("\033[1K");
+        CHECK(el1.rowText(1) == "     pqrst");
+        TerminalScreen el2 = s; el2.feed("\033[2K");
+        CHECK(el2.rowText(1) == "" && el2.rowText(0) == "abcdefghij");
+        TerminalScreen ed0 = s; ed0.feed("\033[J");
+        CHECK(ed0.text() == "abcdefghij\nklmn");
+        TerminalScreen ed1 = s; ed1.feed("\033[1J");
+        CHECK(ed1.text() == "\n     pqrst\nuvwxyz");
+        TerminalScreen ed2 = s; ed2.feed("\033[2J");
+        CHECK(ed2.text().empty() && ed2.cursorRow() == 1 && ed2.cursorCol() == 4);
+        TerminalScreen ech = s; ech.feed("\033[3X");
+        CHECK(ech.rowText(1) == "klmn   rst" && ech.cursorCol() == 4);
+        // Erase paints the current background (xterm's bce).
+        TerminalScreen bce = s; bce.feed("\033[44m\033[K");
+        CHECK(isIndexed(bce.cell(1, 7).style.bg, 4) && bce.cell(1, 7).ch == " ");
+        CHECK(bce.cell(1, 3).style.bg.kind == TermColor::Default);
+    }
+
+    GROUP("screen:insert-delete");
+    {
+        auto s = screenAfter("abcdefghij\r\nklmnopqrst\r\nuvwxyz\033[1;3H");
+        TerminalScreen ich = s; ich.feed("\033[2@");
+        CHECK(ich.rowText(0) == "ab  cdefgh");
+        TerminalScreen dch = s; dch.feed("\033[3P");
+        CHECK(dch.rowText(0) == "abfghij");
+        TerminalScreen il = s; il.feed("\033[2;5H\033[L");
+        CHECK(il.text() == "abcdefghij\n\nklmnopqrst\nuvwxyz");
+        CHECK(il.cursorCol() == 0);
+        TerminalScreen dl = s; dl.feed("\033[M");
+        CHECK(dl.text() == "klmnopqrst\nuvwxyz");
+        TerminalScreen dl9 = s; dl9.feed("\033[2;1H\033[9M");
+        CHECK(dl9.text() == "abcdefghij");
+        // Insert mode (IRM) pushes the rest of the line right.
+        TerminalScreen irm = s; irm.feed("\033[4hXY\033[4lZ");
+        CHECK(irm.rowText(0) == "abXYZdefgh");
+    }
+
+    GROUP("screen:scroll-region");
+    {
+        // Rows 2-4 scroll; rows 1 and 5 stay put.
+        auto s = screenAfter("top\r\na\r\nb\r\nc\r\nbottom\033[2;4r", 10, 5);
+        CHECK(s.scrollTop() == 1 && s.scrollBottom() == 3);
+        CHECK(s.cursorRow() == 0 && s.cursorCol() == 0);   // DECSTBM homes
+        TerminalScreen lf = s; lf.feed("\033[4;1H\nd");
+        CHECK(lf.text() == "top\nb\nc\nd\nbottom");
+        TerminalScreen ind = s; ind.feed("\033[4;1H\033D");
+        CHECK(ind.text() == "top\nb\nc\n\nbottom");
+        TerminalScreen ri = s; ri.feed("\033[2;1H\033M");
+        CHECK(ri.text() == "top\n\na\nb\nbottom");
+        TerminalScreen su = s; su.feed("\033[2S");
+        CHECK(su.text() == "top\nc\n\n\nbottom");
+        TerminalScreen sd = s; sd.feed("\033[T");
+        CHECK(sd.text() == "top\n\na\nb\nbottom");
+        // IL/DL act inside the region only.
+        TerminalScreen il = s; il.feed("\033[3;1H\033[L");
+        CHECK(il.text() == "top\na\n\nb\nbottom");
+        TerminalScreen outside = s; outside.feed("\033[5;1H\033[L");
+        CHECK(outside.text() == "top\na\nb\nc\nbottom");
+        // CUU/CUD stop at the margins when starting inside the region.
+        TerminalScreen cuu = s; cuu.feed("\033[3;1H\033[9A");
+        CHECK(cuu.cursorRow() == 1);
+        TerminalScreen cud = s; cud.feed("\033[3;1H\033[9B");
+        CHECK(cud.cursorRow() == 3);
+        // An invalid region is ignored; no parameters resets it.
+        TerminalScreen bad = s; bad.feed("\033[4;2r");
+        CHECK(bad.scrollTop() == 1 && bad.scrollBottom() == 3);
+        TerminalScreen reset = s; reset.feed("\033[r");
+        CHECK(reset.scrollTop() == 0 && reset.scrollBottom() == 4);
+        // Origin mode addresses rows from the top margin.
+        TerminalScreen om = s; om.feed("\033[\?6h\033[1;1HX\033[9;1H");
+        CHECK(om.rowText(1) == "X" && om.cursorRow() == 3);
+    }
+
+    GROUP("screen:alternate");
+    {
+        auto s = screenAfter("main\r\ntext\033[31m", 10, 4);
+        TerminalScreen a = s;
+        a.feed("\033[\?1049h");
+        CHECK(a.altScreen() && a.text().empty());
+        a.feed("\033[32m\033[3;3Halt");
+        a.feed("\033[\?1049l");
+        CHECK(!a.altScreen() && a.text() == "main\ntext");
+        CHECK(a.cursorRow() == 1 && a.cursorCol() == 4);   // cursor restored
+        a.feed("x");
+        CHECK(isIndexed(a.cell(1, 4).style.fg, 1));          // and its style
+        // 1049 always starts with a clear alternate screen.
+        a.feed("\033[\?1049h");
+        CHECK(a.text().empty());
+        // 47 switches without saving the cursor or clearing.
+        TerminalScreen b = s;
+        b.feed("\033[\?47hAB\033[\?47l");
+        CHECK(b.text() == "main\ntext" && b.cursorCol() == 6);
+        b.feed("\033[\?47h");
+        CHECK(b.text() == "\n    AB");                // kept from last time
+        // 1047 clears the alternate screen when leaving it.
+        TerminalScreen c = s;
+        c.feed("\033[\?1047hAB\033[\?1047l\033[\?1047h");
+        CHECK(c.text().empty());
+    }
+
+    GROUP("screen:save-restore");
+    {
+        TerminalScreen s(10, 4);
+        s.feed("\033[2;3H\033[1;33m\0337\033[H\033[0mx\0338y");
+        CHECK(s.rowText(1) == "  y" && s.cell(1, 2).style.bold &&
+              isIndexed(s.cell(1, 2).style.fg, 3));
+        CHECK(s.cell(0, 0).style == TermStyle());
+        s.feed("\033[4;4H\033[s\033[H\033[uz");        // SCOSC / SCORC
+        CHECK(s.rowText(3) == "   z");
+        // Restoring with nothing saved goes home.
+        TerminalScreen fresh(10, 4);
+        fresh.feed("\033[3;3H\0338");
+        CHECK(fresh.cursorRow() == 0 && fresh.cursorCol() == 0);
+    }
+
+    GROUP("screen:autowrap");
+    {
+        TerminalScreen s(5, 3);
+        s.feed("abcde");
+        // The cursor waits on the last column: the wrap is pending.
+        CHECK(s.cursorRow() == 0 && s.cursorCol() == 4 && s.rowText(1) == "");
+        TerminalScreen cr = s; cr.feed("\rX");
+        CHECK(cr.rowText(0) == "Xbcde" && cr.rowText(1) == "");
+        TerminalScreen more = s; more.feed("f");
+        CHECK(more.rowText(0) == "abcde" && more.rowText(1) == "f");
+        TerminalScreen lf = s; lf.feed("\r\nz");        // no blank line between
+        CHECK(lf.text() == "abcde\nz");
+        TerminalScreen el = s; el.feed("\033[K!");      // erase clears the pending wrap
+        CHECK(el.rowText(0) == "abcd!" && el.rowText(1) == "");
+        // Wrapping at the bottom scrolls.
+        TerminalScreen bottom(5, 2);
+        bottom.feed("12345678901234");
+        CHECK(bottom.text() == "67890\n1234");
+        // With autowrap off, the last column is overwritten.
+        TerminalScreen off(5, 2);
+        off.feed("\033[\?7labcdefg");
+        CHECK(off.text() == "abcdg" && !off.autowrap());
+    }
+
+    GROUP("screen:tabs");
+    {
+        TerminalScreen s(20, 2);
+        s.feed("a\tb\tc\td");
+        CHECK(s.rowText(0) == "a       b       c  d");   // last stop clamps
+        TerminalScreen h(20, 2);
+        h.feed("\033[3g\033[4G\033H\033[1G\tx");        // clear all, set at col 4
+        CHECK(h.rowText(0) == "   x");
+        TerminalScreen cbt(20, 2);
+        cbt.feed("\033[18G\033[Zy\033[2Zz");
+        CHECK(cbt.rowText(0) == "        z       y");
+        TerminalScreen cht(20, 2);
+        cht.feed("\033[2Iq");
+        CHECK(cht.cursorCol() == 17);
+    }
+
+    GROUP("screen:wide-chars");
+    {
+        TerminalScreen s(6, 2);
+        s.feed("\xE4\xB8\xAD\xE6\x96\x87!");                  // 中文!
+        CHECK(s.cell(0, 0).width == 2 && s.cell(0, 1).width == 0);
+        CHECK(s.cell(0, 2).ch == "\xE6\x96\x87" && s.cell(0, 4).ch == "!");
+        CHECK(s.cursorCol() == 5 && s.rowText(0) == "\xE4\xB8\xAD\xE6\x96\x87!");
+        // A wide character that does not fit wraps whole.
+        s.feed("\xE5\xAD\x97");                               // 字
+        CHECK(s.rowText(0) == "\xE4\xB8\xAD\xE6\x96\x87!" &&
+              s.rowText(1) == "\xE5\xAD\x97");
+        // Overwriting half of a wide character blanks the other half.
+        TerminalScreen o(6, 2);
+        o.feed("\xE4\xB8\xAD\xE6\x96\x87\033[1;2Hx");
+        CHECK(o.rowText(0) == " x\xE6\x96\x87");
+        // Emoji are wide, combining marks join the previous cell.
+        TerminalScreen e(6, 2);
+        e.feed("\xF0\x9F\x98\x80" "e\xCC\x81.");
+        CHECK(e.cell(0, 0).width == 2 && e.cell(0, 2).ch == "e\xCC\x81" &&
+              e.cell(0, 3).ch == ".");
+        CHECK(termCharWidth(0x4E2D) == 2 && termCharWidth('a') == 1 &&
+              termCharWidth(0x0301) == 0 && termCharWidth(0x2713) == 1);
+    }
+
+    GROUP("screen:line-drawing");
+    {
+        TerminalScreen s(10, 2);
+        s.feed("\033(0lqk\033(Bq\016x\017x");
+        CHECK(s.rowText(0) == "\xE2\x94\x8C\xE2\x94\x80\xE2\x94\x90qxx");
+        TerminalScreen g1(10, 2);
+        g1.feed("\033)0a\016q\017q");
+        CHECK(g1.rowText(0) == "a\xE2\x94\x80q");
+        // REP repeats the last character.
+        TerminalScreen rep(10, 2);
+        rep.feed("-\033[4b|");
+        CHECK(rep.rowText(0) == "-----|");
+    }
+
+    GROUP("screen:modes-and-replies");
+    {
+        TerminalScreen s(10, 4);
+        CHECK(s.cursorVisible() && !s.appCursorKeys() && !s.bracketedPaste());
+        s.feed("\033[\?25l\033[\?1h\033=\033[\?2004h");
+        CHECK(!s.cursorVisible() && s.appCursorKeys() && s.appKeypad() &&
+              s.bracketedPaste());
+        s.feed("\033[\?1;2004l\033>\033[\?25h");        // several at once
+        CHECK(s.cursorVisible() && !s.appCursorKeys() && !s.appKeypad() &&
+              !s.bracketedPaste());
+        s.feed("\033[3;7H\033[6n\033[5n\033[c\033[>c\033[\?6n");
+        CHECK(s.takeReplies() == "\033[3;7R\033[0n\033[\?1;2c");
+        s.feed("\033]0;my title\007");
+        CHECK(s.title() == "my title");
+        // Private and intermediate sequences never reach SGR.
+        s.feed("\033[>4;2m\033[\?4m\033[0%m\033[2 qA");
+        CHECK(s.cell(2, 6).style == TermStyle() && s.cell(2, 6).ch == "A");
+        // Full reset.
+        s.feed("\033[31m\033[\?1049h\033c");
+        CHECK(!s.altScreen() && s.text().empty() && s.cursorRow() == 0);
+    }
+
+    GROUP("screen:resize");
+    {
+        TerminalScreen s(10, 4);
+        s.feed("one\r\ntwo\r\nthree\r\nfour");
+        s.resize(10, 2);                     // the cursor's line stays on screen
+        CHECK(s.text() == "three\nfour" && s.cursorRow() == 1 && s.cursorCol() == 4);
+        s.resize(3, 3);                      // columns are cut, rows added below
+        CHECK(s.text() == "thr\nfou" && s.cursorCol() == 2 && s.rows() == 3);
+        s.resize(6, 3);
+        CHECK(s.cols() == 6 && s.rowText(0) == "thr");
+        CHECK(s.scrollBottom() == 2);
+        // A wide character split by the new edge becomes a blank.
+        TerminalScreen w(4, 1);
+        w.feed("a\xE4\xB8\xAD");
+        w.resize(2, 1);
+        CHECK(w.rowText(0) == "a");
+        // The alternate screen resizes too.
+        TerminalScreen alt(10, 4);
+        alt.feed("\033[\?1049h\033[4;1Hlast");
+        alt.resize(8, 2);
+        CHECK(alt.altScreen() && alt.rowText(1) == "last");
+    }
+
+    GROUP("screen:selection-text");
+    {
+        auto s = screenAfter("abc\r\ndefgh\r\nij", 10, 3);
+        CHECK(s.textBetween(0, 1, 1, 2) == "bc\ndef");
+        CHECK(s.textBetween(1, 2, 0, 1) == "bc\ndef");     // either direction
+        CHECK(s.textBetween(2, 0, 2, 9) == "ij");
+        CHECK(s.textBetween(0, 0, 2, 9) == "abc\ndefgh\nij");
+    }
+
+    GROUP("screen:keys");
+    {
+        using K = TermKey;
+        CHECK(TerminalScreen::encodeKey(K::Up, 0, false) == "\033[A");
+        CHECK(TerminalScreen::encodeKey(K::Up, 0, true) == "\033OA");     // DECCKM
+        CHECK(TerminalScreen::encodeKey(K::Left, 0, true) == "\033OD");
+        CHECK(TerminalScreen::encodeKey(K::Home, 0, false) == "\033[H");
+        CHECK(TerminalScreen::encodeKey(K::End, 0, true) == "\033OF");
+        CHECK(TerminalScreen::encodeKey(K::Right, TermModCtrl, true) == "\033[1;5C");
+        CHECK(TerminalScreen::encodeKey(K::Down, TermModShift | TermModAlt, false) ==
+              "\033[1;4B");
+        CHECK(TerminalScreen::encodeKey(K::PageUp, 0, false) == "\033[5~");
+        CHECK(TerminalScreen::encodeKey(K::PageDown, TermModShift, false) == "\033[6;2~");
+        CHECK(TerminalScreen::encodeKey(K::Delete, 0, false) == "\033[3~");
+        CHECK(TerminalScreen::encodeKey(K::F1, 0, false) == "\033OP");
+        CHECK(TerminalScreen::encodeKey(K::F4, TermModCtrl, false) == "\033[1;5S");
+        CHECK(TerminalScreen::encodeKey(K::F5, 0, false) == "\033[15~");
+        CHECK(TerminalScreen::encodeKey(K::F12, 0, false) == "\033[24~");
+        CHECK(TerminalScreen::encodeKey(K::Enter, 0, false) == "\r");
+        CHECK(TerminalScreen::encodeKey(K::KeypadEnter, 0, false, true) == "\033OM");
+        CHECK(TerminalScreen::encodeKey(K::KeypadEnter, 0, false, false) == "\r");
+        CHECK(TerminalScreen::encodeKey(K::Backspace, 0, false) == "\x7f");
+        CHECK(TerminalScreen::encodeKey(K::Backspace, TermModAlt, false) == "\033\x7f");
+        CHECK(TerminalScreen::encodeKey(K::Tab, 0, false) == "\t");
+        CHECK(TerminalScreen::encodeKey(K::Tab, TermModShift, false) == "\033[Z");
+        CHECK(TerminalScreen::encodeKey(K::Escape, 0, false) == "\033");
+
+        CHECK(TerminalScreen::encodeChar('c', TermModCtrl) == "\x03");
+        CHECK(TerminalScreen::encodeChar('C', TermModCtrl) == "\x03");
+        CHECK(TerminalScreen::encodeChar('[', TermModCtrl) == "\033");
+        CHECK(TerminalScreen::encodeChar(' ', TermModCtrl) == std::string(1, '\0'));
+        CHECK(TerminalScreen::encodeChar('/', TermModCtrl) == "\x1f");
+        CHECK(TerminalScreen::encodeChar('b', TermModAlt) == "\033b");  // Meta
+        CHECK(TerminalScreen::encodeChar('x', TermModAlt | TermModCtrl) == "\033\x18");
+        CHECK(TerminalScreen::encodeChar(0xE9, 0) == "\xC3\xA9");
+        CHECK(TerminalScreen::encodePaste("a\nb\r\nc", false) == "a\rb\rc");
+        CHECK(TerminalScreen::encodePaste("x", true) == "\033[200~x\033[201~");
+        CHECK(TerminalScreen::encodePaste("x\033[201~y", true) == "\033[200~xy\033[201~");
     }
 }
 
@@ -1302,6 +1795,7 @@ int main() {
     testSyntax();
     testMarkdown();
     testTerminalStream();
+    testTerminalScreen();
     testSettings();
     testSettingsColorEditing();
     testLineComments();
