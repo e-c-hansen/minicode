@@ -414,9 +414,13 @@ edit, and a PDF would show only its first page.
   (autoscaled, single page continuous, editor background), with the page
   count in the title bar. `isPDF` is cleared by `resetViewMode`, blocks
   `saveCurrentFile:`, and `checkExternalChange` reloads it keeping the page,
-  point and (if the user zoomed) scale. Only compiled when added (1.3.2);
-  the GUI check was left to the user, who asked not to have test windows
-  popping up while they work.
+  point and (if the user zoomed) scale. Verified with a temporary
+  `MINICODE_PDFTEST` block (10 checks, including a pixel read and a reload
+  on disk change). That test found that `refreshDisplay` only relaid out when
+  a LatexView existed, so in a window that never opened a .tex, going from
+  an image or PDF to a text file left the image on screen; it now always
+  relays out. The user asked that test windows not pop up while they work:
+  ask before running one, and don't activate the app from a test.
 - Not yet: zoom and scrolling for large images, and the Linux side
   (`linux/src/Editor.cpp`, the `g_utf8_validate` branch; `GtkPicture` is the
   equivalent).

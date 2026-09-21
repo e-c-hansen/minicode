@@ -1756,7 +1756,10 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         [self showLatexPreview];
         return;
     }
-    if (self.latex) { self.latex.hidden = YES; [self relayoutRightArea]; }
+    // Always relay out: whatever held the editor's slot before (a PDF, an
+    // image, the LaTeX preview) has to give it back to the text view.
+    if (self.latex) self.latex.hidden = YES;
+    [self relayoutRightArea];
     if (self.isMarkdown && self.previewMode) {
         self.textView.editable = NO;
         [self renderMarkdown:self.sourceText];
