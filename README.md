@@ -112,7 +112,7 @@ There is also a make run target that opens the current directory, and you can pa
 
 ## A quick tour
 
-The repo includes a demo folder with a Python file, a C++ file, a Markdown file, a short LaTeX document in demo/paper, and a two file C++ example in demo/vec for trying clangd, so you can see the highlighting and the previews right away. Launch the app against it and click through the three files.
+The repo includes a demo folder with a Python file, a C++ file, a Markdown file, a short LaTeX document in demo/paper, and a two file C++ example in demo/vec for trying clangd, so you can see the highlighting and the previews right away. Launch the app against it and click through them.
 
 ```
 make run DIR=demo
