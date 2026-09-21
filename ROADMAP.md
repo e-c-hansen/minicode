@@ -33,13 +33,23 @@ renderer and `.tex` to the LaTeX preview. Modest effort, no new dependencies.
 Images are next; `CLAUDE.md` ("Next task") has the concrete plan and the
 traps in the open path.
 
-## LSP client
+## LSP client (done, with room to grow)
 
-Autocomplete, go-to-definition, and inline diagnostics by speaking the Language
-Server Protocol to servers the developer already has installed (clangd, pyright,
-gopls, ...). The client is light; the servers are external. This is the biggest
-single feature for making it a daily coding tool, and it fits the no-dependency
-thesis because MiniCode would only implement the JSON-RPC client.
+Shipped on macOS: completion, go to definition (F12 and Cmd+click), hover info,
+and diagnostics drawn as squiggles, from servers the user already has (clangd,
+pyright or pylsp, gopls, rust-analyzer, typescript-language-server). What is
+left, roughly in order of value:
+
+- Incremental sync (send the edit, not the whole file) for large files.
+- Find references, rename, and format document; all are one request each
+  on top of what exists.
+- Snippet completions (placeholders you tab through); v1 asks for plain text,
+  so a method completes without its parentheses.
+- Completion that opens while typing an identifier, not only after `.`, `->`
+  and `::` or Ctrl+Space.
+- A problems list for the whole folder, and a way back after go to definition.
+- The Linux port: the core (`Json`, `LspClient`) is portable; it needs a
+  GTK front end (GSubprocess for the server, GtkPopover for the list).
 
 ## Editor niceties
 

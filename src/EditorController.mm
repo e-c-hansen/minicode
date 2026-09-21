@@ -6,6 +6,7 @@
 #import "Latex.h"
 #import "Search.h"
 #import "AppSettings.h"
+#import "Lsp.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #include "SyntaxHighlighter.h"
 #include "MarkdownParser.h"
@@ -271,7 +272,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
 }
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) ClickOutline *outline;
-@property(nonatomic, strong) NSTextView *textView;
+@property(nonatomic, strong) CodeTextView *textView;
 @property(nonatomic, strong) NSTextField *statusLabel;
 @property(nonatomic, copy)   NSString *currentPath;
 @property(nonatomic, copy)   NSString *sourceText;   // raw file text (edited)
@@ -307,6 +308,8 @@ static NSColor *ColorForStyle(TokenStyle s) {
 @property(nonatomic, assign) BOOL showingMessage;   // welcome/binary text shown
 @property(nonatomic, assign) NSUInteger colorLineStart;   // line the color panel edits
 @property(nonatomic, copy)   NSString *colorEditPath;
+@property(nonatomic, strong) LspSession *lsp;         // language servers
+@property(nonatomic, strong) NSTextField *lspLabel;   // their status
 @end
 
 @implementation EditorController
@@ -396,7 +399,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     textScroll.autohidesScrollers = YES;
     textScroll.automaticallyAdjustsContentInsets = NO;
 
-    self.textView = [[NSTextView alloc] initWithFrame:frame];
+    self.textView = [[CodeTextView alloc] initWithFrame:frame];
     self.textView.editable = YES;
     self.textView.delegate = self;
     self.textView.richText = YES;
@@ -420,6 +423,18 @@ static NSColor *ColorForStyle(TokenStyle s) {
     self.textView.horizontallyResizable = YES;
     self.textView.textContainer.widthTracksTextView = YES;
     textScroll.documentView = self.textView;
+
+    // Language servers: completion, go to definition, error underlines.
+    self.lsp = [[LspSession alloc] initWithTextView:self.textView root:_root.path];
+    self.lsp.onStatus = ^(NSString *text) { weakSelf.lspLabel.stringValue = text; };
+    self.lsp.openFile = ^BOOL(NSString *p) {
+        EditorController *s = weakSelf;
+        if ([p hasPrefix:[s.rootPath stringByAppendingString:@"/"]])
+            [s revealPath:p andOpen:YES];
+        else
+            [s openFileAtPath:p];
+        return [s.currentPath isEqualToString:p];
+    };
 
     // Right side hosts the editor plus (lazily) a terminal dock and browser.
     self.rightArea = [[PanelHost alloc] initWithFrame:frame];
@@ -569,6 +584,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     self.statusBar.layer.backgroundColor = [cfg background:Surface::Statusbar].CGColor;
     self.statusLabel.textColor = [cfg text:Surface::Statusbar];
     self.settingsLabel.textColor = [cfg text:Surface::Statusbar];
+    self.lspLabel.textColor = [cfg text:Surface::Statusbar];
     NSArray<NSString *> *errors = cfg.errors;
     self.settingsLabel.stringValue = errors.count == 0 ? @"" :
         [NSString stringWithFormat:@"Settings %@%@", errors.firstObject,
@@ -650,6 +666,17 @@ static NSColor *ColorForStyle(TokenStyle s) {
     errors.lineBreakMode = NSLineBreakByTruncatingTail;
     self.settingsLabel = errors;
     [self.statusBar addSubview:errors];
+
+    // Middle: the language server for the open file and its problem count,
+    // right-aligned just left of the shortcuts hint.
+    NSTextField *lsp = [NSTextField labelWithString:@""];
+    lsp.font = [NSFont systemFontOfSize:11];
+    lsp.alignment = NSTextAlignmentRight;
+    lsp.lineBreakMode = NSLineBreakByTruncatingHead;
+    lsp.frame = NSMakeRect(container.bounds.size.width - 150 - 340, 3, 340, 16);
+    lsp.autoresizingMask = NSViewMinXMargin;
+    self.lspLabel = lsp;
+    [self.statusBar addSubview:lsp];
     [container addSubview:self.statusBar];
 }
 
@@ -785,7 +812,9 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     [self appendHintsRow:s key:@"⌘/" label:@"Toggle comment"
                     key2:@"⇧⌘F" label2:@"Find in folder" state:nil];
     [self appendHintsRow:s key:@"⌘," label:@"Settings"
-                    key2:nil label2:nil state:nil];
+                    key2:@"⌃Space" label2:@"Complete" state:nil];
+    [self appendHintsRow:s key:@"F12" label:@"Go to definition"
+                    key2:@"⌘I" label2:@"Hover info" state:nil];
 
     [self appendHintsHeading:@"Files" to:s];
     [self appendHintsRow:s key:@"⌃⌘N" label:@"New file"
@@ -1338,7 +1367,10 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
                                                  toPath:dst error:&err]) {
         [self warn:err.localizedDescription]; return;
     }
-    if ([self.currentPath isEqual:node.path]) self.currentPath = dst;  // keep editor in sync
+    if ([self.currentPath isEqual:node.path]) {   // keep editor in sync
+        self.currentPath = dst;
+        [self.lsp documentOpened:dst];
+    }
     [self refreshTree:nil];
     [self revealPath:dst andOpen:NO];
 }
@@ -1360,6 +1392,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     }
     if ([self.currentPath isEqual:node.path]) {   // the open file went away
         self.currentPath = nil; self.dirty = NO;
+        [self.lsp documentOpened:nil];
         [self showWelcome]; [self updateTitle];
     }
     [self refreshTree:nil];
@@ -1432,6 +1465,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
             @"Cannot display “%@”.\n\n(Binary file or unsupported encoding.)",
             path.lastPathComponent]];
         [self relayoutRightArea];
+        [self.lsp documentOpened:nil];
         [self updateTitle];
         [self setStatus:path];
         return;
@@ -1450,6 +1484,8 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     [_recent removeObject:path];
     [_recent insertObject:path atIndex:0];   // newest first
     [self refreshDisplay];
+    // Previews show rendered text, which no language server should see.
+    [self.lsp documentOpened:self.previewMode ? nil : path];
     [self updateTitle];
 }
 
@@ -1525,6 +1561,9 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 // -------------------------------------------------------- NSWindowDelegate
 - (BOOL)windowShouldClose:(NSWindow *)sender {
     return [self confirmProceedPastUnsavedChanges];
+}
+- (void)windowWillClose:(NSNotification *)note {
+    [self.lsp shutdown];   // never leave a server running for a closed window
 }
 - (void)windowDidBecomeKey:(NSNotification *)note {
     [self checkExternalChange];
@@ -1782,6 +1821,30 @@ static NSColor *ContrastColor(const Rgba &c) {
 }
 
 // -------------------------------------------------------------- editing hooks
+// Arrows, Return, Tab and Esc drive the completion list while it is open;
+// Option+Esc (complete:) asks the language server.
+- (BOOL)textView:(NSTextView *)tv doCommandBySelector:(SEL)sel {
+    (void)tv;
+    return [self.lsp handleCommand:sel];
+}
+
+// Ctrl+Space, F12, Cmd+I. The session beeps and says why when the file has
+// no language server.
+- (BOOL)lspActionAllowed {
+    if (self.window.firstResponder == self.textView && self.textView.editable) return YES;
+    NSBeep();
+    return NO;
+}
+- (void)triggerCompletion:(id)sender {
+    if ([self lspActionAllowed]) [self.lsp triggerCompletion];
+}
+- (void)goToDefinition:(id)sender {
+    if ([self lspActionAllowed]) [self.lsp goToDefinition];
+}
+- (void)showHoverInfo:(id)sender {
+    if ([self lspActionAllowed]) [self.lsp showHoverInfo];
+}
+
 - (void)textDidChange:(NSNotification *)note {
     self.sourceText = self.textView.string;
     if (!self.dirty) { self.dirty = YES; [self updateTitle]; }
@@ -1811,6 +1874,7 @@ static NSColor *ContrastColor(const Rgba &c) {
         self.sourceText = text;
         self.dirty = NO;
         [self recordModDate];   // so our own save doesn't look like an external change
+        [self.lsp documentSaved];
         [self updateTitle];
     } else {
         NSAlert *a = [NSAlert alertWithError:err];
@@ -1960,6 +2024,7 @@ static NSColor *ContrastColor(const Rgba &c) {
         [_root loadChildren];
         self.currentPath = nil;
         self.dirty = NO;
+        [self.lsp setRoot:dir];   // servers belong to the old folder
         [self.outline reloadData];
         [self showWelcome];
         [self.terminal setDirectory:dir];   // keep terminal cwd in sync

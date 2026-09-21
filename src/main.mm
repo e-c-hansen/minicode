@@ -1,6 +1,7 @@
 // main.mm — application bootstrap and menu bar. Objective-C++.
 #import <Cocoa/Cocoa.h>
 #import "EditorController.h"
+#import "Lsp.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
@@ -79,6 +80,11 @@
     return YES;
 }
 
+// Language servers are child processes; none may outlive the app.
+- (void)applicationWillTerminate:(NSNotification *)note {
+    MCLspTerminateAllServers();
+}
+
 // ------------------------------------------------------- window management
 - (EditorController *)openWindowAtPath:(NSString *)path {
     EditorController *c = [[EditorController alloc] initWithRootPath:path];
@@ -138,6 +144,9 @@
 - (void)refreshTree:(id)sender     { [[self current] refreshTree:sender]; }
 - (void)openSettings:(id)sender    { [[self current] openSettings:sender]; }
 - (void)toggleComment:(id)sender   { [[self current] toggleComment:sender]; }
+- (void)triggerCompletion:(id)sender { [[self current] triggerCompletion:sender]; }
+- (void)goToDefinition:(id)sender  { [[self current] goToDefinition:sender]; }
+- (void)showHoverInfo:(id)sender   { [[self current] showHoverInfo:sender]; }
 
 @end
 
@@ -236,6 +245,17 @@ static void BuildMenu(void) {
     [editMenu addItem:[NSMenuItem separatorItem]];
     [editMenu addItemWithTitle:@"Toggle Comment"
                         action:@selector(toggleComment:) keyEquivalent:@"/"];
+    // Language server completion. Ctrl+Space is also the system shortcut for
+    // switching input sources when more than one is enabled; Option+Esc
+    // (the text view's complete:) reaches the same list either way.
+    NSMenuItem *complete =
+        [[NSMenuItem alloc] initWithTitle:@"Complete"
+                                   action:@selector(triggerCompletion:)
+                            keyEquivalent:@" "];
+    complete.keyEquivalentModifierMask = NSEventModifierFlagControl;
+    [editMenu addItem:complete];
+    [editMenu addItemWithTitle:@"Show Hover Info"
+                        action:@selector(showHoverInfo:) keyEquivalent:@"i"];
     [editMenu addItem:[NSMenuItem separatorItem]];
 
     // Find bar (handled by NSTextView via performTextFinderAction:; the tag is
@@ -343,6 +363,14 @@ static void BuildMenu(void) {
                             keyEquivalent:@"\t"];
     prev.keyEquivalentModifierMask = NSEventModifierFlagControl;
     [navMenu addItem:prev];
+    // F12 as in most editors (fn+F12 on a laptop keyboard); Cmd+click works too.
+    NSMenuItem *definition =
+        [[NSMenuItem alloc] initWithTitle:@"Go to Definition"
+                                   action:@selector(goToDefinition:)
+                            keyEquivalent:[NSString stringWithFormat:@"%C",
+                                              (unichar)NSF12FunctionKey]];
+    definition.keyEquivalentModifierMask = 0;
+    [navMenu addItem:definition];
     navItem.submenu = navMenu;
 }
 
