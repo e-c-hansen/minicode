@@ -7,6 +7,8 @@
 #include "LineComments.h"
 #include "LatexDoc.h"
 #include "SyncTex.h"
+#include "Json.h"
+#include "LspClient.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -807,7 +809,8 @@ void testSettings() {
     // Every documented key, uncommented, is one the parser accepts, and its
     // documented value is the real default.
     std::string keys = uncommentKeys(Settings::defaultFileText());
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 33);   // 4 window, 18 panel, 7 syntax, 4 markdown
+    // 4 window, 18 panel, 7 syntax, 4 markdown, 6 lsp
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 39);
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -823,6 +826,34 @@ void testSettings() {
     for (int i = 0; i < kMarkdownColorCount; i++)
         CHECK(un.markdown((MarkdownColor)i) == d.markdown((MarkdownColor)i));
     CHECK(un.material() == d.material() && un.blur() == d.blur());
+    // The documented servers are the first ones the built-in search tries.
+    CHECK(un.lspEnabled() == d.lspEnabled());
+    for (const std::string &server : Settings::lspServers()) {
+        std::vector<std::string> cmds = Lsp::defaultCommands(server);
+        CHECK(!cmds.empty() && un.lspCommand(server) == cmds[0]);
+        CHECK(d.lspCommand(server).empty());
+    }
+
+    GROUP("settings:lsp");
+    std::vector<SettingsError> e5;
+    Settings ls = parseSettings(
+        "lsp.enabled = false\n"                             // 1
+        "lsp.python = pylsp -v --log-file /tmp/x  # log\n"  // 2 words + comment
+        "lsp.cpp = \"/opt/my tools/clangd\" --background-index\n"   // 3
+        "lsp.go = off\n"                                    // 4
+        "lsp.cobol = cobol-ls\n"                            // 5 unknown
+        "lsp.rust =\n"                                      // 6 no value
+        "lsp.enabled = sometimes\n",                        // 7 not a bool
+        &e5);
+    CHECK(!ls.lspEnabled());
+    CHECK(ls.lspCommand("python") == "pylsp -v --log-file /tmp/x");
+    CHECK(ls.lspCommand("cpp") == "\"/opt/my tools/clangd\" --background-index");
+    CHECK(ls.lspOff("go") && !ls.lspOff("python") && !ls.lspOff("rust"));
+    CHECK(ls.lspCommand("rust").empty());
+    CHECK(e5.size() == 3);
+    CHECK(e5.size() == 3 && e5[0].line == 5 && e5[1].line == 6 && e5[2].line == 7);
+    CHECK(!e5.empty() && e5[0].message.find("lsp.cobol") != std::string::npos);
+    CHECK(parseSettings("").lspEnabled());
 }
 
 }  // namespace
@@ -1297,6 +1328,512 @@ void testSyncTex() {
 
 }  // namespace
 
+// -------------------------------------------------------------------- JSON
+namespace {
+
+Json parsed(const std::string &text) {
+    Json j;
+    Json::parse(text, j);
+    return j;
+}
+
+void testJson() {
+    GROUP("json:parse");
+    Json j;
+    CHECK(Json::parse(" {\"a\": [1, 2.5, -3e2, true, false, null], \"b\": \"x\"} ", j));
+    CHECK(j.isObject() && j.size() == 2);
+    CHECK(j["a"].size() == 6);
+    CHECK(j["a"][0].asInt() == 1);
+    CHECK(j["a"][1].asNumber() == 2.5);
+    CHECK(j["a"][2].asNumber() == -300);
+    CHECK(j["a"][3].asBool() && !j["a"][4].asBool(true) && j["a"][5].isNull());
+    CHECK(j["b"].asString() == "x");
+    // Missing keys and out-of-range indexes read as null, never throw.
+    CHECK(j["nope"].isNull() && j["nope"]["deeper"][3].isNull());
+    CHECK(j["a"][99].isNull() && j["b"][0].isNull());
+    CHECK(j["b"].asInt(7) == 7 && j["a"].asString().empty());
+
+    GROUP("json:strings");
+    CHECK(parsed("\"a\\\"b\\\\c\\/d\\n\\t\"").asString() == "a\"b\\c/d\n\t");
+    CHECK(parsed("\"\\u00e9\"").asString() == "\xC3\xA9");                 // é
+    CHECK(parsed("\"\\u20AC\"").asString() == "\xE2\x82\xAC");             // €
+    CHECK(parsed("\"\\ud83d\\ude00\"").asString() == "\xF0\x9F\x98\x80");  // 😀 pair
+    CHECK(parsed("\"\\ud83d\"").asString() == "\xEF\xBF\xBD");  // lone high -> U+FFFD
+    CHECK(parsed("\"caf\xC3\xA9\"").asString() == "caf\xC3\xA9");  // raw UTF-8 kept
+
+    GROUP("json:errors");
+    std::string err;
+    CHECK(!Json::parse("", j, &err) && !err.empty());
+    CHECK(!Json::parse("{", j));
+    CHECK(!Json::parse("[1,]", j));
+    CHECK(!Json::parse("{\"a\" 1}", j));
+    CHECK(!Json::parse("01", j));
+    CHECK(!Json::parse("tru", j));
+    CHECK(!Json::parse("\"unterminated", j));
+    CHECK(!Json::parse("\"tab\there\"", j));   // raw control character
+    CHECK(!Json::parse("1 2", j));
+    CHECK(!Json::parse(std::string(300, '['), j));   // too deep, not a crash
+    Json keep = Json(5);
+    CHECK(!Json::parse("nope", keep) && keep.asInt() == 5);   // untouched on failure
+
+    GROUP("json:dump");
+    Json o = Json::object({{"id", 3}, {"name", "a\"b\n"}, {"ok", true}});
+    o.set("list", Json::array().push(1).push(Json()).push(1.5));
+    CHECK(o.dump() == "{\"id\":3,\"name\":\"a\\\"b\\n\",\"ok\":true,\"list\":[1,null,1.5]}");
+    CHECK(Json(std::string("\x01")).dump() == "\"\\u0001\"");
+    CHECK(Json(-42).dump() == "-42");
+    CHECK(Json::object().dump() == "{}" && Json::array().dump() == "[]");
+    o.set("id", 4);   // replaces in place, keeps order
+    CHECK(o.dump().rfind("{\"id\":4,", 0) == 0);
+    // Round trip.
+    Json back;
+    CHECK(Json::parse(o.dump(), back) && back == o);
+    CHECK(parsed("{\"a\":1,\"b\":2}") == parsed("{\"b\":2,\"a\":1}"));
+    CHECK(parsed("[1,2]") != parsed("[2,1]"));
+}
+
+// --------------------------------------------------------------------- LSP
+void testLspFraming() {
+    GROUP("lsp:framing");
+    std::string one = "{\"a\":1}", two = "{\"b\":\"\xC3\xA9\"}";   // é is 2 bytes
+    CHECK(Lsp::Framer::frame(one) == "Content-Length: 7\r\n\r\n{\"a\":1}");
+    CHECK(Lsp::Framer::frame(two).find("Content-Length: 10\r\n") == 0);
+
+    // Two messages in one read.
+    Lsp::Framer f;
+    f.feed(Lsp::Framer::frame(one) + Lsp::Framer::frame(two));
+    std::string body;
+    CHECK(f.next(body) && body == one);
+    CHECK(f.next(body) && body == two);
+    CHECK(!f.next(body));
+
+    // One message dribbled in a byte at a time, header and body both split.
+    std::string framed = Lsp::Framer::frame(two);
+    Lsp::Framer g;
+    int got = 0;
+    for (char c : framed) {
+        g.feed(&c, 1);
+        while (g.next(body)) { got++; CHECK(body == two); }
+    }
+    CHECK(got == 1 && g.buffered() == 0);
+
+    // Other headers, any case, and a message with an unusable header skipped.
+    Lsp::Framer h;
+    h.feed("content-type: application/vscode-jsonrpc; charset=utf-8\r\n"
+           "CONTENT-LENGTH:7\r\n\r\n{\"a\":1}"
+           "X-Nothing: 1\r\n\r\n"
+           "Content-Length: 2\r\n\r\n[]");
+    CHECK(h.next(body) && body == one);
+    CHECK(h.next(body) && body == "[]");
+    CHECK(!h.next(body));
+
+    // Many messages: the consumed prefix is dropped, not kept forever.
+    Lsp::Framer m;
+    bool all = true;
+    for (int i = 0; i < 1000; i++) {
+        m.feed(Lsp::Framer::frame(one));
+        if (!m.next(body) || body != one) all = false;
+    }
+    CHECK(all && m.buffered() == 0);
+}
+
+void testLspPositions() {
+    GROUP("lsp:positions");
+    using Lsp::Position;
+    std::u16string t = Lsp::toUtf16("ab\ncd\r\nef\rgh");
+    CHECK(Lsp::offsetForPosition(t, {0, 0}) == 0);
+    CHECK(Lsp::offsetForPosition(t, {0, 2}) == 2);
+    CHECK(Lsp::offsetForPosition(t, {0, 9}) == 2);    // clamps to the line end
+    CHECK(Lsp::offsetForPosition(t, {1, 1}) == 4);
+    CHECK(Lsp::offsetForPosition(t, {2, 0}) == 7);    // after \r\n
+    CHECK(Lsp::offsetForPosition(t, {3, 2}) == 12);   // after a lone \r
+    CHECK(Lsp::offsetForPosition(t, {9, 0}) == t.size());
+    CHECK(Lsp::positionForOffset(t, 0) == (Position{0, 0}));
+    CHECK(Lsp::positionForOffset(t, 4) == (Position{1, 1}));
+    CHECK(Lsp::positionForOffset(t, 7) == (Position{2, 0}));
+    CHECK(Lsp::positionForOffset(t, 11) == (Position{3, 1}));
+    CHECK(Lsp::positionForOffset(t, 999) == (Position{3, 2}));
+    // Round trip at every offset except inside \r\n.
+    bool roundTrip = true;
+    for (size_t i = 0; i <= t.size(); i++) {
+        if (i == 6) continue;   // between \r and \n
+        if (Lsp::offsetForPosition(t, Lsp::positionForOffset(t, i)) != i) roundTrip = false;
+    }
+    CHECK(roundTrip);
+
+    // UTF-16 code units: é is one unit, 😀 is two (a surrogate pair), exactly
+    // as NSString counts them. The server sees UTF-8, positions stay UTF-16.
+    std::u16string u = Lsp::toUtf16("caf\xC3\xA9 \xF0\x9F\x98\x80 x\nnext");
+    CHECK(u.size() == 14);
+    CHECK(Lsp::positionForOffset(u, 8) == (Position{0, 8}));    // the x
+    CHECK(u[8] == u'x');
+    CHECK(Lsp::offsetForPosition(u, {1, 0}) == 10);
+    CHECK(Lsp::toUtf8(u) == "caf\xC3\xA9 \xF0\x9F\x98\x80 x\nnext");
+    CHECK(Lsp::toUtf16("\xFF").size() == 1 && Lsp::toUtf16("\xFF")[0] == 0xFFFD);
+
+    GROUP("lsp:uri");
+    CHECK(Lsp::uriFromPath("/Users/me/a b/c#.cpp") ==
+          "file:///Users/me/a%20b/c%23.cpp");
+    CHECK(Lsp::pathFromUri("file:///Users/me/a%20b/c%23.cpp") == "/Users/me/a b/c#.cpp");
+    CHECK(Lsp::pathFromUri(Lsp::uriFromPath("/tmp/caf\xC3\xA9/x+y.h")) ==
+          "/tmp/caf\xC3\xA9/x+y.h");
+    CHECK(Lsp::uriFromPath("/tmp/caf\xC3\xA9") == "file:///tmp/caf%C3%A9");
+    CHECK(Lsp::pathFromUri("file://localhost/etc/hosts") == "/etc/hosts");
+    CHECK(Lsp::pathFromUri("FILE:///x%2") == "/x%2");   // bad escape kept literally
+    CHECK(Lsp::pathFromUri("https://example.com/x").empty());
+    CHECK(Lsp::pathFromUri("file:///a/b.cpp#L3") == "/a/b.cpp");
+}
+
+void testLspServers() {
+    GROUP("lsp:servers");
+    Lsp::Language l;
+    CHECK(Lsp::languageForExtension("cpp", l) && l.server == "cpp" && l.languageId == "cpp");
+    CHECK(Lsp::languageForExtension("C", l) && l.server == "cpp" && l.languageId == "c");
+    CHECK(Lsp::languageForExtension("mm", l) && l.languageId == "objective-cpp");
+    CHECK(Lsp::languageForExtension("h", l) && l.server == "cpp");
+    CHECK(Lsp::languageForExtension("py", l) && l.server == "python");
+    CHECK(Lsp::languageForExtension("go", l) && l.server == "go");
+    CHECK(Lsp::languageForExtension("rs", l) && l.server == "rust");
+    CHECK(Lsp::languageForExtension("tsx", l) && l.server == "typescript" &&
+          l.languageId == "typescriptreact");
+    CHECK(Lsp::languageForExtension("js", l) && l.languageId == "javascript");
+    CHECK(!Lsp::languageForExtension("md", l));
+    CHECK(!Lsp::languageForExtension("tex", l));
+    CHECK(!Lsp::languageForExtension("png", l));
+    CHECK(!Lsp::languageForExtension("", l));
+    CHECK((Lsp::defaultCommands("python") ==
+           std::vector<std::string>{"pyright-langserver --stdio", "pylsp"}));
+    CHECK(Lsp::defaultCommands("cobol").empty());
+    CHECK(Lsp::serverDisplayName("cpp") == "C/C++");
+    // Every server a file can map to is one the settings file knows.
+    for (const char *ext : {"c", "py", "go", "rs", "ts"}) {
+        Lsp::languageForExtension(ext, l);
+        CHECK(std::find(Settings::lspServers().begin(), Settings::lspServers().end(),
+                        l.server) != Settings::lspServers().end());
+    }
+
+    GROUP("lsp:split-command");
+    CHECK((Lsp::splitCommand("pyright-langserver --stdio") ==
+           std::vector<std::string>{"pyright-langserver", "--stdio"}));
+    CHECK((Lsp::splitCommand("  \"/opt/my tools/clangd\"  --log=error ") ==
+           std::vector<std::string>{"/opt/my tools/clangd", "--log=error"}));
+    CHECK((Lsp::splitCommand("a\\ b 'c \"d\"' \"e\\\"f\"") ==
+           std::vector<std::string>{"a b", "c \"d\"", "e\"f"}));
+    CHECK((Lsp::splitCommand("x ''") == std::vector<std::string>{"x", ""}));
+    CHECK(Lsp::splitCommand("   ").empty());
+}
+
+void testLspParsing() {
+    GROUP("lsp:diagnostics");
+    std::string uri;
+    std::vector<Lsp::Diagnostic> d = Lsp::parseDiagnostics(parsed(
+        "{\"uri\":\"file:///a.cpp\",\"diagnostics\":["
+        "{\"range\":{\"start\":{\"line\":2,\"character\":4},\"end\":{\"line\":2,\"character\":9}},"
+        " \"severity\":1,\"message\":\"use of undeclared identifier 'x'\",\"source\":\"clang\","
+        " \"code\":\"undeclared_var_use\"},"
+        "{\"range\":{\"start\":{\"line\":5,\"character\":0},\"end\":{\"line\":5,\"character\":1}},"
+        " \"severity\":2,\"message\":\"unused\",\"code\":42},"
+        "{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},"
+        " \"message\":\"no severity\"}]}"), &uri);
+    CHECK(uri == "file:///a.cpp");
+    CHECK(d.size() == 3);
+    CHECK(d.size() == 3 && d[0].range.start == (Lsp::Position{2, 4}) &&
+          d[0].range.end == (Lsp::Position{2, 9}));
+    CHECK(d.size() == 3 && d[0].severity == Lsp::Severity::Error && d[0].source == "clang");
+    CHECK(d.size() == 3 && d[1].severity == Lsp::Severity::Warning && d[1].code == "42");
+    CHECK(d.size() == 3 && d[2].severity == Lsp::Severity::Error);   // omitted -> error
+    CHECK(Lsp::parseDiagnostics(parsed("{\"uri\":\"u\",\"diagnostics\":[]}")).empty());
+
+    GROUP("lsp:completion");
+    bool incomplete = false;
+    std::vector<Lsp::CompletionItem> c = Lsp::parseCompletion(parsed(
+        "{\"isIncomplete\":true,\"items\":["
+        "{\"label\":\" size\",\"sortText\":\"2\",\"kind\":2,\"detail\":\"int\","
+        " \"textEdit\":{\"range\":{\"start\":{\"line\":3,\"character\":6},"
+        "\"end\":{\"line\":3,\"character\":6}},\"newText\":\"size()\"}},"
+        "{\"label\":\"\xE2\x80\xA2" "push_back\",\"sortText\":\"1\",\"insertText\":\"push_back\"},"
+        "{\"label\":\"empty\",\"filterText\":\"isEmpty\"},"
+        "{\"label\":\"\"},"
+        "{\"label\":\"at\",\"textEdit\":{\"insert\":{\"start\":{\"line\":1,\"character\":2},"
+        "\"end\":{\"line\":1,\"character\":3}},\"replace\":{\"start\":{\"line\":1,\"character\":2},"
+        "\"end\":{\"line\":1,\"character\":5}},\"newText\":\"at\"}}]}"), &incomplete);
+    CHECK(incomplete);
+    CHECK(c.size() == 4);   // the empty label is dropped
+    // Sorted by sortText, falling back to the label: "1", "2", "at", "empty".
+    CHECK(c.size() == 4 && c[0].label == "push_back" && c[1].label == "size");
+    CHECK(c.size() == 4 && c[2].label == "at" && c[3].label == "empty");
+    CHECK(c.size() == 4 && c[1].hasEdit && c[1].textToInsert() == "size()" &&
+          c[1].editRange.start == (Lsp::Position{3, 6}));
+    CHECK(c.size() == 4 && c[0].textToInsert() == "push_back" && !c[0].hasEdit);
+    CHECK(c.size() == 4 && c[3].textToInsert() == "empty" && c[3].filterKey() == "isEmpty");
+    CHECK(c.size() == 4 && c[2].hasEdit && c[2].editRange.end == (Lsp::Position{1, 3}));
+    CHECK(c.size() == 4 && c[1].detail == "int" && c[1].kind == 2);
+    // A bare array, and null.
+    CHECK(Lsp::parseCompletion(parsed("[{\"label\":\"x\"}]"), &incomplete).size() == 1 &&
+          !incomplete);
+    CHECK(Lsp::parseCompletion(Json()).empty());
+
+    GROUP("lsp:completion-filter");
+    std::vector<Lsp::CompletionItem> all = Lsp::parseCompletion(parsed(
+        "[{\"label\":\"push_back\"},{\"label\":\"pop_back\"},{\"label\":\"size\"},"
+        "{\"label\":\"Capacity\"},{\"label\":\"reserve\"}]"));
+    auto labels = [](const std::vector<Lsp::CompletionItem> &v) {
+        std::string s;
+        for (const auto &i : v) s += i.label + " ";
+        return s;
+    };
+    CHECK(Lsp::filterCompletions(all, "").size() == 5);
+    CHECK(labels(Lsp::filterCompletions(all, "p")) == "pop_back push_back Capacity ");
+    CHECK(labels(Lsp::filterCompletions(all, "cap")) == "Capacity ");   // any case
+    CHECK(labels(Lsp::filterCompletions(all, "pb")) == "pop_back push_back ");
+    // Prefix matches come before subsequence matches.
+    CHECK(labels(Lsp::filterCompletions(all, "s")) == "size push_back reserve ");
+    CHECK(Lsp::filterCompletions(all, "zz").empty());
+
+    GROUP("lsp:hover");
+    CHECK(Lsp::parseHover(parsed(
+        "{\"contents\":{\"kind\":\"plaintext\",\"value\":\"int x\\n\\nA count.\"}}")) ==
+          "int x\n\nA count.");
+    CHECK(Lsp::parseHover(parsed(
+        "{\"contents\":{\"kind\":\"markdown\",\"value\":\"### x\\n```cpp\\nint x\\n```\\n"
+        "Uses \\\\_under\\\\_\"}}")) == "### x\nint x\nUses _under_");
+    CHECK(Lsp::parseHover(parsed(
+        "{\"contents\":[{\"language\":\"python\",\"value\":\"def f()\"},\"Docs.\",\"\"]}")) ==
+          "def f()\n\nDocs.");
+    CHECK(Lsp::parseHover(parsed("{\"contents\":\"plain\"}")) == "plain");
+    CHECK(Lsp::parseHover(Json()).empty());
+
+    GROUP("lsp:definition");
+    std::vector<Lsp::Location> loc = Lsp::parseLocations(parsed(
+        "{\"uri\":\"file:///a.h\",\"range\":{\"start\":{\"line\":4,\"character\":7},"
+        "\"end\":{\"line\":4,\"character\":12}}}"));
+    CHECK(loc.size() == 1 && loc[0].uri == "file:///a.h" &&
+          loc[0].range.start == (Lsp::Position{4, 7}));
+    loc = Lsp::parseLocations(parsed(
+        "[{\"targetUri\":\"file:///b.h\","
+        "\"targetRange\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":9,\"character\":1}},"
+        "\"targetSelectionRange\":{\"start\":{\"line\":2,\"character\":6},"
+        "\"end\":{\"line\":2,\"character\":9}}},"
+        "{\"uri\":\"file:///c.h\",\"range\":{\"start\":{\"line\":0,\"character\":0},"
+        "\"end\":{\"line\":0,\"character\":1}}}]"));
+    CHECK(loc.size() == 2 && loc[0].uri == "file:///b.h" &&
+          loc[0].range.start == (Lsp::Position{2, 6}));   // the name, not the body
+    CHECK(loc.size() == 2 && loc[1].uri == "file:///c.h");
+    CHECK(Lsp::parseLocations(Json()).empty());
+    CHECK(Lsp::parseLocations(parsed("[]")).empty());
+}
+
+// A scripted exchange: everything the client writes is collected and parsed
+// back, and the "server" answers by feeding framed replies to receive().
+struct FakeServer {
+    std::vector<Json> sent;
+    Lsp::Framer framer;
+    void take(const std::string &bytes) {
+        framer.feed(bytes);
+        std::string body;
+        while (framer.next(body)) sent.push_back(parsed(body));
+    }
+    std::vector<std::string> methods() const {
+        std::vector<std::string> m;
+        for (const Json &j : sent) m.push_back(j["method"].asString());
+        return m;
+    }
+};
+
+std::string reply(int id, const std::string &resultJson) {
+    return Lsp::Framer::frame("{\"jsonrpc\":\"2.0\",\"id\":" + std::to_string(id) +
+                              ",\"result\":" + resultJson + "}");
+}
+
+void testLspClient() {
+    GROUP("lsp:client-handshake");
+    FakeServer srv;
+    Lsp::Client client([&](const std::string &b) { srv.take(b); });
+    bool ready = false;
+    client.onReady = [&] { ready = true; };
+    CHECK(client.state() == Lsp::Client::State::Idle);
+
+    client.initialize("/Users/me/my proj", 1234);
+    CHECK(client.state() == Lsp::Client::State::Initializing);
+    CHECK(srv.sent.size() == 1);
+    const Json &init = srv.sent[0];
+    CHECK(init["method"].asString() == "initialize" && init["id"].asInt() == 1);
+    CHECK(init["jsonrpc"].asString() == "2.0");
+    CHECK(init["params"]["processId"].asInt() == 1234);
+    CHECK(init["params"]["rootUri"].asString() == "file:///Users/me/my%20proj");
+    CHECK(init["params"]["workspaceFolders"][0]["name"].asString() == "my proj");
+    CHECK(!init["params"]["capabilities"]["textDocument"]["completion"]
+                ["completionItem"]["snippetSupport"].asBool(true));
+
+    // Before the server answers, document traffic and requests wait.
+    client.didOpen("file:///a.cpp", "cpp", "int x;");
+    int hoverResult = 0;
+    int hid = client.hover("file:///a.cpp", {0, 4}, [&](const Json &r, const Json &) {
+        hoverResult = (int)r["n"].asInt();
+    });
+    CHECK(srv.sent.size() == 1 && client.queuedMessages() == 2);
+
+    // A server request arriving mid-handshake is answered right away.
+    client.receive(Lsp::Framer::frame(
+        "{\"jsonrpc\":\"2.0\",\"id\":\"p1\",\"method\":\"window/workDoneProgress/create\","
+        "\"params\":{}}"));
+    CHECK(srv.sent.size() == 2 && srv.sent[1]["id"].asString() == "p1" &&
+          srv.sent[1].has("result"));
+
+    client.receive(reply(1, "{\"capabilities\":{\"textDocumentSync\":{\"save\":"
+                            "{\"includeText\":true}},\"completionProvider\":"
+                            "{\"triggerCharacters\":[\".\",\">\",\":\"]}},"
+                            "\"serverInfo\":{\"name\":\"clangd\"}}"));
+    CHECK(ready && client.state() == Lsp::Client::State::Ready);
+    CHECK(client.serverName() == "clangd");
+    CHECK((client.completionTriggers() == std::vector<std::string>{".", ">", ":"}));
+    CHECK((srv.methods() == std::vector<std::string>{
+        "initialize", "", "initialized", "textDocument/didOpen", "textDocument/hover"}));
+    CHECK(client.queuedMessages() == 0);
+    CHECK(srv.sent.size() == 5 &&
+          srv.sent[3]["params"]["textDocument"]["text"].asString() == "int x;" &&
+          srv.sent[3]["params"]["textDocument"]["version"].asInt() == 1 &&
+          srv.sent[3]["params"]["textDocument"]["languageId"].asString() == "cpp");
+    CHECK(srv.sent.size() == 5 && srv.sent[4]["id"].asInt() == hid);
+
+    GROUP("lsp:client-sync");
+    size_t before = srv.sent.size();
+    client.didChange("file:///a.cpp", "int x;");   // unchanged: nothing sent
+    CHECK(srv.sent.size() == before);
+    client.didChange("file:///other.cpp", "x");    // not open: nothing sent
+    CHECK(srv.sent.size() == before);
+    client.didChange("file:///a.cpp", "int xy;");
+    CHECK(srv.sent.size() == before + 1);
+    const Json &ch = srv.sent.back();
+    CHECK(ch["method"].asString() == "textDocument/didChange");
+    CHECK(ch["params"]["textDocument"]["version"].asInt() == 2);
+    CHECK(ch["params"]["contentChanges"][0]["text"].asString() == "int xy;");
+    CHECK(client.version("file:///a.cpp") == 2);
+    // Save sends pending text first, and includes it because the server asked.
+    client.didSave("file:///a.cpp", "int xyz;");
+    CHECK((srv.methods().back() == "textDocument/didSave"));
+    CHECK(srv.sent.back()["params"]["text"].asString() == "int xyz;");
+    CHECK(srv.sent[srv.sent.size() - 2]["method"].asString() == "textDocument/didChange");
+    CHECK(client.version("file:///a.cpp") == 3);
+    // Opening an open document again is a change, not a second didOpen.
+    client.didOpen("file:///a.cpp", "cpp", "int q;");
+    CHECK(srv.methods().back() == "textDocument/didChange");
+
+    GROUP("lsp:client-responses");
+    // Responses out of order each reach their own handler.
+    std::string order;
+    int a = client.definition("file:///a.cpp", {0, 4}, [&](const Json &r, const Json &) {
+        order += "a" + std::to_string(r.size());
+    });
+    int b = client.completion("file:///a.cpp", {0, 5}, [&](const Json &r, const Json &e) {
+        order += "b" + std::to_string(r.size()) + (e.isNull() ? "" : "E");
+    }, ".");
+    CHECK(srv.sent.back()["params"]["context"]["triggerKind"].asInt() == 2);
+    CHECK(srv.sent.back()["params"]["context"]["triggerCharacter"].asString() == ".");
+    CHECK(srv.sent.back()["params"]["position"]["character"].asInt() == 5);
+    client.receive(Lsp::Framer::frame(
+        "{\"jsonrpc\":\"2.0\",\"id\":" + std::to_string(b) +
+        ",\"error\":{\"code\":-32603,\"message\":\"boom\"}}") + reply(a, "[1,2]"));
+    CHECK(order == "b0Ea2");
+    client.receive(reply(hid, "{\"n\":7}"));   // the request queued before Ready
+    CHECK(hoverResult == 7);
+    // A reply nobody asked for is ignored.
+    client.receive(reply(999, "null"));
+    CHECK(client.pendingRequests() == 0);
+
+    // Cancelled requests never reach their handler.
+    bool ran = false;
+    int c = client.hover("file:///a.cpp", {0, 0}, [&](const Json &, const Json &) { ran = true; });
+    client.cancel(c);
+    CHECK(srv.methods().back() == "$/cancelRequest" &&
+          srv.sent.back()["params"]["id"].asInt() == c);
+    client.receive(reply(c, "{}"));
+    CHECK(!ran);
+
+    GROUP("lsp:client-notifications");
+    std::string diagUri;
+    size_t diagCount = 0;
+    client.onDiagnostics = [&](const std::string &u, const std::vector<Lsp::Diagnostic> &d) {
+        diagUri = u;
+        diagCount = d.size();
+    };
+    // A garbled message is reported, and the next one still gets through.
+    std::string problem;
+    client.onProtocolError = [&](const std::string &p) { problem = p; };
+    client.receive(Lsp::Framer::frame("{not json") + Lsp::Framer::frame(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":"
+        "{\"uri\":\"file:///a.cpp\",\"diagnostics\":[{\"range\":{\"start\":{\"line\":0,"
+        "\"character\":0},\"end\":{\"line\":0,\"character\":3}},\"message\":\"m\"}]}}"));
+    CHECK(!problem.empty());
+    CHECK(diagUri == "file:///a.cpp" && diagCount == 1);
+
+    // Server requests: configuration gets one null per item; unknown methods
+    // get MethodNotFound so the server isn't left waiting.
+    client.receive(Lsp::Framer::frame(
+        "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"workspace/configuration\","
+        "\"params\":{\"items\":[{},{}]}}"));
+    CHECK(srv.sent.back()["id"].asInt() == 5 && srv.sent.back()["result"].size() == 2);
+    client.receive(Lsp::Framer::frame(
+        "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"workspace/applyEdit\",\"params\":{}}"));
+    CHECK(srv.sent.back()["id"].asInt() == 6 &&
+          srv.sent.back()["error"]["code"].asInt() == -32601);
+
+    GROUP("lsp:client-close-shutdown");
+    client.didClose("file:///a.cpp");
+    CHECK(srv.methods().back() == "textDocument/didClose" && !client.isOpen("file:///a.cpp"));
+    before = srv.sent.size();
+    client.didClose("file:///a.cpp");   // twice: nothing
+    CHECK(srv.sent.size() == before);
+
+    bool done = false;
+    client.shutdown([&] { done = true; });
+    CHECK(client.state() == Lsp::Client::State::ShuttingDown);
+    int sid = (int)srv.sent.back()["id"].asInt();
+    CHECK(srv.methods().back() == "shutdown" && !done);
+    // Nothing else goes out while shutting down.
+    before = srv.sent.size();
+    client.didOpen("file:///b.cpp", "cpp", "x");
+    CHECK(client.hover("file:///b.cpp", {0, 0}, nullptr) == 0);
+    CHECK(srv.sent.size() == before);
+    client.receive(reply(sid, "null"));
+    CHECK(done && client.state() == Lsp::Client::State::Exited);
+    CHECK(srv.methods().back() == "exit");
+    before = srv.sent.size();
+    client.receive(Lsp::Framer::frame("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"x\"}"));
+    CHECK(srv.sent.size() == before);   // an exited client answers nothing
+
+    GROUP("lsp:client-exit-now");
+    FakeServer s2;
+    Lsp::Client quick([&](const std::string &b) { s2.take(b); });
+    quick.initialize("/p", 1);
+    quick.exitNow();   // before the handshake: exit only
+    CHECK((s2.methods() == std::vector<std::string>{"initialize", "exit"}));
+    FakeServer s3;
+    Lsp::Client ready3([&](const std::string &b) { s3.take(b); });
+    ready3.initialize("/p", 1);
+    ready3.receive(reply(1, "{\"capabilities\":{}}"));
+    ready3.exitNow();   // after it: shutdown and exit together, without waiting
+    CHECK((s3.methods() == std::vector<std::string>{"initialize", "initialized",
+                                                    "shutdown", "exit"}));
+    bool d3 = false;
+    ready3.shutdown([&] { d3 = true; });   // already exited: done at once
+    CHECK(d3);
+
+    // A failed initialize leaves the client exited, not waiting forever.
+    FakeServer s4;
+    Lsp::Client bad([&](const std::string &b) { s4.take(b); });
+    std::string why;
+    bad.onProtocolError = [&](const std::string &p) { why = p; };
+    bad.initialize("/p", 1);
+    bad.didOpen("file:///x.py", "python", "x");
+    bad.receive(Lsp::Framer::frame(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-1,\"message\":\"no\"}}"));
+    CHECK(bad.state() == Lsp::Client::State::Exited && why.find("no") != std::string::npos);
+    CHECK(s4.sent.size() == 1 && bad.queuedMessages() == 0);
+}
+
+}  // namespace
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
@@ -1307,6 +1844,12 @@ int main() {
     testLineComments();
     testLatexDoc();
     testSyncTex();
+    testJson();
+    testLspFraming();
+    testLspPositions();
+    testLspServers();
+    testLspParsing();
+    testLspClient();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -14,6 +14,7 @@
 #pragma once
 #include "SyntaxHighlighter.h"   // TokenStyle
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -105,6 +106,17 @@ public:
     // would sit there as a solid strip).
     bool customTitlebar() const;
 
+    // Language servers. lsp.enabled turns the whole client on or off (on by
+    // default). lsp.<server> names the command for one server key (cpp,
+    // python, go, rust, typescript): a whole command line, arguments and all,
+    // unlike every other value. "" when the file names none, so the built-in
+    // search applies.
+    bool lspEnabled() const { return lspEnabled_; }
+    std::string lspCommand(const std::string& server) const;
+    // lsp.<server> = off (or none, false): leave that language alone.
+    bool lspOff(const std::string& server) const;
+    static const std::vector<std::string>& lspServers();
+
 private:
     struct SurfaceSettings {
         std::optional<Rgba> background, text;
@@ -118,6 +130,8 @@ private:
     std::optional<Rgba> syntax_[8];
     std::optional<Rgba> markdown_[kMarkdownColorCount];
     bool titlebarKeySet_ = false;
+    bool lspEnabled_ = true;
+    std::map<std::string, std::string> lspCommands_;
 
     bool apply(const std::string& key, const std::string& value,
                std::string& error);

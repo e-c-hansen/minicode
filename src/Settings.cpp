@@ -210,6 +210,21 @@ Settings Settings::parse(const std::string& text,
         std::string rest = trim(line.substr(eq + 1));
         if (key.empty()) { fail("missing key before '='"); continue; }
 
+        // A language server command is a whole command line, so it runs to
+        // the end of the line or to a " #" comment.
+        if (key.rfind("lsp.", 0) == 0 && key != "lsp.enabled") {
+            size_t hash = rest.find(" #");
+            std::string command = trim(hash == std::string::npos ? rest
+                                                                 : rest.substr(0, hash));
+            if (command.empty() || command[0] == '#') {
+                fail("missing value for " + key);
+                continue;
+            }
+            std::string msg;
+            if (!st.apply(key, command, msg)) fail(msg);
+            continue;
+        }
+
         // The value is one word; anything after it must be a comment.
         size_t end = 0;
         while (end < rest.size() && !std::isspace((unsigned char)rest[end])) end++;
@@ -259,6 +274,22 @@ bool Settings::apply(const std::string& key, const std::string& value,
         for (const char* name : kMaterials)
             if (m == name) { material_ = m; return true; }
         error = "unknown material '" + value + "'";
+        return false;
+    }
+
+    if (key == "lsp.enabled") {
+        if (!parseBool(value, lspEnabled_)) {
+            error = "'" + value + "' is not true or false";
+            return false;
+        }
+        return true;
+    }
+    if (key.rfind("lsp.", 0) == 0) {
+        std::string server = key.substr(4);
+        for (const std::string& known : lspServers())
+            if (server == known) { lspCommands_[server] = value; return true; }
+        error = "unknown setting '" + key + "' (language servers are lsp.cpp, "
+                "lsp.python, lsp.go, lsp.rust and lsp.typescript)";
         return false;
     }
 
@@ -366,6 +397,22 @@ bool Settings::customTitlebar() const {
     return titlebarKeySet_ || !windowIsOpaque();
 }
 
+const std::vector<std::string>& Settings::lspServers() {
+    static const std::vector<std::string> servers = {"cpp", "python", "go", "rust",
+                                                     "typescript"};
+    return servers;
+}
+
+std::string Settings::lspCommand(const std::string& server) const {
+    auto it = lspCommands_.find(server);
+    return it == lspCommands_.end() ? "" : it->second;
+}
+
+bool Settings::lspOff(const std::string& server) const {
+    std::string v = lower(lspCommand(server));
+    return v == "off" || v == "none" || v == "false";
+}
+
 const char* Settings::defaultFileText() {
     return R"CONF(# MiniCode settings
 #
@@ -433,5 +480,19 @@ const char* Settings::defaultFileText() {
 # markdown.link = #4EA1F7
 # markdown.code = #CE9178
 # markdown.quote = #9CA3AF
+
+# Language servers, for completion, go to definition and error underlines
+# (macOS only for now). MiniCode only talks to them, so install the ones you
+# want; clangd comes with the Xcode command line tools. When a file of that
+# language is opened, its server is looked for on PATH and in the Homebrew
+# folders. Give a command to use a different server or an absolute path, or
+# off to leave a language alone. For Python, pylsp is tried when pyright is
+# not installed.
+# lsp.enabled = true
+# lsp.cpp = clangd
+# lsp.python = pyright-langserver --stdio
+# lsp.go = gopls
+# lsp.rust = rust-analyzer
+# lsp.typescript = typescript-language-server --stdio
 )CONF";
 }
