@@ -17,7 +17,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/Settings.cpp src/LineComments.cpp \
             src/LatexDoc.cpp src/SyncTex.cpp src/Json.cpp src/LspClient.cpp
 
-.PHONY: all app run test dmg clean
+.PHONY: all app run test dmg clean demos
 
 all: app
 
@@ -67,6 +67,18 @@ icon:
 	@cp /tmp/mc_icon.png /tmp/mc.iconset/icon_512x512@2x.png
 	@iconutil -c icns /tmp/mc.iconset -o resources/AppIcon.icns
 	@echo "Regenerated resources/AppIcon.icns"
+
+# Record the README's demo GIFs (docs/demos/*.gif) by playing scripted scenes
+# in the real app; see src/Demo.mm and scripts/demos.sh. Windows appear on
+# screen while it runs. `make demos SCENES="tour latex"` records just those;
+# POSTERS=1 also writes a still PNG of each.
+build/makegif: tools/makegif.m
+	@mkdir -p build
+	clang -fobjc-arc -Wall -Wextra -O2 -framework Cocoa \
+		-framework UniformTypeIdentifiers tools/makegif.m -o build/makegif
+
+demos: app build/makegif
+	POSTERS=$(POSTERS) ./scripts/demos.sh $(SCENES)
 
 # Package the app into a distributable (unsigned) disk image.
 dmg:

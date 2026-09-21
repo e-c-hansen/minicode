@@ -2,6 +2,7 @@
 #import <Cocoa/Cocoa.h>
 #import "EditorController.h"
 #import "Lsp.h"
+#import "Demo.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
@@ -74,6 +75,7 @@
     EditorController *c = [self openWindowAtPath:root];
     if (file) [c revealPath:file andOpen:YES];
     [NSApp activateIgnoringOtherApps:YES];
+    MCDemoStart(c);   // no-op unless MINICODE_DEMO is set (make demos)
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)a {
@@ -377,6 +379,7 @@ static void BuildMenu(void) {
 int main(int argc, const char *argv[]) {
     (void)argc; (void)argv;   // args are read via NSProcessInfo
     @autoreleasepool {
+        if (MCDemoListScenes()) return 0;   // MINICODE_DEMO=list
         NSApplication *app = [NSApplication sharedApplication];
         [app setActivationPolicy:NSApplicationActivationPolicyRegular];
         AppDelegate *delegate = [[AppDelegate alloc] init];

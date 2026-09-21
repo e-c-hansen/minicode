@@ -4,6 +4,10 @@ MiniCode is a small code editor for macOS, written from scratch in C++ and Objec
 
 I built it because I wanted a lightweight place to browse a folder, read and edit files with syntax highlighting, preview Markdown and LaTeX, and have a terminal and a browser one keystroke away, without pulling in a few hundred megabytes of runtime to do it.
 
+![Clicking through the demo folder in MiniCode](docs/demos/tour.gif)
+
+Clicking through the demo folder: the README rendered, then shown as source with Shift Command P, a line added to hello.py and saved, and then sample.cpp.
+
 ## What it does
 
 You open a folder and get a file tree on the left, much like the explorer in VS Code. Click a file and it opens in the main pane. The tree is live, so anything you create, rename, or delete elsewhere, in the built in terminal, in git, or in another program, shows up on its own within a moment, because it watches the folder with FSEvents rather than taking a one time snapshot. You can also manage files from the tree directly, right click for new file, new folder, rename, move to trash, and reveal in Finder, or use the same items from the File menu. Source files are syntax highlighted based on their extension, so Python, C, C++, Objective-C, JavaScript, TypeScript, JSON, shell scripts, and a handful of others get colored keywords, strings, comments, numbers, and so on. Markdown files render as formatted text right in the window, and you can flip between the rendered view and the raw source when you want to edit them. LaTeX files are typeset to a PDF in the same pane, and you can edit the document by double clicking the text on the page.
@@ -12,6 +16,10 @@ Files are editable, not just viewable. Type into a file and the highlighting upd
 
 There is a terminal you can pull up at the bottom with Control backtick, and you can drag the bar above it to resize. It runs a single persistent zsh session on a real pseudo terminal, with your own startup files loaded, so aliases and functions from your .zshrc are there and state carries across commands. Output streams in as it is printed, Control C interrupts whatever is running, and programs that ask for input get it, including password prompts, which switch the input line to hidden text. A command that fails shows its exit status underneath. It keeps your command history on the up and down arrows, and clicking anywhere in the panel drops the cursor on the input line. Colors come through, so git, ls, test runners, and anything else that styles its output look the way they do in any other terminal, and progress lines that redraw themselves update in place. Ordinary output is kept as a scrolling log you can select and copy from. When a program wants the whole screen, vim, less, man, htop, git log with its pager, a Python prompt, or an ssh session, the panel switches to a real character grid for as long as that program needs it, and your keys go straight to it: arrows, Tab, Escape, the function keys, Control letters, and Option as Meta. Command shortcuts still reach the menus, so Command C copies a selection you drag in the grid and Command V pastes. When the program exits, the log comes back exactly as you left it. There is also an embedded browser you can toggle with Shift Command B, which is a real WebKit view with a URL bar and back, forward, and reload buttons.
 
+![The terminal panel running ls, git log and a Python script](docs/demos/terminal.gif)
+
+The terminal under a Python file, running ls, git log and the script itself, with the colors each command prints.
+
 If you ever forget a shortcut, press Shift Command H and a small panel lists the ones available in your current context. The panel is aware of what you are doing, so the preview toggle only shows up when a Markdown or LaTeX file is open, for instance.
 
 ## LaTeX
@@ -19,6 +27,10 @@ If you ever forget a shortcut, press Shift Command H and a small panel lists the
 Open a .tex file and MiniCode typesets it and shows you the PDF, right where the editor sits. Shift Command P flips between the typeset page and the source, the same way it does for Markdown. Every time the document changes it is typeset again, which takes well under a second for a short paper.
 
 The interesting part is that the preview is not read only. Double click a piece of text on the page, a title, a heading, a sentence, a table cell, a list entry, or an equation, and a small editor opens holding the LaTeX that produced it. Change it, press Return, and that text is replaced in your document and the page is typeset again. When you click inside a list, the editor also offers to add an entry, which writes a new item after the one you clicked, indented to match the ones around it.
+
+![Editing a list entry by double clicking it in the typeset page](docs/demos/latex.gif)
+
+Double clicking a list entry in the PDF, rewriting it, and pressing Return. The page is typeset again, and Shift Command P shows the edit sitting in the source.
 
 What you type in that editor is LaTeX, not plain text, so you can write \\emph{like this}, and a stray percent sign or ampersand needs its backslash the way it would anywhere else. An edit only ever replaces the bytes of the piece you clicked; the document is never regenerated from a model of it, so macros, packages and anything else MiniCode does not understand cannot be disturbed by an edit somewhere else in the file. Edits mark the buffer as changed, like typing does, and nothing is written to disk until you press Command S.
 
@@ -50,6 +62,10 @@ titlebar.opacity = 0.4
 ```
 
 You don't need to think in hex codes. In the settings file every color is shown as a small swatch of itself, and clicking one opens the macOS color picker. As you pick, the line is rewritten, switched on if it was commented out, and saved, so the window changes while you drag around the color wheel. The opacity slider in the picker writes the alpha channel too.
+
+![Picking new colors for the file tree, the editor and the status bar](docs/demos/settings.gif)
+
+Picking new colors for the file tree, the editor and the status bar from their swatches. Each line is saved as it changes, and the window follows along.
 
 If a line has a mistake in it, that line is ignored, and the status bar says which line and why. The rest of the file still applies. The system menu bar at the very top of the screen belongs to macOS, so apps cannot change it, but the window's own title bar is fully configurable.
 
@@ -88,13 +104,28 @@ There is also a make run target that opens the current directory, and you can pa
 
 ## A quick tour
 
-The repo includes a demo folder with a Python file, a C++ file, and a Markdown file, so you can see the highlighting and the Markdown rendering right away. Launch the app against it and click through the three files.
+The repo includes a demo folder with a Python file, a C++ file, a Markdown file, and a short LaTeX document in demo/paper, so you can see the highlighting and the previews right away. Launch the app against it and click through the three files.
 
 ```
 make run DIR=demo
 ```
 
 Click hello.py and sample.cpp to see the syntax coloring, then click README.md to see it rendered. Press Shift Command P to switch that Markdown file to its raw source, make an edit, save with Command S, and press Shift Command P again to see the change. Pull up the terminal with Control backtick and run something like ls or git status. Toggle the browser with Shift Command B and type a domain into the URL bar.
+
+## Recording the demo GIFs
+
+The GIFs in this README are recorded by the app itself, so they can be made again whenever the interface changes.
+
+```
+make demos
+make demos SCENES="tour latex"
+```
+
+Each scene is a short script in src/Demo.mm that clicks files in the tree, types, and presses shortcuts the way a person would, through the same events a keyboard and mouse send. It only runs when the MINICODE_DEMO environment variable names a scene, which scripts/demos.sh does, so a normal launch never touches it. While a scene plays, the window is captured about ten times a second, and tools/makegif.m turns the frames into a GIF with a single palette, repeated frames merged, and only the changed part of each frame stored, which keeps each one well under a megabyte. The pointer and the key captions in the GIFs are drawn by the demo, since a window capture shows neither.
+
+A window really does appear on screen for each scene, for about twenty seconds, and keyboard and mouse input from you is ignored while it plays. Everything the app reads is a scratch copy: a copy of the demo folder under /tmp, turned into a small git repository for the terminal scene, a separate home folder for the shell, the settings in tools/demo-settings.conf, and a copy of the tectonic cache. So nothing from your own home folder can show up in a frame. The LaTeX scene is skipped if tectonic is not installed. Recording needs the Screen Recording permission for the terminal you run make from. Set POSTERS=1 to also write a still PNG of each scene next to its GIF.
+
+Adding a scene is a function of a few lines in src/Demo.mm and an entry in its scene table; make demos picks it up from there.
 
 ## Keyboard shortcuts
 

@@ -25,6 +25,9 @@ this file covers the macOS app except where it says otherwise.
   Exits non-zero on failure.
 - `make run [DIR=~/path]` — build and launch.
 - `make icon` — regenerate `resources/AppIcon.icns` from `tools/makeicon.m`.
+- `make demos [SCENES="tour latex"] [POSTERS=1]` — record the README's GIFs
+  into `docs/demos/` by playing scripted scenes in the real app (see "Demo
+  GIFs" below). Windows appear on screen for about 20 s per scene.
 - `make dist-zip` / `make dmg` — package for distribution.
 - `scripts/release.sh 1.2.0` — cut a release from a clean `main`: runs the
   tests, stamps the version into `Info.plist` and `packaging/minicode.rb` and
@@ -95,6 +98,9 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 - `src/Lsp.{h,mm}` — language server processes, `CodeTextView` (the editor's
   NSTextView subclass: squiggles, tooltips, Cmd+click), the completion popup,
   and `LspSession`, one per window.
+- `src/Demo.{h,mm}` — demo scenes and the window recorder behind
+  `make demos`. Inert unless `MINICODE_DEMO` is set; two one-line hooks in
+  `main.mm`. `tools/makegif.m` turns the recorded frames into a GIF.
 
 ## UI map (read this before UI work)
 
@@ -298,7 +304,9 @@ against a scripted server in `run_tests.cpp`; `Lsp.mm` owns processes and UI.
 - tectonic 0.17.0 lives at
   `~/Library/Application Support/MiniCode/bin/tectonic` (installed by the
   app's own Download button) with its package cache in
-  `~/Library/Caches/Tectonic`.
+  `~/Library/Caches/TectonicProject.Tectonic` (44 MB; it has `article`,
+  `geometry`, `enumitem`, `hyperref`, `xcolor` and Latin Modern text fonts,
+  but not the Computer Modern math fonts, so math needs the network).
 - Fixed on the way out: opening a file that is not UTF-8 (every PNG) left the
   previous file's mode in place. After a `.tex` the stale PDF stayed on screen;
   after any text file the view stayed editable, and **Cmd+S wrote the "Cannot
@@ -350,6 +358,59 @@ AppKit, so no new dependency. How it fits what exists:
 - **Linux**: the same gap exists in `linux/src/Editor.cpp` (the
   `g_utf8_validate` branch). GTK4's `GtkPicture` is the equivalent there. Do the
   macOS side first; the user tests Linux in Docker afterwards.
+
+## Demo GIFs (`make demos`)
+
+`scripts/demos.sh` builds a scratch world under `/private/tmp/minicode-demo`
+(a copy of `demo/` made into a 4-commit git repo with fixed dates, so hashes
+are stable; a scratch HOME/ZDOTDIR; `tools/demo-settings.conf` as
+`MINICODE_SETTINGS`; a copy of the tectonic cache), launches the raw binary
+with `MINICODE_DEMO=<scene>` under `env -i`, polls and kills after 2 min,
+then runs `build/makegif`. It only ever kills its own pid (the user often has
+MiniCode open) and deletes the scratch folder on exit. The scene list comes
+from `MINICODE_DEMO=list`. `DEMO_KEEP_FRAMES=<dir>` keeps the raw frames and
+the app's log for debugging; look at frames with the Read tool.
+
+- **A scene** is a function in `src/Demo.mm` calling builder methods
+  (`clickFile:`, `type:`, `key:caption:`, `clickAt:`, `doubleClickAt:`,
+  `scrollEditorTo:`, `waitFor:timeout:recorded:`, `run:`, `pause:`,
+  `hidePointer`, `poster`) plus a row in `kScenes`. Steps are queued and
+  played in order; points are resolved lazily when the step runs.
+- **Input is real events.** Clicks and keys are `NSEvent`s posted with
+  `postEvent:`, so they go through the tree's `mouseDown:`, the text input
+  system (US key codes, shift for capitals/symbols), the Ctrl+` key monitor
+  and the menus' key equivalents. The pointer and key captions are drawn by
+  an overlay view in the window (`hitTest:` returns nil); window captures
+  show neither the real cursor nor keys.
+- **The user's own input is swallowed** while a scene plays (a local monitor
+  passes only events whose timestamp, in whole microseconds, the demo
+  posted). Found the hard way: the window comes to the front, and a stray
+  "p" the user typed elsewhere landed in the welcome text, made it dirty,
+  and the next file click hit the "Save changes?" alert. AppKit keeps posted
+  timestamps only to about a nanosecond, so match on rounded microseconds.
+- **Capture** is `screencapture -x -o -l<wid>` about every 100 ms from a
+  background thread, with per-frame times in `manifest.txt`. A child window
+  (NSPopover) is included in the main window's capture, which then grows to
+  take it in (1920x1206 instead of 1920x1200 when the popover pokes 3 pt
+  above the window); the manifest records `child` rects and makegif crops
+  the window back out. Other windows in front (NSColorPanel) are captured
+  separately in parallel and composited (`over`). `waitFor:...recorded:NO`
+  pauses the recorder so a long wait (zsh starting, tectonic) is cut from
+  the GIF.
+- **makegif** writes the GIF itself: ImageIO's GIF writer stores every frame
+  whole, and with alpha it uses disposal 2 (restore to background), so
+  frame-diff transparency does not work through it. makegif uses one
+  median-cut palette for the whole animation (sqrt-count weighting so text
+  anti-aliasing gets colors), merges identical frames, stores only the
+  changed rectangle with unchanged pixels transparent (disposal 1), and LZW
+  encodes. The four GIFs total about 1.1 MB at 960 px wide.
+- **Paths in frames.** `NSHomeDirectory()` ignores `$HOME`, so the terminal
+  prompt shows the real cwd; that is why the project lives under /tmp, not
+  a fake home. `stringByResolvingSymlinksInPath` turns `/private/tmp/...`
+  into `/tmp/...`, so the tree root is `/tmp/minicode-demo/demo`.
+- The LaTeX scene is skipped (exit 3) when tectonic is missing. Keep
+  `demo/paper/notes.tex` free of math: the cache has no math fonts, and
+  tectonic would go to the network.
 
 ## Verification reality (important)
 
@@ -551,6 +612,14 @@ holds, these give real runtime evidence rather than compile-only evidence:
   `setAttributedString:`. Measured on a 50k-line file: ~0.35 ms of
   highlighting per keystroke (the rest of NSTextView's ~2.5 ms is its own),
   15 ms to type `/*` at line 100, ~60 ms for the worst recolor.
+- **Color picks overwritten by the text color**: an NSTextView with
+  `usesFontPanel` (the default) calls `updateFontPanel` when its selection
+  moves, which sets the shared NSColorPanel to the color under the caret,
+  and the panel forwards that as an action to its target, `colorPicked:`.
+  So after every pick (which moves the caret) the line was rewritten with
+  #D4D4D4, the editor's text color. Found by the settings demo scene, from
+  the stack trace of `colorPicked:`. The editor now sets
+  `usesFontPanel = NO` (MiniCode has no use for the Font panel).
 - **Crash on window close**: `NSWindow` defaults to `releasedWhenClosed = YES`,
   a legacy manual release. With ARC also owning the window through a `strong`
   property, closing double-frees it ("MiniCode quit unexpectedly"). Set
