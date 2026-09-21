@@ -1,6 +1,6 @@
 # MiniCode
 
-MiniCode is a small code editor for macOS, written from scratch in C++ and Objective-C++, with no Electron and no third-party dependencies. It links against Cocoa and WebKit, both of which ship with the operating system, and nothing else. The compiled binary is about 150 KB.
+MiniCode is a small code editor for macOS, written from scratch in C++ and Objective-C++, with no Electron and no third-party dependencies. It links only against frameworks that ship with the operating system (Cocoa, WebKit, PDFKit, CoreServices) and the system zlib. The compiled binary is about 1 MB.
 
 I built it because I wanted a lightweight place to browse a folder, read and edit files with syntax highlighting, preview Markdown and LaTeX, and have a terminal and a browser one keystroke away, without pulling in a few hundred megabytes of runtime to do it.
 
