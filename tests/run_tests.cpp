@@ -2282,6 +2282,236 @@ void testSyncTex() {
     CHECK(SyncTexIndex::parse(kSampleSyncTex).hitsAtPoint(1, 0, 0, 1).size() == 1);
 }
 
+// ------------------------------------------------------ latex click-to-source
+// Each group is a failure the click sweep (tests/latex/sweep.sh) found in a
+// real or torture document: a double-click that refused, or opened the wrong
+// text.
+
+// The span holding exactly `text` as its source bytes, or null.
+const LatexSpan *spanWithSource(const LatexDoc &doc, const std::string &src,
+                                const std::string &text) {
+    for (const LatexSpan &sp : doc.spans)
+        if (src.substr(sp.start, sp.end - sp.start) == text) return &sp;
+    return nullptr;
+}
+
+std::string sourceOf(const std::string &src, const LatexSpan *sp) {
+    return sp ? src.substr(sp->start, sp->end - sp->start) : std::string("(none)");
+}
+
+void testLatexClicks() {
+    GROUP("latex:link-inside-wrapper");
+    // A wrapper whose text holds a link used to be taken for a URL argument
+    // and skipped whole, so nothing in an italic note or a bullet that cites a
+    // paper could be clicked.
+    std::string wrapped =
+        "\\begin{document}\n"
+        "\\it{Note: my notes live at \\href{https://notes.example}{notes.example}}.\n"
+        "\\normalfont{Built a birdhouse (\\href{https://x.org/paper}{paper}) "
+        "painted it blue.}\n"
+        "\\normalfont{\\href{https://scholar.example/u}{Google Scholar}}\n"
+        "\\end{document}\n";
+    LatexDoc w = LatexDoc::parse(wrapped);
+    CHECK(hasSpanText(w, "Note: my notes live at"));
+    CHECK(hasSpanText(w, "notes.example"));
+    CHECK(hasSpanText(w, "Built a birdhouse ("));
+    CHECK(hasSpanText(w, "paper"));
+    CHECK(hasSpanText(w, "Google Scholar"));
+    CHECK(!hasSpanText(w, "https://notes.example"));   // the URLs stay machinery
+    CHECK(!hasSpanText(w, "https://x.org/paper"));
+    CHECK(w.spanForClick({2}, "Note") != nullptr);
+    CHECK(sourceOf(wrapped, w.spanForClick({3}, "painted")) == ") painted it blue.");
+
+    GROUP("latex:match-key");
+    // The PDF gives ligatures as one character and accents as letters; the
+    // source spells them in ASCII and TeX escapes. Both meet in the key.
+    CHECK(LatexDoc::matchKey("e\xEF\xAC\x83" "cient") == "efficient");   // U+FB03
+    CHECK(LatexDoc::matchKey("\xEF\xAC\x81nd") == "find");                // U+FB01
+    CHECK(LatexDoc::matchKey("R\xC3\xA9sum\xC3\xA9") == "resume");
+    CHECK(LatexDoc::matchKey("Stra\xC3\x9F" "e") == "strasse");
+    CHECK(LatexDoc::matchKey("se\xC3\xB1or, co\xC3\xB6perate") == "senorcooperate");
+    CHECK(LatexDoc::matchKey("\xE2\x80\x9Cquoted\xE2\x80\x9D \xE2\x80\x94 x") == "quotedx");
+    CHECK(LatexDoc::matchKey("\xCE\xB1\xCE\xB2") == "\xCE\xB1\xCE\xB2");  // Greek kept
+    CHECK(LatexDoc::matchKey(LatexDoc::displayText("r\\'esum\\'e")) == "resume");
+    CHECK(LatexDoc::matchKey(LatexDoc::displayText("r\\'{e}sum\\'{e}")) == "resume");
+    CHECK(LatexDoc::matchKey(LatexDoc::displayText("na\\\"ive")) == "naive");
+    CHECK(LatexDoc::displayText("Stra\\ss e") == "Strasse");
+    CHECK(LatexDoc::displayText("Fran\\c{c}ais") == "Francais");
+    CHECK(LatexDoc::displayText("hy\\-phen") == "hyphen");
+    CHECK(LatexDoc::displayText("the \\LaTeX{} way") == "the LaTeX way");
+    CHECK(LatexDoc::matchKey(LatexDoc::displayText("$\\alpha + \\beta$")) ==
+          "\xCE\xB1\xCE\xB2");
+
+    GROUP("latex:accents-stay-in-the-run");
+    // \ss, \c{c} and \'{e} are letters of a word, not markup that ends a run.
+    std::string accents =
+        "\\begin{document}\nCaf\\'{e} in der Stra\\ss e, Fran\\c{c}ais.\n"
+        "\\end{document}\n";
+    LatexDoc acc = LatexDoc::parse(accents);
+    CHECK(acc.spans.size() == 1);
+    CHECK(sourceOf(accents, acc.spanForClick({2}, "Stra\xC3\x9F" "e")) ==
+          "Caf\\'{e} in der Stra\\ss e, Fran\\c{c}ais.");
+    CHECK(acc.spanForClick({2}, "Fran\xC3\xA7" "ais") != nullptr);
+    CHECK(acc.spanForClick({2}, "Caf\xC3\xA9") != nullptr);
+    std::string ligs = "\\begin{document}\nAn efficient office.\n\\end{document}\n";
+    CHECK(LatexDoc::parse(ligs).spanForClick({2}, "e\xEF\xAC\x83" "cient") != nullptr);
+    CHECK(LatexDoc::parse(ligs).spanForClick({2}, "o\xEF\xAC\x83" "ce") != nullptr);
+
+    GROUP("latex:row-break");
+    // \\ ends a run like & does, so a cell or a resume line edits alone.
+    std::string rows =
+        "\\begin{document}\n\\textit{Principal Engineer} \\hfill 2014 -- 2019\\\\\n"
+        "Next line\n\\end{document}\n";
+    LatexDoc rw = LatexDoc::parse(rows);
+    CHECK(spanWithSource(rw, rows, "2014 -- 2019") != nullptr);
+    CHECK(spanWithSource(rw, rows, "Next line") != nullptr);
+
+    GROUP("latex:url");
+    // \url prints its argument, so the URL is the text to edit.
+    std::string urls = "\\begin{document}\nSee \\url{https://example.org} now.\n"
+                       "\\end{document}\n";
+    LatexDoc ur = LatexDoc::parse(urls);
+    const LatexSpan *url = spanWithSource(ur, urls, "https://example.org");
+    CHECK(url && url->kind == LatexSpanKind::Field && url->command == "url");
+    CHECK(ur.spanForClick({2}, "https://example.org") == url);
+
+    GROUP("latex:maketitle");
+    // \title sits in the preamble; SyncTeX places its text at \maketitle, or
+    // the line after it.
+    std::string titled =
+        "\\documentclass{article}\n\\title{Torture Document}\n"
+        "\\author{Quentin Placeholder}\n\\begin{document}\n\\maketitle\n\n"
+        "Body text.\n\\end{document}\n";
+    LatexDoc tt = LatexDoc::parse(titled);
+    CHECK(tt.titleLines.size() == 1 && tt.titleLines[0] == 5);
+    const LatexSpan *ttl = tt.spanForClick({6}, "Document");
+    CHECK(ttl && ttl->command == "title");
+    const LatexSpan *ath = tt.spanForClick({5}, "Placeholder");
+    CHECK(ath && ath->command == "author");
+    CHECK(tt.spanForClick({6}, "Unrelated") == nullptr);
+
+    GROUP("latex:multi-line-span");
+    // A span is found from any line it covers, not only its first.
+    std::string longPara =
+        "\\begin{document}\nOne\ntwo\nthree\nfour\nfive\nsix seven\n\n"
+        "\\end{document}\n";
+    LatexDoc lp = LatexDoc::parse(longPara);
+    CHECK(lp.spans.size() == 1 && lp.spans[0].line == 2 && lp.spans[0].endLine == 7);
+    CHECK(lp.spanForClick({7}, "One") != nullptr);
+
+    GROUP("latex:word-split-by-font");
+    // foo\emph{bar}baz is one word on the page and three spans in the
+    // source; a join covers all three as one balanced range.
+    std::string split = "\\begin{document}\nSplit: foo\\emph{bar}baz here.\n"
+                        "\\end{document}\n";
+    LatexDoc sp = LatexDoc::parse(split);
+    CHECK(sp.joins.size() == 1);
+    const LatexSpan *joined = sp.spanForClick({2}, "foobarbaz");
+    CHECK(sourceOf(split, joined) == "Split: foo\\emph{bar}baz here.");
+    // Clicking the italic part alone still opens just that part.
+    CHECK(sourceOf(split, sp.spanForClick({2}, "bar")) == "bar");
+    // A spaced font change is two words, so nothing is joined.
+    CHECK(LatexDoc::parse("\\begin{document}\nfoo \\emph{bar} baz\n\\end{document}")
+              .joins.empty());
+    // A join whose range would unbalance the braces is not offered.
+    CHECK(LatexDoc::parse("\\begin{document}\n\\textbf{\\emph{x}}y\n\\end{document}")
+              .joins.empty());
+    // Replacing a join is still one exact splice.
+    LatexDoc::Edit je = LatexDoc::replaceSpan(split, *joined, "new");
+    CHECK(je.source == "\\begin{document}\nnew\n\\end{document}\n");
+
+    GROUP("latex:footnote-mark");
+    // The PDF glues the footnote mark onto the word: "footnote1", "1The".
+    std::string fn = "\\begin{document}\nA footnote.\\footnote{The note.}\n"
+                     "\\end{document}\n";
+    LatexDoc fd = LatexDoc::parse(fn);
+    CHECK(sourceOf(fn, fd.spanForClick({2}, "footnote.1")) == "A footnote.");
+    CHECK(sourceOf(fn, fd.spanForClick({2}, "1The")) == "The note.");
+
+    GROUP("latex:short-words");
+    // A short word must be a whole word of the span: "at" is not in "Math",
+    // "is" is not in "Visit". Pieces split by punctuation still count.
+    std::string shorts = "\\begin{document}\n\\section{Math}\nVisit\n\n\n\n\n"
+                         "Go end-to-end at 5~pm.\n\\end{document}\n";
+    LatexDoc sh = LatexDoc::parse(shorts);
+    CHECK(sh.spanForClick({2}, "at") == nullptr);           // not in "Math"
+    CHECK(sh.spanForClick({2, 3}, "is") == nullptr);        // not in "Visit"
+    CHECK(sh.spanForClick({8}, "to") != nullptr);
+    CHECK(sh.spanForClick({8}, "5 pm") != nullptr);
+    CHECK(sh.spanForClick({8}, "at") != nullptr);
+    // Math still matches inside, since the PDF reads x^2 back as "x2".
+    CHECK(LatexDoc::parse("\\begin{document}\n$x^2$\n\\end{document}")
+              .spanForClick({2}, "x2") != nullptr);
+
+    GROUP("latex:context");
+    // The same word in several nearby spans: the words around the click on
+    // the page decide which one it was.
+    std::string ctx =
+        "\\begin{document}\n"
+        "A paragraph with \\textit{italic walrus} words, \\emph{emphasized pelican}\n"
+        "words, and \\underline{underlined badger} words and more.\n"
+        "\\end{document}\n";
+    LatexDoc cx = LatexDoc::parse(ctx);
+    // Without context the nearest wins; with it, the right one.
+    CHECK(sourceOf(ctx, cx.spanForClick({3, 2}, "words", "emphasized pelican",
+                                        ", and underlined")) == "words, and");
+    CHECK(sourceOf(ctx, cx.spanForClick({3, 2}, "words", "italic walrus",
+                                        ", emphasized")) == "words,");
+    CHECK(sourceOf(ctx, cx.spanForClick({3, 2}, "words", "underlined badger",
+                                        "and more")) == "words and more.");
+    // A single letter needs its context to agree before it is taken...
+    CHECK(sourceOf(ctx, cx.spanForClick({2}, "A", "", "paragraph with")) ==
+          "A paragraph with");
+    // ... and a number TeX generated (a section number) matches no digit in
+    // the text; the nearest span, the heading, is offered instead.
+    std::string num = "\\begin{document}\n\\section{Lists}\nSee Fig.~3 here.\n"
+                      "\\end{document}\n";
+    LatexDoc nd = LatexDoc::parse(num);
+    CHECK(sourceOf(num, nd.spanForClick({2, 3}, "3", "", "Lists See Fig")) == "Lists");
+    CHECK(sourceOf(num, nd.spanForClick({3}, "3", "See Fig.", "here")) ==
+          "See Fig.~3 here.");
+}
+
+// A line box that SyncTeX files under line 23 (where its paragraph ended),
+// with the glue between its words filed under the lines they were read on.
+const char *kLineSyncTex =
+    "SyncTeX Version:1\n"
+    "Input:1:/tmp/doc.tex\n"
+    "Unit:1\n"
+    "X Offset:0\n"
+    "Y Offset:0\n"
+    "Content:\n"
+    "{1\n"
+    "[1,30:0,6553600:39321600,6553600,0\n"
+    "(1,23:4718592,6553600:26214400,655360,131072\n"   // x=72 w=400, baseline 100
+    "g1,20:9830400,6553600\n"                           // glue at x=150, line 20
+    "g1,21:16384000,6553600\n"                          // glue at x=250, line 21
+    "g1,24:30932992,6553600\n"                          // glue at the box's end
+    ")\n"
+    "]\n"
+    "}1\n";
+
+void testSyncTexText() {
+    GROUP("synctex:text-lines");
+    SyncTexIndex idx = SyncTexIndex::parse(kLineSyncTex);
+    // The plain box lookup can only say "line 23".
+    CHECK(idx.hitsAtPoint(1, 200, 95)[0].line == 23);
+    // The glue beside the word knows better: right of it first, then left.
+    std::vector<SyncTexHit> h = idx.textHitsAtPoint(1, 200, 95);
+    CHECK(h.size() >= 3);
+    CHECK(h.size() >= 3 && h[0].line == 21 && h[1].line == 20 && h[2].line == 23);
+    CHECK(!h.empty() && std::abs(h[0].x - 72.0) < 0.01);   // anchored on the line
+    CHECK(idx.textHitsAtPoint(1, 100, 95)[0].line == 20);
+    // Glue on the box's end edge closes the box rather than following the
+    // word, so the glue before the word comes first.
+    std::vector<SyncTexHit> e = idx.textHitsAtPoint(1, 300, 95);
+    CHECK(e.size() >= 2 && e[0].line == 21 && e[1].line == 24);
+    // Off every line box, it is the plain lookup.
+    CHECK(idx.textHitsAtPoint(1, 200, 300)[0].line ==
+          idx.hitsAtPoint(1, 200, 300)[0].line);
+    CHECK(idx.textHitsAtPoint(2, 200, 95).empty());
+}
+
 }  // namespace
 
 // -------------------------------------------------------------------- JSON
@@ -2809,6 +3039,8 @@ int main() {
     testLspServers();
     testLspParsing();
     testLspClient();
+    testLatexClicks();
+    testSyncTexText();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -546,6 +546,86 @@ static const CGFloat kStatusHeight = 26;
 
 // ------------------------------------------------------- click -> source
 
+// TeX hyphenates at the end of a line, so the PDF holds "counterrevolution-"
+// and "aries" as two words where the source has one. When the clicked word
+// sits against a line-end hyphen, take the other half from the text around it
+// (and out of that text), so the whole word is what gets matched.
+static void MCJoinHyphenation(NSString **word, NSString **before, NSString **after) {
+    NSCharacterSet *breaks = [NSCharacterSet newlineCharacterSet];
+    NSCharacterSet *letters = [NSCharacterSet letterCharacterSet];
+    NSArray<NSString *> *hyphens = @[@"-", @"\u2010", @"\u00AD"];
+    // "-\n" right after the word: the rest of it starts the next line.
+    NSString *a = *after;
+    for (NSString *h in hyphens) {
+        if (![a hasPrefix:h] || a.length <= h.length) continue;
+        NSUInteger k = h.length;
+        if (![breaks characterIsMember:[a characterAtIndex:k]]) continue;
+        while (k < a.length && [breaks characterIsMember:[a characterAtIndex:k]]) k++;
+        NSUInteger e = k;
+        while (e < a.length && [letters characterIsMember:[a characterAtIndex:e]]) e++;
+        if (e > k) {
+            *word = [*word stringByAppendingString:[a substringWithRange:NSMakeRange(k, e - k)]];
+            *after = [a substringFromIndex:e];
+        }
+        break;
+    }
+    // "-\n" right before it: the word began at the end of the previous line.
+    NSString *b = *before;
+    NSUInteger k = b.length;
+    while (k > 0 && [breaks characterIsMember:[b characterAtIndex:k - 1]]) k--;
+    if (k == b.length || k == 0) return;
+    for (NSString *h in hyphens) {
+        if (k < h.length || ![[b substringWithRange:NSMakeRange(k - h.length, h.length)]
+                                 isEqualToString:h])
+            continue;
+        NSUInteger e = k - h.length, s = e;
+        while (s > 0 && [letters characterIsMember:[b characterAtIndex:s - 1]]) s--;
+        if (e > s) {
+            *word = [[b substringWithRange:NSMakeRange(s, e - s)] stringByAppendingString:*word];
+            *before = [b substringToIndex:s];
+        }
+        break;
+    }
+}
+
+const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &sync,
+                                    int tag, PDFPage *page, int pageNumber,
+                                    NSPoint pagePoint,
+                                    std::vector<SyncTexHit> *hitsOut) {
+    NSRect bounds = [page boundsForBox:kPDFDisplayBoxMediaBox];
+    double x = pagePoint.x;
+    double y = bounds.size.height - pagePoint.y;   // SyncTeX measures from the top
+
+    std::vector<SyncTexHit> hits = sync.textHitsAtPoint(pageNumber, x, y, 8);
+    std::vector<int> lines;
+    for (const SyncTexHit &h : hits)
+        if (tag == 0 || h.tag == tag) lines.push_back(h.line);
+    if (hitsOut) *hitsOut = hits;
+
+    // The word under the pointer names what was clicked. When the PDF cannot
+    // give one (a glyph from a picture font, a logo, a bullet), fall back to
+    // the whole line, which the matcher can still place.
+    PDFSelection *word = [page selectionForWordAtPoint:pagePoint];
+    NSString *clicked = word.string ?: @"";
+    if (LatexDoc::matchKey(Utf8(clicked)).empty()) {
+        clicked = [page selectionForLineAtPoint:pagePoint].string ?: clicked;
+        return doc.spanForClick(lines, Utf8(clicked));
+    }
+    // The text on either side tells a common word's occurrences apart: which
+    // "the" was clicked is settled by the words around it.
+    NSString *before = @"", *after = @"";
+    PDFSelection *wide = [word copy];
+    [wide extendSelectionAtStart:40];
+    if ([wide.string hasSuffix:clicked])
+        before = [wide.string substringToIndex:wide.string.length - clicked.length];
+    wide = [word copy];
+    [wide extendSelectionAtEnd:40];
+    if ([wide.string hasPrefix:clicked])
+        after = [wide.string substringFromIndex:clicked.length];
+    MCJoinHyphenation(&clicked, &before, &after);
+    return doc.spanForClick(lines, Utf8(clicked), Utf8(before), Utf8(after));
+}
+
 - (void)openEditorForPage:(PDFPage *)page point:(NSPoint)pagePoint {
     if (!_synctex.valid()) {
         [self setStatus:@"No SyncTeX data, so the preview cannot be edited"
@@ -554,22 +634,10 @@ static const CGFloat kStatusHeight = 26;
     }
     NSRect bounds = [page boundsForBox:kPDFDisplayBoxMediaBox];
     int pageNumber = (int)[self.pdf.document indexForPage:page] + 1;
-    double x = pagePoint.x;
-    double y = bounds.size.height - pagePoint.y;   // SyncTeX measures from the top
-
-    std::vector<SyncTexHit> hits = _synctex.hitsAtPoint(pageNumber, x, y, 8);
     int tag = _synctex.tagForPath(Utf8([self scratchTexPath]));
-    std::vector<int> lines;
-    for (const SyncTexHit &h : hits)
-        if (tag == 0 || h.tag == tag) lines.push_back(h.line);
-
-    // The word under the pointer names what was clicked. When the PDF cannot
-    // give one (a glyph from a picture font, a logo), fall back to the whole
-    // line, which the matcher can still place.
-    NSString *clicked = [page selectionForWordAtPoint:pagePoint].string ?: @"";
-    if (clicked.length < 2)
-        clicked = [page selectionForLineAtPoint:pagePoint].string ?: clicked;
-    const LatexSpan *span = _doc.spanForClick(lines, Utf8(clicked));
+    std::vector<SyncTexHit> hits;
+    const LatexSpan *span = MCLatexSpanAtPoint(_doc, _synctex, tag, page,
+                                               pageNumber, pagePoint, &hits);
     if (!span) {
         [self setStatus:@"That is not text MiniCode can trace back to the source"
                    busy:NO];

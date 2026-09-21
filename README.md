@@ -26,7 +26,7 @@ If you ever forget a shortcut, press Shift Command H and a small panel lists the
 
 Open a .tex file and MiniCode typesets it and shows you the PDF, right where the editor sits. Shift Command P flips between the typeset page and the source, the same way it does for Markdown. Every time the document changes it is typeset again, which takes well under a second for a short paper.
 
-The interesting part is that the preview is not read only. Double click a piece of text on the page, a title, a heading, a sentence, a table cell, a list entry, or an equation, and a small editor opens holding the LaTeX that produced it. Change it, press Return, and that text is replaced in your document and the page is typeset again. When you click inside a list, the editor also offers to add an entry, which writes a new item after the one you clicked, indented to match the ones around it.
+The interesting part is that the preview is not read only. Double click a piece of text on the page, a title, a heading, a sentence, a table cell, a list entry, or an equation, and a small editor opens holding the LaTeX that produced it. Change it, press Return, and that text is replaced in your document and the page is typeset again. When you click inside a list, the editor also offers to add an entry, which writes a new item after the one you clicked, indented to match the ones around it. Text inside italics, bold, links and your own macros can be clicked the same way, and so can words with accents or ligatures, or ones TeX hyphenated across two lines. If MiniCode cannot tell which piece of source a word came from, it opens nothing rather than the wrong text.
 
 ![Editing a list entry by double clicking it in the typeset page](docs/demos/latex.gif)
 

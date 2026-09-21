@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <initializer_list>
 
 namespace {
 
@@ -109,6 +110,7 @@ SyncTexIndex SyncTexIndex::parse(const std::string &text) {
         }
 
         Record r;
+        r.type = type;
         r.page = page;
         r.tag = (int)tag;
         r.line = (int)srcLine;
@@ -184,6 +186,65 @@ std::vector<SyncTexHit> SyncTexIndex::hitsAtPoint(int page, double x, double y,
         if (seen) continue;
         out.push_back(h);
         if (out.size() >= maxHits) break;
+    }
+    return out;
+}
+
+std::vector<SyncTexHit> SyncTexIndex::textHitsAtPoint(int page, double x,
+                                                      double y,
+                                                      std::size_t maxHits) const {
+    // The innermost horizontal box around the point: a line of text.
+    const Record *line = nullptr;
+    for (const Record &r : records_) {
+        if (r.page != page || r.type != '(') continue;
+        if (x < r.x || x > r.x + r.w || y < r.y - r.h || y > r.y + r.d) continue;
+        if (!line || r.w * (r.h + r.d) < line->w * (line->h + line->d)) line = &r;
+    }
+
+    std::vector<SyncTexHit> out;
+    auto add = [&out](const SyncTexHit &h) {
+        for (const SyncTexHit &k : out)
+            if (k.tag == h.tag && k.line == h.line) return;
+        out.push_back(h);
+    };
+    if (line) {
+        // Glue, kerns and math on that line's baseline: the nearest at or
+        // right of the point, and the nearest left of it.
+        const Record *right = nullptr, *left = nullptr;
+        for (const Record &r : records_) {
+            if (r.page != page) continue;
+            if (r.type != 'g' && r.type != 'k' && r.type != '$' && r.type != 'x')
+                continue;
+            if (std::fabs(r.y - line->y) > 0.5) continue;
+            if (r.x < line->x - 0.5 || r.x > line->x + line->w + 0.5) continue;
+            if (r.x >= x) {
+                if (!right || r.x < right->x) right = &r;
+            } else {
+                if (!left || r.x > left->x) left = &r;
+            }
+        }
+        // Glue on the box's end edge closes the box (a table cell, a line)
+        // rather than following the word, and may come from a later line.
+        const Record *first = right, *second = left;
+        if (right && left && std::fabs(right->x - (line->x + line->w)) < 0.5)
+            std::swap(first, second);
+        for (const Record *r : {first, second}) {
+            if (!r) continue;
+            SyncTexHit h;
+            h.tag = r->tag;
+            h.line = r->line;
+            h.distance = std::fabs(r->x - x);
+            h.x = line->x;                     // the line's box, for anchoring
+            h.y = line->y - line->h;
+            h.width = line->w;
+            h.height = line->h + line->d;
+            h.area = h.width * h.height;
+            add(h);
+        }
+    }
+    for (const SyncTexHit &h : hitsAtPoint(page, x, y, maxHits)) {
+        if (out.size() >= maxHits) break;
+        add(h);
     }
     return out;
 }

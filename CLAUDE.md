@@ -17,10 +17,11 @@ this file covers the macOS app except where it says otherwise.
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
   run on Apple Silicon and to keep granted permissions stable).
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  1011 checks over the tokenizer (including ~14,000 random edits comparing
+  1079 checks over the tokenizer (including ~14,000 random edits comparing
   incremental against full highlighting, and a timing line for a 100k-line
   file), Markdown parser, terminal output stream and screen grid, settings
-  parser, comment toggling, the LaTeX and SyncTeX readers, JSON, and the LSP
+  parser, comment toggling, the LaTeX and SyncTeX readers (including the preview's click-to-source
+  matching), JSON, and the LSP
   client.
   Exits non-zero on failure.
 - `make run [DIR=~/path]` — build and launch.
@@ -190,16 +191,65 @@ same way Markdown does; `LatexView` takes the editor's slot in
   (`\label`, `\includegraphics`, `\setlength`, ...) and otherwise enters the
   first braced argument that `looksLikeProse` accepts. That heuristic is what
   keeps `{0.5em}`, `{l}`, `{sec:intro}`, `{GDM.png}` and URLs out, while
-  letting `{2014 - 2019}` (digits plus spaces) in.
+  letting `{2014 - 2019}` (digits plus spaces) in. A URL only disqualifies a
+  group that is one unbroken token: the user's "italics block" bug was
+  `\it{Note: ... \href{https://...}{...}}`, skipped whole because the text
+  inside held `://`. A group that holds commands is always entered, since
+  what is inside gets judged one level down anyway.
+- **Letters spelled as commands stay in the run.** `\ss`, `\o`, `\LaTeX`,
+  `\c{c}` and `\'{e}` are part of a word, so they no longer end a span
+  (`kTextSymbols`, `kLetterAccents`), and `displayText` reads them as the
+  letters they print. `\\` ends a run like `&` does (the check for it used to
+  compare against two backslashes and never fired). `\url{...}` is a field,
+  since its argument is printed text.
 - **A click that matches nothing refuses.** `spanForClick` returns null rather
   than the nearest span whenever there was a real word to match on, because
-  opening the wrong text for editing is worse than opening none.
-- **Click to source**: PDFKit gives the page point and the word under it,
-  SyncTeX gives candidate lines, `LatexDoc::spanForClick` picks the span.
-  **TeX reports the line a paragraph *closed* on**, usually one or two past the
-  text, so nearby lines are searched and the word decides between them. The
-  word match is normalized to letters and digits, because the PDF reads math
-  back as `x2` where the source says `x^2`.
+  opening the wrong text for editing is worse than opening none. Only a
+  "word" with no letters or digits at all (a bullet, a logo) falls back to
+  the nearest span. Text TeX makes up is refused on purpose: section and page
+  numbers, and words that come from a `\newcommand` body.
+- **Click to source**, all of it in `MCLatexSpanAtPoint` (Latex.mm), which the
+  sweep harness calls too:
+  - **Lines: `SyncTexIndex::textHitsAtPoint`.** A line of text's box carries
+    the line its *paragraph* closed on, often several past the words. The
+    glue and kerns between words carry the line each word was read on, so the
+    record just right of the click comes first, then the one just left, then
+    the plain box hits. Glue sitting on a box's end edge closes the box (a
+    table cell) and may belong to the next row, so then left goes first.
+  - **Word: PDFKit's `selectionForWordAtPoint:`, plus 40 characters either
+    side** (`extendSelectionAtStart:`/`AtEnd:`). A word TeX hyphenated at a
+    line end is rejoined from that context (`MCJoinHyphenation`).
+  - **Match: `LatexDoc::matchKey`** on both sides: letters and digits,
+    lowercase, ligatures split (the PDF gives U+FB03 for "ffi"), accents
+    dropped (é, ß -> e, ss), other scripts kept. A key of three characters or
+    fewer must be a run of whole words in the span ("at" is not in "Math"),
+    except in math, which the PDF reads back as "x2" for `x^2`.
+  - **Choice: context.** Every nearby span holding the word is a candidate,
+    scored by how much of the page text around the click agrees with the
+    text around the word in the source (`lead`/`trail`, built from the
+    neighbouring spans so URLs and comments never get in). A later candidate
+    must beat the nearest by 4 characters, because the PDF's reading order is
+    not always the source's: a tabular reads back column by column. A single
+    letter or digit must have some context agree, or it is not taken.
+  - **Extras**: spans cover all their lines (`endLine`), not just the first;
+    `\title`/`\author`/`\date` are candidates at `\maketitle`; a word split by
+    a font change mid-word (`foo\emph{bar}baz`) matches a *join*, one span
+    over the whole chain, offered only when its range has balanced braces;
+    a footnote mark glued to a word ("footnote1", "1The") gets a second try
+    without the digits.
+- **Measure before changing the matcher.** `tests/latex/sweep.sh doc.tex [-v]`
+  typesets a document the way the app does and double-clicks every word of
+  every page (first, middle and last character) through
+  `MCLatexSpanAtPoint`, reporting found / refused / wrong, plus "not placed"
+  when a common word landed in a span that nothing confirms is the right
+  occurrence. `tests/latex/torture.tex` is the corpus of constructs. On
+  2026-09-21 the torture document went from 76% found-and-placed to 98.7%
+  (the rest is generated text, correctly refused) and the user's resume
+  (four versions) from 87% to 100%, with zero wrong in both. Set
+  `TECTONIC_CACHE_DIR` to a scratch copy of the cache when running it. One
+  trap paid for: PDFKit's `characterBoundsAtIndex:` drifts away from
+  `page.string`'s indices as a page goes on; the bounds of a one-character
+  `selectionForRange:` do not.
 - **Edits are byte splices.** The popover holds the span's own LaTeX source
   (not plain text), so no escaping is invented and nothing is re-serialized.
   Edits arrive back at `EditorController` through `onSourceEdited`, mark the
