@@ -17,7 +17,9 @@ this file covers the macOS app except where it says otherwise.
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
   run on Apple Silicon and to keep granted permissions stable).
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  501 checks over the tokenizer, Markdown parser, terminal output stream,
+  647 checks over the tokenizer (including ~14,000 random edits comparing
+  incremental against full highlighting, and a timing line for a 100k-line
+  file), Markdown parser, terminal output stream,
   settings parser, comment toggling, and the LaTeX and SyncTeX readers.
   Exits non-zero on failure.
 - `make run [DIR=~/path]` — build and launch.
@@ -36,7 +38,12 @@ The parts that don't need a GUI are plain C++17 and are unit-tested in
 isolation. Keep them dependency-free.
 
 - `src/SyntaxHighlighter.{h,cpp}` — hand-rolled lexer, grammar chosen by file
-  extension. Emits `{start, length, style}` tokens.
+  extension. Emits `{start, length, style}` tokens. Lexes a line at a time
+  from a `LexState` (normal, block comment, triple string, backslash-continued
+  string); `IncrementalHighlighter<Ch>` (char or char16_t) keeps line starts
+  and end states and, after an edit, re-lexes from the edited line until a
+  line ends in the state it used to. `tests/LegacyHighlighter.h` is the old
+  whole-file lexer, frozen as the oracle the tests compare against.
 - `src/MarkdownParser.{h,cpp}` — CommonMark subset -> flat list of styled runs.
 - `src/Settings.{h,cpp}` — the settings file (`key = value`): parsing with
   per-line errors, defaults, and the resolved color of every surface
@@ -423,7 +430,24 @@ holds, these give real runtime evidence rather than compile-only evidence:
 - **Search**: scoped to a folder (default = open folder or selected folder),
   min 2 chars, generation bumped up front + per-file cancellation, ANSI stripped
   from result lines.
-- **Highlighting** is a debounced full re-lex, not incremental.
+- **Highlighting is incremental** (macOS; Linux still does a debounced full
+  re-lex). Opening a file runs `applyHighlighting` (full pass, also used by
+  `recolorEditor` on a settings change). After that the text storage delegate
+  `textStorage:willProcessEditing:` feeds every character edit to
+  `IncrementalHighlighter` and records the lines to recolor; `textDidChange:`
+  (or a `performSelector:afterDelay:0` for storage edits without
+  `didChangeText`) calls `flushHighlighting`, which lexes those lines from the
+  stored states and repaints just them, swatches included. Two traps: (1)
+  never change attributes inside `willProcessEditing`: it widens the edited
+  range and NSTextView moves the caret to its end, so typed characters land
+  on the next line. (2) Reset a range with one `setAttributes:` of the source
+  attributes, never `addAttribute:` of the plain color: over a range with many
+  attribute runs that took 3.4 s for 50k lines, `setAttributes:` takes ~1 ms.
+  `_liveHighlight` must be off whenever the storage holds something that is
+  not source (Markdown preview, messages); set it off before every
+  `setAttributedString:`. Measured on a 50k-line file: ~0.35 ms of
+  highlighting per keystroke (the rest of NSTextView's ~2.5 ms is its own),
+  15 ms to type `/*` at line 100, ~60 ms for the worst recolor.
 - **Crash on window close**: `NSWindow` defaults to `releasedWhenClosed = YES`,
   a legacy manual release. With ARC also owning the window through a `strong`
   property, closing double-frees it ("MiniCode quit unexpectedly"). Set
@@ -460,4 +484,4 @@ holds, these give real runtime evidence rather than compile-only evidence:
 
 See `ROADMAP.md`. Immediate: image rendering (the section above), then the
 LaTeX preview on Linux. After that: video/audio, an LSP client (the feature
-that would make it a daily driver), and real incremental highlighting.
+that would make it a daily driver), and incremental highlighting on Linux.

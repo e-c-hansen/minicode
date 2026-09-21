@@ -7,9 +7,15 @@
 #include "LineComments.h"
 #include "LatexDoc.h"
 #include "SyncTex.h"
+#include "LegacyHighlighter.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <fstream>
+#include <random>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -86,6 +92,463 @@ void testSyntax() {
     GROUP("syntax:plain");
     // Plain text / unknown extension yields no styled tokens.
     CHECK(SyntaxHighlighter::highlight("just words here", "txt").empty());
+}
+
+// ------------------------------------------------ incremental highlighting
+// The line-at-a-time lexer must give exactly the old whole-file tokens, and
+// the incremental highlighter must, after any edit, leave every line with
+// exactly the tokens a fresh full lex gives. Checked by applying thousands of
+// random edits to real files and comparing after each one.
+
+std::string readFile(const char *path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return "";
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+
+// Cut tokens at line boundaries, the way IncrementalHighlighter reports them:
+// a piece ends just after a '\n' it covers.
+template <class Ch>
+std::vector<Token> splitAtLines(const std::vector<Token> &toks,
+                                const std::basic_string<Ch> &text) {
+    std::vector<Token> out;
+    for (const Token &t : toks) {
+        size_t s = t.start, e = t.start + t.length;
+        while (s < e) {
+            size_t nl = text.find(Ch('\n'), s);
+            size_t cut = (nl == std::basic_string<Ch>::npos || nl + 1 > e) ? e : nl + 1;
+            out.push_back({s, cut - s, t.style});
+            s = cut;
+        }
+    }
+    return out;
+}
+
+// One style per code unit, Plain where no token is.
+std::vector<TokenStyle> styleMap(const std::vector<Token> &toks, size_t n) {
+    std::vector<TokenStyle> m(n, TokenStyle::Plain);
+    for (const Token &t : toks)
+        for (size_t i = t.start; i < t.start + t.length && i < n; ++i) m[i] = t.style;
+    return m;
+}
+
+// Minimal UTF-8 <-> UTF-16 for the test (input is valid UTF-8).
+std::u16string toU16(const std::string &s) {
+    std::u16string u;
+    for (size_t i = 0; i < s.size();) {
+        unsigned char c = (unsigned char)s[i];
+        uint32_t cp; int len;
+        if (c < 0x80) { cp = c; len = 1; }
+        else if (c < 0xE0) { cp = c & 0x1F; len = 2; }
+        else if (c < 0xF0) { cp = c & 0x0F; len = 3; }
+        else { cp = c & 0x07; len = 4; }
+        for (int k = 1; k < len && i + k < s.size(); ++k)
+            cp = (cp << 6) | ((unsigned char)s[i + k] & 0x3F);
+        i += len;
+        if (cp >= 0x10000) {
+            cp -= 0x10000;
+            u += (char16_t)(0xD800 + (cp >> 10));
+            u += (char16_t)(0xDC00 + (cp & 0x3FF));
+        } else {
+            u += (char16_t)cp;
+        }
+    }
+    return u;
+}
+std::string toU8(const std::u16string &u, std::vector<size_t> *u16AtByte) {
+    std::string s;
+    if (u16AtByte) u16AtByte->clear();
+    for (size_t i = 0; i < u.size();) {
+        uint32_t cp = u[i];
+        size_t units = 1;
+        if (cp >= 0xD800 && cp < 0xDC00 && i + 1 < u.size()) {
+            cp = 0x10000 + ((cp - 0xD800) << 10) + (u[i + 1] - 0xDC00);
+            units = 2;
+        }
+        size_t before = s.size();
+        if (cp < 0x80) s += (char)cp;
+        else if (cp < 0x800) { s += (char)(0xC0 | (cp >> 6)); s += (char)(0x80 | (cp & 0x3F)); }
+        else if (cp < 0x10000) {
+            s += (char)(0xE0 | (cp >> 12)); s += (char)(0x80 | ((cp >> 6) & 0x3F));
+            s += (char)(0x80 | (cp & 0x3F));
+        } else {
+            s += (char)(0xF0 | (cp >> 18)); s += (char)(0x80 | ((cp >> 12) & 0x3F));
+            s += (char)(0x80 | ((cp >> 6) & 0x3F)); s += (char)(0x80 | (cp & 0x3F));
+        }
+        if (u16AtByte) for (size_t k = before; k < s.size(); ++k) u16AtByte->push_back(i);
+        i += units;
+    }
+    if (u16AtByte) u16AtByte->push_back(u.size());
+    return s;
+}
+
+// The reference tokens for a document: the frozen whole-file lexer, cut at
+// lines, in the document's own units.
+std::vector<Token> reference(const std::string &text, const std::string &ext) {
+    return splitAtLines(legacy::highlight(text, ext), text);
+}
+std::vector<Token> reference(const std::u16string &text, const std::string &ext) {
+    std::vector<size_t> map;
+    std::string u8 = toU8(text, &map);
+    std::vector<Token> toks;
+    for (const Token &t : legacy::highlight(u8, ext)) {
+        size_t a = map[t.start], b = map[t.start + t.length];
+        if (b > a) toks.push_back({a, b - a, t.style});
+    }
+    return splitAtLines(toks, text);
+}
+
+// Fragments that open and close every multi-line construct, plus ordinary
+// code and non-ASCII text.
+const char *const kFragments[] = {
+    "/*", "*/", "\"", "'", "`", "\"\"\"", "'''", "\\", "\\\n", "\n", "\n\n",
+    "#", "//", "@", "# ", "#include <x>\n", "x(", "foo (", "Bar", "0x1F", "3.14",
+    ".5", " ", "\t", "\r\n", "if ", "return ", "def ", "self", "é", "日本",
+    "\xF0\x9F\x98\x80", "/* c */", "\"s\"", "a = \"b\\\"c\"", "*/\n", "/*\n",
+    "\"\"\"doc\n", "x", "}", "{\n",
+};
+
+template <class Ch>
+std::basic_string<Ch> fromUtf8(const std::string &s);
+template <> std::string fromUtf8<char>(const std::string &s) { return s; }
+template <> std::u16string fromUtf8<char16_t>(const std::string &s) { return toU16(s); }
+
+// Keep a split never landing inside a UTF-8 sequence or surrogate pair, so
+// the UTF-16 reference stays convertible. (Edits in UTF-8 may split
+// sequences; the lexer treats stray bytes as punctuation either way.)
+size_t snap(const std::u16string &t, size_t p) {
+    if (p > 0 && p < t.size() && t[p] >= 0xDC00 && t[p] < 0xE000) --p;
+    return p;
+}
+size_t snap(const std::string &, size_t p) { return p; }
+
+struct FuzzStats { size_t edits = 0, linesRelexed = 0, lineTotal = 0; };
+
+// The line holding offset `off`.
+template <class Ch>
+size_t lineOf(const IncrementalHighlighter<Ch> &h, size_t off) {
+    size_t lo = 0, hi = h.lineCount();   // first line starting after off
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        if (h.lineStart(mid) <= off) lo = mid + 1; else hi = mid;
+    }
+    return lo - 1;
+}
+
+// Apply `rounds` random edits to `text`, checking the incremental result
+// against a full lex after each one. Returns false (and prints) on the first
+// mismatch.
+template <class Ch>
+bool fuzzIncremental(std::basic_string<Ch> text, const std::string &ext,
+                     unsigned seed, int rounds, FuzzStats &stats) {
+    using Str = std::basic_string<Ch>;
+    std::mt19937 rng(seed);
+    auto rnd = [&](size_t n) { return n ? (size_t)(rng() % n) : 0; };
+
+    IncrementalHighlighter<Ch> h(ext);
+    std::vector<Token> all;
+    h.reset(StringSource<Ch>(text), &all);
+    if (all != reference(text, ext)) {
+        std::printf("    reset differs from a full lex (%s)\n", ext.c_str());
+        return false;
+    }
+    // The GUI's view: tokens per line, relative to the line start (they move
+    // with the text), and a style per unit (attributes move with the text).
+    std::vector<std::vector<Token>> perLine(h.lineCount());
+    for (const Token &t : all) {
+        size_t line = lineOf(h, t.start);
+        perLine[line].push_back({t.start - h.lineStart(line), t.length, t.style});
+    }
+    std::vector<TokenStyle> styles = styleMap(all, text.size());
+
+    const size_t nFrag = sizeof(kFragments) / sizeof(kFragments[0]);
+    for (int round = 0; round < rounds; ++round) {
+        // Build the edit: sometimes two separate edits reported as one range.
+        size_t pos = snap(text, rnd(text.size() + 1));
+        size_t maxDel = text.size() - pos;
+        size_t oldLen = 0;
+        switch (rnd(4)) {
+        case 0: oldLen = 0; break;
+        case 1: oldLen = std::min<size_t>(maxDel, 1 + rnd(3)); break;
+        case 2: oldLen = std::min<size_t>(maxDel, rnd(40)); break;
+        default: oldLen = std::min<size_t>(maxDel, rnd(400)); break;
+        }
+        oldLen = snap(text, pos + oldLen) - pos;
+        Str ins;
+        size_t kind = rnd(10);
+        if (kind < 6) {
+            for (size_t k = 0, m = 1 + rnd(3); k < m; ++k)
+                ins += fromUtf8<Ch>(kFragments[rnd(nFrag)]);
+        } else if (kind < 8 && !text.empty()) {          // paste a slice
+            size_t a = snap(text, rnd(text.size()));
+            size_t b = snap(text, std::min(text.size(), a + rnd(300)));
+            if (b > a) ins = text.substr(a, b - a);
+        }                                                 // else: pure delete
+        size_t newLen = ins.size();
+        Str before = text;
+        text.replace(pos, oldLen, ins);
+
+        size_t repPos = pos, repOld = oldLen, repNew = newLen;
+        if (rnd(8) == 0 && pos + newLen < text.size()) {
+            // A second edit further on, reported together with the first.
+            size_t p2 = snap(text, pos + newLen + rnd(text.size() - pos - newLen));
+            size_t d2 = snap(text, std::min(text.size(), p2 + rnd(5))) - p2;
+            Str ins2 = fromUtf8<Ch>(kFragments[rnd(nFrag)]);
+            text.replace(p2, d2, ins2);
+            size_t endNew = p2 + ins2.size();
+            repNew = endNew - pos;
+            repOld = repNew + before.size() - text.size();
+        }
+
+        size_t oldLines = h.lineCount();
+        std::vector<Token> got;
+        auto r = h.edit(StringSource<Ch>(text), repPos, repOld, repNew, got);
+        stats.edits++;
+        stats.linesRelexed += r.endLine - r.firstLine;
+        stats.lineTotal += h.lineCount();
+
+        // Per-line model: replace the re-lexed lines, keep the rest.
+        size_t delta = h.lineCount() - oldLines;   // wraps when lines were removed
+        std::vector<std::vector<Token>> next;
+        next.reserve(h.lineCount());
+        for (size_t k = 0; k < r.firstLine; ++k) next.push_back(perLine[k]);
+        for (size_t k = r.firstLine; k < r.endLine; ++k) next.emplace_back();
+        for (const Token &t : got) {
+            size_t line = lineOf(h, t.start);
+            if (line < r.firstLine || line >= r.endLine) {
+                std::printf("    token outside the re-lexed lines\n");
+                return false;
+            }
+            next[line].push_back({t.start - h.lineStart(line), t.length, t.style});
+        }
+        for (size_t k = r.endLine; k < h.lineCount(); ++k)
+            next.push_back(perLine[k - delta]);
+        perLine.swap(next);
+
+        // Asking again for the same lines, from the stored states, agrees.
+        std::vector<Token> again;
+        h.lineTokens(StringSource<Ch>(text), r.firstLine, r.endLine, again);
+        if (again != got || lineOf(h, repPos) != h.lineOf(repPos)) {
+            std::printf("    lineTokens/lineOf disagree with edit()\n");
+            return false;
+        }
+
+        std::vector<Token> flat;
+        for (size_t k = 0; k < perLine.size(); ++k)
+            for (const Token &t : perLine[k])
+                flat.push_back({t.start + h.lineStart(k), t.length, t.style});
+        std::vector<Token> want = reference(text, ext);
+
+        // Style-per-unit model, the way NSTextStorage keeps attributes.
+        styles.erase(styles.begin() + repPos, styles.begin() + repPos + repOld);
+        styles.insert(styles.begin() + repPos, repNew, TokenStyle::Plain);
+        std::fill(styles.begin() + r.start, styles.begin() + r.end, TokenStyle::Plain);
+        for (const Token &t : got)
+            std::fill(styles.begin() + t.start, styles.begin() + t.start + t.length, t.style);
+
+        IncrementalHighlighter<Ch> fresh(ext);
+        fresh.reset(StringSource<Ch>(text), nullptr);
+        bool statesOk = fresh.lineCount() == h.lineCount();
+        for (size_t k = 0; statesOk && k < h.lineCount(); ++k)
+            statesOk = fresh.endState(k) == h.endState(k) &&
+                       fresh.lineStart(k) == h.lineStart(k);
+
+        if (flat != want || styles != styleMap(want, text.size()) || !statesOk ||
+            h.length() != text.size()) {
+            std::printf("    %s: edit %d (pos %zu, -%zu +%zu) diverged: tokens %s, "
+                        "styles %s, states %s\n", ext.c_str(), round, repPos, repOld,
+                        repNew, flat == want ? "ok" : "DIFFER",
+                        styles == styleMap(want, text.size()) ? "ok" : "DIFFER",
+                        statesOk ? "ok" : "DIFFER");
+            return false;
+        }
+    }
+    return true;
+}
+
+void testIncrementalHighlight() {
+    struct Sample { std::string name, text; };
+    std::vector<Sample> samples;
+    for (const char *p : {"demo/sample.cpp", "demo/hello.py", "demo/README.md",
+                          "src/SyntaxHighlighter.cpp", "src/LatexDoc.cpp",
+                          "scripts/release.sh", "tests/LegacyHighlighter.h"}) {
+        std::string t = readFile(p);
+        GROUP("incremental:samples");
+        CHECK(!t.empty());   // run from the repo root (make test does)
+        if (!t.empty()) samples.push_back({p, t});
+    }
+    samples.push_back({"js", "// js\nconst a = `tpl\nline` + 'x';\n/* multi\n"
+                             " line */ function f(x) { return x * 2; }\n"
+                             "let s = \"esc \\\n continued\";\n"});
+    samples.push_back({"py", "def f():\n    '''doc\n    more'''\n    s = \"\"\"a\n\"\"\"\n"
+                             "@dec\nclass K: pass  # note\nx = 'a\\\nb'\n"});
+    samples.push_back({"conf", "# settings\nwindow.background = #1E1E1E\n"
+                               "key = \"quoted # not comment\"\n"});
+    samples.push_back({"empty", ""});
+    samples.push_back({"unicode", "s = \"h\xC3\xA9llo \xF0\x9F\x98\x80\"; /* \xE6\x97\xA5\n"
+                                  "\xE6\x9C\xAC */ int caf\xC3\xA9(x);\n"});
+    const char *exts[] = {"cpp", "py", "js", "sh", "txt"};
+
+    GROUP("incremental:matches-old-lexer");
+    // The line lexer changed no token anywhere, joined back into whole tokens.
+    bool same = true;
+    for (const Sample &s : samples)
+        for (const char *e : exts)
+            if (SyntaxHighlighter::highlight(s.text, e) != legacy::highlight(s.text, e)) {
+                std::printf("    %s as %s differs from the old lexer\n", s.name.c_str(), e);
+                same = false;
+            }
+    CHECK(same);
+    // Random soup of the tricky fragments, too.
+    {
+        std::mt19937 rng(7);
+        bool soup = true;
+        for (int k = 0; k < 400; ++k) {
+            std::string t;
+            for (int m = 0, len = 1 + (int)(rng() % 60); m < len; ++m)
+                t += kFragments[rng() % (sizeof(kFragments) / sizeof(kFragments[0]))];
+            for (const char *e : exts)
+                soup = soup && SyntaxHighlighter::highlight(t, e) == legacy::highlight(t, e);
+        }
+        CHECK(soup);
+    }
+
+    GROUP("incremental:line-states");
+    {
+        IncrementalHighlighter<char> h("cpp");
+        std::string t = "a /* b\nc\nd */ e\n\"x\\\ny\"\n";
+        h.reset(StringSource<char>(t), nullptr);
+        CHECK(h.lineCount() == 6);
+        CHECK(h.endState(0).kind == LexState::BlockComment);
+        CHECK(h.endState(1).kind == LexState::BlockComment);
+        CHECK(h.endState(2).kind == LexState::Normal);
+        CHECK(h.endState(3).kind == LexState::StringCont && h.endState(3).quote == u'"');
+        CHECK(h.endState(4).kind == LexState::Normal);
+        IncrementalHighlighter<char> p("py");
+        std::string py = "x = '''a\nb''' + \"\"\"c\n";
+        p.reset(StringSource<char>(py), nullptr);
+        CHECK(p.endState(0).kind == LexState::TripleString && p.endState(0).quote == u'\'');
+        CHECK(p.endState(1).kind == LexState::TripleString && p.endState(1).quote == u'"');
+    }
+
+    GROUP("incremental:edit-scope");
+    {
+        // Typing a letter re-lexes one line; opening a comment re-lexes to the
+        // end; closing it again stops as soon as the states agree.
+        std::string t;
+        for (int k = 0; k < 200; ++k) t += "int x = 1; // line\n";
+        IncrementalHighlighter<char> h("cpp");
+        h.reset(StringSource<char>(t), nullptr);
+        std::vector<Token> out;
+        t.insert(100, "y");
+        auto r = h.edit(StringSource<char>(t), 100, 0, 1, out);
+        CHECK(r.endLine - r.firstLine == 1);
+        CHECK(r.start == h.lineStart(r.firstLine) && r.end == h.lineStart(r.firstLine + 1));
+        out.clear();
+        t.insert(40, "/*");
+        r = h.edit(StringSource<char>(t), 40, 0, 2, out);
+        CHECK(r.firstLine == 2 && r.endLine == h.lineCount());
+        CHECK(!out.empty() && out.back().style == TokenStyle::Comment);
+        out.clear();
+        t.insert(80, "*/");
+        r = h.edit(StringSource<char>(t), 80, 0, 2, out);
+        CHECK(r.endLine == h.lineCount());   // everything below uncomments
+        out.clear();
+        t.erase(80, 2);
+        r = h.edit(StringSource<char>(t), 80, 2, 0, out);
+        CHECK(r.endLine == h.lineCount());
+        out.clear();
+        t.erase(40, 2);
+        r = h.edit(StringSource<char>(t), 40, 2, 0, out);
+        CHECK(r.endLine == h.lineCount());
+        // A report that does not add up falls back to a full lex.
+        out.clear();
+        r = h.edit(StringSource<char>(t), 0, 5, 0, out);
+        CHECK(r.firstLine == 0 && r.endLine == h.lineCount() && r.end == t.size());
+        CHECK(out == reference(t, "cpp"));
+    }
+
+    GROUP("incremental:random-edits");
+    FuzzStats stats;
+    unsigned seed = 1;
+    for (const Sample &s : samples) {
+        for (const char *e : exts) {
+            bool ok = fuzzIncremental<char>(s.text, e, seed++, 120, stats);
+            if (!ok) std::printf("    (UTF-8, sample %s)\n", s.name.c_str());
+            CHECK(ok);
+            ok = fuzzIncremental<char16_t>(toU16(s.text), e, seed++, 120, stats);
+            if (!ok) std::printf("    (UTF-16, sample %s)\n", s.name.c_str());
+            CHECK(ok);
+        }
+    }
+    std::printf("  incremental: %zu random edits matched a full lex; "
+                "%.1f lines re-lexed per edit (of %.0f)\n", stats.edits,
+                (double)stats.linesRelexed / stats.edits,
+                (double)stats.lineTotal / stats.edits);
+}
+
+// Timing on a big file: a full lex against one keystroke. Printed, not
+// checked, since machines differ; the edit-scope checks above are the
+// deterministic part.
+void benchIncrementalHighlight() {
+    using Clock = std::chrono::steady_clock;
+    auto ms = [](Clock::duration d) {
+        return std::chrono::duration<double, std::milli>(d).count();
+    };
+    std::string unit = readFile("demo/sample.cpp");
+    if (unit.empty()) return;
+    std::u16string text;
+    {
+        std::string big;
+        size_t lines = 0;
+        while (lines < 100000) {
+            big += unit;
+            // No block comments, so a "/*" typed at the top runs to the end.
+            big += "// note\nstatic const char *s = \"text\";\n";
+            lines += 11;
+        }
+        text = toU16(big);
+    }
+    size_t nLines = std::count(text.begin(), text.end(), u'\n');
+
+    IncrementalHighlighter<char16_t> h("cpp");
+    auto t0 = Clock::now();
+    std::vector<Token> all;
+    h.reset(StringSource<char16_t>(text), &all);
+    double full = ms(Clock::now() - t0);
+
+    // One keystroke at a time in the middle, then deleted again.
+    const int kEdits = 2000;
+    std::vector<Token> out;
+    size_t pos = text.size() / 2;
+    t0 = Clock::now();
+    for (int k = 0; k < kEdits; ++k) {
+        out.clear();
+        if (k % 2 == 0) { text.insert(pos, 1, u'x'); h.edit(StringSource<char16_t>(text), pos, 0, 1, out); }
+        else { text.erase(pos, 1); h.edit(StringSource<char16_t>(text), pos, 1, 0, out); }
+    }
+    double perKey = ms(Clock::now() - t0) / kEdits;
+
+    // Worst case: open a block comment near the top, then close it.
+    size_t top = text.find(u'\n') + 1;   // line 2 (line 1 is an #include)
+    out.clear();
+    t0 = Clock::now();
+    text.insert(top, u"/*");
+    auto r = h.edit(StringSource<char16_t>(text), top, 0, 2, out);
+    double openAll = ms(Clock::now() - t0);
+    size_t openLines = r.endLine - r.firstLine;
+    out.clear();
+    t0 = Clock::now();
+    text.erase(top, 2);
+    h.edit(StringSource<char16_t>(text), top, 2, 0, out);
+    double closeAll = ms(Clock::now() - t0);
+
+    std::printf("  bench: %zu lines of C++ (%zu tokens): full lex %.1f ms, "
+                "one keystroke %.4f ms; typing /* at the top %.1f ms (%zu lines), "
+                "deleting it %.1f ms\n",
+                nLines, all.size(), full, perKey, openAll, openLines, closeAll);
 }
 
 // --------------------------------------------------------------- markdown
@@ -1300,6 +1763,8 @@ void testSyncTex() {
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
+    testIncrementalHighlight();
+    benchIncrementalHighlight();
     testMarkdown();
     testTerminalStream();
     testSettings();

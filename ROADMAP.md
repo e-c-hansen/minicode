@@ -43,8 +43,16 @@ thesis because MiniCode would only implement the JSON-RPC client.
 
 ## Editor niceties
 
-- Real incremental re-highlighting (currently a debounced full re-lex; fine for
-  normal files, slower on very large ones).
+- Incremental re-highlighting is done: the lexer keeps a state per line and an
+  edit re-lexes only the lines it can have changed. What is left is the worst
+  case, where one edit changes the color of everything below it (typing `/*`
+  at the top of a huge file). That lexes the rest of the file in a few
+  milliseconds, but recoloring hundreds of thousands of lines of text storage
+  can take tens of milliseconds; coloring only the visible part first and the
+  rest in idle time would hide it.
+- The Linux port still does a debounced full re-lex. `IncrementalHighlighter`
+  takes UTF-8 as well as UTF-16, so wiring it to GtkTextBuffer's insert and
+  delete signals is the remaining step.
 - Line numbers, auto-indent, bracket matching.
 - Broader, more correct syntax highlighting (the scalable answer is tree-sitter,
   which would be the one place to weigh a dependency).
