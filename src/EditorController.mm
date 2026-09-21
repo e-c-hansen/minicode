@@ -11,6 +11,7 @@
 #include "SyntaxHighlighter.h"
 #include "MarkdownParser.h"
 #include "LineComments.h"
+#include <memory>
 #include <string>
 
 // A plain container that relays every resize to a layout block, so we can
@@ -264,11 +265,36 @@ static NSColor *ColorForStyle(TokenStyle s) {
     return [[AppSettings shared] syntax:s];
 }
 
+// The editor's text as the incremental highlighter reads it: UTF-16 straight
+// out of the text storage, a line at a time, never copied whole.
+class NSStringSource : public TextSource<char16_t> {
+public:
+    explicit NSStringSource(NSString *s) : s_(s) {}
+    size_t length() const override { return s_.length; }
+    void read(size_t pos, size_t len, char16_t *out) const override {
+        [s_ getCharacters:(unichar *)out range:NSMakeRange(pos, len)];
+    }
+private:
+    NSString *s_;
+};
+
 // ---------------------------------------------------------------------------
-@interface EditorController () {
+@interface EditorController () <NSTextStorageDelegate> {
     FileItem *_root;
     NSMutableArray<NSString *> *_recent;   // most-recently-opened files, front = newest
     FSEventStreamRef _fsStream;            // watches the open folder for changes
+    // Syntax highlighting of the editable source. While _liveHighlight is on,
+    // every change to the text storage is re-highlighted as it happens, from
+    // the storage delegate; _hl (null for a language without a grammar)
+    // tracks line states so only the changed lines are re-lexed.
+    std::unique_ptr<IncrementalHighlighter<char16_t>> _hl;
+    BOOL _liveHighlight;
+    NSUInteger _pendingStart, _pendingEnd; // edited, not yet recolored (NSNotFound: none)
+    BOOL _flushScheduled;
+    BOOL _highlightingSettingsFile;        // give color values swatches
+    NSColor *_styleColors[8];              // by TokenStyle, from the settings
+    NSColor *_plainColor;
+    NSDictionary *_sourceAttributes;       // font, paragraph style, plain color
 }
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) ClickOutline *outline;
@@ -321,6 +347,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
         [_root loadChildren];
         _terminalHeight = 220;
         _recent = [NSMutableArray array];
+        _pendingStart = _pendingEnd = NSNotFound;
     }
     return self;
 }
@@ -402,6 +429,7 @@ static NSColor *ColorForStyle(TokenStyle s) {
     self.textView = [[CodeTextView alloc] initWithFrame:frame];
     self.textView.editable = YES;
     self.textView.delegate = self;
+    self.textView.textStorage.delegate = self;   // incremental highlighting
     self.textView.richText = YES;
     self.textView.allowsUndo = YES;
     self.textView.automaticSpellingCorrectionEnabled = NO;
@@ -1651,6 +1679,8 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     NSString *content = self.sourceText ?: @"";
     NSMutableAttributedString *attr =
         [[NSMutableAttributedString alloc] initWithString:content attributes:base];
+    _liveHighlight = NO;                        // applyHighlighting starts it again
+    _sourceAttributes = base;
     [self.textView.textStorage setAttributedString:attr];
     self.textView.typingAttributes = base;      // typed text stays monospaced
     self.textView.editable = YES;
@@ -1658,30 +1688,150 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     [self.textView scrollToBeginningOfDocument:nil];
 }
 
-// Recolor the current text storage in place (preserves cursor/selection).
+// Recolor the whole text storage in place (preserves cursor/selection), and
+// start highlighting edits as they happen. Runs when a file is shown as source
+// and when the settings change colors; typing goes through
+// textStorage:willProcessEditing:, which re-lexes only the lines it changes.
 - (void)applyHighlighting {
     std::string cext = self.currentExt.UTF8String ? self.currentExt.UTF8String : "";
     NSTextStorage *storage = self.textView.textStorage;
-    std::string text = storage.string.UTF8String ? storage.string.UTF8String : "";
-    std::vector<Token> tokens;
-    if (SyntaxHighlighter::supports(cext))
-        tokens = SyntaxHighlighter::highlight(text, cext);
-
-    [storage beginEditing];
-    NSRange full = NSMakeRange(0, storage.length);
-    [storage addAttribute:NSForegroundColorAttributeName   // reset baseline
-                    value:[[AppSettings shared] text:Surface::Editor] range:full];
-    [storage removeAttribute:NSBackgroundColorAttributeName range:full];
-    [storage removeAttribute:NSLinkAttributeName range:full];
-    for (const Token &t : tokens) {
-        NSUInteger a = [self utf16IndexForByte:t.start inUTF8:text];
-        NSUInteger b = [self utf16IndexForByte:t.start + t.length inUTF8:text];
-        if (b <= a || b > storage.length) continue;
-        [storage addAttribute:NSForegroundColorAttributeName
-                        value:ColorForStyle(t.style)
-                        range:NSMakeRange(a, b - a)];
+    AppSettings *cfg = [AppSettings shared];
+    _plainColor = [cfg text:Surface::Editor];
+    for (int i = 0; i < 8; ++i) _styleColors[i] = ColorForStyle((TokenStyle)i);
+    _highlightingSettingsFile = [self isSettingsFile];
+    if (_sourceAttributes) {
+        NSMutableDictionary *base = [_sourceAttributes mutableCopy];
+        base[NSForegroundColorAttributeName] = _plainColor;
+        _sourceAttributes = base;
     }
-    if ([self isSettingsFile]) [self decorateColorsIn:storage];
+
+    std::vector<Token> tokens;
+    if (SyntaxHighlighter::supports(cext)) {
+        _hl.reset(new IncrementalHighlighter<char16_t>(cext));
+        _hl->reset(NSStringSource(storage.string), &tokens);
+    } else {
+        _hl.reset();
+    }
+    [storage beginEditing];
+    [self restyleRange:NSMakeRange(0, storage.length) tokens:tokens inStorage:storage];
+    [storage endEditing];
+    _pendingStart = _pendingEnd = NSNotFound;   // all of it is fresh now
+    _liveHighlight = YES;
+}
+
+// Paint `range` (whole lines) from scratch: the plain source attributes, then
+// the tokens, then any color swatches. Adjacent tokens of one style are
+// painted together (a comment spanning lines comes as one piece per line).
+//
+// The reset is one setAttributes: call, not addAttribute: of the plain color.
+// Over a range holding many attribute runs, addAttribute: is dramatically
+// slower (typing "/*" at the top of a 50,000-line file took 3.4 s that way,
+// against milliseconds here).
+- (void)restyleRange:(NSRange)range tokens:(const std::vector<Token> &)tokens
+           inStorage:(NSTextStorage *)storage {
+    if (range.length == 0) return;
+    if (_sourceAttributes) {
+        [storage setAttributes:_sourceAttributes range:range];
+    } else {
+        [storage addAttribute:NSForegroundColorAttributeName value:_plainColor range:range];
+        [storage removeAttribute:NSBackgroundColorAttributeName range:range];
+        [storage removeAttribute:NSLinkAttributeName range:range];
+    }
+    const NSUInteger limit = NSMaxRange(range);
+    for (size_t i = 0; i < tokens.size();) {
+        size_t start = tokens[i].start, end = start + tokens[i].length;
+        TokenStyle st = tokens[i].style;
+        size_t j = i + 1;
+        while (j < tokens.size() && tokens[j].style == st && tokens[j].start == end) {
+            end = tokens[j].start + tokens[j].length;
+            ++j;
+        }
+        i = j;
+        if (start < range.location || end > limit || end <= start) continue;
+        [storage addAttribute:NSForegroundColorAttributeName
+                        value:_styleColors[(int)st & 7]
+                        range:NSMakeRange(start, end - start)];
+    }
+    if (_highlightingSettingsFile) [self decorateColorsIn:storage range:range];
+}
+
+// The storage's characters changed (typing, paste, undo, a Cmd+/ toggle, a
+// color pick). Only the bookkeeping happens here: the highlighter's line
+// table follows every edit, and the lines to recolor are remembered. The
+// colors are applied in flushHighlighting, once the edit is complete.
+// Changing attributes from inside this callback widens the storage's edited
+// range, and NSTextView then moves the insertion point to the end of that
+// range: typing "ab" in the middle of a line came out as "a" there and "b" on
+// the next line.
+- (void)textStorage:(NSTextStorage *)storage
+    willProcessEditing:(NSTextStorageEditActions)actions
+                 range:(NSRange)edited
+        changeInLength:(NSInteger)delta {
+    if (!_liveHighlight || !(actions & NSTextStorageEditedCharacters)) return;
+    if (storage != self.textView.textStorage) return;
+    NSUInteger newLen = edited.length;
+    NSUInteger oldLen = (NSUInteger)((NSInteger)edited.length - delta);
+    NSRange range;
+    if (_hl) {
+        std::vector<Token> unused;   // recomputed for the final text at flush time
+        auto r = _hl->edit(NSStringSource(storage.string), edited.location, oldLen,
+                           newLen, unused);
+        range = NSMakeRange(r.start, r.end - r.start);
+    } else {
+        range = [storage.string lineRangeForRange:edited];
+    }
+
+    // Carry an earlier, still pending range across this edit, then add this
+    // edit's own.
+    if (_pendingStart != NSNotFound) {
+        NSUInteger editEnd = edited.location + oldLen;
+        if (_pendingStart >= editEnd) {
+            _pendingStart = _pendingStart + newLen - oldLen;
+            _pendingEnd = _pendingEnd + newLen - oldLen;
+        } else if (_pendingEnd > edited.location) {
+            _pendingStart = MIN(_pendingStart, edited.location);
+            _pendingEnd = MAX(_pendingEnd, editEnd) + newLen - oldLen;
+        }
+        _pendingStart = MIN(_pendingStart, range.location);
+        _pendingEnd = MAX(_pendingEnd, NSMaxRange(range));
+    } else {
+        _pendingStart = range.location;
+        _pendingEnd = NSMaxRange(range);
+    }
+    // textDidChange: flushes right after the edit; this catches a change
+    // made without didChangeText.
+    if (!_flushScheduled) {
+        _flushScheduled = YES;
+        [self performSelector:@selector(flushHighlightingLater) withObject:nil afterDelay:0];
+    }
+}
+
+- (void)flushHighlightingLater {
+    _flushScheduled = NO;
+    [self flushHighlighting];
+}
+
+// Recolor the lines edits have touched since the last flush.
+- (void)flushHighlighting {
+    if (_pendingStart == NSNotFound) return;
+    NSTextStorage *storage = self.textView.textStorage;
+    NSUInteger start = MIN(_pendingStart, storage.length);
+    NSUInteger end = MIN(MAX(_pendingEnd, start), storage.length);
+    _pendingStart = _pendingEnd = NSNotFound;
+    if (!_liveHighlight) return;
+    std::vector<Token> tokens;
+    NSRange range;
+    if (_hl) {
+        size_t first = _hl->lineOf(start);
+        size_t last = _hl->lineOf(end > start ? end - 1 : start);
+        _hl->lineTokens(NSStringSource(storage.string), first, last + 1, tokens);
+        size_t to = last + 1 < _hl->lineCount() ? _hl->lineStart(last + 1) : _hl->length();
+        range = NSMakeRange(_hl->lineStart(first), to - _hl->lineStart(first));
+    } else {
+        range = [storage.string lineRangeForRange:NSMakeRange(start, end - start)];
+    }
+    [storage beginEditing];
+    [self restyleRange:range tokens:tokens inStorage:storage];
     [storage endEditing];
 }
 
@@ -1697,10 +1847,11 @@ static NSColor *ContrastColor(const Rgba &c) {
     return MCColor([AppSettings shared].settings.contrastText(c));
 }
 
-// Show every color value as a swatch of itself, clickable to pick a new one.
-- (void)decorateColorsIn:(NSTextStorage *)storage {
+// Show every color value in `range` as a swatch of itself, clickable to pick a
+// new one.
+- (void)decorateColorsIn:(NSTextStorage *)storage range:(NSRange)range {
     NSString *str = storage.string;
-    [str enumerateSubstringsInRange:NSMakeRange(0, str.length)
+    [str enumerateSubstringsInRange:[str lineRangeForRange:range]
                             options:NSStringEnumerationByLines
                          usingBlock:^(NSString *line, NSRange lr, NSRange er, BOOL *stop) {
         (void)er; (void)stop;
@@ -1784,7 +1935,6 @@ static NSColor *ContrastColor(const Rgba &c) {
     ColorSpan now;
     if (Settings::findColor(updated, now))
         [tv setSelectedRange:NSMakeRange(start + now.start, 0)];
-    [self applyHighlighting];
 
     // Save shortly after the last change, so dragging around the color wheel
     // doesn't write the file dozens of times a second.
@@ -1848,16 +1998,7 @@ static NSColor *ContrastColor(const Rgba &c) {
 - (void)textDidChange:(NSNotification *)note {
     self.sourceText = self.textView.string;
     if (!self.dirty) { self.dirty = YES; [self updateTitle]; }
-    if (!(self.isMarkdown && self.previewMode)) {
-        // Coalesce rapid keystrokes: re-highlight ~120ms after typing pauses
-        // instead of re-lexing the whole file on every keypress.
-        [NSObject cancelPreviousPerformRequestsWithTarget:self
-                                                 selector:@selector(applyHighlighting)
-                                                   object:nil];
-        [self performSelector:@selector(applyHighlighting)
-                   withObject:nil
-                   afterDelay:0.12];
-    }
+    [self flushHighlighting];   // recolor the lines this change touched
 }
 
 - (void)saveCurrentFile:(id)sender {
@@ -1902,22 +2043,6 @@ static NSColor *ContrastColor(const Rgba &c) {
                          flag, name, mode];
     self.window.documentEdited = self.dirty;
     if (self.hintsVisible) [self updateHints];
-}
-
-// UTF-8 byte offset -> UTF-16 code-unit offset. ASCII-fast, correct for UTF-8.
-- (NSUInteger)utf16IndexForByte:(size_t)byteOffset inUTF8:(const std::string &)s {
-    NSUInteger u16 = 0;
-    size_t i = 0;
-    while (i < byteOffset && i < s.size()) {
-        unsigned char c = (unsigned char)s[i];
-        size_t adv; NSUInteger units;
-        if (c < 0x80)      { adv = 1; units = 1; }
-        else if (c < 0xE0) { adv = 2; units = 1; }
-        else if (c < 0xF0) { adv = 3; units = 1; }
-        else               { adv = 4; units = 2; } // surrogate pair
-        i += adv; u16 += units;
-    }
-    return u16;
 }
 
 - (void)renderMarkdown:(NSString *)content {
@@ -1982,6 +2107,7 @@ static NSColor *ContrastColor(const Rgba &c) {
         [out appendAttributedString:
             [[NSAttributedString alloc] initWithString:s attributes:a]];
     }
+    _liveHighlight = NO;   // rendered Markdown is not source
     [self.textView.textStorage setAttributedString:out];
     [self.textView scrollToBeginningOfDocument:nil];
 }
@@ -1991,6 +2117,7 @@ static NSColor *ContrastColor(const Rgba &c) {
         NSFontAttributeName: [NSFont systemFontOfSize:14],
         NSForegroundColorAttributeName: Hex(0x9CA3AF),
     };
+    _liveHighlight = NO;
     [self.textView.textStorage setAttributedString:
         [[NSAttributedString alloc] initWithString:msg attributes:a]];
     self.showingMessage = YES;
