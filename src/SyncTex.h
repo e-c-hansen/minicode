@@ -34,8 +34,18 @@ public:
     std::vector<SyncTexHit> hitsAtPoint(int page, double x, double y,
                                         std::size_t maxHits = 8) const;
 
+    // Like hitsAtPoint, but for a point on a line of text, and more exact.
+    // A line's box carries the source line where its *paragraph* ended, often
+    // several lines past the words in it. The glue and kerns TeX set between
+    // the words carry the line each word was read from, so those beside the
+    // point come first: the first one to its right (the space after the
+    // word), then the nearest to its left. The box hits follow.
+    std::vector<SyncTexHit> textHitsAtPoint(int page, double x, double y,
+                                            std::size_t maxHits = 8) const;
+
 private:
     struct Record {
+        char type = 'h';
         int page = 1, tag = 0, line = 1;
         double x = 0, y = 0, w = 0, h = 0, d = 0;   // points; y is the baseline
     };

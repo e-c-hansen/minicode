@@ -1,0 +1,108 @@
+% A torture test for the LaTeX preview's click-to-source. Every construct here
+% is one a real document uses to wrap text; tests/latex/sweep.mm double-clicks
+% every word of the typeset PDF and checks the preview finds its source.
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+
+\newcommand{\role}[2]{\textbf{#1} at \emph{#2}}
+\newcommand{\keyword}[1]{\textsc{#1}}
+\newcommand{\company}{Initech Corporation}
+
+\title{Torture Document for Clicking}
+\author{Quentin Placeholder}
+\date{March 2026}
+
+\begin{document}
+\maketitle
+
+\section{Font Changes Inside Sentences}
+A paragraph with \textit{italic walrus} words, \emph{emphasized pelican} words,
+\textbf{bold narwhal} words, \texttt{typewriter octopus} words,
+\underline{underlined badger} words and \textsc{small caps heron} words.
+
+Nested shapes: \textbf{\emph{bold emphasized lemur}} and
+\textit{outer italic \textbf{inner bold marmot} outer tail}.
+
+Declarations in groups: {\itshape declared italic ferret}, {\it old italic
+gecko}, {\bf old bold jackal}, {\em old emph kestrel} and
+{\bfseries declared bold mongoose} end here.
+
+\begin{itshape}
+An italic environment with quokka and wombat inside it.
+\end{itshape}
+
+\begin{bfseries}
+A bold environment holding an axolotl.
+\end{bfseries}
+
+Split words: foo\emph{bar}baz, un\textit{believ}able, and a sentence that
+goes plain then \emph{turns emphatic midway} and back to plain for the platypus.
+
+\subsection{Ligatures and Hyphens}
+The official efficient offline shuffle finds fluffy affluent waffles flowing
+in the fjord; difficult baffling ruffians scoff at the office traffic.
+Unquestionably incomprehensibilities characteristically overwhelm
+internationalization departments whenever extraordinarily uncharacteristically
+counterrevolutionaries misunderstand electroencephalographically
+photolithographic establishments during representational indistinguishability
+reviews, notwithstanding institutionalization.
+
+\subsection{Accents, Escapes and Punctuation}
+Caf\'e na\"ive r\'esum\'e \c{c}a Stra\ss e co\"operate \"Uber se\~nor.
+Profits rose 50\% \& costs fell; the \#1 item cost \$5 in the \_underscore\_ aisle.
+Pages 10--20, an aside---like this---and ``double quoted'' plus `single quoted' text.
+Mr.~Smith met Dr.\ Jones at 5~pm near Prof.~Xavier.
+It costs e.g.\ ten dollars; see Fig.~3 and Table~2 in \S 4.
+
+\section{Footnotes and Links}
+Here is a sentence with a footnote.\footnote{The footnote holds a capybara.}
+Visit \href{https://example.com/path}{the example homepage} or
+\url{https://example.org} for more, or email \href{mailto:a@b.c}{our helpdesk}.
+
+\textit{An italic note that links to \href{https://example.net/x}{a gazette} and
+then carries on about a wildebeest.} {\it Old italic with \url{https://example.com} and
+a manatee.} \normalfont{Wrapped prose citing (\href{https://doi.example/1}{a journal})
+about a pangolin.}
+
+\section{Lists}
+\begin{itemize}
+  \item Plain item about a chinchilla.
+  \item Item with \textbf{bold alpaca} inside.
+  \item \emph{Entirely emphasized item about a tapir.}
+  \item Item spanning a long line so that it wraps across several lines in the
+        output, mentioning a salamander somewhere near the end of it all.
+\end{itemize}
+
+\begin{enumerate}
+  \item First numbered hedgehog.
+  \item Second numbered porcupine with {\itshape an italic tail}.
+\end{enumerate}
+
+\begin{description}
+  \item[Aardvark] Describes an aardvark.
+  \item[\textbf{Bold Label}] Describes a bold label.
+\end{description}
+
+\section{Tables}
+\begin{tabular}{|l|c|r|}
+  \hline
+  Left cell & \textbf{Center bold} & Right cell \\
+  \emph{Emph cell} & {\itshape Shape cell} & 42 units \\
+  \hline
+\end{tabular}
+
+\section{Macros}
+\role{Chief Llama Officer}{Globex Industries} since 2020.
+We sell \keyword{Widgets} to \company{} customers.
+
+\noindent\textbf{Resume Style Heading} \hfill \textit{Springfield, Oregon}\\
+\textit{Principal Yak Shaver} \hfill 2014 -- 2019\\
+{\raisebox{0.5em}{\textit{Staff Iguana Wrangler} @ Umbrella Labs}} \hfill {\normalfont{1/2020 -- 6/2022}}
+
+\section{Math}
+Inline math $x^2 + y^2 = z^2$ sits among words, and $\alpha + \beta$ too.
+\[ E = mc^2 \]
+Afterwards a closing paragraph mentions a quetzal.
+
+\end{document}

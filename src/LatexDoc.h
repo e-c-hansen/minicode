@@ -23,7 +23,11 @@ struct LatexSpan {
     std::size_t start = 0;    // byte range of the editable source
     std::size_t end   = 0;
     int line = 1;             // 1-based line of `start`
+    int endLine = 1;          // 1-based line of the span's last byte
     std::string display;      // text as it roughly appears, for matching
+    // The match keys (see matchKey) of the text just before and after this
+    // span, from its neighbouring spans: what the page shows around it.
+    std::string lead, trail;
     int listIndex = -1;       // index into LatexDoc::lists, or -1
     int itemIndex = -1;       // index of the \item this span sits in, or -1
 };
@@ -41,6 +45,15 @@ struct LatexList {
 struct LatexDoc {
     std::vector<LatexSpan> spans;
     std::vector<LatexList> lists;
+    // Runs of spans that the PDF shows as one word, because a font change
+    // falls inside the word: foo\emph{bar}baz is three spans but one word on
+    // the page. Each join covers the whole chain as a single byte range, and
+    // exists only when that range has balanced braces, so it is as safe to
+    // replace as any span.
+    std::vector<LatexSpan> joins;
+    // Lines holding \maketitle: text there comes from \title, \author and
+    // \date, which usually sit in the preamble, far from where they appear.
+    std::vector<int> titleLines;
 
     static LatexDoc parse(const std::string &src);
 
@@ -51,9 +64,16 @@ struct LatexDoc {
     // SyncTeX offered, best first, and `word` is the word under the pointer.
     // TeX reports the line where a paragraph *closes*, which is often one or
     // two lines past the text itself, so nearby lines are searched too and the
-    // word decides between them.
+    // word decides between them. When the word matches nothing, the answer is
+    // null: opening the wrong text for editing is worse than opening none.
+    //
+    // `before` and `after` are the text the page shows on either side of the
+    // word, when known. They decide between several nearby spans that all
+    // hold a common word: the one whose neighbours read the same wins.
     const LatexSpan *spanForClick(const std::vector<int> &lines,
-                                  const std::string &word) const;
+                                  const std::string &word,
+                                  const std::string &before = std::string(),
+                                  const std::string &after = std::string()) const;
 
     // ------------------------------------------------------------- editing
     // Both return the complete new source; the caller keeps the old one for
@@ -72,4 +92,9 @@ struct LatexDoc {
     static int lineAt(const std::string &src, std::size_t offset);
     // Collapse whitespace and undo the common escapes, for text matching.
     static std::string displayText(const std::string &tex);
+    // The form both sides are compared in: letters and digits only, lowercase,
+    // with ligatures split (U+FB03 -> ffi) and accents dropped (é -> e, ß ->
+    // ss), so the PDF's "eﬃcient" and "résumé" meet the source's "efficient"
+    // and "r\'esum\'e". Letters with no ASCII form (Greek, CJK) are kept.
+    static std::string matchKey(const std::string &text);
 };
