@@ -404,6 +404,12 @@ static NSColor *ColorForStyle(TokenStyle s) {
     self.textView.automaticSpellingCorrectionEnabled = NO;
     self.textView.automaticDashSubstitutionEnabled = NO;
     self.textView.usesFindBar = YES;               // Cmd+F find bar
+    // Not the Font panel: MiniCode sets its own fonts, and a text view that
+    // uses it also pushes the color under the caret into the shared color
+    // panel whenever the selection moves. With the panel picking a color for
+    // the settings file (colorPicked:), that push came back as a pick and
+    // wrote the text color over the color just chosen.
+    self.textView.usesFontPanel = NO;
     // Links are only used for the color swatches in the settings file; keep
     // their own colors and just show a pointing hand.
     self.textView.linkTextAttributes =
