@@ -35,4 +35,7 @@
 - (void)refreshTree:(id)sender;
 - (void)openSettings:(id)sender;       // Cmd+, open the settings file
 - (void)toggleComment:(id)sender;      // Cmd+/ comment or uncomment lines
+- (void)triggerCompletion:(id)sender;  // Ctrl+Space language server completion
+- (void)goToDefinition:(id)sender;     // F12 (and Cmd+click)
+- (void)showHoverInfo:(id)sender;      // Cmd+I type and docs at the cursor
 @end

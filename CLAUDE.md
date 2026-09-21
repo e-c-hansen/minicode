@@ -4,8 +4,8 @@ MiniCode is a small native macOS code editor built from scratch, no Electron,
 no third-party dependencies. It links only Apple system frameworks (Cocoa,
 WebKit, CoreServices, Quartz for PDFKit) plus the C++ standard library and the
 system zlib. The LaTeX preview runs tectonic, an external binary the user
-installs or the app downloads on request, the way an LSP client would use
-language servers. This file is the handoff
+installs or the app downloads on request, and the LSP client talks to
+language servers the user has installed in the same way. This file is the handoff
 for future sessions: architecture, workflow, and the hard-won gotchas.
 
 There is also a GTK4 Linux port under `linux/`, sharing the portable C++ core
@@ -17,9 +17,9 @@ this file covers the macOS app except where it says otherwise.
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
   run on Apple Silicon and to keep granted permissions stable).
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  655 checks over the tokenizer, Markdown parser, terminal output stream and
-  screen grid, settings parser, comment toggling, and the LaTeX and SyncTeX
-  readers.
+  865 checks over the tokenizer, Markdown parser, terminal output stream and
+  screen grid, settings parser, comment toggling, the LaTeX and SyncTeX
+  readers, JSON, and the LSP client.
   Exits non-zero on failure.
 - `make run [DIR=~/path]` — build and launch.
 - `make icon` — regenerate `resources/AppIcon.icns` from `tools/makeicon.m`.
@@ -50,6 +50,10 @@ isolation. Keep them dependency-free.
   one byte range, so unknown macros can never be damaged.
 - `src/SyncTex.{h,cpp}` — reads the `.synctex` file TeX writes beside the PDF:
   a point on a page -> candidate source lines, best first.
+- `src/Json.{h,cpp}` — small JSON value, strict parser, compact serializer.
+- `src/LspClient.{h,cpp}` — LSP client with no I/O: framing, handshake,
+  document sync, request/response matching, result parsing, UTF-16
+  position conversion, server choice by extension. See "LSP" below.
 - `src/TerminalStream.{h,cpp}` — pty byte stream -> styled lines (SGR colors,
   in-line cursor movement) + shell-integration events (OSC 133 marks, OSC 7
   cwd). A line model, not a screen: handles sequences and UTF-8 split across
@@ -81,6 +85,9 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 - `src/Latex.{h,mm}` — LaTeX preview: runs tectonic, shows the PDF with PDFKit,
   and turns a double-click into a popover editing the source behind that text.
 - `src/Search.{h,mm}` — scoped, project-wide text search window.
+- `src/Lsp.{h,mm}` — language server processes, `CodeTextView` (the editor's
+  NSTextView subclass: squiggles, tooltips, Cmd+click), the completion popup,
+  and `LspSession`, one per window.
 
 ## UI map (read this before UI work)
 
@@ -203,6 +210,70 @@ same way Markdown does; `LatexView` takes the editor's slot in
   finding page points with `[PDFDocument findString:]`. Point
   `MINICODE_TECTONIC` and `TECTONIC_CACHE_DIR` at scratch copies so the test
   neither needs the network nor touches the user's cache.
+
+## LSP (read before touching it)
+
+macOS only so far. The protocol lives in `LspClient.cpp`, pure C++ and tested
+against a scripted server in `run_tests.cpp`; `Lsp.mm` owns processes and UI.
+
+- **EditorController hooks are few on purpose**: `documentOpened:` (path, or
+  nil for messages, binary files and previews), `documentSaved`, `setRoot:`
+  (Open Folder), `shutdown` (windowWillClose), and `textView:doCommandBySelector:`
+  forwarding to `handleCommand:`. The session sees typing by observing
+  `NSTextStorageDidProcessEditingNotification` itself, and didChange is
+  debounced 0.3 s; every request flushes first. `Client::didChange` drops
+  unchanged text, so the storage replacement on file switch costs nothing.
+- **Queued until Ready**: didOpen and requests made during the handshake are
+  queued in the client and sent after `initialized`. Server-to-client requests
+  are always answered (configuration gets nulls, unknown methods get
+  -32601), because some servers wait for the reply.
+- **Server lookup**: PATH, then /opt/homebrew/bin, /usr/local/bin, ~/.cargo/bin,
+  ~/go/bin, ~/.local/bin, /usr/bin. `/usr/bin/clangd` is an xcrun shim that
+  pops the "install developer tools" dialog on a Mac without them, so it is
+  never run; `MCDeveloperTool` finds the real binary via
+  /var/db/xcode_select_link. The child gets that wider PATH too (servers spawn
+  node, go, cargo). `which gopls` said "not found" on this Mac while
+  ~/go/bin/gopls exists; the app's search does find it.
+- **Settings**: `lsp.enabled`, `lsp.<cpp|python|go|rust|typescript>`. The
+  command value is a whole command line (to a ` #` comment), unlike every
+  other key; `off` disables one language. A change restarts the servers.
+- **Processes**: NSTask with pipes. stderr goes to /dev/null (clangd logs
+  every request there, a full pipe would stall it) or to `$MINICODE_LSP_LOG`,
+  which also logs all traffic (opened O_APPEND, several servers share it).
+  Writes run on a serial queue with raw `write()` and `F_SETNOSIGPIPE`, so a
+  dead server gives EPIPE, not SIGPIPE. Window close: shutdown, exit on the
+  reply, stdin closed; SIGTERM after 2 s, SIGKILL after 3. App quit
+  (`applicationWillTerminate` → `MCLspTerminateAllServers`): shutdown + exit
+  at once, wait up to 0.5 s, then signals. If MiniCode crashes, stdin EOF
+  makes servers exit.
+- **Diagnostics are drawn, not attributed.** TextKit 2 (the default for a
+  plain NSTextView, which this editor is) ignores underline *rendering
+  attributes*: a pixel count was identical with and without them. Accessing
+  `layoutManager` would silently switch the view to TextKit 1 for the whole
+  editor, so `CodeTextView` draws squiggles after `super drawRect:` from
+  `enumerateTextSegmentsInRange:` (TK1 fallback kept), only for the viewport.
+  Marks are NSRanges that follow edits until the server republishes, and they
+  survive re-highlighting because they are not storage attributes. Tooltips
+  are `addToolTipRect:` per visible mark, rebuilt after drawing when dirty.
+- **Completion**: auto-triggers on `.`, `->`, `::` (if the server lists the
+  trigger char), manual on Ctrl+Space or Option+Esc (`complete:`). The list
+  filters client-side as you type (prefix matches first, then subsequence),
+  closes when the caret leaves the word. Accept replaces from the textEdit's
+  start (or the word start) to the caret. snippetSupport is off, so clangd
+  inserts `lengthSquared` without parentheses; its labels carry a leading
+  space or bullet, stripped in `parseCompletion`.
+- **Definition**: the target is mapped back into the tree root's spelling of
+  the path (clangd answers with /private/tmp/... for a /tmp root) before
+  `revealPath:andOpen:`; outside the root it goes to `openFileAtPath:`.
+- **Tested headless** with a temporary `MINICODE_LSPTEST` block (31 checks,
+  removed): real clangd on a scratch project, diagnostics range and message,
+  status text, squiggle pixels via `cacheDisplayInRect:`, mark shifting,
+  auto and Ctrl+Space completion with filtering, Return/Esc, hover, F12 and
+  Cmd+click across files, markdown and missing-server cases, per-window
+  shutdown, and no server process left after quit. Point
+  `MINICODE_SETTINGS` at a scratch file and `MINICODE_LSP_LOG` at a scratch
+  log when doing this again. Other sessions (and the user's own MiniCode)
+  may have clangd running: kill only PIDs the test started.
 
 ## Current state (handoff, 2026-09-18)
 
@@ -491,5 +562,6 @@ holds, these give real runtime evidence rather than compile-only evidence:
 ## What's next
 
 See `ROADMAP.md`. Immediate: image rendering (the section above), then the
-LaTeX preview on Linux. After that: video/audio, an LSP client (the feature
-that would make it a daily driver), and real incremental highlighting.
+LaTeX preview on Linux. After that: video/audio, the LSP client on Linux
+(and the follow-ups listed in ROADMAP.md), and real incremental highlighting.
+The macOS LSP client is on branch `feat/lsp`, not yet merged.
