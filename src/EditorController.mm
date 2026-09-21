@@ -678,6 +678,7 @@ private:
     [m addItemWithTitle:@"Move to Trash" action:@selector(deleteSelected:) keyEquivalent:@""];
     [m addItem:[NSMenuItem separatorItem]];
     [m addItemWithTitle:@"Reveal in Finder" action:@selector(revealInFinder:) keyEquivalent:@""];
+    [m addItemWithTitle:@"Copy Path" action:@selector(copyPath:) keyEquivalent:@""];
     [m addItemWithTitle:@"Refresh" action:@selector(refreshTree:) keyEquivalent:@""];
     for (NSMenuItem *it in m.itemArray) it.target = self;
     return m;
@@ -1458,6 +1459,16 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     NSString *p = node ? node.path : _root.path;
     [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:
         @[[NSURL fileURLWithPath:p]]];
+}
+
+// Puts an absolute path on the clipboard as plain text: the clicked item's,
+// else the selected one's, else the open folder's (as Reveal in Finder picks).
+- (void)copyPath:(id)sender {
+    FileItem *node = [self clickedOrSelectedItem];
+    NSString *p = node ? node.path : _root.path;
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
+    [pb clearContents];
+    [pb setString:p forType:NSPasteboardTypeString];
 }
 
 // Expand ancestor folders down to path, select it, and optionally open it.
