@@ -15,6 +15,13 @@ What is left, roughly in order of value:
 - Click the page to move the cursor to that line in the source view.
 - A LaTeX grammar for the syntax highlighter, so the source view is colored.
 - Error markers in the source view from tectonic's log, instead of a log pane.
+- Text a macro prints (`\newcommand{\company}{Initech}`) is refused when
+  clicked, because it is not where it appears. Offering the macro's
+  definition instead would make it editable, with a note that every use
+  changes. Section and page numbers stay refused; TeX makes those up.
+- Tables read back from the PDF column by column, so a click in a table
+  leans on SyncTeX's line alone. Using the cell's `&` position in the row
+  would pin it down exactly.
 
 ## Media rendering (images and video)
 
