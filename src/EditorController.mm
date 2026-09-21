@@ -885,6 +885,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
         [self appendHintsRow:s key:@"⇧⌘P" label:@"LaTeX preview"
                         key2:nil label2:nil
                        state:self.previewMode ? @"typeset" : @"source"];
+        [self appendHintsRow:s key:@"⇧⌘S" label:@"Export PDF"
+                        key2:nil label2:nil state:nil];
     }
 
     // A short gap, not a whole empty heading, before the way out.
@@ -1723,6 +1725,52 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     [self.window makeFirstResponder:self.latex];
 }
 
+// Shift+Cmd+S: save the typeset PDF somewhere of the user's choosing. The
+// file is what tectonic wrote for the buffer as it is now, unsaved edits
+// included; if the preview is behind (or was never shown, or the source view
+// is up) the buffer is typeset first.
+- (BOOL)canExportPDF { return self.isLatex && self.currentPath != nil; }
+
+- (void)exportPDF:(id)sender {
+    if (!self.canExportPDF) { NSBeep(); return; }
+    if (!self.latex) {
+        // Opened straight into the source view: make the preview, hidden.
+        self.latex = [[LatexView alloc] initWithPath:self.currentPath
+                                              source:self.sourceText ?: @""];
+        __weak EditorController *weakSelf = self;
+        self.latex.onSourceEdited = ^(NSString *newSource) {
+            [weakSelf latexDidEditSource:newSource];
+        };
+        [self.rightArea addSubview:self.latex];
+        [self relayoutRightArea];
+    }
+    NSString *texPath = self.currentPath;
+    NSSavePanel *panel = [NSSavePanel savePanel];
+    panel.directoryURL = [NSURL fileURLWithPath:
+        texPath.stringByDeletingLastPathComponent];
+    panel.nameFieldStringValue = [texPath.lastPathComponent
+        .stringByDeletingPathExtension stringByAppendingPathExtension:@"pdf"];
+    panel.canCreateDirectories = YES;
+    NSString *source = self.sourceText ?: @"";
+    __weak EditorController *weakSelf = self;
+    [panel beginSheetModalForWindow:self.window
+                  completionHandler:^(NSModalResponse r) {
+        if (r != NSModalResponseOK) return;
+        NSURL *dest = panel.URL;
+        EditorController *me = weakSelf;
+        if (!me) return;
+        [me.latex pdfForPath:texPath source:source
+                  completion:^(NSData *pdf, NSString *error) {
+            NSError *err = nil;
+            if (pdf && [pdf writeToURL:dest options:NSDataWritingAtomic error:&err])
+                return;
+            [weakSelf warn:error ?: [NSString stringWithFormat:
+                @"Could not save “%@”: %@", dest.lastPathComponent,
+                err.localizedDescription]];
+        }];
+    }];
+}
+
 // Cmd+Z with the preview open steps back through the edits made in it. The
 // text view handles undo itself whenever it has focus, so this only runs when
 // the responder chain got as far as the window's delegate.
@@ -1738,6 +1786,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     else NSBeep();
 }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(exportPDF:)) return self.canExportPDF;
     if (item.action == @selector(undo:))
         return [self latexIsShowing] && [self.latex canUndoEdit];
     if (item.action == @selector(redo:))

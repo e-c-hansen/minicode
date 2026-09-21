@@ -258,6 +258,20 @@ same way Markdown does; `LatexView` takes the editor's slot in
   `undo:`/`redo:` on the responder chain, with `EditorController` forwarding
   when focus never got as far as the preview. The text view keeps its own undo
   for typing; the two stacks are separate.
+- **Export PDF (Shift+Cmd+S)**: `exportPDF:` opens a save sheet, then
+  `LatexView pdfForPath:source:completion:` hands back the PDF bytes exactly
+  as tectonic wrote them (kept in `_pdfData` with the source they came from,
+  `_pdfSrc`). If that source is not the buffer's, it typesets now, skipping
+  the debounce, and answers when a run finishes with nothing queued; a
+  failed run answers with an error. Works from the source view too (the
+  LatexView is created hidden if needed). The menu item is `s` with an
+  explicit Cmd|Shift mask, like the other shifted shortcuts. **Testing trap**:
+  a synthetic `NSEvent keyEventWithType:` for Shift+Cmd+S with
+  `charactersIgnoringModifiers:@"s"` matches *Save* (Cmd+S) first and writes
+  the file, and with `@"S"` matches nothing. Neither is what a keyboard does.
+  `CGEventCreateKeyboardEvent` + `CGEventPostToPid(getpid(), ...)` goes
+  through the window server like real hardware, and it reached Export and
+  not Save.
 - **Packages missing from tectonic's bundle.** tectonic's bundle is an
   older TeX Live than Overleaf's. The user's resume needed `twemojis`, which the
   bundle lacks; the fix was to put `twemojis.sty` and `all-twemojis.pdf` in the

@@ -127,6 +127,11 @@
 - (void)openFolder:(id)sender      { [[self current] openFolder:sender]; }
 - (void)saveCurrentFile:(id)sender { [[self current] saveCurrentFile:sender]; }
 - (void)togglePreview:(id)sender   { [[self current] togglePreview:sender]; }
+- (void)exportPDF:(id)sender       { [[self current] exportPDF:sender]; }
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(exportPDF:)) return [self current].canExportPDF;
+    return YES;
+}
 - (void)toggleHints:(id)sender     { [[self current] toggleHints:sender]; }
 - (void)toggleTerminal:(id)sender  { [[self current] toggleTerminal:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
@@ -186,6 +191,12 @@ static void BuildMenu(void) {
     [fileMenu addItemWithTitle:@"Save"
                         action:@selector(saveCurrentFile:)
                  keyEquivalent:@"s"];
+    NSMenuItem *exportPDF =
+        [[NSMenuItem alloc] initWithTitle:@"Export PDF…"
+                                   action:@selector(exportPDF:) keyEquivalent:@"s"];
+    exportPDF.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [fileMenu addItem:exportPDF];
     [fileMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *newFile =

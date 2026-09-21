@@ -40,6 +40,8 @@ What you type in that editor is LaTeX, not plain text, so you can write \\emph{l
 
 Typesetting is done by [tectonic](https://tectonic-typesetting.github.io/), a single binary TeX engine, in the same spirit as the language server support leaning on servers you already have. If you have it installed, MiniCode uses it. If you do not, the preview says so and offers to download the official build, about 22 MB, into ~/Library/Application Support/MiniCode. You can also install it yourself with brew install tectonic. The first document you typeset downloads the LaTeX packages it needs, roughly 40 MB for an ordinary paper, which tectonic keeps for later, so after that it works offline.
 
+To keep the typeset document, press Shift Command S, or choose Export PDF from the File menu, and pick where to save it. The file is exactly what tectonic produced for the document as it stands in the editor, unsaved edits included. If the preview is behind what you have typed, or you are looking at the source, it is typeset first. Your .tex file is not saved by exporting; that is still Command S.
+
 While it is previewing, MiniCode typesets a hidden copy of the buffer next to your file, named like .paper.minicode.tex, so that \\input and \\includegraphics still find their files and your own file is never written behind your back. The copy is deleted as soon as tectonic finishes.
 
 ## Language servers
@@ -162,6 +164,7 @@ Adding a scene is a function of a few lines in src/Demo.mm and an entry in its s
 | Shift Command T, or Control backtick | Toggle terminal |
 | Shift Command B | Toggle browser |
 | Shift Command P | Toggle the preview, for Markdown and LaTeX files |
+| Shift Command S | Export the typeset PDF of a LaTeX file |
 | Shift Command H | Toggle the shortcut hints |
 | Command comma | Open the settings file |
 | Command slash | Comment or uncomment the selected lines |

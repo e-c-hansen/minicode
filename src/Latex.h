@@ -23,6 +23,12 @@
 - (void)undoEdit;
 - (void)redoEdit;
 - (void)compileNow;
+// The PDF for `source`, exactly as tectonic wrote it. Handed over straight
+// away when the preview is already showing that source, otherwise after a
+// typeset of it; `error` is set instead when it does not typeset. The
+// completion always runs on the main thread.
+- (void)pdfForPath:(NSString *)texPath source:(NSString *)source
+        completion:(void (^)(NSData *pdf, NSString *error))done;
 - (void)applySettings;
 @end
 

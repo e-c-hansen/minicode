@@ -154,6 +154,9 @@ static NSString *NsStr(const std::string &s) {
     int _editingItemIndex;
     std::vector<std::string> _undo;   // source before each preview edit
     std::vector<std::string> _redo;
+    NSData *_pdfData;            // the PDF on screen, as tectonic wrote it
+    std::string _pdfSrc;         // the source that PDF was typeset from
+    NSMutableArray *_pdfWaiters; // pdfForPath: calls waiting on a typeset
 }
 
 // Enough history for a working session without holding a whole file's worth of
@@ -360,12 +363,15 @@ static const CGFloat kStatusHeight = 26;
                          encoding:NSUTF8StringEncoding error:&err]) {
         [self showFailure:[NSString stringWithFormat:@"Cannot write the preview "
                            @"copy next to your file:\n%@", err.localizedDescription]];
+        [self answerPdfWaiters:@"The preview copy could not be written next to "
+                                "the file, so the document was not typeset."];
         return;
     }
 
     self.compiling = YES;
     self.compileQueued = NO;
     NSUInteger gen = ++self.generation;
+    std::string compiledSrc = _src;
     [self setStatus:@"Typesetting…" busy:YES];
 
     NSTask *task = [[NSTask alloc] init];
@@ -396,9 +402,10 @@ static const CGFloat kStatusHeight = 26;
             [stem stringByAppendingPathExtension:@"pdf"]];
         NSString *syncPath = [outDir stringByAppendingPathComponent:
             [stem stringByAppendingString:@".synctex.gz"]];
-        PDFDocument *doc = (status == 0)
-            ? [[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:pdfPath]]
-            : nil;
+        // The bytes are kept so an export is exactly what tectonic wrote, not
+        // PDFKit's re-save of it.
+        NSData *pdfData = (status == 0) ? [NSData dataWithContentsOfFile:pdfPath] : nil;
+        PDFDocument *doc = pdfData ? [[PDFDocument alloc] initWithData:pdfData] : nil;
         std::string sync = (status == 0) ? ReadGzip(syncPath) : std::string();
         [[NSFileManager defaultManager] removeItemAtPath:scratch error:nil];
 
@@ -407,9 +414,16 @@ static const CGFloat kStatusHeight = 26;
             if (!me || gen != me.generation) return;
             me.compiling = NO;
             me.task = nil;
-            if (status == 0 && doc) [me showDocument:doc syncTex:sync];
-            else [me showFailure:log.length ? log : @"tectonic did not run."];
+            BOOL ok = status == 0 && doc;
+            if (ok) {
+                [me showDocument:doc syncTex:sync];
+                [me keepPdf:pdfData source:compiledSrc];
+            } else {
+                [me showFailure:log.length ? log : @"tectonic did not run."];
+            }
             if (me.compileQueued) [me compileNow];
+            else [me answerPdfWaiters:ok ? nil : @"The document did not typeset. "
+                                             "The preview shows tectonic's log."];
         });
     });
 }
@@ -438,6 +452,42 @@ static const CGFloat kStatusHeight = 26;
     [self setStatus:[NSString stringWithFormat:
         @"%@ · double-click text to edit it", pages] busy:NO];
     self.actionButton.title = @"Recompile";
+}
+
+// ------------------------------------------------------------------ export
+
+- (void)keepPdf:(NSData *)data source:(const std::string &)src {
+    _pdfData = data;
+    _pdfSrc = src;
+}
+
+- (void)pdfForPath:(NSString *)texPath source:(NSString *)source
+        completion:(void (^)(NSData *pdf, NSString *error))done {
+    [self setPath:texPath source:source];   // no-op when nothing changed
+    if (_pdfData && _pdfSrc == _src && !self.compiling) {
+        done(_pdfData, nil);
+        return;
+    }
+    if (!MCTectonicPath()) {
+        done(nil, @"tectonic is not installed. The LaTeX preview offers to "
+                  "download it.");
+        return;
+    }
+    if (!_pdfWaiters) _pdfWaiters = [NSMutableArray array];
+    [_pdfWaiters addObject:[done copy]];
+    [self compileNow];   // skip the typing debounce; queues if one is running
+}
+
+// Called when a typeset finishes with nothing queued after it. The source
+// can still have moved on (typing during the run), in which case the waiters
+// wait for the typeset that change scheduled.
+- (void)answerPdfWaiters:(NSString *)error {
+    if (_pdfWaiters.count == 0) return;
+    if (!error && _pdfSrc != _src) { [self compileNow]; return; }
+    NSArray *waiters = _pdfWaiters;
+    _pdfWaiters = nil;
+    for (void (^done)(NSData *, NSString *) in waiters)
+        done(error ? nil : _pdfData, error);
 }
 
 - (void)showFailure:(NSString *)log {
