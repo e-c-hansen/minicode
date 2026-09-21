@@ -18,9 +18,19 @@
 //     a command (the panel shows it in the header instead) and on while a
 //     command runs, so a program that turns echo off (a password prompt) gets
 //     a secure input field.
+//   * TerminalScreen (pure C++) reads the same bytes as a cell grid, all the
+//     time, so it is current whenever it is needed. The panel shows it in
+//     place of the log (grid mode) while the program is on the alternate
+//     screen (vim, less, htop, man), or when a running command has kept the
+//     pty out of canonical mode for a moment without one (git's less -X, a
+//     REPL, ssh); the latter lasts until the command ends. In grid mode keys
+//     go straight to the pty. The log stream leaves alternate-screen text
+//     out, so the log is intact when the grid goes away.
 #import "Terminal.h"
 #import "AppSettings.h"
+#import "TerminalGridView.h"
 #include "TerminalStream.h"
+#include "TerminalScreen.h"
 
 #include <util.h>
 #include <termios.h>
@@ -75,8 +85,6 @@ if [[ -o interactive ]]; then
     preexec_functions+=(__minicode_preexec)
     setopt HIST_IGNORE_SPACE
     unsetopt PROMPT_SP PROMPT_CR
-    # There is no screen emulator to drive a pager.
-    export PAGER=cat GIT_PAGER=cat MANPAGER=cat
     __minicode_precmd
   }
   precmd_functions+=(__minicode_install)
@@ -134,7 +142,14 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     BOOL _commandStarted;        // saw 133;C for the command in flight
     BOOL _userCommand;           // the command in flight came from the input
     NSUInteger _liveStart;       // where the live line begins in the output
+
+    TerminalScreen _screen;      // the same output as a cell grid
+    BOOL _gridMode;              // the grid is showing instead of the log
+    BOOL _stickyGrid;            // this command went raw: grid until it ends
+    int _rawTicks;               // consecutive polls that found raw mode
+    NSTimer *_rawTimer;          // polls termios while a command runs
 }
+@property(nonatomic, strong) TerminalGridView *grid;
 @property(nonatomic, strong) NSScrollView *outScroll;
 @property(nonatomic, strong) TerminalOutputView *output;
 @property(nonatomic, strong) NSTextField *prompt;
@@ -194,6 +209,9 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     self.output.richText = YES;
     self.output.drawsBackground = NO;
     self.output.textContainerInset = NSMakeSize(6, 6);
+    // No extra padding, so the log wraps at the same column count the pty
+    // reports (updateWindowSize measures with the grid's metrics).
+    self.output.textContainer.lineFragmentPadding = 0;
     self.output.verticallyResizable = YES;
     self.output.horizontallyResizable = NO;
     self.output.textContainer.widthTracksTextView = YES;
@@ -215,6 +233,16 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         [self makeInputField:[NSSecureTextField class]];
     self.secureInput.placeholderString = @"Hidden input (the program turned echo off)";
     self.secureInput.hidden = YES;
+
+    // The cell grid for full-screen programs, over everything else.
+    self.grid = [[TerminalGridView alloc] initWithFrame:self.bounds];
+    self.grid.screen = &_screen;
+    self.grid.hidden = YES;
+    self.grid.onInput = ^(NSData *bytes) {
+        TerminalView *s = weakSelf;
+        if (s) [s sendBytes:(const char *)bytes.bytes length:bytes.length];
+    };
+    [self addSubview:self.grid];
 }
 
 // Colors from the settings file. Output already on screen in the default
@@ -240,6 +268,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         [ts addAttribute:NSForegroundColorAttributeName value:c range:r];
     }];
     [ts endEditing];
+    [self.grid screenChanged];
 }
 
 // Manual layout — reliable regardless of how the host sizes us.
@@ -256,6 +285,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     NSRect field = NSMakeRect(6 + promptW, 2, MAX(0, W - promptW - 12), 22);
     self.input.frame = field;
     self.secureInput.frame = field;
+    self.grid.frame = self.bounds;
     [self updateWindowSize];
 }
 
@@ -263,7 +293,68 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     return self.secureInput.hidden ? self.input : self.secureInput;
 }
 
-- (void)focusInput { [self.window makeFirstResponder:[self activeInput]]; }
+- (void)focusInput {
+    if (_gridMode) [self.window makeFirstResponder:self.grid];
+    else [self.window makeFirstResponder:[self activeInput]];
+}
+
+// Is keyboard focus somewhere in this panel?
+- (BOOL)hasFocus {
+    id fr = self.window.firstResponder;
+    return fr == self || fr == self.grid || [self isEditing:self.input] ||
+           [self isEditing:self.secureInput];
+}
+
+// Show the grid while the program needs a screen, the log otherwise.
+- (void)updateMode {
+    BOOL want = _master >= 0 && (_screen.altScreen() || _stickyGrid);
+    if (want == _gridMode) return;
+    BOOL hadFocus = [self hasFocus];
+    _gridMode = want;
+    self.grid.hidden = !want;
+    self.outScroll.hidden = want;
+    self.prompt.hidden = want;
+    self.input.hidden = want;
+    self.secureInput.hidden = YES;
+    if (!want) {
+        [self updateSecureInput];
+        [self scrollToEnd];
+    }
+    [self.grid screenChanged];
+    if (hadFocus) [self focusInput];
+}
+
+// While a command runs, watch for it taking the pty out of canonical mode
+// without switching to the alternate screen (git's `less -X`, a REPL, ssh).
+// It must stay that way for two polls, so a program that only flips modes
+// briefly (less -F on short output) never flashes the grid.
+- (void)startRawWatch {
+    if (_rawTimer) return;
+    _rawTicks = 0;
+    __weak TerminalView *weakSelf = self;
+    _rawTimer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES
+                                                  block:^(NSTimer *t) {
+        (void)t;
+        [weakSelf checkRawMode];
+    }];
+}
+
+- (void)stopRawWatch {
+    [_rawTimer invalidate];
+    _rawTimer = nil;
+    _rawTicks = 0;
+}
+
+- (void)checkRawMode {
+    if (_master < 0 || !_commandStarted || _atPrompt) { _rawTicks = 0; return; }
+    struct termios t;
+    BOOL raw = tcgetattr(_master, &t) == 0 && (t.c_lflag & ICANON) == 0;
+    _rawTicks = (raw && !_screen.altScreen()) ? _rawTicks + 1 : 0;
+    if (_rawTicks >= 2 && !_stickyGrid) {
+        _stickyGrid = YES;
+        [self updateMode];
+    }
+}
 
 // Clicks on the terminal's own background (padding/gaps) also focus input.
 - (void)mouseDown:(NSEvent *)event {
@@ -321,6 +412,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         self.output.string = @"";
         _liveStart = 0;
         _stream.breakLine();
+        _screen.feed("\x1b[H\x1b[2J");
         return;
     }
 
@@ -393,6 +485,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
 // Show the secure field while a running program has echo turned off.
 - (void)updateSecureInput {
+    if (_gridMode) return;       // the grid takes keys itself
     BOOL hidden = NO;
     if (_master >= 0 && _commandStarted && !_atPrompt) {
         struct termios t;
@@ -416,6 +509,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
 - (void)stopShell {
     _generation++;                     // ignore anything still in flight
+    [self stopRawWatch];
     if (_readSource) {
         dispatch_source_cancel(_readSource);   // closes the fd
         _readSource = nil;
@@ -425,22 +519,29 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     _master = -1;
 }
 
-// Rows and columns that fit the output view, pushed to the pty so programs
-// that format for the width (ls, git) and SIGWINCH listeners get it right.
+// Rows and columns of grid cells that fit the panel, pushed to the pty so
+// programs that format for the width (ls, git) and full-screen programs get
+// it right; the kernel sends SIGWINCH to the foreground job on a change. The
+// same size serves both modes, so switching never resizes the program.
 - (void)updateWindowSize {
-    NSFont *font = [NSFont monospacedSystemFontOfSize:12
-                                               weight:NSFontWeightRegular];
-    CGFloat charW = [@"M" sizeWithAttributes:@{NSFontAttributeName: font}].width;
-    NSLayoutManager *lm = self.output.layoutManager;
-    CGFloat lineH = lm ? [lm defaultLineHeightForFont:font] : 15;
-    NSSize content = self.outScroll.contentSize;
-    CGFloat usableW = content.width - 2 * self.output.textContainerInset.width -
-                      2 * self.output.textContainer.lineFragmentPadding;
+    NSSize cell = [TerminalGridView cellSize];
+    CGFloat pad = [TerminalGridView padding];
+    NSSize size = self.bounds.size;
+    // A collapsed or not-yet-laid-out panel keeps the last size, rather than
+    // squeezing the screen (and cutting its lines) down to nothing.
+    if (size.width < 100 || size.height < 60) {
+        if (_winsize.ws_col) return;
+        size = NSMakeSize(MAX(size.width, 400), MAX(size.height, 220));
+    }
     struct winsize ws = {};
-    ws.ws_col = (unsigned short)MAX(20, floor(usableW / MAX(charW, 1)));
-    ws.ws_row = (unsigned short)MAX(5, floor(content.height / MAX(lineH, 1)));
+    ws.ws_col = (unsigned short)MAX(20, floor((size.width - 2 * pad) / cell.width));
+    ws.ws_row = (unsigned short)MAX(5, floor((size.height - 2 * pad) / cell.height));
+    ws.ws_xpixel = (unsigned short)(ws.ws_col * cell.width);
+    ws.ws_ypixel = (unsigned short)(ws.ws_row * cell.height);
     if (ws.ws_col == _winsize.ws_col && ws.ws_row == _winsize.ws_row) return;
     _winsize = ws;
+    _screen.resize(ws.ws_col, ws.ws_row);
+    [self.grid screenChanged];
     if (_master >= 0) ioctl(_master, TIOCSWINSZ, &_winsize);
 }
 
@@ -477,13 +578,12 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
             hasLocale = true;
         env.push_back(kv);
     }
-    // Colors and in-line cursor movement are understood, so programs may use
-    // them. Full-screen programs will still misdraw: there is no screen model.
+    // Colors, cursor movement and full-screen programs are all understood:
+    // the log follows ordinary output and the grid takes over for programs
+    // that draw a screen, so pagers are left to the user's own settings.
     env.push_back("TERM=xterm-256color");
     env.push_back("COLORTERM=truecolor");
     env.push_back("TERM_PROGRAM=MiniCode");
-    env.push_back("PAGER=cat");
-    env.push_back("GIT_PAGER=cat");
     if (!hasLocale) env.push_back("LANG=en_US.UTF-8");  // apps get no LANG
     if (_integrated) {
         env.push_back(std::string("ZDOTDIR=") + zdot.fileSystemRepresentation);
@@ -503,9 +603,11 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     _atPrompt = NO;
     _commandStarted = NO;
     _userCommand = NO;
+    _stickyGrid = NO;
     _winsize = {};
     [self updateWindowSize];
     struct winsize ws = _winsize;
+    _screen = TerminalScreen(ws.ws_col, ws.ws_row);
 
     int master = -1;
     pid_t pid = forkpty(&master, nullptr, nullptr, &ws);
@@ -576,6 +678,9 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     _master = -1;
     _shellPid = 0;
     _atPrompt = NO;
+    _stickyGrid = NO;
+    [self stopRawWatch];
+    [self updateMode];           // back to the log (_master is -1 now)
     [self updateSecureInput];
     [self ensureNewline];
     // Restart right away, unless the shell is dying at startup; then wait for
@@ -618,6 +723,9 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 // ---------------------------------------------------------------- output
 - (void)receive:(NSData *)data generation:(int)generation {
     if (generation != _generation) return;
+    _screen.feed((const char *)data.bytes, data.length);
+    std::string replies = _screen.takeReplies();   // e.g. cursor position
+    if (!replies.empty()) [self sendBytes:replies.data() length:replies.size()];
     auto events = _stream.feed((const char *)data.bytes, data.length);
     NSTextStorage *ts = self.output.textStorage;
     [ts beginEditing];
@@ -629,9 +737,12 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         case TermEvent::PromptStart:
             _atPrompt = YES;
             _commandStarted = NO;
+            _stickyGrid = NO;
+            [self stopRawWatch];
             break;
         case TermEvent::CommandStart:
             _commandStarted = YES;
+            [self startRawWatch];
             break;
         case TermEvent::CommandEnd:
             if (_userCommand) {
@@ -651,7 +762,9 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         }
     }
     [ts endEditing];
-    [self scrollToEnd];
+    [self updateMode];
+    if (_gridMode) [self.grid screenChanged];
+    else [self scrollToEnd];
     [self updateSecureInput];
 }
 
