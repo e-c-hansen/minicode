@@ -318,6 +318,9 @@ private:
 @property(nonatomic, strong) DragBar *termDivider;
 @property(nonatomic, strong) BrowserView *browser;
 @property(nonatomic, strong) LatexView *latex;
+@property(nonatomic, strong) NSImageView *imageView;   // editor's slot, for images
+@property(nonatomic, assign) BOOL isImage;
+@property(nonatomic, assign) NSSize imagePixels;       // for the title bar
 @property(nonatomic, assign) BOOL terminalVisible;
 @property(nonatomic, assign) BOOL browserVisible;
 @property(nonatomic, assign) CGFloat terminalHeight;
@@ -612,6 +615,7 @@ private:
 
     self.editorScroll.panelColor = [cfg background:Surface::Editor];
     [self.latex applySettings];
+    self.imageView.layer.backgroundColor = [cfg background:Surface::Editor].CGColor;
     self.textView.insertionPointColor = [cfg text:Surface::Editor];
     [self recolorEditor];
 
@@ -928,8 +932,14 @@ static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hide
     // The LaTeX preview sits in the editor's slot, in place of the text view.
     BOOL showLatex = showEditor && self.latex != nil && self.isLatex &&
                      self.previewMode;
+    // So does an image, in place of the text view.
+    BOOL showImage = showEditor && self.imageView != nil && self.isImage;
     self.editorScroll.frame = topRect;
-    self.editorScroll.hidden = !showEditor || showLatex;
+    self.editorScroll.hidden = !showEditor || showLatex || showImage;
+    if (self.imageView) {
+        self.imageView.frame = topRect;
+        self.imageView.hidden = !showImage;
+    }
     if (self.latex) {
         self.latex.frame = topRect;
         self.latex.hidden = !showLatex;
@@ -1425,9 +1435,10 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         [self warn:err.localizedDescription]; return;
     }
     if ([self.currentPath isEqual:node.path]) {   // the open file went away
-        self.currentPath = nil; self.dirty = NO;
+        self.currentPath = nil;
+        [self resetViewMode];
         [self.lsp documentOpened:nil];
-        [self showWelcome]; [self updateTitle];
+        [self showWelcome]; [self relayoutRightArea]; [self updateTitle];
     }
     [self refreshTree:nil];
 }
@@ -1473,6 +1484,74 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 
 
 // ------------------------------------------------------------ file rendering
+// Forget everything about the previous file's mode. Called before a new file
+// is shown, so a stale preview or image, or an editable text view, can never
+// survive into a file that shows something else. A text file sets its own
+// mode again from its extension, and refreshDisplay makes the view editable.
+- (void)resetViewMode {
+    self.isMarkdown = NO;
+    self.isLatex = NO;
+    self.isImage = NO;
+    self.previewMode = NO;
+    self.sourceText = nil;
+    self.dirty = NO;
+    self.textView.editable = NO;
+    self.imageView.image = nil;
+}
+
+// Formats the system can decode that are worth showing as a picture. SVG and
+// PDF are left out: SVG is source people edit, and a PDF is more than a page.
++ (BOOL)isImagePath:(NSString *)path {
+    static NSSet<NSString *> *exts;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        exts = [NSSet setWithArray:@[@"png", @"jpg", @"jpeg", @"gif", @"tif",
+            @"tiff", @"bmp", @"heic", @"heif", @"webp", @"ico", @"icns"]];
+    });
+    return [exts containsObject:path.pathExtension.lowercaseString];
+}
+
+// Show an image in the editor's slot. Returns NO if it can't be decoded, and
+// the caller falls through to the usual "Cannot display" message.
+- (BOOL)showImageAtPath:(NSString *)path {
+    NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
+    if (!img || !img.isValid) return NO;
+    if (!self.imageView) {
+        NSImageView *v = [[NSImageView alloc] initWithFrame:NSZeroRect];
+        // Fit the pane, but never blow a small image up past its own size.
+        v.imageScaling = NSImageScaleProportionallyDown;
+        v.imageAlignment = NSImageAlignCenter;
+        v.imageFrameStyle = NSImageFrameNone;
+        v.animates = YES;             // animated GIFs play
+        v.editable = NO;
+        v.wantsLayer = YES;
+        v.layer.backgroundColor =
+            [[AppSettings shared] background:Surface::Editor].CGColor;
+        [self.rightArea addSubview:v positioned:NSWindowBelow
+                        relativeTo:self.termDivider];
+        self.imageView = v;
+    }
+    // Pixel size from the largest bitmap, since NSImage.size is in points and
+    // a 144 dpi screenshot would otherwise report half its real size.
+    NSInteger pw = 0, ph = 0;
+    for (NSImageRep *rep in img.representations) {
+        if (rep.pixelsWide > pw) { pw = rep.pixelsWide; ph = rep.pixelsHigh; }
+    }
+    self.imagePixels = pw > 0 ? NSMakeSize(pw, ph) : img.size;
+    // Draw at one image pixel per screen point, so "never scale up" means
+    // what it says on a Retina screen too.
+    if (pw > 0) img.size = NSMakeSize(pw, ph);
+    self.imageView.image = img;
+    self.isImage = YES;
+    self.currentExt = path.pathExtension.lowercaseString;
+    // The hidden text view holds nothing, and a message is never saved.
+    [self setPlainMessage:@""];
+    [self relayoutRightArea];
+    [self.lsp documentOpened:nil];
+    [self updateTitle];
+    return YES;
+}
+
 - (void)openFileAtPath:(NSString *)path {
     [self revealEditor];
     if ([path isEqualToString:self.currentPath]) return;  // avoid double-render
@@ -1481,20 +1560,22 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         return;
     }
     self.currentPath = path;
+    [self resetViewMode];
+    // Images are routed by extension before any attempt to read them as text.
+    if ([EditorController isImagePath:path] && [self showImageAtPath:path]) {
+        [self recordModDate];
+        [_recent removeObject:path];
+        [_recent insertObject:path atIndex:0];
+        return;
+    }
     NSError *err = nil;
     NSString *content = [NSString stringWithContentsOfFile:path
                                                   encoding:NSUTF8StringEncoding
                                                      error:&err];
     if (!content) {
-        // Nothing of the previous file may survive into this one: a stale
-        // preview would stay on screen, and an editable text view would let
-        // Cmd+S write this message over the binary file.
-        self.isMarkdown = NO;
-        self.isLatex = NO;
-        self.previewMode = NO;
-        self.sourceText = nil;
-        self.dirty = NO;
-        self.textView.editable = NO;
+        // resetViewMode above cleared the previous file's mode, so no stale
+        // preview stays on screen and the text view is read-only, which keeps
+        // Cmd+S from writing this message over the binary file.
         [self setPlainMessage:[NSString stringWithFormat:
             @"Cannot display “%@”.\n\n(Binary file or unsupported encoding.)",
             path.lastPathComponent]];
@@ -1567,6 +1648,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     if ([disk isEqualToDate:self.fileModDate]) return;   // unchanged
 
     self.fileModDate = disk;
+    if (self.isImage) { [self showImageAtPath:self.currentPath]; return; }
     if (!self.dirty) {                       // no local edits: reload quietly
         NSString *fresh = [NSString stringWithContentsOfFile:self.currentPath
                                                     encoding:NSUTF8StringEncoding
@@ -2009,7 +2091,7 @@ static NSColor *ContrastColor(const Rgba &c) {
 
 - (void)saveCurrentFile:(id)sender {
     // A message (welcome, binary file) is not the file's contents.
-    if (!self.currentPath || self.showingMessage) return;
+    if (!self.currentPath || self.showingMessage || self.isImage) return;
     // In markdown preview mode the text view holds rendered text, not source;
     // save the tracked source instead.
     NSString *text = self.textView.editable ? self.textView.string
@@ -2045,6 +2127,9 @@ static NSColor *ContrastColor(const Rgba &c) {
     NSString *name = self.currentPath.lastPathComponent ?: @"MiniCode";
     NSString *flag = self.dirty ? @"● " : @"";
     NSString *mode = (self.canTogglePreview && self.previewMode) ? @"  [Preview]" : @"";
+    if (self.isImage)
+        mode = [NSString stringWithFormat:@"  %.0f × %.0f",
+                self.imagePixels.width, self.imagePixels.height];
     self.window.title = [NSString stringWithFormat:@"%@%@ — MiniCode%@",
                          flag, name, mode];
     self.window.documentEdited = self.dirty;
@@ -2156,10 +2241,11 @@ static NSColor *ContrastColor(const Rgba &c) {
         _root.path = dir; _root.isDir = YES;
         [_root loadChildren];
         self.currentPath = nil;
-        self.dirty = NO;
+        [self resetViewMode];     // no stale preview or image over the welcome
         [self.lsp setRoot:dir];   // servers belong to the old folder
         [self.outline reloadData];
         [self showWelcome];
+        [self relayoutRightArea];
         [self.terminal setDirectory:dir];   // keep terminal cwd in sync
         [self startWatching:dir];           // watch the new folder
         self.window.title = [NSString stringWithFormat:@"MiniCode — %@",

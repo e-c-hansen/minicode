@@ -338,76 +338,67 @@ against a scripted server in `run_tests.cpp`; `Lsp.mm` owns processes and UI.
   log when doing this again. Other sessions (and the user's own MiniCode)
   may have clangd running: kill only PIDs the test started.
 
-## Current state (handoff, 2026-09-18)
+## Current state (handoff, 2026-09-21)
 
-- Everything lives on `main`; there are no other branches any more. The merged
-  ones (`linux-port`, `feat/open-file-from-cli`,
-  `fix/markdown-preview-large-files`) were deleted on 2026-09-20 once their
-  work was in `main`. Released as **1.2.1** to the Homebrew tap that day, the
-  first release since 1.1.0 in July. 501 core checks pass; the build is
-  warning-free.
-- The LaTeX preview is macOS only; `linux/` has not been touched for it. The
-  user has used it on an Overleaf resume at
-  `~/Documents/Resume-September-2026` (their personal document: do not edit
-  it or commit anything from it) and reported the wrong-text clicks that led to
-  `9a92379`. Launch: `make run DIR=~/Documents/Resume-September-2026`.
+- Everything lives on `main`. On 2026-09-21 six branches were merged and
+  deleted: `feat/terminal-screen` (grid mode), `feat/lsp`,
+  `feat/incremental-highlight`, `feat/demo-gifs`, `feat/demo-scenes-2` and
+  `feat/latex-click-robustness`; image viewing and opening a file from the
+  command line went straight onto `main`. Released as **1.3.0** that day.
+  1079 core checks pass; the build is warning-free.
+- None of that day's work has reached `linux/` yet: the LSP client, the
+  incremental highlighter (the core is shared, but Linux still re-lexes in
+  full), image viewing and the LaTeX preview are macOS only. The GTK
+  terminal is VTE and needs no grid mode.
+- The LaTeX preview is macOS only. The user has used it on an Overleaf resume
+  at `~/Documents/Resume-September-2026` (their personal document: do not
+  edit it or commit anything from it; read a scratch copy when measuring).
+  `tests/latex/sweep.sh` double-clicks every word of a typeset document
+  through the real click path; it hit 100% on the resume and 98.7% on
+  `tests/latex/torture.tex` after the robustness work.
 - tectonic 0.17.0 lives at
   `~/Library/Application Support/MiniCode/bin/tectonic` (installed by the
   app's own Download button) with its package cache in
   `~/Library/Caches/TectonicProject.Tectonic` (44 MB; it has `article`,
   `geometry`, `enumitem`, `hyperref`, `xcolor` and Latin Modern text fonts,
   but not the Computer Modern math fonts, so math needs the network).
-- Fixed on the way out: opening a file that is not UTF-8 (every PNG) left the
-  previous file's mode in place. After a `.tex` the stale PDF stayed on screen;
-  after any text file the view stayed editable, and **Cmd+S wrote the "Cannot
-  display" message over the binary file**. The binary branch of
-  `openFileAtPath:` now resets `isMarkdown`/`isLatex`/`previewMode`/
-  `sourceText`/`dirty`, makes the text view read-only and relays out, and
-  `saveCurrentFile:` returns early while `showingMessage` is set. A headless
-  test (8 checks) failed 5 before the fix and passed 8 after.
-- Next up per the user: **rendering PNG files** (see the next section). After
-  that, the Linux port of the LaTeX preview, tested in Docker.
+- Needs the user's eyes, not yet confirmed by them: how the terminal grid,
+  LSP squiggles/completion/hover and the LaTeX popover look; that a settings
+  color pick now keeps its color (the `usesFontPanel = NO` fix); whether
+  Ctrl+Space reaches the app with several input sources enabled.
 
-## Next task: render images when they are opened (PNG first)
+## Images
 
-Clicking a `.png` in the tree today shows "Cannot display ... (Binary file or
-unsupported encoding.)". The goal is to show the image instead. PNGs *inside*
-a LaTeX document already render (tectonic embeds them in the PDF, verified on
-the resume's logos); this is about opening an image file directly.
+Opening an image file (png, jpg, jpeg, gif, tif/tiff, bmp, heic/heif, webp,
+ico, icns) shows it in the editor's slot instead of the "Cannot display"
+message. SVG and PDF are deliberately not in the list: SVG is source people
+edit, and a PDF would show only its first page.
 
-The plan in `ROADMAP.md` (Media rendering) holds: an `NSImageView`, which is
-AppKit, so no new dependency. How it fits what exists:
-
-- **Route by extension before reading the file as text.** `openFileAtPath:`
-  currently tries `stringWithContentsOfFile:` first and falls into the binary
-  branch when that fails. Check the extension (png, jpg, jpeg, gif, tiff, bmp,
-  heic, webp; `NSImage imageTypes` lists what the system decodes) before that
-  read, so an image never reaches the text path.
-- **Reset the previous file's mode**, exactly as the binary branch now does,
-  or the old preview and an editable text view survive into the image. Several
-  places set these flags by hand now; a single `resetViewMode` helper called at
-  the top of `openFileAtPath:` would be the tidy way.
-- **Take the editor's slot the way `LatexView` does.** Add the view to
-  `rightArea` lazily, and in `relayoutRightArea` give it `topRect` and hide
-  `editorScroll` while it shows (see `showLatex` there). Terminal, browser,
-  Shift+Cmd+E and the divider drags then keep working unchanged.
-- **Nothing to save.** Set `showingMessage` (or an `isImage` flag checked the
-  same way in `saveCurrentFile:`) so Cmd+S cannot write text over the image,
-  and keep the text view read-only.
-- Scale to fit, never up past 100% for small images (`NSImageScaleProportionallyDown`),
-  on the editor background from `Settings` (`[cfg background:Surface::Editor]`,
-  and re-apply in `applySettings`). A status line with pixel size is cheap and
-  useful. Scrolling/zoom for large images can come later.
-- `canTogglePreview` stays NO for images; hints and README need a line.
-- **Verify** with a temporary `MINICODE_*TEST` block in `main.mm` (see below):
-  open a `.tex`, then a `.png`, then a `.txt`, and check which view is visible,
-  that the image view's `image.size` matches the file, that Cmd+S leaves the
-  PNG's bytes unchanged, and that returning to a text file restores an
-  editable editor. Capture the window with `screencapture -l` to confirm the
-  image actually draws, then leave the visual judgment to the user.
-- **Linux**: the same gap exists in `linux/src/Editor.cpp` (the
-  `g_utf8_validate` branch). GTK4's `GtkPicture` is the equivalent there. Do the
-  macOS side first; the user tests Linux in Docker afterwards.
+- `openFileAtPath:` calls `resetViewMode` first (clears
+  `isMarkdown`/`isLatex`/`isImage`/`previewMode`/`sourceText`/`dirty`, makes
+  the text view read-only), then routes by extension *before* trying to read
+  the file as text. Opening another folder and trashing the open file call it
+  too; before, both left a stale PDF preview over the welcome text.
+- `showImageAtPath:` adds an `NSImageView` to `rightArea` lazily;
+  `relayoutRightArea` gives it `topRect` and hides `editorScroll`, the same
+  way the LaTeX view takes the slot. `NSImageScaleProportionallyDown`, so
+  small images are never blown up; `animates` plays GIFs. The background is
+  the editor surface color, re-applied in `applySettings`.
+- The image's `size` is set to its pixel size, because `NSImage.size` is in
+  points and a 144 dpi screenshot would otherwise draw at half size. The
+  pixel size is shown in the title bar.
+- Nothing is saved: `setPlainMessage:@""` empties the hidden text view and
+  sets `showingMessage`, and `saveCurrentFile:` also returns while `isImage`.
+  `checkExternalChange` reloads the image when the file changes on disk.
+- An image that fails to decode falls through to the text path and gets the
+  usual "Cannot display" message.
+- Verified with a temporary `MINICODE_IMGTEST` block (16 checks): tex, then
+  png, then bin, then txt, view visibility, image and title sizes including a
+  2x-dpi PNG, Cmd+S leaving the PNG bytes unchanged, a pixel read from a
+  `screencapture -l` of a large image, and the text file coming back editable.
+- Not yet: zoom and scrolling for large images, and the Linux side
+  (`linux/src/Editor.cpp`, the `g_utf8_validate` branch; `GtkPicture` is the
+  equivalent).
 
 ## Demo GIFs (`make demos`)
 
@@ -727,6 +718,6 @@ holds, these give real runtime evidence rather than compile-only evidence:
 
 ## What's next
 
-See `ROADMAP.md`. Immediate: image rendering (the section above), then the
-LaTeX preview on Linux. After that: video/audio, the LSP client and
-incremental highlighting on Linux, and the LSP follow-ups in ROADMAP.md.
+See `ROADMAP.md`. Immediate: the Linux port of the day's macOS work (LaTeX
+preview, LSP client, incremental highlighting, images), tested in Docker.
+After that: video/audio, and the LSP and terminal follow-ups in ROADMAP.md.

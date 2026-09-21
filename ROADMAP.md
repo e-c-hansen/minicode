@@ -23,22 +23,16 @@ What is left, roughly in order of value:
   leans on SyncTeX's line alone. Using the cell's `&` position in the row
   would pin it down exactly.
 
-## Media rendering (images and video)
+## Media rendering (images done, video next)
 
-Open an image or video file and see it, instead of the "binary file" message.
-Both are doable natively with no third-party dependency, so VLC is not needed:
+Images open in the editor pane on macOS: an `NSImageView`, scaled to fit and
+never enlarged, with the pixel size in the title bar. Still to do:
 
-- Images (png, jpg, jpeg, gif, heic, webp, bmp, tiff): render with an
-  `NSImageView` in the editor pane, scaled to fit, in place of the text view.
+- Zoom and scroll for large images, and a checkerboard behind transparency.
+- The Linux port (`GtkPicture`).
 - Video and audio (mp4, mov, m4v, mp3, wav, ...): play with an `AVPlayerView`
   from AVKit, which is a macOS system framework. Transport controls come for
-  free.
-
-The work is a new media view in `EditorController` that the open path routes to
-based on file extension, the same way it already routes `.md` to the Markdown
-renderer and `.tex` to the LaTeX preview. Modest effort, no new dependencies.
-Images are next; `CLAUDE.md` ("Next task") has the concrete plan and the
-traps in the open path.
+  free. It routes the same way images do, by extension in `openFileAtPath:`.
 
 ## LSP client (done, with room to grow)
 
