@@ -49,9 +49,17 @@
             android:textColor="#4EA1F7" />
     </LinearLayout>
 
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="#252526">
+
     <TextView
         android:id="@+id/title"
-        android:layout_width="match_parent"
+        android:layout_weight="1"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:background="#252526"
         android:paddingHorizontal="8dp"
@@ -60,6 +68,19 @@
         android:singleLine="true"
         android:ellipsize="start"
         android:text="@string/app_name" />
+
+        <!-- Keyboards on phones vary enough that no key can be assumed, so
+             every shortcut is also reachable here. -->
+        <Button
+            style="?android:attr/borderlessButtonStyle"
+            android:id="@+id/menu"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:text="⋮"
+            android:textSize="18sp"
+            android:textColor="#9CA3AF" />
+    </LinearLayout>
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/fileList"

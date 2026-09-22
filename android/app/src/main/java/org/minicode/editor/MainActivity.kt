@@ -53,6 +53,7 @@ class MainActivity : AppCompatActivity() {
         ui.fileList.adapter = files
         ui.openFolder.setOnClickListener { pickFolder.launch(null) }
         ui.up.setOnClickListener { goUp() }
+        ui.menu.setOnClickListener { showMenu() }
 
         ui.editor.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -181,9 +182,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateTitle() {
-        val waiting = if (leaderArmed) "  …" else ""
-        ui.title.text = (if (dirty) "● " else "") +
-                (currentFile?.name ?: "MiniCode") + waiting
+        ui.title.text = (if (dirty) "● " else "") + (currentFile?.name ?: "MiniCode")
     }
 
     /**
@@ -212,7 +211,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val handled = mutableSetOf<Int>()
-    private var leaderArmed = false
+    private var lastLeaderPress = 0L
 
     /**
      * Shortcuts on a phone keyboard, which has no Ctrl, Esc or Tab.
@@ -228,55 +227,87 @@ class MainActivity : AppCompatActivity() {
      * single keystroke. Ctrl is accepted as well, for anyone on a USB or
      * Bluetooth keyboard.
      */
+    /** One table, keyed by letter, for both ways a shortcut can arrive. */
+    private fun leaderActions(): Map<Char, () -> Unit> = mapOf(
+        's' to { save() },
+        'b' to { showList(ui.fileList.visibility != View.VISIBLE) },
+        'o' to { pickFolder.launch(null) },
+        'h' to { showShortcuts() },
+    )
+
     private fun handleShortcut(event: KeyEvent): Boolean {
         val swap = { showList(ui.fileList.visibility != View.VISIBLE) }
+        val letters = leaderActions()
         val actions = mapOf(
-            KeyEvent.KEYCODE_S to { save() },
-            KeyEvent.KEYCODE_B to swap,
-            KeyEvent.KEYCODE_O to { pickFolder.launch(null) },
-            KeyEvent.KEYCODE_H to { showShortcuts() },
+            KeyEvent.KEYCODE_S to letters.getValue('s'),
+            KeyEvent.KEYCODE_B to letters.getValue('b'),
+            KeyEvent.KEYCODE_O to letters.getValue('o'),
+            KeyEvent.KEYCODE_H to letters.getValue('h'),
         )
 
         if (event.keyCode in LEADER_KEYS) {
-            if (leaderArmed) { disarm(); swap() } else arm()
+            // One press of this key sends a burst of key-downs on a Titan 2
+            // (a hundred of them in the log), so anything within a fifth of
+            // a second is the same press.
+            val now = event.eventTime
+            if (event.repeatCount == 0 && now - lastLeaderPress > 200) {
+                if (now - lastLeaderPress < 700) {   // a second press: the menu
+                    pendingSwap?.let { ui.title.removeCallbacks(it) }
+                    pendingSwap = null
+                    showMenu()
+                } else {
+                    // A single press swaps panes, but only once it is clear
+                    // that no second press is coming.
+                    val swapLater = Runnable { pendingSwap = null; swap() }
+                    pendingSwap = swapLater
+                    ui.title.postDelayed(swapLater, 700)
+                }
+            }
+            lastLeaderPress = now
             handled.add(event.keyCode)
             return true
         }
         val act = when {
-            leaderArmed -> actions[event.keyCode] ?: { disarm() }
             event.isCtrlPressed -> actions[event.keyCode] ?: return false
             else -> return false
         }
-        leaderArmed = false
-        updateTitle()
         handled.add(event.keyCode)
         act()
         return true
     }
 
-    /** The leader is armed for a moment, and says so in the title bar. */
-    private fun arm() {
-        leaderArmed = true
-        updateTitle()
-        ui.title.postDelayed({ if (leaderArmed) disarm() }, 2000)
-    }
+    private var pendingSwap: Runnable? = null
 
-    private fun disarm() {
-        leaderArmed = false
-        updateTitle()
+    /**
+     * The same actions as the shortcuts, for when the keyboard cannot
+     * provide them. Phone keyboards differ too much to rely on any key: the
+     * Titan 2 has no Ctrl, its Alt types symbols, and the system claims Sym
+     * for some letters.
+     */
+    private fun showMenu() {
+        val items = arrayOf("Save", "Files or editor", "Open a folder", "Shortcuts")
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> save()
+                    1 -> showList(ui.fileList.visibility != View.VISIBLE)
+                    2 -> pickFolder.launch(null)
+                    3 -> showShortcuts()
+                }
+            }
+            .show()
     }
 
     /** The equivalent of the Mac app's Shift+Cmd+H panel, for a phone. */
     private fun showShortcuts() {
         val lines = listOf(
-            "The key beside Space, then:",
-            "S      Save",
-            "B      Files or editor",
-            "O      Open a folder",
-            "H      This list",
+            "The key left of right Shift:",
+            "once      Files or editor",
+            "twice     This menu",
             "",
-            "That key twice switches panes.",
-            "With a USB keyboard, Ctrl works too.")
+            "The ⋮ button does the same.",
+            "A USB or Bluetooth keyboard can use",
+            "Ctrl S, Ctrl B, Ctrl O and Ctrl H.")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Shortcuts")
             .setMessage(lines.joinToString(System.lineSeparator()))
