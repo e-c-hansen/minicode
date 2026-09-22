@@ -510,6 +510,30 @@ with the Read tool. Scenes: tour, terminal, settings, latex, lsp, vim.
   the GIF with ImageIO and composite frames in order (frames after the first
   store only the changed region).
 
+## Memory benchmark (`make membench`)
+
+`scripts/membench.sh` runs one workload on MiniCode and on VS Code + Chrome +
+Preview and sums the physical footprint (`tools/procmem.c`, via
+`proc_pid_rusage`) of every process each side owns. Result on 2026-09-21
+(M3, 16 GB): MiniCode 320 MB, the others 1,283 MB; in the README's Memory
+section. Traps paid for while building it:
+
+- Ownership is parent pid OR *responsible* pid. WebKit's helpers are started
+  by launchd, so only the responsible pid ties them to MiniCode, and an app
+  launched from a shell makes the *terminal* responsible. So MiniCode is
+  launched with `open -n -g` (LaunchServices, background) and `--env`.
+- `stringByResolvingSymlinksInPath` turns /private/tmp into /tmp, so the
+  window root and a bench path spelled /private/tmp/... did not match and
+  revealPath opened nothing. `src/Bench.mm` resolves its paths the same way.
+- VS Code's "run task on folder open" was skipped on some launches. A tiny
+  extension loaded with `--extensionDevelopmentPath` opens the terminal and
+  types the tectonic command instead, deterministically.
+- MiniCode's workload uses two windows (code + terminal + browser, and the
+  LaTeX preview), matching VS Code beside Preview. `MINICODE_BENCH` also skips
+  `activateIgnoringOtherApps` so the MiniCode half never takes focus.
+- Always check each side's breakdown before quoting a number: the first run
+  "measured" MiniCode at 55 MB because clangd and WebKit were missing.
+
 ## Verification reality (important)
 
 How much of the GUI you can actually check depends on which port you are

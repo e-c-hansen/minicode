@@ -17,7 +17,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/Settings.cpp src/LineComments.cpp \
             src/LatexDoc.cpp src/SyncTex.cpp src/Json.cpp src/LspClient.cpp
 
-.PHONY: all app run test dmg clean demos
+.PHONY: all app run test dmg clean demos membench
 
 all: app
 
@@ -91,3 +91,13 @@ dist-zip: app
 
 clean:
 	rm -rf build $(BUNDLE) $(APP).dmg $(APP).zip
+
+# Memory used by MiniCode for a day-to-day workload, against VS Code plus
+# Chrome plus Preview doing the same work; see scripts/membench.sh. Windows
+# appear on screen while it runs, for a few minutes.
+build/procmem: tools/procmem.c
+	@mkdir -p build
+	$(CC) -O2 -Wall -Wextra $< -o $@
+
+membench: app build/procmem
+	./scripts/membench.sh

@@ -3,6 +3,7 @@
 #import "EditorController.h"
 #import "Lsp.h"
 #import "Demo.h"
+#import "Bench.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
@@ -74,8 +75,10 @@
     }
     EditorController *c = [self openWindowAtPath:root];
     if (file) [c revealPath:file andOpen:YES];
-    [NSApp activateIgnoringOtherApps:YES];
+    // A benchmark runs in the background, so it never takes the keyboard.
+    if (!MCBenchActive()) [NSApp activateIgnoringOtherApps:YES];
     MCDemoStart(c);   // no-op unless MINICODE_DEMO is set (make demos)
+    MCBenchStart(c);  // no-op unless MINICODE_BENCH is set (make membench)
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)a {
