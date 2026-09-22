@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One pane at a time: on a 576 by 640 dp screen there is no room to put the
+     file list beside the editor, so it covers it and closes when a file opens.
+     The bar at the top is the only permanent chrome, two lines at most. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#1E1E1E"
+    android:fitsSystemWindows="true">
+
+    <LinearLayout
+        android:id="@+id/listBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="#252526"
+        android:paddingHorizontal="4dp"
+        android:paddingVertical="0dp">
+
+        <Button
+            style="?android:attr/borderlessButtonStyle"
+            android:id="@+id/up"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:text="↑"
+            android:textColor="#4EA1F7" />
+
+        <TextView
+            android:id="@+id/path"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:textColor="#9CA3AF"
+            android:singleLine="true"
+            android:ellipsize="start" />
+
+        <Button
+            style="?android:attr/borderlessButtonStyle"
+            android:id="@+id/openFolder"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:text="Open"
+            android:textColor="#4EA1F7" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#252526"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="4dp"
+        android:textColor="#D4D4D4"
+        android:singleLine="true"
+        android:ellipsize="start"
+        android:text="@string/app_name" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/fileList"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#252526" />
+
+    <EditText
+        android:id="@+id/editor"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#1E1E1E"
+        android:textColor="#D4D4D4"
+        android:textColorHighlight="#264F78"
+        android:fontFamily="monospace"
+        android:textSize="13sp"
+        android:gravity="top|start"
+        android:inputType="textMultiLine|textNoSuggestions"
+        android:scrollbars="vertical"
+        android:padding="8dp"
+        android:importantForAutofill="no"
+        android:visibility="gone"
+        android:hint="" />
+</LinearLayout>
