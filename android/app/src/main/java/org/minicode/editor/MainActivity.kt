@@ -184,16 +184,74 @@ class MainActivity : AppCompatActivity() {
         ui.title.text = (if (dirty) "● " else "") + (currentFile?.name ?: "MiniCode")
     }
 
-    // Hardware keyboard shortcuts, which is how this phone is used.
+    /**
+     * Every key the hardware keyboard sends, in the log. This is how the
+     * port learns what a given phone's keyboard actually delivers: the
+     * Titan 2 has no Ctrl, Esc or Tab, and Alt is what types numbers and
+     * symbols, so shortcuts cannot be assumed from a desktop keyboard.
+     *
+     *   adb logcat -s MiniCodeKeys
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            android.util.Log.i("MiniCodeKeys",
+                "code=${event.keyCode} (${KeyEvent.keyCodeToString(event.keyCode)})" +
+                        " scan=${event.scanCode} meta=0x${event.metaState.toString(16)}" +
+                        " char='${event.unicodeChar.toChar()}'" +
+                        " alt=${event.isAltPressed} shift=${event.isShiftPressed}" +
+                        " ctrl=${event.isCtrlPressed} sym=${event.isSymPressed}" +
+                        " fn=${event.isFunctionPressed}")
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    /**
+     * Shortcuts, on the keys this class of phone actually has.
+     *
+     * A Unihertz Titan 2 keyboard has no Ctrl, Esc or Tab. Alt is the symbol
+     * layer, so Alt+S types "4" and is not available. Sym is: it sets a
+     * modifier flag and leaves the letter alone, so it plays the part Command
+     * plays on the Mac and Control does on Linux. The bare key beside Space
+     * (keycode 403 here) is a spare, and switches panes.
+     *
+     * Anything bound here should also work with a plain USB or Bluetooth
+     * keyboard, so Ctrl is accepted alongside Sym.
+     */
     override fun onKeyDown(code: Int, event: KeyEvent): Boolean {
-        if (event.isCtrlPressed) {
+        if (code == SPARE_KEY) {
+            showList(ui.fileList.visibility != View.VISIBLE)
+            return true
+        }
+        if (event.isSymPressed || event.isCtrlPressed) {
             when (code) {
                 KeyEvent.KEYCODE_S -> { save(); return true }
                 KeyEvent.KEYCODE_B -> { showList(ui.fileList.visibility != View.VISIBLE); return true }
                 KeyEvent.KEYCODE_O -> { pickFolder.launch(null); return true }
+                KeyEvent.KEYCODE_H -> { showShortcuts(); return true }
             }
         }
         return super.onKeyDown(code, event)
+    }
+
+    /** The equivalent of the Mac app's Shift+Cmd+H panel, for a phone. */
+    private fun showShortcuts() {
+        val lines = listOf(
+            "Sym S      Save",
+            "Sym B      Files or editor",
+            "Sym O      Open a folder",
+            "Sym H      This list",
+            "",
+            "The key beside Space switches panes.")
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Shortcuts")
+            .setMessage(lines.joinToString(System.lineSeparator()))
+            .setPositiveButton("OK", null)
+            .show()
+    }
+
+    companion object {
+        /** The unlabelled key beside Space on a Titan 2 (no standard name). */
+        private const val SPARE_KEY = 403
     }
 }
 
