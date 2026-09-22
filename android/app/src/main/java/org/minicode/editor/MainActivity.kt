@@ -185,12 +185,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Every key the hardware keyboard sends, in the log. This is how the
-     * port learns what a given phone's keyboard actually delivers: the
-     * Titan 2 has no Ctrl, Esc or Tab, and Alt is what types numbers and
-     * symbols, so shortcuts cannot be assumed from a desktop keyboard.
+     * Shortcuts are handled here, before the key reaches any view. The
+     * editor is a text field and consumes every letter, so a shortcut left
+     * to onKeyDown never fires while the cursor is in a file, which is
+     * exactly when it is wanted.
      *
-     *   adb logcat -s MiniCodeKeys
+     * Each key is also logged, which is how the bindings were worked out on
+     * a keyboard with no Ctrl: `adb logcat -s MiniCodeKeys`.
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
@@ -199,38 +200,43 @@ class MainActivity : AppCompatActivity() {
                         " scan=${event.scanCode} meta=0x${event.metaState.toString(16)}" +
                         " char='${event.unicodeChar.toChar()}'" +
                         " alt=${event.isAltPressed} shift=${event.isShiftPressed}" +
-                        " ctrl=${event.isCtrlPressed} sym=${event.isSymPressed}" +
-                        " fn=${event.isFunctionPressed}")
+                        " ctrl=${event.isCtrlPressed} sym=${event.isSymPressed}")
+            if (handleShortcut(event)) return true
         }
+        // Swallow the release of a key whose press was a shortcut, or the
+        // text field sees a stray key-up.
+        if (event.action == KeyEvent.ACTION_UP && handled.remove(event.keyCode)) return true
         return super.dispatchKeyEvent(event)
     }
 
+    private val handled = mutableSetOf<Int>()
+
     /**
-     * Shortcuts, on the keys this class of phone actually has.
+     * The keys this class of phone actually has.
      *
      * A Unihertz Titan 2 keyboard has no Ctrl, Esc or Tab. Alt is the symbol
-     * layer, so Alt+S types "4" and is not available. Sym is: it sets a
-     * modifier flag and leaves the letter alone, so it plays the part Command
-     * plays on the Mac and Control does on Linux. The bare key beside Space
-     * (keycode 403 here) is a spare, and switches panes.
-     *
-     * Anything bound here should also work with a plain USB or Bluetooth
-     * keyboard, so Ctrl is accepted alongside Sym.
+     * layer, so Alt+S types "4" and cannot be used. Sym sets a modifier flag
+     * and leaves the letter alone, so it takes the part Command plays on the
+     * Mac. The unlabelled key beside Space (403) switches panes by itself.
+     * Ctrl is accepted as well, for a USB or Bluetooth keyboard.
      */
-    override fun onKeyDown(code: Int, event: KeyEvent): Boolean {
-        if (code == SPARE_KEY) {
-            showList(ui.fileList.visibility != View.VISIBLE)
-            return true
-        }
-        if (event.isSymPressed || event.isCtrlPressed) {
-            when (code) {
-                KeyEvent.KEYCODE_S -> { save(); return true }
-                KeyEvent.KEYCODE_B -> { showList(ui.fileList.visibility != View.VISIBLE); return true }
-                KeyEvent.KEYCODE_O -> { pickFolder.launch(null); return true }
-                KeyEvent.KEYCODE_H -> { showShortcuts(); return true }
+    private fun handleShortcut(event: KeyEvent): Boolean {
+        val swap = { showList(ui.fileList.visibility != View.VISIBLE) }
+        val act: (() -> Unit)? = when {
+            event.keyCode == SPARE_KEY -> swap
+            event.isSymPressed || event.isCtrlPressed -> when (event.keyCode) {
+                KeyEvent.KEYCODE_S -> ({ save() })
+                KeyEvent.KEYCODE_B -> swap
+                KeyEvent.KEYCODE_O -> ({ pickFolder.launch(null) })
+                KeyEvent.KEYCODE_H -> ({ showShortcuts() })
+                else -> null
             }
+            else -> null
         }
-        return super.onKeyDown(code, event)
+        if (act == null) return false
+        handled.add(event.keyCode)
+        act()
+        return true
     }
 
     /** The equivalent of the Mac app's Shift+Cmd+H panel, for a phone. */
