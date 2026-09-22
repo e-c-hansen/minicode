@@ -181,7 +181,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateTitle() {
-        ui.title.text = (if (dirty) "● " else "") + (currentFile?.name ?: "MiniCode")
+        val waiting = if (leaderArmed) "  …" else ""
+        ui.title.text = (if (dirty) "● " else "") +
+                (currentFile?.name ?: "MiniCode") + waiting
     }
 
     /**
@@ -210,44 +212,71 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val handled = mutableSetOf<Int>()
+    private var leaderArmed = false
 
     /**
-     * The keys this class of phone actually has.
+     * Shortcuts on a phone keyboard, which has no Ctrl, Esc or Tab.
      *
-     * A Unihertz Titan 2 keyboard has no Ctrl, Esc or Tab. Alt is the symbol
-     * layer, so Alt+S types "4" and cannot be used. Sym sets a modifier flag
-     * and leaves the letter alone, so it takes the part Command plays on the
-     * Mac. The unlabelled key beside Space (403) switches panes by itself.
-     * Ctrl is accepted as well, for a USB or Bluetooth keyboard.
+     * Two things are ruled out on a Titan 2. Alt is the symbol layer, so
+     * Alt+S types "4". And Sym, which looked promising because it sets a
+     * modifier flag without changing the letter, is claimed by the system
+     * for some letters: Sym+H opens the microphone and never reaches an app.
+     *
+     * So the unlabelled key beside Space is a leader instead: press it, then
+     * a letter. Nothing else claims that key, and one press with no letter
+     * after it still switches panes, which is the thing worth doing with a
+     * single keystroke. Ctrl is accepted as well, for anyone on a USB or
+     * Bluetooth keyboard.
      */
     private fun handleShortcut(event: KeyEvent): Boolean {
         val swap = { showList(ui.fileList.visibility != View.VISIBLE) }
-        val act: (() -> Unit)? = when {
-            event.keyCode == SPARE_KEY -> swap
-            event.isSymPressed || event.isCtrlPressed -> when (event.keyCode) {
-                KeyEvent.KEYCODE_S -> ({ save() })
-                KeyEvent.KEYCODE_B -> swap
-                KeyEvent.KEYCODE_O -> ({ pickFolder.launch(null) })
-                KeyEvent.KEYCODE_H -> ({ showShortcuts() })
-                else -> null
-            }
-            else -> null
+        val actions = mapOf(
+            KeyEvent.KEYCODE_S to { save() },
+            KeyEvent.KEYCODE_B to swap,
+            KeyEvent.KEYCODE_O to { pickFolder.launch(null) },
+            KeyEvent.KEYCODE_H to { showShortcuts() },
+        )
+
+        if (event.keyCode in LEADER_KEYS) {
+            if (leaderArmed) { disarm(); swap() } else arm()
+            handled.add(event.keyCode)
+            return true
         }
-        if (act == null) return false
+        val act = when {
+            leaderArmed -> actions[event.keyCode] ?: { disarm() }
+            event.isCtrlPressed -> actions[event.keyCode] ?: return false
+            else -> return false
+        }
+        leaderArmed = false
+        updateTitle()
         handled.add(event.keyCode)
         act()
         return true
     }
 
+    /** The leader is armed for a moment, and says so in the title bar. */
+    private fun arm() {
+        leaderArmed = true
+        updateTitle()
+        ui.title.postDelayed({ if (leaderArmed) disarm() }, 2000)
+    }
+
+    private fun disarm() {
+        leaderArmed = false
+        updateTitle()
+    }
+
     /** The equivalent of the Mac app's Shift+Cmd+H panel, for a phone. */
     private fun showShortcuts() {
         val lines = listOf(
-            "Sym S      Save",
-            "Sym B      Files or editor",
-            "Sym O      Open a folder",
-            "Sym H      This list",
+            "The key beside Space, then:",
+            "S      Save",
+            "B      Files or editor",
+            "O      Open a folder",
+            "H      This list",
             "",
-            "The key beside Space switches panes.")
+            "That key twice switches panes.",
+            "With a USB keyboard, Ctrl works too.")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Shortcuts")
             .setMessage(lines.joinToString(System.lineSeparator()))
@@ -256,8 +285,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        /** The unlabelled key beside Space on a Titan 2 (no standard name). */
-        private const val SPARE_KEY = 403
+        /**
+         * The leader keys. 403 is the unlabelled key beside Space on a
+         * Titan 2: no standard name, and nothing else claims it. Menu and
+         * the Function key are there for other keyboards, and because a
+         * standard keycode is one a test can inject.
+         */
+        private val LEADER_KEYS = setOf(403, KeyEvent.KEYCODE_MENU,
+                                        KeyEvent.KEYCODE_FUNCTION)
     }
 }
 
