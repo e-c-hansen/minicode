@@ -4,6 +4,7 @@
 #pragma once
 
 #include <gtk/gtk.h>
+#include <cstddef>
 #include <string>
 
 #include "Settings.h"
@@ -56,6 +57,14 @@ public:
     // false when there is nothing to do it to (preview, message, a file type
     // with no line comments).
     bool toggleComment();
+
+    // Put the caret on a 1-based line and select `byteLength` bytes starting
+    // `byteColumn` bytes into it (a Find in Folder match), scrolled into view
+    // and focused. A Markdown preview switches to the source first. A column
+    // that no longer fits the line (the file changed since the search) selects
+    // nothing and leaves the caret at the line's start. Returns false when no
+    // editable text is showing.
+    bool revealLine(int line, std::size_t byteColumn, std::size_t byteLength);
 
 private:
     void rehighlight();          // full re-lex of the raw buffer

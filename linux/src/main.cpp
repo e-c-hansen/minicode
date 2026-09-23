@@ -48,6 +48,7 @@
 #include "Palette.h"
 #include "Terminal.h"
 #include "Browser.h"
+#include "Search.h"
 
 #include <glib/gstdio.h>   // g_mkdir_with_parents
 
@@ -71,6 +72,7 @@ struct App {
 
     Editor*   editor = nullptr;
     FileTree* tree = nullptr;
+    SearchPanel* search = nullptr;   // Find in Folder, created on first use
 
     GtkWidget* vpaned = nullptr;          // editor/browser above, terminal below
     GtkWidget* upperBox = nullptr;        // the editor/browser half of the vpaned
@@ -407,6 +409,32 @@ static void act_focus_tree(GSimpleAction*, GVariant*, gpointer userp) {
     static_cast<App*>(userp)->tree->focus();
 }
 
+// A Find in Folder match was activated: open the file the way a click in the
+// tree does, then go to the match. If the file did not end up open (it could
+// not be read, or opening was refused), there is nowhere to go.
+static void openSearchMatch(const FolderSearchMatch& m, void* userp) {
+    App* app = static_cast<App*>(userp);
+    openFileCb(m.path, app);
+    if (app->editor->currentPath() == m.path)
+        app->editor->revealLine(m.line, m.byteColumn, m.byteLength);
+    refreshHints(app);   // a Markdown preview may have switched to source
+    gtk_window_present(GTK_WINDOW(app->window));
+}
+
+// Ctrl+Shift+F: search the folder selected in the tree, or else the open
+// folder, which is what the Mac's Shift+Cmd+F does.
+static void act_find_in_folder(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!app->search) {
+        app->search = new SearchPanel(GTK_WINDOW(app->window));
+        app->search->setOpenCallback(openSearchMatch, app);
+    }
+    app->search->setRoot(app->rootDir);   // resets the scope after Open Folder
+    const std::string dir = app->tree->selectedDir();
+    if (!dir.empty()) app->search->setScope(dir);
+    app->search->show();
+}
+
 // ---------------------------------------------------------------- find impl
 
 // Find the next match at or after `from`, wrapping to the top of the buffer.
@@ -479,6 +507,7 @@ static std::string hintsText(App* app) {
     s += "Ctrl O         Open folder\n";
     s += "Ctrl S         Save\n";
     s += "Ctrl F         Find in file\n";
+    s += "Ctrl Shift F   Find in folder\n";
     s += "Ctrl /         Toggle comment\n";
     s += "Ctrl ,         Settings\n";
     s += "Ctrl 0         Focus the file tree\n";
@@ -604,6 +633,7 @@ static void buildMenu(App* app) {
 
     GMenu* editMenu = g_menu_new();
     g_menu_append(editMenu, "Find", "win.find");
+    g_menu_append(editMenu, "Find in Folder…", "win.findinfolder");
     g_menu_append(editMenu, "Toggle Comment", "win.togglecomment");
     g_menu_append(editMenu, "Settings…", "win.settings");
     g_menu_append_submenu(menuBar, "Edit", G_MENU_MODEL(editMenu));
@@ -639,6 +669,7 @@ static void setAccels(App* app) {
         {"win.newfile",         "<Ctrl><Alt>n"},
         {"win.newfolder",       "<Ctrl><Shift>n"},
         {"win.find",            "<Ctrl>f"},
+        {"win.findinfolder",    "<Ctrl><Shift>f"},
         {"win.togglepreview",   "<Ctrl><Shift>p"},
         {"win.togglehints",     "<Ctrl><Shift>h"},
         {"win.togglesidebar",   "<Ctrl>b"},
@@ -791,6 +822,7 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     addAction(app, "newfile",        G_CALLBACK(act_new_file));
     addAction(app, "newfolder",      G_CALLBACK(act_new_folder));
     addAction(app, "find",           G_CALLBACK(act_find));
+    addAction(app, "findinfolder",   G_CALLBACK(act_find_in_folder));
     addAction(app, "togglepreview",  G_CALLBACK(act_toggle_preview));
     addAction(app, "togglehints",    G_CALLBACK(act_toggle_hints));
     addAction(app, "togglesidebar",  G_CALLBACK(act_toggle_sidebar));

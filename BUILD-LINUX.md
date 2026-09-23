@@ -18,9 +18,10 @@ without a single warning at `warning_level=2`.
 
 Verified by running it:
 
-- The portable C++ core (`src/SyntaxHighlighter.{h,cpp}` and
-  `src/MarkdownParser.{h,cpp}`) compiles and passes all 38 checks under `g++`.
-  This code is shared verbatim with the macOS build.
+- The portable C++ core in `src/` compiles cleanly under `g++` 15 and passes
+  all 1,218 checks of the top-level `make test`, the same suite the macOS
+  build runs. This code is shared verbatim with the macOS build. CI now runs
+  it in the Linux job too.
 - The port's own pure-C++ piece, the byte-to-character offset conversion in
   `linux/src/Utf8Offsets.h`, passes 47 checks (`cd linux && make test`).
 - The window, file tree, editor, syntax highlighting, Markdown preview, the
@@ -69,6 +70,20 @@ Verified by running it:
 - The shell restarts in place when it exits. Confirmed by sending `exit` to the
   child and reading the terminal buffer back: the notice line, a fresh prompt,
   and a command run successfully in the new shell.
+- Find in Folder (Ctrl+Shift+F, September 2026). Checked on Ubuntu 26.04
+  under GNOME on Wayland with a temporary test hook that drove the real code
+  paths inside the running app, then was removed: the action opens the window
+  scoped to the open folder; one character is not searched; a search started
+  and replaced at once has its results dropped, so only the newer query's
+  matches appear; folders the Mac skips (`node_modules`, dotfolders) are left
+  out; the status line counts matches and files; activating a match opens the
+  file with the caret on the right line and the match selected, including
+  after accented letters and an emoji, and a Markdown file switches from the
+  preview to its source first; a folder selected in the tree becomes the
+  scope and the query re-runs there; a path typed into the folder field that
+  is not a folder is refused; closing the window hides it and keeps the
+  results. The search itself is the shared `src/FolderSearch.cpp`, with its
+  own tests in the core suite.
 - All 13 window actions are registered with the intended accelerators, and the
   sidebar, dotfile, terminal, browser and preview toggles were confirmed to
   change the state they claim to.
@@ -76,7 +91,13 @@ Verified by running it:
 Not verified:
 
 - Everything driven by real keyboard and mouse input. Actions were activated
-  programmatically, which proves the wiring but not the key handling.
+  programmatically, which proves the wiring but not the key handling. For Find
+  in Folder that includes pressing Ctrl+Shift+F, typing into the field (the
+  test set its text, which fires the same signal), double-clicking a row, the
+  Down arrow and Escape, the Choose button's folder dialog, and whether GNOME
+  raises the main window when a match is opened (the editor is made the
+  window's focus widget, but activating a window is up to the compositor).
+- How the Find in Folder window looks. Nothing in it was seen on screen.
 - Saving, creating files and folders, and the Open Folder dialog.
 
 ### Notes on the things that were most at risk
@@ -262,6 +283,7 @@ applies a picked color when you press Select, rather than live while you drag.
 | Ctrl Alt N        | New file                   |
 | Ctrl Shift N      | New folder                 |
 | Ctrl F            | Find in the current file   |
+| Ctrl Shift F      | Find in the folder         |
 | Ctrl Shift P      | Toggle Markdown preview    |
 | Ctrl Shift H      | Show or hide the shortcut hints |
 | Ctrl B            | Toggle the sidebar         |

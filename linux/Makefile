@@ -19,12 +19,13 @@ BIN      := $(BUILD)/minicode
 
 # Shared portable core (never copied — compiled straight from ../src).
 CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp \
-        ../src/Settings.cpp ../src/LineComments.cpp
+        ../src/Settings.cpp ../src/LineComments.cpp ../src/FolderSearch.cpp
 
 # GUI sources. Terminal.cpp / Browser.cpp are always listed but compile to
 # nothing unless their feature macro is defined.
 GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Markdown.cpp \
-       src/Terminal.cpp src/Browser.cpp src/AppSettings.cpp src/ThemeCss.cpp
+       src/Terminal.cpp src/Browser.cpp src/AppSettings.cpp src/ThemeCss.cpp \
+       src/Search.cpp
 
 SRCS := $(GUI) $(CORE)
 

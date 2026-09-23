@@ -109,6 +109,11 @@ void FileTree::build() {
 
     GtkSingleSelection* sel =
         gtk_single_selection_new(G_LIST_MODEL(treeModel_));
+    // No row is selected until the user picks one, as in the macOS outline.
+    // With GTK's default autoselect the first row (often a folder) counted as
+    // selected from startup, and Find in Folder searched only that folder.
+    gtk_single_selection_set_autoselect(sel, FALSE);
+    gtk_single_selection_set_can_unselect(sel, TRUE);
 
     GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
     g_signal_connect(factory, "setup", G_CALLBACK(onSetup), this);
@@ -235,4 +240,24 @@ void FileTree::toggleHidden() {
 
 void FileTree::focus() {
     if (listView_) gtk_widget_grab_focus(listView_);
+}
+
+std::string FileTree::selectedDir() const {
+    if (!listView_) return "";
+    GtkSelectionModel* model = gtk_list_view_get_model(GTK_LIST_VIEW(listView_));
+    if (!GTK_IS_SINGLE_SELECTION(model)) return "";
+    // Both are (transfer none) here: the selection and the row own them.
+    GtkTreeListRow* row = GTK_TREE_LIST_ROW(
+        gtk_single_selection_get_selected_item(GTK_SINGLE_SELECTION(model)));
+    if (!row) return "";
+    GFileInfo* info = G_FILE_INFO(gtk_tree_list_row_get_item(row));   // transfer full
+    std::string out;
+    if (infoIsDir(info)) {
+        if (GFile* file = fileOfInfo(info)) {
+            char* path = g_file_get_path(file);
+            if (path) { out = path; g_free(path); }
+        }
+    }
+    if (info) g_object_unref(info);
+    return out;
 }
