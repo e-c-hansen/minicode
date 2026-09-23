@@ -41,7 +41,7 @@ class MainActivity : AppCompatActivity() {
 
     private val pickFolder =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-            if (uri != null) useFolder(uri, remember = true)
+            if (uri != null) confirmLeave { useFolder(uri, remember = true) }
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -132,13 +132,61 @@ class MainActivity : AppCompatActivity() {
 
     private fun openEntry(entry: DocumentFile) {
         if (entry.isDirectory) { list(entry); return }
-        // Pictures and PDFs are shown, not read as text, so an image never
-        // reaches the editor and cannot be saved over.
-        if (showMedia(entry)) return
-        val text = contentResolver.openInputStream(entry.uri)?.use {
-            it.readBytes().toString(Charsets.UTF_8)
-        } ?: return
-        openFile(entry, text)
+        confirmLeave {
+            // Pictures and PDFs are shown, not read as text, so an image never
+            // reaches the editor and cannot be saved over.
+            if (!showMedia(entry)) {
+                val text = readText(entry)
+                if (text == null) cannotDisplay(entry)
+                else openFile(entry, text)
+            }
+        }
+    }
+
+    /**
+     * The file as text, or null when it is not text the editor can hold:
+     * too large, holding NUL bytes, or not valid UTF-8. The Mac app shows
+     * "Cannot display" for the same files. Opening one as text and saving
+     * would write the decoder's replacement characters over the original.
+     */
+    private fun readText(entry: DocumentFile): String? {
+        if (entry.length() > MAX_TEXT_BYTES) return null
+        val bytes = try {
+            contentResolver.openInputStream(entry.uri)?.use { it.readBytes() }
+        } catch (e: Exception) {
+            null
+        } ?: return null
+        if (bytes.size > MAX_TEXT_BYTES) return null
+        for (i in 0 until minOf(bytes.size, 8192)) if (bytes[i] == 0.toByte()) return null
+        return try {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                .decode(java.nio.ByteBuffer.wrap(bytes)).toString()
+        } catch (e: java.nio.charset.CharacterCodingException) {
+            null
+        }
+    }
+
+    private fun cannotDisplay(entry: DocumentFile) {
+        android.widget.Toast.makeText(this, "Cannot display ${entry.name}",
+                                      android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Runs `then` once the buffer may be replaced: at once when nothing is
+     * unsaved, otherwise after the user chooses to save or discard. Cancel
+     * leaves everything as it was, and so does a save that fails.
+     */
+    private fun confirmLeave(then: () -> Unit) {
+        val file = currentFile
+        if (!dirty || showingMedia || file == null) { then(); return }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Save changes to ${file.name}?")
+            .setPositiveButton("Save") { _, _ -> if (save()) then() }
+            .setNegativeButton("Discard") { _, _ -> dirty = false; then() }
+            .setNeutralButton("Cancel", null)
+            .show()
     }
 
     /**
@@ -155,8 +203,7 @@ class MainActivity : AppCompatActivity() {
 
         val bitmap = if (isPdf) firstPdfPage(entry) else decodeImage(entry)
         if (bitmap == null) {
-            android.widget.Toast.makeText(this, "Cannot display ${entry.name}",
-                                          android.widget.Toast.LENGTH_SHORT).show()
+            cannotDisplay(entry)
             return true
         }
         currentFile = entry
@@ -281,14 +328,30 @@ class MainActivity : AppCompatActivity() {
         highlighting = false
     }
 
-    private fun save() {
-        if (showingMedia) return
-        val file = currentFile ?: return
-        contentResolver.openOutputStream(file.uri, "wt")?.use {
-            it.write(ui.editor.text.toString().toByteArray(Charsets.UTF_8))
+    /**
+     * Writes the buffer back. Returns false, leaves the buffer marked
+     * unsaved and says so when the write fails: a provider can refuse, the
+     * folder can be gone, or the permission revoked.
+     */
+    private fun save(): Boolean {
+        if (showingMedia) return true
+        val file = currentFile ?: return true
+        val written = try {
+            contentResolver.openOutputStream(file.uri, "wt")?.use {
+                it.write(ui.editor.text.toString().toByteArray(Charsets.UTF_8))
+                true
+            } ?: false
+        } catch (e: Exception) {
+            false
+        }
+        if (!written) {
+            android.widget.Toast.makeText(this, "Could not save ${file.name}",
+                                          android.widget.Toast.LENGTH_LONG).show()
+            return false
         }
         dirty = false
         updateTitle()
+        return true
     }
 
     private fun showList(show: Boolean) {
@@ -331,17 +394,20 @@ class MainActivity : AppCompatActivity() {
      * to onKeyDown never fires while the cursor is in a file, which is
      * exactly when it is wanted.
      *
-     * Each key is also logged, which is how the bindings were worked out on
-     * a keyboard with no Ctrl: `adb logcat -s MiniCodeKeys`.
+     * In a debug build each key is also logged, which is how the bindings
+     * were worked out on a keyboard with no Ctrl: `adb logcat -s MiniCodeKeys`.
+     * Only the key's code and modifiers are logged, never the character, so
+     * nothing typed (a password in the browser) reaches the log.
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
-            android.util.Log.i("MiniCodeKeys",
-                "code=${event.keyCode} (${KeyEvent.keyCodeToString(event.keyCode)})" +
-                        " scan=${event.scanCode} meta=0x${event.metaState.toString(16)}" +
-                        " char='${event.unicodeChar.toChar()}'" +
-                        " alt=${event.isAltPressed} shift=${event.isShiftPressed}" +
-                        " ctrl=${event.isCtrlPressed} sym=${event.isSymPressed}")
+            if (debuggable) {
+                android.util.Log.d("MiniCodeKeys",
+                    "code=${event.keyCode} (${KeyEvent.keyCodeToString(event.keyCode)})" +
+                            " scan=${event.scanCode} meta=0x${event.metaState.toString(16)}" +
+                            " alt=${event.isAltPressed} shift=${event.isShiftPressed}" +
+                            " ctrl=${event.isCtrlPressed} sym=${event.isSymPressed}")
+            }
             if (handleShortcut(event)) return true
         }
         // Swallow the release of a key whose press was a shortcut, or the
@@ -353,6 +419,9 @@ class MainActivity : AppCompatActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+    private val debuggable by lazy {
+        applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+    }
     private val handled = mutableSetOf<Int>()
     private var lastLeaderPress = 0L
     private var leaderHeld = false
@@ -392,9 +461,11 @@ class MainActivity : AppCompatActivity() {
      */
     fun leaderLetter(letter: Char): Boolean {
         if (!leaderArmed) return false
-        if (leaderActions()[letter.lowercaseChar()] == null) return false
+        // A letter with no shortcut is typed as usual, and it ends the wait,
+        // so the pane does not switch under it a moment later.
         cancelLeader()
-        leaderActions()[letter.lowercaseChar()]?.invoke()
+        val action = leaderActions()[letter.lowercaseChar()] ?: return false
+        action()
         return true
     }
 
@@ -411,8 +482,9 @@ class MainActivity : AppCompatActivity() {
      * after it still switches panes, which is the thing worth doing with a
      * single keystroke. Ctrl is accepted as well, for anyone on a USB or
      * Bluetooth keyboard.
+     *
+     * One table, keyed by letter, for both ways a shortcut can arrive.
      */
-    /** One table, keyed by letter, for both ways a shortcut can arrive. */
     private fun leaderActions(): Map<Char, () -> Unit> = mapOf(
         's' to { save() },
         'b' to { showList(ui.fileList.visibility != View.VISIBLE) },
@@ -475,8 +547,6 @@ class MainActivity : AppCompatActivity() {
         act()
         return true
     }
-
-    private var pendingSwap: Runnable? = null
 
     /**
      * The same actions as the shortcuts, for when the keyboard cannot
@@ -658,6 +728,9 @@ class MainActivity : AppCompatActivity() {
 
         /** How long a leader press waits for a letter, in milliseconds. */
         const val LEADER_WINDOW = 700L
+
+        /** Larger files are not opened as text; an EditText would crawl. */
+        private const val MAX_TEXT_BYTES = 4L * 1024 * 1024
     }
 }
 
