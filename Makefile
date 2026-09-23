@@ -15,7 +15,8 @@ LDFLAGS  := -framework Cocoa -framework WebKit -framework CoreServices \
 CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.cpp \
             src/TerminalScreen.cpp \
             src/Settings.cpp src/LineComments.cpp \
-            src/LatexDoc.cpp src/SyncTex.cpp src/Json.cpp src/LspClient.cpp
+            src/LatexDoc.cpp src/SyncTex.cpp src/Json.cpp src/LspClient.cpp \
+            src/TermLinks.cpp
 
 .PHONY: all app run test dmg clean demos membench
 

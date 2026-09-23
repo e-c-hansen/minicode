@@ -1,6 +1,7 @@
 // run_tests.cpp — unit tests for the pure-C++ core (no framework, no deps).
 // Build/run with `make test`. Exits non-zero if any check fails.
 #include "SyntaxHighlighter.h"
+#include "TermLinks.h"
 #include "MarkdownParser.h"
 #include "TerminalStream.h"
 #include "TerminalScreen.h"
@@ -3020,10 +3021,69 @@ void testLspClient() {
 
 }  // namespace
 
+// ---- TermLinks ---------------------------------------------------------------
+static void testTermLinks() {
+    using TermLinks::Link;
+    auto one = [](const std::string& s) {
+        auto v = TermLinks::find(s);
+        return v.size() == 1 ? v[0] : Link{Link::Url, 0, 0, "<none>"};
+    };
+    // Compiler output: path, line, column, and the span stops before the message.
+    {
+        std::string s = "src/main.cpp:42:7: error: expected ';'";
+        Link l = one(s);
+        CHECK(l.kind == Link::File && l.target == "src/main.cpp");
+        CHECK(l.line == 42 && l.column == 7);
+        CHECK(s.substr(l.start, l.length) == "src/main.cpp:42:7");
+    }
+    { Link l = one("  at foo (lib/util.js:10:3)");
+      CHECK(l.target == "lib/util.js" && l.line == 10 && l.column == 3); }
+    { Link l = one("hello.py:3");
+      CHECK(l.target == "hello.py" && l.line == 3 && l.column == 0); }
+    // TypeScript and MSVC.
+    { Link l = one("app.ts(12,5): error TS2322");
+      CHECK(l.target == "app.ts" && l.line == 12 && l.column == 5); }
+    // Python tracebacks.
+    {
+        std::string s = "  File \"/tmp/x/run.py\", line 17, in <module>";
+        Link l = one(s);
+        CHECK(l.target == "/tmp/x/run.py" && l.line == 17);
+        CHECK(s.substr(l.start, l.length) == "/tmp/x/run.py");
+    }
+    // Plain paths, and punctuation that belongs to the sentence.
+    { Link l = one("see ./docs/README.md.");  CHECK(l.target == "./docs/README.md"); }
+    { Link l = one("~/code/notes.tex"); CHECK(l.target == "~/code/notes.tex"); }
+    // URLs, with trailing punctuation and balanced parentheses.
+    { Link l = one("docs at https://example.com/a?b=1.");
+      CHECK(l.kind == Link::Url && l.target == "https://example.com/a?b=1"); }
+    { Link l = one("(see https://en.wikipedia.org/wiki/Foo_(bar))");
+      CHECK(l.target == "https://en.wikipedia.org/wiki/Foo_(bar)"); }
+    // Not links: words, numbers, versions, a lone slash.
+    CHECK(TermLinks::find("hello world").empty());
+    CHECK(TermLinks::find("took 1.5 seconds").empty());
+    CHECK(TermLinks::find("version 2.0.1").empty());
+    CHECK(TermLinks::find("a / b").empty());
+    // Several on a line, in order, and at().
+    {
+        std::string s = "a.cpp:1 b.h:2 https://x.io";
+        auto v = TermLinks::find(s);
+        CHECK(v.size() == 3);
+        if (v.size() == 3) {
+            CHECK(v[0].target == "a.cpp" && v[1].target == "b.h" &&
+                  v[2].kind == Link::Url);
+            CHECK(TermLinks::at(v, s.find("b.h") + 1) == &v[1]);
+            CHECK(TermLinks::at(v, s.find(' ')) == nullptr);
+        }
+    }
+    // Non-ASCII names are found whole.
+    { Link l = one("données/résumé.tex:3"); CHECK(l.target == "données/résumé.tex" && l.line == 3); }
+}
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
     testIncrementalHighlight();
+    testTermLinks();
     benchIncrementalHighlight();
     testMarkdown();
     testTerminalStream();
