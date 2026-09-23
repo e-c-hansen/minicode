@@ -29,7 +29,7 @@ import org.minicode.editor.databinding.ActivityMainBinding
 class MainActivity : AppCompatActivity() {
 
     private lateinit var ui: ActivityMainBinding
-    private val files = FileListAdapter(::openEntry)
+    private val files = FileListAdapter(::openEntry) { makeRoot(it) }
 
     private var folder: DocumentFile? = null
     private var current: DocumentFile? = null    // the folder being listed
@@ -85,9 +85,12 @@ class MainActivity : AppCompatActivity() {
         //   am start -n org.minicode.editor/.MainActivity --es folder <path>
         // Everyday use goes through the document picker instead.
         val path = intent?.getStringExtra("folder")
-        val saved = getSharedPreferences("minicode", MODE_PRIVATE).getString("folder", null)
+        val prefs = getSharedPreferences("minicode", MODE_PRIVATE)
+        val saved = prefs.getString("folder", null)
+        val savedPath = prefs.getString("folderPath", null)
         when {
             path != null -> usePath(File(path))
+            savedPath != null && canReachPaths() -> usePath(File(savedPath))
             saved != null -> useFolder(Uri.parse(saved), remember = false)
             else -> showList(true)
         }
@@ -101,7 +104,7 @@ class MainActivity : AppCompatActivity() {
                 uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or
                         Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             getSharedPreferences("minicode", MODE_PRIVATE).edit()
-                .putString("folder", uri.toString()).apply()
+                .putString("folder", uri.toString()).remove("folderPath").apply()
         }
         val tree = DocumentFile.fromTreeUri(this, uri) ?: return
         folder = tree
@@ -110,7 +113,11 @@ class MainActivity : AppCompatActivity() {
         showList(true)
     }
 
-    private fun usePath(dir: File) {
+    private fun usePath(dir: File, remember: Boolean = false) {
+        if (remember) {
+            getSharedPreferences("minicode", MODE_PRIVATE).edit()
+                .putString("folderPath", dir.path).remove("folder").apply()
+        }
         val tree = DocumentFile.fromFile(dir)
         folder = tree
         followFolder()
@@ -128,12 +135,14 @@ class MainActivity : AppCompatActivity() {
      * terminal cannot follow it there.
      */
     private fun folderPath(): File? {
-        val tree = folder ?: return null
+        val tree = current ?: folder ?: return null
         val uri = tree.uri
         if (uri.scheme == "file") return uri.path?.let(::File)
         if (uri.authority != "com.android.externalstorage.documents") return null
         val id = try {
-            android.provider.DocumentsContract.getTreeDocumentId(uri)
+            if (android.provider.DocumentsContract.isDocumentUri(this, uri))
+                android.provider.DocumentsContract.getDocumentId(uri)
+            else android.provider.DocumentsContract.getTreeDocumentId(uri)
         } catch (e: IllegalArgumentException) { return null }
         val volume = id.substringBefore(':')
         val rest = id.substringAfter(':', "")
@@ -175,18 +184,50 @@ class MainActivity : AppCompatActivity() {
                 "private, so MiniCode's shell cannot enter it (nor can any " +
                 "other app's). Keep the project in shared storage instead: in " +
                 "Termux run termux-setup-storage and work under " +
-                "~/storage/shared, then open that folder here (leader O, then " +
-                "the phone's storage in the picker)."
+                "~/storage/shared, then open that folder here with leader O, " +
+                "Phone storage."
             where.contains("google") ->
                 "$name is in Google Drive, which has no path a shell can use. " +
-                "Open a folder on the phone's storage instead (leader O, then " +
-                "the phone's storage in the picker)."
+                "Open a folder on the phone's storage instead: leader O, " +
+                "Phone storage."
             else ->
                 "$name comes from another app's storage, which has no path a " +
-                "shell can use. Open a folder on the phone's storage instead " +
-                "(leader O, then the phone's storage in the picker)."
+                "shell can use. Open a folder on the phone's storage instead: " +
+                "leader O, Phone storage."
         }
         return "$why This shell is in MiniCode's own private folder."
+    }
+
+    /**
+     * Where to open a folder from. The phone's storage is browsed here, by
+     * path, which is what lets the terminal follow it; Android's own picker
+     * hides that storage behind a menu on many phones and cannot pick its
+     * top level at all. The picker is still there for Drive, Termux and
+     * other apps' folders, which the editor can use but a shell cannot.
+     */
+    private fun openFolder() {
+        val storage = android.os.Environment.getExternalStorageDirectory()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Open a folder")
+            .setItems(arrayOf("Phone storage (works in the terminal)",
+                              "Another app or cloud (Drive, Termux, ...)")) { _, which ->
+                when {
+                    which == 1 -> pickFolder.launch(null)
+                    !canReachPaths() -> askForPathAccess()
+                    else -> confirmLeave { usePath(storage, remember = true) }
+                }
+            }
+            .show()
+    }
+
+    /**
+     * Makes the folder being listed the project: its root in the file list,
+     * and where the terminal goes. The file list's long press on a folder
+     * does this, so a project deep in storage can be opened directly.
+     */
+    fun makeRoot(dir: DocumentFile) {
+        val path = dir.uri.takeIf { it.scheme == "file" }?.path ?: return
+        confirmLeave { usePath(File(path), remember = true) }
     }
 
     /** A running shell follows the folder when another is opened. */
@@ -587,7 +628,7 @@ class MainActivity : AppCompatActivity() {
         't' to { toggleTerminal() },
         // B is the browser, as Shift+Cmd+B is on the Mac.
         'b' to { toggleBrowser() },
-        'o' to { pickFolder.launch(null) },
+        'o' to { openFolder() },
         'h' to { showShortcuts() },
         // A keyboard with no Ctrl or Escape still has to drive a shell.
         'c' to { ui.terminal.sendControl('c') },
@@ -662,7 +703,7 @@ class MainActivity : AppCompatActivity() {
                     2 -> togglePreview()
                     3 -> toggleTerminal()
                     4 -> toggleBrowser()
-                    5 -> pickFolder.launch(null)
+                    5 -> openFolder()
                     6 -> chooseTextSize()
                     7 -> showShortcuts()
                 }
@@ -752,6 +793,7 @@ class MainActivity : AppCompatActivity() {
                 if (terminalShowing) toggleTerminal()
                 ui.terminal.stop()
             }
+            if (ui.terminal.isRunning) followFolder()
             if (!ui.terminal.isRunning) {
                 val (cwd, why) = terminalDirectory()
                 ui.terminal.post {
@@ -804,7 +846,8 @@ class MainActivity : AppCompatActivity() {
             "P      Markdown preview",
             "T      Terminal",
             "B      Browser",
-            "O      Open a folder",
+            "O      Open a folder (long-press a",
+            "       folder to make it the project)",
             "H      This list",
             "",
             "In the terminal: C for Ctrl C,",
@@ -841,7 +884,8 @@ class MainActivity : AppCompatActivity() {
 }
 
 /** The file list: one row per entry, folders marked by a trailing slash. */
-class FileListAdapter(private val onClick: (DocumentFile) -> Unit) :
+class FileListAdapter(private val onClick: (DocumentFile) -> Unit,
+                      private val onLongClick: (DocumentFile) -> Unit = {}) :
     RecyclerView.Adapter<FileListAdapter.Row>() {
 
     private var entries: List<DocumentFile> = emptyList()
@@ -869,6 +913,10 @@ class FileListAdapter(private val onClick: (DocumentFile) -> Unit) :
         row.text.text = (entry.name ?: "?") + if (entry.isDirectory) "/" else ""
         row.text.setTextColor(if (entry.isDirectory) Palette.ACCENT else Palette.TEXT)
         row.text.setOnClickListener { onClick(entry) }
+        row.text.setOnLongClickListener {
+            if (entry.isDirectory) onLongClick(entry)
+            entry.isDirectory
+        }
     }
 
     override fun getItemCount() = entries.size

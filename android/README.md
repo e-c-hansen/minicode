@@ -72,6 +72,15 @@ one, `/data/data/com.termux/files/home`, that Android lets no other app
 enter, whatever permissions it holds. In both cases the terminal starts in
 MiniCode's private folder and prints why, in grey, above the prompt.
 
+Android's picker is a poor way into that storage: many phones hide it behind
+the picker's menu ("Show internal storage"), and since Android 11 it refuses
+the top level and Download outright. So leader O first asks where to open
+from. "Phone storage" browses `/storage/emulated/0` by path, inside MiniCode;
+long-press a folder there to make it the project. "Another app or cloud" is
+the picker, for Drive and Termux folders the editor can use but a shell
+cannot. A path folder is remembered as `folderPath`, a picked one as
+`folder`, and opening one clears the other.
+
 The place both apps can reach is shared storage. In Termux,
 `termux-setup-storage` makes it `~/storage/shared`; in MiniCode it is the
 phone's storage in the picker (`/storage/emulated/0`). A project kept there
