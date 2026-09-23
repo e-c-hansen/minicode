@@ -8,6 +8,8 @@ go next.
 
 Shipped: tectonic typesets the buffer, PDFKit shows it, and double-clicking
 text on the page edits the source behind it, including adding list entries.
+The GTK port has the same since September 2026 (poppler for the pages,
+`linux/src/Latex.cpp`), with its own sweep, `tests/latex/sweep-linux.sh`.
 What is left, roughly in order of value:
 
 - Add a table row the way a list entry is added now (the column count and the
@@ -22,6 +24,11 @@ What is left, roughly in order of value:
 - Tables read back from the PDF column by column, so a click in a table
   leans on SyncTeX's line alone. Using the cell's `&` position in the row
   would pin it down exactly.
+- A single letter or digit whose context agrees with nothing falls back to
+  the nearest span, so a page number opens the paragraph above it (found by
+  the Linux sweep, which like the Mac's counts single characters apart).
+  Refusing them when the page gives context would close that, at the cost of
+  list numbers no longer opening their item.
 
 ## Media rendering (images done, video next)
 
@@ -116,7 +123,9 @@ file list, editor, Markdown preview, images, PDFs, a terminal on
 ## Linux port parity
 
 The GTK port now has the settings file, per-panel transparency, color swatches,
-Ctrl+/, Ctrl+Shift+T and the divider drags. What is left:
+Ctrl+/, Ctrl+Shift+T and the divider drags, and (September 2026) incremental
+highlighting, images and PDFs, Find in Folder and the LaTeX preview. What is
+left, besides the language server client (`linux/HANDOFF.md`, item 6):
 
 - **Blur.** No portable GTK equivalent (KDE can blur behind windows, GNOME
   can't), so `window.blur` is ignored on Linux.

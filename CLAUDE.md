@@ -297,6 +297,17 @@ same way Markdown does; `LatexView` takes the editor's slot in
 - **Spacing differs from Overleaf by design.** Overleaf defaults to pdfLaTeX,
   tectonic is XeTeX; fonts and line breaking differ, and `\hfill`-built lines
   show it most. The user was told to switch Overleaf to XeLaTeX to compare.
+- **The Linux port** (`linux/src/Latex.cpp`, over `PageWords.cpp` and
+  `LatexClick.cpp`) follows all of the above with poppler in place of PDFKit,
+  and differs on purpose in a few places, listed in `linux/HANDOFF.md` item 7:
+  the GtkTextBuffer keeps the source and preview edits are splices into it
+  (so undo is the buffer's), a click is traced only while the PDF is of the
+  buffer as it is, a click on no text refuses, and tectonic's download is the
+  static musl build checked against a pinned SHA-256.
+  `tests/latex/sweep-linux.sh` is its sweep: 0 wrong on torture.tex and
+  notes.tex. It found that a single character with no agreeing context (a
+  page number) falls through to the nearest span, which the rule above says
+  is refused; see ROADMAP.md.
 - Headless testing worked well here: drive `openEditorForPage:point:`,
   `startAddItem:` and `commitEdit:` directly from a `MINICODE_LATEXTEST` block,
   finding page points with `[PDFDocument findString:]`. Point
@@ -385,9 +396,9 @@ never closes.
   currently is. It has a file list, editor, Markdown preview, images, PDFs, a
   terminal on a real shell, and a browser. Missing: language servers, the
   LaTeX preview, project search, comment toggling. See `android/README.md`.
-- **Linux** has incremental highlighting, images and PDFs, Find in Folder and
-  the LSP client now (September 2026); the LaTeX preview is still macOS only
-  there.
+- **Linux** has incremental highlighting, images and PDFs, Find in Folder,
+  data safety, the tree actions, the LSP client and the LaTeX preview now
+  (September 2026).
   `linux/HANDOFF.md` lists what to do, in order, with the Mac and GTK
   pieces for each.
 - The user's phone is a Unihertz Titan 2 (Android 16, 576 by 640 dp, hardware

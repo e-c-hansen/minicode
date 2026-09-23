@@ -56,6 +56,11 @@ public:
     // Map a point in widget() coordinates onto a page. False in the gaps
     // between pages and in the margins.
     bool pageAtPoint(double x, double y, int* page, double* px, double* py) const;
+    // The other way: a point on a page (in points) in `target`'s coordinates,
+    // for anchoring something to text on the page. False if the page does
+    // not exist or is not laid out yet.
+    bool pagePointIn(GtkWidget* target, int page, double px, double py,
+                     double* x, double* y) const;
 
     // The scroll position as a document point: the page and the y (in points)
     // at the top edge of the viewport. scrollTo restores one, and holds it

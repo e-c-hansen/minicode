@@ -26,8 +26,17 @@ compared with the macOS app, and the order to do it in, see `HANDOFF.md`.
   `GtkPicture` for images, a `PdfView` for PDFs, and a `GFileMonitor` that
   reloads them when the file changes on disk.
 - `src/PdfView.{h,cpp}` — every page of a PDF in a scrolling column, drawn
-  lazily with poppler-glib, behind `MINICODE_ENABLE_PDF`. Written to be reused
-  by the LaTeX preview.
+  lazily with poppler-glib, behind `MINICODE_ENABLE_PDF`. The LaTeX preview
+  shows its pages with it too.
+- `src/Latex.{h,cpp}` — the LaTeX preview in the editor's slot: tectonic
+  (found, or downloaded on request), the pages, the log when it does not
+  typeset, the double-click edit popover and Export PDF (Ctrl+Shift+S).
+  Behind `MINICODE_ENABLE_PDF`.
+- `src/PageWords.{h,cpp}` — pure C++: the word under a point on a page, from
+  its text and one box per character, and the whole click-to-source path
+  over `../src/LatexDoc` and `../src/SyncTex`. Tested in `tests/run_tests.cpp`.
+- `src/LatexClick.{h,cpp}` — the poppler and GIO half of that path: a page's
+  text and boxes, and the gzipped SyncTeX file.
 - `src/Markdown.{h,cpp}` — renders the MarkdownParser run list into a styled
   GtkTextBuffer.
 - `src/Terminal.{h,cpp}` — VTE terminal panel, behind `MINICODE_ENABLE_TERMINAL`.
@@ -50,4 +59,4 @@ the Markdown preview and the image viewer. The terminal (VTE), the browser
 (WebKitGTK) and the PDF viewer (poppler-glib) are optional: Meson enables each
 one when its library is found, and the code for a missing one is compiled out
 entirely. Without poppler a PDF gets the same "Cannot display" message as any
-other binary file.
+other binary file, and a `.tex` file opens as plain source.

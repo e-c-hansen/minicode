@@ -69,6 +69,10 @@ std::string stylesheet(const Settings& s) {
            "; color: " + fg(Surface::Statusbar) +
            "; padding: 2px 8px; font-size: 12px; }";
     css += ".minicode-status label { color: " + fg(Surface::Statusbar) + "; }";
+    // The LaTeX preview's own status line carries a button. It is kept to the
+    // line's height, or the preview's minimum height outgrows a short pane.
+    css += ".minicode-latex-bar button { min-height: 0; padding: 1px 8px; color: " +
+           fg(Surface::Statusbar) + "; }";
 
     // Terminal. VTE paints its own background from the color set in
     // Terminal::applySettings, so the panel behind it stays clear. The 6px

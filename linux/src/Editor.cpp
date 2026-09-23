@@ -8,6 +8,7 @@
 #include "LineComments.h"
 #include "Utf8Offsets.h"
 #include "MediaView.h"
+#include "Latex.h"
 
 #include <algorithm>
 #include <cctype>
@@ -101,6 +102,9 @@ void Editor::showWelcome() {
 }
 
 Editor::~Editor() {
+#ifdef MINICODE_ENABLE_PDF
+    delete latex_;
+#endif
     g_signal_handlers_disconnect_by_data(buffer_, this);
     delete media_;
 }
@@ -228,12 +232,23 @@ bool Editor::openFile(const std::string& path) {
     source_ = content;
     ext_  = extOf(path);
     isMarkdown_ = (ext_ == "md" || ext_ == "markdown");
-    // Markdown opens rendered, matching the macOS build.
-    preview_ = isMarkdown_;
+#ifdef MINICODE_ENABLE_PDF
+    isLatex_ = (ext_ == "tex" || ext_ == "ltx" || ext_ == "latex");
+#endif
+    // Markdown and LaTeX open in their previews, matching the macOS build.
+    preview_ = isMarkdown_ || isLatex_;
     markDirty(false);
 
-    if (preview_) renderPreview();
-    else          loadRawIntoBuffer();
+    if (isLatex_) {
+        // The buffer keeps the source, editable and highlighted, behind the
+        // pages; the preview typesets it and splices its edits into it.
+        loadRawIntoBuffer();
+        showLatex(true);
+    } else if (preview_) {
+        renderPreview();
+    } else {
+        loadRawIntoBuffer();
+    }
     return true;
 }
 
@@ -243,7 +258,8 @@ bool Editor::save(std::string* error) {
     // binary file destroyed it.
     if (path_.empty() || readOnly_) return true;
     // In preview mode the buffer holds rendered text; persist source_ instead.
-    if (!preview_) {
+    // Not for LaTeX, whose buffer always holds the source.
+    if (!preview_ || isLatex_) {
         GtkTextIter a, b;
         gtk_text_buffer_get_bounds(buffer_, &a, &b);
         char* txt = gtk_text_buffer_get_text(buffer_, &a, &b, FALSE);
@@ -298,7 +314,7 @@ void Editor::closeFile() {
 
 bool Editor::revealLine(int line, std::size_t byteColumn, std::size_t byteLength) {
     if (path_.empty()) return false;
-    if (preview_ && isMarkdown_) togglePreview();
+    if (preview_ && (isMarkdown_ || isLatex_)) togglePreview();
     if (!gtk_text_view_get_editable(GTK_TEXT_VIEW(view_))) return false;   // a message
 
     const int lines = gtk_text_buffer_get_line_count(buffer_);
@@ -340,7 +356,44 @@ std::string Editor::titleSuffix() const { return media_->titleSuffix(); }
 
 void Editor::showTextSlot() {
     media_->clear();
+    isLatex_ = false;
+#ifdef MINICODE_ENABLE_PDF
+    if (latex_) latex_->close();   // stops its typeset; the next file is not it
+#endif
     gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
+}
+
+void Editor::showLatex(bool on) {
+#ifdef MINICODE_ENABLE_PDF
+    if (!latex_) {
+        latex_ = new LatexPreview(buffer_);
+        gtk_stack_add_named(GTK_STACK(slot_), latex_->widget(), "latex");
+    }
+    if (on) {
+        latex_->setPath(path_);
+        gtk_stack_set_visible_child(GTK_STACK(slot_), latex_->widget());
+        latex_->setActive(true);
+    } else {
+        latex_->setActive(false);
+        gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
+        gtk_widget_grab_focus(view_);
+    }
+#else
+    (void)on;
+#endif
+}
+
+bool Editor::exportPdf(GtkWindow* parent) {
+#ifdef MINICODE_ENABLE_PDF
+    if (!isLatex_ || path_.empty()) return false;
+    if (!latex_) showLatex(false);   // made hidden, to typeset for the export
+    latex_->setPath(path_);
+    latex_->exportPdf(parent);
+    return true;
+#else
+    (void)parent;
+    return false;
+#endif
 }
 
 void Editor::onMediaChanged(void* selfp) {
@@ -810,6 +863,9 @@ void Editor::setPath(const std::string& path) {
     const bool wasSettings = isSettingsFile();
     const std::string ext = extOf(path);
     path_ = path;
+#ifdef MINICODE_ENABLE_PDF
+    if (isLatex_ && latex_) latex_->setPath(path);   // the preview follows the rename
+#endif
     if (ext != ext_ || wasSettings != isSettingsFile()) {
         ext_ = ext;
         if (sourceMode_) startHighlighting();
@@ -1047,6 +1103,11 @@ bool Editor::toggleComment() {
 // ---------------------------------------------------------------- preview
 
 void Editor::togglePreview() {
+    if (isLatex_) {
+        preview_ = !preview_;
+        showLatex(preview_);
+        return;
+    }
     if (!isMarkdown_) return;
     preview_ = !preview_;
     if (preview_) {

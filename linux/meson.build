@@ -17,6 +17,8 @@ core_sources = [
   core_dir / 'Settings.cpp',
   core_dir / 'LineComments.cpp',
   core_dir / 'FolderSearch.cpp',
+  core_dir / 'LatexDoc.cpp',
+  core_dir / 'SyncTex.cpp',
   core_dir / 'Json.cpp',
   core_dir / 'LspClient.cpp',
 ]
@@ -36,8 +38,12 @@ gui_sources = [
   'src/Search.cpp',
   'src/Lsp.cpp',
   'src/MediaView.cpp',
-  # PdfView.cpp is #ifdef-guarded like Terminal.cpp and Browser.cpp.
+  # PdfView.cpp is #ifdef-guarded like Terminal.cpp and Browser.cpp, and so
+  # are the LaTeX preview's two files, which need poppler too.
   'src/PdfView.cpp',
+  'src/PageWords.cpp',
+  'src/LatexClick.cpp',
+  'src/Latex.cpp',
 ]
 
 inc = include_directories('src', '../src')
@@ -116,7 +122,21 @@ endforeach
 port_tests = executable('minicode-linux-tests',
   sources : ['tests/run_tests.cpp', 'src/ThemeCss.cpp',
              core_dir / 'SyntaxHighlighter.cpp', core_dir / 'Settings.cpp',
-             core_dir / 'LineComments.cpp'],
+             core_dir / 'LineComments.cpp', 'src/PageWords.cpp',
+             core_dir / 'LatexDoc.cpp', core_dir / 'SyncTex.cpp'],
   include_directories : inc,
   install : false)
 test('linux port core', port_tests)
+
+# The LaTeX preview's click sweep: double-clicks every word of a typeset PDF
+# through the preview's own click path. Needs a typeset document, so it is
+# not a test; tests/latex/sweep-linux.sh typesets one and runs it.
+if poppler_dep.found()
+  executable('minicode-latex-sweep',
+    sources : ['tests/latex_sweep.cpp', 'src/PageWords.cpp', 'src/LatexClick.cpp',
+               core_dir / 'LatexDoc.cpp', core_dir / 'SyncTex.cpp'],
+    include_directories : inc,
+    dependencies : [poppler_dep, dependency('gio-2.0')],
+    cpp_args : ['-DMINICODE_ENABLE_PDF'],
+    install : false)
+endif

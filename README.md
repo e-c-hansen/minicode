@@ -168,20 +168,20 @@ make run opens the current directory, and make run DIR=~/some/project opens anot
 
 The Linux version, in the linux folder, is built on GTK4. It shares the portable C++ core with the macOS app, so syntax highlighting, the Markdown parser, the settings file and comment toggling behave the same on both. Around that core it has a file tree with the Mac's right click menu, the editor, the Markdown preview, per-panel colors and transparency from the same settings file, a terminal panel built on VTE, a WebKitGTK browser panel, images and PDFs in the editor, Find in Folder, and the same language server client as the Mac, with squiggles, completion, hover and go to definition. It is developed on Ubuntu 26.04, and CI builds and tests it alongside the macOS app on every change to main. Shortcuts use Control where the Mac uses Command.
 
-It does not have the LaTeX preview yet, which is next on the list. The terminal needs no catching up, since VTE is already a full terminal emulator.
+It also has the LaTeX preview: it typesets with tectonic, offers to download tectonic into ~/.local/share/minicode/bin if it is missing, lets you edit by double clicking the page, and exports the PDF with Ctrl Shift S. The terminal needs no catching up, since VTE is already a full terminal emulator.
 
 To build it on Ubuntu:
 
 ```
 sudo apt install build-essential meson libgtk-4-dev \
-    libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev pkg-config
+    libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev libpoppler-glib-dev pkg-config
 cd linux
 meson setup build
 meson compile -C build
 ./build/minicode ~/some/project
 ```
 
-Only GTK4 is required; the terminal and browser panels are left out if their libraries are missing. BUILD-LINUX.md has the details, including installing it as a desktop app and what has and has not been verified.
+Only GTK4 is required; the terminal, the browser, and the PDF viewer with the LaTeX preview are left out if their libraries are missing. BUILD-LINUX.md has the details, including installing it as a desktop app and what has and has not been verified.
 
 ## Android
 
@@ -227,7 +227,7 @@ The same actions on each platform, sorted by name. A blank cell means that port 
 | Close the window | Command W |  |  |
 | Comment or uncomment the selected lines | Command / | Ctrl / |  |
 | Complete the word at the cursor, with a language server | Control Space, or Option Escape | Ctrl Space | N |
-| Export the typeset PDF of a LaTeX file | Shift Command S |  |  |
+| Export the typeset PDF of a LaTeX file | Shift Command S | Ctrl Shift S |  |
 | Find across the whole folder | Shift Command F | Ctrl Shift F |  |
 | Find in the current file | Command F | Ctrl F |  |
 | Find next, find previous | Command G, Shift Command G |  |  |
@@ -250,7 +250,7 @@ The same actions on each platform, sorted by name. A blank cell means that port 
 | Toggle the browser | Shift Command B | Ctrl Shift B | B |
 | Toggle the editor, giving its space to the terminal and browser | Shift Command E | Ctrl Shift E |  |
 | Toggle the file list or sidebar | Command B | Ctrl B | F |
-| Toggle the preview of a Markdown or LaTeX file | Shift Command P | Ctrl Shift P (Markdown) | P |
+| Toggle the preview of a Markdown or LaTeX file | Shift Command P | Ctrl Shift P | P |
 | Toggle the shortcut hints | Shift Command H | Ctrl Shift H | H |
 | Toggle the terminal | Shift Command T, or Control backtick | Ctrl Shift T | T |
 | Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z |  |

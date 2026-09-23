@@ -31,11 +31,13 @@ been run for real on Ubuntu 26.04. It has:
 - opening a file named on the command line;
 - Find in Folder (Ctrl+Shift+F), over the shared `FolderSearch` core;
 - language servers: squiggles, completion, hover and go to definition
-  (item 6 below, done).
+  (item 6 below, done);
+- the LaTeX preview with double-click editing and Export PDF (item 7 below,
+  done).
 
 It shares from `../src` `SyntaxHighlighter`, `MarkdownParser`, `Settings`,
-`LineComments`, `FolderSearch`, `Json` and `LspClient`. The rest of the core
-(`LatexDoc`, `SyncTex`, `TerminalScreen`) is portable and tested, and has not
+`LineComments`, `FolderSearch`, `Json`, `LspClient`, `LatexDoc` and `SyncTex`.
+The rest of the core (`TerminalScreen`) is portable and tested, and has not
 been added to `meson.build` yet.
 
 ## What to do, in order
@@ -323,7 +325,7 @@ Still needs a person: how the squiggles, the list and the tooltips look,
 and the real keys and mouse (Ctrl+Space, F12, Ctrl+I, Ctrl+click, clicking
 a row), since the hook called the same functions directly.
 
-### 7. The LaTeX preview
+### 7. The LaTeX preview (done, September 2026)
 
 Mac: `src/Latex.mm`; read the whole "LaTeX preview" section of `../CLAUDE.md`
 before starting. Android: `LatexPreview.kt` and `latex_jni.cpp`.
@@ -348,6 +350,98 @@ before starting. Android: `LatexPreview.kt` and `latex_jni.cpp`.
 Done when: `demo/paper/notes.tex` and `tests/latex/torture.tex` typeset, and
 double-clicking words opens the right text or refuses; it never opens the
 wrong text.
+
+**Done, September 2026.** Both documents typeset, and every word of both
+was double-clicked in the running app with none opening the wrong text (the
+counts are below and in `BUILD-LINUX.md`). The pieces:
+
+- `src/PageWords.{h,cpp}`, pure C++ and tested in `tests/run_tests.cpp`: a
+  page's text plus one box per character, the word under a point with 40
+  characters of context each way, the hyphenation join (the Mac's
+  `MCJoinHyphenation`), and `latexSpanAtPoint`, the whole click path over
+  `SyncTexIndex` and `LatexDoc`. A word is a run of characters that
+  `LatexDoc::matchKey` keeps, so the page and the matcher agree on what a
+  letter is, with an apostrophe allowed inside.
+- `src/LatexClick.{h,cpp}`: the poppler and GIO half, `pageTextOf` (from
+  `poppler_page_get_text` and `poppler_page_get_text_layout`, which give a
+  rectangle per character, newlines included, in the same top-left frame as
+  SyncTeX) and `readGzipFile` (a `GZlibDecompressor`, so no zlib dependency).
+- `src/Latex.{h,cpp}`, `LatexPreview`: the status line (spinner, message,
+  Recompile or Download…), a `GtkStack` of the `PdfView` and the log, the
+  edit popover, tectonic, the download, and export.
+- `Editor` gains `isLatex()`, `latex()` and `exportPdf()`, and puts the
+  preview in its slot stack as `"latex"`. `main.cpp` gains the Export PDF
+  action (Ctrl+Shift+S, File menu, enabled only for LaTeX) and two lines in
+  the hints panel.
+
+How it differs from the Mac, on purpose:
+
+- **The buffer keeps the source.** The Mac swaps the text view out and keeps
+  its own copy of the source in the preview. Here the GtkTextBuffer holds the
+  file's text, editable and highlighted, while the preview sits in front of
+  it; the preview reads the buffer to typeset, and a popover commit is a
+  splice into the buffer (only the bytes that differ, as one user action).
+  So dirty tracking, "Save changes?", the incremental highlighter (there is
+  no TeX grammar yet, so nothing to recolor) and undo all see preview edits
+  as typing. Ctrl+Z and Ctrl+Shift+Z (or Ctrl+Y) in the preview are the
+  buffer's undo, through a shortcut controller on the preview, and retypeset
+  at once. `save()` reads the buffer for LaTeX even in preview.
+- **A click is traced only against the PDF of the current buffer.** SyncTeX's
+  lines belong to the source that was typeset; with the buffer ahead of it
+  they could name the wrong text. So a double-click while the PDF is behind
+  refuses ("catching up") and typesets now, and a commit checks the buffer
+  still holds the source the span indexes before splicing.
+- **A click on no text refuses.** The Mac hands an empty word to
+  `spanForClick`, which then offers the nearest span; here a click in a
+  margin or on a picture opens nothing. A glyph that is not a word (a
+  bullet) still sends its line, as on the Mac.
+- **tectonic**: `MINICODE_TECTONIC`, then `$XDG_DATA_HOME/minicode/bin`
+  (`~/.local/share/minicode/bin`), then PATH. The download is 0.17.0, the
+  Mac's version, as the static musl build for x86_64 or aarch64 (about
+  10 MB; the glibc build wants libgraphite2), fetched with curl or else wget
+  (GLib has no HTTPS client), and checked against the SHA-256 GitHub
+  publishes for the asset, which is pinned in `Latex.cpp`. A mismatch is
+  thrown away. Then `tar`, a move into place, and an executable check, as on
+  the Mac.
+- **Output** goes to `$XDG_RUNTIME_DIR/minicode-latex/<hash of the path>/`
+  (or `/tmp/minicode-latex-<user>`), so two `notes.tex` in different folders
+  never share a PDF.
+- **Nothing outlives the app.** tectonic and the download tools are started
+  with `PR_SET_PDEATHSIG`, so they die with MiniCode even when it is killed;
+  on a normal quit the application's `shutdown` signal stops tectonic and
+  removes the hidden sibling. Opening another file, or Open Folder
+  (`closeFile`), closes the preview and kills its typeset. A rename
+  (`Editor::setPath`) keeps the pages, and the SyncTeX tag is looked up by
+  the sibling that was actually typeset, so clicks keep working before the
+  next typeset.
+
+`tests/latex/sweep-linux.sh doc.tex [-v]` is the Linux `sweep.sh`: it
+typesets the way the app does and runs `build/minicode-latex-sweep`
+(`tests/latex_sweep.cpp`, built when poppler is found), which clicks the
+first, middle and last character of every word through `latexSpanAtPoint`
+with the Mac harness's verdicts, and exits non-zero on any wrong click. On
+2026-09-23: torture.tex 1,091 clicks, 1,080 found, 3 found but not placed,
+8 refused (text from `\newcommand` bodies, refused on purpose), 0 wrong;
+notes.tex 185 of 185 found. The in-app run through the real gesture and
+popover gave the same numbers. poppler has no word breaker, so the harness
+enumerates words with `PageText::words()`, the click's own segmentation,
+where the Mac uses NSString's; the verdicts still judge the span against the
+page's text.
+
+A finding for the shared matcher, not changed here: a single letter or digit
+with no agreeing context falls through to `spanForClick`'s last line, the
+nearest span, so a page number opens the last paragraph near it and a section
+number its heading. `../CLAUDE.md` says page and section numbers are refused;
+here they are not, and the same core code makes that choice on the Mac (not
+checked there). Both harnesses count single characters
+apart, so their "wrong 0" does not cover this. Refusing single characters
+when context is known would fix it, at the cost of list numbers no longer
+opening their item.
+
+Not done: zoom (as with PDFs), click-to-line in the source view, and a person
+using it: the real double-click, the popover's look and placement, Return and
+Escape in it, Ctrl+Z in the preview, and the Export PDF dialog were not
+driven by real input (see `BUILD-LINUX.md`).
 
 ### 8. The smaller gaps
 
@@ -414,6 +508,16 @@ Do not claim a GUI behaviour works when it was only compiled.
   is a single-instance GApplication, so a plain launch would hand its
   arguments to whatever MiniCode is already running, the user's or another
   session's, and exit.
+- Pages of a `PdfView` that have never been on screen may not be allocated
+  yet, and then `gtk_widget_compute_point` maps every page to the same place.
+  A real click only reaches pages that are drawn, but a test that clicks
+  page 2 must scroll it into view and wait until `pagePointIn` and
+  `pageAtPoint` round-trip, or it clicks page 1. That produced 137 "wrong"
+  clicks in the first in-app sweep, none of them real.
+- A test launch that is not the user's instance can also change the
+  application id for the run, since a second `org.minicode.Editor` hands off
+  to the first. The LaTeX test used a temporary `MINICODE_APP_ID` read in
+  `main()`, removed with the rest of the hook.
 - An alert from `gtk_alert_dialog_show` (no buttons of our own) did not close
   when its Close button was activated from a test hook; the error alerts now
   set an OK button and use `gtk_alert_dialog_choose`, the same path as
