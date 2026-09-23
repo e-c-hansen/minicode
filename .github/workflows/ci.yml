@@ -24,26 +24,27 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install GTK4, VTE and WebKitGTK
+      - name: Install GTK4, VTE, WebKitGTK and poppler
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build build-essential pkg-config \
-            libgtk-4-dev libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev
+            libgtk-4-dev libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev \
+            libpoppler-glib-dev
 
       # apt will happily install a runtime library and leave the -dev package
       # out, and Meson would then just report the panel as disabled and build a
       # green but much smaller app. Fail here instead, where the reason is
       # obvious. See the same warning in BUILD-LINUX.md.
       - name: Confirm the dev packages actually landed
-        run: pkg-config --modversion gtk4 vte-2.91-gtk4 webkitgtk-6.0
+        run: pkg-config --modversion gtk4 vte-2.91-gtk4 webkitgtk-6.0 poppler-glib
 
       # -Denabled rather than the default auto-detection: this job exists to
-      # compile Terminal.cpp and Browser.cpp, so a missing library has to be a
-      # failure and not a silent skip.
+      # compile Terminal.cpp, Browser.cpp and PdfView.cpp, so a missing library
+      # has to be a failure and not a silent skip.
       - name: Configure with every panel enabled
         working-directory: linux
-        run: meson setup build -Dterminal=enabled -Dbrowser=enabled
+        run: meson setup build -Dterminal=enabled -Dbrowser=enabled -Dpdf=enabled
 
       - name: Build
         working-directory: linux

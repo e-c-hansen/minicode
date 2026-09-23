@@ -23,6 +23,7 @@ been run for real on Ubuntu 26.04. It has:
 - the file tree, live-refreshing;
 - the editor with syntax highlighting (a debounced full re-lex);
 - the Markdown preview;
+- images and PDFs in the editor's slot (item 4 below, done);
 - a VTE terminal and a WebKitGTK browser;
 - the settings file with live colors and per-panel opacity;
 - Ctrl+/ comment toggling, pane hiding and divider drags;
@@ -102,6 +103,40 @@ Mac: `showImageAtPath:` and `showPDFAtPath:` in `EditorController.mm`, and the
 Done when: png, jpg, gif, webp and PDF open in the editor's slot, nothing is
 ever saved over them, and they reload when the file changes on disk.
 
+**Done, September 2026.** `src/MediaView.{h,cpp}` holds the picture and the
+PDF view and watches the shown file with a `GFileMonitor`; `Editor::widget()`
+is now a `GtkStack` with the text view and the media view, so an image or PDF
+takes the editor's slot and the next text file takes it back. The extension
+list is the Mac's (SVG stays text, on purpose). Still images load through
+`gdk_texture_new_from_filename`; animated GIFs go through gdk-pixbuf's
+animation API, which 2.44 deprecated, so that one function silences the
+warning. While an image, a PDF or a binary file's message is shown,
+`Editor::canSave()` is false, `win.save` is disabled and `save()` writes
+nothing. poppler is optional (`-Dpdf=auto`, `make PDF=1`,
+`MINICODE_ENABLE_PDF`). What was checked, and how, is in `BUILD-LINUX.md`.
+Not done: zoom, on Linux as on the Mac, and a person looking at it.
+
+`src/PdfView.{h,cpp}` is the piece item 7 reuses. It shows every page in a
+scrolling column fitted to the width, rendered lazily (visible pages first,
+one per idle pass, at the surface's scale factor, bitmaps dropped for pages
+far from view). Its API, with 0-based pages and points from the page's
+top-left as SyncTeX uses them:
+- `load(path, keepPosition)`: reads the bytes first, so a PDF being
+  rewritten cannot pull data out from under poppler; on failure the old
+  document stays on screen.
+- `pageCount()`, `pageSize(i, &w, &h)`, `document()` for poppler calls such
+  as `poppler_page_get_text_layout`.
+- `pageAtPoint(x, y, &page, &px, &py)` from widget coordinates, and
+  `setClickCallback(cb, user)`, which reports page, point and press count
+  (2 for a double-click).
+- `anchor()` and `scrollTo(anchor)`: the page and y at the top of the view,
+  held through the relayout after a load or resize.
+- `renderPage(page, pixelWidth)`: one page as a cairo image, for tests.
+
+A trap paid for: page sizes set from the adjustment's `changed` signal land
+in the middle of an allocation and are never laid out; the box kept its old
+width after a resize. The relayout now runs from an idle.
+
 ### 5. Find in folder
 
 Mac: `src/Search.mm` (scoped to a folder, at least 2 characters, a generation
@@ -147,8 +182,9 @@ before starting. Android: `LatexPreview.kt` and `latex_jni.cpp`.
   pinned release as the Mac.
 - Typeset from the hidden sibling `.<name>.minicode.tex` into
   `$XDG_RUNTIME_DIR` or `/tmp`, debounced and generation-counted.
-- Show every page with poppler-glib (from item 4), keeping the scroll
-  position across typesets.
+- Show every page with `PdfView` (from item 4): `load(pdf, true)` after
+  each typeset keeps the scroll position, and its click callback gives the
+  page and point for SyncTeX (add one to the page).
 - Double-click to edit: `SyncTexIndex::textHitsAtPoint` for the lines, the
   word and 40 characters either side from `poppler_page_get_text` and
   `poppler_page_get_text_layout`, then `LatexDoc::spanForClick`. The edit
@@ -211,5 +247,5 @@ Do not claim a GUI behaviour works when it was only compiled.
 - A `.desktop` file and icons must be named after the application id
   (`org.minicode.Editor`), or the dock shows a second, generic icon.
 - `apt` can install a runtime library without its `-dev` package, and Meson
-  then quietly builds without that panel. CI checks `pkg-config` for this;
-  do the same for poppler when it is added.
+  then quietly builds without that panel. CI checks `pkg-config` for this,
+  poppler included.

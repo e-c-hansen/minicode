@@ -28,6 +28,9 @@ gui_sources = [
   'src/Browser.cpp',
   'src/AppSettings.cpp',
   'src/ThemeCss.cpp',
+  'src/MediaView.cpp',
+  # PdfView.cpp is #ifdef-guarded like Terminal.cpp and Browser.cpp.
+  'src/PdfView.cpp',
 ]
 
 inc = include_directories('src', '../src')
@@ -53,6 +56,18 @@ if webkit_dep.found()
   message('Browser panel: ENABLED (webkitgtk-6.0 found)')
 else
   message('Browser panel: disabled (webkitgtk-6.0 not found)')
+endif
+
+# --- optional: PDF viewing via poppler-glib ----------------------------------
+# Also what the LaTeX preview will draw its pages with. Without it a PDF gets
+# the same "Cannot display" message as any other binary file.
+poppler_dep = dependency('poppler-glib', required : get_option('pdf'))
+if poppler_dep.found()
+  deps += poppler_dep
+  cpp_args += '-DMINICODE_ENABLE_PDF'
+  message('PDF viewer: ENABLED (poppler-glib found)')
+else
+  message('PDF viewer: disabled (poppler-glib not found)')
 endif
 
 executable('minicode',

@@ -5,3 +5,5 @@ option('terminal', type : 'feature', value : 'auto',
        description : 'Bottom terminal panel via VTE (vte-2.91-gtk4)')
 option('browser',  type : 'feature', value : 'auto',
        description : 'Browser panel via WebKitGTK (webkitgtk-6.0)')
+option('pdf',      type : 'feature', value : 'auto',
+       description : 'PDF viewer via poppler-glib (poppler-glib)')
