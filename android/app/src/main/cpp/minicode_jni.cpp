@@ -2,27 +2,25 @@
 // from Kotlin to the shared core in ../../../src. Everything it calls is
 // unit-tested there, so keep logic on that side rather than in here.
 //
-// The one job with any substance is units. The core lexes UTF-8 and reports
-// byte offsets; a Java string and a Spannable are indexed in UTF-16 code
-// units. So the text is converted here and each byte offset is mapped back to
-// the UTF-16 index it came from.
+// The one job with any substance is units. A Java string and a Spannable are
+// indexed in UTF-16 code units. The highlighter works in UTF-16 directly, so
+// its offsets go straight onto spans; Markdown is parsed from UTF-8, and
+// crosses through jni_strings.h rather than JNI's modified UTF-8.
 #include <jni.h>
 
+#include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "MarkdownParser.h"
 #include "SyntaxHighlighter.h"
+#include "jni_strings.h"
 
 namespace {
 
-std::string Utf8(JNIEnv *env, jstring s) {
-    if (!s) return {};
-    const char *chars = env->GetStringUTFChars(s, nullptr);
-    std::string out(chars ? chars : "");
-    if (chars) env->ReleaseStringUTFChars(s, chars);
-    return out;
-}
+using jnistr::FromJava;
+using jnistr::ToJava;
 
 // The lowercase extension without the dot, which is what the core expects.
 std::string ExtensionOf(const std::string &name) {
@@ -33,88 +31,62 @@ std::string ExtensionOf(const std::string &name) {
     return ext;
 }
 
-// UTF-16 in, UTF-8 out, plus one entry per UTF-8 byte holding the UTF-16 index
-// that byte belongs to (with a final entry for the end, so a token that ends
-// at the end of the text maps cleanly).
-struct Converted {
-    std::string utf8;
-    std::vector<int> toUtf16;
+// One open file's highlighting. The text is mirrored here, updated by each
+// edit, so an edit costs one splice rather than copying the whole document
+// across JNI on every keystroke.
+struct Highlight {
+    std::u16string text;
+    std::unique_ptr<IncrementalHighlighter<char16_t>> hl;
 };
 
-Converted ToUtf8(const jchar *units, jsize count) {
-    Converted c;
-    c.utf8.reserve(static_cast<size_t>(count) * 2);
-    c.toUtf16.reserve(static_cast<size_t>(count) * 2 + 1);
-    for (jsize i = 0; i < count; i++) {
-        char32_t cp = units[i];
-        int width = 1;
-        if (cp >= 0xD800 && cp <= 0xDBFF && i + 1 < count &&
-            units[i + 1] >= 0xDC00 && units[i + 1] <= 0xDFFF) {
-            cp = 0x10000 + ((cp - 0xD800) << 10) + (units[i + 1] - 0xDC00);
-            width = 2;   // a surrogate pair is two UTF-16 units, one character
-        }
-        const size_t before = c.utf8.size();
-        if (cp < 0x80) {
-            c.utf8 += static_cast<char>(cp);
-        } else if (cp < 0x800) {
-            c.utf8 += static_cast<char>(0xC0 | (cp >> 6));
-            c.utf8 += static_cast<char>(0x80 | (cp & 0x3F));
-        } else if (cp < 0x10000) {
-            c.utf8 += static_cast<char>(0xE0 | (cp >> 12));
-            c.utf8 += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-            c.utf8 += static_cast<char>(0x80 | (cp & 0x3F));
-        } else {
-            c.utf8 += static_cast<char>(0xF0 | (cp >> 18));
-            c.utf8 += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
-            c.utf8 += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-            c.utf8 += static_cast<char>(0x80 | (cp & 0x3F));
-        }
-        for (size_t b = before; b < c.utf8.size(); b++) c.toUtf16.push_back(i);
-        i += width - 1;
+Highlight *Get(jlong handle) { return reinterpret_cast<Highlight *>(handle); }
+
+std::u16string Utf16(JNIEnv *env, jstring s) {
+    if (!s) return {};
+    const jsize count = env->GetStringLength(s);
+    std::u16string out(static_cast<size_t>(count), u'\0');
+    env->GetStringRegion(s, 0, count, reinterpret_cast<jchar *>(&out[0]));
+    return out;
+}
+
+jintArray IntArray(JNIEnv *env, const std::vector<jint> &v) {
+    jintArray out = env->NewIntArray(static_cast<jsize>(v.size()));
+    env->SetIntArrayRegion(out, 0, static_cast<jsize>(v.size()), v.data());
+    return out;
+}
+
+std::vector<jint> LineTokens(Highlight *h, size_t start, size_t end) {
+    auto &hl = *h->hl;
+    start = std::min(start, hl.length());
+    end = std::min(std::max(end, start), hl.length());
+    const size_t first = hl.lineOf(start);
+    const size_t last = hl.lineOf(end > start ? end - 1 : start);
+    std::vector<Token> tokens;
+    hl.lineTokens(StringSource<char16_t>(h->text), first, last + 1, tokens);
+    const size_t to = last + 1 < hl.lineCount() ? hl.lineStart(last + 1) : hl.length();
+
+    std::vector<jint> flat;
+    flat.reserve(2 + tokens.size() * 3);
+    flat.push_back(static_cast<jint>(hl.lineStart(first)));
+    flat.push_back(static_cast<jint>(to));
+    for (const Token &t : tokens) {
+        if (t.length == 0) continue;
+        flat.push_back(static_cast<jint>(t.start));
+        flat.push_back(static_cast<jint>(t.length));
+        flat.push_back(static_cast<jint>(t.style));
     }
-    c.toUtf16.push_back(count);
-    return c;
+    return flat;
 }
 
 }  // namespace
 
 extern "C" {
 
-// Tokens for one file, flattened into an int array of triples
-// (start, length, style), so the whole file's highlighting crosses the JNI
-// boundary in a single copy. Offsets are UTF-16 code units.
-JNIEXPORT jintArray JNICALL
-Java_org_minicode_editor_Core_highlight(JNIEnv *env, jclass, jstring text,
-                                        jstring filename) {
-    const jchar *units = env->GetStringChars(text, nullptr);
-    const jsize count = env->GetStringLength(text);
-    Converted c = ToUtf8(units, count);
-    env->ReleaseStringChars(text, units);
-
-    const std::vector<Token> tokens =
-        SyntaxHighlighter::highlight(c.utf8, ExtensionOf(Utf8(env, filename)));
-
-    std::vector<jint> flat;
-    flat.reserve(tokens.size() * 3);
-    const size_t bytes = c.utf8.size();
-    for (const Token &t : tokens) {
-        if (t.start > bytes || t.start + t.length > bytes) continue;
-        const int start = c.toUtf16[t.start];
-        const int end = c.toUtf16[t.start + t.length];
-        flat.push_back(start);
-        flat.push_back(end - start);
-        flat.push_back(static_cast<jint>(t.style));
-    }
-    jintArray out = env->NewIntArray(static_cast<jsize>(flat.size()));
-    env->SetIntArrayRegion(out, 0, static_cast<jsize>(flat.size()), flat.data());
-    return out;
-}
-
 // Whether the core has a real grammar for this file name, as opposed to
 // treating it as plain text.
 JNIEXPORT jboolean JNICALL
 Java_org_minicode_editor_Core_supports(JNIEnv *env, jclass, jstring filename) {
-    return SyntaxHighlighter::supports(ExtensionOf(Utf8(env, filename)))
+    return SyntaxHighlighter::supports(ExtensionOf(FromJava(env, filename)))
                ? JNI_TRUE
                : JNI_FALSE;
 }
@@ -128,7 +100,7 @@ Java_org_minicode_editor_Core_supports(JNIEnv *env, jclass, jstring filename) {
  */
 JNIEXPORT jobjectArray JNICALL
 Java_org_minicode_editor_Core_markdown(JNIEnv *env, jclass, jstring source) {
-    const std::vector<MdRun> runs = MarkdownParser::parse(Utf8(env, source));
+    const std::vector<MdRun> runs = MarkdownParser::parse(FromJava(env, source));
 
     jclass stringClass = env->FindClass("java/lang/String");
     jobjectArray texts = env->NewObjectArray(
@@ -136,7 +108,7 @@ Java_org_minicode_editor_Core_markdown(JNIEnv *env, jclass, jstring source) {
     std::vector<jint> flags(runs.size());
     for (size_t i = 0; i < runs.size(); i++) {
         const MdRun &r = runs[i];
-        jstring text = env->NewStringUTF(r.text.c_str());
+        jstring text = ToJava(env, r.text);
         env->SetObjectArrayElement(texts, static_cast<jsize>(i), text);
         env->DeleteLocalRef(text);
 
@@ -161,6 +133,67 @@ Java_org_minicode_editor_Core_markdown(JNIEnv *env, jclass, jstring source) {
     env->SetObjectArrayElement(out, 0, texts);
     env->SetObjectArrayElement(out, 1, packed);
     return out;
+}
+
+// ---------------------------------------------------- incremental highlighting
+//
+// The same IncrementalHighlighter the macOS editor uses: every line's start
+// and end state are kept, and an edit re-lexes from the edited line until a
+// line ends in the state it used to. Offsets are UTF-16 code units throughout.
+
+/** A highlighter for `text`, or 0 when the file has no grammar. */
+JNIEXPORT jlong JNICALL
+Java_org_minicode_editor_Core_hlOpen(JNIEnv *env, jclass, jstring text,
+                                     jstring filename) {
+    const std::string ext = ExtensionOf(FromJava(env, filename));
+    if (!SyntaxHighlighter::supports(ext)) return 0;
+    auto h = std::make_unique<Highlight>();
+    h->text = Utf16(env, text);
+    h->hl = std::make_unique<IncrementalHighlighter<char16_t>>(ext);
+    h->hl->reset(StringSource<char16_t>(h->text), nullptr);
+    return reinterpret_cast<jlong>(h.release());
+}
+
+JNIEXPORT void JNICALL
+Java_org_minicode_editor_Core_hlClose(JNIEnv *, jclass, jlong handle) {
+    delete Get(handle);
+}
+
+/**
+ * The units [pos, pos + oldLen) were replaced by `inserted`. Returns the
+ * range the edit re-lexed, {start, end} in the new text, or an empty array
+ * when the edit does not fit the text this side holds (the caller then opens
+ * the file afresh).
+ */
+JNIEXPORT jintArray JNICALL
+Java_org_minicode_editor_Core_hlEdit(JNIEnv *env, jclass, jlong handle, jint pos,
+                                     jint oldLen, jstring inserted) {
+    Highlight *h = Get(handle);
+    if (!h || pos < 0 || oldLen < 0 ||
+        static_cast<size_t>(pos) + static_cast<size_t>(oldLen) > h->text.size()) {
+        return env->NewIntArray(0);
+    }
+    const std::u16string added = Utf16(env, inserted);
+    h->text.replace(static_cast<size_t>(pos), static_cast<size_t>(oldLen), added);
+    std::vector<Token> unused;   // the caller asks for colors once edits settle
+    const auto r = h->hl->edit(StringSource<char16_t>(h->text),
+                               static_cast<size_t>(pos), static_cast<size_t>(oldLen),
+                               added.size(), unused);
+    return IntArray(env, {static_cast<jint>(r.start), static_cast<jint>(r.end)});
+}
+
+/**
+ * The tokens of the whole lines covering [start, end), as they stand. The
+ * first two entries are the lines' range {from, to}, which is what the caller
+ * repaints; triples (start, length, style) follow.
+ */
+JNIEXPORT jintArray JNICALL
+Java_org_minicode_editor_Core_hlTokens(JNIEnv *env, jclass, jlong handle, jint start,
+                                       jint end) {
+    Highlight *h = Get(handle);
+    if (!h) return env->NewIntArray(0);
+    return IntArray(env, LineTokens(h, static_cast<size_t>(std::max(start, 0)),
+                                    static_cast<size_t>(std::max(end, 0))));
 }
 
 }  // extern "C"

@@ -5,9 +5,7 @@ import java.io.File
 import android.net.Uri
 import android.os.Bundle
 import android.text.Editable
-import android.text.Spannable
 import android.text.TextWatcher
-import android.text.style.ForegroundColorSpan
 import android.view.KeyEvent
 import android.view.View
 import android.widget.TextView
@@ -69,12 +67,15 @@ class MainActivity : AppCompatActivity() {
 
         ui.editor.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {
+                if (!highlighting && s != null) highlighter.edited(s, a, b, c)
+            }
             override fun afterTextChanged(s: Editable?) {
                 if (highlighting) return
                 dirty = true
                 updateTitle()
-                rehighlight()
+                val name = currentFile?.name
+                if (s != null && name != null) highlighter.paint(s, name)
                 if (previewing) renderPreview()
             }
         })
@@ -301,31 +302,16 @@ class MainActivity : AppCompatActivity() {
 
     private var previewing = false
 
+    private val highlighter = Highlighter()
+
     /**
-     * Colors the whole file from the core's tokens. This is the full pass the
-     * other ports run when a file opens; the incremental path (only the lines
-     * an edit can change) is the next thing to bring over.
+     * Colors the whole file from the core's tokens, on opening it. After
+     * that the TextWatcher keeps the colors current an edit at a time.
      */
     private fun rehighlight() {
         val name = currentFile?.name ?: return
         val editable = ui.editor.text ?: return
-        val spans = editable.getSpans(0, editable.length, ForegroundColorSpan::class.java)
-        for (span in spans) editable.removeSpan(span)
-        if (!Core.supports(name)) return
-        val tokens = Core.highlight(editable.toString(), name)
-        highlighting = true
-        var i = 0
-        while (i + 2 < tokens.size) {
-            val start = tokens[i]
-            val end = start + tokens[i + 1]
-            val style = tokens[i + 2]
-            if (end <= editable.length && style in Palette.styles.indices) {
-                editable.setSpan(ForegroundColorSpan(Palette.styles[style]), start, end,
-                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-            }
-            i += 3
-        }
-        highlighting = false
+        highlighter.open(editable, name)
     }
 
     /**

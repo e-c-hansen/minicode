@@ -107,8 +107,8 @@ file list, editor, Markdown preview, images, PDFs, a terminal on
 - **The LaTeX preview**, which also follows: the reader and click-to-source
   are portable, but tectonic is not built for Android, so it needs Termux or
   a machine on the network.
-- Project search, comment toggling, incremental highlighting, PDFs past the
-  first page, zoom for large images, terminal scrollback.
+- Project search, comment toggling, PDFs past the first page, zoom for large
+  images, terminal scrollback.
 
 ## Linux port parity
 

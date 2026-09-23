@@ -8,8 +8,17 @@ package org.minicode.editor
 object Core {
     init { System.loadLibrary("minicode") }
 
-    /** Tokens as flat triples: start, length, style, in UTF-16 units. */
-    external fun highlight(text: String, filename: String): IntArray
+    /*
+     * Incremental highlighting, through a native handle per open file; see
+     * Highlighter.kt, the only caller. Offsets are UTF-16 units.
+     */
+    /** A highlighter over `text`, or 0 when the file has no grammar. */
+    external fun hlOpen(text: String, filename: String): Long
+    external fun hlClose(handle: Long)
+    /** Units [pos, pos + oldLen) became `inserted`: the re-lexed {start, end}, or empty. */
+    external fun hlEdit(handle: Long, pos: Int, oldLen: Int, inserted: String): IntArray
+    /** {from, to} of the whole lines covering [start, end), then (start, length, style) triples. */
+    external fun hlTokens(handle: Long, start: Int, end: Int): IntArray
 
     /** True when the core has a grammar for this file name. */
     external fun supports(filename: String): Boolean

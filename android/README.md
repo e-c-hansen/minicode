@@ -125,7 +125,14 @@ Run it from the repository root; the tests read a few files from `demo/`,
 ## Files
 
 - `app/src/main/cpp/minicode_jni.cpp` — highlighting and Markdown across the
-  JNI boundary, including the UTF-16 to UTF-8 conversion the core needs.
+  JNI boundary. The editor uses the core's incremental highlighter over a
+  native mirror of the text, so an edit crosses as its position and the
+  inserted characters, and only the lines it can have changed are recolored.
+- `app/src/main/cpp/jni_strings.h` — Java strings to real UTF-8 and back.
+  JNI's own `GetStringUTFChars`/`NewStringUTF` use *modified* UTF-8, which
+  splits an emoji into two surrogates, and CheckJNI (on in debug builds)
+  aborts the app when `NewStringUTF` is given a 4-byte sequence. Use these
+  helpers for any user text.
 - `app/src/main/cpp/terminal_jni.cpp` — the pty, and the shared
   TerminalScreen reading it.
 - `app/src/main/java/org/minicode/editor/MainActivity.kt` — the panes, the
@@ -134,6 +141,8 @@ Run it from the repository root; the tests read a few files from `demo/`,
 - `TerminalView.kt` — draws the grid, sends keys. Declares TYPE_NULL so
   keyboards send keys rather than composing words.
 - `Pty.kt`, `Core.kt` — the native declarations and the shared palette.
+- `Highlighter.kt` — keeps the editor's color spans current, an edit at a
+  time, fed from the editor's TextWatcher.
 - `Markdown.kt` — the core's runs turned into styled text.
 
 ## Not yet
@@ -142,7 +151,6 @@ Run it from the repository root; the tests read a few files from `demo/`,
   clangd and pyright live in Termux, whose files this app cannot read.
 - The LaTeX preview. The reader is portable; tectonic is not built for
   Android, so this needs Termux or a machine on the network.
-- Project search, comment toggling, and incremental highlighting (the editor
-  re-colours the whole file on each edit).
+- Project search and comment toggling.
 - PDFs beyond the first page; zoom and scroll for large images; terminal
   scrollback.
