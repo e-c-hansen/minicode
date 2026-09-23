@@ -50,6 +50,9 @@ std::string stylesheet(const Settings& s) {
            "; color: " + fg(Surface::Editor) + "; }";
     css += ".minicode-editor text selection { background-color: #264F78; }";
     css += ".minicode-editor-scroller { background-color: transparent; }";
+    // Images and PDFs sit on the editor's background, in the editor's slot.
+    css += ".minicode-media { background-color: " + bg(Surface::Editor) + "; }";
+    css += ".minicode-pdf-page { box-shadow: 0 1px 4px rgba(0,0,0,0.5); }";
     // Markdown preview and plain messages: proportional body text at the
     // macOS body size (15pt). Code and table runs re-apply monospace via
     // their GtkTextTags.

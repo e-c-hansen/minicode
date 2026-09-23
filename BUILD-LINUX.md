@@ -106,10 +106,33 @@ Verified by running it:
 - All 13 window actions are registered with the intended accelerators, and the
   sidebar, dotfile, terminal, browser and preview toggles were confirmed to
   change the state they claim to.
+- Images and PDFs (September 2026, poppler-glib 26.01, GTK 4.22.4, on the
+  ThinkPad under GNOME Wayland at scale 2). A temporary test hook, since
+  removed, opened files through the same path a click in the tree takes and
+  made 27 checks, all passing:
+  - png, jpg, bmp, ico, tiff and webp show in the editor's slot with the
+    pixel size in the title (`MiniCode — icon.png  256 × 256`), and an
+    animated GIF advances frames. A small image is drawn at its own size,
+    not enlarged, which a snapshot of the widget confirmed.
+  - A PDF shows in the slot with the page count in the title (`1 page`,
+    `100 pages`). A generated 100-page PDF opened in about 10 ms, and the
+    main loop never went more than 17 ms without running while its pages
+    rendered or after jumping to page 51. Snapshots of the view, read back as images,
+    show the pages drawn, and sharp at twice the scale.
+  - With an image, a PDF or a binary file open, Save is disabled, calling
+    save anyway leaves the file's bytes unchanged, and the buffer is never
+    dirty. An image that will not decode falls through to the text path.
+  - Replacing an image on disk by rename, rewriting a PDF in place, and
+    replacing it with a 3-page PDF all reloaded within a second. The PDF
+    kept its scroll position (page 51, 100 points down) through the rewrite,
+    and the point at the top of the view stayed there through a window
+    resize from 856 to 556 pixels wide.
+  - Opening a text file afterwards gives the editor its slot back, editable
+    and saveable, with no size or page count in the title.
 
 - Data safety and the file tree actions (September 2026, on the ThinkPad).
   These were driven from inside the running app by a temporary
-  `MINICODE_FILETEST` hook, since removed, which ran 44 checks against a
+  `MINICODE_FILETEST` hook, since removed, which ran 50 checks against a
   scratch project, all passing. It activated the window actions, pressed the
   alert buttons by emitting their `clicked` signal, typed names into the name
   popover's entry, and fired the tree's right-click gesture at a row's
@@ -124,8 +147,11 @@ Verified by running it:
   - A failed save (a read-only file, a folder that cannot be written) keeps
     the buffer marked unsaved, keeps the `*` in the title, and shows an alert
     with the reason. Choosing Save in the "Save changes?" alert when the save
-    fails does not switch files. Saves are atomic now, write through symlinks
-    and keep the file's permissions. Ctrl+S on a binary file writes nothing.
+    fails does not switch files. Saves are atomic now; they also write through
+    symlinks and keep the file's permissions, though those two were not
+    tested. Ctrl+S on a binary file writes nothing,
+    and neither a binary file nor an image ever asks "Save changes?". Find in
+    Folder goes to its match after the question is answered, not before.
   - New File and New Folder ask for a name in a popover under the selected
     row and create it in the selected folder, or in the selected file's
     folder, or in the root when nothing is selected. The new item is selected
@@ -157,8 +183,10 @@ Verified by running it:
 Not verified:
 
 - Everything driven by real keyboard and mouse input. Actions were activated
-  programmatically, which proves the wiring but not the key handling. For Find
-  in Folder that includes pressing Ctrl+Shift+F, typing into the field (the
+  programmatically, which proves the wiring but not the key handling. That
+  includes scrolling a PDF with the wheel and clicking a page (the mapping
+  from a point to a page and PDF coordinates was checked, the click was not).
+  For Find in Folder it includes pressing Ctrl+Shift+F, typing into the field (the
   test set its text, which fires the same signal), double-clicking a row, the
   Down arrow and Escape, the Choose button's folder dialog, and whether GNOME
   raises the main window when a match is opened (the editor is made the
@@ -166,6 +194,9 @@ Not verified:
   For the file tree it includes F2 and Delete, a real right-click, and what
   the popovers and alerts look like and where they sit.
 - How the Find in Folder window looks. Nothing in it was seen on screen.
+- How images and PDFs look to a person: the checks above read pixels back
+  from the widget, not from the screen. A build without poppler was compiled
+  and launched on a PDF, but what it shows was not looked at.
 - How highlighting looks while real keys are typed. The test above edited the
   buffer through its API; nobody has watched the colors catch up by eye.
 - Without optimization the lexer is several times slower: typing `/*` over a
@@ -219,12 +250,12 @@ re-investigates them.
 On Ubuntu 24.04 and 26.04:
 
     sudo apt install build-essential meson libgtk-4-dev \
-        libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev pkg-config
+        libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev libpoppler-glib-dev pkg-config
 
-Check afterwards that all three actually landed, since apt will happily install
+Check afterwards that all four actually landed, since apt will happily install
 the runtime library while leaving the `-dev` package out:
 
-    pkg-config --modversion gtk4 vte-2.91-gtk4 webkitgtk-6.0
+    pkg-config --modversion gtk4 vte-2.91-gtk4 webkitgtk-6.0 poppler-glib
 
 Notes on package names, which drift between Ubuntu versions:
 
@@ -236,10 +267,12 @@ Notes on package names, which drift between Ubuntu versions:
 - `libwebkitgtk-6.0-dev` provides the GTK4 WebKit (pkg-config module
   `webkitgtk-6.0`). Older Ubuntu used `libwebkit2gtk-4.1-dev` with a different
   API; that will not work with this code as written.
+- `libpoppler-glib-dev` provides the PDF viewer (pkg-config module
+  `poppler-glib`). Without it a PDF shows the "Cannot display" message.
 
-If you only install `libgtk-4-dev`, the core viewer still builds. The terminal
-and browser panels are compiled out automatically when their libraries are
-absent.
+If you only install `libgtk-4-dev`, the core viewer still builds, images
+included. The terminal, the browser and the PDF viewer are compiled out
+automatically when their libraries are absent.
 
 ## Build with Meson (recommended)
 
@@ -249,11 +282,11 @@ absent.
     meson test -C build
     ./build/minicode ~/some/project
 
-Meson auto-detects VTE and WebKit. Watch the configure output: it prints whether
-each panel is ENABLED or disabled. To force a panel on (and make configuration
-fail loudly if the library is missing):
+Meson auto-detects VTE, WebKit and poppler. Watch the configure output: it
+prints whether each panel is ENABLED or disabled. To force a panel on (and make
+configuration fail loudly if the library is missing):
 
-    meson setup build -Dterminal=enabled -Dbrowser=enabled
+    meson setup build -Dterminal=enabled -Dbrowser=enabled -Dpdf=enabled
 
 To force one off:
 
@@ -267,7 +300,8 @@ If you would rather not use Meson:
     make                      # core viewer only (needs just libgtk-4-dev)
     make TERMINAL=1           # add the terminal panel
     make BROWSER=1            # add the browser panel
-    make TERMINAL=1 BROWSER=1
+    make PDF=1                # add the PDF viewer
+    make TERMINAL=1 BROWSER=1 PDF=1
     make run DIR=~/some/project
     make test                 # pure-C++ tests; needs no GTK and no display
 

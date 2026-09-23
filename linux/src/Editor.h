@@ -12,13 +12,16 @@
 #include "Settings.h"
 #include "SyntaxHighlighter.h"
 
+class MediaView;
+
 class Editor {
 public:
     Editor();
     ~Editor();
 
-    // The scrolled widget to drop into the layout.
-    GtkWidget* widget() const { return scroller_; }
+    // The widget to drop into the layout: a stack holding the text editor
+    // and the image / PDF viewer, which take the same slot.
+    GtkWidget* widget() const { return slot_; }
 
     // The GtkTextView / GtkTextBuffer themselves, for the shell's find bar.
     GtkWidget*     textView() const { return view_; }
@@ -30,14 +33,23 @@ public:
 
     // Write the current buffer (or the raw source, in preview mode) to disk.
     // Returns false, with the reason in *error, when the write failed; the
-    // buffer then stays marked unsaved. With nothing to save (no file, or a
-    // message such as the binary-file notice on screen) it writes nothing and
-    // returns true.
+    // buffer then stays marked unsaved. When there is nothing to save (no
+    // file, or the slot shows something that is not the file's text: an image,
+    // a PDF, the "Cannot display" message) it writes nothing and returns true.
     bool save(std::string* error = nullptr);
+    // False while an image, a PDF or a binary file's message is shown.
+    bool canSave() const { return !path_.empty() && !readOnly_; }
 
     // Close the file and show the welcome text, dropping any unsaved edits.
     // The shell asks "Save changes?" before calling this.
     void closeFile();
+
+    // Images and PDFs (MediaView). isMedia() is true while one is shown, and
+    // titleSuffix() is what the window title adds for it ("  640 × 480",
+    // "  12 pages"), empty otherwise.
+    bool isMedia() const;
+    std::string titleSuffix() const;
+    MediaView* media() const { return media_; }
 
     // Toggle between the raw editable buffer and the rendered Markdown preview.
     // No-op unless the current file is Markdown.
@@ -46,7 +58,7 @@ public:
     bool inPreview() const { return preview_; }
 
     const std::string& currentPath() const { return path_; }
-    bool dirty() const { return dirty_; }
+    bool dirty() const { return dirty_ && !readOnly_; }
 
     // Optional: called whenever the dirty/title state changes so the shell can
     // refresh the window title. Set by main.cpp.
@@ -133,6 +145,12 @@ private:
     static void onPressed(GtkGestureClick* g, int n, double x, double y, gpointer self);
     static void onMotion(GtkEventControllerMotion* m, double x, double y, gpointer self);
 
+    void showTextSlot();                 // the text view back in the slot
+    static void onMediaChanged(void* self);   // reloaded from disk
+
+    GtkWidget*     slot_     = nullptr;   // GtkStack: scroller_ or the media view
+    MediaView*     media_    = nullptr;
+    bool           readOnly_ = false;     // the buffer is not the file's text
     GtkWidget*     scroller_ = nullptr;
     GtkWidget*     view_     = nullptr;   // GtkTextView
     GtkTextBuffer* buffer_   = nullptr;
@@ -143,7 +161,6 @@ private:
     bool        isMarkdown_ = false;
     bool        preview_    = false;
     bool        dirty_      = false;
-    bool        showingMessage_ = false;  // the buffer holds a message, not the file
     bool        tagsReady_  = false;
     bool        sourceMode_ = false;   // the buffer holds editable source text
 

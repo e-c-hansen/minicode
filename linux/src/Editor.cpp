@@ -7,6 +7,7 @@
 #include "SyntaxHighlighter.h"
 #include "LineComments.h"
 #include "Utf8Offsets.h"
+#include "MediaView.h"
 
 #include <algorithm>
 #include <cctype>
@@ -76,6 +77,17 @@ Editor::Editor() {
     g_signal_connect(buffer_, "begin-user-action", G_CALLBACK(onBeginUserAction), this);
     g_signal_connect(buffer_, "end-user-action", G_CALLBACK(onEndUserAction), this);
 
+    // Images and PDFs take the editor's slot, the way the macOS build swaps
+    // an NSImageView or PDFView in for the text view.
+    media_ = new MediaView();
+    media_->setChangedCallback(onMediaChanged, this);
+    slot_ = gtk_stack_new();
+    gtk_widget_set_hexpand(slot_, TRUE);
+    gtk_widget_set_vexpand(slot_, TRUE);
+    gtk_stack_add_named(GTK_STACK(slot_), scroller_, "text");
+    gtk_stack_add_named(GTK_STACK(slot_), media_->widget(), "media");
+    gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
+
     ensureTags();
     showWelcome();
 }
@@ -90,6 +102,7 @@ void Editor::showWelcome() {
 
 Editor::~Editor() {
     g_signal_handlers_disconnect_by_data(buffer_, this);
+    delete media_;
 }
 
 // ---------------------------------------------------------------- tags
@@ -156,6 +169,26 @@ void Editor::ensureTags() {
 // ---------------------------------------------------------------- file I/O
 
 bool Editor::openFile(const std::string& path) {
+    // Whatever was shown before goes, so a stale picture can never sit over
+    // the next file, and nothing from it can be saved.
+    showTextSlot();
+    readOnly_ = false;
+    // Images and PDFs are routed by extension before any attempt to read them
+    // as text. One that will not decode falls through to "Cannot display".
+    if ((MediaView::isImagePath(path) || MediaView::isPdfPath(path)) && media_->show(path)) {
+        path_ = path;
+        source_.clear();
+        ext_ = extOf(path);
+        isMarkdown_ = false;
+        preview_ = false;
+        readOnly_ = true;
+        showMessage("");   // the hidden text view holds nothing
+        markDirty(false);
+        gtk_stack_set_visible_child(GTK_STACK(slot_), media_->widget());
+        if (titleCb_) titleCb_(titleUser_);
+        return true;
+    }
+
     std::ifstream f(path, std::ios::binary);
     if (!f) {
         // The message now stands in for the file; nothing may be saved from it.
@@ -164,6 +197,7 @@ bool Editor::openFile(const std::string& path) {
         ext_.clear();
         isMarkdown_ = false;
         preview_ = false;
+        readOnly_ = true;
         markDirty(false);
         showMessage(std::string("\n  Could not open: ") + path);
         return false;
@@ -184,6 +218,7 @@ bool Editor::openFile(const std::string& path) {
         ext_.clear();
         isMarkdown_ = false;
         preview_ = false;
+        readOnly_ = true;   // the message is not the file: never save it over it
         markDirty(false);
         showMessage("\n  Cannot display “" + base + "”.\n\n"
                     "  (Binary file or unsupported encoding.)");
@@ -203,10 +238,10 @@ bool Editor::openFile(const std::string& path) {
 }
 
 bool Editor::save(std::string* error) {
-    // A message (welcome text, "Cannot display", "Could not open") is not the
-    // file's contents. Saving it used to write the message over the file, which
-    // for a binary file destroyed it.
-    if (path_.empty() || showingMessage_) return true;
+    // Not the file's text: an image, a PDF, or a message such as "Cannot
+    // display". Saving a message used to write it over the file, which for a
+    // binary file destroyed it.
+    if (path_.empty() || readOnly_) return true;
     // In preview mode the buffer holds rendered text; persist source_ instead.
     if (!preview_) {
         GtkTextIter a, b;
@@ -246,6 +281,8 @@ bool Editor::save(std::string* error) {
 }
 
 void Editor::closeFile() {
+    showTextSlot();   // an image or PDF goes too
+    readOnly_ = false;
     path_.clear();
     source_.clear();
     ext_.clear();
@@ -296,6 +333,20 @@ bool Editor::revealLine(int line, std::size_t byteColumn, std::size_t byteLength
     return true;
 }
 
+bool Editor::isMedia() const { return media_->kind() != MediaView::Kind::None; }
+
+std::string Editor::titleSuffix() const { return media_->titleSuffix(); }
+
+void Editor::showTextSlot() {
+    media_->clear();
+    gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
+}
+
+void Editor::onMediaChanged(void* selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    if (self->titleCb_) self->titleCb_(self->titleUser_);   // page count may differ
+}
+
 // ---------------------------------------------------------------- buffer fills
 
 // Source code is monospace; the Markdown preview and the plain messages use the
@@ -329,7 +380,6 @@ void Editor::loadRawIntoBuffer() {
     // startHighlighting() lexes the new text once, whole.
     stopHighlighting();
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
-    showingMessage_ = false;
     setProseFont(false);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), TRUE);
     gtk_text_buffer_set_text(buffer_, source_.c_str(), (int)source_.size());
@@ -346,7 +396,6 @@ void Editor::loadRawIntoBuffer() {
 void Editor::showMessage(const std::string& msg) {
     ensureTags();
     stopHighlighting();
-    showingMessage_ = true;
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
     setProseFont(true);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), FALSE);
@@ -991,7 +1040,6 @@ void Editor::togglePreview() {
 
 void Editor::renderPreview() {
     stopHighlighting();
-    showingMessage_ = false;
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
     setProseFont(true);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), FALSE);
