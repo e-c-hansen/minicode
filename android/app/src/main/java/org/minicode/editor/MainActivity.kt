@@ -694,7 +694,7 @@ class MainActivity : AppCompatActivity() {
     private fun showMenu() {
         val items = arrayOf("Save", "Files or editor", "Markdown preview",
                             "Terminal", "Browser", "Open a folder", "Text size",
-                            "Shortcuts")
+                            "Shortcuts", "Termux tools")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setItems(items) { _, which ->
                 when (which) {
@@ -706,6 +706,7 @@ class MainActivity : AppCompatActivity() {
                     5 -> openFolder()
                     6 -> chooseTextSize()
                     7 -> showShortcuts()
+                    8 -> termuxSetup()
                 }
             }
             .show()
@@ -835,6 +836,56 @@ class MainActivity : AppCompatActivity() {
         ui.editor.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sp.toFloat())
         getSharedPreferences("minicode", MODE_PRIVATE).edit()
             .putInt("textSize", sp).apply()
+    }
+
+    private val askTermux =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            termuxSetup()
+        }
+
+    /**
+     * Where Termux integration stands, and the next step to take. Language
+     * servers and tectonic run in Termux, so this is the one place that says
+     * what is missing, and checks what is installed once it can.
+     */
+    private fun termuxSetup() {
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Termux tools")
+        when {
+            !Termux.isInstalled(this) -> dialog.setMessage(
+                "Language servers and the LaTeX preview run in Termux. Install " +
+                "Termux from F-Droid, then come back here.")
+            !Termux.hasPermission(this) -> {
+                dialog.setMessage("MiniCode needs permission to run commands in " +
+                        "Termux. Termux also has to allow it: in Termux, run\n\n" +
+                        "echo allow-external-apps=true >> ~/.termux/termux.properties\n" +
+                        "termux-reload-settings")
+                dialog.setPositiveButton("Allow") { _, _ -> askTermux.launch(Termux.PERMISSION) }
+            }
+            else -> {
+                dialog.setMessage("Checking Termux…")
+                val shown = dialog.setPositiveButton("OK", null).show()
+                Thread {
+                    val text = try {
+                        val tools = listOf("clangd", "pylsp", "pyright-langserver",
+                                           "gopls", "rust-analyzer",
+                                           "typescript-language-server", "tectonic")
+                        val (_, out) = Termux.run(this, tools.joinToString("; ") {
+                            "printf '%s ' $it; command -v $it || echo -"
+                        })
+                        "Termux runs commands for MiniCode.\n\n" + out.trim() +
+                                "\n\nInstall what is missing with pkg, for example " +
+                                "pkg install clang tectonic python."
+                    } catch (e: Exception) {
+                        e.message ?: e.toString()
+                    }
+                    android.util.Log.i("MiniCodeTermux", text)
+                    runOnUiThread { shown.setMessage(text) }
+                }.start()
+                return
+            }
+        }
+        dialog.setNegativeButton("Close", null).show()
     }
 
     /** The equivalent of the Mac app's Shift+Cmd+H panel, for a phone. */
