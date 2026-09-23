@@ -165,7 +165,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   `browserVisible`, plus NSSplitView's own collapse of `rightArea`.
 - A new shortcut goes in three places: the menu in `main.mm` (plus a
   forwarding method on `AppDelegate`), `hintsText` in EditorController (one
-  `appendHintsRow:` call), and the README shortcut table. The hints panel is an
+  `appendHintsRow:` call), and the README shortcut table, which is
+  sorted by action and has a column per platform. The hints panel is an
   attributed string on tab stops; never line it up with spaces, because the key
   glyphs (⌘ ⇧ ⌃ ⌫ ⏎) differ in width even in a monospaced font.
 - Fonts: system font for Markdown/UI, `monospacedSystemFontOfSize:` 12-13 for

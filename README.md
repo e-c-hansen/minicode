@@ -212,39 +212,43 @@ A new scene is a function of a few lines in src/Demo.mm plus an entry in its sce
 
 ## Keyboard shortcuts
 
-| Shortcut | Action |
-| --- | --- |
-| Command N | New window |
-| Command O | Open folder |
-| Command S | Save |
-| Command Z, Shift Command Z | Undo, redo |
-| Command F | Find in the current file |
-| Shift Command F | Find across the whole folder |
-| Command G, Shift Command G | Find next, find previous |
-| Command W | Close window |
-| Shift Command W | Close application |
-| Command 0 | Focus the file tree |
-| Command 1 | Focus the editor |
-| Up, Down, Return | Browse the tree and open the selected file |
-| Control Tab | Jump to the previous file |
-| Control Command N | New file |
-| Shift Command N | New folder |
-| Command Delete | Move the selected file to the Trash |
-| Command R | Refresh the file tree |
-| Shift Command . | Show or hide dotfiles |
-| Command B | Collapse or restore the sidebar |
-| Shift Command E | Hide or restore the file editor; the terminal and browser take its space |
-| Shift Command T, or Control backtick | Toggle terminal |
-| Shift Command B | Toggle browser |
-| Shift Command P | Toggle the preview, for Markdown and LaTeX files |
-| Shift Command S | Export the typeset PDF of a LaTeX file |
-| Shift Command H | Toggle the shortcut hints |
-| Command comma | Open the settings file |
-| Command slash | Comment or uncomment the selected lines |
-| Control Space, or Option Escape | Complete the word at the cursor, when the file has a language server |
-| F12, or Command click | Go to definition (on a laptop keyboard F12 may need the fn key) |
-| Command click in the terminal | Open a file named in the output at its line and column, such as src/main.cpp:42:7 from a compiler, or a URL in the browser panel |
-| Command I | Show the type and documentation under the cursor |
+The same actions on each platform, sorted by name. A blank cell means that port does not have the action yet. On Android, shortcuts start with a leader key, because a phone keyboard often has no Control: on a Unihertz Titan 2 it is the unlabelled key left of the right Shift, and elsewhere the Menu key. Press it, then the letter. Pressed alone it switches between the file list and the editor, pressed twice it opens the menu, and the ⋮ button offers everything for a keyboard that has neither.
+
+| Action | macOS | Linux | Android, after the leader key |
+| --- | --- | --- | --- |
+| Browse the file tree and open the selected file | Up, Down, Return |  |  |
+| Close the application | Shift Command W |  |  |
+| Close the window | Command W |  |  |
+| Comment or uncomment the selected lines | Command / | Ctrl / |  |
+| Complete the word at the cursor, with a language server | Control Space, or Option Escape |  | N |
+| Export the typeset PDF of a LaTeX file | Shift Command S |  |  |
+| Find across the whole folder | Shift Command F |  |  |
+| Find in the current file | Command F | Ctrl F |  |
+| Find next, find previous | Command G, Shift Command G |  |  |
+| Focus the editor | Command 1 |  |  |
+| Focus the file tree | Command 0 | Ctrl 0 |  |
+| Go to definition | F12, or Command click (F12 may need fn on a laptop) |  | G |
+| Jump to the previous file | Control Tab |  |  |
+| Move the selected file to the Trash | Command Delete |  |  |
+| New file | Control Command N | Ctrl Alt N |  |
+| New folder | Shift Command N | Ctrl Shift N |  |
+| New window | Command N |  |  |
+| Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it |  | Tap it |
+| Open a folder | Command O | Ctrl O | O |
+| Open the settings file | Command comma | Ctrl comma |  |
+| Refresh the file tree | Command R |  |  |
+| Save | Command S | Ctrl S | S |
+| Show or hide dotfiles | Shift Command . | Ctrl H |  |
+| Show the type and documentation under the cursor | Command I |  | K |
+| Toggle the browser | Shift Command B | Ctrl Shift B | B |
+| Toggle the editor, giving its space to the terminal and browser | Shift Command E | Ctrl Shift E |  |
+| Toggle the file list or sidebar | Command B | Ctrl B | F |
+| Toggle the preview of a Markdown or LaTeX file | Shift Command P | Ctrl Shift P (Markdown) | P |
+| Toggle the shortcut hints | Shift Command H | Ctrl Shift H | H |
+| Toggle the terminal | Shift Command T, or Control backtick | Ctrl Shift T | T |
+| Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z |  |
+
+In the Android terminal the leader also sends what the keyboard lacks: C for Control C, D for Control D, E for Escape and I for Tab. The row of keys under the terminal has the same, plus a sticky Control, the pipe and the arrows.
 
 ## How it is put together
 
