@@ -74,4 +74,12 @@
         android:importantForAutofill="no"
         android:visibility="gone"
         android:hint="" />
+
+    <org.minicode.editor.TerminalView
+        android:id="@+id/terminal"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:padding="4dp"
+        android:visibility="gone" />
 </LinearLayout>

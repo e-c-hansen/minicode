@@ -187,7 +187,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showList(show: Boolean) {
+        if (show) terminalShowing = false
         ui.fileList.visibility = if (show) View.VISIBLE else View.GONE
+        ui.terminal.visibility = View.GONE
         ui.editor.visibility = if (show) View.GONE else View.VISIBLE
         ui.up.visibility =
             if (show && current?.uri != folder?.uri) View.VISIBLE else View.GONE
@@ -198,6 +200,7 @@ class MainActivity : AppCompatActivity() {
     /** One line of chrome: the folder while listing, the file while editing. */
     private fun updateTitle() {
         val waiting = if (leaderArmed) "  …" else ""
+        if (terminalShowing) { ui.title.text = "Terminal"; return }
         val showingList = ui.fileList.visibility == View.VISIBLE
         val name = if (showingList) (current?.name ?: folder?.name ?: "MiniCode")
                    else (currentFile?.name ?: "MiniCode")
@@ -272,6 +275,7 @@ class MainActivity : AppCompatActivity() {
      */
     fun leaderLetter(letter: Char): Boolean {
         if (!leaderArmed) return false
+        if (leaderActions()[letter.lowercaseChar()] == null) return false
         cancelLeader()
         leaderActions()[letter.lowercaseChar()]?.invoke()
         return true
@@ -295,8 +299,14 @@ class MainActivity : AppCompatActivity() {
     private fun leaderActions(): Map<Char, () -> Unit> = mapOf(
         's' to { save() },
         'b' to { showList(ui.fileList.visibility != View.VISIBLE) },
+        't' to { toggleTerminal() },
         'o' to { pickFolder.launch(null) },
         'h' to { showShortcuts() },
+        // A keyboard with no Ctrl or Escape still has to drive a shell.
+        'c' to { ui.terminal.sendControl('c') },
+        'd' to { ui.terminal.sendControl('d') },
+        'e' to { ui.terminal.sendEscape() },
+        'i' to { ui.terminal.sendTab() },
     )
 
     private fun handleShortcut(event: KeyEvent): Boolean {
@@ -328,6 +338,16 @@ class MainActivity : AppCompatActivity() {
             handled.add(event.keyCode)
             return true
         }
+        // A letter after a leader press, when it arrives as a key event:
+        // that is what happens in the file list and the terminal, where no
+        // text field is taking the keyboard's output.
+        if (leaderArmed && event.unicodeChar != 0) {
+            val letter = event.unicodeChar.toChar()
+            if (leaderLetter(letter)) {
+                handled.add(event.keyCode)
+                return true
+            }
+        }
         val act = when {
             event.isCtrlPressed -> actions[event.keyCode] ?: return false
             else -> return false
@@ -346,20 +366,50 @@ class MainActivity : AppCompatActivity() {
      * for some letters.
      */
     private fun showMenu() {
-        val items = arrayOf("Save", "Files or editor", "Open a folder",
-                            "Text size", "Shortcuts")
+        val items = arrayOf("Save", "Files or editor", "Terminal",
+                            "Open a folder", "Text size", "Shortcuts")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> save()
                     1 -> showList(ui.fileList.visibility != View.VISIBLE)
-                    2 -> pickFolder.launch(null)
-                    3 -> chooseTextSize()
-                    4 -> showShortcuts()
+                    2 -> toggleTerminal()
+                    3 -> pickFolder.launch(null)
+                    4 -> chooseTextSize()
+                    5 -> showShortcuts()
                 }
             }
             .show()
     }
+
+    /**
+     * The terminal pane: Android's own shell on a pty, drawn by the same
+     * screen grid the macOS app uses. It runs in the app's own storage,
+     * which is the only place it can write, and carries the toybox
+     * utilities the system ships.
+     */
+    private fun toggleTerminal() {
+        terminalShowing = !terminalShowing
+        if (terminalShowing) {
+            ui.fileList.visibility = View.GONE
+            ui.editor.visibility = View.GONE
+            ui.terminal.visibility = View.VISIBLE
+            ui.terminal.onExit = {
+                if (terminalShowing) toggleTerminal()
+                ui.terminal.stop()
+            }
+            ui.terminal.post { ui.terminal.start(filesDir.absolutePath) }
+            ui.terminal.requestFocus()
+            (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                .showSoftInput(ui.terminal, 0)
+        } else {
+            ui.terminal.visibility = View.GONE
+            showList(currentFile == null)
+        }
+        updateTitle()
+    }
+
+    private var terminalShowing = false
 
     /**
      * How large the code is, which matters more on a phone than anywhere
@@ -387,8 +437,13 @@ class MainActivity : AppCompatActivity() {
             "The key left of right Shift, then:",
             "S      Save",
             "B      Files or editor",
+            "T      Terminal",
             "O      Open a folder",
             "H      This list",
+            "",
+            "In the terminal: C for Ctrl C,",
+            "D for Ctrl D, E for Escape,",
+            "I for Tab.",
             "",
             "That key alone switches panes,",
             "twice opens this menu, and the ⋮",

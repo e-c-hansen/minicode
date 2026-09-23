@@ -11,10 +11,13 @@ set(CORE ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../src)
 
 add_library(minicode SHARED
     minicode_jni.cpp
+    terminal_jni.cpp
     ${CORE}/SyntaxHighlighter.cpp
     ${CORE}/MarkdownParser.cpp
     ${CORE}/LineComments.cpp
-    ${CORE}/Settings.cpp)
+    ${CORE}/Settings.cpp
+    ${CORE}/TerminalStream.cpp
+    ${CORE}/TerminalScreen.cpp)
 
 target_include_directories(minicode PRIVATE ${CORE})
 target_compile_options(minicode PRIVATE -Wall -Wextra)
