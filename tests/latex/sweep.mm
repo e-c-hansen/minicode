@@ -20,7 +20,9 @@
 // Words that do not occur in the source at all (section numbers, page
 // numbers, list labels) are counted apart as "generated": refusing those is
 // right. Single characters (section and item numbers, "a") are counted apart
-// too: the matcher places those by position, not by text. -v prints every miss with the candidate lines.
+// too: the matcher refuses every one of them, so any that still offered a
+// span are reported, as "short+span" under -v. -v prints every miss with the
+// candidate lines.
 #import <Quartz/Quartz.h>
 #import "Latex.h"
 #include "LatexDoc.h"
@@ -132,7 +134,7 @@ int main(int argc, char **argv) {
         };
 
         int found = 0, unsure = 0, partial = 0, refused = 0, wrong = 0,
-            generated = 0, shortWords = 0;
+            generated = 0, shortWords = 0, shortSpan = 0;
         for (NSUInteger p = 0; p < pdf.pageCount; p++) {
             PDFPage *page = [pdf pageAtIndex:p];
             NSString *text = page.string ?: @"";
@@ -178,7 +180,11 @@ int main(int argc, char **argv) {
                         (prev.length && [have rangeOfString:[prev stringByAppendingString:want]].location != NSNotFound) ||
                         (next.length && [have rangeOfString:[want stringByAppendingString:next]].location != NSNotFound);
                     const char *verdict;
-                    if (want.length < 2) { shortWords++; verdict = "short"; }
+                    if (want.length < 2) {
+                        shortWords++;
+                        if (sp) shortSpan++;
+                        verdict = sp ? "short+span" : "short";
+                    }
                     else if (!inSource) { generated++; verdict = sp ? "gen+span" : "gen"; }
                     else if (!sp) { refused++; verdict = "REFUSED"; }
                     else if ([have rangeOfString:want].location != NSNotFound) {
@@ -205,10 +211,11 @@ int main(int argc, char **argv) {
         }
         int total = found + unsure + partial + refused + wrong;
         printf("clicks %d: found %d (+%d not placed), partial %d, refused %d, "
-               "wrong %d (hit rate %.1f%%); generated %d, single characters %d\n",
+               "wrong %d (hit rate %.1f%%); generated %d, single characters %d "
+               "(%d offered a span)\n",
                total, found, unsure, partial, refused, wrong,
                total ? 100.0 * (found + unsure + partial) / total : 0.0,
-               generated, shortWords);
+               generated, shortWords, shortSpan);
         return 0;
     }
 }

@@ -428,15 +428,17 @@ enumerates words with `PageText::words()`, the click's own segmentation,
 where the Mac uses NSString's; the verdicts still judge the span against the
 page's text.
 
-A finding for the shared matcher, not changed here: a single letter or digit
-with no agreeing context falls through to `spanForClick`'s last line, the
-nearest span, so a page number opens the last paragraph near it and a section
-number its heading. `../CLAUDE.md` says page and section numbers are refused;
-here they are not, and the same core code makes that choice on the Mac (not
-checked there). Both harnesses count single characters
-apart, so their "wrong 0" does not cover this. Refusing single characters
-when context is known would fix it, at the cost of list numbers no longer
-opening their item.
+The sweep also found that a single letter or digit with no agreeing context
+fell through to `spanForClick`'s last resort, the nearest span, so a page
+number opened the last paragraph near it and a section number its heading.
+The shared matcher now refuses every single character before matching, on
+every port, since a single character cannot say which span it came from and
+the word beside it opens the same span. A list item's number or label, a
+one-letter word and a one-letter math variable no longer open anything; the
+user accepted that. Both harnesses count single characters apart from the
+verdicts above and report how many still offered a span: after the change,
+0 of 49 on torture.tex and 0 of 5 on notes.tex (before, all 54 did), with
+the other counts unchanged.
 
 Not done: zoom (as with PDFs), click-to-line in the source view, and a person
 using it: the real double-click, the popover's look and placement, Return and

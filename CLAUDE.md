@@ -18,7 +18,7 @@ this file covers the macOS app except where it says otherwise.
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
   run on Apple Silicon and to keep granted permissions stable).
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  1218 checks over the tokenizer (including ~14,000 random edits comparing
+  1237 checks over the tokenizer (including ~14,000 random edits comparing
   incremental against full highlighting, and a timing line for a 100k-line
   file), Markdown parser, terminal output stream and screen grid, settings
   parser, comment toggling, the LaTeX and SyncTeX readers (including the preview's click-to-source
@@ -223,6 +223,15 @@ same way Markdown does; `LatexView` takes the editor's slot in
   "word" with no letters or digits at all (a bullet, a logo) falls back to
   the nearest span. Text TeX makes up is refused on purpose: section and page
   numbers, and words that come from a `\newcommand` body.
+- **A single letter or digit is always refused**, before any matching, even
+  when the text around it agrees with the source. Page, section, list and
+  footnote numbers are single characters TeX made up, and they used to fall
+  through to the nearest span (a page number opened the paragraph above it,
+  a section number its heading). Context could tell most real ones apart,
+  but not with a guarantee, and the word beside the character opens the same
+  span anyway. The price, accepted by the user: a list item's number or
+  label, a one-letter word ("a", "I") and a one-letter math variable no
+  longer open anything; click a neighbouring word instead.
 - **Click to source**, all of it in `MCLatexSpanAtPoint` (Latex.mm), which the
   sweep harness calls too:
   - **Lines: `SyncTexIndex::textHitsAtPoint`.** A line of text's box carries
@@ -244,8 +253,7 @@ same way Markdown does; `LatexView` takes the editor's slot in
     text around the word in the source (`lead`/`trail`, built from the
     neighbouring spans so URLs and comments never get in). A later candidate
     must beat the nearest by 4 characters, because the PDF's reading order is
-    not always the source's: a tabular reads back column by column. A single
-    letter or digit must have some context agree, or it is not taken.
+    not always the source's: a tabular reads back column by column.
   - **Extras**: spans cover all their lines (`endLine`), not just the first;
     `\title`/`\author`/`\date` are candidates at `\maketitle`; a word split by
     a font change mid-word (`foo\emph{bar}baz`) matches a *join*, one span
@@ -257,7 +265,10 @@ same way Markdown does; `LatexView` takes the editor's slot in
   every page (first, middle and last character) through
   `MCLatexSpanAtPoint`, reporting found / refused / wrong, plus "not placed"
   when a common word landed in a span that nothing confirms is the right
-  occurrence. `tests/latex/torture.tex` is the corpus of constructs. On
+  occurrence. Single characters are counted apart, with how many still
+  offered a span, which must be 0 (the Mac harness reports this but has not
+  been rebuilt since the change). `tests/latex/torture.tex` is the corpus
+  of constructs. On
   2026-09-21 the torture document went from 76% found-and-placed to 98.7%
   (the rest is generated text, correctly refused) and the user's resume
   (four versions) from 87% to 100%, with zero wrong in both. Set
@@ -305,9 +316,9 @@ same way Markdown does; `LatexView` takes the editor's slot in
   buffer as it is, a click on no text refuses, and tectonic's download is the
   static musl build checked against a pinned SHA-256.
   `tests/latex/sweep-linux.sh` is its sweep: 0 wrong on torture.tex and
-  notes.tex. It found that a single character with no agreeing context (a
-  page number) falls through to the nearest span, which the rule above says
-  is refused; see ROADMAP.md.
+  notes.tex, and none of their 54 single-character clicks offered a span.
+  It is the sweep that found page and section numbers falling through to the
+  nearest span, which led to refusing single characters.
 - Headless testing worked well here: drive `openEditorForPage:point:`,
   `startAddItem:` and `commitEdit:` directly from a `MINICODE_LATEXTEST` block,
   finding page points with `[PDFDocument findString:]`. Point
@@ -387,7 +398,7 @@ never closes.
 ## Current state (handoff, 2026-09-22)
 
 - **macOS** is released as **1.3.3** (Homebrew tap and GitHub Releases), and
-  `main` is pushed. 1,079 core checks passed then (1,218 now); the build is
+  `main` is pushed. 1,079 core checks passed then (1,237 now); the build is
   warning-free. That
   day's work: opening a file from the command line, image and PDF viewing,
   Export PDF for LaTeX, Copy Path in the tree's context menu, the memory
