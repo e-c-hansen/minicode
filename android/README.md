@@ -32,6 +32,10 @@ browser panel.
 - **LaTeX preview.** Typeset by tectonic in Termux, every page in a
   scrolling list, and a double tap on the text opens the source behind it
   for editing, as on the Mac. See "The LaTeX preview" below.
+- **Language servers.** clangd, pylsp and the rest, run in Termux (see
+  below): squiggles under errors and warnings, the message for the one at
+  the caret in a line under the editor, completion, hover and go to
+  definition.
 
 ## Shortcuts, and why they are unusual
 
@@ -44,6 +48,8 @@ microphone. What is left is one unclaimed key, so that key is a leader:
       S  save            P  Markdown preview      O  open a folder
       F  files or editor T  terminal              H  the shortcut list
       B  browser
+    in the editor, with a language server:
+      N  complete        K  what the symbol is    G  go to its definition
     in the terminal:
       C  Ctrl C          D  Ctrl D                E  Escape     I  Tab
 
@@ -159,6 +165,42 @@ things run and live.
   which is then unsaved until the leader's S. If the buffer changed while the
   dialog was up, the edit is not applied.
 
+## Language servers
+
+A language server runs in Termux, since that is where `pkg` installs clangd
+and pip installs pylsp, and Android lets no app run a program out of
+another app's storage. `Termux.kt` asks Termux to start it with RUN_COMMAND,
+and the program's stdin and stdout come back over a loopback socket (the
+file's comment has the details). From there it is the same client as the
+Mac's: `lsp_jni.cpp` exposes `src/LspClient.cpp` with no I/O, and
+`LspSession.kt` owns the socket, the reader thread and the UI.
+
+- **Setup** is the ⋮ menu's Termux tools item, which also lists what is
+  installed. It needs `allow-external-apps=true` in
+  `~/.termux/termux.properties` and MiniCode's "Run commands in Termux"
+  permission.
+- **Which files.** Termux sees only shared storage, so a server starts only
+  for files under `/storage/...`, opened through Phone storage; the path is
+  the same on both sides. The project root is the open folder. There is one
+  server per language per project, started the first time a file of that
+  language opens, and a new project stops the old one's servers.
+- **Which server.** The core's defaults, the first one installed: clangd for
+  C and C++, pyright or pylsp for Python, gopls, rust-analyzer,
+  typescript-language-server. If none is, the bar says what to install.
+- **Diagnostics** are `DiagnosticSpan` markers in the text (so they follow
+  edits until the server publishes again), and `CodeEditText` draws the
+  squiggles after its text, the way the Mac editor does. They never touch the
+  highlighter's color spans. The bar under the editor shows the message for
+  the diagnostic at the caret, otherwise the error and warning counts or what
+  the server is doing, and disappears when there is nothing to say.
+- **Completion** opens on `.`, `->` and `::` when the server lists them as
+  triggers, and on the leader's N. The list is filtered by the core as you
+  type; the arrows move through it, Enter or Tab accepts, Esc or Back closes.
+- **Hover** (leader K) shows in a dialog; **definition** (leader G) moves the
+  caret, opening the other file first when it is elsewhere.
+- In a debug build the server's stderr goes to `~/.minicode-lsp.log` in
+  Termux's home.
+
 ## Building
 
 Needs the Android SDK and NDK, and JDK 17 or 21 (Gradle 8.14 does not run on
@@ -256,11 +298,13 @@ Run it from the repository root; the tests read a few files from `demo/`,
 - `LatexPreview.kt` — the LaTeX preview: typesetting through Termux, the
   page list, and the double tap to edit (`PageText` finds the tapped word).
 - `app/src/main/cpp/latex_jni.cpp` — SyncTeX and `LatexDoc` for the tap.
+- `app/src/main/cpp/lsp_jni.cpp` — the shared LSP client, fed and drained by
+  Kotlin; results come back as small JSON events.
+- `LspSession.kt` — language servers for the editor: processes, document
+  sync, squiggles, the status bar, completion, hover and definition.
 
 ## Not yet
 
-- Language servers. The client is portable C++ and already compiles here, but
-  clangd and pyright live in Termux, whose files this app cannot read.
 - In the LaTeX preview: adding a list item from the preview, a separate undo
   for preview edits, zoom, and Export PDF, all of which the Mac has.
 - Project search and comment toggling.

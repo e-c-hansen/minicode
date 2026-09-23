@@ -75,6 +75,22 @@
         android:visibility="gone"
         android:hint="" />
 
+    <!-- The language server's line: the diagnostic at the caret, or what the
+         server is doing. Shown only with the editor, and only when it has
+         something to say (LspSession.syncBar). -->
+    <TextView
+        android:id="@+id/lspBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#252526"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="3dp"
+        android:textColor="#9CA3AF"
+        android:textSize="12sp"
+        android:singleLine="true"
+        android:ellipsize="end"
+        android:visibility="gone" />
+
     <ScrollView
         android:id="@+id/previewScroll"
         android:layout_width="match_parent"

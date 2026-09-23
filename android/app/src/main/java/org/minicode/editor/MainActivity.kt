@@ -74,6 +74,7 @@ class MainActivity : AppCompatActivity() {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {
                 if (!highlighting && s != null) highlighter.edited(s, a, b, c)
+                if (!highlighting && s != null) lsp.edited(s, a, b, c)
             }
             override fun afterTextChanged(s: Editable?) {
                 if (highlighting) return
@@ -428,6 +429,7 @@ class MainActivity : AppCompatActivity() {
         updateTitle()
         rehighlight()
         renderPreview()
+        lsp.opened(file, folder)
     }
 
     private fun isMarkdown(name: String?): Boolean {
@@ -479,6 +481,17 @@ class MainActivity : AppCompatActivity() {
 
     private val highlighter = Highlighter()
 
+    /** Language servers, run in Termux; see LspSession.kt. */
+    private val lsp by lazy { LspSession(this, ui.editor, ui.lspBar) }
+
+    /** Opens a file by path, for go-to-definition into another file. */
+    fun openPath(file: File) = openEntry(DocumentFile.fromFile(file))
+
+    override fun onDestroy() {
+        lsp.shutdown()
+        super.onDestroy()
+    }
+
     /**
      * Colors the whole file from the core's tokens, on opening it. After
      * that the TextWatcher keeps the colors current an edit at a time.
@@ -513,6 +526,7 @@ class MainActivity : AppCompatActivity() {
         dirty = false
         updateTitle()
         if (LatexPreview.isLatex(file.name)) ui.latex.typesetNow()
+        lsp.saved()
         return true
     }
 
@@ -565,6 +579,11 @@ class MainActivity : AppCompatActivity() {
      * nothing typed (a password in the browser) reaches the log.
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // The completion list, while it is up, takes arrows, Enter and Esc.
+        if (event.action == KeyEvent.ACTION_DOWN && lsp.handleKey(event)) {
+            handled.add(event.keyCode)
+            return true
+        }
         if (event.action == KeyEvent.ACTION_DOWN) {
             if (debuggable) {
                 android.util.Log.d("MiniCodeKeys",
@@ -664,6 +683,11 @@ class MainActivity : AppCompatActivity() {
         'd' to { ui.terminal.sendControl('d') },
         'e' to { ui.terminal.sendEscape() },
         'i' to { ui.terminal.sendTab() },
+        // Language servers: N completes, K shows what the symbol is (as K
+        // does in vim), G goes to its definition.
+        'n' to { lsp.requestCompletion() },
+        'k' to { lsp.hover() },
+        'g' to { lsp.definition() },
     )
 
     private fun handleShortcut(event: KeyEvent): Boolean {
@@ -931,6 +955,9 @@ class MainActivity : AppCompatActivity() {
             "O      Open a folder (long-press a",
             "       folder to make it the project)",
             "H      This list",
+            "N      Complete (language server)",
+            "K      What the symbol is",
+            "G      Go to its definition",
             "",
             "In the terminal: C for Ctrl C,",
             "D for Ctrl D, E for Escape,",

@@ -24,6 +24,31 @@ class CodeEditText @JvmOverloads constructor(
     defStyleAttr: Int = androidx.appcompat.R.attr.editTextStyle
 ) : AppCompatEditText(context, attrs, defStyleAttr) {
 
+    /** Told when the caret moves; the language-server bar follows it. */
+    var onSelection: ((Int) -> Unit)? = null
+
+    /**
+     * Offered committed text before it is inserted: the completion list
+     * takes a newline as "accept" when the keyboard sends Enter as text.
+     */
+    var interceptCommit: ((CharSequence) -> Boolean)? = null
+
+    private val squiggle = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.STROKE
+        strokeWidth = resources.displayMetrics.density
+    }
+
+    override fun onSelectionChanged(selStart: Int, selEnd: Int) {
+        super.onSelectionChanged(selStart, selEnd)
+        onSelection?.invoke(selEnd)
+    }
+
+    /** The text, then language-server squiggles over it. */
+    override fun onDraw(canvas: android.graphics.Canvas) {
+        super.onDraw(canvas)
+        LspSession.drawDiagnostics(this, canvas, squiggle)
+    }
+
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
         val inner = super.onCreateInputConnection(outAttrs) ?: return null
         outAttrs.inputType = outAttrs.inputType or
@@ -37,6 +62,7 @@ class CodeEditText @JvmOverloads constructor(
                     val activity = context as? MainActivity
                     if (activity?.leaderLetter(text[0]) == true) return true
                 }
+                if (text != null && interceptCommit?.invoke(text) == true) return true
                 return super.commitText(text, newCursorPosition)
             }
 

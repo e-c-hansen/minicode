@@ -548,6 +548,12 @@ the file map; what belongs here is what it cost to learn:
   key is 403, hence Menu and Function as leaders too), and `sendevent`,
   which SELinux refuses. Those need a person at the phone; say so rather
   than claiming a shortcut works.
+- **Language servers run in Termux** (`Termux.kt`, `LspSession.kt`,
+  `lsp_jni.cpp`): RUN_COMMAND starts bash, which dials a one-shot
+  127.0.0.1 listener with /dev/tcp, sends a token, and execs the server on
+  the socket. Listen on 127.0.0.1 by name: `getLoopbackAddress()` is ::1
+  on Android and bash's connect is refused. Only files in shared storage
+  get a server, since Termux cannot see anything else.
 - **Toolchain:** Gradle 8.14.3 via the wrapper (9.7 drops an API the Android
   plugin uses) and JDK 21 (Gradle 8 refuses 27). The SDK and NDK are about
   3.6 GB, installed with `sdkmanager`, no Android Studio.
