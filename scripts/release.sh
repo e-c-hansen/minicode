@@ -80,7 +80,12 @@ if [ -z "${MINICODE_NO_APK:-}" ]; then
     APK="MiniCode-$VERSION.apk"
     (
         cd android
-        export JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 21)}"
+        # Homebrew's openjdk@21 is not registered with java_home.
+        if [ -z "${JAVA_HOME:-}" ]; then
+            JAVA_HOME="$(/usr/libexec/java_home -v 21 2>/dev/null ||
+                         echo /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home)"
+        fi
+        export JAVA_HOME
         export MINICODE_KEYSTORE="$KEYSTORE"
         MINICODE_KEYSTORE_PASSWORD="$(security find-generic-password -a minicode -s minicode-android-keystore -w)"
         export MINICODE_KEYSTORE_PASSWORD
