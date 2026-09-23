@@ -20,15 +20,11 @@ What is left, roughly in order of value:
 - Text a macro prints (`\newcommand{\company}{Initech}`) is refused when
   clicked, because it is not where it appears. Offering the macro's
   definition instead would make it editable, with a note that every use
-  changes. Section and page numbers stay refused; TeX makes those up.
+  changes. Section, page and list numbers stay refused; TeX makes those up,
+  and every single letter or digit is refused for that reason.
 - Tables read back from the PDF column by column, so a click in a table
   leans on SyncTeX's line alone. Using the cell's `&` position in the row
   would pin it down exactly.
-- A single letter or digit whose context agrees with nothing falls back to
-  the nearest span, so a page number opens the paragraph above it (found by
-  the Linux sweep, which like the Mac's counts single characters apart).
-  Refusing them when the page gives context would close that, at the cost of
-  list numbers no longer opening their item.
 
 ## Media rendering (images done, video next)
 

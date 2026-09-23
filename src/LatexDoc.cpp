@@ -652,7 +652,7 @@ void appendUtf8(std::string &out, unsigned cp) {
     out += (char)(0x80 | (cp & 0x3F));
 }
 
-// Does the span hold this key? A short key ("a", "at", a list number) must be
+// Does the span hold this key? A short key ("at", "is", "5pm") must be
 // a whole word of the span, or it would be found inside nearly every span:
 // "at" in "Math", "is" in "Visit". Math is the exception, since the PDF reads
 // x^2 back as the one word "x2".
@@ -792,7 +792,20 @@ const LatexSpan *LatexDoc::spanForClick(const std::vector<int> &lines,
             for (const LatexSpan &sp : joins)
                 if (covers(sp, line + delta)) add(&sp);
 
+    // A single letter or digit is refused outright. It is in almost every
+    // span, so only the text around it could say which one, and it is often
+    // text TeX made up (a page, section, item or footnote number) that has no
+    // place in the source at all. Context cannot rule out landing on some
+    // other span that happens to read the same, and the word beside it opens
+    // the same span anyway, so refusing costs little. Characters, not bytes:
+    // a Greek letter in math is one character too.
     std::vector<std::string> needles = needlesFor(word);
+    if (!needles.empty()) {
+        std::size_t chars = 0;
+        for (char c : needles.front())
+            if (((unsigned char)c & 0xC0) != 0x80) chars++;
+        if (chars < 2) return nullptr;
+    }
     std::vector<std::string> hays;
     for (const LatexSpan *sp : near) hays.push_back(matchKey(sp->display));
     std::string beforeKey = matchKey(before), afterKey = matchKey(after);
@@ -809,15 +822,10 @@ const LatexSpan *LatexDoc::spanForClick(const std::vector<int> &lines,
         static const std::size_t kMargin = 4;
         const LatexSpan *pick = nullptr;
         std::size_t pickScore = 0;
-        // A single letter or digit is in almost every span, and may be one
-        // TeX made up (a section or item number), so when the page's text
-        // around it is known, some of that text has to agree too.
-        bool mustAgree = needle.size() == 1 && (!beforeKey.empty() || !afterKey.empty());
         for (std::size_t k = 0; k < near.size(); k++) {
             if (!spanHolds(*near[k], hays[k], needle)) continue;
             std::size_t score = contextScore(*near[k], hays[k], needle,
                                              beforeKey, afterKey);
-            if (mustAgree && score < 2) continue;
             if (!pick || score >= pickScore + kMargin) {
                 pick = near[k];
                 pickScore = score;
@@ -838,9 +846,9 @@ const LatexSpan *LatexDoc::spanForClick(const std::vector<int> &lines,
     }
 
     // Nothing matched what was clicked. With a real word to go on, refuse
-    // rather than offer the wrong text; with none (a logo, a glyph the PDF
-    // cannot name, a list number), the nearest span is the best guess.
-    if (!needles.empty() && needles[0].size() >= 2) return nullptr;
+    // rather than offer the wrong text; with no letters or digits at all (a
+    // logo, a glyph the PDF cannot name), the nearest span is the best guess.
+    if (!needles.empty()) return nullptr;
     return near.empty() ? nullptr : near.front();
 }
 

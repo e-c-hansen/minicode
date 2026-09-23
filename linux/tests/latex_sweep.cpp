@@ -20,7 +20,10 @@
 //   refused  no span offered
 //   wrong    a span was offered that does not hold the word
 // Words that do not occur in the source at all (section and page numbers) are
-// counted apart as "generated", and single characters apart too, as on the Mac.
+// counted apart as "generated". Single characters are counted apart too, as on
+// the Mac: the matcher refuses every one of them (a page, section or list
+// number has no text of its own to match), so any that still offered a span
+// are reported, as "short+span" under -v.
 //
 // One difference: the Mac enumerates words with NSString's word breaker,
 // independently of PDFKit's word under the pointer. Here the words come from
@@ -139,7 +142,7 @@ int main(int argc, char** argv) {
     const std::string wholeFolded = foldTex(dropComments(src));
 
     int found = 0, unsure = 0, partial = 0, refused = 0, wrong = 0, generated = 0,
-        genSpan = 0, shortWords = 0, mismatch = 0;
+        genSpan = 0, shortWords = 0, shortSpan = 0, mismatch = 0;
     const int pages = poppler_document_get_n_pages(pdf);
     for (int p = 0; p < pages; ++p) {
         PopplerPage* page = poppler_document_get_page(pdf, p);
@@ -184,7 +187,11 @@ int main(int argc, char** argv) {
                     (!prev.empty() && contains(have, prev + want)) ||
                     (!next.empty() && contains(have, want + next));
                 const char* verdict;
-                if (want.size() < 2) { shortWords++; verdict = "short"; }
+                if (want.size() < 2) {
+                    shortWords++;
+                    if (sp) shortSpan++;
+                    verdict = sp ? "short+span" : "short";
+                }
                 else if (!inSource) {
                     generated++;
                     if (sp) genSpan++;
@@ -215,10 +222,10 @@ int main(int argc, char** argv) {
     const int total = found + unsure + partial + refused + wrong;
     std::printf("clicks %d: found %d (+%d not placed), partial %d, refused %d, "
                 "wrong %d (hit rate %.1f%%); generated %d (%d offered a span), "
-                "single characters %d\n",
+                "single characters %d (%d offered a span)\n",
                 total, found, unsure, partial, refused, wrong,
                 total ? 100.0 * (found + unsure + partial) / total : 0.0,
-                generated, genSpan, shortWords);
+                generated, genSpan, shortWords, shortSpan);
     if (mismatch) std::printf("warning: %d pages where poppler's boxes and characters "
                               "did not line up\n", mismatch);
     return wrong == 0 ? 0 : 1;

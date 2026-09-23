@@ -66,6 +66,9 @@ struct LatexDoc {
     // two lines past the text itself, so nearby lines are searched too and the
     // word decides between them. When the word matches nothing, the answer is
     // null: opening the wrong text for editing is worse than opening none.
+    // A single letter or digit is always refused, since it cannot say which
+    // span it came from and is often a number TeX made up (page, section,
+    // list item, footnote).
     //
     // `before` and `after` are the text the page shows on either side of the
     // word, when known. They decide between several nearby spans that all

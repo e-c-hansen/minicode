@@ -2467,17 +2467,71 @@ void testLatexClicks() {
                                         ", emphasized")) == "words,");
     CHECK(sourceOf(ctx, cx.spanForClick({3, 2}, "words", "underlined badger",
                                         "and more")) == "words and more.");
-    // A single letter needs its context to agree before it is taken...
-    CHECK(sourceOf(ctx, cx.spanForClick({2}, "A", "", "paragraph with")) ==
-          "A paragraph with");
-    // ... and a number TeX generated (a section number) matches no digit in
-    // the text; the nearest span, the heading, is offered instead.
-    std::string num = "\\begin{document}\n\\section{Lists}\nSee Fig.~3 here.\n"
-                      "\\end{document}\n";
-    LatexDoc nd = LatexDoc::parse(num);
-    CHECK(sourceOf(num, nd.spanForClick({2, 3}, "3", "", "Lists See Fig")) == "Lists");
-    CHECK(sourceOf(num, nd.spanForClick({3}, "3", "See Fig.", "here")) ==
-          "See Fig.~3 here.");
+
+    GROUP("latex:single-characters");
+    // A single letter or digit is refused, whatever the page shows around it.
+    // It could be text TeX made up (a page, section or list number), which
+    // has no place in the source, and the word beside it opens the same span.
+    std::string pages =
+        "\\documentclass{article}\n"                                 // 1
+        "\\begin{document}\n"                                        // 2
+        "\\section{Lists}\n"                                         // 3
+        "See Fig.~3 here, a note I wrote in 2 minutes.\n"             // 4
+        "\\begin{enumerate}\n"                                       // 5
+        "  \\item First numbered hedgehog.\n"                        // 6
+        "  \\item Second numbered porcupine.\n"                      // 7
+        "\\end{enumerate}\n"                                         // 8
+        "\\begin{enumerate}[(a)]\n"                                  // 9
+        "  \\item Lettered item.\n"                                  // 10
+        "\\end{enumerate}\n"                                         // 11
+        "$x + y = z$ closes the page.\n"                              // 12
+        "\\end{document}\n";
+    LatexDoc pd = LatexDoc::parse(pages);
+    // A page number at the foot of the page, below the last paragraph. It
+    // used to fall through to the nearest span and open that paragraph.
+    CHECK(pd.spanForClick({12, 11}, "2", "z closes the page.", "") == nullptr);
+    CHECK(pd.spanForClick({12}, "2") == nullptr);
+    // A section number, in front of its heading. It used to open the heading.
+    CHECK(pd.spanForClick({3, 4}, "1", "", "Lists See Fig. 3 here") == nullptr);
+    CHECK(pd.spanForClick({3}, "1") == nullptr);
+    // A list number and a list label, in front of their items. They used to
+    // open the item; that is the price of never opening the wrong text.
+    CHECK(pd.spanForClick({6}, "1", "2 minutes.", ". First numbered") == nullptr);
+    CHECK(pd.spanForClick({7}, "2.", "hedgehog.", "Second numbered") == nullptr);
+    CHECK(pd.spanForClick({10}, "(a)", "porcupine.", "Lettered item.") == nullptr);
+    // Real single characters in the source are refused too, even where the
+    // text around them agrees: a digit, one-letter words, a math variable.
+    CHECK(pd.spanForClick({4}, "3", "See Fig.", "here, a note") == nullptr);
+    CHECK(pd.spanForClick({4}, "a", "Fig. 3 here,", "note I wrote") == nullptr);
+    CHECK(pd.spanForClick({4}, "I", "here, a note", "wrote in 2") == nullptr);
+    CHECK(pd.spanForClick({12}, "y", "x +", "= z closes") == nullptr);
+    // One character is one character in any script: a Greek letter, an
+    // accented letter.
+    std::string greek = "\\begin{document}\n$\\alpha + \\beta$ and "
+                        "\\'e t\\'e\n\\end{document}\n";
+    LatexDoc gd = LatexDoc::parse(greek);
+    CHECK(gd.spanForClick({2}, "\xCE\xB1") == nullptr);                 // α
+    CHECK(gd.spanForClick({2}, "\xCE\xB1", "", "+ \xCE\xB2 and") == nullptr);
+    CHECK(gd.spanForClick({2}, "\xC3\xA9", "and", "t\xC3\xA9") == nullptr);   // é
+    CHECK(gd.spanForClick({2}, "t\xC3\xA9") != nullptr);                // "té"
+    // A line reported whole (for a glyph that is not a word) is the same:
+    // one character is refused, and a line of words is still found.
+    CHECK(pd.spanForClick({6}, "1.") == nullptr);
+    CHECK(sourceOf(pages, pd.spanForClick({6}, "1. First numbered hedgehog.")) ==
+          "First numbered hedgehog.");
+    // The words beside them still open the right text.
+    CHECK(sourceOf(pages, pd.spanForClick({6}, "First", "2 minutes. 1.",
+                                          "numbered hedgehog.")) ==
+          "First numbered hedgehog.");
+    CHECK(sourceOf(pages, pd.spanForClick({4}, "note", "Fig. 3 here, a",
+                                          "I wrote in 2")) ==
+          "See Fig.~3 here, a note I wrote in 2 minutes.");
+    CHECK(sourceOf(pages, pd.spanForClick({3, 4}, "Lists", "1", "See Fig.")) == "Lists");
+    // Two characters are a word again ("at", "is" are checked above), and a
+    // glyph with no letters or digits at all still offers the nearest span.
+    CHECK(sourceOf(pages, pd.spanForClick({4}, "in", "a note I wrote", "2 minutes.")) ==
+          "See Fig.~3 here, a note I wrote in 2 minutes.");
+    CHECK(pd.spanForClick({6}, "\xE2\x80\xA2") != nullptr);   // a bullet
 }
 
 // A line box that SyncTeX files under line 23 (where its paragraph ended),
