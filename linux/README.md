@@ -7,7 +7,8 @@ shared verbatim and compiled straight from `../src`; it is never copied here, so
 there is one source of truth for highlighting and Markdown parsing.
 
 For install, build, and run instructions, and an honest account of what is and
-is not verified, see `../BUILD-LINUX.md`.
+is not verified, see `../BUILD-LINUX.md`. For what the port still lacks
+compared with the macOS app, and the order to do it in, see `HANDOFF.md`.
 
 ## Files
 

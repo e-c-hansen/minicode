@@ -366,6 +366,8 @@ against a scripted server in `run_tests.cpp`; `Lsp.mm` owns processes and UI.
   LaTeX preview, project search, comment toggling. See `android/README.md`.
 - **Linux** has not moved: the LaTeX preview, the LSP client, incremental
   highlighting and media viewing are still macOS only there.
+  `linux/HANDOFF.md` lists what to do, in order, with the Mac and GTK
+  pieces for each.
 - The user's phone is a Unihertz Titan 2 (Android 16, 576 by 640 dp, hardware
   keyboard, Termux and F-Droid installed). Wireless debugging changes port on
   every reconnect, so ask for the new one rather than guessing.
