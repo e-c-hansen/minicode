@@ -119,7 +119,9 @@ class TerminalView @JvmOverloads constructor(
             var x = paddingLeft.toFloat()
             for ((col, ch) in line.withIndex()) {
                 val index = row * cols + col
-                paint.color = if (index < colors.size) colors[index] else Palette.TEXT
+                // 0 means the program asked for the terminal's own colour.
+                val colour = if (index < colors.size) colors[index] else 0
+                paint.color = if (colour == 0) Palette.TEXT else colour
                 canvas.drawText(ch.toString(), x, y, paint)
                 x += cellWidth
             }

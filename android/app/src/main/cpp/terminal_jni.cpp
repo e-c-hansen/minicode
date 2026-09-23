@@ -194,8 +194,13 @@ Java_org_minicode_editor_Pty_nativeText(JNIEnv *env, jclass, jlong handle) {
 }
 
 /**
- * The foreground colour of every cell, row by row, as 0xAARRGGBB. The text
- * comes from nativeText, so the two line up cell for cell.
+ * The foreground colour of every cell, row by row, as 0xAARRGGBB, with 0 for
+ * a cell the program left at the terminal's default colour: the view paints
+ * those in the panel's own text colour, as the macOS app does with its
+ * MCTerminalDefaultForeground marker. Without that, "default" reads as black
+ * and a dark panel shows black text on grey.
+ *
+ * The text comes from nativeText, so the two line up cell for cell.
  */
 JNIEXPORT jintArray JNICALL
 Java_org_minicode_editor_Pty_nativeColors(JNIEnv *env, jclass, jlong handle) {
@@ -206,10 +211,12 @@ Java_org_minicode_editor_Pty_nativeColors(JNIEnv *env, jclass, jlong handle) {
     for (int row = 0; row < rows; row++) {
         for (int col = 0; col < cols; col++) {
             const TermCell &cell = s->screen.cell(row, col);
-            uint32_t rgb = cell.style.inverse ? cell.style.bg.rgb()
-                                              : cell.style.fg.rgb();
+            const TermColor &colour =
+                cell.style.inverse ? cell.style.bg : cell.style.fg;
             colors[static_cast<size_t>(row * cols + col)] =
-                static_cast<jint>(0xFF000000u | rgb);
+                colour.kind == TermColor::Default
+                    ? 0
+                    : static_cast<jint>(0xFF000000u | colour.rgb());
         }
     }
     jintArray out = env->NewIntArray(static_cast<jsize>(colors.size()));
