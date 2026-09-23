@@ -17,6 +17,8 @@ core_sources = [
   core_dir / 'Settings.cpp',
   core_dir / 'LineComments.cpp',
   core_dir / 'FolderSearch.cpp',
+  core_dir / 'Json.cpp',
+  core_dir / 'LspClient.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -32,6 +34,7 @@ gui_sources = [
   'src/AppSettings.cpp',
   'src/ThemeCss.cpp',
   'src/Search.cpp',
+  'src/Lsp.cpp',
   'src/MediaView.cpp',
   # PdfView.cpp is #ifdef-guarded like Terminal.cpp and Browser.cpp.
   'src/PdfView.cpp',

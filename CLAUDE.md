@@ -305,8 +305,14 @@ same way Markdown does; `LatexView` takes the editor's slot in
 
 ## LSP (read before touching it)
 
-macOS only so far. The protocol lives in `LspClient.cpp`, pure C++ and tested
-against a scripted server in `run_tests.cpp`; `Lsp.mm` owns processes and UI.
+The protocol lives in `LspClient.cpp`, pure C++ and tested against a scripted
+server in `run_tests.cpp`; `Lsp.mm` owns processes and UI on the Mac. The GTK
+port has its own `linux/src/Lsp.cpp` over the same core (item 6 of
+`linux/HANDOFF.md` has its design). One GTK trap worth knowing: a popover
+given to a `GtkTextView` with `gtk_widget_set_parent` must be unparented
+before the view is disposed (it is done on `unrealize`), or GtkTextView's
+dispose loops forever warning "is not a child of GtkTextView" and the window
+never closes.
 
 - **EditorController hooks are few on purpose**: `documentOpened:` (path, or
   nil for messages, binary files and previews), `documentSaved`, `setRoot:`
@@ -379,9 +385,9 @@ against a scripted server in `run_tests.cpp`; `Lsp.mm` owns processes and UI.
   currently is. It has a file list, editor, Markdown preview, images, PDFs, a
   terminal on a real shell, and a browser. Missing: language servers, the
   LaTeX preview, project search, comment toggling. See `android/README.md`.
-- **Linux** has incremental highlighting, images and PDFs, and Find in Folder
-  now (September 2026); the LaTeX preview and the LSP client are still macOS
-  only there.
+- **Linux** has incremental highlighting, images and PDFs, Find in Folder and
+  the LSP client now (September 2026); the LaTeX preview is still macOS only
+  there.
   `linux/HANDOFF.md` lists what to do, in order, with the Mac and GTK
   pieces for each.
 - The user's phone is a Unihertz Titan 2 (Android 16, 576 by 640 dp, hardware

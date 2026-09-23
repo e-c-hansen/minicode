@@ -2,9 +2,10 @@
 
 MiniCode began as a native macOS editor. This is a port of the same editor to
 Ubuntu Linux using GTK4. It reuses the exact same portable C++ core (the syntax
-highlighter, the Markdown parser, the settings file parser and the comment
-toggle) that the macOS build uses, so highlighting, Markdown rendering,
-settings and Ctrl+/ behave identically. Only the GUI layer is rewritten, from
+highlighter, the Markdown parser, the settings file parser, the comment
+toggle, the folder search and the language server client) that the macOS
+build uses, so highlighting, Markdown rendering, settings, Ctrl+/ and the
+language server features behave identically. Only the GUI layer is rewritten, from
 AppKit to GTK4.
 
 Everything for the Linux port lives under `linux/`. The macOS build is
@@ -179,6 +180,47 @@ Verified by running it:
     folder is now a list the tree keeps itself, from its own `GFileMonitor`.
     Creating, renaming and deleting files and folders from outside the app,
     including renaming an expanded folder, all show up.
+- Language servers (September 2026, clangd 21 at /usr/bin/clangd, on the
+  ThinkPad under GNOME Wayland). A temporary test hook, since removed, ran
+  inside the real app under its own application id on a scratch copy of
+  `demo/vec` with a `compile_flags.txt`, and made 32 checks, all passing:
+  - clangd started (the status bar read "clangd starting…", then "clangd: no
+    problems"), one server process for the window.
+  - An undeclared name inserted through the buffer API came back as "1 error";
+    the error tag covered exactly the name's characters, not one either side,
+    and the tooltip text read "Error: Use of undeclared identifier
+    'undefinedThing'". A space typed at the start of that line, which makes
+    the highlighter retag it, left the squiggle in place, shifted by one.
+    Deleting the line brought back "no problems" and the tag went.
+  - Typing `p.` one character at a time opened the completion list with
+    `lengthSquared() const`, `scaled(double k) const`, `x` and `y`, while the
+    text view kept the keyboard focus. Typing `le` narrowed it, Down and Up
+    moved, and Return inserted `lengthSquared`. The Ctrl+Space action on
+    `p.sc` listed `scaled` first and Tab inserted it. Escape closed the list
+    and left the text alone.
+  - Hover (the Ctrl+I action) on `lengthSquared` gave clangd's text with the
+    type (`→ double`) and the header's comment. The tooltip path asked the
+    server once for that word and showed the answer on the next query.
+  - Go to definition on `scaled` in main.cpp opened vec.h and selected
+    `scaled` on line 11; on `Vec2` inside vec.h it stayed in the file and
+    selected `struct Vec2`'s name on line 4. Saving first sent didSave.
+  - A Python file said "No Python language server found" (none is
+    installed); a PNG got no server and an empty status.
+  - Closing the window sent shutdown and exit (both in the
+    `MINICODE_LSP_LOG` traffic), the app exited on its own, the whole run
+    took under 5 s, and afterwards `pgrep -a clangd` found nothing and the
+    server's pid was gone. Every run of the hook ended the same way.
+  - The first run found a real bug: the completion and hover popovers,
+    parented to the text view, sent GtkTextView's dispose into an endless
+    loop of "GtkPopover is not a child of GtkTextView" warnings, so the
+    window never closed. They are now removed when the view is unrealized.
+  - Seen in the full run and not explained: opening the PNG, just after
+    t.py, logged two GTK criticals (`g_signal_handler_disconnect: assertion
+    'handler_id > 0'` and `gdk_frame_clock_idle_end_updating`), from inside
+    GTK's unmap of the text view when the editor's stack switches to the
+    image. Shorter runs that opened a C++ file and then the PNG, with
+    language servers on or off, with the completion list or the hover
+    popover shown first, did not log them.
 
 Not verified:
 
@@ -194,6 +236,13 @@ Not verified:
   For the file tree it includes F2 and Delete, a real right-click, and what
   the popovers and alerts look like and where they sit.
 - How the Find in Folder window looks. Nothing in it was seen on screen.
+- For language servers: how the squiggles, the completion list, the hover
+  popover and the tooltips look and where they sit, and the real keys and
+  mouse. The test called the actions and the list's key handler directly, so
+  Ctrl+Space, F12, Ctrl+I, a Ctrl+click (its hit test in particular),
+  clicking a row of the list and resting the pointer on a word were not
+  pressed or done for real. Whether an input method takes Ctrl+Space first
+  is also open. Only clangd was tried.
 - How images and PDFs look to a person: the checks above read pixels back
   from the widget, not from the screen. A build without poppler was compiled
   and launched on a PDF, but what it shows was not looked at.
@@ -409,6 +458,9 @@ applies a picked color when you press Select, rather than live while you drag.
 | Ctrl Shift B      | Toggle the browser panel   |
 | Ctrl H            | Show or hide dotfiles      |
 | Ctrl 0            | Focus the file tree        |
+| Ctrl Space        | Complete, with a language server |
+| F12, Ctrl click   | Go to definition           |
+| Ctrl I            | Show the type and documentation under the cursor |
 | F2                | Rename the selected item, in the tree |
 | Delete            | Move the selected item to the Trash, in the tree |
 

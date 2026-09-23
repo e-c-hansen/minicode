@@ -14,6 +14,20 @@
 
 class MediaView;
 
+// Told what the buffer holds and how it changes, for the language server
+// session (Lsp.h). Three calls, so the editor knows nothing about LSP.
+class EditorObserver {
+public:
+    virtual ~EditorObserver() = default;
+    // The buffer now holds another document: `path` when it is that file's
+    // editable source, "" for a message or a Markdown preview.
+    virtual void documentChanged(const std::string& path) = 0;
+    virtual void documentSaved() = 0;
+    // The source was edited; the buffer has already changed. `inserted` is
+    // the text of an insertion (len bytes), or null for a deletion.
+    virtual void textEdited(const char* inserted, int len) = 0;
+};
+
 class Editor {
 public:
     Editor();
@@ -94,6 +108,14 @@ public:
     // buffer and its undo history, and re-highlights the whole buffer only if
     // the extension, and so the grammar, changed.
     void setPath(const std::string& path);
+
+    // One observer (the language server session), not owned.
+    void setObserver(EditorObserver* o) { observer_ = o; }
+    // True while the buffer holds a file's editable source.
+    bool isSource() const { return sourceMode_; }
+    // The whole source as UTF-8: the highlighter's mirror when there is one,
+    // else a copy out of the buffer.
+    std::string text() const;
 
 private:
     // Highlighting. startHighlighting() lexes the whole buffer and retags it
@@ -183,6 +205,9 @@ private:
     std::string settingsPath_;
     Settings    settings_;    // for tag colors and swatch text contrast
     bool        overSwatch_ = false;
+
+    EditorObserver* observer_ = nullptr;
+    void notifyDocument();    // tell the observer what the buffer holds now
 
     TitleCb titleCb_ = nullptr;
     void*   titleUser_ = nullptr;

@@ -49,6 +49,7 @@
 #include "Terminal.h"
 #include "Browser.h"
 #include "Search.h"
+#include "Lsp.h"
 
 #include <functional>
 #include <string>
@@ -72,6 +73,8 @@ struct App {
     Editor*   editor = nullptr;
     FileTree* tree = nullptr;
     SearchPanel* search = nullptr;   // Find in Folder, created on first use
+    LspSession*  lsp = nullptr;      // language servers for this window
+    GtkWidget*   lspLabel = nullptr; // their status, in the status bar
 
     GtkWidget* vpaned = nullptr;          // editor/browser above, terminal below
     GtkWidget* upperBox = nullptr;        // the editor/browser half of the vpaned
@@ -382,6 +385,8 @@ static void openFolder(App* app, const std::string& dir) {
     app->rootDir = dir;
     app->tree->setRoot(dir);
     app->editor->closeFile();
+    // After closeFile, so the old file is not reopened under the new root.
+    if (app->lsp) app->lsp->setRoot(dir);   // servers belong to a folder
     updateTitle(app);
     refreshHints(app);
 }
@@ -390,7 +395,12 @@ static void openFolder(App* app, const std::string& dir) {
 // so the close is refused now and repeated once the edits are dealt with.
 static gboolean onCloseRequest(GtkWindow*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    if (app->closing || !app->editor->dirty()) return FALSE;
+    if (app->closing || !app->editor->dirty()) {
+        // The window really is closing: stop its language servers
+        // (shutdown, exit, then signals if they linger).
+        if (app->lsp) app->lsp->shutdown();
+        return FALSE;
+    }
     confirmUnsaved(app, [app] {
         app->closing = true;
         gtk_window_close(GTK_WINDOW(app->window));
@@ -764,6 +774,30 @@ static void openSearchMatch(const FolderSearchMatch& m, void* userp) {
     gtk_window_present(GTK_WINDOW(app->window));
 }
 
+// Language servers (Lsp.h). Each acts on the editor, so only when it has the
+// keyboard, like Ctrl+/.
+static bool editorFocused(App* app) {
+    GtkWidget* view = app->editor->textView();
+    if (gtk_widget_has_focus(view)) return true;
+    gtk_widget_error_bell(view);
+    return false;
+}
+
+static void act_complete(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (editorFocused(app)) app->lsp->triggerCompletion();
+}
+
+static void act_definition(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (editorFocused(app)) app->lsp->goToDefinition();
+}
+
+static void act_hover(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (editorFocused(app)) app->lsp->showHoverInfo();
+}
+
 // Ctrl+Shift+F: search the folder selected in the tree, or else the open
 // folder, which is what the Mac's Shift+Cmd+F does.
 static void act_find_in_folder(GSimpleAction*, GVariant*, gpointer userp) {
@@ -863,6 +897,12 @@ static std::string hintsText(App* app) {
     s += "Delete         Move to Trash (in the tree)\n";
     s += "Ctrl H         Show or hide dotfiles\n";
 
+    s += "\nLanguage servers\n";
+    s += "────────────────────────────────────────\n";
+    s += "Ctrl Space     Complete\n";
+    s += "F12            Go to definition (or Ctrl click)\n";
+    s += "Ctrl I         Hover info\n";
+
     s += "\nPanes\n";
     s += "────────────────────────────────────────\n";
     s += "Ctrl B         Sidebar\n";
@@ -942,6 +982,7 @@ static void applySettings(App* app) {
     }
     gtk_css_provider_load_from_string(app->css, theme::stylesheet(st).c_str());
     if (app->editor) app->editor->applySettings(st);
+    if (app->lsp) app->lsp->applySettings(st);   // restarts servers if lsp.* changed
 #ifdef MINICODE_ENABLE_TERMINAL
     if (app->terminal) app->terminal->applySettings(st);
 #endif
@@ -1010,6 +1051,9 @@ static void buildMenu(App* app) {
     g_menu_append(editMenu, "Find", "win.find");
     g_menu_append(editMenu, "Find in Folder…", "win.findinfolder");
     g_menu_append(editMenu, "Toggle Comment", "win.togglecomment");
+    g_menu_append(editMenu, "Complete", "win.complete");
+    g_menu_append(editMenu, "Go to Definition", "win.definition");
+    g_menu_append(editMenu, "Show Hover Info", "win.hoverinfo");
     g_menu_append(editMenu, "Settings…", "win.settings");
     g_menu_append_submenu(menuBar, "Edit", G_MENU_MODEL(editMenu));
     g_object_unref(editMenu);
@@ -1055,12 +1099,16 @@ static void setAccels(App* app) {
         {"win.togglebrowser",   "<Ctrl><Shift>b"},
         {"win.togglehidden",    "<Ctrl>h"},
         {"win.focustree",       "<Ctrl>0"},
+        {"win.complete",        "<Ctrl>space"},
+        {"win.definition",      "F12"},
+        {"win.hoverinfo",       "<Ctrl>i"},
     };
     for (auto& b : binds) {
         const char* accels[] = { b.accel, nullptr };
         gtk_application_set_accels_for_action(app->gapp, b.action, accels);
     }
 }
+
 
 // ---------------------------------------------------------------- activate
 
@@ -1177,6 +1225,9 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     GtkWidget* statusBar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     gtk_widget_add_css_class(statusBar, "minicode-status");
     gtk_box_append(GTK_BOX(statusBar), app->statusLabel);
+    app->lspLabel = gtk_label_new("");
+    gtk_label_set_ellipsize(GTK_LABEL(app->lspLabel), PANGO_ELLIPSIZE_START);
+    gtk_box_append(GTK_BOX(statusBar), app->lspLabel);
     gtk_box_append(GTK_BOX(statusBar), app->settingsLabel);
     gtk_box_append(GTK_BOX(statusBar), app->hintsHint);
 
@@ -1191,7 +1242,27 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), buildHintsPanel(app));
     gtk_window_set_child(GTK_WINDOW(app->window), overlay);
 
+    // Language servers: one session for the window, told about every file the
+    // editor opens, saves and edits through the editor's observer hook.
+    app->lsp = new LspSession(app->editor, app->rootDir, app->settings->settings());
+    app->lsp->onStatus = [app](const std::string& text) {
+        gtk_label_set_text(GTK_LABEL(app->lspLabel), text.c_str());
+    };
+    app->lsp->onReveal = [app](const std::string& path, int line, std::size_t col,
+                               std::size_t len) {
+        FolderSearchMatch m;
+        m.path = path;
+        m.line = line;
+        m.byteColumn = col;
+        m.byteLength = len;
+        openSearchMatch(m, app);
+    };
+    app->editor->setObserver(app->lsp);   // onCloseRequest shuts it down
+
     // Actions, menu, accelerators.
+    addAction(app, "complete",       G_CALLBACK(act_complete));
+    addAction(app, "definition",     G_CALLBACK(act_definition));
+    addAction(app, "hoverinfo",      G_CALLBACK(act_hover));
     addAction(app, "open",           G_CALLBACK(act_open));
     addAction(app, "save",           G_CALLBACK(act_save));
     addAction(app, "newfile",        G_CALLBACK(act_new_file));
@@ -1321,6 +1392,7 @@ static int onCommandLine(GApplication* gapp, GApplicationCommandLine* cl,
     // Already running: re-root the sidebar on what was asked for, show the file
     // if one was named, and raise the window so the command visibly did something.
     app->tree->setRoot(app->rootDir);
+    if (app->lsp) app->lsp->setRoot(app->rootDir);
     if (!app->startupFile.empty()) openFileCb(app->startupFile, app);
     gtk_window_present(GTK_WINDOW(app->window));
     return 0;
@@ -1335,6 +1407,11 @@ int main(int argc, char** argv) {
     // argc/argv go to g_application_run so that a remote invocation forwards
     // them to the running instance; onCommandLine is where they are read.
     g_signal_connect(gapp, "command-line", G_CALLBACK(onCommandLine), &app);
+    // Quitting: no language server may outlive the app. The main loop has
+    // stopped by now, so this waits on the processes directly.
+    g_signal_connect(gapp, "shutdown", G_CALLBACK(+[](GApplication*, gpointer) {
+        LspTerminateAllServers();
+    }), nullptr);
     int status = g_application_run(G_APPLICATION(gapp), argc, argv);
     g_object_unref(gapp);
     return status;
