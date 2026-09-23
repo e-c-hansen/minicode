@@ -132,16 +132,86 @@ class MainActivity : AppCompatActivity() {
 
     private fun openEntry(entry: DocumentFile) {
         if (entry.isDirectory) { list(entry); return }
+        // Pictures and PDFs are shown, not read as text, so an image never
+        // reaches the editor and cannot be saved over.
+        if (showMedia(entry)) return
         val text = contentResolver.openInputStream(entry.uri)?.use {
             it.readBytes().toString(Charsets.UTF_8)
         } ?: return
         openFile(entry, text)
     }
 
+    /**
+     * An image or the first page of a PDF, in the editor's slot. Both are
+     * decoded by Android itself, as the macOS app leaves them to AppKit and
+     * PDFKit; there is nothing here for the shared core to do.
+     */
+    private fun showMedia(entry: DocumentFile): Boolean {
+        val name = entry.name?.lowercase() ?: return false
+        val isImage = listOf(".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+                             ".heic", ".heif").any { name.endsWith(it) }
+        val isPdf = name.endsWith(".pdf")
+        if (!isImage && !isPdf) return false
+
+        val bitmap = if (isPdf) firstPdfPage(entry) else decodeImage(entry)
+        if (bitmap == null) {
+            android.widget.Toast.makeText(this, "Cannot display ${entry.name}",
+                                          android.widget.Toast.LENGTH_SHORT).show()
+            return true
+        }
+        currentFile = entry
+        if (!entry.name.orEmpty().lowercase().endsWith(".pdf")) pdfPages = 0
+        mediaSize = "${bitmap.width} × ${bitmap.height}"
+        showingMedia = true
+        previewing = false
+        dirty = false
+        ui.media.setImageBitmap(bitmap)
+        // Scaled down to fit, never up past its real size, as on the Mac.
+        ui.media.post {
+            val fits = bitmap.width <= ui.media.width && bitmap.height <= ui.media.height
+            ui.media.scaleType = if (fits) android.widget.ImageView.ScaleType.CENTER
+                                 else android.widget.ImageView.ScaleType.FIT_CENTER
+        }
+        showList(false)
+        return true
+    }
+
+    private fun decodeImage(entry: DocumentFile): android.graphics.Bitmap? =
+        contentResolver.openInputStream(entry.uri)?.use {
+            android.graphics.BitmapFactory.decodeStream(it)
+        }
+
+    /** The first page of a PDF, rendered at the width of the screen. */
+    private fun firstPdfPage(entry: DocumentFile): android.graphics.Bitmap? {
+        val descriptor = contentResolver.openFileDescriptor(entry.uri, "r") ?: return null
+        descriptor.use { file ->
+            android.graphics.pdf.PdfRenderer(file).use { pdf ->
+                if (pdf.pageCount == 0) return null
+                pdf.openPage(0).use { page ->
+                    val width = resources.displayMetrics.widthPixels
+                    val height = width * page.height / page.width
+                    val bitmap = android.graphics.Bitmap.createBitmap(
+                        width, height, android.graphics.Bitmap.Config.ARGB_8888)
+                    bitmap.eraseColor(android.graphics.Color.WHITE)
+                    page.render(bitmap, null, null,
+                                android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    pdfPages = pdf.pageCount
+                    return bitmap
+                }
+            }
+        }
+    }
+
+    private var showingMedia = false
+    private var mediaSize = ""
+    private var pdfPages = 0
+
     // ------------------------------------------------------------ the editor
 
     private fun openFile(file: DocumentFile, text: String) {
         currentFile = file
+        showingMedia = false
+        ui.media.setImageDrawable(null)
         highlighting = true
         ui.editor.setText(text)
         highlighting = false
@@ -212,6 +282,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun save() {
+        if (showingMedia) return
         val file = currentFile ?: return
         contentResolver.openOutputStream(file.uri, "wt")?.use {
             it.write(ui.editor.text.toString().toByteArray(Charsets.UTF_8))
@@ -225,8 +296,11 @@ class MainActivity : AppCompatActivity() {
         ui.fileList.visibility = if (show) View.VISIBLE else View.GONE
         ui.terminal.visibility = View.GONE
         val preview = !show && previewing && isMarkdown(currentFile?.name)
+        val media = !show && showingMedia
         ui.previewScroll.visibility = if (preview) View.VISIBLE else View.GONE
-        ui.editor.visibility = if (show || preview) View.GONE else View.VISIBLE
+        ui.media.visibility = if (media) View.VISIBLE else View.GONE
+        ui.editor.visibility =
+            if (show || preview || media) View.GONE else View.VISIBLE
         ui.up.visibility =
             if (show && current?.uri != folder?.uri) View.VISIBLE else View.GONE
         if (!show) ui.editor.requestFocus()
@@ -241,7 +315,12 @@ class MainActivity : AppCompatActivity() {
         val name = if (showingList) (current?.name ?: folder?.name ?: "MiniCode")
                    else (currentFile?.name ?: "MiniCode")
         val mark = if (!showingList && dirty) "● " else ""
-        ui.title.text = mark + name + waiting
+        val extra = when {
+            showingList || !showingMedia -> ""
+            pdfPages > 0 -> "  ${pdfPages} page" + (if (pdfPages == 1) "" else "s")
+            else -> "  $mediaSize"
+        }
+        ui.title.text = mark + name + extra + waiting
     }
 
     /**
@@ -432,6 +511,7 @@ class MainActivity : AppCompatActivity() {
             ui.fileList.visibility = View.GONE
             ui.editor.visibility = View.GONE
             ui.previewScroll.visibility = View.GONE
+            ui.media.visibility = View.GONE
             ui.terminal.visibility = View.VISIBLE
             ui.terminal.onExit = {
                 if (terminalShowing) toggleTerminal()
