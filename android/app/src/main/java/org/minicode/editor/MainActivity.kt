@@ -153,19 +153,61 @@ class MainActivity : AppCompatActivity() {
         val name = folder?.name ?: "this folder"
         return when {
             folder == null -> null to null
-            path == null -> null to "$name is not on this phone's storage " +
-                    "(a cloud folder has no path), so the terminal starts in the " +
-                    "app's own folder."
-            !canReachPaths() -> null to "Allow \"All files access\" for the " +
-                    "terminal to open in $name."
+            path == null -> null to notReachable(name)
+            !canReachPaths() -> null to "This is MiniCode's own private folder. " +
+                    "Allow \"All files access\" for MiniCode in Settings and " +
+                    "the terminal moves to $name."
             else -> path.path to null
         }
+    }
+
+    /**
+     * Why the shell cannot enter a folder with no path, in terms of where the
+     * folder actually lives. Termux's folders are the common case on a phone
+     * set up for code, and the answer there is shared storage, which both
+     * apps can reach.
+     */
+    private fun notReachable(name: String): String {
+        val where = folder?.uri?.authority.orEmpty()
+        val why = when {
+            where.startsWith("com.termux") ->
+                "$name is inside Termux, and Android keeps each app's files " +
+                "private, so MiniCode's shell cannot enter it (nor can any " +
+                "other app's). Keep the project in shared storage instead: in " +
+                "Termux run termux-setup-storage and work under " +
+                "~/storage/shared, then open that folder here (leader O, then " +
+                "the phone's storage in the picker)."
+            where.contains("google") ->
+                "$name is in Google Drive, which has no path a shell can use. " +
+                "Open a folder on the phone's storage instead (leader O, then " +
+                "the phone's storage in the picker)."
+            else ->
+                "$name comes from another app's storage, which has no path a " +
+                "shell can use. Open a folder on the phone's storage instead " +
+                "(leader O, then the phone's storage in the picker)."
+        }
+        return "$why This shell is in MiniCode's own private folder."
     }
 
     /** A running shell follows the folder when another is opened. */
     private fun followFolder() {
         if (!ui.terminal.isRunning) return
-        terminalDirectory().first?.let { ui.terminal.changeDirectory(it) }
+        val (cwd, why) = terminalDirectory()
+        if (cwd != null && cwd != shellFolder) {
+            ui.terminal.changeDirectory(cwd)
+            shellFolder = cwd
+        } else if (cwd == null && why != null) {
+            ui.terminal.notice(why)
+        }
+    }
+
+    /** The folder the shell was last put in, or null for the app's own. */
+    private var shellFolder: String? = null
+
+    /** Back from Settings with access granted, the shell moves at once. */
+    override fun onResume() {
+        super.onResume()
+        if (ui.terminal.isRunning && shellFolder == null && canReachPaths()) followFolder()
     }
 
     private fun askForPathAccess() {
@@ -710,14 +752,16 @@ class MainActivity : AppCompatActivity() {
                 if (terminalShowing) toggleTerminal()
                 ui.terminal.stop()
             }
-            val (cwd, why) = terminalDirectory()
-            ui.terminal.post {
-                ui.terminal.start(filesDir.absolutePath, cwd ?: filesDir.absolutePath)
-            }
-            if (why != null && !ui.terminal.isRunning) {
+            if (!ui.terminal.isRunning) {
+                val (cwd, why) = terminalDirectory()
+                ui.terminal.post {
+                    ui.terminal.start(filesDir.absolutePath, cwd ?: filesDir.absolutePath)
+                    shellFolder = cwd
+                    // Said in the terminal itself, where the question
+                    // "why am I here?" comes up, rather than in a toast.
+                    if (why != null) ui.terminal.notice(why)
+                }
                 if (folderPath() != null && !canReachPaths()) askForPathAccess()
-                else android.widget.Toast.makeText(this, why,
-                        android.widget.Toast.LENGTH_LONG).show()
             }
             ui.terminal.requestFocus()
             (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)

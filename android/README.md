@@ -66,10 +66,18 @@ open folder only when that folder is on the phone's own storage, and only
 once the app has "All files access" (Android 11 and later), which it asks for
 the first time the terminal opens there. The URI's document id
 (`primary:Documents/project`) maps to `/storage/emulated/0/Documents/project`.
-A folder from a cloud provider, such as Google Drive, has no path at all; the
-terminal says so and starts in the app's own folder. To use git or a build
-on a project, keep it in local storage (Termux's `~/storage/shared` is the
-same place).
+A folder from a cloud provider, such as Google Drive, has no path at all, and
+a folder inside Termux (opened through Termux's own entry in the picker) has
+one, `/data/data/com.termux/files/home`, that Android lets no other app
+enter, whatever permissions it holds. In both cases the terminal starts in
+MiniCode's private folder and prints why, in grey, above the prompt.
+
+The place both apps can reach is shared storage. In Termux,
+`termux-setup-storage` makes it `~/storage/shared`; in MiniCode it is the
+phone's storage in the picker (`/storage/emulated/0`). A project kept there
+can be edited in MiniCode and built or committed from either terminal.
+Granting access while the terminal is open moves it into the folder as soon
+as you return from Settings.
 
 ### Alt, symbols and Meta in the terminal
 

@@ -256,6 +256,13 @@ class TerminalView @JvmOverloads constructor(
         return false
     }
 
+    /** A note from the app, printed in dim text above the shell's output. */
+    fun notice(text: String) {
+        val session = pty ?: return
+        session.show("\u001b[90m$text\u001b[0m\n")
+        snapshot()
+    }
+
     /**
      * Moves a running shell to `path`, for when another folder is opened.
      * Typed as a command, so it lands wherever the shell is: at a prompt it

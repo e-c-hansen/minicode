@@ -64,6 +64,7 @@ class Pty private constructor(private val session: Long) {
         @JvmStatic private external fun nativePump(handle: Long, timeoutMs: Int): Int
         @JvmStatic private external fun nativeReaderDone(handle: Long)
         @JvmStatic private external fun nativeWrite(handle: Long, data: ByteArray)
+        @JvmStatic private external fun nativeShow(handle: Long, data: ByteArray)
         @JvmStatic private external fun nativeEncodeChar(codePoint: Int, mods: Int): ByteArray
         @JvmStatic private external fun nativeEncodeKey(handle: Long, key: Int, mods: Int): ByteArray
         @JvmStatic private external fun nativeResize(handle: Long, cols: Int, rows: Int)
@@ -123,6 +124,11 @@ class Pty private constructor(private val session: Long) {
     }
 
     fun write(data: ByteArray) { if (open) nativeWrite(session, data) }
+
+    /** Text for the screen alone, never sent to the shell. */
+    fun show(text: String) {
+        if (open) nativeShow(session, text.replace("\n", "\r\n").toByteArray(Charsets.UTF_8))
+    }
 
     fun type(codePoint: Int, mods: Int = 0) =
         write(nativeEncodeChar(codePoint, mods))

@@ -234,6 +234,24 @@ Java_org_minicode_editor_Pty_nativeWrite(JNIEnv *env, jclass, jlong handle,
              static_cast<size_t>(length));
 }
 
+/**
+ * Prints a note from the app into the terminal, as if the shell had printed
+ * it: for saying why the shell is not where the user expected. It goes to
+ * the screen only, never to the shell.
+ */
+JNIEXPORT void JNICALL
+Java_org_minicode_editor_Pty_nativeShow(JNIEnv *env, jclass, jlong handle,
+                                        jbyteArray data) {
+    Session *s = Get(handle);
+    if (!s) return;
+    const jsize length = env->GetArrayLength(data);
+    std::vector<jbyte> bytes(static_cast<size_t>(length));
+    env->GetByteArrayRegion(data, 0, length, bytes.data());
+    std::lock_guard<std::mutex> guard(s->lock);
+    s->screen.feed(reinterpret_cast<const char *>(bytes.data()),
+                   static_cast<size_t>(length));
+}
+
 /** The bytes a typed character sends, Ctrl and Alt included. */
 JNIEXPORT jbyteArray JNICALL
 Java_org_minicode_editor_Pty_nativeEncodeChar(JNIEnv *env, jclass,
