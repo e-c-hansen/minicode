@@ -8,8 +8,9 @@ installs or the app downloads on request, and the LSP client talks to
 language servers the user has installed in the same way. This file is the handoff
 for future sessions: architecture, workflow, and the hard-won gotchas.
 
-There is also a GTK4 Linux port under `linux/`, sharing the portable C++ core
-verbatim. It has its own handoff notes in `BUILD-LINUX.md` and `linux/README.md`;
+There is also a GTK4 Linux port under `linux/` and an Android port under
+`android/`, both sharing the portable C++ core verbatim. They have their own
+handoff notes in `BUILD-LINUX.md`, `linux/README.md` and `android/README.md`;
 this file covers the macOS app except where it says otherwise.
 
 ## Build / test / run / release
@@ -352,34 +353,36 @@ against a scripted server in `run_tests.cpp`; `Lsp.mm` owns processes and UI.
   log when doing this again. Other sessions (and the user's own MiniCode)
   may have clangd running: kill only PIDs the test started.
 
-## Current state (handoff, 2026-09-21)
+## Current state (handoff, 2026-09-22)
 
-- Everything lives on `main`. On 2026-09-21 six branches were merged and
-  deleted: `feat/terminal-screen` (grid mode), `feat/lsp`,
-  `feat/incremental-highlight`, `feat/demo-gifs`, `feat/demo-scenes-2` and
-  `feat/latex-click-robustness`; image viewing and opening a file from the
-  command line went straight onto `main`. Released as **1.3.0** that day.
-  1079 core checks pass; the build is warning-free.
-- None of that day's work has reached `linux/` yet: the LSP client, the
-  incremental highlighter (the core is shared, but Linux still re-lexes in
-  full), image viewing and the LaTeX preview are macOS only. The GTK
-  terminal is VTE and needs no grid mode.
-- The LaTeX preview is macOS only. The user has used it on an Overleaf resume
-  at `~/Documents/Resume-September-2026` (their personal document: do not
-  edit it or commit anything from it; read a scratch copy when measuring).
-  `tests/latex/sweep.sh` double-clicks every word of a typeset document
-  through the real click path; it hit 100% on the resume and 98.7% on
-  `tests/latex/torture.tex` after the robustness work.
+- **macOS** is released as **1.3.3** (Homebrew tap and GitHub Releases), and
+  `main` is pushed. 1,079 core checks pass; the build is warning-free. That
+  day's work: opening a file from the command line, image and PDF viewing,
+  Export PDF for LaTeX, Copy Path in the tree's context menu, the memory
+  benchmark, and a plainer README.
+- **Android** is ten commits on `main`, **not pushed**, and is where the work
+  currently is. It has a file list, editor, Markdown preview, images, PDFs, a
+  terminal on a real shell, and a browser. Missing: language servers, the
+  LaTeX preview, project search, comment toggling. See `android/README.md`.
+- **Linux** has not moved: the LaTeX preview, the LSP client, incremental
+  highlighting and media viewing are still macOS only there.
+- The user's phone is a Unihertz Titan 2 (Android 16, 576 by 640 dp, hardware
+  keyboard, Termux and F-Droid installed). Wireless debugging changes port on
+  every reconnect, so ask for the new one rather than guessing.
+- The next things the user named: use the phone for a day, then continue the
+  port. Termux integration is the one piece that unlocks both language
+  servers and LaTeX, since neither clangd nor tectonic exists on the device
+  otherwise.
+- Needs the user's eyes, still unconfirmed: the terminal grid, LSP
+  squiggles, completion and hover, the LaTeX popover's placement, and
+  whether Ctrl+Space reaches the Mac app with several input sources.
 - tectonic 0.17.0 lives at
-  `~/Library/Application Support/MiniCode/bin/tectonic` (installed by the
-  app's own Download button) with its package cache in
-  `~/Library/Caches/TectonicProject.Tectonic` (44 MB; it has `article`,
-  `geometry`, `enumitem`, `hyperref`, `xcolor` and Latin Modern text fonts,
-  but not the Computer Modern math fonts, so math needs the network).
-- Needs the user's eyes, not yet confirmed by them: how the terminal grid,
-  LSP squiggles/completion/hover and the LaTeX popover look; that a settings
-  color pick now keeps its color (the `usesFontPanel = NO` fix); whether
-  Ctrl+Space reaches the app with several input sources enabled.
+  `~/Library/Application Support/MiniCode/bin/tectonic` with its cache in
+  `~/Library/Caches/TectonicProject.Tectonic` (about 44 MB; text fonts but no
+  Computer Modern math fonts, so math needs the network).
+- `tests/latex/sweep.sh` double-clicks every word of a typeset document
+  through the real click path: 100% on the user's resume, 98.7% on
+  `tests/latex/torture.tex`.
 
 ## Images
 
@@ -509,6 +512,45 @@ with the Read tool. Scenes: tour, terminal, settings, latex, lsp, vim.
   match the current demo folder. To look at frames without re-recording, read
   the GIF with ImageIO and composite frames in order (frames after the first
   store only the changed region).
+
+## Android (`android/`, read `android/README.md` first)
+
+A Kotlin app around the same C++ core, developed against a real phone over
+adb (no emulator). `android/README.md` has the build, the device workflow and
+the file map; what belongs here is what it cost to learn:
+
+- **The core is portable.** All 1,079 checks in `tests/run_tests.cpp` compile
+  with the NDK and pass on the phone unchanged, at Mac-like speeds (100k-line
+  full lex 29 ms, one keystroke 0.13 ms). Highlighting, Markdown and the
+  terminal screen are that same code; only the GUI is new.
+- **Phone keyboards do not have the keys a desktop has.** On a Unihertz
+  Titan 2: no Ctrl, Esc or Tab; Alt is the symbol layer (Alt+S types "4");
+  Android claims Sym with some letters before an app sees them (Sym+H opens
+  the microphone, Sym+B reaches the app). One unclaimed key is left, so it
+  is a leader: press, then a letter. `adb logcat -s MiniCodeKeys` prints
+  every key the app sees and is the way to work this out on a new device.
+- **A letter does not arrive as a key event while a text field has focus.**
+  The keyboard reaches the field through the input method, so shortcut
+  letters are caught in `CodeEditText.commitText`. Moving focus away and
+  hiding the keyboard does not change it. In the file list and the terminal
+  the same letters do arrive as key events, so both paths run one table.
+- **A terminal must refuse composition.** `TerminalView` declares
+  `TYPE_NULL`; while it accepted text, the keyboard re-sent the word it was
+  composing on every keystroke and "ls demo" reached the shell as
+  "sso dlemodlemo".
+- **The Titan's spare key repeats in bursts** (a hundred key-downs per
+  press), so presses are separated by the key's release, not by a timer.
+- **`TermKey` ordinals are load-bearing.** `Pty.kt` mirrors the enum in
+  `src/TerminalScreen.h`; when Enter was numbered as Escape, nothing ran and
+  the symptom looked like a dead Enter key.
+- **What a development machine cannot test:** any shortcut needing a
+  modifier (an injected key carries no Sym), keycodes above ~288 (the spare
+  key is 403, hence Menu and Function as leaders too), and `sendevent`,
+  which SELinux refuses. Those need a person at the phone; say so rather
+  than claiming a shortcut works.
+- **Toolchain:** Gradle 8.14.3 via the wrapper (9.7 drops an API the Android
+  plugin uses) and JDK 21 (Gradle 8 refuses 27). The SDK and NDK are about
+  3.6 GB, installed with `sdkmanager`, no Android Studio.
 
 ## Memory benchmark (`make membench`)
 
@@ -776,6 +818,7 @@ holds, these give real runtime evidence rather than compile-only evidence:
 
 ## What's next
 
-See `ROADMAP.md`. Immediate: the Linux port of the day's macOS work (LaTeX
-preview, LSP client, incremental highlighting, images), tested in Docker.
-After that: video/audio, and the LSP and terminal follow-ups in ROADMAP.md.
+See `ROADMAP.md`. Immediate: the Android port continues (Termux for language
+servers and LaTeX, then project search and comment toggling). After that, the
+Linux port of the macOS work it still lacks, then video/audio and the LSP and
+terminal follow-ups.

@@ -1,6 +1,6 @@
 # MiniCode
 
-MiniCode is a small IDE for macOS and Linux, written from scratch in C++ with no Electron and no third-party dependencies. The macOS app is C++ and Objective-C++, and it links only against frameworks that ship with the operating system (Cocoa, WebKit, PDFKit, CoreServices) and the system zlib. The compiled binary is about 1 MB. The Linux version is a GTK4 port that shares the same C++ core; the [Linux](#linux) section says what it covers so far. The rest of this README describes the macOS app.
+MiniCode is a small IDE for macOS, Linux and Android, written from scratch in C++ with no Electron and no third-party dependencies. The macOS app is C++ and Objective-C++, and it links only against frameworks that ship with the operating system (Cocoa, WebKit, PDFKit, CoreServices) and the system zlib. The compiled binary is about 1 MB. The Linux version is a GTK4 port and the Android version is a Kotlin app, both sharing that same C++ core; the [Linux](#linux) and [Android](#android) sections say what each covers so far. The rest of this README describes the macOS app.
 
 I built it because I wanted one light place to browse a folder, edit code with a language server behind it, preview Markdown and LaTeX, and keep a terminal and a browser a keystroke away, without a few hundred megabytes of runtime underneath.
 
@@ -161,6 +161,14 @@ meson compile -C build
 ```
 
 Only GTK4 is required; the terminal and browser panels are left out if their libraries are missing. BUILD-LINUX.md has the details, including installing it as a desktop app and what has and has not been verified.
+
+## Android
+
+There is an Android version too, in the android folder, built around the same C++ core. It has the file tree, the editor with syntax highlighting, the Markdown preview, images and PDFs, a browser panel, and a terminal running the shell Android itself ships, drawn by the same screen grid that runs vim on the Mac. The core's own test suite, all 1,079 checks, compiles with the Android NDK and passes on a phone at about the speed it runs on a Mac.
+
+It is built for a phone with a hardware keyboard, which turns out to be the harder case: a phone keyboard often has no Control, Escape or Tab, and Android reserves some combinations before an app sees them. So shortcuts go through a leader key, pressed and then followed by a letter, and everything is also in a menu for a device whose keyboard offers nothing.
+
+What it does not have yet is language servers and the LaTeX preview. Both need real tools on the device, which on Android means Termux, and that is the next piece of work. android/README.md has the build instructions, the device workflow, and an honest list of what is missing.
 
 ## A quick tour
 
