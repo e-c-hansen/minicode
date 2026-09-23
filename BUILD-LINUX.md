@@ -99,11 +99,11 @@ Not verified:
 - Saving, creating files and folders, and the Open Folder dialog.
 - How highlighting looks while real keys are typed. The test above edited the
   buffer through its API; nobody has watched the colors catch up by eye.
-- A plain `meson setup build` is a debug build without optimization, and the
-  lexer is several times slower there: typing `/*` over a 50,000-line file
-  took 116 ms and closing it with `*/` 281 ms, against 6 and 27 ms in a
-  release build. Build with `--buildtype=release` (or `debugoptimized`) for
-  real use.
+- Without optimization the lexer is several times slower: typing `/*` over a
+  50,000-line file took 116 ms and closing it with `*/` 281 ms, against 6 and
+  27 ms in a release build. `meson.build` therefore defaults to
+  `debugoptimized`; a build directory set up before that change keeps
+  `debug` until `meson configure build --buildtype=debugoptimized`.
 
 ### Notes on the things that were most at risk
 

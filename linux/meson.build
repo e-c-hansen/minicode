@@ -1,6 +1,8 @@
 project('minicode-gtk', 'cpp',
   version : '0.1.0',
-  default_options : ['cpp_std=c++17', 'warning_level=2'])
+  # debugoptimized, not Meson's default of debug: at -O0 the lexer is several
+  # times slower, and typing /* over a 50,000-line file hitched for 0.1 s.
+  default_options : ['cpp_std=c++17', 'warning_level=2', 'buildtype=debugoptimized'])
 
 # --- always-required dependency: GTK4 --------------------------------------
 gtk_dep = dependency('gtk4')
