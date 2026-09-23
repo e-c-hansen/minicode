@@ -448,7 +448,7 @@ then runs `build/makegif`. It only ever kills its own pid (the user often has
 MiniCode open) and deletes the scratch folder on exit. The scene list comes
 from `MINICODE_DEMO=list`. `DEMO_KEEP_FRAMES=<dir>` keeps the raw frames and
 the app's log for debugging (also when the scene fails); look at frames
-with the Read tool. Scenes: tour, terminal, settings, latex, lsp, vim.
+with the Read tool. Scenes: tour, terminal, settings, latex, lsp, vim, files, links.
 
 - **A scene** is a function in `src/Demo.mm` calling builder methods
   (`clickFile:`, `type:`, `key:caption:`, `clickAt:`, `doubleClickAt:`,
