@@ -94,6 +94,15 @@
             android:textIsSelectable="true" />
     </ScrollView>
 
+    <!-- The LaTeX preview: typeset in Termux, every page, double tap to edit
+         (LatexPreview.kt). -->
+    <org.minicode.editor.LatexPreview
+        android:id="@+id/latex"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:visibility="gone" />
+
     <!-- Images and PDF pages, in the slot the editor would have. -->
     <ImageView
         android:id="@+id/media"

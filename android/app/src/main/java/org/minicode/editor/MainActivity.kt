@@ -60,6 +60,11 @@ class MainActivity : AppCompatActivity() {
 
         setTextSize(getSharedPreferences("minicode", MODE_PRIVATE).getInt("textSize", 13))
 
+        // A double tap in the LaTeX preview edits the source behind it; the
+        // splice goes through the buffer, so it is highlighted, marked
+        // unsaved and typeset again like any other edit.
+        ui.latex.onEdit = { start, end, text -> ui.editor.text?.replace(start, end, text) }
+
         ui.fileList.layoutManager = LinearLayoutManager(this)
         ui.fileList.adapter = files
         ui.up.setOnClickListener { goUp() }
@@ -362,6 +367,7 @@ class MainActivity : AppCompatActivity() {
         mediaSize = "${bitmap.width} × ${bitmap.height}"
         showingMedia = true
         previewing = false
+        ui.latex.close()
         dirty = false
         ui.media.setImageBitmap(bitmap)
         // Scaled down to fit, never up past its real size, as on the Mac.
@@ -414,8 +420,10 @@ class MainActivity : AppCompatActivity() {
         ui.editor.setText(text)
         highlighting = false
         dirty = false
-        // Markdown opens rendered, as it does in the other ports.
-        previewing = isMarkdown(file.name)
+        // Markdown and LaTeX open rendered, as they do in the other ports.
+        previewing = isPreviewable(file.name)
+        if (LatexPreview.isLatex(file.name)) ui.latex.open(file, text)
+        else ui.latex.close()
         showList(false)
         updateTitle()
         rehighlight()
@@ -427,18 +435,35 @@ class MainActivity : AppCompatActivity() {
         return lower.endsWith(".md") || lower.endsWith(".markdown")
     }
 
+    /** Files that open rendered: Markdown, and LaTeX (see LatexPreview). */
+    private fun isPreviewable(name: String?) =
+        isMarkdown(name) || LatexPreview.isLatex(name)
+
+    /** The view the rendered form of `name` goes in. */
+    private fun previewPane(name: String?): View =
+        if (LatexPreview.isLatex(name)) ui.latex else ui.previewScroll
+
     /** Shift+Cmd+P on the Mac; the leader's P here. */
     private fun togglePreview() {
-        if (!isMarkdown(currentFile?.name)) return
+        if (!isPreviewable(currentFile?.name)) return
         previewing = !previewing
         renderPreview()
         updateTitle()
     }
 
     private fun renderPreview() {
-        val showPreview = previewing && isMarkdown(currentFile?.name) &&
+        val name = currentFile?.name
+        val showPreview = previewing && isPreviewable(name) &&
                 ui.fileList.visibility != View.VISIBLE && !terminalShowing
-        ui.previewScroll.visibility = if (showPreview) View.VISIBLE else View.GONE
+        ui.previewScroll.visibility =
+            if (showPreview && isMarkdown(name)) View.VISIBLE else View.GONE
+        ui.latex.visibility =
+            if (showPreview && LatexPreview.isLatex(name)) View.VISIBLE else View.GONE
+        if (showPreview && LatexPreview.isLatex(name)) {
+            ui.editor.visibility = View.GONE
+            ui.latex.update(ui.editor.text.toString())
+            return
+        }
         if (!showPreview) {
             if (!terminalShowing && ui.fileList.visibility != View.VISIBLE) {
                 ui.editor.visibility = View.VISIBLE
@@ -487,6 +512,7 @@ class MainActivity : AppCompatActivity() {
         }
         dirty = false
         updateTitle()
+        if (LatexPreview.isLatex(file.name)) ui.latex.typesetNow()
         return true
     }
 
@@ -495,9 +521,12 @@ class MainActivity : AppCompatActivity() {
         ui.browser.visibility = View.GONE
         ui.fileList.visibility = if (show) View.VISIBLE else View.GONE
         ui.terminal.visibility = View.GONE
-        val preview = !show && previewing && isMarkdown(currentFile?.name)
+        val preview = !show && previewing && isPreviewable(currentFile?.name)
         val media = !show && showingMedia
-        ui.previewScroll.visibility = if (preview) View.VISIBLE else View.GONE
+        val pane = previewPane(currentFile?.name)
+        ui.previewScroll.visibility =
+            if (preview && pane == ui.previewScroll) View.VISIBLE else View.GONE
+        ui.latex.visibility = if (preview && pane == ui.latex) View.VISIBLE else View.GONE
         ui.media.visibility = if (media) View.VISIBLE else View.GONE
         ui.editor.visibility =
             if (show || preview || media) View.GONE else View.VISIBLE
@@ -724,6 +753,7 @@ class MainActivity : AppCompatActivity() {
             ui.fileList.visibility = View.GONE
             ui.editor.visibility = View.GONE
             ui.previewScroll.visibility = View.GONE
+            ui.latex.visibility = View.GONE
             ui.media.visibility = View.GONE
             ui.browser.visibility = View.VISIBLE
             if (!browserReady) {
@@ -786,6 +816,7 @@ class MainActivity : AppCompatActivity() {
             ui.fileList.visibility = View.GONE
             ui.editor.visibility = View.GONE
             ui.previewScroll.visibility = View.GONE
+            ui.latex.visibility = View.GONE
             ui.media.visibility = View.GONE
             ui.browser.visibility = View.GONE
             browserShowing = false

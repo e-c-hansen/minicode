@@ -29,6 +29,9 @@ browser panel.
   It starts in the open folder and follows it when another is opened, as
   long as the folder has a path (see below).
 - **Browser.** The system web view with a URL bar.
+- **LaTeX preview.** Typeset by tectonic in Termux, every page in a
+  scrolling list, and a double tap on the text opens the source behind it
+  for editing, as on the Mac. See "The LaTeX preview" below.
 
 ## Shortcuts, and why they are unusual
 
@@ -113,6 +116,48 @@ desktop terminals, Termux among them, often treat only the left one as Meta.
 Termux has its own answer for keyboards without Ctrl and Esc: Volume Down
 acts as Ctrl and Volume Up plus a letter gives Esc, Tab and the arrows (its
 wiki's "Touch Keyboard" page). MiniCode does not copy that yet.
+
+## The LaTeX preview
+
+Opening a `.tex`, `.ltx` or `.latex` file shows it typeset, as Markdown opens
+rendered, and the leader's P flips to the source and back. The design is the
+Mac's (the "LaTeX preview" section of `../CLAUDE.md`); what differs is where
+things run and live.
+
+- **tectonic runs in Termux** (`pkg install tectonic`), through `Termux.kt`.
+  Android will not run a binary out of another app's storage, so there is no
+  way to ship or download one the way the Mac app does. ⋮ → Termux tools
+  says whether it is installed. The first run downloads tectonic's bundle,
+  and the status line shows tectonic's output as it goes.
+- **Only documents on shared storage can be typeset**, because that is the
+  one place both apps see at the same path. A document opened from a cloud
+  folder or from inside Termux gets a message saying so.
+- **The buffer is typeset from a hidden sibling**, `.<name>.minicode.tex` in
+  the document's own folder, written by MiniCode and deleted after each run,
+  so relative `\input` and `\includegraphics` resolve and the user's file is
+  never written. It appears in the file list while a run is going.
+- **Output goes to `/storage/emulated/0/.minicode/latex/<hash of the path>/`.**
+  On the Mac it is the temporary folder, but Termux cannot write MiniCode's
+  private storage and MiniCode cannot read Termux's, so the PDF and its
+  `.synctex.gz` have to be in shared storage too. The folder is outside every
+  project on purpose, so it never lands in a file list or a commit. The
+  renderer works from a copy in MiniCode's cache, so the next run can rewrite
+  the original while pages are on screen.
+- **Runs are debounced and counted**: 0.8 s after typing stops, at once on
+  open and on save, one run at a time, with a change during a run queueing
+  one more. Opening another file drops whatever is still running for the old
+  one. The scroll position survives a re-typeset.
+- **A failed run shows the end of tectonic's log** in place of the pages.
+- **Double tap to edit** uses the core's SyncTeX reader and `LatexDoc` through
+  `latex_jni.cpp`, the same matcher the Mac app's `MCLatexSpanAtPoint` runs
+  and `tests/latex/sweep.sh` measures. The word under the tap and 40
+  characters either side come from `PdfRenderer`'s text selection
+  (`selectContent`), which only exists from Android 15; on older versions the
+  pages show but editing from them says it needs a newer Android. A tap that
+  matches nothing is refused rather than guessed. The edit dialog holds the
+  span's own LaTeX, and Done splices exactly those characters in the buffer,
+  which is then unsaved until the leader's S. If the buffer changed while the
+  dialog was up, the edit is not applied.
 
 ## Building
 
@@ -206,13 +251,19 @@ Run it from the repository root; the tests read a few files from `demo/`,
 - `Highlighter.kt` — keeps the editor's color spans current, an edit at a
   time, fed from the editor's TextWatcher.
 - `Markdown.kt` — the core's runs turned into styled text.
+- `Termux.kt` — runs a program in Termux with its stdin and stdout on a
+  loopback socket; how language servers and tectonic are reached.
+- `LatexPreview.kt` — the LaTeX preview: typesetting through Termux, the
+  page list, and the double tap to edit (`PageText` finds the tapped word).
+- `app/src/main/cpp/latex_jni.cpp` — SyncTeX and `LatexDoc` for the tap.
 
 ## Not yet
 
 - Language servers. The client is portable C++ and already compiles here, but
   clangd and pyright live in Termux, whose files this app cannot read.
-- The LaTeX preview. The reader is portable; tectonic is not built for
-  Android, so this needs Termux or a machine on the network.
+- In the LaTeX preview: adding a list item from the preview, a separate undo
+  for preview edits, zoom, and Export PDF, all of which the Mac has.
 - Project search and comment toggling.
-- PDFs beyond the first page; zoom and scroll for large images; terminal
+- PDFs opened from the file list beyond the first page (the LaTeX preview
+  shows them all); zoom and scroll for large images; terminal
   scrollback.

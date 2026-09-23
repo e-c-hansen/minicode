@@ -12,13 +12,17 @@ set(CORE ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../src)
 add_library(minicode SHARED
     minicode_jni.cpp
     terminal_jni.cpp
+    latex_jni.cpp
     ${CORE}/SyntaxHighlighter.cpp
     ${CORE}/MarkdownParser.cpp
     ${CORE}/LineComments.cpp
     ${CORE}/Settings.cpp
     ${CORE}/TerminalStream.cpp
-    ${CORE}/TerminalScreen.cpp)
+    ${CORE}/TerminalScreen.cpp
+    ${CORE}/LatexDoc.cpp
+    ${CORE}/SyncTex.cpp)
 
 target_include_directories(minicode PRIVATE ${CORE})
 target_compile_options(minicode PRIVATE -Wall -Wextra)
-target_link_libraries(minicode log)
+# zlib is part of the NDK's system libraries; SyncTeX files are gzipped.
+target_link_libraries(minicode log z)
