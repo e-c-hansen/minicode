@@ -18,13 +18,15 @@ this file covers the macOS app except where it says otherwise.
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
   run on Apple Silicon and to keep granted permissions stable).
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  1104 checks over the tokenizer (including ~14,000 random edits comparing
+  1218 checks over the tokenizer (including ~14,000 random edits comparing
   incremental against full highlighting, and a timing line for a 100k-line
   file), Markdown parser, terminal output stream and screen grid, settings
   parser, comment toggling, the LaTeX and SyncTeX readers (including the preview's click-to-source
   matching), JSON, the LSP
-  client, and finding file references and URLs in terminal output.
-  Exits non-zero on failure.
+  client, finding file references and URLs in terminal output, and the
+  folder search (on a scratch tree in the temp directory).
+  Exits non-zero on failure. The Makefile uses clang++ on the Mac and make's
+  default (g++) elsewhere, so it runs on Linux too, and CI runs it there.
 - `make run [DIR=~/path]` — build and launch.
 - `make icon` — regenerate `resources/AppIcon.icns` from `tools/makeicon.m`.
 - `make demos [SCENES="tour latex"] [POSTERS=1]` — record the README's GIFs
@@ -81,6 +83,13 @@ isolation. Keep them dependency-free.
   output: `path:line:col`, Python's `File "x", line N`, `file(line,col)`
   from TypeScript and MSVC, and URLs with sentence punctuation trimmed.
   Text only; each port checks the path exists before showing a link.
+- `src/FolderSearch.{h,cpp}` — Find in Folder's search: a folder, a query and
+  a cancel flag in, matches out (path, line, column in characters and in
+  bytes, cleaned line text). The Mac's `Search.mm` rules (two characters,
+  case-insensitive, dotfiles and `node_modules`/`build`/... skipped, 1 MB and
+  UTF-8 only, 2000 matches, ANSI stripped), plus symlink-loop and named-pipe
+  safety. Used by the GTK port; `Search.mm` still has its own copy of the
+  loop, and Android can use this one.
 
 The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 
@@ -361,7 +370,7 @@ against a scripted server in `run_tests.cpp`; `Lsp.mm` owns processes and UI.
 ## Current state (handoff, 2026-09-22)
 
 - **macOS** is released as **1.3.3** (Homebrew tap and GitHub Releases), and
-  `main` is pushed. 1,079 core checks passed then (1,104 now); the build is
+  `main` is pushed. 1,079 core checks passed then (1,218 now); the build is
   warning-free. That
   day's work: opening a file from the command line, image and PDF viewing,
   Export PDF for LaTeX, Copy Path in the tree's context menu, the memory
@@ -370,8 +379,8 @@ against a scripted server in `run_tests.cpp`; `Lsp.mm` owns processes and UI.
   currently is. It has a file list, editor, Markdown preview, images, PDFs, a
   terminal on a real shell, and a browser. Missing: language servers, the
   LaTeX preview, project search, comment toggling. See `android/README.md`.
-- **Linux** has not moved: the LaTeX preview, the LSP client, incremental
-  highlighting and media viewing are still macOS only there.
+- **Linux** has incremental highlighting now (September 2026); the LaTeX
+  preview, the LSP client and media viewing are still macOS only there.
   `linux/HANDOFF.md` lists what to do, in order, with the Mac and GTK
   pieces for each.
 - The user's phone is a Unihertz Titan 2 (Android 16, 576 by 640 dp, hardware
@@ -791,10 +800,13 @@ holds, these give real runtime evidence rather than compile-only evidence:
   non-ASCII cell knocks the columns out of line.
 - **Search**: scoped to a folder (default = open folder or selected folder),
   min 2 chars, generation bumped up front + per-file cancellation, ANSI stripped
-  from result lines.
-- **Highlighting is incremental** (macOS and Android, where `Highlighter.kt`
-  does the same over a native mirror of the text; Linux still does a
-  debounced full re-lex). Opening a file runs `applyHighlighting` (full pass, also used by
+  from result lines. On Linux the tree's `GtkSingleSelection` must have
+  autoselect off, or its first row counts as selected from launch and the
+  search is scoped to whatever folder sorts first.
+- **Highlighting is incremental** (macOS, Android, where `Highlighter.kt`
+  does the same over a native mirror of the text, and Linux, where
+  `Editor.cpp` keeps a UTF-8 mirror and retags large ranges in idle slices;
+  `linux/HANDOFF.md` item 3). Opening a file runs `applyHighlighting` (full pass, also used by
   `recolorEditor` on a settings change). After that the text storage delegate
   `textStorage:willProcessEditing:` feeds every character edit to
   `IncrementalHighlighter` and records the lines to recolor; `textDidChange:`

@@ -21,16 +21,17 @@ Read these first:
 The port builds without warnings in CI (Ubuntu, GTK 4, VTE, WebKitGTK) and has
 been run for real on Ubuntu 26.04. It has:
 - the file tree, live-refreshing;
-- the editor with syntax highlighting (a debounced full re-lex);
+- the editor with incremental syntax highlighting (item 3 below);
 - the Markdown preview;
 - a VTE terminal and a WebKitGTK browser;
 - the settings file with live colors and per-panel opacity;
 - Ctrl+/ comment toggling, pane hiding and divider drags;
 - the shortcut hints panel;
-- opening a file named on the command line.
+- opening a file named on the command line;
+- Find in Folder (Ctrl+Shift+F), over the shared `FolderSearch` core.
 
-It shares from `../src` only `SyntaxHighlighter`, `MarkdownParser`, `Settings`
-and `LineComments`. The rest of the core (`LatexDoc`, `SyncTex`, `Json`,
+It shares from `../src` only `SyntaxHighlighter`, `MarkdownParser`, `Settings`,
+`LineComments` and `FolderSearch`. The rest of the core (`LatexDoc`, `SyncTex`, `Json`,
 `LspClient`, `TerminalScreen`) is portable and tested, and has not been added
 to `meson.build` yet.
 
@@ -64,6 +65,13 @@ another file, before Ctrl+O, and on the window's `close-request`; the Mac's
 `-confirmProceedPastUnsavedChanges` is the model. `Editor::save` reports
 failure with a reason, which is shown in an alert, and writes atomically.
 Open Folder closes the old file, as the Mac does.
+
+Opening a file is therefore asynchronous: the alert's answer arrives later.
+Anything to do once the file is open goes through `openFileThen(app, path,
+then)`, whose `then` runs after the open and not at all on Cancel. Find in
+Folder's go-to-match and Ctrl+, use it, and go-to-definition (item 6) should
+too; calling `openFileCb` and then acting on the editor straight away acts on
+the old file whenever the question is asked.
 
 Runtime-verified with a temporary hook (see `BUILD-LINUX.md`). Not seen by a
 person yet: the alerts themselves, and the real Open Folder dialog, which the
@@ -104,7 +112,39 @@ Needs the user's eyes: where the popovers sit and how they look.
 The tree's live refresh was broken all along on GTK 4.22 (see "Traps"), and
 is fixed as part of this item.
 
-### 3. Incremental highlighting
+### 3. Incremental highlighting (done, September 2026)
+
+Done and checked in the running app on the ThinkPad; `BUILD-LINUX.md` has
+the test and the timings. How it works, in `Editor.cpp`:
+
+- `insert-text` and `delete-range` handlers that run before the buffer
+  changes turn each edit into UTF-8 byte offsets (the highlighter's line
+  start plus `gtk_text_iter_get_line_index`), apply it to `mirror_`, a copy
+  of the buffer that the highlighter reads, and feed it to
+  `IncrementalHighlighter<char>`. The `_after` handlers, or `end-user-action`
+  when the edit is inside one, retag the lines it reported.
+- A retag removes only the highlight tags (`hlTags_`: one per style plus the
+  settings swatches) and only over those lines, so find matches and future
+  diagnostic tags are never touched. An `apply-tag` handler refuses highlight
+  tags from anyone else, because a paste from a GtkTextView brings the
+  source's tags along.
+- Retagging costs GTK a few microseconds per tag, so over 1,000 lines the
+  lines on screen are retagged at once and the rest in idle slices of 5 ms.
+- A user action with more than 64 edits in it (a large paste arrives as one
+  insert per run of tags) stops being tracked edit by edit; at its end the
+  old and new text are compared once for a common prefix and suffix, and
+  that becomes the edit.
+- GTK also ends lines at a lone `\r` and U+2029, the lexer only at `\n`.
+  When the line counts differ, offsets are counted through `mirror_`
+  instead, which is slower but correct.
+- `Editor::setPath` is the hook for rename and save-as: it re-lexes only if
+  the grammar changed. Rename in the file tree calls it.
+
+Left over: turning off highlighting (a rename to `.txt`) removes the tags
+from the whole buffer at once, about 0.2 s for 50,000 lines. The debug build
+is slow here (see `BUILD-LINUX.md`).
+
+What the item said:
 
 Mac: `IncrementalHighlighter` in `../src/SyntaxHighlighter.h`, driven from
 `textStorage:willProcessEditing:` and `flushHighlighting` in
@@ -136,16 +176,33 @@ Mac: `showImageAtPath:` and `showPDFAtPath:` in `EditorController.mm`, and the
 Done when: png, jpg, gif, webp and PDF open in the editor's slot, nothing is
 ever saved over them, and they reload when the file changes on disk.
 
-### 5. Find in folder
+### 5. Find in folder (done, September 2026)
 
-Mac: `src/Search.mm` (scoped to a folder, at least 2 characters, a generation
-counter cancels stale searches, ANSI stripped). Linux has only the in-file
-find bar.
+Mac: `src/Search.mm`. The search is now `../src/FolderSearch.{h,cpp}`, a pure
+C++17 function (a folder, a query, an `std::atomic<bool>` cancel flag, and
+matches out with the line, the column in characters and in bytes, and the
+cleaned display text) with the Mac's rules, tested in the core suite. Android
+can call it through JNI as it is.
 
-GTK: a window or side panel with a `GtkSearchEntry` and a `GtkListView` of
-results, searching on a `GTask` thread. The search itself should go into
-`../src` as a pure function (a folder, a query, a cancel flag, and matches
-out) with tests, which Android can then use too.
+The GTK side is `src/Search.{h,cpp}`: a separate window like the Mac's, with
+a folder field and Choose button, a `GtkSearchEntry` (0.35 s typing pause, as
+on the Mac), a status line and a `GtkListView` over a `GtkStringList` of
+markup rows. Each search runs on a `GTask` thread; a generation counter plus
+the previous search's cancel flag make sure a superseded search stops and its
+results are dropped. Activating a row goes through `openFileCb` in `main.cpp`
+(the tree's open path, so any unsaved-changes prompt added there applies) and
+then `Editor::revealLine`, which selects the match and switches a Markdown
+preview to source. The scope is the folder selected in the tree, else the
+open folder, and it resets after Open Folder. `FileTree::selectedDir()` reads
+the selection; the tree's selection no longer autoselects its first row.
+
+Verified by driving it inside the running app on the ThinkPad (see
+`../BUILD-LINUX.md`); real key presses, the double-click and the look of the
+window still need a person.
+
+If opening a file ever becomes asynchronous (a save prompt that returns
+later), `openSearchMatch` in `main.cpp` has to go to the line after the open
+completes; today it checks `currentPath()` straight after `openFileCb`.
 
 ### 6. Language servers
 
@@ -203,9 +260,9 @@ wrong text.
 - Show Hidden Files exists as Ctrl+H; check it against the Mac's behaviour.
 - Blur and live color picking, as `../ROADMAP.md` describes ("Linux port
   parity").
-- Run the core tests on Linux in CI: add `make test` (or a Meson test target
-  built from `tests/run_tests.cpp`) to the `linux` job in
-  `.github/workflows/ci.yml`. Today only the Mac job runs them.
+- Done: the core tests run on Linux in CI. The top-level Makefile picks
+  clang++ only on the Mac, so `make test` builds with g++ here, cleanly, and
+  the `linux` job in `.github/workflows/ci.yml` runs it.
 
 Not needed on Linux: the demo recorder and the memory benchmark, which are
 Mac tools.

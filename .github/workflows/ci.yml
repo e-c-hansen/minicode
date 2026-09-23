@@ -38,6 +38,11 @@ jobs:
       - name: Confirm the dev packages actually landed
         run: pkg-config --modversion gtk4 vte-2.91-gtk4 webkitgtk-6.0
 
+      # The shared core in ../src, the same tests the macOS job runs, built
+      # here with g++ (the top-level Makefile picks clang++ only on the Mac).
+      - name: Run core unit tests
+        run: make test
+
       # -Denabled rather than the default auto-detection: this job exists to
       # compile Terminal.cpp and Browser.cpp, so a missing library has to be a
       # failure and not a silent skip.

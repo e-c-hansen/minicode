@@ -1,6 +1,8 @@
 project('minicode-gtk', 'cpp',
   version : '0.1.0',
-  default_options : ['cpp_std=c++17', 'warning_level=2'])
+  # debugoptimized, not Meson's default of debug: at -O0 the lexer is several
+  # times slower, and typing /* over a 50,000-line file hitched for 0.1 s.
+  default_options : ['cpp_std=c++17', 'warning_level=2', 'buildtype=debugoptimized'])
 
 # --- always-required dependency: GTK4 --------------------------------------
 gtk_dep = dependency('gtk4')
@@ -14,6 +16,7 @@ core_sources = [
   core_dir / 'MarkdownParser.cpp',
   core_dir / 'Settings.cpp',
   core_dir / 'LineComments.cpp',
+  core_dir / 'FolderSearch.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -28,6 +31,7 @@ gui_sources = [
   'src/Browser.cpp',
   'src/AppSettings.cpp',
   'src/ThemeCss.cpp',
+  'src/Search.cpp',
 ]
 
 inc = include_directories('src', '../src')

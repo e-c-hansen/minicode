@@ -1,12 +1,16 @@
 // Editor.h — the text editing surface: a GtkTextView + GtkTextBuffer with
-// syntax highlighting driven by the shared SyntaxHighlighter core, plus a
+// syntax highlighting driven by the shared IncrementalHighlighter core, plus a
 // Markdown preview toggle backed by Markdown.{h,cpp}.
 #pragma once
 
 #include <gtk/gtk.h>
+#include <cstddef>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "Settings.h"
+#include "SyntaxHighlighter.h"
 
 class Editor {
 public:
@@ -34,10 +38,6 @@ public:
     // Close the file and show the welcome text, dropping any unsaved edits.
     // The shell asks "Save changes?" before calling this.
     void closeFile();
-
-    // The open file was renamed or moved on disk: keep the buffer, dirty state
-    // and all, and save to the new path from now on.
-    void setPath(const std::string& path);
 
     // Toggle between the raw editable buffer and the rendered Markdown preview.
     // No-op unless the current file is Markdown.
@@ -70,8 +70,53 @@ public:
     // with no line comments).
     bool toggleComment();
 
+    // Put the caret on a 1-based line and select `byteLength` bytes starting
+    // `byteColumn` bytes into it (a Find in Folder match), scrolled into view
+    // and focused. A Markdown preview switches to the source first. A column
+    // that no longer fits the line (the file changed since the search) selects
+    // nothing and leaves the caret at the line's start. Returns false when no
+    // editable text is showing.
+    bool revealLine(int line, std::size_t byteColumn, std::size_t byteLength);
+
+    // The open file now lives at `path` (a rename or save-as). Keeps the
+    // buffer and its undo history, and re-highlights the whole buffer only if
+    // the extension, and so the grammar, changed.
+    void setPath(const std::string& path);
+
 private:
-    void rehighlight();          // full re-lex of the raw buffer
+    // Highlighting. startHighlighting() lexes the whole buffer and retags it
+    // (file load, grammar change, settings change). After that every edit is
+    // fed to the IncrementalHighlighter from the buffer's insert-text and
+    // delete-range signals, and only the lines it reports are retagged: at
+    // once if they are few or on screen, otherwise in idle time slices.
+    void startHighlighting();
+    void stopHighlighting();     // buffer no longer holds source (preview, message)
+    void flushHighlighting();    // retag the lines pending since the last flush
+    void retagSpan(size_t firstLine, size_t endLine);   // lex from stored states, retag
+    void retagLines(size_t firstLine, size_t endLine, const std::vector<Token>& tokens);
+    void visibleLines(size_t& first, size_t& end) const;
+    void cancelDeferred();
+    void resyncAfterBulk();      // one prefix/suffix diff for a many-edit user action
+    void removeHighlightTags(const GtkTextIter* a, const GtkTextIter* b);
+    size_t byteOffsetOf(const GtkTextIter* it) const;
+    bool linesMatch() const;     // GTK's lines are the highlighter's '\n' lines
+    bool isHighlightTag(GtkTextTag* tag) const;
+    void noteEdit(size_t pos, size_t oldLen, size_t newLen);
+
+    static void onInsertText(GtkTextBuffer* buf, GtkTextIter* loc, char* text,
+                             int len, gpointer self);
+    static void onDeleteRange(GtkTextBuffer* buf, GtkTextIter* a, GtkTextIter* b,
+                              gpointer self);
+    static void onInsertTextAfter(GtkTextBuffer* buf, GtkTextIter* loc, char* text,
+                                  int len, gpointer self);
+    static void onDeleteRangeAfter(GtkTextBuffer* buf, GtkTextIter* a, GtkTextIter* b,
+                                   gpointer self);
+    static void onApplyTag(GtkTextBuffer* buf, GtkTextTag* tag, GtkTextIter* a,
+                           GtkTextIter* b, gpointer self);
+    static void onBeginUserAction(GtkTextBuffer* buf, gpointer self);
+    static void onEndUserAction(GtkTextBuffer* buf, gpointer self);
+    static gboolean onIdleRetag(gpointer self);
+
     void renderPreview();        // build the Markdown preview into the buffer
     void loadRawIntoBuffer();    // put source_ back as editable, highlighted text
     void ensureTags();           // create the per-style + markdown GtkTextTags once
@@ -81,7 +126,7 @@ private:
     static void onBufferChanged(GtkTextBuffer* buf, gpointer self);
 
     bool isSettingsFile() const;
-    void decorateColors();                       // swatch tags over color values
+    void decorateColors(int firstLine, int endLine);   // swatch tags over color values
     bool swatchAt(double x, double y, int* line) const;   // widget coords
     void pickColor(int line);
     void setLineColor(int line, const Rgba& c);
@@ -100,7 +145,23 @@ private:
     bool        dirty_      = false;
     bool        showingMessage_ = false;  // the buffer holds a message, not the file
     bool        tagsReady_  = false;
-    guint       rehiTimer_  = 0;  // debounce id for re-highlight
+    bool        sourceMode_ = false;   // the buffer holds editable source text
+
+    // Highlighting state, live only while the buffer holds source of a
+    // language the lexer knows. mirror_ is a UTF-8 copy of the buffer kept in
+    // step edit by edit, the TextSource the highlighter reads.
+    std::unique_ptr<IncrementalHighlighter<char>> hl_;
+    std::string  mirror_;
+    size_t       pendStart_ = 0, pendEnd_ = 0;   // bytes still to retag
+    bool         pending_ = false;
+    size_t       defStart_ = 0, defEnd_ = 0;     // bytes left to the idle retag
+    bool         deferred_ = false;
+    guint        idleId_ = 0;
+    bool         inAction_ = false;    // between begin- and end-user-action
+    int          actionEdits_ = 0;     // edits seen in the current user action
+    bool         bulk_ = false;        // stopped tracking edits one by one
+    bool         applyingTags_ = false;
+    std::vector<GtkTextTag*> hlTags_;   // syntax tags plus swatches: all a retag owns
 
     std::string settingsPath_;
     Settings    settings_;    // for tag colors and swatch text contrast

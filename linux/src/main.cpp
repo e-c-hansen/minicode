@@ -48,6 +48,7 @@
 #include "Palette.h"
 #include "Terminal.h"
 #include "Browser.h"
+#include "Search.h"
 
 #include <functional>
 #include <string>
@@ -70,6 +71,7 @@ struct App {
 
     Editor*   editor = nullptr;
     FileTree* tree = nullptr;
+    SearchPanel* search = nullptr;   // Find in Folder, created on first use
 
     GtkWidget* vpaned = nullptr;          // editor/browser above, terminal below
     GtkWidget* upperBox = nullptr;        // the editor/browser half of the vpaned
@@ -345,19 +347,29 @@ static void openFileNow(App* app, const std::string& path) {
     refreshHints(app);   // the Markdown line depends on the open file
 }
 
-// Called by FileTree when a file is activated, and by everything else that
-// opens a file.
-static void openFileCb(const std::string& path, void* userp) {
-    App* app = static_cast<App*>(userp);
+// Open a file, asking "Save changes?" first when the open one has edits. The
+// answer may come later, so anything to do once the file is open (go to a
+// line, focus the editor) goes in `then`, which runs after the open and not
+// at all when the user cancels.
+static void openFileThen(App* app, const std::string& path, std::function<void()> then) {
     // Clicking the file that is already open with edits in it must not reload
     // it from disk over them. A clean file does reload, which is how a change
     // made elsewhere gets picked up.
     if (path == app->editor->currentPath() && app->editor->dirty()) {
         showEditorArea(app);
+        if (then) then();
         return;
     }
-    confirmUnsaved(app, [app, path] { openFileNow(app, path); },
-                   [app] { reselectCurrentFile(app); });
+    confirmUnsaved(app, [app, path, then] {
+        openFileNow(app, path);
+        if (then) then();
+    }, [app] { reselectCurrentFile(app); });
+}
+
+// Called by FileTree when a file is activated, and by everything else that
+// opens a file with nothing to do afterwards.
+static void openFileCb(const std::string& path, void* userp) {
+    openFileThen(static_cast<App*>(userp), path, nullptr);
 }
 
 // Re-root on a new folder. The file from the old folder is closed, as on the
@@ -513,8 +525,8 @@ static void act_settings(GSimpleAction*, GVariant*, gpointer userp) {
                            ("Could not create " + app->settings->path()).c_str());
         return;
     }
-    openFileCb(app->settings->path(), app);
-    gtk_widget_grab_focus(app->editor->textView());
+    openFileThen(app, app->settings->path(),
+                 [app] { gtk_widget_grab_focus(app->editor->textView()); });
 }
 
 static void act_find(GSimpleAction*, GVariant*, gpointer userp) {
@@ -534,9 +546,10 @@ static void act_find(GSimpleAction*, GVariant*, gpointer userp) {
 // Where New File and New Folder put things: the selected folder, the selected
 // file's folder, or the root when nothing is selected (-targetDirectory).
 static std::string targetDirectory(App* app) {
-    const std::string sel = app->tree->selectedPath();
+    const std::string folder = app->tree->selectedDir();
+    if (!folder.empty()) return folder;
+    const std::string sel = app->tree->selectedPath();   // a file, or nothing
     if (sel.empty()) return app->rootDir;
-    if (g_file_test(sel.c_str(), G_FILE_TEST_IS_DIR)) return sel;
     char* dir = g_path_get_dirname(sel.c_str());
     std::string out = dir;
     g_free(dir);
@@ -635,7 +648,10 @@ static void act_rename(GSimpleAction*, GVariant*, gpointer userp) {
         // The open file keeps its buffer, edits included, under the new name.
         // That holds when a folder above it was renamed, too.
         const std::string cur = app->editor->currentPath();
-        if (isInside(cur, src)) app->editor->setPath(dst + cur.substr(src.size()));
+        if (isInside(cur, src)) {
+            app->editor->setPath(dst + cur.substr(src.size()));
+            updateTitle(app);
+        }
         app->tree->revealPath(dst);
     });
 }
@@ -726,6 +742,38 @@ static void act_focus_tree(GSimpleAction*, GVariant*, gpointer userp) {
     static_cast<App*>(userp)->tree->focus();
 }
 
+// A Find in Folder match was activated: open the file the way a click in the
+// tree does, then go to the match. If the file did not end up open (it could
+// not be read, or opening was refused), there is nowhere to go.
+// Opening may wait on a "Save changes?" answer, so going to the match is the
+// open's continuation, and the match is copied for it.
+static void openSearchMatch(const FolderSearchMatch& m, void* userp) {
+    App* app = static_cast<App*>(userp);
+    const std::string path = m.path;
+    const int line = m.line;
+    const std::size_t column = m.byteColumn, length = m.byteLength;
+    openFileThen(app, path, [app, path, line, column, length] {
+        if (app->editor->currentPath() == path)
+            app->editor->revealLine(line, column, length);
+        refreshHints(app);   // a Markdown preview may have switched to source
+    });
+    gtk_window_present(GTK_WINDOW(app->window));
+}
+
+// Ctrl+Shift+F: search the folder selected in the tree, or else the open
+// folder, which is what the Mac's Shift+Cmd+F does.
+static void act_find_in_folder(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!app->search) {
+        app->search = new SearchPanel(GTK_WINDOW(app->window));
+        app->search->setOpenCallback(openSearchMatch, app);
+    }
+    app->search->setRoot(app->rootDir);   // resets the scope after Open Folder
+    const std::string dir = app->tree->selectedDir();
+    if (!dir.empty()) app->search->setScope(dir);
+    app->search->show();
+}
+
 // ---------------------------------------------------------------- find impl
 
 // Find the next match at or after `from`, wrapping to the top of the buffer.
@@ -798,6 +846,7 @@ static std::string hintsText(App* app) {
     s += "Ctrl O         Open folder\n";
     s += "Ctrl S         Save\n";
     s += "Ctrl F         Find in file\n";
+    s += "Ctrl Shift F   Find in folder\n";
     s += "Ctrl /         Toggle comment\n";
     s += "Ctrl ,         Settings\n";
     s += "Ctrl 0         Focus the file tree\n";
@@ -955,6 +1004,7 @@ static void buildMenu(App* app) {
 
     GMenu* editMenu = g_menu_new();
     g_menu_append(editMenu, "Find", "win.find");
+    g_menu_append(editMenu, "Find in Folder…", "win.findinfolder");
     g_menu_append(editMenu, "Toggle Comment", "win.togglecomment");
     g_menu_append(editMenu, "Settings…", "win.settings");
     g_menu_append_submenu(menuBar, "Edit", G_MENU_MODEL(editMenu));
@@ -990,6 +1040,7 @@ static void setAccels(App* app) {
         {"win.newfile",         "<Ctrl><Alt>n"},
         {"win.newfolder",       "<Ctrl><Shift>n"},
         {"win.find",            "<Ctrl>f"},
+        {"win.findinfolder",    "<Ctrl><Shift>f"},
         {"win.togglepreview",   "<Ctrl><Shift>p"},
         {"win.togglehints",     "<Ctrl><Shift>h"},
         {"win.togglesidebar",   "<Ctrl>b"},
@@ -1146,6 +1197,7 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     addAction(app, "reveal",         G_CALLBACK(act_reveal));
     addAction(app, "copypath",       G_CALLBACK(act_copy_path));
     addAction(app, "find",           G_CALLBACK(act_find));
+    addAction(app, "findinfolder",   G_CALLBACK(act_find_in_folder));
     addAction(app, "togglepreview",  G_CALLBACK(act_toggle_preview));
     addAction(app, "togglehints",    G_CALLBACK(act_toggle_hints));
     addAction(app, "togglesidebar",  G_CALLBACK(act_toggle_sidebar));

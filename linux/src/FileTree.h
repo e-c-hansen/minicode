@@ -32,6 +32,10 @@ public:
 
     void focus();
 
+    // The folder selected in the tree, or "" when nothing or a file is
+    // selected. Find in Folder searches it, as on the Mac.
+    std::string selectedDir() const;
+
     // The selected row's path, or "" when nothing is selected. A right-click
     // selects the row under the pointer (or clears the selection over empty
     // space), so the context menu's actions read the row that was clicked.

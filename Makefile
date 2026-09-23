@@ -6,7 +6,14 @@ BUNDLE   := $(APP).app
 BIN      := build/$(APP)
 SRC      := $(wildcard src/*.mm) $(wildcard src/*.cpp)
 
-CXX      := clang++
+# clang++ on the Mac, where it is the only compiler that builds the app. On
+# other systems (the Linux CI job runs `make test`) keep make's default, g++,
+# unless CXX was given on the command line or in the environment.
+ifeq ($(origin CXX),default)
+  ifeq ($(shell uname -s),Darwin)
+    CXX := clang++
+  endif
+endif
 CXXFLAGS := -std=c++17 -fobjc-arc -Wall -Wextra -O2 -Isrc
 LDFLAGS  := -framework Cocoa -framework WebKit -framework CoreServices \
             -framework Quartz -lz
@@ -16,7 +23,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/TerminalScreen.cpp \
             src/Settings.cpp src/LineComments.cpp \
             src/LatexDoc.cpp src/SyncTex.cpp src/Json.cpp src/LspClient.cpp \
-            src/TermLinks.cpp
+            src/TermLinks.cpp src/FolderSearch.cpp
 
 .PHONY: all app run test dmg clean demos membench
 
@@ -51,7 +58,7 @@ run: app
 test:
 	@mkdir -p build
 	$(CXX) -std=c++17 -Wall -Wextra -Isrc tests/run_tests.cpp $(CORE_SRC) \
-		-o build/run_tests
+		-pthread -o build/run_tests
 	@./build/run_tests
 
 # Regenerate the app icon (resources/AppIcon.icns) from tools/makeicon.m.

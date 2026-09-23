@@ -1,6 +1,6 @@
 // Editor.cpp — see Editor.h. Mirrors the behavior of the macOS
-// EditorController: monospace editor, VS Code dark palette, debounced full
-// re-lex highlighting, and a Markdown preview that swaps the buffer contents.
+// EditorController: monospace editor, VS Code dark palette, incremental
+// highlighting, and a Markdown preview that swaps the buffer contents.
 #include "Editor.h"
 #include "Palette.h"
 #include "Markdown.h"
@@ -65,6 +65,16 @@ Editor::Editor() {
     gtk_widget_set_vexpand(scroller_, TRUE);
 
     g_signal_connect(buffer_, "changed", G_CALLBACK(onBufferChanged), this);
+    // Highlighting follows every edit. The plain handlers run before the
+    // buffer changes (both signals are RUN_LAST), while the iterators still
+    // describe the old text; the _after ones run once it has changed.
+    g_signal_connect(buffer_, "insert-text", G_CALLBACK(onInsertText), this);
+    g_signal_connect(buffer_, "delete-range", G_CALLBACK(onDeleteRange), this);
+    g_signal_connect_after(buffer_, "insert-text", G_CALLBACK(onInsertTextAfter), this);
+    g_signal_connect_after(buffer_, "delete-range", G_CALLBACK(onDeleteRangeAfter), this);
+    g_signal_connect(buffer_, "apply-tag", G_CALLBACK(onApplyTag), this);
+    g_signal_connect(buffer_, "begin-user-action", G_CALLBACK(onBeginUserAction), this);
+    g_signal_connect(buffer_, "end-user-action", G_CALLBACK(onEndUserAction), this);
 
     ensureTags();
     showWelcome();
@@ -79,7 +89,7 @@ void Editor::showWelcome() {
 }
 
 Editor::~Editor() {
-    if (rehiTimer_) g_source_remove(rehiTimer_);
+    g_signal_handlers_disconnect_by_data(buffer_, this);
 }
 
 // ---------------------------------------------------------------- tags
@@ -92,8 +102,9 @@ void Editor::ensureTags() {
     // One tag per syntax style.
     for (int i = 0; i <= (int)TokenStyle::Function; ++i) {
         TokenStyle s = (TokenStyle)i;
-        gtk_text_buffer_create_tag(buffer_, TagNameForStyle(s),
-                                   "foreground", ColorForStyle(s), NULL);
+        hlTags_.push_back(gtk_text_buffer_create_tag(buffer_, TagNameForStyle(s),
+                                                     "foreground", ColorForStyle(s),
+                                                     NULL));
     }
 
     // Markdown preview tags.
@@ -245,9 +256,44 @@ void Editor::closeFile() {
     if (titleCb_) titleCb_(titleUser_);
 }
 
-void Editor::setPath(const std::string& path) {
-    path_ = path;
-    if (titleCb_) titleCb_(titleUser_);
+// ---------------------------------------------------------------- go to line
+
+bool Editor::revealLine(int line, std::size_t byteColumn, std::size_t byteLength) {
+    if (path_.empty()) return false;
+    if (preview_ && isMarkdown_) togglePreview();
+    if (!gtk_text_view_get_editable(GTK_TEXT_VIEW(view_))) return false;   // a message
+
+    const int lines = gtk_text_buffer_get_line_count(buffer_);
+    const int index = std::max(0, std::min(line - 1, lines - 1));
+    GtkTextIter start, end;
+    gtk_text_buffer_get_iter_at_line(buffer_, &start, index);
+    end = start;
+    if (!gtk_text_iter_ends_line(&end)) gtk_text_iter_forward_to_line_end(&end);
+    char* text = gtk_text_buffer_get_slice(buffer_, &start, &end, TRUE);
+    const std::string lineText = text ? text : "";
+    g_free(text);
+
+    // Both ends must fall on character boundaries of the line as it is now.
+    auto boundary = [&](std::size_t b) {
+        return b == lineText.size() ||
+               (b < lineText.size() &&
+                (static_cast<unsigned char>(lineText[b]) & 0xC0) != 0x80);
+    };
+    if (line - 1 != index || !boundary(byteColumn) ||
+        !boundary(byteColumn + byteLength)) {
+        byteColumn = 0;
+        byteLength = 0;
+    }
+    GtkTextIter a = start, b = start;
+    gtk_text_iter_set_line_index(&a, static_cast<int>(byteColumn));
+    gtk_text_iter_set_line_index(&b, static_cast<int>(byteColumn + byteLength));
+    gtk_text_buffer_select_range(buffer_, &a, &b);
+    // Scroll by the insert mark rather than an iterator: a mark scroll waits
+    // for the lines to be laid out, which a file opened a moment ago is not.
+    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(view_), gtk_text_buffer_get_insert(buffer_),
+                                 0.1, TRUE, 0.0, 0.3);
+    gtk_widget_grab_focus(view_);
+    return true;
 }
 
 // ---------------------------------------------------------------- buffer fills
@@ -279,13 +325,17 @@ void Editor::setProseFont(bool prose) {
 
 void Editor::loadRawIntoBuffer() {
     // Temporarily block change signals so filling the buffer doesn't mark dirty.
+    // Highlighting is stopped first so the fill is not fed to it as an edit;
+    // startHighlighting() lexes the new text once, whole.
+    stopHighlighting();
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
     showingMessage_ = false;
     setProseFont(false);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), TRUE);
     gtk_text_buffer_set_text(buffer_, source_.c_str(), (int)source_.size());
     g_signal_handlers_unblock_by_func(buffer_, (gpointer)onBufferChanged, this);
-    rehighlight();
+    sourceMode_ = true;
+    startHighlighting();
 
     // Scroll to top.
     GtkTextIter start;
@@ -295,6 +345,7 @@ void Editor::loadRawIntoBuffer() {
 
 void Editor::showMessage(const std::string& msg) {
     ensureTags();
+    stopHighlighting();
     showingMessage_ = true;
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
     setProseFont(true);
@@ -308,40 +359,389 @@ void Editor::showMessage(const std::string& msg) {
 
 // ---------------------------------------------------------------- highlighting
 
-// SyntaxHighlighter emits BYTE offsets into the UTF-8 source; GtkTextBuffer
-// iterators index by CHARACTER. Utf8OffsetCursor does the conversion with a
-// single forward-only pass over the whole token stream (see Utf8Offsets.h — it
-// is unit-tested in linux/tests/run_tests.cpp, including against real token
-// streams over accented, CJK and emoji text).
-void Editor::rehighlight() {
-    if (ext_.empty() || !SyntaxHighlighter::supports(ext_)) return;
+// The same scheme as the macOS build (textStorage:willProcessEditing: and
+// flushHighlighting in EditorController.mm), in UTF-8 bytes rather than UTF-16:
+//
+// - startHighlighting() lexes the whole buffer once: on file load, when the
+//   grammar changes, and when the settings change.
+// - onInsertText / onDeleteRange run BEFORE the buffer changes, while the
+//   iterators still point into the old text. They turn the edit into bytes,
+//   apply it to mirror_ and to the IncrementalHighlighter (which re-lexes the
+//   edited lines and any below whose start state changed), and widen the
+//   pending byte range.
+// - Once the buffer has changed (the _after handlers, or end-user-action when
+//   the edit is part of one), flushHighlighting() retags the pending lines:
+//   highlight tags off over exactly those lines, then the tokens on.
+//
+// Retagging is what costs: GTK takes a few microseconds per tag applied, so
+// retagging every line of a 50,000-line file takes over a second. A small
+// range is retagged at once; a large one (typing "/*" near the top, opening a
+// big file) gets the lines on screen at once and the rest in idle time slices
+// of a few milliseconds, the way GtkSourceView does it. The lexer's own state
+// is always complete; only the tags lag.
+//
+// Only the tags in hlTags_ (one per token style, plus the settings file's
+// swatches) are ever removed, so find matches or any other tag survive.
+//
+// GtkTextIter speaks characters, and a byte index within its line. When GTK's
+// lines are the highlighter's lines, byte offset = the highlighter's line start
+// + the iterator's line index, with no scanning. They differ only in a file
+// holding a lone '\r' or U+2029, which GTK also ends a line at; then offsets
+// are found by counting characters through mirror_ instead.
 
+namespace {
+const size_t kSyncLines   = 1000;   // retag at once up to this many lines
+const size_t kChunkLines  = 250;    // lines per step of the idle retag
+const gint64 kSliceMicros = 5000;   // idle retag budget per main loop turn
+const int    kBulkEdits   = 64;     // edits in one user action before resyncing whole
+
+size_t byteOfChar(const std::string& s, long chars) {
+    size_t b = 0;
+    for (long c = 0; b < s.size(); ++b) {
+        if (((unsigned char)s[b] & 0xC0) == 0x80) continue;   // continuation byte
+        if (c++ == chars) break;
+    }
+    return b;
+}
+
+// Carry a byte range [s, e) across an edit that replaced [pos, pos + oldLen)
+// with newLen bytes: shifted if it lay below, stretched if the edit touched it.
+void carry(size_t& s, size_t& e, size_t pos, size_t oldLen, size_t newLen) {
+    const size_t editEnd = pos + oldLen;
+    if (s >= editEnd) {
+        s = s + newLen - oldLen;
+        e = e + newLen - oldLen;
+    } else if (e > pos) {
+        s = std::min(s, pos);
+        e = std::max(e, editEnd) + newLen - oldLen;
+    }
+}
+}  // namespace
+
+bool Editor::linesMatch() const {
+    return hl_ && (size_t)gtk_text_buffer_get_line_count(buffer_) == hl_->lineCount();
+}
+
+size_t Editor::byteOffsetOf(const GtkTextIter* it) const {
+    if (linesMatch())
+        return hl_->lineStart((size_t)gtk_text_iter_get_line(it)) +
+               (size_t)gtk_text_iter_get_line_index(it);
+    return byteOfChar(mirror_, gtk_text_iter_get_offset(it));
+}
+
+bool Editor::isHighlightTag(GtkTextTag* tag) const {
+    return std::find(hlTags_.begin(), hlTags_.end(), tag) != hlTags_.end();
+}
+
+void Editor::removeHighlightTags(const GtkTextIter* a, const GtkTextIter* b) {
+    for (GtkTextTag* t : hlTags_) gtk_text_buffer_remove_tag(buffer_, t, a, b);
+}
+
+void Editor::cancelDeferred() {
+    if (idleId_) g_source_remove(idleId_);
+    idleId_ = 0;
+    deferred_ = false;
+}
+
+void Editor::stopHighlighting() {
+    hl_.reset();
+    std::string().swap(mirror_);
+    pending_ = false;
+    bulk_ = false;
+    cancelDeferred();
+    sourceMode_ = false;
+}
+
+void Editor::startHighlighting() {
+    pending_ = false;
+    bulk_ = false;
+    cancelDeferred();
+    hl_.reset();
+    std::string().swap(mirror_);
+    if (!sourceMode_ || ext_.empty() || !SyntaxHighlighter::supports(ext_)) {
+        // No grammar (any more): no colors. Covers a rename to a plain .txt.
+        GtkTextIter a, b;
+        gtk_text_buffer_get_bounds(buffer_, &a, &b);
+        applyingTags_ = true;
+        removeHighlightTags(&a, &b);
+        applyingTags_ = false;
+        return;
+    }
     GtkTextIter a, b;
     gtk_text_buffer_get_bounds(buffer_, &a, &b);
-    char* ctext = gtk_text_buffer_get_text(buffer_, &a, &b, FALSE);
-    std::string text = ctext ? ctext : "";
-    g_free(ctext);
+    char* text = gtk_text_buffer_get_text(buffer_, &a, &b, TRUE);
+    mirror_ = text ? text : "";
+    g_free(text);
 
-    // Reset baseline color across the whole buffer, then apply tags.
-    gtk_text_buffer_remove_all_tags(buffer_, &a, &b);
+    hl_ = std::make_unique<IncrementalHighlighter<char>>(ext_);
+    hl_->reset(StringSource<char>(mirror_), nullptr);
+    pendStart_ = 0;
+    pendEnd_ = mirror_.size();
+    pending_ = true;
+    flushHighlighting();
+}
 
-    std::vector<Token> tokens = SyntaxHighlighter::highlight(text, ext_);
-    const long nbytes = (long)text.size();
-    Utf8OffsetCursor cursor(text);
-
-    for (const Token& t : tokens) {
-        long sb = (long)t.start;
-        long eb = (long)(t.start + t.length);
-        if (sb < 0 || eb > nbytes || eb <= sb) continue;
-        int cstart = (int)cursor.charOffset(sb);
-        int cend   = (int)cursor.charOffset(eb);
-        GtkTextIter ts, te;
-        gtk_text_buffer_get_iter_at_offset(buffer_, &ts, cstart);
-        gtk_text_buffer_get_iter_at_offset(buffer_, &te, cend);
-        gtk_text_buffer_apply_tag_by_name(buffer_,
-                                          TagNameForStyle(t.style), &ts, &te);
+// Record an edit already applied to mirror_: bytes [pos, pos + oldLen) became
+// newLen bytes. The pending and deferred ranges are carried across it, then the
+// lines the highlighter re-lexed join the pending range.
+void Editor::noteEdit(size_t pos, size_t oldLen, size_t newLen) {
+    std::vector<Token> unused;   // recomputed for the final text at flush time
+    auto r = hl_->edit(StringSource<char>(mirror_), pos, oldLen, newLen, unused);
+    if (deferred_) carry(defStart_, defEnd_, pos, oldLen, newLen);
+    if (pending_) {
+        carry(pendStart_, pendEnd_, pos, oldLen, newLen);
+        pendStart_ = std::min(pendStart_, r.start);
+        pendEnd_ = std::max(pendEnd_, r.end);
+    } else {
+        pendStart_ = r.start;
+        pendEnd_ = r.end;
+        pending_ = true;
     }
-    if (isSettingsFile()) decorateColors();
+}
+
+// The highlighter's lines on screen, with some margin. Before the view has a
+// size, the lines around the cursor.
+void Editor::visibleLines(size_t& first, size_t& end) const {
+    const size_t margin = 60;
+    GdkRectangle vis;
+    gtk_text_view_get_visible_rect(GTK_TEXT_VIEW(view_), &vis);
+    GtkTextIter top, bottom;
+    if (vis.height > 0) {
+        gtk_text_view_get_line_at_y(GTK_TEXT_VIEW(view_), &top, vis.y, nullptr);
+        gtk_text_view_get_line_at_y(GTK_TEXT_VIEW(view_), &bottom, vis.y + vis.height, nullptr);
+    } else {
+        gtk_text_buffer_get_iter_at_mark(buffer_, &top, gtk_text_buffer_get_insert(buffer_));
+        bottom = top;
+    }
+    const size_t t = (size_t)gtk_text_iter_get_line(&top);
+    const size_t b = (size_t)gtk_text_iter_get_line(&bottom);
+    first = t > margin ? t - margin : 0;
+    end = b + margin + 1;
+}
+
+void Editor::flushHighlighting() {
+    if (!hl_ || !pending_ || bulk_) return;
+    pending_ = false;
+    const size_t len = hl_->length();
+    const size_t s = std::min(pendStart_, len), e = std::min(pendEnd_, len);
+    const size_t first = hl_->lineOf(s);
+    const size_t end = e > s ? hl_->lineOf(e - 1) + 1 : first + 1;
+    if (end - first <= kSyncLines) {
+        retagSpan(first, end);
+        return;
+    }
+    // Too many lines to retag in one go: the ones on screen now, all of them
+    // later. (The visible ones are retagged twice; that is one chunk's work.)
+    if (linesMatch()) {
+        size_t vf, ve;
+        visibleLines(vf, ve);
+        vf = std::max(vf, first);
+        ve = std::min(ve, end);
+        if (vf < ve) retagSpan(vf, ve);
+    } else {
+        retagSpan(first, first + kSyncLines);
+    }
+    const size_t b0 = hl_->lineStart(first);
+    const size_t b1 = end < hl_->lineCount() ? hl_->lineStart(end) : len;
+    if (deferred_) {
+        defStart_ = std::min(defStart_, b0);
+        defEnd_ = std::max(defEnd_, b1);
+    } else {
+        defStart_ = b0;
+        defEnd_ = b1;
+        deferred_ = true;
+    }
+    // Below redraw and input, so typing and scrolling stay ahead of it.
+    if (!idleId_) idleId_ = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, onIdleRetag, this, nullptr);
+}
+
+gboolean Editor::onIdleRetag(gpointer selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    if (!self->hl_ || !self->deferred_ || self->bulk_) {
+        self->idleId_ = 0;   // resyncAfterBulk schedules it again if needed
+        return G_SOURCE_REMOVE;
+    }
+    const gint64 t0 = g_get_monotonic_time();
+    IncrementalHighlighter<char>& hl = *self->hl_;
+    while (g_get_monotonic_time() - t0 < kSliceMicros) {
+        const size_t len = hl.length();
+        const size_t s = std::min(self->defStart_, len), e = std::min(self->defEnd_, len);
+        if (e <= s) {
+            self->deferred_ = false;
+            break;
+        }
+        const size_t first = hl.lineOf(s);
+        const size_t end = std::min(first + kChunkLines, hl.lineOf(e - 1) + 1);
+        self->retagSpan(first, end);
+        self->defStart_ = end < hl.lineCount() ? hl.lineStart(end) : len;
+    }
+    if (self->deferred_) return G_SOURCE_CONTINUE;
+    self->idleId_ = 0;
+    return G_SOURCE_REMOVE;
+}
+
+void Editor::retagSpan(size_t firstLine, size_t endLine) {
+    endLine = std::min(endLine, hl_->lineCount());
+    std::vector<Token> tokens;
+    hl_->lineTokens(StringSource<char>(mirror_), firstLine, endLine, tokens);
+    retagLines(firstLine, endLine, tokens);
+}
+
+// Lines [firstLine, endLine) of the highlighter: highlight tags off over
+// exactly those lines, then `tokens` (byte offsets, ascending) on. Adjacent
+// tokens of one style are applied together, since a comment spanning lines
+// comes as one piece per line.
+void Editor::retagLines(size_t firstLine, size_t endLine,
+                        const std::vector<Token>& tokens) {
+    if (!hl_ || firstLine >= endLine) return;
+    const size_t b0 = hl_->lineStart(firstLine);
+    const size_t b1 = endLine < hl_->lineCount() ? hl_->lineStart(endLine)
+                                                 : hl_->length();
+    const bool match = linesMatch();
+    GtkTextIter a, b;
+    if (match) {
+        gtk_text_buffer_get_iter_at_line(buffer_, &a, (int)firstLine);
+    } else {
+        Utf8OffsetCursor whole(mirror_);
+        gtk_text_buffer_get_iter_at_offset(buffer_, &a, (int)whole.charOffset((long)b0));
+    }
+    const long c0 = gtk_text_iter_get_offset(&a);
+
+    // Byte -> character conversion over just these lines, one forward pass.
+    const std::string span = mirror_.substr(b0, b1 - b0);
+    gtk_text_buffer_get_iter_at_offset(buffer_, &b,
+                                       (int)(c0 + Utf8OffsetCursor(span).totalChars()));
+    Utf8OffsetCursor cursor(span);
+
+    applyingTags_ = true;
+    removeHighlightTags(&a, &b);
+    GtkTextIter ts = a, te = a;
+    for (size_t i = 0; i < tokens.size();) {
+        const size_t start = tokens[i].start;
+        size_t end = start + tokens[i].length;
+        const TokenStyle st = tokens[i].style;
+        size_t j = i + 1;
+        while (j < tokens.size() && tokens[j].style == st && tokens[j].start == end) {
+            end = tokens[j].start + tokens[j].length;
+            ++j;
+        }
+        i = j;
+        if (start < b0 || end > b1 || end <= start) continue;
+        gtk_text_iter_set_offset(&ts, (int)(c0 + cursor.charOffset((long)(start - b0))));
+        gtk_text_iter_set_offset(&te, (int)(c0 + cursor.charOffset((long)(end - b0))));
+        gtk_text_buffer_apply_tag(buffer_, hlTags_[(int)st], &ts, &te);
+    }
+    if (isSettingsFile()) {
+        if (match) decorateColors((int)firstLine, (int)endLine);
+        else       decorateColors(0, INT_MAX);
+    }
+    applyingTags_ = false;
+}
+
+// A user action with many edits in it (a paste from another GtkTextView is
+// one insert per run of tags, thousands for a large one) stops being tracked
+// edit by edit, since each costs a copy of the mirror. When the action ends,
+// the whole of it is found as one edit: the common prefix and suffix of the
+// old and new text bound the bytes it changed.
+void Editor::resyncAfterBulk() {
+    bulk_ = false;
+    if (!hl_) return;
+    GtkTextIter a, b;
+    gtk_text_buffer_get_bounds(buffer_, &a, &b);
+    char* raw = gtk_text_buffer_get_text(buffer_, &a, &b, TRUE);
+    std::string now = raw ? raw : "";
+    g_free(raw);
+    const size_t n = std::min(now.size(), mirror_.size());
+    size_t p = 0;
+    while (p < n && now[p] == mirror_[p]) ++p;
+    size_t q = 0;
+    while (q < n - p && now[now.size() - 1 - q] == mirror_[mirror_.size() - 1 - q]) ++q;
+    const size_t oldLen = mirror_.size() - p - q, newLen = now.size() - p - q;
+    mirror_ = std::move(now);
+    if (oldLen || newLen) noteEdit(p, oldLen, newLen);
+    flushHighlighting();
+    if (deferred_ && !idleId_)
+        idleId_ = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, onIdleRetag, this, nullptr);
+}
+
+// ------------------------------------------------ buffer signals
+
+void Editor::onInsertText(GtkTextBuffer*, GtkTextIter* loc, char* text, int len,
+                          gpointer selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    if (!self->hl_ || len <= 0 || self->bulk_) return;
+    if (self->inAction_ && ++self->actionEdits_ > kBulkEdits) {
+        self->bulk_ = true;
+        return;
+    }
+    const size_t pos = std::min(self->byteOffsetOf(loc), self->mirror_.size());
+    self->mirror_.insert(pos, text, (size_t)len);
+    self->noteEdit(pos, 0, (size_t)len);
+}
+
+void Editor::onDeleteRange(GtkTextBuffer*, GtkTextIter* start, GtkTextIter* end,
+                           gpointer selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    if (!self->hl_ || self->bulk_) return;
+    if (self->inAction_ && ++self->actionEdits_ > kBulkEdits) {
+        self->bulk_ = true;
+        return;
+    }
+    size_t a = self->byteOffsetOf(start), b = self->byteOffsetOf(end);
+    if (b < a) std::swap(a, b);
+    a = std::min(a, self->mirror_.size());
+    b = std::min(b, self->mirror_.size());
+    if (a == b) return;
+    self->mirror_.erase(a, b - a);
+    self->noteEdit(a, b - a, 0);
+}
+
+// Inside a user action the retag waits for its end, so a delete-then-insert
+// (typing over a selection, a paste) retags once.
+void Editor::onInsertTextAfter(GtkTextBuffer*, GtkTextIter*, char*, int, gpointer selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    if (!self->inAction_) self->flushHighlighting();
+}
+
+void Editor::onDeleteRangeAfter(GtkTextBuffer*, GtkTextIter*, GtkTextIter*, gpointer selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    if (!self->inAction_) self->flushHighlighting();
+}
+
+// GtkTextBuffer emits these for the outermost begin/end pair only.
+void Editor::onBeginUserAction(GtkTextBuffer*, gpointer selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    self->inAction_ = true;
+    self->actionEdits_ = 0;
+}
+
+void Editor::onEndUserAction(GtkTextBuffer*, gpointer selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    self->inAction_ = false;
+    if (self->bulk_) self->resyncAfterBulk();
+    else             self->flushHighlighting();
+}
+
+// Highlight tags belong to the highlighter alone. Pasting from a GtkTextView
+// inserts the copied range with its tags (gtk_text_buffer_insert_range), which
+// would lay the source's colors over the lines just retagged; stopping the
+// emission keeps them off.
+void Editor::onApplyTag(GtkTextBuffer* buf, GtkTextTag* tag, GtkTextIter*, GtkTextIter*,
+                        gpointer selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    if (self->sourceMode_ && !self->applyingTags_ && self->isHighlightTag(tag))
+        g_signal_stop_emission_by_name(buf, "apply-tag");
+}
+
+// ------------------------------------------------ rename
+
+void Editor::setPath(const std::string& path) {
+    const bool wasSettings = isSettingsFile();
+    const std::string ext = extOf(path);
+    path_ = path;
+    if (ext == ext_ && wasSettings == isSettingsFile()) return;
+    ext_ = ext;
+    if (sourceMode_) startHighlighting();
 }
 
 // ---------------------------------------------------------------- settings
@@ -375,7 +775,7 @@ void Editor::applySettings(const Settings& s) {
     setTagColor(buffer_, "md_quote", "foreground-rgba", s.markdown(MarkdownColor::Quote));
     setTagColor(buffer_, "md_link", "foreground-rgba", s.markdown(MarkdownColor::Link));
     // Swatch text contrast depends on the editor background.
-    if (!preview_ && isSettingsFile()) rehighlight();
+    if (sourceMode_ && isSettingsFile()) startHighlighting();
 }
 
 bool Editor::isSettingsFile() const {
@@ -388,10 +788,11 @@ bool Editor::isSettingsFile() const {
 
 // Every color value in the settings file becomes a swatch of itself: the value
 // drawn on its own color, in black or white text, whichever reads.
-void Editor::decorateColors() {
+// Lines [firstLine, endLine), clamped to the buffer.
+void Editor::decorateColors(int firstLine, int endLine) {
     GtkTextTagTable* table = gtk_text_buffer_get_tag_table(buffer_);
-    int lines = gtk_text_buffer_get_line_count(buffer_);
-    for (int ln = 0; ln < lines; ++ln) {
+    int lines = std::min(endLine, gtk_text_buffer_get_line_count(buffer_));
+    for (int ln = std::max(firstLine, 0); ln < lines; ++ln) {
         GtkTextIter ls, le;
         gtk_text_buffer_get_iter_at_line(buffer_, &ls, ln);
         le = ls;
@@ -411,6 +812,7 @@ void Editor::decorateColors() {
             tag = gtk_text_buffer_create_tag(buffer_, name.c_str(),
                                              "background-rgba", &bg,
                                              "foreground-rgba", &fg, NULL);
+            hlTags_.push_back(tag);
         }
         GtkTextIter a = ls, b = ls;
         gtk_text_iter_forward_chars(&a, (int)utf16::toCharOffset(line, span.start));
@@ -526,8 +928,7 @@ void Editor::setLineColor(int line, const Rgba& c) {
     gtk_text_buffer_delete(buffer_, &ls, &le);
     gtk_text_buffer_insert(buffer_, &ls, out.c_str(), (int)out.size());
     gtk_text_buffer_end_user_action(buffer_);
-    save();
-    rehighlight();
+    save();   // the edit above already retagged the line, swatch included
 }
 
 // ---------------------------------------------------------------- comments
@@ -589,6 +990,7 @@ void Editor::togglePreview() {
 }
 
 void Editor::renderPreview() {
+    stopHighlighting();
     showingMessage_ = false;
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
     setProseFont(true);
@@ -613,14 +1015,6 @@ void Editor::markDirty(bool d) {
 void Editor::onBufferChanged(GtkTextBuffer* /*buf*/, gpointer selfp) {
     Editor* self = static_cast<Editor*>(selfp);
     self->markDirty(true);
-    if (self->preview_) return;  // preview buffer isn't user-edited source
-
-    // Debounce: re-highlight ~120ms after the user stops typing.
-    if (self->rehiTimer_) g_source_remove(self->rehiTimer_);
-    self->rehiTimer_ = g_timeout_add(120, [](gpointer p) -> gboolean {
-        Editor* e = static_cast<Editor*>(p);
-        e->rehiTimer_ = 0;
-        e->rehighlight();
-        return G_SOURCE_REMOVE;
-    }, self);
+    // Highlighting is not done here: the insert-text and delete-range
+    // handlers retag each edit's lines as it happens.
 }

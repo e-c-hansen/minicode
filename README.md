@@ -228,7 +228,7 @@ The same actions on each platform, sorted by name. A blank cell means that port 
 | Comment or uncomment the selected lines | Command / | Ctrl / |  |
 | Complete the word at the cursor, with a language server | Control Space, or Option Escape |  | N |
 | Export the typeset PDF of a LaTeX file | Shift Command S |  |  |
-| Find across the whole folder | Shift Command F |  |  |
+| Find across the whole folder | Shift Command F | Ctrl Shift F |  |
 | Find in the current file | Command F | Ctrl F |  |
 | Find next, find previous | Command G, Shift Command G |  |  |
 | Focus the editor | Command 1 |  |  |

@@ -27,6 +27,9 @@ compared with the macOS app, and the order to do it in, see `HANDOFF.md`.
 - `src/Terminal.{h,cpp}` — VTE terminal panel, behind `MINICODE_ENABLE_TERMINAL`.
 - `src/Browser.{h,cpp}` — WebKitGTK browser panel, behind
   `MINICODE_ENABLE_BROWSER`.
+- `src/Search.{h,cpp}` — Find in Folder (Ctrl+Shift+F): a window with a
+  search entry and a list of matches. The search itself is
+  `../src/FolderSearch.{h,cpp}`, run on a GTask worker thread.
 - `src/Palette.h` — the dark color palette, mirrored from the macOS build.
 - `resources/org.minicode.Editor.desktop.in` — the desktop launcher, with the
   binary path filled in at configure time from the install prefix.
