@@ -12,6 +12,9 @@
 #include "SyntaxHighlighter.h"
 #include "ThemeCss.h"
 #include "LineComments.h"
+#include "PageWords.h"
+#include "LatexDoc.h"
+#include "SyncTex.h"
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -314,6 +317,129 @@ void testThemeCss() {
     CHECK(!has(tx, "window.minicode-window.background"));       // text alone: opaque
 }
 
+// ------------------------------------------------------------ PageWords
+
+// Lay text out as poppler would report it: one box per character, 6 points
+// wide and 10 tall, each line 14 points below the last; a newline gets a
+// zero-width box at the end of its line.
+static PageText layOut(const std::string &utf8) {
+    std::vector<PageBox> boxes;
+    double x = 72, y = 72;
+    for (const std::string &ch : chars(utf8)) {
+        PageBox b;
+        if (ch == "\n") {
+            b.x1 = b.x2 = x; b.y1 = y; b.y2 = y + 10;
+            boxes.push_back(b);
+            x = 72; y += 14;
+            continue;
+        }
+        b.x1 = x; b.x2 = x + 6; b.y1 = y; b.y2 = y + 10;
+        boxes.push_back(b);
+        x += 6;
+    }
+    return PageText(utf8, boxes);
+}
+
+// The middle of character i's box.
+static PageClick clickChar(const PageText &t, size_t i) {
+    const PageBox &b = t.box(i);
+    return t.clickAt((b.x1 + b.x2) / 2, (b.y1 + b.y2) / 2);
+}
+
+static void testPageWords() {
+    GROUP("pagewords:basic");
+    const PageText t = layOut("Hello, world of text\nsecond line");
+    CHECK(t.size() == 32);
+    CHECK(t.charAt(72 + 3, 77) == 0);
+    CHECK(t.charAt(10, 10) == std::string::npos);          // the margin
+    PageClick c = clickChar(t, 8);                            // the "o" of world
+    CHECK(c.kind == PageClick::Kind::Word);
+    CHECK(c.word == "world");
+    CHECK(c.before == "Hello, ");
+    CHECK(c.after == " of text\nsecond line");
+    CHECK(c.start == 7 && c.end == 12);
+    c = clickChar(t, 5);                                      // the comma
+    CHECK(c.kind == PageClick::Kind::Line);
+    CHECK(c.word == "Hello, world of text");
+    c = clickChar(t, 6);                                      // the space
+    CHECK(c.kind == PageClick::Kind::Line);
+    CHECK(t.clickAt(10, 10).kind == PageClick::Kind::Nothing);
+    const auto w = t.words();
+    CHECK(w.size() == 6);
+    CHECK(t.slice(w[0].first, w[0].second) == "Hello");
+    CHECK(t.slice(w[5].first, w[5].second) == "line");
+
+    GROUP("pagewords:context");
+    std::string longLine;
+    for (int i = 0; i < 20; ++i) longLine += "abc ";
+    longLine += "target";
+    for (int i = 0; i < 20; ++i) longLine += " xyz";
+    const PageText l = layOut(longLine);
+    c = clickChar(l, 80);
+    CHECK(c.word == "target");
+    CHECK(c.before.size() == PageText::kContext);
+    CHECK(c.after.size() == PageText::kContext);
+
+    GROUP("pagewords:unicode");
+    // Ligatures, accents and other scripts are word characters; the word
+    // and its context come back as UTF-8.
+    const PageText u = layOut("e\xEF\xAC\x83" "cient r\xC3\xA9sum\xC3\xA9 \xCE\xB1\xCE\xB2 \xE2\x80\xA2 end");
+    c = clickChar(u, 1);
+    CHECK(c.word == "e\xEF\xAC\x83" "cient");
+    c = clickChar(u, 8);
+    CHECK(c.word == "r\xC3\xA9sum\xC3\xA9");
+    CHECK(c.before == "e\xEF\xAC\x83" "cient ");
+    c = clickChar(u, 15);
+    CHECK(c.word == "\xCE\xB1\xCE\xB2");
+    c = clickChar(u, 18);                                     // the bullet
+    CHECK(c.kind == PageClick::Kind::Line);
+
+    GROUP("pagewords:apostrophe");
+    const PageText a = layOut("don't 'quoted' l\xE2\x80\x99" "\xC3\xA9t\xC3\xA9");
+    CHECK(clickChar(a, 0).word == "don't");
+    CHECK(clickChar(a, 4).word == "don't");
+    CHECK(clickChar(a, 8).word == "quoted");                  // quotes are not letters
+    CHECK(clickChar(a, 6).kind == PageClick::Kind::Line);
+    CHECK(clickChar(a, 15).word == "l\xE2\x80\x99\xC3\xA9t\xC3\xA9");
+
+    GROUP("pagewords:hyphenation");
+    const PageText h = layOut("the counterrevolu-\ntionaries marched");
+    c = clickChar(h, 6);                                      // first half
+    CHECK(c.word == "counterrevolutionaries");
+    CHECK(c.before == "the ");
+    CHECK(c.after == " marched");
+    c = clickChar(h, 20);                                     // second half
+    CHECK(c.word == "counterrevolutionaries");
+    CHECK(c.before == "the ");
+    CHECK(c.after == " marched");
+    // A hyphen inside a line joins nothing.
+    const PageText k = layOut("well-known words");
+    c = clickChar(k, 1);
+    CHECK(c.word == "well");
+    CHECK(c.after == "-known words");
+    std::string wd = "abc", be = "x-\n", af = "";
+    joinHyphenation(&wd, &be, &af);
+    CHECK(wd == "xabc" && be.empty());
+    wd = "abc"; be = "-\n"; af = "-";                         // nothing to join
+    joinHyphenation(&wd, &be, &af);
+    CHECK(wd == "abc" && be == "-\n" && af == "-");
+
+    GROUP("pagewords:span");
+    // Without SyncTeX lines nothing is near, so every click refuses; a click
+    // on no text refuses before the matcher is even asked.
+    const LatexDoc doc = LatexDoc::parse("\\documentclass{article}\n\\begin{document}\n"
+                                         "Hello world of text\n\\end{document}\n");
+    const SyncTexIndex none = SyncTexIndex::parse("");
+    PageClick seen;
+    CHECK(latexSpanAtPoint(doc, none, 0, t, 1, 10, 10, nullptr, &seen) == nullptr);
+    CHECK(seen.kind == PageClick::Kind::Nothing);
+    CHECK(latexSpanAtPoint(doc, none, 0, t, 1, 72 + 8 * 6 + 3, 77, nullptr, &seen) == nullptr);
+    CHECK(seen.word == "world");
+    // Boxes and characters that disagree in number are cut to the shorter.
+    const PageText cut("abc", {PageBox{0, 0, 5, 5}});
+    CHECK(cut.size() == 1);
+}
+
 int main() {
     std::printf("Running MiniCode Linux port tests...\n\n");
     testAscii();
@@ -325,6 +451,7 @@ int main() {
     testRealSources();
     testUtf16();
     testThemeCss();
+    testPageWords();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

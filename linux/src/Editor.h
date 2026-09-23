@@ -13,6 +13,7 @@
 #include "SyntaxHighlighter.h"
 
 class MediaView;
+class LatexPreview;
 
 class Editor {
 public:
@@ -51,11 +52,20 @@ public:
     std::string titleSuffix() const;
     MediaView* media() const { return media_; }
 
-    // Toggle between the raw editable buffer and the rendered Markdown preview.
-    // No-op unless the current file is Markdown.
+    // Toggle between the raw editable buffer and the rendered Markdown preview,
+    // or for LaTeX between the source and the typeset pages. No-op for other
+    // files.
     void togglePreview();
     bool isMarkdown() const { return isMarkdown_; }
     bool inPreview() const { return preview_; }
+    // A .tex/.ltx/.latex file, in a build with poppler: it opens in the LaTeX
+    // preview (Latex.h), which takes the slot while the buffer keeps the
+    // source. latex() is null until the first one opens.
+    bool isLatex() const { return isLatex_; }
+    LatexPreview* latex() const { return latex_; }
+    // Ctrl+Shift+S: save the typeset PDF somewhere of the user's choosing.
+    // False when the open file is not LaTeX.
+    bool exportPdf(GtkWindow* parent);
 
     const std::string& currentPath() const { return path_; }
     bool dirty() const { return dirty_ && !readOnly_; }
@@ -146,6 +156,7 @@ private:
     static void onMotion(GtkEventControllerMotion* m, double x, double y, gpointer self);
 
     void showTextSlot();                 // the text view back in the slot
+    void showLatex(bool on);             // the LaTeX preview in the slot, or the source
     static void onMediaChanged(void* self);   // reloaded from disk
 
     GtkWidget*     slot_     = nullptr;   // GtkStack: scroller_ or the media view
@@ -159,6 +170,8 @@ private:
     std::string ext_;         // lowercase, no dot
     std::string source_;      // authoritative UTF-8 source text
     bool        isMarkdown_ = false;
+    bool        isLatex_    = false;
+    LatexPreview* latex_    = nullptr;
     bool        preview_    = false;
     bool        dirty_      = false;
     bool        tagsReady_  = false;

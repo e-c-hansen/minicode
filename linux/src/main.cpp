@@ -243,6 +243,8 @@ static void updateTitle(void* userp) {
     // Nothing to save while an image, a PDF or a binary file is shown.
     if (GAction* save = g_action_map_lookup_action(G_ACTION_MAP(app->window), "save"))
         g_simple_action_set_enabled(G_SIMPLE_ACTION(save), app->editor->canSave());
+    if (GAction* exp = g_action_map_lookup_action(G_ACTION_MAP(app->window), "exportpdf"))
+        g_simple_action_set_enabled(G_SIMPLE_ACTION(exp), app->editor->isLatex());
     gtk_label_set_text(GTK_LABEL(app->statusLabel), p.empty() ? "Ready" : p.c_str());
 }
 
@@ -430,6 +432,12 @@ static void act_open(GSimpleAction*, GVariant*, gpointer userp) {
 
 static void act_save(GSimpleAction*, GVariant*, gpointer userp) {
     saveCurrent(static_cast<App*>(userp));
+}
+
+// Ctrl+Shift+S: the typeset PDF of a LaTeX file, as on the Mac (Shift+Cmd+S).
+static void act_export_pdf(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    app->editor->exportPdf(GTK_WINDOW(app->window));
 }
 
 static void act_toggle_preview(GSimpleAction*, GVariant*, gpointer userp) {
@@ -883,6 +891,11 @@ static std::string hintsText(App* app) {
         s += std::string("Ctrl Shift P   Markdown    (") +
              (app->editor->inPreview() ? "rendered" : "source") + ")\n";
     }
+    if (app->editor->isLatex()) {
+        s += std::string("Ctrl Shift P   LaTeX       (") +
+             (app->editor->inPreview() ? "preview" : "source") + ")\n";
+        s += "Ctrl Shift S   Export PDF\n";
+    }
 
     s += "\nCtrl Shift H   Hide these hints";
     return s;
@@ -995,6 +1008,7 @@ static void buildMenu(App* app) {
     GMenu* top = g_menu_new();
     g_menu_append(top, "Open Folder…", "win.open");
     g_menu_append(top, "Save", "win.save");
+    g_menu_append(top, "Export PDF…", "win.exportpdf");
     g_menu_append_section(fileMenu, nullptr, G_MENU_MODEL(top));
     g_object_unref(top);
     GMenuModel* treeItems = treeActionsMenu();
@@ -1041,6 +1055,7 @@ static void setAccels(App* app) {
     struct { const char* action; const char* accel; } binds[] = {
         {"win.open",            "<Ctrl>o"},
         {"win.save",            "<Ctrl>s"},
+        {"win.exportpdf",       "<Ctrl><Shift>s"},
         {"win.newfile",         "<Ctrl><Alt>n"},
         {"win.newfolder",       "<Ctrl><Shift>n"},
         {"win.find",            "<Ctrl>f"},
@@ -1194,6 +1209,7 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     // Actions, menu, accelerators.
     addAction(app, "open",           G_CALLBACK(act_open));
     addAction(app, "save",           G_CALLBACK(act_save));
+    addAction(app, "exportpdf",      G_CALLBACK(act_export_pdf));
     addAction(app, "newfile",        G_CALLBACK(act_new_file));
     addAction(app, "newfolder",      G_CALLBACK(act_new_folder));
     addAction(app, "rename",         G_CALLBACK(act_rename));

@@ -456,6 +456,19 @@ bool PdfView::pageAtPoint(double x, double y, int* page, double* px, double* py)
     return false;
 }
 
+bool PdfView::pagePointIn(GtkWidget* target, int page, double px, double py,
+                          double* x, double* y) const {
+    if (page < 0 || page >= (int)pages_.size()) return false;
+    const Page& p = pages_[page];
+    const graphene_point_t in = GRAPHENE_POINT_INIT((float)(px * p.wPx / p.wPts),
+                                                    (float)(py * p.hPx / p.hPts));
+    graphene_point_t out;
+    if (!gtk_widget_compute_point(p.area, target, &in, &out)) return false;
+    *x = out.x;
+    *y = out.y;
+    return true;
+}
+
 void PdfView::onPressed(GtkGestureClick*, int n, double x, double y, gpointer selfp) {
     PdfView* self = static_cast<PdfView*>(selfp);
     if (!self->clickCb_) return;
