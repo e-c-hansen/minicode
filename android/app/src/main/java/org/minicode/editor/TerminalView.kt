@@ -39,6 +39,7 @@ class TerminalView @JvmOverloads constructor(
     }
     private val fillPaint = Paint()
     private val cursorPaint = Paint().apply { color = Palette.ACCENT; alpha = 140 }
+    private val linkPaint = Paint().apply { color = Palette.ACCENT; strokeWidth = 2f }
     private val ui = Handler(Looper.getMainLooper())
 
     private var pty: Pty? = null
@@ -100,8 +101,99 @@ class TerminalView @JvmOverloads constructor(
     private fun snapshot() {
         redrawQueued.set(false)
         val session = pty ?: return
-        screen = session.snapshot()
+        screen = session.snapshot().also { links = findLinks(it) }
         invalidate()
+    }
+
+    // --------------------------------------------------------------- links
+
+    /**
+     * A file reference or URL on screen that a tap opens. The core's
+     * TermLinks finds them; a file counts only if it exists, resolved against
+     * the directory of the prompt above it, then against `linkDirs`.
+     */
+    class Link(val row: Int, val first: Int, val end: Int,
+               val file: java.io.File?, val url: String?,
+               val line: Int, val column: Int)
+
+    /** Where relative paths are looked for after the prompt's directory. */
+    var linkDirs: () -> List<String> = { emptyList() }
+
+    /** Called when a link is tapped. */
+    var onLink: ((Link) -> Unit)? = null
+
+    private var links: List<Link> = emptyList()
+
+    /**
+     * The phone's /system/bin/sh (mksh) prints its directory in the prompt,
+     * ":/storage/emulated/0/mc $ ", and sends no OSC 7, so the prompt is the
+     * best record of where each command ran.
+     */
+    private val promptPattern = Regex("""^:?(/[^ ]*) [$#] """)
+
+    private fun rowCells(s: Pty.Screen, row: Int) = IntArray(s.cols) { col ->
+        val cp = s.codePoint(row, col)
+        // 0 after a wide character is its right half, otherwise a blank.
+        if (cp == 0 && col > 0 && s.flags(row, col - 1) and Pty.CELL_WIDE != 0) -1 else cp
+    }
+
+    private fun rowText(cells: IntArray) = buildString {
+        for (cp in cells) if (cp >= 0) appendCodePoint(if (cp == 0) ' '.code else cp)
+    }
+
+    private fun findLinks(s: Pty.Screen): List<Link> {
+        val out = mutableListOf<Link>()
+        var promptDir: String? = null
+        val dirs = linkDirs()
+        for (row in 0 until s.rows) {
+            val cells = rowCells(s, row)
+            promptPattern.find(rowText(cells))?.let { promptDir = it.groupValues[1] }
+            for (l in Core.termLinksIn(cells)) {
+                if (!l.isFile) {
+                    out += Link(row, l.first, l.end, null, l.target, 0, 0)
+                    continue
+                }
+                val file = resolve(l.target, listOfNotNull(promptDir) + dirs) ?: continue
+                out += Link(row, l.first, l.end, file, null, l.line, l.column)
+            }
+        }
+        return out
+    }
+
+    /** `~/` is the last of `dirs`, which MainActivity makes the shell's home. */
+    private fun resolve(path: String, dirs: List<String>): java.io.File? {
+        val expanded = if (path.startsWith("~/"))
+            (dirs.lastOrNull() ?: return null) + path.substring(1) else path
+        val candidates = if (expanded.startsWith("/")) listOf(java.io.File(expanded))
+                         else dirs.map { java.io.File(it, expanded) }
+        return candidates.firstOrNull { it.isFile }
+    }
+
+    private val gestures = android.view.GestureDetector(context,
+        object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: android.view.MotionEvent) = true
+            override fun onSingleTapUp(e: android.view.MotionEvent): Boolean {
+                val link = linkAt(e.x, e.y)
+                if (link != null) { onLink?.invoke(link); return true }
+                // Anywhere else a tap is what it always was: focus and keys.
+                requestFocus()
+                (context.getSystemService(Context.INPUT_METHOD_SERVICE)
+                        as android.view.inputmethod.InputMethodManager)
+                    .showSoftInput(this@TerminalView, 0)
+                return true
+            }
+        })
+
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: android.view.MotionEvent): Boolean =
+        gestures.onTouchEvent(event) || super.onTouchEvent(event)
+
+    private fun linkAt(x: Float, y: Float): Link? {
+        val cellWidth = paint.measureText("M")
+        val lineHeight = paint.fontSpacing
+        val row = ((y - paddingTop) / lineHeight).toInt()
+        val col = ((x - paddingLeft) / cellWidth).toInt()
+        return links.firstOrNull { it.row == row && col >= it.first && col < it.end }
     }
 
     // ------------------------------------------------------------ measuring
@@ -154,6 +246,13 @@ class TerminalView @JvmOverloads constructor(
                 pen.color = ink
                 canvas.drawText(String(Character.toChars(cp)), left, top + baseline, pen)
             }
+        }
+        // Links are underlined in the accent colour: on a touch screen there
+        // is no hover to find them by.
+        for (l in links) {
+            val y = paddingTop + (l.row + 1) * lineHeight - 1.5f
+            canvas.drawLine(paddingLeft + l.first * cellWidth, y,
+                            paddingLeft + l.end * cellWidth, y, linkPaint)
         }
         // The cursor is a block, as it is in the other ports, and hidden
         // when the program hides it (vim does while it redraws).

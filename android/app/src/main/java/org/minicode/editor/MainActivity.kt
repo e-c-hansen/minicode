@@ -70,6 +70,14 @@ class MainActivity : AppCompatActivity() {
         ui.up.setOnClickListener { goUp() }
         ui.menu.setOnClickListener { showMenu() }
 
+        // Tapping a file reference or URL in the terminal opens it. Relative
+        // paths are tried in the shell's folder, then the open one, then the
+        // shell's home, which is last because `~/` means it.
+        ui.terminal.linkDirs = {
+            listOfNotNull(shellFolder, folderPath()?.path, filesDir.absolutePath).distinct()
+        }
+        ui.terminal.onLink = ::openTerminalLink
+
         ui.editor.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {
@@ -486,6 +494,41 @@ class MainActivity : AppCompatActivity() {
 
     /** Opens a file by path, for go-to-definition into another file. */
     fun openPath(file: File) = openEntry(DocumentFile.fromFile(file))
+
+    /**
+     * A tapped terminal link: a URL goes to the browser pane, a file to the
+     * editor with the caret on the line and column the compiler named.
+     */
+    private fun openTerminalLink(link: TerminalView.Link) {
+        link.url?.let { url ->
+            if (!browserShowing) toggleBrowser()
+            navigate(url)
+            return
+        }
+        val file = link.file ?: return
+        confirmLeave {
+            terminalShowing = false
+            openPath(file)
+            if (currentFile?.uri?.path == file.path && link.line > 0) {
+                ui.editor.post { moveCaretTo(link.line, link.column) }
+            }
+            updateTitle()
+        }
+    }
+
+    /** 1-based line and column; 0 for the column means the line's start. */
+    private fun moveCaretTo(line: Int, column: Int) {
+        val text = ui.editor.text ?: return
+        var at = 0
+        repeat(line - 1) {
+            val nl = text.indexOf('\n', at)
+            if (nl < 0) return@repeat
+            at = nl + 1
+        }
+        val lineEnd = text.indexOf('\n', at).let { if (it < 0) text.length else it }
+        ui.editor.requestFocus()
+        ui.editor.setSelection((at + maxOf(column - 1, 0)).coerceAtMost(lineEnd))
+    }
 
     override fun onDestroy() {
         lsp.shutdown()

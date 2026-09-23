@@ -97,6 +97,23 @@ can be edited in MiniCode and built or committed from either terminal.
 Granting access while the terminal is open moves it into the folder as soon
 as you return from Settings.
 
+### Tapping links in the terminal
+
+A file reference or URL printed in the terminal is underlined in the accent
+colour, and tapping it opens it: `src/main.cpp:42:7` from a compiler,
+`File "run.py", line 17` from Python, `app.ts(12,5)` from TypeScript, or a
+plain path, in the editor with the caret on that line and column; a URL in
+the browser pane. A tap anywhere else focuses the terminal as before.
+
+Finding them is the core's `TermLinks` (`src/TermLinks.cpp`, tested in
+`run_tests.cpp`), through `links_jni.cpp`, which takes a row as one code
+point per cell so the answer comes back in cells. A file is underlined only
+if it exists. Relative paths are resolved against the directory in the
+prompt above them first: the phone's `/system/bin/sh` is mksh, which sends
+no OSC 7 but prints its directory in the prompt (`:/storage/emulated/0/mc $ `).
+After that come the shell's folder, the open folder, and the shell's home,
+which `~/` means. A link that wraps onto the next row is not found.
+
 ### Alt, symbols and Meta in the terminal
 
 On the Titan 2 the digits and most symbols (`| > & ~ -` and the rest) are
@@ -288,7 +305,10 @@ Run it from the repository root; the tests read a few files from `demo/`,
   leader, the menu.
 - `CodeEditText.kt` — the editor field: no composing, and the leader's letter.
 - `TerminalView.kt` — draws the grid, sends keys. Declares TYPE_NULL so
-  keyboards send keys rather than composing words.
+  keyboards send keys rather than composing words. Also finds, underlines
+  and opens tapped links.
+- `app/src/main/cpp/links_jni.cpp` — the core's TermLinks over one row of
+  cells.
 - `Pty.kt`, `Core.kt` — the native declarations and the shared palette.
 - `Highlighter.kt` — keeps the editor's color spans current, an edit at a
   time, fed from the editor's TextWatcher.

@@ -14,6 +14,7 @@ add_library(minicode SHARED
     terminal_jni.cpp
     latex_jni.cpp
     lsp_jni.cpp
+    links_jni.cpp
     ${CORE}/SyntaxHighlighter.cpp
     ${CORE}/MarkdownParser.cpp
     ${CORE}/LineComments.cpp
@@ -23,7 +24,8 @@ add_library(minicode SHARED
     ${CORE}/LatexDoc.cpp
     ${CORE}/SyncTex.cpp
     ${CORE}/Json.cpp
-    ${CORE}/LspClient.cpp)
+    ${CORE}/LspClient.cpp
+    ${CORE}/TermLinks.cpp)
 
 target_include_directories(minicode PRIVATE ${CORE})
 target_compile_options(minicode PRIVATE -Wall -Wextra)

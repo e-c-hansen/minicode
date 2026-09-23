@@ -47,6 +47,25 @@ object Core {
     const val MD_ORDERED = 1 shl 11
     fun mdListDepth(flags: Int) = (flags shr 12) and 0xF
 
+    /**
+     * What a tap can open in one terminal row: `cells` is a code point per
+     * column (-1 for the right half of a wide character). See links_jni.cpp.
+     */
+    private external fun termLinks(cells: IntArray): Array<Any>
+
+    class TermLink(val isFile: Boolean, val first: Int, val end: Int,
+                   val target: String, val line: Int, val column: Int)
+
+    fun termLinksIn(cells: IntArray): List<TermLink> {
+        val parts = termLinks(cells)
+        val spans = parts[0] as IntArray
+        @Suppress("UNCHECKED_CAST") val targets = parts[1] as Array<String>
+        return targets.indices.map { i ->
+            TermLink(spans[i * 5] == 1, spans[i * 5 + 1], spans[i * 5 + 2],
+                     targets[i], spans[i * 5 + 3], spans[i * 5 + 4])
+        }
+    }
+
     /** Styles in the order of TokenStyle in src/SyntaxHighlighter.h. */
     const val PLAIN = 0
     const val KEYWORD = 1
