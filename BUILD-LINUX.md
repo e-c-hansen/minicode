@@ -179,6 +179,53 @@ Verified by running it:
     folder is now a list the tree keeps itself, from its own `GFileMonitor`.
     Creating, renaming and deleting files and folders from outside the app,
     including renaming an expanded folder, all show up.
+- The LaTeX preview (September 2026, on the ThinkPad under GNOME Wayland,
+  poppler-glib 26.01, tectonic 0.17.0). A temporary test hook, since
+  removed, drove the real code paths in the running app, launched under its
+  own application id with a scratch settings folder and a scratch tectonic
+  cache, on scratch copies of the documents. 55 checks passed, plus 3 and 2
+  in separate runs:
+  - With no tectonic anywhere, opening `notes.tex` shows the message and a
+    Download… button. Pressing it (its real "clicked" signal) downloaded the
+    pinned release into `~/.local/share/minicode/bin` (that copy is now
+    installed on the ThinkPad), byte for byte the published build, left no
+    archive behind, and typeset the document. With a stand-in `curl` that
+    writes junk, the download is refused for its checksum, nothing is
+    installed, and Download… is offered again.
+  - `demo/paper/notes.tex` (1 page) and `tests/latex/torture.tex` (2 pages)
+    typeset; the pages, rendered with `PdfView::renderPage`, and snapshots
+    of the widget were looked at. The hidden sibling is gone after each run
+    and the file on disk never changed.
+  - Every word of both documents was double-clicked at its first, middle
+    and last character by emitting the page view's click gesture with a
+    press count of 2, and the popover's text judged against the word:
+    notes.tex 185 right, 0 refused, 0 wrong; torture.tex 1,083 right,
+    8 refused (text from `\newcommand` bodies, refused on purpose), 0 wrong.
+    Single characters (49 and 5) are counted apart, as on the Mac; see
+    `linux/HANDOFF.md` item 7 for what happens to them. The harness,
+    `tests/latex/sweep-linux.sh`, gives the same counts without the GUI.
+  - A double-click on "Summary" opens a popover titled "Editing text" holding
+    `Summary.`; on "draft", its list item with Add item. A click in the
+    margin opens nothing and says so.
+  - Saving an edit replaces exactly the span's bytes in the buffer, marks it
+    unsaved, can be undone in one step, and typesets at once; the new text
+    is on the page and opens again when clicked. Add item writes a new
+    `\item` after the clicked one, indented like it. A click while the PDF
+    is behind the buffer opens nothing. An undefined command shows the log
+    with "Did not typeset — see the log", and undoing it brings the pages
+    back.
+  - The scroll position (page 2, 150 points down) stayed put through a
+    retypeset. Ctrl+Shift+P switches to the editable source and back. The
+    PDF for export comes back at once when current, and after a typeset
+    when the source view has unsaved typing, containing it.
+  - A rename keeps the pages clickable, and the next typeset uses the new
+    sibling name. Closing the file (what Open Folder does) and opening a text
+    file both take the preview away; with unsaved preview edits, opening
+    another file asks "Save changes?" first.
+  - Quitting while tectonic runs stops it and removes the hidden sibling;
+    killing the app with SIGKILL takes tectonic with it (checked with a
+    stand-in that sleeps 31 seconds). Only a killed app leaves the sibling
+    behind.
 
 Not verified:
 
@@ -192,7 +239,14 @@ Not verified:
   raises the main window when a match is opened (the editor is made the
   window's focus widget, but activating a window is up to the compositor).
   For the file tree it includes F2 and Delete, a real right-click, and what
-  the popovers and alerts look like and where they sit.
+  the popovers and alerts look like and where they sit. For the LaTeX
+  preview it includes a real double-click, Return, Shift+Return and Escape
+  in the popover, Ctrl+Z in the preview, Ctrl+Shift+S, and the Export PDF
+  save dialog and the file it writes (the bytes handed to it were checked,
+  the dialog was never opened).
+- Where the LaTeX popover sits and how it looks on screen. A snapshot of the
+  popover widget looked right, but its placement over the clicked text was
+  not seen.
 - How the Find in Folder window looks. Nothing in it was seen on screen.
 - How images and PDFs look to a person: the checks above read pixels back
   from the widget, not from the screen. A build without poppler was compiled
@@ -268,7 +322,14 @@ Notes on package names, which drift between Ubuntu versions:
   `webkitgtk-6.0`). Older Ubuntu used `libwebkit2gtk-4.1-dev` with a different
   API; that will not work with this code as written.
 - `libpoppler-glib-dev` provides the PDF viewer (pkg-config module
-  `poppler-glib`). Without it a PDF shows the "Cannot display" message.
+  `poppler-glib`). Without it a PDF shows the "Cannot display" message, and
+  a `.tex` file opens as plain source, with no LaTeX preview.
+- The LaTeX preview typesets with [tectonic](https://tectonic-typesetting.github.io/),
+  a separate program, not a build dependency. MiniCode uses `MINICODE_TECTONIC`,
+  then `~/.local/share/minicode/bin/tectonic`, then one on your PATH, and if
+  there is none the preview offers to download the official 0.17.0 build
+  (about 10 MB, checked against its published checksum) into
+  `~/.local/share/minicode/bin`. It needs `curl` or `wget` and `tar` for that.
 
 If you only install `libgtk-4-dev`, the core viewer still builds, images
 included. The terminal, the browser and the PDF viewer are compiled out
@@ -399,7 +460,8 @@ applies a picked color when you press Select, rather than live while you drag.
 | Ctrl Shift N      | New folder                 |
 | Ctrl F            | Find in the current file   |
 | Ctrl Shift F      | Find in the folder         |
-| Ctrl Shift P      | Toggle Markdown preview    |
+| Ctrl Shift P      | Toggle the Markdown or LaTeX preview |
+| Ctrl Shift S      | Export the typeset PDF of a LaTeX file |
 | Ctrl Shift H      | Show or hide the shortcut hints |
 | Ctrl B            | Toggle the sidebar         |
 | Ctrl Shift E      | Collapse or restore the editor |
