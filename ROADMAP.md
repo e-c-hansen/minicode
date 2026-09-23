@@ -29,7 +29,8 @@ Images open in the editor pane on macOS: an `NSImageView`, scaled to fit and
 never enlarged, with the pixel size in the title bar. Still to do:
 
 - Zoom and scroll for large images, and a checkerboard behind transparency.
-- The Linux port (`GtkPicture`).
+- Linux has images (a `GtkPicture`) and PDFs (poppler-glib) since September
+  2026; zoom is missing there too.
 - Video and audio (mp4, mov, m4v, mp3, wav, ...): play with an `AVPlayerView`
   from AVKit, which is a macOS system framework. Transport controls come for
   free. It routes the same way images do, by extension in `openFileAtPath:`.

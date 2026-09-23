@@ -7,6 +7,7 @@
 #include "SyntaxHighlighter.h"
 #include "LineComments.h"
 #include "Utf8Offsets.h"
+#include "MediaView.h"
 
 #include <algorithm>
 #include <cctype>
@@ -72,6 +73,17 @@ Editor::Editor() {
     g_signal_connect(buffer_, "begin-user-action", G_CALLBACK(onBeginUserAction), this);
     g_signal_connect(buffer_, "end-user-action", G_CALLBACK(onEndUserAction), this);
 
+    // Images and PDFs take the editor's slot, the way the macOS build swaps
+    // an NSImageView or PDFView in for the text view.
+    media_ = new MediaView();
+    media_->setChangedCallback(onMediaChanged, this);
+    slot_ = gtk_stack_new();
+    gtk_widget_set_hexpand(slot_, TRUE);
+    gtk_widget_set_vexpand(slot_, TRUE);
+    gtk_stack_add_named(GTK_STACK(slot_), scroller_, "text");
+    gtk_stack_add_named(GTK_STACK(slot_), media_->widget(), "media");
+    gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
+
     ensureTags();
     showMessage("\n  MiniCode — a native C++ editor, now on GTK4\n\n"
                 "  - Select a file in the sidebar to view it\n"
@@ -82,6 +94,7 @@ Editor::Editor() {
 
 Editor::~Editor() {
     g_signal_handlers_disconnect_by_data(buffer_, this);
+    delete media_;
 }
 
 // ---------------------------------------------------------------- tags
@@ -148,8 +161,32 @@ void Editor::ensureTags() {
 // ---------------------------------------------------------------- file I/O
 
 bool Editor::openFile(const std::string& path) {
+    // Whatever was shown before goes, so a stale picture can never sit over
+    // the next file, and nothing from it can be saved.
+    showTextSlot();
+    readOnly_ = false;
+    // Images and PDFs are routed by extension before any attempt to read them
+    // as text. One that will not decode falls through to "Cannot display".
+    if ((MediaView::isImagePath(path) || MediaView::isPdfPath(path)) && media_->show(path)) {
+        path_ = path;
+        source_.clear();
+        ext_ = extOf(path);
+        isMarkdown_ = false;
+        preview_ = false;
+        readOnly_ = true;
+        showMessage("");   // the hidden text view holds nothing
+        markDirty(false);
+        gtk_stack_set_visible_child(GTK_STACK(slot_), media_->widget());
+        if (titleCb_) titleCb_(titleUser_);
+        return true;
+    }
+
     std::ifstream f(path, std::ios::binary);
-    if (!f) { showMessage(std::string("\n  Could not open: ") + path); return false; }
+    if (!f) {
+        readOnly_ = true;   // the buffer now holds this message, not a file
+        showMessage(std::string("\n  Could not open: ") + path);
+        return false;
+    }
     std::ostringstream ss;
     ss << f.rdbuf();
     std::string content = ss.str();
@@ -166,6 +203,7 @@ bool Editor::openFile(const std::string& path) {
         ext_.clear();
         isMarkdown_ = false;
         preview_ = false;
+        readOnly_ = true;   // the message is not the file: never save it over it
         markDirty(false);
         showMessage("\n  Cannot display “" + base + "”.\n\n"
                     "  (Binary file or unsupported encoding.)");
@@ -186,6 +224,7 @@ bool Editor::openFile(const std::string& path) {
 
 bool Editor::save() {
     if (path_.empty()) return false;
+    if (readOnly_) return true;   // an image, a PDF or a binary file: nothing to write
     // In preview mode the buffer holds rendered text; persist source_ instead.
     if (!preview_) {
         GtkTextIter a, b;
@@ -240,6 +279,20 @@ bool Editor::revealLine(int line, std::size_t byteColumn, std::size_t byteLength
                                  0.1, TRUE, 0.0, 0.3);
     gtk_widget_grab_focus(view_);
     return true;
+}
+
+bool Editor::isMedia() const { return media_->kind() != MediaView::Kind::None; }
+
+std::string Editor::titleSuffix() const { return media_->titleSuffix(); }
+
+void Editor::showTextSlot() {
+    media_->clear();
+    gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
+}
+
+void Editor::onMediaChanged(void* selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    if (self->titleCb_) self->titleCb_(self->titleUser_);   // page count may differ
 }
 
 // ---------------------------------------------------------------- buffer fills

@@ -235,8 +235,12 @@ static void updateTitle(void* userp) {
         auto slash = p.find_last_of('/');
         std::string base = slash == std::string::npos ? p : p.substr(slash + 1);
         title = "MiniCode — " + base + (app->editor->dirty() ? " *" : "");
+        title += app->editor->titleSuffix();   // pixel size or page count
     }
     gtk_window_set_title(GTK_WINDOW(app->window), title.c_str());
+    // Nothing to save while an image, a PDF or a binary file is shown.
+    if (GAction* save = g_action_map_lookup_action(G_ACTION_MAP(app->window), "save"))
+        g_simple_action_set_enabled(G_SIMPLE_ACTION(save), app->editor->canSave());
     gtk_label_set_text(GTK_LABEL(app->statusLabel), p.empty() ? "Ready" : p.c_str());
 }
 

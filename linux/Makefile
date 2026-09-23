@@ -3,7 +3,8 @@
 #   make                     # core viewer: tree + editor + markdown (GTK4 only)
 #   make TERMINAL=1          # add the VTE terminal panel
 #   make BROWSER=1           # add the WebKitGTK browser panel
-#   make TERMINAL=1 BROWSER=1
+#   make PDF=1               # add the PDF viewer (poppler-glib)
+#   make TERMINAL=1 BROWSER=1 PDF=1
 #   make run DIR=~/some/dir
 #   make clean
 #
@@ -21,11 +22,11 @@ BIN      := $(BUILD)/minicode
 CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp \
         ../src/Settings.cpp ../src/LineComments.cpp ../src/FolderSearch.cpp
 
-# GUI sources. Terminal.cpp / Browser.cpp are always listed but compile to
-# nothing unless their feature macro is defined.
+# GUI sources. Terminal.cpp / Browser.cpp / PdfView.cpp are always listed but
+# compile to nothing unless their feature macro is defined.
 GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Markdown.cpp \
        src/Terminal.cpp src/Browser.cpp src/AppSettings.cpp src/ThemeCss.cpp \
-       src/Search.cpp
+       src/Search.cpp src/MediaView.cpp src/PdfView.cpp
 
 SRCS := $(GUI) $(CORE)
 
@@ -39,6 +40,10 @@ endif
 ifeq ($(BROWSER),1)
   PKGS += webkitgtk-6.0
   DEFS += -DMINICODE_ENABLE_BROWSER
+endif
+ifeq ($(PDF),1)
+  PKGS += poppler-glib
+  DEFS += -DMINICODE_ENABLE_PDF
 endif
 
 # Lazily expanded (=, not :=) so `make test`, which needs no GTK, does not

@@ -379,8 +379,9 @@ against a scripted server in `run_tests.cpp`; `Lsp.mm` owns processes and UI.
   currently is. It has a file list, editor, Markdown preview, images, PDFs, a
   terminal on a real shell, and a browser. Missing: language servers, the
   LaTeX preview, project search, comment toggling. See `android/README.md`.
-- **Linux** has incremental highlighting now (September 2026); the LaTeX
-  preview, the LSP client and media viewing are still macOS only there.
+- **Linux** has incremental highlighting, images and PDFs, and Find in Folder
+  now (September 2026); the LaTeX preview and the LSP client are still macOS
+  only there.
   `linux/HANDOFF.md` lists what to do, in order, with the Mac and GTK
   pieces for each.
 - The user's phone is a Unihertz Titan 2 (Android 16, 576 by 640 dp, hardware
@@ -441,9 +442,9 @@ edit, and a PDF would show only its first page.
   an image or PDF to a text file left the image on screen; it now always
   relays out. The user asked that test windows not pop up while they work:
   ask before running one, and don't activate the app from a test.
-- Not yet: zoom and scrolling for large images, and the Linux side
-  (`linux/src/Editor.cpp`, the `g_utf8_validate` branch; `GtkPicture` is the
-  equivalent).
+- Not yet: zoom and scrolling for large images. Linux has images and PDFs
+  since September 2026 (`linux/src/MediaView.cpp`, `linux/src/PdfView.cpp`;
+  see `linux/HANDOFF.md`, item 4).
 
 ## Demo GIFs (`make demos`)
 

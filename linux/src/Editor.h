@@ -12,13 +12,16 @@
 #include "Settings.h"
 #include "SyntaxHighlighter.h"
 
+class MediaView;
+
 class Editor {
 public:
     Editor();
     ~Editor();
 
-    // The scrolled widget to drop into the layout.
-    GtkWidget* widget() const { return scroller_; }
+    // The widget to drop into the layout: a stack holding the text editor
+    // and the image / PDF viewer, which take the same slot.
+    GtkWidget* widget() const { return slot_; }
 
     // The GtkTextView / GtkTextBuffer themselves, for the shell's find bar.
     GtkWidget*     textView() const { return view_; }
@@ -29,7 +32,19 @@ public:
     bool openFile(const std::string& path);
 
     // Write the current buffer (or the raw source, in preview mode) to disk.
+    // When the slot shows something that is not the file's text (an image, a
+    // PDF, the "Cannot display" message) there is nothing to save: it writes
+    // nothing and returns true.
     bool save();
+    // False while an image, a PDF or a binary file's message is shown.
+    bool canSave() const { return !path_.empty() && !readOnly_; }
+
+    // Images and PDFs (MediaView). isMedia() is true while one is shown, and
+    // titleSuffix() is what the window title adds for it ("  640 × 480",
+    // "  12 pages"), empty otherwise.
+    bool isMedia() const;
+    std::string titleSuffix() const;
+    MediaView* media() const { return media_; }
 
     // Toggle between the raw editable buffer and the rendered Markdown preview.
     // No-op unless the current file is Markdown.
@@ -124,6 +139,12 @@ private:
     static void onPressed(GtkGestureClick* g, int n, double x, double y, gpointer self);
     static void onMotion(GtkEventControllerMotion* m, double x, double y, gpointer self);
 
+    void showTextSlot();                 // the text view back in the slot
+    static void onMediaChanged(void* self);   // reloaded from disk
+
+    GtkWidget*     slot_     = nullptr;   // GtkStack: scroller_ or the media view
+    MediaView*     media_    = nullptr;
+    bool           readOnly_ = false;     // the buffer is not the file's text
     GtkWidget*     scroller_ = nullptr;
     GtkWidget*     view_     = nullptr;   // GtkTextView
     GtkTextBuffer* buffer_   = nullptr;
