@@ -21,7 +21,8 @@ BIN      := $(BUILD)/minicode
 # Shared portable core (never copied — compiled straight from ../src).
 CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp \
         ../src/Settings.cpp ../src/LineComments.cpp ../src/FolderSearch.cpp \
-        ../src/LatexDoc.cpp ../src/SyncTex.cpp
+        ../src/LatexDoc.cpp ../src/SyncTex.cpp \
+        ../src/Json.cpp ../src/LspClient.cpp
 
 # GUI sources. Terminal.cpp / Browser.cpp / PdfView.cpp and the LaTeX preview's
 # LatexClick.cpp / Latex.cpp are always listed but compile to nothing unless
@@ -29,7 +30,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp \
 GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Markdown.cpp \
        src/Terminal.cpp src/Browser.cpp src/AppSettings.cpp src/ThemeCss.cpp \
        src/Search.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \
-       src/LatexClick.cpp src/Latex.cpp
+       src/LatexClick.cpp src/Latex.cpp src/Lsp.cpp
 
 SRCS := $(GUI) $(CORE)
 

@@ -166,9 +166,9 @@ make run opens the current directory, and make run DIR=~/some/project opens anot
 
 ## Linux
 
-The Linux version, in the linux folder, is built on GTK4. It shares the portable C++ core with the macOS app, so syntax highlighting, the Markdown parser, the settings file and comment toggling behave the same on both. Around that core it has a file tree with the Mac's right click menu, the editor, the Markdown preview, per-panel colors and transparency from the same settings file, a terminal panel built on VTE, and a WebKitGTK browser panel. It is developed on Ubuntu 26.04, and CI builds and tests it alongside the macOS app on every change to main. Shortcuts use Control where the Mac uses Command.
+The Linux version, in the linux folder, is built on GTK4. It shares the portable C++ core with the macOS app, so syntax highlighting, the Markdown parser, the settings file and comment toggling behave the same on both. Around that core it has a file tree with the Mac's right click menu, the editor, the Markdown preview, per-panel colors and transparency from the same settings file, a terminal panel built on VTE, a WebKitGTK browser panel, images and PDFs in the editor, Find in Folder, and the same language server client as the Mac, with squiggles, completion, hover and go to definition. It is developed on Ubuntu 26.04, and CI builds and tests it alongside the macOS app on every change to main. Shortcuts use Control where the Mac uses Command.
 
-It is catching up on the newer features. Incremental highlighting, image and PDF viewing, Find in Folder and the LaTeX preview have come over; the LaTeX preview typesets with tectonic, offers to download it into ~/.local/share/minicode/bin if it is missing, lets you edit by double clicking the page, and exports the PDF with Ctrl Shift S. The language server client is still macOS only. The terminal needs no catching up, since VTE is already a full terminal emulator.
+It also has the LaTeX preview: it typesets with tectonic, offers to download tectonic into ~/.local/share/minicode/bin if it is missing, lets you edit by double clicking the page, and exports the PDF with Ctrl Shift S. The terminal needs no catching up, since VTE is already a full terminal emulator.
 
 To build it on Ubuntu:
 
@@ -226,14 +226,14 @@ The same actions on each platform, sorted by name. A blank cell means that port 
 | Close the application | Shift Command W |  |  |
 | Close the window | Command W |  |  |
 | Comment or uncomment the selected lines | Command / | Ctrl / |  |
-| Complete the word at the cursor, with a language server | Control Space, or Option Escape |  | N |
+| Complete the word at the cursor, with a language server | Control Space, or Option Escape | Ctrl Space | N |
 | Export the typeset PDF of a LaTeX file | Shift Command S | Ctrl Shift S |  |
 | Find across the whole folder | Shift Command F | Ctrl Shift F |  |
 | Find in the current file | Command F | Ctrl F |  |
 | Find next, find previous | Command G, Shift Command G |  |  |
 | Focus the editor | Command 1 |  |  |
 | Focus the file tree | Command 0 | Ctrl 0 |  |
-| Go to definition | F12, or Command click (F12 may need fn on a laptop) |  | G |
+| Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G |
 | Jump to the previous file | Control Tab |  |  |
 | Move the selected file to the Trash | Command Delete | Delete, in the file tree |  |
 | New file | Control Command N | Ctrl Alt N |  |
@@ -246,7 +246,7 @@ The same actions on each platform, sorted by name. A blank cell means that port 
 | Rename the selected file or folder |  | F2, in the file tree |  |
 | Save | Command S | Ctrl S | S |
 | Show or hide dotfiles | Shift Command . | Ctrl H |  |
-| Show the type and documentation under the cursor | Command I |  | K |
+| Show the type and documentation under the cursor | Command I | Ctrl I | K |
 | Toggle the browser | Shift Command B | Ctrl Shift B | B |
 | Toggle the editor, giving its space to the terminal and browser | Shift Command E | Ctrl Shift E |  |
 | Toggle the file list or sidebar | Command B | Ctrl B | F |

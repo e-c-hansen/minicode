@@ -293,6 +293,7 @@ bool Editor::save(std::string* error) {
         return false;
     }
     markDirty(false);
+    if (observer_) observer_->documentSaved();
     return true;
 }
 
@@ -444,6 +445,21 @@ void Editor::loadRawIntoBuffer() {
     GtkTextIter start;
     gtk_text_buffer_get_start_iter(buffer_, &start);
     gtk_text_buffer_place_cursor(buffer_, &start);
+    notifyDocument();
+}
+
+void Editor::notifyDocument() {
+    if (observer_) observer_->documentChanged(sourceMode_ ? path_ : std::string());
+}
+
+std::string Editor::text() const {
+    if (hl_ && !bulk_) return mirror_;
+    GtkTextIter a, b;
+    gtk_text_buffer_get_bounds(buffer_, &a, &b);
+    char* raw = gtk_text_buffer_get_text(buffer_, &a, &b, TRUE);
+    std::string s = raw ? raw : "";
+    g_free(raw);
+    return s;
 }
 
 void Editor::showMessage(const std::string& msg) {
@@ -457,6 +473,7 @@ void Editor::showMessage(const std::string& msg) {
     gtk_text_buffer_get_bounds(buffer_, &a, &b);
     gtk_text_buffer_apply_tag_by_name(buffer_, "plainmsg", &a, &b);
     g_signal_handlers_unblock_by_func(buffer_, (gpointer)onBufferChanged, this);
+    notifyDocument();
 }
 
 // ---------------------------------------------------------------- highlighting
@@ -800,14 +817,19 @@ void Editor::onDeleteRange(GtkTextBuffer*, GtkTextIter* start, GtkTextIter* end,
 
 // Inside a user action the retag waits for its end, so a delete-then-insert
 // (typing over a selection, a paste) retags once.
-void Editor::onInsertTextAfter(GtkTextBuffer*, GtkTextIter*, char*, int, gpointer selfp) {
+// The observer hears about each edit here too, once the buffer has changed
+// (never for a refill: sourceMode_ is off while the buffer is being set).
+void Editor::onInsertTextAfter(GtkTextBuffer*, GtkTextIter*, char* text, int len,
+                               gpointer selfp) {
     Editor* self = static_cast<Editor*>(selfp);
     if (!self->inAction_) self->flushHighlighting();
+    if (self->observer_ && self->sourceMode_) self->observer_->textEdited(text, len);
 }
 
 void Editor::onDeleteRangeAfter(GtkTextBuffer*, GtkTextIter*, GtkTextIter*, gpointer selfp) {
     Editor* self = static_cast<Editor*>(selfp);
     if (!self->inAction_) self->flushHighlighting();
+    if (self->observer_ && self->sourceMode_) self->observer_->textEdited(nullptr, 0);
 }
 
 // GtkTextBuffer emits these for the outermost begin/end pair only.
@@ -844,9 +866,11 @@ void Editor::setPath(const std::string& path) {
 #ifdef MINICODE_ENABLE_PDF
     if (isLatex_ && latex_) latex_->setPath(path);   // the preview follows the rename
 #endif
-    if (ext == ext_ && wasSettings == isSettingsFile()) return;
-    ext_ = ext;
-    if (sourceMode_) startHighlighting();
+    if (ext != ext_ || wasSettings != isSettingsFile()) {
+        ext_ = ext;
+        if (sourceMode_) startHighlighting();
+    }
+    notifyDocument();   // a new name is a new document to a language server
 }
 
 // ---------------------------------------------------------------- settings
@@ -1109,6 +1133,7 @@ void Editor::renderPreview() {
     GtkTextIter start;
     gtk_text_buffer_get_start_iter(buffer_, &start);
     gtk_text_buffer_place_cursor(buffer_, &start);
+    notifyDocument();
 }
 
 // ---------------------------------------------------------------- dirty state

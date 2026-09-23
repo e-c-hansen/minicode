@@ -57,8 +57,9 @@ left, roughly in order of value:
 - Completion that opens while typing an identifier, not only after `.`, `->`
   and `::` or Ctrl+Space.
 - A problems list for the whole folder, and a way back after go to definition.
-- The Linux port: the core (`Json`, `LspClient`) is portable; it needs a
-  GTK front end (GSubprocess for the server, GtkPopover for the list).
+- The Linux port has it too (September 2026, `linux/src/Lsp.cpp`: GSubprocess,
+  tags for the squiggles, a GtkPopover for the list). Checked against clangd
+  at run time; how it looks and the real key presses still need a person.
 
 ## Editor niceties
 

@@ -19,6 +19,8 @@ core_sources = [
   core_dir / 'FolderSearch.cpp',
   core_dir / 'LatexDoc.cpp',
   core_dir / 'SyncTex.cpp',
+  core_dir / 'Json.cpp',
+  core_dir / 'LspClient.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -34,6 +36,7 @@ gui_sources = [
   'src/AppSettings.cpp',
   'src/ThemeCss.cpp',
   'src/Search.cpp',
+  'src/Lsp.cpp',
   'src/MediaView.cpp',
   # PdfView.cpp is #ifdef-guarded like Terminal.cpp and Browser.cpp, and so
   # are the LaTeX preview's two files, which need poppler too.
