@@ -60,9 +60,10 @@ class MainActivity : AppCompatActivity() {
         ui.editor.typeface = android.graphics.Typeface.MONOSPACE
         ui.editor.privateImeOptions = "nm"   // numeric/no-prediction hint some IMEs honour
 
+        setTextSize(getSharedPreferences("minicode", MODE_PRIVATE).getInt("textSize", 13))
+
         ui.fileList.layoutManager = LinearLayoutManager(this)
         ui.fileList.adapter = files
-        ui.openFolder.setOnClickListener { pickFolder.launch(null) }
         ui.up.setOnClickListener { goUp() }
         ui.menu.setOnClickListener { showMenu() }
 
@@ -119,8 +120,8 @@ class MainActivity : AppCompatActivity() {
         val entries = dir.listFiles().sortedWith(
             compareBy({ !it.isDirectory }, { it.name?.lowercase() ?: "" }))
         files.submit(entries)
-        ui.path.text = dir.name ?: "/"
         ui.up.visibility = if (dir.uri == folder?.uri) View.GONE else View.VISIBLE
+        updateTitle()
     }
 
     private fun goUp() {
@@ -187,15 +188,21 @@ class MainActivity : AppCompatActivity() {
 
     private fun showList(show: Boolean) {
         ui.fileList.visibility = if (show) View.VISIBLE else View.GONE
-        ui.listBar.visibility = if (show) View.VISIBLE else View.GONE
         ui.editor.visibility = if (show) View.GONE else View.VISIBLE
+        ui.up.visibility =
+            if (show && current?.uri != folder?.uri) View.VISIBLE else View.GONE
         if (!show) ui.editor.requestFocus()
+        updateTitle()
     }
 
+    /** One line of chrome: the folder while listing, the file while editing. */
     private fun updateTitle() {
         val waiting = if (leaderArmed) "  …" else ""
-        ui.title.text = (if (dirty) "● " else "") +
-                (currentFile?.name ?: "MiniCode") + waiting
+        val showingList = ui.fileList.visibility == View.VISIBLE
+        val name = if (showingList) (current?.name ?: folder?.name ?: "MiniCode")
+                   else (currentFile?.name ?: "MiniCode")
+        val mark = if (!showingList && dirty) "● " else ""
+        ui.title.text = mark + name + waiting
     }
 
     /**
@@ -339,17 +346,39 @@ class MainActivity : AppCompatActivity() {
      * for some letters.
      */
     private fun showMenu() {
-        val items = arrayOf("Save", "Files or editor", "Open a folder", "Shortcuts")
+        val items = arrayOf("Save", "Files or editor", "Open a folder",
+                            "Text size", "Shortcuts")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> save()
                     1 -> showList(ui.fileList.visibility != View.VISIBLE)
                     2 -> pickFolder.launch(null)
-                    3 -> showShortcuts()
+                    3 -> chooseTextSize()
+                    4 -> showShortcuts()
                 }
             }
             .show()
+    }
+
+    /**
+     * How large the code is, which matters more on a phone than anywhere
+     * else: at 13sp with the system font scale at 1.3, this screen fits
+     * about 43 columns, and every step costs or buys a few.
+     */
+    private fun chooseTextSize() {
+        val sizes = arrayOf(10, 11, 12, 13, 14, 16)
+        val labels = sizes.map { "$it sp" }.toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Text size")
+            .setItems(labels) { _, which -> setTextSize(sizes[which]) }
+            .show()
+    }
+
+    private fun setTextSize(sp: Int) {
+        ui.editor.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sp.toFloat())
+        getSharedPreferences("minicode", MODE_PRIVATE).edit()
+            .putInt("textSize", sp).apply()
     }
 
     /** The equivalent of the Mac app's Shift+Cmd+H panel, for a phone. */
@@ -401,9 +430,11 @@ class FileListAdapter(private val onClick: (DocumentFile) -> Unit) :
     class Row(val text: TextView) : RecyclerView.ViewHolder(text)
 
     override fun onCreateViewHolder(parent: android.view.ViewGroup, type: Int): Row {
+        val dp = parent.resources.displayMetrics.density
         val text = TextView(parent.context).apply {
-            setPadding(32, 24, 32, 24)
-            textSize = 16f
+            setPadding((12 * dp).toInt(), (8 * dp).toInt(),
+                       (12 * dp).toInt(), (8 * dp).toInt())
+            textSize = 15f
             setTextColor(Palette.TEXT)
         }
         return Row(text)
