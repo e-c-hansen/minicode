@@ -89,7 +89,7 @@
         android:layout_weight="1"
         android:background="#252526" />
 
-    <EditText
+    <org.minicode.editor.CodeEditText
         android:id="@+id/editor"
         android:layout_width="match_parent"
         android:layout_height="0dp"

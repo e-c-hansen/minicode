@@ -49,6 +49,17 @@ class MainActivity : AppCompatActivity() {
         ui = ActivityMainBinding.inflate(layoutInflater)
         setContentView(ui.root)
 
+        // Ask the keyboard for plain keys: no autocorrect, no suggestions and
+        // no composing region. Without this the keyboard composes words and
+        // commits them in one go ("xys" for one keypress), which swallows
+        // letters a shortcut needs and rewrites code as though it were prose.
+        ui.editor.inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
+                android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        ui.editor.typeface = android.graphics.Typeface.MONOSPACE
+        ui.editor.privateImeOptions = "nm"   // numeric/no-prediction hint some IMEs honour
+
         ui.fileList.layoutManager = LinearLayoutManager(this)
         ui.fileList.adapter = files
         ui.openFolder.setOnClickListener { pickFolder.launch(null) }
@@ -182,7 +193,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateTitle() {
-        ui.title.text = (if (dirty) "● " else "") + (currentFile?.name ?: "MiniCode")
+        val waiting = if (leaderArmed) "  …" else ""
+        ui.title.text = (if (dirty) "● " else "") +
+                (currentFile?.name ?: "MiniCode") + waiting
     }
 
     /**
@@ -206,12 +219,56 @@ class MainActivity : AppCompatActivity() {
         }
         // Swallow the release of a key whose press was a shortcut, or the
         // text field sees a stray key-up.
-        if (event.action == KeyEvent.ACTION_UP && handled.remove(event.keyCode)) return true
+        if (event.action == KeyEvent.ACTION_UP) {
+            if (event.keyCode in LEADER_KEYS) leaderHeld = false
+            if (handled.remove(event.keyCode)) return true
+        }
         return super.dispatchKeyEvent(event)
     }
 
     private val handled = mutableSetOf<Int>()
     private var lastLeaderPress = 0L
+    private var leaderHeld = false
+    private var leaderArmed = false
+    private var whenWindowCloses: Runnable? = null
+
+    /**
+     * A leader press arms for a moment: a letter typed inside that window is
+     * a shortcut rather than text, and nothing typed means the press was a
+     * plain pane switch. The title bar shows the wait with an ellipsis.
+     */
+    private fun arm() {
+        leaderArmed = true
+        updateTitle()
+        val close = Runnable {
+            whenWindowCloses = null
+            leaderArmed = false
+            updateTitle()
+            showList(ui.fileList.visibility != View.VISIBLE)
+        }
+        whenWindowCloses = close
+        ui.title.postDelayed(close, LEADER_WINDOW)
+    }
+
+    private fun cancelLeader() {
+        whenWindowCloses?.let { ui.title.removeCallbacks(it) }
+        whenWindowCloses = null
+        leaderArmed = false
+        updateTitle()
+    }
+
+    /**
+     * The letter after a leader press. On this class of phone the keyboard
+     * reaches the editor through the input method, so the letter arrives as
+     * committed text rather than as a key event; CodeEditText hands it here
+     * before it can be inserted.
+     */
+    fun leaderLetter(letter: Char): Boolean {
+        if (!leaderArmed) return false
+        cancelLeader()
+        leaderActions()[letter.lowercaseChar()]?.invoke()
+        return true
+    }
 
     /**
      * Shortcuts on a phone keyboard, which has no Ctrl, Esc or Tab.
@@ -247,23 +304,20 @@ class MainActivity : AppCompatActivity() {
 
         if (event.keyCode in LEADER_KEYS) {
             // One press of this key sends a burst of key-downs on a Titan 2
-            // (a hundred of them in the log), so anything within a fifth of
-            // a second is the same press.
-            val now = event.eventTime
-            if (event.repeatCount == 0 && now - lastLeaderPress > 200) {
-                if (now - lastLeaderPress < 700) {   // a second press: the menu
-                    pendingSwap?.let { ui.title.removeCallbacks(it) }
-                    pendingSwap = null
+            // (a hundred of them in the log). The release separates one
+            // press from the next, so a down while the key is still held is
+            // part of the same press, however fast the presses come.
+            if (!leaderHeld) {
+                leaderHeld = true
+                val now = event.eventTime
+                if (now - lastLeaderPress < LEADER_WINDOW) {
+                    cancelLeader()
                     showMenu()
                 } else {
-                    // A single press swaps panes, but only once it is clear
-                    // that no second press is coming.
-                    val swapLater = Runnable { pendingSwap = null; swap() }
-                    pendingSwap = swapLater
-                    ui.title.postDelayed(swapLater, 700)
+                    arm()
                 }
+                lastLeaderPress = now
             }
-            lastLeaderPress = now
             handled.add(event.keyCode)
             return true
         }
@@ -301,13 +355,16 @@ class MainActivity : AppCompatActivity() {
     /** The equivalent of the Mac app's Shift+Cmd+H panel, for a phone. */
     private fun showShortcuts() {
         val lines = listOf(
-            "The key left of right Shift:",
-            "once      Files or editor",
-            "twice     This menu",
+            "The key left of right Shift, then:",
+            "S      Save",
+            "B      Files or editor",
+            "O      Open a folder",
+            "H      This list",
             "",
-            "The ⋮ button does the same.",
-            "A USB or Bluetooth keyboard can use",
-            "Ctrl S, Ctrl B, Ctrl O and Ctrl H.")
+            "That key alone switches panes,",
+            "twice opens this menu, and the ⋮",
+            "button does the same. On a USB or",
+            "Bluetooth keyboard, Ctrl works too.")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Shortcuts")
             .setMessage(lines.joinToString(System.lineSeparator()))
@@ -324,6 +381,9 @@ class MainActivity : AppCompatActivity() {
          */
         private val LEADER_KEYS = setOf(403, KeyEvent.KEYCODE_MENU,
                                         KeyEvent.KEYCODE_FUNCTION)
+
+        /** How long a leader press waits for a letter, in milliseconds. */
+        const val LEADER_WINDOW = 700L
     }
 }
 
