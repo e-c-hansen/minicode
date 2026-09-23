@@ -14,6 +14,10 @@
 #include <sstream>
 #include <cstdlib>
 #include <climits>
+#include <cerrno>
+#include <cstring>
+#include <sys/stat.h>
+#include <unistd.h>
 
 // ---------------------------------------------------------------- helpers
 
@@ -63,6 +67,10 @@ Editor::Editor() {
     g_signal_connect(buffer_, "changed", G_CALLBACK(onBufferChanged), this);
 
     ensureTags();
+    showWelcome();
+}
+
+void Editor::showWelcome() {
     showMessage("\n  MiniCode — a native C++ editor, now on GTK4\n\n"
                 "  - Select a file in the sidebar to view it\n"
                 "  - Source files are syntax-highlighted by type\n"
@@ -138,7 +146,17 @@ void Editor::ensureTags() {
 
 bool Editor::openFile(const std::string& path) {
     std::ifstream f(path, std::ios::binary);
-    if (!f) { showMessage(std::string("\n  Could not open: ") + path); return false; }
+    if (!f) {
+        // The message now stands in for the file; nothing may be saved from it.
+        path_ = path;
+        source_.clear();
+        ext_.clear();
+        isMarkdown_ = false;
+        preview_ = false;
+        markDirty(false);
+        showMessage(std::string("\n  Could not open: ") + path);
+        return false;
+    }
     std::ostringstream ss;
     ss << f.rdbuf();
     std::string content = ss.str();
@@ -173,8 +191,11 @@ bool Editor::openFile(const std::string& path) {
     return true;
 }
 
-bool Editor::save() {
-    if (path_.empty()) return false;
+bool Editor::save(std::string* error) {
+    // A message (welcome text, "Cannot display", "Could not open") is not the
+    // file's contents. Saving it used to write the message over the file, which
+    // for a binary file destroyed it.
+    if (path_.empty() || showingMessage_) return true;
     // In preview mode the buffer holds rendered text; persist source_ instead.
     if (!preview_) {
         GtkTextIter a, b;
@@ -183,12 +204,50 @@ bool Editor::save() {
         source_ = txt ? txt : "";
         g_free(txt);
     }
-    std::ofstream out(path_, std::ios::binary);
-    if (!out) return false;
-    out << source_;
-    out.close();
+
+    // Write through a symlink to the file it names (a dotfile repo links its
+    // files into place), and keep the file's permissions. The write itself is
+    // atomic, a temporary file renamed over the old one, so a full disk or a
+    // crash midway leaves the previous contents intact, as the macOS build's
+    // writeToFile:atomically: does. A read-only file is refused rather than
+    // quietly replaced by that rename.
+    char* resolved = realpath(path_.c_str(), nullptr);
+    const std::string target = resolved ? resolved : path_;
+    free(resolved);
+    int mode = 0666;
+    struct stat st;
+    if (stat(target.c_str(), &st) == 0) {
+        mode = st.st_mode & 07777;
+        if (access(target.c_str(), W_OK) != 0) {
+            if (error) *error = std::string("The file is not writable: ") + strerror(errno);
+            return false;
+        }
+    }
+    GError* err = nullptr;
+    if (!g_file_set_contents_full(target.c_str(), source_.data(), (gssize)source_.size(),
+                                  G_FILE_SET_CONTENTS_CONSISTENT, mode, &err)) {
+        if (error) *error = err ? err->message : "Unknown error";
+        g_clear_error(&err);
+        return false;
+    }
     markDirty(false);
     return true;
+}
+
+void Editor::closeFile() {
+    path_.clear();
+    source_.clear();
+    ext_.clear();
+    isMarkdown_ = false;
+    preview_ = false;
+    markDirty(false);
+    showWelcome();
+    if (titleCb_) titleCb_(titleUser_);
+}
+
+void Editor::setPath(const std::string& path) {
+    path_ = path;
+    if (titleCb_) titleCb_(titleUser_);
 }
 
 // ---------------------------------------------------------------- buffer fills
@@ -221,6 +280,7 @@ void Editor::setProseFont(bool prose) {
 void Editor::loadRawIntoBuffer() {
     // Temporarily block change signals so filling the buffer doesn't mark dirty.
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
+    showingMessage_ = false;
     setProseFont(false);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), TRUE);
     gtk_text_buffer_set_text(buffer_, source_.c_str(), (int)source_.size());
@@ -235,6 +295,7 @@ void Editor::loadRawIntoBuffer() {
 
 void Editor::showMessage(const std::string& msg) {
     ensureTags();
+    showingMessage_ = true;
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
     setProseFont(true);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), FALSE);
@@ -528,6 +589,7 @@ void Editor::togglePreview() {
 }
 
 void Editor::renderPreview() {
+    showingMessage_ = false;
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
     setProseFont(true);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), FALSE);

@@ -41,7 +41,7 @@ done. Keep the rules from `../CLAUDE.md`: no third-party dependencies beyond
 the system libraries a distribution ships, logic in `../src` with tests, and
 the GUI kept thin.
 
-### 1. Check data safety first
+### 1. Check data safety first (done, September 2026)
 
 Before adding features, confirm the basics that were never verified on Linux
 (`BUILD-LINUX.md`, "Not verified"): saving, the Open Folder dialog, creating
@@ -53,7 +53,23 @@ Done when: an edited file cannot be lost by opening another file, opening a
 folder or closing the window, and a failed save leaves the buffer marked
 unsaved.
 
-### 2. File tree actions
+What was found, each confirmed by running the old code before fixing it:
+opening another file dropped the edits without a word; clicking the open file
+in the tree reloaded it from disk over its edits; Ctrl+S on a binary file
+wrote the "Cannot display" message over it (12 bytes became 74); a failed
+save reported success and cleared the unsaved mark; and New File opened its
+new file over an edited buffer. Now `confirmUnsaved` in `main.cpp` asks
+"Save changes?" (GtkAlertDialog: Save, Don't Save, Cancel) before opening
+another file, before Ctrl+O, and on the window's `close-request`; the Mac's
+`-confirmProceedPastUnsavedChanges` is the model. `Editor::save` reports
+failure with a reason, which is shown in an alert, and writes atomically.
+Open Folder closes the old file, as the Mac does.
+
+Runtime-verified with a temporary hook (see `BUILD-LINUX.md`). Not seen by a
+person yet: the alerts themselves, and the real Open Folder dialog, which the
+test never opened.
+
+### 2. File tree actions (done, September 2026)
 
 The Mac has New File, New Folder, Rename, Move to Trash, Reveal and Copy Path
 in the tree's right-click menu and the File menu (`src/EditorController.mm`).
@@ -69,6 +85,24 @@ Linux creates `untitled.txt` in the root and has no rename (`main.cpp`,
 
 Done when: every item works from the menu and the tree, a renamed open file
 stays open under its new name, and trashing the open file resets the editor.
+
+All six are in the File menu and the tree's right-click menu, built from one
+`GMenuModel` (`treeActionsMenu` in `main.cpp`); the actions are `act_new_file`,
+`act_new_folder`, `act_rename`, `act_trash`, `act_reveal` and
+`act_copy_path`. `FileTree` gained `selectedPath`, `revealPath` (selects a
+row, expanding folders and retrying while rows load), `setContextMenu` and
+`askName` (the entry popover). F2 and Delete rename and trash, but only while
+the tree has focus, through a shortcut controller on the tree rather than
+window accelerators. Renaming a folder above the open file moves the open
+file's path too, which the Mac does not do.
+
+Runtime-verified with the same hook, except as follows. Driven by signals,
+not by a real mouse or keyboard: the right-click, F2 and Delete. Not run at
+all: Open Containing Folder, which would have opened a file manager window.
+Needs the user's eyes: where the popovers sit and how they look.
+
+The tree's live refresh was broken all along on GTK 4.22 (see "Traps"), and
+is fixed as part of this item.
 
 ### 3. Incremental highlighting
 
@@ -213,3 +247,21 @@ Do not claim a GUI behaviour works when it was only compiled.
 - `apt` can install a runtime library without its `-dev` package, and Meson
   then quietly builds without that panel. CI checks `pkg-config` for this;
   do the same for poppler when it is added.
+- `GtkDirectoryList` with monitoring on reports no changes on GTK 4.22.4: a
+  standalone program showed a `GFileMonitor` on the same folder receiving
+  every create, rename and delete while the list emitted nothing. The tree
+  therefore keeps each folder's list itself (`makeDirModel` in
+  `FileTree.cpp`). Do not switch back without testing a create in an
+  already-listed folder.
+- `g_file_trash` refuses anything on a tmpfs such as /tmp ("Trashing on system
+  internal mounts is not supported"). A test of Move to Trash needs its
+  scratch project on the home filesystem, with `XDG_DATA_HOME` pointed at a
+  scratch folder there so nothing reaches the user's real Trash.
+- A test launch on the ThinkPad should run under `dbus-run-session`. The app
+  is a single-instance GApplication, so a plain launch would hand its
+  arguments to whatever MiniCode is already running, the user's or another
+  session's, and exit.
+- An alert from `gtk_alert_dialog_show` (no buttons of our own) did not close
+  when its Close button was activated from a test hook; the error alerts now
+  set an OK button and use `gtk_alert_dialog_choose`, the same path as
+  "Save changes?".

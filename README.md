@@ -166,7 +166,7 @@ make run opens the current directory, and make run DIR=~/some/project opens anot
 
 ## Linux
 
-The Linux version, in the linux folder, is built on GTK4. It shares the portable C++ core with the macOS app, so syntax highlighting, the Markdown parser, the settings file and comment toggling behave the same on both. Around that core it has the file tree, the editor, the Markdown preview, per-panel colors and transparency from the same settings file, a terminal panel built on VTE, and a WebKitGTK browser panel. It is developed on Ubuntu 26.04, and CI builds and tests it alongside the macOS app on every change to main. Shortcuts use Control where the Mac uses Command.
+The Linux version, in the linux folder, is built on GTK4. It shares the portable C++ core with the macOS app, so syntax highlighting, the Markdown parser, the settings file and comment toggling behave the same on both. Around that core it has a file tree with the Mac's right click menu, the editor, the Markdown preview, per-panel colors and transparency from the same settings file, a terminal panel built on VTE, and a WebKitGTK browser panel. It is developed on Ubuntu 26.04, and CI builds and tests it alongside the macOS app on every change to main. Shortcuts use Control where the Mac uses Command.
 
 It does not have the newer features yet. The LaTeX preview, the language server client, image and PDF viewing, and incremental highlighting are macOS only for now, and bringing them over is next on the list. The terminal needs no catching up, since VTE is already a full terminal emulator.
 
@@ -235,7 +235,7 @@ The same actions on each platform, sorted by name. A blank cell means that port 
 | Focus the file tree | Command 0 | Ctrl 0 |  |
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) |  | G |
 | Jump to the previous file | Control Tab |  |  |
-| Move the selected file to the Trash | Command Delete |  |  |
+| Move the selected file to the Trash | Command Delete | Delete, in the file tree |  |
 | New file | Control Command N | Ctrl Alt N |  |
 | New folder | Shift Command N | Ctrl Shift N |  |
 | New window | Command N |  |  |
@@ -243,6 +243,7 @@ The same actions on each platform, sorted by name. A blank cell means that port 
 | Open a folder | Command O | Ctrl O | O |
 | Open the settings file | Command comma | Ctrl comma |  |
 | Refresh the file tree | Command R |  |  |
+| Rename the selected file or folder |  | F2, in the file tree |  |
 | Save | Command S | Ctrl S | S |
 | Show or hide dotfiles | Shift Command . | Ctrl H |  |
 | Show the type and documentation under the cursor | Command I |  | K |

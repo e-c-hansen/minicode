@@ -73,11 +73,63 @@ Verified by running it:
   sidebar, dotfile, terminal, browser and preview toggles were confirmed to
   change the state they claim to.
 
+- Data safety and the file tree actions (September 2026, on the ThinkPad).
+  These were driven from inside the running app by a temporary
+  `MINICODE_FILETEST` hook, since removed, which ran 44 checks against a
+  scratch project, all passing. It activated the window actions, pressed the
+  alert buttons by emitting their `clicked` signal, typed names into the name
+  popover's entry, and fired the tree's right-click gesture at a row's
+  coordinates:
+  - Opening another file with unsaved edits asks "Save changes?". Cancel
+    keeps the file open with the edits and puts the tree's selection back on
+    it; Save writes it and then switches; Don't Save switches and leaves the
+    file on disk as it was. Clicking the open file again no longer reloads it
+    from disk over its edits. Ctrl+O asks the same question before the folder
+    dialog opens, and closing the window asks too: Cancel keeps the window,
+    Don't Save closes it and the file is unchanged on disk.
+  - A failed save (a read-only file, a folder that cannot be written) keeps
+    the buffer marked unsaved, keeps the `*` in the title, and shows an alert
+    with the reason. Choosing Save in the "Save changes?" alert when the save
+    fails does not switch files. Saves are atomic now, write through symlinks
+    and keep the file's permissions. Ctrl+S on a binary file writes nothing.
+  - New File and New Folder ask for a name in a popover under the selected
+    row and create it in the selected folder, or in the selected file's
+    folder, or in the root when nothing is selected. The new item is selected
+    afterwards and a new file is opened, as on the Mac. A name that already
+    exists, or that contains `/`, gets an alert and touches nothing.
+  - Rename offers the current name with the part before the extension
+    selected. Renaming the open file, or a folder above it, keeps the buffer
+    and its unsaved edits, and the next save goes to the new path. A name
+    already taken is refused.
+  - Move to Trash asks first, and says so when the open file has unsaved
+    edits that would go with it. The file really lands in the Trash (checked
+    in a scratch `XDG_DATA_HOME`), and trashing the open file resets the
+    editor to the welcome text. On a tmpfs such as /tmp, GIO refuses to trash
+    at all ("Trashing on system internal mounts is not supported"); that shows
+    as an alert and the file stays put.
+  - Copy Path puts the selected item's absolute path on the clipboard, read
+    back from the clipboard. A right-click on a row selects it and opens the
+    menu with all six items, whose actions resolve from inside the popover; a
+    right-click on empty space clears the selection, so New File there goes
+    to the root.
+  - The tree refreshes by itself again. It turned out that on GTK 4.22
+    `GtkDirectoryList` with monitoring on never reports a change, although a
+    `GFileMonitor` on the same folder sees every one, so nothing created,
+    renamed or deleted after a folder was first listed ever showed up. Each
+    folder is now a list the tree keeps itself, from its own `GFileMonitor`.
+    Creating, renaming and deleting files and folders from outside the app,
+    including renaming an expanded folder, all show up.
+
 Not verified:
 
 - Everything driven by real keyboard and mouse input. Actions were activated
-  programmatically, which proves the wiring but not the key handling.
-- Saving, creating files and folders, and the Open Folder dialog.
+  programmatically, which proves the wiring but not the key handling. That
+  includes F2 and Delete in the tree, a real right-click, and what the
+  popovers and alerts look like and where they sit.
+- The Open Folder dialog itself, which was not opened (only the question
+  asked before it, and the re-rooting done after it).
+- Open Containing Folder, which was not run, because it opens a file manager
+  window.
 
 ### Notes on the things that were most at risk
 
@@ -98,7 +150,10 @@ re-investigates them.
 2. **The file tree model API.** `"standard::file"` is correct: GTK really does
    set that attribute on every `GFileInfo` a `GtkDirectoryList` produces. Lazy
    expansion through `create_child` works, and the filter and factory callback
-   signatures are unchanged.
+   signatures are unchanged. What did not hold up, found later, was
+   `GtkDirectoryList`'s own monitoring, which reports no changes on GTK 4.22;
+   the tree now fills each folder's list itself (see above) and sets the same
+   attribute.
 
 3. **VTE and WebKit.** `vte_terminal_spawn_async` and the `webkitgtk-6.0` entry
    points all work as written; neither needed a change. The terminal spawns
@@ -272,3 +327,10 @@ applies a picked color when you press Select, rather than live while you drag.
 | Ctrl Shift B      | Toggle the browser panel   |
 | Ctrl H            | Show or hide dotfiles      |
 | Ctrl 0            | Focus the file tree        |
+| F2                | Rename the selected item, in the tree |
+| Delete            | Move the selected item to the Trash, in the tree |
+
+F2 and Delete work only while the file tree has the keyboard, so Delete in the
+editor still deletes text. The tree's right-click menu and the File menu both
+have New File, New Folder, Rename, Move to Trash, Open Containing Folder and
+Copy Path.

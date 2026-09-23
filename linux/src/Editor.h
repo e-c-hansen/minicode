@@ -25,7 +25,19 @@ public:
     bool openFile(const std::string& path);
 
     // Write the current buffer (or the raw source, in preview mode) to disk.
-    bool save();
+    // Returns false, with the reason in *error, when the write failed; the
+    // buffer then stays marked unsaved. With nothing to save (no file, or a
+    // message such as the binary-file notice on screen) it writes nothing and
+    // returns true.
+    bool save(std::string* error = nullptr);
+
+    // Close the file and show the welcome text, dropping any unsaved edits.
+    // The shell asks "Save changes?" before calling this.
+    void closeFile();
+
+    // The open file was renamed or moved on disk: keep the buffer, dirty state
+    // and all, and save to the new path from now on.
+    void setPath(const std::string& path);
 
     // Toggle between the raw editable buffer and the rendered Markdown preview.
     // No-op unless the current file is Markdown.
@@ -43,6 +55,7 @@ public:
 
     // Show a plain gray message (welcome screen / errors), not editable.
     void showMessage(const std::string& msg);
+    void showWelcome();
 
     // Colors from the settings file: syntax and Markdown tags, and the swatches
     // shown while the settings file itself is open. The panel background and
@@ -85,6 +98,7 @@ private:
     bool        isMarkdown_ = false;
     bool        preview_    = false;
     bool        dirty_      = false;
+    bool        showingMessage_ = false;  // the buffer holds a message, not the file
     bool        tagsReady_  = false;
     guint       rehiTimer_  = 0;  // debounce id for re-highlight
 
