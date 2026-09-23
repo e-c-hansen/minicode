@@ -172,4 +172,19 @@
         android:layout_weight="1"
         android:padding="4dp"
         android:visibility="gone" />
+
+    <!-- Keys a phone keyboard lacks, for the terminal: filled in by
+         TerminalKeys.kt, shown and hidden with the terminal. -->
+    <HorizontalScrollView
+        android:id="@+id/termKeys"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:visibility="gone">
+        <LinearLayout
+            android:id="@+id/termKeyRow"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" />
+    </HorizontalScrollView>
 </LinearLayout>

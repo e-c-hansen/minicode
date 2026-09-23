@@ -114,6 +114,16 @@ no OSC 7 but prints its directory in the prompt (`:/storage/emulated/0/mc $ `).
 After that come the shell's folder, the open folder, and the shell's home,
 which `~/` means. A link that wraps onto the next row is not found.
 
+### The key row under the terminal
+
+The Titan 2's Alt layer has no pipe, backslash or backtick, and the keyboard
+app's symbol picker cannot help: the terminal declares TYPE_NULL, so there is
+no text field for it to type into. So the terminal has a row of keys under it,
+as Termux does: Esc, Tab, a sticky Ctrl (tap it, then a letter; it lights up
+while it waits), `| ~ / - \ ` & > < { } [ ]` and the arrows. The row scrolls
+sideways, and its keys never take focus, so typing stays with the shell
+(`TerminalKeys.kt`).
+
 ### Alt, symbols and Meta in the terminal
 
 On the Titan 2 the digits and most symbols (`| > & ~ -` and the rest) are

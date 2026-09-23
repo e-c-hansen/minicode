@@ -66,6 +66,9 @@ class TerminalView @JvmOverloads constructor(
     init {
         isFocusable = true
         isFocusableInTouchMode = true
+        // With a hardware keyboard Android draws a grey focus highlight over
+        // the whole focused view, which turned the terminal grey.
+        defaultFocusHighlightEnabled = false
         setBackgroundColor(Palette.BACKGROUND)
         textSizeSp = 11f
     }
@@ -305,9 +308,30 @@ class TerminalView @JvmOverloads constructor(
     private fun send(ch: Char) {
         when (ch) {
             '\n' -> pty?.press(Pty.KEY_ENTER)
-            else -> pty?.type(ch.code)
+            else -> pty?.type(ch.code, takeCtrl())
         }
     }
+
+    /**
+     * Ctrl from the key row: it applies to the next key typed, then lets go,
+     * the way a sticky modifier does on a phone. `onCtrlChanged` lets the row
+     * show whether it is waiting.
+     */
+    var ctrlArmed = false
+        set(value) { field = value; onCtrlChanged?.invoke(value) }
+    var onCtrlChanged: ((Boolean) -> Unit)? = null
+
+    private fun takeCtrl(): Int {
+        if (!ctrlArmed) return 0
+        ctrlArmed = false
+        return Pty.MOD_CTRL
+    }
+
+    /** Text from the key row, typed as if from the keyboard. */
+    fun typeText(text: String) = text.forEach { send(it) }
+
+    /** A special key from the key row (Pty.KEY_*). */
+    fun pressKey(key: Int) { pty?.press(key, takeCtrl()) }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         handleKey(event, text = true) || super.onKeyDown(keyCode, event)
@@ -334,7 +358,7 @@ class TerminalView @JvmOverloads constructor(
             else -> null
         }
         if (special != null) {
-            session.press(special, mods)
+            session.press(special, mods or takeCtrl())
             return true
         }
         val unicode = if (text) event.unicodeChar else 0
@@ -349,7 +373,7 @@ class TerminalView @JvmOverloads constructor(
                     event.metaState and KeyEvent.META_ALT_MASK.inv())
                 if (withoutAlt != unicode) mods = mods and Pty.MOD_ALT.inv()
             }
-            session.type(unicode, mods)
+            session.type(unicode, mods or takeCtrl())
             return true
         }
         return false

@@ -65,6 +65,7 @@ class MainActivity : AppCompatActivity() {
         // unsaved and typeset again like any other edit.
         ui.latex.onEdit = { start, end, text -> ui.editor.text?.replace(start, end, text) }
 
+        TerminalKeys.fill(ui.termKeyRow, ui.terminal)
         ui.fileList.layoutManager = LinearLayoutManager(this)
         ui.fileList.adapter = files
         ui.up.setOnClickListener { goUp() }
@@ -577,7 +578,7 @@ class MainActivity : AppCompatActivity() {
         if (show) { terminalShowing = false; browserShowing = false }
         ui.browser.visibility = View.GONE
         ui.fileList.visibility = if (show) View.VISIBLE else View.GONE
-        ui.terminal.visibility = View.GONE
+        ui.terminal.visibility = View.GONE; ui.termKeys.visibility = View.GONE
         val preview = !show && previewing && isPreviewable(currentFile?.name)
         val media = !show && showingMedia
         val pane = previewPane(currentFile?.name)
@@ -816,7 +817,7 @@ class MainActivity : AppCompatActivity() {
         browserShowing = !browserShowing
         if (browserShowing) {
             terminalShowing = false
-            ui.terminal.visibility = View.GONE
+            ui.terminal.visibility = View.GONE; ui.termKeys.visibility = View.GONE
             ui.fileList.visibility = View.GONE
             ui.editor.visibility = View.GONE
             ui.previewScroll.visibility = View.GONE
@@ -887,7 +888,7 @@ class MainActivity : AppCompatActivity() {
             ui.media.visibility = View.GONE
             ui.browser.visibility = View.GONE
             browserShowing = false
-            ui.terminal.visibility = View.VISIBLE
+            ui.terminal.visibility = View.VISIBLE; ui.termKeys.visibility = View.VISIBLE
             ui.terminal.onExit = {
                 if (terminalShowing) toggleTerminal()
                 ui.terminal.stop()
@@ -908,7 +909,7 @@ class MainActivity : AppCompatActivity() {
             (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
                 .showSoftInput(ui.terminal, 0)
         } else {
-            ui.terminal.visibility = View.GONE
+            ui.terminal.visibility = View.GONE; ui.termKeys.visibility = View.GONE
             showList(currentFile == null)
         }
         updateTitle()
