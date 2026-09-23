@@ -14,6 +14,30 @@ object Core {
     /** True when the core has a grammar for this file name. */
     external fun supports(filename: String): Boolean
 
+    /** Markdown as styled runs: [0] is Array<String>, [1] is IntArray. */
+    private external fun markdown(source: String): Array<Any>
+
+    class MarkdownRuns(val text: Array<String>, val flags: IntArray)
+
+    @Suppress("UNCHECKED_CAST")
+    fun markdownRuns(source: String): MarkdownRuns {
+        val parts = markdown(source)
+        return MarkdownRuns(parts[0] as Array<String>, parts[1] as IntArray)
+    }
+
+    /** The bits markdownFlags packs, matching MdRun in the core. */
+    const val MD_HEADING = 0x7
+    const val MD_BOLD = 1 shl 3
+    const val MD_ITALIC = 1 shl 4
+    const val MD_CODE = 1 shl 5
+    const val MD_CODE_BLOCK = 1 shl 6
+    const val MD_QUOTE = 1 shl 7
+    const val MD_RULE = 1 shl 8
+    const val MD_TABLE = 1 shl 9
+    const val MD_LINK = 1 shl 10
+    const val MD_ORDERED = 1 shl 11
+    fun mdListDepth(flags: Int) = (flags shr 12) and 0xF
+
     /** Styles in the order of TokenStyle in src/SyntaxHighlighter.h. */
     const val PLAIN = 0
     const val KEYWORD = 1
@@ -33,6 +57,12 @@ object Palette {
     const val MUTED = 0xFF9CA3AF.toInt()
     const val ACCENT = 0xFF4EA1F7.toInt()
     const val DIVIDER = 0xFF333333.toInt()
+
+    // Markdown, from the same defaults the other ports use.
+    const val MD_HEADING = 0xFF4EA1F7.toInt()
+    const val MD_LINK = 0xFF4EA1F7.toInt()
+    const val MD_CODE = 0xFFCE9178.toInt()
+    const val MD_QUOTE = 0xFF9CA3AF.toInt()
 
     val styles = intArrayOf(
         0xFFD4D4D4.toInt(),   // plain

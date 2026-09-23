@@ -75,6 +75,7 @@ class MainActivity : AppCompatActivity() {
                 dirty = true
                 updateTitle()
                 rehighlight()
+                if (previewing) renderPreview()
             }
         })
 
@@ -145,10 +146,43 @@ class MainActivity : AppCompatActivity() {
         ui.editor.setText(text)
         highlighting = false
         dirty = false
+        // Markdown opens rendered, as it does in the other ports.
+        previewing = isMarkdown(file.name)
         showList(false)
         updateTitle()
         rehighlight()
+        renderPreview()
     }
+
+    private fun isMarkdown(name: String?): Boolean {
+        val lower = name?.lowercase() ?: return false
+        return lower.endsWith(".md") || lower.endsWith(".markdown")
+    }
+
+    /** Shift+Cmd+P on the Mac; the leader's P here. */
+    private fun togglePreview() {
+        if (!isMarkdown(currentFile?.name)) return
+        previewing = !previewing
+        renderPreview()
+        updateTitle()
+    }
+
+    private fun renderPreview() {
+        val showPreview = previewing && isMarkdown(currentFile?.name) &&
+                ui.fileList.visibility != View.VISIBLE && !terminalShowing
+        ui.previewScroll.visibility = if (showPreview) View.VISIBLE else View.GONE
+        if (!showPreview) {
+            if (!terminalShowing && ui.fileList.visibility != View.VISIBLE) {
+                ui.editor.visibility = View.VISIBLE
+            }
+            return
+        }
+        ui.editor.visibility = View.GONE
+        ui.preview.text = Markdown.render(ui.editor.text.toString(),
+                                          resources.displayMetrics.density)
+    }
+
+    private var previewing = false
 
     /**
      * Colors the whole file from the core's tokens. This is the full pass the
@@ -190,7 +224,9 @@ class MainActivity : AppCompatActivity() {
         if (show) terminalShowing = false
         ui.fileList.visibility = if (show) View.VISIBLE else View.GONE
         ui.terminal.visibility = View.GONE
-        ui.editor.visibility = if (show) View.GONE else View.VISIBLE
+        val preview = !show && previewing && isMarkdown(currentFile?.name)
+        ui.previewScroll.visibility = if (preview) View.VISIBLE else View.GONE
+        ui.editor.visibility = if (show || preview) View.GONE else View.VISIBLE
         ui.up.visibility =
             if (show && current?.uri != folder?.uri) View.VISIBLE else View.GONE
         if (!show) ui.editor.requestFocus()
@@ -299,6 +335,7 @@ class MainActivity : AppCompatActivity() {
     private fun leaderActions(): Map<Char, () -> Unit> = mapOf(
         's' to { save() },
         'b' to { showList(ui.fileList.visibility != View.VISIBLE) },
+        'p' to { togglePreview() },
         't' to { toggleTerminal() },
         'o' to { pickFolder.launch(null) },
         'h' to { showShortcuts() },
@@ -366,17 +403,18 @@ class MainActivity : AppCompatActivity() {
      * for some letters.
      */
     private fun showMenu() {
-        val items = arrayOf("Save", "Files or editor", "Terminal",
-                            "Open a folder", "Text size", "Shortcuts")
+        val items = arrayOf("Save", "Files or editor", "Markdown preview",
+                            "Terminal", "Open a folder", "Text size", "Shortcuts")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> save()
                     1 -> showList(ui.fileList.visibility != View.VISIBLE)
-                    2 -> toggleTerminal()
-                    3 -> pickFolder.launch(null)
-                    4 -> chooseTextSize()
-                    5 -> showShortcuts()
+                    2 -> togglePreview()
+                    3 -> toggleTerminal()
+                    4 -> pickFolder.launch(null)
+                    5 -> chooseTextSize()
+                    6 -> showShortcuts()
                 }
             }
             .show()
@@ -393,6 +431,7 @@ class MainActivity : AppCompatActivity() {
         if (terminalShowing) {
             ui.fileList.visibility = View.GONE
             ui.editor.visibility = View.GONE
+            ui.previewScroll.visibility = View.GONE
             ui.terminal.visibility = View.VISIBLE
             ui.terminal.onExit = {
                 if (terminalShowing) toggleTerminal()
@@ -437,6 +476,7 @@ class MainActivity : AppCompatActivity() {
             "The key left of right Shift, then:",
             "S      Save",
             "B      Files or editor",
+            "P      Markdown preview",
             "T      Terminal",
             "O      Open a folder",
             "H      This list",

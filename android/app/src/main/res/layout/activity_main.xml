@@ -75,6 +75,25 @@
         android:visibility="gone"
         android:hint="" />
 
+    <ScrollView
+        android:id="@+id/previewScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#1E1E1E"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/preview"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="10dp"
+            android:textColor="#D4D4D4"
+            android:textSize="15sp"
+            android:lineSpacingMultiplier="1.15"
+            android:textIsSelectable="true" />
+    </ScrollView>
+
     <org.minicode.editor.TerminalView
         android:id="@+id/terminal"
         android:layout_width="match_parent"

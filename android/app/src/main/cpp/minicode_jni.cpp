@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "MarkdownParser.h"
 #include "SyntaxHighlighter.h"
 
 namespace {
@@ -116,6 +117,50 @@ Java_org_minicode_editor_Core_supports(JNIEnv *env, jclass, jstring filename) {
     return SyntaxHighlighter::supports(ExtensionOf(Utf8(env, filename)))
                ? JNI_TRUE
                : JNI_FALSE;
+}
+
+/**
+ * Markdown as a flat list of styled runs, the same list the macOS app turns
+ * into an attributed string: a String[] of the runs' text and an int[] of
+ * their packed flags, returned together so the document is parsed once and
+ * crosses the JNI boundary in two copies. What a heading or a quote looks
+ * like belongs to the platform, so that stays in Kotlin.
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_org_minicode_editor_Core_markdown(JNIEnv *env, jclass, jstring source) {
+    const std::vector<MdRun> runs = MarkdownParser::parse(Utf8(env, source));
+
+    jclass stringClass = env->FindClass("java/lang/String");
+    jobjectArray texts = env->NewObjectArray(
+        static_cast<jsize>(runs.size()), stringClass, nullptr);
+    std::vector<jint> flags(runs.size());
+    for (size_t i = 0; i < runs.size(); i++) {
+        const MdRun &r = runs[i];
+        jstring text = env->NewStringUTF(r.text.c_str());
+        env->SetObjectArrayElement(texts, static_cast<jsize>(i), text);
+        env->DeleteLocalRef(text);
+
+        jint f = r.heading & 0x7;
+        if (r.bold) f |= 1 << 3;
+        if (r.italic) f |= 1 << 4;
+        if (r.code) f |= 1 << 5;
+        if (r.codeBlock) f |= 1 << 6;
+        if (r.quote) f |= 1 << 7;
+        if (r.rule) f |= 1 << 8;
+        if (r.table) f |= 1 << 9;
+        if (r.link) f |= 1 << 10;
+        if (r.ordered) f |= 1 << 11;
+        f |= (r.listDepth & 0xF) << 12;
+        flags[static_cast<size_t>(i)] = f;
+    }
+    jintArray packed = env->NewIntArray(static_cast<jsize>(flags.size()));
+    env->SetIntArrayRegion(packed, 0, static_cast<jsize>(flags.size()), flags.data());
+
+    jobjectArray out = env->NewObjectArray(
+        2, env->FindClass("java/lang/Object"), nullptr);
+    env->SetObjectArrayElement(out, 0, texts);
+    env->SetObjectArrayElement(out, 1, packed);
+    return out;
 }
 
 }  // extern "C"
