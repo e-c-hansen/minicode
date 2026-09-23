@@ -27,11 +27,13 @@ object TerminalKeys {
         Key.Special("Esc", Pty.KEY_ESCAPE),
         Key.Special("Tab", Pty.KEY_TAB),
         Key.Ctrl,
+        // Up and Down walk the shell's history, so they come first, where
+        // the row does not need scrolling to reach them.
+        Key.Special("↑", Pty.KEY_UP), Key.Special("↓", Pty.KEY_DOWN),
         Key.Text("|"), Key.Text("~"), Key.Text("/"), Key.Text("-"),
         Key.Text("\\"), Key.Text("`"), Key.Text("&"), Key.Text(">"),
         Key.Text("<"), Key.Text("{"), Key.Text("}"), Key.Text("["), Key.Text("]"),
-        Key.Special("←", Pty.KEY_LEFT), Key.Special("↓", Pty.KEY_DOWN),
-        Key.Special("↑", Pty.KEY_UP), Key.Special("→", Pty.KEY_RIGHT),
+        Key.Special("←", Pty.KEY_LEFT), Key.Special("→", Pty.KEY_RIGHT),
     )
 
     fun fill(row: LinearLayout, terminal: TerminalView) {

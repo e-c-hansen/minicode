@@ -120,7 +120,10 @@ The Titan 2's Alt layer has no pipe, backslash or backtick, and the keyboard
 app's symbol picker cannot help: the terminal declares TYPE_NULL, so there is
 no text field for it to type into. So the terminal has a row of keys under it,
 as Termux does: Esc, Tab, a sticky Ctrl (tap it, then a letter; it lights up
-while it waits), `| ~ / - \ ` & > < { } [ ]` and the arrows. The row scrolls
+while it waits), Up and Down for the shell's history (Android's
+mksh keeps it for the session only: persistent history is compiled out of
+it, so `HISTFILE` does nothing), `| ~ / - \ ` & > < { } [ ]`,
+and Left and Right. The row scrolls
 sideways, and its keys never take focus, so typing stays with the shell
 (`TerminalKeys.kt`).
 
