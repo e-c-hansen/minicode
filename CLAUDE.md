@@ -837,6 +837,11 @@ holds, these give real runtime evidence rather than compile-only evidence:
   (`/opt/homebrew/Library/Taps/e-c-hansen/homebrew-tap`).
 - Not notarized (that needs the paid Apple Developer Program). The full sign +
   notarize flow is scripted in `scripts/sign-and-notarize.sh` for when/if paid.
+- The Android APK is attached to the same GitHub Release, signed with the
+  release key at `~/.config/minicode/release.keystore` (password in the
+  Keychain, service `minicode-android-keystore`). Every update must carry that
+  signature, so the key must never be regenerated; the user keeps a backup.
+  Users install by hand or through Obtainium; it is not on the Play Store.
 - Homebrew is the only way MiniCode updates: the app has no updater, so the
   cask must NOT declare `auto_updates`, or a plain `brew upgrade` would skip it.
 

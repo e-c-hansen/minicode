@@ -7,14 +7,20 @@
 #   2. stamps the version and checksum into Info.plist and packaging/minicode.rb,
 #      commits that, and pushes main,
 #   3. builds the zip and checks the built app reports that same version,
-#   4. publishes a GitHub Release here, tagged vVERSION, with the zip attached,
-#   5. copies packaging/minicode.rb into the tap as the live cask.
+#   4. builds the signed Android APK for the same version,
+#   5. publishes a GitHub Release here, tagged vVERSION, with the zip and the
+#      APK attached (Obtainium and people installing by hand take it from there),
+#   6. copies packaging/minicode.rb into the tap as the live cask.
 #
 # The zip ships from this repo's own Releases, next to the tag it was built
 # from; the tap holds nothing but the cask. packaging/minicode.rb is the one
 # copy of the cask that is edited: the tap's copy is written from it, so the two
 # cannot drift.
-# Requires the gh CLI, authenticated with push access to both repos.
+# Requires the gh CLI, authenticated with push access to both repos, and for
+# the APK the Android SDK, JDK 21, and the release key: the keystore at
+# ~/.config/minicode/release.keystore with its password in the Keychain
+# (service minicode-android-keystore). Every Android update must be signed with
+# that one key, so keep a backup of it. MINICODE_NO_APK=1 releases without it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -38,6 +44,16 @@ if gh release view "v$VERSION" --repo "$APP_REPO" >/dev/null 2>&1; then
     echo "error: v$VERSION is already released on $APP_REPO" >&2; exit 1
 fi
 
+APK=""
+if [ -z "${MINICODE_NO_APK:-}" ]; then
+    KEYSTORE="$HOME/.config/minicode/release.keystore"
+    if [ ! -f "$KEYSTORE" ] ||
+       ! security find-generic-password -a minicode -s minicode-android-keystore -w >/dev/null 2>&1; then
+        echo "error: no Android release key (see the top of this script), or set MINICODE_NO_APK=1" >&2
+        exit 1
+    fi
+fi
+
 echo "==> Running the core tests"
 make test
 
@@ -59,11 +75,25 @@ echo "    version $VERSION   sha256 $SHA"
 git add "$PLIST" "$CASK"
 git diff --cached --quiet || git commit -q -m "Release $VERSION"
 
+if [ -z "${MINICODE_NO_APK:-}" ]; then
+    echo "==> Building the Android APK"
+    APK="MiniCode-$VERSION.apk"
+    (
+        cd android
+        export JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 21)}"
+        export MINICODE_KEYSTORE="$KEYSTORE"
+        MINICODE_KEYSTORE_PASSWORD="$(security find-generic-password -a minicode -s minicode-android-keystore -w)"
+        export MINICODE_KEYSTORE_PASSWORD
+        ./gradlew -q -PminicodeVersion="$VERSION" assembleRelease
+    )
+    cp android/app/build/outputs/apk/release/app-release.apk "$APK"
+fi
+
 echo "==> Pushing main"
 git push -q origin main
 
 echo "==> Publishing GitHub Release v$VERSION on $APP_REPO"
-gh release create "v$VERSION" MiniCode.zip \
+gh release create "v$VERSION" MiniCode.zip ${APK:+"$APK"} \
     --repo "$APP_REPO" \
     --target "$(git rev-parse HEAD)" \
     --title "MiniCode $VERSION" \
@@ -79,5 +109,6 @@ if ! git -C "$TMP" diff --cached --quiet; then
     git -C "$TMP" push -q
 fi
 rm -rf "$TMP"
+[ -n "$APK" ] && rm -f "$APK"
 
 echo "==> Done. brew upgrade --cask e-c-hansen/tap/minicode will now pull $VERSION."

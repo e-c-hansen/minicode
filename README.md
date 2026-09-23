@@ -179,11 +179,11 @@ Only GTK4 is required; the terminal and browser panels are left out if their lib
 
 ## Android
 
-There is an Android version too, in the android folder, built around the same C++ core. It has the file tree, the editor with syntax highlighting, the Markdown preview, images and PDFs, a browser panel, and a terminal running the shell Android itself ships, drawn by the same screen grid that runs vim on the Mac. The core's own test suite, all 1,079 checks, compiles with the Android NDK and passes on a phone at about the speed it runs on a Mac.
+There is an Android version too, built around the same C++ core and designed for a phone with a hardware keyboard, such as a Unihertz Titan 2. It has the file list, the editor with syntax highlighting, the Markdown preview, images and PDFs, a browser pane, and a terminal on a real shell with a row of keys for what a phone keyboard lacks (Esc, Tab, Control, the pipe and the arrows). Tap a compiler error like main.cpp:42:7 in the terminal and the file opens at that line.
 
-It is built for a phone with a hardware keyboard, which turns out to be the harder case: a phone keyboard often has no Control, Escape or Tab, and Android reserves some combinations before an app sees them. So shortcuts go through a leader key, pressed and then followed by a letter, and everything is also in a menu for a device whose keyboard offers nothing.
+With [Termux](https://f-droid.org/packages/com.termux/) installed, it also runs your language servers (clangd, pylsp and the rest) for squiggles, completion, hover and go to definition, and typesets LaTeX with tectonic, including double tapping the page to edit the source behind it.
 
-What it does not have yet is language servers and the LaTeX preview. Both need real tools on the device, which on Android means Termux, and that is the next piece of work. android/README.md has the build instructions, the device workflow, and an honest list of what is missing.
+To install it, download MiniCode-*version*.apk from the [latest release](https://github.com/e-c-hansen/minicode/releases/latest) on your phone and open it; Android asks once whether your browser may install apps. [Obtainium](https://github.com/ImranR98/Obtainium) can install it from this repository's releases and keep it updated. It is not on the Play Store. [android/README.md](android/README.md) covers setting up Termux, the keyboard shortcuts, and building it yourself.
 
 ## A quick tour
 

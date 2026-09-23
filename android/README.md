@@ -6,9 +6,43 @@ from `../src` through the NDK; nothing is copied here, so highlighting,
 Markdown, the terminal screen and the rest behave the same everywhere and
 stay covered by `../tests/run_tests.cpp`.
 
-It is young but real: a file list, an editor with syntax highlighting, save,
-the Markdown preview, images and PDFs, a terminal on a genuine shell, and a
-browser panel.
+## Install
+
+1. On the phone, open the [latest release](https://github.com/e-c-hansen/minicode/releases/latest)
+   and download `MiniCode-<version>.apk`.
+2. Open the download. Android asks once whether your browser may install
+   apps; allow it, then install.
+3. Open MiniCode, press ⋮ → Open a folder → Phone storage, and pick a folder.
+
+To keep it updated without checking by hand, add
+`https://github.com/e-c-hansen/minicode` to
+[Obtainium](https://github.com/ImranR98/Obtainium), which installs from a
+repository's releases. MiniCode is not on the Play Store: Google allows the
+"All files access" the terminal uses only for some kinds of app, and new
+developer accounts need a two-week closed test before publishing anything.
+
+Every release is signed with the same key, so updates install over the old
+version. The APK is built by `scripts/release.sh` from the tagged source.
+
+### Language servers and LaTeX (optional)
+
+These run in [Termux](https://f-droid.org/packages/com.termux/), installed
+from F-Droid (the Play Store copy is years out of date):
+
+1. In Termux:
+
+       pkg install clang tectonic python
+       pip install python-lsp-server
+       echo allow-external-apps=true >> ~/.termux/termux.properties
+       termux-reload-settings
+       termux-setup-storage
+
+2. In MiniCode, ⋮ → Termux tools → Allow. It then lists which language
+   servers and tectonic it found.
+3. Keep projects in phone storage (Termux sees it as `~/storage/shared`),
+   since that is the one place both apps can reach.
+
+The rest of this file is about how the port is built and developed.
 
 ## What it has
 
@@ -248,6 +282,22 @@ newer ones). No Android Studio.
 
 Gradle is pinned to 8.14.3 through the wrapper: 9.7 drops an API the Android
 plugin still uses.
+
+
+### A release build
+
+`scripts/release.sh` builds the signed APK along with the Mac zip. By hand:
+
+    export MINICODE_KEYSTORE=~/.config/minicode/release.keystore
+    export MINICODE_KEYSTORE_PASSWORD="$(security find-generic-password -a minicode -s minicode-android-keystore -w)"
+    ./gradlew -PminicodeVersion=1.4.0 assembleRelease
+
+The release build is shrunk by R8 (4 MB against 15 MB for a debug build),
+with every class of MiniCode's own kept whole in `app/proguard-rules.pro`,
+because JNI finds them by name. The version code is derived from the version
+(1.4.0 is 10400). A debug build and a release build are signed with
+different keys, so going from one to the other on a phone needs an uninstall
+first, which clears the app's settings and permissions.
 
 ## Developing against a real phone
 
