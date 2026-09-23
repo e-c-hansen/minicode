@@ -1,8 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- The browser panel, and nothing else, needs the network. -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- So the terminal can work in the folder that is open. The editor goes
+         through the document picker and needs none of this; a shell has only
+         file paths, and on Android 11 and later a path outside the app's own
+         storage is readable only with "All files access", which the user
+         grants in Settings when the terminal first asks. -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
 
     <application
         android:allowBackup="true"

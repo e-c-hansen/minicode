@@ -70,9 +70,9 @@ class TerminalView @JvmOverloads constructor(
     }
 
     /** Starts the shell, in `home`, once the view has a size. */
-    fun start(home: String) {
+    fun start(home: String, cwd: String = home) {
         if (pty != null) return
-        val session = Pty.start("/system/bin/sh", home, cols, rows) ?: run {
+        val session = Pty.start("/system/bin/sh", home, cwd, cols, rows) ?: run {
             message = "Could not start /system/bin/sh"
             invalidate()
             return
@@ -254,6 +254,16 @@ class TerminalView @JvmOverloads constructor(
             return true
         }
         return false
+    }
+
+    /**
+     * Moves a running shell to `path`, for when another folder is opened.
+     * Typed as a command, so it lands wherever the shell is: at a prompt it
+     * runs, and the new directory shows in the next one.
+     */
+    fun changeDirectory(path: String) {
+        val quoted = "'" + path.replace("'", "'\\''") + "'"
+        pty?.write("cd $quoted\n".toByteArray(Charsets.UTF_8))
     }
 
     /** Ctrl and Escape, for a keyboard that has neither. */

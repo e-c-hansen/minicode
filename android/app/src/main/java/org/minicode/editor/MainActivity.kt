@@ -105,6 +105,7 @@ class MainActivity : AppCompatActivity() {
         }
         val tree = DocumentFile.fromTreeUri(this, uri) ?: return
         folder = tree
+        followFolder()
         list(tree)
         showList(true)
     }
@@ -112,8 +113,74 @@ class MainActivity : AppCompatActivity() {
     private fun usePath(dir: File) {
         val tree = DocumentFile.fromFile(dir)
         folder = tree
+        followFolder()
         list(tree)
         showList(true)
+    }
+
+    /**
+     * The open folder as a path a shell can use, or null when there is none.
+     *
+     * A folder picked in the document picker is a content URI. One on the
+     * phone's own storage maps onto /storage/<volume>/<path>, and a shell can
+     * go there once the app has "All files access". A folder from a cloud
+     * provider (Google Drive and the like) has no path at all, so the
+     * terminal cannot follow it there.
+     */
+    private fun folderPath(): File? {
+        val tree = folder ?: return null
+        val uri = tree.uri
+        if (uri.scheme == "file") return uri.path?.let(::File)
+        if (uri.authority != "com.android.externalstorage.documents") return null
+        val id = try {
+            android.provider.DocumentsContract.getTreeDocumentId(uri)
+        } catch (e: IllegalArgumentException) { return null }
+        val volume = id.substringBefore(':')
+        val rest = id.substringAfter(':', "")
+        val root = if (volume == "primary")
+            android.os.Environment.getExternalStorageDirectory().path
+        else "/storage/$volume"
+        return File(if (rest.isEmpty()) root else "$root/$rest")
+    }
+
+    private fun canReachPaths() =
+        android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R ||
+                android.os.Environment.isExternalStorageManager()
+
+    /** Where a new shell should start, and why not the folder if it cannot. */
+    private fun terminalDirectory(): Pair<String?, String?> {
+        val path = folderPath()
+        val name = folder?.name ?: "this folder"
+        return when {
+            folder == null -> null to null
+            path == null -> null to "$name is not on this phone's storage " +
+                    "(a cloud folder has no path), so the terminal starts in the " +
+                    "app's own folder."
+            !canReachPaths() -> null to "Allow \"All files access\" for the " +
+                    "terminal to open in $name."
+            else -> path.path to null
+        }
+    }
+
+    /** A running shell follows the folder when another is opened. */
+    private fun followFolder() {
+        if (!ui.terminal.isRunning) return
+        terminalDirectory().first?.let { ui.terminal.changeDirectory(it) }
+    }
+
+    private fun askForPathAccess() {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Terminal in this folder")
+            .setMessage("A shell reaches files by path, and Android allows that " +
+                    "outside the app only with \"All files access\". The editor " +
+                    "does not need it. Open the setting?")
+            .setPositiveButton("Open settings") { _, _ ->
+                startActivity(Intent(
+                    android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:$packageName")))
+            }
+            .setNegativeButton("Not now", null)
+            .show()
     }
 
     private fun list(dir: DocumentFile) {
@@ -473,10 +540,11 @@ class MainActivity : AppCompatActivity() {
      */
     private fun leaderActions(): Map<Char, () -> Unit> = mapOf(
         's' to { save() },
-        'b' to { showList(ui.fileList.visibility != View.VISIBLE) },
+        'f' to { showList(ui.fileList.visibility != View.VISIBLE) },
         'p' to { togglePreview() },
         't' to { toggleTerminal() },
-        'w' to { toggleBrowser() },
+        // B is the browser, as Shift+Cmd+B is on the Mac.
+        'b' to { toggleBrowser() },
         'o' to { pickFolder.launch(null) },
         'h' to { showShortcuts() },
         // A keyboard with no Ctrl or Escape still has to drive a shell.
@@ -491,7 +559,7 @@ class MainActivity : AppCompatActivity() {
         val letters = leaderActions()
         val actions = mapOf(
             KeyEvent.KEYCODE_S to letters.getValue('s'),
-            KeyEvent.KEYCODE_B to letters.getValue('b'),
+            KeyEvent.KEYCODE_B to letters.getValue('f'),   // Cmd+B on the Mac
             KeyEvent.KEYCODE_O to letters.getValue('o'),
             KeyEvent.KEYCODE_H to letters.getValue('h'),
         )
@@ -642,7 +710,15 @@ class MainActivity : AppCompatActivity() {
                 if (terminalShowing) toggleTerminal()
                 ui.terminal.stop()
             }
-            ui.terminal.post { ui.terminal.start(filesDir.absolutePath) }
+            val (cwd, why) = terminalDirectory()
+            ui.terminal.post {
+                ui.terminal.start(filesDir.absolutePath, cwd ?: filesDir.absolutePath)
+            }
+            if (why != null && !ui.terminal.isRunning) {
+                if (folderPath() != null && !canReachPaths()) askForPathAccess()
+                else android.widget.Toast.makeText(this, why,
+                        android.widget.Toast.LENGTH_LONG).show()
+            }
             ui.terminal.requestFocus()
             (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
                 .showSoftInput(ui.terminal, 0)
@@ -680,10 +756,10 @@ class MainActivity : AppCompatActivity() {
         val lines = listOf(
             "The key left of right Shift, then:",
             "S      Save",
-            "B      Files or editor",
+            "F      Files or editor",
             "P      Markdown preview",
             "T      Terminal",
-            "W      Browser",
+            "B      Browser",
             "O      Open a folder",
             "H      This list",
             "",

@@ -131,13 +131,17 @@ extern "C" {
  */
 JNIEXPORT jlong JNICALL
 Java_org_minicode_editor_Pty_nativeOpen(JNIEnv *env, jclass, jstring shell,
-                                        jstring home, jint cols, jint rows) {
+                                        jstring home, jstring cwd, jint cols,
+                                        jint rows) {
     const char *shellChars = env->GetStringUTFChars(shell, nullptr);
     const char *homeChars = env->GetStringUTFChars(home, nullptr);
+    const char *cwdChars = env->GetStringUTFChars(cwd, nullptr);
     std::string shellPath(shellChars ? shellChars : "/system/bin/sh");
     std::string homePath(homeChars ? homeChars : "/");
+    std::string cwdPath(cwdChars ? cwdChars : homePath);
     env->ReleaseStringUTFChars(shell, shellChars);
     env->ReleaseStringUTFChars(home, homeChars);
+    env->ReleaseStringUTFChars(cwd, cwdChars);
 
     auto session = std::make_unique<Session>(cols, rows);
 
@@ -161,7 +165,8 @@ Java_org_minicode_editor_Pty_nativeOpen(JNIEnv *env, jclass, jstring shell,
     const pid_t pid = forkpty(&master, nullptr, nullptr, &ws);
     if (pid < 0) return 0;
     if (pid == 0) {
-        chdir(homePath.c_str());
+        // The open folder when the shell can reach it, else home.
+        if (chdir(cwdPath.c_str()) != 0) chdir(homePath.c_str());
         execve(shellPath.c_str(), argv, envp);
         _exit(127);
     }

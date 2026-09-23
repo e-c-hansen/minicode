@@ -14,8 +14,8 @@ browser panel.
 
 - **File list.** One pane at a time rather than a sidebar: on a 576 by 640 dp
   screen there is no room for two. Folders are opened through the system
-  document picker, so the app needs no storage permission, and the choice is
-  remembered between launches.
+  document picker, so the editor needs no storage permission, and the choice
+  is remembered between launches. Only the terminal asks for one (below).
 - **Editor.** The shared highlighter colours the file; autocorrect,
   suggestions and the composing region are all off, because a keyboard that
   rewrites words is wrong for code (see CodeEditText).
@@ -26,6 +26,8 @@ browser panel.
 - **Terminal.** `/system/bin/sh` on a pty, parsed by the shared
   TerminalScreen: the same grid that runs vim and less on the Mac. No Termux
   needed, though only the toybox utilities are reachable until there is.
+  It starts in the open folder and follows it when another is opened, as
+  long as the folder has a path (see below).
 - **Browser.** The system web view with a URL bar.
 
 ## Shortcuts, and why they are unusual
@@ -37,8 +39,8 @@ microphone. What is left is one unclaimed key, so that key is a leader:
 
     the key left of right Shift, then
       S  save            P  Markdown preview      O  open a folder
-      B  files or editor T  terminal              H  the shortcut list
-                         W  browser
+      F  files or editor T  terminal              H  the shortcut list
+      B  browser
     in the terminal:
       C  Ctrl C          D  Ctrl D                E  Escape     I  Tab
 
@@ -51,6 +53,23 @@ a key event, because the keyboard reaches the field through the input method.
 The leader's letter is caught in CodeEditText as text is committed; in the
 file list and the terminal, the same letter arrives as a key event instead.
 Both paths run the same table (`leaderActions`).
+
+B is the browser on every port (Shift+Cmd+B on the Mac), so the file list
+moved to F. On a USB or Bluetooth keyboard Ctrl+B is the file list, as
+Cmd+B is on the Mac.
+
+### The terminal and the open folder
+
+The editor reaches files through the document picker, which hands out
+content URIs, and a shell can only use paths. So the terminal can follow the
+open folder only when that folder is on the phone's own storage, and only
+once the app has "All files access" (Android 11 and later), which it asks for
+the first time the terminal opens there. The URI's document id
+(`primary:Documents/project`) maps to `/storage/emulated/0/Documents/project`.
+A folder from a cloud provider, such as Google Drive, has no path at all; the
+terminal says so and starts in the app's own folder. To use git or a build
+on a project, keep it in local storage (Termux's `~/storage/shared` is the
+same place).
 
 ### Alt, symbols and Meta in the terminal
 

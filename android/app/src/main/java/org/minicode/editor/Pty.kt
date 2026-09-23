@@ -23,8 +23,8 @@ class Pty private constructor(private val session: Long) {
         init { System.loadLibrary("minicode") }
 
         /** Null when no shell could be started. */
-        fun start(shell: String, home: String, cols: Int, rows: Int): Pty? {
-            val handle = nativeOpen(shell, home, cols, rows)
+        fun start(shell: String, home: String, cwd: String, cols: Int, rows: Int): Pty? {
+            val handle = nativeOpen(shell, home, cwd, cols, rows)
             return if (handle == 0L) null else Pty(handle)
         }
 
@@ -60,7 +60,7 @@ class Pty private constructor(private val session: Long) {
         const val CELL_WIDE = 4
 
         @JvmStatic private external fun nativeOpen(
-            shell: String, home: String, cols: Int, rows: Int): Long
+            shell: String, home: String, cwd: String, cols: Int, rows: Int): Long
         @JvmStatic private external fun nativePump(handle: Long, timeoutMs: Int): Int
         @JvmStatic private external fun nativeReaderDone(handle: Long)
         @JvmStatic private external fun nativeWrite(handle: Long, data: ByteArray)
