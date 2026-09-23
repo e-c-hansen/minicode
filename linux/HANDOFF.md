@@ -29,12 +29,14 @@ been run for real on Ubuntu 26.04. It has:
 - Ctrl+/ comment toggling, pane hiding and divider drags;
 - the shortcut hints panel;
 - opening a file named on the command line;
-- Find in Folder (Ctrl+Shift+F), over the shared `FolderSearch` core.
+- Find in Folder (Ctrl+Shift+F), over the shared `FolderSearch` core;
+- language servers: squiggles, completion, hover and go to definition
+  (item 6 below, done).
 
-It shares from `../src` only `SyntaxHighlighter`, `MarkdownParser`, `Settings`,
-`LineComments` and `FolderSearch`. The rest of the core (`LatexDoc`, `SyncTex`, `Json`,
-`LspClient`, `TerminalScreen`) is portable and tested, and has not been added
-to `meson.build` yet.
+It shares from `../src` `SyntaxHighlighter`, `MarkdownParser`, `Settings`,
+`LineComments`, `FolderSearch`, `Json` and `LspClient`. The rest of the core
+(`LatexDoc`, `SyncTex`, `TerminalScreen`) is portable and tested, and has not
+been added to `meson.build` yet.
 
 ## What to do, in order
 
@@ -239,29 +241,87 @@ If opening a file ever becomes asynchronous (a save prompt that returns
 later), `openSearchMatch` in `main.cpp` has to go to the line after the open
 completes; today it checks `currentPath()` straight after `openFileCb`.
 
-### 6. Language servers
+### 6. Language servers (done, September 2026)
 
 Mac: `src/Lsp.mm` over `../src/LspClient.cpp`, described in the "LSP"
-section of `../CLAUDE.md`. Android: `LspSession.kt` and `lsp_jni.cpp`, which
-show how little glue the core needs.
+section of `../CLAUDE.md`. The GTK side is `src/Lsp.{h,cpp}` over the same
+`LspClient` and `Json`, now in `meson.build` and the Makefile. It follows the
+Mac's behaviour; what differs is how.
 
-- Processes: `GSubprocess` with stdin and stdout pipes. Send stderr to
-  `/dev/null` unless `MINICODE_LSP_LOG` is set, because clangd fills a pipe
-  and stalls. Find servers on PATH plus `~/.cargo/bin`, `~/go/bin` and
-  `~/.local/bin`.
-- Diagnostics are easier than on the Mac: a `GtkTextTag` with
-  `underline = PANGO_UNDERLINE_ERROR` and an `underline-rgba` draws the
-  squiggle. Keep those tags separate from the highlighting tags, so a retag
-  never erases them.
-- Hover: the text view's `query-tooltip`. Completion: a `GtkPopover` with a
-  list, opened on the server's trigger characters and on Ctrl+Space.
-  Definition: F12 and Ctrl+click, through the same open-and-reveal path the
-  tree uses.
-- Settings keys are the Mac's (`lsp.enabled`, `lsp.cpp` and the rest), which
-  `Settings.cpp` already parses.
+- **Processes.** `GSubprocessLauncher` with pipes MiniCode creates itself
+  (`take_stdin_fd`/`take_stdout_fd`), so both ends are plain non-blocking
+  descriptors watched with `g_unix_fd_add`: no gio-unix headers, and a server
+  that is slow to read never blocks typing (unwritten bytes wait for
+  `G_IO_OUT`). stderr goes to `/dev/null`, or with the traffic to
+  `$MINICODE_LSP_LOG` (O_APPEND). Servers are found on PATH, then
+  `~/.cargo/bin`, `~/go/bin`, `~/.local/bin`, `/usr/local/bin`, `/usr/bin`,
+  and get that wider PATH. A child-setup `prctl(PR_SET_PDEATHSIG, SIGTERM)`
+  and stdin EOF are the backstops if MiniCode dies. SIGPIPE gets a do-nothing
+  handler rather than `SIG_IGN`, because an ignored signal is inherited by
+  every program the app starts (the terminal's shell included) and a handler
+  is not.
+- **Stopping.** Closing the window (`onCloseRequest`, once the close is
+  really going ahead) sends shutdown, exit on the reply, then SIGTERM after
+  2 s and SIGKILL after 3, as on the Mac. The application's `shutdown`
+  signal calls `LspTerminateAllServers`: exit at once, written out before
+  returning, then a wait of up to 0.5 s on a pidfd per server (it turns
+  readable when the process exits, without reaping it, so GLib's child
+  watch is left alone), then SIGTERM, then SIGKILL. The main loop has
+  stopped by then, which is why it does not wait on GLib.
+- **Sync.** `Editor` has an `EditorObserver` (three calls:
+  `documentChanged(path or "")`, `documentSaved`, `textEdited`). The edit
+  call comes from the same `insert-text`/`delete-range` `_after` handlers
+  the highlighter uses, only while the buffer holds source, so a refill never
+  counts as typing. Everything that changes what the buffer holds ends in
+  `notifyDocument()`: loading source, a message, a Markdown preview, an
+  image or PDF (they show an empty message, so they get no server),
+  `closeFile()` (Open Folder, trashing the open file) and `setPath()` (a
+  rename: didClose, then didOpen under the new name). Full-document sync
+  like the Mac: didChange 0.3 s after typing stops, flushed before every
+  request, sending `Editor::text()` (the highlighter's UTF-8 mirror when it
+  has one). Open Folder calls `LspSession::setRoot` after `closeFile`, so
+  the old file is not reopened under the new root.
+- **Positions.** Per line: a GTK line's text to UTF-16 (`Utf8Offsets.h`)
+  gives LSP's column; a column back through `utf16::toCharOffset` gives
+  GTK's. Both count lines at `\n`, `\r\n` and `\r`; only U+2029 differs.
+- **Squiggles.** Four tags (`lsp-error`, `-warning`, `-information`,
+  `-hint`, the Mac's colors) with `underline = PANGO_UNDERLINE_ERROR` and
+  `underline-rgba`, created from hint up so an error wins where they
+  overlap. The highlighter removes only the tags in its own `hlTags_`, so a
+  retag leaves them alone (checked at run time). Each diagnostic also keeps
+  two `GtkTextMark`s, for the tooltip lookup; the tags themselves follow
+  edits because they are in the buffer.
+- **Hover.** `query-tooltip` shows the diagnostic under the pointer at once
+  and asks the server about the word; the answer is cached per word and
+  `gtk_widget_trigger_tooltip_query` shows it. Ctrl+I shows the same in a
+  popover at the caret, like the Mac's Command I.
+- **Completion.** A `GtkPopover` holding a `GtkListBox`, parented to the
+  text view, not autohide and not focusable, so typing stays in the view.
+  A capture-phase key controller on the view takes Up, Down, Return, Tab
+  and Escape while the list is up. Opens on `.`, `->`, `::` when the
+  server lists them, and on Ctrl+Space; narrows as you type and closes when
+  the caret leaves the word, the view loses focus or the text is selected.
+  Accepting replaces from the textEdit's start (or the word start) to the
+  caret, in one user action.
+- **Definition.** F12 and Ctrl+click (a capture-phase click gesture that
+  claims the press only with Ctrl held and a server running). In the same
+  file it computes the byte column from the buffer and calls
+  `Editor::revealLine`; in another file it maps the path into the tree
+  root's spelling and goes through `openSearchMatch`, so the "Save
+  changes?" prompt and cancelling it behave as for a Find in Folder match.
+- **The trap paid for.** A popover added to a `GtkTextView` with
+  `gtk_widget_set_parent` is unknown to the view's own child list, and
+  GtkTextView's dispose tried to remove it, warned "GtkPopover is not a
+  child of GtkTextView" and tried again, forever: the first test run's
+  window never closed (24 million warnings in 90 s). The popovers are now
+  unparented on the view's `unrealize`, which comes before dispose, and
+  built again on next use.
 
-Done when: clangd on a scratch project shows squiggles, completion, hover
-and definition, and no server process outlives the app.
+Verified at run time on the ThinkPad with a temporary test hook, 32 checks
+against real clangd 21 (see `../BUILD-LINUX.md`), then the hook was removed.
+Still needs a person: how the squiggles, the list and the tooltips look,
+and the real keys and mouse (Ctrl+Space, F12, Ctrl+I, Ctrl+click, clicking
+a row), since the hook called the same functions directly.
 
 ### 7. The LaTeX preview
 
