@@ -102,7 +102,11 @@ gh release create "v$VERSION" MiniCode.zip ${APK:+"$APK"} \
     --repo "$APP_REPO" \
     --target "$(git rev-parse HEAD)" \
     --title "MiniCode $VERSION" \
-    --notes "MiniCode $VERSION"
+    --notes "**macOS:** \`brew install --cask e-c-hansen/tap/minicode\`, or download MiniCode.zip below.
+
+**Android:** download ${APK:-the APK} on your phone and open it; Android asks once whether your browser may install apps. Termux setup and updates through Obtainium: [android/README.md](https://github.com/$APP_REPO/blob/main/android/README.md#install).
+
+Edit these notes on GitHub to say what changed."
 
 echo "==> Writing the cask to $TAP_REPO"
 TMP="$(mktemp -d)"
