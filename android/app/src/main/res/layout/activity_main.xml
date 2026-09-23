@@ -106,6 +106,40 @@
         android:contentDescription="@string/app_name"
         android:visibility="gone" />
 
+    <!-- The browser panel, as on the Mac: a system web view with a URL bar.
+         A phone has a browser a swipe away, so this is for looking something
+         up without leaving the window. -->
+    <LinearLayout
+        android:id="@+id/browser"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <EditText
+            android:id="@+id/url"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#252526"
+            android:textColor="#D4D4D4"
+            android:textColorHint="#9CA3AF"
+            android:hint="Search or type a URL"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="6dp"
+            android:textSize="14sp"
+            android:singleLine="true"
+            android:imeOptions="actionGo"
+            android:inputType="textUri|textNoSuggestions"
+            android:importantForAutofill="no" />
+
+        <WebView
+            android:id="@+id/web"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+    </LinearLayout>
+
     <org.minicode.editor.TerminalView
         android:id="@+id/terminal"
         android:layout_width="match_parent"

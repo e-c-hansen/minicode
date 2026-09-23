@@ -292,7 +292,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showList(show: Boolean) {
-        if (show) terminalShowing = false
+        if (show) { terminalShowing = false; browserShowing = false }
+        ui.browser.visibility = View.GONE
         ui.fileList.visibility = if (show) View.VISIBLE else View.GONE
         ui.terminal.visibility = View.GONE
         val preview = !show && previewing && isMarkdown(currentFile?.name)
@@ -311,6 +312,7 @@ class MainActivity : AppCompatActivity() {
     private fun updateTitle() {
         val waiting = if (leaderArmed) "  …" else ""
         if (terminalShowing) { ui.title.text = "Terminal"; return }
+        if (browserShowing) { ui.title.text = "Browser"; return }
         val showingList = ui.fileList.visibility == View.VISIBLE
         val name = if (showingList) (current?.name ?: folder?.name ?: "MiniCode")
                    else (currentFile?.name ?: "MiniCode")
@@ -416,6 +418,7 @@ class MainActivity : AppCompatActivity() {
         'b' to { showList(ui.fileList.visibility != View.VISIBLE) },
         'p' to { togglePreview() },
         't' to { toggleTerminal() },
+        'w' to { toggleBrowser() },
         'o' to { pickFolder.launch(null) },
         'h' to { showShortcuts() },
         // A keyboard with no Ctrl or Escape still has to drive a shell.
@@ -483,7 +486,8 @@ class MainActivity : AppCompatActivity() {
      */
     private fun showMenu() {
         val items = arrayOf("Save", "Files or editor", "Markdown preview",
-                            "Terminal", "Open a folder", "Text size", "Shortcuts")
+                            "Terminal", "Browser", "Open a folder", "Text size",
+                            "Shortcuts")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setItems(items) { _, which ->
                 when (which) {
@@ -491,13 +495,76 @@ class MainActivity : AppCompatActivity() {
                     1 -> showList(ui.fileList.visibility != View.VISIBLE)
                     2 -> togglePreview()
                     3 -> toggleTerminal()
-                    4 -> pickFolder.launch(null)
-                    5 -> chooseTextSize()
-                    6 -> showShortcuts()
+                    4 -> toggleBrowser()
+                    5 -> pickFolder.launch(null)
+                    6 -> chooseTextSize()
+                    7 -> showShortcuts()
                 }
             }
             .show()
     }
+
+    /**
+     * The browser pane: the system web view with a URL bar, as on the Mac.
+     * A word rather than an address goes to a search, as it does there.
+     */
+    private fun toggleBrowser() {
+        browserShowing = !browserShowing
+        if (browserShowing) {
+            terminalShowing = false
+            ui.terminal.visibility = View.GONE
+            ui.fileList.visibility = View.GONE
+            ui.editor.visibility = View.GONE
+            ui.previewScroll.visibility = View.GONE
+            ui.media.visibility = View.GONE
+            ui.browser.visibility = View.VISIBLE
+            if (!browserReady) {
+                browserReady = true
+                ui.web.settings.javaScriptEnabled = true
+                ui.web.settings.domStorageEnabled = true
+                ui.web.webViewClient = android.webkit.WebViewClient()
+                ui.url.setOnEditorActionListener { _, _, _ ->
+                    navigate(ui.url.text.toString()); true
+                }
+                navigate("duckduckgo.com")
+            }
+            ui.url.requestFocus()
+        } else {
+            ui.browser.visibility = View.GONE
+            showList(currentFile == null)
+        }
+        updateTitle()
+    }
+
+    private fun navigate(text: String) {
+        val trimmed = text.trim()
+        val url = when {
+            trimmed.isEmpty() -> return
+            trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
+            trimmed.contains(' ') || !trimmed.contains('.') ->
+                "https://duckduckgo.com/?q=" + android.net.Uri.encode(trimmed)
+            else -> "https://$trimmed"
+        }
+        ui.web.loadUrl(url)
+        (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+            .hideSoftInputFromWindow(ui.root.windowToken, 0)
+        ui.web.requestFocus()
+    }
+
+    /** Back walks the web history first, then closes whatever pane is up. */
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        when {
+            browserShowing && ui.web.canGoBack() -> ui.web.goBack()
+            browserShowing -> toggleBrowser()
+            terminalShowing -> toggleTerminal()
+            ui.fileList.visibility != View.VISIBLE -> showList(true)
+            else -> super.onBackPressed()
+        }
+    }
+
+    private var browserShowing = false
+    private var browserReady = false
 
     /**
      * The terminal pane: Android's own shell on a pty, drawn by the same
@@ -512,6 +579,8 @@ class MainActivity : AppCompatActivity() {
             ui.editor.visibility = View.GONE
             ui.previewScroll.visibility = View.GONE
             ui.media.visibility = View.GONE
+            ui.browser.visibility = View.GONE
+            browserShowing = false
             ui.terminal.visibility = View.VISIBLE
             ui.terminal.onExit = {
                 if (terminalShowing) toggleTerminal()
@@ -558,6 +627,7 @@ class MainActivity : AppCompatActivity() {
             "B      Files or editor",
             "P      Markdown preview",
             "T      Terminal",
+            "W      Browser",
             "O      Open a folder",
             "H      This list",
             "",
