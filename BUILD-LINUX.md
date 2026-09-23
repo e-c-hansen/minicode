@@ -67,6 +67,25 @@ Verified by running it:
     it down brings it back; dragging the sidebar divider to the right edge
     leaves only the file tree, and opening a file restores the right side at
     its earlier width.
+- Incremental highlighting (September 2026, on the ThinkPad, Ubuntu 26.04,
+  GNOME on Wayland). A temporary test hook opened a generated 50,000-line C
+  file in the running app, edited it through the GtkTextBuffer API, and
+  compared every character's highlight tag with a full re-lex of the final
+  text: 30 comparisons, no mismatches. The edits covered typing, `/*` near
+  the top (in a file with no `*/` below, so the whole rest of the file turns
+  into a comment) and removing it again, an opening quote, accented, CJK and
+  emoji text, a 5,000-line paste, a 3,000-line `insert_range` carrying its
+  tags (what a paste from a GtkTextView does), undo and redo, 400 random
+  inserts and deletes, edits made while a background retag was still under
+  way, renaming to `.txt` and back, and color swatches in the settings file.
+  A tag standing in for find matches survived all of it. A second run did the
+  same over CRLF, lone-CR and mixed line endings. Timings from a release
+  build: a keystroke at line 25,000 takes 0.2 ms; typing `/*` takes 6 ms, the
+  lines on screen recolor at once and the rest in the background, with no
+  main loop turn longer than 11 ms. A real clipboard copy and paste passed in
+  three runs and delivered nothing in two, while other MiniCode windows were
+  running and writing the clipboard; Wayland only gives the clipboard to the
+  focused window, so treat that one as unconfirmed.
 - The shell restarts in place when it exits. Confirmed by sending `exit` to the
   child and reading the terminal buffer back: the notice line, a fresh prompt,
   and a command run successfully in the new shell.
@@ -99,6 +118,13 @@ Not verified:
   window's focus widget, but activating a window is up to the compositor).
 - How the Find in Folder window looks. Nothing in it was seen on screen.
 - Saving, creating files and folders, and the Open Folder dialog.
+- How highlighting looks while real keys are typed. The test above edited the
+  buffer through its API; nobody has watched the colors catch up by eye.
+- Without optimization the lexer is several times slower: typing `/*` over a
+  50,000-line file took 116 ms and closing it with `*/` 281 ms, against 6 and
+  27 ms in a release build. `meson.build` therefore defaults to
+  `debugoptimized`; a build directory set up before that change keeps
+  `debug` until `meson configure build --buildtype=debugoptimized`.
 
 ### Notes on the things that were most at risk
 
