@@ -14,6 +14,7 @@ core_sources = [
   core_dir / 'MarkdownParser.cpp',
   core_dir / 'Settings.cpp',
   core_dir / 'LineComments.cpp',
+  core_dir / 'FolderSearch.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -28,6 +29,7 @@ gui_sources = [
   'src/Browser.cpp',
   'src/AppSettings.cpp',
   'src/ThemeCss.cpp',
+  'src/Search.cpp',
 ]
 
 inc = include_directories('src', '../src')

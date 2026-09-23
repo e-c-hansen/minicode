@@ -27,10 +27,11 @@ been run for real on Ubuntu 26.04. It has:
 - the settings file with live colors and per-panel opacity;
 - Ctrl+/ comment toggling, pane hiding and divider drags;
 - the shortcut hints panel;
-- opening a file named on the command line.
+- opening a file named on the command line;
+- Find in Folder (Ctrl+Shift+F), over the shared `FolderSearch` core.
 
-It shares from `../src` only `SyntaxHighlighter`, `MarkdownParser`, `Settings`
-and `LineComments`. The rest of the core (`LatexDoc`, `SyncTex`, `Json`,
+It shares from `../src` only `SyntaxHighlighter`, `MarkdownParser`, `Settings`,
+`LineComments` and `FolderSearch`. The rest of the core (`LatexDoc`, `SyncTex`, `Json`,
 `LspClient`, `TerminalScreen`) is portable and tested, and has not been added
 to `meson.build` yet.
 
@@ -102,16 +103,33 @@ Mac: `showImageAtPath:` and `showPDFAtPath:` in `EditorController.mm`, and the
 Done when: png, jpg, gif, webp and PDF open in the editor's slot, nothing is
 ever saved over them, and they reload when the file changes on disk.
 
-### 5. Find in folder
+### 5. Find in folder (done, September 2026)
 
-Mac: `src/Search.mm` (scoped to a folder, at least 2 characters, a generation
-counter cancels stale searches, ANSI stripped). Linux has only the in-file
-find bar.
+Mac: `src/Search.mm`. The search is now `../src/FolderSearch.{h,cpp}`, a pure
+C++17 function (a folder, a query, an `std::atomic<bool>` cancel flag, and
+matches out with the line, the column in characters and in bytes, and the
+cleaned display text) with the Mac's rules, tested in the core suite. Android
+can call it through JNI as it is.
 
-GTK: a window or side panel with a `GtkSearchEntry` and a `GtkListView` of
-results, searching on a `GTask` thread. The search itself should go into
-`../src` as a pure function (a folder, a query, a cancel flag, and matches
-out) with tests, which Android can then use too.
+The GTK side is `src/Search.{h,cpp}`: a separate window like the Mac's, with
+a folder field and Choose button, a `GtkSearchEntry` (0.35 s typing pause, as
+on the Mac), a status line and a `GtkListView` over a `GtkStringList` of
+markup rows. Each search runs on a `GTask` thread; a generation counter plus
+the previous search's cancel flag make sure a superseded search stops and its
+results are dropped. Activating a row goes through `openFileCb` in `main.cpp`
+(the tree's open path, so any unsaved-changes prompt added there applies) and
+then `Editor::revealLine`, which selects the match and switches a Markdown
+preview to source. The scope is the folder selected in the tree, else the
+open folder, and it resets after Open Folder. `FileTree::selectedDir()` reads
+the selection; the tree's selection no longer autoselects its first row.
+
+Verified by driving it inside the running app on the ThinkPad (see
+`../BUILD-LINUX.md`); real key presses, the double-click and the look of the
+window still need a person.
+
+If opening a file ever becomes asynchronous (a save prompt that returns
+later), `openSearchMatch` in `main.cpp` has to go to the line after the open
+completes; today it checks `currentPath()` straight after `openFileCb`.
 
 ### 6. Language servers
 
@@ -169,9 +187,9 @@ wrong text.
 - Show Hidden Files exists as Ctrl+H; check it against the Mac's behaviour.
 - Blur and live color picking, as `../ROADMAP.md` describes ("Linux port
   parity").
-- Run the core tests on Linux in CI: add `make test` (or a Meson test target
-  built from `tests/run_tests.cpp`) to the `linux` job in
-  `.github/workflows/ci.yml`. Today only the Mac job runs them.
+- Done: the core tests run on Linux in CI. The top-level Makefile picks
+  clang++ only on the Mac, so `make test` builds with g++ here, cleanly, and
+  the `linux` job in `.github/workflows/ci.yml` runs it.
 
 Not needed on Linux: the demo recorder and the memory benchmark, which are
 Mac tools.

@@ -29,6 +29,10 @@ public:
 
     void focus();
 
+    // The folder selected in the tree, or "" when nothing or a file is
+    // selected. Find in Folder searches it, as on the Mac.
+    std::string selectedDir() const;
+
 private:
     GListModel* makeDirModel(GFile* dir);   // filtered GtkDirectoryList for a dir
     void build();

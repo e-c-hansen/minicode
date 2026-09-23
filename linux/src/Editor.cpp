@@ -191,6 +191,46 @@ bool Editor::save() {
     return true;
 }
 
+// ---------------------------------------------------------------- go to line
+
+bool Editor::revealLine(int line, std::size_t byteColumn, std::size_t byteLength) {
+    if (path_.empty()) return false;
+    if (preview_ && isMarkdown_) togglePreview();
+    if (!gtk_text_view_get_editable(GTK_TEXT_VIEW(view_))) return false;   // a message
+
+    const int lines = gtk_text_buffer_get_line_count(buffer_);
+    const int index = std::max(0, std::min(line - 1, lines - 1));
+    GtkTextIter start, end;
+    gtk_text_buffer_get_iter_at_line(buffer_, &start, index);
+    end = start;
+    if (!gtk_text_iter_ends_line(&end)) gtk_text_iter_forward_to_line_end(&end);
+    char* text = gtk_text_buffer_get_slice(buffer_, &start, &end, TRUE);
+    const std::string lineText = text ? text : "";
+    g_free(text);
+
+    // Both ends must fall on character boundaries of the line as it is now.
+    auto boundary = [&](std::size_t b) {
+        return b == lineText.size() ||
+               (b < lineText.size() &&
+                (static_cast<unsigned char>(lineText[b]) & 0xC0) != 0x80);
+    };
+    if (line - 1 != index || !boundary(byteColumn) ||
+        !boundary(byteColumn + byteLength)) {
+        byteColumn = 0;
+        byteLength = 0;
+    }
+    GtkTextIter a = start, b = start;
+    gtk_text_iter_set_line_index(&a, static_cast<int>(byteColumn));
+    gtk_text_iter_set_line_index(&b, static_cast<int>(byteColumn + byteLength));
+    gtk_text_buffer_select_range(buffer_, &a, &b);
+    // Scroll by the insert mark rather than an iterator: a mark scroll waits
+    // for the lines to be laid out, which a file opened a moment ago is not.
+    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(view_), gtk_text_buffer_get_insert(buffer_),
+                                 0.1, TRUE, 0.0, 0.3);
+    gtk_widget_grab_focus(view_);
+    return true;
+}
+
 // ---------------------------------------------------------------- buffer fills
 
 // Source code is monospace; the Markdown preview and the plain messages use the
