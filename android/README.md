@@ -52,6 +52,32 @@ The leader's letter is caught in CodeEditText as text is committed; in the
 file list and the terminal, the same letter arrives as a key event instead.
 Both paths run the same table (`leaderActions`).
 
+### Alt, symbols and Meta in the terminal
+
+On the Titan 2 the digits and most symbols (`| > & ~ -` and the rest) are
+typed with Alt, so Alt cannot simply mean Meta the way it does on a desktop
+terminal. An early build sent every Alt key as Meta: Alt+S reached the shell
+as ESC then "4", and the line editor swallowed it, so no digit or symbol could
+be typed in the terminal at all. `TerminalView.handleKey` now asks the key
+map what the key makes without Alt. If Alt changes the character, the
+character is sent as typed; only a key Alt leaves unchanged (Enter, the
+arrows) gets the Meta prefix. So on this keyboard Alt+letter is always a
+symbol, and there is no Meta for letters (the Alt+B and Alt+F word jumps of
+a shell). A leader binding is the way to add one if it is missed.
+
+If Alt misbehaves on another device, find out what the key actually sends
+before changing code. On a debug build, `adb logcat -s MiniCodeKeys` prints
+each key the app receives with its meta state (0x12 is left Alt, 0x22 right
+Alt) and whether Alt, Shift or Sym were down. Three things are worth
+checking: whether Alt arrives as held (in the meta state of the letter's own
+event) or as a separate press first (sticky, as some phone keyboards do it);
+whether the symbol arrives as a key event or as text committed by the
+keyboard app, which never shows an Alt at all; and which Alt it is, since
+desktop terminals, Termux among them, often treat only the left one as Meta.
+Termux has its own answer for keyboards without Ctrl and Esc: Volume Down
+acts as Ctrl and Volume Up plus a letter gives Esc, Tab and the arrows (its
+wiki's "Touch Keyboard" page). MiniCode does not copy that yet.
+
 ## Building
 
 Needs the Android SDK and NDK, and JDK 17 or 21 (Gradle 8.14 does not run on

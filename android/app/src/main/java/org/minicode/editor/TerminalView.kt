@@ -240,6 +240,16 @@ class TerminalView @JvmOverloads constructor(
         }
         val unicode = if (text) event.unicodeChar else 0
         if (unicode != 0) {
+            // On a phone keyboard Alt is the symbol layer (Alt+S is "4" on a
+            // Titan 2), so when Alt changes which character the key makes,
+            // the character is what was typed. Sending it as Meta, ESC then
+            // "4", made every digit and symbol vanish into the shell's line
+            // editor. Alt stays Meta only for a key it leaves unchanged.
+            if (mods and Pty.MOD_ALT != 0) {
+                val withoutAlt = event.getUnicodeChar(
+                    event.metaState and KeyEvent.META_ALT_MASK.inv())
+                if (withoutAlt != unicode) mods = mods and Pty.MOD_ALT.inv()
+            }
             session.type(unicode, mods)
             return true
         }
