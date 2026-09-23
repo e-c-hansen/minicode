@@ -1,5 +1,8 @@
 package org.minicode.editor
 
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.concurrent.thread
+
 /**
  * A shell on a pseudo terminal, with the shared TerminalScreen reading its
  * output. See app/src/main/cpp/terminal_jni.cpp.
@@ -8,8 +11,13 @@ package org.minicode.editor
  * cat, grep, ps, and enough to move around a project. Anything richer (git,
  * python, a compiler) lives in Termux, whose files this app cannot reach, so
  * pointing the terminal at a Termux shell is a later job.
+ *
+ * Threads: everything here is for the UI thread except the reader, which
+ * startReading owns. The native session is freed only once both the owner
+ * (close) and the reader have let go of it, so closing while output is
+ * streaming cannot pull the screen out from under the reader.
  */
-class Pty private constructor(private var handle: Long) {
+class Pty private constructor(private val session: Long) {
 
     companion object {
         init { System.loadLibrary("minicode") }
@@ -46,42 +54,92 @@ class Pty private constructor(private var handle: Long) {
         const val MOD_ALT = 2
         const val MOD_CTRL = 4
 
+        /** The flag bits of a cell in a Screen, from nativeSnapshot. */
+        const val CELL_BOLD = 1
+        const val CELL_INVERSE = 2
+        const val CELL_WIDE = 4
+
         @JvmStatic private external fun nativeOpen(
             shell: String, home: String, cols: Int, rows: Int): Long
         @JvmStatic private external fun nativePump(handle: Long, timeoutMs: Int): Int
+        @JvmStatic private external fun nativeReaderDone(handle: Long)
         @JvmStatic private external fun nativeWrite(handle: Long, data: ByteArray)
         @JvmStatic private external fun nativeEncodeChar(codePoint: Int, mods: Int): ByteArray
         @JvmStatic private external fun nativeEncodeKey(handle: Long, key: Int, mods: Int): ByteArray
         @JvmStatic private external fun nativeResize(handle: Long, cols: Int, rows: Int)
-        @JvmStatic private external fun nativeText(handle: Long): String
-        @JvmStatic private external fun nativeColors(handle: Long): IntArray
-        @JvmStatic private external fun nativeCursorRow(handle: Long): Int
-        @JvmStatic private external fun nativeCursorCol(handle: Long): Int
+        @JvmStatic private external fun nativeSnapshot(handle: Long): IntArray
         @JvmStatic private external fun nativeClose(handle: Long)
     }
 
-    val isOpen: Boolean get() = handle != 0L
+    /**
+     * One frame of the screen, copied in a single call. `cells` holds four
+     * ints per cell, row by row: code point (0 for the right half of a wide
+     * character), foreground, background (0xAARRGGBB, 0 for the terminal's
+     * default) and CELL_* flags.
+     */
+    class Screen(data: IntArray) {
+        val rows = if (data.size >= 5) data[0] else 0
+        val cols = if (data.size >= 5) data[1] else 0
+        val cursorRow = if (data.size >= 5) data[2] else 0
+        val cursorCol = if (data.size >= 5) data[3] else 0
+        val cursorVisible = data.size >= 5 && data[4] != 0
+        private val cells = data
 
-    /** Waits for output and feeds it to the screen. -1 once the shell exits. */
-    fun pump(timeoutMs: Int): Int = if (handle == 0L) -1 else nativePump(handle, timeoutMs)
+        private fun at(row: Int, col: Int) = 5 + (row * cols + col) * 4
+        fun codePoint(row: Int, col: Int) = cells[at(row, col)]
+        fun foreground(row: Int, col: Int) = cells[at(row, col) + 1]
+        fun background(row: Int, col: Int) = cells[at(row, col) + 2]
+        fun flags(row: Int, col: Int) = cells[at(row, col) + 3]
+    }
 
-    fun write(data: ByteArray) { if (handle != 0L) nativeWrite(handle, data) }
+    @Volatile private var open = true
+    private var reader: Thread? = null
+    private val readerReleased = AtomicBoolean(false)
+
+    val isOpen: Boolean get() = open
+
+    /**
+     * Reads output on a thread of its own until the shell exits or the Pty
+     * is closed. `onChange` and `onExit` run on that thread; `onExit` only
+     * when the shell ended by itself, not after close().
+     */
+    fun startReading(onChange: () -> Unit, onExit: () -> Unit) {
+        if (reader != null || !open) return
+        reader = thread(name = "minicode-pty", isDaemon = true) {
+            while (open) {
+                when (nativePump(session, 200)) {
+                    -1 -> break
+                    1 -> onChange()
+                }
+            }
+            val closedByOwner = !open
+            releaseReader()
+            if (!closedByOwner) onExit()
+        }
+    }
+
+    private fun releaseReader() {
+        if (readerReleased.compareAndSet(false, true)) nativeReaderDone(session)
+    }
+
+    fun write(data: ByteArray) { if (open) nativeWrite(session, data) }
 
     fun type(codePoint: Int, mods: Int = 0) =
         write(nativeEncodeChar(codePoint, mods))
 
     fun press(key: Int, mods: Int = 0) {
-        if (handle != 0L) write(nativeEncodeKey(handle, key, mods))
+        if (open) write(nativeEncodeKey(session, key, mods))
     }
 
-    fun resize(cols: Int, rows: Int) { if (handle != 0L) nativeResize(handle, cols, rows) }
+    fun resize(cols: Int, rows: Int) { if (open) nativeResize(session, cols, rows) }
 
-    fun text(): String = if (handle == 0L) "" else nativeText(handle)
-    fun colors(): IntArray = if (handle == 0L) IntArray(0) else nativeColors(handle)
-    fun cursorRow(): Int = if (handle == 0L) 0 else nativeCursorRow(handle)
-    fun cursorCol(): Int = if (handle == 0L) 0 else nativeCursorCol(handle)
+    fun snapshot(): Screen = Screen(if (open) nativeSnapshot(session) else IntArray(0))
 
     fun close() {
-        if (handle != 0L) { nativeClose(handle); handle = 0 }
+        if (!open) return
+        open = false
+        nativeClose(session)
+        // A reader that never started still holds its reference.
+        if (reader == null) releaseReader()
     }
 }

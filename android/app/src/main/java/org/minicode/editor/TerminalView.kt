@@ -12,7 +12,7 @@ import android.view.View
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
-import kotlin.concurrent.thread
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The terminal pane: a shell on a pty, drawn as a grid of character cells.
@@ -33,17 +33,22 @@ class TerminalView @JvmOverloads constructor(
         typeface = Typeface.MONOSPACE
         color = Palette.TEXT
     }
+    private val boldPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        color = Palette.TEXT
+    }
+    private val fillPaint = Paint()
     private val cursorPaint = Paint().apply { color = Palette.ACCENT; alpha = 140 }
     private val ui = Handler(Looper.getMainLooper())
 
     private var pty: Pty? = null
-    private var reader: Thread? = null
     private var rows = 24
     private var cols = 80
-    private var lines: List<String> = emptyList()
-    private var colors: IntArray = IntArray(0)
-    private var cursorRow = 0
-    private var cursorCol = 0
+    private var screen: Pty.Screen? = null
+    private var message: String? = null
+    // Set while a redraw is already on its way to the UI thread, so a burst
+    // of output makes one snapshot rather than one per read.
+    private val redrawQueued = AtomicBoolean(false)
 
     /** Called when the shell exits, so the pane can close itself. */
     var onExit: (() -> Unit)? = null
@@ -52,6 +57,7 @@ class TerminalView @JvmOverloads constructor(
         set(value) {
             field = value
             paint.textSize = value * resources.displayMetrics.scaledDensity
+            boldPaint.textSize = paint.textSize
             requestLayout()
             invalidate()
         }
@@ -67,35 +73,34 @@ class TerminalView @JvmOverloads constructor(
     fun start(home: String) {
         if (pty != null) return
         val session = Pty.start("/system/bin/sh", home, cols, rows) ?: run {
-            lines = listOf("Could not start /system/bin/sh")
+            message = "Could not start /system/bin/sh"
             invalidate()
             return
         }
         pty = session
-        reader = thread(name = "minicode-pty", isDaemon = true) {
-            while (true) {
-                when (session.pump(200)) {
-                    -1 -> { ui.post { stop(); onExit?.invoke() }; return@thread }
-                    1 -> ui.post { snapshot() }
-                }
-            }
-        }
+        message = null
+        session.startReading(
+            onChange = {
+                if (redrawQueued.compareAndSet(false, true)) ui.post { snapshot() }
+            },
+            onExit = {
+                // The shell ended by itself. The check against `pty` keeps a
+                // late exit from closing a terminal started since.
+                ui.post { if (pty === session) { stop(); onExit?.invoke() } }
+            })
     }
 
     fun stop() {
         pty?.close()
         pty = null
-        reader = null
     }
 
     val isRunning: Boolean get() = pty?.isOpen == true
 
     private fun snapshot() {
+        redrawQueued.set(false)
         val session = pty ?: return
-        lines = session.text().split('\n')
-        colors = session.colors()
-        cursorRow = session.cursorRow()
-        cursorCol = session.cursorCol()
+        screen = session.snapshot()
         invalidate()
     }
 
@@ -111,26 +116,52 @@ class TerminalView @JvmOverloads constructor(
         pty?.resize(cols, rows)
     }
 
+    /**
+     * Each cell's background first, then its character. A colour of 0 is the
+     * terminal's default, painted in the panel's own colours; inverse swaps
+     * the two after that, which is how vim and less draw their status lines
+     * and most selections. A background left at the default is not painted,
+     * since the view's own background already is that colour.
+     */
     override fun onDraw(canvas: Canvas) {
         val cellWidth = paint.measureText("M")
         val lineHeight = paint.fontSpacing
-        var y = paddingTop - paint.fontMetrics.top
-        for ((row, line) in lines.withIndex()) {
-            var x = paddingLeft.toFloat()
-            for ((col, ch) in line.withIndex()) {
-                val index = row * cols + col
-                // 0 means the program asked for the terminal's own colour.
-                val colour = if (index < colors.size) colors[index] else 0
-                paint.color = if (colour == 0) Palette.TEXT else colour
-                canvas.drawText(ch.toString(), x, y, paint)
-                x += cellWidth
-            }
-            y += lineHeight
+        message?.let {
+            canvas.drawText(it, paddingLeft.toFloat(), paddingTop - paint.fontMetrics.top, paint)
+            return
         }
-        // The cursor is a block, as it is in the other ports.
-        val cx = paddingLeft + cursorCol * cellWidth
-        val cy = paddingTop + cursorRow * lineHeight
-        canvas.drawRect(cx, cy, cx + cellWidth, cy + lineHeight, cursorPaint)
+        val s = screen ?: return
+        val baseline = -paint.fontMetrics.top
+        for (row in 0 until s.rows) {
+            val top = paddingTop + row * lineHeight
+            for (col in 0 until s.cols) {
+                val flags = s.flags(row, col)
+                val fg = s.foreground(row, col)
+                val bg = s.background(row, col)
+                val inverse = flags and Pty.CELL_INVERSE != 0
+                val ink = if (inverse) (if (bg == 0) Palette.BACKGROUND else bg)
+                          else (if (fg == 0) Palette.TEXT else fg)
+                val fill = if (inverse) (if (fg == 0) Palette.TEXT else fg) else bg
+                val left = paddingLeft + col * cellWidth
+                val span = if (flags and Pty.CELL_WIDE != 0) 2 else 1
+                if (fill != 0) {
+                    fillPaint.color = fill
+                    canvas.drawRect(left, top, left + span * cellWidth, top + lineHeight, fillPaint)
+                }
+                val cp = s.codePoint(row, col)
+                if (cp == 0 || cp == ' '.code) continue
+                val pen = if (flags and Pty.CELL_BOLD != 0) boldPaint else paint
+                pen.color = ink
+                canvas.drawText(String(Character.toChars(cp)), left, top + baseline, pen)
+            }
+        }
+        // The cursor is a block, as it is in the other ports, and hidden
+        // when the program hides it (vim does while it redraws).
+        if (s.cursorVisible) {
+            val cx = paddingLeft + s.cursorCol * cellWidth
+            val cy = paddingTop + s.cursorRow * lineHeight
+            canvas.drawRect(cx, cy, cx + cellWidth, cy + lineHeight, cursorPaint)
+        }
     }
 
     // --------------------------------------------------------------- input
