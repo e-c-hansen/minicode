@@ -490,9 +490,14 @@ static void After(double seconds, dispatch_block_t block) {
 }
 
 - (void)postMouse:(NSEventType)type at:(NSPoint)p clicks:(NSInteger)clicks {
+    [self postMouse:type at:p clicks:clicks flags:0];
+}
+
+- (void)postMouse:(NSEventType)type at:(NSPoint)p clicks:(NSInteger)clicks
+            flags:(NSEventModifierFlags)flags {
     NSEvent *e = [NSEvent mouseEventWithType:type
                                     location:p
-                               modifierFlags:0
+                               modifierFlags:flags
                                    timestamp:[self stamp]
                                 windowNumber:self.window.windowNumber
                                      context:nil
@@ -517,6 +522,20 @@ static void After(double seconds, dispatch_block_t block) {
 }
 
 - (void)clickAt:(MCWhere)where { [self clickAt:where count:1]; }
+
+// Command+click. The mouse event carries the flag, which is what the
+// terminal's mouseDown: checks.
+- (void)cmdClickAt:(MCWhere)where {
+    [self add:^(MCDemo *d, MCDone done) {
+        NSPoint p = where();
+        [d animatePointerTo:p then:^{
+            [d rippleAt:p];
+            [d postMouse:NSEventTypeLeftMouseDown at:p clicks:1 flags:NSEventModifierFlagCommand];
+            [d postMouse:NSEventTypeLeftMouseUp at:p clicks:1 flags:NSEventModifierFlagCommand];
+            After(0.25, done);
+        }];
+    }];
+}
 - (void)doubleClickAt:(MCWhere)where { [self clickAt:where count:2]; }
 
 // ---- the file tree
@@ -803,6 +822,76 @@ static void SceneTerminal(MCDemo *d) {
     [d pause:1.0];
 }
 
+// Window point of `needle` in the terminal's output (the last match), and
+// the same text underlined the way holding Command over it does: the hover
+// follows the real mouse and Command key, which a recording cannot move.
+static NSRange TermOutputRange(MCDemo *m, NSString *needle) {
+    NSTextView *out = [[m ui:@"terminal"] valueForKey:@"output"];
+    NSRange r = [out.string rangeOfString:needle options:NSBackwardsSearch];
+    if (r.location == NSNotFound)
+        [m fail:[NSString stringWithFormat:@"no “%@” in the terminal", needle]];
+    return r;
+}
+static NSPoint TermOutputPoint(MCDemo *m, NSString *needle) {
+    NSTextView *out = [[m ui:@"terminal"] valueForKey:@"output"];
+    NSRect screen = [out firstRectForCharacterRange:TermOutputRange(m, needle) actualRange:NULL];
+    NSRect rect = [out.window convertRectFromScreen:screen];
+    return NSMakePoint(NSMinX(rect) + NSWidth(rect) * 0.35, NSMidY(rect));
+}
+static void TermUnderline(MCDemo *m, NSString *needle) {
+    NSTextView *out = [[m ui:@"terminal"] valueForKey:@"output"];
+    [out.textStorage addAttribute:NSUnderlineStyleAttributeName
+                            value:@(NSUnderlineStyleSingle)
+                            range:TermOutputRange(m, needle)];
+}
+
+// Command+click what the terminal prints: a grep result opens at its line,
+// a URL in the browser panel.
+static void SceneLinks(MCDemo *d) {
+    [d pause:0.6];
+    [d clickFile:@"sample.cpp"];
+    [d hidePointer];
+    [d run:^(MCDemo *m) { [m.controller setValue:@300 forKey:@"terminalHeight"]; }];
+    [d key:@"ctrl+`" caption:@"⌃`  Terminal"];
+    [d waitFor:^BOOL(MCDemo *m) {
+        return [[[m ui:@"terminal"] valueForKey:@"atPrompt"] boolValue];
+    } timeout:15 recorded:NO];
+    [d pause:0.4];
+    [d type:@"grep -Hn \"def area\" *.py\n"];
+    [d pause:1.0];
+    [d moveTo:^NSPoint { return TermOutputPoint(d, @"hello.py:9"); }];
+    [d caption:@"⌘-click a file:line in the output"];
+    [d run:^(MCDemo *m) { TermUnderline(m, @"hello.py:9"); }];
+    [d pause:0.9];
+    [d cmdClickAt:^NSPoint { return TermOutputPoint(d, @"hello.py:9"); }];
+    [d waitFor:^BOOL(MCDemo *m) {
+        return [[[m ui:@"textView"] string] hasPrefix:@"# A sample Python file"];
+    } timeout:10 recorded:YES];
+    [d hidePointer];
+    [d poster];
+    [d pause:2.0];
+    // Opening the file moved focus to the editor; a click on the terminal's
+    // input line brings it back, as it would for a person.
+    [d clickAt:^NSPoint {
+        NSTextField *input = [[d ui:@"terminal"] valueForKey:@"input"];
+        NSRect r = [input convertRect:input.bounds toView:nil];
+        return NSMakePoint(NSMinX(r) + 120, NSMidY(r));
+    }];
+    [d hidePointer];
+    [d type:@"echo \"docs: https://docs.python.org/3/library/math.html\"\n"];
+    [d pause:0.8];
+    [d moveTo:^NSPoint { return TermOutputPoint(d, @"docs.python.org"); }];
+    [d caption:@"URLs open in the browser panel"];
+    [d run:^(MCDemo *m) { TermUnderline(m, @"https://docs.python.org/3/library/math.html"); }];
+    [d pause:0.8];
+    [d cmdClickAt:^NSPoint { return TermOutputPoint(d, @"docs.python.org"); }];
+    [d hidePointer];
+    [d waitFor:^BOOL(MCDemo *m) {
+        return [[m.controller valueForKey:@"browserVisible"] boolValue];
+    } timeout:10 recorded:YES];
+    [d pause:3.0];
+}
+
 // Pick a new color for `key` the way a person does: click its swatch, then
 // drag through the color panel, here in `steps` even steps to `to`.
 static void PickColor(MCDemo *d, NSString *key, NSString *from, uint32_t to, int steps) {
@@ -1030,6 +1119,7 @@ static const struct { const char *name; MCSceneBuilder build; } kScenes[] = {
     {"lsp", SceneLsp},
     {"vim", SceneVim},
     {"files", SceneFiles},
+    {"links", SceneLinks},
 };
 
 // ------------------------------------------------------------ entry points

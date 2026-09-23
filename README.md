@@ -36,6 +36,12 @@ The terminal under a Python file, running ls, git log and the script itself, wit
 
 Vim in the terminal panel on the character grid. A short list is typed and saved with :wq, and the panel goes back to the log with the same shell, where cat shows the file. Then git log opens in its pager, Space turns the page and q quits.
 
+Paths and URLs in the output are links. Hold Command and click one, such as src/main.cpp:42:7 from a compiler or a file Claude Code mentions, and the file opens at that line and column; a URL opens in the browser panel. It works in the full screen grid too. Only paths that exist, relative to the shell's current folder or the project, count as links.
+
+![Command clicking a grep result to open it at its line, then a URL that opens in the browser panel](docs/demos/links.gif)
+
+grep finds a function, and Command clicking hello.py:9 opens the file at that line. Then Command clicking a URL printed in the terminal opens it in the browser panel.
+
 If you forget a shortcut, Shift Command H opens a small panel listing the ones that apply right now. The preview toggle, for instance, only appears there when a Markdown or LaTeX file is open.
 
 ## LaTeX
