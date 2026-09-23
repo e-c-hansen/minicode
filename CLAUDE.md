@@ -370,8 +370,8 @@ against a scripted server in `run_tests.cpp`; `Lsp.mm` owns processes and UI.
   currently is. It has a file list, editor, Markdown preview, images, PDFs, a
   terminal on a real shell, and a browser. Missing: language servers, the
   LaTeX preview, project search, comment toggling. See `android/README.md`.
-- **Linux** has not moved: the LaTeX preview, the LSP client, incremental
-  highlighting and media viewing are still macOS only there.
+- **Linux** has incremental highlighting now (September 2026); the LaTeX
+  preview, the LSP client and media viewing are still macOS only there.
   `linux/HANDOFF.md` lists what to do, in order, with the Mac and GTK
   pieces for each.
 - The user's phone is a Unihertz Titan 2 (Android 16, 576 by 640 dp, hardware
@@ -792,9 +792,10 @@ holds, these give real runtime evidence rather than compile-only evidence:
 - **Search**: scoped to a folder (default = open folder or selected folder),
   min 2 chars, generation bumped up front + per-file cancellation, ANSI stripped
   from result lines.
-- **Highlighting is incremental** (macOS and Android, where `Highlighter.kt`
-  does the same over a native mirror of the text; Linux still does a
-  debounced full re-lex). Opening a file runs `applyHighlighting` (full pass, also used by
+- **Highlighting is incremental** (macOS, Android, where `Highlighter.kt`
+  does the same over a native mirror of the text, and Linux, where
+  `Editor.cpp` keeps a UTF-8 mirror and retags large ranges in idle slices;
+  `linux/HANDOFF.md` item 3). Opening a file runs `applyHighlighting` (full pass, also used by
   `recolorEditor` on a settings change). After that the text storage delegate
   `textStorage:willProcessEditing:` feeds every character edit to
   `IncrementalHighlighter` and records the lines to recolor; `textDidChange:`

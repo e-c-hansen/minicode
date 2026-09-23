@@ -21,7 +21,7 @@ Read these first:
 The port builds without warnings in CI (Ubuntu, GTK 4, VTE, WebKitGTK) and has
 been run for real on Ubuntu 26.04. It has:
 - the file tree, live-refreshing;
-- the editor with syntax highlighting (a debounced full re-lex);
+- the editor with incremental syntax highlighting (item 3 below);
 - the Markdown preview;
 - a VTE terminal and a WebKitGTK browser;
 - the settings file with live colors and per-panel opacity;
@@ -70,7 +70,39 @@ Linux creates `untitled.txt` in the root and has no rename (`main.cpp`,
 Done when: every item works from the menu and the tree, a renamed open file
 stays open under its new name, and trashing the open file resets the editor.
 
-### 3. Incremental highlighting
+### 3. Incremental highlighting (done, September 2026)
+
+Done and checked in the running app on the ThinkPad; `BUILD-LINUX.md` has
+the test and the timings. How it works, in `Editor.cpp`:
+
+- `insert-text` and `delete-range` handlers that run before the buffer
+  changes turn each edit into UTF-8 byte offsets (the highlighter's line
+  start plus `gtk_text_iter_get_line_index`), apply it to `mirror_`, a copy
+  of the buffer that the highlighter reads, and feed it to
+  `IncrementalHighlighter<char>`. The `_after` handlers, or `end-user-action`
+  when the edit is inside one, retag the lines it reported.
+- A retag removes only the highlight tags (`hlTags_`: one per style plus the
+  settings swatches) and only over those lines, so find matches and future
+  diagnostic tags are never touched. An `apply-tag` handler refuses highlight
+  tags from anyone else, because a paste from a GtkTextView brings the
+  source's tags along.
+- Retagging costs GTK a few microseconds per tag, so over 1,000 lines the
+  lines on screen are retagged at once and the rest in idle slices of 5 ms.
+- A user action with more than 64 edits in it (a large paste arrives as one
+  insert per run of tags) stops being tracked edit by edit; at its end the
+  old and new text are compared once for a common prefix and suffix, and
+  that becomes the edit.
+- GTK also ends lines at a lone `\r` and U+2029, the lexer only at `\n`.
+  When the line counts differ, offsets are counted through `mirror_`
+  instead, which is slower but correct.
+- `Editor::setPath` is the hook for rename and save-as: it re-lexes only if
+  the grammar changed. Nothing calls it yet; the file tree work should.
+
+Left over: turning off highlighting (a rename to `.txt`) removes the tags
+from the whole buffer at once, about 0.2 s for 50,000 lines. The debug build
+is slow here (see `BUILD-LINUX.md`).
+
+What the item said:
 
 Mac: `IncrementalHighlighter` in `../src/SyntaxHighlighter.h`, driven from
 `textStorage:willProcessEditing:` and `flushHighlighting` in

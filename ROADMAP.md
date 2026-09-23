@@ -61,9 +61,10 @@ left, roughly in order of value:
   milliseconds, but recoloring hundreds of thousands of lines of text storage
   can take tens of milliseconds; coloring only the visible part first and the
   rest in idle time would hide it.
-- The Linux port still does a debounced full re-lex. `IncrementalHighlighter`
-  takes UTF-8 as well as UTF-16, so wiring it to GtkTextBuffer's insert and
-  delete signals is the remaining step.
+- The Linux port is incremental too (September 2026), fed from GtkTextBuffer's
+  insert and delete signals in UTF-8. It already colors the visible lines
+  first and the rest in idle time, because GTK's tags cost more than the
+  Mac's attributes.
 - Line numbers, auto-indent, bracket matching.
 - Broader, more correct syntax highlighting (the scalable answer is tree-sitter,
   which would be the one place to weigh a dependency).
