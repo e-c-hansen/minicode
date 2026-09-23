@@ -11,17 +11,24 @@
 #include "SyncTex.h"
 #include "Json.h"
 #include "LspClient.h"
+#include "FolderSearch.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <random>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
+#ifndef _WIN32
+#include <sys/stat.h>   // mkfifo, for the folder search test
+#endif
 
 // --------------------------------------------------------------- tiny harness
 static int g_pass = 0, g_fail = 0;
@@ -3092,6 +3099,288 @@ static void testTermLinks() {
       CHECK(l.target == "docs/demos/tour.gif"); }
 }
 
+// ------------------------------------------------------------ folder search
+namespace {
+
+namespace fsys = std::filesystem;
+
+void writeFile(const fsys::path &p, const std::string &bytes) {
+    fsys::create_directories(p.parent_path());
+    std::ofstream(p, std::ios::binary) << bytes;
+}
+
+// Matches as "relative:line:column", in the order the search returned them.
+std::vector<std::string> hitKeys(const FolderSearchResult &r) {
+    std::vector<std::string> v;
+    for (const auto &m : r.matches)
+        v.push_back(m.relativePath + ":" + std::to_string(m.line) + ":" +
+                    std::to_string(m.column));
+    return v;
+}
+
+bool hasHit(const FolderSearchResult &r, const std::string &key) {
+    auto v = hitKeys(r);
+    return std::find(v.begin(), v.end(), key) != v.end();
+}
+
+bool anyHitIn(const FolderSearchResult &r, const std::string &relPrefix) {
+    for (const auto &m : r.matches)
+        if (m.relativePath.compare(0, relPrefix.size(), relPrefix) == 0) return true;
+    return false;
+}
+
+void testFolderSearch() {
+    using namespace FolderSearch;
+
+    GROUP("folder-search:query");
+    CHECK(normalizeQuery("  hello \t") == "hello");
+    CHECK(normalizeQuery("\xC2\xA0x y\xE3\x80\x80") == "x y");   // NBSP, ideographic space
+    CHECK(!isSearchable(""));
+    CHECK(!isSearchable("a"));
+    CHECK(!isSearchable("  a  "));
+    CHECK(isSearchable("ab"));
+    CHECK(isSearchable(" ab "));
+    CHECK(!isSearchable("\xC3\xA9"));          // é: two bytes, one character
+    CHECK(isSearchable("\xC3\xA9\xC3\xA9"));
+    CHECK(!isSearchable("\xFF\xFE"));          // not UTF-8: never searched
+
+    GROUP("folder-search:skip");
+    CHECK(isSkippedDirectory("node_modules"));
+    CHECK(isSkippedDirectory("build"));
+    CHECK(isSkippedDirectory("__pycache__"));
+    CHECK(isSkippedDirectory("DerivedData"));
+    CHECK(isSkippedDirectory("venv"));
+    CHECK(!isSkippedDirectory("src"));
+    CHECK(!isSkippedDirectory("Build"));       // the Mac's list is case-sensitive
+
+    GROUP("folder-search:utf8");
+    CHECK(isValidUtf8("plain"));
+    CHECK(isValidUtf8("caf\xC3\xA9 \xE2\x82\xAC \xF0\x9F\x98\x80"));
+    CHECK(isValidUtf8(std::string("nul\0inside", 10)));   // NSString accepts NUL too
+    CHECK(!isValidUtf8("\xC0\x80"));           // overlong NUL
+    CHECK(!isValidUtf8("\xED\xA0\x80"));       // surrogate
+    CHECK(!isValidUtf8("\xF4\x90\x80\x80"));   // past U+10FFFF
+    CHECK(!isValidUtf8("\xE2\x82"));           // truncated
+    CHECK(!isValidUtf8("\x80"));               // stray continuation byte
+
+    GROUP("folder-search:clean");
+    CHECK(cleanLine("\x1b[31mred\x1b[0m text") == "red text");
+    CHECK(cleanLine("\x1b[1;32;40mbold\x1b[m") == "bold");
+    CHECK(cleanLine("a\x07" "b\tc") == "abc");            // bell and tab are controls
+    CHECK(cleanLine("\x1b[31") == "[31");                 // no final byte: only ESC goes
+    CHECK(cleanLine("x\xE2\x80\xAEy") == "xy");           // RIGHT-TO-LEFT OVERRIDE
+    CHECK(cleanLine("\xEF\xBB\xBFtop") == "top");         // byte-order mark
+    CHECK(cleanLine("caf\xC3\xA9") == "caf\xC3\xA9");     // letters untouched
+    CHECK(cleanLine("a\xC2\x85" "b") == "ab");            // C1 NEL
+    CHECK(displayText("   \t  indented  ") == "indented");
+    CHECK(displayText("\x1b[32m   green") == "green");     // cleaned, then trimmed
+    {
+        std::string longLine(300, 'x');
+        CHECK(displayText(longLine).size() == 200);
+        std::string wide;
+        for (int i = 0; i < 250; ++i) wide += "\xC3\xA9";   // 250 two-byte chars
+        const std::string cut = displayText(wide);
+        CHECK(cut.size() == 400);                           // 200 whole characters
+        CHECK(isValidUtf8(cut));
+        CHECK(displayText("abcdef", 3) == "abc");
+    }
+
+    GROUP("folder-search:match");
+    std::size_t col = 99, len = 99;
+    CHECK(findInLine("Hello World", "world", false, &col, &len) && col == 6 && len == 5);
+    CHECK(findInLine("HELLO", "hello", false, &col, &len) && col == 0);
+    CHECK(!findInLine("Hello World", "world", true, &col, &len));
+    CHECK(findInLine("Hello World", "World", true, &col, &len) && col == 6);
+    CHECK(!findInLine("hel lo", "hello", false, &col, &len));
+    CHECK(!findInLine("he", "hello", false, &col, &len));
+    // ASCII query after multi-byte text: the byte column counts bytes.
+    CHECK(findInLine("\xC3\xA9\xC3\xA9TODO", "todo", false, &col, &len) && col == 4 && len == 4);
+    // Latin-1, Greek and Cyrillic fold; match length is in the line's bytes.
+    CHECK(findInLine("\xC3\x89" "COLE", "\xC3\xA9" "cole", false, &col, &len) &&
+          col == 0 && len == 6);
+    CHECK(findInLine("x \xCE\xA3\xCE\x99\xCE\x93\xCE\x9C\xCE\x91", "\xCF\x83\xCE\xB9\xCE\xB3",
+                     false, &col, &len) && col == 2 && len == 6);   // ΣΙΓΜΑ / σιγ
+    CHECK(findInLine("\xD0\x9C\xD0\x98\xD0\xA0", "\xD0\xBC\xD0\xB8\xD1\x80",
+                     false, &col, &len) && len == 6);               // МИР / мир
+    CHECK(findInLine("\xC5\x81" "\xC3\xB3" "d\xC5\xBA", "\xC5\x82\xC3\xB3" "d\xC5\xBA",
+                     false, &col, &len));                           // Łódź / łódź
+    CHECK(!findInLine("\xC3\x89" "COLE", "\xC3\xA9" "cole", true, &col, &len));
+
+    // ---- a real folder -------------------------------------------------
+    std::random_device rd;
+    const fsys::path root = fsys::temp_directory_path() /
+        ("minicode-search-test-" + std::to_string(rd()));
+    fsys::create_directories(root);
+    const fsys::path outside = fsys::temp_directory_path() /
+        ("minicode-search-outside-" + std::to_string(rd()));
+    fsys::create_directories(outside);
+
+    writeFile(root / "a.txt", "hello world\nnothing here\n  Second HELLO\n");
+    writeFile(root / "sub" / "b.cpp", "int x; // hello\r\nfoo\rbar\xE2\x80\xA9" "and hello again");
+    writeFile(root / "sub" / "deeper" / "c.md", "\xC3\xA9\xC3\xA9hello\n");
+    writeFile(root / "ansi.log", "\x1b[32m  hello green\x1b[0m\n");
+    writeFile(root / "nul.txt", std::string("hello\0there", 11));
+    writeFile(root / "build.txt", "hello from a file named like a skipped folder\n");
+    writeFile(root / "bom.txt", "\xEF\xBB\xBFhello bom\n");
+    writeFile(root / ".dotfile", "hello hidden\n");
+    writeFile(root / ".hidden" / "x.txt", "hello hidden dir\n");
+    writeFile(root / ".git" / "config", "hello git\n");
+    for (const char *d : {"node_modules", "build", "dist", "__pycache__", "venv",
+                          "DerivedData"})
+        writeFile(root / d / "x.txt", "hello skipped\n");
+    writeFile(root / "binary.dat", std::string("hello\xFF\xFE\x00\x01", 9));
+    writeFile(root / "latin1.txt", "hello caf\xE9\n");            // not UTF-8
+    writeFile(root / "big.txt", "hello\n" + std::string(1024 * 1024, 'x'));
+    writeFile(root / "exactly1mb.txt",
+              "hello\n" + std::string(1024 * 1024 - 6, 'y'));     // at the limit: searched
+    writeFile(root / "long.txt", std::string(50, ' ') + "hello" + std::string(400, 'z'));
+    writeFile(outside / "linked.txt", "hello through a symlink\n");
+
+    std::error_code ec;
+    fsys::create_directory_symlink(root, root / "sub" / "loop", ec);        // back to root
+    const bool loopMade = !ec;
+    fsys::create_directory_symlink(outside, root / "zlink", ec);           // out of the tree
+    const bool linkMade = !ec;
+    fsys::create_symlink(root / "missing", root / "broken", ec);            // dangling
+#ifndef _WIN32
+    const bool fifoMade = mkfifo((root / "pipe.txt").c_str(), 0600) == 0;  // must not block
+#else
+    const bool fifoMade = false;
+#endif
+
+    GROUP("folder-search:tree");
+    FolderSearchResult r = search(root.string(), "hello");
+    CHECK(!r.cancelled);
+    CHECK(!r.truncated);
+    CHECK(hasHit(r, "a.txt:1:1"));
+    CHECK(hasHit(r, "a.txt:3:10"));                      // case-insensitive, raw column
+    CHECK(hasHit(r, "sub/b.cpp:1:11"));
+    CHECK(hasHit(r, "sub/b.cpp:4:5"));                   // \r\n, \r and U+2029 end lines
+    CHECK(hasHit(r, "sub/deeper/c.md:1:3"));             // column in characters
+    CHECK(hasHit(r, "ansi.log:1:8"));                    // the raw line holds the escape
+    CHECK(hasHit(r, "nul.txt:1:1"));
+    CHECK(hasHit(r, "build.txt:1:1"));                   // only folders are skipped
+    CHECK(hasHit(r, "bom.txt:1:2"));                     // the BOM is a character in line 1
+    CHECK(hasHit(r, "exactly1mb.txt:1:1"));
+    CHECK(hasHit(r, "long.txt:1:51"));
+    CHECK(!anyHitIn(r, ".dotfile"));
+    CHECK(!anyHitIn(r, ".hidden"));
+    CHECK(!anyHitIn(r, ".git"));
+    CHECK(!anyHitIn(r, "node_modules"));
+    CHECK(!anyHitIn(r, "build/"));
+    CHECK(!anyHitIn(r, "dist"));
+    CHECK(!anyHitIn(r, "__pycache__"));
+    CHECK(!anyHitIn(r, "venv"));
+    CHECK(!anyHitIn(r, "DerivedData"));
+    CHECK(!anyHitIn(r, "binary.dat"));
+    CHECK(!anyHitIn(r, "latin1.txt"));
+    CHECK(!anyHitIn(r, "big.txt"));
+    CHECK(!anyHitIn(r, "sub/loop"));                     // the loop back to root is not re-walked
+    CHECK(!anyHitIn(r, "broken"));
+    CHECK(!anyHitIn(r, "pipe.txt"));
+    CHECK(loopMade);
+    CHECK(fifoMade);
+    if (linkMade) CHECK(hasHit(r, "zlink/linked.txt:1:1"));   // symlinked folders are followed
+    CHECK(r.matches.size() == (linkMade ? 12u : 11u));
+    CHECK(r.filesMatched == r.matches.size() - 2);       // a.txt and b.cpp have two
+    CHECK(r.filesSearched >= r.filesMatched);
+
+    // Stable order: files before folders, names in byte order, lines ascending.
+    {
+        auto keys = hitKeys(r);
+        CHECK(!keys.empty() && keys.front() == "a.txt:1:1");
+        auto pos = [&](const std::string &k) {
+            return std::find(keys.begin(), keys.end(), k) - keys.begin();
+        };
+        CHECK(pos("a.txt:1:1") < pos("a.txt:3:10"));
+        CHECK(pos("long.txt:1:51") < pos("sub/b.cpp:1:11"));    // files first
+        CHECK(pos("sub/b.cpp:4:5") < pos("sub/deeper/c.md:1:3"));
+    }
+
+    // Match details: full path, byte offsets and the cleaned display text.
+    for (const auto &m : r.matches) {
+        if (m.relativePath == "ansi.log") {
+            CHECK(m.text == "hello green");
+            CHECK(m.byteColumn == 7 && m.byteLength == 5);
+            CHECK(m.path == (root / "ansi.log").string());
+        }
+        if (m.relativePath == "sub/deeper/c.md") CHECK(m.byteColumn == 4);
+        if (m.relativePath == "long.txt") {
+            CHECK(m.text.size() == 200);
+            CHECK(m.text.compare(0, 5, "hello") == 0);          // trimmed first
+        }
+        if (m.relativePath == "bom.txt") CHECK(m.text == "hello bom");
+        if (m.relativePath == "nul.txt") CHECK(m.text == "hellothere");
+    }
+
+    GROUP("folder-search:options");
+    CHECK(search(root.string(), "h").matches.empty());       // under two characters
+    CHECK(search(root.string(), "   ").matches.empty());
+    CHECK(search((root / "nope").string(), "hello").matches.empty());
+    CHECK(search((root / "a.txt").string(), "hello").matches.empty());   // not a folder
+    CHECK(search(root.string(), "  second hello ").matches.size() == 1); // trimmed query
+    {
+        FolderSearchOptions o;
+        o.caseSensitive = true;
+        auto cs = search(root.string(), "HELLO", nullptr, o);
+        CHECK(cs.matches.size() == 1 && hasHit(cs, "a.txt:3:10"));
+    }
+    {
+        FolderSearchOptions o;
+        o.maxMatches = 3;
+        auto capped = search(root.string(), "hello", nullptr, o);
+        CHECK(capped.matches.size() == 3);
+        CHECK(capped.truncated);
+        CHECK(hitKeys(capped).front() == "a.txt:1:1");
+    }
+    {
+        // The scope folder itself is searched even when its name is on the
+        // skip list, as on the Mac.
+        auto inBuild = search((root / "build").string(), "hello");
+        CHECK(inBuild.matches.size() == 1 && inBuild.matches[0].relativePath == "x.txt");
+        // And a root given with a trailing slash joins paths cleanly.
+        auto slashed = search((root / "sub").string() + "/", "again");
+        CHECK(slashed.matches.size() == 1 &&
+              slashed.matches[0].path == (root / "sub" / "b.cpp").string());
+    }
+
+    GROUP("folder-search:cancel");
+    {
+        std::atomic<bool> stopNow{true};
+        auto c = search(root.string(), "hello", &stopNow);
+        CHECK(c.cancelled);
+        CHECK(c.matches.empty());
+        std::atomic<bool> keepGoing{false};
+        auto k = search(root.string(), "hello", &keepGoing);
+        CHECK(!k.cancelled && k.matches.size() == r.matches.size());
+    }
+    {
+        // Cancelled from another thread while a large tree is being searched:
+        // it stops early and says so.
+        const fsys::path many = root / "many";
+        for (int d = 0; d < 40; ++d)
+            for (int f = 0; f < 25; ++f)
+                writeFile(many / ("d" + std::to_string(d)) / ("f" + std::to_string(f) + ".txt"),
+                          std::string(20000, 'q') + "\nneedle\n");
+        std::atomic<bool> flag{false};
+        std::thread t([&] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            flag = true;
+        });
+        auto c = search(many.string(), "needle", &flag);
+        t.join();
+        CHECK(c.cancelled);
+        CHECK(c.matches.size() < 1000);
+        auto whole = search(many.string(), "needle");
+        CHECK(whole.matches.size() == 1000 && !whole.cancelled);
+    }
+
+    fsys::remove_all(root, ec);
+    fsys::remove_all(outside, ec);
+}
+
+}  // namespace
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
@@ -3114,6 +3403,7 @@ int main() {
     testLspClient();
     testLatexClicks();
     testSyncTexText();
+    testFolderSearch();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
