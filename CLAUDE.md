@@ -18,12 +18,12 @@ this file covers the macOS app except where it says otherwise.
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
   run on Apple Silicon and to keep granted permissions stable).
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  1079 checks over the tokenizer (including ~14,000 random edits comparing
+  1104 checks over the tokenizer (including ~14,000 random edits comparing
   incremental against full highlighting, and a timing line for a 100k-line
   file), Markdown parser, terminal output stream and screen grid, settings
   parser, comment toggling, the LaTeX and SyncTeX readers (including the preview's click-to-source
-  matching), JSON, and the LSP
-  client.
+  matching), JSON, the LSP
+  client, and finding file references and URLs in terminal output.
   Exits non-zero on failure.
 - `make run [DIR=~/path]` — build and launch.
 - `make icon` — regenerate `resources/AppIcon.icns` from `tools/makeicon.m`.
@@ -77,6 +77,10 @@ isolation. Keep them dependency-free.
   alt screen 47/1047/1049, DECSC/DECRC, pending wrap, tabs, wide chars, DEC
   line drawing, DECCKM/keypad/bracketed paste, DSR/DA replies, resize), plus
   key/paste encoding. Tests replay bytes recorded from vim and less.
+- `src/TermLinks.{h,cpp}` — what Cmd+click can open in a line of terminal
+  output: `path:line:col`, Python's `File "x", line N`, `file(line,col)`
+  from TypeScript and MSVC, and URLs with sentence punctuation trimmed.
+  Text only; each port checks the path exists before showing a link.
 
 The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 
@@ -356,7 +360,8 @@ against a scripted server in `run_tests.cpp`; `Lsp.mm` owns processes and UI.
 ## Current state (handoff, 2026-09-22)
 
 - **macOS** is released as **1.3.3** (Homebrew tap and GitHub Releases), and
-  `main` is pushed. 1,079 core checks pass; the build is warning-free. That
+  `main` is pushed. 1,079 core checks passed then (1,104 now); the build is
+  warning-free. That
   day's work: opening a file from the command line, image and PDF viewing,
   Export PDF for LaTeX, Copy Path in the tree's context menu, the memory
   benchmark, and a plainer README.
@@ -737,6 +742,24 @@ holds, these give real runtime evidence rather than compile-only evidence:
   calls `breakLine()` on the stream, or the next update overwrites them. When testing headless, give the shell a scratch
   `HOME` and `ZDOTDIR`: `/etc/zshrc` sets `HISTFILE` from them, and test
   commands otherwise land in the user's real `~/.zsh_history`.
+- **Terminal links (Cmd+click)**: `TermLinks` finds candidates in a line;
+  `TerminalView linkInLine:atByte:` resolves a file against the shell's cwd
+  (from OSC 7), then `projectRoot`, keeping only paths that exist (cached,
+  emptied on every output chunk and cwd change), resolved with
+  `stringByResolvingSymlinksInPath` so /private/tmp matches a /tmp root.
+  The log view maps a click through `characterIndexForPoint:` (checked
+  against that character's own rect, since it answers with the nearest
+  character past a line's end) and UTF-16 -> the line's UTF-8 bytes; the
+  grid builds each row's UTF-8 with a byte -> cell map (wide characters'
+  right halves add no bytes). The hover underline in the log is a real
+  storage attribute, restored afterwards, because TextKit 2 ignores
+  underline rendering attributes; output arriving clears it first, since
+  the live line is replaced whole. Cmd pressed or released without moving
+  is caught by a local flagsChanged monitor (flagsChanged: only reaches the
+  first responder, usually the input line). EditorController
+  `openTerminalLink:` opens URLs in the browser panel, folders in the tree,
+  and files at `goToLine:column:` (switching a preview to source first). A
+  path wrapped across two rows of the grid is not found.
 - **Terminal grid mode** (`feat/terminal-screen`): every pty chunk goes to
   BOTH `TerminalStream` (log) and `TerminalScreen` (grid), so either is
   current when shown and no mid-chunk handoff is needed. `updateMode` shows

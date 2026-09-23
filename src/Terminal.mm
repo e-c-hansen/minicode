@@ -31,6 +31,7 @@
 #import "TerminalGridView.h"
 #include "TerminalStream.h"
 #include "TerminalScreen.h"
+#include "TermLinks.h"
 
 #include <util.h>
 #include <termios.h>
@@ -107,13 +108,132 @@ static NSString *IntegrationDirectory(void) {
     return dir;
 }
 
+@implementation MCTermLink
+@end
+
 // Read-only output view. A plain click focuses the input line; a drag still
-// selects text for copying.
+// selects text for copying; Cmd+click opens the link under the pointer.
+//
+// While Cmd is held over a link the link is underlined. TextKit 2 ignores
+// underline rendering attributes (see Lsp.mm), so the underline is a real
+// storage attribute, added and taken off again; whatever underline the
+// program printed there is put back. Output arriving clears it first, since
+// the live line is replaced wholesale.
 @interface TerminalOutputView : NSTextView
 @property(nonatomic, copy) void (^onPlainClick)(void);
+// The link at a character of the output, and its span there (UTF-16).
+@property(nonatomic, copy) MCTermLink *(^linkAtIndex)(NSUInteger index, NSRange *range);
+@property(nonatomic, copy) void (^openLink)(MCTermLink *link);
+- (void)updateLinkHover;
+- (void)clearLinkHover;
 @end
-@implementation TerminalOutputView
+@implementation TerminalOutputView {
+    NSRange _hoverRange;                        // location NSNotFound: none
+    NSMutableArray<NSArray *> *_savedUnderline; // [range value, underline] pairs
+}
+
+- (instancetype)initWithFrame:(NSRect)frame {
+    if ((self = [super initWithFrame:frame])) _hoverRange = NSMakeRange(NSNotFound, 0);
+    return self;
+}
+
+// The link under a point in the view, or nil. The character index is
+// checked against its own glyph rect, because characterIndexForPoint:
+// answers with the nearest character even far past the end of a line.
+- (MCTermLink *)linkAtPoint:(NSPoint)p range:(NSRange *)range {
+    if (!self.linkAtIndex || !self.window) return nil;
+    NSPoint screen = [self.window convertPointToScreen:
+                      [self convertPoint:p toView:nil]];
+    NSUInteger i = [self characterIndexForPoint:screen];
+    if (i == NSNotFound || i >= self.string.length) return nil;
+    NSRect glyph = [self firstRectForCharacterRange:NSMakeRange(i, 1)
+                                        actualRange:NULL];
+    if (!NSPointInRect(screen, NSInsetRect(glyph, -1, -1))) return nil;
+    return self.linkAtIndex(i, range);
+}
+
+- (void)clearLinkHover {
+    if (_hoverRange.location == NSNotFound) return;
+    NSTextStorage *ts = self.textStorage;
+    if (NSMaxRange(_hoverRange) <= ts.length) {
+        [ts beginEditing];
+        [ts removeAttribute:NSUnderlineStyleAttributeName range:_hoverRange];
+        for (NSArray *pair in _savedUnderline) {
+            NSRange r = [pair[0] rangeValue];
+            if (NSMaxRange(r) <= ts.length)
+                [ts addAttribute:NSUnderlineStyleAttributeName value:pair[1] range:r];
+        }
+        [ts endEditing];
+    }
+    _hoverRange = NSMakeRange(NSNotFound, 0);
+    _savedUnderline = nil;
+}
+
+- (void)updateLinkHover {
+    NSRange range = NSMakeRange(NSNotFound, 0);
+    MCTermLink *link = nil;
+    if (NSEvent.modifierFlags & NSEventModifierFlagCommand) {
+        NSPoint p = [self convertPoint:[self.window mouseLocationOutsideOfEventStream]
+                              fromView:nil];
+        if (NSPointInRect(p, self.visibleRect)) link = [self linkAtPoint:p range:&range];
+    }
+    if (!link) {
+        BOOL was = _hoverRange.location != NSNotFound;
+        [self clearLinkHover];
+        if (was) [self.window invalidateCursorRectsForView:self];
+        return;
+    }
+    if (NSEqualRanges(range, _hoverRange)) { [[NSCursor pointingHandCursor] set]; return; }
+    [self clearLinkHover];
+    NSTextStorage *ts = self.textStorage;
+    _savedUnderline = [NSMutableArray array];
+    [ts enumerateAttribute:NSUnderlineStyleAttributeName inRange:range options:0
+                usingBlock:^(id value, NSRange r, BOOL *stop) {
+        (void)stop;
+        if (value) [self->_savedUnderline addObject:@[[NSValue valueWithRange:r], value]];
+    }];
+    [ts beginEditing];
+    [ts addAttribute:NSUnderlineStyleAttributeName
+               value:@(NSUnderlineStyleSingle) range:range];
+    [ts endEditing];
+    _hoverRange = range;
+    [[NSCursor pointingHandCursor] set];
+}
+
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    for (NSTrackingArea *a in self.trackingAreas)
+        if (a.owner == self && a.userInfo[@"links"]) [self removeTrackingArea:a];
+    [self addTrackingArea:[[NSTrackingArea alloc]
+        initWithRect:NSZeroRect
+             options:NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited |
+                     NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
+               owner:self userInfo:@{@"links": @YES}]];
+}
+
+- (void)mouseMoved:(NSEvent *)event {
+    [super mouseMoved:event];
+    [self updateLinkHover];
+}
+- (void)mouseExited:(NSEvent *)event {
+    [super mouseExited:event];
+    [self clearLinkHover];
+}
+- (void)cursorUpdate:(NSEvent *)event {
+    if (_hoverRange.location != NSNotFound) [[NSCursor pointingHandCursor] set];
+    else [super cursorUpdate:event];
+}
+
 - (void)mouseDown:(NSEvent *)event {
+    if (event.modifierFlags & NSEventModifierFlagCommand) {
+        NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+        MCTermLink *link = [self linkAtPoint:p range:NULL];
+        if (link) {
+            [self clearLinkHover];
+            if (self.openLink) self.openLink(link);
+            return;
+        }
+    }
     [super mouseDown:event];   // runs selection tracking until mouseUp
     if (self.selectedRange.length == 0 && self.onPlainClick) self.onPlainClick();
 }
@@ -148,6 +268,12 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     BOOL _stickyGrid;            // this command went raw: grid until it ends
     int _rawTicks;               // consecutive polls that found raw mode
     NSTimer *_rawTimer;          // polls termios while a command runs
+
+    // Cmd+click links: a path as written -> the existing file it names (or
+    // NSNull when none). Emptied when output arrives or the directory
+    // changes, so a file a command has just created is found.
+    NSMutableDictionary<NSString *, id> *_linkCache;
+    id _flagsMonitor;            // Cmd down/up re-evaluates the link under the pointer
 }
 @property(nonatomic, strong) TerminalGridView *grid;
 @property(nonatomic, strong) NSScrollView *outScroll;
@@ -204,6 +330,13 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     self.output = [[TerminalOutputView alloc] initWithFrame:self.bounds];
     __weak TerminalView *weakSelf = self;
     self.output.onPlainClick = ^{ [weakSelf focusInput]; };
+    self.output.linkAtIndex = ^MCTermLink *(NSUInteger index, NSRange *range) {
+        return [weakSelf linkInOutputAt:index range:range];
+    };
+    self.output.openLink = ^(MCTermLink *link) {
+        TerminalView *s = weakSelf;
+        if (s.onOpenLink) s.onOpenLink(link);
+    };
     self.output.editable = NO;
     self.output.selectable = YES;
     self.output.richText = YES;
@@ -241,6 +374,13 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     self.grid.onInput = ^(NSData *bytes) {
         TerminalView *s = weakSelf;
         if (s) [s sendBytes:(const char *)bytes.bytes length:bytes.length];
+    };
+    self.grid.linkAt = ^id(const std::string &line, size_t byte) {
+        return [weakSelf linkInLine:line atByte:byte];
+    };
+    self.grid.openLink = ^(id link) {
+        TerminalView *s = weakSelf;
+        if (s.onOpenLink) s.onOpenLink(link);
     };
     [self addSubview:self.grid];
 }
@@ -365,6 +505,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 - (void)setDirectory:(NSString *)dir {
     if (!dir.length) return;
     _cwd = dir;
+    [_linkCache removeAllObjects];
     [self updatePrompt];
     if (_atPrompt) {   // move the live shell too (space: kept out of history)
         _atPrompt = NO;
@@ -409,6 +550,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     [_history addObject:line];
     _historyIdx = _history.count;
     if ([trimmed isEqualToString:@"clear"]) {   // handled locally
+        [self.output clearLinkHover];
         self.output.string = @"";
         _liveStart = 0;
         _stream.breakLine();
@@ -504,7 +646,125 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
 // ------------------------------------------------------------ the pty shell
 - (void)dealloc {
+    if (_flagsMonitor) [NSEvent removeMonitor:_flagsMonitor];
     [self stopShell];
+}
+
+// ---------------------------------------------------------------- links
+// Cmd+click on terminal output. TermLinks (pure C++) finds what looks like a
+// URL or a file reference in a line; this resolves a file against the
+// shell's directory and then the project folder, and keeps only files that
+// exist, so "e.g." or a word that happens to have a dot never lights up.
+
+// Pressing or releasing Cmd without moving the mouse still shows or hides
+// the underline. flagsChanged: only reaches the first responder, which is
+// usually the input line, so a monitor watches for it instead.
+- (void)viewDidMoveToWindow {
+    [super viewDidMoveToWindow];
+    if (_flagsMonitor) { [NSEvent removeMonitor:_flagsMonitor]; _flagsMonitor = nil; }
+    if (!self.window) return;
+    __weak TerminalView *weakSelf = self;
+    _flagsMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged
+                                                          handler:^NSEvent *(NSEvent *e) {
+        TerminalView *s = weakSelf;
+        if (s && e.window == s.window && !s.hidden) {
+            if (s->_gridMode) [s.grid updateLinkHover];
+            else [s.output updateLinkHover];
+        }
+        return e;
+    }];
+}
+
+// A path as written, resolved to an existing file or folder, or nil.
+- (NSString *)resolvePath:(NSString *)written isDirectory:(BOOL *)isDir {
+    if (!_linkCache) _linkCache = [NSMutableDictionary dictionary];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    id cached = _linkCache[written];
+    if (cached) {
+        if (cached == [NSNull null]) return nil;
+        [fm fileExistsAtPath:cached isDirectory:isDir];
+        return cached;
+    }
+    NSString *expanded = written.stringByExpandingTildeInPath;
+    NSMutableArray<NSString *> *candidates = [NSMutableArray array];
+    if (expanded.isAbsolutePath) {
+        [candidates addObject:expanded];
+    } else {
+        if (_cwd.length) [candidates addObject:[_cwd stringByAppendingPathComponent:expanded]];
+        if (self.projectRoot.length)
+            [candidates addObject:[self.projectRoot stringByAppendingPathComponent:expanded]];
+    }
+    NSString *found = nil;
+    for (NSString *c in candidates) {
+        // Spelled the way the window spells its root (/tmp, not the
+        // /private/tmp the shell reports), so a file inside the folder is
+        // recognised as inside it.
+        NSString *path = c.stringByStandardizingPath.stringByResolvingSymlinksInPath;
+        if ([fm fileExistsAtPath:path isDirectory:isDir]) { found = path; break; }
+    }
+    if (_linkCache.count > 500) [_linkCache removeAllObjects];
+    _linkCache[written] = found ?: (id)[NSNull null];
+    return found;
+}
+
+- (MCTermLink *)linkInLine:(const std::string &)line atByte:(size_t)byte {
+    std::vector<TermLinks::Link> links = TermLinks::find(line);
+    const TermLinks::Link *l = TermLinks::at(links, byte);
+    if (!l) return nil;
+    NSString *target = [[NSString alloc] initWithBytes:l->target.data()
+                                                length:l->target.size()
+                                              encoding:NSUTF8StringEncoding];
+    if (!target.length) return nil;
+    MCTermLink *link = [MCTermLink new];
+    link.byteStart = l->start;
+    link.byteLength = l->length;
+    link.line = l->line;
+    link.column = l->column;
+    if (l->kind == TermLinks::Link::Url) {
+        link.isURL = YES;
+        link.target = target;
+        return link;
+    }
+    BOOL isDir = NO;
+    NSString *path = [self resolvePath:target isDirectory:&isDir];
+    if (!path) return nil;
+    link.target = path;
+    link.isDirectory = isDir;
+    return link;
+}
+
+// The link at a character of the log view, and its span there in UTF-16.
+- (MCTermLink *)linkInOutputAt:(NSUInteger)index range:(NSRange *)range {
+    NSString *all = self.output.string;
+    if (index >= all.length) return nil;
+    NSRange lineRange = [all lineRangeForRange:NSMakeRange(index, 0)];
+    NSUInteger end = NSMaxRange(lineRange);
+    while (end > lineRange.location && [all characterAtIndex:end - 1] == '\n') end--;
+    if (index >= end) return nil;
+    NSString *line = [all substringWithRange:
+                      NSMakeRange(lineRange.location, end - lineRange.location)];
+    // Start of the composed character, so the prefix never ends inside a
+    // surrogate pair.
+    NSUInteger offset = [line rangeOfComposedCharacterSequenceAtIndex:
+                         index - lineRange.location].location;
+    NSUInteger byte = [[line substringToIndex:offset]
+                       lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+    const char *utf8 = line.UTF8String;
+    if (!utf8) return nil;
+    std::string text(utf8);
+    MCTermLink *link = [self linkInLine:text atByte:byte];
+    if (!link) return nil;
+    if (range) {
+        NSString *before = [[NSString alloc] initWithBytes:text.data()
+                                                    length:link.byteStart
+                                                  encoding:NSUTF8StringEncoding];
+        NSString *span = [[NSString alloc] initWithBytes:text.data() + link.byteStart
+                                                  length:link.byteLength
+                                                encoding:NSUTF8StringEncoding];
+        if (!before || !span) return nil;
+        *range = NSMakeRange(lineRange.location + before.length, span.length);
+    }
+    return link;
 }
 
 - (void)stopShell {
@@ -727,6 +987,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     std::string replies = _screen.takeReplies();   // e.g. cursor position
     if (!replies.empty()) [self sendBytes:replies.data() length:replies.size()];
     auto events = _stream.feed((const char *)data.bytes, data.length);
+    [_linkCache removeAllObjects];
+    [self.output clearLinkHover];   // the live line is about to be replaced
     NSTextStorage *ts = self.output.textStorage;
     [ts beginEditing];
     for (const TermEvent &e : events) {
@@ -757,6 +1019,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
             _cwd = [[NSFileManager defaultManager]
                 stringWithFileSystemRepresentation:e.text.c_str()
                                             length:e.text.size()];
+            [_linkCache removeAllObjects];
             [self updatePrompt];
             break;
         }

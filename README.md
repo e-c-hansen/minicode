@@ -243,6 +243,7 @@ A new scene is a function of a few lines in src/Demo.mm plus an entry in its sce
 | Command slash | Comment or uncomment the selected lines |
 | Control Space, or Option Escape | Complete the word at the cursor, when the file has a language server |
 | F12, or Command click | Go to definition (on a laptop keyboard F12 may need the fn key) |
+| Command click in the terminal | Open a file named in the output at its line and column, such as src/main.cpp:42:7 from a compiler, or a URL in the browser panel |
 | Command I | Show the type and documentation under the cursor |
 
 ## How it is put together

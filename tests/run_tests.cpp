@@ -3077,6 +3077,19 @@ static void testTermLinks() {
     }
     // Non-ASCII names are found whole.
     { Link l = one("données/résumé.tex:3"); CHECK(l.target == "données/résumé.tex" && l.line == 3); }
+    // How Claude Code names files: in parentheses after a tool name, and
+    // with a line in its summaries. The tool name itself is not a path.
+    {
+        std::string s = "⏺ Update(src/Terminal.mm)";
+        Link l = one(s);
+        CHECK(l.target == "src/Terminal.mm" && l.line == 0);
+        CHECK(s.substr(l.start, l.length) == "src/Terminal.mm");
+    }
+    { Link l = one("  ⎿  Read src/main.mm:120 (40 lines)");
+      CHECK(l.target == "src/main.mm" && l.line == 120); }
+    // Inside backticks, as in Markdown output.
+    { Link l = one("see `docs/demos/tour.gif` for it");
+      CHECK(l.target == "docs/demos/tour.gif"); }
 }
 
 int main() {

@@ -879,6 +879,9 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:nil label2:nil state:openOr(!self.editorHidden)];
     [self appendHintsRow:s key:@"⇧⌘T" label:@"Terminal  (also ⌃`)"
                     key2:nil label2:nil state:openOr(self.terminalVisible)];
+    if (self.terminalVisible)
+        [self appendHintsRow:s key:@"⌘ click" label:@"Open a file:line or URL in the terminal"
+                        key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:@"⇧⌘B" label:@"Browser"
                     key2:nil label2:nil state:openOr(self.browserVisible)];
     if (self.isMarkdown) {
@@ -1002,6 +1005,11 @@ static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hide
 - (void)toggleTerminal:(id)sender {
     if (!self.terminal) {
         self.terminal = [[TerminalView alloc] initWithDirectory:_root.path];
+        self.terminal.projectRoot = _root.path;
+        __weak EditorController *weakLinks = self;
+        self.terminal.onOpenLink = ^(MCTermLink *link) {
+            [weakLinks openTerminalLink:link];
+        };
         [self.rightArea addSubview:self.terminal];
 
         self.termDivider = [[DragBar alloc] initWithFrame:NSZeroRect];
@@ -1017,6 +1025,71 @@ static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hide
     if (self.terminalVisible) [self.terminal focusInput];
     else [self collapseRightAreaIfEmpty];
     if (self.hintsVisible) [self updateHints];
+}
+
+// Cmd+click on a link in the terminal. A URL opens in the browser panel; a
+// file opens in the editor at the line and column the reference named; a
+// folder is shown in the tree.
+- (void)openTerminalLink:(MCTermLink *)link {
+    if (link.isURL) {
+        if (!self.browserVisible) [self toggleBrowser:nil];
+        [self.browser navigateToString:link.target];
+        return;
+    }
+    // The terminal spells paths the way the shell does; put one inside the
+    // folder back into the tree's own spelling (the root may be /tmp/x while
+    // the file resolved to /private/tmp/x/y), so the tree can select it.
+    NSString *path = link.target;
+    NSString *rootReal = _root.path.stringByResolvingSymlinksInPath;
+    NSString *real = path.stringByResolvingSymlinksInPath;
+    BOOL inside = [real isEqualToString:rootReal] ||
+                  [real hasPrefix:[rootReal stringByAppendingString:@"/"]];
+    if (inside && real.length > rootReal.length)
+        path = [_root.path stringByAppendingPathComponent:
+                [real substringFromIndex:rootReal.length + 1]];
+    else if (inside)
+        path = _root.path;
+
+    if (link.isDirectory) {
+        if (!inside) { NSBeep(); return; }
+        if (self.sidebarCollapsed) [self toggleSidebar:nil];
+        [self revealPath:path andOpen:NO];
+        return;
+    }
+    if (inside) [self revealPath:path andOpen:YES];
+    else [self openFileAtPath:path];
+    // Opening can be refused ("Save changes?" answered Cancel), and an image
+    // or PDF has no lines to go to.
+    if (![self.currentPath isEqualToString:path] || self.isImage || self.isPDF) return;
+    if (link.line > 0) [self goToLine:link.line column:link.column];
+    else [self.window makeFirstResponder:self.textView];
+}
+
+// Moves the caret to a 1-based line and column (the column counts
+// characters, and 0 means the start of the line), showing the source first
+// if a preview is up.
+- (void)goToLine:(int)line column:(int)column {
+    if (self.previewMode && self.canTogglePreview) [self togglePreview:nil];
+    NSString *text = self.textView.string;
+    NSUInteger index = 0;
+    for (int l = 1; l < line && index < text.length; l++) {
+        NSRange nl = [text rangeOfString:@"\n" options:0
+                                   range:NSMakeRange(index, text.length - index)];
+        if (nl.location == NSNotFound) { index = text.length; break; }
+        index = NSMaxRange(nl);
+    }
+    NSRange lineRange = [text lineRangeForRange:NSMakeRange(MIN(index, text.length), 0)];
+    NSUInteger lineEnd = NSMaxRange(lineRange);
+    while (lineEnd > lineRange.location &&
+           [text characterAtIndex:lineEnd - 1] == '\n') lineEnd--;
+    for (int c = 1; c < column && index < lineEnd; c++)
+        index = NSMaxRange([text rangeOfComposedCharacterSequenceAtIndex:index]);
+    [self.window makeFirstResponder:self.textView];
+    [self.textView setSelectedRange:NSMakeRange(index, 0)];
+    [self.textView scrollRangeToVisible:NSMakeRange(index, 0)];
+    if (lineEnd > lineRange.location)
+        [self.textView showFindIndicatorForRange:
+            NSMakeRange(lineRange.location, lineEnd - lineRange.location)];
 }
 
 - (void)toggleBrowser:(id)sender {
@@ -2375,6 +2448,7 @@ static NSColor *ContrastColor(const Rgba &c) {
         [self showWelcome];
         [self relayoutRightArea];
         [self.terminal setDirectory:dir];   // keep terminal cwd in sync
+        self.terminal.projectRoot = dir;
         [self startWatching:dir];           // watch the new folder
         self.window.title = [NSString stringWithFormat:@"MiniCode — %@",
                              dir.lastPathComponent];

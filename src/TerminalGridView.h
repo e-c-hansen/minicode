@@ -9,6 +9,12 @@
 @property(nonatomic, assign) TerminalScreen *screen;
 // Bytes for the pty: keys, pastes, scroll-wheel arrows.
 @property(nonatomic, copy) void (^onInput)(NSData *bytes);
+// Cmd+click links. `linkAt` resolves the link at a byte of a row's text (nil
+// when there is none or its file does not exist); `openLink` opens one.
+@property(nonatomic, copy) id (^linkAt)(const std::string &line, size_t byte);
+@property(nonatomic, copy) void (^openLink)(id link);
+// Cmd went down or up, or the pointer moved: redo the link under it.
+- (void)updateLinkHover;
 
 + (NSFont *)cellFont;
 // Size of one cell, and the margin around the grid.

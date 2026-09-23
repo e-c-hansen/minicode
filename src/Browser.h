@@ -5,4 +5,6 @@
 @interface BrowserView : NSView
 - (instancetype)initWithHomeURL:(NSString *)url;
 - (void)focusURLBar;
+// Loads an address, or searches for words that are not one.
+- (void)navigateToString:(NSString *)raw;
 @end

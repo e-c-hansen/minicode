@@ -10,6 +10,7 @@
 // performKeyEquivalent: before keyDown:), everything else is encoded by
 // TerminalScreen::encodeKey / encodeChar. Option is Meta (ESC prefix).
 #import "TerminalGridView.h"
+#import "Terminal.h"
 #import "AppSettings.h"
 #import <Carbon/Carbon.h>   // kVK_* key codes (header only, nothing linked)
 
@@ -17,6 +18,15 @@
     BOOL _selecting, _hasSelection;
     int _anchorRow, _anchorCol, _endRow, _endCol;
     CGFloat _scrollAccum;
+    // The link under the pointer while Cmd is held: its row and the cells it
+    // covers, [_linkCol0, _linkCol1). _linkRow is -1 when there is none.
+    MCTermLink *_link;
+    int _linkRow, _linkCol0, _linkCol1;
+}
+
+- (instancetype)initWithFrame:(NSRect)frame {
+    if ((self = [super initWithFrame:frame])) _linkRow = -1;
+    return self;
 }
 
 + (NSFont *)cellFont {
@@ -62,6 +72,10 @@
 - (BOOL)resignFirstResponder { [self setNeedsDisplay:YES]; return YES; }
 
 - (void)screenChanged {
+    // What was under the pointer may have moved; look again, but only when
+    // there is a link showing or Cmd is down, so ordinary output costs nothing.
+    if (_linkRow >= 0 || (NSEvent.modifierFlags & NSEventModifierFlagCommand))
+        [self updateLinkHover];
     [self setNeedsDisplay:YES];
 }
 
@@ -190,6 +204,13 @@ static CellColors ColorsFor(const TermStyle &st) {
         }
     }
 
+    // The Cmd-hovered link, underlined in the text color.
+    if (_linkRow >= firstRow && _linkRow <= lastRow) {
+        NSRect r = [self rectForRow:_linkRow col:_linkCol0 width:_linkCol1 - _linkCol0];
+        [[[AppSettings shared] text:Surface::Terminal] setFill];
+        NSRectFill(NSMakeRect(NSMinX(r), NSMaxY(r) - 1.5, NSWidth(r), 1));
+    }
+
     // The cursor: a block while focused, an outline otherwise.
     int cr = s->cursorRow(), cc = s->cursorCol();
     if (s->cursorVisible() && cr >= firstRow && cr <= lastRow) {
@@ -285,8 +306,103 @@ static CellColors ColorsFor(const TermStyle &st) {
     if (utf8) [self send:utf8];
 }
 
+// ---------------------------------------------------------------- links
+// A row's text as UTF-8, with the cell each byte came from. The right half of
+// a wide character contributes no bytes, so byte offsets from TermLinks map
+// back to the cells a link covers.
+- (std::string)textOfRow:(int)row cells:(std::vector<int> *)cellOfByte {
+    std::string text;
+    TerminalScreen *s = self.screen;
+    for (int c = 0; c < s->cols(); c++) {
+        const TermCell &cell = s->cell(row, c);
+        if (cell.width == 0) continue;
+        const std::string &ch = cell.ch.empty() ? std::string(" ") : cell.ch;
+        text += ch;
+        cellOfByte->insert(cellOfByte->end(), ch.size(), c);
+    }
+    return text;
+}
+
+// The link at a point, with its row and cells, or nil. Points outside the
+// grid find nothing (cellAtPoint: would clamp them onto the edge cells).
+- (MCTermLink *)linkAtPoint:(NSPoint)p row:(int *)row col0:(int *)col0 col1:(int *)col1 {
+    TerminalScreen *s = self.screen;
+    if (!s || !self.linkAt) return nil;
+    NSSize cs = [TerminalGridView cellSize];
+    CGFloat pad = [TerminalGridView padding];
+    int r = (int)floor((p.y - pad) / cs.height);
+    int c = (int)floor((p.x - pad) / cs.width);
+    if (r < 0 || r >= s->rows() || c < 0 || c >= s->cols()) return nil;
+    if (s->cell(r, c).width == 0 && c > 0) c--;   // right half of a wide character
+    std::vector<int> cellOfByte;
+    std::string text = [self textOfRow:r cells:&cellOfByte];
+    size_t byte = 0;
+    while (byte < cellOfByte.size() && cellOfByte[byte] < c) byte++;
+    if (byte >= cellOfByte.size()) return nil;
+    MCTermLink *link = self.linkAt(text, byte);
+    if (!link || link.byteLength == 0 ||
+        link.byteStart + link.byteLength > cellOfByte.size()) return nil;
+    size_t last = link.byteStart + link.byteLength - 1;
+    *row = r;
+    *col0 = cellOfByte[link.byteStart];
+    *col1 = cellOfByte[last] + (s->cell(r, cellOfByte[last]).width == 2 ? 2 : 1);
+    return link;
+}
+
+- (void)updateLinkHover {
+    int row = -1, c0 = 0, c1 = 0;
+    MCTermLink *link = nil;
+    if ((NSEvent.modifierFlags & NSEventModifierFlagCommand) && self.window) {
+        NSPoint p = [self convertPoint:[self.window mouseLocationOutsideOfEventStream]
+                              fromView:nil];
+        if (NSPointInRect(p, self.bounds))
+            link = [self linkAtPoint:p row:&row col0:&c0 col1:&c1];
+    }
+    if (!link) row = -1;
+    BOOL changed = row != _linkRow || c0 != _linkCol0 || c1 != _linkCol1;
+    _link = link;
+    _linkRow = row; _linkCol0 = c0; _linkCol1 = c1;
+    if (link) [[NSCursor pointingHandCursor] set];
+    else if (changed) [[NSCursor arrowCursor] set];
+    if (changed) [self setNeedsDisplay:YES];
+}
+
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    for (NSTrackingArea *a in self.trackingAreas)
+        if (a.owner == self) [self removeTrackingArea:a];
+    [self addTrackingArea:[[NSTrackingArea alloc]
+        initWithRect:NSZeroRect
+             options:NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited |
+                     NSTrackingCursorUpdate | NSTrackingActiveInKeyWindow |
+                     NSTrackingInVisibleRect
+               owner:self userInfo:nil]];
+}
+
+- (void)mouseMoved:(NSEvent *)e { (void)e; [self updateLinkHover]; }
+- (void)mouseExited:(NSEvent *)e {
+    (void)e;
+    if (_linkRow >= 0) { _link = nil; _linkRow = -1; [self setNeedsDisplay:YES]; }
+}
+- (void)cursorUpdate:(NSEvent *)e {
+    (void)e;
+    [(_linkRow >= 0 ? [NSCursor pointingHandCursor] : [NSCursor arrowCursor]) set];
+}
+
 // ---------------------------------------------------------------- mouse
 - (void)mouseDown:(NSEvent *)e {
+    if (e.modifierFlags & NSEventModifierFlagCommand) {
+        int row, c0, c1;
+        NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+        MCTermLink *link = [self linkAtPoint:p row:&row col0:&c0 col1:&c1];
+        if (link) {
+            _link = nil;
+            _linkRow = -1;
+            [self setNeedsDisplay:YES];
+            if (self.openLink) self.openLink(link);
+            return;
+        }
+    }
     [self.window makeFirstResponder:self];
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
     [self cellAtPoint:p row:&_anchorRow col:&_anchorCol];
