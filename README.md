@@ -110,6 +110,21 @@ make membench
 
 On disk, MiniCode.app is 1.3 MB and Visual Studio Code.app is 659 MB.
 
+## Next to VS Code and Zed
+
+MiniCode is the IDE I work in every day, not a sidekick to another one. It covers my daily loop: a language server for completion, errors as you type, hover and go to definition, plus project search, a real terminal, and saving and undo that behave. What it leaves out is what a bigger IDE is for: rename and find references, formatting and code actions, a debugger, a git interface, tabs and split editors, extensions, and an AI assistant built into the editor. If you rely on those, VS Code or Zed will suit you better. An agent that runs in a terminal, like Claude Code, runs fine in MiniCode's.
+
+Zed is the closer comparison. It is native too, written in Rust and drawn on the GPU, much lighter than VS Code and a far richer editor than MiniCode, with deep keyboard control and a vim mode. The difference is what sits around the code. As of Zed 1.15 there is no built in browser, which has been an open [feature request](https://github.com/zed-industries/zed/issues/10533) since 2024. LaTeX goes through an [extension](https://github.com/rzukic/zed-latex/wiki/Preview) that builds the PDF and shows it in a separate viewer such as Skim, with SyncTeX jumps between the two. MiniCode keeps the browser, the typeset PDF and the terminal in the window with the code, a keystroke apart, and you edit the document by double clicking the page.
+
+| | MiniCode | Zed | VS Code |
+| --- | --- | --- | --- |
+| Language server | completion, diagnostics, hover, definition | full | full |
+| Browser in the window | yes | no | a basic one |
+| LaTeX | typeset in the window, edit on the page | extension, external PDF viewer | extension, PDF in a tab |
+| Debugger, git interface | no, use the terminal | yes | yes |
+| Extensions | no | yes | yes |
+| Platforms | macOS, Linux, Android | macOS, Linux, Windows | macOS, Linux, Windows |
+
 ## Installing and building
 
 To install it, there is a Homebrew tap:
