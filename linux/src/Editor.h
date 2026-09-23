@@ -32,12 +32,17 @@ public:
     bool openFile(const std::string& path);
 
     // Write the current buffer (or the raw source, in preview mode) to disk.
-    // When the slot shows something that is not the file's text (an image, a
-    // PDF, the "Cannot display" message) there is nothing to save: it writes
-    // nothing and returns true.
-    bool save();
+    // Returns false, with the reason in *error, when the write failed; the
+    // buffer then stays marked unsaved. When there is nothing to save (no
+    // file, or the slot shows something that is not the file's text: an image,
+    // a PDF, the "Cannot display" message) it writes nothing and returns true.
+    bool save(std::string* error = nullptr);
     // False while an image, a PDF or a binary file's message is shown.
     bool canSave() const { return !path_.empty() && !readOnly_; }
+
+    // Close the file and show the welcome text, dropping any unsaved edits.
+    // The shell asks "Save changes?" before calling this.
+    void closeFile();
 
     // Images and PDFs (MediaView). isMedia() is true while one is shown, and
     // titleSuffix() is what the window title adds for it ("  640 × 480",
@@ -53,7 +58,7 @@ public:
     bool inPreview() const { return preview_; }
 
     const std::string& currentPath() const { return path_; }
-    bool dirty() const { return dirty_; }
+    bool dirty() const { return dirty_ && !readOnly_; }
 
     // Optional: called whenever the dirty/title state changes so the shell can
     // refresh the window title. Set by main.cpp.
@@ -62,6 +67,7 @@ public:
 
     // Show a plain gray message (welcome screen / errors), not editable.
     void showMessage(const std::string& msg);
+    void showWelcome();
 
     // Colors from the settings file: syntax and Markdown tags, and the swatches
     // shown while the settings file itself is open. The panel background and

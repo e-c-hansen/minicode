@@ -50,8 +50,7 @@
 #include "Browser.h"
 #include "Search.h"
 
-#include <glib/gstdio.h>   // g_mkdir_with_parents
-
+#include <functional>
 #include <string>
 #include <unistd.h>
 #include <limits.h>
@@ -98,6 +97,9 @@ struct App {
     // to show once the window exists. See resolveStartupPath.
     std::string startupFile;
     bool sidebarVisible = true;
+
+    bool prompting = false;   // a "Save changes?" alert is up
+    bool closing = false;     // the user answered it for a window close
 };
 
 // Defined with the rest of the hints panel further down; the pane toggles call
@@ -244,37 +246,190 @@ static void updateTitle(void* userp) {
     gtk_label_set_text(GTK_LABEL(app->statusLabel), p.empty() ? "Ready" : p.c_str());
 }
 
-// Called by FileTree when a file is activated.
-static void openFileCb(const std::string& path, void* userp) {
-    App* app = static_cast<App*>(userp);
+static std::string baseName(const std::string& p) {
+    auto slash = p.find_last_of('/');
+    return slash == std::string::npos ? p : p.substr(slash + 1);
+}
+
+// Is `path` the folder `dir` or somewhere inside it?
+static bool isInside(const std::string& path, const std::string& dir) {
+    return !dir.empty() &&
+           (path == dir || path.compare(0, dir.size() + 1, dir + "/") == 0);
+}
+
+// ------------------------------------------------------------ data safety
+//
+// The macOS build asks "Save changes?" before anything replaces an edited
+// buffer (EditorController.mm -confirmProceedPastUnsavedChanges): opening
+// another file, opening a folder, closing the window. GtkAlertDialog is
+// asynchronous, so here the question takes the rest of the operation as a
+// continuation instead of returning an answer.
+
+static void showError(App* app, const std::string& message, const std::string& detail) {
+    GtkAlertDialog* dlg = gtk_alert_dialog_new("%s", message.c_str());
+    if (!detail.empty()) gtk_alert_dialog_set_detail(dlg, detail.c_str());
+    // An explicit button rather than gtk_alert_dialog_show's default one: that
+    // builds a different kind of window, which did not close when its button
+    // was activated in testing. With a button of our own it is the same window
+    // as the "Save changes?" alert.
+    const char* buttons[] = {"OK", nullptr};
+    gtk_alert_dialog_set_buttons(dlg, buttons);
+    gtk_alert_dialog_set_default_button(dlg, 0);
+    gtk_alert_dialog_set_cancel_button(dlg, 0);
+    gtk_alert_dialog_choose(dlg, GTK_WINDOW(app->window), nullptr, nullptr, nullptr);
+    g_object_unref(dlg);
+}
+
+// Save, and tell the user if that failed. The editor leaves the buffer marked
+// unsaved on failure, so the title keeps its "*".
+static bool saveCurrent(App* app) {
+    std::string err;
+    const bool ok = app->editor->save(&err);
+    updateTitle(app);
+    if (!ok)
+        showError(app, "Could not save “" + baseName(app->editor->currentPath()) + "”",
+                  err + "\n\nYour changes are still here, unsaved.");
+    return ok;
+}
+
+namespace {
+struct Pending {
+    App* app;
+    std::function<void()> proceed;
+    std::function<void()> cancelled;
+};
+}  // namespace
+
+// Runs `proceed` once the current buffer's edits are safe: at once when there
+// are none, otherwise after the user picks Save (and the save worked) or Don't
+// Save. Cancel, Escape, or a failed save run `cancelled` instead.
+static void confirmUnsaved(App* app, std::function<void()> proceed,
+                           std::function<void()> cancelled = nullptr) {
+    if (!app->editor->dirty()) { proceed(); return; }
+    if (app->prompting) { if (cancelled) cancelled(); return; }   // one at a time
+    app->prompting = true;
+
+    const std::string name = baseName(app->editor->currentPath());
+    GtkAlertDialog* dlg = gtk_alert_dialog_new("Save changes to “%s”?",
+                                               name.empty() ? "this file" : name.c_str());
+    gtk_alert_dialog_set_detail(dlg, "Your changes will be lost if you don't save them.");
+    const char* buttons[] = {"Save", "Don't Save", "Cancel", nullptr};
+    gtk_alert_dialog_set_buttons(dlg, buttons);
+    gtk_alert_dialog_set_default_button(dlg, 0);
+    gtk_alert_dialog_set_cancel_button(dlg, 2);
+    gtk_alert_dialog_set_modal(dlg, TRUE);
+
+    auto* p = new Pending{app, std::move(proceed), std::move(cancelled)};
+    gtk_alert_dialog_choose(dlg, GTK_WINDOW(app->window), nullptr,
+        [](GObject* src, GAsyncResult* res, gpointer data) {
+            Pending* pd = static_cast<Pending*>(data);
+            App* a = pd->app;
+            a->prompting = false;
+            const int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src),
+                                                              res, nullptr);
+            bool go = choice == 1;                    // Don't Save
+            if (choice == 0) go = saveCurrent(a);     // Save, unless it failed
+            if (go) pd->proceed();
+            else if (pd->cancelled) pd->cancelled();
+            delete pd;
+        }, p);
+    g_object_unref(dlg);
+}
+
+// The tree moves its selection on the click, before the question is asked;
+// after a Cancel it goes back to the file that is still open.
+static void reselectCurrentFile(App* app) {
+    const std::string& cur = app->editor->currentPath();
+    if (isInside(cur, app->rootDir)) app->tree->revealPath(cur);
+    else app->tree->clearSelection();
+}
+
+static void openFileNow(App* app, const std::string& path) {
     showEditorArea(app);   // opening a file must not disappear into a hidden pane
     app->editor->openFile(path);
     updateTitle(app);
     refreshHints(app);   // the Markdown line depends on the open file
 }
 
+// Open a file, asking "Save changes?" first when the open one has edits. The
+// answer may come later, so anything to do once the file is open (go to a
+// line, focus the editor) goes in `then`, which runs after the open and not
+// at all when the user cancels.
+static void openFileThen(App* app, const std::string& path, std::function<void()> then) {
+    // Clicking the file that is already open with edits in it must not reload
+    // it from disk over them. A clean file does reload, which is how a change
+    // made elsewhere gets picked up.
+    if (path == app->editor->currentPath() && app->editor->dirty()) {
+        showEditorArea(app);
+        if (then) then();
+        return;
+    }
+    confirmUnsaved(app, [app, path, then] {
+        openFileNow(app, path);
+        if (then) then();
+    }, [app] { reselectCurrentFile(app); });
+}
+
+// Called by FileTree when a file is activated, and by everything else that
+// opens a file with nothing to do afterwards.
+static void openFileCb(const std::string& path, void* userp) {
+    openFileThen(static_cast<App*>(userp), path, nullptr);
+}
+
+// Re-root on a new folder. The file from the old folder is closed, as on the
+// Mac, so the editor never holds a file the tree no longer shows.
+static void openFolder(App* app, const std::string& dir) {
+    app->rootDir = dir;
+    app->tree->setRoot(dir);
+    app->editor->closeFile();
+    updateTitle(app);
+    refreshHints(app);
+}
+
+// Closing the window with unsaved edits asks first. The answer arrives later,
+// so the close is refused now and repeated once the edits are dealt with.
+static gboolean onCloseRequest(GtkWindow*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->closing || !app->editor->dirty()) return FALSE;
+    confirmUnsaved(app, [app] {
+        app->closing = true;
+        gtk_window_close(GTK_WINDOW(app->window));
+    });
+    return TRUE;
+}
+
 // ---------------------------------------------------------------- actions
 
 static void act_open(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    GtkFileDialog* dlg = gtk_file_dialog_new();
-    gtk_file_dialog_select_folder(dlg, GTK_WINDOW(app->window), nullptr,
-        [](GObject* src, GAsyncResult* res, gpointer up) {
-            App* a = static_cast<App*>(up);
-            GFile* folder = gtk_file_dialog_select_folder_finish(
-                GTK_FILE_DIALOG(src), res, nullptr);
-            if (!folder) return;
-            char* path = g_file_get_path(folder);
-            if (path) { a->rootDir = path; a->tree->setRoot(path); g_free(path); }
-            g_object_unref(folder);
-        }, app);
-    g_object_unref(dlg);
+    confirmUnsaved(app, [app] {
+        GtkFileDialog* dlg = gtk_file_dialog_new();
+        gtk_file_dialog_set_title(dlg, "Open Folder");
+        GFile* start = g_file_new_for_path(app->rootDir.c_str());
+        gtk_file_dialog_set_initial_folder(dlg, start);
+        g_object_unref(start);
+        gtk_file_dialog_select_folder(dlg, GTK_WINDOW(app->window), nullptr,
+            [](GObject* src, GAsyncResult* res, gpointer up) {
+                App* a = static_cast<App*>(up);
+                GFile* folder = gtk_file_dialog_select_folder_finish(
+                    GTK_FILE_DIALOG(src), res, nullptr);
+                if (!folder) return;   // cancelled
+                char* path = g_file_get_path(folder);
+                // The edits were dealt with before the dialog opened, but the
+                // user may have typed more while it was up.
+                if (path) {
+                    std::string dir = path;
+                    confirmUnsaved(a, [a, dir] { openFolder(a, dir); });
+                    g_free(path);
+                }
+                g_object_unref(folder);
+            }, app);
+        g_object_unref(dlg);
+    });
 }
 
 static void act_save(GSimpleAction*, GVariant*, gpointer userp) {
-    App* app = static_cast<App*>(userp);
-    app->editor->save();
-    updateTitle(app);
+    saveCurrent(static_cast<App*>(userp));
 }
 
 static void act_toggle_preview(GSimpleAction*, GVariant*, gpointer userp) {
@@ -374,8 +529,8 @@ static void act_settings(GSimpleAction*, GVariant*, gpointer userp) {
                            ("Could not create " + app->settings->path()).c_str());
         return;
     }
-    openFileCb(app->settings->path(), app);
-    gtk_widget_grab_focus(app->editor->textView());
+    openFileThen(app, app->settings->path(),
+                 [app] { gtk_widget_grab_focus(app->editor->textView()); });
 }
 
 static void act_find(GSimpleAction*, GVariant*, gpointer userp) {
@@ -385,28 +540,206 @@ static void act_find(GSimpleAction*, GVariant*, gpointer userp) {
     if (!on) gtk_widget_grab_focus(app->searchEntry);
 }
 
-// Create a uniquely-named file/folder in the root; the file monitor refreshes
-// the tree. A first draft: no inline rename UI yet.
-static std::string uniqueChild(const std::string& root, const std::string& base) {
-    for (int i = 0; ; ++i) {
-        std::string name = i == 0 ? base : base + std::to_string(i);
-        std::string full = root + "/" + name;
-        if (access(full.c_str(), F_OK) != 0) return full;
+// ------------------------------------------------------ file tree actions
+//
+// The same six as the Mac's tree menu and File menu (EditorController.mm,
+// buildTreeContextMenu): each acts on the selected row, and a right-click
+// selects the row it lands on. The directory monitors refresh the tree, and
+// revealPath selects what an action made.
+
+// Where New File and New Folder put things: the selected folder, the selected
+// file's folder, or the root when nothing is selected (-targetDirectory).
+static std::string targetDirectory(App* app) {
+    const std::string folder = app->tree->selectedDir();
+    if (!folder.empty()) return folder;
+    const std::string sel = app->tree->selectedPath();   // a file, or nothing
+    if (sel.empty()) return app->rootDir;
+    char* dir = g_path_get_dirname(sel.c_str());
+    std::string out = dir;
+    g_free(dir);
+    return out;
+}
+
+// A name typed into the popover must name one entry in one folder.
+static bool validName(App* app, const std::string& name) {
+    if (name == "." || name == "..") {
+        showError(app, "“" + name + "” cannot be used as a name.", "");
+        return false;
     }
+    if (name.find('/') != std::string::npos) {
+        showError(app, "A name cannot contain “/”.", "");
+        return false;
+    }
+    return true;
+}
+
+// GIO's "file exists" message names nothing; say which name clashed.
+static void showFileError(App* app, const std::string& what, const std::string& name,
+                          GError* err) {
+    if (err && g_error_matches(err, G_IO_ERROR, G_IO_ERROR_EXISTS))
+        showError(app, "“" + name + "” already exists.",
+                  "Choose a different name.");
+    else
+        showError(app, what, err ? err->message : "");
 }
 
 static void act_new_file(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    std::string p = uniqueChild(app->rootDir, "untitled.txt");
-    g_file_set_contents(p.c_str(), "", 0, nullptr);
-    app->editor->openFile(p);
-    updateTitle(app);
+    const std::string dir = targetDirectory(app);
+    app->tree->askName("New file name", "", [app, dir](const std::string& name) {
+        if (!validName(app, name)) return;
+        const std::string path = dir + "/" + name;
+        GFile* f = g_file_new_for_path(path.c_str());
+        GError* err = nullptr;
+        // g_file_create fails rather than truncating an existing file.
+        GFileOutputStream* out = g_file_create(f, G_FILE_CREATE_NONE, nullptr, &err);
+        g_object_unref(f);
+        if (!out) {
+            showFileError(app, "Could not create “" + name + "”", name, err);
+            g_clear_error(&err);
+            return;
+        }
+        g_output_stream_close(G_OUTPUT_STREAM(out), nullptr, nullptr);
+        g_object_unref(out);
+        app->tree->revealPath(path);
+        openFileCb(path, app);   // asks about unsaved edits in the open file first
+    });
 }
 
 static void act_new_folder(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    std::string p = uniqueChild(app->rootDir, "untitled-folder");
-    g_mkdir_with_parents(p.c_str(), 0755);
+    const std::string dir = targetDirectory(app);
+    app->tree->askName("New folder name", "", [app, dir](const std::string& name) {
+        if (!validName(app, name)) return;
+        const std::string path = dir + "/" + name;
+        GFile* f = g_file_new_for_path(path.c_str());
+        GError* err = nullptr;
+        const bool ok = g_file_make_directory(f, nullptr, &err);
+        g_object_unref(f);
+        if (!ok) {
+            showFileError(app, "Could not create “" + name + "”", name, err);
+            g_clear_error(&err);
+            return;
+        }
+        app->tree->revealPath(path);
+    });
+}
+
+static void act_rename(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    const std::string src = app->tree->selectedPath();
+    if (src.empty()) { gtk_widget_error_bell(app->window); return; }
+    const std::string old = baseName(src);
+    app->tree->askName("Rename to", old, [app, src, old](const std::string& name) {
+        if (name == old || !validName(app, name)) return;
+        char* parent = g_path_get_dirname(src.c_str());
+        const std::string dst = std::string(parent) + "/" + name;
+        g_free(parent);
+        GFile* from = g_file_new_for_path(src.c_str());
+        GFile* to = g_file_new_for_path(dst.c_str());
+        GError* err = nullptr;
+        // Without OVERWRITE, GIO refuses when the name is taken, where a bare
+        // rename(2) would silently replace that file.
+        const bool ok = g_file_move(from, to, G_FILE_COPY_NOFOLLOW_SYMLINKS,
+                                    nullptr, nullptr, nullptr, &err);
+        g_object_unref(from);
+        g_object_unref(to);
+        if (!ok) {
+            showFileError(app, "Could not rename “" + old + "”", name, err);
+            g_clear_error(&err);
+            return;
+        }
+        // The open file keeps its buffer, edits included, under the new name.
+        // That holds when a folder above it was renamed, too.
+        const std::string cur = app->editor->currentPath();
+        if (isInside(cur, src)) {
+            app->editor->setPath(dst + cur.substr(src.size()));
+            updateTitle(app);
+        }
+        app->tree->revealPath(dst);
+    });
+}
+
+static void trashNow(App* app, const std::string& path) {
+    GFile* f = g_file_new_for_path(path.c_str());
+    GError* err = nullptr;
+    const bool ok = g_file_trash(f, nullptr, &err);
+    g_object_unref(f);
+    if (!ok) {
+        showError(app, "Could not move “" + baseName(path) + "” to the Trash",
+                  err ? err->message : "");
+        g_clear_error(&err);
+        return;
+    }
+    // The open file went with it (or with its folder): back to the welcome
+    // text, the way the Mac resets its editor.
+    if (isInside(app->editor->currentPath(), path)) {
+        app->editor->closeFile();
+        updateTitle(app);
+        refreshHints(app);
+    }
+    app->tree->clearSelection();
+}
+
+static void act_trash(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    const std::string path = app->tree->selectedPath();
+    if (path.empty()) { gtk_widget_error_bell(app->window); return; }
+
+    GtkAlertDialog* dlg = gtk_alert_dialog_new("Move “%s” to the Trash?",
+                                               baseName(path).c_str());
+    // The Mac asks the same question. Unsaved edits in the open file go with
+    // it, so say so rather than asking "Save changes?" about a file that is
+    // on its way out.
+    if (app->editor->dirty() && isInside(app->editor->currentPath(), path)) {
+        const std::string detail = "The open file “" +
+            baseName(app->editor->currentPath()) +
+            "” has unsaved changes, which will be lost.";
+        gtk_alert_dialog_set_detail(dlg, detail.c_str());
+    }
+    const char* buttons[] = {"Move to Trash", "Cancel", nullptr};
+    gtk_alert_dialog_set_buttons(dlg, buttons);
+    gtk_alert_dialog_set_cancel_button(dlg, 1);
+    gtk_alert_dialog_set_default_button(dlg, 0);
+    auto* target = new std::pair<App*, std::string>(app, path);
+    gtk_alert_dialog_choose(dlg, GTK_WINDOW(app->window), nullptr,
+        [](GObject* src, GAsyncResult* res, gpointer data) {
+            auto* t = static_cast<std::pair<App*, std::string>*>(data);
+            if (gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, nullptr) == 0)
+                trashNow(t->first, t->second);
+            delete t;
+        }, target);
+    g_object_unref(dlg);
+}
+
+// "Reveal in Finder" becomes opening the containing folder in the file
+// manager, with the item selected where the file manager supports that.
+static void act_reveal(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    std::string path = app->tree->selectedPath();
+    if (path.empty()) path = app->rootDir;
+    GFile* f = g_file_new_for_path(path.c_str());
+    GtkFileLauncher* launcher = gtk_file_launcher_new(f);
+    g_object_unref(f);
+    gtk_file_launcher_open_containing_folder(launcher, GTK_WINDOW(app->window), nullptr,
+        [](GObject* src, GAsyncResult* res, gpointer up) {
+            GError* err = nullptr;
+            if (!gtk_file_launcher_open_containing_folder_finish(
+                    GTK_FILE_LAUNCHER(src), res, &err) &&
+                !g_error_matches(err, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED))
+                showError(static_cast<App*>(up), "Could not open the containing folder",
+                          err ? err->message : "");
+            g_clear_error(&err);
+        }, app);
+    g_object_unref(launcher);
+}
+
+// The selected item's absolute path, else the open folder's, as plain text.
+static void act_copy_path(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    std::string path = app->tree->selectedPath();
+    if (path.empty()) path = app->rootDir;
+    gdk_clipboard_set_text(gtk_widget_get_clipboard(app->window), path.c_str());
 }
 
 static void act_focus_tree(GSimpleAction*, GVariant*, gpointer userp) {
@@ -416,12 +749,18 @@ static void act_focus_tree(GSimpleAction*, GVariant*, gpointer userp) {
 // A Find in Folder match was activated: open the file the way a click in the
 // tree does, then go to the match. If the file did not end up open (it could
 // not be read, or opening was refused), there is nowhere to go.
+// Opening may wait on a "Save changes?" answer, so going to the match is the
+// open's continuation, and the match is copied for it.
 static void openSearchMatch(const FolderSearchMatch& m, void* userp) {
     App* app = static_cast<App*>(userp);
-    openFileCb(m.path, app);
-    if (app->editor->currentPath() == m.path)
-        app->editor->revealLine(m.line, m.byteColumn, m.byteLength);
-    refreshHints(app);   // a Markdown preview may have switched to source
+    const std::string path = m.path;
+    const int line = m.line;
+    const std::size_t column = m.byteColumn, length = m.byteLength;
+    openFileThen(app, path, [app, path, line, column, length] {
+        if (app->editor->currentPath() == path)
+            app->editor->revealLine(line, column, length);
+        refreshHints(app);   // a Markdown preview may have switched to source
+    });
     gtk_window_present(GTK_WINDOW(app->window));
 }
 
@@ -520,6 +859,8 @@ static std::string hintsText(App* app) {
     s += "────────────────────────────────────────\n";
     s += "Ctrl Alt N     New file\n";
     s += "Ctrl Shift N   New folder\n";
+    s += "F2             Rename (in the tree)\n";
+    s += "Delete         Move to Trash (in the tree)\n";
     s += "Ctrl H         Show or hide dotfiles\n";
 
     s += "\nPanes\n";
@@ -624,16 +965,46 @@ static void onSettingsChanged(void* userp) { applySettings(static_cast<App*>(use
 
 // ---------------------------------------------------------------- menu / accels
 
+// New File, New Folder, Rename, Move to Trash, Reveal and Copy Path, in the
+// Mac's order and grouping. Shared by the File menu and the tree's
+// right-click menu.
+static GMenuModel* treeActionsMenu() {
+    GMenu* menu = g_menu_new();
+    GMenu* create = g_menu_new();
+    g_menu_append(create, "New File…", "win.newfile");
+    g_menu_append(create, "New Folder…", "win.newfolder");
+    g_menu_append_section(menu, nullptr, G_MENU_MODEL(create));
+    g_object_unref(create);
+    GMenu* change = g_menu_new();
+    g_menu_append(change, "Rename…", "win.rename");
+    g_menu_append(change, "Move to Trash", "win.trash");
+    g_menu_append_section(menu, nullptr, G_MENU_MODEL(change));
+    g_object_unref(change);
+    GMenu* where = g_menu_new();
+    g_menu_append(where, "Open Containing Folder", "win.reveal");
+    g_menu_append(where, "Copy Path", "win.copypath");
+    g_menu_append_section(menu, nullptr, G_MENU_MODEL(where));
+    g_object_unref(where);
+    return G_MENU_MODEL(menu);
+}
+
 static void buildMenu(App* app) {
     GMenu* menuBar = g_menu_new();
 
     GMenu* fileMenu = g_menu_new();
-    g_menu_append(fileMenu, "Open Folder…", "win.open");
-    g_menu_append(fileMenu, "New File", "win.newfile");
-    g_menu_append(fileMenu, "New Folder", "win.newfolder");
-    g_menu_append(fileMenu, "Save", "win.save");
+    GMenu* top = g_menu_new();
+    g_menu_append(top, "Open Folder…", "win.open");
+    g_menu_append(top, "Save", "win.save");
+    g_menu_append_section(fileMenu, nullptr, G_MENU_MODEL(top));
+    g_object_unref(top);
+    GMenuModel* treeItems = treeActionsMenu();
+    g_menu_append_section(fileMenu, nullptr, treeItems);
     g_menu_append_submenu(menuBar, "File", G_MENU_MODEL(fileMenu));
     g_object_unref(fileMenu);   // menuBar holds it now
+
+    // The same items on a right-click in the tree.
+    app->tree->setContextMenu(treeItems);
+    g_object_unref(treeItems);
 
     GMenu* editMenu = g_menu_new();
     g_menu_append(editMenu, "Find", "win.find");
@@ -825,6 +1196,10 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     addAction(app, "save",           G_CALLBACK(act_save));
     addAction(app, "newfile",        G_CALLBACK(act_new_file));
     addAction(app, "newfolder",      G_CALLBACK(act_new_folder));
+    addAction(app, "rename",         G_CALLBACK(act_rename));
+    addAction(app, "trash",          G_CALLBACK(act_trash));
+    addAction(app, "reveal",         G_CALLBACK(act_reveal));
+    addAction(app, "copypath",       G_CALLBACK(act_copy_path));
     addAction(app, "find",           G_CALLBACK(act_find));
     addAction(app, "findinfolder",   G_CALLBACK(act_find_in_folder));
     addAction(app, "togglepreview",  G_CALLBACK(act_toggle_preview));
@@ -839,6 +1214,17 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     addAction(app, "settings",       G_CALLBACK(act_settings));
     buildMenu(app);
     setAccels(app);
+    // F2 and Delete rename and trash only while the tree has the keyboard. As
+    // window accelerators they would take Delete away from the editor.
+    GtkEventController* treeKeys = gtk_shortcut_controller_new();
+    gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(treeKeys),
+        gtk_shortcut_new(gtk_keyval_trigger_new(GDK_KEY_F2, (GdkModifierType)0),
+                         gtk_named_action_new("win.rename")));
+    gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(treeKeys),
+        gtk_shortcut_new(gtk_keyval_trigger_new(GDK_KEY_Delete, (GdkModifierType)0),
+                         gtk_named_action_new("win.trash")));
+    gtk_widget_add_controller(app->tree->widget(), treeKeys);
+    g_signal_connect(app->window, "close-request", G_CALLBACK(onCloseRequest), app);
     applySettings(app);   // now that the editor, terminal and status bar exist
 
     // A file named on the command line opens before the window is shown, so it

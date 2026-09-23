@@ -15,6 +15,10 @@
 #include <sstream>
 #include <cstdlib>
 #include <climits>
+#include <cerrno>
+#include <cstring>
+#include <sys/stat.h>
+#include <unistd.h>
 
 // ---------------------------------------------------------------- helpers
 
@@ -85,6 +89,10 @@ Editor::Editor() {
     gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
 
     ensureTags();
+    showWelcome();
+}
+
+void Editor::showWelcome() {
     showMessage("\n  MiniCode — a native C++ editor, now on GTK4\n\n"
                 "  - Select a file in the sidebar to view it\n"
                 "  - Source files are syntax-highlighted by type\n"
@@ -183,7 +191,14 @@ bool Editor::openFile(const std::string& path) {
 
     std::ifstream f(path, std::ios::binary);
     if (!f) {
-        readOnly_ = true;   // the buffer now holds this message, not a file
+        // The message now stands in for the file; nothing may be saved from it.
+        path_ = path;
+        source_.clear();
+        ext_.clear();
+        isMarkdown_ = false;
+        preview_ = false;
+        readOnly_ = true;
+        markDirty(false);
         showMessage(std::string("\n  Could not open: ") + path);
         return false;
     }
@@ -222,9 +237,11 @@ bool Editor::openFile(const std::string& path) {
     return true;
 }
 
-bool Editor::save() {
-    if (path_.empty()) return false;
-    if (readOnly_) return true;   // an image, a PDF or a binary file: nothing to write
+bool Editor::save(std::string* error) {
+    // Not the file's text: an image, a PDF, or a message such as "Cannot
+    // display". Saving a message used to write it over the file, which for a
+    // binary file destroyed it.
+    if (path_.empty() || readOnly_) return true;
     // In preview mode the buffer holds rendered text; persist source_ instead.
     if (!preview_) {
         GtkTextIter a, b;
@@ -233,12 +250,47 @@ bool Editor::save() {
         source_ = txt ? txt : "";
         g_free(txt);
     }
-    std::ofstream out(path_, std::ios::binary);
-    if (!out) return false;
-    out << source_;
-    out.close();
+
+    // Write through a symlink to the file it names (a dotfile repo links its
+    // files into place), and keep the file's permissions. The write itself is
+    // atomic, a temporary file renamed over the old one, so a full disk or a
+    // crash midway leaves the previous contents intact, as the macOS build's
+    // writeToFile:atomically: does. A read-only file is refused rather than
+    // quietly replaced by that rename.
+    char* resolved = realpath(path_.c_str(), nullptr);
+    const std::string target = resolved ? resolved : path_;
+    free(resolved);
+    int mode = 0666;
+    struct stat st;
+    if (stat(target.c_str(), &st) == 0) {
+        mode = st.st_mode & 07777;
+        if (access(target.c_str(), W_OK) != 0) {
+            if (error) *error = std::string("The file is not writable: ") + strerror(errno);
+            return false;
+        }
+    }
+    GError* err = nullptr;
+    if (!g_file_set_contents_full(target.c_str(), source_.data(), (gssize)source_.size(),
+                                  G_FILE_SET_CONTENTS_CONSISTENT, mode, &err)) {
+        if (error) *error = err ? err->message : "Unknown error";
+        g_clear_error(&err);
+        return false;
+    }
     markDirty(false);
     return true;
+}
+
+void Editor::closeFile() {
+    showTextSlot();   // an image or PDF goes too
+    readOnly_ = false;
+    path_.clear();
+    source_.clear();
+    ext_.clear();
+    isMarkdown_ = false;
+    preview_ = false;
+    markDirty(false);
+    showWelcome();
+    if (titleCb_) titleCb_(titleUser_);
 }
 
 // ---------------------------------------------------------------- go to line
