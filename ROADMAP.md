@@ -122,17 +122,25 @@ file list, editor, Markdown preview, images, PDFs, a terminal on
 
 ## Linux port parity
 
-The GTK port now has the settings file, per-panel transparency, color swatches,
-Ctrl+/, Ctrl+Shift+T and the divider drags, and (September 2026) incremental
-highlighting, images and PDFs, Find in Folder and the LaTeX preview. What is
-left, besides the language server client (`linux/HANDOFF.md`, item 6):
+The GTK port has caught up (September 2026, `linux/HANDOFF.md` items 1 to 8):
+data safety, the file tree actions, incremental highlighting, images and
+PDFs, Find in Folder, language servers, the LaTeX preview, several windows,
+Previous File, Find Next and Previous, reload on external change, and a live
+color picker. What is left:
 
-- **Blur.** No portable GTK equivalent (KDE can blur behind windows, GNOME
-  can't), so `window.blur` is ignored on Linux.
-- **Live color picking.** GTK's color dialog only reports a color when it
-  closes. A popover with a `GtkColorChooserWidget` could apply picks live.
+- **Blur.** Not possible on GNOME: GTK 4 has no API for it, and Mutter 50.1
+  offers no Wayland blur protocol (neither KDE's nor
+  `ext-background-effect-v1`). KDE Plasma has its own, so a Plasma-only blur
+  looks possible through GDK's Wayland surface; not tried. `window.blur` is
+  ignored on Linux.
+- **Links in the terminal.** Command-click on `file:line` or a URL in the
+  terminal's output opens it on the Mac. VTE could match the same text
+  (`TermLinks` in the core is portable).
 - **Terminal.** VTE rather than the shared `TerminalStream`, which is fine;
-  VTE is a real emulator.
+  VTE is a real emulator. While it has the keyboard it gets the plain Ctrl
+  keys, and the app keeps the Ctrl+Shift ones and the pane keys.
+- Real key presses and a person's eyes on the Linux-only pieces:
+  `BUILD-LINUX.md` lists them under "Not verified".
 
 ## Smaller polish
 

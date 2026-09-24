@@ -170,6 +170,8 @@ The Linux version, in the linux folder, is built on GTK4. It shares the portable
 
 It also has the LaTeX preview: it typesets with tectonic, offers to download tectonic into ~/.local/share/minicode/bin if it is missing, lets you edit by double clicking the page, and exports the PDF with Ctrl Shift S. The terminal needs no catching up, since VTE is already a full terminal emulator.
 
+Like the Mac app it opens several windows, each with its own folder, terminal and language servers, reloads a file that changed on disk when you have no unsaved edits in it, and applies a picked color to the settings live. Two things it lacks: clicking a file name in the terminal to open it, and blur behind the window, which GNOME gives applications no way to ask for.
+
 To build it on Ubuntu:
 
 ```
@@ -223,22 +225,22 @@ The same actions on each platform, sorted by name. A blank cell means that port 
 | Action | macOS | Linux | Android, after the leader key |
 | --- | --- | --- | --- |
 | Browse the file tree and open the selected file | Up, Down, Return |  |  |
-| Close the application | Shift Command W |  |  |
-| Close the window | Command W |  |  |
+| Close the application | Shift Command W | Ctrl Q |  |
+| Close the window | Command W | Ctrl W |  |
 | Comment or uncomment the selected lines | Command / | Ctrl / |  |
 | Complete the word at the cursor, with a language server | Control Space, or Option Escape | Ctrl Space | N |
 | Export the typeset PDF of a LaTeX file | Shift Command S | Ctrl Shift S |  |
 | Find across the whole folder | Shift Command F | Ctrl Shift F |  |
 | Find in the current file | Command F | Ctrl F |  |
-| Find next, find previous | Command G, Shift Command G |  |  |
-| Focus the editor | Command 1 |  |  |
+| Find next, find previous | Command G, Shift Command G | Ctrl G, Ctrl Shift G |  |
+| Focus the editor | Command 1 | Ctrl 1 |  |
 | Focus the file tree | Command 0 | Ctrl 0 |  |
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G |
-| Jump to the previous file | Control Tab |  |  |
+| Jump to the previous file | Control Tab | Ctrl Tab |  |
 | Move the selected file to the Trash | Command Delete | Delete, in the file tree |  |
 | New file | Control Command N | Ctrl Alt N |  |
 | New folder | Shift Command N | Ctrl Shift N |  |
-| New window | Command N |  |  |
+| New window | Command N | Ctrl N |  |
 | Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it |  | Tap it |
 | Open a folder | Command O | Ctrl O | O |
 | Open the settings file | Command comma | Ctrl comma |  |
@@ -252,8 +254,10 @@ The same actions on each platform, sorted by name. A blank cell means that port 
 | Toggle the file list or sidebar | Command B | Ctrl B | F |
 | Toggle the preview of a Markdown or LaTeX file | Shift Command P | Ctrl Shift P | P |
 | Toggle the shortcut hints | Shift Command H | Ctrl Shift H | H |
-| Toggle the terminal | Shift Command T, or Control backtick | Ctrl Shift T | T |
+| Toggle the terminal | Shift Command T, or Control backtick | Ctrl Shift T, or Ctrl backtick | T |
 | Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z |  |
+
+In the Linux terminal, the plain Ctrl shortcuts belong to the shell while it has the keyboard, so Ctrl W still deletes a word and Ctrl H is still backspace. The Ctrl Shift ones keep working there, and so do Ctrl backtick, Ctrl 0, Ctrl 1 and Ctrl Tab for getting out of it. Ctrl Shift C and Ctrl Shift V copy and paste.
 
 In the Android terminal the leader also sends what the keyboard lacks: C for Control C, D for Control D, E for Escape and I for Tab. The row of keys under the terminal has the same, plus a sticky Control, the pipe and the arrows.
 

@@ -398,9 +398,11 @@ never closes.
   LaTeX preview, project search, comment toggling. See `android/README.md`.
 - **Linux** has incremental highlighting, images and PDFs, Find in Folder,
   data safety, the tree actions, the LSP client and the LaTeX preview now
-  (September 2026).
-  `linux/HANDOFF.md` lists what to do, in order, with the Mac and GTK
-  pieces for each.
+  (September 2026), and with item 8 several windows, Previous File, Find
+  Next and Previous, reload on external change, a live color picker, and a
+  terminal that keeps its Ctrl keys. All eight items of `linux/HANDOFF.md`
+  are done; its item 8 lists what the Mac still has that Linux lacks
+  (terminal links, blur), and `BUILD-LINUX.md` what needs a person.
 - The user's phone is a Unihertz Titan 2 (Android 16, 576 by 640 dp, hardware
   keyboard, Termux and F-Droid installed). Wireless debugging changes port on
   every reconnect, so ask for the new one rather than guessing.
@@ -853,6 +855,16 @@ holds, these give real runtime evidence rather than compile-only evidence:
   a legacy manual release. With ARC also owning the window through a `strong`
   property, closing double-frees it ("MiniCode quit unexpectedly"). Set
   `window.releasedWhenClosed = NO` so ARC is the sole owner.
+- **Linux: accelerators take keys from the terminal.** GTK runs application
+  accelerators in the window's capture phase, before the focused widget, so
+  a plain Ctrl shortcut never reached bash or vim in the VTE panel, and a
+  key controller on the terminal cannot get in first. `main.cpp` unbinds the
+  plain Ctrl ones while the terminal has the focus (`updateShellKeys`). The
+  Mac is spared by using Command.
+- **Linux: GTK criticals on a mid-scroll switch.** Unmapping a
+  GtkScrolledWindow while its adjustment animates (GtkTextView scrolls to
+  the caret with one) ends the animation twice on GTK 4.22 and logs two
+  criticals. `linux/src/ScrollSettle.h` ends it from the child's unmap first.
 
 ## Distribution
 
