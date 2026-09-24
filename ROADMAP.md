@@ -10,12 +10,14 @@ Shipped: tectonic typesets the buffer, PDFKit shows it, and double-clicking
 text on the page edits the source behind it, including adding list entries.
 The GTK port has the same since September 2026 (poppler for the pages,
 `linux/src/Latex.cpp`), with its own sweep, `tests/latex/sweep-linux.sh`.
+The source view is colored on every port, since the shared highlighter
+learned TeX (`.tex`, `.sty`, `.cls` and `.bib` too), math and verbatim
+environments included.
 What is left, roughly in order of value:
 
 - Add a table row the way a list entry is added now (the column count and the
   `&` separators are already in reach of `LatexDoc`).
 - Click the page to move the cursor to that line in the source view.
-- A LaTeX grammar for the syntax highlighter, so the source view is colored.
 - Error markers in the source view from tectonic's log, instead of a log pane.
 - Text a macro prints (`\newcommand{\company}{Initech}`) is refused when
   clicked, because it is not where it appears. Offering the macro's

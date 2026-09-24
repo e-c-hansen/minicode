@@ -395,9 +395,9 @@ How it differs from the Mac, on purpose:
   file's text, editable and highlighted, while the preview sits in front of
   it; the preview reads the buffer to typeset, and a popover commit is a
   splice into the buffer (only the bytes that differ, as one user action).
-  So dirty tracking, "Save changes?", the incremental highlighter (there is
-  no TeX grammar yet, so nothing to recolor) and undo all see preview edits
-  as typing. Ctrl+Z and Ctrl+Shift+Z (or Ctrl+Y) in the preview are the
+  So dirty tracking, "Save changes?", the incremental highlighter (which
+  has a TeX grammar now, so a preview edit recolors the source like typing
+  does) and undo all see preview edits as typing. Ctrl+Z and Ctrl+Shift+Z (or Ctrl+Y) in the preview are the
   buffer's undo, through a shortcut controller on the preview, and retypeset
   at once. `save()` reads the buffer for LaTeX even in preview.
 - **A click is traced only against the PDF of the current buffer.** SyncTeX's

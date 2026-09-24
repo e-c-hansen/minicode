@@ -68,4 +68,4 @@ the Markdown preview and the image viewer. The terminal (VTE), the browser
 (WebKitGTK) and the PDF viewer (poppler-glib) are optional: Meson enables each
 one when its library is found, and the code for a missing one is compiled out
 entirely. Without poppler a PDF gets the same "Cannot display" message as any
-other binary file, and a `.tex` file opens as plain source.
+other binary file, and a `.tex` file opens as highlighted source.

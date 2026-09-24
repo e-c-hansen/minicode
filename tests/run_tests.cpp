@@ -103,6 +103,75 @@ void testSyntax() {
     GROUP("syntax:plain");
     // Plain text / unknown extension yields no styled tokens.
     CHECK(SyntaxHighlighter::highlight("just words here", "txt").empty());
+
+    GROUP("syntax:tex");
+    for (const char *e : {"tex", "ltx", "latex", "sty", "cls", "bib"})
+        CHECK(SyntaxHighlighter::supports(e));
+    std::string tex = "\\documentclass{article}\n\\usepackage{amsmath}\n"
+                      "\\section{Intro} Some \\emph{words}.\n";
+    CHECK(hasToken(tex, "tex", "\\documentclass", TokenStyle::Preprocessor));
+    CHECK(hasToken(tex, "tex", "\\usepackage", TokenStyle::Preprocessor));
+    CHECK(hasToken(tex, "tex", "\\section", TokenStyle::Function));
+    CHECK(hasToken(tex, "tex", "\\emph", TokenStyle::Keyword));
+    CHECK(!hasStyle("Just prose, 42 of it.", "tex", TokenStyle::Number));
+    // \% is a character, not a comment; \\% is a line break, then one.
+    std::string pct = "50\\% off % real\n";
+    CHECK(hasToken(pct, "tex", "\\%", TokenStyle::Keyword));
+    CHECK(hasToken(pct, "tex", "% real", TokenStyle::Comment));
+    CHECK(hasToken("a\\\\% c", "tex", "\\\\", TokenStyle::Keyword));
+    CHECK(hasToken("a\\\\% c", "tex", "% c", TokenStyle::Comment));
+    // Math of every kind, with commands inside still commands.
+    CHECK(hasToken("see $x^2$ here", "tex", "$x^2$", TokenStyle::Number));
+    CHECK(hasToken("$$y$$", "tex", "$$y$$", TokenStyle::Number));
+    CHECK(hasToken("\\(a\\) b", "tex", "\\(a\\)", TokenStyle::Number));
+    CHECK(hasToken("\\[ b \\]", "tex", "\\[ b \\]", TokenStyle::Number));
+    CHECK(hasToken("$\\alpha + 1$", "tex", "\\alpha", TokenStyle::Keyword));
+    CHECK(hasToken("$\\alpha + 1$", "tex", " + 1$", TokenStyle::Number));
+    CHECK(hasToken("$a % c\nb$", "tex", "% c", TokenStyle::Comment));
+    CHECK(hasToken("$a % c\nb$", "tex", "b$", TokenStyle::Number));
+    CHECK(!hasStyle("\\$5 and \\$6", "tex", TokenStyle::Number));
+    // Display math across lines is one token, cut only by commands.
+    CHECK(hasToken("\\[\na\n\\]\nb", "tex", "\\[\na\n\\]", TokenStyle::Number));
+    CHECK(hasToken("\\[\n\\alpha\n\\]", "tex", "\\[\n", TokenStyle::Number));
+    CHECK(hasToken("\\[\n\\alpha\n\\]", "tex", "\n\\]", TokenStyle::Number));
+    // An unclosed $ stops at the paragraph's end.
+    std::string open = "$a\n\nb $c$ d";
+    CHECK(hasToken(open, "tex", "$a\n", TokenStyle::Number));
+    CHECK(hasToken(open, "tex", "$c$", TokenStyle::Number));
+    // \begin / \end and their environment names.
+    CHECK(hasToken("\\begin{itemize}", "tex", "\\begin", TokenStyle::Keyword));
+    CHECK(hasToken("\\begin{itemize}", "tex", "itemize", TokenStyle::Type));
+    std::string eq = "\\begin{equation}\nE = mc^2 % note\n\\end{equation}\nx";
+    CHECK(hasToken(eq, "tex", "\nE = mc^2 ", TokenStyle::Number));
+    CHECK(hasToken(eq, "tex", "% note", TokenStyle::Comment));
+    CHECK(hasToken(eq, "tex", "\\end", TokenStyle::Keyword));
+    CHECK(hasToken(eq, "tex", "equation", TokenStyle::Type));
+    // Verbatim: nothing inside is TeX, and what follows is normal again.
+    std::string verb = "\\begin{verbatim}\n$x % \\y\n\\end{verbatim}\nafter $z$\n";
+    CHECK(hasToken(verb, "tex", "\n$x % \\y\n", TokenStyle::String));
+    CHECK(hasToken(verb, "tex", "verbatim", TokenStyle::Type));
+    CHECK(hasToken(verb, "tex", "$z$", TokenStyle::Number));
+    CHECK(!hasStyle(verb, "tex", TokenStyle::Comment));
+    CHECK(hasToken("\\begin{comment}\n\\foo $\n\\end{comment} $q$", "tex",
+                   "\n\\foo $\n", TokenStyle::Comment));
+    CHECK(hasToken("\\begin{comment}\n\\foo $\n\\end{comment} $q$", "tex",
+                   "$q$", TokenStyle::Number));
+    std::string vb = "\\verb|$%| then $m$ \\verb*+a+ \\verb@b@";
+    CHECK(hasToken(vb, "tex", "\\verb", TokenStyle::Keyword));
+    CHECK(hasToken(vb, "tex", "|$%|", TokenStyle::String));
+    CHECK(hasToken(vb, "tex", "$m$", TokenStyle::Number));
+    CHECK(hasToken(vb, "tex", "\\verb*", TokenStyle::Keyword));
+    CHECK(hasToken(vb, "tex", "+a+", TokenStyle::String));
+    CHECK(hasToken(vb, "tex", "@b@", TokenStyle::String));
+    // An unclosed \verb ends with its line.
+    CHECK(hasToken("\\verb|abc\n$d$", "tex", "|abc", TokenStyle::String));
+    CHECK(hasToken("\\verb|abc\n$d$", "tex", "$d$", TokenStyle::Number));
+    // '@' is a letter in command names (.sty); .bib entries.
+    CHECK(hasToken("\\@ifnextchar[", "sty", "\\@ifnextchar", TokenStyle::Keyword));
+    std::string bib = "@article{key,\n  title = {On $x$},\n}\n";
+    CHECK(hasToken(bib, "bib", "@article", TokenStyle::Preprocessor));
+    CHECK(hasToken(bib, "bib", "$x$", TokenStyle::Number));
+    CHECK(!hasStyle(bib, "tex", TokenStyle::Preprocessor));
 }
 
 // ------------------------------------------------ incremental highlighting
@@ -195,16 +264,29 @@ std::string toU8(const std::u16string &u, std::vector<size_t> *u16AtByte) {
     return s;
 }
 
-// The reference tokens for a document: the frozen whole-file lexer, cut at
-// lines, in the document's own units.
+// Grammars the frozen lexer never had. For these the reference is a full lex
+// by the new highlighter (every line in order from the top), so the random
+// edits still check the incremental bookkeeping, and the UTF-16 run checks
+// that UTF-16 gives the same tokens as UTF-8.
+bool newGrammar(const std::string &ext) {
+    return ext == "tex" || ext == "ltx" || ext == "latex" || ext == "sty" ||
+           ext == "cls" || ext == "bib";
+}
+std::vector<Token> fullLex(const std::string &text, const std::string &ext) {
+    return newGrammar(ext) ? SyntaxHighlighter::highlight(text, ext)
+                           : legacy::highlight(text, ext);
+}
+
+// The reference tokens for a document: the frozen whole-file lexer (or a full
+// lex, for a grammar it lacks), cut at lines, in the document's own units.
 std::vector<Token> reference(const std::string &text, const std::string &ext) {
-    return splitAtLines(legacy::highlight(text, ext), text);
+    return splitAtLines(fullLex(text, ext), text);
 }
 std::vector<Token> reference(const std::u16string &text, const std::string &ext) {
     std::vector<size_t> map;
     std::string u8 = toU8(text, &map);
     std::vector<Token> toks;
-    for (const Token &t : legacy::highlight(u8, ext)) {
+    for (const Token &t : fullLex(u8, ext)) {
         size_t a = map[t.start], b = map[t.start + t.length];
         if (b > a) toks.push_back({a, b - a, t.style});
     }
@@ -219,6 +301,11 @@ const char *const kFragments[] = {
     ".5", " ", "\t", "\r\n", "if ", "return ", "def ", "self", "é", "日本",
     "\xF0\x9F\x98\x80", "/* c */", "\"s\"", "a = \"b\\\"c\"", "*/\n", "/*\n",
     "\"\"\"doc\n", "x", "}", "{\n",
+    // TeX: math, comments, verbatim and the environments that carry state.
+    "$", "$$", "\\(", "\\)", "\\[", "\\]", "%", "\\%", "\\\\", "\\alpha",
+    "\\section{A}", "\\begin{verbatim}", "\\end{verbatim}", "\\begin{equation}\n",
+    "\\end{equation}", "\\begin{comment}", "\\end{comment}", "\\verb|x|",
+    "\\verb", "|", "@article{", "\\begin{itemize}", "\n \n",
 };
 
 template <class Ch>
@@ -384,7 +471,8 @@ void testIncrementalHighlight() {
     std::vector<Sample> samples;
     for (const char *p : {"demo/sample.cpp", "demo/hello.py", "demo/README.md",
                           "src/SyntaxHighlighter.cpp", "src/LatexDoc.cpp",
-                          "scripts/release.sh", "tests/LegacyHighlighter.h"}) {
+                          "scripts/release.sh", "tests/LegacyHighlighter.h",
+                          "demo/paper/notes.tex", "tests/latex/torture.tex"}) {
         std::string t = readFile(p);
         GROUP("incremental:samples");
         CHECK(!t.empty());   // run from the repo root (make test does)
@@ -400,7 +488,20 @@ void testIncrementalHighlight() {
     samples.push_back({"empty", ""});
     samples.push_back({"unicode", "s = \"h\xC3\xA9llo \xF0\x9F\x98\x80\"; /* \xE6\x97\xA5\n"
                                   "\xE6\x9C\xAC */ int caf\xC3\xA9(x);\n"});
+    samples.push_back({"tex",
+        "\\documentclass{article} % class\n\\usepackage{amsmath}\n"
+        "\\begin{document}\n\\section{Caf\xC3\xA9} Price: 50\\%, $x^2 + \\alpha$\n"
+        "and $a\nb$ over lines, \\(c\\) and $$\nd\n$$ then\n\\[\n  e = \\frac{1}{2}\n\\]\n"
+        "\\begin{equation}\n  E = mc^2 % energy\n\n  lost\n\\end{equation}\n"
+        "\\begin{verbatim}\n$ not math % not comment \\[\n\\end{verbatim}\n"
+        "\\begin{lstlisting}[language=C]\nint x; // \xE6\x97\xA5\n\\end{lstlisting}\n"
+        "\\verb|$%| and \\verb*+\\[+ \\verb|open\n"
+        "\\begin{comment}\nhidden $\n\\end{comment}\n"
+        "@article{k, title = {On $x$}}\n\\end{document}\n"});
+    // The old-lexer comparison covers only the grammars it had; the random
+    // edits also run TeX, checked against a full lex (see newGrammar).
     const char *exts[] = {"cpp", "py", "js", "sh", "txt"};
+    const char *fuzzExts[] = {"cpp", "py", "js", "sh", "txt", "tex", "bib"};
 
     GROUP("incremental:matches-old-lexer");
     // The line lexer changed no token anywhere, joined back into whole tokens.
@@ -442,6 +543,25 @@ void testIncrementalHighlight() {
         p.reset(StringSource<char>(py), nullptr);
         CHECK(p.endState(0).kind == LexState::TripleString && p.endState(0).quote == u'\'');
         CHECK(p.endState(1).kind == LexState::TripleString && p.endState(1).quote == u'"');
+
+        IncrementalHighlighter<char> x("tex");
+        std::string tx = "$a\nb$ \\[\nc\n\\] \\begin{verbatim}\n\n$\n\\end{verbatim} "
+                         "\\begin{align}\nx\n\n$$\n$$ \\end{align}\n\\(\n";
+        x.reset(StringSource<char>(tx), nullptr);
+        CHECK(x.lineCount() == 13);
+        CHECK(x.endState(0).kind == LexState::TexMath && x.endState(0).quote == u'$');
+        CHECK(x.endState(1).kind == LexState::TexMath && x.endState(1).quote == u']');
+        CHECK(x.endState(2).kind == LexState::TexMath && x.endState(2).quote == u']');
+        CHECK(x.endState(3).kind == LexState::TexEnv);           // verbatim
+        CHECK(x.endState(4) == x.endState(3));                    // blank: still verbatim
+        CHECK(x.endState(5) == x.endState(3));                    // $ is text there
+        CHECK(x.endState(6).kind == LexState::TexEnv && x.endState(6) != x.endState(3));
+        CHECK(x.endState(7) == x.endState(6));                    // align
+        CHECK(x.endState(8).kind == LexState::Normal);            // blank ends math
+        CHECK(x.endState(9).kind == LexState::TexMath && x.endState(9).quote == u'D');
+        CHECK(x.endState(10).kind == LexState::Normal);
+        CHECK(x.endState(11).kind == LexState::TexMath && x.endState(11).quote == u')');
+        CHECK(x.endState(12).kind == LexState::Normal);           // empty last line
     }
 
     GROUP("incremental:edit-scope");
@@ -480,12 +600,30 @@ void testIncrementalHighlight() {
         CHECK(r.firstLine == 0 && r.endLine == h.lineCount() && r.end == t.size());
         CHECK(out == reference(t, "cpp"));
     }
+    {
+        // In TeX an unclosed $ runs only to the paragraph's end, so typing
+        // one re-lexes the paragraph, not the rest of the document.
+        std::string t;
+        for (int k = 0; k < 50; ++k) t += "Some prose with \\emph{a} word.\nMore.\n\n";
+        IncrementalHighlighter<char> h("tex");
+        h.reset(StringSource<char>(t), nullptr);
+        std::vector<Token> out;
+        t.insert(5, "$");
+        auto r = h.edit(StringSource<char>(t), 5, 0, 1, out);
+        CHECK(r.firstLine == 0 && r.endLine == 3);
+        CHECK(h.endState(1).kind == LexState::TexMath && h.endState(2).kind == LexState::Normal);
+        out.clear();
+        t.insert(t.find("word"), "$");
+        r = h.edit(StringSource<char>(t), t.find("$word"), 0, 1, out);
+        CHECK(r.firstLine == 0 && r.endLine == 3);
+        CHECK(h.endState(0).kind == LexState::Normal && h.endState(1).kind == LexState::Normal);
+    }
 
     GROUP("incremental:random-edits");
     FuzzStats stats;
     unsigned seed = 1;
     for (const Sample &s : samples) {
-        for (const char *e : exts) {
+        for (const char *e : fuzzExts) {
             bool ok = fuzzIncremental<char>(s.text, e, seed++, 120, stats);
             if (!ok) std::printf("    (UTF-8, sample %s)\n", s.name.c_str());
             CHECK(ok);

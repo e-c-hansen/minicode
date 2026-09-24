@@ -482,7 +482,7 @@ Notes on package names, which drift between Ubuntu versions:
   API; that will not work with this code as written.
 - `libpoppler-glib-dev` provides the PDF viewer (pkg-config module
   `poppler-glib`). Without it a PDF shows the "Cannot display" message, and
-  a `.tex` file opens as plain source, with no LaTeX preview.
+  a `.tex` file opens as highlighted source, with no LaTeX preview.
 - The LaTeX preview typesets with [tectonic](https://tectonic-typesetting.github.io/),
   a separate program, not a build dependency. MiniCode uses `MINICODE_TECTONIC`,
   then `~/.local/share/minicode/bin/tectonic`, then one on your PATH, and if
