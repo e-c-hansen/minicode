@@ -3119,6 +3119,12 @@ static void testTermLinks() {
       CHECK(l.kind == Link::Url && l.target == "https://example.com/a?b=1"); }
     { Link l = one("(see https://en.wikipedia.org/wiki/Foo_(bar))");
       CHECK(l.target == "https://en.wikipedia.org/wiki/Foo_(bar)"); }
+    { Link l = one("see https://en.wikipedia.org/wiki/Foo_(bar) for more");
+      CHECK(l.target == "https://en.wikipedia.org/wiki/Foo_(bar)"); }
+    { Link l = one("https://example.com/a_(b).");
+      CHECK(l.target == "https://example.com/a_(b)"); }
+    { Link l = one("(https://example.com/x)");
+      CHECK(l.target == "https://example.com/x"); }
     // Not links: words, numbers, versions, a lone slash.
     CHECK(TermLinks::find("hello world").empty());
     CHECK(TermLinks::find("took 1.5 seconds").empty());
