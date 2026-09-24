@@ -43,7 +43,11 @@ struct LexState {
         BlockComment,   // /* ... not closed yet
         TripleString,   // Python """ or ''' not closed yet (quote = the char)
         StringCont,     // "...\ : a backslash escaped the newline (quote = the char)
-        Unknown,        // never produced by the lexer; marks lines not lexed yet
+        TexMath,        // TeX math not closed yet; quote says what closes it:
+                        // '$' for $, 'D' for $$, ')' for \), ']' for \]
+        TexEnv,         // TeX verbatim, comment or math environment not ended
+                        // yet; quote = 1 + its index in the lexer's table
+        Unknown,       // never produced by the lexer; marks lines not lexed yet
     };
     uint8_t kind = Normal;
     char16_t quote = 0;
