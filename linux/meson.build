@@ -21,6 +21,7 @@ core_sources = [
   core_dir / 'SyncTex.cpp',
   core_dir / 'Json.cpp',
   core_dir / 'LspClient.cpp',
+  core_dir / 'TermLinks.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -44,6 +45,8 @@ gui_sources = [
   'src/PageWords.cpp',
   'src/LatexClick.cpp',
   'src/Latex.cpp',
+  # Resolves the terminal's Ctrl+click file references; plain C++.
+  'src/TermLinkPath.cpp',
 ]
 
 inc = include_directories('src', '../src')
@@ -123,7 +126,8 @@ port_tests = executable('minicode-linux-tests',
   sources : ['tests/run_tests.cpp', 'src/ThemeCss.cpp',
              core_dir / 'SyntaxHighlighter.cpp', core_dir / 'Settings.cpp',
              core_dir / 'LineComments.cpp', 'src/PageWords.cpp',
-             core_dir / 'LatexDoc.cpp', core_dir / 'SyncTex.cpp'],
+             core_dir / 'LatexDoc.cpp', core_dir / 'SyncTex.cpp',
+             core_dir / 'TermLinks.cpp', 'src/TermLinkPath.cpp'],
   include_directories : inc,
   install : false)
 test('linux port core', port_tests)

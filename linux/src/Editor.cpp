@@ -388,6 +388,21 @@ bool Editor::revealLine(int line, std::size_t byteColumn, std::size_t byteLength
     return true;
 }
 
+bool Editor::revealLineColumn(int line, int column) {
+    // revealLine first: it switches a preview back to the source, so the
+    // buffer holds the lines the column counts in.
+    if (!revealLine(line, 0, 0)) return false;
+    if (column <= 1) return true;
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_mark(buffer_, &it, gtk_text_buffer_get_insert(buffer_));
+    for (int c = 1; c < column && !gtk_text_iter_ends_line(&it); c++)
+        gtk_text_iter_forward_char(&it);
+    gtk_text_buffer_place_cursor(buffer_, &it);
+    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(view_), gtk_text_buffer_get_insert(buffer_),
+                                 0.1, TRUE, 0.0, 0.3);
+    return true;
+}
+
 bool Editor::isMedia() const { return media_->kind() != MediaView::Kind::None; }
 
 std::string Editor::titleSuffix() const { return media_->titleSuffix(); }

@@ -15,7 +15,11 @@
 #include "PageWords.h"
 #include "LatexDoc.h"
 #include "SyncTex.h"
+#include "TermLinkPath.h"
+#include "TermLinks.h"
 #include <cstdio>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <string>
 #include <vector>
 
@@ -440,6 +444,86 @@ static void testPageWords() {
     CHECK(cut.size() == 1);
 }
 
+// ------------------------------------------------------------ terminal links
+// TermLinkPath: where a file reference in the terminal's output points. Real
+// files in a scratch directory, since the whole point is that only paths
+// that exist resolve.
+static void touch(const std::string &p) {
+    FILE *f = std::fopen(p.c_str(), "w");
+    if (f) std::fclose(f);
+}
+
+static void testTermLinkPath() {
+    GROUP("TermLinkPath");
+    char tmpl[] = "/tmp/minicode-links-XXXXXX";
+    const char *made = mkdtemp(tmpl);
+    CHECK(made != nullptr);
+    if (!made) return;
+    const std::string base = made;
+    const std::string root = base + "/proj", shell = base + "/proj/build";
+    mkdir(root.c_str(), 0700);
+    mkdir(shell.c_str(), 0700);
+    mkdir((root + "/src").c_str(), 0700);
+    touch(root + "/src/main.cpp");
+    touch(shell + "/gen.cpp");
+    touch(base + "/outside.txt");
+    // The project reached through a symlink, as the shell might spell it.
+    const std::string alias = base + "/alias";
+    CHECK(symlink(root.c_str(), alias.c_str()) == 0);
+
+    TermLinkPath::Target t;
+    // Relative to the shell's directory first...
+    CHECK(TermLinkPath::resolve("gen.cpp", shell, root, "", &t));
+    CHECK(t.path == shell + "/gen.cpp" && !t.isDir && t.insideRoot);
+    // ...then the project folder.
+    CHECK(TermLinkPath::resolve("src/main.cpp", shell, root, "", &t));
+    CHECK(t.path == root + "/src/main.cpp" && t.insideRoot);
+    CHECK(TermLinkPath::resolve("../src/main.cpp", shell, root, "", &t));
+    CHECK(t.path == root + "/src/main.cpp");
+    // Nothing there: no link.
+    CHECK(!TermLinkPath::resolve("nope.cpp", shell, root, "", &t));
+    CHECK(!TermLinkPath::resolve("e.g", shell, root, "", &t));
+    CHECK(!TermLinkPath::resolve("", shell, root, "", &t));
+    // Absolute, inside and outside the project.
+    CHECK(TermLinkPath::resolve(base + "/outside.txt", shell, root, "", &t));
+    CHECK(t.path == base + "/outside.txt" && !t.insideRoot);
+    // A folder.
+    CHECK(TermLinkPath::resolve("src", shell, root, "", &t));
+    CHECK(t.isDir && t.insideRoot && t.path == root + "/src");
+    CHECK(TermLinkPath::resolve(".", root, root, "", &t));
+    CHECK(t.isDir && t.path == root);
+    // Through the symlink, a file inside comes back in the root's spelling;
+    // with the root itself opened through the symlink, likewise.
+    CHECK(TermLinkPath::resolve(alias + "/src/main.cpp", "", root, "", &t));
+    CHECK(t.path == root + "/src/main.cpp" && t.insideRoot);
+    CHECK(TermLinkPath::resolve(root + "/src/main.cpp", "", alias, "", &t));
+    CHECK(t.path == alias + "/src/main.cpp" && t.insideRoot);
+    // "~" is the home directory given, and nothing without one.
+    CHECK(TermLinkPath::resolve("~/outside.txt", "", "", base, &t));
+    CHECK(t.path == base + "/outside.txt");
+    CHECK(!TermLinkPath::resolve("~/outside.txt", "", "", "", &t));
+    // With neither a shell directory nor a root, a relative path is nothing.
+    CHECK(!TermLinkPath::resolve("src/main.cpp", "", "", "", &t));
+
+    // What the terminal does with a line: TermLinks finds the reference, and
+    // this resolves it.
+    const std::string line = "src/main.cpp:12:5: error: expected ';'";
+    const auto links = TermLinks::find(line);
+    const TermLinks::Link *l = TermLinks::at(links, 3);
+    CHECK(l && l->kind == TermLinks::Link::File && l->line == 12 && l->column == 5);
+    CHECK(l && TermLinkPath::resolve(l->target, shell, root, "", &t) &&
+          t.path == root + "/src/main.cpp");
+
+    std::remove(alias.c_str());
+    std::remove((root + "/src/main.cpp").c_str());
+    std::remove((shell + "/gen.cpp").c_str());
+    std::remove((base + "/outside.txt").c_str());
+    rmdir((root + "/src").c_str());
+    rmdir(shell.c_str());
+    rmdir(root.c_str());
+    rmdir(base.c_str());
+}
+
 int main() {
     std::printf("Running MiniCode Linux port tests...\n\n");
     testAscii();
@@ -452,6 +536,7 @@ int main() {
     testUtf16();
     testThemeCss();
     testPageWords();
+    testTermLinkPath();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
