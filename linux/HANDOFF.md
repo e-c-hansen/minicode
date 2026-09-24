@@ -28,7 +28,8 @@ poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
   Trash, Open Containing Folder and Copy Path (item 2);
 - the editor with incremental syntax highlighting (item 3), Ctrl+/, the
   Markdown preview, and reloading when the file changes on disk (item 8);
-- images and PDFs in the editor's slot (item 4);
+- images and PDFs in the editor's slot (item 4), with zoom for PDFs and the
+  LaTeX preview;
 - Find in Folder (item 5) and find in the file with Find Next and Find
   Previous (item 8);
 - language servers: squiggles, completion, hover and go to definition
@@ -204,7 +205,7 @@ warning. While an image, a PDF or a binary file's message is shown,
 `Editor::canSave()` is false, `win.save` is disabled and `save()` writes
 nothing. poppler is optional (`-Dpdf=auto`, `make PDF=1`,
 `MINICODE_ENABLE_PDF`). What was checked, and how, is in `BUILD-LINUX.md`.
-Not done: zoom, on Linux as on the Mac, and a person looking at it.
+Zoom came later (below); still not done: a person looking at it.
 
 `src/PdfView.{h,cpp}` is the piece item 7 reuses. It shows every page in a
 scrolling column fitted to the width, rendered lazily (visible pages first,
@@ -222,10 +223,82 @@ top-left as SyncTeX uses them:
 - `anchor()` and `scrollTo(anchor)`: the page and y at the top of the view,
   held through the relayout after a load or resize.
 - `renderPage(page, pixelWidth)`: one page as a cairo image, for tests.
+- `zoom()`, `effectiveZoom()`, `setZoom(z, x, y)`, `zoomIn()`, `zoomOut()`,
+  `zoomToFit()`, and `setShownCallback` (see Zoom below).
+- `widget()` is now a `GtkOverlay` holding the scrolled window and the zoom
+  badge. Both have the same origin, so widget coordinates did not change.
 
 A trap paid for: page sizes set from the adjustment's `changed` signal land
 in the middle of an allocation and are never laid out; the box kept its old
 width after a resize. The relayout now runs from an idle.
+
+**Zoom, September 2026.** The Mac has no zoom keys, so this was designed
+plainly, for the PDF viewer and the LaTeX preview alike (both are a
+`PdfView`):
+
+- **Scale.** `zoom_` is 0 for fit width, the default, or a factor where 1.0
+  is 100%: a page at its printed size on a nominal 96 dpi display, 4/3
+  logical pixels per point, as browsers and pdf.js have it. The range is
+  25% to 400%. Zoomed, every page is its size in points times the zoom, and
+  the view scrolls sideways when the widest page is wider than it; a window
+  resize keeps the size. Fit width still fits the widest page.
+- **Keys.** Ctrl+Plus, Ctrl+Equal and keypad Plus zoom in, Ctrl+Minus and
+  keypad Minus zoom out, through the steps 25, 33, 50, 67, 75, 90, 100, 110,
+  125, 150, 175, 200, 250, 300 and 400%, about the view's centre. Fit width
+  is **Ctrl+Alt+0**: Ctrl+0 is Focus the File Tree (the Mac's Command 0), and
+  one of the pane keys that stay bound while the terminal has the keyboard, so
+  it is not borrowed. The actions (`win.zoomin`, `win.zoomout`,
+  `win.zoomfit`, in the View menu) are enabled only while a `PdfView` is
+  mapped, which `Editor::showingPdf()` reports and `updateTitle` applies;
+  `PdfView` calls its shown callback on map and unmap, and the editor passes
+  that on as a title update. Disabled, their keys go on to the focused
+  widget. Ctrl+Plus and Ctrl+Minus are plain Ctrl keys, so `shellOwns` gives
+  them to the shell while the terminal has the keyboard, with no new code;
+  Ctrl+Alt+0 stays bound there, as everything with Alt does.
+- **Wheel and pinch.** A scroll controller in the capture phase (so it runs
+  before the scrolled window's own) takes the wheel when Ctrl is held: a
+  notch is 10%, a touchpad's smooth scroll `exp(-dy / 100)`. A motion
+  controller keeps the pointer's position, and the zoom is about it. A
+  `GtkGestureZoom` zooms about the point between the fingers, relative to the
+  zoom when the pinch began.
+- **Holding a point.** `setZoom` finds the document point (page, and x and y
+  in points, allowed off the page's edge) under the given viewport point,
+  lays out at the new scale, and scrolls so the point is back under it. It
+  works from the layout it just made (`pageTop`, `pageLeft`, `contentSize`,
+  which reproduce the box's spacing and GTK's rounding in centring), not
+  from allocations, which lag. A page narrower than the view is centred, so
+  only the vertical position holds then. Successive steps of a pinch start
+  from where the last one meant to be (`scrollValues`), not from where GTK
+  has got to.
+- **Keeping and resetting.** `load(path, true)` keeps the zoom and now also
+  the sideways scroll, so a LaTeX retypeset and a reload from disk keep
+  both. `clear()` and a load without `keepPosition` go back to fit width,
+  which is what opening another file does in the viewer and the preview.
+- **The badge.** A label in the overlay, bottom right, shows "150%" or "Fit
+  width, 79%" for 1.2 s after each change. It is not in the title because
+  the LaTeX preview has none of its own and the level changes too often for
+  a title.
+- **Rendering.** Still lazy, one piece per idle pass, at the surface's scale.
+  A page whose bitmap would pass 8 million device pixels (32 MB) is rendered
+  whole at the resolution that fits, soft up close, and the part in view plus
+  half a view around it is rendered again at full resolution on top (a
+  "detail", at most 12 million pixels, or just the visible part for a view
+  bigger than that), redone when the view moves past it. Pages either side
+  keep bitmaps only while the total stays near 192 MB (at most three either
+  side, as before), and the out-of-range ones are dropped before anything
+  new is rendered. While a zoom or resize is moving, the old bitmaps are
+  stretched; they are redone 120 ms after it stops. At fit width a Letter
+  page stays under the cap up to about 1240 logical pixels wide at 2x, so
+  the default view rarely needs a detail.
+- **Pages are textures.** Each page is a small widget (`MinicodePdfPage`,
+  in `PdfView.cpp`) whose snapshot is a white rectangle, the page texture
+  and the detail texture, drawn with `gtk_snapshot_append_scaled_texture`.
+  It used to be a `GtkDrawingArea`; see the trap below for why it is not.
+- **Coordinates.** `pageAtPoint`, `pagePointIn` and the click callback go
+  through `gtk_widget_compute_point` on the page widgets, as before, so they
+  hold at any zoom; `anchor()` and `scrollTo` use each page's own pixel size.
+  The zoom test checked all of them at six zoom levels against where the
+  page's pixels actually are.
 
 ### 5. Find in folder (done, September 2026)
 
@@ -452,7 +525,9 @@ verdicts above and report how many still offered a span: after the change,
 0 of 49 on torture.tex and 0 of 5 on notes.tex (before, all 54 did), with
 the other counts unchanged.
 
-Not done: zoom (as with PDFs), click-to-line in the source view, and a person
+Zoom came later, with the PDF view's (item 4); a retypeset keeps it, and a
+double-click opens the right text at every zoom tried. Not done:
+click-to-line in the source view, and a person
 using it: the real double-click, the popover's look and placement, Return and
 Escape in it, Ctrl+Z in the preview, and the Export PDF dialog were not
 driven by real input (see `BUILD-LINUX.md`).
@@ -565,7 +640,8 @@ passing, plus the criticals run); what needs a person is listed there too.
 What the Mac has that Linux still lacks: Command-click on a file or URL in
 the terminal's output (the core's `TermLinks` is portable; VTE would need a
 regex match or its hyperlink hover), Refresh File Tree (not needed, the tree
-is live), zoom for images and PDFs (missing on the Mac too), and blur.
+is live), zoom for images (missing on the Mac too; PDFs and the LaTeX
+preview have zoom now, item 4), and blur.
 
 Not needed on Linux: the demo recorder and the memory benchmark, which are
 Mac tools.
@@ -653,3 +729,24 @@ Do not claim a GUI behaviour works when it was only compiled.
   `disconnectOwners`, once the object is in the owners list in
   `onWindowRemoved`; a connection to anything else (a buffer, a model, a
   monitor, the application) must be undone in the object's destructor.
+- Do not draw big bitmaps with cairo in a `GtkDrawingArea`. Its drawing is
+  recorded into a cairo recording surface, which keeps a copy-on-write
+  snapshot of any image painted from; every widget keeps its last render
+  node, so when the image is destroyed, cairo copies it into that node, and
+  the copy lives as long as the node. Scrolling a 400% PDF grew the heap to
+  1.5 GB while the view held 173 MB of bitmaps (`malloc_trim` gave nothing
+  back, since it was all in use). `PdfView` now draws `GdkTexture`s, which are
+  shared by reference, and queues a redraw of a page whose bitmap it drops,
+  so the node lets go too.
+- GtkAdjustment emits `changed` when notifications are thawed, and
+  GtkViewport thaws them after it has placed its child. A value set from a
+  `changed` handler therefore misses the allocation in progress, and the
+  re-allocation it asks for can be lost: a zoom from 40% to 260% left the
+  pages 485 pixels to one side of where the adjustment said, found by
+  comparing a page's real position with the scroll value. `PdfView` raises
+  the adjustments' upper bound to the new layout's size itself before
+  setting the value, and queues the viewport's allocation from an idle when
+  it has to set one from `changed`.
+- A test of a click on a PDF page must check `pageAtPoint`'s return value:
+  at a low zoom a point that was on the page before can be in the margin
+  after, and the outputs are then left as they were.

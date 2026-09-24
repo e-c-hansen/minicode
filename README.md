@@ -166,7 +166,7 @@ make run opens the current directory, and make run DIR=~/some/project opens anot
 
 ## Linux
 
-The Linux version, in the linux folder, is built on GTK4. It shares the portable C++ core with the macOS app, so syntax highlighting, the Markdown parser, the settings file and comment toggling behave the same on both. Around that core it has a file tree with the Mac's right click menu, the editor, the Markdown preview, per-panel colors and transparency from the same settings file, a terminal panel built on VTE, a WebKitGTK browser panel, images and PDFs in the editor, Find in Folder, and the same language server client as the Mac, with squiggles, completion, hover and go to definition. It is developed on Ubuntu 26.04, and CI builds and tests it alongside the macOS app on every change to main. Shortcuts use Control where the Mac uses Command.
+The Linux version, in the linux folder, is built on GTK4. It shares the portable C++ core with the macOS app, so syntax highlighting, the Markdown parser, the settings file and comment toggling behave the same on both. Around that core it has a file tree with the Mac's right click menu, the editor, the Markdown preview, per-panel colors and transparency from the same settings file, a terminal panel built on VTE, a WebKitGTK browser panel, images and PDFs in the editor (PDFs and the LaTeX preview zoom from 25% to 400%), Find in Folder, and the same language server client as the Mac, with squiggles, completion, hover and go to definition. It is developed on Ubuntu 26.04, and CI builds and tests it alongside the macOS app on every change to main. Shortcuts use Control where the Mac uses Command.
 
 It also has the LaTeX preview: it typesets with tectonic, offers to download tectonic into ~/.local/share/minicode/bin if it is missing, lets you edit by double clicking the page, and exports the PDF with Ctrl Shift S. The terminal needs no catching up, since VTE is already a full terminal emulator.
 
@@ -256,8 +256,10 @@ The same actions on each platform, sorted by name. A blank cell means that port 
 | Toggle the shortcut hints | Shift Command H | Ctrl Shift H | H |
 | Toggle the terminal | Shift Command T, or Control backtick | Ctrl Shift T, or Ctrl backtick | T |
 | Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z |  |
+| Zoom a PDF or the LaTeX preview in or out |  | Ctrl plus (or Ctrl equals), Ctrl minus, Ctrl with the scroll wheel, or a pinch on the touchpad |  |
+| Zoom a PDF or the LaTeX preview back to the width of the pane |  | Ctrl Alt 0 |  |
 
-In the Linux terminal, the plain Ctrl shortcuts belong to the shell while it has the keyboard, so Ctrl W still deletes a word and Ctrl H is still backspace. The Ctrl Shift ones keep working there, and so do Ctrl backtick, Ctrl 0, Ctrl 1 and Ctrl Tab for getting out of it. Ctrl Shift C and Ctrl Shift V copy and paste.
+In the Linux terminal, the plain Ctrl shortcuts belong to the shell while it has the keyboard, so Ctrl W still deletes a word and Ctrl H is still backspace. The Ctrl Shift ones keep working there, and so do Ctrl backtick, Ctrl 0, Ctrl 1 and Ctrl Tab for getting out of it. Ctrl Shift C and Ctrl Shift V copy and paste. The PDF zoom keys only act while a PDF or the LaTeX preview is showing; Ctrl plus and Ctrl minus go to the shell while the terminal has the keyboard, like the other plain Ctrl keys. Resetting the zoom is Ctrl Alt 0 rather than the usual Ctrl 0, because Ctrl 0 already moves to the file tree.
 
 In the Android terminal the leader also sends what the keyboard lacks: C for Control C, D for Control D, E for Escape and I for Tab. The row of keys under the terminal has the same, plus a sticky Control, the pipe and the arrows.
 
