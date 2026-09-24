@@ -1,7 +1,7 @@
 // Search.h — Find in Folder (Ctrl+Shift+F): the GTK front end for the shared
 // FolderSearch core (../src/FolderSearch.h). A separate window, like the macOS
 // SearchPanel (src/Search.mm): a scope row naming the folder, a search entry,
-// a status line and a list of matches. Activating a match (double-click or
+// a status line and a list of matches. Activating a match (a click, or
 // Enter) hands it to the open callback, which opens the file at that line.
 //
 // Searching runs on a GTask worker thread. Every new search bumps a generation
@@ -73,7 +73,13 @@ private:
     static void onStopSearch(GtkSearchEntry* e, gpointer self);
     static gboolean onQueryKey(GtkEventControllerKey* c, guint keyval, guint code,
                                GdkModifierType mods, gpointer self);
-    static void onRowActivate(GtkListView* lv, guint pos, gpointer self);
+    static void onRowPressed(GtkGestureClick* g, int n, double x, double y, gpointer self);
+    static void onRowReleased(GtkGestureClick* g, int n, double x, double y, gpointer self);
+    static gboolean onListKey(GtkEventControllerKey* c, guint keyval, guint keycode,
+                              GdkModifierType mods, gpointer self);
+    guint rowAt(double x, double y) const;
+    void openRow(guint pos);
+    void focusFirstResult();
     static void onSetup(GtkSignalListItemFactory* f, GObject* item, gpointer self);
     static void onBind(GtkSignalListItemFactory* f, GObject* item, gpointer self);
     static void worker(GTask* task, gpointer source, gpointer data, GCancellable* c);
@@ -86,6 +92,7 @@ private:
     GtkWidget*     status_     = nullptr;
     GtkWidget*     listView_   = nullptr;
     GtkStringList* rows_       = nullptr;   // one display string per match
+    guint          pressRow_   = GTK_INVALID_LIST_POSITION;   // where a click began
 
     std::vector<FolderSearchMatch> hits_;   // row i of the list is hits_[i]
     std::string root_;

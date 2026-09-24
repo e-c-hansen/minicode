@@ -744,6 +744,13 @@ holds, these give real runtime evidence rather than compile-only evidence:
   that started and then died.
 - Do not bother with `org.gnome.Shell.Introspect.GetWindows`; it answers
   `AccessDenied` for callers that are not whitelisted.
+- Real clicks and keys: a private rootful Xwayland (`Xwayland :87 -geometry
+  1300x850`, one window on the user's desktop) with the app inside it on
+  `GDK_BACKEND=x11`, driven by XTest through Python `ctypes`, and `xwd -root`
+  for captures. `linux/HANDOFF.md` ("How to work on it") has the details.
+  Prefer it to hooks that call code paths: in September 2026 three bugs the
+  user hit by hand (no visible tree selection, Find in Folder not scrolling
+  to the match, Down from the search field) had all passed such hooks.
 
 ## Gotchas already paid for (don't rediscover these)
 
@@ -892,6 +899,24 @@ holds, these give real runtime evidence rather than compile-only evidence:
   key controller on the terminal cannot get in first. `main.cpp` unbinds the
   plain Ctrl ones while the terminal has the focus (`updateShellKeys`). The
   Mac is spared by using Command.
+- **Linux: the file tree.** The stylesheet's transparent row background
+  also wiped out the theme's selection color (an application stylesheet
+  outranks the theme whatever the selectors), so a clicked row showed
+  nothing; `ThemeCss.cpp` now colors `:selected`, `:hover` and
+  `:focus-visible` itself. One click acts, as on the Mac, through a
+  `GtkGestureClick` on the list view with the rows not activatable, so a
+  double-click cannot act twice (`FileTree.cpp`); not
+  `gtk_list_view_set_single_click_activate`, which selects rows on hover.
+  Showing or hiding dotfiles closed every open folder when a dotfile sorted
+  into the root; `setShowHidden` reopens them.
+- **Linux: scrolling to a line of a new file.** GtkTextView animates
+  towards a position computed from estimated heights of lines not laid out
+  yet, and ends in the wrong place (a match on line 250 left 166 to 208 on
+  screen). `Editor::settleOnCaret` scrolls again once the view stops with
+  the caret off screen. Check the visible rect in tests, not just the caret.
+- **Linux: shifted punctuation accelerators.** `<Ctrl><Shift>period` never
+  matches in GTK 4; bind the character (`<Ctrl>greater`), and exempt it in
+  `shellOwns`. Ctrl+Shift+. exists for Toshy users, whose Ctrl+H is taken.
 - **Linux: GTK criticals on a mid-scroll switch.** Unmapping a
   GtkScrolledWindow while its adjustment animates (GtkTextView scrolls to
   the caret with one) ends the animation twice on GTK 4.22 and logs two

@@ -64,7 +64,26 @@ std::string stylesheet(const Settings& s) {
     // File tree: the scroller paints, the list and its rows stay clear.
     css += ".minicode-sidebar { background-color: " + bg(Surface::Sidebar) + "; }";
     css += ".minicode-tree, .minicode-tree > row { background-color: transparent; }";
+    // The selected row. The rule above cleared the desktop theme's selection
+    // color along with the rest, since this stylesheet outranks the theme
+    // whatever the selectors, so a clicked row looked like every other one.
+    // The blue of VS Code's list while the tree has the keyboard, and a tint
+    // of the sidebar's own text color when it does not, so it shows on any
+    // sidebar color the settings give; translucent, so a see-through sidebar
+    // stays see-through. The focus ring is for keyboard use (GTK shows it
+    // only after a key press).
+    Rgba tint = s.text(Surface::Sidebar);
+    auto tinted = [&](double a) { tint.a = a; return cssColor(tint); };
+    css += ".minicode-tree > row:hover { background-color: " + tinted(0.04) + "; }";
+    css += ".minicode-tree > row:selected { background-color: " + tinted(0.20) + "; }";
+    css += ".minicode-tree:focus-within > row:selected {"
+           " background-color: rgba(0,122,204,0.50); }";
+    css += ".minicode-tree > row:focus-visible { outline: 1px solid #007ACC;"
+           " outline-offset: -1px; }";
     css += ".minicode-tree-label { color: " + fg(Surface::Sidebar) + "; }";
+    // The folder arrows, which otherwise take the desktop theme's text color
+    // (black under a light theme, nearly invisible on the dark sidebar).
+    css += ".minicode-tree expander { color: " + fg(Surface::Sidebar) + "; }";
     css += ".minicode-dir-icon  { color: #C09553; }";
     css += ".minicode-file-icon { color: #8A99A8; }";
 

@@ -451,10 +451,14 @@ static bool askExternalChange(void* userp) {
 // line, focus the editor) goes in `then`, which runs after the open and not
 // at all when the user cancels.
 static void openFileThen(App* app, const std::string& path, std::function<void()> then) {
-    // Clicking the file that is already open with edits in it must not reload
-    // it from disk over them. A clean file does reload, which is how a change
-    // made elsewhere gets picked up.
-    if (path == app->editor->currentPath() && app->editor->dirty()) {
+    // The file already open is not opened again, as on the Mac: a click on
+    // it in the tree (one click opens now) must not reload it over its edits,
+    // nor throw away the caret, the scroll position and a preview switched
+    // to source. Changes made elsewhere arrive through the editor's own watch
+    // on the file. Only a message ("Could not open", "Cannot display") is
+    // tried again.
+    if (path == app->editor->currentPath() &&
+        (app->editor->canSave() || app->editor->isMedia())) {
         showEditorArea(app);
         if (then) then();
         return;
@@ -465,10 +469,19 @@ static void openFileThen(App* app, const std::string& path, std::function<void()
     }, [app] { reselectCurrentFile(app); });
 }
 
-// Called by FileTree when a file is activated, and by everything else that
-// opens a file with nothing to do afterwards.
+// Called by everything that opens a file with nothing to do afterwards.
 static void openFileCb(const std::string& path, void* userp) {
     openFileThen(static_cast<App*>(userp), path, nullptr);
+}
+
+// A file opened from the tree: by a click, or by Enter, after which the
+// keyboard goes to the editor, as on the Mac (EditorController.mm
+// -activateRow:).
+static void treeOpenCb(const std::string& path, bool fromKeyboard, void* userp) {
+    App* app = static_cast<App*>(userp);
+    openFileThen(app, path, [app, fromKeyboard] {
+        if (fromKeyboard) gtk_widget_grab_focus(app->editor->textView());
+    });
 }
 
 // Re-root on a new folder. The file from the old folder is closed, as on the
@@ -571,9 +584,14 @@ static void act_toggle_sidebar(GSimpleAction*, GVariant*, gpointer userp) {
     refreshHints(app);
 }
 
-// Ctrl+H, View > Show Hidden Files: the Mac's Shift+Cmd+. (toggleHiddenFiles:
-// flips one global flag). An application action with a check-box state, so
-// every window's tree and every window's menu agree.
+// Ctrl+H or Ctrl+Shift+., View > Show Hidden Files: the Mac's Shift+Cmd+.
+// (toggleHiddenFiles: flips one global flag). An application action with a
+// check-box state, so every window's tree and every window's menu agree.
+// Ctrl+Shift+. is the Mac's key with Ctrl for Command, for keyboards remapped
+// the Mac way (Toshy sends Ctrl for the Command key, and turns Command+H into
+// Super+H, which GNOME takes to hide the window, so Ctrl+H never arrives).
+// It is bound as Ctrl+> (see kBinds), so it needs a layout where Shift+.
+// types ">", as the US and UK ones do.
 static void onShowHiddenChanged(GSimpleAction* action, GVariant* value, gpointer) {
     g_simple_action_set_state(action, value);
     g.showHidden = g_variant_get_boolean(value);
@@ -1192,6 +1210,7 @@ static std::string hintsText(App* app) {
     s += "Delete         Move to Trash (in the tree)\n";
     s += std::string("Ctrl H         Hidden files (") +
          (g.showHidden ? "shown" : "hidden") + ")\n";
+    s += "Ctrl Shift .   Hidden files, too\n";
 
     s += "\nLanguage servers\n";
     s += "────────────────────────────────────────\n";
@@ -1374,7 +1393,11 @@ static const Bind kBinds[] = {
     {"win.togglecomment",  {"<Ctrl>slash"}},
     {"win.settings",       {"<Ctrl>comma"}},
     {"win.togglebrowser",  {"<Ctrl><Shift>b"}},
-    {"app.showhidden",     {"<Ctrl>h"}},
+    // Ctrl+Shift+. (the Mac's key) is written as the character it types:
+    // "<Ctrl><Shift>period" never matches, because GTK compares the keyval
+    // the key produced, ">" on a US layout, and with Shift consumed by it
+    // the modifiers differ as well. Checked with real X key events.
+    {"app.showhidden",     {"<Ctrl>h", "<Ctrl>greater"}},
     {"win.focustree",      {"<Ctrl>0"}},
     {"win.focuseditor",    {"<Ctrl>1"}},
     {"win.previousfile",   {"<Ctrl>Tab"}},
@@ -1395,6 +1418,8 @@ static bool shellOwns(const char* accel) {
     switch (key) {
         case GDK_KEY_grave: case GDK_KEY_0: case GDK_KEY_1: case GDK_KEY_Tab:
             return false;   // the pane keys
+        case GDK_KEY_greater:
+            return false;   // Ctrl+Shift+., typed with Shift like the others that stay
         default:
             return true;
     }
@@ -1643,7 +1668,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
 
     // Core widgets.
     app->tree = new FileTree(app->rootDir, g.showHidden);
-    app->tree->setOpenCallback(openFileCb, app);
+    app->tree->setOpenCallback(treeOpenCb, app);
     app->editor = new Editor();
     app->editor->setTitleCallback(updateTitle, app);
     app->editor->setExternalChangeCallback(askExternalChange, app);

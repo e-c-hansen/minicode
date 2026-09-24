@@ -290,7 +290,27 @@ void FileTree::build() {
 
     listView_ = gtk_list_view_new(GTK_SELECTION_MODEL(sel), factory);
     gtk_widget_add_css_class(listView_, "minicode-tree");
-    g_signal_connect(listView_, "activate", G_CALLBACK(onActivate), this);
+
+    // One click acts, as on the Mac (ClickOutline in EditorController.mm): a
+    // folder opens or closes, a file opens. The rows themselves are not
+    // activatable (onSetup), so GTK's double-click activation cannot act a
+    // second time, and Enter is handled below instead of by the list.
+    // gtk_list_view_set_single_click_activate would do the clicking, but it
+    // also selects whatever row the pointer rests on.
+    // The rows' own click handling runs first (this is the bubble phase), so
+    // the clicked row is already selected when the file opens.
+    GtkGesture* click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
+    g_signal_connect(click, "pressed", G_CALLBACK(onPrimaryPressed), this);
+    g_signal_connect(click, "released", G_CALLBACK(onPrimaryReleased), this);
+    gtk_widget_add_controller(listView_, GTK_EVENT_CONTROLLER(click));
+
+    // Enter opens, Left and Right close and open folders. Capture phase, so
+    // the keys arrive before the list's own bindings.
+    GtkEventController* keys = gtk_event_controller_key_new();
+    gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
+    g_signal_connect(keys, "key-pressed", G_CALLBACK(onKey), this);
+    gtk_widget_add_controller(listView_, keys);
 
     // Right-click: capture phase, so it sees the press before the rows' own
     // click handling does.
@@ -367,6 +387,9 @@ void FileTree::onSetup(GtkSignalListItemFactory* /*f*/, GObject* obj,
     gtk_box_append(GTK_BOX(box), label);
     gtk_tree_expander_set_child(GTK_TREE_EXPANDER(expander), box);
     gtk_list_item_set_child(li, expander);
+    // Clicks and Enter are FileTree's own (see build), so GTK's activation,
+    // which would also fire on a double-click, is off.
+    gtk_list_item_set_activatable(li, FALSE);
     // Lets a widget found under the pointer be traced back to its row.
     g_object_set_data(G_OBJECT(expander), "minicode-list-item", li);
 }
@@ -404,37 +427,123 @@ void FileTree::onBind(GtkSignalListItemFactory* /*f*/, GObject* obj,
 
 // ---------------------------------------------------------------- activation
 
-void FileTree::onActivate(GtkListView* /*lv*/, guint pos, gpointer selfp) {
-    FileTree* self = static_cast<FileTree*>(selfp);
-    GtkSelectionModel* model =
-        gtk_list_view_get_model(GTK_LIST_VIEW(self->listView_));
-    GtkTreeListRow* row =
-        GTK_TREE_LIST_ROW(g_list_model_get_item(G_LIST_MODEL(model), pos));
+void FileTree::actOnRow(guint pos, bool fromKeyboard) {
+    if (pos == GTK_INVALID_LIST_POSITION) return;
+    GtkTreeListRow* row = gtk_tree_list_model_get_row(treeModel_, pos);   // transfer full
     if (!row) return;
-
-    // Both gtk_tree_list_row_get_item and g_list_model_get_item are
-    // (transfer full): we own both references.
-    GFileInfo* info = G_FILE_INFO(gtk_tree_list_row_get_item(row));
+    GFileInfo* info = G_FILE_INFO(gtk_tree_list_row_get_item(row));      // transfer full
     if (infoIsDir(info)) {
-        // Expand/collapse directories on activation.
-        gboolean expanded = gtk_tree_list_row_get_expanded(row);
-        gtk_tree_list_row_set_expanded(row, !expanded);
-    } else if (self->openCb_) {
-        GFile* file = fileOfInfo(info);
-        if (file) {
+        gtk_tree_list_row_set_expanded(row, !gtk_tree_list_row_get_expanded(row));
+    } else if (openCb_) {
+        if (GFile* file = fileOfInfo(info)) {
             char* path = g_file_get_path(file);
-            if (path) { self->openCb_(path, self->openUser_); g_free(path); }
+            if (path) { openCb_(path, fromKeyboard, openUser_); g_free(path); }
         }
     }
     if (info) g_object_unref(info);
     g_object_unref(row);
 }
 
+void FileTree::selectRow(guint pos) {
+    gtk_list_view_scroll_to(GTK_LIST_VIEW(listView_), pos,
+        (GtkListScrollFlags)(GTK_LIST_SCROLL_FOCUS | GTK_LIST_SCROLL_SELECT), nullptr);
+}
+
+guint FileTree::rowAt(double x, double y, bool* onArrow) const {
+    if (onArrow) *onArrow = false;
+    for (GtkWidget* w = gtk_widget_pick(listView_, x, y, GTK_PICK_DEFAULT);
+         w && w != listView_; w = gtk_widget_get_parent(w)) {
+        // GtkTreeExpander's arrow is a child of it named "expander", with a
+        // click handler of its own that opens and closes the folder.
+        if (onArrow && GTK_IS_TREE_EXPANDER(gtk_widget_get_parent(w)) &&
+            g_strcmp0(gtk_widget_get_css_name(w), "expander") == 0)
+            *onArrow = true;
+        if (auto* li = static_cast<GtkListItem*>(
+                g_object_get_data(G_OBJECT(w), "minicode-list-item")))
+            return gtk_list_item_get_position(li);
+    }
+    return GTK_INVALID_LIST_POSITION;
+}
+
+void FileTree::onPrimaryPressed(GtkGestureClick*, int, double x, double y, gpointer selfp) {
+    FileTree* self = static_cast<FileTree*>(selfp);
+    bool onArrow = false;
+    const guint pos = self->rowAt(x, y, &onArrow);
+    // A press on the arrow is the expander's; this click leaves it alone.
+    self->pressRow_ = onArrow ? GTK_INVALID_LIST_POSITION : pos;
+}
+
+// Only the first click of a double-click acts, so a double-click on a folder
+// does not open and close it again. A press on one row released over another
+// (a drag) does nothing.
+void FileTree::onPrimaryReleased(GtkGestureClick*, int n, double x, double y,
+                                 gpointer selfp) {
+    FileTree* self = static_cast<FileTree*>(selfp);
+    const guint pressed = self->pressRow_;
+    self->pressRow_ = GTK_INVALID_LIST_POSITION;
+    if (n != 1 || pressed == GTK_INVALID_LIST_POSITION) return;
+    bool onArrow = false;
+    if (self->rowAt(x, y, &onArrow) != pressed || onArrow) return;
+    self->pendingReveal_.clear();   // the user picked a row; an older reveal gives way
+    self->actOnRow(pressed, false);
+}
+
+// Enter opens the selected row, as on the Mac; Up and Down only move the
+// selection (the list's own keys), so browsing never opens a file. Right
+// opens a folder, and on an open folder goes to its first entry; Left closes
+// a folder, and elsewhere goes up to the folder the row is in.
+gboolean FileTree::onKey(GtkEventControllerKey*, guint keyval, guint, GdkModifierType mods,
+                         gpointer selfp) {
+    FileTree* self = static_cast<FileTree*>(selfp);
+    if (mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK |
+                GDK_SUPER_MASK | GDK_META_MASK))
+        return FALSE;
+    const bool enter = keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter ||
+                       keyval == GDK_KEY_ISO_Enter;
+    const bool left = keyval == GDK_KEY_Left || keyval == GDK_KEY_KP_Left;
+    const bool right = keyval == GDK_KEY_Right || keyval == GDK_KEY_KP_Right;
+    if (!enter && !left && !right) return FALSE;
+
+    GtkSelectionModel* model = gtk_list_view_get_model(GTK_LIST_VIEW(self->listView_));
+    const guint pos = gtk_single_selection_get_selected(GTK_SINGLE_SELECTION(model));
+    if (pos == GTK_INVALID_LIST_POSITION) return FALSE;
+    self->pendingReveal_.clear();
+    if (enter) {
+        self->actOnRow(pos, true);
+        return TRUE;
+    }
+    GtkTreeListRow* row = gtk_tree_list_model_get_row(self->treeModel_, pos);
+    if (!row) return TRUE;
+    const bool folder = gtk_tree_list_row_is_expandable(row);
+    const bool open = gtk_tree_list_row_get_expanded(row);
+    if (right && folder && !open) {
+        gtk_tree_list_row_set_expanded(row, TRUE);
+    } else if (right && folder && open) {
+        // Its first entry, once the folder's listing has arrived.
+        if (GtkTreeListRow* child = gtk_tree_list_row_get_child_row(row, 0)) {
+            self->selectRow(gtk_tree_list_row_get_position(child));
+            g_object_unref(child);
+        }
+    } else if (left && folder && open) {
+        gtk_tree_list_row_set_expanded(row, FALSE);
+    } else if (left) {
+        if (GtkTreeListRow* parent = gtk_tree_list_row_get_parent(row)) {
+            self->selectRow(gtk_tree_list_row_get_position(parent));
+            g_object_unref(parent);
+        }
+    }
+    g_object_unref(row);
+    return TRUE;
+}
+
+static std::string pathOfRow(GtkTreeListRow* row);
+
 // ---------------------------------------------------------------- public ops
 
 void FileTree::setRoot(const std::string& rootDir) {
     root_ = rootDir;
     pendingReveal_.clear();
+    pendingExpand_.clear();
     dropPopovers();
     // Rebuild the model tree against the new root. filter_ and sorter_ are
     // recreated in build(); drop our old references first.
@@ -446,11 +555,52 @@ void FileTree::setRoot(const std::string& rootDir) {
 void FileTree::setShowHidden(bool show) {
     if (show == showHidden_) return;
     showHidden_ = show;
+    // The open folders and the selection, to put back afterwards: refiltering
+    // makes the sorted lists report every entry as removed and added again,
+    // and the tree model forgets what was expanded under a removed row. Found
+    // with a real Ctrl+Shift+. in September 2026: every open folder closed,
+    // and the selection went.
+    std::unordered_set<std::string> open;
+    GListModel* rows = G_LIST_MODEL(treeModel_);
+    for (guint i = 0; i < g_list_model_get_n_items(rows); ++i) {
+        GtkTreeListRow* row = gtk_tree_list_model_get_row(treeModel_, i);
+        if (!row) continue;
+        if (gtk_tree_list_row_get_expanded(row)) open.insert(pathOfRow(row));
+        g_object_unref(row);
+    }
+    const std::string selected = selectedPath();
     // One filter serves every folder's list, so this refilters all of them,
-    // expanded ones included, without re-reading anything from disk.
+    // without re-reading anything from disk.
     if (filter_)
         gtk_filter_changed(filter_, show ? GTK_FILTER_CHANGE_LESS_STRICT
                                          : GTK_FILTER_CHANGE_MORE_STRICT);
+    // A folder expanded again is listed again, asynchronously, so folders
+    // inside it are expanded as their rows arrive (onItemsChanged).
+    pendingExpand_ = std::move(open);
+    expandDeadline_ = g_get_monotonic_time() + 3 * G_USEC_PER_SEC;
+    tryExpand();
+    if (!selected.empty()) {
+        const std::size_t slash = selected.find_last_of('/');
+        const bool hiddenNow = !show && slash != std::string::npos &&
+                               selected.compare(slash + 1, 1, ".") == 0;
+        if (!hiddenNow) revealPath(selected);
+    }
+}
+
+void FileTree::tryExpand() {
+    if (pendingExpand_.empty()) return;
+    if (g_get_monotonic_time() > expandDeadline_) { pendingExpand_.clear(); return; }
+    GListModel* rows = G_LIST_MODEL(treeModel_);
+    for (guint i = 0; i < g_list_model_get_n_items(rows) && !pendingExpand_.empty(); ++i) {
+        GtkTreeListRow* row = gtk_tree_list_model_get_row(treeModel_, i);
+        if (!row) continue;
+        auto it = pendingExpand_.find(pathOfRow(row));
+        if (it != pendingExpand_.end()) {
+            pendingExpand_.erase(it);
+            if (!gtk_tree_list_row_get_expanded(row)) gtk_tree_list_row_set_expanded(row, TRUE);
+        }
+        g_object_unref(row);
+    }
 }
 
 void FileTree::focus() {
@@ -541,10 +691,12 @@ bool FileTree::tryReveal() {
 // trouble.
 void FileTree::onItemsChanged(GListModel*, guint, guint, guint, gpointer selfp) {
     FileTree* self = static_cast<FileTree*>(selfp);
-    if (self->pendingReveal_.empty() || self->revealIdle_) return;
+    if ((self->pendingReveal_.empty() && self->pendingExpand_.empty()) || self->revealIdle_)
+        return;
     self->revealIdle_ = g_idle_add([](gpointer p) -> gboolean {
         FileTree* t = static_cast<FileTree*>(p);
         t->revealIdle_ = 0;
+        t->tryExpand();
         t->tryReveal();
         return G_SOURCE_REMOVE;
     }, self);
