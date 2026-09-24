@@ -279,6 +279,19 @@ private:
     ExternalCb    extCb_ = nullptr;
     void*         extUser_ = nullptr;
 
+    // After revealLine: the caret is checked every frame until it has stayed
+    // on screen for a few frames, and scrolled to again if a layout that was
+    // not ready yet left it off screen (see settleOnCaret).
+    guint  settleTick_ = 0;
+    gint64 settleUntil_ = 0;       // monotonic µs; give up after this
+    int    settleOffset_ = -1;     // the caret's offset; if it moves, the user has
+    double settleLastV_ = -1;      // the scroll position at the last frame
+    int    settleStill_ = 0;       // frames in a row with the caret seen, not moving
+    int    settleTries_ = 0;
+    void settleOnCaret();
+    void stopSettle();
+    static gboolean onSettleTick(GtkWidget* w, GdkFrameClock* clock, gpointer self);
+
     EditorObserver* observer_ = nullptr;
     void notifyDocument();    // tell the observer what the buffer holds now
 

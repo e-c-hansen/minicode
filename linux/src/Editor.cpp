@@ -116,6 +116,7 @@ void Editor::showWelcome() {
 // (main.cpp deletes the editor from GtkApplication's window-removed), so
 // every handler that names this object comes off before GTK disposes them.
 Editor::~Editor() {
+    stopSettle();
     stopWatchingText();
     if (colorSaveTimer_) g_source_remove(colorSaveTimer_);
     colorSaveTimer_ = 0;
@@ -208,6 +209,7 @@ bool Editor::openFile(const std::string& path) {
     }
     dropColorPopover();
     stopWatchingText();
+    stopSettle();
     // Whatever was shown before goes, so a stale picture can never sit over
     // the next file, and nothing from it can be saved.
     showTextSlot();
@@ -340,6 +342,7 @@ void Editor::closeFile() {
     colorSaveTimer_ = 0;
     dropColorPopover();
     stopWatchingText();
+    stopSettle();
     showTextSlot();   // an image or PDF goes too
     readOnly_ = false;
     path_.clear();
@@ -384,12 +387,75 @@ bool Editor::revealLine(int line, std::size_t byteColumn, std::size_t byteLength
     gtk_text_iter_set_line_index(&a, static_cast<int>(byteColumn));
     gtk_text_iter_set_line_index(&b, static_cast<int>(byteColumn + byteLength));
     gtk_text_buffer_select_range(buffer_, &a, &b);
-    // Scroll by the insert mark rather than an iterator: a mark scroll waits
-    // for the lines to be laid out, which a file opened a moment ago is not.
+    // Scroll by the insert mark rather than an iterator, so GTK scrolls once
+    // the line is laid out, and then keep checking (settleOnCaret).
     gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(view_), gtk_text_buffer_get_insert(buffer_),
                                  0.1, TRUE, 0.0, 0.3);
+    settleOnCaret();
     gtk_widget_grab_focus(view_);
     return true;
+}
+
+// A scroll to a line of a file opened a moment ago lands in the wrong place.
+// GtkTextView works out where the line is from estimated heights for the
+// lines above it that it has not laid out yet, and animates the scroll
+// towards that point; the lines are laid out while it moves, their real
+// heights differ, and the animation still ends at the old point. A Find in
+// Folder match on line 250 of a new file ended with lines 166 to 208 on
+// screen, the match selected but out of sight, which looks like the file
+// opened at the top. So for up to two seconds the caret is checked every
+// frame: once the view has stopped moving with the caret off screen, it is
+// scrolled to again, now from real heights. It ends when the caret has been
+// on screen with the view still for three frames, or when the caret moves
+// (the user took over).
+void Editor::settleOnCaret() {
+    stopSettle();
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_mark(buffer_, &it, gtk_text_buffer_get_insert(buffer_));
+    settleOffset_ = gtk_text_iter_get_offset(&it);
+    settleUntil_ = g_get_monotonic_time() + 2 * G_USEC_PER_SEC;
+    settleLastV_ = -1;
+    settleStill_ = 0;
+    settleTries_ = 0;
+    settleTick_ = gtk_widget_add_tick_callback(view_, onSettleTick, this, nullptr);
+}
+
+void Editor::stopSettle() {
+    if (settleTick_) gtk_widget_remove_tick_callback(view_, settleTick_);
+    settleTick_ = 0;
+}
+
+gboolean Editor::onSettleTick(GtkWidget*, GdkFrameClock*, gpointer selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    GtkTextView* tv = GTK_TEXT_VIEW(self->view_);
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_mark(self->buffer_, &it,
+                                     gtk_text_buffer_get_insert(self->buffer_));
+    if (gtk_text_iter_get_offset(&it) != self->settleOffset_ ||
+        g_get_monotonic_time() > self->settleUntil_ || !gtk_widget_get_mapped(self->view_)) {
+        self->settleTick_ = 0;
+        return G_SOURCE_REMOVE;
+    }
+    GdkRectangle vis, at;
+    gtk_text_view_get_visible_rect(tv, &vis);
+    gtk_text_view_get_iter_location(tv, &it, &at);
+    const bool seen = vis.height > 0 && at.y >= vis.y && at.y + at.height <= vis.y + vis.height;
+    const double v = gtk_adjustment_get_value(gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(tv)));
+    const bool still = v == self->settleLastV_;
+    self->settleLastV_ = v;
+    if (!still) {
+        self->settleStill_ = 0;
+    } else if (seen) {
+        if (++self->settleStill_ >= 3) {
+            self->settleTick_ = 0;
+            return G_SOURCE_REMOVE;
+        }
+    } else if (self->settleTries_++ < 5) {
+        self->settleStill_ = 0;
+        gtk_text_view_scroll_to_mark(tv, gtk_text_buffer_get_insert(self->buffer_),
+                                     0.1, TRUE, 0.0, 0.3);
+    }
+    return G_SOURCE_CONTINUE;
 }
 
 bool Editor::revealLineColumn(int line, int column) {
@@ -404,6 +470,7 @@ bool Editor::revealLineColumn(int line, int column) {
     gtk_text_buffer_place_cursor(buffer_, &it);
     gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(view_), gtk_text_buffer_get_insert(buffer_),
                                  0.1, TRUE, 0.0, 0.3);
+    settleOnCaret();   // the caret moved; watch it where it is now
     return true;
 }
 

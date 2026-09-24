@@ -100,7 +100,8 @@ Verified by running it:
   out; the status line counts matches and files; activating a match opens the
   file with the caret on the right line and the match selected, including
   after accented letters and an emoji, and a Markdown file switches from the
-  preview to its source first; a folder selected in the tree becomes the
+  preview to its source first (but see the correction below: whether the
+  line was on screen was never checked, and it was not); a folder selected in the tree becomes the
   scope and the query re-runs there; a path typed into the folder field that
   is not a folder is refused; closing the window hides it and keeps the
   results. The search itself is the shared `src/FolderSearch.cpp`, with its
@@ -328,7 +329,9 @@ Verified by running it:
     own previous-match does the same. No match leaves the selection alone.
   - Show Hidden Files: dotfiles hidden by default, in the root and inside an
     expanded folder; Ctrl+H flips the action's state (the menu's check
-    mark), shows them in both places and keeps the folder expanded. A new
+    mark) and shows them in both places. It was also reported to keep the
+    folder expanded, which held for that test's layout but not in general:
+    see the correction below. A new
     window starts with the setting as it is, and toggling it again hides
     them in both windows.
   - New Window: a second window on the same folder, with its own editor,
@@ -397,6 +400,73 @@ Verified by running it:
   found that VTE's scroll adjustment does not count rows the way its text
   calls do once `clear` has dropped the scrollback (see
   `linux/HANDOFF.md`, item 9).
+- The file tree, Find in Folder and Show Hidden Files, fixed after the user
+  tried the installed app by hand (September 2026). Three of the four bugs
+  were in things the earlier hooks had reported as working, because the
+  hooks called the code paths rather than clicking, and never looked at the
+  screen. This round used real input instead: a private rootful Xwayland
+  (`Xwayland :87 -geometry 1300x850`, a window of its own on the user's
+  desktop) with the app on GTK's X11 backend inside it, and clicks and keys
+  sent with XTest from a Python script through `ctypes` (libXtst has no
+  headers installed, and none are needed). Those are real X events, so
+  GTK's gestures, their claiming, double-click counting and the accelerator
+  matching all ran as they do for a mouse and keyboard. A temporary
+  `MINICODE_TREETEST` hook, under the application id
+  `org.minicode.TreeTest` and since removed, answered over a FIFO with the
+  state (caret, selection, the lines in the visible rect, the tree's rows
+  and selection, the focus) and each widget's position, and rendered the
+  tree to PNG; `xwd` gave whole-screen captures. 38 checks, all passing
+  after the fixes:
+  - **No visible selection in the tree.** Confirmed first on screen: a
+    clicked row looked like every other. The stylesheet made the rows'
+    background transparent, and an application stylesheet outranks the
+    desktop theme whatever the selectors, so the theme's selection color
+    went too. The selected row is now blue while the tree has the keyboard
+    and a tint of the sidebar's text color when it does not, with a focus
+    ring after keyboard use and a faint hover. Checked in renders of the
+    tree with the default dark sidebar and with a light one from a scratch
+    settings file: focused selection (18,79,121) on (37,37,38), unfocused
+    (64,64,65). The folder arrows now take the sidebar's text color too.
+  - **One click acts.** A click on a folder opens or closes it, a click on
+    a file opens it, as on the Mac. A click on the arrow toggles once; a
+    double-click toggles once; the file stays selected and the tree keeps
+    the keyboard. A right-click selects without opening. Clicking another
+    file with unsaved edits asks "Save changes?"; Cancel keeps the file and
+    puts the selection back on it, Don't Save opens the other and leaves
+    the first as it was on disk. Clicking the open, edited file keeps its
+    edits and caret. Up and Down move the selection without opening, Enter
+    opens and moves the keyboard to the editor, Left goes up to the folder
+    and then closes it, Right opens a folder and then goes to its first
+    entry.
+  - **Find in Folder opened at the top.** Reproduced with the old code: a
+    double-click on a match at line 250 of a 400-line file selected the
+    match, but lines 166 to 208 were on screen, and they stayed there. The
+    text view had estimated the heights of lines it had not laid out and
+    animated towards that point; the real heights differed. The editor now
+    watches the caret for up to two seconds and scrolls again once the view
+    has stopped with the caret off screen. After the fix the view passes
+    through lines 112 to 154 and settles on 236 to 278 within 0.4 s, and
+    stays there. Also checked: the file already open, a Markdown match
+    (preview switched to source, match on screen), and the editor having
+    the keyboard afterwards. A match now opens on one click, as the user
+    expected. Down from the query field, and Enter there once the results
+    are in, did not move the keyboard into the list at all, which nobody had
+    pressed for real before; they do now, and Enter on a result opens it.
+  - **Show Hidden Files on Ctrl+Shift+.** Written first as
+    `<Ctrl><Shift>period`, which a real key press showed never matches: GTK
+    compares the keyval the key produced (`greater` on a US layout) and
+    treats Shift as used up by it. It is bound as `<Ctrl>greater`, and a
+    real Ctrl+Shift+. toggles the dotfiles, also with the terminal focused,
+    where it stays bound like the other shifted keys. Ctrl+H still works.
+    The same run found that showing or hiding dotfiles closed every open
+    folder and dropped the selection whenever a dotfile sorted into the root
+    (the sorted lists report every row as removed and added again). The
+    tree now reopens those folders and reselects the row.
+  X11 is not the user's Wayland session, and gestures and accelerators do
+  not depend on the backend, but window activation does: whether GNOME on
+  Wayland raises the editor window when a match is opened still needs the
+  user. A plain launch on Wayland under the hook opened the window and the
+  search panel and found the match.
 
 Not verified:
 
@@ -405,12 +475,14 @@ Not verified:
   includes scrolling a PDF with the wheel and clicking a page (the mapping
   from a point to a page and PDF coordinates was checked, the click was not).
   For Find in Folder it includes pressing Ctrl+Shift+F, typing into the field (the
-  test set its text, which fires the same signal), double-clicking a row, the
-  Down arrow and Escape, the Choose button's folder dialog, and whether GNOME
-  raises the main window when a match is opened (the editor is made the
-  window's focus widget, but activating a window is up to the compositor).
-  For the file tree it includes F2 and Delete, a real right-click, and what
-  the popovers and alerts look like and where they sit. For the LaTeX
+  test set its text, which fires the same signal), Escape, the Choose
+  button's folder dialog, and whether GNOME on Wayland raises the main
+  window when a match is opened (the editor is made the window's focus
+  widget, but activating a window is up to the compositor); clicking a
+  result, Down and Enter were done with real X events in the round above.
+  For the file tree it includes F2 and Delete and what the popovers and
+  alerts look like and where they sit; clicks, a right-click and the arrow
+  keys were real X events in the round above, though on X11, not Wayland. For the LaTeX
   preview it includes a real double-click, Return, Shift+Return and Escape
   in the popover, Ctrl+Z in the preview, Ctrl+Shift+S, and the Export PDF
   save dialog and the file it writes (the bytes handed to it were checked,
@@ -691,7 +763,7 @@ and the color applies live while you drag, as on the Mac.
 | Ctrl /            | Comment or uncomment the selected lines |
 | Ctrl ,            | Open the settings file     |
 | Ctrl Shift B      | Toggle the browser panel   |
-| Ctrl H            | Show or hide dotfiles, in every window |
+| Ctrl H, Ctrl Shift . | Show or hide dotfiles, in every window |
 | Ctrl 0            | Focus the file tree        |
 | Ctrl 1            | Focus the editor           |
 | Ctrl Tab          | Back to the previous file  |
@@ -707,6 +779,17 @@ and the color applies live while you drag, as on the Mac.
 
 F2 and Delete work only while the file tree has the keyboard, so Delete in the
 editor still deletes text.
+
+In the tree, one click opens a file or opens and closes a folder, as on the
+Mac. Up and Down move the selection without opening anything, Enter opens
+the selected file and moves the keyboard to the editor, Left goes up to the
+folder and closes it, and Right opens a folder and steps into it.
+
+Ctrl Shift . is the Mac's Shift Command . with Ctrl for Command, for a
+keyboard remapped the Mac way (Toshy, for one, turns Command H into Super H,
+which GNOME uses to hide the window, so Ctrl H never arrives). It is bound
+as Ctrl and the `>` character, so it works on layouts where Shift . types
+`>`, such as US and UK English.
 
 The zoom keys act only while a PDF or the LaTeX preview is on screen, and
 otherwise pass through to whatever has the keyboard. Fit width is Ctrl+Alt+0,

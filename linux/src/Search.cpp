@@ -89,7 +89,19 @@ void SearchPanel::build() {
     g_signal_connect(factory, "setup", G_CALLBACK(onSetup), this);
     g_signal_connect(factory, "bind", G_CALLBACK(onBind), this);
     listView_ = gtk_list_view_new(GTK_SELECTION_MODEL(sel), factory);
-    g_signal_connect(listView_, "activate", G_CALLBACK(onRowActivate), this);
+    // One click opens a match, as on the Mac, and so does Enter. The rows are
+    // not activatable (onSetup), so a double-click cannot open it twice.
+    // gtk_list_view_set_single_click_activate is not used because it also
+    // selects every row the pointer passes over.
+    GtkGesture* click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
+    g_signal_connect(click, "pressed", G_CALLBACK(onRowPressed), this);
+    g_signal_connect(click, "released", G_CALLBACK(onRowReleased), this);
+    gtk_widget_add_controller(listView_, GTK_EVENT_CONTROLLER(click));
+    GtkEventController* listKeys = gtk_event_controller_key_new();
+    gtk_event_controller_set_propagation_phase(listKeys, GTK_PHASE_CAPTURE);
+    g_signal_connect(listKeys, "key-pressed", G_CALLBACK(onListKey), this);
+    gtk_widget_add_controller(listView_, listKeys);
 
     GtkWidget* scroller = gtk_scrolled_window_new();
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller), listView_);
@@ -310,9 +322,18 @@ void SearchPanel::onQueryActivate(GtkSearchEntry* e, gpointer selfp) {
     if (q != self->lastQuery_ || (self->hits_.empty() && !self->searching_)) {
         self->runSearch();
     } else if (!self->hits_.empty()) {
-        gtk_list_view_scroll_to(GTK_LIST_VIEW(self->listView_), 0,
-            (GtkListScrollFlags)(GTK_LIST_SCROLL_FOCUS | GTK_LIST_SCROLL_SELECT), nullptr);
+        self->focusFirstResult();
     }
+}
+
+// Select the first result and give the list the keyboard. GTK_LIST_SCROLL_FOCUS
+// alone moves the list's own focus item but not the window's focus when the
+// list does not have it, so the keyboard stayed in the query field: found
+// with real key presses in September 2026.
+void SearchPanel::focusFirstResult() {
+    gtk_list_view_scroll_to(GTK_LIST_VIEW(listView_), 0,
+        (GtkListScrollFlags)(GTK_LIST_SCROLL_FOCUS | GTK_LIST_SCROLL_SELECT), nullptr);
+    gtk_widget_grab_focus(listView_);
 }
 
 void SearchPanel::onStopSearch(GtkSearchEntry*, gpointer selfp) {
@@ -324,18 +345,55 @@ gboolean SearchPanel::onQueryKey(GtkEventControllerKey*, guint keyval, guint,
                                  GdkModifierType, gpointer selfp) {
     SearchPanel* self = static_cast<SearchPanel*>(selfp);
     if (keyval != GDK_KEY_Down || self->hits_.empty()) return FALSE;
-    gtk_list_view_scroll_to(GTK_LIST_VIEW(self->listView_), 0,
-        (GtkListScrollFlags)(GTK_LIST_SCROLL_FOCUS | GTK_LIST_SCROLL_SELECT), nullptr);
+    self->focusFirstResult();
     return TRUE;
 }
 
-void SearchPanel::onRowActivate(GtkListView*, guint pos, gpointer selfp) {
-    SearchPanel* self = static_cast<SearchPanel*>(selfp);
-    if (pos >= self->hits_.size() || !self->openCb_) return;
+void SearchPanel::openRow(guint pos) {
+    if (pos >= hits_.size() || !openCb_) return;
     // A copy, because the callback may come back into the panel (a new
     // search replaces hits_).
-    const FolderSearchMatch m = self->hits_[pos];
-    self->openCb_(m, self->openUser_);
+    const FolderSearchMatch m = hits_[pos];
+    openCb_(m, openUser_);
+}
+
+// The result row under a point in the list's coordinates.
+guint SearchPanel::rowAt(double x, double y) const {
+    for (GtkWidget* w = gtk_widget_pick(listView_, x, y, GTK_PICK_DEFAULT);
+         w && w != listView_; w = gtk_widget_get_parent(w))
+        if (auto* li = static_cast<GtkListItem*>(
+                g_object_get_data(G_OBJECT(w), "minicode-list-item")))
+            return gtk_list_item_get_position(li);
+    return GTK_INVALID_LIST_POSITION;
+}
+
+void SearchPanel::onRowPressed(GtkGestureClick*, int, double x, double y, gpointer selfp) {
+    SearchPanel* self = static_cast<SearchPanel*>(selfp);
+    self->pressRow_ = self->rowAt(x, y);
+}
+
+// The first click of a double-click opens the match; the second does
+// nothing. A press released over another row does nothing either.
+void SearchPanel::onRowReleased(GtkGestureClick*, int n, double x, double y, gpointer selfp) {
+    SearchPanel* self = static_cast<SearchPanel*>(selfp);
+    const guint pressed = self->pressRow_;
+    self->pressRow_ = GTK_INVALID_LIST_POSITION;
+    if (n == 1 && pressed != GTK_INVALID_LIST_POSITION && self->rowAt(x, y) == pressed)
+        self->openRow(pressed);
+}
+
+// Enter on a result opens it.
+gboolean SearchPanel::onListKey(GtkEventControllerKey*, guint keyval, guint,
+                                GdkModifierType mods, gpointer selfp) {
+    SearchPanel* self = static_cast<SearchPanel*>(selfp);
+    if (keyval != GDK_KEY_Return && keyval != GDK_KEY_KP_Enter && keyval != GDK_KEY_ISO_Enter)
+        return FALSE;
+    if (mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK)) return FALSE;
+    GtkSelectionModel* model = gtk_list_view_get_model(GTK_LIST_VIEW(self->listView_));
+    const guint pos = gtk_single_selection_get_selected(GTK_SINGLE_SELECTION(model));
+    if (pos == GTK_INVALID_LIST_POSITION) return FALSE;
+    self->openRow(pos);
+    return TRUE;
 }
 
 void SearchPanel::onSetup(GtkSignalListItemFactory*, GObject* obj, gpointer) {
@@ -347,6 +405,8 @@ void SearchPanel::onSetup(GtkSignalListItemFactory*, GObject* obj, gpointer) {
     gtk_widget_set_margin_top(label, 2);
     gtk_widget_set_margin_bottom(label, 2);
     gtk_list_item_set_child(GTK_LIST_ITEM(obj), label);
+    gtk_list_item_set_activatable(GTK_LIST_ITEM(obj), FALSE);   // clicks are ours
+    g_object_set_data(G_OBJECT(label), "minicode-list-item", obj);
 }
 
 void SearchPanel::onBind(GtkSignalListItemFactory*, GObject* obj, gpointer) {

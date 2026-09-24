@@ -8,11 +8,14 @@
 #include <gtk/gtk.h>
 #include <functional>
 #include <string>
+#include <unordered_set>
 
 class FileTree {
 public:
-    // Called when the user activates (single-click / Enter) a regular file.
-    using OpenCb = void(*)(const std::string& path, void* user);
+    // Called when the user opens a regular file: a single click on its row,
+    // as on the Mac, or Enter. `fromKeyboard` is true for Enter, after which
+    // the Mac moves the keyboard to the editor.
+    using OpenCb = void(*)(const std::string& path, bool fromKeyboard, void* user);
     // Receives the name typed into askName's popover, trimmed and non-empty.
     using NameCb = std::function<void(const std::string& name)>;
 
@@ -31,10 +34,10 @@ public:
     void setRoot(const std::string& rootDir);
 
     // Show or hide entries whose names start with a dot, the Mac's rule
-    // (Shift+Cmd+. there, Ctrl+H here). The setting is the application's:
-    // main.cpp sets it on every window's tree, as the Mac's is one global
-    // flag. The expanded folders and the selection survive it; a selected
-    // row that is hidden is no longer selected.
+    // (Shift+Cmd+. there, Ctrl+H or Ctrl+Shift+. here). The setting is the
+    // application's: main.cpp sets it on every window's tree, as the Mac's is
+    // one global flag. The expanded folders and the selection survive it; a
+    // selected row that is hidden is no longer selected.
     void setShowHidden(bool show);
     bool showHidden() const { return showHidden_; }
 
@@ -70,16 +73,29 @@ private:
     void build();
     void dropPopovers();                    // before the list view is replaced
     bool tryReveal();
+    void tryExpand();
     bool rowBounds(guint pos, graphene_rect_t* out) const;
     static void onItemsChanged(GListModel* m, guint pos, guint removed, guint added,
                                gpointer self);
     static void onRightClick(GtkGestureClick* g, int n, double x, double y,
                              gpointer self);
+    static void onPrimaryPressed(GtkGestureClick* g, int n, double x, double y,
+                                 gpointer self);
+    static void onPrimaryReleased(GtkGestureClick* g, int n, double x, double y,
+                                  gpointer self);
+    static gboolean onKey(GtkEventControllerKey* c, guint keyval, guint keycode,
+                          GdkModifierType mods, gpointer self);
+    // The row under a point in the list view's coordinates, or
+    // GTK_INVALID_LIST_POSITION. `onArrow` says whether the point is on the
+    // expander's arrow, which toggles the folder by itself.
+    guint rowAt(double x, double y, bool* onArrow) const;
+    // A click or Enter on a row: a folder opens or closes, a file opens.
+    void actOnRow(guint pos, bool fromKeyboard);
+    void selectRow(guint pos);
 
     // GTK callbacks (static trampolines).
     static GListModel* createChild(gpointer item, gpointer self);
     static gboolean    filterVisible(gpointer item, gpointer self);
-    static void        onActivate(GtkListView* lv, guint pos, gpointer self);
     static void        onSetup(GtkSignalListItemFactory* f, GObject* obj, gpointer self);
     static void        onBind(GtkSignalListItemFactory* f, GObject* obj, gpointer self);
 
@@ -98,7 +114,12 @@ private:
     GtkWidget*  contextMenu_  = nullptr;   // GtkPopoverMenu, parented to listView_
     GtkWidget*  namePopover_  = nullptr;   // askName's popover while it is up
 
+    guint       pressRow_ = GTK_INVALID_LIST_POSITION;   // where the click began
+
     std::string pendingReveal_;            // revealPath target still to be found
     gint64      revealDeadline_ = 0;       // monotonic µs; give up after this
     guint       revealIdle_ = 0;
+    // Folders to open again after the dotfile filter changed (setShowHidden).
+    std::unordered_set<std::string> pendingExpand_;
+    gint64      expandDeadline_ = 0;
 };

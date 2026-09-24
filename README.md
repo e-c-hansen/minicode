@@ -224,7 +224,7 @@ The same actions on each platform, sorted by name. A blank cell means that port 
 
 | Action | macOS | Linux | Android, after the leader key |
 | --- | --- | --- | --- |
-| Browse the file tree and open the selected file | Up, Down, Return |  |  |
+| Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
 | Close the application | Shift Command W | Ctrl Q |  |
 | Close the window | Command W | Ctrl W |  |
 | Comment or uncomment the selected lines | Command / | Ctrl / |  |
@@ -247,7 +247,7 @@ The same actions on each platform, sorted by name. A blank cell means that port 
 | Refresh the file tree | Command R |  |  |
 | Rename the selected file or folder |  | F2, in the file tree |  |
 | Save | Command S | Ctrl S | S |
-| Show or hide dotfiles | Shift Command . | Ctrl H |  |
+| Show or hide dotfiles | Shift Command . | Ctrl H, or Ctrl Shift . |  |
 | Show the type and documentation under the cursor | Command I | Ctrl I | K |
 | Toggle the browser | Shift Command B | Ctrl Shift B | B |
 | Toggle the editor, giving its space to the terminal and browser | Shift Command E | Ctrl Shift E |  |
@@ -259,7 +259,7 @@ The same actions on each platform, sorted by name. A blank cell means that port 
 | Zoom a PDF or the LaTeX preview in or out |  | Ctrl plus (or Ctrl equals), Ctrl minus, Ctrl with the scroll wheel, or a pinch on the touchpad |  |
 | Zoom a PDF or the LaTeX preview back to the width of the pane |  | Ctrl Alt 0 |  |
 
-In the Linux terminal, the plain Ctrl shortcuts belong to the shell while it has the keyboard, so Ctrl W still deletes a word and Ctrl H is still backspace. The Ctrl Shift ones keep working there, and so do Ctrl backtick, Ctrl 0, Ctrl 1 and Ctrl Tab for getting out of it. Ctrl Shift C and Ctrl Shift V copy and paste, and Ctrl click still opens a link. The PDF zoom keys only act while a PDF or the LaTeX preview is showing; Ctrl plus and Ctrl minus go to the shell while the terminal has the keyboard, like the other plain Ctrl keys. Resetting the zoom is Ctrl Alt 0 rather than the usual Ctrl 0, because Ctrl 0 already moves to the file tree.
+In the Linux terminal, the plain Ctrl shortcuts belong to the shell while it has the keyboard, so Ctrl W still deletes a word and Ctrl H is still backspace. The Ctrl Shift ones keep working there, and so do Ctrl backtick, Ctrl 0, Ctrl 1 and Ctrl Tab for getting out of it. Ctrl Shift C and Ctrl Shift V copy and paste, and Ctrl click still opens a link. The PDF zoom keys only act while a PDF or the LaTeX preview is showing; Ctrl plus and Ctrl minus go to the shell while the terminal has the keyboard, like the other plain Ctrl keys. Resetting the zoom is Ctrl Alt 0 rather than the usual Ctrl 0, because Ctrl 0 already moves to the file tree. Ctrl Shift . for dotfiles is the Mac's key, for keyboards remapped the Mac way (with Toshy, Ctrl H never reaches the app); it works on layouts where Shift and the period key type >, such as US and UK English.
 
 In the Android terminal the leader also sends what the keyboard lacks: C for Control C, D for Control D, E for Escape and I for Tab. The row of keys under the terminal has the same, plus a sticky Control, the pipe and the arrows.
 

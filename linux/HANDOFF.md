@@ -125,9 +125,29 @@ window accelerators. Renaming a folder above the open file moves the open
 file's path too, which the Mac does not do.
 
 Runtime-verified with the same hook, except as follows. Driven by signals,
-not by a real mouse or keyboard: the right-click, F2 and Delete. Not run at
-all: Open Containing Folder, which would have opened a file manager window.
-Needs the user's eyes: where the popovers sit and how they look.
+not by a real mouse or keyboard: F2 and Delete. Not run at all: Open
+Containing Folder, which would have opened a file manager window. Needs the
+user's eyes: where the popovers sit and how they look.
+
+**Clicks and selection (September 2026, from the user's own testing).** The
+tree showed no selection at all (the stylesheet's transparent row background
+had wiped out the theme's selection color), and needed a double-click where
+the Mac takes one. Now one click acts: a primary-button `GtkGestureClick` on
+the list view, in the bubble phase so the row's own handler has selected it
+first, acts on release when press and release are on the same row, and only
+for the first click of a double-click. The rows are not activatable, so GTK's
+own double-click activation cannot act a second time; a press on the
+expander's arrow is left to the arrow. Enter, Left and Right come from a
+capture-phase key controller: Enter opens and moves the keyboard to the
+editor (the Mac's `-activateRow:`), Left goes up and closes, Right opens and
+steps in. `gtk_list_view_set_single_click_activate` was not used because it
+also selects whatever row the pointer rests on. `openFileThen` no longer
+reopens the file already open, as the Mac's `openFileAtPath:` does not, so a
+click on it keeps the caret, the scroll and a preview switched to source;
+changes made elsewhere come in through the editor's file watch. The selected
+row is blue while the tree has the keyboard and a tint of the sidebar's text
+color when not, with a focus ring after keyboard use. Checked with real X
+input (see "How to work on it" and `../BUILD-LINUX.md`).
 
 The tree's live refresh was broken all along on GTK 4.22 (see "Traps"), and
 is fixed as part of this item.
@@ -323,8 +343,23 @@ open folder, and it resets after Open Folder. `FileTree::selectedDir()` reads
 the selection; the tree's selection no longer autoselects its first row.
 
 Verified by driving it inside the running app on the ThinkPad (see
-`../BUILD-LINUX.md`); real key presses, the double-click and the look of the
-window still need a person.
+`../BUILD-LINUX.md`); the look of the window still needs a person.
+
+That verification was wrong in one respect, found by the user: it checked
+the caret and the selection after opening a match, not whether the line was
+on screen, and it was not. GtkTextView scrolled towards where it estimated
+the line to be, from heights guessed for the lines above it that it had not
+laid out yet, animating there while the real heights came in, so a match on
+line 250 of a new file left lines 166 to 208 on screen. `Editor::revealLine`
+now calls `settleOnCaret`: a tick callback checks the caret every frame for
+up to two seconds and scrolls again once the view has stopped with the
+caret off screen, and ends when the caret has been on screen, the view
+still, for three frames, or when the caret moves. A result now opens on one
+click (a gesture like the tree's; the rows are not activatable, so a
+double-click opens it once), and Enter on a result opens it. Down from the
+query, and Enter there once the list answers the query, had never moved the
+keyboard into the list (`GTK_LIST_SCROLL_FOCUS` does not take the focus from
+another widget); `focusFirstResult` grabs it now.
 
 Opening a file became asynchronous with item 1 (the "Save changes?"
 question), and `openSearchMatch` goes to the line from `openFileThen`'s
@@ -586,7 +621,12 @@ passing, plus the criticals run); what needs a person is listed there too.
   every window's tree follows it, a new window starts with it, and expanded
   folders stay expanded. The key stays Ctrl+H, the GTK file chooser's and
   Nautilus's, rather than the Mac's Shift+Command+.; Ctrl+. is GTK's emoji
-  key in text views.
+  key in text views. Later (at the user's request, since Toshy's Mac-style
+  remapping never lets Ctrl+H through) Ctrl+Shift+. was added as a second
+  key, bound as `<Ctrl>greater` (see "Traps"). The claim that expanded
+  folders stay expanded was not true in general: with a dotfile sorting into
+  the root, refiltering closed every folder and dropped the selection. It
+  holds now, because `setShowHidden` reopens them and reselects the row.
 - **The terminal's keys** (found in review). Application accelerators run in
   the window's capture phase, before the focused widget, so Ctrl+B, Ctrl+F,
   Ctrl+H, Ctrl+W and the rest never reached bash or vim; a controller on the
@@ -733,6 +773,23 @@ reality"):
   there can launch the real app. Check `echo $WAYLAND_DISPLAY` first. A
   window appears on the user's screen, so say so and never leave one
   running.
+- **Real clicks and keys on the ThinkPad.** GNOME's Wayland session takes
+  no synthetic input, but a private rootful Xwayland does:
+  `Xwayland :87 -geometry 1300x850 -noreset` opens one window on the user's
+  desktop holding its own X screen; run the app inside it with
+  `DISPLAY=:87 GDK_BACKEND=x11` under `dbus-run-session`, and send input with
+  XTest (`XTestFakeMotionEvent`, `XTestFakeButtonEvent`,
+  `XTestFakeKeyEvent`, called from Python through `ctypes` on
+  `libXtst.so.6`; no headers or xdotool needed). These are real X events,
+  so gestures, double-click counting and accelerator matching run as for a
+  person. Find widget positions from a hook (bounds in the surface plus
+  `gdk_x11_surface_get_xid`, then `XTranslateCoordinates` to the root), and
+  capture with `xwd -root` (the XWD format is simple to read with PIL; the
+  capture shows stripes over translucent areas, so read colors from a
+  widget render instead). There is no window manager, so every window opens
+  at the top left, and a window presented later covers the others. Kill the
+  Xwayland and the app's process group afterwards. This is what found three
+  of the bugs the September hooks had missed.
 
 Per feature:
 1. Put the logic in `../src` with tests, and run `make test`.
@@ -827,6 +884,25 @@ Do not claim a GUI behaviour works when it was only compiled.
   the adjustments' upper bound to the new layout's size itself before
   setting the value, and queues the viewport's allocation from an idle when
   it has to set one from `changed`.
+- An application stylesheet outranks the desktop theme whatever the
+  selectors, so a rule that clears a widget's background also clears the
+  theme's `:selected` and `:hover` colors on it. The tree's rows lost their
+  selection color this way; state the colors for those states yourself.
+- An accelerator with Shift on a punctuation key, such as
+  `<Ctrl><Shift>period`, never fires: GTK matches the keyval the key
+  produced (`greater`) and counts Shift as used up by it. Write the
+  character instead (`<Ctrl>greater`); it then depends on the layout.
+  `shellOwns` sees no Shift in it, so such a key needs an exception there
+  to stay bound in the terminal.
+- `gtk_list_view_scroll_to` with `GTK_LIST_SCROLL_FOCUS` moves the list's
+  own focus item but does not take the keyboard from another widget; call
+  `gtk_widget_grab_focus` on the list as well.
+- A scroll to a line of a freshly loaded buffer can end in the wrong place
+  (see item 5, `settleOnCaret`). Check that the line is inside
+  `gtk_text_view_get_visible_rect`, not just where the caret is.
+- A hook that calls the open path directly proves the wiring, not the
+  click. The tree's missing selection, the Find in Folder scroll and the
+  dead Down key all passed such hooks and failed for the user.
 - A test of a click on a PDF page must check `pageAtPoint`'s return value:
   at a low zoom a point that was on the page before can be in the margin
   after, and the outputs are then left as they were.
