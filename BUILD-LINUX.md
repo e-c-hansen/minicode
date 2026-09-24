@@ -582,7 +582,12 @@ home prefix:
 
     cd linux
     meson setup build --prefix=$HOME/.local   # or: meson configure build --prefix=...
-    meson install -C build
+    meson install -C build --strip
+
+`--strip` leaves out the debugging information. The default build type,
+`debugoptimized`, is optimized but also carries about 16 MB of symbols for a
+debugger, which would make the installed binary 17 MB instead of about 1 MB.
+Keep them (drop `--strip`) only if you want readable crash traces.
 
 That installs three things:
 
@@ -614,7 +619,7 @@ Dash". The equivalent from a shell is
         "$(gsettings get org.gnome.shell favorite-apps \
            | sed "s/]$/, 'org.minicode.Editor.desktop']/")"
 
-Installing to `/usr/local` with `sudo meson install` works the same way and puts
+Installing to `/usr/local` with `sudo meson install --strip` works the same way and puts
 the app in every user's menu.
 
 ### Sudden second copy of the app?
