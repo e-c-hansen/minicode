@@ -9,6 +9,7 @@
 #include "Utf8Offsets.h"
 #include "MediaView.h"
 #include "Latex.h"
+#include "ScrollSettle.h"
 
 #include <algorithm>
 #include <cctype>
@@ -63,6 +64,7 @@ Editor::Editor() {
     gtk_widget_add_css_class(scroller_, "minicode-scroller");
     gtk_widget_add_css_class(scroller_, "minicode-editor-scroller");
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller_), view_);
+    settleScrollingOnUnmap(GTK_SCROLLED_WINDOW(scroller_));
     gtk_widget_set_hexpand(scroller_, TRUE);
     gtk_widget_set_vexpand(scroller_, TRUE);
 
