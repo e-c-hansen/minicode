@@ -18,7 +18,7 @@ this file covers the macOS app except where it says otherwise.
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
   run on Apple Silicon and to keep granted permissions stable).
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  1237 checks over the tokenizer (including ~14,000 random edits comparing
+  1400 checks over the tokenizer (including ~25,000 random edits comparing
   incremental against full highlighting, and a timing line for a 100k-line
   file), Markdown parser, terminal output stream and screen grid, settings
   parser, comment toggling, the LaTeX and SyncTeX readers (including the preview's click-to-source
@@ -46,12 +46,27 @@ The parts that don't need a GUI are plain C++17 and are unit-tested in
 isolation. Keep them dependency-free.
 
 - `src/SyntaxHighlighter.{h,cpp}` — hand-rolled lexer, grammar chosen by file
-  extension. Emits `{start, length, style}` tokens. Lexes a line at a time
-  from a `LexState` (normal, block comment, triple string, backslash-continued
-  string); `IncrementalHighlighter<Ch>` (char or char16_t) keeps line starts
-  and end states and, after an edit, re-lexes from the edited line until a
-  line ends in the state it used to. `tests/LegacyHighlighter.h` is the old
-  whole-file lexer, frozen as the oracle the tests compare against.
+  extension: Python; C, C++, Objective-C, Java, Go and Rust (one C-like
+  grammar); JavaScript, TypeScript and JSON; shell, YAML, TOML and conf; and
+  TeX/LaTeX (`.tex`, `.ltx`, `.latex`, `.sty`, `.cls`, `.bib`). Emits
+  `{start, length, style}` tokens. Lexes a line at a time from a `LexState`
+  (normal, block comment, triple string, backslash-continued string, TeX
+  math, TeX verbatim/comment/math environment); `IncrementalHighlighter<Ch>`
+  (char or char16_t) keeps line starts and end states and, after an edit,
+  re-lexes from the edited line until a line ends in the state it used to.
+  `tests/LegacyHighlighter.h` is the old whole-file lexer, frozen as the
+  oracle the tests compare against; it has no TeX, so for TeX the random
+  edits are checked against a full lex by the new highlighter instead
+  (`newGrammar` in the tests).
+  TeX has its own line lexer (`lexTexLine`) and uses only the existing
+  styles: commands are Keyword, preamble and definition commands
+  (`\usepackage`, `\newcommand`) Preprocessor, sectioning commands Function,
+  `\begin`/`\end` names Type, `%` comments Comment (not `\%`), math
+  (`$`, `$$`, `\(`, `\[` and the math environments) Number with the commands
+  inside still Keyword, and `\verb` and verbatim/listing bodies String. A
+  blank line ends any open math, as it does in TeX, so an unclosed `$`
+  recolors only its own paragraph. Tokens start and end only at ASCII
+  characters, which keeps UTF-8 and UTF-16 results identical.
 - `src/MarkdownParser.{h,cpp}` — CommonMark subset -> flat list of styled runs.
 - `src/Settings.{h,cpp}` — the settings file (`key = value`): parsing with
   per-line errors, defaults, and the resolved color of every surface
@@ -398,7 +413,7 @@ never closes.
 ## Current state (handoff, 2026-09-22)
 
 - **macOS** is released as **1.3.3** (Homebrew tap and GitHub Releases), and
-  `main` is pushed. 1,079 core checks passed then (1,237 now); the build is
+  `main` is pushed. 1,079 core checks passed then (1,400 now); the build is
   warning-free. That
   day's work: opening a file from the command line, image and PDF viewing,
   Export PDF for LaTeX, Copy Path in the tree's context menu, the memory
