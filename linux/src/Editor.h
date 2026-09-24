@@ -83,6 +83,12 @@ public:
     bool isMedia() const;
     std::string titleSuffix() const;
     MediaView* media() const { return media_; }
+    // Zoom for the PDF on screen, the PDF viewer's or the LaTeX preview's:
+    // +1 in, -1 out, 0 back to fit width. False, doing nothing, when neither
+    // is on screen. A PDF view coming on or off screen calls the title
+    // callback, so the shell can enable the zoom keys from showingPdf().
+    bool showingPdf() const;
+    bool zoomPdf(int step);
 
     // Toggle between the raw editable buffer and the rendered Markdown preview,
     // or for LaTeX between the source and the typeset pages. No-op for other
@@ -211,6 +217,7 @@ private:
     void showTextSlot();                 // the text view back in the slot
     void showLatex(bool on);             // the LaTeX preview in the slot, or the source
     static void onMediaChanged(void* self);   // reloaded from disk
+    static void onPdfShown(void* self);       // a PDF view came on or off screen
 
     GtkWidget*     slot_     = nullptr;   // GtkStack: scroller_ or the media view
     MediaView*     media_    = nullptr;

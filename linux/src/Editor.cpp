@@ -9,6 +9,7 @@
 #include "Utf8Offsets.h"
 #include "MediaView.h"
 #include "Latex.h"
+#include "PdfView.h"
 #include "ScrollSettle.h"
 
 #include <algorithm>
@@ -89,6 +90,9 @@ Editor::Editor() {
     // an NSImageView or PDFView in for the text view.
     media_ = new MediaView();
     media_->setChangedCallback(onMediaChanged, this);
+#ifdef MINICODE_ENABLE_PDF
+    media_->pdfView()->setShownCallback(onPdfShown, this);
+#endif
     slot_ = gtk_stack_new();
     gtk_widget_set_hexpand(slot_, TRUE);
     gtk_widget_set_vexpand(slot_, TRUE);
@@ -405,6 +409,7 @@ void Editor::showLatex(bool on) {
 #ifdef MINICODE_ENABLE_PDF
     if (!latex_) {
         latex_ = new LatexPreview(buffer_);
+        latex_->pdfView()->setShownCallback(onPdfShown, this);
         gtk_stack_add_named(GTK_STACK(slot_), latex_->widget(), "latex");
     }
     if (on) {
@@ -437,6 +442,35 @@ bool Editor::exportPdf(GtkWindow* parent) {
 void Editor::onMediaChanged(void* selfp) {
     Editor* self = static_cast<Editor*>(selfp);
     if (self->titleCb_) self->titleCb_(self->titleUser_);   // page count may differ
+}
+
+void Editor::onPdfShown(void* selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    if (self->titleCb_) self->titleCb_(self->titleUser_);   // the zoom keys follow
+}
+
+bool Editor::showingPdf() const {
+#ifdef MINICODE_ENABLE_PDF
+    if (media_->pdfView()->shown()) return true;
+    if (latex_ && latex_->pdfView()->shown()) return true;
+#endif
+    return false;
+}
+
+bool Editor::zoomPdf(int step) {
+#ifdef MINICODE_ENABLE_PDF
+    PdfView* pdf = nullptr;
+    if (media_->pdfView()->shown()) pdf = media_->pdfView();
+    else if (latex_ && latex_->pdfView()->shown()) pdf = latex_->pdfView();
+    if (!pdf) return false;
+    if (step > 0) pdf->zoomIn();
+    else if (step < 0) pdf->zoomOut();
+    else pdf->zoomToFit();
+    return true;
+#else
+    (void)step;
+    return false;
+#endif
 }
 
 // ---------------------------------------------------------------- buffer fills
