@@ -24,9 +24,14 @@ public:
     // Called on the main thread when the user activates a match.
     using OpenCb = void (*)(const FolderSearchMatch& match, void* user);
 
-    // The panel lives as long as the app; it is created once and hidden, not
-    // destroyed, when its window is closed.
+    // One panel per editor window, created on first use and hidden, not
+    // destroyed, when its own window is closed.
     explicit SearchPanel(GtkWindow* parent);
+    // The editor window is closing: the panel's window goes, and a search
+    // still running is stopped and its result dropped.
+    ~SearchPanel();
+    SearchPanel(const SearchPanel&) = delete;
+    SearchPanel& operator=(const SearchPanel&) = delete;
 
     void setOpenCallback(OpenCb cb, void* user) { openCb_ = cb; openUser_ = user; }
 
@@ -92,4 +97,7 @@ private:
 
     OpenCb openCb_   = nullptr;
     void*  openUser_ = nullptr;
+    // A finished search checks this before touching the panel, which may
+    // have been deleted while it ran.
+    std::shared_ptr<int> life_ = std::make_shared<int>(0);
 };

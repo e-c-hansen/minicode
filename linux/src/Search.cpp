@@ -11,6 +11,7 @@ struct SearchPanel::Job {
     std::string root;
     std::string query;
     std::shared_ptr<std::atomic<bool>> cancel;
+    std::weak_ptr<int> alive;   // the panel's life_
     FolderSearchResult result;
 };
 
@@ -19,12 +20,23 @@ static const char* kLocationColor = "#4EA1F7";
 
 SearchPanel::SearchPanel(GtkWindow* parent) : parent_(parent) { build(); }
 
+SearchPanel::~SearchPanel() {
+    life_.reset();
+    if (cancel_) cancel_->store(true);
+    if (window_) {
+        g_object_remove_weak_pointer(G_OBJECT(window_), reinterpret_cast<gpointer*>(&window_));
+        gtk_window_destroy(GTK_WINDOW(window_));
+    }
+}
+
 void SearchPanel::build() {
     window_ = gtk_window_new();
     gtk_window_set_title(GTK_WINDOW(window_), "Find in Folder");
     gtk_window_set_default_size(GTK_WINDOW(window_), 680, 460);
     gtk_window_set_transient_for(GTK_WINDOW(window_), parent_);
     gtk_window_set_destroy_with_parent(GTK_WINDOW(window_), TRUE);
+    // GTK may destroy it with its parent before this object goes.
+    g_object_add_weak_pointer(G_OBJECT(window_), reinterpret_cast<gpointer*>(&window_));
     // Closing hides it, so the last query and results are still there when it
     // is opened again, as on the Mac.
     gtk_window_set_hide_on_close(GTK_WINDOW(window_), TRUE);
@@ -229,6 +241,7 @@ void SearchPanel::runSearch() {
     job->root = scope_;
     job->query = query;
     job->cancel = std::make_shared<std::atomic<bool>>(false);
+    job->alive = life_;
     cancel_ = job->cancel;
 
     GTask* task = g_task_new(nullptr, nullptr, onDone, this);
@@ -246,9 +259,9 @@ void SearchPanel::worker(GTask* task, gpointer, gpointer data, GCancellable*) {
 
 // Back on the main thread, in the context the task was created in.
 void SearchPanel::onDone(GObject*, GAsyncResult* res, gpointer selfp) {
-    SearchPanel* self = static_cast<SearchPanel*>(selfp);
     Job* job = static_cast<Job*>(g_task_get_task_data(G_TASK(res)));
-    self->finish(job);
+    if (job->alive.expired()) return;   // the panel went with its window
+    static_cast<SearchPanel*>(selfp)->finish(job);
 }
 
 void SearchPanel::finish(Job* job) {

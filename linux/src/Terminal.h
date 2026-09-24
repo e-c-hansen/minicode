@@ -26,8 +26,15 @@ public:
     static constexpr int kDefaultHeight = 220;
 
     explicit Terminal(const std::string& cwd);
+    // Called while the window's widgets still exist (main.cpp tears a window
+    // down from GtkApplication's window-removed). VTE hangs the shell up when
+    // its widget goes; this only makes sure it is not restarted.
+    ~Terminal();
     GtkWidget* widget() const { return root_; }
     void focus();
+    // Is `w` the terminal itself or inside it? The window asks this of its
+    // focus widget to decide which shortcuts belong to the shell.
+    bool owns(GtkWidget* w) const;
     // Background (with its opacity) and text color from the settings file.
     // VTE redraws everything already on screen in the new colors.
     void applySettings(const Settings& s);
@@ -49,6 +56,7 @@ private:
     gint64      lastSpawn_ = 0;    // g_get_monotonic_time of the last spawn
     int         rapidExits_ = 0;   // consecutive exits inside a second
     GdkRGBA     palette_[16];
+    GCancellable* spawnCancel_ = g_cancellable_new();
 };
 
 #endif // MINICODE_ENABLE_TERMINAL

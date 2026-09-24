@@ -93,7 +93,37 @@ Terminal::Terminal(const std::string& cwd) : cwd_(cwd) {
 
     g_signal_connect(vte_, "child-exited", G_CALLBACK(onChildExited), this);
 
+    // Copy and paste, the keys every Linux terminal uses: plain Ctrl+C and
+    // Ctrl+V belong to the shell. VTE itself binds neither. A controller on
+    // the terminal, so they mean this only while it has the keyboard.
+    GtkEventController* keys = gtk_shortcut_controller_new();
+    gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(keys),
+        gtk_shortcut_new(gtk_keyval_trigger_new(GDK_KEY_C, (GdkModifierType)(
+                             GDK_CONTROL_MASK | GDK_SHIFT_MASK)),
+                         gtk_callback_action_new([](GtkWidget* w, GVariant*, gpointer) -> gboolean {
+                             vte_terminal_copy_clipboard_format(VTE_TERMINAL(w), VTE_FORMAT_TEXT);
+                             return TRUE;
+                         }, nullptr, nullptr)));
+    gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(keys),
+        gtk_shortcut_new(gtk_keyval_trigger_new(GDK_KEY_V, (GdkModifierType)(
+                             GDK_CONTROL_MASK | GDK_SHIFT_MASK)),
+                         gtk_callback_action_new([](GtkWidget* w, GVariant*, gpointer) -> gboolean {
+                             vte_terminal_paste_clipboard(VTE_TERMINAL(w));
+                             return TRUE;
+                         }, nullptr, nullptr)));
+    gtk_widget_add_controller(vte_, keys);
+
     spawnShell();
+}
+
+Terminal::~Terminal() {
+    g_cancellable_cancel(spawnCancel_);
+    g_object_unref(spawnCancel_);
+    g_signal_handlers_disconnect_by_data(vte_, this);
+}
+
+bool Terminal::owns(GtkWidget* w) const {
+    return w && (w == root_ || gtk_widget_is_ancestor(w, root_));
 }
 
 // Colors and font. Everything here mirrors the macOS terminal panel or the
@@ -166,6 +196,8 @@ void Terminal::onChildExited(VteTerminal*, gint /*status*/, gpointer selfp) {
 // sits there blank and there is nothing to tell you why.
 void Terminal::onSpawned(VteTerminal*, GPid pid, GError* error, gpointer selfp) {
     if (pid != -1 && !error) return;
+    // The window closed while the shell was starting: this object is gone.
+    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) return;
     Terminal* self = static_cast<Terminal*>(selfp);
     self->feedNotice(std::string("[could not start the shell: ") +
                      (error && error->message ? error->message : "unknown error") + "]");
@@ -190,7 +222,7 @@ void Terminal::spawnShell() {
         G_SPAWN_DEFAULT,
         nullptr, nullptr, nullptr,               // child setup
         -1,                                      // timeout
-        nullptr,                                 // cancellable
+        spawnCancel_,                            // cancelled if the window closes first
         onSpawned, this);                        // callback / user data
 }
 
