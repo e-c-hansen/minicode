@@ -17,6 +17,8 @@ public:
     explicit Browser(const std::string& homeUrl);
     GtkWidget* widget() const { return root_; }
     void focusUrlBar();
+    // Go to a URL, or to what the URL bar would make of text typed into it.
+    void load(const std::string& url);
 
 private:
     static void onGo(GtkWidget* w, gpointer self);
@@ -31,7 +33,6 @@ private:
     static void onUriChanged(GObject* obj, GParamSpec* pspec, gpointer self);
     static void onLoadChanged(WebKitWebView* wv, WebKitLoadEvent ev, gpointer self);
 
-    void load(const std::string& url);
     void syncUrlBar();   // URL bar text only
     void syncChrome();   // URL bar text + back/forward sensitivity
 

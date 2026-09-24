@@ -131,6 +131,10 @@ public:
     // nothing and leaves the caret at the line's start. Returns false when no
     // editable text is showing.
     bool revealLine(int line, std::size_t byteColumn, std::size_t byteLength);
+    // The same for a compiler's line:column (a terminal link): the caret goes
+    // `column` characters into the 1-based line, 0 or 1 meaning its start,
+    // and no further than its end. The Mac counts the column the same way.
+    bool revealLineColumn(int line, int column);
 
     // The open file now lives at `path` (a rename or save-as). Keeps the
     // buffer and its undo history, and re-highlights the whole buffer only if

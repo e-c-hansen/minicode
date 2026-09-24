@@ -123,17 +123,17 @@ file list, editor, Markdown preview, images, PDFs, a terminal on
 The GTK port has caught up (September 2026, `linux/HANDOFF.md` items 1 to 8):
 data safety, the file tree actions, incremental highlighting, images and
 PDFs, Find in Folder, language servers, the LaTeX preview, several windows,
-Previous File, Find Next and Previous, reload on external change, and a live
-color picker. What is left:
+Previous File, Find Next and Previous, reload on external change, a live
+color picker, and Ctrl+click links in the terminal. What is left:
 
 - **Blur.** Not possible on GNOME: GTK 4 has no API for it, and Mutter 50.1
   offers no Wayland blur protocol (neither KDE's nor
   `ext-background-effect-v1`). KDE Plasma has its own, so a Plasma-only blur
   looks possible through GDK's Wayland surface; not tried. `window.blur` is
   ignored on Linux.
-- **Links in the terminal.** Command-click on `file:line` or a URL in the
-  terminal's output opens it on the Mac. VTE could match the same text
-  (`TermLinks` in the core is portable).
+- **Terminal links, the rest.** Ctrl+click works (the shared `TermLinks`
+  over VTE's text). Still to do on both ports: OSC 8 hyperlinks that
+  programs print themselves (`ls --hyperlink`, GCC's diagnostic URLs).
 - **Terminal.** VTE rather than the shared `TerminalStream`, which is fine;
   VTE is a real emulator. While it has the keyboard it gets the plain Ctrl
   keys, and the app keeps the Ctrl+Shift ones and the pane keys.

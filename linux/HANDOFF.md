@@ -18,7 +18,7 @@ Read these first:
 
 ## Where it stands
 
-Items 1 to 8 below are done (September 2026), so the port now has what the
+Items 1 to 9 below are done (September 2026), so the port now has what the
 Mac has, apart from what the list at the end of item 8 leaves out. It builds
 without warnings at `warning_level=2` (CI: Ubuntu, GTK 4, VTE, WebKitGTK,
 poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
@@ -37,15 +37,17 @@ poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
 - several windows, each with its own tree, editor, terminal, browser, search
   panel and language servers; Previous File, Focus Editor, Close Window and
   Quit (item 8);
-- a VTE terminal that gets its own Ctrl keys while it has the keyboard, and
-  a WebKitGTK browser;
+- a VTE terminal that gets its own Ctrl keys while it has the keyboard, with
+  Ctrl+click on a file:line or URL in its output (item 9), and a WebKitGTK
+  browser;
 - the settings file with live colors, per-panel opacity and a live color
   picker (item 8);
 - pane hiding and divider drags, the shortcut hints panel, and opening a
   file or folder named on the command line.
 
 It shares from `../src` `SyntaxHighlighter`, `MarkdownParser`, `Settings`,
-`LineComments`, `FolderSearch`, `Json`, `LspClient`, `LatexDoc` and `SyncTex`.
+`LineComments`, `FolderSearch`, `Json`, `LspClient`, `LatexDoc`, `SyncTex`
+and `TermLinks`.
 The rest of the core (`TerminalScreen`) is portable and tested, and has not
 been added to `meson.build`, since VTE does that job here.
 
@@ -562,13 +564,82 @@ passing, plus the criticals run); what needs a person is listed there too.
   which comes before the scrolled window's check. 20 pairs of criticals in
   60 switches before, none in two runs after.
 
-What the Mac has that Linux still lacks: Command-click on a file or URL in
-the terminal's output (the core's `TermLinks` is portable; VTE would need a
-regex match or its hyperlink hover), Refresh File Tree (not needed, the tree
-is live), zoom for images and PDFs (missing on the Mac too), and blur.
+What the Mac has that Linux still lacks: Refresh File Tree (not needed, the
+tree is live), zoom for images and PDFs (missing on the Mac too), and blur.
+Terminal links came after this list was written, as item 9.
 
 Not needed on Linux: the demo recorder and the memory benchmark, which are
 Mac tools.
+
+### 9. Terminal links (done, September 2026)
+
+Ctrl+click on a file reference or a URL in the terminal's output opens it,
+as Command+click does on the Mac (`src/Terminal.mm`, `TerminalGridView.mm`,
+`EditorController.mm -openTerminalLink:`). A file opens at the line and
+column the reference names, a folder is selected in the tree (the sidebar
+is shown first; a folder outside the project only beeps, as on the Mac), and
+a URL opens in the browser panel, or with `GtkUriLauncher` in a build
+without WebKitGTK. Holding Ctrl over a link underlines it and shows the
+pointing hand.
+
+- **One source of truth.** The shared `TermLinks` core finds the links in a
+  line; nothing on the GTK side knows a pattern. VTE's own regex matching
+  (`vte_terminal_match_add_regex`) was not used, because it would have meant
+  a second copy of those patterns as PCRE2, and a regex cannot know which
+  paths exist.
+- **From a click to a line.** `Terminal::findLink` turns the point into a
+  cell (VTE's CSS padding, read through the deprecated style context, then
+  whole cells), reads the cell's whole logical line with
+  `vte_terminal_get_text_range_format` (rows that wrapped because they were
+  full come back joined, a real line end is a newline, so a reference
+  wrapped across rows is found from either row), and takes the byte offset
+  of the cell as the length of the text before it. The underline maps the
+  link's bytes back to cells, two for a wide character.
+- **Which row is at the top.** VTE's vertical adjustment counts rows from the
+  oldest one it still keeps, while the text calls number them from the start
+  of the buffer. The two agree until the scrollback is dropped, which
+  `clear` does (ESC[3J) and so does passing the 10,000 kept lines; after a
+  `clear` a click landed five rows off. VTE has no call for the offset, so
+  `Terminal::topRow` finds it by comparing the screen's text with the
+  buffer's rows at each place the screen could start (the cursor is on the
+  last screenful), and keeps it until the contents change. VTE's "visible"
+  text includes one row past the screen, so both readings are compared.
+- **Resolving a path.** `linux/src/TermLinkPath.cpp`, plain C++ with its own
+  tests in `linux/tests/run_tests.cpp`: `~` expanded, an absolute path as
+  is, a relative one against the shell's directory and then the project
+  folder, symlinks resolved, and a path inside the project put back in the
+  root's own spelling so the tree can select it. The shell's directory is
+  VTE's OSC 7 termprop (Ubuntu's `/etc/bash.bashrc` sources
+  `/etc/profile.d/vte-2.91.sh`, which prints it at every prompt), then
+  `/proc/<shell pid>/cwd` for a shell without that hook, then the folder the
+  shell started in. An OSC 7 from another host (ssh) is ignored. No cache:
+  a `stat` per candidate is cheap, and only happens while Ctrl is down.
+- **Input.** A `GtkGestureClick` on the terminal in the capture phase,
+  claimed only when Ctrl is held over a link, so VTE never starts a
+  selection or passes that click to a program that tracks the mouse, and any
+  other click is left alone. Item 8's unbinding of plain Ctrl shortcuts is
+  about keys, so it does not get in the way. The hover follows a motion
+  controller, and a capture-phase key controller on the window catches Ctrl
+  pressed or released without moving the mouse, whichever widget has the
+  keyboard. The underline is a `GtkDrawingArea` over the terminal in a
+  `GtkOverlay` (not targetable), since VTE underlines only its own regex
+  matches. VTE sets its own pointer as the mouse moves, so the hand is put
+  back from an idle callback after each event.
+- **Opening.** `openTerminalLink` in `main.cpp` goes through `openFileThen`,
+  so "Save changes?" is asked first, then `Editor::revealLineColumn`, which
+  counts the column in characters like the Mac's `goToLine:column:` and
+  switches a Markdown or LaTeX preview to the source first. The browser is
+  put away when a file opens, so the file is actually seen.
+- **Also fixed, in the shared core:** a URL ending in a balanced parenthesis,
+  such as a Wikipedia link, lost its closing parenthesis unless another,
+  unmatched one followed it. `make test` has the cases.
+
+Checked with a temporary hook (51 checks); `../BUILD-LINUX.md` has what they
+covered and what still needs a person. Not done: OSC 8 hyperlinks that
+programs print themselves (`ls --hyperlink`, GCC's diagnostic URLs). VTE
+already parses them (`vte_terminal_set_allow_hyperlink` is on) and
+`vte_terminal_check_hyperlink_at` would give the URI, but the Mac does not
+have them either.
 
 ## How to work on it
 
@@ -647,6 +718,15 @@ Do not claim a GUI behaviour works when it was only compiled.
   `hintsText`, and the README table. A plain Ctrl key is given to the shell
   while the terminal has the keyboard without anything more; if it is a key
   for moving between panes, add it to the exceptions in `shellOwns`.
+- VTE numbers rows two ways. `vte_terminal_get_text_range_format` and
+  `vte_terminal_get_cursor_position` count from the start of the buffer;
+  the vertical adjustment counts from the oldest row still kept. They part
+  after `clear` or 10,000 lines of output. Use `Terminal::topRow`, and check
+  anything that maps pixels to rows against `vte_terminal_check_match_at`,
+  which is VTE's own hit test. Rows VTE does not have read back as empty
+  lines, not as nothing, so they cannot be used to find the first kept row.
+- In a test on the ThinkPad, `cat` may be the user's alias for `bat`, which
+  adds a gutter and wraps lines itself. Use `command cat`.
 - A window's objects are deleted while its widgets still exist, from
   `window-removed`. Anything new that connects a signal to a window's object
   with the object as data is covered for widgets and their controllers by

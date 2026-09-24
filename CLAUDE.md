@@ -18,7 +18,7 @@ this file covers the macOS app except where it says otherwise.
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
   run on Apple Silicon and to keep granted permissions stable).
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  1400 checks over the tokenizer (including ~25,000 random edits comparing
+  1403 checks over the tokenizer (including ~25,000 random edits comparing
   incremental against full highlighting, and a timing line for a 100k-line
   file), Markdown parser, terminal output stream and screen grid, settings
   parser, comment toggling, the LaTeX and SyncTeX readers (including the preview's click-to-source
@@ -413,7 +413,7 @@ never closes.
 ## Current state (handoff, 2026-09-22)
 
 - **macOS** is released as **1.3.3** (Homebrew tap and GitHub Releases), and
-  `main` is pushed. 1,079 core checks passed then (1,400 now); the build is
+  `main` is pushed. 1,079 core checks passed then (1,403 now); the build is
   warning-free. That
   day's work: opening a file from the command line, image and PDF viewing,
   Export PDF for LaTeX, Copy Path in the tree's context menu, the memory
@@ -425,10 +425,11 @@ never closes.
 - **Linux** has incremental highlighting, images and PDFs, Find in Folder,
   data safety, the tree actions, the LSP client and the LaTeX preview now
   (September 2026), and with item 8 several windows, Previous File, Find
-  Next and Previous, reload on external change, a live color picker, and a
-  terminal that keeps its Ctrl keys. All eight items of `linux/HANDOFF.md`
-  are done; its item 8 lists what the Mac still has that Linux lacks
-  (terminal links, blur), and `BUILD-LINUX.md` what needs a person.
+  Next and Previous, reload on external change, a live color picker and a
+  terminal that keeps its Ctrl keys; item 9 added Ctrl+click links in the
+  terminal. All nine items of `linux/HANDOFF.md` are done; blur is what the
+  Mac still has that Linux lacks, and `BUILD-LINUX.md` says what needs a
+  person.
 - The user's phone is a Unihertz Titan 2 (Android 16, 576 by 640 dp, hardware
   keyboard, Termux and F-Droid installed). Wireless debugging changes port on
   every reconnect, so ask for the new one rather than guessing.
@@ -817,7 +818,11 @@ holds, these give real runtime evidence rather than compile-only evidence:
   first responder, usually the input line). EditorController
   `openTerminalLink:` opens URLs in the browser panel, folders in the tree,
   and files at `goToLine:column:` (switching a preview to source first). A
-  path wrapped across two rows of the grid is not found.
+  path wrapped across two rows of the grid is not found. The GTK port
+  (Ctrl+click, `linux/src/Terminal.cpp`, `linux/HANDOFF.md` item 9) reads
+  VTE's logical lines, so a wrapped path is found there. Its trap: VTE's
+  scroll adjustment and its text calls number rows differently once `clear`
+  has dropped the scrollback (`Terminal::topRow`).
 - **Terminal grid mode** (`feat/terminal-screen`): every pty chunk goes to
   BOTH `TerminalStream` (log) and `TerminalScreen` (grid), so either is
   current when shown and no mid-chunk handoff is needed. `updateMode` shows

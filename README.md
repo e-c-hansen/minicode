@@ -170,7 +170,7 @@ The Linux version, in the linux folder, is built on GTK4. It shares the portable
 
 It also has the LaTeX preview: it typesets with tectonic, offers to download tectonic into ~/.local/share/minicode/bin if it is missing, lets you edit by double clicking the page, and exports the PDF with Ctrl Shift S. The terminal needs no catching up, since VTE is already a full terminal emulator.
 
-Like the Mac app it opens several windows, each with its own folder, terminal and language servers, reloads a file that changed on disk when you have no unsaved edits in it, and applies a picked color to the settings live. Two things it lacks: clicking a file name in the terminal to open it, and blur behind the window, which GNOME gives applications no way to ask for.
+Like the Mac app it opens several windows, each with its own folder, terminal and language servers, reloads a file that changed on disk when you have no unsaved edits in it, and applies a picked color to the settings live. Paths and URLs in the terminal's output are links there too: hold Ctrl and click one, and a file opens at its line and column while a URL opens in the browser panel. The one thing it lacks is blur behind the window, which GNOME gives applications no way to ask for.
 
 To build it on Ubuntu:
 
@@ -241,7 +241,7 @@ The same actions on each platform, sorted by name. A blank cell means that port 
 | New file | Control Command N | Ctrl Alt N |  |
 | New folder | Shift Command N | Ctrl Shift N |  |
 | New window | Command N | Ctrl N |  |
-| Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it |  | Tap it |
+| Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it | Ctrl click it | Tap it |
 | Open a folder | Command O | Ctrl O | O |
 | Open the settings file | Command comma | Ctrl comma |  |
 | Refresh the file tree | Command R |  |  |
@@ -257,7 +257,7 @@ The same actions on each platform, sorted by name. A blank cell means that port 
 | Toggle the terminal | Shift Command T, or Control backtick | Ctrl Shift T, or Ctrl backtick | T |
 | Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z |  |
 
-In the Linux terminal, the plain Ctrl shortcuts belong to the shell while it has the keyboard, so Ctrl W still deletes a word and Ctrl H is still backspace. The Ctrl Shift ones keep working there, and so do Ctrl backtick, Ctrl 0, Ctrl 1 and Ctrl Tab for getting out of it. Ctrl Shift C and Ctrl Shift V copy and paste.
+In the Linux terminal, the plain Ctrl shortcuts belong to the shell while it has the keyboard, so Ctrl W still deletes a word and Ctrl H is still backspace. The Ctrl Shift ones keep working there, and so do Ctrl backtick, Ctrl 0, Ctrl 1 and Ctrl Tab for getting out of it. Ctrl Shift C and Ctrl Shift V copy and paste, and Ctrl click still opens a link.
 
 In the Android terminal the leader also sends what the keyboard lacks: C for Control C, D for Control D, E for Escape and I for Tab. The row of keys under the terminal has the same, plus a sticky Control, the pipe and the arrows.
 

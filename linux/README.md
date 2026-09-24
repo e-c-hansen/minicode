@@ -44,7 +44,11 @@ compared with the macOS app, and the order to do it in, see `HANDOFF.md`.
   text and boxes, and the gzipped SyncTeX file.
 - `src/Markdown.{h,cpp}` — renders the MarkdownParser run list into a styled
   GtkTextBuffer.
-- `src/Terminal.{h,cpp}` — VTE terminal panel, behind `MINICODE_ENABLE_TERMINAL`.
+- `src/Terminal.{h,cpp}` — VTE terminal panel, behind `MINICODE_ENABLE_TERMINAL`,
+  with Ctrl+click on file references and URLs found by `../src/TermLinks`.
+- `src/TermLinkPath.{h,cpp}` — pure C++: resolves a file reference from the
+  terminal against the shell's folder and the project folder. Tested in
+  `tests/run_tests.cpp`.
 - `src/Browser.{h,cpp}` — WebKitGTK browser panel, behind
   `MINICODE_ENABLE_BROWSER`.
 - `src/Search.{h,cpp}` — Find in Folder (Ctrl+Shift+F): a window with a

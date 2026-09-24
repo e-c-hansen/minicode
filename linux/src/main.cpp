@@ -474,6 +474,9 @@ static void openFolder(App* app, const std::string& dir) {
     app->editor->closeFile();
     // After closeFile, so the old file is not reopened under the new root.
     if (app->lsp) app->lsp->setRoot(dir);   // servers belong to a folder
+#ifdef MINICODE_ENABLE_TERMINAL
+    if (app->terminal) app->terminal->setProjectRoot(dir);   // for its links
+#endif
     updateTitle(app);
     refreshHints(app);
 }
@@ -691,10 +694,9 @@ static void act_previous_file(GSimpleAction*, GVariant*, gpointer userp) {
     openFileCb(app->recent[1], app);
 }
 
-// Ctrl+1: the editor gets the keyboard, shown first if it was hidden (the
-// Mac's Focus Editor, Command 1).
-static void act_focus_editor(GSimpleAction*, GVariant*, gpointer userp) {
-    App* app = static_cast<App*>(userp);
+// The editor shown in the upper half, with the browser put away if it was
+// covering it.
+static void showEditorOverBrowser(App* app) {
     showEditorArea(app);
 #ifdef MINICODE_ENABLE_BROWSER
     // The browser shares the editor's half; the editor is what was asked for.
@@ -705,9 +707,61 @@ static void act_focus_editor(GSimpleAction*, GVariant*, gpointer userp) {
         gtk_widget_set_vexpand(app->browserRevealer, FALSE);
     }
 #endif
+}
+
+// Ctrl+1: the editor gets the keyboard, shown first if it was hidden (the
+// Mac's Focus Editor, Command 1).
+static void act_focus_editor(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    showEditorOverBrowser(app);
     gtk_widget_grab_focus(app->editor->textView());
     refreshHints(app);
 }
+
+#ifdef MINICODE_ENABLE_TERMINAL
+// Ctrl+click on a link in the terminal (Terminal::Link), the Mac's
+// -openTerminalLink:. A URL opens in the browser panel; a file opens in the
+// editor at the line and column the reference named; a folder is shown in
+// the tree.
+static void openTerminalLink(App* app, const Terminal::Link& link) {
+    if (link.isUrl) {
+#ifdef MINICODE_ENABLE_BROWSER
+        if (app->browser && app->browserRevealer) {
+            if (!gtk_revealer_get_reveal_child(GTK_REVEALER(app->browserRevealer)))
+                act_toggle_browser(nullptr, nullptr, app);
+            app->browser->load(link.target);
+            return;
+        }
+#endif
+        // Built without the browser panel: the desktop's own browser.
+        GtkUriLauncher* launcher = gtk_uri_launcher_new(link.target.c_str());
+        gtk_uri_launcher_launch(launcher, GTK_WINDOW(app->window), nullptr, nullptr, nullptr);
+        g_object_unref(launcher);
+        return;
+    }
+
+    const std::string path = link.target;
+    if (link.isDir) {
+        // Only the tree can show a folder, and only one inside it.
+        if (!link.insideRoot) { gtk_widget_error_bell(app->window); return; }
+        if (!app->sidebarVisible) act_toggle_sidebar(nullptr, nullptr, app);
+        app->tree->revealPath(path);
+        return;
+    }
+    if (link.insideRoot) app->tree->revealPath(path);
+    const int line = link.line, column = link.column;
+    openFileThen(app, path, [app, path, line, column] {
+        // Opening can be refused (Cancel at "Save changes?"), and an image
+        // or a PDF has no lines to go to.
+        if (app->editor->currentPath() != path) return;
+        showEditorOverBrowser(app);
+        if (app->editor->isMedia()) return;
+        if (line > 0) app->editor->revealLineColumn(line, column);
+        else gtk_widget_grab_focus(app->editor->textView());
+        refreshHints(app);   // a Markdown preview may have switched to source
+    });
+}
+#endif
 
 // ------------------------------------------------------ file tree actions
 //
@@ -1162,6 +1216,7 @@ static std::string hintsText(App* app) {
     s += "Ctrl W, Ctrl H...). These still work:\n";
     s += "Ctrl Shift C   Copy\n";
     s += "Ctrl Shift V   Paste\n";
+    s += "Ctrl click     Open a file:line or URL\n";
     s += "Ctrl Shift …   Every Ctrl Shift shortcut\n";
     s += "Ctrl ` 0 1     Panes: terminal, tree, editor\n";
     s += "Ctrl Tab       Previous file\n";
@@ -1622,6 +1677,10 @@ static App* newWindow(const std::string& root, const std::string& file) {
 #ifdef MINICODE_ENABLE_TERMINAL
     app->terminal = new Terminal(app->rootDir);
     app->termPanel = app->terminal->widget();
+    app->terminal->setProjectRoot(app->rootDir);
+    app->terminal->setLinkHandler([app](const Terminal::Link& link) {
+        if (!app->dead) openTerminalLink(app, link);
+    });
     gtk_paned_set_end_child(GTK_PANED(app->vpaned), app->termPanel);
     gtk_paned_set_resize_end_child(GTK_PANED(app->vpaned), FALSE);
     gtk_paned_set_shrink_end_child(GTK_PANED(app->vpaned), FALSE);

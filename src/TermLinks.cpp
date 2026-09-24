@@ -68,7 +68,9 @@ size_t urlEnd(const std::string& s, size_t i) {
         if (c == ')' && parens-- == 0) break;
         j++;
     }
-    while (j > i && isTrailing(s[j - 1]) && !(s[j - 1] == ')' && parens < 0))
+    // A ')' still inside the span closed a '(' of the URL's own (an unmatched
+    // one ended the loop above), so it belongs to the URL: Foo_(bar).
+    while (j > i && isTrailing(s[j - 1]) && s[j - 1] != ')')
         j--;
     return j;
 }

@@ -334,6 +334,30 @@ Verified by running it:
     `G_DEBUG=fatal-criticals` in gdb) inside GTK's unmap of the editor's
     scrolled window, called from `Editor::openFile`. After it, two runs
     logged none. The cause is in `linux/src/ScrollSettle.h`.
+- Terminal links (Ctrl+click), with a temporary hook under its own
+  application id: 51 checks, all passing. The real shell ran
+  `cd sub && clear && command cat ../links.txt` on a scratch project, and
+  the hook worked out each reference's cell from the terminal's text, then
+  asked VTE's own hit test (`vte_terminal_check_match_at` with a `\S+`
+  regex) which word sits under that pixel, so the cell maths was checked
+  against VTE and not against itself. Then it called the click path and
+  read the editor's caret. Covered: a gcc `path:line:col` resolved against
+  the project folder, Python's `File "x", line N` resolved against the
+  shell's directory (which followed the `cd`, from OSC 7), TypeScript's
+  `file(line,col)`, a reference after accented and arrow characters (the
+  column counted in characters, not bytes: 5:7 put the caret after "é"), a
+  reference wrapped across two rows clicked on either row, a missing file,
+  plain words and the space past a line's end giving nothing, an https URL
+  with a balanced parenthesis, a folder selected in the tree, a `file://`
+  URL opening the browser panel, a file link putting the browser away, and
+  the same after 60 more lines of output with the view scrolled back 30
+  rows. The underline was checked as spans of cells (one span, and two for
+  the wrapped reference) and seen in widget snapshots to sit under the
+  link's text, and the pointer was read back as `pointer` over a link and
+  `text` after. The run under AddressSanitizer was clean. This test is what
+  found that VTE's scroll adjustment does not count rows the way its text
+  calls do once `clear` has dropped the scrollback (see
+  `linux/HANDOFF.md`, item 9).
 
 Not verified:
 
@@ -389,6 +413,14 @@ Not verified:
   GTK theme, light on a stock Ubuntu, over the dark editor), dragging in it
   with a mouse, the Keep Mine / Reload alert on screen, where GNOME puts a
   second window, and GNOME's "New Window" dock item all need a person.
+- For terminal links: a real Ctrl+click and a real Ctrl held over a link.
+  The test called the click path and the hover code directly, so whether
+  the capture-phase click gesture beats VTE's own selection, whether the
+  window's key controller sees Ctrl on its own, and whether the pointer
+  shape really changes on screen (VTE sets its own pointer as the mouse
+  moves; ours is put back from an idle callback) all need someone at the
+  machine. So does the look of the underline, one pixel in the text color
+  near the bottom of the cell.
 
 ### Notes on the things that were most at risk
 
@@ -618,6 +650,7 @@ and the color applies live while you drag, as on the Mac.
 | F2                | Rename the selected item, in the tree |
 | Delete            | Move the selected item to the Trash, in the tree |
 | Ctrl Shift C, Ctrl Shift V | Copy and paste, in the terminal |
+| Ctrl click, in the terminal | Open a file:line or URL from the output |
 
 F2 and Delete work only while the file tree has the keyboard, so Delete in the
 editor still deletes text.
@@ -626,7 +659,8 @@ While the terminal has the keyboard, the plain Ctrl shortcuts (Ctrl B, F, G,
 H, I, N, O, Q, S, W, Space, slash and comma) and F12 belong to the shell, so
 readline, vim and emacs get them: Ctrl W deletes a word, Ctrl H is backspace.
 Everything with Shift or Alt in it still works there, and so do the keys that
-move between panes: Ctrl `, Ctrl 0, Ctrl 1 and Ctrl Tab. The Mac has no such
+move between panes: Ctrl `, Ctrl 0, Ctrl 1 and Ctrl Tab. Ctrl click on a
+link in the output is a mouse action and is not affected. The Mac has no such
 split, since its shortcuts use Command and the terminal gets Control. The tree's right-click menu and the File menu both
 have New File, New Folder, Rename, Move to Trash, Open Containing Folder and
 Copy Path.
