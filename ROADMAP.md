@@ -35,7 +35,8 @@ never enlarged, with the pixel size in the title bar. Still to do:
 
 - Zoom and scroll for large images, and a checkerboard behind transparency.
 - Linux has images (a `GtkPicture`) and PDFs (poppler-glib) since September
-  2026; zoom is missing there too.
+  2026. Its PDF viewer and LaTeX preview zoom (25% to 400%, keys, Ctrl+wheel
+  and pinch; `linux/HANDOFF.md` item 4); images there still do not.
 - Video and audio (mp4, mov, m4v, mp3, wav, ...): play with an `AVPlayerView`
   from AVKit, which is a macOS system framework. Transport controls come for
   free. It routes the same way images do, by extension in `openFileAtPath:`.
@@ -124,7 +125,9 @@ The GTK port has caught up (September 2026, `linux/HANDOFF.md` items 1 to 8):
 data safety, the file tree actions, incremental highlighting, images and
 PDFs, Find in Folder, language servers, the LaTeX preview, several windows,
 Previous File, Find Next and Previous, reload on external change, a live
-color picker, and Ctrl+click links in the terminal. What is left:
+color picker, and Ctrl+click links in the terminal. PDFs and the LaTeX
+preview also zoom there, from the keyboard, the wheel and a pinch; the Mac
+has no zoom keys. What is left:
 
 - **Blur.** Not possible on GNOME: GTK 4 has no API for it, and Mutter 50.1
   offers no Wayland blur protocol (neither KDE's nor

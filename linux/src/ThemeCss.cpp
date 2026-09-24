@@ -53,6 +53,9 @@ std::string stylesheet(const Settings& s) {
     // Images and PDFs sit on the editor's background, in the editor's slot.
     css += ".minicode-media { background-color: " + bg(Surface::Editor) + "; }";
     css += ".minicode-pdf-page { box-shadow: 0 1px 4px rgba(0,0,0,0.5); }";
+    // The zoom level, for a moment after it changes, in a PDF's corner.
+    css += ".minicode-zoom-badge { background-color: rgba(30,30,30,0.85); color: #E0E0E0;"
+           " border-radius: 6px; padding: 4px 10px; font-size: 12px; }";
     // Markdown preview and plain messages: proportional body text at the
     // macOS body size (15pt). Code and table runs re-apply monospace via
     // their GtkTextTags.

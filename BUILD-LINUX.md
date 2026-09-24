@@ -132,6 +132,45 @@ Verified by running it:
   - Opening a text file afterwards gives the editor its slot back, editable
     and saveable, with no size or page count in the title.
 
+- Zoom for PDFs and the LaTeX preview (September 2026, on the ThinkPad under
+  GNOME Wayland, display at 125%). A temporary `MINICODE_ZOOMTEST` hook,
+  since removed, ran under its own application id (`org.minicode.ZoomTest`)
+  with a scratch home, config and tectonic cache, and made 62 checks, all
+  passing. It generated a 100-page PDF with a landscape page 50 and a red
+  and a blue square at known points on every page, and also used
+  `demo/paper/notes.pdf` and `notes.tex`:
+  - The zoom actions were activated as the menu and keys do: from fit width
+    (79% in an 856-pixel view) down to 50% and up to 100% and 300% by steps,
+    each step keeping the point at the view's centre within a pixel.
+    `setZoom` about points off the centre, the path Ctrl+wheel and a pinch
+    take, kept the point under them too, sideways included once the page is
+    wider than the view (a page narrower than the view is centred, so only
+    the vertical position can hold then). 400% and 25% are the limits.
+  - At fit, 25%, 50%, 100%, 300% and 400%, and on the landscape page and
+    the page after it: the view was scrolled to the red square, a snapshot
+    of the widget was read back, and the pixel where `pagePointIn` put the
+    square's centre was red, with `pageAtPoint` at that point giving the
+    square's PDF coordinates back to within a pixel. The snapshots were
+    looked at: sharp text at 400% and 300%, the column of pages at 25%, and
+    the badge in the corner ("Fit width, 79%").
+  - `anchor()` after `scrollTo` at 300% gave back the page and y it was
+    given. Rewriting the PDF on disk at 300% kept the zoom, the anchor and
+    the sideways scroll exactly. Opening another PDF went back to fit width,
+    and a text file disabled the three actions.
+  - Memory at 400%: jumping through twelve places in the 100-page document
+    ended with 173 MB in page bitmaps and the process at 376 MB. Before the
+    pages were drawn as textures it ended at 1.7 GB, most of it copies of
+    bitmaps already let go (see `linux/HANDOFF.md`, item 4).
+  - With the terminal focused, `win.zoomin` and `win.zoomout` had no
+    accelerators and `win.zoomfit` kept Ctrl+Alt+0; with the focus back in
+    the tree, all three were bound again.
+  - The LaTeX preview: `notes.tex` typeset, the actions were enabled, and a
+    double-click through `pageAtPoint` and the preview's own click handler,
+    at 150%, 300%, 50% and fit, opened the right item for "draft",
+    "printer", "Friday" and "careful". An edit committed through the popover
+    ("review" to "careful review") retypeset, and the zoom, the anchor and
+    the sideways scroll were the same afterwards.
+
 - Data safety and the file tree actions (September 2026, on the ThinkPad).
   These were driven from inside the running app by a temporary
   `MINICODE_FILETEST` hook, since removed, which ran 50 checks against a
@@ -387,6 +426,13 @@ Not verified:
   clicking a row of the list and resting the pointer on a word were not
   pressed or done for real. Whether an input method takes Ctrl+Space first
   is also open. Only clangd was tried.
+- PDF zoom by real input. Ctrl+Plus, Ctrl+Equal, Ctrl+Minus and Ctrl+Alt+0
+  were not pressed; the accelerators were read back from GTK and the actions
+  activated. Ctrl+wheel and a touchpad pinch were not done at all: their
+  handlers are compiled, and the zoom-about-a-point they call was tested.
+  How big a step a touchpad's smooth Ctrl+scroll makes, how the view looks
+  mid-pinch (the old bitmaps are stretched until 120 ms after the last
+  change), and the badge's look and place need a person.
 - How images and PDFs look to a person: the checks above read pixels back
   from the widget, not from the screen. A build without poppler was compiled
   and launched on a PDF, but what it shows was not looked at.
@@ -647,6 +693,8 @@ and the color applies live while you drag, as on the Mac.
 | Ctrl Space        | Complete, with a language server |
 | F12, Ctrl click   | Go to definition           |
 | Ctrl I            | Show the type and documentation under the cursor |
+| Ctrl +, Ctrl =, Ctrl - | Zoom a PDF or the LaTeX preview in and out (also Ctrl with the wheel, or a pinch) |
+| Ctrl Alt 0        | Back to fit width          |
 | F2                | Rename the selected item, in the tree |
 | Delete            | Move the selected item to the Trash, in the tree |
 | Ctrl Shift C, Ctrl Shift V | Copy and paste, in the terminal |
@@ -655,8 +703,13 @@ and the color applies live while you drag, as on the Mac.
 F2 and Delete work only while the file tree has the keyboard, so Delete in the
 editor still deletes text.
 
+The zoom keys act only while a PDF or the LaTeX preview is on screen, and
+otherwise pass through to whatever has the keyboard. Fit width is Ctrl+Alt+0,
+not the usual Ctrl+0, because Ctrl+0 is Focus the File Tree, as Command 0 is
+on the Mac, and one of the ways out of the terminal.
+
 While the terminal has the keyboard, the plain Ctrl shortcuts (Ctrl B, F, G,
-H, I, N, O, Q, S, W, Space, slash and comma) and F12 belong to the shell, so
+H, I, N, O, Q, S, W, Space, slash, comma, plus and minus) and F12 belong to the shell, so
 readline, vim and emacs get them: Ctrl W deletes a word, Ctrl H is backspace.
 Everything with Shift or Alt in it still works there, and so do the keys that
 move between panes: Ctrl `, Ctrl 0, Ctrl 1 and Ctrl Tab. Ctrl click on a

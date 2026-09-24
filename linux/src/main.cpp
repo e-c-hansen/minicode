@@ -283,6 +283,11 @@ static void updateTitle(void* userp) {
         g_simple_action_set_enabled(G_SIMPLE_ACTION(save), app->editor->canSave());
     if (GAction* exp = g_action_map_lookup_action(G_ACTION_MAP(app->window), "exportpdf"))
         g_simple_action_set_enabled(G_SIMPLE_ACTION(exp), app->editor->isLatex());
+    // The zoom keys act only on a PDF or the LaTeX preview on screen; disabled,
+    // their keys go on to whatever has the focus.
+    for (const char* zoom : {"zoomin", "zoomout", "zoomfit"})
+        if (GAction* z = g_action_map_lookup_action(G_ACTION_MAP(app->window), zoom))
+            g_simple_action_set_enabled(G_SIMPLE_ACTION(z), app->editor->showingPdf());
     gtk_label_set_text(GTK_LABEL(app->statusLabel), p.empty() ? "Ready" : p.c_str());
 }
 
@@ -537,6 +542,18 @@ static void act_save(GSimpleAction*, GVariant*, gpointer userp) {
 static void act_export_pdf(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     app->editor->exportPdf(GTK_WINDOW(app->window));
+}
+
+// Zoom for a PDF or the LaTeX preview (PdfView). The reset is Ctrl+Alt+0,
+// not Ctrl+0, which is Focus the File Tree here as on the Mac.
+static void act_zoom_in(GSimpleAction*, GVariant*, gpointer userp) {
+    static_cast<App*>(userp)->editor->zoomPdf(1);
+}
+static void act_zoom_out(GSimpleAction*, GVariant*, gpointer userp) {
+    static_cast<App*>(userp)->editor->zoomPdf(-1);
+}
+static void act_zoom_fit(GSimpleAction*, GVariant*, gpointer userp) {
+    static_cast<App*>(userp)->editor->zoomPdf(0);
 }
 
 static void act_toggle_preview(GSimpleAction*, GVariant*, gpointer userp) {
@@ -1208,6 +1225,10 @@ static std::string hintsText(App* app) {
              (app->editor->inPreview() ? "preview" : "source") + ")\n";
         s += "Ctrl Shift S   Export PDF\n";
     }
+    if (app->editor->showingPdf()) {
+        s += "Ctrl + / -     Zoom the PDF (or Ctrl wheel)\n";
+        s += "Ctrl Alt 0     Fit width\n";
+    }
 
 #ifdef MINICODE_ENABLE_TERMINAL
     s += "\nIn the terminal\n";
@@ -1360,6 +1381,9 @@ static const Bind kBinds[] = {
     {"win.complete",       {"<Ctrl>space"}},
     {"win.definition",     {"F12"}},
     {"win.hoverinfo",      {"<Ctrl>i"}},
+    {"win.zoomin",         {"<Ctrl>plus", "<Ctrl>equal", "<Ctrl>KP_Add"}},
+    {"win.zoomout",        {"<Ctrl>minus", "<Ctrl>KP_Subtract"}},
+    {"win.zoomfit",        {"<Ctrl><Alt>0"}},
 };
 
 // Is this accelerator the shell's while the terminal has the keyboard?
@@ -1487,6 +1511,12 @@ static void buildMenu() {
     g_menu_append(viewMenu, "Toggle Terminal", "win.toggleterminal");
     g_menu_append(viewMenu, "Toggle Browser", "win.togglebrowser");
     g_menu_append(viewMenu, "Show Hidden Files", "app.showhidden");
+    GMenu* zoom = g_menu_new();
+    g_menu_append(zoom, "Zoom In", "win.zoomin");
+    g_menu_append(zoom, "Zoom Out", "win.zoomout");
+    g_menu_append(zoom, "Fit Width", "win.zoomfit");
+    g_menu_append_section(viewMenu, nullptr, G_MENU_MODEL(zoom));
+    g_object_unref(zoom);
     g_menu_append_submenu(menuBar, "View", G_MENU_MODEL(viewMenu));
     g_object_unref(viewMenu);
 
@@ -1787,6 +1817,12 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "previousfile",   G_CALLBACK(act_previous_file));
     addAction(app, "togglecomment",  G_CALLBACK(act_toggle_comment));
     addAction(app, "settings",       G_CALLBACK(act_settings));
+    addAction(app, "zoomin",         G_CALLBACK(act_zoom_in));
+    addAction(app, "zoomout",        G_CALLBACK(act_zoom_out));
+    addAction(app, "zoomfit",        G_CALLBACK(act_zoom_fit));
+    for (const char* zoom : {"zoomin", "zoomout", "zoomfit"})   // until a PDF shows
+        g_simple_action_set_enabled(G_SIMPLE_ACTION(g_action_map_lookup_action(
+                                        G_ACTION_MAP(app->window), zoom)), FALSE);
     app->tree->setContextMenu(g.treeMenu);
     // F2 and Delete rename and trash only while the tree has the keyboard. As
     // window accelerators they would take Delete away from the editor.
