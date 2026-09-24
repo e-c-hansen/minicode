@@ -18,27 +18,39 @@ Read these first:
 
 ## Where it stands
 
-The port builds without warnings in CI (Ubuntu, GTK 4, VTE, WebKitGTK) and has
-been run for real on Ubuntu 26.04. It has:
-- the file tree, live-refreshing;
-- the editor with incremental syntax highlighting (item 3 below);
-- the Markdown preview;
-- images and PDFs in the editor's slot (item 4 below, done);
-- a VTE terminal and a WebKitGTK browser;
-- the settings file with live colors and per-panel opacity;
-- Ctrl+/ comment toggling, pane hiding and divider drags;
-- the shortcut hints panel;
-- opening a file named on the command line;
-- Find in Folder (Ctrl+Shift+F), over the shared `FolderSearch` core;
+Items 1 to 8 below are done (September 2026), so the port now has what the
+Mac has, apart from what the list at the end of item 8 leaves out. It builds
+without warnings at `warning_level=2` (CI: Ubuntu, GTK 4, VTE, WebKitGTK,
+poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
+- data safety: "Save changes?" before anything replaces edits, failed saves
+  reported, atomic saves (item 1);
+- the file tree, live-refreshing, with New File, New Folder, Rename, Move to
+  Trash, Open Containing Folder and Copy Path (item 2);
+- the editor with incremental syntax highlighting (item 3), Ctrl+/, the
+  Markdown preview, and reloading when the file changes on disk (item 8);
+- images and PDFs in the editor's slot (item 4);
+- Find in Folder (item 5) and find in the file with Find Next and Find
+  Previous (item 8);
 - language servers: squiggles, completion, hover and go to definition
-  (item 6 below, done);
-- the LaTeX preview with double-click editing and Export PDF (item 7 below,
-  done).
+  (item 6);
+- the LaTeX preview with double-click editing and Export PDF (item 7);
+- several windows, each with its own tree, editor, terminal, browser, search
+  panel and language servers; Previous File, Focus Editor, Close Window and
+  Quit (item 8);
+- a VTE terminal that gets its own Ctrl keys while it has the keyboard, and
+  a WebKitGTK browser;
+- the settings file with live colors, per-panel opacity and a live color
+  picker (item 8);
+- pane hiding and divider drags, the shortcut hints panel, and opening a
+  file or folder named on the command line.
 
 It shares from `../src` `SyntaxHighlighter`, `MarkdownParser`, `Settings`,
 `LineComments`, `FolderSearch`, `Json`, `LspClient`, `LatexDoc` and `SyncTex`.
 The rest of the core (`TerminalScreen`) is portable and tested, and has not
-been added to `meson.build` yet.
+been added to `meson.build`, since VTE does that job here.
+
+What each item verified at run time, and what still needs a person (mostly
+real key presses and how things look), is in `../BUILD-LINUX.md`.
 
 ## What to do, in order
 
@@ -239,9 +251,9 @@ Verified by driving it inside the running app on the ThinkPad (see
 `../BUILD-LINUX.md`); real key presses, the double-click and the look of the
 window still need a person.
 
-If opening a file ever becomes asynchronous (a save prompt that returns
-later), `openSearchMatch` in `main.cpp` has to go to the line after the open
-completes; today it checks `currentPath()` straight after `openFileCb`.
+Opening a file became asynchronous with item 1 (the "Save changes?"
+question), and `openSearchMatch` goes to the line from `openFileThen`'s
+continuation, after the open.
 
 ### 6. Language servers (done, September 2026)
 
@@ -456,6 +468,105 @@ driven by real input (see `BUILD-LINUX.md`).
   clang++ only on the Mac, so `make test` builds with g++ here, cleanly, and
   the `linux` job in `.github/workflows/ci.yml` runs it.
 
+**Done, September 2026**, with four things found in review. How each was
+checked is in `../BUILD-LINUX.md` (81 checks in the running app, all
+passing, plus the criticals run); what needs a person is listed there too.
+
+- **Windows.** `App` in `main.cpp` is now one window, and `g` holds what they
+  share: the settings file and stylesheet, the menu bar (application-wide,
+  with a Navigate menu like the Mac's), the accelerators, the tree's
+  context menu and the dotfile setting. Ctrl+N opens a window on the same
+  folder (Ctrl+Shift+N stays New Folder; Ctrl+N was free and is the Mac's
+  Command N). Ctrl+W closes one, Ctrl+Q all, each asking "Save changes?",
+  and GtkApplication quits with the last window. A closing window is taken
+  apart in `onWindowRemoved`, from GtkApplication's `window-removed`, which
+  comes before GTK disposes a single widget: `disconnectOwners` takes every
+  handler that names the window's objects off every widget and controller
+  in it, then the search panel, language servers, terminal, browser, tree
+  and editor are deleted, each with a destructor that removes its own
+  sources and handlers on non-widgets (FileTree drops its models, whose
+  filter and child functions call back into it; Terminal cancels a shell
+  still starting; SearchPanel drops a search still running through a life
+  token). The `App` struct itself is kept, marked `dead`, because an alert
+  or file dialog may still answer later and must find out.
+- **The command line.** The app id and `HANDLES_COMMAND_LINE` are as they
+  were, so a second `minicode <path>` still hands off to the running
+  process. It now opens a new window on that folder (what the Mac's
+  command-line launcher gives, since it starts a separate process), or
+  raises the window already on it and opens the named file there. Before,
+  it re-rooted the only window.
+- **Previous File, Find Next, Find Previous, Focus Editor.** Ctrl+Tab goes
+  to the file before this one (a list per window, newest first, as the Mac's
+  `_recent`; renames and trashing keep it right). Ctrl+G and Ctrl+Shift+G
+  step through the find bar's matches from the selection, wrapping, with the
+  bar open or closed; with no query they open the bar. Shift+Enter in the
+  bar goes back. Ctrl+1 focuses the editor, and Ctrl+` toggles the terminal,
+  as on the Mac.
+- **Show Hidden Files.** The Mac's is one global flag for every window,
+  under View as "Show Hidden Files", and hides names starting with a dot.
+  Linux had one per tree and a menu item that did not show its state. It is
+  now an application action with a check mark (`app.showhidden`, Ctrl+H):
+  every window's tree follows it, a new window starts with it, and expanded
+  folders stay expanded. The key stays Ctrl+H, the GTK file chooser's and
+  Nautilus's, rather than the Mac's Shift+Command+.; Ctrl+. is GTK's emoji
+  key in text views.
+- **The terminal's keys** (found in review). Application accelerators run in
+  the window's capture phase, before the focused widget, so Ctrl+B, Ctrl+F,
+  Ctrl+H, Ctrl+W and the rest never reached bash or vim; a controller on the
+  terminal could not win, since it runs after the window's. On the Mac the
+  question does not arise: shortcuts are on Command, and Control goes to
+  the terminal, in the log and the grid alike. So while the active window's
+  terminal has the focus, `updateShellKeys` unbinds every accelerator that
+  is a plain Ctrl key or a bare function key (`shellOwns` decides from the
+  accelerator string, so a new one is covered without a list), and binds
+  them again when the focus leaves. Anything with Shift or Alt stays, and so
+  do the pane keys Ctrl+`, Ctrl+0, Ctrl+1 and Ctrl+Tab. Ctrl+Shift+C and
+  Ctrl+Shift+V copy and paste in the terminal. The hints panel has an "In
+  the terminal" section.
+- **Reload on external change** (found in review). The Mac's
+  `checkExternalChange`, in `Editor`: the open text file is watched with a
+  `GFileMonitor`, and checked again when the window becomes active, as the
+  Mac checks on becoming key. Contents are compared, not dates, with what
+  was last loaded or saved, so MiniCode's own atomic saves are no change. A
+  clean buffer takes the new text in place: only the bytes between the
+  common start and end are replaced, as one user action, so highlighting
+  and the language server see an edit, undo can take it back, and the caret
+  and scroll stay (a caret inside the replaced part keeps its line and
+  column). A Markdown preview re-renders. With unsaved edits the Mac's
+  question comes up, Keep Mine or Reload, and that disk version is not
+  asked about again. MediaView still reloads images and PDFs.
+- **Live color picking.** A click on a swatch opens a popover on the text
+  view holding `GtkColorChooserWidget`, on its editor, at the swatch's
+  color. Each change rewrites the line at once and the file is saved 150 ms
+  after the last, as on the Mac, so the window follows a drag; closing the
+  popover saves at once. The widget is deprecated since GTK 4.10 with no
+  embeddable replacement (GtkColorDialog is a separate window and answers
+  once), so its calls silence the warning, as MediaView does for GIFs. The
+  popover is unparented on the view's `unrealize`, the LSP popovers' trap.
+  Each pick is its own undo step, which a drag makes many of.
+- **Blur: not possible on GNOME.** GTK 4 has no API for it, and Mutter 50.1
+  on the ThinkPad offers no Wayland protocol for it: a small client listing
+  the compositor's globals found neither KDE's blur protocol nor
+  `ext-background-effect-v1` from wayland-protocols' staging set. KDE
+  Plasma's compositor has its own blur protocol, so a Plasma-only blur
+  through GDK's Wayland surface looks possible; it was not tried.
+  `window.blur` stays ignored, and the settings file says so.
+- **The GTK criticals** (found in review). Reproduced every time by
+  scrolling the editor with an animation (a Find in Folder match, a go to
+  definition, a find step) and switching the slot to an image, a PDF, the
+  LaTeX preview or the browser within about 100 ms. GtkAdjustment ends an
+  animation by jumping to its target first; the resulting value-changed
+  lets the text view end the animation already, and the adjustment then
+  disconnects its frame-clock handler and releases the clock a second
+  time. `ScrollSettle.h` ends the animation from the text view's unmap,
+  which comes before the scrolled window's check. 20 pairs of criticals in
+  60 switches before, none in two runs after.
+
+What the Mac has that Linux still lacks: Command-click on a file or URL in
+the terminal's output (the core's `TermLinks` is portable; VTE would need a
+regex match or its hyperlink hover), Refresh File Tree (not needed, the tree
+is live), zoom for images and PDFs (missing on the Mac too), and blur.
+
 Not needed on Linux: the demo recorder and the memory benchmark, which are
 Mac tools.
 
@@ -524,3 +635,21 @@ Do not claim a GUI behaviour works when it was only compiled.
   when its Close button was activated from a test hook; the error alerts now
   set an OK button and use `gtk_alert_dialog_choose`, the same path as
   "Save changes?".
+- `timeout -s KILL 60 dbus-run-session -- minicode` kills only
+  `dbus-run-session`: MiniCode and the private `dbus-daemon` keep running.
+  End a test run from inside (the hook activates `app.quit`), or find and
+  kill those two PIDs yourself.
+- The color chooser saves the colors it has seen as custom colors in
+  GSettings (`org.gtk.gtk4.Settings.ColorChooser`), and the old color dialog
+  did the same. A test that picks colors should run with
+  `GSETTINGS_BACKEND=memory`, or it writes to the user's dconf.
+- A new shortcut goes in `kBinds` in `main.cpp`, the menu in `buildMenu`,
+  `hintsText`, and the README table. A plain Ctrl key is given to the shell
+  while the terminal has the keyboard without anything more; if it is a key
+  for moving between panes, add it to the exceptions in `shellOwns`.
+- A window's objects are deleted while its widgets still exist, from
+  `window-removed`. Anything new that connects a signal to a window's object
+  with the object as data is covered for widgets and their controllers by
+  `disconnectOwners`, once the object is in the owners list in
+  `onWindowRemoved`; a connection to anything else (a buffer, a model, a
+  monitor, the application) must be undone in the object's destructor.

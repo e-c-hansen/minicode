@@ -9,10 +9,12 @@
 #include "Utf8Offsets.h"
 #include "MediaView.h"
 #include "Latex.h"
+#include "ScrollSettle.h"
 
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <functional>
 #include <sstream>
 #include <cstdlib>
 #include <climits>
@@ -58,11 +60,16 @@ Editor::Editor() {
     GtkEventController* motion = gtk_event_controller_motion_new();
     g_signal_connect(motion, "motion", G_CALLBACK(onMotion), this);
     gtk_widget_add_controller(view_, motion);
+    // The color picker's popover is the view's child only by
+    // gtk_widget_set_parent, so it must go before the view is disposed (the
+    // same trap as the LSP popovers, see Lsp.cpp).
+    g_signal_connect(view_, "unrealize", G_CALLBACK(onViewUnrealize), this);
 
     scroller_ = gtk_scrolled_window_new();
     gtk_widget_add_css_class(scroller_, "minicode-scroller");
     gtk_widget_add_css_class(scroller_, "minicode-editor-scroller");
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller_), view_);
+    settleScrollingOnUnmap(GTK_SCROLLED_WINDOW(scroller_));
     gtk_widget_set_hexpand(scroller_, TRUE);
     gtk_widget_set_vexpand(scroller_, TRUE);
 
@@ -101,11 +108,27 @@ void Editor::showWelcome() {
                 "  Ctrl+O to open a different folder.");
 }
 
+// Runs while the window is being torn down but its widgets still exist
+// (main.cpp deletes the editor from GtkApplication's window-removed), so
+// every handler that names this object comes off before GTK disposes them.
 Editor::~Editor() {
+    stopWatchingText();
+    if (colorSaveTimer_) g_source_remove(colorSaveTimer_);
+    colorSaveTimer_ = 0;
+    dropColorPopover();
+    cancelDeferred();
 #ifdef MINICODE_ENABLE_PDF
     delete latex_;
 #endif
     g_signal_handlers_disconnect_by_data(buffer_, this);
+    g_signal_handlers_disconnect_by_data(view_, this);
+    GListModel* ctrls = gtk_widget_observe_controllers(view_);
+    for (guint i = 0; i < g_list_model_get_n_items(ctrls); ++i) {
+        GObject* c = static_cast<GObject*>(g_list_model_get_item(ctrls, i));
+        g_signal_handlers_disconnect_by_data(c, this);
+        g_object_unref(c);
+    }
+    g_object_unref(ctrls);
     delete media_;
 }
 
@@ -173,6 +196,14 @@ void Editor::ensureTags() {
 // ---------------------------------------------------------------- file I/O
 
 bool Editor::openFile(const std::string& path) {
+    // A color picked a moment ago still belongs to the file it was picked in.
+    if (colorSaveTimer_) {
+        g_source_remove(colorSaveTimer_);
+        colorSaveTimer_ = 0;
+        save();
+    }
+    dropColorPopover();
+    stopWatchingText();
     // Whatever was shown before goes, so a stale picture can never sit over
     // the next file, and nothing from it can be saved.
     showTextSlot();
@@ -230,6 +261,8 @@ bool Editor::openFile(const std::string& path) {
     }
 
     source_ = content;
+    rememberDisk(content);
+    watchText();
     ext_  = extOf(path);
     isMarkdown_ = (ext_ == "md" || ext_ == "markdown");
 #ifdef MINICODE_ENABLE_PDF
@@ -293,11 +326,16 @@ bool Editor::save(std::string* error) {
         return false;
     }
     markDirty(false);
+    rememberDisk(source_);   // so this save is not taken for someone else's
     if (observer_) observer_->documentSaved();
     return true;
 }
 
 void Editor::closeFile() {
+    if (colorSaveTimer_) g_source_remove(colorSaveTimer_);
+    colorSaveTimer_ = 0;
+    dropColorPopover();
+    stopWatchingText();
     showTextSlot();   // an image or PDF goes too
     readOnly_ = false;
     path_.clear();
@@ -862,7 +900,16 @@ void Editor::onApplyTag(GtkTextBuffer* buf, GtkTextTag* tag, GtkTextIter*, GtkTe
 void Editor::setPath(const std::string& path) {
     const bool wasSettings = isSettingsFile();
     const std::string ext = extOf(path);
+    // Keep comparing against the same disk contents, under the new name.
+    const bool watched = textMonitor_ != nullptr;
+    const bool known = diskKnown_;
+    const std::size_t size = diskSize_, hash = diskHash_;
+    stopWatchingText();
     path_ = path;
+    diskKnown_ = known;
+    diskSize_ = size;
+    diskHash_ = hash;
+    if (watched) watchText();
 #ifdef MINICODE_ENABLE_PDF
     if (isLatex_ && latex_) latex_->setPath(path);   // the preview follows the rename
 #endif
@@ -988,16 +1035,28 @@ void Editor::onPressed(GtkGestureClick* g, int n, double x, double y, gpointer s
     self->pickColor(line);
 }
 
-namespace {
-struct PickRequest {
-    Editor* editor;
-    int line;
-    std::string path;   // the file the pick was for
-};
-}  // namespace
+static Rgba fromGdk(const GdkRGBA& c) {
+    auto byte = [](float v) {
+        return (uint8_t)(std::min(std::max(v, 0.0f), 1.0f) * 255 + 0.5f);
+    };
+    Rgba rgba;
+    rgba.r = byte(c.red);
+    rgba.g = byte(c.green);
+    rgba.b = byte(c.blue);
+    rgba.a = std::min(std::max((double)c.alpha, 0.0), 1.0);
+    return rgba;
+}
 
-// The system color dialog, starting on the swatch's color. The choice is
-// written back when the dialog closes (GTK's dialog has no live preview).
+// The color picker, live like the Mac's NSColorPanel: a popover under the
+// swatch holding GTK's color chooser, opened on its editor (the plane, hue and
+// alpha sliders and the hex entry) at the swatch's color. Every change the
+// chooser reports rewrites the line at once, and the file is saved 150 ms
+// after the last one, so the window follows the drag. GtkColorDialog, used
+// before, reports a color only when it closes.
+//
+// GtkColorChooserWidget is deprecated since GTK 4.10 with no replacement that
+// can be embedded (GtkColorDialog is a separate window and reports once), so
+// the few calls that need it are wrapped to silence that warning.
 void Editor::pickColor(int line) {
     GtkTextIter ls, le;
     gtk_text_buffer_get_iter_at_line(buffer_, &ls, line);
@@ -1008,40 +1067,107 @@ void Editor::pickColor(int line) {
     g_free(raw);
     ColorSpan span;
     if (!Settings::findColor(text, span)) return;
+    dropColorPopover();
 
-    GtkColorDialog* dlg = gtk_color_dialog_new();
-    gtk_color_dialog_set_with_alpha(dlg, TRUE);
-    gtk_color_dialog_set_modal(dlg, TRUE);
-    gtk_color_dialog_set_title(dlg, "Choose a Color");
+    // Point at the swatch itself.
+    GtkTextIter a = ls, b = ls;
+    gtk_text_iter_forward_chars(&a, (int)utf16::toCharOffset(text, span.start));
+    gtk_text_iter_forward_chars(&b, (int)utf16::toCharOffset(text, span.start + span.length));
+    GdkRectangle ra, rb;
+    gtk_text_view_get_iter_location(GTK_TEXT_VIEW(view_), &a, &ra);
+    gtk_text_view_get_iter_location(GTK_TEXT_VIEW(view_), &b, &rb);
+    int x, y;
+    gtk_text_view_buffer_to_window_coords(GTK_TEXT_VIEW(view_), GTK_TEXT_WINDOW_WIDGET,
+                                          ra.x, ra.y, &x, &y);
+    GdkRectangle at = {x, y, std::max(1, rb.x - ra.x), std::max(1, ra.height)};
+
     GdkRGBA initial = toGdk(span.color);
-    GtkRoot* root = gtk_widget_get_root(view_);
-    auto* req = new PickRequest{this, line, path_};
-    gtk_color_dialog_choose_rgba(
-        dlg, GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : nullptr, &initial, nullptr,
-        [](GObject* src, GAsyncResult* res, gpointer data) {
-            PickRequest* r = static_cast<PickRequest*>(data);
-            GdkRGBA* c = gtk_color_dialog_choose_rgba_finish(GTK_COLOR_DIALOG(src),
-                                                            res, nullptr);
-            if (c && r->editor->path_ == r->path) {
-                auto byte = [](float v) {
-                    return (uint8_t)(std::min(std::max(v, 0.0f), 1.0f) * 255 + 0.5f);
-                };
-                Rgba rgba;
-                rgba.r = byte(c->red); rgba.g = byte(c->green); rgba.b = byte(c->blue);
-                rgba.a = std::min(std::max((double)c->alpha, 0.0), 1.0);
-                r->editor->setLineColor(r->line, rgba);
-            }
-            if (c) gdk_rgba_free(c);
-            delete r;
-        },
-        req);
-    g_object_unref(dlg);
+G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+    GtkWidget* chooser = gtk_color_chooser_widget_new();
+    gtk_color_chooser_set_use_alpha(GTK_COLOR_CHOOSER(chooser), TRUE);
+    gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(chooser), &initial);
+G_GNUC_END_IGNORE_DEPRECATIONS
+    // The editor rather than the palette: the point is to adjust the color
+    // that is there, and the editor starts on it.
+    g_object_set(chooser, "show-editor", TRUE, NULL);
+    // Connected after the color is set, so opening changes nothing.
+    g_signal_connect(chooser, "notify::rgba", G_CALLBACK(onColorPicked), this);
+
+    GtkWidget* pop = gtk_popover_new();
+    gtk_widget_add_css_class(pop, "minicode-color-popover");
+    gtk_popover_set_child(GTK_POPOVER(pop), chooser);
+    gtk_popover_set_position(GTK_POPOVER(pop), GTK_POS_BOTTOM);
+    gtk_popover_set_pointing_to(GTK_POPOVER(pop), &at);
+    gtk_widget_set_parent(pop, view_);
+    // Double-clicking a color in the palette means "this one, done".
+    g_signal_connect_swapped(chooser, "color-activated",
+                             G_CALLBACK(gtk_popover_popdown), pop);
+    // Closing: the last pick is saved now rather than 150 ms later, and the
+    // popover comes off the view from an idle, since it is still emitting
+    // its own signal here.
+    g_signal_connect(pop, "closed", G_CALLBACK(+[](GtkPopover* p, gpointer selfp) {
+        Editor* self = static_cast<Editor*>(selfp);
+        if (self->colorSaveTimer_) {
+            g_source_remove(self->colorSaveTimer_);
+            self->colorSaveTimer_ = 0;
+            if (self->path_ == self->colorPath_) self->save();
+        }
+        if (self->colorPop_ == GTK_WIDGET(p)) self->colorPop_ = nullptr;
+        g_idle_add([](gpointer w) -> gboolean {
+            GtkWidget* widget = GTK_WIDGET(w);
+            if (gtk_widget_get_parent(widget)) gtk_widget_unparent(widget);
+            g_object_unref(widget);
+            return G_SOURCE_REMOVE;
+        }, g_object_ref(p));
+    }), this);
+
+    colorPop_ = pop;
+    colorLine_ = line;
+    colorPath_ = path_;
+    gtk_popover_popup(GTK_POPOVER(pop));
+}
+
+void Editor::onColorPicked(GObject* chooser, GParamSpec*, gpointer selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    if (!self->colorPop_ || self->path_ != self->colorPath_ || self->preview_) return;
+    GdkRGBA c;
+G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+    gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(chooser), &c);
+G_GNUC_END_IGNORE_DEPRECATIONS
+    self->setLineColor(self->colorLine_, fromGdk(c));
+    self->scheduleColorSave();
+}
+
+void Editor::scheduleColorSave() {
+    if (colorSaveTimer_) g_source_remove(colorSaveTimer_);
+    colorSaveTimer_ = g_timeout_add(150, [](gpointer p) -> gboolean {
+        Editor* self = static_cast<Editor*>(p);
+        self->colorSaveTimer_ = 0;
+        if (self->path_ == self->colorPath_) self->save();
+        return G_SOURCE_REMOVE;
+    }, this);
+}
+
+// Take the popover down at once, without its "closed" handler: the file is
+// being switched or closed, or the view is going away.
+void Editor::dropColorPopover() {
+    if (!colorPop_) return;
+    GtkWidget* pop = colorPop_;
+    colorPop_ = nullptr;
+    g_signal_handlers_disconnect_by_data(pop, this);
+    if (GtkWidget* chooser = gtk_popover_get_child(GTK_POPOVER(pop)))
+        g_signal_handlers_disconnect_by_data(chooser, this);
+    if (gtk_widget_get_parent(pop)) gtk_widget_unparent(pop);
+}
+
+void Editor::onViewUnrealize(GtkWidget*, gpointer selfp) {
+    static_cast<Editor*>(selfp)->dropColorPopover();
 }
 
 // Rewrite one line's color (uncommenting it if it was a commented-out
-// default) and save, so the change applies straight away.
+// default). The caller saves, which is what applies it.
 void Editor::setLineColor(int line, const Rgba& c) {
-    if (preview_ || line >= gtk_text_buffer_get_line_count(buffer_)) return;
+    if (preview_ || line < 0 || line >= gtk_text_buffer_get_line_count(buffer_)) return;
     GtkTextIter ls, le;
     gtk_text_buffer_get_iter_at_line(buffer_, &ls, line);
     le = ls;
@@ -1053,11 +1179,219 @@ void Editor::setLineColor(int line, const Rgba& c) {
     if (updated == text) return;
     std::string out = utf16::toUtf8(updated);
 
+    // The caret stays where it was rather than jumping to the line's end.
+    GtkTextIter cur;
+    gtk_text_buffer_get_iter_at_mark(buffer_, &cur, gtk_text_buffer_get_insert(buffer_));
+    const int curLine = gtk_text_iter_get_line(&cur);
+    const int curCol = gtk_text_iter_get_line_offset(&cur);
+
     gtk_text_buffer_begin_user_action(buffer_);
     gtk_text_buffer_delete(buffer_, &ls, &le);
     gtk_text_buffer_insert(buffer_, &ls, out.c_str(), (int)out.size());
     gtk_text_buffer_end_user_action(buffer_);
-    save();   // the edit above already retagged the line, swatch included
+
+    if (curLine == line) {
+        GtkTextIter back;
+        gtk_text_buffer_get_iter_at_line(buffer_, &back, line);
+        const int len = gtk_text_iter_get_chars_in_line(&back);
+        gtk_text_iter_set_line_offset(&back, std::min(curCol, std::max(0, len - 1)));
+        gtk_text_buffer_place_cursor(buffer_, &back);
+    }
+}
+
+// ---------------------------------------------------------------- external changes
+//
+// The Mac checks when its window becomes key (EditorController.mm
+// -checkExternalChange), comparing modification dates. Here the file is also
+// watched, so a change made in the terminal panel under the editor shows up
+// without leaving the window, and the check compares contents: an atomic save
+// by MiniCode itself, or a tool that rewrites the file unchanged, is then no
+// change at all, whatever the dates say.
+
+void Editor::rememberDisk(const std::string& content) {
+    diskKnown_ = true;
+    diskSize_ = content.size();
+    diskHash_ = std::hash<std::string>()(content);
+}
+
+bool Editor::diskMatches(const std::string& content) const {
+    return diskKnown_ && content.size() == diskSize_ &&
+           std::hash<std::string>()(content) == diskHash_;
+}
+
+void Editor::watchText() {
+    if (path_.empty() || textMonitor_) return;
+    GFile* f = g_file_new_for_path(path_.c_str());
+    // WATCH_MOVES, so a save that renames a temporary file over this one
+    // (what MiniCode and most tools do) arrives as a rename, not a deletion.
+    textMonitor_ = g_file_monitor_file(f, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
+    g_object_unref(f);
+    if (textMonitor_)
+        g_signal_connect(textMonitor_, "changed", G_CALLBACK(onTextFileChanged), this);
+}
+
+void Editor::stopWatchingText() {
+    if (textCheckTimer_) g_source_remove(textCheckTimer_);
+    textCheckTimer_ = 0;
+    if (textMonitor_) {
+        g_signal_handlers_disconnect_by_data(textMonitor_, this);
+        g_file_monitor_cancel(textMonitor_);
+        g_object_unref(textMonitor_);
+        textMonitor_ = nullptr;
+    }
+    diskKnown_ = false;
+}
+
+// A burst of events (write, close, rename) becomes one check, a moment after
+// the last of them, when the writer is done.
+void Editor::onTextFileChanged(GFileMonitor*, GFile*, GFile*, GFileMonitorEvent ev,
+                               gpointer selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    switch (ev) {
+        case G_FILE_MONITOR_EVENT_CHANGED:
+        case G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT:
+        case G_FILE_MONITOR_EVENT_CREATED:
+        case G_FILE_MONITOR_EVENT_RENAMED:
+        case G_FILE_MONITOR_EVENT_MOVED_IN:
+            break;
+        default:
+            return;   // attribute changes, and deletion (the buffer stays, as on the Mac)
+    }
+    if (self->textCheckTimer_) g_source_remove(self->textCheckTimer_);
+    self->textCheckTimer_ = g_timeout_add(200, [](gpointer p) -> gboolean {
+        Editor* s = static_cast<Editor*>(p);
+        s->textCheckTimer_ = 0;
+        s->checkExternalChange();
+        return G_SOURCE_REMOVE;
+    }, self);
+}
+
+void Editor::checkExternalChange() {
+    if (path_.empty() || readOnly_ || !diskKnown_) return;
+    gchar* data = nullptr;
+    gsize len = 0;
+    // Gone or unreadable: what is in the editor stays, as on the Mac.
+    if (!g_file_get_contents(path_.c_str(), &data, &len, nullptr)) return;
+    std::string content(data, len);
+    g_free(data);
+    if (diskMatches(content)) return;
+    // No longer text: nothing to put in the buffer (the Mac's read fails too).
+    if (!g_utf8_validate(content.data(), (gssize)content.size(), nullptr)) return;
+    if (!dirty()) {
+        rememberDisk(content);
+        applyDiskText(content);
+        return;
+    }
+    // Edits here and a change there: the user decides. Once asked, this
+    // version on disk is not asked about again, whatever the answer.
+    if (extCb_ && extCb_(extUser_)) rememberDisk(content);
+}
+
+bool Editor::reloadFromDisk() {
+    if (path_.empty() || readOnly_) return false;
+    gchar* data = nullptr;
+    gsize len = 0;
+    if (!g_file_get_contents(path_.c_str(), &data, &len, nullptr)) return false;
+    std::string content(data, len);
+    g_free(data);
+    if (!g_utf8_validate(content.data(), (gssize)content.size(), nullptr)) return false;
+    rememberDisk(content);
+    applyDiskText(content);
+    return true;
+}
+
+namespace {
+// Scroll offsets, put back once the view has laid out the new text as well
+// as straight away (the adjustment's range may lag the buffer by a frame).
+struct ScrollKeep {
+    GtkAdjustment* h;
+    GtkAdjustment* v;
+    double hv, vv;
+};
+void restoreScroll(ScrollKeep* k) {
+    gtk_adjustment_set_value(k->h, k->hv);
+    gtk_adjustment_set_value(k->v, k->vv);
+}
+}  // namespace
+
+// The disk's text replaces the buffer's in place: only the bytes between the
+// common start and end of the two are replaced, as one user action, so the
+// highlighter and the language server see one edit, undo can take it back,
+// and the caret and scroll position stay where they were.
+void Editor::applyDiskText(const std::string& content) {
+    auto* keep = new ScrollKeep{
+        gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)),
+        gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_)), 0, 0};
+    keep->hv = gtk_adjustment_get_value(keep->h);
+    keep->vv = gtk_adjustment_get_value(keep->v);
+    g_object_ref(keep->h);
+    g_object_ref(keep->v);
+
+    if (isMarkdown_ && preview_) {
+        source_ = content;
+        renderPreview();   // rendered text, not the file's: re-render it
+    } else if (sourceMode_) {
+        GtkTextIter s, e;
+        gtk_text_buffer_get_bounds(buffer_, &s, &e);
+        char* raw = gtk_text_buffer_get_text(buffer_, &s, &e, TRUE);
+        const std::string old = raw ? raw : "";
+        g_free(raw);
+        // Common prefix and suffix, in bytes, backed off to character starts.
+        const std::size_t n = std::min(old.size(), content.size());
+        std::size_t p = 0;
+        while (p < n && old[p] == content[p]) ++p;
+        while (p > 0 && p < old.size() && ((unsigned char)old[p] & 0xC0) == 0x80) --p;
+        std::size_t q = 0;
+        while (q < n - p && old[old.size() - 1 - q] == content[content.size() - 1 - q]) ++q;
+        while (q > 0 && ((unsigned char)old[old.size() - q] & 0xC0) == 0x80) --q;
+
+        if (p + q < old.size() || p + q < content.size()) {
+            const long from = g_utf8_strlen(old.data(), (gssize)p);
+            const long to = g_utf8_strlen(old.data(), (gssize)(old.size() - q));
+            // Where the caret was, by line and column, for when it sat inside
+            // the replaced part (outside it, GTK carries it along by itself).
+            GtkTextIter cur;
+            gtk_text_buffer_get_iter_at_mark(buffer_, &cur, gtk_text_buffer_get_insert(buffer_));
+            const long curOff = gtk_text_iter_get_offset(&cur);
+            const int curLine = gtk_text_iter_get_line(&cur);
+            const int curCol = gtk_text_iter_get_line_offset(&cur);
+
+            g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
+            gtk_text_buffer_begin_user_action(buffer_);
+            GtkTextIter a, b;
+            gtk_text_buffer_get_iter_at_offset(buffer_, &a, (int)from);
+            gtk_text_buffer_get_iter_at_offset(buffer_, &b, (int)to);
+            gtk_text_buffer_delete(buffer_, &a, &b);
+            gtk_text_buffer_insert(buffer_, &a, content.data() + p,
+                                   (int)(content.size() - p - q));
+            gtk_text_buffer_end_user_action(buffer_);
+            g_signal_handlers_unblock_by_func(buffer_, (gpointer)onBufferChanged, this);
+
+            if (curOff > from && curOff < to) {
+                GtkTextIter back;
+                const int lines = gtk_text_buffer_get_line_count(buffer_);
+                gtk_text_buffer_get_iter_at_line(buffer_, &back, std::min(curLine, lines - 1));
+                const int len = gtk_text_iter_get_chars_in_line(&back);
+                const bool last = gtk_text_iter_get_line(&back) == lines - 1;
+                gtk_text_iter_set_line_offset(&back,
+                    std::min(curCol, std::max(0, last ? len : len - 1)));
+                gtk_text_buffer_place_cursor(buffer_, &back);
+            }
+        }
+        source_ = content;
+    }
+    markDirty(false);
+
+    restoreScroll(keep);
+    g_idle_add_full(G_PRIORITY_LOW, [](gpointer d) -> gboolean {
+        restoreScroll(static_cast<ScrollKeep*>(d));
+        return G_SOURCE_REMOVE;
+    }, keep, [](gpointer d) {
+        auto* k = static_cast<ScrollKeep*>(d);
+        g_object_unref(k->h);
+        g_object_unref(k->v);
+        delete k;
+    });
 }
 
 // ---------------------------------------------------------------- comments

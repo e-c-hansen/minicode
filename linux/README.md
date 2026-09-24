@@ -15,13 +15,18 @@ compared with the macOS app, and the order to do it in, see `HANDOFF.md`.
 - `meson.build`, `meson_options.txt` — primary build (Meson). Auto-detects VTE,
   WebKit and poppler-glib and builds the panels only when present.
 - `Makefile` — plain pkg-config fallback that builds at least the core viewer.
-- `src/main.cpp` — the GtkApplication: window, menu, accelerators, the
+- `src/main.cpp` — the GtkApplication: its windows (each an `App`), the
+  menu, the accelerators and which of them the terminal gets, the
   sidebar/editor split, status bar, and the collapsible panels.
-- `src/FileTree.{h,cpp}` — the sidebar file browser (GtkDirectoryList +
-  GtkTreeListModel + GtkListView), lazy-loaded and live-refreshing via the
-  GFileMonitor that GtkDirectoryList runs internally.
+- `src/FileTree.{h,cpp}` — the sidebar file browser (a list per folder +
+  GtkTreeListModel + GtkListView), lazy-loaded and live-refreshing from a
+  GFileMonitor per folder (GtkDirectoryList's own monitoring reports nothing
+  on GTK 4.22; see `HANDOFF.md`, "Traps").
 - `src/Editor.{h,cpp}` — the GtkTextView editor: file loading, syntax
-  highlighting via GtkTextTags, and the Markdown preview toggle.
+  highlighting via GtkTextTags, the Markdown preview toggle, reloading when
+  the file changes on disk, and the live color picker for the settings file.
+- `src/ScrollSettle.h` — ends a scroll animation before the editor is hidden,
+  working around a GTK 4.22 fault that logged two criticals.
 - `src/MediaView.{h,cpp}` — images and PDFs in the editor's slot: a
   `GtkPicture` for images, a `PdfView` for PDFs, and a `GFileMonitor` that
   reloads them when the file changes on disk.

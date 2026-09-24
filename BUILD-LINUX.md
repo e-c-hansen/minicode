@@ -54,8 +54,9 @@ Verified by running it:
   (`linux/dev/gtk-dev.sh`, see its README):
   - Ctrl+, creates `~/.config/minicode/settings.conf` with every setting
     commented out and opens it, with each color shown as a swatch. Clicking a
-    swatch opens the GTK color dialog, and the choice is written into the line,
-    uncommented, and saved.
+    swatch opened the GTK color dialog then, and the choice was written into
+    the line, uncommented, and saved. Since item 8 of `linux/HANDOFF.md` it
+    opens a popover that applies picks live instead (checked below).
   - Edits to the file apply while the app runs. Per-panel opacity was measured
     in screenshot pixels against a known backdrop and matches the setting for
     the editor, file tree, terminal, status bar and menu bar. Text colors, the
@@ -261,13 +262,78 @@ Verified by running it:
     parented to the text view, sent GtkTextView's dispose into an endless
     loop of "GtkPopover is not a child of GtkTextView" warnings, so the
     window never closed. They are now removed when the view is unrealized.
-  - Seen in the full run and not explained: opening the PNG, just after
+  - Seen in the full run and not explained then: opening the PNG, just after
     t.py, logged two GTK criticals (`g_signal_handler_disconnect: assertion
     'handler_id > 0'` and `gdk_frame_clock_idle_end_updating`), from inside
     GTK's unmap of the text view when the editor's stack switches to the
-    image. Shorter runs that opened a C++ file and then the PNG, with
-    language servers on or off, with the completion list or the hover
-    popover shown first, did not log them.
+    image. Explained and fixed in item 8, below: the editor was still
+    scrolling to the caret when its slot was switched.
+- The smaller gaps, item 8 of `linux/HANDOFF.md` (September 2026, on the
+  ThinkPad under GNOME Wayland, GTK 4.22.4, VTE 0.84, clangd 21, tectonic
+  0.17). A temporary `MINICODE_ITEM8TEST` hook, since removed, ran inside the
+  real app under its own application id, with scratch `HOME`, config, cache
+  and settings, `GSETTINGS_BACKEND=memory` (the color chooser writes its
+  custom colors to GSettings), and a scratch copy of the tectonic cache. It
+  activated the window and application actions, set the find bar's text,
+  emitted the swatch's click gesture, pressed alert buttons, and wrote files
+  from outside. 81 checks, all passing, with no GTK criticals or warnings
+  from MiniCode in the log and no clangd, tectonic or MiniCode left after.
+  The one warning in the log is WebKit's web process failing to release
+  its bus name as the app exits.
+  - Previous File: with no history it opens nothing; main.cpp then vec.h,
+    and Ctrl+Tab goes back and forth; from an image back to vec.h and
+    forward to the image again.
+  - Find Next and Previous: with no query, Ctrl+G opens the find bar. With
+    "vec2", the matches on lines 4, 5 and 5 come in order, Ctrl+G wraps to
+    the top, Ctrl+Shift+G wraps to the last and steps back, and the entry's
+    own previous-match does the same. No match leaves the selection alone.
+  - Show Hidden Files: dotfiles hidden by default, in the root and inside an
+    expanded folder; Ctrl+H flips the action's state (the menu's check
+    mark), shows them in both places and keeps the folder expanded. A new
+    window starts with the setting as it is, and toggling it again hides
+    them in both windows.
+  - New Window: a second window on the same folder, with its own editor,
+    tree and language server session (two clangd processes, one per
+    window) and its own file. Closing it with unsaved edits asks "Save
+    changes?": Cancel keeps it, Don't Save closes it and leaves the file
+    alone on disk, while the first window and the application carry on. Its
+    clangd was stopped, and the LaTeX preview it had open (tectonic
+    running) went with it: no tectonic afterwards and no hidden sibling.
+    The terminal, browser and Find in Folder panel it had open were torn
+    down without a warning.
+  - A second `minicode sub` run from outside opened a new window on `sub`,
+    and `minicode sub/plain.txt` opened the file in that window rather than
+    a third. Ctrl+Q at the end closed every window and the process exited.
+  - The terminal's keys: with the terminal focused, the plain Ctrl
+    accelerators and F12 are all unbound (14 checked: Ctrl+B, F, H, I, O,
+    Space, W, N, G, Q, S, /, comma and F12), while 12 Ctrl+Shift, Ctrl+Alt
+    and pane keys stay bound, and Ctrl+Shift+T and Ctrl+` both stay for
+    the terminal. Focusing the editor (Ctrl+1) or the tree (Ctrl+0) brings
+    them all back, and so does closing the window whose terminal had them.
+  - Reload on external change: a 300-line file changed on disk in its first
+    and 290th lines reloaded by itself, stayed clean, and kept the caret
+    (line 151, column 4) and the scroll position (1,500 pixels) exactly; so
+    did a whole-file rewrite through an atomic rename. MiniCode's own save
+    changed nothing. With unsaved edits, a change on disk asked Keep Mine or
+    Reload and replaced nothing before the answer; Reload took the disk's
+    text and left the buffer clean, Keep Mine kept the edits, the same
+    version on disk was not asked about twice, and a rewrite with the same
+    contents was no change. A Markdown preview re-rendered.
+  - Live color picking: a click on the `# editor.background` swatch opens
+    the popover with the chooser on the swatch's color (#1E1E1E). Four
+    colors set in a row, like a drag, rewrote the line at once, uncommented,
+    were not yet saved, then were saved 150 ms after the last one, and the
+    settings applied: the editor's background, read back from the settings,
+    was the picked #CC4080, and a snapshot of the window showed it. Closing
+    the popover saves the last pick at once and takes the popover off the
+    view. Snapshots of the popover and the window were looked at.
+  - GTK criticals: a separate run scrolled the editor with an animation and
+    then switched to a PNG, a GIF, a PDF, a `.tex`, the browser, or hid the
+    editor, 0 to 100 ms later, 60 times. Before the fix it logged the two
+    criticals from the language server run 20 times, with a backtrace (under
+    `G_DEBUG=fatal-criticals` in gdb) inside GTK's unmap of the editor's
+    scrolled window, called from `Editor::openFile`. After it, two runs
+    logged none. The cause is in `linux/src/ScrollSettle.h`.
 
 Not verified:
 
@@ -311,6 +377,18 @@ Not verified:
   asked before it, and the re-rooting done after it).
 - Open Containing Folder, which was not run, because it opens a file manager
   window.
+- For item 8: every new shortcut as a real key press. The accelerator table
+  was read back from GTK and the actions were activated, so Ctrl+N, Ctrl+W,
+  Ctrl+Q, Ctrl+Tab, Ctrl+G, Ctrl+Shift+G, Shift+Enter in the find bar,
+  Ctrl+1, Ctrl+` and Ctrl+H were never pressed. Nor was a key typed into
+  the terminal: that bash really receives Ctrl+W, Ctrl+H and the rest rests
+  on GTK not binding them any more, which was checked, not on a keystroke.
+  Ctrl+Shift+C and Ctrl+Shift+V in the terminal were compiled, not tried.
+  Whether F10 (GTK's menu bar key) still reaches the terminal was not
+  looked at. How the color popover looks in place (it follows the system's
+  GTK theme, light on a stock Ubuntu, over the dark editor), dragging in it
+  with a mouse, the Keep Mine / Reload alert on screen, where GNOME puts a
+  second window, and GNOME's "New Window" dock item all need a person.
 
 ### Notes on the things that were most at risk
 
@@ -465,9 +543,12 @@ the app in every user's menu.
 
 `minicode` is a single-instance GApplication, so launching it again while it is
 running does not start a second process. It does still do what you asked:
-the argument is forwarded to the running instance, which re-roots its sidebar,
-opens the file if you named one, and raises its window. There is only ever one
-window, so a second invocation reuses it rather than opening another.
+the argument is forwarded to the running instance, which opens a new window on
+that folder, or raises the window that already has it open and shows the file
+there if you named one. GNOME's "New Window" on the dock icon runs the
+launcher again, so it opens a window too. Inside the app, Ctrl+N opens a
+window on the current folder. The application quits when its last window
+closes.
 
 ## Running
 
@@ -496,37 +577,56 @@ These mirror the macOS set, with Ctrl standing in for Command.
 The settings file (Ctrl+,) is the same `~/.config/minicode/settings.conf` the
 macOS build reads (it follows `$XDG_CONFIG_HOME`). Every panel's background,
 opacity and text color work the same way, with two differences: on Linux the
-title bar settings also color the menu bar, and `window.blur` is ignored,
-because Linux desktops don't give apps a way to blur what is behind a window.
-Transparency needs a compositor, which GNOME always has. GTK's color dialog
-applies a picked color when you press Select, rather than live while you drag.
+title bar settings also color the menu bar, and `window.blur` is ignored.
+GTK has no way to ask for it, and GNOME's compositor offers no protocol for
+it either: Mutter 50.1 on the ThinkPad advertises neither the older KDE blur
+protocol nor `ext-background-effect-v1`, the one in wayland-protocols'
+staging set (checked by listing the Wayland globals it offers). KDE
+Plasma's compositor has a blur protocol of its own, so a Plasma-only blur
+through GDK's Wayland surface looks possible; it was not tried or built. Transparency needs a compositor, which
+GNOME always has. A click on a color swatch opens a color picker under it,
+and the color applies live while you drag, as on the Mac.
 
 | Shortcut          | Action                     |
 | ----------------- | -------------------------- |
+| Ctrl N            | New window on the same folder |
+| Ctrl W            | Close the window           |
+| Ctrl Q            | Quit (every window)        |
 | Ctrl O            | Open folder                |
 | Ctrl S            | Save                       |
 | Ctrl Alt N        | New file                   |
 | Ctrl Shift N      | New folder                 |
 | Ctrl F            | Find in the current file   |
+| Ctrl G, Ctrl Shift G | Find next, find previous (also Enter and Shift Enter in the find bar) |
 | Ctrl Shift F      | Find in the folder         |
 | Ctrl Shift P      | Toggle the Markdown or LaTeX preview |
 | Ctrl Shift S      | Export the typeset PDF of a LaTeX file |
 | Ctrl Shift H      | Show or hide the shortcut hints |
 | Ctrl B            | Toggle the sidebar         |
 | Ctrl Shift E      | Collapse or restore the editor |
-| Ctrl Shift T      | Toggle the terminal panel  |
+| Ctrl Shift T, Ctrl ` | Toggle the terminal panel |
 | Ctrl /            | Comment or uncomment the selected lines |
 | Ctrl ,            | Open the settings file     |
 | Ctrl Shift B      | Toggle the browser panel   |
-| Ctrl H            | Show or hide dotfiles      |
+| Ctrl H            | Show or hide dotfiles, in every window |
 | Ctrl 0            | Focus the file tree        |
+| Ctrl 1            | Focus the editor           |
+| Ctrl Tab          | Back to the previous file  |
 | Ctrl Space        | Complete, with a language server |
 | F12, Ctrl click   | Go to definition           |
 | Ctrl I            | Show the type and documentation under the cursor |
 | F2                | Rename the selected item, in the tree |
 | Delete            | Move the selected item to the Trash, in the tree |
+| Ctrl Shift C, Ctrl Shift V | Copy and paste, in the terminal |
 
 F2 and Delete work only while the file tree has the keyboard, so Delete in the
-editor still deletes text. The tree's right-click menu and the File menu both
+editor still deletes text.
+
+While the terminal has the keyboard, the plain Ctrl shortcuts (Ctrl B, F, G,
+H, I, N, O, Q, S, W, Space, slash and comma) and F12 belong to the shell, so
+readline, vim and emacs get them: Ctrl W deletes a word, Ctrl H is backspace.
+Everything with Shift or Alt in it still works there, and so do the keys that
+move between panes: Ctrl `, Ctrl 0, Ctrl 1 and Ctrl Tab. The Mac has no such
+split, since its shortcuts use Command and the terminal gets Control. The tree's right-click menu and the File menu both
 have New File, New Folder, Rename, Move to Trash, Open Containing Folder and
 Copy Path.

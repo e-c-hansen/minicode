@@ -39,6 +39,16 @@
 //
 // The always-built target is the tree + editor + markdown viewer. Terminal and
 // Browser only exist when their libraries were found at configure time.
+//
+// Windows. Everything above belongs to one window, an App, and there can be
+// several (Ctrl+N, or a second `minicode <path>` from a shell): each has its
+// own tree, editor, terminal, browser, Find in Folder panel and language
+// server session, as each macOS window has its own EditorController. What
+// they share lives in `g` below: the settings file and stylesheet, the menu
+// bar, the accelerators, and whether dotfiles are shown. The application
+// quits when its last window closes, which is GtkApplication's own rule and
+// the Mac's applicationShouldTerminateAfterLastWindowClosed. A closing
+// window is taken apart in onWindowRemoved while its widgets still exist.
 #include <gtk/gtk.h>
 
 #include "AppSettings.h"
@@ -51,13 +61,14 @@
 #include "Search.h"
 #include "Lsp.h"
 
+#include <algorithm>
 #include <functional>
 #include <string>
+#include <vector>
 #include <unistd.h>
 #include <limits.h>
 
 struct App {
-    GtkApplication* gapp = nullptr;
     GtkWidget*      window = nullptr;
     GtkWidget*      hpaned = nullptr;
     GtkWidget*      statusLabel = nullptr;
@@ -65,8 +76,6 @@ struct App {
     GtkWidget*      searchEntry = nullptr;
     GtkWidget*      settingsLabel = nullptr;   // first problem in the settings file
 
-    AppSettings*    settings = nullptr;
-    GtkCssProvider* css = nullptr;
     int  sidebarWidth = 240;      // where the sidebar divider was before collapsing
     bool adjustingPaned = false;  // a snap is moving a divider; ignore the notify
 
@@ -96,14 +105,40 @@ struct App {
     GtkWidget* hintsHint  = nullptr;
 
     std::string rootDir;
-    // Set when the command line named a file rather than a directory: the file
-    // to show once the window exists. See resolveStartupPath.
-    std::string startupFile;
     bool sidebarVisible = true;
 
     bool prompting = false;   // a "Save changes?" alert is up
     bool closing = false;     // the user answered it for a window close
+
+    // Files opened in this window, newest first, for Previous File (the
+    // Mac's _recent in EditorController.mm).
+    std::vector<std::string> recent;
+
+    // The window is gone and everything in it deleted. The struct itself is
+    // kept, a few hundred bytes, so an answer arriving later from a dialog
+    // that was up can see that and do nothing.
+    bool dead = false;
 };
+
+namespace {
+// What every window shares.
+struct Shared {
+    GtkApplication* gapp = nullptr;
+    AppSettings*    settings = nullptr;   // one file, watched once
+    GtkCssProvider* css = nullptr;        // one stylesheet for the display
+    GMenuModel*     treeMenu = nullptr;   // the file tree's right-click menu
+    std::vector<App*> windows;            // open windows, oldest first
+    // Dotfiles in the tree: the application's setting, as the Mac's
+    // gShowHidden is one flag for every window.
+    bool showHidden = false;
+    // The active window's terminal has the keyboard, so plain Ctrl keys are
+    // the shell's (see "Keys in the terminal" below).
+    bool shellKeys = false;
+};
+Shared g;
+}  // namespace
+
+static App* newWindow(const std::string& root, const std::string& file);
 
 // Defined with the rest of the hints panel further down; the pane toggles call
 // it so an open panel never reports stale state.
@@ -332,11 +367,15 @@ static void confirmUnsaved(App* app, std::function<void()> proceed,
             a->prompting = false;
             const int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src),
                                                               res, nullptr);
+            if (a->dead) { delete pd; return; }
             bool go = choice == 1;                    // Don't Save
             if (choice == 0) go = saveCurrent(a);     // Save, unless it failed
             if (go) pd->proceed();
             else if (pd->cancelled) pd->cancelled();
             delete pd;
+            // A change on disk that arrived while this was up could not be
+            // asked about then.
+            if (!a->dead) a->editor->checkExternalChange();
         }, p);
     g_object_unref(dlg);
 }
@@ -349,11 +388,57 @@ static void reselectCurrentFile(App* app) {
     else app->tree->clearSelection();
 }
 
+// Previous File's list: newest first, each file once. The Mac adds a file
+// when it opened (text, image or PDF), not when it could not be shown.
+static void noteRecent(App* app, const std::string& path) {
+    auto& r = app->recent;
+    r.erase(std::remove(r.begin(), r.end(), path), r.end());
+    r.insert(r.begin(), path);
+    if (r.size() > 50) r.resize(50);
+}
+
 static void openFileNow(App* app, const std::string& path) {
     showEditorArea(app);   // opening a file must not disappear into a hidden pane
-    app->editor->openFile(path);
+    if (app->editor->openFile(path)) noteRecent(app, path);
     updateTitle(app);
     refreshHints(app);   // the Markdown line depends on the open file
+}
+
+// A file changed on disk while the buffer has edits of its own: the Mac's
+// question, "Keep Mine" or "Reload" (EditorController.mm -checkExternalChange).
+// Returns false when another question is already up; the editor asks again
+// on its next check.
+static bool askExternalChange(void* userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->dead || app->prompting) return false;
+    app->prompting = true;
+    const std::string name = baseName(app->editor->currentPath());
+    GtkAlertDialog* dlg = gtk_alert_dialog_new("“%s” changed on disk.", name.c_str());
+    gtk_alert_dialog_set_detail(dlg, "You have unsaved changes here. Keep your version, "
+                                     "or reload the file from disk and lose them?");
+    const char* buttons[] = {"Keep Mine", "Reload", nullptr};
+    gtk_alert_dialog_set_buttons(dlg, buttons);
+    gtk_alert_dialog_set_default_button(dlg, 0);
+    gtk_alert_dialog_set_cancel_button(dlg, 0);
+    gtk_alert_dialog_set_modal(dlg, TRUE);
+    gtk_alert_dialog_choose(dlg, GTK_WINDOW(app->window), nullptr,
+        [](GObject* src, GAsyncResult* res, gpointer data) {
+            App* a = static_cast<App*>(data);
+            a->prompting = false;
+            const int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src),
+                                                              res, nullptr);
+            if (a->dead) return;
+            if (choice == 1) {
+                if (!a->editor->reloadFromDisk())
+                    showError(a, "Could not reload “" +
+                                 baseName(a->editor->currentPath()) + "”",
+                              "It can no longer be read as text. Your version is still here.");
+                updateTitle(a);
+            }
+            a->editor->checkExternalChange();   // anything newer since
+        }, app);
+    g_object_unref(dlg);
+    return true;
 }
 
 // Open a file, asking "Save changes?" first when the open one has edits. The
@@ -426,6 +511,7 @@ static void act_open(GSimpleAction*, GVariant*, gpointer userp) {
                 GFile* folder = gtk_file_dialog_select_folder_finish(
                     GTK_FILE_DIALOG(src), res, nullptr);
                 if (!folder) return;   // cancelled
+                if (a->dead) { g_object_unref(folder); return; }
                 char* path = g_file_get_path(folder);
                 // The edits were dealt with before the dialog opened, but the
                 // user may have typed more while it was up.
@@ -465,8 +551,13 @@ static void act_toggle_sidebar(GSimpleAction*, GVariant*, gpointer userp) {
     refreshHints(app);
 }
 
-static void act_toggle_hidden(GSimpleAction*, GVariant*, gpointer userp) {
-    static_cast<App*>(userp)->tree->toggleHidden();
+// Ctrl+H, View > Show Hidden Files: the Mac's Shift+Cmd+. (toggleHiddenFiles:
+// flips one global flag). An application action with a check-box state, so
+// every window's tree and every window's menu agree.
+static void onShowHiddenChanged(GSimpleAction* action, GVariant* value, gpointer) {
+    g_simple_action_set_state(action, value);
+    g.showHidden = g_variant_get_boolean(value);
+    for (App* a : g.windows) a->tree->setShowHidden(g.showHidden);
 }
 
 static void act_toggle_terminal(GSimpleAction*, GVariant*, gpointer userp) {
@@ -542,12 +633,12 @@ static void act_toggle_comment(GSimpleAction*, GVariant*, gpointer userp) {
 // Ctrl+, : open the settings file, writing the commented defaults first.
 static void act_settings(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    if (!app->settings->ensureFileExists()) {
+    if (!g.settings->ensureFileExists()) {
         gtk_label_set_text(GTK_LABEL(app->settingsLabel),
-                           ("Could not create " + app->settings->path()).c_str());
+                           ("Could not create " + g.settings->path()).c_str());
         return;
     }
-    openFileThen(app, app->settings->path(),
+    openFileThen(app, g.settings->path(),
                  [app] { gtk_widget_grab_focus(app->editor->textView()); });
 }
 
@@ -556,6 +647,66 @@ static void act_find(GSimpleAction*, GVariant*, gpointer userp) {
     gboolean on = gtk_search_bar_get_search_mode(GTK_SEARCH_BAR(app->searchBar));
     gtk_search_bar_set_search_mode(GTK_SEARCH_BAR(app->searchBar), !on);
     if (!on) gtk_widget_grab_focus(app->searchEntry);
+}
+
+// Defined with the find bar's search further down.
+static bool findStep(App* app, bool forward);
+
+// Ctrl+G and Ctrl+Shift+G: the next or previous match of what the find bar
+// holds, from the selection, wrapping at either end, as the Mac's Find Next
+// and Find Previous do (Command G, Shift Command G). They work with the bar
+// closed too. With nothing to look for, they open the bar instead.
+static void act_find_next(GSimpleAction*, GVariant*, gpointer userp) {
+    findStep(static_cast<App*>(userp), true);
+}
+
+static void act_find_previous(GSimpleAction*, GVariant*, gpointer userp) {
+    findStep(static_cast<App*>(userp), false);
+}
+
+// Ctrl+N: a new window on this window's folder, as the Mac's New Window
+// (Command N) opens one on the front window's root.
+static void act_new_window(GSimpleAction*, GVariant*, gpointer userp) {
+    newWindow(static_cast<App*>(userp)->rootDir, "");
+}
+
+// Ctrl+W: this window only, asking "Save changes?" first like any close.
+static void act_close_window(GSimpleAction*, GVariant*, gpointer userp) {
+    gtk_window_close(GTK_WINDOW(static_cast<App*>(userp)->window));
+}
+
+// Ctrl+Q: every window, each asking about its own unsaved edits. One that is
+// cancelled stays open, and so does the application with it.
+static void act_quit(GSimpleAction*, GVariant*, gpointer) {
+    const std::vector<App*> open = g.windows;   // closing edits the list
+    for (App* a : open)
+        if (!a->dead) gtk_window_close(GTK_WINDOW(a->window));
+}
+
+// Ctrl+Tab: the file that was open before this one (the Mac's Previous File,
+// Control Tab). Pressed again, it goes back.
+static void act_previous_file(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->recent.size() < 2) { gtk_widget_error_bell(app->window); return; }
+    openFileCb(app->recent[1], app);
+}
+
+// Ctrl+1: the editor gets the keyboard, shown first if it was hidden (the
+// Mac's Focus Editor, Command 1).
+static void act_focus_editor(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    showEditorArea(app);
+#ifdef MINICODE_ENABLE_BROWSER
+    // The browser shares the editor's half; the editor is what was asked for.
+    if (app->browserRevealer &&
+        gtk_revealer_get_reveal_child(GTK_REVEALER(app->browserRevealer))) {
+        gtk_revealer_set_reveal_child(GTK_REVEALER(app->browserRevealer), FALSE);
+        gtk_widget_set_visible(app->editor->widget(), TRUE);
+        gtk_widget_set_vexpand(app->browserRevealer, FALSE);
+    }
+#endif
+    gtk_widget_grab_focus(app->editor->textView());
+    refreshHints(app);
 }
 
 // ------------------------------------------------------ file tree actions
@@ -674,6 +825,10 @@ static void act_rename(GSimpleAction*, GVariant*, gpointer userp) {
             app->editor->setPath(dst + cur.substr(src.size()));
             updateTitle(app);
         }
+        // Previous File follows the rename, in every window.
+        for (App* a : g.windows)
+            for (std::string& r : a->recent)
+                if (isInside(r, src)) r = dst + r.substr(src.size());
         app->tree->revealPath(dst);
     });
 }
@@ -695,6 +850,12 @@ static void trashNow(App* app, const std::string& path) {
         app->editor->closeFile();
         updateTitle(app);
         refreshHints(app);
+    }
+    for (App* a : g.windows) {
+        auto& r = a->recent;
+        r.erase(std::remove_if(r.begin(), r.end(),
+                               [&](const std::string& p) { return isInside(p, path); }),
+                r.end());
     }
     app->tree->clearSelection();
 }
@@ -723,7 +884,8 @@ static void act_trash(GSimpleAction*, GVariant*, gpointer userp) {
     gtk_alert_dialog_choose(dlg, GTK_WINDOW(app->window), nullptr,
         [](GObject* src, GAsyncResult* res, gpointer data) {
             auto* t = static_cast<std::pair<App*, std::string>*>(data);
-            if (gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, nullptr) == 0)
+            if (gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, nullptr) == 0 &&
+                !t->first->dead)
                 trashNow(t->first, t->second);
             delete t;
         }, target);
@@ -744,7 +906,8 @@ static void act_reveal(GSimpleAction*, GVariant*, gpointer userp) {
             GError* err = nullptr;
             if (!gtk_file_launcher_open_containing_folder_finish(
                     GTK_FILE_LAUNCHER(src), res, &err) &&
-                !g_error_matches(err, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED))
+                !g_error_matches(err, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) &&
+                !static_cast<App*>(up)->dead)
                 showError(static_cast<App*>(up), "Could not open the containing folder",
                           err ? err->message : "");
             g_clear_error(&err);
@@ -823,9 +986,9 @@ static void act_find_in_folder(GSimpleAction*, GVariant*, gpointer userp) {
 // ---------------------------------------------------------------- find impl
 
 // Find the next match at or after `from`, wrapping to the top of the buffer.
-static void findFrom(App* app, const GtkTextIter& from) {
+static bool findFrom(App* app, const GtkTextIter& from) {
     const char* q = gtk_editable_get_text(GTK_EDITABLE(app->searchEntry));
-    if (!q || !*q) return;
+    if (!q || !*q) return false;
 
     GtkTextBuffer* buf = app->editor->buffer();
     GtkTextIter mstart, mend;
@@ -837,11 +1000,35 @@ static void findFrom(App* app, const GtkTextIter& from) {
         found = gtk_text_iter_forward_search(
             &top, q, GTK_TEXT_SEARCH_CASE_INSENSITIVE, &mstart, &mend, nullptr);
     }
-    if (!found) return;
+    if (!found) return false;
 
     gtk_text_buffer_select_range(buf, &mstart, &mend);
     gtk_text_view_scroll_to_iter(GTK_TEXT_VIEW(app->editor->textView()),
                                  &mstart, 0.1, FALSE, 0, 0);
+    return true;
+}
+
+// The last match that ends before `before`, wrapping to the bottom.
+static bool findBackFrom(App* app, const GtkTextIter& before) {
+    const char* q = gtk_editable_get_text(GTK_EDITABLE(app->searchEntry));
+    if (!q || !*q) return false;
+
+    GtkTextBuffer* buf = app->editor->buffer();
+    GtkTextIter mstart, mend;
+    gboolean found = gtk_text_iter_backward_search(
+        &before, q, GTK_TEXT_SEARCH_CASE_INSENSITIVE, &mstart, &mend, nullptr);
+    if (!found) {
+        GtkTextIter bottom;
+        gtk_text_buffer_get_end_iter(buf, &bottom);
+        found = gtk_text_iter_backward_search(
+            &bottom, q, GTK_TEXT_SEARCH_CASE_INSENSITIVE, &mstart, &mend, nullptr);
+    }
+    if (!found) return false;
+
+    gtk_text_buffer_select_range(buf, &mstart, &mend);
+    gtk_text_view_scroll_to_iter(GTK_TEXT_VIEW(app->editor->textView()),
+                                 &mstart, 0.1, FALSE, 0, 0);
+    return true;
 }
 
 // Typing in the find bar re-searches from the start of the current selection,
@@ -860,21 +1047,41 @@ static void onSearchChanged(GtkSearchEntry*, gpointer userp) {
     findFrom(app, start);
 }
 
-// Enter means "next match": start one character past the current selection,
-// otherwise forward_search finds the same match again and Enter does nothing.
-static void onSearchNext(GtkSearchEntry*, gpointer userp) {
-    App* app = static_cast<App*>(userp);
+// One step through the matches. Forward starts one character past the start
+// of the selection, otherwise forward_search finds the same match again and
+// Enter does nothing; backward ends before the selection's start.
+static bool findStep(App* app, bool forward) {
+    const char* q = gtk_editable_get_text(GTK_EDITABLE(app->searchEntry));
+    if (!q || !*q) {
+        // Nothing to look for yet: open the bar to type it in.
+        gtk_search_bar_set_search_mode(GTK_SEARCH_BAR(app->searchBar), TRUE);
+        gtk_widget_grab_focus(app->searchEntry);
+        return false;
+    }
     GtkTextBuffer* buf = app->editor->buffer();
     GtkTextIter selStart, selEnd;
-    if (gtk_text_buffer_get_selection_bounds(buf, &selStart, &selEnd)) {
-        gtk_text_iter_forward_char(&selStart);
-        findFrom(app, selStart);
+    const bool sel = gtk_text_buffer_get_selection_bounds(buf, &selStart, &selEnd);
+    if (!sel)
+        gtk_text_buffer_get_iter_at_mark(buf, &selStart, gtk_text_buffer_get_insert(buf));
+    bool found;
+    if (forward) {
+        if (sel) gtk_text_iter_forward_char(&selStart);
+        found = findFrom(app, selStart);
     } else {
-        GtkTextIter insert;
-        gtk_text_buffer_get_iter_at_mark(buf, &insert,
-                                         gtk_text_buffer_get_insert(buf));
-        findFrom(app, insert);
+        found = findBackFrom(app, selStart);
     }
+    if (!found) gtk_widget_error_bell(app->editor->textView());
+    return found;
+}
+
+// Enter and Ctrl+G in the find bar: the next match. Shift+Enter and
+// Ctrl+Shift+G: the previous one.
+static void onSearchNext(GtkSearchEntry*, gpointer userp) {
+    findStep(static_cast<App*>(userp), true);
+}
+
+static void onSearchPrevious(GtkSearchEntry*, gpointer userp) {
+    findStep(static_cast<App*>(userp), false);
 }
 
 // ---------------------------------------------------------- shortcut hints
@@ -892,10 +1099,19 @@ static std::string hintsText(App* app) {
     s += "Ctrl O         Open folder\n";
     s += "Ctrl S         Save\n";
     s += "Ctrl F         Find in file\n";
+    s += "Ctrl G         Find next (Shift: previous)\n";
     s += "Ctrl Shift F   Find in folder\n";
     s += "Ctrl /         Toggle comment\n";
     s += "Ctrl ,         Settings\n";
     s += "Ctrl 0         Focus the file tree\n";
+    s += "Ctrl 1         Focus the editor\n";
+    s += "Ctrl Tab       Previous file\n";
+
+    s += "\nWindows\n";
+    s += "────────────────────────────────────────\n";
+    s += "Ctrl N         New window\n";
+    s += "Ctrl W         Close window\n";
+    s += "Ctrl Q         Quit\n";
 
     s += "\nFiles\n";
     s += "────────────────────────────────────────\n";
@@ -903,7 +1119,8 @@ static std::string hintsText(App* app) {
     s += "Ctrl Shift N   New folder\n";
     s += "F2             Rename (in the tree)\n";
     s += "Delete         Move to Trash (in the tree)\n";
-    s += "Ctrl H         Show or hide dotfiles\n";
+    s += std::string("Ctrl H         Hidden files (") +
+         (g.showHidden ? "shown" : "hidden") + ")\n";
 
     s += "\nLanguage servers\n";
     s += "────────────────────────────────────────\n";
@@ -920,6 +1137,7 @@ static std::string hintsText(App* app) {
     s += std::string("Ctrl Shift T   Terminal    (") +
          (app->termPanel && gtk_widget_get_visible(app->termPanel) ? "open" : "hidden") +
          ")\n";
+    s += "Ctrl `         Terminal, too\n";
 #endif
 #ifdef MINICODE_ENABLE_BROWSER
     s += std::string("Ctrl Shift B   Browser     (") +
@@ -936,6 +1154,19 @@ static std::string hintsText(App* app) {
              (app->editor->inPreview() ? "preview" : "source") + ")\n";
         s += "Ctrl Shift S   Export PDF\n";
     }
+
+#ifdef MINICODE_ENABLE_TERMINAL
+    s += "\nIn the terminal\n";
+    s += "────────────────────────────────────────\n";
+    s += "Plain Ctrl keys go to the shell (Ctrl C,\n";
+    s += "Ctrl W, Ctrl H...). These still work:\n";
+    s += "Ctrl Shift C   Copy\n";
+    s += "Ctrl Shift V   Paste\n";
+    s += "Ctrl Shift …   Every Ctrl Shift shortcut\n";
+    s += "Ctrl ` 0 1     Panes: terminal, tree, editor\n";
+    s += "Ctrl Tab       Previous file\n";
+    s += "Ctrl Alt N     New file\n";
+#endif
 
     s += "\nCtrl Shift H   Hide these hints";
     return s;
@@ -983,41 +1214,151 @@ static void act_toggle_hints(GSimpleAction*, GVariant*, gpointer userp) {
 
 // ---------------------------------------------------------------- settings
 
-// Apply the settings file everywhere: the stylesheet, the editor's tags, the
-// terminal's colors, and the status-bar note about any bad lines.
-static void applySettings(App* app) {
-    const Settings& st = app->settings->settings();
-    if (!app->css) {
-        app->css = gtk_css_provider_new();
-        gtk_style_context_add_provider_for_display(
-            gdk_display_get_default(), GTK_STYLE_PROVIDER(app->css),
-            GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    }
-    gtk_css_provider_load_from_string(app->css, theme::stylesheet(st).c_str());
-    if (app->editor) app->editor->applySettings(st);
+// One window's share of the settings: the editor's tags, the language
+// servers, the terminal's colors, and the status-bar note about bad lines.
+static void applyWindowSettings(App* app) {
+    const Settings& st = g.settings->settings();
+    app->editor->applySettings(st);
     if (app->lsp) app->lsp->applySettings(st);   // restarts servers if lsp.* changed
 #ifdef MINICODE_ENABLE_TERMINAL
     if (app->terminal) app->terminal->applySettings(st);
 #endif
-    if (app->settingsLabel) {
-        const auto& errors = app->settings->errors();
-        std::string note;
-        if (!errors.empty()) {
-            note = "Settings " + errors.front();
-            if (errors.size() > 1)
-                note += " (and " + std::to_string(errors.size() - 1) + " more)";
-        }
-        gtk_label_set_text(GTK_LABEL(app->settingsLabel), note.c_str());
-        std::string tip;
-        for (const auto& e : errors) tip += (tip.empty() ? "" : "\n") + e;
-        gtk_widget_set_tooltip_text(app->settingsLabel,
-            errors.empty() ? nullptr : (app->settings->path() + "\n\n" + tip).c_str());
+    const auto& errors = g.settings->errors();
+    std::string note;
+    if (!errors.empty()) {
+        note = "Settings " + errors.front();
+        if (errors.size() > 1)
+            note += " (and " + std::to_string(errors.size() - 1) + " more)";
+    }
+    gtk_label_set_text(GTK_LABEL(app->settingsLabel), note.c_str());
+    std::string tip;
+    for (const auto& e : errors) tip += (tip.empty() ? "" : "\n") + e;
+    gtk_widget_set_tooltip_text(app->settingsLabel,
+        errors.empty() ? nullptr : (g.settings->path() + "\n\n" + tip).c_str());
+}
+
+// The stylesheet, which is the display's and so shared by every window.
+static void applyStylesheet() {
+    if (!g.css) {
+        g.css = gtk_css_provider_new();
+        gtk_style_context_add_provider_for_display(
+            gdk_display_get_default(), GTK_STYLE_PROVIDER(g.css),
+            GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    }
+    gtk_css_provider_load_from_string(g.css, theme::stylesheet(g.settings->settings()).c_str());
+}
+
+// The settings file changed on disk: every window follows.
+static void onSettingsChanged(void*) {
+    applyStylesheet();
+    for (App* a : g.windows) applyWindowSettings(a);
+}
+
+// ------------------------------------------------------------ keys in the terminal
+//
+// Application accelerators are handled by the window in the capture phase,
+// before the focused widget sees the key, so while the terminal had the
+// keyboard Ctrl+B, Ctrl+F, Ctrl+H, Ctrl+W and the rest were taken from bash,
+// readline, vim and emacs (Ctrl+H is backspace in many setups, Ctrl+W deletes
+// a word). The Mac never has this problem: its shortcuts are on Command, and
+// Control goes to the terminal.
+//
+// So while the active window's terminal has the focus, every accelerator that
+// is a plain Ctrl key, or a bare function key, is taken off, and they come
+// back when the focus leaves it. What stays: anything with Shift or Alt in it
+// (the pane toggles, Find in Folder, New Folder and New File, Export PDF, the
+// hints), and the pane keys Ctrl+`, Ctrl+0, Ctrl+1 and Ctrl+Tab, which a shell
+// has no use for and which are how you get out of the terminal without the
+// mouse. Accelerators belong to the application, not a window, but only the
+// active window gets keys, so its focus decides.
+
+struct Bind {
+    const char* action;
+    const char* accels[3];
+};
+
+static const Bind kBinds[] = {
+    {"win.newwindow",      {"<Ctrl>n"}},
+    {"win.close",          {"<Ctrl>w"}},
+    {"app.quit",           {"<Ctrl>q"}},
+    {"win.open",           {"<Ctrl>o"}},
+    {"win.save",           {"<Ctrl>s"}},
+    {"win.exportpdf",      {"<Ctrl><Shift>s"}},
+    {"win.newfile",        {"<Ctrl><Alt>n"}},
+    {"win.newfolder",      {"<Ctrl><Shift>n"}},
+    {"win.find",           {"<Ctrl>f"}},
+    {"win.findnext",       {"<Ctrl>g"}},
+    {"win.findprevious",   {"<Ctrl><Shift>g"}},
+    {"win.findinfolder",   {"<Ctrl><Shift>f"}},
+    {"win.togglepreview",  {"<Ctrl><Shift>p"}},
+    {"win.togglehints",    {"<Ctrl><Shift>h"}},
+    {"win.togglesidebar",  {"<Ctrl>b"}},
+    {"win.toggleeditor",   {"<Ctrl><Shift>e"}},
+    {"win.toggleterminal", {"<Ctrl><Shift>t", "<Ctrl>grave"}},
+    {"win.togglecomment",  {"<Ctrl>slash"}},
+    {"win.settings",       {"<Ctrl>comma"}},
+    {"win.togglebrowser",  {"<Ctrl><Shift>b"}},
+    {"app.showhidden",     {"<Ctrl>h"}},
+    {"win.focustree",      {"<Ctrl>0"}},
+    {"win.focuseditor",    {"<Ctrl>1"}},
+    {"win.previousfile",   {"<Ctrl>Tab"}},
+    {"win.complete",       {"<Ctrl>space"}},
+    {"win.definition",     {"F12"}},
+    {"win.hoverinfo",      {"<Ctrl>i"}},
+};
+
+// Is this accelerator the shell's while the terminal has the keyboard?
+static bool shellOwns(const char* accel) {
+    guint key = 0;
+    GdkModifierType mods = (GdkModifierType)0;
+    if (!gtk_accelerator_parse(accel, &key, &mods)) return false;
+    if (mods & (GDK_SHIFT_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK)) return false;
+    switch (key) {
+        case GDK_KEY_grave: case GDK_KEY_0: case GDK_KEY_1: case GDK_KEY_Tab:
+            return false;   // the pane keys
+        default:
+            return true;
     }
 }
 
-static void onSettingsChanged(void* userp) { applySettings(static_cast<App*>(userp)); }
+static void applyAccels(bool shell) {
+    for (const Bind& b : kBinds) {
+        const char* accels[4] = {nullptr, nullptr, nullptr, nullptr};
+        int n = 0;
+        for (const char* a : b.accels)
+            if (a && !(shell && shellOwns(a))) accels[n++] = a;
+        gtk_application_set_accels_for_action(g.gapp, b.action, accels);
+    }
+}
 
-// ---------------------------------------------------------------- menu / accels
+static App* appForWindow(GtkWindow* w) {
+    for (App* a : g.windows)
+        if (GTK_WINDOW(a->window) == w) return a;
+    return nullptr;
+}
+
+static void updateShellKeys() {
+    bool shell = false;
+#ifdef MINICODE_ENABLE_TERMINAL
+    if (App* a = appForWindow(gtk_application_get_active_window(g.gapp)))
+        shell = a->terminal && a->terminal->owns(gtk_root_get_focus(GTK_ROOT(a->window)));
+#endif
+    if (shell == g.shellKeys) return;
+    g.shellKeys = shell;
+    applyAccels(shell);
+}
+
+static void onFocusWidget(GObject*, GParamSpec*, gpointer) { updateShellKeys(); }
+
+// Coming back to a window is when the Mac looks for changes made elsewhere
+// (windowDidBecomeKey); the file monitor catches most of them sooner.
+static void onIsActive(GObject* w, GParamSpec*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    updateShellKeys();
+    if (!app->dead && gtk_window_is_active(GTK_WINDOW(w))) app->editor->checkExternalChange();
+}
+
+// ---------------------------------------------------------------- menu
 
 // New File, New Folder, Rename, Move to Trash, Reveal and Copy Path, in the
 // Mac's order and grouping. Shared by the File menu and the tree's
@@ -1042,32 +1383,43 @@ static GMenuModel* treeActionsMenu() {
     return G_MENU_MODEL(menu);
 }
 
-static void buildMenu(App* app) {
+// The menu bar is the application's, shown in every window.
+static void buildMenu() {
     GMenu* menuBar = g_menu_new();
 
     GMenu* fileMenu = g_menu_new();
     GMenu* top = g_menu_new();
+    g_menu_append(top, "New Window", "win.newwindow");
     g_menu_append(top, "Open Folder…", "win.open");
     g_menu_append(top, "Save", "win.save");
     g_menu_append(top, "Export PDF…", "win.exportpdf");
     g_menu_append_section(fileMenu, nullptr, G_MENU_MODEL(top));
     g_object_unref(top);
-    GMenuModel* treeItems = treeActionsMenu();
-    g_menu_append_section(fileMenu, nullptr, treeItems);
+    g.treeMenu = treeActionsMenu();
+    g_menu_append_section(fileMenu, nullptr, g.treeMenu);
+    GMenu* bottom = g_menu_new();
+    g_menu_append(bottom, "Close Window", "win.close");
+    g_menu_append(bottom, "Quit", "app.quit");
+    g_menu_append_section(fileMenu, nullptr, G_MENU_MODEL(bottom));
+    g_object_unref(bottom);
     g_menu_append_submenu(menuBar, "File", G_MENU_MODEL(fileMenu));
     g_object_unref(fileMenu);   // menuBar holds it now
 
-    // The same items on a right-click in the tree.
-    app->tree->setContextMenu(treeItems);
-    g_object_unref(treeItems);
-
     GMenu* editMenu = g_menu_new();
-    g_menu_append(editMenu, "Find", "win.find");
-    g_menu_append(editMenu, "Find in Folder…", "win.findinfolder");
-    g_menu_append(editMenu, "Toggle Comment", "win.togglecomment");
-    g_menu_append(editMenu, "Complete", "win.complete");
-    g_menu_append(editMenu, "Go to Definition", "win.definition");
-    g_menu_append(editMenu, "Show Hover Info", "win.hoverinfo");
+    GMenu* find = g_menu_new();
+    g_menu_append(find, "Find", "win.find");
+    g_menu_append(find, "Find Next", "win.findnext");
+    g_menu_append(find, "Find Previous", "win.findprevious");
+    g_menu_append(find, "Find in Folder…", "win.findinfolder");
+    g_menu_append_section(editMenu, nullptr, G_MENU_MODEL(find));
+    g_object_unref(find);
+    GMenu* code = g_menu_new();
+    g_menu_append(code, "Toggle Comment", "win.togglecomment");
+    g_menu_append(code, "Complete", "win.complete");
+    g_menu_append(code, "Go to Definition", "win.definition");
+    g_menu_append(code, "Show Hover Info", "win.hoverinfo");
+    g_menu_append_section(editMenu, nullptr, G_MENU_MODEL(code));
+    g_object_unref(code);
     g_menu_append(editMenu, "Settings…", "win.settings");
     g_menu_append_submenu(menuBar, "Edit", G_MENU_MODEL(editMenu));
     g_object_unref(editMenu);
@@ -1079,12 +1431,20 @@ static void buildMenu(App* app) {
     g_menu_append(viewMenu, "Toggle Editor", "win.toggleeditor");
     g_menu_append(viewMenu, "Toggle Terminal", "win.toggleterminal");
     g_menu_append(viewMenu, "Toggle Browser", "win.togglebrowser");
-    g_menu_append(viewMenu, "Show/Hide Dotfiles", "win.togglehidden");
-    g_menu_append(viewMenu, "Focus File Tree", "win.focustree");
+    g_menu_append(viewMenu, "Show Hidden Files", "app.showhidden");
     g_menu_append_submenu(menuBar, "View", G_MENU_MODEL(viewMenu));
     g_object_unref(viewMenu);
 
-    gtk_application_set_menubar(app->gapp, G_MENU_MODEL(menuBar));
+    // Keyboard-driven movement, the Mac's Navigate menu.
+    GMenu* navMenu = g_menu_new();
+    g_menu_append(navMenu, "Focus File Tree", "win.focustree");
+    g_menu_append(navMenu, "Focus Editor", "win.focuseditor");
+    g_menu_append(navMenu, "Previous File", "win.previousfile");
+    g_menu_append(navMenu, "Go to Definition", "win.definition");
+    g_menu_append_submenu(menuBar, "Navigate", G_MENU_MODEL(navMenu));
+    g_object_unref(navMenu);
+
+    gtk_application_set_menubar(g.gapp, G_MENU_MODEL(menuBar));
     g_object_unref(menuBar);
 }
 
@@ -1095,47 +1455,101 @@ static void addAction(App* app, const char* name, GCallback cb) {
     g_object_unref(a);   // the action map holds its own ref now
 }
 
-static void setAccels(App* app) {
-    struct { const char* action; const char* accel; } binds[] = {
-        {"win.open",            "<Ctrl>o"},
-        {"win.save",            "<Ctrl>s"},
-        {"win.exportpdf",       "<Ctrl><Shift>s"},
-        {"win.newfile",         "<Ctrl><Alt>n"},
-        {"win.newfolder",       "<Ctrl><Shift>n"},
-        {"win.find",            "<Ctrl>f"},
-        {"win.findinfolder",    "<Ctrl><Shift>f"},
-        {"win.togglepreview",   "<Ctrl><Shift>p"},
-        {"win.togglehints",     "<Ctrl><Shift>h"},
-        {"win.togglesidebar",   "<Ctrl>b"},
-        {"win.toggleeditor",    "<Ctrl><Shift>e"},
-        {"win.toggleterminal",  "<Ctrl><Shift>t"},
-        {"win.togglecomment",   "<Ctrl>slash"},
-        {"win.settings",        "<Ctrl>comma"},
-        {"win.togglebrowser",   "<Ctrl><Shift>b"},
-        {"win.togglehidden",    "<Ctrl>h"},
-        {"win.focustree",       "<Ctrl>0"},
-        {"win.complete",        "<Ctrl>space"},
-        {"win.definition",      "F12"},
-        {"win.hoverinfo",       "<Ctrl>i"},
-    };
-    for (auto& b : binds) {
-        const char* accels[] = { b.accel, nullptr };
-        gtk_application_set_accels_for_action(app->gapp, b.action, accels);
-    }
+// What the application needs once, before its first window: the settings,
+// the stylesheet, the menu bar, its own actions and the accelerators.
+static void initShared() {
+    if (g.settings) return;
+    g.settings = new AppSettings();
+    g.settings->setChangeCallback(onSettingsChanged, nullptr);
+    applyStylesheet();   // before any widget is drawn
+
+    GSimpleAction* quit = g_simple_action_new("quit", nullptr);
+    g_signal_connect(quit, "activate", G_CALLBACK(act_quit), nullptr);
+    g_action_map_add_action(G_ACTION_MAP(g.gapp), G_ACTION(quit));
+    g_object_unref(quit);
+    GSimpleAction* hidden = g_simple_action_new_stateful(
+        "showhidden", nullptr, g_variant_new_boolean(g.showHidden));
+    g_signal_connect(hidden, "change-state", G_CALLBACK(onShowHiddenChanged), nullptr);
+    g_action_map_add_action(G_ACTION_MAP(g.gapp), G_ACTION(hidden));
+    g_object_unref(hidden);
+
+    buildMenu();
+    applyAccels(false);
 }
 
+// ---------------------------------------------------------------- windows
 
-// ---------------------------------------------------------------- activate
+// Take every signal handler that names one of `owners` off `w`, its event
+// controllers and everything inside it.
+static void disconnectOwners(GtkWidget* w, const std::vector<gpointer>& owners) {
+    for (gpointer o : owners) g_signal_handlers_disconnect_by_data(w, o);
+    GListModel* ctrls = gtk_widget_observe_controllers(w);
+    for (guint i = 0; i < g_list_model_get_n_items(ctrls); ++i) {
+        GObject* c = static_cast<GObject*>(g_list_model_get_item(ctrls, i));
+        for (gpointer o : owners) g_signal_handlers_disconnect_by_data(c, o);
+        g_object_unref(c);
+    }
+    g_object_unref(ctrls);
+    for (GtkWidget* c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c))
+        disconnectOwners(c, owners);
+}
 
-static void onActivate(GtkApplication* gapp, gpointer userp) {
-    App* app = static_cast<App*>(userp);
-    app->gapp = gapp;
+// GtkApplication lets go of a closing window before it disposes a single
+// widget, so this is where the window is taken apart: its language servers
+// are already stopping (onCloseRequest), tectonic and the file monitors stop
+// here, the shell is not restarted, and every handler that names one of the
+// window's objects comes off before GTK disposes the widgets, whose last
+// signals would otherwise land in deleted objects.
+static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
+    App* app = appForWindow(window);
+    if (!app) return;   // the Find in Folder window, an alert
+    g.windows.erase(std::find(g.windows.begin(), g.windows.end(), app));
+    app->dead = true;
 
-    app->settings = new AppSettings();
-    app->settings->setChangeCallback(onSettingsChanged, app);
-    applySettings(app);   // the stylesheet, before any widget is drawn
+    std::vector<gpointer> owners = {app, app->editor, app->editor->media(), app->lsp,
+                                    app->tree};
+#ifdef MINICODE_ENABLE_PDF
+    owners.push_back(app->editor->latex());
+#endif
+#ifdef MINICODE_ENABLE_TERMINAL
+    owners.push_back(app->terminal);
+#endif
+#ifdef MINICODE_ENABLE_BROWSER
+    owners.push_back(app->browser);
+#endif
+    disconnectOwners(app->window, owners);
 
-    app->window = gtk_application_window_new(gapp);
+    app->editor->setObserver(nullptr);
+    app->editor->setTitleCallback(nullptr, nullptr);
+    app->editor->setExternalChangeCallback(nullptr, nullptr);
+    delete app->search;
+    app->search = nullptr;
+    delete app->lsp;
+    app->lsp = nullptr;
+#ifdef MINICODE_ENABLE_TERMINAL
+    delete app->terminal;
+    app->terminal = nullptr;
+#endif
+#ifdef MINICODE_ENABLE_BROWSER
+    delete app->browser;
+    app->browser = nullptr;
+#endif
+    delete app->tree;
+    app->tree = nullptr;
+    delete app->editor;
+    app->editor = nullptr;
+    // The App itself is kept (see App::dead).
+    updateShellKeys();
+}
+
+// Build a window rooted at `root`, showing `file` if one is named.
+static App* newWindow(const std::string& root, const std::string& file) {
+    initShared();
+    App* app = new App;
+    app->rootDir = root;
+    g.windows.push_back(app);
+
+    app->window = gtk_application_window_new(g.gapp);
     gtk_widget_add_css_class(app->window, "minicode-window");
     gtk_window_set_default_size(GTK_WINDOW(app->window), 1100, 720);
     gtk_window_set_title(GTK_WINDOW(app->window), "MiniCode");
@@ -1143,11 +1557,12 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
         GTK_APPLICATION_WINDOW(app->window), TRUE);
 
     // Core widgets.
-    app->tree = new FileTree(app->rootDir);
+    app->tree = new FileTree(app->rootDir, g.showHidden);
     app->tree->setOpenCallback(openFileCb, app);
     app->editor = new Editor();
     app->editor->setTitleCallback(updateTitle, app);
-    app->editor->setSettingsPath(app->settings->path());
+    app->editor->setExternalChangeCallback(askExternalChange, app);
+    app->editor->setSettingsPath(g.settings->path());
 
     // Right side: find bar + editor + collapsible panels.
     GtkWidget* rightBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -1163,6 +1578,14 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
                      G_CALLBACK(onSearchNext), app);
     g_signal_connect(app->searchEntry, "next-match",
                      G_CALLBACK(onSearchNext), app);
+    g_signal_connect(app->searchEntry, "previous-match",
+                     G_CALLBACK(onSearchPrevious), app);
+    // Shift+Enter in the find bar goes back, as in most editors' find bars.
+    GtkEventController* findKeys = gtk_shortcut_controller_new();
+    gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(findKeys),
+        gtk_shortcut_new(gtk_keyval_trigger_new(GDK_KEY_Return, GDK_SHIFT_MASK),
+                         gtk_named_action_new("win.findprevious")));
+    gtk_widget_add_controller(app->searchEntry, findKeys);
     // Deliberately no gtk_search_bar_set_key_capture_widget: in an editor that
     // would auto-reveal the find bar on any keystroke and swallow typing.
     gtk_box_append(GTK_BOX(rightBox), app->searchBar);
@@ -1259,7 +1682,7 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
 
     // Language servers: one session for the window, told about every file the
     // editor opens, saves and edits through the editor's observer hook.
-    app->lsp = new LspSession(app->editor, app->rootDir, app->settings->settings());
+    app->lsp = new LspSession(app->editor, app->rootDir, g.settings->settings());
     app->lsp->onStatus = [app](const std::string& text) {
         gtk_label_set_text(GTK_LABEL(app->lspLabel), text.c_str());
     };
@@ -1274,7 +1697,10 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     };
     app->editor->setObserver(app->lsp);   // onCloseRequest shuts it down
 
-    // Actions, menu, accelerators.
+    // Actions. The menu bar and the accelerators are the application's
+    // (initShared); these are what they name in this window.
+    addAction(app, "newwindow",      G_CALLBACK(act_new_window));
+    addAction(app, "close",          G_CALLBACK(act_close_window));
     addAction(app, "complete",       G_CALLBACK(act_complete));
     addAction(app, "definition",     G_CALLBACK(act_definition));
     addAction(app, "hoverinfo",      G_CALLBACK(act_hover));
@@ -1288,6 +1714,8 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     addAction(app, "reveal",         G_CALLBACK(act_reveal));
     addAction(app, "copypath",       G_CALLBACK(act_copy_path));
     addAction(app, "find",           G_CALLBACK(act_find));
+    addAction(app, "findnext",       G_CALLBACK(act_find_next));
+    addAction(app, "findprevious",   G_CALLBACK(act_find_previous));
     addAction(app, "findinfolder",   G_CALLBACK(act_find_in_folder));
     addAction(app, "togglepreview",  G_CALLBACK(act_toggle_preview));
     addAction(app, "togglehints",    G_CALLBACK(act_toggle_hints));
@@ -1295,12 +1723,12 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
     addAction(app, "toggleeditor",   G_CALLBACK(act_toggle_editor));
     addAction(app, "toggleterminal", G_CALLBACK(act_toggle_terminal));
     addAction(app, "togglebrowser",  G_CALLBACK(act_toggle_browser));
-    addAction(app, "togglehidden",   G_CALLBACK(act_toggle_hidden));
     addAction(app, "focustree",      G_CALLBACK(act_focus_tree));
+    addAction(app, "focuseditor",    G_CALLBACK(act_focus_editor));
+    addAction(app, "previousfile",   G_CALLBACK(act_previous_file));
     addAction(app, "togglecomment",  G_CALLBACK(act_toggle_comment));
     addAction(app, "settings",       G_CALLBACK(act_settings));
-    buildMenu(app);
-    setAccels(app);
+    app->tree->setContextMenu(g.treeMenu);
     // F2 and Delete rename and trash only while the tree has the keyboard. As
     // window accelerators they would take Delete away from the editor.
     GtkEventController* treeKeys = gtk_shortcut_controller_new();
@@ -1312,18 +1740,30 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
                          gtk_named_action_new("win.trash")));
     gtk_widget_add_controller(app->tree->widget(), treeKeys);
     g_signal_connect(app->window, "close-request", G_CALLBACK(onCloseRequest), app);
-    applySettings(app);   // now that the editor, terminal and status bar exist
+    g_signal_connect(app->window, "notify::focus-widget", G_CALLBACK(onFocusWidget), app);
+    g_signal_connect(app->window, "notify::is-active", G_CALLBACK(onIsActive), app);
+    applyWindowSettings(app);   // now that the editor, terminal and status bar exist
 
     // A file named on the command line opens before the window is shown, so it
     // is already rendered when the window appears rather than flashing the
     // welcome text first. Markdown arrives rendered, the same as a click in the
     // sidebar would give (Editor::openFile decides that).
-    if (!app->startupFile.empty()) openFileCb(app->startupFile, app);
+    if (!file.empty()) openFileCb(file, app);
 
     gtk_window_present(GTK_WINDOW(app->window));
+    return app;
 }
 
 // ---------------------------------------------------------------- main
+
+namespace {
+// What the command line asked for.
+struct Startup {
+    std::string root;    // the folder for the tree
+    std::string file;    // a file to show, or ""
+    std::string error;   // for the user's terminal, or ""
+};
+}  // namespace
 
 // Work out what to open from argv[1]. It may be a directory, or a single file:
 // `minicode notes.md` should show that file, not make the user name its folder.
@@ -1336,34 +1776,32 @@ static void onActivate(GtkApplication* gapp, gpointer userp) {
 // `cwd` is passed in rather than read here because a second `minicode foo.md`
 // is answered by the already-running process, and the path has to be resolved
 // against the directory the user typed it in, not that process's cwd.
-// Returns a message to show the user if the path did not exist, else empty. It
-// is returned rather than printed because the caller may be a remote invocation,
-// whose output has to be sent back over the command line object to reach the
-// terminal the user actually typed in.
-static std::string resolveStartupPath(App& app, const char* arg,
-                                      const char* cwdIn) {
+// The error is returned rather than printed because the caller may be a
+// remote invocation, whose output has to be sent back over the command line
+// object to reach the terminal the user actually typed in.
+static Startup resolveStartupPath(const char* arg, const char* cwdIn) {
     char cwdBuf[PATH_MAX];
     const std::string cwd = (cwdIn && *cwdIn) ? cwdIn
         : (getcwd(cwdBuf, sizeof(cwdBuf)) ? cwdBuf : ".");
 
-    app.startupFile.clear();
-    if (!arg || !*arg) { app.rootDir = cwd; return ""; }
+    Startup out;
+    if (!arg || !*arg) { out.root = cwd; return out; }
 
     char* canon = g_canonicalize_filename(arg, cwd.c_str());
     const std::string path = canon ? canon : arg;
     g_free(canon);
 
     if (g_file_test(path.c_str(), G_FILE_TEST_IS_DIR)) {
-        app.rootDir = path;
-        return "";
+        out.root = path;
+        return out;
     }
 
     if (g_file_test(path.c_str(), G_FILE_TEST_EXISTS)) {
         char* parent = g_path_get_dirname(path.c_str());
-        app.rootDir = parent ? parent : cwd;
+        out.root = parent ? parent : cwd;
         g_free(parent);
-        app.startupFile = path;
-        return "";
+        out.file = path;
+        return out;
     }
 
     // Neither a directory nor an existing file. Root the tree at the parent if
@@ -1371,58 +1809,58 @@ static std::string resolveStartupPath(App& app, const char* arg,
     // folder instead of dumping the user somewhere unrelated.
     char* parent = g_path_get_dirname(path.c_str());
     const bool parentOk = parent && g_file_test(parent, G_FILE_TEST_IS_DIR);
-    app.rootDir = parentOk ? parent : cwd;
+    out.root = parentOk ? parent : cwd;
     g_free(parent);
-    return std::string("minicode: ") + arg + ": no such file or directory";
+    out.error = std::string("minicode: ") + arg + ": no such file or directory";
+    return out;
 }
 
-// Handles both the first launch and every later `minicode <path>` typed while a
-// window is already open. GApplication is single-instance, so without this the
-// second invocation just raised the existing window and threw the argument away
-// — the file never appeared, which is no use from a shell prompt.
+// Handles both the first launch and every later `minicode <path>` run while
+// MiniCode is already open. GApplication is single-instance: the second
+// process hands its arguments to this one over D-Bus and exits, so this is
+// where every window a command line asks for is made.
+//
+// A second invocation opens a new window on what it names, which is what the
+// Mac's command-line launcher gives (it starts a separate process there), and
+// what GNOME's "New Window" in the dock does, since that runs the desktop
+// entry again. If a window already has that folder open, it is raised
+// instead, and a named file opens in it. Before windows, this re-rooted the
+// only window on the new folder, open file and all.
 //
 // HANDLES_COMMAND_LINE (rather than HANDLES_OPEN) is what lets us keep parsing
 // argv[1] ourselves: it can be a directory or a file, and GApplication must not
 // guess which.
-static int onCommandLine(GApplication* gapp, GApplicationCommandLine* cl,
-                         gpointer userp) {
-    App* app = static_cast<App*>(userp);
-
+static int onCommandLine(GApplication*, GApplicationCommandLine* cl, gpointer) {
     int n = 0;
     char** args = g_application_command_line_get_arguments(cl, &n);
-    const std::string err = resolveStartupPath(
-        *app, n > 1 ? args[1] : nullptr,
-        g_application_command_line_get_cwd(cl));
+    const Startup st = resolveStartupPath(n > 1 ? args[1] : nullptr,
+                                          g_application_command_line_get_cwd(cl));
     g_strfreev(args);
 
     // printerr on the command line object, not g_printerr: for a second
     // `minicode <path>` this routes the message back to the shell that ran it
     // instead of the stderr of the process that happens to own the window.
-    if (!err.empty()) g_application_command_line_printerr(cl, "%s\n", err.c_str());
+    if (!st.error.empty()) g_application_command_line_printerr(cl, "%s\n", st.error.c_str());
 
-    if (!app->window) {
-        onActivate(GTK_APPLICATION(gapp), app);   // first run: build the window
+    for (App* a : g.windows) {
+        if (a->rootDir != st.root) continue;
+        if (!st.file.empty()) openFileCb(st.file, a);
+        gtk_window_present(GTK_WINDOW(a->window));
         return 0;
     }
-
-    // Already running: re-root the sidebar on what was asked for, show the file
-    // if one was named, and raise the window so the command visibly did something.
-    app->tree->setRoot(app->rootDir);
-    if (app->lsp) app->lsp->setRoot(app->rootDir);
-    if (!app->startupFile.empty()) openFileCb(app->startupFile, app);
-    gtk_window_present(GTK_WINDOW(app->window));
+    newWindow(st.root, st.file);
     return 0;
 }
 
 int main(int argc, char** argv) {
-    App app;
-
     GtkApplication* gapp = gtk_application_new("org.minicode.Editor",
                                               G_APPLICATION_HANDLES_COMMAND_LINE);
+    g.gapp = gapp;
     // argv[1] = a directory to open, or a file to open; default = cwd. The real
     // argc/argv go to g_application_run so that a remote invocation forwards
     // them to the running instance; onCommandLine is where they are read.
-    g_signal_connect(gapp, "command-line", G_CALLBACK(onCommandLine), &app);
+    g_signal_connect(gapp, "command-line", G_CALLBACK(onCommandLine), nullptr);
+    g_signal_connect(gapp, "window-removed", G_CALLBACK(onWindowRemoved), nullptr);
     // Quitting: no language server may outlive the app. The main loop has
     // stopped by now, so this waits on the processes directly.
     g_signal_connect(gapp, "shutdown", G_CALLBACK(+[](GApplication*, gpointer) {

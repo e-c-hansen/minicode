@@ -59,6 +59,24 @@ public:
     // The shell asks "Save changes?" before calling this.
     void closeFile();
 
+    // Changes made to the open text file by something else (the Mac's
+    // checkExternalChange). The file is watched while it is open, and the
+    // shell also calls checkExternalChange when the window becomes active.
+    // What is on disk is compared with what was last loaded or saved, by
+    // content, so MiniCode's own atomic saves never count. When it differs:
+    // a clean buffer takes the new text in place, keeping the caret and the
+    // scroll position; a buffer with unsaved edits is left alone and the
+    // callback is asked to put the question to the user. It returns false if
+    // it cannot ask now (another question is up), and then the change is
+    // reported again on the next check. Images and PDFs reload on their own
+    // (MediaView) and are not watched here.
+    using ExternalCb = bool(*)(void* user);
+    void setExternalChangeCallback(ExternalCb cb, void* user) { extCb_ = cb; extUser_ = user; }
+    void checkExternalChange();
+    // The user chose Reload: the disk's text replaces the buffer and its
+    // edits, in place. False if the file can no longer be read as text.
+    bool reloadFromDisk();
+
     // Images and PDFs (MediaView). isMedia() is true while one is shown, and
     // titleSuffix() is what the window title adds for it ("  640 × 480",
     // "  12 pages"), empty otherwise.
@@ -174,8 +192,21 @@ private:
     bool swatchAt(double x, double y, int* line) const;   // widget coords
     void pickColor(int line);
     void setLineColor(int line, const Rgba& c);
+    void dropColorPopover();
+    void scheduleColorSave();
+    static void onColorPicked(GObject* chooser, GParamSpec* pspec, gpointer self);
+    static void onViewUnrealize(GtkWidget* view, gpointer self);
     static void onPressed(GtkGestureClick* g, int n, double x, double y, gpointer self);
     static void onMotion(GtkEventControllerMotion* m, double x, double y, gpointer self);
+
+    // External changes (checkExternalChange).
+    void watchText();                     // start watching path_ as text
+    void stopWatchingText();
+    void rememberDisk(const std::string& content);
+    bool diskMatches(const std::string& content) const;
+    void applyDiskText(const std::string& content);   // in place, caret and scroll kept
+    static void onTextFileChanged(GFileMonitor* m, GFile* f, GFile* other,
+                                  GFileMonitorEvent ev, gpointer self);
 
     void showTextSlot();                 // the text view back in the slot
     void showLatex(bool on);             // the LaTeX preview in the slot, or the source
@@ -218,6 +249,24 @@ private:
     std::string settingsPath_;
     Settings    settings_;    // for tag colors and swatch text contrast
     bool        overSwatch_ = false;
+
+    // The live color picker: a popover on the text view holding a
+    // GtkColorChooserWidget. Every pick rewrites the swatch's line at once;
+    // the file is saved 150 ms after the last one, as on the Mac.
+    GtkWidget*  colorPop_ = nullptr;
+    int         colorLine_ = -1;
+    std::string colorPath_;             // the file the popover was opened for
+    guint       colorSaveTimer_ = 0;
+
+    // What the open text file held on disk when it was last loaded or saved
+    // (size and hash; the content itself is not kept twice).
+    bool          diskKnown_ = false;
+    std::size_t   diskSize_ = 0;
+    std::size_t   diskHash_ = 0;
+    GFileMonitor* textMonitor_ = nullptr;
+    guint         textCheckTimer_ = 0;
+    ExternalCb    extCb_ = nullptr;
+    void*         extUser_ = nullptr;
 
     EditorObserver* observer_ = nullptr;
     void notifyDocument();    // tell the observer what the buffer holds now

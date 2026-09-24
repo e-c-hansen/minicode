@@ -58,14 +58,40 @@ static int compareInfos(gconstpointer a, gconstpointer b, gpointer) {
 
 // ---------------------------------------------------------------- construction
 
-FileTree::FileTree(const std::string& rootDir) : root_(rootDir) {
+FileTree::FileTree(const std::string& rootDir, bool showHidden)
+    : root_(rootDir), showHidden_(showHidden) {
     scroller_ = gtk_scrolled_window_new();
     gtk_widget_set_size_request(scroller_, 220, -1);
     gtk_widget_add_css_class(scroller_, "minicode-sidebar");
     build();
 }
 
-FileTree::~FileTree() = default;
+FileTree::~FileTree() {
+    if (revealIdle_) g_source_remove(revealIdle_);
+    revealIdle_ = 0;
+    dropPopovers();
+    if (listView_) {
+        g_signal_handlers_disconnect_by_data(listView_, this);
+        if (GtkListItemFactory* f = gtk_list_view_get_factory(GTK_LIST_VIEW(listView_)))
+            g_signal_handlers_disconnect_by_data(f, this);
+        GListModel* ctrls = gtk_widget_observe_controllers(listView_);
+        for (guint i = 0; i < g_list_model_get_n_items(ctrls); ++i) {
+            GObject* c = static_cast<GObject*>(g_list_model_get_item(ctrls, i));
+            g_signal_handlers_disconnect_by_data(c, this);
+            g_object_unref(c);
+        }
+        g_object_unref(ctrls);
+    }
+    if (treeModel_) g_signal_handlers_disconnect_by_data(treeModel_, this);
+    // The models call back into this object (the dotfile filter, a folder's
+    // children), so they go now, with it, rather than whenever GTK drops the
+    // list view: that also cancels every folder's monitor and listing.
+    if (listView_) gtk_list_view_set_model(GTK_LIST_VIEW(listView_), nullptr);
+    treeModel_ = nullptr;
+    if (filter_) g_object_unref(filter_);
+    if (sorter_) g_object_unref(sorter_);
+    if (contextModel_) g_object_unref(contextModel_);
+}
 
 // ---------------------------------------------------------------- one folder
 //
@@ -417,9 +443,14 @@ void FileTree::setRoot(const std::string& rootDir) {
     build();
 }
 
-void FileTree::toggleHidden() {
-    showHidden_ = !showHidden_;
-    if (filter_) gtk_filter_changed(filter_, GTK_FILTER_CHANGE_DIFFERENT);
+void FileTree::setShowHidden(bool show) {
+    if (show == showHidden_) return;
+    showHidden_ = show;
+    // One filter serves every folder's list, so this refilters all of them,
+    // expanded ones included, without re-reading anything from disk.
+    if (filter_)
+        gtk_filter_changed(filter_, show ? GTK_FILTER_CHANGE_LESS_STRICT
+                                         : GTK_FILTER_CHANGE_MORE_STRICT);
 }
 
 void FileTree::focus() {

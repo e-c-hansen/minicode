@@ -16,7 +16,11 @@ public:
     // Receives the name typed into askName's popover, trimmed and non-empty.
     using NameCb = std::function<void(const std::string& name)>;
 
-    explicit FileTree(const std::string& rootDir);
+    // The tree starts with dotfiles shown or hidden per showHidden.
+    explicit FileTree(const std::string& rootDir, bool showHidden = false);
+    // Called while the window's widgets still exist (main.cpp tears a window
+    // down from GtkApplication's window-removed): takes every handler that
+    // names this object off the models and the list view.
     ~FileTree();
 
     GtkWidget* widget() const { return scroller_; }
@@ -26,8 +30,12 @@ public:
     // Re-root at a new directory (Open Folder).
     void setRoot(const std::string& rootDir);
 
-    // Show/hide dotfiles (mirrors Shift+Cmd+. on macOS).
-    void toggleHidden();
+    // Show or hide entries whose names start with a dot, the Mac's rule
+    // (Shift+Cmd+. there, Ctrl+H here). The setting is the application's:
+    // main.cpp sets it on every window's tree, as the Mac's is one global
+    // flag. The expanded folders and the selection survive it; a selected
+    // row that is hidden is no longer selected.
+    void setShowHidden(bool show);
     bool showHidden() const { return showHidden_; }
 
     void focus();
