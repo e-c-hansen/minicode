@@ -6,9 +6,15 @@
 // Pages are fitted to the width of the view until the user zooms (see
 // "Zoom" below); then they have a fixed size and the view scrolls both ways.
 // Nothing is rendered up front: each page is a placeholder widget of the
-// right size, and an idle handler renders the ones on screen (then a couple
-// either side), one page per idle pass, at the display's scale factor so text
-// is sharp on HiDPI. Pages far from the viewport give their bitmaps back, so
+// right size, and an idle handler picks the ones on screen (then a couple
+// either side), one page at a time, at the display's scale factor so text
+// is sharp on HiDPI. The rendering itself runs on a worker thread, against a
+// second PopplerDocument opened from the same bytes (a PopplerDocument is not
+// safe to share between threads, two documents are), so a heavy page at 400%
+// never freezes typing or scrolling; the bitmap comes back to the main loop
+// and is dropped if the document, size or zoom changed meanwhile. A page
+// poppler cannot render is marked failed and drawn as a grey placeholder, so
+// the loop moves on instead of asking for it again forever. Pages far from the viewport give their bitmaps back, so
 // a long document does not hold every page in memory. A page too big to hold
 // as one bitmap at the zoom asked for is kept as a smaller whole-page bitmap
 // plus a sharp one of just the part in view (the limits are at the top of
@@ -35,6 +41,7 @@
 #include <gtk/gtk.h>
 #include <poppler.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -136,6 +143,7 @@ private:
         double x = 0, y = 0, w = 0, h = 0;
         int    forW = 0;
         double scale = 0;
+        bool   failed = false;            // could not be rendered at forW/scale
     };
     struct Page {
         GtkWidget*  area = nullptr;       // the page's placeholder widget
@@ -144,6 +152,7 @@ private:
         GdkTexture* tex = nullptr;        // rendered bitmap of the whole page, or null
         int         surfaceW = 0;         // the wPx it was rendered for
         double      surfaceScale = 0;     // the device scale it was rendered at
+        bool        failed = false;       // poppler could not render it at surfaceW/Scale
         Detail      detail;
     };
     // A document point held in place on screen: the page, a point on it in
@@ -170,12 +179,16 @@ private:
     void hold(const Pending& p);       // scroll so p is where it says, and keep it there
     bool visibleRect(int i, double* x, double* y, double* w, double* h) const;
     bool wantDetail(int i, double* x, double* y, double* w, double* h) const;
-    void renderDetail(int i, PopplerPage* pp, double ds);
     void settleLater();                // re-render once resizing or zooming stops
     void showBadge();
     void visibleRange(int* first, int* last) const;
     void scheduleRender();
-    bool renderOne();                  // one page per call; false when done
+    bool renderOne();                  // starts one render; false when none started
+    struct Job;
+    static void renderInThread(GTask* task, gpointer source, gpointer data, GCancellable* c);
+    static void renderDone(GObject* source, GAsyncResult* res, gpointer data);
+    void finishJob(Job* job);
+    void cancelJobs();                 // a new document, or none: drop what is in flight
     void evictFar(int first, int last);
     void applyPendingAnchor();
 
@@ -196,6 +209,16 @@ private:
     GtkWidget* badge_    = nullptr;   // "150%", shown for a moment after a zoom
 
     PopplerDocument*  doc_ = nullptr;
+    GBytes*           bytes_ = nullptr;   // the file, shared with the worker's document
+    // The worker's own document, opened from bytes_ on the worker thread and
+    // used only there; shared with jobs so it outlives a view destroyed while
+    // a render is running.
+    struct WorkerDoc;
+    std::shared_ptr<WorkerDoc> worker_;
+    GCancellable*     cancel_ = nullptr;
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
+    unsigned          docGen_ = 0;        // bumped by every load and clear
+    bool              jobInFlight_ = false;
     std::string       path_;
     std::vector<Page> pages_;
 

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 
 namespace {
 constexpr int    kMargin  = 12;     // around the column of pages, logical px
@@ -197,7 +198,11 @@ PdfView::~PdfView() {
     if (reallocIdle_) g_source_remove(reallocIdle_);
     renderIdle_ = resizeTimer_ = anchorTimer_ = relayoutIdle_ = badgeTimer_ = reallocIdle_ = 0;
     shownCb_ = nullptr;
+    // A render still running on the worker finishes on its own copy of the
+    // document and is then dropped: its completion sees `alive` false.
+    *alive_ = false;
     clear();
+    g_clear_object(&cancel_);
     g_signal_handlers_disconnect_by_data(
         gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)), this);
     g_signal_handlers_disconnect_by_data(
@@ -226,12 +231,18 @@ bool PdfView::load(const std::string& path, bool keepPosition, std::string* erro
     }
     GBytes* bytes = g_bytes_new_take(data, len);
     PopplerDocument* doc = poppler_document_new_from_bytes(bytes, nullptr, &err);
-    g_bytes_unref(bytes);   // the document keeps its own reference
     if (!doc) {
+        g_bytes_unref(bytes);
         if (error) *error = err ? err->message : "not a readable PDF";
         g_clear_error(&err);
         return false;
     }
+    // Renders in flight belong to the old document; the worker gets its own
+    // document of the new bytes.
+    cancelJobs();
+    if (bytes_) g_bytes_unref(bytes_);
+    bytes_ = bytes;
+    worker_ = std::make_shared<WorkerDoc>(bytes_);
 
     const bool keep = keepPosition && doc_ != nullptr;
     // The point at the view's top-left corner, the sideways scroll included.
@@ -252,6 +263,8 @@ bool PdfView::load(const std::string& path, bool keepPosition, std::string* erro
         // reload does not flash white; a zero scale marks them stale.
         pages_[i].surfaceScale = 0;
         pages_[i].detail.scale = 0;
+        pages_[i].failed = false;
+        pages_[i].detail.failed = false;
     }
     if (!keep) zoom_ = 0;   // a new document starts at fit width
     relayout();
@@ -269,6 +282,10 @@ bool PdfView::load(const std::string& path, bool keepPosition, std::string* erro
 }
 
 void PdfView::clear() {
+    cancelJobs();
+    worker_.reset();
+    if (bytes_) g_bytes_unref(bytes_);
+    bytes_ = nullptr;
     rebuildPages(0);
     if (doc_) g_object_unref(doc_);
     doc_ = nullptr;
@@ -662,20 +679,160 @@ void PdfView::onMapChanged(GtkWidget* w, gpointer selfp) {
 
 // ---------------------------------------------------------------- rendering
 
-cairo_surface_t* PdfView::renderPage(PopplerPage* page, int pixelWidth) {
-    double w = 0, h = 0;
-    poppler_page_get_size(page, &w, &h);
-    if (w <= 0 || h <= 0 || pixelWidth <= 0) return nullptr;
-    const double s = pixelWidth / w;
-    const int ph = std::max(1, (int)std::ceil(h * s));
-    cairo_surface_t* surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, pixelWidth, ph);
+namespace {
+// cairo refuses an image surface wider or taller than this, and hands back a
+// surface in an error state with no pixels.
+constexpr int kCairoMax = 32767;
+
+// A white ARGB surface, or null when cairo could not make one.
+cairo_surface_t* paperSurface(int w, int h) {
+    if (w <= 0 || h <= 0 || w > kCairoMax || h > kCairoMax) return nullptr;
+    cairo_surface_t* surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+    if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(surf);
+        return nullptr;
+    }
+    return surf;
+}
+
+// Render `page` scaled by s, offset so (dx0, dy0) is the surface's corner.
+cairo_surface_t* renderRegion(PopplerPage* page, double s, int dx0, int dy0, int w, int h) {
+    cairo_surface_t* surf = paperSurface(w, h);
+    if (!surf) return nullptr;
     cairo_t* cr = cairo_create(surf);
     cairo_set_source_rgb(cr, 1, 1, 1);   // PDFs assume paper underneath
     cairo_paint(cr);
+    cairo_translate(cr, -dx0, -dy0);
     cairo_scale(cr, s, s);
     poppler_page_render(page, cr);
+    const bool ok = cairo_status(cr) == CAIRO_STATUS_SUCCESS;
     cairo_destroy(cr);
+    if (!ok) { cairo_surface_destroy(surf); return nullptr; }
     return surf;
+}
+}  // namespace
+
+cairo_surface_t* PdfView::renderPage(PopplerPage* page, int pixelWidth) {
+    double w = 0, h = 0;
+    poppler_page_get_size(page, &w, &h);
+    // A zero-size MediaBox is laid out as 1 point (load), so render it as one.
+    w = std::max(w, 1.0);
+    h = std::max(h, 1.0);
+    if (pixelWidth <= 0) return nullptr;
+    // A very tall or wide page is fitted under cairo's limit, softer than
+    // asked for but whole, rather than not at all.
+    double pw = std::min<double>(pixelWidth, kCairoMax);
+    if (pw * h / w > kCairoMax) pw = kCairoMax * w / h;
+    const int iw = std::max(1, (int)std::floor(pw));
+    const double s = iw / w;
+    const int ih = std::max(1, std::min(kCairoMax, (int)std::ceil(h * s)));
+    return renderRegion(page, s, 0, 0, iw, ih);
+}
+
+// ---------------------------------------------------------------- the worker
+
+struct PdfView::WorkerDoc {
+    GBytes*          bytes = nullptr;
+    PopplerDocument* doc = nullptr;     // opened on the worker thread, used only there
+    bool             broken = false;    // poppler refused the bytes there
+    std::mutex       lock;              // one render at a time
+    explicit WorkerDoc(GBytes* b) : bytes(g_bytes_ref(b)) {}
+    ~WorkerDoc() {
+        if (doc) g_object_unref(doc);
+        g_bytes_unref(bytes);
+    }
+};
+
+// One render: set up on the main thread, drawn on the worker, handed back
+// to finishJob on the main thread. The view pointer is used only after
+// checking `alive`.
+struct PdfView::Job {
+    std::shared_ptr<WorkerDoc> worker;
+    std::shared_ptr<bool>      alive;
+    PdfView* view = nullptr;
+    unsigned gen = 0;
+    int      page = 0;
+    bool     detail = false;
+    int      pixelW = 0;                 // whole page: the bitmap's width
+    int      dx0 = 0, dy0 = 0, dw = 0, dh = 0;   // detail: its rectangle in device pixels
+    double   s = 0;                      // detail: device pixels per point
+    int      forW = 0;                   // the page's wPx when asked
+    double   ds = 0;                     // the device scale when asked
+    cairo_surface_t* surf = nullptr;     // the result, or null if it failed
+    ~Job() { if (surf) cairo_surface_destroy(surf); }
+};
+
+void PdfView::renderInThread(GTask* task, gpointer, gpointer data, GCancellable* c) {
+    Job* job = static_cast<Job*>(data);
+    if (!g_cancellable_is_cancelled(c)) {
+        WorkerDoc& w = *job->worker;
+        std::lock_guard<std::mutex> hold(w.lock);
+        if (!w.doc && !w.broken) {
+            w.doc = poppler_document_new_from_bytes(w.bytes, nullptr, nullptr);
+            w.broken = !w.doc;
+        }
+        PopplerPage* pp = w.doc ? poppler_document_get_page(w.doc, job->page) : nullptr;
+        if (pp && !g_cancellable_is_cancelled(c)) {
+            job->surf = job->detail
+                ? renderRegion(pp, job->s, job->dx0, job->dy0, job->dw, job->dh)
+                : renderPage(pp, job->pixelW);
+        }
+        if (pp) g_object_unref(pp);
+    }
+    g_task_return_boolean(task, TRUE);
+}
+
+void PdfView::renderDone(GObject*, GAsyncResult* res, gpointer) {
+    Job* job = static_cast<Job*>(g_task_get_task_data(G_TASK(res)));
+    if (*job->alive) job->view->finishJob(job);
+    // The task owns the job (its data's destroy notify) and frees it.
+}
+
+void PdfView::finishJob(Job* job) {
+    if (job->gen != docGen_) return;   // from a document since replaced
+    jobInFlight_ = false;
+    const int i = job->page;
+    // Dropped if the page was resized, zoomed or rescaled meanwhile; the
+    // next pass asks again at the new size.
+    if (i < (int)pages_.size() && pages_[i].wPx == job->forW && deviceScale() == job->ds) {
+        Page& p = pages_[i];
+        if (job->detail) {
+            Detail& d = p.detail;
+            g_clear_object(&d.tex);
+            d.forW = p.wPx;
+            d.scale = job->ds;
+            d.failed = !job->surf;
+            if (job->surf) {
+                d.tex = textureFrom(job->surf);
+                job->surf = nullptr;
+                d.x = job->dx0 / job->ds;
+                d.y = job->dy0 / job->ds;
+                d.w = job->dw / job->ds;
+                d.h = job->dh / job->ds;
+            }
+        } else {
+            g_clear_object(&p.tex);
+            p.surfaceW = p.wPx;
+            p.surfaceScale = job->ds;
+            p.failed = !job->surf;
+            if (job->surf) {
+                p.tex = textureFrom(job->surf);
+                job->surf = nullptr;
+            }
+        }
+        gtk_widget_queue_draw(p.area);
+    }
+    scheduleRender();
+}
+
+void PdfView::cancelJobs() {
+    if (cancel_) {
+        g_cancellable_cancel(cancel_);
+        g_object_unref(cancel_);
+    }
+    cancel_ = g_cancellable_new();
+    ++docGen_;
+    jobInFlight_ = false;
 }
 
 void PdfView::scheduleRender() {
@@ -712,40 +869,15 @@ bool PdfView::wantDetail(int i, double* x, double* y, double* w, double* h) cons
     return true;
 }
 
-void PdfView::renderDetail(int i, PopplerPage* pp, double ds) {
-    Page& p = pages_[i];
-    double x, y, w, h;
-    if (!wantDetail(i, &x, &y, &w, &h)) return;
-    const int dx0 = (int)std::floor(x * ds), dy0 = (int)std::floor(y * ds);
-    const int dx1 = (int)std::ceil((x + w) * ds), dy1 = (int)std::ceil((y + h) * ds);
-    if (dx1 <= dx0 || dy1 <= dy0) return;
-    cairo_surface_t* surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, dx1 - dx0, dy1 - dy0);
-    cairo_t* cr = cairo_create(surf);
-    cairo_set_source_rgb(cr, 1, 1, 1);
-    cairo_paint(cr);
-    // The same scale as a whole-page bitmap of this width (renderPage), so
-    // the detail lines up with the page under it. poppler walks the whole
-    // page, but cairo only rasterizes what lands in this surface.
-    const double s = p.wPx * ds / p.wPts;
-    cairo_translate(cr, -dx0, -dy0);
-    cairo_scale(cr, s, s);
-    poppler_page_render(pp, cr);
-    cairo_destroy(cr);
-    g_clear_object(&p.detail.tex);
-    p.detail.tex = textureFrom(surf);
-    p.detail.x = dx0 / ds;
-    p.detail.y = dy0 / ds;
-    p.detail.w = (dx1 - dx0) / ds;
-    p.detail.h = (dy1 - dy0) / ds;
-    p.detail.forW = p.wPx;
-    p.detail.scale = ds;
-}
-
 // Render the most useful thing that needs it: the visible pages top to
-// bottom, then their details, then the pages either side. One piece per
-// call, so scrolling and typing stay responsive while a long document fills in.
+// bottom, then their details, then the pages either side. One piece at a
+// time, drawn on a worker thread (renderInThread), so scrolling and typing
+// stay responsive while a long or heavy document fills in; its completion
+// (finishJob) schedules the next.
 bool PdfView::renderOne() {
     if (!doc_ || pages_.empty() || !gtk_widget_get_mapped(scroller_)) return false;
+    // One render at a time; its completion calls back here for the next.
+    if (jobInFlight_) return false;
     int first, last;
     visibleRange(&first, &last);
     const double ds = deviceScale();
@@ -774,18 +906,22 @@ bool PdfView::renderOne() {
     auto needs = [&](int i) {
         if (i < 0 || i >= (int)pages_.size()) return false;
         const Page& p = pages_[i];
-        if (!p.tex) return true;
+        const bool current = p.surfaceW == p.wPx && p.surfaceScale == ds;
+        // A page that would not render at this size is not asked for again.
+        if (!p.tex) return !(p.failed && current);
         // Mid-resize or mid-zoom the old bitmap is scaled; it is redone once
         // things settle.
         if (resizing) return false;
-        return p.surfaceW != p.wPx || p.surfaceScale != ds;
+        return !current;
     };
     auto needsDetail = [&](int i) {
         if (resizing) return false;
         double x, y, w, h;
         if (!wantDetail(i, &x, &y, &w, &h)) return false;
         const Detail& d = pages_[i].detail;
-        if (!d.tex || d.forW != pages_[i].wPx || d.scale != ds) return true;
+        const bool current = d.forW == pages_[i].wPx && d.scale == ds;
+        if (!d.tex) return !(d.failed && current);
+        if (!current) return true;
         // Redo it once the view has moved past what it covers.
         double vx, vy, vw, vh;
         visibleRect(i, &vx, &vy, &vw, &vh);
@@ -804,32 +940,45 @@ bool PdfView::renderOne() {
     }
     if (pick < 0) return false;
 
-    Page& p = pages_[pick];
-    PopplerPage* pp = poppler_document_get_page(doc_, pick);
-    if (!pp) {
-        // Nothing to draw it from; mark it done so the loop moves on.
-        p.surfaceW = p.wPx;
-        p.surfaceScale = ds;
-        return true;
-    }
+    const Page& p = pages_[pick];
+    auto* job = new Job;
+    job->worker = worker_;
+    job->alive = alive_;
+    job->view = this;
+    job->gen = docGen_;
+    job->page = pick;
+    job->detail = detail;
+    job->forW = p.wPx;
+    job->ds = ds;
     if (detail) {
-        renderDetail(pick, pp, ds);
+        double x, y, w, h;
+        wantDetail(pick, &x, &y, &w, &h);
+        const int dx0 = (int)std::floor(x * ds), dy0 = (int)std::floor(y * ds);
+        const int dx1 = (int)std::ceil((x + w) * ds), dy1 = (int)std::ceil((y + h) * ds);
+        job->dx0 = dx0;
+        job->dy0 = dy0;
+        job->dw = std::max(0, dx1 - dx0);
+        job->dh = std::max(0, dy1 - dy0);
+        // The same scale as a whole-page bitmap of this width (renderPage),
+        // so the detail lines up with the page under it. poppler walks the
+        // whole page, but cairo only rasterizes what lands in the surface.
+        job->s = p.wPx * ds / p.wPts;
     } else {
         // Full resolution when it fits under kBaseCap; otherwise the widest
         // bitmap that does, drawn at the page's size (softer, and the detail
         // covers the part in view).
         const double full = (double)p.wPx * ds * p.hPx * ds;
-        const bool reduced = full > kBaseCap;
         int pw = (int)std::ceil(p.wPx * ds);
-        if (reduced) pw = std::max(1, (int)std::floor(pw * std::sqrt(kBaseCap / full)));
-        g_clear_object(&p.tex);
-        p.tex = textureFrom(renderPage(pp, pw));
-        p.surfaceW = p.wPx;
-        p.surfaceScale = ds;
+        if (full > kBaseCap) pw = std::max(1, (int)std::floor(pw * std::sqrt(kBaseCap / full)));
+        job->pixelW = pw;
     }
-    g_object_unref(pp);
-    gtk_widget_queue_draw(p.area);
-    return true;
+    jobInFlight_ = true;
+    GTask* task = g_task_new(nullptr, cancel_, renderDone, nullptr);
+    g_task_set_task_data(task, job, [](gpointer j) { delete static_cast<Job*>(j); });
+    g_task_run_in_thread(task, renderInThread);
+    g_object_unref(task);
+    // Nothing more this pass: the job's completion schedules the next one.
+    return false;
 }
 
 size_t PdfView::bitmapBytes() const {
@@ -861,6 +1010,22 @@ void PdfView::snapshotPage(int i, GtkSnapshot* s, int w, int h) {
     if (i < 0 || i >= (int)pages_.size()) return;
     const Page& p = pages_[i];
     if (!p.tex) {
+        if (p.failed) {
+            // poppler could not render it: grey, with a cross, rather than a
+            // blank page that looks like it is still coming.
+            static const GdkRGBA grey = {0.85f, 0.85f, 0.85f, 1};
+            static const GdkRGBA line = {0.6f, 0.6f, 0.6f, 1};
+            gtk_snapshot_append_color(s, &grey, &all);
+            cairo_t* cr = gtk_snapshot_append_cairo(s, &all);
+            gdk_cairo_set_source_rgba(cr, &line);
+            cairo_set_line_width(cr, 2);
+            cairo_move_to(cr, 0, 0);
+            cairo_line_to(cr, w, h);
+            cairo_move_to(cr, w, 0);
+            cairo_line_to(cr, 0, h);
+            cairo_stroke(cr);
+            cairo_destroy(cr);
+        }
         scheduleRender();
         return;
     }

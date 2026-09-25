@@ -18,9 +18,11 @@
 //
 // Everything else follows the Mac: tectonic from MINICODE_TECTONIC, then
 // ~/.local/share/minicode/bin, then PATH, with an offer to download the
-// pinned release; the buffer typeset from a hidden sibling `.<name>.minicode.tex`
-// (so relative \input and \includegraphics resolve and the user's file is
-// never written) into $XDG_RUNTIME_DIR (or /tmp); debounced 0.6 s and
+// pinned release; the buffer typeset from a hidden sibling
+// `.<file name>.<preview number>.minicode.tex` (so relative \input and
+// \includegraphics resolve and the user's file is never written; the full
+// name and the number keep notes.tex, notes.ltx and a second window's copy
+// apart) into $XDG_RUNTIME_DIR, or a private folder in /tmp; debounced 0.6 s and
 // generation-counted; the log shown when it does not typeset; Export PDF
 // copies exactly the bytes tectonic wrote.
 //
@@ -157,6 +159,16 @@ private:
     // generation is not the latest is dropped.
     GSubprocess* proc_ = nullptr;
     std::string runScratch_;
+    // The run's hidden sibling, removed through its folder rather than by
+    // path: an open descriptor of the folder follows it through a rename or
+    // a move to the trash, so the copy never outlives the run wherever its
+    // folder went (removeScratch).
+    int         runDirFd_ = -1;
+    std::string runScratchName_;
+    void        removeScratch();
+    // Distinguishes this preview's sibling from another window's of the
+    // same file (see scratchPath).
+    unsigned    instance_ = 0;
     unsigned generation_ = 0;
     bool queued_ = false;
     bool downloading_ = false;

@@ -237,8 +237,8 @@ Zoom came later (below); still not done: a person looking at it.
 
 `src/PdfView.{h,cpp}` is the piece item 7 reuses. It shows every page in a
 scrolling column fitted to the width, rendered lazily (visible pages first,
-one per idle pass, at the surface's scale factor, bitmaps dropped for pages
-far from view). Its API, with 0-based pages and points from the page's
+one at a time on a worker thread, at the surface's scale factor, bitmaps
+dropped for pages far from view). Its API, with 0-based pages and points from the page's
 top-left as SyncTeX uses them:
 - `load(path, keepPosition)`: reads the bytes first, so a PDF being
   rewritten cannot pull data out from under poppler; on failure the old
@@ -306,7 +306,17 @@ plainly, for the PDF viewer and the LaTeX preview alike (both are a
   width, 79%" for 1.2 s after each change. It is not in the title because
   the LaTeX preview has none of its own and the level changes too often for
   a title.
-- **Rendering.** Still lazy, one piece per idle pass, at the surface's scale.
+- **Rendering.** Still lazy, one piece at a time, at the surface's scale,
+  and since the review of September 2026 off the main thread: the idle picks
+  the piece, a `GTask` thread draws it with its own `PopplerDocument` opened
+  from the same bytes (a document is not safe to share between threads, two
+  are), and the bitmap comes back to the main loop, dropped if the document,
+  the page's size or the scale changed meanwhile. A page cairo cannot hold
+  (past 32,767 pixels on a side, a 100 by 60,000 point page at fit width) is
+  rendered narrower, whole, instead of failing; one poppler cannot render at
+  all is marked failed and drawn grey with a cross, and not asked for again
+  until the size changes. Before, both kinds were asked for on every idle
+  pass forever, at 100% CPU.
   A page whose bitmap would pass 8 million device pixels (32 MB) is rendered
   whole at the resolution that fits, soft up close, and the part in view plus
   half a view around it is rendered again at full resolution on top (a
@@ -461,8 +471,12 @@ before starting. Android: `LatexPreview.kt` and `latex_jni.cpp`.
 - tectonic comes from `MINICODE_TECTONIC`, then
   `~/.local/share/minicode/bin`, then PATH. Offer the same download of the
   pinned release as the Mac.
-- Typeset from the hidden sibling `.<name>.minicode.tex` into
-  `$XDG_RUNTIME_DIR` or `/tmp`, debounced and generation-counted.
+- Typeset from the hidden sibling `.<file name>.<preview>.minicode.tex`
+  into `$XDG_RUNTIME_DIR` or a private folder in `/tmp`, debounced and
+  generation-counted. The Mac's `.<stem>.minicode.tex` made notes.tex and
+  notes.ltx in one folder, and one file in two windows, share a copy, so one
+  run's cleanup deleted another's input; the full name and a per-preview
+  number keep them apart.
 - Show every page with `PdfView` (from item 4): `load(pdf, true)` after
   each typeset keeps the scroll position, and its click callback gives the
   page and point for SyncTeX (add one to the page).
@@ -531,13 +545,19 @@ How it differs from the Mac, on purpose:
   publishes for the asset, which is pinned in `Latex.cpp`. A mismatch is
   thrown away. Then `tar`, a move into place, and an executable check, as on
   the Mac.
-- **Output** goes to `$XDG_RUNTIME_DIR/minicode-latex/<hash of the path>/`
-  (or `/tmp/minicode-latex-<user>`), so two `notes.tex` in different folders
-  never share a PDF.
+- **Output** goes to `$XDG_RUNTIME_DIR/minicode-latex/<hash of the path>/`,
+  so two `notes.tex` in different folders never share a PDF. Without a
+  runtime folder it is `/tmp/minicode-latex-<user>`, but only if that is a
+  real folder owned by the user and closed to everyone else (it is made 0700
+  if missing); one someone else made first is passed over for a fresh
+  `g_dir_make_tmp` folder.
 - **Nothing outlives the app.** tectonic and the download tools are started
   with `PR_SET_PDEATHSIG`, so they die with MiniCode even when it is killed;
   on a normal quit the application's `shutdown` signal stops tectonic and
-  removes the hidden sibling. Opening another file, or Open Folder
+  removes the hidden sibling. The sibling is removed with `unlinkat` on a
+  descriptor of the folder it was written in, opened when the run starts,
+  so it goes even if that folder was renamed or moved to the trash while
+  tectonic ran (by path, it was left behind in the renamed folder). Opening another file, or Open Folder
   (`closeFile`), closes the preview and kills its typeset. A rename
   (`Editor::setPath`) keeps the pages, and the SyncTeX tag is looked up by
   the sibling that was actually typeset, so clicks keep working before the

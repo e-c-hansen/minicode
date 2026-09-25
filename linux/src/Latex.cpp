@@ -7,10 +7,13 @@
 #include "PageWords.h"
 #include "PdfView.h"
 
+#include <fcntl.h>
 #include <glib/gstdio.h>
 #include <poppler.h>
 #include <signal.h>
 #include <sys/prctl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <algorithm>
 
@@ -96,6 +99,8 @@ struct LatexPreview::Job {
 
 LatexPreview::LatexPreview(GtkTextBuffer* buffer)
     : buffer_(buffer), alive_(std::make_shared<LatexPreview*>(this)) {
+    static unsigned instances = 0;
+    instance_ = ++instances;
     root_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_hexpand(root_, TRUE);
     gtk_widget_set_vexpand(root_, TRUE);
@@ -221,6 +226,10 @@ LatexPreview::LatexPreview(GtkTextBuffer* buffer)
 
 LatexPreview::~LatexPreview() {
     *alive_ = nullptr;
+    // An export still waiting for a typeset is dropped, not answered: its
+    // window is going too, so there is nowhere to report to. Dropping it
+    // frees the file it would have written.
+    waiters_.clear();
     stopRun();
     if (debounce_) g_source_remove(debounce_);
     if (changedId_) g_signal_handler_disconnect(buffer_, changedId_);
@@ -268,19 +277,51 @@ std::string LatexPreview::bufferText() const {
     return out;
 }
 
+// `.<file name>.<preview>.minicode.tex`: the whole name, extension included,
+// so notes.tex and notes.ltx in one folder do not share a copy, and this
+// preview's number, so two windows on one file do not either. Each run's
+// removal of its copy would otherwise delete the other's input mid-typeset.
 std::string LatexPreview::scratchPath() const {
-    const std::string stem = baseStem(path_);
-    if (path_.empty() || stem.empty()) return outDir() + "/untitled.minicode.tex";
-    return dirName(path_) + "/." + stem + ".minicode.tex";
+    char* b = g_path_get_basename(path_.c_str());
+    const std::string name = b ? b : "";
+    g_free(b);
+    const std::string tag = "." + std::to_string(instance_) + ".minicode.tex";
+    if (path_.empty() || name.empty() || name == "." || name == "/")
+        return outDir() + "/untitled" + tag;
+    return dirName(path_) + "/." + name + tag;
 }
 
-// $XDG_RUNTIME_DIR/minicode-latex/<a hash of the document's path>, so two
-// documents with the same name in different folders never share output.
-std::string LatexPreview::outDir() const {
+namespace {
+// The folder tectonic's output goes under: $XDG_RUNTIME_DIR/minicode-latex,
+// which only the user can reach, or, with no runtime folder, one in /tmp that
+// must be the user's own. A /tmp path anyone could have made first is used
+// only if it is a real folder (not a link), owned by this user and closed to
+// everyone else; otherwise a fresh private one from g_dir_make_tmp.
+std::string outputBase() {
     const char* runtime = g_getenv("XDG_RUNTIME_DIR");
-    std::string base = (runtime && *runtime && g_file_test(runtime, G_FILE_TEST_IS_DIR))
-        ? std::string(runtime) + "/minicode-latex"
-        : std::string(g_get_tmp_dir()) + "/minicode-latex-" + g_get_user_name();
+    if (runtime && *runtime && g_file_test(runtime, G_FILE_TEST_IS_DIR))
+        return std::string(runtime) + "/minicode-latex";
+    static std::string chosen;
+    if (!chosen.empty()) return chosen;
+    const std::string dir = std::string(g_get_tmp_dir()) + "/minicode-latex-" + g_get_user_name();
+    g_mkdir(dir.c_str(), 0700);   // fails harmlessly if it is there already
+    GStatBuf st;
+    if (g_lstat(dir.c_str(), &st) == 0 && S_ISDIR(st.st_mode) && st.st_uid == getuid() &&
+        (st.st_mode & 077) == 0) {
+        chosen = dir;
+    } else {
+        char* tmp = g_dir_make_tmp("minicode-latex-XXXXXX", nullptr);
+        chosen = tmp ? tmp : dir;
+        g_free(tmp);
+    }
+    return chosen;
+}
+}  // namespace
+
+// <outputBase>/<a hash of the document's path>, so two documents with the
+// same name in different folders never share output.
+std::string LatexPreview::outDir() const {
+    const std::string base = outputBase();
     char* hash = g_compute_checksum_for_string(G_CHECKSUM_SHA1, path_.c_str(), -1);
     std::string dir = base + "/" + std::string(hash).substr(0, 12);
     g_free(hash);
@@ -367,7 +408,22 @@ void LatexPreview::stopRun() {
     }
     // Taken away now, not when the killed run reports back: by then a new run
     // for the same document may have written it again.
-    if (!runScratch_.empty()) g_remove(runScratch_.c_str());
+    removeScratch();
+}
+
+// Remove the running typeset's hidden sibling. Through the descriptor of the
+// folder it was written in, which still names that folder after a rename or
+// a move to the trash, so the copy goes wherever the folder went; by path
+// only if the folder could not be opened.
+void LatexPreview::removeScratch() {
+    if (runDirFd_ >= 0) {
+        unlinkat(runDirFd_, runScratchName_.c_str(), 0);
+        ::close(runDirFd_);
+    } else if (!runScratch_.empty()) {
+        g_remove(runScratch_.c_str());
+    }
+    runDirFd_ = -1;
+    runScratchName_.clear();
     runScratch_.clear();
 }
 
@@ -423,6 +479,10 @@ void LatexPreview::compileNow() {
         return;
     }
     runScratch_ = job->scratch;
+    runDirFd_ = open(dirName(job->scratch).c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    char* name = g_path_get_basename(job->scratch.c_str());
+    runScratchName_ = name ? name : "";
+    g_free(name);
     setStatus("Typesetting…", true);
     g_subprocess_communicate_async(proc_, nullptr, nullptr,
         [](GObject* src, GAsyncResult* res, gpointer data) {
@@ -440,8 +500,7 @@ void LatexPreview::compileNow() {
 }
 
 void LatexPreview::finishCompile(Job* job, GBytes* output, bool ok) {
-    g_remove(job->scratch.c_str());
-    runScratch_.clear();
+    removeScratch();
     g_object_unref(proc_);
     proc_ = nullptr;
 
@@ -606,7 +665,11 @@ void LatexPreview::exportPdf(GtkWindow* parent) {
             delete ask;
             if (!dest) return;   // cancelled
             if (!self) { g_object_unref(dest); return; }
-            self->pdfForBuffer([dest, parent](GBytes* pdf, const std::string& error) {
+            // Held by the waiter, so it is let go of even when the waiter is
+            // dropped unanswered (the preview closing mid-typeset).
+            std::shared_ptr<GFile> owned(dest, [](GFile* f) { g_object_unref(f); });
+            self->pdfForBuffer([owned, parent](GBytes* pdf, const std::string& error) {
+                GFile* dest = owned.get();
                 std::string problem = error;
                 if (pdf) {
                     gsize n = 0;
@@ -622,7 +685,6 @@ void LatexPreview::exportPdf(GtkWindow* parent) {
                         g_clear_error(&err);
                     }
                 }
-                g_object_unref(dest);
                 if (problem.empty()) return;
                 // An OK button of our own and choose(), as main.cpp's error
                 // alerts do: a buttonless show() alert would not close.

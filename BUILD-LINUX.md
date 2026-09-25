@@ -124,8 +124,24 @@ Verified by running it:
   - A PDF shows in the slot with the page count in the title (`1 page`,
     `100 pages`). A generated 100-page PDF opened in about 10 ms, and the
     main loop never went more than 17 ms without running while its pages
-    rendered or after jumping to page 51. Snapshots of the view, read back as images,
+    rendered or after jumping to page 51. That was a light PDF; rendering
+    ran on the main thread then, so a heavy page could freeze it (see the
+    next point). Snapshots of the view, read back as images,
     show the pages drawn, and sharp at twice the scale.
+  - After the September 2026 review, in the Docker container (aarch64,
+    poppler 26.01), with generated PDFs: a 100 by 60,000 point page between
+    two letter pages made the build before the fix spin at 100% of a core
+    with `gdk_memory_texture_new: assertion 'image size 0x0 is invalid'`
+    repeating, because cairo cannot make a surface that tall; the fixed
+    build renders it narrower and sits at 0% CPU, before and after
+    scrolling to it, with no criticals. A page with a broken inline image
+    also settles at 0%. On two pages of 400,000 strokes each, zoomed in four
+    steps, the main thread used 245 ticks of CPU in 12 s before the fix and
+    4 after, with the work (316 ticks) on the render thread. Switching
+    documents three times mid-render and quitting exited cleanly, also under
+    AddressSanitizer. The grey placeholder for a page poppler cannot render
+    at all was not reached by any file tried (poppler repairs a zero-size
+    MediaBox to letter), so that path is checked by reading.
   - With an image, a PDF or a binary file open, Save is disabled, calling
     save anyway leaves the file's bytes unchanged, and the buffer is never
     dirty. An image that will not decode falls through to the text path.
@@ -272,6 +288,24 @@ Verified by running it:
     killing the app with SIGKILL takes tectonic with it (checked with a
     stand-in that sleeps 31 seconds). Only a killed app leaves the sibling
     behind.
+  - After the September 2026 review, in the Docker container (aarch64,
+    poppler 26.01, tectonic 0.17.0, `XDG_RUNTIME_DIR` unset), driven with
+    xdotool and checked from the folder listings and screenshots:
+    - notes.tex in one window and notes.ltx in a second, plus notes.tex in
+      that second window too, typeset together. A watcher listing the folder
+      every 20 ms saw three different siblings (`.notes.tex.1…`,
+      `.notes.tex.2…`, `.notes.ltx.2…`), and none was left afterwards. Both
+      previews showed their own title page.
+    - Renaming the document's folder while tectonic ran (a document made
+      slow on purpose): the build before the fix left `.notes.minicode.tex`
+      in the renamed folder, the fixed one left nothing.
+    - With `/tmp/minicode-latex-root` made first by another user and open to
+      all, the output went to a fresh 0700 `/tmp/minicode-latex-XXXXXX`
+      instead.
+    - A double-click on "review" still opened "Editing list item" with
+      `Ask for a review`, so SyncTeX finds the renamed sibling.
+    - Not checked by running: an Export PDF left waiting when its window
+      closes now frees its file instead of leaking it (by reading).
 - Language servers (September 2026, clangd 21 at /usr/bin/clangd, on the
   ThinkPad under GNOME Wayland). A temporary test hook, since removed, ran
   inside the real app under its own application id on a scratch copy of
