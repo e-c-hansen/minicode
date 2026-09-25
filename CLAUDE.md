@@ -420,12 +420,12 @@ never closes.
 
 ## Current state (handoff, 2026-09-25)
 
-- **Released: 1.4.0** (2026-09-23), on GitHub Releases and the Homebrew tap,
-  with the Mac zip and the first signed Android APK. The user's own Mac runs
-  it from Homebrew. Everything since is on `main` and pushed, but not yet
-  released; the next release carries the Linux parity work, the review fixes
-  below, the TeX grammar and images in the Markdown preview. 1,481 core
-  checks pass; the Mac build is
+- **Released: 1.4.3** (2026-09-25), on GitHub Releases and the Homebrew tap,
+  with the Mac zip and the signed Android APK; the user's own Mac runs it
+  from Homebrew. 1.4.1 carried the Linux parity work, the review fixes below,
+  the TeX grammar and images in the Markdown preview; 1.4.2 made GIFs play
+  (1.4.1's were still); 1.4.3 draws Markdown tables as real tables and stops
+  the editor running past its pane. 1,481 core checks pass; the Mac build is
   warning-free; CI builds and tests macOS and Linux.
 - **macOS**: terminal links (Cmd+click `file:line` and URLs, log and grid) are
   in 1.4.0; the user has not yet clicked them in the grid (Claude Code, vim).
