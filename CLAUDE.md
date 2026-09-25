@@ -415,43 +415,55 @@ never closes.
   log when doing this again. Other sessions (and the user's own MiniCode)
   may have clangd running: kill only PIDs the test started.
 
-## Current state (handoff, 2026-09-22)
+## Current state (handoff, 2026-09-25)
 
-- **macOS** is released as **1.3.3** (Homebrew tap and GitHub Releases), and
-  `main` is pushed. 1,079 core checks passed then (1,403 now); the build is
-  warning-free. That
-  day's work: opening a file from the command line, image and PDF viewing,
-  Export PDF for LaTeX, Copy Path in the tree's context menu, the memory
-  benchmark, and a plainer README.
-- **Android** is ten commits on `main`, **not pushed**, and is where the work
-  currently is. It has a file list, editor, Markdown preview, images, PDFs, a
-  terminal on a real shell, and a browser. Missing: language servers, the
-  LaTeX preview, project search, comment toggling. See `android/README.md`.
-- **Linux** has incremental highlighting, images and PDFs, Find in Folder,
-  data safety, the tree actions, the LSP client and the LaTeX preview now
-  (September 2026), and with item 8 several windows, Previous File, Find
-  Next and Previous, reload on external change, a live color picker and a
-  terminal that keeps its Ctrl keys; item 9 added Ctrl+click links in the
-  terminal. All nine items of `linux/HANDOFF.md` are done; blur is what the
-  Mac still has that Linux lacks, and `BUILD-LINUX.md` says what needs a
-  person.
+- **Released: 1.4.0** (2026-09-23), on GitHub Releases and the Homebrew tap,
+  with the Mac zip and the first signed Android APK. The user's own Mac runs
+  it from Homebrew. Everything since is on `main` and pushed, but not yet
+  released; the next release carries the Linux parity work, the review fixes
+  below, and the TeX grammar. 1,465 core checks pass; the Mac build is
+  warning-free; CI builds and tests macOS and Linux.
+- **macOS**: terminal links (Cmd+click `file:line` and URLs, log and grid) are
+  in 1.4.0; the user has not yet clicked them in the grid (Claude Code, vim).
+  A language server that fails `initialize` now says "failed to start"
+  instead of "starting…" forever (unseen on screen). All eight demo GIFs
+  were re-recorded on 2026-09-23; `latex.gif` predates the TeX grammar, so its
+  source view is uncoloured.
+- **Android** (1.4.0 APK): editor, terminal with a key row (Esc, Tab, sticky
+  Ctrl, Up/Down history, symbols), terminal links, Markdown, images, PDFs,
+  browser, and through Termux the language servers and the LaTeX preview
+  with double-tap editing. Projects must live in phone storage, opened with
+  leader O → Phone storage. Missing: project search, comment toggling,
+  PDF pages past the first outside the LaTeX preview, image zoom, terminal
+  scrollback. The release key and its backup are described under
+  Distribution.
+- **Linux**: all nine items of `linux/HANDOFF.md` are done (the user's work,
+  2026-09-24), and a three-part review on 2026-09-25 was fixed the same day:
+  huge and special files refused before reading, renames followed in every
+  window, in-place saves for hard links and foreign owners, PDF pages
+  rendered on a worker thread with a placeholder for pages that fail, a
+  per-preview LaTeX sibling cleaned up through a folder handle, the Find in
+  Folder picker made safe after its window closes, stale language servers
+  ignored. Verified in the Docker container; still needs the ThinkPad: the
+  folder picker after closing its window, F2 rename in the tree, renames
+  across two windows under GNOME, and the PDF placeholder at 2x.
+- **Reddit**: drafts for five subreddits are a Claude Doc, "MiniCode Reddit
+  drafts" (https://claude.ai/code/artifact/06496ec8-70b7-443d-af5c-9c53f3996ffe),
+  not in the repo. The user is posting from a new account.
 - The user's phone is a Unihertz Titan 2 (Android 16, 576 by 640 dp, hardware
   keyboard, Termux and F-Droid installed). Wireless debugging changes port on
-  every reconnect, so ask for the new one rather than guessing.
-- The next things the user named: use the phone for a day, then continue the
-  port. Termux integration is the one piece that unlocks both language
-  servers and LaTeX, since neither clangd nor tectonic exists on the device
-  otherwise.
-- Needs the user's eyes, still unconfirmed: the terminal grid, LSP
-  squiggles, completion and hover, the LaTeX popover's placement, and
-  whether Ctrl+Space reaches the Mac app with several input sources.
+  every reconnect, so ask for the new one rather than guessing. Test files are
+  in `/sdcard/mc-test`.
+- Still needs the user's eyes on the Mac: the terminal grid, LSP squiggles,
+  completion and hover, the LaTeX popover's placement, and whether
+  Ctrl+Space reaches the app with several input sources.
 - tectonic 0.17.0 lives at
   `~/Library/Application Support/MiniCode/bin/tectonic` with its cache in
   `~/Library/Caches/TectonicProject.Tectonic` (about 44 MB; text fonts but no
   Computer Modern math fonts, so math needs the network).
 - `tests/latex/sweep.sh` double-clicks every word of a typeset document
   through the real click path: 100% on the user's resume, 98.7% on
-  `tests/latex/torture.tex`.
+  `tests/latex/torture.tex` (1,081 found, 14 refused, 0 wrong of 1,095).
 
 ## Images
 
@@ -961,7 +973,8 @@ holds, these give real runtime evidence rather than compile-only evidence:
 
 ## What's next
 
-See `ROADMAP.md`. Immediate: the Android port continues (Termux for language
-servers and LaTeX, then project search and comment toggling). After that, the
-Linux port of the macOS work it still lacks, then video/audio and the LSP and
-terminal follow-ups.
+See `ROADMAP.md`. Candidates, none started: cut the next release (Linux
+parity plus the review fixes); Android project search and comment toggling;
+Android on F-Droid; the other throng features discussed (terminals that
+survive closing the app, switching between projects); notarization once the
+user has a paid Apple Developer account (`scripts/sign-and-notarize.sh`).
