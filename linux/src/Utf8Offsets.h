@@ -117,6 +117,35 @@ inline std::u16string fromUtf8(const std::string& in) {
     return out;
 }
 
+// Byte offset in `in` of UTF-16 offset `u16`, by the same decoding rules as
+// fromUtf8 (an invalid byte is one unit), clamped to the end. An offset
+// between the halves of a surrogate pair counts as the character's start.
+// Walking the bytes directly keeps it inside the string: counting characters
+// and then stepping with g_utf8_offset_to_pointer, which trusts each lead
+// byte's length, ran past the end of a line holding invalid UTF-8.
+inline size_t byteOffsetOfUtf16(const std::string& in, size_t u16) {
+    size_t i = 0, units = 0;
+    while (i < in.size()) {
+        unsigned char c = (unsigned char)in[i];
+        size_t len;
+        if (c < 0x80)                len = 1;
+        else if ((c & 0xE0) == 0xC0) len = 2;
+        else if ((c & 0xF0) == 0xE0) len = 3;
+        else if ((c & 0xF8) == 0xF0) len = 4;
+        else                         len = 0;   // invalid lead byte
+        bool ok = len > 0 && i + len <= in.size();
+        for (size_t k = 1; ok && k < len; ++k)
+            if (((unsigned char)in[i + k] & 0xC0) != 0x80) ok = false;
+        size_t width = 1;   // UTF-16 units this character takes
+        if (!ok) len = 1;
+        else if (len == 4) width = 2;
+        if (units + width > u16) break;
+        units += width;
+        i += len;
+    }
+    return i;
+}
+
 inline std::string toUtf8(const std::u16string& in) {
     std::string out;
     out.reserve(in.size());

@@ -2,6 +2,7 @@
 // shared core; this file is the window, the worker thread and the list.
 #include "Search.h"
 
+#include <memory>
 #include <utility>
 
 // What one search carries into its worker thread and back. The GTask owns it
@@ -192,16 +193,26 @@ void SearchPanel::chooseScope() {
     GFile* initial = g_file_new_for_path(scope_.c_str());
     gtk_file_dialog_set_initial_folder(dlg, initial);
     g_object_unref(initial);
+    // The picker can outlive the panel: the portal's dialog is modal only
+    // to the search window, so the editor window (and this panel with it)
+    // can close while it is up. The callback gets the panel together with
+    // a weak reference to life_, and touches the panel only if that is
+    // still alive.
+    struct Pick {
+        SearchPanel* self;
+        std::weak_ptr<int> alive;
+    };
     gtk_file_dialog_select_folder(dlg, GTK_WINDOW(window_), nullptr,
-        [](GObject* src, GAsyncResult* res, gpointer selfp) {
+        [](GObject* src, GAsyncResult* res, gpointer data) {
+            std::unique_ptr<Pick> pick(static_cast<Pick*>(data));
             GFile* folder = gtk_file_dialog_select_folder_finish(
                 GTK_FILE_DIALOG(src), res, nullptr);
             if (!folder) return;   // cancelled
             char* path = g_file_get_path(folder);
-            if (path) static_cast<SearchPanel*>(selfp)->setScope(path);
+            if (path && !pick->alive.expired()) pick->self->setScope(path);
             g_free(path);
             g_object_unref(folder);
-        }, this);
+        }, new Pick{this, life_});
     g_object_unref(dlg);
 }
 

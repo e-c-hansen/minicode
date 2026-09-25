@@ -182,6 +182,10 @@ public:
 
     // Callbacks.
     std::function<void()> onReady;
+    // The server answered `initialize` with an error. The client is Exited
+    // and drops everything from here on, so the owner should stop the
+    // process and say so, rather than wait for a Ready that never comes.
+    std::function<void(const std::string& message)> onInitializeFailed;
     std::function<void(const std::string& uri, const std::vector<Diagnostic>&)> onDiagnostics;
     std::function<void(int type, const std::string& message)> onShowMessage;
     std::function<void(const std::string& problem)> onProtocolError;

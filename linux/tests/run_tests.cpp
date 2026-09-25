@@ -524,6 +524,35 @@ static void testTermLinkPath() {
     rmdir(base.c_str());
 }
 
+// UTF-16 column -> byte offset, the conversion byteColumn() in Lsp.cpp uses
+// for a definition read from disk, which may not be valid UTF-8.
+static void testByteOffsetOfUtf16() {
+    GROUP("utf16-to-byte");
+    using utf16::byteOffsetOfUtf16;
+    CHECK(byteOffsetOfUtf16("abc", 0) == 0);
+    CHECK(byteOffsetOfUtf16("abc", 2) == 2);
+    CHECK(byteOffsetOfUtf16("abc", 99) == 3);                 // clamped
+    CHECK(byteOffsetOfUtf16("caf\xC3\xA9 x", 4) == 5);        // é is 2 bytes, 1 unit
+    CHECK(byteOffsetOfUtf16("a\xF0\x9F\x98\x80z", 3) == 5);   // an emoji is 2 units
+    CHECK(byteOffsetOfUtf16("a\xF0\x9F\x98\x80z", 2) == 1);   // mid-pair: its start
+    // Invalid UTF-8 stays inside the string, one unit per bad byte, the way
+    // utf16::fromUtf8 counts it. Before, "x\xF0" at column 2 gave byte 5.
+    CHECK(byteOffsetOfUtf16("x\xF0", 2) == 2);
+    CHECK(byteOffsetOfUtf16("x\xF0", 9) == 2);
+    CHECK(byteOffsetOfUtf16("/* caf\xE9 */ int foo;", 15) == 15);
+    CHECK(byteOffsetOfUtf16("\xE2\x82", 5) == 2);              // cut-off sequence
+    // Agrees with fromUtf8 on every prefix of a mixed string.
+    const std::string mixed = "a\xC3\xA9\xFF\xF0\x9F\x98\x80\xE2\x82z";
+    const std::u16string u = utf16::fromUtf8(mixed);
+    bool agrees = true;
+    for (size_t col = 0; col <= u.size(); ++col) {
+        size_t b = byteOffsetOfUtf16(mixed, col);
+        if (b > mixed.size()) agrees = false;
+        else if (utf16::fromUtf8(mixed.substr(0, b)).size() > col) agrees = false;
+    }
+    CHECK(agrees);
+}
+
 int main() {
     std::printf("Running MiniCode Linux port tests...\n\n");
     testAscii();
@@ -534,6 +563,7 @@ int main() {
     testMatchesReference();
     testRealSources();
     testUtf16();
+    testByteOffsetOfUtf16();
     testThemeCss();
     testPageWords();
     testTermLinkPath();

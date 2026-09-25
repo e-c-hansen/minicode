@@ -134,10 +134,7 @@ bool lineOf(const std::string& text, int line, std::string& out) {
 
 // A UTF-16 column in a line -> its byte offset in the line's UTF-8.
 size_t byteColumn(const std::string& lineText, int utf16Col) {
-    std::u16string u = utf16::fromUtf8(lineText);
-    long chars = utf16::toCharOffset(u, (size_t)std::max(0, utf16Col));
-    const char* p = g_utf8_offset_to_pointer(lineText.c_str(), chars);
-    return (size_t)(p - lineText.c_str());
+    return utf16::byteOffsetOfUtf16(lineText, (size_t)std::max(0, utf16Col));
 }
 
 void installCss() {
@@ -681,12 +678,23 @@ std::shared_ptr<Server> LspSession::serverForKey(const std::string& key) {
     }
     std::weak_ptr<int> alive = life_;
     Lsp::Client& c = server->client();
-    c.onReady = [alive, this] {
-        if (!alive.expired()) updateStatus();
+    // These live in the server's own client, so the server is alive when
+    // they run. A server being stopped (a new folder, a settings change) can
+    // still answer or publish before it goes, and by then its replacement
+    // may have the same file open under the same URI, so anything from a
+    // stopping server is dropped rather than drawn over the new one's.
+    Server* self = server.get();
+    c.onReady = [alive, this, self] {
+        if (!alive.expired() && !self->stopping()) updateStatus();
     };
-    c.onDiagnostics = [alive, this](const std::string& uri,
-                                    const std::vector<Lsp::Diagnostic>& list) {
-        if (!alive.expired()) diagnosticsArrived(uri, list);
+    c.onDiagnostics = [alive, this, self](const std::string& uri,
+                                          const std::vector<Lsp::Diagnostic>& list) {
+        if (!alive.expired() && !self->stopping()) diagnosticsArrived(uri, list);
+    };
+    // A server that refuses the handshake would otherwise read "starting…"
+    // for good while every request is dropped: stop it and say so.
+    c.onInitializeFailed = [alive, this, self](const std::string& message) {
+        if (!alive.expired() && !self->stopping()) initializeFailed(self, message);
     };
     std::string name = server->name();
     c.onProtocolError = [name](const std::string& problem) {
@@ -698,6 +706,27 @@ std::shared_ptr<Server> LspSession::serverForKey(const std::string& key) {
     c.initialize(root_, (int)getpid());
     servers_[key] = server;
     return server;
+}
+
+void LspSession::initializeFailed(Server* s, const std::string& message) {
+    std::string note = s->name() + " failed to start";
+    if (!message.empty()) note += ": " + message;
+    std::shared_ptr<Server> keep;
+    auto it = servers_.find(s->key());
+    if (it != servers_.end() && it->second.get() == s) {
+        keep = it->second;
+        servers_.erase(it);
+    }
+    notes_[s->key()] = note;   // not tried again until the folder or settings change
+    if (server_.get() == s) {
+        server_.reset();
+        uri_.clear();
+        note_ = note;
+        clearMarks();
+        closeCompletion();
+        updateStatus();
+    }
+    s->stop();   // its client has already exited, so this just ends its input
 }
 
 void LspSession::serverExited(Server* s) {

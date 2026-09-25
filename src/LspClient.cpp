@@ -718,8 +718,9 @@ void Client::handleMessage(const Json& msg) {
         if (!error.isNull()) {
             state_ = State::Exited;
             queue_.clear();
-            if (onProtocolError)
-                onProtocolError("initialize failed: " + error["message"].asString());
+            const std::string message = error["message"].asString();
+            if (onProtocolError) onProtocolError("initialize failed: " + message);
+            if (onInitializeFailed) onInitializeFailed(message);
             return;
         }
         capabilities_ = result["capabilities"];

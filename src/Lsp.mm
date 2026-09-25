@@ -847,10 +847,21 @@ static const NSInteger kMaxRows = 10;
     __weak LspSession *weakSelf = self;
     __weak MCLspServer *weakServer = server;
     Lsp::Client &c = server.client;
-    c.onReady = [weakSelf] { [weakSelf updateStatus]; };
-    c.onDiagnostics = [weakSelf](const std::string &uri,
-                                 const std::vector<Lsp::Diagnostic> &list) {
-        [weakSelf diagnosticsArrived:uri list:list];
+    // A server being stopped (a new folder, a settings change) can still
+    // answer or publish before it goes, when its replacement may have the
+    // same file open under the same URI; what it sends then is dropped.
+    c.onReady = [weakSelf, weakServer] {
+        if (!weakServer.stopping) [weakSelf updateStatus];
+    };
+    c.onDiagnostics = [weakSelf, weakServer](const std::string &uri,
+                                             const std::vector<Lsp::Diagnostic> &list) {
+        if (!weakServer.stopping) [weakSelf diagnosticsArrived:uri list:list];
+    };
+    // A server that refuses the handshake would otherwise read "starting…"
+    // for good while every request is dropped: stop it and say so.
+    c.onInitializeFailed = [weakSelf, weakServer](const std::string &message) {
+        MCLspServer *s = weakServer;
+        if (s && !s.stopping) [weakSelf server:s failedToStart:message];
     };
     c.onProtocolError = [weakServer](const std::string &problem) {
         NSLog(@"MiniCode: %@: %s", weakServer.name, problem.c_str());
@@ -859,6 +870,24 @@ static const NSInteger kMaxRows = 10;
     c.initialize(Std(_root), (int)getpid());
     _servers[k] = server;
     return server;
+}
+
+- (void)server:(MCLspServer *)server failedToStart:(const std::string &)message {
+    NSString *note = [NSString stringWithFormat:@"%@ failed to start", server.name];
+    if (!message.empty())
+        note = [note stringByAppendingFormat:@": %s", message.c_str()];
+    // Remembered as the key's note, so it is not tried again until the
+    // folder or the settings change.
+    if (_servers[server.key] == server) _servers[server.key] = note;
+    if (_server == server) {
+        _server = nil;
+        _uri = nil;
+        _note = note;
+        _tv.diagnostics = @[];
+        [self closeCompletion];
+        [self updateStatus];
+    }
+    [server stop];   // its client has already exited, so this just ends its input
 }
 
 - (void)serverExited:(MCLspServer *)server {

@@ -3208,14 +3208,16 @@ void testLspClient() {
     // A failed initialize leaves the client exited, not waiting forever.
     FakeServer s4;
     Lsp::Client bad([&](const std::string &b) { s4.take(b); });
-    std::string why;
+    std::string why, failed;
     bad.onProtocolError = [&](const std::string &p) { why = p; };
+    bad.onInitializeFailed = [&](const std::string &m) { failed = m; };
     bad.initialize("/p", 1);
     bad.didOpen("file:///x.py", "python", "x");
     bad.receive(Lsp::Framer::frame(
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-1,\"message\":\"no\"}}"));
     CHECK(bad.state() == Lsp::Client::State::Exited && why.find("no") != std::string::npos);
     CHECK(s4.sent.size() == 1 && bad.queuedMessages() == 0);
+    CHECK(failed == "no");   // the owner hears it, to stop the process and say so
 }
 
 }  // namespace

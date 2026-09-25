@@ -129,6 +129,7 @@ private:
     std::string settingsSignature(const Settings& s) const;
     std::shared_ptr<lspgtk::Server> serverForKey(const std::string& key);
     void serverExited(lspgtk::Server* s);
+    void initializeFailed(lspgtk::Server* s, const std::string& message);
     void stopAllServers();
     void closeDocument();
     void flushChanges();
