@@ -6,8 +6,8 @@
 # it and copies it into the homebrew-tap repo, which holds nothing else, so edit
 # it here and never there. To cut a new version: scripts/release.sh 1.2.1
 cask "minicode" do
-  version "1.4.0"
-  sha256 "0491f6098c1413cc758e86ee2eef879cfde74f55e499beb0f9c00cc7370538b3"
+  version "1.4.1"
+  sha256 "80bdd478bf09b60c03e4cf8f8424a0c41ffbef798d44a50bb32dcddb1b9ba6a8"
 
   url "https://github.com/e-c-hansen/minicode/releases/download/v#{version}/MiniCode.zip"
   name "MiniCode"
