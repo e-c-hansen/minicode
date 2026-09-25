@@ -247,6 +247,11 @@ same way Markdown does; `LatexView` takes the editor's slot in
   span anyway. The price, accepted by the user: a list item's number or
   label, a one-letter word ("a", "I") and a one-letter math variable no
   longer open anything; click a neighbouring word instead.
+  The exception is a single Han, kana or Hangul character: those scripts
+  have no spaces, so PDF word selection often returns one ideograph, and
+  refusing them made CJK documents uneditable from the page. Such a
+  character is taken only when the page text around it agrees with the
+  source; Greek and accented single letters stay refused.
 - **Click to source**, all of it in `MCLatexSpanAtPoint` (Latex.mm), which the
   sweep harness calls too:
   - **Lines: `SyncTexIndex::textHitsAtPoint`.** A line of text's box carries
