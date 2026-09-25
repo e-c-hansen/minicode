@@ -172,6 +172,54 @@ void testSyntax() {
     CHECK(hasToken(bib, "bib", "@article", TokenStyle::Preprocessor));
     CHECK(hasToken(bib, "bib", "$x$", TokenStyle::Number));
     CHECK(!hasStyle(bib, "tex", TokenStyle::Preprocessor));
+    // Inside a .bib entry a '%' is text (a percent-escaped DOI), across
+    // lines and nested braces; outside an entry it is still a comment.
+    std::string doi = "% my refs\n@article{k,\n  url = {https://doi.org/10.1000%2Fabc},\n"
+                      "  note = {50% {off}},\n}\n% after\n@book(b, title = {x%y})\n% end\n";
+    CHECK(hasToken(doi, "bib", "% my refs", TokenStyle::Comment));
+    CHECK(!hasToken(doi, "bib", "%2Fabc},", TokenStyle::Comment));
+    CHECK(!hasToken(doi, "bib", "% {off}},", TokenStyle::Comment));
+    CHECK(hasToken(doi, "bib", "% after", TokenStyle::Comment));
+    CHECK(!hasToken(doi, "bib", "%y})", TokenStyle::Comment));
+    CHECK(hasToken(doi, "bib", "% end", TokenStyle::Comment));
+    CHECK(hasToken(doi, "bib", "@book", TokenStyle::Preprocessor));
+    CHECK(hasToken("@misc{m, title = {\\emph{A} % b}}", "bib", "\\emph", TokenStyle::Keyword));
+    // \url and \href's first argument: a '%' is part of the address.
+    std::string url = "See \\url{https://x.org/a%20b} and \\href{http://y.io/%7Ez}{text} % real\n";
+    CHECK(hasToken(url, "tex", "https://x.org/a%20b", TokenStyle::String));
+    CHECK(hasToken(url, "tex", "http://y.io/%7Ez", TokenStyle::String));
+    CHECK(hasToken(url, "tex", "\\href", TokenStyle::Keyword));
+    CHECK(hasToken(url, "tex", "% real", TokenStyle::Comment));
+    CHECK(!hasToken(url, "tex", "%20b} and \\href{http://y.io/%7Ez}{text} % real", TokenStyle::Comment));
+    // An unclosed \url on its line is ordinary text again.
+    CHECK(hasToken("\\url{a%b\nc}", "tex", "%b", TokenStyle::Comment));
+    // \end {equation}, with a space, ends math as TeX does.
+    std::string sp = "\\begin{equation}\n  x^2\n\\end {equation}\nafter prose\n";
+    CHECK(hasToken(sp, "tex", "equation", TokenStyle::Type));
+    bool afterIsMath = false;
+    for (const Token &t : SyntaxHighlighter::highlight(sp, "tex"))
+        if (t.style == TokenStyle::Number && t.start + t.length > sp.find("after")) afterIsMath = true;
+    CHECK(!afterIsMath);
+    // ...but a verbatim body ends only at the exact \end{verbatim}.
+    std::string vsp = "\\begin{verbatim}\n\\end {verbatim}\n\\end{verbatim}\n";
+    CHECK(hasToken(vsp, "tex", "\n\\end {verbatim}\n", TokenStyle::String));
+    // In a package or class '@' is a letter: \verb@egroup is one command.
+    std::string sty = "\\def\\verb@egroup{\\endgroup}\n";
+    CHECK(hasToken(sty, "sty", "\\verb@egroup", TokenStyle::Keyword));
+    CHECK(!hasStyle(sty, "sty", TokenStyle::String));
+    CHECK(hasToken(sty, "cls", "\\verb@egroup", TokenStyle::Keyword));
+    CHECK(hasToken("\\verb@b@", "tex", "@b@", TokenStyle::String));   // .tex unchanged
+    // Arguments on the \begin line of minted and lstlisting are not body.
+    std::string mint = "\\begin{minted}[linenos]{python}\nx = 1 % no\n\\end{minted}\n";
+    CHECK(!hasToken(mint, "tex", "[linenos]{python}\nx = 1 % no\n", TokenStyle::String));
+    CHECK(hasToken(mint, "tex", "\nx = 1 % no\n", TokenStyle::String));
+    CHECK(hasToken("\\begin{minted}{c}\nint x;\n\\end{minted}", "tex",
+                   "\nint x;\n", TokenStyle::String));
+    std::string lst = "\\begin{lstlisting}[language=C]\nint y;\n\\end{lstlisting}\n";
+    CHECK(hasToken(lst, "tex", "\nint y;\n", TokenStyle::String));
+    // Plain verbatim has no arguments: a bracket there is body.
+    CHECK(hasToken("\\begin{verbatim}[x]\ny\n\\end{verbatim}", "tex", "[x]\ny\n",
+                   TokenStyle::String));
 }
 
 // ------------------------------------------------ incremental highlighting
@@ -306,6 +354,10 @@ const char *const kFragments[] = {
     "\\section{A}", "\\begin{verbatim}", "\\end{verbatim}", "\\begin{equation}\n",
     "\\end{equation}", "\\begin{comment}", "\\end{comment}", "\\verb|x|",
     "\\verb", "|", "@article{", "\\begin{itemize}", "\n \n",
+    "\\end {equation}", "\\verb@egroup", "\\verb@b@", "\\url{a%2F}", "\\url{",
+    "\\href{h%7E}{t}", "@book(", ")", "(", "10.1000%2Fabc", "\\begin{minted}[n]{py}",
+    "\\end{minted}", "\\begin{lstlisting}[language=C]", "\\end{lstlisting}", "{",
+    "\\begin{align}", "\\end{align}",
 };
 
 template <class Ch>
@@ -501,7 +553,7 @@ void testIncrementalHighlight() {
     // The old-lexer comparison covers only the grammars it had; the random
     // edits also run TeX, checked against a full lex (see newGrammar).
     const char *exts[] = {"cpp", "py", "js", "sh", "txt"};
-    const char *fuzzExts[] = {"cpp", "py", "js", "sh", "txt", "tex", "bib"};
+    const char *fuzzExts[] = {"cpp", "py", "js", "sh", "txt", "tex", "bib", "sty"};
 
     GROUP("incremental:matches-old-lexer");
     // The line lexer changed no token anywhere, joined back into whole tokens.
@@ -2652,6 +2704,30 @@ void testLatexClicks() {
     CHECK(gd.spanForClick({2}, "\xCE\xB1", "", "+ \xCE\xB2 and") == nullptr);
     CHECK(gd.spanForClick({2}, "\xC3\xA9", "and", "t\xC3\xA9") == nullptr);   // é
     CHECK(gd.spanForClick({2}, "t\xC3\xA9") != nullptr);                // "té"
+    // Chinese and Japanese are the exception: the PDF often gives a single
+    // ideograph as the word, and it is taken when the page's text around it
+    // agrees with the source. Without context, or with context that does
+    // not agree, it is still refused.
+    std::string cjk =
+        "\\begin{document}\n"
+        "\\section{\xE7\xB4\xB9\xE4\xBB\x8B}\n"                           // 紹介
+        "\xE4\xBB\x8A\xE6\x97\xA5\xE3\x81\xAF\xE9\x9B\xA8\xE3\x81\x8C"
+        "\xE9\x99\x8D\xE3\x82\x8A\xE3\x81\xBE\xE3\x81\x99\xE3\x80\x82\n" // 今日は雨が降ります。
+        "\\end{document}\n";
+    LatexDoc cd = LatexDoc::parse(cjk);
+    const char *rain = "\xE9\x9B\xA8";                                  // 雨
+    CHECK(sourceOf(cjk, cd.spanForClick({3}, rain, "\xE4\xBB\x8A\xE6\x97\xA5\xE3\x81\xAF",
+                                        "\xE3\x81\x8C\xE9\x99\x8D\xE3\x82\x8A")) ==
+          "\xE4\xBB\x8A\xE6\x97\xA5\xE3\x81\xAF\xE9\x9B\xA8\xE3\x81\x8C"
+          "\xE9\x99\x8D\xE3\x82\x8A\xE3\x81\xBE\xE3\x81\x99\xE3\x80\x82");
+    CHECK(cd.spanForClick({3}, rain) == nullptr);                       // no context
+    CHECK(cd.spanForClick({3}, rain, "\xE6\x98\x8E\xE6\x97\xA5",        // 明日
+                          "\xE9\xA2\xA8") == nullptr);                  // 風: disagrees
+    // Hangul too; a lone Latin letter beside CJK text is still refused.
+    std::string ko = "\\begin{document}\n\xEB\x82\xA0\xEC\x94\xA8 \xEC\xA2\x8B\xEB\x8B\xA4 a\n\\end{document}\n";
+    LatexDoc kd = LatexDoc::parse(ko);
+    CHECK(kd.spanForClick({2}, "\xEC\x94\xA8", "\xEB\x82\xA0", "\xEC\xA2\x8B\xEB\x8B\xA4") != nullptr);
+    CHECK(kd.spanForClick({2}, "a", "\xEC\xA2\x8B\xEB\x8B\xA4", "") == nullptr);
     // A line reported whole (for a glyph that is not a word) is the same:
     // one character is refused, and a line of words is still found.
     CHECK(pd.spanForClick({6}, "1.") == nullptr);

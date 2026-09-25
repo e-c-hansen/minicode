@@ -707,6 +707,19 @@ std::vector<std::string> needlesFor(const std::string &word) {
     return out;
 }
 
+// Scripts written without spaces between words, where the PDF's word
+// selection often returns a single character: Han ideographs, kana, Hangul.
+bool isCjk(unsigned cp) {
+    return (cp >= 0x3040 && cp <= 0x30FF) ||   // hiragana, katakana
+           (cp >= 0x31F0 && cp <= 0x31FF) ||   // katakana extensions
+           (cp >= 0x3400 && cp <= 0x4DBF) ||   // CJK extension A
+           (cp >= 0x4E00 && cp <= 0x9FFF) ||   // CJK unified ideographs
+           (cp >= 0xAC00 && cp <= 0xD7AF) ||   // Hangul syllables
+           (cp >= 0xF900 && cp <= 0xFAFF) ||   // CJK compatibility
+           (cp >= 0xFF66 && cp <= 0xFF9F) ||   // halfwidth katakana
+           (cp >= 0x20000 && cp <= 0x3FFFF);   // CJK extensions B and on
+}
+
 bool covers(const LatexSpan &sp, int line) {
     return sp.line <= line && line <= sp.endLine;
 }
@@ -799,12 +812,23 @@ const LatexSpan *LatexDoc::spanForClick(const std::vector<int> &lines,
     // other span that happens to read the same, and the word beside it opens
     // the same span anyway, so refusing costs little. Characters, not bytes:
     // a Greek letter in math is one character too.
+    //
+    // Chinese, Japanese and Korean are the exception. There one character is
+    // a real word far more often than a number TeX made up, and the PDF's
+    // word selection often returns a single ideograph, so refusing would
+    // leave such text uneditable from the page. One is taken only when the
+    // text around it on the page agrees with the source around it.
     std::vector<std::string> needles = needlesFor(word);
+    bool cjkSingle = false;
     if (!needles.empty()) {
         std::size_t chars = 0;
         for (char c : needles.front())
             if (((unsigned char)c & 0xC0) != 0x80) chars++;
-        if (chars < 2) return nullptr;
+        if (chars < 2) {
+            std::size_t at = 0;
+            if (!isCjk(nextCodePoint(needles.front(), at))) return nullptr;
+            cjkSingle = true;
+        }
     }
     std::vector<std::string> hays;
     for (const LatexSpan *sp : near) hays.push_back(matchKey(sp->display));
@@ -812,6 +836,7 @@ const LatexSpan *LatexDoc::spanForClick(const std::vector<int> &lines,
     if (beforeKey.size() > kContext)
         beforeKey = beforeKey.substr(beforeKey.size() - kContext);
     if (afterKey.size() > kContext) afterKey.resize(kContext);
+    if (cjkSingle && beforeKey.empty() && afterKey.empty()) return nullptr;
 
     for (const std::string &needle : needles) {
         // Every nearby span holding the word is a candidate; the one whose
@@ -823,15 +848,21 @@ const LatexSpan *LatexDoc::spanForClick(const std::vector<int> &lines,
         const LatexSpan *pick = nullptr;
         std::size_t pickScore = 0;
         for (std::size_t k = 0; k < near.size(); k++) {
-            if (!spanHolds(*near[k], hays[k], needle)) continue;
+            // Text without spaces has no whole words to hold the character,
+            // so it only has to occur; the context then has to agree.
+            bool holds = cjkSingle ? hays[k].find(needle) != std::string::npos
+                                   : spanHolds(*near[k], hays[k], needle);
+            if (!holds) continue;
             std::size_t score = contextScore(*near[k], hays[k], needle,
                                              beforeKey, afterKey);
+            if (cjkSingle && score < 2) continue;
             if (!pick || score >= pickScore + kMargin) {
                 pick = near[k];
                 pickScore = score;
             }
         }
         if (pick) return pick;
+        if (cjkSingle) break;
         // A line of text holds several spans; the longest is the likeliest
         // to be the one under the pointer, and a short one ("and", "words")
         // is found inside nearly any line.

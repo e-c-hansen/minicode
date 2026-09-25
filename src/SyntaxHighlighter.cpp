@@ -22,6 +22,7 @@ struct SyntaxGrammar {
     bool decorators = false;                 // '@' at line start is a decorator (Python)
     bool tex = false;                        // TeX/LaTeX: lexed by lexTexLine
     bool bibEntries = false;                 // TeX grammar, plus @article etc. (.bib)
+    bool texAtLetter = false;                // .sty/.cls: '@' is always a letter
     std::unordered_set<std::string> keywords;
     std::unordered_set<std::string> types;
 };
@@ -65,6 +66,7 @@ SyntaxGrammar makeGrammar(const std::string& ext) {
     if (isTexExt(ext)) {
         d.tex = true;
         d.bibEntries = ext == "bib";
+        d.texAtLetter = ext == "sty" || ext == "cls";
     } else if (ext == "py") {
         d.lineComments = {"#"}; d.stringDelims = "\"'"; d.tripleQuotes = true;
         d.decorators = true;
@@ -161,12 +163,19 @@ size_t scanTriple(const Ch* s, size_t n, size_t i, Ch q, bool* closed) {
 // text give the same tokens.
 
 enum class TexBody { Verbatim, Comment, Math };
-struct TexSpecialEnv { const char* name; TexBody body; };
+// What may follow \begin{name} on its own line before the body starts:
+// options in [...] (fancyvrb's Verbatim, lstlisting), and for minted the
+// language in {...} as well. TeX reads those as arguments, not as body.
+enum class TexArgs { None, Optional, OptionalThenRequired };
+struct TexSpecialEnv { const char* name; TexBody body; TexArgs args = TexArgs::None; };
 const TexSpecialEnv kTexEnvs[] = {
     {"verbatim", TexBody::Verbatim},   {"verbatim*", TexBody::Verbatim},
-    {"Verbatim", TexBody::Verbatim},   {"Verbatim*", TexBody::Verbatim},
-    {"BVerbatim", TexBody::Verbatim},  {"lstlisting", TexBody::Verbatim},
-    {"minted", TexBody::Verbatim},     {"comment", TexBody::Comment},
+    {"Verbatim", TexBody::Verbatim, TexArgs::Optional},
+    {"Verbatim*", TexBody::Verbatim, TexArgs::Optional},
+    {"BVerbatim", TexBody::Verbatim, TexArgs::Optional},
+    {"lstlisting", TexBody::Verbatim, TexArgs::Optional},
+    {"minted", TexBody::Verbatim, TexArgs::OptionalThenRequired},
+    {"comment", TexBody::Comment},
     {"equation", TexBody::Math},       {"equation*", TexBody::Math},
     {"align", TexBody::Math},          {"align*", TexBody::Math},
     {"alignat", TexBody::Math},        {"alignat*", TexBody::Math},
@@ -209,15 +218,35 @@ size_t texCommandEnd(const Ch* s, size_t n, size_t i) {
     return j;
 }
 
-// True when s reads "\end{name}" at i.
+// True when s reads "\end{name}" at i. With `spaces`, "\end {name}" too, as
+// LaTeX reads it for an ordinary environment; a verbatim body ends only at
+// the exact "\end{name}", since that is all verbatim looks for.
 template <class Ch>
-bool texEndsEnv(const Ch* s, size_t n, size_t i, const char* name) {
-    static const std::string head = "\\end{";
+bool texEndsEnv(const Ch* s, size_t n, size_t i, const char* name, bool spaces) {
+    static const std::string head = "\\end";
     if (!matchesAt(s, n, i, head)) return false;
     size_t j = i + head.size();
+    if (spaces)
+        while (j < n && (s[j] == Ch(' ') || s[j] == Ch('\t'))) j++;
+    if (j >= n || s[j] != Ch('{')) return false;
+    j++;
     for (const char* p = name; *p; ++p, ++j)
         if (j >= n || code(s[j]) != (unsigned char)*p) return false;
     return j < n && s[j] == Ch('}');
+}
+
+// The end of a group that opens at s[i] ('[' or '{') and closes on the same
+// line, nested groups included: the index just past its closing character,
+// or 0 when it does not close before the line ends.
+template <class Ch>
+size_t texGroupEnd(const Ch* s, size_t n, size_t i, Ch open, Ch close) {
+    int depth = 0;
+    for (size_t k = i; k < n && s[k] != Ch('\n'); ++k) {
+        if (s[k] == Ch('\\') && k + 1 < n && s[k + 1] != Ch('\n')) { ++k; continue; }
+        if (s[k] == open) depth++;
+        else if (s[k] == close && --depth == 0) return k + 1;
+    }
+    return 0;
 }
 
 template <class Ch>
@@ -243,11 +272,56 @@ LexState lexTexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState st,
     size_t i = 0;
     size_t run = 0;   // where the current stretch of math began
     while (i < n) {
+        // Inside a .bib entry: fields, not TeX. A '%' is text there (DOIs and
+        // URLs are full of percent escapes; BibTeX has no comments inside an
+        // entry), braces count until the entry closes, commands are still
+        // Keyword, and $...$ on one line is still math.
+        if (st.kind == LexState::BibEntry) {
+            const bool paren = (st.quote & 0x8000) != 0;
+            unsigned depth = st.quote & 0x7FFF;
+            Ch c = s[i];
+            if (c == Ch('{')) {
+                if (depth < 0x7FFF) depth++;
+                st.quote = (char16_t)(depth | (paren ? 0x8000 : 0));
+                i++;
+                continue;
+            }
+            if (c == Ch('}') || (paren && c == Ch(')') && depth == 1)) {
+                if (depth > 0) depth--;
+                st = depth == 0 ? LexState{}
+                                : LexState{LexState::BibEntry,
+                                           (char16_t)(depth | (paren ? 0x8000 : 0))};
+                i++;
+                continue;
+            }
+            if (c == Ch('\\')) {
+                size_t e = texCommandEnd(s, n, i);
+                if (e == i + 1) { i++; continue; }
+                push(i, e - i, TokenStyle::Keyword);
+                i = e;
+                continue;
+            }
+            if (c == Ch('$')) {
+                size_t k = i + 1;
+                while (k < n && s[k] != Ch('$') && s[k] != Ch('\n')) {
+                    if (s[k] == Ch('\\') && k + 1 < n && s[k + 1] != Ch('\n')) k++;
+                    k++;
+                }
+                if (k < n && s[k] == Ch('$')) {
+                    push(i, k + 1 - i, TokenStyle::Number);
+                    i = k + 1;
+                    continue;
+                }
+            }
+            i++;
+            continue;
+        }
+
         // Verbatim and comment environments: everything up to \end{name}.
         if (st.kind == LexState::TexEnv && body() != TexBody::Math) {
             const char* name = kTexEnvs[st.quote - 1].name;
             size_t j = i;
-            while (j < n && !texEndsEnv(s, n, j, name)) j++;
+            while (j < n && !texEndsEnv(s, n, j, name, false)) j++;
             push(i, j - i, body() == TexBody::Comment ? TokenStyle::Comment
                                                       : TokenStyle::String);
             if (j >= n) return st;
@@ -276,7 +350,7 @@ LexState lexTexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState st,
                     continue;
                 }
                 if (st.kind == LexState::TexEnv &&
-                    texEndsEnv(s, n, i, kTexEnvs[st.quote - 1].name)) {
+                    texEndsEnv(s, n, i, kTexEnvs[st.quote - 1].name, true)) {
                     push(run, i - run, TokenStyle::Number);
                     st = LexState{};
                     continue;
@@ -330,7 +404,9 @@ LexState lexTexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState st,
             word.assign(e - i - 1, ' ');
             for (size_t k = i + 1; k < e; ++k) word[k - i - 1] = (char)code(s[k]);
             // \verb@x@: '@' is a letter in a command name, but not here.
-            if (word.size() > 4 && word.compare(0, 5, "verb@") == 0) {
+            // In a package or class it is a letter everywhere, so \verb@egroup
+            // is one internal command, not \verb with '@' as its delimiter.
+            if (!d.texAtLetter && word.size() > 4 && word.compare(0, 5, "verb@") == 0) {
                 e = i + 5;
                 word = "verb";
             }
@@ -348,6 +424,23 @@ LexState lexTexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState st,
                     j = k;
                 }
                 i = j;
+                continue;
+            }
+            // A URL is read almost verbatim, so a '%' in it (a percent
+            // escape) is not a comment: \url{...} and \href's first argument
+            // are String, when they close on this line.
+            if (word == "url" || word == "href") {
+                push(i, e - i, TokenStyle::Keyword);
+                i = e;
+                size_t j = e;
+                while (j < n && (s[j] == Ch(' ') || s[j] == Ch('\t'))) j++;
+                if (j < n && s[j] == Ch('{')) {
+                    size_t k = texGroupEnd(s, n, j, Ch('{'), Ch('}'));
+                    if (k) {
+                        push(j + 1, k - 1 - (j + 1), TokenStyle::String);
+                        i = k;
+                    }
+                }
                 continue;
             }
             if (word == "begin" || word == "end") {
@@ -376,6 +469,21 @@ LexState lexTexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState st,
                                 }
                         }
                         i = run = k + 1;
+                        // Options and minted's language on the \begin line
+                        // are arguments, not the start of the body.
+                        if (st.kind == LexState::TexEnv && body() != TexBody::Math &&
+                            kTexEnvs[st.quote - 1].args != TexArgs::None) {
+                            auto group = [&](Ch open, Ch close) {
+                                size_t p = i;
+                                while (p < n && (s[p] == Ch(' ') || s[p] == Ch('\t'))) p++;
+                                if (p >= n || s[p] != open) return;
+                                size_t q = texGroupEnd(s, n, p, open, close);
+                                if (q) i = run = q;
+                            };
+                            group(Ch('['), Ch(']'));
+                            if (kTexEnvs[st.quote - 1].args == TexArgs::OptionalThenRequired)
+                                group(Ch('{'), Ch('}'));
+                        }
                     }
                 }
                 continue;
@@ -392,6 +500,13 @@ LexState lexTexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState st,
             while (j < n && isAlpha(s[j])) j++;
             push(i, j - i, TokenStyle::Preprocessor);
             i = j;
+            // The entry's body, in braces or parentheses, is fields.
+            while (j < n && (s[j] == Ch(' ') || s[j] == Ch('\t'))) j++;
+            if (j < n && (s[j] == Ch('{') || s[j] == Ch('('))) {
+                st = LexState{LexState::BibEntry,
+                              (char16_t)(s[j] == Ch('(') ? 0x8001 : 1)};
+                i = j + 1;
+            }
             continue;
         }
         i++;

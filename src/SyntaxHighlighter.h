@@ -47,6 +47,8 @@ struct LexState {
                         // '$' for $, 'D' for $$, ')' for \), ']' for \]
         TexEnv,         // TeX verbatim, comment or math environment not ended
                         // yet; quote = 1 + its index in the lexer's table
+        BibEntry,       // inside a .bib entry; quote = brace depth, with
+                        // 0x8000 set when the entry opened with '('
         Unknown,       // never produced by the lexer; marks lines not lexed yet
     };
     uint8_t kind = Normal;
