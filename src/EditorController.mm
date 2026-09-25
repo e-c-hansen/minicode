@@ -7,6 +7,7 @@
 #import "Search.h"
 #import "AppSettings.h"
 #import "Lsp.h"
+#import "MarkdownImage.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #include "SyntaxHighlighter.h"
 #include "MarkdownParser.h"
@@ -2387,6 +2388,24 @@ static NSColor *ContrastColor(const Rgba &c) {
         }
         if (r.link) { color = [cfg markdown:MarkdownColor::Link]; a[NSUnderlineStyleAttributeName] =
             @(NSUnderlineStyleSingle); }
+        if (r.image) {
+            NSString *src = [NSString stringWithUTF8String:r.src.c_str()];
+            NSImage *picture = MCMarkdownLoadImage(src,
+                self.currentPath.stringByDeletingLastPathComponent);
+            if (picture) {
+                MCMarkdownImage *att = [[MCMarkdownImage alloc] initWithPicture:picture];
+                NSMutableAttributedString *pic = [[NSMutableAttributedString alloc]
+                    initWithAttributedString:
+                        [NSAttributedString attributedStringWithAttachment:att]];
+                [pic addAttribute:NSParagraphStyleAttributeName value:ps
+                            range:NSMakeRange(0, pic.length)];
+                [out appendAttributedString:pic];
+                continue;
+            }
+            // A web image, or one that is missing: its alt text, muted.
+            if (!r.link) color = Hex(0x9CA3AF);
+            if (s.length == 0) s = src;
+        }
 
         NSFontManager *fm = [NSFontManager sharedFontManager];
         if (r.bold) font = [fm convertFont:font toHaveTrait:NSBoldFontMask];

@@ -18,6 +18,8 @@ struct MdRun {
     bool ordered   = false;  // ordered list item marker
     bool link      = false;  // link text
     std::string url;         // populated when link == true
+    bool image     = false;  // ![alt](src): text is the alt text
+    std::string src;         // the image's path or URL, as written
 };
 
 class MarkdownParser {

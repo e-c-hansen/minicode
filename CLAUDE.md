@@ -421,7 +421,8 @@ never closes.
   with the Mac zip and the first signed Android APK. The user's own Mac runs
   it from Homebrew. Everything since is on `main` and pushed, but not yet
   released; the next release carries the Linux parity work, the review fixes
-  below, and the TeX grammar. 1,465 core checks pass; the Mac build is
+  below, the TeX grammar and images in the Markdown preview. 1,473 core
+  checks pass; the Mac build is
   warning-free; CI builds and tests macOS and Linux.
 - **macOS**: terminal links (Cmd+click `file:line` and URLs, log and grid) are
   in 1.4.0; the user has not yet clicked them in the grid (Claude Code, vim).
@@ -868,6 +869,16 @@ holds, these give real runtime evidence rather than compile-only evidence:
   makes `-[NSMenu performKeyEquivalent:]` throw and abort the app. Drive
   keys with `[NSApp sendEvent:]` from a background thread via dispatch_sync
   to main; that exercises the real menu-then-first-responder routing.
+- **Images in the Markdown preview** (`src/MarkdownImage.{h,mm}`): the
+  parser gives `![alt](src)` its own run (`image`, `src`; a badge's
+  `[![alt](src)](url)` also sets `link`), and the Mac inserts an
+  `MCMarkdownImage` attachment whose view provider hosts an NSImageView, so
+  GIFs play. Local files only, relative to the Markdown file; web images
+  show their alt text. Trap: never override the attachment's TextKit 2
+  `attachmentBoundsForAttributes:location:...`. NSTextAttachment's own
+  version is what creates the view provider, so with the override no view
+  was ever made; the provider does the sizing. Linux and Android show the
+  alt text for now.
 - **Markdown**: block elements call `ensureLineStart` so they aren't glued to
   the previous paragraph; headings get `paragraphSpacingBefore`; tables render
   as aligned monospace. Table cells are inline-parsed and padded by *display*

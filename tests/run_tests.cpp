@@ -822,6 +822,37 @@ void testMarkdown() {
         return r.link && r.text == "t" && r.url == "http://x";
     }));
 
+    GROUP("md:images");
+    {
+        auto img = MarkdownParser::parse("![A demo](docs/demos/tour.gif)\n");
+        CHECK(anyRun(img, [](const MdRun &r) {
+            return r.image && !r.link && r.text == "A demo" &&
+                   r.src == "docs/demos/tour.gif";
+        }));
+        // No stray "!" or link run around it.
+        CHECK(!anyRun(img, [](const MdRun &r) {
+            return r.text.find('!') != std::string::npos || r.link;
+        }));
+        CHECK(anyRun(MarkdownParser::parse("![t](a.png \"Title\")"),
+                     [](const MdRun &r) { return r.image && r.src == "a.png"; }));
+        CHECK(anyRun(MarkdownParser::parse("![t](<my pic.png>)"),
+                     [](const MdRun &r) { return r.image && r.src == "my pic.png"; }));
+        auto badge = MarkdownParser::parse("[![CI](b.svg)](http://ci)");
+        CHECK(anyRun(badge, [](const MdRun &r) {
+            return r.image && r.link && r.src == "b.svg" && r.url == "http://ci" &&
+                   r.text == "CI";
+        }));
+        CHECK(badge.size() == 1 || !anyRun(badge, [](const MdRun &r) {
+            return r.text.find("](") != std::string::npos;
+        }));
+        // An exclamation mark that is not an image stays text.
+        CHECK(anyRun(MarkdownParser::parse("Hi! [x](y)"), [](const MdRun &r) {
+            return !r.image && r.text.find("Hi!") != std::string::npos;
+        }));
+        CHECK(!anyRun(MarkdownParser::parse("![]()"),
+                      [](const MdRun &r) { return r.image; }));
+    }
+
     GROUP("md:blocks");
     CHECK(anyRun(MarkdownParser::parse("```\nx=1\n```\n"), [](const MdRun &r) {
         return r.codeBlock && r.text.find("x=1") != std::string::npos;

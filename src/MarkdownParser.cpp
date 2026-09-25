@@ -1,6 +1,7 @@
 // MarkdownParser.cpp — a compact CommonMark-subset parser. Pure C++.
 // Supports: ATX headings, fenced code blocks, blockquotes, unordered/ordered
-// lists, horizontal rules, GitHub tables, and inline **bold**, *italic*, `code`, [text](url).
+// lists, horizontal rules, GitHub tables, and inline **bold**, *italic*, `code`,
+// [text](url), ![alt](src) and a linked image [![alt](src)](url).
 #include "MarkdownParser.h"
 #include <algorithm>
 #include <cctype>
@@ -38,6 +39,32 @@ bool isRule(const std::string& s) {
         count++;
     }
     return count >= 3;
+}
+
+// Reads "![alt](src)" at `i`: fills `r` and returns the index past it, or 0.
+// A title after the source ("src \"title\"") and angle brackets are dropped.
+size_t parseImage(const std::string& text, size_t i, MdRun& r) {
+    if (text.compare(i, 2, "![") != 0) return 0;
+    const size_t close = text.find(']', i + 2);
+    if (close == std::string::npos || close + 1 >= text.size() ||
+        text[close + 1] != '(')
+        return 0;
+    const size_t end = text.find(')', close + 2);
+    if (end == std::string::npos) return 0;
+    std::string src = text.substr(close + 2, end - close - 2);
+    const size_t a = src.find_first_not_of(' ');
+    src = a == std::string::npos ? "" : src.substr(a);
+    if (!src.empty() && src[0] == '<') {
+        const size_t gt = src.find('>');
+        src = src.substr(1, gt == std::string::npos ? std::string::npos : gt - 1);
+    } else {
+        src = src.substr(0, src.find(' '));
+    }
+    if (src.empty()) return 0;
+    r.image = true;
+    r.text = text.substr(i + 2, close - i - 2);
+    r.src = src;
+    return end + 1;
 }
 
 // Parse inline spans of one text line into runs, inheriting a template run.
@@ -83,6 +110,32 @@ void parseInline(const std::string& text, MdRun base, std::vector<MdRun>& out) {
                 out.push_back(r);
                 i = j + 1;
                 continue;
+            }
+        }
+        // Image ![alt](src)
+        if (c == '!') {
+            MdRun r = base;
+            if (size_t next = parseImage(text, i, r)) {
+                flush(base);
+                out.push_back(r);
+                i = next;
+                continue;
+            }
+        }
+        // A linked image [![alt](src)](url), as badges are written
+        if (c == '[' && i + 1 < n && text[i + 1] == '!') {
+            MdRun r = base;
+            size_t next = parseImage(text, i + 1, r);
+            if (next && next + 1 < n && text[next] == ']' && text[next + 1] == '(') {
+                const size_t urlEnd = text.find(')', next + 2);
+                if (urlEnd != std::string::npos) {
+                    flush(base);
+                    r.link = true;
+                    r.url = text.substr(next + 2, urlEnd - next - 2);
+                    out.push_back(r);
+                    i = urlEnd + 1;
+                    continue;
+                }
             }
         }
         // Link [text](url)
