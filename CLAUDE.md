@@ -386,12 +386,15 @@ never closes.
   (`applicationWillTerminate` → `MCLspTerminateAllServers`): shutdown + exit
   at once, wait up to 0.5 s, then signals. If MiniCode crashes, stdin EOF
   makes servers exit.
-- **Diagnostics are drawn, not attributed.** TextKit 2 (the default for a
-  plain NSTextView, which this editor is) ignores underline *rendering
-  attributes*: a pixel count was identical with and without them. Accessing
-  `layoutManager` would silently switch the view to TextKit 1 for the whole
-  editor, so `CodeTextView` draws squiggles after `super drawRect:` from
-  `enumerateTextSegmentsInRange:` (TK1 fallback kept), only for the viewport.
+- **Diagnostics are drawn, not attributed.** `CodeTextView` draws
+  squiggles after `super drawRect:` from `enumerateTextSegmentsInRange:`
+  under TextKit 2 or the layout manager's rects under TextKit 1, only for
+  the viewport. In practice it is TextKit 1: AppKit builds any NSTextView
+  subclass that overrides `drawRect:` with a TextKit 1 layout manager
+  (checked on 2026-09-25; a plain NSTextView gets TextKit 2, a subclass
+  whose only override is `drawRect:` gets TextKit 1, and no switch
+  notification is posted). Notes elsewhere that assume TextKit 2 predate
+  this finding.
   Marks are NSRanges that follow edits until the server republishes, and they
   survive re-highlighting because they are not storage attributes. Tooltips
   are `addToolTipRect:` per visible mark, rebuilt after drawing when dirty.
@@ -872,12 +875,14 @@ holds, these give real runtime evidence rather than compile-only evidence:
 - **Images in the Markdown preview** (`src/MarkdownImage.{h,mm}`): the
   parser gives `![alt](src)` its own run (`image`, `src`; a badge's
   `[![alt](src)](url)` also sets `link`), and the Mac inserts an
-  `MCMarkdownImage` attachment whose view provider hosts an NSImageView, so
-  GIFs play. Local files only, relative to the Markdown file; web images
-  show their alt text. Trap: never override the attachment's TextKit 2
-  `attachmentBoundsForAttributes:location:...`. NSTextAttachment's own
-  version is what creates the view provider, so with the override no view
-  was ever made; the provider does the sizing. Linux and Android show the
+  `MCMarkdownImage` attachment. Its cell (`MCAnimatedImageCell`) sizes the
+  picture to the line's width and, for a GIF, draws the current frame and
+  advances it on a timer that runs only while the picture is on screen.
+  Local files only, relative to the Markdown file; web images show their
+  alt text. Traps: 1.4.1 shipped with a TextKit 2 view provider, which the
+  TextKit 1 editor never asks for, so GIFs were still; and setting
+  `attachmentCell` in the attachment's init reads back nil, so the cell is
+  returned from an `attachmentCell` override. Linux and Android show the
   alt text for now.
 - **Markdown**: block elements call `ensureLineStart` so they aren't glued to
   the previous paragraph; headings get `paragraphSpacingBefore`; tables render

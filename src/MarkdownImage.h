@@ -2,9 +2,8 @@
 #import <Cocoa/Cocoa.h>
 
 // An image in rendered Markdown. It is sized to the width of the line it
-// sits on, but never enlarged past the image's own size. Under TextKit 2 (the
-// editor's default) it is shown by an NSImageView, so animated GIFs play;
-// under TextKit 1 it falls back to a still picture.
+// sits on, but never enlarged past the image's own size, and animated GIFs
+// play. A cell draws it (see MCAnimatedImageCell in the .mm).
 @interface MCMarkdownImage : NSTextAttachment
 - (instancetype)initWithPicture:(NSImage *)picture;
 @property (nonatomic, readonly) NSImage *picture;
