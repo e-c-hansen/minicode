@@ -934,6 +934,40 @@ void testMarkdown() {
     CHECK(al.size() == 4 && al[2] == "a    │  b   │     c");
     CHECK(columnsAligned(al));
 
+    GROUP("md:tables-cells");
+    {
+        // Each run knows its cell, so a GUI can build a real table; the
+        // padding and rules are marked as not belonging to any cell.
+        auto t = MarkdownParser::parse(
+            "| L | R |\n|:--|--:|\n| **a** b | 2 |\n| | x |\n\nafter\n\n| Q |\n|---|\n| z |\n");
+        CHECK(anyRun(t, [](const MdRun &r) {
+            return r.tableId == 1 && r.tableRow == 1 && r.tableCol == 0 && r.bold &&
+                   r.text == "a" && r.tableCols == 2 && r.tableAlign == 0;
+        }));
+        CHECK(anyRun(t, [](const MdRun &r) {
+            return r.tableId == 1 && r.tableRow == 1 && r.tableCol == 0 && !r.bold &&
+                   r.text == " b";
+        }));
+        CHECK(anyRun(t, [](const MdRun &r) {
+            return r.tableId == 1 && r.tableRow == 2 && r.tableCol == 1 &&
+                   r.text == "x" && r.tableAlign == 2;
+        }));
+        CHECK(anyRun(t, [](const MdRun &r) {
+            return r.tableId == 1 && r.tableRow == 0 && r.tableCol == 1 && r.bold;
+        }));
+        // Every table run is numbered, and the second table is table 2.
+        CHECK(!anyRun(t, [](const MdRun &r) { return r.table && r.tableId == 0; }));
+        CHECK(anyRun(t, [](const MdRun &r) {
+            return r.tableId == 2 && r.tableCol == 0 && r.tableRow == 1 && r.text == "z";
+        }));
+        // Separators and the header rule belong to no cell.
+        CHECK(!anyRun(t, [](const MdRun &r) {
+            return r.tableCol >= 0 && (r.text.find("\xE2\x94") != std::string::npos ||
+                                       r.text == "\n");
+        }));
+        CHECK(!anyRun(t, [](const MdRun &r) { return !r.table && r.tableId != 0; }));
+    }
+
     GROUP("md:tables-shape");
     // No leading/trailing pipes is still a table.
     CHECK(tableLines(MarkdownParser::parse("A | B\n--- | ---\n1 | 2\n")).size() == 3);

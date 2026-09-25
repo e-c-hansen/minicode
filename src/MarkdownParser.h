@@ -13,7 +13,16 @@ struct MdRun {
     bool codeBlock = false;  // part of a ``` fenced block
     bool quote     = false;  // blockquote line
     bool rule      = false;  // horizontal rule (--- )
-    bool table     = false;  // a preformatted table row
+    bool table     = false;  // part of a table, laid out as padded monospace
+    // Where a table run sits, for a GUI that draws real tables: tables are
+    // numbered from 1 in the document, rows and columns from 0 (row 0 is the
+    // header). Runs that only pad, separate or rule (tableCol == -1) exist
+    // for the monospace layout and are skipped by such a GUI.
+    int  tableId   = 0;
+    int  tableRow  = -1;
+    int  tableCol  = -1;
+    int  tableCols = 0;
+    int  tableAlign = 0;     // this column's alignment: 0 left, 1 center, 2 right
     int  listDepth = 0;      // 0 = not a list; >=1 indent level
     bool ordered   = false;  // ordered list item marker
     bool link      = false;  // link text

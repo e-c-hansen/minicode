@@ -121,6 +121,14 @@ static const CGFloat kDragBarHeight = 12;
 - (void)tile {
     [super tile];
     _backdrop.frame = self.bounds;
+    // A text view that wraps is exactly as wide as what shows of it. Left to
+    // itself it kept the width it was created with (the whole window), so
+    // lines, tables and pictures ran past the pane's right edge.
+    NSTextView *tv = [self.documentView isKindOfClass:NSTextView.class]
+                         ? (NSTextView *)self.documentView : nil;
+    const CGFloat width = self.contentSize.width;
+    if (tv && !tv.horizontallyResizable && width > 0 && tv.frame.size.width != width)
+        [tv setFrameSize:NSMakeSize(width, tv.frame.size.height)];
 }
 - (void)setPanelColor:(NSColor *)color {
     _panelColor = color;
@@ -460,7 +468,8 @@ private:
     self.textView.minSize = NSMakeSize(0, 0);
     self.textView.maxSize = NSMakeSize(FLT_MAX, FLT_MAX);
     self.textView.verticallyResizable = YES;
-    self.textView.horizontallyResizable = YES;
+    self.textView.horizontallyResizable = NO;   // lines wrap; see PanelScrollView
+    self.textView.autoresizingMask = NSViewWidthSizable;
     self.textView.textContainer.widthTracksTextView = YES;
     textScroll.documentView = self.textView;
 
@@ -2343,84 +2352,174 @@ static NSColor *ContrastColor(const Rgba &c) {
     std::vector<MdRun> runs = MarkdownParser::parse(md);
 
     NSMutableAttributedString *out = [[NSMutableAttributedString alloc] init];
-    NSFont *body = [NSFont systemFontOfSize:15];
-    NSFont *mono = [NSFont monospacedSystemFontOfSize:13
-                                               weight:NSFontWeightRegular];
-
-    for (const MdRun &r : runs) {
-        NSString *s = [NSString stringWithUTF8String:r.text.c_str()];
-        if (!s) continue;
-
-        NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
-        ps.lineSpacing = 3.0; ps.paragraphSpacing = 4.0;
-
-        AppSettings *cfg = [AppSettings shared];
-        NSFont *font = body;
-        NSColor *color = [cfg text:Surface::Editor];
-        NSMutableDictionary *a = [NSMutableDictionary dictionary];
-
-        if (r.heading > 0) {
-            CGFloat sizes[7] = {0, 26, 22, 19, 17, 15, 14};
-            font = [NSFont boldSystemFontOfSize:sizes[r.heading]];
-            color = [cfg markdown:MarkdownColor::Heading];
-            ps.paragraphSpacing = 8.0;
-            ps.paragraphSpacingBefore = r.heading <= 2 ? 18.0 : 12.0;  // gap above
+    for (size_t i = 0; i < runs.size();) {
+        if (runs[i].tableId > 0) {
+            size_t end = i;
+            while (end < runs.size() && runs[end].tableId == runs[i].tableId) end++;
+            [self appendMarkdownTable:runs from:i to:end into:out];
+            i = end;
+            continue;
         }
-        if (r.codeBlock || r.code) {
-            font = mono;
-            color = [cfg markdown:MarkdownColor::Code];
-            a[NSBackgroundColorAttributeName] =
-                MCColor(cfg.settings.markdownCodeBackground());
-        }
-        if (r.table) {
-            font = mono;   // monospace keeps the padded columns aligned
-            if (!r.code) color = r.bold ? [cfg markdown:MarkdownColor::Heading]
-                                        : [cfg text:Surface::Editor];
-        }
-        if (r.quote) {
-            color = [cfg markdown:MarkdownColor::Quote];
-            ps.headIndent = 16; ps.firstLineHeadIndent = 16;
-        }
-        if (r.rule) {
-            // Draw a rule as a full line of box-drawing chars.
-            s = @"────────────────────────────────";
-            color = Hex(0x555555);
-        }
-        if (r.link) { color = [cfg markdown:MarkdownColor::Link]; a[NSUnderlineStyleAttributeName] =
-            @(NSUnderlineStyleSingle); }
-        if (r.image) {
-            NSString *src = [NSString stringWithUTF8String:r.src.c_str()];
-            NSImage *picture = MCMarkdownLoadImage(src,
-                self.currentPath.stringByDeletingLastPathComponent);
-            if (picture) {
-                MCMarkdownImage *att = [[MCMarkdownImage alloc] initWithPicture:picture];
-                NSMutableAttributedString *pic = [[NSMutableAttributedString alloc]
-                    initWithAttributedString:
-                        [NSAttributedString attributedStringWithAttachment:att]];
-                [pic addAttribute:NSParagraphStyleAttributeName value:ps
-                            range:NSMakeRange(0, pic.length)];
-                [out appendAttributedString:pic];
-                continue;
-            }
-            // A web image, or one that is missing: its alt text, muted.
-            if (!r.link) color = Hex(0x9CA3AF);
-            if (s.length == 0) s = src;
-        }
-
-        NSFontManager *fm = [NSFontManager sharedFontManager];
-        if (r.bold) font = [fm convertFont:font toHaveTrait:NSBoldFontMask];
-        if (r.italic) font = [fm convertFont:font toHaveTrait:NSItalicFontMask];
-
-        a[NSFontAttributeName] = font;
-        a[NSForegroundColorAttributeName] = color;
-        a[NSParagraphStyleAttributeName] = ps;
-
-        [out appendAttributedString:
-            [[NSAttributedString alloc] initWithString:s attributes:a]];
+        NSAttributedString *piece = [self markdownRun:runs[i] cellStyle:nil];
+        if (piece) [out appendAttributedString:piece];
+        i++;
     }
     _liveHighlight = NO;   // rendered Markdown is not source
     [self.textView.textStorage setAttributedString:out];
     [self.textView scrollToBeginningOfDocument:nil];
+}
+
+// One run of rendered Markdown. Inside a table cell, `cellStyle` is the
+// cell's paragraph style and the text is set in the body font, since a real
+// table lines its columns up without monospace.
+- (NSAttributedString *)markdownRun:(const MdRun &)r
+                          cellStyle:(NSParagraphStyle *)cellStyle {
+    NSString *s = [NSString stringWithUTF8String:r.text.c_str()];
+    if (!s) return nil;
+
+    NSFont *body = [NSFont systemFontOfSize:15];
+    NSFont *mono = [NSFont monospacedSystemFontOfSize:13
+                                               weight:NSFontWeightRegular];
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.lineSpacing = 3.0; ps.paragraphSpacing = 4.0;
+
+    AppSettings *cfg = [AppSettings shared];
+    NSFont *font = body;
+    NSColor *color = [cfg text:Surface::Editor];
+    NSMutableDictionary *a = [NSMutableDictionary dictionary];
+
+    if (r.heading > 0) {
+        CGFloat sizes[7] = {0, 26, 22, 19, 17, 15, 14};
+        font = [NSFont boldSystemFontOfSize:sizes[r.heading]];
+        color = [cfg markdown:MarkdownColor::Heading];
+        ps.paragraphSpacing = 8.0;
+        ps.paragraphSpacingBefore = r.heading <= 2 ? 18.0 : 12.0;  // gap above
+    }
+    if (r.codeBlock || r.code) {
+        font = mono;
+        color = [cfg markdown:MarkdownColor::Code];
+        a[NSBackgroundColorAttributeName] =
+            MCColor(cfg.settings.markdownCodeBackground());
+    }
+    if (r.table && !cellStyle) {
+        font = mono;   // monospace keeps the padded columns aligned
+        if (!r.code) color = r.bold ? [cfg markdown:MarkdownColor::Heading]
+                                    : [cfg text:Surface::Editor];
+    }
+    if (r.table && cellStyle && r.bold && !r.code)
+        color = [cfg markdown:MarkdownColor::Heading];
+    if (r.quote) {
+        color = [cfg markdown:MarkdownColor::Quote];
+        ps.headIndent = 16; ps.firstLineHeadIndent = 16;
+    }
+    if (r.rule) {
+        // Draw a rule as a full line of box-drawing chars.
+        s = @"────────────────────────────────";
+        color = Hex(0x555555);
+    }
+    if (r.link) { color = [cfg markdown:MarkdownColor::Link]; a[NSUnderlineStyleAttributeName] =
+        @(NSUnderlineStyleSingle); }
+    if (cellStyle) ps = [cellStyle mutableCopy];
+    if (r.image) {
+        NSString *src = [NSString stringWithUTF8String:r.src.c_str()];
+        NSImage *picture = MCMarkdownLoadImage(src,
+            self.currentPath.stringByDeletingLastPathComponent);
+        if (picture) {
+            MCMarkdownImage *att = [[MCMarkdownImage alloc] initWithPicture:picture];
+            NSMutableAttributedString *pic = [[NSMutableAttributedString alloc]
+                initWithAttributedString:
+                    [NSAttributedString attributedStringWithAttachment:att]];
+            [pic addAttribute:NSParagraphStyleAttributeName value:ps
+                        range:NSMakeRange(0, pic.length)];
+            return pic;
+        }
+        // A web image, or one that is missing: its alt text, muted.
+        if (!r.link) color = Hex(0x9CA3AF);
+        if (s.length == 0) s = src;
+    }
+
+    NSFontManager *fm = [NSFontManager sharedFontManager];
+    if (r.bold) font = [fm convertFont:font toHaveTrait:NSBoldFontMask];
+    if (r.italic) font = [fm convertFont:font toHaveTrait:NSItalicFontMask];
+
+    a[NSFontAttributeName] = font;
+    a[NSForegroundColorAttributeName] = color;
+    a[NSParagraphStyleAttributeName] = ps;
+    return [[NSAttributedString alloc] initWithString:s attributes:a];
+}
+
+// A Markdown table as an NSTextTable: every cell is a paragraph of its own
+// that wraps inside its column, so a table wider than the pane stays a
+// table. Columns are sized to their content by AppKit, the header row is
+// shaded, and each column keeps the alignment its separator row gave it.
+// The parser's padding and rules (tableCol -1) are for monospace ports and
+// are skipped here.
+- (void)appendMarkdownTable:(const std::vector<MdRun> &)runs
+                       from:(size_t)first
+                         to:(size_t)end
+                       into:(NSMutableAttributedString *)out {
+    const int cols = runs[first].tableCols;
+    int rows = 0;
+    for (size_t k = first; k < end; k++) rows = std::max(rows, runs[k].tableRow + 1);
+    if (cols <= 0 || rows <= 0) return;
+
+    AppSettings *cfg = [AppSettings shared];
+    NSDictionary *plain = @{NSFontAttributeName: [NSFont systemFontOfSize:15],
+                            NSForegroundColorAttributeName: [cfg text:Surface::Editor]};
+    if (out.length && ![out.string hasSuffix:@"\n"])
+        [out appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"
+                                                                    attributes:plain]];
+
+    NSTextTable *table = [[NSTextTable alloc] init];
+    table.numberOfColumns = (NSUInteger)cols;
+    table.layoutAlgorithm = NSTextTableAutomaticLayoutAlgorithm;
+    table.collapsesBorders = YES;
+    table.hidesEmptyCells = NO;
+    NSColor *border = Hex(0x444444);
+    NSColor *headerBackground = MCColor(cfg.settings.markdownCodeBackground());
+    const NSTextAlignment alignments[3] = {NSTextAlignmentLeft, NSTextAlignmentCenter,
+                                           NSTextAlignmentRight};
+
+    for (int row = 0; row < rows; row++) {
+        for (int col = 0; col < cols; col++) {
+            NSTextTableBlock *cell =
+                [[NSTextTableBlock alloc] initWithTable:table startingRow:row rowSpan:1
+                                         startingColumn:col columnSpan:1];
+            [cell setWidth:1 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockBorder];
+            [cell setBorderColor:border];
+            [cell setWidth:8 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
+                      edge:NSRectEdgeMinX];
+            [cell setWidth:8 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
+                      edge:NSRectEdgeMaxX];
+            [cell setWidth:4 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
+                      edge:NSRectEdgeMinY];
+            [cell setWidth:4 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
+                      edge:NSRectEdgeMaxY];
+            if (row == 0) cell.backgroundColor = headerBackground;
+
+            NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+            ps.textBlocks = @[cell];
+            ps.lineSpacing = 2.0;
+            int align = 0;
+            NSMutableAttributedString *text = [[NSMutableAttributedString alloc] init];
+            for (size_t k = first; k < end; k++) {
+                const MdRun &r = runs[k];
+                if (r.tableRow != row || r.tableCol != col) continue;
+                align = r.tableAlign;
+                ps.alignment = alignments[std::min(std::max(align, 0), 2)];
+                NSAttributedString *piece = [self markdownRun:r cellStyle:ps];
+                if (piece) [text appendAttributedString:piece];
+            }
+            ps.alignment = alignments[std::min(std::max(align, 0), 2)];
+            NSMutableDictionary *end = [plain mutableCopy];
+            end[NSParagraphStyleAttributeName] = ps;
+            [text appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"
+                                                                         attributes:end]];
+            [text addAttribute:NSParagraphStyleAttributeName value:ps
+                         range:NSMakeRange(0, text.length)];
+            [out appendAttributedString:text];
+        }
+    }
 }
 
 - (void)setPlainMessage:(NSString *)msg {

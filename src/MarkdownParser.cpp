@@ -264,7 +264,7 @@ size_t displayWidth(const std::string& s) {
 // styling (bold, code, links); padding is computed from the visible text, so
 // markup characters that don't display don't throw the columns off.
 void emitTable(const std::vector<std::vector<std::string>>& rows,
-               const std::vector<Align>& aligns, std::vector<MdRun>& out) {
+               const std::vector<Align>& aligns, int id, std::vector<MdRun>& out) {
     size_t cols = aligns.size();
 
     // Inline-parse every cell once, and measure what will actually show.
@@ -274,6 +274,11 @@ void emitTable(const std::vector<std::vector<std::string>>& rows,
         cells[ri].resize(cols);
         for (size_t c = 0; c < cols; c++) {
             MdRun base; base.table = true; base.bold = (ri == 0);
+            base.tableId = id;
+            base.tableRow = (int)ri;
+            base.tableCol = (int)c;
+            base.tableCols = (int)cols;
+            base.tableAlign = (int)aligns[c];
             if (c < rows[ri].size()) parseInline(rows[ri][c], base, cells[ri][c]);
             size_t w = 0;
             for (const MdRun& r : cells[ri][c]) w += displayWidth(r.text);
@@ -282,7 +287,9 @@ void emitTable(const std::vector<std::vector<std::string>>& rows,
     }
 
     auto plain = [&](const std::string& text) {
-        MdRun r; r.table = true; r.text = text; out.push_back(r);
+        MdRun r; r.table = true; r.text = text;
+        r.tableId = id; r.tableCols = (int)cols;
+        out.push_back(r);
     };
 
     for (size_t ri = 0; ri < rows.size(); ri++) {
@@ -315,6 +322,7 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
     std::vector<MdRun> out;
     auto lines = splitLines(markdown);
     bool inFence = false;
+    int tables = 0;
 
     for (size_t idx = 0; idx < lines.size(); ++idx) {
         const std::string& raw = lines[idx];
@@ -363,7 +371,7 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
                     j++;
                 }
                 idx = j - 1;   // outer loop will ++
-                emitTable(rows, aligns, out);
+                emitTable(rows, aligns, ++tables, out);
                 pushBreak(out);
                 continue;
             }

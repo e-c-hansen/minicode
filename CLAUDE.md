@@ -424,7 +424,7 @@ never closes.
   with the Mac zip and the first signed Android APK. The user's own Mac runs
   it from Homebrew. Everything since is on `main` and pushed, but not yet
   released; the next release carries the Linux parity work, the review fixes
-  below, the TeX grammar and images in the Markdown preview. 1,473 core
+  below, the TeX grammar and images in the Markdown preview. 1,481 core
   checks pass; the Mac build is
   warning-free; CI builds and tests macOS and Linux.
 - **macOS**: terminal links (Cmd+click `file:line` and URLs, log and grid) are
@@ -782,6 +782,11 @@ holds, these give real runtime evidence rather than compile-only evidence:
   positioned AFTER the window is on screen and laid out. The editor / terminal /
   browser are laid out by hand in a `PanelHost` view, not nested split views —
   that was far more predictable.
+- **The editor was wider than its pane** from the first commit until
+  2026-09-25: `horizontallyResizable` was on, so the text view kept the
+  window-wide frame it was created with and wrapped lines past the right
+  edge. It is off now, and `PanelScrollView tile` sets a wrapping text
+  view's width to the visible width.
 - **Terminal resize bar**: the `DragBar` is a 12px grab area drawing a 1px
   line, and `relayoutRightArea` re-raises it to the top of `rightArea`.
   Otherwise a panel added later (the browser) covers half of it. Its cursor
@@ -885,8 +890,12 @@ holds, these give real runtime evidence rather than compile-only evidence:
   returned from an `attachmentCell` override. Linux and Android show the
   alt text for now.
 - **Markdown**: block elements call `ensureLineStart` so they aren't glued to
-  the previous paragraph; headings get `paragraphSpacingBefore`; tables render
-  as aligned monospace. Table cells are inline-parsed and padded by *display*
+  the previous paragraph; headings get `paragraphSpacingBefore`. Tables: the
+  parser lays them out as aligned monospace (what Linux and Android show)
+  and also tags every run with its table, row, column and alignment
+  (`tableId`/`tableRow`/`tableCol`, -1 for padding and rules). The Mac skips
+  the padding and builds an `NSTextTable` from the cells
+  (`appendMarkdownTable:`), so wide tables wrap inside their columns. Table cells are inline-parsed and padded by *display*
   width (code points, CJK/emoji = 2), never UTF-8 byte length, or any
   non-ASCII cell knocks the columns out of line.
 - **Search**: scoped to a folder (default = open folder or selected folder),
