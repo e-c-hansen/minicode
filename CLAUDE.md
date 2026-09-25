@@ -427,8 +427,8 @@ never closes.
   in 1.4.0; the user has not yet clicked them in the grid (Claude Code, vim).
   A language server that fails `initialize` now says "failed to start"
   instead of "starting…" forever (unseen on screen). All eight demo GIFs
-  were re-recorded on 2026-09-23; `latex.gif` predates the TeX grammar, so its
-  source view is uncoloured.
+  were re-recorded on 2026-09-23, and `latex.gif` again on 2026-09-25 so its
+  source view shows the TeX colouring.
 - **Android** (1.4.0 APK): editor, terminal with a key row (Esc, Tab, sticky
   Ctrl, Up/Down history, symbols), terminal links, Markdown, images, PDFs,
   browser, and through Termux the language servers and the LaTeX preview
