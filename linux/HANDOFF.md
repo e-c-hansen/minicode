@@ -178,7 +178,13 @@ the test and the timings. How it works, in `Editor.cpp`:
   When the line counts differ, offsets are counted through `mirror_`
   instead, which is slower but correct.
 - `Editor::setPath` is the hook for rename and save-as: it re-lexes only if
-  the grammar changed. Rename in the file tree calls it.
+  the grammar changed. Rename in the file tree calls it, in every window
+  that has the file (or a file under a renamed folder) open, since a window
+  left on the old name would save its edits there and bring the old file
+  back. It also re-decides the mode from the name (`.txt` to `.md` gains the
+  preview; a preview whose file stops being Markdown or LaTeX goes back to
+  the source) and tells a picture or PDF viewer its new name, so it keeps
+  reloading on change.
 
 Left over: turning off highlighting (a rename to `.txt`) removes the tags
 from the whole buffer at once, about 0.2 s for 50,000 lines. The debug build
@@ -906,3 +912,16 @@ Do not claim a GUI behaviour works when it was only compiled.
 - A test of a click on a PDF page must check `pageAtPoint`'s return value:
   at a low zoom a point that was on the page before can be in the margin
   after, and the outputs are then left as they were.
+- The editor reads text only from a regular file of at most 16 MB, and
+  checks both before opening it (`readTextFile` in `Editor.cpp`): opening a
+  named pipe blocks until a writer comes, and every window shares one
+  process, so either a pipe or a multi-gigabyte file used to freeze or kill
+  all of them, unsaved edits included. Android stops at 4 MB.
+- Saves are an atomic rename, except for a file with another hard link, one
+  owned by someone else, or one in a folder we cannot write: those are
+  written in place (`writeInPlace`, space reserved first), since the rename
+  would cut the link or take the file from its owner. A link to nothing is
+  refused rather than replaced by a regular file.
+- `disconnectOwners` must never be given a null owner: disconnecting by null
+  data strips handlers GTK connected itself. A window that never opened a
+  `.tex` has no LaTeX preview, and its pointer is null.

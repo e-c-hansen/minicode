@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # panels really blend), synthetic input, screenshots, and a session bus.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       meson ninja-build build-essential pkg-config \
-      libgtk-4-dev libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev \
+      libgtk-4-dev libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev libpoppler-glib-dev \
       xvfb xcompmgr x11-xserver-utils xdotool imagemagick \
       dbus-x11 fonts-dejavu-core adwaita-icon-theme zsh \
     && rm -rf /var/lib/apt/lists/*

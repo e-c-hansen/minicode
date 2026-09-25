@@ -104,6 +104,20 @@ bool MediaView::show(const std::string& path) {
     return true;
 }
 
+void MediaView::setPath(const std::string& path) {
+    if (kind_ == Kind::None || path == path_) return;
+    if (reloadTimer_) g_source_remove(reloadTimer_);
+    reloadTimer_ = 0;
+    if (monitor_) {
+        g_signal_handlers_disconnect_by_data(monitor_, this);
+        g_file_monitor_cancel(monitor_);
+        g_object_unref(monitor_);
+        monitor_ = nullptr;
+    }
+    path_ = path;
+    watch(path);
+}
+
 void MediaView::clear() {
     if (reloadTimer_) g_source_remove(reloadTimer_);
     reloadTimer_ = 0;

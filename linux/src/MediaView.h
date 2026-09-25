@@ -40,6 +40,9 @@ public:
     bool show(const std::string& path);
     // Stop showing and watching anything.
     void clear();
+    // The file shown was renamed or moved: keep showing it, and watch it
+    // under its new name so it still reloads when it changes.
+    void setPath(const std::string& path);
 
     Kind kind() const { return kind_; }
     const std::string& path() const { return path_; }

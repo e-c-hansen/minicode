@@ -19,6 +19,7 @@
 #include <cstring>
 #include <string>
 #include <unordered_set>
+#include <sys/stat.h>
 
 // Attributes we request for every listing.
 static const char* kAttrs =
@@ -144,7 +145,14 @@ void addFile(DirWatch* w, GFile* file) {
             GFileInfo* info = g_file_query_info_finish(G_FILE(src), res, nullptr);
             auto* dw = static_cast<DirWatch*>(g_object_get_data(G_OBJECT(store), "minicode-watch"));
             // Gone again already: the temporary file of an atomic save, say.
-            if (info && dw && !g_cancellable_is_cancelled(dw->cancel))
+            // Its deletion (or rename) may have been reported before this
+            // answer came back, and then nothing would ever take the row
+            // away again, so look once more before adding it. lstat, not
+            // stat, so a link to nothing is still listed.
+            const char* p = g_file_peek_path(G_FILE(src));
+            struct stat st;
+            const bool there = p && lstat(p, &st) == 0;
+            if (info && dw && there && !g_cancellable_is_cancelled(dw->cancel))
                 storeInfo(dw, G_FILE(src), info);
             if (info) g_object_unref(info);
             g_object_unref(store);

@@ -907,17 +907,20 @@ static void act_rename(GSimpleAction*, GVariant*, gpointer userp) {
             g_clear_error(&err);
             return;
         }
-        // The open file keeps its buffer, edits included, under the new name.
-        // That holds when a folder above it was renamed, too.
-        const std::string cur = app->editor->currentPath();
-        if (isInside(cur, src)) {
-            app->editor->setPath(dst + cur.substr(src.size()));
-            updateTitle(app);
-        }
-        // Previous File follows the rename, in every window.
-        for (App* a : g.windows)
+        // The open file keeps its buffer, edits included, under the new name,
+        // in every window that has it open: one left on the old name would
+        // save its edits back there and bring the old file back. That holds
+        // when a folder above it was renamed, too. Previous File follows.
+        for (App* a : g.windows) {
+            const std::string cur = a->editor->currentPath();
+            if (isInside(cur, src)) {
+                a->editor->setPath(dst + cur.substr(src.size()));
+                updateTitle(a);
+                refreshHints(a);   // the preview toggle depends on the name
+            }
             for (std::string& r : a->recent)
                 if (isInside(r, src)) r = dst + r.substr(src.size());
+        }
         app->tree->revealPath(dst);
     });
 }
@@ -1627,6 +1630,10 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
 #ifdef MINICODE_ENABLE_BROWSER
     owners.push_back(app->browser);
 #endif
+    // A part the window never made (the LaTeX preview before any .tex was
+    // opened) is null, and disconnecting by null data would strip every
+    // handler GTK itself connected without data, skipping its own cleanup.
+    owners.erase(std::remove(owners.begin(), owners.end(), nullptr), owners.end());
     disconnectOwners(app->window, owners);
 
     app->editor->setObserver(nullptr);

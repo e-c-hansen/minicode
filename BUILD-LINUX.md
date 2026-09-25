@@ -23,8 +23,12 @@ Verified by running it:
   all 1,218 checks of the top-level `make test`, the same suite the macOS
   build runs. This code is shared verbatim with the macOS build. CI now runs
   it in the Linux job too.
-- The port's own pure-C++ piece, the byte-to-character offset conversion in
-  `linux/src/Utf8Offsets.h`, passes 47 checks (`cd linux && make test`).
+- The port's own pure-C++ pieces pass 180 checks (`cd linux && make test`,
+  or `meson test -C build`): the byte-to-character and UTF-16 offset
+  conversions in `linux/src/Utf8Offsets.h`, the theme stylesheet, the page
+  word finder behind the LaTeX click, and terminal link paths. On a Mac two
+  of the link-path checks fail because `/tmp` is a link to `/private/tmp`
+  there; on Linux all pass.
 - The window, file tree, editor, syntax highlighting, Markdown preview, the
   binary-file guard, the VTE terminal and the WebKit browser panel were all
   confirmed on screen. Highlighting was checked against source containing
@@ -467,6 +471,30 @@ Verified by running it:
   Wayland raises the editor window when a match is opened still needs the
   user. A plain launch on Wayland under the hook opened the window and the
   search panel and found the match.
+- Fixes from the September 25 review, each run in the Docker container with
+  real X clicks and keys (xdotool), not hooks:
+  - A 5 GB sparse file opens as "Cannot display … (Larger than 16 MB, too
+    large to edit here.)" at once, and a named pipe as "(Not a regular
+    file.)" without hanging; the next click on a text file opens it. Text
+    files are read only if they are regular files of at most 16 MB, checked
+    before the file is opened, and the external-change reload uses the same
+    read.
+  - Two windows with the same file, the first with unsaved edits. Renaming
+    it from the second window (File > Rename) renamed it in both titles;
+    Ctrl+S in the first wrote the edits to the new name and the old name did
+    not come back. Renaming `x.txt` to `x.md` let Ctrl+Shift+P render it,
+    and renaming it on to `y.txt` while the first window showed the preview
+    took that window back to the source.
+  - Saving a file with a second hard link wrote through both names (same
+    inode, link count still 2); saving a group-writable file owned by
+    another user kept its owner and inode; saving through a link whose
+    target had been deleted was refused with "The file is a link to
+    something that does not exist.", the edits left unsaved and the link
+    left alone. Ordinary files still get the atomic rename.
+  - 300 files created, renamed and deleted as fast as a shell loop can go
+    left no row behind in the tree.
+  - Closing a window that never opened a `.tex` logged no GTK warnings (the
+    teardown no longer disconnects handlers by null data).
 
 Not verified:
 

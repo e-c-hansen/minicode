@@ -14,15 +14,88 @@
 
 #include <algorithm>
 #include <cctype>
-#include <fstream>
 #include <functional>
-#include <sstream>
 #include <cstdlib>
 #include <climits>
 #include <cerrno>
 #include <cstring>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <fcntl.h>
+
+namespace {
+
+// The largest file the editor will open as text, 16 MB. Android stops at
+// 4 MB; a desktop has room for more, but a GtkTextBuffer holding hundreds of
+// megabytes (plus the highlighter's mirror and the saved copy) is not an
+// editor any more, and reading one whole on the main thread freezes every
+// window, since they all share this process.
+constexpr off_t kMaxTextBytes = 16 * 1024 * 1024;
+
+enum class ReadResult { Ok, Missing, NotRegular, TooLarge, Failed };
+
+// Reads a text file for the editor: only a regular file, only up to
+// kMaxTextBytes. The type and size are checked before the file is opened,
+// so a named pipe is never opened (opening one blocks until a writer comes)
+// and a 4 GB disk image is never read. The read itself is bounded too, in
+// case the file grows between the check and the read.
+ReadResult readTextFile(const std::string& path, std::string& out) {
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) return ReadResult::Missing;
+    if (!S_ISREG(st.st_mode)) return ReadResult::NotRegular;
+    if (st.st_size > kMaxTextBytes) return ReadResult::TooLarge;
+    int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0) return ReadResult::Failed;
+    out.clear();
+    out.reserve((size_t)st.st_size);
+    char buf[65536];
+    for (;;) {
+        ssize_t n = read(fd, buf, sizeof buf);
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0) { close(fd); return ReadResult::Failed; }
+        if (n == 0) break;
+        out.append(buf, (size_t)n);
+        if ((off_t)out.size() > kMaxTextBytes) { close(fd); return ReadResult::TooLarge; }
+    }
+    close(fd);
+    return ReadResult::Ok;
+}
+
+// Writes `text` into the existing file at `path`, keeping its inode (so hard
+// links, owner, ACLs and extended attributes stay). Space is reserved before
+// anything is overwritten, so a full disk fails with the old contents
+// intact; only a crash midway can leave the file half written, which is
+// why ordinary files take the atomic rename instead.
+bool writeInPlace(const std::string& path, const std::string& text, off_t oldSize,
+                  std::string& why) {
+    int fd = open(path.c_str(), O_WRONLY | O_CLOEXEC);
+    if (fd < 0) { why = strerror(errno); return false; }
+    const off_t size = (off_t)text.size();
+    if (size > oldSize) {
+        int r = posix_fallocate(fd, 0, size);
+        if (r != 0 && r != EOPNOTSUPP && r != EINVAL) {
+            why = std::string("Not enough space to save: ") + strerror(r);
+            close(fd);
+            return false;
+        }
+    }
+    size_t done = 0;
+    while (done < text.size()) {
+        ssize_t n = pwrite(fd, text.data() + done, text.size() - done, (off_t)done);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) { why = strerror(errno); close(fd); return false; }
+        done += (size_t)n;
+    }
+    if (ftruncate(fd, size) != 0 || fsync(fd) != 0) {
+        why = strerror(errno);
+        close(fd);
+        return false;
+    }
+    if (close(fd) != 0) { why = strerror(errno); return false; }
+    return true;
+}
+
+}  // namespace
 
 // ---------------------------------------------------------------- helpers
 
@@ -214,6 +287,33 @@ bool Editor::openFile(const std::string& path) {
     // the next file, and nothing from it can be saved.
     showTextSlot();
     readOnly_ = false;
+
+    auto base = [&]() {
+        auto slash = path.find_last_of('/');
+        return slash == std::string::npos ? path : path.substr(slash + 1);
+    };
+    // Shown in place of a file that is not opened; nothing can be saved over it.
+    auto refuse = [&](const std::string& why) {
+        path_ = path;
+        source_.clear();
+        ext_.clear();
+        isMarkdown_ = false;
+        isLatex_ = false;
+        preview_ = false;
+        readOnly_ = true;
+        markDirty(false);
+        showMessage("\n  Cannot display “" + base() + "”.\n\n  (" + why + ")");
+        if (titleCb_) titleCb_(titleUser_);
+    };
+
+    // A named pipe, socket or device is refused before anything opens it:
+    // opening a pipe waits for a writer, and would hang every window.
+    struct stat st;
+    if (stat(path.c_str(), &st) == 0 && !S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode)) {
+        refuse("Not a regular file.");
+        return false;
+    }
+
     // Images and PDFs are routed by extension before any attempt to read them
     // as text. One that will not decode falls through to "Cannot display".
     if ((MediaView::isImagePath(path) || MediaView::isPdfPath(path)) && media_->show(path)) {
@@ -230,41 +330,39 @@ bool Editor::openFile(const std::string& path) {
         return true;
     }
 
-    std::ifstream f(path, std::ios::binary);
-    if (!f) {
-        // The message now stands in for the file; nothing may be saved from it.
-        path_ = path;
-        source_.clear();
-        ext_.clear();
-        isMarkdown_ = false;
-        preview_ = false;
-        readOnly_ = true;
-        markDirty(false);
-        showMessage(std::string("\n  Could not open: ") + path);
-        return false;
+    std::string content;
+    switch (readTextFile(path, content)) {
+        case ReadResult::Ok: break;
+        case ReadResult::NotRegular:
+            refuse("Not a regular file.");
+            return false;
+        case ReadResult::TooLarge:
+            refuse("Larger than 16 MB, too large to edit here.");
+            return false;
+        case ReadResult::Missing:
+        case ReadResult::Failed:
+            // The message now stands in for the file; nothing may be saved from it.
+            path_ = path;
+            source_.clear();
+            ext_.clear();
+            isMarkdown_ = false;
+            isLatex_ = false;
+            preview_ = false;
+            readOnly_ = true;
+            markDirty(false);
+            showMessage(std::string("\n  Could not open: ") + path);
+            return false;
     }
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    std::string content = ss.str();
-
-    path_ = path;
 
     // gtk_text_buffer_set_text requires valid UTF-8; handing it a binary file
     // spews GTK criticals and leaves the buffer truncated at the first bad
     // byte. Refuse up front, with the same wording as the macOS build.
     if (!g_utf8_validate(content.data(), (gssize)content.size(), nullptr)) {
-        auto slash = path.find_last_of('/');
-        std::string base = slash == std::string::npos ? path : path.substr(slash + 1);
-        source_.clear();
-        ext_.clear();
-        isMarkdown_ = false;
-        preview_ = false;
-        readOnly_ = true;   // the message is not the file: never save it over it
-        markDirty(false);
-        showMessage("\n  Cannot display “" + base + "”.\n\n"
-                    "  (Binary file or unsupported encoding.)");
+        refuse("Binary file or unsupported encoding.");
         return false;
     }
+
+    path_ = path;
 
     source_ = content;
     rememberDisk(content);
@@ -312,10 +410,19 @@ bool Editor::save(std::string* error) {
     // crash midway leaves the previous contents intact, as the macOS build's
     // writeToFile:atomically: does. A read-only file is refused rather than
     // quietly replaced by that rename.
+    // A link to nothing is refused: saving would replace the link itself
+    // with a regular file, and whatever it was meant to point at would never
+    // get the edits.
+    struct stat lst;
     char* resolved = realpath(path_.c_str(), nullptr);
+    if (!resolved && lstat(path_.c_str(), &lst) == 0 && S_ISLNK(lst.st_mode)) {
+        if (error) *error = "The file is a link to something that does not exist.";
+        return false;
+    }
     const std::string target = resolved ? resolved : path_;
     free(resolved);
     int mode = 0666;
+    bool inPlace = false;
     struct stat st;
     if (stat(target.c_str(), &st) == 0) {
         mode = st.st_mode & 07777;
@@ -323,13 +430,29 @@ bool Editor::save(std::string* error) {
             if (error) *error = std::string("The file is not writable: ") + strerror(errno);
             return false;
         }
+        // The atomic rename puts a new file in the old one's place. That new
+        // file belongs to us and has no other names, so it would cut a hard
+        // link, take a group-writable file away from its owner, and fail in
+        // a folder we may not write to. Those files are written in place.
+        char* dir = g_path_get_dirname(target.c_str());
+        const bool dirWritable = access(dir, W_OK) == 0;
+        g_free(dir);
+        inPlace = st.st_nlink > 1 || st.st_uid != geteuid() || !dirWritable;
     }
-    GError* err = nullptr;
-    if (!g_file_set_contents_full(target.c_str(), source_.data(), (gssize)source_.size(),
-                                  G_FILE_SET_CONTENTS_CONSISTENT, mode, &err)) {
-        if (error) *error = err ? err->message : "Unknown error";
-        g_clear_error(&err);
-        return false;
+    if (inPlace) {
+        std::string why;
+        if (!writeInPlace(target, source_, (off_t)st.st_size, why)) {
+            if (error) *error = why;
+            return false;
+        }
+    } else {
+        GError* err = nullptr;
+        if (!g_file_set_contents_full(target.c_str(), source_.data(), (gssize)source_.size(),
+                                      G_FILE_SET_CONTENTS_CONSISTENT, mode, &err)) {
+            if (error) *error = err ? err->message : "Unknown error";
+            g_clear_error(&err);
+            return false;
+        }
     }
     markDirty(false);
     rememberDisk(source_);   // so this save is not taken for someone else's
@@ -1014,8 +1137,35 @@ void Editor::onApplyTag(GtkTextBuffer* buf, GtkTextTag* tag, GtkTextIter*, GtkTe
 // ------------------------------------------------ rename
 
 void Editor::setPath(const std::string& path) {
+    // A picture or PDF keeps showing, now watched under its new name.
+    if (!media_->path().empty()) {
+        media_->setPath(path);
+        path_ = path;
+        return;
+    }
     const bool wasSettings = isSettingsFile();
     const std::string ext = extOf(path);
+    // The name decides the mode, as it does when a file is opened: x.txt
+    // renamed to x.md gains the preview, and a preview whose file stops
+    // being Markdown or LaTeX goes back to the source. Not for a message
+    // standing in for a file, which has no mode.
+    if (!readOnly_) {
+        const bool md = (ext == "md" || ext == "markdown");
+        if (isMarkdown_ && !md && preview_) {
+            preview_ = false;
+            loadRawIntoBuffer();   // source_ is current: the preview is not editable
+        }
+        isMarkdown_ = md;
+#ifdef MINICODE_ENABLE_PDF
+        const bool tex = (ext == "tex" || ext == "ltx" || ext == "latex");
+        if (isLatex_ && !tex) {
+            if (preview_) showLatex(false);
+            preview_ = false;
+            if (latex_) latex_->close();
+        }
+        isLatex_ = tex;
+#endif
+    }
     // Keep comparing against the same disk contents, under the new name.
     const bool watched = textMonitor_ != nullptr;
     const bool known = diskKnown_;
@@ -1384,12 +1534,10 @@ void Editor::onTextFileChanged(GFileMonitor*, GFile*, GFile*, GFileMonitorEvent 
 
 void Editor::checkExternalChange() {
     if (path_.empty() || readOnly_ || !diskKnown_) return;
-    gchar* data = nullptr;
-    gsize len = 0;
-    // Gone or unreadable: what is in the editor stays, as on the Mac.
-    if (!g_file_get_contents(path_.c_str(), &data, &len, nullptr)) return;
-    std::string content(data, len);
-    g_free(data);
+    // Gone, unreadable, replaced by a pipe or grown past what the editor
+    // opens: what is in the editor stays, as on the Mac.
+    std::string content;
+    if (readTextFile(path_, content) != ReadResult::Ok) return;
     if (diskMatches(content)) return;
     // No longer text: nothing to put in the buffer (the Mac's read fails too).
     if (!g_utf8_validate(content.data(), (gssize)content.size(), nullptr)) return;
@@ -1405,11 +1553,8 @@ void Editor::checkExternalChange() {
 
 bool Editor::reloadFromDisk() {
     if (path_.empty() || readOnly_) return false;
-    gchar* data = nullptr;
-    gsize len = 0;
-    if (!g_file_get_contents(path_.c_str(), &data, &len, nullptr)) return false;
-    std::string content(data, len);
-    g_free(data);
+    std::string content;
+    if (readTextFile(path_, content) != ReadResult::Ok) return false;
     if (!g_utf8_validate(content.data(), (gssize)content.size(), nullptr)) return false;
     rememberDisk(content);
     applyDiskText(content);
