@@ -69,6 +69,9 @@ class MainActivity : AppCompatActivity() {
         TerminalKeys.fill(ui.termKeyRow, ui.terminal)
         ui.fileList.layoutManager = LinearLayoutManager(this)
         ui.fileList.adapter = files
+        // The list takes the keyboard when the editor goes, and without this
+        // Android paints its whole area grey to show that it has it.
+        ui.fileList.defaultFocusHighlightEnabled = false
         ui.up.setOnClickListener { goUp() }
         ui.menu.setOnClickListener { showMenu() }
         // Touch targets only. Focusable, ⋮ took the keyboard whenever a pane
@@ -96,7 +99,8 @@ class MainActivity : AppCompatActivity() {
                 if (!highlighting && s != null) lsp.edited(s, a, b, c)
             }
             override fun afterTextChanged(s: Editable?) {
-                if (highlighting) return
+                // No file, no buffer to mark: the editor is never shown then.
+                if (highlighting || currentFile == null) return
                 dirty = true
                 updateTitle()
                 val name = currentFile?.name
@@ -109,13 +113,25 @@ class MainActivity : AppCompatActivity() {
         // drives the app over adb:
         //   am start -n org.minicode.editor/.MainActivity --es folder <path>
         // Everyday use goes through the document picker instead.
+        // `--ez start true` shows the start screen without forgetting the
+        // saved folder, so it can be looked at on a phone already set up.
         val path = intent?.getStringExtra("folder")
+        val startScreen = intent?.getBooleanExtra("start", false) == true
         val prefs = getSharedPreferences("minicode", MODE_PRIVATE)
         val saved = prefs.getString("folder", null)
         val savedPath = prefs.getString("folderPath", null)
+        // The recent list began after folders were already being saved, so
+        // it starts from the one that is.
+        if (!prefs.contains("recent")) {
+            val seed = savedPath?.let { "path:$it" } ?: saved?.let { "uri:$it" }
+            prefs.edit().putString("recent", seed.orEmpty()).apply()
+        }
         when {
             path != null -> usePath(File(path))
-            savedPath != null && canReachPaths() -> usePath(File(savedPath))
+            startScreen -> showList(true)
+            // Without "All files access" the folder's list says so and
+            // offers the setting, rather than coming up empty.
+            savedPath != null -> usePath(File(savedPath))
             saved != null -> useFolder(Uri.parse(saved), remember = false)
             else -> showList(true)
         }
@@ -130,6 +146,7 @@ class MainActivity : AppCompatActivity() {
                         Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             getSharedPreferences("minicode", MODE_PRIVATE).edit()
                 .putString("folder", uri.toString()).remove("folderPath").apply()
+            addRecent("uri:$uri")
         }
         val tree = DocumentFile.fromTreeUri(this, uri) ?: return
         folder = tree
@@ -144,6 +161,7 @@ class MainActivity : AppCompatActivity() {
         if (remember) {
             getSharedPreferences("minicode", MODE_PRIVATE).edit()
                 .putString("folderPath", dir.path).remove("folder").apply()
+            addRecent("path:${dir.path}")
         }
         val tree = DocumentFile.fromFile(dir)
         folder = tree
@@ -251,19 +269,171 @@ class MainActivity : AppCompatActivity() {
      * other apps' folders, which the editor can use but a shell cannot.
      */
     private fun openFolder() {
-        val storage = android.os.Environment.getExternalStorageDirectory()
+        // The recent folders follow, apart from the one already open.
+        val open = folder?.let { recentKeyOf(it) }
+        val recent = liveRecents().filter { it != open }
+        val items = listOf("Phone storage (works in the terminal)",
+                           "Another app or cloud (Drive, Termux, ...)") +
+                recent.map { val (name, where) = describeRecent(it); "$name   ($where)" }
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Open a folder")
-            .setItems(arrayOf("Phone storage (works in the terminal)",
-                              "Another app or cloud (Drive, Termux, ...)")) { _, which ->
-                when {
-                    which == 1 -> pickFolder.launch(null)
-                    !canReachPaths() -> askForPathAccess()
-                    else -> confirmLeave { usePath(storage, remember = true) }
+            .setItems(items.toTypedArray()) { _, which ->
+                when (which) {
+                    0 -> openPhoneStorage()
+                    1 -> pickFolder.launch(null)
+                    else -> openRecent(recent[which - 2])
                 }
             }
             .show()
     }
+
+    /** The top of the phone's storage, browsed by path. */
+    private fun openPhoneStorage() {
+        if (!canReachPaths()) {
+            wantsStorage = true
+            askForPathAccess("Phone storage",
+                "MiniCode browses the phone's storage by path, which Android " +
+                "allows only with \"All files access\". The same permission lets " +
+                "the terminal work in the folder you open. Open the setting?")
+            return
+        }
+        confirmLeave { usePath(android.os.Environment.getExternalStorageDirectory(), remember = true) }
+    }
+
+    /** Set while the user is in Settings granting access to open storage. */
+    private var wantsStorage = false
+
+    // ------------------------------------------------------ recent folders
+
+    /**
+     * The last few folders opened, newest first, as "path:<path>" for one on
+     * the phone's storage and "uri:<uri>" for one from the picker. Stored
+     * newline-separated in the "recent" preference.
+     */
+    private fun recents(): List<String> =
+        getSharedPreferences("minicode", MODE_PRIVATE).getString("recent", null)
+            ?.split('\n')?.filter { it.isNotEmpty() } ?: emptyList()
+
+    private fun saveRecents(list: List<String>) {
+        getSharedPreferences("minicode", MODE_PRIVATE).edit()
+            .putString("recent", list.joinToString("\n")).apply()
+    }
+
+    private fun addRecent(key: String) =
+        saveRecents((listOf(key) + recents().filter { it != key }).take(MAX_RECENT))
+
+    private fun recentKeyOf(dir: DocumentFile): String =
+        if (dir.uri.scheme == "file") "path:${dir.uri.path}" else "uri:${dir.uri}"
+
+    /**
+     * The recent folders that can still be opened. One that is gone, or whose
+     * permission was taken back, is dropped for good. A path is kept while
+     * the app lacks "All files access", since it cannot tell then, and
+     * opening it asks for the access.
+     */
+    private fun liveRecents(): List<String> {
+        val granted = contentResolver.persistedUriPermissions
+            .filter { it.isReadPermission }.map { it.uri.toString() }.toSet()
+        val all = recents()
+        val live = all.filter { key ->
+            when {
+                key.startsWith("path:") ->
+                    !canReachPaths() || File(key.removePrefix("path:")).isDirectory
+                key.startsWith("uri:") -> key.removePrefix("uri:") in granted && try {
+                    DocumentFile.fromTreeUri(this, Uri.parse(key.removePrefix("uri:")))?.exists() == true
+                } catch (e: Exception) { false }
+                else -> false
+            }
+        }
+        if (live.size != all.size) saveRecents(live)
+        return live
+    }
+
+    /** A recent folder's name, and where it is. */
+    private fun describeRecent(key: String): Pair<String, String> {
+        if (key.startsWith("path:")) {
+            val dir = File(key.removePrefix("path:"))
+            val whole = describePath(dir)
+            if (whole == PHONE_STORAGE) return PHONE_STORAGE to "All of it, from the top"
+            return dir.name to whole
+        }
+        val uri = Uri.parse(key.removePrefix("uri:"))
+        val name = try { DocumentFile.fromTreeUri(this, uri)?.name } catch (e: Exception) { null }
+            ?: uri.lastPathSegment?.substringAfterLast(':')?.substringAfterLast('/') ?: "Folder"
+        return name to providerName(uri.authority)
+    }
+
+    private fun openRecent(key: String) {
+        if (key.startsWith("path:")) {
+            if (!canReachPaths()) {
+                askForPathAccess("Phone storage",
+                    "Opening a folder on the phone's storage needs \"All files " +
+                    "access\" for MiniCode. Open the setting?")
+                return
+            }
+            confirmLeave { usePath(File(key.removePrefix("path:")), remember = true) }
+        } else {
+            confirmLeave { useFolder(Uri.parse(key.removePrefix("uri:")), remember = true) }
+        }
+    }
+
+    // --------------------------------------------------- where things are
+
+    /**
+     * A path as the phone's user would say it: "Phone storage / mc-test /
+     * docs" for shared storage, "MiniCode's own folder" for the app's
+     * private one, and the path itself for anything else.
+     */
+    private fun describePath(f: File): String {
+        val storage = android.os.Environment.getExternalStorageDirectory().path
+        val own = filesDir.parentFile?.path ?: filesDir.path
+        val p = f.path.trimEnd('/')
+        fun under(root: String, label: String) =
+            if (p == root) label else "$label / " + p.removePrefix("$root/").replace("/", " / ")
+        return when {
+            p == storage || p.startsWith("$storage/") -> under(storage, PHONE_STORAGE)
+            p == "/sdcard" || p.startsWith("/sdcard/") -> under("/sdcard", PHONE_STORAGE)
+            p == own || p.startsWith("$own/") -> under(own, "MiniCode's own folder")
+            else -> p
+        }
+    }
+
+    /** The app a picked folder comes from, by its provider's authority. */
+    private fun providerName(authority: String?): String {
+        authority ?: return "Another app"
+        return when {
+            authority.startsWith("com.termux") -> "Termux"
+            authority.startsWith("com.google.android.apps.docs") -> "Google Drive"
+            authority == "com.android.externalstorage.documents" -> PHONE_STORAGE
+            else -> try {
+                packageManager.resolveContentProvider(authority, 0)
+                    ?.loadLabel(packageManager)?.toString()
+            } catch (e: Exception) { null } ?: authority
+        }
+    }
+
+    /**
+     * Where a folder is: its path spelled as describePath does when it has
+     * one, otherwise the app it comes from and the folders from the open
+     * one down.
+     */
+    private fun where(dir: DocumentFile?): String? {
+        dir ?: return null
+        pathOf(dir)?.let { return describePath(it) }
+        val names = mutableListOf<String>()
+        var d: DocumentFile? = dir
+        while (d != null) {
+            names.add(0, d.name ?: "?")
+            if (d.uri == folder?.uri) break
+            d = d.parentFile
+        }
+        return (listOf(providerName(dir.uri.authority)) + names).joinToString(" / ")
+    }
+
+    /** The folder a file is in, as where() says it. */
+    private fun whereFileIs(file: DocumentFile): String? =
+        pathOf(file)?.parentFile?.let(::describePath)
+            ?: where(file.parentFile) ?: providerName(file.uri.authority)
 
     /**
      * Makes the folder being listed the project: its root in the file list,
@@ -281,7 +451,7 @@ class MainActivity : AppCompatActivity() {
         val (cwd, why) = terminalDirectory()
         if (cwd != null && cwd != shellFolder) {
             ui.terminal.changeDirectory(cwd)
-            shellFolder = cwd
+            shellFolder = cwd; updateTitle()
         } else if (cwd == null && why != null) {
             ui.terminal.notice(why)
         }
@@ -294,16 +464,29 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (ui.terminal.isRunning && shellFolder == null && canReachPaths()) followFolder()
+        // Back from Settings with "All files access": finish what asked for it.
+        if (canReachPaths()) {
+            if (wantsStorage) {
+                wantsStorage = false
+                confirmLeave { usePath(android.os.Environment.getExternalStorageDirectory(), remember = true) }
+            } else if (lostAccess) {
+                current?.let(::list)
+            }
+        }
+        if (ui.start.visibility == View.VISIBLE) fillStart()
         // Back from Termux, where a commit may have been made.
         ui.gitPanel.refresh()
     }
 
-    private fun askForPathAccess() {
+    private fun askForPathAccess(
+        title: String = "Terminal in this folder",
+        message: String = "A shell reaches files by path, and Android allows that " +
+                "outside the app only with \"All files access\". The editor " +
+                "does not need it. Open the setting?",
+    ) {
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Terminal in this folder")
-            .setMessage("A shell reaches files by path, and Android allows that " +
-                    "outside the app only with \"All files access\". The editor " +
-                    "does not need it. Open the setting?")
+            .setTitle(title)
+            .setMessage(message)
             .setPositiveButton("Open settings") { _, _ ->
                 startActivity(Intent(
                     android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
@@ -316,12 +499,137 @@ class MainActivity : AppCompatActivity() {
     private fun list(dir: DocumentFile) {
         current = dir
         // Folders first, then files, each alphabetically, as the other ports do.
-        val entries = dir.listFiles().sortedWith(
+        val entries = readFolder(dir)?.sortedWith(
             compareBy({ !it.isDirectory }, { it.name?.lowercase() ?: "" }))
-        files.submit(entries)
+        lostAccess = entries == null
+        files.submit(when {
+            entries == null -> lostRows(dir)
+            entries.isEmpty() -> listOf(
+                ListRow.Note("This folder is empty."),
+                ListRow.Action("New file") { newFile() })
+            else -> entries.map { ListRow.Doc(it) }
+        })
         ui.up.visibility = if (dir.uri == folder?.uri) View.GONE else View.VISIBLE
         updateTitle()
+        if (entries.isNullOrEmpty() && ui.fileList.visibility == View.VISIBLE) focusFileList()
     }
+
+    /**
+     * A folder's entries, or null when the app cannot read it. A path with
+     * no "All files access" lists as empty rather than failing, and so
+     * does a folder that is gone, so both are checked first.
+     */
+    private fun readFolder(dir: DocumentFile): List<DocumentFile>? {
+        if (dir.uri.scheme == "file") {
+            val f = File(dir.uri.path ?: return null)
+            if (!canReachPaths() && f.path != filesDir.path &&
+                !f.path.startsWith(filesDir.parentFile?.path ?: filesDir.path)) return null
+            if (!f.isDirectory) return null
+        }
+        return try {
+            if (!dir.canRead()) null else dir.listFiles().toList()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Set while the file list is saying it cannot read the folder. */
+    private var lostAccess = false
+
+    /** What to say, and offer, for a folder the app cannot read. */
+    private fun lostRows(dir: DocumentFile): List<ListRow> {
+        val name = (try { dir.name } catch (e: Exception) { null })
+            ?: dir.uri.lastPathSegment?.substringAfterLast(':')?.substringAfterLast('/')
+            ?: "This folder"
+        val other = ListRow.Action("Open a different folder") { openFolder() }
+        if (dir.uri.scheme == "file") {
+            if (!canReachPaths()) return listOf(
+                ListRow.Note("MiniCode cannot list $name without \"All files access\", " +
+                             "which Android grants in Settings."),
+                ListRow.Action("Allow access in Settings") {
+                    askForPathAccess("Phone storage",
+                        "Listing $name needs \"All files access\" for MiniCode. " +
+                        "Open the setting?")
+                },
+                other)
+            return listOf(
+                ListRow.Note("$name is not there any more. It may have been moved or deleted."),
+                other)
+        }
+        return listOf(
+            ListRow.Note("MiniCode can no longer open $name. Its access was removed, " +
+                         "or the app it comes from is gone."),
+            ListRow.Action("Open it again") { pickFolder.launch(dir.uri) },
+            other)
+    }
+
+    private fun focusFileList() {
+        val at = files.firstAction()
+        if (at < 0) return
+        ui.fileList.post {
+            ui.fileList.scrollToPosition(at)
+            ui.fileList.post { ui.fileList.findViewHolderForAdapterPosition(at)?.itemView?.requestFocus() }
+        }
+    }
+
+    /**
+     * Makes a file in the folder being listed and opens it. The name is
+     * asked for first, so a new file always has a place and a name before
+     * anything is typed into it.
+     */
+    private fun newFile() {
+        val dir = current ?: folder
+        if (dir == null) { say("Open a folder first."); return }
+        val field = android.widget.EditText(this).apply {
+            hint = "name.txt"
+            isSingleLine = true
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                    android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+            setTextColor(Palette.TEXT)
+        }
+        val box = android.widget.FrameLayout(this).apply {
+            val pad = (20 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad / 2, pad, 0)
+            addView(field)
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("New file in ${where(dir) ?: dir.name}")
+            .setView(box)
+            .setPositiveButton("Create") { _, _ -> createFile(dir, field.text.toString().trim()) }
+            .setNegativeButton("Cancel", null)
+            .create()
+        field.setOnEditorActionListener { _, _, _ ->
+            dialog.dismiss()
+            createFile(dir, field.text.toString().trim())
+            true
+        }
+        dialog.show()
+        field.requestFocus()
+    }
+
+    private fun createFile(dir: DocumentFile, name: String) {
+        if (name.isEmpty() || name == "." || name == ".." || name.contains('/')) {
+            say("A file name cannot be empty or contain /.")
+            return
+        }
+        if (dir.findFile(name) != null) { say("$name already exists here."); return }
+        val made: DocumentFile? = try {
+            val path = dir.uri.takeIf { it.scheme == "file" }?.path
+            if (path != null) File(path, name).takeIf { it.createNewFile() }?.let(DocumentFile::fromFile)
+            // octet-stream, so the provider keeps the name as typed rather
+            // than adding an extension of its own.
+            else dir.createFile("application/octet-stream", name)
+        } catch (e: Exception) {
+            null
+        }
+        if (made == null) { say("Could not create $name here."); return }
+        list(dir)
+        confirmLeave { openFile(made, "") }
+    }
+
+    private fun say(text: String) =
+        android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_SHORT).show()
 
     private fun goUp() {
         val parent = current?.parentFile ?: folder ?: return
@@ -510,7 +818,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         if (!showPreview) {
-            if (!terminalShowing && !sidebarShowing() && !showingDiff) {
+            if (!terminalShowing && !sidebarShowing() && !showingDiff && currentFile != null) {
                 ui.editor.visibility = View.VISIBLE
             }
             return
@@ -588,7 +896,10 @@ class MainActivity : AppCompatActivity() {
      */
     private fun save(): Boolean {
         if (showingMedia) return true
-        val file = currentFile ?: return true
+        val file = currentFile ?: run {
+            if (!showingDiff) say("Nothing to save: no file is open.")
+            return true
+        }
         val written = try {
             contentResolver.openOutputStream(file.uri, "wt")?.use {
                 it.write(ui.editor.text.toString().toByteArray(Charsets.UTF_8))
@@ -610,12 +921,24 @@ class MainActivity : AppCompatActivity() {
         return true
     }
 
-    private fun showList(show: Boolean) {
+    /**
+     * The list side (the start screen, the file list or source control) or
+     * the editor side (the file, its preview, a picture, a diff).
+     *
+     * There is no editor without a file: with nothing open, asking for the
+     * editor side shows the list side instead, so nothing can be typed into
+     * a buffer that has no file to be saved to.
+     */
+    private fun showList(wanted: Boolean) {
+        val show = wanted || !hasEditorContent()
         if (show) { terminalShowing = false; browserShowing = false }
+        val start = show && folder == null
+        if (start) fillStart()
+        ui.start.visibility = if (start) View.VISIBLE else View.GONE
         ui.browser.visibility = View.GONE
-        ui.fileList.visibility = if (show && !sidebarIsGit) View.VISIBLE else View.GONE
-        ui.gitPanel.visibility = if (show && sidebarIsGit) View.VISIBLE else View.GONE
-        setGitActive(show && sidebarIsGit)
+        ui.fileList.visibility = if (show && !start && !sidebarIsGit) View.VISIBLE else View.GONE
+        ui.gitPanel.visibility = if (show && !start && sidebarIsGit) View.VISIBLE else View.GONE
+        setGitActive(show && !start && sidebarIsGit)
         ui.terminal.visibility = View.GONE; ui.termKeys.visibility = View.GONE
         val diff = !show && showingDiff
         ui.diffView.visibility = if (diff) View.VISIBLE else View.GONE
@@ -629,15 +952,64 @@ class MainActivity : AppCompatActivity() {
         ui.editor.visibility =
             if (show || preview || media || diff) View.GONE else View.VISIBLE
         ui.up.visibility =
-            if (show && !sidebarIsGit && current?.uri != folder?.uri) View.VISIBLE else View.GONE
+            if (show && !start && !sidebarIsGit && current?.uri != folder?.uri) View.VISIBLE else View.GONE
         if (!show) (if (diff) ui.diffView else ui.editor).let { v -> v.requestFocus(); v.post { v.requestFocus() } }
+        else if (start) ui.start.post { ui.start.focusFirst() }
         else if (sidebarIsGit) ui.gitPanel.focusPanel()
+        else if (lostAccess || files.firstAction() >= 0) focusFileList()
         updateTitle()
     }
 
-    /** The file list or the source control panel, whichever is up. */
+    /** A file, picture or diff is open, so the editor side has something. */
+    private fun hasEditorContent() = currentFile != null || showingDiff
+
+    /**
+     * The list side and the editor side, for the leader pressed alone and
+     * for leader F. With no file open there is nothing to switch to, and
+     * the title's second line already says so; a short note says it too.
+     */
+    private fun switchPanes() {
+        if (sidebarShowing() && !hasEditorContent()) {
+            say(if (folder == null) "No folder is open yet." else "No file is open. Pick one from the list.")
+            return
+        }
+        showList(!sidebarShowing())
+    }
+
+    /** The start screen: ways to open a folder, recent ones, and the rest. */
+    private fun fillStart() {
+        val items = mutableListOf(
+            StartScreen.Item("Open a folder on phone storage",
+                "Browse the phone's storage. The terminal can work there too.") {
+                openPhoneStorage()
+            },
+            StartScreen.Item("Open from another app or cloud",
+                "Google Drive, Termux and others, through Android's picker") {
+                pickFolder.launch(null)
+            })
+        val recent = liveRecents()
+        if (recent.isNotEmpty()) {
+            items += StartScreen.Item("Recent folders", heading = true)
+            for (key in recent) {
+                val (name, place) = describeRecent(key)
+                items += StartScreen.Item(name, place) { openRecent(key) }
+            }
+        }
+        items += StartScreen.Item("Also", heading = true)
+        items += StartScreen.Item("Terminal", "A shell, in MiniCode's own folder until one is open") {
+            toggleTerminal()
+        }
+        items += StartScreen.Item("Shortcuts", "What the leader key and the ⋮ menu do") {
+            showShortcuts()
+        }
+        ui.start.show("No folder is open. Open one and its files are listed here; " +
+                      "tap a file to edit it.", items)
+    }
+
+    /** The start screen, the file list or source control, whichever is up. */
     private fun sidebarShowing() =
-        ui.fileList.visibility == View.VISIBLE || ui.gitPanel.visibility == View.VISIBLE
+        ui.fileList.visibility == View.VISIBLE || ui.gitPanel.visibility == View.VISIBLE ||
+                ui.start.visibility == View.VISIBLE
 
     /** Which of the two the sidebar shows; leader V switches. */
     private var sidebarIsGit = false
@@ -687,26 +1059,45 @@ class MainActivity : AppCompatActivity() {
     private var showingDiff = false
     private var diffTitle = ""
 
-    /** One line of chrome: the folder while listing, the file while editing. */
+    /**
+     * The title bar: the pane's name on the first line (the folder while
+     * listing, the file while editing, with a dot while it is unsaved), and
+     * where it is on the second, so the screen always says what it shows.
+     */
     private fun updateTitle() {
         val waiting = if (leaderArmed) "  …" else ""
-        if (terminalShowing) { ui.title.text = "Terminal"; return }
-        if (browserShowing) { ui.title.text = "Browser"; return }
-        if (ui.gitPanel.visibility == View.VISIBLE) {
-            ui.title.text = "Source Control" + waiting
-            return
-        }
         val showingList = ui.fileList.visibility == View.VISIBLE
-        if (!showingList && showingDiff) { ui.title.text = diffTitle + waiting; return }
-        val name = if (showingList) (current?.name ?: folder?.name ?: "MiniCode")
-                   else (currentFile?.name ?: "MiniCode")
-        val mark = if (!showingList && dirty) "● " else ""
-        val extra = when {
-            showingList || !showingMedia -> ""
-            pdfPages > 0 -> "  ${pdfPages} page" + (if (pdfPages == 1) "" else "s")
-            else -> "  $mediaSize"
+        val (title, place) = when {
+            terminalShowing -> "Terminal" to
+                    (shellFolder?.let { describePath(File(it)) } ?: "MiniCode's own folder")
+            browserShowing -> "Browser" to null
+            ui.start.visibility == View.VISIBLE -> "MiniCode" to "No folder open"
+            ui.gitPanel.visibility == View.VISIBLE -> "Source Control" to where(folder)
+            showingList -> (current?.name ?: folder?.name ?: "MiniCode") to
+                    (if (lostAccess) "Cannot open this folder" else where(current ?: folder))
+            showingDiff -> diffTitle to "From source control, read only"
+            else -> {
+                val file = currentFile
+                val extra = when {
+                    !showingMedia -> ""
+                    pdfPages > 0 -> "  ${pdfPages} page" + (if (pdfPages == 1) "" else "s")
+                    else -> "  $mediaSize"
+                }
+                val mode = when {
+                    file == null -> null
+                    showingMedia -> "View only"
+                    previewing && isPreviewable(file.name) -> "Preview"
+                    isPreviewable(file.name) -> "Source"
+                    else -> null
+                }
+                val state = if (dirty) "Unsaved" else null
+                ((if (dirty) "● " else "") + (file?.name ?: "MiniCode") + extra) to
+                        listOfNotNull(state, mode, file?.let(::whereFileIs)).joinToString(" · ")
+            }
         }
-        ui.title.text = mark + name + extra + waiting
+        ui.title.text = title + waiting
+        ui.subtitle.text = place.orEmpty()
+        ui.subtitle.visibility = if (place.isNullOrEmpty()) View.GONE else View.VISIBLE
     }
 
     /**
@@ -747,7 +1138,9 @@ class MainActivity : AppCompatActivity() {
 
     /** Leader F: the file list, or the editor when the list is up. */
     private fun showFiles() {
-        if (ui.fileList.visibility == View.VISIBLE) { showList(false); return }
+        if (ui.fileList.visibility == View.VISIBLE || ui.start.visibility == View.VISIBLE) {
+            switchPanes(); return
+        }
         sidebarIsGit = false
         showList(true)
     }
@@ -773,7 +1166,7 @@ class MainActivity : AppCompatActivity() {
             whenWindowCloses = null
             leaderArmed = false
             updateTitle()
-            showList(!sidebarShowing())
+            switchPanes()
         }
         whenWindowCloses = close
         ui.title.postDelayed(close, LEADER_WINDOW)
@@ -910,7 +1303,8 @@ class MainActivity : AppCompatActivity() {
     private fun showMenu() {
         val items = arrayOf("Save", "Files or editor", "Markdown preview",
                             "Terminal", "Browser", "Open a folder", "Text size",
-                            "Shortcuts", "Termux tools", "Source control")
+                            "Shortcuts", "Termux tools", "Source control",
+                            "New file")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setItems(items) { _, which ->
                 when (which) {
@@ -924,6 +1318,7 @@ class MainActivity : AppCompatActivity() {
                     7 -> showShortcuts()
                     8 -> termuxSetup()
                     9 -> toggleSourceControl()
+                    10 -> newFile()
                 }
             }
             .show()
@@ -939,6 +1334,7 @@ class MainActivity : AppCompatActivity() {
             terminalShowing = false
             ui.terminal.visibility = View.GONE; ui.termKeys.visibility = View.GONE
             ui.fileList.visibility = View.GONE
+            ui.start.visibility = View.GONE
             ui.gitPanel.visibility = View.GONE
             setGitActive(false)
             ui.diffView.visibility = View.GONE
@@ -996,6 +1392,9 @@ class MainActivity : AppCompatActivity() {
                 browserShowing -> toggleBrowser()
                 terminalShowing -> toggleTerminal()
                 !sidebarShowing() -> showList(true)
+                // Back in a subfolder of the list goes up one, as ↑ does.
+                ui.fileList.visibility == View.VISIBLE && current != null &&
+                        current?.uri != folder?.uri -> goUp()
                 // Back from source control is the file list, as V is.
                 ui.gitPanel.visibility == View.VISIBLE -> toggleSourceControl()
                 else -> {
@@ -1020,6 +1419,7 @@ class MainActivity : AppCompatActivity() {
         terminalShowing = !terminalShowing
         if (terminalShowing) {
             ui.fileList.visibility = View.GONE
+            ui.start.visibility = View.GONE
             ui.gitPanel.visibility = View.GONE
             setGitActive(false)
             ui.diffView.visibility = View.GONE
@@ -1039,7 +1439,7 @@ class MainActivity : AppCompatActivity() {
                 val (cwd, why) = terminalDirectory()
                 ui.terminal.post {
                     ui.terminal.start(filesDir.absolutePath, cwd ?: filesDir.absolutePath)
-                    shellFolder = cwd
+                    shellFolder = cwd; updateTitle()
                     // Said in the terminal itself, where the question
                     // "why am I here?" comes up, rather than in a toast.
                     if (why != null) ui.terminal.notice(why)
@@ -1181,7 +1581,24 @@ class MainActivity : AppCompatActivity() {
 
         /** Larger files are not opened as text; an EditText would crawl. */
         private const val MAX_TEXT_BYTES = 4L * 1024 * 1024
+
+        /** How many recent folders the start screen and leader O offer. */
+        private const val MAX_RECENT = 6
+
+        /** What the shared storage is called on screen, as Android's Files app says. */
+        private const val PHONE_STORAGE = "Phone storage"
     }
+}
+
+/**
+ * One row of the file list: a file or folder, or, when there is nothing to
+ * list, a line saying why and the rows that do something about it (an empty
+ * folder offers New file, a folder the app lost access to offers to reopen).
+ */
+sealed class ListRow {
+    class Doc(val file: DocumentFile) : ListRow()
+    class Note(val text: String) : ListRow()
+    class Action(val label: String, val run: () -> Unit) : ListRow()
 }
 
 /** The file list: one row per entry, folders marked by a trailing slash. */
@@ -1189,9 +1606,9 @@ class FileListAdapter(private val onClick: (DocumentFile) -> Unit,
                       private val onLongClick: (DocumentFile) -> Unit = {}) :
     RecyclerView.Adapter<FileListAdapter.Row>() {
 
-    private var entries: List<DocumentFile> = emptyList()
+    private var entries: List<ListRow> = emptyList()
 
-    fun submit(list: List<DocumentFile>) {
+    fun submit(list: List<ListRow>) {
         entries = list
         notifyDataSetChanged()
     }
@@ -1205,20 +1622,49 @@ class FileListAdapter(private val onClick: (DocumentFile) -> Unit,
                        (12 * dp).toInt(), (8 * dp).toInt())
             textSize = 15f
             setTextColor(Palette.TEXT)
+            layoutParams = RecyclerView.LayoutParams(
+                RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT)
         }
         return Row(text)
     }
 
     override fun onBindViewHolder(row: Row, position: Int) {
-        val entry = entries[position]
-        row.text.text = (entry.name ?: "?") + if (entry.isDirectory) "/" else ""
-        row.text.setTextColor(if (entry.isDirectory) Palette.ACCENT else Palette.TEXT)
-        row.text.setOnClickListener { onClick(entry) }
-        row.text.setOnLongClickListener {
-            if (entry.isDirectory) onLongClick(entry)
-            entry.isDirectory
+        val t = row.text
+        val dp = t.resources.displayMetrics.density
+        t.setOnClickListener(null)
+        t.setOnLongClickListener(null)
+        t.background = null
+        t.isFocusable = false
+        t.minHeight = 0
+        t.gravity = android.view.Gravity.CENTER_VERTICAL
+        when (val entry = entries[position]) {
+            is ListRow.Doc -> {
+                val f = entry.file
+                t.text = (f.name ?: "?") + if (f.isDirectory) "/" else ""
+                t.setTextColor(if (f.isDirectory) Palette.ACCENT else Palette.TEXT)
+                t.setOnClickListener { onClick(f) }
+                t.setOnLongClickListener {
+                    if (f.isDirectory) onLongClick(f)
+                    f.isDirectory
+                }
+            }
+            is ListRow.Note -> {
+                t.text = entry.text
+                t.setTextColor(Palette.MUTED)
+            }
+            is ListRow.Action -> {
+                t.text = entry.label
+                t.setTextColor(Palette.ACCENT)
+                t.minHeight = (48 * dp).toInt()
+                t.background = StartScreen.rowBackground()
+                t.isFocusable = true
+                t.setOnClickListener { entry.run() }
+            }
         }
     }
+
+    /** The first row that does something, for the keyboard's focus. */
+    fun firstAction() = entries.indexOfFirst { it is ListRow.Action }
 
     override fun getItemCount() = entries.size
 }

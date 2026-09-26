@@ -12,7 +12,7 @@ stay covered by `../tests/run_tests.cpp`.
    and download `MiniCode-<version>.apk`.
 2. Open the download. Android asks once whether your browser may install
    apps; allow it, then install.
-3. Open MiniCode, press ⋮ → Open a folder → Phone storage, and pick a folder.
+3. Open MiniCode and tap "Open a folder on phone storage" on the start screen.
 
 To keep it updated without checking by hand, add
 `https://github.com/e-c-hansen/minicode` to
@@ -46,10 +46,30 @@ The rest of this file is about how the port is built and developed.
 
 ## What it has
 
+- **Start screen.** With no folder open, the window says so and offers
+  large rows, for touch or the arrow keys and Enter: open a folder on phone
+  storage, open one from another app or cloud, the recent folders (the last
+  six, newest first, in the `recent` preference; ones that are gone or lost
+  their permission are dropped), the terminal and the shortcuts
+  (`StartScreen.kt`). `am start ... --ez start true` shows it without
+  forgetting the saved folder, for looking at it on a phone already set up.
 - **File list.** One pane at a time rather than a sidebar: on a 576 by 640 dp
   screen there is no room for two. Folders are opened through the system
   document picker, so the editor needs no storage permission, and the choice
   is remembered between launches. Only the terminal asks for one (below).
+  An empty folder says so and offers New file (also in the ⋮ menu), which
+  asks for a name, creates the file and opens it. A folder the app can no
+  longer read (moved, deleted, its permission taken back, or no "All files
+  access" for a path) says which, with a row to fix it. Back in a subfolder
+  goes up one.
+- **The title bar says where you are.** The first line names the pane (the
+  folder, the file with a dot while unsaved, Terminal, Browser, Source
+  Control, a diff); the second says where it is, as "Phone storage / mc-test
+  / docs", or the app a picked folder comes from, plus Unsaved, Preview,
+  Source or View only for a file.
+- **No editor without a file.** Asking for the editor with nothing open (the
+  leader alone, leader F) stays on the list and says no file is open, so
+  nothing can be typed into a buffer with nowhere to be saved.
 - **Editor.** The shared highlighter colours the file; autocorrect,
   suggestions and the composing region are all off, because a keyboard that
   rewrites words is wrong for code (see CodeEditText).
@@ -468,7 +488,8 @@ Run it from the repository root; the tests read a few files from `demo/`,
 - `app/src/main/cpp/terminal_jni.cpp` — the pty, and the shared
   TerminalScreen reading it.
 - `app/src/main/java/org/minicode/editor/MainActivity.kt` — the panes, the
-  leader, the menu.
+  leader, the menu, the title bar, recent folders.
+- `StartScreen.kt` — what shows while no folder is open.
 - `CodeEditText.kt` — the editor field: no composing, and the leader's letter.
 - `TerminalView.kt` — draws the grid, sends keys. Declares TYPE_NULL so
   keyboards send keys rather than composing words. Also finds, underlines

@@ -907,6 +907,13 @@ the file map; what belongs here is what it cost to learn:
   storage, so every command carries `-c safe.directory=<top level>`; the
   first one retries with the path from git's "dubious ownership" message.
   Never write a safe.directory into any config.
+- **There is no editor without a file** (2026-09-26, after the user could
+  not tell which page they were on and typed into an empty editor whose text
+  was silently dropped). With no folder the window is a start screen
+  (`StartScreen.kt`); `showList(false)` with no file or diff shows the list
+  side instead; the title bar's second line says where every pane is. The
+  start screen can be seen without losing the user's folder with
+  `am start -S -n org.minicode.editor/.MainActivity --ez start true`.
 - **Back on Android 16** reaches an app that targets API 36 only through
   the OnBackPressedDispatcher; the old `onBackPressed` override was never
   called, and Back left the app from every pane.
