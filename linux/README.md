@@ -43,7 +43,10 @@ compared with the macOS app, and the order to do it in, see `HANDOFF.md`.
 - `src/LatexClick.{h,cpp}` — the poppler and GIO half of that path: a page's
   text and boxes, and the gzipped SyncTeX file.
 - `src/Markdown.{h,cpp}` — renders the MarkdownParser run list into a styled
-  GtkTextBuffer.
+  GtkTextBuffer, with tables (a grid of labels) and pictures (GIFs play) as
+  embedded widgets, and a map from the rendered text back to source lines
+  that the editor uses for links, Ctrl+Shift+P keeping its place, and
+  editing a block from the preview (`../src/MarkdownEdit`).
 - `src/Terminal.{h,cpp}` — VTE terminal panel, behind `MINICODE_ENABLE_TERMINAL`,
   with Ctrl+click on file references and URLs found by `../src/TermLinks`.
 - `src/TermLinkPath.{h,cpp}` — pure C++: resolves a file reference from the

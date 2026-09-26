@@ -753,38 +753,37 @@ static void act_focus_editor(GSimpleAction*, GVariant*, gpointer userp) {
     refreshHints(app);
 }
 
-#ifdef MINICODE_ENABLE_TERMINAL
-// Ctrl+click on a link in the terminal (Terminal::Link), the Mac's
+// Opens a link from the terminal or a Markdown preview, the Mac's
 // -openTerminalLink:. A URL opens in the browser panel; a file opens in the
 // editor at the line and column the reference named; a folder is shown in
 // the tree.
-static void openTerminalLink(App* app, const Terminal::Link& link) {
-    if (link.isUrl) {
+static void openLink(App* app, bool isUrl, const std::string& target, bool isDir,
+                     bool insideRoot, int line, int column) {
+    if (isUrl) {
 #ifdef MINICODE_ENABLE_BROWSER
         if (app->browser && app->browserRevealer) {
             if (!gtk_revealer_get_reveal_child(GTK_REVEALER(app->browserRevealer)))
                 act_toggle_browser(nullptr, nullptr, app);
-            app->browser->load(link.target);
+            app->browser->load(target);
             return;
         }
 #endif
         // Built without the browser panel: the desktop's own browser.
-        GtkUriLauncher* launcher = gtk_uri_launcher_new(link.target.c_str());
+        GtkUriLauncher* launcher = gtk_uri_launcher_new(target.c_str());
         gtk_uri_launcher_launch(launcher, GTK_WINDOW(app->window), nullptr, nullptr, nullptr);
         g_object_unref(launcher);
         return;
     }
 
-    const std::string path = link.target;
-    if (link.isDir) {
+    const std::string path = target;
+    if (isDir) {
         // Only the tree can show a folder, and only one inside it.
-        if (!link.insideRoot) { gtk_widget_error_bell(app->window); return; }
+        if (!insideRoot) { gtk_widget_error_bell(app->window); return; }
         if (!app->sidebarVisible) act_toggle_sidebar(nullptr, nullptr, app);
         app->tree->revealPath(path);
         return;
     }
-    if (link.insideRoot) app->tree->revealPath(path);
-    const int line = link.line, column = link.column;
+    if (insideRoot) app->tree->revealPath(path);
     openFileThen(app, path, [app, path, line, column] {
         // Opening can be refused (Cancel at "Save changes?"), and an image
         // or a PDF has no lines to go to.
@@ -796,7 +795,20 @@ static void openTerminalLink(App* app, const Terminal::Link& link) {
         refreshHints(app);   // a Markdown preview may have switched to source
     });
 }
+
+#ifdef MINICODE_ENABLE_TERMINAL
+// Ctrl+click on a link in the terminal (Terminal::Link).
+static void openTerminalLink(App* app, const Terminal::Link& link) {
+    openLink(app, link.isUrl, link.target, link.isDir, link.insideRoot, link.line, link.column);
+}
 #endif
+
+// A click on a link in a Markdown preview (Editor::Link). The editor has
+// resolved the path; whether it is inside the open folder is decided here.
+static void openEditorLink(App* app, const Editor::Link& link) {
+    const bool inside = !link.isUrl && isInside(link.target, app->rootDir);
+    openLink(app, link.isUrl, link.target, link.isDir, inside, link.line, 0);
+}
 
 // ------------------------------------------------------ file tree actions
 //
@@ -1638,6 +1650,7 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
 
     app->editor->setObserver(nullptr);
     app->editor->setTitleCallback(nullptr, nullptr);
+    app->editor->setLinkHandler(nullptr);
     app->editor->setExternalChangeCallback(nullptr, nullptr);
     delete app->search;
     app->search = nullptr;
@@ -1678,6 +1691,9 @@ static App* newWindow(const std::string& root, const std::string& file) {
     app->tree->setOpenCallback(treeOpenCb, app);
     app->editor = new Editor();
     app->editor->setTitleCallback(updateTitle, app);
+    app->editor->setLinkHandler([app](const Editor::Link& link) {
+        if (!app->dead) openEditorLink(app, link);
+    });
     app->editor->setExternalChangeCallback(askExternalChange, app);
     app->editor->setSettingsPath(g.settings->path());
 

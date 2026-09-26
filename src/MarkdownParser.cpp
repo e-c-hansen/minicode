@@ -318,6 +318,18 @@ void emitTable(const std::vector<std::vector<std::string>>& rows,
 
 } // namespace
 
+std::string MarkdownParser::anchor(const std::string& headingText) {
+    std::string t = trim(headingText), out;
+    for (char c : t) {
+        const auto u = static_cast<unsigned char>(c);
+        if (u >= 0x80) out += c;
+        else if (std::isalnum(u)) out += (char)std::tolower(u);
+        else if (c == ' ') out += '-';
+        else if (c == '-' || c == '_') out += c;
+    }
+    return out;
+}
+
 std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
     std::vector<MdRun> out;
     auto lines = splitLines(markdown);

@@ -4,6 +4,7 @@
 #include "Editor.h"
 #include "Palette.h"
 #include "Markdown.h"
+#include "MarkdownEdit.h"
 #include "SyntaxHighlighter.h"
 #include "LineComments.h"
 #include "Utf8Offsets.h"
@@ -13,6 +14,7 @@
 #include "ScrollSettle.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <functional>
 #include <cstdlib>
@@ -134,6 +136,12 @@ Editor::Editor() {
     GtkEventController* motion = gtk_event_controller_motion_new();
     g_signal_connect(motion, "motion", G_CALLBACK(onMotion), this);
     gtk_widget_add_controller(view_, motion);
+    // Ctrl+Z and Ctrl+Shift+Z for edits made from a Markdown preview, whose
+    // buffer holds rendered text and so has no undo of its own for them.
+    GtkEventController* keys = gtk_event_controller_key_new();
+    gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
+    g_signal_connect(keys, "key-pressed", G_CALLBACK(onViewKey), this);
+    gtk_widget_add_controller(view_, keys);
     // The color picker's popover is the view's child only by
     // gtk_widget_set_parent, so it must go before the view is disposed (the
     // same trap as the LSP popovers, see Lsp.cpp).
@@ -144,6 +152,11 @@ Editor::Editor() {
     gtk_widget_add_css_class(scroller_, "minicode-editor-scroller");
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller_), view_);
     settleScrollingOnUnmap(GTK_SCROLLED_WINDOW(scroller_));
+    // A preview's tables and pictures follow the pane's width.
+    g_signal_connect_swapped(gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)),
+                             "notify::page-size", G_CALLBACK(+[](gpointer self) {
+        static_cast<Editor*>(self)->fitPage();
+    }), this);
     gtk_widget_set_hexpand(scroller_, TRUE);
     gtk_widget_set_vexpand(scroller_, TRUE);
 
@@ -190,6 +203,11 @@ void Editor::showWelcome() {
 // every handler that names this object comes off before GTK disposes them.
 Editor::~Editor() {
     stopSettle();
+    if (previewEntryTimer_) g_source_remove(previewEntryTimer_);
+    previewEntryTimer_ = 0;
+    dropMdPopover();
+    g_signal_handlers_disconnect_by_data(
+        gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)), this);
     stopWatchingText();
     if (colorSaveTimer_) g_source_remove(colorSaveTimer_);
     colorSaveTimer_ = 0;
@@ -365,6 +383,9 @@ bool Editor::openFile(const std::string& path) {
     path_ = path;
 
     source_ = content;
+    mdUndo_.clear();
+    mdRedo_.clear();
+    haveSrcPos_ = false;
     rememberDisk(content);
     watchText();
     ext_  = extOf(path);
@@ -713,6 +734,8 @@ void Editor::loadRawIntoBuffer() {
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
     setProseFont(false);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), TRUE);
+    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(view_), TRUE);
+    page_ = Markdown::Page();
     gtk_text_buffer_set_text(buffer_, source_.c_str(), (int)source_.size());
     g_signal_handlers_unblock_by_func(buffer_, (gpointer)onBufferChanged, this);
     sourceMode_ = true;
@@ -745,6 +768,7 @@ void Editor::showMessage(const std::string& msg) {
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
     setProseFont(true);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), FALSE);
+    page_ = Markdown::Page();
     gtk_text_buffer_set_text(buffer_, msg.c_str(), (int)msg.size());
     GtkTextIter a, b;
     gtk_text_buffer_get_bounds(buffer_, &a, &b);
@@ -1285,9 +1309,36 @@ bool Editor::swatchAt(double x, double y, int* line) const {
     return found;
 }
 
+// The span of a Markdown preview under a point in the view, or null. A
+// table or picture is its own widget and takes its own clicks.
+static const Markdown::Span* previewSpanAt(GtkWidget* view, const Markdown::Page& page,
+                                           double x, double y, GtkTextIter* iter) {
+    if (page.spans.empty()) return nullptr;
+    GtkWidget* picked = gtk_widget_pick(view, x, y, GTK_PICK_DEFAULT);
+    for (const Markdown::Embed& e : page.embeds)
+        if (picked && (picked == e.widget || gtk_widget_is_ancestor(picked, e.widget)))
+            return nullptr;
+    int bx, by;
+    gtk_text_view_window_to_buffer_coords(GTK_TEXT_VIEW(view), GTK_TEXT_WINDOW_WIDGET,
+                                          (int)x, (int)y, &bx, &by);
+    GtkTextIter it;
+    if (!gtk_text_view_get_iter_at_location(GTK_TEXT_VIEW(view), &it, bx, by)) return nullptr;
+    // The iterator is the character nearest the point, or the end of the
+    // line when the point is past it: that one does not count.
+    GdkRectangle box;
+    gtk_text_view_get_iter_location(GTK_TEXT_VIEW(view), &it, &box);
+    if (gtk_text_iter_ends_line(&it) && bx > box.x + std::max(box.width, 1)) return nullptr;
+    if (iter) *iter = it;
+    return page.spanAt(gtk_text_iter_get_offset(&it));
+}
+
 void Editor::onMotion(GtkEventControllerMotion*, double x, double y, gpointer selfp) {
     Editor* self = static_cast<Editor*>(selfp);
     bool over = self->swatchAt(x, y, nullptr);
+    if (!over && self->preview_ && self->isMarkdown_) {
+        const Markdown::Span* sp = previewSpanAt(self->view_, self->page_, x, y, nullptr);
+        over = sp && !sp->url.empty();
+    }
     if (over == self->overSwatch_) return;
     self->overSwatch_ = over;
     gtk_widget_set_cursor_from_name(self->view_, over ? "pointer" : "text");
@@ -1295,6 +1346,34 @@ void Editor::onMotion(GtkEventControllerMotion*, double x, double y, gpointer se
 
 void Editor::onPressed(GtkGestureClick* g, int n, double x, double y, gpointer selfp) {
     Editor* self = static_cast<Editor*>(selfp);
+    if (self->preview_ && self->isMarkdown_) {
+        GtkTextIter it;
+        const Markdown::Span* sp = previewSpanAt(self->view_, self->page_, x, y, &it);
+            if (!sp) return;
+        if (n == 1 && !sp->url.empty()) {
+            gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
+            // Once the click is over: the text view still puts the caret
+            // where it landed, which would undo a scroll to "#section".
+            auto* job = new std::pair<Editor*, std::string>(self, sp->url);
+            g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, [](gpointer d) -> gboolean {
+                auto* j = static_cast<std::pair<Editor*, std::string>*>(d);
+                j->first->openMarkdownLink(j->second);
+                return G_SOURCE_REMOVE;
+            }, job, [](gpointer d) { delete static_cast<std::pair<Editor*, std::string>*>(d); });
+            return;
+        }
+        if (n == 2) {
+            GdkRectangle box;
+            gtk_text_view_get_iter_location(GTK_TEXT_VIEW(self->view_), &it, &box);
+            int wx, wy;
+            gtk_text_view_buffer_to_window_coords(GTK_TEXT_VIEW(self->view_),
+                                                  GTK_TEXT_WINDOW_WIDGET, box.x, box.y, &wx, &wy);
+            gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
+            self->editMarkdownBlock(sp->line, -1, GdkRectangle{wx, wy, std::max(box.width, 1),
+                                                                std::max(box.height, 1)});
+        }
+        return;
+    }
     int line;
     if (n != 1 || !self->swatchAt(x, y, &line)) return;
     gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
@@ -1428,6 +1507,7 @@ void Editor::dropColorPopover() {
 
 void Editor::onViewUnrealize(GtkWidget*, gpointer selfp) {
     static_cast<Editor*>(selfp)->dropColorPopover();
+    static_cast<Editor*>(selfp)->dropMdPopover();
 }
 
 // Rewrite one line's color (uncommenting it if it was a commented-out
@@ -1704,7 +1784,36 @@ void Editor::togglePreview() {
         return;
     }
     if (!isMarkdown_) return;
+    GtkTextView* tv = GTK_TEXT_VIEW(view_);
+    GtkAdjustment* v = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
+    int caretLine = -1, previewLine = -1;
+    if (!preview_) {
+        // Leaving the source: remember the selection and the caret's height.
+        GtkTextIter a, b;
+        gtk_text_buffer_get_selection_bounds(buffer_, &a, &b);
+        srcSelStart_ = gtk_text_iter_get_offset(&a);
+        srcSelEnd_ = gtk_text_iter_get_offset(&b);
+        caretLine = gtk_text_iter_get_line(&a);
+        GdkRectangle loc, vis;
+        gtk_text_view_get_iter_location(tv, &a, &loc);
+        gtk_text_view_get_visible_rect(tv, &vis);
+        srcCaretFrac_ = vis.height > 0
+            ? std::min(0.9, std::max(0.0, (double)(loc.y - vis.y) / vis.height)) : 0.3;
+        haveSrcPos_ = true;
+    } else if (previewEntryV_ >= 0 && std::fabs(gtk_adjustment_get_value(v) - previewEntryV_) > 2) {
+        // Leaving a preview that was scrolled: the source opens where it was.
+        GdkRectangle vis;
+        gtk_text_view_get_visible_rect(tv, &vis);
+        GtkTextIter top;
+        gtk_text_view_get_iter_at_location(tv, &top, vis.x, vis.y + 4);
+        const int at = gtk_text_iter_get_offset(&top);
+        for (const Markdown::Span& sp : page_.spans)
+            if (sp.end > at && sp.line >= 0) { previewLine = sp.line; break; }
+    }
+    if (previewEntryTimer_) g_source_remove(previewEntryTimer_);
+    previewEntryTimer_ = 0;
     preview_ = !preview_;
+
     if (preview_) {
         // Sync source_ from the buffer first, in case of unsaved edits.
         GtkTextIter a, b;
@@ -1713,8 +1822,49 @@ void Editor::togglePreview() {
         source_ = txt ? txt : "";
         g_free(txt);
         renderPreview();
+        // The part of the page the caret was in, a third of the way down.
+        GtkTextIter at;
+        gtk_text_buffer_get_iter_at_offset(buffer_, &at,
+            page_.offsetForLine(caretLine, gtk_text_buffer_get_char_count(buffer_)));
+        gtk_text_buffer_place_cursor(buffer_, &at);
+        gtk_text_view_scroll_to_mark(tv, gtk_text_buffer_get_insert(buffer_), 0.0, TRUE, 0.0,
+                                     caretLine <= 0 ? 0.0 : 0.33);
+        settleOnCaret();
+        // Where the preview came to rest, once it has: a scroll after that
+        // is the user's.
+        previewEntryV_ = -1;
+        previewEntryTimer_ = g_timeout_add(700, [](gpointer selfp) -> gboolean {
+            Editor* self = static_cast<Editor*>(selfp);
+            self->previewEntryTimer_ = 0;
+            self->previewEntryV_ = gtk_adjustment_get_value(
+                gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(self->scroller_)));
+            return G_SOURCE_REMOVE;
+        }, this);
     } else {
+        // Preview edits were undone from snapshots; the source view has its
+        // own undo from here.
+        mdUndo_.clear();
+        mdRedo_.clear();
+        dropMdPopover();
         loadRawIntoBuffer();
+        const int chars = gtk_text_buffer_get_char_count(buffer_);
+        GtkTextIter a, b;
+        double yalign = 0.0;
+        if (previewLine >= 0) {
+            gtk_text_buffer_get_iter_at_line(buffer_, &a, previewLine);
+            b = a;
+        } else if (haveSrcPos_) {
+            gtk_text_buffer_get_iter_at_offset(buffer_, &a, std::min(srcSelStart_, chars));
+            gtk_text_buffer_get_iter_at_offset(buffer_, &b, std::min(srcSelEnd_, chars));
+            yalign = srcCaretFrac_;
+        } else {
+            gtk_text_buffer_get_start_iter(buffer_, &a);
+            b = a;
+        }
+        gtk_text_buffer_select_range(buffer_, &a, &b);
+        gtk_text_view_scroll_to_mark(tv, gtk_text_buffer_get_insert(buffer_), 0.0, TRUE, 0.0,
+                                     yalign);
+        settleOnCaret();
     }
 }
 
@@ -1723,12 +1873,316 @@ void Editor::renderPreview() {
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
     setProseFont(true);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), FALSE);
-    Markdown::render(buffer_, source_);
+    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(view_), FALSE);   // a page, not a field
+    Markdown::Hooks hooks;
+    char* dir = g_path_get_dirname(path_.c_str());
+    hooks.folder = dir ? dir : ".";
+    g_free(dir);
+    hooks.link = [this](const std::string& url) { openMarkdownLink(url); };
+    hooks.cellDoubleClick = [this](int line, int row, int column, GtkWidget* cell) {
+        graphene_rect_t r;
+        GdkRectangle at{0, 0, 1, 1};
+        if (gtk_widget_compute_bounds(cell, view_, &r))
+            at = GdkRectangle{(int)r.origin.x, (int)r.origin.y, std::max(1, (int)r.size.width),
+                              std::max(1, (int)r.size.height)};
+        // The separator row sits between the header and the first body row.
+        editMarkdownBlock(line + row + (row > 0 ? 1 : 0), column, at);
+    };
+    // Rendered text is never undone into, so no history is kept of it.
+    gtk_text_buffer_begin_irreversible_action(buffer_);
+    page_ = Markdown::render(GTK_TEXT_VIEW(view_), buffer_, source_, hooks);
+    gtk_text_buffer_end_irreversible_action(buffer_);
     g_signal_handlers_unblock_by_func(buffer_, (gpointer)onBufferChanged, this);
+    fitPage();
     GtkTextIter start;
     gtk_text_buffer_get_start_iter(buffer_, &start);
     gtk_text_buffer_place_cursor(buffer_, &start);
     notifyDocument();
+}
+
+void Editor::fitPage() {
+    if (page_.embeds.empty()) return;
+    const double page = gtk_adjustment_get_page_size(
+        gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)));
+    // Before the first layout the pane has no width yet; a notify follows.
+    const int width = page > 0 ? (int)page : 600;
+    Markdown::fit(page_, width - gtk_text_view_get_left_margin(GTK_TEXT_VIEW(view_)) -
+                         gtk_text_view_get_right_margin(GTK_TEXT_VIEW(view_)) - 16);
+}
+
+// ---------------------------------------------------------------- preview links
+
+// "#section" scrolls to that heading; a web address, or a path relative to
+// the Markdown file (GitHub's "#L12" names a line), goes to the shell.
+void Editor::openMarkdownLink(const std::string& url) {
+    if (url.empty()) return;
+    if (url[0] == '#') {
+        if (!scrollToAnchor(url.substr(1))) gtk_widget_error_bell(view_);
+        return;
+    }
+    char* scheme = g_uri_parse_scheme(url.c_str());
+    const std::string sch = scheme ? scheme : "";
+    g_free(scheme);
+    if (!sch.empty() && sch != "file") {
+        if (sch == "http" || sch == "https") {
+            Link link;
+            link.isUrl = true;
+            link.target = url;
+            if (linkHandler_) linkHandler_(link);
+        } else {
+            GtkUriLauncher* launcher = gtk_uri_launcher_new(url.c_str());
+            gtk_uri_launcher_launch(launcher, GTK_WINDOW(gtk_widget_get_root(view_)),
+                                    nullptr, nullptr, nullptr);
+            g_object_unref(launcher);
+        }
+        return;
+    }
+    std::string path = url, fragment;
+    if (sch == "file") {
+        char* f = g_filename_from_uri(url.c_str(), nullptr, nullptr);
+        path = f ? f : "";
+        g_free(f);
+    }
+    const size_t hash = path.find('#');
+    if (hash != std::string::npos) {
+        fragment = path.substr(hash + 1);
+        path = path.substr(0, hash);
+    }
+    if (sch != "file") {
+        char* un = g_uri_unescape_string(path.c_str(), nullptr);
+        if (un) path = un;
+        g_free(un);
+    }
+    if (path.rfind("~/", 0) == 0) path = std::string(g_get_home_dir()) + path.substr(1);
+    if (path.empty()) {   // "#section" after an empty path: this file
+        if (!scrollToAnchor(fragment)) gtk_widget_error_bell(view_);
+        return;
+    }
+    if (path[0] != '/') {
+        char* dir = g_path_get_dirname(path_.c_str());
+        path = std::string(dir) + "/" + path;
+        g_free(dir);
+    }
+    // Spelled like the tree's paths: "..", "." and doubled slashes folded.
+    GFile* f = g_file_new_for_path(path.c_str());
+    char* canon = g_file_get_path(f);
+    g_object_unref(f);
+    if (canon) path = canon;
+    g_free(canon);
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) {
+        gtk_widget_error_bell(view_);
+        return;
+    }
+    if (path == path_ && !fragment.empty() && fragment[0] != 'L') {
+        if (!scrollToAnchor(fragment)) gtk_widget_error_bell(view_);
+        return;
+    }
+    Link link;
+    link.target = path;
+    link.isDir = S_ISDIR(st.st_mode);
+    if (fragment.size() > 1 && fragment[0] == 'L') link.line = atoi(fragment.c_str() + 1);
+    if (linkHandler_) linkHandler_(link);
+}
+
+bool Editor::scrollToAnchor(const std::string& anchorIn) {
+    char* un = g_uri_unescape_string(anchorIn.c_str(), nullptr);
+    std::string key = un ? un : anchorIn;
+    g_free(un);
+    for (char& c : key) c = (char)std::tolower((unsigned char)c);
+    auto it = page_.anchors.find(key);
+    if (it == page_.anchors.end()) return false;
+    GtkTextIter at;
+    gtk_text_buffer_get_iter_at_offset(buffer_, &at, it->second);
+    gtk_text_buffer_place_cursor(buffer_, &at);
+    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(view_), gtk_text_buffer_get_insert(buffer_),
+                                 0.0, TRUE, 0.0, 0.0);
+    settleOnCaret();
+    return true;
+}
+
+// ---------------------------------------------------------------- preview edits
+//
+// A double-click on rendered Markdown opens the block behind it (a
+// paragraph, heading, list item, quote, code block or table cell) in a
+// popover holding its Markdown, as the LaTeX preview does for LaTeX. Saving
+// splices just those bytes into the source (MarkdownEdit), which is then
+// unsaved until Ctrl+S, as typing leaves it.
+
+void Editor::editMarkdownBlock(int line, int column, const GdkRectangle& at) {
+    MarkdownEdit::Block block = MarkdownEdit::blockAt(source_, line, column);
+    if (block.kind == MarkdownEdit::Block::None) return;
+    static const char* const kinds[] = {"", "Paragraph", "Heading", "List item", "Quote",
+                                        "Code block", "Table cell", "Table row"};
+    mdBlock_ = block;
+    mdEditSrc_ = source_;
+    mdEditValid_ = true;
+    mdAdding_ = false;
+    mdAnchor_ = at;
+    showMdPopover(std::string(kinds[block.kind]) +
+                      " (Markdown; Enter saves, Shift+Enter for a new line)",
+                  source_.substr(block.start, block.end - block.start),
+                  block.kind == MarkdownEdit::Block::ListItem);
+}
+
+void Editor::showMdPopover(const std::string& title, const std::string& text, bool allowsItem) {
+    if (!mdPop_) {
+        mdPop_ = gtk_popover_new();
+        gtk_popover_set_position(GTK_POPOVER(mdPop_), GTK_POS_BOTTOM);
+        gtk_widget_set_parent(mdPop_, view_);
+        GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+        gtk_widget_set_size_request(box, 440, -1);
+        mdPopLabel_ = gtk_label_new("");
+        gtk_label_set_xalign(GTK_LABEL(mdPopLabel_), 0.0);
+        gtk_widget_add_css_class(mdPopLabel_, "dim-label");
+        mdPopText_ = gtk_text_view_new();
+        gtk_text_view_set_monospace(GTK_TEXT_VIEW(mdPopText_), TRUE);
+        gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(mdPopText_), GTK_WRAP_WORD_CHAR);
+        gtk_text_view_set_left_margin(GTK_TEXT_VIEW(mdPopText_), 4);
+        gtk_text_view_set_right_margin(GTK_TEXT_VIEW(mdPopText_), 4);
+        GtkWidget* scroll = gtk_scrolled_window_new();
+        gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), mdPopText_);
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER,
+                                       GTK_POLICY_AUTOMATIC);
+        gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), 74);
+        gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(scroll), 260);
+        gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroll), TRUE);
+        gtk_scrolled_window_set_has_frame(GTK_SCROLLED_WINDOW(scroll), TRUE);
+        // Enter saves and Shift+Enter types a newline, as on the Mac; Escape
+        // closes the popover by itself.
+        GtkEventController* keys = gtk_event_controller_key_new();
+        gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
+        g_signal_connect(keys, "key-pressed", G_CALLBACK(+[](GtkEventControllerKey*, guint key,
+                                                           guint, GdkModifierType mods,
+                                                           gpointer selfp) -> gboolean {
+            if ((key != GDK_KEY_Return && key != GDK_KEY_KP_Enter) || (mods & GDK_SHIFT_MASK))
+                return FALSE;
+            static_cast<Editor*>(selfp)->commitMdEdit();
+            return TRUE;
+        }), this);
+        gtk_widget_add_controller(mdPopText_, keys);
+
+        GtkWidget* buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        mdPopAdd_ = gtk_button_new_with_label("Add item");
+        gtk_widget_set_tooltip_text(mdPopAdd_, "Add a new entry to this list, below this one");
+        g_signal_connect_swapped(mdPopAdd_, "clicked", G_CALLBACK(+[](gpointer selfp) {
+            Editor* self = static_cast<Editor*>(selfp);
+            if (!self->mdEditValid_) return;
+            self->mdAdding_ = true;
+            self->showMdPopover("New list entry", "", false);
+        }), this);
+        GtkWidget* spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+        gtk_widget_set_hexpand(spacer, TRUE);
+        GtkWidget* cancel = gtk_button_new_with_label("Cancel");
+        g_signal_connect_swapped(cancel, "clicked", G_CALLBACK(+[](gpointer selfp) {
+            Editor* self = static_cast<Editor*>(selfp);
+            self->mdEditValid_ = false;
+            gtk_popover_popdown(GTK_POPOVER(self->mdPop_));
+        }), this);
+        GtkWidget* save = gtk_button_new_with_label("Save");
+        gtk_widget_add_css_class(save, "suggested-action");
+        g_signal_connect_swapped(save, "clicked", G_CALLBACK(+[](gpointer selfp) {
+            static_cast<Editor*>(selfp)->commitMdEdit();
+        }), this);
+        gtk_box_append(GTK_BOX(buttons), mdPopAdd_);
+        gtk_box_append(GTK_BOX(buttons), spacer);
+        gtk_box_append(GTK_BOX(buttons), cancel);
+        gtk_box_append(GTK_BOX(buttons), save);
+        gtk_box_append(GTK_BOX(box), mdPopLabel_);
+        gtk_box_append(GTK_BOX(box), scroll);
+        gtk_box_append(GTK_BOX(box), buttons);
+        gtk_popover_set_child(GTK_POPOVER(mdPop_), box);
+    }
+    gtk_label_set_text(GTK_LABEL(mdPopLabel_), title.c_str());
+    GtkTextBuffer* b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(mdPopText_));
+    gtk_text_buffer_set_text(b, text.c_str(), (int)text.size());
+    gtk_widget_set_visible(mdPopAdd_, allowsItem);
+    gtk_popover_set_pointing_to(GTK_POPOVER(mdPop_), &mdAnchor_);
+    gtk_popover_popup(GTK_POPOVER(mdPop_));
+    gtk_widget_grab_focus(mdPopText_);
+    GtkTextIter s, e;
+    gtk_text_buffer_get_bounds(b, &s, &e);
+    gtk_text_buffer_select_range(b, &s, &e);
+}
+
+void Editor::commitMdEdit() {
+    if (!mdEditValid_ || !mdPop_) return;
+    GtkTextBuffer* b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(mdPopText_));
+    GtkTextIter s, e;
+    gtk_text_buffer_get_bounds(b, &s, &e);
+    char* raw = gtk_text_buffer_get_text(b, &s, &e, FALSE);
+    const std::string text = raw ? raw : "";
+    g_free(raw);
+    const bool adding = mdAdding_;
+    mdEditValid_ = false;
+    gtk_popover_popdown(GTK_POPOVER(mdPop_));
+    // The block's bytes index the source it was found in; if that changed
+    // while the popover was open, they may no longer be the same text.
+    if (source_ != mdEditSrc_ || !preview_ || !isMarkdown_) return;
+    std::string edited;
+    if (adding) {
+        if (text.empty()) return;
+        edited = MarkdownEdit::addItem(source_, mdBlock_, text);
+    } else {
+        edited = MarkdownEdit::replace(source_, mdBlock_, text);
+    }
+    if (edited != source_) applyMarkdownSource(edited, true);
+}
+
+void Editor::dropMdPopover() {
+    mdEditValid_ = false;
+    if (!mdPop_) return;
+    g_signal_handlers_disconnect_by_data(mdPop_, this);
+    if (gtk_widget_get_parent(mdPop_)) gtk_widget_unparent(mdPop_);
+    mdPop_ = mdPopLabel_ = mdPopText_ = mdPopAdd_ = nullptr;
+}
+
+void Editor::applyMarkdownSource(const std::string& source, bool undoable) {
+    if (source == source_) return;
+    if (undoable) {
+        mdUndo_.push_back(source_);
+        mdRedo_.clear();
+    }
+    GtkAdjustment* v = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
+    const double keep = gtk_adjustment_get_value(v);
+    source_ = source;
+    markDirty(true);
+    renderPreview();
+    gtk_adjustment_set_value(v, keep);
+    // Once the new text is laid out, the same place again.
+    auto* again = new std::pair<GtkAdjustment*, double>(GTK_ADJUSTMENT(g_object_ref(v)), keep);
+    g_idle_add_full(G_PRIORITY_LOW, [](gpointer d) -> gboolean {
+        auto* p = static_cast<std::pair<GtkAdjustment*, double>*>(d);
+        gtk_adjustment_set_value(p->first, p->second);
+        return G_SOURCE_REMOVE;
+    }, again, [](gpointer d) {
+        auto* p = static_cast<std::pair<GtkAdjustment*, double>*>(d);
+        g_object_unref(p->first);
+        delete p;
+    });
+    previewEntryV_ = keep;
+}
+
+gboolean Editor::onViewKey(GtkEventControllerKey*, guint key, guint, GdkModifierType mods,
+                           gpointer selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    if (!self->preview_ || !self->isMarkdown_) return FALSE;
+    const bool ctrl = mods & GDK_CONTROL_MASK, shift = mods & GDK_SHIFT_MASK;
+    const bool undo = ctrl && !shift && (key == GDK_KEY_z || key == GDK_KEY_Z);
+    const bool redo = ctrl && ((shift && (key == GDK_KEY_z || key == GDK_KEY_Z)) ||
+                               (!shift && (key == GDK_KEY_y || key == GDK_KEY_Y)));
+    if (!undo && !redo) return FALSE;
+    auto& from = undo ? self->mdUndo_ : self->mdRedo_;
+    auto& to = undo ? self->mdRedo_ : self->mdUndo_;
+    if (from.empty()) {
+        gtk_widget_error_bell(self->view_);
+        return TRUE;
+    }
+    to.push_back(self->source_);
+    const std::string src = from.back();
+    from.pop_back();
+    self->applyMarkdownSource(src, false);
+    return TRUE;
 }
 
 // ---------------------------------------------------------------- dirty state

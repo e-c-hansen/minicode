@@ -35,4 +35,8 @@ struct MdRun {
 class MarkdownParser {
 public:
     static std::vector<MdRun> parse(const std::string& markdown);
+    // GitHub's anchor for a heading, what a "#section" link names:
+    // lowercased (ASCII), spaces as hyphens, and every other ASCII character
+    // but letters, digits, '-' and '_' dropped. Other scripts are kept.
+    static std::string anchor(const std::string& headingText);
 };

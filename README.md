@@ -111,7 +111,7 @@ make run DIR=demo
 
 ## Linux
 
-The Linux version, in the linux folder, is built on GTK4 with a VTE terminal, a WebKitGTK browser and poppler for PDFs. It has everything described above, including the LaTeX preview and language servers, with Control where the Mac uses Command. It lacks editing Markdown from the rendered page, and blur behind the window, which GNOME gives applications no way to ask for.
+The Linux version, in the linux folder, is built on GTK4 with a VTE terminal, a WebKitGTK browser and poppler for PDFs. It has everything described above, including the LaTeX preview and language servers, with Control where the Mac uses Command. The one thing it lacks is blur behind the window, which GNOME gives applications no way to ask for.
 
 ```
 sudo apt install build-essential meson libgtk-4-dev \

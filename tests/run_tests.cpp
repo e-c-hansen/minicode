@@ -1060,6 +1060,12 @@ void testMarkdown() {
         CHECK(!anyRun(t, [](const MdRun &r) { return !r.table && r.tableId != 0; }));
     }
 
+    GROUP("md:anchors");
+    CHECK(MarkdownParser::anchor("Next to VS Code and Zed") == "next-to-vs-code-and-zed");
+    CHECK(MarkdownParser::anchor(" Installing, and building! ") == "installing-and-building");
+    CHECK(MarkdownParser::anchor("C++ & you_2") == "c--you_2");
+    CHECK(MarkdownParser::anchor("Caf\xC3\xA9") == "caf\xC3\xA9");
+
     GROUP("md:source-lines");
     {
         auto doc = MarkdownParser::parse(

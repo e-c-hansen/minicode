@@ -60,6 +60,15 @@ std::string stylesheet(const Settings& s) {
     // macOS body size (15pt). Code and table runs re-apply monospace via
     // their GtkTextTags.
     css += ".minicode-prose text { font-family: sans-serif; font-size: 15pt; }";
+    // Markdown tables: a grid of cells, lines between them drawn once (each
+    // cell draws its right and bottom edges, the table its top and left),
+    // the header row shaded, text in the editor's colors.
+    css += ".minicode-md-table { border-top: 1px solid #444444; border-left: 1px solid #444444; }";
+    css += ".minicode-md-cell { border-right: 1px solid #444444; border-bottom: 1px solid #444444;"
+           " padding: 4px 8px; }";
+    css += ".minicode-md-cell label { color: " + fg(Surface::Editor) + "; }";
+    css += ".minicode-md-head { background-color: " + cssColor(s.markdownCodeBackground()) + "; }";
+    css += ".minicode-md-head label { color: " + cssColor(s.markdown(MarkdownColor::Heading)) + "; }";
 
     // File tree: the scroller paints, the list and its rows stay clear.
     css += ".minicode-sidebar { background-color: " + bg(Surface::Sidebar) + "; }";

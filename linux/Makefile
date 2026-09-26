@@ -19,7 +19,7 @@ BUILD    := build-make
 BIN      := $(BUILD)/minicode
 
 # Shared portable core (never copied — compiled straight from ../src).
-CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp \
+CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEdit.cpp \
         ../src/Settings.cpp ../src/LineComments.cpp ../src/FolderSearch.cpp \
         ../src/LatexDoc.cpp ../src/SyncTex.cpp \
         ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp

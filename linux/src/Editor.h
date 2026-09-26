@@ -5,10 +5,13 @@
 
 #include <gtk/gtk.h>
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "Markdown.h"
+#include "MarkdownEdit.h"
 #include "Settings.h"
 #include "SyntaxHighlighter.h"
 
@@ -147,6 +150,18 @@ public:
     // the extension, and so the grammar, changed.
     void setPath(const std::string& path);
 
+    // A link clicked in a Markdown preview that the editor does not handle
+    // itself ("#section" it scrolls to): a web address, or a file or folder,
+    // resolved against the Markdown file's folder. `line` is from GitHub's
+    // "#L12", else 0. The shell opens it as it opens terminal links.
+    struct Link {
+        bool isUrl = false;
+        std::string target;
+        bool isDir = false;
+        int line = 0;
+    };
+    void setLinkHandler(std::function<void(const Link&)> h) { linkHandler_ = std::move(h); }
+
     // One observer (the language server session), not owned.
     void setObserver(EditorObserver* o) { observer_ = o; }
     // True while the buffer holds a file's editable source.
@@ -190,6 +205,20 @@ private:
     static gboolean onIdleRetag(gpointer self);
 
     void renderPreview();        // build the Markdown preview into the buffer
+    void fitPage();              // size the preview's tables and pictures to the pane
+    void openMarkdownLink(const std::string& url);
+    bool scrollToAnchor(const std::string& anchor);
+    // Editing from the preview: the block on source `line` (a cell, when
+    // `column` is not -1) in a popover pointing at `at` (view coordinates).
+    void editMarkdownBlock(int line, int column, const GdkRectangle& at);
+    void showMdPopover(const std::string& title, const std::string& text, bool allowsItem);
+    void commitMdEdit();
+    void dropMdPopover();
+    // A new source from a preview edit (or its undo): dirty, shown again at
+    // the same scroll. `undoable` puts the old source on the undo stack.
+    void applyMarkdownSource(const std::string& source, bool undoable);
+    static gboolean onViewKey(GtkEventControllerKey* c, guint key, guint code,
+                              GdkModifierType mods, gpointer self);
     void loadRawIntoBuffer();    // put source_ back as editable, highlighted text
     void ensureTags();           // create the per-style + markdown GtkTextTags once
     void setProseFont(bool prose);  // proportional for preview/messages, mono for code
@@ -291,6 +320,33 @@ private:
     void settleOnCaret();
     void stopSettle();
     static gboolean onSettleTick(GtkWidget* w, GdkFrameClock* clock, gpointer self);
+
+    // The Markdown preview: what each stretch of the rendered text came
+    // from, and its tables and pictures (Markdown.h).
+    Markdown::Page page_;
+    std::function<void(const Link&)> linkHandler_;
+    // Editing from the preview (editMarkdownBlock): the popover, the block
+    // being edited, and the source it was found in; the edit is refused if
+    // the source changed meanwhile. Undo and redo of preview edits are
+    // source snapshots, since the buffer holds rendered text.
+    GtkWidget*  mdPop_ = nullptr;
+    GtkWidget*  mdPopLabel_ = nullptr;
+    GtkWidget*  mdPopText_ = nullptr;
+    GtkWidget*  mdPopAdd_ = nullptr;
+    MarkdownEdit::Block mdBlock_;
+    std::string mdEditSrc_;
+    bool        mdEditValid_ = false;
+    bool        mdAdding_ = false;
+    GdkRectangle mdAnchor_{0, 0, 1, 1};
+    std::vector<std::string> mdUndo_, mdRedo_;
+    // Ctrl+Shift+P keeps the place: the source's selection and how far down
+    // the pane the caret sat, and the preview's scroll when it came up (a
+    // preview scrolled since sends the source to where it was looking).
+    bool   haveSrcPos_ = false;
+    int    srcSelStart_ = 0, srcSelEnd_ = 0;
+    double srcCaretFrac_ = 0.3;
+    double previewEntryV_ = -1;
+    guint  previewEntryTimer_ = 0;
 
     EditorObserver* observer_ = nullptr;
     void notifyDocument();    // tell the observer what the buffer holds now

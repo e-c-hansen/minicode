@@ -14,6 +14,7 @@ core_dir = meson.current_source_dir() / '..' / 'src'
 core_sources = [
   core_dir / 'SyntaxHighlighter.cpp',
   core_dir / 'MarkdownParser.cpp',
+  core_dir / 'MarkdownEdit.cpp',
   core_dir / 'Settings.cpp',
   core_dir / 'LineComments.cpp',
   core_dir / 'FolderSearch.cpp',

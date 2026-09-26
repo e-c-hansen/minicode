@@ -425,7 +425,7 @@ never closes.
   from Homebrew. 1.4.1 carried the Linux parity work, the review fixes below,
   the TeX grammar and images in the Markdown preview; 1.4.2 made GIFs play
   (1.4.1's were still); 1.4.3 draws Markdown tables as real tables and stops
-  the editor running past its pane. 1,518 core checks pass; the Mac build is
+  the editor running past its pane. 1,522 core checks pass; the Mac build is
   warning-free; CI builds and tests macOS and Linux.
 - **macOS**: terminal links (Cmd+click `file:line` and URLs, log and grid) are
   in 1.4.0; the user has not yet clicked them in the grid (Claude Code, vim).
@@ -915,7 +915,24 @@ holds, these give real runtime evidence rather than compile-only evidence:
   types a newline, Add item on a list item). `applyMarkdownSource:` splices,
   marks the buffer dirty, registers undo with the window's undo manager and
   re-renders at the same scroll. An edit is dropped if the buffer changed
-  while the popover was open. Mac only for now. Table cells are inline-parsed and padded by *display*
+  while the popover was open.
+- **The Linux preview does the same** (2026-09-26): `linux/src/Markdown.cpp`
+  returns a `Markdown::Page` (spans of rendered text with their source line
+  and link, heading anchors via `MarkdownParser::anchor`, and the embedded
+  widgets). Tables are a `GtkGrid` of wrapping labels and pictures an
+  `MdPicture` (its own small widget, since GtkPicture always asks for the
+  image's full size and a text view grants it), both in child anchors and
+  sized by `Markdown::fit` from the pane's width. A label's natural width is
+  pinned by `max_width_chars = 1` plus a width request, so it wraps. The
+  editor (`Editor.cpp`) handles clicks, the popover, snapshot undo (Ctrl+Z
+  in the preview; the buffer holds rendered text) and the toggle position.
+  Two traps: act on a link from an idle, because the text view moves the
+  caret after the click and undid a scroll to `#section`; and
+  `gtk_text_view_get_iter_at_location` returns the *nearest* character, so a
+  click can land a pixel left of the character's box (reject only a point
+  past a line's end). Checked in the Docker container: links, anchors,
+  GIFs playing, tables wrapping, list and cell edits, undo and redo, and the
+  three toggle cases. Android shows none of this yet. Table cells are inline-parsed and padded by *display*
   width (code points, CJK/emoji = 2), never UTF-8 byte length, or any
   non-ASCII cell knocks the columns out of line.
 - **Search**: scoped to a folder (default = open folder or selected folder),
