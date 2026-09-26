@@ -968,6 +968,19 @@ void testMarkdown() {
         CHECK(!anyRun(t, [](const MdRun &r) { return !r.table && r.tableId != 0; }));
     }
 
+    GROUP("md:source-lines");
+    {
+        auto doc = MarkdownParser::parse(
+            "# Title\n\nfirst para\nstill first\n\n| a | b |\n|---|---|\n| c | d |\n\n- item **x**\n");
+        CHECK(anyRun(doc, [](const MdRun &r) { return r.heading == 1 && r.line == 0; }));
+        CHECK(anyRun(doc, [](const MdRun &r) { return r.text == "first para" && r.line == 2; }));
+        CHECK(anyRun(doc, [](const MdRun &r) { return r.text == "still first" && r.line == 3; }));
+        // A table's runs all carry its first line.
+        CHECK(anyRun(doc, [](const MdRun &r) { return r.text == "d" && r.line == 5; }));
+        CHECK(anyRun(doc, [](const MdRun &r) { return r.bold && r.text == "x" && r.line == 9; }));
+        CHECK(!anyRun(doc, [](const MdRun &r) { return r.line < 0; }));
+    }
+
     GROUP("md:tables-shape");
     // No leading/trailing pipes is still a table.
     CHECK(tableLines(MarkdownParser::parse("A | B\n--- | ---\n1 | 2\n")).size() == 3);

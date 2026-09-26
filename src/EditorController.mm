@@ -267,6 +267,8 @@ static NSString *FromU16(const std::u16string &u) {
 
 // Link value marking a clickable color in the settings file.
 static NSString *const kColorLink = @"minicode-color";
+// On rendered Markdown: the 0-based source line a stretch of text came from.
+static NSAttributedStringKey const kMarkdownSourceLine = @"MCMarkdownSourceLine";
 
 // Panel, text and syntax colors come from the settings file (AppSettings);
 // Hex is for the fixed accents that aren't configurable.
@@ -298,6 +300,16 @@ private:
     // tracks line states so only the changed lines are re-lexed.
     std::unique_ptr<IncrementalHighlighter<char16_t>> _hl;
     BOOL _liveHighlight;
+    // Rendered Markdown's headings, by GitHub's anchor spelling, for #links.
+    NSDictionary<NSString *, NSNumber *> *_markdownAnchors;
+    // Where the source view was when a preview took over, so coming back
+    // lands there again: the selection, and how far below the top of the
+    // pane the caret sat. _previewEntryScroll tells whether the preview was
+    // scrolled since, in which case coming back follows it instead.
+    NSRange _sourceSelection;
+    CGFloat _sourceCaretOffset;
+    BOOL _haveSourcePosition;
+    NSPoint _previewEntryScroll;
     NSUInteger _pendingStart, _pendingEnd; // edited, not yet recolored (NSNotFound: none)
     BOOL _flushScheduled;
     BOOL _highlightingSettingsFile;        // give color values swatches
@@ -1598,6 +1610,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     self.isImage = NO;
     self.isPDF = NO;
     self.previewMode = NO;
+    _haveSourcePosition = NO;
     self.sourceText = nil;
     self.dirty = NO;
     self.textView.editable = NO;
@@ -2160,6 +2173,10 @@ static NSColor *ContrastColor(const Rgba &c) {
 }
 
 - (BOOL)textView:(NSTextView *)tv clickedOnLink:(id)link atIndex:(NSUInteger)i {
+    if (self.isMarkdown && self.previewMode && [link isKindOfClass:NSString.class]) {
+        [self openMarkdownLink:link];
+        return YES;
+    }
     if (![link isEqual:kColorLink]) return NO;
     [self pickColorAtIndex:i];
     return YES;
@@ -2323,10 +2340,184 @@ static NSColor *ContrastColor(const Rgba &c) {
         return;
     }
     [self revealEditor];
-    if (self.textView.editable) self.sourceText = self.textView.string;  // keep edits
-    self.previewMode = !self.previewMode;
+    NSTextView *tv = self.textView;
+    const BOOL toPreview = !self.previewMode;
+    NSInteger sourceLine = -1;       // the caret's line, for the preview to show
+    NSInteger previewLine = -1;      // the line at the top of a scrolled preview
+    if (toPreview) {
+        _sourceSelection = tv.selectedRange;
+        NSRect caret = [self textRectForCharacter:_sourceSelection.location];
+        _sourceCaretOffset = NSMinY(caret) - NSMinY(tv.visibleRect);
+        _haveSourcePosition = !NSIsEmptyRect(caret);
+        sourceLine = [self lineOfCharacter:_sourceSelection.location inString:tv.string];
+    } else if (self.isMarkdown &&
+               !NSEqualPoints(self.editorScroll.contentView.bounds.origin, _previewEntryScroll)) {
+        NSUInteger top = [tv characterIndexForInsertionAtPoint:
+            NSMakePoint(NSMidX(tv.visibleRect), NSMinY(tv.visibleRect) + 4)];
+        previewLine = [self markdownSourceLineNear:top];
+    }
+    if (tv.editable) self.sourceText = tv.string;  // keep edits
+    self.previewMode = toPreview;
     [self refreshDisplay];
     [self updateTitle];
+
+    if (toPreview && self.isMarkdown) {
+        // Show the part of the page the caret was in, a third of the way down.
+        NSUInteger target = [self markdownCharacterForSourceLine:sourceLine];
+        NSRect r = [self textRectForCharacter:target];
+        if (!NSIsEmptyRect(r))
+            [self scrollEditorToY:NSMinY(r) - NSHeight(tv.visibleRect) / 3];
+        _previewEntryScroll = self.editorScroll.contentView.bounds.origin;
+    } else if (!toPreview && previewLine >= 0) {
+        // The preview was scrolled: open the source where it was looking.
+        NSUInteger at = [self characterAtStartOfLine:previewLine inString:tv.string];
+        tv.selectedRange = NSMakeRange(at, 0);
+        NSRect r = [self textRectForCharacter:at];
+        if (!NSIsEmptyRect(r)) [self scrollEditorToY:NSMinY(r) - 8];
+    } else if (!toPreview && _haveSourcePosition) {
+        const NSUInteger n = tv.string.length;
+        NSRange sel = _sourceSelection;
+        if (sel.location > n) sel = NSMakeRange(n, 0);
+        if (NSMaxRange(sel) > n) sel.length = n - sel.location;
+        tv.selectedRange = sel;
+        NSRect r = [self textRectForCharacter:sel.location];
+        if (!NSIsEmptyRect(r)) [self scrollEditorToY:NSMinY(r) - _sourceCaretOffset];
+    }
+    if (!self.previewMode) [self.window makeFirstResponder:tv];
+}
+
+// Where character `i` of the editor is drawn, in the text view's coordinates;
+// the end of the text counts as the last character. Empty when it cannot be
+// known. The editor runs TextKit 1 (see CLAUDE.md), so this asks the layout
+// manager, and it never touches one under TextKit 2, where asking would
+// switch the view over.
+- (NSRect)textRectForCharacter:(NSUInteger)i {
+    NSTextView *tv = self.textView;
+    const NSUInteger n = tv.string.length;
+    if (tv.textLayoutManager || n == 0) return NSZeroRect;
+    NSLayoutManager *lm = tv.layoutManager;
+    if (i >= n) i = n - 1;
+    [lm ensureLayoutForCharacterRange:NSMakeRange(0, i + 1)];
+    NSRange glyphs = [lm glyphRangeForCharacterRange:NSMakeRange(i, 1)
+                                actualCharacterRange:NULL];
+    NSRect r = [lm boundingRectForGlyphRange:glyphs inTextContainer:tv.textContainer];
+    if (NSIsEmptyRect(r)) r.size = NSMakeSize(1, 1);   // a bare newline
+    NSPoint o = tv.textContainerOrigin;
+    return NSOffsetRect(r, o.x, o.y);
+}
+
+- (void)scrollEditorToY:(CGFloat)y {
+    NSClipView *clip = self.editorScroll.contentView;
+    const CGFloat most = NSHeight(self.textView.frame) - NSHeight(clip.bounds);
+    y = MAX(0, MIN(y, MAX(0, most)));
+    [clip scrollToPoint:NSMakePoint(clip.bounds.origin.x, y)];
+    [self.editorScroll reflectScrolledClipView:clip];
+}
+
+- (NSInteger)lineOfCharacter:(NSUInteger)i inString:(NSString *)s {
+    NSInteger line = 0;
+    const NSUInteger end = MIN(i, s.length);
+    for (NSUInteger k = 0; k < end; k++)
+        if ([s characterAtIndex:k] == '\n') line++;
+    return line;
+}
+
+- (NSUInteger)characterAtStartOfLine:(NSInteger)line inString:(NSString *)s {
+    NSUInteger k = 0;
+    for (NSInteger l = 0; l < line && k < s.length; k++)
+        if ([s characterAtIndex:k] == '\n') l++;
+    return k;
+}
+
+// The first rendered character that came from source line `line` or later
+// (the end of the page when none did).
+- (NSUInteger)markdownCharacterForSourceLine:(NSInteger)line {
+    NSTextStorage *st = self.textView.textStorage;
+    __block NSUInteger found = st.length;
+    if (line <= 0) return 0;
+    [st enumerateAttribute:kMarkdownSourceLine inRange:NSMakeRange(0, st.length) options:0
+                usingBlock:^(NSNumber *v, NSRange r, BOOL *stop) {
+        if (v && v.integerValue >= line) { found = r.location; *stop = YES; }
+    }];
+    return found;
+}
+
+// The source line behind rendered character `i`, or the nearest one after it.
+- (NSInteger)markdownSourceLineNear:(NSUInteger)i {
+    NSTextStorage *st = self.textView.textStorage;
+    if (i >= st.length) i = st.length ? st.length - 1 : 0;
+    __block NSInteger line = -1;
+    if (st.length == 0) return line;
+    [st enumerateAttribute:kMarkdownSourceLine inRange:NSMakeRange(i, st.length - i) options:0
+                usingBlock:^(NSNumber *v, NSRange r, BOOL *stop) {
+        (void)r;
+        if (v) { line = v.integerValue; *stop = YES; }
+    }];
+    return line;
+}
+
+// A click on a link in rendered Markdown. "#section" scrolls to that heading;
+// a web address opens in the browser panel (another scheme, such as mailto,
+// goes to the system); anything else is a path relative to the Markdown
+// file, opened as the terminal opens paths, with "#section" or GitHub's
+// "#L12" honoured when the target is a Markdown or source file.
+- (void)openMarkdownLink:(NSString *)href {
+    if ([href hasPrefix:@"#"]) {
+        if (![self scrollToMarkdownAnchor:[href substringFromIndex:1]]) NSBeep();
+        return;
+    }
+    NSURL *url = [NSURL URLWithString:href];
+    NSString *scheme = url.scheme.lowercaseString;
+    if (scheme.length && ![scheme isEqualToString:@"file"]) {
+        if ([scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"]) {
+            MCTermLink *link = [MCTermLink new];
+            link.isURL = YES;
+            link.target = href;
+            [self openTerminalLink:link];
+        } else if (url) {
+            [[NSWorkspace sharedWorkspace] openURL:url];
+        }
+        return;
+    }
+    NSString *path = href, *fragment = nil;
+    if ([scheme isEqualToString:@"file"]) path = url.path;
+    NSRange hash = [path rangeOfString:@"#"];
+    if (hash.location != NSNotFound) {
+        fragment = [path substringFromIndex:hash.location + 1];
+        path = [path substringToIndex:hash.location];
+    }
+    path = (path.stringByRemovingPercentEncoding ?: path).stringByExpandingTildeInPath;
+    if (!path.absolutePath)
+        path = [self.currentPath.stringByDeletingLastPathComponent
+                   stringByAppendingPathComponent:path];
+    path = path.stringByStandardizingPath;
+    BOOL dir = NO;
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&dir]) {
+        NSBeep();
+        return;
+    }
+    MCTermLink *link = [MCTermLink new];
+    link.target = path;
+    link.isDirectory = dir;
+    if (fragment.length > 1 && [fragment characterAtIndex:0] == 'L')
+        link.line = [fragment substringFromIndex:1].intValue;   // GitHub's #L12
+    [self openTerminalLink:link];
+    if (fragment.length && link.line <= 0 && self.isMarkdown && self.previewMode &&
+        [self.currentPath isEqualToString:path])
+        [self scrollToMarkdownAnchor:fragment];
+}
+
+- (BOOL)scrollToMarkdownAnchor:(NSString *)anchor {
+    NSString *key = (anchor.stringByRemovingPercentEncoding ?: anchor).lowercaseString;
+    NSNumber *at = _markdownAnchors[key];
+    if (!at) return NO;
+    NSRect r = [self textRectForCharacter:at.unsignedIntegerValue];
+    if (NSIsEmptyRect(r)) {
+        [self.textView scrollRangeToVisible:NSMakeRange(at.unsignedIntegerValue, 0)];
+        return YES;
+    }
+    [self scrollEditorToY:NSMinY(r) - 8];
+    return YES;
 }
 
 - (void)updateTitle {
@@ -2352,7 +2543,29 @@ static NSColor *ContrastColor(const Rgba &c) {
     std::vector<MdRun> runs = MarkdownParser::parse(md);
 
     NSMutableAttributedString *out = [[NSMutableAttributedString alloc] init];
+    NSMutableDictionary<NSString *, NSNumber *> *anchors = [NSMutableDictionary dictionary];
     for (size_t i = 0; i < runs.size();) {
+        if (runs[i].heading > 0) {
+            // A heading's text may be several runs (bold, code, links).
+            std::string title;
+            const int line = runs[i].line;
+            for (size_t k = i; k < runs.size() && runs[k].heading > 0 && runs[k].line == line; k++)
+                title += runs[k].text;
+            NSString *slug = MCMarkdownAnchor([NSString stringWithUTF8String:title.c_str()]);
+            // GitHub numbers repeats: intro, intro-1, intro-2.
+            NSString *key = slug;
+            for (int n = 1; anchors[key]; n++)
+                key = [NSString stringWithFormat:@"%@-%d", slug, n];
+            if (key.length) anchors[key] = @(out.length);
+            size_t end = i;
+            while (end < runs.size() && runs[end].heading > 0 && runs[end].line == line) {
+                NSAttributedString *piece = [self markdownRun:runs[end] cellStyle:nil];
+                if (piece) [out appendAttributedString:piece];
+                end++;
+            }
+            i = end;
+            continue;
+        }
         if (runs[i].tableId > 0) {
             size_t end = i;
             while (end < runs.size() && runs[end].tableId == runs[i].tableId) end++;
@@ -2364,9 +2577,29 @@ static NSColor *ContrastColor(const Rgba &c) {
         if (piece) [out appendAttributedString:piece];
         i++;
     }
+    _markdownAnchors = anchors;
     _liveHighlight = NO;   // rendered Markdown is not source
     [self.textView.textStorage setAttributedString:out];
     [self.textView scrollToBeginningOfDocument:nil];
+}
+
+// GitHub's anchor for a heading: lowercase, punctuation dropped (letters of
+// any script, digits, hyphens and underscores stay), spaces as hyphens.
+static NSString *MCMarkdownAnchor(NSString *title) {
+    NSString *t = [title stringByTrimmingCharactersInSet:
+                            NSCharacterSet.whitespaceAndNewlineCharacterSet].lowercaseString;
+    NSMutableString *slug = [NSMutableString string];
+    [t enumerateSubstringsInRange:NSMakeRange(0, t.length)
+                          options:NSStringEnumerationByComposedCharacterSequences
+                       usingBlock:^(NSString *ch, NSRange r, NSRange er, BOOL *stop) {
+        (void)r; (void)er; (void)stop;
+        unichar c = [ch characterAtIndex:0];
+        if (c == ' ') [slug appendString:@"-"];
+        else if (c == '-' || c == '_' ||
+                 [NSCharacterSet.alphanumericCharacterSet characterIsMember:c])
+            [slug appendString:ch];
+    }];
+    return slug;
 }
 
 // One run of rendered Markdown. Inside a table cell, `cellStyle` is the
@@ -2419,6 +2652,11 @@ static NSColor *ContrastColor(const Rgba &c) {
     }
     if (r.link) { color = [cfg markdown:MarkdownColor::Link]; a[NSUnderlineStyleAttributeName] =
         @(NSUnderlineStyleSingle); }
+    // A link's target as written; textView:clickedOnLink: resolves it.
+    NSString *href = r.link && !r.url.empty()
+                         ? [NSString stringWithUTF8String:r.url.c_str()] : nil;
+    if (href.length) a[NSLinkAttributeName] = href;
+    if (r.line >= 0) a[kMarkdownSourceLine] = @(r.line);
     if (cellStyle) ps = [cellStyle mutableCopy];
     if (r.image) {
         NSString *src = [NSString stringWithUTF8String:r.src.c_str()];
@@ -2431,6 +2669,11 @@ static NSColor *ContrastColor(const Rgba &c) {
                     [NSAttributedString attributedStringWithAttachment:att]];
             [pic addAttribute:NSParagraphStyleAttributeName value:ps
                         range:NSMakeRange(0, pic.length)];
+            if (href.length)
+                [pic addAttribute:NSLinkAttributeName value:href range:NSMakeRange(0, pic.length)];
+            if (r.line >= 0)
+                [pic addAttribute:kMarkdownSourceLine value:@(r.line)
+                            range:NSMakeRange(0, pic.length)];
             return pic;
         }
         // A web image, or one that is missing: its alt text, muted.
@@ -2516,6 +2759,8 @@ static NSColor *ContrastColor(const Rgba &c) {
             [text appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"
                                                                          attributes:end]];
             [text addAttribute:NSParagraphStyleAttributeName value:ps
+                         range:NSMakeRange(0, text.length)];
+            [text addAttribute:kMarkdownSourceLine value:@(runs[first].line)
                          range:NSMakeRange(0, text.length)];
             [out appendAttributedString:text];
         }

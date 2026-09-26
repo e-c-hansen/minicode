@@ -323,8 +323,18 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
     auto lines = splitLines(markdown);
     bool inFence = false;
     int tables = 0;
+    // Every run is stamped with the line it came from once that line (or
+    // a table's first line) is done, so a GUI can map between the source
+    // and the rendered text.
+    size_t stamped = 0;
+    int current = 0;
+    auto stamp = [&] {
+        for (; stamped < out.size(); stamped++) out[stamped].line = current;
+    };
 
     for (size_t idx = 0; idx < lines.size(); ++idx) {
+        stamp();
+        current = (int)idx;
         const std::string& raw = lines[idx];
 
         // Fenced code blocks.
@@ -439,5 +449,6 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
         parseInline(trimmed, base, out);
         MdRun sp; sp.text = " "; out.push_back(sp); // soft-wrap spacing
     }
+    stamp();
     return out;
 }

@@ -425,7 +425,7 @@ never closes.
   from Homebrew. 1.4.1 carried the Linux parity work, the review fixes below,
   the TeX grammar and images in the Markdown preview; 1.4.2 made GIFs play
   (1.4.1's were still); 1.4.3 draws Markdown tables as real tables and stops
-  the editor running past its pane. 1,481 core checks pass; the Mac build is
+  the editor running past its pane. 1,487 core checks pass; the Mac build is
   warning-free; CI builds and tests macOS and Linux.
 - **macOS**: terminal links (Cmd+click `file:line` and URLs, log and grid) are
   in 1.4.0; the user has not yet clicked them in the grid (Claude Code, vim).
@@ -895,7 +895,14 @@ holds, these give real runtime evidence rather than compile-only evidence:
   and also tags every run with its table, row, column and alignment
   (`tableId`/`tableRow`/`tableCol`, -1 for padding and rules). The Mac skips
   the padding and builds an `NSTextTable` from the cells
-  (`appendMarkdownTable:`), so wide tables wrap inside their columns. Table cells are inline-parsed and padded by *display*
+  (`appendMarkdownTable:`), so wide tables wrap inside their columns.
+  Every run also carries its source `line`, stored on the rendered text as
+  `kMarkdownSourceLine`: Shift+Cmd+P uses it to open the preview at the
+  caret, and to open the source at a preview the user scrolled (otherwise
+  the source comes back with its old selection and caret height). Links are
+  real `NSLinkAttributeName`s, resolved in `openMarkdownLink:`: `#heading`
+  by GitHub's anchor spelling, web addresses in the browser panel, other
+  paths relative to the file through `openTerminalLink:` (`#L12` works). Table cells are inline-parsed and padded by *display*
   width (code points, CJK/emoji = 2), never UTF-8 byte length, or any
   non-ASCII cell knocks the columns out of line.
 - **Search**: scoped to a folder (default = open folder or selected folder),
