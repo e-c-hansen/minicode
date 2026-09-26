@@ -39,6 +39,10 @@ this file covers the macOS app except where it says otherwise.
   publishes it on the Homebrew tap repo, bumps the cask's version + sha256,
   then tags `v1.2.0` and pushes `main` with the tag. The version on the
   command line is the only place a version is typed; never edit it by hand.
+  Then `brew update && brew upgrade --cask e-c-hansen/tap/minicode` so the
+  user's own copy has it; they run MiniCode from Homebrew and expect a
+  finished, user-visible Mac change to reach it (Linux-only changes need no
+  release, since Linux users build from source).
 
 ## Layout of the code
 
@@ -418,15 +422,36 @@ never closes.
   log when doing this again. Other sessions (and the user's own MiniCode)
   may have clangd running: kill only PIDs the test started.
 
-## Current state (handoff, 2026-09-25)
+## Current state (handoff, 2026-09-26)
 
-- **Released: 1.4.3** (2026-09-25), on GitHub Releases and the Homebrew tap,
+- **Released: 1.4.5** (2026-09-26), on GitHub Releases and the Homebrew tap,
   with the Mac zip and the signed Android APK; the user's own Mac runs it
-  from Homebrew. 1.4.1 carried the Linux parity work, the review fixes below,
-  the TeX grammar and images in the Markdown preview; 1.4.2 made GIFs play
-  (1.4.1's were still); 1.4.3 draws Markdown tables as real tables and stops
-  the editor running past its pane. 1,522 core checks pass; the Mac build is
-  warning-free; CI builds and tests macOS and Linux.
+  from Homebrew. The user expects a finished Mac change to be pushed,
+  released and upgraded on their Mac (see Build / release). What each
+  release added: 1.4.1 Linux parity, review fixes, the TeX grammar, images
+  in the Markdown preview; 1.4.2 GIFs that play (the editor is TextKit 1,
+  see LSP); 1.4.3 real Markdown tables and an editor as wide as its pane;
+  1.4.4 working Markdown links, Shift+Cmd+P keeping its place, the user's
+  README rewrite; 1.4.5 editing Markdown from the preview (double-click a
+  block). After 1.4.5, on `main` and pushed but not released: the Linux
+  preview brought level with the Mac (links, pictures, tables, place
+  keeping, double-click editing), Linux-only, so no release was cut.
+  1,522 core checks pass; Mac and Linux builds are warning-free; CI builds
+  and tests macOS and Linux.
+- **In progress: a git panel for the Mac**, started 2026-09-26 by a
+  subagent in a separate git worktree (its own branch; not merged, not
+  pushed). The brief: `src/GitStatus.{h,cpp}` parsing `git status
+  --porcelain=v2 --branch -z` and unified diffs, tested; a Source Control
+  view that takes the sidebar's place (branch, staged and unstaged changes,
+  Space stages, Return shows a colored diff in the editor's slot, a commit
+  field with Command+Return); only non-destructive git commands (status,
+  diff, add, restore --staged, commit); README and this file updated. When
+  it reports, review the branch, merge it, and let the user try it before
+  a release. `git worktree list` shows where it is.
+- **Markdown preview** (Mac and Linux, not Android): links, pictures with
+  GIFs playing, real tables, Shift+Cmd+P / Ctrl+Shift+P keeping the place,
+  and double-click editing of a block in a popover. Details under
+  "Markdown" in the gotchas below.
 - **macOS**: terminal links (Cmd+click `file:line` and URLs, log and grid) are
   in 1.4.0; the user has not yet clicked them in the grid (Claude Code, vim).
   A language server that fails `initialize` now says "failed to start"
@@ -1035,8 +1060,12 @@ holds, these give real runtime evidence rather than compile-only evidence:
 
 ## What's next
 
-See `ROADMAP.md`. Candidates, none started: cut the next release (Linux
-parity plus the review fixes); Android project search and comment toggling;
+See `ROADMAP.md`. In flight: the Mac git panel (see Current state). Candidates,
+none started: the git panel on Linux (the core parser is shared); the
+Markdown preview's links, tables, pictures and editing on Android; a gap
+between a paragraph and a list that follows it in the preview (the parser
+emits none); Android project
+search and comment toggling;
 Android on F-Droid; the other throng features discussed (terminals that
 survive closing the app, switching between projects); notarization once the
 user has a paid Apple Developer account (`scripts/sign-and-notarize.sh`).
