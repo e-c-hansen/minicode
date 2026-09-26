@@ -1,6 +1,6 @@
 # MiniCode
 
-MiniCode is a small IDE for macOS, Linux and Android, written from scratch in C++ with no Electron and no third-party dependencies. The macOS app links only against frameworks that ship with the system, and the binary is about 1 MB. The Linux version is a GTK4 port and the Android version a Kotlin app, both built on the same C++ core. The rest of this README describes the macOS app; the [Linux](#linux) and [Android](#android) sections say how the others differ.
+MiniCode is a quick, 1 MB workspace application with a text editor, terminal, browser, and file browser navigable by keyboard. It's for writing/running code, browsing/editing documents, making/editing LaTeX, and browsing the web. It runs on macOS, Linux, and Android. It's written from scratch in C++ with no Electron and no third-party dependencies. The macOS app links only against frameworks that ship with the system. The Linux version is a GTK4 port. The Android version is a Kotlin app. They all share the same C++ core. The rest of this README describes the macOS app; the [Linux](#linux) and [Android](#android) sections say how the others differ.
 
 I built it because I wanted one light place to browse a folder, edit code with a language server behind it, preview Markdown and LaTeX, and keep a terminal and a browser a keystroke away, without a few hundred megabytes of runtime underneath.
 
@@ -63,9 +63,9 @@ Every color in the file shows as a swatch, and clicking one opens the color pick
 
 ## Memory
 
-One everyday workload (this repository with clangd on a C++ file, a terminal, a typeset LaTeX document and a Wikipedia page), measured as the physical footprint of every process each side owns, on an M3 Mac:
+I benchmarked a simple workload using this very repository: clangd on a C++ file, interacting with the terminal, typesetting a LaTeX document, and loading a Wikipedia page. Here's the RAM footprint on an M3 Mac after giving the machine a minute to reach a steady state:
 
-| After a minute to settle | Memory |
+|   | Memory |
 | --- | --- |
 | MiniCode | 320 MB |
 | VS Code, Chrome and Preview | 1,283 MB |
@@ -74,9 +74,9 @@ Both sides run the same clangd. make membench reproduces it on scratch profiles.
 
 ## Next to VS Code and Zed
 
-MiniCode is the IDE I work in every day, not a sidekick to another one. It covers my daily loop: a language server for completion, errors as you type, hover and go to definition, plus project search, a real terminal, and saving and undo that behave. What it leaves out is what a bigger IDE is for: rename and find references, formatting and code actions, a debugger, a git interface, tabs and split editors, extensions, and an AI assistant built into the editor. If you rely on those, VS Code or Zed will suit you better. An agent that runs in a terminal, like Claude Code, runs fine in MiniCode's.
+MiniCode isn't VS Code or Zed, but I do use it every day. I can jump between writing code, running it in terminal, and browsing github repos via web browser via hotkeys, alone. I edited my own resume in LaTeX. Claude Code runs fine in MiniCode's terminal, too. With that said, MiniCode leaves out some things that VS Code and Zed offer, usually for sake of keeping a tight footprint and avoiding becoming the bloatware that drove me to make it in the first place. For instance, there's no means to rename and find references, formatting and code actions, a debugger, a git interface, tabs and split editors, extensions, and an AI assistant built into the editor. VS Code or Zed are better options for those particulars.
 
-Zed is the closer comparison. It is native too, written in Rust and drawn on the GPU, much lighter than VS Code and a far richer editor than MiniCode, with deep keyboard control and a vim mode. The difference is what sits around the code. As of Zed 1.15 there is no built in browser, which has been an open [feature request](https://github.com/zed-industries/zed/issues/10533) since 2024. LaTeX goes through an [extension](https://github.com/rzukic/zed-latex/wiki/Preview) that builds the PDF and shows it in a separate viewer such as Skim, with SyncTeX jumps between the two. MiniCode keeps the browser, the typeset PDF and the terminal in the window with the code, a keystroke apart, and you edit the document by double clicking the page.
+Zed was created with a similar goal for a more usable, lightweight IDE. It accomplishes much of what MiniCode seeks out to do, but, as of Zed 1.15, there is no built in browser, which has been an open [feature request](https://github.com/zed-industries/zed/issues/10533) since 2024. LaTeX goes through an [extension](https://github.com/rzukic/zed-latex/wiki/Preview) that builds the PDF and shows it in a separate viewer such as Skim, with SyncTeX jumps between the two. It begins to feel like the clunky, emulated workarounds that VS Code extensions offered during my time as a VS Code user. That's why MiniCode's browser is built-in, yet lightweight. It's why PDFs render easily. Why LaTeX is in-line mutable.
 
 | | MiniCode | Zed | VS Code |
 | --- | --- | --- | --- |
@@ -101,10 +101,13 @@ To build it yourself you need only the Xcode command line tools.
 git clone https://github.com/e-c-hansen/minicode.git
 cd minicode
 make
-make run DIR=demo
 ```
 
-The demo folder has a Python file, C++, Markdown, a short LaTeX paper in demo/paper and a two file C++ example in demo/vec for trying clangd. make test runs the unit tests of the shared core.
+The demo folder has a Python file, C++, Markdown, a short LaTeX paper in demo/paper and a two file C++ example in demo/vec for trying clangd. make test runs the unit tests of the shared core. To run it:
+
+```
+make run DIR=demo
+```
 
 ## Linux
 
@@ -116,14 +119,26 @@ sudo apt install build-essential meson libgtk-4-dev \
 cd linux
 meson setup build
 meson compile -C build
-./build/minicode ~/some/project
 ```
+
+To run the demo:
+
+```
+./build/minicode ../demo
+```
+
+You can alias the local build, if you'd like:
+
+```
+alias minicode="$PWD/build/minicode"
+```
+
 
 [BUILD-LINUX.md](BUILD-LINUX.md) covers installing it as a desktop app and which shortcuts go to the terminal.
 
 ## Android
 
-There is an Android version too, built around the same C++ core and designed for a phone with a hardware keyboard, such as a Unihertz Titan 2. It has the file list, the editor with syntax highlighting, the Markdown preview, images and PDFs, a browser pane, and a terminal on a real shell with a row of keys for what a phone keyboard lacks (Esc, Tab, Control, the pipe and the arrows). Tap a compiler error like main.cpp:42:7 in the terminal and the file opens at that line.
+As a foray into the mobile space, I made an Android port, specifically for keyboard-based phones like the Unihertz Titan 2 Elite. It's built around the same C++ core and offers approximately the same functionality: file tree, editor with syntax highlighting, Markdown preview, images and PDF rendering, a browser pane, and a terminal on a real shell, including all the special characters you need. You can even tap links in the terminal for specific lines within files and go straight to them, like "main.cpp:42:7". The keyboard shortcuts work here, too. You can quickly jump between browser, text editor, file system, and so on. It feels like a tiny operating system.
 
 With [Termux](https://f-droid.org/packages/com.termux/) installed, it also runs your language servers (clangd, pylsp and the rest) for squiggles, completion, hover and go to definition, and typesets LaTeX with tectonic, including double tapping the page to edit the source behind it.
 
