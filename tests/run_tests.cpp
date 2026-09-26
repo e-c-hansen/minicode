@@ -13,6 +13,7 @@
 #include "Json.h"
 #include "LspClient.h"
 #include "FolderSearch.h"
+#include "GitStatus.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -3833,6 +3834,359 @@ void testFolderSearch() {
 
 }  // namespace
 
+// ---- Git status and diff -----------------------------------------------------
+// Records as `git status --porcelain=v2 -z` writes them: each one ends in NUL.
+static std::string nulRecords(std::initializer_list<std::string> recs) {
+    std::string out;
+    for (const std::string& r : recs) { out += r; out += '\0'; }
+    return out;
+}
+
+static void testGitStatus() {
+    using namespace Git;
+    const std::string h40 = std::string(40, 'a'), z40 = std::string(40, '0');
+    const std::string modes = " 100644 100644 100644 ";
+
+    GROUP("git:status-empty-repo");
+    {
+        // A fresh `git init` with two untracked files, one with a space and
+        // one with a non-ASCII name (-z never quotes paths).
+        Status s = parseStatus(nulRecords({
+            "# branch.oid (initial)", "# branch.head main",
+            "? caf\xc3\xa9.txt", "? old name.txt"}));
+        CHECK(s.initial && s.oid.empty());
+        CHECK(s.branch == "main" && !s.detached);
+        CHECK(s.upstream.empty() && !s.hasAheadBehind);
+        CHECK(s.entries.size() == 2);
+        CHECK(s.entries[0].untracked && s.entries[0].path == "caf\xc3\xa9.txt");
+        CHECK(s.entries[1].path == "old name.txt");
+        CHECK(!isStaged(s.entries[0]) && hasUnstaged(s.entries[0]));
+        CHECK(unstagedLetter(s.entries[0]) == 'U');
+        CHECK(branchLabel(s) == "main");
+        // Nothing at all: no records.
+        Status none = parseStatus("");
+        CHECK(none.entries.empty() && none.branch.empty() && !none.initial);
+    }
+
+    GROUP("git:status-ordinary");
+    {
+        Status s = parseStatus(nulRecords({
+            "# branch.oid " + h40, "# branch.head feature/x",
+            "# branch.upstream origin/feature/x", "# branch.ab +2 -1",
+            "1 .M N..." + modes + h40 + " " + h40 + " src/main.cpp",
+            "1 M. N..." + modes + h40 + " " + h40 + " dir with spaces/a b.txt",
+            "1 MM N..." + modes + h40 + " " + h40 + " both.txt",
+            "1 A. N... 000000 100644 100644 " + z40 + " " + h40 + " added.txt",
+            "1 D. N... 100644 000000 000000 " + h40 + " " + z40 + " gone.txt",
+            "1 .D N..." + modes + h40 + " " + h40 + " deleted-here.txt",
+            "1 .M SC.. 160000 160000 160000 " + h40 + " " + h40 + " vendor/lib",
+            "! build/out.o"}));
+        CHECK(s.oid == h40 && !s.initial);
+        CHECK(s.branch == "feature/x");
+        CHECK(s.upstream == "origin/feature/x");
+        CHECK(s.hasAheadBehind && s.ahead == 2 && s.behind == 1);
+        CHECK(branchLabel(s) == "feature/x \xe2\x86\x91" "2 \xe2\x86\x93" "1");
+        CHECK(s.entries.size() == 7);   // the ignored file is left out
+        const Entry& m = s.entries[0];
+        CHECK(m.path == "src/main.cpp" && m.staged == '.' && m.unstaged == 'M');
+        CHECK(!isStaged(m) && hasUnstaged(m) && unstagedLetter(m) == 'M');
+        const Entry& sp = s.entries[1];
+        CHECK(sp.path == "dir with spaces/a b.txt");
+        CHECK(isStaged(sp) && !hasUnstaged(sp) && stagedLetter(sp) == 'M');
+        const Entry& both = s.entries[2];
+        CHECK(isStaged(both) && hasUnstaged(both));
+        CHECK(stagedLetter(s.entries[3]) == 'A' && isStaged(s.entries[3]));
+        CHECK(stagedLetter(s.entries[4]) == 'D' && !hasUnstaged(s.entries[4]));
+        CHECK(unstagedLetter(s.entries[5]) == 'D' && !isStaged(s.entries[5]));
+        CHECK(s.entries[6].submodule && s.entries[6].path == "vendor/lib");
+        CHECK(!s.entries[0].submodule);
+    }
+
+    GROUP("git:status-ahead-behind");
+    {
+        Status s = parseStatus(nulRecords({"# branch.oid " + h40,
+            "# branch.head main", "# branch.upstream origin/main", "# branch.ab +0 -0"}));
+        CHECK(s.hasAheadBehind && s.ahead == 0 && s.behind == 0);
+        CHECK(branchLabel(s) == "main");   // level with upstream: nothing added
+        Status b = parseStatus(nulRecords({"# branch.head main", "# branch.ab +0 -12"}));
+        CHECK(branchLabel(b) == "main \xe2\x86\x93" "12");
+        Status bad = parseStatus(nulRecords({"# branch.head main", "# branch.ab junk"}));
+        CHECK(!bad.hasAheadBehind);
+    }
+
+    GROUP("git:status-rename");
+    {
+        // A rename's original path is the record after it, with -z.
+        Status s = parseStatus(nulRecords({
+            "# branch.oid " + h40, "# branch.head main",
+            "2 R. N..." + modes + h40 + " " + h40 + " R100 new name.txt",
+            "old name.txt",
+            "2 RM N..." + modes + h40 + " " + h40 + " R087 docs/caf\xc3\xa9.md",
+            "docs/cafe.md",
+            "2 C. N..." + modes + h40 + " " + h40 + " C75 copy.txt", "orig.txt",
+            "? after.txt"}));
+        CHECK(s.entries.size() == 4);
+        CHECK(s.entries[0].path == "new name.txt");
+        CHECK(s.entries[0].origPath == "old name.txt");
+        CHECK(stagedLetter(s.entries[0]) == 'R' && !hasUnstaged(s.entries[0]));
+        CHECK(s.entries[1].path == "docs/caf\xc3\xa9.md" &&
+              s.entries[1].origPath == "docs/cafe.md");
+        CHECK(isStaged(s.entries[1]) && unstagedLetter(s.entries[1]) == 'M');
+        CHECK(stagedLetter(s.entries[2]) == 'C' && s.entries[2].origPath == "orig.txt");
+        // The original path was not taken for a record of its own.
+        CHECK(s.entries[3].untracked && s.entries[3].path == "after.txt");
+    }
+
+    GROUP("git:status-unmerged");
+    {
+        Status s = parseStatus(nulRecords({
+            "# branch.oid " + h40, "# branch.head main",
+            "u UU N... 100644 100644 100644 100644 " + h40 + " " + h40 + " " + h40 +
+                " conflict file.txt",
+            "u AA N... 000000 100644 100644 100644 " + z40 + " " + h40 + " " + h40 +
+                " both-added.txt"}));
+        CHECK(s.entries.size() == 2);
+        const Entry& c = s.entries[0];
+        CHECK(c.unmerged && c.path == "conflict file.txt");
+        CHECK(!isStaged(c) && hasUnstaged(c));
+        CHECK(unstagedLetter(c) == 'C');
+        CHECK(s.entries[1].unmerged && s.entries[1].staged == 'A');
+    }
+
+    GROUP("git:status-detached");
+    {
+        Status s = parseStatus(nulRecords({
+            "# branch.oid 1a2b3c4d5e6f" + std::string(28, '0'),
+            "# branch.head (detached)"}));
+        CHECK(s.detached && s.branch.empty());
+        CHECK(branchLabel(s) == "HEAD (detached at 1a2b3c4)");
+        Status s2 = parseStatus(nulRecords({"# branch.head (detached)"}));
+        CHECK(branchLabel(s2) == "HEAD (detached)");
+    }
+
+    GROUP("git:status-robust");
+    {
+        // Short, unknown and truncated records are skipped, and output that
+        // lacks the final NUL still gives its last record.
+        std::string out = nulRecords({"", "x", "7 something new", "1 .M N... short",
+                                      "# branch.head main"});
+        out += "? no-terminator.txt";
+        Status s = parseStatus(out);
+        CHECK(s.branch == "main");
+        CHECK(s.entries.size() == 1 && s.entries[0].path == "no-terminator.txt");
+        // A rename at the very end with its original path missing.
+        Status r = parseStatus(nulRecords({"2 R. N..." + modes + h40 + " " + h40 +
+                                           " R100 new.txt"}));
+        CHECK(r.entries.size() == 1 && r.entries[0].origPath.empty());
+    }
+}
+
+static void testGitDiff() {
+    using namespace Git;
+
+    GROUP("git:unquote");
+    CHECK(unquotePath("plain name.txt") == "plain name.txt");
+    CHECK(unquotePath("\"a/caf\\303\\251.txt\"") == "a/caf\xc3\xa9.txt");
+    CHECK(unquotePath("\"tab\\there\"") == "tab\there");
+    CHECK(unquotePath("\"q\\\"uote\\\\s\"") == "q\"uote\\s");
+    CHECK(unquotePath("\"") == "\"");
+    CHECK(unquotePath("\"\"") == "");
+
+    GROUP("git:diff-hunks");
+    const std::string diff =
+        "diff --git a/src/app.c b/src/app.c\n"
+        "index 83db48f..bf269f4 100644\n"
+        "--- a/src/app.c\n"
+        "+++ b/src/app.c\n"
+        "@@ -1,4 +1,5 @@ int main(void)\n"
+        " #include <stdio.h>\n"
+        "-int x;\n"
+        "+int x = 1;\n"
+        "+int y;\n"
+        " \n"
+        " int z;\n"
+        "@@ -20,3 +21,2 @@\n"
+        " a\n"
+        "--- this line was removed, it is not a header\n"
+        " b\n"
+        "diff --git \"a/caf\\303\\251.txt\" \"b/caf\\303\\251.txt\"\n"
+        "index c1b0730..722ed8c 100644\n"
+        "--- \"a/caf\\303\\251.txt\"\n"
+        "+++ \"b/caf\\303\\251.txt\"\n"
+        "@@ -1 +1 @@\n"
+        "-x\n"
+        "\\ No newline at end of file\n"
+        "+xd\n";
+    {
+        std::vector<DiffLine> ls = classifyDiff(diff);
+        CHECK(ls.size() == 23);
+        CHECK(ls[0].kind == LineKind::FileHeader);
+        CHECK(ls[3].kind == LineKind::FileHeader);   // +++ before any hunk
+        CHECK(ls[4].kind == LineKind::HunkHeader);
+        CHECK(ls[5].kind == LineKind::Context && ls[5].oldLine == 1 && ls[5].newLine == 1);
+        CHECK(ls[6].kind == LineKind::Removed && ls[6].oldLine == 2 && ls[6].newLine == 0);
+        CHECK(ls[7].kind == LineKind::Added && ls[7].newLine == 2 && ls[7].oldLine == 0);
+        CHECK(ls[8].kind == LineKind::Added && ls[8].newLine == 3);
+        CHECK(ls[9].kind == LineKind::Context && ls[9].text == " ");
+        CHECK(ls[10].kind == LineKind::Context && ls[10].oldLine == 4 && ls[10].newLine == 5);
+        CHECK(ls[11].kind == LineKind::HunkHeader);
+        CHECK(ls[12].kind == LineKind::Context && ls[12].oldLine == 20 && ls[12].newLine == 21);
+        // Inside a hunk, "--- ..." is a removed line.
+        CHECK(ls[13].kind == LineKind::Removed && ls[13].oldLine == 21);
+        CHECK(ls[14].kind == LineKind::Context && ls[14].newLine == 22);
+        CHECK(ls[15].kind == LineKind::FileHeader);
+        CHECK(ls[17].kind == LineKind::FileHeader && ls[18].kind == LineKind::FileHeader);
+        CHECK(ls[19].kind == LineKind::HunkHeader);
+        CHECK(ls[20].kind == LineKind::Removed);
+        CHECK(ls[21].kind == LineKind::NoNewline);
+        CHECK(ls[21].text == "\\ No newline at end of file");
+        CHECK(ls[22].kind == LineKind::Added && ls[22].text == "+xd");
+    }
+    {
+        std::vector<FileDiff> fs = parseDiff(diff);
+        CHECK(fs.size() == 2);
+        CHECK(fs[0].oldPath == "src/app.c" && fs[0].newPath == "src/app.c");
+        CHECK(fs[0].header.size() == 4 && fs[0].hunks.size() == 2);
+        const Hunk& h = fs[0].hunks[0];
+        CHECK(h.oldStart == 1 && h.oldCount == 4 && h.newStart == 1 && h.newCount == 5);
+        CHECK(h.section == "int main(void)");
+        CHECK(h.lines.size() == 7 && h.lines[0].kind == LineKind::HunkHeader);
+        const Hunk& h2 = fs[0].hunks[1];
+        CHECK(h2.oldStart == 20 && h2.oldCount == 3 && h2.newStart == 21 && h2.newCount == 2);
+        CHECK(h2.section.empty() && h2.lines.size() == 4);
+        CHECK(fs[1].oldPath == "caf\xc3\xa9.txt" && fs[1].newPath == "caf\xc3\xa9.txt");
+        CHECK(fs[1].hunks.size() == 1);
+        // "@@ -1 +1 @@": a count left out is 1.
+        CHECK(fs[1].hunks[0].oldCount == 1 && fs[1].hunks[0].newCount == 1);
+        CHECK(fs[1].hunks[0].lines.size() == 4);   // header, -, \, +
+        CHECK(fs[1].hunks[0].lines[2].kind == LineKind::NoNewline);
+        CHECK(fs[1].hunks[0].lines[3].kind == LineKind::Added);
+    }
+
+    GROUP("git:diff-new-deleted-binary");
+    {
+        const std::string d =
+            "diff --git a/new file.txt b/new file.txt\n"
+            "new file mode 100644\n"
+            "index 0000000..3b18e51\n"
+            "--- /dev/null\n"
+            "+++ b/new file.txt\n"
+            "@@ -0,0 +1,2 @@\n"
+            "+hello\n"
+            "+world\n"
+            "diff --git a/old.txt b/old.txt\n"
+            "deleted file mode 100644\n"
+            "index 3b18e51..0000000\n"
+            "--- a/old.txt\n"
+            "+++ /dev/null\n"
+            "@@ -1 +0,0 @@\n"
+            "-bye\n"
+            "diff --git a/logo.png b/logo.png\n"
+            "index 1111111..2222222 100644\n"
+            "Binary files a/logo.png and b/logo.png differ\n";
+        std::vector<FileDiff> fs = parseDiff(d);
+        CHECK(fs.size() == 3);
+        CHECK(fs[0].isNew && !fs[0].isDeleted);
+        CHECK(fs[0].oldPath.empty() && fs[0].newPath == "new file.txt");
+        CHECK(fs[0].hunks.size() == 1 && fs[0].hunks[0].newCount == 2);
+        CHECK(fs[0].hunks[0].lines[1].newLine == 1 && fs[0].hunks[0].lines[2].newLine == 2);
+        CHECK(fs[1].isDeleted && fs[1].oldPath == "old.txt" && fs[1].newPath.empty());
+        CHECK(fs[1].hunks[0].lines.size() == 2);
+        CHECK(fs[2].binary && fs[2].hunks.empty() && fs[2].newPath == "logo.png");
+        std::vector<DiffLine> ls = classifyDiff(d);
+        CHECK(ls.back().kind == LineKind::Other);
+        CHECK(ls[8].kind == LineKind::FileHeader);   // next file's diff line
+    }
+
+    GROUP("git:diff-rename");
+    {
+        const std::string d =
+            "diff --git a/old name.txt b/new name.txt\n"
+            "similarity index 100%\n"
+            "rename from old name.txt\n"
+            "rename to new name.txt\n"
+            "diff --git a/a.txt b/b.txt\n"
+            "similarity index 80%\n"
+            "rename from a.txt\n"
+            "rename to b.txt\n"
+            "index 1..2 100644\n"
+            "--- a/a.txt\n"
+            "+++ b/b.txt\n"
+            "@@ -1,2 +1,2 @@\n"
+            " same\n"
+            "-old\n"
+            "+new\n";
+        std::vector<FileDiff> fs = parseDiff(d);
+        CHECK(fs.size() == 2);
+        CHECK(fs[0].isRename && fs[0].oldPath == "old name.txt" &&
+              fs[0].newPath == "new name.txt");
+        CHECK(fs[0].hunks.empty() && fs[0].header.size() == 4);
+        CHECK(fs[1].isRename && fs[1].oldPath == "a.txt" && fs[1].newPath == "b.txt");
+        CHECK(fs[1].hunks.size() == 1 && fs[1].hunks[0].lines.size() == 4);
+    }
+
+    GROUP("git:diff-combined");
+    {
+        // A conflict, as `git diff` shows it during a merge.
+        const std::string d =
+            "diff --cc f\n"
+            "index 351be5b,e45c9c2..0000000\n"
+            "--- a/f\n"
+            "+++ b/f\n"
+            "@@@ -1,1 -1,1 +1,5 @@@\n"
+            "++<<<<<<< HEAD\n"
+            " +mine\n"
+            "++=======\n"
+            "+ other\n"
+            "++>>>>>>> other\n";
+        std::vector<DiffLine> ls = classifyDiff(d);
+        CHECK(ls.size() == 10);
+        CHECK(ls[4].kind == LineKind::HunkHeader);
+        for (size_t i = 5; i < 10; i++) CHECK(ls[i].kind == LineKind::Added);
+        CHECK(ls[5].newLine == 1 && ls[9].newLine == 5);
+        CHECK(ls[6].oldLine == 1);   // "mine" is the first parent's line 1
+        std::vector<FileDiff> fs = parseDiff(d);
+        CHECK(fs.size() == 1 && fs[0].newPath == "f" && fs[0].oldPath == "f");
+        CHECK(fs[0].hunks.size() == 1 && fs[0].hunks[0].newCount == 5);
+        CHECK(fs[0].hunks[0].lines.size() == 6);
+        // A combined removal.
+        std::vector<DiffLine> r = classifyDiff(
+            "diff --cc g\n@@@ -1,2 -1,1 +1,1 @@@\n- gone\n  kept\n");
+        CHECK(r.size() == 4 && r[2].kind == LineKind::Removed && r[3].kind == LineKind::Context);
+    }
+
+    GROUP("git:diff-edges");
+    {
+        CHECK(classifyDiff("").empty());
+        CHECK(parseDiff("").empty());
+        // Text outside any file (a warning git printed) stays Other, and an
+        // "@@" there is not a hunk.
+        std::vector<DiffLine> ls = classifyDiff("warning: something\n@@ -1 +1 @@\n");
+        CHECK(ls.size() == 2 && ls[0].kind == LineKind::Other && ls[1].kind == LineKind::Other);
+        CHECK(parseDiff("warning: something\n").empty());
+        // No final newline on the last line.
+        ls = classifyDiff("diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b");
+        CHECK(ls.size() == 4 && ls[3].kind == LineKind::Added && ls[3].text == "+b");
+        // A malformed hunk header is not a hunk.
+        ls = classifyDiff("diff --git a/x b/x\n@@ nonsense @@\n+a\n");
+        CHECK(ls[1].kind == LineKind::FileHeader && ls[2].kind == LineKind::FileHeader);
+        // A hunk shorter than its header says ends at the next file.
+        ls = classifyDiff("diff --git a/x b/x\n@@ -1,5 +1,5 @@\n a\n"
+                          "diff --git a/y b/y\n@@ -1 +1 @@\n-p\n+q\n");
+        CHECK(ls[3].kind == LineKind::FileHeader && ls[4].kind == LineKind::HunkHeader);
+        CHECK(ls[5].kind == LineKind::Removed && ls[6].kind == LineKind::Added);
+        std::vector<FileDiff> fs = parseDiff("diff --git a/x b/x\n@@ -1,5 +1,5 @@\n a\n"
+                                             "diff --git a/y b/y\n@@ -1 +1 @@\n-p\n+q\n");
+        CHECK(fs.size() == 2 && fs[1].newPath == "y");
+        // A header whose two names differ and hold " b/" is split at " b/".
+        fs = parseDiff("diff --git a/one b/two\n");
+        CHECK(fs.size() == 1 && fs[0].oldPath == "one" && fs[0].newPath == "two");
+        // Git adds a tab after a name with a space in ---/+++ lines.
+        fs = parseDiff("diff --git a/a b b/a b\n--- a/a b\t\n+++ b/a b\t\n");
+        CHECK(fs[0].oldPath == "a b" && fs[0].newPath == "a b");
+    }
+}
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
@@ -3857,6 +4211,8 @@ int main() {
     testLatexClicks();
     testSyncTexText();
     testFolderSearch();
+    testGitStatus();
+    testGitDiff();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

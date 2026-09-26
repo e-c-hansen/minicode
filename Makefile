@@ -23,7 +23,8 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/TerminalScreen.cpp \
             src/Settings.cpp src/LineComments.cpp \
             src/LatexDoc.cpp src/SyncTex.cpp src/Json.cpp src/LspClient.cpp \
-            src/TermLinks.cpp src/FolderSearch.cpp src/MarkdownEdit.cpp
+            src/TermLinks.cpp src/FolderSearch.cpp src/MarkdownEdit.cpp \
+            src/GitStatus.cpp
 
 .PHONY: all app run test dmg clean demos membench
 

@@ -139,6 +139,7 @@
 - (void)toggleTerminal:(id)sender  { [[self current] toggleTerminal:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
 - (void)toggleSidebar:(id)sender   { [[self current] toggleSidebar:sender]; }
+- (void)toggleSourceControl:(id)sender { [[self current] toggleSourceControl:sender]; }
 - (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
 - (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
 - (void)openSearch:(id)sender      { [[self current] openSearch:sender]; }
@@ -326,6 +327,15 @@ static void BuildMenu(void) {
                             keyEquivalent:@"b"];
     sidebar.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     [viewMenu addItem:sidebar];
+
+    // Ctrl+Shift+G as in VS Code (Shift+Cmd+G is Find Previous).
+    NSMenuItem *git =
+        [[NSMenuItem alloc] initWithTitle:@"Toggle Source Control"
+                                   action:@selector(toggleSourceControl:)
+                            keyEquivalent:@"g"];
+    git.keyEquivalentModifierMask =
+        NSEventModifierFlagControl | NSEventModifierFlagShift;
+    [viewMenu addItem:git];
 
     NSMenuItem *editorPane =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Editor"
