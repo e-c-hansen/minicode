@@ -484,10 +484,18 @@ never closes.
   itself (403) and real typing in the message box, which injection cannot
   show. The same branch fixed Back on Android 16, which left the app from
   any pane (`onBackPressed` is never called for an app targeting API 36).
-- **Markdown preview** (Mac and Linux, not Android): links, pictures with
-  GIFs playing, real tables, Shift+Cmd+P / Ctrl+Shift+P keeping the place,
-  and double-click editing of a block in a popover. Details under
-  "Markdown" in the gotchas below.
+- **Markdown preview** (Mac, Linux and Android): links, pictures with
+  GIFs playing, real tables, Shift+Cmd+P / Ctrl+Shift+P / leader P keeping
+  the place, and double-click (double-tap) editing of a block. Details under
+  "Markdown" in the gotchas below. Android's arrived 2026-09-26 on a branch,
+  not merged, checked on the Titan 2 with injected taps and keys; still
+  needs a person: the Titan's own Enter and Shift+Enter in the edit box,
+  and the leader key (403) for U and R.
+- **Android key rows clear of the rounded corners** (same branch): the user
+  saw the first and last keys of the symbol row clipped by the Titan 2's
+  curved corners; both key rows are lifted 4 dp and padded from
+  `WindowInsets.getRoundedCorner` (`CurvedEdges` in `EditorKeys.kt`).
+  Looked right in screenshots; the physical curve needs the user's eyes.
 - **macOS**: terminal links (Cmd+click `file:line` and URLs, log and grid) are
   in 1.4.0; the user has not yet clicked them in the grid (Claude Code, vim).
   A language server that fails `initialize` now says "failed to start"
@@ -495,7 +503,8 @@ never closes.
   were re-recorded on 2026-09-23, and `latex.gif` again on 2026-09-25 so its
   source view shows the TeX colouring.
 - **Android** (1.4.0 APK): editor, terminal with a key row (Esc, Tab, sticky
-  Ctrl, Up/Down history, symbols), terminal links, Markdown, images, PDFs,
+  Ctrl, Up/Down history, symbols), terminal links, the Markdown preview
+  (links, tables, pictures, double-tap editing), images, PDFs,
   browser, and through Termux the language servers and the LaTeX preview
   with double-tap editing. Projects must live in phone storage, opened with
   leader O → Phone storage. Missing: project search, comment toggling,
@@ -1184,11 +1193,12 @@ holds, these give real runtime evidence rather than compile-only evidence:
   alt text. Traps: 1.4.1 shipped with a TextKit 2 view provider, which the
   TextKit 1 editor never asks for, so GIFs were still; and setting
   `attachmentCell` in the attachment's init reads back nil, so the cell is
-  returned from an `attachmentCell` override. Linux and Android show the
-  alt text for now.
+  returned from an `attachmentCell` override. Linux draws them with its
+  own `MdPicture`, Android with an ImageView over `ImageDecoder` (an
+  `AnimatedImageDrawable` for a GIF).
 - **Markdown**: block elements call `ensureLineStart` so they aren't glued to
   the previous paragraph; headings get `paragraphSpacingBefore`. Tables: the
-  parser lays them out as aligned monospace (what Linux and Android show)
+  parser lays them out as aligned monospace (no port shows that any more)
   and also tags every run with its table, row, column and alignment
   (`tableId`/`tableRow`/`tableCol`, -1 for padding and rules). The Mac skips
   the padding and builds an `NSTextTable` from the cells
@@ -1229,9 +1239,25 @@ holds, these give real runtime evidence rather than compile-only evidence:
   click can land a pixel left of the character's box (reject only a point
   past a line's end). Checked in the Docker container: links, anchors,
   GIFs playing, tables wrapping, list and cell edits, undo and redo, and the
-  three toggle cases. Android shows none of this yet. Table cells are inline-parsed and padded by *display*
+  three toggle cases. Table cells are inline-parsed and padded by *display*
   width (code points, CJK/emoji = 2), never UTF-8 byte length, or any
   non-ASCII cell knocks the columns out of line.
+- **Android's preview does the same** (2026-09-26, `MarkdownPreview.kt`,
+  `MarkdownEditDialog.kt`; `android/README.md`, "The Markdown preview"):
+  `minicode_jni.cpp` now passes every run's line, link, picture source and
+  table fields, plus `MarkdownParser::anchor` and `MarkdownEdit` (block
+  ranges converted from UTF-8 bytes to UTF-16 units). The page is a column
+  of views: styled TextViews between embeds, a table as a grid of wrapping
+  TextViews, a picture as an ImageView. An edit reaches the buffer as the
+  smallest splice of the editor's Editable, so the highlighter, the
+  language server and the dirty mark see ordinary typing; preview undo is
+  snapshots, on leader U and R. Traps: the preview text must not be
+  selectable, or a double tap selects a word instead of editing; View's
+  constructor reports visibility before a Kotlin subclass's fields exist,
+  so `onVisibilityChanged` must guard; an anchor asked for right after a
+  render (a link from another file) must wait for layout; and re-rendering
+  after an edit must not reset the "placed at" scroll, or a scroll made
+  before the edit stops counting for place keeping.
 - **Search**: scoped to a folder (default = open folder or selected folder),
   min 2 chars, generation bumped up front + per-file cancellation, ANSI stripped
   from result lines. On Linux the tree's `GtkSingleSelection` must have
@@ -1334,8 +1360,8 @@ holds, these give real runtime evidence rather than compile-only evidence:
 
 See `ROADMAP.md`. Waiting on the user: trying the Mac git panel before a
 release, the Linux one on the ThinkPad, and the Android one on the phone
-(the leader key and real typing). Candidates, none started: the Markdown
-preview's links, tables, pictures and editing on Android; a gap
+(the leader key and real typing), and the Android Markdown preview and key
+rows on the phone. Candidates, none started: a gap
 between a paragraph and a list that follows it in the preview (the parser
 emits none); Android project
 search and comment toggling;

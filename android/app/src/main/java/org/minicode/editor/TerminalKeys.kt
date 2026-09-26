@@ -36,6 +36,9 @@ object TerminalKeys {
         Key.Special("←", Pty.KEY_LEFT), Key.Special("→", Pty.KEY_RIGHT),
     )
 
+    /** A key's padding above and below its label. */
+    const val KEY_PADDING_DP = 10f
+
     fun fill(row: LinearLayout, terminal: TerminalView) {
         val dp = row.resources.displayMetrics.density
         row.setBackgroundColor(Palette.SIDEBAR)
@@ -48,8 +51,8 @@ object TerminalKeys {
                 setTextColor(Palette.TEXT)
                 gravity = Gravity.CENTER
                 minWidth = (40 * dp).toInt()
-                setPadding((8 * dp).toInt(), (10 * dp).toInt(),
-                           (8 * dp).toInt(), (10 * dp).toInt())
+                setPadding((8 * dp).toInt(), (KEY_PADDING_DP * dp).toInt(),
+                           (8 * dp).toInt(), (KEY_PADDING_DP * dp).toInt())
                 isFocusable = false
                 isFocusableInTouchMode = false
                 setOnClickListener {

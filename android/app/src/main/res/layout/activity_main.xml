@@ -154,24 +154,15 @@
             android:orientation="horizontal" />
     </HorizontalScrollView>
 
-    <ScrollView
+    <!-- The Markdown preview (MarkdownPreview.kt): text, real tables and
+         pictures; a tap on a link opens it, a double tap edits the block. -->
+    <org.minicode.editor.MarkdownPreview
         android:id="@+id/previewScroll"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
         android:background="#1E1E1E"
-        android:visibility="gone">
-
-        <TextView
-            android:id="@+id/preview"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:padding="10dp"
-            android:textColor="#D4D4D4"
-            android:textSize="15sp"
-            android:lineSpacingMultiplier="1.15"
-            android:textIsSelectable="true" />
-    </ScrollView>
+        android:visibility="gone" />
 
     <!-- A diff or a commit from the source control panel, in the editor's
          place: a line per row, so only what is on screen is laid out. -->

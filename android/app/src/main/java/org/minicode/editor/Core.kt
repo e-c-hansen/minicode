@@ -23,16 +23,66 @@ object Core {
     /** True when the core has a grammar for this file name. */
     external fun supports(filename: String): Boolean
 
-    /** Markdown as styled runs: [0] is Array<String>, [1] is IntArray. */
+    /** Markdown as styled runs; see minicode_jni.cpp for the four parts. */
     private external fun markdown(source: String): Array<Any>
 
-    class MarkdownRuns(val text: Array<String>, val flags: IntArray)
+    /**
+     * The runs of a Markdown document, in parallel arrays: each run's text,
+     * its style flags, where it came from and, for tables and pictures,
+     * where it goes.
+     */
+    class MarkdownRuns(val text: Array<String>, val flags: IntArray,
+                       private val extra: IntArray, private val targets: Array<String?>) {
+        val size get() = text.size
+        /** The 0-based source line the run came from, or -1. */
+        fun line(i: Int) = extra[i * 7]
+        /** Tables are numbered from 1; 0 is not a table. */
+        fun tableId(i: Int) = extra[i * 7 + 1]
+        /** 0 is the header row. */
+        fun tableRow(i: Int) = extra[i * 7 + 2]
+        /** -1 for the padding and rules only a monospace table needs. */
+        fun tableCol(i: Int) = extra[i * 7 + 3]
+        fun tableCols(i: Int) = extra[i * 7 + 4]
+        /** 0 left, 1 center, 2 right. */
+        fun tableAlign(i: Int) = extra[i * 7 + 5]
+        fun isImage(i: Int) = extra[i * 7 + 6] != 0
+        fun url(i: Int): String? = targets[i * 2]
+        fun src(i: Int): String? = targets[i * 2 + 1]
+    }
 
     @Suppress("UNCHECKED_CAST")
     fun markdownRuns(source: String): MarkdownRuns {
         val parts = markdown(source)
-        return MarkdownRuns(parts[0] as Array<String>, parts[1] as IntArray)
+        return MarkdownRuns(parts[0] as Array<String>, parts[1] as IntArray,
+                            parts[2] as IntArray, parts[3] as Array<String?>)
     }
+
+    /** GitHub's anchor for a heading, what a "#section" link names. */
+    external fun mdAnchor(heading: String): String
+
+    /**
+     * The block of Markdown on 0-based source `line`, or null: {kind, start,
+     * end, firstLine, lastLine}, start and end in UTF-16 units of `source`.
+     * `column` picks one cell of a table row. See src/MarkdownEdit.h.
+     */
+    external fun mdBlockAt(source: String, line: Int, column: Int): IntArray?
+
+    /**
+     * `source` once the block at (`line`, `column`) holds `text`, or with
+     * `adding`, once a new list item holding `text` follows it. Null when
+     * nothing would change.
+     */
+    external fun mdApply(source: String, line: Int, column: Int, text: String,
+                         adding: Boolean): String?
+
+    /** MarkdownEdit::Block::Kind, in its order. */
+    const val MD_BLOCK_PARAGRAPH = 1
+    const val MD_BLOCK_HEADING = 2
+    const val MD_BLOCK_LIST_ITEM = 3
+    const val MD_BLOCK_QUOTE = 4
+    const val MD_BLOCK_CODE = 5
+    const val MD_BLOCK_TABLE_CELL = 6
+    const val MD_BLOCK_TABLE_ROW = 7
 
     /** The bits markdownFlags packs, matching MdRun in the core. */
     const val MD_HEADING = 0x7

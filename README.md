@@ -143,7 +143,7 @@ alias minicode="$PWD/build/minicode"
 
 ## Android
 
-As a foray into the mobile space, I made an Android port, specifically for keyboard-based phones like the Unihertz Titan 2 Elite. It's built around the same C++ core and offers approximately the same functionality: file tree, editor with syntax highlighting, Markdown preview, images and PDF rendering, a browser pane, and a terminal on a real shell, including all the special characters you need. You can even tap links in the terminal for specific lines within files and go straight to them, like "main.cpp:42:7". The keyboard shortcuts work here, too. You can quickly jump between browser, text editor, file system, and so on. It feels like a tiny operating system.
+As a foray into the mobile space, I made an Android port, specifically for keyboard-based phones like the Unihertz Titan 2 Elite. It's built around the same C++ core and offers approximately the same functionality: file tree, editor with syntax highlighting, images and PDF rendering, a browser pane, and a terminal on a real shell, including all the special characters you need. The Markdown preview is the desktop's: links you can tap, real tables, pictures with GIFs playing, and a double tap on a paragraph, heading, list item, quote, code block or table cell opens a small box holding its Markdown to edit. You can even tap links in the terminal for specific lines within files and go straight to them, like "main.cpp:42:7". The keyboard shortcuts work here, too. You can quickly jump between browser, text editor, file system, and so on. It feels like a tiny operating system.
 
 With [Termux](https://f-droid.org/packages/com.termux/) installed, it also runs your language servers (clangd, pylsp and the rest) for squiggles, completion, hover and go to definition, typesets LaTeX with tectonic, including double tapping the page to edit the source behind it, and runs git for the same source control panel and commit graph the desktop has.
 
@@ -188,7 +188,7 @@ A blank cell means that port does not have the action yet. On Android, shortcuts
 | Toggle the shortcut hints | Shift Command H | Ctrl Shift H | H |
 | Toggle the source control panel in place of the file tree | Control Shift G | Ctrl Shift G | V |
 | Toggle the terminal | Shift Command T, or Control backtick | Ctrl Shift T, or Ctrl backtick | T |
-| Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z |  |
+| Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z | U, R |
 | Zoom a PDF or the LaTeX preview in or out |  | Ctrl plus (or Ctrl equals), Ctrl minus, Ctrl with the scroll wheel, or a pinch on the touchpad |  |
 | Zoom a PDF or the LaTeX preview back to the width of the pane |  | Ctrl Alt 0 |  |
 

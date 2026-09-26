@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "MarkdownEdit.h"
 #include "MarkdownParser.h"
 #include "SyntaxHighlighter.h"
 #include "jni_strings.h"
@@ -78,6 +79,23 @@ std::vector<jint> LineTokens(Highlight *h, size_t start, size_t end) {
     return flat;
 }
 
+// How many UTF-16 units the first `bytes` bytes of UTF-8 `s` make: one per
+// character, two for one outside the Basic Multilingual Plane. A malformed
+// byte counts one, as jnistr::ToUtf16 turns it into one U+FFFD.
+size_t Utf16Length(const std::string &s, size_t bytes) {
+    bytes = std::min(bytes, s.size());
+    size_t units = 0;
+    for (size_t i = 0; i < bytes;) {
+        const unsigned char b = static_cast<unsigned char>(s[i]);
+        size_t len = b < 0x80 ? 1 : (b & 0xE0) == 0xC0 ? 2 : (b & 0xF0) == 0xE0 ? 3
+                   : (b & 0xF8) == 0xF0 ? 4 : 1;
+        if (i + len > s.size()) len = 1;
+        units += len == 4 ? 2 : 1;
+        i += len;
+    }
+    return units;
+}
+
 }  // namespace
 
 extern "C" {
@@ -93,24 +111,44 @@ Java_org_minicode_editor_Core_supports(JNIEnv *env, jclass, jstring filename) {
 
 /**
  * Markdown as a flat list of styled runs, the same list the macOS app turns
- * into an attributed string: a String[] of the runs' text and an int[] of
- * their packed flags, returned together so the document is parsed once and
- * crosses the JNI boundary in two copies. What a heading or a quote looks
- * like belongs to the platform, so that stays in Kotlin.
+ * into an attributed string. Returned together, so the document is parsed
+ * once:
+ *   [0] String[]  each run's text
+ *   [1] int[]     its packed style flags (see Core.kt)
+ *   [2] int[]     seven ints per run: the source line, table id, row,
+ *                 column, column count, alignment, and 1 for a picture
+ *   [3] String[]  two per run: the link's target and the picture's source,
+ *                 null where there is none
+ * What a heading or a quote looks like belongs to the platform, so that
+ * stays in Kotlin.
  */
 JNIEXPORT jobjectArray JNICALL
 Java_org_minicode_editor_Core_markdown(JNIEnv *env, jclass, jstring source) {
     const std::vector<MdRun> runs = MarkdownParser::parse(FromJava(env, source));
+    constexpr size_t kStride = 7;
 
     jclass stringClass = env->FindClass("java/lang/String");
     jobjectArray texts = env->NewObjectArray(
         static_cast<jsize>(runs.size()), stringClass, nullptr);
+    jobjectArray targets = env->NewObjectArray(
+        static_cast<jsize>(runs.size() * 2), stringClass, nullptr);
     std::vector<jint> flags(runs.size());
+    std::vector<jint> extra(runs.size() * kStride);
     for (size_t i = 0; i < runs.size(); i++) {
         const MdRun &r = runs[i];
         jstring text = ToJava(env, r.text);
         env->SetObjectArrayElement(texts, static_cast<jsize>(i), text);
         env->DeleteLocalRef(text);
+        if (r.link && !r.url.empty()) {
+            jstring url = ToJava(env, r.url);
+            env->SetObjectArrayElement(targets, static_cast<jsize>(i * 2), url);
+            env->DeleteLocalRef(url);
+        }
+        if (r.image && !r.src.empty()) {
+            jstring src = ToJava(env, r.src);
+            env->SetObjectArrayElement(targets, static_cast<jsize>(i * 2 + 1), src);
+            env->DeleteLocalRef(src);
+        }
 
         jint f = r.heading & 0x7;
         if (r.bold) f |= 1 << 3;
@@ -123,16 +161,78 @@ Java_org_minicode_editor_Core_markdown(JNIEnv *env, jclass, jstring source) {
         if (r.link) f |= 1 << 10;
         if (r.ordered) f |= 1 << 11;
         f |= (r.listDepth & 0xF) << 12;
-        flags[static_cast<size_t>(i)] = f;
+        flags[i] = f;
+
+        jint *e = &extra[i * kStride];
+        e[0] = r.line;
+        e[1] = r.tableId;
+        e[2] = r.tableRow;
+        e[3] = r.tableCol;
+        e[4] = r.tableCols;
+        e[5] = r.tableAlign;
+        e[6] = r.image ? 1 : 0;
     }
-    jintArray packed = env->NewIntArray(static_cast<jsize>(flags.size()));
-    env->SetIntArrayRegion(packed, 0, static_cast<jsize>(flags.size()), flags.data());
 
     jobjectArray out = env->NewObjectArray(
-        2, env->FindClass("java/lang/Object"), nullptr);
+        4, env->FindClass("java/lang/Object"), nullptr);
     env->SetObjectArrayElement(out, 0, texts);
-    env->SetObjectArrayElement(out, 1, packed);
+    env->SetObjectArrayElement(out, 1, IntArray(env, flags));
+    env->SetObjectArrayElement(out, 2, IntArray(env, extra));
+    env->SetObjectArrayElement(out, 3, targets);
     return out;
+}
+
+/** GitHub's anchor for a heading's text, what a "#section" link names. */
+JNIEXPORT jstring JNICALL
+Java_org_minicode_editor_Core_mdAnchor(JNIEnv *env, jclass, jstring heading) {
+    return ToJava(env, MarkdownParser::anchor(FromJava(env, heading)));
+}
+
+// ---------------------------------------------------- editing from the preview
+//
+// MarkdownEdit works in the UTF-8 bytes of the source; Kotlin holds UTF-16.
+// A block's range crosses back in UTF-16 units, and an edit comes back as
+// the whole new source, which the caller splices into the editor as the
+// smallest change that turns one into the other.
+
+/**
+ * The block on 0-based source `line` (`column` picks a table cell, -1 the
+ * whole row): {kind, start, end, firstLine, lastLine}, with start and end in
+ * UTF-16 units of `source` and kind in the order of MarkdownEdit::Block's
+ * enum. Null where there is nothing to edit (a blank line, a rule, a fence).
+ */
+JNIEXPORT jintArray JNICALL
+Java_org_minicode_editor_Core_mdBlockAt(JNIEnv *env, jclass, jstring source, jint line,
+                                        jint column) {
+    const std::string src = FromJava(env, source);
+    const MarkdownEdit::Block b = MarkdownEdit::blockAt(src, line, column);
+    if (b.kind == MarkdownEdit::Block::None) return nullptr;
+    const jint start = static_cast<jint>(Utf16Length(src, b.start));
+    const jint end = static_cast<jint>(Utf16Length(src, b.end));
+    return IntArray(env, {static_cast<jint>(b.kind), start, end, b.firstLine, b.lastLine});
+}
+
+/**
+ * The source once the block at (`line`, `column`) holds `text`, or, with
+ * `adding`, once a new list item holding `text` follows that item. Null
+ * when the block is gone or nothing would change.
+ */
+JNIEXPORT jstring JNICALL
+Java_org_minicode_editor_Core_mdApply(JNIEnv *env, jclass, jstring source, jint line,
+                                      jint column, jstring text, jboolean adding) {
+    const std::string src = FromJava(env, source);
+    const MarkdownEdit::Block b = MarkdownEdit::blockAt(src, line, column);
+    if (b.kind == MarkdownEdit::Block::None) return nullptr;
+    const std::string t = FromJava(env, text);
+    std::string edited;
+    if (adding) {
+        if (b.kind != MarkdownEdit::Block::ListItem || t.empty()) return nullptr;
+        edited = MarkdownEdit::addItem(src, b, t);
+    } else {
+        edited = MarkdownEdit::replace(src, b, t);
+    }
+    if (edited == src) return nullptr;
+    return ToJava(env, edited);
 }
 
 // ---------------------------------------------------- incremental highlighting

@@ -21,6 +21,7 @@ add_library(minicode SHARED
     git_jni.cpp
     ${CORE}/SyntaxHighlighter.cpp
     ${CORE}/MarkdownParser.cpp
+    ${CORE}/MarkdownEdit.cpp
     ${CORE}/LineComments.cpp
     ${CORE}/Settings.cpp
     ${CORE}/TerminalStream.cpp

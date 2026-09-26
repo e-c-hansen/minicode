@@ -73,8 +73,12 @@ The rest of this file is about how the port is built and developed.
 - **Editor.** The shared highlighter colours the file; autocorrect,
   suggestions and the composing region are all off, because a keyboard that
   rewrites words is wrong for code (see CodeEditText).
-- **Markdown preview.** The shared parser, rendered as styled text. The
-  leader's P flips between the preview and the source.
+- **Markdown preview.** The shared parser, rendered as the Mac and Linux
+  render it: links that open on a tap, real tables whose cells wrap,
+  pictures beside the file shown inline (GIFs playing), and a double tap on
+  a block to edit its Markdown. The leader's P flips between the preview
+  and the source, keeping the place both ways. See "The Markdown preview"
+  below.
 - **Images and PDFs.** Decoded by Android, scaled down but never up, with the
   pixel size or page count in the title bar. A PDF shows its first page.
 - **Terminal.** `/system/bin/sh` on a pty, parsed by the shared
@@ -106,6 +110,7 @@ microphone. What is left is one unclaimed key, so that key is a leader:
       S  save            P  Markdown preview      O  open a folder
       F  files or editor T  terminal              H  the shortcut list
       B  browser         V  source control        Y  on-screen keyboard
+      U  undo            R  redo
     in the editor, with a language server:
       N  complete        K  what the symbol is    G  go to its definition
     in the terminal:
@@ -140,7 +145,16 @@ Markdown heading could not be typed. Two ways around it:
   so it is highlighted, marks the file unsaved, updates the preview and can
   be undone like typing; the keys never take focus. It shows only while a
   file's source is on screen, and "Hide the symbol row" in the ⋮ menu takes
-  it away for good (the `symbolRow` preference).
+  it away for good (the `symbolRow` preference). The Markdown preview's edit
+  box has the same row, starting with a New line key.
+- **Clear of the rounded corners.** The Titan 2's screen has corners of a
+  100 pixel radius, and a row flush with the bottom edge lost the outer
+  halves of its first and last keys to them. Both rows (this one and the
+  terminal's) sit 4 dp up, and `CurvedEdges` in `EditorKeys.kt` pads their
+  ends by as much as the corner cuts in at the height of the keys' text,
+  from `WindowInsets.getRoundedCorner` (Android 12 and later; 12 dp
+  otherwise). The padding is inside the scrolling row, so the end keys can
+  still be scrolled to, and a row lifted above the keyboard gets none.
 - **The on-screen keyboard**, from the keyboard button in the title bar or
   leader Y. While a hardware keyboard is attached Android keeps the
   on-screen one hidden, and no app can override that: asked to show, the
@@ -319,6 +333,62 @@ Measured on the Titan 2 (2026-09-26): a refresh's status in 250 to 350 ms
 through Termux, the first 200 commits of the graph 300 ms after that, the
 next 200 (Show more) in 520 ms, and an unchanged refresh running no log at
 all.
+
+## The Markdown preview
+
+The Mac's and the Linux preview, on a phone (`MarkdownPreview.kt`). The
+core's `MarkdownParser` does the reading, and `minicode_jni.cpp` now hands
+Kotlin everything a run carries: its source line, link target, picture
+source, and a table cell's table, row, column and alignment. GitHub's
+anchor for a heading comes from the core too (`MarkdownParser::anchor`).
+
+- **Layout.** A column of views in a ScrollView: the text between tables
+  and pictures is one TextView styled with spans, a table is a grid of
+  wrapping TextViews with equal columns (as Linux draws them), and a
+  picture is an ImageView. Every stretch of text keeps the source line it
+  came from, which links, editing and place keeping all go through. The
+  text is not selectable, because a selectable TextView takes a double tap
+  to select a word.
+- **Links.** A single tap: `#heading` scrolls to it, `http(s)` opens the
+  browser pane, a path relative to the file opens that file (`#L12` in the
+  source at that line, another anchor at that heading), another scheme goes
+  to whatever app handles it. A file opened through the picker has no path,
+  so a relative link is followed through the picked tree from the file's
+  folder (`resolveRelative`).
+- **Pictures** relative to the file, or absolute, decoded by `ImageDecoder`
+  no wider than the pane and never larger than their own size. A GIF comes
+  back as an `AnimatedImageDrawable`, which plays while the preview is on
+  screen. Web pictures are never fetched and show their alt text, as do
+  files over 64 MB. Decoded pictures are kept for the next render, since an
+  edit re-renders the page.
+- **Editing.** A double tap on a paragraph, heading, list item, quote,
+  code block or table cell opens a box (`MarkdownEditDialog.kt`) holding
+  that block's Markdown, found by the core's `MarkdownEdit::blockAt`.
+  Enter saves; Shift+Enter, or the New line key that starts the box's
+  symbol row, types a new line (a phone keyboard may not let an app see
+  Shift). A list item offers Add item. Save hands the text to
+  `MarkdownEdit::replace` or `addItem` through JNI, and the new source goes
+  into the editor as the smallest splice, so it is highlighted, marked
+  unsaved and seen by the language server like typing. An edit is dropped
+  if the buffer changed while the box was open.
+- **Undo.** Preview edits are undone from whole-source snapshots (50 kept),
+  with the leader's U and R, or Ctrl+Z and Ctrl+Shift+Z on a keyboard that
+  has Ctrl, as on Linux. In the source the same keys reach the text field's
+  own undo, which a phone keyboard had no way to reach before. Switching to
+  the source drops the preview's snapshots.
+- **Place keeping.** Going to the preview puts the caret's part of the page
+  a third of the way down. Coming back, the source opens at what the
+  preview had at its top if the reader scrolled it, and otherwise with the
+  caret where it was. An edit keeps the page where it was.
+
+Checked on the Titan 2 (2026-09-26) with a scratch document: every kind of
+block edited or opened, Add item, a table cell with a pipe and a new line
+(saved as `\|` and a space), undo and redo, all four kinds of link
+including an anchor in another file and `#L3`, the PNG at its own size,
+the GIF playing at the pane's width, the web picture's alt text, and
+place keeping both ways. Injected keys cannot show whether the Titan's own
+Enter and Shift+Enter arrive as keys or as committed text in the box; both
+paths are handled, and the New line key works either way.
 
 ## The LaTeX preview
 
@@ -502,7 +572,8 @@ Run it from the repository root; the tests read a few files from `demo/`,
 ## Files
 
 - `app/src/main/cpp/minicode_jni.cpp` — highlighting and Markdown across the
-  JNI boundary. The editor uses the core's incremental highlighter over a
+  JNI boundary, including `MarkdownEdit` for editing from the preview, with
+  block ranges converted from UTF-8 bytes to UTF-16 units. The editor uses the core's incremental highlighter over a
   native mirror of the text, so an edit crosses as its position and the
   inserted characters, and only the lines it can have changed are recolored.
 - `app/src/main/cpp/jni_strings.h` — Java strings to real UTF-8 and back.
@@ -516,7 +587,8 @@ Run it from the repository root; the tests read a few files from `demo/`,
   leader, the menu, the title bar, recent folders.
 - `StartScreen.kt` — what shows while no folder is open.
 - `CodeEditText.kt` — the editor field: no composing, and the leader's letter.
-- `EditorKeys.kt` — the row of symbols under the editor.
+- `EditorKeys.kt` — the row of symbols under the editor, and `CurvedEdges`,
+  which keeps both key rows clear of the screen's rounded corners.
 - `TerminalView.kt` — draws the grid, sends keys. Declares TYPE_NULL so
   keyboards send keys rather than composing words. Also finds, underlines
   and opens tapped links.
@@ -525,7 +597,10 @@ Run it from the repository root; the tests read a few files from `demo/`,
 - `Pty.kt`, `Core.kt` — the native declarations and the shared palette.
 - `Highlighter.kt` — keeps the editor's color spans current, an edit at a
   time, fed from the editor's TextWatcher.
-- `Markdown.kt` — the core's runs turned into styled text.
+- `MarkdownPreview.kt`: the Markdown preview, with text, tables and
+  pictures, taps on links, double taps to edit, and the lines behind place
+  keeping.
+- `MarkdownEditDialog.kt`: the box a double tap opens.
 - `Termux.kt` — runs a program in Termux with its stdin and stdout on a
   loopback socket; how language servers, tectonic and git are reached.
 - `LatexPreview.kt` — the LaTeX preview: typesetting through Termux, the

@@ -68,13 +68,20 @@ class MainActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this, back)
         TerminalKeys.fill(ui.termKeyRow, ui.terminal)
+        // Both key rows sit on the bottom edge, where the screen's corners
+        // are rounded; the number is each key's own vertical padding.
+        CurvedEdges.keepClear(ui.termKeys, ui.termKeyRow, TerminalKeys.KEY_PADDING_DP)
         ui.fileList.layoutManager = LinearLayoutManager(this)
         ui.fileList.adapter = files
         // The list takes the keyboard when the editor goes, and without this
         // Android paints its whole area grey to show that it has it.
         ui.fileList.defaultFocusHighlightEnabled = false
-        ui.preview.defaultFocusHighlightEnabled = false
         ui.previewScroll.defaultFocusHighlightEnabled = false
+        // The Markdown preview: a tapped link opens, a double tap edits the
+        // block behind it, and pictures are found beside the file.
+        ui.previewScroll.onLink = ::openMarkdownLink
+        ui.previewScroll.onEditBlock = ::editMarkdownBlock
+        ui.previewScroll.resolve = ::resolveRelative
         ui.up.setOnClickListener { goUp() }
         ui.menu.setOnClickListener { showMenu() }
         // Touch targets only. Focusable, ⋮ took the keyboard whenever a pane
@@ -84,6 +91,7 @@ class MainActivity : AppCompatActivity() {
         ui.keyboard.isFocusable = false
         ui.keyboard.setOnClickListener { toggleSoftKeyboard() }
         EditorKeys.fill(ui.editKeyRow, ui.editor)
+        CurvedEdges.keepClear(ui.editKeys, ui.editKeyRow, EditorKeys.KEY_PADDING_DP)
 
         // Tapping a file reference or URL in the terminal opens it. Relative
         // paths are tried in the shell's folder, then the open one, then the
@@ -778,6 +786,8 @@ class MainActivity : AppCompatActivity() {
         ui.editor.setText(text)
         highlighting = false
         dirty = false
+        mdUndo.clear()
+        mdRedo.clear()
         // Markdown and LaTeX open rendered, as they do in the other ports.
         previewing = isPreviewable(file.name)
         if (LatexPreview.isLatex(file.name)) ui.latex.open(file, text)
@@ -785,7 +795,7 @@ class MainActivity : AppCompatActivity() {
         showList(false)
         updateTitle()
         rehighlight()
-        renderPreview()
+        renderPreview(keepScroll = false)
         lsp.opened(file, folder)
     }
 
@@ -802,15 +812,69 @@ class MainActivity : AppCompatActivity() {
     private fun previewPane(name: String?): View =
         if (LatexPreview.isLatex(name)) ui.latex else ui.previewScroll
 
-    /** Shift+Cmd+P on the Mac; the leader's P here. */
+    /**
+     * Shift+Cmd+P on the Mac; the leader's P here. For Markdown the place
+     * is kept both ways, through the source line of each rendered stretch:
+     * the preview opens with the caret's part of the page a third of the way
+     * down, and the source opens at what the preview had at its top if the
+     * preview was scrolled, or else with the caret where it was.
+     */
     private fun togglePreview() {
-        if (!isPreviewable(currentFile?.name)) return
+        val name = currentFile?.name
+        if (!isPreviewable(name)) return
+        val md = isMarkdown(name)
+        val caretLine = if (md && !previewing) lineAt(ui.editor.selectionStart) else -1
+        val topLine = if (md && previewing && ui.previewScroll.isShown &&
+                          ui.previewScroll.scrolledByUser()) ui.previewScroll.topLine() else -1
         previewing = !previewing
-        renderPreview()
+        // Preview edits are undone from snapshots; the source has its own undo.
+        if (md && !previewing) { mdUndo.clear(); mdRedo.clear() }
+        renderPreview(keepScroll = false)
+        if (md && previewing && ui.previewScroll.isShown) {
+            ui.previewScroll.scrollToLine(caretLine, 0.33f)
+            ui.previewScroll.requestFocus()
+            // Nothing to type into on a page; the keyboard's strip would stay.
+            (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                .hideSoftInputFromWindow(ui.root.windowToken, 0)
+        } else if (md && !previewing && ui.editor.isShown) {
+            ui.editor.requestFocus()
+            if (topLine >= 0) showSourceLine(topLine)
+        }
         updateTitle()
     }
 
-    private fun renderPreview() {
+    /** The 0-based line of `offset` in the buffer. */
+    private fun lineAt(offset: Int): Int {
+        val text = ui.editor.text ?: return 0
+        var n = 0
+        for (i in 0 until offset.coerceIn(0, text.length)) if (text[i] == '\n') n++
+        return n
+    }
+
+    /** Puts the caret at the start of 0-based `line` and that line at the top. */
+    private fun showSourceLine(line: Int) {
+        val text = ui.editor.text ?: return
+        var at = 0
+        for (k in 0 until line) {
+            val nl = text.indexOf('\n', at)
+            if (nl < 0) break
+            at = nl + 1
+        }
+        ui.editor.setSelection(at)
+        ui.editor.post {
+            val l = ui.editor.layout ?: return@post
+            val visible = ui.editor.height - ui.editor.totalPaddingTop - ui.editor.totalPaddingBottom
+            val max = maxOf(0, l.height - visible)
+            ui.editor.scrollTo(0, l.getLineTop(l.getLineForOffset(at)).coerceIn(0, max))
+        }
+    }
+
+    /**
+     * Renders the preview if it is the pane showing. `keepScroll` leaves a
+     * Markdown page where it was, which is what an edit made from the preview
+     * wants; opening a file starts at the top.
+     */
+    private fun renderPreview(keepScroll: Boolean = true) {
         val name = currentFile?.name
         val showPreview = previewing && isPreviewable(name) &&
                 !sidebarShowing() && !terminalShowing
@@ -830,8 +894,189 @@ class MainActivity : AppCompatActivity() {
             return
         }
         ui.editor.visibility = View.GONE
-        ui.preview.text = Markdown.render(ui.editor.text.toString(),
-                                          resources.displayMetrics.density)
+        ui.previewScroll.show(ui.editor.text.toString(), keepScroll)
+    }
+
+    // ------------------------------------------------------------ Markdown preview
+
+    /** Preview edits, as whole-source snapshots (capped), for leader U and R. */
+    private val mdUndo = ArrayList<String>()
+    private val mdRedo = ArrayList<String>()
+
+    private fun markdownPreviewShowing() = ui.previewScroll.visibility == View.VISIBLE
+
+    /**
+     * A path as a Markdown file writes it (relative to the file, or
+     * absolute) -> the file, or null. A file opened by path resolves by
+     * path; one from the document picker walks the picked tree from its
+     * folder, since it has no path.
+     */
+    private fun resolveRelative(written: String): DocumentFile? {
+        val file = currentFile ?: return null
+        if (written.startsWith("/")) {
+            val f = File(written)
+            return if (f.exists()) DocumentFile.fromFile(f) else null
+        }
+        if (file.uri.scheme == "file") {
+            val base = File(file.uri.path ?: return null).parentFile ?: return null
+            val f = try { File(base, written).canonicalFile } catch (e: Exception) { return null }
+            return if (f.exists()) DocumentFile.fromFile(f) else null
+        }
+        var at: DocumentFile = file.parentFile ?: return null
+        for (part in written.split('/')) {
+            at = when (part) {
+                "", "." -> at
+                ".." -> at.parentFile ?: return null
+                else -> at.findFile(part) ?: return null
+            }
+        }
+        return at
+    }
+
+    /**
+     * A tapped link in the preview, as on the Mac and Linux: "#section"
+     * scrolls to that heading (GitHub's spelling of the anchor), a web
+     * address opens in the browser pane, and a path relative to the file
+     * opens it, at the line "#L12" names or the heading another anchor names.
+     */
+    private fun openMarkdownLink(url: String) {
+        if (url.startsWith("#")) {
+            if (!ui.previewScroll.scrollToAnchor(url.substring(1))) say("There is no heading $url here.")
+            return
+        }
+        val uri = Uri.parse(url)
+        val scheme = uri.scheme?.lowercase()
+        if (scheme == "http" || scheme == "https") {
+            if (!browserShowing) toggleBrowser()
+            navigate(url)
+            return
+        }
+        if (scheme != null && scheme != "file") {
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, uri))
+            } catch (e: Exception) {
+                say("Nothing on this phone opens $scheme: links.")
+            }
+            return
+        }
+        var path = if (scheme == "file") uri.path.orEmpty() else url
+        var fragment = ""
+        val hash = path.indexOf('#')
+        if (hash >= 0) {
+            fragment = path.substring(hash + 1)
+            path = path.substring(0, hash)
+        }
+        if (scheme != "file") path = Uri.decode(path)
+        if (path.isEmpty()) {
+            if (!ui.previewScroll.scrollToAnchor(fragment)) say("There is no heading #$fragment here.")
+            return
+        }
+        val target = resolveRelative(path)
+        if (target == null) {
+            say("$path was not found.")
+            return
+        }
+        if (target.isDirectory) {
+            confirmLeave { list(target); showList(true) }
+            return
+        }
+        val line = Regex("L(\\d+).*").matchEntire(fragment)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        if (target.uri == currentFile?.uri) {
+            if (line > 0) { if (previewing) togglePreview(); ui.editor.post { moveCaretTo(line, 0) } }
+            else if (fragment.isNotEmpty()) ui.previewScroll.scrollToAnchor(fragment)
+            return
+        }
+        confirmLeave {
+            openEntry(target)
+            if (currentFile?.uri != target.uri) return@confirmLeave
+            if (line > 0) {
+                // A line is a place in the source, so the source it is.
+                if (previewing) togglePreview()
+                ui.editor.post { moveCaretTo(line, 0) }
+            } else if (fragment.isNotEmpty() && previewing) {
+                ui.previewScroll.scrollToAnchor(fragment)
+            }
+        }
+    }
+
+    /**
+     * A double tap in the preview: the block of Markdown behind it in a box
+     * (MarkdownEditDialog), and on Save the new text spliced over exactly
+     * that block by the core's MarkdownEdit. The buffer is then unsaved, as
+     * typing leaves it. An edit is dropped if the buffer changed meanwhile.
+     */
+    private fun editMarkdownBlock(line: Int, column: Int) {
+        val file = currentFile ?: return
+        val source = ui.editor.text.toString()
+        val block = Core.mdBlockAt(source, line, column) ?: return
+        val what = when (block[0]) {
+            Core.MD_BLOCK_PARAGRAPH -> "a paragraph"
+            Core.MD_BLOCK_HEADING -> "a heading"
+            Core.MD_BLOCK_LIST_ITEM -> "a list item"
+            Core.MD_BLOCK_QUOTE -> "a quote"
+            Core.MD_BLOCK_CODE -> "a code block"
+            Core.MD_BLOCK_TABLE_CELL -> "a table cell"
+            else -> "a table row"
+        }
+        val start = block[1].coerceIn(0, source.length)
+        val end = block[2].coerceIn(start, source.length)
+        MarkdownEditDialog.show(this, what, source.substring(start, end),
+                                block[0] == Core.MD_BLOCK_LIST_ITEM) { text, adding ->
+            if (currentFile?.uri != file.uri || ui.editor.text.toString() != source ||
+                !markdownPreviewShowing()) {
+                say("The file changed while the box was open, so the edit was not applied.")
+                return@show
+            }
+            val edited = Core.mdApply(source, line, column, text, adding) ?: return@show
+            applyPreviewSource(edited, undoable = true)
+        }
+    }
+
+    /**
+     * Makes the buffer `source`, as the smallest splice that gets there, so
+     * the highlighter, the language server and the title see one ordinary
+     * edit. The preview re-renders from the buffer and keeps its place.
+     */
+    private fun applyPreviewSource(source: String, undoable: Boolean) {
+        val editable = ui.editor.text ?: return
+        val old = editable.toString()
+        if (old == source) return
+        if (undoable) {
+            mdUndo.add(old)
+            if (mdUndo.size > MD_UNDO_LIMIT) mdUndo.removeAt(0)
+            mdRedo.clear()
+        }
+        val n = minOf(old.length, source.length)
+        var p = 0
+        while (p < n && old[p] == source[p]) p++
+        if (p > 0 && Character.isHighSurrogate(old[p - 1])) p--
+        var q = 0
+        while (q < n - p && old[old.length - 1 - q] == source[source.length - 1 - q]) q++
+        if (q > 0 && Character.isLowSurrogate(old[old.length - q])) q--
+        editable.replace(p, old.length - q, source, p, source.length - q)
+    }
+
+    /**
+     * Leader U and R (Ctrl+Z and Ctrl+Shift+Z on a keyboard that has Ctrl):
+     * in the Markdown preview, the preview's own edits, a snapshot each; in
+     * the editor, the text field's own undo, which a phone keyboard has no
+     * other way to reach.
+     */
+    private fun undo(redo: Boolean) {
+        if (markdownPreviewShowing() && currentFile != null) {
+            val from = if (redo) mdRedo else mdUndo
+            val to = if (redo) mdUndo else mdRedo
+            if (from.isEmpty()) {
+                say(if (redo) "Nothing to redo in the preview." else "Nothing to undo in the preview.")
+                return
+            }
+            to.add(ui.editor.text.toString())
+            applyPreviewSource(from.removeAt(from.lastIndex), undoable = false)
+            return
+        }
+        if (ui.editor.isShown && currentFile != null) {
+            ui.editor.onTextContextMenuItem(if (redo) android.R.id.redo else android.R.id.undo)
+        }
     }
 
     private var previewing = false
@@ -1358,6 +1603,9 @@ class MainActivity : AppCompatActivity() {
         'n' to { lsp.requestCompletion() },
         'k' to { lsp.hover() },
         'g' to { lsp.definition() },
+        // Undo and redo: the phone has no Ctrl for Ctrl+Z.
+        'u' to { undo(redo = false) },
+        'r' to { undo(redo = true) },
     )
 
     private fun handleShortcut(event: KeyEvent): Boolean {
@@ -1404,6 +1652,14 @@ class MainActivity : AppCompatActivity() {
             toggleSourceControl()
             return true
         }
+        // Undo and redo in the Markdown preview, as Ctrl+Z does on Linux.
+        // The editor's own field handles them itself.
+        if (event.isCtrlPressed && markdownPreviewShowing() &&
+            (event.keyCode == KeyEvent.KEYCODE_Z || event.keyCode == KeyEvent.KEYCODE_Y)) {
+            handled.add(event.keyCode)
+            undo(redo = event.keyCode == KeyEvent.KEYCODE_Y || event.isShiftPressed)
+            return true
+        }
         val act = when {
             event.isCtrlPressed -> actions[event.keyCode] ?: return false
             else -> return false
@@ -1424,7 +1680,8 @@ class MainActivity : AppCompatActivity() {
                             "Terminal", "Browser", "Open a folder", "Text size",
                             "Shortcuts", "Termux tools", "Source control",
                             "New file", "On-screen keyboard",
-                            if (symbolRow) "Hide the symbol row" else "Show the symbol row")
+                            if (symbolRow) "Hide the symbol row" else "Show the symbol row",
+                            "Undo", "Redo")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setItems(items) { _, which ->
                 when (which) {
@@ -1441,6 +1698,8 @@ class MainActivity : AppCompatActivity() {
                     10 -> newFile()
                     11 -> toggleSoftKeyboard()
                     12 -> toggleSymbolRow()
+                    13 -> undo(redo = false)
+                    14 -> undo(redo = true)
                 }
             }
             .show()
@@ -1670,6 +1929,13 @@ class MainActivity : AppCompatActivity() {
             "N      Complete (language server)",
             "K      What the symbol is",
             "G      Go to its definition",
+            "U      Undo",
+            "R      Redo",
+            "",
+            "In the Markdown preview: tap a link",
+            "to follow it, double-tap a block to",
+            "edit it (Enter saves; New line in",
+            "the row under the box for a new line).",
             "",
             "In the terminal: C for Ctrl C,",
             "D for Ctrl D, E for Escape,",
@@ -1702,6 +1968,8 @@ class MainActivity : AppCompatActivity() {
 
         /** How long a leader press waits for a letter, in milliseconds. */
         const val LEADER_WINDOW = 700L
+        /** Preview edits kept for undo, as on the Mac. */
+        private const val MD_UNDO_LIMIT = 50
 
         /** Larger files are not opened as text; an EditText would crawl. */
         private const val MAX_TEXT_BYTES = 4L * 1024 * 1024
