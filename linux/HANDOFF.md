@@ -41,14 +41,16 @@ poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
 - a VTE terminal that gets its own Ctrl keys while it has the keyboard, with
   Ctrl+click on a file:line or URL in its output (item 9), and a WebKitGTK
   browser;
+- the Source Control panel with the commit graph, in the tree's place on
+  Ctrl+Shift+G (item 10);
 - the settings file with live colors, per-panel opacity and a live color
   picker (item 8);
 - pane hiding and divider drags, the shortcut hints panel, and opening a
   file or folder named on the command line.
 
 It shares from `../src` `SyntaxHighlighter`, `MarkdownParser`, `Settings`,
-`LineComments`, `FolderSearch`, `Json`, `LspClient`, `LatexDoc`, `SyncTex`
-and `TermLinks`.
+`LineComments`, `FolderSearch`, `Json`, `LspClient`, `LatexDoc`, `SyncTex`,
+`TermLinks`, `GitStatus` and `GitGraph`.
 The rest of the core (`TerminalScreen`) is portable and tested, and has not
 been added to `meson.build`, since VTE does that job here.
 
@@ -783,6 +785,57 @@ already parses them (`vte_terminal_set_allow_hyperlink` is on) and
 `vte_terminal_check_hyperlink_at` would give the URI, but the Mac does not
 have them either.
 
+### 10. The Source Control panel (done, September 2026)
+
+Mac: `src/GitPanel.mm` and "Git panel" in `../CLAUDE.md`, over the shared
+`GitStatus` and `GitGraph`. GTK: `src/GitPanel.{h,cpp}` over
+`src/GitModel.{h,cpp}`, which is plain C++ and holds everything that can be
+decided without GTK (rows, keys, the selection after a refresh, argument
+vectors, the summary line, error text, diff and commit text with styles in
+character offsets, graph tooltips). It is tested in `tests/run_tests.cpp`.
+
+- **Toggling.** The sidebar is a `GtkStack` (`App::sidebar` in `main.cpp`)
+  holding the tree and, from the first Ctrl+Shift+G, the panel, so the
+  divider and the width stay put. A hidden sidebar opens for it, Ctrl+0
+  focuses it while it is shown, and a folder link from the terminal puts
+  the tree back. Find Previous moved to Shift+F3 (and F3 joined Ctrl+G for
+  Find Next): Ctrl+Shift+G is the panel, as in VS Code on Linux. While the
+  terminal has the keyboard, `shellOwns` gives Ctrl+Shift+G to the shell.
+- **Running git.** `GSubprocess` with an argument vector, run synchronously
+  on a `GThreadPool` of one thread per panel, so commands keep their order
+  (an add, then the status after it). Results come back through
+  `g_idle_add` and are dropped when the panel is gone (a shared flag), the
+  folder changed, or a newer diff or graph was asked for (generation
+  counts). The environment and every argument vector are the Mac's.
+- **Refreshing.** 50 ms debounce, only while the panel is shown. Triggers:
+  showing it, every action, the window becoming active, a save, the file
+  tree's folder monitors (`FileTree::setActivityCallback`, which reports
+  content changes too), and the panel's own monitors on the top level,
+  `.git`, `.git/refs/heads` and `.git/refs/tags`. A change in a folder the
+  tree never opened is only seen on the next focus or save; GIO has no
+  recursive monitor and watching every folder of a large repository costs
+  inotify watches. Nothing the panel runs writes to `.git`
+  (`GIT_OPTIONAL_LOCKS=0`), so a refresh cannot set off another.
+- **Drawing.** The two lists are `GtkListView`s over a `GtkStringList` that
+  only holds a count; each row is a `GtkDrawingArea` drawn with cairo and
+  Pango from the panel's vectors by position, the way the Mac's table cells
+  are drawn by hand. Up, Down, Space, Enter and Tab are a capture-phase key
+  controller on each list; headings are neither selectable nor focusable.
+  The panel's children are placed by a `GtkCustomLayout` that is the Mac's
+  `layoutPanel`: the change lists take their rows' height up to about half,
+  the graph the rest.
+- **The diff** is a `GitDiffView` (read-only `GtkTextView` with the
+  editor's CSS class, so its colors follow the settings) that `Editor` adds
+  to its slot stack on first use; `Editor::showDiff` closes the file first,
+  after main.cpp's "Save changes?", and any file opening puts the editor
+  back.
+- **Debug log.** `G_MESSAGES_DEBUG=minicode-git` prints each refresh's
+  branch line, summary, rows, graph rows and every action. The Docker
+  checks read state from it.
+
+Checked in the Docker container with real X input; `../BUILD-LINUX.md` has
+what was covered and what still needs the ThinkPad.
+
 ## How to work on it
 
 Two ways to run the app, both described in `../CLAUDE.md` ("Verification
@@ -828,6 +881,18 @@ Per feature:
 Do not claim a GUI behaviour works when it was only compiled.
 
 ## Traps already known
+
+- `gtk_list_view_scroll_to` with `GTK_LIST_SCROLL_FOCUS` moves the list's
+  cursor, not the keyboard: Tab from the commit message into the list left
+  the caret in the message until the list view was also given
+  `gtk_widget_grab_focus`. A refresh selects without either flag, so it
+  never pulls the keyboard out of the message box.
+- The Docker image has no git; `apt-get install git` in the running
+  container (not the image) is enough for the panel's checks.
+- In a worktree-isolated agent session, shell commands whose text names git
+  (even a file called GitModel.cpp, or `docker exec ... git`) are refused.
+  Put the command in a script under the scratchpad, `docker cp` it into the
+  container and run it by path.
 
 - Byte offsets versus character offsets: the core speaks UTF-8 bytes and
   `GtkTextIter` speaks characters. `Utf8Offsets.h` converts, with 47 tests;

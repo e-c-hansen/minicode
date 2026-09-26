@@ -23,10 +23,13 @@ Verified by running it:
   all 1,218 checks of the top-level `make test`, the same suite the macOS
   build runs. This code is shared verbatim with the macOS build. CI now runs
   it in the Linux job too.
-- The port's own pure-C++ pieces pass 180 checks (`cd linux && make test`,
+- The port's own pure-C++ pieces pass 327 checks (`cd linux && make test`,
   or `meson test -C build`): the byte-to-character and UTF-16 offset
   conversions in `linux/src/Utf8Offsets.h`, the theme stylesheet, the page
-  word finder behind the LaTeX click, and terminal link paths. On a Mac two
+  word finder behind the LaTeX click, terminal link paths, and the Source
+  Control panel's model (`linux/src/GitModel.h`: rows, keys, selection after
+  a refresh, argument vectors, the summary line, error text, diff and commit
+  text styles in character offsets, and the graph's labels and tooltips). On a Mac two
   of the link-path checks fail because `/tmp` is a link to `/private/tmp`
   there; on Linux all pass.
 - The window, file tree, editor, syntax highlighting, Markdown preview, the
@@ -529,9 +532,69 @@ Verified by running it:
     left no row behind in the tree.
   - Closing a window that never opened a `.tex` logged no GTK warnings (the
     teardown no longer disconnects handlers by null data).
+- The Source Control panel (Ctrl+Shift+G, September 26), in the Docker
+  container with real X keys and clicks (xdotool) and screenshots looked at,
+  against scratch repositories in the container's `/tmp`, identity given
+  through `GIT_AUTHOR_*` and `GIT_COMMITTER_*` with `GIT_CONFIG_GLOBAL` set to
+  `/dev/null`. The panel logs what it shows with
+  `G_MESSAGES_DEBUG=minicode-git`, which is how the rows and graph were
+  read back.
+  - The clone was 2 ahead and 1 behind its upstream, with a merged feature
+    branch, an annotated tag, a remote-only branch and a local branch. The
+    branch line read "main ↑2 ↓1", the lists held two staged files (a
+    modification and a rename) and four changes, and the graph's 8 rows had
+    the right lanes, labels (main filled, local-only outlined, origin/*
+    purple, the tag amber), hollow tinted dots with up arrows on the two
+    local commits and a green down arrow on the upstream one.
+  - Space unstaged the rename (both halves came back as a deletion and an
+    untracked file), staged `sp*ecial.txt` without touching `spXecial.txt`,
+    and in an empty repository staged a file and unstaged it again with
+    `rm --cached`, the file left on disk. The selection stayed at the same
+    place in its list each time.
+  - Return and a click showed a modification, an untracked file and a staged
+    file in the editor's slot, colored, titled "a.txt (diff)". With unsaved
+    edits in the open file it asked "Save changes?" first; Cancel kept the
+    file, Don't Save showed the diff and left the file alone on disk.
+  - Ctrl+Return with an empty message showed git's "Aborting commit due to
+    empty commit message." in red; with a two-line message it committed and
+    showed "[main 807914c] ..." muted, and the graph gained the commit.
+  - Return and a click on commits showed the header, message, stat and diff
+    under "6a9014e More feature work"; a merge said it was against its first
+    parent and showed what the feature brought in; the root commit had no
+    parent line.
+  - All branches added a side branch's commit in its own lane (10 rows
+    instead of 9). On 3,200 commits made with fast-import the first 200
+    arrived 208 ms after the key press, Show more (End, Return) loaded 400
+    rows in about 70 ms with the selection on the first new one, and again
+    600.
+  - Tab went changes, graph, message and round; Shift+Tab the other way;
+    Down from the last file entered the graph and Up from its first row went
+    back to the list. With no changes, opening the panel put the keyboard in
+    the graph.
+  - With the terminal focused, Ctrl+Shift+G reached the shell (`cat -v`
+    printed `^G`) and the panel stayed; Ctrl+0 then focused the panel and
+    Ctrl+Shift+G put the tree back.
+  - A new file at the top level and a commit typed in the terminal each
+    refreshed the panel within a second; a change in a folder the tree had
+    never opened was picked up when the window came back to the front. Six
+    idle seconds after a refresh ran no git at all, and `.git/index` kept its
+    time. Open Folder moved the panel to an empty repository, a detached
+    HEAD ("HEAD is detached, so there is no upstream to compare with."), a
+    clone level with its upstream and a folder outside any repository.
+  - Through a logging wrapper first on PATH, only rev-parse, status,
+    for-each-ref, log, rev-list, diff, add, commit and show ran; nine
+    refreshes ran log four times, since an unchanged repository keeps its
+    graph. Closing a window with the panel open, and with a Show more still
+    loading, logged no GTK warnings.
 
 Not verified:
 
+- For the Source Control panel, everything that needs GNOME on Wayland: the
+  look under the desktop's own theme (the button and check box are styled
+  from the sidebar colors, the rest follows the theme), the selection and
+  focus colors at 2x, tooltips on a real pointer, the window-focus refresh
+  when switching from another application, and a real repository with many
+  branches in All branches mode.
 - Everything driven by real keyboard and mouse input. Actions were activated
   programmatically, which proves the wiring but not the key handling. That
   includes scrolling a PDF with the wheel and clicking a page (the mapping
@@ -814,7 +877,7 @@ and the color applies live while you drag, as on the Mac.
 | Ctrl Alt N        | New file                   |
 | Ctrl Shift N      | New folder                 |
 | Ctrl F            | Find in the current file   |
-| Ctrl G, Ctrl Shift G | Find next, find previous (also Enter and Shift Enter in the find bar) |
+| Ctrl G or F3, Shift F3 | Find next, find previous (also Enter and Shift Enter in the find bar) |
 | Ctrl Shift F      | Find in the folder         |
 | Ctrl Shift P      | Toggle the Markdown or LaTeX preview |
 | Ctrl Shift S      | Export the typeset PDF of a LaTeX file |
@@ -825,6 +888,7 @@ and the color applies live while you drag, as on the Mac.
 | Ctrl /            | Comment or uncomment the selected lines |
 | Ctrl ,            | Open the settings file     |
 | Ctrl Shift B      | Toggle the browser panel   |
+| Ctrl Shift G      | Toggle the Source Control panel in place of the file tree |
 | Ctrl H, Ctrl Shift . | Show or hide dotfiles, in every window |
 | Ctrl 0            | Focus the file tree        |
 | Ctrl 1            | Focus the editor           |
@@ -847,6 +911,13 @@ Mac. Up and Down move the selection without opening anything, Enter opens
 the selected file and moves the keyboard to the editor, Left goes up to the
 folder and closes it, and Right opens a folder and steps into it.
 
+In the Source Control panel, Up and Down move through the files, Enter shows
+the selected file's diff in the editor's place, Space stages or unstages it,
+Tab moves between the changes, the graph and the message box, and Ctrl Enter
+in the message box commits. Enter or a click on a commit in the graph shows
+it. Find Previous is Shift F3 rather than the Mac's Shift Command G, because
+Ctrl Shift G is the panel, as in VS Code on Linux.
+
 Ctrl Shift . is the Mac's Shift Command . with Ctrl for Command, for a
 keyboard remapped the Mac way (Toshy, for one, turns Command H into Super H,
 which GNOME uses to hide the window, so Ctrl H never arrives). It is bound
@@ -861,8 +932,10 @@ on the Mac, and one of the ways out of the terminal.
 While the terminal has the keyboard, the plain Ctrl shortcuts (Ctrl B, F, G,
 H, I, N, O, Q, S, W, Space, slash, comma, plus and minus) and F12 belong to the shell, so
 readline, vim and emacs get them: Ctrl W deletes a word, Ctrl H is backspace.
-Everything with Shift or Alt in it still works there, and so do the keys that
-move between panes: Ctrl `, Ctrl 0, Ctrl 1 and Ctrl Tab. Ctrl click on a
+Everything with Shift or Alt in it still works there, except Ctrl Shift G,
+which the shell reads as Ctrl G, and so do the keys that move between panes:
+Ctrl `, Ctrl 0, Ctrl 1 and Ctrl Tab. Ctrl 0 reaches the Source Control panel
+from the terminal while it is open. Ctrl click on a
 link in the output is a mouse action and is not affected. The Mac has no such
 split, since its shortcuts use Command and the terminal gets Control. The tree's right-click menu and the File menu both
 have New File, New Folder, Rename, Move to Trash, Open Containing Folder and

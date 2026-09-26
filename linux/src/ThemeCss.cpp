@@ -93,6 +93,52 @@ std::string stylesheet(const Settings& s) {
     // The folder arrows, which otherwise take the desktop theme's text color
     // (black under a light theme, nearly invisible on the dark sidebar).
     css += ".minicode-tree expander { color: " + fg(Surface::Sidebar) + "; }";
+    // The Source Control panel, in the tree's place: the sidebar's colors,
+    // painted once by the panel. Its accents are the Mac's inline hex.
+    css += ".minicode-git { background-color: " + bg(Surface::Sidebar) + "; color: " +
+           fg(Surface::Sidebar) + "; }";
+    css += ".minicode-git label { color: " + fg(Surface::Sidebar) + "; }";
+    css += ".minicode-git label.minicode-git-branch { font-weight: 600; font-size: 12px; }";
+    css += ".minicode-git label.minicode-git-error { color: #F48771; font-size: 11px; }";
+    css += ".minicode-git label.minicode-git-info,"
+           " .minicode-git label.minicode-git-summary { color: #9CA3AF; font-size: 11px; }";
+    css += ".minicode-git label.minicode-git-notice { color: #9CA3AF; font-size: 12px; }";
+    css += ".minicode-git label.minicode-git-heading { color: #9CA3AF; font-size: 10px;"
+           " font-weight: 600; letter-spacing: 0.6px; }";
+    css += ".minicode-git label.minicode-git-placeholder { color: #6B7280; font-size: 12px; }";
+    css += ".minicode-git-message { border: 1px solid #3C3C3C; border-radius: 4px;"
+           " background-color: " + bg(Surface::Editor) + "; }";
+    css += ".minicode-git-message:focus-within { border-color: #007ACC; }";
+    css += ".minicode-git-message scrolledwindow, .minicode-git-message textview,"
+           " .minicode-git-message text { background-color: transparent; color: " +
+           fg(Surface::Sidebar) + "; font-size: 12px; }";
+    css += ".minicode-git-message text selection { background-color: #264F78; }";
+    css += ".minicode-git checkbutton label { color: #9CA3AF; font-size: 11px; }";
+    // The button and the check box would otherwise take the desktop theme's
+    // light look on the dark sidebar; tints of the sidebar's text fit any.
+    css += ".minicode-git button.minicode-git-commit { background-image: none;"
+           " background-color: " + tinted(0.12) + "; color: " + fg(Surface::Sidebar) + ";"
+           " border: 1px solid " + tinted(0.18) + "; box-shadow: none; min-height: 24px; }";
+    css += ".minicode-git button.minicode-git-commit:hover { background-color: " +
+           tinted(0.18) + "; }";
+    css += ".minicode-git button.minicode-git-commit:active { background-color: " +
+           tinted(0.26) + "; }";
+    css += ".minicode-git button.minicode-git-commit label { color: " + fg(Surface::Sidebar) +
+           "; }";
+    css += ".minicode-git checkbutton check { background-image: none; background-color: "
+           "transparent; border: 1px solid " + tinted(0.45) + "; color: " +
+           fg(Surface::Sidebar) + "; box-shadow: none; min-width: 12px; min-height: 12px; }";
+    css += ".minicode-git checkbutton check:checked { background-color: #007ACC;"
+           " border-color: #007ACC; color: #FFFFFF; }";
+    css += ".minicode-git-rule { background-color: #333333; min-height: 1px; }";
+    css += ".minicode-git-list, .minicode-git-list > row { background-color: transparent;"
+           " padding: 0; min-height: 0; }";
+    css += ".minicode-git-list > row:hover { background-color: " + tinted(0.04) + "; }";
+    css += ".minicode-git-list > row:selected { background-color: " + tinted(0.20) + "; }";
+    css += ".minicode-git-list:focus-within > row:selected {"
+           " background-color: rgba(0,122,204,0.50); }";
+    css += ".minicode-git-list > row:focus-visible { outline: 1px solid #007ACC;"
+           " outline-offset: -1px; }";
     css += ".minicode-dir-icon  { color: #C09553; }";
     css += ".minicode-file-icon { color: #8A99A8; }";
 

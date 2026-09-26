@@ -9,6 +9,7 @@
 #include "LineComments.h"
 #include "Utf8Offsets.h"
 #include "MediaView.h"
+#include "GitPanel.h"
 #include "Latex.h"
 #include "PdfView.h"
 #include "ScrollSettle.h"
@@ -226,6 +227,7 @@ Editor::~Editor() {
     }
     g_object_unref(ctrls);
     delete media_;
+    delete diff_;
 }
 
 // ---------------------------------------------------------------- tags
@@ -499,6 +501,32 @@ void Editor::closeFile() {
     if (titleCb_) titleCb_(titleUser_);
 }
 
+void Editor::showDiff(const std::string& title, const std::string& bytes, bool commit) {
+    if (colorSaveTimer_) g_source_remove(colorSaveTimer_);
+    colorSaveTimer_ = 0;
+    dropColorPopover();
+    stopWatchingText();
+    stopSettle();
+    showTextSlot();
+    readOnly_ = false;
+    path_.clear();
+    source_.clear();
+    ext_.clear();
+    isMarkdown_ = false;
+    preview_ = false;
+    markDirty(false);
+    showMessage("");   // the hidden text view holds nothing
+    if (!diff_) {
+        diff_ = new GitDiffView();
+        gtk_stack_add_named(GTK_STACK(slot_), diff_->widget(), "diff");
+    }
+    diff_->show(bytes, commit);
+    diffShown_ = true;
+    diffTitle_ = title;
+    gtk_stack_set_visible_child(GTK_STACK(slot_), diff_->widget());
+    if (titleCb_) titleCb_(titleUser_);
+}
+
 // ---------------------------------------------------------------- go to line
 
 bool Editor::revealLine(int line, std::size_t byteColumn, std::size_t byteLength) {
@@ -624,6 +652,8 @@ std::string Editor::titleSuffix() const { return media_->titleSuffix(); }
 
 void Editor::showTextSlot() {
     media_->clear();
+    diffShown_ = false;
+    diffTitle_.clear();
     isLatex_ = false;
 #ifdef MINICODE_ENABLE_PDF
     if (latex_) latex_->close();   // stops its typeset; the next file is not it

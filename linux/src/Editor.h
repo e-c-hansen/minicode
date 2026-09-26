@@ -17,6 +17,7 @@
 
 class MediaView;
 class LatexPreview;
+class GitDiffView;
 
 // Told what the buffer holds and how it changes, for the language server
 // session (Lsp.h). Three calls, so the editor knows nothing about LSP.
@@ -107,6 +108,16 @@ public:
     // Ctrl+Shift+S: save the typeset PDF somewhere of the user's choosing.
     // False when the open file is not LaTeX.
     bool exportPdf(GtkWindow* parent);
+
+    // A file's diff or a commit from the Source Control panel, read-only in
+    // the editor's slot the way an image takes it. The open file is closed
+    // first (the shell asks "Save changes?" before calling this), so there is
+    // nothing to save; opening any file puts the editor back. `title` is what
+    // the window title shows: "name (diff)" or "<short hash> <subject>".
+    void showDiff(const std::string& title, const std::string& bytes, bool commit);
+    bool isDiff() const { return diffShown_; }
+    const std::string& diffTitle() const { return diffTitle_; }
+    GitDiffView* diffView() const { return diff_; }
 
     const std::string& currentPath() const { return path_; }
     bool dirty() const { return dirty_ && !readOnly_; }
@@ -253,6 +264,9 @@ private:
     static void onPdfShown(void* self);       // a PDF view came on or off screen
 
     GtkWidget*     slot_     = nullptr;   // GtkStack: scroller_ or the media view
+    GitDiffView*   diff_     = nullptr;   // made on the first diff
+    bool           diffShown_ = false;
+    std::string    diffTitle_;
     MediaView*     media_    = nullptr;
     bool           readOnly_ = false;     // the buffer is not the file's text
     GtkWidget*     scroller_ = nullptr;

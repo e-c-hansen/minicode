@@ -7,6 +7,7 @@
 
 #include <gtk/gtk.h>
 #include <functional>
+#include <memory>
 #include <string>
 #include <unordered_set>
 
@@ -58,6 +59,11 @@ public:
     // monitor reports it, so this keeps retrying as rows arrive, for a couple
     // of seconds, rather than failing on the first pass.
     void revealPath(const std::string& path);
+
+    // Called on every change any of the tree's folder monitors reports, a
+    // file's contents included. The Source Control panel refreshes on it,
+    // as the Mac's does on the tree's FSEvents.
+    void setActivityCallback(std::function<void()> cb) { *activity_ = std::move(cb); }
 
     // The right-click menu. Its items name window actions ("win.rename"),
     // which resolve because the menu is parented inside the window.
@@ -121,5 +127,8 @@ private:
     guint       revealIdle_ = 0;
     // Folders to open again after the dotfile filter changed (setShowHidden).
     std::unordered_set<std::string> pendingExpand_;
+    // Shared with every folder's watch, which may outlive the tree briefly.
+    std::shared_ptr<std::function<void()>> activity_ =
+        std::make_shared<std::function<void()>>();
     gint64      expandDeadline_ = 0;
 };

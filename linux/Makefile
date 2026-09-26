@@ -31,7 +31,8 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
 GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Markdown.cpp \
        src/Terminal.cpp src/Browser.cpp src/AppSettings.cpp src/ThemeCss.cpp \
        src/Search.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \
-       src/LatexClick.cpp src/Latex.cpp src/Lsp.cpp src/TermLinkPath.cpp
+       src/LatexClick.cpp src/Latex.cpp src/Lsp.cpp src/TermLinkPath.cpp \
+       src/GitModel.cpp src/GitPanel.cpp
 
 SRCS := $(GUI) $(CORE)
 
@@ -80,6 +81,7 @@ test:
 	    ../src/SyntaxHighlighter.cpp ../src/Settings.cpp ../src/LineComments.cpp \
 	    src/PageWords.cpp ../src/LatexDoc.cpp ../src/SyncTex.cpp \
 	    ../src/TermLinks.cpp src/TermLinkPath.cpp \
+	    ../src/GitStatus.cpp ../src/GitGraph.cpp src/GitModel.cpp \
 	    -o $(TEST_BIN)
 	@$(TEST_BIN)
 

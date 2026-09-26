@@ -24,7 +24,7 @@ Paths and URLs in the output are links. Command click src/main.cpp:42:7 from a c
 
 ![Command clicking a grep result to open it at its line, then a URL that opens in the browser panel](docs/demos/links.gif)
 
-On the Mac, Control Shift G swaps the file tree for a small source control panel. It shows the branch, how far it is ahead of or behind its upstream, and the changed files in two lists, staged and not yet staged, each with a one letter status. Arrow keys move through the files, Return shows the selected file's diff in the main pane, Space stages or unstages it, and Command Return in the message box commits. Git does the work underneath, and when it refuses something, such as a commit with nothing staged, its own message appears in the panel.
+Control Shift G swaps the file tree for a small source control panel, on the Mac and on Linux. It shows the branch, how far it is ahead of or behind its upstream, and the changed files in two lists, staged and not yet staged, each with a one letter status. Arrow keys move through the files, Return shows the selected file's diff in the main pane, Space stages or unstages it, and Command Return (Ctrl Enter on Linux) in the message box commits. Git does the work underneath, and when it refuses something, such as a commit with nothing staged, its own message appears in the panel.
 
 Under the changes is the commit graph: the history of the current branch and its upstream, drawn in colored lanes the way VS Code's graph and `git log --graph` draw them, with branch, remote and tag labels on their commits. Commits you have not pushed yet are tinted blue with a hollow dot and an up arrow, commits on the upstream you have not pulled are tinted green with a down arrow, and a line above the graph says how many of each there are, or that the branch has no upstream. A checkbox shows every local and remote branch instead. The graph loads 200 commits at a time, with a row at the bottom for the next 200. Tab moves between the changes, the graph and the message box, the Down arrow goes from the last changed file into the graph, and Return or a click on a commit shows its author, date, message and diff in the main pane. The panel only reads history; checking out, branching, merging, pulling and pushing are left to the terminal.
 
@@ -87,7 +87,7 @@ Zed was created with a similar goal for a more usable, lightweight IDE. It accom
 | Language server | completion, diagnostics, hover, definition | full | full |
 | Browser in the window | yes | no | a basic one |
 | LaTeX | typeset in the window, edit on the page | extension, external PDF viewer | extension, PDF in a tab |
-| Git | status, diffs, staging, committing and a read-only commit graph (macOS); branches, merges and pushing in the terminal | full | full |
+| Git | status, diffs, staging, committing and a read-only commit graph (macOS and Linux); branches, merges and pushing in the terminal | full | full |
 | Debugger | no | yes | yes |
 | Extensions | no | yes | yes |
 | Platforms | macOS, Linux, Android | macOS, Linux, Windows | macOS, Linux, Windows |
@@ -163,7 +163,7 @@ A blank cell means that port does not have the action yet. On Android, shortcuts
 | Export the typeset PDF of a LaTeX file | Shift Command S | Ctrl Shift S |  |
 | Find across the whole folder | Shift Command F | Ctrl Shift F |  |
 | Find in the current file | Command F | Ctrl F |  |
-| Find next, find previous | Command G, Shift Command G | Ctrl G, Ctrl Shift G |  |
+| Find next, find previous | Command G, Shift Command G | Ctrl G or F3, Shift F3 |  |
 | Focus the editor | Command 1 | Ctrl 1 |  |
 | Focus the file tree | Command 0 | Ctrl 0 |  |
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G |
@@ -185,7 +185,7 @@ A blank cell means that port does not have the action yet. On Android, shortcuts
 | Toggle the file list or sidebar | Command B | Ctrl B | F |
 | Toggle the preview of a Markdown or LaTeX file | Shift Command P | Ctrl Shift P | P |
 | Toggle the shortcut hints | Shift Command H | Ctrl Shift H | H |
-| Toggle the source control panel in place of the file tree | Control Shift G |  |  |
+| Toggle the source control panel in place of the file tree | Control Shift G | Ctrl Shift G |  |
 | Toggle the terminal | Shift Command T, or Control backtick | Ctrl Shift T, or Ctrl backtick | T |
 | Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z |  |
 | Zoom a PDF or the LaTeX preview in or out |  | Ctrl plus (or Ctrl equals), Ctrl minus, Ctrl with the scroll wheel, or a pinch on the touchpad |  |

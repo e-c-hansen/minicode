@@ -57,6 +57,15 @@ compared with the macOS app, and the order to do it in, see `HANDOFF.md`.
 - `src/Search.{h,cpp}` — Find in Folder (Ctrl+Shift+F): a window with a
   search entry and a list of matches. The search itself is
   `../src/FolderSearch.{h,cpp}`, run on a GTask worker thread.
+- `src/GitPanel.{h,cpp}` — the Source Control panel (Ctrl+Shift+G), which
+  takes the file tree's place in the sidebar: the branch, staged and
+  unstaged changes, the commit message, and the commit graph drawn with
+  cairo, with git run off the main thread one command at a time. Also
+  `GitDiffView`, the colored diff or commit that the editor shows in its
+  slot.
+- `src/GitModel.{h,cpp}` — pure C++: what the panel shows and every git
+  command it runs, worked out from `../src/GitStatus` and `../src/GitGraph`.
+  Tested in `tests/run_tests.cpp`.
 - `src/Palette.h` — the dark color palette, mirrored from the macOS build.
 - `resources/org.minicode.Editor.desktop.in` — the desktop launcher, with the
   binary path filled in at configure time from the install prefix.

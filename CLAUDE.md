@@ -116,14 +116,14 @@ isolation. Keep them dependency-free.
   staged and unstaged letters, untracked, conflict); `git diff` -> every
   line with a kind (file header, hunk header, context, added, removed, "\ No
   newline") and its old/new line numbers, also grouped into files and hunks.
-  Combined diffs (`diff --cc`, a conflict) are understood. Only the Mac uses
-  it so far; it is in the core so the other ports can.
+  Combined diffs (`diff --cc`, a conflict) are understood. The Mac and the
+  GTK port use it; Android does not yet.
 - `src/GitGraph.{h,cpp}` — the commit graph, also reading only: `git log
   -z --topo-order` records, `for-each-ref` refs (tags peeled, symrefs such
   as origin/HEAD dropped) grouped into labels per commit, `rev-list
   --left-right` into outgoing and incoming sets, `git show` into a header
   and patch, relative dates, and `layoutGraph`, the lane assignment (see
-  "Git panel"). Compiled into the Linux builds too, unused there so far.
+  "Git panel"). The GTK port's panel uses it too.
 
 The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 
@@ -468,6 +468,11 @@ never closes.
   and a commit's diff on Return. Unseen on screen: hover tooltips, the
   selection colors over the push/pull tints, the checkbox, and a real
   repository with many branches in All branches mode.
+- **Git panel (Linux), 2026-09-26, on a branch, not merged**: the same
+  panel and graph in the GTK port (`linux/src/GitPanel`, `GitModel`; see
+  "Git panel" below and `linux/HANDOFF.md` item 10). Checked in the Docker
+  container with real X keys and clicks; the ThinkPad has not seen it.
+  Find Previous moved from Ctrl+Shift+G to Shift+F3 there.
 - **Markdown preview** (Mac and Linux, not Android): links, pictures with
   GIFs playing, real tables, Shift+Cmd+P / Ctrl+Shift+P keeping the place,
   and double-click editing of a block in a popover. Details under
@@ -558,7 +563,21 @@ edit, and a PDF would show only its first page.
   since September 2026 (`linux/src/MediaView.cpp`, `linux/src/PdfView.cpp`;
   see `linux/HANDOFF.md`, item 4).
 
-## Git panel (macOS only)
+## Git panel
+
+Mac and Linux. What follows is the Mac's; the GTK port
+(`linux/src/GitPanel.{h,cpp}` over `linux/src/GitModel.{h,cpp}`, the latter
+plain C++ and tested) follows the same rules, commands, wording, colors and
+keys, with Ctrl+Return to commit, and its differences are in
+`linux/HANDOFF.md` item 10: a `GtkStack` in the sidebar in place of
+`replaceSubview:`, `GSubprocess` on a one-thread `GThreadPool` in place of
+the serial queue, list views of cairo-drawn rows, and refreshes from the
+file tree's monitors plus the panel's own on the top level, `.git` and its
+`refs/heads` and `refs/tags` (GIO has no recursive monitor, so a change in
+a folder the tree never opened waits for focus or a save). Find Previous
+there is Shift+F3, since Ctrl+Shift+G is the panel, and while the terminal
+has the keyboard Ctrl+Shift+G is the shell's. `G_MESSAGES_DEBUG=minicode-git`
+logs every refresh, row and action.
 
 Ctrl+Shift+G (`toggleSourceControl:`, View menu) swaps the file tree for
 `MCGitPanel` with `NSSplitView replaceSubview:with:`, same frame, so the
@@ -1254,8 +1273,9 @@ holds, these give real runtime evidence rather than compile-only evidence:
 
 ## What's next
 
-See `ROADMAP.md`. Waiting on the user: trying the Mac git panel before a release. Candidates,
-none started: the git panel on Linux (the core parser is shared); the
+See `ROADMAP.md`. Waiting on the user: trying the Mac git panel before a
+release, and the Linux one on the ThinkPad. Candidates, none started: the
+git panel on Android (the core and `linux/src/GitModel` are portable); the
 Markdown preview's links, tables, pictures and editing on Android; a gap
 between a paragraph and a list that follows it in the preview (the parser
 emits none); Android project

@@ -50,6 +50,9 @@ gui_sources = [
   'src/Latex.cpp',
   # Resolves the terminal's Ctrl+click file references; plain C++.
   'src/TermLinkPath.cpp',
+  # The Source Control panel (GitPanel) over its plain C++ half (GitModel).
+  'src/GitModel.cpp',
+  'src/GitPanel.cpp',
 ]
 
 inc = include_directories('src', '../src')
@@ -132,7 +135,7 @@ port_tests = executable('minicode-linux-tests',
              core_dir / 'LatexDoc.cpp', core_dir / 'SyncTex.cpp',
              core_dir / 'TermLinks.cpp',
   core_dir / 'GitStatus.cpp',
-  core_dir / 'GitGraph.cpp', 'src/TermLinkPath.cpp'],
+  core_dir / 'GitGraph.cpp', 'src/TermLinkPath.cpp', 'src/GitModel.cpp'],
   include_directories : inc,
   install : false)
 test('linux port core', port_tests)

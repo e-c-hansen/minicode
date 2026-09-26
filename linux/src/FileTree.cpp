@@ -68,6 +68,7 @@ FileTree::FileTree(const std::string& rootDir, bool showHidden)
 }
 
 FileTree::~FileTree() {
+    *activity_ = nullptr;   // folder watches still running call nothing now
     if (revealIdle_) g_source_remove(revealIdle_);
     revealIdle_ = 0;
     dropPopovers();
@@ -112,6 +113,7 @@ struct DirWatch {
     GFileMonitor* monitor = nullptr;
     GCancellable* cancel = nullptr;
     std::unordered_set<std::string> names;
+    std::shared_ptr<std::function<void()>> activity;   // FileTree::setActivityCallback
 };
 
 // The info a row needs, tagged with its GFile the way GtkDirectoryList did it,
@@ -162,6 +164,7 @@ void addFile(DirWatch* w, GFile* file) {
 void onDirChanged(GFileMonitor*, GFile* file, GFile* other, GFileMonitorEvent ev,
                   gpointer wp) {
     auto* w = static_cast<DirWatch*>(wp);
+    if (w->activity && *w->activity) (*w->activity)();
     char* name = g_file_get_basename(file);
     switch (ev) {
     case G_FILE_MONITOR_EVENT_CREATED:
@@ -218,6 +221,7 @@ GListModel* FileTree::makeDirModel(GFile* dir) {
     w->dir = G_FILE(g_object_ref(dir));
     w->store = store;
     w->cancel = g_cancellable_new();
+    w->activity = activity_;
     // Watch before listing, so nothing created in between is missed; the name
     // set keeps an entry from being listed twice.
     w->monitor = g_file_monitor_directory(dir, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);

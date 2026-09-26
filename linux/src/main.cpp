@@ -6,7 +6,8 @@
 //   GtkApplicationWindow
 //     vbox
 //       hpaned  (movable divider)
-//         [start] FileTree sidebar
+//         [start] sidebar stack: FileTree, or the Source Control panel
+//                 (GitPanel) in its place on Ctrl+Shift+G
 //         [end]   right vbox
 //                   editor find-bar (GtkSearchBar)
 //                   vpaned  (movable divider)
@@ -60,6 +61,7 @@
 #include "Browser.h"
 #include "Search.h"
 #include "Lsp.h"
+#include "GitPanel.h"
 
 #include <algorithm>
 #include <functional>
@@ -81,6 +83,11 @@ struct App {
 
     Editor*   editor = nullptr;
     FileTree* tree = nullptr;
+    // The sidebar is a stack: the file tree, or the Source Control panel in
+    // its place (Ctrl+Shift+G), made on first use.
+    GtkWidget* sidebar = nullptr;
+    GitPanel*  git = nullptr;
+    bool       gitShown = false;
     SearchPanel* search = nullptr;   // Find in Folder, created on first use
     LspSession*  lsp = nullptr;      // language servers for this window
     GtkWidget*   lspLabel = nullptr; // their status, in the status bar
@@ -210,7 +217,7 @@ static void onVpanedPosition(GObject*, GParamSpec*, gpointer userp) {
 static bool rightCollapsed(App* app) {
     int maxPos = 0;
     g_object_get(app->hpaned, "max-position", &maxPos, NULL);
-    return gtk_widget_get_visible(app->tree->widget()) && maxPos > 0 &&
+    return gtk_widget_get_visible(app->sidebar) && maxPos > 0 &&
            gtk_paned_get_position(GTK_PANED(app->hpaned)) >= maxPos;
 }
 
@@ -271,7 +278,10 @@ static void updateTitle(void* userp) {
     App* app = static_cast<App*>(userp);
     std::string title = "MiniCode";
     const std::string& p = app->editor->currentPath();
-    if (!p.empty()) {
+    if (app->editor->isDiff()) {
+        // "name (diff)" or "<short hash> <subject>", as the Mac titles it.
+        title = "MiniCode — " + app->editor->diffTitle();
+    } else if (!p.empty()) {
         auto slash = p.find_last_of('/');
         std::string base = slash == std::string::npos ? p : p.substr(slash + 1);
         title = "MiniCode — " + base + (app->editor->dirty() ? " *" : "");
@@ -288,7 +298,10 @@ static void updateTitle(void* userp) {
     for (const char* zoom : {"zoomin", "zoomout", "zoomfit"})
         if (GAction* z = g_action_map_lookup_action(G_ACTION_MAP(app->window), zoom))
             g_simple_action_set_enabled(G_SIMPLE_ACTION(z), app->editor->showingPdf());
-    gtk_label_set_text(GTK_LABEL(app->statusLabel), p.empty() ? "Ready" : p.c_str());
+    gtk_label_set_text(GTK_LABEL(app->statusLabel),
+                       app->editor->isDiff() ? app->editor->diffTitle().c_str()
+                       : p.empty()           ? "Ready"
+                                             : p.c_str());
 }
 
 static std::string baseName(const std::string& p) {
@@ -331,6 +344,7 @@ static bool saveCurrent(App* app) {
     std::string err;
     const bool ok = app->editor->save(&err);
     updateTitle(app);
+    if (ok && app->git && app->gitShown) app->git->refresh();
     if (!ok)
         showError(app, "Could not save “" + baseName(app->editor->currentPath()) + "”",
                   err + "\n\nYour changes are still here, unsaved.");
@@ -489,6 +503,7 @@ static void treeOpenCb(const std::string& path, bool fromKeyboard, void* userp) 
 static void openFolder(App* app, const std::string& dir) {
     app->rootDir = dir;
     app->tree->setRoot(dir);
+    if (app->git) app->git->setRoot(dir);   // the panel follows the folder
     app->editor->closeFile();
     // After closeFile, so the old file is not reopened under the new root.
     if (app->lsp) app->lsp->setRoot(dir);   // servers belong to a folder
@@ -580,7 +595,7 @@ static void act_toggle_sidebar(GSimpleAction*, GVariant*, gpointer userp) {
     // Hiding the tree with the right side collapsed would leave nothing.
     if (app->sidebarVisible) showRightArea(app);
     app->sidebarVisible = !app->sidebarVisible;
-    gtk_widget_set_visible(app->tree->widget(), app->sidebarVisible);
+    gtk_widget_set_visible(app->sidebar, app->sidebarVisible);
     refreshHints(app);
 }
 
@@ -687,13 +702,18 @@ static void act_find(GSimpleAction*, GVariant*, gpointer userp) {
     if (!on) gtk_widget_grab_focus(app->searchEntry);
 }
 
+static void act_toggle_git(GSimpleAction*, GVariant*, gpointer userp);
+
 // Defined with the find bar's search further down.
 static bool findStep(App* app, bool forward);
 
-// Ctrl+G and Ctrl+Shift+G: the next or previous match of what the find bar
-// holds, from the selection, wrapping at either end, as the Mac's Find Next
-// and Find Previous do (Command G, Shift Command G). They work with the bar
-// closed too. With nothing to look for, they open the bar instead.
+// Ctrl+G or F3, and Shift+F3: the next or previous match of what the find
+// bar holds, from the selection, wrapping at either end, as the Mac's Find
+// Next and Find Previous do (Command G, Shift Command G). They work with the
+// bar closed too. With nothing to look for, they open the bar instead.
+// Ctrl+Shift+G, the Mac's Find Previous with Ctrl for Command, is the Source
+// Control panel here, as in VS Code on Linux, whose Find Previous is also
+// Shift+F3.
 static void act_find_next(GSimpleAction*, GVariant*, gpointer userp) {
     findStep(static_cast<App*>(userp), true);
 }
@@ -780,6 +800,7 @@ static void openLink(App* app, bool isUrl, const std::string& target, bool isDir
         // Only the tree can show a folder, and only one inside it.
         if (!insideRoot) { gtk_widget_error_bell(app->window); return; }
         if (!app->sidebarVisible) act_toggle_sidebar(nullptr, nullptr, app);
+        if (app->gitShown) act_toggle_git(nullptr, nullptr, app);   // the tree back
         app->tree->revealPath(path);
         return;
     }
@@ -1027,8 +1048,59 @@ static void act_copy_path(GSimpleAction*, GVariant*, gpointer userp) {
     gdk_clipboard_set_text(gtk_widget_get_clipboard(app->window), path.c_str());
 }
 
+// Ctrl+0: the tree, or the Source Control panel's list while it is in the
+// tree's place, as the Mac's Command 0.
 static void act_focus_tree(GSimpleAction*, GVariant*, gpointer userp) {
-    static_cast<App*>(userp)->tree->focus();
+    App* app = static_cast<App*>(userp);
+    if (app->gitShown) {
+        if (!app->sidebarVisible) act_toggle_sidebar(nullptr, nullptr, app);
+        app->git->focus();
+        return;
+    }
+    app->tree->focus();
+}
+
+// A file's diff or a commit, in the editor's slot. Like opening a file it
+// asks about unsaved edits first, since the open file is closed for it.
+static void showDiffInEditor(App* app, const std::string& title, const std::string& bytes,
+                             bool commit) {
+    confirmUnsaved(app, [app, title, bytes, commit] {
+        showEditorOverBrowser(app);
+        app->editor->showDiff(title, bytes, commit);
+        updateTitle(app);
+        refreshHints(app);
+    });
+}
+
+// Ctrl+Shift+G: the Source Control panel takes the file tree's place in the
+// sidebar and gives it back when pressed again, the Mac's
+// toggleSourceControl:. The sidebar keeps its width, and a hidden one opens.
+static void act_toggle_git(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!app->git) {
+        app->git = new GitPanel(app->rootDir);
+        app->git->applySettings(g.settings->settings());
+        app->git->onShowDiff = [app](const std::string& name, const std::string&,
+                                     const std::string& diff) {
+            if (!app->dead) showDiffInEditor(app, name + " (diff)", diff, false);
+        };
+        app->git->onShowCommit = [app](const std::string& title, const std::string& show) {
+            if (!app->dead) showDiffInEditor(app, title, show, true);
+        };
+        gtk_stack_add_named(GTK_STACK(app->sidebar), app->git->widget(), "git");
+    }
+    app->gitShown = !app->gitShown;
+    if (app->gitShown) {
+        if (!app->sidebarVisible) act_toggle_sidebar(nullptr, nullptr, app);
+        gtk_stack_set_visible_child(GTK_STACK(app->sidebar), app->git->widget());
+        app->git->setActive(true);
+        app->git->focus();
+    } else {
+        gtk_stack_set_visible_child(GTK_STACK(app->sidebar), app->tree->widget());
+        app->git->setActive(false);
+        app->tree->focus();
+    }
+    refreshHints(app);
 }
 
 // A Find in Folder match was activated: open the file the way a click in the
@@ -1179,7 +1251,7 @@ static bool findStep(App* app, bool forward) {
 }
 
 // Enter and Ctrl+G in the find bar: the next match. Shift+Enter and
-// Ctrl+Shift+G: the previous one.
+// Shift+F3: the previous one.
 static void onSearchNext(GtkSearchEntry*, gpointer userp) {
     findStep(static_cast<App*>(userp), true);
 }
@@ -1203,7 +1275,8 @@ static std::string hintsText(App* app) {
     s += "Ctrl O         Open folder\n";
     s += "Ctrl S         Save\n";
     s += "Ctrl F         Find in file\n";
-    s += "Ctrl G         Find next (Shift: previous)\n";
+    s += "Ctrl G, F3     Find next\n";
+    s += "Shift F3       Find previous\n";
     s += "Ctrl Shift F   Find in folder\n";
     s += "Ctrl /         Toggle comment\n";
     s += "Ctrl ,         Settings\n";
@@ -1250,6 +1323,14 @@ static std::string hintsText(App* app) {
           gtk_revealer_get_reveal_child(GTK_REVEALER(app->browserRevealer))
               ? "open" : "hidden") + ")\n";
 #endif
+    s += std::string("Ctrl Shift G   Git panel   (") + (app->gitShown ? "open" : "hidden") +
+         ")\n";
+    if (app->gitShown) {
+        s += "Enter          Show the diff or commit\n";
+        s += "Space          Stage or unstage\n";
+        // Ctrl+Enter to commit is written in the message box itself.
+        s += "Tab            Changes, graph, message\n";
+    }
     if (app->editor->isMarkdown()) {
         s += std::string("Ctrl Shift P   Markdown    (") +
              (app->editor->inPreview() ? "rendered" : "source") + ")\n";
@@ -1273,6 +1354,7 @@ static std::string hintsText(App* app) {
     s += "Ctrl Shift V   Paste\n";
     s += "Ctrl click     Open a file:line or URL\n";
     s += "Ctrl Shift …   Every Ctrl Shift shortcut\n";
+    s += "               but G, which is the shell's\n";
     s += "Ctrl ` 0 1     Panes: terminal, tree, editor\n";
     s += "Ctrl Tab       Previous file\n";
     s += "Ctrl Alt N     New file\n";
@@ -1330,6 +1412,7 @@ static void applyWindowSettings(App* app) {
     const Settings& st = g.settings->settings();
     app->editor->applySettings(st);
     if (app->lsp) app->lsp->applySettings(st);   // restarts servers if lsp.* changed
+    if (app->git) app->git->applySettings(st);
 #ifdef MINICODE_ENABLE_TERMINAL
     if (app->terminal) app->terminal->applySettings(st);
 #endif
@@ -1379,7 +1462,8 @@ static void onSettingsChanged(void*) {
 // (the pane toggles, Find in Folder, New Folder and New File, Export PDF, the
 // hints), and the pane keys Ctrl+`, Ctrl+0, Ctrl+1 and Ctrl+Tab, which a shell
 // has no use for and which are how you get out of the terminal without the
-// mouse. Accelerators belong to the application, not a window, but only the
+// mouse. The one Shift key that goes to the shell is Ctrl+Shift+G (Source
+// Control), which terminals send as Ctrl+G. Accelerators belong to the application, not a window, but only the
 // active window gets keys, so its focus decides.
 
 struct Bind {
@@ -1397,8 +1481,9 @@ static const Bind kBinds[] = {
     {"win.newfile",        {"<Ctrl><Alt>n"}},
     {"win.newfolder",      {"<Ctrl><Shift>n"}},
     {"win.find",           {"<Ctrl>f"}},
-    {"win.findnext",       {"<Ctrl>g"}},
-    {"win.findprevious",   {"<Ctrl><Shift>g"}},
+    {"win.findnext",       {"<Ctrl>g", "F3"}},
+    {"win.findprevious",   {"<Shift>F3"}},
+    {"win.togglegit",      {"<Ctrl><Shift>g"}},
     {"win.findinfolder",   {"<Ctrl><Shift>f"}},
     {"win.togglepreview",  {"<Ctrl><Shift>p"}},
     {"win.togglehints",    {"<Ctrl><Shift>h"}},
@@ -1429,6 +1514,9 @@ static bool shellOwns(const char* accel) {
     guint key = 0;
     GdkModifierType mods = (GdkModifierType)0;
     if (!gtk_accelerator_parse(accel, &key, &mods)) return false;
+    // Ctrl+Shift+G (Source Control) goes to the shell too, which reads it as
+    // Ctrl+G. Ctrl+0 still reaches the panel from the terminal.
+    if (key == GDK_KEY_g && mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) return true;
     if (mods & (GDK_SHIFT_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK)) return false;
     switch (key) {
         case GDK_KEY_grave: case GDK_KEY_0: case GDK_KEY_1: case GDK_KEY_Tab:
@@ -1474,7 +1562,10 @@ static void onFocusWidget(GObject*, GParamSpec*, gpointer) { updateShellKeys(); 
 static void onIsActive(GObject* w, GParamSpec*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     updateShellKeys();
-    if (!app->dead && gtk_window_is_active(GTK_WINDOW(w))) app->editor->checkExternalChange();
+    if (!app->dead && gtk_window_is_active(GTK_WINDOW(w))) {
+        app->editor->checkExternalChange();
+        if (app->git && app->gitShown) app->git->refresh();   // commits made elsewhere
+    }
 }
 
 // ---------------------------------------------------------------- menu
@@ -1550,6 +1641,7 @@ static void buildMenu() {
     g_menu_append(viewMenu, "Toggle Editor", "win.toggleeditor");
     g_menu_append(viewMenu, "Toggle Terminal", "win.toggleterminal");
     g_menu_append(viewMenu, "Toggle Browser", "win.togglebrowser");
+    g_menu_append(viewMenu, "Toggle Source Control", "win.togglegit");
     g_menu_append(viewMenu, "Show Hidden Files", "app.showhidden");
     GMenu* zoom = g_menu_new();
     g_menu_append(zoom, "Zoom In", "win.zoomin");
@@ -1632,7 +1724,7 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->dead = true;
 
     std::vector<gpointer> owners = {app, app->editor, app->editor->media(), app->lsp,
-                                    app->tree};
+                                    app->tree, app->git};
 #ifdef MINICODE_ENABLE_PDF
     owners.push_back(app->editor->latex());
 #endif
@@ -1664,6 +1756,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     delete app->browser;
     app->browser = nullptr;
 #endif
+    delete app->git;
+    app->git = nullptr;
     delete app->tree;
     app->tree = nullptr;
     delete app->editor;
@@ -1689,6 +1783,11 @@ static App* newWindow(const std::string& root, const std::string& file) {
     // Core widgets.
     app->tree = new FileTree(app->rootDir, g.showHidden);
     app->tree->setOpenCallback(treeOpenCb, app);
+    // The tree's folder monitors see changes in the work tree; the Source
+    // Control panel looks again when it is showing.
+    app->tree->setActivityCallback([app] {
+        if (!app->dead && app->git && app->gitShown) app->git->refresh();
+    });
     app->editor = new Editor();
     app->editor->setTitleCallback(updateTitle, app);
     app->editor->setLinkHandler([app](const Editor::Link& link) {
@@ -1769,7 +1868,9 @@ static App* newWindow(const std::string& root, const std::string& file) {
     // Sidebar | editor split.
     app->hpaned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_widget_add_css_class(app->hpaned, "minicode-split");
-    gtk_paned_set_start_child(GTK_PANED(app->hpaned), app->tree->widget());
+    app->sidebar = gtk_stack_new();
+    gtk_stack_add_named(GTK_STACK(app->sidebar), app->tree->widget(), "tree");
+    gtk_paned_set_start_child(GTK_PANED(app->hpaned), app->sidebar);
     gtk_paned_set_end_child(GTK_PANED(app->hpaned), rightBox);
     gtk_paned_set_position(GTK_PANED(app->hpaned), 240);
     gtk_paned_set_resize_start_child(GTK_PANED(app->hpaned), FALSE);
@@ -1860,6 +1961,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "toggleeditor",   G_CALLBACK(act_toggle_editor));
     addAction(app, "toggleterminal", G_CALLBACK(act_toggle_terminal));
     addAction(app, "togglebrowser",  G_CALLBACK(act_toggle_browser));
+    addAction(app, "togglegit",      G_CALLBACK(act_toggle_git));
     addAction(app, "focustree",      G_CALLBACK(act_focus_tree));
     addAction(app, "focuseditor",    G_CALLBACK(act_focus_editor));
     addAction(app, "previousfile",   G_CALLBACK(act_previous_file));
