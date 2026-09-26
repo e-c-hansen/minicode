@@ -169,7 +169,7 @@ A blank cell means that port does not have the action yet. On Android, shortcuts
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G |
 | Jump to the previous file | Control Tab | Ctrl Tab |  |
 | Move the selected file to the Trash | Command Delete | Delete, in the file tree |  |
-| New file | Control Command N | Ctrl Alt N |  |
+| New file | Control Command N | Ctrl Alt N | New file in the ⋮ menu |
 | New folder | Shift Command N | Ctrl Shift N |  |
 | New window | Command N | Ctrl N |  |
 | Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it | Ctrl click it | Tap it |
@@ -179,6 +179,7 @@ A blank cell means that port does not have the action yet. On Android, shortcuts
 | Rename the selected file or folder |  | F2, in the file tree |  |
 | Save | Command S | Ctrl S | S |
 | Show or hide dotfiles | Shift Command . | Ctrl H, or Ctrl Shift . |  |
+| Show or hide the on-screen keyboard, for symbols the phone's keyboard lacks |  |  | Y, or the keyboard button in the title bar |
 | Show the type and documentation under the cursor | Command I | Ctrl I | K |
 | Toggle the browser | Shift Command B | Ctrl Shift B | B |
 | Toggle the editor, giving its space to the terminal and browser | Shift Command E | Ctrl Shift E |  |

@@ -105,7 +105,7 @@ microphone. What is left is one unclaimed key, so that key is a leader:
     the key left of right Shift, then
       S  save            P  Markdown preview      O  open a folder
       F  files or editor T  terminal              H  the shortcut list
-      B  browser         V  source control
+      B  browser         V  source control        Y  on-screen keyboard
     in the editor, with a language server:
       N  complete        K  what the symbol is    G  go to its definition
     in the terminal:
@@ -128,6 +128,31 @@ Both paths run the same table (`leaderActions`).
 B is the browser on every port (Shift+Cmd+B on the Mac), so the file list
 moved to F. On a USB or Bluetooth keyboard Ctrl+B is the file list, as
 Cmd+B is on the Mac.
+
+### Symbols the keyboard lacks
+
+The Titan 2's Alt layer has no #, backtick, braces, pipe or backslash, so a
+Markdown heading could not be typed. Two ways around it:
+
+- **A row of symbols under the editor** (`EditorKeys.kt`): Tab, `#`, `*`,
+  backtick, `_ - [ ] ( ) { } < > | \ / ~ = + " ' ! ? @ $ % ^ & ; :`,
+  scrolling sideways. A tap inserts at the caret through the editor's text,
+  so it is highlighted, marks the file unsaved, updates the preview and can
+  be undone like typing; the keys never take focus. It shows only while a
+  file's source is on screen, and "Hide the symbol row" in the ⋮ menu takes
+  it away for good (the `symbolRow` preference).
+- **The on-screen keyboard**, from the keyboard button in the title bar or
+  leader Y. While a hardware keyboard is attached Android keeps the
+  on-screen one hidden, and no app can override that: asked to show, the
+  keyboard app draws only a thin strip with a hide arrow and a picker
+  button. The switch that allows it is "Use on-screen keyboard", at the top
+  of Android's keyboard picker (also Settings, System, Keyboard, Physical
+  keyboard; it is the secure setting `show_ime_with_hard_keyboard`). So with
+  that switch off the button opens the picker, and when the picker closes
+  with the switch on, the keyboard comes up. With the switch on, the button
+  simply shows and hides it. Checked on the Titan 2, whose Kika keyboard
+  then offers a ?!# panel. The strip counts as "visible" in the window
+  insets, so a keyboard is taken as up only when it is over 120 dp tall.
 
 ### The terminal and the open folder
 
@@ -491,6 +516,7 @@ Run it from the repository root; the tests read a few files from `demo/`,
   leader, the menu, the title bar, recent folders.
 - `StartScreen.kt` — what shows while no folder is open.
 - `CodeEditText.kt` — the editor field: no composing, and the leader's letter.
+- `EditorKeys.kt` — the row of symbols under the editor.
 - `TerminalView.kt` — draws the grid, sends keys. Declares TYPE_NULL so
   keyboards send keys rather than composing words. Also finds, underlines
   and opens tapped links.

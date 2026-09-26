@@ -59,6 +59,7 @@ class MainActivity : AppCompatActivity() {
         ui.editor.privateImeOptions = "nm"   // numeric/no-prediction hint some IMEs honour
 
         setTextSize(getSharedPreferences("minicode", MODE_PRIVATE).getInt("textSize", 13))
+        symbolRow = getSharedPreferences("minicode", MODE_PRIVATE).getBoolean("symbolRow", true)
 
         // A double tap in the LaTeX preview edits the source behind it; the
         // splice goes through the buffer, so it is highlighted, marked
@@ -72,12 +73,17 @@ class MainActivity : AppCompatActivity() {
         // The list takes the keyboard when the editor goes, and without this
         // Android paints its whole area grey to show that it has it.
         ui.fileList.defaultFocusHighlightEnabled = false
+        ui.preview.defaultFocusHighlightEnabled = false
+        ui.previewScroll.defaultFocusHighlightEnabled = false
         ui.up.setOnClickListener { goUp() }
         ui.menu.setOnClickListener { showMenu() }
         // Touch targets only. Focusable, ⋮ took the keyboard whenever a pane
         // was swapped under it, and the next Space opened the menu.
         ui.up.isFocusable = false
         ui.menu.isFocusable = false
+        ui.keyboard.isFocusable = false
+        ui.keyboard.setOnClickListener { toggleSoftKeyboard() }
+        EditorKeys.fill(ui.editKeyRow, ui.editor)
 
         // Tapping a file reference or URL in the terminal opens it. Relative
         // paths are tried in the shell's folder, then the open one, then the
@@ -1098,6 +1104,109 @@ class MainActivity : AppCompatActivity() {
         ui.title.text = title + waiting
         ui.subtitle.text = place.orEmpty()
         ui.subtitle.visibility = if (place.isNullOrEmpty()) View.GONE else View.VISIBLE
+        // Every pane change ends here, so the editor's symbol row follows
+        // the editor from here too.
+        val editing = ui.editor.visibility == View.VISIBLE && currentFile != null && symbolRow
+        ui.editKeys.visibility = if (editing) View.VISIBLE else View.GONE
+    }
+
+    /** Whether the symbol row under the editor is wanted (⋮ menu). */
+    private var symbolRow = true
+
+    private fun toggleSymbolRow() {
+        symbolRow = !symbolRow
+        getSharedPreferences("minicode", MODE_PRIVATE).edit()
+            .putBoolean("symbolRow", symbolRow).apply()
+        updateTitle()
+    }
+
+    /**
+     * Whether a whole on-screen keyboard is up. With a hardware keyboard
+     * attached, Android still "shows" the input method as a strip a few
+     * dozen pixels tall (a hide arrow and a keyboard picker), and the
+     * insets call that visible; a keyboard worth the name is far taller.
+     */
+    private fun imeShowing(): Boolean {
+        val insets = androidx.core.view.ViewCompat.getRootWindowInsets(ui.root) ?: return false
+        val type = androidx.core.view.WindowInsetsCompat.Type.ime()
+        val nav = androidx.core.view.WindowInsetsCompat.Type.navigationBars()
+        val height = insets.getInsets(type).bottom - insets.getInsets(nav).bottom
+        return insets.isVisible(type) && height > 120 * resources.displayMetrics.density
+    }
+
+    /** A hardware keyboard is attached and in use. */
+    private fun hardKeyboard(): Boolean {
+        val c = resources.configuration
+        return c.keyboard != android.content.res.Configuration.KEYBOARD_NOKEYS &&
+                c.hardKeyboardHidden == android.content.res.Configuration.HARDKEYBOARDHIDDEN_NO
+    }
+
+    /**
+     * Android's "Use on-screen keyboard" switch (show_ime_with_hard_keyboard):
+     * 1 on, 0 off, -1 when the app may not read it.
+     */
+    private fun showImeWithHardKeyboard(): Int = try {
+        android.provider.Settings.Secure.getInt(contentResolver, "show_ime_with_hard_keyboard", -1)
+    } catch (e: Exception) { -1 }
+
+    /**
+     * The on-screen keyboard, on or off (the ⌨ button, leader Y). The phone's
+     * own keyboard has no #, braces or backtick, and while it is attached
+     * Android keeps the on-screen one hidden. No app can override that:
+     * asked to show, the keyboard app draws only its thin strip. The switch
+     * that allows it, "Use on-screen keyboard", is at the top of Android's
+     * keyboard picker, so with the switch off this opens the picker (on a
+     * Titan 2, turning the switch on brings the keyboard up at once). With
+     * it on, the button shows and hides the keyboard directly.
+     */
+    private fun toggleSoftKeyboard() {
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        if (imeShowing()) {
+            imm.hideSoftInputFromWindow(ui.root.windowToken, 0)
+            return
+        }
+        val target: View = when {
+            terminalShowing -> ui.terminal
+            browserShowing -> currentFocus ?: ui.url
+            ui.editor.visibility == View.VISIBLE -> ui.editor
+            else -> currentFocus ?: run {
+                say("Open a file to type into it.")
+                return
+            }
+        }
+        target.requestFocus()
+        if (hardKeyboard() && showImeWithHardKeyboard() == 0) {
+            pickKeyboard(imm)
+            return
+        }
+        androidx.core.view.WindowCompat.getInsetsController(window, target)
+            .show(androidx.core.view.WindowInsetsCompat.Type.ime())
+        @Suppress("DEPRECATION")
+        imm.showSoftInput(target, android.view.inputmethod.InputMethodManager.SHOW_FORCED)
+        // The switch could not be read: if no keyboard came up, the picker
+        // is still where it is.
+        if (hardKeyboard()) ui.root.postDelayed({ if (!imeShowing()) pickKeyboard(imm) }, 700)
+    }
+
+    private fun pickKeyboard(imm: android.view.inputmethod.InputMethodManager) {
+        android.widget.Toast.makeText(this, "Turn on \"Use on-screen keyboard\"",
+                                      android.widget.Toast.LENGTH_LONG).show()
+        keyboardAsked = true
+        imm.showInputMethodPicker()
+    }
+
+    /** Set while Android's keyboard picker is up on the ⌨ button's behalf. */
+    private var keyboardAsked = false
+
+    /**
+     * Back from the picker: if the switch was turned on, the keyboard comes
+     * up, so one press of ⌨ is all it takes.
+     */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus || !keyboardAsked) return
+        keyboardAsked = false
+        if (showImeWithHardKeyboard() == 1) ui.root.postDelayed({ toggleSoftKeyboard() }, 200)
     }
 
     /**
@@ -1229,6 +1338,8 @@ class MainActivity : AppCompatActivity() {
         'b' to { toggleBrowser() },
         'o' to { openFolder() },
         'h' to { showShortcuts() },
+        // Y: the on-screen keyboard, for the symbols the phone's lacks.
+        'y' to { toggleSoftKeyboard() },
         // A keyboard with no Ctrl or Escape still has to drive a shell.
         'c' to { ui.terminal.sendControl('c') },
         'd' to { ui.terminal.sendControl('d') },
@@ -1304,7 +1415,8 @@ class MainActivity : AppCompatActivity() {
         val items = arrayOf("Save", "Files or editor", "Markdown preview",
                             "Terminal", "Browser", "Open a folder", "Text size",
                             "Shortcuts", "Termux tools", "Source control",
-                            "New file")
+                            "New file", "On-screen keyboard",
+                            if (symbolRow) "Hide the symbol row" else "Show the symbol row")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setItems(items) { _, which ->
                 when (which) {
@@ -1319,6 +1431,8 @@ class MainActivity : AppCompatActivity() {
                     8 -> termuxSetup()
                     9 -> toggleSourceControl()
                     10 -> newFile()
+                    11 -> toggleSoftKeyboard()
+                    12 -> toggleSymbolRow()
                 }
             }
             .show()
@@ -1541,6 +1655,8 @@ class MainActivity : AppCompatActivity() {
             "O      Open a folder (long-press a",
             "       folder to make it the project)",
             "H      This list",
+            "Y      On-screen keyboard, for",
+            "       symbols (or the ⌨ button)",
             "V      Source control, in place of",
             "       the files (V again: files)",
             "N      Complete (language server)",

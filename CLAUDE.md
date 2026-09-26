@@ -914,6 +914,14 @@ the file map; what belongs here is what it cost to learn:
   side instead; the title bar's second line says where every pane is. The
   start screen can be seen without losing the user's folder with
   `am start -S -n org.minicode.editor/.MainActivity --ez start true`.
+- **No app can force the on-screen keyboard up** while a hardware keyboard
+  is attached: with Android's "Use on-screen keyboard" switch off, the
+  keyboard app answers showSoftInput (even SHOW_FORCED) with a thin strip,
+  which the window insets still call a visible IME. The keyboard button
+  (leader Y) opens the input method picker, where that switch is, and the
+  editor has a symbol row (`EditorKeys.kt`). `adb shell settings get/put
+  secure show_ime_with_hard_keyboard` reads and sets the switch; put it back
+  as the user had it (0 on the Titan 2) after a test.
 - **Back on Android 16** reaches an app that targets API 36 only through
   the OnBackPressedDispatcher; the old `onBackPressed` override was never
   called, and Back left the app from every pane.

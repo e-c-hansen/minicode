@@ -58,6 +58,17 @@
                 android:visibility="gone" />
         </LinearLayout>
 
+        <!-- The on-screen keyboard, which Android hides while the phone's
+             own keyboard is attached (MainActivity.toggleSoftKeyboard). -->
+        <TextView
+            android:id="@+id/keyboard"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="8dp"
+            android:text="⌨"
+            android:textSize="18sp"
+            android:textColor="#9CA3AF" />
+
         <!-- Keyboards on phones vary enough that no key can be assumed, so
              every shortcut is also reachable here. -->
         <TextView
@@ -127,6 +138,21 @@
         android:singleLine="true"
         android:ellipsize="end"
         android:visibility="gone" />
+
+    <!-- Characters the phone keyboard lacks, for the editor: filled in by
+         EditorKeys.kt, shown only while a file's source is being edited. -->
+    <HorizontalScrollView
+        android:id="@+id/editKeys"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:visibility="gone">
+        <LinearLayout
+            android:id="@+id/editKeyRow"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" />
+    </HorizontalScrollView>
 
     <ScrollView
         android:id="@+id/previewScroll"
