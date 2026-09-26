@@ -552,6 +552,11 @@ static NSColor *SeverityColor(NSInteger severity) {
         NSUInteger i = [self characterIndexForInsertionAtPoint:p];
         if (self.onCommandClick(i)) return;
     }
+    if (event.clickCount == 2 && !self.editable && self.onPreviewDoubleClick) {
+        NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+        NSUInteger i = [self characterIndexForInsertionAtPoint:p];
+        if (self.onPreviewDoubleClick(i, p)) return;
+    }
     [super mouseDown:event];
 }
 @end

@@ -425,7 +425,7 @@ never closes.
   from Homebrew. 1.4.1 carried the Linux parity work, the review fixes below,
   the TeX grammar and images in the Markdown preview; 1.4.2 made GIFs play
   (1.4.1's were still); 1.4.3 draws Markdown tables as real tables and stops
-  the editor running past its pane. 1,487 core checks pass; the Mac build is
+  the editor running past its pane. 1,518 core checks pass; the Mac build is
   warning-free; CI builds and tests macOS and Linux.
 - **macOS**: terminal links (Cmd+click `file:line` and URLs, log and grid) are
   in 1.4.0; the user has not yet clicked them in the grid (Claude Code, vim).
@@ -902,7 +902,20 @@ holds, these give real runtime evidence rather than compile-only evidence:
   the source comes back with its old selection and caret height). Links are
   real `NSLinkAttributeName`s, resolved in `openMarkdownLink:`: `#heading`
   by GitHub's anchor spelling, web addresses in the browser panel, other
-  paths relative to the file through `openTerminalLink:` (`#L12` works). Table cells are inline-parsed and padded by *display*
+  paths relative to the file through `openTerminalLink:` (`#L12` works).
+- **Editing Markdown from the preview** (`src/MarkdownEdit.{h,cpp}`, pure
+  C++ and tested; `src/MarkdownEditPanel.mm`; `editMarkdownAtCharacter:`):
+  a double-click on the read-only preview (`CodeTextView
+  onPreviewDoubleClick`) reads `kMarkdownSourceLine`, plus
+  `kMarkdownTableCell` (row, column) in a table, and `MarkdownEdit::blockAt`
+  classifies source lines the way the parser does to find the block:
+  heading text, list item text, whole paragraph or quote, code between the
+  fences, or one table cell (newlines and bare pipes are escaped on the way
+  back). The popover works like the LaTeX one (Return saves, Shift+Return
+  types a newline, Add item on a list item). `applyMarkdownSource:` splices,
+  marks the buffer dirty, registers undo with the window's undo manager and
+  re-renders at the same scroll. An edit is dropped if the buffer changed
+  while the popover was open. Mac only for now. Table cells are inline-parsed and padded by *display*
   width (code points, CJK/emoji = 2), never UTF-8 byte length, or any
   non-ASCII cell knocks the columns out of line.
 - **Search**: scoped to a folder (default = open folder or selected folder),

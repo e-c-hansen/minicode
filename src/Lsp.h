@@ -21,6 +21,10 @@
 @property(nonatomic, copy) NSArray<MCDiagnosticMark *> *diagnostics;
 // Cmd+click at a character index. Return NO to let the click through.
 @property(nonatomic, copy) BOOL (^onCommandClick)(NSUInteger index);
+// A double-click while the view is read-only (a rendered preview), with the
+// character under the pointer and the click's point in the view. Returning
+// YES takes the click; NO lets it select a word as usual.
+@property(nonatomic, copy) BOOL (^onPreviewDoubleClick)(NSUInteger index, NSPoint point);
 // The message of the diagnostic covering a character, or nil.
 - (NSString *)diagnosticMessageAtIndex:(NSUInteger)index;
 // The line fragments a character range covers, in view coordinates.

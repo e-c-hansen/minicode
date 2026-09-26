@@ -8,9 +8,11 @@
 #import "AppSettings.h"
 #import "Lsp.h"
 #import "MarkdownImage.h"
+#import "MarkdownEditPanel.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #include "SyntaxHighlighter.h"
 #include "MarkdownParser.h"
+#include "MarkdownEdit.h"
 #include "LineComments.h"
 #include <memory>
 #include <string>
@@ -256,6 +258,11 @@ static NSColor *Hex(unsigned int rgb) {
 
 static const CGFloat kStatusBarHeight = 24;
 
+static std::string Utf8String(NSString *s) {
+    const char *c = s.UTF8String;
+    return c ? c : "";
+}
+
 static std::u16string U16(NSString *s) {
     std::u16string u(s.length, u'\0');
     [s getCharacters:(unichar *)u.data() range:NSMakeRange(0, s.length)];
@@ -269,6 +276,8 @@ static NSString *FromU16(const std::u16string &u) {
 static NSString *const kColorLink = @"minicode-color";
 // On rendered Markdown: the 0-based source line a stretch of text came from.
 static NSAttributedStringKey const kMarkdownSourceLine = @"MCMarkdownSourceLine";
+// On a rendered table cell: @[row, column], row 0 being the header.
+static NSAttributedStringKey const kMarkdownTableCell = @"MCMarkdownTableCell";
 
 // Panel, text and syntax colors come from the settings file (AppSettings);
 // Hex is for the fixed accents that aren't configurable.
@@ -339,6 +348,7 @@ private:
 @property(nonatomic, strong) DragBar *termDivider;
 @property(nonatomic, strong) BrowserView *browser;
 @property(nonatomic, strong) LatexView *latex;
+@property(nonatomic, strong) MCMarkdownEditPanel *markdownEditPanel;
 @property(nonatomic, strong) NSImageView *imageView;   // editor's slot, for images
 @property(nonatomic, assign) BOOL isImage;
 @property(nonatomic, assign) NSSize imagePixels;       // for the title bar
@@ -487,6 +497,9 @@ private:
 
     // Language servers: completion, go to definition, error underlines.
     self.lsp = [[LspSession alloc] initWithTextView:self.textView root:_root.path];
+    self.textView.onPreviewDoubleClick = ^BOOL(NSUInteger index, NSPoint point) {
+        return [weakSelf editMarkdownAtCharacter:index point:point];
+    };
     self.lsp.onStatus = ^(NSString *text) { weakSelf.lspLabel.stringValue = text; };
     self.lsp.openFile = ^BOOL(NSString *p) {
         EditorController *s = weakSelf;
@@ -2456,6 +2469,92 @@ static NSColor *ContrastColor(const Rgba &c) {
     return line;
 }
 
+// ---------------------------------------------- editing from the preview
+
+// A double-click on rendered Markdown opens the block behind it (a
+// paragraph, heading, list item, quote, code block or table cell) in a
+// popover holding its Markdown; saving splices just those bytes back into
+// the buffer, which is then dirty until Cmd+S, as typing leaves it.
+- (BOOL)editMarkdownAtCharacter:(NSUInteger)index point:(NSPoint)point {
+    if (!self.isMarkdown || !self.previewMode) return NO;
+    NSTextStorage *st = self.textView.textStorage;
+    if (st.length == 0) return NO;
+    // The insertion point can fall just after the character clicked.
+    if (index >= st.length) index = st.length - 1;
+    if (index > 0 && !NSPointInRect(point, [self textRectForCharacter:index]) &&
+        NSPointInRect(point, [self textRectForCharacter:index - 1]))
+        index--;
+    NSNumber *line = [st attribute:kMarkdownSourceLine atIndex:index effectiveRange:NULL];
+    if (!line) return NO;
+    NSArray<NSNumber *> *cell = [st attribute:kMarkdownTableCell atIndex:index
+                               effectiveRange:NULL];
+    int sourceLine = line.intValue, column = -1;
+    if (cell.count == 2) {
+        const int row = cell[0].intValue;
+        sourceLine += row + (row > 0 ? 1 : 0);   // the separator row follows the header
+        column = cell[1].intValue;
+    }
+    const std::string src = Utf8String(self.sourceText ?: @"");
+    MarkdownEdit::Block block = MarkdownEdit::blockAt(src, sourceLine, column);
+    if (block.kind == MarkdownEdit::Block::None) return NO;
+
+    static NSString *const titles[] = {@"", @"Paragraph", @"Heading", @"List item",
+                                       @"Quote", @"Code block", @"Table cell", @"Table row"};
+    NSString *title = [titles[block.kind] stringByAppendingString:
+        @" (Markdown; Return saves, Shift+Return for a new line)"];
+    NSString *text = [NSString stringWithUTF8String:
+        src.substr(block.start, block.end - block.start).c_str()] ?: @"";
+
+    NSRect anchor = [self textRectForCharacter:index];
+    if (NSIsEmptyRect(anchor)) anchor = NSMakeRect(point.x, point.y, 1, 1);
+    if (!self.markdownEditPanel) self.markdownEditPanel = [MCMarkdownEditPanel new];
+    __weak EditorController *weakSelf = self;
+    NSString *before = self.sourceText;
+    void (^addItem)(NSString *) = nil;
+    if (block.kind == MarkdownEdit::Block::ListItem) {
+        addItem = ^(NSString *newText) {
+            EditorController *me = weakSelf;
+            if (!me || ![me.sourceText isEqualToString:before]) return;
+            std::string edited = MarkdownEdit::addItem(src, block, Utf8String(newText));
+            [me applyMarkdownSource:[NSString stringWithUTF8String:edited.c_str()]];
+        };
+    }
+    [self.markdownEditPanel showText:text title:title inView:self.textView rect:anchor
+        commit:^(NSString *newText) {
+            EditorController *me = weakSelf;
+            if (!me || ![me.sourceText isEqualToString:before]) return;   // file changed meanwhile
+            std::string edited = MarkdownEdit::replace(src, block, Utf8String(newText));
+            if (edited != src) [me applyMarkdownSource:[NSString stringWithUTF8String:edited.c_str()]];
+        }
+        addItem:addItem];
+    return YES;
+}
+
+// A new buffer from a preview edit: dirty, undoable with Cmd+Z, and shown
+// again without moving the page.
+- (void)applyMarkdownSource:(NSString *)source {
+    if (!source || [source isEqualToString:self.sourceText]) return;
+    NSString *old = self.sourceText ?: @"";
+    NSUndoManager *undo = self.textView.undoManager;
+    __weak EditorController *weakSelf = self;
+    [undo registerUndoWithTarget:self handler:^(EditorController *target) {
+        (void)target;
+        [weakSelf applyMarkdownSource:old];
+    }];
+    [undo setActionName:@"Preview Edit"];
+    self.sourceText = source;
+    self.dirty = YES;
+    [self updateTitle];
+    if (self.isMarkdown && self.previewMode) {
+        NSPoint origin = self.editorScroll.contentView.bounds.origin;
+        [self renderMarkdown:source];
+        [self scrollEditorToY:origin.y];
+        _previewEntryScroll = self.editorScroll.contentView.bounds.origin;
+    } else if (self.isMarkdown) {
+        [self refreshDisplay];
+    }
+}
+
 // A click on a link in rendered Markdown. "#section" scrolls to that heading;
 // a web address opens in the browser panel (another scheme, such as mailto,
 // goes to the system); anything else is a path relative to the Markdown
@@ -2761,6 +2860,8 @@ static NSString *MCMarkdownAnchor(NSString *title) {
             [text addAttribute:NSParagraphStyleAttributeName value:ps
                          range:NSMakeRange(0, text.length)];
             [text addAttribute:kMarkdownSourceLine value:@(runs[first].line)
+                         range:NSMakeRange(0, text.length)];
+            [text addAttribute:kMarkdownTableCell value:@[@(row), @(col)]
                          range:NSMakeRange(0, text.length)];
             [out appendAttributedString:text];
         }

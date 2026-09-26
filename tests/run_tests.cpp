@@ -3,6 +3,7 @@
 #include "SyntaxHighlighter.h"
 #include "TermLinks.h"
 #include "MarkdownParser.h"
+#include "MarkdownEdit.h"
 #include "TerminalStream.h"
 #include "TerminalScreen.h"
 #include "Settings.h"
@@ -797,6 +798,97 @@ bool columnsAligned(const std::vector<std::string> &lines) {
     for (const auto &l : lines)
         if (dividerColumns(l) != first) return false;
     return true;
+}
+
+void testMarkdownEdit() {
+    using namespace MarkdownEdit;
+    const std::string doc =
+        "# Title here\n"            // 0
+        "\n"                        // 1
+        "First line of a\n"         // 2
+        "paragraph, two lines.\n"   // 3
+        "\n"                        // 4
+        "- apple\n"                 // 5
+        "  - pear\n"                // 6
+        "3. third\n"                // 7
+        "\n"                        // 8
+        "> quoted\n"                // 9
+        "> more\n"                  // 10
+        "\n"                        // 11
+        "```\n"                     // 12
+        "x = 1\n"                   // 13
+        "y = 2\n"                   // 14
+        "```\n"                     // 15
+        "| Key | Mac |\n"            // 16
+        "| --- | --- |\n"            // 17
+        "| Save | Cmd S |\n"         // 18
+        "|  | x |\n"                 // 19
+        "\n"                        // 20
+        "---\n";                    // 21
+    auto text = [&](const Block &b) { return doc.substr(b.start, b.end - b.start); };
+
+    GROUP("mdedit:blocks");
+    Block h = blockAt(doc, 0);
+    CHECK(h.kind == Block::Heading && text(h) == "Title here");
+    Block p = blockAt(doc, 3);
+    CHECK(p.kind == Block::Paragraph && text(p) == "First line of a\nparagraph, two lines.");
+    CHECK(p.firstLine == 2 && p.lastLine == 3);
+    Block li = blockAt(doc, 5);
+    CHECK(li.kind == Block::ListItem && text(li) == "apple" && li.nextItemPrefix == "- ");
+    Block nested = blockAt(doc, 6);
+    CHECK(nested.kind == Block::ListItem && text(nested) == "pear" && nested.nextItemPrefix == "  - ");
+    Block num = blockAt(doc, 7);
+    CHECK(num.kind == Block::ListItem && text(num) == "third" && num.nextItemPrefix == "4. ");
+    Block q = blockAt(doc, 10);
+    CHECK(q.kind == Block::Quote && text(q) == "> quoted\n> more");
+    Block code = blockAt(doc, 13);
+    CHECK(code.kind == Block::Code && text(code) == "x = 1\ny = 2");
+    Block cell = blockAt(doc, 18, 1);
+    CHECK(cell.kind == Block::TableCell && text(cell) == "Cmd S");
+    Block head = blockAt(doc, 16, 0);
+    CHECK(head.kind == Block::TableCell && text(head) == "Key");
+    Block row = blockAt(doc, 18);
+    CHECK(row.kind == Block::TableRow && text(row) == "| Save | Cmd S |");
+    CHECK(blockAt(doc, 18, 7).kind == Block::TableRow);
+    for (int none : {1, 12, 15, 17, 21, 99, -1})
+        CHECK(blockAt(doc, none).kind == Block::None);
+
+    GROUP("mdedit:edits");
+    CHECK(replace(doc, h, "New").rfind("# New\n\nFirst", 0) == 0);
+    std::string r = replace(doc, cell, "Command S");
+    CHECK(r.find("| Save | Command S |\n") != std::string::npos);
+    // Newlines and bare pipes cannot go into a cell as they are.
+    r = replace(doc, cell, "a|b\nc");
+    CHECK(r.find("| Save | a\\|b c |\n") != std::string::npos);
+    CHECK(replace(doc, cell, "a\\|b").find("| Save | a\\|b |") != std::string::npos);
+    Block empty = blockAt(doc, 19, 0);
+    CHECK(empty.kind == Block::TableCell && empty.start == empty.end);
+    CHECK(replace(doc, empty, "new").find("| new| x |\n") != std::string::npos ||
+          replace(doc, empty, "new").find("| new | x |\n") != std::string::npos);
+    // Only the block's bytes change.
+    std::string pr = replace(doc, p, "One line now.");
+    CHECK(pr == doc.substr(0, p.start) + "One line now." + doc.substr(p.end));
+    size_t at = 0;
+    std::string added = addItem(doc, num, "fourth", &at);
+    CHECK(added.find("3. third\n4. fourth\n\n> quoted") != std::string::npos);
+    CHECK(added.substr(at, 6) == "fourth");
+    CHECK(addItem(doc, nested, "plum").find("  - pear\n  - plum\n3.") != std::string::npos);
+    CHECK(addItem(doc, p, "nope") == doc);
+
+    GROUP("mdedit:agrees-with-parser");
+    // Every run the parser stamped with a line maps back to a block (or to
+    // nothing only for the lines that render as nothing editable).
+    auto runs = MarkdownParser::parse(doc);
+    bool ok = true;
+    for (const MdRun &run : runs) {
+        if (run.text.find_first_not_of(" \n") == std::string::npos || run.rule) continue;
+        if (run.table && run.tableCol < 0) continue;
+        int line = run.line;
+        if (run.table) line = run.line + run.tableRow + (run.tableRow > 0 ? 1 : 0);
+        Block b = blockAt(doc, line, run.table ? run.tableCol : -1);
+        if (b.kind == Block::None) { ok = false; printf("  no block for run '%s' line %d\n", run.text.c_str(), line); }
+    }
+    CHECK(ok);
 }
 
 void testMarkdown() {
@@ -3742,6 +3834,7 @@ int main() {
     testTermLinks();
     benchIncrementalHighlight();
     testMarkdown();
+    testMarkdownEdit();
     testTerminalStream();
     testTerminalScreen();
     testSettings();

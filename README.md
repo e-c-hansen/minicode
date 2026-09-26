@@ -10,7 +10,7 @@ I built it because I wanted one light place to browse a folder, edit code with a
 
 Open a folder and you get a file tree on the left and the file you click in the main pane. The tree follows changes made elsewhere, in the terminal, in git or in another program, and right clicking an item offers new file, new folder, rename, move to trash, reveal in Finder and copy path.
 
-Source files are highlighted by extension: Python, the C family, JavaScript, TypeScript, JSON, shell, LaTeX and a few others. Markdown renders as formatted text, and Shift Command P flips to the source. Images and PDFs open in the same pane, and reload when the file changes on disk.
+Source files are highlighted by extension: Python, the C family, JavaScript, TypeScript, JSON, shell, LaTeX and a few others. Markdown renders as formatted text, with working links, tables and images, and Shift Command P flips to the source. You can also edit the rendered page: double click a paragraph, heading, list item or table cell, and a small editor opens holding its Markdown. Images and PDFs open in the same pane, and reload when the file changes on disk.
 
 ![Opening a PNG and then a PDF from the file tree](docs/demos/files.gif)
 
@@ -111,7 +111,7 @@ make run DIR=demo
 
 ## Linux
 
-The Linux version, in the linux folder, is built on GTK4 with a VTE terminal, a WebKitGTK browser and poppler for PDFs. It has everything described above, including the LaTeX preview and language servers, with Control where the Mac uses Command. The one thing it lacks is blur behind the window, which GNOME gives applications no way to ask for.
+The Linux version, in the linux folder, is built on GTK4 with a VTE terminal, a WebKitGTK browser and poppler for PDFs. It has everything described above, including the LaTeX preview and language servers, with Control where the Mac uses Command. It lacks editing Markdown from the rendered page, and blur behind the window, which GNOME gives applications no way to ask for.
 
 ```
 sudo apt install build-essential meson libgtk-4-dev \
