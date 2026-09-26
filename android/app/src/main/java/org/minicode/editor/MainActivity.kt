@@ -1079,8 +1079,16 @@ class MainActivity : AppCompatActivity() {
             browserShowing -> "Browser" to null
             ui.start.visibility == View.VISIBLE -> "MiniCode" to "No folder open"
             ui.gitPanel.visibility == View.VISIBLE -> "Source Control" to where(folder)
-            showingList -> (current?.name ?: folder?.name ?: "MiniCode") to
-                    (if (lostAccess) "Cannot open this folder" else where(current ?: folder))
+            showingList -> {
+                val dir = current ?: folder
+                // The top of shared storage is a folder called "0".
+                val top = dir != null && where(dir) == PHONE_STORAGE
+                (if (top) PHONE_STORAGE else dir?.name ?: "MiniCode") to when {
+                    lostAccess -> "Cannot open this folder"
+                    top -> "The top of the phone's storage"
+                    else -> where(dir)
+                }
+            }
             showingDiff -> diffTitle to "From source control, read only"
             else -> {
                 val file = currentFile
