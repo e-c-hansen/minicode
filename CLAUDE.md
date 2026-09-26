@@ -23,8 +23,9 @@ this file covers the macOS app except where it says otherwise.
   file), Markdown parser, terminal output stream and screen grid, settings
   parser, comment toggling, the LaTeX and SyncTeX readers (including the preview's click-to-source
   matching), JSON, the LSP
-  client, finding file references and URLs in terminal output, and the
-  folder search (on a scratch tree in the temp directory).
+  client, finding file references and URLs in terminal output, the
+  folder search (on a scratch tree in the temp directory), and the git
+  status and diff readers (1,651 checks on 2026-09-26).
   Exits non-zero on failure. The Makefile uses clang++ on the Mac and make's
   default (g++) elsewhere, so it runs on Linux too, and CI runs it there.
 - `make run [DIR=~/path]` — build and launch.
@@ -105,6 +106,14 @@ isolation. Keep them dependency-free.
   UTF-8 only, 2000 matches, ANSI stripped), plus symlink-loop and named-pipe
   safety. Used by the GTK port; `Search.mm` still has its own copy of the
   loop, and Android can use this one.
+- `src/GitStatus.{h,cpp}` — reads what git prints, runs nothing:
+  `git status --porcelain=v2 --branch -z` -> branch, upstream, ahead/behind,
+  detached and no-commit-yet states, and entries (path, rename source,
+  staged and unstaged letters, untracked, conflict); `git diff` -> every
+  line with a kind (file header, hunk header, context, added, removed, "\ No
+  newline") and its old/new line numbers, also grouped into files and hunks.
+  Combined diffs (`diff --cc`, a conflict) are understood. Only the Mac uses
+  it so far; it is in the core so the other ports can.
 
 The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 
@@ -125,6 +134,8 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 - `src/Latex.{h,mm}` — LaTeX preview: runs tectonic, shows the PDF with PDFKit,
   and turns a double-click into a popover editing the source behind that text.
 - `src/Search.{h,mm}` — scoped, project-wide text search window.
+- `src/GitPanel.{h,mm}` — running git (`MCGitRunSync`), the Source Control
+  panel (`MCGitPanel`) and diff coloring (`MCGitDiffText`). See "Git panel".
 - `src/Lsp.{h,mm}` — language server processes, `CodeTextView` (the editor's
   NSTextView subclass: squiggles, tooltips, Cmd+click), the completion popup,
   and `LspSession`, one per window.
@@ -142,6 +153,7 @@ container (PanelHost, laid out by hand in layoutContainer)
 ├── titlebarView + titleLabel                     drawn when customTitlebar
 ├── NSSplitView (vertical, thin divider)          sidebar | right pane
 │   ├── treeScroll → ClickOutline (NSOutlineView)  file tree, bg #252526
+│   │   (or gitPanel, MCGitPanel, swapped in by Ctrl+Shift+G)
 │   └── rightArea (PanelHost, laid out by hand in relayoutRightArea)
 │       ├── editorScroll → textView (NSTextView)   top slot, bg #1E1E1E
 │       ├── browser (BrowserView)                  top slot when open
@@ -512,6 +524,107 @@ edit, and a PDF would show only its first page.
 - Not yet: zoom and scrolling for large images. Linux has images and PDFs
   since September 2026 (`linux/src/MediaView.cpp`, `linux/src/PdfView.cpp`;
   see `linux/HANDOFF.md`, item 4).
+
+## Git panel (macOS only)
+
+Ctrl+Shift+G (`toggleSourceControl:`, View menu) swaps the file tree for
+`MCGitPanel` with `NSSplitView replaceSubview:with:`, same frame, so the
+sidebar keeps its width; a collapsed sidebar (Cmd+B) is opened for it. The
+tree comes back on the next toggle. Shift+Cmd+G was taken (Find Previous);
+Ctrl+Shift+G is VS Code's key and was free in the menus.
+
+- **What runs.** Only status, diff, add, restore --staged and commit -m,
+  plus rm --cached --force before the first commit (restore --staged needs
+  a HEAD and fails with "could not resolve HEAD"; with --cached, --force
+  only lets it drop an index entry that differs from the file, the file is
+  never touched). Never a shell string: `MCGitRunSync` is an NSTask with an
+  argument array, cwd = the repository's top level (from `rev-parse
+  --show-toplevel` in the window's folder, so a subfolder works and paths
+  from status are used as they are). Every path goes after `--`, and add,
+  restore and rm get `--literal-pathspecs`, so a file called `sp*ecial.txt`
+  never stages `spXecial.txt` too. Status is `--porcelain=v2 --branch -z
+  --untracked-files=all`; diffs are `-c core.quotePath=false diff --no-color
+  --no-ext-diff --src-prefix=a/ --dst-prefix=b/` (a user's diff.noprefix or
+  external diff tool would otherwise change the output), `--cached -M` with
+  both paths for a staged rename, and `--no-index -- /dev/null path` for an
+  untracked file (exit status 1 there means "differs", not failure).
+- **Finding git**: `MCFindProgram(@"git")`, the LSP lookup (now exported from
+  Lsp.mm), so /usr/bin/git, an xcrun shim that pops the install dialog on a
+  Mac without the tools, is never run; on this Mac it finds
+  /Library/Developer/CommandLineTools/usr/bin/git. No git: one plain line.
+- **Environment**: `GIT_OPTIONAL_LOCKS=0`, because a plain status refreshes
+  and rewrites .git/index, the open folder is watched by FSEvents, and the
+  panel refreshes on FSEvents: that would loop. Checked: the index's mtime
+  does not move across a refresh. Also `GIT_TERMINAL_PROMPT=0`,
+  `GIT_EDITOR=true`, stdin /dev/null, the wide PATH for hooks. stdout and
+  stderr are drained at once (stderr on another queue), so a chatty stderr
+  cannot fill its pipe and stall git.
+- **Threads**: one serial queue per panel, so an add and the status after it
+  run in order; results come back on the main queue and are dropped if the
+  folder changed (`root` compared) or, for diffs, a newer diff was asked for
+  (generation count). `refresh` is coalesced over 50 ms and does nothing
+  while the panel is not in a window. It is called when the panel is shown,
+  after every action, on `windowDidBecomeKey`, and from the tree's FSEvents
+  callback while the panel is visible.
+- **Errors**: git's stderr, blank lines dropped, under the Commit button
+  (max 6 lines, the whole text in the tooltip). If stderr is empty the last
+  line of stdout is used: a commit with nothing staged prints a whole status
+  on stdout and exits 1, ending with "no changes added to commit". A status
+  error stays until a status succeeds; an action's error until the next
+  action. A successful commit shows git's "[main 1a2b3c4] Subject" muted.
+  Outside a repository (stderr says "not a git repository") the list area
+  says "This folder is not in a git repository." and the message box and
+  button are hidden; a clean tree says "No changes."
+- **The list** is an NSTableView of hand-drawn rows (`MCGitCell`): headings
+  "Staged changes N" and "Changes N" (not selectable), then name, muted
+  folder (and "from old" for a rename) and the letter at the right: status
+  X in Staged, Y in Changes, U untracked, C conflict (a copy in Staged is
+  also C; the tooltip says which). A file changed after staging (MM) is in
+  both lists. Keys in `MCGitTable keyDown:`: Up/Down skip headings, Return
+  shows the diff, Space stages or unstages, Tab goes to the message box.
+  A click shows the diff from `mouseDown:`, like the tree. After a refresh
+  the selection stays on the same file, or at the same index in the list it
+  left, so Space can be pressed down a list. Letter colors are inline hex
+  (VS Code's git decoration colors), not settings.
+- **The message box** (`MCCommitTextView`) commits on Cmd+Return (keyDown
+  and performKeyEquivalent, keyCode 36/76), Tab returns to the list, and
+  draws its own placeholder. The message is kept when a commit fails.
+- **The diff** takes the editor's slot like an image or PDF: `showDiffNamed:`
+  asks about unsaved changes first, then sets `currentPath = nil` (nothing
+  to save or reload), `resetViewMode`, `isDiff`, and fills a read-only
+  NSTextView in its own `PanelScrollView` (`diffScroll`), which
+  `relayoutRightArea` shows in `topRect`. Title "name (diff) — MiniCode".
+  Opening any file clears it through `resetViewMode`. `MCGitDiffText` colors
+  with `classifyDiff`: added #73C991, removed #F14C4C, hunk headers and
+  "\ No newline" muted, file headers muted bold, context the editor's text
+  color; it re-renders on a settings change. Diffs past 4 MB are cut.
+- **Verified** (2026-09-26) by a scratch program built from all of src/
+  except main.mm with `makeKeyAndOrderFront:`/`orderFront:` swizzled to
+  no-ops and the activation policy Prohibited, so no window reached the
+  screen (111 checks, against scratch repos in /private/tmp, identity given
+  through GIT_AUTHOR_*/GIT_COMMITTER_* environment variables, never the
+  global config): rows for every kind of change, arrow keys skipping
+  headings, Space staging a modification, a deletion and a glob-named file,
+  unstaging a rename (both halves), Return and click diffs (staged,
+  untracked, combined), colors read back from the attributed string, empty
+  message, nothing staged and missing identity (GIT_CONFIG_GLOBAL=/dev/null
+  plus user.useConfigOnly) showing git's text, Cmd+Return committing a
+  multi-line message, not-a-repository, an empty repository (stage, then
+  unstage an AM file with the file left intact), a conflict (C, then staged
+  as resolved), ahead count against a clone's upstream, detached HEAD, a
+  subfolder of a repository, the index untouched by a refresh, and the menu
+  item matched by a Ctrl+Shift+G event made with `CGEventCreateKeyboardEvent`
+  (and Shift+Cmd+G still reaching Find Previous). In an offscreen
+  EditorController: the swap and width, the diff taking the slot, the title,
+  Cmd+S writing nothing, opening the file returning to editing, Cmd+0
+  focusing the panel, the hints rows, and the collapsed-sidebar case. A
+  `cacheDisplayInRect:` picture of the window was looked at. Not seen in the
+  real app: FSEvents and window-key refreshes, focus and selection colors,
+  and the Commit button's look.
+- **Tool guard trap**: in a worktree-isolated agent session, shell commands
+  that run git outside the worktree in compound or unusual forms are refused
+  (even a filename containing "git"). Plain `cd scratch && git ...` lines
+  work; the test program runs git itself through NSTask.
 
 ## Demo GIFs (`make demos`)
 
