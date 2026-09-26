@@ -24,7 +24,9 @@ Paths and URLs in the output are links. Command click src/main.cpp:42:7 from a c
 
 ![Command clicking a grep result to open it at its line, then a URL that opens in the browser panel](docs/demos/links.gif)
 
-On the Mac, Control Shift G swaps the file tree for a small source control panel. It shows the branch, how far it is ahead of or behind its upstream, and the changed files in two lists, staged and not yet staged, each with a one letter status. Arrow keys move through the files, Return shows the selected file's diff in the main pane, Space stages or unstages it, and Command Return in the message box commits. Git does the work underneath, and when it refuses something, such as a commit with nothing staged, its own message appears in the panel. Branches, history, merges and pushing are left to the terminal.
+On the Mac, Control Shift G swaps the file tree for a small source control panel. It shows the branch, how far it is ahead of or behind its upstream, and the changed files in two lists, staged and not yet staged, each with a one letter status. Arrow keys move through the files, Return shows the selected file's diff in the main pane, Space stages or unstages it, and Command Return in the message box commits. Git does the work underneath, and when it refuses something, such as a commit with nothing staged, its own message appears in the panel.
+
+Under the changes is the commit graph: the history of the current branch and its upstream, drawn in colored lanes the way VS Code's graph and `git log --graph` draw them, with branch, remote and tag labels on their commits. Commits you have not pushed yet are tinted blue with a hollow dot and an up arrow, commits on the upstream you have not pulled are tinted green with a down arrow, and a line above the graph says how many of each there are, or that the branch has no upstream. A checkbox shows every local and remote branch instead. The graph loads 200 commits at a time, with a row at the bottom for the next 200. Tab moves between the changes, the graph and the message box, the Down arrow goes from the last changed file into the graph, and Return or a click on a commit shows its author, date, message and diff in the main pane. The panel only reads history; checking out, branching, merging, pulling and pushing are left to the terminal.
 
 Shift Command H lists the shortcuts that apply right now.
 
@@ -76,7 +78,7 @@ Both sides run the same clangd. make membench reproduces it on scratch profiles.
 
 ## Next to VS Code and Zed
 
-MiniCode isn't VS Code or Zed, but I do use it every day. I can jump between writing code, running it in terminal, and browsing github repos via web browser via hotkeys, alone. I edited my own resume in LaTeX. Claude Code runs fine in MiniCode's terminal, too. With that said, MiniCode leaves out some things that VS Code and Zed offer, usually for sake of keeping a tight footprint and avoiding becoming the bloatware that drove me to make it in the first place. For instance, there's no means to rename and find references, formatting and code actions, a debugger, tabs and split editors, extensions, and an AI assistant built into the editor. The git panel is deliberately small: it shows status and diffs, stages and unstages files, and commits, while branches, history, merges and pushing stay in the terminal. VS Code or Zed are better options for those particulars.
+MiniCode isn't VS Code or Zed, but I do use it every day. I can jump between writing code, running it in terminal, and browsing github repos via web browser via hotkeys, alone. I edited my own resume in LaTeX. Claude Code runs fine in MiniCode's terminal, too. With that said, MiniCode leaves out some things that VS Code and Zed offer, usually for sake of keeping a tight footprint and avoiding becoming the bloatware that drove me to make it in the first place. For instance, there's no means to rename and find references, formatting and code actions, a debugger, tabs and split editors, extensions, and an AI assistant built into the editor. The git panel is deliberately small: it shows status, diffs and the commit graph with what is and is not pushed, stages and unstages files, and commits, while checking out branches, merging and pushing stay in the terminal. VS Code or Zed are better options for those particulars.
 
 Zed was created with a similar goal for a more usable, lightweight IDE. It accomplishes much of what MiniCode seeks out to do, but, as of Zed 1.15, there is no built in browser, which has been an open [feature request](https://github.com/zed-industries/zed/issues/10533) since 2024. LaTeX goes through an [extension](https://github.com/rzukic/zed-latex/wiki/Preview) that builds the PDF and shows it in a separate viewer such as Skim, with SyncTeX jumps between the two. It begins to feel like the clunky, emulated workarounds that VS Code extensions offered during my time as a VS Code user. That's why MiniCode's browser is built-in, yet lightweight. It's why PDFs render easily. Why LaTeX is in-line mutable.
 
@@ -85,7 +87,7 @@ Zed was created with a similar goal for a more usable, lightweight IDE. It accom
 | Language server | completion, diagnostics, hover, definition | full | full |
 | Browser in the window | yes | no | a basic one |
 | LaTeX | typeset in the window, edit on the page | extension, external PDF viewer | extension, PDF in a tab |
-| Git | status, diffs, staging and committing (macOS); the rest in the terminal | full | full |
+| Git | status, diffs, staging, committing and a read-only commit graph (macOS); branches, merges and pushing in the terminal | full | full |
 | Debugger | no | yes | yes |
 | Extensions | no | yes | yes |
 | Platforms | macOS, Linux, Android | macOS, Linux, Windows | macOS, Linux, Windows |

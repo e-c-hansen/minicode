@@ -380,6 +380,7 @@ private:
 @property(nonatomic, assign) BOOL isDiff;
 @property(nonatomic, copy)   NSString *diffName;     // for the title
 @property(nonatomic, strong) NSData *diffData;       // re-colored on a settings change
+@property(nonatomic, assign) BOOL diffIsCommit;      // a whole commit (git show), not one file
 @end
 
 @implementation EditorController
@@ -933,10 +934,10 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     [self appendHintsRow:s key:@"⌃⇧G" label:@"Source control"
                     key2:nil label2:nil state:openOr(self.gitPanelVisible)];
     if (self.gitPanelVisible) {
-        [self appendHintsRow:s key:@"⏎" label:@"Show the diff"
+        [self appendHintsRow:s key:@"⏎" label:@"Show the diff or commit"
                         key2:@"Space" label2:@"Stage or unstage" state:nil];
-        [self appendHintsRow:s key:@"⌘⏎" label:@"Commit (in the message)"
-                        key2:nil label2:nil state:nil];
+        [self appendHintsRow:s key:@"⇥" label:@"Changes, graph, message"
+                        key2:@"⌘⏎" label2:@"Commit (in the message)" state:nil];
     }
     if (self.isMarkdown) {
         [self appendHintsRow:s key:@"⇧⌘P" label:@"Markdown preview"
@@ -1271,6 +1272,9 @@ static const CGFloat kDividerGrabSlop = 5;
         self.gitPanel.onShowDiff = ^(NSString *name, NSString *path, NSData *diff) {
             [weakSelf showDiffNamed:name path:path data:diff];
         };
+        self.gitPanel.onShowCommit = ^(NSString *title, NSData *show) {
+            [weakSelf showCommitTitled:title data:show];
+        };
     }
     NSView *from = self.gitPanelVisible ? self.gitPanel : self.sidebarScroll;
     NSView *to = self.gitPanelVisible ? self.sidebarScroll : self.gitPanel;
@@ -1294,6 +1298,16 @@ static const CGFloat kDividerGrabSlop = 5;
 // image or a PDF takes it. Opening any file puts the editor back.
 - (void)showDiffNamed:(NSString *)name path:(NSString *)path data:(NSData *)diff {
     (void)path;
+    [self showDiffTitled:name data:diff commit:NO];
+}
+
+// A commit from the graph, the same way: its header and message, then its
+// diff. The title is "<short hash> <subject>".
+- (void)showCommitTitled:(NSString *)title data:(NSData *)show {
+    [self showDiffTitled:title data:show commit:YES];
+}
+
+- (void)showDiffTitled:(NSString *)name data:(NSData *)diff commit:(BOOL)commit {
     if (![self confirmProceedPastUnsavedChanges]) return;
     [self revealEditor];
     if (!self.diffScroll) {
@@ -1328,6 +1342,7 @@ static const CGFloat kDividerGrabSlop = 5;
     self.isDiff = YES;
     self.diffName = name;
     self.diffData = diff;
+    self.diffIsCommit = commit;
     [self setPlainMessage:@""];   // the hidden text view holds nothing to save
     [self renderDiff];
     [self.diffView scrollPoint:NSZeroPoint];
@@ -1338,7 +1353,9 @@ static const CGFloat kDividerGrabSlop = 5;
 
 - (void)renderDiff {
     NSFont *mono = [NSFont monospacedSystemFontOfSize:12.5 weight:NSFontWeightRegular];
-    [self.diffView.textStorage setAttributedString:MCGitDiffText(self.diffData, mono)];
+    [self.diffView.textStorage setAttributedString:
+        self.diffIsCommit ? MCGitCommitText(self.diffData, mono)
+                          : MCGitDiffText(self.diffData, mono)];
 }
 
 // Cmd+Shift+. : show or hide dotfiles in the tree (like Finder).
@@ -1739,6 +1756,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     self.isDiff = NO;
     self.diffName = nil;
     self.diffData = nil;
+    self.diffIsCommit = NO;
     [self.diffView.textStorage setAttributedString:[NSAttributedString new]];
 }
 
@@ -2733,7 +2751,9 @@ static NSColor *ContrastColor(const Rgba &c) {
 
 - (void)updateTitle {
     NSString *name = self.currentPath.lastPathComponent ?: @"MiniCode";
-    if (self.isDiff) name = [NSString stringWithFormat:@"%@ (diff)", self.diffName];
+    if (self.isDiff)
+        name = self.diffIsCommit ? self.diffName
+                                 : [NSString stringWithFormat:@"%@ (diff)", self.diffName];
     NSString *flag = self.dirty ? @"● " : @"";
     NSString *mode = (self.canTogglePreview && self.previewMode) ? @"  [Preview]" : @"";
     if (self.isImage)

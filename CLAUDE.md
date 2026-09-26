@@ -118,6 +118,12 @@ isolation. Keep them dependency-free.
   newline") and its old/new line numbers, also grouped into files and hunks.
   Combined diffs (`diff --cc`, a conflict) are understood. Only the Mac uses
   it so far; it is in the core so the other ports can.
+- `src/GitGraph.{h,cpp}` — the commit graph, also reading only: `git log
+  -z --topo-order` records, `for-each-ref` refs (tags peeled, symrefs such
+  as origin/HEAD dropped) grouped into labels per commit, `rev-list
+  --left-right` into outgoing and incoming sets, `git show` into a header
+  and patch, relative dates, and `layoutGraph`, the lane assignment (see
+  "Git panel"). Compiled into the Linux builds too, unused there so far.
 
 The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 
@@ -448,7 +454,7 @@ never closes.
   block). After 1.4.5, on `main` and pushed but not released: the Linux
   preview brought level with the Mac (links, pictures, tables, place
   keeping, double-click editing), Linux-only, so no release was cut.
-  1,522 core checks pass; Mac and Linux builds are warning-free; CI builds
+  1,750 core checks pass; Mac and Linux builds are warning-free; CI builds
   and tests macOS and Linux.
 - **Git panel (Mac), merged 2026-09-26, not yet released**: Control+Shift+G
   swaps the tree for Source Control (see "Git panel" below). Built by a
@@ -456,6 +462,12 @@ never closes.
   before a release. Still unseen: refresh after a commit in the terminal
   and on window focus, the selection and focus look, the Commit button,
   and a long git error (cut to 6 lines, full text in the tooltip).
+  The user asked for VS Code's lineage view after trying it, so a commit
+  graph was added under the change lists (2026-09-26, on a branch, also
+  offscreen-only): lanes, labels, pushed or not, All branches, Show more,
+  and a commit's diff on Return. Unseen on screen: hover tooltips, the
+  selection colors over the push/pull tints, the checkbox, and a real
+  repository with many branches in All branches mode.
 - **Markdown preview** (Mac and Linux, not Android): links, pictures with
   GIFs playing, real tables, Shift+Cmd+P / Ctrl+Shift+P keeping the place,
   and double-click editing of a block in a popover. Details under
@@ -642,10 +654,83 @@ Ctrl+Shift+G is VS Code's key and was free in the menus.
   `cacheDisplayInRect:` picture of the window was looked at. Not seen in the
   real app: FSEvents and window-key refreshes, focus and selection colors,
   and the Commit button's look.
+- **The graph** sits under the change lists: they take what their rows
+  need, up to half the space left, and the graph (an `MCGitTable` of
+  hand-drawn `MCGitGraphCell` rows) takes the rest and scrolls. Its heading
+  has the All branches checkbox and one line on what is pushed ("↑ 2 to
+  push, ↓ 1 to pull, against origin/main", "Up to date with ...", no
+  upstream, upstream gone, detached HEAD). It is hidden outside a
+  repository and before the first commit.
+  - **Commands**: `for-each-ref` (refs/heads, refs/remotes, refs/tags),
+    `-c log.showSignature=false log -z --topo-order --max-count=N HEAD
+    @{upstream} --` (with `--branches --remotes` for All branches; no
+    `@{upstream}` when there is none, it is gone, or HEAD is detached), and
+    `rev-list --left-right HEAD...@{upstream} --` only when status reports
+    ahead or behind. A commit is `-c core.quotePath=false show --no-color
+    --no-ext-diff --src-prefix=a/ --dst-prefix=b/ -M
+    --diff-merges=first-parent --stat --patch`: git's default for a merge is
+    a combined diff that is usually empty, so a merge shows what it brought
+    in against its first parent, and says so.
+  - **Cost**: the status is applied first, then the graph is built in a
+    second step on the same serial queue, so a slow `log --topo-order` never
+    holds up the change lists. The graph is keyed on HEAD, branch, upstream,
+    limit, the checkbox and the whole for-each-ref output; a refresh with
+    the same key (most of them: saving a file triggers FSEvents) runs only
+    for-each-ref and keeps the old graph object. A generation count drops
+    stale results. "Show more" raises the limit by 200 and reloads the
+    whole window (topo order has to be computed from the top anyway), with
+    the selection landing on the first new row.
+  - **Lanes** (`Git::layoutGraph`, tested in run_tests.cpp): each lane
+    waits for a hash. A commit takes the leftmost lane waiting for it; the
+    other waiting lanes end in its dot (In edges). No lane waiting means a
+    branch tip, added at the right with a new color. The first parent
+    continues the commit's lane even when another lane already waits for
+    it (they meet at the parent's row), a further parent joins a lane
+    already waiting for it or takes the first free lane to the right, with
+    a new color. Free lanes are then closed up, so lanes to the right bend
+    left in the same row (Pass edges with from != to). A row is drawn in
+    two halves around the dot; In and Out curves meet the dot sideways,
+    Pass curves are S-shapes. Lane width is 12 points, narrower when a
+    graph's widest row would take more than 40% of the panel. 100,000
+    commits lay out in about 200 ms unoptimized; only the loaded window is
+    ever laid out.
+  - **Drawing**: filled dot; a merge has a hole; outgoing and incoming
+    commits are hollow with a blue or green row tint and an arrow at the
+    right; HEAD has a ring. Labels are pills: the current branch (or a
+    detached "HEAD", orange) filled, other branches blue outlines, remotes
+    purple, tags amber with "tag". Lane colors are the accent blue then VS
+    Code's graph colors, inline hex like the rest of the panel.
+  - **Keys**: Down from the last file enters the graph, Up from its first
+    row goes back; Tab goes changes, graph, message, changes, Shift+Tab the
+    other way (`onBackTab`, `onPastEnd` on `MCGitTable`). With no changes,
+    `focusList` (Cmd+0, opening the panel) lands in the graph. Return or a
+    click shows the commit; on the last row it loads more.
+  - **The commit view** reuses the diff slot: `showCommitTitled:data:` sets
+    `diffIsCommit`, the title is "<short hash> <subject>" without
+    "(diff)", and `MCGitCommitText` draws hash, parents, author, a
+    different committer, date with relative time, the message (subject
+    bold), then the stat and diff through `MCGitDiffText`.
+  - **Verified** (2026-09-26) with a scratch program like the one above
+    (swizzled ordering, activation Prohibited, 64 checks) on scratch repos
+    in /private/tmp: a clone 2 ahead and 1 behind with a merged feature
+    branch, an annotated tag, a remote branch and a local-only branch; an
+    octopus merge with a detached HEAD; 3,119 commits made with
+    fast-import. Checked: rows, lanes, labels and current marks, out/in
+    marks against rev-list, the summary lines, All branches adding the
+    local branch, an unchanged refresh running no log, arrow and Tab focus
+    moves through real key events, Return and a click showing a merge (with
+    its first-parent diff and stat) and a root commit, the window title,
+    Show more (200 then 400 rows, first batch in 133 ms, the next in 51 ms),
+    the index and refs untouched, and, through a logging git wrapper put
+    first on PATH, that only rev-parse, status, for-each-ref, log, rev-list
+    and show ran. PNGs of the panel and the window were looked at.
 - **Tool guard trap**: in a worktree-isolated agent session, shell commands
   that run git outside the worktree in compound or unusual forms are refused
   (even a filename containing "git"). Plain `cd scratch && git ...` lines
-  work; the test program runs git itself through NSTask.
+  work; the test program runs git itself through NSTask. Anything longer
+  (loops, pipes, a perl or python edit of a file whose text says gitPanel)
+  goes into a script in the scratchpad run as `bash script.sh`, and source
+  edits go through the Edit tool.
 
 ## Demo GIFs (`make demos`)
 

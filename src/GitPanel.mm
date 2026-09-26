@@ -3,7 +3,11 @@
 #import "AppSettings.h"
 #import "Lsp.h"   // MCFindProgram, MCSearchDirs
 #include "GitStatus.h"
+#include "GitGraph.h"
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 static NSColor *GHex(unsigned int rgb) {
     return [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0
@@ -185,6 +189,77 @@ NSAttributedString *MCGitDiffText(NSData *diff, NSFont *font) {
     return out;
 }
 
+static NSString *MCGitDateText(long long t) {
+    static NSDateFormatter *f;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        f = [NSDateFormatter new];
+        f.dateStyle = NSDateFormatterMediumStyle;
+        f.timeStyle = NSDateFormatterShortStyle;
+    });
+    return [f stringFromDate:[NSDate dateWithTimeIntervalSince1970:(double)t]];
+}
+
+static NSString *MCGitRelativeText(long long t) {
+    return NSFromBytes(Git::relativeTime(t, (long long)NSDate.date.timeIntervalSince1970));
+}
+
+NSAttributedString *MCGitCommitText(NSData *show, NSFont *font) {
+    std::string bytes((const char *)show.bytes, show.length);
+    Git::CommitDetail d;
+    if (!Git::parseShow(bytes, d)) return MCGitDiffText(show, font);
+    AppSettings *cfg = [AppSettings shared];
+    NSColor *plain = [cfg text:Surface::Editor];
+    NSColor *muted = GHex(0x9CA3AF);
+    NSFont *bold = [[NSFontManager sharedFontManager] convertFont:font
+                                                     toHaveTrait:NSBoldFontMask];
+    NSDictionary *label = @{NSFontAttributeName: font, NSForegroundColorAttributeName: muted};
+    NSDictionary *value = @{NSFontAttributeName: font, NSForegroundColorAttributeName: plain};
+    NSMutableAttributedString *out = [NSMutableAttributedString new];
+    void (^add)(NSString *, NSDictionary *) = ^(NSString *s, NSDictionary *a) {
+        [out appendAttributedString:[[NSAttributedString alloc] initWithString:s ?: @""
+                                                                    attributes:a]];
+    };
+    auto line = ^(NSString *name, NSString *text) {
+        add([name stringByPaddingToLength:10 withString:@" " startingAtIndex:0], label);
+        add(text, value);
+        add(@"\n", value);
+    };
+    add(@"commit    ", label);
+    add(NSFromBytes(d.hash), @{NSFontAttributeName: font,
+                               NSForegroundColorAttributeName: GHex(0xE2C08D)});
+    add(@"\n", value);
+    NSMutableArray *parents = [NSMutableArray array];
+    for (const std::string &p : d.parents) [parents addObject:NSFromBytes(Git::shortHash(p))];
+    if (parents.count > 1)
+        line(@"Merge", [parents componentsJoinedByString:@" "]);
+    else if (parents.count == 1)
+        line(@"Parent", parents[0]);
+    line(@"Author", [NSString stringWithFormat:@"%@ <%@>", NSFromBytes(d.author),
+                                               NSFromBytes(d.email)]);
+    if (!d.committer.empty()) line(@"Committer", NSFromBytes(d.committer));
+    line(@"Date", [NSString stringWithFormat:@"%@ (%@)", MCGitDateText(d.time),
+                                             MCGitRelativeText(d.time)]);
+    add(@"\n", value);
+    // The message: its subject bold, the body as written.
+    NSString *msg = NSFromBytes(d.message);
+    NSRange nl = [msg rangeOfString:@"\n"];
+    NSString *subject = nl.location == NSNotFound ? msg : [msg substringToIndex:nl.location];
+    add(subject, @{NSFontAttributeName: bold, NSForegroundColorAttributeName: plain});
+    if (nl.location != NSNotFound) add([msg substringFromIndex:nl.location], value);
+    add(@"\n\n", value);
+    if (parents.count > 1)
+        add(@"Changes against the first parent, which is what the merge brought in.\n\n",
+            label);
+    if (d.patch.empty()) {
+        add(@"No changes in this commit.\n", label);
+    } else {
+        NSData *patch = [NSData dataWithBytes:d.patch.data() length:d.patch.size()];
+        [out appendAttributedString:MCGitDiffText(patch, font)];
+    }
+    return out;
+}
+
 // ------------------------------------------------------------------- rows
 @interface MCGitRow : NSObject
 @property(nonatomic, assign) BOOL header;
@@ -211,8 +286,235 @@ NSAttributedString *MCGitDiffText(NSData *diff, NSFont *font) {
 @property(nonatomic, copy) NSArray<MCGitRow *> *rows;
 @property(nonatomic, copy) NSString *errorText;   // a command failed
 @property(nonatomic, copy) NSString *notice;      // one plain line for the list
+// What the graph needs from the status.
+@property(nonatomic, copy) NSString *headOid;     // nil before the first commit
+@property(nonatomic, copy) NSString *branch;      // nil when detached
+@property(nonatomic, assign) BOOL detached;
+@property(nonatomic, copy) NSString *upstream;    // nil when there is none
+@property(nonatomic, assign) BOOL hasAheadBehind; // false when the upstream is gone
+@property(nonatomic, assign) int ahead, behind;
 @end
 @implementation MCGitSnapshot
+@end
+
+// ------------------------------------------------------------------ graph
+// One load of the commit graph, built off the main thread and not changed
+// after: the commits, their lanes, labels and which ones are not pushed.
+@interface MCGitGraph : NSObject {
+@public
+    std::vector<Git::Commit> commits;
+    std::vector<Git::GraphRow> rows;
+    std::unordered_map<std::string, std::vector<Git::Ref>> labels;
+    Git::Divergence divergence;
+    std::string head;
+    int maxWidth;
+}
+@property(nonatomic, strong) NSData *key;         // what it was built from; same key, same graph
+@property(nonatomic, assign) BOOL hasMore;        // the limit cut the history short
+@property(nonatomic, assign) NSInteger limit;
+@property(nonatomic, copy) NSString *errorText;
+@end
+@implementation MCGitGraph
+@end
+
+static const NSInteger kGraphBatch = 200;
+
+// Lane colors: the first is the accent blue (HEAD's lane is usually first),
+// the rest VS Code's graph colors.
+static NSColor *LaneColor(int i) {
+    static const unsigned int palette[] = {0x59A4F9, 0xFFB000, 0xDC267F, 0x40B0A6,
+                                           0xB66DFF, 0xE0823D, 0x8FCB5A};
+    const int n = sizeof(palette) / sizeof(palette[0]);
+    return GHex(palette[((i % n) + n) % n]);
+}
+
+// The width of one lane: 12 points, narrower when many lanes would take
+// more than two fifths of the row.
+static CGFloat LaneWidth(CGFloat rowWidth, int lanes) {
+    if (lanes <= 0) return 12;
+    return MAX(4.0, MIN(12.0, (rowWidth * 0.4 - 8) / lanes));
+}
+
+// One row of the graph, drawn by hand: its lines and dot, the ref labels as
+// pills, the subject, and an arrow at the right for a commit to push or pull.
+@interface MCGitGraphCell : NSView
+@property(nonatomic, strong) MCGitGraph *graph;
+@property(nonatomic, assign) NSInteger index;     // == commits.size(): the "Show more" row
+@property(nonatomic, strong) NSColor *textColor, *panelColor;
+@end
+@implementation MCGitGraphCell
+- (BOOL)isFlipped { return YES; }
+
+// A label: filled for HEAD's own branch (or a detached HEAD), outlined for
+// the rest, blue for local branches, purple for remote ones, amber for tags.
+static CGFloat DrawPill(const Git::Ref &r, CGFloat x, CGFloat midY, CGFloat maxW) {
+    NSColor *c = r.kind == Git::RefKind::Head     ? GHex(0xEA5C00)
+               : r.kind == Git::RefKind::Remote   ? GHex(0xB180D7)
+               : r.kind == Git::RefKind::Tag      ? GHex(0xE2C08D)
+                                                  : GHex(0x59A4F9);
+    NSString *name = NSFromBytes(r.name);
+    if (r.kind == Git::RefKind::Tag) name = [@"tag " stringByAppendingString:name];
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    NSDictionary *a = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:10 weight:NSFontWeightSemibold],
+        NSForegroundColorAttributeName: r.current ? GHex(0x1E1E1E) : c,
+        NSParagraphStyleAttributeName: ps,
+    };
+    CGFloat textW = MIN(ceil([name sizeWithAttributes:a].width), MAX(0, maxW - 10));
+    if (textW < 12) return 0;
+    NSRect box = NSMakeRect(x, midY - 7, textW + 10, 14);
+    NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(box, 0.5, 0.5)
+                                                      xRadius:6.5 yRadius:6.5];
+    if (r.current) {
+        [c setFill];
+        [p fill];
+    } else {
+        [[c colorWithAlphaComponent:0.14] setFill];
+        [p fill];
+        [[c colorWithAlphaComponent:0.7] setStroke];
+        p.lineWidth = 1;
+        [p stroke];
+    }
+    [name drawWithRect:NSMakeRect(x + 5, midY - 7 + 1, textW, 13)
+               options:NSStringDrawingUsesLineFragmentOrigin |
+                       NSStringDrawingTruncatesLastVisibleLine
+            attributes:a];
+    return box.size.width;
+}
+
+- (void)drawRect:(NSRect)dirty {
+    (void)dirty;
+    MCGitGraph *g = self.graph;
+    if (!g) return;
+    const NSRect b = self.bounds;
+    const CGFloat h = b.size.height, mid = floor(h / 2);
+    NSColor *muted = GHex(0x9CA3AF);
+    if (self.index >= (NSInteger)g->commits.size()) {
+        [[NSString stringWithFormat:@"Show %ld more…", (long)kGraphBatch]
+            drawAtPoint:NSMakePoint(18, 3)
+         withAttributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12],
+                          NSForegroundColorAttributeName: GHex(0x4EA1F7)}];
+        return;
+    }
+    const Git::Commit &c = g->commits[self.index];
+    const Git::GraphRow &row = g->rows[self.index];
+    const bool outgoing = g->divergence.outgoing.count(c.hash) > 0;
+    const bool incoming = g->divergence.incoming.count(c.hash) > 0;
+    const CGFloat lw = LaneWidth(b.size.width, g->maxWidth);
+    auto X = [&](int lane) { return 8 + lane * lw + lw / 2; };
+
+    if (outgoing || incoming) {
+        [[(outgoing ? GHex(0x4EA1F7) : GHex(0x73C991)) colorWithAlphaComponent:0.09] setFill];
+        NSRectFillUsingOperation(b, NSCompositingOperationSourceOver);
+    }
+
+    // Lines: straight down within a lane, curves between lanes, meeting the
+    // dot sideways the way VS Code's graph draws a merge or a branch-off.
+    for (const Git::GraphEdge &e : row.edges) {
+        NSBezierPath *p = [NSBezierPath bezierPath];
+        p.lineWidth = 1.5;
+        p.lineCapStyle = NSLineCapStyleRound;
+        CGFloat x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+        switch (e.kind) {
+        case Git::GraphEdge::Pass: x0 = X(e.from); y0 = 0; x1 = X(e.to); y1 = h; break;
+        case Git::GraphEdge::In: x0 = X(e.from); y0 = 0; x1 = X(row.lane); y1 = mid; break;
+        case Git::GraphEdge::Out: x0 = X(row.lane); y0 = mid; x1 = X(e.to); y1 = h; break;
+        }
+        [p moveToPoint:NSMakePoint(x0, y0)];
+        if (x0 == x1) {
+            [p lineToPoint:NSMakePoint(x1, y1)];
+        } else if (e.kind == Git::GraphEdge::Pass) {
+            [p curveToPoint:NSMakePoint(x1, y1) controlPoint1:NSMakePoint(x0, mid)
+              controlPoint2:NSMakePoint(x1, mid)];
+        } else if (e.kind == Git::GraphEdge::In) {
+            [p curveToPoint:NSMakePoint(x1, y1) controlPoint1:NSMakePoint(x0, y1)
+              controlPoint2:NSMakePoint(x0, y1)];
+        } else {
+            [p curveToPoint:NSMakePoint(x1, y1) controlPoint1:NSMakePoint(x1, y0)
+              controlPoint2:NSMakePoint(x1, y0)];
+        }
+        [LaneColor(e.color) setStroke];
+        [p stroke];
+    }
+
+    // The dot: filled; hollow when not pushed or not pulled yet; a merge has
+    // a hole in the middle; HEAD gets a ring around it.
+    NSColor *dc = LaneColor(row.color);
+    NSColor *bg = self.panelColor ?: GHex(0x252526);
+    const CGFloat cx = X(row.lane);
+    auto circle = [&](CGFloat r) {
+        return [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(cx - r, mid - r, 2 * r, 2 * r)];
+    };
+    const bool merge = c.parents.size() > 1;
+    if (c.hash == g->head) {
+        [bg setFill];
+        [circle(6.5) fill];
+        NSBezierPath *ring = circle(6);
+        ring.lineWidth = 1.3;
+        [dc setStroke];
+        [ring stroke];
+    }
+    [bg setFill];
+    [circle(5) fill];
+    if (outgoing || incoming) {
+        NSBezierPath *ring = circle(3.4);
+        ring.lineWidth = 1.6;
+        [dc setStroke];
+        [ring stroke];
+        if (merge) { [dc setFill]; [circle(1.4) fill]; }
+    } else {
+        [dc setFill];
+        [circle(4) fill];
+        if (merge) { [bg setFill]; [circle(1.6) fill]; }
+    }
+
+    // Labels, then the subject.
+    CGFloat x = 8 + row.width * lw + 6;
+    const CGFloat right = b.size.width - ((outgoing || incoming) ? 20 : 6);
+    auto it = g->labels.find(c.hash);
+    if (it != g->labels.end()) {
+        size_t shown = 0;
+        for (const Git::Ref &r : it->second) {
+            CGFloat room = MIN(120.0, right - x - 40);
+            if (room < 30) break;
+            CGFloat w = DrawPill(r, x, mid, room);
+            if (w <= 0) break;
+            x += w + 4;
+            shown++;
+        }
+        if (shown < it->second.size() && right - x > 20) {
+            NSString *more = [NSString stringWithFormat:@"+%zu", it->second.size() - shown];
+            [more drawAtPoint:NSMakePoint(x, mid - 7)
+               withAttributes:@{NSFontAttributeName: [NSFont systemFontOfSize:10],
+                                NSForegroundColorAttributeName: muted}];
+            x += [more sizeWithAttributes:@{NSFontAttributeName: [NSFont systemFontOfSize:10]}]
+                     .width + 4;
+        }
+    }
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.lineBreakMode = NSLineBreakByTruncatingTail;
+    if (right - x > 8) {
+        [NSFromBytes(c.subject) drawWithRect:NSMakeRect(x, mid - 8, right - x, 17)
+                                     options:NSStringDrawingUsesLineFragmentOrigin |
+                                             NSStringDrawingTruncatesLastVisibleLine
+                                  attributes:@{
+                                      NSFontAttributeName: [NSFont systemFontOfSize:12.5],
+                                      NSForegroundColorAttributeName:
+                                          incoming ? muted : (self.textColor ?: NSColor.textColor),
+                                      NSParagraphStyleAttributeName: ps,
+                                  }];
+    }
+    if (outgoing || incoming) {
+        [(outgoing ? @"↑" : @"↓") drawAtPoint:NSMakePoint(b.size.width - 16, mid - 8)
+                                withAttributes:@{
+                                    NSFontAttributeName: [NSFont systemFontOfSize:12
+                                                                           weight:NSFontWeightSemibold],
+                                    NSForegroundColorAttributeName:
+                                        outgoing ? GHex(0x4EA1F7) : GHex(0x73C991),
+                                }];
+    }
+}
 @end
 
 static NSColor *LetterColor(unichar c, BOOL unmerged) {
@@ -293,8 +595,10 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 @property(nonatomic, copy) void (^onToggle)(NSInteger row);
 @property(nonatomic, copy) void (^onClick)(NSInteger row);
 @property(nonatomic, copy) void (^onTab)(void);
+@property(nonatomic, copy) void (^onBackTab)(void);            // Shift+Tab; else onTab
+@property(nonatomic, copy) void (^onPastEnd)(NSInteger step);  // an arrow off either end
 @property(nonatomic, copy) BOOL (^selectable)(NSInteger row);
-- (void)moveBy:(NSInteger)step;   // to the next file row up or down
+- (BOOL)moveBy:(NSInteger)step;   // to the next file row up or down; NO if none
 @end
 @implementation MCGitTable
 - (void)mouseDown:(NSEvent *)event {
@@ -303,15 +607,16 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     [super mouseDown:event];
     if (row >= 0 && self.onClick && event.clickCount == 1) self.onClick(row);
 }
-- (void)moveBy:(NSInteger)step {
+- (BOOL)moveBy:(NSInteger)step {
     NSInteger n = self.numberOfRows, r = self.selectedRow;
     if (r < 0) r = step > 0 ? -1 : n;
     for (r += step; r >= 0 && r < n; r += step) {
         if (self.selectable && !self.selectable(r)) continue;
         [self selectRowIndexes:[NSIndexSet indexSetWithIndex:r] byExtendingSelection:NO];
         [self scrollRowToVisible:r];
-        return;
+        return YES;
     }
+    return NO;
 }
 - (void)keyDown:(NSEvent *)event {
     NSEventModifierFlags m = event.modifierFlags &
@@ -321,9 +626,16 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     if (!m) {
         if ((c == '\r' || c == 3) && self.onActivate) { self.onActivate(self.selectedRow); return; }
         if (c == ' ' && self.onToggle) { self.onToggle(self.selectedRow); return; }
-        if ((c == '\t' || c == 25) && self.onTab) { self.onTab(); return; }
-        if (c == NSUpArrowFunctionKey) { [self moveBy:-1]; return; }
-        if (c == NSDownArrowFunctionKey) { [self moveBy:1]; return; }
+        if (c == 25 && (self.onBackTab || self.onTab)) {
+            if (self.onBackTab) self.onBackTab(); else self.onTab();
+            return;
+        }
+        if (c == '\t' && self.onTab) { self.onTab(); return; }
+        if (c == NSUpArrowFunctionKey || c == NSDownArrowFunctionKey) {
+            NSInteger step = c == NSUpArrowFunctionKey ? -1 : 1;
+            if (![self moveBy:step] && self.onPastEnd) self.onPastEnd(step);
+            return;
+        }
     }
     [super keyDown:event];
 }
@@ -334,6 +646,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 @interface MCCommitTextView : NSTextView
 @property(nonatomic, copy) void (^onCommit)(void);
 @property(nonatomic, copy) void (^onTab)(void);
+@property(nonatomic, copy) void (^onBackTab)(void);
 @end
 @implementation MCCommitTextView
 - (BOOL)isCommandReturn:(NSEvent *)e {
@@ -354,7 +667,11 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     [super keyDown:e];
 }
 - (void)insertTab:(id)sender { if (self.onTab) self.onTab(); else [super insertTab:sender]; }
-- (void)insertBacktab:(id)sender { if (self.onTab) self.onTab(); else [super insertBacktab:sender]; }
+- (void)insertBacktab:(id)sender {
+    if (self.onBackTab) self.onBackTab();
+    else if (self.onTab) self.onTab();
+    else [super insertBacktab:sender];
+}
 - (void)didChangeText { [super didChangeText]; [self setNeedsDisplay:YES]; }
 - (void)drawRect:(NSRect)dirty {
     [super drawRect:dirty];
@@ -390,6 +707,17 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     MCGitTable *_table;
     NSTextField *_notice;
     NSColor *_text;
+    // The graph, under the change lists.
+    BOOL _graphShown;
+    NSView *_graphLine;               // the rule above its heading
+    NSTextField *_graphHeading;
+    NSButton *_allToggle;
+    NSTextField *_summaryLabel;       // pushed or not, against the upstream
+    NSScrollView *_graphScroll;
+    MCGitTable *_graphTable;
+    MCGitGraph *_graph;
+    NSInteger _graphLimit;
+    NSUInteger _graphGeneration;
 }
 
 - (instancetype)initWithRoot:(NSString *)root {
@@ -397,6 +725,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
         _root = [root copy];
         _queue = dispatch_queue_create("minicode.git", DISPATCH_QUEUE_SERIAL);
         _rows = @[];
+        _graphLimit = kGraphBatch;
         self.wantsLayer = YES;
         [self build];
         [self applySettings];
@@ -436,6 +765,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _message.textContainer.widthTracksTextView = YES;
     _message.onCommit = ^{ [weakSelf commit]; };
     _message.onTab = ^{ [weakSelf focusList]; };
+    _message.onBackTab = ^{ [weakSelf focusGraph]; };
     _messageScroll.documentView = _message;
     [self addSubview:_messageScroll];
 
@@ -471,7 +801,9 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _table.onActivate = ^(NSInteger row) { [weakSelf showDiffAtRow:row]; };
     _table.onClick = ^(NSInteger row) { [weakSelf showDiffAtRow:row]; };
     _table.onToggle = ^(NSInteger row) { [weakSelf toggleStageAtRow:row]; };
-    _table.onTab = ^{ [weakSelf focusMessage]; };
+    _table.onTab = ^{ [weakSelf focusGraph]; };
+    _table.onBackTab = ^{ [weakSelf focusMessage]; };
+    _table.onPastEnd = ^(NSInteger step) { if (step > 0) [weakSelf focusGraph]; };
     _table.selectable = ^BOOL(NSInteger row) { return [weakSelf rowIsFile:row]; };
     _listScroll.documentView = _table;
     [self addSubview:_listScroll];
@@ -481,7 +813,68 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _notice.textColor = GHex(0x9CA3AF);
     _notice.hidden = YES;
     [self addSubview:_notice];
+
+    // The graph: a heading with the "All branches" switch, one line saying
+    // what is pushed, then the commits.
+    _graphLine = [[NSView alloc] initWithFrame:NSZeroRect];
+    _graphLine.wantsLayer = YES;
+    _graphLine.layer.backgroundColor = GHex(0x333333).CGColor;
+    [self addSubview:_graphLine];
+    _graphHeading = [NSTextField labelWithString:@""];
+    _graphHeading.attributedStringValue = [[NSAttributedString alloc]
+        initWithString:@"GRAPH"
+            attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:10
+                                                                weight:NSFontWeightSemibold],
+                         NSForegroundColorAttributeName: GHex(0x9CA3AF),
+                         NSKernAttributeName: @0.6}];
+    [self addSubview:_graphHeading];
+    _allToggle = [NSButton checkboxWithTitle:@"All branches" target:self
+                                      action:@selector(toggleAllBranches:)];
+    _allToggle.controlSize = NSControlSizeSmall;
+    _allToggle.font = [NSFont systemFontOfSize:11];
+    _allToggle.toolTip = @"Show every local and remote branch, not only this branch "
+                          "and its upstream";
+    [self addSubview:_allToggle];
+    _summaryLabel = [NSTextField labelWithString:@""];
+    _summaryLabel.font = [NSFont systemFontOfSize:11];
+    _summaryLabel.textColor = GHex(0x9CA3AF);
+    _summaryLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    [self addSubview:_summaryLabel];
+
+    _graphScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect];
+    _graphScroll.hasVerticalScroller = YES;
+    _graphScroll.autohidesScrollers = YES;
+    _graphScroll.drawsBackground = NO;
+    _graphScroll.automaticallyAdjustsContentInsets = NO;
+    _graphTable = [[MCGitTable alloc] initWithFrame:NSZeroRect];
+    NSTableColumn *gcol = [[NSTableColumn alloc] initWithIdentifier:@"graph"];
+    gcol.resizingMask = NSTableColumnAutoresizingMask;
+    [_graphTable addTableColumn:gcol];
+    _graphTable.headerView = nil;
+    _graphTable.backgroundColor = NSColor.clearColor;
+    _graphTable.rowHeight = 22;
+    _graphTable.intercellSpacing = NSMakeSize(0, 0);
+    _graphTable.columnAutoresizingStyle = NSTableViewLastColumnOnlyAutoresizingStyle;
+    _graphTable.style = NSTableViewStylePlain;
+    _graphTable.dataSource = self;
+    _graphTable.delegate = self;
+    _graphTable.onActivate = ^(NSInteger row) { [weakSelf showCommitAtRow:row]; };
+    _graphTable.onClick = ^(NSInteger row) { [weakSelf showCommitAtRow:row]; };
+    _graphTable.onTab = ^{ [weakSelf focusMessageOrList]; };
+    _graphTable.onBackTab = ^{ [weakSelf focusListFromGraph:YES]; };
+    _graphTable.onPastEnd = ^(NSInteger step) {
+        if (step < 0) [weakSelf focusListFromGraph:NO];
+    };
+    _graphScroll.documentView = _graphTable;
+    [self addSubview:_graphScroll];
+    [self showGraph:NO];
     [self showMessageArea:NO];
+}
+
+- (void)showGraph:(BOOL)show {
+    _graphShown = show;
+    _graphLine.hidden = _graphHeading.hidden = _allToggle.hidden = !show;
+    _summaryLabel.hidden = _graphScroll.hidden = !show;
 }
 
 - (void)applySettings {
@@ -492,7 +885,13 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _message.textColor = _text;
     _message.insertionPointColor = _text;
     _messageScroll.layer.backgroundColor = [cfg background:Surface::Editor].CGColor;
+    _allToggle.contentTintColor = _text;
+    _allToggle.attributedTitle = [[NSAttributedString alloc]
+        initWithString:@"All branches"
+            attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
+                         NSForegroundColorAttributeName: GHex(0x9CA3AF)}];
     [_table reloadData];
+    [_graphTable reloadData];
     [self updateErrorColor];
 }
 
@@ -528,12 +927,37 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
         _errorLabel.frame = NSMakeRect(pad, y, inner, h);
         y += h + 6;
     }
-    _listScroll.frame = NSMakeRect(0, y, W, MAX(0, H - y));
-    [_table sizeLastColumnToFit];
+    CGFloat noticeH = 0;
     if (!_notice.hidden) {
         NSSize fit = [_notice.cell cellSizeForBounds:NSMakeRect(0, 0, inner, 200)];
-        _notice.frame = NSMakeRect(pad, y + 6, inner, ceil(fit.height));
+        noticeH = ceil(fit.height);
+        _notice.frame = NSMakeRect(pad, y + 6, inner, noticeH);
     }
+    if (!_graphShown) {
+        _listScroll.frame = NSMakeRect(0, y, W, MAX(0, H - y));
+        [_table sizeLastColumnToFit];
+        return;
+    }
+    // The change lists take what their rows need, up to about half of what
+    // is left; the graph gets the rest and scrolls.
+    CGFloat content = 0;
+    for (MCGitRow *r in _rows) content += r.header ? 26 : 22;
+    if (noticeH > 0) content = MAX(content, noticeH + 12);
+    const CGFloat headH = 46;
+    CGFloat listH = MIN(content + 4, MAX(70.0, (H - y - headH) * 0.5));
+    _listScroll.frame = NSMakeRect(0, y, W, MAX(0, listH));
+    [_table sizeLastColumnToFit];
+    y += listH + 4;
+    _graphLine.frame = NSMakeRect(0, y, W, 1);
+    y += 6;
+    NSSize tog = _allToggle.fittingSize;
+    _graphHeading.frame = NSMakeRect(pad, y + 2, MAX(0, inner - tog.width - 4), 14);
+    _allToggle.frame = NSMakeRect(W - pad - tog.width, y, tog.width, 18);
+    y += 20;
+    _summaryLabel.frame = NSMakeRect(pad, y, inner, 15);
+    y += 19;
+    _graphScroll.frame = NSMakeRect(0, y, W, MAX(0, H - y));
+    [_graphTable sizeLastColumnToFit];
 }
 
 - (void)setRoot:(NSString *)root {
@@ -541,7 +965,11 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _rows = @[];
     _topLevel = nil;
     _inRepository = NO;
+    _graph = nil;
+    _graphLimit = kGraphBatch;
+    [self showGraph:NO];
     [_table reloadData];
+    [_graphTable reloadData];
     [self setError:nil info:NO];
     [self refresh];
 }
@@ -551,10 +979,15 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     if (self.window) [self refresh];
 }
 
+// Focus order: the change lists, the graph, the message box (Tab), and back
+// (Shift+Tab). With no changes the list is skipped for the graph, since there
+// is nothing to stage or commit.
 - (void)focusList {
     if (_table.selectedRow < 0) [_table moveBy:1];
-    if (_table.selectedRow < 0 && !_messageScroll.hidden) {
-        [self focusMessage];
+    if (_table.selectedRow < 0) {
+        if ([self graphHasRows]) [self focusGraph];
+        else if (!_messageScroll.hidden) [self focusMessage];
+        else [self.window makeFirstResponder:_table];
         return;
     }
     [self.window makeFirstResponder:_table];
@@ -565,7 +998,60 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     [self.window makeFirstResponder:_message];
 }
 
+- (BOOL)graphHasRows { return _graphShown && _graphTable.numberOfRows > 0; }
+
+- (void)focusGraph {
+    if (![self graphHasRows]) { [self focusMessage]; return; }
+    if (_graphTable.selectedRow < 0) {
+        [_graphTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+        [_graphTable scrollRowToVisible:0];
+    }
+    [self.window makeFirstResponder:_graphTable];
+}
+
+// Up from the graph's first row, or Shift+Tab: the last file in the lists.
+// With no changes, Shift+Tab (`wrap`) goes round to the message and Up stays.
+- (void)focusListFromGraph:(BOOL)wrap {
+    if (_table.selectedRow < 0) {
+        for (NSInteger i = (NSInteger)_rows.count - 1; i >= 0; i--) {
+            if (_rows[i].header) continue;
+            [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:i] byExtendingSelection:NO];
+            [_table scrollRowToVisible:i];
+            break;
+        }
+    }
+    if (_table.selectedRow < 0) {
+        if (wrap) [self focusMessage];
+        return;
+    }
+    [self.window makeFirstResponder:_table];
+}
+
+- (void)focusMessageOrList {
+    if (!_messageScroll.hidden) [self focusMessage];
+    else [self focusList];
+}
+
 - (NSTableView *)list { return _table; }
+- (NSTableView *)graphList { return _graphTable; }
+
+- (void)toggleAllBranches:(id)sender {
+    (void)sender;
+    self.allBranches = _allToggle.state == NSControlStateValueOn;
+}
+
+- (void)setAllBranches:(BOOL)all {
+    if (_allBranches == all) return;
+    _allBranches = all;
+    _allToggle.state = all ? NSControlStateValueOn : NSControlStateValueOff;
+    _graphLimit = kGraphBatch;
+    [self runRefresh];
+}
+
+- (void)showMore {
+    _graphLimit += kGraphBatch;
+    [self runRefresh];
+}
 - (NSTextView *)messageView { return _message; }
 - (NSString *)errorLine { return _errorLabel.hidden ? @"" : _errorLabel.stringValue; }
 
@@ -592,16 +1078,130 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     });
 }
 
+// The status first, shown as soon as it is read; then the graph, which on a
+// big history takes longer, and which is rebuilt only when HEAD, the refs,
+// the limit or the "All branches" switch changed.
 - (void)runRefresh {
     NSString *root = self.root;
     if (!root) return;
+    NSUInteger gen = ++_graphGeneration;
+    NSInteger limit = _graphLimit;
+    BOOL all = _allBranches;
+    MCGitGraph *previous = _graph;
     dispatch_async(_queue, ^{
         MCGitSnapshot *snap = [MCGitPanel snapshotAt:root];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (![root isEqualToString:self.root]) return;   // folder changed
             [self applySnapshot:snap];
         });
+        if (!snap.inRepository || snap.initial || !snap.headOid) return;
+        MCGitGraph *graph = [MCGitPanel graphFor:snap limit:limit all:all previous:previous];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (![root isEqualToString:self.root] || gen != self->_graphGeneration) return;
+            [self applyGraph:graph];
+        });
     });
+}
+
++ (MCGitGraph *)graphFor:(MCGitSnapshot *)s limit:(NSInteger)limit all:(BOOL)all
+                previous:(MCGitGraph *)previous {
+    NSString *dir = s.topLevel;
+    BOOL compare = s.upstream.length && s.hasAheadBehind && !s.detached;
+    MCGitResult *refs = MCGitRunSync(dir, @[@"for-each-ref",
+                                            [NSString stringWithFormat:@"--format=%s",
+                                                                       Git::refFormat()],
+                                            @"refs/heads", @"refs/remotes", @"refs/tags"]);
+    // Everything the graph depends on, so an unchanged repository (most
+    // refreshes come from saving a file) costs one for-each-ref.
+    NSMutableData *key = [NSMutableData data];
+    NSString *head = [NSString stringWithFormat:@"%@ %@ %d %ld %d %@\n", s.headOid,
+                                                s.branch ?: @"", compare, (long)limit, all,
+                                                s.upstream ?: @""];
+    [key appendData:[head dataUsingEncoding:NSUTF8StringEncoding]];
+    [key appendData:refs.output];
+    if (previous && [previous.key isEqualToData:key]) return previous;
+
+    MCGitGraph *g = [MCGitGraph new];
+    g.key = key;
+    g.limit = limit;
+    NSMutableArray *args = [@[@"-c", @"log.showSignature=false", @"log", @"-z",
+                              @"--topo-order", @"--no-color",
+                              [NSString stringWithFormat:@"--format=%s", Git::logFormat()],
+                              [NSString stringWithFormat:@"--max-count=%ld", (long)limit]]
+                               mutableCopy];
+    if (all) [args addObjectsFromArray:@[@"--branches", @"--remotes"]];
+    [args addObject:@"HEAD"];
+    if (compare) [args addObject:@"@{upstream}"];
+    [args addObject:@"--"];
+    MCGitResult *log = MCGitRunSync(dir, args);
+    if (!log.ok) {
+        g.errorText = MCGitFailureText(log);
+        return g;
+    }
+    g->commits = Git::parseLog(std::string((const char *)log.output.bytes, log.output.length));
+    g.hasMore = (NSInteger)g->commits.size() >= limit;
+    g->rows = Git::layoutGraph(g->commits);
+    g->maxWidth = 1;
+    for (const Git::GraphRow &r : g->rows) g->maxWidth = std::max(g->maxWidth, r.width);
+    g->head = s.headOid.UTF8String;
+    std::string refBytes((const char *)refs.output.bytes, refs.output.length);
+    g->labels = Git::labelsByCommit(Git::parseRefs(refBytes), g->head,
+                                    s.branch ? std::string(s.branch.UTF8String) : "",
+                                    s.detached);
+    if (compare && (s.ahead || s.behind)) {
+        MCGitResult *lr = MCGitRunSync(dir, @[@"rev-list", @"--left-right",
+                                              @"HEAD...@{upstream}", @"--"]);
+        if (lr.ok)
+            g->divergence = Git::parseLeftRight(
+                std::string((const char *)lr.output.bytes, lr.output.length));
+    }
+    return g;
+}
+
+// What is pushed, in one line over the graph.
+- (NSString *)summaryFor:(MCGitSnapshot *)s {
+    if (s.detached) return @"HEAD is detached, so there is no upstream to compare with.";
+    if (!s.upstream.length)
+        return [NSString stringWithFormat:@"%@ has no upstream, so nothing here is marked "
+                                           "as pushed or not.", s.branch ?: @"This branch"];
+    if (!s.hasAheadBehind)
+        return [NSString stringWithFormat:@"The upstream %@ is gone.", s.upstream];
+    if (!s.ahead && !s.behind)
+        return [NSString stringWithFormat:@"Up to date with %@.", s.upstream];
+    NSMutableArray *parts = [NSMutableArray array];
+    if (s.ahead) [parts addObject:[NSString stringWithFormat:@"↑ %d to push", s.ahead]];
+    if (s.behind) [parts addObject:[NSString stringWithFormat:@"↓ %d to pull", s.behind]];
+    return [NSString stringWithFormat:@"%@, against %@", [parts componentsJoinedByString:@", "],
+                                      s.upstream];
+}
+
+- (void)applyGraph:(MCGitGraph *)g {
+    if (g == _graph) {
+        if (self.onGraphLoaded) self.onGraphLoaded();
+        return;
+    }
+    // Keep the selection on the same commit.
+    std::string was;
+    NSInteger sel = _graphTable.selectedRow;
+    if (_graph && sel >= 0 && sel < (NSInteger)_graph->commits.size())
+        was = _graph->commits[sel].hash;
+    BOOL wasMoreRow = _graph && sel == (NSInteger)_graph->commits.size();
+    _graph = g;
+    [_graphTable reloadData];
+    NSInteger pick = -1;
+    for (size_t i = 0; !was.empty() && i < g->commits.size(); i++)
+        if (g->commits[i].hash == was) { pick = (NSInteger)i; break; }
+    // After "Show more", the first of the new commits.
+    if (pick < 0 && wasMoreRow && sel < (NSInteger)g->commits.size()) pick = sel;
+    if (pick >= 0) {
+        [_graphTable selectRowIndexes:[NSIndexSet indexSetWithIndex:pick]
+                 byExtendingSelection:NO];
+        if (wasMoreRow) [_graphTable scrollRowToVisible:pick];
+    } else {
+        [_graphTable deselectAll:nil];
+    }
+    if (g.errorText.length) [self setError:g.errorText info:NO];
+    if (self.onGraphLoaded) self.onGraphLoaded();
 }
 
 + (MCGitSnapshot *)snapshotAt:(NSString *)root {
@@ -633,6 +1233,13 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     Git::Status status = Git::parseStatus(
         std::string((const char *)st.output.bytes, st.output.length));
     s.initial = status.initial;
+    s.headOid = status.oid.empty() ? nil : NSFromBytes(status.oid);
+    s.branch = status.branch.empty() ? nil : NSFromBytes(status.branch);
+    s.detached = status.detached;
+    s.upstream = status.upstream.empty() ? nil : NSFromBytes(status.upstream);
+    s.hasAheadBehind = status.hasAheadBehind;
+    s.ahead = status.ahead;
+    s.behind = status.behind;
     NSString *branch = NSFromBytes(Git::branchLabel(status));
     if (status.initial) branch = [branch stringByAppendingString:@"  (no commits yet)"];
     s.branchText = branch;
@@ -704,6 +1311,15 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
         [self setError:nil info:NO];
     }
     [_table reloadData];
+    BOOL graph = s.inRepository && !s.initial && s.headOid && !s.errorText.length;
+    [self showGraph:graph];
+    _graphSummary = graph ? [self summaryFor:s] : nil;
+    _summaryLabel.stringValue = _graphSummary ?: @"";
+    _summaryLabel.toolTip = _graphSummary;
+    if (!graph && _graph) {
+        _graph = nil;
+        [_graphTable reloadData];
+    }
 
     NSInteger pick = -1, n = (NSInteger)_rows.count;
     if (was) {
@@ -840,15 +1456,108 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     });
 }
 
+// A commit's header, message and diff (against its first parent for a
+// merge, which is what the merge brought in; git's default for a merge is a
+// combined diff that is usually empty).
+- (void)showCommitAtRow:(NSInteger)row {
+    if (!_graph || row < 0 || !_topLevel) return;
+    if (row >= (NSInteger)_graph->commits.size()) {
+        if (_graph.hasMore) [self showMore];
+        return;
+    }
+    const Git::Commit &c = _graph->commits[row];
+    NSString *hash = NSFromBytes(c.hash);
+    NSString *title = [NSString stringWithFormat:@"%@ %@", NSFromBytes(Git::shortHash(c.hash)),
+                                                 NSFromBytes(c.subject)];
+    NSArray *args = @[@"-c", @"core.quotePath=false", @"show", @"--no-color", @"--no-ext-diff",
+                      @"--src-prefix=a/", @"--dst-prefix=b/", @"-M",
+                      @"--diff-merges=first-parent", @"--stat", @"--patch",
+                      [NSString stringWithFormat:@"--format=%s", Git::showFormat()],
+                      hash, @"--"];
+    NSUInteger gen = ++_diffGeneration;
+    NSString *dir = _topLevel, *root = self.root;
+    dispatch_async(_queue, ^{
+        MCGitResult *res = MCGitRunSync(dir, args);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (gen != self->_diffGeneration || ![root isEqualToString:self.root]) return;
+            if (!res.ok) {
+                [self setError:MCGitFailureText(res) info:NO];
+                return;
+            }
+            if (self.onShowCommit) self.onShowCommit(title, res.output);
+        });
+    });
+}
+
+- (NSArray<NSString *> *)graphDescriptions {
+    NSMutableArray *out = [NSMutableArray array];
+    if (!_graph) return out;
+    for (size_t i = 0; i < _graph->commits.size(); i++) {
+        const Git::Commit &c = _graph->commits[i];
+        NSMutableString *line = [NSMutableString stringWithFormat:@"%@ lane=%d",
+            NSFromBytes(Git::shortHash(c.hash)), _graph->rows[i].lane];
+        if (c.hash == _graph->head) [line appendString:@" head"];
+        if (_graph->divergence.outgoing.count(c.hash)) [line appendString:@" out"];
+        if (_graph->divergence.incoming.count(c.hash)) [line appendString:@" in"];
+        [line appendFormat:@" %@", NSFromBytes(c.subject)];
+        auto it = _graph->labels.find(c.hash);
+        if (it != _graph->labels.end()) {
+            NSMutableArray *names = [NSMutableArray array];
+            for (const Git::Ref &r : it->second)
+                [names addObject:[NSString stringWithFormat:@"%@%@",
+                                  r.current ? @"*" : @"", NSFromBytes(r.name)]];
+            [line appendFormat:@" [%@]", [names componentsJoinedByString:@","]];
+        }
+        [out addObject:line];
+    }
+    if (_graph.hasMore) [out addObject:@"(more)"];
+    return out;
+}
+
+- (NSString *)graphToolTip:(NSInteger)row {
+    if (row >= (NSInteger)_graph->commits.size())
+        return [NSString stringWithFormat:@"Load the next %ld commits", (long)kGraphBatch];
+    const Git::Commit &c = _graph->commits[row];
+    NSMutableString *t = [NSMutableString stringWithFormat:@"%@  %@, %@ (%@)\n%@",
+        NSFromBytes(Git::shortHash(c.hash)), NSFromBytes(c.author), MCGitRelativeText(c.time),
+        MCGitDateText(c.time), NSFromBytes(c.subject)];
+    if (_graph->divergence.outgoing.count(c.hash))
+        [t appendString:@"\nNot pushed yet: on this branch but not its upstream."];
+    if (_graph->divergence.incoming.count(c.hash))
+        [t appendString:@"\nNot pulled yet: on the upstream but not this branch."];
+    auto it = _graph->labels.find(c.hash);
+    if (it != _graph->labels.end()) {
+        NSMutableArray *names = [NSMutableArray array];
+        for (const Git::Ref &r : it->second) [names addObject:NSFromBytes(r.name)];
+        [t appendFormat:@"\n%@", [names componentsJoinedByString:@", "]];
+    }
+    return t;
+}
+
 // ------------------------------------------------------------ table view
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tv {
-    (void)tv;
+    if (tv == _graphTable)
+        return _graph ? (NSInteger)_graph->commits.size() + (_graph.hasMore ? 1 : 0) : 0;
     return (NSInteger)_rows.count;
 }
 
 - (NSView *)tableView:(NSTableView *)tv viewForTableColumn:(NSTableColumn *)col
                   row:(NSInteger)row {
     (void)col;
+    if (tv == _graphTable) {
+        MCGitGraphCell *cell = [tv makeViewWithIdentifier:@"graphcell" owner:self];
+        if (!cell) {
+            cell = [[MCGitGraphCell alloc] initWithFrame:NSMakeRect(0, 0, 200, 22)];
+            cell.identifier = @"graphcell";
+        }
+        cell.graph = _graph;
+        cell.index = row;
+        cell.textColor = _text;
+        cell.panelColor = [[AppSettings shared] background:Surface::Sidebar];
+        cell.toolTip = [self graphToolTip:row];
+        [cell setNeedsDisplay:YES];
+        return cell;
+    }
     MCGitCell *cell = [tv makeViewWithIdentifier:@"gitcell" owner:self];
     if (!cell) {
         cell = [[MCGitCell alloc] initWithFrame:NSMakeRect(0, 0, 200, 22)];
@@ -871,12 +1580,12 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 }
 
 - (BOOL)tableView:(NSTableView *)tv shouldSelectRow:(NSInteger)row {
-    (void)tv;
+    if (tv == _graphTable) return YES;
     return [self rowIsFile:row];
 }
 
 - (CGFloat)tableView:(NSTableView *)tv heightOfRow:(NSInteger)row {
-    (void)tv;
+    if (tv == _graphTable) return 22;
     return _rows[row].header ? 26 : 22;
 }
 
