@@ -9,6 +9,7 @@
 #import "Lsp.h"
 #import "MarkdownImage.h"
 #import "MarkdownEditPanel.h"
+#import "GitPanel.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #include "SyntaxHighlighter.h"
 #include "MarkdownParser.h"
@@ -372,6 +373,13 @@ private:
 @property(nonatomic, copy)   NSString *colorEditPath;
 @property(nonatomic, strong) LspSession *lsp;         // language servers
 @property(nonatomic, strong) NSTextField *lspLabel;   // their status
+@property(nonatomic, strong) MCGitPanel *gitPanel;    // Source Control, in the sidebar's place
+@property(nonatomic, assign) BOOL gitPanelVisible;
+@property(nonatomic, strong) PanelScrollView *diffScroll;   // editor's slot, for a diff
+@property(nonatomic, strong) NSTextView *diffView;
+@property(nonatomic, assign) BOOL isDiff;
+@property(nonatomic, copy)   NSString *diffName;     // for the title
+@property(nonatomic, strong) NSData *diffData;       // re-colored on a settings change
 @end
 
 @implementation EditorController
@@ -654,6 +662,9 @@ private:
     [self.latex applySettings];
     self.imageView.layer.backgroundColor = [cfg background:Surface::Editor].CGColor;
     self.pdfView.backgroundColor = [cfg background:Surface::Editor];
+    self.diffScroll.panelColor = [cfg background:Surface::Editor];
+    if (self.isDiff && self.diffData) [self renderDiff];
+    [self.gitPanel applySettings];
     self.textView.insertionPointColor = [cfg text:Surface::Editor];
     [self recolorEditor];
 
@@ -919,6 +930,14 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                         key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:@"⇧⌘B" label:@"Browser"
                     key2:nil label2:nil state:openOr(self.browserVisible)];
+    [self appendHintsRow:s key:@"⌃⇧G" label:@"Source control"
+                    key2:nil label2:nil state:openOr(self.gitPanelVisible)];
+    if (self.gitPanelVisible) {
+        [self appendHintsRow:s key:@"⏎" label:@"Show the diff"
+                        key2:@"Space" label2:@"Stage or unstage" state:nil];
+        [self appendHintsRow:s key:@"⌘⏎" label:@"Commit (in the message)"
+                        key2:nil label2:nil state:nil];
+    }
     if (self.isMarkdown) {
         [self appendHintsRow:s key:@"⇧⌘P" label:@"Markdown preview"
                         key2:nil label2:nil
@@ -979,8 +998,13 @@ static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hide
     // So does an image, in place of the text view.
     BOOL showImage = showEditor && self.imageView != nil && self.isImage;
     BOOL showPDF = showEditor && self.pdfView != nil && self.isPDF;
+    BOOL showDiff = showEditor && self.diffScroll != nil && self.isDiff;
     self.editorScroll.frame = topRect;
-    self.editorScroll.hidden = !showEditor || showLatex || showImage || showPDF;
+    self.editorScroll.hidden = !showEditor || showLatex || showImage || showPDF || showDiff;
+    if (self.diffScroll) {
+        self.diffScroll.frame = topRect;
+        self.diffScroll.hidden = !showDiff;
+    }
     if (self.pdfView) {
         self.pdfView.frame = topRect;
         self.pdfView.hidden = !showPDF;
@@ -1237,6 +1261,86 @@ static const CGFloat kDividerGrabSlop = 5;
                ofDividerAtIndex:0];
 }
 
+// Ctrl+Shift+G: the Source Control panel takes the file tree's place in the
+// split view, and gives it back when toggled again. The sidebar's width is
+// kept, and a collapsed sidebar opens for it.
+- (void)toggleSourceControl:(id)sender {
+    if (!self.gitPanel) {
+        self.gitPanel = [[MCGitPanel alloc] initWithRoot:_root.path];
+        __weak EditorController *weakSelf = self;
+        self.gitPanel.onShowDiff = ^(NSString *name, NSString *path, NSData *diff) {
+            [weakSelf showDiffNamed:name path:path data:diff];
+        };
+    }
+    NSView *from = self.gitPanelVisible ? self.gitPanel : self.sidebarScroll;
+    NSView *to = self.gitPanelVisible ? self.sidebarScroll : self.gitPanel;
+    to.frame = from.frame;
+    [self.splitView replaceSubview:from with:to];
+    self.gitPanelVisible = !self.gitPanelVisible;
+    if (self.sidebarCollapsed || from.frame.size.width < 1) {
+        self.sidebarCollapsed = NO;
+        [self.splitView setPosition:260 ofDividerAtIndex:0];
+    }
+    if (self.gitPanelVisible) {
+        [self.gitPanel refresh];
+        [self.gitPanel focusList];
+    } else {
+        [self.window makeFirstResponder:self.outline];
+    }
+    if (self.hintsVisible) [self updateHints];
+}
+
+// A file's diff in the editor's slot, read-only and colored, the way an
+// image or a PDF takes it. Opening any file puts the editor back.
+- (void)showDiffNamed:(NSString *)name path:(NSString *)path data:(NSData *)diff {
+    (void)path;
+    if (![self confirmProceedPastUnsavedChanges]) return;
+    [self revealEditor];
+    if (!self.diffScroll) {
+        PanelScrollView *scroll = [[PanelScrollView alloc] init];
+        scroll.hasVerticalScroller = YES;
+        scroll.autohidesScrollers = YES;
+        scroll.automaticallyAdjustsContentInsets = NO;
+        scroll.panelColor = [[AppSettings shared] background:Surface::Editor];
+        NSTextView *tv = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 400, 400)];
+        tv.editable = NO;
+        tv.selectable = YES;
+        tv.richText = YES;
+        tv.drawsBackground = NO;
+        tv.usesFontPanel = NO;
+        tv.usesFindBar = YES;
+        tv.incrementalSearchingEnabled = YES;
+        tv.textContainerInset = NSMakeSize(8, 8);
+        tv.minSize = NSMakeSize(0, 0);
+        tv.maxSize = NSMakeSize(FLT_MAX, FLT_MAX);
+        tv.verticallyResizable = YES;
+        tv.horizontallyResizable = NO;   // long lines wrap, as in the editor
+        tv.autoresizingMask = NSViewWidthSizable;
+        tv.textContainer.widthTracksTextView = YES;
+        scroll.documentView = tv;
+        [self.rightArea addSubview:scroll positioned:NSWindowBelow
+                        relativeTo:self.termDivider];
+        self.diffScroll = scroll;
+        self.diffView = tv;
+    }
+    self.currentPath = nil;   // nothing here is a file to save or reload
+    [self resetViewMode];
+    self.isDiff = YES;
+    self.diffName = name;
+    self.diffData = diff;
+    [self setPlainMessage:@""];   // the hidden text view holds nothing to save
+    [self renderDiff];
+    [self.diffView scrollPoint:NSZeroPoint];
+    [self relayoutRightArea];
+    [self.lsp documentOpened:nil];
+    [self updateTitle];
+}
+
+- (void)renderDiff {
+    NSFont *mono = [NSFont monospacedSystemFontOfSize:12.5 weight:NSFontWeightRegular];
+    [self.diffView.textStorage setAttributedString:MCGitDiffText(self.diffData, mono)];
+}
+
 // Cmd+Shift+. : show or hide dotfiles in the tree (like Finder).
 - (void)toggleHiddenFiles:(id)sender {
     gShowHidden = !gShowHidden;
@@ -1373,6 +1477,8 @@ static const CGFloat kDividerGrabSlop = 5;
 
 // --------------------------------------------------- keyboard focus + switch
 - (void)focusTree:(id)sender {
+    // The sidebar holds the Source Control panel instead: focus its list.
+    if (self.gitPanelVisible) { [self.gitPanel focusList]; return; }
     if (self.outline.selectedRow < 0 && self.outline.numberOfRows > 0)
         [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:0]
                   byExtendingSelection:NO];
@@ -1395,6 +1501,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     (void)stream; (void)n; (void)paths; (void)flags; (void)ids;
     EditorController *self = (__bridge EditorController *)info;
     [self refreshTree:nil];
+    if (self.gitPanelVisible) [self.gitPanel refresh];   // a commit or edit made elsewhere
 }
 
 - (void)startWatching:(NSString *)path {
@@ -1629,6 +1736,10 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     self.textView.editable = NO;
     self.imageView.image = nil;
     self.pdfView.document = nil;
+    self.isDiff = NO;
+    self.diffName = nil;
+    self.diffData = nil;
+    [self.diffView.textStorage setAttributedString:[NSAttributedString new]];
 }
 
 // Formats the system can decode that are worth showing as a picture. SVG is
@@ -1865,6 +1976,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 }
 - (void)windowDidBecomeKey:(NSNotification *)note {
     [self checkExternalChange];
+    if (self.gitPanelVisible) [self.gitPanel refresh];
 }
 
 - (BOOL)canTogglePreview { return self.isMarkdown || self.isLatex; }
@@ -2621,6 +2733,7 @@ static NSColor *ContrastColor(const Rgba &c) {
 
 - (void)updateTitle {
     NSString *name = self.currentPath.lastPathComponent ?: @"MiniCode";
+    if (self.isDiff) name = [NSString stringWithFormat:@"%@ (diff)", self.diffName];
     NSString *flag = self.dirty ? @"● " : @"";
     NSString *mode = (self.canTogglePreview && self.previewMode) ? @"  [Preview]" : @"";
     if (self.isImage)
@@ -2913,6 +3026,7 @@ static NSString *MCMarkdownAnchor(NSString *title) {
         [self relayoutRightArea];
         [self.terminal setDirectory:dir];   // keep terminal cwd in sync
         self.terminal.projectRoot = dir;
+        self.gitPanel.root = dir;           // the panel follows the folder
         [self startWatching:dir];           // watch the new folder
         self.window.title = [NSString stringWithFormat:@"MiniCode — %@",
                              dir.lastPathComponent];

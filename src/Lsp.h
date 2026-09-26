@@ -67,6 +67,14 @@
 @property(nonatomic, readonly) NSString *lastHoverText;
 @end
 
+// Where tools are looked for: PATH, then the package managers' directories
+// (a Finder-launched app gets a short PATH). Also the PATH given to children.
+NSArray<NSString *> *MCSearchDirs(void);
+// A program by name (or path) on those directories, or nil. /usr/bin's
+// developer-tool shims are never run: the real binary is found instead, so
+// a Mac without the command line tools never gets the install dialog.
+NSString *MCFindProgram(NSString *name);
+
 // Stop every server the app started, now: shutdown and exit, then a signal
 // for any that are still running a moment later. For applicationWillTerminate.
 void MCLspTerminateAllServers(void);

@@ -54,7 +54,7 @@ static BOOL IsIdentChar(unichar c) {
 // ------------------------------------------------------ finding a server
 // A Finder-launched app gets a short PATH (/usr/bin:/bin:/usr/sbin:/sbin), so
 // the places package managers put language servers are searched as well.
-static NSArray<NSString *> *MCSearchDirs(void) {
+NSArray<NSString *> *MCSearchDirs(void) {
     NSMutableArray<NSString *> *dirs = [NSMutableArray array];
     NSString *path = NSProcessInfo.processInfo.environment[@"PATH"] ?: @"";
     NSString *home = NSHomeDirectory();
@@ -92,7 +92,7 @@ static NSString *MCDeveloperTool(NSString *name) {
     return nil;
 }
 
-static NSString *MCFindProgram(NSString *name) {
+NSString *MCFindProgram(NSString *name) {
     NSFileManager *fm = [NSFileManager defaultManager];
     if ([name containsString:@"/"]) {
         NSString *p = name.stringByExpandingTildeInPath;
