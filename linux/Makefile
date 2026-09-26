@@ -22,7 +22,8 @@ BIN      := $(BUILD)/minicode
 CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEdit.cpp \
         ../src/Settings.cpp ../src/LineComments.cpp ../src/FolderSearch.cpp \
         ../src/LatexDoc.cpp ../src/SyncTex.cpp \
-        ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp
+        ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp \
+        ../src/GitStatus.cpp ../src/GitGraph.cpp
 
 # GUI sources. Terminal.cpp / Browser.cpp / PdfView.cpp and the LaTeX preview's
 # LatexClick.cpp / Latex.cpp are always listed but compile to nothing unless

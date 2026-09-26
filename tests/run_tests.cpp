@@ -14,6 +14,7 @@
 #include "LspClient.h"
 #include "FolderSearch.h"
 #include "GitStatus.h"
+#include "GitGraph.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -23,6 +24,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <random>
 #include <sstream>
 #include <string>
@@ -4187,6 +4189,359 @@ static void testGitDiff() {
     }
 }
 
+// ---- Git commit graph --------------------------------------------------------
+namespace {
+
+Git::Commit gc(const std::string& hash, std::vector<std::string> parents) {
+    Git::Commit c;
+    c.hash = hash;
+    c.parents = std::move(parents);
+    c.subject = hash;
+    return c;
+}
+
+// A row's lines, sorted, as "I1>0" (in from lane 1 to the dot at 0), "P2>1"
+// (passing from 2 at the top to 1 at the bottom), "O0>1" (out to lane 1).
+std::string edgeText(const Git::GraphRow& r) {
+    std::vector<std::string> v;
+    for (const Git::GraphEdge& e : r.edges) {
+        const char* k = e.kind == Git::GraphEdge::In ? "I"
+                        : e.kind == Git::GraphEdge::Pass ? "P" : "O";
+        v.push_back(k + std::to_string(e.from) + ">" + std::to_string(e.to));
+    }
+    std::sort(v.begin(), v.end());
+    std::string s;
+    for (const std::string& x : v) s += (s.empty() ? "" : " ") + x;
+    return s;
+}
+
+int edgeColor(const Git::GraphRow& r, Git::GraphEdge::Kind k, int from, int to) {
+    for (const Git::GraphEdge& e : r.edges)
+        if (e.kind == k && e.from == from && e.to == to) return e.color;
+    return -1;
+}
+
+// Lines leaving a row at the bottom must be exactly the lines entering the
+// next row at the top, in the same lanes and colors, and lanes must be packed
+// from 0 at both edges. Returns false (and says where) when not.
+bool graphConsistent(const std::vector<Git::GraphRow>& rows) {
+    for (size_t i = 0; i < rows.size(); i++) {
+        std::map<int, int> bottom, top;
+        for (const Git::GraphEdge& e : rows[i].edges) {
+            if (e.kind == Git::GraphEdge::In) continue;
+            if (bottom.count(e.to) && bottom[e.to] != e.color) {
+                std::printf("  row %zu: two colors leave lane %d\n", i, e.to);
+                return false;
+            }
+            bottom[e.to] = e.color;
+        }
+        int n = 0;
+        for (auto& kv : bottom)
+            if (kv.first != n++) { std::printf("  row %zu: bottom not packed\n", i); return false; }
+        if (i + 1 == rows.size()) break;
+        for (const Git::GraphEdge& e : rows[i + 1].edges) {
+            if (e.kind == Git::GraphEdge::Out) continue;
+            if (top.count(e.from) && e.kind == Git::GraphEdge::Pass) {
+                std::printf("  row %zu: lane %d enters twice\n", i + 1, e.from);
+                return false;
+            }
+            top[e.from] = e.color;
+        }
+        if (top != bottom) {
+            std::printf("  rows %zu/%zu: lanes differ at the seam\n", i, i + 1);
+            return false;
+        }
+        const Git::GraphRow& r = rows[i + 1];
+        if (r.lane < 0 || r.lane >= r.width) return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+static void testGitGraph() {
+    using namespace Git;
+
+    GROUP("git:log-parse");
+    {
+        // Bytes as `git log -z --topo-order --format=<logFormat()>` wrote them
+        // (checked against git 2.54): fields NUL-separated, each commit ended
+        // by a NUL, a root commit's parents empty.
+        std::string h1(40, '1'), h2(40, '2'), h3(40, '3');
+        std::string out = h3 + std::string("\0", 1) + h2 + " " + h1 + std::string("\0", 1) +
+                          "Eric" + std::string("\0", 1) + "1790418642" +
+                          std::string("\0", 1) + "Merge branch 'side'" +
+                          std::string("\0", 1) + h1 + std::string("\0\0", 2) +
+                          "T" + std::string("\0", 1) + "1790418600" +
+                          std::string("\0", 1) + "first one" + std::string("\0", 1);
+        std::vector<Commit> cs = parseLog(out);
+        CHECK(cs.size() == 2);
+        CHECK(cs[0].hash == h3 && cs[0].parents.size() == 2 && cs[0].parents[1] == h1);
+        CHECK(cs[0].author == "Eric" && cs[0].time == 1790418642);
+        CHECK(cs[0].subject == "Merge branch 'side'");
+        CHECK(cs[1].parents.empty() && cs[1].subject == "first one");
+        // An empty subject (--allow-empty-message) keeps the fields in step.
+        out = h2 + std::string("\0", 1) + h1 + std::string("\0", 1) + "A" +
+              std::string("\0", 1) + "5" + std::string("\0\0", 2) + h1 +
+              std::string("\0\0", 2) + "B" + std::string("\0", 1) + "4" +
+              std::string("\0", 1) + "root" + std::string("\0", 1);
+        cs = parseLog(out);
+        CHECK(cs.size() == 2 && cs[0].subject.empty() && cs[1].subject == "root");
+        // Output cut off mid-record drops only that record.
+        cs = parseLog(h2 + std::string("\0", 1) + h1 + std::string("\0", 1) + "A");
+        CHECK(cs.empty());
+        CHECK(parseLog("").empty());
+    }
+
+    GROUP("git:refs");
+    {
+        // `git for-each-ref --format=<refFormat()>` in a clone with an
+        // annotated and a lightweight tag (git 2.54).
+        auto line = [](const std::string& obj, const std::string& peeled,
+                       const std::string& name, const std::string& sym) {
+            return obj + std::string("\0", 1) + peeled + std::string("\0", 1) + name +
+                   std::string("\0", 1) + sym + "\n";
+        };
+        std::string a(40, 'a'), b(40, 'b'), t(40, 't');
+        std::string out = line(a, "", "refs/heads/main", "") +
+                          line(b, "", "refs/heads/side", "") +
+                          line(a, "", "refs/remotes/origin/HEAD", "refs/remotes/origin/main") +
+                          line(b, "", "refs/remotes/origin/main", "") +
+                          line(a, "", "refs/stash", "") +
+                          line(a, "", "refs/tags/light", "") +
+                          line(t, b, "refs/tags/v1", "");
+        std::vector<Ref> refs = parseRefs(out);
+        CHECK(refs.size() == 5);
+        CHECK(refs[0].kind == RefKind::Branch && refs[0].name == "main" && refs[0].target == a);
+        CHECK(refs[2].kind == RefKind::Remote && refs[2].name == "origin/main");
+        CHECK(refs[4].kind == RefKind::Tag && refs[4].name == "v1" && refs[4].target == b);
+
+        auto labels = labelsByCommit(refs, a, "main", false);
+        CHECK(labels[a].size() == 2);
+        CHECK(labels[a][0].name == "main" && labels[a][0].current);
+        CHECK(labels[a][1].kind == RefKind::Tag && !labels[a][1].current);
+        // On b: the local branch, then the remote one, then the tag.
+        CHECK(labels[b].size() == 3);
+        CHECK(labels[b][0].name == "side" && !labels[b][0].current);
+        CHECK(labels[b][1].name == "origin/main" && labels[b][2].name == "v1");
+        // Detached at b: a HEAD label first, and no branch is current.
+        labels = labelsByCommit(refs, b, "", true);
+        CHECK(labels[b].size() == 4 && labels[b][0].kind == RefKind::Head &&
+              labels[b][0].current);
+        CHECK(!labels[a][0].current);
+        // Before the first commit there is nothing to label.
+        CHECK(labelsByCommit({}, "", "main", false).empty());
+    }
+
+    GROUP("git:left-right");
+    {
+        // `git rev-list --left-right HEAD...@{u}` after one local commit and
+        // one on the upstream.
+        Divergence d = parseLeftRight("<" + std::string(40, 'a') + "\n>" +
+                                      std::string(40, 'b') + "\n");
+        CHECK(d.outgoing.size() == 1 && d.outgoing.count(std::string(40, 'a')));
+        CHECK(d.incoming.size() == 1 && d.incoming.count(std::string(40, 'b')));
+        CHECK(parseLeftRight("").outgoing.empty());
+    }
+
+    GROUP("git:graph-linear");
+    {
+        std::vector<GraphRow> g = layoutGraph({gc("c", {"b"}), gc("b", {"a"}), gc("a", {})});
+        CHECK(g.size() == 3);
+        CHECK(edgeText(g[0]) == "O0>0");
+        CHECK(edgeText(g[1]) == "I0>0 O0>0");
+        CHECK(edgeText(g[2]) == "I0>0");   // the root ends its lane
+        for (const GraphRow& r : g) CHECK(r.lane == 0 && r.width == 1 && r.color == 0);
+        CHECK(graphConsistent(g));
+        CHECK(layoutGraph({}).empty());
+    }
+
+    GROUP("git:graph-branch-merge");
+    {
+        // git's own topo order for: A; B on main; S on side from A; M merging
+        // side into main (M's parents B, S).
+        std::vector<GraphRow> g = layoutGraph(
+            {gc("M", {"B", "S"}), gc("S", {"A"}), gc("B", {"A"}), gc("A", {})});
+        CHECK(edgeText(g[0]) == "O0>0 O0>1");
+        CHECK(g[0].width == 2);
+        CHECK(g[1].lane == 1 && edgeText(g[1]) == "I1>1 O1>1 P0>0");
+        CHECK(g[2].lane == 0 && edgeText(g[2]) == "I0>0 O0>0 P1>1");
+        // Both lanes meet at A, and the side lane's line keeps its color.
+        CHECK(g[3].lane == 0 && edgeText(g[3]) == "I0>0 I1>0");
+        CHECK(g[0].color == 0 && g[2].color == 0 && g[3].color == 0);
+        CHECK(g[1].color != 0 && edgeColor(g[0], GraphEdge::Out, 0, 1) == g[1].color);
+        CHECK(edgeColor(g[3], GraphEdge::In, 1, 0) == g[1].color);
+        CHECK(g[3].width == 2);
+        CHECK(graphConsistent(g));
+    }
+
+    GROUP("git:graph-octopus");
+    {
+        // `git merge A B C` from main at R: O's parents are A, B, C, and git
+        // lists O C B A R.
+        std::vector<GraphRow> g = layoutGraph({gc("O", {"A", "B", "C"}), gc("C", {"R"}),
+                                               gc("B", {"R"}), gc("A", {"R"}), gc("R", {})});
+        CHECK(edgeText(g[0]) == "O0>0 O0>1 O0>2" && g[0].width == 3);
+        int c0 = edgeColor(g[0], GraphEdge::Out, 0, 0), c1 = edgeColor(g[0], GraphEdge::Out, 0, 1),
+            c2 = edgeColor(g[0], GraphEdge::Out, 0, 2);
+        CHECK(c0 != c1 && c1 != c2 && c0 != c2);
+        CHECK(g[1].lane == 2 && g[1].color == c2);
+        CHECK(edgeText(g[1]) == "I2>2 O2>2 P0>0 P1>1");
+        CHECK(g[2].lane == 1 && edgeText(g[2]) == "I1>1 O1>1 P0>0 P2>2");
+        CHECK(g[3].lane == 0 && edgeText(g[3]) == "I0>0 O0>0 P1>1 P2>2");
+        CHECK(g[4].lane == 0 && edgeText(g[4]) == "I0>0 I1>0 I2>0");
+        CHECK(graphConsistent(g));
+    }
+
+    GROUP("git:graph-several-tips");
+    {
+        // Two branches off X, neither merged: two tips, both meet at X.
+        std::vector<GraphRow> g =
+            layoutGraph({gc("T1", {"X"}), gc("T2", {"X"}), gc("X", {"W"}), gc("W", {})});
+        CHECK(g[0].lane == 0 && edgeText(g[0]) == "O0>0");
+        CHECK(g[1].lane == 1 && g[1].color != g[0].color);
+        CHECK(edgeText(g[1]) == "O1>1 P0>0");   // a tip: no line in from above
+        CHECK(edgeText(g[2]) == "I0>0 I1>0 O0>0" && g[2].width == 2);
+        CHECK(edgeText(g[3]) == "I0>0" && g[3].width == 1);
+        CHECK(graphConsistent(g));
+
+        // Three lanes; the middle one merges into the left one's commit, and
+        // the right lane moves left to close the gap in the same row.
+        g = layoutGraph({gc("a", {"x"}), gc("b", {"x"}), gc("c", {"y"}), gc("x", {"y"}),
+                         gc("y", {})});
+        CHECK(edgeText(g[2]) == "O2>2 P0>0 P1>1");
+        CHECK(edgeText(g[3]) == "I0>0 I1>0 O0>0 P2>1");
+        CHECK(g[3].width == 3);
+        CHECK(edgeColor(g[3], GraphEdge::Pass, 2, 1) == g[2].color);
+        CHECK(edgeText(g[4]) == "I0>0 I1>0");
+        CHECK(graphConsistent(g));
+    }
+
+    GROUP("git:graph-window");
+    {
+        // Parents past the loaded window keep their lines to the bottom.
+        std::vector<GraphRow> g = layoutGraph({gc("M", {"p1", "p2"}), gc("c", {"p1"})});
+        CHECK(edgeText(g[0]) == "O0>0 O0>1");
+        CHECK(g[1].lane == 2 && edgeText(g[1]) == "O2>2 P0>0 P1>1");
+        CHECK(graphConsistent(g));
+        // A merge whose second parent is already some lane's: the line goes
+        // into that lane rather than opening another.
+        g = layoutGraph({gc("t", {"b"}), gc("M", {"a", "b"}), gc("b", {"a"}), gc("a", {})});
+        CHECK(g[1].lane == 1 && edgeText(g[1]) == "O1>0 O1>1 P0>0");
+        CHECK(graphConsistent(g));
+    }
+
+    GROUP("git:graph-roots");
+    {
+        // `git merge --allow-unrelated-histories`: git lists M B A, both roots.
+        std::vector<GraphRow> g = layoutGraph({gc("M", {"A", "B"}), gc("B", {}), gc("A", {})});
+        CHECK(edgeText(g[1]) == "I1>1 P0>0" && g[1].lane == 1);
+        CHECK(edgeText(g[2]) == "I0>0" && g[2].width == 1);
+        // A root in the left lane while a lane to its right carries on: that
+        // lane moves left across the root's row.
+        g = layoutGraph({gc("M", {"A", "B"}), gc("A", {}), gc("B", {})});
+        CHECK(edgeText(g[1]) == "I0>0 P1>0" && g[1].width == 2);
+        CHECK(g[2].lane == 0 && edgeText(g[2]) == "I0>0");
+        CHECK(graphConsistent(g));
+    }
+
+    GROUP("git:graph-random");
+    {
+        // Random histories, created oldest first so reversing them gives a
+        // topological order: the seams between rows must always match.
+        std::mt19937 rng(7);
+        bool ok = true;
+        for (int round = 0; round < 200 && ok; round++) {
+            int n = 1 + (int)(rng() % 60);
+            std::vector<Commit> made;
+            for (int i = 0; i < n; i++) {
+                std::vector<std::string> ps;
+                int np = i == 0 ? 0 : (int)(rng() % 10 < 1 ? 0 : rng() % 10 < 7 ? 1
+                                            : rng() % 4 == 0 ? 3 : 2);
+                for (int k = 0; k < np; k++) {
+                    std::string p = "c" + std::to_string(rng() % i);
+                    if (std::find(ps.begin(), ps.end(), p) == ps.end()) ps.push_back(p);
+                }
+                made.push_back(gc("c" + std::to_string(i), ps));
+            }
+            std::reverse(made.begin(), made.end());
+            // Sometimes only a window of it, so parents are missing.
+            if (rng() % 3 == 0) made.resize(1 + rng() % made.size());
+            std::vector<GraphRow> g = layoutGraph(made);
+            ok = g.size() == made.size() && graphConsistent(g);
+            for (size_t i = 0; ok && i < made.size(); i++) {
+                int outs = 0;
+                for (const GraphEdge& e : g[i].edges) outs += e.kind == GraphEdge::Out;
+                ok = outs == (int)made[i].parents.size();
+            }
+        }
+        CHECK(ok);
+    }
+
+    GROUP("git:graph-speed");
+    {
+        // 100,000 commits with a merge every tenth: the layout is linear.
+        std::vector<Commit> big;
+        const int N = 100000;
+        for (int i = N - 1; i >= 0; i--) {
+            std::vector<std::string> ps;
+            if (i > 0) ps.push_back("h" + std::to_string(i - 1));
+            if (i > 10 && i % 10 == 0) ps.push_back("h" + std::to_string(i - 7));
+            big.push_back(gc("h" + std::to_string(i), ps));
+        }
+        auto t0 = std::chrono::steady_clock::now();
+        std::vector<GraphRow> g = layoutGraph(big);
+        double ms = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - t0).count();
+        std::printf("  graph layout: %d commits in %.1f ms\n", N, ms);
+        CHECK(g.size() == (size_t)N && graphConsistent(g));
+    }
+
+    GROUP("git:show-parse");
+    {
+        // `git show --format=<showFormat()> --stat --patch` (git 2.54): the
+        // fields, a newline, "---" before the stat, then the diff.
+        std::string z("\0", 1), h(40, 'a'), p(40, 'b');
+        std::string out = h + z + p + z + "Eric" + z + "e@x" + z + "1790418654" + z + "Eric" +
+                          z + "e@x" + z + "Subject line\n\nBody text.\n" + z +
+                          "\n---\n a | 1 +\n 1 file changed, 1 insertion(+)\n\n"
+                          "diff --git a/a b/a\n";
+        CommitDetail d;
+        CHECK(parseShow(out, d));
+        CHECK(d.hash == h && d.parents.size() == 1 && d.parents[0] == p);
+        CHECK(d.author == "Eric" && d.email == "e@x" && d.time == 1790418654);
+        CHECK(d.committer.empty());
+        CHECK(d.message == "Subject line\n\nBody text.");
+        CHECK(d.patch.rfind(" a | 1 +", 0) == 0);
+        CHECK(d.patch.find("diff --git a/a b/a\n") != std::string::npos);
+        // A different committer is kept; a root merge-less commit has no
+        // parents; a missing field fails.
+        out = h + z + z + "A" + z + "a@x" + z + "5" + z + "C" + z + "c@x" + z + "m" + z + "\n";
+        CHECK(parseShow(out, d) && d.parents.empty() && d.committer == "C <c@x>");
+        CHECK(d.patch.empty());
+        CHECK(!parseShow("fatal: bad object", d));
+    }
+
+    GROUP("git:relative-time");
+    {
+        const long long now = 1790418654, M = 60, H = 3600, D = 86400;
+        CHECK(relativeTime(now, now) == "just now");
+        CHECK(relativeTime(now + 500, now) == "just now");
+        CHECK(relativeTime(now - 70, now) == "a minute ago");
+        CHECK(relativeTime(now - 5 * M, now) == "5 minutes ago");
+        CHECK(relativeTime(now - 70 * M, now) == "an hour ago");
+        CHECK(relativeTime(now - 3 * H, now) == "3 hours ago");
+        CHECK(relativeTime(now - 26 * H, now) == "yesterday");
+        CHECK(relativeTime(now - 3 * D, now) == "3 days ago");
+        CHECK(relativeTime(now - 8 * D, now) == "1 week ago");
+        CHECK(relativeTime(now - 20 * D, now) == "3 weeks ago");
+        CHECK(relativeTime(now - 65 * D, now) == "2 months ago");
+        CHECK(relativeTime(now - 400 * D, now) == "1 year ago");
+        CHECK(relativeTime(now - 3 * 365 * D, now) == "3 years ago");
+        CHECK(shortHash(std::string(40, 'f')) == "fffffff" && shortHash("ab") == "ab");
+    }
+}
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
@@ -4213,6 +4568,7 @@ int main() {
     testFolderSearch();
     testGitStatus();
     testGitDiff();
+    testGitGraph();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
