@@ -57,6 +57,14 @@
         android:layout_weight="1"
         android:background="#252526" />
 
+    <!-- Source control, in the file list's place (GitPanel.kt): leader V. -->
+    <org.minicode.editor.GitPanel
+        android:id="@+id/gitPanel"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:visibility="gone" />
+
     <org.minicode.editor.CodeEditText
         android:id="@+id/editor"
         android:layout_width="match_parent"
@@ -109,6 +117,15 @@
             android:lineSpacingMultiplier="1.15"
             android:textIsSelectable="true" />
     </ScrollView>
+
+    <!-- A diff or a commit from the source control panel, in the editor's
+         place: a line per row, so only what is on screen is laid out. -->
+    <org.minicode.editor.DiffView
+        android:id="@+id/diffView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:visibility="gone" />
 
     <!-- The LaTeX preview: typeset in Termux, every page, double tap to edit
          (LatexPreview.kt). -->

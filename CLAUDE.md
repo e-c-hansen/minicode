@@ -116,14 +116,15 @@ isolation. Keep them dependency-free.
   staged and unstaged letters, untracked, conflict); `git diff` -> every
   line with a kind (file header, hunk header, context, added, removed, "\ No
   newline") and its old/new line numbers, also grouped into files and hunks.
-  Combined diffs (`diff --cc`, a conflict) are understood. The Mac and the
-  GTK port use it; Android does not yet.
+  Combined diffs (`diff --cc`, a conflict) are understood. The Mac, the
+  GTK port and Android use it.
 - `src/GitGraph.{h,cpp}` — the commit graph, also reading only: `git log
   -z --topo-order` records, `for-each-ref` refs (tags peeled, symrefs such
   as origin/HEAD dropped) grouped into labels per commit, `rev-list
   --left-right` into outgoing and incoming sets, `git show` into a header
   and patch, relative dates, and `layoutGraph`, the lane assignment (see
-  "Git panel"). The GTK port's panel uses it too.
+  "Git panel"). The GTK port's panel uses it too, and so does Android's,
+  which also compiles `linux/src/GitModel.cpp` (it has no GTK in it).
 
 The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 
@@ -473,6 +474,16 @@ never closes.
   "Git panel" below and `linux/HANDOFF.md` item 10). Checked in the Docker
   container with real X keys and clicks; the ThinkPad has not seen it.
   Find Previous moved from Ctrl+Shift+G to Shift+F3 there.
+- **Git panel (Android), 2026-09-26, on a branch, not merged**: the same
+  panel and graph in the file list's place (leader V, Ctrl+Shift+G on a USB
+  keyboard), git run in Termux through one long-lived bash loop, over the
+  core and `linux/src/GitModel` through `git_jni.cpp`. Checked on the Titan
+  2 with injected keys and taps against scratch repositories in
+  `/sdcard/mc-test/gitpanel-test` (deleted afterwards); see
+  `android/README.md`, "Source control". Needs a person: the leader key
+  itself (403) and real typing in the message box, which injection cannot
+  show. The same branch fixed Back on Android 16, which left the app from
+  any pane (`onBackPressed` is never called for an app targeting API 36).
 - **Markdown preview** (Mac and Linux, not Android): links, pictures with
   GIFs playing, real tables, Shift+Cmd+P / Ctrl+Shift+P keeping the place,
   and double-click editing of a block in a popover. Details under
@@ -565,7 +576,7 @@ edit, and a PDF would show only its first page.
 
 ## Git panel
 
-Mac and Linux. What follows is the Mac's; the GTK port
+Mac, Linux and Android. What follows is the Mac's; the GTK port
 (`linux/src/GitPanel.{h,cpp}` over `linux/src/GitModel.{h,cpp}`, the latter
 plain C++ and tested) follows the same rules, commands, wording, colors and
 keys, with Ctrl+Return to commit, and its differences are in
@@ -578,6 +589,16 @@ a folder the tree never opened waits for focus or a save). Find Previous
 there is Shift+F3, since Ctrl+Shift+G is the panel, and while the terminal
 has the keyboard Ctrl+Shift+G is the shell's. `G_MESSAGES_DEBUG=minicode-git`
 logs every refresh, row and action.
+
+Android has it too (`GitPanel.kt` over `git_jni.cpp`, which exposes the
+core and `linux/src/GitModel`): the same commands and wording, in the file
+list's place on leader V, with git run in Termux, so only projects in
+shared storage. Its differences (a bash loop in Termux in place of a
+process per command, `-c safe.directory` on every command, Up and Down in
+place of Tab, + and − buttons for touch, and a diff view with a row per
+line) are in `android/README.md`, "Source control".
+`adb shell setprop log.tag.MiniCodeGit DEBUG` logs every command, refresh,
+row and timing.
 
 Ctrl+Shift+G (`toggleSourceControl:`, View menu) swaps the file tree for
 `MCGitPanel` with `NSSplitView replaceSubview:with:`, same frame, so the
@@ -879,6 +900,29 @@ the file map; what belongs here is what it cost to learn:
   the socket. Listen on 127.0.0.1 by name: `getLoopbackAddress()` is ::1
   on Android and bash's connect is refused. Only files in shared storage
   get a server, since Termux cannot see anything else.
+- **Git runs in Termux too, but through one bash loop per panel**, not a
+  RUN_COMMAND per command (`GitRunner.kt`): requests are NUL-separated
+  fields that bash reads with `read -r -d ''` into an array, so no path or
+  commit message is ever shell text. Termux's user owns nothing in shared
+  storage, so every command carries `-c safe.directory=<top level>`; the
+  first one retries with the path from git's "dubious ownership" message.
+  Never write a safe.directory into any config.
+- **Back on Android 16** reaches an app that targets API 36 only through
+  the OnBackPressedDispatcher; the old `onBackPressed` override was never
+  called, and Back left the app from every pane.
+- **A focusable ViewGroup gets a grey veil** when it has focus and no
+  focused look of its own (Android's default focus highlight). The git
+  panel holds the keyboard itself, so it sets
+  `defaultFocusHighlightEnabled = false`. The title bar's ⋮ and ↑ are not
+  focusable any more: ⋮ took the keyboard when panes were swapped, and the
+  next Space opened the menu.
+- **A TextView is no place for a long diff**: 500 KB took seconds to lay
+  out with the window frozen. `DiffView` is a RecyclerView with a row per
+  line.
+- **`adb shell input text` shuffles letters** in the phone's text fields
+  ("Second" arrived as "Scond" and "Scceond"), in the editor as much as the
+  commit box. It is the injection racing the keyboard app; real typing
+  needs a person to check.
 - **Toolchain:** Gradle 8.14.3 via the wrapper (9.7 drops an API the Android
   plugin uses) and JDK 21 (Gradle 8 refuses 27). The SDK and NDK are about
   3.6 GB, installed with `sdkmanager`, no Android Studio.
@@ -1274,9 +1318,9 @@ holds, these give real runtime evidence rather than compile-only evidence:
 ## What's next
 
 See `ROADMAP.md`. Waiting on the user: trying the Mac git panel before a
-release, and the Linux one on the ThinkPad. Candidates, none started: the
-git panel on Android (the core and `linux/src/GitModel` are portable); the
-Markdown preview's links, tables, pictures and editing on Android; a gap
+release, the Linux one on the ThinkPad, and the Android one on the phone
+(the leader key and real typing). Candidates, none started: the Markdown
+preview's links, tables, pictures and editing on Android; a gap
 between a paragraph and a list that follows it in the preview (the parser
 emits none); Android project
 search and comment toggling;

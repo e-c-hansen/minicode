@@ -65,11 +65,16 @@ class MainActivity : AppCompatActivity() {
         // unsaved and typeset again like any other edit.
         ui.latex.onEdit = { start, end, text -> ui.editor.text?.replace(start, end, text) }
 
+        onBackPressedDispatcher.addCallback(this, back)
         TerminalKeys.fill(ui.termKeyRow, ui.terminal)
         ui.fileList.layoutManager = LinearLayoutManager(this)
         ui.fileList.adapter = files
         ui.up.setOnClickListener { goUp() }
         ui.menu.setOnClickListener { showMenu() }
+        // Touch targets only. Focusable, ⋮ took the keyboard whenever a pane
+        // was swapped under it, and the next Space opened the menu.
+        ui.up.isFocusable = false
+        ui.menu.isFocusable = false
 
         // Tapping a file reference or URL in the terminal opens it. Relative
         // paths are tried in the shell's folder, then the open one, then the
@@ -78,6 +83,11 @@ class MainActivity : AppCompatActivity() {
             listOfNotNull(shellFolder, folderPath()?.path, filesDir.absolutePath).distinct()
         }
         ui.terminal.onLink = ::openTerminalLink
+
+        // Source control takes the file list's place (leader V); a diff or a
+        // commit it shows takes the editor's.
+        ui.gitPanel.folder = ::gitFolder
+        ui.gitPanel.onShow = ::showDiff
 
         ui.editor.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -125,6 +135,8 @@ class MainActivity : AppCompatActivity() {
         folder = tree
         followFolder()
         list(tree)
+        sidebarIsGit = false
+        ui.gitPanel.folderChanged()
         showList(true)
     }
 
@@ -137,6 +149,8 @@ class MainActivity : AppCompatActivity() {
         folder = tree
         followFolder()
         list(tree)
+        sidebarIsGit = false
+        ui.gitPanel.folderChanged()
         showList(true)
     }
 
@@ -149,8 +163,11 @@ class MainActivity : AppCompatActivity() {
      * provider (Google Drive and the like) has no path at all, so the
      * terminal cannot follow it there.
      */
-    private fun folderPath(): File? {
-        val tree = current ?: folder ?: return null
+    private fun folderPath(): File? = pathOf(current ?: folder)
+
+    /** A folder's path, when it has one; see folderPath. */
+    private fun pathOf(tree: DocumentFile?): File? {
+        tree ?: return null
         val uri = tree.uri
         if (uri.scheme == "file") return uri.path?.let(::File)
         if (uri.authority != "com.android.externalstorage.documents") return null
@@ -165,6 +182,19 @@ class MainActivity : AppCompatActivity() {
             android.os.Environment.getExternalStorageDirectory().path
         else "/storage/$volume"
         return File(if (rest.isEmpty()) root else "$root/$rest")
+    }
+
+    /**
+     * The project for the source control panel, as a path Termux can use,
+     * or null with the reason. Git runs in Termux, which sees shared storage
+     * and nothing else, so a folder from the picker counts when it is on the
+     * phone's storage, whether or not MiniCode itself may read paths there.
+     */
+    private fun gitFolder(): Pair<File?, String?> {
+        if (folder == null) return null to "Open a folder first: leader O, Phone storage."
+        val path = pathOf(folder)
+        if (path == null || !Termux.isShared(path)) return null to GitPanel.NOT_SHARED
+        return path to null
     }
 
     private fun canReachPaths() =
@@ -264,6 +294,8 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (ui.terminal.isRunning && shellFolder == null && canReachPaths()) followFolder()
+        // Back from Termux, where a commit may have been made.
+        ui.gitPanel.refresh()
     }
 
     private fun askForPathAccess() {
@@ -376,6 +408,7 @@ class MainActivity : AppCompatActivity() {
         if (!entry.name.orEmpty().lowercase().endsWith(".pdf")) pdfPages = 0
         mediaSize = "${bitmap.width} × ${bitmap.height}"
         showingMedia = true
+        showingDiff = false
         previewing = false
         ui.latex.close()
         dirty = false
@@ -425,6 +458,7 @@ class MainActivity : AppCompatActivity() {
     private fun openFile(file: DocumentFile, text: String) {
         currentFile = file
         showingMedia = false
+        showingDiff = false
         ui.media.setImageDrawable(null)
         highlighting = true
         ui.editor.setText(text)
@@ -465,7 +499,7 @@ class MainActivity : AppCompatActivity() {
     private fun renderPreview() {
         val name = currentFile?.name
         val showPreview = previewing && isPreviewable(name) &&
-                ui.fileList.visibility != View.VISIBLE && !terminalShowing
+                !sidebarShowing() && !terminalShowing
         ui.previewScroll.visibility =
             if (showPreview && isMarkdown(name)) View.VISIBLE else View.GONE
         ui.latex.visibility =
@@ -476,7 +510,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         if (!showPreview) {
-            if (!terminalShowing && ui.fileList.visibility != View.VISIBLE) {
+            if (!terminalShowing && !sidebarShowing() && !showingDiff) {
                 ui.editor.visibility = View.VISIBLE
             }
             return
@@ -533,6 +567,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         lsp.shutdown()
+        ui.gitPanel.shutdown()
         super.onDestroy()
     }
 
@@ -571,35 +606,98 @@ class MainActivity : AppCompatActivity() {
         updateTitle()
         if (LatexPreview.isLatex(file.name)) ui.latex.typesetNow()
         lsp.saved()
+        ui.gitPanel.refresh()
         return true
     }
 
     private fun showList(show: Boolean) {
         if (show) { terminalShowing = false; browserShowing = false }
         ui.browser.visibility = View.GONE
-        ui.fileList.visibility = if (show) View.VISIBLE else View.GONE
+        ui.fileList.visibility = if (show && !sidebarIsGit) View.VISIBLE else View.GONE
+        ui.gitPanel.visibility = if (show && sidebarIsGit) View.VISIBLE else View.GONE
+        setGitActive(show && sidebarIsGit)
         ui.terminal.visibility = View.GONE; ui.termKeys.visibility = View.GONE
-        val preview = !show && previewing && isPreviewable(currentFile?.name)
-        val media = !show && showingMedia
+        val diff = !show && showingDiff
+        ui.diffView.visibility = if (diff) View.VISIBLE else View.GONE
+        val preview = !diff && !show && previewing && isPreviewable(currentFile?.name)
+        val media = !diff && !show && showingMedia
         val pane = previewPane(currentFile?.name)
         ui.previewScroll.visibility =
             if (preview && pane == ui.previewScroll) View.VISIBLE else View.GONE
         ui.latex.visibility = if (preview && pane == ui.latex) View.VISIBLE else View.GONE
         ui.media.visibility = if (media) View.VISIBLE else View.GONE
         ui.editor.visibility =
-            if (show || preview || media) View.GONE else View.VISIBLE
+            if (show || preview || media || diff) View.GONE else View.VISIBLE
         ui.up.visibility =
-            if (show && current?.uri != folder?.uri) View.VISIBLE else View.GONE
-        if (!show) ui.editor.requestFocus()
+            if (show && !sidebarIsGit && current?.uri != folder?.uri) View.VISIBLE else View.GONE
+        if (!show) (if (diff) ui.diffView else ui.editor).let { v -> v.requestFocus(); v.post { v.requestFocus() } }
+        else if (sidebarIsGit) ui.gitPanel.focusPanel()
         updateTitle()
     }
+
+    /** The file list or the source control panel, whichever is up. */
+    private fun sidebarShowing() =
+        ui.fileList.visibility == View.VISIBLE || ui.gitPanel.visibility == View.VISIBLE
+
+    /** Which of the two the sidebar shows; leader V switches. */
+    private var sidebarIsGit = false
+    private var gitActive = false
+
+    private fun setGitActive(on: Boolean) {
+        if (on == gitActive) return
+        gitActive = on
+        ui.gitPanel.setActive(on)
+    }
+
+    /**
+     * Leader V (Ctrl+Shift+G on a USB keyboard, as on the Mac and Linux):
+     * the source control panel in the file list's place, and the file list
+     * back when it is already up.
+     */
+    private fun toggleSourceControl() {
+        sidebarIsGit = ui.gitPanel.visibility != View.VISIBLE
+        showList(true)
+    }
+
+    /**
+     * A diff or a commit from the source control panel, in the editor's
+     * place, as on the Mac: whatever was open is closed first (asking about
+     * unsaved changes), and nothing here can be saved. Opening any file
+     * puts the editor back.
+     */
+    private fun showDiff(title: String, text: List<CharSequence>) {
+        confirmLeave {
+            currentFile = null
+            dirty = false
+            showingMedia = false
+            ui.media.setImageDrawable(null)
+            previewing = false
+            ui.latex.close()
+            highlighting = true
+            ui.editor.setText("")
+            highlighting = false
+            lsp.opened(null, folder)
+            showingDiff = true
+            diffTitle = title
+            ui.diffView.show(text)
+            showList(false)
+        }
+    }
+
+    private var showingDiff = false
+    private var diffTitle = ""
 
     /** One line of chrome: the folder while listing, the file while editing. */
     private fun updateTitle() {
         val waiting = if (leaderArmed) "  …" else ""
         if (terminalShowing) { ui.title.text = "Terminal"; return }
         if (browserShowing) { ui.title.text = "Browser"; return }
+        if (ui.gitPanel.visibility == View.VISIBLE) {
+            ui.title.text = "Source Control" + waiting
+            return
+        }
         val showingList = ui.fileList.visibility == View.VISIBLE
+        if (!showingList && showingDiff) { ui.title.text = diffTitle + waiting; return }
         val name = if (showingList) (current?.name ?: folder?.name ?: "MiniCode")
                    else (currentFile?.name ?: "MiniCode")
         val mark = if (!showingList && dirty) "● " else ""
@@ -647,6 +745,13 @@ class MainActivity : AppCompatActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+    /** Leader F: the file list, or the editor when the list is up. */
+    private fun showFiles() {
+        if (ui.fileList.visibility == View.VISIBLE) { showList(false); return }
+        sidebarIsGit = false
+        showList(true)
+    }
+
     private val debuggable by lazy {
         applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
     }
@@ -668,7 +773,7 @@ class MainActivity : AppCompatActivity() {
             whenWindowCloses = null
             leaderArmed = false
             updateTitle()
-            showList(ui.fileList.visibility != View.VISIBLE)
+            showList(!sidebarShowing())
         }
         whenWindowCloses = close
         ui.title.postDelayed(close, LEADER_WINDOW)
@@ -692,6 +797,13 @@ class MainActivity : AppCompatActivity() {
         // A letter with no shortcut is typed as usual, and it ends the wait,
         // so the pane does not switch under it a moment later.
         cancelLeader()
+        // The leader then Enter commits, from anywhere in the source control
+        // panel: the phone has no Ctrl for Ctrl+Enter.
+        if (letter == '\n' || letter == '\r') {
+            if (ui.gitPanel.visibility != View.VISIBLE) return false
+            ui.gitPanel.commit()
+            return true
+        }
         val action = leaderActions()[letter.lowercaseChar()] ?: return false
         action()
         return true
@@ -715,7 +827,9 @@ class MainActivity : AppCompatActivity() {
      */
     private fun leaderActions(): Map<Char, () -> Unit> = mapOf(
         's' to { save() },
-        'f' to { showList(ui.fileList.visibility != View.VISIBLE) },
+        'f' to { showFiles() },
+        // V for version control: G was already go-to-definition.
+        'v' to { toggleSourceControl() },
         'p' to { togglePreview() },
         't' to { toggleTerminal() },
         // B is the browser, as Shift+Cmd+B is on the Mac.
@@ -735,7 +849,6 @@ class MainActivity : AppCompatActivity() {
     )
 
     private fun handleShortcut(event: KeyEvent): Boolean {
-        val swap = { showList(ui.fileList.visibility != View.VISIBLE) }
         val letters = leaderActions()
         val actions = mapOf(
             KeyEvent.KEYCODE_S to letters.getValue('s'),
@@ -773,6 +886,12 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
         }
+        // Ctrl+Shift+G is source control on the Mac and Linux.
+        if (event.isCtrlPressed && event.isShiftPressed && event.keyCode == KeyEvent.KEYCODE_G) {
+            handled.add(event.keyCode)
+            toggleSourceControl()
+            return true
+        }
         val act = when {
             event.isCtrlPressed -> actions[event.keyCode] ?: return false
             else -> return false
@@ -791,12 +910,12 @@ class MainActivity : AppCompatActivity() {
     private fun showMenu() {
         val items = arrayOf("Save", "Files or editor", "Markdown preview",
                             "Terminal", "Browser", "Open a folder", "Text size",
-                            "Shortcuts", "Termux tools")
+                            "Shortcuts", "Termux tools", "Source control")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> save()
-                    1 -> showList(ui.fileList.visibility != View.VISIBLE)
+                    1 -> showFiles()
                     2 -> togglePreview()
                     3 -> toggleTerminal()
                     4 -> toggleBrowser()
@@ -804,6 +923,7 @@ class MainActivity : AppCompatActivity() {
                     6 -> chooseTextSize()
                     7 -> showShortcuts()
                     8 -> termuxSetup()
+                    9 -> toggleSourceControl()
                 }
             }
             .show()
@@ -819,6 +939,9 @@ class MainActivity : AppCompatActivity() {
             terminalShowing = false
             ui.terminal.visibility = View.GONE; ui.termKeys.visibility = View.GONE
             ui.fileList.visibility = View.GONE
+            ui.gitPanel.visibility = View.GONE
+            setGitActive(false)
+            ui.diffView.visibility = View.GONE
             ui.editor.visibility = View.GONE
             ui.previewScroll.visibility = View.GONE
             ui.latex.visibility = View.GONE
@@ -837,7 +960,7 @@ class MainActivity : AppCompatActivity() {
             ui.url.requestFocus()
         } else {
             ui.browser.visibility = View.GONE
-            showList(currentFile == null)
+            showList(currentFile == null && !showingDiff)
         }
         updateTitle()
     }
@@ -857,15 +980,30 @@ class MainActivity : AppCompatActivity() {
         ui.web.requestFocus()
     }
 
-    /** Back walks the web history first, then closes whatever pane is up. */
-    @Suppress("DEPRECATION")
-    override fun onBackPressed() {
-        when {
-            browserShowing && ui.web.canGoBack() -> ui.web.goBack()
-            browserShowing -> toggleBrowser()
-            terminalShowing -> toggleTerminal()
-            ui.fileList.visibility != View.VISIBLE -> showList(true)
-            else -> super.onBackPressed()
+    /**
+     * Back walks the web history first, then closes whatever pane is up.
+     *
+     * Through the dispatcher rather than onBackPressed: on Android 16 an app
+     * that targets API 36 never gets onBackPressed (predictive back), so the
+     * old override left the app on the first press of Back from any pane.
+     * With nothing left to close, the callback steps aside and Back does
+     * what it does everywhere else.
+     */
+    private val back = object : androidx.activity.OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+            when {
+                browserShowing && ui.web.canGoBack() -> ui.web.goBack()
+                browserShowing -> toggleBrowser()
+                terminalShowing -> toggleTerminal()
+                !sidebarShowing() -> showList(true)
+                // Back from source control is the file list, as V is.
+                ui.gitPanel.visibility == View.VISIBLE -> toggleSourceControl()
+                else -> {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                    isEnabled = true
+                }
+            }
         }
     }
 
@@ -882,6 +1020,9 @@ class MainActivity : AppCompatActivity() {
         terminalShowing = !terminalShowing
         if (terminalShowing) {
             ui.fileList.visibility = View.GONE
+            ui.gitPanel.visibility = View.GONE
+            setGitActive(false)
+            ui.diffView.visibility = View.GONE
             ui.editor.visibility = View.GONE
             ui.previewScroll.visibility = View.GONE
             ui.latex.visibility = View.GONE
@@ -910,7 +1051,7 @@ class MainActivity : AppCompatActivity() {
                 .showSoftInput(ui.terminal, 0)
         } else {
             ui.terminal.visibility = View.GONE; ui.termKeys.visibility = View.GONE
-            showList(currentFile == null)
+            showList(currentFile == null && !showingDiff)
         }
         updateTitle()
     }
@@ -968,13 +1109,14 @@ class MainActivity : AppCompatActivity() {
                     val text = try {
                         val tools = listOf("clangd", "pylsp", "pyright-langserver",
                                            "gopls", "rust-analyzer",
-                                           "typescript-language-server", "tectonic")
+                                           "typescript-language-server", "tectonic",
+                                           "git")
                         val (_, out) = Termux.run(this, tools.joinToString("; ") {
                             "printf '%s ' $it; command -v $it || echo -"
                         })
                         "Termux runs commands for MiniCode.\n\n" + out.trim() +
                                 "\n\nInstall what is missing with pkg, for example " +
-                                "pkg install clang tectonic python."
+                                "pkg install git clang tectonic python."
                     } catch (e: Exception) {
                         e.message ?: e.toString()
                     }
@@ -999,6 +1141,8 @@ class MainActivity : AppCompatActivity() {
             "O      Open a folder (long-press a",
             "       folder to make it the project)",
             "H      This list",
+            "V      Source control, in place of",
+            "       the files (V again: files)",
             "N      Complete (language server)",
             "K      What the symbol is",
             "G      Go to its definition",
@@ -1006,6 +1150,10 @@ class MainActivity : AppCompatActivity() {
             "In the terminal: C for Ctrl C,",
             "D for Ctrl D, E for Escape,",
             "I for Tab.",
+            "",
+            "In source control: Space stages or",
+            "unstages, Enter shows the diff, the",
+            "key then Enter commits.",
             "",
             "That key alone switches panes,",
             "twice opens this menu, and the ⋮",

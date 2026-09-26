@@ -24,21 +24,21 @@ developer accounts need a two-week closed test before publishing anything.
 Every release is signed with the same key, so updates install over the old
 version. The APK is built by `scripts/release.sh` from the tagged source.
 
-### Language servers and LaTeX (optional)
+### Language servers, LaTeX and git (optional)
 
 These run in [Termux](https://f-droid.org/packages/com.termux/), installed
 from F-Droid (the Play Store copy is years out of date):
 
 1. In Termux:
 
-       pkg install clang tectonic python
+       pkg install git clang tectonic python
        pip install python-lsp-server
        echo allow-external-apps=true >> ~/.termux/termux.properties
        termux-reload-settings
        termux-setup-storage
 
 2. In MiniCode, ⋮ → Termux tools → Allow. It then lists which language
-   servers and tectonic it found.
+   servers, tectonic and git it found.
 3. Keep projects in phone storage (Termux sees it as `~/storage/shared`),
    since that is the one place both apps can reach.
 
@@ -70,6 +70,10 @@ The rest of this file is about how the port is built and developed.
   below): squiggles under errors and warnings, the message for the one at
   the caret in a line under the editor, completion, hover and go to
   definition.
+- **Source control.** The Mac and Linux panel, with git run in Termux, in
+  the file list's place (leader V): staged and unstaged changes, diffs,
+  staging, committing, and the commit graph with what is pushed and what is
+  not. See "Source control" below.
 
 ## Shortcuts, and why they are unusual
 
@@ -81,15 +85,19 @@ microphone. What is left is one unclaimed key, so that key is a leader:
     the key left of right Shift, then
       S  save            P  Markdown preview      O  open a folder
       F  files or editor T  terminal              H  the shortcut list
-      B  browser
+      B  browser         V  source control
     in the editor, with a language server:
       N  complete        K  what the symbol is    G  go to its definition
     in the terminal:
       C  Ctrl C          D  Ctrl D                E  Escape     I  Tab
+    in source control:
+      Enter  commit
 
 The key alone switches panes, twice opens the menu, and the ⋮ button in the
 title bar offers the same items for a device whose keyboard offers nothing.
-Ctrl also works, for a USB or Bluetooth keyboard.
+Ctrl also works, for a USB or Bluetooth keyboard, and Ctrl+Shift+G is
+source control there, as on the Mac and Linux. G was taken by go to
+definition, so the leader's letter for source control is V.
 
 One trap worth keeping: while the editor has focus, a letter never arrives as
 a key event, because the keyboard reaches the field through the input method.
@@ -186,6 +194,86 @@ desktop terminals, Termux among them, often treat only the left one as Meta.
 Termux has its own answer for keyboards without Ctrl and Esc: Volume Down
 acts as Ctrl and Volume Up plus a letter gives Esc, Tab and the arrows (its
 wiki's "Touch Keyboard" page). MiniCode does not copy that yet.
+
+## Source control
+
+The leader's V puts the source control panel where the file list goes (V
+again, or Back, brings the list back). It is the Mac's and the Linux port's
+panel, and all of its deciding is their shared C++: the core's `GitStatus`
+and `GitGraph` read what git prints, and the GTK port's
+`linux/src/GitModel.cpp`, which has no GTK in it, turns that into rows,
+argument vectors, the summary line, error text and colored diff text.
+`git_jni.cpp` puts those behind JNI (`GitNative.kt`), and `GitPanel.kt`
+runs git and draws. The commands, the wording, the letters and the colors
+are the same as on the desktop.
+
+- **Git runs in Termux** (`pkg install git`), which is why only a project in
+  shared storage works: that is the one place both apps see at the same
+  path. Anywhere else the panel says so, and without git in Termux it says
+  "Install git in Termux: pkg install git".
+- **One helper per panel, not one launch per command.** A refresh runs up to
+  five commands, and starting each through RUN_COMMAND would cost a moment
+  apiece, so `GitRunner.kt` starts one small bash loop through `Termux.start`
+  (the language servers' bridge) and keeps it. Each request is the argument
+  count, the directory and the arguments, NUL-separated; bash reads each
+  field with `read -r -d ''` into an array and runs `git "${args[@]}"`, so a
+  path or a commit message never passes through a shell's quoting, splitting
+  or globbing. git writes stdout and stderr into two files in Termux's
+  temporary folder (so neither pipe can fill and stall it), and the answer
+  is the exit status, both lengths, then both outputs. The loop says "ok" or
+  "nogit" when it starts. It closes two minutes after the panel is last
+  shown, and a dead connection is reopened once, only when git cannot have
+  run yet.
+- **Dubious ownership.** Termux's user does not own anything in shared
+  storage, so git refuses every repository there unless it is named in
+  `safe.directory`. Every command gets `-c safe.directory=<the top level>`
+  for that one repository; no config file is ever written. The first command
+  cannot know the top level yet, so it names the open folder, and when git
+  answers "detected dubious ownership in repository at '<path>'" (a
+  subfolder of a repository was opened) it runs again naming that path.
+- **The same rules as the desktop**: `GIT_OPTIONAL_LOCKS=0`,
+  `GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true`, `GIT_PAGER=cat`; stdin
+  `/dev/null`; paths after `--` and `--literal-pathspecs` on add, restore and
+  rm; only rev-parse, status, diff, add, restore --staged (rm --cached
+  before the first commit), commit, log, rev-list, for-each-ref and show. One
+  worker thread per panel keeps an add and the status after it in order;
+  results are dropped when the folder changed or a newer diff or graph was
+  asked for. Native handles are freed on that thread, after any job still
+  using them.
+- **Refreshing**: on showing the panel, after every action, on returning to
+  the app (a commit made in Termux), after a save, and on a tap on the
+  branch line. There is no file watching.
+- **Layout on 576 by 640 dp**: the branch line; the message box with the
+  Commit button beside it; git's error, if any (six lines, the whole text on
+  a tap); the change lists, which take what their rows need up to half of
+  what is left; then the graph heading with All branches, the summary line,
+  and the graph, which scrolls. Rows are drawn by hand in RecyclerViews, the
+  graph's lanes, dots, pills, tints and arrows as the Mac draws them.
+- **Keys** (the panel holds the keyboard itself; its rows are not views
+  that take focus): Up and Down move through the files, skipping headings,
+  and on into the graph; Up from the first file goes to the message box, and
+  Down from the message box's last line comes back, since the phone has no
+  Tab (Tab and Shift+Tab work on a keyboard that has them). Space stages or
+  unstages, Enter shows the diff or the commit. In the message box Enter is
+  a new line; the leader then Enter commits from anywhere in the panel, as
+  does Ctrl+Enter.
+- **Touch**: a tap on a file shows its diff, a tap on the + or − at its right
+  stages or unstages it, a tap on a commit shows it, and a long press shows
+  what the desktop puts in a tooltip.
+- **The diff or commit** takes the editor's place, after "Save changes?" if
+  the buffer is unsaved, and Back returns to the panel. `DiffView.kt` is a
+  RecyclerView with a row per line: one TextView holding a 500 KB diff took
+  seconds to lay out, with the window frozen, while this shows the core's
+  full 4 MB at once. Up and Down scroll it, Space and Page Down page, Home
+  and End jump.
+- **Debug log**: `adb shell setprop log.tag.MiniCodeGit DEBUG` turns on, in
+  any build, a line per git command with its exit status, and each refresh's
+  branch line, rows, graph rows and timings.
+
+Measured on the Titan 2 (2026-09-26): a refresh's status in 250 to 350 ms
+through Termux, the first 200 commits of the graph 300 ms after that, the
+next 200 (Show more) in 520 ms, and an unchanged refresh running no log at
+all.
 
 ## The LaTeX preview
 
@@ -331,6 +419,21 @@ What can and cannot be tested from a development machine:
 - Every key the app sees is logged: `adb logcat -s MiniCodeKeys`. That log is
   how each keyboard finding above was established, and it is the first place
   to look when a shortcut does nothing.
+- Text typed with `adb shell input text` arrives shuffled in any of the
+  app's text fields ("Second commit" became "Scond commeit" in the editor
+  and "Scceond commit" in the commit message box): the injected key events
+  race the keyboard app. It says nothing about real typing; check that at
+  the phone.
+- `adb push` leaves out empty folders, and a git repository without
+  `.git/refs/heads` or `.git/refs/tags` is not a repository to git. Make
+  them with `adb shell mkdir -p` after pushing a scratch repository.
+- A release build is not debuggable, so `dumpsys activity top` shows none of
+  its views. The source control panel's own log (above) is how its state
+  was read in testing.
+
+Back on Android 16: an app that targets API 36 never gets `onBackPressed`,
+so Back went straight out of the app from any pane until it moved to an
+`OnBackPressedCallback` (September 2026).
 
 ## Running the core's own tests on the phone
 
@@ -377,7 +480,7 @@ Run it from the repository root; the tests read a few files from `demo/`,
   time, fed from the editor's TextWatcher.
 - `Markdown.kt` — the core's runs turned into styled text.
 - `Termux.kt` — runs a program in Termux with its stdin and stdout on a
-  loopback socket; how language servers and tectonic are reached.
+  loopback socket; how language servers, tectonic and git are reached.
 - `LatexPreview.kt` — the LaTeX preview: typesetting through Termux, the
   page list, and the double tap to edit (`PageText` finds the tapped word).
 - `app/src/main/cpp/latex_jni.cpp` — SyncTeX and `LatexDoc` for the tap.
@@ -385,6 +488,14 @@ Run it from the repository root; the tests read a few files from `demo/`,
   Kotlin; results come back as small JSON events.
 - `LspSession.kt` — language servers for the editor: processes, document
   sync, squiggles, the status bar, completion, hover and definition.
+- `app/src/main/cpp/git_jni.cpp`: the core's `GitStatus` and `GitGraph` and
+  the GTK port's `GitModel` (compiled from `../linux/src` by CMake), behind
+  `GitNative.kt`. Argument vectors cross as byte arrays, so a path goes back
+  to git exactly as git printed it.
+- `GitRunner.kt`: the bash loop in Termux that runs git for the panel.
+- `GitPanel.kt`: the source control panel, with its refreshing, actions, keys and
+  the hand-drawn change and graph rows.
+- `DiffView.kt`: a diff or a commit in the editor's place, a row per line.
 
 ## Not yet
 

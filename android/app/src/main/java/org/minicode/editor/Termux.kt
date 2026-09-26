@@ -64,6 +64,8 @@ object Termux {
         val input: InputStream get() = socket.getInputStream()
         val output: OutputStream get() = socket.getOutputStream()
         fun close() = try { socket.close() } catch (e: Exception) {}
+        /** How long a read may wait, in milliseconds; 0 waits for ever. */
+        fun setReadTimeout(ms: Int) { socket.soTimeout = ms }
     }
 
     private val random = SecureRandom()

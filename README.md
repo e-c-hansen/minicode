@@ -24,7 +24,7 @@ Paths and URLs in the output are links. Command click src/main.cpp:42:7 from a c
 
 ![Command clicking a grep result to open it at its line, then a URL that opens in the browser panel](docs/demos/links.gif)
 
-Control Shift G swaps the file tree for a small source control panel, on the Mac and on Linux. It shows the branch, how far it is ahead of or behind its upstream, and the changed files in two lists, staged and not yet staged, each with a one letter status. Arrow keys move through the files, Return shows the selected file's diff in the main pane, Space stages or unstages it, and Command Return (Ctrl Enter on Linux) in the message box commits. Git does the work underneath, and when it refuses something, such as a commit with nothing staged, its own message appears in the panel.
+Control Shift G swaps the file tree for a small source control panel, on the Mac, on Linux and on Android (there the leader key and then V, in the file list's place). It shows the branch, how far it is ahead of or behind its upstream, and the changed files in two lists, staged and not yet staged, each with a one letter status. Arrow keys move through the files, Return shows the selected file's diff in the main pane, Space stages or unstages it, and Command Return (Ctrl Enter on Linux) in the message box commits. On the phone a tap on a file shows its diff, the plus or minus beside it stages or unstages it, and the Commit button, or the leader key and then Enter, commits; git runs in Termux there, so the project has to be in the phone's shared storage. Git does the work underneath, and when it refuses something, such as a commit with nothing staged, its own message appears in the panel.
 
 Under the changes is the commit graph: the history of the current branch and its upstream, drawn in colored lanes the way VS Code's graph and `git log --graph` draw them, with branch, remote and tag labels on their commits. Commits you have not pushed yet are tinted blue with a hollow dot and an up arrow, commits on the upstream you have not pulled are tinted green with a down arrow, and a line above the graph says how many of each there are, or that the branch has no upstream. A checkbox shows every local and remote branch instead. The graph loads 200 commits at a time, with a row at the bottom for the next 200. Tab moves between the changes, the graph and the message box, the Down arrow goes from the last changed file into the graph, and Return or a click on a commit shows its author, date, message and diff in the main pane. The panel only reads history; checking out, branching, merging, pulling and pushing are left to the terminal.
 
@@ -87,7 +87,7 @@ Zed was created with a similar goal for a more usable, lightweight IDE. It accom
 | Language server | completion, diagnostics, hover, definition | full | full |
 | Browser in the window | yes | no | a basic one |
 | LaTeX | typeset in the window, edit on the page | extension, external PDF viewer | extension, PDF in a tab |
-| Git | status, diffs, staging, committing and a read-only commit graph (macOS and Linux); branches, merges and pushing in the terminal | full | full |
+| Git | status, diffs, staging, committing and a read-only commit graph (macOS, Linux, and Android through Termux); branches, merges and pushing in the terminal | full | full |
 | Debugger | no | yes | yes |
 | Extensions | no | yes | yes |
 | Platforms | macOS, Linux, Android | macOS, Linux, Windows | macOS, Linux, Windows |
@@ -145,7 +145,7 @@ alias minicode="$PWD/build/minicode"
 
 As a foray into the mobile space, I made an Android port, specifically for keyboard-based phones like the Unihertz Titan 2 Elite. It's built around the same C++ core and offers approximately the same functionality: file tree, editor with syntax highlighting, Markdown preview, images and PDF rendering, a browser pane, and a terminal on a real shell, including all the special characters you need. You can even tap links in the terminal for specific lines within files and go straight to them, like "main.cpp:42:7". The keyboard shortcuts work here, too. You can quickly jump between browser, text editor, file system, and so on. It feels like a tiny operating system.
 
-With [Termux](https://f-droid.org/packages/com.termux/) installed, it also runs your language servers (clangd, pylsp and the rest) for squiggles, completion, hover and go to definition, and typesets LaTeX with tectonic, including double tapping the page to edit the source behind it.
+With [Termux](https://f-droid.org/packages/com.termux/) installed, it also runs your language servers (clangd, pylsp and the rest) for squiggles, completion, hover and go to definition, typesets LaTeX with tectonic, including double tapping the page to edit the source behind it, and runs git for the same source control panel and commit graph the desktop has.
 
 To install it, download MiniCode-*version*.apk from the [latest release](https://github.com/e-c-hansen/minicode/releases/latest) on your phone and open it; Android asks once whether your browser may install apps. [Obtainium](https://github.com/ImranR98/Obtainium) can install it from this repository's releases and keep it updated. It is not on the Play Store. [android/README.md](android/README.md) covers setting up Termux, the keyboard shortcuts, and building it yourself.
 
@@ -185,7 +185,7 @@ A blank cell means that port does not have the action yet. On Android, shortcuts
 | Toggle the file list or sidebar | Command B | Ctrl B | F |
 | Toggle the preview of a Markdown or LaTeX file | Shift Command P | Ctrl Shift P | P |
 | Toggle the shortcut hints | Shift Command H | Ctrl Shift H | H |
-| Toggle the source control panel in place of the file tree | Control Shift G | Ctrl Shift G |  |
+| Toggle the source control panel in place of the file tree | Control Shift G | Ctrl Shift G | V |
 | Toggle the terminal | Shift Command T, or Control backtick | Ctrl Shift T, or Ctrl backtick | T |
 | Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z |  |
 | Zoom a PDF or the LaTeX preview in or out |  | Ctrl plus (or Ctrl equals), Ctrl minus, Ctrl with the scroll wheel, or a pinch on the touchpad |  |
