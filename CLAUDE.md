@@ -450,16 +450,12 @@ never closes.
   keeping, double-click editing), Linux-only, so no release was cut.
   1,522 core checks pass; Mac and Linux builds are warning-free; CI builds
   and tests macOS and Linux.
-- **In progress: a git panel for the Mac**, started 2026-09-26 by a
-  subagent in a separate git worktree (its own branch; not merged, not
-  pushed). The brief: `src/GitStatus.{h,cpp}` parsing `git status
-  --porcelain=v2 --branch -z` and unified diffs, tested; a Source Control
-  view that takes the sidebar's place (branch, staged and unstaged changes,
-  Space stages, Return shows a colored diff in the editor's slot, a commit
-  field with Command+Return); only non-destructive git commands (status,
-  diff, add, restore --staged, commit); README and this file updated. When
-  it reports, review the branch, merge it, and let the user try it before
-  a release. `git worktree list` shows where it is.
+- **Git panel (Mac), merged 2026-09-26, not yet released**: Control+Shift+G
+  swaps the tree for Source Control (see "Git panel" below). Built by a
+  subagent and checked only in offscreen windows, so the user tries it
+  before a release. Still unseen: refresh after a commit in the terminal
+  and on window focus, the selection and focus look, the Commit button,
+  and a long git error (cut to 6 lines, full text in the tooltip).
 - **Markdown preview** (Mac and Linux, not Android): links, pictures with
   GIFs playing, real tables, Shift+Cmd+P / Ctrl+Shift+P keeping the place,
   and double-click editing of a block in a popover. Details under
@@ -1173,7 +1169,7 @@ holds, these give real runtime evidence rather than compile-only evidence:
 
 ## What's next
 
-See `ROADMAP.md`. In flight: the Mac git panel (see Current state). Candidates,
+See `ROADMAP.md`. Waiting on the user: trying the Mac git panel before a release. Candidates,
 none started: the git panel on Linux (the core parser is shared); the
 Markdown preview's links, tables, pictures and editing on Android; a gap
 between a paragraph and a list that follows it in the preview (the parser
