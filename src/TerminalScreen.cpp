@@ -371,8 +371,14 @@ void TerminalScreen::esc(const std::string& inter, unsigned char f) {
 }
 
 void TerminalScreen::osc(const std::string& body) {
-    if (body.rfind("0;", 0) == 0 || body.rfind("2;", 0) == 0)
+    if (body.rfind("0;", 0) == 0 || body.rfind("2;", 0) == 0) {
         title_ = body.substr(2);
+    } else if (body.rfind("133;D", 0) == 0) {
+        commandsEnded_++;
+    } else {
+        std::string path = termOsc7Path(body);
+        if (!path.empty()) directory_ = path;
+    }
 }
 
 void TerminalScreen::setMode(const std::string& csi, bool on) {

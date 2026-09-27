@@ -448,20 +448,27 @@ void TerminalStream::finishOsc(const std::string& s, std::vector<TermEvent>& out
         }
         flushLine(out);                      // keep events in order
         out.push_back(e);
-    } else if (s.rfind("7;", 0) == 0) {
-        // "7;file://host/path" — the path starts at the first '/' after the
-        // host. A bare "7;/path" is accepted too.
-        std::string url = s.substr(2);
-        size_t pathStart = 0;
-        if (url.rfind("file://", 0) == 0) pathStart = url.find('/', 7);
-        if (pathStart != std::string::npos && pathStart < url.size() &&
-            url[pathStart] == '/') {
+    } else {
+        std::string path = termOsc7Path(s);
+        if (!path.empty()) {
             flushLine(out);
             TermEvent e; e.kind = TermEvent::Directory;
-            e.text = percentDecode(url.substr(pathStart));
+            e.text = path;
             out.push_back(e);
         }
     }
+}
+
+std::string termOsc7Path(const std::string& s) {
+    if (s.rfind("7;", 0) != 0) return "";
+    // "7;file://host/path" — the path starts at the first '/' after the
+    // host. A bare "7;/path" is accepted too.
+    std::string url = s.substr(2);
+    size_t pathStart = 0;
+    if (url.rfind("file://", 0) == 0) pathStart = url.find('/', 7);
+    if (pathStart == std::string::npos || pathStart >= url.size() ||
+        url[pathStart] != '/') return "";
+    return percentDecode(url.substr(pathStart));
 }
 
 // ------------------------------------------------------------------ feed

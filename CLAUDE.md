@@ -455,7 +455,7 @@ never closes.
   block). After 1.4.5, on `main` and pushed but not released: the Linux
   preview brought level with the Mac (links, pictures, tables, place
   keeping, double-click editing), Linux-only, so no release was cut.
-  1,750 core checks pass; Mac and Linux builds are warning-free; CI builds
+  1,755 core checks pass; Mac and Linux builds are warning-free; CI builds
   and tests macOS and Linux.
 - **Git panel (Mac), merged 2026-09-26, not yet released**: Control+Shift+G
   swaps the tree for Source Control (see "Git panel" below). Built by a
@@ -511,6 +511,17 @@ never closes.
   PDF pages past the first outside the LaTeX preview, image zoom, terminal
   scrollback. The release key and its backup are described under
   Distribution.
+- **Android terminal in Termux, and a list that follows the disk**
+  (2026-09-26, on a branch, not merged): the user found `touch` in the
+  terminal did not show in the file list, and python missing from the
+  terminal. The terminal is now Termux's bash on a real pty when Termux is
+  set up (⋮ Shell to choose), the file list is watched with FileObserver,
+  and the open file reloads or warns when changed on disk. See
+  `android/README.md`, "Termux's bash in the terminal" and "The file list
+  follows the disk". Checked on the Titan 2 with injected keys; needs the
+  user: typing on the real keyboard in bash, vim (not installed in their
+  Termux), and the on-screen keyboard resizing the pane (Kika shows only its
+  strip for the terminal, so the resize was tested with `wm size`).
 - **Linux**: all nine items of `linux/HANDOFF.md` are done (the user's work,
   2026-09-24), and a three-part review on 2026-09-25 was fixed the same day:
   huge and special files refused before reading, renames followed in every
@@ -903,6 +914,25 @@ the file map; what belongs here is what it cost to learn:
   key is 403, hence Menu and Function as leaders too), and `sendevent`,
   which SELinux refuses. Those need a person at the phone; say so rather
   than claiming a shortcut works.
+- **The terminal's bash runs in Termux on a pty MiniCode brings**
+  (`TermuxShell.kt`, `cpp/termux_pty.c`): Termux's RUN_COMMAND gives a
+  socket, not a terminal, and Termux has no pty tool by default, so a small
+  C helper is built as an executable named `libminicode_pty.so` (AGP packs
+  an executable with a lib*.so name), read out of the APK, sent over the
+  token socket into `$TMPDIR/minicode-pty-<hash>` with `head -c`, and run
+  from there. Termux can run its own files; nothing can run another app's.
+  Input is framed (`d` data, `w` window size), output raw. The rc file
+  sends OSC 7 and OSC 133;D, which `TerminalScreen` now records.
+- **One FileObserver per path.** Android keeps one inotify watch per path,
+  so a second observer on a folder replaces the first one's mask; the file
+  list stopped seeing deletions once a file in it was opened. Share one.
+- **`wm size` recreated the activity** (and so killed the shell and any
+  unsaved buffer) until `smallestScreenSize|screenLayout` joined
+  `configChanges`. The phone has a `wm size` override of 1076x1200 of its
+  own: never `wm size reset`, set it back to that.
+- **`adb shell` in a `while read` loop eats the loop's input**; use
+  `adb shell -n`. Typing into the terminal through `input text` is reliable
+  (no scrambling there, since it takes keys, not text).
 - **Language servers run in Termux** (`Termux.kt`, `LspSession.kt`,
   `lsp_jni.cpp`): RUN_COMMAND starts bash, which dials a one-shot
   127.0.0.1 listener with /dev/tcp, sends a token, and execs the server on

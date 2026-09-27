@@ -100,6 +100,11 @@ class MainActivity : AppCompatActivity() {
             listOfNotNull(shellFolder, folderPath()?.path, filesDir.absolutePath).distinct()
         }
         ui.terminal.onLink = ::openTerminalLink
+        // bash in Termux says where it is (OSC 7) and when a command ends
+        // (OSC 133;D): the title follows it, and the file list looks again,
+        // which is the only way a folder from the picker hears of a change.
+        ui.terminal.onDirectory = { dir -> shellFolder = dir; updateTitle() }
+        ui.terminal.onCommandEnded = { scheduleListRefresh() }
 
         // Source control takes the file list's place (leader V); a diff or a
         // commit it shows takes the editor's.
@@ -253,7 +258,8 @@ class MainActivity : AppCompatActivity() {
      * set up for code, and the answer there is shared storage, which both
      * apps can reach.
      */
-    private fun notReachable(name: String): String {
+    private fun notReachable(name: String,
+                             shellHome: String = "MiniCode's own private folder"): String {
         val where = folder?.uri?.authority.orEmpty()
         val why = when {
             where.startsWith("com.termux") ->
@@ -272,7 +278,7 @@ class MainActivity : AppCompatActivity() {
                 "shell can use. Open a folder on the phone's storage instead: " +
                 "leader O, Phone storage."
         }
-        return "$why This shell is in MiniCode's own private folder."
+        return "$why This shell is in $shellHome."
     }
 
     /**
@@ -408,6 +414,7 @@ class MainActivity : AppCompatActivity() {
             p == storage || p.startsWith("$storage/") -> under(storage, PHONE_STORAGE)
             p == "/sdcard" || p.startsWith("/sdcard/") -> under("/sdcard", PHONE_STORAGE)
             p == own || p.startsWith("$own/") -> under(own, "MiniCode's own folder")
+            p == Termux.HOME || p.startsWith("${Termux.HOME}/") -> under(Termux.HOME, "Termux home")
             else -> p
         }
     }
@@ -462,7 +469,7 @@ class MainActivity : AppCompatActivity() {
     /** A running shell follows the folder when another is opened. */
     private fun followFolder() {
         if (!ui.terminal.isRunning) return
-        val (cwd, why) = terminalDirectory()
+        val (cwd, why) = if (ui.terminal.isTermux) termuxDirectory() else terminalDirectory()
         if (cwd != null && cwd != shellFolder) {
             ui.terminal.changeDirectory(cwd)
             shellFolder = cwd; updateTitle()
@@ -477,7 +484,15 @@ class MainActivity : AppCompatActivity() {
     /** Back from Settings with access granted, the shell moves at once. */
     override fun onResume() {
         super.onResume()
-        if (ui.terminal.isRunning && shellFolder == null && canReachPaths()) followFolder()
+        // Files may have come and gone while MiniCode was away (in Termux,
+        // say): the list and the open file are read again, and watched.
+        resumed = true
+        watchFolder()
+        watchOpenFile()
+        scheduleListRefresh()
+        checkOpenFile()
+        if (ui.terminal.isRunning && !ui.terminal.isTermux && shellFolder == null &&
+            canReachPaths()) followFolder()
         // Back from Settings with "All files access": finish what asked for it.
         if (canReachPaths()) {
             if (wantsStorage) {
@@ -510,22 +525,192 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun list(dir: DocumentFile) {
+    /**
+     * Lists `dir`. With `keepPlace` (a refresh of the folder already shown)
+     * nothing happens unless the entries changed, and then the scroll
+     * position and the focused row stay where they were.
+     */
+    private fun list(dir: DocumentFile, keepPlace: Boolean = false) {
         current = dir
         // Folders first, then files, each alphabetically, as the other ports do.
-        val entries = readFolder(dir)?.sortedWith(
-            compareBy({ !it.isDirectory }, { it.name?.lowercase() ?: "" }))
+        val entries = readFolder(dir)?.map { Entry(it, it.name ?: "", it.isDirectory) }
+            ?.sortedWith(compareBy({ !it.isDir }, { it.name.lowercase() }))
+        val shape = entries?.map { (if (it.isDir) "d:" else "f:") + it.name }
+        if (keepPlace && shape == listed && (entries == null) == lostAccess) return
+        listed = shape
         lostAccess = entries == null
+        val state = if (keepPlace) ui.fileList.layoutManager?.onSaveInstanceState() else null
+        val focused = if (keepPlace) focusedRowLabel() else null
         files.submit(when {
             entries == null -> lostRows(dir)
             entries.isEmpty() -> listOf(
                 ListRow.Note("This folder is empty."),
                 ListRow.Action("New file") { newFile() })
-            else -> entries.map { ListRow.Doc(it) }
+            else -> entries.map { ListRow.Doc(it.file) }
         })
-        ui.up.visibility = if (dir.uri == folder?.uri) View.GONE else View.VISIBLE
+        state?.let { ui.fileList.layoutManager?.onRestoreInstanceState(it) }
+        if (focused != null) ui.fileList.post { focusRowLabelled(focused) }
+        ui.up.visibility = if (dir.uri == folder?.uri || ui.fileList.visibility != View.VISIBLE)
+            View.GONE else View.VISIBLE
         updateTitle()
-        if (entries.isNullOrEmpty() && ui.fileList.visibility == View.VISIBLE) focusFileList()
+        watchFolder()
+        if (!keepPlace && entries.isNullOrEmpty() && ui.fileList.visibility == View.VISIBLE) focusFileList()
+    }
+
+    /** A listed entry, with the name and kind read once for sorting. */
+    private class Entry(val file: DocumentFile, val name: String, val isDir: Boolean)
+
+    /** What the list shows, as "d:name" and "f:name", or null when unreadable. */
+    private var listed: List<String>? = null
+
+    private fun focusedRowLabel(): CharSequence? {
+        val v = ui.fileList.focusedChild as? TextView ?: return null
+        return v.text
+    }
+
+    private fun focusRowLabelled(label: CharSequence) {
+        for (i in 0 until ui.fileList.childCount) {
+            val v = ui.fileList.getChildAt(i) as? TextView ?: continue
+            if (v.text.toString() == label.toString() && v.isFocusable) { v.requestFocus(); return }
+        }
+    }
+
+    // ------------------------------------------- following changes on disk
+
+    /**
+     * The file list follows the disk. A folder with a path MiniCode may read
+     * (Phone storage, or a picked folder on the phone's storage once "All
+     * files access" is granted) is watched with a FileObserver, so a file
+     * made by `touch` in either terminal, by Termux or over adb shows up
+     * within a moment. A folder from another app or the cloud has no path to
+     * watch; it is read again on returning to the app, on showing the list,
+     * and whenever a command finishes in a Termux shell.
+     *
+     * The open file's folder is watched the same way, for writes to the file.
+     * One observer per folder, whatever it is watched for: Android keeps one
+     * inotify watch per path, so a second FileObserver on the same folder
+     * replaces the first one's events instead of adding to them (the list
+     * stopped seeing deletions once a file in it was opened).
+     *
+     * Events come in bursts (an unzip, a git checkout), so they only start a
+     * short timer, and the refresh reads the folder once.
+     */
+    private fun updateWatches() {
+        val listDir = current?.let(::pathOf)?.takeIf { resumed && readablePath(it) }?.path
+        val file = currentFile?.let(::pathOf)?.takeIf { resumed && readablePath(it) }
+        watchedListDir = listDir
+        watchedFileDir = file?.parentFile?.path
+        watchedFileName = file?.name
+        val wanted = setOfNotNull(listDir, watchedFileDir)
+        for ((dir, observer) in observers.toList()) {
+            if (dir !in wanted) { observer.stopWatching(); observers.remove(dir) }
+        }
+        for (dir in wanted) {
+            if (dir in observers) continue
+            observers[dir] = object : android.os.FileObserver(File(dir), WATCHED) {
+                // On FileObserver's own thread; only what matters is posted.
+                override fun onEvent(event: Int, name: String?) {
+                    val what = event and ALL_EVENTS
+                    if (dir == watchedListDir && what and LIST_EVENTS != 0)
+                        ui.root.post { scheduleListRefresh() }
+                    if (dir == watchedFileDir && name == watchedFileName && what and FILE_EVENTS != 0)
+                        ui.root.post {
+                            ui.root.removeCallbacks(fileCheck)
+                            ui.root.postDelayed(fileCheck, 300)
+                        }
+                }
+            }.also { it.startWatching() }
+        }
+    }
+
+    private fun watchFolder() = updateWatches()
+    private fun watchOpenFile() = updateWatches()
+
+    private val observers = mutableMapOf<String, android.os.FileObserver>()
+    @Volatile private var watchedListDir: String? = null
+    @Volatile private var watchedFileDir: String? = null
+    @Volatile private var watchedFileName: String? = null
+    private var resumed = false
+
+    /** MiniCode itself may read this path (not only Termux). */
+    private fun readablePath(f: File) =
+        canReachPaths() || f.path.startsWith(filesDir.parentFile?.path ?: filesDir.path)
+
+    private val listRefresh = Runnable { refreshList() }
+
+    private fun scheduleListRefresh() {
+        ui.root.removeCallbacks(listRefresh)
+        ui.root.postDelayed(listRefresh, 250)
+    }
+
+    /**
+     * Reads the listed folder again, keeping the place. Only while the list
+     * is on screen; showing it later refreshes it then. A subfolder that was
+     * deleted gives way to the nearest folder above it that is still there.
+     */
+    private fun refreshList() {
+        if (ui.fileList.visibility != View.VISIBLE) return
+        var dir = current ?: return
+        if (dir.uri != folder?.uri && !stillThere(dir)) {
+            var up = dir.parentFile
+            while (up != null && up.uri != folder?.uri && !stillThere(up)) up = up.parentFile
+            dir = up ?: folder ?: return
+            list(dir)
+            return
+        }
+        list(dir, keepPlace = true)
+    }
+
+    private fun stillThere(dir: DocumentFile) = try { dir.isDirectory } catch (e: Exception) { false }
+
+    /**
+     * When the open file was last read or written, as its modification time
+     * and length, to notice another program changing it.
+     */
+    private var diskStamp: Pair<Long, Long>? = null
+    /** Set once the user has been told the unsaved file changed on disk. */
+    private var diskConflictSaid = false
+
+    private fun stampOf(file: DocumentFile): Pair<Long, Long>? = try {
+        if (file.exists()) file.lastModified() to file.length() else null
+    } catch (e: Exception) { null }
+
+    /**
+     * The open file changed on disk: a buffer with no unsaved edits takes
+     * the new text (as one edit, so undo can go back), keeping the caret; an
+     * unsaved one is kept, the user is told once, and saving asks before
+     * writing over the other program's change.
+     */
+    private fun checkOpenFile() {
+        val file = currentFile ?: return
+        if (showingMedia || showingDiff) return
+        val now = stampOf(file) ?: return   // gone: saving writes it again
+        if (now == diskStamp) return
+        if (dirty) {
+            if (!diskConflictSaid) {
+                diskConflictSaid = true
+                say("${file.name} changed on disk. Your unsaved edits are kept; saving asks first.")
+            }
+            return
+        }
+        val text = readText(file) ?: return
+        val caret = ui.editor.selectionStart
+        applyPreviewSource(text, undoable = false)
+        mdUndo.clear(); mdRedo.clear()
+        dirty = false
+        diskStamp = now
+        ui.editor.setSelection(caret.coerceIn(0, ui.editor.text?.length ?: 0))
+        updateTitle()
+    }
+
+    private val fileCheck = Runnable { checkOpenFile() }
+
+    override fun onPause() {
+        super.onPause()
+        resumed = false
+        // Nothing is watched while MiniCode is out of sight; returning reads
+        // everything again.
+        updateWatches()
     }
 
     /**
@@ -779,6 +964,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun openFile(file: DocumentFile, text: String) {
         currentFile = file
+        diskStamp = stampOf(file)
+        diskConflictSaid = false
+        watchOpenFile()
         showingMedia = false
         showingDiff = false
         ui.media.setImageDrawable(null)
@@ -1125,6 +1313,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        // A Termux shell lives in Termux's process: without this it would
+        // outlive the window until MiniCode's own process ended.
+        ui.terminal.stop()
         lsp.shutdown()
         ui.gitPanel.shutdown()
         super.onDestroy()
@@ -1145,11 +1336,29 @@ class MainActivity : AppCompatActivity() {
      * unsaved and says so when the write fails: a provider can refuse, the
      * folder can be gone, or the permission revoked.
      */
-    private fun save(): Boolean {
+    private fun save(force: Boolean = false): Boolean {
         if (showingMedia) return true
         val file = currentFile ?: run {
             if (!showingDiff) say("Nothing to save: no file is open.")
             return true
+        }
+        // Another program wrote the file since it was read: ask rather than
+        // overwrite its change without a word.
+        val onDisk = stampOf(file)
+        if (!force && onDisk != null && diskStamp != null && onDisk != diskStamp) {
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("${file.name} changed on disk")
+                .setMessage("Another program changed this file since it was opened. " +
+                        "Save over its change, or load the file as it is on disk " +
+                        "(your unsaved edits are dropped)?")
+                .setPositiveButton("Save over it") { _, _ -> save(force = true) }
+                .setNegativeButton("Load from disk") { _, _ ->
+                    dirty = false
+                    checkOpenFile()
+                }
+                .setNeutralButton("Cancel", null)
+                .show()
+            return false
         }
         val written = try {
             contentResolver.openOutputStream(file.uri, "wt")?.use {
@@ -1165,6 +1374,8 @@ class MainActivity : AppCompatActivity() {
             return false
         }
         dirty = false
+        diskStamp = stampOf(file)
+        diskConflictSaid = false
         updateTitle()
         if (LatexPreview.isLatex(file.name)) ui.latex.typesetNow()
         lsp.saved()
@@ -1182,6 +1393,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun showList(wanted: Boolean) {
         val show = wanted || !hasEditorContent()
+        val listWasShowing = ui.fileList.visibility == View.VISIBLE
         if (show) { terminalShowing = false; browserShowing = false }
         val start = show && folder == null
         if (start) fillStart()
@@ -1209,6 +1421,10 @@ class MainActivity : AppCompatActivity() {
         else if (sidebarIsGit) ui.gitPanel.focusPanel()
         else if (lostAccess || files.firstAction() >= 0) focusFileList()
         updateTitle()
+        // Coming back to the list (from the terminal, say) reads it again,
+        // and coming back to the file checks it was not changed meanwhile.
+        if (ui.fileList.visibility == View.VISIBLE && !listWasShowing) scheduleListRefresh()
+        if (!show) checkOpenFile()
     }
 
     /** A file, picture or diff is open, so the editor side has something. */
@@ -1247,7 +1463,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
         items += StartScreen.Item("Also", heading = true)
-        items += StartScreen.Item("Terminal", "A shell, in MiniCode's own folder until one is open") {
+        items += StartScreen.Item("Terminal", if (wantsTermuxShell())
+                "Termux's bash, in its home folder until one is open"
+            else "A shell, in MiniCode's own folder until one is open") {
             toggleTerminal()
         }
         items += StartScreen.Item("Shortcuts", "What the leader key and the ⋮ menu do") {
@@ -1300,6 +1518,7 @@ class MainActivity : AppCompatActivity() {
             ui.editor.setText("")
             highlighting = false
             lsp.opened(null, folder)
+            watchOpenFile()
             showingDiff = true
             diffTitle = title
             ui.diffView.show(text)
@@ -1319,8 +1538,10 @@ class MainActivity : AppCompatActivity() {
         val waiting = if (leaderArmed) "  …" else ""
         val showingList = ui.fileList.visibility == View.VISIBLE
         val (title, place) = when {
-            terminalShowing -> "Terminal" to
-                    (shellFolder?.let { describePath(File(it)) } ?: "MiniCode's own folder")
+            terminalShowing -> (if (ui.terminal.isTermux) "Terminal (Termux)" else "Terminal") to
+                    (shellFolder?.let { describePath(File(it)) }
+                        ?: if (ui.terminal.isTermux || wantsTermuxShell()) "Termux home"
+                           else "MiniCode's own folder")
             browserShowing -> "Browser" to null
             ui.start.visibility == View.VISIBLE -> "MiniCode" to "No folder open"
             ui.gitPanel.visibility == View.VISIBLE -> "Source Control" to where(folder)
@@ -1681,7 +1902,8 @@ class MainActivity : AppCompatActivity() {
                             "Shortcuts", "Termux tools", "Source control",
                             "New file", "On-screen keyboard",
                             if (symbolRow) "Hide the symbol row" else "Show the symbol row",
-                            "Undo", "Redo")
+                            "Undo", "Redo", "Shell: " + when (shellChoice()) {
+                                "termux" -> "Termux"; "system" -> "Android"; else -> "automatic" })
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setItems(items) { _, which ->
                 when (which) {
@@ -1700,6 +1922,7 @@ class MainActivity : AppCompatActivity() {
                     12 -> toggleSymbolRow()
                     13 -> undo(redo = false)
                     14 -> undo(redo = true)
+                    15 -> chooseShell()
                 }
             }
             .show()
@@ -1791,10 +2014,10 @@ class MainActivity : AppCompatActivity() {
     private var browserReady = false
 
     /**
-     * The terminal pane: Android's own shell on a pty, drawn by the same
-     * screen grid the macOS app uses. It runs in the app's own storage,
-     * which is the only place it can write, and carries the toybox
-     * utilities the system ships.
+     * The terminal pane, drawn by the same screen grid the macOS app uses:
+     * bash in Termux when it is set up (TermuxShell), with python, git and
+     * the rest, or else Android's own sh with the toybox utilities. See
+     * startShell and ⋮ Shell.
      */
     private fun toggleTerminal() {
         terminalShowing = !terminalShowing
@@ -1811,22 +2034,7 @@ class MainActivity : AppCompatActivity() {
             ui.browser.visibility = View.GONE
             browserShowing = false
             ui.terminal.visibility = View.VISIBLE; ui.termKeys.visibility = View.VISIBLE
-            ui.terminal.onExit = {
-                if (terminalShowing) toggleTerminal()
-                ui.terminal.stop()
-            }
-            if (ui.terminal.isRunning) followFolder()
-            if (!ui.terminal.isRunning) {
-                val (cwd, why) = terminalDirectory()
-                ui.terminal.post {
-                    ui.terminal.start(filesDir.absolutePath, cwd ?: filesDir.absolutePath)
-                    shellFolder = cwd; updateTitle()
-                    // Said in the terminal itself, where the question
-                    // "why am I here?" comes up, rather than in a toast.
-                    if (why != null) ui.terminal.notice(why)
-                }
-                if (folderPath() != null && !canReachPaths()) askForPathAccess()
-            }
+            if (ui.terminal.isRunning) followFolder() else startShell()
             ui.terminal.requestFocus()
             (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
                 .showSoftInput(ui.terminal, 0)
@@ -1838,6 +2046,114 @@ class MainActivity : AppCompatActivity() {
     }
 
     private var terminalShowing = false
+
+    /**
+     * Which shell the terminal runs: "termux" (bash in Termux, with python,
+     * git and whatever else is installed there), "system" (Android's own sh
+     * and toybox), or "auto", the default, which is Termux's whenever Termux
+     * is installed and MiniCode may run commands in it.
+     */
+    private fun shellChoice() =
+        getSharedPreferences("minicode", MODE_PRIVATE).getString("shell", "auto") ?: "auto"
+
+    private fun wantsTermuxShell() = shellChoice() != "system" && Termux.problem(this) == null
+
+    /**
+     * Starts the chosen shell, once the pane has a size. A Termux shell that
+     * cannot be started falls back to Android's, saying why in the pane.
+     */
+    private fun startShell() {
+        ui.terminal.onExit = { quick ->
+            if (quick && ui.terminal.isTermux && terminalShowing) {
+                // bash in Termux ended as it began: whatever it printed is
+                // gone with the pane, so say so and use Android's shell.
+                startSystemShell("bash in Termux ended as soon as it started. " +
+                        "This is Android's own shell; try again from ⋮ Shell.")
+            } else {
+                if (terminalShowing) toggleTerminal()
+                ui.terminal.stop()
+            }
+        }
+        if (!wantsTermuxShell()) {
+            val note = if (shellChoice() != "system") termuxShellNote() else null
+            startSystemShell(note)
+            return
+        }
+        val (cwd, why) = termuxDirectory()
+        ui.terminal.post {
+            ui.terminal.startTermux(cwd) { reason ->
+                if (terminalShowing) startSystemShell(
+                    "Termux did not start a shell ($reason) This is Android's own shell.")
+            }
+            shellFolder = cwd; updateTitle()
+            if (why != null) ui.terminal.notice(why)
+        }
+    }
+
+    private fun startSystemShell(note: String? = null) {
+        ui.terminal.stop()
+        val (cwd, why) = terminalDirectory()
+        ui.terminal.post {
+            ui.terminal.start(filesDir.absolutePath, cwd ?: filesDir.absolutePath)
+            shellFolder = cwd; updateTitle()
+            // Said in the terminal itself, where the question "why am I
+            // here?" comes up, rather than in a toast.
+            if (note != null) ui.terminal.notice(note)
+            if (why != null) ui.terminal.notice(why)
+        }
+        if (folderPath() != null && !canReachPaths()) askForPathAccess()
+    }
+
+    /** One line on why this is not Termux's shell, and how to get it. */
+    private fun termuxShellNote(): String = when {
+        !Termux.isInstalled(this) -> "Android's own shell, without python or git. " +
+                "For Termux's bash here, install Termux from F-Droid."
+        else -> "Android's own shell, without python or git. For Termux's " +
+                "bash here, allow MiniCode in ⋮ Termux tools."
+    }
+
+    /**
+     * Where a Termux shell starts, and why not the folder if it cannot. Termux
+     * sees shared storage at the same paths MiniCode does, and nothing of
+     * MiniCode's own, so a folder anywhere else starts it in Termux's home.
+     */
+    private fun termuxDirectory(): Pair<String?, String?> {
+        val path = folderPath()
+        val name = folder?.name ?: "this folder"
+        return when {
+            folder == null -> null to null
+            path == null -> null to notReachable(name, "Termux's home folder")
+            !Termux.isShared(path) -> null to "$name is in MiniCode's own storage, " +
+                    "which Termux cannot enter. This shell is in Termux's home folder."
+            else -> path.path to null
+        }
+    }
+
+    /** ⋮ Shell: Termux's bash or Android's sh, and the shell restarts. */
+    private fun chooseShell() {
+        val choices = arrayOf("auto", "termux", "system")
+        val labels = arrayOf(
+            "Automatic: Termux's when it is set up",
+            "Termux: bash, python, git and your packages",
+            "Android: the phone's sh and toybox, no Termux")
+        val at = choices.indexOf(shellChoice()).coerceAtLeast(0)
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Shell")
+            .setSingleChoiceItems(labels, at) { dialog, which ->
+                dialog.dismiss()
+                getSharedPreferences("minicode", MODE_PRIVATE).edit()
+                    .putString("shell", choices[which]).apply()
+                if (choices[which] == "termux" && Termux.problem(this) != null) {
+                    termuxSetup()
+                    return@setSingleChoiceItems
+                }
+                // A new shell of the chosen kind, in the pane.
+                ui.terminal.stop()
+                if (!terminalShowing) toggleTerminal() else startShell()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
 
     /**
      * How large the code is, which matters more on a phone than anywhere
@@ -1970,6 +2286,17 @@ class MainActivity : AppCompatActivity() {
         const val LEADER_WINDOW = 700L
         /** Preview edits kept for undo, as on the Mac. */
         private const val MD_UNDO_LIMIT = 50
+
+        /** What the file list and the open file are watched for. */
+        private const val LIST_EVENTS = android.os.FileObserver.CREATE or
+                android.os.FileObserver.DELETE or android.os.FileObserver.MOVED_FROM or
+                android.os.FileObserver.MOVED_TO or android.os.FileObserver.DELETE_SELF or
+                android.os.FileObserver.MOVE_SELF
+        private const val FILE_EVENTS = android.os.FileObserver.CLOSE_WRITE or
+                android.os.FileObserver.MOVED_TO or android.os.FileObserver.CREATE or
+                android.os.FileObserver.MODIFY
+        private const val WATCHED = LIST_EVENTS or FILE_EVENTS
+        private const val ALL_EVENTS = android.os.FileObserver.ALL_EVENTS
 
         /** Larger files are not opened as text; an EditText would crawl. */
         private const val MAX_TEXT_BYTES = 4L * 1024 * 1024

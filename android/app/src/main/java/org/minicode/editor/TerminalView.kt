@@ -51,8 +51,12 @@ class TerminalView @JvmOverloads constructor(
     // of output makes one snapshot rather than one per read.
     private val redrawQueued = AtomicBoolean(false)
 
-    /** Called when the shell exits, so the pane can close itself. */
-    var onExit: (() -> Unit)? = null
+    /**
+     * Called when the shell exits, so the pane can close itself. `quick` is
+     * true when it ended within moments of starting, which for a Termux
+     * shell means it never really ran.
+     */
+    var onExit: ((quick: Boolean) -> Unit)? = null
 
     var textSizeSp: Float = 11f
         set(value) {
@@ -73,16 +77,81 @@ class TerminalView @JvmOverloads constructor(
         textSizeSp = 11f
     }
 
-    /** Starts the shell, in `home`, once the view has a size. */
+    /** Starts Android's own shell, in `cwd` (else `home`), once the view has a size. */
     fun start(home: String, cwd: String = home) {
-        if (pty != null) return
+        if (pty != null || starting != 0) return
         val session = Pty.start("/system/bin/sh", home, cwd, cols, rows) ?: run {
             message = "Could not start /system/bin/sh"
             invalidate()
             return
         }
+        attach(session, termux = false)
+    }
+
+    /**
+     * Starts bash in Termux (TermuxShell), in `dir` when given. Termux takes
+     * a moment, so this returns at once and the pane says it is starting;
+     * `onFailed` gets Termux's reason if no shell came of it.
+     */
+    fun startTermux(dir: String?, onFailed: (String) -> Unit) {
+        if (pty != null || starting != 0) return
+        val attempt = ++attempts
+        starting = attempt
+        message = "Starting bash in Termux…"
+        invalidate()
+        val c = cols; val r = rows
+        Thread {
+            val result = try {
+                Result.success(TermuxShell.start(context, dir, c, r))
+            } catch (e: Exception) {
+                android.util.Log.w("MiniCodeTermux", "terminal: ${e.message}")
+                Result.failure(e)
+            }
+            ui.post {
+                val session = result.getOrNull()
+                // Closed, or started again, while Termux was busy.
+                if (starting != attempt) { session?.close(); return@post }
+                starting = 0
+                if (session != null) attach(session, termux = true)
+                else {
+                    message = null
+                    invalidate()
+                    onFailed(result.exceptionOrNull()?.message ?: "no reason given")
+                }
+            }
+        }.start()
+    }
+
+    private var attempts = 0
+    /** The attempt still waiting for Termux, or 0. */
+    private var starting = 0
+    private var startedAt = 0L
+    private var directory = ""
+    private var commandsEnded = 0
+    private val pendingNotices = mutableListOf<String>()
+
+    /** Whether the running shell is Termux's bash rather than Android's sh. */
+    var isTermux = false
+        private set
+
+    /** The shell's directory changed (OSC 7; bash in Termux sends it). */
+    var onDirectory: ((String) -> Unit)? = null
+
+    /** A command finished (OSC 133;D), so files may have changed. */
+    var onCommandEnded: (() -> Unit)? = null
+
+    private fun attach(session: Pty, termux: Boolean) {
         pty = session
+        isTermux = termux
         message = null
+        directory = ""
+        commandsEnded = 0
+        startedAt = android.os.SystemClock.uptimeMillis()
+        // The pane may have changed size while the shell was starting.
+        session.resize(cols, rows)
+        pendingNotices.forEach { session.show("\u001b[90m$it\u001b[0m\n") }
+        pendingNotices.clear()
+        snapshot()
         session.startReading(
             onChange = {
                 if (redrawQueued.compareAndSet(false, true)) ui.post { snapshot() }
@@ -90,21 +159,41 @@ class TerminalView @JvmOverloads constructor(
             onExit = {
                 // The shell ended by itself. The check against `pty` keeps a
                 // late exit from closing a terminal started since.
-                ui.post { if (pty === session) { stop(); onExit?.invoke() } }
+                ui.post {
+                    if (pty === session) {
+                        val quick = android.os.SystemClock.uptimeMillis() - startedAt < QUICK_EXIT_MS
+                        stop()
+                        onExit?.invoke(quick)
+                    }
+                }
             })
     }
 
     fun stop() {
+        starting = 0
         pty?.close()
         pty = null
+        message = null
     }
 
-    val isRunning: Boolean get() = pty?.isOpen == true
+    /** A shell is running, or Termux is starting one. */
+    val isRunning: Boolean get() = pty?.isOpen == true || starting != 0
 
     private fun snapshot() {
         redrawQueued.set(false)
         val session = pty ?: return
-        screen = session.snapshot().also { links = findLinks(it) }
+        screen = session.snapshot()
+        val dir = session.directory()
+        if (dir != directory) {
+            directory = dir
+            if (dir.isNotEmpty()) onDirectory?.invoke(dir)
+        }
+        val ended = session.commandsEnded()
+        if (ended != commandsEnded) {
+            commandsEnded = ended
+            onCommandEnded?.invoke()
+        }
+        links = findLinks(screen!!)
         invalidate()
     }
 
@@ -156,7 +245,8 @@ class TerminalView @JvmOverloads constructor(
                     out += Link(row, l.first, l.end, null, l.target, 0, 0)
                     continue
                 }
-                val file = resolve(l.target, listOfNotNull(promptDir) + dirs) ?: continue
+                val here = listOfNotNull(promptDir, directory.takeIf { it.isNotEmpty() })
+                val file = resolve(l.target, here + dirs) ?: continue
                 out += Link(row, l.first, l.end, file, null, l.line, l.column)
             }
         }
@@ -381,7 +471,11 @@ class TerminalView @JvmOverloads constructor(
 
     /** A note from the app, printed in dim text above the shell's output. */
     fun notice(text: String) {
-        val session = pty ?: return
+        val session = pty ?: run {
+            // Said once the shell is there (Termux may still be starting).
+            if (starting != 0) pendingNotices += text
+            return
+        }
         session.show("\u001b[90m$text\u001b[0m\n")
         snapshot()
     }
@@ -394,6 +488,11 @@ class TerminalView @JvmOverloads constructor(
     fun changeDirectory(path: String) {
         val quoted = "'" + path.replace("'", "'\\''") + "'"
         pty?.write("cd $quoted\n".toByteArray(Charsets.UTF_8))
+    }
+
+    companion object {
+        /** A shell that ends sooner than this after starting never ran. */
+        private const val QUICK_EXIT_MS = 2500L
     }
 
     /** Ctrl and Escape, for a keyboard that has neither. */

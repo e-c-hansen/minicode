@@ -24,10 +24,12 @@ developer accounts need a two-week closed test before publishing anything.
 Every release is signed with the same key, so updates install over the old
 version. The APK is built by `scripts/release.sh` from the tagged source.
 
-### Language servers, LaTeX and git (optional)
+### Termux: python, git, language servers and LaTeX (optional)
 
 These run in [Termux](https://f-droid.org/packages/com.termux/), installed
-from F-Droid (the Play Store copy is years out of date):
+from F-Droid (the Play Store copy is years out of date). Once it is set up,
+MiniCode's terminal is Termux's bash, so everything installed there runs in
+the terminal too:
 
 1. In Termux:
 
@@ -38,7 +40,8 @@ from F-Droid (the Play Store copy is years out of date):
        termux-setup-storage
 
 2. In MiniCode, ⋮ → Termux tools → Allow. It then lists which language
-   servers, tectonic and git it found.
+   servers, tectonic and git it found. The next terminal you open is
+   Termux's bash.
 3. Keep projects in phone storage (Termux sees it as `~/storage/shared`),
    since that is the one place both apps can reach.
 
@@ -61,7 +64,8 @@ The rest of this file is about how the port is built and developed.
   asks for a name, creates the file and opens it. A folder the app can no
   longer read (moved, deleted, its permission taken back, or no "All files
   access" for a path) says which, with a row to fix it. Back in a subfolder
-  goes up one.
+  goes up one. The list follows the disk: see "The file list follows the
+  disk" below.
 - **The title bar says where you are.** The first line names the pane (the
   folder, the file with a dot while unsaved, Terminal, Browser, Source
   Control, a diff); the second says where it is, as "Phone storage / mc-test
@@ -81,11 +85,12 @@ The rest of this file is about how the port is built and developed.
   below.
 - **Images and PDFs.** Decoded by Android, scaled down but never up, with the
   pixel size or page count in the title bar. A PDF shows its first page.
-- **Terminal.** `/system/bin/sh` on a pty, parsed by the shared
-  TerminalScreen: the same grid that runs vim and less on the Mac. No Termux
-  needed, though only the toybox utilities are reachable until there is.
+- **Terminal.** Termux's bash when Termux is set up, otherwise the phone's
+  own `/system/bin/sh` with the toybox utilities, either one parsed by the
+  shared TerminalScreen: the same grid that runs vim and less on the Mac.
   It starts in the open folder and follows it when another is opened, as
-  long as the folder has a path (see below).
+  long as the folder has a path. ⋮ → Shell picks one. See "Termux's bash in
+  the terminal" below.
 - **Browser.** The system web view with a URL bar.
 - **LaTeX preview.** Typeset by tectonic in Termux, every page in a
   scrolling list, and a double tap on the text opens the source behind it
@@ -181,6 +186,9 @@ a folder inside Termux (opened through Termux's own entry in the picker) has
 one, `/data/data/com.termux/files/home`, that Android lets no other app
 enter, whatever permissions it holds. In both cases the terminal starts in
 MiniCode's private folder and prints why, in grey, above the prompt.
+All of this is about Android's own shell; Termux's bash needs none of
+MiniCode's permissions, only Termux's own storage access, and starts in
+Termux's home when the folder is not in shared storage.
 
 Android's picker is a poor way into that storage: many phones hide it behind
 the picker's menu ("Show internal storage"), and since Android 11 it refuses
@@ -198,6 +206,118 @@ can be edited in MiniCode and built or committed from either terminal.
 Granting access while the terminal is open moves it into the folder as soon
 as you return from Settings.
 
+### Termux's bash in the terminal
+
+The phone's own shell cannot reach anything installed in Termux, so a user
+who ran `pkg install python` still got "python3: inaccessible or not found"
+in MiniCode's terminal. Now, when Termux is installed and MiniCode may run
+commands in it, the terminal is bash running in Termux, in the open folder,
+with Termux's HOME, PATH, prompt, `~/.bashrc` and history. python, git,
+clang and whatever else `pkg` installed run there, and so do the Python
+prompt, less and vim, because bash has a real pseudo terminal.
+
+- **How.** `Termux.start` (the language servers' bridge) could already run a
+  program in Termux with its stdin and stdout on a loopback socket, but a
+  socket is not a terminal: no line editing, no Ctrl C, no full-screen
+  programs. Termux ships nothing that turns one into the other (`script` is
+  in util-linux, python may not be there), so MiniCode brings its own:
+  `app/src/main/cpp/termux_pty.c`, about 150 lines of C against bionic,
+  which opens a pty inside Termux, starts `bash --rcfile ... -i` on it and
+  relays between the pty and the socket. Input travels in frames (`d`, a
+  two-byte length, the bytes; or `w` with the new columns and rows), so a
+  change of size reaches the pty as TIOCSWINSZ and bash, less and vim get
+  SIGWINCH. Output comes back raw. `terminal_jni.cpp` has a second kind of
+  session for this (`nativeAttach`): the same screen, keys and snapshots,
+  with writes framed and resizes sent as frames.
+- **Getting the helper into Termux.** Android runs no program out of
+  another app's storage, and MiniCode's native libraries are not even
+  extracted (they stay in the APK, for 16 KB page alignment). Termux can run
+  its own files, though, so the helper is built as an executable named
+  `libminicode_pty.so` (the name is what makes the Android build carry it in
+  the APK), read out of the APK by `TermuxShell.kt`, and sent over the same
+  socket the first time: the script Termux runs answers "have" or "need"
+  for `$TMPDIR/minicode-pty-<hash>`, and on "need" reads exactly the
+  helper's bytes with `head -c`. A new build with a different helper gets a
+  new hash, and older copies are removed. Nothing is needed from `pkg`.
+- **The rc file** (`$TMPDIR/minicode-bashrc`, rewritten on every start)
+  enters the open folder (passed in `MINICODE_DIR`, never written into a
+  script), runs Termux's `bash.bashrc` and the user's `~/.bashrc`, then adds
+  a PROMPT_COMMAND that sends OSC 7 (the directory) and OSC 133;D (a
+  command finished). The core's TerminalScreen now records both
+  (`directory()`, `commandsEnded()`): the title bar follows the directory,
+  links resolve against it, and a finished command makes the file list
+  look again.
+- **Security** is the language servers': a one-shot listener on 127.0.0.1
+  that takes one connection, which must send the random token first.
+- **Which shell.** ⋮ → Shell: Automatic (the default: Termux's when Termux
+  is installed and MiniCode has its permission), Termux, or Android. A
+  change restarts the shell. On Android's shell in automatic mode a grey
+  line says how to get Termux's. If Termux will not start a shell, Android's
+  starts instead, with Termux's reason above the prompt, and the same
+  happens if bash ends within moments of starting.
+- **Where it starts.** A folder in shared storage opens there. Anywhere
+  else (a cloud folder, MiniCode's own storage) bash starts in Termux's home
+  and says why. If Termux has no storage permission yet, the rc file says
+  to run `termux-setup-storage`.
+- **Ending.** `exit` (or Ctrl D) ends bash, then the helper, then the pane,
+  as before. Closing MiniCode closes the socket, and the helper hangs up
+  bash, so nothing is left running in Termux; the window stops the shell in
+  `onDestroy` too, since a Termux shell lives in Termux's process.
+- **Size changes** used to recreate the window (a display size or layout
+  change is not in `configChanges` by default), which lost the shell and
+  any unsaved buffer. The activity now handles `smallestScreenSize` and
+  `screenLayout` itself, like the others it already did.
+
+Checked on the Titan 2 (2026-09-26, Termux 0.118.3, which had python3,
+less, clang and git but not vim): bash in the open folder with the user's
+prompt, `python3 -c 'print(1+1)'`, a Python prompt line, a script in the
+folder with a traceback whose file link opened the file at the line,
+`less` filling the grid, a change of height from 23 to 14 rows and back
+reaching `stty size` and redrawing `less`, Ctrl C from the key row
+interrupting `sleep` (status 130), `exit` and a new shell with no process
+left behind in Termux, and ⋮ Shell switching to Android's sh and back.
+The on-screen keyboard could not be used to change the height: the Titan's
+Kika keyboard shows only its strip for a TYPE_NULL view, so `wm size` was
+used instead, which changes the pane the same way.
+
+### The file list follows the disk
+
+The list used to be read only when a folder was opened, so a file made by
+`touch` in the terminal never appeared. Now:
+
+- **A folder with a path MiniCode may read** (Phone storage, or a picked
+  folder on the phone's storage once "All files access" is granted) is
+  watched with a `FileObserver`. Creating, deleting or moving an entry
+  starts a 250 ms timer, and the folder is read once when it runs; the list
+  is replaced only if an entry changed, keeping the scroll position and the
+  focused row. A deleted subfolder gives way to the nearest folder above it
+  that is still there; a deleted project folder says it is gone.
+- **A folder with no path** (Drive, Termux's own folders, other apps) cannot
+  be watched. It is read again on returning to the app, on showing the list
+  (from the terminal, say), and when a command finishes in Termux's bash.
+- **One observer per folder.** Android keeps one inotify watch per path, and
+  a second FileObserver on the same folder replaces the first one's event
+  mask instead of adding to it. Watching the open file's folder separately
+  made the list stop seeing deletions as soon as a file in it was opened,
+  so both uses share one observer with both masks.
+- **The open file** is checked when its folder reports a write to it, on
+  returning to the app and on showing the editor. A buffer with no unsaved
+  edits takes the new text as one edit (so undo can go back to what was
+  there) with the caret kept; an unsaved one is kept and the user is told
+  once, and saving then asks whether to save over the other program's
+  change or load the file from disk. Before this, nothing noticed, and a
+  save silently wrote over whatever had changed.
+- Nothing is watched while MiniCode is in the background; returning reads
+  everything again.
+
+Checked on the Titan 2 with a scratch folder: files made by `adb shell
+touch`, by `touch` in Termux's bash and in Android's sh appeared within a
+second, an `rm` and a `mkdir` from adb showed up while a file in the same
+folder was open, deleting the listed subfolder moved the list up, an
+outside append to the open file reloaded it with the caret kept, and an
+outside change under an unsaved edit gave the toast and then the dialog on
+save.
+
 ### Tapping links in the terminal
 
 A file reference or URL printed in the terminal is underlined in the accent
@@ -212,8 +332,8 @@ point per cell so the answer comes back in cells. A file is underlined only
 if it exists. Relative paths are resolved against the directory in the
 prompt above them first: the phone's `/system/bin/sh` is mksh, which sends
 no OSC 7 but prints its directory in the prompt (`:/storage/emulated/0/mc $ `).
-After that come the shell's folder, the open folder, and the shell's home,
-which `~/` means. A link that wraps onto the next row is not found.
+Termux's bash sends OSC 7, so its directory comes next. After that come the
+shell's folder, the open folder, and MiniCode's home, which `~/` means. A link that wraps onto the next row is not found.
 
 ### The key row under the terminal
 
@@ -223,7 +343,7 @@ no text field for it to type into. So the terminal has a row of keys under it,
 as Termux does: Esc, Tab, a sticky Ctrl (tap it, then a letter; it lights up
 while it waits), Up and Down for the shell's history (Android's
 mksh keeps it for the session only: persistent history is compiled out of
-it, so `HISTFILE` does nothing), `| ~ / - \ ` & > < { } [ ]`,
+it, so `HISTFILE` does nothing; Termux's bash keeps `~/.bash_history`), `| ~ / - \ ` & > < { } [ ]`,
 and Left and Right. The row scrolls
 sideways, and its keys never take focus, so typing stays with the shell
 (`TerminalKeys.kt`).
@@ -581,8 +701,8 @@ Run it from the repository root; the tests read a few files from `demo/`,
   splits an emoji into two surrogates, and CheckJNI (on in debug builds)
   aborts the app when `NewStringUTF` is given a 4-byte sequence. Use these
   helpers for any user text.
-- `app/src/main/cpp/terminal_jni.cpp` — the pty, and the shared
-  TerminalScreen reading it.
+- `app/src/main/cpp/terminal_jni.cpp`: the pty (or the socket to a Termux
+  shell), and the shared TerminalScreen reading it.
 - `app/src/main/java/org/minicode/editor/MainActivity.kt` — the panes, the
   leader, the menu, the title bar, recent folders.
 - `StartScreen.kt` — what shows while no folder is open.
@@ -601,8 +721,12 @@ Run it from the repository root; the tests read a few files from `demo/`,
   pictures, taps on links, double taps to edit, and the lines behind place
   keeping.
 - `MarkdownEditDialog.kt`: the box a double tap opens.
-- `Termux.kt` — runs a program in Termux with its stdin and stdout on a
-  loopback socket; how language servers, tectonic and git are reached.
+- `Termux.kt`: runs a program in Termux with its stdin and stdout on a
+  loopback socket; how language servers, tectonic, git and the terminal's
+  bash are reached.
+- `TermuxShell.kt`: bash in Termux for the terminal: hands the pty helper
+  to Termux, writes the rc file, and turns the socket into a `Pty`.
+- `app/src/main/cpp/termux_pty.c`: the pty helper that runs inside Termux.
 - `LatexPreview.kt` — the LaTeX preview: typesetting through Termux, the
   page list, and the double tap to edit (`PageText` finds the tapped word).
 - `app/src/main/cpp/latex_jni.cpp` — SyncTeX and `LatexDoc` for the tap.

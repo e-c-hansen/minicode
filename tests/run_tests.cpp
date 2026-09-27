@@ -1815,6 +1815,17 @@ void testTerminalScreen() {
         CHECK(s.takeReplies() == "\033[3;7R\033[0n\033[\?1;2c");
         s.feed("\033]0;my title\007");
         CHECK(s.title() == "my title");
+        // Shell integration, which Android's terminal reads from the grid:
+        // OSC 7 names the directory, OSC 133;D counts finished commands.
+        CHECK(s.directory().empty() && s.commandsEnded() == 0);
+        s.feed("\033]7;file://localhost/storage/emulated/0/my%20dir\007");
+        CHECK(s.directory() == "/storage/emulated/0/my dir");
+        s.feed("\033]7;/tmp\033\\\033]133;D;0\007\033]133;A\007\033]133;D\007");
+        CHECK(s.directory() == "/tmp" && s.commandsEnded() == 2);
+        s.feed("\033]7;file://host-without-path\007\033]7;\007");
+        CHECK(s.directory() == "/tmp");
+        CHECK(termOsc7Path("7;file://h/a%2Fb") == "/a/b" &&
+              termOsc7Path("0;title").empty());
         // Private and intermediate sequences never reach SGR.
         s.feed("\033[>4;2m\033[\?4m\033[0%m\033[2 qA");
         CHECK(s.cell(2, 6).style == TermStyle() && s.cell(2, 6).ch == "A");

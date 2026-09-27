@@ -57,6 +57,10 @@ struct TermRun {
 // zero-width characters, 2 for East Asian wide characters and most emoji.
 int termCharWidth(uint32_t cp);
 
+// The directory an OSC 7 body names ("7;file://host/path", or a bare
+// "7;/path"), percent-decoded; empty when the body is not a usable OSC 7.
+std::string termOsc7Path(const std::string& body);
+
 // Apply an SGR parameter string (the body of "CSI ... m") to a style.
 void applySgr(TermStyle& style, const std::string& params);
 

@@ -67,6 +67,12 @@ public:
     int scrollTop() const { return top_; }
     int scrollBottom() const { return bottom_; }
     const std::string& title() const { return title_; }
+    // Shell integration, for a host that has only the grid (Android): the
+    // directory from the last OSC 7, and how many OSC 133;D (command
+    // finished) marks have arrived. A full reset keeps both, since they
+    // describe the shell rather than the screen.
+    const std::string& directory() const { return directory_; }
+    int commandsEnded() const { return commandsEnded_; }
 
     // Bytes the program asked the terminal to send back (DSR, DA). The host
     // writes them to the pty; taking them clears the queue.
@@ -114,8 +120,10 @@ private:
     uint32_t lastCp_ = 0;
     std::string replies_;
     std::string title_;
+    std::string directory_;
+    int commandsEnded_ = 0;
 
-    TermCell blank() const;           // an erased cell in the current colors
+    TermCell blank() const;          // an erased cell in the current colors
     void resetTabs();
     void fullReset();
     void print(uint32_t cp, const std::string& utf8);

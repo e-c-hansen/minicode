@@ -7,10 +7,10 @@ import kotlin.concurrent.thread
  * A shell on a pseudo terminal, with the shared TerminalScreen reading its
  * output. See app/src/main/cpp/terminal_jni.cpp.
  *
- * The shell is Android's own, /system/bin/sh, with the toybox utilities: ls,
- * cat, grep, ps, and enough to move around a project. Anything richer (git,
- * python, a compiler) lives in Termux, whose files this app cannot reach, so
- * pointing the terminal at a Termux shell is a later job.
+ * Either Android's own shell, /system/bin/sh with the toybox utilities, on a
+ * pty in this app (start), or bash in Termux, where python, git and the
+ * compilers are, on a pty Termux holds, reached over a loopback socket
+ * (attach, from TermuxShell). Everything else is the same for both.
  *
  * Threads: everything here is for the UI thread except the reader, which
  * startReading owns. The native session is freed only once both the owner
@@ -25,6 +25,15 @@ class Pty private constructor(private val session: Long) {
         /** Null when no shell could be started. */
         fun start(shell: String, home: String, cwd: String, cols: Int, rows: Int): Pty? {
             val handle = nativeOpen(shell, home, cwd, cols, rows)
+            return if (handle == 0L) null else Pty(handle)
+        }
+
+        /**
+         * A shell already running in Termux, behind the socket `fd` (see
+         * TermuxShell). The Pty owns the descriptor from here on.
+         */
+        fun attach(fd: Int, cols: Int, rows: Int): Pty? {
+            val handle = nativeAttach(fd, cols, rows)
             return if (handle == 0L) null else Pty(handle)
         }
 
@@ -61,6 +70,9 @@ class Pty private constructor(private val session: Long) {
 
         @JvmStatic private external fun nativeOpen(
             shell: String, home: String, cwd: String, cols: Int, rows: Int): Long
+        @JvmStatic private external fun nativeAttach(fd: Int, cols: Int, rows: Int): Long
+        @JvmStatic private external fun nativeDirectory(handle: Long): String
+        @JvmStatic private external fun nativeCommandsEnded(handle: Long): Int
         @JvmStatic private external fun nativePump(handle: Long, timeoutMs: Int): Int
         @JvmStatic private external fun nativeReaderDone(handle: Long)
         @JvmStatic private external fun nativeWrite(handle: Long, data: ByteArray)
@@ -138,6 +150,12 @@ class Pty private constructor(private val session: Long) {
     }
 
     fun resize(cols: Int, rows: Int) { if (open) nativeResize(session, cols, rows) }
+
+    /** The shell's directory from its last OSC 7, or "" if it sends none. */
+    fun directory(): String = if (open) nativeDirectory(session) else ""
+
+    /** How many commands have finished (OSC 133;D) since the shell began. */
+    fun commandsEnded(): Int = if (open) nativeCommandsEnded(session) else 0
 
     fun snapshot(): Screen = Screen(if (open) nativeSnapshot(session) else IntArray(0))
 

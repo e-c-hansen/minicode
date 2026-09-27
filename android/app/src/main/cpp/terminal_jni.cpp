@@ -1,17 +1,21 @@
 // terminal_jni.cpp — a shell on a pseudo terminal, drawn by the shared
 // TerminalScreen from ../../../src.
 //
-// Android has no Termux requirement for this: every device carries a shell at
-// /system/bin/sh with the toybox utilities beside it, and an app may run it
-// inside its own sandbox. What it cannot do is reach another app's files, so
-// git, python and the rest arrive only if the user has Termux and points the
-// terminal at its shell later.
+// Two kinds of session. The first is Android's own shell: every device
+// carries /system/bin/sh with the toybox utilities beside it, and an app may
+// run it on a pty inside its own sandbox. The second is a shell in Termux,
+// where python, git and the compilers live: Termux runs it on a pty of its
+// own (termux_pty.c) and the bytes cross a loopback socket, which is what
+// `nativeAttach` takes over. The screen and the keys are the same for both;
+// only writing (framed for the helper) and resizing (a frame rather than an
+// ioctl) differ.
 //
 // The parsing is not reimplemented here. Bytes from the pty go to the same
 // TerminalScreen the macOS app uses for vim and less, and this file only
 // carries them across the JNI boundary.
 #include <jni.h>
 
+#include <errno.h>
 #include <fcntl.h>
 #include <pty.h>
 #include <signal.h>
@@ -22,6 +26,7 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -29,6 +34,7 @@
 #include <vector>
 
 #include "TerminalScreen.h"
+#include "jni_strings.h"
 
 namespace {
 
@@ -50,6 +56,7 @@ namespace {
 struct Session {
     int fd = -1;
     pid_t pid = -1;
+    bool remote = false;   // fd is a socket to termux_pty.c, not a pty
     bool reaped = false;   // set by the reader only, before it lets go
     std::mutex lock;
     std::mutex writeLock;
@@ -68,14 +75,44 @@ void SetSize(int fd, int cols, int rows) {
     ioctl(fd, TIOCSWINSZ, &ws);
 }
 
-void WriteAll(Session *s, const char *data, size_t length) {
-    std::lock_guard<std::mutex> guard(s->writeLock);
+bool WriteRaw(int fd, const char *data, size_t length) {
     size_t written = 0;
     while (written < length) {
-        const ssize_t n = write(s->fd, data + written, length - written);
-        if (n <= 0) break;
+        const ssize_t n = write(fd, data + written, length - written);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) return false;
         written += static_cast<size_t>(n);
     }
+    return true;
+}
+
+/**
+ * One frame for termux_pty.c: a type byte, a two-byte length, the body.
+ * The caller holds writeLock, so frames never interleave.
+ */
+bool WriteFrame(Session *s, char type, const char *data, size_t length) {
+    char header[3] = {type, static_cast<char>((length >> 8) & 0xFF),
+                      static_cast<char>(length & 0xFF)};
+    return WriteRaw(s->fd, header, 3) && WriteRaw(s->fd, data, length);
+}
+
+/** Keys and replies for the program: straight to a pty, framed to Termux. */
+void WriteAll(Session *s, const char *data, size_t length) {
+    std::lock_guard<std::mutex> guard(s->writeLock);
+    if (!s->remote) { WriteRaw(s->fd, data, length); return; }
+    // The helper reads frames of up to 4 KB.
+    for (size_t at = 0; at < length; at += 4096) {
+        if (!WriteFrame(s, 'd', data + at, std::min<size_t>(4096, length - at))) return;
+    }
+}
+
+/** The pane's size in cells: TIOCSWINSZ on a pty, a frame to Termux. */
+void SendSize(Session *s, int cols, int rows) {
+    if (!s->remote) { SetSize(s->fd, cols, rows); return; }
+    const char body[4] = {static_cast<char>((cols >> 8) & 0xFF), static_cast<char>(cols & 0xFF),
+                          static_cast<char>((rows >> 8) & 0xFF), static_cast<char>(rows & 0xFF)};
+    std::lock_guard<std::mutex> guard(s->writeLock);
+    WriteFrame(s, 'w', body, 4);
 }
 
 /**
@@ -173,6 +210,25 @@ Java_org_minicode_editor_Pty_nativeOpen(JNIEnv *env, jclass, jstring shell,
     fcntl(master, F_SETFD, FD_CLOEXEC);
     session->fd = master;
     session->pid = pid;
+    return reinterpret_cast<jlong>(session.release());
+}
+
+/**
+ * A shell in Termux, already running: `fd` is the socket to termux_pty.c
+ * (TermuxShell.kt starts it and hands the connection over). The session owns
+ * the descriptor from here on; closing it hangs up the shell in Termux.
+ */
+JNIEXPORT jlong JNICALL
+Java_org_minicode_editor_Pty_nativeAttach(JNIEnv *, jclass, jint fd, jint cols,
+                                          jint rows) {
+    if (fd < 0) return 0;
+    auto session = std::make_unique<Session>(cols, rows);
+    fcntl(fd, F_SETFD, FD_CLOEXEC);
+    session->fd = fd;
+    session->remote = true;
+    // The helper was started at the size the pane had then; it may have
+    // changed while Termux was starting.
+    SendSize(session.get(), cols, rows);
     return reinterpret_cast<jlong>(session.release());
 }
 
@@ -290,7 +346,31 @@ Java_org_minicode_editor_Pty_nativeResize(JNIEnv *, jclass, jlong handle,
     if (!s || s->fd < 0) return;
     std::lock_guard<std::mutex> guard(s->lock);
     s->screen.resize(cols, rows);
-    SetSize(s->fd, cols, rows);
+    SendSize(s, cols, rows);
+}
+
+/**
+ * What the shell said about itself through the grid: the directory from its
+ * last OSC 7 (empty if it sends none, as the phone's mksh does), and how many
+ * commands have finished (OSC 133;D), for the file list to look again.
+ */
+JNIEXPORT jstring JNICALL
+Java_org_minicode_editor_Pty_nativeDirectory(JNIEnv *env, jclass, jlong handle) {
+    Session *s = Get(handle);
+    std::string dir;
+    if (s) {
+        std::lock_guard<std::mutex> guard(s->lock);
+        dir = s->screen.directory();
+    }
+    return jnistr::ToJava(env, dir);
+}
+
+JNIEXPORT jint JNICALL
+Java_org_minicode_editor_Pty_nativeCommandsEnded(JNIEnv *, jclass, jlong handle) {
+    Session *s = Get(handle);
+    if (!s) return 0;
+    std::lock_guard<std::mutex> guard(s->lock);
+    return s->screen.commandsEnded();
 }
 
 /**

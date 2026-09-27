@@ -102,20 +102,11 @@ straight to the pty, and pagers are no longer forced to `cat`. What remains:
 ## Android port
 
 The newest port (`android/`), a Kotlin app around the same C++ core, with the
-file list, editor, Markdown preview, images, PDFs, a terminal on
-`/system/bin/sh` and a browser. What is left:
+file list (which follows the disk), editor, Markdown preview, images, PDFs,
+source control, a browser, and a terminal that is Termux's bash on a real
+pty when Termux is set up (the phone's `/system/bin/sh` otherwise).
+Language servers and the LaTeX preview run in Termux too. What is left:
 
-- **Termux**, which is the interesting one: it is where a phone keeps git,
-  python, clangd and a TeX engine. Termux will run a command for another app
-  through its RUN_COMMAND intent, which needs the app to hold
-  `com.termux.permission.RUN_COMMAND` and the user to set
-  `allow-external-apps=true`. Pointing the terminal at Termux's shell is the
-  first step, since the pty and the screen already work.
-- **Language servers**, which follow from Termux: the client is portable C++
-  and already compiles for Android.
-- **The LaTeX preview**, which also follows: the reader and click-to-source
-  are portable, but tectonic is not built for Android, so it needs Termux or
-  a machine on the network.
 - Project search, comment toggling, PDFs past the first page, zoom for large
   images, terminal scrollback.
 

@@ -66,6 +66,18 @@ object Termux {
         fun close() = try { socket.close() } catch (e: Exception) {}
         /** How long a read may wait, in milliseconds; 0 waits for ever. */
         fun setReadTimeout(ms: Int) { socket.soTimeout = ms }
+
+        /**
+         * The connection as a plain descriptor, for native code to read and
+         * write (the terminal's session). The caller owns it and must close
+         * it; this Process is closed and done with.
+         */
+        fun detachFd(): Int {
+            socket.soTimeout = 0
+            val fd = android.os.ParcelFileDescriptor.fromSocket(socket).detachFd()
+            close()
+            return fd
+        }
     }
 
     private val random = SecureRandom()
