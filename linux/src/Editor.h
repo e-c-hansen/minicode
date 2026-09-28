@@ -81,10 +81,16 @@ public:
     // edits, in place. False if the file can no longer be read as text.
     bool reloadFromDisk();
 
-    // Images and PDFs (MediaView). isMedia() is true while one is shown, and
-    // titleSuffix() is what the window title adds for it ("  640 × 480",
-    // "  12 pages"), empty otherwise.
+    // Images, PDFs, video and audio (MediaView). isMedia() is true while one
+    // is shown, and titleSuffix() is what the window title adds for it
+    // ("  640 × 480", "  12 pages", "  640 × 360, 0:05"), empty otherwise.
+    // canPlayMedia() is true while a video or audio file that can play is
+    // shown, and togglePlayMedia() plays or pauses it. The media view calls
+    // the title callback when a stream learns its size or fails, so the
+    // shell can enable Play/Pause from canPlayMedia().
     bool isMedia() const;
+    bool canPlayMedia() const;
+    void togglePlayMedia();
     std::string titleSuffix() const;
     MediaView* media() const { return media_; }
     // Zoom for the PDF on screen, the PDF viewer's or the LaTeX preview's:

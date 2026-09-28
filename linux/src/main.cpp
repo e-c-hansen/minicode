@@ -274,6 +274,29 @@ static void showEditorArea(App* app) {
 
 // ---------------------------------------------------------------- helpers
 
+// Play/Pause (Ctrl+Shift+Space) acts only while video or audio that can play
+// is shown, and never while the keyboard is typing somewhere: in the
+// terminal, whose Ctrl+Shift+Space is the shell's, or in a text field such
+// as the commit message. Disabled, the key goes on to whatever has the
+// focus. Called when the title changes and when the focus moves.
+static void updateMediaKey(App* app) {
+    if (app->dead || !app->editor) return;
+    GAction* a = g_action_map_lookup_action(G_ACTION_MAP(app->window), "playpause");
+    if (!a) return;
+    bool on = app->editor->canPlayMedia();
+    if (on) {
+        GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(app->window));
+#ifdef MINICODE_ENABLE_TERMINAL
+        if (app->terminal && app->terminal->owns(focus)) on = false;
+#endif
+        if (focus && GTK_IS_TEXT_VIEW(focus) && gtk_text_view_get_editable(GTK_TEXT_VIEW(focus)))
+            on = false;
+        if (focus && GTK_IS_EDITABLE(focus) && gtk_editable_get_editable(GTK_EDITABLE(focus)))
+            on = false;
+    }
+    g_simple_action_set_enabled(G_SIMPLE_ACTION(a), on);
+}
+
 static void updateTitle(void* userp) {
     App* app = static_cast<App*>(userp);
     std::string title = "MiniCode";
@@ -298,6 +321,8 @@ static void updateTitle(void* userp) {
     for (const char* zoom : {"zoomin", "zoomout", "zoomfit"})
         if (GAction* z = g_action_map_lookup_action(G_ACTION_MAP(app->window), zoom))
             g_simple_action_set_enabled(G_SIMPLE_ACTION(z), app->editor->showingPdf());
+    updateMediaKey(app);
+    refreshHints(app);   // Play/Pause is listed while video or audio can play
     gtk_label_set_text(GTK_LABEL(app->statusLabel),
                        app->editor->isDiff() ? app->editor->diffTitle().c_str()
                        : p.empty()           ? "Ready"
@@ -574,6 +599,10 @@ static void act_export_pdf(GSimpleAction*, GVariant*, gpointer userp) {
 
 // Zoom for a PDF or the LaTeX preview (PdfView). The reset is Ctrl+Alt+0,
 // not Ctrl+0, which is Focus the File Tree here as on the Mac.
+static void act_play_pause(GSimpleAction*, GVariant*, gpointer userp) {
+    static_cast<App*>(userp)->editor->togglePlayMedia();
+}
+
 static void act_zoom_in(GSimpleAction*, GVariant*, gpointer userp) {
     static_cast<App*>(userp)->editor->zoomPdf(1);
 }
@@ -1344,6 +1373,12 @@ static std::string hintsText(App* app) {
         s += "Ctrl + / -     Zoom the PDF (or Ctrl wheel)\n";
         s += "Ctrl Alt 0     Fit width\n";
     }
+    if (app->editor->canPlayMedia()) {
+        // A section of its own: the key is wider than the column above.
+        s += "\nVideo and audio\n";
+        s += "────────────────────────────────────────\n";
+        s += "Ctrl Shift Space  Play or pause\n";
+    }
 
 #ifdef MINICODE_ENABLE_TERMINAL
     s += "\nIn the terminal\n";
@@ -1354,7 +1389,7 @@ static std::string hintsText(App* app) {
     s += "Ctrl Shift V   Paste\n";
     s += "Ctrl click     Open a file:line or URL\n";
     s += "Ctrl Shift …   Every Ctrl Shift shortcut\n";
-    s += "               but G, which is the shell's\n";
+    s += "               but G and Space, the shell's\n";
     s += "Ctrl ` 0 1     Panes: terminal, tree, editor\n";
     s += "Ctrl Tab       Previous file\n";
     s += "Ctrl Alt N     New file\n";
@@ -1462,8 +1497,8 @@ static void onSettingsChanged(void*) {
 // (the pane toggles, Find in Folder, New Folder and New File, Export PDF, the
 // hints), and the pane keys Ctrl+`, Ctrl+0, Ctrl+1 and Ctrl+Tab, which a shell
 // has no use for and which are how you get out of the terminal without the
-// mouse. The one Shift key that goes to the shell is Ctrl+Shift+G (Source
-// Control), which terminals send as Ctrl+G. Accelerators belong to the application, not a window, but only the
+// mouse. The Shift keys that go to the shell are Ctrl+Shift+G (Source
+// Control), which terminals send as Ctrl+G, and Ctrl+Shift+Space (Play/Pause). Accelerators belong to the application, not a window, but only the
 // active window gets keys, so its focus decides.
 
 struct Bind {
@@ -1507,6 +1542,7 @@ static const Bind kBinds[] = {
     {"win.zoomin",         {"<Ctrl>plus", "<Ctrl>equal", "<Ctrl>KP_Add"}},
     {"win.zoomout",        {"<Ctrl>minus", "<Ctrl>KP_Subtract"}},
     {"win.zoomfit",        {"<Ctrl><Alt>0"}},
+    {"win.playpause",      {"<Ctrl><Shift>space"}},
 };
 
 // Is this accelerator the shell's while the terminal has the keyboard?
@@ -1517,6 +1553,9 @@ static bool shellOwns(const char* accel) {
     // Ctrl+Shift+G (Source Control) goes to the shell too, which reads it as
     // Ctrl+G. Ctrl+0 still reaches the panel from the terminal.
     if (key == GDK_KEY_g && mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) return true;
+    // So does Play/Pause, Ctrl+Shift+Space, which a shell reads as Ctrl+Space
+    // (Emacs sets the mark with it).
+    if (key == GDK_KEY_space && mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) return true;
     if (mods & (GDK_SHIFT_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK)) return false;
     switch (key) {
         case GDK_KEY_grave: case GDK_KEY_0: case GDK_KEY_1: case GDK_KEY_Tab:
@@ -1555,7 +1594,10 @@ static void updateShellKeys() {
     applyAccels(shell);
 }
 
-static void onFocusWidget(GObject*, GParamSpec*, gpointer) { updateShellKeys(); }
+static void onFocusWidget(GObject*, GParamSpec*, gpointer userp) {
+    updateShellKeys();
+    updateMediaKey(static_cast<App*>(userp));
+}
 
 // Coming back to a window is when the Mac looks for changes made elsewhere
 // (windowDidBecomeKey); the file monitor catches most of them sooner.
@@ -1649,6 +1691,10 @@ static void buildMenu() {
     g_menu_append(zoom, "Fit Width", "win.zoomfit");
     g_menu_append_section(viewMenu, nullptr, G_MENU_MODEL(zoom));
     g_object_unref(zoom);
+    GMenu* play = g_menu_new();
+    g_menu_append(play, "Play or Pause", "win.playpause");
+    g_menu_append_section(viewMenu, nullptr, G_MENU_MODEL(play));
+    g_object_unref(play);
     g_menu_append_submenu(menuBar, "View", G_MENU_MODEL(viewMenu));
     g_object_unref(viewMenu);
 
@@ -1970,9 +2016,10 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "zoomin",         G_CALLBACK(act_zoom_in));
     addAction(app, "zoomout",        G_CALLBACK(act_zoom_out));
     addAction(app, "zoomfit",        G_CALLBACK(act_zoom_fit));
-    for (const char* zoom : {"zoomin", "zoomout", "zoomfit"})   // until a PDF shows
+    addAction(app, "playpause",      G_CALLBACK(act_play_pause));
+    for (const char* off : {"zoomin", "zoomout", "zoomfit", "playpause"})   // until shown
         g_simple_action_set_enabled(G_SIMPLE_ACTION(g_action_map_lookup_action(
-                                        G_ACTION_MAP(app->window), zoom)), FALSE);
+                                        G_ACTION_MAP(app->window), off)), FALSE);
     app->tree->setContextMenu(g.treeMenu);
     // F2 and Delete rename and trash only while the tree has the keyboard. As
     // window accelerators they would take Delete away from the editor.

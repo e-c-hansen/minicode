@@ -156,6 +156,59 @@ Verified by running it:
   - Opening a text file afterwards gives the editor its slot back, editable
     and saveable, with no size or page count in the title.
 
+- Video and audio (September 2026, in the Docker container: aarch64, GTK
+  4.22.4, GStreamer 1.28.2, X11 under Xvfb with llvmpipe, no sound device).
+  No test hook: every file was opened by a real xdotool click in the tree
+  and every key was a real X key event, with screenshots looked at. Clips
+  were made with gst-launch-1.0 from `videotestsrc` (SMPTE bars scrolling
+  sideways, so frames differ) and `audiotestsrc`.
+  - With `gstreamer1.0-libav` installed, all fourteen play: h264.mp4 (with
+    AAC), h264.mov, mjpeg.avi, theora.ogv, vp8.webm, vp9.mkv, and aac,
+    flac, m4a, mp3, ogg, opus and wav. A video opens paused on its first
+    frame with GtkVideo's play button over it, and the title reads
+    `MiniCode — vp8.webm  640 × 360, 0:06`; audio shows its name over
+    always-visible controls, titled `MiniCode — tone.mp3  0:05`. Ctrl Shift
+    Space from the tree played each one: about 71% of the video's pixels
+    changed between captures 0.7 s apart, and the audio page's time and
+    scale moved. With no sound device, GStreamer played silently rather
+    than failing.
+  - On the stock packages (plugins-base and plugins-good, libav and ugly
+    removed), everything played except h264.mp4, h264.mov, tone.m4a and
+    tone.aac, which show "Cannot play", the two packages to install, and
+    GStreamer's own "Your GStreamer installation is missing a plug-in."
+    Installing libav while MiniCode ran did not help until it was
+    restarted, which the message says. A file of random bytes named .mp4
+    says "Could not determine type of stream." With `GTK_MEDIA=none` (GTK
+    with no media backend) a video shows the message about GTK's GStreamer
+    support, and Ctrl Shift Space does nothing. Nothing crashed.
+  - Switching from a playing video to a text file ends GStreamer's GstPlay
+    thread at once; its streaming threads are pooled by GStreamer and gone
+    within 20 s. Move to Trash on a playing file and Ctrl W on a window
+    playing a video also end the GstPlay thread.
+  - Replacing a playing 20 s video on disk (a copy renamed over it) reloaded
+    it at 4.2 s, still playing; replacing it while paused reloaded it at
+    6.95 s, still paused, which the controls showed as 0:06 of 0:20.
+  - Ctrl Shift Space with the terminal focused left the video alone and
+    reached the shell (`cat -v` printed `^@`); with the commit message box
+    focused it left the video alone and typed nothing; from the tree it
+    played. The hints list it under "Video and audio" while a file that can
+    play is on screen.
+  - The build is warning-free and `meson test` passes. Two faults found on
+    the way are fixed: the new pages' minimum height made GTK warn "Trying
+    to measure GtkBox for height of 46" (from launch, and every second a
+    video played), and the audio controls were dark grey on the dark
+    editor background.
+  - Not fixed, and not ours: each video opened leaves one idle
+    `gstglcontext` thread and one `gldisplay-event` thread behind. A
+    standalone GtkVideo program that opens and releases the same way
+    leaks the same, also when it reuses one GtkMediaFile, so it is in
+    GTK 4.22 and GStreamer 1.28 under X11 with llvmpipe. Audio does not
+    use GL.
+  - Not seen: real sound, GNOME on Wayland with a real GPU (the ThinkPad),
+    a HiDPI screen, whether the GL thread leak happens there, and Ubuntu
+    24.04's `libgtk-4-media-gstreamer` package, whose name is Debian's and
+    was not checked in a container.
+
 - Zoom for PDFs and the LaTeX preview (September 2026, on the ThinkPad under
   GNOME Wayland, display at 125%). A temporary `MINICODE_ZOOMTEST` hook,
   since removed, ran under its own application id (`org.minicode.ZoomTest`)
@@ -733,6 +786,22 @@ Notes on package names, which drift between Ubuntu versions:
   (about 10 MB, checked against its published checksum) into
   `~/.local/share/minicode/bin`. It needs `curl` or `wget` and `tar` for that.
 
+- Video and audio play through GTK's own media support, which is GStreamer,
+  so they add no build dependency. On Ubuntu 26.04 GTK's GStreamer backend
+  is part of `libgtk-4-1` itself; on Ubuntu 24.04 and older Debian it is the
+  separate package `libgtk-4-media-gstreamer`. What plays then depends on the
+  GStreamer plugins installed. A stock Ubuntu desktop has
+  `gstreamer1.0-plugins-base` and `gstreamer1.0-plugins-good`, which play
+  WebM, Matroska (VP8, VP9), Ogg (Theora, Vorbis, Opus), MP3, FLAC, WAV and
+  MJPEG AVI. H.264 video (most .mp4 and .mov files) and AAC audio (.m4a,
+  .aac) need `gstreamer1.0-libav`:
+
+      sudo apt install gstreamer1.0-libav
+
+  A file GStreamer has no decoder for shows a message naming these packages
+  in place of the player. GStreamer reads its plugin list when MiniCode
+  starts, so restart MiniCode after installing one.
+
 If you only install `libgtk-4-dev`, the core viewer still builds, images
 included. The terminal, the browser and the PDF viewer are compiled out
 automatically when their libraries are absent.
@@ -898,6 +967,7 @@ and the color applies live while you drag, as on the Mac.
 | Ctrl I            | Show the type and documentation under the cursor |
 | Ctrl +, Ctrl =, Ctrl - | Zoom a PDF or the LaTeX preview in and out (also Ctrl with the wheel, or a pinch) |
 | Ctrl Alt 0        | Back to fit width          |
+| Ctrl Shift Space  | Play or pause the video or audio file on screen (not while the terminal or a text field has the keyboard) |
 | F2                | Rename the selected item, in the tree |
 | Delete            | Move the selected item to the Trash, in the tree |
 | Ctrl Shift C, Ctrl Shift V | Copy and paste, in the terminal |
@@ -933,7 +1003,8 @@ While the terminal has the keyboard, the plain Ctrl shortcuts (Ctrl B, F, G,
 H, I, N, O, Q, S, W, Space, slash, comma, plus and minus) and F12 belong to the shell, so
 readline, vim and emacs get them: Ctrl W deletes a word, Ctrl H is backspace.
 Everything with Shift or Alt in it still works there, except Ctrl Shift G,
-which the shell reads as Ctrl G, and so do the keys that move between panes:
+which the shell reads as Ctrl G, and Ctrl Shift Space (Play or Pause), which
+it reads as Ctrl Space, and so do the keys that move between panes:
 Ctrl `, Ctrl 0, Ctrl 1 and Ctrl Tab. Ctrl 0 reaches the Source Control panel
 from the terminal while it is open. Ctrl click on a
 link in the output is a mouse action and is not affected. The Mac has no such
