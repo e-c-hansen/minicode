@@ -15,5 +15,5 @@ MiniCode.app/
 *.dmg
 MiniCode-*.apk
 
-# Reddit post drafts (kept locally, not published)
-reddit/
+# Post drafts (kept locally, not published)
+posts/
