@@ -51,8 +51,7 @@ class CodeEditText @JvmOverloads constructor(
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
         val inner = super.onCreateInputConnection(outAttrs) ?: return null
-        outAttrs.inputType = outAttrs.inputType or
-                android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        outAttrs.inputType = codeInputType(outAttrs.inputType)
         outAttrs.imeOptions = outAttrs.imeOptions or
                 EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING or
                 EditorInfo.IME_FLAG_NO_EXTRACT_UI
@@ -72,6 +71,30 @@ class CodeEditText @JvmOverloads constructor(
                 super.commitText(text, newCursorPosition)
 
             override fun setComposingRegion(start: Int, end: Int) = true
+        }
+    }
+
+    companion object {
+        /**
+         * What the keyboard is told this field is, whatever the layout or
+         * the caller set: plain text in the visible-password variation,
+         * multi-line if the field is, with no suggestions and no automatic
+         * capitals.
+         *
+         * NO_SUGGESTIONS alone is not enough. Physical-keyboard input
+         * methods such as Pastiera keep auto-capitals, double space to
+         * period and autocorrect on in every text field except password,
+         * URI, email and filter ones (its InputContextState), so `if` at
+         * the start of a line became `If`. The visible-password variation is
+         * the least odd of those for code: nothing is hidden, the Titan 2's
+         * own keyboard shows its usual layout and symbol panel, and the
+         * field stays multi-line.
+         */
+        fun codeInputType(current: Int): Int {
+            val keep = current and android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            return keep or android.text.InputType.TYPE_CLASS_TEXT or
+                    android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or
+                    android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }
     }
 }

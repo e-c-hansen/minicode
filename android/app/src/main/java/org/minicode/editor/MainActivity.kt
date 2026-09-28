@@ -51,6 +51,9 @@ class MainActivity : AppCompatActivity() {
         // no composing region. Without this the keyboard composes words and
         // commits them in one go ("xys" for one keypress), which swallows
         // letters a shortcut needs and rewrites code as though it were prose.
+        // The password variation is what turns off Pastiera's capitals and
+        // autocorrect; CodeEditText.codeInputType says so to the keyboard
+        // whatever is set here.
         ui.editor.inputType = android.text.InputType.TYPE_CLASS_TEXT or
                 android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
                 android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
@@ -1829,15 +1832,46 @@ class MainActivity : AppCompatActivity() {
         'r' to { undo(redo = true) },
     )
 
-    private fun handleShortcut(event: KeyEvent): Boolean {
+    /**
+     * The action a held Ctrl gives a letter key, or null to leave the key
+     * alone. Ctrl+letter is the leader's letter, with these exceptions:
+     *
+     * - C, V, X, A, Z and Y belong to the text field (copy, paste, cut,
+     *   select all, undo, redo), so they are never taken, and leader Y (the
+     *   on-screen keyboard) has no Ctrl form.
+     * - C, D, E and I are the leader's stand-ins for keys a real Ctrl already
+     *   sends to the shell (Ctrl C, Ctrl D, Ctrl [ and Ctrl I), so they stay
+     *   the shell's.
+     * - B is the file list, as Cmd+B is on the Mac; Ctrl+Shift+B is the
+     *   browser, as on Linux. G is go to definition, and Ctrl+Shift+G source
+     *   control, as on the Mac and Linux (V is paste).
+     * - While the terminal has the keyboard, Ctrl+letter is the shell's
+     *   (Ctrl R searches history, Ctrl U kills the line, and so on). Only
+     *   S, B, O and H are taken there, as they always were; with Shift held,
+     *   every letter here is taken, the way a desktop terminal keeps
+     *   Ctrl+Shift for itself.
+     *
+     * The key may come from the hardware or, with an input method such as
+     * Pastiera that passes a held Ctrl on, through InputConnection.sendKeyEvent;
+     * both reach dispatchKeyEvent with the Ctrl meta state set.
+     */
+    private fun ctrlAction(event: KeyEvent): (() -> Unit)? {
+        if (!event.isCtrlPressed || event.isAltPressed || event.isMetaPressed) return null
+        val code = event.keyCode
+        if (code < KeyEvent.KEYCODE_A || code > KeyEvent.KEYCODE_Z) return null
+        val letter = 'a' + (code - KeyEvent.KEYCODE_A)
+        val shift = event.isShiftPressed
+        if (letter in "cvxazydei") return null
+        if (!shift && ui.terminal.hasFocus() && letter !in "sboh") return null
         val letters = leaderActions()
-        val actions = mapOf(
-            KeyEvent.KEYCODE_S to letters.getValue('s'),
-            KeyEvent.KEYCODE_B to letters.getValue('f'),   // Cmd+B on the Mac
-            KeyEvent.KEYCODE_O to letters.getValue('o'),
-            KeyEvent.KEYCODE_H to letters.getValue('h'),
-        )
+        return when {
+            letter == 'b' -> letters.getValue(if (shift) 'b' else 'f')
+            letter == 'g' && shift -> letters.getValue('v')
+            else -> letters[letter]
+        }
+    }
 
+    private fun handleShortcut(event: KeyEvent): Boolean {
         if (event.keyCode in LEADER_KEYS) {
             // One press of this key sends a burst of key-downs on a Titan 2
             // (a hundred of them in the log). The release separates one
@@ -1867,12 +1901,6 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
         }
-        // Ctrl+Shift+G is source control on the Mac and Linux.
-        if (event.isCtrlPressed && event.isShiftPressed && event.keyCode == KeyEvent.KEYCODE_G) {
-            handled.add(event.keyCode)
-            toggleSourceControl()
-            return true
-        }
         // Undo and redo in the Markdown preview, as Ctrl+Z does on Linux.
         // The editor's own field handles them itself.
         if (event.isCtrlPressed && markdownPreviewShowing() &&
@@ -1881,10 +1909,7 @@ class MainActivity : AppCompatActivity() {
             undo(redo = event.keyCode == KeyEvent.KEYCODE_Y || event.isShiftPressed)
             return true
         }
-        val act = when {
-            event.isCtrlPressed -> actions[event.keyCode] ?: return false
-            else -> return false
-        }
+        val act = ctrlAction(event) ?: return false
         handled.add(event.keyCode)
         act()
         return true
@@ -2263,8 +2288,14 @@ class MainActivity : AppCompatActivity() {
             "",
             "That key alone switches panes,",
             "twice opens this menu, and the ⋮",
-            "button does the same. On a USB or",
-            "Bluetooth keyboard, Ctrl works too.")
+            "button does the same.",
+            "",
+            "A held Ctrl works too: Ctrl and the",
+            "letter, except Ctrl B for files,",
+            "Ctrl Shift B for the browser and",
+            "Ctrl Shift G for source control.",
+            "In the terminal, Ctrl and a letter",
+            "go to the shell; add Shift there.")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Shortcuts")
             .setMessage(lines.joinToString(System.lineSeparator()))

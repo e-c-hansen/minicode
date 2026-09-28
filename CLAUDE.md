@@ -900,6 +900,15 @@ the file map; what belongs here is what it cost to learn:
   letters are caught in `CodeEditText.commitText`. Moving focus away and
   hiding the keyboard does not change it. In the file list and the terminal
   the same letters do arrive as key events, so both paths run one table.
+- **Pastiera, and any keyboard that "helps", needs the password variation.**
+  Pastiera (a physical-keyboard IME) keeps auto-capitals, double space to
+  period and autocorrect on in every field but password, URI, email and
+  filter ones, so `CodeEditText.codeInputType` always reports
+  TYPE_TEXT_VARIATION_VISIBLE_PASSWORD. A held Ctrl reaches
+  `dispatchKeyEvent` (from Pastiera through `sendKeyEvent`) and maps to the
+  leader's letter in `ctrlAction`, except the text field's C V X A Z Y, the
+  shell's C D E I, and anything but S B O H without Shift while the
+  terminal has focus. `android/README.md`, "Pastiera" and "A held Ctrl".
 - **A terminal must refuse composition.** `TerminalView` declares
   `TYPE_NULL`; while it accepted text, the keyboard re-sent the word it was
   composing on every keystroke and "ls demo" reached the shell as
