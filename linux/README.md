@@ -27,9 +27,11 @@ compared with the macOS app, and the order to do it in, see `HANDOFF.md`.
   the file changes on disk, and the live color picker for the settings file.
 - `src/ScrollSettle.h` — ends a scroll animation before the editor is hidden,
   working around a GTK 4.22 fault that logged two criticals.
-- `src/MediaView.{h,cpp}` — images and PDFs in the editor's slot: a
-  `GtkPicture` for images, a `PdfView` for PDFs, and a `GFileMonitor` that
-  reloads them when the file changes on disk.
+- `src/MediaView.{h,cpp}` — images, PDFs, video and audio in the editor's
+  slot: a `GtkPicture` for images, a `PdfView` for PDFs, a `GtkVideo` or
+  `GtkMediaControls` over GTK's GStreamer backend for video and audio (or a
+  message naming what to install when it cannot play), and a `GFileMonitor`
+  that reloads them when the file changes on disk.
 - `src/PdfView.{h,cpp}` — every page of a PDF in a scrolling column, drawn
   lazily with poppler-glib, behind `MINICODE_ENABLE_PDF`. The LaTeX preview
   shows its pages with it too.
@@ -76,7 +78,11 @@ compared with the macOS app, and the order to do it in, see `HANDOFF.md`.
 ## Feature flags
 
 The always-built target is the file tree, the editor with syntax highlighting,
-the Markdown preview and the image viewer. The terminal (VTE), the browser
+the Markdown preview, the image viewer, and video and audio. Video and audio
+use GTK's own GStreamer backend, so they need no build option; what plays
+depends on the GStreamer plugins installed at run time (plugins-good for
+WebM, Ogg, MP3 and FLAC, `gstreamer1.0-libav` for H.264 and AAC; see
+`../BUILD-LINUX.md`). The terminal (VTE), the browser
 (WebKitGTK) and the PDF viewer (poppler-glib) are optional: Meson enables each
 one when its library is found, and the code for a missing one is compiled out
 entirely. Without poppler a PDF gets the same "Cannot display" message as any

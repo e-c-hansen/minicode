@@ -118,6 +118,8 @@ make run DIR=demo
 
 The Linux version, in the linux folder, is built on GTK4 with a VTE terminal, a WebKitGTK browser and poppler for PDFs. It has everything described above, including the LaTeX preview and language servers, with Control where the Mac uses Command. The one thing it lacks is blur behind the window, which GNOME gives applications no way to ask for.
 
+Video and audio files play in the editor's pane through GTK's own GStreamer support. A stock Ubuntu plays WebM, Ogg, MP3 and FLAC out of the box; H.264 video and AAC audio, which most .mp4 and .m4a files hold, need `sudo apt install gstreamer1.0-libav`, and MiniCode says so when it meets one.
+
 ```
 sudo apt install build-essential meson libgtk-4-dev \
     libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev libpoppler-glib-dev pkg-config
@@ -175,7 +177,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it | Ctrl click it | Tap it |
 | Open a folder | Command O | Ctrl O | O, or Ctrl O |
 | Open the settings file | Command comma | Ctrl comma |  |
-| Play or pause a video or audio file | Shift Command Space |  |  |
+| Play or pause a video or audio file | Shift Command Space | Ctrl Shift Space |  |
 | Refresh the file tree | Command R |  |  |
 | Rename the selected file or folder |  | F2, in the file tree |  |
 | Save | Command S | Ctrl S | S, or Ctrl S |

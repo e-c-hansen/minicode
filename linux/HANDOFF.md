@@ -18,7 +18,7 @@ Read these first:
 
 ## Where it stands
 
-Items 1 to 9 below are done (September 2026), so the port now has what the
+Items 1 to 11 below are done (September 2026), so the port now has what the
 Mac has, apart from what the list at the end of item 8 leaves out. It builds
 without warnings at `warning_level=2` (CI: Ubuntu, GTK 4, VTE, WebKitGTK,
 poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
@@ -43,6 +43,8 @@ poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
   browser;
 - the Source Control panel with the commit graph, in the tree's place on
   Ctrl+Shift+G (item 10);
+- video and audio in the editor's slot through GTK's GStreamer backend,
+  with Play/Pause on Ctrl+Shift+Space (item 11);
 - the settings file with live colors, per-panel opacity and a live color
   picker (item 8);
 - pane hiding and divider drags, the shortcut hints panel, and opening a
@@ -235,7 +237,8 @@ warning. While an image, a PDF or a binary file's message is shown,
 `Editor::canSave()` is false, `win.save` is disabled and `save()` writes
 nothing. poppler is optional (`-Dpdf=auto`, `make PDF=1`,
 `MINICODE_ENABLE_PDF`). What was checked, and how, is in `BUILD-LINUX.md`.
-Zoom came later (below); still not done: a person looking at it.
+Zoom came later (below); still not done: a person looking at it. Video and
+audio joined the same view later still (item 11).
 
 `src/PdfView.{h,cpp}` is the piece item 7 reuses. It shows every page in a
 scrolling column fitted to the width, rendered lazily (visible pages first,
@@ -836,6 +839,63 @@ character offsets, graph tooltips). It is tested in `tests/run_tests.cpp`.
 Checked in the Docker container with real X input; `../BUILD-LINUX.md` has
 what was covered and what still needs the ThinkPad.
 
+### 11. Video and audio (done, September 2026)
+
+Mac: AVKit, done in parallel by another session. GTK: a third kind in
+`src/MediaView.{h,cpp}` beside images and PDFs, over `GtkMediaFile`, which
+is GTK's GStreamer backend. No new build dependency.
+
+- **Routing.** Video: mp4, m4v, mov, webm, mkv, ogv, avi. Audio: mp3, wav,
+  m4a, aac, flac, ogg, opus. `MediaView::handles` covers all four kinds and
+  `Editor::openFile` routes by it before reading anything as text. The page
+  then follows what the file holds, not its name: once prepared, an .ogg
+  with Theora in it moves to the video page and an .mp4 of sound alone to
+  the audio page.
+- **Pages.** Video is a `GtkVideo` (autoplay off, so it opens paused on its
+  first frame, with its own overlay controls). Audio is the file's name
+  over a `GtkMediaControls` that is always shown, since a `GtkVideo` of
+  audio is an empty pane whose controls hide until the pointer moves. The
+  controls carry the `osd` class, as GtkVideo's do. A failure is a
+  selectable label in the player's place, with GStreamer's whole message as
+  its tooltip. Each page sits in a scrolled window that keeps its minimum
+  size to itself, and the media stack is not homogeneous (see Traps).
+- **Title.** `  640 × 360, 0:06` for video, `  0:06` for audio, once the
+  stream is prepared and the first frame has given the size
+  (`invalidate-size`); nothing after a failure.
+- **Stopping.** `releaseStream` pauses, takes the stream off the video and
+  the controls, calls `gtk_media_file_clear` and drops the last reference,
+  which ends GStreamer's pipeline. `clear()` calls it, and `clear()` runs on
+  every other file, a diff, closing the file (a new folder, Move to Trash)
+  and the window going (`~MediaView`). Nothing plays in the background.
+- **Reloading.** The existing `GFileMonitor` path: the new stream is told
+  the old one's timestamp and play state, and seeks and plays once
+  prepared. A reload that arrives before the previous one was prepared
+  passes the same place on.
+- **Failures.** GTK built without a media backend returns a
+  `GtkNoMediaFile`, recognised by type name, and the note names GTK's
+  GStreamer support (in `libgtk-4-1` on Ubuntu 26.04,
+  `libgtk-4-media-gstreamer` before). A missing decoder is recognised from
+  the error text (see Traps) and the note names `gstreamer1.0-libav` and
+  `gstreamer1.0-plugins-good` and says to restart, since GStreamer reads its
+  plugin list once. Anything else shows GStreamer's plain message, without
+  its debug detail.
+- **Play/Pause** is `win.playpause` on Ctrl+Shift+Space, in the View menu.
+  `updateMediaKey` in main.cpp enables it only while a stream that can play
+  is shown and the keyboard is not in the terminal or any editable text
+  (the commit message, the find bar); disabled, the key goes to the focused
+  widget. `shellOwns` also gives it to the shell, which reads it as
+  Ctrl+Space. It runs from `updateTitle` (the media view calls the title
+  callback when a stream is prepared, sized or failed) and on every focus
+  change. At the end of a file it starts over. The Mac session's key was
+  not known when this was chosen; align them if they differ.
+- **Debug log.** `G_MESSAGES_DEBUG=minicode-media` prints each stream's
+  kind, size, length and restored place, and every error in full.
+
+Checked in the Docker container with real X clicks and keys, on stock
+plugins and with libav; `../BUILD-LINUX.md` has the list. Still needs the
+ThinkPad: real sound through PipeWire, GNOME on Wayland with a real GPU,
+HiDPI, and whether the GL thread leak below happens there.
+
 ## How to work on it
 
 Two ways to run the app, both described in `../CLAUDE.md` ("Verification
@@ -1007,6 +1067,38 @@ Do not claim a GUI behaviour works when it was only compiled.
   written in place (`writeInPlace`, space reserved first), since the rename
   would cut the link or take the file from its owner. A link to nothing is
   refused rather than replaced by a regular file.
+- A widget with a real minimum height in the editor's slot makes GTK warn
+  "Trying to measure GtkBox ... for height of 46, but it needs at least 64":
+  the vertical split may shrink the editor, so it measures the editor's side
+  at small heights, and the box above it (`upperBox`) is then asked for less
+  than its children need. The text view never showed this because its
+  scroller asks for nothing. The media pages sit in scrolled windows for
+  this reason, and the media stack is not homogeneous, or a hidden page's
+  minimum counts too. The culprit was found by running under gdb with
+  `G_DEBUG=fatal-warnings`, reading the widget's address from the warning
+  and walking `gtk_widget_get_parent` with `g_type_name_from_instance`.
+- GTK 4.22 plays through GstPlay, which wraps every GStreamer error in its
+  own domain (`gst-play-error-quark`, code 1) with the text "Error from
+  element <path>: <message>\n<message>\n<debug>". The original code
+  (codec not found, missing plugin) is lost, so a missing decoder can only
+  be told from the text; the debug line, "No suitable plugins found", is
+  never translated.
+- Each video opened leaves one idle `gstglcontext` and one
+  `gldisplay-event` thread in the process, in the container (X11,
+  llvmpipe). A standalone GtkVideo program leaks the same, even reusing one
+  GtkMediaFile, so it is upstream; GStreamer's streaming threads, which also
+  stay after a stream ends, are only its thread pool and go within 20 s.
+  Check the ThinkPad before chasing it further.
+- GStreamer reads its plugin registry once per process: a decoder installed
+  while MiniCode runs is not used until it restarts.
+- The dev image has none of the tools for making test clips.
+  `apt-get install gstreamer1.0-tools gstreamer1.0-plugins-ugly
+  gstreamer1.0-libav` in the running container (x264enc is in ugly, the AAC
+  encoder in libav), then `apt-get remove` the last two to see what a stock
+  desktop plays. `h264parse` and `timeoverlay` are in packages the image
+  lacks; mp4mux takes x264enc's output directly, and `videotestsrc
+  pattern=smpte horizontal-speed=8` gives frames that visibly differ.
+
 - `disconnectOwners` must never be given a null owner: disconnecting by null
   data strips handlers GTK connected itself. A window that never opened a
   `.tex` has no LaTeX preview, and its pointer is null.

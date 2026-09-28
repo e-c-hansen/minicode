@@ -334,9 +334,11 @@ bool Editor::openFile(const std::string& path) {
         return false;
     }
 
-    // Images and PDFs are routed by extension before any attempt to read them
-    // as text. One that will not decode falls through to "Cannot display".
-    if ((MediaView::isImagePath(path) || MediaView::isPdfPath(path)) && media_->show(path)) {
+    // Images, PDFs, video and audio are routed by extension before any
+    // attempt to read them as text. An image or PDF that will not decode
+    // falls through to "Cannot display"; video or audio that cannot play
+    // says why in the media view itself.
+    if (MediaView::handles(path) && media_->show(path)) {
         path_ = path;
         source_.clear();
         ext_ = extOf(path);
@@ -647,6 +649,10 @@ bool Editor::revealLineColumn(int line, int column) {
 }
 
 bool Editor::isMedia() const { return media_->kind() != MediaView::Kind::None; }
+
+bool Editor::canPlayMedia() const { return media_->canPlay(); }
+
+void Editor::togglePlayMedia() { media_->togglePlay(); }
 
 std::string Editor::titleSuffix() const { return media_->titleSuffix(); }
 
