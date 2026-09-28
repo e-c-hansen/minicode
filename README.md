@@ -1,6 +1,6 @@
 # MiniCode
 
-MiniCode is a quick, 1 MB workspace application with a text editor, terminal, browser, and file browser navigable by keyboard. It's for writing/running code, browsing/editing documents, making/editing LaTeX, and browsing the web. It runs on macOS, Linux, and Android. It's written from scratch in C++ with no Electron and no third-party dependencies. The macOS app links only against frameworks that ship with the system. The Linux version is a GTK4 port. The Android version is a Kotlin app. They all share the same C++ core. The rest of this README describes the macOS app; the [Linux](#linux) and [Android](#android) sections say how the others differ.
+MiniCode is a quick, 1.6 MB workspace application with a text editor, terminal, browser, and file browser navigable by keyboard. It's for writing/running code, browsing/editing documents, making/editing LaTeX, and browsing the web. It runs on macOS, Linux, and Android. It's written from scratch in C++ with no Electron and no third-party dependencies. The macOS app links only against frameworks that ship with the system. The Linux version is a GTK4 port. The Android version is a Kotlin app. They all share the same C++ core. The rest of this README describes the macOS app; the [Linux](#linux) and [Android](#android) sections say how the others differ.
 
 I built it because I wanted one light place to browse a folder, edit code with a language server behind it, preview Markdown and LaTeX, and keep a terminal and a browser a keystroke away, without a few hundred megabytes of runtime underneath.
 
@@ -67,20 +67,20 @@ Every color in the file shows as a swatch, and clicking one opens the color pick
 
 ## Memory
 
-I benchmarked a simple workload using this very repository: clangd on a C++ file, interacting with the terminal, typesetting a LaTeX document, and loading a Wikipedia page. Here's the RAM footprint on an M3 Mac after giving the machine a minute to reach a steady state:
+The benchmark is a simple workload on this repository: clangd on a C++ file, some work in the terminal, typesetting a LaTeX document, and loading a Wikipedia page. The numbers are the RAM footprint on an M3 Mac, measured after a minute of settling:
 
 |   | Memory |
 | --- | --- |
 | MiniCode | 320 MB |
 | VS Code, Chrome and Preview | 1,283 MB |
 
-Both sides run the same clangd. make membench reproduces it on scratch profiles. On disk, MiniCode.app is 1.3 MB and Visual Studio Code.app is 659 MB.
+Both sides run the same clangd. make membench reproduces it on scratch profiles. On disk, MiniCode.app is 1.6 MB and Visual Studio Code.app is 659 MB.
 
 ## Next to VS Code and Zed
 
-MiniCode isn't VS Code or Zed, but I do use it every day. I can jump between writing code, running it in terminal, and browsing github repos via web browser via hotkeys, alone. I edited my own resume in LaTeX. Claude Code runs fine in MiniCode's terminal, too. With that said, MiniCode leaves out some things that VS Code and Zed offer, usually for sake of keeping a tight footprint and avoiding becoming the bloatware that drove me to make it in the first place. For instance, there's no means to rename and find references, formatting and code actions, a debugger, tabs and split editors, extensions, and an AI assistant built into the editor. The git panel is deliberately small: it shows status, diffs and the commit graph with what is and is not pushed, stages and unstages files, and commits, while checking out branches, merging and pushing stay in the terminal. VS Code or Zed are better options for those particulars.
+MiniCode isn't VS Code or Zed, but I use it every day. Hotkeys alone move between writing code, running it in the terminal and reading GitHub in the browser pane. I edited my own resume in it, in LaTeX, and Claude Code runs fine in its terminal. It leaves out a good deal that VS Code and Zed offer, mostly to keep the footprint small: rename and find references, formatting and code actions, a debugger, tabs and split editors, extensions, and an AI assistant built into the editor. The git panel is small on purpose. It shows status, diffs and the commit graph with what is and isn't pushed, stages and unstages files, and commits, while checking out branches, merging and pushing stay in the terminal. For those, VS Code or Zed is the better choice.
 
-Zed was created with a similar goal for a more usable, lightweight IDE. It accomplishes much of what MiniCode seeks out to do, but, as of Zed 1.15, there is no built in browser, which has been an open [feature request](https://github.com/zed-industries/zed/issues/10533) since 2024. LaTeX goes through an [extension](https://github.com/rzukic/zed-latex/wiki/Preview) that builds the PDF and shows it in a separate viewer such as Skim, with SyncTeX jumps between the two. It begins to feel like the clunky, emulated workarounds that VS Code extensions offered during my time as a VS Code user. That's why MiniCode's browser is built-in, yet lightweight. It's why PDFs render easily. Why LaTeX is in-line mutable.
+Zed set out with a similar goal, a lighter and more usable IDE, and it does much of what MiniCode does. As of Zed 1.15 it has no built-in browser, which has been an open [feature request](https://github.com/zed-industries/zed/issues/10533) since 2024. LaTeX goes through an [extension](https://github.com/rzukic/zed-latex/wiki/Preview) that builds the PDF and shows it in a separate viewer such as Skim, with SyncTeX jumps between the two. VS Code works the same way, through extensions and outside viewers. MiniCode builds the browser, the PDF viewer and the LaTeX preview into the window instead, and text on the typeset page can be edited where it is.
 
 | | MiniCode | Zed | VS Code |
 | --- | --- | --- | --- |
@@ -143,7 +143,7 @@ alias minicode="$PWD/build/minicode"
 
 ## Android
 
-As a foray into the mobile space, I made an Android port, specifically for keyboard-based phones like the Unihertz Titan 2 Elite. It's built around the same C++ core and offers approximately the same functionality: file tree, editor with syntax highlighting, images and PDF rendering, a browser pane, and a terminal on a real shell, including all the special characters you need. The Markdown preview is the desktop's: links you can tap, real tables, pictures with GIFs playing, and a double tap on a paragraph, heading, list item, quote, code block or table cell opens a small box holding its Markdown to edit. You can even tap links in the terminal for specific lines within files and go straight to them, like "main.cpp:42:7". The keyboard shortcuts work here, too. You can quickly jump between browser, text editor, file system, and so on. It feels like a tiny operating system.
+The Android port is made for phones with a physical keyboard, such as the Unihertz Titan 2 Elite. It's built around the same C++ core and offers approximately the same functionality: file tree, editor with syntax highlighting, images and PDF rendering, a browser pane, and a terminal on a real shell, including all the special characters you need. The Markdown preview is the desktop's: links you can tap, real tables, pictures with GIFs playing, and a double tap on a paragraph, heading, list item, quote, code block or table cell opens a small box holding its Markdown to edit. You can even tap links in the terminal for specific lines within files and go straight to them, like "main.cpp:42:7". The keyboard shortcuts work here too, so the browser, the editor, the file list and the terminal are each a key away. It feels like a tiny operating system.
 
 With [Termux](https://f-droid.org/packages/com.termux/) installed, the terminal is Termux's own bash, in the folder you have open, so python, git, clang and anything else you installed with pkg run there, and vim, less and the Python prompt get a real terminal. Without Termux it is the phone's own shell, which has the basic file tools and nothing more. Termux also runs your language servers (clangd, pylsp and the rest) for squiggles, completion, hover and go to definition, typesets LaTeX with tectonic, including double tapping the page to edit the source behind it, and runs git for the same source control panel and commit graph the desktop has. The file list keeps up with the disk, so a file made in the terminal shows up in it straight away.
 
