@@ -951,6 +951,11 @@ the file map; what belongs here is what it cost to learn:
   leader's letter in `ctrlAction`, except the text field's C V X A Z Y, the
   shell's C D E I, and anything but S B O H without Shift while the
   terminal has focus. `android/README.md`, "Pastiera" and "A held Ctrl".
+  A letter with Ctrl held has no `unicodeChar` (Android's key map has no
+  Ctrl layer), so until 2026-09-28 the terminal dropped a real Ctrl U or
+  Ctrl R; `TerminalView.handleKey` now takes the character without Ctrl.
+  `adb shell input keycombination KEYCODE_CTRL_LEFT KEYCODE_U` does carry
+  the Ctrl meta state, so this much can be tested without a person.
 - **A terminal must refuse composition.** `TerminalView` declares
   `TYPE_NULL`; while it accepted text, the keyboard re-sent the word it was
   composing on every keystroke and "ls demo" reached the shell as

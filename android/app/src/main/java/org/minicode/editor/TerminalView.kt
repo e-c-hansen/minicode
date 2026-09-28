@@ -451,7 +451,13 @@ class TerminalView @JvmOverloads constructor(
             session.press(special, mods or takeCtrl())
             return true
         }
-        val unicode = if (text) event.unicodeChar else 0
+        var unicode = if (text) event.unicodeChar else 0
+        // Android gives no character for a letter with Ctrl held (the key
+        // map has no Ctrl layer), so a keyboard's own Ctrl U, or Pastiera
+        // passing one on, reached nothing. Take the character without Ctrl;
+        // MOD_CTRL turns it into the control code.
+        if (text && unicode == 0 && mods and Pty.MOD_CTRL != 0)
+            unicode = event.getUnicodeChar(event.metaState and KeyEvent.META_CTRL_MASK.inv())
         if (unicode != 0) {
             // On a phone keyboard Alt is the symbol layer (Alt+S is "4" on a
             // Titan 2), so when Alt changes which character the key makes,
