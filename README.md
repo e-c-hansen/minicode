@@ -151,45 +151,45 @@ To install it, download MiniCode-*version*.apk from the [latest release](https:/
 
 ## Keyboard shortcuts
 
-A blank cell means that port does not have the action yet. On Android, shortcuts start with a leader key, because a phone keyboard often has no Control: on a Unihertz Titan 2 it is the unlabelled key left of the right Shift, and elsewhere the Menu key. [android/README.md](android/README.md) has the rest.
+A blank cell means that port does not have the action yet. On Android, a letter alone means the leader key and then that letter, because a phone keyboard often has no Control: on a Unihertz Titan 2 the leader is the unlabelled key left of the right Shift, and elsewhere the Menu key. A held Ctrl works too, on a USB or Bluetooth keyboard or a phone whose Fn key is set to act as Ctrl. While the terminal has the keyboard, Ctrl and a letter go to the shell, so add Shift there. [android/README.md](android/README.md) has the rest.
 
-| Action | macOS | Linux | Android, after the leader key |
+| Action | macOS | Linux | Android |
 | --- | --- | --- | --- |
 | Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
 | Close the application | Shift Command W | Ctrl Q |  |
 | Close the window | Command W | Ctrl W |  |
 | Comment or uncomment the selected lines | Command / | Ctrl / |  |
-| Complete the word at the cursor, with a language server | Control Space, or Option Escape | Ctrl Space | N |
+| Complete the word at the cursor, with a language server | Control Space, or Option Escape | Ctrl Space | N, or Ctrl N |
 | Export the typeset PDF of a LaTeX file | Shift Command S | Ctrl Shift S |  |
 | Find across the whole folder | Shift Command F | Ctrl Shift F |  |
 | Find in the current file | Command F | Ctrl F |  |
 | Find next, find previous | Command G, Shift Command G | Ctrl G or F3, Shift F3 |  |
 | Focus the editor, or the player when a video or audio file is open | Command 1 | Ctrl 1 |  |
 | Focus the file tree | Command 0 | Ctrl 0 |  |
-| Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G |
+| Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G, or Ctrl G |
 | Jump to the previous file | Control Tab | Ctrl Tab |  |
 | Move the selected file to the Trash | Command Delete | Delete, in the file tree |  |
 | New file | Control Command N | Ctrl Alt N | New file in the ⋮ menu |
 | New folder | Shift Command N | Ctrl Shift N |  |
 | New window | Command N | Ctrl N |  |
 | Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it | Ctrl click it | Tap it |
-| Open a folder | Command O | Ctrl O | O |
+| Open a folder | Command O | Ctrl O | O, or Ctrl O |
 | Open the settings file | Command comma | Ctrl comma |  |
 | Play or pause a video or audio file | Shift Command Space |  |  |
 | Refresh the file tree | Command R |  |  |
 | Rename the selected file or folder |  | F2, in the file tree |  |
-| Save | Command S | Ctrl S | S |
+| Save | Command S | Ctrl S | S, or Ctrl S |
 | Show or hide dotfiles | Shift Command . | Ctrl H, or Ctrl Shift . |  |
 | Show or hide the on-screen keyboard, for symbols the phone's keyboard lacks |  |  | Y, or the keyboard button in the title bar |
-| Show the type and documentation under the cursor | Command I | Ctrl I | K |
-| Toggle the browser | Shift Command B | Ctrl Shift B | B |
+| Show the type and documentation under the cursor | Command I | Ctrl I | K, or Ctrl K |
+| Toggle the browser | Shift Command B | Ctrl Shift B | B, or Ctrl Shift B |
 | Toggle the editor, giving its space to the terminal and browser | Shift Command E | Ctrl Shift E |  |
-| Toggle the file list or sidebar | Command B | Ctrl B | F |
-| Toggle the preview of a Markdown or LaTeX file | Shift Command P | Ctrl Shift P | P |
-| Toggle the shortcut hints | Shift Command H | Ctrl Shift H | H |
-| Toggle the source control panel in place of the file tree | Control Shift G | Ctrl Shift G | V |
-| Toggle the terminal | Shift Command T, or Control backtick | Ctrl Shift T, or Ctrl backtick | T |
-| Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z | U, R |
+| Toggle the file list or sidebar | Command B | Ctrl B | F, or Ctrl B or Ctrl F |
+| Toggle the preview of a Markdown or LaTeX file | Shift Command P | Ctrl Shift P | P, or Ctrl P |
+| Toggle the shortcut hints | Shift Command H | Ctrl Shift H | H, or Ctrl H |
+| Toggle the source control panel in place of the file tree | Control Shift G | Ctrl Shift G | V, or Ctrl Shift G |
+| Toggle the terminal | Shift Command T, or Control backtick | Ctrl Shift T, or Ctrl backtick | T, or Ctrl T |
+| Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z | U, R, or Ctrl Z, Ctrl Shift Z (Ctrl U, Ctrl R also work) |
 | Zoom a PDF or the LaTeX preview in or out |  | Ctrl plus (or Ctrl equals), Ctrl minus, Ctrl with the scroll wheel, or a pinch on the touchpad |  |
 | Zoom a PDF or the LaTeX preview back to the width of the pane |  | Ctrl Alt 0 |  |
 

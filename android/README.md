@@ -75,8 +75,9 @@ The rest of this file is about how the port is built and developed.
   leader alone, leader F) stays on the list and says no file is open, so
   nothing can be typed into a buffer with nowhere to be saved.
 - **Editor.** The shared highlighter colours the file; autocorrect,
-  suggestions and the composing region are all off, because a keyboard that
-  rewrites words is wrong for code (see CodeEditText).
+  suggestions, automatic capitals and the composing region are all off,
+  because a keyboard that rewrites words is wrong for code (see
+  CodeEditText, and "Pastiera" below).
 - **Markdown preview.** The shared parser, rendered as the Mac and Linux
   render it: links that open on a tap, real tables whose cells wrap,
   pictures beside the file shown inline (GIFs playing), and a double tap on
@@ -125,9 +126,35 @@ microphone. What is left is one unclaimed key, so that key is a leader:
 
 The key alone switches panes, twice opens the menu, and the ⋮ button in the
 title bar offers the same items for a device whose keyboard offers nothing.
-Ctrl also works, for a USB or Bluetooth keyboard, and Ctrl+Shift+G is
-source control there, as on the Mac and Linux. G was taken by go to
-definition, so the leader's letter for source control is V.
+G was taken by go to definition, so the leader's letter for source control
+is V.
+
+### A held Ctrl
+
+A USB or Bluetooth keyboard has Ctrl, and so does a Titan 2 whose Fn key is
+set to act as Ctrl (below, under Pastiera). Holding Ctrl and pressing a
+letter does what the leader and that letter do (`ctrlAction` in
+`MainActivity.kt`), with these exceptions:
+
+- C, V, X, A, Z and Y are the text field's: copy, paste, cut, select all,
+  undo and redo. Ctrl+Z and Ctrl+Shift+Z undo and redo in the editor and in
+  the Markdown preview; Ctrl+U and Ctrl+R do too, as the leader's U and R.
+  Leader Y, the on-screen keyboard, has no Ctrl form.
+- C, D, E and I stand in for keys a real Ctrl already sends to a shell
+  (Ctrl C, Ctrl D, Ctrl [ and Ctrl I), so they are not taken.
+- Ctrl+B is the file list, as Cmd+B is on the Mac, and Ctrl+Shift+B the
+  browser, as on Linux. Ctrl+G is go to definition and Ctrl+Shift+G source
+  control, as on the Mac and Linux.
+- While the terminal has the keyboard, Ctrl and a letter go to the shell,
+  since bash needs Ctrl R, Ctrl U, Ctrl P and the rest. Only Ctrl+S, B, O and
+  H are taken there, as they always were. With Shift added every shortcut
+  works in the terminal too (Ctrl+Shift+T leaves it), the way a desktop
+  terminal keeps Ctrl+Shift for itself; Ctrl+Shift+C and V are left alone.
+
+In the editor the key may come from the hardware or from an input method
+that passes a held Ctrl on through `InputConnection.sendKeyEvent`, as
+Pastiera does; either way it reaches `dispatchKeyEvent` with the Ctrl meta
+state set, before the text field sees it.
 
 One trap worth keeping: while the editor has focus, a letter never arrives as
 a key event, because the keyboard reaches the field through the input method.
@@ -136,8 +163,44 @@ file list and the terminal, the same letter arrives as a key event instead.
 Both paths run the same table (`leaderActions`).
 
 B is the browser on every port (Shift+Cmd+B on the Mac), so the file list
-moved to F. On a USB or Bluetooth keyboard Ctrl+B is the file list, as
-Cmd+B is on the Mac.
+moved to F.
+
+### Pastiera
+
+[Pastiera](https://github.com/palsoftware/pastiera) is an input method for
+phones with a physical keyboard, the Titan 2 among them. It works with
+MiniCode, with a few things worth knowing (checked against Pastiera 0.86's
+source):
+
+- **It sees keys only while a text field has focus.** In the editor, the
+  commit box and the Markdown edit box it turns keys into text one
+  character at a time. The terminal declares no text field (TYPE_NULL), and
+  the file list and source control panel are not text fields, so there it
+  passes keys straight to MiniCode except for its own Nav Mode and Sym
+  shortcuts.
+- **No capitals or autocorrect in code.** Pastiera capitalises the first
+  letter and after a period, turns a double space into ". ", and corrects
+  words, in every field except password, URI, email and filter ones. The
+  editor, the commit box and the Markdown edit box tell the keyboard they
+  are visible-password fields, so all of that stays off and `if` stays
+  `if`. Nothing is hidden, and other keyboards show their usual layout.
+- **Hold Ctrl, do not tap it.** A held Ctrl reaches MiniCode as Ctrl and the
+  letter (see "A held Ctrl" above). A tapped or double-tapped Ctrl is
+  Pastiera's Nav Mode instead: Ctrl Q is Escape, Ctrl T is Tab, ESDF and
+  IJKL are arrows, and so on.
+- **Nav Mode in the terminal takes over typing** until Ctrl is tapped again,
+  because the terminal is not a text field and Nav Mode is what Pastiera
+  does outside one. If letters stop reaching the shell, tap Ctrl.
+- **Sym in the terminal.** Pastiera's Sym power shortcuts also act outside
+  text fields. Turn them off in Pastiera's settings if you want Sym to reach
+  the terminal.
+- **The leader keys pass through.** The unlabelled key left of right Shift
+  (keycode 403), Menu and Function produce no character, so Pastiera leaves
+  them alone and they work as before. A letter after the leader is caught
+  as committed text in the editor, as with any keyboard.
+- **The Titan 2's Fn key can be Ctrl.** Unihertz's own keyboard settings
+  can set Fn to act as Ctrl; it then arrives as a left Ctrl, and every
+  Ctrl shortcut above works from the phone's own keyboard.
 
 ### Symbols the keyboard lacks
 
