@@ -86,6 +86,10 @@ The rest of this file is about how the port is built and developed.
   below.
 - **Images and PDFs.** Decoded by Android, scaled down but never up, with the
   pixel size or page count in the title bar. A PDF shows its first page.
+- **Video and audio.** mp4, mov, webm, mkv and the rest, and mp3, flac, ogg
+  and the rest, played by Android's own MediaPlayer in the editor's place,
+  paused on the first frame until Space or the play button. See "Video and
+  audio" below.
 - **Terminal.** Termux's bash when Termux is set up, otherwise the phone's
   own `/system/bin/sh` with the toybox utilities, either one parsed by the
   shared TerminalScreen: the same grid that runs vim and less on the Mac.
@@ -144,7 +148,8 @@ letter does what the leader and that letter do (`ctrlAction` in
   (Ctrl C, Ctrl D, Ctrl [ and Ctrl I), so they are not taken.
 - Ctrl+B is the file list, as Cmd+B is on the Mac, and Ctrl+Shift+B the
   browser, as on Linux. Ctrl+G is go to definition and Ctrl+Shift+G source
-  control, as on the Mac and Linux.
+  control, as on the Mac and Linux. Ctrl+Shift+Space plays or pauses a
+  video or audio file, as on Linux.
 - While the terminal has the keyboard, Ctrl and a letter go to the shell,
   since bash needs Ctrl R, Ctrl U, Ctrl P and the rest. Only Ctrl+S, B, O and
   H are taken there, as they always were. With Shift added every shortcut
@@ -615,6 +620,65 @@ things run and live.
   which is then unsaved until the leader's S. If the buffer changed while the
   dialog was up, the edit is not applied.
 
+## Video and audio
+
+Opening a video (mp4, m4v, mov, 3gp, webm, mkv) or an audio file (mp3, wav,
+m4a, aac, flac, ogg, opus) puts a player in the editor's place, as the Mac
+does with AVKit and Linux with GtkVideo (`PlayerPane.kt`). It is Android's
+own MediaPlayer drawing into a TextureView, so what plays is whatever the
+phone can decode, and nothing is added to the APK but the pane (about
+19 KB).
+
+- **Paused on the first frame.** The title says the size and length
+  ("640 × 360  0:05"; audio only the length). A seek before the first
+  play draws that frame. Audio shows its name over the controls, and the
+  file's contents decide which it is: an .mp4 of sound alone shows as
+  audio. Nothing is saved, and nothing marks the file unsaved.
+- **Controls.** A bar along the bottom: play or pause, the place (drag
+  it), the time and the length, kept clear of the rounded corners like
+  the key rows. While a video plays the bar hides after 3 seconds, and a
+  tap on the picture brings it back. With the keyboard: Space plays or
+  pauses (a headset's button too), Left and Right go back or on 5
+  seconds, and Ctrl+Shift+Space plays or pauses from anywhere the player
+  is on screen, as on Linux. At the end it stops, and playing again starts
+  over. No leader letter was added: the free ones say nothing about
+  playing, and Space already does it.
+- **No sound from a pane you left.** The player is released whenever its
+  pane is hidden (the file list, the terminal, the browser, source
+  control, Back, another file, a diff) and when the app goes to the
+  background, and its place is kept. Coming back opens it again, paused
+  there. Playing takes audio focus, so music in another app pauses, and
+  a call or pulling out headphones pauses this.
+- **Paused for 4 seconds, it is released too.** The Titan 2 plays a
+  file's sound through the audio hardware ("offload"), and Android's
+  player shuts that down after 10 seconds paused and restarts it with a
+  seek to the key frame before the place, so the picture jumped back and
+  playing resumed up to 8 seconds early. Releasing the player first avoids
+  it; the last frame stays on screen, and play or a seek opens a new
+  player at the right place, a fraction of a second later.
+- **Changes on disk** reload it, keeping the place and whether it was
+  playing, through the open file's FileObserver. A deleted file stops and
+  says so, and comes back if the file does.
+- **A file Android cannot decode** says "Cannot play" and why, in the
+  player's place.
+- **Debug log**: `adb shell setprop log.tag.MiniCodeMedia DEBUG` logs each
+  open, prepare, seek, play, pause and release with its position, in any
+  build.
+
+Checked on the Titan 2 (2026-09-28) with clips made by ffmpeg: each of the
+thirteen kinds opened and played (H.264, VP8, VP9, AAC, MP3, FLAC, Vorbis,
+Opus, PCM), a 3gp at 176 × 144, a phone-style rotated .mov as 360 × 640
+upright, an .mp4 of sound alone as audio, an hour-long .m4a as 1:02:05, and
+random bytes as "Cannot play". Space, Left, Right, Ctrl+Shift+Space, taps on
+the picture and the button, and a drag of the bar were injected, and `adb
+shell dumpsys media.player` and `dumpsys audio` showed no MiniCode player
+after Back, Home, opening a.cpp or a picture, and the terminal. A clip
+replaced on disk while playing carried on playing at its place, and while
+paused stayed paused there. Reading positions back after a pause of 15
+seconds is what found the jump to the key frame described above. Real
+sound, a call or pulled-out headphones pausing it, and the Titan's own
+Space and leader key need a person.
+
 ## Language servers
 
 A language server runs in Termux, since that is where `pkg` installs clangd
@@ -805,6 +869,9 @@ Run it from the repository root; the tests read a few files from `demo/`,
 - `GitPanel.kt`: the source control panel, with its refreshing, actions, keys and
   the hand-drawn change and graph rows.
 - `DiffView.kt`: a diff or a commit in the editor's place, a row per line.
+- `PlayerPane.kt`: video and audio in the editor's place: MediaPlayer on a
+  TextureView, the control bar, keys, audio focus, and letting go of the
+  player whenever it is hidden or paused for a few seconds.
 
 ## Not yet
 
