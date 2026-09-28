@@ -1,6 +1,6 @@
 # MiniCode
 
-MiniCode is a quick, 1.6 MB workspace application with a text editor, terminal, browser, and file browser navigable by keyboard. It's for writing/running code, browsing/editing documents, making/editing LaTeX, and browsing the web. It runs on macOS, Linux, and Android. It's written from scratch in C++ with no Electron and no third-party dependencies. The macOS app links only against frameworks that ship with the system. The Linux version is a GTK4 port. The Android version is a Kotlin app. They all share the same C++ core. The rest of this README describes the macOS app; the [Linux](#linux) and [Android](#android) sections say how the others differ.
+MiniCode is a quick, 1.7 MB workspace application with a text editor, terminal, browser, and file browser navigable by keyboard. It's for writing/running code, browsing/editing documents, making/editing LaTeX, and browsing the web. It runs on macOS, Linux, and Android. It's written from scratch in C++ with no Electron and no third-party dependencies. The macOS app links only against frameworks that ship with the system. The Linux version is a GTK4 port. The Android version is a Kotlin app. They all share the same C++ core. The rest of this README describes the macOS app; the [Linux](#linux) and [Android](#android) sections say how the others differ.
 
 I built it because I wanted one light place to browse a folder, edit code with a language server behind it, preview Markdown and LaTeX, and keep a terminal and a browser a keystroke away, without a few hundred megabytes of runtime underneath.
 
@@ -74,7 +74,7 @@ The benchmark is a simple workload on this repository: clangd on a C++ file, som
 | MiniCode | 320 MB |
 | VS Code, Chrome and Preview | 1,283 MB |
 
-Both sides run the same clangd. make membench reproduces it on scratch profiles. On disk, MiniCode.app is 1.6 MB and Visual Studio Code.app is 659 MB.
+Both sides run the same clangd. make membench reproduces it on scratch profiles. On disk, MiniCode.app is 1.7 MB and Visual Studio Code.app is 659 MB.
 
 ## Next to VS Code and Zed
 
