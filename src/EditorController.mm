@@ -11,6 +11,8 @@
 #import "MarkdownEditPanel.h"
 #import "GitPanel.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
+#import <AVKit/AVKit.h>                 // video and audio in the editor's slot
+#import <AVFoundation/AVFoundation.h>
 #include "SyntaxHighlighter.h"
 #include "MarkdownParser.h"
 #include "MarkdownEdit.h"
@@ -355,6 +357,11 @@ private:
 @property(nonatomic, assign) NSSize imagePixels;       // for the title bar
 @property(nonatomic, strong) PDFView *pdfView;         // editor's slot, for PDFs
 @property(nonatomic, assign) BOOL isPDF;
+@property(nonatomic, strong) AVPlayerView *playerView; // editor's slot, video and audio
+@property(nonatomic, assign) BOOL isMedia;
+@property(nonatomic, strong) AVPlayerItem *mediaItem;  // observed for size and duration
+@property(nonatomic, assign) NSSize mediaPixels;       // zero for audio
+@property(nonatomic, assign) double mediaSeconds;      // < 0 until known
 @property(nonatomic, assign) BOOL terminalVisible;
 @property(nonatomic, assign) BOOL browserVisible;
 @property(nonatomic, assign) CGFloat terminalHeight;
@@ -565,7 +572,11 @@ private:
     [self startWatching:_root.path];   // live tree updates
 }
 
+// KVO context for the player item (see observeMediaItem:).
+static void *kMediaItemContext = &kMediaItemContext;
+
 - (void)dealloc {
+    [self stopMedia];
     [self stopWatching];
     [self.window removeObserver:self forKeyPath:@"title"];
 }
@@ -575,7 +586,11 @@ private:
                         change:(NSDictionary *)change context:(void *)context {
     if (object == self.window && [keyPath isEqualToString:@"title"])
         self.titleLabel.stringValue = self.window.title ?: @"";
-    else
+    else if (context == kMediaItemContext) {
+        // AVFoundation may report from another thread.
+        AVPlayerItem *item = object;
+        dispatch_async(dispatch_get_main_queue(), ^{ [self mediaItemChanged:item]; });
+    } else
         [super observeValueForKeyPath:keyPath ofObject:object change:change
                               context:context];
 }
@@ -663,6 +678,7 @@ private:
     [self.latex applySettings];
     self.imageView.layer.backgroundColor = [cfg background:Surface::Editor].CGColor;
     self.pdfView.backgroundColor = [cfg background:Surface::Editor];
+    self.playerView.layer.backgroundColor = [cfg background:Surface::Editor].CGColor;
     self.diffScroll.panelColor = [cfg background:Surface::Editor];
     if (self.isDiff && self.diffData) [self renderDiff];
     [self.gitPanel applySettings];
@@ -950,6 +966,10 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
         [self appendHintsRow:s key:@"⇧⌘S" label:@"Export PDF"
                         key2:nil label2:nil state:nil];
     }
+    if (self.isMedia) {
+        [self appendHintsRow:s key:@"⇧⌘Space" label:@"Play or pause"
+                        key2:@"⌘1" label2:@"Focus the player" state:nil];
+    }
 
     // A short gap, not a whole empty heading, before the way out.
     [s appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"
@@ -999,9 +1019,11 @@ static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hide
     // So does an image, in place of the text view.
     BOOL showImage = showEditor && self.imageView != nil && self.isImage;
     BOOL showPDF = showEditor && self.pdfView != nil && self.isPDF;
+    BOOL showMedia = showEditor && self.playerView != nil && self.isMedia;
     BOOL showDiff = showEditor && self.diffScroll != nil && self.isDiff;
     self.editorScroll.frame = topRect;
-    self.editorScroll.hidden = !showEditor || showLatex || showImage || showPDF || showDiff;
+    self.editorScroll.hidden = !showEditor || showLatex || showImage || showPDF ||
+                               showMedia || showDiff;
     if (self.diffScroll) {
         self.diffScroll.frame = topRect;
         self.diffScroll.hidden = !showDiff;
@@ -1013,6 +1035,10 @@ static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hide
     if (self.imageView) {
         self.imageView.frame = topRect;
         self.imageView.hidden = !showImage;
+    }
+    if (self.playerView) {
+        self.playerView.frame = topRect;
+        self.playerView.hidden = !showMedia;
     }
     if (self.latex) {
         self.latex.frame = topRect;
@@ -1120,7 +1146,8 @@ static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hide
     else [self openFileAtPath:path];
     // Opening can be refused ("Save changes?" answered Cancel), and an image
     // or PDF has no lines to go to.
-    if (![self.currentPath isEqualToString:path] || self.isImage || self.isPDF) return;
+    if (![self.currentPath isEqualToString:path] || self.isImage || self.isPDF ||
+        self.isMedia) return;
     if (link.line > 0) [self goToLine:link.line column:link.column];
     else [self.window makeFirstResponder:self.textView];
 }
@@ -1503,6 +1530,11 @@ static const CGFloat kDividerGrabSlop = 5;
 }
 - (void)focusEditor:(id)sender {
     [self revealEditor];
+    // A video or audio file: the player, whose own Space, arrows and J K L work.
+    if (self.isMedia && self.playerView) {
+        [self.window makeFirstResponder:self.playerView];
+        return;
+    }
     [self.window makeFirstResponder:self.textView];
 }
 - (void)switchToPreviousFile:(id)sender {
@@ -1753,6 +1785,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     self.textView.editable = NO;
     self.imageView.image = nil;
     self.pdfView.document = nil;
+    [self stopMedia];   // the sound must stop when anything else is shown
     self.isDiff = NO;
     self.diffName = nil;
     self.diffData = nil;
@@ -1855,6 +1888,122 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     return YES;
 }
 
+// Video and audio that AVFoundation plays on this Mac. WebM, Matroska, Ogg
+// video, WMV and FLV are not, so they are left to the "Cannot display"
+// message. .ts and .mts are TypeScript here, not MPEG transport streams.
++ (BOOL)isMediaPath:(NSString *)path {
+    static NSSet<NSString *> *exts;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        exts = [NSSet setWithArray:@[
+            @"mp4", @"m4v", @"mov", @"3gp", @"avi",                 // video
+            @"mp3", @"wav", @"m4a", @"aac", @"aif", @"aiff",       // audio
+            @"flac", @"ogg", @"opus"]];
+    });
+    return [exts containsObject:path.pathExtension.lowercaseString];
+}
+
+// Watch one player item for its status, size and duration; nil stops.
+- (void)observeMediaItem:(AVPlayerItem *)item {
+    if (self.mediaItem == item) return;
+    for (NSString *key in @[@"status", @"presentationSize", @"duration"])
+        [self.mediaItem removeObserver:self forKeyPath:key context:kMediaItemContext];
+    self.mediaItem = item;
+    for (NSString *key in @[@"status", @"presentationSize", @"duration"])
+        [item addObserver:self forKeyPath:key options:0 context:kMediaItemContext];
+}
+
+// Pause and let go of the player, so nothing keeps playing once another file,
+// folder or message takes the slot, or the window closes.
+- (void)stopMedia {
+    [self.playerView.player pause];
+    [self observeMediaItem:nil];
+    self.playerView.player = nil;
+    self.isMedia = NO;
+}
+
+// Size and duration arrive once the item is ready. A file AVFoundation turns
+// down only at this point gets a message in place of the player.
+- (void)mediaItemChanged:(AVPlayerItem *)item {
+    if (!self.isMedia || item != self.mediaItem) return;   // stale
+    if (item.status == AVPlayerItemStatusFailed) {
+        NSString *name = self.currentPath.lastPathComponent ?: @"";
+        NSString *why = item.error.localizedDescription ?: @"";
+        [self stopMedia];
+        [self setPlainMessage:[NSString stringWithFormat:
+            @"Cannot play “%@”.\n\n(%@)", name, why]];
+        [self relayoutRightArea];
+        [self updateTitle];
+        return;
+    }
+    if (item.status != AVPlayerItemStatusReadyToPlay) return;
+    CMTime d = item.duration;
+    self.mediaSeconds = CMTIME_IS_NUMERIC(d) ? CMTimeGetSeconds(d) : -1;
+    self.mediaPixels = item.presentationSize;
+    [self updateTitle];
+}
+
+// Show a video or audio file in the editor's slot with AVKit's player: the
+// first frame, paused, with the usual transport bar and full screen button.
+// A reload (the file changed on disk) keeps the time and whether it was
+// playing. Returns NO if AVFoundation can't play it, and the caller falls
+// through to the "Cannot display" message.
+- (BOOL)showMediaAtPath:(NSString *)path {
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:path]
+                                            options:nil];
+    if (!asset.playable) return NO;
+    if (!self.playerView) {
+        AVPlayerView *v = [[AVPlayerView alloc] initWithFrame:NSZeroRect];
+        v.controlsStyle = AVPlayerViewControlsStyleInline;
+        v.showsFullScreenToggleButton = YES;
+        v.videoGravity = AVLayerVideoGravityResizeAspect;
+        v.wantsLayer = YES;
+        v.layer.backgroundColor =
+            [[AppSettings shared] background:Surface::Editor].CGColor;
+        [self.rightArea addSubview:v positioned:NSWindowBelow
+                        relativeTo:self.termDivider];
+        self.playerView = v;
+    }
+    AVPlayerItem *item = [AVPlayerItem playerItemWithAsset:asset];
+    AVPlayer *player = self.playerView.player;
+    if (self.isMedia && player) {
+        CMTime at = player.currentTime;
+        BOOL playing = player.rate != 0;
+        [player replaceCurrentItemWithPlayerItem:item];
+        [player seekToTime:at toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero];
+        if (playing) [player play];
+    } else {
+        player = [AVPlayer playerWithPlayerItem:item];
+        player.actionAtItemEnd = AVPlayerActionAtItemEndPause;
+        self.playerView.player = player;
+        self.mediaPixels = NSZeroSize;
+        self.mediaSeconds = -1;
+    }
+    [self observeMediaItem:item];
+    self.isMedia = YES;
+    self.currentExt = path.pathExtension.lowercaseString;
+    [self setPlainMessage:@""];   // nothing in the text view to save
+    [self relayoutRightArea];
+    [self.lsp documentOpened:nil];
+    [self updateTitle];
+    [self mediaItemChanged:item];   // a reload may be ready already
+    return YES;
+}
+
+- (BOOL)canTogglePlayback { return self.isMedia && self.playerView.player != nil; }
+
+// Shift+Cmd+Space: play or pause whatever the player holds, from any pane.
+// At the end it starts again from the beginning.
+- (void)togglePlayback:(id)sender {
+    if (![self canTogglePlayback]) { NSBeep(); return; }
+    AVPlayer *p = self.playerView.player;
+    if (p.rate != 0) { [p pause]; return; }
+    CMTime end = p.currentItem.duration;
+    if (CMTIME_IS_NUMERIC(end) && CMTimeCompare(p.currentTime, end) >= 0)
+        [p seekToTime:kCMTimeZero];
+    [p play];
+}
+
 - (void)openFileAtPath:(NSString *)path {
     [self revealEditor];
     if ([path isEqualToString:self.currentPath]) return;  // avoid double-render
@@ -1873,6 +2022,12 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     }
     if ([path.pathExtension.lowercaseString isEqualToString:@"pdf"] &&
         [self showPDFAtPath:path]) {
+        [self recordModDate];
+        [_recent removeObject:path];
+        [_recent insertObject:path atIndex:0];
+        return;
+    }
+    if ([EditorController isMediaPath:path] && [self showMediaAtPath:path]) {
         [self recordModDate];
         [_recent removeObject:path];
         [_recent insertObject:path atIndex:0];
@@ -1960,6 +2115,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     self.fileModDate = disk;
     if (self.isImage) { [self showImageAtPath:self.currentPath]; return; }
     if (self.isPDF) { [self showPDFAtPath:self.currentPath]; return; }
+    if (self.isMedia) { [self showMediaAtPath:self.currentPath]; return; }
     if (!self.dirty) {                       // no local edits: reload quietly
         NSString *fresh = [NSString stringWithContentsOfFile:self.currentPath
                                                     encoding:NSUTF8StringEncoding
@@ -1990,6 +2146,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     return [self confirmProceedPastUnsavedChanges];
 }
 - (void)windowWillClose:(NSNotification *)note {
+    [self stopMedia];      // no sound from a closed window
     [self.lsp shutdown];   // never leave a server running for a closed window
 }
 - (void)windowDidBecomeKey:(NSNotification *)note {
@@ -2100,6 +2257,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (item.action == @selector(exportPDF:)) return self.canExportPDF;
+    if (item.action == @selector(togglePlayback:)) return self.canTogglePlayback;
     if (item.action == @selector(undo:))
         return [self latexIsShowing] && [self.latex canUndoEdit];
     if (item.action == @selector(redo:))
@@ -2457,7 +2615,8 @@ static NSColor *ContrastColor(const Rgba &c) {
 
 - (void)saveCurrentFile:(id)sender {
     // A message (welcome, binary file) is not the file's contents.
-    if (!self.currentPath || self.showingMessage || self.isImage || self.isPDF) return;
+    if (!self.currentPath || self.showingMessage || self.isImage || self.isPDF ||
+        self.isMedia) return;
     // In markdown preview mode the text view holds rendered text, not source;
     // save the tracked source instead.
     NSString *text = self.textView.editable ? self.textView.string
@@ -2749,6 +2908,14 @@ static NSColor *ContrastColor(const Rgba &c) {
     return YES;
 }
 
+// m:ss, or h:mm:ss from an hour up.
+static NSString *MCFormatDuration(double seconds) {
+    long t = (long)llround(seconds);
+    long h = t / 3600, m = (t / 60) % 60, s = t % 60;
+    return h > 0 ? [NSString stringWithFormat:@"%ld:%02ld:%02ld", h, m, s]
+                 : [NSString stringWithFormat:@"%ld:%02ld", m, s];
+}
+
 - (void)updateTitle {
     NSString *name = self.currentPath.lastPathComponent ?: @"MiniCode";
     if (self.isDiff)
@@ -2763,6 +2930,17 @@ static NSColor *ContrastColor(const Rgba &c) {
         NSUInteger n = self.pdfView.document.pageCount;
         mode = n == 1 ? @"  1 page"
                       : [NSString stringWithFormat:@"  %lu pages", (unsigned long)n];
+    }
+    if (self.isMedia) {
+        // Video: pixel size as shown (rotation applied), then the duration.
+        // Audio has no picture, so only the duration.
+        NSMutableString *m = [NSMutableString string];
+        NSSize px = self.mediaPixels;
+        if (px.width > 0 && px.height > 0)
+            [m appendFormat:@"  %.0f × %.0f", px.width, px.height];
+        if (self.mediaSeconds >= 0)
+            [m appendFormat:@"  %@", MCFormatDuration(self.mediaSeconds)];
+        mode = m;
     }
     self.window.title = [NSString stringWithFormat:@"%@%@ — MiniCode%@",
                          flag, name, mode];

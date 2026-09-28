@@ -2,7 +2,8 @@
 
 MiniCode is a small native macOS code editor built from scratch, no Electron,
 no third-party dependencies. It links only Apple system frameworks (Cocoa,
-WebKit, CoreServices, Quartz for PDFKit) plus the C++ standard library and the
+WebKit, CoreServices, Quartz for PDFKit, AVKit, AVFoundation and CoreMedia
+for video and audio) plus the C++ standard library and the
 system zlib. The LaTeX preview runs tectonic, an external binary the user
 installs or the app downloads on request, and the LSP client talks to
 language servers the user has installed in the same way. This file is the handoff
@@ -593,6 +594,47 @@ edit, and a PDF would show only its first page.
 - Not yet: zoom and scrolling for large images. Linux has images and PDFs
   since September 2026 (`linux/src/MediaView.cpp`, `linux/src/PdfView.cpp`;
   see `linux/HANDOFF.md`, item 4).
+- **Video and audio** (Mac only, 2026-09-28): `+isMediaPath:` (mp4, m4v,
+  mov, 3gp, avi; mp3, wav, m4a, aac, aif/aiff, flac, ogg, opus) routes to
+  `showMediaAtPath:`, which puts an AVKit `AVPlayerView` (inline controls,
+  full screen button, editor background) in the slot the same way, paused
+  on the first frame. `isMedia` is cleared by `resetViewMode` through
+  `stopMedia`, which pauses the player and sets it to nil, so the sound
+  stops when another file, a diff, the welcome text or another folder takes
+  the slot; `windowWillClose:` and `dealloc` call it too. Saving returns
+  while `isMedia`. `checkExternalChange` swaps in a new `AVPlayerItem`,
+  seeks back to the old time and plays again if it was playing. The title
+  shows the pixel size (`presentationSize`, which has the rotation
+  applied, so a portrait phone clip says 1080 × 1920) and the duration
+  (m:ss or h:mm:ss); audio shows only the duration. Both arrive once the
+  item is ready, through KVO on status, presentationSize and duration.
+  Shift+Cmd+Space (View > Play/Pause) plays or pauses from any pane and
+  starts again from the top at the end; Cmd+1 focuses the player, whose own
+  Space, arrows and J K L then work. Traps: `.ts` and `.mts` are TypeScript
+  here, not MPEG transport streams, so they are not in the list. AVFoundation
+  plays an MJPEG avi but not an MPEG-4 Part 2 (Xvid) one; `asset.playable`
+  is checked first, and a file that fails there, or fails later as an item,
+  gets a message instead of a player. WebM, mkv, ogv, wmv and flv are not
+  playable, so they are left to "Cannot display". Cmd+Return was not used,
+  because the commit box in the git panel takes it. A disabled Play/Pause
+  item still swallows Shift+Cmd+Space, which nothing else uses.
+  Verified (58 checks) with a scratch program that `#include`s `main.mm`
+  with `main` renamed, so the real menu and AppDelegate are used, and
+  ordering front swizzled away with the activation policy Prohibited:
+  routing of every extension above against ffmpeg-made clips, the view in
+  the slot and below the terminal bar, no autoplay, titles (640 × 360 0:05,
+  a rotated mov as 360 × 640, a 1:02:05 m4a), the background color, Cmd+S
+  leaving the bytes and mtime alone, Shift+Cmd+Space as a CGEvent-built key
+  event playing and pausing, no menu item matching Cmd+Return, Cmd+1
+  focusing the player, reload keeping the time paused and playing, opening
+  a text file pausing and releasing the player, webm and random bytes
+  getting "Cannot display", `.ts` opening as text, and closing the window
+  pausing it. Unseen: what the player looks like on screen, sound actually
+  coming out, full screen, the controls' keyboard use, and a real keypress
+  (a CGEvent posted to a window that is never on screen goes nowhere).
+  Size: the binary grew by about 20 KB. Playing a 1080p clip offscreen
+  added about 5.5 MB to the process's footprint, a lower bound since the
+  picture was never composited.
 
 ## Git panel
 
