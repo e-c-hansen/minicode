@@ -523,6 +523,19 @@ never closes.
   user: typing on the real keyboard in bash, vim (not installed in their
   Termux), and the on-screen keyboard resizing the pane (Kika shows only its
   strip for the terminal, so the resize was tested with `wm size`).
+- **Android video and audio** (2026-09-28, on a branch, not merged): mp4,
+  m4v, mov, 3gp, webm and mkv, and mp3, wav, m4a, aac, flac, ogg and opus
+  open in the editor's slot (`PlayerPane.kt`, MediaPlayer on a
+  TextureView with its own bar), paused on the first frame, with size and
+  length in the title. Space in the player or Ctrl+Shift+Space plays and
+  pauses, Left and Right skip 5 s, a tap shows the bar. Released whenever
+  the pane is hidden or the app leaves, and after 4 s paused (see the trap
+  below); reloads on a change on disk keeping its place and play state.
+  Checked on the Titan 2 with injected keys and taps and `dumpsys
+  media.player` / `dumpsys audio`; see `android/README.md`, "Video and
+  audio". Needs the user: real sound, a real keypress on the Titan (the
+  leader and Space from its own keyboard), and a USB keyboard's
+  Ctrl+Shift+Space where Android may switch keyboard layouts with it.
 - **Linux**: all nine items of `linux/HANDOFF.md` are done (the user's work,
   2026-09-24), and a three-part review on 2026-09-25 was fixed the same day:
   huge and special files refused before reading, renames followed in every
@@ -594,7 +607,9 @@ edit, and a PDF would show only its first page.
 - Not yet: zoom and scrolling for large images. Linux has images and PDFs
   since September 2026 (`linux/src/MediaView.cpp`, `linux/src/PdfView.cpp`;
   see `linux/HANDOFF.md`, item 4).
-- **Video and audio** (Mac only, 2026-09-28): `+isMediaPath:` (mp4, m4v,
+- **Video and audio** (Mac, 2026-09-28; Linux has its own in
+  `linux/HANDOFF.md` item 11, Android in `android/README.md`, "Video and
+  audio"): `+isMediaPath:` (mp4, m4v,
   mov, 3gp, avi; mp3, wav, m4a, aac, aif/aiff, flac, ogg, opus) routes to
   `showMediaAtPath:`, which puts an AVKit `AVPlayerView` (inline controls,
   full screen button, editor background) in the slot the same way, paused
@@ -1029,6 +1044,23 @@ the file map; what belongs here is what it cost to learn:
 - **A TextView is no place for a long diff**: 500 KB took seconds to lay
   out with the window frozen. `DiffView` is a RecyclerView with a row per
   line.
+- **A paused MediaPlayer moves by itself.** The Titan 2 hands a file's
+  sound to the audio hardware ("offload", `offloading(1)` in `dumpsys
+  media.player`), even beside video and for a 30 s clip. NuPlayer shuts
+  offload down after 10 s paused and restarts it with a seek to the key
+  frame before the place: the paused picture changed to that frame, and
+  play resumed up to 8 s early (x264's default key frames are 8.3 s
+  apart). No app can turn offload off for MediaPlayer, so `PlayerPane`
+  releases a player 4 s after it pauses, keeping its place (the
+  TextureView keeps showing the last frame), and opens a new one on play
+  or a seek. Found only by reading positions back after a long pause; a
+  short pause, and a 5 s clip (too short to offload), both looked fine.
+- **Not MediaController**: it is a window of its own, focusable, so while
+  it shows it would take the keyboard, and the leader key and the first
+  Back would go to it (from its source; not tried). `PlayerPane` draws its
+  own bar. A seek before the first `start()`
+  draws that frame (NuPlayer's preview), which is how a file opens on its
+  first frame, paused.
 - **`adb shell input text` shuffles letters** in the phone's text fields
   ("Second" arrived as "Scond" and "Scceond"), in the editor as much as the
   commit box. It is the injection racing the keyboard app; real typing

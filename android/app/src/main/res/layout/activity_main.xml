@@ -194,6 +194,15 @@
         android:contentDescription="@string/app_name"
         android:visibility="gone" />
 
+    <!-- Video and audio, in the same slot: Android's MediaPlayer with a bar
+         of controls, paused until asked to play (PlayerPane.kt). -->
+    <org.minicode.editor.PlayerPane
+        android:id="@+id/player"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:visibility="gone" />
+
     <!-- The browser panel, as on the Mac: a system web view with a URL bar.
          A phone has a browser a swipe away, so this is for looking something
          up without leaving the window. -->

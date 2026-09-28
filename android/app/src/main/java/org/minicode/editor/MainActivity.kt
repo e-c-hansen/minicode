@@ -114,6 +114,9 @@ class MainActivity : AppCompatActivity() {
         ui.gitPanel.folder = ::gitFolder
         ui.gitPanel.onShow = ::showDiff
 
+        // Video and audio: the title follows the size and length once known.
+        ui.player.onChanged = { updateTitle() }
+
         ui.editor.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {
@@ -686,6 +689,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun checkOpenFile() {
         val file = currentFile ?: return
+        if (showingPlayer) { checkPlayedFile(file); return }
         if (showingMedia || showingDiff) return
         val now = stampOf(file) ?: return   // gone: saving writes it again
         if (now == diskStamp) return
@@ -714,6 +718,17 @@ class MainActivity : AppCompatActivity() {
         // Nothing is watched while MiniCode is out of sight; returning reads
         // everything again.
         updateWatches()
+        // No sound from a window the user has left.
+        ui.player.pause()
+    }
+
+    /**
+     * Out of sight, the player gives up its decoder and keeps its place;
+     * back in sight it opens the file again, paused there (PlayerPane).
+     */
+    override fun onStop() {
+        super.onStop()
+        ui.player.suspend()
     }
 
     /**
@@ -841,8 +856,8 @@ class MainActivity : AppCompatActivity() {
     private fun openEntry(entry: DocumentFile) {
         if (entry.isDirectory) { list(entry); return }
         confirmLeave {
-            // Pictures and PDFs are shown, not read as text, so an image never
-            // reaches the editor and cannot be saved over.
+            // Pictures, PDFs, video and audio are shown, not read as text, so
+            // they never reach the editor and cannot be saved over.
             if (!showMedia(entry)) {
                 val text = readText(entry)
                 if (text == null) cannotDisplay(entry)
@@ -898,12 +913,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * An image or the first page of a PDF, in the editor's slot. Both are
-     * decoded by Android itself, as the macOS app leaves them to AppKit and
-     * PDFKit; there is nothing here for the shared core to do.
+     * An image, the first page of a PDF, or a video or audio file, in the
+     * editor's slot. All are decoded by Android itself, as the macOS app
+     * leaves them to AppKit, PDFKit and AVKit; there is nothing here for the
+     * shared core to do.
      */
     private fun showMedia(entry: DocumentFile): Boolean {
         val name = entry.name?.lowercase() ?: return false
+        val ext = name.substringAfterLast('.', "")
+        if (ext in PlayerPane.VIDEO_EXTENSIONS || ext in PlayerPane.AUDIO_EXTENSIONS) {
+            showPlayer(entry, video = ext in PlayerPane.VIDEO_EXTENSIONS)
+            return true
+        }
         val isImage = listOf(".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
                              ".heic", ".heif").any { name.endsWith(it) }
         val isPdf = name.endsWith(".pdf")
@@ -918,6 +939,8 @@ class MainActivity : AppCompatActivity() {
         if (!entry.name.orEmpty().lowercase().endsWith(".pdf")) pdfPages = 0
         mediaSize = "${bitmap.width} × ${bitmap.height}"
         showingMedia = true
+        showingPlayer = false
+        ui.player.close()
         showingDiff = false
         previewing = false
         ui.latex.close()
@@ -959,6 +982,43 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * A video or audio file in the editor's slot (PlayerPane), paused on its
+     * first frame, as on the Mac and Linux. It is view only like a picture:
+     * nothing to save, and the player lets go of the file whenever the pane
+     * is out of sight, so nothing plays from a hidden pane.
+     */
+    private fun showPlayer(entry: DocumentFile, video: Boolean) {
+        currentFile = entry
+        diskStamp = stampOf(entry)
+        watchOpenFile()
+        pdfPages = 0
+        showingMedia = true
+        showingPlayer = true
+        showingDiff = false
+        previewing = false
+        ui.latex.close()
+        dirty = false
+        ui.media.setImageDrawable(null)
+        lsp.opened(null, folder)
+        ui.player.open(entry, video)
+        showList(false)
+    }
+
+    /**
+     * The played file changed on disk: the player loads it again, keeping
+     * its place and whether it was playing. One that is gone stops, and says
+     * so.
+     */
+    private fun checkPlayedFile(file: DocumentFile) {
+        val now = stampOf(file)
+        if (now == diskStamp) return
+        diskStamp = now
+        if (now == null) ui.player.gone() else ui.player.reload()
+    }
+
+    /** Set with showingMedia while the file is a video or audio one. */
+    private var showingPlayer = false
     private var showingMedia = false
     private var mediaSize = ""
     private var pdfPages = 0
@@ -971,6 +1031,8 @@ class MainActivity : AppCompatActivity() {
         diskConflictSaid = false
         watchOpenFile()
         showingMedia = false
+        showingPlayer = false
+        ui.player.close()
         showingDiff = false
         ui.media.setImageDrawable(null)
         highlighting = true
@@ -1321,6 +1383,7 @@ class MainActivity : AppCompatActivity() {
         ui.terminal.stop()
         lsp.shutdown()
         ui.gitPanel.shutdown()
+        ui.player.close()
         super.onDestroy()
     }
 
@@ -1414,15 +1477,24 @@ class MainActivity : AppCompatActivity() {
         ui.previewScroll.visibility =
             if (preview && pane == ui.previewScroll) View.VISIBLE else View.GONE
         ui.latex.visibility = if (preview && pane == ui.latex) View.VISIBLE else View.GONE
-        ui.media.visibility = if (media) View.VISIBLE else View.GONE
+        ui.media.visibility = if (media && !showingPlayer) View.VISIBLE else View.GONE
+        // Hiding the player releases it (PlayerPane), so nothing plays behind
+        // the list, and showing it again opens the file paused where it was.
+        ui.player.visibility = if (media && showingPlayer) View.VISIBLE else View.GONE
         ui.editor.visibility =
             if (show || preview || media || diff) View.GONE else View.VISIBLE
         ui.up.visibility =
             if (show && !start && !sidebarIsGit && current?.uri != folder?.uri) View.VISIBLE else View.GONE
-        if (!show) (if (diff) ui.diffView else ui.editor).let { v -> v.requestFocus(); v.post { v.requestFocus() } }
+        if (!show) (if (diff) ui.diffView else if (media && showingPlayer) ui.player else ui.editor)
+            .let { v -> v.requestFocus(); v.post { v.requestFocus() } }
         else if (start) ui.start.post { ui.start.focusFirst() }
         else if (sidebarIsGit) ui.gitPanel.focusPanel()
         else if (lostAccess || files.firstAction() >= 0) focusFileList()
+        // Nothing to type into in a player; the keyboard strip the terminal
+        // raised would otherwise stay under it.
+        if (!show && media && showingPlayer)
+            (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                .hideSoftInputFromWindow(ui.root.windowToken, 0)
         updateTitle()
         // Coming back to the list (from the terminal, say) reads it again,
         // and coming back to the file checks it was not changed meanwhile.
@@ -1514,6 +1586,8 @@ class MainActivity : AppCompatActivity() {
             currentFile = null
             dirty = false
             showingMedia = false
+            showingPlayer = false
+            ui.player.close()
             ui.media.setImageDrawable(null)
             previewing = false
             ui.latex.close()
@@ -1563,6 +1637,8 @@ class MainActivity : AppCompatActivity() {
                 val file = currentFile
                 val extra = when {
                     !showingMedia -> ""
+                    // "640 × 360  0:05" for a video, the length for audio.
+                    showingPlayer -> ui.player.describe().let { if (it.isEmpty()) "" else "  $it" }
                     pdfPages > 0 -> "  ${pdfPages} page" + (if (pdfPages == 1) "" else "s")
                     else -> "  $mediaSize"
                 }
@@ -1901,6 +1977,15 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
         }
+        // Play or pause a video or audio file, as Ctrl+Shift+Space does on
+        // Linux (Shift+Cmd+Space on the Mac), whatever has the keyboard.
+        // With no player on screen the key goes on as usual.
+        if (event.keyCode == KeyEvent.KEYCODE_SPACE && event.isCtrlPressed &&
+            event.isShiftPressed && ui.player.visibility == View.VISIBLE) {
+            handled.add(event.keyCode)
+            if (event.repeatCount == 0) ui.player.togglePlay()
+            return true
+        }
         // Undo and redo in the Markdown preview, as Ctrl+Z does on Linux.
         // The editor's own field handles them itself.
         if (event.isCtrlPressed && markdownPreviewShowing() &&
@@ -1971,6 +2056,7 @@ class MainActivity : AppCompatActivity() {
             ui.previewScroll.visibility = View.GONE
             ui.latex.visibility = View.GONE
             ui.media.visibility = View.GONE
+            ui.player.visibility = View.GONE
             ui.browser.visibility = View.VISIBLE
             if (!browserReady) {
                 browserReady = true
@@ -2056,6 +2142,7 @@ class MainActivity : AppCompatActivity() {
             ui.previewScroll.visibility = View.GONE
             ui.latex.visibility = View.GONE
             ui.media.visibility = View.GONE
+            ui.player.visibility = View.GONE
             ui.browser.visibility = View.GONE
             browserShowing = false
             ui.terminal.visibility = View.VISIBLE; ui.termKeys.visibility = View.VISIBLE
@@ -2286,6 +2373,11 @@ class MainActivity : AppCompatActivity() {
             "unstages, Enter shows the diff, the",
             "key then Enter commits.",
             "",
+            "In a video or audio file: Space",
+            "plays or pauses, Left and Right go",
+            "back or on 5 seconds; tap the",
+            "picture for the controls.",
+            "",
             "That key alone switches panes,",
             "twice opens this menu, and the ⋮",
             "button does the same.",
@@ -2293,7 +2385,8 @@ class MainActivity : AppCompatActivity() {
             "A held Ctrl works too: Ctrl and the",
             "letter, except Ctrl B for files,",
             "Ctrl Shift B for the browser and",
-            "Ctrl Shift G for source control.",
+            "Ctrl Shift G for source control,",
+            "and Ctrl Shift Space plays or pauses.",
             "In the terminal, Ctrl and a letter",
             "go to the shell; add Shift there.")
         androidx.appcompat.app.AlertDialog.Builder(this)
@@ -2323,9 +2416,12 @@ class MainActivity : AppCompatActivity() {
                 android.os.FileObserver.DELETE or android.os.FileObserver.MOVED_FROM or
                 android.os.FileObserver.MOVED_TO or android.os.FileObserver.DELETE_SELF or
                 android.os.FileObserver.MOVE_SELF
+        // Deleting or moving the open file away matters to the player, which
+        // stops; a text buffer is kept (saving writes it again).
         private const val FILE_EVENTS = android.os.FileObserver.CLOSE_WRITE or
                 android.os.FileObserver.MOVED_TO or android.os.FileObserver.CREATE or
-                android.os.FileObserver.MODIFY
+                android.os.FileObserver.MODIFY or android.os.FileObserver.DELETE or
+                android.os.FileObserver.MOVED_FROM
         private const val WATCHED = LIST_EVENTS or FILE_EVENTS
         private const val ALL_EVENTS = android.os.FileObserver.ALL_EVENTS
 
