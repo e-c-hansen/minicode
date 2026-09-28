@@ -133,8 +133,11 @@
 - (void)exportPDF:(id)sender       { [[self current] exportPDF:sender]; }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (item.action == @selector(exportPDF:)) return [self current].canExportPDF;
+    if (item.action == @selector(togglePlayback:))
+        return [self current].canTogglePlayback;
     return YES;
 }
+- (void)togglePlayback:(id)sender  { [[self current] togglePlayback:sender]; }
 - (void)toggleHints:(id)sender     { [[self current] toggleHints:sender]; }
 - (void)toggleTerminal:(id)sender  { [[self current] toggleTerminal:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
@@ -370,6 +373,19 @@ static void BuildMenu(void) {
     browser.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:browser];
+
+    [viewMenu addItem:[NSMenuItem separatorItem]];
+
+    // Video and audio. Not Cmd+Return, which commits in the git panel's
+    // message box, and not Space alone, which the tree and text need; the
+    // player's own Space works once it has the focus (Cmd+1).
+    NSMenuItem *play =
+        [[NSMenuItem alloc] initWithTitle:@"Play/Pause"
+                                   action:@selector(togglePlayback:)
+                            keyEquivalent:@" "];
+    play.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [viewMenu addItem:play];
 
     viewItem.submenu = viewMenu;
 

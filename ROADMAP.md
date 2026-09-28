@@ -28,18 +28,22 @@ What is left, roughly in order of value:
   leans on SyncTeX's line alone. Using the cell's `&` position in the row
   would pin it down exactly.
 
-## Media rendering (images done, video next)
+## Media rendering (images, PDFs, video and audio done on the Mac)
 
 Images open in the editor pane on macOS: an `NSImageView`, scaled to fit and
-never enlarged, with the pixel size in the title bar. Still to do:
+never enlarged, with the pixel size in the title bar. Video and audio play
+there too since September 2026, in AVKit's `AVPlayerView` (see "Video and
+audio" in CLAUDE.md). Still to do:
 
 - Zoom and scroll for large images, and a checkerboard behind transparency.
 - Linux has images (a `GtkPicture`) and PDFs (poppler-glib) since September
   2026. Its PDF viewer and LaTeX preview zoom (25% to 400%, keys, Ctrl+wheel
   and pinch; `linux/HANDOFF.md` item 4); images there still do not.
-- Video and audio (mp4, mov, m4v, mp3, wav, ...): play with an `AVPlayerView`
-  from AVKit, which is a macOS system framework. Transport controls come for
-  free. It routes the same way images do, by extension in `openFileAtPath:`.
+- ~~Video and audio on the Mac~~ (done, 2026-09-28): mp4, m4v, mov, 3gp and
+  avi, and mp3, wav, m4a, aac, aiff, flac, ogg and opus. WebM, Matroska, Ogg
+  video, WMV and FLV are left out because AVFoundation cannot play them.
+- Video and audio on Linux (GStreamer through GTK's `GtkVideo` is the obvious
+  route) and Android (the platform's `MediaPlayer` in a `VideoView`).
 
 ## LSP client (done, with room to grow)
 

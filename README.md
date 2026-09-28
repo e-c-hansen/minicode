@@ -10,7 +10,7 @@ I built it because I wanted one light place to browse a folder, edit code with a
 
 Open a folder and you get a file tree on the left and the file you click in the main pane. The tree follows changes made elsewhere, in the terminal, in git or in another program, and right clicking an item offers new file, new folder, rename, move to trash, reveal in Finder and copy path.
 
-Source files are highlighted by extension: Python, the C family, JavaScript, TypeScript, JSON, shell, LaTeX and a few others. Markdown renders as formatted text, with working links, tables and images, and Shift Command P flips to the source. You can also edit the rendered page: double click a paragraph, heading, list item or table cell, and a small editor opens holding its Markdown. Images and PDFs open in the same pane, and reload when the file changes on disk.
+Source files are highlighted by extension: Python, the C family, JavaScript, TypeScript, JSON, shell, LaTeX and a few others. Markdown renders as formatted text, with working links, tables and images, and Shift Command P flips to the source. You can also edit the rendered page: double click a paragraph, heading, list item or table cell, and a small editor opens holding its Markdown. Images and PDFs open in the same pane, and reload when the file changes on disk. On the Mac so do video and audio files, such as mp4, mov, mp3, wav and flac, in the system's own player; nothing plays until you press Shift Command Space or the play button.
 
 ![Opening a PNG and then a PDF from the file tree](docs/demos/files.gif)
 
@@ -164,7 +164,7 @@ A blank cell means that port does not have the action yet. On Android, shortcuts
 | Find across the whole folder | Shift Command F | Ctrl Shift F |  |
 | Find in the current file | Command F | Ctrl F |  |
 | Find next, find previous | Command G, Shift Command G | Ctrl G or F3, Shift F3 |  |
-| Focus the editor | Command 1 | Ctrl 1 |  |
+| Focus the editor, or the player when a video or audio file is open | Command 1 | Ctrl 1 |  |
 | Focus the file tree | Command 0 | Ctrl 0 |  |
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G |
 | Jump to the previous file | Control Tab | Ctrl Tab |  |
@@ -175,6 +175,7 @@ A blank cell means that port does not have the action yet. On Android, shortcuts
 | Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it | Ctrl click it | Tap it |
 | Open a folder | Command O | Ctrl O | O |
 | Open the settings file | Command comma | Ctrl comma |  |
+| Play or pause a video or audio file | Shift Command Space |  |  |
 | Refresh the file tree | Command R |  |  |
 | Rename the selected file or folder |  | F2, in the file tree |  |
 | Save | Command S | Ctrl S | S |
