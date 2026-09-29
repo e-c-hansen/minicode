@@ -17,16 +17,18 @@ struct Block {
     std::string nextItemPrefix;
 };
 
-// The block on 0-based source `line`, classified the way MarkdownParser
-// reads it. For a table row, `column` picks one cell (0-based; -1, or a
-// column the row lacks, gives the whole row). What the block covers:
-//   heading    the text after the #s
-//   list item  the text after the marker, on its own line
-//   paragraph  every line of it, blank line to blank line
-//   quote      every line of it, the > markers included
-//   code       the lines between the fences
+// The block on 0-based source `line`, as MarkdownParser::lines reads it.
+// For a table row, `column` picks one cell (0-based; -1, or a column the row
+// lacks, gives the whole row). What the block covers:
+//   heading    the text after the #s and before any closing #s, or all the
+//              text lines of a setext (underlined) heading
+//   list item  the text after the marker, with its continuation lines
+//   paragraph  every line of it, lazy continuation lines included
+//   quote      every line of the whole quote, the > markers included
+//   code       the lines between the fences, or an indented block's lines
 //   table cell the cell's text, trimmed
-// Blank lines, rules, fences and a table's separator row give None.
+// Blank lines, rules, fences, a table's separator row, a setext underline,
+// link reference definitions and HTML comments give None.
 Block blockAt(const std::string& source, int line, int column = -1);
 
 // The source with `block`'s bytes replaced by `text`.

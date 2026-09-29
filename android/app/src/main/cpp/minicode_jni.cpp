@@ -161,6 +161,7 @@ Java_org_minicode_editor_Core_markdown(JNIEnv *env, jclass, jstring source) {
         if (r.link) f |= 1 << 10;
         if (r.ordered) f |= 1 << 11;
         f |= (r.listDepth & 0xF) << 12;
+        if (r.strike) f |= 1 << 16;
         flags[i] = f;
 
         jint *e = &extra[i * kStride];

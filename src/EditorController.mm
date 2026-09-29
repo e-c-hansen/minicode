@@ -2978,37 +2978,44 @@ static NSString *MCFormatDuration(double seconds) {
 
     NSMutableAttributedString *out = [[NSMutableAttributedString alloc] init];
     NSMutableDictionary<NSString *, NSNumber *> *anchors = [NSMutableDictionary dictionary];
+    // A paragraph's look comes from its first run, and every run in it gets
+    // that paragraph style; a quote's or a code block's paragraphs share one
+    // text block, which draws the bar or the box around all of them.
+    NSParagraphStyle *para = nil;
+    NSTextBlock *quoteBlock = nil, *codeBox = nil;
+    BOOL lineStart = YES;
     for (size_t i = 0; i < runs.size();) {
-        if (runs[i].heading > 0) {
-            // A heading's text may be several runs (bold, code, links).
-            std::string title;
-            const int line = runs[i].line;
-            for (size_t k = i; k < runs.size() && runs[k].heading > 0 && runs[k].line == line; k++)
-                title += runs[k].text;
-            NSString *slug = MCMarkdownAnchor([NSString stringWithUTF8String:title.c_str()]);
-            // GitHub numbers repeats: intro, intro-1, intro-2.
-            NSString *key = slug;
-            for (int n = 1; anchors[key]; n++)
-                key = [NSString stringWithFormat:@"%@-%d", slug, n];
-            if (key.length) anchors[key] = @(out.length);
+        const MdRun &r = runs[i];
+        if (r.tableId > 0) {
             size_t end = i;
-            while (end < runs.size() && runs[end].heading > 0 && runs[end].line == line) {
-                NSAttributedString *piece = [self markdownRun:runs[end] cellStyle:nil];
-                if (piece) [out appendAttributedString:piece];
-                end++;
-            }
-            i = end;
-            continue;
-        }
-        if (runs[i].tableId > 0) {
-            size_t end = i;
-            while (end < runs.size() && runs[end].tableId == runs[i].tableId) end++;
+            while (end < runs.size() && runs[end].tableId == r.tableId) end++;
             [self appendMarkdownTable:runs from:i to:end into:out];
             i = end;
+            lineStart = YES;
+            quoteBlock = codeBox = nil;
             continue;
         }
-        NSAttributedString *piece = [self markdownRun:runs[i] cellStyle:nil];
-        if (piece) [out appendAttributedString:piece];
+        if (lineStart) {
+            if (r.heading > 0) {
+                // A heading's text may be several runs (bold, code, links).
+                std::string title;
+                for (size_t k = i; k < runs.size() && runs[k].heading > 0 &&
+                                   runs[k].line == r.line; k++)
+                    title += runs[k].text;
+                NSString *slug = MCMarkdownAnchor([NSString stringWithUTF8String:title.c_str()]);
+                // GitHub numbers repeats: intro, intro-1, intro-2.
+                NSString *key = slug;
+                for (int n = 1; anchors[key]; n++)
+                    key = [NSString stringWithFormat:@"%@-%d", slug, n];
+                if (key.length) anchors[key] = @(out.length);
+            }
+            para = [self markdownParagraphFor:r quote:&quoteBlock code:&codeBox];
+        }
+        NSAttributedString *piece = [self markdownRun:r style:para inCell:NO];
+        if (piece.length) {
+            [out appendAttributedString:piece];
+            lineStart = [piece.string hasSuffix:@"\n"];
+        }
         i++;
     }
     _markdownAnchors = anchors;
@@ -3106,20 +3113,117 @@ static NSString *MCMarkdownAnchor(NSString *title) {
     return slug;
 }
 
-// One run of rendered Markdown. Inside a table cell, `cellStyle` is the
-// cell's paragraph style and the text is set in the body font, since a real
+// The preview's vertical rhythm, in points: the empty line between two
+// blocks (the parser's `gap` runs), and the indent of each list level.
+static const CGFloat kMarkdownGap = 12;
+static const CGFloat kMarkdownListStep = 24;
+
+// A text block as wide as the text container.
+static NSTextBlock *MCFullWidthBlock(void) {
+    NSTextBlock *b = [NSTextBlock new];
+    [b setValue:100 type:NSTextBlockPercentageValueType forDimension:NSTextBlockWidth];
+    return b;
+}
+
+// The paragraph style for a paragraph of rendered Markdown, from its first
+// run. A block quote draws a bar down its left side and a code block a box;
+// `quote` and `code` carry that text block from one paragraph to the next,
+// so the paragraphs of one quote or code block (and a quote's inner gaps)
+// share it and it is drawn once around them all.
+- (NSParagraphStyle *)markdownParagraphFor:(const MdRun &)r
+                                     quote:(NSTextBlock * __strong *)quote
+                                      code:(NSTextBlock * __strong *)code {
+    AppSettings *cfg = [AppSettings shared];
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.lineSpacing = 3.0;
+    NSMutableArray<NSTextBlock *> *blocks = [NSMutableArray array];
+    if (r.quote) {
+        if (!*quote) {
+            NSTextBlock *b = MCFullWidthBlock();
+            [b setWidth:3 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockBorder
+                   edge:NSRectEdgeMinX];
+            [b setBorderColor:Hex(0x4B5563) forEdge:NSRectEdgeMinX];
+            [b setWidth:13 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
+                   edge:NSRectEdgeMinX];
+            *quote = b;
+        }
+        [blocks addObject:*quote];
+    } else {
+        *quote = nil;
+    }
+    if (r.codeBlock) {
+        if (!*code) {
+            NSTextBlock *b = MCFullWidthBlock();
+            b.backgroundColor = MCColor(cfg.settings.markdownCodeBackground());
+            [b setWidth:12 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
+                   edge:NSRectEdgeMinX];
+            [b setWidth:12 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
+                   edge:NSRectEdgeMaxX];
+            [b setWidth:9 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
+                   edge:NSRectEdgeMinY];
+            [b setWidth:9 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
+                   edge:NSRectEdgeMaxY];
+            *code = b;
+        }
+        [blocks addObject:*code];
+        ps.lineSpacing = 2.0;
+    } else {
+        *code = nil;
+    }
+    if (r.gap) {
+        ps.minimumLineHeight = ps.maximumLineHeight = kMarkdownGap;
+        ps.lineSpacing = 0;
+    } else if (r.heading > 0) {
+        ps.paragraphSpacingBefore = r.heading <= 2 ? 10.0 : 4.0;
+        ps.paragraphSpacing = 2.0;
+        if (r.heading <= 2) {   // a line under the two biggest, as GitHub has
+            NSTextBlock *b = MCFullWidthBlock();
+            [b setWidth:1 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockBorder
+                   edge:NSRectEdgeMaxY];
+            [b setBorderColor:Hex(0x3F3F46) forEdge:NSRectEdgeMaxY];
+            [b setWidth:6 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
+                   edge:NSRectEdgeMaxY];
+            [blocks addObject:b];
+        }
+    } else if (r.rule) {
+        NSTextBlock *b = MCFullWidthBlock();
+        [b setWidth:2 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockBorder
+               edge:NSRectEdgeMaxY];
+        [b setBorderColor:Hex(0x4B5563) forEdge:NSRectEdgeMaxY];
+        [blocks addObject:b];
+        ps.minimumLineHeight = ps.maximumLineHeight = 4;
+        ps.lineSpacing = 0;
+    }
+    if (r.listDepth > 0) {
+        // The text of every line sits at the level's indent; a marker is
+        // right-aligned just before it, so numbers of any width line up.
+        const CGFloat text = r.listDepth * kMarkdownListStep;
+        ps.headIndent = text;
+        ps.firstLineHeadIndent = r.marker ? text - kMarkdownListStep : text;
+        ps.tabStops = @[
+            [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentRight
+                                            location:text - 7 options:@{}],
+            [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft
+                                            location:text options:@{}],
+        ];
+        ps.paragraphSpacing = 3.0;
+    }
+    ps.textBlocks = blocks;
+    return ps;
+}
+
+// One run of rendered Markdown, set in the paragraph style `ps`. Inside a
+// table cell (`inCell`) the text is set in the body font, since a real
 // table lines its columns up without monospace.
 - (NSAttributedString *)markdownRun:(const MdRun &)r
-                          cellStyle:(NSParagraphStyle *)cellStyle {
+                              style:(NSParagraphStyle *)ps
+                             inCell:(BOOL)inCell {
     NSString *s = [NSString stringWithUTF8String:r.text.c_str()];
     if (!s) return nil;
 
     NSFont *body = [NSFont systemFontOfSize:15];
     NSFont *mono = [NSFont monospacedSystemFontOfSize:13
                                                weight:NSFontWeightRegular];
-    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
-    ps.lineSpacing = 3.0; ps.paragraphSpacing = 4.0;
-
     AppSettings *cfg = [AppSettings shared];
     NSFont *font = body;
     NSColor *color = [cfg text:Surface::Editor];
@@ -3129,31 +3233,32 @@ static NSString *MCMarkdownAnchor(NSString *title) {
         CGFloat sizes[7] = {0, 26, 22, 19, 17, 15, 14};
         font = [NSFont boldSystemFontOfSize:sizes[r.heading]];
         color = [cfg markdown:MarkdownColor::Heading];
-        ps.paragraphSpacing = 8.0;
-        ps.paragraphSpacingBefore = r.heading <= 2 ? 18.0 : 12.0;  // gap above
     }
     if (r.codeBlock || r.code) {
         font = mono;
         color = [cfg markdown:MarkdownColor::Code];
-        a[NSBackgroundColorAttributeName] =
-            MCColor(cfg.settings.markdownCodeBackground());
+        if (!r.codeBlock)   // a code block's box is its paragraphs' text block
+            a[NSBackgroundColorAttributeName] =
+                MCColor(cfg.settings.markdownCodeBackground());
     }
-    if (r.table && !cellStyle) {
+    if (r.table && !inCell) {
         font = mono;   // monospace keeps the padded columns aligned
         if (!r.code) color = r.bold ? [cfg markdown:MarkdownColor::Heading]
                                     : [cfg text:Surface::Editor];
     }
-    if (r.table && cellStyle && r.bold && !r.code)
+    if (r.table && inCell && r.bold && !r.code)
         color = [cfg markdown:MarkdownColor::Heading];
-    if (r.quote) {
-        color = [cfg markdown:MarkdownColor::Quote];
-        ps.headIndent = 16; ps.firstLineHeadIndent = 16;
+    if (r.quote && !r.code) color = [cfg markdown:MarkdownColor::Quote];
+    if (r.marker) {
+        // "  • " from the parser: the tabs of the paragraph style place it.
+        NSString *m = [s stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        s = [NSString stringWithFormat:@"\t%@\t", m];
     }
-    if (r.rule) {
-        // Draw a rule as a full line of box-drawing chars.
-        s = @"────────────────────────────────";
-        color = Hex(0x555555);
-    }
+    // A line break inside a paragraph, not the start of a new one.
+    if (r.hardBreak) s = @" ";
+    if (r.rule) font = [NSFont systemFontOfSize:2];
+    if (r.strike)
+        a[NSStrikethroughStyleAttributeName] = @(NSUnderlineStyleSingle);
     if (r.link) { color = [cfg markdown:MarkdownColor::Link]; a[NSUnderlineStyleAttributeName] =
         @(NSUnderlineStyleSingle); }
     // A link's target as written; textView:clickedOnLink: resolves it.
@@ -3161,7 +3266,7 @@ static NSString *MCMarkdownAnchor(NSString *title) {
                          ? [NSString stringWithUTF8String:r.url.c_str()] : nil;
     if (href.length) a[NSLinkAttributeName] = href;
     if (r.line >= 0) a[kMarkdownSourceLine] = @(r.line);
-    if (cellStyle) ps = [cellStyle mutableCopy];
+    if (!ps) ps = [NSParagraphStyle defaultParagraphStyle];
     if (r.image) {
         NSString *src = [NSString stringWithUTF8String:r.src.c_str()];
         NSImage *picture = MCMarkdownLoadImage(src,
@@ -3265,7 +3370,7 @@ static NSString *MCMarkdownAnchor(NSString *title) {
                 if (r.tableRow != row || r.tableCol != col) continue;
                 align = r.tableAlign;
                 ps.alignment = alignments[std::min(std::max(align, 0), 2)];
-                NSAttributedString *piece = [self markdownRun:r cellStyle:ps];
+                NSAttributedString *piece = [self markdownRun:r style:ps inCell:YES];
                 if (piece) [text appendAttributedString:piece];
             }
             ps.alignment = alignments[std::min(std::max(align, 0), 2)];

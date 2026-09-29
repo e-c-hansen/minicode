@@ -96,6 +96,7 @@ object Core {
     const val MD_LINK = 1 shl 10
     const val MD_ORDERED = 1 shl 11
     fun mdListDepth(flags: Int) = (flags shr 12) and 0xF
+    const val MD_STRIKE = 1 shl 16
 
     /**
      * What a tap can open in one terminal row: `cells` is a code point per

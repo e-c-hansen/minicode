@@ -327,6 +327,7 @@ std::string cellMarkup(const std::vector<const MdRun*>& runs) {
                 "\" background=\"" + pal::MdCodeBg + "\">" + t + "</span>";
         if (r->italic) t = "<i>" + t + "</i>";
         if (r->bold) t = "<b>" + t + "</b>";
+        if (r->strike) t = "<s>" + t + "</s>";
         if (r->link && !r->url.empty())
             t = "<a href=\"" + escaped(r->url) + "\">" + t + "</a>";
         m += t;
@@ -481,6 +482,13 @@ Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
             embed.widget = grid;
             anchorWidget(grid, r);
             page.embeds.push_back(embed);
+            // The table's own rows ended its lines; the widget stands for
+            // them, so its line ends here, and the gap after it is a line
+            // of its own.
+            GtkTextIter lineEnd;
+            gtk_text_buffer_get_end_iter(buffer, &lineEnd);
+            gtk_text_buffer_insert(buffer, &lineEnd, "\n", 1);
+            lineLen = 0;
             i = end - 1;
             continue;
         }
@@ -558,6 +566,8 @@ Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
         if (r.link)                applyTag(buffer, "md_link",  startOff, endOff);
         if (r.bold)                applyTag(buffer, "md_bold",  startOff, endOff);
         if (r.italic)              applyTag(buffer, "md_italic", startOff, endOff);
+        if (r.strike)              applyTag(buffer, "md_strike", startOff, endOff);
+        if (r.gap)                 applyTag(buffer, "md_gap",   startOff, endOff);
         if (r.image && !r.link)    applyTag(buffer, "plainmsg", startOff, endOff);
     }
     endHeading();
