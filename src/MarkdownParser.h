@@ -43,6 +43,15 @@ struct MdRun {
     // spaces or a backslash, or <br>.
     bool gap       = false;
     bool hardBreak = false;
+    // Math, written as GitHub and pandoc read it: 1 for inline ($...$ or
+    // \(...\)), 2 for display ($$...$$, a ```math block, or \[...\] on
+    // lines of its own). `text` is the TeX between the delimiters as
+    // written (an inline formula's line breaks become spaces), and `code`
+    // is set as well, so a port that does not typeset math shows it
+    // verbatim in the code style. Display math in a paragraph stands on a
+    // line of its own: "\n" runs end the text before it and start the text
+    // after it (not in a heading or a table cell, which stay one line).
+    int  math      = 0;
 };
 
 // How the parser read one line of the source. MarkdownEdit works from this,
@@ -55,7 +64,9 @@ struct MdLine {
         Quote,            // a line starting with >
         ListItem,         // the line holding a list item's marker
         Text,             // a paragraph line, or a lazy continuation line
-        Hidden            // a link reference definition or an HTML comment
+        Hidden,           // a link reference definition or an HTML comment
+        Math              // a line of a $$ (or \[) display math block,
+                          // its delimiters included
     };
     Kind kind = Blank;
     // Lines that are edited together share a number: a paragraph, a list

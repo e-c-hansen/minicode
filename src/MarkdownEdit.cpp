@@ -111,6 +111,11 @@ Block blockAt(const std::string& source, int line, int column) {
             out.start = first.lineStart;
             out.end = lines[b].lineEnd;
             break;
+        case MdLine::Math:
+            out.kind = Block::Math;
+            out.start = first.start;
+            out.end = lines[b].lineEnd;
+            break;
         case MdLine::Text:
             out.kind = Block::Paragraph;
             out.start = first.start;

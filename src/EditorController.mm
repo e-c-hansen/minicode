@@ -2810,7 +2810,8 @@ static NSColor *ContrastColor(const Rgba &c) {
     if (block.kind == MarkdownEdit::Block::None) return NO;
 
     static NSString *const titles[] = {@"", @"Paragraph", @"Heading", @"List item",
-                                       @"Quote", @"Code block", @"Table cell", @"Table row"};
+                                       @"Quote", @"Code block", @"Table cell", @"Table row",
+                                       @"Formula"};
     NSString *title = [titles[block.kind] stringByAppendingString:
         @" (Markdown; Return saves, Shift+Return for a new line)"];
     NSString *text = [NSString stringWithUTF8String:

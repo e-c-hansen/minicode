@@ -1514,6 +1514,198 @@ void testMarkdownCommonMark() {
 }
 
 // MarkdownParser::lines, which MarkdownEdit builds on.
+// Math, read as GitHub and pandoc read it, before any other inline rule.
+void testMarkdownMath() {
+    using P = MarkdownParser;
+    auto maths = [](const std::vector<MdRun> &runs) {
+        std::vector<MdRun> m;
+        for (const MdRun &r : runs)
+            if (r.math) m.push_back(r);
+        return m;
+    };
+    auto noMath = [&](const std::string &md) { return maths(P::parse(md)).empty(); };
+
+    GROUP("md:math-inline");
+    {
+        auto one = maths(P::parse("$x^2$"));
+        CHECK(one.size() == 1 && one[0].math == 1 && one[0].text == "x^2" && one[0].code);
+        auto mid = P::parse("a $x_1$ b\n");
+        CHECK(mdText(mid) == "a x_1 b\n");
+        CHECK(mid.size() == 4 && mid[1].math == 1 && mid[1].text == "x_1" && mid[1].line == 0);
+        // Nothing inside is Markdown: escapes stay, underscores and stars
+        // do not pair, brackets are not links.
+        auto esc = maths(P::parse("set $\\{a, b\\}$ here"));
+        CHECK(esc.size() == 1 && esc[0].text == "\\{a, b\\}");
+        auto under = P::parse("$a_i$ and $b_j$ and $c*d*e$\n");
+        CHECK(maths(under).size() == 3 && !mdAny(under, [](const MdRun &r) { return r.italic; }));
+        CHECK(maths(under).size() == 3 && maths(under)[2].text == "c*d*e");
+        auto brackets = P::parse("$[a](b)$ and $\\mathbb{1}[i \\in S]$\n");
+        CHECK(maths(brackets).size() == 2 && !mdAny(brackets, [](const MdRun &r) { return r.link; }));
+        CHECK(maths(P::parse("$\\,x\\!y\\ z\\\\$")).size() == 1 &&
+              maths(P::parse("$\\,x\\!y\\ z\\\\$"))[0].text == "\\,x\\!y\\ z\\\\");
+        // Prices are not math: the closing $ may not follow a space, and may
+        // not come before a digit.
+        CHECK(noMath("It costs $5 and $10.\n"));
+        CHECK(mdText(P::parse("It costs $5 and $10.\n")) == "It costs $5 and $10.\n");
+        CHECK(noMath("from $5, or $6 with tax"));
+        CHECK(noMath("between $5 and 10$20 today"));
+        CHECK(noMath("$ x$"));      // the opener is followed by a space
+        CHECK(noMath("$x $"));      // the closer follows a space
+        CHECK(noMath("$x$5"));      // the closer is followed by a digit
+        CHECK(noMath("a $ b"));
+        CHECK(mdText(P::parse("a $ b\n")) == "a $ b\n");
+        // \$ is a dollar sign; a $ in a code span is not math.
+        CHECK(noMath("\\$x\\$"));
+        CHECK(mdText(P::parse("\\$x\\$\n")) == "$x$\n");
+        auto code = P::parse("`$x$` and `a$` $b$\n");
+        CHECK(maths(code).size() == 1 && maths(code)[0].text == "b");
+        CHECK(mdAny(code, [](const MdRun &r) { return !r.math && r.code && r.text == "$x$"; }));
+        // An escaped dollar inside math does not close it.
+        auto dollar = maths(P::parse("$\\$5 + x$"));
+        CHECK(dollar.size() == 1 && dollar[0].text == "\\$5 + x");
+        // A code span inside math is skipped whole.
+        auto tick = maths(P::parse("$a `$` b$"));
+        CHECK(tick.size() == 1 && tick[0].text == "a `$` b");
+        // \(...\) is inline math too.
+        auto paren = maths(P::parse("so \\(x + y\\) holds"));
+        CHECK(paren.size() == 1 && paren[0].math == 1 && paren[0].text == "x + y");
+        CHECK(noMath("an escaped \\( paren"));
+        // A formula may cross a line break; it reads as one line.
+        auto wrap = maths(P::parse("so $a +\nb$ holds\n"));
+        CHECK(wrap.size() == 1 && wrap[0].text == "a + b" && wrap[0].line == 0);
+        auto later = P::parse("one\ntwo $y$\n");
+        CHECK(maths(later).size() == 1 && maths(later)[0].line == 1);
+        // In links, headings, quotes, lists and emphasis.
+        auto link = P::parse("[see $x$](u)\n");
+        CHECK(maths(link).size() == 1 && maths(link)[0].link && maths(link)[0].url == "u");
+        auto dest = P::parse("[a](b$c) $d$\n");
+        CHECK(mdAny(dest, [](const MdRun &r) { return r.link && r.url == "b$c"; }) &&
+              maths(dest).size() == 1 && maths(dest)[0].text == "d");
+        auto head = maths(P::parse("# The $O(n)$ bound\n"));
+        CHECK(head.size() == 1 && head[0].heading == 1 && head[0].text == "O(n)");
+        auto quote = maths(P::parse("> so $q_t$ here\n"));
+        CHECK(quote.size() == 1 && quote[0].quote);
+        auto item = maths(P::parse("- item $i$\n"));
+        CHECK(item.size() == 1 && item[0].listDepth == 1);
+        auto em = maths(P::parse("*$x$*"));
+        CHECK(em.size() == 1 && em[0].italic);
+        // Dollars that close nothing are text.
+        CHECK(noMath("a $$ b"));
+        CHECK(mdText(P::parse("a $$ b\n")) == "a $$ b\n");
+        CHECK(noMath("$$"));
+        // Math in a table cell, with the table's fields.
+        auto tbl = P::parse("| a | $x_1$ |\n|---|---|\n| $\\alpha$ | $5 |\n");
+        auto tm = maths(tbl);
+        CHECK(tm.size() == 2 && tm[0].table && tm[0].tableRow == 0 && tm[0].tableCol == 1 &&
+              tm[0].text == "x_1");
+        CHECK(tm.size() == 2 && tm[1].tableRow == 1 && tm[1].tableCol == 0 &&
+              tm[1].text == "\\alpha");
+        CHECK(mdAny(tbl, [](const MdRun &r) { return r.table && r.text == "$5"; }));
+    }
+
+    GROUP("md:math-display");
+    {
+        // $$ inside a paragraph stands on a line of its own.
+        auto para = P::parse("see $$x^2$$ here\n");
+        CHECK(mdText(para) == "see\nx^2\nhere\n");
+        auto pm = maths(para);
+        CHECK(pm.size() == 1 && pm[0].math == 2 && pm[0].text == "x^2");
+        auto spaced = maths(P::parse("$$ a + b $$"));
+        CHECK(spaced.size() == 1 && spaced[0].math == 2 && spaced[0].text == "a + b");
+        auto two = P::parse("$$a$$ and $$b$$\n");
+        CHECK(mdText(two) == "a\nand\nb\n");
+        auto across = P::parse("text\nmore $$\nx\n$$ after\n");
+        CHECK(mdText(across) == "text more\nx\nafter\n");
+        CHECK(maths(across).size() == 1 && maths(across)[0].line == 1);
+        // Not in a heading or a table cell, which stay one line.
+        auto head = P::parse("# A $$x$$ b\n");
+        CHECK(mdCount(head, [](const MdRun &r) { return r.text == "\n"; }) == 1);
+        CHECK(maths(head).size() == 1 && maths(head)[0].math == 2);
+    }
+
+    GROUP("md:math-blocks");
+    {
+        const std::string src = "Intro\n\n$$\nx^2 + y^2\n$$\n\nAfter\n";
+        auto b = P::parse(src);
+        auto bm = maths(b);
+        CHECK(bm.size() == 1 && bm[0].math == 2 && bm[0].text == "x^2 + y^2" && bm[0].line == 2);
+        CHECK(mdText(b) == "Intro\n\nx^2 + y^2\n\nAfter\n");
+        auto lines = P::lines(src);
+        CHECK(lines.size() >= 5 && lines[2].kind == MdLine::Math && lines[3].kind == MdLine::Math &&
+              lines[4].kind == MdLine::Math && lines[2].block == lines[4].block &&
+              lines[2].block >= 0);
+        // A double-click opens the whole block, delimiters and all.
+        for (int line : {2, 3, 4}) {
+            MarkdownEdit::Block e = MarkdownEdit::blockAt(src, line);
+            CHECK(e.kind == MarkdownEdit::Block::Math &&
+                  src.substr(e.start, e.end - e.start) == "$$\nx^2 + y^2\n$$" &&
+                  e.firstLine == 2 && e.lastLine == 4);
+        }
+        MarkdownEdit::Block e = MarkdownEdit::blockAt(src, 3);
+        CHECK(MarkdownEdit::replace(src, e, "$$\nz\n$$") == "Intro\n\n$$\nz\n$$\n\nAfter\n");
+
+        // An aligned block keeps its lines exactly.
+        const std::string aligned =
+            "$$\n\\begin{aligned}\na &= b \\\\\nc &= d\n\\end{aligned}\n$$\n";
+        auto am = maths(P::parse(aligned));
+        CHECK(am.size() == 1 &&
+              am[0].text == "\\begin{aligned}\na &= b \\\\\nc &= d\n\\end{aligned}");
+        // One line, and content on the delimiter lines.
+        auto single = maths(P::parse("$$ E = mc^2 $$\n"));
+        CHECK(single.size() == 1 && single[0].text == "E = mc^2");
+        CHECK(P::lines("$$ E = mc^2 $$\n")[0].kind == MdLine::Math);
+        auto edges = maths(P::parse("$$ a = b\n+ c $$\n"));
+        CHECK(edges.size() == 1 && edges[0].text == "a = b\n+ c");
+        // A $$ line interrupts a paragraph, as a fence does.
+        auto interrupt = P::parse("text\n$$\nx\n$$\nmore\n");
+        CHECK(mdText(interrupt) == "text\n\nx\n\nmore\n");
+        CHECK(P::lines("text\n$$\nx\n$$\nmore\n")[4].kind == MdLine::Text);
+        // A blank line inside is no block, and no math at all.
+        CHECK(noMath("$$\nx\n\ny\n$$\n"));
+        CHECK(noMath("$$\nnever closed\n"));
+        // Two formulas on one line are a paragraph.
+        CHECK(P::lines("$$a$$ and $$b$$\n")[0].kind == MdLine::Text);
+        // \[ ... \] on lines of its own.
+        auto bracket = maths(P::parse("\\[\n\\int_0^1 f\n\\]\n"));
+        CHECK(bracket.size() == 1 && bracket[0].math == 2 && bracket[0].text == "\\int_0^1 f");
+        CHECK(maths(P::parse("\\[x\\]\n")).size() == 1);
+        // GitHub's ```math fence.
+        const std::string fence = "```math\nE = mc^2\n```\n";
+        auto fm = maths(P::parse(fence));
+        CHECK(fm.size() == 1 && fm[0].math == 2 && fm[0].text == "E = mc^2" && fm[0].line == 1);
+        CHECK(MarkdownEdit::blockAt(fence, 1).kind == MarkdownEdit::Block::Code);
+        CHECK(noMath("```python\nx = 1\n```\n"));
+        // In a list item, and in a quote.
+        auto inList = maths(P::parse("- item\n\n  $$\n  x\n  $$\n"));
+        CHECK(inList.size() == 1 && inList[0].listDepth == 1 && inList[0].text == "x");
+        auto inQuote = maths(P::parse("> $$\n> x\n> $$\n"));
+        CHECK(inQuote.size() == 1 && inQuote[0].quote && inQuote[0].math == 2 &&
+              inQuote[0].text == "x");
+        // Indented four spaces it is code.
+        CHECK(noMath("    $$\n    x\n    $$\n"));
+    }
+
+    GROUP("md:math-speed");
+    {
+        std::string dollars, doubles, parens;
+        for (int k = 0; k < 20000; k++) {
+            dollars += "$a ";
+            doubles += "$$a ";
+            parens += "\\(a ";
+        }
+        auto t0 = std::chrono::steady_clock::now();
+        auto r1 = P::parse(dollars);
+        auto r2 = P::parse(doubles);
+        auto r3 = P::parse(parens);
+        const double ms = std::chrono::duration<double, std::milli>(
+                              std::chrono::steady_clock::now() - t0).count();
+        // Every $$ closes the one before it; the others close nothing.
+        CHECK(maths(r1).empty() && maths(r2).size() == 10000 && maths(r3).empty());
+        CHECK(ms < 2000);
+        std::printf("  markdown math: 60,000 openers, 40,000 closing nothing, in %.1f ms\n", ms);
+    }
+}
+
 void testMarkdownLines() {
     GROUP("md:lines");
     const std::string doc =
@@ -1615,6 +1807,48 @@ void testMarkdownCorpus() {
         }
     }
     CHECK(linked && local >= 5);
+    // Its math section.
+    CHECK(mdCount(runs, [](const MdRun &r) { return r.math == 1; }) == 3);
+    CHECK(mdCount(runs, [](const MdRun &r) { return r.math == 2; }) == 3);
+
+    GROUP("md:math-corpus");
+    std::ifstream mf("tests/markdown/math.md");
+    if (!mf) return;
+    std::stringstream ms;
+    ms << mf.rdbuf();
+    const std::string math = ms.str();
+    auto mruns = MarkdownParser::parse(math);
+    const int inl = mdCount(mruns, [](const MdRun &r) { return r.math == 1; });
+    const int disp = mdCount(mruns, [](const MdRun &r) { return r.math == 2; });
+    CHECK(inl == 32 && disp == 11);
+    if (inl != 32 || disp != 11) std::printf("  math.md: %d inline, %d display\n", inl, disp);
+    // No delimiter is left in the text, besides the ones meant as text.
+    CHECK(!mdAny(mruns, [](const MdRun &r) {
+        return !r.code && (r.text.find("$$") != std::string::npos ||
+                           r.text.find("\\(") != std::string::npos ||
+                           r.text.find("\\[") != std::string::npos);
+    }));
+    CHECK(mdAny(mruns, [](const MdRun &r) {
+        return !r.math && r.text.find("costs $5 and $10, a price of $20,000, $x$") !=
+                              std::string::npos;
+    }));
+    // Every formula opens a block when double-clicked, and a display
+    // formula of its own opens the whole $$ block.
+    bool mathEditable = true;
+    for (const MdRun &r : mruns) {
+        if (!r.math) continue;
+        int line = r.line;
+        if (r.table) line = r.line + r.tableRow + (r.tableRow > 0 ? 1 : 0);
+        MarkdownEdit::Block b = MarkdownEdit::blockAt(math, line, r.table ? r.tableCol : -1);
+        if (b.kind == MarkdownEdit::Block::None) {
+            mathEditable = false;
+            std::printf("  no block for formula '%s' on line %d\n", r.text.c_str(), line);
+        }
+        if (b.kind == MarkdownEdit::Block::Math &&
+            math.substr(b.start, b.end - b.start).find(r.text) == std::string::npos)
+            mathEditable = false;
+    }
+    CHECK(mathEditable);
 }
 
 }  // namespace
@@ -2640,8 +2874,8 @@ void testSettings() {
     // Every documented key, uncommented, is one the parser accepts, and its
     // documented value is the real default.
     std::string keys = uncommentKeys(Settings::defaultFileText());
-    // 4 window, 18 panel, 7 syntax, 4 markdown, 6 lsp
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 39);
+    // Window, panel, syntax, markdown (colors, web images, math) and lsp keys.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 40);
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -2660,6 +2894,7 @@ void testSettings() {
     // The documented servers are the first ones the built-in search tries.
     CHECK(un.lspEnabled() == d.lspEnabled());
     CHECK(un.webImages() == d.webImages());
+    CHECK(un.math() == d.math());
     for (const std::string &server : Settings::lspServers()) {
         std::vector<std::string> cmds = Lsp::defaultCommands(server);
         CHECK(!cmds.empty() && un.lspCommand(server) == cmds[0]);
@@ -2694,6 +2929,15 @@ void testSettings() {
     CHECK(!parseSettings("Markdown.Web-Images = off\n").webImages());
     Settings wi = parseSettings("markdown.web-images = maybe\n", &e6);
     CHECK(wi.webImages() && e6.size() == 1 && e6[0].line == 1);
+
+    GROUP("settings:math");
+    std::vector<SettingsError> e7;
+    CHECK(parseSettings("").math());
+    CHECK(!parseSettings("markdown.math = false\n").math());
+    CHECK(!parseSettings("markdown.math = off\n").math());
+    CHECK(parseSettings("markdown.math = on\n").math());
+    Settings mt = parseSettings("\nmarkdown.math = sometimes\n", &e7);
+    CHECK(mt.math() && e7.size() == 1 && e7[0].line == 2);
 }
 
 }  // namespace
@@ -5057,6 +5301,7 @@ int main() {
     benchIncrementalHighlight();
     testMarkdown();
     testMarkdownCommonMark();
+    testMarkdownMath();
     testMarkdownLines();
     testMarkdownCorpus();
     testMarkdownEdit();

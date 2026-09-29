@@ -560,6 +560,9 @@ Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
             g_snprintf(name, sizeof(name), "h%d", r.heading);
             applyTag(buffer, name, startOff, endOff);
         }
+        // Math (r.math) has `code` set too: until this port typesets it, a
+        // formula shows as its TeX in the code style, display math on lines
+        // of its own.
         if (r.codeBlock || r.code) applyTag(buffer, "md_code",  startOff, endOff);
         if (r.quote)               applyTag(buffer, "md_quote", startOff, endOff);
         if (r.rule)                applyTag(buffer, "md_rule",  startOff, endOff);

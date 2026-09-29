@@ -217,6 +217,24 @@ a <a href="https://example.com/html">link by tag</a>, and an inline
 
 <h3 align="center">A heading written in HTML</h3>
 
+## Math
+
+Inline math sits on the line: $e^{i\pi} + 1 = 0$, $x_t \in \mathbb{R}^d$ and
+$\alpha_{\text{min}}$, and underscores in it pair with nothing. It costs $5
+and $10, which is no formula, and \$ is a dollar sign.
+
+$$
+\mathcal{L}(\theta) = -\frac{1}{N}\sum_{n=1}^{N} \log p_\theta(y_n \mid x_n)
+$$
+
+A formula in a paragraph, $$\int_0^1 x^2\,dx = \tfrac{1}{3},$$ stands on its own line.
+
+```math
+\operatorname*{arg\,max}_k \; s_k
+```
+
+`tests/markdown/math.md` has many more.
+
 ## Unicode
 
 Symbols render as they are: x ∈ ℝ^n, A ∈ ℝ^{n × m}, a ⊙ b, f′(x), α → β,

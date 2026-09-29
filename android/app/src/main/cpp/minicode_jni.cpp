@@ -162,6 +162,11 @@ Java_org_minicode_editor_Core_markdown(JNIEnv *env, jclass, jstring source) {
         if (r.ordered) f |= 1 << 11;
         f |= (r.listDepth & 0xF) << 12;
         if (r.strike) f |= 1 << 16;
+        // Math: the run's text is the TeX, and `code` is set too, so the
+        // preview shows it verbatim in the code style until Android
+        // typesets it.
+        if (r.math == 1) f |= 1 << 17;
+        if (r.math == 2) f |= 1 << 18;
         flags[i] = f;
 
         jint *e = &extra[i * kStride];
