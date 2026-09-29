@@ -521,8 +521,14 @@ as `{`, underscores pairing into italics).
   again it renders with all 287 typeset from the disk cache, in about the
   same 60 ms, with nothing left to wait for. With tectonic's cache empty
   the first run downloads the LaTeX format, packages and fonts (42 MB) and
-  took 44 s. `~/Library/Caches/TectonicProject.Tectonic` was not on this
-  Mac on 2026-09-29, so the user's first page will cost that once.
+  took 44 s. The user's first page did cost that once, on 2026-09-29, and
+  with nothing on screen but the TeX they took it for math that would never
+  be typeset. So while formulas are out with tectonic the page's top line
+  says "Typesetting N formulas…" (`mathNoteTypesetting:`), adding that the
+  first run downloads LaTeX files when tectonic's cache folder is empty or
+  missing (`TECTONIC_CACHE_DIR`, else `~/Library/Caches/TectonicProject.Tectonic`).
+  The line goes with the render that brings the formulas in, and
+  `renderMarkdownKeepingPlace` already allows for the line coming or going.
 - **Verified** (2026-09-29) with an offscreen harness like the git
   panel's (all of src/ except main.mm, window ordering swizzled to no-ops,
   activation Prohibited, formula and tectonic caches in the scratchpad):
@@ -677,12 +683,14 @@ never closes.
   (g++ in the Docker container too), offscreen renders on the Mac, the
   GTK port in the container, and an Android debug build; not yet seen by
   the user on a real screen, and no release cut.
-- **Math in the Markdown preview** (2026-09-29, on a branch, not merged):
+- **Math in the Markdown preview** (2026-09-29, merged, not released):
   `$...$`, `$$...$$` and ```` ```math ```` read by the core on every port
   and typeset by tectonic on the Mac, shown as TeX elsewhere; see the
   section of that name. Checked offscreen on the user's cheatsheet and
-  `tests/markdown/math.md`; not yet seen by the user on a real screen, and
-  no release cut. 2,066 core checks pass.
+  `tests/markdown/math.md`. The user has seen it typeset on their Mac, after
+  a first run that waited 44 s for tectonic's downloads with no sign of
+  progress, which led to the "Typesetting N formulas…" line. No release
+  cut. 2,066 core checks pass.
 - **Markdown preview** (Mac, Linux and Android): links, pictures with
   GIFs playing, real tables, Shift+Cmd+P / Ctrl+Shift+P / leader P keeping
   the place, and double-click (double-tap) editing of a block. Details under

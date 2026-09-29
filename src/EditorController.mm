@@ -3056,7 +3056,11 @@ static NSString *MCFormatDuration(double seconds) {
     for (const MdRun &r : runs) hasMath = hasMath || r.math;
     NSAttributedString *note = !hasMath ? nil
                              : self.mathNoteWanted ? [self mathNote]
-                             : _mathRunProblem ? [self mathNoteForProblem:_mathRunProblem] : nil;
+                             : _mathRunProblem ? [self mathNoteForProblem:_mathRunProblem]
+                             // Formulas still out with tectonic: say so, or the TeX
+                             // standing in looks like math that will never be typeset.
+                             : _awaitedMath.count ? [self mathNoteTypesetting:_awaitedMath.count]
+                             : nil;
     if (note) {
         [out insertAttributedString:note atIndex:0];
         for (NSString *key in anchors.allKeys)
@@ -3117,6 +3121,29 @@ static NSString *MCFormatDuration(double seconds) {
         @"The math on this page shows as TeX: tectonic could not typeset it (%@). "
         @"It is tried again when the page is next shown, a minute from now or later.", why]
                          link:nil];
+}
+
+// tectonic keeps the LaTeX files it downloads in its own cache. Before its
+// first run there is none, and that run fetches about 42 MB first.
+static BOOL MCTectonicCacheIsEmpty(void) {
+    NSString *dir = NSProcessInfo.processInfo.environment[@"TECTONIC_CACHE_DIR"];
+    if (!dir.length)
+        dir = [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES)
+                   .firstObject stringByAppendingPathComponent:@"TectonicProject.Tectonic"];
+    NSArray *inside = [NSFileManager.defaultManager contentsOfDirectoryAtPath:dir error:nil];
+    return inside.count == 0;
+}
+
+// "Typesetting 12 formulas…" while they are out with tectonic, with a word
+// on the wait when this is tectonic's first run.
+- (NSAttributedString *)mathNoteTypesetting:(NSUInteger)count {
+    NSString *text = count == 1 ? @"Typesetting 1 formula…"
+                                : [NSString stringWithFormat:@"Typesetting %lu formulas…",
+                                                             (unsigned long)count];
+    if (MCTectonicCacheIsEmpty())
+        text = [text stringByAppendingString:
+            @" tectonic's first run downloads its LaTeX files first, which takes about a minute."];
+    return [self mathNoteText:text link:nil];
 }
 
 // "Math shows as TeX..." with a link that downloads tectonic, or how that
