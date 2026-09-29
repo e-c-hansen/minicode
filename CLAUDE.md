@@ -536,6 +536,17 @@ never closes.
   audio". Needs the user: real sound, a real keypress on the Titan (the
   leader and Space from its own keyboard), and a USB keyboard's
   Ctrl+Shift+Space where Android may switch keyboard layouts with it.
+- **Android web pictures in the Markdown preview** (2026-09-28, on a
+  branch, not merged): `https://` pictures fetched with
+  HttpsURLConnection, alt text until they arrive, the place kept, a 32 MB
+  memory cache, a 20 MB cap, SVG left as alt text, and ⋮ Web images in
+  Markdown to turn it off. Built release-signed but never run: the phone's
+  wireless debugging port had changed. Still to check on the Titan 2, with
+  `adb shell setprop log.tag.MiniCodeWeb DEBUG`: a PNG and a GIF arriving
+  and the GIF playing; the text on screen staying put when they land
+  above it; a 404 keeping its alt text; the toggle off making no request;
+  an edit from the preview making no request; a linked badge opening its
+  link; and 100Mb.dat from proof.ovh.net refused from its length.
 - **Linux**: all nine items of `linux/HANDOFF.md` are done (the user's work,
   2026-09-24), and a three-part review on 2026-09-25 was fixed the same day:
   huge and special files refused before reading, renames followed in every
@@ -1044,6 +1055,43 @@ the file map; what belongs here is what it cost to learn:
 - **A TextView is no place for a long diff**: 500 KB took seconds to lay
   out with the window frozen. `DiffView` is a RecyclerView with a row per
   line.
+- **Web pictures in the Markdown preview** (`WebImages.kt`, 2026-09-28;
+  `android/README.md`, "Pictures from the web"). Android does not read
+  `settings.conf`, so `markdown.web-images` is the `webImages` preference,
+  toggled from the ⋮ menu. What to know before changing it:
+  - An arrival re-renders the whole page (a picture that shows is its own
+    view, while its alt text sat inside a paragraph's TextView), so the
+    place is kept by *run index*, which is the same from one render of a
+    source to the next: the run at the top of the pane and how far below
+    the top it starts, restored after layout. Source lines were too coarse
+    (one line can be a whole paragraph). Measure a text piece from its
+    first character that is not a newline, because a piece that starts a
+    view loses its leading newlines and one right after a new picture now
+    starts a view.
+  - The "placed at" scroll (`entryScroll`) moves by the same amount as the
+    scroll, or a reader who never scrolled would count as having scrolled
+    when a picture lands above, and leader P would open the source at the
+    preview's top instead of at the caret.
+  - Arrivals wait while a finger is down or the page scrolled in the last
+    0.3 s. A fling and `smoothScrollTo` (a `#heading` link) keep running on
+    the ScrollView's own scroller in the old page's coordinates and would
+    overwrite the restored scroll.
+  - `showList(false)` makes the preview visible again without rendering,
+    so an arrival while it is hidden is remembered and rendered when it is
+    shown (`onVisibilityChanged`, after the `ready` guard). New fields go
+    above `init`, with the others, for the same constructor reason.
+  - The bytes that arrived are handed to the next render directly, not
+    looked up in the LruCache, and decoded pictures are kept across renders.
+    Otherwise a page whose pictures add up to more than the 32 MB cache
+    evicts one while another arrives, re-renders, asks again, and loops.
+  - A release build trusts only the system's certificate authorities, and a
+    debug build cannot go over the release one without an uninstall (which
+    clears the app's data), so a test server on the Mac with a self-signed
+    certificate is out without shipping a weaker network security config.
+    Test against public https addresses instead (the repository's own
+    `docs/demos/*.gif` on raw.githubusercontent.com, a missing file there
+    for a 404, shields.io for SVG, a large file on proof.ovh.net for the
+    cap) and read `adb shell setprop log.tag.MiniCodeWeb DEBUG` output.
 - **A paused MediaPlayer moves by itself.** The Titan 2 hands a file's
   sound to the audio hardware ("offload", `offloading(1)` in `dumpsys
   media.player`), even beside video and for a 30 s clip. NuPlayer shuts
@@ -1375,7 +1423,9 @@ holds, these give real runtime evidence rather than compile-only evidence:
   so `onVisibilityChanged` must guard; an anchor asked for right after a
   render (a link from another file) must wait for layout; and re-rendering
   after an edit must not reset the "placed at" scroll, or a scroll made
-  before the edit stops counting for place keeping.
+  before the edit stops counting for place keeping. Web pictures
+  (`WebImages.kt`, 2026-09-28) are fetched there too, behind ⋮ Web images
+  in Markdown; its traps are in the Android section below.
 - **Search**: scoped to a folder (default = open folder or selected folder),
   min 2 chars, generation bumped up front + per-file cancellation, ANSI stripped
   from result lines. On Linux the tree's `GtkSingleSelection` must have
