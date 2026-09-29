@@ -134,6 +134,10 @@ class MarkdownPreview @JvmOverloads constructor(
      */
     fun show(source: String, keepScroll: Boolean) {
         val keep = scrollY
+        // The same source again (web pictures turned on or off) keeps what
+        // is at the top of the pane, as an arrival does; an edit changes the
+        // runs, so it keeps the scroll position itself.
+        val anchor = if (keepScroll && source == this.source && isLaidOut) anchorAt(keep) else null
         // This render takes whatever has arrived; a pending one would repeat it.
         removeCallbacks(rerender)
         rerenderPending = false
@@ -141,10 +145,13 @@ class MarkdownPreview @JvmOverloads constructor(
         this.source = source
         render(source)
         afterLayout {
-            scrollTo(0, if (keepScroll) keep else 0)
+            val y = if (!keepScroll) 0
+                    else anchor?.let { (run, dy) -> yOfRun(run)?.let { it - dy } } ?: keep
+            scrollTo(0, maxOf(0, y))
             // An edit keeps the page where the reader took it, so a scroll
             // made before the edit still counts as theirs.
             if (!keepScroll) entryScroll = scrollY
+            else if (anchor != null && entryScroll >= 0) entryScroll += scrollY - keep
         }
     }
 
@@ -430,19 +437,24 @@ class MarkdownPreview @JvmOverloads constructor(
             return null
         }
         // From the bytes, so a GIF comes back animated just as a file's does.
-        val picture = decode(ImageDecoder.createSource(java.nio.ByteBuffer.wrap(bytes)), maxWidth)
+        val picture = decode(ImageDecoder.createSource(java.nio.ByteBuffer.wrap(bytes)), maxWidth,
+                             WebImages.MAX_PIXELS)
         if (picture == null) WebImages.undecodable(url) else used[key] = picture
         return picture
     }
 
-    /** A picture decoded no wider than `maxWidth`, or null. */
-    private fun decode(source: ImageDecoder.Source, maxWidth: Int): Picture? {
+    /** A picture decoded no wider than `maxWidth`, or null; null too past `maxPixels`. */
+    private fun decode(source: ImageDecoder.Source, maxWidth: Int,
+                       maxPixels: Long = Long.MAX_VALUE): Picture? {
         return try {
             var w = 0
             var h = 0
             val drawable = ImageDecoder.decodeDrawable(source) { decoder, info, _ ->
                 w = info.size.width
                 h = info.size.height
+                // A few kilobytes from the web can claim a size that takes
+                // gigabytes to decode; the header says so before any of it.
+                if (w.toLong() * h > maxPixels) throw IllegalArgumentException("$w x $h")
                 // Never larger than the pane, and never blown up past its own size.
                 if (w > maxWidth) {
                     h = maxOf(1, (h.toLong() * maxWidth / w).toInt())

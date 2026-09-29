@@ -1068,6 +1068,9 @@ the file map; what belongs here is what it cost to learn:
     first character that is not a newline, because a piece that starts a
     view loses its leading newlines and one right after a new picture now
     starts a view.
+  - `show()` of the same source again (the toggle) keeps the place the same
+    way; an edit changes the runs, so it still keeps the plain scroll
+    position.
   - The "placed at" scroll (`entryScroll`) moves by the same amount as the
     scroll, or a reader who never scrolled would count as having scrolled
     when a picture lands above, and leader P would open the source at the

@@ -565,7 +565,8 @@ anchor for a heading comes from the core too (`MarkdownParser::anchor`).
   address (an edit, or opening the file again, costs no request), and a
   failure for a minute, so a missing picture is not asked for on every
   edit. A picture over 20 MB is cut off when it passes that (or refused
-  from its Content-Length). A 404, a timeout, a picture Android cannot
+  from its Content-Length), and one over 64 megapixels is refused from its
+  header before it is decoded, as on Linux. A 404, a timeout, a picture Android cannot
   decode and anything else that goes wrong leave the alt text as it was,
   without a message. SVG cannot be decoded by `ImageDecoder`, so it keeps
   its alt text; its Content-Type is enough to refuse it without reading
@@ -576,7 +577,8 @@ anchor for a heading comes from the core too (`MarkdownParser::anchor`).
 - **Web images in Markdown** (⋮ menu, on by default, kept in the
   `webImages` preference) turns the fetching off. Off, web pictures show
   their alt text, nothing is asked for, and fetches still queued are
-  dropped before they go out. This is the desktop's `markdown.web-images`;
+  dropped before they go out. Turning it on or off keeps the text at the
+  top of the pane where it was. This is the desktop's `markdown.web-images`;
   Android does not read `settings.conf`. `adb shell setprop
   log.tag.MiniCodeWeb DEBUG` logs every request and its result, in any
   build.

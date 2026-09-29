@@ -26,7 +26,8 @@ import javax.net.ssl.HttpsURLConnection
  * What arrives is kept in memory only: the encoded bytes in an LruCache of
  * 32 MB keyed by address, so a re-render or reopening the file costs no
  * request. A picture over 20 MB is cut off where it passes that and counts
- * as a failure. Failures are remembered for a minute, so a page with a
+ * as a failure, and the preview refuses one whose header claims more than
+ * 64 megapixels. Failures are remembered for a minute, so a page with a
  * missing picture does not ask again on every edit. SVG is refused from its
  * Content-Type without reading the body, since ImageDecoder cannot draw it.
  *
@@ -35,6 +36,8 @@ import javax.net.ssl.HttpsURLConnection
 object WebImages {
     const val TAG = "MiniCodeWeb"
     const val MAX_BYTES = 20 * 1024 * 1024
+    /** The largest picture decoded, read from its header first, as on Linux. */
+    const val MAX_PIXELS = 64_000_000L
     private const val CACHE_BYTES = 32 * 1024 * 1024
     private const val TIMEOUT_MS = 15_000
     /** A server that trickles bytes inside the read timeout still ends here. */
