@@ -131,6 +131,10 @@ isolation. Keep them dependency-free.
   and patch, relative dates, and `layoutGraph`, the lane assignment (see
   "Git panel"). The GTK port's panel uses it too, and so does Android's,
   which also compiles `linux/src/GitModel.cpp` (it has no GTK in it).
+- `src/MathTex.{h,cpp}`: the TeX side of the Markdown preview's math,
+  doing no I/O: which formulas may share a batch, how one is rewritten for
+  LaTeX, the batch document (a page per formula) and reading tectonic's
+  log. Only the Mac uses it so far; see "Math in the Markdown preview".
 
 The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 
@@ -150,6 +154,10 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 - `src/Browser.{h,mm}` — WKWebView panel.
 - `src/Latex.{h,mm}` — LaTeX preview: runs tectonic, shows the PDF with PDFKit,
   and turns a double-click into a popover editing the source behind that text.
+  Also `MCTectonicPath` and `MCDownloadTectonic`, which the math uses too.
+- `src/MarkdownMath.{h,mm}`: the Markdown preview's math. Runs tectonic on
+  a page's formulas in the background, caches the pages, and draws them
+  as attachments on the text's baseline.
 - `src/Search.{h,mm}` — scoped, project-wide text search window.
 - `src/GitPanel.{h,mm}` — running git (`MCGitRunSync`), the Source Control
   panel (`MCGitPanel`) and diff coloring (`MCGitDiffText`). See "Git panel".
@@ -374,6 +382,177 @@ same way Markdown does; `LatexView` takes the editor's slot in
   `MINICODE_TECTONIC` and `TECTONIC_CACHE_DIR` at scratch copies so the test
   neither needs the network nor touches the user's cache.
 
+## Math in the Markdown preview
+
+Math written as GitHub and pandoc write it is typeset on the Mac by
+tectonic, the LaTeX preview's engine. Everywhere else (Linux, Android, and
+the Mac without tectonic or with `markdown.math = false`) a formula shows
+as its TeX in the code style. Built 2026-09-29 for the user's 580-line
+cheatsheet of 287 formulas, whose math the old parser mangled (`\{` shown
+as `{`, underscores pairing into italics).
+
+- **The parser** (`MarkdownParser.cpp`) reads math before any other
+  inline rule, so nothing inside it is escaped, emphasised or linked.
+  Inline `$...$` follows pandoc: the opening `$` is not followed by a
+  space, and the first `$` after it closes it, but only if it neither
+  follows a space nor comes before a digit; otherwise there is no math at
+  all, which keeps "$5 and $10" text. Inside math a backslash and the
+  character after it are skipped together (so `\$` never closes) and so is
+  a code span (a `$` in one neither opens nor closes). `$$...$$` inline is
+  display math; `\(...\)` is inline math. Display blocks: a line starting
+  with `$$` or `\[` and the line ending with `$$` or `\]` (the same one or
+  a later one, no blank line between; two formulas on one line make a
+  paragraph), which interrupts a paragraph as a fence does, and GitHub's
+  ```` ```math ```` fence. `\[...\]` counts only as such a block, because
+  inline it is how Markdown escapes brackets (`\[WIP\]`). `matchBrackets`
+  skips math as the inline pass does, so a `[` in a formula never pairs
+  with a `]` outside it. Memos keep a line full of openers with no closer
+  linear (60,000 in about 55 ms unoptimized).
+- **Runs.** `MdRun::math` is 1 (inline) or 2 (display) and `text` the TeX
+  between the delimiters (an inline formula's line breaks become spaces).
+  `code` is set too, which is all the Linux and Android previews needed to
+  show it verbatim. Display math inside a paragraph gets a line of its own:
+  "\n" runs end the text before it and start the text after it (not in a
+  heading or a table cell). A `$$` block is one `MdLine::Math` block, which
+  `MarkdownEdit::blockAt` opens whole, delimiters included
+  (`Block::Math`, "Formula" in the popovers). A ```` ```math ```` fence
+  stays a Code block and opens its lines, as other fences do. Android gets
+  flag bits 17 and 18 and `MD_BLOCK_MATH`; tests are `md:math-*`, and
+  `tests/markdown/math.md` holds every case (`md:math-corpus` counts it).
+- **The batch** (`MathTex`, tested in `mathtex:*`). One LaTeX document per
+  run. Each formula is set with `\setbox\mcbox\hbox{$...$}` (never a macro
+  argument, so TeX recovers from a stray `\par`), `\displaystyle` for
+  display math, and shipped by `\mcship` as a page exactly its box plus
+  1 pt on each side; per-page `\pdfpagewidth` works in XeTeX. The log gets
+  `MC:BEGIN:k` before each formula and `MC:k:page:wd:ht:dp` as it ships, so
+  `readLog` finds each formula's page, box and first `! ` error
+  ("Undefined control sequence" gets the culprit from the context line).
+  The output routine throws pages away, so an error's debris cannot add a
+  page. `check` refuses what could derail the formulas after it:
+  unbalanced braces, a `$` outside braces, `\input`, `\end{document}`,
+  `\write` and a few more. `prepare` rewrites what MathJax takes and LaTeX
+  does not: `\mathbb{1}` (amssymb has no blackboard digits and silently
+  draws a wrong glyph) and `\mathbbm` become dsfont's `\mathds`; align,
+  gather, equation, multline and the like become their inline forms;
+  `\tag{x}` in display becomes `\qquad\text{(x)}`; `\label`, `\nonumber`
+  and `\notag` go; Greek letters and common symbols typed as Unicode become
+  commands (in `\ensuremath` inside `\text`); blank lines go. The preamble
+  loads amsmath, amssymb, amsfonts, mathtools, bm, dsfont, mathrsfs, cancel
+  and xcolor, and provides `\R \N \Z \Q \C \argmax \argmin \abs \norm \lt
+  \gt \sgn \tr \diag \Bbb \bold`. **Bump `MathTex::kVersion`** when any of
+  this changes: it is in every cache key.
+- **The run** (`MarkdownMath.mm`). Requests (`MCMathTypeset`) collect for
+  50 ms and go to one background run on a serial queue; those made during
+  a run wait for the next, so edits in quick succession share runs.
+  tectonic gets `-Z continue-on-errors --untrusted --print --keep-logs
+  --reruns 0`: one pass is a quarter faster, and `--untrusted` keeps shell
+  escape off. A formula TeX complains about fails alone, the complaint its
+  tooltip, and its neighbours typeset. A page must be the size the log
+  gave its box, or that formula fails. A run with no PDF fails the formula
+  TeX was in and runs the rest again. A watchdog kills tectonic after 15 s
+  without output once TeX is in the formulas (`\def\x{\x}\x` loops for
+  ever without growing), and since `--print` streams TeX's output, the last
+  `MC:BEGIN` names the formula to fail; before the formulas it allows 60 s,
+  because tectonic prints a line per file it downloads. A run that reaches
+  no formula fails its formulas for 60 s (`transient`) and the page says
+  why in a line at its top; tectonic panics rather than printing `error:`
+  when a first run cannot reach its bundle, and `firstError` reads the
+  panic. Failures are kept in memory only: a missing font on a bad network
+  can look like a formula's own error.
+- **The cache.** tectonic's PDF is kept whole under
+  `~/Library/Caches/MiniCode/math` (`$MINICODE_MATH_CACHE` in tests) with a
+  `.idx` beside it (key, page, depth). A run's formulas share its fonts, so
+  the cheatsheet's 287 take 175 KB; a PDF per formula, drawn through
+  `CGPDFContext`, embedded the fonts again and took 7.5 MB. The key is a
+  SHA-256 of `kVersion`, display or inline, and the TeX. The size is not
+  in it, since the pages stay vector and are scaled as they are drawn. The
+  index is read at the first lookup, newer batches winning, and a batch
+  trimmed away makes its formulas typeset again. Past 50 MB the batches
+  used longest ago go, down to 40 MB; reading a batch from disk touches
+  its date, at most once a day.
+- **Drawing** (`MCMathAttachment` and its cell; the editor is TextKit 1).
+  The cell draws the PDF page as vectors, so Retina and any scale are
+  sharp, in a transparency layer filled with the text color in source-in
+  mode: TeX draws black, and the formula takes the body, heading, quote or
+  link color around it (a `\color` inside a formula is flattened to that
+  too). `cellBaselineOffset` puts the box's baseline on the text's. The
+  frame is stretched to the font's ascender and descender, because TextKit
+  1 sizes a line from its glyphs and a line holding only an attachment (a
+  table cell) otherwise put its baseline higher than its neighbours'. The
+  page's side margins are drawn past the frame, not in it, or every
+  formula stood apart from the comma after it. Trap for tests: an
+  attachment glyph's location is the bottom of its frame, not the
+  baseline. A 10 pt TeX em is drawn at 1.12 times the text's size, about
+  halfway between matching Computer Modern's capitals and its lowercase to
+  the system font's.
+- **Too wide.** A formula wider than a whole line is scaled down to fit
+  (the whole line's width, never what is left of it, or a formula near
+  the end of a line shrank instead of moving to the next). Scaling was
+  chosen over horizontal scrolling: a scroll view inside a line needs
+  TextKit 2's view providers, which the editor never asks for, and a
+  scaled formula stays whole and readable up to about twice too wide,
+  where a clipped one hides its end.
+- **Tables.** AppKit's automatic table layout knows nothing of an
+  attachment's width: it made the cheatsheet's columns equal and shrank
+  formulas in narrow ones to smudges. A width on some cells threw the rows
+  out of line, and a width on the table did nothing. So a table holding
+  typeset formulas gets its columns from `MCTableColumnWidths`, as a
+  browser lays out a table: each column's widest word or formula as its
+  least, all its text on one line as its most, the room shared out
+  between, set as percentages on every cell. Tables without typeset
+  formulas keep AppKit's layout.
+- **Never blocking.** The render takes what the cache has (memory, then
+  the index) and shows the rest as TeX, marked `kMarkdownMath` `@[key, n]`,
+  asking for it once the page is built. `MCMathTypesetNotification` names
+  the settled keys; if the page waits for any of them it renders again
+  50 ms later through `renderMarkdownKeepingPlace`, which counts a
+  formula's TeX turning into one attachment character as it counts a web
+  picture's alt text, and allows for the line at the top appearing or
+  going. A result for another page lands in the cache only. Display math
+  shown as TeX sits in a code block's box; typeset, it is centred with
+  4 points above and below.
+- **No tectonic.** The math shows as TeX and one muted line at the top of
+  the page says so, ending in a Download tectonic link. `MCDownloadTectonic`
+  (Latex.mm) is the LaTeX preview's download, now shared; a second caller
+  waits for the first. There is no prompt.
+- **Timings** (M3, offscreen). The cheatsheet (251 inline and 36 display
+  formulas) renders in about 60 ms with its TeX showing, and the typeset
+  formulas arrive 0.36 s later when tectonic's own cache is warm. Opened
+  again it renders with all 287 typeset from the disk cache, in about the
+  same 60 ms, with nothing left to wait for. With tectonic's cache empty
+  the first run downloads the LaTeX format, packages and fonts (42 MB) and
+  took 44 s. `~/Library/Caches/TectonicProject.Tectonic` was not on this
+  Mac on 2026-09-29, so the user's first page will cost that once.
+- **Verified** (2026-09-29) with an offscreen harness like the git
+  panel's (all of src/ except main.mm, window ordering swizzled to no-ops,
+  activation Prohibited, formula and tectonic caches in the scratchpad):
+  the cheatsheet and `tests/markdown/math.md` rendered to PNGs in the dark
+  theme and looked at; every inline formula's baseline equal to its
+  line's text to 0.00 pt; no black pixel in 40 formulas (tinted); no
+  formula that fits a line shrunk; every typeset formula mapping to an
+  editable block and the 36 display blocks opening whole; the text at the
+  top of the pane staying put to the point at six places down the
+  cheatsheet while its math arrived and the page moved by up to 2,400
+  points; a double-click on a display formula opening its `$$` block and
+  Save leaving only that formula as TeX until it came back; a second page
+  opened while the first page's math ran getting one re-render, its own;
+  math.md's three bad formulas showing TeX's complaints as tooltips; a
+  looping formula failing alone after 16 s; math off; tectonic missing (a
+  scratch home through `CFFIXED_USER_HOME`), the note, and its link
+  downloading tectonic into the scratch home and typesetting the page; no
+  network (a dead proxy, an empty tectonic cache) giving the note with
+  tectonic's reason. Batch pages of a sample of formulas matched the
+  standalone PDFs that the cheatsheet's rebuild had checked against the
+  original page's MathJax. The GTK port built in the Docker container and
+  showed math.md as TeX; the Android debug build compiled.
+- **Needs the user's eyes**: the look on a real screen (the size against
+  the text, the centring, the measured tables), hovering a failed formula
+  for its tooltip, the Download tectonic link on a Mac without tectonic,
+  the first page with their own tectonic cache, and scrolling the
+  cheatsheet while its formulas arrive. Known gaps: copying a typeset
+  formula copies an attachment character, not its TeX, and `\color`
+  inside a formula is drawn in the text's color.
+
 ## LSP (read before touching it)
 
 The protocol lives in `LspClient.cpp`, pure C++ and tested against a scripted
@@ -498,6 +677,12 @@ never closes.
   (g++ in the Docker container too), offscreen renders on the Mac, the
   GTK port in the container, and an Android debug build; not yet seen by
   the user on a real screen, and no release cut.
+- **Math in the Markdown preview** (2026-09-29, on a branch, not merged):
+  `$...$`, `$$...$$` and ```` ```math ```` read by the core on every port
+  and typeset by tectonic on the Mac, shown as TeX elsewhere; see the
+  section of that name. Checked offscreen on the user's cheatsheet and
+  `tests/markdown/math.md`; not yet seen by the user on a real screen, and
+  no release cut. 2,066 core checks pass.
 - **Markdown preview** (Mac, Linux and Android): links, pictures with
   GIFs playing, real tables, Shift+Cmd+P / Ctrl+Shift+P / leader P keeping
   the place, and double-click (double-tap) editing of a block. Details under
@@ -1509,24 +1694,19 @@ holds, these give real runtime evidence rather than compile-only evidence:
     `tests/markdown/corpus.md` holds every construct for eyes and for
     `md:corpus` (no line unstamped, no markup left as text, every run
     editable, its own `#links` landing on its headings).
-  - **Math is not rendered** (`$...$`, `$$...$$`, GitHub's ```` ```math ````).
-    It shows as written, and escapes inside it are read as Markdown's.
-    Options discussed, none started: (1) read math spans before emphasis
-    and show them as code, so the TeX survives intact (cheap, all ports);
-    (2) turn simple TeX into Unicode (Greek, ℝ, ×, sub and superscript
-    digits), pure C++ for all ports, useless for fractions and matrices;
-    (3) typeset every formula of a page with tectonic in one background
-    run, one page per formula, cached by hash and drawn as pictures
-    (vector PDF on the Mac, poppler on Linux, Termux on Android); exact,
-    no new dependency, but the tectonic cache here has no math fonts, so
-    the first run needs the network, and inline baselines need care;
-    (4) a small TeX math layout engine of our own, the most work. MathJax
-    or KaTeX in a web view would break the no-dependency rule.
-    Markdown exported from a page that MathJax rendered can lose its math
-    entirely (empty table cells, gaps in sentences), which no viewer can
-    show. Such a page's MathJax SVG keeps `data-mml-node` and `data-c`
-    (the MathML element tree and each glyph's code point) but no TeX, so
-    the formulas could be rebuilt as MathML from it, not copied as TeX.
+  - **Math** (`$...$`, `$$...$$`, ```` ```math ````) is read before any
+    other inline rule, and typeset on the Mac: see "Math in the Markdown
+    preview". Of the options weighed before it was built, (3) was taken:
+    every formula of a page typeset by tectonic in one background run. The
+    others were showing the TeX as code (now the fallback everywhere),
+    turning simple TeX into Unicode (useless for fractions and matrices), a
+    TeX math layout engine of our own (the most work), and MathJax or KaTeX
+    in a web view (a dependency). Markdown exported from a page that
+    MathJax rendered can lose its math entirely (empty table cells, gaps in
+    sentences), which no viewer can show. Such a page's MathJax SVG keeps
+    `data-mml-node` and `data-c` (the MathML element tree and each glyph's
+    code point) but no TeX, so the formulas could be rebuilt as MathML from
+    it, not copied as TeX.
 - **The Mac's Markdown paragraphs** (`renderMarkdown:`,
   `markdownParagraphFor:quote:code:`, `markdownRun:style:inCell:`): a
   paragraph's style comes from its first run and is given to every run in
