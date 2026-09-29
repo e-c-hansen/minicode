@@ -611,10 +611,20 @@ place keeping both ways. Injected keys cannot show whether the Titan's own
 Enter and Shift+Enter arrive as keys or as committed text in the box; both
 paths are handled, and the New line key works either way.
 
-Pictures from the web (2026-09-28) are built into a release APK but have
-not been tried on the phone yet, because wireless debugging had moved to a
-port nobody had given. The checks still to make are listed under "Current
-state" in `../CLAUDE.md`.
+Pictures from the web were checked on the Titan 2 (2026-09-29) with the
+release build and the MiniCodeWeb log, against a scratch page of public
+addresses: the page came up at once with every picture as alt text; the
+repository's icon.png and tour.gif (from raw.githubusercontent.com)
+arrived in about 0.2 s and showed, and the GIF played (its area differed
+across three screenshots 2 s apart while a still area did not); the same
+address twice on the page made one request; the re-render for the
+arrivals asked for nothing again, the 404 and the SVG included; a 404, a
+shields.io SVG (refused from its Content-Type), a 100 MB file (refused
+from its Content-Length) and a plain http address kept their alt text,
+and the http one made no request. The phone left the network before the
+rest could be checked: a tap on a linked picture, the place kept when
+pictures land above a scrolled page, the toggle off making no request,
+and an edit from the preview making none.
 
 ## The LaTeX preview
 

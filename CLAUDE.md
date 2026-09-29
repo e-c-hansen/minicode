@@ -539,14 +539,17 @@ never closes.
 - **Android web pictures in the Markdown preview** (2026-09-28, on a
   branch, not merged): `https://` pictures fetched with
   HttpsURLConnection, alt text until they arrive, the place kept, a 32 MB
-  memory cache, a 20 MB cap, SVG left as alt text, and ⋮ Web images in
-  Markdown to turn it off. Built release-signed but never run: the phone's
-  wireless debugging port had changed. Still to check on the Titan 2, with
-  `adb shell setprop log.tag.MiniCodeWeb DEBUG`: a PNG and a GIF arriving
-  and the GIF playing; the text on screen staying put when they land
-  above it; a 404 keeping its alt text; the toggle off making no request;
-  an edit from the preview making no request; a linked badge opening its
-  link; and 100Mb.dat from proof.ovh.net refused from its length.
+  memory cache, a 20 MB and 64 megapixel cap, SVG left as alt text, and
+  ⋮ Web images in Markdown to turn it off. Checked on the Titan 2
+  (2026-09-29, release build, `adb shell setprop log.tag.MiniCodeWeb
+  DEBUG`): a PNG and a GIF arriving and the GIF playing, one request per
+  address, no request again on the arrivals' re-render, a 404, an SVG, a
+  100 MB file and plain http keeping their alt text (http never asked).
+  The phone left the network before the rest: a linked picture opening
+  its link, the text staying put when pictures land above a scrolled page
+  (`scroll.md` with `?scrolltest=1` addresses, so nothing is cached), the
+  toggle off making no request, and an edit from the preview making none.
+  Its test page is still in `/sdcard/mc-test/web-test`; delete it after.
 - **Linux**: all nine items of `linux/HANDOFF.md` are done (the user's work,
   2026-09-24), and a three-part review on 2026-09-25 was fixed the same day:
   huge and special files refused before reading, renames followed in every
@@ -1368,8 +1371,10 @@ holds, these give real runtime evidence rather than compile-only evidence:
 - **Web pictures on Linux** (`linux/src/WebImages.cpp` over libsoup 3,
   rules in `WebImageRules.cpp`, 2026-09-29) follow the same rules, and
   place each arrival in the buffer in place of its alt text rather than
-  re-rendering; `linux/HANDOFF.md` item 12. Android's are on a branch
-  waiting for a phone test.
+  re-rendering; `linux/HANDOFF.md` item 12. Android's re-render the page
+  and keep the place by run (Android section below); they are on a branch,
+  checked on the phone for arrivals and failures, with scrolling, the
+  toggle and badge links still to try.
 - **Web pictures in the Mac preview** (`MCWebImageLoader` in
   `MarkdownImage.mm`, 2026-09-28). An `https://` source is fetched in the
   background by one NSURLSession for the whole app: ephemeral, no cookie
