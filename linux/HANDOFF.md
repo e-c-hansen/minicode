@@ -896,6 +896,56 @@ plugins and with libav; `../BUILD-LINUX.md` has the list. Still needs the
 ThinkPad: real sound through PipeWire, GNOME on Wayland with a real GPU,
 HiDPI, and whether the GL thread leak below happens there.
 
+### 12. Pictures from the web in the Markdown preview (done, September 2026)
+
+The Mac has them too (`MarkdownImage.mm`). Here the rules and limits are
+plain C++ in `src/WebImageRules.{h,cpp}` (tested in `tests/run_tests.cpp`)
+and the fetching is `src/WebImages.{h,cpp}`, over libsoup 3.
+
+- **Why libsoup.** WebKitGTK 6 is built on it (`webkitgtk-6.0.pc` requires
+  `libsoup-3.0`, and `libwebkitgtk-6.0-dev` pulls in `libsoup-3.0-dev`),
+  so wherever the browser panel builds, this costs no new package. It is
+  its own meson option, `webimages` (auto), and `make WEBIMAGES=1`, so a
+  build without WebKit can still have it. Without it, web pictures show
+  their alt text as before. GIO's `GFile` on an https URI would need gvfs,
+  which is not always there.
+- **Rules.** Only `https://` with a host is fetched; a redirect is followed
+  only to another https address, at most 5. The session has no cookie jar
+  and no cache, and sends `User-Agent: MiniCode/<version>` (the version is
+  read from `../Info.plist` at configure time). 15 s without progress or
+  60 s in all ends a fetch. A Content-Length over 20 MB is not read, and a
+  body is cancelled once it passes 20 MB. The header's claimed size is read
+  before decoding, and more than 64 megapixels is refused. Decoded pictures
+  are kept in a 64 MB least-recently-used store; a failed address is not
+  asked for again for a minute. Nothing reaches the disk.
+- **Placing.** The render shows the alt text for every web picture not in
+  memory and lists it in `Page::pending`. The editor fetches each address
+  once, collects arrivals and places them 100 ms after the first, each in
+  place of its alt text in the buffer as it stands, not by a new render
+  (`Markdown::placeWebPicture`). A result for a page that is gone finds
+  nothing pending and is dropped. `markdown.web-images = false` renders
+  alt text only; turning it back on re-renders and fetches.
+- **Keeping the place.** GtkTextView keeps the line at the top of the view
+  still when lines above it grow, but with two pictures laid out in one
+  pass it moved for the second before the adjustment's upper bound had
+  grown, and near the end of a page the move was cut short. `holdTopLine`
+  puts the top line back for a few frames after placing, and a scroll by
+  the user ends it at once.
+- **SVG.** Decoded by glycin's SVG loader where GTK uses glycin (Ubuntu
+  26.04), so shields.io badges show.
+- **Debug log.** `G_MESSAGES_DEBUG=minicode-web` logs every request,
+  answer, failure, the cache and each placing.
+
+Checked in the Docker container (2026-09-29) against a local https server
+whose certificate only the container trusted: a png, an animated gif, a
+badge and an SVG arrived; a 404, bytes that do not decode, 25 MB with and
+without a length (cancelled at 20 MB), plain http and a redirect to http
+kept their alt text, and the http port saw no request; a redirect to https
+arrived; two 300-pixel pictures arriving above a scrolled page left the
+same paragraph at the top; the setting off made no request, and turning
+it on fetched. Still needs the ThinkPad: real sites (GitHub, shields.io)
+and scrolling by hand while pictures arrive.
+
 ## How to work on it
 
 Two ways to run the app, both described in `../CLAUDE.md` ("Verification

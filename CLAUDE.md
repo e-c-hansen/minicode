@@ -1314,6 +1314,11 @@ holds, these give real runtime evidence rather than compile-only evidence:
   the cell is returned from an `attachmentCell` override. Linux draws them with its
   own `MdPicture`, Android with an ImageView over `ImageDecoder` (an
   `AnimatedImageDrawable` for a GIF).
+- **Web pictures on Linux** (`linux/src/WebImages.cpp` over libsoup 3,
+  rules in `WebImageRules.cpp`, 2026-09-29) follow the same rules, and
+  place each arrival in the buffer in place of its alt text rather than
+  re-rendering; `linux/HANDOFF.md` item 12. Android's are on a branch
+  waiting for a phone test.
 - **Web pictures in the Mac preview** (`MCWebImageLoader` in
   `MarkdownImage.mm`, 2026-09-28). An `https://` source is fetched in the
   background by one NSURLSession for the whole app: ephemeral, no cookie

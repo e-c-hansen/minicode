@@ -776,6 +776,9 @@ Notes on package names, which drift between Ubuntu versions:
 - `libwebkitgtk-6.0-dev` provides the GTK4 WebKit (pkg-config module
   `webkitgtk-6.0`). Older Ubuntu used `libwebkit2gtk-4.1-dev` with a different
   API; that will not work with this code as written.
+- Pictures with an https address in the Markdown preview are fetched with
+  libsoup 3 (pkg-config module `libsoup-3.0`), which `libwebkitgtk-6.0-dev`
+  already pulls in. Without it they show their alt text.
 - `libpoppler-glib-dev` provides the PDF viewer (pkg-config module
   `poppler-glib`). Without it a PDF shows the "Cannot display" message, and
   a `.tex` file opens as highlighted source, with no LaTeX preview.
