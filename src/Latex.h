@@ -35,6 +35,13 @@
 // Where tectonic was found, or nil. Exposed for the status line and tests.
 NSString *MCTectonicPath(void);
 
+// Downloads the pinned tectonic release into Application Support, where
+// MCTectonicPath finds it. `done` runs on the main thread with nil, or with
+// why it failed; a download already under way is shared, not repeated.
+void MCDownloadTectonic(void (^done)(NSString *problem));
+// Whether a download is under way.
+BOOL MCTectonicDownloading(void);
+
 #ifdef __cplusplus
 #import <Quartz/Quartz.h>
 #include <vector>

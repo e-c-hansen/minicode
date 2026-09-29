@@ -4,6 +4,7 @@
 #include "TermLinks.h"
 #include "MarkdownParser.h"
 #include "MarkdownEdit.h"
+#include "MathTex.h"
 #include "TerminalStream.h"
 #include "TerminalScreen.h"
 #include "Settings.h"
@@ -1704,6 +1705,102 @@ void testMarkdownMath() {
         CHECK(ms < 2000);
         std::printf("  markdown math: 60,000 openers, 40,000 closing nothing, in %.1f ms\n", ms);
     }
+}
+
+// The TeX side of typesetting a page's math: what may go into a batch, how
+// a formula is rewritten for LaTeX, the batch document, and the log.
+void testMathTex() {
+    using namespace MathTex;
+    auto count = [](const std::string &s, const std::string &what) {
+        int n = 0;
+        for (size_t at = s.find(what); at != std::string::npos; at = s.find(what, at + 1)) n++;
+        return n;
+    };
+
+    GROUP("mathtex:check");
+    CHECK(check("x^2").empty());
+    CHECK(check("\\{a, b\\} \\cup \\{c\\}").empty());
+    CHECK(check("\\text{costs \\$5 and $x$}").empty());
+    CHECK(check("50\\% % a comment with a { in it\n+ 1").empty());
+    CHECK(check("\\\\{x}").empty());
+    CHECK(check("\\inputs_i").empty());               // not \input
+    CHECK(!check("{x").empty());
+    CHECK(!check("x}").empty());
+    CHECK(check("x}{").find("}") != std::string::npos);
+    CHECK(!check("a $ b").empty());
+    CHECK(!check("\\input{/etc/passwd}").empty());
+    CHECK(!check("x \\end{document}").empty());
+    CHECK(!check("\\immediate\\write18{ls}").empty());
+
+    GROUP("mathtex:prepare");
+    CHECK(prepare("\\mathbb{1}[i \\in S]", false) == "\\mathds{1}[i \\in S]");
+    CHECK(prepare("\\mathbb 1_A", false) == "\\mathds 1_A");
+    CHECK(prepare("\\mathbb{R}^d \\mathbb{1}", false) == "\\mathbb{R}^d \\mathds{1}");
+    CHECK(prepare("\\mathbbm{1}_A", false) == "\\mathds{1}_A");
+    CHECK(prepare("\\begin{align*}a &= b\\\\ c &= d\\end{align*}", true) ==
+          "\\begin{aligned}a &= b\\\\ c &= d\\end{aligned}");
+    CHECK(prepare("\\begin{gather}a\\\\b\\end{gather}", true) ==
+          "\\begin{gathered}a\\\\b\\end{gathered}");
+    CHECK(prepare("\\begin{equation}E = mc^2\\end{equation}", true) == "E = mc^2");
+    CHECK(prepare("\\begin{alignat}{2}a&=b\\end{alignat}", true) ==
+          "\\begin{alignedat}{2}a&=b\\end{alignedat}");
+    CHECK(prepare("E = mc^2 \\tag{3}", true) == "E = mc^2 \\qquad\\text{(3)}");
+    CHECK(prepare("E = mc^2 \\tag*{A}", true) == "E = mc^2 \\qquad\\text{A}");
+    CHECK(prepare("E \\tag{3}", false) == "E \\tag{3}");   // inline: left to TeX
+    CHECK(prepare("\\label{eq:one} a = b \\nonumber", true) == " a = b ");
+    CHECK(prepare("a\n\n   \nb\n", true) == "a\nb");
+    // Unicode: a command in math, \ensuremath in text.
+    CHECK(prepare("α + β ≤ γ", false) == "\\alpha  + \\beta  \\leq  \\gamma ");
+    CHECK(prepare("x_α", false) == "x_\\alpha ");
+    CHECK(prepare("\\text{for all α}", false) == "\\text{for all \\ensuremath{\\alpha}}");
+    CHECK(prepare("x ∈ ℝ^{n×d}", false) == "x \\in  \\mathbb{R} ^{n\\times d}");
+    CHECK(prepare("a − b", false) == "a - b");
+    CHECK(prepare("日本", false) == "日本");   // left alone
+
+    GROUP("mathtex:document");
+    const std::string doc = document({{"x^2", false}, {"\\sum_i a_i", true}, {"y % note", false}});
+    CHECK(count(doc, "MC:BEGIN:") == 3 && count(doc, "\\mcship{") == 3);
+    CHECK(doc.find("\\setbox\\mcbox\\hbox{$\\displaystyle\n\\sum_i a_i\n$}") != std::string::npos);
+    CHECK(doc.find("\\setbox\\mcbox\\hbox{$\nx^2\n$}") != std::string::npos);
+    CHECK(doc.find("y % note\n$}") != std::string::npos);   // the comment ends before the $
+    CHECK(doc.find("\\usepackage{amsmath,amssymb,amsfonts") != std::string::npos);
+    CHECK(doc.find("\\typeout{MC:END}\n\\end{document}") != std::string::npos);
+
+    GROUP("mathtex:log");
+    const std::string log =
+        "(math.tex LaTeX2e\n"
+        "MC:BEGIN:0\n"
+        "(umsa.fd) (umsb.fd)\n"
+        "MC:0:1:47.89156pt:8.49002pt:4.11543pt\n"
+        "[1]\n"
+        "MC:BEGIN:1\n"
+        "! Undefined control sequence.\n"
+        "<recently read> \\notacommand \n"
+        "                               \n"
+        "l.29 \\notacommand\n"
+        "! Missing } inserted.\n"
+        "MC:1:2:5.71527pt:4.30554pt:0.0pt\n"
+        "MC:BEGIN:2\n"
+        "! LaTeX Error: \\begin{document} ended by \\end{cases}.\n"
+        "MC:2:3:5.0pt:6.0pt:1.5pt\n"
+        "MC:BEGIN:3\n"
+        "MC:END\n"
+        "! Emergency stop.\n";
+    const std::vector<Box> boxes = readLog(log, 5);
+    CHECK(boxes.size() == 5);
+    CHECK(boxes[0].reached && boxes[0].measured && boxes[0].error.empty() && boxes[0].page == 1);
+    CHECK(std::fabs(boxes[0].width - 47.89156) < 1e-6 && std::fabs(boxes[0].depth - 4.11543) < 1e-6);
+    CHECK(boxes[1].measured && boxes[1].error == "Undefined control sequence: \\notacommand");
+    CHECK(boxes[2].error == "\\begin{document} ended by \\end{cases}");
+    CHECK(boxes[3].reached && !boxes[3].measured && boxes[3].error.empty());   // after MC:END
+    CHECK(!boxes[4].reached && !boxes[4].measured);
+    // The culprit named on the line where TeX read it.
+    const std::vector<Box> l2 = readLog("MC:BEGIN:0\n! Undefined control sequence.\n"
+                                        "l.12 $\\foo\n", 1);
+    CHECK(l2[0].error == "Undefined control sequence: \\foo");
+    CHECK(firstError("note: downloading\nerror: batch.tex:12: Undefined control sequence\n"
+                     "error: another\n") == "batch.tex:12: Undefined control sequence");
+    CHECK(firstError("all fine\n").empty());
 }
 
 void testMarkdownLines() {
@@ -5302,6 +5399,7 @@ int main() {
     testMarkdown();
     testMarkdownCommonMark();
     testMarkdownMath();
+    testMathTex();
     testMarkdownLines();
     testMarkdownCorpus();
     testMarkdownEdit();
