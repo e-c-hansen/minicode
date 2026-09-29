@@ -281,6 +281,9 @@ static NSString *const kColorLink = @"minicode-color";
 static NSAttributedStringKey const kMarkdownSourceLine = @"MCMarkdownSourceLine";
 // On a rendered table cell: @[row, column], row 0 being the header.
 static NSAttributedStringKey const kMarkdownTableCell = @"MCMarkdownTableCell";
+// On the alt text standing in for a web picture still on its way:
+// @[address, n], n numbering them so two in a row stay two runs.
+static NSAttributedStringKey const kMarkdownWebImage = @"MCMarkdownWebImage";
 
 // Panel, text and syntax colors come from the settings file (AppSettings);
 // Hex is for the fixed accents that aren't configurable.
@@ -322,6 +325,11 @@ private:
     CGFloat _sourceCaretOffset;
     BOOL _haveSourcePosition;
     NSPoint _previewEntryScroll;
+    // Web pictures the rendered page is waiting for, by address; renderMarkdown
+    // starts a new set, and nil (after the window closes) waits for none.
+    NSMutableSet<NSString *> *_awaitedWebImages;
+    NSUInteger _webImageMarks;             // numbers kMarkdownWebImage runs
+    BOOL _webImageRenderQueued;
     NSUInteger _pendingStart, _pendingEnd; // edited, not yet recolored (NSNotFound: none)
     BOOL _flushScheduled;
     BOOL _highlightingSettingsFile;        // give color values swatches
@@ -555,6 +563,9 @@ private:
     [[NSNotificationCenter defaultCenter]
         addObserver:self selector:@selector(applySettings)
                name:MCSettingsDidChangeNotification object:nil];
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self selector:@selector(markdownWebImageArrived:)
+               name:MCMarkdownWebImageNotification object:nil];
     [self.window addObserver:self forKeyPath:@"title"
                      options:NSKeyValueObservingOptionInitial context:NULL];
     [self showWelcome];
@@ -1780,6 +1791,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     self.isPDF = NO;
     self.previewMode = NO;
     _haveSourcePosition = NO;
+    [_awaitedWebImages removeAllObjects];
     self.sourceText = nil;
     self.dirty = NO;
     self.textView.editable = NO;
@@ -2146,6 +2158,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     return [self confirmProceedPastUnsavedChanges];
 }
 - (void)windowWillClose:(NSNotification *)note {
+    _awaitedWebImages = nil;   // pictures still on their way land in the cache only
     [self stopMedia];      // no sound from a closed window
     [self.lsp shutdown];   // never leave a server running for a closed window
 }
@@ -2951,6 +2964,8 @@ static NSString *MCFormatDuration(double seconds) {
 - (void)renderMarkdown:(NSString *)content {
     std::string md = content.UTF8String ? content.UTF8String : "";
     std::vector<MdRun> runs = MarkdownParser::parse(md);
+    _awaitedWebImages = [NSMutableSet set];   // markdownRun: fills it
+    _webImageMarks = 0;
 
     NSMutableAttributedString *out = [[NSMutableAttributedString alloc] init];
     NSMutableDictionary<NSString *, NSNumber *> *anchors = [NSMutableDictionary dictionary];
@@ -2991,6 +3006,76 @@ static NSString *MCFormatDuration(double seconds) {
     _liveHighlight = NO;   // rendered Markdown is not source
     [self.textView.textStorage setAttributedString:out];
     [self.textView scrollToBeginningOfDocument:nil];
+}
+
+// A web picture finished. When the page on show waits for it, the page is
+// rendered again with the picture in, and pictures finishing close together
+// share one render. A failure keeps the alt text and needs nothing.
+- (void)markdownWebImageArrived:(NSNotification *)note {
+    NSString *src = note.userInfo[MCMarkdownWebImageURLKey];
+    if (!src || ![_awaitedWebImages containsObject:src]) return;
+    [_awaitedWebImages removeObject:src];
+    if (![note.userInfo[MCMarkdownWebImageOKKey] boolValue] || _webImageRenderQueued) return;
+    _webImageRenderQueued = YES;
+    NSString *path = self.currentPath;
+    __weak EditorController *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [weakSelf showArrivedWebImagesForPath:path];
+    });
+}
+
+- (void)showArrivedWebImagesForPath:(NSString *)path {
+    _webImageRenderQueued = NO;
+    // Not after the window closed, another file was opened, or the source
+    // took the preview's place (the preview renders anew when it is back).
+    if (!_awaitedWebImages || !self.isMarkdown || !self.previewMode || !path ||
+        ![path isEqualToString:self.currentPath])
+        return;
+    [self renderMarkdownKeepingPlace];
+}
+
+// Render the preview again, keeping the text at the top of the pane where it
+// was. Each web picture that has arrived takes the place of its alt text, one
+// character for many, and moves what follows by the height it adds, so the
+// text to keep is found again by its character, counted past those
+// replacements. A page at the very top stays at the top, as a browser's does
+// while its pictures load.
+- (void)renderMarkdownKeepingPlace {
+    NSTextView *tv = self.textView;
+    NSTextStorage *st = tv.textStorage;
+    NSClipView *clip = self.editorScroll.contentView;
+    const NSPoint origin = clip.bounds.origin;
+    const BOOL unscrolled = NSEqualPoints(origin, _previewEntryScroll);
+    NSUInteger anchor = NSNotFound;
+    CGFloat offset = 0;
+    if (origin.y > 0 && st.length > 0) {
+        const NSRect visible = tv.visibleRect;
+        NSUInteger i = [tv characterIndexForInsertionAtPoint:
+            NSMakePoint(NSMinX(visible) + 20, NSMinY(visible) + 1)];
+        if (i >= st.length) i = st.length - 1;
+        const NSRect r = [self textRectForCharacter:i];
+        if (!NSIsEmptyRect(r)) {
+            offset = NSMinY(r) - NSMinY(visible);
+            __block NSUInteger shift = 0, inside = NSNotFound;
+            [st enumerateAttribute:kMarkdownWebImage inRange:NSMakeRange(0, i + 1) options:0
+                        usingBlock:^(NSArray *mark, NSRange range, BOOL *stop) {
+                (void)stop;
+                if (!mark || !MCMarkdownWebImageIsReady(mark.firstObject)) return;
+                if (NSLocationInRange(i, range)) inside = range.location - shift;
+                else shift += range.length - 1;
+            }];
+            anchor = inside != NSNotFound ? inside : i - shift;
+        }
+    }
+    [self renderMarkdown:self.sourceText];
+    if (anchor != NSNotFound && st.length > 0) {
+        if (!tv.textLayoutManager)   // TextKit 1, as the editor is: the full height
+            [tv.layoutManager ensureLayoutForTextContainer:tv.textContainer];
+        const NSRect r = [self textRectForCharacter:MIN(anchor, st.length - 1)];
+        [self scrollEditorToY:NSIsEmptyRect(r) ? origin.y : NSMinY(r) - offset];
+    }
+    if (unscrolled) _previewEntryScroll = clip.bounds.origin;
 }
 
 // GitHub's anchor for a heading: lowercase, punctuation dropped (letters of
@@ -3072,6 +3157,16 @@ static NSString *MCMarkdownAnchor(NSString *title) {
         NSString *src = [NSString stringWithUTF8String:r.src.c_str()];
         NSImage *picture = MCMarkdownLoadImage(src,
             self.currentPath.stringByDeletingLastPathComponent);
+        // An https picture comes from the cache, or is fetched in the
+        // background while its alt text stands in; the page is rendered
+        // again when it arrives (markdownWebImageArrived:).
+        BOOL waiting = NO;
+        if (!picture && MCMarkdownIsWebImage(src) && cfg.settings.webImages())
+            picture = MCMarkdownWebImage(src, &waiting);
+        if (waiting) {
+            [_awaitedWebImages addObject:src];
+            a[kMarkdownWebImage] = @[src, @(++_webImageMarks)];
+        }
         if (picture) {
             MCMarkdownImage *att = [[MCMarkdownImage alloc] initWithPicture:picture];
             NSMutableAttributedString *pic = [[NSMutableAttributedString alloc]
@@ -3086,7 +3181,8 @@ static NSString *MCMarkdownAnchor(NSString *title) {
                             range:NSMakeRange(0, pic.length)];
             return pic;
         }
-        // A web image, or one that is missing: its alt text, muted.
+        // Missing, still on its way, or a web picture that may not or could
+        // not be fetched: its alt text, muted.
         if (!r.link) color = Hex(0x9CA3AF);
         if (s.length == 0) s = src;
     }

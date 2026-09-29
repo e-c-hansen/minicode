@@ -10,7 +10,34 @@
 @end
 
 // The picture that `src`, as written in a Markdown file, names: a path
-// relative to `folder` (the Markdown file's own), an absolute or ~ path, or a
-// file:// URL. Web images and anything that does not decode give nil, and the
-// caller shows the alt text instead.
+// relative to `folder` (the Markdown file's own), an absolute or ~ path, a
+// file:// URL, or a base64 data: URI. Web addresses and anything that does
+// not decode give nil (see MCMarkdownWebImage for the web).
 NSImage *MCMarkdownLoadImage(NSString *src, NSString *folder);
+
+// Pictures from the web. Only https addresses are fetched, never plain http,
+// in the background: no cookies, nothing written to disk, a 20 MB cap and a
+// timeout. What arrives is kept in memory for the whole app (about 64 MB),
+// keyed by the address as written, and a failure is remembered for half a
+// minute so a dead address is not asked for again on every render.
+BOOL MCMarkdownIsWebImage(NSString *src);
+
+// The picture at an https address when it has already arrived, as a new
+// NSImage each time (an animated cell steps its frames on its own copy).
+// Otherwise nil, and a fetch is started unless one is under way or the
+// address failed recently. *pending says whether one is under way, in which
+// case MCMarkdownWebImageNotification follows. Main thread only.
+NSImage *MCMarkdownWebImage(NSString *src, BOOL *pending);
+
+// Whether MCMarkdownWebImage would answer with a picture now, without
+// starting anything.
+BOOL MCMarkdownWebImageIsReady(NSString *src);
+
+// Posted on the main thread when a fetch ends, whether or not it brought a
+// picture. userInfo: MCMarkdownWebImageURLKey (the address as written),
+// MCMarkdownWebImageOKKey (NSNumber, YES when there is a picture) and, when
+// there is not, MCMarkdownWebImageErrorKey (why, for logs and tests).
+extern NSNotificationName const MCMarkdownWebImageNotification;
+extern NSString *const MCMarkdownWebImageURLKey;
+extern NSString *const MCMarkdownWebImageOKKey;
+extern NSString *const MCMarkdownWebImageErrorKey;
