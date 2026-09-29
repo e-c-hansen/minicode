@@ -277,6 +277,13 @@ bool Settings::apply(const std::string& key, const std::string& value,
         return false;
     }
 
+    if (key == "markdown.web-images") {
+        if (!parseBool(value, webImages_)) {
+            error = "'" + value + "' is not true or false";
+            return false;
+        }
+        return true;
+    }
     if (key == "lsp.enabled") {
         if (!parseBool(value, lspEnabled_)) {
             error = "'" + value + "' is not true or false";
@@ -480,6 +487,10 @@ const char* Settings::defaultFileText() {
 # markdown.link = #4EA1F7
 # markdown.code = #CE9178
 # markdown.quote = #9CA3AF
+# Pictures in Markdown with an https address are downloaded and shown. Turn
+# this off to show their alt text instead, so opening a file never contacts
+# the sites it links to.
+# markdown.web-images = true
 
 # Language servers, for completion, go to definition and error underlines
 # (macOS only for now). MiniCode only talks to them, so install the ones you

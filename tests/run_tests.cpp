@@ -2172,6 +2172,7 @@ void testSettings() {
     CHECK(un.material() == d.material() && un.blur() == d.blur());
     // The documented servers are the first ones the built-in search tries.
     CHECK(un.lspEnabled() == d.lspEnabled());
+    CHECK(un.webImages() == d.webImages());
     for (const std::string &server : Settings::lspServers()) {
         std::vector<std::string> cmds = Lsp::defaultCommands(server);
         CHECK(!cmds.empty() && un.lspCommand(server) == cmds[0]);
@@ -2198,6 +2199,14 @@ void testSettings() {
     CHECK(e5.size() == 3 && e5[0].line == 5 && e5[1].line == 6 && e5[2].line == 7);
     CHECK(!e5.empty() && e5[0].message.find("lsp.cobol") != std::string::npos);
     CHECK(parseSettings("").lspEnabled());
+
+    GROUP("settings:web images");
+    std::vector<SettingsError> e6;
+    CHECK(parseSettings("").webImages());
+    CHECK(!parseSettings("markdown.web-images = false\n").webImages());
+    CHECK(!parseSettings("Markdown.Web-Images = off\n").webImages());
+    Settings wi = parseSettings("markdown.web-images = maybe\n", &e6);
+    CHECK(wi.webImages() && e6.size() == 1 && e6[0].line == 1);
 }
 
 }  // namespace

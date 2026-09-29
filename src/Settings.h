@@ -106,6 +106,10 @@ public:
     // would sit there as a solid strip).
     bool customTitlebar() const;
 
+    // markdown.web-images: whether the Markdown preview fetches pictures
+    // from https addresses (on by default). Off, they show their alt text.
+    bool webImages() const { return webImages_; }
+
     // Language servers. lsp.enabled turns the whole client on or off (on by
     // default). lsp.<server> names the command for one server key (cpp,
     // python, go, rust, typescript): a whole command line, arguments and all,
@@ -131,6 +135,7 @@ private:
     std::optional<Rgba> markdown_[kMarkdownColorCount];
     bool titlebarKeySet_ = false;
     bool lspEnabled_ = true;
+    bool webImages_ = true;
     std::map<std::string, std::string> lspCommands_;
 
     bool apply(const std::string& key, const std::string& value,
