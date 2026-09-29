@@ -528,70 +528,22 @@ static const CGFloat kStatusHeight = 26;
 // ------------------------------------------------------------- downloading
 
 - (void)downloadTectonic {
-    NSString *file = [NSString stringWithFormat:@"tectonic-%@-%@.tar.gz",
-                      kTectonicVersion, kTectonicArch];
-    NSString *urlText = [NSString stringWithFormat:
-        @"https://github.com/tectonic-typesetting/tectonic/releases/download/"
-        @"tectonic%%40%@/%@", kTectonicVersion, file];
-    NSURL *url = [NSURL URLWithString:urlText];
-    if (!url) return;
-
     [self setStatus:@"Downloading tectonic…" busy:YES];
     self.actionButton.enabled = NO;
     __weak LatexView *weakSelf = self;
-    NSURLSessionDownloadTask *task = [NSURLSession.sharedSession
-        downloadTaskWithURL:url
-          completionHandler:^(NSURL *tmp, NSURLResponse *response, NSError *error) {
-        NSString *problem = error.localizedDescription;
-        NSString *dest = [MCSupportDir() stringByAppendingPathComponent:@"bin"];
-        if (!problem) {
-            NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
-            if ([http isKindOfClass:[NSHTTPURLResponse class]] &&
-                http.statusCode != 200)
-                problem = [NSString stringWithFormat:@"The download failed (HTTP %ld).",
-                           (long)http.statusCode];
+    MCDownloadTectonic(^(NSString *problem) {
+        LatexView *me = weakSelf;
+        if (!me) return;
+        me.actionButton.enabled = YES;
+        if (problem) {
+            [me showFailure:[NSString stringWithFormat:
+                @"Could not install tectonic.\n\n%@\n\nYou can also install "
+                @"it yourself with:\n\n    brew install tectonic", problem]];
+            me.actionButton.title = @"Download…";
+        } else {
+            [me compileNow];
         }
-        if (!problem) {
-            NSFileManager *fm = [NSFileManager defaultManager];
-            [fm createDirectoryAtPath:dest withIntermediateDirectories:YES
-                           attributes:nil error:nil];
-            NSString *archive = [dest stringByAppendingPathComponent:file];
-            [fm removeItemAtPath:archive error:nil];
-            NSError *moveErr = nil;
-            if (![fm moveItemAtURL:tmp toURL:[NSURL fileURLWithPath:archive]
-                             error:&moveErr]) {
-                problem = moveErr.localizedDescription;
-            } else {
-                NSTask *untar = [[NSTask alloc] init];
-                untar.executableURL = [NSURL fileURLWithPath:@"/usr/bin/tar"];
-                untar.arguments = @[@"-xzf", archive, @"-C", dest];
-                NSError *tarErr = nil;
-                if ([untar launchAndReturnError:&tarErr]) [untar waitUntilExit];
-                else problem = tarErr.localizedDescription;
-                [fm removeItemAtPath:archive error:nil];
-                if (!problem) {
-                    [fm setAttributes:@{NSFilePosixPermissions: @(0755)}
-                         ofItemAtPath:MCManagedTectonic() error:nil];
-                    if (![fm isExecutableFileAtPath:MCManagedTectonic()])
-                        problem = @"The download did not contain tectonic.";
-                }
-            }
-        }
-        dispatch_async(dispatch_get_main_queue(), ^{
-            LatexView *me = weakSelf;
-            if (!me) return;
-            me.actionButton.enabled = YES;
-            if (problem) {
-                [me showFailure:[NSString stringWithFormat:
-                    @"Could not install tectonic.\n\n%@\n\nYou can also install "
-                    @"it yourself with:\n\n    brew install tectonic", problem]];
-                me.actionButton.title = @"Download…";
-            } else {
-                [me compileNow];
-            }
-        });
-    }];
-    [task resume];
+    });
 }
 
 // ------------------------------------------------------- click -> source
@@ -853,3 +805,73 @@ const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &syn
 }
 
 @end
+
+// The download, shared by the LaTeX preview and the Markdown preview's math.
+static NSMutableArray<void (^)(NSString *)> *gTectonicWaiters;
+
+BOOL MCTectonicDownloading(void) {
+    return gTectonicWaiters != nil;
+}
+
+void MCDownloadTectonic(void (^done)(NSString *problem)) {
+    if (gTectonicWaiters) {   // one is under way: wait for it
+        [gTectonicWaiters addObject:[done copy]];
+        return;
+    }
+    NSString *file = [NSString stringWithFormat:@"tectonic-%@-%@.tar.gz",
+                      kTectonicVersion, kTectonicArch];
+    NSString *urlText = [NSString stringWithFormat:
+        @"https://github.com/tectonic-typesetting/tectonic/releases/download/"
+        @"tectonic%%40%@/%@", kTectonicVersion, file];
+    NSURL *url = [NSURL URLWithString:urlText];
+    if (!url) {
+        done(@"The download address is not valid.");
+        return;
+    }
+    gTectonicWaiters = [NSMutableArray arrayWithObject:[done copy]];
+    NSURLSessionDownloadTask *task = [NSURLSession.sharedSession
+        downloadTaskWithURL:url
+          completionHandler:^(NSURL *tmp, NSURLResponse *response, NSError *error) {
+        NSString *problem = error.localizedDescription;
+        NSString *dest = [MCSupportDir() stringByAppendingPathComponent:@"bin"];
+        if (!problem) {
+            NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
+            if ([http isKindOfClass:[NSHTTPURLResponse class]] &&
+                http.statusCode != 200)
+                problem = [NSString stringWithFormat:@"The download failed (HTTP %ld).",
+                           (long)http.statusCode];
+        }
+        if (!problem) {
+            NSFileManager *fm = [NSFileManager defaultManager];
+            [fm createDirectoryAtPath:dest withIntermediateDirectories:YES
+                           attributes:nil error:nil];
+            NSString *archive = [dest stringByAppendingPathComponent:file];
+            [fm removeItemAtPath:archive error:nil];
+            NSError *moveErr = nil;
+            if (![fm moveItemAtURL:tmp toURL:[NSURL fileURLWithPath:archive]
+                             error:&moveErr]) {
+                problem = moveErr.localizedDescription;
+            } else {
+                NSTask *untar = [[NSTask alloc] init];
+                untar.executableURL = [NSURL fileURLWithPath:@"/usr/bin/tar"];
+                untar.arguments = @[@"-xzf", archive, @"-C", dest];
+                NSError *tarErr = nil;
+                if ([untar launchAndReturnError:&tarErr]) [untar waitUntilExit];
+                else problem = tarErr.localizedDescription;
+                [fm removeItemAtPath:archive error:nil];
+                if (!problem) {
+                    [fm setAttributes:@{NSFilePosixPermissions: @(0755)}
+                         ofItemAtPath:MCManagedTectonic() error:nil];
+                    if (![fm isExecutableFileAtPath:MCManagedTectonic()])
+                        problem = @"The download did not contain tectonic.";
+                }
+            }
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSArray<void (^)(NSString *)> *waiters = gTectonicWaiters;
+            gTectonicWaiters = nil;
+            for (void (^w)(NSString *) in waiters) w(problem);
+        });
+    }];
+    [task resume];
+}

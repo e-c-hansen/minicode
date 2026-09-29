@@ -28,6 +28,28 @@ What is left, roughly in order of value:
   leans on SyncTeX's line alone. Using the cell's `&` position in the row
   would pin it down exactly.
 
+## Math in Markdown (done on the Mac)
+
+Since September 2026 the core reads `$...$`, `$$...$$` and ```` ```math ````
+blocks on every port, and the Mac typesets a page's formulas with tectonic
+in one background run, a page per formula, cached on disk (see "Math in the
+Markdown preview" in CLAUDE.md). Linux and Android show the TeX in the code
+style. Next, roughly in order of value:
+
+- **Linux**: the same design. `src/MathTex` (the batch document, the checks
+  and rewriting, reading the log) is shared and tested; the port needs the
+  run (a `GSubprocess` on a worker, as the LaTeX preview runs tectonic), a
+  cache like the Mac's, and poppler to draw the pages, tinted with cairo's
+  IN operator, as `GtkTextView` child anchors or paintables on the baseline.
+- **Android**: tectonic in Termux, as the LaTeX preview already runs it, with
+  the same batch, log and cache; `PdfRenderer` draws the pages as bitmaps at
+  the screen's density, tinted with a `PorterDuff` SRC_IN filter, as
+  `ReplacementSpan`s aligned on the baseline.
+- Copying a typeset formula should copy its TeX, not an attachment.
+- `\color` inside a formula is drawn in the text's color, since the page is
+  tinted whole; keeping colored ink would take typesetting in the text
+  color instead.
+
 ## Media rendering (images, PDFs, video and audio done on the Mac)
 
 Images open in the editor pane on macOS: an `NSImageView`, scaled to fit and

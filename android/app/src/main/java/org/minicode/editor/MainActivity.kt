@@ -1269,6 +1269,7 @@ class MainActivity : AppCompatActivity() {
             Core.MD_BLOCK_QUOTE -> "a quote"
             Core.MD_BLOCK_CODE -> "a code block"
             Core.MD_BLOCK_TABLE_CELL -> "a table cell"
+            Core.MD_BLOCK_MATH -> "a formula"
             else -> "a table row"
         }
         val start = block[1].coerceIn(0, source.length)

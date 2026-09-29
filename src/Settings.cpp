@@ -284,6 +284,13 @@ bool Settings::apply(const std::string& key, const std::string& value,
         }
         return true;
     }
+    if (key == "markdown.math") {
+        if (!parseBool(value, math_)) {
+            error = "'" + value + "' is not true or false";
+            return false;
+        }
+        return true;
+    }
     if (key == "lsp.enabled") {
         if (!parseBool(value, lspEnabled_)) {
             error = "'" + value + "' is not true or false";
@@ -491,6 +498,10 @@ const char* Settings::defaultFileText() {
 # this off to show their alt text instead, so opening a file never contacts
 # the sites it links to.
 # markdown.web-images = true
+# Math ($x^2$, $$...$$ and ```math blocks) is typeset with tectonic, the
+# engine the LaTeX preview uses (macOS only for now). Turn this off to show
+# formulas as their TeX instead.
+# markdown.math = true
 
 # Language servers, for completion, go to definition and error underlines
 # (macOS only for now). MiniCode only talks to them, so install the ones you

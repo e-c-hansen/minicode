@@ -83,6 +83,7 @@ object Core {
     const val MD_BLOCK_CODE = 5
     const val MD_BLOCK_TABLE_CELL = 6
     const val MD_BLOCK_TABLE_ROW = 7
+    const val MD_BLOCK_MATH = 8
 
     /** The bits markdownFlags packs, matching MdRun in the core. */
     const val MD_HEADING = 0x7
@@ -97,6 +98,13 @@ object Core {
     const val MD_ORDERED = 1 shl 11
     fun mdListDepth(flags: Int) = (flags shr 12) and 0xF
     const val MD_STRIKE = 1 shl 16
+    /**
+     * Inline and display math. The run's text is the TeX, and MD_CODE is
+     * set with them, so the preview shows formulas verbatim in the code
+     * style; display math has lines of its own.
+     */
+    const val MD_MATH_INLINE = 1 shl 17
+    const val MD_MATH_DISPLAY = 1 shl 18
 
     /**
      * What a tap can open in one terminal row: `cells` is a code point per

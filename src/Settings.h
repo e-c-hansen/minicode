@@ -109,6 +109,9 @@ public:
     // markdown.web-images: whether the Markdown preview fetches pictures
     // from https addresses (on by default). Off, they show their alt text.
     bool webImages() const { return webImages_; }
+    // markdown.math: whether the Markdown preview typesets math (on by
+    // default, where tectonic is found). Off, formulas show as their TeX.
+    bool math() const { return math_; }
 
     // Language servers. lsp.enabled turns the whole client on or off (on by
     // default). lsp.<server> names the command for one server key (cpp,
@@ -136,6 +139,7 @@ private:
     bool titlebarKeySet_ = false;
     bool lspEnabled_ = true;
     bool webImages_ = true;
+    bool math_ = true;
     std::map<std::string, std::string> lspCommands_;
 
     bool apply(const std::string& key, const std::string& value,

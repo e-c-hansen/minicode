@@ -8,7 +8,7 @@
 namespace MarkdownEdit {
 
 struct Block {
-    enum Kind { None, Paragraph, Heading, ListItem, Quote, Code, TableCell, TableRow };
+    enum Kind { None, Paragraph, Heading, ListItem, Quote, Code, TableCell, TableRow, Math };
     Kind kind = None;
     size_t start = 0, end = 0;   // the editable bytes of the source
     int firstLine = -1, lastLine = -1;
@@ -26,6 +26,9 @@ struct Block {
 //   paragraph  every line of it, lazy continuation lines included
 //   quote      every line of the whole quote, the > markers included
 //   code       the lines between the fences, or an indented block's lines
+//              (a ```math fence's formula too)
+//   math       a $$ (or \[) display formula on lines of its own, all of
+//              it, the delimiters included
 //   table cell the cell's text, trimmed
 // Blank lines, rules, fences, a table's separator row, a setext underline,
 // link reference definitions and HTML comments give None.

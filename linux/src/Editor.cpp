@@ -2248,7 +2248,7 @@ void Editor::editMarkdownBlock(int line, int column, const GdkRectangle& at) {
     MarkdownEdit::Block block = MarkdownEdit::blockAt(source_, line, column);
     if (block.kind == MarkdownEdit::Block::None) return;
     static const char* const kinds[] = {"", "Paragraph", "Heading", "List item", "Quote",
-                                        "Code block", "Table cell", "Table row"};
+                                        "Code block", "Table cell", "Table row", "Formula"};
     mdBlock_ = block;
     mdEditSrc_ = source_;
     mdEditValid_ = true;

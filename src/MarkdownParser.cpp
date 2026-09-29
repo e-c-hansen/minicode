@@ -14,6 +14,14 @@
 // reference links and images, <autolinks> and bare web addresses, hard
 // breaks, and a little inline HTML (<br>, <img>, <b>, <a href>, <kbd>...;
 // other tags and comments are dropped, their text kept).
+//
+// Math is read before any other inline rule, as GitHub and pandoc read it:
+// $...$ (the opening $ not followed by a space, the closing one neither
+// after a space nor before a digit, so "$5 and $10" stays text), $$...$$ and
+// \(...\). \$ is a dollar sign, and a $ inside a code span is not math.
+// Display math also comes as a block: $$ (or \[) starting a line and $$ (or
+// \]) ending one, or a ```math fence. Nothing inside math is escaped,
+// emphasised or linked.
 #include "MarkdownParser.h"
 #include <algorithm>
 #include <cctype>
@@ -374,12 +382,13 @@ size_t readAutolink(const std::string& s, size_t i, size_t to, std::string* url,
 // ------------------------------------------------------------ inline pass
 
 struct Piece {
-    enum Kind { Text, Delim, Code, Image, Soft, Hard, TagOpen, TagClose };
+    enum Kind { Text, Delim, Code, Image, Soft, Hard, TagOpen, TagClose, Math };
     Kind kind = Text;
     std::string text;       // what shows (a delimiter's remaining characters)
     size_t at = 0;          // where it starts in the block's text
     int bold = 0, italic = 0, strike = 0;
     bool codeTag = false;   // inside <code> or <kbd>
+    bool display = false;   // Math: display math, not inline
     bool link = false;
     std::string url;        // a link's target (for a tag, <a>'s href)
     std::string src;        // an image's source
@@ -396,7 +405,7 @@ bool special(unsigned char c) {
     static const struct Table {
         bool is[256] = {};
         Table() {
-            for (const char* p = "\\\n`*_~[!<&hHwW"; *p; p++) is[(unsigned char)*p] = true;
+            for (const char* p = "\\\n`*_~[!<&hHwW$"; *p; p++) is[(unsigned char)*p] = true;
         }
     } table;
     return table.is[c];
@@ -459,6 +468,7 @@ public:
     // Pieces of s[from, to). Inside a link's text no further links are made.
     void parse(size_t from, size_t to, bool inLink, std::vector<Piece>& out) {
         std::map<size_t, size_t> noCloser;   // backtick run length -> no closer from here on
+        MathMemo memo;
         std::string pending;
         size_t pendingAt = from;
         auto flush = [&] {
@@ -485,6 +495,23 @@ public:
                 continue;
             }
             const char c = s_[i];
+            // Math first, so nothing inside it is read as Markdown.
+            if (c == '$' || (c == '\\' && i + 1 < to && s_[i + 1] == '(')) {
+                Piece m;
+                if (size_t next = math(i, to, noCloser, memo, m)) {
+                    flush();
+                    out.push_back(std::move(m));
+                    i = next;
+                    continue;
+                }
+                if (c == '$') {
+                    // A dollar sign, or two that close nothing.
+                    const size_t n = i + 1 < to && s_[i + 1] == '$' ? 2 : 1;
+                    addText(i, std::string(n, '$'));
+                    i += n;
+                    continue;
+                }
+            }
             if (c == '\\' && i + 1 < to && s_[i + 1] == '\n') {
                 flush();
                 Piece h;
@@ -645,14 +672,123 @@ private:
     std::vector<std::pair<size_t, size_t>> close_;   // '[' and its ']', by '['
     int depth_ = 0;                    // links and images being read, nested
 
+    // Where a search for a closing "$$" or "\)" already failed: a later
+    // search from there on, in the same region, fails too. It keeps a line
+    // of openers with no closers linear.
+    struct MathMemo {
+        size_t noDisplay = std::string::npos;
+        size_t noParen = std::string::npos;
+    };
+
+    // Past a code span starting at `k` (a backtick), or past its backticks
+    // when nothing closes them.
+    size_t skipCode(size_t k, size_t to, std::map<size_t, size_t>& ticks) {
+        size_t n = 0;
+        while (k + n < to && s_[k + n] == '`') n++;
+        const size_t close = findBackticks(k + n, to, n, ticks);
+        return close == std::string::npos ? k + n : close + n;
+    }
+
+    // Math at `i`: "$...$", "$$...$$" or "\(...\)". Fills `m` (a Math piece
+    // holding the TeX) and returns the index past the closing delimiter, or
+    // 0 when there is none. A backslash and the character after it are
+    // skipped together, so \$ never closes; so is a code span, so a $ in
+    // one is not math. Inline $ follows pandoc: the first $ after the
+    // opener closes it, and only when it has no space before it and no
+    // digit after it, or there is no math at all.
+    size_t math(size_t i, size_t to, std::map<size_t, size_t>& ticks, MathMemo& memo, Piece& m) {
+        const size_t npos = std::string::npos;
+        size_t open = 0, close = npos, next = 0;
+        bool display = false;
+        if (s_[i] == '\\') {
+            open = i + 2;
+            if (open >= memo.noParen) return 0;
+            for (size_t k = open; k + 1 < to; k++) {
+                if (s_[k] != '\\') continue;
+                if (s_[k + 1] == ')') {
+                    close = k;
+                    next = k + 2;
+                    break;
+                }
+                k++;
+            }
+            if (close == npos) {
+                memo.noParen = std::min(memo.noParen, open);
+                return 0;
+            }
+        } else if (i + 1 < to && s_[i + 1] == '$') {
+            display = true;
+            open = i + 2;
+            if (open >= memo.noDisplay) return 0;
+            for (size_t k = open; k < to;) {
+                const char c = s_[k];
+                if (c == '\\') { k += 2; continue; }
+                if (c == '`') { k = skipCode(k, to, ticks); continue; }
+                if (c == '$' && k + 1 < to && s_[k + 1] == '$') {
+                    close = k;
+                    next = k + 2;
+                    break;
+                }
+                k++;
+            }
+            if (close == npos) {
+                memo.noDisplay = std::min(memo.noDisplay, open);
+                return 0;
+            }
+        } else {
+            open = i + 1;
+            if (open >= to || std::isspace((unsigned char)s_[open])) return 0;
+            for (size_t k = open; k < to;) {
+                const char c = s_[k];
+                if (c == '\\') { k += 2; continue; }
+                if (c == '`') { k = skipCode(k, to, ticks); continue; }
+                if (c == '$') {
+                    if (std::isspace((unsigned char)s_[k - 1]) ||
+                        (k + 1 < s_.size() && std::isdigit((unsigned char)s_[k + 1])))
+                        return 0;
+                    close = k;
+                    next = k + 1;
+                    break;
+                }
+                k++;
+            }
+            if (close == npos) return 0;
+        }
+        std::string tex = s_.substr(open, close - open);
+        if (tex.find_first_not_of(" \t\n") == npos) return 0;
+        if (display || s_[i] == '\\') {
+            tex.erase(0, tex.find_first_not_of(" \t\n"));
+            tex.erase(tex.find_last_not_of(" \t\n") + 1);
+        }
+        // Display TeX keeps its lines (an aligned block is written over
+        // several); an inline formula is one line of text.
+        if (!display)
+            for (char& ch : tex)
+                if (ch == '\n') ch = ' ';
+        m.kind = Piece::Math;
+        m.text = std::move(tex);
+        m.at = i;
+        m.display = display;
+        return next;
+    }
+
     // Pairs every '[' with the ']' that closes it, in one pass, skipping
-    // escapes, code spans, autolinks and tags as the inline pass does.
+    // escapes, code spans, math, autolinks and tags as the inline pass does.
     void matchBrackets() {
         std::map<size_t, size_t> no;
+        MathMemo memo;
         std::vector<size_t> open;
         const size_t to = s_.size();
         for (size_t k = 0; k < to;) {
             const char c = s_[k];
+            if (c == '$' || (c == '\\' && k + 1 < to && s_[k + 1] == '(')) {
+                Piece m;
+                if (size_t e = math(k, to, no, memo, m)) { k = e; continue; }
+                if (c == '$') {   // as the inline pass reads them: plain dollars
+                    k += k + 1 < to && s_[k + 1] == '$' ? 2 : 1;
+                    continue;
+                }
+            }
             if (c == '\\' && k + 1 < to) { k += 2; continue; }
             if (c == '`') {
                 size_t n = 0;
@@ -787,7 +923,8 @@ private:
             im.at = open - 1;
             im.src = dest;
             for (const Piece& q : inner)
-                if (q.kind == Piece::Text || q.kind == Piece::Code) im.text += q.text;
+                if (q.kind == Piece::Text || q.kind == Piece::Code || q.kind == Piece::Math)
+                    im.text += q.text;
                 else if (q.kind == Piece::Image) im.text += q.text;
                 else if (q.kind == Piece::Soft || q.kind == Piece::Hard) im.text += ' ';
             made.push_back(std::move(im));
@@ -948,17 +1085,48 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
 
     // Line breaks at either end of the text show nothing.
     auto shows = [](const Piece& p) {
-        return p.kind == Piece::Image || p.kind == Piece::Code ||
+        return p.kind == Piece::Image || p.kind == Piece::Code || p.kind == Piece::Math ||
                (p.kind == Piece::Text && !p.text.empty());
     };
     size_t first = 0, last = pieces.size();
     while (first < last && !shows(pieces[first])) first++;
     while (last > first && !shows(pieces[last - 1])) last--;
 
+    // Display math stands on a line of its own, except in a heading or a
+    // table cell, which are one line.
+    const bool ownLine = base.heading == 0 && !base.table;
+    const size_t begin = out.size();
+    bool lineAfterMath = false;   // display math ended the line: the next text starts one
+    auto newline = [&](int line) {
+        MdRun nl = base;
+        nl.text = "\n";
+        nl.line = line;
+        out.push_back(std::move(nl));
+    };
+
     bool mergeable = false, afterBreak = false;
     for (size_t k = first; k < last; k++) {
         const Piece& p = pieces[k];
         if (p.kind == Piece::TagOpen || p.kind == Piece::TagClose) continue;
+        if (ownLine && p.kind == Piece::Math && p.display) {
+            // The spaces and breaks before it end in a line break instead.
+            while (out.size() > begin && !out.back().image && !out.back().math &&
+                   out.back().text.find_first_not_of(" \n") == std::string::npos)
+                out.pop_back();
+            if (out.size() > begin) {
+                MdRun& prev = out.back();
+                if (!prev.code && !prev.image)
+                    prev.text.erase(prev.text.find_last_not_of(' ') + 1);
+                newline(lineOf(p.at));
+            }
+            lineAfterMath = true;
+        } else if (lineAfterMath) {
+            if (p.kind == Piece::Soft || p.kind == Piece::Hard) continue;
+            if (!shows(p)) continue;
+            newline(lineOf(p.at));
+            lineAfterMath = false;
+            afterBreak = true;
+        }
         MdRun r = base;
         r.bold = base.bold || p.bold > 0;
         r.italic = base.italic || p.italic > 0;
@@ -973,6 +1141,12 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
         case Piece::Code:
             r.code = true;
             r.text = p.text;
+            break;
+        case Piece::Math:
+            r.math = p.display ? 2 : 1;
+            r.code = true;   // verbatim, where math is not typeset
+            r.text = p.text;
+            canMerge = false;
             break;
         case Piece::Image:
             r.image = true;
@@ -1147,8 +1321,10 @@ void emitTable(const std::vector<std::vector<std::string>>& rows,
 // ------------------------------------------------------------ block pass
 
 struct Block {
-    enum Kind { Para, Heading, Item, Code, Rule, Table };
+    enum Kind { Para, Heading, Item, Code, Rule, Table, Math };
     Kind kind = Para;
+    bool math = false;           // a ```math fence: display math, not code
+    std::string tex;             // a Math block's TeX
     int first = 0, last = 0;     // source lines
     int edit = -1;               // MdLine::block of its lines
     int level = 0;               // a heading's
@@ -1235,8 +1411,9 @@ bool isSetextUnderline(const std::string& body, int& level) {
     return true;
 }
 
-// ``` or ~~~ (three or more) opening a code block.
-bool isFenceOpen(const std::string& body, char& ch, size_t& len) {
+// ``` or ~~~ (three or more) opening a code block. `info` gets the first
+// word after the fence, lowercased ("math" for GitHub's display math).
+bool isFenceOpen(const std::string& body, char& ch, size_t& len, std::string* info = nullptr) {
     if (body.empty() || (body[0] != '`' && body[0] != '~')) return false;
     size_t n = 0;
     while (n < body.size() && body[n] == body[0]) n++;
@@ -1244,7 +1421,62 @@ bool isFenceOpen(const std::string& body, char& ch, size_t& len) {
     if (body[0] == '`' && body.find('`', n) != std::string::npos) return false;
     ch = body[0];
     len = n;
+    if (info) {
+        const std::string rest = trim(body.substr(n));
+        *info = lowerAscii(rest.substr(0, rest.find_first_of(" \t{")));
+    }
     return true;
+}
+
+bool endsWith(const std::string& s, const std::string& tail) {
+    return s.size() >= tail.size() && s.compare(s.size() - tail.size(), tail.size(), tail) == 0;
+}
+
+std::string trimRight(const std::string& s) {
+    size_t b = s.size();
+    while (b > 0 && std::isspace((unsigned char)s[b - 1])) b--;
+    return s.substr(0, b);
+}
+
+// Display math on lines of its own: a line starting with "$$" (or "\["),
+// then the line ending with "$$" (or "\]"), perhaps the same one, with no
+// blank line between them (TeX would stop at one, and pandoc does). `last`
+// gets the closing line and `tex` the TeX between the delimiters, trimmed.
+// "$$ a $$ and $$ b $$" is a paragraph, not a block.
+bool mathBlock(const std::vector<std::string>& raw, size_t i, const std::string& body,
+               size_t& last, std::string& tex) {
+    std::string close;
+    if (body.compare(0, 2, "$$") == 0) close = "$$";
+    else if (body.compare(0, 2, "\\[") == 0) close = "\\]";
+    else return false;
+    const std::string first = trimRight(body.substr(2));
+    std::string content;
+    if (endsWith(first, close)) {
+        content = first.substr(0, first.size() - 2);
+        if (content.find(close) != std::string::npos || content.find("$$") != std::string::npos)
+            return false;
+        last = i;
+    } else {
+        if (first.find(close) != std::string::npos) return false;
+        content = first;
+        size_t j = i + 1;
+        for (; j < raw.size() && j < i + 2000; j++) {
+            const std::string t = trimRight(raw[j]);
+            if (trim(t).empty()) return false;
+            if (endsWith(t, close)) {
+                const std::string before = t.substr(0, t.size() - 2);
+                if (before.find(close) != std::string::npos) return false;
+                content += "\n" + before;
+                break;
+            }
+            if (t.find(close) != std::string::npos) return false;
+            content += "\n" + t;
+        }
+        if (j >= raw.size() || j >= i + 2000) return false;
+        last = j;
+    }
+    tex = trim(content);
+    return !tex.empty();
 }
 
 bool isFenceClose(const std::string& body, char ch, size_t len) {
@@ -1530,16 +1762,43 @@ Doc analyze(const std::string& md) {
             open = -1;
             continue;
         }
-        if (shallow && isFenceOpen(body, fenceChar, fenceLen)) {
+        std::string info;
+        if (shallow && isFenceOpen(body, fenceChar, fenceLen, &info)) {
             open = -1;
             quoteGroup = -1;
             settleList(cols);
             Block& f = newBlock(Block::Code, (int)i);
             f.edit = editIds++;
+            f.math = info == "math";
             fenceBlock = (int)d.blocks.size() - 1;
             fenceIndent = cols;
             inFence = true;
             L.kind = MdLine::Fence;
+            continue;
+        }
+        // Display math on lines of its own: one block, delimiters and all.
+        size_t mathLast = 0;
+        std::string tex;
+        if (shallow && (body[0] == '$' || body[0] == '\\') &&
+            mathBlock(raw, i, body, mathLast, tex)) {
+            open = -1;
+            quoteGroup = -1;
+            settleList(cols);
+            Block& mb = newBlock(Block::Math, (int)i);
+            mb.edit = editIds++;
+            mb.last = (int)mathLast;
+            mb.depth = (int)list.size();
+            mb.tex = std::move(tex);
+            for (size_t j = i; j <= mathLast; j++) {
+                MdLine& M = d.lines[j];
+                M.kind = MdLine::Math;
+                M.block = mb.edit;
+                size_t q = 0;
+                while (q < raw[j].size() && (raw[j][q] == ' ' || raw[j][q] == '\t')) q++;
+                M.start = M.lineStart + q;
+                M.end = M.lineEnd;
+            }
+            i = mathLast;
             continue;
         }
         // An HTML comment starting a line hides it, and ends any paragraph.
@@ -1789,7 +2048,37 @@ void emitBlock(const Block& b, const Refs& refs, int& tables, std::vector<MdRun>
         out.push_back(std::move(end));
         break;
     }
+    case Block::Math: {
+        MdRun r = base;
+        r.math = 2;
+        r.code = true;
+        r.text = b.tex;
+        r.line = b.first;
+        out.push_back(std::move(r));
+        out.push_back(std::move(end));
+        break;
+    }
     case Block::Code:
+        if (b.math) {
+            // A ```math fence: its lines are one display formula, stamped
+            // with the first of them, which a double-click edits.
+            std::string tex;
+            for (const auto& line : b.code) tex += (tex.empty() ? "" : "\n") + line.first;
+            tex = trim(tex);
+            if (!tex.empty()) {
+                MdRun r = base;
+                r.math = 2;
+                r.code = true;
+                r.text = tex;
+                r.line = b.code.front().second;
+                out.push_back(std::move(r));
+                MdRun e = base;
+                e.text = "\n";
+                e.line = b.code.back().second;
+                out.push_back(std::move(e));
+                break;
+            }
+        }
         for (const auto& line : b.code) {
             MdRun r;
             r.code = r.codeBlock = true;

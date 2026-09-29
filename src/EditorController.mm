@@ -8,6 +8,7 @@
 #import "AppSettings.h"
 #import "Lsp.h"
 #import "MarkdownImage.h"
+#import "MarkdownMath.h"
 #import "MarkdownEditPanel.h"
 #import "GitPanel.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
@@ -284,6 +285,14 @@ static NSAttributedStringKey const kMarkdownTableCell = @"MCMarkdownTableCell";
 // On the alt text standing in for a web picture still on its way:
 // @[address, n], n numbering them so two in a row stay two runs.
 static NSAttributedStringKey const kMarkdownWebImage = @"MCMarkdownWebImage";
+// On the TeX standing in for a formula still being typeset: @[key, n], as
+// for web pictures.
+static NSAttributedStringKey const kMarkdownMath = @"MCMarkdownMath";
+// On the line at the top of a page whose math cannot be typeset because
+// tectonic is missing.
+static NSAttributedStringKey const kMarkdownMathNote = @"MCMarkdownMathNote";
+// The link in that line that downloads tectonic.
+static NSString *const kMathDownloadLink = @"minicode-math:download-tectonic";
 
 // Panel, text and syntax colors come from the settings file (AppSettings);
 // Hex is for the fixed accents that aren't configurable.
@@ -330,6 +339,15 @@ private:
     NSMutableSet<NSString *> *_awaitedWebImages;
     NSUInteger _webImageMarks;             // numbers kMarkdownWebImage runs
     BOOL _webImageRenderQueued;
+    // The same for formulas being typeset, by MCMathKey; renderMarkdown
+    // collects the ones to ask for in _mathWanted.
+    NSMutableSet<NSString *> *_awaitedMath;
+    NSMutableArray<NSArray *> *_mathWanted;
+    NSUInteger _mathMarks;
+    BOOL _mathRenderQueued;
+    BOOL _mathOn;                          // this render typesets math
+    NSString *_mathRunProblem;             // why a whole run failed, this render
+    NSString *_tectonicProblem;            // why the last download failed
     NSUInteger _pendingStart, _pendingEnd; // edited, not yet recolored (NSNotFound: none)
     BOOL _flushScheduled;
     BOOL _highlightingSettingsFile;        // give color values swatches
@@ -566,6 +584,9 @@ private:
     [[NSNotificationCenter defaultCenter]
         addObserver:self selector:@selector(markdownWebImageArrived:)
                name:MCMarkdownWebImageNotification object:nil];
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self selector:@selector(markdownMathArrived:)
+               name:MCMathTypesetNotification object:nil];
     [self.window addObserver:self forKeyPath:@"title"
                      options:NSKeyValueObservingOptionInitial context:NULL];
     [self showWelcome];
@@ -1801,6 +1822,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     self.previewMode = NO;
     _haveSourcePosition = NO;
     [_awaitedWebImages removeAllObjects];
+    [_awaitedMath removeAllObjects];
     self.sourceText = nil;
     self.dirty = NO;
     self.textView.editable = NO;
@@ -2168,6 +2190,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 }
 - (void)windowWillClose:(NSNotification *)note {
     _awaitedWebImages = nil;   // pictures still on their way land in the cache only
+    _awaitedMath = nil;        // and so do formulas
     [self stopMedia];      // no sound from a closed window
     [self.lsp shutdown];   // never leave a server running for a closed window
 }
@@ -2496,6 +2519,10 @@ static NSColor *ContrastColor(const Rgba &c) {
 }
 
 - (BOOL)textView:(NSTextView *)tv clickedOnLink:(id)link atIndex:(NSUInteger)i {
+    if (self.isMarkdown && self.previewMode && [link isEqual:kMathDownloadLink]) {
+        [self downloadTectonicForMath];
+        return YES;
+    }
     if (self.isMarkdown && self.previewMode && [link isKindOfClass:NSString.class]) {
         [self openMarkdownLink:link];
         return YES;
@@ -2810,7 +2837,8 @@ static NSColor *ContrastColor(const Rgba &c) {
     if (block.kind == MarkdownEdit::Block::None) return NO;
 
     static NSString *const titles[] = {@"", @"Paragraph", @"Heading", @"List item",
-                                       @"Quote", @"Code block", @"Table cell", @"Table row"};
+                                       @"Quote", @"Code block", @"Table cell", @"Table row",
+                                       @"Formula"};
     NSString *title = [titles[block.kind] stringByAppendingString:
         @" (Markdown; Return saves, Shift+Return for a new line)"];
     NSString *text = [NSString stringWithUTF8String:
@@ -2975,6 +3003,11 @@ static NSString *MCFormatDuration(double seconds) {
     std::vector<MdRun> runs = MarkdownParser::parse(md);
     _awaitedWebImages = [NSMutableSet set];   // markdownRun: fills it
     _webImageMarks = 0;
+    _awaitedMath = [NSMutableSet set];        // and these
+    _mathWanted = [NSMutableArray array];
+    _mathMarks = 0;
+    _mathOn = [self typesetsMath];            // asked once, not per formula
+    _mathRunProblem = nil;                    // markdownRun: notes a failed run
 
     NSMutableAttributedString *out = [[NSMutableAttributedString alloc] init];
     NSMutableDictionary<NSString *, NSNumber *> *anchors = [NSMutableDictionary dictionary];
@@ -3018,10 +3051,160 @@ static NSString *MCFormatDuration(double seconds) {
         }
         i++;
     }
+    // A page whose math cannot be typeset says why in a line at its top.
+    BOOL hasMath = NO;
+    for (const MdRun &r : runs) hasMath = hasMath || r.math;
+    NSAttributedString *note = !hasMath ? nil
+                             : self.mathNoteWanted ? [self mathNote]
+                             : _mathRunProblem ? [self mathNoteForProblem:_mathRunProblem] : nil;
+    if (note) {
+        [out insertAttributedString:note atIndex:0];
+        for (NSString *key in anchors.allKeys)
+            anchors[key] = @(anchors[key].unsignedIntegerValue + note.length);
+    }
     _markdownAnchors = anchors;
     _liveHighlight = NO;   // rendered Markdown is not source
     [self.textView.textStorage setAttributedString:out];
     [self.textView scrollToBeginningOfDocument:nil];
+    // Formulas not typeset yet go to tectonic in one run; the page renders
+    // again when they are back (markdownMathArrived:).
+    if (_mathWanted.count) MCMathTypeset(_mathWanted);
+    _mathWanted = nil;
+}
+
+// ------------------------------------------------------ math in the preview
+
+// Whether formulas are typeset: the setting, and tectonic to do it.
+- (BOOL)typesetsMath {
+    return [AppSettings shared].settings.math() && MCTectonicPath() != nil;
+}
+
+// The line at the top of a page with math is wanted when typesetting is
+// on but tectonic is not there.
+- (BOOL)mathNoteWanted {
+    return [AppSettings shared].settings.math() && MCTectonicPath() == nil;
+}
+
+// The line at the top of a page, muted, with a link at its end if any.
+- (NSAttributedString *)mathNoteText:(NSString *)text link:(NSString *)link {
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.paragraphSpacing = 10;
+    NSDictionary *muted = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:12],
+        NSForegroundColorAttributeName: Hex(0x9CA3AF),
+        NSParagraphStyleAttributeName: ps,
+        kMarkdownMathNote: @YES,
+    };
+    NSMutableAttributedString *note = [[NSMutableAttributedString alloc] init];
+    [note appendAttributedString:[[NSAttributedString alloc] initWithString:text attributes:muted]];
+    if (link) {
+        NSMutableDictionary *a = [muted mutableCopy];
+        a[NSLinkAttributeName] = kMathDownloadLink;
+        a[NSForegroundColorAttributeName] = [[AppSettings shared] markdown:MarkdownColor::Link];
+        [note appendAttributedString:[[NSAttributedString alloc] initWithString:link attributes:a]];
+    }
+    [note appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n" attributes:muted]];
+    return note;
+}
+
+// A whole run failed (tectonic could not fetch its files, say): why, and
+// that it is tried again.
+- (NSAttributedString *)mathNoteForProblem:(NSString *)problem {
+    NSString *why = [problem stringByTrimmingCharactersInSet:
+                                 NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if ([why hasSuffix:@"."]) why = [why substringToIndex:why.length - 1];
+    return [self mathNoteText:[NSString stringWithFormat:
+        @"The math on this page shows as TeX: tectonic could not typeset it (%@). "
+        @"It is tried again when the page is next shown, a minute from now or later.", why]
+                         link:nil];
+}
+
+// "Math shows as TeX..." with a link that downloads tectonic, or how that
+// download is going.
+- (NSAttributedString *)mathNote {
+    NSString *text, *link = nil;
+    if (MCTectonicDownloading()) {
+        text = @"Downloading tectonic, which typesets the math on this page…";
+    } else if (_tectonicProblem) {
+        text = [NSString stringWithFormat:@"tectonic could not be downloaded (%@), so the math "
+                                          @"shows as TeX. ", _tectonicProblem];
+        link = @"Try again";
+    } else {
+        text = @"The math on this page shows as TeX: MiniCode typesets it with tectonic, "
+               @"which is not installed. ";
+        link = @"Download tectonic";
+    }
+    return [self mathNoteText:text link:link];
+}
+
+- (void)downloadTectonicForMath {
+    if (MCTectonicDownloading()) return;
+    _tectonicProblem = nil;
+    NSString *path = self.currentPath;
+    __weak EditorController *weakSelf = self;
+    MCDownloadTectonic(^(NSString *problem) {
+        EditorController *me = weakSelf;
+        if (!me) return;
+        me->_tectonicProblem = [problem copy];
+        if (me.isMarkdown && me.previewMode && [path isEqualToString:me.currentPath])
+            [me renderMarkdownKeepingPlace];
+    });
+    [self renderMarkdownKeepingPlace];   // "Downloading..."
+}
+
+// How long the line about tectonic at the top of the page is, or 0.
+- (NSUInteger)mathNoteLength {
+    NSTextStorage *st = self.textView.textStorage;
+    NSRange r = NSMakeRange(0, 0);
+    if (st.length && [st attribute:kMarkdownMathNote atIndex:0 longestEffectiveRange:&r
+                                inRange:NSMakeRange(0, st.length)])
+        return r.length;
+    return 0;
+}
+
+// The typeset formula for a math run, or nil when it is to show as TeX:
+// typesetting is off, it is still being typeset, or it failed.
+- (MCMathFormula *)typesetFormulaFor:(const MdRun &)r {
+    if (!r.math || !_mathOn) return nil;
+    NSString *tex = [NSString stringWithUTF8String:r.text.c_str()];
+    if (!tex) return nil;
+    MCMathFormula *f = MCMathLookup(tex, r.math == 2);
+    return f && !f.failed ? f : nil;
+}
+
+// Screen points per PDF point of a formula set beside text of `fontSize`.
+// TeX sets the formulas at 10 pt. Computer Modern's lowercase letters are
+// smaller for their size than the system font's and its capitals about the
+// same, so its em is made a little larger than the text's: halfway, near
+// enough, between matching the capitals and matching the lowercase.
+static CGFloat MCMathScaleFor(CGFloat fontSize) {
+    static const CGFloat kEmToText = 1.12;             // math em / text size
+    static const CGFloat kTenPointsInPdf = 10 * 72.0 / 72.27;
+    return fontSize * kEmToText / kTenPointsInPdf;
+}
+
+// Some formulas of the page on show are back from tectonic: render it again
+// with them in, once for all that arrive together, keeping the place.
+- (void)markdownMathArrived:(NSNotification *)note {
+    NSSet<NSString *> *keys = note.userInfo[MCMathKeysKey];
+    if (!_awaitedMath || ![_awaitedMath intersectsSet:keys]) return;
+    [_awaitedMath minusSet:keys];
+    if (_mathRenderQueued) return;
+    _mathRenderQueued = YES;
+    NSString *path = self.currentPath;
+    __weak EditorController *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [weakSelf showArrivedMathForPath:path];
+    });
+}
+
+- (void)showArrivedMathForPath:(NSString *)path {
+    _mathRenderQueued = NO;
+    if (!_awaitedMath || !self.isMarkdown || !self.previewMode || !path ||
+        ![path isEqualToString:self.currentPath])
+        return;
+    [self renderMarkdownKeepingPlace];
 }
 
 // A web picture finished. When the page on show waits for it, the page is
@@ -3052,11 +3235,12 @@ static NSString *MCFormatDuration(double seconds) {
 }
 
 // Render the preview again, keeping the text at the top of the pane where it
-// was. Each web picture that has arrived takes the place of its alt text, one
-// character for many, and moves what follows by the height it adds, so the
-// text to keep is found again by its character, counted past those
-// replacements. A page at the very top stays at the top, as a browser's does
-// while its pictures load.
+// was. Each web picture that has arrived takes the place of its alt text, and
+// each typeset formula the place of its TeX, one character for many, and
+// moves what follows by the height it adds, so the text to keep is found
+// again by its character, counted past those replacements (and past the
+// line about tectonic, when it is going). A page at the very top stays at
+// the top, as a browser's does while its pictures load.
 - (void)renderMarkdownKeepingPlace {
     NSTextView *tv = self.textView;
     NSTextStorage *st = tv.textStorage;
@@ -3073,18 +3257,47 @@ static NSString *MCFormatDuration(double seconds) {
         const NSRect r = [self textRectForCharacter:i];
         if (!NSIsEmptyRect(r)) {
             offset = NSMinY(r) - NSMinY(visible);
-            __block NSUInteger shift = 0, inside = NSNotFound;
-            [st enumerateAttribute:kMarkdownWebImage inRange:NSMakeRange(0, i + 1) options:0
+            // Stretches before the anchor that change length: where they
+            // are, and how many characters they will be.
+            NSMutableArray<NSArray<NSNumber *> *> *changes = [NSMutableArray array];
+            const NSRange before = NSMakeRange(0, i + 1);
+            [st enumerateAttribute:kMarkdownWebImage inRange:before options:0
                         usingBlock:^(NSArray *mark, NSRange range, BOOL *stop) {
                 (void)stop;
-                if (!mark || !MCMarkdownWebImageIsReady(mark.firstObject)) return;
-                if (NSLocationInRange(i, range)) inside = range.location - shift;
-                else shift += range.length - 1;
+                if (mark && MCMarkdownWebImageIsReady(mark.firstObject))
+                    [changes addObject:@[@(range.location), @(range.length), @1]];
             }];
+            if ([self typesetsMath])
+                [st enumerateAttribute:kMarkdownMath inRange:before options:0
+                            usingBlock:^(NSArray *mark, NSRange range, BOOL *stop) {
+                    (void)stop;
+                    if (mark && MCMathIsReady(mark.firstObject))
+                        [changes addObject:@[@(range.location), @(range.length), @1]];
+                }];
+            [changes sortUsingComparator:^NSComparisonResult(NSArray *a, NSArray *b) {
+                return [a[0] compare:b[0]];
+            }];
+            NSUInteger shift = 0, inside = NSNotFound;
+            for (NSArray<NSNumber *> *c in changes) {
+                const NSRange range = NSMakeRange(c[0].unsignedIntegerValue,
+                                                  c[1].unsignedIntegerValue);
+                if (NSLocationInRange(i, range)) {
+                    inside = range.location - shift;
+                    break;
+                }
+                shift += range.length - c[2].unsignedIntegerValue;
+            }
             anchor = inside != NSNotFound ? inside : i - shift;
         }
     }
+    const NSUInteger noteBefore = [self mathNoteLength];
     [self renderMarkdown:self.sourceText];
+    // The line about tectonic at the top may have come or gone.
+    const NSUInteger noteAfter = [self mathNoteLength];
+    if (anchor != NSNotFound) {
+        if (anchor >= noteBefore) anchor = anchor - noteBefore + noteAfter;
+        else anchor = 0;
+    }
     if (anchor != NSNotFound && st.length > 0) {
         if (!tv.textLayoutManager)   // TextKit 1, as the editor is: the full height
             [tv.layoutManager ensureLayoutForTextContainer:tv.textContainer];
@@ -3133,9 +3346,23 @@ static NSTextBlock *MCFullWidthBlock(void) {
 - (NSParagraphStyle *)markdownParagraphFor:(const MdRun &)r
                                      quote:(NSTextBlock * __strong *)quote
                                       code:(NSTextBlock * __strong *)code {
+    // Display math on a line of its own: centred when it is typeset, in a
+    // code block's box while it shows as TeX.
+    if (r.math == 2 && r.heading == 0 && !r.table && ![self typesetFormulaFor:r]) {
+        MdRun box = r;
+        box.math = 0;
+        box.codeBlock = true;
+        return [self markdownParagraphFor:box quote:quote code:code];
+    }
     AppSettings *cfg = [AppSettings shared];
     NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
     ps.lineSpacing = 3.0;
+    if (r.math == 2 && r.heading == 0 && !r.table) {
+        ps.alignment = NSTextAlignmentCenter;
+        ps.lineSpacing = 0;
+        ps.paragraphSpacingBefore = 4;
+        ps.paragraphSpacing = 4;
+    }
     NSMutableArray<NSTextBlock *> *blocks = [NSMutableArray array];
     if (r.quote) {
         if (!*quote) {
@@ -3234,10 +3461,12 @@ static NSTextBlock *MCFullWidthBlock(void) {
         font = [NSFont boldSystemFontOfSize:sizes[r.heading]];
         color = [cfg markdown:MarkdownColor::Heading];
     }
+    // Display math on a line of its own, shown as TeX, sits in a code box.
+    const BOOL boxedMath = r.math == 2 && r.heading == 0 && !r.table;
     if (r.codeBlock || r.code) {
         font = mono;
         color = [cfg markdown:MarkdownColor::Code];
-        if (!r.codeBlock)   // a code block's box is its paragraphs' text block
+        if (!r.codeBlock && !boxedMath)   // a code block's box is its paragraphs' text block
             a[NSBackgroundColorAttributeName] =
                 MCColor(cfg.settings.markdownCodeBackground());
     }
@@ -3267,6 +3496,49 @@ static NSTextBlock *MCFullWidthBlock(void) {
     if (href.length) a[NSLinkAttributeName] = href;
     if (r.line >= 0) a[kMarkdownSourceLine] = @(r.line);
     if (!ps) ps = [NSParagraphStyle defaultParagraphStyle];
+    if (r.math && cfg.settings.math()) {
+        // Typeset, a picture on the baseline in the color the text around
+        // it has. Otherwise its TeX in the code style: while it is being
+        // typeset (it is asked for once the page is built), or with TeX's
+        // complaint on hover when it failed.
+        const BOOL display = r.math == 2;
+        MCMathFormula *f = _mathOn ? MCMathLookup(s, display) : nil;
+        if (f && !f.failed) {
+            NSColor *ink = [cfg text:Surface::Editor];
+            NSFont *around = body;
+            if (r.heading > 0) {
+                const CGFloat sizes[7] = {0, 26, 22, 19, 17, 15, 14};
+                around = [NSFont boldSystemFontOfSize:sizes[r.heading]];
+                ink = [cfg markdown:MarkdownColor::Heading];
+            }
+            if (r.table && r.bold) ink = [cfg markdown:MarkdownColor::Heading];
+            if (r.quote) ink = [cfg markdown:MarkdownColor::Quote];
+            if (r.link) ink = [cfg markdown:MarkdownColor::Link];
+            MCMathAttachment *att = [[MCMathAttachment alloc]
+                initWithFormula:f scale:MCMathScaleFor(around.pointSize) color:ink font:around];
+            NSMutableAttributedString *pic = [[NSMutableAttributedString alloc]
+                initWithAttributedString:[NSAttributedString attributedStringWithAttachment:att]];
+            NSMutableDictionary *pa = [NSMutableDictionary dictionary];
+            pa[NSParagraphStyleAttributeName] = ps;
+            pa[NSFontAttributeName] = around;
+            if (href.length) pa[NSLinkAttributeName] = href;
+            if (r.line >= 0) pa[kMarkdownSourceLine] = @(r.line);
+            [pic addAttributes:pa range:NSMakeRange(0, pic.length)];
+            return pic;
+        }
+        if (f.failed) {
+            if (f.transient) _mathRunProblem = f.error;
+            a[NSToolTipAttributeName] = f.error.length ? f.error : @"TeX could not typeset this.";
+            // A dotted red line under it says there is something to hover.
+            a[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle | NSUnderlinePatternDot);
+            a[NSUnderlineColorAttributeName] = Hex(0xF14C4C);
+        } else if (_mathOn) {
+            NSString *key = MCMathKey(s, display);
+            [_awaitedMath addObject:key];
+            [_mathWanted addObject:@[s, @(display)]];
+            a[kMarkdownMath] = @[key, @(++_mathMarks)];
+        }
+    }
     if (r.image) {
         NSString *src = [NSString stringWithUTF8String:r.src.c_str()];
         NSImage *picture = MCMarkdownLoadImage(src,
@@ -3311,12 +3583,77 @@ static NSTextBlock *MCFullWidthBlock(void) {
     return [[NSAttributedString alloc] initWithString:s attributes:a];
 }
 
+// How wide a table cell's content must be (its widest word or formula, which
+// cannot wrap) and would like to be (all of it on one line).
+static void MCMeasureCell(NSAttributedString *s, CGFloat *least, CGFloat *most) {
+    *least = *most = 0;
+    if (s.length == 0) return;
+    *most = ceil([s boundingRectWithSize:NSMakeSize(CGFLOAT_MAX, CGFLOAT_MAX) options:0].size.width);
+    NSString *str = s.string;
+    NSCharacterSet *space = NSCharacterSet.whitespaceAndNewlineCharacterSet;
+    const NSUInteger n = str.length;
+    for (NSUInteger i = 0; i < n;) {
+        while (i < n && [space characterIsMember:[str characterAtIndex:i]]) i++;
+        NSUInteger j = i;
+        while (j < n && ![space characterIsMember:[str characterAtIndex:j]]) j++;
+        if (j > i) {
+            NSAttributedString *word = [s attributedSubstringFromRange:NSMakeRange(i, j - i)];
+            *least = MAX(*least, ceil([word boundingRectWithSize:NSMakeSize(CGFLOAT_MAX, CGFLOAT_MAX)
+                                                        options:0].size.width));
+        }
+        i = j;
+    }
+}
+
+// Each column's share of a table `available` points wide, as percentages,
+// laid out the way a browser lays out a table: every column gets its widest
+// piece that cannot wrap, and the room left over goes to the columns by how
+// much wider their text would like to be. `chrome` is a cell's padding and
+// border. Empty when the pane is too narrow to bother.
+static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *cells, int rows,
+                                                int cols, CGFloat available, CGFloat chrome) {
+    std::vector<CGFloat> lo((size_t)cols, 0), hi((size_t)cols, 0);
+    for (int row = 0; row < rows; row++)
+        for (int col = 0; col < cols; col++) {
+            CGFloat least = 0, most = 0;
+            MCMeasureCell(cells[(NSUInteger)(row * cols + col)], &least, &most);
+            // A point to spare, for the rounding of percentages.
+            lo[(size_t)col] = MAX(lo[(size_t)col], least + 1);
+            hi[(size_t)col] = MAX(hi[(size_t)col], most + 1);
+        }
+    const CGFloat room = available - cols * chrome;
+    if (room <= 40) return {};
+    CGFloat sumLo = 0, sumHi = 0;
+    for (int c = 0; c < cols; c++) {
+        sumLo += lo[(size_t)c];
+        sumHi += hi[(size_t)c];
+    }
+    std::vector<CGFloat> pct((size_t)cols);
+    for (int c = 0; c < cols; c++) {
+        const size_t k = (size_t)c;
+        CGFloat w;
+        if (sumHi <= room)         // everything fits on one line: share out the rest
+            w = sumHi > 0 ? hi[k] + (room - sumHi) * hi[k] / sumHi : room / cols;
+        else if (sumLo >= room)    // not even the widest pieces fit: scale them all
+            w = lo[k] * room / sumLo;
+        else
+            w = lo[k] + (room - sumLo) * (hi[k] - lo[k]) / (sumHi - sumLo);
+        pct[k] = w / available * 100;
+    }
+    return pct;
+}
+
 // A Markdown table as an NSTextTable: every cell is a paragraph of its own
 // that wraps inside its column, so a table wider than the pane stays a
 // table. Columns are sized to their content by AppKit, the header row is
 // shaded, and each column keeps the alignment its separator row gave it.
 // The parser's padding and rules (tableCol -1) are for monospace ports and
 // are skipped here.
+//
+// AppKit's sizing reads text and knows nothing of an attachment's width, so
+// a table holding typeset formulas gets its column widths from
+// MCTableColumnWidths instead: formulas cannot wrap, and AppKit would make
+// the columns equal and leave them to be scaled down.
 - (void)appendMarkdownTable:(const std::vector<MdRun> &)runs
                        from:(size_t)first
                          to:(size_t)end
@@ -3343,6 +3680,38 @@ static NSTextBlock *MCFullWidthBlock(void) {
     const NSTextAlignment alignments[3] = {NSTextAlignmentLeft, NSTextAlignmentCenter,
                                            NSTextAlignmentRight};
 
+    // The cells' contents first, so the columns can be measured.
+    NSMutableArray<NSMutableAttributedString *> *contents = [NSMutableArray array];
+    std::vector<int> aligns((size_t)(rows * cols), 0);
+    BOOL typesetMath = NO;
+    NSParagraphStyle *interim = [NSParagraphStyle defaultParagraphStyle];
+    for (int row = 0; row < rows; row++) {
+        for (int col = 0; col < cols; col++) {
+            NSMutableAttributedString *text = [[NSMutableAttributedString alloc] init];
+            for (size_t k = first; k < end; k++) {
+                const MdRun &r = runs[k];
+                if (r.tableRow != row || r.tableCol != col) continue;
+                aligns[(size_t)(row * cols + col)] = r.tableAlign;
+                NSAttributedString *piece = [self markdownRun:r style:interim inCell:YES];
+                if (!piece) continue;
+                [text appendAttributedString:piece];
+                if (r.math && piece.length == 1 &&
+                    [[piece attribute:NSAttachmentAttributeName atIndex:0 effectiveRange:NULL]
+                        isKindOfClass:MCMathAttachment.class])
+                    typesetMath = YES;
+            }
+            [contents addObject:text];
+        }
+    }
+    // Each cell pads its text by 8 points a side and has a 1 point border.
+    static const CGFloat kCellChrome = 17;
+    std::vector<CGFloat> widths;
+    if (typesetMath)
+        widths = MCTableColumnWidths(contents, rows, cols,
+                                     self.textView.textContainer.size.width -
+                                         2 * self.textView.textContainer.lineFragmentPadding,
+                                     kCellChrome);
+
     for (int row = 0; row < rows; row++) {
         for (int col = 0; col < cols; col++) {
             NSTextTableBlock *cell =
@@ -3359,21 +3728,16 @@ static NSTextBlock *MCFullWidthBlock(void) {
             [cell setWidth:4 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
                       edge:NSRectEdgeMaxY];
             if (row == 0) cell.backgroundColor = headerBackground;
+            if (!widths.empty())
+                [cell setValue:widths[(size_t)col] type:NSTextBlockPercentageValueType
+                  forDimension:NSTextBlockWidth];
 
             NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
             ps.textBlocks = @[cell];
             ps.lineSpacing = 2.0;
-            int align = 0;
-            NSMutableAttributedString *text = [[NSMutableAttributedString alloc] init];
-            for (size_t k = first; k < end; k++) {
-                const MdRun &r = runs[k];
-                if (r.tableRow != row || r.tableCol != col) continue;
-                align = r.tableAlign;
-                ps.alignment = alignments[std::min(std::max(align, 0), 2)];
-                NSAttributedString *piece = [self markdownRun:r style:ps inCell:YES];
-                if (piece) [text appendAttributedString:piece];
-            }
+            const int align = aligns[(size_t)(row * cols + col)];
             ps.alignment = alignments[std::min(std::max(align, 0), 2)];
+            NSMutableAttributedString *text = contents[(NSUInteger)(row * cols + col)];
             NSMutableDictionary *end = [plain mutableCopy];
             end[NSParagraphStyleAttributeName] = ps;
             [text appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"
