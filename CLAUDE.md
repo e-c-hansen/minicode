@@ -632,9 +632,29 @@ never closes.
   log when doing this again. Other sessions (and the user's own MiniCode)
   may have clangd running: kill only PIDs the test started.
 
-## Current state (handoff, 2026-09-26)
+## Current state (handoff, 2026-09-29)
 
-- **Released: 1.4.5** (2026-09-26), on GitHub Releases and the Homebrew tap,
+- **Released: 1.4.9** (2026-09-29), with the Mac zip and the signed APK;
+  the user's Mac runs it from Homebrew. 1.4.6 the git panel on all three
+  platforms; 1.4.7 video and audio (Mac, Linux), Pastiera fixes and a held
+  Ctrl on Android; 1.4.8 Android video and audio and a real Ctrl reaching
+  the Android shell; 1.4.9 the Markdown parser rewrite (GitHub's rules),
+  math typeset by tectonic in the Mac preview (TeX shown verbatim on Linux
+  and Android), web pictures in the Mac and Linux previews, and opening
+  files from Finder (document types, `application:openURLs:`). 2,066 core
+  checks pass. Waiting on the user: Finder's Open With, double-click and a
+  Dock drop on 1.4.9; the Linux work on the ThinkPad.
+- **Android web pictures** are on branch `worktree-agent-a19381a828540a39b`
+  (worktree under `.claude/worktrees/`), not merged: on the phone a PNG and
+  GIF arrived and failures kept their alt text, but a badge link, the
+  scroll staying put and the ⋮ "Web images in Markdown" toggle making no
+  requests are still unchecked, and `/sdcard/mc-test/web-test` needs
+  deleting. Needs a new wireless debugging port (the phone is now at
+  192.168.1.211; restart the adb server if connect says "No route").
+- **Local build alias**: `mc-dev` (in the user's `~/Code/dotfiles/shell/aliases.sh`)
+  runs the repo's `MiniCode.app`; launching it registers that copy with
+  Launch Services, so Finder may offer two MiniCodes. `lsregister -u` it.
+- **Earlier: 1.4.5** (2026-09-26), on GitHub Releases and the Homebrew tap,
   with the Mac zip and the signed Android APK; the user's own Mac runs it
   from Homebrew. The user expects a finished Mac change to be pushed,
   released and upgraded on their Mac (see Build / release). What each
