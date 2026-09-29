@@ -4,35 +4,6 @@
 <dict>
 	<key>CFBundleDisplayName</key>
 	<string>MiniCode</string>
-	<key>CFBundleExecutable</key>
-	<string>MiniCode</string>
-	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
-	<key>CFBundleIdentifier</key>
-	<string>com.minicode.editor</string>
-	<key>CFBundleName</key>
-	<string>MiniCode</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<key>CFBundleShortVersionString</key>
-	<string>1.4.8</string>
-	<key>CFBundleVersion</key>
-	<string>1.4.8</string>
-	<key>LSMinimumSystemVersion</key>
-	<string>11.0</string>
-	<key>NSHighResolutionCapable</key>
-	<true/>
-	<key>NSPrincipalClass</key>
-	<string>NSApplication</string>
-	<!--
-	What Finder offers MiniCode for (Open With, drops on the Dock icon). Every
-	entry is Alternate, so MiniCode is never made the default app for a type
-	unless the user picks it. There is no NSDocumentClass: AppDelegate's
-	application:openURLs: handles every open, and NSDocumentController is
-	never used. Types with a system UTI are listed by UTI; the rest (TeX, Go,
-	Rust, TOML, conf, and .ts, which macOS takes for an MPEG-2 video) by
-	extension, the way VS Code declares them.
-	-->
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -74,12 +45,6 @@
 			</array>
 		</dict>
 		<dict>
-			<key>CFBundleTypeName</key>
-			<string>TeX document</string>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>LSHandlerRank</key>
-			<string>Alternate</string>
 			<key>CFBundleTypeExtensions</key>
 			<array>
 				<string>tex</string>
@@ -89,14 +54,14 @@
 				<string>cls</string>
 				<string>bib</string>
 			</array>
-		</dict>
-		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Source code</string>
+			<string>TeX document</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
 			<string>Alternate</string>
+		</dict>
+		<dict>
 			<key>CFBundleTypeExtensions</key>
 			<array>
 				<string>ts</string>
@@ -117,6 +82,12 @@
 				<string>cmake</string>
 				<string>gradle</string>
 			</array>
+			<key>CFBundleTypeName</key>
+			<string>Source code</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
 		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
@@ -198,22 +169,37 @@
 			</array>
 		</dict>
 	</array>
-	<!--
-	Markdown is a system type on current macOS (CoreTypes declares it). The
-	import only describes it for older systems that lack it; where the
-	system's own declaration exists, it wins.
-	-->
+	<key>CFBundleExecutable</key>
+	<string>MiniCode</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.minicode.editor</string>
+	<key>CFBundleName</key>
+	<string>MiniCode</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.4.9</string>
+	<key>CFBundleVersion</key>
+	<string>1.4.9</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
 	<key>UTImportedTypeDeclarations</key>
 	<array>
 		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>net.daringfireball.markdown</string>
-			<key>UTTypeDescription</key>
-			<string>Markdown document</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.plain-text</string>
 			</array>
+			<key>UTTypeDescription</key>
+			<string>Markdown document</string>
+			<key>UTTypeIdentifier</key>
+			<string>net.daringfireball.markdown</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
