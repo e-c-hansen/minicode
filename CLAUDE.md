@@ -26,7 +26,9 @@ this file covers the macOS app except where it says otherwise.
   matching), JSON, the LSP
   client, finding file references and URLs in terminal output, the
   folder search (on a scratch tree in the temp directory), and the git
-  status and diff readers (1,651 checks on 2026-09-26).
+  status and diff readers (1,932 checks on 2026-09-29, with the Markdown
+  corpus in `tests/markdown/corpus.md` read from the repo root; the
+  corpus checks skip themselves where that file is not found).
   Exits non-zero on failure. The Makefile uses clang++ on the Mac and make's
   default (g++) elsewhere, so it runs on Linux too, and CI runs it there.
 - `make run [DIR=~/path]` — build and launch.
@@ -73,7 +75,10 @@ isolation. Keep them dependency-free.
   blank line ends any open math, as it does in TeX, so an unclosed `$`
   recolors only its own paragraph. Tokens start and end only at ASCII
   characters, which keeps UTF-8 and UTF-16 results identical.
-- `src/MarkdownParser.{h,cpp}` — CommonMark subset -> flat list of styled runs.
+- `src/MarkdownParser.{h,cpp}` — Markdown -> flat list of styled runs, by
+  CommonMark's rules plus GitHub's tables, strikethrough, task lists,
+  alerts and bare web addresses; also `lines()`, how it read each source
+  line, which `MarkdownEdit` works from. See "Markdown" in the gotchas.
 - `src/Settings.{h,cpp}` — the settings file (`key = value`): parsing with
   per-line errors, defaults, and the resolved color of every surface
   (opacity applied, fallbacks from `window.*`). All color decisions live here
@@ -485,6 +490,14 @@ never closes.
   itself (403) and real typing in the message box, which injection cannot
   show. The same branch fixed Back on Android 16, which left the app from
   any pane (`onBackPressed` is never called for an app targeting API 36).
+- **Markdown parser rewrite** (2026-09-29, on a branch, not merged): the
+  core now follows CommonMark and GitHub (see "The Markdown parser" in the
+  gotchas), the Mac draws quote bars, code boxes, heading and horizontal
+  rules and hanging list indents, and Linux and Android pick up
+  strikethrough and the even block spacing. Checked with the unit tests
+  (g++ in the Docker container too), offscreen renders on the Mac, the
+  GTK port in the container, and an Android debug build; not yet seen by
+  the user on a real screen, and no release cut.
 - **Markdown preview** (Mac, Linux and Android): links, pictures with
   GIFs playing, real tables, Shift+Cmd+P / Ctrl+Shift+P / leader P keeping
   the place, and double-click (double-tap) editing of a block. Details under
@@ -1385,8 +1398,92 @@ holds, these give real runtime evidence rather than compile-only evidence:
     scrolling, a web GIF playing (an offscreen window counts as occluded,
     so frames never advance there), and real hosts such as GitHub and
     shields.io, which the test never contacted.
-- **Markdown**: block elements call `ensureLineStart` so they aren't glued to
-  the previous paragraph; headings get `paragraphSpacingBefore`. Tables: the
+- **The Markdown parser** was rewritten on 2026-09-29, after the user's
+  own notes rendered wrongly in many places. What was wrong, and what to
+  keep in mind:
+  - **Two passes.** `analyze()` reads lines into blocks (paragraphs, ATX
+    and setext headings, fenced and indented code, quotes with GitHub's
+    `> [!NOTE]` alerts, lists nested by their parent's text column, rules,
+    tables, front matter shown as code) and classifies every line
+    (`MdLine`: kind, and a block number shared by lines edited together).
+    Link reference definitions and HTML comments are `Hidden`. The inline
+    pass then reads each block's text, all its lines at once, so emphasis
+    can span a line break.
+  - **Emphasis follows CommonMark's delimiter rules** (left and right
+    flanking, the rule of three, openers-bottom). The old parser italicized
+    from any `_` or `*` to the next one, so `max_len`, `load_config` and
+    `2 * 3 * 4` came out italic with the characters eaten. Now underscores
+    inside a word never emphasise; stars do, as on GitHub (`5*6*7` puts
+    the 6 in italics, and `__init__.py` bolds "init" there too).
+  - Also new: backslash escapes, entities (named and numeric), code spans
+    of any backtick count, link titles, parentheses in a destination,
+    styled link text, reference links, `<autolinks>` and bare
+    `https://`/`www.` addresses, `~~strike~~` (`MdRun::strike`), hard
+    breaks (two spaces, a backslash, `<br>`: `hardBreak`), task boxes,
+    lazy continuation lines in list items and quotes, and a little inline
+    HTML: `<b>`, `<i>`, `<s>`, `<code>`/`<kbd>`, `<a href>`, `<img>`,
+    `<h1>`..`<h6>` on a line of its own. Other tags and comments are
+    dropped, their text kept.
+  - **Space between blocks is a run.** Every block ends with its own
+    `"\n"`, and between two blocks comes exactly one more `"\n"` with
+    `gap` set, however many blank lines the source has; tight list items
+    get none. The old parser turned blank lines into `"\n"` runs one for
+    one, and ended a paragraph with a space, so paragraphs ran together
+    while every heading had a whole empty line under it and every table
+    two. Ports that draw `"\n"` as text get one even empty line; the Mac
+    draws a gap 12 points high and Linux as an 8 point line (`md_gap`).
+  - **Markers**: a list item's first run has `marker` set and reads
+    `"  • "` as before (◦ at the second level, ▪ below, the number as
+    written, ☐ or ☑ for a task). The Mac trims it and places it on tab
+    stops for a hanging indent; Linux and Android still show it as text.
+  - **`MarkdownEdit` no longer classifies lines itself**: it asks
+    `MarkdownParser::lines`, so a new block rule cannot make the preview
+    and a double-click disagree. A list item's block now takes its
+    continuation lines, a setext heading its text lines, a quote the whole
+    quote, and an indented block or front matter is Code.
+  - **Speed**: brackets are matched once per block with a stack, and link
+    and image nesting stops at 8, so pathological input stays linear
+    (30,000 `[` in 30 ms unoptimized). The cheatsheet repeated 100 times
+    (1.3 MB) parses in 18 ms at -O2 against the old parser's 16; dense
+    generated markup is about twice as slow (8 MB in 127 ms against 60).
+  - **Tests**: `md:*` groups in `run_tests.cpp` cover each rule, and
+    `tests/markdown/corpus.md` holds every construct for eyes and for
+    `md:corpus` (no line unstamped, no markup left as text, every run
+    editable, its own `#links` landing on its headings).
+  - **Math is not rendered** (`$...$`, `$$...$$`, GitHub's ```` ```math ````).
+    It shows as written, and escapes inside it are read as Markdown's.
+    Options discussed, none started: (1) read math spans before emphasis
+    and show them as code, so the TeX survives intact (cheap, all ports);
+    (2) turn simple TeX into Unicode (Greek, ℝ, ×, sub and superscript
+    digits), pure C++ for all ports, useless for fractions and matrices;
+    (3) typeset every formula of a page with tectonic in one background
+    run, one page per formula, cached by hash and drawn as pictures
+    (vector PDF on the Mac, poppler on Linux, Termux on Android); exact,
+    no new dependency, but the tectonic cache here has no math fonts, so
+    the first run needs the network, and inline baselines need care;
+    (4) a small TeX math layout engine of our own, the most work. MathJax
+    or KaTeX in a web view would break the no-dependency rule.
+    Markdown exported from a page that MathJax rendered can lose its math
+    entirely (empty table cells, gaps in sentences), which no viewer can
+    show. Such a page's MathJax SVG keeps `data-mml-node` and `data-c`
+    (the MathML element tree and each glyph's code point) but no TeX, so
+    the formulas could be rebuilt as MathML from it, not copied as TeX.
+- **The Mac's Markdown paragraphs** (`renderMarkdown:`,
+  `markdownParagraphFor:quote:code:`, `markdownRun:style:inCell:`): a
+  paragraph's style comes from its first run and is given to every run in
+  it. Quotes and code blocks are `NSTextBlock`s: one block object is
+  carried across the paragraphs (and inner gaps) of one quote or code
+  block, so the bar down a quote's left side and a code block's box are
+  drawn once around all of them. h1 and h2 have a rule under them and a
+  horizontal rule is a full-width block with a bottom border, both text
+  blocks too. List text sits at 24 points a level with the marker right
+  aligned on a tab just before it, so wrapped lines and numbers of any
+  width line up. A hard break is U+2028 there, so it stays inside the
+  paragraph and its indent. Checked offscreen (window ordering swizzled,
+  activation Prohibited, `cacheDisplayInRect:` of the text view) on the
+  corpus and the user's notes; the look on a real screen still wants the
+  user's eyes.
+- **Markdown**: headings get `paragraphSpacingBefore`. Tables: the
   parser lays them out as aligned monospace (no port shows that any more)
   and also tags every run with its table, row, column and alignment
   (`tableId`/`tableRow`/`tableCol`, -1 for padding and rules). The Mac skips
@@ -1404,9 +1501,10 @@ holds, these give real runtime evidence rather than compile-only evidence:
   a double-click on the read-only preview (`CodeTextView
   onPreviewDoubleClick`) reads `kMarkdownSourceLine`, plus
   `kMarkdownTableCell` (row, column) in a table, and `MarkdownEdit::blockAt`
-  classifies source lines the way the parser does to find the block:
-  heading text, list item text, whole paragraph or quote, code between the
-  fences, or one table cell (newlines and bare pipes are escaped on the way
+  finds the block from the parser's own reading of the lines
+  (`MarkdownParser::lines`): heading text, list item text with its
+  continuation lines, whole paragraph or quote, code between the fences,
+  or one table cell (newlines and bare pipes are escaped on the way
   back). The popover works like the LaTeX one (Return saves, Shift+Return
   types a newline, Add item on a list item). `applyMarkdownSource:` splices,
   marks the buffer dirty, registers undo with the window's undo manager and
@@ -1550,9 +1648,11 @@ holds, these give real runtime evidence rather than compile-only evidence:
 See `ROADMAP.md`. Waiting on the user: trying the Mac git panel before a
 release, the Linux one on the ThinkPad, and the Android one on the phone
 (the leader key and real typing), and the Android Markdown preview and key
-rows on the phone. Candidates, none started: a gap
-between a paragraph and a list that follows it in the preview (the parser
-emits none); Android project
+rows on the phone. Candidates, none started: a hanging indent for list
+items in the Linux and Android previews (the Mac has one; see "The Mac's
+Markdown paragraphs"), quote bars and code boxes there too, and math in
+the Markdown preview (`$...$`, options in the 2026-09-29 notes under
+"The Markdown parser"); Android project
 search and comment toggling;
 Android on F-Droid; the other throng features discussed (terminals that
 survive closing the app, switching between projects); notarization once the

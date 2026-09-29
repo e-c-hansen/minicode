@@ -11,6 +11,7 @@ import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
 import android.text.style.RelativeSizeSpan
+import android.text.style.StrikethroughSpan
 import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
 import android.text.style.UnderlineSpan
@@ -237,6 +238,7 @@ class MarkdownPreview @JvmOverloads constructor(
         }
         if (flags and Core.MD_BOLD != 0) span(StyleSpan(Typeface.BOLD))
         if (flags and Core.MD_ITALIC != 0) span(StyleSpan(Typeface.ITALIC))
+        if (flags and Core.MD_STRIKE != 0) span(StrikethroughSpan())
         if (flags and (Core.MD_CODE or Core.MD_CODE_BLOCK) != 0) {
             span(TypefaceSpan("monospace"))
             span(ForegroundColorSpan(Palette.MD_CODE))

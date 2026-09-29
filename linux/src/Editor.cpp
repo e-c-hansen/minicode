@@ -303,6 +303,12 @@ void Editor::ensureTags() {
                                "weight", PANGO_WEIGHT_BOLD, NULL);
     gtk_text_buffer_create_tag(buffer_, "md_italic",
                                "style", PANGO_STYLE_ITALIC, NULL);
+    gtk_text_buffer_create_tag(buffer_, "md_strike",
+                               "strikethrough", TRUE, NULL);
+    // The empty line between two blocks (MdRun::gap), shorter than a line
+    // of text, as the macOS build draws it.
+    gtk_text_buffer_create_tag(buffer_, "md_gap",
+                               "size-points", 8.0, NULL);
     gtk_text_buffer_create_tag(buffer_, "plainmsg",
                                "foreground", pal::MdPlainMsg, NULL);
 

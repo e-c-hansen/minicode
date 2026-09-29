@@ -1,7 +1,7 @@
 // Markdown.h — renders the shared MarkdownParser's MdRun list into a styled
 // GtkTextBuffer. The buffer is expected to already carry the markdown tags
 // created by Editor::ensureTags() (h1..h6, md_code, md_quote, md_rule,
-// md_link, md_table, md_bold, md_italic, plainmsg).
+// md_link, md_table, md_bold, md_italic, md_strike, md_gap, plainmsg).
 //
 // Tables and pictures are widgets anchored in the text (a grid of wrapping
 // labels, and MdPicture, which plays GIFs); fit() sizes them to the pane.

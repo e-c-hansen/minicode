@@ -26,6 +26,7 @@
 #include <fstream>
 #include <map>
 #include <random>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -892,6 +893,55 @@ void testMarkdownEdit() {
         if (b.kind == Block::None) { ok = false; printf("  no block for run '%s' line %d\n", run.text.c_str(), line); }
     }
     CHECK(ok);
+
+    GROUP("mdedit:blocks-more");
+    const std::string more =
+        "- item one\n"          // 0
+        "  continues here\n"    // 1
+        "- two\n"               // 2
+        "\n"                    // 3
+        "Setext title\n"        // 4
+        "============\n"        // 5
+        "\n"                    // 6
+        "## Closed ##\n"        // 7
+        "\n"                    // 8
+        "> q1\n"                // 9
+        ">\n"                   // 10
+        "> q2\n"                // 11
+        "\n"                    // 12
+        "[ref]: /x\n"           // 13
+        "\n"                    // 14
+        "    indented\n"        // 15
+        "    code\n"            // 16
+        "\n"                    // 17
+        "- [ ] task\n"          // 18
+        "<!-- note -->\n";      // 19
+    auto textOf = [&](const Block &b) { return more.substr(b.start, b.end - b.start); };
+    // A list item takes its continuation lines with it.
+    Block cont = blockAt(more, 1);
+    CHECK(cont.kind == Block::ListItem && textOf(cont) == "item one\n  continues here");
+    CHECK(cont.firstLine == 0 && cont.lastLine == 1);
+    CHECK(blockAt(more, 0).end == cont.end);
+    CHECK(addItem(more, cont, "new").find("continues here\n- new\n- two\n") != std::string::npos);
+    Block setext = blockAt(more, 4);
+    CHECK(setext.kind == Block::Heading && textOf(setext) == "Setext title");
+    CHECK(blockAt(more, 5).kind == Block::None);
+    Block closed = blockAt(more, 7);
+    CHECK(closed.kind == Block::Heading && textOf(closed) == "Closed");
+    CHECK(replace(more, closed, "Open").find("## Open ##\n") != std::string::npos);
+    Block quote = blockAt(more, 10);
+    CHECK(quote.kind == Block::Quote && textOf(quote) == "> q1\n>\n> q2");
+    CHECK(blockAt(more, 13).kind == Block::None && blockAt(more, 19).kind == Block::None);
+    Block indented = blockAt(more, 16);
+    CHECK(indented.kind == Block::Code && textOf(indented) == "    indented\n    code");
+    Block task = blockAt(more, 18);
+    CHECK(task.kind == Block::ListItem && textOf(task) == "[ ] task");
+    CHECK(task.nextItemPrefix == "- [ ] ");
+    // Front matter is a code block.
+    const std::string fm = "---\ntitle: x\n---\ntext\n";
+    Block front = blockAt(fm, 1);
+    CHECK(front.kind == Block::Code && fm.substr(front.start, front.end - front.start) == "title: x");
+    CHECK(blockAt(fm, 0).kind == Block::None && blockAt(fm, 3).kind == Block::Paragraph);
 }
 
 void testMarkdown() {
@@ -1128,6 +1178,443 @@ void testMarkdown() {
         }
     }
     CHECK(sawNewlineBeforeHeading);
+}
+
+// Every run's text joined: what a reader sees, block by block.
+std::string mdText(const std::vector<MdRun> &runs) {
+    std::string s;
+    for (const MdRun &r : runs) s += r.text;
+    return s;
+}
+
+template <class F> bool mdAny(const std::vector<MdRun> &runs, F f) {
+    for (const MdRun &r : runs)
+        if (f(r)) return true;
+    return false;
+}
+
+template <class F> int mdCount(const std::vector<MdRun> &runs, F f) {
+    int n = 0;
+    for (const MdRun &r : runs)
+        if (f(r)) n++;
+    return n;
+}
+
+// The run whose text is exactly `text`, or a blank run.
+MdRun mdRun(const std::vector<MdRun> &runs, const std::string &text) {
+    for (const MdRun &r : runs)
+        if (r.text == text) return r;
+    return MdRun();
+}
+
+// What CommonMark and GitHub do that the first parser did not. Most of the
+// cases come from files that rendered wrongly: identifiers with
+// underscores, a bold label glued to its sentence, escapes, and the space
+// between blocks.
+void testMarkdownCommonMark() {
+    using P = MarkdownParser;
+
+    GROUP("md:spacing");
+    {
+        // One gap between blocks, however many blank lines part them.
+        auto r = P::parse("one\ntwo\n\nthree\n\n\n\nfour\n");
+        CHECK(mdText(r) == "one two\n\nthree\n\nfour\n");
+        CHECK(mdCount(r, [](const MdRun &x) { return x.gap; }) == 2);
+        // A heading's space is the same with or without a blank line after it.
+        CHECK(mdText(P::parse("# H\n\ntext\n")) == mdText(P::parse("# H\ntext\n")));
+        CHECK(mdText(P::parse("# H\ntext\n")) == "H\n\ntext\n");
+        // A list or a table straight after a paragraph is set apart all the
+        // same; the items of a tight list are not.
+        CHECK(mdText(P::parse("text\n- a\n- b\n\nafter\n")) ==
+              "text\n\n  \xE2\x80\xA2 a\n  \xE2\x80\xA2 b\n\nafter\n");
+        auto t = P::parse("text\n| a |\n|---|\n| 1 |\nafter\n");
+        CHECK(t.size() > 2 && t[0].text == "text" && t[1].text == "\n" && t[2].gap);
+        CHECK(!t.empty() && t.back().text == "\n" && !t.back().gap);
+        // A loose list has a gap between its items.
+        CHECK(mdCount(P::parse("- a\n\n- b\n"), [](const MdRun &x) { return x.gap; }) == 1);
+        // Never two gaps in a row, and none at either end.
+        auto g = P::parse("\n\n# A\n\n\n<!-- c -->\n\n[x]: /y\n\npara\n\n\n");
+        bool ok = !g.empty() && !g.front().gap && !g.back().gap;
+        for (size_t k = 1; k < g.size(); k++)
+            if (g[k].gap && g[k - 1].gap) ok = false;
+        CHECK(ok);
+        CHECK(mdText(g) == "A\n\npara\n");
+    }
+
+    GROUP("md:emphasis");
+    {
+        auto names = P::parse("snake_case_name, max_len, load_config and x_i^T\n");
+        CHECK(mdText(names) == "snake_case_name, max_len, load_config and x_i^T\n");
+        CHECK(!mdAny(names, [](const MdRun &x) { return x.italic || x.bold; }));
+        auto maths = P::parse("2 * 3 * 4 and a * b\n");
+        CHECK(mdText(maths) == "2 * 3 * 4 and a * b\n");
+        CHECK(!mdAny(maths, [](const MdRun &x) { return x.italic; }));
+        auto both = P::parse("***both***\n");
+        CHECK(mdRun(both, "both").bold && mdRun(both, "both").italic);
+        auto nest = P::parse("**bold *it* bold** and *em **strong** em*\n");
+        CHECK(mdRun(nest, "it").bold && mdRun(nest, "it").italic);
+        CHECK(mdRun(nest, "bold ").bold && !mdRun(nest, "bold ").italic);
+        CHECK(mdRun(nest, "strong").bold && mdRun(nest, "strong").italic);
+        CHECK(mdRun(nest, "em ").italic && !mdRun(nest, "em ").bold);
+        // A bold label glued to its sentence ends where its ** close.
+        auto label = P::parse("**Label**Text after\n");
+        CHECK(mdRun(label, "Label").bold && !mdRun(label, "Text after").bold);
+        // Stars inside a word emphasise; underscores inside one do not.
+        CHECK(mdRun(P::parse("un*frig*able\n"), "frig").italic);
+        CHECK(!mdAny(P::parse("un_frig_able\n"), [](const MdRun &x) { return x.italic; }));
+        CHECK(mdRun(P::parse("__init__.py\n"), "init").bold);   // as on GitHub
+        CHECK(!mdAny(P::parse("foo_bar_ and _foo_bar\n"),
+                     [](const MdRun &x) { return x.italic; }));
+        CHECK(mdText(P::parse("**unclosed and a lone *\n")) == "**unclosed and a lone *\n");
+        auto strike = P::parse("~~gone~~, ~one~ and ~~~three~~~\n");
+        CHECK(mdRun(strike, "gone").strike && mdRun(strike, "one").strike);
+        CHECK(!mdAny(strike, [](const MdRun &x) { return x.strike && x.text == "three"; }));
+        // A code span binds tighter than emphasis.
+        auto code = P::parse("*foo`*`\n");
+        CHECK(mdRun(code, "*").code && !mdAny(code, [](const MdRun &x) { return x.italic; }));
+        auto inLink = P::parse("[*a*](u) and *[b](v)*\n");
+        CHECK(mdRun(inLink, "a").italic && mdRun(inLink, "a").link);
+        CHECK(mdRun(inLink, "b").italic && mdRun(inLink, "b").url == "v");
+    }
+
+    GROUP("md:escapes");
+    {
+        auto e = P::parse("\\*x\\* a\\_b \\[t\\](u) \\q \\\\ \\`c\\`\n");
+        CHECK(mdText(e) == "*x* a_b [t](u) \\q \\ `c`\n");
+        CHECK(!mdAny(e, [](const MdRun &x) { return x.italic || x.link || x.code; }));
+        CHECK(!mdAny(P::parse("\\# not a heading\n"), [](const MdRun &x) { return x.heading; }));
+        CHECK(mdText(P::parse("f\xE2\x80\xB2\\_n=42\n")) == "f\xE2\x80\xB2_n=42\n");
+    }
+
+    GROUP("md:code-spans");
+    {
+        CHECK(mdRun(P::parse("``a ` b``\n"), "a ` b").code);
+        CHECK(mdRun(P::parse("` `` `\n"), "``").code);
+        CHECK(mdRun(P::parse("`  x  `\n"), " x ").code);
+        CHECK(mdRun(P::parse("`a\nb`\n"), "a b").code);
+        CHECK(mdText(P::parse("`unclosed\n")) == "`unclosed\n");
+        CHECK(mdRun(P::parse("`**not bold** _x_`\n"), "**not bold** _x_").code);
+    }
+
+    GROUP("md:links");
+    {
+        auto three = P::parse("[a](u1) [b](u2) [c](u3)\n");
+        CHECK(mdCount(three, [](const MdRun &x) { return x.link; }) == 3);
+        CHECK(mdRun(three, "c").url == "u3");
+        CHECK(mdRun(P::parse("[t](http://x \"Title\")\n"), "t").url == "http://x");
+        CHECK(mdRun(P::parse("[w](https://e.org/a_(b))\n"), "w").url == "https://e.org/a_(b)");
+        CHECK(mdRun(P::parse("[t](<a b.md>)\n"), "t").url == "a b.md");
+        auto styled = P::parse("[**b** c](u)\n");
+        CHECK(mdRun(styled, "b").bold && mdRun(styled, "b").url == "u");
+        CHECK(mdRun(styled, " c").link && !mdRun(styled, " c").bold);
+        // Reference links: full, collapsed (any case) and shortcut; the
+        // definitions themselves show nothing.
+        auto refs = P::parse("[x][r], [R][] and [r].\n\n[r]: http://r \"T\"\n[s]: </s>\n");
+        CHECK(mdRun(refs, "x").url == "http://r" && mdRun(refs, "R").url == "http://r");
+        CHECK(mdRun(refs, "r").url == "http://r");
+        CHECK(mdText(refs) == "x, R and r.\n");
+        CHECK(mdText(P::parse("[missing][nope]\n")) == "[missing][nope]\n");
+        // Autolinks, and web addresses written out.
+        CHECK(mdRun(P::parse("<https://a.b/c>\n"), "https://a.b/c").url == "https://a.b/c");
+        CHECK(mdRun(P::parse("<me@x.org>\n"), "me@x.org").url == "mailto:me@x.org");
+        auto bare = P::parse("see https://a.b/p_q_r. or (https://a.b/c) or www.a.b,\n");
+        CHECK(mdRun(bare, "https://a.b/p_q_r").link);
+        CHECK(mdRun(bare, "https://a.b/c").link);
+        CHECK(mdRun(bare, "www.a.b").url == "http://www.a.b");
+        CHECK(!mdAny(bare, [](const MdRun &x) { return x.italic; }));
+        CHECK(!mdAny(P::parse("nohttps://x and awww.b\n"), [](const MdRun &x) { return x.link; }));
+        // A badge: a picture inside a link.
+        auto badge = P::parse("[![CI](b.svg)](http://ci) [![x]][site]\n\n[x]: x.png\n[site]: /s\n");
+        CHECK(mdAny(badge, [](const MdRun &x) { return x.image && x.src == "b.svg" && x.link; }));
+        CHECK(mdAny(badge, [](const MdRun &x) { return x.image && x.src == "x.png" && x.url == "/s"; }));
+    }
+
+    GROUP("md:entities");
+    {
+        CHECK(mdText(P::parse("&amp; &lt;t&gt; &copy; &#65;&#x42; &nope; &alpha;&Omega; AT&T\n")) ==
+              "& <t> \xC2\xA9 AB &nope; \xCE\xB1\xCE\xA9 AT&T\n");
+        CHECK(mdText(P::parse("a&nbsp;b &mdash; &frac12; &#0;\n")) ==
+              "a\xC2\xA0" "b \xE2\x80\x94 \xC2\xBD \xEF\xBF\xBD\n");
+    }
+
+    GROUP("md:hard-breaks");
+    {
+        auto two = P::parse("a  \nb\n");
+        CHECK(two.size() >= 3 && two[0].text == "a" && two[1].hardBreak && two[1].text == "\n" &&
+              two[2].text == "b" && two[2].line == 1);
+        CHECK(mdAny(P::parse("a\\\nb\n"), [](const MdRun &x) { return x.hardBreak; }));
+        CHECK(mdAny(P::parse("a<br>b and c<br/>d\n"), [](const MdRun &x) { return x.hardBreak; }));
+        CHECK(mdText(P::parse("a\nb\n")) == "a b\n");
+        CHECK(mdText(P::parse("last line  \n")) == "last line\n");
+    }
+
+    GROUP("md:lists");
+    {
+        auto nested = P::parse("- a\n  - b\n    - c\n");
+        CHECK(mdRun(nested, "  \xE2\x80\xA2 ").marker && mdRun(nested, "a").listDepth == 1);
+        CHECK(mdRun(nested, "    \xE2\x97\xA6 ").listDepth == 2);        // ◦
+        CHECK(mdRun(nested, "      \xE2\x96\xAA ").listDepth == 3);      // ▪
+        // Nesting follows the parent's text column, not two spaces a level.
+        CHECK(mdRun(P::parse("- a\n    - b\n"), "b").listDepth == 2);
+        CHECK(mdRun(P::parse("1. a\n   - b\n"), "b").listDepth == 2);
+        CHECK(mdRun(P::parse("- a\n - b\n"), "b").listDepth == 1);
+        auto ordered = P::parse("3. x\n4. y\n10) z\n");
+        CHECK(mdRun(ordered, "  3. ").marker && mdRun(ordered, "  3. ").ordered);
+        CHECK(mdRun(ordered, "y").ordered && mdRun(ordered, "  10) ").marker);
+        auto tasks = P::parse("- [ ] to do\n- [x] done\n");
+        CHECK(mdRun(tasks, "  \xE2\x98\x90 ").marker && mdRun(tasks, "  \xE2\x98\x91 ").marker);
+        CHECK(mdRun(tasks, "to do").listDepth == 1 && mdRun(tasks, "done").listDepth == 1);
+        // A line under an item continues it, indented or not.
+        auto lazy = P::parse("- item\ncontinued\n  and more\n- next\n");
+        CHECK(mdRun(lazy, "continued").listDepth == 1 && mdRun(lazy, "continued").line == 1);
+        CHECK(mdRun(lazy, "and more").listDepth == 1);
+        CHECK(mdCount(lazy, [](const MdRun &x) { return x.marker; }) == 2);
+        // A paragraph indented under an item after a blank line belongs to it.
+        auto para = P::parse("- item\n\n  second paragraph\n\nafter\n");
+        CHECK(mdRun(para, "second paragraph").listDepth == 1);
+        CHECK(!mdRun(para, "second paragraph").marker && mdRun(para, "after").listDepth == 0);
+        // Only a list starting at 1 may interrupt a paragraph.
+        CHECK(!mdAny(P::parse("The year\n2019. was long\n"),
+                     [](const MdRun &x) { return x.listDepth > 0; }));
+        CHECK(mdAny(P::parse("Steps:\n1. first\n"), [](const MdRun &x) { return x.marker; }));
+        CHECK(!mdAny(P::parse("* * *\n"), [](const MdRun &x) { return x.marker; }));
+        // A bold label at the start of an item.
+        auto label = P::parse("- **Step one**: open the file\n");
+        CHECK(mdRun(label, "Step one").bold && mdRun(label, "Step one").listDepth == 1);
+        CHECK(mdRun(label, ": open the file").listDepth == 1);
+    }
+
+    GROUP("md:quotes");
+    {
+        auto q = P::parse("> a long\n> quote\n");
+        CHECK(mdText(q) == "a long quote\n" && mdRun(q, "a long").quote);
+        auto paras = P::parse("> one\n>\n> two\nlazy\n");
+        CHECK(mdText(paras) == "one\n\ntwo lazy\n");
+        CHECK(mdAny(paras, [](const MdRun &x) { return x.gap && x.quote; }));
+        CHECK(mdRun(paras, "lazy").quote);
+        auto apart = P::parse("> one\n\n> two\n");
+        CHECK(mdAny(apart, [](const MdRun &x) { return x.gap && !x.quote; }));
+        auto nested = P::parse("> outer\n>> inner\n");
+        CHECK(mdText(nested) == "outer\n\ninner\n");
+        auto alert = P::parse("> [!TIP]\n> Use it.\n");
+        CHECK(mdRun(alert, "Tip").bold && mdRun(alert, "Tip").quote);
+        CHECK(mdRun(alert, "Use it.").quote && !mdRun(alert, "Use it.").bold);
+        auto list = P::parse("> - a\n> - b\n");
+        CHECK(mdCount(list, [](const MdRun &x) { return x.marker && x.quote; }) == 2);
+        CHECK(mdRun(P::parse("> # Title\n"), "Title").heading == 1);
+    }
+
+    GROUP("md:code-blocks");
+    {
+        CHECK(mdRun(P::parse("~~~\nx\n~~~\n"), "x\n").codeBlock);
+        auto longer = P::parse("````md\n```\ninner\n```\n````\n");
+        CHECK(mdText(longer) == "```\ninner\n```\n");
+        CHECK(mdRun(P::parse("    code\n      more\n"), "code\n").codeBlock);
+        CHECK(mdRun(P::parse("    code\n      more\n"), "  more\n").codeBlock);
+        auto blankIn = P::parse("    a\n\n    b\n\nafter\n");
+        CHECK(mdText(blankIn) == "a\n\nb\n\nafter\n");
+        CHECK(mdRun(blankIn, "\n").codeBlock);   // the blank line inside the block
+        CHECK(mdText(P::parse("para\n    not code\n")) == "para not code\n");
+        CHECK(mdText(P::parse("```\nunclosed\n")) == "unclosed\n");
+        CHECK(mdRun(P::parse("- x\n  ```\n  y\n  ```\n"), "y\n").codeBlock);
+        CHECK(mdRun(P::parse("``` a`b ```\n"), "a`b").code);   // not a fence
+    }
+
+    GROUP("md:headings");
+    {
+        CHECK(mdText(P::parse("# T #\n")) == "T\n" && mdText(P::parse("# T#\n")) == "T#\n");
+        CHECK(!mdAny(P::parse("#\n"), [](const MdRun &x) { return x.heading; }));
+        CHECK(mdRun(P::parse("Title\n=====\n"), "Title").heading == 1);
+        auto h2 = P::parse("Title\n---\n");
+        CHECK(mdRun(h2, "Title").heading == 2 && !mdAny(h2, [](const MdRun &x) { return x.rule; }));
+        CHECK(mdAny(P::parse("text\n\n---\n"), [](const MdRun &x) { return x.rule; }));
+        CHECK(mdAny(P::parse("- item\n---\n"), [](const MdRun &x) { return x.rule; }));
+        auto two = P::parse("One\nTwo\n===\n");
+        CHECK(mdRun(two, "One").heading == 1 && mdRun(two, "Two").heading == 1);
+        CHECK(mdRun(two, "Two").line == 0);   // one heading, one line
+        CHECK(mdRun(P::parse("<h2 align=\"center\">Hi <b>there</b></h2>\n"), "there").heading == 2);
+        // Front matter shows as code.
+        auto fm = P::parse("---\ntitle: x\n---\n# Body\n");
+        CHECK(mdRun(fm, "title: x\n").codeBlock && mdRun(fm, "Body").heading == 1);
+        CHECK(!mdAny(fm, [](const MdRun &x) { return x.rule; }));
+        auto notFm = P::parse("---\nplain words\n---\n");
+        CHECK(mdAny(notFm, [](const MdRun &x) { return x.rule; }));
+        CHECK(mdRun(notFm, "plain words").heading == 2);
+    }
+
+    GROUP("md:html");
+    {
+        CHECK(mdText(P::parse("<!-- c -->\ntext\n")) == "text\n");
+        CHECK(mdText(P::parse("<!--\na\n\nb\n-->\ntext\n")) == "text\n");
+        CHECK(!mdAny(P::parse("a <!-- c --> b\n"),
+                     [](const MdRun &x) { return x.text.find("<!--") != std::string::npos; }));
+        auto tags = P::parse("<kbd>K</kbd> <b>B</b> <i>I</i> <s>S</s> <a href=\"u\">L</a> "
+                             "<span>s</span> Vec<T> x\n");
+        CHECK(mdRun(tags, "K").code && mdRun(tags, "B").bold && mdRun(tags, "I").italic);
+        CHECK(mdRun(tags, "S").strike && mdRun(tags, "L").url == "u");
+        CHECK(mdText(tags) == "K B I S L s Vec x\n");
+        auto img = P::parse("<p align=\"center\">\n  <img src=\"logo.png\" alt=\"Logo\" width=\"90\">\n</p>\n");
+        CHECK(img.size() == 2 && img[0].image && img[0].src == "logo.png" && img[0].text == "Logo");
+        CHECK(mdText(P::parse("a < b > c\n")) == "a < b > c\n");
+    }
+
+    GROUP("md:anchors-unicode");
+    CHECK(P::anchor("\xC2\xA7" "2Setup") == "2setup");                       // §2Setup
+    CHECK(P::anchor("\xF0\x9F\x9A\x80 Launch") == "-launch");                 // 🚀
+    CHECK(P::anchor("\xC3\x9C" "ber Stra\xC3\x9F" "e") == "\xC3\xBC" "ber-stra\xC3\x9F" "e");
+    CHECK(P::anchor("\xCE\x91\xCE\x92 \xD0\x9C\xD0\x98\xD0\xA0") ==
+          "\xCE\xB1\xCE\xB2-\xD0\xBC\xD0\xB8\xD1\x80");                      // ΑΒ МИР
+    CHECK(P::anchor("A \xE2\x80\x93 B") == "a--b");                           // en dash
+    CHECK(P::anchor("x \xE2\x88\x88 \xE2\x84\x9D") == "x--\xE2\x84\x9D");     // ∈ goes, ℝ stays
+
+    GROUP("md:speed");
+    {
+        std::string big;
+        for (int k = 0; k < 20000; k++) {
+            big += "Line " + std::to_string(k) + " has *emphasis*, `code`, a [link](u_" +
+                   std::to_string(k) + "), snake_case and **bold**.\n";
+            if (k % 5 == 4) big += "\n";
+            if (k % 50 == 49) big += "- item\n- item\n\n";
+        }
+        auto t0 = std::chrono::steady_clock::now();
+        auto runs = P::parse(big);
+        double ms = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - t0).count();
+        CHECK(!runs.empty());
+        // Inputs that make a naive parser quadratic.
+        const std::string hard[] = {
+            std::string(30000, '['), std::string(30000, '*') + "a",
+            std::string(20000, '_') + " x", [] {
+                std::string s;
+                for (int k = 1; k < 200; k++) s += std::string((size_t)k, '`') + "a";
+                return s;
+            }(),
+            [] {
+                std::string s;
+                for (int k = 0; k < 5000; k++) s += "![";
+                return s + "x" + std::string(5000, ']');
+            }(),
+            [] {
+                std::string s;
+                for (int k = 0; k < 10000; k++) s += "*a **b ";
+                return s;
+            }(),
+        };
+        double worst = 0;
+        for (const std::string &h : hard) {
+            auto t1 = std::chrono::steady_clock::now();
+            P::parse(h);
+            worst = std::max(worst, std::chrono::duration<double, std::milli>(
+                                        std::chrono::steady_clock::now() - t1).count());
+        }
+        CHECK(worst < 2000);
+        std::printf("  markdown: 20000 lines parsed in %.1f ms; worst pathological input %.1f ms\n",
+                    ms, worst);
+    }
+}
+
+// MarkdownParser::lines, which MarkdownEdit builds on.
+void testMarkdownLines() {
+    GROUP("md:lines");
+    const std::string doc =
+        "# H\n"            // 0
+        "\n"               // 1
+        "para\n"           // 2
+        "lazy\n"           // 3
+        "- item\n"         // 4
+        "cont\n"           // 5
+        "\n"               // 6
+        "[r]: /x\n"        // 7
+        "<!-- c -->\n"     // 8
+        "T\n"              // 9
+        "===\n"            // 10
+        "```\n"            // 11
+        "code\n"           // 12
+        "```\n";           // 13
+    auto L = MarkdownParser::lines(doc);
+    CHECK(L.size() == 15);
+    if (L.size() < 15) return;
+    CHECK(L[0].kind == MdLine::Heading && L[1].kind == MdLine::Blank);
+    CHECK(L[2].kind == MdLine::Text && L[3].kind == MdLine::Text && L[2].block == L[3].block);
+    CHECK(L[4].kind == MdLine::ListItem && L[5].kind == MdLine::Text && L[4].block == L[5].block);
+    CHECK(L[2].block != L[4].block);
+    CHECK(L[7].kind == MdLine::Hidden && L[8].kind == MdLine::Hidden && L[7].block < 0);
+    CHECK(L[9].kind == MdLine::Heading && L[10].kind == MdLine::SetextUnderline);
+    CHECK(L[11].kind == MdLine::Fence && L[12].kind == MdLine::Code && L[13].kind == MdLine::Fence);
+    CHECK(L[14].kind == MdLine::Blank);
+    // Offsets: the heading's text, the item's text after its marker.
+    CHECK(doc.substr(L[0].start, L[0].end - L[0].start) == "H");
+    CHECK(doc.substr(L[4].start, L[4].end - L[4].start) == "item");
+    CHECK(doc.substr(L[12].lineStart, L[12].lineEnd - L[12].lineStart) == "code");
+    // \r\n line ends are not part of a line.
+    auto crlf = MarkdownParser::lines("a\r\nb\r\n");
+    CHECK(crlf.size() == 3 && crlf[0].lineEnd - crlf[0].lineStart == 1 && crlf[1].lineStart == 3);
+}
+
+// The corpus in tests/markdown, read as a whole: the invariants every
+// document must keep, and its own links landing on its own headings.
+void testMarkdownCorpus() {
+    GROUP("md:corpus");
+    std::ifstream f("tests/markdown/corpus.md");
+    if (!f) {
+        std::printf("  (tests/markdown/corpus.md not found here; corpus checks skipped)\n");
+        return;
+    }
+    std::stringstream ss;
+    ss << f.rdbuf();
+    const std::string src = ss.str();
+    auto runs = MarkdownParser::parse(src);
+    CHECK(runs.size() > 200);
+    CHECK(!mdAny(runs, [](const MdRun &r) { return r.line < 0; }));
+    CHECK(!mdAny(runs, [](const MdRun &r) { return r.text.empty() && !r.image; }));
+    bool gapsOk = !runs.empty() && !runs.front().gap && !runs.back().gap;
+    for (size_t k = 1; k < runs.size(); k++)
+        if (runs[k].gap && runs[k - 1].gap) gapsOk = false;
+    CHECK(gapsOk);
+    // Nothing that is markup shows as text.
+    CHECK(!mdAny(runs, [](const MdRun &r) {
+        return !r.code && (r.text.find("<!--") != std::string::npos ||
+                           r.text.find("&amp;") != std::string::npos ||
+                           r.text.find("[ref-one]") != std::string::npos ||
+                           r.text.find("<kbd>") != std::string::npos);
+    }));
+    CHECK(mdCount(runs, [](const MdRun &r) { return r.tableId > 0 && r.tableRow == 0 &&
+                                                    r.tableCol == 0; }) == 3);
+    // Every run that shows text maps back to a block a double-click can edit.
+    bool editable = true;
+    for (const MdRun &r : runs) {
+        if (r.gap || r.rule || r.text.find_first_not_of(" \n") == std::string::npos) continue;
+        if (r.table && r.tableCol < 0) continue;
+        int line = r.line;
+        if (r.table) line = r.line + r.tableRow + (r.tableRow > 0 ? 1 : 0);
+        if (MarkdownEdit::blockAt(src, line, r.table ? r.tableCol : -1).kind ==
+            MarkdownEdit::Block::None) {
+            editable = false;
+            std::printf("  no block for run '%s' on line %d\n", r.text.c_str(), line);
+        }
+    }
+    CHECK(editable);
+    // The corpus's #links name its own headings.
+    std::set<std::string> anchors;
+    std::string title;
+    int titleLine = -1;
+    for (const MdRun &r : runs) {
+        if (r.heading > 0 && r.line == titleLine) { title += r.text; continue; }
+        if (titleLine >= 0) anchors.insert(MarkdownParser::anchor(title));
+        titleLine = r.heading > 0 ? r.line : -1;
+        title = r.heading > 0 ? r.text : "";
+    }
+    bool linked = true;
+    int local = 0;
+    for (const MdRun &r : runs) {
+        if (!r.link || r.url.empty() || r.url[0] != '#') continue;
+        local++;
+        if (!anchors.count(r.url.substr(1))) {
+            linked = false;
+            std::printf("  no heading for link %s\n", r.url.c_str());
+        }
+    }
+    CHECK(linked && local >= 5);
 }
 
 }  // namespace
@@ -4569,6 +5056,9 @@ int main() {
     testTermLinks();
     benchIncrementalHighlight();
     testMarkdown();
+    testMarkdownCommonMark();
+    testMarkdownLines();
+    testMarkdownCorpus();
     testMarkdownEdit();
     testTerminalStream();
     testTerminalScreen();

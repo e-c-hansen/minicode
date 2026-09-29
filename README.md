@@ -197,7 +197,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 
 ## Limitations
 
-MiniCode does what I use every day and leaves out a good deal. The terminal does not pass mouse clicks to full screen programs, and has no scrollback while a program has the grid. The Markdown parser covers the common cases, not all of CommonMark. In the LaTeX preview, text produced inside your own macro definitions cannot be edited from the page. The language server client has no rename, find references, formatting or code actions yet.
+MiniCode does what I use every day and leaves out a good deal. The terminal does not pass mouse clicks to full screen programs, and has no scrollback while a program has the grid. The Markdown preview follows GitHub's rules for emphasis, links, lists, quotes and tables, but only a handful of HTML tags mean anything to it, and $math$ shows as written. In the LaTeX preview, text produced inside your own macro definitions cannot be edited from the page. The language server client has no rename, find references, formatting or code actions yet.
 
 ## License
 
