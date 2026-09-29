@@ -14,6 +14,9 @@
 @interface MCMathFormula : NSObject
 @property(nonatomic, readonly) BOOL failed;
 @property(nonatomic, readonly, copy) NSString *error;   // why, when it failed
+// Failed with the whole run (tectonic did not start, or could not fetch its
+// files), not because of its own TeX: it is asked for again in a minute.
+@property(nonatomic, readonly) BOOL transient;
 // Its page, in PDF points: the formula's box and a little space around it,
 // `margin` on every side, for ink that strays out of the box.
 @property(nonatomic, readonly) NSSize size;

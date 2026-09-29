@@ -389,14 +389,27 @@ std::vector<Box> readLog(const std::string& log, size_t count) {
 }
 
 std::string firstError(const std::string& output) {
+    std::string panic;
+    bool afterPanic = false;
     for (size_t a = 0; a < output.size();) {
         size_t e = output.find('\n', a);
         if (e == std::string::npos) e = output.size();
         const std::string line = output.substr(a, e - a);
         a = e + 1;
         if (line.compare(0, 7, "error: ") == 0) return line.substr(7);
+        // tectonic panics when it cannot reach its bundle on a first run;
+        // the line after the panic says why.
+        if (afterPanic && panic.empty()) {
+            panic = line;
+            const std::string unwrap = "called `Result::unwrap()` on an `Err` value: ";
+            if (panic.compare(0, unwrap.size(), unwrap) == 0) panic = panic.substr(unwrap.size());
+            // What follows is the library's own error, a URL and all.
+            const size_t detail = panic.find(". Error: ");
+            if (detail != std::string::npos) panic.erase(detail + 1);
+        }
+        afterPanic = line.find("panicked at") != std::string::npos;
     }
-    return "";
+    return panic;
 }
 
 }  // namespace MathTex

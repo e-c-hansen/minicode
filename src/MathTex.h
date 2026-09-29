@@ -58,7 +58,8 @@ struct Box {
 std::vector<Box> readLog(const std::string& log, size_t count);
 
 // The first line of tectonic's own output that says what went wrong
-// ("error: ..."), for a run that produced nothing; "" when there is none.
+// ("error: ...", or why it panicked, as it does when a first run cannot
+// reach its bundle), for a run that produced nothing; "" when there is none.
 std::string firstError(const std::string& output);
 
 }  // namespace MathTex

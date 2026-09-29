@@ -15,10 +15,10 @@
 //      baseline.
 //   4. If tectonic stopped without a PDF, the formula it was in fails and
 //      the others go round again. If it hangs (15 s with no word once the
-//      formulas have begun, or 90 s in all), it is killed and the formula
-//      it was in fails. If it failed before any formula (not installed
-//      properly, or the network is needed for fonts and is not there), the
-//      run's formulas fail for a minute and are asked for again after that.
+//      formulas have begun), it is killed and the formula it was in fails.
+//      If it failed before any formula (not installed properly, or the
+//      network is needed for its files and is not there), the run's
+//      formulas fail for a minute and are asked for again after that.
 //   5. Results go into memory on the main thread and a notification names
 //      them; the preview renders again with the pictures in.
 #import "MarkdownMath.h"
@@ -34,8 +34,11 @@ NSString *const MCMathErrorKey = @"error";
 
 // A whole run that failed is tried again after this long.
 static const NSTimeInterval kRetryAfter = 60;
-// Killing a run: silence once TeX is in the formulas, or in all.
-static const NSTimeInterval kStallLimit = 15, kRunLimit = 90;
+// Killing a run: this long without a word once TeX is in the formulas (a
+// formula that loops), or before that (tectonic prints a line for every
+// file it downloads, so a first run that fetches the whole bundle, about
+// 40 s on a good line, is not silent), or in all.
+static const NSTimeInterval kStallLimit = 15, kQuietLimit = 60, kRunLimit = 600;
 // The disk cache is cut back to kCacheTrimTo once it passes kCacheLimit.
 static const unsigned long long kCacheLimit = 50ull << 20, kCacheTrimTo = 40ull << 20;
 // PDF points per TeX point.
@@ -103,6 +106,10 @@ static NSString *const kIndexHeader = @"minicode-math-index 1";
 
 - (BOOL)stale {
     return _retryAfter && _retryAfter.timeIntervalSinceNow <= 0;
+}
+
+- (BOOL)transient {
+    return _retryAfter != nil;
 }
 
 - (void)drawInRect:(NSRect)rect color:(NSColor *)color flipped:(BOOL)flipped {
@@ -363,9 +370,10 @@ static MCMathRun MCMathRunOnce(NSString *tool, const std::vector<MCMathItem> &it
     NSTask *task = [NSTask new];
     task.executableURL = [NSURL fileURLWithPath:tool];
     // --print streams TeX's own output, so a run that hangs still says
-    // which formula it hung in.
+    // which formula it hung in, and the default chatter a line per file
+    // downloaded. One pass is enough: nothing refers to anything.
     task.arguments = @[@"-Z", @"continue-on-errors", @"--untrusted", @"--print", @"--keep-logs",
-                       @"--chatter", @"minimal", @"--color", @"never", @"--outdir", dir, tex];
+                       @"--reruns", @"0", @"--color", @"never", @"--outdir", dir, tex];
     task.currentDirectoryURL = [NSURL fileURLWithPath:dir];
     task.standardInput = [NSFileHandle fileHandleWithNullDevice];
     NSPipe *pipe = [NSPipe pipe];
@@ -390,8 +398,9 @@ static MCMathRun MCMathRunOnce(NSString *tool, const std::vector<MCMathItem> &it
     dispatch_source_set_event_handler(watch, ^{
         BOOL stop;
         @synchronized(lock) {
+            const NSTimeInterval quiet = -lastWord.timeIntervalSinceNow;
             stop = !killed && (-started.timeIntervalSinceNow > kRunLimit ||
-                               (inFormulas && -lastWord.timeIntervalSinceNow > kStallLimit));
+                               quiet > (inFormulas ? kStallLimit : kQuietLimit));
             if (stop) killed = YES;
         }
         if (stop && task.running) [task terminate];

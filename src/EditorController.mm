@@ -346,6 +346,7 @@ private:
     NSUInteger _mathMarks;
     BOOL _mathRenderQueued;
     BOOL _mathOn;                          // this render typesets math
+    NSString *_mathRunProblem;             // why a whole run failed, this render
     NSString *_tectonicProblem;            // why the last download failed
     NSUInteger _pendingStart, _pendingEnd; // edited, not yet recolored (NSNotFound: none)
     BOOL _flushScheduled;
@@ -3006,16 +3007,9 @@ static NSString *MCFormatDuration(double seconds) {
     _mathWanted = [NSMutableArray array];
     _mathMarks = 0;
     _mathOn = [self typesetsMath];            // asked once, not per formula
+    _mathRunProblem = nil;                    // markdownRun: notes a failed run
 
     NSMutableAttributedString *out = [[NSMutableAttributedString alloc] init];
-    // A page with math that cannot be typeset says why in a line at its top.
-    if (self.mathNoteWanted) {
-        for (const MdRun &r : runs) {
-            if (!r.math) continue;
-            [out appendAttributedString:[self mathNote]];
-            break;
-        }
-    }
     NSMutableDictionary<NSString *, NSNumber *> *anchors = [NSMutableDictionary dictionary];
     // A paragraph's look comes from its first run, and every run in it gets
     // that paragraph style; a quote's or a code block's paragraphs share one
@@ -3057,6 +3051,17 @@ static NSString *MCFormatDuration(double seconds) {
         }
         i++;
     }
+    // A page whose math cannot be typeset says why in a line at its top.
+    BOOL hasMath = NO;
+    for (const MdRun &r : runs) hasMath = hasMath || r.math;
+    NSAttributedString *note = !hasMath ? nil
+                             : self.mathNoteWanted ? [self mathNote]
+                             : _mathRunProblem ? [self mathNoteForProblem:_mathRunProblem] : nil;
+    if (note) {
+        [out insertAttributedString:note atIndex:0];
+        for (NSString *key in anchors.allKeys)
+            anchors[key] = @(anchors[key].unsignedIntegerValue + note.length);
+    }
     _markdownAnchors = anchors;
     _liveHighlight = NO;   // rendered Markdown is not source
     [self.textView.textStorage setAttributedString:out];
@@ -3080,9 +3085,8 @@ static NSString *MCFormatDuration(double seconds) {
     return [AppSettings shared].settings.math() && MCTectonicPath() == nil;
 }
 
-// "Math shows as TeX..." with a link that downloads tectonic, or how that
-// download is going.
-- (NSAttributedString *)mathNote {
+// The line at the top of a page, muted, with a link at its end if any.
+- (NSAttributedString *)mathNoteText:(NSString *)text link:(NSString *)link {
     NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
     ps.paragraphSpacing = 10;
     NSDictionary *muted = @{
@@ -3092,6 +3096,32 @@ static NSString *MCFormatDuration(double seconds) {
         kMarkdownMathNote: @YES,
     };
     NSMutableAttributedString *note = [[NSMutableAttributedString alloc] init];
+    [note appendAttributedString:[[NSAttributedString alloc] initWithString:text attributes:muted]];
+    if (link) {
+        NSMutableDictionary *a = [muted mutableCopy];
+        a[NSLinkAttributeName] = kMathDownloadLink;
+        a[NSForegroundColorAttributeName] = [[AppSettings shared] markdown:MarkdownColor::Link];
+        [note appendAttributedString:[[NSAttributedString alloc] initWithString:link attributes:a]];
+    }
+    [note appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n" attributes:muted]];
+    return note;
+}
+
+// A whole run failed (tectonic could not fetch its files, say): why, and
+// that it is tried again.
+- (NSAttributedString *)mathNoteForProblem:(NSString *)problem {
+    NSString *why = [problem stringByTrimmingCharactersInSet:
+                                 NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if ([why hasSuffix:@"."]) why = [why substringToIndex:why.length - 1];
+    return [self mathNoteText:[NSString stringWithFormat:
+        @"The math on this page shows as TeX: tectonic could not typeset it (%@). "
+        @"It is tried again when the page is next shown, a minute from now or later.", why]
+                         link:nil];
+}
+
+// "Math shows as TeX..." with a link that downloads tectonic, or how that
+// download is going.
+- (NSAttributedString *)mathNote {
     NSString *text, *link = nil;
     if (MCTectonicDownloading()) {
         text = @"Downloading tectonic, which typesets the math on this page…";
@@ -3104,15 +3134,7 @@ static NSString *MCFormatDuration(double seconds) {
                @"which is not installed. ";
         link = @"Download tectonic";
     }
-    [note appendAttributedString:[[NSAttributedString alloc] initWithString:text attributes:muted]];
-    if (link) {
-        NSMutableDictionary *a = [muted mutableCopy];
-        a[NSLinkAttributeName] = kMathDownloadLink;
-        a[NSForegroundColorAttributeName] = [[AppSettings shared] markdown:MarkdownColor::Link];
-        [note appendAttributedString:[[NSAttributedString alloc] initWithString:link attributes:a]];
-    }
-    [note appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n" attributes:muted]];
-    return note;
+    return [self mathNoteText:text link:link];
 }
 
 - (void)downloadTectonicForMath {
@@ -3128,6 +3150,16 @@ static NSString *MCFormatDuration(double seconds) {
             [me renderMarkdownKeepingPlace];
     });
     [self renderMarkdownKeepingPlace];   // "Downloading..."
+}
+
+// How long the line about tectonic at the top of the page is, or 0.
+- (NSUInteger)mathNoteLength {
+    NSTextStorage *st = self.textView.textStorage;
+    NSRange r = NSMakeRange(0, 0);
+    if (st.length && [st attribute:kMarkdownMathNote atIndex:0 longestEffectiveRange:&r
+                                inRange:NSMakeRange(0, st.length)])
+        return r.length;
+    return 0;
 }
 
 // The typeset formula for a math run, or nil when it is to show as TeX:
@@ -3242,12 +3274,6 @@ static CGFloat MCMathScaleFor(CGFloat fontSize) {
                     if (mark && MCMathIsReady(mark.firstObject))
                         [changes addObject:@[@(range.location), @(range.length), @1]];
                 }];
-            if (!self.mathNoteWanted)
-                [st enumerateAttribute:kMarkdownMathNote inRange:before options:0
-                            usingBlock:^(id note, NSRange range, BOOL *stop) {
-                    (void)stop;
-                    if (note) [changes addObject:@[@(range.location), @(range.length), @0]];
-                }];
             [changes sortUsingComparator:^NSComparisonResult(NSArray *a, NSArray *b) {
                 return [a[0] compare:b[0]];
             }];
@@ -3264,7 +3290,14 @@ static CGFloat MCMathScaleFor(CGFloat fontSize) {
             anchor = inside != NSNotFound ? inside : i - shift;
         }
     }
+    const NSUInteger noteBefore = [self mathNoteLength];
     [self renderMarkdown:self.sourceText];
+    // The line about tectonic at the top may have come or gone.
+    const NSUInteger noteAfter = [self mathNoteLength];
+    if (anchor != NSNotFound) {
+        if (anchor >= noteBefore) anchor = anchor - noteBefore + noteAfter;
+        else anchor = 0;
+    }
     if (anchor != NSNotFound && st.length > 0) {
         if (!tv.textLayoutManager)   // TextKit 1, as the editor is: the full height
             [tv.layoutManager ensureLayoutForTextContainer:tv.textContainer];
@@ -3494,6 +3527,7 @@ static NSTextBlock *MCFullWidthBlock(void) {
             return pic;
         }
         if (f.failed) {
+            if (f.transient) _mathRunProblem = f.error;
             a[NSToolTipAttributeName] = f.error.length ? f.error : @"TeX could not typeset this.";
             // A dotted red line under it says there is something to hover.
             a[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle | NSUnderlinePatternDot);

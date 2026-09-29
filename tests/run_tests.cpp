@@ -1801,6 +1801,12 @@ void testMathTex() {
     CHECK(firstError("note: downloading\nerror: batch.tex:12: Undefined control sequence\n"
                      "error: another\n") == "batch.tex:12: Undefined control sequence");
     CHECK(firstError("all fine\n").empty());
+    CHECK(firstError("thread 'main' (1) panicked at src/config.rs:154:18:\n"
+                     "called `Result::unwrap()` on an `Err` value: this bundle isn't cached, "
+                     "and we couldn't get it from the internet. Error: error sending request "
+                     "for url (https://relay.example/bundle)\n"
+                     "note: run with `RUST_BACKTRACE=1`\n") ==
+          "this bundle isn't cached, and we couldn't get it from the internet.");
 }
 
 void testMarkdownLines() {
