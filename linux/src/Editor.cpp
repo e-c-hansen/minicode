@@ -13,6 +13,7 @@
 #include "Latex.h"
 #include "PdfView.h"
 #include "ScrollSettle.h"
+#include "WebImages.h"
 
 #include <algorithm>
 #include <cmath>
@@ -143,6 +144,19 @@ Editor::Editor() {
     gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
     g_signal_connect(keys, "key-pressed", G_CALLBACK(onViewKey), this);
     gtk_widget_add_controller(view_, keys);
+    // A scroll by the user ends holding the top line in place (holdTopLine).
+    GtkEventController* wheel =
+        gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
+    gtk_event_controller_set_propagation_phase(wheel, GTK_PHASE_CAPTURE);
+    g_signal_connect_swapped(wheel, "scroll-begin", G_CALLBACK(+[](gpointer self) {
+        static_cast<Editor*>(self)->stopHold();
+    }), this);
+    g_signal_connect(wheel, "scroll", G_CALLBACK(+[](GtkEventControllerScroll*, double, double,
+                                                   gpointer self) -> gboolean {
+        static_cast<Editor*>(self)->stopHold();
+        return FALSE;
+    }), this);
+    gtk_widget_add_controller(view_, wheel);
     // The color picker's popover is the view's child only by
     // gtk_widget_set_parent, so it must go before the view is disposed (the
     // same trap as the LSP popovers, see Lsp.cpp).
@@ -206,6 +220,10 @@ Editor::~Editor() {
     stopSettle();
     if (previewEntryTimer_) g_source_remove(previewEntryTimer_);
     previewEntryTimer_ = 0;
+    alive_.reset();   // fetches still running find the editor gone
+    stopHold();
+    if (arrivedTimer_) g_source_remove(arrivedTimer_);
+    arrivedTimer_ = 0;
     dropMdPopover();
     g_signal_handlers_disconnect_by_data(
         gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)), this);
@@ -766,6 +784,7 @@ void Editor::loadRawIntoBuffer() {
     // Temporarily block change signals so filling the buffer doesn't mark dirty.
     // Highlighting is stopped first so the fill is not fed to it as an edit;
     // startHighlighting() lexes the new text once, whole.
+    stopHold();
     stopHighlighting();
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
     setProseFont(false);
@@ -800,6 +819,7 @@ std::string Editor::text() const {
 
 void Editor::showMessage(const std::string& msg) {
     ensureTags();
+    stopHold();
     stopHighlighting();
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
     setProseFont(true);
@@ -1261,6 +1281,7 @@ static void setTagColor(GtkTextBuffer* buf, const char* name, const char* prop,
 }
 
 void Editor::applySettings(const Settings& s) {
+    const bool webBefore = settings_.webImages();
     settings_ = s;
     ensureTags();
     for (int i = 0; i <= (int)TokenStyle::Function; ++i)
@@ -1278,6 +1299,15 @@ void Editor::applySettings(const Settings& s) {
     setTagColor(buffer_, "md_link", "foreground-rgba", s.markdown(MarkdownColor::Link));
     // Swatch text contrast depends on the editor background.
     if (sourceMode_ && isSettingsFile()) startHighlighting();
+    // Web pictures turned on or off: the preview shows them, or their alt
+    // text, from now on.
+    if (s.webImages() != webBefore && preview_ && isMarkdown_) {
+        GtkAdjustment* v = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
+        const bool scrolled = previewEntryV_ >= 0 &&
+                              std::fabs(gtk_adjustment_get_value(v) - previewEntryV_) > 2;
+        rerenderPreview();
+        if (!scrolled) notePreviewRest();   // still where Ctrl+Shift+P left it
+    }
 }
 
 bool Editor::isSettingsFile() const {
@@ -1868,14 +1898,7 @@ void Editor::togglePreview() {
         settleOnCaret();
         // Where the preview came to rest, once it has: a scroll after that
         // is the user's.
-        previewEntryV_ = -1;
-        previewEntryTimer_ = g_timeout_add(700, [](gpointer selfp) -> gboolean {
-            Editor* self = static_cast<Editor*>(selfp);
-            self->previewEntryTimer_ = 0;
-            self->previewEntryV_ = gtk_adjustment_get_value(
-                gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(self->scroller_)));
-            return G_SOURCE_REMOVE;
-        }, this);
+        notePreviewRest();
     } else {
         // Preview edits were undone from snapshots; the source view has its
         // own undo from here.
@@ -1905,6 +1928,7 @@ void Editor::togglePreview() {
 }
 
 void Editor::renderPreview() {
+    stopHold();
     stopHighlighting();
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
     setProseFont(true);
@@ -1914,6 +1938,7 @@ void Editor::renderPreview() {
     char* dir = g_path_get_dirname(path_.c_str());
     hooks.folder = dir ? dir : ".";
     g_free(dir);
+    hooks.webImages = settings_.webImages() && WebImages::available();
     hooks.link = [this](const std::string& url) { openMarkdownLink(url); };
     hooks.cellDoubleClick = [this](int line, int row, int column, GtkWidget* cell) {
         graphene_rect_t r;
@@ -1934,6 +1959,174 @@ void Editor::renderPreview() {
     gtk_text_buffer_get_start_iter(buffer_, &start);
     gtk_text_buffer_place_cursor(buffer_, &start);
     notifyDocument();
+    fetchWebPictures();
+}
+
+void Editor::notePreviewRest() {
+    if (previewEntryTimer_) g_source_remove(previewEntryTimer_);
+    previewEntryV_ = -1;
+    previewEntryTimer_ = g_timeout_add(700, [](gpointer selfp) -> gboolean {
+        Editor* self = static_cast<Editor*>(selfp);
+        self->previewEntryTimer_ = 0;
+        self->previewEntryV_ = gtk_adjustment_get_value(
+            gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(self->scroller_)));
+        return G_SOURCE_REMOVE;
+    }, this);
+}
+
+// Rendered again in place (an edit from the preview, its undo, a setting):
+// the same scroll offset, set now and again once the new text is laid out.
+void Editor::rerenderPreview() {
+    GtkAdjustment* v = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
+    const double keep = gtk_adjustment_get_value(v);
+    renderPreview();
+    gtk_adjustment_set_value(v, keep);
+    auto* again = new std::pair<GtkAdjustment*, double>(GTK_ADJUSTMENT(g_object_ref(v)), keep);
+    g_idle_add_full(G_PRIORITY_LOW, [](gpointer d) -> gboolean {
+        auto* p = static_cast<std::pair<GtkAdjustment*, double>*>(d);
+        gtk_adjustment_set_value(p->first, p->second);
+        return G_SOURCE_REMOVE;
+    }, again, [](gpointer d) {
+        auto* p = static_cast<std::pair<GtkAdjustment*, double>*>(d);
+        g_object_unref(p->first);
+        delete p;
+    });
+}
+
+// ---------------------------------------------------------------- web pictures
+//
+// The render showed the alt text of every web picture it did not have; each
+// address is asked for once (WebImages shares one fetch among all who ask).
+// Arrivals are collected and placed 100 ms after the first, so a page of
+// badges settles in a few steps rather than one per badge. Each is put in
+// place of its alt text in the buffer as it stands, not by a new render:
+// GtkTextView keeps the first paragraph on screen where it is when lines
+// above it change height, so the part of the page being read stays put.
+// A result for a page that is gone (another file, the source, a new
+// render without that picture) finds nothing pending and is dropped.
+
+void Editor::fetchWebPictures() {
+    std::weak_ptr<int> alive = alive_;
+    std::vector<std::string> asked;
+    for (const Markdown::PendingPicture& p : page_.pending) {
+        if (std::find(asked.begin(), asked.end(), p.url) != asked.end()) continue;
+        asked.push_back(p.url);
+        const std::string url = p.url;
+        WebImages::fetch(url, [this, alive, url](WebImages::PicturePtr pic) {
+            if (alive.expired()) return;
+            arrived_.emplace_back(url, std::move(pic));
+            if (!arrivedTimer_)
+                arrivedTimer_ = g_timeout_add(100, [](gpointer selfp) -> gboolean {
+                    Editor* self = static_cast<Editor*>(selfp);
+                    self->arrivedTimer_ = 0;
+                    self->placeArrivedPictures();
+                    return G_SOURCE_REMOVE;
+                }, this);
+        });
+    }
+}
+
+void Editor::placeArrivedPictures() {
+    auto batch = std::move(arrived_);
+    arrived_.clear();
+    if (!preview_ || !isMarkdown_ || page_.pending.empty()) return;
+    GtkTextView* tv = GTK_TEXT_VIEW(view_);
+    GtkAdjustment* v = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
+    // A preview the user has not scrolled yet is not scrolled by this
+    // either, as far as Ctrl+Shift+P is concerned.
+    const bool scrolled = previewEntryV_ >= 0 &&
+                          std::fabs(gtk_adjustment_get_value(v) - previewEntryV_) > 2;
+    // The line at the top of the view, and how far into it the view starts.
+    GdkRectangle vis;
+    gtk_text_view_get_visible_rect(tv, &vis);
+    GtkTextIter top;
+    int topY = 0;
+    gtk_text_view_get_line_at_y(tv, &top, vis.y, &topY);
+    GtkTextMark* topMark = gtk_text_buffer_create_mark(buffer_, nullptr, &top, TRUE);
+
+    int placed = 0;
+    g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
+    gtk_text_buffer_begin_irreversible_action(buffer_);
+    for (const auto& a : batch)
+        placed += Markdown::placeWebPicture(tv, buffer_, page_, a.first, a.second);
+    gtk_text_buffer_end_irreversible_action(buffer_);
+    g_signal_handlers_unblock_by_func(buffer_, (gpointer)onBufferChanged, this);
+    g_log("minicode-web", G_LOG_LEVEL_DEBUG, "placed %d pictures from %zu arrivals, %zu pending",
+          placed, batch.size(), page_.pending.size());
+    if (!placed) {
+        gtk_text_buffer_delete_mark(buffer_, topMark);
+        return;
+    }
+    fitPage();
+    if (!scrolled && !previewEntryTimer_) notePreviewRest();
+    // Not while a scroll to the caret is settling (the preview has just
+    // come up), which is placing the view itself, nor at the very top.
+    if (vis.y > 0 && !settleTick_) holdTopLine(topMark, vis.y - topY);
+    else gtk_text_buffer_delete_mark(buffer_, topMark);
+}
+
+// GtkTextView keeps the line at the top of the view in place by itself when
+// lines above it change height: it moves the scroll offset down as far as
+// they grew. But when two pictures are laid out in one pass it moves for
+// the second before the adjustment's upper bound has grown with the first,
+// and near the end of a page that move is cut short (two 300-pixel
+// pictures left the text 35 pixels lower). So for a few frames after
+// pictures are placed, the line that was at the top is put back where it
+// was, until it stays there. A scroll by the user ends it at once.
+// (In the container the first move put it right every time.)
+void Editor::holdTopLine(GtkTextMark* mark, int into) {
+    stopHold();
+    holdMark_ = mark;
+    holdInto_ = into;
+    holdUntil_ = g_get_monotonic_time() + G_USEC_PER_SEC / 2;
+    holdStill_ = 0;
+    holdMoves_ = 0;
+    holdTick_ = gtk_widget_add_tick_callback(view_, onHoldTick, this, nullptr);
+}
+
+void Editor::stopHold() {
+    if (holdTick_) gtk_widget_remove_tick_callback(view_, holdTick_);
+    holdTick_ = 0;
+    if (holdMark_ && !gtk_text_mark_get_deleted(holdMark_))
+        gtk_text_buffer_delete_mark(buffer_, holdMark_);
+    holdMark_ = nullptr;
+}
+
+gboolean Editor::onHoldTick(GtkWidget*, GdkFrameClock*, gpointer selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    GtkTextView* tv = GTK_TEXT_VIEW(self->view_);
+    if (!self->holdMark_ || g_get_monotonic_time() > self->holdUntil_ ||
+        !gtk_widget_get_mapped(self->view_)) {
+        self->holdTick_ = 0;
+        self->stopHold();
+        return G_SOURCE_REMOVE;
+    }
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_mark(self->buffer_, &it, self->holdMark_);
+    int y = 0, h = 0;
+    gtk_text_view_get_line_yrange(tv, &it, &y, &h);
+    GdkRectangle vis;
+    gtk_text_view_get_visible_rect(tv, &vis);
+    const int off = y + self->holdInto_ - vis.y;
+    // A few moves at most: GTK lays the pictures out in a frame or two, and
+    // anything still moving the view after that (a flick of a touchpad
+    // coasting on) is not to be fought.
+    if (off != 0 && self->holdMoves_++ >= 3) {
+        self->holdTick_ = 0;
+        self->stopHold();
+        return G_SOURCE_REMOVE;
+    }
+    if (off != 0) {
+        GtkAdjustment* v = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(tv));
+        g_log("minicode-web", G_LOG_LEVEL_DEBUG, "top line held: moved %d px", off);
+        gtk_adjustment_set_value(v, gtk_adjustment_get_value(v) + off);
+        self->holdStill_ = 0;
+    } else if (++self->holdStill_ >= 3) {
+        self->holdTick_ = 0;
+        self->stopHold();
+        return G_SOURCE_REMOVE;
+    }
+    return G_SOURCE_CONTINUE;
 }
 
 void Editor::fitPage() {
@@ -2183,19 +2376,7 @@ void Editor::applyMarkdownSource(const std::string& source, bool undoable) {
     const double keep = gtk_adjustment_get_value(v);
     source_ = source;
     markDirty(true);
-    renderPreview();
-    gtk_adjustment_set_value(v, keep);
-    // Once the new text is laid out, the same place again.
-    auto* again = new std::pair<GtkAdjustment*, double>(GTK_ADJUSTMENT(g_object_ref(v)), keep);
-    g_idle_add_full(G_PRIORITY_LOW, [](gpointer d) -> gboolean {
-        auto* p = static_cast<std::pair<GtkAdjustment*, double>*>(d);
-        gtk_adjustment_set_value(p->first, p->second);
-        return G_SOURCE_REMOVE;
-    }, again, [](gpointer d) {
-        auto* p = static_cast<std::pair<GtkAdjustment*, double>*>(d);
-        g_object_unref(p->first);
-        delete p;
-    });
+    rerenderPreview();
     previewEntryV_ = keep;
 }
 

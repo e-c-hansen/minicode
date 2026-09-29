@@ -4,7 +4,8 @@
 #   make TERMINAL=1          # add the VTE terminal panel
 #   make BROWSER=1           # add the WebKitGTK browser panel
 #   make PDF=1               # add the PDF viewer (poppler-glib)
-#   make TERMINAL=1 BROWSER=1 PDF=1
+#   make WEBIMAGES=1         # pictures from https:// in the Markdown preview (libsoup-3.0)
+#   make TERMINAL=1 BROWSER=1 PDF=1 WEBIMAGES=1
 #   make run DIR=~/some/dir
 #   make clean
 #
@@ -32,12 +33,15 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Markdown.cpp \
        src/Terminal.cpp src/Browser.cpp src/AppSettings.cpp src/ThemeCss.cpp \
        src/Search.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \
        src/LatexClick.cpp src/Latex.cpp src/Lsp.cpp src/TermLinkPath.cpp \
-       src/GitModel.cpp src/GitPanel.cpp
+       src/GitModel.cpp src/GitPanel.cpp src/WebImageRules.cpp src/WebImages.cpp
 
 SRCS := $(GUI) $(CORE)
 
 PKGS   := gtk4
-DEFS   :=
+# The version the User-Agent of web picture fetches carries, from the Mac's
+# Info.plist, which the release script stamps.
+VERSION := $(shell sed -n '/CFBundleShortVersionString/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' ../Info.plist)
+DEFS   := -DMINICODE_VERSION='"$(VERSION)"'
 
 ifeq ($(TERMINAL),1)
   PKGS += vte-2.91-gtk4
@@ -50,6 +54,10 @@ endif
 ifeq ($(PDF),1)
   PKGS += poppler-glib
   DEFS += -DMINICODE_ENABLE_PDF
+endif
+ifeq ($(WEBIMAGES),1)
+  PKGS += libsoup-3.0
+  DEFS += -DMINICODE_ENABLE_WEB_IMAGES
 endif
 
 # Lazily expanded (=, not :=) so `make test`, which needs no GTK, does not
@@ -82,6 +90,7 @@ test:
 	    src/PageWords.cpp ../src/LatexDoc.cpp ../src/SyncTex.cpp \
 	    ../src/TermLinks.cpp src/TermLinkPath.cpp \
 	    ../src/GitStatus.cpp ../src/GitGraph.cpp src/GitModel.cpp \
+	    src/WebImageRules.cpp \
 	    -o $(TEST_BIN)
 	@$(TEST_BIN)
 

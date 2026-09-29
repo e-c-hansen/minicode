@@ -53,6 +53,10 @@ gui_sources = [
   # The Source Control panel (GitPanel) over its plain C++ half (GitModel).
   'src/GitModel.cpp',
   'src/GitPanel.cpp',
+  # Web pictures in the Markdown preview: the libsoup half (#ifdef-guarded,
+  # like Terminal.cpp) over its plain C++ half.
+  'src/WebImageRules.cpp',
+  'src/WebImages.cpp',
 ]
 
 inc = include_directories('src', '../src')
@@ -91,6 +95,32 @@ if poppler_dep.found()
 else
   message('PDF viewer: disabled (poppler-glib not found)')
 endif
+
+# --- optional: pictures from the web in the Markdown preview (libsoup 3) ----
+# libsoup 3 is the HTTP library WebKitGTK 6 is built on (webkitgtk-6.0.pc
+# requires libsoup-3.0), so wherever the browser panel builds, this is
+# already installed and costs users no new package. It is its own option so
+# a build without WebKit can still have it. Without it, web pictures show
+# their alt text.
+soup_dep = dependency('libsoup-3.0', required : get_option('webimages'))
+if soup_dep.found()
+  deps += soup_dep
+  cpp_args += '-DMINICODE_ENABLE_WEB_IMAGES'
+  message('Web pictures in the Markdown preview: ENABLED (libsoup-3.0 found)')
+else
+  message('Web pictures in the Markdown preview: disabled (libsoup-3.0 not found)')
+endif
+
+# The app's version, for the User-Agent those fetches send: the Mac's
+# Info.plist, which scripts/release.sh stamps, is the one place it is kept.
+fs = import('fs')
+app_version = meson.project_version()
+plist = fs.read('..' / 'Info.plist')
+version_key = '<key>CFBundleShortVersionString</key>'
+if plist.contains(version_key)
+  app_version = plist.split(version_key)[1].split('<string>')[1].split('</string>')[0].strip()
+endif
+cpp_args += '-DMINICODE_VERSION="' + app_version + '"'
 
 executable('minicode',
   sources : gui_sources + core_sources,
@@ -135,7 +165,8 @@ port_tests = executable('minicode-linux-tests',
              core_dir / 'LatexDoc.cpp', core_dir / 'SyncTex.cpp',
              core_dir / 'TermLinks.cpp',
   core_dir / 'GitStatus.cpp',
-  core_dir / 'GitGraph.cpp', 'src/TermLinkPath.cpp', 'src/GitModel.cpp'],
+  core_dir / 'GitGraph.cpp', 'src/TermLinkPath.cpp', 'src/GitModel.cpp',
+  'src/WebImageRules.cpp'],
   include_directories : inc,
   install : false)
 test('linux port core', port_tests)

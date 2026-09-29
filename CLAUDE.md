@@ -1355,13 +1355,84 @@ holds, these give real runtime evidence rather than compile-only evidence:
   `MCMarkdownImage` attachment. Its cell (`MCAnimatedImageCell`) sizes the
   picture to the line's width and, for a GIF, draws the current frame and
   advances it on a timer that runs only while the picture is on screen.
-  Local files only, relative to the Markdown file; web images show their
-  alt text. Traps: 1.4.1 shipped with a TextKit 2 view provider, which the
-  TextKit 1 editor never asks for, so GIFs were still; and setting
-  `attachmentCell` in the attachment's init reads back nil, so the cell is
-  returned from an `attachmentCell` override. Linux draws them with its
+  Local files are relative to the Markdown file; on the Mac, https pictures
+  are fetched (next item). Traps: 1.4.1 shipped with a TextKit 2 view
+  provider, which the TextKit 1 editor never asks for, so GIFs were still;
+  and setting `attachmentCell` in the attachment's init reads back nil, so
+  the cell is returned from an `attachmentCell` override. Linux draws them with its
   own `MdPicture`, Android with an ImageView over `ImageDecoder` (an
   `AnimatedImageDrawable` for a GIF).
+- **Web pictures on Linux** (`linux/src/WebImages.cpp` over libsoup 3,
+  rules in `WebImageRules.cpp`, 2026-09-29) follow the same rules, and
+  place each arrival in the buffer in place of its alt text rather than
+  re-rendering; `linux/HANDOFF.md` item 12. Android's are on a branch
+  waiting for a phone test.
+- **Web pictures in the Mac preview** (`MCWebImageLoader` in
+  `MarkdownImage.mm`, 2026-09-28). An `https://` source is fetched in the
+  background by one NSURLSession for the whole app: ephemeral, no cookie
+  storage, credentials or URL cache, 15 s without a byte or 30 s in all ends
+  it, `User-Agent: MiniCode/<version>`. Plain `http://` is never fetched,
+  and a redirect is followed only to another https address. A
+  `data:image/...;base64,` source decodes on the spot, no network.
+  `markdown.web-images = false` (`Settings::webImages()`) makes
+  `markdownRun:` leave the web alone, cached pictures included; a settings
+  change re-renders the preview as before.
+  - **Never blocks the render.** `MCMarkdownWebImage` answers from the cache
+    or starts a fetch and says it is pending. The alt text stands in, tagged
+    `kMarkdownWebImage`, and the address goes into `_awaitedWebImages`, a
+    set each render starts afresh. `MCMarkdownWebImageNotification` (main
+    thread, success or failure) for an awaited address queues one re-render
+    0.1 s later, so pictures finishing together share it. Opening another
+    file empties the set, closing the window drops it, and the re-render
+    checks the path, so a late picture for a file no longer shown renders
+    nothing. Failures keep the alt text, with no alert.
+  - **The place is kept** (`renderMarkdownKeepingPlace`). A picture turns
+    its alt text (many characters) into one attachment character, so the
+    character at the top of the pane is found again by subtracting what
+    arrived above it, then put back at the same distance from the top. A
+    page at the very top stays at the top. `applySettings` still keeps only
+    the scroll origin.
+  - **Limits.** 20 MB: a larger Content-Length is refused at the response,
+    and bytes are counted as they come for a server that sends none (or
+    lies). NSImage must decode the bytes, and 50 megapixels is the most,
+    since a few kilobytes of PNG can claim a size that takes gigabytes to
+    draw. The cache is an NSCache of the bytes (64 MB of cost), keyed by the
+    address as written. It holds bytes, not NSImages, because every render
+    needs its own picture: the animated cell sets the frame to draw on the
+    image it holds. A failure is remembered for 30 s, so re-renders do not
+    ask again. Nothing is written to disk.
+  - **SVG works.** NSImage draws SVG itself on current macOS
+    (`_NSSVGImageRep`), so shields.io badges show at their own size in
+    points. An `<image href>` inside an SVG is never fetched; CoreSVG draws
+    a small red crossed box in its place.
+  - A linked badge's attachment carries `NSLinkAttributeName`, and a click
+    on it reaches `textView:clickedOnLink:` like linked text.
+  - **Verified** (2026-09-28, 64 checks) by a scratch program built from
+    all of src/ except main.mm, with window ordering swizzled to no-ops and
+    activation Prohibited, against a python server on 127.0.0.1 serving
+    https with a self-signed certificate. Only the test trusts it: it adds
+    `URLSession:didReceiveChallenge:completionHandler:` to
+    `MCWebImageLoader` with `class_addMethod` before the first fetch; the
+    app has no challenge handler. `-Wl,-sectcreate,__TEXT,__info_plist,
+    Info.plist` gives the unbundled binary a version for the User-Agent.
+    Checked: the render returning in 5 ms with the alt text; a png and an
+    animated GIF arriving at 120x80 and 64x48, the GIF in the local GIF's
+    cell with its 3 frames and its timer starting when drawn; one re-render
+    for pictures arriving together (and for five delayed ones); the text on
+    show staying put to the point when a 300-point picture arrived above
+    it, nothing moving when it arrived below, and a page at the top staying
+    there; 404, garbage, a refused port and a 15 s timeout keeping the alt
+    text; 30 MB with and without a length cancelled (the server saw 128 KB
+    and 20 MB go out); http, and a redirect to http, never requested;
+    the SVG badge drawn and its link followed on a click; no cookie sent
+    back after a Set-Cookie; a re-render, a preview toggle and a reopen
+    fetching nothing again, nor the 404; the setting off making no request
+    and on again fetching; a picture for a file since closed, or a closed
+    window, rendering nothing. Pixel captures of the preview were looked
+    at. Needs the user's eyes: pictures popping in on a real README while
+    scrolling, a web GIF playing (an offscreen window counts as occluded,
+    so frames never advance there), and real hosts such as GitHub and
+    shields.io, which the test never contacted.
 - **Markdown**: block elements call `ensureLineStart` so they aren't glued to
   the previous paragraph; headings get `paragraphSpacingBefore`. Tables: the
   parser lays them out as aligned monospace (no port shows that any more)

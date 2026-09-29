@@ -18,6 +18,7 @@
 #include "TermLinkPath.h"
 #include "TermLinks.h"
 #include "GitModel.h"
+#include "WebImageRules.h"
 #include <cstdio>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -587,6 +588,125 @@ static GitUi::Style styleOf(const GitUi::StyledText& t, const std::string& piece
     return GitUi::Style::Plain;
 }
 
+// ------------------------------------------------ web pictures (WebImageRules)
+
+static std::vector<unsigned char> bytes(std::initializer_list<int> v) {
+    std::vector<unsigned char> out;
+    for (int b : v) out.push_back((unsigned char)b);
+    return out;
+}
+
+static void testWebImageRules() {
+    GROUP("web images: addresses");
+    using namespace WebImageRules;
+    CHECK(isFetchable("https://img.shields.io/badge/a-b-green.svg"));
+    CHECK(isFetchable("HTTPS://Example.com/x.png"));
+    CHECK(isFetchable("https://127.0.0.1:8443/p.png?x=1#f"));
+    CHECK(!isFetchable("http://example.com/x.png"));
+    CHECK(!isFetchable("//example.com/x.png"));
+    CHECK(!isFetchable("data:image/png;base64,AAAA"));
+    CHECK(!isFetchable("images/x.png"));
+    CHECK(!isFetchable("file:///tmp/x.png"));
+    CHECK(!isFetchable("https://"));
+    CHECK(!isFetchable("https:///x.png"));
+    CHECK(!isFetchable("https://a b/x.png"));
+    CHECK(!isFetchable("https://example.com/\nx.png"));
+    CHECK(!isFetchable("ftp://example.com/x.png"));
+
+    GROUP("web images: header sizes");
+    int w = 0, h = 0;
+    // PNG: signature, IHDR length, "IHDR", width 640, height 480.
+    auto png = bytes({0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, 'I', 'H', 'D', 'R',
+                      0, 0, 2, 0x80, 0, 0, 1, 0xE0, 8, 6, 0, 0, 0});
+    CHECK(headerSize(png.data(), png.size(), &w, &h) && w == 640 && h == 480);
+    CHECK(!headerSize(png.data(), 20, &w, &h));   // cut short
+    // A PNG claiming 100000 x 100000: read, and refused by sizeAllowed.
+    auto bomb = png;
+    bomb[16] = 0; bomb[17] = 0x01; bomb[18] = 0x86; bomb[19] = 0xA0;
+    bomb[20] = 0; bomb[21] = 0x01; bomb[22] = 0x86; bomb[23] = 0xA0;
+    CHECK(headerSize(bomb.data(), bomb.size(), &w, &h) && w == 100000 && h == 100000);
+    CHECK(!sizeAllowed(w, h));
+    // GIF: logical screen 160 x 100, little-endian.
+    auto gif = bytes({'G', 'I', 'F', '8', '9', 'a', 160, 0, 100, 0, 0xF7, 0, 0});
+    CHECK(isGif(gif.data(), gif.size()));
+    CHECK(headerSize(gif.data(), gif.size(), &w, &h) && w == 160 && h == 100);
+    auto gif87 = bytes({'G', 'I', 'F', '8', '7', 'a', 1, 1, 2, 0});
+    CHECK(isGif(gif87.data(), gif87.size()));
+    CHECK(headerSize(gif87.data(), gif87.size(), &w, &h) && w == 257 && h == 2);
+    CHECK(!isGif(png.data(), png.size()));
+    // JPEG: SOI, an APP0 segment to skip, a fill byte, then SOF0 with
+    // height 300 and width 400.
+    auto jpg = bytes({0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 'J', 'F', 'I', 'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0,
+                      0xFF, 0xFF, 0xC0, 0, 17, 8, 1, 0x2C, 1, 0x90, 3, 1, 0x22, 0});
+    CHECK(headerSize(jpg.data(), jpg.size(), &w, &h) && w == 400 && h == 300);
+    // A progressive JPEG (SOF2) after a DHT (C4) that must not be taken for
+    // a frame.
+    auto prog = bytes({0xFF, 0xD8, 0xFF, 0xC4, 0, 4, 0, 0, 0xFF, 0xC2, 0, 17, 8, 0, 10, 0, 20, 3});
+    CHECK(headerSize(prog.data(), prog.size(), &w, &h) && w == 20 && h == 10);
+    // Scan data before any frame: no size.
+    auto noframe = bytes({0xFF, 0xD8, 0xFF, 0xDA, 0, 8, 1, 2, 3, 4, 5, 6});
+    CHECK(!headerSize(noframe.data(), noframe.size(), &w, &h));
+    // WebP, the three kinds.
+    auto vp8x = bytes({'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P', 'V', 'P', '8', 'X',
+                       10, 0, 0, 0, 0x10, 0, 0, 0, 0x1F, 0x03, 0, 0xC7, 0, 0});   // 800 x 200
+    CHECK(headerSize(vp8x.data(), vp8x.size(), &w, &h) && w == 800 && h == 200);
+    // VP8L: 14-bit width-1 and height-1 packed after the 0x2F signature:
+    // width 100 (99 = 0x63), height 50 (49 << 14).
+    const unsigned long bits = 99ul | (49ul << 14);
+    auto vp8l = bytes({'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P', 'V', 'P', '8', 'L',
+                       0, 0, 0, 0, 0x2F, (int)(bits & 0xFF), (int)((bits >> 8) & 0xFF),
+                       (int)((bits >> 16) & 0xFF), (int)((bits >> 24) & 0xFF), 0, 0, 0, 0, 0});
+    CHECK(headerSize(vp8l.data(), vp8l.size(), &w, &h) && w == 100 && h == 50);
+    auto vp8 = bytes({'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P', 'V', 'P', '8', ' ',
+                      0, 0, 0, 0, 0, 0, 0, 0x9D, 0x01, 0x2A, 0x40, 0x01, 0xF0, 0x00});   // 320 x 240
+    CHECK(headerSize(vp8.data(), vp8.size(), &w, &h) && w == 320 && h == 240);
+    // SVG and plain garbage say nothing.
+    const std::string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"90\" height=\"20\"/>";
+    CHECK(!headerSize((const unsigned char*)svg.data(), svg.size(), &w, &h));
+    auto junk = bytes({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+                       21, 22, 23, 24, 25, 26, 27, 28, 29, 30});
+    CHECK(!headerSize(junk.data(), junk.size(), &w, &h));
+    CHECK(!headerSize(nullptr, 0, &w, &h));
+
+    GROUP("web images: limits");
+    CHECK(sizeAllowed(1, 1));
+    CHECK(sizeAllowed(8192, 8192));
+    CHECK(!sizeAllowed(8192, 8193));
+    CHECK(!sizeAllowed(0, 10) && !sizeAllowed(10, -1));
+    CHECK(decodedCost(100, 50, false, 999) == 20000);
+    CHECK(decodedCost(100, 50, true, 999) == 40999);
+    CHECK(kMaxBytes == 20u * 1024 * 1024 && kCacheBytes == 64u * 1024 * 1024);
+
+    GROUP("web images: cache");
+    ByteLru<std::string> lru(100);
+    CHECK(lru.put("a", "A", 40));
+    CHECK(lru.put("b", "B", 40));
+    CHECK(lru.bytes() == 80 && lru.size() == 2);
+    CHECK(lru.get("a") && *lru.get("a") == "A");   // a is now the most recent
+    CHECK(lru.put("c", "C", 40));                   // over 100: b, the least recent, goes
+    CHECK(!lru.get("b") && lru.get("a") && lru.get("c"));
+    CHECK(lru.bytes() == 80);
+    CHECK(!lru.put("huge", "H", 101));              // over the whole limit: not kept
+    CHECK(!lru.get("huge") && lru.size() == 2);
+    CHECK(lru.put("a", "A2", 10));                  // replacing counts the new cost only
+    CHECK(lru.bytes() == 50 && *lru.get("a") == "A2");
+    CHECK(lru.put("d", "D", 100));                  // exactly the limit: all else goes
+    CHECK(lru.size() == 1 && lru.bytes() == 100 && lru.get("d"));
+    lru.erase("d");
+    CHECK(lru.size() == 0 && lru.bytes() == 0);
+
+    GROUP("web images: failures");
+    FailureMemory fails(60);
+    CHECK(!fails.recent("x", 0));
+    fails.remember("x", 10);
+    CHECK(fails.recent("x", 10) && fails.recent("x", 69.9));
+    CHECK(!fails.recent("x", 70));
+    CHECK(fails.size() == 0);   // forgotten once expired
+    // Many failures: the expired ones are swept out as new ones come in.
+    for (int i = 0; i < 600; i++) fails.remember("u" + std::to_string(i), i < 300 ? 0 : 100);
+    CHECK(fails.size() == 300 && fails.recent("u599", 100) && !fails.recent("u0", 100));
+}
+
 void testGitModel() {
     using namespace GitUi;
     const std::string h40 = std::string(40, 'a'), z40 = std::string(40, '0');
@@ -880,6 +1000,7 @@ int main() {
     testPageWords();
     testTermLinkPath();
     testGitModel();
+    testWebImageRules();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
