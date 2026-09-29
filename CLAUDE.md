@@ -563,6 +563,65 @@ never closes.
 - `tests/latex/sweep.sh` double-clicks every word of a typeset document
   through the real click path: 100% on the user's resume, 98.7% on
   `tests/latex/torture.tex` (1,081 found, 14 refused, 0 wrong of 1,095).
+- **Opening from Finder and the Dock** (2026-09-29, on a branch, not
+  merged): see the section of that name below. Checked offscreen only;
+  after a release the user should try Open With on a .md, a double-click
+  once MiniCode is chosen in Get Info, and a drop on the Dock icon.
+
+## Opening from Finder and the Dock (Mac)
+
+Up to 1.4.8 the app declared no document types and its delegate had no open
+handler, so Finder did not offer it, and a forced Open With went to
+NSDocumentController, which answered "MiniCode cannot open files in the
+“Markdown” format".
+
+- **Info.plist** declares `CFBundleDocumentTypes`, every entry
+  `LSHandlerRank` Alternate and no `NSDocumentClass`. By UTI: text and
+  source (`public.text`, `public.plain-text`, `public.source-code` and the
+  usual subtypes), Markdown (`net.daringfireball.markdown`, a CoreTypes UTI,
+  also imported for older systems), the exact image, video and audio UTIs
+  MiniCode shows (not `public.image` or `public.movie`, which would offer it
+  for formats it cannot show), PDF, and `public.folder`. By extension, for
+  what has only a dynamic UTI: TeX, Go, Rust, TOML, conf, ini, tsx and a few
+  more, plus `.ts`, which macOS types as an MPEG-2 video. No `public.data`
+  catch-all; VS Code has none either (65 extension-based types plus
+  `public.folder`), so extensionless files and dotfiles go through the
+  Other item under Open With. Where no other app claims a type (.conf and .bib on this Mac),
+  MiniCode becomes the double-click app even at Alternate.
+- **One handler.** Open With, a double-click and a Dock drop all arrive as
+  one odoc Apple Event, which AppKit hands to `application:openURLs:` in
+  `main.mm`. Folders are taken first: a window already rooted there comes
+  forward, else a new one opens. Then each file goes to the window with the
+  innermost root holding it, else to a new window on its folder, and several
+  files share that window (the last is shown). Paths are compared with
+  symlinks resolved, then respelled from the window's own root so
+  `revealPath:` can walk the tree. `EditorController showFile:` opens even a
+  dotfile the tree hides, and the command line uses it too.
+  `applicationShouldOpenUntitledFile:` returns NO.
+- **Launch order.** Launch Services delivers the open between
+  willFinishLaunching and didFinishLaunching (with `IsDefaultLaunch` NO),
+  so setup lives in `applicationWillFinishLaunching:`, and didFinishLaunching
+  opens no window of its own when one exists and argv is empty. A Finder
+  launch has / as its cwd, so that window would have been rooted at /.
+- **argv.** AppKit treats paths on the command line as documents to open
+  (through `application:openFiles:`, before didFinishLaunching) unless
+  `NSTreatUnknownArgumentsAsOpen` is NO, which `main()` registers. The
+  launcher and `make run` keep going through the argv code alone.
+- **Verifying.** Never `lsregister` or `open` a build in the repo or a
+  worktree: Finder then offers that copy too. The repo's MiniCode.app and
+  several worktree copies were found registered on 2026-09-29, probably from
+  running their binaries; `lsregister -u <path>` removes one. The offscreen
+  harness compiled the app's own `main.mm` with `-Dmain=minicode_main`,
+  swizzled window ordering, activation, alerts and NSDocumentController, and
+  sent opens as odoc events through `NSAppleEventManager
+  dispatchRawAppleEvent:`, so AppKit's routing ran for real (61 checks; with
+  `openURLs:` hidden it reproduced the user's alert word for word). The
+  claims were checked by registering a copy of the bundle under another
+  name and bundle id, outside /private/tmp (Launch Services leaves apps
+  there out of Open With), asking `LSCopyApplicationURLsForURL`, then
+  unregistering and deleting it. Homebrew runs `lsregister` only when it
+  reopens apps it quit during an upgrade; macOS registers a new bundle in
+  /Applications itself, and a launch refreshes a stale record.
 
 ## Images
 

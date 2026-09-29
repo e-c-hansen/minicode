@@ -98,7 +98,7 @@ Zed set out with a similar goal, a lighter and more usable IDE, and it does much
 brew install --cask e-c-hansen/tap/minicode
 ```
 
-The app is not notarized, since that needs a paid Apple Developer account, so the cask clears the quarantine flag and it opens without a Gatekeeper warning. The install also puts a minicode command on your PATH: give it a folder or a file, or nothing for the current directory.
+The app is not notarized, since that needs a paid Apple Developer account, so the cask clears the quarantine flag and it opens without a Gatekeeper warning. The install also puts a minicode command on your PATH: give it a folder or a file, or nothing for the current directory. In Finder, Open With offers MiniCode for text and source files, Markdown, LaTeX, images, PDFs, video, audio and folders, and you can drop any of them on its Dock icon. A file opens in the window whose folder already holds it, or else in a new window on the file's folder. MiniCode never makes itself the default app for a kind of file; pick it under Open With in Finder's Get Info if you want a double click to use it.
 
 To build it yourself you need only the Xcode command line tools.
 

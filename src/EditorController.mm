@@ -1760,6 +1760,15 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     if (open && !node.isDir) [self openFileAtPath:node.path];
 }
 
+// revealPath: opens only what the tree lists, and the tree leaves dotfiles
+// out unless asked, so a file from Finder is opened directly: selected in the
+// tree when the tree has it, and shown either way.
+- (BOOL)showFile:(NSString *)path {
+    [self revealPath:path andOpen:NO];
+    [self openFileAtPath:path];
+    return [self.currentPath isEqualToString:path];
+}
+
 - (void)warn:(NSString *)msg {
     NSAlert *a = [[NSAlert alloc] init];
     a.messageText = msg;

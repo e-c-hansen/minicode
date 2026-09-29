@@ -12,7 +12,9 @@
 
 @implementation AppDelegate
 
-- (void)applicationDidFinishLaunching:(NSNotification *)note {
+// Set up before any window can open: when Finder launches MiniCode to open
+// something, application:openURLs: arrives before didFinishLaunching.
+- (void)applicationWillFinishLaunching:(NSNotification *)note {
     self.controllers = [NSMutableArray array];
 
     // Keep each window independent. Otherwise macOS auto-merges them into
@@ -45,13 +47,21 @@
         }
         return e;
     }];
+}
 
+- (void)applicationDidFinishLaunching:(NSNotification *)note {
     // Open what the command line names, else the cwd. A directory becomes the
     // tree's root; a file opens in the editor with the tree rooted at the
     // folder holding it, so its neighbours are still listed. A path that does
     // not exist roots the tree at its parent when that exists, so a mistyped
     // filename still lands in the right folder.
     NSArray *args = [[NSProcessInfo processInfo] arguments];
+    // Launched by Finder or the Dock to open something: those windows are
+    // already open, and the cwd (/ for such a launch) would only add another.
+    if (args.count < 2 && self.controllers.count > 0) {
+        if (!MCBenchActive()) [NSApp activateIgnoringOtherApps:YES];
+        return;
+    }
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *root = fm.currentDirectoryPath;
     NSString *file = nil;
@@ -74,7 +84,7 @@
         }
     }
     EditorController *c = [self openWindowAtPath:root];
-    if (file) [c revealPath:file andOpen:YES];
+    if (file) [c showFile:file];
     // A benchmark runs in the background, so it never takes the keyboard.
     if (!MCBenchActive()) [NSApp activateIgnoringOtherApps:YES];
     MCDemoStart(c);   // no-op unless MINICODE_DEMO is set (make demos)
@@ -88,6 +98,107 @@
 // Language servers are child processes; none may outlive the app.
 - (void)applicationWillTerminate:(NSNotification *)note {
     MCLspTerminateAllServers();
+}
+
+// ------------------------------------------- opening from Finder and the Dock
+// Launch Services sends every open here: Open With, a double-click on a file
+// MiniCode is the default app for, and a drop on the Dock icon. Handling it
+// keeps AppKit from passing it to NSDocumentController, which MiniCode does
+// not use and which answered "MiniCode cannot open files in the “Markdown”
+// format".
+- (void)application:(NSApplication *)app openURLs:(NSArray<NSURL *> *)urls {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray<NSString *> *folders = [NSMutableArray array];
+    NSMutableArray<NSString *> *files = [NSMutableArray array];
+    for (NSURL *url in urls) {
+        if (!url.isFileURL) continue;
+        // Resolved, as a path on the command line is, so that /tmp and
+        // /private/tmp name one folder.
+        NSString *p = url.path.stringByResolvingSymlinksInPath;
+        BOOL dir = NO;
+        if (![fm fileExistsAtPath:p isDirectory:&dir]) continue;
+        [(dir ? folders : files) addObject:p];
+    }
+    if (!folders.count && !files.count) return;
+    // Before any "Save changes?" alert, so it is not behind another app.
+    if (!MCBenchActive()) [NSApp activateIgnoringOtherApps:YES];
+
+    // Folders first, so a file dropped together with its folder lands in
+    // that folder's window.
+    EditorController *front = nil;
+    for (NSString *dir in folders)
+        front = [self controllerRootedAt:dir] ?: [self openWindowAtPath:dir];
+
+    // Files from one folder share a window: the last is shown, and Ctrl+Tab
+    // goes back to the one before. A window whose unsaved changes the user
+    // chose to keep is not asked again for the rest of its files.
+    NSMutableSet<EditorController *> *declined = [NSMutableSet set];
+    for (NSString *file in files) {
+        NSString *inRoot = nil;
+        EditorController *c = [self controllerContaining:file spelled:&inRoot];
+        if (!c) {
+            c = [self openWindowAtPath:file.stringByDeletingLastPathComponent];
+            inRoot = file;
+        }
+        front = c;
+        if ([declined containsObject:c]) continue;
+        [c.window makeKeyAndOrderFront:nil];
+        if (![c showFile:inRoot]) [declined addObject:c];
+    }
+    [front.window makeKeyAndOrderFront:nil];
+}
+
+// MiniCode has no untitled documents. Now that Info.plist declares document
+// types, AppKit would otherwise ask NSDocumentController for one on every
+// launch that opens nothing.
+- (BOOL)applicationShouldOpenUntitledFile:(NSApplication *)sender {
+    return NO;
+}
+
+// The path spelled the way the tree roots compare: symlinks resolved and
+// /private dropped, as for paths from the command line and from Finder.
+static NSString *MCComparablePath(NSString *path) {
+    return path.stringByResolvingSymlinksInPath;
+}
+
+// The part of path below root ("a/b.md"), or nil when path is not inside it.
+static NSString *MCPathBelow(NSString *root, NSString *path) {
+    if ([root isEqualToString:@"/"])
+        return path.length > 1 ? [path substringFromIndex:1] : nil;
+    NSString *prefix = [root stringByAppendingString:@"/"];
+    return [path hasPrefix:prefix] ? [path substringFromIndex:prefix.length] : nil;
+}
+
+// A window rooted at dir, the frontmost if there are several.
+- (EditorController *)controllerRootedAt:(NSString *)dir {
+    EditorController *found = nil;
+    for (EditorController *c in self.controllers) {
+        if (![MCComparablePath(c.rootPath) isEqualToString:dir]) continue;
+        if (!found || c == [self current]) found = c;
+    }
+    return found;
+}
+
+// The window whose folder holds file, the innermost if several do (the
+// frontmost among equals). *spelled gets the file's path from that window's
+// root as the window spells it, which revealPath: needs to walk the tree.
+- (EditorController *)controllerContaining:(NSString *)file
+                                   spelled:(NSString **)spelled {
+    EditorController *best = nil;
+    NSUInteger bestDepth = 0;
+    NSString *bestBelow = nil;
+    for (EditorController *c in self.controllers) {
+        NSString *root = MCComparablePath(c.rootPath);
+        NSString *below = MCPathBelow(root, file);
+        if (!below) continue;
+        NSUInteger depth = root.pathComponents.count;
+        if (!best || depth > bestDepth ||
+            (depth == bestDepth && c == [self current])) {
+            best = c; bestDepth = depth; bestBelow = below;
+        }
+    }
+    if (best) *spelled = [best.rootPath stringByAppendingPathComponent:bestBelow];
+    return best;
 }
 
 // ------------------------------------------------------- window management
@@ -420,6 +531,11 @@ int main(int argc, const char *argv[]) {
     (void)argc; (void)argv;   // args are read via NSProcessInfo
     @autoreleasepool {
         if (MCDemoListScenes()) return 0;   // MINICODE_DEMO=list
+        // A path on the command line (the minicode launcher, make run) is read
+        // in applicationDidFinishLaunching. Left to AppKit, it would also be
+        // taken as a file to open and handed on a second time.
+        [[NSUserDefaults standardUserDefaults]
+            registerDefaults:@{@"NSTreatUnknownArgumentsAsOpen": @"NO"}];
         NSApplication *app = [NSApplication sharedApplication];
         [app setActivationPolicy:NSApplicationActivationPolicyRegular];
         AppDelegate *delegate = [[AppDelegate alloc] init];

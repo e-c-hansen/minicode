@@ -13,6 +13,9 @@
 - (instancetype)initWithRootPath:(NSString *)path;
 - (void)showWindow;
 - (void)revealPath:(NSString *)path andOpen:(BOOL)open;  // select in tree
+// Open a file handed in from outside (Finder, the Dock, the command line),
+// spelled from rootPath. NO if the user kept unsaved changes instead.
+- (BOOL)showFile:(NSString *)path;
 - (void)openFolder:(id)sender;    // menu action
 - (void)saveCurrentFile:(id)sender;   // Cmd+S
 - (void)togglePreview:(id)sender;     // Markdown: source <-> rendered
