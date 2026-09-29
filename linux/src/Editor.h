@@ -222,7 +222,20 @@ private:
     static gboolean onIdleRetag(gpointer self);
 
     void renderPreview();        // build the Markdown preview into the buffer
+    void rerenderPreview();      // the same again, at the same scroll
     void fitPage();              // size the preview's tables and pictures to the pane
+    // Web pictures (WebImages.h): the page's pending ones are fetched after
+    // a render; those that arrive are put in together, shortly after the
+    // first of them, in place of their alt text.
+    void fetchWebPictures();
+    void placeArrivedPictures();
+    // Where the preview comes to rest (previewEntryV_), measured 700 ms on.
+    void notePreviewRest();
+    // Keeping the line at the top of the view in place while pictures placed
+    // above it are laid out (see holdTopLine in Editor.cpp).
+    void holdTopLine(GtkTextMark* mark, int into);
+    void stopHold();
+    static gboolean onHoldTick(GtkWidget* w, GdkFrameClock* clock, gpointer self);
     void openMarkdownLink(const std::string& url);
     bool scrollToAnchor(const std::string& anchor);
     // Editing from the preview: the block on source `line` (a cell, when
@@ -367,6 +380,19 @@ private:
     double srcCaretFrac_ = 0.3;
     double previewEntryV_ = -1;
     guint  previewEntryTimer_ = 0;
+
+    // Web pictures that arrived since the last placing, and the timer that
+    // places them. The fetches' callbacks can outlive the editor, so they
+    // hold a weak reference to alive_ and do nothing once it is gone.
+    std::vector<std::pair<std::string, WebImages::PicturePtr>> arrived_;
+    guint arrivedTimer_ = 0;
+    std::shared_ptr<int> alive_ = std::make_shared<int>(0);
+    GtkTextMark* holdMark_ = nullptr;   // the line that was at the top
+    int    holdInto_ = 0;               // how far into it the view started
+    guint  holdTick_ = 0;
+    gint64 holdUntil_ = 0;
+    int    holdStill_ = 0;              // frames in a row it needed no move
+    int    holdMoves_ = 0;              // moves made so far
 
     EditorObserver* observer_ = nullptr;
     void notifyDocument();    // tell the observer what the buffer holds now

@@ -193,10 +193,27 @@ void md_picture_class_init(MdPictureClass* k) {
     wk->unmap = mdPictureUnmap;
 }
 
-// The picture `src` names, as written in a Markdown file: a path relative to
-// `folder`, an absolute or ~ path, or a file:// URL. Web pictures and files
-// that do not decode give null, and the alt text is shown instead.
+// A picture widget over a decoded still or animation; it takes its own
+// references. An animation starts on its current frame.
 G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+GtkWidget* newPicture(GdkTexture* still, GdkPixbufAnimation* anim, int* width, int* height) {
+    MdPicture* p = MD_PICTURE(g_object_new(md_picture_get_type(), nullptr));
+    if (anim) {
+        p->anim = GDK_PIXBUF_ANIMATION(g_object_ref(anim));
+        p->iter = gdk_pixbuf_animation_get_iter(anim, nullptr);
+        p->texture = textureFromPixbuf(gdk_pixbuf_animation_iter_get_pixbuf(p->iter));
+    } else {
+        p->texture = GDK_TEXTURE(g_object_ref(still));
+    }
+    *width = p->width = gdk_texture_get_width(p->texture);
+    *height = p->height = gdk_texture_get_height(p->texture);
+    return GTK_WIDGET(p);
+}
+
+// The picture `src` names, as written in a Markdown file: a path relative to
+// `folder`, an absolute or ~ path, or a file:// URL. Web pictures (they come
+// from WebImages) and files that do not decode give null, and the alt text
+// is shown instead.
 GtkWidget* loadPicture(const std::string& srcIn, const std::string& folder,
                        int* width, int* height) {
     std::string src = srcIn, path;
@@ -207,7 +224,7 @@ GtkWidget* loadPicture(const std::string& srcIn, const std::string& folder,
         g_free(f);
     } else {
         if (src.find("://") != std::string::npos || src.rfind("data:", 0) == 0)
-            return nullptr;   // no network fetches from a preview
+            return nullptr;   // not a file
         const size_t cut = src.find_first_of("?#");
         if (cut != std::string::npos) src = src.substr(0, cut);
         char* un = g_uri_unescape_string(src.c_str(), nullptr);
@@ -221,31 +238,62 @@ GtkWidget* loadPicture(const std::string& srcIn, const std::string& folder,
         st.st_size > 64ll * 1024 * 1024)
         return nullptr;
 
-    MdPicture* p = MD_PICTURE(g_object_new(md_picture_get_type(), nullptr));
     std::string lower = path;
     std::transform(lower.begin(), lower.end(), lower.begin(),
                    [](unsigned char c) { return (char)std::tolower(c); });
+    GdkPixbufAnimation* anim = nullptr;
+    GdkTexture* still = nullptr;
     if (lower.size() > 4 && lower.compare(lower.size() - 4, 4, ".gif") == 0) {
-        GdkPixbufAnimation* anim = gdk_pixbuf_animation_new_from_file(path.c_str(), nullptr);
-        if (anim && !gdk_pixbuf_animation_is_static_image(anim)) {
-            p->anim = anim;
-            p->iter = gdk_pixbuf_animation_get_iter(anim, nullptr);
-            p->texture = textureFromPixbuf(gdk_pixbuf_animation_iter_get_pixbuf(p->iter));
-        } else if (anim) {
-            g_object_unref(anim);
-        }
+        anim = gdk_pixbuf_animation_new_from_file(path.c_str(), nullptr);
+        if (anim && gdk_pixbuf_animation_is_static_image(anim)) g_clear_object(&anim);
     }
-    if (!p->texture) p->texture = gdk_texture_new_from_filename(path.c_str(), nullptr);
-    if (!p->texture) {
-        g_object_ref_sink(p);
-        g_object_unref(p);
-        return nullptr;
-    }
-    *width = p->width = gdk_texture_get_width(p->texture);
-    *height = p->height = gdk_texture_get_height(p->texture);
-    return GTK_WIDGET(p);
+    if (!anim) still = gdk_texture_new_from_filename(path.c_str(), nullptr);
+    if (!anim && !still) return nullptr;
+    GtkWidget* w = newPicture(still, anim, width, height);
+    if (anim) g_object_unref(anim);
+    if (still) g_object_unref(still);
+    return w;
 }
 G_GNUC_END_IGNORE_DEPRECATIONS
+
+// A picture from the web, kept in memory by WebImages.
+GtkWidget* webPicture(const WebImages::Picture& pic, int* width, int* height) {
+    if (!pic.texture && !pic.animation) return nullptr;
+    return newPicture(pic.texture, pic.animation, width, height);
+}
+
+// A picture inside a link (a badge, [![alt](src)](url)) opens the link on a
+// click, from an idle as the text's links do, and shows the hand pointer.
+// The picture takes its own clicks, so the editor never sees them.
+struct PictureLink {
+    std::shared_ptr<Markdown::Hooks> hooks;
+    std::string url;
+};
+
+void linkPicture(GtkWidget* pic, const std::shared_ptr<Markdown::Hooks>& hooks,
+                 const std::string& url) {
+    auto* info = new PictureLink{hooks, url};
+    g_object_set_data_full(G_OBJECT(pic), "md-link", info,
+                           [](gpointer d) { delete static_cast<PictureLink*>(d); });
+    GtkGesture* click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
+    g_signal_connect(click, "pressed", G_CALLBACK(+[](GtkGestureClick* g, int n, double, double,
+                                                    gpointer data) {
+        if (n != 1) return;
+        auto* li = static_cast<PictureLink*>(data);
+        if (!li->hooks->link) return;
+        gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
+        auto* job = new PictureLink(*li);
+        g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, [](gpointer d) -> gboolean {
+            auto* j = static_cast<PictureLink*>(d);
+            j->hooks->link(j->url);
+            return G_SOURCE_REMOVE;
+        }, job, [](gpointer d) { delete static_cast<PictureLink*>(d); });
+    }), info);
+    gtk_widget_add_controller(pic, GTK_EVENT_CONTROLLER(click));
+    gtk_widget_set_cursor_from_name(pic, "pointer");
+    gtk_widget_set_tooltip_text(pic, url.c_str());
+}
 
 void mdPictureSetSize(GtkWidget* w, int width, int height) {
     MdPicture* p = MD_PICTURE(w);
@@ -377,6 +425,7 @@ Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
     gtk_text_buffer_set_text(buffer, "", 0);
     Page page;
     auto hooks = std::make_shared<Hooks>(hooksIn);
+    page.hooks = hooks;
 
     std::vector<MdRun> runs = MarkdownParser::parse(source);
 
@@ -435,9 +484,23 @@ Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
             i = end - 1;
             continue;
         }
+        // A web picture not kept in memory yet: its alt text for now, and
+        // the editor fetches it (unless it failed a moment ago).
+        bool fetchLater = false;
         if (r.image) {
             int w = 0, h = 0;
-            if (GtkWidget* pic = loadPicture(r.src, hooks->folder, &w, &h)) {
+            GtkWidget* pic = nullptr;
+            const bool web = WebImages::isFetchable(r.src);
+            if (!web) {
+                pic = loadPicture(r.src, hooks->folder, &w, &h);
+            } else if (hooks->webImages) {
+                if (WebImages::PicturePtr kept = WebImages::cached(r.src))
+                    pic = webPicture(*kept, &w, &h);
+                else
+                    fetchLater = !WebImages::recentlyFailed(r.src);
+            }
+            if (pic) {
+                if (r.link && !r.url.empty()) linkPicture(pic, hooks, r.url);
                 Embed embed;
                 embed.widget = pic;
                 embed.width = w;
@@ -473,6 +536,15 @@ Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
         gtk_text_buffer_insert(buffer, &end, text.c_str(), (int)text.size());
         int endOff = gtk_text_buffer_get_char_count(buffer);
         addSpan(startOff, endOff, r);
+        if (fetchLater) {
+            PendingPicture pp;
+            pp.url = r.src;
+            pp.start = startOff;
+            pp.end = endOff;
+            pp.span = (int)page.spans.size() - 1;
+            if (r.link) pp.link = r.url;
+            page.pending.push_back(pp);
+        }
 
         // Layer tags. Order roughly follows the macOS precedence.
         if (r.heading > 0 && r.heading <= 6) {
@@ -507,4 +579,53 @@ void Markdown::fit(Page& page, int width) {
         const int w = std::min(e.width, width);
         mdPictureSetSize(e.widget, w, (int)((double)e.height * w / e.width + 0.5));
     }
+}
+
+int Markdown::placeWebPicture(GtkTextView* view, GtkTextBuffer* buffer, Page& page,
+                              const std::string& url, const WebImages::PicturePtr& picture) {
+    int placed = 0;
+    for (size_t k = 0; k < page.pending.size();) {
+        if (page.pending[k].url != url) {
+            k++;
+            continue;
+        }
+        const PendingPicture p = page.pending[k];
+        page.pending.erase(page.pending.begin() + (long)k);
+        int w = 0, h = 0;
+        GtkWidget* pic = picture ? webPicture(*picture, &w, &h) : nullptr;
+        if (!pic) continue;   // failed: the alt text stays
+        if (!p.link.empty()) linkPicture(pic, page.hooks, p.link);
+
+        // The alt text out, the picture in, as one character.
+        GtkTextIter a, b;
+        gtk_text_buffer_get_iter_at_offset(buffer, &a, p.start);
+        gtk_text_buffer_get_iter_at_offset(buffer, &b, p.end);
+        gtk_text_buffer_delete(buffer, &a, &b);
+        GtkTextChildAnchor* anchor = gtk_text_buffer_create_child_anchor(buffer, &a);
+        gtk_text_view_add_child_at_anchor(view, pic, anchor);
+        Embed embed;
+        embed.widget = pic;
+        embed.width = w;
+        embed.height = h;
+        page.embeds.push_back(embed);
+        placed++;
+
+        // Everything after it moves by the difference.
+        const int delta = 1 - (p.end - p.start);
+        if (p.span >= 0 && p.span < (int)page.spans.size()) {
+            page.spans[(size_t)p.span].end = page.spans[(size_t)p.span].start + 1;
+            for (size_t i = (size_t)p.span + 1; i < page.spans.size(); i++) {
+                page.spans[i].start += delta;
+                page.spans[i].end += delta;
+            }
+        }
+        for (auto& an : page.anchors)
+            if (an.second >= p.end) an.second += delta;
+        for (PendingPicture& o : page.pending)
+            if (o.start >= p.end) {
+                o.start += delta;
+                o.end += delta;
+            }
+    }
+    return placed;
 }
