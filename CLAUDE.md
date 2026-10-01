@@ -1496,6 +1496,23 @@ holds, these give real runtime evidence rather than compile-only evidence:
 
 ## Gotchas already paid for (don't rediscover these)
 
+- **Drag and drop in the file tree** (2026-10-01): rows move into folders
+  (`outlineView:validateDrop:` retargets every drop onto a folder: a file
+  row means its folder, empty space the root; a folder into itself, its
+  descendant or where it already is is refused), files from Finder are
+  copied in, rows dragged out are copies. A name already in the folder is
+  refused with a message shown after the drop, never during it, since
+  Finder's side of the drag waits on a modal. `pathMovedFrom:to:` makes
+  the open file, the recent list, the LaTeX preview's path and a Markdown
+  preview's relative pictures follow. `ClickOutline mouseDown:` now runs
+  the native tracking first and treats the press as a click only if no
+  drag began (`dragBegan`, set in `draggingSession:willBeginAtPoint:`), so
+  a file opens on release. Checked with an offscreen harness (33 checks,
+  calling the data source with a fake NSDraggingInfo, and a real press and
+  queued release for the click); the drag gesture itself, its highlight and
+  folders springing open need a real mouse.
+- **Empty Markdown and LaTeX files open in the source** on all three
+  ports, since a blank preview of a new file looked like nothing opened.
 - **Single-click open in the file tree**: `NSOutlineView` selection
   notifications / target-action did not fire reliably. `ClickOutline` overrides
   `mouseDown:` to compute the row from the click point and open directly.

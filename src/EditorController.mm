@@ -227,14 +227,19 @@ static BOOL gShowHidden = NO;
 @interface ClickOutline : NSOutlineView
 @property(nonatomic, copy) void (^onRowClick)(NSInteger row, NSPoint pointInView);
 @property(nonatomic, copy) void (^onActivate)(NSInteger row);   // Return / Enter
+@property(nonatomic, assign) BOOL dragBegan;   // set when a row is dragged
 @end
 
 @implementation ClickOutline
 - (void)mouseDown:(NSEvent *)event {
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
     NSInteger row = [self rowAtPoint:p];
-    if (row >= 0 && self.onRowClick) self.onRowClick(row, p);
-    [super mouseDown:event];   // keep native selection / expansion visuals
+    // The native tracking runs first (selection, expansion, and a drag once
+    // the mouse moves), and returns at the release or when a drag starts.
+    // A press that became a drag opens nothing; any other is a click.
+    self.dragBegan = NO;
+    [super mouseDown:event];
+    if (row >= 0 && !self.dragBegan && self.onRowClick) self.onRowClick(row, p);
 }
 - (void)keyDown:(NSEvent *)event {
     NSString *chars = event.charactersIgnoringModifiers;
@@ -342,6 +347,8 @@ private:
     // The same for formulas being typeset, by MCMathKey; renderMarkdown
     // collects the ones to ask for in _mathWanted.
     NSMutableSet<NSString *> *_awaitedMath;
+    // The tree's rows being dragged, while a drag from the tree is on.
+    NSArray<NSString *> *_draggedPaths;
     NSMutableArray<NSArray *> *_mathWanted;
     NSUInteger _mathMarks;
     BOOL _mathRenderQueued;
@@ -494,6 +501,11 @@ private:
     self.outline.indentationPerLevel = 14;
     self.outline.floatsGroupRows = NO;
     self.outline.menu = [self buildTreeContextMenu];
+    // Drag and drop: rows move into folders; files from Finder are copied in,
+    // and rows dragged out to Finder or the terminal are copies.
+    [self.outline registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+    [self.outline setDraggingSourceOperationMask:NSDragOperationMove forLocal:YES];
+    [self.outline setDraggingSourceOperationMask:NSDragOperationCopy forLocal:NO];
     treeScroll.documentView = self.outline;
 
     // --- editor pane
@@ -1516,6 +1528,120 @@ static const CGFloat kDividerGrabSlop = 5;
     cell.imageView.image = img;
     cell.imageView.contentTintColor = node.isDir ? Hex(0xC09553) : Hex(0x8A99A8);
     return cell;
+}
+
+// ---------------------------------------------------- tree drag and drop
+- (id<NSPasteboardWriting>)outlineView:(NSOutlineView *)ov
+               pasteboardWriterForItem:(id)item {
+    return [NSURL fileURLWithPath:((FileItem *)item).path];
+}
+
+- (void)outlineView:(NSOutlineView *)ov draggingSession:(NSDraggingSession *)session
+   willBeginAtPoint:(NSPoint)pt forItems:(NSArray *)items {
+    ((ClickOutline *)ov).dragBegan = YES;
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    for (FileItem *it in items) [paths addObject:it.path];
+    _draggedPaths = paths;
+}
+
+- (void)outlineView:(NSOutlineView *)ov draggingSession:(NSDraggingSession *)session
+       endedAtPoint:(NSPoint)pt operation:(NSDragOperation)op {
+    _draggedPaths = nil;
+}
+
+// What a drop would move or copy: the tree's own rows, else file URLs.
+- (NSArray<NSString *> *)droppedPaths:(id<NSDraggingInfo>)info local:(BOOL)local {
+    if (local) return _draggedPaths ?: @[];
+    NSArray<NSURL *> *urls = [info.draggingPasteboard
+        readObjectsForClasses:@[NSURL.class]
+                      options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    for (NSURL *u in urls) if (u.path) [paths addObject:u.path];
+    return paths;
+}
+
+// A move into a folder makes sense unless the item is already there, or the
+// folder is the item itself or inside it.
+static BOOL MCCanDropPath(NSString *src, NSString *dir) {
+    NSString *s = src.stringByStandardizingPath, *d = dir.stringByStandardizingPath;
+    if ([s.stringByDeletingLastPathComponent isEqualToString:d]) return NO;
+    if ([d isEqualToString:s] || [d hasPrefix:[s stringByAppendingString:@"/"]]) return NO;
+    return YES;
+}
+
+- (NSDragOperation)outlineView:(NSOutlineView *)ov validateDrop:(id<NSDraggingInfo>)info
+                  proposedItem:(id)item proposedChildIndex:(NSInteger)index {
+    // Always a drop onto a folder: a file stands for its folder, the space
+    // between rows for the folder they are in, the empty space for the root.
+    FileItem *target = item;
+    if (target && !target.isDir) target = [ov parentForItem:target];
+    [ov setDropItem:target dropChildIndex:NSOutlineViewDropOnItemIndex];
+    NSString *dir = target ? target.path : _root.path;
+    if (!dir) return NSDragOperationNone;
+    BOOL local = info.draggingSource == ov;
+    NSArray<NSString *> *paths = [self droppedPaths:info local:local];
+    if (!paths.count) return NSDragOperationNone;
+    for (NSString *p in paths)
+        if (!MCCanDropPath(p, dir)) return NSDragOperationNone;
+    return local ? NSDragOperationMove : NSDragOperationCopy;
+}
+
+- (BOOL)outlineView:(NSOutlineView *)ov acceptDrop:(id<NSDraggingInfo>)info
+               item:(id)item childIndex:(NSInteger)index {
+    FileItem *target = item;   // a folder or nil, as validateDrop set it
+    NSString *dir = target ? target.path : _root.path;
+    BOOL local = info.draggingSource == ov;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray<NSString *> *problems = [NSMutableArray array];
+    NSString *last = nil;
+    for (NSString *src in [self droppedPaths:info local:local]) {
+        if (!MCCanDropPath(src, dir)) continue;
+        NSString *dst = [dir stringByAppendingPathComponent:src.lastPathComponent];
+        if ([fm fileExistsAtPath:dst]) {
+            [problems addObject:[NSString stringWithFormat:
+                @"“%@” already exists in “%@”.", dst.lastPathComponent,
+                dir.lastPathComponent]];
+            continue;
+        }
+        NSError *err = nil;
+        BOOL ok = local ? [fm moveItemAtPath:src toPath:dst error:&err]
+                        : [fm copyItemAtPath:src toPath:dst error:&err];
+        if (!ok) { [problems addObject:err.localizedDescription]; continue; }
+        if (local) [self pathMovedFrom:src to:dst];
+        last = dst;
+    }
+    [self refreshTree:nil];
+    if (last) [self revealPath:last andOpen:NO];
+    // Not a modal alert inside the drop: Finder's side of the drag would
+    // wait on it.
+    if (problems.count) {
+        NSString *msg = [problems componentsJoinedByString:@"\n"];
+        dispatch_async(dispatch_get_main_queue(), ^{ [self warn:msg]; });
+    }
+    return last != nil;
+}
+
+// The open file, and the recent list, follow a file or folder that moved.
+- (void)pathMovedFrom:(NSString *)src to:(NSString *)dst {
+    NSString *(^follow)(NSString *) = ^NSString *(NSString *p) {
+        if ([p isEqualToString:src]) return dst;
+        NSString *prefix = [src stringByAppendingString:@"/"];
+        if ([p hasPrefix:prefix])
+            return [dst stringByAppendingPathComponent:[p substringFromIndex:prefix.length]];
+        return nil;
+    };
+    for (NSUInteger i = 0; i < _recent.count; i++) {
+        NSString *moved = follow(_recent[i]);
+        if (moved) _recent[i] = moved;
+    }
+    NSString *moved = self.currentPath ? follow(self.currentPath) : nil;
+    if (!moved) return;
+    self.currentPath = moved;
+    [self.lsp documentOpened:self.previewMode ? nil : moved];
+    // Relative \input and pictures now resolve from the new folder.
+    if (self.isLatex && self.latex) [self.latex setPath:moved source:self.sourceText ?: @""];
+    if (self.isMarkdown && self.previewMode) [self recolorEditor];
+    [self updateTitle];
 }
 
 // Primary open path: driven from ClickOutline's mouseDown, so it always fires.
