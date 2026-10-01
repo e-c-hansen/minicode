@@ -1042,8 +1042,9 @@ class MainActivity : AppCompatActivity() {
         dirty = false
         mdUndo.clear()
         mdRedo.clear()
-        // Markdown and LaTeX open rendered, as they do in the other ports.
-        previewing = isPreviewable(file.name)
+        // Markdown and LaTeX open rendered, as they do in the other ports,
+        // unless the file is empty: a blank preview looks like nothing opened.
+        previewing = isPreviewable(file.name) && text.isNotBlank()
         if (LatexPreview.isLatex(file.name)) ui.latex.open(file, text)
         else ui.latex.close()
         showList(false)

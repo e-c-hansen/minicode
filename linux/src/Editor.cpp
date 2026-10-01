@@ -422,15 +422,18 @@ bool Editor::openFile(const std::string& path) {
 #ifdef MINICODE_ENABLE_PDF
     isLatex_ = (ext_ == "tex" || ext_ == "ltx" || ext_ == "latex");
 #endif
-    // Markdown and LaTeX open in their previews, matching the macOS build.
-    preview_ = isMarkdown_ || isLatex_;
+    // Markdown and LaTeX open in their previews, matching the macOS build,
+    // unless the file is empty: a blank preview looks like nothing opened.
+    const bool blank = std::all_of(content.begin(), content.end(),
+                                   [](unsigned char c) { return std::isspace(c); });
+    preview_ = (isMarkdown_ || isLatex_) && !blank;
     markDirty(false);
 
     if (isLatex_) {
         // The buffer keeps the source, editable and highlighted, behind the
         // pages; the preview typesets it and splices its edits into it.
         loadRawIntoBuffer();
-        showLatex(true);
+        showLatex(preview_);
     } else if (preview_) {
         renderPreview();
     } else {

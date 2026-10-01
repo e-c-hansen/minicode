@@ -2100,8 +2100,11 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
                       [ext isEqualToString:@"markdown"];
     self.isLatex = [ext isEqualToString:@"tex"] || [ext isEqualToString:@"ltx"] ||
                    [ext isEqualToString:@"latex"];
-    // Markdown and LaTeX both open in their preview.
-    self.previewMode = self.isMarkdown || self.isLatex;
+    // Markdown and LaTeX both open in their preview, unless the file is
+    // empty: a blank preview of a new file looks like nothing opened.
+    BOOL blank = [content stringByTrimmingCharactersInSet:
+                     NSCharacterSet.whitespaceAndNewlineCharacterSet].length == 0;
+    self.previewMode = (self.isMarkdown || self.isLatex) && !blank;
     self.dirty = NO;
     [self recordModDate];
     [_recent removeObject:path];
