@@ -29,7 +29,7 @@ import org.minicode.editor.databinding.ActivityMainBinding
 class MainActivity : AppCompatActivity() {
 
     private lateinit var ui: ActivityMainBinding
-    private val files = FileListAdapter(::openEntry) { makeRoot(it) }
+    private val files = FileListAdapter(::openEntry, ::makeRoot, ::startMove)
 
     private var folder: DocumentFile? = null
     private var current: DocumentFile? = null    // the folder being listed
@@ -87,6 +87,10 @@ class MainActivity : AppCompatActivity() {
         ui.previewScroll.onEditBlock = ::editMarkdownBlock
         ui.previewScroll.resolve = ::resolveRelative
         ui.up.setOnClickListener { goUp() }
+        // A row dragged from the list drops on a folder row, on the listed
+        // folder (anywhere else in the list), or on ↑ for the folder above.
+        ui.fileList.setOnDragListener { _, e -> listDrag(e) }
+        ui.up.setOnDragListener { _, e -> upDrag(e) }
         ui.menu.setOnClickListener { showMenu() }
         // Touch targets only. Focusable, ⋮ took the keyboard whenever a pane
         // was swapped under it, and the next Space opened the menu.
@@ -473,6 +477,281 @@ class MainActivity : AppCompatActivity() {
         confirmLeave { usePath(File(path), remember = true) }
     }
 
+    // ------------------------------------------------- moving by dragging
+
+    /**
+     * A drag from the file list, from the long press that started it to the
+     * drop. `from` is the folder the entry is in; `key` and `fromKey` are
+     * FileMove.keyOf for the two.
+     */
+    private class Drag(val item: DocumentFile, val from: DocumentFile, val name: String,
+                       val key: String, val fromKey: String)
+
+    private var drag: Drag? = null
+
+    /**
+     * Starts dragging `entry` from its row: the file list's long press,
+     * then a move of the finger. The shadow is a small label with the name,
+     * since the whole row is as wide as the screen.
+     */
+    private fun startMove(row: View, entry: DocumentFile) {
+        val from = current ?: return
+        if (lostAccess) return
+        val name = entry.name ?: return
+        val d = Drag(entry, from, name, FileMove.keyOf(entry), FileMove.keyOf(from))
+        val dp = resources.displayMetrics.density
+        val label = TextView(this).apply {
+            text = if (files.docAt(ui.fileList.getChildAdapterPosition(row))?.isDir == true)
+                "$name/" else name
+            textSize = 15f
+            setTextColor(Palette.TEXT)
+            setPadding((12 * dp).toInt(), (6 * dp).toInt(), (12 * dp).toInt(), (6 * dp).toInt())
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(DROP_COLOR)
+                cornerRadius = 6 * dp
+            }
+            val any = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            measure(any, any)
+            layout(0, 0, measuredWidth, measuredHeight)
+        }
+        drag = d
+        dragMoved = false
+        val started = row.startDragAndDrop(android.content.ClipData.newPlainText(name, name),
+                                           View.DragShadowBuilder(label), d, 0)
+        if (!started) drag = null
+    }
+
+    /**
+     * What a drop at (x, y) in the list would move into: the folder row
+     * there, or else the folder being listed. The row is returned too, to
+     * be lit up.
+     */
+    private fun dropTargetAt(x: Float, y: Float): Pair<DocumentFile?, View?> {
+        val row = ui.fileList.findChildViewUnder(x, y)
+        val doc = row?.let { files.docAt(ui.fileList.getChildAdapterPosition(it)) }
+        if (doc != null && doc.isDir) return doc.file to row
+        return (if (lostAccess) null else current) to null
+    }
+
+    /** Why `into` cannot take the dragged entry, or null when it can. */
+    private fun refusal(d: Drag, into: DocumentFile): FileMove.Refusal? =
+        FileMove.refusal(d.key, d.fromKey, FileMove.keyOf(into))
+
+    private fun listDrag(e: android.view.DragEvent): Boolean {
+        if (e.action == android.view.DragEvent.ACTION_DRAG_ENDED) { endDrag(); return true }
+        val d = e.localState as? Drag ?: return false
+        when (e.action) {
+            android.view.DragEvent.ACTION_DRAG_STARTED -> return true
+            android.view.DragEvent.ACTION_DRAG_LOCATION -> {
+                dragX = e.x; dragY = e.y
+                hoverAt(d, e.x, e.y)
+                val edge = 48 * resources.displayMetrics.density
+                val dir = when {
+                    e.y < edge -> -1
+                    e.y > ui.fileList.height - edge -> 1
+                    else -> 0
+                }
+                if (dir != edgeScrollDir) {
+                    edgeScrollDir = dir
+                    ui.root.removeCallbacks(edgeScroll)
+                    if (dir != 0) ui.root.post(edgeScroll)
+                }
+            }
+            android.view.DragEvent.ACTION_DRAG_EXITED -> clearListHover()
+            android.view.DragEvent.ACTION_DROP -> {
+                val (into, _) = dropTargetAt(e.x, e.y)
+                clearListHover()
+                return into != null && moveInto(d, into)
+            }
+        }
+        return true
+    }
+
+    /** The drag is over the list at (x, y): light up where it would go. */
+    private fun hoverAt(d: Drag, x: Float, y: Float) {
+        val (into, row) = dropTargetAt(x, y)
+        val ok = into != null && refusal(d, into) == null
+        val lit = if (ok) row ?: ui.fileList else null
+        if (lit !== hoverView) unlight()
+        hoverView = lit
+        // Set every time: a row scrolled away and back is bound afresh,
+        // which clears its background.
+        when (lit) {
+            null -> {}
+            ui.fileList -> ui.fileList.setBackgroundColor(DROP_LIST_COLOR)
+            else -> lit.setBackgroundColor(DROP_COLOR)
+        }
+        // Held over a folder row, the list opens that folder, so a drop can
+        // go deeper than the folders on screen. Never the dragged folder
+        // itself: nothing can be moved into it, and the list never being
+        // inside it is what keeps every drop out of it.
+        val spring = if (row == null) null else into?.takeIf { it.uri != d.item.uri }
+        if (spring?.uri != springTarget?.uri) {
+            ui.root.removeCallbacks(springOpen)
+            springTarget = spring
+            if (spring != null) ui.root.postDelayed(springOpen, SPRING_MS)
+        }
+    }
+
+    private var hoverView: View? = null
+    private var springTarget: DocumentFile? = null
+    private var dragX = 0f
+    private var dragY = 0f
+    private var edgeScrollDir = 0
+    private var dragMoved = false
+
+    /** The folder held over during a drag opens in the list. */
+    private val springOpen = Runnable {
+        val dir = springTarget ?: return@Runnable
+        clearListHover()
+        list(dir)
+    }
+
+    /** Held near the top or bottom of the list during a drag, it scrolls. */
+    private val edgeScroll = object : Runnable {
+        override fun run() {
+            val d = drag ?: return
+            if (edgeScrollDir == 0) return
+            ui.fileList.scrollBy(0, (edgeScrollDir * 10 * resources.displayMetrics.density).toInt())
+            hoverAt(d, dragX, dragY)
+            ui.root.postDelayed(this, 25)
+        }
+    }
+
+    private fun unlight() {
+        when (val v = hoverView) {
+            null -> {}
+            ui.fileList -> ui.fileList.setBackgroundColor(Palette.SIDEBAR)
+            else -> v.background = null
+        }
+        hoverView = null
+    }
+
+    private fun clearListHover() {
+        unlight()
+        ui.root.removeCallbacks(springOpen)
+        springTarget = null
+        edgeScrollDir = 0
+        ui.root.removeCallbacks(edgeScroll)
+    }
+
+    /** ↑ during a drag: the folder above the listed one. */
+    private fun upDrag(e: android.view.DragEvent): Boolean {
+        if (e.action == android.view.DragEvent.ACTION_DRAG_ENDED) { endDrag(); return true }
+        val d = e.localState as? Drag ?: return false
+        val into = current?.takeIf { it.uri != folder?.uri }?.parentFile
+        when (e.action) {
+            android.view.DragEvent.ACTION_DRAG_STARTED -> return true
+            android.view.DragEvent.ACTION_DRAG_ENTERED -> { upHovered = true; lightUp(d) }
+            android.view.DragEvent.ACTION_DRAG_EXITED -> { upHovered = false; clearUpHover() }
+            android.view.DragEvent.ACTION_DROP -> {
+                upHovered = false
+                clearUpHover()
+                return into != null && moveInto(d, into)
+            }
+        }
+        return true
+    }
+
+    /** The folder above the listed one: lit when it can take the drag, and gone to when held. */
+    private fun lightUp(d: Drag) {
+        val into = current?.takeIf { it.uri != folder?.uri }?.parentFile ?: return
+        if (refusal(d, into) == null) ui.up.setBackgroundColor(DROP_COLOR)
+        ui.root.removeCallbacks(springUp)
+        ui.root.postDelayed(springUp, SPRING_MS)
+    }
+
+    private var upHovered = false
+
+    /** Held on ↑, the list goes up a level, and on up while it stays held. */
+    private val springUp = Runnable {
+        clearUpHover()
+        val d = drag ?: return@Runnable
+        if (current?.uri == folder?.uri) return@Runnable
+        goUp()
+        if (upHovered && ui.up.visibility == View.VISIBLE) lightUp(d)
+    }
+
+    private fun clearUpHover() {
+        ui.up.background = null
+        ui.root.removeCallbacks(springUp)
+    }
+
+    /**
+     * Every listening view hears the end of a drag; the first to does the
+     * tidying. A drag that moved nothing puts the list back on the folder
+     * it started from, if holding over folders had taken it elsewhere.
+     */
+    private fun endDrag() {
+        val d = drag ?: return
+        drag = null
+        upHovered = false
+        clearListHover()
+        clearUpHover()
+        if (!dragMoved && current?.uri != d.from.uri && ui.fileList.visibility == View.VISIBLE)
+            list(d.from)
+    }
+
+    /**
+     * Moves the dragged entry into `into`, unless that is refused. Then the
+     * open file follows it, and the list shows the result. True when it
+     * moved.
+     */
+    private fun moveInto(d: Drag, into: DocumentFile): Boolean {
+        when (refusal(d, into)) {
+            // Lifting the finger over the row itself, or over the folder it
+            // is already in, is how a drag is let go of: nothing to say.
+            FileMove.Refusal.SELF, FileMove.Refusal.ALREADY_THERE -> return false
+            FileMove.Refusal.INSIDE -> { say("${d.name} cannot go inside itself."); return false }
+            null -> {}
+        }
+        // Where the open file is below the moved entry, if it is, while the
+        // old names can still be read.
+        val trail = currentFile?.let { FileMove.trail(it, d.item) }
+        val result = FileMove.move(this, d.item, d.from, into, providerName(into.uri.authority))
+        if (result is FileMove.Result.Failed) {
+            android.widget.Toast.makeText(this, result.message, android.widget.Toast.LENGTH_LONG).show()
+            return false
+        }
+        val moved = (result as FileMove.Result.Moved).file
+        dragMoved = true
+        if (trail != null) followMove(moved, trail)
+        // The top of shared storage is a folder called "0".
+        val place = if (where(into) == PHONE_STORAGE) PHONE_STORAGE else into.name ?: "the folder"
+        say("Moved ${d.name} to $place")
+        current?.let { list(it, keepPlace = true) }
+        ui.gitPanel.refresh()
+        return true
+    }
+
+    /**
+     * The open file, or the folder it is in, was moved: the buffer stays as
+     * it is (unsaved edits too) and from now on belongs to the new place,
+     * for saving, watching, the title, the language server and the LaTeX
+     * and Markdown previews.
+     */
+    private fun followMove(moved: DocumentFile, trail: List<String>) {
+        val open = currentFile ?: return
+        val now = FileMove.follow(moved, trail) ?: run {
+            say("${open.name} moved, and MiniCode lost track of it. Open it again from its new folder.")
+            return
+        }
+        currentFile = now
+        diskStamp = stampOf(now)
+        watchOpenFile()
+        when {
+            showingPlayer -> ui.player.moved(now)
+            showingMedia -> {}
+            else -> {
+                val text = ui.editor.text?.toString().orEmpty()
+                if (LatexPreview.isLatex(now.name)) ui.latex.open(now, text)
+                lsp.opened(now, folder)
+                if (previewing && isMarkdown(now.name)) renderPreview()
+            }
+        }
+        updateTitle()
+    }
+
     /** A running shell follows the folder when another is opened. */
     private fun followFolder() {
         if (!ui.terminal.isRunning) return
@@ -553,7 +832,7 @@ class MainActivity : AppCompatActivity() {
             entries.isEmpty() -> listOf(
                 ListRow.Note("This folder is empty."),
                 ListRow.Action("New file") { newFile() })
-            else -> entries.map { ListRow.Doc(it.file) }
+            else -> entries.map { ListRow.Doc(it.file, it.isDir) }
         })
         state?.let { ui.fileList.layoutManager?.onRestoreInstanceState(it) }
         if (focused != null) ui.fileList.post { focusRowLabelled(focused) }
@@ -2433,6 +2712,13 @@ class MainActivity : AppCompatActivity() {
         /** How many recent folders the start screen and leader O offer. */
         private const val MAX_RECENT = 6
 
+        /** A drop target under a drag: a folder row, ↑, the drag's label. */
+        private const val DROP_COLOR = 0xFF04395E.toInt()
+        /** The whole list, while a drop there goes into the listed folder. */
+        private const val DROP_LIST_COLOR = 0xFF1C2B3A.toInt()
+        /** How long a drag rests on a folder or ↑ before the list goes there. */
+        private const val SPRING_MS = 900L
+
         /** What the shared storage is called on screen, as Android's Files app says. */
         private const val PHONE_STORAGE = "Phone storage"
     }
@@ -2444,14 +2730,22 @@ class MainActivity : AppCompatActivity() {
  * folder offers New file, a folder the app lost access to offers to reopen).
  */
 sealed class ListRow {
-    class Doc(val file: DocumentFile) : ListRow()
+    class Doc(val file: DocumentFile, val isDir: Boolean = file.isDirectory) : ListRow()
     class Note(val text: String) : ListRow()
     class Action(val label: String, val run: () -> Unit) : ListRow()
 }
 
-/** The file list: one row per entry, folders marked by a trailing slash. */
+/**
+ * The file list: one row per entry, folders marked by a trailing slash.
+ *
+ * A long press arms a row. Lifted without moving, it does what a long press
+ * always did (`onLongClick`: a folder on Phone storage becomes the project);
+ * moved after the press, the row is dragged instead (`onDrag`), to be
+ * dropped on a folder (MainActivity.startMove).
+ */
 class FileListAdapter(private val onClick: (DocumentFile) -> Unit,
-                      private val onLongClick: (DocumentFile) -> Unit = {}) :
+                      private val onLongClick: (DocumentFile) -> Unit = {},
+                      private val onDrag: (View, DocumentFile) -> Unit = { _, _ -> }) :
     RecyclerView.Adapter<FileListAdapter.Row>() {
 
     private var entries: List<ListRow> = emptyList()
@@ -2461,7 +2755,17 @@ class FileListAdapter(private val onClick: (DocumentFile) -> Unit,
         notifyDataSetChanged()
     }
 
-    class Row(val text: TextView) : RecyclerView.ViewHolder(text)
+    /** The row at `position` when it is a file or folder, else null. */
+    fun docAt(position: Int): ListRow.Doc? = entries.getOrNull(position) as? ListRow.Doc
+
+    class Row(val text: TextView) : RecyclerView.ViewHolder(text) {
+        /** Set by a long press, until the finger lifts or a drag starts. */
+        var held = false
+        var lastX = 0f
+        var lastY = 0f
+        var heldX = 0f
+        var heldY = 0f
+    }
 
     override fun onCreateViewHolder(parent: android.view.ViewGroup, type: Int): Row {
         val dp = parent.resources.displayMetrics.density
@@ -2476,11 +2780,14 @@ class FileListAdapter(private val onClick: (DocumentFile) -> Unit,
         return Row(text)
     }
 
+    @android.annotation.SuppressLint("ClickableViewAccessibility")  // clicks still go through performClick
     override fun onBindViewHolder(row: Row, position: Int) {
         val t = row.text
         val dp = t.resources.displayMetrics.density
         t.setOnClickListener(null)
         t.setOnLongClickListener(null)
+        t.setOnTouchListener(null)
+        row.held = false
         t.background = null
         t.isFocusable = false
         t.minHeight = 0
@@ -2488,12 +2795,36 @@ class FileListAdapter(private val onClick: (DocumentFile) -> Unit,
         when (val entry = entries[position]) {
             is ListRow.Doc -> {
                 val f = entry.file
-                t.text = (f.name ?: "?") + if (f.isDirectory) "/" else ""
-                t.setTextColor(if (f.isDirectory) Palette.ACCENT else Palette.TEXT)
+                t.text = (f.name ?: "?") + if (entry.isDir) "/" else ""
+                t.setTextColor(if (entry.isDir) Palette.ACCENT else Palette.TEXT)
                 t.setOnClickListener { onClick(f) }
-                t.setOnLongClickListener {
-                    if (f.isDirectory) onLongClick(f)
-                    f.isDirectory
+                t.setOnLongClickListener { v ->
+                    row.held = true
+                    row.heldX = row.lastX
+                    row.heldY = row.lastY
+                    // The list would take the next move as a scroll.
+                    v.parent?.requestDisallowInterceptTouchEvent(true)
+                    true
+                }
+                val slop = android.view.ViewConfiguration.get(t.context).scaledTouchSlop
+                t.setOnTouchListener { v, e ->
+                    when (e.actionMasked) {
+                        android.view.MotionEvent.ACTION_DOWN,
+                        android.view.MotionEvent.ACTION_MOVE -> {
+                            row.lastX = e.x; row.lastY = e.y
+                            if (row.held && Math.hypot((e.x - row.heldX).toDouble(),
+                                                       (e.y - row.heldY).toDouble()) > slop) {
+                                row.held = false
+                                onDrag(v, f)
+                            }
+                        }
+                        android.view.MotionEvent.ACTION_UP -> {
+                            if (row.held && entry.isDir) onLongClick(f)
+                            row.held = false
+                        }
+                        android.view.MotionEvent.ACTION_CANCEL -> row.held = false
+                    }
+                    false
                 }
             }
             is ListRow.Note -> {

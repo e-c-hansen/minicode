@@ -65,7 +65,8 @@ The rest of this file is about how the port is built and developed.
   longer read (moved, deleted, its permission taken back, or no "All files
   access" for a path) says which, with a row to fix it. Back in a subfolder
   goes up one. The list follows the disk: see "The file list follows the
-  disk" below.
+  disk" below. A long press and a drag moves a file or folder into another
+  folder: see "Moving files by dragging".
 - **The title bar says where you are.** The first line names the pane (the
   folder, the file with a dot while unsaved, Terminal, Browser, Source
   Control, a diff); the second says where it is, as "Phone storage / mc-test
@@ -264,7 +265,8 @@ the top level and Download outright. So leader O first asks where to open
 from. "Phone storage" browses `/storage/emulated/0` by path, inside MiniCode;
 long-press a folder there to make it the project. "Another app or cloud" is
 the picker, for Drive and Termux folders the editor can use but a shell
-cannot. A path folder is remembered as `folderPath`, a picked one as
+cannot. (A long press that moves on drags the folder instead; see "Moving
+files by dragging".) A path folder is remembered as `folderPath`, a picked one as
 `folder`, and opening one clears the other.
 
 The place both apps can reach is shared storage. In Termux,
@@ -385,6 +387,56 @@ folder was open, deleting the listed subfolder moved the list up, an
 outside append to the open file reloaded it with the caret kept, and an
 outside change under an unsaved edit gave the toast and then the dialog on
 save.
+
+### Moving files by dragging
+
+A new file used to need the terminal to get into a folder. Now a file or
+folder in the list can be dragged there (`FileMove.kt`, and the drag code
+in `MainActivity.kt` under "moving by dragging"):
+
+- **A long press, then move the finger.** The long press arms the row (the
+  phone gives its usual buzz); moving after it starts the drag, with the
+  name as a small label under the finger. Lifting without moving does what
+  a long press always did: a folder on Phone storage becomes the project,
+  and anything else does nothing. So the old gesture still works, and no
+  menu was added.
+- **Where it can go.** Onto a folder row, which lights up; onto ↑ in the
+  title bar, for the folder above; or anywhere else in the list, meaning
+  the folder being listed, and then the whole list lights up. Held on a
+  folder row or on ↑ for most of a second, the list goes there, so a drop
+  can reach any folder in the project; held near the top or bottom edge,
+  the list scrolls. A drag that moves nothing returns the list to the
+  folder it started in.
+- **Refused.** The folder it is already in and the dragged folder itself
+  never light up, and a drop there simply lets go. The list never enters
+  the dragged folder, so nothing can be moved inside itself, and
+  `FileMove.refusal` checks that too, by path or by the provider's
+  document id. A name already in the destination is never written over: it
+  says "docs already has something called notes.md." On the phone's
+  storage that check ignores case, as the storage does; for a picked folder
+  any name differing only in case is refused, to be safe.
+- **How.** A folder opened by path moves with `Files.move`, which, unlike
+  `File.renameTo`, refuses to replace an existing file. A folder from the
+  picker asks its provider (`DocumentsContract.moveDocument`), after
+  checking the entry says it can be moved; a provider that cannot gets a
+  message naming it, and nothing changes.
+- **The open file follows**, whether it was the one moved or inside a
+  moved folder: the buffer, unsaved edits included, now saves to the new
+  place, and the title, the file watch, the language server (closed at the
+  old path and opened at the new one), the LaTeX preview and the Markdown
+  preview's relative pictures follow. A paused video or audio file opens
+  from its new place when shown again.
+- The list is read again at once (FileObserver would notice anyway for a
+  path, but not for a picked folder), and source control refreshes.
+
+Built and compiled only: the phone was not reachable when this was
+written. Still to check at the phone: the long press arming without
+scrolling the list, the drag starting and the label following the finger,
+the row and list highlights, a held folder and a held ↑ opening, the edge
+scroll, a cancelled drag returning to its folder, the old long press on a
+folder still making it the project, moving the open file (and a folder
+holding it) with unsaved edits and then saving, a name clash, and a move
+in a folder picked from Drive and from Termux.
 
 ### Tapping links in the terminal
 
@@ -833,6 +885,9 @@ Run it from the repository root; the tests read a few files from `demo/`,
 - `app/src/main/java/org/minicode/editor/MainActivity.kt` — the panes, the
   leader, the menu, the title bar, recent folders.
 - `StartScreen.kt` — what shows while no folder is open.
+- `FileMove.kt` — moving a file or folder for the list's drag and drop: by
+  path or through the document provider, never over an existing name, and
+  where the open file ends up.
 - `CodeEditText.kt` — the editor field: no composing, and the leader's letter.
 - `EditorKeys.kt` — the row of symbols under the editor, and `CurvedEdges`,
   which keeps both key rows clear of the screen's rounded corners.
