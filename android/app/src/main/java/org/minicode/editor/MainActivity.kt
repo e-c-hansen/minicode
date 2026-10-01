@@ -60,6 +60,7 @@ class MainActivity : AppCompatActivity() {
                 android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
         ui.editor.typeface = android.graphics.Typeface.MONOSPACE
         ui.editor.privateImeOptions = "nm"   // numeric/no-prediction hint some IMEs honour
+        ui.editor.autoIndent = true   // Enter keeps the line's indentation
 
         setTextSize(getSharedPreferences("minicode", MODE_PRIVATE).getInt("textSize", 13))
         symbolRow = getSharedPreferences("minicode", MODE_PRIVATE).getBoolean("symbolRow", true)

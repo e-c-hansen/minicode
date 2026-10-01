@@ -54,9 +54,13 @@ The parts that don't need a GUI are plain C++17 and are unit-tested in
 isolation. Keep them dependency-free.
 
 - `src/SyntaxHighlighter.{h,cpp}` — hand-rolled lexer, grammar chosen by file
-  extension: Python; C, C++, Objective-C, Java, Go and Rust (one C-like
-  grammar); JavaScript, TypeScript and JSON; shell, YAML, TOML and conf; and
-  TeX/LaTeX (`.tex`, `.ltx`, `.latex`, `.sty`, `.cls`, `.bib`). Emits
+  extension (`families()`, about 200 of them): Python; C, C++,
+  Objective-C, Java, Go, Rust, Swift, Kotlin, C# and the other brace
+  languages (one C-like grammar); JavaScript, TypeScript and the JSON family,
+  JSON Lines included; '#'-comment files (shell, YAML, TOML, Ruby, Perl, R,
+  config and dotfiles); ';' (ini, Lisps, assembly); '--' (SQL, Lua,
+  Haskell); CSS; and TeX/LaTeX (`.tex`, `.ltx`, `.latex`, `.sty`, `.cls`,
+  `.bib`). Emits
   `{start, length, style}` tokens. Lexes a line at a time from a `LexState`
   (normal, block comment, triple string, backslash-continued string, TeX
   math, TeX verbatim/comment/math environment); `IncrementalHighlighter<Ch>`
@@ -224,6 +228,11 @@ container (PanelHost, laid out by hand in layoutContainer)
 - Layout is manual frames, not Auto Layout (see gotchas for why). Pane state
   flags: `sidebarCollapsed`, `editorHidden`, `terminalVisible`,
   `browserVisible`, plus NSSplitView's own collapse of `rightArea`.
+- Return keeps the current line's indentation (spaces and tabs up to the
+  caret) on all three ports: `textView:doCommandBySelector:` on the Mac,
+  `onViewKey` noting the key plus `onInsertTextAfter` on Linux (so the
+  completion list still takes Return), and `CodeEditText.autoIndent` on
+  Android, both for a key event and for "\n" committed by the keyboard.
 - A new shortcut goes in three places: the menu in `main.mm` (plus a
   forwarding method on `AppDelegate`), `hintsText` in EditorController (one
   `appendHintsRow:` call), and the README shortcut table, which is

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cctype>
 #include <type_traits>
+#include <unordered_map>
 #include <unordered_set>
 
 struct SyntaxGrammar {
@@ -56,32 +57,106 @@ const std::unordered_set<std::string> kJs = {
     "finally","throw","async","await","yield","null","undefined","true","false",
     "of","in","void"};
 
-bool isTexExt(const std::string& ext) {
-    return ext == "tex" || ext == "ltx" || ext == "latex" || ext == "sty" ||
-           ext == "cls" || ext == "bib";
+// Which grammar each extension gets. Several are near enough that one
+// grammar serves them all: C's serves the brace languages, JavaScript's the
+// JSON family (JSON Lines included), and the '#' one shell and config files.
+enum class Family { C, Python, Js, Css, Hash, Ini, Lisp, Dash, Tex };
+
+const std::unordered_map<std::string, Family>& families() {
+    static const std::unordered_map<std::string, Family> m = [] {
+        std::unordered_map<std::string, Family> f;
+        auto add = [&f](Family fam, std::initializer_list<const char*> exts) {
+            for (const char* e : exts) f[e] = fam;
+        };
+        add(Family::Tex, {"tex", "ltx", "latex", "sty", "cls", "bib"});
+        add(Family::Python, {"py", "pyi", "pyw", "pyx", "pxd", "bzl", "star",
+                             "gyp", "gypi", "sconstruct", "sconscript"});
+        add(Family::Js, {"js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx",
+                         "json", "jsonl", "ndjson", "jsonc", "json5",
+                         "geojson", "topojson", "webmanifest", "har",
+                         "ipynb", "babelrc", "eslintrc", "prettierrc",
+                         "jshintrc", "swcrc", "as"});
+        add(Family::C, {"c", "cpp", "cc", "cxx", "c++", "h", "hpp", "hxx",
+                        "hh", "h++", "inl", "ipp", "tpp", "cu", "cuh", "m",
+                        "mm", "java", "go", "rs", "swift", "kt", "kts",
+                        "scala", "sc", "cs", "fs", "dart", "groovy",
+                        "gradle", "proto", "zig", "d", "v", "sv", "svh",
+                        "sol", "php", "glsl", "vert", "frag", "geom", "comp",
+                        "tesc", "tese", "hlsl", "metal", "wgsl", "ino",
+                        "pde", "jsonnet", "prisma",
+                        "libsonnet", "thrift", "capnp", "hx", "nut", "vala",
+                        "cg", "fx", "y", "yy", "l", "ll", "gn", "gni"});
+        add(Family::Hash, {"sh", "bash", "zsh", "fish", "ksh", "csh", "tcsh",
+                           "command", "yml", "yaml", "toml", "conf", "cfg",
+                           "cnf", "env", "properties", "rb", "rake",
+                           "gemspec", "ru", "pl", "pm", "t", "r", "jl", "ex",
+                           "exs", "nim", "cr", "tcl", "awk", "sed", "ps1",
+                           "psm1", "psd1", "nix", "tf", "tfvars", "hcl",
+                           "mk", "mak", "make", "cmake", "dockerfile",
+                           "containerfile", "service", "socket", "timer",
+                           "mount", "target", "desktop", "gitignore",
+                           "gitattributes", "gitmodules", "gitconfig",
+                           "dockerignore", "npmignore", "editorconfig",
+                           "zshrc", "zshenv", "zprofile", "zlogin",
+                           "zlogout", "bashrc", "bash_profile",
+                           "bash_logout", "profile", "inputrc", "tmux",
+                           "vimrc", "pkgbuild", "ebuild", "spec", "pp",
+                           "sls", "bats", "envrc", "flake8", "pylintrc",
+                           "condarc", "npmrc", "yarnrc", "nanorc", "mailmap",
+                           "pri", "bb", "bbappend", "graphql", "gql"});
+        add(Family::Css, {"css", "scss", "less"});
+        add(Family::Ini, {"ini", "reg", "inf", "iss"});
+        add(Family::Lisp, {"asm", "s", "nasm", "el", "lisp", "lsp", "scm",
+                           "ss", "rkt", "clj", "cljs", "cljc", "edn", "fnl"});
+        add(Family::Dash, {"sql", "psql", "mysql", "pgsql", "plsql", "lua",
+                           "hs", "lhs", "elm", "purs", "ada", "adb", "ads",
+                           "vhd", "vhdl", "applescript", "scpt"});
+        return f;
+    }();
+    return m;
 }
 
 SyntaxGrammar makeGrammar(const std::string& ext) {
     SyntaxGrammar d;
-    if (isTexExt(ext)) {
+    auto it = families().find(ext);
+    Family fam = it == families().end() ? Family::C : it->second;
+    switch (fam) {
+    case Family::Tex:
         d.tex = true;
         d.bibEntries = ext == "bib";
         d.texAtLetter = ext == "sty" || ext == "cls";
-    } else if (ext == "py") {
+        break;
+    case Family::Python:
         d.lineComments = {"#"}; d.stringDelims = "\"'"; d.tripleQuotes = true;
         d.decorators = true;
         d.keywords = kPy; d.types = kPyTypes;
-    } else if (ext == "js" || ext == "ts" || ext == "jsx" || ext == "tsx" ||
-               ext == "json") {
+        break;
+    case Family::Js:
         d.lineComments = {"//"}; d.blockStart = "/*"; d.blockEnd = "*/";
         d.stringDelims = "\"'`"; d.keywords = kJs; d.types = kCTypes;
-    } else if (ext == "sh" || ext == "bash" || ext == "zsh" || ext == "yml" ||
-               ext == "yaml" || ext == "toml" || ext == "conf") {
+        break;
+    case Family::Css:   // plain CSS has no line comments; a URL would end in one
+        if (ext != "css") d.lineComments = {"//"};
+        d.blockStart = "/*"; d.blockEnd = "*/"; d.stringDelims = "\"'";
+        break;
+    case Family::Hash:
         d.lineComments = {"#"}; d.stringDelims = "\"'";
-    } else { // c, cpp, cc, h, hpp, m, mm, java, go, rs, ...
+        break;
+    case Family::Ini:
+        d.lineComments = {";", "#"}; d.stringDelims = "\"";
+        break;
+    case Family::Lisp:
+        d.lineComments = {";"}; d.stringDelims = "\"";
+        break;
+    case Family::Dash:
+        d.lineComments = {"--"}; d.blockStart = "/*"; d.blockEnd = "*/";
+        d.stringDelims = "\"'";
+        break;
+    case Family::C:
         d.lineComments = {"//"}; d.blockStart = "/*"; d.blockEnd = "*/";
         d.stringDelims = "\"'"; d.preprocHash = true;
         d.keywords = kCLike; d.types = kCTypes;
+        break;
     }
     return d;
 }
@@ -660,11 +735,7 @@ LexState lexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
 } // namespace
 
 bool SyntaxHighlighter::supports(const std::string& ext) {
-    static const std::unordered_set<std::string> known = {
-        "py","js","ts","jsx","tsx","json","c","cpp","cc","cxx","h","hpp","hxx",
-        "m","mm","java","go","rs","sh","bash","zsh","yml","yaml","toml","conf",
-        "tex","ltx","latex","sty","cls","bib"};
-    return known.count(ext) > 0;
+    return families().count(ext) > 0;
 }
 
 std::vector<Token> SyntaxHighlighter::highlight(const std::string& text,

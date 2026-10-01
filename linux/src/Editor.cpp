@@ -138,8 +138,9 @@ Editor::Editor() {
     GtkEventController* motion = gtk_event_controller_motion_new();
     g_signal_connect(motion, "motion", G_CALLBACK(onMotion), this);
     gtk_widget_add_controller(view_, motion);
-    // Ctrl+Z and Ctrl+Shift+Z for edits made from a Markdown preview, whose
-    // buffer holds rendered text and so has no undo of its own for them.
+    // Return, noted for its indent (onViewKey), and Ctrl+Z and Ctrl+Shift+Z
+    // for edits made from a Markdown preview, whose buffer holds rendered
+    // text and so has no undo of its own for them.
     GtkEventController* keys = gtk_event_controller_key_new();
     gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
     g_signal_connect(keys, "key-pressed", G_CALLBACK(onViewKey), this);
@@ -1182,11 +1183,31 @@ void Editor::onDeleteRange(GtkTextBuffer*, GtkTextIter* start, GtkTextIter* end,
 // (typing over a selection, a paste) retags once.
 // The observer hears about each edit here too, once the buffer has changed
 // (never for a refill: sourceMode_ is off while the buffer is being set).
-void Editor::onInsertTextAfter(GtkTextBuffer*, GtkTextIter*, char* text, int len,
+void Editor::onInsertTextAfter(GtkTextBuffer* buf, GtkTextIter* loc, char* text, int len,
                                gpointer selfp) {
     Editor* self = static_cast<Editor*>(selfp);
     if (!self->inAction_) self->flushHighlighting();
     if (self->observer_ && self->sourceMode_) self->observer_->textEdited(text, len);
+    // Return keeps the indentation: the new line gets the spaces and tabs
+    // that begin the line it was split from. Only for the Return key (see
+    // onViewKey), so a pasted newline is left alone. Inserting at loc keeps
+    // it valid for the handlers after this one.
+    const bool afterReturn = self->returnKey_;
+    self->returnKey_ = false;
+    if (!afterReturn || !self->sourceMode_ || self->readOnly_ || len != 1 || text[0] != '\n')
+        return;
+    GtkTextIter a = *loc;
+    if (!gtk_text_iter_backward_line(&a)) return;
+    GtkTextIter b = a;
+    while (!gtk_text_iter_ends_line(&b)) {
+        const gunichar c = gtk_text_iter_get_char(&b);
+        if (c != ' ' && c != '\t') break;
+        gtk_text_iter_forward_char(&b);
+    }
+    if (gtk_text_iter_equal(&a, &b)) return;
+    char* indent = gtk_text_iter_get_text(&a, &b);
+    gtk_text_buffer_insert(buf, loc, indent, -1);
+    g_free(indent);
 }
 
 void Editor::onDeleteRangeAfter(GtkTextBuffer*, GtkTextIter*, GtkTextIter*, gpointer selfp) {
@@ -2389,6 +2410,11 @@ void Editor::applyMarkdownSource(const std::string& source, bool undoable) {
 gboolean Editor::onViewKey(GtkEventControllerKey*, guint key, guint, GdkModifierType mods,
                            gpointer selfp) {
     Editor* self = static_cast<Editor*>(selfp);
+    // Return in source: onInsertTextAfter indents the line it makes. The key
+    // is only noted, never taken, so the completion list still gets it.
+    self->returnKey_ = (key == GDK_KEY_Return || key == GDK_KEY_KP_Enter ||
+                        key == GDK_KEY_ISO_Enter) &&
+                       !(mods & (GDK_CONTROL_MASK | GDK_ALT_MASK)) && self->sourceMode_;
     if (!self->preview_ || !self->isMarkdown_) return FALSE;
     const bool ctrl = mods & GDK_CONTROL_MASK, shift = mods & GDK_SHIFT_MASK;
     const bool undo = ctrl && !shift && (key == GDK_KEY_z || key == GDK_KEY_Z);

@@ -80,6 +80,18 @@ void testSyntax() {
     CHECK(SyntaxHighlighter::supports("js"));
     CHECK(!SyntaxHighlighter::supports("xyz"));
     CHECK(!SyntaxHighlighter::supports(""));
+    for (const char *e : {"jsonl", "ndjson", "jsonc", "mjs", "kt", "swift", "cs",
+                          "rb", "lua", "sql", "ini", "css", "pyi", "fish"})
+        CHECK(SyntaxHighlighter::supports(e));
+    // JSON Lines gets the JSON grammar: strings, numbers, true/false/null.
+    CHECK(hasToken("{\"a\": 1, \"b\": true}\n{\"c\": null}\n", "jsonl", "\"a\"",
+                   TokenStyle::String));
+    CHECK(hasToken("{\"c\": null}\n", "jsonl", "null", TokenStyle::Keyword));
+    CHECK(hasToken("SELECT 1 -- note\n", "sql", "-- note", TokenStyle::Comment));
+    CHECK(hasToken("[s]\n; note\n", "ini", "; note", TokenStyle::Comment));
+    CHECK(hasToken("a { color: red; } /* c */\n", "css", "/* c */", TokenStyle::Comment));
+    // A URL in plain CSS is not a comment.
+    CHECK(!hasStyle("b { background: url(http://x/y.png); }\n", "css", TokenStyle::Comment));
 
     GROUP("syntax:python");
     std::string py = "def foo(x):\n    return 1  # note\n";

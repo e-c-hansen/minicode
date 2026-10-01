@@ -302,6 +302,7 @@ private:
     bool        dirty_      = false;
     bool        tagsReady_  = false;
     bool        sourceMode_ = false;   // the buffer holds editable source text
+    bool        returnKey_  = false;   // the Return key is being handled
 
     // Highlighting state, live only while the buffer holds source of a
     // language the lexer knows. mirror_ is a UTF-8 copy of the buffer kept in

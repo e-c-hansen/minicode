@@ -2635,8 +2635,25 @@ static NSColor *ContrastColor(const Rgba &c) {
 // Arrows, Return, Tab and Esc drive the completion list while it is open;
 // Option+Esc (complete:) asks the language server.
 - (BOOL)textView:(NSTextView *)tv doCommandBySelector:(SEL)sel {
-    (void)tv;
-    return [self.lsp handleCommand:sel];
+    if ([self.lsp handleCommand:sel]) return YES;
+    // Return keeps the current line's indentation, as other editors do: the
+    // new line starts with the spaces and tabs that begin this one, up to
+    // the caret.
+    if (sel == @selector(insertNewline:) && tv == self.textView && tv.editable) {
+        NSString *s = tv.string;
+        NSRange range = tv.selectedRange;
+        NSUInteger start = [s lineRangeForRange:NSMakeRange(range.location, 0)].location;
+        NSUInteger end = start;
+        while (end < range.location) {
+            unichar c = [s characterAtIndex:end];
+            if (c != ' ' && c != '\t') break;
+            ++end;
+        }
+        NSString *indent = [s substringWithRange:NSMakeRange(start, end - start)];
+        [tv insertText:[@"\n" stringByAppendingString:indent] replacementRange:range];
+        return YES;
+    }
+    return NO;
 }
 
 // Ctrl+Space, F12, Cmd+I. The session beeps and says why when the file has
