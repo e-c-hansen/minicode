@@ -643,7 +643,11 @@ never closes.
 
 ## Current state (handoff, 2026-09-29)
 
-- **Released: 1.4.10** (2026-10-01): about 200 more extensions
+- **Released: 1.4.11** (2026-10-01): drag and drop in the file tree on
+  all three ports (Mac checked offscreen, Linux with real drags in Docker,
+  Android build-only: the phone checks are in android/README.md), and empty
+  Markdown and LaTeX files opening in the source.
+- **1.4.10** (2026-10-01): about 200 more extensions
   highlighted (JSON Lines among them) and Return keeping the line's indent,
   on all three ports; built and unit-tested, not tried in a running app.
 - **1.4.9** (2026-09-29), with the Mac zip and the signed APK;
