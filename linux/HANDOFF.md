@@ -25,7 +25,8 @@ poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
 - data safety: "Save changes?" before anything replaces edits, failed saves
   reported, atomic saves (item 1);
 - the file tree, live-refreshing, with New File, New Folder, Rename, Move to
-  Trash, Open Containing Folder and Copy Path (item 2);
+  Trash, Open Containing Folder and Copy Path (item 2), and rows that drag
+  onto folders (item 13);
 - the editor with incremental syntax highlighting (item 3), Ctrl+/, the
   Markdown preview, and reloading when the file changes on disk (item 8);
 - images and PDFs in the editor's slot (item 4), with zoom for PDFs and the
@@ -945,6 +946,57 @@ arrived; two 300-pixel pictures arriving above a scrolled page left the
 same paragraph at the top; the setting off made no request, and turning
 it on fetched. Still needs the ThinkPad: real sites (GitHub, shields.io)
 and scrolling by hand while pictures arrive.
+
+### 13. Drag and drop in the file tree (done, October 2026)
+
+The user had to use the terminal to move a new file into a folder. Rows
+now drag, as in the Mac's outline, which gained the same at the same time.
+`FileTree` decides where a drop goes and whether it may; `main.cpp`
+(`dropOnTree`) does the work.
+
+- **Where.** Onto a folder row: into it. Onto a file row: into that file's
+  folder. Onto the space below the rows: into the root. The folder's row is
+  lit (`minicode-drop-target`, accent #4EA1F7, in `ThemeCss.cpp`), or the
+  whole tree is outlined for the root. A closed folder held under a drag
+  for 0.7 s opens, and the list scrolls while the pointer is within 24
+  pixels of its top or bottom.
+- **Refused** while hovering (nothing lit, no drop): a folder into itself
+  or anything below it, and anything into the folder it is already in.
+- **Move or copy.** What a drag carries is a `GdkFileList`. A drag that
+  began in this process (a tree in any window) moves, with `g_file_move`
+  and no OVERWRITE, then `followMove`, the code Rename already used, so the
+  open file and Previous File follow in every window, a file inside a moved
+  folder too. Files from another program (a file manager) are copied, on a
+  worker thread (`CopyJob`, `copyTree`: folders recursively, links as
+  links), never over anything. A name already taken gives "“x” already
+  exists in “folder”." and nothing is replaced. The folder monitors bring
+  the rows in, and `revealPath` selects what arrived.
+- **Clicks.** A click already acted on release, and only when press and
+  release were on one row; the drag starts past GTK's drag threshold, after
+  the click has given up, so a drag never opens its row.
+- **Trap.** GtkTreeExpander has a drop controller of its own that opens a
+  folder after 0.5 s under any drag, the folder being dragged included.
+  `onSetup` removes it, so only `hoverFolder`, which knows what is
+  refused, opens folders.
+
+Checked in the Docker container (2026-10-01) with real xdotool drags: a
+file onto a folder, a file onto a file row (into its folder), a folder
+into a sibling, a file onto the empty space (root), the refusals (a folder
+onto itself, into its child, a folder into its own parent) leaving the
+disk untouched, a name collision showing the alert and leaving both files,
+the open file following its own move and its folder's move (then Ctrl+S
+writing to the new place and nothing at the old one), hover-open (and no
+opening over a refused folder), autoscroll down a 70-row list, and single
+clicks still opening files and toggling folders, a click that wobbles 3
+pixels included. Files from outside came from a small GTK program run as a
+separate X client (a real XDND drag, so the copy path and text/uri-list
+conversion ran): a file and a folder copied with the originals left, and a
+second drop of both reporting "2 items already exist". Screenshots of the
+row highlight and the root outline were looked at. Not checked: a real file
+manager (Nautilus) on the ThinkPad, a drag between two MiniCode windows,
+dragging a row out to a file manager, and the look under GNOME's theme.
+Dropping a row on the editor inserts its path as text, which is
+GtkTextView's own handling of a file list.
 
 ## How to work on it
 

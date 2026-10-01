@@ -71,6 +71,7 @@ FileTree::~FileTree() {
     *activity_ = nullptr;   // folder watches still running call nothing now
     if (revealIdle_) g_source_remove(revealIdle_);
     revealIdle_ = 0;
+    endDrop();
     dropPopovers();
     if (listView_) {
         g_signal_handlers_disconnect_by_data(listView_, this);
@@ -317,6 +318,28 @@ void FileTree::build() {
     g_signal_connect(click, "released", G_CALLBACK(onPrimaryReleased), this);
     gtk_widget_add_controller(listView_, GTK_EVENT_CONTROLLER(click));
 
+    // Rows drag onto folders (see "drag and drop" below). The drag starts
+    // only past GTK's drag threshold, beyond the distance at which the click
+    // above gives up, and the click acts on release, so a drag never opens
+    // the row it began on. Offering a file list also lets a row be dragged
+    // out to a file manager.
+    GtkDragSource* drag = gtk_drag_source_new();
+    gtk_drag_source_set_actions(drag, (GdkDragAction)(GDK_ACTION_MOVE | GDK_ACTION_COPY));
+    g_signal_connect(drag, "prepare", G_CALLBACK(onDragPrepare), this);
+    g_signal_connect(drag, "drag-end", G_CALLBACK(onDragEnd), this);
+    gtk_widget_add_controller(listView_, GTK_EVENT_CONTROLLER(drag));
+
+    // Preloaded, so files dragged in from elsewhere are known while they
+    // hover and a drop into the folder they are already in can be refused.
+    GtkDropTarget* drop = gtk_drop_target_new(GDK_TYPE_FILE_LIST,
+        (GdkDragAction)(GDK_ACTION_MOVE | GDK_ACTION_COPY));
+    gtk_drop_target_set_preload(drop, TRUE);
+    g_signal_connect(drop, "enter", G_CALLBACK(onDropMotion), this);
+    g_signal_connect(drop, "motion", G_CALLBACK(onDropMotion), this);
+    g_signal_connect(drop, "leave", G_CALLBACK(onDropLeave), this);
+    g_signal_connect(drop, "drop", G_CALLBACK(onDrop), this);
+    gtk_widget_add_controller(listView_, GTK_EVENT_CONTROLLER(drop));
+
     // Enter opens, Left and Right close and open folders. Capture phase, so
     // the keys arrive before the list's own bindings.
     GtkEventController* keys = gtk_event_controller_key_new();
@@ -404,6 +427,17 @@ void FileTree::onSetup(GtkSignalListItemFactory* /*f*/, GObject* obj,
     gtk_list_item_set_activatable(li, FALSE);
     // Lets a widget found under the pointer be traced back to its row.
     g_object_set_data(G_OBJECT(expander), "minicode-list-item", li);
+    // GtkTreeExpander opens its folder after half a second under any drag,
+    // even a folder being dragged into itself. FileTree opens folders under
+    // a drag itself (hoverFolder), only where the drop is allowed, so the
+    // expander's own drop controller goes.
+    GListModel* ctrls = gtk_widget_observe_controllers(expander);
+    for (guint i = g_list_model_get_n_items(ctrls); i-- > 0;) {
+        auto* c = static_cast<GtkEventController*>(g_list_model_get_item(ctrls, i));
+        if (GTK_IS_DROP_CONTROLLER_MOTION(c)) gtk_widget_remove_controller(expander, c);
+        g_object_unref(c);
+    }
+    g_object_unref(ctrls);
 }
 
 void FileTree::onBind(GtkSignalListItemFactory* /*f*/, GObject* obj,
@@ -556,6 +590,7 @@ void FileTree::setRoot(const std::string& rootDir) {
     root_ = rootDir;
     pendingReveal_.clear();
     pendingExpand_.clear();
+    endDrop();
     dropPopovers();
     // Rebuild the model tree against the new root. filter_ and sorter_ are
     // recreated in build(); drop our old references first.
@@ -716,17 +751,8 @@ void FileTree::onItemsChanged(GListModel*, guint, guint, guint, gpointer selfp) 
 
 // Where row `pos` is drawn, in the list view's coordinates, if it is on screen.
 bool FileTree::rowBounds(guint pos, graphene_rect_t* out) const {
-    for (GtkWidget* c = gtk_widget_get_first_child(listView_); c;
-         c = gtk_widget_get_next_sibling(c)) {
-        GtkWidget* inner = gtk_widget_get_first_child(c);
-        if (!inner) continue;
-        auto* li = static_cast<GtkListItem*>(
-            g_object_get_data(G_OBJECT(inner), "minicode-list-item"));
-        if (li && gtk_list_item_get_position(li) == pos &&
-            gtk_widget_get_mapped(inner))
-            return gtk_widget_compute_bounds(inner, listView_, out);
-    }
-    return false;
+    GtkWidget* row = rowWidget(pos);
+    return row && gtk_widget_compute_bounds(gtk_widget_get_first_child(row), listView_, out);
 }
 
 // ---------------------------------------------------------------- context menu
@@ -848,4 +874,268 @@ void FileTree::askName(const std::string& prompt, const std::string& initial,
     int stem = (dot && dot != initial.c_str())
                    ? (int)g_utf8_pointer_to_offset(initial.c_str(), dot) : -1;
     gtk_editable_select_region(GTK_EDITABLE(entry), 0, stem);
+}
+
+// ---------------------------------------------------------------- drag and drop
+//
+// A row dragged onto a folder moves into it, as in the Mac's outline: onto a
+// folder row means into that folder, onto a file row into the file's folder,
+// onto the space below the rows into the root. The tree only works out where
+// a drop goes and whether it may go there; the moving and copying, and the
+// open file following a move, are main.cpp's (setDropCallback).
+//
+// What a drag carries is a GdkFileList, so files dragged in from a file
+// manager arrive the same way. A drag that began in this process (any
+// window's tree: nothing else here drags files) is a move; anything else is a
+// copy, so a file manager never loses its file to MiniCode.
+
+namespace {
+// The rows a tree is dragging right now. A drop target in this process reads
+// them while the drag hovers, before the drag's data is asked for.
+std::vector<std::string> sDragPaths;
+
+std::vector<std::string> pathsOfValue(const GValue* v) {
+    std::vector<std::string> out;
+    if (!v || !G_VALUE_HOLDS(v, GDK_TYPE_FILE_LIST)) return out;
+    auto* list = static_cast<GdkFileList*>(g_value_get_boxed(v));
+    if (!list) return out;
+    GSList* files = gdk_file_list_get_files(list);   // transfer container
+    for (GSList* l = files; l; l = l->next) {
+        // Only local files: a drop from a network location is left alone.
+        if (char* p = g_file_get_path(G_FILE(l->data))) { out.push_back(p); g_free(p); }
+    }
+    g_slist_free(files);
+    return out;
+}
+
+bool rowIsDir(GtkTreeListRow* row) {
+    GFileInfo* info = G_FILE_INFO(gtk_tree_list_row_get_item(row));   // transfer full
+    const bool dir = infoIsDir(info);
+    if (info) g_object_unref(info);
+    return dir;
+}
+}  // namespace
+
+GtkWidget* FileTree::rowWidget(guint pos) const {
+    for (GtkWidget* c = gtk_widget_get_first_child(listView_); c;
+         c = gtk_widget_get_next_sibling(c)) {
+        GtkWidget* inner = gtk_widget_get_first_child(c);
+        if (!inner) continue;
+        auto* li = static_cast<GtkListItem*>(
+            g_object_get_data(G_OBJECT(inner), "minicode-list-item"));
+        if (li && gtk_list_item_get_position(li) == pos && gtk_widget_get_mapped(c))
+            return c;
+    }
+    return nullptr;
+}
+
+GdkContentProvider* FileTree::onDragPrepare(GtkDragSource* s, double x, double y,
+                                            gpointer selfp) {
+    FileTree* self = static_cast<FileTree*>(selfp);
+    if (!self->dropCb_) return nullptr;
+    const guint pos = self->rowAt(x, y, nullptr);
+    if (pos == GTK_INVALID_LIST_POSITION) return nullptr;   // empty space drags nothing
+    GtkTreeListRow* row = gtk_tree_list_model_get_row(self->treeModel_, pos);
+    if (!row) return nullptr;
+    const std::string path = pathOfRow(row);
+    g_object_unref(row);
+    if (path.empty()) return nullptr;
+
+    GFile* file = g_file_new_for_path(path.c_str());
+    GValue v = G_VALUE_INIT;
+    g_value_init(&v, GDK_TYPE_FILE_LIST);
+    g_value_take_boxed(&v, gdk_file_list_new_from_array(&file, 1));
+    GdkContentProvider* content = gdk_content_provider_new_for_value(&v);
+    g_value_unset(&v);
+    g_object_unref(file);
+    sDragPaths = {path};
+
+    // The row itself, as it looks now, follows the pointer, held where it
+    // was picked up.
+    if (GtkWidget* w = self->rowWidget(pos)) {
+        graphene_rect_t b;
+        if (gtk_widget_compute_bounds(w, self->listView_, &b)) {
+            GdkPaintable* live = gtk_widget_paintable_new(w);
+            GdkPaintable* still = gdk_paintable_get_current_image(live);
+            gtk_drag_source_set_icon(s, still, (int)(x - b.origin.x), (int)(y - b.origin.y));
+            g_object_unref(still);
+            g_object_unref(live);
+        }
+    }
+    return content;
+}
+
+// The drop side does the moving, so a move's "delete the data" is ignored.
+void FileTree::onDragEnd(GtkDragSource*, GdkDrag*, gboolean, gpointer) {
+    sDragPaths.clear();
+}
+
+std::string FileTree::dropDirAt(double x, double y, guint* rowOut) const {
+    *rowOut = GTK_INVALID_LIST_POSITION;
+    // Spelled as GIO spells the rows' paths, so the checks compare like with
+    // like (no trailing slash, no "..").
+    GFile* rootFile = g_file_new_for_path(root_.c_str());
+    char* rp = g_file_get_path(rootFile);
+    std::string dir = rp ? rp : root_;
+    g_free(rp);
+    g_object_unref(rootFile);
+
+    const guint pos = rowAt(x, y, nullptr);
+    if (pos == GTK_INVALID_LIST_POSITION) return dir;
+    GtkTreeListRow* row = gtk_tree_list_model_get_row(treeModel_, pos);
+    if (!row) return dir;
+    if (rowIsDir(row)) {
+        dir = pathOfRow(row);
+        *rowOut = pos;
+    } else if (GtkTreeListRow* parent = gtk_tree_list_row_get_parent(row)) {
+        dir = pathOfRow(parent);
+        *rowOut = gtk_tree_list_row_get_position(parent);
+        g_object_unref(parent);
+    }
+    g_object_unref(row);
+    return dir;
+}
+
+bool FileTree::dropAllowed(const std::vector<std::string>& paths, const std::string& dir) {
+    if (paths.empty() || dir.empty()) return false;
+    for (const std::string& p : paths) {
+        if (p == dir || dir.compare(0, p.size() + 1, p + "/") == 0) return false;
+        char* parent = g_path_get_dirname(p.c_str());
+        const bool already = dir == parent;
+        g_free(parent);
+        if (already) return false;
+    }
+    return true;
+}
+
+GdkDragAction FileTree::updateDrop() {
+    guint row = GTK_INVALID_LIST_POSITION;
+    const std::string dir = dropDirAt(dropX_, dropY_, &row);
+    // Files from elsewhere are taken on trust until they have been read,
+    // and checked again when they land.
+    if (!dropCb_ || (!dropPaths_.empty() && !dropAllowed(dropPaths_, dir))) {
+        showDropTarget(false, GTK_INVALID_LIST_POSITION);
+        hoverFolder(GTK_INVALID_LIST_POSITION);
+        return (GdkDragAction)0;
+    }
+    showDropTarget(true, row);
+    hoverFolder(row);
+    return dropMove_ ? GDK_ACTION_MOVE : GDK_ACTION_COPY;
+}
+
+GdkDragAction FileTree::onDropMotion(GtkDropTarget* t, double x, double y, gpointer selfp) {
+    FileTree* self = static_cast<FileTree*>(selfp);
+    GdkDrop* drop = gtk_drop_target_get_current_drop(t);
+    self->dropMove_ = drop && gdk_drop_get_drag(drop) && !sDragPaths.empty();
+    self->dropPaths_ = self->dropMove_ ? sDragPaths
+                                       : pathsOfValue(gtk_drop_target_get_value(t));
+    self->dropX_ = x;
+    self->dropY_ = y;
+    self->autoScroll(y);
+    return self->updateDrop();
+}
+
+void FileTree::onDropLeave(GtkDropTarget*, gpointer selfp) {
+    static_cast<FileTree*>(selfp)->endDrop();
+}
+
+gboolean FileTree::onDrop(GtkDropTarget* t, const GValue* value, double x, double y,
+                          gpointer selfp) {
+    FileTree* self = static_cast<FileTree*>(selfp);
+    GdkDrop* drop = gtk_drop_target_get_current_drop(t);
+    const bool move = drop && gdk_drop_get_drag(drop);
+    self->endDrop();
+    const std::vector<std::string> paths = pathsOfValue(value);
+    guint row = GTK_INVALID_LIST_POSITION;
+    const std::string dir = self->dropDirAt(x, y, &row);
+    if (!self->dropCb_ || !dropAllowed(paths, dir)) return FALSE;
+    DropCb cb = self->dropCb_;   // a copy: the callback may re-root this tree
+    cb(paths, dir, move);
+    return TRUE;
+}
+
+// The row widget is lit with a CSS class (ThemeCss.cpp). Row widgets are
+// recycled as the list scrolls, so the lit one is looked up again on every
+// update and the class moved when the widget changes.
+void FileTree::showDropTarget(bool on, guint row) {
+    GtkWidget* w = on && row != GTK_INVALID_LIST_POSITION ? rowWidget(row) : nullptr;
+    if (w != dropRow_) {
+        if (dropRow_) {
+            gtk_widget_remove_css_class(dropRow_, "minicode-drop-target");
+            g_object_remove_weak_pointer(G_OBJECT(dropRow_), (gpointer*)&dropRow_);
+        }
+        dropRow_ = w;
+        if (w) {
+            gtk_widget_add_css_class(w, "minicode-drop-target");
+            g_object_add_weak_pointer(G_OBJECT(w), (gpointer*)&dropRow_);
+        }
+    }
+    const bool root = on && row == GTK_INVALID_LIST_POSITION;
+    if (root != dropRoot_ && listView_) {
+        dropRoot_ = root;
+        if (root) gtk_widget_add_css_class(listView_, "minicode-drop-root");
+        else gtk_widget_remove_css_class(listView_, "minicode-drop-root");
+    }
+}
+
+// A closed folder under the pointer for 0.7 s opens, so a drop can reach
+// into it, as on the Mac.
+void FileTree::hoverFolder(guint pos) {
+    GtkTreeListRow* row = pos == GTK_INVALID_LIST_POSITION
+                              ? nullptr : gtk_tree_list_model_get_row(treeModel_, pos);
+    if (row && (!rowIsDir(row) || gtk_tree_list_row_get_expanded(row))) {
+        g_object_unref(row);
+        row = nullptr;
+    }
+    // The model hands back the same row object while the row exists.
+    if (row == hoverRow_) {
+        if (row) g_object_unref(row);
+        return;
+    }
+    if (hoverTimer_) g_source_remove(hoverTimer_);
+    hoverTimer_ = 0;
+    if (hoverRow_) g_object_unref(hoverRow_);
+    hoverRow_ = row;   // keeps the reference
+    if (!row) return;
+    hoverTimer_ = g_timeout_add(700, [](gpointer p) -> gboolean {
+        FileTree* self = static_cast<FileTree*>(p);
+        self->hoverTimer_ = 0;
+        if (self->hoverRow_) gtk_tree_list_row_set_expanded(self->hoverRow_, TRUE);
+        self->updateDrop();
+        return G_SOURCE_REMOVE;
+    }, this);
+}
+
+// Near the top or bottom edge the list scrolls on its own, faster the closer
+// the pointer is, so a folder off screen can still be reached.
+void FileTree::autoScroll(double y) {
+    const double edge = 24, h = gtk_widget_get_height(listView_);
+    scrollStep_ = 0;
+    if (y < edge) scrollStep_ = -(2 + (edge - y) / 2);
+    else if (y > h - edge) scrollStep_ = 2 + (y - (h - edge)) / 2;
+    if (scrollStep_ == 0) {
+        if (scrollTimer_) g_source_remove(scrollTimer_);
+        scrollTimer_ = 0;
+        return;
+    }
+    if (scrollTimer_) return;
+    scrollTimer_ = g_timeout_add(30, [](gpointer p) -> gboolean {
+        FileTree* self = static_cast<FileTree*>(p);
+        GtkAdjustment* adj = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(self->listView_));
+        if (!adj) { self->scrollTimer_ = 0; return G_SOURCE_REMOVE; }
+        const double top = gtk_adjustment_get_lower(adj);
+        const double bottom = gtk_adjustment_get_upper(adj) - gtk_adjustment_get_page_size(adj);
+        const double v = gtk_adjustment_get_value(adj) + self->scrollStep_;
+        gtk_adjustment_set_value(adj, v < top ? top : v > bottom ? bottom : v);
+        self->updateDrop();   // other rows are under the pointer now
+        return G_SOURCE_CONTINUE;
+    }, this);
+}
+
+void FileTree::endDrop() {
+    showDropTarget(false, GTK_INVALID_LIST_POSITION);
+    hoverFolder(GTK_INVALID_LIST_POSITION);
+    if (scrollTimer_) g_source_remove(scrollTimer_);
+    scrollTimer_ = 0;
+    dropPaths_.clear();
 }
