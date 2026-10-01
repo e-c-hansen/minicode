@@ -231,6 +231,15 @@ class PlayerPane @JvmOverloads constructor(
         start()
     }
 
+    /**
+     * The file was moved (dragged in the file list). The pane is hidden
+     * then, so the player is already released; it opens `f` when shown.
+     */
+    fun moved(f: DocumentFile) {
+        file = f
+        name.text = f.name
+    }
+
     /** The file is gone from the disk. */
     fun gone() = fail("It is not there any more.")
 
