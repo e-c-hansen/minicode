@@ -643,7 +643,10 @@ never closes.
 
 ## Current state (handoff, 2026-09-29)
 
-- **Released: 1.4.9** (2026-09-29), with the Mac zip and the signed APK;
+- **Released: 1.4.10** (2026-10-01): about 200 more extensions
+  highlighted (JSON Lines among them) and Return keeping the line's indent,
+  on all three ports; built and unit-tested, not tried in a running app.
+- **1.4.9** (2026-09-29), with the Mac zip and the signed APK;
   the user's Mac runs it from Homebrew. 1.4.6 the git panel on all three
   platforms; 1.4.7 video and audio (Mac, Linux), Pastiera fixes and a held
   Ctrl on Android; 1.4.8 Android video and audio and a real Ctrl reaching
