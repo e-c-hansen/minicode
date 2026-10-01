@@ -91,6 +91,15 @@ std::string stylesheet(const Settings& s) {
            " background-color: rgba(0,122,204,0.50); }";
     css += ".minicode-tree > row:focus-visible { outline: 1px solid #007ACC;"
            " outline-offset: -1px; }";
+    // Where a dragged row or file would land (FileTree's drag and drop): the
+    // folder's row in the accent blue, or the whole tree for the root. The
+    // theme's own drop outline around the list is turned off. Keyed on
+    // :drop(active) so the rule outranks the selected row's color above.
+    css += ".minicode-tree:drop(active) { box-shadow: none; outline: none; }";
+    css += ".minicode-tree:drop(active) > row.minicode-drop-target {"
+           " background-color: rgba(78,161,247,0.30); box-shadow: inset 0 0 0 1px #4EA1F7; }";
+    css += ".minicode-tree.minicode-drop-root:drop(active) {"
+           " outline: 2px solid #4EA1F7; outline-offset: -2px; }";
     css += ".minicode-tree-label { color: " + fg(Surface::Sidebar) + "; }";
     // The folder arrows, which otherwise take the desktop theme's text color
     // (black under a light theme, nearly invisible on the dark sidebar).

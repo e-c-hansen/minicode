@@ -69,6 +69,7 @@
 #include <vector>
 #include <unistd.h>
 #include <limits.h>
+#include <sys/stat.h>
 
 struct App {
     GtkWidget*      window = nullptr;
@@ -945,6 +946,24 @@ static void act_new_folder(GSimpleAction*, GVariant*, gpointer userp) {
     });
 }
 
+// A file or folder moved from `src` to `dst` (Rename, or a drag in the tree).
+// The open file keeps its buffer, edits included, under the new name, in
+// every window that has it open: one left on the old name would save its
+// edits back there and bring the old file back. That holds when a folder
+// above it moved, too. Previous File follows.
+static void followMove(const std::string& src, const std::string& dst) {
+    for (App* a : g.windows) {
+        const std::string cur = a->editor->currentPath();
+        if (isInside(cur, src)) {
+            a->editor->setPath(dst + cur.substr(src.size()));
+            updateTitle(a);
+            refreshHints(a);   // the preview toggle depends on the name
+        }
+        for (std::string& r : a->recent)
+            if (isInside(r, src)) r = dst + r.substr(src.size());
+    }
+}
+
 static void act_rename(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     const std::string src = app->tree->selectedPath();
@@ -969,22 +988,137 @@ static void act_rename(GSimpleAction*, GVariant*, gpointer userp) {
             g_clear_error(&err);
             return;
         }
-        // The open file keeps its buffer, edits included, under the new name,
-        // in every window that has it open: one left on the old name would
-        // save its edits back there and bring the old file back. That holds
-        // when a folder above it was renamed, too. Previous File follows.
-        for (App* a : g.windows) {
-            const std::string cur = a->editor->currentPath();
-            if (isInside(cur, src)) {
-                a->editor->setPath(dst + cur.substr(src.size()));
-                updateTitle(a);
-                refreshHints(a);   // the preview toggle depends on the name
-            }
-            for (std::string& r : a->recent)
-                if (isInside(r, src)) r = dst + r.substr(src.size());
-        }
+        followMove(src, dst);
         app->tree->revealPath(dst);
     });
+}
+
+// "“name” already exists in “folder”." for a drop that would have replaced
+// something; GIO's own message names neither.
+static void showTaken(App* app, const std::vector<std::string>& names,
+                      const std::string& dir, const std::string& detail) {
+    const std::string folder = "“" + baseName(dir) + "”";
+    if (names.size() == 1) {
+        showError(app, "“" + names[0] + "” already exists in " + folder + ".", detail);
+        return;
+    }
+    std::string list;
+    for (const std::string& n : names) list += (list.empty() ? "" : ", ") + n;
+    showError(app, std::to_string(names.size()) + " items already exist in " + folder + ".",
+              list + ". " + detail);
+}
+
+namespace {
+// Files dragged in from another program, copied into the tree on a worker
+// thread, since a folder may be large.
+struct CopyJob {
+    App* app = nullptr;
+    std::vector<std::string> paths;
+    std::string dir;
+    std::vector<std::string> copied;   // where each copy went
+    std::vector<std::string> taken;    // names the folder already had
+    std::string failed, why;           // the first other failure
+};
+
+// `src` to `dst`, a folder with everything in it, never over anything that is
+// there; a symbolic link is copied as a link. Stops at the first error.
+bool copyTree(GFile* src, GFile* dst, GError** err) {
+    if (g_file_query_file_type(src, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr) !=
+        G_FILE_TYPE_DIRECTORY)
+        return g_file_copy(src, dst, G_FILE_COPY_NOFOLLOW_SYMLINKS, nullptr, nullptr,
+                           nullptr, err);
+    if (!g_file_make_directory(dst, nullptr, err)) return false;
+    GFileEnumerator* en = g_file_enumerate_children(src, "standard::name",
+        G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, err);
+    if (!en) return false;
+    bool ok = true;
+    while (ok) {
+        GFileInfo* info = nullptr;   // both owned by the enumerator
+        GFile* child = nullptr;
+        if (!g_file_enumerator_iterate(en, &info, &child, nullptr, err)) { ok = false; break; }
+        if (!info) break;
+        GFile* to = g_file_get_child(dst, g_file_info_get_name(info));
+        ok = copyTree(child, to, err);
+        g_object_unref(to);
+    }
+    g_object_unref(en);
+    return ok;
+}
+}  // namespace
+
+// Something dropped on the tree (FileTree::setDropCallback). A row dragged
+// within MiniCode moves, as Rename moves it, and the open file follows it;
+// files from another program are copied. Neither ever replaces an entry of
+// the same name. The folder monitors bring the rows in, and revealPath
+// selects what arrived.
+static void dropOnTree(App* app, const std::vector<std::string>& paths,
+                       const std::string& dir, bool move) {
+    if (move) {
+        for (const std::string& src : paths) {
+            const std::string name = baseName(src);
+            const std::string dst = dir + "/" + name;
+            GFile* from = g_file_new_for_path(src.c_str());
+            GFile* to = g_file_new_for_path(dst.c_str());
+            GError* err = nullptr;
+            // Without OVERWRITE GIO refuses a name that is taken. A folder
+            // only moves within one file system (a rename); across two GIO
+            // says so, and nothing has been touched.
+            const bool ok = g_file_move(from, to, G_FILE_COPY_NOFOLLOW_SYMLINKS,
+                                        nullptr, nullptr, nullptr, &err);
+            g_object_unref(from);
+            g_object_unref(to);
+            if (!ok) {
+                if (g_error_matches(err, G_IO_ERROR, G_IO_ERROR_EXISTS))
+                    showTaken(app, {name}, dir, "Nothing was moved.");
+                else
+                    showError(app, "Could not move “" + name + "”", err ? err->message : "");
+                g_clear_error(&err);
+                return;
+            }
+            followMove(src, dst);
+            app->tree->revealPath(dst);
+        }
+        return;
+    }
+    auto* job = new CopyJob;
+    job->app = app;
+    job->paths = paths;
+    job->dir = dir;
+    GTask* task = g_task_new(nullptr, nullptr, [](GObject*, GAsyncResult* res, gpointer) {
+        auto* j = static_cast<CopyJob*>(g_task_get_task_data(G_TASK(res)));
+        App* a = j->app;
+        if (!a->dead) {
+            if (!j->copied.empty()) a->tree->revealPath(j->copied.back());
+            if (!j->taken.empty()) showTaken(a, j->taken, j->dir, "Nothing was copied over it.");
+            if (!j->failed.empty()) showError(a, "Could not copy “" + j->failed + "”", j->why);
+        }
+    }, nullptr);
+    g_task_set_task_data(task, job, [](gpointer p) { delete static_cast<CopyJob*>(p); });
+    g_task_run_in_thread(task, [](GTask*, gpointer, gpointer data, GCancellable*) {
+        auto* j = static_cast<CopyJob*>(data);
+        for (const std::string& src : j->paths) {
+            const std::string name = baseName(src);
+            const std::string dst = j->dir + "/" + name;
+            GFile* from = g_file_new_for_path(src.c_str());
+            GFile* to = g_file_new_for_path(dst.c_str());
+            GError* err = nullptr;
+            struct stat st;
+            if (lstat(dst.c_str(), &st) == 0) {
+                j->taken.push_back(name);
+            } else if (copyTree(from, to, &err)) {
+                j->copied.push_back(dst);
+            } else if (g_error_matches(err, G_IO_ERROR, G_IO_ERROR_EXISTS)) {
+                j->taken.push_back(name);
+            } else if (j->failed.empty()) {
+                j->failed = name;
+                j->why = err ? err->message : "";
+            }
+            g_clear_error(&err);
+            g_object_unref(from);
+            g_object_unref(to);
+        }
+    });
+    g_object_unref(task);
 }
 
 static void trashNow(App* app, const std::string& path) {
@@ -1829,6 +1963,10 @@ static App* newWindow(const std::string& root, const std::string& file) {
     // Core widgets.
     app->tree = new FileTree(app->rootDir, g.showHidden);
     app->tree->setOpenCallback(treeOpenCb, app);
+    app->tree->setDropCallback([app](const std::vector<std::string>& paths,
+                                     const std::string& dir, bool move) {
+        if (!app->dead) dropOnTree(app, paths, dir, move);
+    });
     // The tree's folder monitors see changes in the work tree; the Source
     // Control panel looks again when it is showing.
     app->tree->setActivityCallback([app] {
