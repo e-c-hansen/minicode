@@ -1,10 +1,18 @@
 # MiniCode
 
-MiniCode is a quick, 1.7 MB workspace application with a text editor, terminal, browser, and file browser navigable by keyboard. It's for writing/running code, browsing/editing documents, making/editing LaTeX, and browsing the web. It runs on macOS, Linux, and Android. It's written from scratch in C++ with no Electron and no third-party dependencies. The macOS app links only against frameworks that ship with the system. The Linux version is a GTK4 port. The Android version is a Kotlin app. They all share the same C++ core. The rest of this README describes the macOS app; the [Linux](#linux) and [Android](#android) sections say how the others differ.
+MiniCode is a 1.7 MB editor with a terminal, a browser, a file tree and a Markdown and LaTeX preview in one window, all driven from the keyboard. It's written from scratch in C++, with no Electron and no third-party dependencies, and runs on macOS, Linux and Android.
+
+![Clicking through the demo folder in MiniCode](docs/demos/tour.gif)
+
+```
+brew install --cask e-c-hansen/tap/minicode
+```
+
+The [Linux](#linux) and [Android](#android) builds are further down.
 
 I built it because I wanted one light place to browse a folder, edit code with a language server behind it, preview Markdown and LaTeX, and keep a terminal and a browser a keystroke away, without a few hundred megabytes of runtime underneath.
 
-![Clicking through the demo folder in MiniCode](docs/demos/tour.gif)
+The macOS app links only against frameworks that ship with the system. The Linux version is a GTK4 port and the Android version is a Kotlin app; all three share the same C++ core. The rest of this README describes the macOS app, and the Linux and Android sections say how the others differ.
 
 ## What it does
 
