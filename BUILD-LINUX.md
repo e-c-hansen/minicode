@@ -11,6 +11,21 @@ AppKit to GTK4.
 Everything for the Linux port lives under `linux/`. The macOS build is
 untouched.
 
+## Install on Ubuntu
+
+On Ubuntu 26.04 there is no need to build it: a Launchpad PPA has it, and
+apt keeps it up to date.
+
+    sudo add-apt-repository ppa:e-c-hansen/minicode
+    sudo apt install minicode
+
+The package is built from `debian/` at the top of the repository with every
+panel on, and installs the same launcher and icons as `meson install` below,
+under `/usr`. If you installed a build of your own into `~/.local` before,
+remove that first, or it shadows the package. `packaging/PPA.md` has the
+commands for that, and how the package is made and uploaded. The rest of
+this file is for building MiniCode yourself.
+
 ## What is verified, and what is not
 
 The port now builds clean and runs, with every panel enabled. It was brought up
