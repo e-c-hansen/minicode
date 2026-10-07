@@ -5,6 +5,7 @@
 #include "Palette.h"
 #include "Markdown.h"
 #include "MarkdownEdit.h"
+#include "MarkdownTasks.h"
 #include "SyntaxHighlighter.h"
 #include "LineComments.h"
 #include "Utf8Offsets.h"
@@ -221,6 +222,8 @@ Editor::~Editor() {
     stopSettle();
     if (previewEntryTimer_) g_source_remove(previewEntryTimer_);
     previewEntryTimer_ = 0;
+    if (taskCountTimer_) g_source_remove(taskCountTimer_);
+    taskCountTimer_ = 0;
     alive_.reset();   // fetches still running find the editor gone
     stopHold();
     if (arrivedTimer_) g_source_remove(arrivedTimer_);
@@ -286,6 +289,11 @@ void Editor::ensureTags() {
                                "foreground", pal::EditorText,
                                "family", "monospace",
                                "size-points", 13.0, NULL);   // keeps columns aligned
+    // A checked task's text (MdRun::task == 2). Before md_code and md_link,
+    // so a code span or link in it keeps its color and is struck through.
+    gtk_text_buffer_create_tag(buffer_, "md_done",
+                               "foreground", pal::MdDone,
+                               "strikethrough", TRUE, NULL);
     gtk_text_buffer_create_tag(buffer_, "md_code",
                                "foreground", pal::MdCode,
                                "background", pal::MdCodeBg,
@@ -332,6 +340,7 @@ bool Editor::openFile(const std::string& path) {
     // the next file, and nothing from it can be saved.
     showTextSlot();
     readOnly_ = false;
+    clearTaskCount();
 
     auto base = [&]() {
         auto slash = path.find_last_of('/');
@@ -439,6 +448,7 @@ bool Editor::openFile(const std::string& path) {
     } else {
         loadRawIntoBuffer();
     }
+    refreshTaskCount();
     return true;
 }
 
@@ -526,6 +536,7 @@ void Editor::closeFile() {
     ext_.clear();
     isMarkdown_ = false;
     preview_ = false;
+    clearTaskCount();
     markDirty(false);
     showWelcome();
     if (titleCb_) titleCb_(titleUser_);
@@ -544,6 +555,7 @@ void Editor::showDiff(const std::string& title, const std::string& bytes, bool c
     ext_.clear();
     isMarkdown_ = false;
     preview_ = false;
+    clearTaskCount();
     markDirty(false);
     showMessage("");   // the hidden text view holds nothing
     if (!diff_) {
@@ -800,7 +812,7 @@ void Editor::loadRawIntoBuffer() {
     setProseFont(false);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), TRUE);
     gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(view_), TRUE);
-    page_ = Markdown::Page();
+    clearPage();
     gtk_text_buffer_set_text(buffer_, source_.c_str(), (int)source_.size());
     g_signal_handlers_unblock_by_func(buffer_, (gpointer)onBufferChanged, this);
     sourceMode_ = true;
@@ -834,7 +846,7 @@ void Editor::showMessage(const std::string& msg) {
     g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
     setProseFont(true);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), FALSE);
-    page_ = Markdown::Page();
+    clearPage();
     gtk_text_buffer_set_text(buffer_, msg.c_str(), (int)msg.size());
     GtkTextIter a, b;
     gtk_text_buffer_get_bounds(buffer_, &a, &b);
@@ -1294,6 +1306,7 @@ void Editor::setPath(const std::string& path) {
         if (sourceMode_) startHighlighting();
     }
     notifyDocument();   // a new name is a new document to a language server
+    refreshTaskCount();   // x.txt renamed to x.md counts its tasks
 }
 
 // ---------------------------------------------------------------- settings
@@ -1327,6 +1340,7 @@ void Editor::applySettings(const Settings& s) {
     setTagColor(buffer_, "md_code", "background-rgba", s.markdownCodeBackground());
     setTagColor(buffer_, "md_quote", "foreground-rgba", s.markdown(MarkdownColor::Quote));
     setTagColor(buffer_, "md_link", "foreground-rgba", s.markdown(MarkdownColor::Link));
+    setTagColor(buffer_, "md_done", "foreground-rgba", s.markdown(MarkdownColor::Done));
     // Swatch text contrast depends on the editor background.
     if (sourceMode_ && isSettingsFile()) startHighlighting();
     // Web pictures turned on or off: the preview shows them, or their alt
@@ -1818,6 +1832,7 @@ void Editor::applyDiskText(const std::string& content) {
         source_ = content;
     }
     markDirty(false);
+    refreshTaskCount();
 
     restoreScroll(keep);
     g_idle_add_full(G_PRIORITY_LOW, [](gpointer d) -> gboolean {
@@ -1918,6 +1933,7 @@ void Editor::togglePreview() {
         source_ = txt ? txt : "";
         g_free(txt);
         renderPreview();
+        refreshTaskCount();   // typing a moment ago may not be counted yet
         // The part of the page the caret was in, a third of the way down.
         GtkTextIter at;
         gtk_text_buffer_get_iter_at_offset(buffer_, &at,
@@ -1979,7 +1995,12 @@ void Editor::renderPreview() {
         // The separator row sits between the header and the first body row.
         editMarkdownBlock(line + row + (row > 0 ? 1 : 0), column, at);
     };
+    std::weak_ptr<int> alive = alive_;
+    hooks.taskToggle = [this, alive](int line) {
+        if (!alive.expired()) toggleTaskBox(line);
+    };
     // Rendered text is never undone into, so no history is kept of it.
+    clearPage();
     gtk_text_buffer_begin_irreversible_action(buffer_);
     page_ = Markdown::render(GTK_TEXT_VIEW(view_), buffer_, source_, hooks);
     gtk_text_buffer_end_irreversible_action(buffer_);
@@ -1990,6 +2011,21 @@ void Editor::renderPreview() {
     gtk_text_buffer_place_cursor(buffer_, &start);
     notifyDocument();
     fetchWebPictures();
+}
+
+// The page's tables, pictures and task boxes come off the view before the
+// text holding their anchors is replaced. Left to the buffer's deletion,
+// each child is unmapped from inside gtk_text_buffer_set_text, and a child
+// that is hovered or pressed changes the view's state flags there; the
+// view's handler reads the selection from a buffer half deleted and
+// crashes (GTK 4.22). A task box re-renders the page while the pointer is
+// on it and its press is in progress, which reached this every time after
+// the edit popover had been open once.
+void Editor::clearPage() {
+    for (const Markdown::Embed& e : page_.embeds)
+        if (e.widget && gtk_widget_get_parent(e.widget) == view_)
+            gtk_text_view_remove(GTK_TEXT_VIEW(view_), e.widget);
+    page_ = Markdown::Page();
 }
 
 void Editor::notePreviewRest() {
@@ -2408,6 +2444,7 @@ void Editor::applyMarkdownSource(const std::string& source, bool undoable) {
     markDirty(true);
     rerenderPreview();
     previewEntryV_ = keep;
+    refreshTaskCount();
 }
 
 gboolean Editor::onViewKey(GtkEventControllerKey*, guint key, guint, GdkModifierType mods,
@@ -2415,9 +2452,18 @@ gboolean Editor::onViewKey(GtkEventControllerKey*, guint key, guint, GdkModifier
     Editor* self = static_cast<Editor*>(selfp);
     // Return in source: onInsertTextAfter indents the line it makes. The key
     // is only noted, never taken, so the completion list still gets it.
-    self->returnKey_ = (key == GDK_KEY_Return || key == GDK_KEY_KP_Enter ||
-                        key == GDK_KEY_ISO_Enter) &&
-                       !(mods & (GDK_CONTROL_MASK | GDK_ALT_MASK)) && self->sourceMode_;
+    const bool ret = (key == GDK_KEY_Return || key == GDK_KEY_KP_Enter ||
+                      key == GDK_KEY_ISO_Enter) &&
+                     !(mods & (GDK_CONTROL_MASK | GDK_ALT_MASK)) && self->sourceMode_;
+    // In a Markdown list it starts the next item, or ends the list, unless a
+    // completion list is open and wants it. Shift+Return is a plain new line
+    // (with the indent), for a second line inside the same item.
+    if (ret && !(mods & GDK_SHIFT_MASK) && self->isMarkdown_ &&
+        !(self->observer_ && self->observer_->takesReturn()) && self->continueList()) {
+        self->returnKey_ = false;
+        return TRUE;
+    }
+    self->returnKey_ = ret;
     if (!self->preview_ || !self->isMarkdown_) return FALSE;
     const bool ctrl = mods & GDK_CONTROL_MASK, shift = mods & GDK_SHIFT_MASK;
     const bool undo = ctrl && !shift && (key == GDK_KEY_z || key == GDK_KEY_Z);
@@ -2452,4 +2498,118 @@ void Editor::onBufferChanged(GtkTextBuffer* /*buf*/, gpointer selfp) {
     self->markDirty(true);
     // Highlighting is not done here: the insert-text and delete-range
     // handlers retag each edit's lines as it happens.
+    if (self->sourceMode_ && self->isMarkdown_) self->scheduleTaskCount();
+}
+
+// ---------------------------------------------------------------- tasks
+//
+// Task lists ("- [ ] x"), over the shared MarkdownTasks core: a click on a
+// box in the preview, Ctrl+L on the source's lines, Return continuing a
+// list, and the count in the window title.
+
+void Editor::clearTaskCount() {
+    if (taskCountTimer_) g_source_remove(taskCountTimer_);
+    taskCountTimer_ = 0;
+    tasksDone_ = tasksTotal_ = 0;
+}
+
+void Editor::refreshTaskCount() {
+    if (taskCountTimer_) g_source_remove(taskCountTimer_);
+    taskCountTimer_ = 0;
+    int done = 0, total = 0;
+    if (isMarkdown_ && !readOnly_ && !path_.empty()) {
+        // The preview's buffer holds rendered text; source_ is the file then.
+        const MarkdownTasks::Counts c = MarkdownTasks::count(preview_ ? source_ : text());
+        done = c.done;
+        total = c.total;
+    }
+    if (done == tasksDone_ && total == tasksTotal_) return;
+    tasksDone_ = done;
+    tasksTotal_ = total;
+    if (titleCb_) titleCb_(titleUser_);
+}
+
+void Editor::scheduleTaskCount() {
+    if (taskCountTimer_) g_source_remove(taskCountTimer_);
+    taskCountTimer_ = g_timeout_add(300, [](gpointer p) -> gboolean {
+        Editor* self = static_cast<Editor*>(p);
+        self->taskCountTimer_ = 0;
+        self->refreshTaskCount();
+        return G_SOURCE_REMOVE;
+    }, this);
+}
+
+void Editor::toggleTaskBox(int line) {
+    if (!preview_ || !isMarkdown_ || readOnly_) return;
+    const std::string edited = MarkdownTasks::toggleBox(source_, line);
+    if (edited == source_) {
+        gtk_widget_error_bell(view_);
+        return;
+    }
+    // A preview edit like the popover's: dirty until Ctrl+S, undone with
+    // Ctrl+Z in the preview, and the page shown again at the same scroll.
+    applyMarkdownSource(edited, true);
+}
+
+void Editor::applyTaskEdit(const std::u16string& text, std::size_t replaceStart,
+                           std::size_t replaceLength, const std::u16string& replacement,
+                           std::size_t selStart, std::size_t selEnd) {
+    GtkTextIter from, to;
+    gtk_text_buffer_get_iter_at_offset(buffer_, &from,
+        (int)utf16::toCharOffset(text, replaceStart));
+    gtk_text_buffer_get_iter_at_offset(buffer_, &to,
+        (int)utf16::toCharOffset(text, replaceStart + replaceLength));
+    const std::string bytes = utf16::toUtf8(replacement);
+    // One user action, so one Ctrl+Z takes it back.
+    gtk_text_buffer_begin_user_action(buffer_);
+    gtk_text_buffer_delete(buffer_, &from, &to);
+    gtk_text_buffer_insert(buffer_, &from, bytes.c_str(), (int)bytes.size());
+    gtk_text_buffer_end_user_action(buffer_);
+
+    std::u16string after = text;
+    after.replace(replaceStart, replaceLength, replacement);
+    GtkTextIter ns, ne;
+    gtk_text_buffer_get_iter_at_offset(buffer_, &ns, (int)utf16::toCharOffset(after, selStart));
+    gtk_text_buffer_get_iter_at_offset(buffer_, &ne, (int)utf16::toCharOffset(after, selEnd));
+    gtk_text_buffer_select_range(buffer_, &ns, &ne);
+    gtk_text_view_scroll_mark_onscreen(GTK_TEXT_VIEW(view_), gtk_text_buffer_get_insert(buffer_));
+}
+
+bool Editor::toggleTask() {
+    if (!isMarkdown_ || preview_ || readOnly_ || !sourceMode_ ||
+        !gtk_text_view_get_editable(GTK_TEXT_VIEW(view_)))
+        return false;
+    GtkTextIter a, b;
+    gtk_text_buffer_get_bounds(buffer_, &a, &b);
+    char* raw = gtk_text_buffer_get_text(buffer_, &a, &b, TRUE);
+    const std::u16string text = utf16::fromUtf8(raw ? raw : "");
+    g_free(raw);
+    GtkTextIter selA, selB;
+    gtk_text_buffer_get_selection_bounds(buffer_, &selA, &selB);
+    const MarkdownTasks::Edit r = MarkdownTasks::toggle(
+        text, utf16::fromCharOffset(text, gtk_text_iter_get_offset(&selA)),
+        utf16::fromCharOffset(text, gtk_text_iter_get_offset(&selB)));
+    if (!r.changed) return false;
+    applyTaskEdit(text, r.replaceStart, r.replaceLength, r.replacement, r.selStart, r.selEnd);
+    refreshTaskCount();
+    return true;
+}
+
+bool Editor::continueList() {
+    if (!isMarkdown_ || preview_ || readOnly_ || !sourceMode_ ||
+        !gtk_text_view_get_editable(GTK_TEXT_VIEW(view_)))
+        return false;
+    GtkTextIter a, b;
+    gtk_text_buffer_get_bounds(buffer_, &a, &b);
+    char* raw = gtk_text_buffer_get_text(buffer_, &a, &b, TRUE);
+    const std::u16string text = utf16::fromUtf8(raw ? raw : "");
+    g_free(raw);
+    GtkTextIter selA, selB;
+    gtk_text_buffer_get_selection_bounds(buffer_, &selA, &selB);
+    const MarkdownTasks::Edit r = MarkdownTasks::newline(
+        text, utf16::fromCharOffset(text, gtk_text_iter_get_offset(&selA)),
+        utf16::fromCharOffset(text, gtk_text_iter_get_offset(&selB)));
+    if (!r.changed) return false;
+    applyTaskEdit(text, r.replaceStart, r.replaceLength, r.replacement, r.selStart, r.selEnd);
+    return true;
 }

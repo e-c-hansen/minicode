@@ -71,6 +71,18 @@ std::string stylesheet(const Settings& s) {
     css += ".minicode-md-cell label { color: " + fg(Surface::Editor) + "; }";
     css += ".minicode-md-head { background-color: " + cssColor(s.markdownCodeBackground()) + "; }";
     css += ".minicode-md-head label { color: " + cssColor(s.markdown(MarkdownColor::Heading)) + "; }";
+    // A task's box in the Markdown preview: an outline in the done color,
+    // filled with the accent blue and a white tick when checked, in place of
+    // the desktop theme's light check box.
+    css += "checkbutton.minicode-md-task { padding: 0; margin: 0 4px 0 0; min-height: 0;"
+           " background: none; }";
+    css += "checkbutton.minicode-md-task check { background-image: none; background-color:"
+           " transparent; border: 1.5px solid " + cssColor(s.markdown(MarkdownColor::Done)) +
+           "; border-radius: 3px; box-shadow: none; min-width: 13px; min-height: 13px;"
+           " margin: 0; padding: 0; color: transparent; -gtk-icon-size: 12px; }";
+    css += "checkbutton.minicode-md-task:hover check { border-color: #4EA1F7; }";
+    css += "checkbutton.minicode-md-task check:checked { background-color: #4EA1F7;"
+           " border-color: #4EA1F7; color: #FFFFFF; }";
 
     // File tree: the scroller paints, the list and its rows stay clear.
     css += ".minicode-sidebar { background-color: " + bg(Surface::Sidebar) + "; }";

@@ -90,6 +90,7 @@ struct App {
     GitPanel*  git = nullptr;
     bool       gitShown = false;
     SearchPanel* search = nullptr;   // Find in Folder, created on first use
+    SearchPanel* todos = nullptr;    // the TODOs window, the same, on Ctrl+Shift+L
     LspSession*  lsp = nullptr;      // language servers for this window
     GtkWidget*   lspLabel = nullptr; // their status, in the status bar
 
@@ -309,6 +310,10 @@ static void updateTitle(void* userp) {
         auto slash = p.find_last_of('/');
         std::string base = slash == std::string::npos ? p : p.substr(slash + 1);
         title = "MiniCode — " + base + (app->editor->dirty() ? " *" : "");
+        // A Markdown file with tasks: how many are done.
+        if (app->editor->tasksTotal() > 0)
+            title += " — " + std::to_string(app->editor->tasksDone()) + " of " +
+                     std::to_string(app->editor->tasksTotal()) + " done";
         title += app->editor->titleSuffix();   // pixel size or page count
     }
     gtk_window_set_title(GTK_WINDOW(app->window), title.c_str());
@@ -710,6 +715,16 @@ static void act_toggle_comment(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     GtkWidget* view = app->editor->textView();
     if (!gtk_widget_has_focus(view) || !app->editor->toggleComment())
+        gtk_widget_error_bell(view);
+}
+
+// Ctrl+L: the task key in a Markdown file's source, on the lines the
+// selection touches. Elsewhere it rings the bell. In the terminal it is the
+// shell's (clear screen), see shellOwns.
+static void act_toggle_task(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    GtkWidget* view = app->editor->textView();
+    if (!gtk_widget_has_focus(view) || !app->editor->toggleTask())
         gtk_widget_error_bell(view);
 }
 
@@ -1322,6 +1337,20 @@ static void act_find_in_folder(GSimpleAction*, GVariant*, gpointer userp) {
     app->search->show();
 }
 
+// Ctrl+Shift+L: the TODOs window, scoped as Find in Folder is, and scanned
+// again each time it comes up. A row opens like a Find in Folder match.
+static void act_todos(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!app->todos) {
+        app->todos = new SearchPanel(GTK_WINDOW(app->window), SearchPanel::Mode::Todos);
+        app->todos->setOpenCallback(openSearchMatch, app);
+    }
+    app->todos->setRoot(app->rootDir);
+    const std::string dir = app->tree->selectedDir();
+    if (!dir.empty()) app->todos->setScope(dir);
+    app->todos->show();
+}
+
 // ---------------------------------------------------------------- find impl
 
 // Find the next match at or after `from`, wrapping to the top of the buffer.
@@ -1441,6 +1470,7 @@ static std::string hintsText(App* app) {
     s += "Ctrl G, F3     Find next\n";
     s += "Shift F3       Find previous\n";
     s += "Ctrl Shift F   Find in folder\n";
+    s += "Ctrl Shift L   TODOs in folder\n";
     s += "Ctrl /         Toggle comment\n";
     s += "Ctrl ,         Settings\n";
     s += "Ctrl 0         Focus the file tree\n";
@@ -1497,6 +1527,10 @@ static std::string hintsText(App* app) {
     if (app->editor->isMarkdown()) {
         s += std::string("Ctrl Shift P   Markdown    (") +
              (app->editor->inPreview() ? "rendered" : "source") + ")\n";
+        if (app->editor->inPreview())
+            s += "Click a box    Check or clear a task\n";
+        else
+            s += "Ctrl L         Toggle task\n";
     }
     if (app->editor->isLatex()) {
         s += std::string("Ctrl Shift P   LaTeX       (") +
@@ -1660,6 +1694,10 @@ static const Bind kBinds[] = {
     {"win.toggleeditor",   {"<Ctrl><Shift>e"}},
     {"win.toggleterminal", {"<Ctrl><Shift>t", "<Ctrl>grave"}},
     {"win.togglecomment",  {"<Ctrl>slash"}},
+    // Ctrl+L is the shell's in the terminal (clear screen): shellOwns takes
+    // it off there like every plain Ctrl key.
+    {"win.toggletask",     {"<Ctrl>l"}},
+    {"win.todos",          {"<Ctrl><Shift>l"}},
     {"win.settings",       {"<Ctrl>comma"}},
     {"win.togglebrowser",  {"<Ctrl><Shift>b"}},
     // Ctrl+Shift+. (the Mac's key) is written as the character it types:
@@ -1797,10 +1835,12 @@ static void buildMenu() {
     g_menu_append(find, "Find Next", "win.findnext");
     g_menu_append(find, "Find Previous", "win.findprevious");
     g_menu_append(find, "Find in Folder…", "win.findinfolder");
+    g_menu_append(find, "TODOs…", "win.todos");
     g_menu_append_section(editMenu, nullptr, G_MENU_MODEL(find));
     g_object_unref(find);
     GMenu* code = g_menu_new();
     g_menu_append(code, "Toggle Comment", "win.togglecomment");
+    g_menu_append(code, "Toggle Task", "win.toggletask");
     g_menu_append(code, "Complete", "win.complete");
     g_menu_append(code, "Go to Definition", "win.definition");
     g_menu_append(code, "Show Hover Info", "win.hoverinfo");
@@ -1926,6 +1966,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->editor->setExternalChangeCallback(nullptr, nullptr);
     delete app->search;
     app->search = nullptr;
+    delete app->todos;
+    app->todos = nullptr;
     delete app->lsp;
     app->lsp = nullptr;
 #ifdef MINICODE_ENABLE_TERMINAL
@@ -2150,6 +2192,8 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "focuseditor",    G_CALLBACK(act_focus_editor));
     addAction(app, "previousfile",   G_CALLBACK(act_previous_file));
     addAction(app, "togglecomment",  G_CALLBACK(act_toggle_comment));
+    addAction(app, "toggletask",     G_CALLBACK(act_toggle_task));
+    addAction(app, "todos",          G_CALLBACK(act_todos));
     addAction(app, "settings",       G_CALLBACK(act_settings));
     addAction(app, "zoomin",         G_CALLBACK(act_zoom_in));
     addAction(app, "zoomout",        G_CALLBACK(act_zoom_out));

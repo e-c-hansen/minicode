@@ -8,6 +8,11 @@
 // counter and raises the previous search's cancel flag, and a result that comes
 // back from a superseded generation is dropped, so typing quickly never shows a
 // stale list.
+//
+// The same panel, made with Mode::Todos, is the TODOs window (Ctrl+Shift+L):
+// FolderSearch::findTodos over the scope in place of a query, scanned again
+// every time it is shown, and the field filters the list it found (by path
+// or text, any case) without scanning again.
 #pragma once
 
 #include <gtk/gtk.h>
@@ -24,9 +29,11 @@ public:
     // Called on the main thread when the user activates a match.
     using OpenCb = void (*)(const FolderSearchMatch& match, void* user);
 
+    enum class Mode { Find, Todos };
+
     // One panel per editor window, created on first use and hidden, not
     // destroyed, when its own window is closed.
-    explicit SearchPanel(GtkWindow* parent);
+    explicit SearchPanel(GtkWindow* parent, Mode mode = Mode::Find);
     // The editor window is closing: the panel's window goes, and a search
     // still running is stopped and its result dropped.
     ~SearchPanel();
@@ -40,10 +47,12 @@ public:
     void setRoot(const std::string& root);
 
     // Search a folder, re-running the current query if the folder changed.
+    // (The TODOs scan waits for show() while the window is hidden.)
     void setScope(const std::string& dir);
     const std::string& scope() const { return scope_; }
 
-    // Present the window with the query field focused.
+    // Present the window with the query field focused. The TODOs window
+    // scans its scope again.
     void show();
 
     // For the headless test hook and for anyone who needs to look inside.
@@ -64,6 +73,9 @@ private:
     void setStatus(const std::string& s);
     void clearResults();
     void finish(Job* job);
+    void showRows();          // hits_ into the list
+    void applyFilter();       // TODOs: hits_ = the found ones the field matches
+    void setTodoStatus();
     void scopeEntered();
     void chooseScope();
     void updateScopeField();
@@ -94,7 +106,11 @@ private:
     GtkStringList* rows_       = nullptr;   // one display string per match
     guint          pressRow_   = GTK_INVALID_LIST_POSITION;   // where a click began
 
+    Mode           mode_       = Mode::Find;
     std::vector<FolderSearchMatch> hits_;   // row i of the list is hits_[i]
+    std::vector<FolderSearchMatch> found_;  // TODOs: all of them, before the filter
+    std::size_t    foundFiles_ = 0;
+    bool           foundTruncated_ = false;
     std::string root_;
     std::string scope_;
     std::string lastQuery_;                 // the query the current list is for
