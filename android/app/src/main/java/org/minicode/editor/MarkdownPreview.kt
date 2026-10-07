@@ -58,6 +58,9 @@ class MarkdownPreview @JvmOverloads constructor(
      */
     var onEditBlock: ((line: Int, column: Int) -> Unit)? = null
 
+    /** A single tap on a task's box: the 0-based source line of its item. */
+    var onToggleTask: ((line: Int) -> Unit)? = null
+
     /** A path as a picture's source names it (relative to the file) -> the file. */
     var resolve: ((String) -> DocumentFile?)? = null
 
@@ -112,6 +115,9 @@ class MarkdownPreview @JvmOverloads constructor(
      */
     private class Piece(val start: Int, val end: Int, val line: Int, val url: String?,
                         val run: Int = -1)
+
+    /** A task's box: the character it is drawn over, and its item's source line. */
+    private class Box(val offset: Int, val line: Int)
 
     /** A table cell: the source line of its row, and its column. */
     private class Cell(val line: Int, val column: Int)
@@ -272,6 +278,16 @@ class MarkdownPreview @JvmOverloads constructor(
                 text.append(piece)
                 style(text, start, text.length, flags, runs.isImage(i))
                 view.pieces.add(Piece(start, text.length, line, runs.url(i), i))
+                // A task's ☐ or ☑ becomes a box drawn to be tapped.
+                val task = Core.mdTask(flags)
+                if (task > 0 && flags and Core.MD_MARKER != 0 && line >= 0) {
+                    val at = piece.indexOfFirst { it == '☐' || it == '☑' }
+                    if (at >= 0) {
+                        text.setSpan(CheckboxSpan(task == 2), start + at, start + at + 1,
+                                     Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        view.boxes.add(Box(start + at, line))
+                    }
+                }
             }
             i++
         }
@@ -323,6 +339,66 @@ class MarkdownPreview @JvmOverloads constructor(
             span(UnderlineSpan())
         }
         if (depth > 0) span(LeadingMarginSpan.Standard((depth * 16 * dp).toInt()))
+        // A checked task's own text looks done: muted and struck through.
+        // Set last, so its color wins over a link's or a heading's.
+        if (Core.mdTask(flags) == 2 && flags and Core.MD_MARKER == 0) {
+            span(ForegroundColorSpan(Palette.MD_DONE))
+            span(StrikethroughSpan())
+        }
+    }
+
+    /**
+     * A task's box in place of the ☐ or ☑ the core writes: a rounded square
+     * the size of a capital letter, outlined when open, filled with the
+     * accent and a check mark when done.
+     */
+    private inner class CheckboxSpan(val checked: Boolean) : android.text.style.ReplacementSpan() {
+        private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+
+        private fun side(p: android.graphics.Paint) = p.textSize * 0.95f
+
+        override fun getSize(p: android.graphics.Paint, text: CharSequence?, start: Int, end: Int,
+                             fm: android.graphics.Paint.FontMetricsInt?): Int {
+            fm?.let {
+                val m = p.fontMetricsInt
+                it.ascent = m.ascent; it.descent = m.descent
+                it.top = m.top; it.bottom = m.bottom; it.leading = m.leading
+            }
+            return kotlin.math.ceil(side(p) + 2 * dp).toInt()
+        }
+
+        override fun draw(canvas: android.graphics.Canvas, text: CharSequence?, start: Int, end: Int,
+                          x: Float, top: Int, y: Int, bottom: Int, p: android.graphics.Paint) {
+            val s = side(p)
+            // Centred on the lowercase letters, as a box beside text looks right.
+            val m = p.fontMetrics
+            val mid = y + (m.ascent + m.descent) / 2
+            val r = android.graphics.RectF(x + dp, mid - s / 2, x + dp + s, mid + s / 2)
+            val radius = s * 0.2f
+            if (checked) {
+                paint.style = android.graphics.Paint.Style.FILL
+                paint.color = Palette.ACCENT
+                canvas.drawRoundRect(r, radius, radius, paint)
+                paint.style = android.graphics.Paint.Style.STROKE
+                paint.strokeWidth = s * 0.14f
+                paint.strokeCap = android.graphics.Paint.Cap.ROUND
+                paint.strokeJoin = android.graphics.Paint.Join.ROUND
+                paint.color = Palette.BACKGROUND
+                val path = android.graphics.Path().apply {
+                    moveTo(r.left + s * 0.22f, r.top + s * 0.52f)
+                    lineTo(r.left + s * 0.42f, r.top + s * 0.72f)
+                    lineTo(r.left + s * 0.78f, r.top + s * 0.30f)
+                }
+                canvas.drawPath(path, paint)
+            } else {
+                paint.style = android.graphics.Paint.Style.STROKE
+                paint.strokeWidth = maxOf(1f, 1.5f * dp)
+                paint.color = Palette.MUTED
+                val inset = paint.strokeWidth / 2
+                r.inset(inset, inset)
+                canvas.drawRoundRect(r, radius, radius, paint)
+            }
+        }
     }
 
     // ------------------------------------------------------------ tables
@@ -650,14 +726,26 @@ class MarkdownPreview @JvmOverloads constructor(
      */
     private inner class PieceText(val cell: Cell?) : TextView(context) {
         val pieces = ArrayList<Piece>()
+        val boxes = ArrayList<Box>()
 
         private val taps = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent) = true
+            // A box answers the tap at once, without waiting to see whether
+            // a second tap follows; the page is rendered again afterwards,
+            // so the change is posted rather than made under this touch.
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                val box = boxAt(e.x, e.y) ?: return false
+                post { onToggleTask?.invoke(box.line) }
+                return true
+            }
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                if (boxAt(e.x, e.y) != null) return true
                 linkAt(e.x, e.y)?.let { onLink?.invoke(it) }
                 return true
             }
             override fun onDoubleTap(e: MotionEvent): Boolean {
+                // The first tap already ticked the box; the second is not an edit.
+                if (boxAt(e.x, e.y) != null) return true
                 if (cell != null) {
                     onEditBlock?.invoke(cell.line, cell.column)
                 } else {
@@ -690,6 +778,32 @@ class MarkdownPreview @JvmOverloads constructor(
             // The nearest boundary may be the one after the character tapped.
             if (off > l.getLineStart(line) && l.getPrimaryHorizontal(off) > fx) off--
             return off
+        }
+
+        /**
+         * The box under (x, y), on its line of text. The box is only as wide
+         * as a letter, so a finger gets 12 dp to its left (the indent) and
+         * the space after it, but never the item's text, which a tap leaves
+         * alone.
+         */
+        fun boxAt(x: Float, y: Float): Box? {
+            if (boxes.isEmpty()) return null
+            val l = layout ?: return null
+            val fy = (y - totalPaddingTop + scrollY).toInt()
+            val line = l.getLineForVertical(fy)
+            if (fy < l.getLineTop(line) || fy > l.getLineBottom(line)) return null
+            val fx = x - totalPaddingLeft + scrollX
+            val t = text
+            fun onLine(k: Int) = k < t.length && l.getLineForOffset(k) == line
+            return boxes.firstOrNull { b ->
+                onLine(b.offset) && run {
+                    val left = l.getPrimaryHorizontal(b.offset)
+                    var end = b.offset + 1
+                    if (onLine(end) && t[end] == ' ') end++
+                    val right = if (onLine(end)) l.getPrimaryHorizontal(end) else l.getLineRight(line)
+                    fx >= left - 12 * dp && fx <= right
+                }
+            }
         }
 
         fun linkAt(x: Float, y: Float): String? {

@@ -9,12 +9,15 @@
 #include <jni.h>
 
 #include <algorithm>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "FolderSearch.h"
 #include "MarkdownEdit.h"
 #include "MarkdownParser.h"
+#include "MarkdownTasks.h"
 #include "SyntaxHighlighter.h"
 #include "jni_strings.h"
 
@@ -96,6 +99,26 @@ size_t Utf16Length(const std::string &s, size_t bytes) {
     return units;
 }
 
+// A MarkdownTasks edit for Kotlin: {int[]{replaceStart, replaceLength,
+// selStart, selEnd}, the replacement}, or null when nothing changes. All in
+// UTF-16 units, which is what both sides hold.
+jobjectArray TaskEdit(JNIEnv *env, const MarkdownTasks::Edit &e) {
+    if (!e.changed) return nullptr;
+    jobjectArray out = env->NewObjectArray(2, env->FindClass("java/lang/Object"), nullptr);
+    env->SetObjectArrayElement(out, 0, IntArray(env, {
+        static_cast<jint>(e.replaceStart), static_cast<jint>(e.replaceLength),
+        static_cast<jint>(e.selStart), static_cast<jint>(e.selEnd)}));
+    jstring rep = env->NewString(reinterpret_cast<const jchar *>(e.replacement.data()),
+                                 static_cast<jsize>(e.replacement.size()));
+    env->SetObjectArrayElement(out, 1, rep);
+    env->DeleteLocalRef(rep);
+    return out;
+}
+
+// Raised to stop the TODO scan under way; each scan lowers it as it starts.
+// Scans run one at a time, on TodoPane's single worker thread.
+std::atomic<bool> gTodoCancel{false};
+
 }  // namespace
 
 extern "C" {
@@ -167,6 +190,10 @@ Java_org_minicode_editor_Core_markdown(JNIEnv *env, jclass, jstring source) {
         // typesets it.
         if (r.math == 1) f |= 1 << 17;
         if (r.math == 2) f |= 1 << 18;
+        // A list item's marker, and a task item's box: 1 open, 2 checked,
+        // on the marker and on the item's own text.
+        if (r.marker) f |= 1 << 19;
+        f |= (r.task & 0x3) << 20;
         flags[i] = f;
 
         jint *e = &extra[i * kStride];
@@ -239,6 +266,98 @@ Java_org_minicode_editor_Core_mdApply(JNIEnv *env, jclass, jstring source, jint 
     }
     if (edited == src) return nullptr;
     return ToJava(env, edited);
+}
+
+// ---------------------------------------------------- task lists
+//
+// MarkdownTasks: a box ticked from the preview (a source line in, the whole
+// new source out, spliced like any preview edit), the done and total counts
+// for the title, and the editor's two edits, the task key and Return in a
+// list, which work in UTF-16 units and so map straight onto the Editable.
+
+/** `source` with the box on 0-based `line` ticked or cleared, or null. */
+JNIEXPORT jstring JNICALL
+Java_org_minicode_editor_Core_mdToggleBox(JNIEnv *env, jclass, jstring source, jint line) {
+    const std::string src = FromJava(env, source);
+    if (!MarkdownTasks::boxOnLine(src, line).found) return nullptr;
+    const std::string edited = MarkdownTasks::toggleBox(src, line);
+    if (edited == src) return nullptr;
+    return ToJava(env, edited);
+}
+
+/** {done, total} over the document's task items. */
+JNIEXPORT jintArray JNICALL
+Java_org_minicode_editor_Core_mdTaskCount(JNIEnv *env, jclass, jstring source) {
+    const MarkdownTasks::Counts c = MarkdownTasks::count(FromJava(env, source));
+    return IntArray(env, {c.done, c.total});
+}
+
+/** The task key over the lines [selStart, selEnd) touches; see TaskEdit. */
+JNIEXPORT jobjectArray JNICALL
+Java_org_minicode_editor_Core_mdTaskToggle(JNIEnv *env, jclass, jstring text, jint selStart,
+                                           jint selEnd) {
+    const std::u16string t = Utf16(env, text);
+    const size_t a = static_cast<size_t>(std::max(0, std::min(selStart, selEnd)));
+    const size_t b = static_cast<size_t>(std::max(0, std::max(selStart, selEnd)));
+    if (b > t.size()) return nullptr;
+    return TaskEdit(env, MarkdownTasks::toggle(t, a, b));
+}
+
+/** Return in a list item, or null for the editor's usual Return. */
+JNIEXPORT jobjectArray JNICALL
+Java_org_minicode_editor_Core_mdTaskNewline(JNIEnv *env, jclass, jstring text, jint selStart,
+                                            jint selEnd) {
+    const std::u16string t = Utf16(env, text);
+    const size_t a = static_cast<size_t>(std::max(0, std::min(selStart, selEnd)));
+    const size_t b = static_cast<size_t>(std::max(0, std::max(selStart, selEnd)));
+    if (b > t.size()) return nullptr;
+    return TaskEdit(env, MarkdownTasks::newline(t, a, b));
+}
+
+/**
+ * The TODO list over the folder at `root` (FolderSearch::findTodos):
+ *   [0] String[]  each match's path relative to the root
+ *   [1] int[]     two per match: the 1-based line and 1-based column (in
+ *                 characters)
+ *   [2] String[]  the line as shown
+ *   [3] int[]     {files with a match, files read, 1 if it stopped at the
+ *                 limit, 1 if it was cancelled}
+ * Blocking: TodoPane runs it on its worker thread.
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_org_minicode_editor_Core_findTodos(JNIEnv *env, jclass, jstring root) {
+    gTodoCancel = false;
+    const FolderSearchResult r = FolderSearch::findTodos(FromJava(env, root), &gTodoCancel);
+    jclass stringClass = env->FindClass("java/lang/String");
+    const jsize n = static_cast<jsize>(r.matches.size());
+    jobjectArray paths = env->NewObjectArray(n, stringClass, nullptr);
+    jobjectArray texts = env->NewObjectArray(n, stringClass, nullptr);
+    std::vector<jint> where(r.matches.size() * 2);
+    for (jsize i = 0; i < n; i++) {
+        const FolderSearchMatch &m = r.matches[static_cast<size_t>(i)];
+        jstring p = ToJava(env, m.relativePath);
+        env->SetObjectArrayElement(paths, i, p);
+        env->DeleteLocalRef(p);
+        jstring t = ToJava(env, m.text);
+        env->SetObjectArrayElement(texts, i, t);
+        env->DeleteLocalRef(t);
+        where[static_cast<size_t>(i) * 2] = m.line;
+        where[static_cast<size_t>(i) * 2 + 1] = m.column;
+    }
+    jobjectArray out = env->NewObjectArray(4, env->FindClass("java/lang/Object"), nullptr);
+    env->SetObjectArrayElement(out, 0, paths);
+    env->SetObjectArrayElement(out, 1, IntArray(env, where));
+    env->SetObjectArrayElement(out, 2, texts);
+    env->SetObjectArrayElement(out, 3, IntArray(env, {
+        static_cast<jint>(r.filesMatched), static_cast<jint>(r.filesSearched),
+        r.truncated ? 1 : 0, r.cancelled ? 1 : 0}));
+    return out;
+}
+
+/** Stops the TODO scan under way, if any. */
+JNIEXPORT void JNICALL
+Java_org_minicode_editor_Core_cancelTodos(JNIEnv *, jclass) {
+    gTodoCancel = true;
 }
 
 // ---------------------------------------------------- incremental highlighting

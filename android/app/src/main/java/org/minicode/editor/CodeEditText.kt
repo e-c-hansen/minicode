@@ -21,7 +21,10 @@ import androidx.appcompat.widget.AppCompatEditText
  * here, however the focus and the soft keyboard are arranged.
  *
  * With [autoIndent], Enter starts the new line with the indentation of the
- * one it splits, whether it comes as a key or as committed text.
+ * one it splits, whether it comes as a key or as committed text. With
+ * [markdownLists] as well, Enter in a list item first asks the core
+ * (MarkdownTasks::newline) to continue the list: the next item's marker
+ * ("- [ ] ", "4. "), or the list ended on an empty item.
  */
 class CodeEditText @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null,
@@ -39,6 +42,9 @@ class CodeEditText @JvmOverloads constructor(
 
     /** Enter keeps the current line's indentation (the code editor's field). */
     var autoIndent = false
+
+    /** Enter continues a Markdown list (set while a Markdown file is open). */
+    var markdownLists = false
 
     private val squiggle = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         style = android.graphics.Paint.Style.STROKE
@@ -67,8 +73,23 @@ class CodeEditText @JvmOverloads constructor(
         return "\n" + t.subSequence(start, end)
     }
 
+    /**
+     * Enter in a Markdown list item, as the core decides it: one
+     * replacement and the caret after it. False when the line is not one,
+     * and the usual Enter should run.
+     */
+    private fun continueList(): Boolean {
+        if (!markdownLists) return false
+        val t = text ?: return false
+        val edit = Core.taskNewline(t.toString(), selectionStart, selectionEnd) ?: return false
+        val (a, b) = edit.applyTo(t)
+        setSelection(a, b)
+        return true
+    }
+
     /** Replaces the selection with a newline and the indentation. */
     private fun insertNewline() {
+        if (continueList()) return
         val t = text ?: return
         val a = minOf(selectionStart, selectionEnd).coerceAtLeast(0)
         val b = maxOf(selectionStart, selectionEnd).coerceAtLeast(0)
@@ -100,8 +121,12 @@ class CodeEditText @JvmOverloads constructor(
                     if (activity?.leaderLetter(text[0]) == true) return true
                 }
                 if (text != null && interceptCommit?.invoke(text) == true) return true
-                if (autoIndent && text?.toString() == "\n")
+                if (autoIndent && text?.toString() == "\n") {
+                    beginBatchEdit()
+                    val listed = try { continueList() } finally { endBatchEdit() }
+                    if (listed) return true
                     return super.commitText(newlineWithIndent(), newCursorPosition)
+                }
                 return super.commitText(text, newCursorPosition)
             }
 
