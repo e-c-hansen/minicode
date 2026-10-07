@@ -1,6 +1,6 @@
 # MiniCode
 
-MiniCode is a 1.7 MB editor with a terminal, a browser, a file tree and a Markdown and LaTeX preview in one window, all driven from the keyboard. It's written from scratch in C++, with no Electron and no third-party dependencies, and runs on macOS, Linux and Android.
+MiniCode is a 1.7 MB editor with a terminal, a browser, a file tree, and a Markdown and LaTeX preview in one window, all driven from the keyboard. It's written from scratch in C++, with no Electron and no third-party dependencies, and runs on macOS, Linux and Android.
 
 ![Clicking through the demo folder in MiniCode](docs/demos/tour.gif)
 
