@@ -1,6 +1,6 @@
-.TH MINICODE 1 "October 2026" "MiniCode" "User Commands"
+.TH MINICODE 1 "October 2026" "minicode" "User Commands"
 .SH NAME
-minicode \- small editor for text, code and LaTeX, with a browser and terminal
+minicode \- small editor for text, code, and LaTeX, with a browser and terminal
 .SH SYNOPSIS
 .B minicode
 .RI [ path ]
@@ -14,7 +14,7 @@ is a folder, it becomes the root of the file tree. If it is a file, the
 file is opened and the tree is rooted at the folder that holds it. With no
 argument the current directory is opened.
 .PP
-MiniCode runs as a single instance. Running it again while it is open
+minicode runs as a single instance. Running it again while it is open
 passes the path to the running instance, which opens a new window on that
 folder, or brings forward the window that already has it and shows the file
 there.
@@ -23,7 +23,7 @@ Ctrl+Shift+H shows every keyboard shortcut in the window.
 .SH FILES
 .TP
 .I ~/.config/minicode/settings.conf
-Colors, opacity and language server commands. Ctrl+, creates it with every
+Colors, opacity, and language server commands. Ctrl+, creates it with every
 setting commented out and opens it. It follows
 .BR $XDG_CONFIG_HOME .
 .TP

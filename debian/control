@@ -31,20 +31,20 @@ Suggests:
  gopls,
  python3-pylsp,
  rust-analyzer,
-Description: small editor for text, code and LaTeX, with a browser and terminal
- MiniCode is a light, keyboard-first editor for text, code and LaTeX. One
+Description: small editor for text, code, and LaTeX, with a browser and terminal
+ minicode is a light, keyboard-first editor for text, code, and LaTeX. One
  window holds a file tree, an editor with syntax highlighting for about 200
- languages and file types, a terminal panel, a web browser panel and a
- Source Control panel for staging, committing and browsing the commit
+ languages and file types, a terminal panel, a web browser panel, and a
+ Source Control panel for staging, committing, and browsing the commit
  graph.
  .
- Markdown files open rendered, with tables, pictures and links, and any
- block can be edited from the preview. Images, PDFs, video and audio open
+ Markdown files open rendered, with tables, pictures, and links, and any
+ block can be edited from the preview. Images, PDFs, video, and audio open
  in the editor's place. LaTeX files are typeset as you type and can be
- edited by double-clicking the page, using tectonic, which MiniCode
- offers to download when it is not installed. Completion, diagnostics and
+ edited by double-clicking the page, using tectonic, which minicode
+ offers to download when it is not installed. Completion, diagnostics, and
  go to definition come from language servers such as clangd, pylsp,
- gopls and rust-analyzer when they are installed.
+ gopls, and rust-analyzer when they are installed.
  .
  This is the GTK 4 build of the macOS app of the same name, sharing its
  C++ core.
