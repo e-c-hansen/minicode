@@ -1,6 +1,6 @@
-# linux/ — the GTK4 port of MiniCode
+# linux/ — the GTK4 port of minicode
 
-This directory holds the Linux port of MiniCode, built on GTK4. It is separate
+This directory holds the Linux port of minicode, built on GTK4. It is separate
 from the macOS app under `src/`, which it does not touch. The portable C++ core
 (`../src/SyntaxHighlighter.{h,cpp}` and `../src/MarkdownParser.{h,cpp}`) is
 shared verbatim and compiled straight from `../src`; it is never copied here, so

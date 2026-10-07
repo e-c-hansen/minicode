@@ -1,6 +1,6 @@
 # android/ — the Android port
 
-MiniCode for Android, built on the same portable C++ core as the macOS app
+minicode for Android, built on the same portable C++ core as the macOS app
 (`../src`) and the GTK port (`../linux`). CMake compiles that core straight
 from `../src` through the NDK; nothing is copied here, so highlighting,
 Markdown, the terminal screen and the rest behave the same everywhere and
@@ -12,12 +12,12 @@ stay covered by `../tests/run_tests.cpp`.
    and download `MiniCode-<version>.apk`.
 2. Open the download. Android asks once whether your browser may install
    apps; allow it, then install.
-3. Open MiniCode and tap "Open a folder on phone storage" on the start screen.
+3. Open minicode and tap "Open a folder on phone storage" on the start screen.
 
 To keep it updated without checking by hand, add
 `https://github.com/e-c-hansen/minicode` to
 [Obtainium](https://github.com/ImranR98/Obtainium), which installs from a
-repository's releases. MiniCode is not on the Play Store: Google allows the
+repository's releases. minicode is not on the Play Store: Google allows the
 "All files access" the terminal uses only for some kinds of app, and new
 developer accounts need a two-week closed test before publishing anything.
 
@@ -28,7 +28,7 @@ version. The APK is built by `scripts/release.sh` from the tagged source.
 
 These run in [Termux](https://f-droid.org/packages/com.termux/), installed
 from F-Droid (the Play Store copy is years out of date). Once it is set up,
-MiniCode's terminal is Termux's bash, so everything installed there runs in
+minicode's terminal is Termux's bash, so everything installed there runs in
 the terminal too:
 
 1. In Termux:
@@ -39,7 +39,7 @@ the terminal too:
        termux-reload-settings
        termux-setup-storage
 
-2. In MiniCode, ⋮ → Termux tools → Allow. It then lists which language
+2. In minicode, ⋮ → Termux tools → Allow. It then lists which language
    servers, tectonic and git it found. The next terminal you open is
    Termux's bash.
 3. Keep projects in phone storage (Termux sees it as `~/storage/shared`),
@@ -183,14 +183,14 @@ moved to F.
 
 [Pastiera](https://github.com/palsoftware/pastiera) is an input method for
 phones with a physical keyboard, the Titan 2 among them. It works with
-MiniCode, with a few things worth knowing (checked against Pastiera 0.86's
+minicode, with a few things worth knowing (checked against Pastiera 0.86's
 source):
 
 - **It sees keys only while a text field has focus.** In the editor, the
   commit box and the Markdown edit box it turns keys into text one
   character at a time. The terminal declares no text field (TYPE_NULL), and
   the file list and source control panel are not text fields, so there it
-  passes keys straight to MiniCode except for its own Nav Mode and Sym
+  passes keys straight to minicode except for its own Nav Mode and Sym
   shortcuts.
 - **No capitals or autocorrect in code.** Pastiera capitalises the first
   letter and after a period, turns a double space into ". ", and corrects
@@ -198,7 +198,7 @@ source):
   editor, the commit box and the Markdown edit box tell the keyboard they
   are visible-password fields, so all of that stays off and `if` stays
   `if`. Nothing is hidden, and other keyboards show their usual layout.
-- **Hold Ctrl, do not tap it.** A held Ctrl reaches MiniCode as Ctrl and the
+- **Hold Ctrl, do not tap it.** A held Ctrl reaches minicode as Ctrl and the
   letter (see "A held Ctrl" above). A tapped or double-tapped Ctrl is
   Pastiera's Nav Mode instead: Ctrl Q is Escape, Ctrl T is Tab, ESDF and
   IJKL are arrows, and so on.
@@ -262,15 +262,15 @@ A folder from a cloud provider, such as Google Drive, has no path at all, and
 a folder inside Termux (opened through Termux's own entry in the picker) has
 one, `/data/data/com.termux/files/home`, that Android lets no other app
 enter, whatever permissions it holds. In both cases the terminal starts in
-MiniCode's private folder and prints why, in grey, above the prompt.
+minicode's private folder and prints why, in grey, above the prompt.
 All of this is about Android's own shell; Termux's bash needs none of
-MiniCode's permissions, only Termux's own storage access, and starts in
+minicode's permissions, only Termux's own storage access, and starts in
 Termux's home when the folder is not in shared storage.
 
 Android's picker is a poor way into that storage: many phones hide it behind
 the picker's menu ("Show internal storage"), and since Android 11 it refuses
 the top level and Download outright. So leader O first asks where to open
-from. "Phone storage" browses `/storage/emulated/0` by path, inside MiniCode;
+from. "Phone storage" browses `/storage/emulated/0` by path, inside minicode;
 long-press a folder there to make it the project. "Another app or cloud" is
 the picker, for Drive and Termux folders the editor can use but a shell
 cannot. (A long press that moves on drags the folder instead; see "Moving
@@ -278,9 +278,9 @@ files by dragging".) A path folder is remembered as `folderPath`, a picked one a
 `folder`, and opening one clears the other.
 
 The place both apps can reach is shared storage. In Termux,
-`termux-setup-storage` makes it `~/storage/shared`; in MiniCode it is the
+`termux-setup-storage` makes it `~/storage/shared`; in minicode it is the
 phone's storage in the picker (`/storage/emulated/0`). A project kept there
-can be edited in MiniCode and built or committed from either terminal.
+can be edited in minicode and built or committed from either terminal.
 Granting access while the terminal is open moves it into the folder as soon
 as you return from Settings.
 
@@ -288,7 +288,7 @@ as you return from Settings.
 
 The phone's own shell cannot reach anything installed in Termux, so a user
 who ran `pkg install python` still got "python3: inaccessible or not found"
-in MiniCode's terminal. Now, when Termux is installed and MiniCode may run
+in minicode's terminal. Now, when Termux is installed and minicode may run
 commands in it, the terminal is bash running in Termux, in the open folder,
 with Termux's HOME, PATH, prompt, `~/.bashrc` and history. python, git,
 clang and whatever else `pkg` installed run there, and so do the Python
@@ -298,7 +298,7 @@ prompt, less and vim, because bash has a real pseudo terminal.
   program in Termux with its stdin and stdout on a loopback socket, but a
   socket is not a terminal: no line editing, no Ctrl C, no full-screen
   programs. Termux ships nothing that turns one into the other (`script` is
-  in util-linux, python may not be there), so MiniCode brings its own:
+  in util-linux, python may not be there), so minicode brings its own:
   `app/src/main/cpp/termux_pty.c`, about 150 lines of C against bionic,
   which opens a pty inside Termux, starts `bash --rcfile ... -i` on it and
   relays between the pty and the socket. Input travels in frames (`d`, a
@@ -308,7 +308,7 @@ prompt, less and vim, because bash has a real pseudo terminal.
   session for this (`nativeAttach`): the same screen, keys and snapshots,
   with writes framed and resizes sent as frames.
 - **Getting the helper into Termux.** Android runs no program out of
-  another app's storage, and MiniCode's native libraries are not even
+  another app's storage, and minicode's native libraries are not even
   extracted (they stay in the APK, for 16 KB page alignment). Termux can run
   its own files, though, so the helper is built as an executable named
   `libminicode_pty.so` (the name is what makes the Android build carry it in
@@ -328,17 +328,17 @@ prompt, less and vim, because bash has a real pseudo terminal.
 - **Security** is the language servers': a one-shot listener on 127.0.0.1
   that takes one connection, which must send the random token first.
 - **Which shell.** ⋮ → Shell: Automatic (the default: Termux's when Termux
-  is installed and MiniCode has its permission), Termux, or Android. A
+  is installed and minicode has its permission), Termux, or Android. A
   change restarts the shell. On Android's shell in automatic mode a grey
   line says how to get Termux's. If Termux will not start a shell, Android's
   starts instead, with Termux's reason above the prompt, and the same
   happens if bash ends within moments of starting.
 - **Where it starts.** A folder in shared storage opens there. Anywhere
-  else (a cloud folder, MiniCode's own storage) bash starts in Termux's home
+  else (a cloud folder, minicode's own storage) bash starts in Termux's home
   and says why. If Termux has no storage permission yet, the rc file says
   to run `termux-setup-storage`.
 - **Ending.** `exit` (or Ctrl D) ends bash, then the helper, then the pane,
-  as before. Closing MiniCode closes the socket, and the helper hangs up
+  as before. Closing minicode closes the socket, and the helper hangs up
   bash, so nothing is left running in Termux; the window stops the shell in
   `onDestroy` too, since a Termux shell lives in Termux's process.
 - **Size changes** used to recreate the window (a display size or layout
@@ -363,7 +363,7 @@ used instead, which changes the pane the same way.
 The list used to be read only when a folder was opened, so a file made by
 `touch` in the terminal never appeared. Now:
 
-- **A folder with a path MiniCode may read** (Phone storage, or a picked
+- **A folder with a path minicode may read** (Phone storage, or a picked
   folder on the phone's storage once "All files access" is granted) is
   watched with a `FileObserver`. Creating, deleting or moving an entry
   starts a 250 ms timer, and the folder is read once when it runs; the list
@@ -385,7 +385,7 @@ The list used to be read only when a folder was opened, so a file made by
   once, and saving then asks whether to save over the other program's
   change or load the file from disk. Before this, nothing noticed, and a
   save silently wrote over whatever had changed.
-- Nothing is watched while MiniCode is in the background; returning reads
+- Nothing is watched while minicode is in the background; returning reads
   everything again.
 
 Checked on the Titan 2 with a scratch folder: files made by `adb shell
@@ -461,7 +461,7 @@ if it exists. Relative paths are resolved against the directory in the
 prompt above them first: the phone's `/system/bin/sh` is mksh, which sends
 no OSC 7 but prints its directory in the prompt (`:/storage/emulated/0/mc $ `).
 Termux's bash sends OSC 7, so its directory comes next. After that come the
-shell's folder, the open folder, and MiniCode's home, which `~/` means. A link that wraps onto the next row is not found.
+shell's folder, the open folder, and minicode's home, which `~/` means. A link that wraps onto the next row is not found.
 
 ### The key row under the terminal
 
@@ -500,7 +500,7 @@ keyboard app, which never shows an Alt at all; and which Alt it is, since
 desktop terminals, Termux among them, often treat only the left one as Meta.
 Termux has its own answer for keyboards without Ctrl and Esc: Volume Down
 acts as Ctrl and Volume Up plus a letter gives Esc, Tab and the arrows (its
-wiki's "Touch Keyboard" page). MiniCode does not copy that yet.
+wiki's "Touch Keyboard" page). minicode does not copy that yet.
 
 ## Source control
 
@@ -782,15 +782,15 @@ things run and live.
   one place both apps see at the same path. A document opened from a cloud
   folder or from inside Termux gets a message saying so.
 - **The buffer is typeset from a hidden sibling**, `.<name>.minicode.tex` in
-  the document's own folder, written by MiniCode and deleted after each run,
+  the document's own folder, written by minicode and deleted after each run,
   so relative `\input` and `\includegraphics` resolve and the user's file is
   never written. It appears in the file list while a run is going.
 - **Output goes to `/storage/emulated/0/.minicode/latex/<hash of the path>/`.**
-  On the Mac it is the temporary folder, but Termux cannot write MiniCode's
-  private storage and MiniCode cannot read Termux's, so the PDF and its
+  On the Mac it is the temporary folder, but Termux cannot write minicode's
+  private storage and minicode cannot read Termux's, so the PDF and its
   `.synctex.gz` have to be in shared storage too. The folder is outside every
   project on purpose, so it never lands in a file list or a commit. The
-  renderer works from a copy in MiniCode's cache, so the next run can rewrite
+  renderer works from a copy in minicode's cache, so the next run can rewrite
   the original while pages are on screen.
 - **Runs are debounced and counted**: 0.8 s after typing stops, at once on
   open and on save, one run at a time, with a change during a run queueing
@@ -859,7 +859,7 @@ Opus, PCM), a 3gp at 176 × 144, a phone-style rotated .mov as 360 × 640
 upright, an .mp4 of sound alone as audio, an hour-long .m4a as 1:02:05, and
 random bytes as "Cannot play". Space, Left, Right, Ctrl+Shift+Space, taps on
 the picture and the button, and a drag of the bar were injected, and `adb
-shell dumpsys media.player` and `dumpsys audio` showed no MiniCode player
+shell dumpsys media.player` and `dumpsys audio` showed no minicode player
 after Back, Home, opening a.cpp or a picture, and the terminal. A clip
 replaced on disk while playing carried on playing at its place, and while
 paused stayed paused there. Reading positions back after a pause of 15
@@ -879,7 +879,7 @@ Mac's: `lsp_jni.cpp` exposes `src/LspClient.cpp` with no I/O, and
 
 - **Setup** is the ⋮ menu's Termux tools item, which also lists what is
   installed. It needs `allow-external-apps=true` in
-  `~/.termux/termux.properties` and MiniCode's "Run commands in Termux"
+  `~/.termux/termux.properties` and minicode's "Run commands in Termux"
   permission.
 - **Which files.** Termux sees only shared storage, so a server starts only
   for files under `/storage/...`, opened through Phone storage; the path is
@@ -931,7 +931,7 @@ plugin still uses.
     ./gradlew -PminicodeVersion=1.4.0 assembleRelease
 
 The release build is shrunk by R8 (4 MB against 15 MB for a debug build),
-with every class of MiniCode's own kept whole in `app/proguard-rules.pro`,
+with every class of minicode's own kept whole in `app/proguard-rules.pro`,
 because JNI finds them by name. The version code is derived from the version
 (1.4.0 is 10400). A debug build and a release build are signed with
 different keys, so going from one to the other on a phone needs an uninstall

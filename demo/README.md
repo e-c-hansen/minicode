@@ -1,4 +1,4 @@
-# MiniCode Demo
+# minicode Demo
 
 A **native** macOS editor written in *C++* — no Electron.
 
