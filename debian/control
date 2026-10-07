@@ -1,0 +1,49 @@
+Source: minicode
+Section: editors
+Maintainer: Eric Hansen <eric.calvin.hansen@gmail.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ libgtk-4-dev,
+ libpoppler-glib-dev,
+ libsoup-3.0-dev,
+ libvte-2.91-gtk4-dev,
+ libwebkitgtk-6.0-dev,
+ meson,
+ pkgconf,
+Standards-Version: 4.7.3
+Homepage: https://github.com/e-c-hansen/minicode
+Vcs-Browser: https://github.com/e-c-hansen/minicode
+Vcs-Git: https://github.com/e-c-hansen/minicode.git
+
+Package: minicode
+Architecture: any
+Depends:
+ ${misc:Depends},
+ ${shlibs:Depends},
+Recommends:
+ curl | wget,
+ git,
+ gstreamer1.0-libav,
+ gstreamer1.0-plugins-base,
+ gstreamer1.0-plugins-good,
+Suggests:
+ clangd,
+ gopls,
+ python3-pylsp,
+ rust-analyzer,
+Description: small native code editor with a terminal, browser and previews
+ MiniCode is a light, keyboard-first code editor. One window holds a file
+ tree, an editor with syntax highlighting for about 200 languages and file
+ types, a terminal panel, a web browser panel and a Source Control panel
+ for staging, committing and browsing the commit graph.
+ .
+ Markdown files open rendered, with tables, pictures and links, and any
+ block can be edited from the preview. Images, PDFs, video and audio open
+ in the editor's place. LaTeX files are typeset as you type and can be
+ edited by double-clicking the page, using tectonic, which MiniCode
+ offers to download when it is not installed. Completion, diagnostics and
+ go to definition come from language servers such as clangd, pylsp,
+ gopls and rust-analyzer when they are installed.
+ .
+ This is the GTK 4 build of the macOS app of the same name, sharing its
+ C++ core.

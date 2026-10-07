@@ -1,0 +1,31 @@
+#!/usr/bin/make -f
+# MiniCode's GTK 4 port lives in linux/. Its Meson build also compiles the
+# shared C++ core from ../src and reads the version from ../Info.plist, which
+# is why the source package is the whole repository.
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@ --buildsystem=meson --sourcedirectory=linux
+
+# Every optional panel is forced on, so a missing build dependency fails the
+# configure step instead of quietly building an editor without a terminal,
+# browser, PDF viewer or web pictures. dh passes --buildtype=plain and the
+# compiler flags come from dpkg-buildflags (-O2 -g plus hardening), the same
+# optimization as the project's own debugoptimized default; dh_strip then
+# moves the symbols into the minicode-dbgsym package.
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-Dterminal=enabled \
+		-Dbrowser=enabled \
+		-Dpdf=enabled \
+		-Dwebimages=enabled
+
+# The port's own tests (meson test), then the core suite the Mac build runs
+# (make test at the top level, which builds into build/). Neither needs a
+# display or the network.
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	dh_auto_test
+	$(MAKE) test
+endif

@@ -1,0 +1,8 @@
+minicode (0~local-0) UNRELEASED; urgency=medium
+
+  * Placeholder for a build straight from a checkout (dpkg-buildpackage -b),
+    numbered below every real version so apt replaces it. scripts/ppa.sh
+    writes the changelog for each upload in place of this one; see
+    packaging/PPA.md.
+
+ -- Eric Hansen <eric.calvin.hansen@gmail.com>  Wed, 07 Oct 2026 12:00:00 +0000

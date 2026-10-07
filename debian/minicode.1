@@ -1,0 +1,49 @@
+.TH MINICODE 1 "October 2026" "MiniCode" "User Commands"
+.SH NAME
+minicode \- small native code editor with a terminal, browser and previews
+.SH SYNOPSIS
+.B minicode
+.RI [ path ]
+.SH DESCRIPTION
+.B minicode
+opens a window with a file tree on the left and an editor on the right.
+.PP
+If
+.I path
+is a folder, it becomes the root of the file tree. If it is a file, the
+file is opened and the tree is rooted at the folder that holds it. With no
+argument the current directory is opened.
+.PP
+MiniCode runs as a single instance. Running it again while it is open
+passes the path to the running instance, which opens a new window on that
+folder, or brings forward the window that already has it and shows the file
+there.
+.PP
+Ctrl+Shift+H shows every keyboard shortcut in the window.
+.SH FILES
+.TP
+.I ~/.config/minicode/settings.conf
+Colors, opacity and language server commands. Ctrl+, creates it with every
+setting commented out and opens it. It follows
+.BR $XDG_CONFIG_HOME .
+.TP
+.I ~/.local/share/minicode/bin/tectonic
+Where the LaTeX preview puts tectonic when it is asked to download it.
+.SH ENVIRONMENT
+.TP
+.B MINICODE_SETTINGS
+A settings file to read in place of the one above.
+.TP
+.B MINICODE_TECTONIC
+The tectonic binary the LaTeX preview uses, ahead of any other.
+.TP
+.B MINICODE_LSP_LOG
+A file to append every language server message to, for debugging.
+.TP
+.B SHELL
+The shell the terminal panel runs.
+.SH SEE ALSO
+.BR git (1),
+.BR clangd (1)
+.PP
+https://github.com/e-c-hansen/minicode
