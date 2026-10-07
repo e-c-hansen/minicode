@@ -31,6 +31,10 @@ struct MdRun {
     // (•, ◦ or ▪ by level), the number as written ("3.") or a task's box
     // (☐ or ☑), then a space. A GUI with real indents can trim the spaces.
     bool marker    = false;
+    // A task list item ("- [ ] x" or "- [x] x"): 1 open, 2 checked, on its
+    // marker run and on the runs of the item's own text (not on items
+    // nested under it), so a GUI can draw a box and mute what is done.
+    int  task      = 0;
     bool link      = false;  // link text
     std::string url;         // populated when link == true
     int  line      = -1;     // the 0-based source line the run came from

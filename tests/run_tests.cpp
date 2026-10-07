@@ -4,6 +4,7 @@
 #include "TermLinks.h"
 #include "MarkdownParser.h"
 #include "MarkdownEdit.h"
+#include "MarkdownTasks.h"
 #include "MathTex.h"
 #include "TerminalStream.h"
 #include "TerminalScreen.h"
@@ -2990,7 +2991,7 @@ void testSettings() {
     // documented value is the real default.
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math) and lsp keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 40);
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 41);
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -5408,6 +5409,197 @@ static void testGitGraph() {
     }
 }
 
+// ---------------------------------------------------------------- task lists
+
+// `marked` uses '|' for a caret and '{' '}' for a selection; the result is
+// written the same way, or "unchanged".
+std::string taskEdit(const std::string &marked, bool isNewline) {
+    std::u16string text;
+    size_t a = std::string::npos, b = std::string::npos;
+    for (char c : marked) {
+        if (c == '|') { a = b = text.size(); continue; }
+        if (c == '{') { a = text.size(); continue; }
+        if (c == '}') { b = text.size(); continue; }
+        text += (char16_t)(unsigned char)c;
+    }
+    MarkdownTasks::Edit e = isNewline ? MarkdownTasks::newline(text, a, b)
+                                      : MarkdownTasks::toggle(text, a, b);
+    if (!e.changed) return "unchanged";
+    text.replace(e.replaceStart, e.replaceLength, e.replacement);
+    std::string out = narrow(text);
+    if (e.selStart == e.selEnd) return out.insert(e.selStart, "|");
+    out.insert(e.selEnd, "}");
+    return out.insert(e.selStart, "{");
+}
+std::string taskToggled(const std::string &m) { return taskEdit(m, false); }
+std::string taskReturn(const std::string &m) { return taskEdit(m, true); }
+
+void testMarkdownTasks() {
+    GROUP("tasks:toggle");
+    CHECK(taskToggled("|buy milk") == "- [ ] |buy milk");
+    CHECK(taskToggled("buy| milk") == "- [ ] buy| milk");
+    CHECK(taskToggled("  indented|") == "  - [ ] indented|");
+    CHECK(taskToggled("- buy|") == "- [ ] buy|");
+    CHECK(taskToggled("* buy|") == "* [ ] buy|");
+    CHECK(taskToggled("- [ ] buy|") == "- [x] buy|");
+    CHECK(taskToggled("- [x] buy|") == "- [ ] buy|");
+    CHECK(taskToggled("  * [X] nested|") == "  * [ ] nested|");
+    CHECK(taskToggled("1. thing|") == "1. [ ] thing|");
+    CHECK(taskToggled("> quoted|") == "> - [ ] quoted|");
+    CHECK(taskToggled("> - [ ] quoted|") == "> - [x] quoted|");
+    CHECK(taskToggled("|") == "- [ ] |");
+    CHECK(taskToggled("a\n|\nb") == "a\n- [ ] |\nb");
+    CHECK(taskToggled("-|") == "- [ ] |");
+    CHECK(taskToggled("- [ ]|") == "- [x]|");
+    CHECK(taskToggled("{a\n- [x] b}") == "{- [ ] a\n- [x] b}");
+    CHECK(taskToggled("{- [ ] a\n- [x] b}") == "{- [x] a\n- [x] b}");
+    CHECK(taskToggled("{- [x] a\n- [x] b}") == "{- [ ] a\n- [ ] b}");
+    CHECK(taskToggled("{a\n\nb}") == "{- [ ] a\n\n- [ ] b}");
+    // A selection ending at the start of a line leaves that line out.
+    CHECK(taskToggled("{a\n}b") == "{- [ ] a\n}b");
+    // A wrapped item's continuation line toggles its item.
+    CHECK(taskToggled("- [ ] long\n  more|") == "- [x] long\n  more|");
+    // Code, headings, tables and rules are not tasks.
+    CHECK(taskToggled("```\n|x\n```") == "unchanged");
+    CHECK(taskToggled("```\n- [ ] x|\n```") == "unchanged");
+    CHECK(taskToggled("# Title|") == "unchanged");
+    {
+        const std::u16string table = u"| a | b |\n|---|---|\n| 1 | 2 |";
+        CHECK(!MarkdownTasks::toggle(table, 25, 25).changed);
+        CHECK(!MarkdownTasks::toggle(table, 0, 0).changed);
+    }
+    CHECK(taskToggled("text\n\n---|") == "unchanged");
+    // Non-ASCII text keeps its UTF-16 offsets.
+    CHECK(taskToggled("- [ ] caf\xC3\xA9|") != "unchanged");
+    {
+        std::u16string t = u"- [ ] café \U0001F600";
+        MarkdownTasks::Edit e = MarkdownTasks::toggle(t, t.size(), t.size());
+        CHECK(e.changed && e.replaceStart == 3 && e.replacement == u"x");
+        CHECK(e.selStart == t.size());
+    }
+
+    GROUP("tasks:return");
+    CHECK(taskReturn("- [ ] a|") == "- [ ] a\n- [ ] |");
+    CHECK(taskReturn("- [x] a|") == "- [x] a\n- [ ] |");
+    CHECK(taskReturn("- a|") == "- a\n- |");
+    CHECK(taskReturn("  * a|") == "  * a\n  * |");
+    CHECK(taskReturn("+ a|") == "+ a\n+ |");
+    CHECK(taskReturn("9. a|") == "9. a\n10. |");
+    CHECK(taskReturn("3) a|") == "3) a\n4) |");
+    CHECK(taskReturn("2. [ ] a|") == "2. [ ] a\n3. [ ] |");
+    CHECK(taskReturn("> - [ ] a|") == "> - [ ] a\n> - [ ] |");
+    CHECK(taskReturn("-   a|") == "-   a\n-   |");
+    CHECK(taskReturn("- [ ] fo|o") == "- [ ] fo\n- [ ] |o");
+    CHECK(taskReturn("- {a}b") == "- \n- |b");
+    CHECK(taskReturn("x\n- [ ] |") == "x\n|");
+    CHECK(taskReturn("- a\n  - |") == "- a\n|");
+    CHECK(taskReturn("- |") == "|");
+    CHECK(taskReturn("|- a") == "unchanged");
+    CHECK(taskReturn("- [ |] a") == "unchanged");
+    CHECK(taskReturn("plain|") == "unchanged");
+    CHECK(taskReturn("```\n- a|\n```") == "unchanged");
+    CHECK(taskReturn("    - a|") == "unchanged");   // indented code
+    CHECK(taskReturn("-a|") == "unchanged");
+    CHECK(taskReturn("--- |") == "unchanged");
+    CHECK(taskReturn("{- a\n- b}") == "unchanged");
+    CHECK(taskReturn("- a|\r\n- b") == "- a\n- |\r\n- b");
+
+    GROUP("tasks:preview");
+    const std::string src =
+        "# T\n- [ ] a\n- [x] b\n  - [ ] c\n```\n- [ ] no\n```\n> - [X] q\n- plain\n";
+    MarkdownTasks::Counts c = MarkdownTasks::count(src);
+    CHECK(c.total == 4 && c.done == 2);
+    CHECK(MarkdownTasks::count("nothing here\n").total == 0);
+    size_t mark = 0;
+    CHECK(MarkdownTasks::toggleBox(src, 1, &mark) ==
+          "# T\n- [x] a\n- [x] b\n  - [ ] c\n```\n- [ ] no\n```\n> - [X] q\n- plain\n");
+    CHECK(mark == 7);
+    CHECK(MarkdownTasks::toggleBox(src, 2).substr(12, 7) == "- [ ] b");
+    CHECK(MarkdownTasks::toggleBox(src, 3).find("  - [x] c") != std::string::npos);
+    CHECK(MarkdownTasks::toggleBox(src, 5) == src);   // in code
+    CHECK(MarkdownTasks::toggleBox(src, 8) == src);   // no box
+    CHECK(MarkdownTasks::toggleBox(src, 0) == src);
+    CHECK(MarkdownTasks::toggleBox(src, 99) == src);
+    CHECK(MarkdownTasks::toggleBox(src, -1) == src);
+    CHECK(MarkdownTasks::toggleBox(src, 7).find("> - [ ] q") != std::string::npos);
+    MarkdownTasks::Box box = MarkdownTasks::boxOnLine(src, 2);
+    CHECK(box.found && box.checked);
+    std::vector<MarkdownTasks::OpenTask> open = MarkdownTasks::openTasks(src);
+    CHECK(open.size() == 2);
+    if (open.size() == 2) {
+        CHECK(open[0].line == 1 && open[0].column == 2);
+        CHECK(open[1].line == 3 && open[1].column == 4);
+    }
+    // The parser marks a task item's marker and text, not its children's.
+    std::vector<MdRun> runs = MarkdownParser::parse("- [x] done *now*\n  - [ ] sub\n- plain\n");
+    int done = 0, open1 = 0, plain = 0;
+    for (const MdRun &r : runs) {
+        if (r.text == "\n") continue;
+        if (r.task == 2) done++;
+        else if (r.task == 1) open1++;
+        else plain++;
+    }
+    CHECK(done == 3 && open1 == 2 && plain == 2);   // marker, "done ", "now"
+    for (const MdRun &r : runs)
+        if (r.marker && r.task) CHECK(r.text.find(r.task == 2 ? "\xE2\x98\x91" : "\xE2\x98\x90") != std::string::npos);
+
+    GROUP("tasks:todo-lines");
+    size_t col = 0, len = 0;
+    CHECK(FolderSearch::findTodoInLine("// TODO: x", false, &col, &len) && col == 3 && len == 4);
+    CHECK(FolderSearch::findTodoInLine("x = 1  # FIXME later", false, &col, &len) && len == 5);
+    CHECK(FolderSearch::findTodoInLine("/* HACK */", false, &col, &len) && col == 3);
+    CHECK(FolderSearch::findTodoInLine("/** XXX odd */", false, &col, &len));
+    CHECK(FolderSearch::findTodoInLine("   * BUG: in the middle", false, &col, &len));
+    CHECK(FolderSearch::findTodoInLine("-- TODO sql", false, &col, &len));
+    CHECK(FolderSearch::findTodoInLine("; TODO lisp", false, &col, &len));
+    CHECK(FolderSearch::findTodoInLine("% TODO tex", false, &col, &len));
+    CHECK(FolderSearch::findTodoInLine("    TODO: in a docstring", false, &col, &len) && col == 4);
+    CHECK(FolderSearch::findTodoInLine("call(); //TODO(eric) tidy", false, &col, &len) && col == 10);
+    CHECK(!FolderSearch::findTodoInLine("int TODO = 1;", false, &col, &len));
+    CHECK(!FolderSearch::findTodoInLine("// TODOS", false, &col, &len));
+    CHECK(!FolderSearch::findTodoInLine("// todo: lower", false, &col, &len));
+    CHECK(!FolderSearch::findTodoInLine("TODO write", false, &col, &len));
+    CHECK(!FolderSearch::findTodoInLine("x = a * TODO", false, &col, &len));
+    CHECK(!FolderSearch::findTodoInLine("s = \"TODO\"", false, &col, &len));
+    CHECK(!FolderSearch::findTodoInLine("# TODO list", true, &col, &len));
+    CHECK(FolderSearch::findTodoInLine("# TODO list", false, &col, &len));
+    CHECK(FolderSearch::findTodoInLine("<!-- TODO: hidden -->", true, &col, &len) && col == 5);
+    CHECK(FolderSearch::isMarkdownPath("/a/b/Notes.MD"));
+    CHECK(FolderSearch::isMarkdownPath("x.markdown"));
+    CHECK(!FolderSearch::isMarkdownPath("/a.md/readme"));
+    CHECK(!FolderSearch::isMarkdownPath("x.mdx"));
+
+    GROUP("tasks:todo-folder");
+    std::random_device rd;
+    const fsys::path root = fsys::temp_directory_path() /
+        ("minicode-todo-test-" + std::to_string(rd()));
+    fsys::create_directories(root / "sub");
+    fsys::create_directories(root / "node_modules");
+    writeFile(root / "a.cpp", "int x;\n// TODO: one\nint TODO = 2;\n");
+    writeFile(root / "notes.md",
+              "# TODO heading\n- [ ] task\n```\n- [ ] no\n```\n- [x] done\n<!-- FIXME: hidden -->\n");
+    writeFile(root / "sub" / "b.py", "def f():\n    pass  # XXX slow\n");
+    writeFile(root / ".hidden.py", "# TODO: hidden file\n");
+    writeFile(root / "node_modules" / "m.js", "// TODO: skipped\n");
+    FolderSearchResult r = FolderSearch::findTodos(root.string());
+    CHECK(r.matches.size() == 4);
+    if (r.matches.size() == 4) {
+        CHECK(r.matches[0].relativePath == "a.cpp" && r.matches[0].line == 2 &&
+              r.matches[0].text == "// TODO: one" && r.matches[0].column == 4);
+        CHECK(r.matches[1].relativePath == "notes.md" && r.matches[1].line == 2 &&
+              r.matches[1].byteColumn == 2 && r.matches[1].byteLength == 3);
+        CHECK(r.matches[2].relativePath == "notes.md" && r.matches[2].line == 7 &&
+              r.matches[2].byteColumn == 5);
+        CHECK(r.matches[3].relativePath == "sub/b.py" && r.matches[3].line == 2);
+    }
+    CHECK(r.filesMatched == 3);
+    std::atomic<bool> stop{true};
+    CHECK(FolderSearch::findTodos(root.string(), &stop).cancelled);
+    CHECK(FolderSearch::findTodos((root / "a.cpp").string()).matches.empty());
+    std::error_code ec;
+    fsys::remove_all(root, ec);
+}
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
@@ -5437,6 +5629,7 @@ int main() {
     testLatexClicks();
     testSyncTexText();
     testFolderSearch();
+    testMarkdownTasks();
     testGitStatus();
     testGitDiff();
     testGitGraph();
