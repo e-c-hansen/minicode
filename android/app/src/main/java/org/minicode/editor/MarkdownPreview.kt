@@ -34,9 +34,12 @@ import androidx.documentfile.provider.DocumentFile
  * - Text between tables and pictures is one TextView, styled with spans.
  * - A table is a grid of wrapping cells, the columns sharing the width
  *   equally, as the Linux port draws them.
- * - A local picture is shown at its own size or the pane's width, whichever
- *   is smaller; a GIF plays while the preview is on screen. Web pictures and
- *   files over 64 MB show their alt text instead.
+ * - A picture is shown at its own size or the pane's width, whichever is
+ *   smaller; a GIF plays while the preview is on screen. Files over 64 MB
+ *   show their alt text instead.
+ * - A picture from an https address (WebImages) shows its alt text while it
+ *   is fetched, and the page is rendered again when it arrives, with what
+ *   the reader was looking at kept where it was on the screen.
  *
  * Every stretch of text remembers the source line it came from, which is
  * what a tapped link, a double tap to edit and the preview/source toggle all
@@ -72,14 +75,43 @@ class MarkdownPreview @JvmOverloads constructor(
     private val pictures = HashMap<String, Picture>()
     /** Where the preview was left after it was placed; a scroll after that is the user's. */
     private var entryScroll = -1
+
+    // Web pictures. All of it is declared above init, like the rest: see `ready`.
+    /** The source last shown, rendered again when web pictures arrive; null once closed. */
+    private var source: String? = null
+    /** Addresses the page on screen shows alt text for until they arrive. */
+    private val waitingFor = HashSet<String>()
+    /** Addresses asked of WebImages that have not answered yet. */
+    private val asked = HashSet<String>()
+    /** Pictures that arrived since the last render, for the next one. */
+    private val arrived = HashMap<String, ByteArray>()
+    /** Several arrivals close together make one render. */
+    private val rerender = Runnable { rerenderForArrivals() }
+    private var rerenderPending = false
+    /** Arrivals that came while the preview was hidden, rendered when it is shown. */
+    private var arrivedWhileHidden = false
+    /**
+     * A finger on the page, and when it last scrolled: arrivals wait for the
+     * page to be still, since a fling or a jump to a heading would carry on
+     * from where the old page had it and undo the place kept.
+     */
+    private var touching = false
+    private var lastScrollAt = 0L
+    /** The first run of each table and picture, for keeping the place across renders. */
+    private val blockRuns = HashMap<View, Int>()
     /**
      * False until construction is done: View's constructor already reports
      * the visibility from the layout file, before these fields exist.
      */
     private var ready = false
 
-    /** A stretch of rendered text: [start, end) of its view's text. */
-    private class Piece(val start: Int, val end: Int, val line: Int, val url: String?)
+    /**
+     * A stretch of rendered text: [start, end) of its view's text, and the
+     * index of the run it came from, which is the same from one render of a
+     * source to the next.
+     */
+    private class Piece(val start: Int, val end: Int, val line: Int, val url: String?,
+                        val run: Int = -1)
 
     /** A table cell: the source line of its row, and its column. */
     private class Cell(val line: Int, val column: Int)
@@ -103,13 +135,45 @@ class MarkdownPreview @JvmOverloads constructor(
      */
     fun show(source: String, keepScroll: Boolean) {
         val keep = scrollY
+        // The same source again (web pictures turned on or off) keeps what
+        // is at the top of the pane, as an arrival does; an edit changes the
+        // runs, so it keeps the scroll position itself.
+        val anchor = if (keepScroll && source == this.source && isLaidOut) anchorAt(keep) else null
+        // This render takes whatever has arrived; a pending one would repeat it.
+        removeCallbacks(rerender)
+        rerenderPending = false
+        arrivedWhileHidden = false
+        this.source = source
         render(source)
         afterLayout {
-            scrollTo(0, if (keepScroll) keep else 0)
+            val y = if (!keepScroll) 0
+                    else anchor?.let { (run, dy) -> yOfRun(run)?.let { it - dy } } ?: keep
+            scrollTo(0, maxOf(0, y))
             // An edit keeps the page where the reader took it, so a scroll
             // made before the edit still counts as theirs.
             if (!keepScroll) entryScroll = scrollY
+            else if (anchor != null && entryScroll >= 0) entryScroll += scrollY - keep
         }
+    }
+
+    /**
+     * Lets go of the page when its file is closed, so nothing of it is kept
+     * and a web picture arriving later is dropped.
+     */
+    fun close() {
+        removeCallbacks(rerender)
+        rerenderPending = false
+        arrivedWhileHidden = false
+        source = null
+        waitingFor.clear()
+        arrived.clear()
+        stopAll()
+        playing.clear()
+        body.removeAllViews()
+        anchors.clear()
+        blockLines.clear()
+        blockRuns.clear()
+        pictures.clear()
     }
 
     private fun render(source: String) {
@@ -118,6 +182,8 @@ class MarkdownPreview @JvmOverloads constructor(
         body.removeAllViews()
         anchors.clear()
         blockLines.clear()
+        blockRuns.clear()
+        waitingFor.clear()
         val used = HashMap<String, Picture>()
         val runs = Core.markdownRuns(source)
 
@@ -177,6 +243,7 @@ class MarkdownPreview @JvmOverloads constructor(
                 flush()
                 val grid = buildTable(runs, i, end)
                 blockLines[grid] = runs.line(i)
+                blockRuns[grid] = i
                 addBlock(grid)
                 i = end
                 continue
@@ -188,6 +255,7 @@ class MarkdownPreview @JvmOverloads constructor(
                     flush()
                     val image = pictureView(picture, runs.url(i), line)
                     blockLines[image] = line
+                    blockRuns[image] = i
                     addBlock(image)
                     i++
                     continue
@@ -203,13 +271,14 @@ class MarkdownPreview @JvmOverloads constructor(
                 val start = text.length
                 text.append(piece)
                 style(text, start, text.length, flags, runs.isImage(i))
-                view.pieces.add(Piece(start, text.length, line, runs.url(i)))
+                view.pieces.add(Piece(start, text.length, line, runs.url(i), i))
             }
             i++
         }
         flush()
         pictures.clear()
         pictures.putAll(used)
+        arrived.clear()
     }
 
     private fun addBlock(v: View) {
@@ -318,14 +387,15 @@ class MarkdownPreview @JvmOverloads constructor(
 
     /**
      * The picture a Markdown source names, decoded no wider than the pane:
-     * a path relative to the file, an absolute path or a file:// address.
-     * Web pictures are not fetched; they, files over 64 MB and files that do
-     * not decode give null, and the alt text is shown. Decoded pictures are
-     * kept for the next render (an edit re-renders), keyed by file, date
-     * and width; `used` collects this render's.
+     * a path relative to the file, an absolute path, a file:// address or
+     * an https one (webPicture). Files over 64 MB, files that do not decode,
+     * plain http and data: give null, and the alt text is shown. Decoded
+     * pictures are kept for the next render (an edit re-renders), keyed by
+     * file, date and width; `used` collects this render's.
      */
     private fun picture(srcIn: String, used: HashMap<String, Picture>): Picture? {
         var src = srcIn.trim()
+        if (WebImages.isWeb(src)) return webPicture(src, used)
         if (src.startsWith("file://")) {
             src = android.net.Uri.parse(src).path ?: return null
         } else {
@@ -343,13 +413,50 @@ class MarkdownPreview @JvmOverloads constructor(
         while (used.containsKey("$key|$n")) n++
         key = "$key|$n"
         pictures[key]?.let { used[key] = it; return it }
+        return decode(ImageDecoder.createSource(context.contentResolver, file.uri), maxWidth)
+            ?.also { used[key] = it }
+    }
+
+    /**
+     * An https picture: the decoded one this page already had, else the
+     * bytes if they have arrived (or are in WebImages' cache), else null
+     * and a fetch, whose arrival renders the page again. Nothing is asked
+     * while "Web images in Markdown" is off, or again soon after a failure.
+     */
+    private fun webPicture(url: String, used: HashMap<String, Picture>): Picture? {
+        if (!WebImages.enabled) return null
+        val maxWidth = maxOf(1, availableWidth())
+        var key = "web|$url|$maxWidth"
+        var n = 0
+        while (used.containsKey("$key|$n")) n++
+        key = "$key|$n"
+        pictures[key]?.let { used[key] = it; return it }
+        val bytes = arrived[url] ?: WebImages.cached(url)
+        if (bytes == null) {
+            if (WebImages.failedRecently(url)) return null
+            waitingFor.add(url)
+            if (asked.add(url)) WebImages.fetch(context, url) { data -> webArrived(url, data) }
+            return null
+        }
+        // From the bytes, so a GIF comes back animated just as a file's does.
+        val picture = decode(ImageDecoder.createSource(java.nio.ByteBuffer.wrap(bytes)), maxWidth,
+                             WebImages.MAX_PIXELS)
+        if (picture == null) WebImages.undecodable(url) else used[key] = picture
+        return picture
+    }
+
+    /** A picture decoded no wider than `maxWidth`, or null; null too past `maxPixels`. */
+    private fun decode(source: ImageDecoder.Source, maxWidth: Int,
+                       maxPixels: Long = Long.MAX_VALUE): Picture? {
         return try {
             var w = 0
             var h = 0
-            val source = ImageDecoder.createSource(context.contentResolver, file.uri)
             val drawable = ImageDecoder.decodeDrawable(source) { decoder, info, _ ->
                 w = info.size.width
                 h = info.size.height
+                // A few kilobytes from the web can claim a size that takes
+                // gigabytes to decode; the header says so before any of it.
+                if (w.toLong() * h > maxPixels) throw IllegalArgumentException("$w x $h")
                 // Never larger than the pane, and never blown up past its own size.
                 if (w > maxWidth) {
                     h = maxOf(1, (h.toLong() * maxWidth / w).toInt())
@@ -357,8 +464,7 @@ class MarkdownPreview @JvmOverloads constructor(
                     decoder.setTargetSize(w, h)
                 }
             }
-            if (w <= 0 || h <= 0) null
-            else Picture(drawable, w, h).also { used[key] = it }
+            if (w <= 0 || h <= 0) null else Picture(drawable, w, h)
         } catch (e: Exception) {
             null
         } catch (e: OutOfMemoryError) {
@@ -401,16 +507,138 @@ class MarkdownPreview @JvmOverloads constructor(
     override fun onVisibilityChanged(changedView: View, visibility: Int) {
         super.onVisibilityChanged(changedView, visibility)
         if (!ready) return
-        if (isShown) playing.forEach { it.start() } else stopAll()
+        if (isShown) shown() else stopAll()
     }
 
     override fun onWindowVisibilityChanged(visibility: Int) {
         super.onWindowVisibilityChanged(visibility)
         if (!ready) return
-        if (visibility == View.VISIBLE && isShown) playing.forEach { it.start() } else stopAll()
+        if (visibility == View.VISIBLE && isShown) shown() else stopAll()
+    }
+
+    private fun shown() {
+        playing.forEach { it.start() }
+        // Coming back from the file list shows the page as it was left, so
+        // pictures that arrived meanwhile are put in now.
+        if (arrivedWhileHidden) {
+            arrivedWhileHidden = false
+            scheduleRerender()
+        }
     }
 
     private fun stopAll() = playing.forEach { it.stop() }
+
+    // ------------------------------------------------------------ web pictures arriving
+
+    /**
+     * A fetch answered. Kept for the next render only if the page on screen
+     * is still waiting for that address: one closed or changed since has
+     * nothing to put it in (the bytes stay in WebImages' cache).
+     */
+    private fun webArrived(url: String, bytes: ByteArray?) {
+        asked.remove(url)
+        if (bytes == null || source == null || url !in waitingFor) return
+        arrived[url] = bytes
+        scheduleRerender()
+    }
+
+    private fun scheduleRerender() {
+        if (rerenderPending) return
+        rerenderPending = true
+        postDelayed(rerender, ARRIVAL_COALESCE_MS)
+    }
+
+    /**
+     * Renders the same source again with the pictures that came in, keeping
+     * what was at the top of the pane where it was: a picture arriving above
+     * it moves the scroll by its height instead of pushing the text down.
+     * The "placed at" scroll moves by the same amount, so the reader's own
+     * scrolling still counts as theirs (and not scrolling still does not).
+     */
+    private fun rerenderForArrivals() {
+        rerenderPending = false
+        if (source == null || arrived.isEmpty()) return
+        if (!isShown) {
+            arrivedWhileHidden = true
+            return
+        }
+        if (touching || android.os.SystemClock.uptimeMillis() - lastScrollAt < SETTLE_MS) {
+            scheduleRerender()
+            return
+        }
+        // Measured on a laid-out page, after any placing already under way.
+        afterLayout {
+            val src = source ?: return@afterLayout
+            if (arrived.isEmpty()) return@afterLayout   // a show() took them
+            val before = scrollY
+            val anchor = anchorAt(before)
+            render(src)
+            afterLayout {
+                val y = anchor?.let { (run, dy) -> yOfRun(run)?.let { it - dy } } ?: before
+                scrollTo(0, maxOf(0, y))
+                if (entryScroll >= 0) entryScroll += scrollY - before
+            }
+        }
+    }
+
+    /**
+     * What is at scroll position `top`: the run that starts the first view
+     * reaching below it, and how far below `top` that run starts.
+     */
+    private fun anchorAt(top: Int): Pair<Int, Int>? {
+        for (k in 0 until body.childCount) {
+            val child = body.getChildAt(k)
+            val y = topOf(child)
+            if (y + child.height <= top) continue
+            if (child is PieceText) {
+                val l = child.layout ?: return null
+                val off = l.getLineStart(l.getLineForVertical(maxOf(0, top - y - child.totalPaddingTop)))
+                val p = child.pieces.firstOrNull { it.end > off && it.run >= 0 } ?: continue
+                return p.run to (yOfPiece(child, p) - top)
+            }
+            val run = blockRuns[child] ?: continue
+            return run to (y - top)
+        }
+        return null
+    }
+
+    /** Where run `run` (or the first after it) starts, in scrolling coordinates. */
+    private fun yOfRun(run: Int): Int? {
+        for (k in 0 until body.childCount) {
+            val child = body.getChildAt(k)
+            if (child is PieceText) {
+                val p = child.pieces.firstOrNull { it.run >= run } ?: continue
+                return yOfPiece(child, p)
+            }
+            if ((blockRuns[child] ?: -1) >= run) return topOf(child)
+        }
+        return null
+    }
+
+    /**
+     * The top of a piece's first line of text. Newlines it starts with are
+     * skipped, since a piece that begins a view loses them and one that
+     * follows a picture may begin one after this render.
+     */
+    private fun yOfPiece(view: PieceText, p: Piece): Int {
+        val text = view.text
+        var k = p.start
+        while (k < p.end && k < text.length && text[k] == '\n') k++
+        return yOf(view, k)
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> touching = true
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> touching = false
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
+        super.onScrollChanged(l, t, oldl, oldt)
+        lastScrollAt = android.os.SystemClock.uptimeMillis()
+    }
 
     // ------------------------------------------------------------ taps
 
@@ -589,5 +817,9 @@ class MarkdownPreview @JvmOverloads constructor(
 
     companion object {
         const val MAX_PICTURE_BYTES = 64L * 1024 * 1024
+        /** Arrivals this close together are put in with one render. */
+        private const val ARRIVAL_COALESCE_MS = 150L
+        /** How long the page must have been still before arrivals go in. */
+        private const val SETTLE_MS = 300L
     }
 }

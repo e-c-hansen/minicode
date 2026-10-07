@@ -64,6 +64,8 @@ class MainActivity : AppCompatActivity() {
 
         setTextSize(getSharedPreferences("minicode", MODE_PRIVATE).getInt("textSize", 13))
         symbolRow = getSharedPreferences("minicode", MODE_PRIVATE).getBoolean("symbolRow", true)
+        // The desktop's markdown.web-images, as a preference (⋮ menu); on by default.
+        WebImages.enabled = getSharedPreferences("minicode", MODE_PRIVATE).getBoolean("webImages", true)
 
         // A double tap in the LaTeX preview edits the source behind it; the
         // splice goes through the buffer, so it is highlighted, marked
@@ -1224,6 +1226,7 @@ class MainActivity : AppCompatActivity() {
         showingDiff = false
         previewing = false
         ui.latex.close()
+        ui.previewScroll.close()
         dirty = false
         ui.media.setImageBitmap(bitmap)
         // Scaled down to fit, never up past its real size, as on the Mac.
@@ -1278,6 +1281,7 @@ class MainActivity : AppCompatActivity() {
         showingDiff = false
         previewing = false
         ui.latex.close()
+        ui.previewScroll.close()
         dirty = false
         ui.media.setImageDrawable(null)
         lsp.opened(null, folder)
@@ -1326,6 +1330,9 @@ class MainActivity : AppCompatActivity() {
         previewing = isPreviewable(file.name) && text.isNotBlank()
         if (LatexPreview.isLatex(file.name)) ui.latex.open(file, text)
         else ui.latex.close()
+        // Another Markdown file replaces the page when it renders; anything
+        // else lets go of it, and of any web picture still on its way.
+        if (!isMarkdown(file.name)) ui.previewScroll.close()
         showList(false)
         updateTitle()
         rehighlight()
@@ -1873,6 +1880,7 @@ class MainActivity : AppCompatActivity() {
             ui.media.setImageDrawable(null)
             previewing = false
             ui.latex.close()
+            ui.previewScroll.close()
             highlighting = true
             ui.editor.setText("")
             highlighting = false
@@ -2295,7 +2303,8 @@ class MainActivity : AppCompatActivity() {
                             "New file", "On-screen keyboard",
                             if (symbolRow) "Hide the symbol row" else "Show the symbol row",
                             "Undo", "Redo", "Shell: " + when (shellChoice()) {
-                                "termux" -> "Termux"; "system" -> "Android"; else -> "automatic" })
+                                "termux" -> "Termux"; "system" -> "Android"; else -> "automatic" },
+                            "Web images in Markdown: " + if (WebImages.enabled) "on" else "off")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setItems(items) { _, which ->
                 when (which) {
@@ -2315,6 +2324,7 @@ class MainActivity : AppCompatActivity() {
                     13 -> undo(redo = false)
                     14 -> undo(redo = true)
                     15 -> chooseShell()
+                    16 -> toggleWebImages()
                 }
             }
             .show()
@@ -2521,6 +2531,20 @@ class MainActivity : AppCompatActivity() {
                     "which Termux cannot enter. This shell is in Termux's home folder."
             else -> path.path to null
         }
+    }
+
+    /**
+     * ⋮ Web images in Markdown, the desktop's markdown.web-images: whether
+     * the preview fetches pictures from https addresses. Off, they show
+     * their alt text and opening a file contacts nothing it links to.
+     */
+    private fun toggleWebImages() {
+        WebImages.enabled = !WebImages.enabled
+        getSharedPreferences("minicode", MODE_PRIVATE).edit()
+            .putBoolean("webImages", WebImages.enabled).apply()
+        say(if (WebImages.enabled) "Web images in Markdown are on."
+            else "Web images in Markdown are off: they show their alt text.")
+        if (markdownPreviewShowing()) renderPreview()
     }
 
     /** ⋮ Shell: Termux's bash or Android's sh, and the shell restarts. */

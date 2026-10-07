@@ -81,8 +81,8 @@ The rest of this file is about how the port is built and developed.
   CodeEditText, and "Pastiera" below).
 - **Markdown preview.** The shared parser, rendered as the Mac and Linux
   render it: links that open on a tap, real tables whose cells wrap,
-  pictures beside the file shown inline (GIFs playing), and a double tap on
-  a block to edit its Markdown. The leader's P flips between the preview
+  pictures beside the file or at an https address shown inline (GIFs
+  playing), and a double tap on a block to edit its Markdown. The leader's P flips between the preview
   and the source, keeping the place both ways. See "The Markdown preview"
   below.
 - **Images and PDFs.** Decoded by Android, scaled down but never up, with the
@@ -598,9 +598,42 @@ anchor for a heading comes from the core too (`MarkdownParser::anchor`).
 - **Pictures** relative to the file, or absolute, decoded by `ImageDecoder`
   no wider than the pane and never larger than their own size. A GIF comes
   back as an `AnimatedImageDrawable`, which plays while the preview is on
-  screen. Web pictures are never fetched and show their alt text, as do
-  files over 64 MB. Decoded pictures are kept for the next render, since an
-  edit re-renders the page.
+  screen. Files over 64 MB show their alt text. Decoded pictures are kept
+  for the next render, since an edit re-renders the page. A picture inside
+  a table cell shows its alt text, local or not.
+- **Pictures from the web** (`WebImages.kt`). An `https://` picture shows
+  its alt text at first and is fetched in the background: platform
+  `HttpsURLConnection` on three threads, the system's certificate checks,
+  15 seconds to connect and for each read (60 in all), no cookies, no HTTP
+  cache, and `MiniCode/<version>` as the User-Agent. Plain `http://` is
+  never fetched, and neither is a redirect from https to http. When pictures
+  arrive the page is rendered again, several arrivals to one render, and
+  the text at the top of the pane stays where it was: a picture that lands
+  above it moves the scroll by its height. Arrivals wait while a finger is
+  on the page or it scrolled in the last 0.3 s, so a fling or a jump to a
+  heading is never cut short. The bytes are decoded with
+  `ImageDecoder.createSource(ByteBuffer)`, so a GIF plays like a local one.
+  Kept in memory only: the downloaded bytes in a 32 MB `LruCache` keyed by
+  address (an edit, or opening the file again, costs no request), and a
+  failure for a minute, so a missing picture is not asked for on every
+  edit. A picture over 20 MB is cut off when it passes that (or refused
+  from its Content-Length), and one over 64 megapixels is refused from its
+  header before it is decoded, as on Linux. A 404, a timeout, a picture Android cannot
+  decode and anything else that goes wrong leave the alt text as it was,
+  without a message. SVG cannot be decoded by `ImageDecoder`, so it keeps
+  its alt text; its Content-Type is enough to refuse it without reading
+  the body, which is the usual case for shields.io badges. A linked badge,
+  `[![alt](src)](url)`, opens its link on a tap whether it shows the
+  picture or the alt text. A page closed or changed before its pictures
+  arrive drops them.
+- **Web images in Markdown** (⋮ menu, on by default, kept in the
+  `webImages` preference) turns the fetching off. Off, web pictures show
+  their alt text, nothing is asked for, and fetches still queued are
+  dropped before they go out. Turning it on or off keeps the text at the
+  top of the pane where it was. This is the desktop's `markdown.web-images`;
+  Android does not read `settings.conf`. `adb shell setprop
+  log.tag.MiniCodeWeb DEBUG` logs every request and its result, in any
+  build.
 - **Editing.** A double tap on a paragraph, heading, list item, quote,
   code block or table cell opens a box (`MarkdownEditDialog.kt`) holding
   that block's Markdown, found by the core's `MarkdownEdit::blockAt`.
@@ -629,6 +662,21 @@ the GIF playing at the pane's width, the web picture's alt text, and
 place keeping both ways. Injected keys cannot show whether the Titan's own
 Enter and Shift+Enter arrive as keys or as committed text in the box; both
 paths are handled, and the New line key works either way.
+
+Pictures from the web were checked on the Titan 2 (2026-09-29) with the
+release build and the MiniCodeWeb log, against a scratch page of public
+addresses: the page came up at once with every picture as alt text; the
+repository's icon.png and tour.gif (from raw.githubusercontent.com)
+arrived in about 0.2 s and showed, and the GIF played (its area differed
+across three screenshots 2 s apart while a still area did not); the same
+address twice on the page made one request; the re-render for the
+arrivals asked for nothing again, the 404 and the SVG included; a 404, a
+shields.io SVG (refused from its Content-Type), a 100 MB file (refused
+from its Content-Length) and a plain http address kept their alt text,
+and the http one made no request. The phone left the network before the
+rest could be checked: a tap on a linked picture, the place kept when
+pictures land above a scrolled page, the toggle off making no request,
+and an edit from the preview making none.
 
 ## The LaTeX preview
 
@@ -903,6 +951,8 @@ Run it from the repository root; the tests read a few files from `demo/`,
   pictures, taps on links, double taps to edit, and the lines behind place
   keeping.
 - `MarkdownEditDialog.kt`: the box a double tap opens.
+- `WebImages.kt`: fetching https pictures for the preview, with the
+  in-memory cache and the memory of failures.
 - `Termux.kt`: runs a program in Termux with its stdin and stdout on a
   loopback socket; how language servers, tectonic, git and the terminal's
   bash are reached.
