@@ -40,8 +40,8 @@ struct Rgba {
 enum class Surface { Titlebar, Sidebar, Editor, Terminal, Browser, Statusbar };
 constexpr int kSurfaceCount = 6;
 
-enum class MarkdownColor { Heading, Link, Code, Quote };
-constexpr int kMarkdownColorCount = 4;
+enum class MarkdownColor { Heading, Link, Code, Quote, Done };
+constexpr int kMarkdownColorCount = 5;
 
 // A color value on one line of the settings file, in UTF-16 offsets.
 struct ColorSpan {

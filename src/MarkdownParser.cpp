@@ -1331,6 +1331,7 @@ struct Block {
     int depth = 0;               // list nesting of an item, or of a paragraph in one
     bool listish = false;        // an item, or a paragraph inside an item
     std::string marker;          // an item's, as shown
+    int task = 0;                // an item's box: 1 open, 2 checked
     bool ordered = false;
     bool quote = false;
     int quoteGroup = -1;         // which block quote
@@ -1932,6 +1933,7 @@ Doc analyze(const std::string& md) {
                 qb.depth = 1 + (int)(inner / 2);
                 qb.ordered = m.ordered;
                 qb.marker = markerText(m, qb.depth);
+                qb.task = m.task ? (m.checked ? 2 : 1) : 0;
                 std::string text = ct.substr(std::min(m.textStart, ct.size()));
                 if (m.task) text = text.size() > 3 ? text.substr(4) : "";
                 if (!text.empty()) qb.text.push_back({text, (int)i});
@@ -1966,6 +1968,7 @@ Doc analyze(const std::string& md) {
                 it.depth = (int)list.size();
                 it.ordered = m.ordered;
                 it.marker = markerText(m, it.depth);
+                it.task = m.task ? (m.checked ? 2 : 1) : 0;
                 std::string text = body.substr(std::min(m.textStart, body.size()));
                 if (m.task) text = text.size() > 3 ? text.substr(4) : "";
                 if (!text.empty()) it.text.push_back({text, (int)i});
@@ -2039,6 +2042,7 @@ void emitBlock(const Block& b, const Refs& refs, int& tables, std::vector<MdRun>
         break;
     }
     case Block::Item: {
+        base.task = b.task;
         MdRun m = base;
         m.marker = true;
         m.text = std::string((size_t)b.depth * 2, ' ') + b.marker + " ";

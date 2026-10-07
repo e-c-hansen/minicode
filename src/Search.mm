@@ -2,6 +2,9 @@
 // A floating window with a query field and a results list; selecting a result
 // calls back to open that file at the matching line.
 #import "Search.h"
+#include "FolderSearch.h"
+#include <atomic>
+#include <memory>
 
 static NSColor *SHex(unsigned int rgb) {
     return [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0
@@ -45,6 +48,9 @@ static NSString *CleanLine(NSString *s) {
     NSMutableArray<SearchHit *> *_hits;
     NSUInteger _searchGeneration;   // cancels a stale in-flight search
     NSString *_scope;               // directory currently being searched
+    BOOL _todos;                    // the TODO list, not a text search
+    NSArray<SearchHit *> *_allTodos;   // the last scan, before the filter
+    std::shared_ptr<std::atomic<bool>> _todoCancel;   // the scan in flight
 }
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) NSTextField *scopeField;
@@ -58,13 +64,28 @@ static NSString *CleanLine(NSString *s) {
 - (instancetype)initWithRoot:(NSString *)root
                  openHandler:(void (^)(NSString *, NSInteger))handler {
     if ((self = [super init])) {
+        [self setUpWithRoot:root openHandler:handler];
+    }
+    return self;
+}
+
+- (instancetype)initTodosWithRoot:(NSString *)root
+                      openHandler:(void (^)(NSString *, NSInteger))handler {
+    if ((self = [super init])) {
+        _todos = YES;
+        [self setUpWithRoot:root openHandler:handler];
+    }
+    return self;
+}
+
+- (void)setUpWithRoot:(NSString *)root openHandler:(void (^)(NSString *, NSInteger))handler {
+    {
         _root = root;
         _scope = root;
         _open = [handler copy];
         _hits = [NSMutableArray array];
         [self build];
     }
-    return self;
 }
 
 - (void)build {
@@ -76,7 +97,7 @@ static NSString *CleanLine(NSString *s) {
                              NSWindowStyleMaskResizable)
                     backing:NSBackingStoreBuffered
                       defer:NO];
-    self.window.title = @"Search";
+    self.window.title = _todos ? @"TODOs" : @"Search";
     self.window.releasedWhenClosed = NO;
     [self.window center];
 
@@ -109,7 +130,9 @@ static NSString *CleanLine(NSString *s) {
     // --- query field ---
     self.field = [[NSTextField alloc]
         initWithFrame:NSMakeRect(12, H - 70, W - 24, 24)];
-    self.field.placeholderString = @"Search text in this folder…";
+    self.field.placeholderString = _todos
+        ? @"Filter TODOs (TODO, FIXME, HACK, XXX, BUG comments and open - [ ] tasks)…"
+        : @"Search text in this folder…";
     self.field.delegate = self;
     self.field.target = self;
     self.field.action = @selector(runSearch:);
@@ -149,6 +172,7 @@ static NSString *CleanLine(NSString *s) {
 }
 
 - (void)show {
+    if (_todos) [self runSearch:nil];   // the list is scanned afresh each time
     [self.window makeKeyAndOrderFront:nil];
     [self.table sizeLastColumnToFit];
     [self.window makeFirstResponder:self.field];
@@ -205,6 +229,7 @@ static NSString *CleanLine(NSString *s) {
 // few characters, so we don't kick off a full folder scan on every keypress.
 - (void)controlTextDidChange:(NSNotification *)note {
     if (note.object != self.field) return;   // scope field handled separately
+    if (_todos) { [self filterTodos]; return; }
     [NSObject cancelPreviousPerformRequestsWithTarget:self
                                              selector:@selector(runSearchNow)
                                                object:nil];
@@ -214,6 +239,7 @@ static NSString *CleanLine(NSString *s) {
 
 // ------------------------------------------------------------------ search
 - (void)runSearch:(id)sender {
+    if (_todos) { [self scanTodos]; return; }
     // Cancel any in-flight search immediately (bumps the generation).
     ++_searchGeneration;
     NSString *query = [self.field.stringValue stringByTrimmingCharactersInSet:
@@ -252,6 +278,67 @@ static NSString *CleanLine(NSString *s) {
                 (unsigned long)files];
         });
     });
+}
+
+// ------------------------------------------------------------------- TODOs
+// Scan the folder for TODOs off the main thread; a newer scan cancels this one.
+- (void)scanTodos {
+    ++_searchGeneration;
+    if (_todoCancel) _todoCancel->store(true);
+    auto cancel = std::make_shared<std::atomic<bool>>(false);
+    _todoCancel = cancel;
+    _allTodos = @[];
+    [_hits removeAllObjects];
+    [self.table reloadData];
+    self.status.stringValue = @"Looking for TODOs…";
+    NSUInteger gen = _searchGeneration;
+    const std::string root = _scope.fileSystemRepresentation;
+    __weak SearchPanel *weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        FolderSearchResult r = FolderSearch::findTodos(root, cancel.get());
+        NSMutableArray<SearchHit *> *found = [NSMutableArray array];
+        for (const FolderSearchMatch &m : r.matches) {
+            SearchHit *h = [SearchHit new];
+            h.path = [NSString stringWithUTF8String:m.path.c_str()] ?: @"";
+            h.line = m.line;
+            h.text = [NSString stringWithUTF8String:m.text.c_str()] ?: @"";
+            [found addObject:h];
+        }
+        const BOOL truncated = r.truncated;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            SearchPanel *s = weakSelf;
+            if (!s || s->_searchGeneration != gen) return;   // superseded
+            s->_allTodos = found;
+            [s filterTodos];
+            if (truncated)
+                s.status.stringValue = [s.status.stringValue
+                    stringByAppendingString:@" (stopped at 2000)"];
+        });
+    });
+}
+
+// Show the scanned TODOs whose text or path holds what the field says.
+- (void)filterTodos {
+    NSString *q = [self.field.stringValue stringByTrimmingCharactersInSet:
+                   [NSCharacterSet whitespaceCharacterSet]];
+    [_hits removeAllObjects];
+    NSMutableSet *files = [NSMutableSet set];
+    for (SearchHit *h in _allTodos) {
+        if (q.length && [h.text rangeOfString:q options:NSCaseInsensitiveSearch].location == NSNotFound &&
+            [h.path rangeOfString:q options:NSCaseInsensitiveSearch].location == NSNotFound)
+            continue;
+        [_hits addObject:h];
+        [files addObject:h.path];
+    }
+    [self.table reloadData];
+    if (_allTodos.count == 0)
+        self.status.stringValue = @"No TODOs in this folder";
+    else
+        self.status.stringValue = [NSString stringWithFormat:@"%lu %@ in %lu %@%@",
+            (unsigned long)_hits.count, _hits.count == 1 ? @"TODO" : @"TODOs",
+            (unsigned long)files.count, files.count == 1 ? @"file" : @"files",
+            q.length ? [NSString stringWithFormat:@" (of %lu)",
+                        (unsigned long)_allTodos.count] : @""];
 }
 
 // Directories we never descend into (heavy / uninteresting).

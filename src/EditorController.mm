@@ -18,6 +18,7 @@
 #include "MarkdownParser.h"
 #include "MarkdownEdit.h"
 #include "LineComments.h"
+#include "MarkdownTasks.h"
 #include <memory>
 #include <string>
 
@@ -298,6 +299,58 @@ static NSAttributedStringKey const kMarkdownMath = @"MCMarkdownMath";
 static NSAttributedStringKey const kMarkdownMathNote = @"MCMarkdownMathNote";
 // The link in that line that downloads tectonic.
 static NSString *const kMathDownloadLink = @"minicode-math:download-tectonic";
+// Link value on a task's box in rendered Markdown, followed by its 0-based
+// source line: a click ticks or clears it.
+static NSString *const kTaskLinkPrefix = @"minicode-task:";
+
+// A task list item's box, drawn rather than the ☐ and ☑ characters, whose
+// look depends on the font. Checked, it is filled with the link color and
+// carries a check mark.
+@interface MCTaskBoxCell : NSTextAttachmentCell
+@property(nonatomic) BOOL checked;
+@property(nonatomic, strong) NSColor *ink, *fill;
+@end
+
+@implementation MCTaskBoxCell
+- (NSSize)cellSize { return NSMakeSize(14, 14); }
+- (NSPoint)cellBaselineOffset { return NSMakePoint(0, -2); }
+- (void)drawWithFrame:(NSRect)frame inView:(NSView *)view {
+    NSRect box = NSInsetRect(frame, 0.75, 0.75);
+    NSBezierPath *outline = [NSBezierPath bezierPathWithRoundedRect:box xRadius:3 yRadius:3];
+    if (self.checked) {
+        [self.fill setFill];
+        [outline fill];
+        // The text view is flipped: y grows downwards.
+        NSBezierPath *tick = [NSBezierPath bezierPath];
+        [tick moveToPoint:NSMakePoint(NSMinX(box) + 3.0, NSMidY(box) + 0.2)];
+        [tick lineToPoint:NSMakePoint(NSMinX(box) + 5.6, NSMaxY(box) - 3.2)];
+        [tick lineToPoint:NSMakePoint(NSMaxX(box) - 2.8, NSMinY(box) + 3.2)];
+        tick.lineWidth = 1.8;
+        tick.lineCapStyle = NSLineCapStyleRound;
+        tick.lineJoinStyle = NSLineJoinStyleRound;
+        [[NSColor whiteColor] setStroke];
+        [tick stroke];
+    } else {
+        outline.lineWidth = 1.3;
+        [[self.ink colorWithAlphaComponent:0.75] setStroke];
+        [outline stroke];
+    }
+}
+- (void)drawWithFrame:(NSRect)frame inView:(NSView *)view
+       characterIndex:(NSUInteger)charIndex layoutManager:(NSLayoutManager *)lm {
+    [self drawWithFrame:frame inView:view];
+}
+@end
+
+// The cell is handed out by an override, since one set in init reads back
+// nil (see MarkdownImage).
+@interface MCTaskBox : NSTextAttachment
+@property(nonatomic, strong) MCTaskBoxCell *box;
+@end
+
+@implementation MCTaskBox
+- (id<NSTextAttachmentCell>)attachmentCell { return self.box; }
+@end
 
 // Panel, text and syntax colors come from the settings file (AppSettings);
 // Hex is for the fixed accents that aren't configurable.
@@ -404,6 +457,7 @@ private:
 @property(nonatomic, assign) CGFloat sidebarWidthBeforeCollapse;
 @property(nonatomic, assign) BOOL editorHidden;   // Shift+Cmd+E: file view hidden
 @property(nonatomic, strong) SearchPanel *searchPanel;
+@property(nonatomic, strong) SearchPanel *todoPanel;   // Shift+Cmd+L
 @property(nonatomic, strong) NSVisualEffectView *blurView;   // window.blur
 @property(nonatomic, strong) NSView *titlebarView;   // drawn when customTitlebar
 @property(nonatomic, strong) NSTextField *titleLabel;
@@ -960,6 +1014,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⌘A" label2:@"Select all" state:nil];
     [self appendHintsRow:s key:@"⌘/" label:@"Toggle comment"
                     key2:@"⇧⌘F" label2:@"Find in folder" state:nil];
+    [self appendHintsRow:s key:@"⌘L" label:@"Toggle task (Markdown)"
+                    key2:@"⇧⌘L" label2:@"TODOs in folder" state:nil];
     [self appendHintsRow:s key:@"⌘," label:@"Settings"
                     key2:@"⌃Space" label2:@"Complete" state:nil];
     [self appendHintsRow:s key:@"F12" label:@"Go to definition"
@@ -1456,6 +1512,29 @@ static const CGFloat kDividerGrabSlop = 5;
         if (node.isDir) [self.searchPanel setScope:node.path];
     }
     [self.searchPanel show];
+}
+
+// Shift+Cmd+L: every TODO comment and open task in the folder, scoped as
+// Find in Folder is.
+- (void)showTodos:(id)sender {
+    if (!self.todoPanel) {
+        __weak EditorController *weakSelf = self;
+        self.todoPanel = [[SearchPanel alloc]
+            initTodosWithRoot:_root.path
+                  openHandler:^(NSString *path, NSInteger line) {
+                EditorController *s = weakSelf;
+                [s openFileAtPath:path];
+                if (![s.currentPath isEqualToString:path]) return;   // refused
+                [s.window makeKeyAndOrderFront:nil];
+                [s goToLine:(int)line column:0];
+            }];
+    }
+    NSInteger row = self.outline.selectedRow;
+    if (row >= 0) {
+        FileItem *node = [self.outline itemAtRow:row];
+        if (node.isDir) [self.todoPanel setScope:node.path];
+    }
+    [self.todoPanel show];
 }
 
 // Move the editor selection to a 1-based line and reveal it.
@@ -2648,6 +2727,11 @@ static NSColor *ContrastColor(const Rgba &c) {
 }
 
 - (BOOL)textView:(NSTextView *)tv clickedOnLink:(id)link atIndex:(NSUInteger)i {
+    if (self.isMarkdown && self.previewMode && [link isKindOfClass:NSString.class] &&
+        [link hasPrefix:kTaskLinkPrefix]) {
+        [self toggleTaskOnSourceLine:[[link substringFromIndex:kTaskLinkPrefix.length] intValue]];
+        return YES;
+    }
     if (self.isMarkdown && self.previewMode && [link isEqual:kMathDownloadLink]) {
         [self downloadTectonicForMath];
         return YES;
@@ -2760,6 +2844,38 @@ static NSColor *ContrastColor(const Rgba &c) {
     [tv setSelectedRange:NSMakeRange(r.selStart, r.selEnd - r.selStart)];
 }
 
+// A click on a task's box in the preview: tick or clear it in the source,
+// which is then dirty until Cmd+S, as after any other preview edit.
+- (void)toggleTaskOnSourceLine:(int)line {
+    const std::string src = Utf8String(self.sourceText ?: @"");
+    const std::string edited = MarkdownTasks::toggleBox(src, line);
+    if (edited == src) { NSBeep(); return; }
+    [self applyMarkdownSource:[NSString stringWithUTF8String:edited.c_str()]];
+    [self.textView.undoManager setActionName:@"Toggle Task"];
+}
+
+// Cmd+L in Markdown source: make the lines the selection touches tasks, or
+// tick or clear them.
+- (void)toggleTask:(id)sender {
+    NSTextView *tv = self.textView;
+    if (!self.isMarkdown || self.window.firstResponder != tv || !tv.editable) {
+        NSBeep();
+        return;
+    }
+    NSRange sel = tv.selectedRange;
+    MarkdownTasks::Edit e = MarkdownTasks::toggle(U16(tv.string), sel.location, NSMaxRange(sel));
+    if (!e.changed) { NSBeep(); return; }
+    NSRange range = NSMakeRange(e.replaceStart, e.replaceLength);
+    NSString *replacement = FromU16(e.replacement);
+    [tv breakUndoCoalescing];
+    if (![tv shouldChangeTextInRange:range replacementString:replacement]) return;
+    [tv.textStorage replaceCharactersInRange:range withString:replacement];
+    [tv didChangeText];
+    [tv breakUndoCoalescing];
+    [tv.undoManager setActionName:@"Toggle Task"];
+    [tv setSelectedRange:NSMakeRange(e.selStart, e.selEnd - e.selStart)];
+}
+
 // -------------------------------------------------------------- editing hooks
 // Arrows, Return, Tab and Esc drive the completion list while it is open;
 // Option+Esc (complete:) asks the language server.
@@ -2771,6 +2887,18 @@ static NSColor *ContrastColor(const Rgba &c) {
     if (sel == @selector(insertNewline:) && tv == self.textView && tv.editable) {
         NSString *s = tv.string;
         NSRange range = tv.selectedRange;
+        // In a Markdown list, Return starts the next item, or ends the list
+        // on an empty one.
+        if (self.isMarkdown) {
+            MarkdownTasks::Edit e =
+                MarkdownTasks::newline(U16(s), range.location, NSMaxRange(range));
+            if (e.changed) {
+                [tv insertText:FromU16(e.replacement)
+                    replacementRange:NSMakeRange(e.replaceStart, e.replaceLength)];
+                [tv setSelectedRange:NSMakeRange(e.selStart, e.selEnd - e.selStart)];
+                return YES;
+            }
+        }
         NSUInteger start = [s lineRangeForRange:NSMakeRange(range.location, 0)].location;
         NSUInteger end = start;
         while (end < range.location) {
@@ -2805,6 +2933,13 @@ static NSColor *ContrastColor(const Rgba &c) {
 - (void)textDidChange:(NSNotification *)note {
     self.sourceText = self.textView.string;
     if (!self.dirty) { self.dirty = YES; [self updateTitle]; }
+    // The title's task count follows typing, a moment after it stops.
+    if (self.isMarkdown) {
+        [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                                 selector:@selector(updateTitle)
+                                                   object:nil];
+        [self performSelector:@selector(updateTitle) withObject:nil afterDelay:0.3];
+    }
     [self flushHighlighting];   // recolor the lines this change touched
 }
 
@@ -2968,6 +3103,9 @@ static NSColor *ContrastColor(const Rgba &c) {
     if (index > 0 && !NSPointInRect(point, [self textRectForCharacter:index]) &&
         NSPointInRect(point, [self textRectForCharacter:index - 1]))
         index--;
+    // A box was ticked by the first click; the second does nothing more.
+    id link = [st attribute:NSLinkAttributeName atIndex:index effectiveRange:NULL];
+    if ([link isKindOfClass:NSString.class] && [link hasPrefix:kTaskLinkPrefix]) return YES;
     NSNumber *line = [st attribute:kMarkdownSourceLine atIndex:index effectiveRange:NULL];
     if (!line) return NO;
     NSArray<NSNumber *> *cell = [st attribute:kMarkdownTableCell atIndex:index
@@ -3137,6 +3275,13 @@ static NSString *MCFormatDuration(double seconds) {
         if (self.mediaSeconds >= 0)
             [m appendFormat:@"  %@", MCFormatDuration(self.mediaSeconds)];
         mode = m;
+    }
+    // A Markdown file with tasks: how many are done.
+    if (self.isMarkdown && self.currentPath && !self.isDiff) {
+        NSString *src = self.textView.editable ? self.textView.string : self.sourceText;
+        MarkdownTasks::Counts c = MarkdownTasks::count(Utf8String(src ?: @""));
+        if (c.total > 0)
+            mode = [mode stringByAppendingFormat:@"  %d of %d done", c.done, c.total];
     }
     self.window.title = [NSString stringWithFormat:@"%@%@ — MiniCode%@",
                          flag, name, mode];
@@ -3668,6 +3813,38 @@ static NSTextBlock *MCFullWidthBlock(void) {
                          ? [NSString stringWithUTF8String:r.url.c_str()] : nil;
     if (href.length) a[NSLinkAttributeName] = href;
     if (r.line >= 0) a[kMarkdownSourceLine] = @(r.line);
+    // A checked task's text: muted and struck through.
+    if (r.task == 2 && !r.marker) {
+        color = [cfg markdown:MarkdownColor::Done];
+        a[NSStrikethroughStyleAttributeName] = @(NSUnderlineStyleSingle);
+    }
+    // A task's marker is a box to click, placed by the tabs as a bullet is.
+    if (r.marker && r.task && r.line >= 0) {
+        MCTaskBox *att = [MCTaskBox new];
+        att.box = [MCTaskBoxCell new];
+        att.box.checked = r.task == 2;
+        att.box.ink = [cfg text:Surface::Editor];
+        att.box.fill = [cfg markdown:MarkdownColor::Link];
+        NSMutableDictionary *ta = [a mutableCopy];
+        ta[NSFontAttributeName] = font;
+        ta[NSForegroundColorAttributeName] = color;
+        ta[NSParagraphStyleAttributeName] = ps;
+        NSMutableAttributedString *m =
+            [[NSMutableAttributedString alloc] initWithString:@"\t" attributes:ta];
+        NSMutableAttributedString *pic = [[NSMutableAttributedString alloc]
+            initWithAttributedString:[NSAttributedString attributedStringWithAttachment:att]];
+        [pic addAttributes:ta range:NSMakeRange(0, pic.length)];
+        [pic addAttribute:NSLinkAttributeName
+                    value:[kTaskLinkPrefix stringByAppendingFormat:@"%d", r.line]
+                    range:NSMakeRange(0, pic.length)];
+        [pic addAttribute:NSToolTipAttributeName
+                    value:r.task == 2 ? @"Done: click to clear" : @"Click to tick"
+                    range:NSMakeRange(0, pic.length)];
+        [m appendAttributedString:pic];
+        [m appendAttributedString:[[NSAttributedString alloc] initWithString:@"\t"
+                                                                  attributes:ta]];
+        return m;
+    }
     if (!ps) ps = [NSParagraphStyle defaultParagraphStyle];
     if (r.math && cfg.settings.math()) {
         // Typeset, a picture on the baseline in the color the text around

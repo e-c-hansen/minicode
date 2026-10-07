@@ -31,6 +31,9 @@ public:
     // The source was edited; the buffer has already changed. `inserted` is
     // the text of an insertion (len bytes), or null for a deletion.
     virtual void textEdited(const char* inserted, int len) = 0;
+    // The observer has a use for the Return key just pressed (a completion
+    // list is open), so the editor must not continue a Markdown list with it.
+    virtual bool takesReturn() const { return false; }
 };
 
 class Editor {
@@ -150,6 +153,16 @@ public:
     // with no line comments).
     bool toggleComment();
 
+    // Ctrl+L in a Markdown file's source: the task key over the lines the
+    // selection touches (MarkdownTasks::toggle), as one undo step. False when
+    // there is nothing to do it to (not Markdown, the preview, a heading).
+    bool toggleTask();
+    // A Markdown file's tasks, done and in all, kept current as it is edited
+    // (0.3 s after typing stops) and toggled; 0 and 0 for any other file.
+    // The title callback is called when they change.
+    int tasksDone() const { return tasksDone_; }
+    int tasksTotal() const { return tasksTotal_; }
+
     // Put the caret on a 1-based line and select `byteLength` bytes starting
     // `byteColumn` bytes into it (a Find in Folder match), scrolled into view
     // and focused. A Markdown preview switches to the source first. A column
@@ -224,6 +237,7 @@ private:
     void renderPreview();        // build the Markdown preview into the buffer
     void rerenderPreview();      // the same again, at the same scroll
     void fitPage();              // size the preview's tables and pictures to the pane
+    void clearPage();            // its widgets off the view first, then page_ emptied
     // Web pictures (WebImages.h): the page's pending ones are fetched after
     // a render; those that arrive are put in together, shortly after the
     // first of them, in place of their alt text.
@@ -247,6 +261,20 @@ private:
     // A new source from a preview edit (or its undo): dirty, shown again at
     // the same scroll. `undoable` puts the old source on the undo stack.
     void applyMarkdownSource(const std::string& source, bool undoable);
+    // A click on a task's box in the preview: that one byte of the source
+    // flipped (MarkdownTasks::toggleBox), as a preview edit.
+    void toggleTaskBox(int line);
+    // Return in a Markdown list item (MarkdownTasks::newline): true when it
+    // made the new item, or ended the list, itself.
+    bool continueList();
+    // One replacement from MarkdownTasks in the UTF-16 `text` the buffer
+    // held, as one user action, and the selection it gives.
+    void applyTaskEdit(const std::u16string& text, std::size_t replaceStart,
+                       std::size_t replaceLength, const std::u16string& replacement,
+                       std::size_t selStart, std::size_t selEnd);
+    void refreshTaskCount();     // count now; the title callback if it changed
+    void scheduleTaskCount();    // 0.3 s after the last edit
+    void clearTaskCount();
     static gboolean onViewKey(GtkEventControllerKey* c, guint key, guint code,
                               GdkModifierType mods, gpointer self);
     void loadRawIntoBuffer();    // put source_ back as editable, highlighted text
@@ -381,6 +409,9 @@ private:
     double srcCaretFrac_ = 0.3;
     double previewEntryV_ = -1;
     guint  previewEntryTimer_ = 0;
+
+    int   tasksDone_ = 0, tasksTotal_ = 0;
+    guint taskCountTimer_ = 0;
 
     // Web pictures that arrived since the last placing, and the timer that
     // places them. The fetches' callbacks can outlive the editor, so they

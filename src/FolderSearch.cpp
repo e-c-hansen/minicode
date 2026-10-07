@@ -1,5 +1,6 @@
 // FolderSearch.cpp — see FolderSearch.h.
 #include "FolderSearch.h"
+#include "MarkdownTasks.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -99,6 +100,7 @@ struct Walker {
     const FolderSearchOptions& opt;
     FolderSearchResult& out;
     std::set<std::string> visited;   // canonical folders already walked
+    bool todos = false;              // the TODO list, not a query
 
     bool full() const { return out.matches.size() >= opt.maxMatches; }
 
@@ -122,6 +124,11 @@ struct Walker {
         ++out.filesSearched;
 
         const std::size_t before = out.matches.size();
+        // For the TODO list, a Markdown file's open tasks, by line.
+        const bool markdown = todos && isMarkdownPath(path);
+        std::vector<MarkdownTasks::OpenTask> tasks;
+        if (markdown) tasks = MarkdownTasks::openTasks(content);
+        std::size_t nextTask = 0;
         int lineNo = 0;
         std::size_t pos = 0;
         const std::size_t n = content.size();
@@ -148,7 +155,19 @@ struct Walker {
             }
             const std::string line = content.substr(pos, end - pos);
             std::size_t col = 0, len = 0;
-            if (findInLine(line, query, opt.caseSensitive, &col, &len)) {
+            bool hit;
+            if (todos) {
+                while (nextTask < tasks.size() && tasks[nextTask].line < lineNo - 1) nextTask++;
+                hit = findTodoInLine(line, markdown, &col, &len);
+                if (!hit && nextTask < tasks.size() && tasks[nextTask].line == lineNo - 1) {
+                    col = tasks[nextTask].column;
+                    len = 3;
+                    hit = col + len <= line.size();
+                }
+            } else {
+                hit = findInLine(line, query, opt.caseSensitive, &col, &len);
+            }
+            if (hit) {
                 FolderSearchMatch m;
                 m.path = path;
                 m.relativePath = rel;
@@ -366,6 +385,95 @@ FolderSearchResult search(const std::string& root, const std::string& query,
     std::error_code ec;
     if (!fs::is_directory(root, ec)) return out;
     Walker w{q, cancel, options, out, {}};
+    const fs::path canon = fs::canonical(root, ec);
+    if (!ec) w.visited.insert(canon.string());
+    w.walk(root, "");
+    return out;
+}
+
+bool isMarkdownPath(const std::string& path) {
+    const std::size_t dot = path.rfind('.');
+    const std::size_t slash = path.rfind('/');
+    if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) return false;
+    std::string ext = path.substr(dot + 1);
+    for (char& c : ext) c = static_cast<char>(asciiLower(static_cast<unsigned char>(c)));
+    return ext == "md" || ext == "markdown" || ext == "mdown" || ext == "mkd" ||
+           ext == "mkdn";
+}
+
+namespace {
+
+bool isWordByte(unsigned char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+           c == '_' || c >= 0x80;
+}
+
+// Whether line[0, end) ends in a comment opener, spaces after it allowed:
+// //, #, --, ;, /*, <!--, %, or a line starting with * (inside a block
+// comment). In Markdown only <!-- counts, since # starts a heading there.
+bool afterCommentOpener(const std::string& line, std::size_t end, bool markdown) {
+    std::size_t e = end;
+    while (e > 0 && (line[e - 1] == ' ' || line[e - 1] == '\t')) --e;
+    if (e == 0) return false;
+    auto endsWith = [&](const char* s) {
+        const std::size_t n = std::char_traits<char>::length(s);
+        return e >= n && line.compare(e - n, n, s) == 0;
+    };
+    if (endsWith("<!--")) return true;
+    if (markdown) return false;
+    if (endsWith("//") || endsWith("--") || endsWith("/*")) return true;
+    const char c = line[e - 1];
+    if (c == '#' || c == ';' || c == '%') return true;
+    if (c == '*') {
+        // "/**" opens a doc comment; a line of only stars and spaces before
+        // the tag is the middle of a block comment.
+        std::size_t k = e;
+        while (k > 0 && line[k - 1] == '*') --k;
+        if (k > 0 && line[k - 1] == '/') return true;
+        for (std::size_t j = 0; j < k; ++j)
+            if (line[j] != ' ' && line[j] != '\t') return false;
+        return true;
+    }
+    return false;
+}
+
+}  // namespace
+
+bool findTodoInLine(const std::string& line, bool markdown, std::size_t* byteColumn,
+                    std::size_t* byteLength) {
+    static const char* const kTags[] = {"TODO", "FIXME", "HACK", "XXX", "BUG"};
+    for (std::size_t i = 0; i < line.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(line[i]);
+        if (c < 'B' || c > 'X') continue;
+        if (i > 0 && isWordByte(static_cast<unsigned char>(line[i - 1]))) continue;
+        for (const char* tag : kTags) {
+            const std::size_t n = std::char_traits<char>::length(tag);
+            if (line.compare(i, n, tag) != 0) continue;
+            if (i + n < line.size() && isWordByte(static_cast<unsigned char>(line[i + n])))
+                continue;
+            const char next = i + n < line.size() ? line[i + n] : '\0';
+            bool atStart = true;
+            for (std::size_t j = 0; j < i; ++j)
+                if (line[j] != ' ' && line[j] != '\t') { atStart = false; break; }
+            // After a comment opener, or first on a line when a colon
+            // follows ("TODO: ..." in a docstring or a block comment).
+            if (afterCommentOpener(line, i, markdown) || (atStart && next == ':')) {
+                *byteColumn = i;
+                *byteLength = n;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+FolderSearchResult findTodos(const std::string& root, const std::atomic<bool>* cancel,
+                             const FolderSearchOptions& options) {
+    FolderSearchResult out;
+    std::error_code ec;
+    if (options.maxMatches == 0 || !fs::is_directory(root, ec)) return out;
+    const std::string none;
+    Walker w{none, cancel, options, out, {}, true};
     const fs::path canon = fs::canonical(root, ec);
     if (!ec) w.visited.insert(canon.string());
     w.walk(root, "");

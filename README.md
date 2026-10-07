@@ -22,6 +22,8 @@ Source files are highlighted by extension: Python, the C family, JavaScript, Typ
 
 ![Opening a PNG and then a PDF from the file tree](docs/demos/files.gif)
 
+Markdown task lists make a TODO list, written the way GitHub, Obsidian and VS Code read them: `- [ ] buy milk` is a task still to do and `- [x] buy milk` one that is done. In the preview each task has a box you click (or tap, on Android) to tick or clear it. The file then has unsaved changes, as after any edit made in the preview, until you save it. Done tasks are greyed out and struck through (markdown.done in the settings sets their color), and the title bar says how many of the file's tasks are done. In the source, Command L (Ctrl L on Linux) turns the line, or every selected line, into a task, ticks it if it already is one, and clears it if it was ticked. Return at the end of a list item starts the next item, with an empty box after a task and the next number after a numbered one, and Return on an empty item ends the list. Shift Command L (Ctrl Shift L on Linux, the leader key and then W on Android) lists every TODO, FIXME, HACK, XXX and BUG comment in the folder, along with the open tasks in its Markdown files, and opens the one you pick at its line.
+
 Control backtick opens a terminal at the bottom. It runs one persistent zsh with your own startup files, so aliases, history and state carry over from one command to the next, and colors come through. When a program wants the whole screen (vim, less, htop, git log's pager, ssh), the panel becomes a character grid until it exits.
 
 ![The terminal panel running ls, git log and a Python script](docs/demos/terminal.gif)
@@ -178,6 +180,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Focus the file tree | Command 0 | Ctrl 0 |  |
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G, or Ctrl G |
 | Jump to the previous file | Control Tab | Ctrl Tab |  |
+| List the TODO comments and open Markdown tasks in the folder | Shift Command L | Ctrl Shift L | W, or Ctrl Shift L |
 | Move the selected file to the Trash | Command Delete | Delete, in the file tree |  |
 | New file | Control Command N | Ctrl Alt N | New file in the ⋮ menu |
 | New folder | Shift Command N | Ctrl Shift N |  |
@@ -192,6 +195,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Show or hide dotfiles | Shift Command . | Ctrl H, or Ctrl Shift . |  |
 | Show or hide the on-screen keyboard, for symbols the phone's keyboard lacks |  |  | Y, or the keyboard button in the title bar |
 | Show the type and documentation under the cursor | Command I | Ctrl I | K, or Ctrl K |
+| Tick or clear a Markdown task, or make the selected lines tasks | Command L, or click its box in the preview | Ctrl L, or click its box in the preview | L, or Ctrl L, or tap its box in the preview |
 | Toggle the browser | Shift Command B | Ctrl Shift B | B, or Ctrl Shift B |
 | Toggle the editor, giving its space to the terminal and browser | Shift Command E | Ctrl Shift E |  |
 | Toggle the file list or sidebar | Command B | Ctrl B | F, or Ctrl B or Ctrl F |

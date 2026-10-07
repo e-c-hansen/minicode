@@ -11,6 +11,7 @@ struct SearchPanel::Job {
     unsigned gen = 0;
     std::string root;
     std::string query;
+    bool todos = false;   // findTodos, not a query
     std::shared_ptr<std::atomic<bool>> cancel;
     std::weak_ptr<int> alive;   // the panel's life_
     FolderSearchResult result;
@@ -19,7 +20,9 @@ struct SearchPanel::Job {
 // The location half of a row, the same blue as the Markdown link color.
 static const char* kLocationColor = "#4EA1F7";
 
-SearchPanel::SearchPanel(GtkWindow* parent) : parent_(parent) { build(); }
+SearchPanel::SearchPanel(GtkWindow* parent, Mode mode) : parent_(parent), mode_(mode) {
+    build();
+}
 
 SearchPanel::~SearchPanel() {
     life_.reset();
@@ -32,7 +35,8 @@ SearchPanel::~SearchPanel() {
 
 void SearchPanel::build() {
     window_ = gtk_window_new();
-    gtk_window_set_title(GTK_WINDOW(window_), "Find in Folder");
+    const bool todos = mode_ == Mode::Todos;
+    gtk_window_set_title(GTK_WINDOW(window_), todos ? "TODOs" : "Find in Folder");
     gtk_window_set_default_size(GTK_WINDOW(window_), 680, 460);
     gtk_window_set_transient_for(GTK_WINDOW(window_), parent_);
     gtk_window_set_destroy_with_parent(GTK_WINDOW(window_), TRUE);
@@ -50,8 +54,10 @@ void SearchPanel::build() {
     scopeEntry_ = gtk_entry_new();
     gtk_widget_set_hexpand(scopeEntry_, TRUE);
     gtk_widget_set_tooltip_text(scopeEntry_,
-        "The folder to search. Type a path and press Enter; a relative path is "
-        "taken from the open folder.");
+        todos ? "The folder to list TODOs from. Type a path and press Enter; a "
+                "relative path is taken from the open folder."
+              : "The folder to search. Type a path and press Enter; a relative path is "
+                "taken from the open folder.");
     g_signal_connect_swapped(scopeEntry_, "activate",
         G_CALLBACK(+[](SearchPanel* self) { self->scopeEntered(); }), this);
     GtkWidget* choose = gtk_button_new_with_label("Choose…");
@@ -64,10 +70,11 @@ void SearchPanel::build() {
     // --- the query ---
     entry_ = gtk_search_entry_new();
     gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(entry_),
-                                          "Search text in this folder…");
+        todos ? "Filter the TODOs…" : "Search text in this folder…");
     // Search as the user types, after the same pause the Mac waits (0.35 s),
-    // so a full folder scan does not start on every keystroke.
-    gtk_search_entry_set_search_delay(GTK_SEARCH_ENTRY(entry_), 350);
+    // so a full folder scan does not start on every keystroke. Filtering the
+    // TODOs found scans nothing, so it follows each key.
+    gtk_search_entry_set_search_delay(GTK_SEARCH_ENTRY(entry_), todos ? 0 : 350);
     g_signal_connect(entry_, "search-changed", G_CALLBACK(onSearchChanged), this);
     g_signal_connect(entry_, "activate", G_CALLBACK(onQueryActivate), this);
     g_signal_connect(entry_, "stop-search", G_CALLBACK(onStopSearch), this);
@@ -147,6 +154,8 @@ void SearchPanel::setScope(const std::string& dir) {
     if (dir == scope_) { updateScopeField(); return; }
     scope_ = dir;
     updateScopeField();
+    // A hidden TODOs window scans when show() brings it up.
+    if (mode_ == Mode::Todos && !gtk_widget_get_visible(window_)) return;
     runSearch();
 }
 
@@ -220,6 +229,7 @@ void SearchPanel::chooseScope() {
 
 void SearchPanel::show() {
     gtk_window_present(GTK_WINDOW(window_));
+    if (mode_ == Mode::Todos) runSearch();   // files change between looks
     gtk_widget_grab_focus(entry_);
     gtk_editable_select_region(GTK_EDITABLE(entry_), 0, -1);
 }
@@ -247,22 +257,31 @@ void SearchPanel::runSearch() {
     if (cancel_) cancel_->store(true);
     cancel_.reset();
 
+    const bool todos = mode_ == Mode::Todos;
     const std::string query =
-        FolderSearch::normalizeQuery(gtk_editable_get_text(GTK_EDITABLE(entry_)));
+        todos ? std::string()
+              : FolderSearch::normalizeQuery(gtk_editable_get_text(GTK_EDITABLE(entry_)));
     lastQuery_ = query;
     clearResults();
-    if (!FolderSearch::isSearchable(query) || scope_.empty()) {
+    found_.clear();
+    if (todos && scope_.empty()) {
+        searching_ = false;
+        setStatus("");
+        return;
+    }
+    if (!todos && (!FolderSearch::isSearchable(query) || scope_.empty())) {
         searching_ = false;
         setStatus(query.empty() ? "" : "Type at least 2 characters");
         return;
     }
 
     searching_ = true;
-    setStatus("Searching…");
+    setStatus(todos ? "Looking for TODOs…" : "Searching…");
     auto* job = new Job;
     job->gen = generation_;
     job->root = scope_;
     job->query = query;
+    job->todos = todos;
     job->cancel = std::make_shared<std::atomic<bool>>(false);
     job->alive = life_;
     cancel_ = job->cancel;
@@ -276,7 +295,8 @@ void SearchPanel::runSearch() {
 // Runs on a GLib worker thread. Touches nothing but the job.
 void SearchPanel::worker(GTask* task, gpointer, gpointer data, GCancellable*) {
     Job* job = static_cast<Job*>(data);
-    job->result = FolderSearch::search(job->root, job->query, job->cancel.get());
+    job->result = job->todos ? FolderSearch::findTodos(job->root, job->cancel.get())
+                             : FolderSearch::search(job->root, job->query, job->cancel.get());
     g_task_return_boolean(task, TRUE);
 }
 
@@ -292,7 +312,54 @@ void SearchPanel::finish(Job* job) {
     searching_ = false;
     cancel_.reset();
 
+    if (mode_ == Mode::Todos) {
+        found_ = std::move(job->result.matches);
+        foundFiles_ = job->result.filesMatched;
+        foundTruncated_ = job->result.truncated;
+        applyFilter();
+        return;
+    }
     hits_ = std::move(job->result.matches);
+    showRows();
+
+    const std::size_t n = hits_.size(), files = job->result.filesMatched;
+    std::string status = std::to_string(n) + (n == 1 ? " match in " : " matches in ") +
+                         std::to_string(files) + (files == 1 ? " file" : " files");
+    if (job->result.truncated) status += " (stopped at the first " + std::to_string(n) + ")";
+    setStatus(status);
+}
+
+// The TODOs whose "path:line  text" holds what is in the field, in any case.
+void SearchPanel::applyFilter() {
+    const std::string q =
+        FolderSearch::normalizeQuery(gtk_editable_get_text(GTK_EDITABLE(entry_)));
+    hits_.clear();
+    for (const FolderSearchMatch& m : found_) {
+        std::size_t col = 0, len = 0;
+        if (q.empty() ||
+            FolderSearch::findInLine(m.relativePath + ":" + std::to_string(m.line) + "  " + m.text,
+                                     q, false, &col, &len))
+            hits_.push_back(m);
+    }
+    showRows();
+    setTodoStatus();
+}
+
+void SearchPanel::setTodoStatus() {
+    if (searching_) return;
+    const std::size_t n = found_.size(), files = foundFiles_;
+    if (n == 0) {
+        setStatus("No TODOs");
+        return;
+    }
+    std::string status = std::to_string(n) + (n == 1 ? " TODO in " : " TODOs in ") +
+                         std::to_string(files) + (files == 1 ? " file" : " files");
+    if (foundTruncated_) status += " (stopped at the first " + std::to_string(n) + ")";
+    if (hits_.size() != n) status += ", " + std::to_string(hits_.size()) + " shown";
+    setStatus(status);
+}
+
+void SearchPanel::showRows() {
     std::vector<std::string> markup;
     markup.reserve(hits_.size());
     for (const FolderSearchMatch& m : hits_) {
@@ -310,24 +377,25 @@ void SearchPanel::finish(Job* job) {
     ptrs.push_back(nullptr);
     gtk_string_list_splice(rows_, 0,
                            g_list_model_get_n_items(G_LIST_MODEL(rows_)), ptrs.data());
-
-    const std::size_t n = hits_.size(), files = job->result.filesMatched;
-    std::string status = std::to_string(n) + (n == 1 ? " match in " : " matches in ") +
-                         std::to_string(files) + (files == 1 ? " file" : " files");
-    if (job->result.truncated) status += " (stopped at the first " + std::to_string(n) + ")";
-    setStatus(status);
 }
 
 // ------------------------------------------------------------------ signals
 
 void SearchPanel::onSearchChanged(GtkSearchEntry*, gpointer selfp) {
-    static_cast<SearchPanel*>(selfp)->runSearch();
+    SearchPanel* self = static_cast<SearchPanel*>(selfp);
+    if (self->mode_ == Mode::Todos) self->applyFilter();
+    else self->runSearch();
 }
 
 // Enter searches at once, unless the list already answers this query, in
-// which case it moves into the list (Enter again opens the match).
+// which case it moves into the list (Enter again opens the match). In the
+// TODOs window the list always answers the field.
 void SearchPanel::onQueryActivate(GtkSearchEntry* e, gpointer selfp) {
     SearchPanel* self = static_cast<SearchPanel*>(selfp);
+    if (self->mode_ == Mode::Todos) {
+        if (!self->hits_.empty()) self->focusFirstResult();
+        return;
+    }
     const std::string q =
         FolderSearch::normalizeQuery(gtk_editable_get_text(GTK_EDITABLE(e)));
     if (q != self->lastQuery_ || (self->hits_.empty() && !self->searching_)) {

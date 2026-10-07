@@ -39,6 +39,7 @@ const NamedColor kMarkdown[kMarkdownColorCount] = {
     {"link",    0x4EA1F7},
     {"code",    0xCE9178},
     {"quote",   0x9CA3AF},
+    {"done",    0x858585},
 };
 
 const char* const kMaterials[] = {
@@ -494,6 +495,8 @@ const char* Settings::defaultFileText() {
 # markdown.link = #4EA1F7
 # markdown.code = #CE9178
 # markdown.quote = #9CA3AF
+# A checked task's text ("- [x] ..."), which is also struck through.
+# markdown.done = #858585
 # Pictures in Markdown with an https address are downloaded and shown. Turn
 # this off to show their alt text instead, so opening a file never contacts
 # the sites it links to.

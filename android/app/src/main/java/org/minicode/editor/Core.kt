@@ -105,6 +105,75 @@ object Core {
      */
     const val MD_MATH_INLINE = 1 shl 17
     const val MD_MATH_DISPLAY = 1 shl 18
+    /** A list item's marker run ("  • ", "  3. ", or a task's ☐ or ☑). */
+    const val MD_MARKER = 1 shl 19
+    /**
+     * A task item's box, on its marker and on the item's own text: 0 none,
+     * 1 open, 2 checked (MdRun::task).
+     */
+    fun mdTask(flags: Int) = (flags shr 20) and 0x3
+
+    /*
+     * Task lists (src/MarkdownTasks.h). The preview's box works on a source
+     * line and gives back the whole source, spliced like any preview edit;
+     * the editor's two edits work in UTF-16 units, like the Editable.
+     */
+    /** `source` with the box on 0-based `line` ticked or cleared, or null. */
+    external fun mdToggleBox(source: String, line: Int): String?
+    /** {done, total} over the document's task items. */
+    external fun mdTaskCount(source: String): IntArray
+    private external fun mdTaskToggle(text: String, selStart: Int, selEnd: Int): Array<Any>?
+    private external fun mdTaskNewline(text: String, selStart: Int, selEnd: Int): Array<Any>?
+
+    /** One replacement, [start, start + length) -> `text`, and the selection after it. */
+    class TextEdit(val start: Int, val length: Int, val text: String,
+                   val selStart: Int, val selEnd: Int) {
+        /** Applies it to `editable` as one replacement, returning the new selection. */
+        fun applyTo(editable: android.text.Editable): Pair<Int, Int> {
+            editable.replace(start, start + length, text)
+            return selStart.coerceIn(0, editable.length) to selEnd.coerceIn(0, editable.length)
+        }
+    }
+
+    private fun textEdit(parts: Array<Any>?): TextEdit? {
+        parts ?: return null
+        val n = parts[0] as IntArray
+        return TextEdit(n[0], n[1], parts[1] as String, n[2], n[3])
+    }
+
+    /**
+     * The task key on the lines the selection touches: each becomes a task,
+     * or all are checked, or all cleared. Null when nothing changes.
+     */
+    fun taskToggle(text: String, selStart: Int, selEnd: Int) =
+        textEdit(mdTaskToggle(text, selStart, selEnd))
+
+    /** Return continuing a list item, or null for the usual Return. */
+    fun taskNewline(text: String, selStart: Int, selEnd: Int) =
+        textEdit(mdTaskNewline(text, selStart, selEnd))
+
+    /**
+     * The TODO list over a folder (FolderSearch::findTodos), blocking: TODO,
+     * FIXME, HACK, XXX and BUG after a comment opener, and open tasks in
+     * Markdown files.
+     */
+    private external fun findTodos(root: String): Array<Any>
+    /** Stops a findTodos under way; it then returns what it had. */
+    external fun cancelTodos()
+
+    class Todo(val path: String, val line: Int, val column: Int, val text: String)
+    class Todos(val items: List<Todo>, val filesMatched: Int, val filesRead: Int,
+                val truncated: Boolean, val cancelled: Boolean)
+
+    fun todosIn(root: String): Todos {
+        val parts = findTodos(root)
+        @Suppress("UNCHECKED_CAST") val paths = parts[0] as Array<String>
+        val where = parts[1] as IntArray
+        @Suppress("UNCHECKED_CAST") val texts = parts[2] as Array<String>
+        val info = parts[3] as IntArray
+        return Todos(paths.indices.map { Todo(paths[it], where[it * 2], where[it * 2 + 1], texts[it]) },
+                     info[0], info[1], info[2] != 0, info[3] != 0)
+    }
 
     /**
      * What a tap can open in one terminal row: `cells` is a code point per
@@ -150,6 +219,8 @@ object Palette {
     const val MD_LINK = 0xFF4EA1F7.toInt()
     const val MD_CODE = 0xFFCE9178.toInt()
     const val MD_QUOTE = 0xFF9CA3AF.toInt()
+    /** A checked task's text, struck through too (the desktop's markdown.done). */
+    const val MD_DONE = 0xFF858585.toInt()
 
     val styles = intArrayOf(
         0xFFD4D4D4.toInt(),   // plain

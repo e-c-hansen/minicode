@@ -22,6 +22,8 @@ add_library(minicode SHARED
     ${CORE}/SyntaxHighlighter.cpp
     ${CORE}/MarkdownParser.cpp
     ${CORE}/MarkdownEdit.cpp
+    ${CORE}/MarkdownTasks.cpp
+    ${CORE}/FolderSearch.cpp
     ${CORE}/LineComments.cpp
     ${CORE}/Settings.cpp
     ${CORE}/TerminalStream.cpp

@@ -112,4 +112,23 @@ FolderSearchResult search(const std::string& root, const std::string& query,
                           const std::atomic<bool>* cancel = nullptr,
                           const FolderSearchOptions& options = {});
 
+// The TODO list. Instead of a query, every line holding a TODO, FIXME,
+// HACK, XXX or BUG tag (uppercase, a whole word) after a comment opener
+// (//, #, --, ;, /*, *, <!--, %), or first on its line with a colon after
+// it; and in Markdown files every open task ("- [ ] ..."), as the parser
+// reads them, so none from a code block. The match covers the tag or the
+// box. The same walk, limits and order as search().
+FolderSearchResult findTodos(const std::string& root,
+                             const std::atomic<bool>* cancel = nullptr,
+                             const FolderSearchOptions& options = {});
+
+// The first TODO tag on a line, as findTodos reads lines. In a Markdown file
+// (`markdown`) only an HTML comment counts as a comment, since # starts a
+// heading there.
+bool findTodoInLine(const std::string& line, bool markdown, std::size_t* byteColumn,
+                    std::size_t* byteLength);
+
+// .md, .markdown, .mdown, .mkd or .mkdn, in any case.
+bool isMarkdownPath(const std::string& path);
+
 }  // namespace FolderSearch
