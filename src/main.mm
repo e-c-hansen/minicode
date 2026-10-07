@@ -269,6 +269,8 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
 - (void)refreshTree:(id)sender     { [[self current] refreshTree:sender]; }
 - (void)openSettings:(id)sender    { [[self current] openSettings:sender]; }
 - (void)toggleComment:(id)sender   { [[self current] toggleComment:sender]; }
+- (void)toggleTask:(id)sender      { [[self current] toggleTask:sender]; }
+- (void)showTodos:(id)sender       { [[self current] showTodos:sender]; }
 - (void)triggerCompletion:(id)sender { [[self current] triggerCompletion:sender]; }
 - (void)goToDefinition:(id)sender  { [[self current] goToDefinition:sender]; }
 - (void)showHoverInfo:(id)sender   { [[self current] showHoverInfo:sender]; }
@@ -376,6 +378,8 @@ static void BuildMenu(void) {
     [editMenu addItem:[NSMenuItem separatorItem]];
     [editMenu addItemWithTitle:@"Toggle Comment"
                         action:@selector(toggleComment:) keyEquivalent:@"/"];
+    [editMenu addItemWithTitle:@"Toggle Task"
+                        action:@selector(toggleTask:) keyEquivalent:@"l"];
     // Language server completion. Ctrl+Space is also the system shortcut for
     // switching input sources when more than one is enabled; Option+Esc
     // (the text view's complete:) reaches the same list either way.
@@ -411,6 +415,12 @@ static void BuildMenu(void) {
     findInFolder.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [editMenu addItem:findInFolder];
+    NSMenuItem *todos =
+        [[NSMenuItem alloc] initWithTitle:@"TODOs in Folder…"
+                                   action:@selector(showTodos:) keyEquivalent:@"l"];
+    todos.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [editMenu addItem:todos];
     editItem.submenu = editMenu;
 
     // View menu
