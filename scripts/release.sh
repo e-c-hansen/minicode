@@ -10,7 +10,10 @@
 #   4. builds the signed Android APK for the same version,
 #   5. publishes a GitHub Release here, tagged vVERSION, with the zip and the
 #      APK attached (Obtainium and people installing by hand take it from there),
-#   6. copies packaging/minicode.rb into the tap as the live cask.
+#   6. copies packaging/minicode.rb into the tap as the live cask,
+#   7. uploads the Ubuntu source package to the Launchpad PPA through
+#      scripts/ppa.sh, when a signing key is configured (packaging/PPA.md),
+#      and says it skipped that step when none is.
 #
 # The zip ships from this repo's own Releases, next to the tag it was built
 # from; the tap holds nothing but the cask. packaging/minicode.rb is the one
@@ -21,6 +24,10 @@
 # ~/.config/minicode/release.keystore with its password in the Keychain
 # (service minicode-android-keystore). Every Android update must be signed with
 # that one key, so keep a backup of it. MINICODE_NO_APK=1 releases without it.
+# The PPA upload needs Docker, gpg and the key id in MINICODE_PPA_KEY or
+# ~/.config/minicode/ppa-key-id; MINICODE_NO_PPA=1 releases without it. It runs
+# last, so a failed upload leaves the GitHub release and the cask in place, and
+# scripts/ppa.sh VERSION retries it alone.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -42,6 +49,26 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 if gh release view "v$VERSION" --repo "$APP_REPO" >/dev/null 2>&1; then
     echo "error: v$VERSION is already released on $APP_REPO" >&2; exit 1
+fi
+
+# The PPA step runs only with a key configured. With one, check now that it
+# can run, rather than finding out after main is pushed.
+PPA_KEY=""
+if [ -z "${MINICODE_NO_PPA:-}" ]; then
+    PPA_KEY="${MINICODE_PPA_KEY:-}"
+    if [ -z "$PPA_KEY" ] && [ -s "$HOME/.config/minicode/ppa-key-id" ]; then
+        PPA_KEY="$(tr -d '[:space:]' < "$HOME/.config/minicode/ppa-key-id")"
+    fi
+fi
+if [ -n "$PPA_KEY" ]; then
+    if ! command -v gpg >/dev/null || ! gpg --list-secret-keys "$PPA_KEY" >/dev/null 2>&1; then
+        echo "error: no gpg secret key $PPA_KEY for the PPA (packaging/PPA.md), or set MINICODE_NO_PPA=1" >&2
+        exit 1
+    fi
+    if ! docker info >/dev/null 2>&1; then
+        echo "error: the PPA upload needs Docker running (open -a Docker), or set MINICODE_NO_PPA=1" >&2
+        exit 1
+    fi
 fi
 
 APK=""
@@ -120,4 +147,22 @@ fi
 rm -rf "$TMP"
 [ -n "$APK" ] && rm -f "$APK"
 
+PPA_FAILED=""
+if [ -n "${MINICODE_NO_PPA:-}" ]; then
+    echo "==> Skipping the Ubuntu PPA (MINICODE_NO_PPA is set)"
+elif [ -z "$PPA_KEY" ]; then
+    echo "==> Skipping the Ubuntu PPA: no signing key configured (MINICODE_PPA_KEY or"
+    echo "    ~/.config/minicode/ppa-key-id; packaging/PPA.md has the one-time setup)"
+else
+    echo "==> Uploading $VERSION to the Ubuntu PPA"
+    if ! MINICODE_PPA_KEY="$PPA_KEY" scripts/ppa.sh "$VERSION"; then
+        PPA_FAILED=1
+    fi
+fi
+
 echo "==> Done. brew upgrade --cask e-c-hansen/tap/minicode will now pull $VERSION."
+if [ -n "$PPA_FAILED" ]; then
+    echo "error: the PPA upload failed; everything else is released. Retry it with" >&2
+    echo "       scripts/ppa.sh $VERSION" >&2
+    exit 1
+fi
