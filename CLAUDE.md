@@ -41,7 +41,7 @@ this file covers the macOS app except where it says otherwise.
   (`debian/`, versions like `1.4.12-1~ppa1~resolute1`) in an ubuntu:26.04
   container, signs it on the Mac with the gpg key named in
   `~/.config/minicode/ppa-key-id`, and uploads it to
-  `ppa:e-c-hansen/minicode`. `--dry-run` and `--simulate` send nothing.
+  `ppa:echansen/minicode`. `--dry-run` and `--simulate` send nothing.
   `release.sh` runs it last and skips it when no key is configured. The
   one-time Launchpad setup is in `packaging/PPA.md` (not done yet as of
   2026-10-07: the user is creating the account).
@@ -2057,7 +2057,7 @@ holds, these give real runtime evidence rather than compile-only evidence:
   Keychain, service `minicode-android-keystore`). Every update must carry that
   signature, so the key must never be regenerated; the user keeps a backup.
   Users install by hand or through Obtainium; it is not on the Play Store.
-- Ubuntu PPA `ppa:e-c-hansen/minicode` (Launchpad builds the binaries
+- Ubuntu PPA `ppa:echansen/minicode` (Launchpad builds the binaries
   from the signed source package). Once it is live, a Linux change reaches
   Ubuntu users only through a release, so the "Linux-only changes need no
   release" rule above no longer holds for them. A lost signing key can be

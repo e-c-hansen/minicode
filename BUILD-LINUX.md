@@ -16,7 +16,7 @@ untouched.
 On Ubuntu 26.04 there is no need to build it: a Launchpad PPA has it, and
 apt keeps it up to date.
 
-    sudo add-apt-repository ppa:e-c-hansen/minicode
+    sudo add-apt-repository ppa:echansen/minicode
     sudo apt install minicode
 
 The package is built from `debian/` at the top of the repository with every

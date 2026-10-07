@@ -2,12 +2,12 @@
 
 The GTK 4 port is packaged for Ubuntu in `debian/` at the top of the
 repository, and published as source packages to the PPA
-`ppa:e-c-hansen/minicode`, where Launchpad builds the binaries. People on
+`ppa:echansen/minicode`, where Launchpad builds the binaries. People on
 Ubuntu then install and update MiniCode with apt.
 
 ## Installing it (for users)
 
-    sudo add-apt-repository ppa:e-c-hansen/minicode
+    sudo add-apt-repository ppa:echansen/minicode
     sudo apt install minicode
 
 That gives `minicode` on the PATH, MiniCode in the app grid, and its manual
@@ -33,7 +33,7 @@ comes before `/usr/bin` on the PATH, and GNOME prefers a launcher in
     update-desktop-database ~/.local/share/applications
 
 To remove it again: `sudo apt remove minicode`, and
-`sudo add-apt-repository --remove ppa:e-c-hansen/minicode` to drop the PPA.
+`sudo add-apt-repository --remove ppa:echansen/minicode` to drop the PPA.
 
 The PPA builds for Ubuntu 26.04 LTS (resolute). Other releases are not
 built; see "Other Ubuntu releases" below.
@@ -87,18 +87,18 @@ key added to the Launchpad account works for the same PPA, and apt users
 notice nothing, because what they trust is Launchpad's signing key for the
 PPA, not yours.
 
-### 3. A Launchpad account named e-c-hansen
+### 3. A Launchpad account (username echansen)
 
 Sign up at <https://login.launchpad.net/> (an Ubuntu One account), then log
 in at <https://launchpad.net/> once so the Launchpad profile is created. The
-PPA's address uses the Launchpad *username*, so open your profile's "Change
-details" and set the username to `e-c-hansen`. If that name is taken, pick
-another and set `MINICODE_PPA=ppa:<name>/minicode` when running the scripts
-(and change the address in this file and in BUILD-LINUX.md).
+PPA's address uses the Launchpad *username*, which is `echansen` (created
+2026-10-07). Under another account, set `MINICODE_PPA=ppa:<name>/minicode`
+when running the scripts and change the address in this file and in
+BUILD-LINUX.md.
 
 ### 4. The key on the account
 
-At <https://launchpad.net/~e-c-hansen/+editpgpkeys>, paste the fingerprint
+At <https://launchpad.net/~echansen/+editpgpkeys>, paste the fingerprint
 and choose "Import Key". Launchpad mails an encrypted message to the
 address on the key. Save the part from `-----BEGIN PGP MESSAGE-----` to
 `-----END PGP MESSAGE-----` to a file, then
@@ -117,7 +117,7 @@ the `.asc` file into the form. If it does not ask, skip this.
 
 ### 6. The PPA
 
-At <https://launchpad.net/~e-c-hansen/+activate-ppa> create a PPA with URL
+At <https://launchpad.net/~echansen/+activate-ppa> create a PPA with URL
 `minicode`, display name `MiniCode`, and a line of description (for example
 "MiniCode, a small native code editor, for Ubuntu"). Then under the PPA's
 "Change details":
@@ -150,7 +150,7 @@ then upload the current release for real:
 
 Launchpad mails the address on the key when the upload is accepted (or
 rejected, with the reason), then builds it; the build log and status are at
-<https://launchpad.net/~e-c-hansen/+archive/ubuntu/minicode/+packages>. A
+<https://launchpad.net/~echansen/+archive/ubuntu/minicode/+packages>. A
 build takes a few minutes, and publishing another few after that, before
 `apt install minicode` finds it.
 
@@ -183,7 +183,7 @@ it alone.
 4. Copies the `.dsc` out, signs it on the Mac with gpg, copies it back,
    regenerates the `.changes` so it carries the signed `.dsc`'s checksums,
    and signs that the same way.
-5. Uploads with `dput ppa:e-c-hansen/minicode` from the container.
+5. Uploads with `dput ppa:echansen/minicode` from the container.
 
 The committed `debian/changelog` is only a placeholder, numbered `0~local-0`
 so that apt replaces anything built from it; each upload's changelog is the
@@ -259,7 +259,7 @@ Launchpad's builders have no network. `DEB_BUILD_OPTIONS=nocheck` skips them.
 
 - **dput cannot connect.** It uploads over FTP to `ppa.launchpad.net`,
   which some networks block. dput can also upload over SFTP
-  (`ssh-ppa:e-c-hansen/minicode`, with an SSH key on the Launchpad profile),
+  (`ssh-ppa:echansen/minicode`, with an SSH key on the Launchpad profile),
   but ppa.sh does not set that up, since the container has no SSH key; try
   another network first.
 - **Rejected: "Signer has no upload rights" or "not a valid key".** The key

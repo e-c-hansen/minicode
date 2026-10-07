@@ -33,7 +33,7 @@
 # be the one uploaded to the Launchpad account that owns the PPA; see
 # packaging/PPA.md for the one-time setup.
 #   MINICODE_PPA_SERIES   Ubuntu series to build for (default resolute, 26.04)
-#   MINICODE_PPA          upload target (default ppa:e-c-hansen/minicode)
+#   MINICODE_PPA          upload target (default ppa:echansen/minicode)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -46,7 +46,7 @@ esac
 VERSION="${1:?usage: scripts/ppa.sh [--dry-run|--simulate] <version> [ppa revision]   e.g. 1.4.12}"
 REV="${2:-1}"
 SERIES="${MINICODE_PPA_SERIES:-resolute}"
-PPA="${MINICODE_PPA:-ppa:e-c-hansen/minicode}"
+PPA="${MINICODE_PPA:-ppa:echansen/minicode}"
 IMAGE="minicode-ppa"
 KEYFILE="$HOME/.config/minicode/ppa-key-id"
 
