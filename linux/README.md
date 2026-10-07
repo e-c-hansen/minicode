@@ -58,7 +58,8 @@ compared with the macOS app, and the order to do it in, see `HANDOFF.md`.
   `MINICODE_ENABLE_BROWSER`.
 - `src/Search.{h,cpp}` — Find in Folder (Ctrl+Shift+F): a window with a
   search entry and a list of matches. The search itself is
-  `../src/FolderSearch.{h,cpp}`, run on a GTask worker thread.
+  `../src/FolderSearch.{h,cpp}`, run on a GTask worker thread. The same
+  window in a TODOs mode (Ctrl+Shift+L) lists `FolderSearch::findTodos`.
 - `src/GitPanel.{h,cpp}` — the Source Control panel (Ctrl+Shift+G), which
   takes the file tree's place in the sidebar: the branch, staged and
   unstaged changes, the commit message, and the commit graph drawn with

@@ -135,6 +135,13 @@ isolation. Keep them dependency-free.
   and patch, relative dates, and `layoutGraph`, the lane assignment (see
   "Git panel"). The GTK port's panel uses it too, and so does Android's,
   which also compiles `linux/src/GitModel.cpp` (it has no GTK in it).
+- `src/MarkdownTasks.{h,cpp}` — task lists (`- [ ]`, `- [x]`): a box
+  ticked from the preview (one byte, `toggleBox`), the task key over a
+  selection and Return continuing a list (`toggle`, `newline`, in UTF-16
+  units like LineComments), done/total counts and a file's open tasks.
+  What is a task is decided by `MarkdownParser::lines`, so never one in
+  code. `FolderSearch::findTodos` is the TODO list built on it. See "Task
+  lists".
 - `src/MathTex.{h,cpp}`: the TeX side of the Markdown preview's math,
   doing no I/O: which formulas may share a batch, how one is rewritten for
   LaTeX, the batch document (a page per formula) and reading tectonic's
@@ -568,6 +575,49 @@ as `{`, underscores pairing into italics).
   formula copies an attachment character, not its TeX, and `\color`
   inside a formula is drawn in the text's color.
 
+## Task lists (all three ports, 2026-10-07)
+
+The user asked for TODO lists "with clean formatting and an interactive
+check box", done the way other editors do it. They are GitHub's Markdown
+task lists, so files stay portable.
+
+- **Preview.** `MdRun::task` (1 open, 2 checked) is set on a task item's
+  marker run and its own text runs. The Mac draws the box as an
+  `MCTaskBox` attachment (`MCTaskBoxCell`, accent fill and a tick when
+  checked) carrying `NSLinkAttributeName` `minicode-task:<line>`; a click
+  reaches `textView:clickedOnLink:` (not `clickedOnCell:`, which never
+  fired) and goes through `applyMarkdownSource:`, so a toggle is a preview
+  edit like any other: dirty, undoable, never saved by itself (the user
+  ruled out autosave). The second click of a double-click on a box is
+  swallowed in `editMarkdownAtCharacter:`. Checked text takes
+  `markdown.done` (#858585, a new key) and a strikethrough. Linux puts a
+  widget in a child anchor (`linux/HANDOFF.md` item 14); Android draws a
+  span in `MarkdownPreview.kt` (`android/README.md`, "Task lists and the
+  TODO list").
+- **Keys.** Toggle Task: Cmd+L / Ctrl+L / leader L (Markdown source only,
+  one undo step). TODOs: Shift+Cmd+L / Ctrl+Shift+L / leader W. Return in
+  a list item calls `MarkdownTasks::newline` before the keep-the-indent
+  code on every port. The title shows "3 of 7 done", refreshed 0.3 s after
+  typing stops.
+- **TODOs window.** On the Mac and Linux it is the Find in Folder window
+  in a TODOs mode (the field filters the scan; it rescans on every show),
+  on Android `TodoPane.kt` in the file list's place. A tag counts only
+  after a comment opener or first on a line with a colon, as Todo Tree
+  does, so `int TODO = 1` and prose stay out; in Markdown only `<!--`
+  counts as an opener, since `#` is a heading.
+- **Verified**: 50-odd core checks (`tasks:*`); the Mac with an offscreen
+  harness that includes `main.mm` (48 checks: boxes, a click ticking the
+  source with the file untouched on disk, undo, the title count, Cmd+L
+  through the real menu, Return, the TODOs window and opening a row) and
+  pictures looked at; Linux in the Docker container with real clicks and
+  keys (it found and fixed a GTK crash: embedded widgets must come off
+  the view before a re-render); Android build only, no phone connected.
+  A synthetic Shift+Cmd+L matches Cmd+L or nothing (the Export PDF trap
+  above), so the TODOs menu item was checked by its key and mask. Needs
+  a person: the look on a real screen everywhere, and every phone check
+  listed in `android/README.md`. Known: a numbered task (`1. [ ] x`)
+  shows its box but not its number in all previews.
+
 ## LSP (read before touching it)
 
 The protocol lives in `LspClient.cpp`, pure C++ and tested against a scripted
@@ -642,6 +692,11 @@ never closes.
   may have clangd running: kill only PIDs the test started.
 
 ## Current state (handoff, 2026-09-29)
+
+- **Task lists** (2026-10-07): clickable boxes, the task key, lists
+  continuing on Return, the done count and a TODOs window on all three
+  ports; see "Task lists". Released on the Mac; Android untested on the
+  phone.
 
 - **Released: 1.4.11** (2026-10-01): drag and drop in the file tree on
   all three ports (Mac checked offscreen, Linux with real drags in Docker,
