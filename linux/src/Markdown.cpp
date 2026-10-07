@@ -303,6 +303,50 @@ void mdPictureSetSize(GtkWidget* w, int width, int height) {
     gtk_widget_queue_resize(w);
 }
 
+// ------------------------------------------------------------- task boxes
+//
+// A task's box is a check button anchored in the text where the parser put
+// ☐ or ☑. Its own click handling never runs: a capture-phase gesture claims
+// the press (so the button does not flip itself, and the text view does not
+// start a selection), and the editor is told from an idle, since it renders
+// the page again and this button goes with it. The new page's button shows
+// the new state. It never takes the keyboard.
+
+struct TaskInfo {
+    std::shared_ptr<Markdown::Hooks> hooks;
+    int line;
+};
+
+GtkWidget* taskBox(bool checked, int line, const std::shared_ptr<Markdown::Hooks>& hooks) {
+    GtkWidget* box = gtk_check_button_new();
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(box), checked);
+    gtk_widget_add_css_class(box, "minicode-md-task");
+    gtk_widget_set_focusable(box, FALSE);
+    gtk_widget_set_focus_on_click(box, FALSE);
+    gtk_widget_set_valign(box, GTK_ALIGN_CENTER);
+    gtk_widget_set_cursor_from_name(box, "pointer");
+    auto* info = new TaskInfo{hooks, line};
+    g_object_set_data_full(G_OBJECT(box), "md-task", info,
+                           [](gpointer d) { delete static_cast<TaskInfo*>(d); });
+    GtkGesture* click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(click), GTK_PHASE_CAPTURE);
+    g_signal_connect(click, "pressed", G_CALLBACK(+[](GtkGestureClick* g, int, double, double,
+                                                    gpointer data) {
+        gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
+        auto* ti = static_cast<TaskInfo*>(data);
+        if (!ti->hooks->taskToggle) return;
+        auto* job = new TaskInfo(*ti);
+        g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, [](gpointer d) -> gboolean {
+            auto* j = static_cast<TaskInfo*>(d);
+            j->hooks->taskToggle(j->line);
+            return G_SOURCE_REMOVE;
+        }, job, [](gpointer d) { delete static_cast<TaskInfo*>(d); });
+    }), info);
+    gtk_widget_add_controller(box, GTK_EVENT_CONTROLLER(click));
+    return box;
+}
+
 // ------------------------------------------------------------- tables
 
 struct CellInfo {
@@ -452,6 +496,42 @@ Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
         lineLen++;
     };
 
+    // Insert `text` at the end with run `r`'s tags, as a span of its own.
+    auto insertRun = [&](const std::string& textIn, const MdRun& r, int* startOut = nullptr,
+                         int* endOut = nullptr) {
+        if (textIn.empty()) return;
+        const std::string text = boundLogicalLines(textIn, lineLen);
+        GtkTextIter end;
+        gtk_text_buffer_get_end_iter(buffer, &end);
+        const int startOff = gtk_text_buffer_get_char_count(buffer);
+        gtk_text_buffer_insert(buffer, &end, text.c_str(), (int)text.size());
+        const int endOff = gtk_text_buffer_get_char_count(buffer);
+        addSpan(startOff, endOff, r);
+        if (startOut) *startOut = startOff;
+        if (endOut) *endOut = endOff;
+
+        // Layer tags. Order roughly follows the macOS precedence.
+        if (r.heading > 0 && r.heading <= 6) {
+            char name[8];
+            g_snprintf(name, sizeof(name), "h%d", r.heading);
+            applyTag(buffer, name, startOff, endOff);
+        }
+        // Math (r.math) has `code` set too: until this port typesets it, a
+        // formula shows as its TeX in the code style, display math on lines
+        // of its own.
+        if (r.codeBlock || r.code) applyTag(buffer, "md_code",  startOff, endOff);
+        if (r.quote)               applyTag(buffer, "md_quote", startOff, endOff);
+        if (r.rule)                applyTag(buffer, "md_rule",  startOff, endOff);
+        if (r.link)                applyTag(buffer, "md_link",  startOff, endOff);
+        if (r.bold)                applyTag(buffer, "md_bold",  startOff, endOff);
+        if (r.italic)              applyTag(buffer, "md_italic", startOff, endOff);
+        if (r.strike)              applyTag(buffer, "md_strike", startOff, endOff);
+        if (r.gap)                 applyTag(buffer, "md_gap",   startOff, endOff);
+        if (r.image && !r.link)    applyTag(buffer, "plainmsg", startOff, endOff);
+        // A checked task's own text: muted and struck through.
+        if (r.task == 2 && !r.marker) applyTag(buffer, "md_done", startOff, endOff);
+    };
+
     std::string heading;   // the text of the heading being emitted
     int headingLine = -1, headingAt = 0;
     auto endHeading = [&] {
@@ -535,15 +615,24 @@ Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
                            "\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\n";
         if (text.empty()) continue;
 
-        text = boundLogicalLines(text, lineLen);
+        // A task's marker: its box (☐ or ☑, three bytes) becomes a check
+        // button, and the indentation before it and the space after it stay
+        // text with the run's tags.
+        if (r.marker && r.task) {
+            const size_t box = r.text.find(r.task == 2 ? "\xE2\x98\x91" : "\xE2\x98\x90");
+            if (box != std::string::npos) {
+                insertRun(r.text.substr(0, box), r);
+                Embed embed;
+                embed.widget = taskBox(r.task == 2, r.line, hooks);
+                anchorWidget(embed.widget, r);
+                page.embeds.push_back(embed);
+                insertRun(r.text.substr(box + 3), r);
+                continue;
+            }
+        }
 
-        // Insert at end, remembering the char offset span we just added.
-        GtkTextIter end;
-        gtk_text_buffer_get_end_iter(buffer, &end);
-        int startOff = gtk_text_buffer_get_char_count(buffer);
-        gtk_text_buffer_insert(buffer, &end, text.c_str(), (int)text.size());
-        int endOff = gtk_text_buffer_get_char_count(buffer);
-        addSpan(startOff, endOff, r);
+        int startOff = 0, endOff = 0;
+        insertRun(text, r, &startOff, &endOff);
         if (fetchLater) {
             PendingPicture pp;
             pp.url = r.src;
@@ -553,25 +642,6 @@ Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
             if (r.link) pp.link = r.url;
             page.pending.push_back(pp);
         }
-
-        // Layer tags. Order roughly follows the macOS precedence.
-        if (r.heading > 0 && r.heading <= 6) {
-            char name[8];
-            g_snprintf(name, sizeof(name), "h%d", r.heading);
-            applyTag(buffer, name, startOff, endOff);
-        }
-        // Math (r.math) has `code` set too: until this port typesets it, a
-        // formula shows as its TeX in the code style, display math on lines
-        // of its own.
-        if (r.codeBlock || r.code) applyTag(buffer, "md_code",  startOff, endOff);
-        if (r.quote)               applyTag(buffer, "md_quote", startOff, endOff);
-        if (r.rule)                applyTag(buffer, "md_rule",  startOff, endOff);
-        if (r.link)                applyTag(buffer, "md_link",  startOff, endOff);
-        if (r.bold)                applyTag(buffer, "md_bold",  startOff, endOff);
-        if (r.italic)              applyTag(buffer, "md_italic", startOff, endOff);
-        if (r.strike)              applyTag(buffer, "md_strike", startOff, endOff);
-        if (r.gap)                 applyTag(buffer, "md_gap",   startOff, endOff);
-        if (r.image && !r.link)    applyTag(buffer, "plainmsg", startOff, endOff);
     }
     endHeading();
     return page;

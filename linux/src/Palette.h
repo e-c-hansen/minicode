@@ -33,6 +33,7 @@ namespace pal {
     constexpr const char* MdRule     = "#555555";
     constexpr const char* MdLink     = "#4EA1F7";
     constexpr const char* MdPlainMsg = "#9CA3AF";
+    constexpr const char* MdDone     = "#858585";  // a checked task's text
 }
 
 // The concrete color for each syntax token style. Mirrors ColorForStyle().

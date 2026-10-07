@@ -1,10 +1,12 @@
 // Markdown.h — renders the shared MarkdownParser's MdRun list into a styled
 // GtkTextBuffer. The buffer is expected to already carry the markdown tags
 // created by Editor::ensureTags() (h1..h6, md_code, md_quote, md_rule,
-// md_link, md_table, md_bold, md_italic, md_strike, md_gap, plainmsg).
+// md_link, md_table, md_bold, md_italic, md_strike, md_gap, md_done, plainmsg).
 //
 // Tables and pictures are widgets anchored in the text (a grid of wrapping
 // labels, and MdPicture, which plays GIFs); fit() sizes them to the pane.
+// So is a task's box ("- [ ] x"), a check button a click toggles through
+// Hooks::taskToggle; a checked item's text gets the md_done tag.
 // The Page it returns maps the rendered text back to the source, for links,
 // for Ctrl+Shift+P keeping its place, and for editing from the preview.
 //
@@ -73,6 +75,9 @@ struct Hooks {
     // A double-click on a table cell: the table's first source line, the
     // cell's row (0 = header) and column, and the cell's widget.
     std::function<void(int line, int row, int column, GtkWidget* cell)> cellDoubleClick;
+    // A click on a task's box ("- [ ] x"): the item's source line. Called
+    // from an idle once the click is over, so the page may be rendered again.
+    std::function<void(int line)> taskToggle;
 };
 
 // Replace the buffer's contents with the rendered Markdown.

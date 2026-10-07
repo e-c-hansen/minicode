@@ -58,6 +58,7 @@ public:
     void documentChanged(const std::string& path) override;
     void documentSaved() override;
     void textEdited(const char* inserted, int len) override;
+    bool takesReturn() const override { return completionVisible(); }
 
     // Test hooks.
     bool completionVisible() const;

@@ -29,6 +29,9 @@ poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
   onto folders (item 13);
 - the editor with incremental syntax highlighting (item 3), Ctrl+/, the
   Markdown preview, and reloading when the file changes on disk (item 8);
+- Markdown task lists: boxes to click in the preview, Ctrl+L, Return
+  continuing a list, the count in the title, and the TODOs window on
+  Ctrl+Shift+L (item 14);
 - images and PDFs in the editor's slot (item 4), with zoom for PDFs and the
   LaTeX preview;
 - Find in Folder (item 5) and find in the file with Find Next and Find
@@ -51,7 +54,7 @@ poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
 - pane hiding and divider drags, the shortcut hints panel, and opening a
   file or folder named on the command line.
 
-It shares from `../src` `SyntaxHighlighter`, `MarkdownParser`, `Settings`,
+It shares from `../src` `SyntaxHighlighter`, `MarkdownParser`, `MarkdownTasks`, `Settings`,
 `LineComments`, `FolderSearch`, `Json`, `LspClient`, `LatexDoc`, `SyncTex`,
 `TermLinks`, `GitStatus` and `GitGraph`.
 The rest of the core (`TerminalScreen`) is portable and tested, and has not
@@ -997,6 +1000,91 @@ manager (Nautilus) on the ThinkPad, a drag between two MiniCode windows,
 dragging a row out to a file manager, and the look under GNOME's theme.
 Dropping a row on the editor inserts its path as text, which is
 GtkTextView's own handling of a file list.
+
+### 14. Task lists and the TODOs window (done, October 2026)
+
+Markdown task lists ("- [ ] buy milk", "- [x] done"), the TODO format
+GitHub, Obsidian and VS Code read, built on the core's `MarkdownTasks` and
+`FolderSearch::findTodos` (the Mac and Android do the same over the same
+core). Nothing here decides what a task is: that is `MarkdownParser`, so a
+"- [ ]" in a code block is never one.
+
+- **The box in the preview.** `Markdown::render` puts a `GtkCheckButton`
+  (`taskBox`, class `minicode-md-task`) in a child anchor where the parser
+  wrote ☐ or ☑, with the indent before it and the space after it still
+  text. It never takes the keyboard. A capture-phase click gesture claims
+  the press, so the button never flips itself and the text view starts no
+  selection, and calls `Hooks::taskToggle` from an idle. The editor's
+  `toggleTaskBox` flips that one byte (`MarkdownTasks::toggleBox`) and
+  hands the new source to `applyMarkdownSource`, the path the double-click
+  popover's edits take: dirty until Ctrl+S, Ctrl+Z and Ctrl+Shift+Z in the
+  preview, rendered again at the same scroll. The box is an embed, so the
+  editor's own click handler leaves it alone and a double-click elsewhere
+  still opens the popover. Styled in `ThemeCss.cpp`: an outline in the
+  `markdown.done` color, filled with the accent #4EA1F7 and a white tick
+  when checked.
+- **Done items** get the `md_done` tag on their own text runs
+  (`MdRun::task == 2`, not the marker): the `markdown.done` color, struck
+  through, recolored by `applySettings`. It is made before `md_code` and
+  `md_link`, so a code span or link in a done item keeps its color.
+- **Ctrl+L** (Edit > Toggle Task) in a Markdown file's source runs
+  `MarkdownTasks::toggle` on the lines the selection touches, as one user
+  action, and moves the selection as it says. Anywhere else, the preview
+  included, it rings the bell. In the terminal it is the shell's (clear
+  screen): `shellOwns` takes every plain Ctrl key off while the terminal
+  has the keyboard, so nothing special was needed.
+- **Return** in a Markdown source asks `MarkdownTasks::newline` first, from
+  `onViewKey`, and takes the key only when that changed something (the next
+  item, "4." after "3.", or ending the list on an empty item); otherwise the
+  key goes on to the usual keep-the-indent Return. It is never taken while a
+  completion list is open: `EditorObserver::takesReturn`, which the LSP
+  session answers with `completionVisible()`. Shift+Return is a plain new
+  line, for a second line in the same item.
+- **The title** says "MiniCode — TODO.md * — 3 of 7 done" while a Markdown
+  file with at least one task is open. The counts live in the editor
+  (`tasksDone`, `tasksTotal`), recounted 0.3 s after typing stops, at once
+  after a toggle, a preview edit, an undo of one, a reload from disk and a
+  rename, and the title callback runs only when they change.
+- **TODOs** (Ctrl+Shift+L, Edit > TODOs…) is the Find in Folder window made
+  with `SearchPanel::Mode::Todos`: titled "TODOs", scoped the same way (the
+  folder selected in the tree, else the open one), `findTodos` on the same
+  worker thread, scanned again every time it is shown (a hidden window does
+  not scan when the scope changes). The field filters what was found, by
+  "path:line  text" in any case, without scanning; the status line says
+  "9 TODOs in 4 files, 2 shown". A row opens like a match: a Markdown file
+  switches to its source with the box selected.
+- **Trap: take a page's widgets off before replacing its text.** Clicking a
+  box re-renders the page while the pointer is on the box and its press is
+  still in progress. `gtk_text_buffer_set_text` then unmaps the box from
+  inside the deletion, the view's state flags change, and GtkTextView's
+  handler reads the selection from a half-deleted buffer: a segfault in
+  `gtk_text_buffer_get_selection_bounds` (GTK 4.22). It happened every
+  time once the edit popover had been open, and not before, which is why
+  it took a backtrace (gdb in the container) to find. `Editor::clearPage`
+  now removes every embed with `gtk_text_view_remove` before any render or
+  refill, tables and pictures included.
+
+Checked in the Docker container (2026-10-07) with xdotool: clicking boxes
+(top level, nested, ordered, in a quote) changed the title to "* — 3 of 7
+done", and Ctrl+S then differed from the original by one byte (`cmp -l`);
+Ctrl+Z and Ctrl+Shift+Z in the preview; a double-click on an item's text
+still opening the popover, and boxes clicked after it (the crash above,
+found this way, then fixed and clicked through again under gdb); Ctrl+L
+on a plain line, again to check it, on a task, on a heading (no change),
+on two selected tasks (both cleared) and one Ctrl+Z restoring both;
+Return in "- [ ] a" giving "- [ ] ", in "3. x" giving "4. ", in an empty
+"- [ ] " ending the list (one Ctrl+Z bringing it back), Shift+Return a
+plain line; Ctrl+L in the terminal clearing the screen and leaving the file
+alone; the TODOs window on a folder with TODO and FIXME comments, Markdown
+tasks and a task in a code fence (not listed), filtering, Down and Return
+opening `main.c` with TODO selected, a click opening a Markdown row in its
+source, a new file's FIXME appearing on the next Ctrl+Shift+L; and
+`markdown.done` at startup and changed while running, read back from the
+pixels. Screenshots of the boxes and the done items were looked at. Not
+checked: Return with a completion list open (no Markdown language server
+in the container; the code path is `takesReturn`), the look under GNOME's
+theme and at 2x, and the box's height against the text on the ThinkPad
+(it sits a pixel or two above the text's middle here).
 
 ## How to work on it
 
