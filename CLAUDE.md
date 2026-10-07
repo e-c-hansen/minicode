@@ -43,8 +43,10 @@ this file covers the macOS app except where it says otherwise.
   `~/.config/minicode/ppa-key-id`, and uploads it to
   `ppa:echansen/minicode`. `--dry-run` and `--simulate` send nothing.
   `release.sh` runs it last and skips it when no key is configured. The
-  one-time Launchpad setup is in `packaging/PPA.md` (not done yet as of
-  2026-10-07: the user is creating the account).
+  one-time Launchpad setup is in `packaging/PPA.md`. Live since
+  2026-10-07 (account `echansen`, key 340F7652...1F40 in the Mac's gpg
+  with its passphrase in the Keychain); 1.4.12 was the first upload, built
+  for amd64 and published about 35 minutes after the upload.
 - `scripts/release.sh 1.2.0` — cut a release from a clean `main`: runs the
   tests, stamps the version into `Info.plist` and `packaging/minicode.rb` and
   commits that, builds the zip and checks the built app reports the version,
