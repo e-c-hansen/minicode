@@ -31,11 +31,12 @@ Suggests:
  gopls,
  python3-pylsp,
  rust-analyzer,
-Description: small native code editor with a terminal, browser and previews
- MiniCode is a light, keyboard-first code editor. One window holds a file
- tree, an editor with syntax highlighting for about 200 languages and file
- types, a terminal panel, a web browser panel and a Source Control panel
- for staging, committing and browsing the commit graph.
+Description: small editor for text, code and LaTeX, with a browser and terminal
+ MiniCode is a light, keyboard-first editor for text, code and LaTeX. One
+ window holds a file tree, an editor with syntax highlighting for about 200
+ languages and file types, a terminal panel, a web browser panel and a
+ Source Control panel for staging, committing and browsing the commit
+ graph.
  .
  Markdown files open rendered, with tables, pictures and links, and any
  block can be edited from the preview. Images, PDFs, video and audio open
