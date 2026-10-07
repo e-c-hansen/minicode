@@ -37,6 +37,14 @@ this file covers the macOS app except where it says otherwise.
   into `docs/demos/` by playing scripted scenes in the real app (see "Demo
   GIFs" below). Windows appear on screen for about 20 s per scene.
 - `make dist-zip` / `make dmg` — package for distribution.
+- `scripts/ppa.sh VERSION [N]` — builds the Ubuntu source package
+  (`debian/`, versions like `1.4.12-1~ppa1~resolute1`) in an ubuntu:26.04
+  container, signs it on the Mac with the gpg key named in
+  `~/.config/minicode/ppa-key-id`, and uploads it to
+  `ppa:e-c-hansen/minicode`. `--dry-run` and `--simulate` send nothing.
+  `release.sh` runs it last and skips it when no key is configured. The
+  one-time Launchpad setup is in `packaging/PPA.md` (not done yet as of
+  2026-10-07: the user is creating the account).
 - `scripts/release.sh 1.2.0` — cut a release from a clean `main`: runs the
   tests, stamps the version into `Info.plist` and `packaging/minicode.rb` and
   commits that, builds the zip and checks the built app reports the version,
@@ -695,8 +703,12 @@ never closes.
 
 - **Task lists** (2026-10-07): clickable boxes, the task key, lists
   continuing on Return, the done count and a TODOs window on all three
-  ports; see "Task lists". Released on the Mac; Android untested on the
-  phone.
+  ports; see "Task lists". In 1.4.12. Checked on the Titan 2 on
+  2026-10-07 with injected taps and keys: boxes, a tap ticking (file
+  unchanged on disk), text taps not toggling, Ctrl+Z, double tap still
+  editing, Ctrl+L, Enter after a task, a number and a quote, Enter ending
+  an empty item, the count, and the TODO pane opening a row after asking
+  about unsaved changes. The leader key (L, W) still needs a person.
 
 - **Released: 1.4.11** (2026-10-01): drag and drop in the file tree on
   all three ports (Mac checked offscreen, Linux with real drags in Docker,
@@ -2045,6 +2057,15 @@ holds, these give real runtime evidence rather than compile-only evidence:
   Keychain, service `minicode-android-keystore`). Every update must carry that
   signature, so the key must never be regenerated; the user keeps a backup.
   Users install by hand or through Obtainium; it is not on the Play Store.
+- Ubuntu PPA `ppa:e-c-hansen/minicode` (Launchpad builds the binaries
+  from the signed source package). Once it is live, a Linux change reaches
+  Ubuntu users only through a release, so the "Linux-only changes need no
+  release" rule above no longer holds for them. A lost signing key can be
+  replaced on Launchpad, unlike the Android key. Traps: macOS `tar` adds
+  `._*` files that `dpkg-source` rejects (use `git archive`); `tar` fails
+  with ENOSYS under Docker Desktop's amd64 emulation, so the amd64 .deb
+  was never built locally; gpg-agent cannot be forwarded into Docker
+  Desktop, hence signing on the host.
 - Homebrew is the only way MiniCode updates: the app has no updater, so the
   cask must NOT declare `auto_updates`, or a plain `brew upgrade` would skip it.
 
