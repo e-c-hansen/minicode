@@ -105,6 +105,15 @@
         android:layout_weight="1"
         android:visibility="gone" />
 
+    <!-- The project's TODOs and open tasks, in the same place (TodoPane.kt):
+         leader W. -->
+    <org.minicode.editor.TodoPane
+        android:id="@+id/todos"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:visibility="gone" />
+
     <org.minicode.editor.CodeEditText
         android:id="@+id/editor"
         android:layout_width="match_parent"

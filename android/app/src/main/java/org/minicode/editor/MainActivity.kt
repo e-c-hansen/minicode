@@ -88,6 +88,10 @@ class MainActivity : AppCompatActivity() {
         ui.previewScroll.onLink = ::openMarkdownLink
         ui.previewScroll.onEditBlock = ::editMarkdownBlock
         ui.previewScroll.resolve = ::resolveRelative
+        // A tap on a task's box ticks or clears it, as a preview edit.
+        ui.previewScroll.onToggleTask = ::toggleTaskBox
+        // The TODO list (leader W) opens a file at the line a row names.
+        ui.todos.onOpen = ::openTodo
         ui.up.setOnClickListener { goUp() }
         // A row dragged from the list drops on a folder row, on the listed
         // folder (anywhere else in the list), or on ↑ for the folder above.
@@ -138,6 +142,7 @@ class MainActivity : AppCompatActivity() {
                 val name = currentFile?.name
                 if (s != null && name != null) highlighter.paint(s, name)
                 if (previewing) renderPreview()
+                if (isMarkdown(name)) scheduleTaskCount()
             }
         })
 
@@ -185,6 +190,7 @@ class MainActivity : AppCompatActivity() {
         followFolder()
         list(tree)
         sidebarIsGit = false
+        sidebarIsTodos = false
         ui.gitPanel.folderChanged()
         showList(true)
     }
@@ -200,6 +206,7 @@ class MainActivity : AppCompatActivity() {
         followFolder()
         list(tree)
         sidebarIsGit = false
+        sidebarIsTodos = false
         ui.gitPanel.folderChanged()
         showList(true)
     }
@@ -1325,6 +1332,9 @@ class MainActivity : AppCompatActivity() {
         dirty = false
         mdUndo.clear()
         mdRedo.clear()
+        // Return continues a Markdown list, and the title counts its tasks.
+        ui.editor.markdownLists = isMarkdown(file.name)
+        countTasks()
         // Markdown and LaTeX open rendered, as they do in the other ports,
         // unless the file is empty: a blank preview looks like nothing opened.
         previewing = isPreviewable(file.name) && text.isNotBlank()
@@ -1598,6 +1608,129 @@ class MainActivity : AppCompatActivity() {
         editable.replace(p, old.length - q, source, p, source.length - q)
     }
 
+    // ------------------------------------------------------------ task lists
+
+    /**
+     * A tap on a task's box in the preview: the core flips the one character
+     * between its brackets (MarkdownTasks::toggleBox), and the new source
+     * reaches the buffer as any preview edit does, the smallest splice, with
+     * a snapshot for leader U. The file is unsaved until it is saved.
+     */
+    private fun toggleTaskBox(line: Int) {
+        if (currentFile == null || !markdownPreviewShowing()) return
+        val edited = Core.mdToggleBox(ui.editor.text.toString(), line) ?: return
+        applyPreviewSource(edited, undoable = true)
+        countTasks()
+    }
+
+    /**
+     * Leader L, Ctrl+L: the task key in a Markdown file's source, on every
+     * line the caret or selection touches (MarkdownTasks::toggle). A line
+     * becomes a task, or all of them are ticked, or all cleared. One
+     * replacement, so the text field's undo takes it back in one step.
+     */
+    private fun toggleTaskInSource() {
+        val file = currentFile
+        if (file == null || showingMedia || showingDiff || !isMarkdown(file.name)) {
+            say("Task lists are for Markdown files.")
+            return
+        }
+        if (!ui.editor.isShown) {
+            say(if (markdownPreviewShowing()) "In the preview, tap a task's box to tick it."
+                else "Task lists are toggled in the editor.")
+            return
+        }
+        val t = ui.editor.text ?: return
+        val a = maxOf(0, minOf(ui.editor.selectionStart, ui.editor.selectionEnd))
+        val b = maxOf(0, maxOf(ui.editor.selectionStart, ui.editor.selectionEnd))
+        val edit = Core.taskToggle(t.toString(), a, b) ?: return
+        val (s, e) = edit.applyTo(t)
+        ui.editor.setSelection(s, e)
+        countTasks()
+    }
+
+    /** Done and total tasks in the open Markdown file, or null: the title shows them. */
+    private var taskCount: IntArray? = null
+    private val recountTasks = Runnable { countTasks() }
+
+    /** Counts again a moment after typing stops. */
+    private fun scheduleTaskCount() {
+        ui.title.removeCallbacks(recountTasks)
+        ui.title.postDelayed(recountTasks, TASK_COUNT_DELAY)
+    }
+
+    private fun countTasks() {
+        ui.title.removeCallbacks(recountTasks)
+        val file = currentFile
+        val before = taskCount
+        taskCount = if (file != null && !showingMedia && isMarkdown(file.name))
+            Core.mdTaskCount(ui.editor.text.toString()).takeIf { it[1] > 0 } else null
+        if (!before.contentEquals(taskCount)) updateTitle()
+    }
+
+    /**
+     * Leader W, Ctrl+Shift+L: the project's TODOs and open tasks in the file
+     * list's place, as source control is; W again (or Back) is the list.
+     */
+    private fun toggleTodos() {
+        if (folder == null) { say("Open a folder first: leader O, Phone storage."); return }
+        sidebarIsTodos = ui.todos.visibility != View.VISIBLE
+        if (sidebarIsTodos) sidebarIsGit = false
+        showList(true)
+    }
+
+    /**
+     * The folder the TODO list reads, as a path, or why there is none. The
+     * core walks the folder with the file system, so a folder from the
+     * cloud or another app, which has no path, cannot be read.
+     */
+    private fun todoRoot(): Pair<File?, String?> {
+        val tree = folder ?: return null to "Open a folder first: leader O, Phone storage."
+        val path = pathOf(tree)
+        if (path == null) return null to "The TODO list reads folders on the phone's storage. " +
+                "${tree.name ?: "This folder"} comes from another app or the cloud."
+        if (tree.uri.scheme != "file" && !canReachPaths())
+            return null to "The TODO list needs \"All files access\" to read this folder. " +
+                    "Open the terminal once to be asked for it."
+        if (!path.isDirectory || !path.canRead()) return null to "Cannot read ${path.path}."
+        return path to null
+    }
+
+    /** A row of the TODO list: its file, in the source, at its line and column. */
+    private fun openTodo(todo: Core.Todo) {
+        val tree = folder ?: return
+        val target = entryUnder(tree, todo.path)
+        if (target == null || !target.isFile) {
+            say("${todo.path} is not there any more.")
+            return
+        }
+        val go = go@{
+            if (currentFile?.uri != target.uri) openEntry(target)
+            if (currentFile?.uri != target.uri) return@go
+            if (sidebarShowing()) showList(false)
+            // A line is a place in the source, so the source it is.
+            if (previewing) togglePreview()
+            ui.editor.post { moveCaretTo(todo.line, todo.column) }
+        }
+        // The open file itself needs no question about its unsaved edits.
+        if (currentFile?.uri == target.uri) go() else confirmLeave(go)
+    }
+
+    /** The entry at `relative` ('/' separated) under `tree`, or null. */
+    private fun entryUnder(tree: DocumentFile, relative: String): DocumentFile? {
+        if (tree.uri.scheme == "file") {
+            val base = tree.uri.path ?: return null
+            val f = File(base, relative)
+            return if (f.exists()) DocumentFile.fromFile(f) else null
+        }
+        var at = tree
+        for (part in relative.split('/')) {
+            if (part.isEmpty()) continue
+            at = at.findFile(part) ?: return null
+        }
+        return at
+    }
+
     /**
      * Leader U and R (Ctrl+Z and Ctrl+Shift+Z on a keyboard that has Ctrl):
      * in the Markdown preview, the preview's own edits, a snapshot each; in
@@ -1672,6 +1805,7 @@ class MainActivity : AppCompatActivity() {
         ui.terminal.stop()
         lsp.shutdown()
         ui.gitPanel.shutdown()
+        ui.todos.shutdown()
         ui.player.close()
         super.onDestroy()
     }
@@ -1754,9 +1888,11 @@ class MainActivity : AppCompatActivity() {
         if (start) fillStart()
         ui.start.visibility = if (start) View.VISIBLE else View.GONE
         ui.browser.visibility = View.GONE
-        ui.fileList.visibility = if (show && !start && !sidebarIsGit) View.VISIBLE else View.GONE
+        val filesKind = !sidebarIsGit && !sidebarIsTodos
+        ui.fileList.visibility = if (show && !start && filesKind) View.VISIBLE else View.GONE
         ui.gitPanel.visibility = if (show && !start && sidebarIsGit) View.VISIBLE else View.GONE
         setGitActive(show && !start && sidebarIsGit)
+        setTodosShowing(show && !start && sidebarIsTodos)
         ui.terminal.visibility = View.GONE; ui.termKeys.visibility = View.GONE
         val diff = !show && showingDiff
         ui.diffView.visibility = if (diff) View.VISIBLE else View.GONE
@@ -1773,11 +1909,12 @@ class MainActivity : AppCompatActivity() {
         ui.editor.visibility =
             if (show || preview || media || diff) View.GONE else View.VISIBLE
         ui.up.visibility =
-            if (show && !start && !sidebarIsGit && current?.uri != folder?.uri) View.VISIBLE else View.GONE
+            if (show && !start && filesKind && current?.uri != folder?.uri) View.VISIBLE else View.GONE
         if (!show) (if (diff) ui.diffView else if (media && showingPlayer) ui.player else ui.editor)
             .let { v -> v.requestFocus(); v.post { v.requestFocus() } }
         else if (start) ui.start.post { ui.start.focusFirst() }
         else if (sidebarIsGit) ui.gitPanel.focusPanel()
+        else if (sidebarIsTodos) ui.todos.focusPanel()
         else if (lostAccess || files.firstAction() >= 0) focusFileList()
         // Nothing to type into in a player; the keyboard strip the terminal
         // raised would otherwise stay under it.
@@ -1842,11 +1979,26 @@ class MainActivity : AppCompatActivity() {
     /** The start screen, the file list or source control, whichever is up. */
     private fun sidebarShowing() =
         ui.fileList.visibility == View.VISIBLE || ui.gitPanel.visibility == View.VISIBLE ||
-                ui.start.visibility == View.VISIBLE
+                ui.todos.visibility == View.VISIBLE || ui.start.visibility == View.VISIBLE
 
-    /** Which of the two the sidebar shows; leader V switches. */
+    /**
+     * Which the sidebar shows: source control (leader V), the TODO list
+     * (leader W), or with neither, the file list.
+     */
     private var sidebarIsGit = false
+    private var sidebarIsTodos = false
     private var gitActive = false
+
+    /**
+     * The TODO list on or off screen. Each time it comes on, the folder is
+     * read again; going off stops a scan still under way.
+     */
+    private fun setTodosShowing(on: Boolean) {
+        val was = ui.todos.visibility == View.VISIBLE
+        ui.todos.visibility = if (on) View.VISIBLE else View.GONE
+        if (on && !was) todoRoot().let { (root, why) -> ui.todos.scan(root, why) }
+        else if (!on && was) ui.todos.stop()
+    }
 
     private fun setGitActive(on: Boolean) {
         if (on == gitActive) return
@@ -1861,6 +2013,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun toggleSourceControl() {
         sidebarIsGit = ui.gitPanel.visibility != View.VISIBLE
+        if (sidebarIsGit) sidebarIsTodos = false
         showList(true)
     }
 
@@ -1912,6 +2065,7 @@ class MainActivity : AppCompatActivity() {
             browserShowing -> "Browser" to null
             ui.start.visibility == View.VISIBLE -> "MiniCode" to "No folder open"
             ui.gitPanel.visibility == View.VISIBLE -> "Source Control" to where(folder)
+            ui.todos.visibility == View.VISIBLE -> "TODOs" to where(folder)
             showingList -> {
                 val dir = current ?: folder
                 // The top of shared storage is a folder called "0".
@@ -1940,7 +2094,10 @@ class MainActivity : AppCompatActivity() {
                     else -> null
                 }
                 val state = if (dirty) "Unsaved" else null
-                ((if (dirty) "● " else "") + (file?.name ?: "MiniCode") + extra) to
+                // A Markdown file with tasks: "notes.md — 3 of 7 done".
+                val tasks = taskCount?.takeIf { !showingMedia && isMarkdown(file?.name) }
+                    ?.let { " — ${it[0]} of ${it[1]} done" }.orEmpty()
+                ((if (dirty) "● " else "") + (file?.name ?: "MiniCode") + extra + tasks) to
                         listOfNotNull(state, mode, file?.let(::whereFileIs)).joinToString(" · ")
             }
         }
@@ -2094,6 +2251,7 @@ class MainActivity : AppCompatActivity() {
             switchPanes(); return
         }
         sidebarIsGit = false
+        sidebarIsTodos = false
         showList(true)
     }
 
@@ -2196,6 +2354,10 @@ class MainActivity : AppCompatActivity() {
         // Undo and redo: the phone has no Ctrl for Ctrl+Z.
         'u' to { undo(redo = false) },
         'r' to { undo(redo = true) },
+        // Task lists: L toggles the task on the caret's lines in a Markdown
+        // file (Ctrl+L, as on the desktop); W lists what is left to do.
+        'l' to { toggleTaskInSource() },
+        'w' to { toggleTodos() },
     )
 
     /**
@@ -2211,6 +2373,9 @@ class MainActivity : AppCompatActivity() {
      * - B is the file list, as Cmd+B is on the Mac; Ctrl+Shift+B is the
      *   browser, as on Linux. G is go to definition, and Ctrl+Shift+G source
      *   control, as on the Mac and Linux (V is paste).
+     * - L toggles a task, as on the desktop, and Ctrl+Shift+L is the TODO
+     *   list. Leader W, the TODO list, has no Ctrl form: Ctrl+W closes
+     *   things everywhere else, and is left alone.
      * - While the terminal has the keyboard, Ctrl+letter is the shell's
      *   (Ctrl R searches history, Ctrl U kills the line, and so on). Only
      *   S, B, O and H are taken there, as they always were; with Shift held,
@@ -2233,6 +2398,8 @@ class MainActivity : AppCompatActivity() {
         return when {
             letter == 'b' -> letters.getValue(if (shift) 'b' else 'f')
             letter == 'g' && shift -> letters.getValue('v')
+            letter == 'l' && shift -> letters.getValue('w')
+            letter == 'w' -> null
             else -> letters[letter]
         }
     }
@@ -2304,7 +2471,8 @@ class MainActivity : AppCompatActivity() {
                             if (symbolRow) "Hide the symbol row" else "Show the symbol row",
                             "Undo", "Redo", "Shell: " + when (shellChoice()) {
                                 "termux" -> "Termux"; "system" -> "Android"; else -> "automatic" },
-                            "Web images in Markdown: " + if (WebImages.enabled) "on" else "off")
+                            "Web images in Markdown: " + if (WebImages.enabled) "on" else "off",
+                            "Toggle task", "TODOs")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setItems(items) { _, which ->
                 when (which) {
@@ -2325,6 +2493,8 @@ class MainActivity : AppCompatActivity() {
                     14 -> undo(redo = true)
                     15 -> chooseShell()
                     16 -> toggleWebImages()
+                    17 -> toggleTaskInSource()
+                    18 -> toggleTodos()
                 }
             }
             .show()
@@ -2343,6 +2513,7 @@ class MainActivity : AppCompatActivity() {
             ui.start.visibility = View.GONE
             ui.gitPanel.visibility = View.GONE
             setGitActive(false)
+            setTodosShowing(false)
             ui.diffView.visibility = View.GONE
             ui.editor.visibility = View.GONE
             ui.previewScroll.visibility = View.GONE
@@ -2404,6 +2575,8 @@ class MainActivity : AppCompatActivity() {
                         current?.uri != folder?.uri -> goUp()
                 // Back from source control is the file list, as V is.
                 ui.gitPanel.visibility == View.VISIBLE -> toggleSourceControl()
+                // Back from the TODO list is the file list, as W is.
+                ui.todos.visibility == View.VISIBLE -> toggleTodos()
                 else -> {
                     isEnabled = false
                     onBackPressedDispatcher.onBackPressed()
@@ -2429,6 +2602,7 @@ class MainActivity : AppCompatActivity() {
             ui.start.visibility = View.GONE
             ui.gitPanel.visibility = View.GONE
             setGitActive(false)
+            setTodosShowing(false)
             ui.diffView.visibility = View.GONE
             ui.editor.visibility = View.GONE
             ui.previewScroll.visibility = View.GONE
@@ -2665,9 +2839,14 @@ class MainActivity : AppCompatActivity() {
             "G      Go to its definition",
             "U      Undo",
             "R      Redo",
+            "L      Toggle a task (- [ ]) on the",
+            "       caret's lines, in Markdown",
+            "W      TODOs and open tasks in the",
+            "       project (W again: files)",
             "",
             "In the Markdown preview: tap a link",
-            "to follow it, double-tap a block to",
+            "to follow it, tap a task's box to",
+            "tick it, double-tap a block to",
             "edit it (Enter saves; New line in",
             "the row under the box for a new line).",
             "",
@@ -2692,6 +2871,8 @@ class MainActivity : AppCompatActivity() {
             "letter, except Ctrl B for files,",
             "Ctrl Shift B for the browser and",
             "Ctrl Shift G for source control,",
+            "Ctrl Shift L for TODOs (W has no",
+            "Ctrl form),",
             "and Ctrl Shift Space plays or pauses.",
             "In the terminal, Ctrl and a letter",
             "go to the shell; add Shift there.")
@@ -2716,6 +2897,8 @@ class MainActivity : AppCompatActivity() {
         const val LEADER_WINDOW = 700L
         /** Preview edits kept for undo, as on the Mac. */
         private const val MD_UNDO_LIMIT = 50
+        /** The title's task count is redone this long after typing stops. */
+        private const val TASK_COUNT_DELAY = 300L
 
         /** What the file list and the open file are watched for. */
         private const val LIST_EVENTS = android.os.FileObserver.CREATE or

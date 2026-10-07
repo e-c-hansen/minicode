@@ -85,6 +85,10 @@ The rest of this file is about how the port is built and developed.
   playing), and a double tap on a block to edit its Markdown. The leader's P flips between the preview
   and the source, keeping the place both ways. See "The Markdown preview"
   below.
+- **Task lists.** A task's box in the preview ticks on a tap, leader L
+  makes or toggles tasks in the source, Enter continues a list, the title
+  counts what is done, and leader W lists every TODO comment and open task
+  in the project. See "Task lists and the TODO list" below.
 - **Images and PDFs.** Decoded by Android, scaled down but never up, with the
   pixel size or page count in the title bar. A PDF shows its first page.
 - **Video and audio.** mp4, mov, webm, mkv and the rest, and mp3, flac, ogg
@@ -122,6 +126,7 @@ microphone. What is left is one unclaimed key, so that key is a leader:
       F  files or editor T  terminal              H  the shortcut list
       B  browser         V  source control        Y  on-screen keyboard
       U  undo            R  redo
+      L  toggle a task   W  TODOs in the project
     in the editor, with a language server:
       N  complete        K  what the symbol is    G  go to its definition
     in the terminal:
@@ -151,6 +156,9 @@ letter does what the leader and that letter do (`ctrlAction` in
   browser, as on Linux. Ctrl+G is go to definition and Ctrl+Shift+G source
   control, as on the Mac and Linux. Ctrl+Shift+Space plays or pauses a
   video or audio file, as on Linux.
+- Ctrl+L toggles a task, as leader L does, and Ctrl+Shift+L is the TODO
+  list. Leader W, the TODO list, has no Ctrl form, since Ctrl+W closes
+  things everywhere else.
 - While the terminal has the keyboard, Ctrl and a letter go to the shell,
   since bash needs Ctrl R, Ctrl U, Ctrl P and the rest. Only Ctrl+S, B, O and
   H are taken there, as they always were. With Shift added every shortcut
@@ -678,6 +686,86 @@ rest could be checked: a tap on a linked picture, the place kept when
 pictures land above a scrolled page, the toggle off making no request,
 and an edit from the preview making none.
 
+## Task lists and the TODO list
+
+GitHub's task lists (`- [ ] buy milk`, `- [x] done`), as the Mac and Linux
+have them. Every decision is the core's `src/MarkdownTasks.cpp` and
+`FolderSearch::findTodos`, reached through `minicode_jni.cpp`; Kotlin only
+draws and applies the one replacement each of them returns. What counts as
+a task is the parser's reading, so a `- [ ]` inside a code block never is.
+
+- **A box in the preview.** A task item's ☐ or ☑ (the core's marker run,
+  flag bit 19, with the task's state in bits 20 and 21) is drawn by a
+  `ReplacementSpan` as a rounded square the size of a capital: outlined in
+  grey while open, filled with the accent and a check mark when done. A
+  checked item's own text is grey (#858585, the desktop's `markdown.done`
+  default) and struck through. A single tap on the box (or up to 12 dp left
+  of it, or on the space after it, but not on the item's text) ticks or
+  clears it at once, without waiting to see if a
+  second tap follows: `MarkdownTasks::toggleBox` changes the one character
+  between the brackets, and the new source reaches the buffer as every
+  preview edit does, as the smallest splice, so it is highlighted, seen by
+  the language server, marked unsaved and undone by leader U (a snapshot).
+  The file is not saved. A double tap anywhere but on a box still opens
+  the edit box, and the preview's text is still not selectable.
+- **Leader L, Ctrl+L, in the source** of a Markdown file: the task key on
+  every line the caret or selection touches (`MarkdownTasks::toggle`). A
+  line that is not a task becomes one (`text` and `- text` become
+  `- [ ] text`, `1. text` becomes `1. [ ] text`); when all of them already
+  are, they are all ticked, or all cleared if they all were. It is one
+  replacement, so the text field's own undo (leader U in the source) takes
+  it back, and the selection moves where the core says. In the preview
+  the key says to tap the box instead; in any other file it says task
+  lists are for Markdown.
+- **Enter continues a list** in a Markdown file, whether the keyboard
+  sends Enter as a key or as text: `CodeEditText` asks
+  `MarkdownTasks::newline` first, which starts the next item with the same
+  indentation, quote markers and marker (`- [ ] ` after a task, `4. ` after
+  `3. `), or ends the list when the item is empty. Anywhere else the core
+  answers "no change" and Enter keeps the line's indentation as before.
+- **The count in the title.** While a Markdown file with at least one task
+  is open, the title reads `notes.md — 3 of 7 done` (`MarkdownTasks::count`).
+  It is counted on opening, 300 ms after typing stops, and at once after a
+  tap on a box or leader L. The title is cut from the left when it is too
+  long, so the count stays in view.
+- **The TODO list** (leader W, Ctrl+Shift+L, or ⋮ TODOs) takes the file
+  list's place, as source control does: every TODO, FIXME, HACK, XXX and BUG
+  after a comment opener, and every open task in the project's Markdown
+  files, in Find in Folder's order and limits (hidden folders,
+  `node_modules`, `build` and the like skipped, files over 1 MB skipped,
+  2,000 at most). Rows read `relative/path:line  text`. Up and Down move,
+  Page Up, Page Down (or Space), Home and End jump, and Enter or a tap opens
+  the file in the source with the caret at the tag or the box, asking about
+  unsaved changes first unless it is the open file. W again or Back
+  returns to the files. After opening a row, the leader alone or Back
+  brings the TODO list back, read again.
+- **Read afresh each time it is shown**, on one worker thread. A scan still
+  running when the pane goes, or when another starts, is cancelled through
+  the core's cancel flag, and its answer is dropped. The rows shown last
+  stay until the new answer arrives. `adb shell setprop log.tag.MiniCodeTodos
+  DEBUG` logs each scan's count and time.
+- **Only folders with a path.** The core walks the folder with the file
+  system, so the list works for Phone storage folders and folders picked
+  on the phone's own storage once "All files access" is granted. A folder
+  from the cloud or another app has no path, and the pane says so rather
+  than showing nothing.
+
+Built and compiled only (2026-10-07): the phone was not connected, so none
+of this has been seen running. To try at the phone, with a scratch folder
+in `/sdcard/mc-test` holding a Markdown file of tasks (nested, numbered, in
+a quote, one inside a code fence) and a source file with TODO comments:
+the boxes' look, open and checked, at both text sizes; a tap on a box
+ticking and clearing it, the title's dot and count following, leader U and
+R undoing and redoing it, and the file unchanged on disk until leader S; a
+tap beside the box and on the item's text (the text must not toggle); a
+double tap on the item's text opening the edit box; checked text grey and
+struck through; leader L (and Ctrl+L with the Fn key set to Ctrl) on one
+line, on a selection of mixed lines, on a blank line, and in a non-Markdown
+file; Enter from the Titan's own keyboard after a task, after `3.`, on an
+empty item, and in a plain paragraph; the TODO list from leader W and
+Ctrl+Shift+L, a row opening at its line by Enter and by a tap, W and Back
+returning to the files, and a Drive folder getting its message.
+
 ## The LaTeX preview
 
 Opening a `.tex`, `.ltx` or `.latex` file shows it typeset, as Markdown opens
@@ -920,7 +1008,9 @@ Run it from the repository root; the tests read a few files from `demo/`,
 
 - `app/src/main/cpp/minicode_jni.cpp` — highlighting and Markdown across the
   JNI boundary, including `MarkdownEdit` for editing from the preview, with
-  block ranges converted from UTF-8 bytes to UTF-16 units. The editor uses the core's incremental highlighter over a
+  block ranges converted from UTF-8 bytes to UTF-16 units, and
+  `MarkdownTasks` and `FolderSearch::findTodos` for task lists and the
+  TODO list. The editor uses the core's incremental highlighter over a
   native mirror of the text, so an edit crosses as its position and the
   inserted characters, and only the lines it can have changed are recolored.
 - `app/src/main/cpp/jni_strings.h` — Java strings to real UTF-8 and back.
@@ -951,6 +1041,8 @@ Run it from the repository root; the tests read a few files from `demo/`,
   pictures, taps on links, double taps to edit, and the lines behind place
   keeping.
 - `MarkdownEditDialog.kt`: the box a double tap opens.
+- `TodoPane.kt`: the TODO list in the file list's place, scanned by the
+  core's `FolderSearch::findTodos` on a worker thread.
 - `WebImages.kt`: fetching https pictures for the preview, with the
   in-memory cache and the memory of failures.
 - `Termux.kt`: runs a program in Termux with its stdin and stdout on a
