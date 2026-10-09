@@ -14,24 +14,31 @@
 # What goes in:
 #   - the upstream tarball, minicode_VERSION.orig.tar.gz, is `git archive` of
 #     the tag vVERSION minus debian/ (fetched from origin if it is not here
-#     yet; release.sh lets gh create the tag on GitHub). git archive and
-#     gzip -n give the same bytes every time, which matters because Launchpad
-#     refuses a second, different tarball under the same name;
+#     yet; release.sh lets gh create the tag on GitHub), compressed by
+#     gzip_zlib below. That gives the same bytes every time and on every
+#     machine, which matters because Launchpad refuses a second, different
+#     tarball under the same name;
 #   - debian/ is taken from HEAD as committed, so a packaging fix made after
 #     a release can go out as ~ppa2 without a new release.
 #
-# The build runs in an ubuntu:26.04 container (packaging/ppa/Dockerfile) that
-# sees only those two files, read-only, and builds in its own /build. The
-# signing key never enters the container: the unsigned .dsc and .changes are
-# copied out, signed on this Mac with gpg (pinentry asks for the passphrase as
-# usual), and copied back, the .changes regenerated in between so it carries
-# the signed .dsc's checksums. dput then uploads from the container, after
-# checking the signatures against the public key.
+# On the Mac the build runs in an ubuntu:26.04 container
+# (packaging/ppa/Dockerfile) that sees only those two files, read-only, and
+# builds in its own /build. The signing key never enters the container: the
+# unsigned .dsc and .changes are copied out, signed with gpg on the host
+# (pinentry asks for the passphrase as usual), and copied back, the .changes
+# regenerated in between so it carries the signed .dsc's checksums. dput then
+# uploads from the container, after checking the signatures against the
+# public key.
 #
-# Needs Docker, and for a real upload gpg (brew install gnupg pinentry-mac) and
-# the key id in MINICODE_PPA_KEY or ~/.config/minicode/ppa-key-id. The key must
-# be the one uploaded to the Launchpad account that owns the PPA; see
-# packaging/PPA.md for the one-time setup.
+# Where Docker is not running, on an Ubuntu machine with the same tools
+# installed (sudo apt install --no-install-recommends debhelper devscripts
+# distro-info dput libdistro-info-perl lintian), the same steps run directly
+# in a scratch folder instead, and dput uses the host's own gpg.
+#
+# A real upload needs gpg and the key id in MINICODE_PPA_KEY or
+# ~/.config/minicode/ppa-key-id. The key must be one registered to the
+# Launchpad account that owns the PPA (the Mac and the ThinkPad each have
+# their own); see packaging/PPA.md for the one-time setup.
 #   MINICODE_PPA_SERIES   Ubuntu series to build for (default resolute, 26.04)
 #   MINICODE_PPA          upload target (default ppa:echansen/minicode)
 set -euo pipefail
@@ -97,11 +104,31 @@ fi
 if ! [[ "$SIGNER" =~ ^(.+)\ \<([^>]+)\>$ ]]; then
     echo "error: cannot read a name and address from '$SIGNER'" >&2; exit 1
 fi
-SIGNER_NAME="${BASH_REMATCH[1]}"
+# Without the key's comment, "(MiniCode releases, ThinkPad)", which says which
+# key it is and is no part of the name.
+SIGNER_NAME="${BASH_REMATCH[1]% (*)}"
 SIGNER_EMAIL="${BASH_REMATCH[2]}"
 
+# In the container when Docker runs, as on the Mac; otherwise here, which
+# takes an Ubuntu (or Debian) machine with the container's tools installed.
+NATIVE=""
 if ! docker info >/dev/null 2>&1; then
-    echo "error: Docker is not running (open -a Docker)" >&2; exit 1
+    NATIVE=1
+    MISSING=""
+    for tool in dch dpkg-buildpackage dpkg-genchanges dh lintian dput; do
+        command -v "$tool" >/dev/null || MISSING="$MISSING $tool"
+    done
+    if [ -n "$MISSING" ]; then
+        echo "error: Docker is not running (on the Mac: open -a Docker), and building here" >&2
+        echo "       needs$MISSING. On Ubuntu: sudo apt install --no-install-recommends" >&2
+        echo "       debhelper devscripts distro-info dput libdistro-info-perl lintian" >&2
+        exit 1
+    fi
+    HOST_SERIES="$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-}")"
+    if [ "$HOST_SERIES" != "$SERIES" ]; then
+        echo "warning: building for $SERIES on ${HOST_SERIES:-an unknown release}; the container" >&2
+        echo "         (Docker) builds with $SERIES's own tools" >&2
+    fi
 fi
 if ! git cat-file -e HEAD:debian/control 2>/dev/null; then
     echo "error: there is no committed debian/ at HEAD" >&2; exit 1
@@ -136,25 +163,57 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# What the Mac's gzip -n -9 wrote for 1.4.12, byte for byte: zlib at level 9
+# behind a header with no name and no time. Ubuntu's GNU gzip deflates with
+# code of its own, and its different bytes would be refused for any release
+# the PPA already holds.
+gzip_zlib() {
+    python3 -I -c '
+import struct, sys, zlib
+data = sys.stdin.buffer.read()
+z = zlib.compressobj(9, zlib.DEFLATED, -15, 8)
+out = sys.stdout.buffer
+out.write(b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\x03")
+out.write(z.compress(data) + z.flush())
+out.write(struct.pack("<II", zlib.crc32(data), len(data) & 0xffffffff))
+'
+}
+
 echo "==> Making $ORIG from v$VERSION, and debian/ from HEAD"
 git archive --format=tar --prefix="minicode-$VERSION/" "v$VERSION" -- . ':(exclude)debian' |
-    gzip -n -9 > "$WORK/$ORIG"
+    gzip_zlib > "$WORK/$ORIG"
 git archive --format=tar HEAD debian > "$WORK/debian.tar"
 
-echo "==> Building the source package $PKGVER in an ubuntu:26.04 container"
-docker build -q -t "$IMAGE" packaging/ppa >/dev/null
-CID="$(docker run -d -v "$WORK:/in:ro" -w /build \
-        -e VERSION="$VERSION" -e PKGVER="$PKGVER" -e SERIES="$SERIES" -e SRCOPT="$SRCOPT" \
-        -e DEBFULLNAME="$SIGNER_NAME" -e DEBEMAIL="$SIGNER_EMAIL" \
-        "$IMAGE" sleep infinity)"
-in_container() { docker exec "$CID" bash -euo pipefail -c "$1"; }
+# build_run runs a step where the package is built, with the inputs in $IN
+# and the work in $B; fetch and put copy a file out of and into $B.
+if [ -n "$NATIVE" ]; then
+    echo "==> Building the source package $PKGVER here (Docker is not running)"
+    IN="$WORK" B="$WORK/build"
+    build_run() {
+        env VERSION="$VERSION" PKGVER="$PKGVER" SERIES="$SERIES" SRCOPT="$SRCOPT" \
+            DEBFULLNAME="$SIGNER_NAME" DEBEMAIL="$SIGNER_EMAIL" IN="$IN" B="$B" \
+            bash -euo pipefail -c "$1"
+    }
+    fetch() { cp "$B/$1" "$2"; }
+    put() { cp "$1" "$B/$2"; }
+else
+    echo "==> Building the source package $PKGVER in an ubuntu:26.04 container"
+    docker build -q -t "$IMAGE" packaging/ppa >/dev/null
+    CID="$(docker run -d -v "$WORK:/in:ro" -w /build \
+            -e VERSION="$VERSION" -e PKGVER="$PKGVER" -e SERIES="$SERIES" -e SRCOPT="$SRCOPT" \
+            -e DEBFULLNAME="$SIGNER_NAME" -e DEBEMAIL="$SIGNER_EMAIL" -e IN=/in -e B=/build \
+            "$IMAGE" sleep infinity)"
+    build_run() { docker exec "$CID" bash -euo pipefail -c "$1"; }
+    fetch() { docker cp -q "$CID:/build/$1" "$2"; }
+    put() { docker cp -q "$1" "$CID:/build/$2"; }
+fi
 
-in_container '
-    mkdir -p /build && cd /build
-    cp "/in/minicode_$VERSION.orig.tar.gz" .
+build_run '
+    mkdir -p "$B" && cd "$B"
+    cp "$IN/minicode_$VERSION.orig.tar.gz" .
     tar xzf "minicode_$VERSION.orig.tar.gz"
     cd "minicode-$VERSION"
-    tar xf /in/debian.tar
+    tar xf "$IN/debian.tar"
     # One entry per upload, written here: the committed changelog is only a
     # placeholder for builds from a checkout.
     rm debian/changelog
@@ -174,7 +233,7 @@ if [ -n "$DRY" ]; then
     mkdir -p build/ppa
     rm -f build/ppa/minicode_*
     for f in "$ORIG" "$DSC" "minicode_${PKGVER}.debian.tar.xz" "$CHANGES"; do
-        docker cp -q "$CID:/build/$f" build/ppa/
+        fetch "$f" build/ppa/
     done
     echo "==> Dry run: the unsigned source package is in build/ppa/; nothing was signed or uploaded."
     ls -1 build/ppa
@@ -188,23 +247,25 @@ sign() {
 }
 
 echo "==> Signing with $KEY"
-docker cp -q "$CID:/build/$DSC" "$WORK/$DSC"
+fetch "$DSC" "$WORK/$DSC"
 sign "$DSC"
-docker cp -q "$WORK/$DSC" "$CID:/build/$DSC"
-in_container 'cd "/build/minicode-$VERSION" && dpkg-genchanges -S "$SRCOPT" -O"../minicode_${PKGVER}_source.changes" 2>/dev/null'
-docker cp -q "$CID:/build/$CHANGES" "$WORK/$CHANGES"
+put "$WORK/$DSC" "$DSC"
+build_run 'cd "$B/minicode-$VERSION" && dpkg-genchanges -S "$SRCOPT" -O"../minicode_${PKGVER}_source.changes" 2>/dev/null'
+fetch "$CHANGES" "$WORK/$CHANGES"
 sign "$CHANGES"
-docker cp -q "$WORK/$CHANGES" "$CID:/build/$CHANGES"
+put "$WORK/$CHANGES" "$CHANGES"
 
-gpg --export "$KEY" | docker exec -i "$CID" gpg --quiet --import
+# dput checks the signatures with gpg where it runs: the container needs the
+# public key; here, the host's gpg has it already.
+[ -n "$NATIVE" ] || gpg --export "$KEY" | docker exec -i "$CID" gpg --quiet --import
 if [ -n "$SIMULATE" ]; then
     echo "==> Checking the upload to $PPA (dput -s: nothing is sent)"
-    in_container "cd /build && dput -s '$PPA' \"minicode_\${PKGVER}_source.changes\""
+    build_run "cd \"\$B\" && dput -s '$PPA' \"minicode_\${PKGVER}_source.changes\""
     echo "==> Simulated: $PKGVER is signed and passes dput's checks; nothing was uploaded."
     exit 0
 fi
 echo "==> Uploading to $PPA"
-in_container "cd /build && dput '$PPA' \"minicode_\${PKGVER}_source.changes\""
+build_run "cd \"\$B\" && dput '$PPA' \"minicode_\${PKGVER}_source.changes\""
 
 echo "==> Uploaded $PKGVER. Launchpad mails $SIGNER_EMAIL when it is accepted and"
 echo "    built; progress at https://launchpad.net/~$PPA_OWNER/+archive/ubuntu/$PPA_NAME/+packages"

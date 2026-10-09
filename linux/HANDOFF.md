@@ -1119,6 +1119,19 @@ reality"):
   at the top left, and a window presented later covers the others. Kill the
   Xwayland and the app's process group afterwards. This is what found three
   of the bugs the September hooks had missed.
+  - **Kill by PID, never by name.** The user runs the packaged MiniCode
+    (`/usr/bin/minicode`), so `pkill -x minicode` closes their own windows
+    too, unsaved work included. That happened in October 2026. And never
+    `pkill -f` with a pattern that appears in your own command line.
+  - **Prefer `Xephyr :87 -screen 1150x760 -noreset -ac`** (with `DISPLAY=:0`)
+    to the rootful Xwayland. Xwayland stopped delivering XTest pointer
+    events to the app whenever the user's real mouse was outside its window
+    (the X pointer moved, the app saw nothing), which makes a scroll or a
+    click test pass or fail at random. Xephyr does not.
+  - **Read the XWD's bits per pixel** from the header (offset 44). These
+    servers write 24-bit pixels; decoding them as 32-bit squeezes the image
+    to three quarters of its width and adds the stripes, so a point in the
+    picture is not the point to click.
 
 Per feature:
 1. Put the logic in `../src` with tests, and run `make test`.
