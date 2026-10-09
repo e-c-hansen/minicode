@@ -5,16 +5,17 @@
 //
 //   GtkApplicationWindow
 //     vbox
-//       hpaned  (movable divider)
-//         [start] sidebar stack: FileTree, or the Source Control panel
-//                 (GitPanel) in its place on Ctrl+Shift+G
-//         [end]   right vbox
-//                   editor find-bar (GtkSearchBar)
-//                   vpaned  (movable divider)
-//                     [start] upper vbox
-//                               Editor (GtkTextView, vexpand)
-//                               browser revealer  (#ifdef MINICODE_ENABLE_BROWSER)
-//                     [end]   Terminal panel      (#ifdef MINICODE_ENABLE_TERMINAL)
+//       overlay  (the shortcut list floats over the panes, Ctrl+Shift+H)
+//         hpaned  (movable divider)
+//           [start] sidebar stack: FileTree, or the Source Control panel
+//                   (GitPanel) in its place on Ctrl+Shift+G
+//           [end]   right vbox
+//                     editor find-bar (GtkSearchBar)
+//                     vpaned  (movable divider)
+//                       [start] upper vbox
+//                                 Editor (GtkTextView, vexpand)
+//                                 browser revealer  (#ifdef MINICODE_ENABLE_BROWSER)
+//                       [end]   Terminal panel      (#ifdef MINICODE_ENABLE_TERMINAL)
 //       status bar (GtkLabel, VS Code blue)
 //
 // The editor and the browser share the upper area — showing the browser hides
@@ -111,6 +112,7 @@ struct App {
     // The floating shortcut list and the status-bar label that advertises it.
     GtkWidget* hintsPanel = nullptr;
     GtkWidget* hintsLabel = nullptr;
+    GtkWidget* hintsScroll = nullptr;
     GtkWidget* hintsHint  = nullptr;
 
     std::string rootDir;
@@ -1570,20 +1572,37 @@ static std::string hintsText(App* app) {
 static GtkWidget* buildHintsPanel(App* app) {
     app->hintsLabel = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(app->hintsLabel), 0.0);
+    // Room for the scrollbar, which is drawn over the content.
+    gtk_widget_set_margin_end(app->hintsLabel, 10);
+
+    // The list is taller than a laptop's window once the terminal's keys and a
+    // file's own are in it, so it scrolls. The scrolled window asks for the
+    // label's whole size, GtkOverlay never gives an overlay child more than the
+    // overlay has, and what does not fit is a wheel turn away.
+    app->hintsScroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(app->hintsScroll),
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_propagate_natural_width(
+        GTK_SCROLLED_WINDOW(app->hintsScroll), TRUE);
+    gtk_scrolled_window_set_propagate_natural_height(
+        GTK_SCROLLED_WINDOW(app->hintsScroll), TRUE);
+    gtk_widget_add_css_class(app->hintsScroll, "minicode-scroller");
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(app->hintsScroll), app->hintsLabel);
 
     app->hintsPanel = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_add_css_class(app->hintsPanel, "minicode-hints");
-    gtk_box_append(GTK_BOX(app->hintsPanel), app->hintsLabel);
+    gtk_box_append(GTK_BOX(app->hintsPanel), app->hintsScroll);
 
     // Float it in the top-right corner, the same corner macOS puts it in, and
-    // keep it from stretching to fill the overlay.
+    // keep it from stretching to fill the overlay. The bottom margin matters
+    // only when the list is cut to fit.
     gtk_widget_set_halign(app->hintsPanel, GTK_ALIGN_END);
     gtk_widget_set_valign(app->hintsPanel, GTK_ALIGN_START);
     gtk_widget_set_margin_top(app->hintsPanel, 18);
     gtk_widget_set_margin_end(app->hintsPanel, 18);
-    // The panel is a reference card, not a control: clicks belong to whatever is
-    // underneath it.
-    gtk_widget_set_can_target(app->hintsPanel, FALSE);
+    gtk_widget_set_margin_bottom(app->hintsPanel, 18);
+    // It takes the pointer, which costs only clicks on text it already hides,
+    // so that the wheel scrolls the list.
     gtk_widget_set_visible(app->hintsPanel, FALSE);
     return app->hintsPanel;
 }
@@ -1601,7 +1620,11 @@ static void act_toggle_hints(GSimpleAction*, GVariant*, gpointer userp) {
     const bool showing = !gtk_widget_get_visible(app->hintsPanel);
     // Rebuilt on every open, not once at startup: half its value is reporting
     // which panels are currently up.
-    if (showing) gtk_label_set_text(GTK_LABEL(app->hintsLabel), hintsText(app).c_str());
+    if (showing) {
+        gtk_label_set_text(GTK_LABEL(app->hintsLabel), hintsText(app).c_str());
+        gtk_adjustment_set_value(gtk_scrolled_window_get_vadjustment(
+                                     GTK_SCROLLED_WINDOW(app->hintsScroll)), 0);
+    }
     gtk_widget_set_visible(app->hintsPanel, showing);
     gtk_label_set_text(GTK_LABEL(app->hintsHint),
                        showing ? kHintsHintHide : kHintsHintShow);
@@ -2133,16 +2156,18 @@ static App* newWindow(const std::string& root, const std::string& file) {
     gtk_box_append(GTK_BOX(statusBar), app->settingsLabel);
     gtk_box_append(GTK_BOX(statusBar), app->hintsHint);
 
-    GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_box_append(GTK_BOX(vbox), app->hpaned);
-    gtk_box_append(GTK_BOX(vbox), statusBar);
-
-    // The hints panel floats over the whole window rather than displacing it,
-    // so it needs a GtkOverlay between the window and the layout.
+    // The hints panel floats over the panes rather than displacing them, so it
+    // needs a GtkOverlay. The status bar stays outside it: a long list then
+    // stops above the bar, and the bar's "Hide shortcuts" stays in sight.
     GtkWidget* overlay = gtk_overlay_new();
-    gtk_overlay_set_child(GTK_OVERLAY(overlay), vbox);
+    gtk_overlay_set_child(GTK_OVERLAY(overlay), app->hpaned);
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), buildHintsPanel(app));
-    gtk_window_set_child(GTK_WINDOW(app->window), overlay);
+    gtk_widget_set_vexpand(overlay, TRUE);
+
+    GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_box_append(GTK_BOX(vbox), overlay);
+    gtk_box_append(GTK_BOX(vbox), statusBar);
+    gtk_window_set_child(GTK_WINDOW(app->window), vbox);
 
     // Language servers: one session for the window, told about every file the
     // editor opens, saves and edits through the editor's observer hook.
