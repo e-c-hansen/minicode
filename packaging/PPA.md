@@ -159,6 +159,47 @@ rejected, with the reason), then builds it; the build log and status are at
 build takes a few minutes, and publishing another few after that, before
 `apt install minicode` finds it.
 
+### 9. A second machine (the ThinkPad)
+
+Any Ubuntu machine can upload too, with a key of its own: Launchpad takes
+several keys per account, and each machine keeps its secret key to itself.
+The ThinkPad's is `AEE321CE250697CFEB921ED8EEF9635EDB7F9335`, made on
+2026-10-09; the Mac's is `340F7652C7B877AB7F1CB3E3C45D7F425A211F40`. To set
+up another:
+
+1. Make the key with the same shape as the Mac's (RSA 4096, an encryption
+   subkey, a comment saying which machine), with GNOME's pinentry asking
+   for the passphrase:
+
+       gpg --batch --generate-key <<'EOF'
+       Key-Type: RSA
+       Key-Length: 4096
+       Key-Usage: sign
+       Subkey-Type: RSA
+       Subkey-Length: 4096
+       Subkey-Usage: encrypt
+       Name-Real: Eric Hansen
+       Name-Comment: MiniCode releases, ThinkPad
+       Name-Email: eric.calvin.hansen@gmail.com
+       Expire-Date: 5y
+       %commit
+       EOF
+
+2. Send it to the keyserver and add it on Launchpad, as in steps 2 and 4
+   (the confirmation mail is decrypted on the new machine, with the new key).
+3. Put its fingerprint in `~/.config/minicode/ppa-key-id`, as in step 7.
+4. Install the tools the container has, since there is no Docker there:
+
+       sudo apt install --no-install-recommends debhelper devscripts \
+           distro-info dput libdistro-info-perl lintian
+
+5. Check with `scripts/ppa.sh --simulate` on the latest release.
+
+ppa.sh builds in the container whenever Docker is running, and otherwise
+runs the same steps directly in a scratch folder, which needs those tools.
+The changelog's signer is the key's name without its comment, so uploads
+from either machine read the same.
+
 ## How a release flows
 
 `scripts/release.sh 1.4.13` does what it always did (tests, stamping, the
@@ -170,25 +211,39 @@ the secret key and that Docker is running, before anything is pushed, and
 the rest of the release is already out, and `scripts/ppa.sh 1.4.13` retries
 it alone.
 
+`scripts/release.sh --linux 1.4.13` is the release for a change only Ubuntu
+users would notice, and it runs on the ThinkPad as well as the Mac: it runs
+the tests, stamps the version into `Info.plist` (the Linux build reads its
+version from there), commits, pushes `main` with the tag `v1.4.13`, and
+uploads to the PPA. There is no GitHub Release, zip, APK or cask, so
+Homebrew users and Obtainium stay on the last full release; Obtainium in
+particular would find no APK in a release without one. The next full
+release takes a higher version and brings the change to the Mac and Android.
+Either kind of release refuses a version whose tag already exists.
+
 `scripts/ppa.sh VERSION` does this:
 
 1. Makes `minicode_VERSION.orig.tar.gz` with `git archive` of the tag
    `vVERSION`, leaving out `debian/` (the tag is fetched from GitHub first if
    it is not in the local repository, since `gh release create` makes it
-   there). `git archive` and `gzip -n` give the same bytes every time, which
-   matters: Launchpad refuses a second tarball of the same name with
-   different contents.
+   there), and compresses it with zlib at level 9 and a header with no name
+   or time, which is what the Mac's `gzip -n -9` did. That gives the same
+   bytes every time and on either machine, which matters: Launchpad refuses
+   a second tarball of the same name with different contents. Ubuntu's GNU
+   `gzip` deflates with code of its own, and its tarball for 1.4.12 did not
+   match the one the PPA holds.
 2. Takes `debian/` from HEAD as committed (uncommitted changes there are left
    out, with a warning).
 3. In an `ubuntu:26.04` container (`packaging/ppa/Dockerfile`, built on first
    use, about 780 MB) that sees only those two files, read-only, writes the
    changelog entry with `dch` from the version on the command line, builds
    the source package with `dpkg-buildpackage -S`, and runs lintian on it,
-   stopping on any error or warning.
-4. Copies the `.dsc` out, signs it on the Mac with gpg, copies it back,
+   stopping on any error or warning. Without Docker, the same steps run
+   directly in a scratch folder (step 9 above).
+4. Copies the `.dsc` out, signs it on the host with gpg, copies it back,
    regenerates the `.changes` so it carries the signed `.dsc`'s checksums,
    and signs that the same way.
-5. Uploads with `dput ppa:echansen/minicode` from the container.
+5. Uploads with `dput ppa:echansen/minicode` from where it built.
 
 The committed `debian/changelog` is only a placeholder, numbered `0~local-0`
 so that apt replaces anything built from it; each upload's changelog is the

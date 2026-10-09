@@ -46,7 +46,9 @@ this file covers the macOS app except where it says otherwise.
   one-time Launchpad setup is in `packaging/PPA.md`. Live since
   2026-10-07 (account `echansen`, key 340F7652...1F40 in the Mac's gpg
   with its passphrase in the Keychain); 1.4.12 was the first upload, built
-  for amd64 and published about 35 minutes after the upload.
+  for amd64 and published about 35 minutes after the upload. The ThinkPad
+  has its own key (AEE321CE...DB7F9335, made 2026-10-09) and no Docker, so
+  there ppa.sh runs the packaging tools directly (`packaging/PPA.md`, step 9).
 - `scripts/release.sh 1.2.0` — cut a release from a clean `main`: runs the
   tests, stamps the version into `Info.plist` and `packaging/minicode.rb` and
   commits that, builds the zip and checks the built app reports the version,
@@ -55,8 +57,13 @@ this file covers the macOS app except where it says otherwise.
   command line is the only place a version is typed; never edit it by hand.
   Then `brew update && brew upgrade --cask e-c-hansen/tap/minicode` so the
   user's own copy has it; they run MiniCode from Homebrew and expect a
-  finished, user-visible Mac change to reach it (Linux-only changes need no
-  release, since Linux users build from source).
+  finished, user-visible Mac change to reach it.
+- `scripts/release.sh --linux 1.2.1` — a Linux-only release, which runs on
+  the ThinkPad too: tests, stamps `Info.plist` (the Linux build's version
+  comes from it), pushes `main` with the tag, and uploads to the PPA. No
+  GitHub Release, zip, APK or cask, so Homebrew and Obtainium stay on the
+  last full release. Ubuntu users get Linux changes only through a release
+  of one kind or the other.
 
 ## Layout of the code
 
