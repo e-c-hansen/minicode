@@ -5459,6 +5459,18 @@ void testMarkdownTasks() {
     CHECK(taskToggled("{a\n}b") == "{- [ ] a\n}b");
     // A wrapped item's continuation line toggles its item.
     CHECK(taskToggled("- [ ] long\n  more|") == "- [x] long\n  more|");
+    // A box written without a list marker gets the marker, not a second box,
+    // and keeps its tick; then the next press checks as usual.
+    CHECK(taskToggled("[ ] study|") == "- [ ] study|");
+    CHECK(taskToggled("[x] done|") == "- [x] done|");
+    CHECK(taskToggled("  [X] done|") == "  - [X] done|");
+    CHECK(taskToggled("[ ]|") == "- [ ]|");
+    CHECK(taskToggled("{[ ] a\n[x] b\nc}") == "{- [ ] a\n- [x] b\n- [ ] c}");
+    CHECK(taskToggled("> [ ] quoted|") == "> - [ ] quoted|");
+    // Only a real box: a link, "[]" and "[ ]x" are text.
+    CHECK(taskToggled("[a] b|") == "- [ ] [a] b|");
+    CHECK(taskToggled("[] b|") == "- [ ] [] b|");
+    CHECK(taskToggled("[ ]x|") == "- [ ] [ ]x|");
     // Code, headings, tables and rules are not tasks.
     CHECK(taskToggled("```\n|x\n```") == "unchanged");
     CHECK(taskToggled("```\n- [ ] x|\n```") == "unchanged");

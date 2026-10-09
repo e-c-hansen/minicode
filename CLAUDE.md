@@ -609,6 +609,12 @@ task lists, so files stay portable.
   a list item calls `MarkdownTasks::newline` before the keep-the-indent
   code on every port. The title shows "3 of 7 done", refreshed 0.3 s after
   typing stops.
+- **"[ ] item" with no dash is not a task** (GitHub, Obsidian and VS Code
+  agree), so it previews as one run-on paragraph with no boxes. The user's
+  own TODO.md was written that way and was why they saw no boxes on
+  2026-10-09, with 1.4.12 running fine. The task key used to give such a
+  line a second box (`- [ ] [ ] item`); it now adds only the dash and keeps
+  the box and its tick. The core's rule for what is a task is unchanged.
 - **TODOs window.** On the Mac and Linux it is the Find in Folder window
   in a TODOs mode (the field filters the scan; it rescans on every show),
   on Android `TodoPane.kt` in the file list's place. A tag counts only

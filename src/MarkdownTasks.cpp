@@ -259,7 +259,15 @@ Edit toggle(const std::u16string& text, size_t selStart, size_t selEnd) {
         if (allTasks) {
             edits.push_back({s.start + p.mark, 1, allChecked ? u" " : u"x"});
         } else if (!p.list) {
-            edits.push_back({s.start + p.contentStart, 0, u"- [ ] "});
+            // "[ ] text" written without a list marker already has its box:
+            // it gets the marker only, keeping the box and whether it was
+            // ticked, rather than a second box in front of it.
+            const std::u16string line = text.substr(s.start, s.end - s.start);
+            const size_t c = p.contentStart;
+            const bool hasBox = c + 2 < line.size() && line[c] == u'[' && line[c + 2] == u']' &&
+                                (line[c + 1] == u' ' || line[c + 1] == u'x' || line[c + 1] == u'X') &&
+                                (c + 3 == line.size() || isSpace(line, c + 3));
+            edits.push_back({s.start + p.contentStart, 0, hasBox ? u"- " : u"- [ ] "});
         } else if (!p.task) {
             // After the marker and one space; a marker with no text gets one.
             if (p.textStart > p.markerEnd)
