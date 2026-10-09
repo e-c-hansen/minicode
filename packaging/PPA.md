@@ -31,6 +31,11 @@ comes before `/usr/bin` on the PATH, and GNOME prefers a launcher in
           ~/.local/share/applications/org.minicode.Editor.desktop \
           ~/.local/share/icons/hicolor/*/apps/org.minicode.Editor.png
     update-desktop-database ~/.local/share/applications
+    gtk4-update-icon-cache -f -t ~/.local/share/icons/hicolor
+
+Rebuild the icon cache, not just the launcher's. The old cache still lists
+the deleted icons, and since it sits ahead of the system one, the dock looks
+there, finds no file, and shows a black square instead of the icon.
 
 To remove it again: `sudo apt remove minicode`, and
 `sudo add-apt-repository --remove ppa:echansen/minicode` to drop the PPA.
