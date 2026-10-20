@@ -1,16 +1,24 @@
 // Lsp.mm — Objective-C++. See Lsp.h. Server processes (MCLspServer), the
-// completion list (MCCompletionPopup), the editor's text view (CodeTextView)
+// editor's text view (CodeTextView), the completion list and its
+// documentation (MCCompletionPopup), the signature hint (MCSignaturePopup)
 // and the per-window glue (LspSession).
 #import "Lsp.h"
 #import "AppSettings.h"
 #include "LspClient.h"
+#include "MarkdownParser.h"
+#include "PythonEnvs.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <math.h>
 #include <memory>
 #include <signal.h>
 #include <stdlib.h>
 #include <unistd.h>
+
+NSNotificationName const MCLspSessionDidChangeNotification = @"MCLspSessionDidChange";
+NSNotificationName const MCPythonInterpreterDidChangeNotification =
+    @"MCPythonInterpreterDidChange";
 
 // ------------------------------------------------------------------ helpers
 static NSColor *LHex(unsigned int rgb) {
@@ -51,20 +59,90 @@ static BOOL IsIdentChar(unichar c) {
            [[NSCharacterSet alphanumericCharacterSet] characterIsMember:c];
 }
 
+static BOOL Contains(const std::vector<std::string> &list, const std::string &s) {
+    return std::find(list.begin(), list.end(), s) != list.end();
+}
+
+// The status dot's colors.
+static NSColor *DotGreen(void) { return LHex(0x73C991); }
+static NSColor *DotYellow(void) { return LHex(0xCCA700); }
+static NSColor *DotRed(void) { return LHex(0xF14C4C); }
+static NSColor *DotGray(void) { return LHex(0x9CA3AF); }
+
 // ------------------------------------------------------ finding a server
+// Folders inside `dir`, newest version first (v22.17.0 before v18.20.4,
+// 3.13 before 3.9).
+static NSArray<NSString *> *VersionedSubdirs(NSString *dir) {
+    NSArray<NSString *> *names =
+        [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:nil];
+    names = [names sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+        return [b compare:a options:NSNumericSearch];
+    }];
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *n in names)
+        if (![n hasPrefix:@"."]) [out addObject:[dir stringByAppendingPathComponent:n]];
+    return out;
+}
+
+// npm's global prefix when ~/.npmrc sets one (prefix=~/.npm-global).
+static NSString *NpmrcPrefix(NSString *home) {
+    NSString *rc = [NSString stringWithContentsOfFile:[home stringByAppendingPathComponent:@".npmrc"]
+                                             encoding:NSUTF8StringEncoding error:nil];
+    NSCharacterSet *ws = [NSCharacterSet whitespaceCharacterSet];
+    for (NSString *line in [rc componentsSeparatedByString:@"\n"]) {
+        NSRange eq = [line rangeOfString:@"="];
+        if (eq.location == NSNotFound) continue;
+        NSString *key = [[line substringToIndex:eq.location] stringByTrimmingCharactersInSet:ws];
+        if (![key isEqualToString:@"prefix"]) continue;
+        NSString *v = [[line substringFromIndex:NSMaxRange(eq)] stringByTrimmingCharactersInSet:ws];
+        v = [v stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"\"'"]];
+        v = [v stringByReplacingOccurrencesOfString:@"${HOME}" withString:home];
+        if (v.length) return v.stringByExpandingTildeInPath;
+    }
+    return nil;
+}
+
 // A Finder-launched app gets a short PATH (/usr/bin:/bin:/usr/sbin:/sbin), so
 // the places package managers put language servers are searched as well.
 NSArray<NSString *> *MCSearchDirs(void) {
     NSMutableArray<NSString *> *dirs = [NSMutableArray array];
     NSString *path = NSProcessInfo.processInfo.environment[@"PATH"] ?: @"";
     NSString *home = NSHomeDirectory();
-    NSArray *extra = @[@"/opt/homebrew/bin", @"/usr/local/bin",
-                       [home stringByAppendingPathComponent:@".cargo/bin"],
-                       [home stringByAppendingPathComponent:@"go/bin"],
-                       [home stringByAppendingPathComponent:@".local/bin"],
-                       @"/usr/bin"];
+    NSString * (^h)(NSString *) = ^NSString *(NSString *sub) {
+        return [home stringByAppendingPathComponent:sub];
+    };
+    NSMutableArray<NSString *> *extra =
+        [NSMutableArray arrayWithObjects:@"/opt/homebrew/bin", @"/usr/local/bin",
+                                         @"/opt/local/bin", nil];
+    // npm's global installs: a prefix of the user's own, the folder npm's
+    // docs suggest, and the Node versions nvm, fnm and volta manage.
+    NSString *npm = NpmrcPrefix(home);
+    if (npm) [extra addObject:[npm stringByAppendingPathComponent:@"bin"]];
+    [extra addObject:h(@".npm-global/bin")];
+    for (NSString *v in VersionedSubdirs(h(@".nvm/versions/node")))
+        [extra addObject:[v stringByAppendingPathComponent:@"bin"]];
+    for (NSString *v in VersionedSubdirs(h(@"Library/Application Support/fnm/node-versions")))
+        [extra addObject:[v stringByAppendingPathComponent:@"installation/bin"]];
+    [extra addObjectsFromArray:@[h(@".volta/bin"), h(@"Library/pnpm"), h(@".bun/bin"),
+                                 h(@".cargo/bin"), h(@"go/bin"),
+                                 h(@".local/bin")]];   // pipx, uv tool, pip --user on Linux
+    // pip install --user on a Mac.
+    for (NSString *v in VersionedSubdirs(h(@"Library/Python")))
+        [extra addObject:[v stringByAppendingPathComponent:@"bin"]];
+    [extra addObject:h(@".pyenv/shims")];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray<NSString *> *existing = [NSMutableArray array];
+    for (NSString *d in extra) {
+        BOOL isDir = NO;
+        if ([fm fileExistsAtPath:d isDirectory:&isDir] && isDir) [existing addObject:d];
+    }
+    [existing addObject:@"/usr/bin"];
+    // Homebrew's llvm is not linked into bin; its clangd comes after the
+    // developer tools' own.
+    for (NSString *d in @[@"/opt/homebrew/opt/llvm/bin", @"/usr/local/opt/llvm/bin"])
+        if ([fm fileExistsAtPath:d]) [existing addObject:d];
     for (NSString *d in [[path componentsSeparatedByString:@":"]
-                            arrayByAddingObjectsFromArray:extra])
+                            arrayByAddingObjectsFromArray:existing])
         if (d.length && ![dirs containsObject:d]) [dirs addObject:d];
     return dirs;
 }
@@ -74,7 +152,7 @@ NSArray<NSString *> *MCSearchDirs(void) {
 // running the shim pops up the "install developer tools" dialog, which an
 // editor opening a .c file must never do. So the shim is never run; the
 // real binary is, when it exists.
-static NSString *MCDeveloperTool(NSString *name) {
+NSString *MCDeveloperToolPath(NSString *name) {
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *dev = [fm destinationOfSymbolicLinkAtPath:@"/var/db/xcode_select_link"
                                                   error:nil];
@@ -92,34 +170,61 @@ static NSString *MCDeveloperTool(NSString *name) {
     return nil;
 }
 
-NSString *MCFindProgram(NSString *name) {
+// `first` is searched before everything else (a Python environment's bin,
+// where pylsp may be installed).
+static NSString *FindProgram(NSString *name, NSArray<NSString *> *first) {
     NSFileManager *fm = [NSFileManager defaultManager];
     if ([name containsString:@"/"]) {
         NSString *p = name.stringByExpandingTildeInPath;
         return [fm isExecutableFileAtPath:p] ? p : nil;
     }
-    for (NSString *dir in MCSearchDirs()) {
+    NSArray *dirs = first.count ? [first arrayByAddingObjectsFromArray:MCSearchDirs()]
+                                : MCSearchDirs();
+    for (NSString *dir in dirs) {
         if ([dir isEqualToString:@"/usr/bin"]) {
-            NSString *real = MCDeveloperTool(name);
+            NSString *real = MCDeveloperToolPath(name);
             if (real) return real;
             continue;
         }
         NSString *p = [dir stringByAppendingPathComponent:name];
-        if ([fm isExecutableFileAtPath:p]) return p;
+        BOOL isDir = NO;
+        if ([fm isExecutableFileAtPath:p] && [fm fileExistsAtPath:p isDirectory:&isDir] && !isDir)
+            return p;
     }
     return nil;
 }
 
+NSString *MCFindProgram(NSString *name) { return FindProgram(name, nil); }
+
 // A command line from the settings (or the defaults) -> program path plus
 // arguments, or nil when the program is not installed.
-static NSArray<NSString *> *MCResolveCommand(const std::string &command) {
+static NSArray<NSString *> *MCResolveCommand(const std::string &command,
+                                             NSArray<NSString *> *first) {
     std::vector<std::string> words = Lsp::splitCommand(command);
     if (words.empty()) return nil;
-    NSString *prog = MCFindProgram(NS(words[0]));
+    NSString *prog = FindProgram(NS(words[0]), first);
     if (!prog) return nil;
     NSMutableArray *argv = [NSMutableArray arrayWithObject:prog];
     for (size_t i = 1; i < words.size(); i++) [argv addObject:NS(words[i])];
     return argv;
+}
+
+static std::vector<std::string> ArgvWords(NSArray<NSString *> *argv) {
+    std::vector<std::string> words;
+    for (NSString *a in argv) words.push_back(Std(a));
+    return words;
+}
+
+// How a server is named in the status bar: pyright, not pyright-langserver.
+static NSString *ServerDisplayName(NSString *key, NSArray<NSString *> *argv) {
+    if ([key isEqualToString:@"python"]) {
+        Lsp::PythonServer kind = Lsp::pythonServerKind(ArgvWords(argv));
+        if (kind != Lsp::PythonServer::Other) return NS(Lsp::pythonServerName(kind));
+    }
+    NSString *name = argv.firstObject.lastPathComponent;
+    if ([name hasSuffix:@"-langserver"])
+        name = [name substringToIndex:name.length - @"-langserver".length];
+    return name;
 }
 
 // ------------------------------------------------------------- MCLspServer
@@ -132,10 +237,16 @@ static NSMutableSet<MCLspServer *> *gServers;   // every running server
 
 @interface MCLspServer : NSObject
 @property(nonatomic, readonly, copy) NSString *key;
-@property(nonatomic, readonly, copy) NSString *name;   // program name, for the status bar
+@property(nonatomic, readonly, copy) NSString *name;   // for the status bar: "pyright"
+@property(nonatomic, readonly, copy) NSString *program;
+@property(nonatomic, readonly, copy) NSArray<NSString *> *argv;
 @property(nonatomic, readonly) BOOL running;
 @property(nonatomic, readonly) BOOL stopping;
 @property(nonatomic, readonly) pid_t pid;
+@property(nonatomic, readonly) NSDate *started;
+// Once it has ended: "exited with status 1", "killed by signal 9", with the
+// last line it wrote to stderr.
+@property(nonatomic, readonly, copy) NSString *exitDescription;
 @property(nonatomic, readonly) BOOL processRunning;   // NSTask's view, any thread
 @property(nonatomic, copy) void (^onExit)(MCLspServer *server);
 - (instancetype)initWithKey:(NSString *)key argv:(NSArray<NSString *> *)argv
@@ -153,13 +264,17 @@ static NSMutableSet<MCLspServer *> *gServers;   // every running server
     dispatch_queue_t _writeQueue;
     std::unique_ptr<Lsp::Client> _client;
     NSFileHandle *_log;
+    NSMutableData *_errTail;   // the end of what it wrote to stderr
 }
 
 - (instancetype)initWithKey:(NSString *)key argv:(NSArray<NSString *> *)argv
                        root:(NSString *)root {
     if (!(self = [super init])) return nil;
     _key = [key copy];
-    _name = [argv.firstObject.lastPathComponent copy];
+    _argv = [argv copy];
+    _program = [argv.firstObject copy];
+    _name = [ServerDisplayName(key, argv) copy];
+    _errTail = [NSMutableData data];
     _task = [[NSTask alloc] init];
     _task.executableURL = [NSURL fileURLWithPath:argv.firstObject];
     _task.arguments = [argv subarrayWithRange:NSMakeRange(1, argv.count - 1)];
@@ -168,16 +283,24 @@ static NSMutableSet<MCLspServer *> *gServers;   // every running server
         _task.currentDirectoryURL = [NSURL fileURLWithPath:root];
 
     // Servers start helpers of their own (node, go, cargo), which need the
-    // same wider PATH the server was found on.
+    // same wider PATH the server was found on. The server's own folder goes
+    // first: a script that starts with "#!/usr/bin/env node" then runs the
+    // node it was installed with (nvm keeps them side by side), not
+    // whichever comes first on PATH.
     NSMutableDictionary *env = [NSProcessInfo.processInfo.environment mutableCopy];
-    env[@"PATH"] = [MCSearchDirs() componentsJoinedByString:@":"];
+    NSMutableArray *path = [NSMutableArray arrayWithObject:
+        _program.stringByDeletingLastPathComponent];
+    for (NSString *d in MCSearchDirs()) if (![path containsObject:d]) [path addObject:d];
+    env[@"PATH"] = [path componentsJoinedByString:@":"];
     _task.environment = env;
 
-    NSPipe *toServer = [NSPipe pipe], *fromServer = [NSPipe pipe];
+    NSPipe *toServer = [NSPipe pipe], *fromServer = [NSPipe pipe], *errors = [NSPipe pipe];
     _task.standardInput = toServer;
     _task.standardOutput = fromServer;
-    // stderr must go somewhere that never fills up: clangd logs every
-    // request there, and a full pipe would stall the server mid-reply.
+    // stderr is drained as it comes, so it never fills (clangd logs every
+    // request there, and a full pipe would stall the server mid-reply). Its
+    // last lines say why a server that dies died.
+    _task.standardError = errors;
     NSString *logPath = NSProcessInfo.processInfo.environment[@"MINICODE_LSP_LOG"];
     if (logPath.length) {
         // O_APPEND, so several servers (and their stderr) share one file
@@ -185,7 +308,6 @@ static NSMutableSet<MCLspServer *> *gServers;   // every running server
         int fd = open(logPath.fileSystemRepresentation, O_WRONLY | O_CREAT | O_APPEND, 0644);
         if (fd >= 0) _log = [[NSFileHandle alloc] initWithFileDescriptor:fd closeOnDealloc:YES];
     }
-    _task.standardError = _log ?: [NSFileHandle fileHandleWithNullDevice];
 
     __weak MCLspServer *weakSelf = self;
     fromServer.fileHandleForReading.readabilityHandler = ^(NSFileHandle *h) {
@@ -193,9 +315,19 @@ static NSMutableSet<MCLspServer *> *gServers;   // every running server
         if (data.length == 0) { h.readabilityHandler = nil; return; }
         dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf received:data]; });
     };
+    errors.fileHandleForReading.readabilityHandler = ^(NSFileHandle *h) {
+        NSData *data = h.availableData;
+        if (data.length == 0) { h.readabilityHandler = nil; return; }
+        dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf stderrArrived:data]; });
+    };
     _task.terminationHandler = ^(NSTask *t) {
-        (void)t;
-        dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf ended]; });
+        int status = t.terminationStatus;
+        NSTaskTerminationReason reason = t.terminationReason;
+        // A moment later, so what it wrote to stderr as it died is in.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC),
+                       dispatch_get_main_queue(), ^{
+            [weakSelf endedWithStatus:status reason:reason];
+        });
     };
 
     NSError *err = nil;
@@ -204,6 +336,7 @@ static NSMutableSet<MCLspServer *> *gServers;   // every running server
         return nil;
     }
     _running = YES;
+    _started = [NSDate date];
     _pid = _task.processIdentifier;
     _input = toServer.fileHandleForWriting;
     _inputFd = _input.fileDescriptor;
@@ -267,9 +400,37 @@ static NSMutableSet<MCLspServer *> *gServers;   // every running server
     _client->receive((const char *)data.bytes, data.length);
 }
 
-- (void)ended {
+- (void)stderrArrived:(NSData *)data {
+    if (_log) [_log writeData:data];
+    [_errTail appendData:data];
+    const NSUInteger keep = 4096;
+    if (_errTail.length > keep)
+        [_errTail replaceBytesInRange:NSMakeRange(0, _errTail.length - keep) withBytes:NULL
+                               length:0];
+}
+
+// The last line the server wrote to stderr that says something.
+- (NSString *)lastErrorLine {
+    NSString *s = [[NSString alloc] initWithData:_errTail encoding:NSUTF8StringEncoding]
+                      ?: [[NSString alloc] initWithData:_errTail encoding:NSISOLatin1StringEncoding];
+    NSArray<NSString *> *lines = [s componentsSeparatedByCharactersInSet:
+                                        [NSCharacterSet newlineCharacterSet]];
+    for (NSString *line in lines.reverseObjectEnumerator) {
+        NSString *t = [line stringByTrimmingCharactersInSet:
+                                [NSCharacterSet whitespaceCharacterSet]];
+        if (t.length) return t.length > 240 ? [[t substringToIndex:240] stringByAppendingString:@"…"] : t;
+    }
+    return nil;
+}
+
+- (void)endedWithStatus:(int)status reason:(NSTaskTerminationReason)reason {
     if (!_running) return;
     _running = NO;
+    NSString *how = reason == NSTaskTerminationReasonUncaughtSignal
+                        ? [NSString stringWithFormat:@"killed by signal %d", status]
+                        : [NSString stringWithFormat:@"exited with status %d", status];
+    NSString *last = [self lastErrorLine];
+    _exitDescription = last ? [NSString stringWithFormat:@"%@: %@", how, last] : how;
     [self closeInput];
     [gServers removeObject:self];
     if (self.onExit) self.onExit(self);
@@ -561,9 +722,84 @@ static NSColor *SeverityColor(NSInteger severity) {
 }
 @end
 
+// ------------------------------------------------------- documentation text
+// Documentation from a server, drawn simply: code (spans, blocks and the
+// signature) in the monospaced font, the rest as plain text, with Markdown
+// read by the preview's own parser.
+static NSFont *DocFont(BOOL mono, BOOL bold, BOOL italic, CGFloat size) {
+    NSFont *f = mono ? [NSFont monospacedSystemFontOfSize:size
+                                                   weight:bold ? NSFontWeightSemibold
+                                                               : NSFontWeightRegular]
+                     : (bold ? [NSFont boldSystemFontOfSize:size] : [NSFont systemFontOfSize:size]);
+    if (italic) f = [[NSFontManager sharedFontManager] convertFont:f toHaveTrait:NSItalicFontMask];
+    return f;
+}
+
+static void TrimTrailingSpace(NSMutableAttributedString *s) {
+    NSCharacterSet *ws = [NSCharacterSet whitespaceAndNewlineCharacterSet];
+    while (s.length && [ws characterIsMember:[s.string characterAtIndex:s.length - 1]])
+        [s deleteCharactersInRange:NSMakeRange(s.length - 1, 1)];
+}
+
+static NSAttributedString *MCDocText(NSString *text, BOOL markdown) {
+    NSColor *body = LHex(0xCCCCCC);
+    NSMutableAttributedString *s = [NSMutableAttributedString new];
+    if (!markdown) {
+        [s appendAttributedString:[[NSAttributedString alloc]
+            initWithString:text attributes:@{NSFontAttributeName: DocFont(NO, NO, NO, 12),
+                                              NSForegroundColorAttributeName: body}]];
+        TrimTrailingSpace(s);
+        return s;
+    }
+    for (const MdRun &r : MarkdownParser::parse(Std(text))) {
+        if (r.gap) {   // between blocks: a short gap, not a whole line
+            [s appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"
+                attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:5]}]];
+            continue;
+        }
+        if (r.rule) continue;   // the gaps around it already part what it parts
+        BOOL mono = r.code || r.codeBlock || r.math;
+        NSString *text = NS(r.text);
+        // pylsp escapes underscores even inside code spans (`object\_hook`),
+        // where Markdown keeps the backslash; nobody means it there.
+        if (r.code && !r.codeBlock)
+            text = [text stringByReplacingOccurrencesOfString:@"\\_" withString:@"_"];
+        NSFont *font = DocFont(mono, r.bold || r.heading, r.italic, mono ? 11.5 : 12);
+        NSColor *color = r.codeBlock ? LHex(0xD4D4D4)
+                       : r.code ? LHex(0xCE9178)
+                       : r.link ? LHex(0x4EA1F7) : body;
+        [s appendAttributedString:[[NSAttributedString alloc]
+            initWithString:text
+                attributes:@{NSFontAttributeName: font, NSForegroundColorAttributeName: color}]];
+    }
+    TrimTrailingSpace(s);
+    return s;
+}
+
+// The panel beside the completion list: the item's detail (its type or
+// signature), then its documentation. Nil when there is neither.
+static NSAttributedString *MCCompletionDoc(const Lsp::CompletionItem &item) {
+    NSMutableAttributedString *s = [NSMutableAttributedString new];
+    if (!item.detail.empty())
+        [s appendAttributedString:[[NSAttributedString alloc]
+            initWithString:NS(item.detail)
+                attributes:@{NSFontAttributeName: DocFont(YES, NO, NO, 11.5),
+                             NSForegroundColorAttributeName: LHex(0xD4D4D4)}]];
+    NSString *doc = [NS(item.documentation) stringByTrimmingCharactersInSet:
+                                               [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (doc.length) {
+        if (s.length)
+            [s appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n\n"
+                attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:5]}]];
+        [s appendAttributedString:MCDocText(doc, item.docIsMarkdown)];
+    }
+    return s.length ? s : nil;
+}
+
 // ------------------------------------------------------ MCCompletionPopup
-// A borderless child window with a one-column table. It never becomes key:
-// the text view keeps focus and forwards arrows, Return, Tab and Esc.
+// A borderless child window with a one-column table, and a second one beside
+// it for the selected item's documentation. Neither becomes key: the text
+// view keeps focus and forwards arrows, Return, Tab and Esc.
 @interface MCCompletionPanel : NSPanel
 @end
 @implementation MCCompletionPanel
@@ -571,37 +807,49 @@ static NSColor *SeverityColor(NSInteger severity) {
 - (BOOL)canBecomeMainWindow { return NO; }
 @end
 
+static MCCompletionPanel *MakePopupPanel(NSRect frame) {
+    MCCompletionPanel *p = [[MCCompletionPanel alloc]
+        initWithContentRect:frame
+                  styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
+                    backing:NSBackingStoreBuffered defer:YES];
+    p.hasShadow = YES;
+    p.releasedWhenClosed = NO;
+    p.backgroundColor = LHex(0x252526);
+    p.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+    p.becomesKeyOnlyIfNeeded = YES;
+    return p;
+}
+
 @interface MCCompletionPopup : NSObject <NSTableViewDataSource, NSTableViewDelegate>
 @property(nonatomic, copy) void (^onAccept)(NSInteger row);
+@property(nonatomic, copy) void (^onSelectionChanged)(void);
 @property(nonatomic, readonly) BOOL visible;
 @property(nonatomic, readonly) NSArray<NSString *> *labels;
+@property(nonatomic, readonly) NSString *docText;   // nil when the doc panel is hidden
 - (void)showLabels:(NSArray<NSString *> *)labels details:(NSArray<NSString *> *)details
          atScreenRect:(NSRect)caret parent:(NSWindow *)parent;
+// The selected item's documentation beside the list; nil hides it.
+- (void)showDoc:(NSAttributedString *)doc;
 - (void)close;
 - (void)moveSelection:(NSInteger)delta;
 - (NSInteger)selectedRow;
+- (NSRect)frame;
 @end
 
 @implementation MCCompletionPopup {
-    MCCompletionPanel *_panel;
+    MCCompletionPanel *_panel, *_docPanel;
     NSTableView *_table;
+    NSTextView *_docView;
+    NSScrollView *_docScroll;
     NSArray<NSString *> *_details;
     __weak NSWindow *_parent;
+    BOOL _docVisible;
 }
-static const CGFloat kRowHeight = 20, kPopupWidth = 420;
+static const CGFloat kRowHeight = 20, kPopupWidth = 420, kDocWidth = 400, kDocMaxHeight = 320;
 static const NSInteger kMaxRows = 10;
 
 - (void)build {
-    _panel = [[MCCompletionPanel alloc]
-        initWithContentRect:NSMakeRect(0, 0, kPopupWidth, 100)
-                  styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
-                    backing:NSBackingStoreBuffered defer:YES];
-    _panel.hasShadow = YES;
-    _panel.releasedWhenClosed = NO;
-    _panel.backgroundColor = LHex(0x252526);
-    _panel.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
-    _panel.becomesKeyOnlyIfNeeded = YES;
-
+    _panel = MakePopupPanel(NSMakeRect(0, 0, kPopupWidth, 100));
     NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:_panel.contentView.bounds];
     scroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     scroll.hasVerticalScroller = YES;
@@ -631,6 +879,29 @@ static const NSInteger kMaxRows = 10;
     [_panel.contentView addSubview:scroll];
 }
 
+- (void)buildDoc {
+    _docPanel = MakePopupPanel(NSMakeRect(0, 0, kDocWidth, 100));
+    _docScroll = [[NSScrollView alloc] initWithFrame:_docPanel.contentView.bounds];
+    _docScroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    _docScroll.hasVerticalScroller = YES;
+    _docScroll.autohidesScrollers = YES;
+    _docScroll.drawsBackground = NO;
+    _docScroll.wantsLayer = YES;
+    _docScroll.layer.borderWidth = 1;
+    _docScroll.layer.borderColor = LHex(0x454545).CGColor;
+    _docView = [[NSTextView alloc] initWithFrame:_docScroll.bounds];
+    _docView.editable = NO;
+    _docView.selectable = NO;
+    _docView.drawsBackground = NO;
+    _docView.textContainerInset = NSMakeSize(6, 6);
+    _docView.verticallyResizable = YES;
+    _docView.horizontallyResizable = NO;
+    _docView.autoresizingMask = NSViewWidthSizable;
+    _docView.textContainer.widthTracksTextView = YES;
+    _docScroll.documentView = _docView;
+    [_docPanel.contentView addSubview:_docScroll];
+}
+
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tv {
     (void)tv;
     return (NSInteger)_labels.count;
@@ -644,6 +915,10 @@ static const NSInteger kMaxRows = 10;
         f = [NSTextField labelWithString:@""];
         f.identifier = @"cell";
         f.lineBreakMode = NSLineBreakByTruncatingTail;
+    }
+    if (row < 0 || (NSUInteger)row >= _labels.count) {
+        f.stringValue = @"";
+        return f;
     }
     NSFont *mono = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
     NSMutableAttributedString *s = [[NSMutableAttributedString alloc]
@@ -660,11 +935,18 @@ static const NSInteger kMaxRows = 10;
     return f;
 }
 
+- (void)tableViewSelectionDidChange:(NSNotification *)note {
+    (void)note;
+    if (_visible && self.onSelectionChanged) self.onSelectionChanged();
+}
+
 - (void)clicked:(id)sender {
     (void)sender;
     NSInteger row = _table.clickedRow;
     if (row >= 0 && self.onAccept) self.onAccept(row);
 }
+
+- (NSRect)frame { return _panel.frame; }
 
 - (void)showLabels:(NSArray<NSString *> *)labels details:(NSArray<NSString *> *)details
          atScreenRect:(NSRect)caret parent:(NSWindow *)parent {
@@ -673,6 +955,8 @@ static const NSInteger kMaxRows = 10;
                              ? _labels[(NSUInteger)[self selectedRow]] : nil;
     _labels = [labels copy];
     _details = [details copy];
+    BOOL wasVisible = _visible;
+    _visible = NO;   // no selection callbacks while the rows are replaced
     [_table reloadData];
     // Keep the highlighted item while the list narrows, else the first.
     NSUInteger keep = previous ? [_labels indexOfObject:previous] : NSNotFound;
@@ -688,21 +972,71 @@ static const NSInteger kMaxRows = 10;
     if (NSMinY(frame) < NSMinY(vis)) frame.origin.y = NSMaxY(caret) + 2;   // above
     if (NSMaxX(frame) > NSMaxX(vis)) frame.origin.x = NSMaxX(vis) - kPopupWidth;
     [_panel setFrame:frame display:YES];
-    if (!_visible || _parent != parent) {
+    if (!wasVisible || _parent != parent) {
         [_parent removeChildWindow:_panel];
         [parent addChildWindow:_panel ordered:NSWindowAbove];
         _parent = parent;
     }
     [_panel orderFront:nil];
     _visible = YES;
+    if (_docVisible) [self placeDoc];
+    if (self.onSelectionChanged) self.onSelectionChanged();
 }
 
+- (void)placeDoc {
+    NSRect list = _panel.frame;
+    NSScreen *screen = _parent.screen ?: [NSScreen mainScreen];
+    NSRect vis = screen.visibleFrame;
+    NSRect f = _docPanel.frame;
+    f.origin.x = NSMaxX(list) + 2;
+    if (NSMaxX(f) > NSMaxX(vis)) f.origin.x = NSMinX(list) - f.size.width - 2;   // left of it
+    f.origin.y = NSMaxY(list) - f.size.height;   // tops level
+    if (NSMinY(f) < NSMinY(vis)) f.origin.y = NSMinY(vis);
+    [_docPanel setFrame:f display:YES];
+}
+
+- (void)showDoc:(NSAttributedString *)doc {
+    if (!doc.length || !_visible) { [self hideDoc]; return; }
+    if (!_docPanel) [self buildDoc];
+    [_docPanel setContentSize:NSMakeSize(kDocWidth, kDocMaxHeight)];
+    [_docView.textStorage setAttributedString:doc];
+    NSLayoutManager *lm = _docView.layoutManager;
+    [lm ensureLayoutForTextContainer:_docView.textContainer];
+    CGFloat h = ceil([lm usedRectForTextContainer:_docView.textContainer].size.height) +
+                2 * _docView.textContainerInset.height + 2;
+    h = MIN(MAX(h, kRowHeight + 2), kDocMaxHeight);
+    NSRect f = _docPanel.frame;
+    f.size = NSMakeSize(kDocWidth, h);
+    [_docPanel setFrame:f display:NO];
+    [self placeDoc];
+    [_docView scrollRangeToVisible:NSMakeRange(0, 0)];
+    if (!_docVisible) {
+        [_parent addChildWindow:_docPanel ordered:NSWindowAbove];
+        [_docPanel orderFront:nil];
+        _docVisible = YES;
+    }
+}
+
+- (void)hideDoc {
+    if (!_docVisible) return;
+    _docVisible = NO;
+    [_parent removeChildWindow:_docPanel];
+    [_docPanel orderOut:nil];
+}
+
+- (NSString *)docText { return _docVisible ? _docView.string : nil; }
+
 - (void)close {
+    [self hideDoc];
     if (!_visible) return;
     _visible = NO;
     [_parent removeChildWindow:_panel];
     [_panel orderOut:nil];
     _labels = @[];
+    _details = @[];
+    // The table must hear the rows are gone, or a later layout pass asks
+    // for one of them.
+    [_table reloadData];
 }
 
 - (NSInteger)selectedRow { return _table ? _table.selectedRow : -1; }
@@ -717,33 +1051,194 @@ static const NSInteger kMaxRows = 10;
 }
 @end
 
+// ------------------------------------------------------- MCSignaturePopup
+// The signature of the call being typed, above the caret's line, with the
+// argument being typed in bold.
+@interface MCSignaturePopup : NSObject
+@property(nonatomic, readonly) BOOL visible;
+@property(nonatomic, readonly) NSString *text;
+- (void)show:(NSAttributedString *)text atScreenRect:(NSRect)caret parent:(NSWindow *)parent;
+- (void)close;
+@end
+
+@implementation MCSignaturePopup {
+    MCCompletionPanel *_panel;
+    NSTextField *_label;
+    __weak NSWindow *_parent;
+}
+static const CGFloat kSignatureMaxWidth = 600;
+
+- (void)show:(NSAttributedString *)text atScreenRect:(NSRect)caret parent:(NSWindow *)parent {
+    if (!_panel) {
+        _panel = MakePopupPanel(NSMakeRect(0, 0, 200, 24));
+        NSView *box = _panel.contentView;
+        box.wantsLayer = YES;
+        box.layer.borderWidth = 1;
+        box.layer.borderColor = LHex(0x454545).CGColor;
+        _label = [NSTextField wrappingLabelWithString:@""];
+        _label.selectable = NO;
+        [box addSubview:_label];
+    }
+    _label.attributedStringValue = text;
+    NSSize fit = [_label sizeThatFits:NSMakeSize(kSignatureMaxWidth, CGFLOAT_MAX)];
+    fit.width = MIN(ceil(fit.width), kSignatureMaxWidth);
+    fit.height = MIN(ceil(fit.height), 200);
+    NSSize size = NSMakeSize(fit.width + 16, fit.height + 10);
+    _label.frame = NSMakeRect(8, 5, fit.width, fit.height);
+    NSRect frame = NSMakeRect(caret.origin.x - 8, NSMaxY(caret) + 2, size.width, size.height);
+    NSScreen *screen = parent.screen ?: [NSScreen mainScreen];
+    NSRect vis = screen.visibleFrame;
+    // Below the line when there is no room above it.
+    if (NSMaxY(frame) > NSMaxY(vis)) frame.origin.y = caret.origin.y - size.height - 2;
+    if (NSMaxX(frame) > NSMaxX(vis)) frame.origin.x = NSMaxX(vis) - size.width;
+    if (NSMinX(frame) < NSMinX(vis)) frame.origin.x = NSMinX(vis);
+    [_panel setFrame:frame display:YES];
+    if (!_visible || _parent != parent) {
+        [_parent removeChildWindow:_panel];
+        [parent addChildWindow:_panel ordered:NSWindowAbove];
+        _parent = parent;
+    }
+    [_panel orderFront:nil];
+    _visible = YES;
+    _text = [text.string copy];
+}
+
+- (void)close {
+    if (!_visible) return;
+    _visible = NO;
+    _text = nil;
+    [_parent removeChildWindow:_panel];
+    [_panel orderOut:nil];
+}
+@end
+
+// The first paragraph of some documentation, as one plain line.
+static NSString *FirstParagraph(const std::string &doc, bool markdown) {
+    NSString *s = markdown ? MCDocText(NS(doc), YES).string : NS(doc);
+    s = [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSRange gap = [s rangeOfString:@"\n\n"];
+    if (gap.location != NSNotFound) s = [s substringToIndex:gap.location];
+    s = [s stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+    return s.length > 300 ? [[s substringToIndex:300] stringByAppendingString:@"…"] : s;
+}
+
+static NSAttributedString *MCSignatureText(const Lsp::SignatureHelp &help) {
+    const Lsp::SignatureInfo &sig = help.signatures[(size_t)help.activeSignature];
+    NSString *label = NS(sig.label);
+    NSMutableAttributedString *s = [[NSMutableAttributedString alloc]
+        initWithString:label
+            attributes:@{NSFontAttributeName: DocFont(YES, NO, NO, 12),
+                         NSForegroundColorAttributeName: LHex(0xD4D4D4)}];
+    int ap = help.activeParameter;
+    if (ap >= 0 && (size_t)ap < sig.params.size()) {
+        std::pair<int, int> r = sig.params[(size_t)ap];
+        if (r.first >= 0 && r.second > r.first && (NSUInteger)r.second <= label.length) {
+            NSRange range = NSMakeRange((NSUInteger)r.first, (NSUInteger)(r.second - r.first));
+            [s addAttributes:@{NSFontAttributeName: DocFont(YES, YES, NO, 12),
+                               NSForegroundColorAttributeName: LHex(0x4EA1F7)}
+                       range:range];
+        }
+    }
+    if (help.signatures.size() > 1)
+        [s appendAttributedString:[[NSAttributedString alloc]
+            initWithString:[NSString stringWithFormat:@"   %d of %zu",
+                               help.activeSignature + 1, help.signatures.size()]
+                attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
+                             NSForegroundColorAttributeName: LHex(0x9CA3AF)}]];
+    NSString *doc = nil;
+    if (ap >= 0 && (size_t)ap < sig.paramDocs.size() && !sig.paramDocs[(size_t)ap].empty())
+        doc = FirstParagraph(sig.paramDocs[(size_t)ap], true);
+    else if (!sig.documentation.empty())
+        doc = FirstParagraph(sig.documentation, sig.docIsMarkdown);
+    if (doc.length)
+        [s appendAttributedString:[[NSAttributedString alloc]
+            initWithString:[@"\n" stringByAppendingString:doc]
+                attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
+                             NSForegroundColorAttributeName: LHex(0x9CA3AF)}]];
+    return s;
+}
+
 // ------------------------------------------------------------ LspSession
+@implementation MCLspServerInfo
+@end
+@implementation MCPythonCandidate
+@end
+
+static NSString *StateText(MCLspState state) {
+    switch (state) {
+    case MCLspStateIdle: return @"not started";
+    case MCLspStateStarting: return @"starting";
+    case MCLspStateRunning: return @"running";
+    case MCLspStateNotInstalled: return @"not installed";
+    case MCLspStateOff: return @"off";
+    case MCLspStateStopped: return @"stopped";
+    case MCLspStateFailed: return @"failed to start";
+    case MCLspStateRestarting: return @"restarting";
+    case MCLspStateCrashed: return @"crashed";
+    }
+    return @"";
+}
+
+// One language's server in one window: the process when there is one, and
+// what the status bar and the popover say about it when there is not.
+@interface MCLspEntry : NSObject
+@property(nonatomic, copy) NSString *key;
+@property(nonatomic, strong) MCLspServer *server;
+@property(nonatomic, assign) MCLspState state;
+@property(nonatomic, copy) NSString *message;   // why it failed or crashed
+@property(nonatomic, copy) NSString *command;   // the command line it runs
+@property(nonatomic, copy) NSString *serverName;   // "pyright", kept after it exits
+@property(nonatomic, assign) NSInteger crashes;
+// Bumped by every start and stop, so a restart scheduled after a crash can
+// tell it has been overtaken.
+@property(nonatomic, assign) NSUInteger generation;
+// Python: the interpreter the running server was given, where it came from,
+// and which server it is.
+@property(nonatomic, copy) NSString *interpreter, *interpreterSource;
+@property(nonatomic, assign) Lsp::PythonServer pythonKind;
+@end
+@implementation MCLspEntry
+@end
+
+// A server that crashes is started again after 1, 2, then 4 seconds; the
+// fourth crash in a row leaves it stopped, so a server that cannot start
+// never spins. Three minutes of running clears the count.
+static const NSInteger kMaxAutomaticRestarts = 3;
+static const NSTimeInterval kCrashForgiven = 180;
+static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
+
 @implementation LspSession {
     __weak CodeTextView *_tv;
-    NSString *_root;
-    NSMutableDictionary<NSString *, id> *_servers;   // key -> MCLspServer, or a note
+    NSMutableDictionary<NSString *, MCLspEntry *> *_entries;
     NSString *_path;          // the file in the view, even with no server
+    NSString *_langKey;       // its language's server key, or nil
+    NSString *_languageId;
     NSString *_uri;           // its URI, when a server has it open
     MCLspServer *_server;     // the server for it, or nil
-    NSString *_note;          // why there is no server, for the status bar
     NSString *_transient;     // a brief message ("No definition found")
     std::map<std::string, std::vector<Lsp::Diagnostic>> _diags;
-    NSString *_settingsSignature;
+    NSString *_settingsSignature, *_pythonSetting;
 
     MCCompletionPopup *_popup;
     std::vector<Lsp::CompletionItem> _items, _shown;
     NSUInteger _anchor;       // where the word being completed starts
     BOOL _completing;         // a request is out or the list is showing
-    int _completionGen, _definitionGen, _hoverGen;
+    BOOL _haveItems;          // the server has answered it
+    BOOL _incomplete;         // ...with a list it says will change as you type
+    int _completionGen, _definitionGen, _hoverGen, _resolveGen, _signatureGen;
+    int _resolveId;
+    MCLspServer *_resolveServer;
     NSPopover *_hover;
+    MCSignaturePopup *_signature;
 }
 
 - (instancetype)initWithTextView:(CodeTextView *)textView root:(NSString *)root {
     if (!(self = [super init])) return nil;
     _tv = textView;
     _root = [root copy];
-    _servers = [NSMutableDictionary dictionary];
+    _entries = [NSMutableDictionary dictionary];
     _settingsSignature = [self currentSettingsSignature];
+    _pythonSetting = NS([AppSettings shared].settings.pythonInterpreter());
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
     [nc addObserver:self selector:@selector(storageEdited:)
                name:NSTextStorageDidProcessEditingNotification object:textView.textStorage];
@@ -751,6 +1246,8 @@ static const NSInteger kMaxRows = 10;
                name:NSTextViewDidChangeSelectionNotification object:textView];
     [nc addObserver:self selector:@selector(settingsChanged:)
                name:MCSettingsDidChangeNotification object:nil];
+    [nc addObserver:self selector:@selector(interpreterChosen:)
+               name:MCPythonInterpreterDidChangeNotification object:nil];
     __weak LspSession *weakSelf = self;
     textView.onCommandClick = ^BOOL(NSUInteger index) {
         LspSession *s = weakSelf;
@@ -768,16 +1265,27 @@ static const NSInteger kMaxRows = 10;
 }
 
 // ---- status
+- (BOOL)isSettingsFile:(NSString *)path {
+    NSString *settings = [AppSettings shared].path;
+    return path && settings && [RealPath(path) isEqualToString:RealPath(settings)];
+}
+
 - (void)updateStatus {
     NSString *s = @"";
+    NSColor *dot = nil;
+    MCLspEntry *e = _langKey ? _entries[_langKey] : nil;
+    NSString *language = _langKey ? NS(Lsp::serverDisplayName(Std(_langKey))) : nil;
     if (_transient) {
         s = _transient;
-    } else if (_server) {
-        if (_server.client.state() != Lsp::Client::State::Ready) {
-            s = [NSString stringWithFormat:@"%@ starting…", _server.name];
-        } else {
+    } else if (_langKey && ![AppSettings shared].settings.lspEnabled()) {
+        s = @"Language servers off";
+        dot = DotGray();
+    } else if (_langKey && e) {
+        NSString *name = e.server.name ?: e.serverName ?: language;
+        switch (e.state) {
+        case MCLspStateRunning: {
             int errors = 0, warnings = 0;
-            auto it = _diags.find(Std(_uri));
+            auto it = _uri ? _diags.find(Std(_uri)) : _diags.end();
             if (it != _diags.end())
                 for (const Lsp::Diagnostic &d : it->second) {
                     if (d.severity == Lsp::Severity::Error) errors++;
@@ -788,14 +1296,60 @@ static const NSInteger kMaxRows = 10;
                                           errors == 1 ? @"" : @"s"]];
             if (warnings) [parts addObject:[NSString stringWithFormat:@"%d warning%@",
                                             warnings, warnings == 1 ? @"" : @"s"]];
-            s = [NSString stringWithFormat:@"%@: %@", _server.name,
+            s = [NSString stringWithFormat:@"%@: %@", name,
                  parts.count ? [parts componentsJoinedByString:@", "] : @"no problems"];
+            dot = DotGreen();
+            break;
         }
-    } else if (_note) {
-        s = _note;
+        case MCLspStateStarting:
+            s = [NSString stringWithFormat:@"%@ starting…", name];
+            dot = DotYellow();
+            break;
+        case MCLspStateRestarting:
+            s = [NSString stringWithFormat:@"%@ crashed, restarting…", name];
+            dot = DotYellow();
+            break;
+        case MCLspStateNotInstalled:
+            s = [NSString stringWithFormat:@"No %@ language server installed", language];
+            dot = DotGray();
+            break;
+        case MCLspStateOff:
+            s = [NSString stringWithFormat:@"%@ language server off", language];
+            dot = DotGray();
+            break;
+        case MCLspStateStopped:
+            s = [NSString stringWithFormat:@"%@ stopped", name];
+            dot = DotGray();
+            break;
+        case MCLspStateFailed:
+            s = [NSString stringWithFormat:@"%@ failed to start", name];
+            dot = DotRed();
+            break;
+        case MCLspStateCrashed:
+            s = [NSString stringWithFormat:@"%@ crashed", name];
+            dot = DotRed();
+            break;
+        case MCLspStateIdle:
+            break;
+        }
+    } else if ([self isSettingsFile:_path]) {
+        // The settings file names the servers, so say where to see them.
+        NSInteger running = 0;
+        for (MCLspEntry *x in _entries.allValues) if (x.state == MCLspStateRunning) running++;
+        s = running ? [NSString stringWithFormat:@"Language servers: %ld running", (long)running]
+                    : @"Language servers";
+        dot = running ? DotGreen() : DotGray();
     }
     _statusText = s;
-    if (self.onStatus) self.onStatus(s);
+    _statusDot = dot;
+    if (self.onStatus) self.onStatus(s, dot);
+}
+
+// Something the status bar or the popover shows has changed.
+- (void)changed {
+    [self updateStatus];
+    [[NSNotificationCenter defaultCenter] postNotificationName:MCLspSessionDidChangeNotification
+                                                        object:self];
 }
 
 - (void)flash:(NSString *)message {
@@ -810,6 +1364,8 @@ static const NSInteger kMaxRows = 10;
     [self updateStatus];
 }
 
+- (NSString *)currentLanguage { return _langKey; }
+
 // ---- servers
 - (NSString *)currentSettingsSignature {
     const Settings &st = [AppSettings shared].settings;
@@ -819,44 +1375,93 @@ static const NSInteger kMaxRows = 10;
     return sig;
 }
 
-- (MCLspServer *)serverForKey:(const std::string &)key {
-    NSString *k = NS(key);
-    id existing = _servers[k];
-    if ([existing isKindOfClass:[MCLspServer class]]) return existing;
-    if ([existing isKindOfClass:[NSString class]]) {
-        _note = ((NSString *)existing).length ? existing : nil;
-        return nil;
+- (MCLspEntry *)entryForKey:(NSString *)key {
+    MCLspEntry *e = _entries[key];
+    if (!e) {
+        e = [MCLspEntry new];
+        e.key = key;
+        e.state = MCLspStateIdle;
+        _entries[key] = e;
     }
+    return e;
+}
+
+// The command lines to try for a key: the settings' own, else the defaults.
+- (std::vector<std::string>)commandsForKey:(const std::string &)key {
     const Settings &st = [AppSettings shared].settings;
-    if (st.lspOff(key)) {
-        _servers[k] = @"";   // switched off on purpose: say nothing
+    if (!st.lspCommand(key).empty()) return {st.lspCommand(key)};
+    return Lsp::defaultCommands(key);
+}
+
+// Where a server is looked for before the usual folders: for Python, the
+// interpreter's own bin, where pylsp may be installed.
+- (NSArray<NSString *> *)firstDirsForKey:(NSString *)key {
+    if (![key isEqualToString:@"python"]) return nil;
+    NSString *source = nil;
+    NSString *interp = [self pythonInterpreterWithSource:&source];
+    return interp ? @[interp.stringByDeletingLastPathComponent] : nil;
+}
+
+// The server for a key, started if it is not running and nothing says it
+// should not be.
+- (MCLspServer *)ensureServer:(NSString *)key {
+    MCLspEntry *e = [self entryForKey:key];
+    if (e.server) return e.server;
+    // Not installed is looked for again: it may have been installed since.
+    if (e.state != MCLspStateIdle && e.state != MCLspStateNotInstalled) return nil;
+    return [self startEntry:e];
+}
+
+- (MCLspServer *)startEntry:(MCLspEntry *)e {
+    e.generation++;
+    e.message = nil;
+    const Settings &st = [AppSettings shared].settings;
+    std::string key = Std(e.key);
+    if (!st.lspEnabled() || st.lspOff(key)) {
+        e.state = MCLspStateOff;
         return nil;
     }
-    std::vector<std::string> commands;
-    if (!st.lspCommand(key).empty()) commands.push_back(st.lspCommand(key));
-    else commands = Lsp::defaultCommands(key);
+    NSArray *first = [self firstDirsForKey:e.key];
     MCLspServer *server = nil;
-    for (const std::string &cmd : commands) {
-        NSArray *argv = MCResolveCommand(cmd);
+    NSArray *argv = nil;
+    for (const std::string &cmd : [self commandsForKey:key]) {
+        argv = MCResolveCommand(cmd, first);
         if (!argv) continue;
-        server = [[MCLspServer alloc] initWithKey:k argv:argv root:_root];
-        if (server) break;
+        e.command = NS(cmd);
+        server = [[MCLspServer alloc] initWithKey:e.key argv:argv root:_root];
+        break;
+    }
+    if (!argv) {
+        e.state = MCLspStateNotInstalled;
+        return nil;
     }
     if (!server) {
-        NSString *note = [NSString stringWithFormat:@"No %s language server found",
-                          Lsp::serverDisplayName(key).c_str()];
-        _servers[k] = note;
-        _note = note;
+        e.state = MCLspStateFailed;
+        e.message = [NSString stringWithFormat:@"%@ could not be run", argv.firstObject];
         return nil;
+    }
+    e.server = server;
+    e.serverName = server.name;
+    e.state = MCLspStateStarting;
+    Lsp::Client &c = server.client;
+    if ([e.key isEqualToString:@"python"]) {
+        NSString *source = nil;
+        NSString *interp = [self pythonInterpreterWithSource:&source];
+        Lsp::PythonServer kind = Lsp::pythonServerKind(ArgvWords(argv));
+        e.pythonKind = kind;
+        e.interpreter = interp;
+        e.interpreterSource = source;
+        c.setInitializationOptions(Lsp::pythonInitializationOptions(kind, Std(interp)));
+        c.setSettings(Lsp::pythonSettings(kind, Std(interp)));
     }
     __weak LspSession *weakSelf = self;
     __weak MCLspServer *weakServer = server;
-    Lsp::Client &c = server.client;
     // A server being stopped (a new folder, a settings change) can still
     // answer or publish before it goes, when its replacement may have the
     // same file open under the same URI; what it sends then is dropped.
     c.onReady = [weakSelf, weakServer] {
-        if (!weakServer.stopping) [weakSelf updateStatus];
+        MCLspServer *s = weakServer;
+        if (s && !s.stopping) [weakSelf serverReady:s];
     };
     c.onDiagnostics = [weakSelf, weakServer](const std::string &uri,
                                              const std::vector<Lsp::Diagnostic> &list) {
@@ -868,97 +1473,390 @@ static const NSInteger kMaxRows = 10;
         MCLspServer *s = weakServer;
         if (s && !s.stopping) [weakSelf server:s failedToStart:message];
     };
+    // Errors the server shows (pyright saying it cannot find the Python it
+    // was given) are kept for the popover.
+    c.onShowMessage = [weakSelf, weakServer](int type, const std::string &message) {
+        MCLspServer *s = weakServer;
+        if (s && !s.stopping && type == 1) [weakSelf server:s said:NS(message)];
+    };
     c.onProtocolError = [weakServer](const std::string &problem) {
         NSLog(@"MiniCode: %@: %s", weakServer.name, problem.c_str());
     };
     server.onExit = ^(MCLspServer *s) { [weakSelf serverExited:s]; };
     c.initialize(Std(_root), (int)getpid());
-    _servers[k] = server;
     return server;
 }
 
+- (MCLspEntry *)entryOf:(MCLspServer *)server {
+    MCLspEntry *e = _entries[server.key];
+    return e.server == server ? e : nil;
+}
+
+- (void)serverReady:(MCLspServer *)server {
+    MCLspEntry *e = [self entryOf:server];
+    if (!e) return;
+    e.state = MCLspStateRunning;
+    [self changed];
+}
+
+- (void)server:(MCLspServer *)server said:(NSString *)message {
+    MCLspEntry *e = [self entryOf:server];
+    if (!e) return;
+    e.message = message;
+    [self changed];
+}
+
 - (void)server:(MCLspServer *)server failedToStart:(const std::string &)message {
-    NSString *note = [NSString stringWithFormat:@"%@ failed to start", server.name];
-    if (!message.empty())
-        note = [note stringByAppendingFormat:@": %s", message.c_str()];
-    // Remembered as the key's note, so it is not tried again until the
-    // folder or the settings change.
-    if (_servers[server.key] == server) _servers[server.key] = note;
-    if (_server == server) {
-        _server = nil;
-        _uri = nil;
-        _note = note;
-        _tv.diagnostics = @[];
-        [self closeCompletion];
-        [self updateStatus];
+    MCLspEntry *e = [self entryOf:server];
+    if (e) {
+        // Not tried again until it is started by hand, or the folder or the
+        // settings change.
+        e.state = MCLspStateFailed;
+        e.message = message.empty() ? nil : NS(message);
+        e.server = nil;
+        e.generation++;
     }
+    if (_server == server) [self detachDocument];
     [server stop];   // its client has already exited, so this just ends its input
+    [self changed];
 }
 
 - (void)serverExited:(MCLspServer *)server {
-    if (_servers[server.key] == server)
-        _servers[server.key] = server.stopping ? nil
-            : [NSString stringWithFormat:@"%@ stopped", server.name];
-    if (_server == server) {
-        _server = nil;
-        _uri = nil;
-        _note = server.stopping ? nil : _servers[server.key];
-        _tv.diagnostics = @[];
-        [self closeCompletion];
-        [self updateStatus];
+    if (_server == server) [self detachDocument];
+    MCLspEntry *e = [self entryOf:server];
+    if (!e || server.stopping) { [self changed]; return; }
+    // It went on its own: a crash. Start it again a few times, waiting
+    // longer each time, then leave it to the popover's Start.
+    e.server = nil;
+    if (-[server.started timeIntervalSinceNow] > kCrashForgiven) e.crashes = 0;
+    e.crashes++;
+    e.message = server.exitDescription;
+    NSLog(@"MiniCode: %@ %@", server.name, server.exitDescription);
+    if (e.crashes <= kMaxAutomaticRestarts) {
+        e.state = MCLspStateRestarting;
+        NSUInteger gen = ++e.generation;
+        double delay = pow(2.0, (double)(e.crashes - 1));
+        __weak LspSession *weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            LspSession *s = weakSelf;
+            if (!s || s->_entries[e.key] != e || e.generation != gen ||
+                e.state != MCLspStateRestarting)
+                return;
+            [s startEntry:e];
+            [s attachDocument];
+            [s changed];
+        });
+    } else {
+        e.state = MCLspStateCrashed;
     }
+    [self changed];
+}
+
+- (void)stopEntry:(MCLspEntry *)e {
+    e.generation++;
+    MCLspServer *s = e.server;
+    if (!s) return;
+    if (_server == s) [self detachDocument];
+    e.server = nil;
+    [s stop];
 }
 
 - (void)stopAllServers {
-    for (id s in _servers.allValues)
-        if ([s isKindOfClass:[MCLspServer class]]) [(MCLspServer *)s stop];
-    [_servers removeAllObjects];
+    for (MCLspEntry *e in _entries.allValues) [self stopEntry:e];
+    [_entries removeAllObjects];
     _diags.clear();
+}
+
+- (void)restartServer:(NSString *)key {
+    MCLspEntry *e = [self entryForKey:key];
+    [self stopEntry:e];
+    e.crashes = 0;
+    e.state = MCLspStateIdle;
+    [self startEntry:e];
+    [self attachDocument];
+    [self changed];
+}
+
+- (void)stopServer:(NSString *)key {
+    MCLspEntry *e = [self entryForKey:key];
+    [self stopEntry:e];
+    e.crashes = 0;
+    e.message = nil;
+    e.state = MCLspStateStopped;
+    [self changed];
+}
+
+- (void)startServer:(NSString *)key {
+    MCLspEntry *e = [self entryForKey:key];
+    if (e.server) return;
+    e.crashes = 0;
+    e.state = MCLspStateIdle;
+    [self startEntry:e];
+    [self attachDocument];
+    [self changed];
+}
+
+- (void)restartCurrentServer {
+    if (!_langKey) {
+        NSBeep();
+        [self flash:@"No language server for this file"];
+        return;
+    }
+    [self restartServer:_langKey];
+}
+
+- (NSArray<MCLspServerInfo *> *)serverInfos {
+    const Settings &st = [AppSettings shared].settings;
+    NSMutableArray<NSString *> *keys = [NSMutableArray array];
+    if (_langKey) [keys addObject:_langKey];
+    for (const std::string &k : Settings::lspServers())
+        if (![keys containsObject:NS(k)]) [keys addObject:NS(k)];
+    NSMutableArray<MCLspServerInfo *> *out = [NSMutableArray array];
+    for (NSString *key in keys) {
+        std::string k = Std(key);
+        MCLspEntry *e = _entries[key];
+        MCLspServerInfo *info = [MCLspServerInfo new];
+        info.key = key;
+        info.language = NS(Lsp::serverDisplayName(k));
+        info.current = [key isEqualToString:_langKey];
+        info.state = e ? e.state : MCLspStateIdle;
+        info.message = e.message;
+        if (e.server) {
+            info.serverName = e.server.name;
+            info.program = e.server.program;
+            info.command = e.command;
+            info.pid = e.server.pid;
+        } else {
+            // What would run: the first command that is installed.
+            std::vector<std::string> commands = [self commandsForKey:k];
+            NSArray *first = [self firstDirsForKey:key];
+            for (const std::string &cmd : commands) {
+                NSArray *argv = MCResolveCommand(cmd, first);
+                if (!argv) continue;
+                info.command = NS(cmd);
+                info.program = argv.firstObject;
+                info.serverName = ServerDisplayName(key, argv);
+                break;
+            }
+            if (!info.command) {
+                NSMutableArray *all = [NSMutableArray array];
+                for (const std::string &cmd : commands) [all addObject:NS(cmd)];
+                info.command = [all componentsJoinedByString:@", or "];
+                if (info.state == MCLspStateIdle) info.state = MCLspStateNotInstalled;
+            }
+        }
+        if (!st.lspEnabled() || st.lspOff(k)) info.state = MCLspStateOff;
+        if (info.state == MCLspStateNotInstalled) info.installHint = NS(Lsp::installHint(k));
+        if ([key isEqualToString:@"python"]) {
+            if (e.server) {
+                info.interpreter = e.interpreter;
+                info.interpreterSource = e.interpreterSource;
+            } else {
+                NSString *source = nil;
+                info.interpreter = [self pythonInterpreterWithSource:&source];
+                info.interpreterSource = source;
+            }
+        }
+        info.stateText = StateText(info.state);
+        [out addObject:info];
+    }
+    return out;
 }
 
 - (void)settingsChanged:(NSNotification *)note {
     (void)note;
     NSString *sig = [self currentSettingsSignature];
-    if ([sig isEqualToString:_settingsSignature]) return;
-    _settingsSignature = sig;
-    NSString *path = _path;
-    [self closeDocument];
-    [self stopAllServers];
-    [self documentOpened:path];
+    NSString *python = NS([AppSettings shared].settings.pythonInterpreter());
+    if (![sig isEqualToString:_settingsSignature]) {
+        _settingsSignature = sig;
+        _pythonSetting = python;
+        NSString *path = _path;
+        [self closeDocument];
+        [self stopAllServers];
+        [self documentOpened:path];
+        return;
+    }
+    if (![python isEqualToString:_pythonSetting]) {
+        _pythonSetting = python;
+        [self applyPythonInterpreter];
+    }
+}
+
+// ---- the Python interpreter
+- (NSString *)rootKey { return RealPath(_root) ?: @""; }
+
+- (NSString *)chosenPythonInterpreter {
+    NSDictionary *all = [[NSUserDefaults standardUserDefaults]
+                            dictionaryForKey:kInterpretersDefaultsKey];
+    id p = all[[self rootKey]];
+    return [p isKindOfClass:[NSString class]] && [p length] ? p : nil;
+}
+
+- (void)choosePythonInterpreter:(NSString *)path {
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    NSMutableDictionary *all = [[d dictionaryForKey:kInterpretersDefaultsKey] mutableCopy]
+                                   ?: [NSMutableDictionary dictionary];
+    if (path.length) all[[self rootKey]] = path;
+    else [all removeObjectForKey:[self rootKey]];
+    [d setObject:all forKey:kInterpretersDefaultsKey];
+    // Every window on this folder follows, this one included.
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:MCPythonInterpreterDidChangeNotification object:[self rootKey]];
+}
+
+- (void)interpreterChosen:(NSNotification *)note {
+    if ([note.object isEqual:[self rootKey]]) [self applyPythonInterpreter];
+}
+
+- (PythonEnvs::Context)pythonContext {
+    PythonEnvs::Context ctx;
+    BOOL pythonFile = [_langKey isEqualToString:@"python"] && _path;
+    ctx.fileDir = Std(pythonFile ? RealPath(_path.stringByDeletingLastPathComponent)
+                                 : RealPath(_root));
+    ctx.root = Std(RealPath(_root));
+    ctx.home = Std(NSHomeDirectory());
+    NSDictionary *env = NSProcessInfo.processInfo.environment;
+    for (NSString *k in @[@"VIRTUAL_ENV", @"CONDA_PREFIX", @"PYENV_ROOT", @"WORKON_HOME",
+                          @"CONDA_ENVS_PATH", @"POETRY_VIRTUALENVS_PATH", @"XDG_DATA_HOME",
+                          @"XDG_CACHE_HOME"])
+        if ([env[k] length]) ctx.env[Std(k)] = Std(env[k]);
+    for (NSString *d in MCSearchDirs())
+        if (![d isEqualToString:@"/usr/bin"]) ctx.pathDirs.push_back(Std(d));
+    // /usr/bin/python3 is the developer tools' shim; their real Python is
+    // offered instead, when they are installed.
+    ctx.skip = {"/usr/bin/python3", "/usr/bin/python"};
+    ctx.mac = true;
+    return ctx;
+}
+
+static BOOL IsRunnable(NSString *path) {
+    BOOL isDir = NO;
+    return path.length && [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] &&
+           !isDir && [[NSFileManager defaultManager] isExecutableFileAtPath:path];
+}
+
+- (NSString *)pythonInterpreterWithSource:(NSString **)source {
+    return [self pythonInterpreterWithSource:source folderChoice:YES];
+}
+
+- (NSString *)defaultPythonInterpreterWithSource:(NSString **)source {
+    return [self pythonInterpreterWithSource:source folderChoice:NO];
+}
+
+- (NSString *)pythonInterpreterWithSource:(NSString **)source folderChoice:(BOOL)useChoice {
+    NSString *missing = nil;
+    NSString *chosen = useChoice ? [self chosenPythonInterpreter].stringByExpandingTildeInPath
+                                 : nil;
+    if (chosen) {
+        if (IsRunnable(chosen)) { if (source) *source = @"this folder"; return chosen; }
+        missing = @"this folder's choice is missing";
+    }
+    std::string setting = [AppSettings shared].settings.pythonInterpreter();
+    if (!setting.empty()) {
+        NSString *p = NS(setting).stringByExpandingTildeInPath;
+        if (IsRunnable(p)) { if (source) *source = @"settings"; return p; }
+        if (!missing) missing = @"python.interpreter is missing";
+    }
+    std::string automatic = PythonEnvs::automatic([self pythonContext]);
+    if (source) *source = missing ? [@"automatic; " stringByAppendingString:missing]
+                                  : @"automatic";
+    return automatic.empty() ? nil : NS(automatic);
+}
+
+- (NSArray<MCPythonCandidate *> *)pythonCandidates {
+    NSMutableArray<MCPythonCandidate *> *out = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+    auto add = [&](NSString *path, NSString *kind, NSString *name, NSString *version) {
+        if (!path.length || [seen containsObject:path]) return;
+        [seen addObject:path];
+        MCPythonCandidate *c = [MCPythonCandidate new];
+        c.path = path;
+        c.kind = kind;
+        c.name = name;
+        c.version = version ?: @"";
+        [out addObject:c];
+    };
+    for (const PythonEnvs::Interpreter &i : PythonEnvs::find([self pythonContext]))
+        add(NS(i.path), NS(i.kind), NS(i.name), NS(i.version));
+    NSString *xcode = MCDeveloperToolPath(@"python3");
+    if (xcode) add(xcode, @"Xcode tools", @"python3", NS(PythonEnvs::versionOf(Std(xcode))));
+    // A choice that is none of these (picked with Other…) stays on the list.
+    NSString *chosen = [self chosenPythonInterpreter].stringByExpandingTildeInPath;
+    if (chosen && ![seen containsObject:chosen] && IsRunnable(chosen))
+        add(chosen, @"chosen", chosen.lastPathComponent, NS(PythonEnvs::versionOf(Std(chosen))));
+    return out;
+}
+
+// The interpreter may have changed (a choice, the setting, or in automatic
+// mode a file in another environment): tell the server, the way it listens.
+- (void)applyPythonInterpreter {
+    MCLspEntry *e = _entries[@"python"];
+    NSString *source = nil;
+    NSString *interp = [self pythonInterpreterWithSource:&source];
+    if (!e.server) { [self changed]; return; }
+    if (interp == e.interpreter || [interp isEqualToString:e.interpreter]) {
+        e.interpreterSource = source;
+        [self changed];
+        return;
+    }
+    Lsp::PythonServer kind = e.pythonKind;
+    // jedi-language-server reads it only when starting, and pylsp cannot be
+    // told to forget one.
+    if (Lsp::pythonInterpreterNeedsRestart(kind) || (kind == Lsp::PythonServer::Pylsp && !interp)) {
+        [self restartServer:@"python"];
+        return;
+    }
+    e.interpreter = interp;
+    e.interpreterSource = source;
+    e.server.client.didChangeConfiguration(Lsp::pythonSettings(kind, Std(interp)));
+    [self changed];
 }
 
 // ---- documents
-- (void)closeDocument {
+- (void)detachDocument {
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushChanges)
                                                object:nil];
     [self closeCompletion];
+    [self closeSignature];
     [_hover close];
-    if (_server && _uri) {
-        _server.client.didClose(Std(_uri));
-        _diags.erase(Std(_uri));
-    }
+    if (_uri) _diags.erase(Std(_uri));
     _server = nil;
     _uri = nil;
-    _path = nil;
-    _note = nil;
     _tv.diagnostics = @[];
+}
+
+// Open the current file on its language's server, starting it if need be.
+- (void)attachDocument {
+    if (_server || !_path || !_langKey || ![AppSettings shared].settings.lspEnabled()) return;
+    MCLspServer *server = [self ensureServer:_langKey];
+    if (!server) return;
+    _server = server;
+    _uri = NS(Lsp::uriFromPath(Std(RealPath(_path))));
+    server.client.didOpen(Std(_uri), Std(_languageId), Std(_tv.string));
+}
+
+- (void)closeDocument {
+    if (_server && _uri) _server.client.didClose(Std(_uri));
+    [self detachDocument];
+    _path = nil;
+    _langKey = nil;
+    _languageId = nil;
 }
 
 - (void)documentOpened:(NSString *)path {
     [self closeDocument];
     _path = [path copy];
     Lsp::Language lang;
-    if (!path || ![AppSettings shared].settings.lspEnabled() ||
-        !Lsp::languageForExtension(Std(path.pathExtension.lowercaseString), lang)) {
-        [self updateStatus];
-        return;
+    if (path && Lsp::languageForExtension(Std(path.pathExtension.lowercaseString), lang)) {
+        _langKey = NS(lang.server);
+        _languageId = NS(lang.languageId);
+        BOOL wasRunning = _entries[_langKey].server != nil;
+        [self attachDocument];
+        // In automatic mode another file may sit in another environment.
+        if (wasRunning && [_langKey isEqualToString:@"python"]) [self applyPythonInterpreter];
     }
-    MCLspServer *server = [self serverForKey:lang.server];
-    if (!server) { [self updateStatus]; return; }
-    _server = server;
-    _uri = NS(Lsp::uriFromPath(Std(RealPath(path))));
-    server.client.didOpen(Std(_uri), lang.languageId, Std(_tv.string));
-    [self updateStatus];
+    [self changed];
 }
 
 - (void)documentSaved {
@@ -972,7 +1870,7 @@ static const NSInteger kMaxRows = 10;
     [self closeDocument];
     [self stopAllServers];
     _root = [root copy];
-    [self updateStatus];
+    [self changed];
 }
 
 - (void)shutdown {
@@ -995,21 +1893,35 @@ static const NSInteger kMaxRows = 10;
                                                object:nil];
     [self performSelector:@selector(flushChanges) withObject:nil afterDelay:0.3];
 
-    // One character typed: is it the end of ".", "->" or "::"?
     NSRange er = ts.editedRange;
-    if (ts.changeInLength == 1 && er.length == 1) {
-        NSString *s = ts.string;
-        unichar c = [s characterAtIndex:er.location];
-        unichar prev = er.location > 0 ? [s characterAtIndex:er.location - 1] : 0;
+    NSString *s = ts.string;
+    BOOL typedOne = ts.changeInLength == 1 && er.length == 1;
+    unichar c = typedOne ? [s characterAtIndex:er.location] : 0;
+    unichar prev = typedOne && er.location > 0 ? [s characterAtIndex:er.location - 1] : 0;
+    Lsp::Client &client = _server.client;
+
+    // The signature hint: opened by the server's trigger characters ("(" and
+    // ","), and brought up to date after any other edit while it shows.
+    if (client.hasSignatureHelp()) {
+        std::string ch = typedOne ? Std([NSString stringWithCharacters:&c length:1]) : "";
+        if (typedOne && (Contains(client.signatureTriggers(), ch) ||
+                         (_signature.visible && Contains(client.signatureRetriggers(), ch)))) {
+            NSString *trigger = NS(ch);
+            dispatch_async(dispatch_get_main_queue(), ^{ [self requestSignature:trigger]; });
+        } else if (_signature.visible) {
+            [self scheduleSignatureUpdate];
+        }
+    }
+
+    if (typedOne) {
+        // The end of ".", "->" or "::"?
         NSString *trigger = nil;
         if (c == '.') trigger = @".";
         else if (c == '>' && prev == '-') trigger = @">";
         else if (c == ':' && prev == ':') trigger = @":";
         if (trigger) {
-            std::vector<std::string> triggers = _server.client.completionTriggers();
-            bool allowed = triggers.empty() ||
-                std::find(triggers.begin(), triggers.end(), Std(trigger)) != triggers.end();
-            if (allowed) {
+            std::vector<std::string> triggers = client.completionTriggers();
+            if (triggers.empty() || Contains(triggers, Std(trigger))) {
                 // After the text view has finished the edit and moved the caret.
                 dispatch_async(dispatch_get_main_queue(), ^{
                     [self requestCompletion:trigger];
@@ -1017,15 +1929,42 @@ static const NSInteger kMaxRows = 10;
                 return;
             }
         }
+        // A word being typed: the list opens by itself on the first letter
+        // after ".", "->" or "::" (so "json.lo" typed quickly, or after Esc,
+        // still lists json's members), and on the second letter of any
+        // other word.
+        if (!_completing && IsIdentChar(c)) {
+            NSUInteger start = er.location;
+            while (start > 0 && IsIdentChar([s characterAtIndex:start - 1])) start--;
+            NSUInteger length = er.location + 1 - start;
+            unichar b1 = start > 0 ? [s characterAtIndex:start - 1] : 0;
+            unichar b2 = start > 1 ? [s characterAtIndex:start - 2] : 0;
+            BOOL afterAccess = b1 == '.' || (b1 == '>' && b2 == '-') || (b1 == ':' && b2 == ':');
+            unichar first = [s characterAtIndex:start];
+            BOOL number = first >= '0' && first <= '9';
+            if (!number && (afterAccess || length == 2)) {
+                dispatch_async(dispatch_get_main_queue(), ^{ [self requestCompletion:nil]; });
+                return;
+            }
+        }
     }
-    if (_completing)
+    if (_completing) {
+        // A list the server called incomplete is asked for again as the word
+        // grows; the old one stays up, filtered, until the new one is in.
+        if (_incomplete && _haveItems && typedOne && IsIdentChar(c))
+            dispatch_async(dispatch_get_main_queue(), ^{ [self requestCompletion:nil]; });
         dispatch_async(dispatch_get_main_queue(), ^{ [self refilterCompletion]; });
+    }
 }
 
 - (void)selectionChanged:(NSNotification *)note {
     (void)note;
     if (_completing)
         dispatch_async(dispatch_get_main_queue(), ^{ [self refilterCompletion]; });
+    if (_signature.visible) {
+        if (_tv.window.firstResponder != _tv) [self closeSignature];
+        else [self scheduleSignatureUpdate];
+    }
 }
 
 // ---- diagnostics
@@ -1075,7 +2014,11 @@ static const NSInteger kMaxRows = 10;
 }
 
 - (void)triggerCompletion {
-    if (!_server) { NSBeep(); [self flash:_note ?: @"No language server for this file"]; return; }
+    if (!_server) {
+        NSBeep();
+        [self flash:_statusText.length ? _statusText : @"No language server for this file"];
+        return;
+    }
     [self requestCompletion:nil];
 }
 
@@ -1086,6 +2029,12 @@ static const NSInteger kMaxRows = 10;
     NSUInteger cursor = [self cursor];
     NSUInteger anchor = cursor;
     while (anchor > 0 && IsIdentChar([s characterAtIndex:anchor - 1])) anchor--;
+    if (!_completing || anchor != _anchor) {
+        // A new word: forget the old list. The same word asked again (an
+        // incomplete list) keeps it showing until the answer.
+        _items.clear();
+        _haveItems = NO;
+    }
     _anchor = anchor;
     _completing = YES;
     int gen = ++_completionGen;
@@ -1101,8 +2050,18 @@ static const NSInteger kMaxRows = 10;
 
 - (void)completionArrived:(const Json &)result gen:(int)gen uri:(NSString *)uri {
     if (gen != _completionGen || ![uri isEqualToString:_uri] || !_completing) return;
-    _items = Lsp::parseCompletion(result);
+    bool incomplete = false;
+    _items = Lsp::parseCompletion(result, &incomplete);
+    _incomplete = incomplete;
+    _haveItems = YES;
+    if (_items.empty()) { [self closeCompletion]; return; }
     [self refilterCompletion];
+}
+
+- (NSString *)typedPrefix {
+    NSUInteger cursor = [self cursor];
+    if (cursor < _anchor || cursor > _tv.string.length) return @"";
+    return [_tv.string substringWithRange:NSMakeRange(_anchor, cursor - _anchor)];
 }
 
 - (void)refilterCompletion {
@@ -1116,8 +2075,8 @@ static const NSInteger kMaxRows = 10;
     }
     for (NSUInteger i = _anchor; i < cursor; i++)
         if (!IsIdentChar([s characterAtIndex:i])) { [self closeCompletion]; return; }
-    if (_items.empty()) return;   // still waiting for the server
-    NSString *prefix = [s substringWithRange:NSMakeRange(_anchor, cursor - _anchor)];
+    if (!_haveItems) return;   // still waiting for the server
+    NSString *prefix = [self typedPrefix];
     _shown = Lsp::filterCompletions(_items, Std(prefix));
     // Nothing to offer, or only exactly what is already typed.
     if (_shown.empty() ||
@@ -1129,9 +2088,11 @@ static const NSInteger kMaxRows = 10;
         _popup = [MCCompletionPopup new];
         __weak LspSession *weakSelf = self;
         _popup.onAccept = ^(NSInteger row) { [weakSelf acceptCompletion:row]; };
+        _popup.onSelectionChanged = ^{ [weakSelf completionSelectionMoved]; };
     }
     NSMutableArray *labels = [NSMutableArray array], *details = [NSMutableArray array];
     size_t limit = std::min<size_t>(_shown.size(), 200);
+    _shown.resize(limit);
     for (size_t i = 0; i < limit; i++) {
         [labels addObject:NS(_shown[i].label)];
         [details addObject:NS(_shown[i].detail)];
@@ -1140,8 +2101,64 @@ static const NSInteger kMaxRows = 10;
     [_popup showLabels:labels details:details atScreenRect:caret parent:_tv.window];
 }
 
+// The selection in the list moved (or the list was rebuilt): show the
+// item's documentation, asking the server for it when the list came
+// without.
+- (void)completionSelectionMoved {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(resolveSelected)
+                                               object:nil];
+    NSInteger row = _popup.selectedRow;
+    if (row < 0 || (size_t)row >= _shown.size()) { [_popup showDoc:nil]; return; }
+    const Lsp::CompletionItem &item = _shown[(size_t)row];
+    BOOL willResolve = !item.resolved && _server && _server.client.canResolveCompletion();
+    NSAttributedString *doc = MCCompletionDoc(item);
+    // While the documentation is on its way, what shows stays rather than
+    // flickering away and back as the arrows move.
+    if (doc || !willResolve) [_popup showDoc:doc];
+    // Asked a moment after the selection settles, so holding an arrow key
+    // down does not ask for every item it passes.
+    if (willResolve)
+        [self performSelector:@selector(resolveSelected) withObject:nil afterDelay:0.08];
+}
+
+- (void)resolveSelected {
+    if (!_server || !_completing) return;
+    NSInteger row = _popup.selectedRow;
+    if (row < 0 || (size_t)row >= _shown.size() || _shown[(size_t)row].resolved) return;
+    if (_resolveId && _resolveServer) _resolveServer.client.cancel(_resolveId);
+    int gen = ++_resolveGen;
+    int index = _shown[(size_t)row].index;
+    __weak LspSession *weakSelf = self;
+    _resolveServer = _server;
+    _resolveId = _server.client.resolveCompletion(_shown[(size_t)row],
+        [weakSelf, gen, index](const Json &result, const Json &error) {
+            [weakSelf completionResolved:error.isNull() ? result : Json() gen:gen index:index];
+        });
+}
+
+- (void)completionResolved:(const Json &)result gen:(int)gen index:(int)index {
+    if (gen != _resolveGen) return;
+    _resolveId = 0;
+    _resolveServer = nil;
+    if (!_completing) return;
+    if (index >= 0 && (size_t)index < _items.size() && _items[(size_t)index].index == index)
+        Lsp::applyResolved(_items[(size_t)index], result);
+    for (Lsp::CompletionItem &it : _shown)
+        if (it.index == index) Lsp::applyResolved(it, result);
+    NSInteger row = _popup.selectedRow;
+    if (row >= 0 && (size_t)row < _shown.size() && _shown[(size_t)row].index == index)
+        [_popup showDoc:MCCompletionDoc(_shown[(size_t)row])];
+}
+
 - (void)closeCompletion {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(resolveSelected)
+                                               object:nil];
+    if (_resolveId && _resolveServer) _resolveServer.client.cancel(_resolveId);
+    _resolveId = 0;
+    _resolveServer = nil;
     _completing = NO;
+    _haveItems = NO;
+    _incomplete = NO;
     _items.clear();
     _shown.clear();
     [_popup close];
@@ -1174,23 +2191,99 @@ static const NSInteger kMaxRows = 10;
         [self requestCompletion:nil];
         return YES;
     }
-    if (!_popup.visible) return NO;
-    if (sel == @selector(moveUp:)) { [_popup moveSelection:-1]; return YES; }
-    if (sel == @selector(moveDown:)) { [_popup moveSelection:1]; return YES; }
-    if (sel == @selector(insertNewline:) || sel == @selector(insertTab:)) {
-        [self acceptCompletion:_popup.selectedRow];
+    if (_popup.visible) {
+        if (sel == @selector(moveUp:)) { [_popup moveSelection:-1]; return YES; }
+        if (sel == @selector(moveDown:)) { [_popup moveSelection:1]; return YES; }
+        if (sel == @selector(insertNewline:)) {
+            // A word typed out in full, with the list still offering it:
+            // Return is a new line, not a completion.
+            NSInteger row = _popup.selectedRow;
+            if (row >= 0 && (size_t)row < _shown.size() &&
+                _shown[(size_t)row].textToInsert() == Std([self typedPrefix])) {
+                [self closeCompletion];
+                return NO;
+            }
+            [self acceptCompletion:row];
+            return YES;
+        }
+        if (sel == @selector(insertTab:)) {
+            [self acceptCompletion:_popup.selectedRow];
+            return YES;
+        }
+        if (sel == @selector(cancelOperation:)) { [self closeCompletion]; return YES; }
+        return NO;
+    }
+    if (_signature.visible && sel == @selector(cancelOperation:)) {
+        [self closeSignature];
         return YES;
     }
-    if (sel == @selector(cancelOperation:)) { [self closeCompletion]; return YES; }
     return NO;
 }
 
 - (BOOL)completionVisible { return _popup.visible; }
 - (NSArray<NSString *> *)completionLabels { return _popup.visible ? _popup.labels : @[]; }
+- (NSString *)completionSelectedLabel {
+    NSInteger row = _popup.visible ? _popup.selectedRow : -1;
+    return row >= 0 && (NSUInteger)row < _popup.labels.count ? _popup.labels[(NSUInteger)row] : nil;
+}
+- (NSString *)completionDocText { return _popup.visible ? _popup.docText : nil; }
+
+// ---- signature help
+- (void)scheduleSignatureUpdate {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(updateSignature)
+                                               object:nil];
+    [self performSelector:@selector(updateSignature) withObject:nil afterDelay:0.15];
+}
+
+- (void)updateSignature {
+    if (_signature.visible) [self requestSignature:nil];
+}
+
+- (void)requestSignature:(NSString *)trigger {
+    if (!_server || !_uri || !_server.client.hasSignatureHelp()) return;
+    [self flushChanges];
+    int gen = ++_signatureGen;
+    __weak LspSession *weakSelf = self;
+    NSString *uri = _uri;
+    NSUInteger cursor = [self cursor];
+    Lsp::Position pos = Lsp::positionForOffset(U16Of(_tv.string), cursor);
+    _server.client.signatureHelp(Std(uri), pos,
+        [weakSelf, gen, uri, cursor](const Json &result, const Json &error) {
+            (void)error;
+            [weakSelf signatureArrived:result gen:gen uri:uri cursor:cursor];
+        }, trigger ? Std(trigger) : "", _signature.visible);
+}
+
+- (void)signatureArrived:(const Json &)result gen:(int)gen uri:(NSString *)uri
+                  cursor:(NSUInteger)cursor {
+    if (gen != _signatureGen || ![uri isEqualToString:_uri]) return;
+    Lsp::SignatureHelp help = Lsp::parseSignatureHelp(result);
+    if (help.signatures.empty() || _tv.window.firstResponder != _tv ||
+        cursor > _tv.string.length) {
+        [self closeSignature];
+        return;
+    }
+    if (!_signature) _signature = [MCSignaturePopup new];
+    NSRect caret = [_tv firstRectForCharacterRange:NSMakeRange(cursor, 0) actualRange:NULL];
+    [_signature show:MCSignatureText(help) atScreenRect:caret parent:_tv.window];
+}
+
+- (void)closeSignature {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(updateSignature)
+                                               object:nil];
+    _signatureGen++;
+    [_signature close];
+}
+
+- (NSString *)signatureText { return _signature.visible ? _signature.text : nil; }
 
 // ---- go to definition
 - (void)goToDefinition {
-    if (!_server) { NSBeep(); [self flash:_note ?: @"No language server for this file"]; return; }
+    if (!_server) {
+        NSBeep();
+        [self flash:_statusText.length ? _statusText : @"No language server for this file"];
+        return;
+    }
     [self definitionAtIndex:_tv.selectedRange.location];
 }
 
@@ -1236,7 +2329,11 @@ static const NSInteger kMaxRows = 10;
 
 // ---- hover
 - (void)showHoverInfo {
-    if (!_server || !_uri) { NSBeep(); [self flash:_note ?: @"No language server for this file"]; return; }
+    if (!_server || !_uri) {
+        NSBeep();
+        [self flash:_statusText.length ? _statusText : @"No language server for this file"];
+        return;
+    }
     [self flushChanges];
     NSUInteger index = _tv.selectedRange.location;
     int gen = ++_hoverGen;

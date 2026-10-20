@@ -336,6 +336,11 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
 - (void)triggerCompletion:(id)sender { [[self current] triggerCompletion:sender]; }
 - (void)goToDefinition:(id)sender  { [[self current] goToDefinition:sender]; }
 - (void)showHoverInfo:(id)sender   { [[self current] showHoverInfo:sender]; }
+- (void)showLanguageServers:(id)sender { [[self current] showLanguageServers:sender]; }
+- (void)restartLanguageServer:(id)sender { [[self current] restartLanguageServer:sender]; }
+- (void)selectPythonInterpreter:(id)sender {
+    [[self current] selectPythonInterpreter:sender];
+}
 
 @end
 
@@ -354,6 +359,17 @@ static void BuildMenu(void) {
     [appMenu addItemWithTitle:@"Settings…"
                        action:@selector(openSettings:)
                 keyEquivalent:@","];
+    // Beside Settings, since the settings file is where servers are named;
+    // the status bar's server item opens the same popover.
+    [appMenu addItemWithTitle:@"Language Servers…"
+                       action:@selector(showLanguageServers:)
+                keyEquivalent:@""];
+    [appMenu addItemWithTitle:@"Restart Language Server"
+                       action:@selector(restartLanguageServer:)
+                keyEquivalent:@""];
+    [appMenu addItemWithTitle:@"Select Python Interpreter…"
+                       action:@selector(selectPythonInterpreter:)
+                keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Quit MiniCode"
                        action:@selector(terminate:)

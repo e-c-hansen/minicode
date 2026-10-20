@@ -385,6 +385,15 @@ Settings Settings::parse(const std::string& text,
         std::string rest = trim(line.substr(eq + 1));
         if (key.empty()) { fail("missing key before '='"); continue; }
 
+        // A path may hold spaces, so it runs to the end of the line or to a
+        // " #" comment. Empty, or auto, is the automatic choice.
+        if (key == "python.interpreter") {
+            size_t hash = rest.find(" #");
+            std::string path = trim(hash == std::string::npos ? rest : rest.substr(0, hash));
+            if (!path.empty() && path[0] == '#') path.clear();
+            st.pythonInterpreter_ = lower(path) == "auto" ? "" : path;
+            continue;
+        }
         // A language server, run or formatter command is a whole command
         // line, so it runs to the end of the line or to a " #" comment.
         if ((key.rfind("lsp.", 0) == 0 && key != "lsp.enabled") ||
@@ -758,10 +767,15 @@ const char* Settings::defaultFileText() {
 # Language servers, for completion, go to definition and error underlines
 # (macOS only for now). MiniCode only talks to them, so install the ones you
 # want; clangd comes with the Xcode command line tools. When a file of that
-# language is opened, its server is looked for on PATH and in the Homebrew
-# folders. Give a command to use a different server or an absolute path, or
-# off to leave a language alone. For Python, pylsp is tried when pyright is
-# not installed.
+# language is opened, its server is looked for on PATH and in the Homebrew,
+# npm, pipx, Cargo and Go folders. Give a command to use a different server
+# or an absolute path, or off to leave a language alone. For Python,
+# basedpyright, pylsp and jedi-language-server are tried, in that order, when
+# pyright is not installed.
+#
+# The status bar shows the open file's server: click it, or choose Language
+# Servers... in the MiniCode menu, to see each server's state, where it was
+# found and how to install a missing one, and to restart or stop it.
 # lsp.enabled = true
 # lsp.cpp = clangd
 # lsp.python = pyright-langserver --stdio
@@ -804,5 +818,11 @@ const char* Settings::defaultFileText() {
 # format.shell = shfmt -i 2 -ci -bn --filename {file}
 # Format the file each time Cmd+S saves it.
 # format.on-save = false
+# The Python the Python server analyses your code with, so it finds the
+# packages installed there. auto picks the folder's .venv, venv or env, then
+# $VIRTUAL_ENV; a path (such as ~/envs/work/bin/python) is used for every
+# folder. Select Python Interpreter... in the MiniCode menu chooses one for
+# the open folder alone, which wins over this.
+# python.interpreter = auto
 )CONF";
 }

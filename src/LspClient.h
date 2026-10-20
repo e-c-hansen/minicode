@@ -15,6 +15,7 @@
 #include "Json.h"
 #include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,18 @@ struct Diagnostic {
 struct CompletionItem {
     std::string label, detail, insertText, filterText, sortText;
     int kind = 0;
+    // Documentation, as text or Markdown. Servers often leave it (and the
+    // detail) out of the list and fill it in on completionItem/resolve.
+    std::string documentation;
+    bool docIsMarkdown = false;
+    bool resolved = false;      // completionItem/resolve has answered for it
+    // The item as the server sent it, which is what resolve sends back
+    // (servers keep their own bookkeeping in its `data`). Shared, so the
+    // copies filtering makes on every keystroke stay cheap.
+    std::shared_ptr<const Json> raw;
+    // Its place in the list parseCompletion returned, so a filtered copy
+    // can be matched back to the item it came from.
+    int index = -1;
     // A textEdit from the server: replace `editRange` with `newText`. For an
     // InsertReplaceEdit this is the insert range.
     bool hasEdit = false;
@@ -57,6 +70,22 @@ struct CompletionItem {
         if (hasEdit) return newText;
         return insertText.empty() ? label : insertText;
     }
+};
+
+// textDocument/signatureHelp, for the hint shown while typing a call's
+// arguments. Parameter ranges are UTF-16 offsets into the label, so they map
+// straight onto an NSString; {-1, -1} when a parameter's label could not be
+// found in the signature's.
+struct SignatureInfo {
+    std::string label, documentation;
+    bool docIsMarkdown = false;
+    std::vector<std::pair<int, int>> params;
+    std::vector<std::string> paramDocs;
+};
+struct SignatureHelp {
+    std::vector<SignatureInfo> signatures;
+    int activeSignature = 0;   // clamped into range; 0 when there are none
+    int activeParameter = -1;  // for the active signature; -1 for none
 };
 
 // ------------------------------------------------------------------ framing
@@ -102,6 +131,9 @@ bool languageForExtension(const std::string& ext, Language& out);
 std::vector<std::string> defaultCommands(const std::string& server);
 // The display name of a server key ("python" -> "Python").
 std::string serverDisplayName(const std::string& server);
+// A one-line way to install a server, for the "not installed" note: the
+// Homebrew, npm, pipx or toolchain command on macOS. "" if none is known.
+std::string installHint(const std::string& server);
 // Split a command line into words. Single and double quotes group words;
 // a backslash outside single quotes escapes the next character.
 std::vector<std::string> splitCommand(const std::string& command);
@@ -111,6 +143,12 @@ std::vector<Diagnostic> parseDiagnostics(const Json& params, std::string* uri = 
 // A CompletionList, a bare array of items, or null. Items come back sorted by
 // sortText (then label), which is the order servers mean them in.
 std::vector<CompletionItem> parseCompletion(const Json& result, bool* incomplete = nullptr);
+// Fill in what completionItem/resolve answered: detail and documentation,
+// when it gave them. Marks the item resolved either way.
+void applyResolved(CompletionItem& item, const Json& result);
+// MarkupContent ({kind, value}) or a plain string. False for anything else.
+bool parseMarkup(const Json& j, std::string& text, bool& isMarkdown);
+SignatureHelp parseSignatureHelp(const Json& result);
 // MarkupContent, a MarkedString, or an array of MarkedStrings, flattened to
 // text. Markdown code fences are dropped, keeping their contents.
 std::string parseHover(const Json& result);
@@ -126,6 +164,30 @@ Range parseRange(const Json& j);
 std::vector<CompletionItem> filterCompletions(const std::vector<CompletionItem>& items,
                                               const std::string& prefix);
 
+// The part of a settings tree a workspace/configuration item asks for:
+// "python.analysis" is settings["python"]["analysis"], "" the whole tree.
+// Null when it is not there.
+Json configurationSection(const Json& settings, const std::string& section);
+
+// ------------------------------------------------------- Python servers
+// Each Python server is told which interpreter to use in its own way:
+// pyright and basedpyright read python.pythonPath through
+// workspace/configuration, pylsp reads pylsp.plugins.jedi.environment from
+// didChangeConfiguration, and jedi-language-server reads
+// workspace.environmentPath from its initializationOptions only.
+enum class PythonServer { Other, Pyright, BasedPyright, Pylsp, Jedi };
+// Which one a command line runs, from its words' file names.
+PythonServer pythonServerKind(const std::vector<std::string>& argv);
+const char* pythonServerName(PythonServer kind);
+// The settings tree to answer workspace/configuration and send in
+// didChangeConfiguration. An empty interpreter leaves the server to choose.
+Json pythonSettings(PythonServer kind, const std::string& interpreter);
+// initializationOptions for `initialize`, or null.
+Json pythonInitializationOptions(PythonServer kind, const std::string& interpreter);
+// Whether a different interpreter needs the server restarted, rather than
+// reaching it through didChangeConfiguration.
+bool pythonInterpreterNeedsRestart(PythonServer kind);
+
 // ------------------------------------------------------------------- client
 class Client {
 public:
@@ -137,6 +199,16 @@ public:
     explicit Client(Sender send) : send_(std::move(send)) {}
 
     State state() const { return state_; }
+
+    // Sent with `initialize` when not null; set it before calling initialize.
+    void setInitializationOptions(Json options) { initOptions_ = std::move(options); }
+    // The settings workspace/configuration is answered from (by section).
+    // When it is a non-empty object it is also sent as didChangeConfiguration
+    // right after `initialized`, for servers that only read settings that way.
+    void setSettings(Json settings) { settings_ = std::move(settings); }
+    const Json& settings() const { return settings_; }
+    // New settings: stored, and sent as workspace/didChangeConfiguration.
+    void didChangeConfiguration(Json settings);
 
     // Sends `initialize`. Notifications and requests made before the server
     // answers are queued and go out, in order, right after `initialized`.
@@ -160,6 +232,14 @@ public:
     int completion(const std::string& uri, Position p, ResultHandler h,
                    const std::string& triggerCharacter = "");
     int hover(const std::string& uri, Position p, ResultHandler h);
+    // completionItem/resolve for an item from parseCompletion. 0 (and no
+    // request) when the server does not resolve or the item has no raw form.
+    int resolveCompletion(const CompletionItem& item, ResultHandler h);
+    bool canResolveCompletion() const;
+    // textDocument/signatureHelp. triggerKind is 1 (invoked), 2 (a trigger
+    // character) or 3 (the content changed while the hint was showing).
+    int signatureHelp(const std::string& uri, Position p, ResultHandler h,
+                      const std::string& triggerCharacter = "", bool isRetrigger = false);
     int definition(const std::string& uri, Position p, ResultHandler h);
     // Drop interest in a request (its handler will not run). Sends
     // $/cancelRequest if it was already sent.
@@ -178,6 +258,11 @@ public:
     // Server capabilities, valid once Ready.
     const Json& capabilities() const { return capabilities_; }
     std::vector<std::string> completionTriggers() const;
+    // signatureHelpProvider's trigger and retrigger characters; both empty
+    // when the server offers no signature help.
+    bool hasSignatureHelp() const;
+    std::vector<std::string> signatureTriggers() const;
+    std::vector<std::string> signatureRetriggers() const;
     std::string serverName() const { return serverName_; }
 
     // Callbacks.
@@ -206,6 +291,7 @@ private:
     std::vector<int> queuedIds_;                // requests among them
     std::map<std::string, Doc> docs_;
     Json capabilities_;
+    Json initOptions_, settings_;
     std::string serverName_;
     std::string rootPath_;
     std::function<void()> shutdownDone_;

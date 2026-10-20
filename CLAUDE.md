@@ -114,8 +114,13 @@ isolation. Keep them dependency-free.
   a point on a page -> candidate source lines, best first.
 - `src/Json.{h,cpp}` — small JSON value, strict parser, compact serializer.
 - `src/LspClient.{h,cpp}` — LSP client with no I/O: framing, handshake,
-  document sync, request/response matching, result parsing, UTF-16
-  position conversion, server choice by extension. See "LSP" below.
+  document sync, request/response matching, result parsing (completion
+  with resolve, signature help), workspace/configuration, UTF-16
+  position conversion, server choice by extension, and how each Python
+  server is told its interpreter. See "LSP" below.
+- `src/PythonEnvs.{h,cpp}` — finding Python interpreters (project venvs,
+  the active one, conda, pyenv, poetry, pipenv, uv, PATH) without running
+  any; the Linux port can use it as is.
 - `src/TerminalStream.{h,cpp}` — pty byte stream -> styled lines (SGR colors,
   in-line cursor movement) + shell-integration events (OSC 133 marks, OSC 7
   cwd). A line model, not a screen: handles sequences and UTF-8 split across
@@ -214,6 +219,8 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
   the opacity slider popover. See "Adjust Settings…" in the UI map.
 - `src/FormatRunner.{h,mm}` — runs the planned formatter (`MCFormatText`):
   finds it, pipes the buffer through it off the main thread, times it out.
+- `src/LspPanel.{h,mm}` — the status bar's server item, the Language
+  Servers popover and the Select Python Interpreter sheet.
 - `src/Demo.{h,mm}` — demo scenes and the window recorder behind
   `make demos`. Inert unless `MINICODE_DEMO` is set; two one-line hooks in
   `main.mm`. `tools/makegif.m` turns the recorded frames into a GIF.
@@ -877,6 +884,64 @@ never closes.
 - **Settings**: `lsp.enabled`, `lsp.<cpp|python|go|rust|typescript>`. The
   command value is a whole command line (to a ` #` comment), unlike every
   other key; `off` disables one language. A change restarts the servers.
+  `python.interpreter` (a path, spaces allowed; `auto` or empty = automatic)
+  only reconfigures the Python server. Python's defaults are pyright, then
+  basedpyright, pylsp, jedi-language-server.
+- **Server states** (2026-10-20): each window's `LspSession` keeps an
+  `MCLspEntry` per language (Idle, Starting, Running, NotInstalled, Off,
+  Stopped, Failed, Restarting, Crashed). The status bar item is
+  `MCLspStatusField` (LspPanel.mm): a colored dot plus text, clickable; it and
+  the app menu's Language Servers… open a popover (`MCServersController`)
+  listing every language with command, resolved program, PID, interpreter,
+  last error (stderr's last line is kept: stderr is now a drained pipe, not
+  /dev/null) and Restart/Stop/Start, plus `Lsp::installHint` for a missing
+  one. Nothing is ever installed. A server that exits on its own is
+  restarted after 1, 2, 4 s; the fourth crash in a row (three minutes of
+  running clears the count) leaves it Crashed until Start. NotInstalled is
+  looked for again whenever a file of that language opens. The settings
+  file shows "Language servers: N running" in the status bar, and its
+  default text points at the menu item.
+- **Search folders** grew: an `~/.npmrc` prefix, ~/.npm-global, nvm and fnm
+  Node versions (newest first), volta, pnpm, bun, ~/Library/Python/*/bin
+  (pip --user), pyenv shims, MacPorts, and Homebrew's keg-only llvm after
+  /usr/bin. A server's own folder goes first on its child PATH, so an nvm
+  script's `#!/usr/bin/env node` gets nvm's node: on the user's Mac
+  Homebrew's node was broken (missing libllhttp) and came first otherwise.
+- **Completion** opens on its own after `.`/`->`/`::` and on the second
+  letter of any word (so `json.lo` typed fast still lists json's members);
+  an `isIncomplete` list is asked for again as the word grows. Return on an
+  item exactly equal to the typed word is a newline. The selected item's
+  detail and documentation (Markdown through `MarkdownParser`, code
+  monospaced) show in a second child panel beside the list, fetched with
+  `completionItem/resolve` 80 ms after the selection settles; items keep
+  their raw JSON (`shared_ptr`) and list index for that. Signature help
+  (`(` and `,`, from the server's trigger characters) is a small panel above
+  the caret line, the active parameter bold; it re-asks 0.15 s after edits
+  or caret moves and closes on null, Esc or focus loss. Trap paid for: the
+  list's `close` must `reloadData` after emptying its labels, or a later
+  layout pass asks for a vanished row (an NSRangeException inside window
+  layout, intermittent).
+- **Python interpreter**: `PythonEnvs` (pure C++, tested) finds them without
+  running any (versions from pyvenv.cfg, conda-meta, pyenv folder names or
+  the symlink target's name); /usr/bin/python3 is skipped (xcrun shim) and
+  the CLT's real python3 offered. Order: this folder's choice
+  (NSUserDefaults `MCPythonInterpreters`, keyed by the root's realpath,
+  posted to every window on that folder), then `python.interpreter`, then
+  automatic (the nearest .venv/venv/env from the file up to the root, then
+  $VIRTUAL_ENV, $CONDA_PREFIX), else the server's own. pyright/basedpyright
+  get it as `python.pythonPath` through workspace/configuration plus
+  didChangeConfiguration; pylsp as `pylsp.plugins.jedi.environment` (sent
+  after `initialized` and on change); jedi-language-server through
+  `initializationOptions`, so it restarts. basedpyright gets
+  `typeCheckingMode = standard` unless the project configures it.
+- **Verified** (2026-10-20) with an offscreen harness (window ordering
+  swizzled, activation Prohibited, scratch settings, log, project and
+  venvs) against real pyright 1.1.414 (54 checks) and pylsp 1.15 (49):
+  completion typed fast and slow, docs following the selection, resolve,
+  signature help, interpreter switching changing pyright's diagnostics,
+  restart/stop/start, four SIGKILLs (backoff 1/2/4 s then Crashed),
+  `/usr/bin/false`, not installed, off. Pictures of the list, doc panel,
+  signature, status bar, popover and picker were looked at.
 - **Processes**: NSTask with pipes. stderr goes to /dev/null (clangd logs
   every request there, a full pipe would stall it) or to `$MINICODE_LSP_LOG`,
   which also logs all traffic (opened O_APPEND, several servers share it).
