@@ -29,6 +29,7 @@
 #import "Terminal.h"
 #import "AppSettings.h"
 #import "TerminalGridView.h"
+#import "Appearance.h"
 #include "TerminalStream.h"
 #include "TerminalScreen.h"
 #include "TermLinks.h"
@@ -135,6 +136,12 @@ static NSString *IntegrationDirectory(void) {
 - (instancetype)initWithFrame:(NSRect)frame {
     if ((self = [super initWithFrame:frame])) _hoverRange = NSMakeRange(NSNotFound, 0);
     return self;
+}
+
+- (NSMenu *)menuForEvent:(NSEvent *)event {
+    NSMenu *menu = [super menuForEvent:event];
+    MCAddAdjustSettingsItem(menu, @"terminal", self);
+    return menu;
 }
 
 // The link under a point in the view, or nil. The character index is
@@ -360,7 +367,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     self.prompt.backgroundColor = [NSColor clearColor];
     [self addSubview:self.prompt];
 
-    self.input = [self makeInputField:[NSTextField class]];
+    self.input = [self makeInputField:[MCSurfaceTextField class]];
+    ((MCSurfaceTextField *)self.input).appearanceSurface = @"terminal";
     self.input.placeholderString = @"Enter a command…";
     self.secureInput = (NSSecureTextField *)
         [self makeInputField:[NSSecureTextField class]];
@@ -383,6 +391,12 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         if (s.onOpenLink) s.onOpenLink(link);
     };
     [self addSubview:self.grid];
+}
+
+// A right click on the grid, the prompt or the panel's edges.
+- (NSMenu *)menuForEvent:(NSEvent *)event {
+    (void)event;
+    return MCAdjustSettingsMenu(@"terminal", self);
 }
 
 // Colors from the settings file. Output already on screen in the default

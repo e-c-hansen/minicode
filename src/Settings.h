@@ -54,6 +54,22 @@ struct SettingsError {
     std::string message;
 };
 
+// A part of the window as a right click names it, and the settings keys that
+// color it, for "Adjust Appearance…": the settings file opens at the first
+// key and all of them are marked. Keys of its own come first, in the order
+// they appear in defaultFileText, then the window.* keys it falls back to.
+struct AppearanceSurface {
+    const char* id;                  // "tree", "editor", "terminal", ...
+    const char* title;               // "File Tree", for menus
+    std::vector<const char*> keys;
+    bool placeholder;                // for views not built yet; kept out of menus
+};
+
+// A value on one line of the settings file, in UTF-16 offsets.
+struct ValueSpan {
+    size_t start = 0, length = 0;
+};
+
 class Settings {
 public:
     // Parse the file's text. Problems are appended to `errors` if given.
@@ -77,6 +93,24 @@ public:
     // commented-out setting ("# editor.text = #D4D4D4"), so a picked color
     // takes effect. Lines without a color come back unchanged.
     static std::u16string setColor(const std::u16string& line, const Rgba& c);
+    // The value of a "key = value" line, commented out or not: the first word
+    // after the '='. False for a line with no key or no value.
+    static bool findValue(const std::u16string& line, ValueSpan& out);
+    // The value of a "*.opacity = 0.8" line (or 80%), commented out or not.
+    static bool findOpacity(const std::u16string& line, ValueSpan& out, double& value);
+    // The line with its opacity replaced (as a percentage if it was written
+    // as one, else a decimal with at most two places) and uncommented, as
+    // setColor does. Lines without an opacity come back unchanged.
+    static std::u16string setOpacity(const std::u16string& line, double value);
+
+    // Every surface "Adjust Appearance…" knows, and one by id (or null).
+    static const std::vector<AppearanceSurface>& appearanceSurfaces();
+    static const AppearanceSurface* appearanceSurface(const std::string& id);
+    // The 0-based line of the settings text that holds `key`: the last line
+    // that sets it (the one that wins), else the first commented-out
+    // "# key = ..." line. -1 when the key is nowhere in the text.
+    static int findKeyLine(const std::string& text, const std::string& key);
+
     // Black or white text, whichever reads better on a swatch of `c` drawn
     // over the editor background.
     Rgba contrastText(const Rgba& c) const;

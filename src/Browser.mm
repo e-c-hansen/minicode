@@ -1,7 +1,19 @@
 // Browser.mm — embedded browser panel. Objective-C++.
 #import "Browser.h"
 #import "AppSettings.h"
+#import "Appearance.h"
 #import <WebKit/WebKit.h>
+
+// The page's own context menu (Back, Reload, Inspect...) ends with Adjust
+// Settings for the browser.
+@interface MCWebView : WKWebView
+@end
+@implementation MCWebView
+- (void)willOpenMenu:(NSMenu *)menu withEvent:(NSEvent *)event {
+    [super willOpenMenu:menu withEvent:event];
+    MCAddAdjustSettingsItem(menu, @"browser", self);
+}
+@end
 
 @interface BrowserView () <WKNavigationDelegate, NSTextFieldDelegate>
 @property(nonatomic, strong) WKWebView   *web;
@@ -35,6 +47,12 @@
         ? [cfg text:Surface::Browser] : [NSColor controlTextColor];
 }
 
+// A right click on the toolbar.
+- (NSMenu *)menuForEvent:(NSEvent *)event {
+    (void)event;
+    return MCAdjustSettingsMenu(@"browser", self);
+}
+
 - (NSButton *)navButton:(NSString *)title action:(SEL)sel {
     NSButton *b = [NSButton buttonWithTitle:title target:self action:sel];
     b.bezelStyle = NSBezelStyleRounded;
@@ -50,7 +68,9 @@
     [self addSubview:self.forward];
     [self addSubview:self.reload];
 
-    self.urlBar = [[NSTextField alloc] init];
+    MCSurfaceTextField *urlBar = [[MCSurfaceTextField alloc] init];
+    urlBar.appearanceSurface = @"browser";
+    self.urlBar = urlBar;
     self.urlBar.font = [NSFont systemFontOfSize:12];
     self.urlBar.placeholderString = @"Enter URL and press Return";
     self.urlBar.delegate = self;
@@ -59,7 +79,7 @@
     [self addSubview:self.urlBar];
 
     WKWebViewConfiguration *cfg = [[WKWebViewConfiguration alloc] init];
-    self.web = [[WKWebView alloc] initWithFrame:self.bounds configuration:cfg];
+    self.web = [[MCWebView alloc] initWithFrame:self.bounds configuration:cfg];
     self.web.navigationDelegate = self;
     [self addSubview:self.web];
 }

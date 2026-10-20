@@ -4,6 +4,7 @@
 #import "Lsp.h"
 #import "Demo.h"
 #import "Bench.h"
+#import "Appearance.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
@@ -268,6 +269,7 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
 - (void)deleteSelected:(id)sender  { [[self current] deleteSelected:sender]; }
 - (void)refreshTree:(id)sender     { [[self current] refreshTree:sender]; }
 - (void)openSettings:(id)sender    { [[self current] openSettings:sender]; }
+- (void)adjustAppearance:(id)sender { [[self current] adjustAppearance:sender]; }
 - (void)toggleComment:(id)sender   { [[self current] toggleComment:sender]; }
 - (void)toggleTask:(id)sender      { [[self current] toggleTask:sender]; }
 - (void)showTodos:(id)sender       { [[self current] showTodos:sender]; }
@@ -507,6 +509,13 @@ static void BuildMenu(void) {
     play.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:play];
+
+    [viewMenu addItem:[NSMenuItem separatorItem]];
+    // The same as a right click's Adjust Settings, for each part of the window.
+    NSMenuItem *adjust = [[NSMenuItem alloc] initWithTitle:@"Adjust Settings"
+                                                    action:nil keyEquivalent:@""];
+    adjust.submenu = MCAdjustSettingsSubmenu();
+    [viewMenu addItem:adjust];
 
     viewItem.submenu = viewMenu;
 

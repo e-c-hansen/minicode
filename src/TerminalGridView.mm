@@ -12,6 +12,7 @@
 #import "TerminalGridView.h"
 #import "Terminal.h"
 #import "AppSettings.h"
+#import "Appearance.h"
 #import <Carbon/Carbon.h>   // kVK_* key codes (header only, nothing linked)
 
 @implementation TerminalGridView {
@@ -66,6 +67,11 @@
 
 - (BOOL)isFlipped { return YES; }
 - (BOOL)acceptsFirstResponder { return YES; }
+// A right click while a full-screen program runs.
+- (NSMenu *)menuForEvent:(NSEvent *)event {
+    (void)event;
+    return MCAdjustSettingsMenu(@"terminal", self);
+}
 - (BOOL)acceptsFirstMouse:(NSEvent *)e { (void)e; return YES; }
 
 - (BOOL)becomeFirstResponder { [self setNeedsDisplay:YES]; return YES; }

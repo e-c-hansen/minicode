@@ -161,16 +161,20 @@ std::string Settings::formatColor(const Rgba& c) {
     return s;
 }
 
+static std::u16string uncommentSetting(const std::u16string& out);
+
 std::u16string Settings::setColor(const std::u16string& line, const Rgba& c) {
     ColorSpan span;
     if (!findColor(line, span)) return line;
     std::string hex = formatColor(c);
-    std::u16string out = line.substr(0, span.start) +
-                         std::u16string(hex.begin(), hex.end()) +
-                         line.substr(span.start + span.length);
+    return uncommentSetting(line.substr(0, span.start) +
+                            std::u16string(hex.begin(), hex.end()) +
+                            line.substr(span.start + span.length));
+}
 
-    // "# key = value" -> "key = value", keeping any indentation. Only when
-    // what follows the # is a plain key, so prose is never touched.
+// "# key = value" -> "key = value", keeping any indentation. Only when what
+// follows the # is a plain key, so prose is never touched.
+static std::u16string uncommentSetting(const std::u16string& out) {
     size_t hash = 0;
     while (hash < out.size() && (out[hash] == u' ' || out[hash] == u'\t')) hash++;
     if (hash >= out.size() || out[hash] != u'#') return out;
@@ -187,6 +191,166 @@ std::u16string Settings::setColor(const std::u16string& line, const Rgba& c) {
         if (!ok) return out;
     }
     return out.substr(0, hash) + out.substr(key);
+}
+
+// The key of a "key = value" or "# key = value" line, lowercased, or "" when
+// the line is prose or blank.
+static std::string settingKey(const std::u16string& line, size_t* eqOut = nullptr) {
+    size_t i = 0;
+    while (i < line.size() && (line[i] == u' ' || line[i] == u'\t')) i++;
+    if (i < line.size() && line[i] == u'#') {
+        i++;
+        while (i < line.size() && line[i] == u' ') i++;
+    }
+    size_t eq = line.find(u'=', i);
+    if (eq == std::u16string::npos) return "";
+    size_t end = eq;
+    while (end > i && (line[end - 1] == u' ' || line[end - 1] == u'\t')) end--;
+    std::string key;
+    for (size_t k = i; k < end; k++) {
+        char16_t ch = line[k];
+        bool ok = (ch >= u'a' && ch <= u'z') || (ch >= u'A' && ch <= u'Z') ||
+                  (ch >= u'0' && ch <= u'9') || ch == u'.' || ch == u'_' || ch == u'-';
+        if (!ok) return "";
+        key += (char)std::tolower((int)ch);
+    }
+    if (eqOut) *eqOut = eq;
+    return key;
+}
+
+bool Settings::findValue(const std::u16string& line, ValueSpan& out) {
+    size_t eq;
+    if (settingKey(line, &eq).empty()) return false;
+    size_t start = eq + 1;
+    while (start < line.size() && (line[start] == u' ' || line[start] == u'\t')) start++;
+    size_t end = start;
+    while (end < line.size() && line[end] != u' ' && line[end] != u'\t' &&
+           line[end] != u'\r' && line[end] != u'\n')
+        end++;
+    if (end == start) return false;
+    out.start = start;
+    out.length = end - start;
+    return true;
+}
+
+bool Settings::findOpacity(const std::u16string& line, ValueSpan& out, double& value) {
+    std::string key = settingKey(line);
+    const std::string suffix = ".opacity";
+    if (key.size() <= suffix.size() ||
+        key.compare(key.size() - suffix.size(), suffix.size(), suffix) != 0)
+        return false;
+    ValueSpan span;
+    if (!findValue(line, span)) return false;
+    std::string token;
+    for (size_t i = span.start; i < span.start + span.length; i++) {
+        if (line[i] > 0x7F) return false;
+        token += (char)line[i];
+    }
+    if (!parseOpacity(token, value)) return false;
+    out = span;
+    return true;
+}
+
+std::u16string Settings::setOpacity(const std::u16string& line, double value) {
+    ValueSpan span;
+    double old;
+    if (!findOpacity(line, span, old)) return line;
+    if (value < 0) value = 0;
+    if (value > 1) value = 1;
+    bool percent = line[span.start + span.length - 1] == u'%';
+    std::string text;
+    if (percent) {
+        text = std::to_string((int)(value * 100 + 0.5)) + "%";
+    } else {
+        int hundredths = (int)(value * 100 + 0.5);
+        if (hundredths == 100) text = "1";
+        else if (hundredths == 0) text = "0";
+        else {
+            text = "0." + std::string(1, char('0' + hundredths / 10));
+            if (hundredths % 10) text += char('0' + hundredths % 10);
+        }
+    }
+    return uncommentSetting(line.substr(0, span.start) +
+                            std::u16string(text.begin(), text.end()) +
+                            line.substr(span.start + span.length));
+}
+
+const std::vector<AppearanceSurface>& Settings::appearanceSurfaces() {
+    // window.opacity and window.text are what every panel falls back to.
+    static const std::vector<AppearanceSurface> surfaces = {
+        {"tree", "File Tree",
+         {"sidebar.background", "sidebar.opacity", "sidebar.text",
+          "window.opacity", "window.text"}, false},
+        {"git", "Source Control",
+         {"sidebar.background", "sidebar.opacity", "sidebar.text",
+          "window.opacity", "window.text"}, false},
+        {"editor", "Editor",
+         {"editor.background", "editor.opacity", "editor.text",
+          "syntax.keyword", "syntax.type", "syntax.string", "syntax.comment",
+          "syntax.number", "syntax.preprocessor", "syntax.function",
+          "window.opacity", "window.text"}, false},
+        {"syntax", "Syntax Colors",
+         {"syntax.keyword", "syntax.type", "syntax.string", "syntax.comment",
+          "syntax.number", "syntax.preprocessor", "syntax.function",
+          "editor.text"}, false},
+        {"markdown", "Markdown Preview",
+         {"markdown.heading", "markdown.link", "markdown.code", "markdown.quote",
+          "markdown.done", "editor.background", "editor.opacity", "editor.text",
+          "window.opacity", "window.text"}, false},
+        {"terminal", "Terminal",
+         {"terminal.background", "terminal.opacity", "terminal.text",
+          "window.opacity", "window.text"}, false},
+        {"browser", "Browser",
+         {"browser.background", "browser.opacity", "browser.text",
+          "window.opacity", "window.text"}, false},
+        {"statusbar", "Status Bar",
+         {"statusbar.background", "statusbar.opacity", "statusbar.text",
+          "window.opacity", "window.text"}, false},
+        {"titlebar", "Title Bar",
+         {"titlebar.background", "titlebar.opacity", "titlebar.text",
+          "window.opacity", "window.text"}, false},
+        {"window", "Window",
+         {"window.opacity", "window.text", "window.blur", "window.material"}, false},
+        // For views other work adds: the editor's tab strip and the terminal's
+        // tabs. They draw in their pane's colors until they get keys of their own.
+        {"tabs", "Tabs",
+         {"editor.background", "editor.opacity", "editor.text",
+          "window.opacity", "window.text"}, true},
+        {"terminal-tabs", "Terminal Tabs",
+         {"terminal.background", "terminal.opacity", "terminal.text",
+          "window.opacity", "window.text"}, true},
+    };
+    return surfaces;
+}
+
+const AppearanceSurface* Settings::appearanceSurface(const std::string& id) {
+    for (const AppearanceSurface& s : appearanceSurfaces())
+        if (id == s.id) return &s;
+    return nullptr;
+}
+
+int Settings::findKeyLine(const std::string& text, const std::string& key) {
+    std::string want = lower(key);
+    int active = -1, commented = -1, lineNo = 0;
+    size_t pos = 0;
+    while (pos <= text.size()) {
+        size_t nl = text.find('\n', pos);
+        if (nl == std::string::npos) nl = text.size();
+        std::string line = text.substr(pos, nl - pos);
+        std::u16string wide(line.begin(), line.end());   // keys are ASCII
+        if (settingKey(wide) == want) {
+            size_t i = 0;
+            while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) i++;
+            if (i < line.size() && line[i] == '#') {
+                if (commented < 0) commented = lineNo;
+            } else {
+                active = lineNo;
+            }
+        }
+        pos = nl + 1;
+        lineNo++;
+    }
+    return active >= 0 ? active : commented;
 }
 
 Settings Settings::parse(const std::string& text,
