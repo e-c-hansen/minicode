@@ -196,6 +196,9 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 - `src/Lsp.{h,mm}` — language server processes, `CodeTextView` (the editor's
   NSTextView subclass: squiggles, tooltips, Cmd+click), the completion popup,
   and `LspSession`, one per window.
+- `src/Appearance.{h,mm}` — "Adjust Settings…" for context menus
+  (`MCAddAdjustSettingsItem`), the View submenu, `MCSurfaceTextField`, and
+  the opacity slider popover. See "Adjust Settings…" in the UI map.
 - `src/Demo.{h,mm}` — demo scenes and the window recorder behind
   `make demos`. Inert unless `MINICODE_DEMO` is set; two one-line hooks in
   `main.mm`. `tools/makegif.m` turns the recorded frames into a GIF.
@@ -256,7 +259,32 @@ container (PanelHost, laid out by hand in layoutContainer)
   `textView:clickedOnLink:` opens NSColorPanel; `colorPicked:` rewrites the
   line with `Settings::setColor` (which uncomments it) and saves after
   150 ms. `linkTextAttributes` is only a pointing-hand cursor so swatches
-  keep their colors.
+  keep their colors. An opacity value (`*.opacity`, commented or not) is a
+  `minicode-opacity` link with a dotted accent underline; a click opens
+  `MCOpacityPopover` (a slider) and `opacityPicked:` rewrites the line with
+  `Settings::setOpacity` (uncommenting it, keeping a `%` form) the same way.
+- **Adjust Settings… (right click, Mac, 2026-10-20).** Every surface's context
+  menu ends with "Adjust Settings…", which opens the settings file at the
+  keys that color that surface. The map is `Settings::appearanceSurfaces()`
+  (ids `tree`, `git`, `editor`, `syntax`, `markdown`, `terminal`, `browser`,
+  `statusbar`, `titlebar`, `window`, plus placeholders `tabs` and
+  `terminal-tabs`): its own keys in file order, then the `window.*`
+  fallbacks; `settings:appearance-surfaces` checks every key is in
+  `defaultFileText`. `src/Appearance.{h,mm}` holds the shared pieces:
+  **a new view adds the item with one line**,
+  `MCAddAdjustSettingsItem(menu, @"surface", self)` at the end of its
+  `menuForEvent:` (or `willOpenMenu:withEvent:` for WKWebView), or
+  `view.menu = MCAdjustSettingsMenu(@"surface", view)` for a plain view;
+  `MCSurfaceTextField` does it for a text field's editing menu (an
+  NSTextField's delegate is never asked; the field editor asks the field
+  itself). The item finds the window's EditorController through the view
+  (`showSettingsForSurface:`), which calls `openSettings:` once (the place
+  to change when files open as tabs), selects the first key's value, centres
+  its line and tints all the key lines with layout-manager temporary
+  attributes that fade out after about 3 s (never over a swatch). View >
+  Adjust Settings lists the surfaces (`adjustAppearance:`, the id as
+  `representedObject`). The hints overlay has no keys (inline hex), so it
+  has no item. Verified offscreen (123 checks; see the commit message).
 - Layout is manual frames, not Auto Layout (see gotchas for why). Pane state
   flags: `sidebarCollapsed`, `editorHidden`, `terminalVisible`,
   `browserVisible`, plus NSSplitView's own collapse of `rightArea`.

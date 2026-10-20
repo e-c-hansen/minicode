@@ -1,6 +1,7 @@
 // GitPanel.mm — Objective-C++. See GitPanel.h.
 #import "GitPanel.h"
 #import "AppSettings.h"
+#import "Appearance.h"
 #import "Lsp.h"   // MCFindProgram, MCSearchDirs
 #include "GitStatus.h"
 #include "GitGraph.h"
@@ -607,6 +608,10 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     [super mouseDown:event];
     if (row >= 0 && self.onClick && event.clickCount == 1) self.onClick(row);
 }
+- (NSMenu *)menuForEvent:(NSEvent *)event {
+    (void)event;
+    return MCAdjustSettingsMenu(@"git", self);
+}
 - (BOOL)moveBy:(NSInteger)step {
     NSInteger n = self.numberOfRows, r = self.selectedRow;
     if (r < 0) r = step > 0 ? -1 : n;
@@ -673,6 +678,11 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     else [super insertBacktab:sender];
 }
 - (void)didChangeText { [super didChangeText]; [self setNeedsDisplay:YES]; }
+- (NSMenu *)menuForEvent:(NSEvent *)event {
+    NSMenu *menu = [super menuForEvent:event];
+    MCAddAdjustSettingsItem(menu, @"git", self);
+    return menu;
+}
 - (void)drawRect:(NSRect)dirty {
     [super drawRect:dirty];
     if (self.string.length) return;
@@ -875,6 +885,12 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _graphShown = show;
     _graphLine.hidden = _graphHeading.hidden = _allToggle.hidden = !show;
     _summaryLabel.hidden = _graphScroll.hidden = !show;
+}
+
+// A right click on the headings, the button or the panel's edges.
+- (NSMenu *)menuForEvent:(NSEvent *)event {
+    (void)event;
+    return MCAdjustSettingsMenu(@"git", self);
 }
 
 - (void)applySettings {

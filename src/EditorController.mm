@@ -11,6 +11,7 @@
 #import "MarkdownMath.h"
 #import "MarkdownEditPanel.h"
 #import "GitPanel.h"
+#import "Appearance.h"
 #import "TabStrip.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #import <AVKit/AVKit.h>                 // video and audio in the editor's slot
@@ -301,6 +302,7 @@ static NSString *FromU16(const std::u16string &u) {
 
 // Link value marking a clickable color in the settings file.
 static NSString *const kColorLink = @"minicode-color";
+static NSString *const kOpacityLink = @"minicode-opacity";
 // On rendered Markdown: the 0-based source line a stretch of text came from.
 static NSAttributedStringKey const kMarkdownSourceLine = @"MCMarkdownSourceLine";
 // On a rendered table cell: @[row, column], row 0 being the header.
@@ -549,6 +551,8 @@ private:
 @property(nonatomic, assign) BOOL showingMessage;   // welcome/binary text shown
 @property(nonatomic, assign) NSUInteger colorLineStart;   // line the color panel edits
 @property(nonatomic, copy)   NSString *colorEditPath;
+@property(nonatomic, assign) NSUInteger opacityLineStart;   // line the opacity slider edits
+@property(nonatomic, assign) NSUInteger keyFlashGeneration;  // Adjust Settings' tint
 @property(nonatomic, strong) LspSession *lsp;         // language servers
 @property(nonatomic, strong) NSTextField *lspLabel;   // their status
 @property(nonatomic, strong) MCGitPanel *gitPanel;    // Source Control, in the sidebar's place
@@ -817,6 +821,7 @@ static void *kMediaItemContext = &kMediaItemContext;
 - (void)buildTitlebarInContainer:(NSView *)container {
     self.titlebarView = [[NSView alloc] initWithFrame:NSZeroRect];
     self.titlebarView.wantsLayer = YES;
+    self.titlebarView.menu = MCAdjustSettingsMenu(@"titlebar", self.titlebarView);
     NSTextField *label = [NSTextField labelWithString:@""];
     label.font = [NSFont titleBarFontOfSize:0];
     label.alignment = NSTextAlignmentCenter;
@@ -933,6 +938,7 @@ static void *kMediaItemContext = &kMediaItemContext;
     [m addItemWithTitle:@"Copy Path" action:@selector(copyPath:) keyEquivalent:@""];
     [m addItemWithTitle:@"Refresh" action:@selector(refreshTree:) keyEquivalent:@""];
     for (NSMenuItem *it in m.itemArray) it.target = self;
+    MCAddAdjustSettingsItem(m, @"tree", self.outline);
     return m;
 }
 
@@ -942,6 +948,7 @@ static void *kMediaItemContext = &kMediaItemContext;
         initWithFrame:NSMakeRect(0, 0, container.bounds.size.width, barH)];
     self.statusBar.wantsLayer = YES;   // colors set in applySettings
     self.statusBar.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;
+    self.statusBar.menu = MCAdjustSettingsMenu(@"statusbar", self.statusBar);
 
     NSTextField *label = [NSTextField labelWithString:@"⇧⌘H  Shortcuts"];
     label.font = [NSFont systemFontOfSize:11];
@@ -3491,7 +3498,21 @@ static NSColor *ContrastColor(const Rgba &c) {
                          usingBlock:^(NSString *line, NSRange lr, NSRange er, BOOL *stop) {
         (void)er; (void)stop;
         ColorSpan span;
-        if (!Settings::findColor(U16(line), span)) return;
+        std::u16string wide = U16(line);
+        if (!Settings::findColor(wide, span)) {
+            // An opacity is a link too, opening a slider; a dotted underline
+            // says it can be clicked without looking like a swatch.
+            ValueSpan os;
+            double value;
+            if (Settings::findOpacity(wide, os, value))
+                [storage addAttributes:@{
+                    NSLinkAttributeName: kOpacityLink,
+                    NSUnderlineStyleAttributeName:
+                        @(NSUnderlineStyleSingle | NSUnderlinePatternDot),
+                    NSUnderlineColorAttributeName: Hex(0x4EA1F7),
+                } range:NSMakeRange(lr.location + os.start, os.length)];
+            return;
+        }
         [storage addAttributes:@{
             NSBackgroundColorAttributeName: MCColor(span.color),
             NSForegroundColorAttributeName: ContrastColor(span.color),
@@ -3512,6 +3533,10 @@ static NSColor *ContrastColor(const Rgba &c) {
     }
     if (self.isMarkdown && self.previewMode && [link isKindOfClass:NSString.class]) {
         [self openMarkdownLink:link];
+        return YES;
+    }
+    if ([link isEqual:kOpacityLink]) {
+        [self pickOpacityAtIndex:i];
         return YES;
     }
     if (![link isEqual:kColorLink]) return NO;
@@ -3590,6 +3615,176 @@ static NSColor *ContrastColor(const Rgba &c) {
                                              selector:@selector(saveCurrentFile:)
                                                object:nil];
     [self performSelector:@selector(saveCurrentFile:) withObject:nil afterDelay:0.15];
+}
+
+// The rectangle of a character range in the text view's coordinates.
+- (NSRect)editorRectForRange:(NSRange)range {
+    NSTextView *tv = self.textView;
+    NSLayoutManager *lm = tv.layoutManager;   // the editor is TextKit 1 (see Lsp.mm)
+    [lm ensureLayoutForCharacterRange:NSMakeRange(0, NSMaxRange(range))];
+    NSRange glyphs = [lm glyphRangeForCharacterRange:range actualCharacterRange:NULL];
+    NSRect r = [lm boundingRectForGlyphRange:glyphs inTextContainer:tv.textContainer];
+    return NSOffsetRect(r, tv.textContainerOrigin.x, tv.textContainerOrigin.y);
+}
+
+// A click on an opacity value in the settings file: a slider in a popover.
+// Like a color pick, each change rewrites the line (uncommenting it) and the
+// file is saved shortly after, so the panel changes as the slider moves.
+- (void)pickOpacityAtIndex:(NSUInteger)i {
+    NSString *str = self.textView.string;
+    if (i > str.length) return;
+    NSUInteger start, contentsEnd;
+    [str getLineStart:&start end:NULL contentsEnd:&contentsEnd
+             forRange:NSMakeRange(i, 0)];
+    ValueSpan span;
+    double value;
+    if (!Settings::findOpacity(U16([str substringWithRange:
+            NSMakeRange(start, contentsEnd - start)]), span, value)) return;
+    self.opacityLineStart = start;
+    self.colorEditPath = self.currentPath;
+    [self.textView breakUndoCoalescing];
+    NSRange valueRange = NSMakeRange(start + span.start, span.length);
+    [self.textView setSelectedRange:NSMakeRange(valueRange.location, 0)];
+    __weak EditorController *weakSelf = self;
+    [MCOpacityPopover showForValue:value
+                    relativeToRect:[self editorRectForRange:valueRange]
+                            ofView:self.textView
+                          onChange:^(double v) { [weakSelf opacityPicked:v]; }];
+}
+
+- (void)opacityPicked:(double)value {
+    NSTextView *tv = self.textView;
+    if (!self.colorEditPath || ![self.currentPath isEqualToString:self.colorEditPath] ||
+        !tv.editable)
+        return;
+    NSString *str = tv.string;
+    if (self.opacityLineStart > str.length) return;
+    NSUInteger start, contentsEnd;
+    [str getLineStart:&start end:NULL contentsEnd:&contentsEnd
+             forRange:NSMakeRange(self.opacityLineStart, 0)];
+    NSRange lineRange = NSMakeRange(start, contentsEnd - start);
+    std::u16string line = U16([str substringWithRange:lineRange]);
+    std::u16string updated = Settings::setOpacity(line, value);
+    if (updated == line) return;
+    NSString *replacement = FromU16(updated);
+    if (![tv shouldChangeTextInRange:lineRange replacementString:replacement]) return;
+    [tv.textStorage replaceCharactersInRange:lineRange withString:replacement];
+    [tv didChangeText];
+    [tv.undoManager setActionName:@"Change Opacity"];
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(saveCurrentFile:)
+                                               object:nil];
+    [self performSelector:@selector(saveCurrentFile:) withObject:nil afterDelay:0.15];
+}
+
+// ------------------------------------------------- Adjust Settings (right click)
+// The editor's context menu: AppKit's items, then Adjust Settings for the
+// editor, or for the Markdown preview while it shows.
+- (NSMenu *)textView:(NSTextView *)tv menu:(NSMenu *)menu forEvent:(NSEvent *)event
+             atIndex:(NSUInteger)index {
+    (void)event; (void)index;
+    if (tv == self.textView)
+        MCAddAdjustSettingsItem(menu, (self.isMarkdown && self.previewMode) ? @"markdown"
+                                                                            : @"editor", tv);
+    return menu;
+}
+
+// View > Adjust Settings > (surface): the id is the item's representedObject.
+- (void)adjustAppearance:(id)sender {
+    id surface = [sender respondsToSelector:@selector(representedObject)]
+        ? [sender representedObject] : nil;
+    if ([surface isKindOfClass:[NSString class]]) [self showSettingsForSurface:surface];
+}
+
+// Open the settings file with a surface's keys in view: the first key's line
+// in the middle of the pane with its value selected, and every key's line
+// tinted for a few seconds.
+- (void)showSettingsForSurface:(NSString *)surface {
+    const AppearanceSurface *s = Settings::appearanceSurface(surface.UTF8String ?: "");
+    if (!s) return;
+    [self openSettings:nil];
+    if (![self isSettingsFile] || (self.isMarkdown && self.previewMode)) return;
+
+    NSTextView *tv = self.textView;
+    NSString *text = tv.string;
+    std::string utf8 = text.UTF8String ?: "";
+    // Start of each line, so a line number from the core maps to a range.
+    NSMutableArray<NSNumber *> *starts = [NSMutableArray arrayWithObject:@0];
+    for (NSUInteger i = 0; i < text.length; i++)
+        if ([text characterAtIndex:i] == '\n') [starts addObject:@(i + 1)];
+    NSMutableArray<NSValue *> *lines = [NSMutableArray array];
+    for (const char *key : s->keys) {
+        int n = Settings::findKeyLine(utf8, key);
+        if (n < 0 || n >= (int)starts.count) continue;
+        NSRange r = [text lineRangeForRange:NSMakeRange(starts[n].unsignedIntegerValue, 0)];
+        while (r.length && [text characterAtIndex:NSMaxRange(r) - 1] == '\n') r.length--;
+        NSValue *v = [NSValue valueWithRange:r];
+        if (![lines containsObject:v]) [lines addObject:v];
+    }
+    if (!lines.count) return;
+
+    NSRange first = lines.firstObject.rangeValue;
+    ValueSpan value;
+    NSRange selection = NSMakeRange(first.location, 0);
+    if (Settings::findValue(U16([text substringWithRange:first]), value))
+        selection = NSMakeRange(first.location + value.start, value.length);
+    [tv setSelectedRange:selection];
+    [self centerEditorOnRange:first];
+    // Once more after the pane has had its layout pass.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if ([self isSettingsFile] && NSMaxRange(first) <= tv.string.length)
+            [self centerEditorOnRange:first];
+    });
+    [self tintKeyLines:lines];
+}
+
+- (void)centerEditorOnRange:(NSRange)range {
+    NSRect r = [self editorRectForRange:range];
+    NSClipView *clip = self.editorScroll.contentView;
+    CGFloat visible = clip.bounds.size.height;
+    CGFloat maxY = MAX(0, NSHeight(self.textView.frame) - visible);
+    CGFloat y = MIN(MAX(0, NSMidY(r) - visible / 2), maxY);
+    [clip scrollToPoint:NSMakePoint(clip.bounds.origin.x, y)];
+    [self.editorScroll reflectScrolledClipView:clip];
+}
+
+// A quiet accent tint behind the lines, held for a moment and then faded
+// out. Temporary attributes, so the file and its undo are untouched; a color
+// swatch keeps its own color.
+- (void)tintKeyLines:(NSArray<NSValue *> *)lines {
+    NSLayoutManager *lm = self.textView.layoutManager;
+    NSUInteger generation = ++self.keyFlashGeneration;
+    void (^paint)(CGFloat) = ^(CGFloat alpha) {
+        if (generation != self.keyFlashGeneration) return;
+        NSString *text = self.textView.string;
+        NSUInteger length = text.length;
+        [lm removeTemporaryAttribute:NSBackgroundColorAttributeName
+                   forCharacterRange:NSMakeRange(0, length)];
+        if (alpha <= 0 || ![self isSettingsFile]) return;
+        NSColor *tint = [Hex(0x4EA1F7) colorWithAlphaComponent:alpha];
+        for (NSValue *v in lines) {
+            NSRange r = v.rangeValue;
+            if (NSMaxRange(r) > length) continue;
+            NSRange skip = NSMakeRange(NSMaxRange(r), 0);
+            ColorSpan swatch;
+            if (Settings::findColor(U16([text substringWithRange:r]), swatch))
+                skip = NSMakeRange(r.location + swatch.start, swatch.length);
+            NSRange before = NSMakeRange(r.location, skip.location - r.location);
+            NSRange after = NSMakeRange(NSMaxRange(skip), NSMaxRange(r) - NSMaxRange(skip));
+            for (NSValue *part in @[[NSValue valueWithRange:before],
+                                    [NSValue valueWithRange:after]])
+                if (part.rangeValue.length)
+                    [lm addTemporaryAttribute:NSBackgroundColorAttributeName value:tint
+                            forCharacterRange:part.rangeValue];
+        }
+    };
+    paint(0.24);
+    const double steps[][2] = {{2.4, 0.16}, {2.7, 0.09}, {3.0, 0.04}, {3.3, 0}};
+    for (const auto &step : steps) {
+        CGFloat alpha = step[1];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(step[0] * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{ paint(alpha); });
+    }
 }
 
 // Cmd+/ : comment or uncomment the lines the selection touches.

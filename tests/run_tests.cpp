@@ -3216,6 +3216,95 @@ void testSettingsColorEditing() {
     // The result parses as the new setting.
     std::u16string line = Settings::setColor(u"# terminal.text = #D4D4D4", red);
     CHECK(colorIs(Settings::parse(narrow(line)).text(Surface::Terminal), 0xFF0000));
+
+    GROUP("settings:find-value");
+    ValueSpan vs;
+    CHECK(Settings::findValue(u"editor.opacity = 0.5", vs) && vs.start == 17 && vs.length == 3);
+    CHECK(Settings::findValue(u"# window.blur = false  # note", vs) &&
+          vs.start == 16 && vs.length == 5);
+    CHECK(Settings::findValue(u"lsp.cpp=clangd", vs) && vs.start == 8 && vs.length == 6);
+    CHECK(!Settings::findValue(u"# Each line is key = value, and", vs));
+    CHECK(!Settings::findValue(u"editor.opacity =", vs));
+    CHECK(!Settings::findValue(u"", vs));
+
+    GROUP("settings:opacity-editing");
+    double op = -1;
+    CHECK(Settings::findOpacity(u"# sidebar.opacity = 1", vs, op) && vs.start == 20 &&
+          vs.length == 1 && near(op, 1));
+    CHECK(Settings::findOpacity(u"window.opacity = 80%", vs, op) && near(op, 0.8));
+    CHECK(!Settings::findOpacity(u"editor.text = #D4D4D4", vs, op));
+    CHECK(!Settings::findOpacity(u"window.blur = true", vs, op));
+    CHECK(!Settings::findOpacity(u"editor.opacity = lots", vs, op));
+    CHECK(Settings::setOpacity(u"# sidebar.opacity = 1", 0.85) == u"sidebar.opacity = 0.85");
+    CHECK(Settings::setOpacity(u"sidebar.opacity = 1  # mine", 0.5) ==
+          u"sidebar.opacity = 0.5  # mine");
+    CHECK(Settings::setOpacity(u"editor.opacity = 0.5", 1.0) == u"editor.opacity = 1");
+    CHECK(Settings::setOpacity(u"editor.opacity = 0.5", 0.0) == u"editor.opacity = 0");
+    CHECK(Settings::setOpacity(u"editor.opacity = 0.5", 0.07) == u"editor.opacity = 0.07");
+    CHECK(Settings::setOpacity(u"# window.opacity = 80%", 0.425) == u"window.opacity = 43%");
+    CHECK(Settings::setOpacity(u"editor.opacity = 0.5", 3) == u"editor.opacity = 1");
+    CHECK(Settings::setOpacity(u"editor.text = #D4D4D4", 0.5) == u"editor.text = #D4D4D4");
+    std::u16string opLine = Settings::setOpacity(u"# terminal.opacity = 1", 0.6);
+    CHECK(near(Settings::parse(narrow(opLine)).opacity(Surface::Terminal), 0.6));
+
+    GROUP("settings:key-line");
+    const std::string conf = "# window.opacity = 1\n"
+                             "# sidebar.background = #252526\n"
+                             "sidebar.background = #000000\n"
+                             "# Each line is key = value\n"
+                             "  Sidebar.Opacity = 0.5\n"
+                             "sidebar.background = #111111\n";
+    CHECK(Settings::findKeyLine(conf, "window.opacity") == 0);        // commented only
+    CHECK(Settings::findKeyLine(conf, "sidebar.background") == 5);    // the last one set
+    CHECK(Settings::findKeyLine(conf, "sidebar.opacity") == 4);       // any case, indented
+    CHECK(Settings::findKeyLine(conf, "editor.text") == -1);
+    CHECK(Settings::findKeyLine(conf, "key") == -1);                  // prose is not a key
+    CHECK(Settings::findKeyLine("", "window.opacity") == -1);
+
+    GROUP("settings:appearance-surfaces");
+    // Every key a surface lists is in the default file and parses there, so
+    // the map cannot outlive a renamed key.
+    const std::string defaults = Settings::defaultFileText();
+    const std::string live = uncommentKeys(defaults);
+    std::vector<SettingsError> liveErrors;
+    Settings::parse(live, &liveErrors);
+    CHECK(liveErrors.empty());
+    int rotten = 0, misordered = 0, ownAfterFallback = 0;
+    for (const AppearanceSurface &s : Settings::appearanceSurfaces()) {
+        CHECK(!s.keys.empty());
+        CHECK(Settings::appearanceSurface(s.id) == &s);
+        std::string group = std::string(s.keys[0]).substr(0, std::string(s.keys[0]).find('.'));
+        int lastOwn = -1, lastFallback = -1;
+        bool inFallback = false;
+        for (const char *key : s.keys) {
+            int at = Settings::findKeyLine(defaults, key);
+            if (at < 0 || Settings::findKeyLine(live, key) < 0) {
+                rotten++;
+                std::printf("    surface %s: %s is not in the default file\n", s.id, key);
+            }
+            bool fallback = std::string(key).rfind("window.", 0) == 0 &&
+                            std::string(s.id) != "window";
+            if (fallback) {
+                inFallback = true;
+                if (at < lastFallback) misordered++;
+                lastFallback = at;
+            } else {
+                if (inFallback) ownAfterFallback++;
+                if (std::string(key).rfind(group, 0) == 0 && at < lastOwn) misordered++;
+                if (std::string(key).rfind(group, 0) == 0) lastOwn = at;
+            }
+        }
+    }
+    CHECK(rotten == 0);
+    CHECK(misordered == 0);
+    CHECK(ownAfterFallback == 0);
+    for (const char *id : {"tree", "editor", "markdown", "syntax", "terminal", "browser",
+                           "statusbar", "titlebar", "window", "git", "tabs",
+                           "terminal-tabs"})
+        CHECK(Settings::appearanceSurface(id) != nullptr);
+    CHECK(Settings::appearanceSurface("nothing") == nullptr);
+    CHECK(std::string(Settings::appearanceSurface("tree")->keys[0]) == "sidebar.background");
+    CHECK(std::string(Settings::appearanceSurface("tree")->keys.back()) == "window.text");
 }
 
 // ------------------------------------------------------------------- latex
