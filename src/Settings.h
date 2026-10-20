@@ -159,6 +159,20 @@ public:
     bool lspOff(const std::string& server) const;
     static const std::vector<std::string>& lspServers();
 
+    // Run File (Shift+Cmd+Return). run.terminal = new runs each file in a new
+    // terminal; current (the default) types the command into the terminal on
+    // show. run.<language> is a command template for a language, a whole
+    // command line like lsp.<server> (see RunFile.h for its placeholders);
+    // off leaves a language without one.
+    bool runInNewTerminal() const { return runInNewTerminal_; }
+    // The template for a file extension (lowercase, no dot): run.<extension>,
+    // else run.<its language>, else the built-in default. "" when there is
+    // none or it is off.
+    std::string runTemplate(const std::string& extension) const;
+    // The language an extension's run command is listed under: python for
+    // py, sh for bash, and so on; the extension itself otherwise.
+    static std::string runLanguage(const std::string& extension);
+
 private:
     struct SurfaceSettings {
         std::optional<Rgba> background, text;
@@ -176,6 +190,8 @@ private:
     bool webImages_ = true;
     bool math_ = true;
     std::map<std::string, std::string> lspCommands_;
+    bool runInNewTerminal_ = false;
+    std::map<std::string, std::string> runCommands_;
 
     bool apply(const std::string& key, const std::string& value,
                std::string& error);

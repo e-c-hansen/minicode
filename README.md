@@ -28,6 +28,10 @@ Control backtick opens a terminal at the bottom. It runs one persistent zsh with
 
 ![The terminal panel running ls, git log and a Python script](docs/demos/terminal.gif)
 
+On the Mac you can have several terminals, each its own shell. Control Shift backtick opens another in a new tab, Command backslash splits the one you are in so two sit side by side, and Option Command ] and [ move between them. Tabs you are not looking at keep running. Each tab is titled with the command running in it or the folder it is in, and Control Shift W, or the × on its tab, closes a terminal; closing the last one hides the panel.
+
+Shift Command Return runs the open file in the terminal. It saves the file, then types the command into the terminal on show as if you had typed it, so it stays in the shell's history and Up brings it back. A Python file runs with the python in the project's .venv, venv or env folder when there is one, and python3 otherwise; shell scripts, Go, JavaScript and Ruby have commands too, and run.<language> in the settings changes them or adds others. If that terminal is busy with something else, the file runs in a new one instead, and run.terminal = new gives every run a terminal of its own.
+
 ![Writing a short list in vim inside the terminal panel, then paging through git log](docs/demos/vim.gif)
 
 Paths and URLs in the output are links. Command click src/main.cpp:42:7 from a compiler, or a file Claude Code mentions, and it opens at that line; a URL opens in the browser panel, which Shift Command B toggles. On the Mac the browser sits to the right of the editor rather than in its place, with a bar between them you can drag, and the terminal stays across the bottom under both. Any of the three can be hidden on its own (Shift Command E for the editor), and the others take its space. Command 1, 2 and 3 move the keyboard to the editor, the terminal and the browser.
@@ -170,8 +174,9 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Action | macOS | Linux | Android |
 | --- | --- | --- | --- |
 | Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
+| Close the active terminal | Control Shift W |  |  |
 | Close the application | Command Q | Ctrl Q |  |
-| Close the tab, or the terminal or browser panel when it has the keyboard | Command W |  |  |
+| Close the tab, the terminal the keyboard is in, or the browser panel when it has the keyboard | Command W |  |  |
 | Close the window | Shift Command W | Ctrl W |  |
 | Comment or uncomment the selected lines | Command / | Ctrl / |  |
 | Complete the word at the cursor, with a language server | Control Space, or Option Escape | Ctrl Space | N, or Ctrl N |
@@ -188,20 +193,24 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Jump to the previous file |  | Ctrl Tab |  |
 | List the TODO comments and open Markdown tasks in the folder | Shift Command L | Ctrl Shift L | W, or Ctrl Shift L |
 | Move the selected file to the Trash | Command Delete | Delete, in the file tree |  |
+| Move to the next or previous terminal, across split panes and tabs | Option Command ], Option Command [ |  |  |
 | New file | Control Command N | Ctrl Alt N | New file in the ⋮ menu |
 | New folder | Shift Command N | Ctrl Shift N |  |
 | New window | Command N | Ctrl N |  |
 | Next tab, previous tab | Control Tab, Control Shift Tab, or Shift Command ], Shift Command [ |  |  |
 | Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it | Ctrl click it | Tap it |
 | Open a folder | Command O | Ctrl O | O, or Ctrl O |
+| Open a new terminal in a new tab | Control Shift backtick |  |  |
 | Open the settings file | Command comma | Ctrl comma |  |
 | Play or pause a video or audio file | Shift Command Space | Ctrl Shift Space | Space in the player, or Ctrl Shift Space |
 | Refresh the file tree | Command R |  |  |
 | Rename the selected file or folder |  | F2, in the file tree |  |
+| Run the open file in the terminal | Shift Command Return |  |  |
 | Save | Command S | Ctrl S | S, or Ctrl S |
 | Show or hide dotfiles | Shift Command . | Ctrl H, or Ctrl Shift . |  |
 | Show or hide the on-screen keyboard, for symbols the phone's keyboard lacks |  |  | Y, or the keyboard button in the title bar |
 | Show the type and documentation under the cursor | Command I | Ctrl I | K, or Ctrl K |
+| Split the terminal, with a new one beside it | Command backslash |  |  |
 | Tick or clear a Markdown task, or make the selected lines tasks | Command L, or click its box in the preview | Ctrl L, or click its box in the preview | L, or Ctrl L, or tap its box in the preview |
 | Toggle the browser | Shift Command B | Ctrl Shift B | B, or Ctrl Shift B |
 | Toggle the editor, giving its space to the terminal and browser | Shift Command E | Ctrl Shift E |  |

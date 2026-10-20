@@ -25,4 +25,23 @@
 - (instancetype)initWithDirectory:(NSString *)dir;
 - (void)setDirectory:(NSString *)dir;   // sync cwd when the open folder changes
 - (void)focusInput;                     // the input line, or the grid when shown
+- (BOOL)hasFocus;                       // the keyboard is somewhere in this terminal
+
+// zsh is waiting for a command (from the shell integration's marks).
+@property(nonatomic, readonly) BOOL atPrompt;
+// A full-screen program has the grid.
+@property(nonatomic, readonly) BOOL gridMode;
+// A command is running, or one is waiting to be typed: not a terminal to
+// type another command into. A shell still starting is not busy.
+@property(nonatomic, readonly) BOOL busy;
+// What a tab shows: the command running, else the folder's name.
+@property(nonatomic, readonly, copy) NSString *title;
+@property(nonatomic, readonly, copy) NSString *directory;   // the shell's cwd
+@property(nonatomic, copy) void (^onTitleChange)(void);
+// Types a command as if it were entered in the input line, so it shows and
+// goes into the shell's history like any other. Waits for the prompt when the
+// shell is still starting (or restarts a shell that exited).
+- (void)runCommand:(NSString *)line;
+// Ends the shell (SIGHUP, the pty closed) for good. The view is then dead.
+- (void)close;
 @end

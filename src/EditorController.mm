@@ -2,6 +2,8 @@
 // highlighter, markdown parser) to AppKit views.
 #import "EditorController.h"
 #import "Terminal.h"
+#import "TerminalPanel.h"
+#import "RunCommand.h"
 #import "Browser.h"
 #import "Latex.h"
 #import "Search.h"
@@ -517,7 +519,8 @@ private:
 @property(nonatomic, assign) BOOL hintsVisible;
 @property(nonatomic, strong) PanelHost *rightArea;
 @property(nonatomic, strong) PanelScrollView *editorScroll;
-@property(nonatomic, strong) TerminalView *terminal;
+@property(nonatomic, strong) MCTerminalPanel *terminalPanel;   // tabs of terminals
+@property(nonatomic, readonly) TerminalView *terminal;         // its active one
 @property(nonatomic, strong) DragBar *termDivider;
 @property(nonatomic, strong) DragBar *browserDivider;   // editor | browser
 @property(nonatomic, strong) BrowserView *browser;
@@ -883,6 +886,14 @@ static void *kMediaItemContext = &kMediaItemContext;
     self.statusLabel.textColor = [cfg text:Surface::Statusbar];
     self.settingsLabel.textColor = [cfg text:Surface::Statusbar];
     self.lspLabel.textColor = [cfg text:Surface::Statusbar];
+    [self showSettingsErrors];
+
+    [w invalidateShadow];
+    [self layoutContainer];
+}
+
+- (void)showSettingsErrors {
+    AppSettings *cfg = [AppSettings shared];
     NSArray<NSString *> *errors = cfg.errors;
     self.settingsLabel.stringValue = errors.count == 0 ? @"" :
         [NSString stringWithFormat:@"Settings %@%@", errors.firstObject,
@@ -892,9 +903,6 @@ static void *kMediaItemContext = &kMediaItemContext;
     self.settingsLabel.toolTip = errors.count
         ? [NSString stringWithFormat:@"%@\n\n%@", cfg.path,
            [errors componentsJoinedByString:@"\n"]] : nil;
-
-    [w invalidateShadow];
-    [self layoutContainer];
 }
 
 // Redraw the open document in the current colors, keeping the scroll
@@ -1132,6 +1140,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⌘1" label2:@"Focus editor" state:nil];
     [self appendHintsRow:s key:@"⌘2" label:@"Focus terminal"
                     key2:@"⌘3" label2:@"Focus browser" state:nil];
+    [self appendHintsRow:s key:@"⇧⌘⏎" label:@"Run the file in the terminal"
+                    key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:@"↑ ↓" label:@"Browse tree"
                     key2:@"⏎" label2:@"Open file" state:nil];
     [self appendHintsRow:s key:@"⌘B" label:@"Toggle sidebar"
@@ -1154,9 +1164,16 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:nil label2:nil state:openOr(!self.editorHidden)];
     [self appendHintsRow:s key:@"⇧⌘T" label:@"Terminal  (also ⌃`)"
                     key2:nil label2:nil state:openOr(self.terminalVisible)];
-    if (self.terminalVisible)
+    if (self.terminalVisible) {
+        [self appendHintsRow:s key:@"⌃⇧`" label:@"New terminal"
+                        key2:@"⌘\\" label2:@"Split terminal" state:nil];
+        [self appendHintsRow:s key:@"⌥⌘]" label:@"Next terminal"
+                        key2:@"⌥⌘[" label2:@"Previous" state:nil];
+        [self appendHintsRow:s key:@"⌃⇧W" label:@"Close terminal"
+                        key2:nil label2:nil state:nil];
         [self appendHintsRow:s key:@"⌘ click" label:@"Open a file:line or URL in the terminal"
                         key2:nil label2:nil state:nil];
+    }
     [self appendHintsRow:s key:@"⇧⌘B" label:@"Browser"
                     key2:nil label2:nil state:openOr(self.browserVisible)];
     [self appendHintsRow:s key:@"⌃⇧G" label:@"Source control"
@@ -1208,7 +1225,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
 // browser on the right, with a vertical bar between them; either can be
 // hidden and the other takes the whole width. The terminal docks below both,
 // across the full width, or fills the pane when the top is empty.
-static const CGFloat kMinTopSlotHeight = 40;   // smallest editor while dragging
+// The smallest top while dragging: the tab strip and 40 points of editor.
+static const CGFloat kMinTopSlotHeight = 40 + kMCTabStripHeight;
 static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hides it
 static const CGFloat kMinSideWidth     = 150;  // editor or browser beside the other
 static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides that pane
@@ -1216,7 +1234,7 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
 - (void)relayoutRightArea {
     NSRect b = self.rightArea.bounds;
     CGFloat W = b.size.width, H = b.size.height;
-    BOOL showTerm = self.terminalVisible && self.terminal != nil;
+    BOOL showTerm = self.terminalVisible && self.terminalPanel != nil;
     BOOL showBrowser = self.browserVisible && self.browser != nil;
     BOOL showEditor = !self.editorHidden;
     BOOL topShown = showBrowser || showEditor;
@@ -1281,9 +1299,9 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
         self.browser.frame = browserRect;
         self.browser.hidden = !showBrowser;
     }
-    if (self.terminal) {
-        self.terminal.frame = NSMakeRect(0, 0, W, termH);
-        self.terminal.hidden = !showTerm;
+    if (self.terminalPanel) {
+        self.terminalPanel.frame = NSMakeRect(0, 0, W, termH);
+        self.terminalPanel.hidden = !showTerm;
     }
     if (self.browserDivider) {
         self.browserDivider.frame =
@@ -1362,23 +1380,165 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     if (self.hintsVisible) [self updateHints];
 }
 
-- (void)toggleTerminal:(id)sender {
-    if (!self.terminal) {
-        self.terminal = [[TerminalView alloc] initWithDirectory:_root.path];
-        self.terminal.projectRoot = _root.path;
-        __weak EditorController *weakLinks = self;
-        self.terminal.onOpenLink = ^(MCTermLink *link) {
-            [weakLinks openTerminalLink:link];
-        };
-        [self.rightArea addSubview:self.terminal];
+- (TerminalView *)terminal { return self.terminalPanel.activeTerminal; }
 
+// The terminal dock, with its first terminal, made when first needed and
+// again after its last terminal was closed.
+- (void)makeTerminalPanel {
+    if (self.terminalPanel) return;
+    self.terminalPanel = [[MCTerminalPanel alloc] initWithDirectory:_root.path];
+    self.terminalPanel.projectRoot = _root.path;
+    __weak EditorController *weakSelf = self;
+    self.terminalPanel.onOpenLink = ^(MCTermLink *link) {
+        [weakSelf openTerminalLink:link];
+    };
+    self.terminalPanel.onEmpty = ^{ [weakSelf terminalPanelEmptied]; };
+    self.terminalPanel.hidden = YES;
+    [self.rightArea addSubview:self.terminalPanel];
+
+    if (!self.termDivider) {
         self.termDivider = [[DragBar alloc] initWithFrame:NSZeroRect];
-        __weak EditorController *weakSelf = self;
         self.termDivider.onDrag = ^(CGFloat y) {
             [weakSelf terminalBarDraggedTo:y];
         };
         [self.rightArea addSubview:self.termDivider];
     }
+}
+
+// The last terminal was closed: the dock goes, and the keyboard goes back to
+// the editor (or the tree, or the browser).
+- (void)terminalPanelEmptied {
+    MCTerminalPanel *panel = self.terminalPanel;
+    BOOL hadFocus = [self.window.firstResponder isKindOfClass:NSView.class] &&
+        [(NSView *)self.window.firstResponder isDescendantOf:panel];
+    self.terminalPanel = nil;
+    self.terminalVisible = NO;
+    [panel removeFromSuperview];
+    [self relayoutRightArea];
+    if (hadFocus || !self.window.firstResponder ||
+        self.window.firstResponder == self.window) {
+        if (!self.editorHidden) [self focusActiveDocument];
+        else if (self.browserVisible && self.browser) [self.browser focusURLBar];
+        else [self.window makeFirstResponder:self.outline];
+    }
+    [self collapseRightAreaIfEmpty];
+    if (self.hintsVisible) [self updateHints];
+}
+
+// Shows the dock (making it if needed) without changing the focus.
+- (void)showTerminalPanel {
+    [self makeTerminalPanel];
+    if (!self.terminalVisible) {
+        self.terminalVisible = YES;
+        [self showRightArea];
+        [self relayoutRightArea];
+        if (self.hintsVisible) [self updateHints];
+    }
+}
+
+// Ctrl+Shift+`: a new terminal in a new tab, opening the dock if needed.
+- (void)newTerminal:(id)sender {
+    BOOL fresh = self.terminalPanel == nil;
+    [self showTerminalPanel];
+    if (!fresh) [self.terminalPanel addTab];
+    [self.terminalPanel focusActive];
+}
+
+// Cmd+\: a new terminal beside the active one.
+- (void)splitTerminal:(id)sender {
+    BOOL fresh = self.terminalPanel == nil;
+    [self showTerminalPanel];
+    if (!fresh) [self.terminalPanel splitActive];
+    [self.terminalPanel focusActive];
+}
+
+// Option+Cmd+] and [: the next or previous terminal, across tabs.
+- (void)nextTerminal:(id)sender {
+    if (!self.terminalPanel) { [self newTerminal:nil]; return; }
+    [self showTerminalPanel];
+    [self.terminalPanel moveActive:1];
+}
+- (void)previousTerminal:(id)sender {
+    if (!self.terminalPanel) { [self newTerminal:nil]; return; }
+    [self showTerminalPanel];
+    [self.terminalPanel moveActive:-1];
+}
+
+// Closes the terminal the keyboard is in. NO (and nothing closed) when the
+// keyboard is elsewhere, so Cmd+W can fall through to closing something else.
+- (BOOL)closeFocusedTerminal {
+    if (!(self.terminalVisible && [self.terminalPanel hasFocus])) return NO;
+    [self.terminalPanel closeTerminal:self.terminalPanel.activeTerminal];
+    return YES;
+}
+
+// Ctrl+Shift+W: the active terminal of the dock on show, wherever the
+// keyboard is.
+- (void)closeTerminal:(id)sender {
+    if (!(self.terminalVisible && self.terminalPanel)) { NSBeep(); return; }
+    [self.terminalPanel closeTerminal:self.terminalPanel.activeTerminal];
+}
+
+// Shift+Cmd+Return: run the open file in a terminal, typed as if by hand so
+// it shows and lands in the shell's history. The file is saved first, as VS
+// Code does. A terminal busy with a command is never typed into (the keys
+// would go to that program): with run.terminal = current the file then runs
+// in a new terminal, and the status bar says so, which costs nothing and
+// interrupts nothing, where asking would. The keyboard stays where it was,
+// usually the editor, as in VS Code; Cmd+2 goes to the terminal.
+- (void)runCurrentFile:(id)sender {
+    if (!self.currentPath || self.showingMessage || self.isImage || self.isPDF ||
+        self.isMedia || self.isDiff) {
+        NSBeep();
+        [self showStatusNote:@"Open a file to run it"];
+        return;
+    }
+    NSString *problem = nil;
+    NSString *command = MCRunCommandForFile(self.currentPath, _root.path, &problem);
+    if (!command) {
+        NSBeep();
+        [self showStatusNote:problem];
+        return;
+    }
+    if (self.dirty) {
+        [self saveCurrentFile:nil];
+        if (self.dirty) return;   // the save failed and said why
+    }
+
+    NSResponder *keep = self.window.firstResponder;
+    BOOL fresh = self.terminalPanel == nil;
+    [self showTerminalPanel];
+    TerminalView *term = self.terminalPanel.activeTerminal;
+    NSString *note = nil;
+    if (!fresh && [AppSettings shared].settings.runInNewTerminal()) {
+        term = [self.terminalPanel addTab];
+    } else if (!fresh && term.busy) {
+        term = [self.terminalPanel addTab];
+        note = @"The terminal was busy, so the file runs in a new one";
+    }
+    [term runCommand:command];
+    if (keep && keep != self.window && [self.window firstResponder] != keep)
+        [self.window makeFirstResponder:keep];
+    if (note) [self showStatusNote:note];
+}
+
+// A passing note on the left of the status bar, where settings problems
+// show; they come back when it goes.
+- (void)showStatusNote:(NSString *)note {
+    if (!note.length) return;
+    self.settingsLabel.stringValue = note;
+    self.settingsLabel.toolTip = note;
+    NSString *shown = [note copy];
+    __weak EditorController *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        EditorController *s = weakSelf;
+        if ([s.settingsLabel.stringValue isEqualToString:shown]) [s showSettingsErrors];
+    });
+}
+
+- (void)toggleTerminal:(id)sender {
+    [self makeTerminalPanel];
     self.terminalVisible = !self.terminalVisible;
     if (self.terminalVisible) [self showRightArea];
     [self relayoutRightArea];
@@ -2981,15 +3141,15 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     [self showEmptyState];
 }
 
-// Cmd+W: what has the keyboard closes. The terminal or the browser panel
-// hides (the shell keeps running), and anywhere else the tab on show
+// Cmd+W: what has the keyboard closes. In a terminal that terminal closes
+// (its tab, or its pane of a split; the panel hides with the last one), the
+// browser panel hides, and anywhere else the tab on show
 // closes. With no tab left a new press closes the window, so the key is
 // never dead, while one held down stops at the empty editor.
 - (void)closeFocused:(id)sender {
     switch ([self focusedCloseTarget]) {
     case 1:
-        [self toggleTerminal:nil];
-        [self focusAfterClosingPanel];
+        [self closeFocusedTerminal];
         return;
     case 2:
         [self toggleBrowser:nil];
@@ -3011,7 +3171,8 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
 - (int)focusedCloseTarget {
     NSResponder *fr = self.window.firstResponder;
     NSView *v = [fr isKindOfClass:NSView.class] ? (NSView *)fr : nil;
-    if (v && self.terminal && self.terminalVisible && [v isDescendantOf:self.terminal]) return 1;
+    if (v && self.terminalPanel && self.terminalVisible &&
+        [v isDescendantOf:self.terminalPanel]) return 1;
     if (v && self.browser && self.browserVisible && [v isDescendantOf:self.browser]) return 2;
     return _activeTab ? 3 : 0;
 }
@@ -5110,8 +5271,8 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
         [_root loadChildren];
         [self.lsp setRoot:dir];   // servers belong to the old folder
         [self.outline reloadData];
-        [self.terminal setDirectory:dir];   // keep terminal cwd in sync
-        self.terminal.projectRoot = dir;
+        [self.terminalPanel setDirectory:dir];   // keep terminal cwds in sync
+        self.terminalPanel.projectRoot = dir;
         self.gitPanel.root = dir;           // the panel follows the folder
         [self startWatching:dir];           // watch the new folder
         [self updateTitle];

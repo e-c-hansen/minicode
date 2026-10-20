@@ -268,6 +268,10 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     BOOL _atPrompt;              // zsh is waiting for a command
     BOOL _commandStarted;        // saw 133;C for the command in flight
     BOOL _userCommand;           // the command in flight came from the input
+    BOOL _seenPrompt;            // this shell has reached its first prompt
+    NSString *_runningCommand;   // what was entered, until the next prompt
+    NSString *_pendingCommand;   // runCommand: waiting for the prompt
+    BOOL _closed;                // close was called: never start a shell again
     NSUInteger _liveStart;       // where the live line begins in the output
 
     TerminalScreen _screen;      // the same output as a cell grid
@@ -535,6 +539,63 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     self.prompt.toolTip = _cwd;
 }
 
+- (BOOL)atPrompt { return _atPrompt; }
+- (BOOL)gridMode { return _gridMode; }
+- (NSString *)directory { return _cwd; }
+
+- (BOOL)busy {
+    if (_pendingCommand) return YES;
+    return _shellPid > 0 && _integrated && _seenPrompt && !_atPrompt;
+}
+
+// A path in the command shows as its last part, so "/x/.venv/bin/python
+// /x/app/main.py" reads "python main.py".
+- (NSString *)title {
+    if (_runningCommand.length) {
+        NSMutableArray *words = [NSMutableArray array];
+        for (NSString *w in [_runningCommand componentsSeparatedByString:@" "]) {
+            NSString *bare = [w stringByTrimmingCharactersInSet:
+                [NSCharacterSet characterSetWithCharactersInString:@"'\""]];
+            [words addObject:[bare hasPrefix:@"/"] && bare.length > 1
+                                 ? bare.lastPathComponent : w];
+        }
+        return [words componentsJoinedByString:@" "];
+    }
+    if ([_cwd isEqualToString:NSHomeDirectory()]) return @"~";
+    return _cwd.lastPathComponent.length ? _cwd.lastPathComponent : @"zsh";
+}
+
+- (void)titleChanged {
+    if (self.onTitleChange) self.onTitleChange();
+}
+
+- (void)runCommand:(NSString *)line {
+    if (_closed || !line.length) return;
+    if (_shellPid <= 0) {
+        _pendingCommand = line;
+        [self startShell];
+        return;
+    }
+    if (!_integrated || (_atPrompt && !_gridMode)) [self submitCommand:line];
+    else _pendingCommand = line;
+}
+
+// As if typed into the input line and entered; whatever the user had typed
+// there is kept.
+- (void)submitCommand:(NSString *)line {
+    NSString *draft = self.input.stringValue;
+    self.input.stringValue = line;
+    [self inputEntered:self.input];
+    self.input.stringValue = draft;
+}
+
+- (void)close {
+    _closed = YES;
+    _pendingCommand = nil;
+    if (_flagsMonitor) { [NSEvent removeMonitor:_flagsMonitor]; _flagsMonitor = nil; }
+    [self stopShell];
+}
+
 // ---------------------------------------------------------------- input
 - (void)inputEntered:(id)sender {
     NSTextField *field = sender;
@@ -542,7 +603,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     field.stringValue = @"";
 
     if (_shellPid <= 0) {   // the shell exited and wasn't restarted yet
-        [self startShell];
+        if (!_closed) [self startShell];
         return;
     }
 
@@ -580,6 +641,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         _atPrompt = NO;
         _commandStarted = NO;
         _userCommand = YES;
+        _runningCommand = trimmed;
+        [self titleChanged];
     }
     [self sendText:[line stringByAppendingString:@"\n"]];
 }
@@ -878,6 +941,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     if (maxFd < 0 || maxFd > 65536) maxFd = 65536;
 
     _stream = TerminalStream();
+    _seenPrompt = NO;
+    _runningCommand = nil;
     _atPrompt = NO;
     _commandStarted = NO;
     _userCommand = NO;
@@ -951,7 +1016,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 }
 
 - (void)shellExited:(int)generation {
-    if (generation != _generation) return;   // replaced or torn down
+    if (generation != _generation || _closed) return;   // replaced or torn down
     _readSource = nil;
     _master = -1;
     _shellPid = 0;
@@ -1016,9 +1081,11 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
             break;
         case TermEvent::PromptStart:
             _atPrompt = YES;
+            _seenPrompt = YES;
             _commandStarted = NO;
             _stickyGrid = NO;
             [self stopRawWatch];
+            if (_runningCommand) { _runningCommand = nil; [self titleChanged]; }
             break;
         case TermEvent::CommandStart:
             _commandStarted = YES;
@@ -1039,6 +1106,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
                                             length:e.text.size()];
             [_linkCache removeAllObjects];
             [self updatePrompt];
+            [self titleChanged];
             break;
         }
     }
@@ -1047,6 +1115,11 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     if (_gridMode) [self.grid screenChanged];
     else [self scrollToEnd];
     [self updateSecureInput];
+    if (_pendingCommand && _atPrompt && !_gridMode) {
+        NSString *line = _pendingCommand;
+        _pendingCommand = nil;
+        [self submitCommand:line];
+    }
 }
 
 // ---------------------------------------------------------------- styling

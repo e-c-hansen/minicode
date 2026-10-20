@@ -25,6 +25,15 @@
 - (void)redo:(id)sender;              // Shift+Cmd+Z
 - (void)toggleHints:(id)sender;       // Shift+Cmd+H shortcut-hints overlay
 - (void)toggleTerminal:(id)sender;    // Ctrl+` bottom terminal dock
+- (void)newTerminal:(id)sender;       // Ctrl+Shift+` a terminal in a new tab
+- (void)splitTerminal:(id)sender;     // Cmd+\ a terminal beside the active one
+- (void)nextTerminal:(id)sender;      // Option+Cmd+] across panes and tabs
+- (void)previousTerminal:(id)sender;  // Option+Cmd+[
+- (void)closeTerminal:(id)sender;     // Ctrl+Shift+W the active terminal
+// Closes the terminal the keyboard is in and returns YES; NO when the
+// keyboard is not in a terminal (for a Cmd+W that closes what has focus).
+- (BOOL)closeFocusedTerminal;
+- (void)runCurrentFile:(id)sender;    // Shift+Cmd+Return run the file in a terminal
 - (void)toggleBrowser:(id)sender;     // Shift+Cmd+B embedded browser
 - (void)toggleSidebar:(id)sender;     // Cmd+B collapse/restore file tree
 - (void)toggleSourceControl:(id)sender;   // Ctrl+Shift+G git panel in the sidebar

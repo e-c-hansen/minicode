@@ -47,6 +47,15 @@ const char* const kMaterials[] = {
     "under-window", "header", "content", "fullscreen", "tooltip",
 };
 
+// Run File's built-in commands, only where the command is not in doubt.
+const struct { const char* language; const char* command; } kRunDefaults[] = {
+    {"python", "{python} {file}"},
+    {"sh",     "bash {file}"},
+    {"go",     "go run {file}"},
+    {"js",     "node {file}"},
+    {"rb",     "ruby {file}"},
+};
+
 const uint32_t kCodeBackground = 0x2A2A2A;
 const uint32_t kTerminalInputText = 0xEDEDED;
 
@@ -374,9 +383,10 @@ Settings Settings::parse(const std::string& text,
         std::string rest = trim(line.substr(eq + 1));
         if (key.empty()) { fail("missing key before '='"); continue; }
 
-        // A language server command is a whole command line, so it runs to
-        // the end of the line or to a " #" comment.
-        if (key.rfind("lsp.", 0) == 0 && key != "lsp.enabled") {
+        // A language server or run command is a whole command line, so it
+        // runs to the end of the line or to a " #" comment.
+        if ((key.rfind("lsp.", 0) == 0 && key != "lsp.enabled") ||
+            (key.rfind("run.", 0) == 0 && key != "run.terminal")) {
             size_t hash = rest.find(" #");
             std::string command = trim(hash == std::string::npos ? rest
                                                                  : rest.substr(0, hash));
@@ -460,6 +470,29 @@ bool Settings::apply(const std::string& key, const std::string& value,
             error = "'" + value + "' is not true or false";
             return false;
         }
+        return true;
+    }
+    if (key == "run.terminal") {
+        std::string v = lower(value);
+        if (v != "current" && v != "new") {
+            error = "'" + value + "' is not current or new";
+            return false;
+        }
+        runInNewTerminal_ = v == "new";
+        return true;
+    }
+    if (key.rfind("run.", 0) == 0) {
+        std::string language = key.substr(4);
+        bool ok = !language.empty();
+        for (char c : language)
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' ||
+                  c == '-' || c == '+'))
+                ok = false;
+        if (!ok) {
+            error = "'" + key + "' is not run.<language or extension>";
+            return false;
+        }
+        runCommands_[language] = value;
         return true;
     }
     if (key.rfind("lsp.", 0) == 0) {
@@ -587,6 +620,31 @@ bool Settings::lspOff(const std::string& server) const {
     return v == "off" || v == "none" || v == "false";
 }
 
+std::string Settings::runLanguage(const std::string& extension) {
+    std::string e = lower(extension);
+    if (e == "py" || e == "pyw") return "python";
+    if (e == "bash") return "sh";
+    if (e == "mjs" || e == "cjs") return "js";
+    return e;
+}
+
+std::string Settings::runTemplate(const std::string& extension) const {
+    std::string e = lower(extension), language = runLanguage(e);
+    if (e.empty()) return "";
+    std::string command;
+    auto set = runCommands_.find(e);
+    if (set == runCommands_.end()) set = runCommands_.find(language);
+    if (set != runCommands_.end()) {
+        command = set->second;
+    } else {
+        for (const auto& d : kRunDefaults)
+            if (language == d.language) command = d.command;
+    }
+    std::string v = lower(command);
+    if (v == "off" || v == "none" || v == "false") return "";
+    return command;
+}
+
 const char* Settings::defaultFileText() {
     return R"CONF(# MiniCode settings
 #
@@ -678,5 +736,22 @@ const char* Settings::defaultFileText() {
 # lsp.go = gopls
 # lsp.rust = rust-analyzer
 # lsp.typescript = typescript-language-server --stdio
+
+# Run File (Shift+Cmd+Return) types a command for the open file into the
+# terminal, as if you had typed it (macOS only for now). A terminal busy with
+# a command is never typed into: the file runs in a new terminal instead, and
+# setting run.terminal to new opens a new terminal for every run.
+# run.<language> is the command for a language, or for a file extension
+# (run.py beats run.python),
+# with {file}, {dir}, {root}, {name} and {python} filled in and quoted.
+# {python} is the python in a .venv, venv or env folder beside the file or
+# above it in the project, else python3. Add your own (for Lua, a line
+# reading run.lua = lua {file}), or set one to off.
+# run.terminal = current
+# run.python = {python} {file}
+# run.sh = bash {file}
+# run.go = go run {file}
+# run.js = node {file}
+# run.rb = ruby {file}
 )CONF";
 }
