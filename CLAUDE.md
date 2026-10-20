@@ -159,6 +159,8 @@ isolation. Keep them dependency-free.
   What is a task is decided by `MarkdownParser::lines`, so never one in
   code. `FolderSearch::findTodos` is the TODO list built on it. See "Task
   lists".
+- `src/EditorTabs.{h,cpp}`: the rules for the Mac's tabs (see "Tabs and
+  the landing state").
 - `src/MathTex.{h,cpp}`: the TeX side of the Markdown preview's math,
   doing no I/O: which formulas may share a batch, how one is rewritten for
   LaTeX, the batch document (a page per formula) and reading tectonic's
@@ -180,6 +182,8 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 - `src/TerminalGridView.{h,mm}` — draws a `TerminalScreen` and encodes keys
   (via `TerminalScreen::encodeKey`/`encodeChar`) straight to the pty.
 - `src/Browser.{h,mm}` — WKWebView panel.
+- `src/TabStrip.{h,mm}` — the row of open files over the editor (draws and
+  reports clicks; EditorController owns the tabs).
 - `src/Latex.{h,mm}` — LaTeX preview: runs tectonic, shows the PDF with PDFKit,
   and turns a double-click into a popover editing the source behind that text.
   Also `MCTectonicPath` and `MCDownloadTectonic`, which the math uses too.
@@ -208,6 +212,8 @@ container (PanelHost, laid out by hand in layoutContainer)
 │   ├── treeScroll → ClickOutline (NSOutlineView)  file tree, bg #252526
 │   │   (or gitPanel, MCGitPanel, swapped in by Ctrl+Shift+G)
 │   └── rightArea (PanelHost, laid out by hand in relayoutRightArea)
+│       ├── tabStrip (MCTabStrip)                  top of the editor's side, with tabs
+│       ├── emptyLabel                             editor's side, no file open
 │       ├── editorScroll → textView (NSTextView)   top left (editor's slot), bg #1E1E1E
 │       ├── latex, imageView, pdfView, playerView,
 │       │   diffScroll                             editor's slot, in its place
@@ -660,6 +666,76 @@ task lists, so files stay portable.
   a person: the look on a real screen everywhere, and every phone check
   listed in `android/README.md`. Known: a numbered task (`1. [ ] x`)
   shows its box but not its number in all previews.
+
+## Tabs and the landing state (Mac, 2026-10-20)
+
+- **One text view, many documents.** `MCTab` (top of EditorController.mm)
+  holds everything per document: path, text, `savedText`, mode flags,
+  `dirty`, its own `NSUndoManager` (handed out by `undoManagerForTextView:`),
+  its own `LatexView`, and where its view was. The controller's document
+  properties (`currentPath`, `dirty`, `isMarkdown`, `latex`, ...) are
+  forwarding accessors to `_activeTab` (`MC_TAB_PROPERTY`), so the old
+  single-document code still reads them, and with no tab they read nil/NO.
+  The image, PDF, player and diff views stay shared: `stashActiveTab`
+  remembers the place (top character and its offset, selection, PDF page,
+  player time) and lets them go (a playing sound stops), and
+  `showActiveTab` rebuilds the view from the tab. A tab restored from the
+  session is read only when first shown (`loaded`). Diffs and commits share
+  one tab that each new one replaces.
+- **Rules in C++**: `src/EditorTabs.{h,cpp}` (`tabs:*` tests): a new tab
+  goes right of the active one, Shift+Cmd/Ctrl+N with 9 as the last, wrap
+  on next/previous, the most recently used tab after closing the active
+  one, what of a remembered session can be reopened, and labels that add
+  folders when two files share a name. `src/TabStrip.{h,mm}` only draws and
+  reports clicks (× on release, middle click, a dot for unsaved changes,
+  scrolls when tabs pass their 80 pt minimum). Strip colors are the sidebar
+  and editor surfaces; no new settings keys.
+- **Dirty means "differs from disk"**: `noteEdited` compares the buffer with
+  `savedText` (length first), so typing and deleting, undoing, or reverting
+  a preview edit or a task box clears the dot and the prompt. `savedText` is
+  the text as read (NSString's UTF-8 read drops a BOM, and Save never wrote
+  one back, before tabs either; CRLF survives byte for byte), set again on
+  save and on reload; "Keep Mine" after a change on disk compares against
+  the new disk text.
+- **Keys**: Ctrl+Tab / Ctrl+Shift+Tab, Shift+Cmd+] / [ (hidden menu items
+  with `allowsKeyEquivalentWhenHidden`), Shift+Cmd+1..9 and Ctrl+1..9 (the
+  Go to Tab submenu). macOS takes Shift+Cmd+3, 4 and 5 for screenshots
+  before the app sees them, hence Ctrl+N too. Cmd+W (`closeFocused:`)
+  closes the tab, or hides the terminal or browser when it has the
+  keyboard; with no tab a fresh press closes the window and a held one
+  (`isARepeat`) stops at the empty editor. The menu title follows
+  (validateMenuItem). Shift+Cmd+W is Close Window (it used to quit; Cmd+Q
+  quits). The old Previous File (Ctrl+Tab, `_recent`) is gone.
+- **Unsaved tabs are never dropped**: closing a dirty tab asks Save / Don't
+  Save / Cancel; closing the window, Open Folder and quitting
+  (`applicationShouldTerminate:`, new: quitting used to lose unsaved
+  changes silently) ask once for all ("Save changes to 3 files?"). Moving to
+  the Trash closes only clean tabs of what went; a renamed file or folder
+  moves its tabs (`pathMovedFrom:to:`). A background tab is checked against
+  the disk when it is shown again.
+- **Landing**: a window reopens the tabs its folder had (NSUserDefaults key
+  `MCTabSessions`, by the folder's resolved path, 50 folders kept, files
+  that are gone skipped), else shows a read-only empty editor with one muted
+  line. Sessions are off under `MINICODE_DEMO` and `MINICODE_BENCH`, and
+  `MINICODE_DEFAULTS_SUITE` points them at a scratch suite for tests.
+- **Touch points for merges**: `relayoutRightArea` has two lines (the strip
+  takes the top of the editor's slot through `layoutTabStripIn:`; the
+  browser keeps the whole slot), `applySettings` one.
+- **Verified** with an offscreen harness (152 checks): main.mm included with
+  `main` renamed; `makeKeyAndOrderFront:`/`orderFront:` swizzled, and
+  `-[NSApplication keyWindow]`/`mainWindow` swizzled to return the test
+  window (an offscreen window never becomes key, so menu validation and
+  Cmd+W found no target); `performClose:` swizzled to ask the delegate and
+  close (it does nothing for a window never on screen); `NSAlert runModal`
+  answering from a queue; `trashItemAtURL:` removing instead. Traps: a
+  shifted key (Shift+Cmd+2, Shift+Cmd+], Ctrl+Shift+Tab) matches the menu
+  only as the NSEvent made by `eventWithCGEvent:` itself, never one rebuilt
+  from its characters; `NSApp.currentEvent` is not the event handed to
+  `performKeyEquivalent:` directly; a scroll restored right after
+  `setAttributedString:` stops where the layout ends unless a screen past
+  the target is laid out first. Needs the user's eyes: the strip's look,
+  hover, tooltips, scrolling with many tabs, a real middle click, and the
+  quit prompt. The GTK and Android ports have no tabs yet.
 
 ## LSP (read before touching it)
 

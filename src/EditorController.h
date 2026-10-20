@@ -14,7 +14,7 @@
 - (void)showWindow;
 - (void)revealPath:(NSString *)path andOpen:(BOOL)open;  // select in tree
 // Open a file handed in from outside (Finder, the Dock, the command line),
-// spelled from rootPath. NO if the user kept unsaved changes instead.
+// spelled from rootPath, in its tab (a new one unless it is open already).
 - (BOOL)showFile:(NSString *)path;
 - (void)openFolder:(id)sender;    // menu action
 - (void)saveCurrentFile:(id)sender;   // Cmd+S
@@ -35,7 +35,14 @@
 - (void)focusEditor:(id)sender;       // Cmd+1 move keyboard focus to editor
 - (void)focusTerminal:(id)sender;     // Cmd+2 the terminal, opening it if hidden
 - (void)focusBrowser:(id)sender;      // Cmd+3 the browser's address bar, likewise
-- (void)switchToPreviousFile:(id)sender;  // Ctrl+Tab jump to previous file
+- (void)selectNextTab:(id)sender;     // Ctrl+Tab, Shift+Cmd+]
+- (void)selectPreviousTab:(id)sender; // Ctrl+Shift+Tab, Shift+Cmd+[
+- (void)selectTabNumber:(id)sender;   // Shift+Cmd+1..9, Ctrl+1..9 (tag = n; 9 = last)
+- (void)closeFocused:(id)sender;      // Cmd+W the tab, or the focused terminal/browser
+// Asks about every tab with unsaved changes (window close, quit). NO when
+// the user cancelled or a save failed.
+- (BOOL)confirmCloseAllTabs;
+@property(nonatomic, readonly) BOOL hasUnsavedChanges;
 - (void)newFile:(id)sender;
 - (void)newFolder:(id)sender;
 - (void)renameSelected:(id)sender;

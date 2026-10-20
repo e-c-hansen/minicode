@@ -16,7 +16,7 @@ The macOS app links only against frameworks that ship with the system. The Linux
 
 ## What it does
 
-Open a folder and you get a file tree on the left and the file you click in the main pane. The tree follows changes made elsewhere, in the terminal, in git or in another program, and right clicking an item offers new file, new folder, rename, move to trash, reveal in Finder and copy path.
+Open a folder and you get a file tree on the left and the file you click in the main pane. Each file you open gets a tab above the editor, keeping its own unsaved changes, undo history, and place, and a dot on the tab means it has changes to save. Typing something and deleting it again leaves nothing to save. Command W closes the tab, or the terminal or browser when it has the keyboard, and Shift Command W closes the window. The next time you open the folder, its tabs come back. The tree follows changes made elsewhere, in the terminal, in git or in another program, and right clicking an item offers new file, new folder, rename, move to trash, reveal in Finder and copy path.
 
 Source files are highlighted by extension: Python, the C family, JavaScript, TypeScript, JSON, shell, LaTeX and a few others. Markdown renders as formatted text, with working links, tables and images, and Shift Command P flips to the source. Pictures with an https address, such as the badges at the top of a README, are downloaded in the background and kept in memory only; markdown.web-images = false in the settings turns that off. Math written as on GitHub, $x^2$ inline and $$ or a math code block for a display, is typeset by tectonic (the LaTeX preview's engine, below) in the background and kept in a cache, so a page opened again shows its formulas at once; markdown.math = false shows them as their TeX instead. You can also edit the rendered page: double click a paragraph, heading, list item or table cell, and a small editor opens holding its Markdown. Images and PDFs open in the same pane, and reload when the file changes on disk. On the Mac so do video and audio files, such as mp4, mov, mp3, wav and flac, in the system's own player; nothing plays until you press Shift Command Space or the play button.
 
@@ -126,7 +126,7 @@ make run DIR=demo
 
 ## Linux
 
-The Linux version, in the linux folder, is built on GTK4 with a VTE terminal, a WebKitGTK browser and poppler for PDFs. It has everything described above, including the LaTeX preview and language servers, with Control where the Mac uses Command. What it lacks is typeset math in the Markdown preview, which shows the TeX for now, and blur behind the window, which GNOME gives applications no way to ask for.
+The Linux version, in the linux folder, is built on GTK4 with a VTE terminal, a WebKitGTK browser and poppler for PDFs. It has everything described above, including the LaTeX preview and language servers, with Control where the Mac uses Command. What it lacks is tabs, so a window holds one file at a time, typeset math in the Markdown preview, which shows the TeX for now, and blur behind the window, which GNOME gives applications no way to ask for.
 
 Video and audio files play in the editor's pane through GTK's own GStreamer support. A stock Ubuntu plays WebM, Ogg, MP3 and FLAC out of the box; H.264 video and AAC audio, which most .mp4 and .m4a files hold, need `sudo apt install gstreamer1.0-libav`, and minicode says so when it meets one.
 
@@ -168,8 +168,9 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Action | macOS | Linux | Android |
 | --- | --- | --- | --- |
 | Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
-| Close the application | Shift Command W | Ctrl Q |  |
-| Close the window | Command W | Ctrl W |  |
+| Close the application | Command Q | Ctrl Q |  |
+| Close the tab, or the terminal or browser panel when it has the keyboard | Command W |  |  |
+| Close the window | Shift Command W | Ctrl W |  |
 | Comment or uncomment the selected lines | Command / | Ctrl / |  |
 | Complete the word at the cursor, with a language server | Control Space, or Option Escape | Ctrl Space | N, or Ctrl N |
 | Export the typeset PDF of a LaTeX file | Shift Command S | Ctrl Shift S |  |
@@ -181,12 +182,14 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Focus the file tree | Command 0 | Ctrl 0 |  |
 | Focus the terminal, opening it if it is hidden | Command 2 |  |  |
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G, or Ctrl G |
-| Jump to the previous file | Control Tab | Ctrl Tab |  |
+| Go to tab 1 to 8, or the last tab | Control 1 to 9, or Shift Command 1 to 9 (macOS keeps Shift Command 3, 4 and 5 for screenshots) |  |  |
+| Jump to the previous file |  | Ctrl Tab |  |
 | List the TODO comments and open Markdown tasks in the folder | Shift Command L | Ctrl Shift L | W, or Ctrl Shift L |
 | Move the selected file to the Trash | Command Delete | Delete, in the file tree |  |
 | New file | Control Command N | Ctrl Alt N | New file in the ⋮ menu |
 | New folder | Shift Command N | Ctrl Shift N |  |
 | New window | Command N | Ctrl N |  |
+| Next tab, previous tab | Control Tab, Control Shift Tab, or Shift Command ], Shift Command [ |  |  |
 | Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it | Ctrl click it | Tap it |
 | Open a folder | Command O | Ctrl O | O, or Ctrl O |
 | Open the settings file | Command comma | Ctrl comma |  |
