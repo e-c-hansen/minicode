@@ -27,7 +27,7 @@ this file covers the macOS app except where it says otherwise.
   client, finding file references and URLs in terminal output, the
   folder search (on a scratch tree in the temp directory), and the git
   status and diff readers, the formatter planning and the line diff
-  (2,331 checks on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
+  (3,111 checks on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
   corpus in `tests/markdown/corpus.md` read from the repo root; the
   corpus checks skip themselves where that file is not found).
   Exits non-zero on failure. The Makefile uses clang++ on the Mac and make's
@@ -322,6 +322,12 @@ container (PanelHost, laid out by hand in layoutContainer)
   Adjust Settings lists the surfaces (`adjustAppearance:`, the id as
   `representedObject`). The hints overlay has no keys (inline hex), so it
   has no item. Verified offscreen (123 checks; see the commit message).
+  A settings file written before some of the surface's keys existed (the
+  user's was) has no line to show: `Settings::missingSurfaceLines` gives
+  their commented defaults from `defaultFileText`, each with the comment
+  just above it there, and `appendSettingsLines:title:` adds them at the end
+  under one "# Added by Adjust Settings: ..." line, as one undo step, saving
+  at once only if the file had no unsaved changes.
 - Layout is manual frames, not Auto Layout (see gotchas for why). Pane state
   flags: `sidebarCollapsed`, `editorHidden`, `terminalVisible`,
   `browserVisible`, plus NSSplitView's own collapse of `rightArea`.
@@ -779,11 +785,42 @@ task lists, so files stay portable.
   the Trash closes only clean tabs of what went; a renamed file or folder
   moves its tabs (`pathMovedFrom:to:`). A background tab is checked against
   the disk when it is shown again.
+- **The disk, after the tab was opened** (2026-10-20 fixes): a buffer
+  replaced from disk (a quiet reload, Reload, a fresh load) loses its undo
+  steps and the LaTeX preview's (`forgetHistoryOf:`); they were for the old
+  text, and Cmd+Z edited the new text at the old places, or threw. Every
+  save, Cmd+S and Save All alike, checks the file's date first
+  (`mayWriteTab:`): changed outside asks Keep Mine / Reload / Cancel, gone
+  asks before writing it again, and Cancel stops a Save All. `saveTab:`
+  saves a background tab where it is, never by showing it (with
+  keep-sorted-on-save its sort waits in `pendingSort` and goes into the
+  buffer as an undoable edit when the tab is shown). A file moved or
+  deleted outside (FSEvents, `checkTabsOnDisk`, and on show/focus): a
+  rename within its folder is followed when a file there has the same
+  inode and modification date (`fileID`), otherwise the tab is `gone`:
+  "(deleted)" in its title and the window's, unsaved, and back to normal
+  if the file returns.
 - **Landing**: a window reopens the tabs its folder had (NSUserDefaults key
   `MCTabSessions`, by the folder's resolved path, 50 folders kept, files
   that are gone skipped), else shows a read-only empty editor with one muted
   line. Sessions are off under `MINICODE_DEMO` and `MINICODE_BENCH`, and
-  `MINICODE_DEFAULTS_SUITE` points them at a scratch suite for tests.
+  `MINICODE_DEFAULTS_SUITE` points them at a scratch suite for tests. The
+  tab on show is read at launch, so one over 16 MB (the GTK port's limit)
+  or not a plain file waits for a click and the nearest other tab is shown;
+  opening such a file by hand is unchanged. Windows open on one folder
+  share its session: each save lists the saving window's files, then the
+  other windows' (so quitting with two windows reopens all their files in
+  one), and a window closing while another stays open leaves the session
+  to that one, so what is remembered is what was open when the folder's
+  last window went.
+- **Keys from Find in Folder and TODOs**: AppDelegate's `current` maps a
+  window an editor window made (`ownsWindow:`) to that editor, not to the
+  last window made, and the items that edit the file on show (Format
+  Document, Sort Lines, Run File, Toggle Comment, Toggle Task, completion,
+  F12, hover) are disabled while another window is key, so the key reaches
+  the field there (Shift+Option+F types Ï). Cmd+1 focuses what the tab
+  shows (`focusActiveDocument`), never the text view hidden behind a PDF,
+  the LaTeX preview or a diff.
 - **Touch points for merges**: `relayoutRightArea` has two lines (the strip
   takes the top of the editor's side through `layoutTabStripIn:`; the
   browser beside it keeps its whole height), `applySettings` one.
@@ -851,7 +888,11 @@ through an external formatter; nothing is bundled.
   text input other than the editor's CodeTextView or a TerminalGridView, so
   the terminal, commit box and find fields still type it.
 - `format.on-save` (off): Cmd+S (a non-nil sender) formats, then saves in
-  the completion; saves MiniCode makes itself (nil sender) never wait.
+  the completion; saves MiniCode makes itself (nil sender) never wait, and
+  Save All formats nothing, so no tab is formatted unseen. A Cmd+S is never
+  lost (`_formatSaveTab`): leaving the tab (another tab, closing it or the
+  window) drops the formatter's result and saves the tab unformatted at
+  once, and Format Document pressed meanwhile takes over the save.
 - **Verified** (2026-10-20) with an offscreen harness that includes
   `main.mm` (61 checks) against pyink 26.5.1 and yapf 0.43.0 in a scratch
   venv and the command line tools' clang-format 21: the key event built
@@ -933,8 +974,10 @@ The user found Return in Python "rarely works the way it is supposed to"
   sort by the text after leading spaces, stable, duplicates kept; else the
   innermost block holding the caret), Shift+F9 every block. The caret
   follows its own line (`Result::origin`). `editor.keep-sorted-on-save`
-  (Mac and Linux; Android has no settings file) sorts before writing.
-  Messages go to the status bar for six seconds. Android: leader J and two
+  (Mac and Linux; Android has no settings file) sorts before writing,
+  without moving the view, background tabs in Save All too (not a tab
+  showing a preview, on show or not). Messages go to the status bar for
+  six seconds. Android: leader J and two
   ⋮ menu items.
 - **Undo**: every edit is one replacement, its own step (Mac:
   `breakUndoCoalescing` around it; Linux: one user action; Android: one
@@ -991,8 +1034,9 @@ never closes.
   node, go, cargo). `which gopls` said "not found" on this Mac while
   ~/go/bin/gopls exists; the app's search does find it.
 - **Settings**: `lsp.enabled`, `lsp.<cpp|python|go|rust|typescript>`. The
-  command value is a whole command line (to a ` #` comment), unlike every
-  other key; `off` disables one language. A change restarts the servers.
+  command value is a whole command line (to a ` #` comment outside quotes,
+  as for `run.*` and `format.*`), unlike every other key; `off` disables one
+  language. A change restarts the servers.
   `python.interpreter` (a path, spaces allowed; `auto` or empty = automatic)
   only reconfigures the Python server. Python's defaults are pyright, then
   basedpyright, pylsp, jedi-language-server.
@@ -1325,7 +1369,9 @@ never closes.
   from `Settings::runTemplate(ext)` (run.<extension>, then run.<language>
   via `runLanguage`, then the defaults python, sh, go, js, rb; `off`
   removes one), filled by `RunFile::expand`, each value quoted by
-  `shellQuote`. `{python}` is the LSP session's
+  `shellQuote`, or, where the template already quotes the placeholder
+  (`python3 "{file}"`), escaped for those quotes (`quoteInside`).
+  `{python}` is the LSP session's
   `pythonInterpreterWithSource:` (the folder's choice, python.interpreter,
   then automatic), so a run and the completions see the same packages;
   `MCPythonInterpreterFor` (.venv, venv, env with an executable bin/python

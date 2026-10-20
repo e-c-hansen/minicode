@@ -249,10 +249,30 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
     return nil;
 }
 
-// The controller whose window is frontmost (menu actions target it).
+// The controller whose window is frontmost (menu actions target it). Find
+// in Folder and TODOs belong to the editor window that opened them, so
+// their keys go to that one, not to whichever window was made last.
 - (EditorController *)current {
     NSWindow *w = NSApp.keyWindow ?: NSApp.mainWindow;
-    return [self controllerForWindow:w] ?: self.controllers.lastObject;
+    for (EditorController *c in self.controllers)
+        if ([c ownsWindow:w]) return c;
+    return [self controllerForWindow:NSApp.mainWindow] ?: self.controllers.lastObject;
+}
+
+// Keys that edit the file on show (Format Document, Sort Lines, Run File,
+// Toggle Comment, completion...) act only from the editor window. In Find in
+// Folder or TODOs their items are disabled, so the key reaches the field
+// there: Shift+Option+F types its character, as in any other text field.
+static BOOL MCEditorOnlyAction(SEL a) {
+    return a == @selector(formatDocument:) || a == @selector(sortLines:) ||
+           a == @selector(fixKeepSorted:) || a == @selector(runCurrentFile:) ||
+           a == @selector(toggleComment:) || a == @selector(toggleTask:) ||
+           a == @selector(triggerCompletion:) || a == @selector(goToDefinition:) ||
+           a == @selector(showHoverInfo:);
+}
+- (BOOL)keyWindowIsEditor {
+    NSWindow *key = NSApp.keyWindow;
+    return !key || [self controllerForWindow:key] != nil;
 }
 
 - (void)windowClosing:(NSNotification *)note {
@@ -276,6 +296,7 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
 - (void)togglePreview:(id)sender   { [[self current] togglePreview:sender]; }
 - (void)exportPDF:(id)sender       { [[self current] exportPDF:sender]; }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (MCEditorOnlyAction(item.action)) return [self keyWindowIsEditor];
     if (item.action == @selector(exportPDF:)) return [self current].canExportPDF;
     if (item.action == @selector(togglePlayback:))
         return [self current].canTogglePlayback;

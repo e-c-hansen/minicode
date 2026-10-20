@@ -26,3 +26,8 @@ NSString *MCFixKeepSorted(NSTextView *tv);
 // editor.keep-sorted-on-save: sort every block before a save, if the file
 // has any. Returns a message when some block was left alone, else nil.
 NSString *MCKeepSortedBeforeSave(NSTextView *tv);
+
+// The same for a file's text away from the editor (a tab saved in the
+// background): the sorted text, or nil when nothing changed. *problem, if
+// given, gets the message when some block was left alone.
+NSString *MCKeepSortedText(NSString *text, NSString **problem);

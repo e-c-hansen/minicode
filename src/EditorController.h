@@ -40,6 +40,9 @@
 - (void)toggleEditor:(id)sender;      // Shift+Cmd+E hide/restore the file editor
 - (void)toggleHiddenFiles:(id)sender; // Cmd+Shift+. show/hide dotfiles
 - (void)openSearch:(id)sender;        // Cmd+Shift+F project-wide search
+// The editor window itself, or a window it made for itself (Find in Folder,
+// TODOs, a sheet or child window of it).
+- (BOOL)ownsWindow:(NSWindow *)window;
 - (void)focusTree:(id)sender;         // Cmd+0 move keyboard focus to file tree
 - (void)focusEditor:(id)sender;       // Cmd+1 move keyboard focus to editor
 - (void)focusTerminal:(id)sender;     // Cmd+2 the terminal, opening it if hidden

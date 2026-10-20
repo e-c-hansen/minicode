@@ -22,6 +22,8 @@
 - (BOOL)canRedoEdit;
 - (void)undoEdit;
 - (void)redoEdit;
+// The source was replaced from disk: the edits before it cannot be undone.
+- (void)forgetEdits;
 - (void)compileNow;
 // The PDF for `source`, exactly as tectonic wrote it. Handed over straight
 // away when the preview is already showing that source, otherwise after a

@@ -312,6 +312,10 @@ static const CGFloat kStatusHeight = 26;
 
 - (void)undoEdit { [self stepFrom:_undo to:_redo saying:@"Undid a preview edit"]; }
 - (void)redoEdit { [self stepFrom:_redo to:_undo saying:@"Redid a preview edit"]; }
+- (void)forgetEdits {
+    _undo.clear();
+    _redo.clear();
+}
 
 // Cmd+Z reaches here through the responder chain when the page has focus; the
 // window controller forwards it when something else does.

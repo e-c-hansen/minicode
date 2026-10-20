@@ -417,6 +417,16 @@ private:
 @property(nonatomic, copy)   NSString *currentExt;
 @property(nonatomic, assign) BOOL isMarkdown, isLatex, previewMode, dirty;
 @property(nonatomic, strong) NSDate *fileModDate;
+// The file's inode when last read or saved, to follow a rename made outside.
+@property(nonatomic, assign) uint64_t fileID;
+// The file is no longer at its path (deleted, or moved where it could not
+// be followed): the tab says "(deleted)", counts as unsaved, and Cmd+S asks
+// before writing it again.
+@property(nonatomic, assign) BOOL gone;
+// Saved sorted (keep-sorted-on-save) while in the background: the sort is
+// put into the buffer as an undoable edit when the tab is next shown, so its
+// undo history still matches the text.
+@property(nonatomic, copy)   NSString *pendingSort;
 @property(nonatomic, strong) LatexView *latex;        // its own, so its undo and page stay
 @property(nonatomic, assign) BOOL isImage, isPDF, isMedia;
 @property(nonatomic, assign) NSSize imagePixels, mediaPixels;
@@ -506,6 +516,11 @@ private:
     NSDictionary *_sourceAttributes;       // font, paragraph style, plain color
     NSUInteger _formatGeneration;          // a format result for an older one is dropped
     NSPopover *_formatNote;                // what Format Document has to say
+    // The tab whose Cmd+S (format.on-save) waits for the formatter. A save
+    // is never lost: leaving the tab saves it at once, and Format Document
+    // started meanwhile saves when it is done.
+    __weak MCTab *_formatSaveTab;
+    BOOL _closing;                         // windowWillClose: has run
 }
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) ClickOutline *outline;
@@ -1889,6 +1904,14 @@ static const CGFloat kDividerGrabSlop = 5;
     [self.searchPanel show];
 }
 
+- (BOOL)ownsWindow:(NSWindow *)w {
+    if (!w) return NO;
+    if (w == self.window || w == self.searchPanel.window || w == self.todoPanel.window) return YES;
+    // A sheet or a child window (a popover's) of one of those.
+    NSWindow *up = w.sheetParent ?: w.parentWindow;
+    return up && up != w && [self ownsWindow:up];
+}
+
 // Shift+Cmd+L: every TODO comment and open task in the folder, scoped as
 // Find in Folder is.
 - (void)showTodos:(id)sender {
@@ -2150,12 +2173,10 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
 }
 - (void)focusEditor:(id)sender {
     [self revealEditor];
-    // A video or audio file: the player, whose own Space, arrows and J K L work.
-    if (self.isMedia && self.playerView) {
-        [self.window makeFirstResponder:self.playerView];
-        return;
-    }
-    [self.window makeFirstResponder:self.textView];
+    // What the tab shows: the text, or the LaTeX preview, a PDF, the player
+    // (whose own Space, arrows and J K L work) or a diff, never the text
+    // view hidden behind them.
+    [self focusActiveDocument];
 }
 // Cmd+2: the terminal's input (or its grid), opening the terminal if needed.
 - (void)focusTerminal:(id)sender {
@@ -2178,6 +2199,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     EditorController *self = (__bridge EditorController *)info;
     [self refreshTree:nil];
     if (self.gitPanelVisible) [self.gitPanel refresh];   // a commit or edit made elsewhere
+    [self checkTabsOnDisk];   // a tab's file moved or deleted in the terminal
 }
 
 - (void)startWatching:(NSString *)path {
@@ -2664,6 +2686,9 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     NSString *path = self.currentPath;
     if (!path) return;
     _activeTab.loaded = YES;
+    _activeTab.gone = NO;
+    _activeTab.pendingSort = nil;
+    [self forgetHistoryOf:_activeTab];   // the text is read afresh
     [self resetViewMode];
     // Images are routed by extension before any attempt to read them as text.
     if ([EditorController isImagePath:path] && [self showImageAtPath:path]) {
@@ -2724,7 +2749,23 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         attributesOfItemAtPath:path error:nil];
     return attrs.fileModificationDate;
 }
-- (void)recordModDate { self.fileModDate = [self diskModDateFor:self.currentPath]; }
+// What the tab knows of its file on disk: when it was last changed, and its
+// inode, so a rename made outside can be followed.
+- (void)recordDiskStateOf:(MCTab *)t {
+    NSDictionary *attrs = t.currentPath
+        ? [[NSFileManager defaultManager] attributesOfItemAtPath:t.currentPath error:nil] : nil;
+    t.fileModDate = attrs.fileModificationDate;
+    t.fileID = [attrs[NSFileSystemFileNumber] unsignedLongLongValue];
+}
+- (void)recordModDate { [self recordDiskStateOf:_activeTab]; }
+
+// The tab's text was replaced from disk. Its undo steps were made for the
+// old text, and taken now they would edit the new text at the old places
+// (or throw past its end), so they go, and so do the LaTeX preview's.
+- (void)forgetHistoryOf:(MCTab *)t {
+    [t.undoManager removeAllActions];
+    [t.latex forgetEdits];
+}
 
 - (void)reselectCurrentFileInTree {
     for (NSInteger row = 0; row < self.outline.numberOfRows; row++) {
@@ -2836,6 +2877,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
                                         : [NSString stringWithFormat:@"%@ (diff)", t.diffName ?: @""];
         else
             item.title = [NSString stringWithUTF8String:names[i].c_str()] ?: t.currentPath.lastPathComponent;
+        if (t.gone) item.title = [item.title stringByAppendingString:@" (deleted)"];
         item.toolTip = t.currentPath ?: item.title;
         item.dirty = t.dirty;
         [items addObject:item];
@@ -2889,6 +2931,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
 - (void)stashActiveTab {
     MCTab *t = _activeTab;
     if (!t) return;
+    [self saveBeforeLeavingFormatSave];   // Cmd+S is never lost to a tab switch
     NSTextView *tv = self.textView;
     [self.markdownEditPanel close];
     // A color pick saves the settings file a moment later (colorPicked:);
@@ -3011,6 +3054,19 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
         if (t.isMarkdown && t.previewMode)
             _previewEntryScroll = self.editorScroll.contentView.bounds.origin;
     }
+    // Sorted as it was saved in the background (saveTab:): the sort goes in
+    // now, as one undo step, which leaves the buffer as the file is.
+    if (t.pendingSort) {
+        NSString *sorted = t.pendingSort;
+        t.pendingSort = nil;
+        if (self.textView.editable) {
+            [self replaceSourceWithText:sorted actionName:@"Sort keep-sorted Blocks"];
+        } else {
+            t.sourceText = sorted;
+            [self forgetHistoryOf:t];
+            [self refreshDisplay];
+        }
+    }
     [self.lsp documentOpened:self.previewMode ? nil : path];
     [self updateTitle];
 }
@@ -3032,6 +3088,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     else if (self.isMedia && self.playerView) [self.window makeFirstResponder:self.playerView];
     else if (self.isPDF && self.pdfView) [self.window makeFirstResponder:self.pdfView];
     else if (self.isDiff && self.diffView) [self.window makeFirstResponder:self.diffView];
+    else if (self.isImage) [self.window makeFirstResponder:nil];   // nothing in it takes keys
     else [self.window makeFirstResponder:self.textView];
 }
 
@@ -3081,6 +3138,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
 // Before the window closes, the app quits or another folder takes over:
 // one question for every tab with unsaved changes.
 - (BOOL)confirmCloseAllTabs {
+    [self saveBeforeLeavingFormatSave];   // a Cmd+S still waiting for its formatter
     NSMutableArray<MCTab *> *dirty = [NSMutableArray array];
     for (MCTab *t in _tabs) if (t.dirty) [dirty addObject:t];
     if (dirty.count == 0) return YES;
@@ -3107,23 +3165,42 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     return YES;
 }
 
-// Write a tab's text to its file. The active tab saves as Cmd+S does.
+// Write a tab's text to its file, YES when nothing is left unsaved. The
+// active tab saves as a save MiniCode makes itself does (saveCurrentFile:
+// with no sender). A tab in the background saves where it is by the same
+// rules: the disk is checked first (Keep Mine, Reload, Cancel), and with
+// editor.keep-sorted-on-save its blocks are sorted unless it shows a
+// preview; the sort reaches its buffer as an undoable edit when the tab is
+// next shown. format.on-save stays with Cmd+S on the tab on show, so a tab
+// is never formatted unseen.
 - (BOOL)saveTab:(MCTab *)t {
     if (t == _activeTab) {
         [self saveCurrentFile:nil];
         return !self.dirty;
     }
     if (!t.dirty || !t.currentPath) return YES;
+    if (t.isImage || t.isPDF || t.isMedia || t.isDiff || t.showingMessage) return YES;
+    if (![self mayWriteTab:t]) return !t.dirty;   // Reload leaves nothing to save
+    NSString *text = t.sourceText ?: @"";
+    NSString *sortProblem = nil;
+    const BOOL preview = (t.isMarkdown || t.isLatex) && t.previewMode;
+    if (!preview && [AppSettings shared].settings.keepSortedOnSave())
+        text = MCKeepSortedText(text, &sortProblem) ?: text;
     NSError *err = nil;
-    if (![(t.sourceText ?: @"") writeToFile:t.currentPath atomically:YES
-                                  encoding:NSUTF8StringEncoding error:&err]) {
+    if (![text writeToFile:t.currentPath atomically:YES
+                  encoding:NSUTF8StringEncoding error:&err]) {
         [[NSAlert alertWithError:err] runModal];
         return NO;
     }
-    t.savedText = t.sourceText;
+    if (![text isEqualToString:t.sourceText ?: @""]) t.pendingSort = text;
+    t.savedText = text;
+    t.gone = NO;
     t.dirty = NO;
-    t.fileModDate = [self diskModDateFor:t.currentPath];
+    [self recordDiskStateOf:t];
     [self updateTitle];
+    if (sortProblem)
+        [self flashStatus:[NSString stringWithFormat:@"%@: %@",
+                           t.currentPath.lastPathComponent, sortProblem]];
     return YES;
 }
 
@@ -3132,6 +3209,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
 - (BOOL)closeTab:(MCTab *)t prompt:(BOOL)prompt {
     const NSUInteger index = [_tabs indexOfObject:t];
     if (index == NSNotFound) return YES;
+    if (t == _activeTab) [self saveBeforeLeavingFormatSave];   // saved, so not asked about
     if (prompt && ![self confirmCloseTab:t]) return NO;
     std::vector<uint64_t> stamps;
     for (MCTab *each in _tabs) stamps.push_back(each.lastActive);
@@ -3217,6 +3295,8 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
 // every time.
 static NSString *const kTabSessionsKey = @"MCTabSessions";
 static const NSUInteger kMaxTabSessions = 50;
+// The largest file shown at launch, the GTK port's limit for opening one.
+static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
 
 - (NSUserDefaults *)sessionDefaults {
     // Tests point this at a scratch suite, away from the user's own.
@@ -3231,6 +3311,14 @@ static const NSUInteger kMaxTabSessions = 50;
 }
 
 - (NSString *)sessionKey { return _root.path.stringByResolvingSymlinksInPath; }
+
+// The files this window would reopen, in tab order.
+- (NSArray<NSString *> *)sessionFilePaths {
+    NSMutableArray<NSString *> *files = [NSMutableArray array];
+    for (MCTab *t in _tabs)
+        if (t.currentPath) [files addObject:t.currentPath];
+    return files;
+}
 
 - (void)saveSession {
     if (![self sessionsEnabled] || !_root.path) return;
@@ -3247,10 +3335,30 @@ static const NSUInteger kMaxTabSessions = 50;
         if (t == shown) active = (NSInteger)files.count;
         [files addObject:t.currentPath];
     }
+    NSString *key = [self sessionKey];
+    // Windows open on the same folder share its session: this window's
+    // files first, then the other windows' not already there, so whichever
+    // saves last, quitting with two windows on a folder reopens all their
+    // files. A window that closes while another stays open drops out of the
+    // next save, so what is remembered is what was open when the folder's
+    // last window went.
+    id app = NSApp.delegate;
+    NSArray *windows = [app respondsToSelector:@selector(controllers)]
+                           ? [app valueForKey:@"controllers"] : nil;
+    for (EditorController *other in windows) {
+        if (other == self || ![other isKindOfClass:[EditorController class]] ||
+            other->_closing || ![[other sessionKey] isEqualToString:key])
+            continue;
+        if (_closing) {   // the folder stays open in another window: it speaks for it
+            [other saveSession];
+            return;
+        }
+        for (NSString *f in [other sessionFilePaths])
+            if (![files containsObject:f]) [files addObject:f];
+    }
     NSUserDefaults *d = [self sessionDefaults];
     NSMutableDictionary *all = [[d dictionaryForKey:kTabSessionsKey] mutableCopy]
                                ?: [NSMutableDictionary dictionary];
-    NSString *key = [self sessionKey];
     if (files.count == 0) {
         [all removeObjectForKey:key];
     } else {
@@ -3292,14 +3400,36 @@ static const NSUInteger kMaxTabSessions = 50;
         t.currentPath = [NSString stringWithUTF8String:f.c_str()];
         [_tabs addObject:t];
     }
-    [self activateTab:_tabs[(NSUInteger)r.active]];
+    // The tab on show is read now, while the window opens. One holding a
+    // file too big for that (it held up every launch) or no plain file at
+    // all waits for a click instead, and the nearest other tab is shown.
+    auto quick = [fm](NSString *path) {
+        NSDictionary *a = [fm attributesOfItemAtPath:path error:nil];
+        return [a.fileType isEqualToString:NSFileTypeRegular] &&
+               a.fileSize <= kMaxRestoredFileBytes;
+    };
+    NSInteger active = -1;
+    for (NSInteger d = 0; active < 0 && d < (NSInteger)_tabs.count; d++)
+        for (NSInteger i : {(NSInteger)r.active - d, (NSInteger)r.active + d})
+            if (active < 0 && i >= 0 && i < (NSInteger)_tabs.count && quick(_tabs[(NSUInteger)i].currentPath))
+                active = i;
+    if (active < 0) {
+        [self reloadTabStrip];
+        [self updateTitle];
+        return;
+    }
+    [self activateTab:_tabs[(NSUInteger)active]];
 }
 
 // Called when the window regains focus: reconcile with on-disk changes.
 - (void)checkExternalChange {
-    if (!self.currentPath) return;
+    if (!self.currentPath || !self.fileModDate) return;
     NSDate *disk = [self diskModDateFor:self.currentPath];
-    if (!disk || !self.fileModDate) return;
+    if (!disk) {                             // moved or deleted
+        [self tabWentMissing:_activeTab];
+        return;
+    }
+    if (_activeTab.gone) [self tabCameBack:_activeTab];
     if ([disk isEqualToDate:self.fileModDate]) return;   // unchanged
 
     self.fileModDate = disk;
@@ -3310,7 +3440,7 @@ static const NSUInteger kMaxTabSessions = 50;
         NSString *fresh = [NSString stringWithContentsOfFile:self.currentPath
                                                     encoding:NSUTF8StringEncoding
                                                        error:nil];
-        if (fresh) { self.sourceText = fresh; self.savedText = fresh; [self refreshDisplay]; }
+        if (fresh) [self takeDiskText:fresh forTab:_activeTab];
         return;
     }
     NSAlert *a = [[NSAlert alloc] init];     // local edits AND disk changed
@@ -3324,10 +3454,7 @@ static const NSUInteger kMaxTabSessions = 50;
                                                 encoding:NSUTF8StringEncoding
                                                    error:nil];
     if ([a runModal] == NSAlertSecondButtonReturn) {
-        if (fresh) {
-            self.sourceText = fresh; self.savedText = fresh; self.dirty = NO;
-            [self refreshDisplay]; [self updateTitle];
-        }
+        if (fresh) [self takeDiskText:fresh forTab:_activeTab];
     } else if (fresh) {
         // Kept: what counts as unchanged from now on is the file's new text.
         self.savedText = fresh;
@@ -3335,11 +3462,128 @@ static const NSUInteger kMaxTabSessions = 50;
     }
 }
 
+// Put the file's text from disk in a tab, as if it had just been opened:
+// clean, with nothing to undo. A background tab shows it when shown.
+- (void)takeDiskText:(NSString *)fresh forTab:(MCTab *)t {
+    if (!t) return;
+    t.sourceText = fresh;
+    t.savedText = fresh;
+    t.dirty = NO;
+    t.gone = NO;
+    t.pendingSort = nil;
+    [self recordDiskStateOf:t];
+    [self forgetHistoryOf:t];
+    if (t == _activeTab) [self refreshDisplay];
+    [self updateTitle];
+}
+
+// ------------------------------------------- files moved or deleted outside
+// A tab's file is no longer at its path. A rename within its folder (mv, git
+// mv) is followed when a file there has the same inode and modification
+// date, which a rename keeps and nothing else produces; otherwise the tab is
+// marked: "(deleted)" in its title, unsaved, and Cmd+S asks first.
+- (void)tabWentMissing:(MCTab *)t {
+    if (!t.currentPath || !t.fileModDate || t.gone) return;
+    if ([[NSFileManager defaultManager] fileExistsAtPath:t.currentPath]) return;
+    NSString *moved = [self renamedFileFor:t];
+    if (moved) {
+        [self pathMovedFrom:t.currentPath to:moved];
+        if (t == _activeTab) [self reselectCurrentFileInTree];
+        return;
+    }
+    t.gone = YES;
+    // Only text has anything to save; a picture or a video is just marked.
+    if (!t.isImage && !t.isPDF && !t.isMedia && !t.isDiff && !t.showingMessage && t.loaded)
+        t.dirty = YES;
+    [self updateTitle];
+    [self saveSession];
+}
+
+- (void)tabCameBack:(MCTab *)t {
+    if (!t.gone) return;
+    t.gone = NO;
+    NSString *now = t.sourceText ?: @"", *saved = t.savedText ?: @"";
+    t.dirty = t.loaded && ![now isEqualToString:saved];
+    [self updateTitle];
+}
+
+- (NSString *)renamedFileFor:(MCTab *)t {
+    if (!t.fileID) return nil;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *dir = t.currentPath.stringByDeletingLastPathComponent;
+    for (NSString *name in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+        NSString *p = [dir stringByAppendingPathComponent:name];
+        NSDictionary *a = [fm attributesOfItemAtPath:p error:nil];
+        if (![a.fileType isEqualToString:NSFileTypeRegular]) continue;
+        if ([a[NSFileSystemFileNumber] unsignedLongLongValue] != t.fileID) continue;
+        if (![a.fileModificationDate isEqualToDate:t.fileModDate]) continue;
+        if ([self tabForPath:p]) return nil;   // already open in another tab
+        return p;
+    }
+    return nil;
+}
+
+// After a change in the folder (FSEvents): every tab whose file went away
+// or came back. Nothing is read, so this is cheap; changed contents wait
+// until the tab is shown or the window comes forward, as before.
+- (void)checkTabsOnDisk {
+    for (MCTab *t in [_tabs copy]) {
+        if (!t.currentPath || !t.fileModDate) continue;
+        BOOL there = [[NSFileManager defaultManager] fileExistsAtPath:t.currentPath];
+        if (!there) [self tabWentMissing:t];
+        else if (t.gone) {
+            if (t == _activeTab) [self checkExternalChange];
+            else [self tabCameBack:t];
+        }
+    }
+}
+
+// Before writing a tab's file: NO when the save must not go ahead. A file
+// changed on disk since it was read asks Keep Mine (write over it), Reload
+// (take the disk's text, nothing is written) or Cancel; a file no longer
+// there asks before it is written again. Save All asks the same, file by
+// file, so nothing outside is overwritten unasked.
+- (BOOL)mayWriteTab:(MCTab *)t {
+    if (!t.fileModDate) return YES;   // never on disk as far as we know
+    NSDate *disk = [self diskModDateFor:t.currentPath];
+    if (disk && [disk isEqualToDate:t.fileModDate] && !t.gone) return YES;
+    NSString *name = t.currentPath.lastPathComponent;
+    NSAlert *a = [[NSAlert alloc] init];
+    if (!disk) {
+        a.messageText = [NSString stringWithFormat:@"“%@” is no longer on disk.", name];
+        a.informativeText = @"It was moved or deleted after it was opened here. "
+                             "Save your version at its old place?";
+        [a addButtonWithTitle:@"Save"];      // 1000
+        [a addButtonWithTitle:@"Cancel"];    // 1001
+        return [a runModal] == NSAlertFirstButtonReturn;
+    }
+    if (t.gone) {   // it came back: compare with what is there now
+        [self tabCameBack:t];
+        if ([disk isEqualToDate:t.fileModDate]) return YES;
+    }
+    a.messageText = [NSString stringWithFormat:@"“%@” changed on disk.", name];
+    a.informativeText = @"It changed after it was opened here. Keep your version "
+                         "and write over it, or reload the file from disk and lose "
+                         "your changes?";
+    [a addButtonWithTitle:@"Keep Mine"];     // 1000
+    [a addButtonWithTitle:@"Reload"];        // 1001
+    [a addButtonWithTitle:@"Cancel"];        // 1002
+    NSModalResponse r = [a runModal];
+    if (r == NSAlertFirstButtonReturn) return YES;
+    if (r == NSAlertSecondButtonReturn) {
+        NSString *fresh = [NSString stringWithContentsOfFile:t.currentPath
+                                                    encoding:NSUTF8StringEncoding error:nil];
+        if (fresh) [self takeDiskText:fresh forTab:t];
+    }
+    return NO;
+}
+
 // -------------------------------------------------------- NSWindowDelegate
 - (BOOL)windowShouldClose:(NSWindow *)sender {
     return [self confirmCloseAllTabs];
 }
 - (void)windowWillClose:(NSNotification *)note {
+    _closing = YES;
     [self saveSession];        // reopened with the folder next time
     _awaitedWebImages = nil;   // pictures still on their way land in the cache only
     _awaitedMath = nil;        // and so do formulas
@@ -3487,7 +3731,9 @@ static const NSUInteger kMaxTabSessions = 50;
 // fraction of a millisecond for a large file.
 - (void)noteEdited {
     NSString *now = self.sourceText ?: @"", *saved = self.savedText ?: @"";
-    const BOOL dirty = now.length != saved.length || ![now isEqualToString:saved];
+    // A file deleted outside has nothing on disk to match.
+    const BOOL dirty = _activeTab.gone || now.length != saved.length ||
+                       ![now isEqualToString:saved];
     if (dirty == self.dirty) return;
     self.dirty = dirty;
     [self updateTitle];
@@ -3892,6 +4138,12 @@ static NSColor *ContrastColor(const Rgba &c) {
     if (![self isSettingsFile] || (self.isMarkdown && self.previewMode)) return;
 
     NSTextView *tv = self.textView;
+    // A file written before some of these keys existed has no line for
+    // them: their commented-out defaults are added at its end first, so
+    // the swatches and sliders are there to use.
+    const std::string missing = Settings::missingSurfaceLines(Utf8String(tv.string),
+                                                              surface.UTF8String ?: "");
+    if (!missing.empty() && tv.editable) [self appendSettingsLines:missing title:s->title];
     NSString *text = tv.string;
     std::string utf8 = text.UTF8String ?: "";
     // Start of each line, so a line number from the core maps to a range.
@@ -3907,7 +4159,10 @@ static NSColor *ContrastColor(const Rgba &c) {
         NSValue *v = [NSValue valueWithRange:r];
         if (![lines containsObject:v]) [lines addObject:v];
     }
-    if (!lines.count) return;
+    if (!lines.count) {
+        [self flashStatus:[NSString stringWithFormat:@"No %s settings in this file.", s->title]];
+        return;
+    }
 
     NSRange first = lines.firstObject.rangeValue;
     ValueSpan value;
@@ -3922,6 +4177,30 @@ static NSColor *ContrastColor(const Rgba &c) {
             [self centerEditorOnRange:first];
     });
     [self tintKeyLines:lines];
+}
+
+// Add the default lines of keys the settings file lacks at its end, under a
+// line saying where they came from, as one undo step. A file with no unsaved
+// changes is saved at once (the lines are all commented out, so nothing
+// changes but the file), one with changes is left for the user to save.
+- (void)appendSettingsLines:(const std::string &)lines title:(const char *)title {
+    NSTextView *tv = self.textView;
+    NSString *text = tv.string;
+    const BOOL wasClean = !self.dirty;
+    NSMutableString *add = [NSMutableString string];
+    if (text.length && ![text hasSuffix:@"\n"]) [add appendString:@"\n"];
+    if (text.length) [add appendString:@"\n"];
+    [add appendFormat:@"# Added by Adjust Settings: the %s keys this file did not have yet.\n",
+                      title];
+    [add appendString:[NSString stringWithUTF8String:lines.c_str()] ?: @""];
+    const NSRange end = NSMakeRange(text.length, 0);
+    [tv breakUndoCoalescing];
+    if (![tv shouldChangeTextInRange:end replacementString:add]) return;
+    [tv.textStorage replaceCharactersInRange:end withString:add];
+    [tv didChangeText];
+    [tv breakUndoCoalescing];
+    [tv.undoManager setActionName:@"Adjust Settings"];
+    if (wasClean) [self saveCurrentFile:nil];
 }
 
 - (void)centerEditorOnRange:(NSRange)range {
@@ -4051,6 +4330,13 @@ static NSColor *ContrastColor(const Rgba &c) {
     NSTextView *tv = self.textView;
     NSString *original = [tv.string copy];
     NSString *path = self.currentPath;
+    MCTab *tab = _activeTab;
+    // Format Document while Cmd+S waits for format.on-save: this run takes
+    // over the save, since the one it replaces will be dropped.
+    if (!then && _formatSaveTab && _formatSaveTab == tab) {
+        __weak EditorController *weakSelf = self;
+        then = ^{ [weakSelf finishFormatSave]; };
+    }
     // A selection formats its lines, where the formatter can do that.
     NSInteger first = 0, last = 0;
     NSRange sel = tv.selectedRange;
@@ -4068,10 +4354,12 @@ static NSColor *ContrastColor(const Rgba &c) {
     }
     NSUInteger generation = ++_formatGeneration;
     __weak EditorController *weakSelf = self;
+    __weak MCTab *weakTab = tab;
     MCFormatText(original, path, self.rootPath, first, last, 10, ^(MCFormatResult *r) {
         EditorController *s = weakSelf;
-        // Another format started, or the window closed, or the file changed.
-        if (!s || generation != s->_formatGeneration || ![path isEqualToString:s.currentPath])
+        // Another format started, or the window closed, or another tab is
+        // on show (which saved this one as it left, if a save waited).
+        if (!s || generation != s->_formatGeneration || !weakTab || weakTab != s->_activeTab)
             return;
         if (r.error) {
             if (!(quiet && r.unavailable)) [s showFormatNote:r.error error:YES];
@@ -4093,8 +4381,27 @@ static NSColor *ContrastColor(const Rgba &c) {
     if (![self canFormatSource] || Formatter::languageFor(Utf8String(self.currentPath)).empty())
         return NO;
     __weak EditorController *weakSelf = self;
-    [self formatSourceQuietly:YES then:^{ [weakSelf saveCurrentFile:nil]; }];
+    _formatSaveTab = _activeTab;
+    [self formatSourceQuietly:YES then:^{ [weakSelf finishFormatSave]; }];
     return YES;
+}
+
+// The formatter is done (or its result was dropped): the save Cmd+S asked
+// for happens now, if it still waits.
+- (void)finishFormatSave {
+    MCTab *t = _formatSaveTab;
+    _formatSaveTab = nil;
+    if (t && t == _activeTab) [self saveCurrentFile:nil];
+}
+
+// The tab whose save waits for the formatter is leaving the screen (another
+// tab, or it closes): the formatter's result is dropped and the tab saved
+// now, unformatted, while it is still the one on show.
+- (void)saveBeforeLeavingFormatSave {
+    if (!_formatSaveTab || _formatSaveTab != _activeTab) return;
+    _formatSaveTab = nil;
+    _formatGeneration++;
+    [self saveCurrentFile:nil];
 }
 
 // Put `text` in place of the source as one undo step, touching only the
@@ -4307,6 +4614,8 @@ static NSColor *ContrastColor(const Rgba &c) {
     // formatter is done; saves asked for by MiniCode itself (nil) never wait.
     if (sender && [AppSettings shared].settings.formatOnSave() && [self formatBeforeSaving])
         return;
+    // Never over a change made outside, or a file deleted outside, unasked.
+    if (![self mayWriteTab:_activeTab]) return;
     // In markdown preview mode the text view holds rendered text, not source;
     // save the tracked source instead.
     // editor.keep-sorted-on-save: the blocks are sorted first, as one undo step.
@@ -4321,6 +4630,7 @@ static NSColor *ContrastColor(const Rgba &c) {
     if (ok) {
         self.sourceText = text;
         self.savedText = text;
+        _activeTab.gone = NO;
         self.dirty = NO;
         [self recordModDate];   // so our own save doesn't look like an external change
         [self.lsp documentSaved];
@@ -4620,6 +4930,7 @@ static NSString *MCFormatDuration(double seconds) {
     // With no file open, the folder's name.
     NSString *name = self.currentPath.lastPathComponent ?: _root.path.lastPathComponent;
     if (!name.length) name = @"MiniCode";
+    if (_activeTab.gone) name = [name stringByAppendingString:@" (deleted)"];
     if (self.isDiff)
         name = self.diffIsCommit ? self.diffName
                                  : [NSString stringWithFormat:@"%@ (diff)", self.diffName];

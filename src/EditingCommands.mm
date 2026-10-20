@@ -26,9 +26,10 @@ std::string FileName(NSString *path) {
 // Set while Apply edits, so its own replacement never counts as typing.
 bool gApplying = false;
 
-// One replacement as its own undo step, with the selection after it.
+// One replacement as its own undo step, with the selection after it, which
+// is scrolled into view unless `scroll` is off.
 void Apply(NSTextView *tv, size_t start, size_t length, const std::u16string &replacement,
-           size_t selStart, size_t selEnd, NSString *action) {
+           size_t selStart, size_t selEnd, NSString *action, bool scroll = true) {
     NSRange range = NSMakeRange(start, length);
     NSString *text = FromU16(replacement);
     gApplying = true;
@@ -40,7 +41,7 @@ void Apply(NSTextView *tv, size_t start, size_t length, const std::u16string &re
         if (action) [tv.undoManager setActionName:action];
         NSRange sel = NSMakeRange(selStart, selEnd - selStart);
         [tv setSelectedRange:sel];
-        [tv scrollRangeToVisible:sel];
+        if (scroll) [tv scrollRangeToVisible:sel];
     }
     gApplying = false;
 }
@@ -156,8 +157,29 @@ NSString *MCKeepSortedBeforeSave(NSTextView *tv) {
     if (!KeepSorted::hasBlocks(text)) return nil;
     const NSRange sel = tv.selectedRange;
     KeepSorted::Edit e = KeepSorted::fixCommand(text, sel.location, NSMaxRange(sel));
-    if (e.changed)
+    if (e.changed) {
+        // Saving never moves the view: the lines on screen stay where they
+        // are, wherever the caret went.
+        NSClipView *clip = tv.enclosingScrollView.contentView;
+        const NSPoint origin = clip.bounds.origin;
         Apply(tv, e.replaceStart, e.replaceLength, e.replacement, e.selStart, e.selEnd,
-              @"Sort keep-sorted Blocks");
+              @"Sort keep-sorted Blocks", false);
+        if (clip) {
+            [clip scrollToPoint:[clip constrainBoundsRect:(NSRect){origin, clip.bounds.size}].origin];
+            [tv.enclosingScrollView reflectScrolledClipView:clip];
+        }
+    }
     return e.error && !e.message.empty() ? [NSString stringWithUTF8String:e.message.c_str()] : nil;
+}
+
+NSString *MCKeepSortedText(NSString *text, NSString **problem) {
+    const std::u16string u = U16(text ?: @"");
+    if (!KeepSorted::hasBlocks(u)) return nil;
+    KeepSorted::Edit e = KeepSorted::fixCommand(u, 0, 0);
+    if (problem && e.error && !e.message.empty())
+        *problem = [NSString stringWithUTF8String:e.message.c_str()];
+    if (!e.changed) return nil;
+    std::u16string out = u;
+    out.replace(e.replaceStart, e.replaceLength, e.replacement);
+    return FromU16(out);
 }
