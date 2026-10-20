@@ -33,6 +33,8 @@
 - (void)openSearch:(id)sender;        // Cmd+Shift+F project-wide search
 - (void)focusTree:(id)sender;         // Cmd+0 move keyboard focus to file tree
 - (void)focusEditor:(id)sender;       // Cmd+1 move keyboard focus to editor
+- (void)focusTerminal:(id)sender;     // Cmd+2 the terminal, opening it if hidden
+- (void)focusBrowser:(id)sender;      // Cmd+3 the browser's address bar, likewise
 - (void)switchToPreviousFile:(id)sender;  // Ctrl+Tab jump to previous file
 - (void)newFile:(id)sender;
 - (void)newFolder:(id)sender;

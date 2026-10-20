@@ -31,14 +31,16 @@
 - (void)setFrameSize:(NSSize)s { [super setFrameSize:s]; if (self.onLayout) self.onLayout(); }
 @end
 
-// Drag handle for resizing the terminal dock. The view is a generous grab
+// Drag handle for resizing the terminal dock (a horizontal bar) or the
+// editor beside the browser (a vertical one). The view is a generous grab
 // area centered on the boundary but draws only a 1px line, which lights up
-// while hovered or dragged. Reports the new boundary Y (in its superview's
-// coordinates) to a block, keeping the offset where the bar was grabbed so it
-// doesn't jump. The host must keep it above neighboring views, or they take
-// the clicks.
+// while hovered or dragged. Reports the new boundary Y, or X for a vertical
+// bar (in its superview's coordinates), to a block, keeping the offset where
+// the bar was grabbed so it doesn't jump. The host must keep it above
+// neighboring views, or they take the clicks.
 @interface DragBar : NSView
-@property(nonatomic, copy) void (^onDrag)(CGFloat yInSuperview);
+@property(nonatomic, copy) void (^onDrag)(CGFloat inSuperview);
+@property(nonatomic) BOOL vertical;   // a boundary between left and right
 @end
 @implementation DragBar {
     CGFloat _grabOffset;   // pointer Y minus boundary Y at mouseDown
@@ -63,7 +65,11 @@ static const CGFloat kDragBarHeight = 12;
 
 // Cursor rects lose to overlapping text views; a tracking-area cursor update
 // goes to whichever view is on top under the pointer.
-- (void)cursorUpdate:(NSEvent *)event { [[NSCursor resizeUpDownCursor] set]; }
+- (NSCursor *)cursor {
+    return self.vertical ? [NSCursor resizeLeftRightCursor]
+                         : [NSCursor resizeUpDownCursor];
+}
+- (void)cursorUpdate:(NSEvent *)event { [[self cursor] set]; }
 
 - (void)setHot:(BOOL)hot {
     if (hot == _hot) return;
@@ -71,21 +77,28 @@ static const CGFloat kDragBarHeight = 12;
     self.needsDisplay = YES;
 }
 - (void)mouseEntered:(NSEvent *)event { [self setHot:YES]; }
+// A bar hidden mid-drag (dragged to an edge) never sees the pointer leave,
+// and would come back lit.
+- (void)viewDidHide { [super viewDidHide]; _hot = NO; }
 - (void)mouseExited:(NSEvent *)event { if (!_dragging) [self setHot:NO]; }
 
-- (CGFloat)boundaryY { return NSMidY(self.frame); }
+- (CGFloat)boundary {
+    return self.vertical ? NSMidX(self.frame) : NSMidY(self.frame);
+}
+- (CGFloat)along:(NSPoint)p { return self.vertical ? p.x : p.y; }
 
 - (void)mouseDown:(NSEvent *)event {
     NSPoint p = [self.superview convertPoint:event.locationInWindow fromView:nil];
-    _grabOffset = p.y - [self boundaryY];
+    _grabOffset = [self along:p] - [self boundary];
     _dragging = YES;
     [self setHot:YES];
-    [[NSCursor resizeUpDownCursor] set];
+    [[self cursor] set];
 }
 - (void)mouseDragged:(NSEvent *)event {
     NSPoint p = [self.superview convertPoint:event.locationInWindow fromView:nil];
-    [[NSCursor resizeUpDownCursor] set];
-    if (self.onDrag) self.onDrag(p.y - _grabOffset);
+    [[self cursor] set];
+    [self setHot:YES];
+    if (self.onDrag) self.onDrag([self along:p] - _grabOffset);
 }
 - (void)mouseUp:(NSEvent *)event {
     _dragging = NO;
@@ -96,7 +109,9 @@ static const CGFloat kDragBarHeight = 12;
 - (void)drawRect:(NSRect)dirty {
     NSRect b = self.bounds;
     CGFloat h = _hot ? 2 : 1;
-    NSRect line = NSMakeRect(0, floor(NSMidY(b) - h / 2), b.size.width, h);
+    NSRect line = self.vertical
+        ? NSMakeRect(floor(NSMidX(b) - h / 2), 0, h, b.size.height)
+        : NSMakeRect(0, floor(NSMidY(b) - h / 2), b.size.width, h);
     [(_hot ? [NSColor colorWithSRGBRed:0x4E / 255.0 green:0xA1 / 255.0
                                   blue:0xF7 / 255.0 alpha:1]
            : [NSColor colorWithSRGBRed:0x33 / 255.0 green:0x33 / 255.0
@@ -435,6 +450,7 @@ private:
 @property(nonatomic, strong) PanelScrollView *editorScroll;
 @property(nonatomic, strong) TerminalView *terminal;
 @property(nonatomic, strong) DragBar *termDivider;
+@property(nonatomic, strong) DragBar *browserDivider;   // editor | browser
 @property(nonatomic, strong) BrowserView *browser;
 @property(nonatomic, strong) LatexView *latex;
 @property(nonatomic, strong) MCMarkdownEditPanel *markdownEditPanel;
@@ -451,6 +467,7 @@ private:
 @property(nonatomic, assign) BOOL terminalVisible;
 @property(nonatomic, assign) BOOL browserVisible;
 @property(nonatomic, assign) CGFloat terminalHeight;
+@property(nonatomic, assign) CGFloat browserFraction;   // of the top's width
 @property(nonatomic, strong) NSSplitView *splitView;
 @property(nonatomic, strong) PanelScrollView *sidebarScroll;
 @property(nonatomic, assign) BOOL sidebarCollapsed;
@@ -485,6 +502,7 @@ private:
         _root.path = path; _root.isDir = YES;
         [_root loadChildren];
         _terminalHeight = 220;
+        _browserFraction = 0.5;
         _recent = [NSMutableArray array];
         _pendingStart = _pendingEnd = NSNotFound;
     }
@@ -1032,6 +1050,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     [self appendHintsHeading:@"Navigation" to:s];
     [self appendHintsRow:s key:@"⌘0" label:@"Focus tree"
                     key2:@"⌘1" label2:@"Focus editor" state:nil];
+    [self appendHintsRow:s key:@"⌘2" label:@"Focus terminal"
+                    key2:@"⌘3" label2:@"Focus browser" state:nil];
     [self appendHintsRow:s key:@"↑ ↓" label:@"Browse tree"
                     key2:@"⏎" label2:@"Open file" state:nil];
     [self appendHintsRow:s key:@"⌃⇥" label:@"Previous file"
@@ -1091,19 +1111,22 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
 }
 
 // -------------------------------------------------------- terminal + browser
-// Dock the terminal at the bottom; the editor OR the browser fills the top.
-// The top slot holds the browser when it's open, else the file editor unless
-// that is hidden. The terminal docks below it, or fills the pane when the top
-// slot is empty.
+// The top of the pane holds the file editor (or whatever has its slot: the
+// LaTeX preview, an image, a PDF, a player, a diff) on the left and the
+// browser on the right, with a vertical bar between them; either can be
+// hidden and the other takes the whole width. The terminal docks below both,
+// across the full width, or fills the pane when the top is empty.
 static const CGFloat kMinTopSlotHeight = 40;   // smallest editor while dragging
 static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hides it
+static const CGFloat kMinSideWidth     = 150;  // editor or browser beside the other
+static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides that pane
 
 - (void)relayoutRightArea {
     NSRect b = self.rightArea.bounds;
     CGFloat W = b.size.width, H = b.size.height;
     BOOL showTerm = self.terminalVisible && self.terminal != nil;
     BOOL showBrowser = self.browserVisible && self.browser != nil;
-    BOOL showEditor = !showBrowser && !self.editorHidden;
+    BOOL showEditor = !self.editorHidden;
     BOOL topShown = showBrowser || showEditor;
 
     CGFloat termH = 0;
@@ -1113,6 +1136,21 @@ static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hide
                          : H;
     NSRect topRect = NSMakeRect(0, termH, W, MAX(0, H - termH));
 
+    // Side by side, the browser gets its remembered share of the width, but
+    // neither pane goes below kMinSideWidth while there is room for both.
+    NSRect editorRect = topRect, browserRect = topRect;
+    BOOL sideBySide = showEditor && showBrowser;
+    if (sideBySide) {
+        CGFloat bw = round(W * self.browserFraction);
+        if (W >= 2 * kMinSideWidth)
+            bw = MIN(MAX(bw, kMinSideWidth), W - kMinSideWidth);
+        else
+            bw = round(W / 2);
+        editorRect.size.width = W - bw;
+        browserRect.origin.x = W - bw;
+        browserRect.size.width = bw;
+    }
+
     // The LaTeX preview sits in the editor's slot, in place of the text view.
     BOOL showLatex = showEditor && self.latex != nil && self.isLatex &&
                      self.previewMode;
@@ -1121,36 +1159,42 @@ static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hide
     BOOL showPDF = showEditor && self.pdfView != nil && self.isPDF;
     BOOL showMedia = showEditor && self.playerView != nil && self.isMedia;
     BOOL showDiff = showEditor && self.diffScroll != nil && self.isDiff;
-    self.editorScroll.frame = topRect;
+    self.editorScroll.frame = editorRect;
     self.editorScroll.hidden = !showEditor || showLatex || showImage || showPDF ||
                                showMedia || showDiff;
     if (self.diffScroll) {
-        self.diffScroll.frame = topRect;
+        self.diffScroll.frame = editorRect;
         self.diffScroll.hidden = !showDiff;
     }
     if (self.pdfView) {
-        self.pdfView.frame = topRect;
+        self.pdfView.frame = editorRect;
         self.pdfView.hidden = !showPDF;
     }
     if (self.imageView) {
-        self.imageView.frame = topRect;
+        self.imageView.frame = editorRect;
         self.imageView.hidden = !showImage;
     }
     if (self.playerView) {
-        self.playerView.frame = topRect;
+        self.playerView.frame = editorRect;
         self.playerView.hidden = !showMedia;
     }
     if (self.latex) {
-        self.latex.frame = topRect;
+        self.latex.frame = editorRect;
         self.latex.hidden = !showLatex;
     }
     if (self.browser) {
-        self.browser.frame = topRect;
+        self.browser.frame = browserRect;
         self.browser.hidden = !showBrowser;
     }
     if (self.terminal) {
         self.terminal.frame = NSMakeRect(0, 0, W, termH);
         self.terminal.hidden = !showTerm;
+    }
+    if (self.browserDivider) {
+        self.browserDivider.frame =
+            NSMakeRect(NSMinX(browserRect) - kDragBarHeight / 2, NSMinY(topRect),
+                       kDragBarHeight, NSHeight(topRect));
+        self.browserDivider.hidden = !sideBySide;
     }
     if (self.termDivider) {
         // With the top slot empty the bar sits at the top edge, still inside
@@ -1159,12 +1203,21 @@ static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hide
                                 : H - kDragBarHeight;
         self.termDivider.frame = NSMakeRect(0, barY, W, kDragBarHeight);
         self.termDivider.hidden = !showTerm;
-        // Views added later (the browser) would otherwise sit on top of the
-        // bar and swallow the clicks meant for it.
-        if (self.rightArea.subviews.lastObject != self.termDivider)
-            [self.rightArea addSubview:self.termDivider
-                            positioned:NSWindowAbove relativeTo:nil];
     }
+    // Views added later (the browser, a PDF view) would otherwise sit on top
+    // of the bars and swallow the clicks meant for them. The terminal's bar
+    // goes last, so it wins where the two meet. Only moved when out of
+    // order: moving a bar in the middle of its own drag is asking for trouble.
+    NSMutableArray<NSView *> *bars = [NSMutableArray array];
+    if (self.browserDivider) [bars addObject:self.browserDivider];
+    if (self.termDivider) [bars addObject:self.termDivider];
+    NSArray<NSView *> *subs = self.rightArea.subviews;
+    BOOL inOrder = subs.count >= bars.count &&
+        [[subs subarrayWithRange:NSMakeRange(subs.count - bars.count, bars.count)]
+            isEqualToArray:bars];
+    if (!inOrder)
+        for (NSView *bar in bars)
+            [self.rightArea addSubview:bar positioned:NSWindowAbove relativeTo:nil];
 }
 
 // Dragging the terminal bar. Near the top it hides whatever is above the
@@ -1183,6 +1236,32 @@ static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hide
     } else {
         if (!topShown) self.editorHidden = NO;
         self.terminalHeight = MIN(MAX(y, 80), MAX(80, H - kMinTopSlotHeight));
+    }
+    [self relayoutRightArea];
+    if (self.hintsVisible) [self updateHints];
+}
+
+// Dragging the bar between the editor and the browser. Near the left edge it
+// hides the editor, near the right edge the browser; dragging back out in
+// the same drag brings it back, as the terminal bar does.
+- (void)browserBarDraggedTo:(CGFloat)x {
+    CGFloat W = self.rightArea.bounds.size.width;
+    if (W <= 0 || !self.browser) return;
+    if (x <= kSideSnapDistance) {
+        if (!self.editorHidden && self.browserVisible) {
+            self.editorHidden = YES;
+            [self.browser focusURLBar];
+        }
+    } else if (x >= W - kSideSnapDistance) {
+        if (self.browserVisible && !self.editorHidden) {
+            self.browserVisible = NO;
+            [self.window makeFirstResponder:self.textView];
+        }
+    } else {
+        if (self.editorHidden && self.browserVisible) self.editorHidden = NO;
+        if (!self.browserVisible && !self.editorHidden) self.browserVisible = YES;
+        CGFloat bw = MIN(MAX(W - x, kMinSideWidth), MAX(kMinSideWidth, W - kMinSideWidth));
+        self.browserFraction = bw / W;
     }
     [self relayoutRightArea];
     if (self.hintsVisible) [self updateHints];
@@ -1284,6 +1363,14 @@ static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hide
         self.browser = [[BrowserView alloc]
             initWithHomeURL:@"https://duckduckgo.com"];
         [self.rightArea addSubview:self.browser];
+
+        self.browserDivider = [[DragBar alloc] initWithFrame:NSZeroRect];
+        self.browserDivider.vertical = YES;
+        __weak EditorController *weakSelf = self;
+        self.browserDivider.onDrag = ^(CGFloat x) {
+            [weakSelf browserBarDraggedTo:x];
+        };
+        [self.rightArea addSubview:self.browserDivider];
     }
     self.browserVisible = !self.browserVisible;
     if (self.browserVisible) [self showRightArea];
@@ -1340,8 +1427,8 @@ static const CGFloat kDividerGrabSlop = 5;
     self.editorHidden = YES;
     [self relayoutRightArea];
     if (self.terminalVisible && self.terminal) [self.terminal focusInput];
-    else if (!(self.browserVisible && self.browser))
-        [self.window makeFirstResponder:self.outline];
+    else if (self.browserVisible && self.browser) [self.browser focusURLBar];
+    else [self.window makeFirstResponder:self.outline];
     [self collapseRightAreaIfEmpty];
     if (self.hintsVisible) [self updateHints];
 }
@@ -1773,6 +1860,18 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
         return;
     }
     [self.window makeFirstResponder:self.textView];
+}
+// Cmd+2: the terminal's input (or its grid), opening the terminal if needed.
+- (void)focusTerminal:(id)sender {
+    if (!(self.terminalVisible && self.terminal)) { [self toggleTerminal:nil]; return; }
+    [self showRightArea];
+    [self.terminal focusInput];
+}
+// Cmd+3: the browser's address bar, opening the browser if needed.
+- (void)focusBrowser:(id)sender {
+    if (!(self.browserVisible && self.browser)) { [self toggleBrowser:nil]; return; }
+    [self showRightArea];
+    [self.browser focusURLBar];
 }
 - (void)switchToPreviousFile:(id)sender {
     // _recent is most-recent-first; index 1 is the file before the current one.

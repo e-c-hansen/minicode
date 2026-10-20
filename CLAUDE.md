@@ -208,10 +208,12 @@ container (PanelHost, laid out by hand in layoutContainer)
 │   ├── treeScroll → ClickOutline (NSOutlineView)  file tree, bg #252526
 │   │   (or gitPanel, MCGitPanel, swapped in by Ctrl+Shift+G)
 │   └── rightArea (PanelHost, laid out by hand in relayoutRightArea)
-│       ├── editorScroll → textView (NSTextView)   top slot, bg #1E1E1E
-│       ├── browser (BrowserView)                  top slot when open
-│       ├── latex (LatexView)                     editor's slot, .tex preview
-│       ├── terminal (TerminalView)                docked bottom, bg #181818
+│       ├── editorScroll → textView (NSTextView)   top left (editor's slot), bg #1E1E1E
+│       ├── latex, imageView, pdfView, playerView,
+│       │   diffScroll                             editor's slot, in its place
+│       ├── browser (BrowserView)                  top right, beside the editor
+│       ├── terminal (TerminalView)                docked bottom, full width, bg #181818
+│       ├── browserDivider (DragBar, vertical)     editor | browser, kept on top
 │       └── termDivider (DragBar)                  kept topmost
 ├── status bar (buildStatusBarInContainer)        bottom strip
 └── hintsPanel (buildHintsPanelInContainer)       Shift+Cmd+H overlay
@@ -252,6 +254,24 @@ container (PanelHost, laid out by hand in layoutContainer)
 - Layout is manual frames, not Auto Layout (see gotchas for why). Pane state
   flags: `sidebarCollapsed`, `editorHidden`, `terminalVisible`,
   `browserVisible`, plus NSSplitView's own collapse of `rightArea`.
+- **Editor, browser and terminal together** (2026-10-20). Up to 1.4.14 the
+  browser took the editor's slot. Now `relayoutRightArea` splits the top
+  into `editorRect` (left) and `browserRect` (right) when both show, and
+  every view that takes the editor's slot (LaTeX, image, PDF, player, diff)
+  is given `editorRect`. The browser's share is `browserFraction` (0.5 at
+  first, kept per window while hidden, like `terminalHeight`), clamped so
+  each side keeps `kMinSideWidth` (150); a top narrower than 300 splits
+  evenly. `browserDivider` is a `DragBar` with `vertical` set; dragging it
+  within 16 points of the left edge hides the editor, of the right edge the
+  browser, and dragging back out in the same drag shows it again
+  (`browserBarDraggedTo:`). Cmd+2 focuses the terminal and Cmd+3 the
+  browser's address bar, each opening its pane if hidden. URLs from the
+  terminal and Markdown links open the browser beside the editor. Checked
+  offscreen (62 checks: frames, bars, drags and snaps, the share across a
+  window resize, Shift+Cmd+E, the terminal bar to the top, an image and a
+  PDF in the editor's part, a link, Cmd+1/2/3 through the menu, including
+  from inside the web page, collapse when all three are hidden). The GTK
+  port still puts the browser in the editor's place.
 - Return keeps the current line's indentation (spaces and tabs up to the
   caret) on all three ports: `textView:doCommandBySelector:` on the Mac,
   `onViewKey` noting the key plus `onInsertTextAfter` on Linux (so the
@@ -1666,10 +1686,24 @@ holds, these give real runtime evidence rather than compile-only evidence:
   edge. It is off now, and `PanelScrollView tile` sets a wrapping text
   view's width to the visible width.
 - **Terminal resize bar**: the `DragBar` is a 12px grab area drawing a 1px
-  line, and `relayoutRightArea` re-raises it to the top of `rightArea`.
+  line, and `relayoutRightArea` re-raises it to the top of `rightArea`
+  (after the browser's vertical bar, so the terminal's wins where they
+  meet), but only when they are out of order, never during a drag.
   Otherwise a panel added later (the browser) covers half of it. Its cursor
   comes from a tracking area, because cursor rects lose to the overlapping
-  text views.
+  text views. A bar hidden mid-drag (snapped to an edge) clears its hover
+  light in `viewDidHide`.
+- **The terminal's input line draws no background** (2026-10-20). It used
+  to fill its NSTextField with a fixed #232323 (`terminalInputBackground`,
+  now gone) on the #181818 panel: a lighter strip starting after the ❯ and
+  stopping short of the edges, which the user saw as untidy with default
+  settings. It ignored `terminal.background`, and on a see-through panel
+  it composited its own alpha over the panel's (0.6 became 0.84 under the
+  field). Now `drawsBackground` is off and the panel's layer shows
+  through, and the ❯ shares the field's row so it sits on the text's
+  baseline. Checked by rendering the panel's layer (`renderInContext:`),
+  which gave the exact colors; `cacheDisplayInRect:` gave the same verdict
+  but shifted every value (#181818 read as #1E1E1E).
 - **Cmd+B collapse** fought the split delegate's 160px min; a `sidebarCollapsed`
   flag lets the minimum drop to 0.
 - **Hiding panes**: two separate mechanisms. (1) Dragging the sidebar divider
@@ -1678,8 +1712,9 @@ holds, these give real runtime evidence rather than compile-only evidence:
   divider's grab area to 5px each side; min pane width 150 so the drag doesn't
   visibly stall). (2) Shift+Cmd+E, or dragging the terminal bar to the top,
   sets `editorHidden`: only the file editor goes, and `relayoutRightArea`
-  gives the terminal the full height (bar pinned at the top edge so it can be
-  dragged back down). If that leaves the pane empty, `collapseRightAreaIfEmpty`
+  gives its width to the browser if open, else the height to the terminal
+  (bar pinned at the top edge so it can be dragged back down). The terminal
+  bar at the top hides the browser too. If that leaves the pane empty, `collapseRightAreaIfEmpty`
   collapses it. Opening a file, Cmd+1 and the preview toggle call
   `revealEditor`; showing the terminal/browser calls `showRightArea`. Headless,
   a real split-view drag can be tested by posting LeftMouseDragged/Up events

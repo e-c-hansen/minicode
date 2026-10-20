@@ -30,7 +30,7 @@ Control backtick opens a terminal at the bottom. It runs one persistent zsh with
 
 ![Writing a short list in vim inside the terminal panel, then paging through git log](docs/demos/vim.gif)
 
-Paths and URLs in the output are links. Command click src/main.cpp:42:7 from a compiler, or a file Claude Code mentions, and it opens at that line; a URL opens in the browser panel, which Shift Command B toggles.
+Paths and URLs in the output are links. Command click src/main.cpp:42:7 from a compiler, or a file Claude Code mentions, and it opens at that line; a URL opens in the browser panel, which Shift Command B toggles. On the Mac the browser sits to the right of the editor rather than in its place, with a bar between them you can drag, and the terminal stays across the bottom under both. Any of the three can be hidden on its own (Shift Command E for the editor), and the others take its space. Command 1, 2 and 3 move the keyboard to the editor, the terminal and the browser.
 
 ![Command clicking a grep result to open it at its line, then a URL that opens in the browser panel](docs/demos/links.gif)
 
@@ -176,8 +176,10 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Find across the whole folder | Shift Command F | Ctrl Shift F |  |
 | Find in the current file | Command F | Ctrl F |  |
 | Find next, find previous | Command G, Shift Command G | Ctrl G or F3, Shift F3 |  |
+| Focus the browser's address bar, opening the browser if it is hidden | Command 3 |  |  |
 | Focus the editor, or the player when a video or audio file is open | Command 1 | Ctrl 1 |  |
 | Focus the file tree | Command 0 | Ctrl 0 |  |
+| Focus the terminal, opening it if it is hidden | Command 2 |  |  |
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G, or Ctrl G |
 | Jump to the previous file | Control Tab | Ctrl Tab |  |
 | List the TODO comments and open Markdown tasks in the folder | Shift Command L | Ctrl Shift L | W, or Ctrl Shift L |

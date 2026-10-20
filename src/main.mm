@@ -259,6 +259,8 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
 - (void)openSearch:(id)sender      { [[self current] openSearch:sender]; }
 - (void)focusTree:(id)sender       { [[self current] focusTree:sender]; }
 - (void)focusEditor:(id)sender     { [[self current] focusEditor:sender]; }
+- (void)focusTerminal:(id)sender   { [[self current] focusTerminal:sender]; }
+- (void)focusBrowser:(id)sender    { [[self current] focusBrowser:sender]; }
 - (void)switchToPreviousFile:(id)sender {
     [[self current] switchToPreviousFile:sender];
 }
@@ -520,6 +522,12 @@ static void BuildMenu(void) {
     [navMenu addItemWithTitle:@"Focus Editor"
                        action:@selector(focusEditor:)
                 keyEquivalent:@"1"];
+    [navMenu addItemWithTitle:@"Focus Terminal"
+                       action:@selector(focusTerminal:)
+                keyEquivalent:@"2"];
+    [navMenu addItemWithTitle:@"Focus Browser"
+                       action:@selector(focusBrowser:)
+                keyEquivalent:@"3"];
     NSMenuItem *prev =
         [[NSMenuItem alloc] initWithTitle:@"Previous File"
                                    action:@selector(switchToPreviousFile:)
