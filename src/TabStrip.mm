@@ -1,5 +1,6 @@
 // TabStrip.mm — see TabStrip.h.
 #import "TabStrip.h"
+#import "Appearance.h"
 #include <cmath>
 #include <vector>
 
@@ -208,6 +209,10 @@ static const CGFloat kMinTab = 80, kMaxTab = 240;
     _hover = -1;
     _hoverClose = NO;
     self.needsDisplay = YES;
+}
+
+- (NSMenu *)menuForEvent:(NSEvent *)event {
+    return self.surface ? MCAdjustSettingsMenu(self.surface, self) : nil;
 }
 
 - (void)mouseDown:(NSEvent *)event {

@@ -89,6 +89,7 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
         _selected = -1;
         __weak MCTerminalPanel *weakSelf = self;
         self.strip = [[MCTabStrip alloc] initWithFrame:NSZeroRect];
+        self.strip.surface = @"terminal-tabs";
         self.strip.onSelect = ^(NSInteger i) {
             [weakSelf selectTab:(NSUInteger)i];
             [weakSelf focusActive];

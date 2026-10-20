@@ -2756,6 +2756,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
 - (void)buildTabStrip {
     MCTabStrip *strip = [[MCTabStrip alloc] initWithFrame:NSZeroRect];
     strip.hidden = YES;
+    strip.surface = @"tabs";
     __weak EditorController *weakSelf = self;
     strip.onSelect = ^(NSInteger i) { [weakSelf selectTabAtIndex:i]; };
     strip.onClose = ^(NSInteger i) { [weakSelf closeTabAtIndex:i]; };

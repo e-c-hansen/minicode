@@ -22,6 +22,9 @@ extern const CGFloat kMCTabStripHeight;
 // Colors: the strip behind the tabs, the active tab (the editor's own
 // background, so it runs into the editor), and the two text colors.
 @property(nonatomic, strong) NSColor *stripColor, *activeColor, *activeText, *inactiveText;
+// The appearance surface its right-click menu offers to adjust ("tabs" or
+// "terminal-tabs", see Settings::appearanceSurfaces); nil for no menu.
+@property(nonatomic, copy) NSString *surface;
 // Where a tab and its close button are drawn, in the strip's coordinates
 // (flipped). Empty when the tab is scrolled out of sight.
 - (NSRect)rectForTab:(NSInteger)index;

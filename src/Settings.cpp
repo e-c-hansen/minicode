@@ -319,14 +319,16 @@ const std::vector<AppearanceSurface>& Settings::appearanceSurfaces() {
           "window.opacity", "window.text"}, false},
         {"window", "Window",
          {"window.opacity", "window.text", "window.blur", "window.material"}, false},
-        // For views other work adds: the editor's tab strip and the terminal's
-        // tabs. They draw in their pane's colors until they get keys of their own.
+        // The editor's and the terminal's tab strips: the active tab is drawn
+        // in its pane's colors, the strip behind the tabs in the sidebar's.
         {"tabs", "Tabs",
          {"editor.background", "editor.opacity", "editor.text",
-          "window.opacity", "window.text"}, true},
+          "sidebar.background", "sidebar.opacity", "sidebar.text",
+          "window.opacity", "window.text"}, false},
         {"terminal-tabs", "Terminal Tabs",
          {"terminal.background", "terminal.opacity", "terminal.text",
-          "window.opacity", "window.text"}, true},
+          "sidebar.background", "sidebar.opacity", "sidebar.text",
+          "window.opacity", "window.text"}, false},
     };
     return surfaces;
 }
