@@ -277,8 +277,8 @@ std::string serverDisplayName(const std::string& server) {
 
 std::string installHint(const std::string& server) {
     if (server == "cpp") return "xcode-select --install (or brew install llvm)";
-    if (server == "python") return "brew install pyright (or npm install -g pyright, or "
-                                   "pipx install python-lsp-server)";
+    if (server == "python") return "npm install -g pyright (or uv tool install basedpyright, "
+                                   "or pipx install python-lsp-server)";
     if (server == "go") return "go install golang.org/x/tools/gopls@latest";
     if (server == "rust") return "rustup component add rust-analyzer";
     if (server == "typescript")

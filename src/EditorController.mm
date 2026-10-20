@@ -7,6 +7,7 @@
 #import "Search.h"
 #import "AppSettings.h"
 #import "Lsp.h"
+#import "LspPanel.h"
 #import "MarkdownImage.h"
 #import "MarkdownMath.h"
 #import "MarkdownEditPanel.h"
@@ -466,7 +467,7 @@ private:
 @property(nonatomic, assign) NSUInteger colorLineStart;   // line the color panel edits
 @property(nonatomic, copy)   NSString *colorEditPath;
 @property(nonatomic, strong) LspSession *lsp;         // language servers
-@property(nonatomic, strong) NSTextField *lspLabel;   // their status
+@property(nonatomic, strong) MCLspStatusField *lspLabel;   // their status; click for more
 @property(nonatomic, strong) MCGitPanel *gitPanel;    // Source Control, in the sidebar's place
 @property(nonatomic, assign) BOOL gitPanelVisible;
 @property(nonatomic, strong) PanelScrollView *diffScroll;   // editor's slot, for a diff
@@ -608,7 +609,9 @@ private:
     self.textView.onPreviewDoubleClick = ^BOOL(NSUInteger index, NSPoint point) {
         return [weakSelf editMarkdownAtCharacter:index point:point];
     };
-    self.lsp.onStatus = ^(NSString *text) { weakSelf.lspLabel.stringValue = text; };
+    self.lsp.onStatus = ^(NSString *text, NSColor *dot) {
+        [weakSelf.lspLabel setStatus:text dot:dot];
+    };
     self.lsp.openFile = ^BOOL(NSString *p) {
         EditorController *s = weakSelf;
         if ([p hasPrefix:[s.rootPath stringByAppendingString:@"/"]])
@@ -872,12 +875,14 @@ static void *kMediaItemContext = &kMediaItemContext;
 
     // Middle: the language server for the open file and its problem count,
     // right-aligned just left of the shortcuts hint.
-    NSTextField *lsp = [NSTextField labelWithString:@""];
+    MCLspStatusField *lsp = [[MCLspStatusField alloc] initWithFrame:NSZeroRect];
     lsp.font = [NSFont systemFontOfSize:11];
     lsp.alignment = NSTextAlignmentRight;
     lsp.lineBreakMode = NSLineBreakByTruncatingHead;
     lsp.frame = NSMakeRect(container.bounds.size.width - 150 - 340, 3, 340, 16);
     lsp.autoresizingMask = NSViewMinXMargin;
+    __weak EditorController *weakSelf = self;
+    lsp.onClick = ^{ [weakSelf showLanguageServers:nil]; };
     self.lspLabel = lsp;
     [self.statusBar addSubview:lsp];
     [container addSubview:self.statusBar];
@@ -2928,6 +2933,15 @@ static NSColor *ContrastColor(const Rgba &c) {
 }
 - (void)showHoverInfo:(id)sender {
     if ([self lspActionAllowed]) [self.lsp showHoverInfo];
+}
+- (void)showLanguageServers:(id)sender {
+    MCShowLanguageServers(self.lsp, self.lspLabel);
+}
+- (void)restartLanguageServer:(id)sender {
+    [self.lsp restartCurrentServer];
+}
+- (void)selectPythonInterpreter:(id)sender {
+    MCChoosePythonInterpreter(self.lsp, self.window);
 }
 
 - (void)textDidChange:(NSNotification *)note {

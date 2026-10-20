@@ -52,9 +52,13 @@ Typesetting is done by [tectonic](https://tectonic-typesetting.github.io/). If i
 
 ## Language servers
 
-With a language server installed, minicode gives you completion, errors as you type, hover and go to definition. It knows clangd (C, C++, Objective-C), pyright or pylsp (Python), gopls (Go), rust-analyzer (Rust) and typescript-language-server (JavaScript and TypeScript), and finds them on your PATH and in the usual Homebrew, Cargo and Go folders.
+With a language server installed, minicode gives you completion, errors as you type, hover and go to definition. It knows clangd (C, C++, Objective-C), pyright, basedpyright, pylsp or jedi-language-server (Python), gopls (Go), rust-analyzer (Rust) and typescript-language-server (JavaScript and TypeScript), and finds them on your PATH and in the usual Homebrew, npm (nvm, fnm and volta included), pipx, uv, Cargo and Go folders. minicode never installs one itself.
 
-Problems get a red or yellow squiggle, and the status bar counts them. Typing a dot, an arrow or a double colon opens completion, and Control Space opens it anywhere. F12 or Command click jumps to a definition, and Command I shows the type and documentation under the cursor.
+Problems get a red or yellow squiggle, and the status bar counts them. Completion opens as you type, after a dot, an arrow or a double colon and on the second letter of any word, and Control Space opens it anywhere. Beside the list, the selected item's signature and documentation show, fetched as you move through it. Typing an opening parenthesis or a comma shows the call's signature above the line, with the argument you are on in bold. F12 or Command click jumps to a definition, and Command I shows the type and documentation under the cursor.
+
+The status bar shows the open file's server with a colored dot: green when it is running, yellow while it starts, red when it failed or crashed, and gray when there is none. Click it, or choose Language Servers in the minicode menu, to see every language's server, the command and program it runs, its process id, and why it stopped, with buttons to restart, stop and start it, and the command that installs a missing one. A server that crashes is started again after one, two and then four seconds, and after a fourth crash it waits for you. Restart Language Server in the same menu restarts the open file's.
+
+For Python, `npm install -g pyright` (or `uv tool install basedpyright`, which brings its own Node) is the one to install. The server reads your code with a Python interpreter, so it finds the packages installed there: by default the folder's own .venv, venv or env, then the active virtual environment. Select Python Interpreter in the minicode menu, or Change in the Language Servers popover, lists the project's environments, conda, pyenv, poetry, pipenv, uv and the Pythons on your PATH, and keeps the choice for that folder. python.interpreter in the settings file sets the default for folders without one.
 
 ![clangd flagging an error, completing a member, showing hover info and jumping to a definition](docs/demos/lsp.gif)
 
@@ -192,6 +196,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Refresh the file tree | Command R |  |  |
 | Rename the selected file or folder |  | F2, in the file tree |  |
 | Save | Command S | Ctrl S | S, or Ctrl S |
+| See the language servers, restart one, or choose the Python interpreter | Click the server in the status bar, or the minicode menu |  |  |
 | Show or hide dotfiles | Shift Command . | Ctrl H, or Ctrl Shift . |  |
 | Show or hide the on-screen keyboard, for symbols the phone's keyboard lacks |  |  | Y, or the keyboard button in the title bar |
 | Show the type and documentation under the cursor | Command I | Ctrl I | K, or Ctrl K |
