@@ -16,6 +16,11 @@
 @property(nonatomic) NSUInteger byteStart, byteLength;   // within the line's UTF-8
 @end
 
+// Posted (object: the TerminalView) when a command typed or run in a
+// terminal finishes, per the shell integration's marks. Something it
+// installed may now be found (LspSession looks again for a missing server).
+extern NSNotificationName const MCTerminalCommandDidFinishNotification;
+
 @interface TerminalView : NSView
 // Cmd+click on a link in the output. The window opens files and URLs.
 @property(nonatomic, copy) void (^onOpenLink)(MCTermLink *link);
@@ -53,6 +58,11 @@
 // goes into the shell's history like any other. Waits for the prompt when the
 // shell is still starting (or restarts a shell that exited).
 - (void)runCommand:(NSString *)line;
+// Puts a command in the input line and gives it the keyboard, for the user
+// to read and press Return (Run in Terminal for an install command). Never
+// runs it. NO when the terminal cannot take it now (a program has the grid,
+// or the terminal is busy); then nothing changed.
+- (BOOL)typeCommand:(NSString *)line;
 // Ends the shell (SIGHUP, the pty closed) for good. The view is then dead.
 - (void)close;
 @end

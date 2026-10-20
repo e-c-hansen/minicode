@@ -16,13 +16,16 @@
 @end
 
 // The Language Servers popover, shown under `view` (the status item). It
-// follows the servers while open.
-void MCShowLanguageServers(LspSession *session, NSView *view);
+// follows the servers while open. A missing server's card shows how to
+// install it, with Copy and, when `runInTerminal` is given, Run in Terminal.
+void MCShowLanguageServers(LspSession *session, NSView *view,
+                           void (^runInTerminal)(NSString *command));
 // Select Python Interpreter, as a sheet on `window`.
 void MCChoosePythonInterpreter(LspSession *session, NSWindow *window);
 
 // Test hooks. The popover's content, built but not shown.
-NSView *MCLanguageServersView(LspSession *session);
+NSView *MCLanguageServersView(LspSession *session,
+                              void (^runInTerminal)(NSString *command));
 
 // The picker behind Select Python Interpreter: row 0 is "Automatic" (no
 // choice for this folder), the rest the session's candidates.

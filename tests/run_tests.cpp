@@ -21,6 +21,7 @@
 #include "GitGraph.h"
 #include "EditorTabs.h"
 #include "Formatter.h"
+#include "InstallHints.h"
 #include "LineDiff.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
@@ -4357,9 +4358,10 @@ void testLspServers() {
            std::vector<std::string>{"pyright-langserver --stdio",
                                     "basedpyright-langserver --stdio", "pylsp",
                                     "jedi-language-server"}));
+    // Every server the settings know has install commands.
     for (const std::string &server : Settings::lspServers())
-        CHECK(!Lsp::installHint(server).empty());
-    CHECK(Lsp::installHint("cobol").empty());
+        CHECK(Install::server(server) && !Install::server(server)->ways.empty());
+    CHECK(Install::server("cobol") == nullptr);
     CHECK(Lsp::defaultCommands("cobol").empty());
     CHECK(Lsp::serverDisplayName("cpp") == "C/C++");
     // Every server a file can map to is one the settings file knows.
@@ -6519,7 +6521,7 @@ void testFormatter() {
     CHECK(p.candidates.size() == 2 &&
           p.candidates[0].command.find("--line-length 80") != std::string::npos &&
           p.candidates[1].command == "yapf --style=google");
-    CHECK(p.installHint == "pipx install pyink");
+    CHECK(p.installHint == "uv tool install pyink");
     Plan c = plan("cpp", "", "/w/proj/m.cc", "/w/proj", empty);
     CHECK(c.candidates.size() == 1 && c.candidates[0].program == "clang-format" &&
           c.candidates[0].command.find("--fallback-style=Google") != std::string::npos);
@@ -6531,7 +6533,7 @@ void testFormatter() {
     CHECK(s.fromSettings && s.candidates.size() == 1 &&
           s.candidates[0].program == "/opt/bin/yapf" &&
           s.candidates[0].command == "/opt/bin/yapf --style=pep8" &&
-          s.installHint == "pipx install yapf");
+          s.installHint == "uv tool install yapf");
     CHECK(plan("python", "OFF", "/w/a.py", "/w", empty).off);
     CHECK(plan("cpp", "none", "/w/a.c", "/w", empty).off);
     Plan q = plan("cpp", "\"/opt/my tools/clang-format\" -style=LLVM", "/w/a.c", "/w", empty);
@@ -6553,7 +6555,7 @@ void testFormatter() {
     Plan bl = plan("python", "", "/w/proj/a.py", "/w/proj",
                    fakeFs({{"/w/proj/pyproject.toml", "[tool.black]\nline-length = 88\n"}}));
     CHECK(bl.candidates.size() == 1 && bl.candidates[0].program == "black" &&
-          bl.installHint == "pipx install black");
+          bl.installHint == "uv tool install black");
     Plan yp = plan("python", "", "/w/proj/sub/a.py", "/w/proj",
                    fakeFs({{"/w/proj/sub/.style.yapf", "[style]\nbased_on_style = pep8\n"},
                            {"/w/proj/pyproject.toml", "[tool.pyink]\n"}}));
@@ -6753,6 +6755,121 @@ void testLineDiff() {
 #include "KeepSortedTests.cpp"
 #include "FileDetailsTests.cpp"
 
+// How to install the servers and formatters: one table, the app's notes and
+// the README.
+static void testInstallHints() {
+    GROUP("install:table");
+    const Install::Tool *py = Install::server("python");
+    CHECK(py && py->name == "basedpyright" && !py->homepage.empty());
+    CHECK(py && py->ways.size() == 4 && py->ways[0].command == "uv tool install basedpyright" &&
+          py->ways[0].needs == "uv");
+    CHECK(Install::server("cpp") &&
+          Install::server("cpp")->ways[0].command == "xcode-select --install" &&
+          Install::server("cpp")->ways[0].needs.empty());
+    CHECK(Install::server("go") &&
+          Install::server("go")->ways[0].command == "go install golang.org/x/tools/gopls@latest");
+    CHECK(Install::server("rust") &&
+          Install::server("rust")->ways[0].command == "rustup component add rust-analyzer");
+    CHECK(Install::server("typescript") &&
+          Install::server("typescript")->ways[0].command ==
+              "npm install -g typescript-language-server typescript");
+    CHECK(Install::formatter("pyink") &&
+          Install::formatter("/x/.venv/bin/pyink") == Install::formatter("pyink"));
+    CHECK(Install::formatter("shfmt") &&
+          Install::formatter("shfmt")->ways[0].command == "brew install shfmt");
+    CHECK(Install::formatter("clang-format") &&
+          Install::formatter("clang-format")->ways.size() == 2);
+    CHECK(Install::formatter("rustfmt") && Install::formatter("gofmt"));
+    CHECK(Install::formatter("prettier") == nullptr);
+    // Every formatter Format Document can pick has a hint.
+    for (const std::string &lang : Formatter::languages()) {
+        Formatter::Fs none;
+        none.exists = [](const std::string &) { return false; };
+        none.read = [](const std::string &) { return std::string(); };
+        Formatter::Plan pl = Formatter::plan(lang, "", "/w/a", "/w", none);
+        for (const Formatter::Candidate &c : pl.candidates)
+            CHECK(Install::formatter(c.program) != nullptr);
+        CHECK(!pl.installHint.empty());
+    }
+    // Every command is one line, every tool says what it gives and where it
+    // lives, and every prerequisite is one `prerequisite` knows.
+    for (const Install::Tool *t : Install::all()) {
+        std::string gives = t->gives;   // "Black formats ...": names it, any case
+        std::transform(gives.begin(), gives.end(), gives.begin(), ::tolower);
+        CHECK(!gives.empty() && gives.find(t->name) != std::string::npos);
+        CHECK(t->homepage.rfind("https://", 0) == 0);
+        for (const Install::Way &w : t->ways) {
+            CHECK(w.command.find('\n') == std::string::npos && !w.command.empty());
+            if (!w.needs.empty()) CHECK(!Install::prerequisite(w.needs).url.empty());
+        }
+    }
+    CHECK(Install::prerequisite("uv").command == "brew install uv");
+    CHECK(Install::prerequisite("brew").command.empty() &&
+          Install::prerequisite("brew").url == "https://brew.sh");
+    CHECK(Install::serverKeys().size() == Settings::lspServers().size());
+
+    GROUP("install:suggest");
+    auto haveOnly = [](std::set<std::string> progs) {
+        return [progs](const std::string &p) { return progs.count(p) > 0; };
+    };
+    Install::Suggestion s = Install::suggest(*py, haveOnly({"uv", "brew"}));
+    CHECK(s.command == "uv tool install basedpyright" && s.before.empty() &&
+          s.beforeUrl.empty() && s.missing.empty());
+    CHECK(s.alternatives.size() == 3 && s.alternatives[0] == "pipx install basedpyright" &&
+          s.alternatives[1] == "npm install -g pyright");
+    // No uv: the first that can run.
+    s = Install::suggest(*py, haveOnly({"npm", "brew"}));
+    CHECK(s.command == "npm install -g pyright" && s.before.empty());
+    CHECK(s.alternatives.size() == 3 && s.alternatives[0] == "uv tool install basedpyright");
+    s = Install::suggest(*py, haveOnly({"pipx"}));
+    CHECK(s.command == "pipx install basedpyright");
+    // Nothing that can run: the best, after getting uv with Homebrew...
+    s = Install::suggest(*py, haveOnly({"brew"}));
+    CHECK(s.command == "uv tool install basedpyright" && s.before == "brew install uv" &&
+          s.missing == "uv" && s.beforeUrl.empty());
+    // ...or from uv's page when Homebrew is missing too.
+    s = Install::suggest(*py, haveOnly({}));
+    CHECK(s.command == "uv tool install basedpyright" && s.before.empty() &&
+          s.missing == "uv" && s.beforeUrl.find("astral.sh") != std::string::npos);
+    // Needs nothing: always first.
+    s = Install::suggest(*Install::server("cpp"), haveOnly({}));
+    CHECK(s.command == "xcode-select --install" && s.missing.empty() &&
+          s.alternatives == std::vector<std::string>{"brew install llvm"});
+    // No go, but Homebrew: Homebrew's gopls.
+    s = Install::suggest(*Install::server("go"), haveOnly({"brew"}));
+    CHECK(s.command == "brew install gopls" && s.before.empty());
+    // No rustup and no Homebrew: rustup's page.
+    s = Install::suggest(*Install::server("rust"), haveOnly({}));
+    CHECK(s.command == "rustup component add rust-analyzer" && s.before.empty() &&
+          s.beforeUrl == "https://rustup.rs");
+    // Other tools that would do come after the tool's own other ways.
+    s = Install::suggest(*Install::formatter("pyink"), haveOnly({"pipx"}),
+                         {Install::formatter("pyink"), Install::formatter("yapf")});
+    CHECK(s.command == "pipx install pyink");
+    CHECK((s.alternatives ==
+           std::vector<std::string>{"uv tool install pyink", "pipx install yapf"}));
+    Install::Tool none;
+    CHECK(Install::suggest(none, haveOnly({})).command.empty());
+
+    GROUP("install:readme");
+    // The README's "Language servers and formatters" section lists every
+    // command the app suggests, word for word.
+    std::ifstream f("README.md");
+    if (!f) {
+        std::printf("  (README.md not found here; README checks skipped)\n");
+        return;
+    }
+    std::stringstream ss;
+    ss << f.rdbuf();
+    std::string readme = ss.str();
+    for (const Install::Tool *t : Install::all())
+        for (const Install::Way &w : t->ways) {
+            bool found = readme.find("`" + w.command + "`") != std::string::npos;
+            if (!found) std::printf("  README lacks `%s`\n", w.command.c_str());
+            CHECK(found);
+        }
+}
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
@@ -6790,6 +6907,7 @@ int main() {
     testGitGraph();
     testEditorTabs();
     testFormatter();
+    testInstallHints();
     testLineDiff();
     testAutoIndent();
     testKeepSorted();

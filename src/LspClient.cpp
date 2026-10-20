@@ -275,17 +275,6 @@ std::string serverDisplayName(const std::string& server) {
     return server;
 }
 
-std::string installHint(const std::string& server) {
-    if (server == "cpp") return "xcode-select --install (or brew install llvm)";
-    if (server == "python") return "npm install -g pyright (or uv tool install basedpyright, "
-                                   "or pipx install python-lsp-server)";
-    if (server == "go") return "go install golang.org/x/tools/gopls@latest";
-    if (server == "rust") return "rustup component add rust-analyzer";
-    if (server == "typescript")
-        return "npm install -g typescript-language-server typescript";
-    return "";
-}
-
 std::vector<std::string> splitCommand(const std::string& command) {
     std::vector<std::string> words;
     std::string cur;

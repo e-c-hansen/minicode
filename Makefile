@@ -26,7 +26,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/LatexDoc.cpp src/SyncTex.cpp src/Json.cpp src/LspClient.cpp \
             src/TermLinks.cpp src/FolderSearch.cpp src/MarkdownEdit.cpp src/MarkdownTasks.cpp \
             src/GitStatus.cpp src/GitGraph.cpp src/MathTex.cpp src/EditorTabs.cpp \
-            src/Formatter.cpp src/LineDiff.cpp \
+            src/Formatter.cpp src/InstallHints.cpp src/LineDiff.cpp \
             src/PythonEnvs.cpp \
             src/AutoIndent.cpp src/KeepSorted.cpp src/FileDetails.cpp
 

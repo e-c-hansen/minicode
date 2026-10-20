@@ -1,5 +1,6 @@
 // Formatter.cpp — see Formatter.h.
 #include "Formatter.h"
+#include "InstallHints.h"
 #include "LspClient.h"   // Lsp::splitCommand, shared with lsp.* commands
 #include <algorithm>
 #include <cctype>
@@ -55,7 +56,6 @@ struct Tool {
     const char* project;    // the command when it does
     std::vector<Marker> markers;
     bool byDefault;         // tried without project configuration
-    const char* hint;       // how to install it
 };
 
 struct Language {
@@ -80,20 +80,20 @@ const std::vector<Language>& table() {
               "--stdin-filename {file} -",
               "pyink --quiet --stdin-filename {file} -",
               {{"pyproject.toml", Kind::TomlTable, "tool.pyink"}},
-              true, "pipx install pyink"},
+              true},
              {"yapf", "yapf --style=google", "yapf",
               {{".style.yapf", Kind::Any, ""},
                {"pyproject.toml", Kind::TomlTable, "tool.yapf"},
                {"setup.cfg", Kind::IniSection, "yapf"}},
-              true, "pipx install yapf"},
+              true},
              {"black", "", "black --quiet --stdin-filename {file} -",
               {{"pyproject.toml", Kind::TomlTable, "tool.black"}},
-              false, "pipx install black"},
+              false},
              {"ruff", "", "ruff format --stdin-filename {file} -",
               {{"ruff.toml", Kind::Any, ""},
                {".ruff.toml", Kind::Any, ""},
                {"pyproject.toml", Kind::TomlTable, "tool.ruff.format"}},
-              false, "pipx install ruff"},
+              false},
          }},
         {"cpp", "C-family",
          {"c", "h", "cc", "cpp", "cxx", "c++", "hh", "hpp", "hxx", "h++", "ipp",
@@ -108,20 +108,20 @@ const std::vector<Language>& table() {
               "clang-format --style=file --fallback-style=Google "
               "--assume-filename={file}",
               {{".clang-format", Kind::Any, ""}, {"_clang-format", Kind::Any, ""}},
-              true, "xcode-select --install (or brew install clang-format)"},
+              true},
          }},
         {"go", "Go", {"go"},
-         {{"gofmt", "gofmt", "gofmt", {}, true, "brew install go"}}},
+         {{"gofmt", "gofmt", "gofmt", {}, true}}},
         {"rust", "Rust", {"rs"},
          {{"rustfmt", "rustfmt --edition 2021", "rustfmt --edition 2021",
            {{"rustfmt.toml", Kind::Any, ""}, {".rustfmt.toml", Kind::Any, ""}},
-           true, "rustup component add rustfmt"}}},
+           true}}},
         // Google's shell style: 2-space indents, case patterns indented,
         // a pipeline split with the | starting each continued line.
         {"shell", "shell", {"sh", "bash", "ksh", "bats"},
          {{"shfmt", "shfmt -i 2 -ci -bn --filename {file}", "shfmt --filename {file}",
            {{".editorconfig", Kind::EditorConfigShell, ""}},
-           true, "brew install shfmt"}}},
+           true}}},
     };
     return langs;
 }
@@ -132,12 +132,10 @@ const Language* findLanguage(const std::string& key) {
     return nullptr;
 }
 
-const Tool* findTool(const std::string& program) {
-    std::string name = programName(program);
-    for (const Language& l : table())
-        for (const Tool& t : l.tools)
-            if (name == t.program) return &t;
-    return nullptr;
+// The best way to install a formatter, from the one table (InstallHints).
+std::string hintFor(const std::string& program) {
+    const Install::Tool* t = Install::formatter(program);
+    return t && !t->ways.empty() ? t->ways.front().command : "";
 }
 
 bool markerMatches(const Marker& m, const std::string& dir, const Fs& fs,
@@ -241,7 +239,7 @@ Plan plan(const std::string& lang, const std::string& setting,
         if (words.empty()) return p;
         p.fromSettings = true;
         p.candidates.push_back({words[0], value, false});
-        if (const Tool* t = findTool(words[0])) p.installHint = t->hint;
+        p.installHint = hintFor(words[0]);
         return p;
     }
 
@@ -264,12 +262,12 @@ Plan plan(const std::string& lang, const std::string& setting,
 
     if (chosen) {
         p.candidates.push_back({chosen->program, chosen->project, true});
-        p.installHint = chosen->hint;
+        p.installHint = hintFor(chosen->program);
     } else {
         for (const Tool& t : l->tools) {
             if (!t.byDefault) continue;
             p.candidates.push_back({t.program, t.google, false});
-            if (p.installHint.empty()) p.installHint = t.hint;
+            if (p.installHint.empty()) p.installHint = hintFor(t.program);
         }
     }
 

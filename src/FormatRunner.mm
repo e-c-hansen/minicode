@@ -174,23 +174,27 @@ void MCFormatText(NSString *text, NSString *path, NSString *root, NSInteger firs
         }
         NSString *configName = NS(plan.configFile).lastPathComponent;
         if (!chosen) {
-            NSString *hint = plan.installHint.empty() ? @""
-                : [NSString stringWithFormat:@"\n\nInstall it with:\n%@", NS(plan.installHint)];
+            // How to install one is shown under the message (InstallPanel),
+            // from the same table as plan.installHint.
+            NSMutableArray<NSString *> *programs = [NSMutableArray array];
+            for (const Formatter::Candidate &c : plan.candidates)
+                [programs addObject:NS(Formatter::programName(c.program))];
+            if (!plan.installHint.empty()) result.installPrograms = programs;
             if (plan.fromSettings) {
                 result.error = [NSString stringWithFormat:
-                    @"format.%@ in the settings runs %@, which was not found.%@",
-                    NS(lang), NS(plan.candidates.front().program), hint];
+                    @"format.%@ in the settings runs %@, which was not found.",
+                    NS(lang), NS(plan.candidates.front().program)];
             } else if (!plan.configFile.empty()) {
                 result.error = [NSString stringWithFormat:
-                    @"This project configures %@ (in %@), which is not installed.%@",
-                    NS(plan.candidates.front().program), configName, hint];
+                    @"This project configures %@ (in %@), which is not installed.",
+                    NS(plan.candidates.front().program), configName];
             } else {
                 NSMutableArray *names = [NSMutableArray array];
                 for (const Formatter::Candidate &c : plan.candidates)
                     [names addObject:NS(c.program)];
                 result.error = [NSString stringWithFormat:
-                    @"No formatter for %@ files was found (looked for %@).%@",
-                    display, [names componentsJoinedByString:@" and "], hint];
+                    @"No formatter for %@ files was found (looked for %@).",
+                    display, [names componentsJoinedByString:@" and "]];
             }
             finish();
             return;

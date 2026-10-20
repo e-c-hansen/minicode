@@ -120,6 +120,16 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 - (NSArray<MCLspServerInfo *> *)serverInfos;
 // The open file's language key, or nil.
 @property(nonatomic, readonly, copy) NSString *currentLanguage;
+// The open file's language key when its server is wanted (lsp.enabled on,
+// the language not off) but was not found; nil otherwise.
+@property(nonatomic, readonly, copy) NSString *missingServer;
+// Look for the open file's missing server again and start it when it is
+// there now. Also done on its own whenever the window becomes key and when
+// a command finishes in any terminal, so a server installed meanwhile is
+// picked up without a restart.
+- (void)lookAgainForMissingServer;
+// The open file is on a server (starting or running).
+@property(nonatomic, readonly) BOOL hasServer;
 - (void)restartServer:(NSString *)key;   // stop if running, then start
 - (void)stopServer:(NSString *)key;      // stays stopped until started
 - (void)startServer:(NSString *)key;

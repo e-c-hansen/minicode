@@ -62,13 +62,13 @@ Typesetting is done by [tectonic](https://tectonic-typesetting.github.io/). If i
 
 ## Language servers
 
-With a language server installed, minicode gives you completion, errors as you type, hover and go to definition. It knows clangd (C, C++, Objective-C), pyright, basedpyright, pylsp or jedi-language-server (Python), gopls (Go), rust-analyzer (Rust) and typescript-language-server (JavaScript and TypeScript), and finds them on your PATH and in the usual Homebrew, npm (nvm, fnm and volta included), pipx, uv, Cargo and Go folders. minicode never installs one itself.
+With a language server installed, minicode gives you completion, errors as you type, hover and go to definition. It knows clangd (C, C++, Objective-C), pyright, basedpyright, pylsp or jedi-language-server (Python), gopls (Go), rust-analyzer (Rust) and typescript-language-server (JavaScript and TypeScript), and finds them on your PATH and in the usual Homebrew, npm (nvm, fnm and volta included), pipx, uv, Cargo and Go folders. minicode never installs one itself, but it tells you how when one is missing; see [Installing servers and formatters](#installing-servers-and-formatters).
 
 Problems get a red or yellow squiggle, and the status bar counts them. Completion opens as you type, after a dot, an arrow or a double colon and on the second letter of any word, and Control Space opens it anywhere. On the Mac, Tab takes the selected item, and Return takes it too when you opened the list yourself, when it opened after a dot, an arrow or a double colon, or once you have moved through it with the arrow keys; a list that opened by itself on an ordinary word leaves Return a new line, as in VS Code and Zed. Beside the list, the selected item's signature and documentation show, fetched as you move through it. Typing an opening parenthesis or a comma shows the call's signature above the line, with the argument you are on in bold. F12 or Command click jumps to a definition, and Command I shows the type and documentation under the cursor.
 
 The status bar shows the open file's server with a colored dot: green when it is running, yellow while it starts, red when it failed or crashed, and gray when there is none. Click it, or choose Language Servers in the minicode menu, to see every language's server, the command and program it runs, its process id, and why it stopped, with buttons to restart, stop and start it, and the command that installs a missing one. A server that crashes is started again after one, two and then four seconds, and after a fourth crash it waits for you. Restart Language Server in the same menu restarts the open file's.
 
-For Python, `npm install -g pyright` (or `uv tool install basedpyright`, which brings its own Node) is the one to install. The server reads your code with a Python interpreter, so it finds the packages installed there: by default the folder's own .venv, venv or env, then the active virtual environment. Select Python Interpreter in the minicode menu, or Change in the Language Servers popover, lists the project's environments, conda, pyenv, poetry, pipenv, uv and the Pythons on your PATH, and keeps the choice for that folder. python.interpreter in the settings file sets the default for folders without one.
+For Python, basedpyright is the one to install, with `uv tool install basedpyright`, which brings its own copy of Node. The server reads your code with a Python interpreter, so it finds the packages installed there: by default the folder's own .venv, venv or env, then the active virtual environment. Select Python Interpreter in the minicode menu, or Change in the Language Servers popover, lists the project's environments, conda, pyenv, poetry, pipenv, uv and the Pythons on your PATH, and keeps the choice for that folder. python.interpreter in the settings file sets the default for folders without one.
 
 ![clangd flagging an error, completing a member, showing hover info and jumping to a definition](docs/demos/lsp.gif)
 
@@ -78,16 +78,38 @@ The settings file can pick a different server or turn one off (lsp.python = pyls
 
 Shift Option F formats the file with the formatter you have installed for its language, on macOS for now. If a project has its own configuration, such as a .clang-format, a [tool.pyink] or [tool.black] table in pyproject.toml, a .style.yapf, or a ruff.toml, that formatter runs with the project's style. Otherwise minicode follows Google's style guides: clang-format with Google's style for C, C++, Objective-C, Java, JavaScript, TypeScript, Protocol Buffers, and C#; pyink at 80 columns for Python, or yapf's google style when pyink is not installed; gofmt for Go; rustfmt for Rust; and shfmt with two-space indents for shell scripts. Python formatters in the project's .venv or venv are used first.
 
-With some lines selected, clang-format, pyink, and yapf format only those lines. The change is one step to undo, the cursor stays on the code it was on, and a file the formatter cannot parse is left alone, with the formatter's complaint shown next to the cursor. To get the Google-style tools:
-
-```sh
-xcode-select --install      # clang-format comes with the command line tools
-pipx install pyink          # or: pipx install yapf
-brew install go shfmt       # gofmt, shfmt
-rustup component add rustfmt
-```
+With some lines selected, clang-format, pyink, and yapf format only those lines. The change is one step to undo, the cursor stays on the code it was on, and a file the formatter cannot parse is left alone, with the formatter's complaint shown next to the cursor. When the formatter is not installed, the note next to the cursor says how to install it, as below.
 
 The settings file can give a language its own command (format.python = yapf --style=google), turn one off (format.cpp = off), or format each time you save (format.on-save = true).
+
+## Installing servers and formatters
+
+minicode installs nothing itself, but it says what to install at the moment you need it, on the Mac for now. Open a Python file with no Python language server and a line over the editor says so, with an Install button. That line shows once per language each time minicode starts, its × closes it, and Don't Show Again keeps it away for that language; the status bar keeps offering the same help as long as the server is missing. Format Document does the same when the formatter is missing, and so does each missing server in the Language Servers popover.
+
+The help shows the command to run, with a Copy button and a Run in Terminal button. Run in Terminal types the command into minicode's terminal and leaves it for you to read and press Return; it never runs anything on its own. minicode suggests the first command your Mac can run: with uv installed it suggests uv, without it pipx or npm, and with none of them it adds the step that installs uv. The other ways are listed under it. Once the program is installed, minicode notices when the command finishes in its terminal, or when you come back to the window, and starts the server without a restart.
+
+| Language | Server | Install it with |
+|---|---|---|
+| Python | basedpyright | `uv tool install basedpyright`; or `pipx install basedpyright`, `npm install -g pyright`, or `pipx install python-lsp-server` |
+| C, C++, and Objective-C | clangd | `xcode-select --install` (the command line tools), or `brew install llvm` |
+| Go | gopls | `go install golang.org/x/tools/gopls@latest`, or `brew install gopls` |
+| Rust | rust-analyzer | `rustup component add rust-analyzer`, or `brew install rust-analyzer` |
+| JavaScript and TypeScript | typescript-language-server | `npm install -g typescript-language-server typescript`, or `brew install typescript-language-server` |
+
+| Formatter | Formats | Install it with |
+|---|---|---|
+| pyink | Python, in Google's style | `uv tool install pyink`, or `pipx install pyink` |
+| yapf | Python, when pyink is missing | `uv tool install yapf`, or `pipx install yapf` |
+| Black | Python projects set up for it | `uv tool install black`, `pipx install black`, or `brew install black` |
+| Ruff | Python projects set up for it | `uv tool install ruff`, `pipx install ruff`, or `brew install ruff` |
+| clang-format | C, C++, Objective-C, Java, JavaScript, TypeScript, Protocol Buffers, and C# | `xcode-select --install`, or `brew install clang-format` |
+| gofmt | Go | `brew install go` |
+| rustfmt | Rust | `rustup component add rustfmt` |
+| shfmt | shell scripts | `brew install shfmt`, or `go install mvdan.cc/sh/v3/cmd/shfmt@latest` |
+
+The installers come from Homebrew: `brew install uv`, `brew install pipx`, `brew install node` for npm, and `brew install go`. Rust's rustup comes from [rustup.rs](https://rustup.rs), and Homebrew itself from [brew.sh](https://brew.sh).
+
+minicode looks for these programs on your PATH, in Homebrew's folders, in ~/.local/bin (where uv and pipx put them), in npm's global folder (nvm, fnm, and volta included), in ~/go/bin and ~/.cargo/bin, and, for the Python formatters, in the project's .venv or venv first. To use something else, give its command in the settings file: lsp.python = pylsp, or format.python = yapf --style=google. A command there always wins over these.
 
 ## Settings and transparency
 

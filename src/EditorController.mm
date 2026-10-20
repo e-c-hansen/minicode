@@ -19,6 +19,7 @@
 #import "FormatRunner.h"
 #import "EditingCommands.h"
 #import "TreeDetails.h"
+#import "InstallPanel.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #import <AVKit/AVKit.h>                 // video and audio in the editor's slot
 #import <AVFoundation/AVFoundation.h>
@@ -31,6 +32,7 @@
 #include "EditorTabs.h"
 #include "LineDiff.h"
 #include "Formatter.h"
+#include "LspClient.h"   // Lsp::serverDisplayName
 #include <memory>
 #include <string>
 
@@ -549,6 +551,12 @@ private:
     NSUInteger _sortGeneration;
     NSString *_realRoot;                   // the root as FSEvents spells it
     NSTimer *_detailsTimer;                // ages and "Saved ..." each half minute
+    // The bar over the editor when the open file's language server is
+    // missing: the language it was offered for (nil once closed), shown
+    // while a file of that language is on show and the server still missing.
+    NSString *_installBarKey;
+    NSPopover *_installPopover;
+    NSString *_missingBefore;              // the open file's missing server, last time
 }
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) ClickOutline *outline;
@@ -609,6 +617,7 @@ private:
 @property(nonatomic, assign) NSUInteger keyFlashGeneration;  // Adjust Settings' tint
 @property(nonatomic, strong) LspSession *lsp;         // language servers
 @property(nonatomic, strong) MCLspStatusField *lspLabel;   // their status; click for more
+@property(nonatomic, strong) MCInstallBar *installBar;     // "No Python language server..."
 @property(nonatomic, strong) MCGitPanel *gitPanel;    // Source Control, in the sidebar's place
 @property(nonatomic, assign) BOOL gitPanelVisible;
 @property(nonatomic, strong) PanelScrollView *diffScroll;   // editor's slot, for a diff
@@ -761,6 +770,7 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
     };
     self.lsp.onStatus = ^(NSString *text, NSColor *dot) {
         [weakSelf.lspLabel setStatus:text dot:dot];
+        [weakSelf updateInstallBar];
     };
     self.lsp.openFile = ^BOOL(NSString *p) {
         EditorController *s = weakSelf;
@@ -940,6 +950,7 @@ static void *kMediaItemContext = &kMediaItemContext;
     self.settingsLabel.textColor = [cfg text:Surface::Statusbar];
     self.savedLabel.textColor = [cfg text:Surface::Statusbar];
     self.lspLabel.textColor = [cfg text:Surface::Statusbar];
+    [self applyInstallBarColors];
     [self showSettingsErrors];
 
     [w invalidateShadow];
@@ -1075,7 +1086,12 @@ static void *kMediaItemContext = &kMediaItemContext;
     lsp.frame = NSMakeRect(container.bounds.size.width - 150 - 340, 3, 340, 16);
     lsp.autoresizingMask = NSViewMinXMargin;
     __weak EditorController *weakSelf = self;
-    lsp.onClick = ^{ [weakSelf showLanguageServers:nil]; };
+    // A missing server: how to install it. Otherwise every server.
+    lsp.onClick = ^{
+        EditorController *s = weakSelf;
+        if (s.lsp.missingServer) [s showInstallHelpFrom:s.lspLabel];
+        else [s showLanguageServers:nil];
+    };
     self.lspLabel = lsp;
     [self.statusBar addSubview:lsp];
     [container addSubview:self.statusBar];
@@ -1361,6 +1377,7 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     // The tab strip takes the top of the editor's side; the browser keeps
     // its whole height.
     editorRect = [self layoutTabStripIn:editorRect editorShown:showEditor];
+    editorRect = [self layoutInstallBarIn:editorRect editorShown:showEditor];
 
     // The LaTeX preview sits in the editor's slot, in place of the text view.
     BOOL showLatex = showEditor && self.latex != nil && self.isLatex &&
@@ -4752,7 +4769,8 @@ static NSColor *ContrastColor(const Rgba &c) {
         if (!s || generation != s->_formatGeneration || !weakTab || weakTab != s->_activeTab)
             return;
         if (r.error) {
-            if (!(quiet && r.unavailable)) [s showFormatNote:r.error error:YES];
+            if (!(quiet && r.unavailable))
+                [s showFormatNote:r.error error:YES install:r.installPrograms];
         } else if (!s.textView.editable || ![s.textView.string isEqualToString:original]) {
             // Typed into meanwhile, or a preview took over: the output is
             // for text that is no longer there.
@@ -4859,11 +4877,27 @@ static NSColor *ContrastColor(const Rgba &c) {
 // A note from Format Document by the caret: the formatter's complaint, what
 // to install, or that there was nothing to change (which closes itself).
 - (void)showFormatNote:(NSString *)message error:(BOOL)error {
+    [self showFormatNote:message error:error install:nil];
+}
+
+// With `install` (formatters, best first), the note is how to install one:
+// the message, then the commands with Copy and Run in Terminal.
+- (void)showFormatNote:(NSString *)message error:(BOOL)error
+               install:(NSArray<NSString *> *)install {
     self.lastFormatNote = message;
     [_formatNote close];
     _formatNote = nil;
     CodeTextView *tv = self.textView;
     if (!tv.window || tv.isHiddenOrHasHiddenAncestor) { NSBeep(); return; }
+
+    MCInstallView *installView = nil;
+    if (install.count) {
+        __weak EditorController *weakSelf = self;
+        installView = [[MCInstallView alloc]
+            initWithFormatters:install message:message width:500
+                 runInTerminal:^(NSString *command) { [weakSelf typeCommandInTerminal:command]; }];
+        if (!installView.command) installView = nil;
+    }
 
     NSTextField *label = [NSTextField wrappingLabelWithString:message];
     label.font = error ? [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular]
@@ -4878,10 +4912,16 @@ static NSColor *ContrastColor(const Rgba &c) {
     label.frame = NSMakeRect(12, 10, fit.width, fit.height);
     [content addSubview:label];
     NSViewController *vc = [NSViewController new];
-    vc.view = content;
+    vc.view = installView ?: content;
+    vc.preferredContentSize = vc.view.frame.size;
     NSPopover *note = [NSPopover new];
     note.contentViewController = vc;
     note.behavior = NSPopoverBehaviorTransient;
+    if (installView) {
+        note.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+        __weak NSPopover *weakNote = note;
+        installView.onDone = ^{ [weakNote close]; };
+    }
 
     // Under the caret's line when it is on screen, else at the top of the pane.
     NSRect visible = tv.visibleRect;
@@ -4973,7 +5013,114 @@ static NSColor *ContrastColor(const Rgba &c) {
     if ([self lspActionAllowed]) [self.lsp showHoverInfo];
 }
 - (void)showLanguageServers:(id)sender {
-    MCShowLanguageServers(self.lsp, self.lspLabel);
+    __weak EditorController *weakSelf = self;
+    MCShowLanguageServers(self.lsp, self.lspLabel, ^(NSString *command) {
+        [weakSelf typeCommandInTerminal:command];
+    });
+}
+
+// ------------------------------------------------- installing a server
+// The bar over the editor, when the open file's language server is wanted
+// but missing. It is offered once per language per launch (across windows)
+// and never for a language whose bar said Don't Show Again; it stays over
+// that language's files in this window until closed or the server turns up.
+- (void)updateInstallBar {
+    NSString *missing = self.lsp.missingServer;
+    NSString *language = self.lsp.currentLanguage;
+    // The open file's server was missing a moment ago and runs now.
+    if (_missingBefore && !missing && [language isEqualToString:_missingBefore] &&
+        self.lsp.hasServer) {
+        [_installPopover close];
+        [self showStatusNote:[NSString stringWithFormat:@"Found the %@ language server",
+                             @(Lsp::serverDisplayName(Utf8String(language)).c_str())]];
+    }
+    _missingBefore = [missing copy];
+    if (_installBarKey && !missing && [language isEqualToString:_installBarKey]) {
+        _installBarKey = nil;   // found, or switched off: the bar has done its job
+    } else if (missing && ![missing isEqualToString:_installBarKey] &&
+               !MCInstallBarMuted(missing) && MCInstallBarTakeOffer(missing)) {
+        _installBarKey = [missing copy];   // a language not offered yet takes the bar
+    }
+    BOOL show = _installBarKey && [_installBarKey isEqualToString:missing];
+    if (show && !self.installBar) {
+        MCInstallBar *bar = [[MCInstallBar alloc] initWithFrame:NSZeroRect];
+        __weak EditorController *weakSelf = self;
+        bar.onInstall = ^(NSButton *sender) { [weakSelf showInstallHelpFrom:sender]; };
+        bar.onClose = ^{ [weakSelf closeInstallBarMuting:NO]; };
+        bar.onMute = ^{ [weakSelf closeInstallBarMuting:YES]; };
+        self.installBar = bar;
+        [self applyInstallBarColors];
+        bar.hidden = YES;   // shown, and laid out, just below
+        [self.rightArea addSubview:bar];
+    }
+    if (show) self.installBar.serverKey = _installBarKey;
+    if (self.installBar && self.installBar.hidden == show) {
+        self.installBar.hidden = !show;
+        [self relayoutRightArea];
+    }
+}
+
+// The bar takes the top of the editor's slot, under the tab strip.
+- (NSRect)layoutInstallBarIn:(NSRect)slot editorShown:(BOOL)shown {
+    MCInstallBar *bar = self.installBar;
+    if (!bar) return slot;
+    BOOL show = shown && !bar.hidden && _installBarKey &&
+                [_installBarKey isEqualToString:self.lsp.missingServer];
+    if (!show) {
+        bar.frame = NSZeroRect;
+        return slot;
+    }
+    const CGFloat h = MIN(kMCInstallBarHeight, NSHeight(slot));
+    bar.frame = NSMakeRect(NSMinX(slot), NSMaxY(slot) - h, NSWidth(slot), h);
+    return NSMakeRect(NSMinX(slot), NSMinY(slot), NSWidth(slot), NSHeight(slot) - h);
+}
+
+- (void)applyInstallBarColors {
+    AppSettings *cfg = [AppSettings shared];
+    [self.installBar setBackground:[cfg background:Surface::Sidebar]
+                              text:[cfg text:Surface::Sidebar]];
+}
+
+- (void)closeInstallBarMuting:(BOOL)mute {
+    if (mute && _installBarKey) MCInstallBarSetMuted(_installBarKey, YES);
+    _installBarKey = nil;
+    self.installBar.hidden = YES;
+    [self relayoutRightArea];
+}
+
+// The install popover for the open file's missing server, by `anchor` (the
+// bar's Install… button or the status bar item).
+- (void)showInstallHelpFrom:(NSView *)anchor {
+    NSString *key = self.lsp.missingServer;
+    if (!key) return;
+    [_installPopover close];
+    std::string setting = [AppSettings shared].settings.lspCommand(Utf8String(key));
+    NSString *message = setting.empty() ? nil
+        : [NSString stringWithFormat:@"lsp.%@ in the settings runs %@, which was not found. "
+                                     @"The server minicode suggests is below.",
+                                     key, @(setting.c_str())];
+    __weak EditorController *weakSelf = self;
+    MCInstallView *view = [[MCInstallView alloc]
+        initWithServer:key message:message width:500
+         runInTerminal:^(NSString *command) { [weakSelf typeCommandInTerminal:command]; }];
+    if (!view.command) return;
+    NSRectEdge edge = anchor == self.lspLabel ? NSRectEdgeMaxY : NSRectEdgeMinY;
+    _installPopover = MCShowInstallPopover(view, anchor, anchor.bounds, edge);
+}
+
+// Run in Terminal: the command goes into a terminal's input line, and the
+// keyboard with it, for the user to read and press Return. Never run here.
+// A busy terminal is left alone and a new one opened, as Run File does.
+- (void)typeCommandInTerminal:(NSString *)command {
+    BOOL fresh = self.terminalPanel == nil;
+    [self showTerminalPanel];
+    TerminalView *term = self.terminalPanel.activeTerminal;
+    if (!fresh && term.busy) term = [self.terminalPanel addTab];
+    if (![term typeCommand:command]) {
+        term = [self.terminalPanel addTab];
+        [term typeCommand:command];
+    }
+    [self showStatusNote:@"Press Return in the terminal to run the command"];
 }
 - (void)restartLanguageServer:(id)sender {
     [self.lsp restartCurrentServer];

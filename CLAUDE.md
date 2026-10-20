@@ -175,6 +175,11 @@ isolation. Keep them dependency-free.
   line ranges, and the error summary. See "Formatting".
 - `src/LineDiff.{h,cpp}`: a line diff (Myers, capped) in UTF-16 offsets and
   `mapOffset`, which carries a caret or the top of the pane across it.
+- `src/InstallHints.{h,cpp}`: how to install every language server and
+  formatter MiniCode talks to (tool, what it gives, homepage, commands best
+  first with the installer each needs), and `suggest`, which picks the
+  first command this Mac can run. The one table behind the app's install
+  notes, `Formatter::Plan::installHint` and the README (see "Install hints").
 - `src/MathTex.{h,cpp}`: the TeX side of the Markdown preview's math,
   doing no I/O: which formulas may share a batch, how one is rewritten for
   LaTeX, the batch document (a page per formula) and reading tectonic's
@@ -1019,6 +1024,70 @@ through an external formatter; nothing is bundled.
   were looked at. Needs the user: the popover on a real screen and a real
   Shift+Option+F from the keyboard.
 
+## Install hints (Mac, 2026-10-20)
+
+The user asked for the commands that get completions and formatting working
+to show in the app at the moment they are needed, and in the README.
+
+- **One table**: `Install::server(key)` / `Install::formatter(program)` in
+  `InstallHints.cpp`. Python is `uv tool install basedpyright` first (it
+  brings its own Node; Homebrew's node broke pyright on this Mac), then
+  `pipx install basedpyright`, `npm install -g pyright`, `pipx install
+  python-lsp-server`; formatters are uv first too (`uv tool install pyink`).
+  `suggest` takes the first way whose installer (uv, pipx, npm, brew, go,
+  rustup) `MCInstallerAvailable` finds; with none, the first way plus
+  `brew install uv` (shown as one line, `brew install uv && uv tool install
+  basedpyright`) or, without Homebrew, a link to the installer's page.
+  `$MINICODE_INSTALL_HAVE` (comma list) fakes which installers exist.
+  The `install:readme` test checks the README has every command in
+  backticks, so change both together.
+- **What the user sees** (`InstallPanel.mm`): opening a file whose server is
+  wanted but `NotInstalled` (`LspSession.missingServer`) puts an
+  `MCInstallBar` under the tab strip (`layoutInstallBarIn:`): "No Python
+  language server is installed...", Install…, Don't Show Again, ×. Offered
+  once per language per launch across windows (`MCInstallBarTakeOffer`); it
+  stays over that language's files in that window until ×, Don't Show Again
+  (`MCInstallHintsMuted` in `MCAppDefaults()`), the server turning up, or
+  another missing language taking the bar. The status item reads "Install a
+  Python language server…" and its click opens the same popover
+  (`MCInstallView`: what it gives, the command with Copy and Run in Terminal,
+  alternatives with Copy, a note, the homepage). The Language Servers card
+  of a missing server shows the same rows (`MCInstallCommandRows`), and
+  Format Document's note for a missing formatter is an `MCInstallView`
+  (`MCFormatResult.installPrograms`; the error text no longer carries the
+  hint).
+- **Run in Terminal** types the command into the active terminal's input
+  line (`TerminalView typeCommand:`, caret at the end, keyboard there) and
+  never runs it; the user presses Return. A busy terminal gets a new tab.
+  Copy uses `MCInstallPasteboard()` (`$MINICODE_PASTEBOARD` names a private
+  one for tests).
+- **Found without a restart**: `lookAgainForMissingServer` runs on the
+  window's `NSWindowDidBecomeKeyNotification` and on
+  `MCTerminalCommandDidFinishNotification` (posted at every OSC 133 D), and
+  starts the server; the bar goes and the status bar says "Found the Python
+  language server". Formatters are looked up on every run anyway.
+- **Verified** with an offscreen harness including `main.mm` (59 checks;
+  scratch HOME via `CFFIXED_USER_HOME`, ZDOTDIR, settings, a defaults suite
+  deleted before and after, a private pasteboard, PATH without a Python
+  server): the bar once, its layout, gone on a .md and back on a .py, none
+  in a second window but its status item opening the popover, Copy putting
+  the exact command on the private pasteboard with the general one's
+  changeCount unchanged, Run in Terminal leaving the command in the input
+  with nothing run, the no-uv and no-Homebrew variants, the servers card,
+  Format Document's note, × and Don't Show Again (read back from a fresh
+  NSUserDefaults), basedpyright linked into the scratch PATH by a real zsh
+  command being found and running in both windows, and a stand-in
+  rust-analyzer found on window focus. Pictures of the bar, the popovers
+  and the window were looked at. A harness trap: run the test from a timer,
+  not a main-queue block, or nothing the app dispatches to the main queue
+  (pty reads, formatter results) ever runs while it waits.
+- **Needs the user's eyes**: the bar and popovers on a real screen, a real
+  click on Copy and Run in Terminal, and an actual install. Linux and
+  Android do not have any of this yet; the GTK port could compile
+  `InstallHints.cpp` as it is (its `MCInstallerAvailable` would be a PATH
+  lookup, with apt, pipx and uv rows to add), and Android installs through
+  Termux's `pkg`, so it would want its own rows.
+
 ## Indentation and sorting (2026-10-20)
 
 The user found Return in Python "rarely works the way it is supposed to"
@@ -1159,8 +1228,8 @@ never closes.
   the app menu's Language Servers… open a popover (`MCServersController`)
   listing every language with command, resolved program, PID, interpreter,
   last error (stderr's last line is kept: stderr is now a drained pipe, not
-  /dev/null) and Restart/Stop/Start, plus `Lsp::installHint` for a missing
-  one. Nothing is ever installed. A server that exits on its own is
+  /dev/null) and Restart/Stop/Start, plus the install commands for a missing
+  one (see "Install hints"; `Lsp::installHint` is gone). Nothing is ever installed. A server that exits on its own is
   restarted after 1, 2, 4 s; the fourth crash in a row (three minutes of
   running clears the count) leaves it Crashed until Start. NotInstalled is
   looked for again whenever a file of that language opens. The settings

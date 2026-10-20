@@ -1,6 +1,7 @@
 // LspPanel.mm — Objective-C++. See LspPanel.h.
 #import "LspPanel.h"
 #import "Lsp.h"
+#import "InstallPanel.h"
 
 static NSColor *PHex(unsigned int rgb) {
     return [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0
@@ -113,6 +114,7 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
 @interface MCServersController : NSViewController
 - (instancetype)initWithSession:(LspSession *)session;
 @property(nonatomic, copy) void (^onChooseInterpreter)(void);
+@property(nonatomic, copy) void (^onRunInTerminal)(NSString *command);
 @end
 
 @implementation MCServersController {
@@ -226,9 +228,14 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
                               componentsJoinedByString:@" "]];
     }
     [card addArrangedSubview:Label(command, Mono(), muted, YES, YES)];
-    if (info.installHint.length)
-        [card addArrangedSubview:Label([@"Install: " stringByAppendingString:info.installHint],
-                                       Mono(), PHex(0xD4D4D4), YES, YES)];
+    if (info.state == MCLspStateNotInstalled) {
+        NSView *rows = MCInstallCommandRows(info.key, kPanelWidth - 24, self.onRunInTerminal);
+        if (rows) {
+            [card addArrangedSubview:Label(@"Install it with one of these:", Small(),
+                                           PHex(0xC8C8C8), NO, NO)];
+            [card addArrangedSubview:rows];
+        }
+    }
     if ([info.key isEqualToString:@"python"]) {
         NSString *interp = info.interpreter
             ? [NSString stringWithFormat:@"Interpreter: %@ (%@)", Short(info.interpreter),
@@ -316,15 +323,17 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
 
 static NSPopover *gServersPopover;
 
-NSView *MCLanguageServersView(LspSession *session) {
+NSView *MCLanguageServersView(LspSession *session, void (^runInTerminal)(NSString *)) {
     static MCServersController *keep;
     keep = [[MCServersController alloc] initWithSession:session];
+    keep.onRunInTerminal = runInTerminal;
     NSView *v = keep.view;
     v.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
     return v;
 }
 
-void MCShowLanguageServers(LspSession *session, NSView *view) {
+void MCShowLanguageServers(LspSession *session, NSView *view,
+                           void (^runInTerminal)(NSString *)) {
     if (gServersPopover.shown) {
         [gServersPopover close];
         return;
@@ -340,6 +349,11 @@ void MCShowLanguageServers(LspSession *session, NSView *view) {
         LspSession *s = weakSession;
         if (s) MCChoosePythonInterpreter(s, window);
     };
+    if (runInTerminal)
+        vc.onRunInTerminal = ^(NSString *command) {
+            [gServersPopover close];
+            runInTerminal(command);
+        };
     gServersPopover = [NSPopover new];
     gServersPopover.behavior = NSPopoverBehaviorTransient;
     gServersPopover.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];

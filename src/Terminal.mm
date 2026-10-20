@@ -140,6 +140,9 @@ static NSString *IntegrationDirectory(void) {
     return dir;
 }
 
+NSNotificationName const MCTerminalCommandDidFinishNotification =
+    @"MCTerminalCommandDidFinish";
+
 @implementation MCTermLink
 @end
 
@@ -701,6 +704,23 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     else _pendingCommand = line;
 }
 
+- (void)postCommandFinished {
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:MCTerminalCommandDidFinishNotification object:self];
+}
+
+- (BOOL)typeCommand:(NSString *)line {
+    if (_closed || !line.length || _gridMode || self.busy) return NO;
+    if (_shellPid <= 0) [self startShell];
+    self.input.stringValue = line;
+    [self.window makeFirstResponder:self.input];
+    // The field editor selects everything it is given; the caret goes to
+    // the end instead, so a key typed by accident does not replace it.
+    NSText *editor = self.input.currentEditor;
+    if (editor) editor.selectedRange = NSMakeRange(line.length, 0);
+    return YES;
+}
+
 // As if typed into the input line and entered; whatever the user had typed
 // there is kept.
 - (void)submitCommand:(NSString *)line {
@@ -1217,6 +1237,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
             [self startRawWatch];
             break;
         case TermEvent::CommandEnd:
+            // After this chunk, once the view is up to date.
+            [self performSelector:@selector(postCommandFinished) withObject:nil afterDelay:0];
             if (_userCommand) {
                 _userCommand = NO;
                 [self ensureNewline];

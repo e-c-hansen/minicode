@@ -55,7 +55,8 @@ struct Plan {
     // The project file that chose the formatter or its style, or "".
     std::string configFile;
     // What to install when none of the candidates is found, as a command to
-    // type ("pipx install pyink"). "" for a program MiniCode does not know.
+    // type ("uv tool install pyink"), from InstallHints. "" for a program
+    // MiniCode does not know.
     std::string installHint;
 };
 

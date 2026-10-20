@@ -131,9 +131,7 @@ bool languageForExtension(const std::string& ext, Language& out);
 std::vector<std::string> defaultCommands(const std::string& server);
 // The display name of a server key ("python" -> "Python").
 std::string serverDisplayName(const std::string& server);
-// A one-line way to install a server, for the "not installed" note: the
-// Homebrew, npm, pipx or toolchain command on macOS. "" if none is known.
-std::string installHint(const std::string& server);
+// How to install a missing server is in InstallHints.h (Install::server).
 // Split a command line into words. Single and double quotes group words;
 // a backslash outside single quotes escapes the next character.
 std::vector<std::string> splitCommand(const std::string& command);

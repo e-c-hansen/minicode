@@ -12,9 +12,12 @@
 // Which style it applied: "Google style", "the project's .clang-format",
 // "format.python in settings".
 @property(nonatomic, copy) NSString *style;
-// What went wrong, for the user: the formatter's first error lines, or what
-// to install. nil on success.
+// What went wrong, for the user: the formatter's first error lines, or that
+// none was found. nil on success.
 @property(nonatomic, copy) NSString *error;
+// When none was found: the formatters that would do, best first ("pyink",
+// "yapf"), for the note's install commands (InstallPanel). nil otherwise.
+@property(nonatomic, copy) NSArray<NSString *> *installPrograms;
 // YES when only the asked lines were formatted.
 @property(nonatomic, assign) BOOL ranged;
 // The file's language has no formatter, or its format.<lang> is off.

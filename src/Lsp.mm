@@ -4,6 +4,8 @@
 // and the per-window glue (LspSession).
 #import "Lsp.h"
 #import "AppSettings.h"
+#import "Terminal.h"   // MCTerminalCommandDidFinishNotification
+#include "InstallHints.h"
 #include "LspClient.h"
 #include "MarkdownParser.h"
 #include "PythonEnvs.h"
@@ -1262,6 +1264,12 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
                name:MCPythonInterpreterDidChangeNotification object:nil];
     [nc addObserver:self selector:@selector(windowResignedKey:)
                name:NSWindowDidResignKeyNotification object:nil];
+    // A server installed meanwhile (in the terminal, or anywhere while the
+    // window was in the background) is picked up without a restart.
+    [nc addObserver:self selector:@selector(windowBecameKey:)
+               name:NSWindowDidBecomeKeyNotification object:nil];
+    [nc addObserver:self selector:@selector(terminalCommandFinished:)
+               name:MCTerminalCommandDidFinishNotification object:nil];
     __weak LspSession *weakSelf = self;
     // The list and the signature hint belong to the caret: they go when the
     // keyboard leaves the editor (Cmd+2, a click in the tree) or the window.
@@ -1330,7 +1338,8 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
             dot = DotYellow();
             break;
         case MCLspStateNotInstalled:
-            s = [NSString stringWithFormat:@"No %@ language server installed", language];
+            // Clicking it shows how to install one.
+            s = [NSString stringWithFormat:@"Install a %@ language server…", language];
             dot = DotGray();
             break;
         case MCLspStateOff:
@@ -1385,6 +1394,29 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
 }
 
 - (NSString *)currentLanguage { return _langKey; }
+
+- (NSString *)missingServer {
+    if (!_langKey || !_path || ![AppSettings shared].settings.lspEnabled()) return nil;
+    MCLspEntry *e = _entries[_langKey];
+    return e.state == MCLspStateNotInstalled ? _langKey : nil;
+}
+
+- (void)lookAgainForMissingServer {
+    if (!self.missingServer) return;
+    [self attachDocument];   // ensureServer looks again for a missing one
+    if (!self.missingServer) [self changed];
+}
+
+- (BOOL)hasServer { return _server != nil; }
+
+- (void)windowBecameKey:(NSNotification *)note {
+    if (_tv.window && note.object == _tv.window) [self lookAgainForMissingServer];
+}
+
+- (void)terminalCommandFinished:(NSNotification *)note {
+    (void)note;
+    [self lookAgainForMissingServer];
+}
 
 // ---- servers
 - (NSString *)currentSettingsSignature {
@@ -1667,7 +1699,10 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
             }
         }
         if (!st.lspEnabled() || st.lspOff(k)) info.state = MCLspStateOff;
-        if (info.state == MCLspStateNotInstalled) info.installHint = NS(Lsp::installHint(k));
+        if (info.state == MCLspStateNotInstalled) {
+            const Install::Tool *tool = Install::server(k);
+            if (tool && !tool->ways.empty()) info.installHint = NS(tool->ways.front().command);
+        }
         if ([key isEqualToString:@"python"]) {
             if (e.server) {
                 info.interpreter = e.interpreter;
