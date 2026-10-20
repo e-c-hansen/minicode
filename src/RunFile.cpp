@@ -26,23 +26,65 @@ std::string shellQuote(const std::string& s) {
     return out;
 }
 
+std::string quoteInside(const std::string& s, char quote) {
+    std::string out;
+    if (quote == '\'') {
+        // A ' cannot appear between single quotes: close, an escaped ', reopen.
+        for (char c : s) {
+            if (c == '\'') out += "'\\''";
+            else out += c;
+        }
+        return out;
+    }
+    // Between double quotes the shell still expands $ and `; a backslash
+    // keeps them, " and itself literal. History expansion still sees a !
+    // there, and what a backslash does to it differs between shells, so it
+    // steps out of the double quotes into single ones.
+    for (char c : s) {
+        if (c == '!') {
+            out += "\"'!'\"";
+            continue;
+        }
+        if (c == '"' || c == '$' || c == '`' || c == '\\') out += '\\';
+        out += c;
+    }
+    return out;
+}
+
 std::string expand(const std::string& tmpl,
                    const std::map<std::string, std::string>& vars) {
     std::string out;
+    char quote = 0;   // the quote the template has open at this point, if any
     size_t i = 0;
     while (i < tmpl.size()) {
-        if (tmpl[i] == '{') {
+        const char c = tmpl[i];
+        if (c == '{') {
             size_t close = tmpl.find('}', i + 1);
             if (close != std::string::npos) {
                 auto it = vars.find(tmpl.substr(i + 1, close - i - 1));
                 if (it != vars.end()) {
-                    out += shellQuote(it->second);
+                    // A placeholder the user already quoted ("{file}") gets
+                    // what is right inside those quotes, not quotes of its own.
+                    out += quote ? quoteInside(it->second, quote) : shellQuote(it->second);
                     i = close + 1;
                     continue;
                 }
             }
         }
-        out += tmpl[i++];
+        if (quote == '\'') {
+            if (c == '\'') quote = 0;
+        } else if (c == '\\' && i + 1 < tmpl.size() && tmpl[i + 1] != '{') {
+            out += c;            // an escaped character, in or out of double quotes
+            out += tmpl[++i];
+            i++;
+            continue;
+        } else if (quote == '"') {
+            if (c == '"') quote = 0;
+        } else if (c == '\'' || c == '"') {
+            quote = c;
+        }
+        out += c;
+        i++;
     }
     return out;
 }

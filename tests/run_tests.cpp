@@ -3072,6 +3072,25 @@ void testSettings() {
             CHECK(re[0].line == 6 && re[1].line == 7 && re[2].line == 8);
         }
         CHECK(parseSettings("run.terminal = Current\n").runInNewTerminal() == false);
+        // A " #" inside quotes is the command's own, not a comment.
+        std::vector<SettingsError> qe;
+        Settings rq = parseSettings(
+            "run.py = python3 \"{file}\" --tag \"a #1\"  # mine\n"
+            "run.sh = echo 'b #2' {file}\n"
+            "run.rb = ruby {file} \\# not a comment\n"
+            "run.go = go run {file} \"# open\n"
+            "lsp.cpp = \"/opt/x #y/clangd\" # mine\n"
+            "format.go = gofmt -r 'a #b -> c' # mine\n"
+            "run.js = node {file}#frag # mine\n",
+            &qe);
+        CHECK(qe.empty());
+        CHECK(rq.runTemplate("py") == "python3 \"{file}\" --tag \"a #1\"");
+        CHECK(rq.runTemplate("sh") == "echo 'b #2' {file}");
+        CHECK(rq.runTemplate("rb") == "ruby {file} \\# not a comment");
+        CHECK(rq.runTemplate("go") == "go run {file} \"# open");
+        CHECK(rq.lspCommand("cpp") == "\"/opt/x #y/clangd\"");
+        CHECK(rq.formatCommand("go") == "gofmt -r 'a #b -> c'");
+        CHECK(rq.runTemplate("js") == "node {file}#frag");
     }
 
     GROUP("runfile:quote");
@@ -3095,6 +3114,32 @@ void testSettings() {
               "cd '/p/my app' && /p/.venv/bin/python main.py");
         CHECK(RunFile::expand("echo {a,b} {unknown} {file", v) == "echo {a,b} {unknown} {file");
         CHECK(RunFile::expand("", v).empty());
+        // A placeholder the template already quotes is escaped for those
+        // quotes instead of getting quotes of its own.
+        CHECK(RunFile::expand("python3 \"{file}\"", v) == "python3 \"/p/my app/main.py\"");
+        CHECK(RunFile::expand("python3 '{file}'", v) == "python3 '/p/my app/main.py'");
+        CHECK(RunFile::expand("cd \"{dir}\" && python3 {name}", v) ==
+              "cd \"/p/my app\" && python3 main.py");
+        // After a closed quote the next placeholder is a word of its own again.
+        CHECK(RunFile::expand("echo \"x\" {file} 'y' {file}", v) ==
+              "echo \"x\" '/p/my app/main.py' 'y' '/p/my app/main.py'");
+        // An escaped quote opens nothing; a quote inside the other kind is plain.
+        CHECK(RunFile::expand("echo \\\" {file}", v) == "echo \\\" '/p/my app/main.py'");
+        CHECK(RunFile::expand("echo \"it's\" {file}", v) ==
+              "echo \"it's\" '/p/my app/main.py'");
+        CHECK(RunFile::expand("echo \"a \\\" b\" {file}", v) ==
+              "echo \"a \\\" b\" '/p/my app/main.py'");
+        std::map<std::string, std::string> odd = {{"file", "/p/a\"b$c`d\\e!f'g.py"}};
+        CHECK(RunFile::expand("run \"{file}\"", odd) ==
+              "run \"/p/a\\\"b\\$c\\`d\\\\e\"'!'\"f'g.py\"");
+        CHECK(RunFile::expand("run '{file}'", odd) ==
+              "run '/p/a\"b$c`d\\e!f'\\''g.py'");
+        CHECK(RunFile::expand("run {file}", odd) ==
+              "run '/p/a\"b$c`d\\e!f'\\''g.py'");
+        // An unclosed quote in the template still escapes for it.
+        CHECK(RunFile::expand("echo \"{name}", odd).empty() == false);
+        CHECK(RunFile::quoteInside("a'b", '\'') == "a'\\''b");
+        CHECK(RunFile::quoteInside("$x", '"') == "\\$x");
     }
 
     GROUP("runfile:venv");
@@ -3475,6 +3520,48 @@ void testSettingsColorEditing() {
     CHECK(Settings::appearanceSurface("nothing") == nullptr);
     CHECK(std::string(Settings::appearanceSurface("tree")->keys[0]) == "sidebar.background");
     CHECK(std::string(Settings::appearanceSurface("tree")->keys.back()) == "window.text");
+
+    GROUP("settings:missing-surface-lines");
+    {
+        // A file with every key has nothing missing, and an unknown surface none.
+        for (const AppearanceSurface &s : Settings::appearanceSurfaces())
+            CHECK(Settings::missingSurfaceLines(defaults, s.id).empty());
+        CHECK(Settings::missingSurfaceLines("", "nothing").empty());
+        // An empty file is missing all of a surface's keys, each with its
+        // section's heading.
+        std::string t = Settings::missingSurfaceLines("", "terminal");
+        CHECK(t == "# The whole window. window.opacity is the default for every panel below that\n"
+                   "# doesn't set its own, and window.text is the default text color.\n"
+                   "# window.opacity = 1\n"
+                   "# window.text = #D4D4D4\n"
+                   "\n"
+                   "# The terminal panel.\n"
+                   "# terminal.background = #181818\n"
+                   "# terminal.opacity = 1\n"
+                   "# terminal.text = #D4D4D4\n");
+        // An old file with the window and editor keys, set or commented,
+        // lacks only the syntax and Markdown ones; a key's own note comes
+        // with it.
+        const std::string old = "window.opacity = 0.9\n# window.text = #D4D4D4\n"
+                                "editor.background = #000000\n# editor.opacity = 1\n"
+                                "# editor.text = #D4D4D4\n"
+                                "markdown.heading = #FFFFFF\nmarkdown.link = #4EA1F7\n"
+                                "# markdown.code = #CE9178\n# markdown.quote = #9CA3AF\n";
+        std::string m = Settings::missingSurfaceLines(old, "markdown");
+        CHECK(m == "# A checked task's text (\"- [x] ...\"), which is also struck through.\n"
+                   "# markdown.done = #858585\n");
+        std::string e = Settings::missingSurfaceLines(old, "editor");
+        CHECK(e.rfind("# Syntax highlighting. Plain text uses editor.text.\n"
+                      "# syntax.keyword = #569CD6\n", 0) == 0);
+        CHECK(e.find("syntax.function") != std::string::npos);
+        CHECK(e.find("# editor.") == std::string::npos && e.find("# window.") == std::string::npos);
+        // Appended, the lines are found, so nothing is missing a second time.
+        CHECK(Settings::missingSurfaceLines(old + "\n" + e, "editor").empty());
+        CHECK(Settings::findKeyLine(old + "\n" + e, "syntax.keyword") > 0);
+        std::vector<SettingsError> pe;
+        Settings::parse(old + "\n" + e + m, &pe);
+        CHECK(pe.empty());
+    }
 }
 
 // ------------------------------------------------------------------- latex

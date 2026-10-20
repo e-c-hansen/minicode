@@ -110,6 +110,12 @@ public:
     // that sets it (the one that wins), else the first commented-out
     // "# key = ..." line. -1 when the key is nowhere in the text.
     static int findKeyLine(const std::string& text, const std::string& key);
+    // The lines of defaultFileText for a surface's keys that `text` has
+    // nowhere, not even commented out (a file written before those keys
+    // existed), each with the comment lines just above it there, in the
+    // default file's order and with a blank line between its sections. ""
+    // when none are missing or the surface is unknown.
+    static std::string missingSurfaceLines(const std::string& text, const std::string& surface);
 
     // Black or white text, whichever reads better on a swatch of `c` drawn
     // over the editor background.

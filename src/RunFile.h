@@ -17,7 +17,13 @@ namespace RunFile {
 // characters no shell treats specially, otherwise in single quotes.
 std::string shellQuote(const std::string& s);
 
-// `tmpl` with each {key} in `vars` replaced by its value, quoted.
+// `s` escaped to sit between the shell quotes `quote` (' or ") and read back
+// as itself there.
+std::string quoteInside(const std::string& s, char quote);
+
+// `tmpl` with each {key} in `vars` replaced by its value, quoted: as its own
+// word normally, or escaped for the quotes around it when the template
+// already quotes the placeholder ("{file}" or '{file}').
 std::string expand(const std::string& tmpl,
                    const std::map<std::string, std::string>& vars);
 

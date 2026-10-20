@@ -171,6 +171,28 @@ std::string Settings::formatColor(const Rgba& c) {
 
 static std::u16string uncommentSetting(const std::u16string& out);
 
+// Where a whole command line ends: at a " #" comment outside quotes, else at
+// the end. A '#' inside quotes is the command's own (echo "a #b"), so it
+// never cuts the line short and leaves an unclosed quote for the shell.
+static size_t commandLineEnd(const std::string& rest) {
+    char quote = 0;
+    for (size_t i = 0; i < rest.size(); i++) {
+        const char c = rest[i];
+        if (quote == '\'') {
+            if (c == '\'') quote = 0;
+        } else if (c == '\\') {
+            i++;   // the next character is taken as it is, in double quotes too
+        } else if (quote == '"') {
+            if (c == '"') quote = 0;
+        } else if (c == '\'' || c == '"') {
+            quote = c;
+        } else if (c == '#' && i > 0 && (rest[i - 1] == ' ' || rest[i - 1] == '\t')) {
+            return i - 1;
+        }
+    }
+    return rest.size();
+}
+
 std::u16string Settings::setColor(const std::u16string& line, const Rgba& c) {
     ColorSpan span;
     if (!findColor(line, span)) return line;
@@ -363,6 +385,49 @@ int Settings::findKeyLine(const std::string& text, const std::string& key) {
     return active >= 0 ? active : commented;
 }
 
+std::string Settings::missingSurfaceLines(const std::string& text, const std::string& surface) {
+    const AppearanceSurface* s = appearanceSurface(surface);
+    if (!s) return "";
+    std::vector<std::string> lines;
+    const std::string defaults = defaultFileText();
+    for (size_t pos = 0; pos < defaults.size();) {
+        size_t nl = defaults.find('\n', pos);
+        if (nl == std::string::npos) nl = defaults.size();
+        lines.push_back(defaults.substr(pos, nl - pos));
+        pos = nl + 1;
+    }
+    auto keyOf = [](const std::string& line) {
+        return settingKey(std::u16string(line.begin(), line.end()));   // ASCII
+    };
+    std::vector<bool> wanted(lines.size(), false);
+    for (size_t k = 0; k < lines.size(); k++) {
+        const std::string key = keyOf(lines[k]);
+        if (key.empty()) continue;
+        bool ours = false;
+        for (const char* own : s->keys) ours = ours || key == own;
+        if (!ours || findKeyLine(text, key) >= 0) continue;
+        wanted[k] = true;
+        // The comment just above it: its section's heading, or its own note.
+        for (size_t up = k; up > 0; up--) {
+            const std::string& above = lines[up - 1];
+            if (above.empty() || !keyOf(above).empty()) break;
+            wanted[up - 1] = true;
+        }
+    }
+    std::string out;
+    bool gap = false;   // a blank line passed since the last line taken
+    for (size_t k = 0; k < lines.size(); k++) {
+        if (!wanted[k]) {
+            if (lines[k].empty()) gap = true;
+            continue;
+        }
+        if (gap && !out.empty()) out += "\n";
+        gap = false;
+        out += lines[k] + "\n";
+    }
+    return out;
+}
+
 Settings Settings::parse(const std::string& text,
                          std::vector<SettingsError>* errors) {
     Settings st;
@@ -395,13 +460,12 @@ Settings Settings::parse(const std::string& text,
             continue;
         }
         // A language server, run or formatter command is a whole command
-        // line, so it runs to the end of the line or to a " #" comment.
+        // line, so it runs to the end of the line or to a " #" comment
+        // outside quotes.
         if ((key.rfind("lsp.", 0) == 0 && key != "lsp.enabled") ||
             (key.rfind("run.", 0) == 0 && key != "run.terminal") ||
             (key.rfind("format.", 0) == 0 && key != "format.on-save")) {
-            size_t hash = rest.find(" #");
-            std::string command = trim(hash == std::string::npos ? rest
-                                                                 : rest.substr(0, hash));
+            std::string command = trim(rest.substr(0, commandLineEnd(rest)));
             if (command.empty() || command[0] == '#') {
                 fail("missing value for " + key);
                 continue;
