@@ -1,6 +1,14 @@
 // TerminalPanel.mm — see TerminalPanel.h. Objective-C++.
 #import "TerminalPanel.h"
 #import "AppSettings.h"
+#import "TabStrip.h"
+
+@class MCTerminalStripButtons;
+
+@interface MCTerminalPanel ()
+@property(nonatomic, strong) MCTabStrip *strip;
+@property(nonatomic, strong) MCTerminalStripButtons *buttons;
+@end
 
 static NSColor *PHex(unsigned int rgb) {
     return [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0
@@ -9,153 +17,57 @@ static NSColor *PHex(unsigned int rgb) {
                                alpha:1.0];
 }
 
-static const CGFloat kStripHeight = 24;
-static const CGFloat kButtonWidth = 24;   // + and ◫ at the strip's right end
-static const CGFloat kTabMaxWidth = 200;
-static const CGFloat kTabMinWidth = 70;
-static const CGFloat kTabPad = 10;
-static const CGFloat kCloseWidth = 14;
+static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
 
-@class MCTerminalTabStrip;
-
-@interface MCTerminalPanel ()
-@property(nonatomic, strong) MCTerminalTabStrip *strip;
-- (NSArray<NSString *> *)tabTitles;
-- (NSString *)tabToolTip:(NSUInteger)tab;
+// The + and ◫ buttons beside the tabs, on the strip's own color. MCTabStrip
+// (the editor's) draws the tabs themselves, so both rows of tabs look alike.
+@interface MCTerminalStripButtons : NSView
+@property(nonatomic, strong) NSColor *stripColor;
+@property(nonatomic, copy) void (^onAdd)(void);
+@property(nonatomic, copy) void (^onSplit)(void);
 @end
 
-// The row of tabs, drawn by hand on the panel's own background. A click
-// selects a tab, × closes one, + adds a tab and ◫ splits the shown one.
-@interface MCTerminalTabStrip : NSView
-@property(nonatomic, weak) MCTerminalPanel *panel;
-@end
-
-@implementation MCTerminalTabStrip
-
+@implementation MCTerminalStripButtons
 - (BOOL)isFlipped { return YES; }
 - (BOOL)mouseDownCanMoveWindow { return NO; }
 - (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
 
-- (NSDictionary *)attributes:(BOOL)selected {
-    NSColor *color = selected ? [[AppSettings shared] text:Surface::Terminal]
-                              : PHex(0x9CA3AF);
-    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
-    ps.lineBreakMode = NSLineBreakByTruncatingMiddle;
-    return @{NSFontAttributeName: [NSFont systemFontOfSize:11],
-             NSForegroundColorAttributeName: color,
-             NSParagraphStyleAttributeName: ps};
-}
-
-// Each tab's rectangle, left to right. Tabs share what is left of the strip
-// once the buttons have their room, each between kTabMinWidth and
-// kTabMaxWidth wide.
-- (NSArray<NSValue *> *)tabRects {
-    NSArray<NSString *> *titles = [self.panel tabTitles];
-    CGFloat avail = self.bounds.size.width - 2 * kButtonWidth - 8;
-    NSMutableArray<NSNumber *> *widths = [NSMutableArray array];
-    CGFloat total = 0;
-    for (NSString *t in titles) {
-        CGFloat w = ceil([t sizeWithAttributes:[self attributes:YES]].width) +
-                    2 * kTabPad + kCloseWidth;
-        w = MIN(MAX(w, kTabMinWidth), kTabMaxWidth);
-        [widths addObject:@(w)];
-        total += w;
-    }
-    CGFloat squeeze = total > avail && titles.count
-        ? MAX(kTabMinWidth / 2, avail / titles.count) : 0;
-    NSMutableArray<NSValue *> *rects = [NSMutableArray array];
-    CGFloat x = 4;
-    for (NSNumber *w in widths) {
-        CGFloat width = squeeze ? squeeze : w.doubleValue;
-        [rects addObject:[NSValue valueWithRect:
-            NSMakeRect(x, 0, width, self.bounds.size.height)]];
-        x += width;
-    }
-    return rects;
-}
-
-- (NSRect)closeRectIn:(NSRect)tab {
-    return NSMakeRect(NSMaxX(tab) - kTabPad / 2 - kCloseWidth, 0, kCloseWidth,
-                      tab.size.height);
-}
 - (NSRect)addRect {
-    return NSMakeRect(self.bounds.size.width - 2 * kButtonWidth - 4, 0,
-                      kButtonWidth, self.bounds.size.height);
+    return NSMakeRect(0, 0, kButtonWidth, self.bounds.size.height);
 }
 - (NSRect)splitRect {
-    return NSMakeRect(self.bounds.size.width - kButtonWidth - 4, 0,
-                      kButtonWidth, self.bounds.size.height);
+    return NSMakeRect(kButtonWidth, 0, kButtonWidth, self.bounds.size.height);
 }
 
 - (void)drawGlyph:(NSString *)glyph inRect:(NSRect)r size:(CGFloat)size {
     NSDictionary *a = @{NSFontAttributeName: [NSFont systemFontOfSize:size],
                         NSForegroundColorAttributeName: PHex(0x9CA3AF)};
-    NSSize s = [glyph sizeWithAttributes:a];
-    [glyph drawAtPoint:NSMakePoint(NSMidX(r) - s.width / 2, NSMidY(r) - s.height / 2)
+    NSSize sz = [glyph sizeWithAttributes:a];
+    [glyph drawAtPoint:NSMakePoint(floor(NSMidX(r) - sz.width / 2),
+                                   floor(NSMidY(r) - sz.height / 2))
         withAttributes:a];
 }
 
 - (void)drawRect:(NSRect)dirty {
-    NSArray<NSString *> *titles = [self.panel tabTitles];
-    NSArray<NSValue *> *rects = [self tabRects];
-    NSInteger selected = self.panel.selectedTab;
-    for (NSUInteger i = 0; i < titles.count && i < rects.count; i++) {
-        NSRect r = rects[i].rectValue;
-        BOOL sel = (NSInteger)i == selected;
-        NSRect text = NSMakeRect(NSMinX(r) + kTabPad, 0,
-                                 r.size.width - 2 * kTabPad - kCloseWidth, r.size.height);
-        NSDictionary *a = [self attributes:sel];
-        CGFloat h = [titles[i] sizeWithAttributes:a].height;
-        [titles[i] drawInRect:NSMakeRect(text.origin.x, floor((r.size.height - h) / 2),
-                                         MAX(0, text.size.width), h)
-               withAttributes:a];
-        [self drawGlyph:@"×" inRect:[self closeRectIn:r] size:12];
-        if (sel) {
-            [PHex(0x4EA1F7) setFill];
-            NSRectFill(NSMakeRect(NSMinX(r) + 4, r.size.height - 2, r.size.width - 8, 2));
-        }
-    }
-    [self drawGlyph:@"+" inRect:[self addRect] size:14];
-    [self drawGlyph:@"◫" inRect:[self splitRect] size:12];
+    // Filled once, like MCTabStrip, so a see-through color is not doubled.
+    [(self.stripColor ?: PHex(0x252526)) set];
+    NSRectFill(self.bounds);
+    [self drawGlyph:@"+" inRect:[self addRect] size:15];
+    [self drawGlyph:@"◫" inRect:[self splitRect] size:13];
 }
 
 - (void)mouseDown:(NSEvent *)event {
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
-    MCTerminalPanel *panel = self.panel;
-    if (NSPointInRect(p, [self addRect])) { [panel addTab]; return; }
-    if (NSPointInRect(p, [self splitRect])) { [panel splitActive]; return; }
-    NSArray<NSValue *> *rects = [self tabRects];
-    for (NSUInteger i = 0; i < rects.count; i++) {
-        NSRect r = rects[i].rectValue;
-        if (!NSPointInRect(p, r)) continue;
-        if (NSPointInRect(p, [self closeRectIn:r])) [panel closeTab:i];
-        else { [panel selectTab:i]; [panel focusActive]; }
-        return;
-    }
-}
-
-- (void)updateToolTips {
-    [self removeAllToolTips];
-    NSArray<NSValue *> *rects = [self tabRects];
-    for (NSUInteger i = 0; i < rects.count; i++)
-        [self addToolTipRect:rects[i].rectValue owner:self userData:(void *)(uintptr_t)i];
-    [self addToolTipRect:[self addRect] owner:self userData:(void *)(uintptr_t)1000];
-    [self addToolTipRect:[self splitRect] owner:self userData:(void *)(uintptr_t)1001];
-}
-
-- (NSString *)view:(NSView *)view stringForToolTip:(NSToolTipTag)tag
-             point:(NSPoint)point userData:(void *)data {
-    uintptr_t i = (uintptr_t)data;
-    if (i == 1000) return @"New terminal (⌃⇧`)";
-    if (i == 1001) return @"Split terminal (⌘\\)";
-    return [self.panel tabToolTip:i];
+    if (NSPointInRect(p, [self addRect]) && self.onAdd) self.onAdd();
+    else if (NSPointInRect(p, [self splitRect]) && self.onSplit) self.onSplit();
 }
 
 - (void)setFrameSize:(NSSize)size {
     [super setFrameSize:size];
-    [self updateToolTips];
+    [self removeAllToolTips];
+    [self addToolTipRect:[self addRect] owner:@"New terminal (⌃⇧`)" userData:NULL];
+    [self addToolTipRect:[self splitRect] owner:@"Split terminal (⌘\\)" userData:NULL];
 }
-
 @end
 
 @implementation MCTerminalPanel {
@@ -175,10 +87,18 @@ static const CGFloat kCloseWidth = 14;
         _tabActive = [NSMutableArray array];
         _separators = [NSMutableArray array];
         _selected = -1;
-        self.strip = [[MCTerminalTabStrip alloc] initWithFrame:NSZeroRect];
-        self.strip.panel = self;
-        self.strip.wantsLayer = YES;
+        __weak MCTerminalPanel *weakSelf = self;
+        self.strip = [[MCTabStrip alloc] initWithFrame:NSZeroRect];
+        self.strip.onSelect = ^(NSInteger i) {
+            [weakSelf selectTab:(NSUInteger)i];
+            [weakSelf focusActive];
+        };
+        self.strip.onClose = ^(NSInteger i) { [weakSelf closeTab:(NSUInteger)i]; };
         [self addSubview:self.strip];
+        self.buttons = [[MCTerminalStripButtons alloc] initWithFrame:NSZeroRect];
+        self.buttons.onAdd = ^{ [weakSelf addTab]; };
+        self.buttons.onSplit = ^{ [weakSelf splitActive]; };
+        [self addSubview:self.buttons];
         _activeMark = [[NSView alloc] initWithFrame:NSZeroRect];
         _activeMark.wantsLayer = YES;
         _activeMark.layer.backgroundColor = PHex(0x4EA1F7).CGColor;
@@ -199,11 +119,31 @@ static const CGFloat kCloseWidth = 14;
     for (TerminalView *t in self.terminals) [t close];
 }
 
-// The strip stands on the terminal's own background; the terminals paint
-// theirs, so nothing is painted twice on a see-through panel.
+// The strip in the editor strip's colors, except that the active tab is
+// the terminal's own color, so it runs into the terminal below it.
 - (void)applySettings {
-    self.strip.layer.backgroundColor =
-        [[AppSettings shared] background:Surface::Terminal].CGColor;
+    AppSettings *cfg = [AppSettings shared];
+    self.strip.stripColor = [cfg background:Surface::Sidebar];
+    self.strip.activeColor = [cfg background:Surface::Terminal];
+    self.strip.activeText = [cfg text:Surface::Terminal];
+    self.strip.inactiveText = [[cfg text:Surface::Sidebar] colorWithAlphaComponent:0.7];
+    self.strip.needsDisplay = YES;
+    self.buttons.stripColor = self.strip.stripColor;
+    self.buttons.needsDisplay = YES;
+}
+
+// Titles and the selected tab, after anything that changes them.
+- (void)reloadStrip {
+    NSMutableArray<MCTabStripItem *> *items = [NSMutableArray array];
+    NSArray<NSString *> *titles = [self tabTitles];
+    for (NSUInteger i = 0; i < titles.count; i++) {
+        MCTabStripItem *item = [MCTabStripItem new];
+        item.title = titles[i];
+        item.toolTip = [self tabToolTip:i];
+        [items addObject:item];
+    }
+    self.strip.items = items;
+    self.strip.activeIndex = _selected;
     self.strip.needsDisplay = YES;
 }
 
@@ -216,11 +156,7 @@ static const CGFloat kCloseWidth = 14;
         MCTerminalPanel *s = weakSelf;
         if (s.onOpenLink) s.onOpenLink(link);
     };
-    t.onTitleChange = ^{
-        MCTerminalPanel *s = weakSelf;
-        s.strip.needsDisplay = YES;
-        [s.strip updateToolTips];
-    };
+    t.onTitleChange = ^{ [weakSelf reloadStrip]; };
     [self addSubview:t positioned:NSWindowBelow relativeTo:_activeMark];
     return t;
 }
@@ -376,10 +312,12 @@ static const CGFloat kCloseWidth = 14;
 // keep the size they had.
 - (void)layoutPanes {
     NSRect b = self.bounds;
-    CGFloat W = b.size.width, H = MAX(0, b.size.height - kStripHeight);
-    self.strip.frame = NSMakeRect(0, H, W, MIN(kStripHeight, b.size.height));
-    self.strip.needsDisplay = YES;
-    [self.strip updateToolTips];
+    CGFloat W = b.size.width, H = MAX(0, b.size.height - kMCTabStripHeight);
+    CGFloat stripH = MIN(kMCTabStripHeight, b.size.height);
+    CGFloat buttonsW = MIN(2 * kButtonWidth, W);
+    self.strip.frame = NSMakeRect(0, H, W - buttonsW, stripH);
+    self.buttons.frame = NSMakeRect(W - buttonsW, H, buttonsW, stripH);
+    [self reloadStrip];
 
     NSUInteger shownCount = _selected >= 0 ? _tabs[_selected].count : 0;
     while (_separators.count < MAX(shownCount, 1u) - 1) {

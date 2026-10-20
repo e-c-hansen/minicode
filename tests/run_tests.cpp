@@ -18,6 +18,7 @@
 #include "FolderSearch.h"
 #include "GitStatus.h"
 #include "GitGraph.h"
+#include "EditorTabs.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -5717,6 +5718,98 @@ void testMarkdownTasks() {
     fsys::remove_all(root, ec);
 }
 
+// ------------------------------------------------------------ editor tabs
+static void testEditorTabs() {
+    using namespace EditorTabs;
+    GROUP("tabs:insert");
+    CHECK(insertionIndex(-1, 0) == 0);
+    CHECK(insertionIndex(0, 1) == 1);
+    CHECK(insertionIndex(1, 4) == 2);
+    CHECK(insertionIndex(3, 4) == 4);
+    CHECK(insertionIndex(-1, 3) == 3);
+
+    GROUP("tabs:number");
+    CHECK(indexForNumber(1, 3) == 0);
+    CHECK(indexForNumber(3, 3) == 2);
+    CHECK(indexForNumber(4, 3) == -1);
+    CHECK(indexForNumber(9, 3) == 2);    // 9 is the last, however many
+    CHECK(indexForNumber(9, 12) == 11);
+    CHECK(indexForNumber(8, 12) == 7);
+    CHECK(indexForNumber(1, 0) == -1);
+    CHECK(indexForNumber(9, 0) == -1);
+    CHECK(indexForNumber(0, 5) == -1);
+    CHECK(indexForNumber(10, 12) == -1);
+
+    GROUP("tabs:step");
+    CHECK(step(0, 3, 1) == 1);
+    CHECK(step(2, 3, 1) == 0);           // wraps
+    CHECK(step(0, 3, -1) == 2);
+    CHECK(step(1, 3, -1) == 0);
+    CHECK(step(0, 1, 1) == 0);
+    CHECK(step(0, 0, 1) == -1);
+    CHECK(step(-1, 3, 1) == 0);
+    CHECK(step(-1, 3, -1) == 2);
+
+    GROUP("tabs:close");
+    // Another tab closed: the active one stays, its index shifting.
+    CHECK(activeAfterClose({1, 2, 3}, 2, 0) == 1);
+    CHECK(activeAfterClose({1, 2, 3}, 0, 2) == 0);
+    CHECK(activeAfterClose({1, 2, 3}, 1, 2) == 1);
+    // The active one closed: the most recently used of the rest.
+    CHECK(activeAfterClose({5, 9, 7}, 1, 1) == 1);   // tab 2 (stamp 7), now index 1
+    CHECK(activeAfterClose({8, 9, 7}, 1, 1) == 0);
+    CHECK(activeAfterClose({1, 2, 3, 4}, 3, 3) == 2);
+    CHECK(activeAfterClose({4, 1, 2, 3}, 0, 0) == 2);
+    CHECK(activeAfterClose({1}, 0, 0) == -1);        // the last tab
+    CHECK(activeAfterClose({}, -1, 0) == -1);
+    CHECK(activeAfterClose({1, 2}, 0, 5) == -1);     // no such tab
+
+    GROUP("tabs:session");
+    auto has = [](const std::set<std::string> &files) {
+        return [files](const std::string &f) { return files.count(f) > 0; };
+    };
+    {
+        Session s{{"/p/a", "/p/b", "/p/c"}, 1};
+        Session r = restorable(s, has({"/p/a", "/p/b", "/p/c"}));
+        CHECK(r.files == s.files && r.active == 1);
+    }
+    {   // the active file is gone: the one before it
+        Session r = restorable({{"/p/a", "/p/b", "/p/c"}, 2}, has({"/p/a", "/p/b"}));
+        CHECK((r.files == std::vector<std::string>{"/p/a", "/p/b"}) && r.active == 1);
+    }
+    {   // missing ones dropped, the active one followed
+        Session r = restorable({{"/p/a", "/p/b", "/p/c"}, 2}, has({"/p/c", "/p/b"}));
+        CHECK((r.files == std::vector<std::string>{"/p/b", "/p/c"}) && r.active == 1);
+    }
+    {   // nothing before the active file is left: the first
+        Session r = restorable({{"/p/a", "/p/b", "/p/c"}, 0}, has({"/p/c"}));
+        CHECK((r.files == std::vector<std::string>{"/p/c"}) && r.active == 0);
+    }
+    {   // repeats and empty entries dropped; active on a repeat goes to its file
+        Session r = restorable({{"/p/a", "", "/p/b", "/p/a"}, 3}, has({"/p/a", "/p/b"}));
+        CHECK((r.files == std::vector<std::string>{"/p/a", "/p/b"}) && r.active == 0);
+    }
+    {
+        Session r = restorable({{"/p/a"}, 0}, has({}));
+        CHECK(r.files.empty() && r.active == -1);
+    }
+    {   // an active index out of range
+        Session r = restorable({{"/p/a", "/p/b"}, 7}, has({"/p/a", "/p/b"}));
+        CHECK(r.files.size() == 2 && r.active == 0);
+    }
+
+    GROUP("tabs:labels");
+    CHECK((labels({"/p/a.txt", "/p/b.txt"}) == std::vector<std::string>{"a.txt", "b.txt"}));
+    CHECK((labels({"/p/src/main.cpp", "/p/tests/main.cpp", "/p/x.h"}) ==
+           std::vector<std::string>{"src/main.cpp", "tests/main.cpp", "x.h"}));
+    CHECK((labels({"/a/x/m.c", "/b/x/m.c"}) == std::vector<std::string>{"a/x/m.c", "b/x/m.c"}));
+    CHECK((labels({"/p/one/README.md", "", "/p/two/README.md"}) ==
+           std::vector<std::string>{"one/README.md", "", "two/README.md"}));
+    CHECK((labels({"/p/q.md", "/p/q.md"}) == std::vector<std::string>{"q.md", "q.md"}));
+    CHECK((labels({"/m.c", "/x/m.c"}) == std::vector<std::string>{"m.c", "x/m.c"}));
+    CHECK(labels({}).empty());
+}
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
@@ -5750,6 +5843,7 @@ int main() {
     testGitStatus();
     testGitDiff();
     testGitGraph();
+    testEditorTabs();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

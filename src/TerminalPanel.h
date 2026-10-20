@@ -1,9 +1,9 @@
 // TerminalPanel.h — the terminal dock: several terminals, as tabs and as
 // panes side by side within a tab.
 //
-// A thin tab strip runs across the top (each tab titled with its running
-// command or its folder, with a × to close it, then + for a new tab and ◫ to
-// split), and the shown tab's terminals share the space below in equal
+// A tab strip runs across the top, the editor's MCTabStrip (each tab titled
+// with its running command or its folder, with a × to close it), then + for
+// a new tab and ◫ to split; the shown tab's terminals share the space below in equal
 // widths, the active one marked by an accent line along its bottom. Every
 // terminal is a TerminalView with its own shell on its own pty;
 // tabs that are not shown keep running and keep their output. The active

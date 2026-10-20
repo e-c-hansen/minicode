@@ -13,6 +13,7 @@
 #import "MarkdownMath.h"
 #import "MarkdownEditPanel.h"
 #import "GitPanel.h"
+#import "TabStrip.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #import <AVKit/AVKit.h>                 // video and audio in the editor's slot
 #import <AVFoundation/AVFoundation.h>
@@ -21,6 +22,7 @@
 #include "MarkdownEdit.h"
 #include "LineComments.h"
 #include "MarkdownTasks.h"
+#include "EditorTabs.h"
 #include <memory>
 #include <string>
 
@@ -389,9 +391,73 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// MCTab: one open document of a window, and everything that belongs to it
+// rather than to the window: the file, its text and mode, whether it has
+// unsaved changes, its own undo stack and LaTeX preview, and where its view
+// was. The window has one text view (and one image, PDF, player and diff
+// view), which shows the active tab; EditorController's document properties
+// (currentPath, dirty, isMarkdown, ...) read and write the active tab, so
+// with no tab open they read as nothing.
+// ---------------------------------------------------------------------------
+@interface MCTab : NSObject
+@property(nonatomic, copy)   NSString *currentPath;   // nil for a diff or commit
+@property(nonatomic, assign) BOOL loaded;             // read from disk yet
+@property(nonatomic, copy)   NSString *sourceText;
+// The text as it is on disk: as read, or as last saved. `dirty` means the
+// buffer differs from it, so typing a letter and deleting it again, or
+// undoing back to it, leaves nothing to save.
+@property(nonatomic, copy)   NSString *savedText;
+@property(nonatomic, copy)   NSString *currentExt;
+@property(nonatomic, assign) BOOL isMarkdown, isLatex, previewMode, dirty;
+@property(nonatomic, strong) NSDate *fileModDate;
+@property(nonatomic, strong) LatexView *latex;        // its own, so its undo and page stay
+@property(nonatomic, assign) BOOL isImage, isPDF, isMedia;
+@property(nonatomic, assign) NSSize imagePixels, mediaPixels;
+@property(nonatomic, assign) double mediaSeconds;
+@property(nonatomic, assign) BOOL showingMessage;
+@property(nonatomic, copy)   NSString *message;       // what the slot says instead
+@property(nonatomic, assign) BOOL isDiff, diffIsCommit;
+@property(nonatomic, copy)   NSString *diffName;
+@property(nonatomic, strong) NSData *diffData;
+@property(nonatomic, strong) NSUndoManager *undoManager;
+@property(nonatomic, assign) uint64_t lastActive;     // for the tab shown after a close
+// Where the view was when another tab took over.
+@property(nonatomic, assign) BOOL haveView;
+@property(nonatomic, assign) NSRange selection;
+@property(nonatomic, assign) NSUInteger topCharacter; // first character in view
+@property(nonatomic, assign) CGFloat topOffset;       // its distance below the pane's top
+@property(nonatomic, assign) NSPoint diffScroll;
+@property(nonatomic, assign) NSUInteger pdfPage;
+@property(nonatomic, assign) NSPoint pdfPoint;
+@property(nonatomic, assign) CGFloat pdfScale;
+@property(nonatomic, assign) BOOL pdfAutoScales;
+@property(nonatomic, assign) double mediaTime;
+// The preview's memory of the source view (see togglePreview:).
+@property(nonatomic, assign) NSRange sourceSelection;
+@property(nonatomic, assign) CGFloat sourceCaretOffset;
+@property(nonatomic, assign) BOOL haveSourcePosition;
+@property(nonatomic, assign) NSPoint previewEntryScroll;
+@end
+
+@implementation MCTab
+- (instancetype)init {
+    if ((self = [super init])) {
+        _undoManager = [NSUndoManager new];
+        _mediaSeconds = -1;
+        _pdfAutoScales = YES;
+    }
+    return self;
+}
+@end
+
+// ---------------------------------------------------------------------------
 @interface EditorController () <NSTextStorageDelegate> {
     FileItem *_root;
-    NSMutableArray<NSString *> *_recent;   // most-recently-opened files, front = newest
+    // The open files, in the order the strip shows them, and the one shown.
+    NSMutableArray<MCTab *> *_tabs;
+    MCTab *_activeTab;
+    uint64_t _tabStamp;                    // counts activations, for MCTab.lastActive
+    NSUndoManager *_noTabUndo;             // the text view's while no tab is open
     FSEventStreamRef _fsStream;            // watches the open folder for changes
     // Syntax highlighting of the editable source. While _liveHighlight is on,
     // every change to the text storage is re-highlighted as it happens, from
@@ -438,6 +504,7 @@ private:
 @property(nonatomic, strong) NSTextField *statusLabel;
 @property(nonatomic, copy)   NSString *currentPath;
 @property(nonatomic, copy)   NSString *sourceText;   // raw file text (edited)
+@property(nonatomic, copy)   NSString *savedText;    // the text on disk (see MCTab)
 @property(nonatomic, copy)   NSString *currentExt;
 @property(nonatomic, assign) BOOL isMarkdown;
 @property(nonatomic, assign) BOOL isLatex;
@@ -495,6 +562,8 @@ private:
 @property(nonatomic, copy)   NSString *diffName;     // for the title
 @property(nonatomic, strong) NSData *diffData;       // re-colored on a settings change
 @property(nonatomic, assign) BOOL diffIsCommit;      // a whole commit (git show), not one file
+@property(nonatomic, strong) MCTabStrip *tabStrip;   // the open files, over the editor
+@property(nonatomic, strong) NSTextField *emptyLabel; // the editor's slot with no file open
 @end
 
 @implementation EditorController
@@ -506,7 +575,8 @@ private:
         [_root loadChildren];
         _terminalHeight = 220;
         _browserFraction = 0.5;
-        _recent = [NSMutableArray array];
+        _tabs = [NSMutableArray array];
+        _noTabUndo = [NSUndoManager new];
         _pendingStart = _pendingEnd = NSNotFound;
     }
     return self;
@@ -644,6 +714,7 @@ private:
     self.rightArea.onLayout = ^{ [weakSelf relayoutRightArea]; };
     textScroll.frame = self.rightArea.bounds;
     [self.rightArea addSubview:textScroll];
+    [self buildTabStrip];
 
     [split addSubview:treeScroll];
     [split addSubview:self.rightArea];
@@ -676,7 +747,7 @@ private:
                name:MCMathTypesetNotification object:nil];
     [self.window addObserver:self forKeyPath:@"title"
                      options:NSKeyValueObservingOptionInitial context:NULL];
-    [self showWelcome];
+    [self showEmptyState];
     [self.window makeKeyAndOrderFront:nil];
     [self.outline reloadData];
 
@@ -689,6 +760,7 @@ private:
     [self.outline sizeLastColumnToFit];
 
     [self startWatching:_root.path];   // live tree updates
+    [self restoreSession];             // the files open here last time
 }
 
 // KVO context for the player item (see observeMediaItem:).
@@ -794,7 +866,8 @@ static void *kMediaItemContext = &kMediaItemContext;
     }];
 
     self.editorScroll.panelColor = [cfg background:Surface::Editor];
-    [self.latex applySettings];
+    for (MCTab *t in _tabs) [t.latex applySettings];
+    [self applyTabSettings];
     self.imageView.layer.backgroundColor = [cfg background:Surface::Editor].CGColor;
     self.pdfView.backgroundColor = [cfg background:Surface::Editor];
     self.playerView.layer.backgroundColor = [cfg background:Surface::Editor].CGColor;
@@ -1064,8 +1137,20 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:@"↑ ↓" label:@"Browse tree"
                     key2:@"⏎" label2:@"Open file" state:nil];
-    [self appendHintsRow:s key:@"⌃⇥" label:@"Previous file"
-                    key2:@"⌘B" label2:@"Toggle sidebar" state:nil];
+    [self appendHintsRow:s key:@"⌘B" label:@"Toggle sidebar"
+                    key2:nil label2:nil state:nil];
+
+    [self appendHintsHeading:@"Tabs" to:s];
+    [self appendHintsRow:s key:@"⌃⇥" label:@"Next tab"
+                    key2:@"⌃⇧⇥" label2:@"Previous tab" state:nil];
+    [self appendHintsRow:s key:@"⇧⌘]" label:@"Next tab"
+                    key2:@"⇧⌘[" label2:@"Previous tab" state:nil];
+    [self appendHintsRow:s key:@"⌃1…9" label:@"Tab 1 to 9 (also ⇧⌘1…9; 9 is the last)"
+                    key2:nil label2:nil state:nil];
+    [self appendHintsRow:s key:@"⌘W" label:@"Close tab, or the focused panel"
+                    key2:nil label2:nil state:nil];
+    [self appendHintsRow:s key:@"⇧⌘W" label:@"Close window"
+                    key2:@"⌘Q" label2:@"Quit" state:nil];
 
     [self appendHintsHeading:@"Panes" to:s];
     [self appendHintsRow:s key:@"⇧⌘E" label:@"Editor"
@@ -1133,7 +1218,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
 // browser on the right, with a vertical bar between them; either can be
 // hidden and the other takes the whole width. The terminal docks below both,
 // across the full width, or fills the pane when the top is empty.
-static const CGFloat kMinTopSlotHeight = 40;   // smallest editor while dragging
+// The smallest top while dragging: the tab strip and 40 points of editor.
+static const CGFloat kMinTopSlotHeight = 40 + kMCTabStripHeight;
 static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hides it
 static const CGFloat kMinSideWidth     = 150;  // editor or browser beside the other
 static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides that pane
@@ -1167,6 +1253,9 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
         browserRect.origin.x = W - bw;
         browserRect.size.width = bw;
     }
+    // The tab strip takes the top of the editor's side; the browser keeps
+    // its whole height.
+    editorRect = [self layoutTabStripIn:editorRect editorShown:showEditor];
 
     // The LaTeX preview sits in the editor's slot, in place of the text view.
     BOOL showLatex = showEditor && self.latex != nil && self.isLatex &&
@@ -1321,7 +1410,7 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     [self relayoutRightArea];
     if (hadFocus || !self.window.firstResponder ||
         self.window.firstResponder == self.window) {
-        if (!self.editorHidden) [self.window makeFirstResponder:self.textView];
+        if (!self.editorHidden) [self focusActiveDocument];
         else if (self.browserVisible && self.browser) [self.browser focusURLBar];
         else [self.window makeFirstResponder:self.outline];
     }
@@ -1681,8 +1770,18 @@ static const CGFloat kDividerGrabSlop = 5;
 }
 
 - (void)showDiffTitled:(NSString *)name data:(NSData *)diff commit:(BOOL)commit {
-    if (![self confirmProceedPastUnsavedChanges]) return;
     [self revealEditor];
+    // Diffs and commits share one tab, which each new one replaces, so
+    // stepping through the changed files does not leave a tab for each.
+    MCTab *tab = nil;
+    for (MCTab *t in _tabs) if (t.isDiff) { tab = t; break; }
+    if (!tab) {
+        tab = [MCTab new];
+        tab.loaded = YES;
+        tab.isDiff = YES;
+        [self insertTab:tab];
+    }
+    [self activateTab:tab];
     if (!self.diffScroll) {
         PanelScrollView *scroll = [[PanelScrollView alloc] init];
         scroll.hasVerticalScroller = YES;
@@ -1946,7 +2045,8 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
     return last != nil;
 }
 
-// The open file, and the recent list, follow a file or folder that moved.
+// Every open tab follows a file or folder that moved; the one on show also
+// tells the language server and the previews.
 - (void)pathMovedFrom:(NSString *)src to:(NSString *)dst {
     NSString *(^follow)(NSString *) = ^NSString *(NSString *p) {
         if ([p isEqualToString:src]) return dst;
@@ -1955,13 +2055,20 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
             return [dst stringByAppendingPathComponent:[p substringFromIndex:prefix.length]];
         return nil;
     };
-    for (NSUInteger i = 0; i < _recent.count; i++) {
-        NSString *moved = follow(_recent[i]);
-        if (moved) _recent[i] = moved;
+    BOOL any = NO, activeMoved = NO;
+    for (MCTab *t in _tabs) {
+        NSString *moved = t.currentPath ? follow(t.currentPath) : nil;
+        if (!moved) continue;
+        t.currentPath = moved;
+        any = YES;
+        if (t == _activeTab) activeMoved = YES;
+        // A hidden LaTeX preview: its \input and pictures now resolve from the
+        // new folder too.
+        else if (t.latex) [t.latex setPath:moved source:t.sourceText ?: @""];
     }
-    NSString *moved = self.currentPath ? follow(self.currentPath) : nil;
-    if (!moved) return;
-    self.currentPath = moved;
+    if (any) { [self reloadTabStrip]; [self saveSession]; }
+    if (!activeMoved) return;
+    NSString *moved = self.currentPath;
     [self.lsp documentOpened:self.previewMode ? nil : moved];
     // Relative \input and pictures now resolve from the new folder.
     if (self.isLatex && self.latex) [self.latex setPath:moved source:self.sourceText ?: @""];
@@ -2031,11 +2138,6 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
     if (!(self.browserVisible && self.browser)) { [self toggleBrowser:nil]; return; }
     [self showRightArea];
     [self.browser focusURLBar];
-}
-- (void)switchToPreviousFile:(id)sender {
-    // _recent is most-recent-first; index 1 is the file before the current one.
-    if (_recent.count < 2) { NSBeep(); return; }
-    [self openFileAtPath:_recent[1]];
 }
 
 // ------------------------------------------------ live file-tree (FSEvents)
@@ -2181,10 +2283,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
                                                  toPath:dst error:&err]) {
         [self warn:err.localizedDescription]; return;
     }
-    if ([self.currentPath isEqual:node.path]) {   // keep editor in sync
-        self.currentPath = dst;
-        [self.lsp documentOpened:dst];
-    }
+    [self pathMovedFrom:node.path to:dst];   // open tabs follow, a folder's too
     [self refreshTree:nil];
     [self revealPath:dst andOpen:NO];
 }
@@ -2204,11 +2303,13 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
                                        resultingItemURL:nil error:&err]) {
         [self warn:err.localizedDescription]; return;
     }
-    if ([self.currentPath isEqual:node.path]) {   // the open file went away
-        self.currentPath = nil;
-        [self resetViewMode];
-        [self.lsp documentOpened:nil];
-        [self showWelcome]; [self relayoutRightArea]; [self updateTitle];
+    // Tabs of what went away close, a folder's too, unless they hold unsaved
+    // changes: those stay open, and saving writes the file again.
+    NSString *prefix = [node.path stringByAppendingString:@"/"];
+    for (MCTab *t in [_tabs copy]) {
+        if (t.dirty || !t.currentPath) continue;
+        if ([t.currentPath isEqualToString:node.path] || [t.currentPath hasPrefix:prefix])
+            [self closeTab:t prompt:NO];
     }
     [self refreshTree:nil];
 }
@@ -2287,6 +2388,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     [_awaitedWebImages removeAllObjects];
     [_awaitedMath removeAllObjects];
     self.sourceText = nil;
+    self.savedText = nil;
     self.dirty = NO;
     self.textView.editable = NO;
     self.imageView.image = nil;
@@ -2510,33 +2612,41 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     [p play];
 }
 
+// Show a file: its tab when it has one, else a new tab just right of the
+// one on show. The file in the tab that was on show stays as it was,
+// unsaved changes and all.
 - (void)openFileAtPath:(NSString *)path {
     [self revealEditor];
+    if (!path) return;
     if ([path isEqualToString:self.currentPath]) return;  // avoid double-render
-    if (![self confirmProceedPastUnsavedChanges]) {
-        [self reselectCurrentFileInTree];   // undo the tree's selection move
-        return;
+    MCTab *tab = [self tabForPath:path];
+    if (!tab) {
+        tab = [MCTab new];
+        tab.currentPath = path;
+        [self insertTab:tab];
     }
-    self.currentPath = path;
+    [self activateTab:tab];
+}
+
+// Read the active tab's file and show it: the first time the tab is shown,
+// and again when it is reloaded.
+- (void)loadActiveTab {
+    NSString *path = self.currentPath;
+    if (!path) return;
+    _activeTab.loaded = YES;
     [self resetViewMode];
     // Images are routed by extension before any attempt to read them as text.
     if ([EditorController isImagePath:path] && [self showImageAtPath:path]) {
         [self recordModDate];
-        [_recent removeObject:path];
-        [_recent insertObject:path atIndex:0];
         return;
     }
     if ([path.pathExtension.lowercaseString isEqualToString:@"pdf"] &&
         [self showPDFAtPath:path]) {
         [self recordModDate];
-        [_recent removeObject:path];
-        [_recent insertObject:path atIndex:0];
         return;
     }
     if ([EditorController isMediaPath:path] && [self showMediaAtPath:path]) {
         [self recordModDate];
-        [_recent removeObject:path];
-        [_recent insertObject:path atIndex:0];
         return;
     }
     NSError *err = nil;
@@ -2568,10 +2678,9 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     BOOL blank = [content stringByTrimmingCharactersInSet:
                      NSCharacterSet.whitespaceAndNewlineCharacterSet].length == 0;
     self.previewMode = (self.isMarkdown || self.isLatex) && !blank;
+    self.savedText = content;
     self.dirty = NO;
     [self recordModDate];
-    [_recent removeObject:path];
-    [_recent insertObject:path atIndex:0];   // newest first
     [self refreshDisplay];
     // Previews show rendered text, which no language server should see.
     [self.lsp documentOpened:self.previewMode ? nil : path];
@@ -2598,20 +2707,561 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     }
 }
 
-// Returns YES if it is safe to replace the current buffer. Prompts on dirty.
-- (BOOL)confirmProceedPastUnsavedChanges {
-    if (!self.dirty) return YES;
+// ====================================================================== tabs
+// The document properties are the active tab's (see MCTab): with no tab
+// open they read as nil, NO and zero, and setting them does nothing.
+#define MC_TAB_PROPERTY(type, name, setter)                     \
+    - (type)name { return _activeTab.name; }                    \
+    - (void)setter:(type)value { _activeTab.name = value; }
+MC_TAB_PROPERTY(NSString *, currentPath, setCurrentPath)
+MC_TAB_PROPERTY(NSString *, sourceText, setSourceText)
+MC_TAB_PROPERTY(NSString *, savedText, setSavedText)
+MC_TAB_PROPERTY(NSString *, currentExt, setCurrentExt)
+MC_TAB_PROPERTY(BOOL, isMarkdown, setIsMarkdown)
+MC_TAB_PROPERTY(BOOL, isLatex, setIsLatex)
+MC_TAB_PROPERTY(BOOL, previewMode, setPreviewMode)
+MC_TAB_PROPERTY(BOOL, dirty, setDirty)
+MC_TAB_PROPERTY(NSDate *, fileModDate, setFileModDate)
+MC_TAB_PROPERTY(LatexView *, latex, setLatex)
+MC_TAB_PROPERTY(BOOL, isImage, setIsImage)
+MC_TAB_PROPERTY(NSSize, imagePixels, setImagePixels)
+MC_TAB_PROPERTY(BOOL, isPDF, setIsPDF)
+MC_TAB_PROPERTY(BOOL, isMedia, setIsMedia)
+MC_TAB_PROPERTY(NSSize, mediaPixels, setMediaPixels)
+MC_TAB_PROPERTY(double, mediaSeconds, setMediaSeconds)
+MC_TAB_PROPERTY(BOOL, showingMessage, setShowingMessage)
+MC_TAB_PROPERTY(BOOL, isDiff, setIsDiff)
+MC_TAB_PROPERTY(NSString *, diffName, setDiffName)
+MC_TAB_PROPERTY(NSData *, diffData, setDiffData)
+MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
+#undef MC_TAB_PROPERTY
+
+// Typing, and edits made from the Markdown preview, are undone per tab.
+- (NSUndoManager *)undoManagerForTextView:(NSTextView *)view {
+    return _activeTab ? _activeTab.undoManager : _noTabUndo;
+}
+
+- (BOOL)hasUnsavedChanges {
+    for (MCTab *t in _tabs) if (t.dirty) return YES;
+    return NO;
+}
+
+- (void)buildTabStrip {
+    MCTabStrip *strip = [[MCTabStrip alloc] initWithFrame:NSZeroRect];
+    strip.hidden = YES;
+    __weak EditorController *weakSelf = self;
+    strip.onSelect = ^(NSInteger i) { [weakSelf selectTabAtIndex:i]; };
+    strip.onClose = ^(NSInteger i) { [weakSelf closeTabAtIndex:i]; };
+    [self.rightArea addSubview:strip];
+    self.tabStrip = strip;
+    // With no file open the slot is empty but for one muted line.
+    NSTextField *label = [NSTextField labelWithString:@"No file open. Choose one in the file tree."];
+    label.font = [NSFont systemFontOfSize:13];
+    label.alignment = NSTextAlignmentCenter;
+    label.hidden = YES;
+    [self.rightArea addSubview:label];
+    self.emptyLabel = label;
+}
+
+- (void)applyTabSettings {
+    AppSettings *cfg = [AppSettings shared];
+    self.tabStrip.stripColor = [cfg background:Surface::Sidebar];
+    self.tabStrip.activeColor = [cfg background:Surface::Editor];
+    self.tabStrip.activeText = [cfg text:Surface::Editor];
+    self.tabStrip.inactiveText = [[cfg text:Surface::Sidebar] colorWithAlphaComponent:0.7];
+    self.tabStrip.needsDisplay = YES;
+    self.emptyLabel.textColor = Hex(0x9CA3AF);
+}
+
+// Called by relayoutRightArea with the editor's slot: the strip takes its
+// top while any tab is open, and the empty line sits in it while none is.
+// Returns what is left for the editor.
+- (NSRect)layoutTabStripIn:(NSRect)slot editorShown:(BOOL)shown {
+    const BOOL strip = shown && _tabs.count > 0;
+    const BOOL empty = shown && _tabs.count == 0;
+    self.tabStrip.hidden = !strip;
+    self.emptyLabel.hidden = !empty;
+    if (empty)
+        self.emptyLabel.frame = NSMakeRect(NSMinX(slot) + 16, NSMidY(slot) + 10,
+                                           MAX(0, NSWidth(slot) - 32), 20);
+    if (!strip) return slot;
+    const CGFloat h = MIN(kMCTabStripHeight, NSHeight(slot));
+    self.tabStrip.frame = NSMakeRect(NSMinX(slot), NSMaxY(slot) - h, NSWidth(slot), h);
+    return NSMakeRect(NSMinX(slot), NSMinY(slot), NSWidth(slot), NSHeight(slot) - h);
+}
+
+// The strip again from the tabs: titles, dots for unsaved changes, the
+// active one. The editor's slot is laid out again when the strip comes or goes.
+- (void)reloadTabStrip {
+    std::vector<std::string> paths;
+    for (MCTab *t in _tabs) paths.push_back(t.currentPath ? Utf8String(t.currentPath) : "");
+    std::vector<std::string> names = EditorTabs::labels(paths);
+    NSMutableArray<MCTabStripItem *> *items = [NSMutableArray array];
+    for (NSUInteger i = 0; i < _tabs.count; i++) {
+        MCTab *t = _tabs[i];
+        MCTabStripItem *item = [MCTabStripItem new];
+        if (t.isDiff)
+            item.title = t.diffIsCommit ? (t.diffName ?: @"Commit")
+                                        : [NSString stringWithFormat:@"%@ (diff)", t.diffName ?: @""];
+        else
+            item.title = [NSString stringWithUTF8String:names[i].c_str()] ?: t.currentPath.lastPathComponent;
+        item.toolTip = t.currentPath ?: item.title;
+        item.dirty = t.dirty;
+        [items addObject:item];
+    }
+    const BOOL wasShown = !self.tabStrip.hidden;
+    self.tabStrip.items = items;
+    self.tabStrip.activeIndex = _activeTab ? (NSInteger)[_tabs indexOfObject:_activeTab] : -1;
+    if (wasShown != (_tabs.count > 0)) [self relayoutRightArea];
+}
+
+- (MCTab *)tabForPath:(NSString *)path {
+    for (MCTab *t in _tabs) if ([t.currentPath isEqualToString:path]) return t;
+    // The same file spelled another way (/tmp and /private/tmp).
+    NSString *real = path.stringByResolvingSymlinksInPath;
+    for (MCTab *t in _tabs)
+        if (t.currentPath && [t.currentPath.stringByResolvingSymlinksInPath isEqualToString:real])
+            return t;
+    return nil;
+}
+
+- (void)insertTab:(MCTab *)tab {
+    NSInteger active = _activeTab ? (NSInteger)[_tabs indexOfObject:_activeTab] : -1;
+    [_tabs insertObject:tab
+                atIndex:(NSUInteger)EditorTabs::insertionIndex((int)active, (int)_tabs.count)];
+}
+
+// Put a tab on show. The tab that was on show keeps its text, unsaved
+// changes, undo stack and place; a tab shown for the first time reads its
+// file, and one shown again is checked against the disk.
+- (void)activateTab:(MCTab *)tab {
+    if (!tab) return;
+    [self revealEditor];
+    tab.lastActive = ++_tabStamp;
+    if (tab == _activeTab) { [self reloadTabStrip]; return; }
+    [self stashActiveTab];
+    _activeTab = tab;
+    if (!tab.loaded) {
+        [self loadActiveTab];
+    } else {
+        [self showActiveTab];
+        [self checkExternalChange];
+    }
+    [self reselectCurrentFileInTree];
+    [self reloadTabStrip];
+    [self saveSession];
+}
+
+// The active tab is about to leave the screen: remember where its view
+// was, and let go of what the shared views hold for it (a playing video
+// stops).
+- (void)stashActiveTab {
+    MCTab *t = _activeTab;
+    if (!t) return;
+    NSTextView *tv = self.textView;
+    [self.markdownEditPanel close];
+    // A color pick saves the settings file a moment later (colorPicked:);
+    // that save belongs to this tab, so it happens now, not in the next one.
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(saveCurrentFile:)
+                                               object:nil];
+    if (t.dirty && [t.currentPath isEqualToString:self.colorEditPath] && [self isSettingsFile])
+        [self saveCurrentFile:nil];
+    [tv breakUndoCoalescing];   // typing in the next tab is a new undo step
+    [self flushHighlighting];
+    if (tv.editable && !t.showingMessage) t.sourceText = tv.string;
+    t.selection = tv.selectedRange;
+    t.topCharacter = 0;
+    t.topOffset = 0;
+    const NSUInteger n = tv.string.length;
+    if (n > 0 && !t.showingMessage && !(t.isLatex && t.previewMode)) {
+        const NSRect visible = tv.visibleRect;
+        NSUInteger top = [tv characterIndexForInsertionAtPoint:
+            NSMakePoint(NSMinX(visible) + 20, NSMinY(visible) + 1)];
+        if (top >= n) top = n - 1;
+        const NSRect r = [self textRectForCharacter:top];
+        t.topCharacter = top;
+        t.topOffset = NSIsEmptyRect(r) ? 0 : NSMinY(r) - NSMinY(visible);
+    }
+    t.haveView = YES;
+    if (t.isDiff && self.diffScroll) t.diffScroll = self.diffScroll.contentView.bounds.origin;
+    t.sourceSelection = _sourceSelection;
+    t.sourceCaretOffset = _sourceCaretOffset;
+    t.haveSourcePosition = _haveSourcePosition;
+    t.previewEntryScroll = _previewEntryScroll;
+    if (t.isPDF && self.pdfView.document) {
+        PDFDestination *at = self.pdfView.currentDestination;
+        t.pdfPage = [self.pdfView.document indexForPage:at.page];
+        t.pdfPoint = at.point;
+        t.pdfScale = self.pdfView.scaleFactor;
+        t.pdfAutoScales = self.pdfView.autoScales;
+    }
+    if (t.isMedia && self.playerView.player)
+        t.mediaTime = CMTimeGetSeconds(self.playerView.player.currentTime);
+    // The shared views let go; the tab's own flags stay as they are.
+    self.imageView.image = nil;
+    self.pdfView.document = nil;
+    [self.playerView.player pause];
+    [self observeMediaItem:nil];
+    self.playerView.player = nil;
+    [self.diffView.textStorage setAttributedString:[NSAttributedString new]];
+    [_awaitedWebImages removeAllObjects];
+    [_awaitedMath removeAllObjects];
+    t.latex.hidden = YES;
+    _liveHighlight = NO;
+}
+
+// Show the active tab again from what it kept.
+- (void)showActiveTab {
+    MCTab *t = _activeTab;
+    NSString *path = t.currentPath;
+    _sourceSelection = t.sourceSelection;
+    _sourceCaretOffset = t.sourceCaretOffset;
+    _haveSourcePosition = t.haveSourcePosition;
+    _previewEntryScroll = t.previewEntryScroll;
+    self.textView.editable = NO;
+    if (t.isImage) {
+        if (![self showImageAtPath:path]) [self loadActiveTab];
+        return;
+    }
+    if (t.isPDF) {
+        if (![self showPDFAtPath:path]) { [self loadActiveTab]; return; }
+        PDFDocument *doc = self.pdfView.document;
+        if (t.haveView && t.pdfPage < doc.pageCount) {
+            if (!t.pdfAutoScales) self.pdfView.scaleFactor = t.pdfScale;
+            [self.pdfView goToDestination:[[PDFDestination alloc]
+                initWithPage:[doc pageAtIndex:t.pdfPage] atPoint:t.pdfPoint]];
+        }
+        return;
+    }
+    if (t.isMedia) {
+        const double at = t.mediaTime;
+        if (![self showMediaAtPath:path]) { [self loadActiveTab]; return; }
+        if (at > 0)
+            [self.playerView.player seekToTime:CMTimeMakeWithSeconds(at, 600)
+                               toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero];
+        return;
+    }
+    if (t.isDiff) {
+        [self setPlainMessage:@""];
+        [self renderDiff];
+        [self relayoutRightArea];
+        [self.diffView scrollPoint:t.diffScroll];
+        [self.lsp documentOpened:nil];
+        [self updateTitle];
+        return;
+    }
+    if (t.showingMessage) {
+        [self setPlainMessage:t.message ?: @""];
+        [self relayoutRightArea];
+        [self.lsp documentOpened:nil];
+        [self updateTitle];
+        return;
+    }
+    [self refreshDisplay];
+    if (!(t.isLatex && t.previewMode) && t.haveView) {
+        NSTextView *tv = self.textView;
+        const NSUInteger n = tv.string.length;
+        NSRange sel = t.selection;
+        if (sel.location > n) sel = NSMakeRange(n, 0);
+        if (NSMaxRange(sel) > n) sel.length = n - sel.location;
+        tv.selectedRange = sel;
+        if (n > 0) {
+            const NSRect r = [self textRectForCharacter:MIN(t.topCharacter, n - 1)];
+            // Laid out a screen past it too, or the scroll stops where the
+            // layout does, with that character at the bottom of the pane.
+            if (!tv.textLayoutManager && !NSIsEmptyRect(r))
+                [tv.layoutManager ensureLayoutForBoundingRect:
+                    NSMakeRect(0, 0, CGFLOAT_MAX,
+                               NSMaxY(r) + 2 * NSHeight(self.editorScroll.contentView.bounds))
+                                              inTextContainer:tv.textContainer];
+            if (!NSIsEmptyRect(r)) [self scrollEditorToY:NSMinY(r) - t.topOffset];
+        }
+        if (t.isMarkdown && t.previewMode)
+            _previewEntryScroll = self.editorScroll.contentView.bounds.origin;
+    }
+    [self.lsp documentOpened:self.previewMode ? nil : path];
+    [self updateTitle];
+}
+
+// The editor's slot with no tab open: nothing to edit, one muted line.
+- (void)showEmptyState {
+    _activeTab = nil;
+    [self resetViewMode];
+    [self setPlainMessage:@""];
+    self.textView.editable = NO;
+    [self.lsp documentOpened:nil];
+    [self reloadTabStrip];
+    [self relayoutRightArea];
+    [self updateTitle];
+}
+
+- (void)focusActiveDocument {
+    if ([self latexIsShowing]) [self.window makeFirstResponder:self.latex];
+    else if (self.isMedia && self.playerView) [self.window makeFirstResponder:self.playerView];
+    else if (self.isPDF && self.pdfView) [self.window makeFirstResponder:self.pdfView];
+    else if (self.isDiff && self.diffView) [self.window makeFirstResponder:self.diffView];
+    else [self.window makeFirstResponder:self.textView];
+}
+
+- (void)selectTabAtIndex:(NSInteger)i {
+    if (i < 0 || i >= (NSInteger)_tabs.count) return;
+    [self activateTab:_tabs[(NSUInteger)i]];
+    [self focusActiveDocument];
+}
+
+- (void)closeTabAtIndex:(NSInteger)i {
+    if (i < 0 || i >= (NSInteger)_tabs.count) return;
+    [self closeTab:_tabs[(NSUInteger)i] prompt:YES];
+}
+
+// Ctrl+Tab and Shift+Cmd+], and the other way.
+- (void)selectNextTab:(id)sender { [self stepTab:1]; }
+- (void)selectPreviousTab:(id)sender { [self stepTab:-1]; }
+- (void)stepTab:(int)delta {
+    if (_tabs.count == 0) { NSBeep(); return; }
+    NSInteger active = _activeTab ? (NSInteger)[_tabs indexOfObject:_activeTab] : -1;
+    [self selectTabAtIndex:EditorTabs::step((int)active, (int)_tabs.count, delta)];
+}
+
+// Shift+Cmd+1 to 9 and Ctrl+1 to 9; the menu item's tag is the number.
+- (void)selectTabNumber:(id)sender {
+    const int i = EditorTabs::indexForNumber((int)[sender tag], (int)_tabs.count);
+    if (i < 0) { NSBeep(); return; }
+    [self selectTabAtIndex:i];
+}
+
+// YES when the tab may go: no unsaved changes, or the user saved them or
+// let them go.
+- (BOOL)confirmCloseTab:(MCTab *)t {
+    if (!t.dirty) return YES;
     NSAlert *a = [[NSAlert alloc] init];
     a.messageText = [NSString stringWithFormat:@"Save changes to “%@”?",
-                     self.currentPath.lastPathComponent ?: @"this file"];
+                     t.currentPath.lastPathComponent ?: @"this file"];
     a.informativeText = @"Your changes will be lost if you don't save them.";
     [a addButtonWithTitle:@"Save"];         // 1000
     [a addButtonWithTitle:@"Don't Save"];   // 1001
     [a addButtonWithTitle:@"Cancel"];       // 1002
     NSModalResponse r = [a runModal];
-    if (r == NSAlertFirstButtonReturn) { [self saveCurrentFile:nil]; return !self.dirty; }
-    if (r == NSAlertSecondButtonReturn) return YES;   // discard
-    return NO;                                          // cancel
+    if (r == NSAlertFirstButtonReturn) return [self saveTab:t];
+    return r == NSAlertSecondButtonReturn;
+}
+
+// Before the window closes, the app quits or another folder takes over:
+// one question for every tab with unsaved changes.
+- (BOOL)confirmCloseAllTabs {
+    NSMutableArray<MCTab *> *dirty = [NSMutableArray array];
+    for (MCTab *t in _tabs) if (t.dirty) [dirty addObject:t];
+    if (dirty.count == 0) return YES;
+    if (dirty.count == 1) {
+        [self activateTab:dirty[0]];   // so the file asked about is the one on show
+        return [self confirmCloseTab:dirty[0]];
+    }
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    for (MCTab *t in dirty) [names addObject:t.currentPath.lastPathComponent ?: @"?"];
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = [NSString stringWithFormat:@"Save changes to %lu files?",
+                     (unsigned long)dirty.count];
+    a.informativeText = [NSString stringWithFormat:
+        @"%@\n\nYour changes will be lost if you don't save them.",
+        [names componentsJoinedByString:@"\n"]];
+    [a addButtonWithTitle:@"Save All"];     // 1000
+    [a addButtonWithTitle:@"Don't Save"];   // 1001
+    [a addButtonWithTitle:@"Cancel"];       // 1002
+    NSModalResponse r = [a runModal];
+    if (r == NSAlertSecondButtonReturn) return YES;
+    if (r != NSAlertFirstButtonReturn) return NO;
+    for (MCTab *t in dirty)
+        if (![self saveTab:t]) return NO;
+    return YES;
+}
+
+// Write a tab's text to its file. The active tab saves as Cmd+S does.
+- (BOOL)saveTab:(MCTab *)t {
+    if (t == _activeTab) {
+        [self saveCurrentFile:nil];
+        return !self.dirty;
+    }
+    if (!t.dirty || !t.currentPath) return YES;
+    NSError *err = nil;
+    if (![(t.sourceText ?: @"") writeToFile:t.currentPath atomically:YES
+                                  encoding:NSUTF8StringEncoding error:&err]) {
+        [[NSAlert alertWithError:err] runModal];
+        return NO;
+    }
+    t.savedText = t.sourceText;
+    t.dirty = NO;
+    t.fileModDate = [self diskModDateFor:t.currentPath];
+    [self updateTitle];
+    return YES;
+}
+
+// Close a tab, asking about unsaved changes first when `prompt` is set. NO
+// when the user kept it. The tab shown next is the one used most recently.
+- (BOOL)closeTab:(MCTab *)t prompt:(BOOL)prompt {
+    const NSUInteger index = [_tabs indexOfObject:t];
+    if (index == NSNotFound) return YES;
+    if (prompt && ![self confirmCloseTab:t]) return NO;
+    std::vector<uint64_t> stamps;
+    for (MCTab *each in _tabs) stamps.push_back(each.lastActive);
+    const NSInteger active = _activeTab ? (NSInteger)[_tabs indexOfObject:_activeTab] : -1;
+    const int next = EditorTabs::activeAfterClose(stamps, (int)active, (int)index);
+    const BOOL wasActive = t == _activeTab;
+    if (wasActive) {
+        [self stashActiveTab];
+        _activeTab = nil;
+    }
+    [t.latex removeFromSuperview];
+    [_tabs removeObjectAtIndex:index];
+    if (wasActive && next >= 0) {
+        [self activateTab:_tabs[(NSUInteger)next]];
+    } else {
+        if (wasActive) [self showEmptyState];
+        [self reloadTabStrip];
+        [self updateTitle];
+        [self saveSession];
+    }
+    return YES;
+}
+
+// Every tab goes, unasked (the caller asked), and nothing is remembered of
+// it: the folder's tabs stay remembered for when it is opened again.
+- (void)dropAllTabs {
+    [self stashActiveTab];
+    _activeTab = nil;
+    for (MCTab *t in _tabs) [t.latex removeFromSuperview];
+    [_tabs removeAllObjects];
+    [self showEmptyState];
+}
+
+// Cmd+W: what has the keyboard closes. In a terminal that terminal closes
+// (its tab, or its pane of a split; the panel hides with the last one), the
+// browser panel hides, and anywhere else the tab on show
+// closes. With no tab left a new press closes the window, so the key is
+// never dead, while one held down stops at the empty editor.
+- (void)closeFocused:(id)sender {
+    switch ([self focusedCloseTarget]) {
+    case 1:
+        [self closeFocusedTerminal];
+        return;
+    case 2:
+        [self toggleBrowser:nil];
+        [self focusAfterClosingPanel];
+        return;
+    case 3:
+        [self closeTab:_activeTab prompt:YES];
+        return;
+    default: {
+        NSEvent *e = NSApp.currentEvent;
+        if (e.type == NSEventTypeKeyDown && e.isARepeat) return;
+        [self.window performClose:sender];
+    }
+    }
+}
+
+// What Cmd+W would close: 1 the terminal, 2 the browser, 3 the active tab,
+// 0 the window.
+- (int)focusedCloseTarget {
+    NSResponder *fr = self.window.firstResponder;
+    NSView *v = [fr isKindOfClass:NSView.class] ? (NSView *)fr : nil;
+    if (v && self.terminalPanel && self.terminalVisible &&
+        [v isDescendantOf:self.terminalPanel]) return 1;
+    if (v && self.browser && self.browserVisible && [v isDescendantOf:self.browser]) return 2;
+    return _activeTab ? 3 : 0;
+}
+
+- (void)focusAfterClosingPanel {
+    const BOOL browser = self.browserVisible && self.browser;
+    if (self.rightAreaCollapsed) [self.window makeFirstResponder:self.outline];
+    else if (!browser && !self.editorHidden) [self focusActiveDocument];
+    else if (browser) [self.browser focusURLBar];
+    else if (self.terminalVisible && self.terminal) [self.terminal focusInput];
+    else [self.window makeFirstResponder:self.outline];
+}
+
+// ----------------------------------------------- the tabs between runs
+// Each folder's open files and which was on show, in the user defaults by
+// the folder's real path; the most recently used 50 folders are kept. Off
+// for the demos and the memory benchmark, which must start the same way
+// every time.
+static NSString *const kTabSessionsKey = @"MCTabSessions";
+static const NSUInteger kMaxTabSessions = 50;
+
+- (NSUserDefaults *)sessionDefaults {
+    // Tests point this at a scratch suite, away from the user's own.
+    NSString *suite = NSProcessInfo.processInfo.environment[@"MINICODE_DEFAULTS_SUITE"];
+    return suite.length ? [[NSUserDefaults alloc] initWithSuiteName:suite]
+                        : [NSUserDefaults standardUserDefaults];
+}
+
+- (BOOL)sessionsEnabled {
+    NSDictionary *env = NSProcessInfo.processInfo.environment;
+    return !env[@"MINICODE_DEMO"] && !env[@"MINICODE_BENCH"];
+}
+
+- (NSString *)sessionKey { return _root.path.stringByResolvingSymlinksInPath; }
+
+- (void)saveSession {
+    if (![self sessionsEnabled] || !_root.path) return;
+    // The file on show, or with a diff on show the file shown last.
+    MCTab *shown = _activeTab.currentPath ? _activeTab : nil;
+    for (MCTab *t in _tabs)
+        if (!shown && t.currentPath) shown = t;
+        else if (shown != _activeTab && t.currentPath && t.lastActive > shown.lastActive)
+            shown = t;
+    NSMutableArray<NSString *> *files = [NSMutableArray array];
+    NSInteger active = 0;
+    for (MCTab *t in _tabs) {
+        if (!t.currentPath) continue;   // a diff is not reopened
+        if (t == shown) active = (NSInteger)files.count;
+        [files addObject:t.currentPath];
+    }
+    NSUserDefaults *d = [self sessionDefaults];
+    NSMutableDictionary *all = [[d dictionaryForKey:kTabSessionsKey] mutableCopy]
+                               ?: [NSMutableDictionary dictionary];
+    NSString *key = [self sessionKey];
+    if (files.count == 0) {
+        [all removeObjectForKey:key];
+    } else {
+        all[key] = @{@"files": files, @"active": @(active),
+                     @"used": @([NSDate date].timeIntervalSince1970)};
+        while (all.count > kMaxTabSessions) {
+            NSString *oldest = nil;
+            double when = DBL_MAX;
+            for (NSString *k in all) {
+                double used = [all[k][@"used"] doubleValue];
+                if (used < when) { when = used; oldest = k; }
+            }
+            if (!oldest) break;
+            [all removeObjectForKey:oldest];
+        }
+    }
+    [d setObject:all forKey:kTabSessionsKey];
+}
+
+// Open the tabs this folder had last time; only the one on show is read
+// now, the others when they are first shown.
+- (void)restoreSession {
+    if (![self sessionsEnabled]) return;
+    NSDictionary *s = [[self sessionDefaults] dictionaryForKey:kTabSessionsKey][[self sessionKey]];
+    if (![s isKindOfClass:NSDictionary.class]) return;
+    EditorTabs::Session saved;
+    for (id f in s[@"files"])
+        if ([f isKindOfClass:NSString.class]) saved.files.push_back(Utf8String(f));
+    saved.active = [s[@"active"] intValue];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    EditorTabs::Session r = EditorTabs::restorable(saved, [fm](const std::string &f) {
+        BOOL dir = NO;
+        return [fm fileExistsAtPath:[NSString stringWithUTF8String:f.c_str()] isDirectory:&dir] &&
+               !dir;
+    });
+    if (r.files.empty() || r.active < 0) return;
+    for (const std::string &f : r.files) {
+        MCTab *t = [MCTab new];
+        t.currentPath = [NSString stringWithUTF8String:f.c_str()];
+        [_tabs addObject:t];
+    }
+    [self activateTab:_tabs[(NSUInteger)r.active]];
 }
 
 // Called when the window regains focus: reconcile with on-disk changes.
@@ -2629,7 +3279,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         NSString *fresh = [NSString stringWithContentsOfFile:self.currentPath
                                                     encoding:NSUTF8StringEncoding
                                                        error:nil];
-        if (fresh) { self.sourceText = fresh; [self refreshDisplay]; }
+        if (fresh) { self.sourceText = fresh; self.savedText = fresh; [self refreshDisplay]; }
         return;
     }
     NSAlert *a = [[NSAlert alloc] init];     // local edits AND disk changed
@@ -2639,22 +3289,27 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
                          "or reload the file from disk and lose them?";
     [a addButtonWithTitle:@"Keep Mine"];     // 1000
     [a addButtonWithTitle:@"Reload"];        // 1001
+    NSString *fresh = [NSString stringWithContentsOfFile:self.currentPath
+                                                encoding:NSUTF8StringEncoding
+                                                   error:nil];
     if ([a runModal] == NSAlertSecondButtonReturn) {
-        NSString *fresh = [NSString stringWithContentsOfFile:self.currentPath
-                                                    encoding:NSUTF8StringEncoding
-                                                       error:nil];
         if (fresh) {
-            self.sourceText = fresh; self.dirty = NO;
+            self.sourceText = fresh; self.savedText = fresh; self.dirty = NO;
             [self refreshDisplay]; [self updateTitle];
         }
+    } else if (fresh) {
+        // Kept: what counts as unchanged from now on is the file's new text.
+        self.savedText = fresh;
+        [self noteEdited];
     }
 }
 
 // -------------------------------------------------------- NSWindowDelegate
 - (BOOL)windowShouldClose:(NSWindow *)sender {
-    return [self confirmProceedPastUnsavedChanges];
+    return [self confirmCloseAllTabs];
 }
 - (void)windowWillClose:(NSNotification *)note {
+    [self saveSession];        // reopened with the folder next time
     _awaitedWebImages = nil;   // pictures still on their way land in the cache only
     _awaitedMath = nil;        // and so do formulas
     [self stopMedia];      // no sound from a closed window
@@ -2767,6 +3422,16 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     else NSBeep();
 }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(closeFocused:)) {
+        static NSString *const titles[] = {@"Close Window", @"Close Terminal",
+                                           @"Close Browser", @"Close Tab"};
+        item.title = titles[[self focusedCloseTarget]];
+        return YES;
+    }
+    if (item.action == @selector(selectTabNumber:))
+        return EditorTabs::indexForNumber((int)item.tag, (int)_tabs.count) >= 0;
+    if (item.action == @selector(selectNextTab:) || item.action == @selector(selectPreviousTab:))
+        return _tabs.count > 0;
     if (item.action == @selector(exportPDF:)) return self.canExportPDF;
     if (item.action == @selector(togglePlayback:)) return self.canTogglePlayback;
     if (item.action == @selector(undo:))
@@ -2780,7 +3445,19 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 - (void)latexDidEditSource:(NSString *)newSource {
     if ([newSource isEqualToString:self.sourceText]) return;
     self.sourceText = newSource;
-    self.dirty = YES;
+    [self noteEdited];
+}
+
+// The buffer changed: it has unsaved changes exactly when it differs from
+// the text on disk, so an edit taken back (typed and deleted, undone, a
+// preview edit reverted) leaves none. Lengths are compared first, so most
+// keystrokes cost nothing more; equal lengths compare the characters, a
+// fraction of a millisecond for a large file.
+- (void)noteEdited {
+    NSString *now = self.sourceText ?: @"", *saved = self.savedText ?: @"";
+    const BOOL dirty = now.length != saved.length || ![now isEqualToString:saved];
+    if (dirty == self.dirty) return;
+    self.dirty = dirty;
     [self updateTitle];
 }
 
@@ -3190,7 +3867,7 @@ static NSColor *ContrastColor(const Rgba &c) {
 
 - (void)textDidChange:(NSNotification *)note {
     self.sourceText = self.textView.string;
-    if (!self.dirty) { self.dirty = YES; [self updateTitle]; }
+    [self noteEdited];
     // The title's task count follows typing, a moment after it stops.
     if (self.isMarkdown) {
         [NSObject cancelPreviousPerformRequestsWithTarget:self
@@ -3214,6 +3891,7 @@ static NSColor *ContrastColor(const Rgba &c) {
                        encoding:NSUTF8StringEncoding error:&err];
     if (ok) {
         self.sourceText = text;
+        self.savedText = text;
         self.dirty = NO;
         [self recordModDate];   // so our own save doesn't look like an external change
         [self.lsp documentSaved];
@@ -3424,7 +4102,7 @@ static NSColor *ContrastColor(const Rgba &c) {
     }];
     [undo setActionName:@"Preview Edit"];
     self.sourceText = source;
-    self.dirty = YES;
+    [self noteEdited];
     [self updateTitle];
     if (self.isMarkdown && self.previewMode) {
         NSPoint origin = self.editorScroll.contentView.bounds.origin;
@@ -3509,7 +4187,9 @@ static NSString *MCFormatDuration(double seconds) {
 }
 
 - (void)updateTitle {
-    NSString *name = self.currentPath.lastPathComponent ?: @"MiniCode";
+    // With no file open, the folder's name.
+    NSString *name = self.currentPath.lastPathComponent ?: _root.path.lastPathComponent;
+    if (!name.length) name = @"MiniCode";
     if (self.isDiff)
         name = self.diffIsCommit ? self.diffName
                                  : [NSString stringWithFormat:@"%@ (diff)", self.diffName];
@@ -3543,7 +4223,9 @@ static NSString *MCFormatDuration(double seconds) {
     }
     self.window.title = [NSString stringWithFormat:@"%@%@ — MiniCode%@",
                          flag, name, mode];
-    self.window.documentEdited = self.dirty;
+    // The close button's dot: unsaved changes in any tab.
+    self.window.documentEdited = [self hasUnsavedChanges];
+    [self reloadTabStrip];   // the dots on the tabs
     if (self.hintsVisible) [self updateHints];
 }
 
@@ -4370,15 +5052,7 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
     [self.textView.textStorage setAttributedString:
         [[NSAttributedString alloc] initWithString:msg attributes:a]];
     self.showingMessage = YES;
-}
-
-- (void)showWelcome {
-    [self setPlainMessage:
-        @"\n  MiniCode — a native C++ editor for macOS\n\n"
-         "  • Select a file in the sidebar to view it\n"
-         "  • Source files are syntax-highlighted by type\n"
-         "  • Markdown (.md) files render formatted\n\n"
-         "  Cmd+O to open a different folder."];
+    _activeTab.message = msg;   // shown again when the tab comes back
 }
 
 - (void)setStatus:(NSString *)path {
@@ -4388,28 +5062,26 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
 
 // ------------------------------------------------------------- open folder
 - (void)openFolder:(id)sender {
-    if (![self confirmProceedPastUnsavedChanges]) return;
+    if (![self confirmCloseAllTabs]) return;
     NSOpenPanel *panel = [NSOpenPanel openPanel];
     panel.canChooseDirectories = YES;
     panel.canChooseFiles = NO;
     panel.allowsMultipleSelection = NO;
     if ([panel runModal] == NSModalResponseOK) {
         NSString *dir = panel.URLs.firstObject.path;
+        [self saveSession];       // the old folder's tabs, for when it is back
+        [self dropAllTabs];       // no stale preview or image over the new folder
         _root = [FileItem new];
         _root.path = dir; _root.isDir = YES;
         [_root loadChildren];
-        self.currentPath = nil;
-        [self resetViewMode];     // no stale preview or image over the welcome
         [self.lsp setRoot:dir];   // servers belong to the old folder
         [self.outline reloadData];
-        [self showWelcome];
-        [self relayoutRightArea];
         [self.terminalPanel setDirectory:dir];   // keep terminal cwds in sync
         self.terminalPanel.projectRoot = dir;
         self.gitPanel.root = dir;           // the panel follows the folder
         [self startWatching:dir];           // watch the new folder
-        self.window.title = [NSString stringWithFormat:@"MiniCode — %@",
-                             dir.lastPathComponent];
+        [self updateTitle];
+        [self restoreSession];              // the new folder's tabs from last time
     }
 }
 
