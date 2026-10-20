@@ -292,6 +292,13 @@ bool Settings::apply(const std::string& key, const std::string& value,
         }
         return true;
     }
+    if (key == "editor.keep-sorted-on-save") {
+        if (!parseBool(value, keepSortedOnSave_)) {
+            error = "'" + value + "' is not true or false";
+            return false;
+        }
+        return true;
+    }
     if (key == "lsp.enabled") {
         if (!parseBool(value, lspEnabled_)) {
             error = "'" + value + "' is not true or false";
@@ -465,6 +472,9 @@ const char* Settings::defaultFileText() {
 # editor.background = #1E1E1E
 # editor.opacity = 1
 # editor.text = #D4D4D4
+# Sort the lines between "keep-sorted start" and "keep-sorted end" comments
+# every time a file is saved, as Google's keep-sorted tool would.
+# editor.keep-sorted-on-save = false
 
 # The terminal panel.
 # terminal.background = #181818

@@ -2771,7 +2771,7 @@ std::string uncommentKeys(const std::string &text) {
         std::string key = eq == std::string::npos ? "" : line.substr(2, eq - 2);
         bool isKey = line.rfind("# ", 0) == 0 && key.find('.') != std::string::npos;
         for (char ch : key)
-            if (!(ch == '.' || (ch >= 'a' && ch <= 'z'))) isKey = false;
+            if (!(ch == '.' || ch == '-' || (ch >= 'a' && ch <= 'z'))) isKey = false;
         if (isKey) out += line.substr(2) + "\n";
         line.clear();
     }
@@ -2990,8 +2990,9 @@ void testSettings() {
     // Every documented key, uncommented, is one the parser accepts, and its
     // documented value is the real default.
     std::string keys = uncommentKeys(Settings::defaultFileText());
-    // Window, panel, syntax, markdown (colors, web images, math) and lsp keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 41);
+    // Window, panel, keep-sorted, syntax, markdown (colors, web images, math)
+    // and lsp keys.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 43);
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -3011,6 +3012,7 @@ void testSettings() {
     CHECK(un.lspEnabled() == d.lspEnabled());
     CHECK(un.webImages() == d.webImages());
     CHECK(un.math() == d.math());
+    CHECK(un.keepSortedOnSave() == d.keepSortedOnSave());
     for (const std::string &server : Settings::lspServers()) {
         std::vector<std::string> cmds = Lsp::defaultCommands(server);
         CHECK(!cmds.empty() && un.lspCommand(server) == cmds[0]);
@@ -3045,6 +3047,18 @@ void testSettings() {
     CHECK(!parseSettings("Markdown.Web-Images = off\n").webImages());
     Settings wi = parseSettings("markdown.web-images = maybe\n", &e6);
     CHECK(wi.webImages() && e6.size() == 1 && e6[0].line == 1);
+
+    GROUP("settings:keep-sorted");
+    std::vector<SettingsError> e8;
+    CHECK(!parseSettings("").keepSortedOnSave());
+    CHECK(parseSettings("editor.keep-sorted-on-save = true\n").keepSortedOnSave());
+    CHECK(parseSettings("Editor.Keep-Sorted-On-Save = yes  # sort\n").keepSortedOnSave());
+    CHECK(!parseSettings("editor.keep-sorted-on-save = off\n").keepSortedOnSave());
+    Settings ks = parseSettings("editor.keep-sorted-on-save = always\n", &e8);
+    CHECK(!ks.keepSortedOnSave() && e8.size() == 1 && e8[0].line == 1);
+    // The editor's colors still parse beside it.
+    CHECK(parseSettings("editor.keep-sorted-on-save = true\neditor.text = #FF0000\n")
+              .text(Surface::Editor) == Rgba::hex(0xFF0000));
 
     GROUP("settings:math");
     std::vector<SettingsError> e7;
@@ -5612,6 +5626,9 @@ void testMarkdownTasks() {
     fsys::remove_all(root, ec);
 }
 
+#include "AutoIndentTests.cpp"
+#include "KeepSortedTests.cpp"
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
@@ -5645,6 +5662,8 @@ int main() {
     testGitStatus();
     testGitDiff();
     testGitGraph();
+    testAutoIndent();
+    testKeepSorted();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
