@@ -4782,8 +4782,11 @@ void testLspFeatures() {
     CHECK(srv3.methods().back() == "workspace/didChangeConfiguration" &&
           srv3.sent.back()["params"]["settings"] == tree2 && py.settings() == tree2);
     // No settings: no didChangeConfiguration after initialized.
-    CHECK(std::count(srv.methods().begin(), srv.methods().end(),
-                     std::string("workspace/didChangeConfiguration")) == 0);
+    {
+        const std::vector<std::string> ms = srv.methods();
+        CHECK(std::count(ms.begin(), ms.end(),
+                         std::string("workspace/didChangeConfiguration")) == 0);
+    }
 
     GROUP("lsp:python-servers");
     using Lsp::PythonServer;
