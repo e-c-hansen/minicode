@@ -27,7 +27,7 @@ this file covers the macOS app except where it says otherwise.
   client, finding file references and URLs in terminal output, the
   folder search (on a scratch tree in the temp directory), and the git
   status and diff readers, the formatter planning and the line diff
-  (3,111 checks on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
+  (3,144 checks on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
   corpus in `tests/markdown/corpus.md` read from the repo root; the
   corpus checks skip themselves where that file is not found).
   Exits non-zero on failure. The Makefile uses clang++ on the Mac and make's
@@ -360,7 +360,12 @@ container (PanelHost, laid out by hand in layoutContainer)
   from the toolbar, or a page loaded from the toolbar (address bar, back,
   forward, reload) while the keyboard is still in the toolbar; never while
   hidden. `navigateToString:` (links from the terminal and Markdown) clears
-  the toolbar allowance.
+  the toolbar allowance. Tab and Shift+Tab in the address bar go into the
+  page through the field's delegate (`control:textView:doCommandBySelector:`
+  calling `selectKeyViewFollowingView:`) while the field editor still has
+  the keyboard, over a key view loop of bar, page and buttons; left to
+  NSTextField, the window was first responder by the time it moved on, the
+  page refused, and the keyboard stayed with the window (fixed 2026-10-20).
 - Return, Tab, Shift+Tab and Backspace follow `AutoIndent` on all three
   ports (see "Indentation and sorting"): `textView:doCommandBySelector:` via
   `MCIndentCommand` on the Mac, `onViewKey` taking the key on Linux unless
@@ -805,7 +810,11 @@ task lists, so files stay portable.
   text, and Cmd+Z edited the new text at the old places, or threw. Every
   save, Cmd+S and Save All alike, checks the file's date first
   (`mayWriteTab:`): changed outside asks Keep Mine / Reload / Cancel, gone
-  asks before writing it again, and Cancel stops a Save All. `saveTab:`
+  asks before writing it again, and Cancel stops a Save All. Save All
+  (closing, quitting, Open Folder) asks every tab's question first
+  (`diskDecisionForTab:`), then applies Reloads and writes, so Cancel at
+  any of them writes and reloads nothing (it used to have written the tabs
+  before it). `saveTab:`
   saves a background tab where it is, never by showing it (with
   keep-sorted-on-save its sort waits in `pendingSort` and goes into the
   buffer as an undoable edit when the tab is shown). A file moved or
@@ -1085,7 +1094,18 @@ never closes.
   one), or the arrows moved through it, and is otherwise a new line through
   the normal Return/AutoIndent path (it used to turn `name = nm` into
   `EnvironmentError`); an item equal to the typed word is always a new line;
-  Shift+Tab never takes it. Both the list and the signature hint close when
+  Shift+Tab never takes it, and Tab with nothing selected indents.
+  **Which item is selected** (fixed 2026-10-20): `filterCompletions` ranks
+  the word exactly as typed, then same-case prefixes, any-case prefixes and
+  subsequences, the server's sortText order inside each, and the list
+  selects its first row after every filter unless the arrows chose an item
+  still listed (matched by label and text, since an incomplete list asked
+  again renumbers). When the typed word equals some item exactly
+  (`exactCompletion`, case-sensitive), Return is a new line unless the
+  arrows chose another. Before, `os.path` + Return gave `os.PathLike` and
+  `os.pa` kept `POSIX_SPAWN_CLOSE` highlighted from the `os.p` list. The
+  Linux port gets the ranking but still keeps a highlighted label across
+  filters; it has no arrows-used flag yet. Both the list and the signature hint close when
   the text view resigns first responder (`CodeTextView onFocusLost`), when
   its window resigns key, and on a tab switch. The selected item's
   detail and documentation (Markdown through `MarkdownParser`, code
@@ -1147,7 +1167,7 @@ never closes.
   with no marks and a clean tab used to show the previous file's error.
 - **Completion**: auto-triggers on `.`, `->`, `::` (if the server lists the
   trigger char), manual on Ctrl+Space or Option+Esc (`complete:`). The list
-  filters client-side as you type (prefix matches first, then subsequence),
+  filters client-side as you type (ranked as in "Which item is selected"),
   closes when the caret leaves the word. Accept replaces from the textEdit's
   start (or the word start) to the caret. snippetSupport is off, so clangd
   inserts `lengthSquared` without parentheses; its labels carry a leading
@@ -1397,9 +1417,19 @@ never closes.
 - **Closing** is `TerminalView close`: the flags monitor goes, then
   `stopShell` (SIGHUP to zsh, the read source cancelled, which closes the
   pty and reaps the shell); `_closed` stops a restart. A terminal whose
-  `runningCommand` is set (a command per OSC 133 C with no prompt since, or
-  any foreground process group other than the shell's, from `tcgetpgrp` on
-  the master, named by `proc_name`) asks first: "Close the terminal?"
+  `runningCommands` is not empty asks first: a command per OSC 133 C with
+  no prompt since, or any foreground process group other than the shell's
+  (`tcgetpgrp` on the master, named by `proc_name`); a `runCommand:` line
+  still waiting for the first prompt ("... (waiting to start)"); and
+  background jobs (2026-10-20: `sleep 100 &` used to die unasked), found as
+  every process whose controlling tty is the pty (`KERN_PROC_TTY`; macOS
+  answers nothing for `KERN_PROC_SESSION`) in a process group other than
+  the shell's and the foreground one, one per group, named from
+  `KERN_PROCARGS2` ("sleep 100 (in the background)", or "(stopped)"). A
+  job disowned with `&!` counts too; nothing outside zsh can tell. A shell
+  still starting with nothing queued closes unasked, and a queued command
+  dropped by closing its terminal is named in the status bar (panel
+  `onNote`). The question: "Close the terminal?"
   Close / Cancel, from Cmd+W, Ctrl+Shift+W and the tab's × (`closeTerminal:`
   and `closeTab:` return NO when kept). Closing the window asks once for
   every running command ("Close the window?") before the unsaved tabs, and
@@ -1413,7 +1443,11 @@ never closes.
   (a pane of a five-way split, 91 pt wide, gets 10 columns); only a hidden
   dock (height 0), a collapsed pane or one not laid out yet keeps the last
   size. It used to keep the old size below 100 pt wide or 60 pt tall (and
-  never went under 20 columns), so lines ran off narrow panes.
+  never went under 20 columns), so lines ran off narrow panes. A split is
+  refused (beep, status note) when each pane of the tab would be under 20
+  columns (`kMinSplitColumns`); a window made narrower afterwards narrows
+  the panes as they are, each pty following down to 2 columns, rather than
+  hiding panes or overflowing the dock.
 - **Run File** (`runCurrentFile:`, Shift+Cmd+Return): the template comes
   from `Settings::runTemplate(ext)` (run.<extension>, then run.<language>
   via `runLanguage`, then the defaults python, sh, go, js, rb; `off`
