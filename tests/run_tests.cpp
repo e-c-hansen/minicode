@@ -2829,7 +2829,6 @@ void testSettings() {
     CHECK(colorIs(d.syntax(TokenStyle::Plain), 0xD4D4D4));
     CHECK(colorIs(d.markdown(MarkdownColor::Link), 0x4EA1F7));
     CHECK(colorIs(d.markdownCodeBackground(), 0x2A2A2A));
-    CHECK(colorIs(d.terminalInputBackground(), 0x232323));
     CHECK(colorIs(d.terminalInputText(), 0xEDEDED));
     CHECK(near(d.opacity(Surface::Editor), 1));
     CHECK(!d.blur());
@@ -2846,7 +2845,6 @@ void testSettings() {
     CHECK(colorIs(p.background(Surface::Terminal), 0x181818, 1));  // untouched
     CHECK(colorIs(p.text(Surface::Editor), 0xD4D4D4, 1));          // text stays solid
     CHECK(near(p.markdownCodeBackground().a, 0.6));                // follows editor
-    CHECK(near(p.terminalInputBackground().a, 1));
     CHECK(!p.windowIsOpaque());
     CHECK(p.customTitlebar());   // a see-through window draws its own title bar
     CHECK(near(p.background(Surface::Titlebar).a, 1));
@@ -2857,7 +2855,6 @@ void testSettings() {
     CHECK(near(w.opacity(Surface::Titlebar), 0.5));
     CHECK(near(w.opacity(Surface::Statusbar), 0.5));
     CHECK(near(w.opacity(Surface::Terminal), 0.9));      // its own wins
-    CHECK(near(w.terminalInputBackground().a, 0.9));
     // Order doesn't matter: the panel's own opacity wins either way.
     Settings w2 = parseSettings("terminal.opacity = 0.9\nwindow.opacity = 0.5\n");
     CHECK(near(w2.opacity(Surface::Terminal), 0.9));

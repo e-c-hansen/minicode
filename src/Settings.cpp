@@ -48,7 +48,6 @@ const char* const kMaterials[] = {
 };
 
 const uint32_t kCodeBackground = 0x2A2A2A;
-const uint32_t kTerminalInputBackground = 0x232323;
 const uint32_t kTerminalInputText = 0xEDEDED;
 
 std::string trim(const std::string& s) {
@@ -387,10 +386,6 @@ Rgba Settings::markdown(MarkdownColor c) const {
 
 Rgba Settings::markdownCodeBackground() const {
     return Rgba::hex(kCodeBackground, opacity(Surface::Editor));
-}
-
-Rgba Settings::terminalInputBackground() const {
-    return Rgba::hex(kTerminalInputBackground, opacity(Surface::Terminal));
 }
 
 Rgba Settings::terminalInputText() const {

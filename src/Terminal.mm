@@ -314,7 +314,12 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     f.bezeled = NO;
     f.focusRingType = NSFocusRingTypeNone;
     f.bordered = NO;
-    f.drawsBackground = YES;
+    // The input line is part of the panel: the panel's own layer paints
+    // behind it, as it does behind the log. A background of its own showed as
+    // a lighter strip that stopped short of the edges, and on a see-through
+    // panel it doubled the opacity under the field.
+    f.drawsBackground = NO;
+    f.backgroundColor = [NSColor clearColor];
     f.delegate = self;
     f.target = self;
     f.action = @selector(inputEntered:);
@@ -390,12 +395,9 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 - (void)applySettings {
     AppSettings *cfg = [AppSettings shared];
     self.layer.backgroundColor = [cfg background:Surface::Terminal].CGColor;
-    NSColor *inputBg = MCColor(cfg.settings.terminalInputBackground());
     NSColor *inputText = MCColor(cfg.settings.terminalInputText());
-    for (NSTextField *f in @[self.input, self.secureInput]) {
-        f.backgroundColor = inputBg;
+    for (NSTextField *f in @[self.input, self.secureInput])
         f.textColor = inputText;
-    }
     NSTextStorage *ts = self.output.textStorage;
     NSColor *fg = [cfg text:Surface::Terminal];
     [ts beginEditing];
@@ -421,8 +423,10 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     CGFloat W = self.bounds.size.width, H = self.bounds.size.height;
     const CGFloat inH = 26, promptW = 20;
     self.outScroll.frame = NSMakeRect(0, inH, W, MAX(0, H - inH));
-    self.prompt.frame = NSMakeRect(6, 4, promptW, 18);
-    NSRect field = NSMakeRect(6 + promptW, 2, MAX(0, W - promptW - 12), 22);
+    // The prompt and the field share a row, so the glyph sits on the text's
+    // baseline (same font size, same unbezeled cell).
+    NSRect field = NSMakeRect(6 + promptW, 4, MAX(0, W - promptW - 12), 18);
+    self.prompt.frame = NSMakeRect(6, field.origin.y, promptW, field.size.height);
     self.input.frame = field;
     self.secureInput.frame = field;
     self.grid.frame = self.bounds;

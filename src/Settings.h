@@ -94,7 +94,8 @@ public:
     Rgba syntax(TokenStyle s) const;          // Plain is the editor's text color
     Rgba markdown(MarkdownColor c) const;
     Rgba markdownCodeBackground() const;      // follows the editor's opacity
-    Rgba terminalInputBackground() const;     // follows the terminal's opacity
+    // The terminal's input line draws no background of its own (it is part of
+    // the panel), only its text, a little brighter than the output's.
     Rgba terminalInputText() const;
 
     bool blur() const { return blur_; }
