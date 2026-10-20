@@ -94,6 +94,8 @@ BOOL MCIndentCommand(NSTextView *tv, SEL command, NSString *path, BOOL markdown)
         action = @"Outdent";
         if (!e.changed) return YES;   // Shift+Tab never leaves the editor
     } else if (command == @selector(deleteBackward:)) {
+        // Only ever in leading spaces: look before copying the whole text.
+        if (sel.length != 0 || a == 0 || [tv.string characterAtIndex:a - 1] != ' ') return NO;
         e = AutoIndent::backspace(U16(tv.string), a, b, name);
     } else {
         return NO;
