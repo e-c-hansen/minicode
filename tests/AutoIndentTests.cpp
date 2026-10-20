@@ -142,6 +142,15 @@ void testAutoIndentDetect() {
     // CRLF and blank lines with spaces do not count.
     u = d("a.py", "if x:\r\n  y\r\n   \r\nz\r\n");
     CHECK(!u.tabs && u.width == 2);
+    // A first line of carriage returns and blanks: nothing is read before
+    // the text (AddressSanitizer caught t[-1] here), and it opens nothing.
+    u = d("a.py", "\r \t\r\n");
+    CHECK(!u.tabs && u.width == 4);
+    u = d("a.py", "\r\r\nif x:\n  y\n");
+    CHECK(!u.tabs && u.width == 2);
+    u = d("a.txt", "\r\r\n");
+    CHECK(!u.tabs && u.width == 4 && !u.fromFile);
+    CHECK(AutoIndent::newline(toU16("\r\r\n"), 3, 3, "a.py").replacement.size() > 0);
     CHECK((AutoIndent::Unit{true, 4, true}.text() == u"\t"));
     CHECK((AutoIndent::Unit{false, 2, true}.text() == u"  "));
 }

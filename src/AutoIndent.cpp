@@ -555,7 +555,9 @@ Unit detect(const std::u16string& t, const std::string& filename) {
             }
             size_t last = e;
             while (last > j && (isWs(t[last - 1]) || t[last - 1] == u'\r')) --last;
-            prevLast = t[last - 1];
+            // A line of only carriage returns and blanks ends nowhere; at the
+            // top of the file last - 1 would be before the text.
+            prevLast = last > j ? t[last - 1] : 0;
         }
         i = e + 1;
     }
