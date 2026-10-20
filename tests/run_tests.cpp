@@ -6751,6 +6751,7 @@ void testLineDiff() {
 }
 #include "AutoIndentTests.cpp"
 #include "KeepSortedTests.cpp"
+#include "FileDetailsTests.cpp"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -6792,6 +6793,7 @@ int main() {
     testLineDiff();
     testAutoIndent();
     testKeepSorted();
+    testFileDetails();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

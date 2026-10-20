@@ -18,9 +18,11 @@
 #import "TabStrip.h"
 #import "FormatRunner.h"
 #import "EditingCommands.h"
+#import "TreeDetails.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #import <AVKit/AVKit.h>                 // video and audio in the editor's slot
 #import <AVFoundation/AVFoundation.h>
+#include <sys/stat.h>
 #include "SyntaxHighlighter.h"
 #include "MarkdownParser.h"
 #include "MarkdownEdit.h"
@@ -170,12 +172,21 @@ static const CGFloat kDragBarHeight = 12;
 
 // ---------------------------------------------------------------------------
 // FileItem: one node in the file tree. Children load lazily on expansion.
+// `children` is in name order, folders first, exactly as the tree always
+// listed them; the order on show (`shown`) comes from the window's sort
+// options (see childrenOf: in EditorController).
 // ---------------------------------------------------------------------------
 @interface FileItem : NSObject
 @property(nonatomic, copy)   NSString *path;
 @property(nonatomic, assign) BOOL isDir;
+@property(nonatomic, assign) BOOL isLink;        // a symbolic link (to a folder or a file)
+@property(nonatomic, assign) long long size;     // a file's bytes; -1 when unknown
+@property(nonatomic, assign) double modified;    // seconds since 1970; 0 when unknown
+@property(nonatomic, assign) long long nameRank; // its place in name order among its siblings
 @property(nonatomic, strong) NSMutableArray<FileItem *> *children;
 @property(nonatomic, assign) BOOL loaded;
+@property(nonatomic, strong) NSArray<FileItem *> *shown;   // children in the order on show
+@property(nonatomic, assign) NSUInteger shownGeneration;
 @end
 
 // When NO, entries beginning with "." are hidden from the tree (default).
@@ -184,28 +195,59 @@ static BOOL gShowHidden = NO;
 @implementation FileItem
 - (NSString *)name { return self.path.lastPathComponent; }
 
-- (void)loadChildren {
-    if (self.loaded || !self.isDir) return;
-    self.loaded = YES;
-    self.children = [NSMutableArray array];
+// The entry's kind, size and date. A symbolic link shows what it points to
+// (a link to a folder is a folder, as before); one that points nowhere is a
+// file of unknown size.
+- (void)readStat {
+    struct stat lst, st;
+    const char *p = self.path.fileSystemRepresentation;
+    const BOOL haveL = lstat(p, &lst) == 0;
+    const BOOL have = stat(p, &st) == 0;
+    self.isLink = haveL && S_ISLNK(lst.st_mode);
+    self.isDir = have && S_ISDIR(st.st_mode);
+    const struct stat &use = have ? st : lst;
+    self.size = have && S_ISREG(st.st_mode) ? (long long)st.st_size : -1;
+    self.modified = (have || haveL)
+        ? (double)use.st_mtimespec.tv_sec + use.st_mtimespec.tv_nsec / 1e9 : 0;
+}
+
+// The folder's entries in name order, folders first: the order the tree
+// has always had, and the base every other order starts from.
+- (NSMutableArray<FileItem *> *)listReusing:(NSDictionary<NSString *, FileItem *> *)existing {
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *entries = [fm contentsOfDirectoryAtPath:self.path error:nil];
-    entries = [entries sortedArrayUsingComparator:^(NSString *a, NSString *b) {
-        return [a caseInsensitiveCompare:b];
-    }];
+    NSArray *entries = [[fm contentsOfDirectoryAtPath:self.path error:nil]
+        sortedArrayUsingComparator:^(NSString *a, NSString *b) {
+            return [a caseInsensitiveCompare:b];
+        }];
     NSMutableArray *dirs = [NSMutableArray array];
     NSMutableArray *files = [NSMutableArray array];
+    long long rank = 0;
     for (NSString *entry in entries) {
         if (!gShowHidden && [entry hasPrefix:@"."]) continue;   // hide dotfiles
         NSString *full = [self.path stringByAppendingPathComponent:entry];
-        BOOL d = NO;
-        [fm fileExistsAtPath:full isDirectory:&d];
         FileItem *item = [FileItem new];
-        item.path = full; item.isDir = d;
-        [(d ? dirs : files) addObject:item];                // dirs first
+        item.path = full;
+        [item readStat];
+        FileItem *old = existing[full];
+        if (old && old.isDir == item.isDir) {   // the same node, so expansion stays
+            old.isLink = item.isLink;
+            old.size = item.size;
+            old.modified = item.modified;
+            item = old;
+        }
+        item.nameRank = rank++;
+        [(item.isDir ? dirs : files) addObject:item];          // dirs first
     }
-    [self.children addObjectsFromArray:dirs];
-    [self.children addObjectsFromArray:files];
+    NSMutableArray<FileItem *> *children = [NSMutableArray arrayWithArray:dirs];
+    [children addObjectsFromArray:files];
+    return children;
+}
+
+- (void)loadChildren {
+    if (self.loaded || !self.isDir) return;
+    self.loaded = YES;
+    self.children = [self listReusing:@{}];
+    self.shown = nil;
 }
 
 // Re-scan this directory, reusing existing child objects for paths that still
@@ -213,33 +255,11 @@ static BOOL gShowHidden = NO;
 // any subdirectory that was already loaded.
 - (void)refresh {
     if (!self.isDir || !self.loaded) return;
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *entries = [[fm contentsOfDirectoryAtPath:self.path error:nil]
-        sortedArrayUsingComparator:^(NSString *a, NSString *b) {
-            return [a caseInsensitiveCompare:b];
-        }];
-
     NSMutableDictionary<NSString *, FileItem *> *existing =
         [NSMutableDictionary dictionary];
     for (FileItem *c in self.children) existing[c.path] = c;
-
-    NSMutableArray *dirs = [NSMutableArray array];
-    NSMutableArray *files = [NSMutableArray array];
-    for (NSString *entry in entries) {
-        if (!gShowHidden && [entry hasPrefix:@"."]) continue;
-        NSString *full = [self.path stringByAppendingPathComponent:entry];
-        BOOL d = NO;
-        [fm fileExistsAtPath:full isDirectory:&d];
-        FileItem *item = existing[full];
-        if (!item || item.isDir != d) {          // new, or type changed
-            item = [FileItem new];
-            item.path = full; item.isDir = d;
-        }
-        [(d ? dirs : files) addObject:item];
-    }
-    self.children = [NSMutableArray array];
-    [self.children addObjectsFromArray:dirs];
-    [self.children addObjectsFromArray:files];
+    self.children = [self listReusing:existing];
+    self.shown = nil;
     for (FileItem *c in self.children)           // recurse into open subdirs
         if (c.isDir && c.loaded) [c refresh];
 }
@@ -522,6 +542,13 @@ private:
     __weak MCTab *_formatSaveTab;
     BOOL _closing;                         // windowWillClose: has run
     NSSet<MCTab *> *_approvedWrites;       // Save All: disk questions already answered
+    // The tree's sizes, dates and order (see TreeDetails.h). Each folder's
+    // order on show is worked out again when _sortGeneration moves on.
+    MCFolderSizer *_sizer;
+    TreeSort::Options _treeSort;
+    NSUInteger _sortGeneration;
+    NSString *_realRoot;                   // the root as FSEvents spells it
+    NSTimer *_detailsTimer;                // ages and "Saved ..." each half minute
 }
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) ClickOutline *outline;
@@ -592,6 +619,7 @@ private:
 @property(nonatomic, assign) BOOL diffIsCommit;      // a whole commit (git show), not one file
 @property(nonatomic, strong) MCTabStrip *tabStrip;   // the open files, over the editor
 @property(nonatomic, strong) NSTextField *emptyLabel; // the editor's slot with no file open
+@property(nonatomic, strong) NSTextField *savedLabel; // "Saved 14:32", with details on
 @end
 
 typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCancel };
@@ -608,6 +636,7 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
         _tabs = [NSMutableArray array];
         _noTabUndo = [NSUndoManager new];
         _pendingStart = _pendingEnd = NSNotFound;
+        [self setUpTreeDetails];
     }
     return self;
 }
@@ -778,6 +807,10 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
     [[NSNotificationCenter defaultCenter]
         addObserver:self selector:@selector(markdownMathArrived:)
                name:MCMathTypesetNotification object:nil];
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self selector:@selector(treeDetailsChanged:)
+               name:MCTreeDetailsDidChangeNotification object:nil];
+    [self updateDetailsTimer];
     [self.window addObserver:self forKeyPath:@"title"
                      options:NSKeyValueObservingOptionInitial context:NULL];
     [self showEmptyState];
@@ -888,16 +921,7 @@ static void *kMediaItemContext = &kMediaItemContext;
     self.titleLabel.textColor = [cfg text:Surface::Titlebar];
 
     self.sidebarScroll.panelColor = [cfg background:Surface::Sidebar];
-    NSColor *treeText = [cfg text:Surface::Sidebar];
-    [self.outline enumerateAvailableRowViewsUsingBlock:^(NSTableRowView *row,
-                                                         NSInteger r) {
-        (void)r;
-        for (NSInteger i = 0; i < row.numberOfColumns; i++) {
-            NSTableCellView *cell = [row viewAtColumn:i];
-            if ([cell isKindOfClass:[NSTableCellView class]])
-                cell.textField.textColor = treeText;
-        }
-    }];
+    [self refreshTreeCells];   // names, and their sizes and dates
 
     self.editorScroll.panelColor = [cfg background:Surface::Editor];
     for (MCTab *t in _tabs) [t.latex applySettings];
@@ -914,6 +938,7 @@ static void *kMediaItemContext = &kMediaItemContext;
     self.statusBar.layer.backgroundColor = [cfg background:Surface::Statusbar].CGColor;
     self.statusLabel.textColor = [cfg text:Surface::Statusbar];
     self.settingsLabel.textColor = [cfg text:Surface::Statusbar];
+    self.savedLabel.textColor = [cfg text:Surface::Statusbar];
     self.lspLabel.textColor = [cfg text:Surface::Statusbar];
     [self showSettingsErrors];
 
@@ -974,7 +999,34 @@ static void *kMediaItemContext = &kMediaItemContext;
     [m addItemWithTitle:@"Reveal in Finder" action:@selector(revealInFinder:) keyEquivalent:@""];
     [m addItemWithTitle:@"Copy Path" action:@selector(copyPath:) keyEquivalent:@""];
     [m addItemWithTitle:@"Refresh" action:@selector(refreshTree:) keyEquivalent:@""];
-    for (NSMenuItem *it in m.itemArray) it.target = self;
+    [m addItem:[NSMenuItem separatorItem]];
+    // How the tree is ordered (remembered per folder), and the sizes and
+    // dates at the right of each row (Shift+Cmd+I, for every window).
+    NSMenu *sort = [[NSMenu alloc] initWithTitle:@"Sort By"];
+    const struct { NSString *title; TreeSort::Key key; } keys[] = {
+        {@"Name", TreeSort::Key::Name},
+        {@"Date Modified", TreeSort::Key::Modified},
+        {@"Size", TreeSort::Key::Size},
+    };
+    for (const auto &k : keys)
+        [sort addItemWithTitle:k.title action:@selector(sortTreeBy:) keyEquivalent:@""].tag =
+            (NSInteger)k.key;
+    [sort addItem:[NSMenuItem separatorItem]];
+    [sort addItemWithTitle:@"Ascending" action:@selector(setTreeSortDirection:)
+             keyEquivalent:@""].tag = 1;
+    [sort addItemWithTitle:@"Descending" action:@selector(setTreeSortDirection:)
+             keyEquivalent:@""].tag = 0;
+    [sort addItem:[NSMenuItem separatorItem]];
+    [sort addItemWithTitle:@"Folders First" action:@selector(toggleFoldersFirst:)
+             keyEquivalent:@""];
+    for (NSMenuItem *it in sort.itemArray) it.target = self;
+    NSMenuItem *sortItem = [m addItemWithTitle:@"Sort By" action:nil keyEquivalent:@""];
+    sortItem.submenu = sort;
+    NSMenuItem *details = [m addItemWithTitle:@"Show Sizes and Dates"
+                                       action:@selector(toggleTreeDetails:)
+                                keyEquivalent:@"i"];
+    details.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    for (NSMenuItem *it in m.itemArray) if (it.action) it.target = self;
     MCAddAdjustSettingsItem(m, @"tree", self.outline);
     return m;
 }
@@ -1004,6 +1056,15 @@ static void *kMediaItemContext = &kMediaItemContext;
     errors.lineBreakMode = NSLineBreakByTruncatingTail;
     self.settingsLabel = errors;
     [self.statusBar addSubview:errors];
+
+    // Left of them, with details on (Shift+Cmd+I): when the file on show
+    // was last saved.
+    NSTextField *saved = [NSTextField labelWithString:@""];
+    saved.font = [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightRegular];
+    saved.lineBreakMode = NSLineBreakByTruncatingTail;
+    saved.hidden = YES;
+    self.savedLabel = saved;
+    [self.statusBar addSubview:saved];
 
     // Middle: the language server for the open file and its problem count,
     // right-aligned just left of the shortcuts hint.
@@ -1170,7 +1231,7 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     [self appendHintsRow:s key:@"⌘⌫" label:@"Move to trash"
                     key2:@"⌘R" label2:@"Refresh tree" state:nil];
     [self appendHintsRow:s key:@"⇧⌘." label:@"Show hidden files"
-                    key2:nil label2:nil state:nil];
+                    key2:@"⇧⌘I" label2:@"Sizes and dates" state:nil];
 
     [self appendHintsHeading:@"Navigation" to:s];
     [self appendHintsRow:s key:@"⌘0" label:@"Focus tree"
@@ -1182,7 +1243,7 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     [self appendHintsRow:s key:@"↑ ↓" label:@"Browse tree"
                     key2:@"⏎" label2:@"Open file" state:nil];
     [self appendHintsRow:s key:@"⌘B" label:@"Toggle sidebar"
-                    key2:nil label2:nil state:nil];
+                    key2:@"⇧F10" label2:@"Context menu" state:nil];
 
     [self appendHintsHeading:@"Tabs" to:s];
     [self appendHintsRow:s key:@"⌃⇥" label:@"Next tab"
@@ -1962,14 +2023,10 @@ static const CGFloat kDividerGrabSlop = 5;
 
 // ------------------------------------------------------- NSOutlineView source
 - (NSInteger)outlineView:(NSOutlineView *)ov numberOfChildrenOfItem:(id)item {
-    FileItem *node = item ?: _root;
-    [node loadChildren];
-    return node.children.count;
+    return (NSInteger)[self childrenOf:item ?: _root].count;
 }
 - (id)outlineView:(NSOutlineView *)ov child:(NSInteger)i ofItem:(id)item {
-    FileItem *node = item ?: _root;
-    [node loadChildren];
-    return node.children[i];
+    return [self childrenOf:item ?: _root][(NSUInteger)i];
 }
 - (BOOL)outlineView:(NSOutlineView *)ov isItemExpandable:(id)item {
     return ((FileItem *)item).isDir;
@@ -1978,37 +2035,12 @@ static const CGFloat kDividerGrabSlop = 5;
 - (NSView *)outlineView:(NSOutlineView *)ov
      viewForTableColumn:(NSTableColumn *)col
                    item:(id)item {
-    FileItem *node = item;
-    NSTableCellView *cell = [ov makeViewWithIdentifier:@"cell" owner:self];
+    MCTreeCell *cell = [ov makeViewWithIdentifier:@"cell" owner:self];
     if (!cell) {
-        cell = [[NSTableCellView alloc] init];
+        cell = [[MCTreeCell alloc] initWithFrame:NSZeroRect];
         cell.identifier = @"cell";
-        NSTextField *tf = [NSTextField labelWithString:@""];
-        tf.translatesAutoresizingMaskIntoConstraints = NO;
-        NSImageView *iv = [[NSImageView alloc] init];
-        iv.translatesAutoresizingMaskIntoConstraints = NO;
-        [cell addSubview:iv];
-        [cell addSubview:tf];
-        cell.textField = tf;
-        cell.imageView = iv;
-        [NSLayoutConstraint activateConstraints:@[
-            [iv.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:2],
-            [iv.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
-            [iv.widthAnchor constraintEqualToConstant:16],
-            [iv.heightAnchor constraintEqualToConstant:16],
-            [tf.leadingAnchor constraintEqualToAnchor:iv.trailingAnchor constant:5],
-            [tf.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-2],
-            [tf.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
-        ]];
     }
-    cell.textField.stringValue = [node name];
-    cell.textField.textColor = [[AppSettings shared] text:Surface::Sidebar];
-    cell.textField.font = [NSFont systemFontOfSize:12.5];
-    NSString *sym = node.isDir ? @"folder.fill" : @"doc.text";
-    NSImage *img = [NSImage imageWithSystemSymbolName:sym
-                             accessibilityDescription:nil];
-    cell.imageView.image = img;
-    cell.imageView.contentTintColor = node.isDir ? Hex(0xC09553) : Hex(0x8A99A8);
+    [self configureTreeCell:cell item:item];
     return cell;
 }
 
@@ -2200,8 +2232,14 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
 static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
                        void *paths, const FSEventStreamEventFlags flags[],
                        const FSEventStreamEventId ids[]) {
-    (void)stream; (void)n; (void)paths; (void)flags; (void)ids;
+    (void)stream; (void)ids;
     EditorController *self = (__bridge EditorController *)info;
+    // Folder totals under the folders that changed are counted again.
+    char **changed = (char **)paths;
+    for (size_t i = 0; i < n; i++)
+        [self folderChangedOnDisk:@(changed[i])
+                          subtree:(flags[i] & (kFSEventStreamEventFlagMustScanSubDirs |
+                                               kFSEventStreamEventFlagRootChanged)) != 0];
     [self refreshTree:nil];
     if (self.gitPanelVisible) [self.gitPanel refresh];   // a commit or edit made elsewhere
     [self checkTabsOnDisk];   // a tab's file moved or deleted in the terminal
@@ -2232,7 +2270,15 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 }
 
 // Re-scan the tree, keeping expanded folders and the selection where possible.
+// Refresh from the menu also counts every folder total again.
 - (void)refreshTree:(id)sender {
+    if (sender) [_sizer reset];
+    [self reloadTreeKeepingState:YES];
+}
+
+// Rebuild the rows, from the disk when `rescan`, else only in a new order,
+// keeping the expanded folders, the selected row and the scroll position.
+- (void)reloadTreeKeepingState:(BOOL)rescan {
     NSString *selPath = nil;
     if (self.outline.selectedRow >= 0)
         selPath = [(FileItem *)[self.outline itemAtRow:self.outline.selectedRow] path];
@@ -2242,8 +2288,10 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         FileItem *it = [self.outline itemAtRow:r];
         if ([self.outline isItemExpanded:it]) [expanded addObject:it.path];
     }
+    NSClipView *clip = self.sidebarScroll.contentView;
+    const NSPoint origin = clip.bounds.origin;
 
-    [_root refresh];
+    if (rescan) [_root refresh];
     [self.outline reloadData];
     [self reExpand:_root usingSet:expanded];
 
@@ -2256,6 +2304,12 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
             }
         }
     }
+    if (clip) {
+        NSRect want = clip.bounds;
+        want.origin = origin;
+        [clip scrollToPoint:[clip constrainBoundsRect:want].origin];
+        [self.sidebarScroll reflectScrolledClipView:clip];
+    }
 }
 
 - (void)reExpand:(FileItem *)node usingSet:(NSSet<NSString *> *)expanded {
@@ -2265,6 +2319,273 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
             [self reExpand:child usingSet:expanded];
         }
     }
+}
+
+// ----------------------------------------- sizes, dates and order (the tree)
+// Shift+Cmd+I shows each row's size and age at its right; the tree's
+// context menu sorts it by name, date modified or size. The rules are in
+// FileDetails.h, the counting of folder totals in TreeDetails.mm.
+- (void)setUpTreeDetails {
+    _sizer = [MCFolderSizer new];
+    __weak EditorController *weakSelf = self;
+    _sizer.onTotals = ^(NSSet<NSString *> *paths) { [weakSelf folderTotalsArrived:paths]; };
+    [self rootChanged];
+}
+
+// A new root (the window's first, or Open Folder): its own sort order, and
+// no totals counted for the old one.
+- (void)rootChanged {
+    [_sizer reset];
+    _treeSort = MCTreeSortForRoot(_root.path);
+    _sortGeneration++;
+    char real[PATH_MAX];
+    _realRoot = _root.path && realpath(_root.path.fileSystemRepresentation, real)
+                    ? @(real) : _root.path;
+}
+
+// A folder's entries in the order on show, worked out once per change of
+// order (or of what is on disk) and kept on the node.
+- (NSArray<FileItem *> *)childrenOf:(FileItem *)node {
+    [node loadChildren];
+    if (node.shown && node.shownGeneration == _sortGeneration) return node.shown;
+    node.shown = [self orderOf:node.children];
+    node.shownGeneration = _sortGeneration;
+    return node.shown;
+}
+
+- (NSArray<FileItem *> *)orderOf:(NSArray<FileItem *> *)items {
+    // Name, A to Z, folders first is the order they were listed in.
+    if (_treeSort == TreeSort::Options() || items.count < 2) return items ?: @[];
+    const BOOL bySize = _treeSort.key == TreeSort::Key::Size;
+    std::vector<TreeSort::Entry> entries;
+    entries.reserve(items.count);
+    for (FileItem *it in items) {
+        TreeSort::Entry e;
+        e.name = Utf8String(it.name);
+        e.isDir = it.isDir;
+        e.modified = it.modified;
+        e.nameRank = it.nameRank;
+        e.size = it.size;
+        if (it.isDir) {
+            e.size = -1;
+            if (bySize) {
+                FolderSizes::Total t;
+                BOOL stale = NO;
+                if (it.isLink) e.size = 0;   // not counted, as in the totals
+                else if ([_sizer totalFor:it.path total:&t stale:&stale]) {
+                    e.size = t.bytes;
+                    if (stale) [_sizer request:it.path];
+                } else {
+                    [_sizer request:it.path];
+                }
+            }
+        }
+        entries.push_back(e);
+    }
+    NSMutableArray<FileItem *> *out = [NSMutableArray arrayWithCapacity:items.count];
+    for (size_t i : TreeSort::order(entries, _treeSort)) [out addObject:items[i]];
+    return out;
+}
+
+static NSString *MCGroupedCount(long long n) {
+    static NSNumberFormatter *f;
+    if (!f) {
+        f = [NSNumberFormatter new];
+        f.numberStyle = NSNumberFormatterDecimalStyle;
+    }
+    return [f stringFromNumber:@(n)];
+}
+
+- (void)configureTreeCell:(MCTreeCell *)cell item:(FileItem *)node {
+    AppSettings *cfg = [AppSettings shared];
+    NSColor *text = [cfg text:Surface::Sidebar];
+    cell.textField.stringValue = node.name ?: @"";
+    cell.textField.textColor = text;
+    cell.textField.font = [NSFont systemFontOfSize:12.5];
+    NSString *sym = node.isDir ? @"folder.fill" : @"doc.text";
+    cell.imageView.image = [NSImage imageWithSystemSymbolName:sym accessibilityDescription:nil];
+    cell.imageView.contentTintColor = node.isDir ? Hex(0xC09553) : Hex(0x8A99A8);
+    if (!MCTreeDetailsShown()) {
+        [cell setSize:nil age:nil color:nil];
+        cell.toolTip = nil;
+        return;
+    }
+    NSDate *modified = node.modified > 0
+        ? [NSDate dateWithTimeIntervalSince1970:node.modified] : nil;
+    NSString *age = modified ? MCCompactAge(modified, [NSDate date]) : @"";
+    NSString *size = @"", *sizeTip = nil;
+    if (node.isDir && node.isLink) {
+        size = @"—";
+        sizeTip = @"A symbolic link: what it points to is not counted.";
+    } else if (node.isDir) {
+        FolderSizes::Total t;
+        BOOL stale = NO;
+        if ([_sizer totalFor:node.path total:&t stale:&stale]) {
+            NSString *bytes = MCFormatByteCount(t.bytes);
+            // A thin space after ≥, so "≥ 999.9 MB" fits its column.
+            size = t.capped ? [@"≥\u2009" stringByAppendingString:bytes] : bytes;
+            sizeTip = [NSString stringWithFormat:@"%@%@ bytes in %@ %@%@",
+                       t.capped ? @"At least " : @"", MCGroupedCount(t.bytes),
+                       MCGroupedCount(t.files), t.files == 1 ? @"file" : @"files",
+                       t.capped ? @" (counting stopped there; the folder is very large)" : @""];
+            if (stale) [_sizer request:node.path];
+        } else {
+            size = @"…";
+            sizeTip = @"Counting…";
+            [_sizer request:node.path];
+        }
+    } else if (node.size >= 0) {
+        size = MCFormatByteCount(node.size);
+        sizeTip = [NSString stringWithFormat:@"%@ bytes", MCGroupedCount(node.size)];
+    }
+    [cell setSize:size age:age color:[text colorWithAlphaComponent:0.55]];
+    NSMutableArray<NSString *> *tip = [NSMutableArray arrayWithObject:node.name ?: @""];
+    if (modified) [tip addObject:[@"Modified " stringByAppendingString:MCFullDate(modified)]];
+    if (sizeTip) [tip addObject:sizeTip];
+    cell.toolTip = [tip componentsJoinedByString:@"\n"];
+}
+
+// The rows on screen again, in place: new colors, sizes or ages.
+- (void)refreshTreeCells {
+    [self.outline enumerateAvailableRowViewsUsingBlock:^(NSTableRowView *rv, NSInteger row) {
+        MCTreeCell *cell = [rv viewAtColumn:0];
+        FileItem *item = [self.outline itemAtRow:row];
+        if ([cell isKindOfClass:MCTreeCell.class] && item)
+            [self configureTreeCell:cell item:item];
+    }];
+}
+
+// Folder totals arrived. Sorted by size, the rows move if their order
+// changed (the selection, expansion and scroll position stay); otherwise
+// the rows on screen just show the new sizes.
+- (void)folderTotalsArrived:(NSSet<NSString *> *)paths {
+    (void)paths;
+    if (_treeSort.key == TreeSort::Key::Size) {
+        _sortGeneration++;
+        BOOL changed = NO;
+        [self reorderNode:_root changed:&changed];
+        if (changed) {
+            [self reloadTreeKeepingState:NO];
+            return;
+        }
+    }
+    if (MCTreeDetailsShown()) [self refreshTreeCells];
+}
+
+- (void)reorderNode:(FileItem *)node changed:(BOOL *)changed {
+    if (!node.loaded) return;
+    NSArray<FileItem *> *before = node.shown;
+    NSArray<FileItem *> *now = [self childrenOf:node];
+    if (before && ![before isEqualToArray:now]) *changed = YES;
+    for (FileItem *c in now)
+        if (c.isDir && c.loaded) [self reorderNode:c changed:changed];
+}
+
+// FSEvents named a folder (as the disk spells it, /private/tmp for /tmp)
+// in which something changed: its total and those above it are stale.
+- (void)folderChangedOnDisk:(NSString *)path subtree:(BOOL)subtree {
+    while (path.length > 1 && [path hasSuffix:@"/"]) path = [path substringToIndex:path.length - 1];
+    NSString *root = _root.path;
+    if (_realRoot && root && ![_realRoot isEqualToString:root]) {
+        if ([path isEqualToString:_realRoot])
+            path = root;
+        else if ([path hasPrefix:[_realRoot stringByAppendingString:@"/"]])
+            path = [root stringByAppendingString:[path substringFromIndex:_realRoot.length]];
+    }
+    [_sizer invalidate:path subtree:subtree];
+}
+
+- (void)setTreeSort:(TreeSort::Options)options {
+    if (options == _treeSort) return;
+    _treeSort = options;
+    MCSetTreeSortForRoot(_root.path, options);
+    _sortGeneration++;
+    [self reloadTreeKeepingState:NO];
+    if (self.outline.selectedRow >= 0) [self.outline scrollRowToVisible:self.outline.selectedRow];
+}
+- (void)sortTreeBy:(id)sender {
+    const NSInteger tag = [sender tag];
+    const TreeSort::Key key = tag == 1 ? TreeSort::Key::Modified
+                            : tag == 2 ? TreeSort::Key::Size : TreeSort::Key::Name;
+    [self setTreeSort:TreeSort::choose(_treeSort, key)];
+}
+- (void)setTreeSortDirection:(id)sender {
+    TreeSort::Options o = _treeSort;
+    o.ascending = [sender tag] == 1;
+    [self setTreeSort:o];
+}
+- (void)toggleFoldersFirst:(id)sender {
+    TreeSort::Options o = _treeSort;
+    o.foldersFirst = !o.foldersFirst;
+    [self setTreeSort:o];
+}
+- (TreeSort::Options)treeSortOptions { return _treeSort; }   // tests
+
+// Shift+Cmd+I, for every window: they all hear the notification.
+- (void)toggleTreeDetails:(id)sender {
+    (void)sender;
+    MCSetTreeDetailsShown(!MCTreeDetailsShown());
+}
+- (void)treeDetailsChanged:(NSNotification *)note {
+    (void)note;
+    [self refreshTreeCells];
+    [self updateSavedStatus];
+    [self updateDetailsTimer];
+    if (self.hintsVisible) [self updateHints];
+}
+
+// Ages ("5 min") and "Saved ..." move on by themselves while details show.
+- (void)updateDetailsTimer {
+    const BOOL want = MCTreeDetailsShown() && !_closing;
+    if (want == (_detailsTimer != nil)) return;
+    if (!want) {
+        [_detailsTimer invalidate];
+        _detailsTimer = nil;
+        return;
+    }
+    __weak EditorController *weakSelf = self;
+    _detailsTimer = [NSTimer scheduledTimerWithTimeInterval:30 repeats:YES
+                                                     block:^(NSTimer *t) {
+        (void)t;
+        [weakSelf refreshTreeCells];
+        [weakSelf updateSavedStatus];
+    }];
+    _detailsTimer.tolerance = 5;
+}
+
+// The status bar's "Saved 14:32" for the tab on show, with details on.
+- (void)updateSavedStatus {
+    NSString *text = @"", *tip = nil;
+    MCTab *t = _activeTab;
+    if (MCTreeDetailsShown() && t.currentPath && !t.isDiff) {
+        NSDate *disk = t.fileModDate;
+        if (t.gone || !disk) text = @"Not saved";
+        else if (t.dirty) text = @"Unsaved changes";
+        else {
+            text = MCSavedPhrase(disk, [NSDate date]);
+            // Pictures, PDFs and media are never saved from here.
+            if ((t.isImage || t.isPDF || t.isMedia) && [text hasPrefix:@"Saved"])
+                text = [@"Modified" stringByAppendingString:[text substringFromIndex:5]];
+        }
+        if (disk) tip = [@"On disk since " stringByAppendingString:MCFullDate(disk)];
+    }
+    self.savedLabel.stringValue = text;
+    self.savedLabel.toolTip = tip;
+    self.savedLabel.hidden = text.length == 0;
+    [self layoutStatusLabels];
+}
+
+// The left of the status bar: "Saved ..." then any settings problem.
+- (void)layoutStatusLabels {
+    if (!self.statusBar) return;
+    const CGFloat W = self.statusBar.bounds.size.width;
+    CGFloat x = 12;
+    if (!self.savedLabel.hidden) {
+        const CGFloat w = MIN(ceil(self.savedLabel.fittingSize.width) + 2, 220);
+        self.savedLabel.frame = NSMakeRect(x, 3, w, 16);
+        x += w + 14;
+    }
+    self.settingsLabel.frame = NSMakeRect(x, 3, MAX(0, W * 0.6 - (x - 12)), 16);
 }
 
 // -------------------------------------------------- file operations (tree)
@@ -2761,6 +3082,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         ? [[NSFileManager defaultManager] attributesOfItemAtPath:t.currentPath error:nil] : nil;
     t.fileModDate = attrs.fileModificationDate;
     t.fileID = [attrs[NSFileSystemFileNumber] unsignedLongLongValue];
+    if (t == _activeTab) [self updateSavedStatus];
 }
 - (void)recordModDate { [self recordDiskStateOf:_activeTab]; }
 
@@ -3632,6 +3954,9 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
         [panel removeFromSuperview];
     }
     [self saveSession];        // reopened with the folder next time
+    [_sizer cancel];           // no counting for a closed window
+    [_detailsTimer invalidate];
+    _detailsTimer = nil;
     _awaitedWebImages = nil;   // pictures still on their way land in the cache only
     _awaitedMath = nil;        // and so do formulas
     [self stopMedia];      // no sound from a closed window
@@ -3745,6 +4070,24 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
     else NSBeep();
 }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(sortTreeBy:)) {
+        item.state = item.tag == (NSInteger)_treeSort.key ? NSControlStateValueOn
+                                                          : NSControlStateValueOff;
+        return YES;
+    }
+    if (item.action == @selector(setTreeSortDirection:)) {
+        item.state = _treeSort.ascending == (item.tag == 1) ? NSControlStateValueOn
+                                                             : NSControlStateValueOff;
+        return YES;
+    }
+    if (item.action == @selector(toggleFoldersFirst:)) {
+        item.state = _treeSort.foldersFirst ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
+    if (item.action == @selector(toggleTreeDetails:)) {
+        item.state = MCTreeDetailsShown() ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
     if (item.action == @selector(closeFocused:)) {
         static NSString *const titles[] = {@"Close Window", @"Close Terminal",
                                            @"Close Browser", @"Close Tab"};
@@ -5014,6 +5357,7 @@ static NSString *MCFormatDuration(double seconds) {
     // The close button's dot: unsaved changes in any tab.
     self.window.documentEdited = [self hasUnsavedChanges];
     [self reloadTabStrip];   // the dots on the tabs
+    [self updateSavedStatus];
     if (self.hintsVisible) [self updateHints];
 }
 
@@ -5861,6 +6205,7 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
         [self dropAllTabs];       // no stale preview or image over the new folder
         _root = [FileItem new];
         _root.path = dir; _root.isDir = YES;
+        [self rootChanged];
         [_root loadChildren];
         [self.lsp setRoot:dir];   // servers belong to the old folder
         [self.outline reloadData];

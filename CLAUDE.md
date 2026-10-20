@@ -26,8 +26,9 @@ this file covers the macOS app except where it says otherwise.
   matching), JSON, the LSP
   client, finding file references and URLs in terminal output, the
   folder search (on a scratch tree in the temp directory), and the git
-  status and diff readers, the formatter planning and the line diff
-  (3,144 checks on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
+  status and diff readers, the formatter planning and the line diff, and
+  the file tree's sort orders, ages and folder totals (`tree:*`, `sizes:*`)
+  (3,259 checks on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
   corpus in `tests/markdown/corpus.md` read from the repo root; the
   corpus checks skip themselves where that file is not found).
   Exits non-zero on failure. The Makefile uses clang++ on the Mac and make's
@@ -229,6 +230,12 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
   finds it, pipes the buffer through it off the main thread, times it out.
 - `src/LspPanel.{h,mm}` — the status bar's server item, the Language
   Servers popover and the Select Python Interpreter sheet.
+- `src/FileDetails.{h,cpp}` (pure C++, tested) and `src/TreeDetails.{h,mm}`
+  — the file tree's sizes, dates and sort orders: `TreeSort` (the order of
+  one folder's entries), `Age` ("5 min", "Saved 14:32"), `FolderSizes`
+  (the totals cache and the POSIX walker); and on the Mac the formatting,
+  `MCFolderSizer` (the background queue), `MCTreeCell` (the row view) and
+  `MCShowContextMenuInWindow` (Shift+F10). See "Sizes, dates and sorting".
 - `src/EditingCommands.{h,mm}` — AutoIndent and KeepSorted on an
   NSTextView: the indentation keys, the electric dedent, F9 / Shift+F9 and
   sorting before a save. EditorController only calls in from
@@ -248,6 +255,7 @@ container (PanelHost, laid out by hand in layoutContainer)
 ├── titlebarView + titleLabel                     drawn when customTitlebar
 ├── NSSplitView (vertical, thin divider)          sidebar | right pane
 │   ├── treeScroll → ClickOutline (NSOutlineView)  file tree, bg #252526
+│   │   rows are MCTreeCell: icon, name, size and age (Shift+Cmd+I)
 │   │   (or gitPanel, MCGitPanel, swapped in by Ctrl+Shift+G)
 │   └── rightArea (PanelHost, laid out by hand in relayoutRightArea)
 │       ├── tabStrip (MCTabStrip)                  top of the editor's side, with tabs
@@ -261,7 +269,9 @@ container (PanelHost, laid out by hand in layoutContainer)
 │       │   └── TerminalView per terminal          bg #181818; a tab's side by side
 │       ├── browserDivider (DragBar, vertical)     editor | browser, kept on top
 │       └── termDivider (DragBar)                  kept topmost
-├── status bar (buildStatusBarInContainer)        bottom strip
+├── status bar (buildStatusBarInContainer)        bottom strip: savedLabel ("Saved
+│                                                 14:32", details on), settings errors,
+│                                                 language servers, the hints key
 └── hintsPanel (buildHintsPanelInContainer)       Shift+Cmd+H overlay
 ```
 
@@ -862,6 +872,85 @@ task lists, so files stay portable.
   the target is laid out first. Needs the user's eyes: the strip's look,
   hover, tooltips, scrolling with many tabs, a real middle click, and the
   quit prompt. The GTK and Android ports have no tabs yet.
+
+## Sizes, dates and sorting in the tree (Mac, 2026-10-20)
+
+The user asked for sizes and a last-saved time on a hotkey, sorting by
+name, date or size from the right click, and the right click from the
+keyboard.
+
+- **Shift+Cmd+I** (View > Show Sizes and Dates, and in the tree's menu;
+  Cmd+I is Show Hover Info) shows each row's size and age right-aligned
+  and muted (sidebar text at 55%), in two fixed columns (`MCTreeCell`,
+  laid out by hand): the age goes first, then the size, when the name
+  would get under 72 points; with details on, the name truncates in the
+  middle. Sizes are NSByteCountFormatter's file style (logical bytes, "0
+  bytes" not "Zero KB"); ages "now", "5 min", "3 h", "yesterday", "12 Oct",
+  "May 2025"; the tooltip has the exact bytes, file count and full date.
+  App-wide, in the user defaults (`MCTreeDetails`), posted as
+  `MCTreeDetailsDidChangeNotification` so every window follows. With it on,
+  the status bar's left shows the tab's "Saved 5 min ago", "Saved 14:32" or
+  "Saved yesterday 14:32", "Unsaved changes" when dirty, "Not saved" for a
+  file gone from disk, and "Modified ..." for pictures, PDFs and media; a
+  30 s timer keeps the ages and that line current while details are on.
+- **Folder totals** (`FolderSizes::measure`, run by `MCFolderSizer` on one
+  utility queue, last asked first): every regular file below, hidden ones
+  included (as Finder and du count; the tree's dotfile hiding is about
+  showing, not counting), never through a symlink (a symlinked folder's
+  row shows "—"), never into another device; a hard-linked file counts once for each name.
+  Each subfolder's total is cached with its stamp (dev, inode, own mtime)
+  and reused, so a recount reads only the changed chain. FSEvents paths
+  (now read in the callback; `/private/tmp` mapped back to the tree's
+  `/tmp` spelling through realpath) invalidate the folder and every folder
+  above it (`MustScanSubDirs` takes the subtree too); a store is refused
+  if an invalidation came after the count began. Limits: 200,000 entries
+  or 2 s per count, then "≥ X" (a thin space after ≥). "…" until the first
+  total; later recounts show the last total meanwhile, so rows do not
+  flicker. Refresh (Cmd+R) recounts everything; FSEvents refreshes do not.
+- **Sort By** (tree menu): Name, Date Modified, Size; Ascending,
+  Descending; Folders First. Name ascending with folders first is exactly
+  the old order (caseInsensitiveCompare:, not localizedStandardCompare:,
+  so nothing moves for anyone who never sorts); the platform's name order
+  reaches the C++ as `nameRank`. A new key starts in its own direction
+  (dates newest, sizes largest first, as Finder); ties go by name. Folder
+  dates are their own mtime, as in Finder. **Size while totals are
+  pending**: while any folder in a list has no total, the folders stay in
+  name order ahead of the files, then the list re-sorts once
+  (`folderTotalsArrived:` reloads only when an order really changed,
+  keeping selection, expansion and scroll through
+  `reloadTreeKeepingState:`, which refreshTree uses too). Remembered per
+  folder (resolved path, `MCTreeSort`, only non-default orders, 100
+  folders), like the tab sessions, since a big folder sorted by size says
+  nothing about the next project. `FileItem` keeps `children` in name
+  order and `shown` in the window's order, recomputed when
+  `_sortGeneration` moves.
+- **The context menu by keyboard**: Shift+F10 (View > Show Context Menu),
+  a hidden Ctrl+Return (otherwise a text view's binding for a U+2028 line
+  separator, never wanted in code) and the PC Menu key (keyCode 0x6E, in
+  the key monitor). `MCShowContextMenuInWindow` takes the key window's
+  first responder, builds a right mouse down just inside the selected
+  row's bottom edge (so `clickedRow` is that row and the tree's commands
+  act on it) or at the caret, asks the view's `menuForEvent:` (restoring a
+  text view's selection, which a right click moves to the word) and pops
+  it with `popUpContextMenu:withEvent:forView:` on the next turn of the run
+  loop. Shift+F10 therefore no longer reaches programs in the terminal grid.
+- **Verified** (2026-10-20) with an offscreen harness including main.mm
+  (100 checks, a project of known sizes and dates with a 205,000-file
+  folder, a symlink loop and a link to a folder; scratch HOME and a fresh
+  defaults suite per run, since cfprefsd keeps a deleted plist's values):
+  a dump of every menu key equivalent (no clashes), Shift+Cmd+I as a
+  CGEvent key, sizes, ages, tooltips, totals arriving and "≥ 200 KB", a
+  file growing deep down, "Saved", "Unsaved changes" and "Saved just now",
+  every order and direction with its check marks, the order kept per
+  folder and a second window sorting the same, the order, selection and
+  expansion over a new file, a re-sort, a rename, the source control swap
+  and Refresh, the columns at five sidebar widths, Shift+F10, Ctrl+Return
+  and the Menu key in the tree and the editor (popUpContextMenu swizzled
+  to record), Copy Path from that menu, and a capture of the tree, looked
+  at. Needs the user's eyes: the look on a real screen, the real menu
+  opening and keyboard navigation in it, a PC Menu key, the half-minute
+  updates, and a huge real folder such as the home folder. Linux and
+  Android have none of it yet.
 
 ## Formatting (Mac, 2026-10-20)
 

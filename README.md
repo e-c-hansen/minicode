@@ -18,6 +18,8 @@ The macOS app links only against frameworks that ship with the system. The Linux
 
 Open a folder and you get a file tree on the left and the file you click in the main pane. Each file you open gets a tab above the editor, keeping its own unsaved changes, undo history, and place, and a dot on the tab means it has changes to save. Typing something and deleting it again leaves nothing to save. Command W closes the tab, or the terminal or browser when it has the keyboard, and Shift Command W closes the window. The next time you open the folder, its tabs come back. The tree follows changes made elsewhere, in the terminal, in git or in another program, and right clicking an item offers new file, new folder, rename, move to trash, reveal in Finder and copy path.
 
+On the Mac, Shift Command I shows each file's size and when it was last changed at the right of its row, in Finder's units ("4 KB", "2 min", "yesterday"), with the exact figures in the row's tooltip. A folder shows the total of everything inside it, hidden files included, as Finder and du count it; it is added up in the background, shows "…" until it is known, and is counted again when something inside changes. A very large folder stops being counted after a couple of seconds and shows "≥" before what it reached. While the sizes show, the status bar also says when the open file was last saved. Sort By in the tree's right click menu orders the tree by name, date modified or size, ascending or descending, with folders first or mixed in with the files. Dates and sizes start newest and largest first, as in Finder, and each folder remembers its own order. Shift F10 or Control Return opens the right click menu of whatever has the keyboard, at the selected row or the cursor, so all of this works without the mouse.
+
 Source files are highlighted by extension: Python, the C family, JavaScript, TypeScript, JSON, shell, LaTeX and a few others. Markdown renders as formatted text, with working links, tables and images, and Shift Command P flips to the source. Pictures with an https address, such as the badges at the top of a README, are downloaded in the background and kept in memory only; markdown.web-images = false in the settings turns that off. Math written as on GitHub, $x^2$ inline and $$ or a math code block for a display, is typeset by tectonic (the LaTeX preview's engine, below) in the background and kept in a cache, so a page opened again shows its formulas at once; markdown.math = false shows them as their TeX instead. You can also edit the rendered page: double click a paragraph, heading, list item or table cell, and a small editor opens holding its Markdown. Images and PDFs open in the same pane, and reload when the file changes on disk. On the Mac so do video and audio files, such as mp4, mov, mp3, wav and flac, in the system's own player; nothing plays until you press Shift Command Space or the play button.
 
 ![Opening a PNG and then a PDF from the file tree](docs/demos/files.gif)
@@ -226,6 +228,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it | Ctrl click it | Tap it |
 | Open a folder | Command O | Ctrl O | O, or Ctrl O |
 | Open a new terminal in a new tab | Control Shift backtick |  |  |
+| Open the right click menu of what has the keyboard, at the selected row or the cursor | Shift F10, or Control Return, or the Menu key of a PC keyboard |  |  |
 | Open the settings file | Command comma | Ctrl comma |  |
 | Play or pause a video or audio file | Shift Command Space | Ctrl Shift Space | Space in the player, or Ctrl Shift Space |
 | Refresh the file tree | Command R |  |  |
@@ -235,6 +238,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | See the language servers, restart one, or choose the Python interpreter | Click the server in the status bar, or the minicode menu |  |  |
 | Show or hide dotfiles | Shift Command . | Ctrl H, or Ctrl Shift . |  |
 | Show or hide the on-screen keyboard, for symbols the phone's keyboard lacks |  |  | Y, or the keyboard button in the title bar |
+| Show or hide the sizes and dates of files and folders in the file tree, and when the open file was saved | Shift Command I |  |  |
 | Show the type and documentation under the cursor | Command I | Ctrl I | K, or Ctrl K |
 | Split the terminal, with a new one beside it | Command backslash |  |  |
 | Sort every keep-sorted block in the file | Shift F9 | Shift F9 | Sort keep-sorted blocks in the ⋮ menu |
