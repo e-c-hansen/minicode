@@ -45,6 +45,19 @@
             [c toggleTerminal:nil];
             return nil;   // consume
         }
+        // Shift+Option+F is Format Document only in the editor. Anywhere
+        // else that takes typing (the terminal, the commit message, a find
+        // field) it types its character, as it did before the menu had it.
+        BOOL shift = (m & NSEventModifierFlagShift) != 0;
+        if (opt && shift && !cmd && !ctrl && [ch isEqualToString:@"f"]) {
+            NSResponder *fr = e.window.firstResponder;
+            if (![fr isKindOfClass:[CodeTextView class]] &&
+                ([fr conformsToProtocol:@protocol(NSTextInputClient)] ||
+                 [fr isKindOfClass:NSClassFromString(@"TerminalGridView")])) {
+                [fr keyDown:e];
+                return nil;
+            }
+        }
         return e;
     }];
 }
@@ -269,6 +282,7 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
 - (void)refreshTree:(id)sender     { [[self current] refreshTree:sender]; }
 - (void)openSettings:(id)sender    { [[self current] openSettings:sender]; }
 - (void)toggleComment:(id)sender   { [[self current] toggleComment:sender]; }
+- (void)formatDocument:(id)sender  { [[self current] formatDocument:sender]; }
 - (void)toggleTask:(id)sender      { [[self current] toggleTask:sender]; }
 - (void)showTodos:(id)sender       { [[self current] showTodos:sender]; }
 - (void)triggerCompletion:(id)sender { [[self current] triggerCompletion:sender]; }
@@ -380,6 +394,14 @@ static void BuildMenu(void) {
                         action:@selector(toggleComment:) keyEquivalent:@"/"];
     [editMenu addItemWithTitle:@"Toggle Task"
                         action:@selector(toggleTask:) keyEquivalent:@"l"];
+    // VS Code's key on the Mac. It has no Command, so it is also a character
+    // (Ï on a US keyboard); the key monitor above lets it type that outside
+    // the editor. Nothing else here uses Option.
+    NSMenuItem *format = [[NSMenuItem alloc] initWithTitle:@"Format Document"
+                                                    action:@selector(formatDocument:)
+                                             keyEquivalent:@"f"];
+    format.keyEquivalentModifierMask = NSEventModifierFlagOption | NSEventModifierFlagShift;
+    [editMenu addItem:format];
     // Language server completion. Ctrl+Space is also the system shortcut for
     // switching input sources when more than one is enabled; Option+Esc
     // (the text view's complete:) reaches the same list either way.

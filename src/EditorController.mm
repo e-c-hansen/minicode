@@ -11,6 +11,7 @@
 #import "MarkdownMath.h"
 #import "MarkdownEditPanel.h"
 #import "GitPanel.h"
+#import "FormatRunner.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #import <AVKit/AVKit.h>                 // video and audio in the editor's slot
 #import <AVFoundation/AVFoundation.h>
@@ -19,6 +20,8 @@
 #include "MarkdownEdit.h"
 #include "LineComments.h"
 #include "MarkdownTasks.h"
+#include "LineDiff.h"
+#include "Formatter.h"
 #include <memory>
 #include <string>
 
@@ -414,6 +417,8 @@ private:
     NSColor *_styleColors[8];              // by TokenStyle, from the settings
     NSColor *_plainColor;
     NSDictionary *_sourceAttributes;       // font, paragraph style, plain color
+    NSUInteger _formatGeneration;          // a format result for an older one is dropped
+    NSPopover *_formatNote;                // what Format Document has to say
 }
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) ClickOutline *outline;
@@ -463,6 +468,7 @@ private:
 @property(nonatomic, strong) NSTextField *titleLabel;
 @property(nonatomic, strong) NSTextField *settingsLabel;     // settings errors
 @property(nonatomic, assign) BOOL showingMessage;   // welcome/binary text shown
+@property(nonatomic, copy) NSString *lastFormatNote;  // tests: the last format note
 @property(nonatomic, assign) NSUInteger colorLineStart;   // line the color panel edits
 @property(nonatomic, copy)   NSString *colorEditPath;
 @property(nonatomic, strong) LspSession *lsp;         // language servers
@@ -1020,6 +1026,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⌃Space" label2:@"Complete" state:nil];
     [self appendHintsRow:s key:@"F12" label:@"Go to definition"
                     key2:@"⌘I" label2:@"Hover info" state:nil];
+    [self appendHintsRow:s key:@"⌥⇧F" label:@"Format document"
+                    key2:nil label2:nil state:nil];
 
     [self appendHintsHeading:@"Files" to:s];
     [self appendHintsRow:s key:@"⌃⌘N" label:@"New file"
@@ -2400,6 +2408,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     _awaitedWebImages = nil;   // pictures still on their way land in the cache only
     _awaitedMath = nil;        // and so do formulas
     [self stopMedia];      // no sound from a closed window
+    _formatGeneration++;   // a formatter still running finds nothing to apply
     [self.lsp shutdown];   // never leave a server running for a closed window
 }
 - (void)windowDidBecomeKey:(NSNotification *)note {
@@ -2876,6 +2885,181 @@ static NSColor *ContrastColor(const Rgba &c) {
     [tv setSelectedRange:NSMakeRange(e.selStart, e.selEnd - e.selStart)];
 }
 
+// ------------------------------------------------------------ format document
+// Shift+Option+F: run the file's formatter (FormatRunner.mm) on the buffer and
+// put its output in as one undo step. Only the source view of a file can be
+// formatted, never a preview, a message, a picture or a diff.
+- (BOOL)canFormatSource {
+    return self.currentPath && self.textView.editable && !self.showingMessage;
+}
+
+- (void)formatDocument:(id)sender {
+    if (![self canFormatSource]) { NSBeep(); return; }
+    [self formatSourceQuietly:NO then:nil];
+}
+
+// Start formatting. `then` runs once the result is in (applied, or refused)
+// if the same file is still open; quietly leaves out the notes that only
+// answer a key press (no formatter for this kind of file, already formatted).
+- (void)formatSourceQuietly:(BOOL)quiet then:(void (^)(void))then {
+    NSTextView *tv = self.textView;
+    NSString *original = [tv.string copy];
+    NSString *path = self.currentPath;
+    // A selection formats its lines, where the formatter can do that.
+    NSInteger first = 0, last = 0;
+    NSRange sel = tv.selectedRange;
+    if (sel.length > 0) {
+        NSUInteger end = NSMaxRange(sel);
+        if ([original characterAtIndex:end - 1] == '\n' && end - 1 > sel.location) end--;
+        auto lineOf = ^NSInteger(NSUInteger index) {
+            NSInteger line = 1;
+            for (NSUInteger i = 0; i < index; i++)
+                if ([original characterAtIndex:i] == '\n') line++;
+            return line;
+        };
+        first = lineOf(sel.location);
+        last = lineOf(end);
+    }
+    NSUInteger generation = ++_formatGeneration;
+    __weak EditorController *weakSelf = self;
+    MCFormatText(original, path, self.rootPath, first, last, 10, ^(MCFormatResult *r) {
+        EditorController *s = weakSelf;
+        // Another format started, or the window closed, or the file changed.
+        if (!s || generation != s->_formatGeneration || ![path isEqualToString:s.currentPath])
+            return;
+        if (r.error) {
+            if (!(quiet && r.unavailable)) [s showFormatNote:r.error error:YES];
+        } else if (!s.textView.editable || ![s.textView.string isEqualToString:original]) {
+            // Typed into meanwhile, or a preview took over: the output is
+            // for text that is no longer there.
+        } else if (![s replaceSourceWithText:r.text actionName:@"Format Document"]) {
+            if (!quiet)
+                [s showFormatNote:[NSString stringWithFormat:@"Already formatted (%@, %@).",
+                                                             r.tool, r.style]
+                            error:NO];
+        }
+        if (then) then();
+    });
+}
+
+// format.on-save: NO when this file has no formatter, so the save goes on.
+- (BOOL)formatBeforeSaving {
+    if (![self canFormatSource] || Formatter::languageFor(Utf8String(self.currentPath)).empty())
+        return NO;
+    __weak EditorController *weakSelf = self;
+    [self formatSourceQuietly:YES then:^{ [weakSelf saveCurrentFile:nil]; }];
+    return YES;
+}
+
+// Put `text` in place of the source as one undo step, touching only the
+// lines that differ, so the highlighter and the language server see an
+// ordinary edit and the caret and the scroll position stay with their text.
+// NO when the text is the same.
+- (BOOL)replaceSourceWithText:(NSString *)text actionName:(NSString *)name {
+    CodeTextView *tv = self.textView;
+    const std::u16string a = U16(tv.string), b = U16(text);
+    std::vector<LineDiff::Hunk> hunks = LineDiff::diff(a, b);
+    if (hunks.empty()) return NO;
+    // Each hunk is an edit with its own layout pass; past a few hundred, one
+    // replacement from the first to the last is quicker.
+    if (hunks.size() > 300) {
+        LineDiff::Hunk h = hunks.front();
+        const LineDiff::Hunk &z = hunks.back();
+        h.oldLength = z.oldStart + z.oldLength - h.oldStart;
+        h.newLength = z.newStart + z.newLength - h.newStart;
+        hunks.assign(1, h);
+    }
+
+    // Where the view is: the character at the top of the pane, and how far
+    // above or below the top its line sits.
+    NSRect visible = tv.visibleRect;
+    NSUInteger top = [tv characterIndexForInsertionAtPoint:
+        NSMakePoint(NSMinX(visible) + tv.textContainerOrigin.x + 1, NSMinY(visible) + 1)];
+    __block CGFloat topY = NAN;
+    NSUInteger length = a.size();
+    if (top <= length)
+        [tv enumerateRectsForRange:NSMakeRange(top, top < length ? 1 : 0) block:^(NSRect r) {
+            if (isnan(topY)) topY = NSMinY(r);
+        }];
+    NSRange sel = tv.selectedRange;
+
+    NSUndoManager *um = tv.undoManager;
+    [tv breakUndoCoalescing];
+    [um beginUndoGrouping];
+    for (auto it = hunks.rbegin(); it != hunks.rend(); ++it) {
+        NSRange range = NSMakeRange(it->oldStart, it->oldLength);
+        NSString *replacement = FromU16(b.substr(it->newStart, it->newLength));
+        if (![tv shouldChangeTextInRange:range replacementString:replacement]) continue;
+        [tv.textStorage replaceCharactersInRange:range withString:replacement];
+        [tv didChangeText];
+    }
+    [um setActionName:name];
+    [um endUndoGrouping];
+    [tv breakUndoCoalescing];
+
+    size_t start = LineDiff::mapOffset(a, b, hunks, sel.location);
+    size_t end = sel.length ? LineDiff::mapOffset(a, b, hunks, NSMaxRange(sel)) : start;
+    if (end < start) end = start;
+    [tv setSelectedRange:NSMakeRange(start, end - start)];
+    if (!isnan(topY)) {
+        NSUInteger newTop = LineDiff::mapOffset(a, b, hunks, top);
+        NSUInteger newLength = tv.string.length;
+        __block CGFloat y = NAN;
+        [tv enumerateRectsForRange:NSMakeRange(newTop, newTop < newLength ? 1 : 0)
+                             block:^(NSRect r) { if (isnan(y)) y = NSMinY(r); }];
+        if (!isnan(y))
+            [tv scrollPoint:NSMakePoint(NSMinX(visible), MAX(0, y - (topY - NSMinY(visible))))];
+    }
+    return YES;
+}
+
+// A note from Format Document by the caret: the formatter's complaint, what
+// to install, or that there was nothing to change (which closes itself).
+- (void)showFormatNote:(NSString *)message error:(BOOL)error {
+    self.lastFormatNote = message;
+    [_formatNote close];
+    _formatNote = nil;
+    CodeTextView *tv = self.textView;
+    if (!tv.window || tv.isHiddenOrHasHiddenAncestor) { NSBeep(); return; }
+
+    NSTextField *label = [NSTextField wrappingLabelWithString:message];
+    label.font = error ? [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular]
+                       : [NSFont systemFontOfSize:12];
+    label.selectable = YES;
+    const CGFloat maxWidth = 560;
+    label.preferredMaxLayoutWidth = maxWidth;
+    NSSize fit = [label sizeThatFits:NSMakeSize(maxWidth, CGFLOAT_MAX)];
+    fit = NSMakeSize(ceil(MIN(fit.width, maxWidth)), ceil(fit.height));
+    NSView *content = [[NSView alloc]
+        initWithFrame:NSMakeRect(0, 0, fit.width + 24, fit.height + 20)];
+    label.frame = NSMakeRect(12, 10, fit.width, fit.height);
+    [content addSubview:label];
+    NSViewController *vc = [NSViewController new];
+    vc.view = content;
+    NSPopover *note = [NSPopover new];
+    note.contentViewController = vc;
+    note.behavior = NSPopoverBehaviorTransient;
+
+    // Under the caret's line when it is on screen, else at the top of the pane.
+    NSRect visible = tv.visibleRect;
+    NSUInteger caret = tv.selectedRange.location, length = tv.string.length;
+    __block NSRect anchor = NSZeroRect;
+    [tv enumerateRectsForRange:NSMakeRange(caret, caret < length ? 1 : 0) block:^(NSRect r) {
+        if (NSIsEmptyRect(anchor)) anchor = r;
+    }];
+    if (NSIsEmptyRect(anchor) || !NSIntersectsRect(anchor, visible))
+        anchor = NSMakeRect(NSMidX(visible), NSMinY(visible), 1, 1);
+    anchor.size.width = MAX(anchor.size.width, 1);
+    anchor.size.height = MAX(anchor.size.height, 1);
+    [note showRelativeToRect:anchor ofView:tv preferredEdge:NSRectEdgeMaxY];
+    _formatNote = note;
+    if (!error) {
+        __weak NSPopover *weakNote = note;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{ [weakNote close]; });
+    }
+}
+
 // -------------------------------------------------------------- editing hooks
 // Arrows, Return, Tab and Esc drive the completion list while it is open;
 // Option+Esc (complete:) asks the language server.
@@ -2947,6 +3131,10 @@ static NSColor *ContrastColor(const Rgba &c) {
     // A message (welcome, binary file) is not the file's contents.
     if (!self.currentPath || self.showingMessage || self.isImage || self.isPDF ||
         self.isMedia) return;
+    // format.on-save: Cmd+S (a sender) formats first and saves when the
+    // formatter is done; saves asked for by MiniCode itself (nil) never wait.
+    if (sender && [AppSettings shared].settings.formatOnSave() && [self formatBeforeSaving])
+        return;
     // In markdown preview mode the text view holds rendered text, not source;
     // save the tracked source instead.
     NSString *text = self.textView.editable ? self.textView.string

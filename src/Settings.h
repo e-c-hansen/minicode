@@ -124,6 +124,15 @@ public:
     bool lspOff(const std::string& server) const;
     static const std::vector<std::string>& lspServers();
 
+    // Format Document. format.<lang> (python, cpp, go, rust, shell; see
+    // Formatter.h) is a whole command line like lsp.*, "" when the file
+    // names none, so the project's configuration and then Google's style
+    // apply. format.on-save formats before Cmd+S writes the file (off by
+    // default).
+    std::string formatCommand(const std::string& lang) const;
+    bool formatOnSave() const { return formatOnSave_; }
+    static const std::vector<std::string>& formatLanguages();
+
 private:
     struct SurfaceSettings {
         std::optional<Rgba> background, text;
@@ -141,6 +150,8 @@ private:
     bool webImages_ = true;
     bool math_ = true;
     std::map<std::string, std::string> lspCommands_;
+    std::map<std::string, std::string> formatCommands_;
+    bool formatOnSave_ = false;
 
     bool apply(const std::string& key, const std::string& value,
                std::string& error);

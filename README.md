@@ -60,6 +60,21 @@ Problems get a red or yellow squiggle, and the status bar counts them. Typing a 
 
 The settings file can pick a different server or turn one off (lsp.python = pylsp, lsp.go = off, lsp.enabled = false).
 
+## Formatting
+
+Shift Option F formats the file with the formatter you have installed for its language, on macOS for now. If a project has its own configuration, such as a .clang-format, a [tool.pyink] or [tool.black] table in pyproject.toml, a .style.yapf, or a ruff.toml, that formatter runs with the project's style. Otherwise minicode follows Google's style guides: clang-format with Google's style for C, C++, Objective-C, Java, JavaScript, TypeScript, Protocol Buffers, and C#; pyink at 80 columns for Python, or yapf's google style when pyink is not installed; gofmt for Go; rustfmt for Rust; and shfmt with two-space indents for shell scripts. Python formatters in the project's .venv or venv are used first.
+
+With some lines selected, clang-format, pyink, and yapf format only those lines. The change is one step to undo, the cursor stays on the code it was on, and a file the formatter cannot parse is left alone, with the formatter's complaint shown next to the cursor. To get the Google-style tools:
+
+```sh
+xcode-select --install      # clang-format comes with the command line tools
+pipx install pyink          # or: pipx install yapf
+brew install go shfmt       # gofmt, shfmt
+rustup component add rustfmt
+```
+
+The settings file can give a language its own command (format.python = yapf --style=google), turn one off (format.cpp = off), or format each time you save (format.on-save = true).
+
 ## Settings and transparency
 
 Command comma opens ~/.config/minicode/settings.conf, written the first time with every setting listed and commented out. Changes apply as soon as the file is saved. Each panel has its own background color, opacity and text color; opacity applies only to the background, so text stays solid, and window.blur frosts what is behind the window. Syntax and Markdown colors can be changed too.
@@ -88,7 +103,7 @@ Both sides run the same clangd. make membench reproduces it on scratch profiles.
 
 ## Next to VS Code and Zed
 
-minicode isn't VS Code or Zed, but I use it every day. Hotkeys alone move between writing code, running it in the terminal and reading GitHub in the browser pane. I edited my own resume in it, in LaTeX, and Claude Code runs fine in its terminal. It leaves out a good deal that VS Code and Zed offer, mostly to keep the footprint small: rename and find references, formatting and code actions, a debugger, tabs and split editors, extensions, and an AI assistant built into the editor. The git panel is small on purpose. It shows status, diffs and the commit graph with what is and isn't pushed, stages and unstages files, and commits, while checking out branches, merging and pushing stay in the terminal. For those, VS Code or Zed is the better choice.
+minicode isn't VS Code or Zed, but I use it every day. Hotkeys alone move between writing code, running it in the terminal and reading GitHub in the browser pane. I edited my own resume in it, in LaTeX, and Claude Code runs fine in its terminal. It leaves out a good deal that VS Code and Zed offer, mostly to keep the footprint small: rename and find references, code actions, a debugger, tabs and split editors, extensions, and an AI assistant built into the editor. The git panel is small on purpose. It shows status, diffs and the commit graph with what is and isn't pushed, stages and unstages files, and commits, while checking out branches, merging and pushing stay in the terminal. For those, VS Code or Zed is the better choice.
 
 Zed set out with a similar goal, a lighter and more usable IDE, and it does much of what minicode does. As of Zed 1.15 it has no built-in browser, which has been an open [feature request](https://github.com/zed-industries/zed/issues/10533) since 2024. LaTeX goes through an [extension](https://github.com/rzukic/zed-latex/wiki/Preview) that builds the PDF and shows it in a separate viewer such as Skim, with SyncTeX jumps between the two. VS Code works the same way, through extensions and outside viewers. minicode builds the browser, the PDF viewer and the LaTeX preview into the window instead, and text on the typeset page can be edited where it is.
 
@@ -178,6 +193,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Find next, find previous | Command G, Shift Command G | Ctrl G or F3, Shift F3 |  |
 | Focus the editor, or the player when a video or audio file is open | Command 1 | Ctrl 1 |  |
 | Focus the file tree | Command 0 | Ctrl 0 |  |
+| Format the file, or the selected lines where the formatter can | Shift Option F |  |  |
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G, or Ctrl G |
 | Jump to the previous file | Control Tab | Ctrl Tab |  |
 | List the TODO comments and open Markdown tasks in the folder | Shift Command L | Ctrl Shift L | W, or Ctrl Shift L |
@@ -209,7 +225,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 
 ## Limitations
 
-minicode does what I use every day and leaves out a good deal. The terminal does not pass mouse clicks to full screen programs, and has no scrollback while a program has the grid. The Markdown preview follows GitHub's rules for emphasis, links, lists, quotes and tables, but only a handful of HTML tags mean anything to it, and on Linux and Android math shows as its TeX. In the LaTeX preview, text produced inside your own macro definitions cannot be edited from the page. The language server client has no rename, find references, formatting or code actions yet.
+minicode does what I use every day and leaves out a good deal. The terminal does not pass mouse clicks to full screen programs, and has no scrollback while a program has the grid. The Markdown preview follows GitHub's rules for emphasis, links, lists, quotes and tables, but only a handful of HTML tags mean anything to it, and on Linux and Android math shows as its TeX. In the LaTeX preview, text produced inside your own macro definitions cannot be edited from the page. The language server client has no rename, find references, or code actions yet.
 
 ## License
 

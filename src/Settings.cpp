@@ -213,7 +213,9 @@ Settings Settings::parse(const std::string& text,
 
         // A language server command is a whole command line, so it runs to
         // the end of the line or to a " #" comment.
-        if (key.rfind("lsp.", 0) == 0 && key != "lsp.enabled") {
+        // So is a formatter command.
+        if ((key.rfind("lsp.", 0) == 0 && key != "lsp.enabled") ||
+            (key.rfind("format.", 0) == 0 && key != "format.on-save")) {
             size_t hash = rest.find(" #");
             std::string command = trim(hash == std::string::npos ? rest
                                                                  : rest.substr(0, hash));
@@ -305,6 +307,22 @@ bool Settings::apply(const std::string& key, const std::string& value,
             if (server == known) { lspCommands_[server] = value; return true; }
         error = "unknown setting '" + key + "' (language servers are lsp.cpp, "
                 "lsp.python, lsp.go, lsp.rust and lsp.typescript)";
+        return false;
+    }
+
+    if (key == "format.on-save") {
+        if (!parseBool(value, formatOnSave_)) {
+            error = "'" + value + "' is not true or false";
+            return false;
+        }
+        return true;
+    }
+    if (key.rfind("format.", 0) == 0) {
+        std::string lang = key.substr(7);
+        for (const std::string& known : formatLanguages())
+            if (lang == known) { formatCommands_[lang] = value; return true; }
+        error = "unknown setting '" + key + "' (formatters are format.python, "
+                "format.cpp, format.go, format.rust and format.shell)";
         return false;
     }
 
@@ -428,6 +446,19 @@ bool Settings::lspOff(const std::string& server) const {
     return v == "off" || v == "none" || v == "false";
 }
 
+const std::vector<std::string>& Settings::formatLanguages() {
+    // The same keys as Formatter::languages(), which a test checks; kept
+    // here so the settings parser needs nothing else from the core.
+    static const std::vector<std::string> langs = {"python", "cpp", "go", "rust",
+                                                   "shell"};
+    return langs;
+}
+
+std::string Settings::formatCommand(const std::string& lang) const {
+    auto it = formatCommands_.find(lang);
+    return it == formatCommands_.end() ? "" : it->second;
+}
+
 const char* Settings::defaultFileText() {
     return R"CONF(# MiniCode settings
 #
@@ -519,5 +550,25 @@ const char* Settings::defaultFileText() {
 # lsp.go = gopls
 # lsp.rust = rust-analyzer
 # lsp.typescript = typescript-language-server --stdio
+
+# Format Document (Shift+Option+F) runs an external formatter on the file
+# (macOS only for now). Install the ones you want. When a project configures
+# its formatter (.clang-format, [tool.pyink] or [tool.black] in
+# pyproject.toml, .style.yapf, ruff.toml, rustfmt.toml, an .editorconfig for
+# shell), that formatter runs with the project's style. Otherwise Google's
+# style is used: clang-format for C, C++, Objective-C, Java, JavaScript,
+# TypeScript, Protocol Buffers and C#; pyink, or yapf --style=google when
+# pyink is not installed; gofmt; rustfmt with the edition from Cargo.toml;
+# shfmt. Python tools are looked for in the project's .venv or venv first.
+# Giving a command here runs exactly that, whatever the project says; {file}
+# stands for the file's path. off leaves a language alone. Google's internal
+# 2-space Python is pyink --pyink-indentation 2 with the options below.
+# format.python = pyink --line-length 80 --pyink-use-majority-quotes --quiet --stdin-filename {file} -
+# format.cpp = clang-format --style=file --fallback-style=Google --assume-filename={file}
+# format.go = gofmt
+# format.rust = rustfmt --edition 2021
+# format.shell = shfmt -i 2 -ci -bn --filename {file}
+# Format the file each time Cmd+S saves it.
+# format.on-save = false
 )CONF";
 }
