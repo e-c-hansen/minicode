@@ -144,6 +144,15 @@
     self.web.chrome = self;
     self.web.navigationDelegate = self;
     [self addSubview:self.web];
+    // Tab from the address bar goes into the page (MCWebView lets a Tab out
+    // of the toolbar in), and out of the page's last field back to the
+    // toolbar. The buttons are key views only with full keyboard access on;
+    // otherwise the loop passes them by.
+    self.urlBar.nextKeyView = self.web;
+    self.web.nextKeyView = self.back;
+    self.back.nextKeyView = self.forward;
+    self.forward.nextKeyView = self.reload;
+    self.reload.nextKeyView = self.urlBar;
 }
 
 - (void)setFrameSize:(NSSize)newSize {
@@ -200,6 +209,25 @@
     self.web.toolbarNavigation = YES;
     [self loadString:self.urlBar.stringValue];
 }
+// Tab and Shift+Tab in the address bar go into the page. Moved here, while
+// the field editor still has the keyboard: when NSTextField moves on after
+// editing ends, the window itself is first responder, so the page cannot
+// tell the Tab came from the toolbar and refuses it, and the keyboard was
+// left with the window.
+- (BOOL)control:(NSControl *)control textView:(NSTextView *)tv doCommandBySelector:(SEL)sel {
+    (void)tv;
+    if (control != self.urlBar) return NO;
+    if (sel == @selector(insertTab:)) {
+        [self.window selectKeyViewFollowingView:self.urlBar];
+        return YES;
+    }
+    if (sel == @selector(insertBacktab:)) {
+        [self.window selectKeyViewPrecedingView:self.urlBar];
+        return YES;
+    }
+    return NO;
+}
+
 - (void)goBack:(id)sender     { self.web.toolbarNavigation = YES; [self.web goBack]; }
 - (void)goForward:(id)sender  { self.web.toolbarNavigation = YES; [self.web goForward]; }
 - (void)reloadPage:(id)sender { self.web.toolbarNavigation = YES; [self.web reload]; }
