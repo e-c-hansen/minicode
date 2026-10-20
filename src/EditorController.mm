@@ -521,6 +521,7 @@ private:
     // started meanwhile saves when it is done.
     __weak MCTab *_formatSaveTab;
     BOOL _closing;                         // windowWillClose: has run
+    NSSet<MCTab *> *_approvedWrites;       // Save All: disk questions already answered
 }
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) ClickOutline *outline;
@@ -592,6 +593,8 @@ private:
 @property(nonatomic, strong) MCTabStrip *tabStrip;   // the open files, over the editor
 @property(nonatomic, strong) NSTextField *emptyLabel; // the editor's slot with no file open
 @end
+
+typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCancel };
 
 @implementation EditorController
 
@@ -3162,9 +3165,24 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     NSModalResponse r = [a runModal];
     if (r == NSAlertSecondButtonReturn) return YES;
     if (r != NSAlertFirstButtonReturn) return NO;
-    for (MCTab *t in dirty)
-        if (![self saveTab:t]) return NO;
-    return YES;
+    // Every question about the disk first (Keep Mine, Reload, Cancel), and
+    // only then any writing, so Cancel at any of them leaves every file and
+    // every tab as it was.
+    NSMutableArray<MCTab *> *write = [NSMutableArray array], *reload = [NSMutableArray array];
+    for (MCTab *t in dirty) {
+        switch ([self diskDecisionForTab:t]) {
+        case MCDiskWrite: [write addObject:t]; break;
+        case MCDiskReload: [reload addObject:t]; break;
+        case MCDiskCancel: return NO;
+        }
+    }
+    for (MCTab *t in reload) [self reloadTabFromDisk:t];
+    _approvedWrites = [NSSet setWithArray:write];
+    BOOL ok = YES;
+    for (MCTab *t in write)
+        if (![self saveTab:t]) { ok = NO; break; }
+    _approvedWrites = nil;
+    return ok;
 }
 
 // Write a tab's text to its file, YES when nothing is left unsaved. The
@@ -3545,11 +3563,26 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
 // changed on disk since it was read asks Keep Mine (write over it), Reload
 // (take the disk's text, nothing is written) or Cancel; a file no longer
 // there asks before it is written again. Save All asks the same, file by
-// file, so nothing outside is overwritten unasked.
+// file, so nothing outside is overwritten unasked, but asks all of them
+// before it writes any (confirmCloseAllTabs).
 - (BOOL)mayWriteTab:(MCTab *)t {
-    if (!t.fileModDate) return YES;   // never on disk as far as we know
+    if ([_approvedWrites containsObject:t]) return YES;   // Save All asked already
+    MCDiskDecision d = [self diskDecisionForTab:t];
+    if (d == MCDiskReload) [self reloadTabFromDisk:t];
+    return d == MCDiskWrite;
+}
+
+- (void)reloadTabFromDisk:(MCTab *)t {
+    NSString *fresh = [NSString stringWithContentsOfFile:t.currentPath
+                                                encoding:NSUTF8StringEncoding error:nil];
+    if (fresh) [self takeDiskText:fresh forTab:t];
+}
+
+// The question mayWriteTab: asks, without acting on the answer.
+- (MCDiskDecision)diskDecisionForTab:(MCTab *)t {
+    if (!t.fileModDate) return MCDiskWrite;   // never on disk as far as we know
     NSDate *disk = [self diskModDateFor:t.currentPath];
-    if (disk && [disk isEqualToDate:t.fileModDate] && !t.gone) return YES;
+    if (disk && [disk isEqualToDate:t.fileModDate] && !t.gone) return MCDiskWrite;
     NSString *name = t.currentPath.lastPathComponent;
     NSAlert *a = [[NSAlert alloc] init];
     if (!disk) {
@@ -3558,11 +3591,11 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
                              "Save your version at its old place?";
         [a addButtonWithTitle:@"Save"];      // 1000
         [a addButtonWithTitle:@"Cancel"];    // 1001
-        return [a runModal] == NSAlertFirstButtonReturn;
+        return [a runModal] == NSAlertFirstButtonReturn ? MCDiskWrite : MCDiskCancel;
     }
     if (t.gone) {   // it came back: compare with what is there now
         [self tabCameBack:t];
-        if ([disk isEqualToDate:t.fileModDate]) return YES;
+        if ([disk isEqualToDate:t.fileModDate]) return MCDiskWrite;
     }
     a.messageText = [NSString stringWithFormat:@"“%@” changed on disk.", name];
     a.informativeText = @"It changed after it was opened here. Keep your version "
@@ -3572,13 +3605,8 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
     [a addButtonWithTitle:@"Reload"];        // 1001
     [a addButtonWithTitle:@"Cancel"];        // 1002
     NSModalResponse r = [a runModal];
-    if (r == NSAlertFirstButtonReturn) return YES;
-    if (r == NSAlertSecondButtonReturn) {
-        NSString *fresh = [NSString stringWithContentsOfFile:t.currentPath
-                                                    encoding:NSUTF8StringEncoding error:nil];
-        if (fresh) [self takeDiskText:fresh forTab:t];
-    }
-    return NO;
+    return r == NSAlertFirstButtonReturn ? MCDiskWrite
+         : r == NSAlertSecondButtonReturn ? MCDiskReload : MCDiskCancel;
 }
 
 // -------------------------------------------------------- NSWindowDelegate
