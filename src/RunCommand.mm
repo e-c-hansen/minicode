@@ -15,7 +15,8 @@ NSString *MCPythonInterpreterFor(NSString *filePath, NSString *root) {
                                                                        length:found.size()];
 }
 
-NSString *MCRunCommandForFile(NSString *filePath, NSString *root, NSString **problem) {
+NSString *MCRunCommandForFile(NSString *filePath, NSString *root, NSString *python,
+                              NSString **problem) {
     NSString *ext = filePath.pathExtension.lowercaseString;
     std::string tmpl = [AppSettings shared].settings.runTemplate(ext.UTF8String ?: "");
     if (tmpl.empty()) {
@@ -34,7 +35,7 @@ NSString *MCRunCommandForFile(NSString *filePath, NSString *root, NSString **pro
     };
     // Only looked for when the command uses it.
     if (tmpl.find("{python}") != std::string::npos)
-        vars["python"] = Utf8(MCPythonInterpreterFor(filePath, root));
+        vars["python"] = Utf8(python.length ? python : MCPythonInterpreterFor(filePath, root));
     std::string line = RunFile::expand(tmpl, vars);
     return [NSString stringWithUTF8String:line.c_str()];
 }

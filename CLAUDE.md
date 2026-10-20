@@ -1209,9 +1209,11 @@ never closes.
   from `Settings::runTemplate(ext)` (run.<extension>, then run.<language>
   via `runLanguage`, then the defaults python, sh, go, js, rb; `off`
   removes one), filled by `RunFile::expand`, each value quoted by
-  `shellQuote`. `{python}` is `MCPythonInterpreterFor` (.venv, venv, env
-  with an executable bin/python from the file's folder up to the root,
-  else `python3`), the one function to point at an interpreter picker. A
+  `shellQuote`. `{python}` is the LSP session's
+  `pythonInterpreterWithSource:` (the folder's choice, python.interpreter,
+  then automatic), so a run and the completions see the same packages;
+  `MCPythonInterpreterFor` (.venv, venv, env with an executable bin/python
+  from the file's folder up to the root, else `python3`) is the fallback. A
   dirty file is saved first. The command goes through `TerminalView
   runCommand:`, which fills the input line and enters it (keeping a draft),
   so it shows with the ❯ header and reaches zsh's history and the panel's

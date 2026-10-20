@@ -790,9 +790,10 @@ const char* Settings::defaultFileText() {
 # run.<language> is the command for a language, or for a file extension
 # (run.py beats run.python),
 # with {file}, {dir}, {root}, {name} and {python} filled in and quoted.
-# {python} is the python in a .venv, venv or env folder beside the file or
-# above it in the project, else python3. Add your own (for Lua, a line
-# reading run.lua = lua {file}), or set one to off.
+# {python} is the Python the Python server uses: the folder's choice from
+# Select Python Interpreter, else python.interpreter, else a .venv, venv or
+# env folder beside the file or above it in the project, else python3. Add
+# your own (for Lua, a line reading run.lua = lua {file}), or set one to off.
 # run.terminal = current
 # run.python = {python} {file}
 # run.sh = bash {file}

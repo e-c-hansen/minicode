@@ -1507,7 +1507,12 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
         return;
     }
     NSString *problem = nil;
-    NSString *command = MCRunCommandForFile(self.currentPath, _root.path, &problem);
+    // The interpreter the Python server uses (this folder's choice, then
+    // python.interpreter, then the project's virtualenv), so a run and the
+    // completions agree on which packages exist.
+    NSString *python = [self.lsp.currentLanguage isEqualToString:@"python"]
+                           ? [self.lsp pythonInterpreterWithSource:nil] : nil;
+    NSString *command = MCRunCommandForFile(self.currentPath, _root.path, python, &problem);
     if (!command) {
         NSBeep();
         [self showStatusNote:problem];
