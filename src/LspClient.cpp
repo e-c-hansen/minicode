@@ -257,7 +257,9 @@ bool languageForExtension(const std::string& extIn, Language& out) {
 
 std::vector<std::string> defaultCommands(const std::string& server) {
     if (server == "cpp") return {"clangd"};
-    if (server == "python") return {"pyright-langserver --stdio", "pylsp"};
+    if (server == "python")
+        return {"pyright-langserver --stdio", "basedpyright-langserver --stdio", "pylsp",
+                "jedi-language-server"};
     if (server == "go") return {"gopls"};
     if (server == "rust") return {"rust-analyzer"};
     if (server == "typescript") return {"typescript-language-server --stdio"};
@@ -271,6 +273,17 @@ std::string serverDisplayName(const std::string& server) {
     if (server == "rust") return "Rust";
     if (server == "typescript") return "JavaScript/TypeScript";
     return server;
+}
+
+std::string installHint(const std::string& server) {
+    if (server == "cpp") return "xcode-select --install (or brew install llvm)";
+    if (server == "python") return "brew install pyright (or npm install -g pyright, or "
+                                   "pipx install python-lsp-server)";
+    if (server == "go") return "go install golang.org/x/tools/gopls@latest";
+    if (server == "rust") return "rustup component add rust-analyzer";
+    if (server == "typescript")
+        return "npm install -g typescript-language-server typescript";
+    return "";
 }
 
 std::vector<std::string> splitCommand(const std::string& command) {
@@ -346,7 +359,9 @@ std::vector<CompletionItem> parseCompletion(const Json& result, bool* incomplete
         CompletionItem c;
         c.label = cleanLabel(it["label"].asString());
         if (c.label.empty()) continue;
-        c.detail = it["detail"].asString();
+        c.detail = trim(it["detail"].asString());
+        parseMarkup(it["documentation"], c.documentation, c.docIsMarkdown);
+        c.raw = std::make_shared<const Json>(it);
         c.insertText = it["insertText"].asString();
         c.filterText = it["filterText"].asString();
         c.sortText = it["sortText"].asString();
@@ -366,7 +381,167 @@ std::vector<CompletionItem> parseCompletion(const Json& result, bool* incomplete
         const std::string& kb = b.sortText.empty() ? b.label : b.sortText;
         return ka < kb;
     });
+    for (size_t i = 0; i < out.size(); i++) out[i].index = (int)i;
     return out;
+}
+
+bool parseMarkup(const Json& j, std::string& text, bool& isMarkdown) {
+    if (j.isString()) {
+        text = j.asString();
+        isMarkdown = false;
+        return true;
+    }
+    if (j.isObject() && j["value"].isString()) {
+        text = j["value"].asString();
+        isMarkdown = j["kind"].asString() == "markdown";
+        return true;
+    }
+    return false;
+}
+
+void applyResolved(CompletionItem& item, const Json& result) {
+    item.resolved = true;
+    if (!result.isObject()) return;
+    std::string detail = trim(result["detail"].asString());
+    if (!detail.empty()) item.detail = detail;
+    std::string doc;
+    bool md = false;
+    if (parseMarkup(result["documentation"], doc, md) && !trim(doc).empty()) {
+        item.documentation = doc;
+        item.docIsMarkdown = md;
+    }
+}
+
+SignatureHelp parseSignatureHelp(const Json& result) {
+    SignatureHelp help;
+    if (!result.isObject()) return help;
+    for (const Json& s : result["signatures"].elements()) {
+        SignatureInfo info;
+        info.label = s["label"].asString();
+        parseMarkup(s["documentation"], info.documentation, info.docIsMarkdown);
+        size_t from = 0;   // a string label is looked for after the last one
+        for (const Json& p : s["parameters"].elements()) {
+            const Json& l = p["label"];
+            std::pair<int, int> range{-1, -1};
+            if (l.isArray() && l.size() == 2) {
+                range = {(int)l[0].asInt(-1), (int)l[1].asInt(-1)};
+            } else if (l.isString() && !l.asString().empty()) {
+                size_t at = info.label.find(l.asString(), from);
+                if (at == std::string::npos) at = info.label.find(l.asString());
+                if (at != std::string::npos) {
+                    int a = (int)toUtf16(info.label.substr(0, at)).size();
+                    range = {a, a + (int)toUtf16(l.asString()).size()};
+                    from = at + l.asString().size();
+                }
+            }
+            info.params.push_back(range);
+            std::string doc;
+            bool md = false;
+            parseMarkup(p["documentation"], doc, md);
+            info.paramDocs.push_back(trim(doc));
+        }
+        help.signatures.push_back(info);
+    }
+    if (help.signatures.empty()) return help;
+    int active = (int)result["activeSignature"].asInt(0);
+    if (active < 0 || active >= (int)help.signatures.size()) active = 0;
+    help.activeSignature = active;
+    // A signature's own activeParameter wins over the result's.
+    const Json& sig = result["signatures"][(size_t)active];
+    const Json& param = sig.has("activeParameter") ? sig["activeParameter"]
+                                                   : result["activeParameter"];
+    int ap = param.isNumber() ? (int)param.asInt() : 0;
+    if (ap < 0 || ap >= (int)help.signatures[(size_t)active].params.size()) ap = -1;
+    help.activeParameter = ap;
+    return help;
+}
+
+Json configurationSection(const Json& settings, const std::string& section) {
+    if (section.empty()) return settings;
+    const Json* at = &settings;
+    size_t start = 0;
+    while (true) {
+        size_t dot = section.find('.', start);
+        std::string part = section.substr(start, dot == std::string::npos ? std::string::npos
+                                                                           : dot - start);
+        if (!at->isObject() || !at->has(part)) return Json();
+        at = &(*at)[part];
+        if (dot == std::string::npos) break;
+        start = dot + 1;
+    }
+    return *at;
+}
+
+// ------------------------------------------------------- Python servers
+PythonServer pythonServerKind(const std::vector<std::string>& argv) {
+    for (const std::string& word : argv) {
+        size_t slash = word.find_last_of('/');
+        std::string name = lower(slash == std::string::npos ? word : word.substr(slash + 1));
+        // pyright may be run as node plus its script, so its folder counts.
+        std::string full = lower(word);
+        if (full.find("basedpyright") != std::string::npos) return PythonServer::BasedPyright;
+        if (full.find("pyright") != std::string::npos) return PythonServer::Pyright;
+        if (name == "pylsp" || name.find("python-lsp-server") != std::string::npos ||
+            name.find("python_lsp_server") != std::string::npos)
+            return PythonServer::Pylsp;
+        if (name.find("jedi-language-server") != std::string::npos ||
+            name.find("jedi_language_server") != std::string::npos)
+            return PythonServer::Jedi;
+    }
+    return PythonServer::Other;
+}
+
+const char* pythonServerName(PythonServer kind) {
+    switch (kind) {
+    case PythonServer::Pyright: return "pyright";
+    case PythonServer::BasedPyright: return "basedpyright";
+    case PythonServer::Pylsp: return "pylsp";
+    case PythonServer::Jedi: return "jedi-language-server";
+    case PythonServer::Other: break;
+    }
+    return "other";
+}
+
+Json pythonSettings(PythonServer kind, const std::string& interpreter) {
+    // pyright's own defaults, spelled out: search the usual source folders,
+    // read types from libraries without stubs, and check only open files,
+    // which keeps a large folder from being analysed whole.
+    Json analysis = Json::object({{"autoSearchPaths", true},
+                                  {"useLibraryCodeForTypes", true},
+                                  {"diagnosticMode", "openFilesOnly"}});
+    if (kind == PythonServer::Pyright || kind == PythonServer::BasedPyright) {
+        Json python = Json::object();
+        if (!interpreter.empty()) python.set("pythonPath", interpreter);
+        Json out = Json::object();
+        if (kind == PythonServer::Pyright) {
+            python.set("analysis", analysis);
+            out.set("python", python);
+        } else {
+            // basedpyright reads its analysis settings under its own name,
+            // and checks far more than pyright unless told otherwise; a
+            // pyproject.toml or pyrightconfig.json still wins over this.
+            analysis.set("typeCheckingMode", "standard");
+            out.set("python", python);
+            out.set("basedpyright", Json::object({{"analysis", analysis}}));
+        }
+        return out;
+    }
+    if (kind == PythonServer::Pylsp && !interpreter.empty()) {
+        return Json::object({{"pylsp", Json::object({{"plugins", Json::object({
+            {"jedi", Json::object({{"environment", interpreter}})}})}})}});
+    }
+    return Json();
+}
+
+Json pythonInitializationOptions(PythonServer kind, const std::string& interpreter) {
+    if (kind == PythonServer::Jedi && !interpreter.empty())
+        return Json::object({{"workspace",
+                              Json::object({{"environmentPath", interpreter}})}});
+    return Json();
+}
+
+bool pythonInterpreterNeedsRestart(PythonServer kind) {
+    return kind == PythonServer::Jedi || kind == PythonServer::Other;
 }
 
 namespace {
@@ -500,13 +675,22 @@ void Client::initialize(const std::string& rootPath, int processId,
     Json completionItem = Json::object({
         {"snippetSupport", false},
         {"insertReplaceSupport", false},
-        {"documentationFormat", Json::array().push("plaintext")},
+        {"documentationFormat", Json::array().push("markdown").push("plaintext")},
+        {"resolveSupport", Json::object({{"properties",
+                                          Json::array().push("documentation").push("detail")}})},
+    });
+    Json signatureInformation = Json::object({
+        {"documentationFormat", Json::array().push("markdown").push("plaintext")},
+        {"parameterInformation", Json::object({{"labelOffsetSupport", true}})},
+        {"activeParameterSupport", true},
     });
     Json textDocument = Json::object({
         {"synchronization", Json::object({{"didSave", true},
                                           {"dynamicRegistration", false}})},
         {"completion", Json::object({{"completionItem", completionItem},
                                      {"contextSupport", true}})},
+        {"signatureHelp", Json::object({{"signatureInformation", signatureInformation},
+                                        {"contextSupport", true}})},
         {"hover", Json::object({{"contentFormat",
                                  Json::array().push("plaintext").push("markdown")}})},
         {"definition", Json::object({{"linkSupport", true}})},
@@ -515,7 +699,9 @@ void Client::initialize(const std::string& rootPath, int processId,
     Json caps = Json::object({
         {"textDocument", textDocument},
         {"workspace", Json::object({{"workspaceFolders", true},
-                                    {"configuration", true}})},
+                                    {"configuration", true},
+                                    {"didChangeConfiguration",
+                                     Json::object({{"dynamicRegistration", false}})}})},
         {"general", Json::object({{"positionEncodings", Json::array().push("utf-16")}})},
     });
     Json params = Json::object({
@@ -527,6 +713,7 @@ void Client::initialize(const std::string& rootPath, int processId,
          Json::array().push(Json::object({{"uri", rootUri}, {"name", name}}))},
         {"capabilities", caps},
     });
+    if (!initOptions_.isNull()) params.set("initializationOptions", initOptions_);
     rootPath_ = rootPath;
     state_ = State::Initializing;
     initializeId_ = nextId_++;
@@ -622,6 +809,32 @@ int Client::definition(const std::string& uri, Position p, ResultHandler h) {
     return request("textDocument/definition", docPosition(uri, p), std::move(h));
 }
 
+bool Client::canResolveCompletion() const {
+    return capabilities_["completionProvider"]["resolveProvider"].asBool();
+}
+
+int Client::resolveCompletion(const CompletionItem& item, ResultHandler h) {
+    if (!canResolveCompletion() || !item.raw) return 0;
+    return request("completionItem/resolve", *item.raw, std::move(h));
+}
+
+int Client::signatureHelp(const std::string& uri, Position p, ResultHandler h,
+                          const std::string& triggerCharacter, bool isRetrigger) {
+    Json params = docPosition(uri, p);
+    int kind = isRetrigger && triggerCharacter.empty() ? 3
+             : triggerCharacter.empty() ? 1 : 2;
+    Json context = Json::object({{"triggerKind", kind}, {"isRetrigger", isRetrigger}});
+    if (!triggerCharacter.empty()) context.set("triggerCharacter", triggerCharacter);
+    params.set("context", context);
+    return request("textDocument/signatureHelp", params, std::move(h));
+}
+
+void Client::didChangeConfiguration(Json settings) {
+    settings_ = std::move(settings);
+    notify("workspace/didChangeConfiguration",
+           Json::object({{"settings", settings_.isNull() ? Json::object() : settings_}}));
+}
+
 void Client::cancel(int id) {
     if (!handlers_.erase(id)) return;
     auto q = std::find(queuedIds_.begin(), queuedIds_.end(), id);
@@ -665,11 +878,29 @@ void Client::exitNow() {
     queue_.clear();
 }
 
-std::vector<std::string> Client::completionTriggers() const {
+namespace {
+std::vector<std::string> strings(const Json& list) {
     std::vector<std::string> out;
-    for (const Json& t : capabilities_["completionProvider"]["triggerCharacters"].elements())
+    for (const Json& t : list.elements())
         if (t.isString()) out.push_back(t.asString());
     return out;
+}
+}  // namespace
+
+std::vector<std::string> Client::completionTriggers() const {
+    return strings(capabilities_["completionProvider"]["triggerCharacters"]);
+}
+
+bool Client::hasSignatureHelp() const {
+    return capabilities_["signatureHelpProvider"].isObject();
+}
+
+std::vector<std::string> Client::signatureTriggers() const {
+    return strings(capabilities_["signatureHelpProvider"]["triggerCharacters"]);
+}
+
+std::vector<std::string> Client::signatureRetriggers() const {
+    return strings(capabilities_["signatureHelpProvider"]["retriggerCharacters"]);
 }
 
 void Client::receive(const char* data, size_t n) {
@@ -728,6 +959,11 @@ void Client::handleMessage(const Json& msg) {
         state_ = State::Ready;
         write(Json::object({{"jsonrpc", "2.0"}, {"method", "initialized"},
                             {"params", Json::object()}}));
+        // Settings go before anything queued, so the first didOpen is
+        // already analysed with them (pylsp reads settings only this way).
+        if (settings_.isObject() && settings_.size() > 0)
+            notify("workspace/didChangeConfiguration",
+                   Json::object({{"settings", settings_}}));
         std::vector<std::string> queued;
         queued.swap(queue_);
         queuedIds_.clear();
@@ -757,9 +993,11 @@ void Client::handleServerRequest(const Json& msg) {
     const std::string& method = msg["method"].asString();
     const Json& id = msg["id"];
     if (method == "workspace/configuration") {
-        // One entry per requested item; null means "use your defaults".
+        // One entry per requested item, from the settings by section; null
+        // means "use your defaults".
         Json out = Json::array();
-        for (size_t i = 0; i < msg["params"]["items"].size(); i++) out.push(Json());
+        for (const Json& item : msg["params"]["items"].elements())
+            out.push(configurationSection(settings_, item["section"].asString()));
         respond(id, out);
     } else if (method == "workspace/workspaceFolders") {
         std::string uri = uriFromPath(rootPath_);

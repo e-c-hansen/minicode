@@ -14,6 +14,7 @@
 #include "SyncTex.h"
 #include "Json.h"
 #include "LspClient.h"
+#include "PythonEnvs.h"
 #include "FolderSearch.h"
 #include "GitStatus.h"
 #include "GitGraph.h"
@@ -2990,8 +2991,9 @@ void testSettings() {
     // Every documented key, uncommented, is one the parser accepts, and its
     // documented value is the real default.
     std::string keys = uncommentKeys(Settings::defaultFileText());
-    // Window, panel, syntax, markdown (colors, web images, math) and lsp keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 41);
+    // Window, panel, syntax, markdown (colors, web images, math), lsp and
+    // python keys.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 42);
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -3011,6 +3013,7 @@ void testSettings() {
     CHECK(un.lspEnabled() == d.lspEnabled());
     CHECK(un.webImages() == d.webImages());
     CHECK(un.math() == d.math());
+    CHECK(un.pythonInterpreter().empty() && d.pythonInterpreter().empty());
     for (const std::string &server : Settings::lspServers()) {
         std::vector<std::string> cmds = Lsp::defaultCommands(server);
         CHECK(!cmds.empty() && un.lspCommand(server) == cmds[0]);
@@ -3037,6 +3040,21 @@ void testSettings() {
     CHECK(e5.size() == 3 && e5[0].line == 5 && e5[1].line == 6 && e5[2].line == 7);
     CHECK(!e5.empty() && e5[0].message.find("lsp.cobol") != std::string::npos);
     CHECK(parseSettings("").lspEnabled());
+
+    GROUP("settings:python");
+    std::vector<SettingsError> py7;
+    CHECK(parseSettings("").pythonInterpreter().empty());
+    CHECK(parseSettings("python.interpreter = /my envs/x/bin/python  # work\n", &py7)
+              .pythonInterpreter() == "/my envs/x/bin/python");
+    CHECK(parseSettings("Python.Interpreter = ~/venv/bin/python3\n", &py7)
+              .pythonInterpreter() == "~/venv/bin/python3");
+    CHECK(parseSettings("python.interpreter = /a\npython.interpreter = auto\n", &py7)
+              .pythonInterpreter().empty());   // the last one wins
+    CHECK(parseSettings("python.interpreter =\n", &py7).pythonInterpreter().empty());
+    CHECK(py7.empty());
+    std::vector<SettingsError> py8;
+    parseSettings("python.version = 3\n", &py8);
+    CHECK(py8.size() == 1);
 
     GROUP("settings:web images");
     std::vector<SettingsError> e6;
@@ -4010,7 +4028,12 @@ void testLspServers() {
     CHECK(!Lsp::languageForExtension("png", l));
     CHECK(!Lsp::languageForExtension("", l));
     CHECK((Lsp::defaultCommands("python") ==
-           std::vector<std::string>{"pyright-langserver --stdio", "pylsp"}));
+           std::vector<std::string>{"pyright-langserver --stdio",
+                                    "basedpyright-langserver --stdio", "pylsp",
+                                    "jedi-language-server"}));
+    for (const std::string &server : Settings::lspServers())
+        CHECK(!Lsp::installHint(server).empty());
+    CHECK(Lsp::installHint("cobol").empty());
     CHECK(Lsp::defaultCommands("cobol").empty());
     CHECK(Lsp::serverDisplayName("cpp") == "C/C++");
     // Every server a file can map to is one the settings file knows.
@@ -4340,6 +4363,358 @@ void testLspClient() {
     CHECK(bad.state() == Lsp::Client::State::Exited && why.find("no") != std::string::npos);
     CHECK(s4.sent.size() == 1 && bad.queuedMessages() == 0);
     CHECK(failed == "no");   // the owner hears it, to stop the process and say so
+}
+
+void testLspFeatures() {
+    GROUP("lsp:completion-docs");
+    std::vector<Lsp::CompletionItem> items = Lsp::parseCompletion(parsed(
+        "[{\"label\":\"loads\",\"sortText\":\"2\",\"data\":{\"id\":7},"
+        "  \"documentation\":{\"kind\":\"markdown\",\"value\":\"Read `s`.\"}},"
+        " {\"label\":\"load\",\"sortText\":\"1\",\"documentation\":\"Read a file.\","
+        "  \"detail\":\"  (function)  \"},"
+        " {\"label\":\"loop\",\"sortText\":\"3\"}]"));
+    CHECK(items.size() == 3);
+    if (items.size() == 3) {
+        CHECK(items[0].label == "load" && items[0].index == 0 && items[2].index == 2);
+        CHECK(items[0].documentation == "Read a file." && !items[0].docIsMarkdown);
+        CHECK(items[0].detail == "(function)");   // trimmed
+        CHECK(items[1].documentation == "Read `s`." && items[1].docIsMarkdown);
+        CHECK(items[1].raw && (*items[1].raw)["data"]["id"].asInt() == 7);
+        CHECK(items[2].documentation.empty() && !items[2].resolved);
+        // A filtered copy shares the raw item and keeps its index.
+        std::vector<Lsp::CompletionItem> f = Lsp::filterCompletions(items, "loo");
+        CHECK(f.size() == 1 && f[0].index == 2 && f[0].raw == items[2].raw);
+        Lsp::applyResolved(items[2], parsed(
+            "{\"label\":\"loop\",\"detail\":\"def loop() -> None\","
+            "\"documentation\":{\"kind\":\"markdown\",\"value\":\"```python\\nloop()\\n```\"}}"));
+        CHECK(items[2].resolved && items[2].detail == "def loop() -> None");
+        CHECK(items[2].docIsMarkdown && items[2].documentation.find("loop()") != std::string::npos);
+        // A resolve that adds nothing keeps what the item had.
+        Lsp::applyResolved(items[0], parsed("{\"label\":\"load\",\"documentation\":\"  \"}"));
+        CHECK(items[0].resolved && items[0].documentation == "Read a file." &&
+              items[0].detail == "(function)");
+        Lsp::applyResolved(items[1], Json());
+        CHECK(items[1].resolved && items[1].documentation == "Read `s`.");
+    }
+    std::string text;
+    bool md = true;
+    CHECK(Lsp::parseMarkup(parsed("\"plain\""), text, md) && text == "plain" && !md);
+    CHECK(Lsp::parseMarkup(parsed("{\"kind\":\"plaintext\",\"value\":\"p\"}"), text, md) &&
+          text == "p" && !md);
+    CHECK(!Lsp::parseMarkup(Json(), text, md) && !Lsp::parseMarkup(parsed("3"), text, md));
+
+    GROUP("lsp:client-capabilities");
+    FakeServer srv;
+    Lsp::Client client([&](const std::string &b) { srv.take(b); });
+    client.initialize("/p", 1);
+    const Json &caps = srv.sent[0]["params"]["capabilities"];
+    const Json &ci = caps["textDocument"]["completion"]["completionItem"];
+    CHECK(ci["documentationFormat"][0].asString() == "markdown" &&
+          ci["documentationFormat"][1].asString() == "plaintext");
+    CHECK(ci["resolveSupport"]["properties"][0].asString() == "documentation" &&
+          ci["resolveSupport"]["properties"][1].asString() == "detail");
+    const Json &sh = caps["textDocument"]["signatureHelp"];
+    CHECK(sh["signatureInformation"]["parameterInformation"]["labelOffsetSupport"].asBool());
+    CHECK(sh["signatureInformation"]["documentationFormat"][0].asString() == "markdown");
+    CHECK(sh["contextSupport"].asBool());
+    CHECK(caps["workspace"]["configuration"].asBool());
+    CHECK(!srv.sent[0]["params"].has("initializationOptions"));
+
+    GROUP("lsp:client-resolve");
+    client.receive(reply(1, "{\"capabilities\":{\"completionProvider\":"
+                            "{\"resolveProvider\":true,\"triggerCharacters\":[\".\"]},"
+                            "\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"],"
+                            "\"retriggerCharacters\":[\")\"]}}}"));
+    CHECK(client.canResolveCompletion());
+    std::string resolvedDoc;
+    Lsp::CompletionItem it = items.size() == 3 ? items[1] : Lsp::CompletionItem();
+    int rid = client.resolveCompletion(it, [&](const Json &r, const Json &) {
+        Lsp::applyResolved(it, r);
+        resolvedDoc = it.documentation;
+    });
+    CHECK(rid > 0 && srv.methods().back() == "completionItem/resolve");
+    // The item goes back exactly as it came, its data included.
+    CHECK(srv.sent.back()["params"]["data"]["id"].asInt() == 7 &&
+          srv.sent.back()["params"]["label"].asString() == "loads");
+    client.receive(reply(rid, "{\"label\":\"loads\",\"documentation\":\"Parse s.\"}"));
+    CHECK(resolvedDoc == "Parse s.");
+    Lsp::CompletionItem bare;
+    bare.label = "x";
+    CHECK(client.resolveCompletion(bare, nullptr) == 0);   // no raw item: nothing sent
+    FakeServer srv2;
+    Lsp::Client noResolve([&](const std::string &b) { srv2.take(b); });
+    noResolve.initialize("/p", 1);
+    noResolve.receive(reply(1, "{\"capabilities\":{\"completionProvider\":{}}}"));
+    CHECK(!noResolve.canResolveCompletion() && !noResolve.hasSignatureHelp());
+    CHECK(noResolve.resolveCompletion(it, nullptr) == 0 &&
+          srv2.methods().back() == "initialized");
+
+    GROUP("lsp:signature-help");
+    CHECK(client.hasSignatureHelp());
+    CHECK((client.signatureTriggers() == std::vector<std::string>{"(", ","}));
+    CHECK((client.signatureRetriggers() == std::vector<std::string>{")"}));
+    int sid = client.signatureHelp("file:///a.py", {2, 9}, nullptr, "(");
+    const Json &sctx = srv.sent.back()["params"]["context"];
+    CHECK(sid > 0 && srv.methods().back() == "textDocument/signatureHelp");
+    CHECK(sctx["triggerKind"].asInt() == 2 && sctx["triggerCharacter"].asString() == "(" &&
+          !sctx["isRetrigger"].asBool(true));
+    client.signatureHelp("file:///a.py", {2, 10}, nullptr, "", true);
+    CHECK(srv.sent.back()["params"]["context"]["triggerKind"].asInt() == 3 &&
+          srv.sent.back()["params"]["context"]["isRetrigger"].asBool());
+    client.signatureHelp("file:///a.py", {2, 10}, nullptr);
+    CHECK(srv.sent.back()["params"]["context"]["triggerKind"].asInt() == 1);
+
+    Lsp::SignatureHelp help = Lsp::parseSignatureHelp(parsed(
+        "{\"signatures\":[{\"label\":\"dumps(obj, *, indent=None)\","
+        "\"documentation\":{\"kind\":\"markdown\",\"value\":\"Serialize.\"},"
+        "\"parameters\":[{\"label\":\"obj\",\"documentation\":\" the object \"},"
+        "{\"label\":\"*\"},{\"label\":\"indent=None\"},{\"label\":\"missing\"}]}],"
+        "\"activeSignature\":0,\"activeParameter\":2}"));
+    CHECK(help.signatures.size() == 1 && help.activeSignature == 0 && help.activeParameter == 2);
+    if (help.signatures.size() == 1) {
+        const Lsp::SignatureInfo &s = help.signatures[0];
+        CHECK(s.label == "dumps(obj, *, indent=None)" && s.docIsMarkdown &&
+              s.documentation == "Serialize.");
+        CHECK(s.params.size() == 4 && s.params[0] == std::make_pair(6, 9) &&
+              s.params[1] == std::make_pair(11, 12) && s.params[2] == std::make_pair(14, 25));
+        CHECK(s.params.size() == 4 && s.params[3] == std::make_pair(-1, -1));
+        CHECK(s.paramDocs.size() == 4 && s.paramDocs[0] == "the object");
+    }
+    // Offsets as given, in UTF-16; a string label after a non-ASCII name is
+    // found in UTF-16 units too; a signature's own activeParameter wins.
+    help = Lsp::parseSignatureHelp(parsed(
+        "{\"signatures\":[{\"label\":\"f(a, b)\",\"parameters\":[{\"label\":[2,3]},"
+        "{\"label\":[5,6]}]},{\"label\":\"caf\u00e9(x, y)\",\"activeParameter\":1,"
+        "\"parameters\":[{\"label\":\"x\"},{\"label\":\"y\"}]}],"
+        "\"activeSignature\":1,\"activeParameter\":0}"));
+    CHECK(help.signatures.size() == 2 && help.activeSignature == 1 && help.activeParameter == 1);
+    CHECK(help.signatures.size() == 2 && help.signatures[0].params[1] == std::make_pair(5, 6));
+    CHECK(help.signatures.size() == 2 && help.signatures[1].params[0] == std::make_pair(5, 6) &&
+          help.signatures[1].params[1] == std::make_pair(8, 9));
+    // Out of range falls back; null and an empty list have no signatures.
+    help = Lsp::parseSignatureHelp(parsed(
+        "{\"signatures\":[{\"label\":\"g()\"}],\"activeSignature\":5,\"activeParameter\":3}"));
+    CHECK(help.signatures.size() == 1 && help.activeSignature == 0 && help.activeParameter == -1);
+    CHECK(Lsp::parseSignatureHelp(Json()).signatures.empty());
+    CHECK(Lsp::parseSignatureHelp(parsed("{\"signatures\":[]}")).signatures.empty());
+
+    GROUP("lsp:configuration");
+    Json tree = parsed("{\"python\":{\"pythonPath\":\"/v/bin/python\","
+                       "\"analysis\":{\"diagnosticMode\":\"openFilesOnly\"}}}");
+    CHECK(Lsp::configurationSection(tree, "python")["pythonPath"].asString() == "/v/bin/python");
+    CHECK(Lsp::configurationSection(tree, "python.analysis")["diagnosticMode"].asString() ==
+          "openFilesOnly");
+    CHECK(Lsp::configurationSection(tree, "python.analysis.diagnosticMode").asString() ==
+          "openFilesOnly");
+    CHECK(Lsp::configurationSection(tree, "pyright").isNull());
+    CHECK(Lsp::configurationSection(tree, "python.nope.deeper").isNull());
+    CHECK(Lsp::configurationSection(tree, "") == tree);
+    CHECK(Lsp::configurationSection(Json(), "python").isNull());
+
+    // Settings given before the handshake: initializationOptions go with
+    // `initialize`, and the settings follow `initialized` before any queued
+    // document traffic.
+    FakeServer srv3;
+    Lsp::Client py([&](const std::string &b) { srv3.take(b); });
+    py.setInitializationOptions(parsed("{\"workspace\":{\"environmentPath\":\"/v\"}}"));
+    py.setSettings(tree);
+    py.initialize("/p", 1);
+    CHECK(srv3.sent[0]["params"]["initializationOptions"]["workspace"]["environmentPath"]
+              .asString() == "/v");
+    py.didOpen("file:///p/a.py", "python", "import json");
+    py.receive(reply(1, "{\"capabilities\":{}}"));
+    CHECK((srv3.methods() == std::vector<std::string>{"initialize", "initialized",
+                                                      "workspace/didChangeConfiguration",
+                                                      "textDocument/didOpen"}));
+    CHECK(srv3.sent.size() == 4 && srv3.sent[2]["params"]["settings"] == tree);
+    // workspace/configuration is answered from them, item by item.
+    py.receive(Lsp::Framer::frame(
+        "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"workspace/configuration\","
+        "\"params\":{\"items\":[{\"section\":\"python\"},{\"section\":\"python.analysis\"},"
+        "{\"section\":\"pyright\"},{\"scopeUri\":\"file:///p\"}]}}"));
+    const Json &answer = srv3.sent.back();
+    CHECK(answer["id"].asInt() == 9 && answer["result"].size() == 4);
+    CHECK(answer["result"][0]["pythonPath"].asString() == "/v/bin/python");
+    CHECK(answer["result"][1]["diagnosticMode"].asString() == "openFilesOnly");
+    CHECK(answer["result"][2].isNull() && answer["result"][3] == tree);
+    // A change is stored and sent.
+    Json tree2 = parsed("{\"python\":{\"pythonPath\":\"/w/bin/python\"}}");
+    py.didChangeConfiguration(tree2);
+    CHECK(srv3.methods().back() == "workspace/didChangeConfiguration" &&
+          srv3.sent.back()["params"]["settings"] == tree2 && py.settings() == tree2);
+    // No settings: no didChangeConfiguration after initialized.
+    CHECK(std::count(srv.methods().begin(), srv.methods().end(),
+                     std::string("workspace/didChangeConfiguration")) == 0);
+
+    GROUP("lsp:python-servers");
+    using Lsp::PythonServer;
+    auto kind = [](const std::string &cmd) { return Lsp::pythonServerKind(Lsp::splitCommand(cmd)); };
+    CHECK(kind("pyright-langserver --stdio") == PythonServer::Pyright);
+    CHECK(kind("/opt/homebrew/bin/pyright-langserver --stdio") == PythonServer::Pyright);
+    CHECK(kind("node /x/node_modules/pyright/langserver.index.js --stdio") == PythonServer::Pyright);
+    CHECK(kind("basedpyright-langserver --stdio") == PythonServer::BasedPyright);
+    CHECK(kind("pylsp -v") == PythonServer::Pylsp);
+    CHECK(kind("/v/bin/python -m pylsp") == PythonServer::Pylsp);
+    CHECK(kind("jedi-language-server") == PythonServer::Jedi);
+    CHECK(kind("ruff server") == PythonServer::Other);
+    CHECK(std::string(Lsp::pythonServerName(PythonServer::BasedPyright)) == "basedpyright");
+
+    Json ps = Lsp::pythonSettings(PythonServer::Pyright, "/v/bin/python");
+    CHECK(ps["python"]["pythonPath"].asString() == "/v/bin/python");
+    CHECK(ps["python"]["analysis"]["useLibraryCodeForTypes"].asBool() &&
+          ps["python"]["analysis"]["autoSearchPaths"].asBool() &&
+          ps["python"]["analysis"]["diagnosticMode"].asString() == "openFilesOnly");
+    CHECK(!Lsp::pythonSettings(PythonServer::Pyright, "")["python"].has("pythonPath"));
+    Json bs = Lsp::pythonSettings(PythonServer::BasedPyright, "/v/bin/python");
+    CHECK(bs["python"]["pythonPath"].asString() == "/v/bin/python" &&
+          !bs["python"].has("analysis"));
+    CHECK(bs["basedpyright"]["analysis"]["typeCheckingMode"].asString() == "standard");
+    CHECK(Lsp::pythonSettings(PythonServer::Pylsp, "/v/bin/python")["pylsp"]["plugins"]["jedi"]
+              ["environment"].asString() == "/v/bin/python");
+    CHECK(Lsp::pythonSettings(PythonServer::Pylsp, "").isNull());
+    CHECK(Lsp::pythonSettings(PythonServer::Jedi, "/v/bin/python").isNull());
+    CHECK(Lsp::pythonInitializationOptions(PythonServer::Jedi, "/v/bin/python")["workspace"]
+              ["environmentPath"].asString() == "/v/bin/python");
+    CHECK(Lsp::pythonInitializationOptions(PythonServer::Jedi, "").isNull());
+    CHECK(Lsp::pythonInitializationOptions(PythonServer::Pyright, "/v/bin/python").isNull());
+    CHECK(Lsp::pythonInterpreterNeedsRestart(PythonServer::Jedi) &&
+          Lsp::pythonInterpreterNeedsRestart(PythonServer::Other));
+    CHECK(!Lsp::pythonInterpreterNeedsRestart(PythonServer::Pyright) &&
+          !Lsp::pythonInterpreterNeedsRestart(PythonServer::BasedPyright) &&
+          !Lsp::pythonInterpreterNeedsRestart(PythonServer::Pylsp));
+}
+
+}  // namespace
+
+// ------------------------------------------------------------- Python envs
+namespace {
+
+void makeExecutable(const std::filesystem::path &p, const std::string &bytes = "#!/bin/sh\n") {
+    std::filesystem::create_directories(p.parent_path());
+    std::ofstream(p, std::ios::binary) << bytes;
+    std::filesystem::permissions(p, std::filesystem::perms::owner_all,
+                                 std::filesystem::perm_options::add);
+}
+
+void testPythonEnvs() {
+    namespace fs = std::filesystem;
+    GROUP("python-envs");
+    std::random_device rd;
+    const fs::path base = fs::temp_directory_path() / ("minicode-pyenvs-" + std::to_string(rd()));
+    // canonical, so paths compare with what realpath gives back
+    fs::create_directories(base);
+    const fs::path top = fs::canonical(base);
+    const fs::path root = top / "proj", home = top / "home", bin = top / "bin";
+
+    // The project: .venv at the top, venv in a subpackage, a stray file
+    // named env that is no environment.
+    makeExecutable(root / ".venv/bin/python3");
+    { std::ofstream(root / ".venv/pyvenv.cfg") << "home = /x\nversion = 3.11.2\n"; }
+    makeExecutable(root / "sub/pkg/venv/bin/python");
+    { std::ofstream(root / "sub/pkg/venv/pyvenv.cfg") << "version_info = 3.12.4.final.0\n"; }
+    { std::ofstream(root / "sub/env") << "not a venv"; }
+    { std::ofstream(root / "pyproject.toml") << "[tool.poetry]\nname = \"My_Proj\"\n"; }
+    // Above the root, never looked at.
+    makeExecutable(top / ".venv/bin/python3");
+    // conda, pyenv, poetry, pipenv, virtualenvwrapper, uv.
+    makeExecutable(home / "miniconda3/bin/python3");
+    { std::ofstream(home / "miniconda3/bin/../conda-meta-placeholder") << ""; }
+    fs::create_directories(home / "miniconda3/conda-meta");
+    { std::ofstream(home / "miniconda3/conda-meta/python-3.10.14-h_0_cpython.json") << "{}"; }
+    makeExecutable(home / "miniconda3/envs/ml/bin/python");
+    makeExecutable(home / ".pyenv/versions/3.9.18/bin/python3");
+    makeExecutable(home / "Library/Caches/pypoetry/virtualenvs/my-proj-AbC12-py3.12/bin/python");
+    makeExecutable(home / "Library/Caches/pypoetry/virtualenvs/other-XyZ98-py3.12/bin/python");
+    makeExecutable(home / ".local/share/virtualenvs/proj-Q1w2E3/bin/python");
+    makeExecutable(home / ".local/share/virtualenvs/elsewhere-Q1w2E3/bin/python");
+    makeExecutable(home / ".virtualenvs/tools/bin/python3");
+    makeExecutable(home / ".local/share/uv/python/cpython-3.13.1-macos-aarch64-none/bin/python3");
+    // PATH: python3 -> python3.12, python3.11, python3-config (not a Python),
+    // and a shim to skip.
+    makeExecutable(bin / "python3.12");
+    makeExecutable(bin / "python3.11");
+    makeExecutable(bin / "python3-config");
+    fs::create_symlink("python3.12", bin / "python3");
+    makeExecutable(top / "shims/python3");
+
+    using PythonEnvs::Interpreter;
+    std::string R = root.string();
+    CHECK(PythonEnvs::projectInterpreter(R, R) == R + "/.venv/bin/python3");
+    CHECK(PythonEnvs::projectInterpreter(R + "/sub/pkg/mod", R) ==
+          R + "/sub/pkg/venv/bin/python");
+    CHECK(PythonEnvs::projectInterpreter(R + "/sub", R) == R + "/.venv/bin/python3");
+    CHECK(PythonEnvs::projectInterpreter(top.string() + "/elsewhere", R) ==
+          R + "/.venv/bin/python3");   // a file outside the root: the root's
+    CHECK(PythonEnvs::projectInterpreter(top.string(), top.string() + "/nothing").empty());
+    CHECK(PythonEnvs::interpreterIn(R + "/sub/env").empty());
+    CHECK(PythonEnvs::versionOf(R + "/.venv/bin/python3") == "3.11.2");
+    CHECK(PythonEnvs::versionOf(R + "/sub/pkg/venv/bin/python") == "3.12.4");
+    CHECK(PythonEnvs::versionOf(home.string() + "/miniconda3/bin/python3") == "3.10.14");
+    CHECK(PythonEnvs::versionOf((bin / "python3").string()) == "3.12");
+    CHECK(PythonEnvs::versionOf(home.string() + "/.virtualenvs/tools/bin/python3").empty());
+
+    PythonEnvs::Context ctx;
+    ctx.fileDir = R + "/sub/pkg";
+    ctx.root = R;
+    ctx.home = home.string();
+    ctx.env["VIRTUAL_ENV"] = R + "/.venv";   // the same as the project's: listed once
+    ctx.pathDirs = {bin.string(), top.string() + "/shims", top.string() + "/missing"};
+    ctx.skip = {top.string() + "/shims/python3"};
+    std::vector<Interpreter> found = PythonEnvs::find(ctx);
+    auto at = [&](const std::string &path) -> const Interpreter * {
+        for (const Interpreter &i : found) if (i.path == path) return &i;
+        return nullptr;
+    };
+    auto indexOf = [&](const std::string &path) {
+        for (size_t i = 0; i < found.size(); i++) if (found[i].path == path) return (int)i;
+        return -1;
+    };
+    const std::string H = home.string();
+    CHECK(found.size() >= 2 && found[0].path == R + "/sub/pkg/venv/bin/python" &&
+          found[0].kind == "project" && found[0].name == "sub/pkg/venv");
+    CHECK(found.size() >= 2 && found[1].path == R + "/.venv/bin/python3" &&
+          found[1].name == ".venv" && found[1].version == "3.11.2");
+    CHECK(!at(top.string() + "/.venv/bin/python3"));
+    int conda = indexOf(H + "/miniconda3/bin/python3");
+    CHECK(conda > 1 && found[(size_t)conda].kind == "conda" && found[(size_t)conda].name == "base");
+    CHECK(at(H + "/miniconda3/envs/ml/bin/python") &&
+          at(H + "/miniconda3/envs/ml/bin/python")->name == "ml");
+    CHECK(at(H + "/.pyenv/versions/3.9.18/bin/python3") &&
+          at(H + "/.pyenv/versions/3.9.18/bin/python3")->version == "3.9.18");
+    CHECK(at(H + "/Library/Caches/pypoetry/virtualenvs/my-proj-AbC12-py3.12/bin/python"));
+    CHECK(!at(H + "/Library/Caches/pypoetry/virtualenvs/other-XyZ98-py3.12/bin/python"));
+    CHECK(at(H + "/.local/share/virtualenvs/proj-Q1w2E3/bin/python") &&
+          at(H + "/.local/share/virtualenvs/proj-Q1w2E3/bin/python")->kind == "pipenv");
+    CHECK(!at(H + "/.local/share/virtualenvs/elsewhere-Q1w2E3/bin/python"));
+    CHECK(at(H + "/.virtualenvs/tools/bin/python3"));
+    const Interpreter *uv =
+        at(H + "/.local/share/uv/python/cpython-3.13.1-macos-aarch64-none/bin/python3");
+    CHECK(uv && uv->version == "3.13.1" && uv->kind == "uv");
+    // PATH: python3 (the same file as python3.12, so 3.12 is not listed
+    // again), then 3.11; never python3-config or the shim.
+    int p3 = indexOf(bin.string() + "/python3");
+    CHECK(p3 > conda && found[(size_t)p3].kind == "path" && found[(size_t)p3].version == "3.12");
+    CHECK(!at(bin.string() + "/python3.12"));
+    CHECK(indexOf(bin.string() + "/python3.11") == p3 + 1);
+    CHECK(!at(bin.string() + "/python3-config") && !at(top.string() + "/shims/python3"));
+    std::set<std::string> paths;
+    for (const Interpreter &i : found) paths.insert(i.path);
+    CHECK(paths.size() == found.size());
+
+    // The automatic choice.
+    CHECK(PythonEnvs::automatic(ctx) == R + "/sub/pkg/venv/bin/python");
+    PythonEnvs::Context bare;
+    bare.root = top.string() + "/nothing";
+    bare.env["VIRTUAL_ENV"] = H + "/.virtualenvs/tools";
+    CHECK(PythonEnvs::automatic(bare) == H + "/.virtualenvs/tools/bin/python3");
+    bare.env.clear();
+    bare.env["CONDA_PREFIX"] = H + "/miniconda3/envs/ml";
+    CHECK(PythonEnvs::automatic(bare) == H + "/miniconda3/envs/ml/bin/python");
+    bare.env.clear();
+    CHECK(PythonEnvs::automatic(bare).empty());
+
+    std::error_code ec;
+    fs::remove_all(base, ec);
 }
 
 }  // namespace
@@ -5638,6 +6013,8 @@ int main() {
     testLspServers();
     testLspParsing();
     testLspClient();
+    testLspFeatures();
+    testPythonEnvs();
     testLatexClicks();
     testSyncTexText();
     testFolderSearch();

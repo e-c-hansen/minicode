@@ -123,6 +123,12 @@ public:
     // lsp.<server> = off (or none, false): leave that language alone.
     bool lspOff(const std::string& server) const;
     static const std::vector<std::string>& lspServers();
+    // python.interpreter: the Python the Python language server analyses
+    // with, for folders that have not chosen their own (Select Python
+    // Interpreter). A path, which may hold spaces; "" (or auto) lets
+    // MiniCode pick: the folder's .venv, venv or env, then $VIRTUAL_ENV,
+    // then the server's own choice.
+    const std::string& pythonInterpreter() const { return pythonInterpreter_; }
 
 private:
     struct SurfaceSettings {
@@ -141,6 +147,7 @@ private:
     bool webImages_ = true;
     bool math_ = true;
     std::map<std::string, std::string> lspCommands_;
+    std::string pythonInterpreter_;
 
     bool apply(const std::string& key, const std::string& value,
                std::string& error);
