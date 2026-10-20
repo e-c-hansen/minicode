@@ -4447,6 +4447,45 @@ void testLspParsing() {
     CHECK(labels(Lsp::filterCompletions(all, "s")) == "size push_back reserve ");
     CHECK(Lsp::filterCompletions(all, "zz").empty());
 
+    GROUP("lsp:completion-rank");
+    {
+        // What pyright lists for "os." (sorted as it sends them: capitals first).
+        std::vector<Lsp::CompletionItem> os = Lsp::parseCompletion(parsed(
+            "[{\"label\":\"path\",\"sortText\":\"09.path\"},"
+            "{\"label\":\"PathLike\",\"sortText\":\"09.PathLike\"},"
+            "{\"label\":\"POSIX_SPAWN_CLOSE\",\"sortText\":\"09.POSIX_SPAWN_CLOSE\"},"
+            "{\"label\":\"pardir\",\"sortText\":\"09.pardir\"},"
+            "{\"label\":\"pathconf\",\"sortText\":\"09.pathconf\"},"
+            "{\"label\":\"_path\",\"sortText\":\"10._path\"},"
+            "{\"label\":\"getcwd\",\"sortText\":\"09.getcwd\"}]"));
+        CHECK(labels(os) == "POSIX_SPAWN_CLOSE PathLike getcwd pardir path pathconf _path ");
+        // The word typed out in full comes first, then same-case prefixes,
+        // then other-case prefixes, then subsequences.
+        CHECK(labels(Lsp::filterCompletions(os, "path")) == "path pathconf PathLike _path ");
+        CHECK(labels(Lsp::filterCompletions(os, "pa")) ==
+              "pardir path pathconf PathLike POSIX_SPAWN_CLOSE _path ");
+        CHECK(labels(Lsp::filterCompletions(os, "Pa")) ==
+              "PathLike pardir path pathconf POSIX_SPAWN_CLOSE _path ");
+        CHECK(labels(Lsp::filterCompletions(os, "PathLike")) == "PathLike ");
+        CHECK(labels(Lsp::filterCompletions(os, "pathlike")) == "PathLike ");
+        // Within a group the server's sortText decides, not the label.
+        std::vector<Lsp::CompletionItem> st = Lsp::parseCompletion(parsed(
+            "[{\"label\":\"count\",\"sortText\":\"2\"},{\"label\":\"counter\",\"sortText\":\"1\"},"
+            "{\"label\":\"Count\",\"sortText\":\"0\"}]"));
+        CHECK(labels(Lsp::filterCompletions(st, "co")) == "counter count Count ");
+        CHECK(labels(Lsp::filterCompletions(st, "count")) == "count counter Count ");
+        CHECK(labels(Lsp::filterCompletions(st, "Count")) == "Count counter count ");
+        // An exact match by insert text counts too (a label with a signature).
+        std::vector<Lsp::CompletionItem> ins = Lsp::parseCompletion(parsed(
+            "[{\"label\":\"append(x)\",\"insertText\":\"append\",\"filterText\":\"append\"},"
+            "{\"label\":\"appendleft\"}]"));
+        CHECK(Lsp::exactCompletion(Lsp::filterCompletions(os, "path"), "path") == 0);
+        CHECK(Lsp::exactCompletion(Lsp::filterCompletions(os, "pa"), "pa") == -1);
+        CHECK(Lsp::exactCompletion(Lsp::filterCompletions(os, "pathlike"), "pathlike") == -1);
+        CHECK(Lsp::exactCompletion(Lsp::filterCompletions(ins, "append"), "append") == 0);
+        CHECK(Lsp::exactCompletion(os, "") == -1);
+    }
+
     GROUP("lsp:completion-keys");
     {
         using O = Lsp::CompletionOrigin;

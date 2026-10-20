@@ -837,8 +837,10 @@ static MCCompletionPanel *MakePopupPanel(NSRect frame) {
 @property(nonatomic, readonly) BOOL visible;
 @property(nonatomic, readonly) NSArray<NSString *> *labels;
 @property(nonatomic, readonly) NSString *docText;   // nil when the doc panel is hidden
+// `select` is the row to highlight (the caller decides: the best match, or
+// the item the arrows chose).
 - (void)showLabels:(NSArray<NSString *> *)labels details:(NSArray<NSString *> *)details
-         atScreenRect:(NSRect)caret parent:(NSWindow *)parent;
+               select:(NSInteger)select atScreenRect:(NSRect)caret parent:(NSWindow *)parent;
 // The selected item's documentation beside the list; nil hides it.
 - (void)showDoc:(NSAttributedString *)doc;
 - (void)close;
@@ -960,18 +962,14 @@ static const NSInteger kMaxRows = 10;
 - (NSRect)frame { return _panel.frame; }
 
 - (void)showLabels:(NSArray<NSString *> *)labels details:(NSArray<NSString *> *)details
-         atScreenRect:(NSRect)caret parent:(NSWindow *)parent {
+               select:(NSInteger)select atScreenRect:(NSRect)caret parent:(NSWindow *)parent {
     if (!_panel) [self build];
-    NSString *previous = [self selectedRow] >= 0 && [self selectedRow] < (NSInteger)_labels.count
-                             ? _labels[(NSUInteger)[self selectedRow]] : nil;
     _labels = [labels copy];
     _details = [details copy];
     BOOL wasVisible = _visible;
     _visible = NO;   // no selection callbacks while the rows are replaced
     [_table reloadData];
-    // Keep the highlighted item while the list narrows, else the first.
-    NSUInteger keep = previous ? [_labels indexOfObject:previous] : NSNotFound;
-    NSInteger row = keep == NSNotFound ? 0 : (NSInteger)keep;
+    NSInteger row = select >= 0 && select < (NSInteger)labels.count ? select : 0;
     [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row]
         byExtendingSelection:NO];
     [_table scrollRowToVisible:row];
@@ -2134,6 +2132,14 @@ static BOOL IsRunnable(NSString *path) {
         if (!IsIdentChar([s characterAtIndex:i])) { [self closeCompletion]; return; }
     if (!_haveItems) return;   // still waiting for the server
     NSString *prefix = [self typedPrefix];
+    // The item highlighted before, by label and text (an incomplete list
+    // asked for again numbers its items afresh).
+    NSInteger prevRow = _popup.visible ? _popup.selectedRow : -1;
+    std::string prevLabel, prevText;
+    if (prevRow >= 0 && (size_t)prevRow < _shown.size()) {
+        prevLabel = _shown[(size_t)prevRow].label;
+        prevText = _shown[(size_t)prevRow].textToInsert();
+    }
     _shown = Lsp::filterCompletions(_items, Std(prefix));
     // Nothing to offer, or only exactly what is already typed.
     if (_shown.empty() ||
@@ -2150,12 +2156,25 @@ static BOOL IsRunnable(NSString *path) {
     NSMutableArray *labels = [NSMutableArray array], *details = [NSMutableArray array];
     size_t limit = std::min<size_t>(_shown.size(), 200);
     _shown.resize(limit);
+    // The best match (filterCompletions puts it first), unless the arrows
+    // chose an item that is still listed. A stale highlight from a wider
+    // list used to stay ("os.pa" kept POSIX_SPAWN_CLOSE from "os.p").
+    NSInteger select = 0;
+    if (_navigated) {
+        NSInteger kept = -1;
+        for (size_t i = 0; i < limit && kept < 0; i++)
+            if (_shown[i].label == prevLabel && _shown[i].textToInsert() == prevText)
+                kept = (NSInteger)i;
+        if (kept >= 0) select = kept;
+        else _navigated = NO;   // the chosen item went: back to choosing for the user
+    }
     for (size_t i = 0; i < limit; i++) {
         [labels addObject:NS(_shown[i].label)];
         [details addObject:NS(_shown[i].detail)];
     }
     NSRect caret = [_tv firstRectForCharacterRange:NSMakeRange(_anchor, 0) actualRange:NULL];
-    [_popup showLabels:labels details:details atScreenRect:caret parent:_tv.window];
+    [_popup showLabels:labels details:details select:select atScreenRect:caret
+                parent:_tv.window];
 }
 
 // The selection in the list moved (or the list was rebuilt): show the
@@ -2261,8 +2280,17 @@ static BOOL IsRunnable(NSString *path) {
             // line (Lsp::completionKeyAccepts). A key that does not take it
             // closes the list and goes on to the editor (AutoIndent).
             NSInteger row = _popup.selectedRow;
-            BOOL exact = row >= 0 && (size_t)row < _shown.size() &&
-                         _shown[(size_t)row].textToInsert() == Std([self typedPrefix]);
+            if (row < 0 || (size_t)row >= _shown.size()) {
+                // Nothing selected: the key is the editor's (Tab indents).
+                [self closeCompletion];
+                return NO;
+            }
+            // The word typed out exactly as some item (case and all) is a
+            // new line, unless the arrows chose another item: "os.path"
+            // used to become os.PathLike.
+            std::string typed = Std([self typedPrefix]);
+            BOOL exact = _shown[(size_t)row].textToInsert() == typed ||
+                         (!_navigated && Lsp::exactCompletion(_shown, typed) >= 0);
             Lsp::CompletionKey key = ret ? Lsp::CompletionKey::Return
                                    : tab ? Lsp::CompletionKey::Tab
                                          : Lsp::CompletionKey::ShiftTab;

@@ -630,17 +630,29 @@ std::vector<CompletionItem> filterCompletions(const std::vector<CompletionItem>&
                                               const std::string& prefix) {
     if (prefix.empty()) return items;
     std::string p = lower(prefix);
-    std::vector<CompletionItem> starts, contains;
+    // exact, same-case prefix, any-case prefix, subsequence
+    std::vector<CompletionItem> tiers[4];
     for (const CompletionItem& it : items) {
-        std::string key = lower(it.filterKey());
-        if (key.compare(0, p.size(), p) == 0) { starts.push_back(it); continue; }
+        const std::string& raw = it.filterKey();
+        if (raw == prefix || it.textToInsert() == prefix) { tiers[0].push_back(it); continue; }
+        if (raw.compare(0, prefix.size(), prefix) == 0) { tiers[1].push_back(it); continue; }
+        std::string key = lower(raw);
+        if (key.compare(0, p.size(), p) == 0) { tiers[2].push_back(it); continue; }
         size_t k = 0;
         for (char c : key)
             if (k < p.size() && c == p[k]) k++;
-        if (k == p.size()) contains.push_back(it);
+        if (k == p.size()) tiers[3].push_back(it);
     }
-    starts.insert(starts.end(), contains.begin(), contains.end());
-    return starts;
+    std::vector<CompletionItem> out;
+    for (auto& t : tiers) out.insert(out.end(), t.begin(), t.end());
+    return out;
+}
+
+int exactCompletion(const std::vector<CompletionItem>& shown, const std::string& typed) {
+    if (typed.empty()) return -1;
+    for (size_t i = 0; i < shown.size(); i++)
+        if (shown[i].filterKey() == typed || shown[i].textToInsert() == typed) return (int)i;
+    return -1;
 }
 
 bool completionKeyAccepts(CompletionOrigin origin, bool navigated, CompletionKey key,

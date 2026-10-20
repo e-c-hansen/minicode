@@ -158,11 +158,18 @@ Json positionJson(Position p);
 Position parsePosition(const Json& j);
 Range parseRange(const Json& j);
 
-// Items whose filter key starts with `prefix` (ignoring case), then those that
-// merely contain it in order (a subsequence), keeping the server's order within
-// each group. An empty prefix keeps everything.
+// The items that match `prefix`, best first: the word exactly as typed
+// (case and all), then filter keys that start with it in the same case, then
+// those that start with it in any case, then those that merely contain it in
+// order (a subsequence, any case). Within each group the server's order
+// (sortText, which parseCompletion sorted by) is kept, so the first item is
+// always the one to select. An empty prefix keeps everything as it was.
 std::vector<CompletionItem> filterCompletions(const std::vector<CompletionItem>& items,
                                               const std::string& prefix);
+// The index of an item that is exactly `typed` (its filter key or its
+// insert text, case-sensitive), or -1. With such an item in the list,
+// Return is a new line unless the arrows chose another.
+int exactCompletion(const std::vector<CompletionItem>& shown, const std::string& typed);
 
 // How the completion list came up: by itself while a word was typed, after a
 // trigger character ("." "->" "::", or the first letter after one), or asked
