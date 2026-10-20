@@ -11,6 +11,7 @@
 #import "MarkdownMath.h"
 #import "MarkdownEditPanel.h"
 #import "GitPanel.h"
+#import "EditingCommands.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #import <AVKit/AVKit.h>                 // video and audio in the editor's slot
 #import <AVFoundation/AVFoundation.h>
@@ -1020,6 +1021,10 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⌃Space" label2:@"Complete" state:nil];
     [self appendHintsRow:s key:@"F12" label:@"Go to definition"
                     key2:@"⌘I" label2:@"Hover info" state:nil];
+    [self appendHintsRow:s key:@"F9" label:@"Sort lines"
+                    key2:@"⇧F9" label2:@"Sort keep-sorted blocks" state:nil];
+    [self appendHintsRow:s key:@"⇥" label:@"Indent lines"
+                    key2:@"⇧⇥" label2:@"Outdent lines" state:nil];
 
     [self appendHintsHeading:@"Files" to:s];
     [self appendHintsRow:s key:@"⌃⌘N" label:@"New file"
@@ -2881,36 +2886,52 @@ static NSColor *ContrastColor(const Rgba &c) {
 // Option+Esc (complete:) asks the language server.
 - (BOOL)textView:(NSTextView *)tv doCommandBySelector:(SEL)sel {
     if ([self.lsp handleCommand:sel]) return YES;
-    // Return keeps the current line's indentation, as other editors do: the
-    // new line starts with the spaces and tabs that begin this one, up to
-    // the caret.
-    if (sel == @selector(insertNewline:) && tv == self.textView && tv.editable) {
-        NSString *s = tv.string;
-        NSRange range = tv.selectedRange;
-        // In a Markdown list, Return starts the next item, or ends the list
-        // on an empty one.
-        if (self.isMarkdown) {
-            MarkdownTasks::Edit e =
-                MarkdownTasks::newline(U16(s), range.location, NSMaxRange(range));
-            if (e.changed) {
-                [tv insertText:FromU16(e.replacement)
-                    replacementRange:NSMakeRange(e.replaceStart, e.replaceLength)];
-                [tv setSelectedRange:NSMakeRange(e.selStart, e.selEnd - e.selStart)];
-                return YES;
-            }
-        }
-        NSUInteger start = [s lineRangeForRange:NSMakeRange(range.location, 0)].location;
-        NSUInteger end = start;
-        while (end < range.location) {
-            unichar c = [s characterAtIndex:end];
-            if (c != ' ' && c != '\t') break;
-            ++end;
-        }
-        NSString *indent = [s substringWithRange:NSMakeRange(start, end - start)];
-        [tv insertText:[@"\n" stringByAppendingString:indent] replacementRange:range];
+    // Return, Tab, Shift+Tab and Backspace follow the language's indentation
+    // (AutoIndent), and Return in a Markdown list continues the list.
+    if (tv == self.textView && MCIndentCommand(tv, sel, self.currentPath, self.isMarkdown))
         return YES;
-    }
     return NO;
+}
+
+// A typed closer, or Python's ':' after else and the like, may move its line
+// back; MCIndentDidChange (from textDidChange:) does it once the text is in.
+- (BOOL)textView:(NSTextView *)tv shouldChangeTextInRange:(NSRange)range
+    replacementString:(NSString *)replacement {
+    if (tv == self.textView && replacement) MCIndentWillChange(tv, range, replacement);
+    return YES;
+}
+
+// F9: sort the selected lines, or the keep-sorted block around the caret.
+- (void)sortLines:(id)sender {
+    if (self.window.firstResponder != self.textView) {
+        NSBeep();
+        return;
+    }
+    [self flashStatus:MCSortLines(self.textView)];
+}
+
+// Shift+F9: sort every keep-sorted block in the file.
+- (void)fixKeepSorted:(id)sender {
+    if (self.window.firstResponder != self.textView) {
+        NSBeep();
+        return;
+    }
+    [self flashStatus:MCFixKeepSorted(self.textView)];
+}
+
+// A message in the status bar for a few seconds, in place of the hints key.
+- (void)flashStatus:(NSString *)message {
+    if (!message.length) return;
+    self.statusLabel.stringValue = message;
+    self.statusLabel.toolTip = message;
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(endFlash)
+                                               object:nil];
+    [self performSelector:@selector(endFlash) withObject:nil afterDelay:6];
+}
+- (void)endFlash {
+    self.statusLabel.stringValue =
+        self.hintsVisible ? @"⇧⌘H  Hide shortcuts" : @"⇧⌘H  Shortcuts";
+    self.statusLabel.toolTip = nil;
 }
 
 // Ctrl+Space, F12, Cmd+I. The session beeps and says why when the file has
@@ -2941,6 +2962,7 @@ static NSColor *ContrastColor(const Rgba &c) {
         [self performSelector:@selector(updateTitle) withObject:nil afterDelay:0.3];
     }
     [self flushHighlighting];   // recolor the lines this change touched
+    MCIndentDidChange(self.textView, self.currentPath);
 }
 
 - (void)saveCurrentFile:(id)sender {
@@ -2949,6 +2971,10 @@ static NSColor *ContrastColor(const Rgba &c) {
         self.isMedia) return;
     // In markdown preview mode the text view holds rendered text, not source;
     // save the tracked source instead.
+    // editor.keep-sorted-on-save: the blocks are sorted first, as one undo step.
+    NSString *sortProblem = nil;
+    if (self.textView.editable && [AppSettings shared].settings.keepSortedOnSave())
+        sortProblem = MCKeepSortedBeforeSave(self.textView);
     NSString *text = self.textView.editable ? self.textView.string
                                             : (self.sourceText ?: @"");
     NSError *err = nil;
@@ -2960,6 +2986,7 @@ static NSColor *ContrastColor(const Rgba &c) {
         [self recordModDate];   // so our own save doesn't look like an external change
         [self.lsp documentSaved];
         [self updateTitle];
+        [self flashStatus:sortProblem];
     } else {
         NSAlert *a = [NSAlert alertWithError:err];
         [a runModal];

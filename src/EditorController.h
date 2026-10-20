@@ -42,6 +42,8 @@
 - (void)openSettings:(id)sender;       // Cmd+, open the settings file
 - (void)toggleComment:(id)sender;      // Cmd+/ comment or uncomment lines
 - (void)toggleTask:(id)sender;         // Cmd+L Markdown task on the lines
+- (void)sortLines:(id)sender;          // F9 sort lines, or the keep-sorted block
+- (void)fixKeepSorted:(id)sender;      // Shift+F9 sort every keep-sorted block
 - (void)showTodos:(id)sender;          // Shift+Cmd+L TODOs in the folder
 - (void)triggerCompletion:(id)sender;  // Ctrl+Space language server completion
 - (void)goToDefinition:(id)sender;     // F12 (and Cmd+click)
