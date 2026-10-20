@@ -178,6 +178,14 @@ isolation. Keep them dependency-free.
   doing no I/O: which formulas may share a batch, how one is rewritten for
   LaTeX, the batch document (a page per formula) and reading tectonic's
   log. Only the Mac uses it so far; see "Math in the Markdown preview".
+- `src/AutoIndent.{h,cpp}`: what Return, Tab, Shift+Tab and Backspace do
+  to indentation, and the dedent a typed closer or Python colon causes, by
+  the file's language, in UTF-16 units like LineComments. Each result is
+  one replacement. See "Indentation and sorting".
+- `src/KeepSorted.{h,cpp}`: Google's keep-sorted (`keep-sorted start` /
+  `keep-sorted end` blocks), ported from its Go code with its options, and
+  plain line sorting; the editors' commands in UTF-16. See "Indentation
+  and sorting".
 
 The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 
@@ -221,6 +229,11 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
   finds it, pipes the buffer through it off the main thread, times it out.
 - `src/LspPanel.{h,mm}` — the status bar's server item, the Language
   Servers popover and the Select Python Interpreter sheet.
+- `src/EditingCommands.{h,mm}` — AutoIndent and KeepSorted on an
+  NSTextView: the indentation keys, the electric dedent, F9 / Shift+F9 and
+  sorting before a save. EditorController only calls in from
+  `textView:doCommandBySelector:`, `shouldChangeTextInRange`,
+  `textDidChange:`, two menu actions and `saveCurrentFile:`.
 - `src/Demo.{h,mm}` — demo scenes and the window recorder behind
   `make demos`. Inert unless `MINICODE_DEMO` is set; two one-line hooks in
   `main.mm`. `tools/makegif.m` turns the recorded frames into a GIF.
@@ -330,11 +343,12 @@ container (PanelHost, laid out by hand in layoutContainer)
   PDF in the editor's part, a link, Cmd+1/2/3 through the menu, including
   from inside the web page, collapse when all three are hidden). The GTK
   port still puts the browser in the editor's place.
-- Return keeps the current line's indentation (spaces and tabs up to the
-  caret) on all three ports: `textView:doCommandBySelector:` on the Mac,
-  `onViewKey` noting the key plus `onInsertTextAfter` on Linux (so the
-  completion list still takes Return), and `CodeEditText.autoIndent` on
-  Android, both for a key event and for "\n" committed by the keyboard.
+- Return, Tab, Shift+Tab and Backspace follow `AutoIndent` on all three
+  ports (see "Indentation and sorting"): `textView:doCommandBySelector:` via
+  `MCIndentCommand` on the Mac, `onViewKey` taking the key on Linux unless
+  the completion list is open (`takesReturn`), and `CodeEditText` on
+  Android, for key events, for "\n" and "\t" committed by the keyboard,
+  for `deleteSurroundingText` and for the symbol row's Tab.
 - A new shortcut goes in three places: the menu in `main.mm` (plus a
   forwarding method on `AppDelegate`), `hintsText` in EditorController (one
   `appendHintsRow:` call), and the README shortcut table, which is
@@ -852,6 +866,101 @@ through an external formatter; nothing is bundled.
   were looked at. Needs the user: the popover on a real screen and a real
   Shift+Option+F from the keyboard.
 
+## Indentation and sorting (2026-10-20)
+
+The user found Return in Python "rarely works the way it is supposed to"
+(it only copied the line's leading whitespace), and asked for keep-sorted.
+
+- **AutoIndent reads the code from the top of the file to the caret**
+  (`scan`): strings (Python prefixes, triple quotes, JS templates, Go raw
+  strings, Rust lifetimes are not strings), comments (`#` only at a word's
+  start in shell and YAML, no `//` in CSS or JSON, so `url(http://x)`
+  survives), and a stack of open brackets with the line each opened on.
+  Linear: Return at the end of an 80,000-line Python file takes about
+  60 ms unoptimized in the tests. Languages come from the extension
+  (`languageFor`): Python, CLike, Yaml, Generic (anything LineComments has
+  a marker for: brackets only) and Plain (old behaviour: keep the
+  indentation up to the caret, nothing trimmed).
+- **Python rules**, in order: inside a triple-quoted or one-line string,
+  keep the line's indentation; inside a bracket, a closer right after the
+  caret with the opener right before it opens the pair (`(|)`), a moved
+  closer goes to the opener line's indentation, text after the opener on
+  its line means align with it, else a hanging indent of one unit; with no
+  bracket open, a trailing backslash indents once (or keeps the line on a
+  continuation line), a block colon indents, return / pass / break /
+  continue / raise as the statement's first word dedent (only with nothing
+  moved down), else the indentation of the *statement's first line*.
+  CLike: one unit after a line ending in an opener, otherwise the line's
+  own indentation, or that of the line that opened a bracket this line
+  closes (`foo(a,\n    b);|`); in `/* */` a " * " continuation.
+- **Electric dedent** (`typed`): a closer alone on its line goes to its
+  opener line's indentation (for `(` and `[` only when the opener ended its
+  line, so lined-up arguments keep theirs); in Python the colon of else,
+  elif, except, finally or case moves the line to the nearest shallower
+  *statement start* if that is an if/elif/for/while/try/except (or case
+  for case). Statement starts come from the same scan, so continuation
+  lines, docstrings, blank and comment lines never count.
+- **Indent unit** (`detect`): tabs if more lines start with a tab, else the
+  most common step of 4, 2, 8 or 3 between a line and a deeper one, counted
+  only after a line ending in `:` or an opener in languages with blocks
+  (so `x = foo(a,` + 8 aligned spaces does not make the file 8-wide).
+  Defaults: 4 spaces, 2 in YAML, tabs in Go and Makefiles. Plain text gets
+  soft tabs only when the file itself has space indentation; `.tsv` never.
+  There is no settings key for it, on purpose: the file decides.
+- **KeepSorted is keep-sorted's Go code, step for step** (block.go,
+  line_group.go, options.go at v0.10): groups, sticky comments, block
+  balance, the trailing-comma trick, dedupe modes, numeric tokens, prefix
+  order, YAML flow lists, nesting (inner blocks first), and by_regex /
+  group_start_regex / group_end_regex through std::regex with a small RE2
+  translation (`(?i)`, `(?s)` default for by_regex, named groups, `${name}`
+  templates, literal braces). `\p`, `\Q` and the like mark the block
+  unsupported: it is left alone with a message, since sorting it any other
+  way would disagree with keep-sorted. A marker without its partner leaves
+  the whole file alone, as keep-sorted does. Deliberate difference: a
+  block whose groups would split a nested block (group=no) is left alone
+  and named; keep-sorted scatters the markers.
+- **Verified against the real tool.** Go is on this Mac (`/opt/homebrew/bin/go`):
+  keep-sorted built from a clone with `GOMODCACHE`/`GOCACHE` in the
+  scratchpad, then a fuzzer fed 55,000 random files (random options,
+  nesting, comments, quotes, CRLF) to both: no difference except the
+  deliberate one and keep-sorted's own bug (with an unmatched marker it
+  still rewrites lines, through a shared Go slice, while saying it fixed
+  nothing). Its 17 golden files are in `tests/keepsorted` (Apache 2.0,
+  LICENSE beside them) and all pass in `make test`, warnings included.
+  One quirk kept: an outermost block sorted down to nothing leaves one
+  empty line (keep-sorted writes every line with its newline).
+- **Commands**: F9 Sort Lines (selection over two or more lines: plain
+  sort by the text after leading spaces, stable, duplicates kept; else the
+  innermost block holding the caret), Shift+F9 every block. The caret
+  follows its own line (`Result::origin`). `editor.keep-sorted-on-save`
+  (Mac and Linux; Android has no settings file) sorts before writing.
+  Messages go to the status bar for six seconds. Android: leader J and two
+  ⋮ menu items.
+- **Undo**: every edit is one replacement, its own step (Mac:
+  `breakUndoCoalescing` around it; Linux: one user action; Android: one
+  `Editable.replace`). The electric dedent happens in the same event as
+  the typed character, so on the Mac it shares that event's undo group.
+- **Verified**: 272 `indent:*` and 158 `keepsorted:*` checks; on the Mac an
+  offscreen harness (55 checks, `main.mm` included with
+  `-Dmain=minicode_main`, window ordering swizzled, activation Prohibited,
+  NSAlert answered Don't Save, scratch HOME and settings, lsp off) sending
+  real key events through `keyDown:` and the menu: Return, Tab, Shift+Tab,
+  Backspace, the else: dedent, `}`, Markdown lists, F9, Shift+F9, undo and
+  redo, saving with the setting on. Harness trap: with `groupsByEvent` off,
+  `saveCurrentFile:` outside a begin/end grouping throws once the sort
+  registers undo. Android: the debug build compiles. Linux: not built
+  (see the Docker trap below); the code mirrors continueList and
+  toggleComment.
+- **Docker trap (2026-10-20)**: `open -g -a Docker` on this Mac brought up
+  an administrator password prompt ("Docker Desktop requires privileged
+  access to configure privileged port mapping") and the daemon never came
+  up; killing the prompt made Docker show an error window. Do not start
+  Docker unattended; ask the user to start it first.
+- **Needs a person**: everything on a real screen (Mac, the ThinkPad, the
+  Titan 2), F9 on a laptop keyboard (fn), the Linux build itself, and on
+  Android whether Pastiera sends Backspace as a key or as
+  deleteSurroundingText.
+
 ## LSP (read before touching it)
 
 The protocol lives in `LspClient.cpp`, pure C++ and tested against a scripted
@@ -984,6 +1093,13 @@ never closes.
   may have clangd running: kill only PIDs the test started.
 
 ## Current state (handoff, 2026-09-29)
+
+- **Indentation and sorting** (2026-10-20, on a branch, not merged or
+  released): language-aware Return, Tab, Shift+Tab and Backspace, the
+  electric dedent, F9 / Shift+F9 keep-sorted, and
+  `editor.keep-sorted-on-save`, on all three ports; see "Indentation and
+  sorting". 2,637 core checks pass. Mac checked offscreen, Android built,
+  Linux not built.
 
 - **Task lists** (2026-10-07): clickable boxes, the task key, lists
   continuing on Return, the done count and a TODOs window on all three

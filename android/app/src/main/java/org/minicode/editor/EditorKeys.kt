@@ -61,6 +61,9 @@ object EditorKeys {
 
     /** Replaces the selection, or inserts at the caret, as typing would. */
     private fun insert(editor: EditText, text: String) {
+        // The code editor's Tab indents as the Tab key does, and a closer
+        // may move its line back.
+        if (editor is CodeEditText && editor.keyRowInsert(text)) return
         val buffer = editor.text ?: return
         val a = minOf(editor.selectionStart, editor.selectionEnd).coerceAtLeast(0)
         val b = maxOf(editor.selectionStart, editor.selectionEnd).coerceAtLeast(0)

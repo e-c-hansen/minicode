@@ -157,6 +157,17 @@ public:
     // selection touches (MarkdownTasks::toggle), as one undo step. False when
     // there is nothing to do it to (not Markdown, the preview, a heading).
     bool toggleTask();
+
+    // F9: the selected lines sorted, or with no selection the keep-sorted
+    // block around the caret (KeepSorted::sortCommand). Shift+F9: every
+    // keep-sorted block in the file. One undo step each. `message` gets what
+    // to tell the user ("Already sorted", or why nothing was done). False
+    // when nothing could be done (preview, message, an unmatched marker).
+    bool sortLines(std::string* message);
+    bool fixKeepSorted(std::string* message);
+    // editor.keep-sorted-on-save: every block sorted before a save, as one
+    // undo step. Returns a problem to show, or "".
+    std::string sortBlocksBeforeSave();
     // A Markdown file's tasks, done and in all, kept current as it is edited
     // (0.3 s after typing stops) and toggled; 0 and 0 for any other file.
     // The title callback is called when they change.
@@ -275,6 +286,16 @@ private:
     void refreshTaskCount();     // count now; the title callback if it changed
     void scheduleTaskCount();    // 0.3 s after the last edit
     void clearTaskCount();
+    // The editable source as UTF-16 and the selection in it; false when the
+    // buffer is not editable source (preview, message, read-only).
+    bool sourceText(std::u16string& text, std::size_t& a, std::size_t& b) const;
+    // Return, Tab, Shift+Tab or Backspace by AutoIndent's rules: true when
+    // it acted (or, for Shift+Tab, when the key must not move the focus).
+    bool indentKey(guint key);
+    // A closer or ':' just typed, before `loc`: the line moved back where
+    // AutoIndent::typed says, inside the same user action; loc stays valid.
+    void electric(GtkTextIter* loc);
+    bool runKeepSorted(bool all, std::string* message);
     static gboolean onViewKey(GtkEventControllerKey* c, guint key, guint code,
                               GdkModifierType mods, gpointer self);
     void loadRawIntoBuffer();    // put source_ back as editable, highlighted text
@@ -330,7 +351,7 @@ private:
     bool        dirty_      = false;
     bool        tagsReady_  = false;
     bool        sourceMode_ = false;   // the buffer holds editable source text
-    bool        returnKey_  = false;   // the Return key is being handled
+    char        typedKey_   = 0;       // ':' or a closer being typed (electric)
 
     // Highlighting state, live only while the buffer holds source of a
     // language the lexer knows. mirror_ is a UTF-8 copy of the buffer kept in

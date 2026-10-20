@@ -332,6 +332,8 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
 - (void)toggleComment:(id)sender   { [[self current] toggleComment:sender]; }
 - (void)formatDocument:(id)sender  { [[self current] formatDocument:sender]; }
 - (void)toggleTask:(id)sender      { [[self current] toggleTask:sender]; }
+- (void)sortLines:(id)sender       { [[self current] sortLines:sender]; }
+- (void)fixKeepSorted:(id)sender   { [[self current] fixKeepSorted:sender]; }
 - (void)showTodos:(id)sender       { [[self current] showTodos:sender]; }
 - (void)triggerCompletion:(id)sender { [[self current] triggerCompletion:sender]; }
 - (void)goToDefinition:(id)sender  { [[self current] goToDefinition:sender]; }
@@ -467,6 +469,19 @@ static void BuildMenu(void) {
                                              keyEquivalent:@"f"];
     format.keyEquivalentModifierMask = NSEventModifierFlagOption | NSEventModifierFlagShift;
     [editMenu addItem:format];
+    // F9 as in Sublime Text (fn+F9 on a laptop keyboard): the selected
+    // lines, or the keep-sorted block around the caret.
+    NSString *f9 = [NSString stringWithFormat:@"%C", (unichar)NSF9FunctionKey];
+    NSMenuItem *sortLines = [[NSMenuItem alloc] initWithTitle:@"Sort Lines"
+                                                       action:@selector(sortLines:)
+                                                keyEquivalent:f9];
+    sortLines.keyEquivalentModifierMask = 0;
+    [editMenu addItem:sortLines];
+    NSMenuItem *fixSorted = [[NSMenuItem alloc] initWithTitle:@"Sort keep-sorted Blocks"
+                                                       action:@selector(fixKeepSorted:)
+                                                keyEquivalent:f9];
+    fixSorted.keyEquivalentModifierMask = NSEventModifierFlagShift;
+    [editMenu addItem:fixSorted];
     // Language server completion. Ctrl+Space is also the system shortcut for
     // switching input sources when more than one is enabled; Option+Esc
     // (the text view's complete:) reaches the same list either way.

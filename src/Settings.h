@@ -148,6 +148,10 @@ public:
     // default, where tectonic is found). Off, formulas show as their TeX.
     bool math() const { return math_; }
 
+    // editor.keep-sorted-on-save: sort every keep-sorted block in a file
+    // when it is saved (off by default).
+    bool keepSortedOnSave() const { return keepSortedOnSave_; }
+
     // Language servers. lsp.enabled turns the whole client on or off (on by
     // default). lsp.<server> names the command for one server key (cpp,
     // python, go, rust, typescript): a whole command line, arguments and all,
@@ -203,6 +207,7 @@ private:
     bool lspEnabled_ = true;
     bool webImages_ = true;
     bool math_ = true;
+    bool keepSortedOnSave_ = false;
     std::map<std::string, std::string> lspCommands_;
     bool runInNewTerminal_ = false;
     std::map<std::string, std::string> runCommands_;

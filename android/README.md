@@ -89,6 +89,13 @@ The rest of this file is about how the port is built and developed.
   makes or toggles tasks in the source, Enter continues a list, the title
   counts what is done, and leader W lists every TODO comment and open task
   in the project. See "Task lists and the TODO list" below.
+- **Indentation and sorting.** Enter, Tab, Shift+Tab, and Backspace follow
+  the file's language through the core's AutoIndent (`Editing.kt` over
+  `editing_jni.cpp`), as on the desktop: Enter after a Python colon or an
+  opening bracket indents, a closer typed alone on a line (from the keyboard
+  or the symbol row) moves back to its opener. Leader J sorts the selected
+  lines, or the keep-sorted block at the caret, and the ⋮ menu also sorts
+  every keep-sorted block in the file. Built, not yet tried on the phone.
 - **Images and PDFs.** Decoded by Android, scaled down but never up, with the
   pixel size or page count in the title bar. A PDF shows its first page.
 - **Video and audio.** mp4, mov, webm, mkv and the rest, and mp3, flac, ogg
@@ -1026,7 +1033,10 @@ Run it from the repository root; the tests read a few files from `demo/`,
 - `FileMove.kt` — moving a file or folder for the list's drag and drop: by
   path or through the document provider, never over an existing name, and
   where the open file ends up.
-- `CodeEditText.kt` — the editor field: no composing, and the leader's letter.
+- `CodeEditText.kt` — the editor field: no composing, the leader's letter,
+  and Enter, Tab, and Backspace through `Editing.kt`.
+- `Editing.kt`, `app/src/main/cpp/editing_jni.cpp` — the core's AutoIndent
+  and KeepSorted, in UTF-16 units like the Editable.
 - `EditorKeys.kt` — the row of symbols under the editor, and `CurvedEdges`,
   which keeps both key rows clear of the screen's rounded corners.
 - `TerminalView.kt` — draws the grid, sends keys. Declares TYPE_NULL so

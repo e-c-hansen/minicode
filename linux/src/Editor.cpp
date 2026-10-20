@@ -8,6 +8,8 @@
 #include "MarkdownTasks.h"
 #include "SyntaxHighlighter.h"
 #include "LineComments.h"
+#include "AutoIndent.h"
+#include "KeepSorted.h"
 #include "Utf8Offsets.h"
 #include "MediaView.h"
 #include "GitPanel.h"
@@ -1203,26 +1205,38 @@ void Editor::onInsertTextAfter(GtkTextBuffer* buf, GtkTextIter* loc, char* text,
     Editor* self = static_cast<Editor*>(selfp);
     if (!self->inAction_) self->flushHighlighting();
     if (self->observer_ && self->sourceMode_) self->observer_->textEdited(text, len);
-    // Return keeps the indentation: the new line gets the spaces and tabs
-    // that begin the line it was split from. Only for the Return key (see
-    // onViewKey), so a pasted newline is left alone. Inserting at loc keeps
-    // it valid for the handlers after this one.
-    const bool afterReturn = self->returnKey_;
-    self->returnKey_ = false;
-    if (!afterReturn || !self->sourceMode_ || self->readOnly_ || len != 1 || text[0] != '\n')
-        return;
-    GtkTextIter a = *loc;
-    if (!gtk_text_iter_backward_line(&a)) return;
-    GtkTextIter b = a;
-    while (!gtk_text_iter_ends_line(&b)) {
-        const gunichar c = gtk_text_iter_get_char(&b);
-        if (c != ' ' && c != '\t') break;
-        gtk_text_iter_forward_char(&b);
-    }
-    if (gtk_text_iter_equal(&a, &b)) return;
-    char* indent = gtk_text_iter_get_text(&a, &b);
-    gtk_text_buffer_insert(buf, loc, indent, -1);
-    g_free(indent);
+    // A closer, or ':', typed from the keyboard (see onViewKey) may move its
+    // line back (AutoIndent::typed). Return, Tab and Backspace are handled
+    // whole in onViewKey.
+    const char typed = self->typedKey_;
+    self->typedKey_ = 0;
+    (void)buf;
+    if (typed && len == 1 && text[0] == typed && self->sourceMode_ && !self->readOnly_ &&
+        !self->preview_)
+        self->electric(loc);
+}
+
+void Editor::electric(GtkTextIter* loc) {
+    GtkTextIter a, b;
+    gtk_text_buffer_get_bounds(buffer_, &a, &b);
+    char* raw = gtk_text_buffer_get_text(buffer_, &a, &b, TRUE);
+    const std::u16string text = utf16::fromUtf8(raw ? raw : "");
+    g_free(raw);
+    const size_t caret = utf16::fromCharOffset(text, gtk_text_iter_get_offset(loc));
+    const AutoIndent::Edit e = AutoIndent::typed(text, caret, path_);
+    if (!e.changed) return;
+    // Inside the key's own user action, so one Ctrl+Z takes back the key and
+    // the move together. The mark keeps loc valid for the handlers after us.
+    GtkTextMark* keep = gtk_text_buffer_create_mark(buffer_, nullptr, loc, FALSE);
+    GtkTextIter from, to;
+    gtk_text_buffer_get_iter_at_offset(buffer_, &from, (int)utf16::toCharOffset(text, e.replaceStart));
+    gtk_text_buffer_get_iter_at_offset(buffer_, &to,
+        (int)utf16::toCharOffset(text, e.replaceStart + e.replaceLength));
+    gtk_text_buffer_delete(buffer_, &from, &to);
+    const std::string bytes = utf16::toUtf8(e.replacement);
+    gtk_text_buffer_insert(buffer_, &from, bytes.c_str(), (int)bytes.size());
+    gtk_text_buffer_get_iter_at_mark(buffer_, loc, keep);
+    gtk_text_buffer_delete_mark(buffer_, keep);
 }
 
 void Editor::onDeleteRangeAfter(GtkTextBuffer*, GtkTextIter*, GtkTextIter*, gpointer selfp) {
@@ -2450,20 +2464,31 @@ void Editor::applyMarkdownSource(const std::string& source, bool undoable) {
 gboolean Editor::onViewKey(GtkEventControllerKey*, guint key, guint, GdkModifierType mods,
                            gpointer selfp) {
     Editor* self = static_cast<Editor*>(selfp);
-    // Return in source: onInsertTextAfter indents the line it makes. The key
-    // is only noted, never taken, so the completion list still gets it.
-    const bool ret = (key == GDK_KEY_Return || key == GDK_KEY_KP_Enter ||
-                      key == GDK_KEY_ISO_Enter) &&
-                     !(mods & (GDK_CONTROL_MASK | GDK_ALT_MASK)) && self->sourceMode_;
-    // In a Markdown list it starts the next item, or ends the list, unless a
-    // completion list is open and wants it. Shift+Return is a plain new line
-    // (with the indent), for a second line inside the same item.
-    if (ret && !(mods & GDK_SHIFT_MASK) && self->isMarkdown_ &&
-        !(self->observer_ && self->observer_->takesReturn()) && self->continueList()) {
-        self->returnKey_ = false;
-        return TRUE;
+    // Return, Tab, Shift+Tab and Backspace in source follow the language's
+    // indentation (AutoIndent), unless a completion list is open and wants
+    // the key.
+    const bool plain = !(mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK));
+    const bool completion = self->observer_ && self->observer_->takesReturn();
+    self->typedKey_ = 0;
+    if (plain && self->sourceMode_ && !completion) {
+        const bool shift = mods & GDK_SHIFT_MASK;
+        if (key == GDK_KEY_Return || key == GDK_KEY_KP_Enter || key == GDK_KEY_ISO_Enter) {
+            // In a Markdown list it starts the next item, or ends the list.
+            // Shift+Return is a plain new line (with the indent), for a
+            // second line inside the same item.
+            if (!shift && self->isMarkdown_ && self->continueList()) return TRUE;
+            if (self->indentKey(GDK_KEY_Return)) return TRUE;
+        } else if ((key == GDK_KEY_Tab || key == GDK_KEY_KP_Tab) && !shift) {
+            if (self->indentKey(GDK_KEY_Tab)) return TRUE;
+        } else if (key == GDK_KEY_ISO_Left_Tab || key == GDK_KEY_Tab || key == GDK_KEY_KP_Tab) {
+            if (self->indentKey(GDK_KEY_ISO_Left_Tab)) return TRUE;
+        } else if (key == GDK_KEY_BackSpace && !shift) {
+            if (self->indentKey(GDK_KEY_BackSpace)) return TRUE;
+        } else {
+            const gunichar c = gdk_keyval_to_unicode(key);
+            if (c == ':' || c == ')' || c == ']' || c == '}') self->typedKey_ = (char)c;
+        }
     }
-    self->returnKey_ = ret;
     if (!self->preview_ || !self->isMarkdown_) return FALSE;
     const bool ctrl = mods & GDK_CONTROL_MASK, shift = mods & GDK_SHIFT_MASK;
     const bool undo = ctrl && !shift && (key == GDK_KEY_z || key == GDK_KEY_Z);
@@ -2612,4 +2637,77 @@ bool Editor::continueList() {
     if (!r.changed) return false;
     applyTaskEdit(text, r.replaceStart, r.replaceLength, r.replacement, r.selStart, r.selEnd);
     return true;
+}
+
+// ---------------------------------------------------------------- indentation
+//
+// Return, Tab, Shift+Tab and Backspace over the shared AutoIndent core, and
+// line sorting over KeepSorted. Each edit is one user action, one Ctrl+Z.
+
+bool Editor::sourceText(std::u16string& text, std::size_t& a, std::size_t& b) const {
+    if (preview_ || readOnly_ || !sourceMode_ || !gtk_text_view_get_editable(GTK_TEXT_VIEW(view_)))
+        return false;
+    GtkTextIter s, e;
+    gtk_text_buffer_get_bounds(buffer_, &s, &e);
+    char* raw = gtk_text_buffer_get_text(buffer_, &s, &e, TRUE);
+    text = utf16::fromUtf8(raw ? raw : "");
+    g_free(raw);
+    GtkTextIter selA, selB;
+    gtk_text_buffer_get_selection_bounds(buffer_, &selA, &selB);
+    a = utf16::fromCharOffset(text, gtk_text_iter_get_offset(&selA));
+    b = utf16::fromCharOffset(text, gtk_text_iter_get_offset(&selB));
+    return true;
+}
+
+bool Editor::indentKey(guint key) {
+    if (key == GDK_KEY_BackSpace) {
+        // Only ever in leading spaces: look before reading the whole buffer.
+        GtkTextIter at;
+        gtk_text_buffer_get_iter_at_mark(buffer_, &at, gtk_text_buffer_get_insert(buffer_));
+        if (gtk_text_buffer_get_has_selection(buffer_) || gtk_text_iter_starts_line(&at))
+            return false;
+        GtkTextIter before = at;
+        gtk_text_iter_backward_char(&before);
+        if (gtk_text_iter_get_char(&before) != ' ') return false;
+    }
+    std::u16string text;
+    std::size_t a = 0, b = 0;
+    if (!sourceText(text, a, b)) return false;
+    AutoIndent::Edit e;
+    switch (key) {
+        case GDK_KEY_Return: e = AutoIndent::newline(text, a, b, path_); break;
+        case GDK_KEY_Tab: e = AutoIndent::tab(text, a, b, path_); break;
+        case GDK_KEY_ISO_Left_Tab: e = AutoIndent::backtab(text, a, b, path_); break;
+        case GDK_KEY_BackSpace: e = AutoIndent::backspace(text, a, b, path_); break;
+        default: return false;
+    }
+    // Shift+Tab never moves the focus out of the editor.
+    if (!e.changed) return key == GDK_KEY_ISO_Left_Tab;
+    applyTaskEdit(text, e.replaceStart, e.replaceLength, e.replacement, e.selStart, e.selEnd);
+    return true;
+}
+
+bool Editor::runKeepSorted(bool all, std::string* message) {
+    std::u16string text;
+    std::size_t a = 0, b = 0;
+    if (!sourceText(text, a, b)) return false;
+    const KeepSorted::Edit e = all ? KeepSorted::fixCommand(text, a, b)
+                                   : KeepSorted::sortCommand(text, a, b);
+    if (e.changed)
+        applyTaskEdit(text, e.replaceStart, e.replaceLength, e.replacement, e.selStart, e.selEnd);
+    if (message) *message = !e.message.empty() ? e.message : e.changed ? "" : "Already sorted";
+    return e.changed || !e.error;
+}
+
+bool Editor::sortLines(std::string* message) { return runKeepSorted(false, message); }
+bool Editor::fixKeepSorted(std::string* message) { return runKeepSorted(true, message); }
+
+std::string Editor::sortBlocksBeforeSave() {
+    std::u16string text;
+    std::size_t a = 0, b = 0;
+    if (!sourceText(text, a, b) || !KeepSorted::hasBlocks(text)) return "";
+    const KeepSorted::Edit e = KeepSorted::fixCommand(text, a, b);
+    if (e.changed)
+        applyTaskEdit(text, e.replaceStart, e.replaceLength, e.replacement, e.selStart, e.selEnd);
+    return e.error ? e.message : "";
 }

@@ -1,0 +1,70 @@
+Skip no lines with an empty block is ok:
+keep-sorted-test start skip_lines=0
+keep-sorted-test end
+
+Skip lines at start with an empty block:
+keep-sorted-test start skip_lines=1
+keep-sorted-test end
+
+Skip lines at end with an empty block:
+keep-sorted-test start skip_lines=-1
+keep-sorted-test end
+
+Skip two lines:
+// keep-sorted-test start skip_lines=2
+foo
+bar
+c
+b
+a
+// keep-sorted-test end
+
+Number of skipped lines is greater than block size, so skip_lines causes warning:
+// keep-sorted-test start skip_lines=10
+z
+y
+x
+// keep-sorted-test end
+
+Skipping lines with nested blocks:
+<!-- keep-sorted-test start skip_lines=1 -->
+This line should not be sorted.
+### Table 2
+  <!-- keep-sorted-test start skip_lines=2 -->
+  Name    | Value
+  ------- | -----
+  Bravo   | Foxtrot
+  Alpha   | Romeo
+  <!-- keep-sorted-test end -->
+### Table 1
+  <!-- keep-sorted-test start skip_lines=2  -->
+  Name    | Value
+  ------- | -----
+  Delta   | Qux
+  Bravo   | Bar
+  Alpha   | Foo
+  Charlie | Baz
+  <!-- keep-sorted-test end -->
+<!-- keep-sorted-test end -->
+
+Skip lines with group_prefixes:
+// keep-sorted-test start skip_lines=2 group_prefixes=:
+| birds        |
+| ------------ |
+| blue footed  |
+: booby        |
+| crested      |
+: bobwhite     |
+| anhinga      |
+// keep-sorted-test end
+
+Skip lines with group_prefixes indented:
+// keep-sorted-test start skip_lines=2 group_prefixes=:
+    | birds        |
+    | ------------ |
+    | blue footed  |
+    : booby        |
+    | crested      |
+    : bobwhite     |
+    | anhinga      |
+// keep-sorted-test end

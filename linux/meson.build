@@ -18,6 +18,8 @@ core_sources = [
   core_dir / 'MarkdownTasks.cpp',
   core_dir / 'Settings.cpp',
   core_dir / 'LineComments.cpp',
+  core_dir / 'AutoIndent.cpp',
+  core_dir / 'KeepSorted.cpp',
   core_dir / 'FolderSearch.cpp',
   core_dir / 'LatexDoc.cpp',
   core_dir / 'SyncTex.cpp',
