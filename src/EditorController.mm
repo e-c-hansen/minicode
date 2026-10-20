@@ -1427,6 +1427,7 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
         [weakSelf openTerminalLink:link];
     };
     self.terminalPanel.onEmpty = ^{ [weakSelf terminalPanelEmptied]; };
+    self.terminalPanel.onNote = ^(NSString *note) { [weakSelf showStatusNote:note]; };
     self.terminalPanel.hidden = YES;
     [self.rightArea addSubview:self.terminalPanel];
 

@@ -34,10 +34,17 @@
 // A command is running, or one is waiting to be typed: not a terminal to
 // type another command into. A shell still starting is not busy.
 @property(nonatomic, readonly) BOOL busy;
-// The command closing this terminal would end ("npm run dev", "vim"), or nil
-// when the shell is idle at its prompt: a command per the shell integration,
-// or any program holding the terminal's foreground.
+// What closing this terminal would end or drop, for the question asked
+// first: the command in the foreground ("npm run dev", "vim": per the shell
+// integration, or any program holding the terminal's foreground), a command
+// waiting for the first prompt ("python3 a.py (waiting to start)"), and
+// background jobs ("sleep 100 (in the background)", or "(stopped)"). Empty
+// when the shell is idle with no jobs, or still starting with nothing queued.
+@property(nonatomic, readonly, copy) NSArray<NSString *> *runningCommands;
+// The first of them, or nil.
 @property(nonatomic, readonly, copy) NSString *runningCommand;
+// A runCommand: line still waiting for the shell's prompt, or nil.
+@property(nonatomic, readonly, copy) NSString *pendingCommand;
 // What a tab shows: the command running, else the folder's name.
 @property(nonatomic, readonly, copy) NSString *title;
 @property(nonatomic, readonly, copy) NSString *directory;   // the shell's cwd

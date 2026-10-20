@@ -17,6 +17,8 @@
 @property(nonatomic, copy) void (^onOpenLink)(MCTermLink *link);
 // The last terminal was closed. The panel is empty and should go.
 @property(nonatomic, copy) void (^onEmpty)(void);
+// A passing note for the status bar (a queued command dropped by a close).
+@property(nonatomic, copy) void (^onNote)(NSString *note);
 @property(nonatomic, copy) NSString *projectRoot;     // passed to every terminal
 
 @property(nonatomic, readonly) TerminalView *activeTerminal;
@@ -32,9 +34,9 @@
 // Next (+1) or previous (-1) terminal: through the shown tab's panes, then on
 // to the next tab, wrapping around.
 - (void)moveActive:(NSInteger)delta;
-// Close a terminal, or a tab's terminals. A command still running in one
-// (see TerminalView runningCommand) is asked about first; NO when the user
-// kept it.
+// Close a terminal, or a tab's terminals. A command still running in one,
+// waiting to start, or a background job (see TerminalView runningCommands)
+// is asked about first; NO when the user kept it.
 - (BOOL)closeTerminal:(TerminalView *)terminal;
 - (BOOL)closeTab:(NSUInteger)tab;
 // Every terminal, unasked (the window is closing): shells hung up and reaped.

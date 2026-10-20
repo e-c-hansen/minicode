@@ -38,7 +38,9 @@
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <sys/sysctl.h>
 #include <libproc.h>
+#include <map>
 #include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -46,6 +48,34 @@
 #include <vector>
 
 extern char **environ;
+
+// A process's command line ("sleep 100"), from KERN_PROCARGS2: argc, the
+// executable's path, padding, then the arguments. The program's path is cut
+// to its last part; nil when it cannot be read.
+static NSString *ProcessCommandLine(pid_t pid) {
+    int mib[3] = {CTL_KERN, KERN_PROCARGS2, pid};
+    size_t size = 0;
+    if (sysctl(mib, 3, nullptr, &size, nullptr, 0) != 0 || size < sizeof(int)) return nil;
+    std::vector<char> buf(size);
+    if (sysctl(mib, 3, buf.data(), &size, nullptr, 0) != 0 || size < sizeof(int)) return nil;
+    int argc = 0;
+    memcpy(&argc, buf.data(), sizeof argc);
+    size_t i = sizeof argc;
+    while (i < size && buf[i]) i++;    // the executable's path
+    while (i < size && !buf[i]) i++;   // padding
+    NSMutableArray<NSString *> *words = [NSMutableArray array];
+    for (int a = 0; a < argc && i < size; a++) {
+        size_t start = i;
+        while (i < size && buf[i]) i++;
+        NSString *w = [[NSString alloc] initWithBytes:buf.data() + start length:i - start
+                                             encoding:NSUTF8StringEncoding];
+        if (w) [words addObject:a == 0 && [w hasPrefix:@"/"] ? w.lastPathComponent : w];
+        i++;
+    }
+    NSString *line = [words componentsJoinedByString:@" "];
+    if (line.length > 80) line = [[line substringToIndex:79] stringByAppendingString:@"…"];
+    return line.length ? line : nil;
+}
 
 static NSColor *THex(unsigned int rgb) {
     return [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0
@@ -549,11 +579,81 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     return _shellPid > 0 && _integrated && _seenPrompt && !_atPrompt;
 }
 
-// What closing this terminal would end: a command the shell integration says
-// is running (133;C seen, no prompt since), or any program that holds the
-// terminal's foreground (vim, a server, Claude Code), even one the marks
-// missed. nil for a shell at its prompt, or still starting.
-- (NSString *)runningCommand {
+- (NSString *)pendingCommand { return _closed ? nil : _pendingCommand; }
+
+// Everything closing this terminal would end or drop: the command in the
+// foreground, a command waiting for the first prompt, and the shell's
+// background jobs. Empty for a shell idle at its prompt with no jobs, or one
+// still starting with nothing queued.
+- (NSArray<NSString *> *)runningCommands {
+    NSMutableArray<NSString *> *out = [NSMutableArray array];
+    if (_closed) return out;
+    NSString *fg = [self foregroundCommand];
+    if (fg) [out addObject:fg];
+    if (_pendingCommand)
+        [out addObject:[_pendingCommand stringByAppendingString:@" (waiting to start)"]];
+    [out addObjectsFromArray:[self backgroundJobs]];
+    return out;
+}
+
+- (NSString *)runningCommand { return self.runningCommands.firstObject; }
+
+// The shell's jobs that are not in the foreground: every process whose
+// controlling terminal is this pty, in a process group other than the
+// shell's and the foreground one, so "sleep 100 &" counts, one entry per
+// job (a pipeline is one group), named by the group's leader. zsh hangs
+// these up when it is closed. A job disowned with &! is counted too, since
+// nothing outside the shell can tell it apart; a daemon that left the
+// terminal (setsid, nohup's detach) is not.
+- (NSArray<NSString *> *)backgroundJobs {
+    if (_shellPid <= 0 || _master < 0 || (_integrated && !_seenPrompt)) return @[];
+    pid_t fg = tcgetpgrp(_master);
+    // The pty, as the shell's controlling terminal (macOS answers nothing
+    // for KERN_PROC_SESSION).
+    struct kinfo_proc shell = {};
+    size_t size = sizeof shell;
+    int pmib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, _shellPid};
+    if (sysctl(pmib, 4, &shell, &size, nullptr, 0) != 0 || size == 0 ||
+        shell.kp_eproc.e_tdev == NODEV)
+        return @[];
+    int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_TTY, (int)shell.kp_eproc.e_tdev};
+    size = 0;
+    if (sysctl(mib, 4, nullptr, &size, nullptr, 0) != 0 || size == 0) return @[];
+    size += 16 * sizeof(struct kinfo_proc);   // room for a few more since
+    std::vector<struct kinfo_proc> procs(size / sizeof(struct kinfo_proc));
+    if (sysctl(mib, 4, procs.data(), &size, nullptr, 0) != 0) return @[];
+    procs.resize(size / sizeof(struct kinfo_proc));
+    std::map<pid_t, std::pair<pid_t, BOOL>> groups;   // pgid -> (who names it, stopped)
+    for (const struct kinfo_proc &k : procs) {
+        pid_t pid = k.kp_proc.p_pid, pgid = k.kp_eproc.e_pgid;
+        if (pid == _shellPid || pgid == _shellPid || pgid == fg) continue;
+        if (k.kp_proc.p_stat == SZOMB) continue;
+        BOOL stopped = k.kp_proc.p_stat == SSTOP;
+        auto it = groups.find(pgid);
+        if (it == groups.end()) groups[pgid] = {pid, stopped};
+        else {
+            if (pid == pgid) it->second.first = pid;   // the leader names the job
+            it->second.second = it->second.second && stopped;
+        }
+    }
+    NSMutableArray<NSString *> *out = [NSMutableArray array];
+    for (const auto &g : groups) {
+        NSString *name = ProcessCommandLine(g.second.first);
+        if (!name) {
+            char n[2 * MAXCOMLEN + 1] = {0};
+            name = proc_name(g.second.first, n, sizeof n) > 0 ? @(n) : @"A job";
+        }
+        [out addObject:[name stringByAppendingString:g.second.second ? @" (stopped)"
+                                                                     : @" (in the background)"]];
+    }
+    return out;
+}
+
+// A command the shell integration says is running (133;C seen, no prompt
+// since), or any program that holds the terminal's foreground (vim, a
+// server, Claude Code), even one the marks missed. nil for a shell at its
+// prompt, or still starting.
+- (NSString *)foregroundCommand {
     if (_closed || _shellPid <= 0 || _master < 0) return nil;
     pid_t fg = tcgetpgrp(_master);
     BOOL other = fg > 0 && fg != _shellPid && (_seenPrompt || !_integrated);

@@ -258,10 +258,7 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
 // ------------------------------------------------------------------ closing
 NSArray<NSString *> *MCRunningCommands(NSArray<TerminalView *> *terminals) {
     NSMutableArray<NSString *> *out = [NSMutableArray array];
-    for (TerminalView *t in terminals) {
-        NSString *c = t.runningCommand;
-        if (c) [out addObject:c];
-    }
+    for (TerminalView *t in terminals) [out addObjectsFromArray:t.runningCommands];
     return out;
 }
 
@@ -284,9 +281,19 @@ BOOL MCConfirmClosingRunning(NSArray<NSString *> *commands, NSString *question,
 
 - (BOOL)confirmClosing:(NSArray<TerminalView *> *)terminals {
     NSArray<NSString *> *running = MCRunningCommands(terminals);
-    return MCConfirmClosingRunning(running, running.count > 1 ? @"Close these terminals?"
-                                                              : @"Close the terminal?",
+    return MCConfirmClosingRunning(running, terminals.count > 1 ? @"Close these terminals?"
+                                                                : @"Close the terminal?",
                                    @"Close");
+}
+
+// A command queued for a terminal that closes before its prompt never runs;
+// the user agreed to that at the question, and the status bar says so.
+- (void)noteDroppedCommands:(NSArray<TerminalView *> *)terminals {
+    for (TerminalView *t in terminals) {
+        NSString *c = t.pendingCommand;
+        if (c && self.onNote)
+            self.onNote([NSString stringWithFormat:@"“%@” did not run: its terminal was closed", c]);
+    }
 }
 
 - (BOOL)closeTerminal:(TerminalView *)terminal {
@@ -296,6 +303,7 @@ BOOL MCConfirmClosingRunning(NSArray<NSString *> *commands, NSString *question,
         if (i == NSNotFound) continue;
         if (![self confirmClosing:@[terminal]]) return NO;
         BOOL hadFocus = [terminal hasFocus];
+        [self noteDroppedCommands:@[terminal]];
         [terminal close];
         [terminal removeFromSuperview];
         [panes removeObjectAtIndex:i];
@@ -313,6 +321,7 @@ BOOL MCConfirmClosingRunning(NSArray<NSString *> *commands, NSString *question,
 - (BOOL)closeTab:(NSUInteger)tab {
     if (tab >= _tabs.count) return YES;
     if (![self confirmClosing:_tabs[tab]]) return NO;
+    [self noteDroppedCommands:_tabs[tab]];
     BOOL hadFocus = NO;
     for (TerminalView *t in _tabs[tab]) {
         hadFocus = hadFocus || [t hasFocus];
