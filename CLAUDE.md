@@ -26,7 +26,8 @@ this file covers the macOS app except where it says otherwise.
   matching), JSON, the LSP
   client, finding file references and URLs in terminal output, the
   folder search (on a scratch tree in the temp directory), and the git
-  status and diff readers (1,932 checks on 2026-09-29, with the Markdown
+  status and diff readers, the formatter planning and the line diff
+  (2,331 checks on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
   corpus in `tests/markdown/corpus.md` read from the repo root; the
   corpus checks skip themselves where that file is not found).
   Exits non-zero on failure. The Makefile uses clang++ on the Mac and make's
@@ -161,6 +162,13 @@ isolation. Keep them dependency-free.
   lists".
 - `src/EditorTabs.{h,cpp}`: the rules for the Mac's tabs (see "Tabs and
   the landing state").
+- `src/Formatter.{h,cpp}`: Format Document's decisions, no I/O: language
+  by extension, the plan (settings command, else the project's configured
+  formatter, else Google-style defaults in order), config discovery through
+  an `Fs` of callbacks, venv folders, argv templating with `{file}` and
+  line ranges, and the error summary. See "Formatting".
+- `src/LineDiff.{h,cpp}`: a line diff (Myers, capped) in UTF-16 offsets and
+  `mapOffset`, which carries a caret or the top of the pane across it.
 - `src/MathTex.{h,cpp}`: the TeX side of the Markdown preview's math,
   doing no I/O: which formulas may share a batch, how one is rewritten for
   LaTeX, the batch document (a page per formula) and reading tectonic's
@@ -204,6 +212,8 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 - `src/Appearance.{h,mm}` — "Adjust Settings…" for context menus
   (`MCAddAdjustSettingsItem`), the View submenu, `MCSurfaceTextField`, and
   the opacity slider popover. See "Adjust Settings…" in the UI map.
+- `src/FormatRunner.{h,mm}` — runs the planned formatter (`MCFormatText`):
+  finds it, pipes the buffer through it off the main thread, times it out.
 - `src/Demo.{h,mm}` — demo scenes and the window recorder behind
   `make demos`. Inert unless `MINICODE_DEMO` is set; two one-line hooks in
   `main.mm`. `tools/makegif.m` turns the recorded frames into a GIF.
@@ -754,8 +764,8 @@ task lists, so files stay portable.
   line. Sessions are off under `MINICODE_DEMO` and `MINICODE_BENCH`, and
   `MINICODE_DEFAULTS_SUITE` points them at a scratch suite for tests.
 - **Touch points for merges**: `relayoutRightArea` has two lines (the strip
-  takes the top of the editor's slot through `layoutTabStripIn:`; the
-  browser keeps the whole slot), `applySettings` one.
+  takes the top of the editor's side through `layoutTabStripIn:`; the
+  browser beside it keeps its whole height), `applySettings` one.
 - **Verified** with an offscreen harness (152 checks): main.mm included with
   `main` renamed; `makeKeyAndOrderFront:`/`orderFront:` swizzled, and
   `-[NSApplication keyWindow]`/`mainWindow` swizzled to return the test
@@ -771,6 +781,69 @@ task lists, so files stay portable.
   the target is laid out first. Needs the user's eyes: the strip's look,
   hover, tooltips, scrolling with many tabs, a real middle click, and the
   quit prompt. The GTK and Android ports have no tabs yet.
+
+## Formatting (Mac, 2026-10-20)
+
+Shift+Option+F (Edit > Format Document, `formatDocument:`) pipes the buffer
+through an external formatter; nothing is bundled.
+
+- **Which one.** `format.<python|cpp|go|rust|shell>` in the settings is a
+  whole command line like `lsp.*` (`{file}` is the path; `off` disables) and
+  runs exactly as written. Unset, the nearest folder (up to the open folder or
+  a `.git`) with a formatter's config decides: `[tool.pyink]`, `.style.yapf`,
+  `[yapf]` in setup.cfg, `[tool.black]`, ruff.toml or `[tool.ruff.format]`,
+  `.clang-format`, rustfmt.toml, an `.editorconfig` with a shell section. That
+  tool runs with no style flags, and if it is missing the user is told to
+  install it; another tool would restyle the project. With no config, the
+  Google defaults: `clang-format --style=file --fallback-style=Google`
+  (C-family incl. Java, JS/TS, proto, C#), pyink then yapf `--style=google`,
+  gofmt, rustfmt with Cargo.toml's edition, `shfmt -i 2 -ci -bn`. Python
+  defaults to Google's *published* guide (4 spaces, 80 columns, consistent
+  quotes: pyink `--line-length 80 --pyink-use-majority-quotes`), which yapf's
+  google style also follows; Google's internal 2-space is
+  `--pyink-indentation 2`. No LSP `textDocument/formatting` fallback: clangd
+  falls back to LLVM style and pylsp to autopep8, and the servers' own
+  formatters sit on the same search path anyway.
+- **Finding and running.** `MCFindProgram` (never /usr/bin's xcrun shims;
+  clang-format comes from the command line tools), with `.venv/bin` and
+  `venv/bin` from the file's folder up to the root first for Python. stdin
+  in, stdout out, cwd the file's folder, PATH widened, `PYTHONUTF8=1`, 10 s
+  then SIGTERM and SIGKILL. Non-zero exit, empty output for non-empty input,
+  or non-UTF-8 output leaves the buffer alone and shows the first 6 lines of
+  stderr in a popover by the caret (paths shortened to the file name).
+  Planning uses symlink-resolved path and root, since the tree can say /tmp
+  where a file says /private/tmp.
+- **Applying** (`replaceSourceWithText:actionName:`): `LineDiff` hunks,
+  applied last to first through shouldChangeText/didChangeText inside one
+  undo group, so the highlighter, the LSP and dirty see ordinary edits. The
+  caret and the character at the top of the pane are mapped by counting
+  non-whitespace characters within a hunk. Hunks with only blank lines
+  between them are joined: a blank line matches any other, and without that
+  the diff split "def h(x,y):" and "def h(x, y):" into different hunks and
+  the caret jumped. A result for text that changed meanwhile is dropped
+  (generation count plus string compare). A selection passes its lines to
+  clang-format (`--lines`), yapf (`--lines`) and pyink/black
+  (`--line-ranges`); others format the whole file. Undo selects what it
+  restored, so pressing the key right after an undo formats only that.
+- **The key.** No Command, so it is also a character (Ï on US). The local
+  key monitor in main.mm hands it to the first responder when that is a
+  text input other than the editor's CodeTextView or a TerminalGridView, so
+  the terminal, commit box and find fields still type it.
+- `format.on-save` (off): Cmd+S (a non-nil sender) formats, then saves in
+  the completion; saves MiniCode makes itself (nil sender) never wait.
+- **Verified** (2026-10-20) with an offscreen harness that includes
+  `main.mm` (61 checks) against pyink 26.5.1 and yapf 0.43.0 in a scratch
+  venv and the command line tools' clang-format 21: the key event built
+  with `CGEventCreateKeyboardEvent` matching the menu (Option+F and
+  Cmd+Shift+F not), output equal to the tools run by hand, one undo, the
+  caret on the same token, the line at the top of the pane staying put, the
+  keyword color in a changed line, already formatted, a syntax error's
+  note, typing during a run, a project `.clang-format`, a selection,
+  missing shfmt, `off`, a preview refused, a settings command, the yapf
+  fallback from a venv, format on save, a 10 s timeout killing the
+  process, and the key typing Ï in another text view. Popover pictures
+  were looked at. Needs the user: the popover on a real screen and a real
+  Shift+Option+F from the keyboard.
 
 ## LSP (read before touching it)
 

@@ -172,6 +172,14 @@ public:
     // The language an extension's run command is listed under: python for
     // py, sh for bash, and so on; the extension itself otherwise.
     static std::string runLanguage(const std::string& extension);
+    // Format Document. format.<lang> (python, cpp, go, rust, shell; see
+    // Formatter.h) is a whole command line like lsp.*, "" when the file
+    // names none, so the project's configuration and then Google's style
+    // apply. format.on-save formats before Cmd+S writes the file (off by
+    // default).
+    std::string formatCommand(const std::string& lang) const;
+    bool formatOnSave() const { return formatOnSave_; }
+    static const std::vector<std::string>& formatLanguages();
 
 private:
     struct SurfaceSettings {
@@ -192,6 +200,8 @@ private:
     std::map<std::string, std::string> lspCommands_;
     bool runInNewTerminal_ = false;
     std::map<std::string, std::string> runCommands_;
+    std::map<std::string, std::string> formatCommands_;
+    bool formatOnSave_ = false;
 
     bool apply(const std::string& key, const std::string& value,
                std::string& error);

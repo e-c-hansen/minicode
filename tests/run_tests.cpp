@@ -19,6 +19,8 @@
 #include "GitStatus.h"
 #include "GitGraph.h"
 #include "EditorTabs.h"
+#include "Formatter.h"
+#include "LineDiff.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -2990,8 +2992,9 @@ void testSettings() {
     // Every documented key, uncommented, is one the parser accepts, and its
     // documented value is the real default.
     std::string keys = uncommentKeys(Settings::defaultFileText());
-    // Window, panel, syntax, markdown (colors, web images, math) and lsp keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 47);
+    // Window, panel, syntax, markdown (colors, web images, math), lsp, run and
+    // format keys.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 52);
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -3019,6 +3022,16 @@ void testSettings() {
         CHECK(!cmds.empty() && un.lspCommand(server) == cmds[0]);
         CHECK(d.lspCommand(server).empty());
     }
+    // The documented formatters are each language's first Google-style tool.
+    CHECK(Settings::formatLanguages() == Formatter::languages());
+    for (const std::string &lang : Settings::formatLanguages()) {
+        CHECK(!Formatter::defaultCommand(lang).empty());
+        CHECK(un.formatCommand(lang) == Formatter::defaultCommand(lang));
+        CHECK(d.formatCommand(lang).empty());
+    }
+    CHECK(!d.formatOnSave());
+    CHECK(!parseSettings(std::string(Settings::defaultFileText()) +
+                         "format.on-save = false\n").formatOnSave());
 
     GROUP("settings:run");
     {
@@ -3143,6 +3156,25 @@ void testSettings() {
     CHECK(e5.size() == 3 && e5[0].line == 5 && e5[1].line == 6 && e5[2].line == 7);
     CHECK(!e5.empty() && e5[0].message.find("lsp.cobol") != std::string::npos);
     CHECK(parseSettings("").lspEnabled());
+
+    GROUP("settings:format");
+    std::vector<SettingsError> e8;
+    Settings fm = parseSettings(
+        "format.python = yapf --style=google  # yapf instead\n"        // 1
+        "format.cpp = \"/opt/my tools/clang-format\" --style=LLVM\n"   // 2
+        "format.go = off\n"                                           // 3
+        "format.cobol = cobfmt\n"                                     // 4 unknown
+        "format.rust =\n"                                             // 5 no value
+        "format.on-save = true\n"                                     // 6
+        "format.on-save = maybe\n",                                   // 7 not a bool
+        &e8);
+    CHECK(fm.formatCommand("python") == "yapf --style=google");
+    CHECK(fm.formatCommand("cpp") == "\"/opt/my tools/clang-format\" --style=LLVM");
+    CHECK(fm.formatCommand("go") == "off");
+    CHECK(fm.formatCommand("rust").empty() && fm.formatCommand("shell").empty());
+    CHECK(fm.formatOnSave());
+    CHECK(e8.size() == 3 && e8[0].line == 4 && e8[1].line == 5 && e8[2].line == 7);
+    CHECK(!e8.empty() && e8[0].message.find("format.cobol") != std::string::npos);
 
     GROUP("settings:web images");
     std::vector<SettingsError> e6;
@@ -5899,6 +5931,286 @@ static void testEditorTabs() {
     CHECK(labels({}).empty());
 }
 
+// ------------------------------------------------------------------ formatting
+namespace {
+
+std::u16string u16(const std::string &s) { return std::u16string(s.begin(), s.end()); }
+
+// A fake file system: path -> contents.
+Formatter::Fs fakeFs(const std::map<std::string, std::string> &files) {
+    Formatter::Fs fs;
+    fs.exists = [files](const std::string &p) { return files.count(p) > 0; };
+    fs.read = [files](const std::string &p) {
+        auto it = files.find(p);
+        return it == files.end() ? std::string() : it->second;
+    };
+    return fs;
+}
+
+}  // namespace
+
+void testFormatter() {
+    using namespace Formatter;
+    GROUP("format:languages");
+    CHECK(languageFor("/a/b/x.py") == "python");
+    CHECK(languageFor("/a/b/X.PYI") == "python");
+    CHECK(languageFor("/a/main.cpp") == "cpp");
+    CHECK(languageFor("/a/v.h") == "cpp");
+    CHECK(languageFor("/a/App.java") == "cpp");
+    CHECK(languageFor("/a/app.tsx") == "cpp");
+    CHECK(languageFor("/a/x.proto") == "cpp");
+    CHECK(languageFor("/a/x.mm") == "cpp");
+    CHECK(languageFor("/a/main.go") == "go");
+    CHECK(languageFor("/a/lib.rs") == "rust");
+    CHECK(languageFor("/a/run.sh") == "shell");
+    CHECK(languageFor("/a/notes.md").empty());
+    CHECK(languageFor("/a/Makefile").empty());
+    CHECK(languageFor("/a/.py").empty());       // a dotfile, not a .py
+    CHECK(languageFor("/a.d/x").empty());
+    CHECK(languages().size() == 5);
+    CHECK(displayName("cpp") == "C-family");
+
+    GROUP("format:plan defaults");
+    Fs empty = fakeFs({});
+    Plan p = plan("python", "", "/w/proj/pkg/a.py", "/w/proj", empty);
+    CHECK(!p.off && !p.fromSettings && p.configFile.empty());
+    CHECK(p.candidates.size() == 2);
+    CHECK(p.candidates.size() == 2 && p.candidates[0].program == "pyink" &&
+          p.candidates[1].program == "yapf");
+    CHECK(p.candidates.size() == 2 &&
+          p.candidates[0].command.find("--line-length 80") != std::string::npos &&
+          p.candidates[1].command == "yapf --style=google");
+    CHECK(p.installHint == "pipx install pyink");
+    Plan c = plan("cpp", "", "/w/proj/m.cc", "/w/proj", empty);
+    CHECK(c.candidates.size() == 1 && c.candidates[0].program == "clang-format" &&
+          c.candidates[0].command.find("--fallback-style=Google") != std::string::npos);
+    CHECK(plan("go", "", "/w/m.go", "/w", empty).candidates.size() == 1);
+    CHECK(plan("txt", "", "/w/m.txt", "/w", empty).candidates.empty());
+
+    GROUP("format:plan settings");
+    Plan s = plan("python", "  /opt/bin/yapf --style=pep8 ", "/w/a.py", "/w", empty);
+    CHECK(s.fromSettings && s.candidates.size() == 1 &&
+          s.candidates[0].program == "/opt/bin/yapf" &&
+          s.candidates[0].command == "/opt/bin/yapf --style=pep8" &&
+          s.installHint == "pipx install yapf");
+    CHECK(plan("python", "OFF", "/w/a.py", "/w", empty).off);
+    CHECK(plan("cpp", "none", "/w/a.c", "/w", empty).off);
+    Plan q = plan("cpp", "\"/opt/my tools/clang-format\" -style=LLVM", "/w/a.c", "/w", empty);
+    CHECK(q.candidates.size() == 1 && q.candidates[0].program == "/opt/my tools/clang-format");
+    // A project's configuration never overrides the settings.
+    Plan s2 = plan("python", "yapf", "/w/a.py", "/w",
+                   fakeFs({{"/w/pyproject.toml", "[tool.black]\n"}}));
+    CHECK(s2.candidates.size() == 1 && s2.candidates[0].command == "yapf" &&
+          s2.configFile.empty());
+
+    GROUP("format:plan project");
+    Plan pk = plan("python", "", "/w/proj/pkg/a.py", "/w/proj",
+                   fakeFs({{"/w/proj/pyproject.toml",
+                            "[project]\nname = 'x'\n\n[tool.pyink]\nline-length = 100\n"}}));
+    CHECK(pk.candidates.size() == 1 && pk.candidates[0].program == "pyink" &&
+          pk.candidates[0].projectStyle &&
+          pk.candidates[0].command.find("--line-length") == std::string::npos);
+    CHECK(pk.configFile == "/w/proj/pyproject.toml");
+    Plan bl = plan("python", "", "/w/proj/a.py", "/w/proj",
+                   fakeFs({{"/w/proj/pyproject.toml", "[tool.black]\nline-length = 88\n"}}));
+    CHECK(bl.candidates.size() == 1 && bl.candidates[0].program == "black" &&
+          bl.installHint == "pipx install black");
+    Plan yp = plan("python", "", "/w/proj/sub/a.py", "/w/proj",
+                   fakeFs({{"/w/proj/sub/.style.yapf", "[style]\nbased_on_style = pep8\n"},
+                           {"/w/proj/pyproject.toml", "[tool.pyink]\n"}}));
+    CHECK(yp.candidates.size() == 1 && yp.candidates[0].command == "yapf" &&
+          yp.configFile == "/w/proj/sub/.style.yapf");   // nearest folder wins
+    Plan sc = plan("python", "", "/w/a.py", "/w",
+                   fakeFs({{"/w/setup.cfg", "[metadata]\n[yapf]\nbased_on_style=google\n"}}));
+    CHECK(sc.candidates.size() == 1 && sc.candidates[0].program == "yapf");
+    Plan rf = plan("python", "", "/w/a.py", "/w",
+                   fakeFs({{"/w/pyproject.toml", "[tool.ruff.format]\nquote-style='single'\n"}}));
+    CHECK(rf.candidates.size() == 1 && rf.candidates[0].program == "ruff");
+    // A pyproject.toml that configures no formatter changes nothing.
+    Plan np = plan("python", "", "/w/a.py", "/w",
+                   fakeFs({{"/w/pyproject.toml", "[tool.ruff.lint]\nselect = ['E']\n"}}));
+    CHECK(np.candidates.size() == 2 && np.configFile.empty());
+    // The search stops at the open folder, and at a repository's top.
+    Plan above = plan("cpp", "", "/w/proj/m.cc", "/w/proj",
+                      fakeFs({{"/w/.clang-format", "BasedOnStyle: LLVM\n"}}));
+    CHECK(above.configFile.empty() && !above.candidates[0].projectStyle);
+    Plan repo = plan("cpp", "", "/w/proj/sub/m.cc", "",
+                     fakeFs({{"/w/proj/sub/.git", ""}, {"/w/proj/.clang-format", ""}}));
+    CHECK(repo.configFile.empty());
+    Plan cf = plan("cpp", "", "/w/proj/src/m.cc", "/w/proj",
+                   fakeFs({{"/w/proj/.clang-format", "BasedOnStyle: LLVM\n"}}));
+    CHECK(cf.configFile == "/w/proj/.clang-format" && cf.candidates[0].projectStyle);
+    Plan sh = plan("shell", "", "/w/x.sh", "/w",
+                   fakeFs({{"/w/.editorconfig", "root = true\n[*.py]\nindent_size = 4\n"}}));
+    CHECK(sh.configFile.empty() && sh.candidates[0].command.find("-i 2") != std::string::npos);
+    Plan sh2 = plan("shell", "", "/w/x.sh", "/w",
+                    fakeFs({{"/w/.editorconfig", "[*.{sh,bash}]\nindent_size = 4\n"}}));
+    CHECK(sh2.configFile == "/w/.editorconfig" &&
+          sh2.candidates[0].command == "shfmt --filename {file}");
+    Plan rs = plan("rust", "", "/w/crate/src/lib.rs", "/w",
+                   fakeFs({{"/w/crate/Cargo.toml",
+                            "[package]\nname = \"x\"\nedition = \"2024\"\n"}}));
+    CHECK(rs.candidates.size() == 1 && rs.candidates[0].command == "rustfmt --edition 2024");
+
+    GROUP("format:project files");
+    CHECK(tomlHasTable("[tool.pyink]\n", "tool.pyink"));
+    CHECK(tomlHasTable("  [ tool . pyink ]  # comment\n", "tool.pyink"));
+    CHECK(tomlHasTable("[tool.\"pyink\"]\n", "tool.pyink"));
+    CHECK(tomlHasTable("[tool.ruff.format]\n", "tool.ruff"));
+    CHECK(!tomlHasTable("[tool.pyinkx]\n", "tool.pyink"));
+    CHECK(!tomlHasTable("# [tool.pyink]\nx = '[tool.pyink]'\n", "tool.pyink"));
+    CHECK(iniHasSection("[metadata]\n[YAPF]\n", "yapf"));
+    CHECK(!iniHasSection("[yapf.x]\n", "yapf"));
+    CHECK(cargoEdition("[package]\nname = \"a\"\nedition = \"2018\" # old\n") == "2018");
+    CHECK(cargoEdition("[package]\nname = \"a\"\n") == "2021");
+    CHECK(cargoEdition("[dependencies]\nedition = \"2015\"\n") == "2021");
+    CHECK(cargoEdition("[package]\neditions = \"2015\"\n") == "2021");
+    CHECK(editorconfigCoversShell("[*]\nindent_style = space\n"));
+    CHECK(editorconfigCoversShell("[*.bash]\n"));
+    CHECK(!editorconfigCoversShell("root = true\n[*.{js,py}]\n"));
+
+    GROUP("format:venv");
+    std::vector<std::string> v = venvBinDirs("/w/proj/pkg/a.py", "/w/proj", "/env/x");
+    CHECK(v.size() == 5);
+    CHECK(v.size() == 5 && v[0] == "/w/proj/pkg/.venv/bin" && v[1] == "/w/proj/pkg/venv/bin" &&
+          v[2] == "/w/proj/.venv/bin" && v[3] == "/w/proj/venv/bin" && v[4] == "/env/x/bin");
+    CHECK(venvBinDirs("/w/a.py", "/w/", "/w/.venv").size() == 2);   // no duplicate
+    std::vector<std::string> out = venvBinDirs("/elsewhere/x/a.py", "/w", "");
+    CHECK(out.size() == 2 && out[0] == "/elsewhere/x/.venv/bin");
+    CHECK(venvBinDirs("/wx/a.py", "/w", "").size() == 2);   // /wx is not inside /w
+
+    GROUP("format:arguments");
+    std::vector<std::string> a = arguments(
+        "clang-format --style=file --assume-filename={file}", "/my dir/it's \"x\".cc");
+    CHECK(a.size() == 3 && a[2] == "--assume-filename=/my dir/it's \"x\".cc");
+    std::vector<std::string> q2 = arguments("'/opt/my tools/yapf' --style=google", "/a.py");
+    CHECK(q2.size() == 2 && q2[0] == "/opt/my tools/yapf");
+    std::vector<std::string> two = arguments("tool {file}:{file}", "/x");
+    CHECK(two.size() == 2 && two[1] == "/x:/x");
+    bool ranged = true;
+    std::vector<std::string> r1 = arguments("clang-format --assume-filename={file}", "/a.c",
+                                            3, 7, &ranged);
+    CHECK(ranged && r1.size() == 3 && r1[2] == "--lines=3:7");
+    std::vector<std::string> r2 = arguments(
+        "pyink --quiet --stdin-filename {file} -", "/a.py", 2, 2, &ranged);
+    CHECK(ranged && r2.size() == 6 && r2[4] == "--line-ranges=2-2" && r2[5] == "-");
+    std::vector<std::string> r3 = arguments("/v/bin/yapf --style=google", "/a.py", 1, 4, &ranged);
+    CHECK(ranged && r3.back() == "--lines=1-4");
+    std::vector<std::string> r4 = arguments("gofmt", "/a.go", 1, 4, &ranged);
+    CHECK(!ranged && r4.size() == 1);
+    std::vector<std::string> r5 = arguments("yapf", "/a.py", 0, 0, &ranged);
+    CHECK(!ranged && r5.size() == 1);
+    CHECK(programName("/opt/homebrew/bin/clang-format") == "clang-format");
+
+    GROUP("format:errors");
+    std::string e = errorSummary(
+        "error: cannot format /w/p/a.py: Cannot parse: 1:6\n\n    def f(:\n         ^\n",
+        "", "/w/p/a.py");
+    CHECK(e == "error: cannot format a.py: Cannot parse: 1:6\n    def f(:\n         ^");
+    CHECK(errorSummary("<standard input>:2:12: expected ')'\n", "", "/x/m.go") ==
+          "m.go:2:12: expected ')'");
+    CHECK(errorSummary("  \n", "out line\n", "/x/a") == "out line");
+    CHECK(errorSummary("1\n2\n3\n4\n5\n6\n7\n8\n", "", "/x/a", 3) == "1\n2\n3\n…");
+    CHECK(errorSummary("", "", "/x/a").empty());
+}
+
+void testLineDiff() {
+    GROUP("linediff:hunks");
+    std::u16string a = u16("a\nb\nc\nd\ne\n");
+    CHECK(LineDiff::diff(a, a).empty());
+    std::u16string b = u16("a\nB\nc\nd\nE\nf\n");
+    std::vector<LineDiff::Hunk> h = LineDiff::diff(a, b);
+    CHECK(h.size() == 2);
+    CHECK(h.size() == 2 && h[0].oldLine == 1 && h[0].oldLines == 1 && h[0].newLines == 1 &&
+          h[0].oldStart == 2 && h[0].oldLength == 2);
+    CHECK(h.size() == 2 && h[1].oldLine == 4 && h[1].oldLines == 1 && h[1].newLines == 2);
+    CHECK(LineDiff::apply(a, b, h) == b);
+    // Insertions and deletions only.
+    std::u16string ins = u16("a\nx\ny\nb\nc\nd\ne\n");
+    h = LineDiff::diff(a, ins);
+    CHECK(h.size() == 1 && h[0].oldLines == 0 && h[0].newLines == 2 && h[0].oldStart == 2);
+    CHECK(LineDiff::apply(a, ins, h) == ins);
+    h = LineDiff::diff(ins, a);
+    CHECK(h.size() == 1 && h[0].oldLines == 2 && h[0].newLines == 0);
+    // No final newline, an empty side.
+    CHECK(LineDiff::apply(u16("x"), u16("x\n"), LineDiff::diff(u16("x"), u16("x\n"))) == u16("x\n"));
+    CHECK(LineDiff::apply(u16(""), u16("q\n"), LineDiff::diff(u16(""), u16("q\n"))) == u16("q\n"));
+    CHECK(LineDiff::apply(u16("q\n"), u16(""), LineDiff::diff(u16("q\n"), u16(""))) == u16(""));
+    // Too many edits for the cap: one hunk, still right.
+    std::u16string m1, m2;
+    for (int i = 0; i < 300; i++) {
+        m1 += u16("line " + std::to_string(i) + "\n");
+        m2 += u16("LINE " + std::to_string(i) + "\n");
+    }
+    h = LineDiff::diff(m1, m2, 50);
+    CHECK(h.size() == 1 && LineDiff::apply(m1, m2, h) == m2);
+    CHECK(LineDiff::apply(m1, m2, LineDiff::diff(m1, m2)) == m2);
+
+    GROUP("linediff:random");
+    std::mt19937 rng(7);
+    bool allOk = true, minimal = true;
+    for (int round = 0; round < 400; round++) {
+        std::vector<std::string> lines;
+        int n = rng() % 30;
+        for (int i = 0; i < n; i++) lines.push_back(std::string(1, char('a' + rng() % 5)));
+        std::vector<std::string> edited = lines;
+        int edits = rng() % 6;
+        for (int e = 0; e < edits; e++) {
+            int op = rng() % 3;
+            size_t at = edited.empty() ? 0 : rng() % (edited.size() + 1);
+            if (op == 0 || edited.empty())
+                edited.insert(edited.begin() + at, std::string(1, char('a' + rng() % 7)));
+            else if (at < edited.size() && op == 1) edited.erase(edited.begin() + at);
+            else if (at < edited.size()) edited[at] = "z";
+        }
+        std::u16string x, y;
+        for (auto &l : lines) x += u16(l + "\n");
+        for (auto &l : edited) y += u16(l + "\n");
+        if (rng() % 2 && !y.empty()) y.pop_back();   // sometimes no final newline
+        std::vector<LineDiff::Hunk> hh = LineDiff::diff(x, y);
+        if (LineDiff::apply(x, y, hh) != y) allOk = false;
+        size_t changed = 0;
+        for (auto &k : hh) changed += k.oldLines + k.newLines;
+        // An edit costs at most 2 changed lines (a replacement), and losing
+        // the final newline 2 more.
+        if (changed > (size_t)(2 * edits + 2)) minimal = false;
+        for (size_t i = 1; i < hh.size(); i++)
+            if (hh[i].oldStart <= hh[i - 1].oldStart + hh[i - 1].oldLength) allOk = false;
+    }
+    CHECK(allOk);
+    CHECK(minimal);
+
+    GROUP("linediff:map");
+    // Outside hunks: shifted by what the hunks before gained.
+    std::u16string o = u16("def f( a,b ):\n    return a+b\nx = 1\n");
+    std::u16string n2 = u16("def f(a, b):\n  return a + b\n\n\nx = 1\n");
+    h = LineDiff::diff(o, n2);
+    CHECK(LineDiff::apply(o, n2, h) == n2);
+    size_t xo = o.find(u"x = 1"), xn = n2.find(u"x = 1");
+    CHECK(LineDiff::mapOffset(o, n2, h, xo) == xn);
+    CHECK(LineDiff::mapOffset(o, n2, h, xo + 4) == xn + 4);
+    CHECK(LineDiff::mapOffset(o, n2, h, o.size()) == n2.size());
+    // Inside: before the same character...
+    CHECK(LineDiff::mapOffset(o, n2, h, o.find(u"b ):")) == n2.find(u"b):"));
+    CHECK(LineDiff::mapOffset(o, n2, h, o.find(u"return")) == n2.find(u"return"));
+    CHECK(LineDiff::mapOffset(o, n2, h, o.find(u"+b")) == n2.find(u"+ b"));
+    // ...after it when the caret sat on whitespace...
+    CHECK(LineDiff::mapOffset(o, n2, h, o.find(u" ):")) == n2.find(u"):"));
+    // ...and in the indentation, at the same column of its line.
+    CHECK(LineDiff::mapOffset(o, n2, h, o.find(u"    return") + 1) == n2.find(u"  return") + 1);
+    // The end of a line stays the end of that line.
+    CHECK(LineDiff::mapOffset(o, n2, h, o.find(u"\n")) == n2.find(u"\n"));
+    CHECK(LineDiff::mapOffset(o, n2, h, 0) == 0);
+    // Blank lines the formatter added can pair with ones it kept; the hunks
+    // either side are joined, so the caret still finds its code.
+    std::u16string bo = u16("w = 0\ndef h(x,y):\n    return x+y\n\nu = 1\n");
+    std::u16string bn = u16("w = 0\n\n\ndef h(x, y):\n    return x + y\n\n\nu = 1\n");
+    h = LineDiff::diff(bo, bn);
+    CHECK(h.size() == 1 && LineDiff::apply(bo, bn, h) == bn);
+    CHECK(LineDiff::mapOffset(bo, bn, h, bo.find(u"return")) == bn.find(u"return"));
+    CHECK(LineDiff::mapOffset(bo, bn, h, bo.find(u"u = 1")) == bn.find(u"u = 1"));
+}
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
@@ -5933,6 +6245,8 @@ int main() {
     testGitDiff();
     testGitGraph();
     testEditorTabs();
+    testFormatter();
+    testLineDiff();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
