@@ -1334,6 +1334,8 @@ class MainActivity : AppCompatActivity() {
         mdRedo.clear()
         // Return continues a Markdown list, and the title counts its tasks.
         ui.editor.markdownLists = isMarkdown(file.name)
+        // Enter, Tab and Backspace follow the file's language.
+        ui.editor.fileName = file.name ?: ""
         countTasks()
         // Markdown and LaTeX open rendered, as they do in the other ports,
         // unless the file is empty: a blank preview looks like nothing opened.
@@ -1647,6 +1649,28 @@ class MainActivity : AppCompatActivity() {
         val (s, e) = edit.applyTo(t)
         ui.editor.setSelection(s, e)
         countTasks()
+    }
+
+    /**
+     * Leader J, and ⋮ Sort lines: the selected lines sorted, or with no
+     * selection the keep-sorted block the caret is in. ⋮ Sort keep-sorted
+     * blocks (`all`): every block in the file. One replacement each, so one
+     * undo step; the caret stays on its line.
+     */
+    private fun sortLines(all: Boolean) {
+        if (currentFile == null || showingMedia || showingDiff || !ui.editor.isShown) {
+            say("Lines are sorted in the editor.")
+            return
+        }
+        val t = ui.editor.text ?: return
+        val a = maxOf(0, minOf(ui.editor.selectionStart, ui.editor.selectionEnd))
+        val b = maxOf(0, maxOf(ui.editor.selectionStart, ui.editor.selectionEnd))
+        val sorted = Editing.sort(t.toString(), a, b, all)
+        sorted.edit?.let {
+            val (s, e) = it.applyTo(t)
+            ui.editor.setSelection(s, e)
+        }
+        if (sorted.message.isNotEmpty()) say(sorted.message)
     }
 
     /** Done and total tasks in the open Markdown file, or null: the title shows them. */
@@ -2358,6 +2382,8 @@ class MainActivity : AppCompatActivity() {
         // file (Ctrl+L, as on the desktop); W lists what is left to do.
         'l' to { toggleTaskInSource() },
         'w' to { toggleTodos() },
+        // J sorts the selected lines, or the keep-sorted block at the caret.
+        'j' to { sortLines(all = false) },
     )
 
     /**
@@ -2472,7 +2498,7 @@ class MainActivity : AppCompatActivity() {
                             "Undo", "Redo", "Shell: " + when (shellChoice()) {
                                 "termux" -> "Termux"; "system" -> "Android"; else -> "automatic" },
                             "Web images in Markdown: " + if (WebImages.enabled) "on" else "off",
-                            "Toggle task", "TODOs")
+                            "Toggle task", "TODOs", "Sort lines", "Sort keep-sorted blocks")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setItems(items) { _, which ->
                 when (which) {
@@ -2495,6 +2521,8 @@ class MainActivity : AppCompatActivity() {
                     16 -> toggleWebImages()
                     17 -> toggleTaskInSource()
                     18 -> toggleTodos()
+                    19 -> sortLines(all = false)
+                    20 -> sortLines(all = true)
                 }
             }
             .show()
@@ -2843,6 +2871,9 @@ class MainActivity : AppCompatActivity() {
             "       caret's lines, in Markdown",
             "W      TODOs and open tasks in the",
             "       project (W again: files)",
+            "J      Sort the selected lines, or",
+            "       the keep-sorted block at the",
+            "       caret (⋮ also sorts them all)",
             "",
             "In the Markdown preview: tap a link",
             "to follow it, tap a task's box to",

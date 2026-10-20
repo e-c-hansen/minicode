@@ -19,12 +19,15 @@ add_library(minicode SHARED
     lsp_jni.cpp
     links_jni.cpp
     git_jni.cpp
+    editing_jni.cpp
     ${CORE}/SyntaxHighlighter.cpp
     ${CORE}/MarkdownParser.cpp
     ${CORE}/MarkdownEdit.cpp
     ${CORE}/MarkdownTasks.cpp
     ${CORE}/FolderSearch.cpp
     ${CORE}/LineComments.cpp
+    ${CORE}/AutoIndent.cpp
+    ${CORE}/KeepSorted.cpp
     ${CORE}/Settings.cpp
     ${CORE}/TerminalStream.cpp
     ${CORE}/TerminalScreen.cpp

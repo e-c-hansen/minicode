@@ -373,7 +373,13 @@ static void showError(App* app, const std::string& message, const std::string& d
 
 // Save, and tell the user if that failed. The editor leaves the buffer marked
 // unsaved on failure, so the title keeps its "*".
+static void flashStatus(App* app, const std::string& message);
+
 static bool saveCurrent(App* app) {
+    // editor.keep-sorted-on-save: the blocks are sorted first, one undo step.
+    std::string sortProblem;
+    if (g.settings->settings().keepSortedOnSave())
+        sortProblem = app->editor->sortBlocksBeforeSave();
     std::string err;
     const bool ok = app->editor->save(&err);
     updateTitle(app);
@@ -381,7 +387,30 @@ static bool saveCurrent(App* app) {
     if (!ok)
         showError(app, "Could not save “" + baseName(app->editor->currentPath()) + "”",
                   err + "\n\nYour changes are still here, unsaved.");
+    else if (!sortProblem.empty())
+        flashStatus(app, sortProblem);
     return ok;
+}
+
+// A message in the status bar for a few seconds, then what it said before.
+static void flashStatus(App* app, const std::string& message) {
+    if (message.empty()) return;
+    struct Flash {
+        GtkWidget* label;
+        std::string message, before;
+    };
+    auto* f = new Flash{app->statusLabel, message, gtk_label_get_text(GTK_LABEL(app->statusLabel))};
+    g_object_ref(f->label);
+    gtk_label_set_text(GTK_LABEL(f->label), message.c_str());
+    g_timeout_add_seconds(6, [](gpointer p) -> gboolean {
+        auto* f = static_cast<Flash*>(p);
+        // Unless something else has been written there since.
+        if (f->message == gtk_label_get_text(GTK_LABEL(f->label)))
+            gtk_label_set_text(GTK_LABEL(f->label), f->before.c_str());
+        g_object_unref(f->label);
+        delete f;
+        return G_SOURCE_REMOVE;
+    }, f);
 }
 
 namespace {
@@ -728,6 +757,24 @@ static void act_toggle_task(GSimpleAction*, GVariant*, gpointer userp) {
     GtkWidget* view = app->editor->textView();
     if (!gtk_widget_has_focus(view) || !app->editor->toggleTask())
         gtk_widget_error_bell(view);
+}
+
+// F9: sort the selected lines, or the keep-sorted block around the caret.
+// Shift+F9: every keep-sorted block in the file. In the terminal F9 is the
+// shell's (shellOwns).
+static void sortCommand(App* app, bool all) {
+    GtkWidget* view = app->editor->textView();
+    std::string message;
+    const bool ok = gtk_widget_has_focus(view) &&
+                    (all ? app->editor->fixKeepSorted(&message) : app->editor->sortLines(&message));
+    if (!ok) gtk_widget_error_bell(view);
+    flashStatus(app, message);
+}
+static void act_sort_lines(GSimpleAction*, GVariant*, gpointer userp) {
+    sortCommand(static_cast<App*>(userp), false);
+}
+static void act_fix_keep_sorted(GSimpleAction*, GVariant*, gpointer userp) {
+    sortCommand(static_cast<App*>(userp), true);
 }
 
 // Ctrl+, : open the settings file, writing the commented defaults first.
@@ -1474,6 +1521,9 @@ static std::string hintsText(App* app) {
     s += "Ctrl Shift F   Find in folder\n";
     s += "Ctrl Shift L   TODOs in folder\n";
     s += "Ctrl /         Toggle comment\n";
+    s += "Tab, Shift Tab Indent, outdent lines\n";
+    s += "F9             Sort lines\n";
+    s += "Shift F9       Sort keep-sorted blocks\n";
     s += "Ctrl ,         Settings\n";
     s += "Ctrl 0         Focus the file tree\n";
     s += "Ctrl 1         Focus the editor\n";
@@ -1720,6 +1770,8 @@ static const Bind kBinds[] = {
     // Ctrl+L is the shell's in the terminal (clear screen): shellOwns takes
     // it off there like every plain Ctrl key.
     {"win.toggletask",     {"<Ctrl>l"}},
+    {"win.sortlines",      {"F9"}},
+    {"win.fixkeepsorted",  {"<Shift>F9"}},
     {"win.todos",          {"<Ctrl><Shift>l"}},
     {"win.settings",       {"<Ctrl>comma"}},
     {"win.togglebrowser",  {"<Ctrl><Shift>b"}},
@@ -1864,6 +1916,8 @@ static void buildMenu() {
     GMenu* code = g_menu_new();
     g_menu_append(code, "Toggle Comment", "win.togglecomment");
     g_menu_append(code, "Toggle Task", "win.toggletask");
+    g_menu_append(code, "Sort Lines", "win.sortlines");
+    g_menu_append(code, "Sort keep-sorted Blocks", "win.fixkeepsorted");
     g_menu_append(code, "Complete", "win.complete");
     g_menu_append(code, "Go to Definition", "win.definition");
     g_menu_append(code, "Show Hover Info", "win.hoverinfo");
@@ -2218,6 +2272,8 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "previousfile",   G_CALLBACK(act_previous_file));
     addAction(app, "togglecomment",  G_CALLBACK(act_toggle_comment));
     addAction(app, "toggletask",     G_CALLBACK(act_toggle_task));
+    addAction(app, "sortlines",      G_CALLBACK(act_sort_lines));
+    addAction(app, "fixkeepsorted",  G_CALLBACK(act_fix_keep_sorted));
     addAction(app, "todos",          G_CALLBACK(act_todos));
     addAction(app, "settings",       G_CALLBACK(act_settings));
     addAction(app, "zoomin",         G_CALLBACK(act_zoom_in));
