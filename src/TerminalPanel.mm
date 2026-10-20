@@ -2,6 +2,7 @@
 #import "TerminalPanel.h"
 #import "AppSettings.h"
 #import "TabStrip.h"
+#import "TerminalGridView.h"
 
 @class MCTerminalStripButtons;
 
@@ -219,9 +220,33 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
     return t;
 }
 
+// A split is refused when each pane of the shown tab would be under this many
+// columns: a 2-column shell is no use, and a split nobody can read is worse
+// than a beep. A window made narrower later narrows the panes as they are;
+// each pty still follows its pane down to 2 columns (TerminalView
+// updateWindowSize), so nothing runs off a pane's edge.
+static const int kMinSplitColumns = 20;
+
+- (BOOL)roomForPanes:(NSUInteger)n {
+    CGFloat W = self.bounds.size.width;
+    if (W <= 0 || n == 0) return YES;   // not laid out yet: nothing to judge by
+    CGFloat each = floor((W - (n - 1)) / n);
+    CGFloat cols = floor((each - 2 * [TerminalGridView padding]) /
+                         [TerminalGridView cellSize].width);
+    return cols >= kMinSplitColumns;
+}
+
 - (TerminalView *)splitActive {
     if (_selected < 0) return [self addTab];
     NSMutableArray<TerminalView *> *tab = _tabs[_selected];
+    if (![self roomForPanes:tab.count + 1]) {
+        NSBeep();
+        if (self.onNote)
+            self.onNote([NSString stringWithFormat:@"No room to split: each terminal would be "
+                                                    "narrower than %d columns",
+                                                    kMinSplitColumns]);
+        return nil;
+    }
     TerminalView *t = [self makeTerminal];
     NSUInteger at = [tab indexOfObject:self.activeTerminal];
     [tab insertObject:t atIndex:at == NSNotFound ? tab.count : at + 1];
