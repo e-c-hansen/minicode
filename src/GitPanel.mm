@@ -651,8 +651,10 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 @implementation MCCommitTextView
 - (BOOL)isCommandReturn:(NSEvent *)e {
     NSEventModifierFlags m = e.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
+    // Not with Shift: Shift+Cmd+Return is Run File.
     return (m & NSEventModifierFlagCommand) &&
-           !(m & (NSEventModifierFlagControl | NSEventModifierFlagOption)) &&
+           !(m & (NSEventModifierFlagControl | NSEventModifierFlagOption |
+                  NSEventModifierFlagShift)) &&
            (e.keyCode == 36 || e.keyCode == 76);
 }
 - (BOOL)performKeyEquivalent:(NSEvent *)e {

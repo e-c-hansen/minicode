@@ -41,6 +41,14 @@
         BOOL ctrl = (m & NSEventModifierFlagControl) != 0;
         BOOL opt = (m & NSEventModifierFlagOption) != 0;
         NSString *ch = e.charactersIgnoringModifiers.lowercaseString;
+        BOOL shift = (m & NSEventModifierFlagShift) != 0;
+        // Ctrl+Shift+` (a new terminal) by the key's position, since Shift
+        // turns its character into ~ on most layouts.
+        if (ctrl && shift && !cmd && !opt &&
+            (e.keyCode == 50 || [ch isEqualToString:@"~"])) {
+            [c newTerminal:nil];
+            return nil;
+        }
         if (ctrl && !cmd && !opt && [ch isEqualToString:@"`"]) {
             [c toggleTerminal:nil];
             return nil;   // consume
@@ -251,6 +259,12 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
 - (void)togglePlayback:(id)sender  { [[self current] togglePlayback:sender]; }
 - (void)toggleHints:(id)sender     { [[self current] toggleHints:sender]; }
 - (void)toggleTerminal:(id)sender  { [[self current] toggleTerminal:sender]; }
+- (void)newTerminal:(id)sender     { [[self current] newTerminal:sender]; }
+- (void)splitTerminal:(id)sender   { [[self current] splitTerminal:sender]; }
+- (void)nextTerminal:(id)sender    { [[self current] nextTerminal:sender]; }
+- (void)previousTerminal:(id)sender { [[self current] previousTerminal:sender]; }
+- (void)closeTerminal:(id)sender   { [[self current] closeTerminal:sender]; }
+- (void)runCurrentFile:(id)sender  { [[self current] runCurrentFile:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
 - (void)toggleSidebar:(id)sender   { [[self current] toggleSidebar:sender]; }
 - (void)toggleSourceControl:(id)sender { [[self current] toggleSourceControl:sender]; }
@@ -511,6 +525,54 @@ static void BuildMenu(void) {
     [viewMenu addItem:play];
 
     viewItem.submenu = viewMenu;
+
+    // Terminal menu: several terminals, and running the open file in one.
+    NSMenuItem *termItem = [[NSMenuItem alloc] init];
+    [menubar addItem:termItem];
+    NSMenu *termMenu = [[NSMenu alloc] initWithTitle:@"Terminal"];
+    // Ctrl+Shift+` as in VS Code; the key monitor above catches it, since a
+    // shifted backtick is no clean key equivalent. Shown here for reference.
+    NSMenuItem *newTerm =
+        [[NSMenuItem alloc] initWithTitle:@"New Terminal"
+                                   action:@selector(newTerminal:)
+                            keyEquivalent:@"`"];
+    newTerm.keyEquivalentModifierMask =
+        NSEventModifierFlagControl | NSEventModifierFlagShift;
+    [termMenu addItem:newTerm];
+    [termMenu addItemWithTitle:@"Split Terminal"
+                        action:@selector(splitTerminal:)
+                 keyEquivalent:@"\\"];
+    NSMenuItem *nextTerm =
+        [[NSMenuItem alloc] initWithTitle:@"Next Terminal"
+                                   action:@selector(nextTerminal:)
+                            keyEquivalent:@"]"];
+    nextTerm.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    [termMenu addItem:nextTerm];
+    NSMenuItem *prevTerm =
+        [[NSMenuItem alloc] initWithTitle:@"Previous Terminal"
+                                   action:@selector(previousTerminal:)
+                            keyEquivalent:@"["];
+    prevTerm.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    [termMenu addItem:prevTerm];
+    NSMenuItem *closeTerm =
+        [[NSMenuItem alloc] initWithTitle:@"Close Terminal"
+                                   action:@selector(closeTerminal:)
+                            keyEquivalent:@"w"];
+    closeTerm.keyEquivalentModifierMask =
+        NSEventModifierFlagControl | NSEventModifierFlagShift;
+    [termMenu addItem:closeTerm];
+    [termMenu addItem:[NSMenuItem separatorItem]];
+    // Not Cmd+Return, which commits in the git panel's message box.
+    NSMenuItem *runFile =
+        [[NSMenuItem alloc] initWithTitle:@"Run File"
+                                   action:@selector(runCurrentFile:)
+                            keyEquivalent:@"\r"];
+    runFile.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [termMenu addItem:runFile];
+    termItem.submenu = termMenu;
 
     // Navigate menu — keyboard-driven movement.
     NSMenuItem *navItem = [[NSMenuItem alloc] init];

@@ -22,7 +22,7 @@ LDFLAGS  := -framework Cocoa -framework WebKit -framework CoreServices \
 # The pure-C++ core, testable on its own (no frameworks, no Objective-C).
 CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.cpp \
             src/TerminalScreen.cpp \
-            src/Settings.cpp src/LineComments.cpp \
+            src/Settings.cpp src/RunFile.cpp src/LineComments.cpp \
             src/LatexDoc.cpp src/SyncTex.cpp src/Json.cpp src/LspClient.cpp \
             src/TermLinks.cpp src/FolderSearch.cpp src/MarkdownEdit.cpp src/MarkdownTasks.cpp \
             src/GitStatus.cpp src/GitGraph.cpp src/MathTex.cpp

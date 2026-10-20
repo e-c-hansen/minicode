@@ -9,6 +9,7 @@
 #include "TerminalStream.h"
 #include "TerminalScreen.h"
 #include "Settings.h"
+#include "RunFile.h"
 #include "LineComments.h"
 #include "LatexDoc.h"
 #include "SyncTex.h"
@@ -35,6 +36,7 @@
 #include <vector>
 #ifndef _WIN32
 #include <sys/stat.h>   // mkfifo, for the folder search test
+#include <unistd.h>     // getpid, for scratch folder names
 #endif
 
 // --------------------------------------------------------------- tiny harness
@@ -2988,7 +2990,7 @@ void testSettings() {
     // documented value is the real default.
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math) and lsp keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 41);
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 47);
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -3008,10 +3010,116 @@ void testSettings() {
     CHECK(un.lspEnabled() == d.lspEnabled());
     CHECK(un.webImages() == d.webImages());
     CHECK(un.math() == d.math());
+    CHECK(un.runInNewTerminal() == d.runInNewTerminal());
+    for (const char *ext : {"py", "sh", "go", "js", "rb", "pyw", "bash", "mjs", "txt", "c"})
+        CHECK(un.runTemplate(ext) == d.runTemplate(ext));
     for (const std::string &server : Settings::lspServers()) {
         std::vector<std::string> cmds = Lsp::defaultCommands(server);
         CHECK(!cmds.empty() && un.lspCommand(server) == cmds[0]);
         CHECK(d.lspCommand(server).empty());
+    }
+
+    GROUP("settings:run");
+    {
+        Settings rd = parseSettings("");
+        CHECK(!rd.runInNewTerminal());
+        CHECK(rd.runTemplate("py") == "{python} {file}");
+        CHECK(rd.runTemplate("PY") == "{python} {file}");
+        CHECK(rd.runTemplate("pyw") == "{python} {file}");
+        CHECK(rd.runTemplate("bash") == "bash {file}");
+        CHECK(rd.runTemplate("go") == "go run {file}");
+        CHECK(rd.runTemplate("txt").empty());
+        CHECK(rd.runTemplate("c").empty());
+        CHECK(rd.runTemplate("").empty());
+        CHECK(Settings::runLanguage("py") == "python");
+        CHECK(Settings::runLanguage("lua") == "lua");
+        std::vector<SettingsError> re;
+        Settings rs = parseSettings(
+            "run.terminal = new\n"                              // 1
+            "run.python = uv run {file}  # with uv\n"           // 2 whole line
+            "run.lua = lua5.4 {file}\n"                         // 3 a new language
+            "run.go = off\n"                                    // 4
+            "run.py = {python} -X dev {file}\n"                 // 5 extension wins
+            "run.terminal = sometimes\n"                        // 6 bad
+            "run.Bad Key = x\n"                                 // 7 bad key
+            "run.sh =\n",                                       // 8 no value
+            &re);
+        CHECK(rs.runInNewTerminal());
+        CHECK(rs.runTemplate("py") == "{python} -X dev {file}");
+        CHECK(rs.runTemplate("pyw") == "uv run {file}");
+        CHECK(rs.runTemplate("lua") == "lua5.4 {file}");
+        CHECK(rs.runTemplate("go").empty());
+        CHECK(rs.runTemplate("sh") == "bash {file}");
+        CHECK(re.size() == 3);
+        if (re.size() == 3) {
+            CHECK(re[0].line == 6 && re[1].line == 7 && re[2].line == 8);
+        }
+        CHECK(parseSettings("run.terminal = Current\n").runInNewTerminal() == false);
+    }
+
+    GROUP("runfile:quote");
+    CHECK(RunFile::shellQuote("/Users/me/proj/main.py") == "/Users/me/proj/main.py");
+    CHECK(RunFile::shellQuote("a b.py") == "'a b.py'");
+    CHECK(RunFile::shellQuote("it's.py") == "'it'\\''s.py'");
+    CHECK(RunFile::shellQuote("$HOME") == "'$HOME'");
+    CHECK(RunFile::shellQuote("x;rm -rf ~") == "'x;rm -rf ~'");
+    CHECK(RunFile::shellQuote("~/x") == "'~/x'");
+    CHECK(RunFile::shellQuote("") == "''");
+    CHECK(RunFile::shellQuote("caf\xC3\xA9.py") == "caf\xC3\xA9.py");
+
+    GROUP("runfile:expand");
+    {
+        std::map<std::string, std::string> v = {
+            {"python", "/p/.venv/bin/python"}, {"file", "/p/my app/main.py"},
+            {"dir", "/p/my app"}, {"root", "/p"}, {"name", "main.py"}};
+        CHECK(RunFile::expand("{python} {file}", v) ==
+              "/p/.venv/bin/python '/p/my app/main.py'");
+        CHECK(RunFile::expand("cd {dir} && {python} {name}", v) ==
+              "cd '/p/my app' && /p/.venv/bin/python main.py");
+        CHECK(RunFile::expand("echo {a,b} {unknown} {file", v) == "echo {a,b} {unknown} {file");
+        CHECK(RunFile::expand("", v).empty());
+    }
+
+    GROUP("runfile:venv");
+    {
+        namespace fs = std::filesystem;
+        fs::path base = fs::temp_directory_path() /
+            ("minicode-venv-test-" + std::to_string(::getpid()));
+        fs::remove_all(base);
+        auto python = [&](const fs::path &venv) {
+            fs::create_directories(venv / "bin");
+            std::ofstream(venv / "bin" / "python") << "#!/bin/sh\n";
+            fs::permissions(venv / "bin" / "python", fs::perms::owner_all);
+        };
+        fs::create_directories(base / "proj" / "pkg" / "sub");
+        fs::create_directories(base / "other");
+        std::string root = (base / "proj").string();
+        std::string deep = (base / "proj" / "pkg" / "sub" / "x.py").string();
+        CHECK(RunFile::findVirtualenvPython(deep, root).empty());
+        python(base / ".venv");   // above the root: never looked at
+        CHECK(RunFile::findVirtualenvPython(deep, root).empty());
+        python(base / "proj" / "env");
+        CHECK(RunFile::findVirtualenvPython(deep, root) == root + "/env/bin/python");
+        CHECK(RunFile::findVirtualenvPython(deep, root + "/") == root + "/env/bin/python");
+        python(base / "proj" / "pkg" / "venv");
+        CHECK(RunFile::findVirtualenvPython(deep, root) == root + "/pkg/venv/bin/python");
+        python(base / "proj" / "pkg" / ".venv");   // .venv before venv
+        CHECK(RunFile::findVirtualenvPython(deep, root) == root + "/pkg/.venv/bin/python");
+        // Not executable: not a python.
+        fs::create_directories(base / "proj" / "pkg" / "sub" / "venv" / "bin");
+        std::ofstream(base / "proj" / "pkg" / "sub" / "venv" / "bin" / "python") << "x";
+        fs::permissions(base / "proj" / "pkg" / "sub" / "venv" / "bin" / "python",
+                        fs::perms::owner_read | fs::perms::owner_write);
+        CHECK(RunFile::findVirtualenvPython(deep, root) == root + "/pkg/.venv/bin/python");
+        // A file outside the root looks only in its own folder.
+        std::string outside = (base / "other" / "y.py").string();
+        CHECK(RunFile::findVirtualenvPython(outside, root).empty());
+        python(base / "other" / "venv");
+        CHECK(RunFile::findVirtualenvPython(outside, root) ==
+              (base / "other" / "venv" / "bin" / "python").string());
+        // No root at all: the file's folder only.
+        CHECK(RunFile::findVirtualenvPython(deep, "").empty());
+        fs::remove_all(base);
     }
 
     GROUP("settings:lsp");

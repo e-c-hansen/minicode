@@ -175,8 +175,13 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 - `src/AppSettings.{h,mm}` — singleton that loads
   `~/.config/minicode/settings.conf` (or `$MINICODE_SETTINGS`), watches it,
   and posts `MCSettingsDidChangeNotification`.
-- `src/Terminal.{h,mm}` — shell panel: zsh on a pty via forkpty; a log view
+- `src/Terminal.{h,mm}` — one terminal: zsh on a pty via forkpty; a log view
   with a line input, swapped for the grid while a program needs a screen.
+- `src/TerminalPanel.{h,mm}` — the dock holding the terminals: tabs, panes
+  side by side in a tab, the active one. See "Several terminals".
+- `src/RunFile.{h,cpp}` (pure C++, tested) and `src/RunCommand.{h,mm}` —
+  Run File's quoting, templates and virtualenv search, and the command for
+  a file (`MCRunCommandForFile`, `MCPythonInterpreterFor`).
 - `src/TerminalGridView.{h,mm}` — draws a `TerminalScreen` and encodes keys
   (via `TerminalScreen::encodeKey`/`encodeChar`) straight to the pty.
 - `src/Browser.{h,mm}` — WKWebView panel.
@@ -212,7 +217,9 @@ container (PanelHost, laid out by hand in layoutContainer)
 │       ├── latex, imageView, pdfView, playerView,
 │       │   diffScroll                             editor's slot, in its place
 │       ├── browser (BrowserView)                  top right, beside the editor
-│       ├── terminal (TerminalView)                docked bottom, full width, bg #181818
+│       ├── terminalPanel (MCTerminalPanel)        docked bottom, full width
+│       │   ├── strip (MCTerminalTabStrip)         tabs, +, ◫; bg = terminal's
+│       │   └── TerminalView per terminal          bg #181818; a tab's side by side
 │       ├── browserDivider (DragBar, vertical)     editor | browser, kept on top
 │       └── termDivider (DragBar)                  kept topmost
 ├── status bar (buildStatusBarInContainer)        bottom strip
@@ -925,6 +932,62 @@ never closes.
   merged): see the section of that name below. Checked offscreen only;
   after a release the user should try Open With on a .md, a double-click
   once MiniCode is chosen in Get Info, and a drop on the Dock icon.
+
+## Several terminals and Run File (Mac, 2026-10-20)
+
+- **The dock is an `MCTerminalPanel`** (`terminalPanel`); `terminal` is now a
+  read-only getter for its active `TerminalView`, so older code and the demo
+  scenes' KVC (`atPrompt`, `gridMode`, `output`) still reach a terminal. It
+  is made by `makeTerminalPanel` with one terminal and dropped by
+  `terminalPanelEmptied` when its last terminal closes (the dock hides and
+  the editor, browser or tree gets the keyboard).
+- **Tabs and panes**: a 24-point strip on top, drawn by hand on the
+  terminal's own background (the terminals paint theirs, so a see-through
+  panel is painted once); the shown tab's terminals below in equal widths
+  with 1px #333333 lines between, no drag bar. Hidden tabs keep the same
+  frames (so their programs keep their size) and keep running. The active
+  terminal follows the keyboard (KVO on the window's `firstResponder`, and
+  checked again whenever asked); in a split tab a 2px accent line runs
+  along its bottom. Titles: the running command with paths cut to their
+  last part, else the folder's name (`TerminalView title`).
+- **Keys**: Ctrl+Shift+` new tab (caught by the key monitor in `main.mm` by
+  keyCode 50, since Shift makes it ~; the menu item only shows it), Cmd+\
+  split, Option+Cmd+] and [ next and previous across panes then tabs,
+  Ctrl+Shift+W close the active one. All in a new Terminal menu.
+  `closeFocusedTerminal` closes the terminal the keyboard is in and returns
+  NO when it is elsewhere, for a Cmd+W that closes whatever has focus.
+- **Closing** is `TerminalView close`: the flags monitor goes, then
+  `stopShell` (SIGHUP to zsh, the read source cancelled, which closes the
+  pty and reaps the shell); `_closed` stops a restart.
+- **Run File** (`runCurrentFile:`, Shift+Cmd+Return): the template comes
+  from `Settings::runTemplate(ext)` (run.<extension>, then run.<language>
+  via `runLanguage`, then the defaults python, sh, go, js, rb; `off`
+  removes one), filled by `RunFile::expand`, each value quoted by
+  `shellQuote`. `{python}` is `MCPythonInterpreterFor` (.venv, venv, env
+  with an executable bin/python from the file's folder up to the root,
+  else `python3`), the one function to point at an interpreter picker. A
+  dirty file is saved first. The command goes through `TerminalView
+  runCommand:`, which fills the input line and enters it (keeping a draft),
+  so it shows with the ❯ header and reaches zsh's history and the panel's
+  Up history; while the shell is still starting it waits for the first
+  prompt. `busy` (a command in flight per OSC 133, or one waiting) never
+  gets typed into: the file runs in a new tab and the status bar's left
+  side says so for 6 s (`showStatusNote:`). `run.terminal = new` always
+  opens a tab. The keyboard stays where it was, as in VS Code. The git
+  commit box's Cmd+Return now ignores Shift+Cmd+Return.
+- **Verified** offscreen (95 checks, real zsh with scratch HOME and
+  ZDOTDIR): tabs, a split's frames and focus, next and previous through
+  the menu, a hidden tab's command finishing with its output kept, OSC 7
+  and titles, a link in a split pane, less taking the grid in one pane
+  only, a settings change recoloring every terminal and the strip (pixels
+  equal across strip, log and input, opaque and at 0.6), closing by
+  focus, by Ctrl+Shift+W and the last one (shells gone, checked with
+  `kill(pid, 0)`), Ctrl+Shift+` through the real key monitor, Run File
+  through the menu (saved first, the venv's python, focus kept, the
+  command in `fc -l`, a busy terminal, run.terminal = new, a template with
+  a quoted path holding a space and a quote, no command for .txt, a shell
+  script). Needs a person: the strip's look, clicking its tabs, × and
+  buttons, and a real Python run.
 
 ## Opening from Finder and the Dock (Mac)
 
