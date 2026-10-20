@@ -27,6 +27,8 @@
 // character under the pointer and the click's point in the view. Returning
 // YES takes the click; NO lets it select a word as usual.
 @property(nonatomic, copy) BOOL (^onPreviewDoubleClick)(NSUInteger index, NSPoint point);
+// The keyboard left the view (the terminal, the tree, another window...).
+@property(nonatomic, copy) void (^onFocusLost)(void);
 // The message of the diagnostic covering a character, or nil.
 - (NSString *)diagnosticMessageAtIndex:(NSUInteger)index;
 // The line fragments a character range covers, in view coordinates.

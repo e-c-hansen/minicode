@@ -643,6 +643,21 @@ std::vector<CompletionItem> filterCompletions(const std::vector<CompletionItem>&
     return starts;
 }
 
+bool completionKeyAccepts(CompletionOrigin origin, bool navigated, CompletionKey key,
+                          bool selectedEqualsTyped) {
+    switch (key) {
+    case CompletionKey::Tab:
+        return true;
+    case CompletionKey::ShiftTab:
+        return false;
+    case CompletionKey::Return:
+        // A word typed out in full: Return is a new line whatever the list.
+        if (selectedEqualsTyped) return false;
+        return origin != CompletionOrigin::Typing || navigated;
+    }
+    return false;
+}
+
 // ------------------------------------------------------------------- client
 void Client::write(const Json& msg, bool beforeReadyOk) {
     if (state_ == State::Exited) return;

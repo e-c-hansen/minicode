@@ -77,7 +77,10 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
     NSInteger _selected;
     NSMutableArray<NSView *> *_separators;
     NSView *_activeMark;                          // under the active pane, when split
-    NSWindow *_observedWindow;
+    // Watched for its first responder. Weak: the window owns this view
+    // through its content view, and a strong reference here kept a closed
+    // window, the panel and every shell in it alive until the app quit.
+    __weak NSWindow *_observedWindow;
 }
 
 - (instancetype)initWithDirectory:(NSString *)dir {
@@ -116,7 +119,7 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
 
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
-    [_observedWindow removeObserver:self forKeyPath:@"firstResponder"];
+    [self stopObservingWindow];
     for (TerminalView *t in self.terminals) [t close];
 }
 
@@ -252,11 +255,46 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
     [next focusInput];
 }
 
-- (void)closeTerminal:(TerminalView *)terminal {
+// ------------------------------------------------------------------ closing
+NSArray<NSString *> *MCRunningCommands(NSArray<TerminalView *> *terminals) {
+    NSMutableArray<NSString *> *out = [NSMutableArray array];
+    for (TerminalView *t in terminals) {
+        NSString *c = t.runningCommand;
+        if (c) [out addObject:c];
+    }
+    return out;
+}
+
+BOOL MCConfirmClosingRunning(NSArray<NSString *> *commands, NSString *question,
+                             NSString *button) {
+    if (commands.count == 0) return YES;
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = question;
+    if (commands.count == 1)
+        a.informativeText = [NSString stringWithFormat:@"“%@” is still running.",
+                             commands.firstObject];
+    else
+        a.informativeText = [NSString stringWithFormat:@"These are still running:\n%@",
+                             [commands componentsJoinedByString:@"\n"]];
+    [a addButtonWithTitle:button];      // 1000, Return
+    [a addButtonWithTitle:@"Cancel"];   // 1001, Esc
+    a.buttons[1].keyEquivalent = @"\033";
+    return [a runModal] == NSAlertFirstButtonReturn;
+}
+
+- (BOOL)confirmClosing:(NSArray<TerminalView *> *)terminals {
+    NSArray<NSString *> *running = MCRunningCommands(terminals);
+    return MCConfirmClosingRunning(running, running.count > 1 ? @"Close these terminals?"
+                                                              : @"Close the terminal?",
+                                   @"Close");
+}
+
+- (BOOL)closeTerminal:(TerminalView *)terminal {
     for (NSUInteger tab = 0; tab < _tabs.count; tab++) {
         NSMutableArray<TerminalView *> *panes = _tabs[tab];
         NSUInteger i = [panes indexOfObject:terminal];
         if (i == NSNotFound) continue;
+        if (![self confirmClosing:@[terminal]]) return NO;
         BOOL hadFocus = [terminal hasFocus];
         [terminal close];
         [terminal removeFromSuperview];
@@ -267,12 +305,14 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
             _tabActive[tab] = panes[i > 0 ? i - 1 : 0];
         }
         [self finishClose:hadFocus];
-        return;
+        return YES;
     }
+    return YES;
 }
 
-- (void)closeTab:(NSUInteger)tab {
-    if (tab >= _tabs.count) return;
+- (BOOL)closeTab:(NSUInteger)tab {
+    if (tab >= _tabs.count) return YES;
+    if (![self confirmClosing:_tabs[tab]]) return NO;
     BOOL hadFocus = NO;
     for (TerminalView *t in _tabs[tab]) {
         hadFocus = hadFocus || [t hasFocus];
@@ -281,6 +321,19 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
     }
     [self removeTab:tab];
     [self finishClose:hadFocus];
+    return YES;
+}
+
+- (void)closeAll {
+    for (TerminalView *t in self.terminals) {
+        [t close];
+        [t removeFromSuperview];
+    }
+    [_tabs removeAllObjects];
+    [_tabActive removeAllObjects];
+    _selected = -1;
+    [self stopObservingWindow];
+    [self layoutPanes];
 }
 
 // Drops an emptied tab; the one to its left is shown when it was the shown one.
@@ -382,10 +435,19 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
 // The active pane follows the keyboard: a click in a pane of the shown tab
 // makes it the one Cmd+W, Run File and the next/previous keys act on.
 - (void)viewWillMoveToWindow:(NSWindow *)window {
-    [_observedWindow removeObserver:self forKeyPath:@"firstResponder"];
-    _observedWindow = window;
-    [window addObserver:self forKeyPath:@"firstResponder" options:0 context:NULL];
+    [self stopObservingWindow];
+    if (window) {
+        _observedWindow = window;
+        [window addObserver:self forKeyPath:@"firstResponder" options:0 context:NULL];
+    }
     [super viewWillMoveToWindow:window];
+}
+
+- (void)stopObservingWindow {
+    NSWindow *w = _observedWindow;
+    if (!w) return;
+    [w removeObserver:self forKeyPath:@"firstResponder"];
+    _observedWindow = nil;
 }
 
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object

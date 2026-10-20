@@ -331,9 +331,14 @@ void MCShowLanguageServers(LspSession *session, NSView *view) {
     }
     MCServersController *vc = [[MCServersController alloc] initWithSession:session];
     __weak NSWindow *window = view.window;
+    // Weak: the popover lives on in gServersPopover after it closes, and a
+    // strong session here kept a closed window's session (and its text view)
+    // alive.
+    __weak LspSession *weakSession = session;
     vc.onChooseInterpreter = ^{
         [gServersPopover close];
-        MCChoosePythonInterpreter(session, window);
+        LspSession *s = weakSession;
+        if (s) MCChoosePythonInterpreter(s, window);
     };
     gServersPopover = [NSPopover new];
     gServersPopover.behavior = NSPopoverBehaviorTransient;

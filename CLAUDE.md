@@ -349,6 +349,18 @@ container (PanelHost, laid out by hand in layoutContainer)
   PDF in the editor's part, a link, Cmd+1/2/3 through the menu, including
   from inside the web page, collapse when all three are hidden). The GTK
   port still puts the browser in the editor's place.
+- **The page never takes the keyboard by itself.** WebKit makes the web
+  view first responder whenever the page focuses a field (an autofocus box
+  on load, `focus()` from a script), even hidden: it took the keyboard from
+  the terminal after Cmd+2 and from the editor after Run File. The window is
+  an `MCKeyboardWindow` (Browser.h), whose `makeFirstResponder:` asks
+  `MCWebView mc_refusesKeyboard` before the current responder resigns
+  (refusing in `becomeFirstResponder` left the window itself first
+  responder). Allowed: a mouse down in the page as the current event, Tab
+  from the toolbar, or a page loaded from the toolbar (address bar, back,
+  forward, reload) while the keyboard is still in the toolbar; never while
+  hidden. `navigateToString:` (links from the terminal and Markdown) clears
+  the toolbar allowance.
 - Return, Tab, Shift+Tab and Backspace follow `AutoIndent` on all three
   ports (see "Indentation and sorting"): `textView:doCommandBySelector:` via
   `MCIndentCommand` on the Mac, `onViewKey` taking the key on Linux unless
@@ -775,7 +787,9 @@ task lists, so files stay portable.
   before the app sees them, hence Ctrl+N too. Cmd+W (`closeFocused:`)
   closes the tab, or hides the terminal or browser when it has the
   keyboard; with no tab a fresh press closes the window and a held one
-  (`isARepeat`) stops at the empty editor. The menu title follows
+  stops at the empty editor: a repeat of Cmd+W (`isARepeat`) is ignored for
+  every target, so one press closes one thing (a held Cmd+W used to close
+  three terminals, one running a command, then both tabs). The menu title follows
   (validateMenuItem). Shift+Cmd+W is Close Window (it used to quit; Cmd+Q
   quits). The old Previous File (Ctrl+Tab, `_recent`) is gone.
 - **Unsaved tabs are never dropped**: closing a dirty tab asks Save / Don't
@@ -1053,7 +1067,9 @@ never closes.
   running clears the count) leaves it Crashed until Start. NotInstalled is
   looked for again whenever a file of that language opens. The settings
   file shows "Language servers: N running" in the status bar, and its
-  default text points at the menu item.
+  default text points at the menu item. The popover outlives its window in
+  a static (`gServersPopover`), so what it keeps of the session is weak; a
+  strong capture kept a closed window's LspSession alive.
 - **Search folders** grew: an `~/.npmrc` prefix, ~/.npm-global, nvm and fnm
   Node versions (newest first), volta, pnpm, bun, ~/Library/Python/*/bin
   (pip --user), pyenv shims, MacPorts, and Homebrew's keg-only llvm after
@@ -1062,8 +1078,16 @@ never closes.
   Homebrew's node was broken (missing libllhttp) and came first otherwise.
 - **Completion** opens on its own after `.`/`->`/`::` and on the second
   letter of any word (so `json.lo` typed fast still lists json's members);
-  an `isIncomplete` list is asked for again as the word grows. Return on an
-  item exactly equal to the typed word is a newline. The selected item's
+  an `isIncomplete` list is asked for again as the word grows. Keys
+  (`Lsp::completionKeyAccepts`, tested in `lsp:completion-keys`): Tab takes
+  the item; Return takes it only when the list was asked for (Ctrl+Space,
+  Option+Esc), came after a trigger character (or the first letter after
+  one), or the arrows moved through it, and is otherwise a new line through
+  the normal Return/AutoIndent path (it used to turn `name = nm` into
+  `EnvironmentError`); an item equal to the typed word is always a new line;
+  Shift+Tab never takes it. Both the list and the signature hint close when
+  the text view resigns first responder (`CodeTextView onFocusLost`), when
+  its window resigns key, and on a tab switch. The selected item's
   detail and documentation (Markdown through `MarkdownParser`, code
   monospaced) show in a second child panel beside the list, fetched with
   `completionItem/resolve` 80 ms after the selection settles; items keep
@@ -1083,7 +1107,10 @@ never closes.
   automatic (the nearest .venv/venv/env from the file up to the root, then
   $VIRTUAL_ENV, $CONDA_PREFIX), else the server's own. pyright/basedpyright
   get it as `python.pythonPath` through workspace/configuration plus
-  didChangeConfiguration; pylsp as `pylsp.plugins.jedi.environment` (sent
+  didChangeConfiguration, sent only when the resolved interpreter differs
+  from the server's (switching between files of one environment sends
+  nothing; a file in no environment keeps the server's, which used to
+  restart pylsp on every switch to it; jedi still restarts on a real change); pylsp as `pylsp.plugins.jedi.environment` (sent
   after `initialized` and on change); jedi-language-server through
   `initializationOptions`, so it restarts. basedpyright gets
   `typeCheckingMode = standard` unless the project configures it.
@@ -1115,7 +1142,9 @@ never closes.
   this finding.
   Marks are NSRanges that follow edits until the server republishes, and they
   survive re-highlighting because they are not storage attributes. Tooltips
-  are `addToolTipRect:` per visible mark, rebuilt after drawing when dirty.
+  are `addToolTipRect:` per visible mark, rebuilt after drawing when dirty;
+  `setDiagnostics:` removes the old ones at once, since drawing returns early
+  with no marks and a clean tab used to show the previous file's error.
 - **Completion**: auto-triggers on `.`, `->`, `::` (if the server lists the
   trigger char), manual on Ctrl+Space or Option+Esc (`complete:`). The list
   filters client-side as you type (prefix matches first, then subsequence),
@@ -1123,7 +1152,10 @@ never closes.
   start (or the word start) to the caret. snippetSupport is off, so clangd
   inserts `lengthSquared` without parentheses; its labels carry a leading
   space or bullet, stripped in `parseCompletion`.
-- **Definition**: the target is mapped back into the tree root's spelling of
+- **Definition**: a reply is dropped unless the generation, the document and
+  the selection are what they were when asked (`detachDocument` bumps the
+  completion, definition and hover generations, so A, B and back to A drops
+  it). The target is mapped back into the tree root's spelling of
   the path (clangd answers with /private/tmp/... for a /tmp root) before
   `revealPath:andOpen:`; outside the root it goes to `openFileAtPath:`.
 - **Tested headless** with a temporary `MINICODE_LSPTEST` block (31 checks,
@@ -1364,7 +1396,24 @@ never closes.
   strip plus 40 points (`kMinTopSlotHeight`), or the strip ate it all.
 - **Closing** is `TerminalView close`: the flags monitor goes, then
   `stopShell` (SIGHUP to zsh, the read source cancelled, which closes the
-  pty and reaps the shell); `_closed` stops a restart.
+  pty and reaps the shell); `_closed` stops a restart. A terminal whose
+  `runningCommand` is set (a command per OSC 133 C with no prompt since, or
+  any foreground process group other than the shell's, from `tcgetpgrp` on
+  the master, named by `proc_name`) asks first: "Close the terminal?"
+  Close / Cancel, from Cmd+W, Ctrl+Shift+W and the tab's × (`closeTerminal:`
+  and `closeTab:` return NO when kept). Closing the window asks once for
+  every running command ("Close the window?") before the unsaved tabs, and
+  quitting once for all windows ("Quit MiniCode?"). Idle shells close
+  unasked. `windowWillClose:` calls `closeAll` and drops the panel, and the
+  panel watches its window's `firstResponder` through a weak reference
+  (removed in `viewWillMoveToWindow:`): it used to hold the window strongly,
+  so a closed window, its controller's views and every shell in it lived
+  until quit.
+- **Pane sizes**: any pane with room for two cells gets its true pty size
+  (a pane of a five-way split, 91 pt wide, gets 10 columns); only a hidden
+  dock (height 0), a collapsed pane or one not laid out yet keeps the last
+  size. It used to keep the old size below 100 pt wide or 60 pt tall (and
+  never went under 20 columns), so lines ran off narrow panes.
 - **Run File** (`runCurrentFile:`, Shift+Cmd+Return): the template comes
   from `Settings::runTemplate(ext)` (run.<extension>, then run.<language>
   via `runLanguage`, then the defaults python, sh, go, js, rb; `off`

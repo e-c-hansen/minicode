@@ -38,6 +38,7 @@
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <libproc.h>
 #include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -548,6 +549,26 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     return _shellPid > 0 && _integrated && _seenPrompt && !_atPrompt;
 }
 
+// What closing this terminal would end: a command the shell integration says
+// is running (133;C seen, no prompt since), or any program that holds the
+// terminal's foreground (vim, a server, Claude Code), even one the marks
+// missed. nil for a shell at its prompt, or still starting.
+- (NSString *)runningCommand {
+    if (_closed || _shellPid <= 0 || _master < 0) return nil;
+    pid_t fg = tcgetpgrp(_master);
+    BOOL other = fg > 0 && fg != _shellPid && (_seenPrompt || !_integrated);
+    BOOL marked = _integrated && _seenPrompt && !_atPrompt && _commandStarted;
+    if (!other && !marked) return nil;
+    NSString *typed = [_runningCommand stringByTrimmingCharactersInSet:
+                       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (typed.length) return typed;
+    if (other) {
+        char name[2 * MAXCOMLEN + 1] = {0};
+        if (proc_name(fg, name, sizeof name) > 0) return @(name);
+    }
+    return @"A command";
+}
+
 // A path in the command shows as its last part, so "/x/.venv/bin/python
 // /x/app/main.py" reads "python main.py".
 - (NSString *)title {
@@ -868,15 +889,19 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     NSSize cell = [TerminalGridView cellSize];
     CGFloat pad = [TerminalGridView padding];
     NSSize size = self.bounds.size;
-    // A collapsed or not-yet-laid-out panel keeps the last size, rather than
-    // squeezing the screen (and cutting its lines) down to nothing.
-    if (size.width < 100 || size.height < 60) {
+    // A hidden dock (height 0), a collapsed pane (width 0) or a view not
+    // laid out yet keeps the last size, rather than squeezing the screen
+    // (and cutting its lines) down to nothing. Anything with room for a
+    // couple of cells gets its true size, however narrow: a pane of a
+    // three-way split in a small window used to keep the size it had before
+    // the split, and its lines ran off its right edge.
+    if (size.width < 2 * pad + 2 * cell.width || size.height < 2 * pad + 2 * cell.height) {
         if (_winsize.ws_col) return;
         size = NSMakeSize(MAX(size.width, 400), MAX(size.height, 220));
     }
     struct winsize ws = {};
-    ws.ws_col = (unsigned short)MAX(20, floor((size.width - 2 * pad) / cell.width));
-    ws.ws_row = (unsigned short)MAX(5, floor((size.height - 2 * pad) / cell.height));
+    ws.ws_col = (unsigned short)MAX(2, floor((size.width - 2 * pad) / cell.width));
+    ws.ws_row = (unsigned short)MAX(2, floor((size.height - 2 * pad) / cell.height));
     ws.ws_xpixel = (unsigned short)(ws.ws_col * cell.width);
     ws.ws_ypixel = (unsigned short)(ws.ws_row * cell.height);
     if (ws.ws_col == _winsize.ws_col && ws.ws_row == _winsize.ws_row) return;
