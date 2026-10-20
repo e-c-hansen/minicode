@@ -95,6 +95,18 @@
     return YES;
 }
 
+// Quitting asks about unsaved changes in every window's tabs, as closing
+// each window would; windows are not closed on the way out, so nothing
+// else would.
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)app {
+    for (EditorController *c in [self.controllers copy]) {
+        if (!c.hasUnsavedChanges) continue;
+        [c.window makeKeyAndOrderFront:nil];
+        if (![c confirmCloseAllTabs]) return NSTerminateCancel;
+    }
+    return NSTerminateNow;
+}
+
 // Language servers are child processes; none may outlive the app.
 - (void)applicationWillTerminate:(NSNotification *)note {
     MCLspTerminateAllServers();
@@ -129,9 +141,9 @@
     for (NSString *dir in folders)
         front = [self controllerRootedAt:dir] ?: [self openWindowAtPath:dir];
 
-    // Files from one folder share a window: the last is shown, and Ctrl+Tab
-    // goes back to the one before. A window whose unsaved changes the user
-    // chose to keep is not asked again for the rest of its files.
+    // Files from one folder share a window, each in a tab, the last one on
+    // show. (showFile: no longer refuses, since a tab with unsaved changes
+    // simply stays open, but a window that did is not asked again.)
     NSMutableSet<EditorController *> *declined = [NSMutableSet set];
     for (NSString *file in files) {
         NSString *inRoot = nil;
@@ -246,6 +258,18 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
     if (item.action == @selector(exportPDF:)) return [self current].canExportPDF;
     if (item.action == @selector(togglePlayback:))
         return [self current].canTogglePlayback;
+    // The tab items, and Cmd+W's title, are the window's to decide.
+    if (item.action == @selector(closeFocused:) || item.action == @selector(selectTabNumber:) ||
+        item.action == @selector(selectNextTab:) || item.action == @selector(selectPreviousTab:)) {
+        EditorController *c = [self current];
+        if (!c) return item.action == @selector(closeFocused:);
+        if (item.action == @selector(closeFocused:) && NSApp.keyWindow &&
+            ![self controllerForWindow:NSApp.keyWindow]) {
+            item.title = @"Close Window";   // another window, which just closes
+            return YES;
+        }
+        return [c validateMenuItem:item];
+    }
     return YES;
 }
 - (void)togglePlayback:(id)sender  { [[self current] togglePlayback:sender]; }
@@ -259,8 +283,15 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
 - (void)openSearch:(id)sender      { [[self current] openSearch:sender]; }
 - (void)focusTree:(id)sender       { [[self current] focusTree:sender]; }
 - (void)focusEditor:(id)sender     { [[self current] focusEditor:sender]; }
-- (void)switchToPreviousFile:(id)sender {
-    [[self current] switchToPreviousFile:sender];
+- (void)selectNextTab:(id)sender     { [[self current] selectNextTab:sender]; }
+- (void)selectPreviousTab:(id)sender { [[self current] selectPreviousTab:sender]; }
+- (void)selectTabNumber:(id)sender   { [[self current] selectTabNumber:sender]; }
+// Cmd+W reaches the editor window's controller first, as its delegate, so
+// this runs for another window (Find in Folder, say), which just closes.
+- (void)closeFocused:(id)sender {
+    NSWindow *key = NSApp.keyWindow;
+    if (key && ![self controllerForWindow:key]) [key performClose:sender];
+    else [[self current] closeFocused:sender];
 }
 - (void)newFile:(id)sender         { [[self current] newFile:sender]; }
 - (void)newFolder:(id)sender       { [[self current] newFolder:sender]; }
@@ -343,19 +374,20 @@ static void BuildMenu(void) {
                         action:@selector(refreshTree:) keyEquivalent:@"r"];
     [fileMenu addItem:[NSMenuItem separatorItem]];
 
-    // Cmd+W closes the focused window.
-    [fileMenu addItemWithTitle:@"Close Window"
-                        action:@selector(performClose:)
+    // Cmd+W closes what has the keyboard: the tab on show, or the terminal
+    // or browser panel. The title says which (validateMenuItem:).
+    [fileMenu addItemWithTitle:@"Close Tab"
+                        action:@selector(closeFocused:)
                  keyEquivalent:@"w"];
 
-    // Cmd+Shift+W quits the whole application.
-    NSMenuItem *closeApp =
-        [[NSMenuItem alloc] initWithTitle:@"Close Application"
-                                   action:@selector(terminate:)
+    // Cmd+Shift+W closes the whole window, asking about unsaved tabs first.
+    NSMenuItem *closeWindow =
+        [[NSMenuItem alloc] initWithTitle:@"Close Window"
+                                   action:@selector(performClose:)
                             keyEquivalent:@"w"];
-    closeApp.keyEquivalentModifierMask =
+    closeWindow.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
-    [fileMenu addItem:closeApp];
+    [fileMenu addItem:closeWindow];
 
     fileItem.submenu = fileMenu;
 
@@ -520,12 +552,56 @@ static void BuildMenu(void) {
     [navMenu addItemWithTitle:@"Focus Editor"
                        action:@selector(focusEditor:)
                 keyEquivalent:@"1"];
-    NSMenuItem *prev =
-        [[NSMenuItem alloc] initWithTitle:@"Previous File"
-                                   action:@selector(switchToPreviousFile:)
-                            keyEquivalent:@"\t"];
-    prev.keyEquivalentModifierMask = NSEventModifierFlagControl;
-    [navMenu addItem:prev];
+    [navMenu addItem:[NSMenuItem separatorItem]];
+    // Tabs. Each action has a second key on a hidden item: Ctrl+Tab as in
+    // VS Code and browsers, Shift+Cmd+] as in Safari and Terminal.
+    NSMenuItem *(^addKey)(NSString *, SEL, NSString *, NSEventModifierFlags, BOOL) =
+        ^NSMenuItem *(NSString *title, SEL action, NSString *key,
+                      NSEventModifierFlags mask, BOOL hidden) {
+        NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:title action:action
+                                             keyEquivalent:key];
+        it.keyEquivalentModifierMask = mask;
+        if (hidden) {
+            it.hidden = YES;
+            it.allowsKeyEquivalentWhenHidden = YES;
+        }
+        [navMenu addItem:it];
+        return it;
+    };
+    const NSEventModifierFlags ctrl = NSEventModifierFlagControl;
+    const NSEventModifierFlags shiftCmd = NSEventModifierFlagShift | NSEventModifierFlagCommand;
+    addKey(@"Next Tab", @selector(selectNextTab:), @"\t", ctrl, NO);
+    addKey(@"Previous Tab", @selector(selectPreviousTab:), @"\t",
+           ctrl | NSEventModifierFlagShift, NO);
+    addKey(@"Next Tab", @selector(selectNextTab:), @"]", shiftCmd, YES);
+    addKey(@"Previous Tab", @selector(selectPreviousTab:), @"[", shiftCmd, YES);
+    // Shift+Cmd+1 to 9 as asked, with Ctrl+1 to 9 (VS Code's keys on the
+    // Mac) beside them, because macOS keeps Shift+Cmd+3, 4 and 5 for
+    // screenshots and the app never sees them. 9 is the last tab.
+    NSMenuItem *goItem = [[NSMenuItem alloc] initWithTitle:@"Go to Tab" action:nil
+                                             keyEquivalent:@""];
+    NSMenu *goMenu = [[NSMenu alloc] initWithTitle:@"Go to Tab"];
+    for (int n = 1; n <= 9; n++) {
+        NSString *digit = [NSString stringWithFormat:@"%d", n];
+        NSString *title = n == 9 ? @"Last Tab" : [NSString stringWithFormat:@"Tab %d", n];
+        NSMenuItem *a = [[NSMenuItem alloc] initWithTitle:title
+                                                   action:@selector(selectTabNumber:)
+                                            keyEquivalent:digit];
+        a.keyEquivalentModifierMask = shiftCmd;
+        a.tag = n;
+        [goMenu addItem:a];
+        NSMenuItem *b = [[NSMenuItem alloc] initWithTitle:title
+                                                   action:@selector(selectTabNumber:)
+                                            keyEquivalent:digit];
+        b.keyEquivalentModifierMask = ctrl;
+        b.tag = n;
+        b.hidden = YES;
+        b.allowsKeyEquivalentWhenHidden = YES;
+        [goMenu addItem:b];
+    }
+    goItem.submenu = goMenu;
+    [navMenu addItem:goItem];
+    [navMenu addItem:[NSMenuItem separatorItem]];
     // F12 as in most editors (fn+F12 on a laptop keyboard); Cmd+click works too.
     NSMenuItem *definition =
         [[NSMenuItem alloc] initWithTitle:@"Go to Definition"
