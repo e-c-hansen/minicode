@@ -40,6 +40,7 @@
 - (void)toggleSourceControl:(id)sender;   // Ctrl+Shift+G git panel in the sidebar
 - (void)toggleEditor:(id)sender;      // Shift+Cmd+E hide/restore the file editor
 - (void)toggleHiddenFiles:(id)sender; // Cmd+Shift+. show/hide dotfiles
+- (void)toggleTreeDetails:(id)sender; // Shift+Cmd+I sizes and dates in the tree
 - (void)openSearch:(id)sender;        // Cmd+Shift+F project-wide search
 // The editor window itself, or a window it made for itself (Find in Folder,
 // TODOs, a sheet or child window of it).

@@ -6,6 +6,7 @@
 #import "Bench.h"
 #import "Appearance.h"
 #import "TerminalPanel.h"
+#import "TreeDetails.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
@@ -54,6 +55,12 @@
         if (ctrl && !cmd && !opt && [ch isEqualToString:@"`"]) {
             [c toggleTerminal:nil];
             return nil;   // consume
+        }
+        // The Menu (Application) key of a PC keyboard opens the context
+        // menu of what has the keyboard, as Shift+F10 does.
+        if (e.keyCode == 0x6E /* kVK_ContextualMenu */ && !cmd && !ctrl && !opt) {
+            MCShowContextMenuInWindow(e.window);
+            return nil;
         }
         // Shift+Option+F is Format Document only in the editor. Anywhere
         // else that takes typing (the terminal, the commit message, a find
@@ -304,6 +311,12 @@ static BOOL MCEditorOnlyAction(SEL a) {
 - (void)exportPDF:(id)sender       { [[self current] exportPDF:sender]; }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (MCEditorOnlyAction(item.action)) return [self keyWindowIsEditor];
+    if (item.action == @selector(toggleTreeDetails:)) {
+        item.state = MCTreeDetailsShown() ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
+    if (item.action == @selector(showContextMenu:))
+        return (NSApp.keyWindow ?: NSApp.mainWindow) != nil;
     if (item.action == @selector(exportPDF:)) return [self current].canExportPDF;
     if (item.action == @selector(togglePlayback:))
         return [self current].canTogglePlayback;
@@ -335,6 +348,12 @@ static BOOL MCEditorOnlyAction(SEL a) {
 - (void)toggleSourceControl:(id)sender { [[self current] toggleSourceControl:sender]; }
 - (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
 - (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
+// App-wide, so it works from any window.
+- (void)toggleTreeDetails:(id)sender { (void)sender; MCSetTreeDetailsShown(!MCTreeDetailsShown()); }
+- (void)showContextMenu:(id)sender {
+    (void)sender;
+    MCShowContextMenuInWindow(NSApp.keyWindow ?: NSApp.mainWindow);
+}
 - (void)openSearch:(id)sender      { [[self current] openSearch:sender]; }
 - (void)focusTree:(id)sender       { [[self current] focusTree:sender]; }
 - (void)focusEditor:(id)sender     { [[self current] focusEditor:sender]; }
@@ -607,6 +626,16 @@ static void BuildMenu(void) {
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:hidden];
 
+    // Sizes and dates at the right of the file tree's rows (and the last
+    // save in the status bar). Shift+Cmd+I: Cmd+I is Show Hover Info.
+    NSMenuItem *details =
+        [[NSMenuItem alloc] initWithTitle:@"Show Sizes and Dates"
+                                   action:@selector(toggleTreeDetails:)
+                            keyEquivalent:@"i"];
+    details.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [viewMenu addItem:details];
+
     // Terminal: Shift+Cmd+T in the menu, like the other pane toggles; Ctrl+`
     // also works, caught by the local key monitor above.
     NSMenuItem *term =
@@ -639,6 +668,24 @@ static void BuildMenu(void) {
     [viewMenu addItem:play];
 
     [viewMenu addItem:[NSMenuItem separatorItem]];
+    // The right click's menu from the keyboard, for what has the keyboard:
+    // Shift+F10 as on Windows and Linux, and Ctrl+Return (hidden), which a
+    // text view would otherwise take for a Unicode line separator.
+    NSMenuItem *contextMenu =
+        [[NSMenuItem alloc] initWithTitle:@"Show Context Menu"
+                                   action:@selector(showContextMenu:)
+                            keyEquivalent:[NSString stringWithFormat:@"%C",
+                                              (unichar)NSF10FunctionKey]];
+    contextMenu.keyEquivalentModifierMask = NSEventModifierFlagShift;
+    [viewMenu addItem:contextMenu];
+    NSMenuItem *contextMenu2 =
+        [[NSMenuItem alloc] initWithTitle:@"Show Context Menu"
+                                   action:@selector(showContextMenu:)
+                            keyEquivalent:@"\r"];
+    contextMenu2.keyEquivalentModifierMask = NSEventModifierFlagControl;
+    contextMenu2.hidden = YES;
+    contextMenu2.allowsKeyEquivalentWhenHidden = YES;
+    [viewMenu addItem:contextMenu2];
     // The same as a right click's Adjust Settings, for each part of the window.
     NSMenuItem *adjust = [[NSMenuItem alloc] initWithTitle:@"Adjust Settings"
                                                     action:nil keyEquivalent:@""];
