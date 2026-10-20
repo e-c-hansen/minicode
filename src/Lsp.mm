@@ -517,8 +517,19 @@ NSUInteger MCLspRunningServerCount(void) { return gServers.count; }
 
 - (void)setDiagnostics:(NSArray<MCDiagnosticMark *> *)diagnostics {
     _diagnostics = [diagnostics copy];
-    _tooltipsDirty = YES;
+    // The old marks' tooltips go now: drawing rebuilds them only while there
+    // are marks, so after a switch to a clean file the previous file's
+    // messages stayed on its rects.
+    [self removeAllToolTips];
+    _tooltipMessages = nil;
+    _tooltipsDirty = _diagnostics.count > 0;
     self.needsDisplay = YES;
+}
+
+- (BOOL)resignFirstResponder {
+    BOOL ok = [super resignFirstResponder];
+    if (ok && self.onFocusLost) self.onFocusLost();
+    return ok;
 }
 
 // Keep the marks on their text while it is edited, until the server sends
@@ -1225,6 +1236,9 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     BOOL _completing;         // a request is out or the list is showing
     BOOL _haveItems;          // the server has answered it
     BOOL _incomplete;         // ...with a list it says will change as you type
+    Lsp::CompletionOrigin _origin;   // how the list came up (what Return does)
+    BOOL _navigated;          // the arrow keys moved through it
+    NSRange _definitionSelection;    // the selection when F12 was asked
     int _completionGen, _definitionGen, _hoverGen, _resolveGen, _signatureGen;
     int _resolveId;
     MCLspServer *_resolveServer;
@@ -1248,7 +1262,15 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
                name:MCSettingsDidChangeNotification object:nil];
     [nc addObserver:self selector:@selector(interpreterChosen:)
                name:MCPythonInterpreterDidChangeNotification object:nil];
+    [nc addObserver:self selector:@selector(windowResignedKey:)
+               name:NSWindowDidResignKeyNotification object:nil];
     __weak LspSession *weakSelf = self;
+    // The list and the signature hint belong to the caret: they go when the
+    // keyboard leaves the editor (Cmd+2, a click in the tree) or the window.
+    textView.onFocusLost = ^{
+        [weakSelf closeCompletion];
+        [weakSelf closeSignature];
+    };
     textView.onCommandClick = ^BOOL(NSUInteger index) {
         LspSession *s = weakSelf;
         if (!s || !s->_server) return NO;
@@ -1791,12 +1813,21 @@ static BOOL IsRunnable(NSString *path) {
 // The interpreter may have changed (a choice, the setting, or in automatic
 // mode a file in another environment): tell the server, the way it listens.
 - (void)applyPythonInterpreter {
+    [self applyPythonInterpreterForSwitch:NO];
+}
+
+// A switch to another file (forSwitch) changes the server only when that
+// file resolves to another interpreter: a file in no environment keeps the
+// one the server has, where it used to send "none" (and restart pylsp,
+// which cannot be told to forget one) on every switch to such a file.
+- (void)applyPythonInterpreterForSwitch:(BOOL)forSwitch {
     MCLspEntry *e = _entries[@"python"];
     NSString *source = nil;
     NSString *interp = [self pythonInterpreterWithSource:&source];
     if (!e.server) { [self changed]; return; }
-    if (interp == e.interpreter || [interp isEqualToString:e.interpreter]) {
-        e.interpreterSource = source;
+    if (interp == e.interpreter || [interp isEqualToString:e.interpreter] ||
+        (forSwitch && !interp && e.interpreter)) {
+        if (interp) e.interpreterSource = source;
         [self changed];
         return;
     }
@@ -1820,6 +1851,10 @@ static BOOL IsRunnable(NSString *path) {
     [self closeCompletion];
     [self closeSignature];
     [_hover close];
+    // Answers still on their way were for the document leaving the view.
+    _completionGen++;
+    _definitionGen++;
+    _hoverGen++;
     if (_uri) _diags.erase(Std(_uri));
     _server = nil;
     _uri = nil;
@@ -1854,7 +1889,9 @@ static BOOL IsRunnable(NSString *path) {
         BOOL wasRunning = _entries[_langKey].server != nil;
         [self attachDocument];
         // In automatic mode another file may sit in another environment.
-        if (wasRunning && [_langKey isEqualToString:@"python"]) [self applyPythonInterpreter];
+        // Only a real change reaches the server (same environment: nothing).
+        if (wasRunning && [_langKey isEqualToString:@"python"])
+            [self applyPythonInterpreterForSwitch:YES];
     }
     [self changed];
 }
@@ -1924,7 +1961,7 @@ static BOOL IsRunnable(NSString *path) {
             if (triggers.empty() || Contains(triggers, Std(trigger))) {
                 // After the text view has finished the edit and moved the caret.
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    [self requestCompletion:trigger];
+                    [self requestCompletion:trigger origin:Lsp::CompletionOrigin::Trigger];
                 });
                 return;
             }
@@ -1943,7 +1980,14 @@ static BOOL IsRunnable(NSString *path) {
             unichar first = [s characterAtIndex:start];
             BOOL number = first >= '0' && first <= '9';
             if (!number && (afterAccess || length == 2)) {
-                dispatch_async(dispatch_get_main_queue(), ^{ [self requestCompletion:nil]; });
+                // A member after "." counts as after the trigger character
+                // (Return takes it); any other word's list leaves Return a
+                // new line until the arrows are used.
+                Lsp::CompletionOrigin origin = afterAccess ? Lsp::CompletionOrigin::Trigger
+                                                           : Lsp::CompletionOrigin::Typing;
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [self requestCompletion:nil origin:origin];
+                });
                 return;
             }
         }
@@ -1952,9 +1996,17 @@ static BOOL IsRunnable(NSString *path) {
         // A list the server called incomplete is asked for again as the word
         // grows; the old one stays up, filtered, until the new one is in.
         if (_incomplete && _haveItems && typedOne && IsIdentChar(c))
-            dispatch_async(dispatch_get_main_queue(), ^{ [self requestCompletion:nil]; });
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self requestCompletion:nil origin:Lsp::CompletionOrigin::Typing];
+            });
         dispatch_async(dispatch_get_main_queue(), ^{ [self refilterCompletion]; });
     }
+}
+
+- (void)windowResignedKey:(NSNotification *)note {
+    if (!_tv.window || note.object != _tv.window) return;
+    [self closeCompletion];
+    [self closeSignature];
 }
 
 - (void)selectionChanged:(NSNotification *)note {
@@ -2019,10 +2071,10 @@ static BOOL IsRunnable(NSString *path) {
         [self flash:_statusText.length ? _statusText : @"No language server for this file"];
         return;
     }
-    [self requestCompletion:nil];
+    [self requestCompletion:nil origin:Lsp::CompletionOrigin::Explicit];
 }
 
-- (void)requestCompletion:(NSString *)trigger {
+- (void)requestCompletion:(NSString *)trigger origin:(Lsp::CompletionOrigin)origin {
     if (!_server || !_uri) return;
     [self flushChanges];
     NSString *s = _tv.string;
@@ -2031,9 +2083,14 @@ static BOOL IsRunnable(NSString *path) {
     while (anchor > 0 && IsIdentChar([s characterAtIndex:anchor - 1])) anchor--;
     if (!_completing || anchor != _anchor) {
         // A new word: forget the old list. The same word asked again (an
-        // incomplete list) keeps it showing until the answer.
+        // incomplete list) keeps it showing until the answer, and keeps how
+        // it first came up unless it is now asked for.
         _items.clear();
         _haveItems = NO;
+        _origin = origin;
+        _navigated = NO;
+    } else if (origin == Lsp::CompletionOrigin::Explicit) {
+        _origin = origin;
     }
     _anchor = anchor;
     _completing = YES;
@@ -2159,6 +2216,7 @@ static BOOL IsRunnable(NSString *path) {
     _completing = NO;
     _haveItems = NO;
     _incomplete = NO;
+    _navigated = NO;
     _items.clear();
     _shown.clear();
     [_popup close];
@@ -2188,26 +2246,31 @@ static BOOL IsRunnable(NSString *path) {
 - (BOOL)handleCommand:(SEL)sel {
     if (sel == @selector(complete:)) {
         if (!_server) return NO;   // the text view's own word completion
-        [self requestCompletion:nil];
+        [self requestCompletion:nil origin:Lsp::CompletionOrigin::Explicit];
         return YES;
     }
     if (_popup.visible) {
-        if (sel == @selector(moveUp:)) { [_popup moveSelection:-1]; return YES; }
-        if (sel == @selector(moveDown:)) { [_popup moveSelection:1]; return YES; }
-        if (sel == @selector(insertNewline:)) {
-            // A word typed out in full, with the list still offering it:
-            // Return is a new line, not a completion.
+        if (sel == @selector(moveUp:)) { _navigated = YES; [_popup moveSelection:-1]; return YES; }
+        if (sel == @selector(moveDown:)) { _navigated = YES; [_popup moveSelection:1]; return YES; }
+        BOOL ret = sel == @selector(insertNewline:);
+        BOOL tab = sel == @selector(insertTab:);
+        BOOL backTab = sel == @selector(insertBacktab:);
+        if (ret || tab || backTab) {
+            // Tab takes the item; Return does when the list was asked for,
+            // came after ".", or was moved through, and is otherwise a new
+            // line (Lsp::completionKeyAccepts). A key that does not take it
+            // closes the list and goes on to the editor (AutoIndent).
             NSInteger row = _popup.selectedRow;
-            if (row >= 0 && (size_t)row < _shown.size() &&
-                _shown[(size_t)row].textToInsert() == Std([self typedPrefix])) {
+            BOOL exact = row >= 0 && (size_t)row < _shown.size() &&
+                         _shown[(size_t)row].textToInsert() == Std([self typedPrefix]);
+            Lsp::CompletionKey key = ret ? Lsp::CompletionKey::Return
+                                   : tab ? Lsp::CompletionKey::Tab
+                                         : Lsp::CompletionKey::ShiftTab;
+            if (!Lsp::completionKeyAccepts(_origin, _navigated, key, exact)) {
                 [self closeCompletion];
                 return NO;
             }
             [self acceptCompletion:row];
-            return YES;
-        }
-        if (sel == @selector(insertTab:)) {
-            [self acceptCompletion:_popup.selectedRow];
             return YES;
         }
         if (sel == @selector(cancelOperation:)) { [self closeCompletion]; return YES; }
@@ -2291,6 +2354,7 @@ static BOOL IsRunnable(NSString *path) {
     if (!_server || !_uri) return;
     [self flushChanges];
     int gen = ++_definitionGen;
+    _definitionSelection = _tv.selectedRange;
     __weak LspSession *weakSelf = self;
     NSString *uri = _uri;
     Lsp::Position pos = Lsp::positionForOffset(U16Of(_tv.string), index);
@@ -2301,7 +2365,12 @@ static BOOL IsRunnable(NSString *path) {
 }
 
 - (void)definitionArrived:(const Json &)result gen:(int)gen uri:(NSString *)uri {
-    if (gen != _definitionGen || ![uri isEqualToString:_uri]) return;
+    // A late answer jumps only if the user is still where they asked: the
+    // same document, never left since (detachDocument bumps the generation,
+    // so A, B and back to A drops it), and the selection unmoved.
+    if (gen != _definitionGen || ![uri isEqualToString:_uri] ||
+        !NSEqualRanges(_tv.selectedRange, _definitionSelection))
+        return;
     std::vector<Lsp::Location> locs = Lsp::parseLocations(result);
     if (locs.empty()) { NSBeep(); [self flash:@"No definition found"]; return; }
     Lsp::Location loc = locs[0];

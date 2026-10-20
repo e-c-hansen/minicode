@@ -32,10 +32,23 @@
 // Next (+1) or previous (-1) terminal: through the shown tab's panes, then on
 // to the next tab, wrapping around.
 - (void)moveActive:(NSInteger)delta;
-- (void)closeTerminal:(TerminalView *)terminal;
-- (void)closeTab:(NSUInteger)tab;
+// Close a terminal, or a tab's terminals. A command still running in one
+// (see TerminalView runningCommand) is asked about first; NO when the user
+// kept it.
+- (BOOL)closeTerminal:(TerminalView *)terminal;
+- (BOOL)closeTab:(NSUInteger)tab;
+// Every terminal, unasked (the window is closing): shells hung up and reaped.
+- (void)closeAll;
 - (void)focusActive;
 - (BOOL)hasFocus;                 // the keyboard is in one of the terminals
 // The window's folder changed: every terminal at a prompt moves there.
 - (void)setDirectory:(NSString *)dir;
 @end
+
+// The commands running in these terminals, for a question before they close.
+NSArray<NSString *> *MCRunningCommands(NSArray<TerminalView *> *terminals);
+// The question ("Close the terminal?"), then "“vim” is still running." (or a
+// list), with `button` (Return) and Cancel (Esc). YES to go ahead, and YES at
+// once when nothing is running.
+BOOL MCConfirmClosingRunning(NSArray<NSString *> *commands, NSString *question,
+                             NSString *button);

@@ -5,6 +5,7 @@
 #import "Demo.h"
 #import "Bench.h"
 #import "Appearance.h"
+#import "TerminalPanel.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
@@ -120,6 +121,12 @@
 // each window would; windows are not closed on the way out, so nothing
 // else would.
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)app {
+    // One question for every command still running in any window's
+    // terminals, before the unsaved files.
+    NSMutableArray<NSString *> *running = [NSMutableArray array];
+    for (EditorController *c in self.controllers)
+        [running addObjectsFromArray:[c runningTerminalCommands]];
+    if (!MCConfirmClosingRunning(running, @"Quit MiniCode?", @"Quit")) return NSTerminateCancel;
     for (EditorController *c in [self.controllers copy]) {
         if (!c.hasUnsavedChanges) continue;
         [c.window makeKeyAndOrderFront:nil];

@@ -164,6 +164,21 @@ Range parseRange(const Json& j);
 std::vector<CompletionItem> filterCompletions(const std::vector<CompletionItem>& items,
                                               const std::string& prefix);
 
+// How the completion list came up: by itself while a word was typed, after a
+// trigger character ("." "->" "::", or the first letter after one), or asked
+// for (Ctrl+Space, Option+Esc).
+enum class CompletionOrigin { Typing, Trigger, Explicit };
+enum class CompletionKey { Return, Tab, ShiftTab };
+// Whether a key pressed while the list shows takes the selected item. When
+// it does not, the list closes and the key does what it does in the editor
+// (a new line, indentation). Tab always takes it. Return takes it when the
+// list was asked for or came after a trigger character, or once the user
+// has moved through it with the arrow keys; a list that came up by itself
+// while typing leaves Return a new line, as does an item that is exactly
+// the word already typed. Shift+Tab never takes it.
+bool completionKeyAccepts(CompletionOrigin origin, bool navigated, CompletionKey key,
+                          bool selectedEqualsTyped);
+
 // The part of a settings tree a workspace/configuration item asks for:
 // "python.analysis" is settings["python"]["analysis"], "" the whole tree.
 // Null when it is not there.

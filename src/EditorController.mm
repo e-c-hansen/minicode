@@ -605,7 +605,8 @@ private:
                        // it (see applySettings); layoutContainer keeps the
                        // panels below it.
                        NSWindowStyleMaskFullSizeContentView;
-    self.window = [[NSWindow alloc] initWithContentRect:frame
+    // MCKeyboardWindow (Browser.h): a web page cannot take the keyboard.
+    self.window = [[MCKeyboardWindow alloc] initWithContentRect:frame
                                               styleMask:style
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
@@ -1139,7 +1140,7 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     [self appendHintsRow:s key:@"F12" label:@"Go to definition"
                     key2:@"⌘I" label2:@"Hover info" state:nil];
     [self appendHintsRow:s key:@"⌥⇧F" label:@"Format document"
-                    key2:nil label2:nil state:nil];
+                    key2:@"⇥" label2:@"Take completion" state:nil];
     [self appendHintsRow:s key:@"F9" label:@"Sort lines"
                     key2:@"⇧F9" label2:@"Sort keep-sorted blocks" state:nil];
     [self appendHintsRow:s key:@"⇥" label:@"Indent lines"
@@ -3166,11 +3167,15 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
 }
 
 // Cmd+W: what has the keyboard closes. In a terminal that terminal closes
-// (its tab, or its pane of a split; the panel hides with the last one), the
-// browser panel hides, and anywhere else the tab on show
-// closes. With no tab left a new press closes the window, so the key is
-// never dead, while one held down stops at the empty editor.
+// (its tab, or its pane of a split; the panel hides with the last one; a
+// command still running in it is asked about), the browser panel hides, and
+// anywhere else the tab on show closes. With no tab left a new press closes
+// the window, so the key is never dead. A held key's repeats do nothing: one
+// press closes one thing, where a held Cmd+W once took three terminals (one
+// running a command) and then both editor tabs.
 - (void)closeFocused:(id)sender {
+    NSEvent *e = NSApp.currentEvent;
+    if (e.type == NSEventTypeKeyDown && e.isARepeat) return;
     switch ([self focusedCloseTarget]) {
     case 1:
         [self closeFocusedTerminal];
@@ -3182,11 +3187,8 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     case 3:
         [self closeTab:_activeTab prompt:YES];
         return;
-    default: {
-        NSEvent *e = NSApp.currentEvent;
-        if (e.type == NSEventTypeKeyDown && e.isARepeat) return;
+    default:
         [self.window performClose:sender];
-    }
     }
 }
 
@@ -3336,10 +3338,26 @@ static const NSUInteger kMaxTabSessions = 50;
 }
 
 // -------------------------------------------------------- NSWindowDelegate
+// Commands still running in this window's terminals, for the question asked
+// before the window closes or the app quits.
+- (NSArray<NSString *> *)runningTerminalCommands {
+    return self.terminalPanel ? MCRunningCommands(self.terminalPanel.terminals) : @[];
+}
 - (BOOL)windowShouldClose:(NSWindow *)sender {
+    if (!MCConfirmClosingRunning([self runningTerminalCommands], @"Close the window?",
+                                 @"Close"))
+        return NO;
     return [self confirmCloseAllTabs];
 }
 - (void)windowWillClose:(NSNotification *)note {
+    // The shells go with the window (hung up and reaped), and the dock with
+    // them, so nothing of the window outlives it.
+    if (self.terminalPanel) {
+        MCTerminalPanel *panel = self.terminalPanel;
+        self.terminalPanel = nil;
+        [panel closeAll];
+        [panel removeFromSuperview];
+    }
     [self saveSession];        // reopened with the folder next time
     _awaitedWebImages = nil;   // pictures still on their way land in the cache only
     _awaitedMath = nil;        // and so do formulas

@@ -4360,6 +4360,29 @@ void testLspParsing() {
     CHECK(labels(Lsp::filterCompletions(all, "s")) == "size push_back reserve ");
     CHECK(Lsp::filterCompletions(all, "zz").empty());
 
+    GROUP("lsp:completion-keys");
+    {
+        using O = Lsp::CompletionOrigin;
+        using K = Lsp::CompletionKey;
+        // A list that came up by itself while typing: Return is a new line
+        // ("name = nm" + Return stays "nm"), unless the arrows were used.
+        CHECK(!Lsp::completionKeyAccepts(O::Typing, false, K::Return, false));
+        CHECK(Lsp::completionKeyAccepts(O::Typing, true, K::Return, false));
+        // Asked for, or after ".", "->", "::": Return takes the item.
+        CHECK(Lsp::completionKeyAccepts(O::Explicit, false, K::Return, false));
+        CHECK(Lsp::completionKeyAccepts(O::Trigger, false, K::Return, false));
+        // The word typed out in full is a new line however the list came.
+        CHECK(!Lsp::completionKeyAccepts(O::Explicit, false, K::Return, true));
+        CHECK(!Lsp::completionKeyAccepts(O::Trigger, true, K::Return, true));
+        CHECK(!Lsp::completionKeyAccepts(O::Typing, true, K::Return, true));
+        // Tab takes the item always; Shift+Tab never.
+        for (O o : {O::Typing, O::Trigger, O::Explicit})
+            for (bool nav : {false, true}) {
+                CHECK(Lsp::completionKeyAccepts(o, nav, K::Tab, false));
+                CHECK(!Lsp::completionKeyAccepts(o, nav, K::ShiftTab, false));
+            }
+    }
+
     GROUP("lsp:hover");
     CHECK(Lsp::parseHover(parsed(
         "{\"contents\":{\"kind\":\"plaintext\",\"value\":\"int x\\n\\nA count.\"}}")) ==

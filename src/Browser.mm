@@ -6,17 +6,78 @@
 
 // The page's own context menu (Back, Reload, Inspect...) ends with Adjust
 // Settings for the browser.
+//
+// The page never takes the keyboard by itself. WebKit makes the web view the
+// first responder whenever the page focuses an element (an autofocus search
+// box, a script calling focus() once loaded), which took the keyboard from
+// the terminal or the editor while a page loaded, even with the browser
+// hidden. So the view accepts it only for the user: a click in it, Tab from
+// the toolbar, or a page the user asked for from the toolbar (address bar,
+// back, forward, reload) while the keyboard is still in the toolbar. Never
+// while hidden.
 @interface MCWebView : WKWebView
+@property(nonatomic, weak) NSView *chrome;          // the BrowserView around it
+@property(nonatomic) BOOL toolbarNavigation;        // the last load came from the toolbar
 @end
 @implementation MCWebView
 - (void)willOpenMenu:(NSMenu *)menu withEvent:(NSEvent *)event {
     [super willOpenMenu:menu withEvent:event];
     MCAddAdjustSettingsItem(menu, @"browser", self);
 }
+
+// Whether the keyboard is somewhere in the browser's toolbar now.
+- (BOOL)keyboardInToolbar {
+    NSResponder *r = self.window.firstResponder;
+    if ([r isKindOfClass:NSTextView.class] && [(NSTextView *)r isFieldEditor] &&
+        [[(NSTextView *)r delegate] isKindOfClass:NSView.class])
+        r = (NSView *)[(NSTextView *)r delegate];
+    return [r isKindOfClass:NSView.class] && self.chrome &&
+           [(NSView *)r isDescendantOf:self.chrome] && ![(NSView *)r isDescendantOf:self];
+}
+
+- (BOOL)userAsksForKeyboard {
+    if (self.isHiddenOrHasHiddenAncestor || !self.window) return NO;
+    NSEvent *e = NSApp.currentEvent;
+    // A click (any button) in the page, just now.
+    BOOL recent = e && NSProcessInfo.processInfo.systemUptime - e.timestamp < 1.0;
+    switch (e.type) {
+    case NSEventTypeLeftMouseDown:
+    case NSEventTypeRightMouseDown:
+    case NSEventTypeOtherMouseDown:
+        if (recent && e.window == self.window &&
+            NSPointInRect([self convertPoint:e.locationInWindow fromView:nil], self.bounds))
+            return YES;
+        break;
+    case NSEventTypeKeyDown:
+        // Tab or Shift+Tab out of the toolbar into the page.
+        if (recent && e.keyCode == 48 /* Tab */ && [self keyboardInToolbar]) return YES;
+        break;
+    default:
+        break;
+    }
+    // The page the user asked for in the toolbar focusing its own field,
+    // while the keyboard is still where they asked from.
+    return self.toolbarNavigation && [self keyboardInToolbar];
+}
+
+- (BOOL)mc_refusesKeyboard { return ![self userAsksForKeyboard]; }
+@end
+
+// Asked before the current first responder resigns: NSWindow's own
+// makeFirstResponder: takes the keyboard from the editor first and, when the
+// new view then refuses, leaves it with the window itself.
+@implementation MCKeyboardWindow
+- (BOOL)makeFirstResponder:(NSResponder *)responder {
+    if (responder != self.firstResponder &&
+        [responder respondsToSelector:@selector(mc_refusesKeyboard)] &&
+        [(MCWebView *)responder mc_refusesKeyboard])
+        return NO;
+    return [super makeFirstResponder:responder];
+}
 @end
 
 @interface BrowserView () <WKNavigationDelegate, NSTextFieldDelegate>
-@property(nonatomic, strong) WKWebView   *web;
+@property(nonatomic, strong) MCWebView   *web;
 @property(nonatomic, strong) NSTextField *urlBar;
 @property(nonatomic, strong) NSButton    *back;
 @property(nonatomic, strong) NSButton    *forward;
@@ -80,6 +141,7 @@
 
     WKWebViewConfiguration *cfg = [[WKWebViewConfiguration alloc] init];
     self.web = [[MCWebView alloc] initWithFrame:self.bounds configuration:cfg];
+    self.web.chrome = self;
     self.web.navigationDelegate = self;
     [self addSubview:self.web];
 }
@@ -104,8 +166,15 @@
 - (void)focusURLBar { [self.window makeFirstResponder:self.urlBar]; }
 
 // -------------------------------------------------------------- navigation
+// From outside (a link in the terminal or a Markdown file): the page may not
+// take the keyboard when it loads.
 - (void)navigateToString:(NSString *)raw {
-    NSString *s = [raw stringByTrimmingCharactersInSet:
+    self.web.toolbarNavigation = NO;
+    [self loadString:raw];
+}
+
+- (void)loadString:(NSString *)raw {
+    NSString *s =[raw stringByTrimmingCharactersInSet:
                    [NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (s.length == 0) return;
     NSString *urlStr = s;
@@ -125,10 +194,15 @@
     if (url) [self.web loadRequest:[NSURLRequest requestWithURL:url]];
 }
 
-- (void)urlEntered:(id)sender { [self navigateToString:self.urlBar.stringValue]; }
-- (void)goBack:(id)sender     { [self.web goBack]; }
-- (void)goForward:(id)sender  { [self.web goForward]; }
-- (void)reloadPage:(id)sender { [self.web reload]; }
+// From the toolbar: the page asked for may focus its own field, as long as
+// the keyboard is still in the toolbar when it does.
+- (void)urlEntered:(id)sender {
+    self.web.toolbarNavigation = YES;
+    [self loadString:self.urlBar.stringValue];
+}
+- (void)goBack:(id)sender     { self.web.toolbarNavigation = YES; [self.web goBack]; }
+- (void)goForward:(id)sender  { self.web.toolbarNavigation = YES; [self.web goForward]; }
+- (void)reloadPage:(id)sender { self.web.toolbarNavigation = YES; [self.web reload]; }
 
 - (void)webView:(WKWebView *)wv didCommitNavigation:(WKNavigation *)nav {
     self.urlBar.stringValue = wv.URL.absoluteString ?: @"";

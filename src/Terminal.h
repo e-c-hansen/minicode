@@ -34,6 +34,10 @@
 // A command is running, or one is waiting to be typed: not a terminal to
 // type another command into. A shell still starting is not busy.
 @property(nonatomic, readonly) BOOL busy;
+// The command closing this terminal would end ("npm run dev", "vim"), or nil
+// when the shell is idle at its prompt: a command per the shell integration,
+// or any program holding the terminal's foreground.
+@property(nonatomic, readonly, copy) NSString *runningCommand;
 // What a tab shows: the command running, else the folder's name.
 @property(nonatomic, readonly, copy) NSString *title;
 @property(nonatomic, readonly, copy) NSString *directory;   // the shell's cwd
