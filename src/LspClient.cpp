@@ -535,13 +535,31 @@ bool pythonInterpreterNeedsRestart(PythonServer kind) {
 
 namespace {
 
-// Markdown to readable text: keep code fence contents, drop the fence lines,
-// and unescape the backslash escapes servers put before punctuation.
+// A Markdown horizontal rule: three or more of one of - * _, spaces allowed.
+bool isRuleLine(const std::string& line) {
+    std::string t = trim(line);
+    if (t.empty() || (t[0] != '-' && t[0] != '*' && t[0] != '_')) return false;
+    int n = 0;
+    for (char c : t) {
+        if (c == t[0]) n++;
+        else if (c != ' ' && c != '\t') return false;
+    }
+    return n >= 3;
+}
+
+// Markdown to readable text: keep code fence contents, drop the fence lines
+// and rules (pyright puts one between the signature and the docs), and
+// unescape the backslash escapes servers put before punctuation.
 std::string markdownToText(const std::string& md) {
     std::string out, line;
+    bool inFence = false;
     for (size_t i = 0; i <= md.size(); i++) {
         if (i < md.size() && md[i] != '\n') { line += md[i]; continue; }
-        if (trim(line).compare(0, 3, "```") != 0) {
+        bool fence = trim(line).compare(0, 3, "```") == 0;
+        if (fence) inFence = !inFence;
+        if (!fence && !inFence && isRuleLine(line)) {
+            out += '\n';
+        } else if (!fence) {
             std::string un;
             for (size_t k = 0; k < line.size(); k++) {
                 if (line[k] == '\\' && k + 1 < line.size() &&
@@ -593,6 +611,38 @@ std::string parseHover(const Json& result) {
         out += c;
     }
     return trim(out);
+}
+
+HoverDoc parseHoverDoc(const Json& result) {
+    HoverDoc doc;
+    if (!result.isObject()) return doc;
+    auto add = [&](const Json& j) {
+        HoverDoc::Part part;
+        if (j.isString()) {   // a MarkedString: Markdown
+            part.text = j.asString();
+            part.markdown = true;
+        } else if (j.isObject() && j.has("language")) {
+            std::string value = trim(j["value"].asString());
+            if (!value.empty())
+                part.text = "```" + j["language"].asString() + "\n" + value + "\n```";
+            part.markdown = true;
+        } else if (!parseMarkup(j, part.text, part.markdown)) {
+            return;
+        }
+        part.text = trim(part.text);
+        if (!part.text.empty()) doc.parts.push_back(part);
+    };
+    const Json& contents = result["contents"];
+    if (contents.isArray()) {
+        for (const Json& part : contents.elements()) add(part);
+    } else {
+        add(contents);
+    }
+    if (result["range"].isObject()) {
+        doc.hasRange = true;
+        doc.range = parseRange(result["range"]);
+    }
+    return doc;
 }
 
 std::vector<Location> parseLocations(const Json& result) {
@@ -707,8 +757,9 @@ void Client::initialize(const std::string& rootPath, int processId,
                                      {"contextSupport", true}})},
         {"signatureHelp", Json::object({{"signatureInformation", signatureInformation},
                                         {"contextSupport", true}})},
+        // Markdown first: hover info is drawn with its code and emphasis.
         {"hover", Json::object({{"contentFormat",
-                                 Json::array().push("plaintext").push("markdown")}})},
+                                 Json::array().push("markdown").push("plaintext")}})},
         {"definition", Json::object({{"linkSupport", true}})},
         {"publishDiagnostics", Json::object({{"relatedInformation", false}})},
     });

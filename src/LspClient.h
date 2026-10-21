@@ -150,6 +150,19 @@ SignatureHelp parseSignatureHelp(const Json& result);
 // MarkupContent, a MarkedString, or an array of MarkedStrings, flattened to
 // text. Markdown code fences are dropped, keeping their contents.
 std::string parseHover(const Json& result);
+// The same answer kept as the server wrote it, for drawing: each part's text
+// and whether it is Markdown ({language, value} becomes a fenced block), and
+// the range the server says it describes, when it gives one.
+struct HoverDoc {
+    struct Part {
+        std::string text;
+        bool markdown = false;
+    };
+    std::vector<Part> parts;
+    bool hasRange = false;
+    Range range;
+};
+HoverDoc parseHoverDoc(const Json& result);
 // Location, Location[], LocationLink[], or null.
 std::vector<Location> parseLocations(const Json& result);
 Json positionJson(Position p);

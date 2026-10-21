@@ -65,11 +65,18 @@
         // Shift+Option+F is Format Document only in the editor. Anywhere
         // else that takes typing (the terminal, the commit message, a find
         // field) it types its character, as it did before the menu had it.
-        if (opt && shift && !cmd && !ctrl && [ch isEqualToString:@"f"]) {
+        // In the editor the menu gets it first: AppKit offers a key without
+        // Command or Control to the menu only after the first responder,
+        // and the text view takes it as typing (Ï). F9 and Shift+F9 too.
+        BOOL formatKey = opt && shift && !cmd && !ctrl && [ch isEqualToString:@"f"];
+        BOOL sortKey = e.keyCode == 101 /* kVK_F9 */ && !cmd && !ctrl && !opt;
+        if (formatKey || sortKey) {
             NSResponder *fr = e.window.firstResponder;
-            if (![fr isKindOfClass:[CodeTextView class]] &&
-                ([fr conformsToProtocol:@protocol(NSTextInputClient)] ||
-                 [fr isKindOfClass:NSClassFromString(@"TerminalGridView")])) {
+            if ([fr isKindOfClass:[CodeTextView class]]) {
+                if ([NSApp.mainMenu performKeyEquivalent:e]) return nil;
+            } else if (formatKey &&
+                       ([fr conformsToProtocol:@protocol(NSTextInputClient)] ||
+                        [fr isKindOfClass:NSClassFromString(@"TerminalGridView")])) {
                 [fr keyDown:e];
                 return nil;
             }

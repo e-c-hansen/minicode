@@ -4522,7 +4522,33 @@ void testLspParsing() {
         "{\"contents\":[{\"language\":\"python\",\"value\":\"def f()\"},\"Docs.\",\"\"]}")) ==
           "def f()\n\nDocs.");
     CHECK(Lsp::parseHover(parsed("{\"contents\":\"plain\"}")) == "plain");
+    // pyright's rule between signature and docs goes; one inside code stays.
+    CHECK(Lsp::parseHover(parsed(
+        "{\"contents\":{\"kind\":\"markdown\",\"value\":\"```python\\nx = 1\\n---\\n```\\n"
+        "---\\nDocs.\"}}")) == "x = 1\n---\n\nDocs.");
     CHECK(Lsp::parseHover(Json()).empty());
+    {
+        // What basedpyright sends for a module: one Markdown part, kept whole.
+        Lsp::HoverDoc d = Lsp::parseHoverDoc(parsed(
+            "{\"contents\":{\"kind\":\"markdown\",\"value\":\"```python\\n(module) os\\n```\\n"
+            "---\\nOS routines.\\n\"},\"range\":{\"start\":{\"line\":2,\"character\":7},"
+            "\"end\":{\"line\":2,\"character\":9}}}"));
+        CHECK(d.parts.size() == 1 && d.parts[0].markdown);
+        CHECK(d.parts[0].text == "```python\n(module) os\n```\n---\nOS routines.");
+        CHECK(d.hasRange && d.range.start.line == 2 && d.range.start.character == 7 &&
+              d.range.end.character == 9);
+        d = Lsp::parseHoverDoc(parsed(
+            "{\"contents\":[{\"language\":\"python\",\"value\":\"def f()\"},\"Docs.\",\"\","
+            "{\"language\":\"python\",\"value\":\"  \"}]}"));
+        CHECK(d.parts.size() == 2 && !d.hasRange);
+        CHECK(d.parts.size() == 2 && d.parts[0].text == "```python\ndef f()\n```" &&
+              d.parts[0].markdown && d.parts[1].text == "Docs." && d.parts[1].markdown);
+        d = Lsp::parseHoverDoc(parsed(
+            "{\"contents\":{\"kind\":\"plaintext\",\"value\":\"int x *y\\n\"}}"));
+        CHECK(d.parts.size() == 1 && !d.parts[0].markdown && d.parts[0].text == "int x *y");
+        CHECK(Lsp::parseHoverDoc(Json()).parts.empty());
+        CHECK(Lsp::parseHoverDoc(parsed("{\"contents\":[]}")).parts.empty());
+    }
 
     GROUP("lsp:definition");
     std::vector<Lsp::Location> loc = Lsp::parseLocations(parsed(
@@ -4801,6 +4827,7 @@ void testLspFeatures() {
     const Json &ci = caps["textDocument"]["completion"]["completionItem"];
     CHECK(ci["documentationFormat"][0].asString() == "markdown" &&
           ci["documentationFormat"][1].asString() == "plaintext");
+    CHECK(caps["textDocument"]["hover"]["contentFormat"][0].asString() == "markdown");
     CHECK(ci["resolveSupport"]["properties"][0].asString() == "documentation" &&
           ci["resolveSupport"]["properties"][1].asString() == "detail");
     const Json &sh = caps["textDocument"]["signatureHelp"];

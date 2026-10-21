@@ -499,8 +499,7 @@ NSUInteger MCLspRunningServerCount(void) { return gServers.count; }
 @end
 
 @implementation CodeTextView {
-    BOOL _tooltipsDirty;
-    NSArray<NSString *> *_tooltipMessages;
+    NSTrackingArea *_hoverArea;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -519,12 +518,6 @@ NSUInteger MCLspRunningServerCount(void) { return gServers.count; }
 
 - (void)setDiagnostics:(NSArray<MCDiagnosticMark *> *)diagnostics {
     _diagnostics = [diagnostics copy];
-    // The old marks' tooltips go now: drawing rebuilds them only while there
-    // are marks, so after a switch to a clean file the previous file's
-    // messages stayed on its rects.
-    [self removeAllToolTips];
-    _tooltipMessages = nil;
-    _tooltipsDirty = _diagnostics.count > 0;
     self.needsDisplay = YES;
 }
 
@@ -565,7 +558,6 @@ NSUInteger MCLspRunningServerCount(void) { return gServers.count; }
         [kept addObject:n];
     }
     _diagnostics = kept;
-    _tooltipsDirty = YES;
     self.needsDisplay = YES;
 }
 
@@ -677,45 +669,56 @@ static NSColor *SeverityColor(NSInteger severity) {
             [path stroke];
         }];
     }
-    if (_tooltipsDirty) {
-        _tooltipsDirty = NO;
-        dispatch_async(dispatch_get_main_queue(), ^{ [self rebuildTooltips]; });
-    }
 }
 
-// One tooltip rect per visible diagnostic, rebuilt after anything moves them.
-- (void)rebuildTooltips {
-    [self removeAllToolTips];
-    NSMutableArray<NSString *> *messages = [NSMutableArray array];
-    NSRange visible = [self visibleCharacterRange];
-    for (MCDiagnosticMark *m in _diagnostics) {
-        NSRange r = m.range;
-        if (NSMaxRange(r) < visible.location || r.location > NSMaxRange(visible)) continue;
-        NSUInteger index = messages.count;
-        [messages addObject:m.message ?: @""];
-        [self enumerateRectsForRange:r block:^(NSRect rect) {
-            rect.size.width = MAX(rect.size.width, 6);
-            [self addToolTipRect:rect owner:self userData:(void *)index];
-        }];
-    }
-    _tooltipMessages = messages;
+// ---- the pointer, for hover info
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    if (_hoverArea) [self removeTrackingArea:_hoverArea];
+    _hoverArea = [[NSTrackingArea alloc]
+        initWithRect:NSZeroRect
+             options:NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited |
+                     NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
+               owner:self userInfo:nil];
+    [self addTrackingArea:_hoverArea];
 }
 
-- (NSString *)view:(NSView *)view stringForToolTip:(NSToolTipTag)tag
-             point:(NSPoint)point userData:(void *)data {
-    (void)view; (void)tag;
-    // Every diagnostic under the pointer, not just the one this rect is for.
+- (NSUInteger)characterIndexUnderPoint:(NSPoint)point {
+    NSString *text = self.string;
+    NSUInteger n = text.length;
+    if (n == 0) return NSNotFound;
     NSUInteger i = [self characterIndexForInsertionAtPoint:point];
-    NSString *all = [self diagnosticMessageAtIndex:i];
-    if (!all && i > 0) all = [self diagnosticMessageAtIndex:i - 1];
-    if (all) return all;
-    NSUInteger index = (NSUInteger)data;
-    return index < _tooltipMessages.count ? _tooltipMessages[index] : @"";
+    // The insertion point is before the character whose left half holds
+    // the point, after it for its right half; either way it is one of these
+    // two, and only if the point is inside its box (past a line's end the
+    // nearest insertion point is the line's end).
+    for (NSInteger k = (NSInteger)MIN(i, n - 1); k >= 0 && k >= (NSInteger)i - 1; k--) {
+        unichar c = [text characterAtIndex:(NSUInteger)k];
+        if (c == '\n' || c == '\r') continue;
+        __block BOOL inside = NO;
+        [self enumerateRectsForRange:NSMakeRange((NSUInteger)k, 1) block:^(NSRect rect) {
+            if (NSPointInRect(point, rect)) inside = YES;
+        }];
+        if (inside) return (NSUInteger)k;
+    }
+    return NSNotFound;
 }
 
-- (void)setFrameSize:(NSSize)size {
-    [super setFrameSize:size];
-    _tooltipsDirty = YES;
+- (void)mouseMoved:(NSEvent *)event {
+    [super mouseMoved:event];
+    if (!self.onMouseHover) return;
+    NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+    self.onMouseHover([self characterIndexUnderPoint:p]);
+}
+
+- (void)mouseExited:(NSEvent *)event {
+    [super mouseExited:event];
+    if (self.onMouseHover) self.onMouseHover(NSNotFound);
+}
+
+- (void)scrollWheel:(NSEvent *)event {
+    if (self.onScrolled) self.onScrolled();
+    [super scrollWheel:event];
 }
 
 - (void)mouseDown:(NSEvent *)event {
@@ -1062,6 +1065,125 @@ static const NSInteger kMaxRows = 10;
 }
 @end
 
+// ----------------------------------------------------------- MCHoverPopup
+// Hover info: what the server says about the symbol under the pointer (or
+// the caret, for Cmd+I), with any diagnostic there first. Above its line, as
+// in VS Code, below when there is no room. The pointer may move into it to
+// scroll a long docstring; it says when the pointer leaves.
+@interface MCHoverView : NSView
+@property(nonatomic, copy) void (^onExit)(void);
+@end
+@implementation MCHoverView {
+    NSTrackingArea *_area;
+}
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    if (_area) [self removeTrackingArea:_area];
+    _area = [[NSTrackingArea alloc]
+        initWithRect:NSZeroRect
+             options:NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways |
+                     NSTrackingInVisibleRect
+               owner:self userInfo:nil];
+    [self addTrackingArea:_area];
+}
+- (void)mouseExited:(NSEvent *)event {
+    (void)event;
+    if (self.onExit) self.onExit();
+}
+@end
+
+@interface MCHoverPopup : NSObject
+@property(nonatomic, readonly) BOOL visible;
+@property(nonatomic, copy) void (^onExit)(void);
+- (void)show:(NSAttributedString *)text atScreenRect:(NSRect)line parent:(NSWindow *)parent;
+- (void)close;
+- (NSRect)frame;
+@end
+
+@implementation MCHoverPopup {
+    MCCompletionPanel *_panel;
+    NSScrollView *_scroll;
+    NSTextView *_view;
+    __weak NSWindow *_parent;
+}
+static const CGFloat kHoverMaxWidth = 520, kHoverMaxHeight = 320, kHoverMinWidth = 60;
+
+- (void)build {
+    _panel = MakePopupPanel(NSMakeRect(0, 0, kHoverMaxWidth, 100));
+    MCHoverView *box = [[MCHoverView alloc] initWithFrame:_panel.contentView.bounds];
+    __weak MCHoverPopup *weakSelf = self;
+    box.onExit = ^{
+        MCHoverPopup *p = weakSelf;
+        if (p && p.onExit) p.onExit();
+    };
+    _panel.contentView = box;
+    _scroll = [[NSScrollView alloc] initWithFrame:box.bounds];
+    _scroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    _scroll.hasVerticalScroller = YES;
+    _scroll.autohidesScrollers = YES;
+    _scroll.drawsBackground = NO;
+    _scroll.wantsLayer = YES;
+    _scroll.layer.borderWidth = 1;
+    _scroll.layer.borderColor = LHex(0x454545).CGColor;
+    _view = [[NSTextView alloc] initWithFrame:_scroll.bounds];
+    _view.editable = NO;
+    _view.selectable = NO;
+    _view.drawsBackground = NO;
+    _view.textContainerInset = NSMakeSize(8, 6);
+    _view.verticallyResizable = YES;
+    _view.horizontallyResizable = NO;
+    _view.autoresizingMask = NSViewWidthSizable;
+    _view.textContainer.widthTracksTextView = YES;
+    _scroll.documentView = _view;
+    [box addSubview:_scroll];
+}
+
+- (NSRect)frame { return _visible ? _panel.frame : NSZeroRect; }
+
+- (void)show:(NSAttributedString *)text atScreenRect:(NSRect)line parent:(NSWindow *)parent {
+    if (!_panel) [self build];
+    // Laid out at the widest first, then narrowed to the longest line, so a
+    // one-line answer gets a small box.
+    [_panel setContentSize:NSMakeSize(kHoverMaxWidth, kHoverMaxHeight)];
+    [_view.textStorage setAttributedString:text];
+    NSLayoutManager *lm = _view.layoutManager;
+    [lm ensureLayoutForTextContainer:_view.textContainer];
+    NSSize used = [lm usedRectForTextContainer:_view.textContainer].size;
+    NSSize inset = _view.textContainerInset;
+    CGFloat pad = _view.textContainer.lineFragmentPadding;
+    CGFloat w = MIN(MAX(ceil(used.width) + 2 * (inset.width + pad) + 2, kHoverMinWidth),
+                    kHoverMaxWidth);
+    if (w < kHoverMaxWidth) {
+        [_panel setContentSize:NSMakeSize(w, kHoverMaxHeight)];
+        [lm ensureLayoutForTextContainer:_view.textContainer];
+        used = [lm usedRectForTextContainer:_view.textContainer].size;
+    }
+    CGFloat h = MIN(ceil(used.height) + 2 * inset.height + 2, kHoverMaxHeight);
+    NSRect frame = NSMakeRect(line.origin.x - 8, NSMaxY(line) + 2, w, h);
+    NSScreen *screen = parent.screen ?: [NSScreen mainScreen];
+    NSRect vis = screen.visibleFrame;
+    if (NSMaxY(frame) > NSMaxY(vis)) frame.origin.y = line.origin.y - h - 2;   // below
+    if (NSMaxX(frame) > NSMaxX(vis)) frame.origin.x = NSMaxX(vis) - w;
+    if (NSMinX(frame) < NSMinX(vis)) frame.origin.x = NSMinX(vis);
+    [_panel setFrame:frame display:YES];
+    [_view scrollRangeToVisible:NSMakeRange(0, 0)];
+    if (!_visible || _parent != parent) {
+        [_parent removeChildWindow:_panel];
+        [parent addChildWindow:_panel ordered:NSWindowAbove];
+        _parent = parent;
+    }
+    [_panel orderFront:nil];
+    _visible = YES;
+}
+
+- (void)close {
+    if (!_visible) return;
+    _visible = NO;
+    [_parent removeChildWindow:_panel];
+    [_panel orderOut:nil];
+}
+@end
+
 // ------------------------------------------------------- MCSignaturePopup
 // The signature of the call being typed, above the caret's line, with the
 // argument being typed in bold.
@@ -1242,7 +1364,10 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     int _completionGen, _definitionGen, _hoverGen, _resolveGen, _signatureGen;
     int _resolveId;
     MCLspServer *_resolveServer;
-    NSPopover *_hover;
+    MCHoverPopup *_hover;
+    BOOL _hoverByMouse;       // shown for the pointer (else for Cmd+I)
+    NSRange _hoverRange;      // the text it is about
+    NSUInteger _pointerIndex; // the character under the pointer, or NSNotFound
     MCSignaturePopup *_signature;
 }
 
@@ -1276,7 +1401,11 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     textView.onFocusLost = ^{
         [weakSelf closeCompletion];
         [weakSelf closeSignature];
+        [weakSelf closeHoverUnlessPointer];
     };
+    _pointerIndex = NSNotFound;
+    textView.onMouseHover = ^(NSUInteger index) { [weakSelf pointerAt:index]; };
+    textView.onScrolled = ^{ [weakSelf closeHover]; };
     textView.onCommandClick = ^BOOL(NSUInteger index) {
         LspSession *s = weakSelf;
         if (!s || !s->_server) return NO;
@@ -1883,7 +2012,7 @@ static BOOL IsRunnable(NSString *path) {
                                                object:nil];
     [self closeCompletion];
     [self closeSignature];
-    [_hover close];
+    [self closeHover];
     // Answers still on their way were for the document leaving the view.
     _completionGen++;
     _definitionGen++;
@@ -1958,6 +2087,8 @@ static BOOL IsRunnable(NSString *path) {
 
 - (void)storageEdited:(NSNotification *)note {
     NSTextStorage *ts = note.object;
+    // Typing closes hover info; recoloring alone does not.
+    if (ts.editedMask & NSTextStorageEditedCharacters) [self closeHover];
     if (!(ts.editedMask & NSTextStorageEditedCharacters) || !_server || !_uri) return;
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushChanges)
                                                object:nil];
@@ -2040,10 +2171,12 @@ static BOOL IsRunnable(NSString *path) {
     if (!_tv.window || note.object != _tv.window) return;
     [self closeCompletion];
     [self closeSignature];
+    [self closeHover];
 }
 
 - (void)selectionChanged:(NSNotification *)note {
     (void)note;
+    [self closeHover];
     if (_completing)
         dispatch_async(dispatch_get_main_queue(), ^{ [self refilterCompletion]; });
     if (_signature.visible) {
@@ -2343,6 +2476,10 @@ static BOOL IsRunnable(NSString *path) {
         [self closeSignature];
         return YES;
     }
+    if (_hover.visible && sel == @selector(cancelOperation:)) {
+        [self closeHover];
+        return YES;
+    }
     return NO;
 }
 
@@ -2460,55 +2597,185 @@ static BOOL IsRunnable(NSString *path) {
 }
 
 // ---- hover
+// Cmd+I: about the caret, until the caret moves or Esc.
 - (void)showHoverInfo {
     if (!_server || !_uri) {
         NSBeep();
         [self flash:_statusText.length ? _statusText : @"No language server for this file"];
         return;
     }
+    [self requestHoverAt:_tv.selectedRange.location byMouse:NO];
+}
+
+// The pointer rests on a character for a moment: ask about it, as VS Code
+// does. Moving within what the box is about keeps it; moving off it closes
+// it a moment later unless the pointer went into the box.
+static const NSTimeInterval kHoverDelay = 0.4, kHoverGrace = 0.3;
+
+- (void)pointerAt:(NSUInteger)index {
+    _pointerIndex = index;
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(pointerRested)
+                                               object:nil];
+    if (_hover.visible && _hoverByMouse && index != NSNotFound &&
+        NSLocationInRange(index, _hoverRange))
+        return;
+    if (_hover.visible && _hoverByMouse) [self closeHoverSoon];
+    if (index != NSNotFound && [self hoverWantedAt:index])
+        [self performSelector:@selector(pointerRested) withObject:nil afterDelay:kHoverDelay];
+}
+
+- (BOOL)hoverWantedAt:(NSUInteger)index {
+    if (!_tv.editable || index >= _tv.string.length) return NO;
+    if (_popup.visible) return NO;   // the completion list has the stage
+    unichar c = [_tv.string characterAtIndex:index];
+    if ([[NSCharacterSet whitespaceAndNewlineCharacterSet] characterIsMember:c]) return NO;
+    return (_server && _uri) || [_tv diagnosticMessageAtIndex:index] != nil;
+}
+
+- (BOOL)pointerInHover {
+    return _hover.visible &&
+           NSPointInRect([NSEvent mouseLocation], NSInsetRect(_hover.frame, -4, -4));
+}
+
+- (void)pointerRested {
+    NSUInteger index = _pointerIndex;
+    if (index == NSNotFound || ![self hoverWantedAt:index] || [self pointerInHover]) return;
+    if (!_server || !_uri) {   // only a diagnostic to show
+        [self showHover:Json() gen:_hoverGen uri:_uri index:index byMouse:YES];
+        return;
+    }
+    [self requestHoverAt:index byMouse:YES];
+}
+
+- (void)requestHoverAt:(NSUInteger)index byMouse:(BOOL)byMouse {
     [self flushChanges];
-    NSUInteger index = _tv.selectedRange.location;
     int gen = ++_hoverGen;
     __weak LspSession *weakSelf = self;
     NSString *uri = _uri;
     Lsp::Position pos = Lsp::positionForOffset(U16Of(_tv.string), index);
-    _server.client.hover(Std(uri), pos, [weakSelf, gen, uri, index](const Json &r, const Json &e) {
+    _server.client.hover(Std(uri), pos, [weakSelf, gen, uri, index, byMouse](const Json &r,
+                                                                              const Json &e) {
         (void)e;
-        [weakSelf hoverArrived:r gen:gen uri:uri index:index];
+        [weakSelf showHover:r gen:gen uri:uri index:index byMouse:byMouse];
     });
 }
 
-- (void)hoverArrived:(const Json &)result gen:(int)gen uri:(NSString *)uri
-               index:(NSUInteger)index {
-    if (gen != _hoverGen || ![uri isEqualToString:_uri]) return;
-    NSString *text = NS(Lsp::parseHover(result));
-    NSString *diag = [_tv diagnosticMessageAtIndex:index];
-    if (diag) text = text.length ? [NSString stringWithFormat:@"%@\n\n%@", diag, text] : diag;
-    _lastHoverText = text;
-    if (!text.length) { [self flash:@"No information here"]; return; }
-
-    NSTextField *label = [NSTextField wrappingLabelWithString:text];
-    label.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
-    label.textColor = LHex(0xD4D4D4);
-    label.selectable = YES;
-    NSSize fit = [label sizeThatFits:NSMakeSize(520, CGFLOAT_MAX)];
-    fit.width = MIN(ceil(fit.width), 520);
-    fit.height = MIN(ceil(fit.height), 360);
-    NSView *box = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, fit.width + 20, fit.height + 16)];
-    label.frame = NSMakeRect(10, 8, fit.width, fit.height);
-    [box addSubview:label];
-    NSViewController *vc = [NSViewController new];
-    vc.view = box;
-
-    [_hover close];
-    _hover = [NSPopover new];
-    _hover.behavior = NSPopoverBehaviorTransient;
-    _hover.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
-    _hover.contentViewController = vc;
-    NSRect screen = [_tv firstRectForCharacterRange:NSMakeRange(index, 0) actualRange:NULL];
-    NSRect inWindow = [_tv.window convertRectFromScreen:screen];
-    NSRect inView = [_tv convertRect:inWindow fromView:nil];
-    inView.size.width = MAX(inView.size.width, 1);
-    [_hover showRelativeToRect:inView ofView:_tv preferredEdge:NSRectEdgeMaxY];
+// The word around a character, for a server that names no range.
+- (NSRange)wordAt:(NSUInteger)index {
+    NSString *t = _tv.string;
+    if (index >= t.length) return NSMakeRange(index, 0);
+    if (!IsIdentChar([t characterAtIndex:index])) return NSMakeRange(index, 1);
+    NSUInteger a = index, b = index + 1;
+    while (a > 0 && IsIdentChar([t characterAtIndex:a - 1])) a--;
+    while (b < t.length && IsIdentChar([t characterAtIndex:b])) b++;
+    return NSMakeRange(a, b - a);
 }
+
+- (void)showHover:(const Json &)result gen:(int)gen uri:(NSString *)uri
+            index:(NSUInteger)index byMouse:(BOOL)byMouse {
+    if (gen != _hoverGen) return;
+    if (uri != _uri && ![uri isEqualToString:_uri]) return;
+    if (index > _tv.string.length) return;
+    NSRange range = [self wordAt:index];
+    Lsp::HoverDoc doc = Lsp::parseHoverDoc(result);
+    if (doc.hasRange) {
+        std::u16string text = U16Of(_tv.string);
+        size_t a = Lsp::offsetForPosition(text, doc.range.start);
+        size_t b = Lsp::offsetForPosition(text, doc.range.end);
+        if (a <= index && index < b) range = NSMakeRange(a, b - a);
+    }
+    // The pointer moved on while the server thought.
+    if (byMouse && (_pointerIndex == NSNotFound ||
+                    !(NSLocationInRange(_pointerIndex, range) || _pointerIndex == index)))
+        return;
+
+    NSMutableAttributedString *s = [NSMutableAttributedString new];
+    NSAttributedString *gap = [[NSAttributedString alloc] initWithString:@"\n\n"
+        attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:5]}];
+    for (MCDiagnosticMark *m in _tv.diagnostics) {
+        if (!(NSLocationInRange(index, m.range) ||
+              (m.range.length == 0 && index == m.range.location)))
+            continue;
+        if (s.length) [s appendAttributedString:gap];
+        [s appendAttributedString:[[NSAttributedString alloc]
+            initWithString:m.message ?: @""
+                attributes:@{NSFontAttributeName: DocFont(NO, NO, NO, 12),
+                             NSForegroundColorAttributeName: SeverityColor(m.severity)}]];
+        range = NSUnionRange(range, m.range);
+    }
+    for (const Lsp::HoverDoc::Part &part : doc.parts) {
+        NSAttributedString *t = MCDocText(NS(part.text), part.markdown);
+        if (!t.length) continue;
+        if (s.length) [s appendAttributedString:gap];
+        [s appendAttributedString:t];
+    }
+    _lastHoverText = s.length ? [s.string copy] : @"";
+    if (!s.length) {
+        if (!byMouse) [self flash:@"No information here"];
+        return;
+    }
+
+    // Anchored to the line the text starts on, at the text (or the caret).
+    __block NSRect line = NSZeroRect;
+    NSRange anchor = byMouse ? NSMakeRange(range.location, MAX(range.length, 1))
+                             : NSMakeRange(index, 0);
+    if (anchor.length) {
+        [_tv enumerateRectsForRange:anchor block:^(NSRect r) {
+            if (NSIsEmptyRect(line)) line = r;
+        }];
+    }
+    if (NSIsEmptyRect(line)) {
+        NSRect screen = [_tv firstRectForCharacterRange:NSMakeRange(index, 0) actualRange:NULL];
+        line = [_tv.window convertRectFromScreen:screen];
+    } else {
+        line = [_tv convertRect:line toView:nil];
+    }
+    NSRect screenLine = [_tv.window convertRectToScreen:line];
+    screenLine.size.width = MAX(screenLine.size.width, 1);
+
+    if (!_hover) {
+        _hover = [MCHoverPopup new];
+        __weak LspSession *weakSelf = self;
+        _hover.onExit = ^{ [weakSelf closeHoverSoon]; };
+    }
+    _hoverByMouse = byMouse;
+    _hoverRange = range;
+    [_hover show:s atScreenRect:screenLine parent:_tv.window];
+}
+
+- (void)closeHoverSoon {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(closeHoverUnlessPointer)
+                                               object:nil];
+    [self performSelector:@selector(closeHoverUnlessPointer) withObject:nil
+               afterDelay:kHoverGrace];
+}
+
+// Kept while the pointer is in the box or on what it is about.
+- (void)closeHoverUnlessPointer {
+    if (!_hover.visible) return;
+    if (_hoverByMouse) {
+        if ([self pointerInHover]) return;
+        NSWindow *w = _tv.window;
+        if (w) {
+            NSPoint p = [_tv convertPoint:[w convertPointFromScreen:[NSEvent mouseLocation]]
+                                 fromView:nil];
+            NSUInteger i = [_tv characterIndexUnderPoint:p];
+            if (i != NSNotFound && NSLocationInRange(i, _hoverRange)) return;
+        }
+    }
+    [self closeHover];
+}
+
+- (void)closeHover {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(pointerRested)
+                                               object:nil];
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(closeHoverUnlessPointer)
+                                               object:nil];
+    _hoverGen++;
+    [_hover close];
+}
+
+- (BOOL)hoverVisible { return _hover.visible; }
 @end

@@ -1000,10 +1000,15 @@ through an external formatter; nothing is bundled.
   clang-format (`--lines`), yapf (`--lines`) and pyink/black
   (`--line-ranges`); others format the whole file. Undo selects what it
   restored, so pressing the key right after an undo formats only that.
-- **The key.** No Command, so it is also a character (Ï on US). The local
-  key monitor in main.mm hands it to the first responder when that is a
-  text input other than the editor's CodeTextView or a TerminalGridView, so
-  the terminal, commit box and find fields still type it.
+- **The key.** No Command, so it is also a character (Ï on US). AppKit
+  offers a key without Command or Control to the menu only after the first
+  responder, and the editor takes it as typing: 1.5.0 and 1.5.1 typed Ï
+  (the "verified" check had sent the event to the menu directly). So the
+  local key monitor in main.mm offers it to the menu first when a
+  CodeTextView has the keyboard (F9 and Shift+F9 too), and hands it to the
+  first responder when that is another text input or a TerminalGridView, so
+  the terminal, commit box and find fields still type it. Test keys like
+  this through `[window sendEvent:]`, never the menu alone.
 - `format.on-save` (off): Cmd+S (a non-nil sender) formats, then saves in
   the completion; saves MiniCode makes itself (nil sender) never wait, and
   Save All formats nothing, so no tab is formatted unseen. A Cmd+S is never
@@ -1319,10 +1324,8 @@ never closes.
   notification is posted). Notes elsewhere that assume TextKit 2 predate
   this finding.
   Marks are NSRanges that follow edits until the server republishes, and they
-  survive re-highlighting because they are not storage attributes. Tooltips
-  are `addToolTipRect:` per visible mark, rebuilt after drawing when dirty;
-  `setDiagnostics:` removes the old ones at once, since drawing returns early
-  with no marks and a clean tab used to show the previous file's error.
+  survive re-highlighting because they are not storage attributes. Their
+  messages show in the hover box (below); the per-mark tooltips are gone.
 - **Completion**: auto-triggers on `.`, `->`, `::` (if the server lists the
   trigger char), manual on Ctrl+Space or Option+Esc (`complete:`). The list
   filters client-side as you type (ranked as in "Which item is selected"),
@@ -1330,6 +1333,26 @@ never closes.
   start (or the word start) to the caret. snippetSupport is off, so clangd
   inserts `lengthSquared` without parentheses; its labels carry a leading
   space or bullet, stripped in `parseCompletion`.
+- **Hover** (Mac, 2026-10-21): the pointer resting 0.4 s on a non-blank
+  character of the editor (`CodeTextView onMouseHover`, from a tracking
+  area active in the key window; `characterIndexUnderPoint:` checks the
+  character's own box, so past a line's end is nothing) asks
+  `textDocument/hover` and shows `MCHoverPopup`, a non-key child panel above
+  the line (below without room), sized to its text up to 520 x 320, drawn
+  from `Lsp::parseHoverDoc` through `MCDocText` (Markdown, code monospaced).
+  The client now asks for Markdown first (`contentFormat`); pyright and
+  basedpyright sent plain text before, since plaintext came first.
+  Diagnostics under the pointer come first in the box in their severity's
+  color, and replace the old tooltips (gone). Kept while the pointer is on
+  the range the server named (or the word) or inside the box; leaving
+  either closes it after 0.3 s; typing, a caret move, a scroll, Esc,
+  focus or key loss and a document switch close it at once. Not in a
+  read-only view (previews) or while the completion list shows. Cmd+I
+  shows the same box at the caret, closed by the caret moving, not the
+  pointer. Linux and Android still flatten hover to text (`parseHover`,
+  which now also drops Markdown rules). Verified offscreen against
+  basedpyright (26 checks, window ordering and `addChildWindow:` swizzled)
+  and the box's picture looked at; a real pointer needs the user.
 - **Definition**: a reply is dropped unless the generation, the document and
   the selection are what they were when asked (`detachDocument` bumps the
   completion, definition and hover generations, so A, B and back to A drops

@@ -11,7 +11,8 @@
 #import <Cocoa/Cocoa.h>
 
 // The editor's text view: draws diagnostics as squiggles under the text,
-// shows their messages as tooltips, and reports Cmd+click. Diagnostics are
+// reports where the pointer rests (for hover info, which also shows their
+// messages), and reports Cmd+click. Diagnostics are
 // kept as character ranges that follow edits until the server sends new ones.
 @interface MCDiagnosticMark : NSObject
 @property(nonatomic, assign) NSRange range;
@@ -29,6 +30,13 @@
 @property(nonatomic, copy) BOOL (^onPreviewDoubleClick)(NSUInteger index, NSPoint point);
 // The keyboard left the view (the terminal, the tree, another window...).
 @property(nonatomic, copy) void (^onFocusLost)(void);
+// The pointer moved: the character under it, or NSNotFound when it is over
+// no character (past a line's end, between lines) or left the view.
+@property(nonatomic, copy) void (^onMouseHover)(NSUInteger index);
+// The view scrolled under the pointer (a wheel or trackpad).
+@property(nonatomic, copy) void (^onScrolled)(void);
+// The character drawn at a point in the view, or NSNotFound.
+- (NSUInteger)characterIndexUnderPoint:(NSPoint)point;
 // The message of the diagnostic covering a character, or nil.
 - (NSString *)diagnosticMessageAtIndex:(NSUInteger)index;
 // The line fragments a character range covers, in view coordinates.
@@ -159,6 +167,7 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 @property(nonatomic, readonly) NSString *statusText;
 @property(nonatomic, readonly) NSColor *statusDot;
 @property(nonatomic, readonly) NSString *lastHoverText;
+@property(nonatomic, readonly) BOOL hoverVisible;
 @end
 
 // Where tools are looked for: PATH, then the package managers' directories
