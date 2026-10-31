@@ -983,7 +983,7 @@ keyboard.
   updates, and a huge real folder such as the home folder. Linux and
   Android have none of it yet.
 
-## Request a Change (Mac, 2026-10-31, on a branch)
+## Request a Change (Mac, 2026-10-31, released in 1.5.3)
 
 The user asked for an in-app way to request changes to minicode and see
 them "materialize in realtime", in the window rather than a new one.
@@ -1460,6 +1460,12 @@ never closes.
   may have clangd running: kill only PIDs the test started.
 
 ## Current state (handoff, 2026-09-29)
+
+- **1.5.3** (2026-10-31): the tree's size, last-saved and created columns
+  on their own keys, and Request a Change (Shift+Cmd+K). Released without
+  the PPA upload (Docker was not running; Mac-only changes):
+  `scripts/ppa.sh 1.5.3` uploads it later. The real relaunch into a build
+  and real Claude Code in the bar's terminal still need the user.
 
 - **Indentation and sorting** (2026-10-20, on a branch, not merged or
   released): language-aware Return, Tab, Shift+Tab and Backspace, the
