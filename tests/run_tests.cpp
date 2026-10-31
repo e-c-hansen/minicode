@@ -22,6 +22,7 @@
 #include "EditorTabs.h"
 #include "Formatter.h"
 #include "InstallHints.h"
+#include "ChangeRequest.h"
 #include "LineDiff.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
@@ -2995,8 +2996,8 @@ void testSettings() {
     // documented value is the real default.
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
-    // format, python and keep-sorted keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 56);
+    // format, python, keep-sorted and develop keys.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 58);
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -3021,6 +3022,8 @@ void testSettings() {
         CHECK(un.runTemplate(ext) == d.runTemplate(ext));
     CHECK(un.pythonInterpreter().empty() && d.pythonInterpreter().empty());
     CHECK(un.keepSortedOnSave() == d.keepSortedOnSave());
+    CHECK(un.developCommand() == d.developCommand() && d.developCommand() == "claude");
+    CHECK(un.developSource().empty() && d.developSource().empty());
     for (const std::string &server : Settings::lspServers()) {
         std::vector<std::string> cmds = Lsp::defaultCommands(server);
         CHECK(!cmds.empty() && un.lspCommand(server) == cmds[0]);
@@ -6897,6 +6900,63 @@ static void testInstallHints() {
         }
 }
 
+static void testChangeRequest() {
+    using namespace ChangeRequest;
+    GROUP("change:prompt");
+    Context c;
+    c.request = "  Make the tree's font bigger\n ";
+    c.version = "1.5.2";
+    c.appPath = "/Applications/MiniCode.app";
+    std::string p = prompt(c);
+    CHECK(p.rfind("Make the tree's font bigger\n\n(Sent from", 0) == 0);
+    CHECK(p.find("minicode 1.5.2 is running from /Applications/MiniCode.app.") !=
+          std::string::npos);
+    CHECK(p.find("run `make`") != std::string::npos);
+    CHECK(p.find("Do not commit, push, or release unless asked.") != std::string::npos);
+    c.request = " \n\t ";
+    CHECK(prompt(c).empty());
+    c.request = "x";
+    c.version.clear();
+    c.appPath.clear();
+    CHECK(prompt(c).find("(Sent from minicode's Request a Change bar. minicode is running. ") !=
+          std::string::npos);
+
+    GROUP("change:commands");
+    CHECK(startCommand("claude", "/src/mini code", "/tmp/req 1.txt") ==
+          "cd '/src/mini code' && claude \"$(cat '/tmp/req 1.txt')\"");
+    CHECK(startCommand("  claude --model opus ", "/s", "/t/r.txt") ==
+          "cd /s && claude --model opus \"$(cat /t/r.txt)\"");
+    CHECK(resumeCommand("claude", "/a b") == "cd '/a b' && claude --continue");
+
+    GROUP("change:source");
+    std::set<std::string> files = {"/x/mc/Makefile", "/x/mc/src/EditorController.mm",
+                                   "/y/Makefile"};
+    auto exists = [&](const std::string &f) { return files.count(f) > 0; };
+    CHECK(looksLikeSource("/x/mc", exists));
+    CHECK(looksLikeSource("/x/mc/", exists));
+    CHECK(!looksLikeSource("/y", exists));
+    CHECK(!looksLikeSource("", exists));
+    CHECK(checkoutOfBundle("/x/mc/MiniCode.app") == "/x/mc");
+    CHECK(checkoutOfBundle("/x/mc/MiniCode.app/") == "/x/mc");
+    CHECK(checkoutOfBundle("/MiniCode.app").empty());
+    CHECK(builtApp("/x/mc/") == "/x/mc/MiniCode.app");
+    CHECK(buildStamp("/x/mc") == "/x/mc/MiniCode.app/Contents/_CodeSignature/CodeResources");
+
+    GROUP("change:settings");
+    Settings d = parseSettings("");
+    CHECK(d.developCommand() == "claude" && d.developSource().empty());
+    std::vector<SettingsError> e;
+    Settings s = parseSettings("develop.command = claude --model opus  # mine\n"
+                               "develop.source = ~/Code/my minicode # here\n", &e);
+    CHECK(e.empty());
+    CHECK(s.developCommand() == "claude --model opus");
+    CHECK(s.developSource() == "~/Code/my minicode");
+    CHECK(parseSettings("develop.source = auto\n").developSource().empty());
+    std::vector<SettingsError> e2;
+    parseSettings("develop.command =\n", &e2);
+    CHECK(e2.size() == 1);
+}
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
@@ -6939,6 +6999,7 @@ int main() {
     testAutoIndent();
     testKeepSorted();
     testFileDetails();
+    testChangeRequest();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

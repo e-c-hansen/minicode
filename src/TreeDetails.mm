@@ -4,7 +4,8 @@
 
 NSNotificationName const MCTreeDetailsDidChangeNotification = @"MCTreeDetailsDidChange";
 
-static NSString *const kTreeDetailsKey = @"MCTreeDetails";
+static NSString *const kTreeDetailsKey = @"MCTreeDetails";   // before the columns
+static NSString *const kTreeColumnsKey = @"MCTreeColumns";
 // {resolved folder path: @[encoded options, date chosen]}; only folders
 // whose order is not the default are kept, at most kMaxTreeSorts of them.
 static NSString *const kTreeSortKey = @"MCTreeSort";
@@ -22,13 +23,53 @@ NSUserDefaults *MCAppDefaults(void) {
     return scratch;
 }
 
-BOOL MCTreeDetailsShown(void) { return [MCAppDefaults() boolForKey:kTreeDetailsKey]; }
+static const MCTreeColumns kAllTreeColumns =
+    MCTreeColumnSize | MCTreeColumnSaved | MCTreeColumnCreated;
 
-void MCSetTreeDetailsShown(BOOL shown) {
-    if (shown == MCTreeDetailsShown()) return;
-    [MCAppDefaults() setBool:shown forKey:kTreeDetailsKey];
+MCTreeColumns MCTreeColumnsShown(void) {
+    NSUserDefaults *d = MCAppDefaults();
+    id v = [d objectForKey:kTreeColumnsKey];
+    if ([v isKindOfClass:NSNumber.class])
+        return (MCTreeColumns)([v unsignedIntegerValue] & kAllTreeColumns);
+    // The single switch of 1.5.2 and before showed sizes and ages together.
+    return [d boolForKey:kTreeDetailsKey] ? (MCTreeColumnSize | MCTreeColumnSaved) : 0;
+}
+
+BOOL MCTreeColumnShown(MCTreeColumns column) { return (MCTreeColumnsShown() & column) != 0; }
+BOOL MCTreeDetailsShown(void) { return MCTreeColumnsShown() != 0; }
+
+void MCSetTreeColumnsShown(MCTreeColumns columns) {
+    columns &= kAllTreeColumns;
+    NSUserDefaults *d = MCAppDefaults();
+    const BOOL had = [[d objectForKey:kTreeColumnsKey] isKindOfClass:NSNumber.class];
+    if (had && columns == MCTreeColumnsShown()) return;
+    [d setObject:@(columns) forKey:kTreeColumnsKey];
+    [d removeObjectForKey:kTreeDetailsKey];
     [[NSNotificationCenter defaultCenter]
         postNotificationName:MCTreeDetailsDidChangeNotification object:nil];
+}
+
+void MCToggleTreeColumn(MCTreeColumns column) {
+    MCSetTreeColumnsShown(MCTreeColumnsShown() ^ (column & kAllTreeColumns));
+}
+
+NSArray<NSMenuItem *> *MCTreeColumnMenuItems(void) {
+    const NSEventModifierFlags shiftCmd = NSEventModifierFlagShift | NSEventModifierFlagCommand;
+    const struct { NSString *title; MCTreeColumns column; NSEventModifierFlags mask; } rows[] = {
+        {@"Show Sizes", MCTreeColumnSize, shiftCmd},
+        {@"Show When Last Saved", MCTreeColumnSaved, shiftCmd | NSEventModifierFlagOption},
+        {@"Show When Created", MCTreeColumnCreated, shiftCmd | NSEventModifierFlagControl},
+    };
+    NSMutableArray<NSMenuItem *> *items = [NSMutableArray array];
+    for (const auto &r : rows) {
+        NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:r.title
+                                                    action:@selector(toggleTreeColumn:)
+                                             keyEquivalent:@"i"];
+        it.keyEquivalentModifierMask = r.mask;
+        it.tag = (NSInteger)r.column;
+        [items addObject:it];
+    }
+    return items;
 }
 
 static NSString *MCSortKeyFor(NSString *root) {
@@ -259,10 +300,19 @@ NSString *MCSavedPhrase(NSDate *date, NSDate *now) {
 
 // ------------------------------------------------------------ the row view
 static const CGFloat kIconX = 2, kNameX = 23, kRightPad = 2, kGap = 4;
-static const CGFloat kSizeWidth = 58, kAgeWidth = 54, kMinNameWidth = 72;
+static const CGFloat kSizeWidth = 58, kDateWidth = 54, kMinNameWidth = 72;
+
+CGFloat MCTreeCellWidthFor(MCTreeColumns columns) {
+    CGFloat w = kNameX + 110 + kRightPad;
+    if (columns & MCTreeColumnSize) w += kSizeWidth + kGap;
+    if (columns & MCTreeColumnSaved) w += kDateWidth + kGap;
+    if (columns & MCTreeColumnCreated) w += kDateWidth + kGap;
+    return w;
+}
 
 @implementation MCTreeCell {
     BOOL _details;
+    BOOL _on[3];   // size, saved, created: switched on
 }
 
 static NSTextField *MCDetailField(void) {
@@ -284,19 +334,27 @@ static NSTextField *MCDetailField(void) {
         self.imageView = iv;
         self.textField = tf;
         _sizeField = MCDetailField();
-        _ageField = MCDetailField();
+        _savedField = MCDetailField();
+        _createdField = MCDetailField();
         [self addSubview:_sizeField];
-        [self addSubview:_ageField];
+        [self addSubview:_savedField];
+        [self addSubview:_createdField];
     }
     return self;
 }
 
-- (void)setSize:(NSString *)size age:(NSString *)age color:(NSColor *)color {
-    _details = size != nil || age != nil;
+- (void)setSize:(NSString *)size saved:(NSString *)saved created:(NSString *)created
+          color:(NSColor *)color {
+    _details = size != nil || saved != nil || created != nil;
+    // A column switched off is hidden; one switched on keeps its place even
+    // when blank, so the columns stay lined up from row to row.
+    _on[0] = size != nil;
+    _on[1] = saved != nil;
+    _on[2] = created != nil;
     _sizeField.stringValue = size ?: @"";
-    _ageField.stringValue = age ?: @"";
-    _sizeField.textColor = color;
-    _ageField.textColor = color;
+    _savedField.stringValue = saved ?: @"";
+    _createdField.stringValue = created ?: @"";
+    for (NSTextField *f in @[_sizeField, _savedField, _createdField]) f.textColor = color;
     // Middle truncation keeps a name's extension in view beside the
     // details; without them the name is clipped, as it always was.
     self.textField.lineBreakMode = _details ? NSLineBreakByTruncatingMiddle
@@ -312,31 +370,45 @@ static NSTextField *MCDetailField(void) {
     [super layout];
     [self place];
 }
+// NSTableCellView moves its textField for the row size style without a
+// layout pass (to the cell's width, over the columns); put it back before
+// every draw.
+- (void)viewWillDraw {
+    [super viewWillDraw];
+    [self place];
+}
 
 - (void)place {
     const NSRect b = self.bounds;
     const CGFloat H = b.size.height, right = b.size.width - kRightPad;
     self.imageView.frame = NSMakeRect(kIconX, floor((H - 16) / 2), 16, 16);
-    const CGFloat room = right - kNameX;
-    const BOOL showSize = _details && _sizeField.stringValue.length &&
-                          room >= kMinNameWidth + kGap + kSizeWidth;
-    const BOOL showAge = showSize && _ageField.stringValue.length &&
-                         room >= kMinNameWidth + 2 * kGap + kSizeWidth + kAgeWidth;
     const CGFloat lineH = 16;
     const CGFloat y = floor((H - lineH) / 2);
+    // The columns switched on, left to right; while the name would get less
+    // than its minimum, the rightmost goes.
+    NSArray<NSTextField *> *all = @[_sizeField, _savedField, _createdField];
+    const CGFloat widths[] = {kSizeWidth, kDateWidth, kDateWidth};
+    NSMutableArray<NSTextField *> *on = [NSMutableArray array];
+    CGFloat need = 0;
+    if (_details)
+        for (NSUInteger i = 0; i < all.count; i++)
+            if (_on[i]) {
+                [on addObject:all[i]];
+                need += widths[i] + kGap;
+            }
+    const CGFloat room = right - kNameX;
+    while (on.count && room < kMinNameWidth + need) {
+        need -= widths[[all indexOfObject:on.lastObject]] + kGap;
+        [on removeLastObject];
+    }
+    for (NSTextField *f in all) f.hidden = ![on containsObject:f];
     CGFloat edge = right;
-    if (showAge) {
-        _ageField.frame = NSMakeRect(edge - kAgeWidth, y, kAgeWidth, lineH);
-        edge -= kAgeWidth + kGap;
+    for (NSTextField *f in on.reverseObjectEnumerator) {
+        const CGFloat w = widths[[all indexOfObject:f]];
+        f.frame = NSMakeRect(edge - w, y, w, lineH);
+        edge -= w + kGap;
     }
-    if (showSize) {
-        _sizeField.frame = NSMakeRect(edge - kSizeWidth, y, kSizeWidth, lineH);
-        edge -= kSizeWidth + kGap;
-    } else {
-        edge = b.size.width - 2;
-    }
-    _sizeField.hidden = !showSize;
-    _ageField.hidden = !showAge;
+    if (!on.count) edge = b.size.width - 2;
     self.textField.frame = NSMakeRect(kNameX, y, MAX(0, edge - kNameX), lineH);
 }
 @end

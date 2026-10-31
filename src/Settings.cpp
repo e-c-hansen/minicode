@@ -459,12 +459,20 @@ Settings Settings::parse(const std::string& text,
             st.pythonInterpreter_ = lower(path) == "auto" ? "" : path;
             continue;
         }
+        if (key == "develop.source") {
+            size_t hash = rest.find(" #");
+            std::string path = trim(hash == std::string::npos ? rest : rest.substr(0, hash));
+            if (!path.empty() && path[0] == '#') path.clear();
+            st.developSource_ = lower(path) == "auto" ? "" : path;
+            continue;
+        }
         // A language server, run or formatter command is a whole command
         // line, so it runs to the end of the line or to a " #" comment
         // outside quotes.
         if ((key.rfind("lsp.", 0) == 0 && key != "lsp.enabled") ||
             (key.rfind("run.", 0) == 0 && key != "run.terminal") ||
-            (key.rfind("format.", 0) == 0 && key != "format.on-save")) {
+            (key.rfind("format.", 0) == 0 && key != "format.on-save") ||
+            key == "develop.command") {
             std::string command = trim(rest.substr(0, commandLineEnd(rest)));
             if (command.empty() || command[0] == '#') {
                 fail("missing value for " + key);
@@ -585,6 +593,11 @@ bool Settings::apply(const std::string& key, const std::string& value,
         error = "unknown setting '" + key + "' (language servers are lsp.cpp, "
                 "lsp.python, lsp.go, lsp.rust and lsp.typescript)";
         return false;
+    }
+
+    if (key == "develop.command") {
+        developCommand_ = value;
+        return true;
     }
 
     if (key == "format.on-save") {
@@ -904,5 +917,15 @@ const char* Settings::defaultFileText() {
 # folder. Select Python Interpreter... in the MiniCode menu chooses one for
 # the open folder alone, which wins over this.
 # python.interpreter = auto
+
+# Request a Change to minicode (Shift+Cmd+K, macOS only for now) hands what
+# you describe to Claude Code, in a terminal tab opened in minicode's own
+# source folder, and offers to restart into the new build once Claude has
+# rebuilt it with make. develop.command is the command it runs, with your
+# request added at the end; add flags here (such as --model). develop.source
+# is the source folder, a clone of github.com/e-c-hansen/minicode; auto uses
+# the folder this minicode was built in, else asks once and remembers.
+# develop.command = claude
+# develop.source = auto
 )CONF";
 }

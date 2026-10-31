@@ -1,8 +1,8 @@
 // FileDetails.h — what the file tree needs to show sizes and dates and to
 // sort by them, with the parts that can be tested kept here in plain C++:
 //
-//   - TreeSort: the order of one folder's entries by name, date modified or
-//     size, ascending or descending, with folders first or mixed in.
+//   - TreeSort: the order of one folder's entries by name, date modified,
+//     size, or date created, ascending or descending, with folders first or mixed in.
 //   - Age: "5 min", "3 h", "yesterday" for a row, "Saved 14:32" for the
 //     status bar.
 //   - SizeCache and measure: a folder's total size, worked out on a
@@ -22,7 +22,8 @@
 
 namespace TreeSort {
 
-enum class Key { Name, Modified, Size };
+// The values are the tags of the Sort By menu's items; never renumber them.
+enum class Key { Name, Modified, Size, Created };
 
 struct Options {
     Key key = Key::Name;
@@ -34,8 +35,8 @@ struct Options {
     bool operator!=(const Options &o) const { return !(*this == o); }
 };
 
-// The direction a key starts in when it is chosen: names A to Z, dates
-// newest first and sizes largest first, as in Finder.
+// The direction a key starts in when it is chosen: names A to Z, both
+// dates newest first and sizes largest first, as in Finder.
 bool defaultAscending(Key key);
 
 // The options after the user picks `key`: another key starts in its own
@@ -52,6 +53,7 @@ struct Entry {
     bool isDir = false;
     int64_t size = -1;       // bytes; -1 while unknown (a folder's total on its way)
     double modified = 0;     // seconds since 1970
+    double created = 0;      // seconds since 1970 (the birth time); 0 when unknown
     // The entry's place in the platform's own name order (the Mac sorts
     // names with caseInsensitiveCompare:, and the tree's order by name must
     // stay exactly what it was), or -1 to compare the names here instead.

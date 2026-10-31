@@ -20,6 +20,7 @@
 #import "EditingCommands.h"
 #import "TreeDetails.h"
 #import "InstallPanel.h"
+#import "ChangePanel.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #import <AVKit/AVKit.h>                 // video and audio in the editor's slot
 #import <AVFoundation/AVFoundation.h>
@@ -184,6 +185,7 @@ static const CGFloat kDragBarHeight = 12;
 @property(nonatomic, assign) BOOL isLink;        // a symbolic link (to a folder or a file)
 @property(nonatomic, assign) long long size;     // a file's bytes; -1 when unknown
 @property(nonatomic, assign) double modified;    // seconds since 1970; 0 when unknown
+@property(nonatomic, assign) double created;     // its birth time, the same way
 @property(nonatomic, assign) long long nameRank; // its place in name order among its siblings
 @property(nonatomic, strong) NSMutableArray<FileItem *> *children;
 @property(nonatomic, assign) BOOL loaded;
@@ -211,6 +213,8 @@ static BOOL gShowHidden = NO;
     self.size = have && S_ISREG(st.st_mode) ? (long long)st.st_size : -1;
     self.modified = (have || haveL)
         ? (double)use.st_mtimespec.tv_sec + use.st_mtimespec.tv_nsec / 1e9 : 0;
+    self.created = (have || haveL)
+        ? (double)use.st_birthtimespec.tv_sec + use.st_birthtimespec.tv_nsec / 1e9 : 0;
 }
 
 // The folder's entries in name order, folders first: the order the tree
@@ -235,6 +239,7 @@ static BOOL gShowHidden = NO;
             old.isLink = item.isLink;
             old.size = item.size;
             old.modified = item.modified;
+            old.created = item.created;
             item = old;
         }
         item.nameRank = rank++;
@@ -490,7 +495,7 @@ private:
 @end
 
 // ---------------------------------------------------------------------------
-@interface EditorController () <NSTextStorageDelegate> {
+@interface EditorController () <NSTextStorageDelegate, MCChangeHost> {
     FileItem *_root;
     // The open files, in the order the strip shows them, and the one shown.
     NSMutableArray<MCTab *> *_tabs;
@@ -551,12 +556,14 @@ private:
     NSUInteger _sortGeneration;
     NSString *_realRoot;                   // the root as FSEvents spells it
     NSTimer *_detailsTimer;                // ages and "Saved ..." each half minute
+    MCTreeColumns _shownColumns;           // the tree's columns, as last laid out
     // The bar over the editor when the open file's language server is
     // missing: the language it was offered for (nil once closed), shown
     // while a file of that language is on show and the server still missing.
     NSString *_installBarKey;
     NSPopover *_installPopover;
     NSString *_missingBefore;              // the open file's missing server, last time
+    MCChangeSession *_change;              // Request a Change (Shift+Cmd+K), made on first use
 }
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) ClickOutline *outline;
@@ -951,6 +958,7 @@ static void *kMediaItemContext = &kMediaItemContext;
     self.savedLabel.textColor = [cfg text:Surface::Statusbar];
     self.lspLabel.textColor = [cfg text:Surface::Statusbar];
     [self applyInstallBarColors];
+    [self applyChangeBarColors];
     [self showSettingsErrors];
 
     [w invalidateShadow];
@@ -1012,12 +1020,13 @@ static void *kMediaItemContext = &kMediaItemContext;
     [m addItemWithTitle:@"Refresh" action:@selector(refreshTree:) keyEquivalent:@""];
     [m addItem:[NSMenuItem separatorItem]];
     // How the tree is ordered (remembered per folder), and the sizes and
-    // dates at the right of each row (Shift+Cmd+I, for every window).
+    // dates at the right of each row (each its own switch, for every window).
     NSMenu *sort = [[NSMenu alloc] initWithTitle:@"Sort By"];
     const struct { NSString *title; TreeSort::Key key; } keys[] = {
         {@"Name", TreeSort::Key::Name},
         {@"Date Modified", TreeSort::Key::Modified},
         {@"Size", TreeSort::Key::Size},
+        {@"Date Created", TreeSort::Key::Created},
     };
     for (const auto &k : keys)
         [sort addItemWithTitle:k.title action:@selector(sortTreeBy:) keyEquivalent:@""].tag =
@@ -1033,10 +1042,7 @@ static void *kMediaItemContext = &kMediaItemContext;
     for (NSMenuItem *it in sort.itemArray) it.target = self;
     NSMenuItem *sortItem = [m addItemWithTitle:@"Sort By" action:nil keyEquivalent:@""];
     sortItem.submenu = sort;
-    NSMenuItem *details = [m addItemWithTitle:@"Show Sizes and Dates"
-                                       action:@selector(toggleTreeDetails:)
-                                keyEquivalent:@"i"];
-    details.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    for (NSMenuItem *it in MCTreeColumnMenuItems()) [m addItem:it];
     for (NSMenuItem *it in m.itemArray) if (it.action) it.target = self;
     MCAddAdjustSettingsItem(m, @"tree", self.outline);
     return m;
@@ -1068,8 +1074,8 @@ static void *kMediaItemContext = &kMediaItemContext;
     self.settingsLabel = errors;
     [self.statusBar addSubview:errors];
 
-    // Left of them, with details on (Shift+Cmd+I): when the file on show
-    // was last saved.
+    // Left of them, with the tree's last-saved column on
+    // (Option+Shift+Cmd+I): when the file on show was last saved.
     NSTextField *saved = [NSTextField labelWithString:@""];
     saved.font = [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightRegular];
     saved.lineBreakMode = NSLineBreakByTruncatingTail;
@@ -1247,7 +1253,9 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     [self appendHintsRow:s key:@"⌘⌫" label:@"Move to trash"
                     key2:@"⌘R" label2:@"Refresh tree" state:nil];
     [self appendHintsRow:s key:@"⇧⌘." label:@"Show hidden files"
-                    key2:@"⇧⌘I" label2:@"Sizes and dates" state:nil];
+                    key2:@"⇧⌘I" label2:@"Sizes" state:nil];
+    [self appendHintsRow:s key:@"⌥⇧⌘I" label:@"When last saved"
+                    key2:@"⌃⇧⌘I" label2:@"When created" state:nil];
 
     [self appendHintsHeading:@"Navigation" to:s];
     [self appendHintsRow:s key:@"⌘0" label:@"Focus tree"
@@ -1255,7 +1263,7 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     [self appendHintsRow:s key:@"⌘2" label:@"Focus terminal"
                     key2:@"⌘3" label2:@"Focus browser" state:nil];
     [self appendHintsRow:s key:@"⇧⌘⏎" label:@"Run the file in the terminal"
-                    key2:nil label2:nil state:nil];
+                    key2:@"⇧⌘K" label2:@"Request a change to minicode" state:nil];
     [self appendHintsRow:s key:@"↑ ↓" label:@"Browse tree"
                     key2:@"⏎" label2:@"Open file" state:nil];
     [self appendHintsRow:s key:@"⌘B" label:@"Toggle sidebar"
@@ -1347,6 +1355,8 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
 
 - (void)relayoutRightArea {
     NSRect b = self.rightArea.bounds;
+    // Request a Change's bar runs across the top, over editor and browser.
+    b = [self layoutChangeBarIn:b];
     CGFloat W = b.size.width, H = b.size.height;
     BOOL showTerm = self.terminalVisible && self.terminalPanel != nil;
     BOOL showBrowser = self.browserVisible && self.browser != nil;
@@ -2339,10 +2349,12 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 }
 
 // ----------------------------------------- sizes, dates and order (the tree)
-// Shift+Cmd+I shows each row's size and age at its right; the tree's
-// context menu sorts it by name, date modified or size. The rules are in
+// Shift+Cmd+I shows each row's size at its right, Option+Shift+Cmd+I when
+// it was last saved and Control+Shift+Cmd+I when it was created; the tree's
+// context menu sorts it by name, date modified, size or date created. The rules are in
 // FileDetails.h, the counting of folder totals in TreeDetails.mm.
 - (void)setUpTreeDetails {
+    _shownColumns = MCTreeColumnsShown();
     _sizer = [MCFolderSizer new];
     __weak EditorController *weakSelf = self;
     _sizer.onTotals = ^(NSSet<NSString *> *paths) { [weakSelf folderTotalsArrived:paths]; };
@@ -2381,6 +2393,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         e.name = Utf8String(it.name);
         e.isDir = it.isDir;
         e.modified = it.modified;
+        e.created = it.created;
         e.nameRank = it.nameRank;
         e.size = it.size;
         if (it.isDir) {
@@ -2422,16 +2435,24 @@ static NSString *MCGroupedCount(long long n) {
     NSString *sym = node.isDir ? @"folder.fill" : @"doc.text";
     cell.imageView.image = [NSImage imageWithSystemSymbolName:sym accessibilityDescription:nil];
     cell.imageView.contentTintColor = node.isDir ? Hex(0xC09553) : Hex(0x8A99A8);
-    if (!MCTreeDetailsShown()) {
-        [cell setSize:nil age:nil color:nil];
+    const MCTreeColumns columns = MCTreeColumnsShown();
+    if (!columns) {
+        [cell setSize:nil saved:nil created:nil color:nil];
         cell.toolTip = nil;
         return;
     }
+    NSDate *now = [NSDate date];
     NSDate *modified = node.modified > 0
         ? [NSDate dateWithTimeIntervalSince1970:node.modified] : nil;
-    NSString *age = modified ? MCCompactAge(modified, [NSDate date]) : @"";
+    NSDate *created = node.created > 0
+        ? [NSDate dateWithTimeIntervalSince1970:node.created] : nil;
+    NSString *saved = nil, *born = nil;
+    if (columns & MCTreeColumnSaved) saved = modified ? MCCompactAge(modified, now) : @"";
+    if (columns & MCTreeColumnCreated) born = created ? MCCompactAge(created, now) : @"";
     NSString *size = @"", *sizeTip = nil;
-    if (node.isDir && node.isLink) {
+    if (!(columns & MCTreeColumnSize)) {
+        size = nil;   // no column, and no folder totals counted for it
+    } else if (node.isDir && node.isLink) {
         size = @"—";
         sizeTip = @"A symbolic link: what it points to is not counted.";
     } else if (node.isDir) {
@@ -2455,9 +2476,10 @@ static NSString *MCGroupedCount(long long n) {
         size = MCFormatByteCount(node.size);
         sizeTip = [NSString stringWithFormat:@"%@ bytes", MCGroupedCount(node.size)];
     }
-    [cell setSize:size age:age color:[text colorWithAlphaComponent:0.55]];
+    [cell setSize:size saved:saved created:born color:[text colorWithAlphaComponent:0.55]];
     NSMutableArray<NSString *> *tip = [NSMutableArray arrayWithObject:node.name ?: @""];
     if (modified) [tip addObject:[@"Modified " stringByAppendingString:MCFullDate(modified)]];
+    if (created) [tip addObject:[@"Created " stringByAppendingString:MCFullDate(created)]];
     if (sizeTip) [tip addObject:sizeTip];
     cell.toolTip = [tip componentsJoinedByString:@"\n"];
 }
@@ -2523,7 +2545,8 @@ static NSString *MCGroupedCount(long long n) {
 - (void)sortTreeBy:(id)sender {
     const NSInteger tag = [sender tag];
     const TreeSort::Key key = tag == 1 ? TreeSort::Key::Modified
-                            : tag == 2 ? TreeSort::Key::Size : TreeSort::Key::Name;
+                            : tag == 2 ? TreeSort::Key::Size
+                            : tag == 3 ? TreeSort::Key::Created : TreeSort::Key::Name;
     [self setTreeSort:TreeSort::choose(_treeSort, key)];
 }
 - (void)setTreeSortDirection:(id)sender {
@@ -2538,13 +2561,25 @@ static NSString *MCGroupedCount(long long n) {
 }
 - (TreeSort::Options)treeSortOptions { return _treeSort; }   // tests
 
-// Shift+Cmd+I, for every window: they all hear the notification.
-- (void)toggleTreeDetails:(id)sender {
-    (void)sender;
-    MCSetTreeDetailsShown(!MCTreeDetailsShown());
+// Shift+Cmd+I (sizes), Option+Shift+Cmd+I (last saved) and
+// Control+Shift+Cmd+I (created), for every window: they all hear the
+// notification. The item's tag is the column.
+- (void)toggleTreeColumn:(id)sender {
+    MCToggleTreeColumn((MCTreeColumns)[sender tag]);
 }
 - (void)treeDetailsChanged:(NSNotification *)note {
     (void)note;
+    // A column switched on gets room: a sidebar too narrow for the columns
+    // now on widens, up to two fifths of the window.
+    const MCTreeColumns now = MCTreeColumnsShown();
+    if ((now & ~_shownColumns) && !self.sidebarCollapsed) {
+        NSView *side = self.splitView.subviews.firstObject;
+        const CGFloat want = ceil(MCTreeCellWidthFor(now) + 24);   // indentation, scroller
+        const CGFloat cap = floor(NSWidth(self.splitView.bounds) * 0.4);
+        if (side && NSWidth(side.frame) < want && NSWidth(side.frame) < cap)
+            [self.splitView setPosition:MIN(want, cap) ofDividerAtIndex:0];
+    }
+    _shownColumns = now;
     [self refreshTreeCells];
     [self updateSavedStatus];
     [self updateDetailsTimer];
@@ -2574,7 +2609,7 @@ static NSString *MCGroupedCount(long long n) {
 - (void)updateSavedStatus {
     NSString *text = @"", *tip = nil;
     MCTab *t = _activeTab;
-    if (MCTreeDetailsShown() && t.currentPath && !t.isDiff) {
+    if (MCTreeColumnShown(MCTreeColumnSaved) && t.currentPath && !t.isDiff) {
         NSDate *disk = t.fileModDate;
         if (t.gone || !disk) text = @"Not saved";
         else if (t.dirty) text = @"Unsaved changes";
@@ -3979,6 +4014,7 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
     [self stopMedia];      // no sound from a closed window
     _formatGeneration++;   // a formatter still running finds nothing to apply
     [self.lsp shutdown];   // never leave a server running for a closed window
+    [_change stop];        // no build watched for a closed window
 }
 - (void)windowDidBecomeKey:(NSNotification *)note {
     [self checkExternalChange];
@@ -4101,8 +4137,9 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
         item.state = _treeSort.foldersFirst ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
     }
-    if (item.action == @selector(toggleTreeDetails:)) {
-        item.state = MCTreeDetailsShown() ? NSControlStateValueOn : NSControlStateValueOff;
+    if (item.action == @selector(toggleTreeColumn:)) {
+        item.state = MCTreeColumnShown((MCTreeColumns)item.tag) ? NSControlStateValueOn
+                                                                 : NSControlStateValueOff;
         return YES;
     }
     if (item.action == @selector(closeFocused:)) {
@@ -5017,6 +5054,125 @@ static NSColor *ContrastColor(const Rgba &c) {
     MCShowLanguageServers(self.lsp, self.lspLabel, ^(NSString *command) {
         [weakSelf typeCommandInTerminal:command];
     });
+}
+
+// ----------------------------------------- Request a Change (Shift+Cmd+K)
+// See ChangePanel.h: a bar for the request, Claude Code in a terminal tab of
+// minicode's source folder, and a restart into the new build.
+- (MCChangeSession *)changeSession {
+    if (!_change) _change = [[MCChangeSession alloc] initWithHost:self];
+    return _change;
+}
+
+- (void)requestChange:(id)sender {
+    (void)sender;
+    MCChangeSession *s = [self changeSession];
+    if (!s.bar.superview) {
+        [self applyChangeBarColors];
+        [self.rightArea addSubview:s.bar];
+    }
+    [self showRightArea];
+    [s begin];
+}
+
+- (void)resumeChangeWithSource:(NSString *)source command:(NSString *)command {
+    MCChangeSession *s = [self changeSession];
+    if (!s.bar.superview) {
+        [self applyChangeBarColors];
+        [self.rightArea addSubview:s.bar];
+    }
+    [s resumeWithSource:source command:command];
+}
+
+- (NSRect)layoutChangeBarIn:(NSRect)area {
+    MCChangeBar *bar = _change ? _change.bar : nil;
+    if (!bar) return area;
+    if (!_change.barShown) {
+        bar.hidden = YES;
+        return area;
+    }
+    bar.hidden = NO;
+    const CGFloat h = MIN(kMCChangeBarHeight, NSHeight(area));
+    bar.frame = NSMakeRect(NSMinX(area), NSMaxY(area) - h, NSWidth(area), h);
+    // Above the panes, which are added later and would cover it.
+    if (self.rightArea.subviews.lastObject != bar)
+        [self.rightArea addSubview:bar positioned:NSWindowAbove relativeTo:nil];
+    return NSMakeRect(NSMinX(area), NSMinY(area), NSWidth(area), NSHeight(area) - h);
+}
+
+- (void)applyChangeBarColors {
+    if (!_change) return;
+    AppSettings *cfg = [AppSettings shared];
+    [_change.bar setBackground:[cfg background:Surface::Sidebar]
+                          text:[cfg text:Surface::Sidebar]];
+}
+
+// MCChangeHost
+- (TerminalView *)changeTerminalRunning:(NSString *)command focus:(BOOL)focus {
+    NSResponder *keep = self.window.firstResponder;
+    BOOL fresh = self.terminalPanel == nil;
+    [self showTerminalPanel];
+    TerminalView *term = self.terminalPanel.activeTerminal;
+    // A dock made just now has one idle terminal; otherwise a new tab, so
+    // nothing the user was doing is typed over.
+    if (!fresh || term.busy) term = [self.terminalPanel addTab];
+    // Claude's screen wants room.
+    if (self.terminalHeight < 320 && !self.editorHidden) {
+        self.terminalHeight = MAX(self.terminalHeight,
+                                  MIN(420, round(NSHeight(self.rightArea.bounds) * 0.55)));
+        [self relayoutRightArea];
+    }
+    [term runCommand:command];
+    if (focus) [self focusChangeTerminal:term];
+    else if (keep && keep != self.window && self.window.firstResponder != keep)
+        [self.window makeFirstResponder:keep];
+    return term;
+}
+
+- (void)runCommand:(NSString *)command inTerminal:(TerminalView *)terminal focus:(BOOL)focus {
+    [self showTerminalPanel];
+    [terminal runCommand:command];
+    if (focus) [self focusChangeTerminal:terminal];
+}
+
+- (BOOL)terminalIsOpen:(TerminalView *)terminal {
+    return terminal && [self.terminalPanel.terminals containsObject:terminal];
+}
+
+- (void)focusChangeTerminal:(TerminalView *)terminal {
+    if (![self terminalIsOpen:terminal]) return;
+    [self showTerminalPanel];
+    for (NSUInteger tab = 0; tab < self.terminalPanel.tabCount; tab++)
+        if ([[self.terminalPanel terminalsInTab:tab] containsObject:terminal]) {
+            [self.terminalPanel selectTab:tab];
+            break;
+        }
+    [terminal focusInput];
+}
+
+- (void)changeBarDidChange {
+    [self relayoutRightArea];
+}
+
+- (void)restartIntoApp:(NSString *)appPath source:(NSString *)source
+               command:(NSString *)command {
+    id<MCRestarting> app = (id<MCRestarting>)NSApp.delegate;
+    if (![app conformsToProtocol:@protocol(MCRestarting)]) { NSBeep(); return; }
+    [app restartIntoApp:appPath resumingIn:self source:source command:command];
+}
+
+// Claude's terminal, which a restart resumes rather than asks about.
+- (TerminalView *)changeTerminal {
+    TerminalView *t = _change.terminal;
+    return [self terminalIsOpen:t] ? t : nil;
+}
+
+- (NSArray<NSString *> *)runningTerminalCommandsExceptChange {
+    if (!self.terminalPanel) return @[];
+    NSMutableArray<TerminalView *> *others = [self.terminalPanel.terminals mutableCopy];
+    TerminalView *t = [self changeTerminal];
+    if (t) [others removeObject:t];
+    return MCRunningCommands(others);
 }
 
 // ------------------------------------------------- installing a server

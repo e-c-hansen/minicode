@@ -40,7 +40,7 @@
 - (void)toggleSourceControl:(id)sender;   // Ctrl+Shift+G git panel in the sidebar
 - (void)toggleEditor:(id)sender;      // Shift+Cmd+E hide/restore the file editor
 - (void)toggleHiddenFiles:(id)sender; // Cmd+Shift+. show/hide dotfiles
-- (void)toggleTreeDetails:(id)sender; // Shift+Cmd+I sizes and dates in the tree
+- (void)toggleTreeColumn:(id)sender;  // the tree's size, saved and created columns (tag)
 - (void)openSearch:(id)sender;        // Cmd+Shift+F project-wide search
 // The editor window itself, or a window it made for itself (Find in Folder,
 // TODOs, a sheet or child window of it).
@@ -60,6 +60,13 @@
 // Commands still running in this window's terminals (empty when every shell
 // is idle), for the question asked before quitting.
 - (NSArray<NSString *> *)runningTerminalCommands;
+// The same, leaving out Claude's terminal from Request a Change, which a
+// restart into the new build resumes instead of ending.
+- (NSArray<NSString *> *)runningTerminalCommandsExceptChange;
+// Shift+Cmd+K: Request a Change to minicode (see ChangePanel.h).
+- (void)requestChange:(id)sender;
+// After a restart: the conversation in `source` continued in a terminal here.
+- (void)resumeChangeWithSource:(NSString *)source command:(NSString *)command;
 - (void)newFile:(id)sender;
 - (void)newFolder:(id)sender;
 - (void)renameSelected:(id)sender;

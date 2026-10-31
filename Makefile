@@ -28,7 +28,8 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/GitStatus.cpp src/GitGraph.cpp src/MathTex.cpp src/EditorTabs.cpp \
             src/Formatter.cpp src/InstallHints.cpp src/LineDiff.cpp \
             src/PythonEnvs.cpp \
-            src/AutoIndent.cpp src/KeepSorted.cpp src/FileDetails.cpp
+            src/AutoIndent.cpp src/KeepSorted.cpp src/FileDetails.cpp \
+            src/ChangeRequest.cpp
 
 .PHONY: all app run test dmg clean demos membench
 

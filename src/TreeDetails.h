@@ -1,7 +1,7 @@
 // TreeDetails.h — Objective-C++. Sizes and dates in the file tree (Mac):
-// the formatting, the switch that shows them (Shift+Cmd+I, app-wide), the
-// background counting of folder totals, and the row view that draws a name
-// with its size and age at the right. The rules that can be tested (sort
+// the formatting, the switches that show them (app-wide), the background
+// counting of folder totals, and the row view that draws a name with its
+// size, last save and creation date at the right. The rules that can be tested (sort
 // orders, ages, the totals cache) are plain C++ in FileDetails.h.
 #import <Cocoa/Cocoa.h>
 #include "FileDetails.h"
@@ -10,10 +10,29 @@
 // MINICODE_DEFAULTS_SUITE is set (tests), else the standard ones.
 NSUserDefaults *MCAppDefaults(void);
 
-// Shift+Cmd+I. Remembered across launches, the same for every window;
-// changing it posts MCTreeDetailsDidChangeNotification.
+// The columns at the right of the tree's rows, each switched on its own:
+// sizes (Shift+Cmd+I), when each file was last saved (Option+Shift+Cmd+I,
+// which also puts "Saved 14:32" in the status bar) and when it was created
+// (Control+Shift+Cmd+I). The values are the menu items' tags. Remembered
+// across launches, the same for every window; a change posts
+// MCTreeDetailsDidChangeNotification. A copy that only knew the old single
+// switch (MCTreeDetails, sizes and dates together) starts with sizes and
+// last saved on when it was on.
+typedef NS_OPTIONS(NSUInteger, MCTreeColumns) {
+    MCTreeColumnSize = 1 << 0,
+    MCTreeColumnSaved = 1 << 1,
+    MCTreeColumnCreated = 1 << 2,
+};
+MCTreeColumns MCTreeColumnsShown(void);
+BOOL MCTreeColumnShown(MCTreeColumns column);
+void MCSetTreeColumnsShown(MCTreeColumns columns);
+void MCToggleTreeColumn(MCTreeColumns column);
+// Any column shown.
 BOOL MCTreeDetailsShown(void);
-void MCSetTreeDetailsShown(BOOL shown);
+// "Show Sizes", "Show When Last Saved" and "Show When Created" with their
+// keys, for the View menu and the tree's context menu: action
+// toggleTreeColumn:, the column as the tag, no target.
+NSArray<NSMenuItem *> *MCTreeColumnMenuItems(void);
 extern NSNotificationName const MCTreeDetailsDidChangeNotification;
 
 // The tree's sort order for a folder (by its resolved path), Name A to Z
@@ -53,12 +72,18 @@ NSString *MCSavedPhrase(NSDate *date, NSDate *now);
 @property(nonatomic, readonly) BOOL busy;   // for tests
 @end
 
-// A row of the tree: icon, name, and with details on, the size and age
-// right-aligned in two fixed columns, muted. The name is truncated before
-// them, and the age goes first, then the size, when the row is narrow.
+// A row of the tree: icon, name, and the columns switched on (size, last
+// saved, created, in that order) right-aligned in fixed columns, muted. The
+// name is truncated before them; when the row is narrow the rightmost
+// column goes first, until the name has room. A nil string is a column
+// switched off; an empty one keeps its place, blank.
+// The row width at which every column in `columns` shows beside a name of
+// a comfortable length.
+CGFloat MCTreeCellWidthFor(MCTreeColumns columns);
 @interface MCTreeCell : NSTableCellView
-@property(nonatomic, strong, readonly) NSTextField *sizeField, *ageField;
-- (void)setSize:(NSString *)size age:(NSString *)age color:(NSColor *)color;
+@property(nonatomic, strong, readonly) NSTextField *sizeField, *savedField, *createdField;
+- (void)setSize:(NSString *)size saved:(NSString *)saved created:(NSString *)created
+          color:(NSColor *)color;
 @end
 
 // Shift+F10, Ctrl+Return, or the PC keyboard's Menu key: the context menu of

@@ -28,7 +28,7 @@ this file covers the macOS app except where it says otherwise.
   folder search (on a scratch tree in the temp directory), and the git
   status and diff readers, the formatter planning and the line diff, and
   the file tree's sort orders, ages and folder totals (`tree:*`, `sizes:*`)
-  (3,259 checks on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
+  (3,453 checks on 2026-10-31; 3,259 on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
   corpus in `tests/markdown/corpus.md` read from the repo root; the
   corpus checks skip themselves where that file is not found).
   Exits non-zero on failure. The Makefile uses clang++ on the Mac and make's
@@ -188,6 +188,9 @@ isolation. Keep them dependency-free.
   to indentation, and the dedent a typed closer or Python colon causes, by
   the file's language, in UTF-16 units like LineComments. Each result is
   one replacement. See "Indentation and sorting".
+- `src/ChangeRequest.{h,cpp}`: Request a Change's prompt, the commands
+  typed into the terminal to start and resume Claude Code, and how the
+  source folder and its fresh build are recognised (`change:*` tests).
 - `src/KeepSorted.{h,cpp}`: Google's keep-sorted (`keep-sorted start` /
   `keep-sorted end` blocks), ported from its Go code with its options, and
   plain line sorting; the editors' commands in UTF-16. See "Indentation
@@ -241,6 +244,9 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
   (the totals cache and the POSIX walker); and on the Mac the formatting,
   `MCFolderSizer` (the background queue), `MCTreeCell` (the row view) and
   `MCShowContextMenuInWindow` (Shift+F10). See "Sizes, dates and sorting".
+- `src/ChangePanel.{h,mm}` — Request a Change (Shift+Cmd+K): the bar,
+  `MCChangeSession` (one per window), the restart record and the detached
+  relaunch. See "Request a Change".
 - `src/EditingCommands.{h,mm}` — AutoIndent and KeepSorted on an
   NSTextView: the indentation keys, the electric dedent, F9 / Shift+F9 and
   sorting before a save. EditorController only calls in from
@@ -884,6 +890,26 @@ The user asked for sizes and a last-saved time on a hotkey, sorting by
 name, date or size from the right click, and the right click from the
 keyboard.
 
+- **Three columns, three switches (2026-10-31).** The user then asked for
+  last-saved and created times to toggle on their own, like sizes. The
+  single `MCTreeDetails` switch became `MCTreeColumns` (a bitmask in the
+  defaults; `MCTreeColumnSize`, `Saved`, `Created`, also the menu items'
+  tags, action `toggleTreeColumn:`): Shift+Cmd+I sizes, Option+Shift+Cmd+I
+  last saved (and the status bar's "Saved ..."), Control+Shift+Cmd+I
+  created (`st_birthtimespec`, `FileItem.created`). A copy with the old
+  switch on starts with sizes and saved on. Columns are size, saved,
+  created left to right; a narrow row drops the rightmost first; switching
+  one on widens a sidebar too narrow for them (`MCTreeCellWidthFor`, up
+  to 40% of the window). Sort By has Date Created (`TreeSort::Key::Created`,
+  "created" in the encoding, newest first). Trap: NSTableCellView moves its
+  textField to the cell's width (x 28) without a layout pass, so a long
+  name drew under the columns; `MCTreeCell` places its fields again in
+  `viewWillDraw`. Verified offscreen (the harness below, 2026-10-31): the
+  migration, the three keys as CGEvent keys, column texts ("Jan 2020" from
+  a file whose birth time was set by `touch -t`), right-to-left order,
+  narrow rows, the widening, the status bar, the sort and the tree menu,
+  and a capture looked at.
+
 - **Shift+Cmd+I** (View > Show Sizes and Dates, and in the tree's menu;
   Cmd+I is Show Hover Info) shows each row's size and age right-aligned
   and muted (sidebar text at 55%), in two fixed columns (`MCTreeCell`,
@@ -956,6 +982,64 @@ keyboard.
   opening and keyboard navigation in it, a PC Menu key, the half-minute
   updates, and a huge real folder such as the home folder. Linux and
   Android have none of it yet.
+
+## Request a Change (Mac, 2026-10-31, on a branch)
+
+The user asked for an in-app way to request changes to minicode and see
+them "materialize in realtime", in the window rather than a new one.
+Native code cannot be hot-reloaded, so the loop is: Claude Code in a
+terminal tab changes the source and runs `make`, and minicode restarts
+into the build, keeping its place.
+
+- **Shift+Cmd+K** (minicode menu, Request a Change to minicode…) shows
+  `MCChangeBar` across the top of the right pane (`layoutChangeBarIn:`,
+  carved off before everything else in `relayoutRightArea`, over editor
+  and browser), field focused; Esc closes and gives the keyboard back.
+  Return writes the prompt (`ChangeRequest::prompt`: the request, then a
+  paragraph asking for `make`, CLAUDE.md, and no commit, push, or release)
+  to `$TMPDIR/MiniCode-change/request-<pid>-<n>.txt` and types
+  `cd <source> && <develop.command> "$(cat <file>)"` into a new terminal
+  tab (or Claude's previous terminal if idle), focused so its questions
+  can be answered. The file keeps the typed line, the tab title and zsh's
+  history short; the whole prompt on the line flooded all three. While
+  Claude still runs, Shift+Cmd+K focuses its terminal instead.
+- **Source folder** (`MCChangeSourceFolder`): `develop.source` (an error
+  in the bar if it is not one), else the checkout this app bundle was
+  built in, else `MCChangeSource` in the defaults, else an open panel
+  sheet that remembers the choice. "Source" means a Makefile and
+  `src/EditorController.mm`.
+- **Watching the build**: a 2 s timer reads the mtime of
+  `<source>/MiniCode.app/Contents/_CodeSignature/CodeResources` (codesign
+  is the last step of `make app`); newer than at the request and unchanged
+  for one tick puts the bar in Rebuilt with Restart. × on it waits for the
+  next build. The timer stops when Claude's terminal closes.
+- **Restart** (`AppDelegate restartIntoApp:resumingIn:source:command:`,
+  protocol `MCRestarting`): sets `restartApp`/`restartRecord` and calls
+  `terminate:`. `applicationShouldTerminate` asks the usual questions,
+  titled "Restart minicode?" and leaving Claude's terminal out
+  (`runningTerminalCommandsExceptChange`); Cancel clears the restart.
+  `applicationWillTerminate` writes `MCRestart` (windows' roots, which one
+  resumes, source, command, time) and `MCLaunchAfterExit` spawns a
+  detached `/bin/sh` (own session) that waits for our pid and runs `open
+  -n <source>/MiniCode.app`. The next launch takes the record if under two
+  minutes old (`reopenAfterRestart:`), opens each folder (tabs come back
+  from `MCTabSessions`), and in the resuming window runs
+  `<command> --continue` in a terminal, unfocused, with a note in the bar.
+  So after the first restart the user runs the repo's build, not
+  Homebrew's, until the next `brew upgrade`; launching it registers that
+  bundle with Launch Services (see the mc-dev note).
+- **Verified** offscreen (71 checks with the tree's, 2026-10-31: all of
+  src/ with main.mm included as `minicode_main`, ordering, `keyWindow`,
+  activation, `setActivationPolicy:` and `terminate:` swizzled; scratch
+  HOME, ZDOTDIR, settings and defaults suite; a fake claude script that
+  records its arguments and touches CodeResources): the key, the bar's
+  frame over the editor, Esc, Return, the prompt reaching the program
+  through `$(cat)`, focus, the busy case, Rebuilt, the restart questions
+  and record, the record read once and ignored when old, and reopening
+  with `--continue`. Pictures of the bar were looked at. **Not run**: the
+  real relaunch through `open -n` (it would put a window on the user's
+  screen) and real Claude Code in the terminal. Needs the user: one real
+  request end to end.
 
 ## Formatting (Mac, 2026-10-20)
 

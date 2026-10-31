@@ -7,10 +7,15 @@
 #import "Appearance.h"
 #import "TerminalPanel.h"
 #import "TreeDetails.h"
+#import "ChangePanel.h"
 
-@interface AppDelegate : NSObject <NSApplicationDelegate>
+@interface AppDelegate : NSObject <NSApplicationDelegate, MCRestarting>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
 @property(nonatomic, strong) id keyMonitor;
+// Request a Change's restart, between the question and the quit: the app
+// to open, and what it reopens (see restartIntoApp:).
+@property(nonatomic, copy) NSString *restartApp;
+@property(nonatomic, copy) NSDictionary *restartRecord;
 @end
 
 @implementation AppDelegate
@@ -86,6 +91,14 @@
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
+    // Started by Request a Change's restart: the windows that were open, and
+    // the conversation with Claude where it was.
+    NSDictionary *restart = MCTakeRestartRecord();
+    if (restart && [NSProcessInfo processInfo].arguments.count < 2 &&
+        self.controllers.count == 0 && [self reopenAfterRestart:restart]) {
+        if (!MCBenchActive()) [NSApp activateIgnoringOtherApps:YES];
+        return;
+    }
     // Open what the command line names, else the cwd. A directory becomes the
     // tree's root; a file opens in the editor with the tree rooted at the
     // folder holding it, so its neighbours are still listed. A path that does
@@ -135,12 +148,26 @@
 // each window would; windows are not closed on the way out, so nothing
 // else would.
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)app {
+    const BOOL restarting = self.restartApp != nil;
+    NSApplicationTerminateReply reply = [self confirmQuitRestarting:restarting];
+    if (reply == NSTerminateCancel) {
+        self.restartApp = nil;
+        self.restartRecord = nil;
+    }
+    return reply;
+}
+
+- (NSApplicationTerminateReply)confirmQuitRestarting:(BOOL)restarting {
     // One question for every command still running in any window's
-    // terminals, before the unsaved files.
+    // terminals, before the unsaved files. Claude's terminal is not asked
+    // about on a restart: the new build continues the conversation.
     NSMutableArray<NSString *> *running = [NSMutableArray array];
     for (EditorController *c in self.controllers)
-        [running addObjectsFromArray:[c runningTerminalCommands]];
-    if (!MCConfirmClosingRunning(running, @"Quit MiniCode?", @"Quit")) return NSTerminateCancel;
+        [running addObjectsFromArray:restarting ? [c runningTerminalCommandsExceptChange]
+                                                : [c runningTerminalCommands]];
+    if (!MCConfirmClosingRunning(running, restarting ? @"Restart minicode?" : @"Quit MiniCode?",
+                                 restarting ? @"Restart" : @"Quit"))
+        return NSTerminateCancel;
     for (EditorController *c in [self.controllers copy]) {
         if (!c.hasUnsavedChanges) continue;
         [c.window makeKeyAndOrderFront:nil];
@@ -152,6 +179,62 @@
 // Language servers are child processes; none may outlive the app.
 - (void)applicationWillTerminate:(NSNotification *)note {
     MCLspTerminateAllServers();
+    if (self.restartApp) {
+        MCSaveRestartRecord(self.restartRecord ?: @{});
+        MCLaunchAfterExit(self.restartApp);
+    }
+}
+
+// ------------------------------------------------ restarting into a build
+// Request a Change's Restart button. The questions quitting asks come first
+// (Cancel at any of them leaves everything as it was); then each window's
+// folder is written down for the next launch (their tabs come back with the
+// folders' sessions), and a detached shell opens the new build once this
+// process has gone.
+- (void)restartIntoApp:(NSString *)appPath resumingIn:(id)controller
+                source:(NSString *)source command:(NSString *)command {
+    if (![[NSFileManager defaultManager] fileExistsAtPath:appPath]) { NSBeep(); return; }
+    NSMutableArray *windows = [NSMutableArray array];
+    // The window asking first, so it comes back in front.
+    NSMutableArray<EditorController *> *order = [self.controllers mutableCopy];
+    if ([order containsObject:controller]) {
+        [order removeObject:controller];
+        [order insertObject:controller atIndex:0];
+    }
+    for (EditorController *c in order) {
+        if (!c.rootPath) continue;
+        [windows addObject:@{@"root": c.rootPath, @"resume": @(c == controller)}];
+    }
+    self.restartRecord = @{@"windows": windows, @"source": source ?: @"",
+                           @"command": command ?: @""};
+    self.restartApp = appPath;
+    [NSApp terminate:nil];
+    // Still here: a question was cancelled (applicationShouldTerminate
+    // cleared the restart).
+}
+
+- (BOOL)reopenAfterRestart:(NSDictionary *)record {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *source = [record[@"source"] isKindOfClass:NSString.class] ? record[@"source"] : nil;
+    NSString *command = [record[@"command"] isKindOfClass:NSString.class] ? record[@"command"] : nil;
+    EditorController *front = nil, *resume = nil;
+    NSArray *windows = [record[@"windows"] isKindOfClass:NSArray.class] ? record[@"windows"] : @[];
+    // Opened back to front, so the first ends up in front.
+    for (NSDictionary *w in windows.reverseObjectEnumerator) {
+        if (![w isKindOfClass:NSDictionary.class]) continue;
+        NSString *root = w[@"root"];
+        BOOL dir = NO;
+        if (![root isKindOfClass:NSString.class] ||
+            ![fm fileExistsAtPath:root isDirectory:&dir] || !dir)
+            continue;
+        EditorController *c = [self openWindowAtPath:root];
+        front = c;
+        if ([w[@"resume"] boolValue]) resume = c;
+    }
+    if (!front) return NO;
+    [front.window makeKeyAndOrderFront:nil];
+    if (resume && source.length) [resume resumeChangeWithSource:source command:command];
+    return YES;
 }
 
 // ------------------------------------------- opening from Finder and the Dock
@@ -318,8 +401,9 @@ static BOOL MCEditorOnlyAction(SEL a) {
 - (void)exportPDF:(id)sender       { [[self current] exportPDF:sender]; }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (MCEditorOnlyAction(item.action)) return [self keyWindowIsEditor];
-    if (item.action == @selector(toggleTreeDetails:)) {
-        item.state = MCTreeDetailsShown() ? NSControlStateValueOn : NSControlStateValueOff;
+    if (item.action == @selector(toggleTreeColumn:)) {
+        item.state = MCTreeColumnShown((MCTreeColumns)item.tag) ? NSControlStateValueOn
+                                                                 : NSControlStateValueOff;
         return YES;
     }
     if (item.action == @selector(showContextMenu:))
@@ -355,8 +439,9 @@ static BOOL MCEditorOnlyAction(SEL a) {
 - (void)toggleSourceControl:(id)sender { [[self current] toggleSourceControl:sender]; }
 - (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
 - (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
+- (void)requestChange:(id)sender   { [[self current] requestChange:sender]; }
 // App-wide, so it works from any window.
-- (void)toggleTreeDetails:(id)sender { (void)sender; MCSetTreeDetailsShown(!MCTreeDetailsShown()); }
+- (void)toggleTreeColumn:(id)sender { MCToggleTreeColumn((MCTreeColumns)[sender tag]); }
 - (void)showContextMenu:(id)sender {
     (void)sender;
     MCShowContextMenuInWindow(NSApp.keyWindow ?: NSApp.mainWindow);
@@ -426,6 +511,14 @@ static void BuildMenu(void) {
     [appMenu addItemWithTitle:@"Select Python Interpreter…"
                        action:@selector(selectPythonInterpreter:)
                 keyEquivalent:@""];
+    [appMenu addItem:[NSMenuItem separatorItem]];
+    // Hands a change to Claude Code in a terminal of minicode's own source
+    // folder, then restarts into the build (ChangePanel.h).
+    NSMenuItem *change = [[NSMenuItem alloc] initWithTitle:@"Request a Change to minicode…"
+                                                    action:@selector(requestChange:)
+                                             keyEquivalent:@"k"];
+    change.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [appMenu addItem:change];
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Quit MiniCode"
                        action:@selector(terminate:)
@@ -633,15 +726,10 @@ static void BuildMenu(void) {
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:hidden];
 
-    // Sizes and dates at the right of the file tree's rows (and the last
-    // save in the status bar). Shift+Cmd+I: Cmd+I is Show Hover Info.
-    NSMenuItem *details =
-        [[NSMenuItem alloc] initWithTitle:@"Show Sizes and Dates"
-                                   action:@selector(toggleTreeDetails:)
-                            keyEquivalent:@"i"];
-    details.keyEquivalentModifierMask =
-        NSEventModifierFlagCommand | NSEventModifierFlagShift;
-    [viewMenu addItem:details];
+    // Columns at the right of the file tree's rows, each on its own key:
+    // sizes, when last saved (which also shows the open file's last save in
+    // the status bar) and when created. Cmd+I alone is Show Hover Info.
+    for (NSMenuItem *it in MCTreeColumnMenuItems()) [viewMenu addItem:it];
 
     // Terminal: Shift+Cmd+T in the menu, like the other pane toggles; Ctrl+`
     // also works, caught by the local key monitor above.

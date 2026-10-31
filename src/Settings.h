@@ -195,6 +195,16 @@ public:
     // default).
     std::string formatCommand(const std::string& lang) const;
     bool formatOnSave() const { return formatOnSave_; }
+    // Request a Change to minicode (macOS). develop.command is the Claude
+    // Code command line the request is handed to, a whole command line like
+    // lsp.* ("claude" when unset). develop.source is minicode's source
+    // folder, a path that may hold spaces (a leading ~ is the GUI's to
+    // expand); "" lets minicode find it (the folder its own build is in,
+    // else the one chosen last time).
+    std::string developCommand() const {
+        return developCommand_.empty() ? "claude" : developCommand_;
+    }
+    const std::string& developSource() const { return developSource_; }
     static const std::vector<std::string>& formatLanguages();
 
 private:
@@ -220,6 +230,8 @@ private:
     std::map<std::string, std::string> formatCommands_;
     bool formatOnSave_ = false;
     std::string pythonInterpreter_;
+    std::string developCommand_;
+    std::string developSource_;
 
     bool apply(const std::string& key, const std::string& value,
                std::string& error);

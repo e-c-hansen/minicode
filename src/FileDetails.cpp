@@ -22,7 +22,10 @@ Options choose(const Options &current, Key key) {
 }
 
 std::string encode(const Options &o) {
-    const char *key = o.key == Key::Name ? "name" : o.key == Key::Modified ? "modified" : "size";
+    const char *key = o.key == Key::Name       ? "name"
+                    : o.key == Key::Modified ? "modified"
+                    : o.key == Key::Created  ? "created"
+                                             : "size";
     return std::string(key) + (o.ascending ? ",asc" : ",desc") +
            (o.foldersFirst ? ",folders" : ",mixed");
 }
@@ -42,6 +45,7 @@ bool decode(const std::string &s, Options *out) {
     if (parts[0] == "name") o.key = Key::Name;
     else if (parts[0] == "modified") o.key = Key::Modified;
     else if (parts[0] == "size") o.key = Key::Size;
+    else if (parts[0] == "created") o.key = Key::Created;
     else return false;
     if (parts[1] == "asc") o.ascending = true;
     else if (parts[1] == "desc") o.ascending = false;
@@ -89,6 +93,10 @@ std::vector<size_t> order(const std::vector<Entry> &entries, const Options &o) {
         case Key::Modified:
             if (a.modified != b.modified)
                 return o.ascending ? a.modified < b.modified : a.modified > b.modified;
+            return byName < 0;
+        case Key::Created:
+            if (a.created != b.created)
+                return o.ascending ? a.created < b.created : a.created > b.created;
             return byName < 0;
         case Key::Size: {
             if (pendingDirs && a.isDir && b.isDir) return byName < 0;

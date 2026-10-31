@@ -117,10 +117,32 @@ static void testFileDetails() {
     c = choose(c, Key::Name);
     CHECK(c.key == Key::Name && c.ascending);
     CHECK(defaultAscending(Key::Name) && !defaultAscending(Key::Modified) &&
-          !defaultAscending(Key::Size));
+          !defaultAscending(Key::Size) && !defaultAscending(Key::Created));
+
+    GROUP("tree:created");
+    {
+        // Birth times differ from the modification times above: a file made
+        // long ago and saved just now sorts by when it was made.
+        std::vector<Entry> b = es;
+        const double born[] = {50, 400, 20, 10, 600, 20};
+        for (size_t i = 0; i < b.size(); i++) b[i].created = born[i];
+        o = choose(Options(), Key::Created);
+        CHECK(o.key == Key::Created && !o.ascending && o.foldersFirst);
+        CHECK(fdOrder(b, o) == "src Build docs beta.c zeta.txt Alpha.md");
+        o.ascending = true;
+        CHECK(fdOrder(b, o) == "docs Build src Alpha.md zeta.txt beta.c");
+        o.foldersFirst = false;
+        CHECK(fdOrder(b, o) == "docs Alpha.md Build zeta.txt src beta.c");
+        CHECK(choose(o, Key::Created) == o);
+        CHECK(choose(o, Key::Modified).key == Key::Modified);
+        // Unknown birth times (0) sort as the oldest.
+        std::vector<Entry> u = {fdEntry("a", false, 0, 0), fdEntry("b", false, 0, 0)};
+        u[1].created = 5;
+        CHECK(fdOrder(u, choose(Options(), Key::Created)) == "b a");
+    }
 
     GROUP("tree:encode");
-    for (Key k : {Key::Name, Key::Modified, Key::Size})
+    for (Key k : {Key::Name, Key::Modified, Key::Size, Key::Created})
         for (bool asc : {true, false})
             for (bool ff : {true, false}) {
                 Options a;
@@ -132,6 +154,7 @@ static void testFileDetails() {
                 CHECK(decode(encode(a), &b) && b == a);
             }
     CHECK(encode(Options()) == "name,asc,folders");
+    CHECK(encode(choose(Options(), Key::Created)) == "created,desc,folders");
     {
         Options keep = choose(Options(), Key::Size);
         for (const char *bad : {"", "name", "name,asc", "date,asc,folders",
