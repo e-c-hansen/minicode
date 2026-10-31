@@ -1005,9 +1005,15 @@ into the build, keeping its place.
   Claude still runs, Shift+Cmd+K focuses its terminal instead.
 - **Source folder** (`MCChangeSourceFolder`): `develop.source` (an error
   in the bar if it is not one), else the checkout this app bundle was
-  built in, else `MCChangeSource` in the defaults, else an open panel
-  sheet that remembers the choice. "Source" means a Makefile and
-  `src/EditorController.mm`.
+  built in, else `MCChangeCloneFolder()`
+  (`~/Library/Application Support/MiniCode/source`) once cloned. With
+  none, the first request types `(git clone --branch v<version> <repo>
+  <dir> || git clone <repo> <dir>) && cd <dir> && claude ...` as one line
+  (`cloneThenStartCommand`), so the clone shows in the terminal; a full
+  clone, about 15 MB. No git (`MCFindProgram`, never the /usr/bin shim)
+  or something else at that path gives a note instead. "Source" means a
+  Makefile and `src/EditorController.mm`. The user's own settings name
+  `~/Code/public/minicode`.
 - **Watching the build**: a 2 s timer reads the mtime of
   `<source>/MiniCode.app/Contents/_CodeSignature/CodeResources` (codesign
   is the last step of `make app`); newer than at the request and unchanged

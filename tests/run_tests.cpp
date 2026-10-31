@@ -6927,6 +6927,17 @@ static void testChangeRequest() {
     CHECK(startCommand("  claude --model opus ", "/s", "/t/r.txt") ==
           "cd /s && claude --model opus \"$(cat /t/r.txt)\"");
     CHECK(resumeCommand("claude", "/a b") == "cd '/a b' && claude --continue");
+    CHECK(std::string(kRepository) == "https://github.com/e-c-hansen/minicode.git");
+    CHECK(cloneCommand("1.5.2", "/Users/x/Library/Application Support/MiniCode/source") ==
+          "(git clone --branch v1.5.2 https://github.com/e-c-hansen/minicode.git "
+          "'/Users/x/Library/Application Support/MiniCode/source' || git clone "
+          "https://github.com/e-c-hansen/minicode.git "
+          "'/Users/x/Library/Application Support/MiniCode/source')");
+    CHECK(cloneCommand(" ", "/s") == "git clone https://github.com/e-c-hansen/minicode.git /s");
+    CHECK(cloneThenStartCommand("1.6.0", "claude", "/s", "/t/r.txt") ==
+          "(git clone --branch v1.6.0 https://github.com/e-c-hansen/minicode.git /s || "
+          "git clone https://github.com/e-c-hansen/minicode.git /s) && "
+          "cd /s && claude \"$(cat /t/r.txt)\"");
 
     GROUP("change:source");
     std::set<std::string> files = {"/x/mc/Makefile", "/x/mc/src/EditorController.mm",

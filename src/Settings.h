@@ -200,7 +200,7 @@ public:
     // lsp.* ("claude" when unset). develop.source is minicode's source
     // folder, a path that may hold spaces (a leading ~ is the GUI's to
     // expand); "" lets minicode find it (the folder its own build is in,
-    // else the one chosen last time).
+    // else its own clone in Application Support, made on first use).
     std::string developCommand() const {
         return developCommand_.empty() ? "claude" : developCommand_;
     }

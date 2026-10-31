@@ -34,6 +34,21 @@ std::string prompt(const Context &c);
 // typed as written.
 std::string startCommand(const std::string &command, const std::string &source,
                          const std::string &promptFile);
+// minicode's public repository, which a copy installed without its source
+// clones on first use.
+extern const char *const kRepository;   // "https://github.com/e-c-hansen/minicode.git"
+
+// `(git clone --branch v<version> <repo> <dir> || git clone <repo> <dir>)`:
+// the source of the release that is running, or the default branch when
+// that tag does not exist (a build between releases). No version: the
+// default branch alone. git removes a clone that fails, so the second try
+// starts clean.
+std::string cloneCommand(const std::string &version, const std::string &dir);
+// cloneCommand, then startCommand in that folder: one line in the
+// terminal, so the clone's progress shows before Claude starts.
+std::string cloneThenStartCommand(const std::string &version, const std::string &command,
+                                  const std::string &dir, const std::string &promptFile);
+
 // `cd <source> && <command> --continue`: the last conversation in that
 // folder, after a restart.
 std::string resumeCommand(const std::string &command, const std::string &source);

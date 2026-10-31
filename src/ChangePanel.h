@@ -2,7 +2,8 @@
 // inside the window: a bar across the top of the right pane takes a request,
 // a terminal tab opens in minicode's own source folder running Claude Code
 // with it (so the user watches, answers its questions, and approves its
-// edits right there), and once Claude has rebuilt MiniCode.app with `make`
+// edits right there; a copy installed without its source clones the running
+// release first, in the same terminal), and once Claude has rebuilt MiniCode.app with `make`
 // the bar offers to restart into the new build. The restart reopens every
 // window's folder (their tabs come back with the folder's session) and the
 // conversation, with `claude --continue`, in a terminal of the window it
@@ -80,11 +81,12 @@ extern const CGFloat kMCChangeBarHeight;
 @end
 
 // minicode's source folder: develop.source when set (nil and *problem when
-// it is not one), else the checkout this app was built in, else the folder
-// chosen last time; nil when none is known yet.
+// it is not one), else the checkout this app was built in, else the clone
+// made by an earlier request; nil when there is none yet, and the request
+// clones the running release into MCChangeCloneFolder() first.
 NSString *MCChangeSourceFolder(NSString **problem);
-// Remembers the folder chosen in the open panel.
-void MCSetChangeSourceFolder(NSString *path);
+// ~/Library/Application Support/MiniCode/source
+NSString *MCChangeCloneFolder(void);
 
 // The restart: what to reopen, written as the app quits, read once by the
 // next launch (if it comes within two minutes).

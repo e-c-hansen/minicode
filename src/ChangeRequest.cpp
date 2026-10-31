@@ -40,6 +40,23 @@ std::string startCommand(const std::string &command, const std::string &source,
            RunFile::shellQuote(promptFile) + ")\"";
 }
 
+const char *const kRepository = "https://github.com/e-c-hansen/minicode.git";
+
+std::string cloneCommand(const std::string &version, const std::string &dir) {
+    const std::string repo = RunFile::shellQuote(kRepository);
+    const std::string d = RunFile::shellQuote(dir);
+    const std::string plain = "git clone " + repo + " " + d;
+    const std::string v = trim(version);
+    if (v.empty()) return plain;
+    return "(git clone --branch " + RunFile::shellQuote("v" + v) + " " + repo + " " + d +
+           " || " + plain + ")";
+}
+
+std::string cloneThenStartCommand(const std::string &version, const std::string &command,
+                                  const std::string &dir, const std::string &promptFile) {
+    return cloneCommand(version, dir) + " && " + startCommand(command, dir, promptFile);
+}
+
 std::string resumeCommand(const std::string &command, const std::string &source) {
     return "cd " + RunFile::shellQuote(source) + " && " + trim(command) + " --continue";
 }

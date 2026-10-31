@@ -924,7 +924,8 @@ const char* Settings::defaultFileText() {
 # rebuilt it with make. develop.command is the command it runs, with your
 # request added at the end; add flags here (such as --model). develop.source
 # is the source folder, a clone of github.com/e-c-hansen/minicode; auto uses
-# the folder this minicode was built in, else asks once and remembers.
+# the folder this minicode was built in, else clones the release you are
+# running into ~/Library/Application Support/MiniCode/source on first use.
 # develop.command = claude
 # develop.source = auto
 )CONF";

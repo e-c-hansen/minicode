@@ -1,6 +1,7 @@
 // ChangePanel.mm — see ChangePanel.h.
 #import "ChangePanel.h"
 #import "AppSettings.h"
+#import "Lsp.h"   // MCFindProgram
 #import "Terminal.h"
 #import "TreeDetails.h"   // MCAppDefaults
 #include "ChangeRequest.h"
@@ -143,13 +144,16 @@ const CGFloat kMCChangeBarHeight = 32;
 @end
 
 // ------------------------------------------------------------ the source
-static NSString *const kChangeSourceKey = @"MCChangeSource";
-
 static BOOL MCLooksLikeSource(NSString *dir) {
     NSFileManager *fm = [NSFileManager defaultManager];
     return ChangeRequest::looksLikeSource(Std(dir), [fm](const std::string &p) {
         return (bool)[fm fileExistsAtPath:NS(p)];
     });
+}
+
+NSString *MCChangeCloneFolder(void) {
+    return [NSHomeDirectory() stringByAppendingPathComponent:
+            @"Library/Application Support/MiniCode/source"];
 }
 
 NSString *MCChangeSourceFolder(NSString **problem) {
@@ -165,13 +169,9 @@ NSString *MCChangeSourceFolder(NSString **problem) {
     }
     NSString *built = NS(ChangeRequest::checkoutOfBundle(Std(NSBundle.mainBundle.bundlePath)));
     if (built.length && MCLooksLikeSource(built)) return built;
-    NSString *chosen = [MCAppDefaults() stringForKey:kChangeSourceKey];
-    if (chosen.length && MCLooksLikeSource(chosen)) return chosen;
+    NSString *clone = MCChangeCloneFolder();
+    if (MCLooksLikeSource(clone)) return clone;
     return nil;
-}
-
-void MCSetChangeSourceFolder(NSString *path) {
-    [MCAppDefaults() setObject:path forKey:kChangeSourceKey];
 }
 
 // ------------------------------------------------------------ restarting
@@ -307,40 +307,32 @@ static double MCFileTime(NSString *path) {
         return;
     }
     if (!source) {
-        [self chooseSourceThen:^(NSString *dir) { [self send:trimmed source:dir]; }];
-        return;
-    }
-    [self send:trimmed source:source];
-}
-
-// The open panel, as a sheet, until a folder holding minicode's source is
-// chosen or the user cancels.
-- (void)chooseSourceThen:(void (^)(NSString *dir))then {
-    NSWindow *w = _host.window;
-    NSOpenPanel *p = [NSOpenPanel openPanel];
-    p.canChooseDirectories = YES;
-    p.canChooseFiles = NO;
-    p.allowsMultipleSelection = NO;
-    p.prompt = @"Use This Folder";
-    p.message = @"Choose minicode's source folder, a clone of github.com/e-c-hansen/minicode. "
-                @"Claude Code makes the change there and rebuilds it.";
-    __weak MCChangeSession *weakSelf = self;
-    [p beginSheetModalForWindow:w completionHandler:^(NSModalResponse r) {
-        MCChangeSession *s = weakSelf;
-        if (!s || r != NSModalResponseOK || !p.URL) return;
-        NSString *dir = p.URL.path;
-        if (!MCLooksLikeSource(dir)) {
-            [s showBar:MCChangeBarNote message:[NSString stringWithFormat:
-                @"%@ is not minicode's source folder (it has no src/EditorController.mm).",
-                dir.stringByAbbreviatingWithTildeInPath]];
+        // An installed copy has no source: the first request clones the
+        // release that is running into Application Support, in the
+        // terminal, before Claude starts.
+        NSString *clone = MCChangeCloneFolder();
+        NSFileManager *fm = [NSFileManager defaultManager];
+        if ([fm fileExistsAtPath:clone]) {
+            [self showBar:MCChangeBarNote message:[NSString stringWithFormat:
+                @"%@ is in the way of minicode's source: move it away and try again.",
+                clone.stringByAbbreviatingWithTildeInPath]];
             return;
         }
-        MCSetChangeSourceFolder(dir);
-        then(dir);
-    }];
+        if (!MCFindProgram(@"git")) {
+            [self showBar:MCChangeBarNote message:
+                @"Building minicode needs Apple's command line tools. Install them with "
+                @"xcode-select --install in the terminal, then try again."];
+            return;
+        }
+        [fm createDirectoryAtPath:clone.stringByDeletingLastPathComponent
+      withIntermediateDirectories:YES attributes:nil error:nil];
+        [self send:trimmed source:clone clone:YES];
+        return;
+    }
+    [self send:trimmed source:source clone:NO];
 }
 
-- (void)send:(NSString *)request source:(NSString *)source {
+- (void)send:(NSString *)request source:(NSString *)source clone:(BOOL)clone {
     ChangeRequest::Context c;
     c.request = Std(request);
     c.version = Std(NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"] ?: @"");
@@ -359,7 +351,9 @@ static double MCFileTime(NSString *path) {
                                               @"the temporary folder."];
         return;
     }
-    NSString *line = NS(ChangeRequest::startCommand(command, Std(source), Std(file)));
+    NSString *line = clone
+        ? NS(ChangeRequest::cloneThenStartCommand(c.version, command, Std(source), Std(file)))
+        : NS(ChangeRequest::startCommand(command, Std(source), Std(file)));
     _source = [source copy];
     _request = [request copy];
     _bar.field.stringValue = @"";
@@ -372,8 +366,10 @@ static double MCFileTime(NSString *path) {
     [self watchFrom:MCFileTime(NS(ChangeRequest::buildStamp(Std(source))))];
     NSString *shortReq = request.length > 80
         ? [[request substringToIndex:80] stringByAppendingString:@"…"] : request;
-    [self showBar:MCChangeBarWorking message:[NSString stringWithFormat:
-        @"Claude is working on “%@” in the terminal. minicode offers a restart once it is rebuilt.",
+    [self showBar:MCChangeBarWorking message:[NSString stringWithFormat:clone
+        ? @"Fetching minicode's source, then Claude starts on “%@” in the terminal. "
+          @"minicode offers a restart once it is rebuilt."
+        : @"Claude is working on “%@” in the terminal. minicode offers a restart once it is rebuilt.",
         shortReq]];
 }
 
