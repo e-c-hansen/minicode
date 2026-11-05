@@ -1066,6 +1066,11 @@ static void BuildMenu(void) {
     closeTerm.keyEquivalentModifierMask =
         NSEventModifierFlagControl | NSEventModifierFlagShift;
     [termMenu addItem:closeTerm];
+    // Cmd+K as in Terminal.app and VS Code. Answered by the terminal with
+    // the keyboard (TerminalView clearTerminal:), so elsewhere it is off.
+    [termMenu addItemWithTitle:@"Clear Terminal"
+                        action:@selector(clearTerminal:)
+                 keyEquivalent:@"k"];
     [termMenu addItem:[NSMenuItem separatorItem]];
     // Not Cmd+Return, which commits in the git panel's message box.
     NSMenuItem *runFile =

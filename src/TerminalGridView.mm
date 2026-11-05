@@ -24,12 +24,15 @@
 #import "AppSettings.h"
 #import "Appearance.h"
 #import <Carbon/Carbon.h>   // kVK_* key codes (header only, nothing linked)
+#include <algorithm>
 #include <climits>
 #include <utility>
 #include <vector>
 #include "TerminalStream.h"   // termCharWidth
 
 static const long long kNoLine = LLONG_MIN;
+// Synchronized output: the longest a frame may keep the view from drawing.
+static const NSTimeInterval kSyncLimit = 0.15;
 
 @implementation TerminalGridView {
     BOOL _selecting, _hasSelection;
@@ -48,12 +51,30 @@ static const long long kNoLine = LLONG_MIN;
     int _linkCol0, _linkCol1;
     NSString *_marked;             // input method text being composed
     NSRange _markedSel;
+    // Synchronized output (mode 2026): when the view began waiting for the
+    // program to finish a frame (0: not waiting), and, after a frame took
+    // longer than kSyncLimit, the frame count it gave up at: the mode is
+    // then ignored until a frame ends, so a program that never ends one
+    // (killed mid-frame) cannot slow the view down for good.
+    CFTimeInterval _syncSince;
+    BOOL _redrawQueued;
+    BOOL _syncIgnored;
+    int _syncIgnoredAt;
+    // Find: the matches in reading order, by line number (historyBase() +
+    // line), the current one, and what was asked for.
+    struct Found { long long id; int col, width; };
+    std::vector<Found> _found;
+    NSInteger _foundIndex;
+    BOOL _finding, _findRefreshQueued;
+    std::string _findQuery;
+    BOOL _findCase;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
     if ((self = [super initWithFrame:frame])) {
         _linkId = kNoLine;
         _optionAsMeta = YES;
+        _foundIndex = -1;
     }
     return self;
 }
@@ -154,7 +175,194 @@ static const long long kNoLine = LLONG_MIN;
     // there is a link showing or Cmd is down, so ordinary output costs nothing.
     if (_linkId != kNoLine || (NSEvent.modifierFlags & NSEventModifierFlagCommand))
         [self updateLinkHover];
+    // Output under an open find bar: look again shortly, not on every piece.
+    if (_finding && !_findRefreshQueued) {
+        _findRefreshQueued = YES;
+        [self performSelector:@selector(refreshFind) withObject:nil afterDelay:0.2
+                      inModes:@[NSRunLoopCommonModes]];
+    }
+    // Whether to draw is decided once the output in hand is parsed: the
+    // terminal parses it in pieces, calling this after each, and a redraw
+    // asked for after one piece cannot be taken back (the layer keeps the
+    // request) when the next piece begins a synchronized frame.
+    if (!_redrawQueued) {
+        _redrawQueued = YES;
+        [self performSelector:@selector(redrawQueued) withObject:nil afterDelay:0
+                      inModes:@[NSRunLoopCommonModes]];
+    }
+}
+
+- (void)redrawQueued {
+    _redrawQueued = NO;
+    [self redrawUnlessMidFrame];
+}
+
+- (void)contentCleared {
+    _hasSelection = NO;
+    _selecting = NO;
+    _offset = 0;
+    [self screenChanged];
+    if (_finding) [self refreshFind];
+}
+
+// Synchronized output, DEC private mode 2026 (Claude Code uses it): between
+// "CSI ? 2026 h" and "l" the program is drawing a frame, and showing the
+// screen then shows half of it. So the view does not draw while the mode is
+// set, and draws when it ends, or after kSyncLimit at most.
+- (void)redrawUnlessMidFrame {
+    TerminalScreen *s = self.screen;
+    BOOL synced = s && s->synchronizedOutput();
+    if (_syncIgnored && (!synced || s->synchronizedFramesEnded() != _syncIgnoredAt))
+        _syncIgnored = NO;
+    if (synced && !_syncIgnored) {
+        if (_syncSince == 0) {
+            _syncSince = CACurrentMediaTime();
+            [self performSelector:@selector(syncTimedOut) withObject:nil
+                       afterDelay:kSyncLimit inModes:@[NSRunLoopCommonModes]];
+        }
+        return;
+    }
+    if (_syncSince) {
+        _syncSince = 0;
+        [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                                 selector:@selector(syncTimedOut) object:nil];
+    }
     [self setNeedsDisplay:YES];
+}
+
+- (void)syncTimedOut {
+    if (!_syncSince) return;
+    _syncSince = 0;
+    TerminalScreen *s = self.screen;
+    if (s && s->synchronizedOutput()) {
+        _syncIgnored = YES;
+        _syncIgnoredAt = s->synchronizedFramesEnded();
+    }
+    [self setNeedsDisplay:YES];
+}
+
+// Waiting on a frame (for tests and the host): the view holds its last
+// picture until the program finishes drawing.
+- (BOOL)waitingForFrame { return _syncSince != 0; }
+
+- (void)dealloc {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self];
+}
+
+// ---------------------------------------------------------------- find
+- (NSInteger)findLimit { return 10000; }
+- (NSInteger)findCount { return (NSInteger)_found.size(); }
+- (NSInteger)findIndex { return _foundIndex; }
+
+// The matches for the current query, as line numbers.
+- (std::vector<Found>)matches {
+    std::vector<Found> out;
+    TerminalScreen *s = self.screen;
+    if (!s || _findQuery.empty()) return out;
+    long long base = s->historyBase();
+    for (const TermMatch &m : s->find(_findQuery, _findCase, (size_t)[self findLimit]))
+        out.push_back({base + m.line, m.col, m.width});
+    return out;
+}
+
+// The last match at or before a place (line number, column), else the first.
+- (NSInteger)matchAtOrBefore:(long long)lineId col:(int)col {
+    if (_found.empty()) return -1;
+    NSInteger pick = 0;
+    for (size_t i = 0; i < _found.size(); i++) {
+        const Found &f = _found[i];
+        if (f.id < lineId || (f.id == lineId && f.col <= col)) pick = (NSInteger)i;
+        else break;
+    }
+    return pick;
+}
+
+- (void)revealCurrentMatch {
+    TerminalScreen *s = self.screen;
+    if (!s || _foundIndex < 0 || _foundIndex >= (NSInteger)_found.size()) return;
+    int line = (int)(_found[_foundIndex].id - s->historyBase());
+    int top = [self topLine], rows = s->rows();
+    if (line < top || line > top + rows - 1)
+        [self setOffset:rows / 2 - line];   // the match in the middle of the view
+}
+
+- (void)findText:(NSString *)text matchCase:(BOOL)matchCase {
+    TerminalScreen *s = self.screen;
+    const char *utf8 = text.UTF8String;
+    // Where the last search was, or the bottom of the view for a new one.
+    long long anchorId;
+    int anchorCol;
+    if (_foundIndex >= 0 && _foundIndex < (NSInteger)_found.size()) {
+        anchorId = _found[_foundIndex].id;
+        anchorCol = _found[_foundIndex].col;
+    } else {
+        anchorId = [self base] + [self topLine] + (s ? s->rows() - 1 : 0);
+        anchorCol = INT_MAX;
+    }
+    _finding = YES;
+    _findQuery = utf8 ? utf8 : "";
+    _findCase = matchCase;
+    _found = [self matches];
+    _foundIndex = [self matchAtOrBefore:anchorId col:anchorCol];
+    [self revealCurrentMatch];
+    [self setNeedsDisplay:YES];
+}
+
+- (void)findNext:(BOOL)forward {
+    if (_found.empty()) { NSBeep(); return; }
+    NSInteger n = (NSInteger)_found.size();
+    if (_foundIndex < 0) _foundIndex = forward ? 0 : n - 1;
+    else _foundIndex = (_foundIndex + (forward ? 1 : n - 1)) % n;
+    [self revealCurrentMatch];
+    [self setNeedsDisplay:YES];
+    if (self.onFindChanged) self.onFindChanged();
+}
+
+// Output arrived: the same search again, the current match kept where it
+// still is (or the one before its place), the view left where it is.
+- (void)refreshFind {
+    _findRefreshQueued = NO;
+    if (!_finding) return;
+    long long anchorId = LLONG_MAX;
+    int anchorCol = INT_MAX;
+    if (_foundIndex >= 0 && _foundIndex < (NSInteger)_found.size()) {
+        anchorId = _found[_foundIndex].id;
+        anchorCol = _found[_foundIndex].col;
+    }
+    _found = [self matches];
+    _foundIndex = [self matchAtOrBefore:anchorId col:anchorCol];
+    [self setNeedsDisplay:YES];
+    if (self.onFindChanged) self.onFindChanged();
+}
+
+- (void)endFind {
+    _finding = NO;
+    _found.clear();
+    _foundIndex = -1;
+    _findQuery.clear();
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(refreshFind)
+                                               object:nil];
+    _findRefreshQueued = NO;
+    [self setNeedsDisplay:YES];
+}
+
+// The matches on one line, highlighted under the text: the current one
+// strongly, the rest faintly (VS Code's find colors).
+- (void)drawMatchesOnLine:(long long)lineId row:(int)r {
+    if (_found.empty()) return;
+    auto it = std::lower_bound(_found.begin(), _found.end(), lineId,
+                               [](const Found &f, long long id) { return f.id < id; });
+    BOOL dark = [AppSettings shared].settings.isDark();
+    for (; it != _found.end() && it->id == lineId; ++it) {
+        BOOL current = (NSInteger)(it - _found.begin()) == _foundIndex;
+        NSColor *c = current
+            ? (dark ? [NSColor colorWithSRGBRed:0x9E / 255.0 green:0x6A / 255.0 blue:0x03 / 255.0 alpha:1]
+                    : [NSColor colorWithSRGBRed:0xF6 / 255.0 green:0xB9 / 255.0 blue:0x4D / 255.0 alpha:1])
+            : [NSColor colorWithSRGBRed:0xEA / 255.0 green:0x5C / 255.0 blue:0x00 / 255.0 alpha:0.33];
+        [c setFill];
+        NSRectFillUsingOperation([self rectForRow:r col:it->col width:it->width],
+                                 NSCompositingOperationSourceOver);
+    }
 }
 
 // ---------------------------------------------------------------- colors
@@ -320,6 +528,7 @@ static CellColors ColorsFor(const TermStyle &st) {
                                          NSCompositingOperationSourceOver);
             }
         }
+        [self drawMatchesOnLine:lineId row:r];
         // Text: runs of plain ASCII in one style, other characters one by one.
         c = 0;
         while (c < cols) {
@@ -443,6 +652,22 @@ static CellColors ColorsFor(const TermStyle &st) {
         // in Terminal.app. Other Cmd keys the menu did not take beep.
         if (e.keyCode == kVK_Home) { [self setOffset:[self maxOffset]]; return; }
         if (e.keyCode == kVK_End) { [self scrollToBottom]; return; }
+        // Cmd+Left, Cmd+Right and Cmd+Delete edit the line at the shell's
+        // prompt (or a REPL's, Claude Code's), as in VS Code and iTerm:
+        // its start, its end, and delete back to its start. A full-screen
+        // program keeps its own keys.
+        NSEventModifierFlags others = f & (NSEventModifierFlagShift | NSEventModifierFlagOption |
+                                          NSEventModifierFlagControl);
+        if (self.textInput && !others && !s->altScreen() && self.onLineEdit &&
+            (e.keyCode == kVK_LeftArrow || e.keyCode == kVK_RightArrow ||
+             e.keyCode == kVK_Delete)) {
+            if (_hasSelection) { _hasSelection = NO; [self setNeedsDisplay:YES]; }
+            [self scrollToBottom];
+            self.onLineEdit(e.keyCode == kVK_LeftArrow ? MCLineEditStart
+                            : e.keyCode == kVK_RightArrow ? MCLineEditEnd
+                                                          : MCLineEditDeleteToStart);
+            return;
+        }
         [super keyDown:e];
         return;
     }

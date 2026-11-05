@@ -25,6 +25,17 @@ struct TermCell {
     uint8_t width = 1;      // 1, 2 (left half of a wide character), 0 (right half)
 };
 
+// A place the find bar found its text: `width` cells from `col` of `line`,
+// a line as TerminalScreen::lineCell numbers them (negative: the scrollback).
+struct TermMatch {
+    int line = 0;
+    int col = 0;
+    int width = 0;
+    bool operator==(const TermMatch& o) const {
+        return line == o.line && col == o.col && width == o.width;
+    }
+};
+
 enum class TermKey {
     Up, Down, Right, Left, Home, End, PageUp, PageDown, Insert, Delete,
     F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
@@ -81,6 +92,23 @@ public:
     size_t historyBytes() const;
     size_t historyCellBytes() const;
 
+    // Every place `query` appears, in reading order: the scrollback first
+    // (on the main screen; the alternate screen has none), then the screen.
+    // Case is ignored unless `matchCase` (ASCII, Latin-1, Greek and Cyrillic
+    // letters). A match never runs from one line into the next, even where
+    // a program's long line wrapped. At most `limit` are returned.
+    std::vector<TermMatch> find(const std::string& query, bool matchCase,
+                                size_t limit = 10000) const;
+
+    // Cmd+K. clearAll: the scrollback and the screen are erased and the
+    // cursor goes home, for a shell at its prompt, which then draws the
+    // prompt again. clearToCursorLine: the scrollback goes and the cursor's
+    // line becomes the top row, the rows below coming up with it, as VS
+    // Code's Clear does, for a program that is running and draws below
+    // its last line. On the alternate screen both clear only the scrollback.
+    void clearAll();
+    void clearToCursorLine();
+
     // One row as UTF-8, trailing blanks dropped.
     std::string rowText(int row) const;
     // Every row, joined with "\n", trailing blank rows dropped.
@@ -99,6 +127,14 @@ public:
     bool appCursorKeys() const { return appCursor_; }
     bool appKeypad() const { return appKeypad_; }
     bool bracketedPaste() const { return bracketedPaste_; }
+    // Synchronized output (DEC private mode 2026): the program is in the
+    // middle of drawing a frame, so the host should not show the screen
+    // until it ends (with a time limit, since a program may never end it).
+    bool synchronizedOutput() const { return syncOutput_; }
+    // How many synchronized frames have ended (the mode reset while set),
+    // so a host that gave up waiting on one frame can tell when the next
+    // one comes.
+    int synchronizedFramesEnded() const { return syncEnds_; }
     bool autowrap() const { return autowrap_; }
     int scrollTop() const { return top_; }
     int scrollBottom() const { return bottom_; }
@@ -172,6 +208,8 @@ private:
     bool autowrap_ = true, originMode_ = false, insertMode_ = false;
     bool cursorVisible_ = true, appCursor_ = false, appKeypad_ = false;
     bool bracketedPaste_ = false;
+    bool syncOutput_ = false;
+    int syncEnds_ = 0;
     int g0_ = 0, g1_ = 0, gl_ = 0;    // charsets: 0 ASCII, 1 DEC line drawing
     std::string lastChar_;            // for REP
     uint32_t lastCp_ = 0;
@@ -189,6 +227,7 @@ private:
     void esc(const std::string& inter, unsigned char final);
     void osc(const std::string& body);
     void setMode(const std::string& params, bool on);
+    void reportMode(const std::string& params);   // DECRQM
 
     void lineFeed();
     void reverseIndex();
