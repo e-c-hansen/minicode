@@ -10,12 +10,17 @@
 #import "TreeDetails.h"   // MCAppDefaults
 #include "CommandPalette.h"
 
+#include <atomic>
+#include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
 static NSString *const kPaletteRecentKey = @"MCCommandPaletteRecent";
+static NSString *const kQuickOpenRecentKey = @"MCQuickOpenRecent";
 static const CGFloat kPaletteRowHeight = 26;
 static const NSInteger kPaletteMaxRows = 12;
+static const size_t kQuickOpenMaxFiles = 20000;
 
 static NSColor *PHex(unsigned rgb, CGFloat alpha = 1) {
     return [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0
@@ -34,6 +39,9 @@ static std::u16string PU16(NSString *s) {
 static NSString *PNS(const std::u16string &s) {
     return [NSString stringWithCharacters:(const unichar *)s.data() length:s.size()];
 }
+
+@implementation MCPaletteContext
+@end
 
 // ------------------------------------------------------------ the commands
 @interface MCPaletteCommand : NSObject
@@ -87,21 +95,35 @@ static void PCollect(NSMenu *menu, NSString *path, NSMutableArray<MCPaletteComma
     }
 }
 
-static std::vector<std::string> PRecent(void) {
-    std::vector<std::string> out;
-    for (id s in [MCAppDefaults() arrayForKey:kPaletteRecentKey])
-        if ([s isKindOfClass:NSString.class]) out.push_back([s UTF8String]);
+static NSArray<NSString *> *PStrings(NSString *key) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (id s in [MCAppDefaults() arrayForKey:key])
+        if ([s isKindOfClass:NSString.class]) [out addObject:s];
     return out;
 }
 
-static void PNoteRun(NSString *label) {
-    std::vector<std::string> r = CommandPalette::noteRun(PRecent(), label.UTF8String);
+// Most recent first, once each, at most cap.
+static void PNote(NSString *key, NSString *value, NSUInteger cap) {
+    std::vector<std::string> r;
+    for (NSString *s in PStrings(key)) r.push_back(s.UTF8String);
+    r = CommandPalette::noteRun(r, value.UTF8String, cap);
     NSMutableArray *a = [NSMutableArray array];
     for (const std::string &s : r) [a addObject:@(s.c_str())];
-    [MCAppDefaults() setObject:a forKey:kPaletteRecentKey];
+    [MCAppDefaults() setObject:a forKey:key];
 }
 
 // ------------------------------------------------------------------ a row
+// What the list shows: a label (its matched characters marked), the keys
+// at the right, and what Return does.
+@interface MCPaletteItem : NSObject
+@property(nonatomic, copy) NSString *label;
+@property(nonatomic, strong) NSAttributedString *text;
+@property(nonatomic, copy) NSString *keys;
+@property(nonatomic, copy) void (^run)(void);   // nil: nothing to run
+@end
+@implementation MCPaletteItem
+@end
+
 @interface MCPaletteRow : NSView
 @property(nonatomic, strong) NSAttributedString *text;
 @property(nonatomic, copy) NSString *keys;
@@ -152,6 +174,10 @@ static void PNoteRun(NSString *label) {
 @interface MCPaletteOverlay : NSView <NSTextFieldDelegate, NSTableViewDataSource,
                                       NSTableViewDelegate>
 @property(nonatomic, strong) NSArray<MCPaletteCommand *> *commands;
+@property(nonatomic, strong) MCPaletteContext *context;
+@property(nonatomic, strong) NSArray<NSString *> *files;   // relative; nil until listed
+@property(nonatomic) BOOL filesTruncated;
+@property(nonatomic, strong) NSArray<MCPaletteItem *> *items;
 @property(nonatomic, weak) NSResponder *restore;
 @property(nonatomic) NSRange restoreSelection;   // in a text field's field editor
 @property(nonatomic, strong) NSView *box;
@@ -167,13 +193,16 @@ static void PNoteRun(NSString *label) {
 
 @implementation MCPaletteOverlay {
     std::vector<CommandPalette::Entry> _entries;
-    std::vector<CommandPalette::Match> _matches;
+    std::vector<std::u16string> _fileKeys;
+    std::shared_ptr<std::atomic<bool>> _cancelListing;
 }
 
-- (instancetype)initWithFrame:(NSRect)frame commands:(NSArray<MCPaletteCommand *> *)commands {
+- (instancetype)initWithFrame:(NSRect)frame commands:(NSArray<MCPaletteCommand *> *)commands
+                      context:(MCPaletteContext *)context {
     if (!(self = [super initWithFrame:frame])) return nil;
     self.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     self.commands = commands;
+    self.context = context;
     for (MCPaletteCommand *c in commands) {
         CommandPalette::Entry e;
         e.label = PU16(c.label);
@@ -218,7 +247,7 @@ static void PNoteRun(NSString *label) {
     f.usesSingleLineMode = YES;
     f.cell.scrollable = YES;
     f.placeholderAttributedString = [[NSAttributedString alloc]
-        initWithString:@"Type the name of a command"
+        initWithString:@"Search files by name (> for commands, : for a line)"
             attributes:@{NSForegroundColorAttributeName: self.mutedColor,
                          NSFontAttributeName: f.font}];
     f.delegate = self;
@@ -226,7 +255,7 @@ static void PNoteRun(NSString *label) {
     [self.fieldBack addSubview:f];
 
     MCPaletteTable *t = [[MCPaletteTable alloc] initWithFrame:NSZeroRect];
-    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"command"];
+    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"item"];
     col.resizingMask = NSTableColumnAutoresizingMask;
     [t addTableColumn:col];
     t.headerView = nil;
@@ -254,14 +283,53 @@ static void PNoteRun(NSString *label) {
     self.scroll = sv;
     [self.box addSubview:sv];
 
-    self.emptyLabel = [NSTextField labelWithString:@"No matching commands"];
+    self.emptyLabel = [NSTextField labelWithString:@""];
     self.emptyLabel.textColor = self.mutedColor;
     self.emptyLabel.font = [NSFont systemFontOfSize:13];
     self.emptyLabel.hidden = YES;
     [self.box addSubview:self.emptyLabel];
-
-    [self refilter];
     return self;
+}
+
+// The folder's files, listed on a background queue; the list fills in when
+// they arrive (or never, if the palette closed first, which stops the walk).
+- (void)listFiles {
+    NSString *root = self.context.root;
+    if (!root.length) {
+        self.files = @[];
+        return;
+    }
+    auto cancel = std::make_shared<std::atomic<bool>>(false);
+    _cancelListing = cancel;
+    __weak MCPaletteOverlay *weakSelf = self;
+    const std::string rootUtf8 = root.fileSystemRepresentation;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        bool truncated = false;
+        std::vector<std::string> found =
+            CommandPalette::listFiles(rootUtf8, kQuickOpenMaxFiles, cancel.get(), &truncated);
+        if (cancel->load()) return;
+        NSMutableArray<NSString *> *files = [NSMutableArray arrayWithCapacity:found.size()];
+        for (const std::string &rel : found) {
+            NSString *s = [NSString stringWithUTF8String:rel.c_str()];
+            if (s) [files addObject:s];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            MCPaletteOverlay *me = weakSelf;
+            if (!me || me.closing) return;
+            me.filesTruncated = truncated;
+            [me setListedFiles:files];
+        });
+    });
+}
+
+- (void)setListedFiles:(NSArray<NSString *> *)files {
+    self.files = files;
+    _fileKeys.clear();
+    _fileKeys.reserve(files.count);
+    for (NSString *f in files) _fileKeys.push_back(PU16(f));
+    if (CommandPalette::parse(PU16(self.field.stringValue ?: @"")).mode ==
+        CommandPalette::Mode::Files)
+        [self refilter];
 }
 
 - (void)setFrameSize:(NSSize)s {
@@ -280,7 +348,7 @@ static void PNoteRun(NSString *label) {
         if (t >= 0 && t < 100) titleH = t;
     }
     const CGFloat boxW = floor(MIN(600, MAX(200, b.size.width - 40)));
-    const NSInteger rows = MAX(1, MIN((NSInteger)_matches.size(), kPaletteMaxRows));
+    const NSInteger rows = MAX(1, MIN((NSInteger)self.items.count, kPaletteMaxRows));
     const CGFloat pad = 6, fieldH = 30, listH = rows * kPaletteRowHeight;
     const CGFloat boxH = pad + fieldH + pad + listH + pad;
     const CGFloat top = NSMaxY(b) - titleH - 8;
@@ -293,6 +361,7 @@ static void PNoteRun(NSString *label) {
     self.table.tableColumns.firstObject.width = self.scroll.contentSize.width;
     [self.emptyLabel sizeToFit];
     NSSize es = self.emptyLabel.frame.size;
+    es.width = MIN(es.width, boxW - 2 * pad - 24);
     self.emptyLabel.frame = NSMakeRect(pad + 12, pad + floor((listH - es.height) / 2),
                                        es.width, es.height);
 }
@@ -309,23 +378,147 @@ static void PNoteRun(NSString *label) {
 }
 - (void)rightMouseDown:(NSEvent *)e { [self mouseDown:e]; }
 
+// ------------------------------------------------------------- the items
 - (void)refilter {
-    _matches = CommandPalette::rank(_entries, PU16(self.field.stringValue ?: @""), PRecent());
-    self.selected = _matches.empty() ? -1 : 0;
+    using namespace CommandPalette;
+    const Parsed p = parse(PU16(self.field.stringValue ?: @""));
+    NSMutableArray<MCPaletteItem *> *items = [NSMutableArray array];
+    NSString *empty = @"";
+    __weak MCPaletteOverlay *weakSelf = self;
+    if (p.mode == Mode::Commands) {
+        std::vector<std::string> recent;
+        for (NSString *s in PStrings(kPaletteRecentKey)) recent.push_back(s.UTF8String);
+        for (const Match &m : rank(_entries, p.query, recent)) {
+            MCPaletteCommand *c = self.commands[m.index];
+            MCPaletteItem *it = [MCPaletteItem new];
+            it.label = c.label;
+            it.text = [self attributed:c.label title:c.title match:m];
+            it.keys = c.keys;
+            NSMenuItem *menuItem = c.item;
+            NSString *label = c.label;
+            it.run = ^{
+                PNote(kPaletteRecentKey, label, 20);
+                [weakSelf closeRestoringFocus:YES];
+                // On the next turn of the run loop, out of the field's own
+                // key handling, with the keyboard back where it was, so the
+                // command acts on what had it, as from the menu bar.
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [NSApp sendAction:menuItem.action to:menuItem.target from:menuItem];
+                });
+            };
+            [items addObject:it];
+        }
+        if (!items.count) empty = @"No matching commands";
+    } else if (p.mode == Mode::Line) {
+        void (^go)(NSInteger, NSInteger) = self.context.goToLine;
+        MCPaletteItem *it = [MCPaletteItem new];
+        if (!go) {
+            it.label = @"Open a file to go to one of its lines";
+        } else if (!p.lineValid) {
+            it.label = @"Type a line number, and a column after a colon if you like";
+        } else if (p.line <= 0) {
+            it.label = @"Type a line number to go to";
+        } else {
+            it.label = p.column > 0
+                ? [NSString stringWithFormat:@"Go to line %d, column %d", p.line, p.column]
+                : [NSString stringWithFormat:@"Go to line %d", p.line];
+            const NSInteger line = p.line, column = p.column;
+            it.run = ^{
+                [weakSelf closeRestoringFocus:YES];
+                dispatch_async(dispatch_get_main_queue(), ^{ go(line, column); });
+            };
+        }
+        it.text = [[NSAttributedString alloc]
+            initWithString:it.label
+                attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:13],
+                             NSForegroundColorAttributeName:
+                                 it.run ? self.textColor : self.mutedColor}];
+        [items addObject:it];
+    } else if (!self.files) {
+        empty = @"Listing the folder's files…";
+    } else {
+        NSString *root = self.context.root;
+        NSString *prefix = [root hasSuffix:@"/"] ? root : [root stringByAppendingString:@"/"];
+        std::vector<std::u16string> recent;
+        NSMutableArray<NSString *> *recentAbs = [NSMutableArray array];
+        [recentAbs addObjectsFromArray:self.context.recentFiles ?: @[]];
+        [recentAbs addObjectsFromArray:PStrings(kQuickOpenRecentKey)];
+        // Compared with symlinks resolved, as /tmp and /private/tmp are one.
+        NSString *resolvedRoot = root.stringByResolvingSymlinksInPath;
+        NSString *resolvedPrefix = [resolvedRoot hasSuffix:@"/"]
+            ? resolvedRoot : [resolvedRoot stringByAppendingString:@"/"];
+        for (NSString *a in recentAbs) {
+            if ([a hasPrefix:prefix]) {
+                recent.push_back(PU16([a substringFromIndex:prefix.length]));
+                continue;
+            }
+            NSString *r = a.stringByResolvingSymlinksInPath;
+            if ([r hasPrefix:resolvedPrefix])
+                recent.push_back(PU16([r substringFromIndex:resolvedPrefix.length]));
+        }
+        std::set<std::u16string> recentSet(recent.begin(), recent.end());
+        for (const Match &m : rankFiles(_fileKeys, p.query, recent)) {
+            NSString *rel = self.files[m.index];
+            MCPaletteItem *it = [MCPaletteItem new];
+            it.label = rel;
+            it.text = [self attributed:rel title:rel.lastPathComponent match:m];
+            if (recentSet.count(_fileKeys[m.index])) it.keys = @"recently opened";
+            NSString *abs = [prefix stringByAppendingString:rel];
+            void (^open)(NSString *) = self.context.openFile;
+            it.run = ^{
+                PNote(kQuickOpenRecentKey, abs, 50);
+                [weakSelf closeRestoringFocus:YES];
+                if (open) dispatch_async(dispatch_get_main_queue(), ^{ open(abs); });
+            };
+            [items addObject:it];
+        }
+        if (!items.count)
+            empty = self.files.count ? @"No matching files" : @"No files in this folder";
+    }
+    self.items = items;
+    self.selected = items.count ? 0 : -1;
     [self.table reloadData];
-    self.emptyLabel.hidden = !_matches.empty();
+    self.emptyLabel.stringValue = empty;
+    self.emptyLabel.hidden = items.count > 0;
     [self relayout];
     if (self.selected >= 0) [self.table scrollRowToVisible:0];
 }
 
+// The part before the title muted (a command's menu, a file's folder), the
+// title in the text color, the matched characters in the accent color and
+// semibold.
+- (NSAttributedString *)attributed:(NSString *)label title:(NSString *)title
+                             match:(const CommandPalette::Match &)m {
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.lineBreakMode = NSLineBreakByTruncatingHead;
+    NSFont *font = [NSFont systemFontOfSize:13];
+    NSMutableAttributedString *s = [[NSMutableAttributedString alloc]
+        initWithString:label
+            attributes:@{NSFontAttributeName: font,
+                         NSForegroundColorAttributeName: self.textColor,
+                         NSParagraphStyleAttributeName: ps}];
+    const NSUInteger titleAt = label.length >= title.length ? label.length - title.length : 0;
+    if (titleAt > 0)
+        [s addAttribute:NSForegroundColorAttributeName value:self.mutedColor
+                  range:NSMakeRange(0, titleAt)];
+    NSFont *bold = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
+    for (size_t p : m.positions) {
+        if (p >= label.length) continue;
+        [s addAttributes:@{NSFontAttributeName: bold,
+                           NSForegroundColorAttributeName: PAccent()}
+                   range:NSMakeRange(p, 1)];
+    }
+    return s;
+}
+
 - (NSArray<NSString *> *)labels {
     NSMutableArray *a = [NSMutableArray array];
-    for (const auto &m : _matches) [a addObject:self.commands[m.index].label];
+    for (MCPaletteItem *it in self.items) [a addObject:it.label];
     return a;
 }
 
 - (void)select:(NSInteger)row {
-    const NSInteger n = (NSInteger)_matches.size();
+    const NSInteger n = (NSInteger)self.items.count;
     if (n == 0) return;
     row = ((row % n) + n) % n;   // wraps, as VS Code's list does
     NSInteger old = self.selected;
@@ -338,7 +531,7 @@ static void PNoteRun(NSString *label) {
 
 // Page moves stop at the ends instead of wrapping.
 - (void)page:(NSInteger)delta {
-    const NSInteger n = (NSInteger)_matches.size();
+    const NSInteger n = (NSInteger)self.items.count;
     if (n == 0) return;
     [self select:MAX(0, MIN(n - 1, self.selected + delta))];
 }
@@ -390,7 +583,7 @@ static void PNoteRun(NSString *label) {
 // ------------------------------------------------------------- the list
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tv {
     (void)tv;
-    return (NSInteger)_matches.size();
+    return (NSInteger)self.items.count;
 }
 
 - (NSView *)tableView:(NSTableView *)tv viewForTableColumn:(NSTableColumn *)col
@@ -401,42 +594,14 @@ static void PNoteRun(NSString *label) {
         v = [[MCPaletteRow alloc] initWithFrame:NSMakeRect(0, 0, 100, kPaletteRowHeight)];
         v.identifier = @"MCPaletteRow";
     }
-    if (row < 0 || row >= (NSInteger)_matches.size()) return v;
-    const CommandPalette::Match &m = _matches[(size_t)row];
-    MCPaletteCommand *c = self.commands[m.index];
-    v.text = [self attributedLabel:c match:m];
-    v.keys = c.keys;
+    if (row < 0 || row >= (NSInteger)self.items.count) return v;
+    MCPaletteItem *it = self.items[(NSUInteger)row];
+    v.text = it.text;
+    v.keys = it.keys;
     v.keyColor = self.mutedColor;
     v.selected = row == self.selected;
     v.needsDisplay = YES;
     return v;
-}
-
-// The menu's part muted, the item's own title in the text color, the
-// matched characters in the accent color and semibold.
-- (NSAttributedString *)attributedLabel:(MCPaletteCommand *)c
-                                  match:(const CommandPalette::Match &)m {
-    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
-    ps.lineBreakMode = NSLineBreakByTruncatingTail;
-    NSFont *font = [NSFont systemFontOfSize:13];
-    NSMutableAttributedString *s = [[NSMutableAttributedString alloc]
-        initWithString:c.label
-            attributes:@{NSFontAttributeName: font,
-                         NSForegroundColorAttributeName: self.textColor,
-                         NSParagraphStyleAttributeName: ps}];
-    const NSUInteger titleAt = c.label.length - c.title.length;
-    if (titleAt > 0)
-        [s addAttribute:NSForegroundColorAttributeName value:self.mutedColor
-                  range:NSMakeRange(0, titleAt)];
-    NSFont *bold = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
-    for (size_t p : m.positions) {
-        if (p >= c.label.length) continue;
-        NSRange r = NSMakeRange(p, 1);
-        [s addAttributes:@{NSFontAttributeName: bold,
-                           NSForegroundColorAttributeName: PAccent()}
-                   range:r];
-    }
-    return s;
 }
 
 - (void)rowClicked:(id)sender {
@@ -448,22 +613,17 @@ static void PNoteRun(NSString *label) {
 
 // ------------------------------------------------------------- run, close
 - (void)runRow:(NSInteger)row {
-    if (row < 0 || row >= (NSInteger)_matches.size()) { NSBeep(); return; }
-    MCPaletteCommand *c = self.commands[_matches[(size_t)row].index];
-    PNoteRun(c.label);
-    NSMenuItem *item = c.item;
-    // The keyboard goes back first, so the command acts on what had it
-    // (Close Tab, Toggle Comment, Find...), as from the menu bar. It runs on
-    // the next turn of the run loop, out of the field's own key handling.
-    [self closeRestoringFocus:YES];
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [NSApp sendAction:item.action to:item.target from:item];
-    });
+    if (row < 0 || row >= (NSInteger)self.items.count || !self.items[(NSUInteger)row].run) {
+        NSBeep();
+        return;
+    }
+    self.items[(NSUInteger)row].run();
 }
 
 - (void)closeRestoringFocus:(BOOL)restore {
     if (self.closing) return;
     self.closing = YES;
+    if (_cancelListing) _cancelListing->store(true);
     NSWindow *w = self.window;
     if (restore && w) {
         NSResponder *r = self.restore;
@@ -484,6 +644,14 @@ static void PNoteRun(NSString *label) {
     }
     [self removeFromSuperview];
 }
+
+// New text in the field, the caret after it, and the list to match.
+- (void)takeText:(NSString *)text {
+    self.field.stringValue = text ?: @"";
+    [self refilter];
+    NSText *ed = self.field.currentEditor;
+    if (ed) ed.selectedRange = NSMakeRange(ed.string.length, 0);
+}
 @end
 
 // ------------------------------------------------------------------ public
@@ -494,13 +662,13 @@ NSView *MCCommandPaletteIn(NSWindow *window) {
     return nil;
 }
 
-void MCShowCommandPalette(NSWindow *window) {
+void MCShowPalette(NSWindow *window, NSString *text, MCPaletteContext *context) {
     NSView *content = window.contentView;
     if (!content) return;
     MCPaletteOverlay *open = (MCPaletteOverlay *)MCCommandPaletteIn(window);
     if (open) {
         [window makeFirstResponder:open.field];
-        [open.field selectText:nil];
+        [open takeText:text];
         return;
     }
     // Read before the keyboard moves, so validation sees what had it.
@@ -508,7 +676,8 @@ void MCShowCommandPalette(NSWindow *window) {
     PCollect(NSApp.mainMenu, nil, commands);
 
     MCPaletteOverlay *p = [[MCPaletteOverlay alloc] initWithFrame:content.bounds
-                                                         commands:commands];
+                                                         commands:commands
+                                                          context:context ?: [MCPaletteContext new]];
     // Where the keyboard goes back to: a text field rather than its field
     // editor, which the field gets again (with the caret where it was).
     NSResponder *fr = window.firstResponder;
@@ -520,8 +689,9 @@ void MCShowCommandPalette(NSWindow *window) {
     }
     p.restore = fr;
     [content addSubview:p positioned:NSWindowAbove relativeTo:nil];
-    [p relayout];
     [window makeFirstResponder:p.field];
+    [p takeText:text];
+    [p listFiles];
 }
 
 NSTextField *MCCommandPaletteField(NSView *palette) {
@@ -537,4 +707,9 @@ NSArray<NSString *> *MCCommandPaletteLabels(NSView *palette) {
 NSInteger MCCommandPaletteSelection(NSView *palette) {
     return [palette isKindOfClass:MCPaletteOverlay.class] ? ((MCPaletteOverlay *)palette).selected
                                                           : -1;
+}
+
+BOOL MCCommandPaletteFilesListed(NSView *palette) {
+    return [palette isKindOfClass:MCPaletteOverlay.class] &&
+           ((MCPaletteOverlay *)palette).files != nil;
 }

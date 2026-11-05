@@ -1283,7 +1283,9 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⌃⇧⌘I" label2:@"When created" state:nil];
 
     [self appendHintsHeading:@"Navigation" to:s];
-    [self appendHintsRow:s key:@"⇧⌘P" label:@"Command palette: any menu command by name"
+    [self appendHintsRow:s key:@"⇧⌘P" label:@"Command palette"
+                    key2:@"⌘P" label2:@"Go to file" state:nil];
+    [self appendHintsRow:s key:@"⌃G" label:@"Go to line"
                     key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:@"⌘0" label:@"Focus tree"
                     key2:@"⌘1" label2:@"Focus editor" state:nil];
@@ -1311,7 +1313,7 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     [self appendHintsHeading:@"Panes" to:s];
     [self appendHintsRow:s key:@"⇧⌘E" label:@"Editor"
                     key2:nil label2:nil state:openOr(!self.editorHidden)];
-    [self appendHintsRow:s key:@"⇧⌘T" label:@"Terminal  (also ⌃`)"
+    [self appendHintsRow:s key:@"⇧⌘T" label:@"Terminal  (also ⌘J, ⌃`)"
                     key2:nil label2:nil state:openOr(self.terminalVisible)];
     if (self.terminalVisible) {
         [self appendHintsRow:s key:@"⌃⇧`" label:@"New terminal"
@@ -1769,6 +1771,22 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     if (lineEnd > lineRange.location)
         [self.textView showFindIndicatorForRange:
             NSMakeRange(lineRange.location, lineEnd - lineRange.location)];
+}
+
+// For the palette's Go to Line (Ctrl+G) and Quick Open (Cmd+P).
+- (BOOL)canGoToLine {
+    return self.currentPath && !self.showingMessage && !self.isImage && !self.isPDF &&
+           !self.isMedia && !self.isDiff;
+}
+- (NSArray<NSString *> *)recentTabPaths {
+    NSArray<MCTab *> *byUse = [_tabs sortedArrayUsingComparator:^NSComparisonResult(MCTab *a, MCTab *b) {
+        return a.lastActive == b.lastActive ? NSOrderedSame
+             : a.lastActive > b.lastActive  ? NSOrderedAscending : NSOrderedDescending;
+    }];
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    for (MCTab *t in byUse)
+        if (t.currentPath) [paths addObject:t.currentPath];
+    return paths;
 }
 
 - (void)toggleBrowser:(id)sender {

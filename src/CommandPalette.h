@@ -2,11 +2,17 @@
 // matching of what is typed against the menu's commands, their order, the
 // list of recently run commands, and a key equivalent drawn as glyphs.
 //
-// Pure C++, no I/O, in UTF-16 code units like LineComments and MultiCaret,
-// so matched positions map straight onto NSRange. Which commands exist and
-// whether they are enabled is the GUI's business (src/PalettePanel.mm walks
-// the main menu); everything here works on their labels alone.
+// The same palette is Quick Open (Cmd+P: the folder's files) and Go to Line
+// (Ctrl+G, or ":" typed first); ">" typed first switches to commands, as in
+// VS Code (see Mode).
+//
+// Pure C++ in UTF-16 code units like LineComments and MultiCaret, so matched
+// positions map straight onto NSRange. Which commands exist and whether they
+// are enabled is the GUI's business (src/PalettePanel.mm walks the main
+// menu); everything here works on their labels alone. The one piece of I/O
+// is listFiles, the walk Quick Open lists, run off the main thread.
 #pragma once
+#include <atomic>
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -67,5 +73,41 @@ enum Mod : unsigned { Shift = 1, Control = 2, Option = 4, Command = 8 };
 // Shift, as in NSMenuItem), F1 to F35, arrows, ⏎ ⇥ ⎋ ⌫ ⌦, Space. An empty
 // key gives an empty label.
 std::u16string keyLabel(const std::u16string& key, unsigned mods);
+
+// ------------------------------------------------------------ the modes
+// What the field's text asks for: a leading ">" is a command, a leading ":"
+// a line of the file on show, anything else a file of the folder.
+enum class Mode { Files, Commands, Line };
+struct Parsed {
+    Mode mode = Mode::Files;
+    std::u16string query;      // the text after the prefix, trimmed
+    int line = 0, column = 0;  // Line mode: 0 when not typed (yet)
+    bool lineValid = false;    // Line mode: digits, then ":digits" at most
+};
+Parsed parse(const std::u16string& text);
+
+// ------------------------------------------------------------ Quick Open
+// The files below root that Quick Open lists, as '/'-separated paths
+// relative to it, by Find in Folder's rules (FolderSearch.h) for what is
+// skipped: names starting with '.', and node_modules, build, venv and the
+// other folders isSkippedDirectory names. Symlinked folders are followed
+// once each. Nearer files come first (breadth first, each folder's files in
+// byte order), at most maxFiles; *truncated says it stopped at the cap. A
+// raised cancel stops it early.
+std::vector<std::string> listFiles(const std::string& root, size_t maxFiles = 20000,
+                                   const std::atomic<bool>* cancel = nullptr,
+                                   bool* truncated = nullptr);
+
+// The files that match query, best first. A query without '/' is matched
+// against the file name first (any such match beats one that needs the
+// folders), then against the whole path; a query with '/' against the path.
+// Within a tier, recently opened files (relative paths, most recent first)
+// come first, then the score, then shorter paths. An empty query lists the
+// recent files first, then the rest in their order. Positions are in the
+// path. At most limit results.
+std::vector<Match> rankFiles(const std::vector<std::u16string>& paths,
+                             const std::u16string& query,
+                             const std::vector<std::u16string>& recent,
+                             size_t limit = 500);
 
 }  // namespace CommandPalette

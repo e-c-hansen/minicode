@@ -1,8 +1,14 @@
 // CommandPalette.cpp — see CommandPalette.h.
 #include "CommandPalette.h"
 
+#include "FolderSearch.h"
+
 #include <algorithm>
 #include <climits>
+#include <deque>
+#include <filesystem>
+#include <set>
+#include <utility>
 
 namespace CommandPalette {
 
@@ -224,6 +230,159 @@ std::u16string keyLabel(const std::u16string& key, unsigned mods) {
     }
     out.push_back(isLower(k) ? char16_t(k - 32) : k);
     return out;
+}
+
+Parsed parse(const std::u16string& text) {
+    Parsed p;
+    const std::u16string t = trimmed(text);
+    if (!t.empty() && t[0] == '>') {
+        p.mode = Mode::Commands;
+        p.query = trimmed(t.substr(1));
+        return p;
+    }
+    if (!t.empty() && t[0] == ':') {
+        p.mode = Mode::Line;
+        p.query = trimmed(t.substr(1));
+        // "12", "12:5" or "12,5"; nothing typed yet is valid too (no line).
+        const std::u16string& q = p.query;
+        size_t i = 0;
+        long line = 0, col = 0;
+        while (i < q.size() && isDigit(q[i])) {
+            if (line < 100000000) line = line * 10 + (q[i] - '0');
+            i++;
+        }
+        if (i > 0 && i < q.size() && (q[i] == ':' || q[i] == ',')) {
+            i++;
+            while (i < q.size() && isDigit(q[i])) {
+                if (col < 100000000) col = col * 10 + (q[i] - '0');
+                i++;
+            }
+        }
+        p.lineValid = i == q.size();
+        if (p.lineValid) {
+            p.line = int(line);
+            p.column = int(col);
+        }
+        return p;
+    }
+    p.query = t;
+    return p;
+}
+
+std::vector<std::string> listFiles(const std::string& root, size_t maxFiles,
+                                   const std::atomic<bool>* cancel, bool* truncated) {
+    namespace fs = std::filesystem;
+    std::vector<std::string> out;
+    if (truncated) *truncated = false;
+    std::error_code ec;
+    const fs::path canonRoot = fs::canonical(root, ec);
+    if (ec) return out;
+    std::set<std::string> seen = {canonRoot.string()};
+    std::deque<std::pair<std::string, std::string>> queue;   // (full path, relative)
+    queue.push_back({root, ""});
+    while (!queue.empty()) {
+        if (cancel && cancel->load()) return out;
+        const std::pair<std::string, std::string> here = queue.front();
+        queue.pop_front();
+        const std::string& dir = here.first;
+        const std::string& rel = here.second;
+        std::vector<std::string> names;
+        fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
+        if (ec) continue;
+        for (fs::directory_iterator end; it != end; it.increment(ec)) {
+            if (ec) break;
+            std::string name = it->path().filename().string();
+            if (name.empty() || name[0] == '.') continue;   // hidden
+            names.push_back(std::move(name));
+        }
+        std::sort(names.begin(), names.end());
+        std::vector<std::pair<std::string, std::string>> subdirs;
+        for (const std::string& name : names) {
+            const std::string full = (!dir.empty() && dir.back() == '/') ? dir + name
+                                                                         : dir + "/" + name;
+            const std::string childRel = rel.empty() ? name : rel + "/" + name;
+            const fs::file_status st = fs::status(full, ec);   // follows symlinks
+            if (ec) continue;   // broken symlink, vanished, unreadable
+            if (fs::is_directory(st)) {
+                if (!FolderSearch::isSkippedDirectory(name)) subdirs.push_back({full, childRel});
+                continue;
+            }
+            if (!fs::is_regular_file(st)) continue;   // pipes, sockets, devices
+            if (out.size() >= maxFiles) {
+                if (truncated) *truncated = true;
+                return out;
+            }
+            out.push_back(childRel);
+        }
+        for (const auto& sd : subdirs) {
+            const fs::path canon = fs::canonical(sd.first, ec);
+            if (ec) continue;
+            if (!seen.insert(canon.string()).second) continue;   // a loop, or seen already
+            queue.push_back(sd);
+        }
+    }
+    return out;
+}
+
+std::vector<Match> rankFiles(const std::vector<std::u16string>& paths,
+                             const std::u16string& query,
+                             const std::vector<std::u16string>& recent, size_t limit) {
+    auto recency = [&](const std::u16string& p) {
+        auto it = std::find(recent.begin(), recent.end(), p);
+        return it == recent.end() ? recent.size() : size_t(it - recent.begin());
+    };
+    const std::u16string q = lowered(trimmed(query));
+    const bool pathQuery = q.find(u'/') != std::u16string::npos;
+    struct Ranked {
+        Match m;
+        int group = 0;   // 0: the name matched (or the path, for a query with '/'), 1: the path
+        size_t rec = 0;
+    };
+    std::vector<Ranked> out;
+    for (size_t i = 0; i < paths.size(); i++) {
+        const std::u16string& path = paths[i];
+        Ranked r;
+        r.m.index = i;
+        r.m.tier = Tier::Prefix;
+        if (!q.empty()) {
+            const size_t slash = path.rfind(u'/');
+            const size_t nameAt = slash == std::u16string::npos ? 0 : slash + 1;
+            const std::u16string name = path.substr(nameAt);
+            const std::u16string lname = lowered(name);
+            std::vector<size_t> pos;
+            int score = 0;
+            if (!pathQuery && q.size() <= lname.size() && lname.compare(0, q.size(), q) == 0) {
+                r.m.score = 1000 - int(name.size());
+                for (size_t k = 0; k < q.size(); k++)
+                    if (q[k] != ' ') r.m.positions.push_back(nameAt + k);
+            } else if (!pathQuery && match(q, name, &score, &pos)) {
+                r.m.tier = tierOf(name, pos);
+                r.m.score = score;
+                for (size_t p : pos) r.m.positions.push_back(nameAt + p);
+            } else if (match(q, path, &score, &pos)) {
+                r.group = pathQuery ? 0 : 1;
+                r.m.tier = tierOf(path, pos);
+                r.m.score = score;
+                r.m.positions = pos;
+            } else {
+                continue;
+            }
+        }
+        r.rec = recency(path);
+        out.push_back(std::move(r));
+    }
+    std::stable_sort(out.begin(), out.end(), [&](const Ranked& a, const Ranked& b) {
+        if (a.group != b.group) return a.group < b.group;
+        if (a.m.tier != b.m.tier) return a.m.tier < b.m.tier;
+        if (a.rec != b.rec) return a.rec < b.rec;
+        if (a.m.score != b.m.score) return a.m.score > b.m.score;
+        const size_t la = paths[a.m.index].size(), lb = paths[b.m.index].size();
+        if (!q.empty() && la != lb) return la < lb;
+        return a.m.index < b.m.index;
+    });
+    std::vector<Match> result;
+    for (size_t i = 0; i < out.size() && i < limit; i++) result.push_back(std::move(out[i].m));
+    return result;
 }
 
 }  // namespace CommandPalette

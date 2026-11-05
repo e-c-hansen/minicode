@@ -7422,6 +7422,118 @@ static void testCommandPalette() {
         CHECK(keyLabel(u"", Command) == u"");
         CHECK(keyLabel(u"1", Control) == u"⌃1");
     }
+
+    GROUP("palette:modes");
+    {
+        Parsed p = parse(u"");
+        CHECK(p.mode == Mode::Files && p.query.empty());
+        p = parse(u"  main.cpp ");
+        CHECK(p.mode == Mode::Files && p.query == u"main.cpp");
+        p = parse(u">");
+        CHECK(p.mode == Mode::Commands && p.query.empty());
+        p = parse(u"> toggle term");
+        CHECK(p.mode == Mode::Commands && p.query == u"toggle term");
+        p = parse(u":");
+        CHECK(p.mode == Mode::Line && p.lineValid && p.line == 0);
+        p = parse(u":42");
+        CHECK(p.mode == Mode::Line && p.lineValid && p.line == 42 && p.column == 0);
+        p = parse(u": 42:7");
+        CHECK(p.lineValid && p.line == 42 && p.column == 7);
+        p = parse(u":42,7");
+        CHECK(p.lineValid && p.line == 42 && p.column == 7);
+        p = parse(u":4x");
+        CHECK(p.mode == Mode::Line && !p.lineValid && p.line == 0);
+        p = parse(u"::3");
+        CHECK(!p.lineValid);
+        p = parse(u":99999999999999");   // capped, no overflow
+        CHECK(p.lineValid && p.line > 0);
+    }
+
+    GROUP("palette:list-files");
+    {
+        namespace fs = std::filesystem;
+        const fs::path root = fs::temp_directory_path() /
+            ("minicode-palette-" + std::to_string(::getpid()));
+        fs::remove_all(root);
+        auto touch = [&](const std::string &rel) {
+            fs::create_directories((root / rel).parent_path());
+            std::ofstream(root / rel) << "x";
+        };
+        touch("b.txt");
+        touch("a.py");
+        touch("src/main.cpp");
+        touch("src/deep/inner.h");
+        touch(".hidden");
+        touch(".git/config");
+        touch("node_modules/pkg/index.js");
+        touch("build/out.o");
+        touch("venv/bin/python");
+        touch("docs/.secret/x.md");
+        std::error_code ec;
+        fs::create_directory_symlink(root / "src", root / "loop", ec);       // a second way in
+        fs::create_directory_symlink(root, root / "src" / "up", ec);          // a loop
+        bool truncated = true;
+        std::vector<std::string> files = listFiles(root.string(), 100, nullptr, &truncated);
+        CHECK(!truncated);
+        // Breadth first: the root's files, then src's, then deeper.
+        CHECK(files.size() == 4);
+        CHECK(files == (std::vector<std::string>{"a.py", "b.txt", "src/main.cpp", "src/deep/inner.h"}) ||
+              files == (std::vector<std::string>{"a.py", "b.txt", "loop/main.cpp", "loop/deep/inner.h"}));
+        for (const std::string &f : files) {
+            CHECK(f.find(".git") == std::string::npos && f.find("node_modules") == std::string::npos);
+            CHECK(f.find("build/") == std::string::npos && f.find("venv/") == std::string::npos);
+        }
+        files = listFiles(root.string(), 3, nullptr, &truncated);
+        CHECK(files.size() == 3 && truncated);
+        std::atomic<bool> stop(true);
+        CHECK(listFiles(root.string(), 100, &stop, nullptr).empty());
+        CHECK(listFiles((root / "missing").string()).empty());
+        fs::remove_all(root);
+    }
+
+    GROUP("palette:rank-files");
+    {
+        const std::vector<std::u16string> paths = {
+            u"README.md",                  // 0
+            u"src/main.mm",                // 1
+            u"src/EditorController.mm",    // 2
+            u"src/CommandPalette.cpp",     // 3
+            u"tests/run_tests.cpp",        // 4
+            u"linux/src/main.cpp",         // 5
+            u"docs/maintenance.md",        // 6
+        };
+        auto order = [&](const std::u16string &q, const std::vector<std::u16string> &recent = {}) {
+            std::vector<size_t> out;
+            for (const Match &m : rankFiles(paths, q, recent)) out.push_back(m.index);
+            return out;
+        };
+        std::vector<size_t> o = order(u"");
+        CHECK(o.size() == paths.size() && o[0] == 0 && o[6] == 6);
+        o = order(u"", {u"tests/run_tests.cpp", u"src/main.mm"});
+        CHECK(o[0] == 4 && o[1] == 1 && o[2] == 0);
+        // The name prefix first, the shorter path first among equals.
+        o = order(u"main");
+        CHECK(o.size() >= 3 && o[0] == 1 && o[1] == 5);
+        // ...unless one was opened recently.
+        o = order(u"main", {u"linux/src/main.cpp"});
+        CHECK(o[0] == 5 && o[1] == 1);
+        // Name matches beat matches that need the folders.
+        o = order(u"ec");
+        CHECK(!o.empty() && o[0] == 2);   // EditorController: word starts in the name
+        o = order(u"srcmain");            // only through the path
+        CHECK(o.size() == 2 && (o[0] == 1 || o[0] == 5));
+        // A '/' in the query matches the path.
+        o = order(u"linux/");
+        CHECK(o.size() == 1 && o[0] == 5);
+        o = order(u"zzz");
+        CHECK(o.empty());
+        // Positions are in the path, the name's offset added.
+        std::vector<Match> m = rankFiles(paths, u"compal", {});
+        CHECK(!m.empty() && m[0].index == 3 &&
+              m[0].positions == (std::vector<size_t>{4, 5, 6, 11, 12, 13}));
+        // The limit.
+        CHECK(rankFiles(paths, u"", {}, 2).size() == 2);
+    }
 }
 
 int main() {

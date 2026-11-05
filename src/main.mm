@@ -74,6 +74,13 @@
         // In the editor the menu gets it first: AppKit offers a key without
         // Command or Control to the menu only after the first responder,
         // and the text view takes it as typing (Ï). F9 and Shift+F9 too.
+        // Ctrl+G is Go to Line, except in a program on the terminal's grid
+        // (nano, emacs and less use it), which gets it as typed.
+        if (ctrl && !cmd && !opt && !shift && [ch isEqualToString:@"g"] &&
+            [e.window.firstResponder isKindOfClass:NSClassFromString(@"TerminalGridView")]) {
+            [e.window.firstResponder keyDown:e];
+            return nil;
+        }
         BOOL formatKey = opt && shift && !cmd && !ctrl && [ch isEqualToString:@"f"];
         BOOL sortKey = e.keyCode == 101 /* kVK_F9 */ && !cmd && !ctrl && !opt;
         if (formatKey || sortKey) {
@@ -492,10 +499,28 @@ static BOOL MCEditorOnlyAction(SEL a) {
 - (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
 - (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
 - (void)requestChange:(id)sender   { [[self current] requestChange:sender]; }
-- (void)showCommandPalette:(id)sender {
-    (void)sender;
-    MCShowCommandPalette([self current].window);
+// The palette (PalettePanel.h): commands (Shift+Cmd+P), the folder's files
+// (Cmd+P) and Go to Line (Ctrl+G) are one view, chosen by its first character.
+- (void)showPaletteWithText:(NSString *)text {
+    EditorController *c = [self current];
+    if (!c) return;
+    MCPaletteContext *ctx = [MCPaletteContext new];
+    ctx.root = c.rootPath;
+    ctx.recentFiles = [c recentTabPaths];
+    __weak EditorController *weak = c;
+    ctx.openFile = ^(NSString *path) {
+        EditorController *e = weak;
+        [e revealPath:path andOpen:YES];   // as a click in the tree
+    };
+    if (c.canGoToLine)
+        ctx.goToLine = ^(NSInteger line, NSInteger column) {
+            [weak goToLine:(int)line column:(int)column];
+        };
+    MCShowPalette(c.window, text, ctx);
 }
+- (void)showCommandPalette:(id)sender { (void)sender; [self showPaletteWithText:@">"]; }
+- (void)quickOpen:(id)sender          { (void)sender; [self showPaletteWithText:@""]; }
+- (void)goToLinePrompt:(id)sender     { (void)sender; [self showPaletteWithText:@":"]; }
 // App-wide, so it works from any window.
 - (void)toggleTreeColumn:(id)sender { MCToggleTreeColumn((MCTreeColumns)[sender tag]); }
 - (void)showContextMenu:(id)sender {
@@ -804,6 +829,15 @@ static void BuildMenu(void) {
     term.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:term];
+    // Cmd+J too, VS Code's Toggle Panel (hidden: one item, two keys).
+    NSMenuItem *term2 =
+        [[NSMenuItem alloc] initWithTitle:@"Toggle Terminal"
+                                   action:@selector(toggleTerminal:)
+                            keyEquivalent:@"j"];
+    term2.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    term2.hidden = YES;
+    term2.allowsKeyEquivalentWhenHidden = YES;
+    [viewMenu addItem:term2];
 
     NSMenuItem *browser =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Browser"
@@ -905,6 +939,17 @@ static void BuildMenu(void) {
     NSMenuItem *navItem = [[NSMenuItem alloc] init];
     [menubar addItem:navItem];
     NSMenu *navMenu = [[NSMenu alloc] initWithTitle:@"Navigate"];
+    // VS Code's keys: Cmd+P lists the folder's files, Ctrl+G asks for a
+    // line (the key monitor leaves Ctrl+G to a program on the terminal grid).
+    [navMenu addItemWithTitle:@"Go to File…"
+                       action:@selector(quickOpen:)
+                keyEquivalent:@"p"];
+    NSMenuItem *goLine = [[NSMenuItem alloc] initWithTitle:@"Go to Line…"
+                                                    action:@selector(goToLinePrompt:)
+                                             keyEquivalent:@"g"];
+    goLine.keyEquivalentModifierMask = NSEventModifierFlagControl;
+    [navMenu addItem:goLine];
+    [navMenu addItem:[NSMenuItem separatorItem]];
     [navMenu addItemWithTitle:@"Focus File Tree"
                        action:@selector(focusTree:)
                 keyEquivalent:@"0"];
