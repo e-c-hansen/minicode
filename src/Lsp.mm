@@ -1523,7 +1523,13 @@ static NSString *StateText(MCLspState state) {
 struct MCDiagSet {
     std::vector<Lsp::Diagnostic> list;
     std::shared_ptr<const std::u16string> base;   // null: not known
+    // For a file no tab has open: the server that reported on it, compared
+    // only (never followed), so its reports go when it does.
+    const void *server = nullptr;
 };
+
+@implementation MCProblem
+@end
 
 // A server that crashes is started again after 1, 2, then 4 seconds; the
 // fourth crash in a row leaves it stopped, so a server that cannot start
@@ -1542,6 +1548,12 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     MCLspServer *_server;     // the server for it, or nil
     NSString *_transient;     // a brief message ("No definition found")
     std::map<std::string, MCDiagSet> _diags;   // by canonical URI
+    // What servers publish for files no tab has open (a server checking the
+    // whole folder): listed in Problems only.
+    std::map<std::string, MCDiagSet> _otherDiags;
+    // F8: the mark the last step went to, in the marks it was one of.
+    NSArray<MCDiagnosticMark *> *_stepMarks;
+    long _stepIndex;
     NSMutableDictionary<NSString *, MCLspDoc *> *_docs;   // by canonical URI
     NSUInteger _edits;        // counts edits to the text on show
     NSString *_settingsSignature, *_pythonSetting;
@@ -1858,7 +1870,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
                                              const std::vector<Lsp::Diagnostic> &list) {
         MCLspServer *s = weakServer;
         if (s && !s.stopping)
-            [weakSelf diagnosticsArrived:uri list:list base:s.client.textFor(uri)];
+            [weakSelf diagnosticsArrived:uri list:list base:s.client.textFor(uri) server:s];
     };
     // A server that refuses the handshake would otherwise read "starting…"
     // for good while every request is dropped: stop it and say so.
@@ -1988,6 +2000,8 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     [_entries removeAllObjects];
     [_docs removeAllObjects];
     _diags.clear();
+    _otherDiags.clear();
+    [self problemsChanged];
 }
 
 // A server going away takes its documents with it: nothing to close, and
@@ -1998,6 +2012,10 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
         [_docs removeObjectForKey:uri];
         _diags.erase(Std(uri));
     }
+    const void *gone = (__bridge const void *)server;
+    for (auto it = _otherDiags.begin(); it != _otherDiags.end();)
+        it = it->second.server == gone ? _otherDiags.erase(it) : std::next(it);
+    [self problemsChanged];
 }
 
 - (void)restartServer:(NSString *)key {
@@ -2374,6 +2392,7 @@ static BOOL IsRunnable(NSString *path) {
         if (!had.server.stopping) had.server.client.didClose(Std(uri));
         [_docs removeObjectForKey:uri];
         _diags.erase(Std(uri));
+        [self problemsChanged];
     }
     for (NSString *uri in wanted) {
         MCLspDoc *d = wanted[uri];
@@ -2531,17 +2550,179 @@ static BOOL IsRunnable(NSString *path) {
 // published (Client::textFor), or null when it does not have it open.
 - (void)diagnosticsArrived:(const std::string &)uri
                       list:(const std::vector<Lsp::Diagnostic> &)list
-                      base:(const std::string *)base {
-    // A file no tab has open (a server reporting on the whole folder): not
-    // shown anywhere, and opening it brings fresh ones.
+                      base:(const std::string *)base
+                    server:(MCLspServer *)server {
     std::string key = CanonicalURI(uri);
-    if (!base && !_docs[NS(key)]) return;
+    if (!base && !_docs[NS(key)]) {
+        // A file no tab has open (a server reporting on the whole folder):
+        // only listed in Problems, and opening it brings fresh ones.
+        if (list.empty()) {
+            if (!_otherDiags.erase(key)) return;
+        } else {
+            MCDiagSet set;
+            set.list = list;
+            set.server = (__bridge const void *)server;
+            _otherDiags[key] = std::move(set);
+        }
+        [self problemsChanged];
+        return;
+    }
+    _otherDiags.erase(key);
     MCDiagSet set;
     set.list = list;
     if (base) set.base = std::make_shared<const std::u16string>(Lsp::toUtf16(*base));
     // Kept for another tab's file too, and drawn when that tab is shown.
     _diags[key] = std::move(set);
     if ([self uri:uri isSameFileAs:_uri]) [self paintDiagnostics];
+    [self problemsChanged];
+}
+
+// ---- the Problems list
+- (void)problemsChanged {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(reportProblems)
+                                               object:nil];
+    [self performSelector:@selector(reportProblems) withObject:nil afterDelay:0.05];
+}
+
+- (void)reportProblems {
+    if (self.onProblemsChanged) self.onProblemsChanged();
+}
+
+// Every published diagnostic as an Lsp::Problem, placed in the text as it
+// is now for files open in a tab (Lsp::diagnosticSpans, leaving out ones
+// about text typed over since), as the server said for the others. Hints
+// are left out, as VS Code leaves them out of its Problems: pyright sends
+// one for every name not used yet, which would drown the rest.
+- (std::vector<Lsp::Problem>)collectProblems {
+    std::vector<Lsp::Problem> out;
+    auto add = [&](NSString *path, const Lsp::Diagnostic &d, Lsp::Position a,
+                   Lsp::Position b) {
+        if (d.severity == Lsp::Severity::Hint) return;
+        Lsp::Problem p;
+        p.path = Std(path);
+        p.line = a.line;
+        p.column = a.character;
+        p.endLine = b.line;
+        p.endColumn = b.character;
+        p.severity = d.severity;
+        p.message = d.message;
+        p.source = d.source;
+        p.code = d.code;
+        out.push_back(p);
+    };
+    for (auto &[key, set] : _diags) {
+        NSString *uri = NS(key);
+        BOOL onShow = _uri && [self uri:key isSameFileAs:_uri];
+        // Listed under the tree's spelling of the path, as the files no tab
+        // has are, so they sort together; the tab's own spelling finds its text.
+        NSString *tabPath = onShow ? _path : _docs[uri].path;
+        NSString *path = [self treePathForURI:key];
+        if (!path.length) continue;
+        NSString *text = onShow ? _tv.string
+                       : tabPath && self.bufferText ? self.bufferText(tabPath) : nil;
+        std::u16string now = text ? U16Of(text)
+                                  : (set.base ? *set.base : std::u16string());
+        for (const Lsp::DiagnosticSpan &sp :
+             Lsp::diagnosticSpans(set.base.get(), now, set.list))
+            add(path, set.list[sp.index], Lsp::positionForOffset(now, sp.start),
+                Lsp::positionForOffset(now, sp.end));
+    }
+    for (auto &[key, set] : _otherDiags) {
+        NSString *path = [self treePathForURI:key];
+        if (!path.length) continue;
+        for (const Lsp::Diagnostic &d : set.list) add(path, d, d.range.start, d.range.end);
+    }
+    return out;
+}
+
+- (NSArray<MCProblem *> *)problemRows {
+    std::vector<Lsp::Problem> problems = [self collectProblems];
+    NSMutableArray<MCProblem *> *rows = [NSMutableArray array];
+    for (const Lsp::ProblemRow &r : Lsp::problemRows(problems)) {
+        MCProblem *p = [MCProblem new];
+        p.heading = r.heading;
+        p.path = NS(r.path);
+        if (r.heading) {
+            p.errors = r.errors;
+            p.warnings = r.warnings;
+            p.others = r.others;
+        } else {
+            const Lsp::Problem &q = problems[r.problem];
+            p.line = q.line;
+            p.column = q.column;
+            p.endLine = q.endLine;
+            p.endColumn = q.endColumn;
+            p.severity = (NSInteger)q.severity;
+            p.fullMessage = NS(q.message);
+            p.message = NS(Lsp::problemOneLine(q.message));
+            p.source = NS(q.source);
+            p.code = NS(q.code);
+        }
+        [rows addObject:p];
+    }
+    return rows;
+}
+
+- (Lsp::ProblemCounts)problemCounts {
+    std::vector<Lsp::Problem> problems;
+    for (auto *m : {&_diags, &_otherDiags})
+        for (auto &[key, set] : *m)
+            for (const Lsp::Diagnostic &d : set.list) {
+                if (d.severity == Lsp::Severity::Hint) continue;
+                Lsp::Problem p;
+                p.path = key;
+                p.severity = d.severity;
+                problems.push_back(p);
+            }
+    return Lsp::countProblems(problems);
+}
+
+- (NSString *)problemCountsText { return NS(Lsp::problemCountsText([self problemCounts])); }
+- (NSInteger)problemErrors { return [self problemCounts].errors; }
+- (NSInteger)problemWarnings { return [self problemCounts].warnings; }
+
+- (BOOL)problemsKnown {
+    if (!_diags.empty() || !_otherDiags.empty()) return YES;
+    for (MCLspEntry *e in _entries.allValues)
+        if (e.server) return YES;
+    return NO;
+}
+
+- (void)openProblem:(MCProblem *)problem {
+    if (problem.heading || !problem.path.length) return;
+    Lsp::Location loc;
+    loc.uri = Lsp::uriFromPath(Std(RealPath(problem.path)));
+    loc.range.start = Lsp::Position{(int)problem.line, (int)problem.column};
+    loc.range.end = Lsp::Position{(int)problem.endLine, (int)problem.endColumn};
+    [self revealLocation:loc];
+}
+
+- (void)goToProblem:(BOOL)forward {
+    // The marks drawn now (they follow typing), hints left out as in the list.
+    NSArray<MCDiagnosticMark *> *all = _tv.diagnostics;
+    NSMutableArray<MCDiagnosticMark *> *marks = [NSMutableArray array];
+    for (MCDiagnosticMark *m in all) if (m.severity != 4) [marks addObject:m];
+    if (!_uri || marks.count == 0) {
+        NSBeep();
+        [self flash:@"No problems in this file"];
+        return;
+    }
+    std::vector<std::pair<size_t, size_t>> spans;
+    for (MCDiagnosticMark *m in marks) spans.push_back({m.range.location, NSMaxRange(m.range)});
+    long last = all == _stepMarks ? _stepIndex : -1;
+    long i = Lsp::stepProblem(spans, _tv.selectedRange.location, last, forward);
+    if (i < 0) return;
+    MCDiagnosticMark *m = marks[(NSUInteger)i];
+    NSRange caret = NSMakeRange(m.range.location, 0);
+    [_tv setSelectedRange:caret];   // closes what was showing
+    [_tv scrollRangeToVisible:m.range];
+    _stepMarks = all;
+    _stepIndex = i;
+    // Its message (and any other problem there) in the hover box at the
+    // caret, which the next caret move closes.
+    [self closeHover];
+    [self showHover:Json() gen:_hoverGen uri:_uri index:caret.location byMouse:NO];
 }
 
 // The file on show's diagnostics, drawn on its text as it is now: those

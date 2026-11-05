@@ -110,9 +110,11 @@ static BOOL MCIsCommandPeriod(NSEvent *e) {
         }
         BOOL formatKey = opt && shift && !cmd && !ctrl && [ch isEqualToString:@"f"];
         BOOL sortKey = e.keyCode == 101 /* kVK_F9 */ && !cmd && !ctrl && !opt;
-        // F2 and Shift+F12 likewise (Rename Symbol, Find All References).
+        // F2 and Shift+F12 likewise (Rename Symbol, Find All References),
+        // and F8 and Shift+F8 (Next and Previous Problem).
         BOOL lspKey = (e.keyCode == 120 /* kVK_F2 */ && !cmd && !ctrl && !opt && !shift) ||
-                      (e.keyCode == 111 /* kVK_F12 */ && shift && !cmd && !ctrl && !opt);
+                      (e.keyCode == 111 /* kVK_F12 */ && shift && !cmd && !ctrl && !opt) ||
+                      (e.keyCode == 100 /* kVK_F8 */ && !cmd && !ctrl && !opt);
         if (formatKey || sortKey || lspKey) {
             NSResponder *fr = e.window.firstResponder;
             if ([fr isKindOfClass:[CodeTextView class]]) {
@@ -490,7 +492,8 @@ static BOOL MCEditorOnlyAction(SEL a) {
            a == @selector(toggleComment:) || a == @selector(toggleTask:) ||
            a == @selector(triggerCompletion:) || a == @selector(goToDefinition:) ||
            a == @selector(showHoverInfo:) || a == @selector(renameSymbol:) ||
-           a == @selector(findReferences:) || a == @selector(showQuickFixes:);
+           a == @selector(findReferences:) || a == @selector(showQuickFixes:) ||
+           a == @selector(nextProblem:) || a == @selector(previousProblem:);
 }
 - (BOOL)keyWindowIsEditor {
     NSWindow *key = NSApp.keyWindow;
@@ -529,6 +532,10 @@ static BOOL MCEditorOnlyAction(SEL a) {
     if (item.action == @selector(exportPDF:)) return [self current].canExportPDF;
     if (item.action == @selector(togglePlayback:))
         return [self current].canTogglePlayback;
+    if (item.action == @selector(toggleProblems:)) {
+        EditorController *c = [self current];
+        return c ? [c validateMenuItem:item] : NO;
+    }
     // The tab items, and Cmd+W's title, are the window's to decide.
     if (item.action == @selector(closeFocused:) || item.action == @selector(selectTabNumber:) ||
         item.action == @selector(selectNextTab:) || item.action == @selector(selectPreviousTab:)) {
@@ -639,6 +646,9 @@ static BOOL MCEditorOnlyAction(SEL a) {
 - (void)renameSymbol:(id)sender    { [[self current] renameSymbol:sender]; }
 - (void)findReferences:(id)sender  { [[self current] findReferences:sender]; }
 - (void)showQuickFixes:(id)sender  { [[self current] showQuickFixes:sender]; }
+- (void)nextProblem:(id)sender     { [[self current] nextProblem:sender]; }
+- (void)previousProblem:(id)sender { [[self current] previousProblem:sender]; }
+- (void)toggleProblems:(id)sender  { [[self current] toggleProblems:sender]; }
 - (void)showLanguageServers:(id)sender { [[self current] showLanguageServers:sender]; }
 - (void)restartLanguageServer:(id)sender { [[self current] restartLanguageServer:sender]; }
 - (void)selectPythonInterpreter:(id)sender {
@@ -935,6 +945,16 @@ static void BuildMenu(void) {
         NSEventModifierFlagControl | NSEventModifierFlagShift;
     [viewMenu addItem:git];
 
+    // Shift+Cmd+M as in VS Code: every problem the language servers report,
+    // above the terminal.
+    NSMenuItem *problems =
+        [[NSMenuItem alloc] initWithTitle:@"Problems"
+                                   action:@selector(toggleProblems:)
+                            keyEquivalent:@"m"];
+    problems.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [viewMenu addItem:problems];
+
     NSMenuItem *editorPane =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Editor"
                                    action:@selector(toggleEditor:)
@@ -1174,6 +1194,19 @@ static void BuildMenu(void) {
                                               (unichar)NSF12FunctionKey]];
     references.keyEquivalentModifierMask = NSEventModifierFlagShift;
     [navMenu addItem:references];
+    // F8 and Shift+F8 as in VS Code: the next or previous problem in the
+    // file, its message shown at the cursor. Caught by the key monitor too.
+    NSString *f8 = [NSString stringWithFormat:@"%C", (unichar)NSF8FunctionKey];
+    NSMenuItem *nextProblem = [[NSMenuItem alloc] initWithTitle:@"Next Problem"
+                                                         action:@selector(nextProblem:)
+                                                  keyEquivalent:f8];
+    nextProblem.keyEquivalentModifierMask = 0;
+    [navMenu addItem:nextProblem];
+    NSMenuItem *previousProblem = [[NSMenuItem alloc] initWithTitle:@"Previous Problem"
+                                                             action:@selector(previousProblem:)
+                                                      keyEquivalent:f8];
+    previousProblem.keyEquivalentModifierMask = NSEventModifierFlagShift;
+    [navMenu addItem:previousProblem];
     navItem.submenu = navMenu;
 }
 

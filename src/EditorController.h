@@ -102,6 +102,9 @@
 - (void)renameSymbol:(id)sender;       // F2: the name at the cursor, or the tree's file
 - (void)findReferences:(id)sender;     // Shift+F12
 - (void)showQuickFixes:(id)sender;     // Cmd+.
+- (void)nextProblem:(id)sender;        // F8: the next problem in the file
+- (void)previousProblem:(id)sender;    // Shift+F8
+- (void)toggleProblems:(id)sender;     // Shift+Cmd+M every problem, above the terminal
 - (void)showLanguageServers:(id)sender;     // the servers popover (status bar click)
 - (void)restartLanguageServer:(id)sender;   // the open file's server
 - (void)selectPythonInterpreter:(id)sender; // the Python server's interpreter
