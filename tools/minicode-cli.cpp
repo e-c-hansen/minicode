@@ -17,6 +17,7 @@
 #include <cstring>
 #include <dirent.h>
 #include <fstream>
+#include <libproc.h>
 #include <mach-o/dyld.h>
 #include <signal.h>
 #include <spawn.h>
@@ -76,6 +77,25 @@ int findSocket(int wantPid) {
         closedir(d);
     }
     return chooseSocket(found, wantPid, alive);
+}
+
+// A minicode process of this user's that has no socket: one from before the
+// control channel, which a launch would only bring forward.
+bool appRunningWithoutSocket() {
+    std::vector<pid_t> pids(4096);
+    int bytes = proc_listallpids(pids.data(), (int)(pids.size() * sizeof(pid_t)));
+    if (bytes <= 0) return false;
+    pids.resize((size_t)bytes / sizeof(pid_t));
+    for (pid_t pid : pids) {
+        char name[2 * MAXCOMLEN + 1] = {};
+        if (pid <= 0 || proc_name(pid, name, sizeof name) <= 0) continue;
+        if (std::strcmp(name, "MiniCode") != 0) continue;
+        struct proc_bsdshortinfo info;
+        if (proc_pidinfo(pid, PROC_PIDT_SHORTBSDINFO, 0, &info, sizeof info) == sizeof info &&
+            info.pbsi_uid == getuid())
+            return true;
+    }
+    return false;
 }
 
 // The app bundle this client was installed in (Contents/MacOS/minicode-cli),
@@ -246,6 +266,11 @@ int main(int argc, char **argv) {
     if (!pid) {
         if (c.pid) {
             std::fprintf(stderr, "minicode: no minicode is running as process %d\n", c.pid);
+            return kExitNoApp;
+        }
+        if (appRunningWithoutSocket()) {
+            std::fprintf(stderr, "minicode: the minicode that is running does not answer (a version "
+                                 "from before the command channel?); quit and open it again\n");
             return kExitNoApp;
         }
         if (!launchApp(c.launchFolder)) {

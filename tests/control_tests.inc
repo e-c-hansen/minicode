@@ -1,6 +1,7 @@
 // control_tests.inc — the `control:*` and `sidebyside:*` groups of
 // run_tests.cpp (ControlProtocol.h, SideBySide.h), kept in their own file
 // and included there.
+#include <stdexcept>
 
 static void testControlProtocol() {
     using namespace ControlChannel;

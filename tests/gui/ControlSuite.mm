@@ -246,8 +246,30 @@ MC_GUI_SUITE(control) {
                           @"MINICODE_CLI_WAIT": @"0.4"},
                         ^(int s, NSString *out, NSString *err) {
             GCHECK(s == 3);
-            GCHECK([out hasPrefix:@"open -a "] && [out containsString:MCGuiProject().lastPathComponent]);
-            GCHECK([err containsString:@"did not start"]);
+            if ([err containsString:@"does not answer"]) {
+                // An older minicode is open on this Mac: it is told so, and
+                // nothing is launched.
+                GCHECK(out.length == 0);
+            } else {
+                GCHECK([out hasPrefix:@"open -a "] &&
+                       [out containsString:MCGuiProject().lastPathComponent]);
+                GCHECK([err containsString:@"did not start"]);
+            }
+            done();
+        });
+    });
+
+    MCGuiAsync(@"the launcher in the bundle hands subcommands to the client", 30, ^(MCGuiDone done) {
+        NSString *launcher = [[MCGuiBuildDir().stringByDeletingLastPathComponent
+            stringByAppendingPathComponent:@"MiniCode.app"]
+            stringByAppendingPathComponent:@"Contents/Resources/minicode"];
+        if (![fm isExecutableFileAtPath:launcher]) {
+            MCGuiNote(@"no MiniCode.app built here (make app): launcher check skipped");
+            done();
+            return;
+        }
+        MCGuiRunProcess(@[launcher, @"state", @"--pid", pid], nil, ^(int s, NSString *out, NSString *) {
+            GCHECK(s == 0 && [ParseJSON(out)[@"pid"] intValue] == getpid());
             done();
         });
     });
