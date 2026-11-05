@@ -28,7 +28,9 @@ Return indents the way the language expects. In Python a line ending in a colon 
 
 F9 sorts the selected lines. Lines between a `keep-sorted start` and a `keep-sorted end` comment, as used by Google's [keep-sorted](https://github.com/google/keep-sorted), are sorted the way that tool sorts them, its options included: F9 with the cursor inside such a block sorts it, Shift F9 sorts every block in the file, and editor.keep-sorted-on-save = true in the settings sorts them all whenever the file is saved. A start without an end leaves the file alone and the status bar says which line it is on.
 
-Markdown task lists make a TODO list, written the way GitHub, Obsidian, and VS Code read them: `- [ ] buy milk` is a task still to do and `- [x] buy milk` one that is done. In the preview each task has a box you click (or tap, on Android) to tick or clear it. The file then has unsaved changes, as after any edit made in the preview, until you save it. Done tasks are greyed out and struck through (markdown.done in the settings sets their color), and the title bar says how many of the file's tasks are done. In the source, Command L (Ctrl L on Linux) turns the line, or every selected line, into a task, ticks it if it already is one, and clears it if it was ticked. A line written as `[ ] buy milk`, without the dash, is not a task to GitHub or to minicode and shows as plain text, so select such lines and press Command L once: each gets its dash and keeps its box. Return at the end of a list item starts the next item, with an empty box after a task and the next number after a numbered one, and Return on an empty item ends the list. Shift Command L (Ctrl Shift L on Linux, the leader key and then W on Android) lists every TODO, FIXME, HACK, XXX, and BUG comment in the folder, along with the open tasks in its Markdown files, and opens the one you pick at its line.
+On the Mac the editor has VS Code's keys for several cursors. Command D selects the word at the cursor, and each press after that adds the next place the word occurs as a whole word, going round to the top of the file at the end; with text already selected, it adds the next place that text occurs. Shift Command L selects every place at once, and Option Command Down and Up add a cursor on the line below or above. Typing, Backspace, Paste, and the arrow keys then work at every cursor, each edit one step to undo, and Escape goes back to one. A thin line down the editor at column 100 shows where lines get long: editor.ruler in the settings moves it, adds more (80,120), or turns it off, and editor.ruler-color sets its color.
+
+Markdown task lists make a TODO list, written the way GitHub, Obsidian, and VS Code read them: `- [ ] buy milk` is a task still to do and `- [x] buy milk` one that is done. In the preview each task has a box you click (or tap, on Android) to tick or clear it. The file then has unsaved changes, as after any edit made in the preview, until you save it. Done tasks are greyed out and struck through (markdown.done in the settings sets their color), and the title bar says how many of the file's tasks are done. In the source, Command L (Ctrl L on Linux) turns the line, or every selected line, into a task, ticks it if it already is one, and clears it if it was ticked. A line written as `[ ] buy milk`, without the dash, is not a task to GitHub or to minicode and shows as plain text, so select such lines and press Command L once: each gets its dash and keeps its box. Return at the end of a list item starts the next item, with an empty box after a task and the next number after a numbered one, and Return on an empty item ends the list. Shift Command D (Ctrl Shift L on Linux, the leader key and then W on Android) lists every TODO, FIXME, HACK, XXX, and BUG comment in the folder, along with the open tasks in its Markdown files, and opens the one you pick at its line.
 
 Control backtick opens a terminal at the bottom. It runs one persistent zsh with your own startup files, so aliases, history and state carry over from one command to the next, and colors come through. When a program wants the whole screen (vim, less, htop, git log's pager, ssh), the panel becomes a character grid until it exits.
 
@@ -222,7 +224,9 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 
 | Action | macOS | Linux | Android |
 | --- | --- | --- | --- |
+| Add a cursor on the line below or above each cursor, at the same column | Option Command Down, Option Command Up |  |  |
 | Add a cursor, or take one away, to type in several places at once | Option click, or Shift Command click |  |  |
+| Add the next place the selected text occurs to the selection, or select the word at the cursor | Command D |  |  |
 | Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
 | Close the active terminal | Control Shift W |  |  |
 | Close the application | Command Q | Ctrl Q |  |
@@ -248,7 +252,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Go to the start or end of the file (Shift selects to it) | Command Home, Command End (fn Command Left, Right on a laptop) |  |  |
 | Indent or outdent the selected lines | Tab, Shift Tab | Tab, Shift Tab | Tab, Shift Tab |
 | Jump to the previous file |  | Ctrl Tab |  |
-| List the TODO comments and open Markdown tasks in the folder | Shift Command L | Ctrl Shift L | W, or Ctrl Shift L |
+| List the TODO comments and open Markdown tasks in the folder | Shift Command D | Ctrl Shift L | W, or Ctrl Shift L |
 | Move the line, or the selected lines, down or up, at every cursor | Option Down, Option Up, or Command Down, Command Up |  |  |
 | Move the selected file to the Trash | Command Delete, in the file tree | Delete, in the file tree |  |
 | Move to the next or previous terminal, across split panes and tabs | Option Command ], Option Command [ |  |  |
@@ -268,6 +272,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Run the open file in the terminal | Shift Command Return |  |  |
 | Save | Command S | Ctrl S | S, or Ctrl S |
 | See the language servers, restart one, or choose the Python interpreter | Click the server in the status bar, or the minicode menu |  |  |
+| Select every place the selected text, or the word at the cursor, occurs | Shift Command L |  |  |
 | Show or hide dotfiles | Shift Command . | Ctrl H, or Ctrl Shift . |  |
 | Show or hide the on-screen keyboard, for symbols the phone's keyboard lacks |  |  | Y, or the keyboard button in the title bar |
 | Show or hide the sizes of files and folders in the file tree | Shift Command I |  |  |

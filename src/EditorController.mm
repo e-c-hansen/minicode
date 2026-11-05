@@ -625,7 +625,7 @@ private:
 @property(nonatomic, assign) CGFloat sidebarWidthBeforeCollapse;
 @property(nonatomic, assign) BOOL editorHidden;   // Shift+Cmd+E: file view hidden
 @property(nonatomic, strong) SearchPanel *searchPanel;
-@property(nonatomic, strong) SearchPanel *todoPanel;   // Shift+Cmd+L
+@property(nonatomic, strong) SearchPanel *todoPanel;   // Shift+Cmd+D
 @property(nonatomic, strong) NSVisualEffectView *blurView;   // window.blur
 @property(nonatomic, strong) NSView *titlebarView;   // drawn when customTitlebar
 @property(nonatomic, strong) NSTextField *titleLabel;
@@ -967,6 +967,10 @@ static void *kMediaItemContext = &kMediaItemContext;
     if (self.isDiff && self.diffData) [self renderDiff];
     [self.gitPanel applySettings];
     self.textView.insertionPointColor = [cfg text:Surface::Editor];
+    NSMutableArray *rulers = [NSMutableArray array];
+    for (int column : st.rulers()) [rulers addObject:@(column)];
+    self.textView.rulerColumns = rulers;
+    self.textView.rulerColor = MCColor(st.rulerColor());
     [self recolorEditor];
 
     self.statusBar.layer.backgroundColor = [cfg background:Surface::Statusbar].CGColor;
@@ -1259,8 +1263,12 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⌥↑ ⌘↑" label2:@"Move line up" state:nil];
     [self appendHintsRow:s key:@"⇧⌘↓" label:@"Copy line down"
                     key2:@"⇧⌘↑" label2:@"Copy line up" state:nil];
+    [self appendHintsRow:s key:@"⌥⌘↓" label:@"Add cursor below"
+                    key2:@"⌥⌘↑" label2:@"Add cursor above" state:nil];
+    [self appendHintsRow:s key:@"⌘D" label:@"Add next occurrence"
+                    key2:@"⇧⌘L" label2:@"Select all occurrences" state:nil];
     [self appendHintsRow:s key:@"⌘L" label:@"Toggle task (Markdown)"
-                    key2:@"⇧⌘L" label2:@"TODOs in folder" state:nil];
+                    key2:@"⇧⌘D" label2:@"TODOs in folder" state:nil];
     [self appendHintsRow:s key:@"⌘," label:@"Settings"
                     key2:@"⌃Space" label2:@"Complete" state:nil];
     [self appendHintsRow:s key:@"F12" label:@"Go to definition"
@@ -2030,7 +2038,7 @@ static const CGFloat kDividerGrabSlop = 5;
     return up && up != w && [self ownsWindow:up];
 }
 
-// Shift+Cmd+L: every TODO comment and open task in the folder, scoped as
+// Shift+Cmd+D: every TODO comment and open task in the folder, scoped as
 // Find in Folder is.
 - (void)showTodos:(id)sender {
     if (!self.todoPanel) {

@@ -346,6 +346,134 @@ Edit moveLines(const std::u16string& text, const std::vector<Caret>& carets, boo
     return out;
 }
 
+namespace {
+
+bool isWordChar(char16_t c) { return charClass(c) == 1; }
+
+// VS Code's whole-word test: a match may not run on into a word on either
+// side, though a match that starts (or ends) with punctuation may sit
+// right against one.
+bool wholeWordAt(const std::u16string& t, size_t s, size_t len) {
+    if (len == 0) return false;
+    const size_t e = s + len;
+    if (s > 0 && isWordChar(t[s - 1]) && isWordChar(t[s])) return false;
+    if (e < t.size() && isWordChar(t[e]) && isWordChar(t[e - 1])) return false;
+    return true;
+}
+
+}  // namespace
+
+Caret wordAt(const std::u16string& text, size_t p) {
+    const size_t n = text.size();
+    if (p > n) p = n;
+    if (!((p < n && isWordChar(text[p])) || (p > 0 && isWordChar(text[p - 1])))) return {p, p};
+    size_t a = p, b = p;
+    while (a > 0 && isWordChar(text[a - 1])) a--;
+    while (b < n && isWordChar(text[b])) b++;
+    return {a, b};
+}
+
+std::vector<Caret> occurrences(const std::u16string& text, const std::u16string& needle,
+                               bool wholeWord) {
+    std::vector<Caret> out;
+    if (needle.empty()) return out;
+    size_t pos = 0;
+    for (;;) {
+        const size_t s = text.find(needle, pos);
+        if (s == std::u16string::npos) break;
+        if (wholeWord && !wholeWordAt(text, s, needle.size())) {
+            pos = s + 1;
+            continue;
+        }
+        out.push_back({s, s + needle.size()});
+        pos = s + needle.size();
+    }
+    return out;
+}
+
+Found addNextOccurrence(const std::u16string& text, const std::vector<Caret>& carets,
+                        Caret last, bool wholeWord) {
+    const size_t n = text.size();
+    Found f;
+    f.carets = normalize(carets, n);
+    f.wholeWord = wholeWord;
+    if (last.hi() > n) last = f.carets.back();
+    f.added = last;
+
+    // An empty caret selects its word, and the search turns whole-word.
+    bool anyEmpty = false;
+    for (const Caret& c : f.carets)
+        if (c.empty()) anyEmpty = true;
+    if (anyEmpty) {
+        std::vector<Caret> out;
+        for (const Caret& c : f.carets) {
+            const Caret w = c.empty() ? wordAt(text, c.head) : c;
+            if (!(w == c)) f.changed = true;
+            out.push_back(w);
+        }
+        f.carets = normalize(out, n);
+        f.wholeWord = true;
+        if (last.empty()) {
+            const Caret w = wordAt(text, last.head);
+            if (!w.empty()) f.added = w;
+        }
+        return f;
+    }
+
+    const std::u16string needle = text.substr(last.lo(), last.hi() - last.lo());
+    const size_t len = needle.size();
+    // The selections are sorted and never overlap, so their ends are sorted
+    // too: the first one ending after s is the only one that can overlap
+    // [s, s + len).
+    auto taken = [&](size_t s) {
+        size_t lo = 0, hi = f.carets.size();
+        while (lo < hi) {
+            const size_t mid = (lo + hi) / 2;
+            if (f.carets[mid].hi() <= s) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo < f.carets.size() && f.carets[lo].lo() < s + len;
+    };
+    const size_t from = last.hi();
+    for (int pass = 0; pass < 2; pass++) {
+        size_t pos = pass == 0 ? from : 0;
+        for (;;) {
+            const size_t s = text.find(needle, pos);
+            if (s == std::u16string::npos || (pass == 1 && s >= from)) break;
+            if ((!wholeWord || wholeWordAt(text, s, len)) && !taken(s)) {
+                f.added = {s, s + len};
+                std::vector<Caret> out = f.carets;
+                out.push_back(f.added);
+                f.carets = normalize(out, n);
+                f.changed = true;
+                return f;
+            }
+            pos = s + 1;
+        }
+    }
+    return f;
+}
+
+Found selectAllOccurrences(const std::u16string& text, Caret last, bool wholeWord) {
+    Found f;
+    const size_t n = text.size();
+    if (last.hi() > n) last = {n, n};
+    if (last.empty()) {
+        last = wordAt(text, last.head);
+        wholeWord = true;
+    }
+    f.wholeWord = wholeWord;
+    f.added = last;
+    if (last.empty()) {
+        f.carets = {last};
+        return f;
+    }
+    f.carets = occurrences(text, text.substr(last.lo(), last.hi() - last.lo()), wholeWord);
+    if (f.carets.empty()) f.carets = {last};   // a selection that fails the whole-word test
+    f.changed = true;
+    return f;
+}
+
 std::u16string applyEdit(const std::u16string& text, const Edit& e) {
     std::u16string out = text;
     for (auto it = e.changes.rbegin(); it != e.changes.rend(); ++it)

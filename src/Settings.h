@@ -157,6 +157,11 @@ public:
     // editor.keep-sorted-on-save: sort every keep-sorted block in a file
     // when it is saved (off by default).
     bool keepSortedOnSave() const { return keepSortedOnSave_; }
+    // editor.ruler: the columns a thin vertical line marks in the editor,
+    // ascending ({100} by default; empty for off). editor.ruler-color is the
+    // line's color.
+    const std::vector<int>& rulers() const { return rulers_; }
+    Rgba rulerColor() const;
 
     // Language servers. lsp.enabled turns the whole client on or off (on by
     // default). lsp.<server> names the command for one server key (cpp,
@@ -224,6 +229,8 @@ private:
     bool webImages_ = true;
     bool math_ = true;
     bool keepSortedOnSave_ = false;
+    std::vector<int> rulers_ = {100};
+    std::optional<Rgba> rulerColor_;
     std::map<std::string, std::string> lspCommands_;
     bool runInNewTerminal_ = false;
     std::map<std::string, std::string> runCommands_;

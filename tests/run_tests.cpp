@@ -3062,8 +3062,8 @@ void testSettings() {
     // documented value is the real default.
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
-    // format, python, keep-sorted and develop keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 58);
+    // format, python, keep-sorted, ruler and develop keys.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 60);
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -3088,6 +3088,7 @@ void testSettings() {
         CHECK(un.runTemplate(ext) == d.runTemplate(ext));
     CHECK(un.pythonInterpreter().empty() && d.pythonInterpreter().empty());
     CHECK(un.keepSortedOnSave() == d.keepSortedOnSave());
+    CHECK(un.rulers() == d.rulers() && un.rulerColor() == d.rulerColor());
     CHECK(un.developCommand() == d.developCommand() && d.developCommand() == "claude");
     CHECK(un.developSource().empty() && d.developSource().empty());
     for (const std::string &server : Settings::lspServers()) {
@@ -3105,6 +3106,32 @@ void testSettings() {
     CHECK(!d.formatOnSave());
     CHECK(!parseSettings(std::string(Settings::defaultFileText()) +
                          "format.on-save = false\n").formatOnSave());
+
+    GROUP("settings:ruler");
+    {
+        CHECK(d.rulers() == std::vector<int>{100});
+        CHECK(d.rulerColor() == Rgba::hex(0x5A5A5A));
+        CHECK(parseSettings("editor.ruler = 80\n").rulers() == std::vector<int>{80});
+        CHECK(parseSettings("editor.ruler = 120,80,120\n").rulers() ==
+              (std::vector<int>{80, 120}));
+        CHECK(parseSettings("editor.ruler = off\n").rulers().empty());
+        CHECK(parseSettings("editor.ruler = None  # no line\n").rulers().empty());
+        for (const char *bad : {"editor.ruler = 0\n", "editor.ruler = 80,\n",
+                                "editor.ruler = wide\n", "editor.ruler = 1001\n",
+                                "editor.ruler = -5\n", "editor.ruler = 80, 120\n"}) {
+            std::vector<SettingsError> re;
+            Settings rs = parseSettings(bad, &re);
+            CHECK(re.size() == 1 && rs.rulers() == std::vector<int>{100});
+        }
+        std::vector<SettingsError> re;
+        parseSettings("editor.ruler = 9x\n", &re);
+        CHECK(re.size() == 1 && re[0].message.find("not a column") != std::string::npos);
+        Settings rc = parseSettings("editor.ruler-color = #FF000080\n");
+        CHECK(rc.rulerColor().r == 255 && rc.rulerColor().a > 0.49 && rc.rulerColor().a < 0.51);
+        std::vector<SettingsError> ce;
+        parseSettings("editor.ruler-color = grey\n", &ce);
+        CHECK(ce.size() == 1);
+    }
 
     GROUP("settings:run");
     {
@@ -7257,6 +7284,113 @@ static void testMultiCaret() {
     }
 }
 
+// Cmd+D and Shift+Cmd+L: the selection's text found again, as VS Code does.
+static void testMultiCaretOccurrences() {
+    using namespace MultiCaret;
+    auto sel = [](const std::u16string &t, const std::vector<Caret> &v) {
+        std::vector<std::u16string> out;
+        for (const Caret &c : v) out.push_back(t.substr(c.lo(), c.hi() - c.lo()));
+        return out;
+    };
+    auto los = [](const std::vector<Caret> &v) {
+        std::vector<size_t> out;
+        for (const Caret &c : v) out.push_back(c.lo());
+        return out;
+    };
+
+    GROUP("multicaret:word-at");
+    {
+        const std::u16string t = u"foo(bar_1, baz) é_x";
+        CHECK(wordAt(t, 0) == (Caret{0, 3}));
+        CHECK(wordAt(t, 2) == (Caret{0, 3}));
+        CHECK(wordAt(t, 3) == (Caret{0, 3}));    // touching on the left
+        CHECK(wordAt(t, 4) == (Caret{4, 9}));    // touching on the right
+        CHECK(wordAt(t, 10) == (Caret{10, 10})); // between ", " and nothing
+        CHECK(wordAt(t, 11) == (Caret{11, 14}));
+        CHECK(wordAt(t, 16) == (Caret{16, 19})); // past ASCII counts as a letter
+        CHECK(wordAt(t, 99) == (Caret{16, 19})); // clamped to the end
+        CHECK(wordAt(u"", 0) == (Caret{0, 0}));
+        CHECK(wordAt(u"a  b", 2) == (Caret{2, 2}));
+        CHECK(wordAt(u"x\ny", 1) == (Caret{0, 1}));
+    }
+
+    GROUP("multicaret:occurrences");
+    {
+        const std::u16string t = u"item items item\nItem item_2 (item)";
+        CHECK(los(occurrences(t, u"item", false)) ==
+              (std::vector<size_t>{0, 5, 11, 21, 29}));
+        CHECK(los(occurrences(t, u"item", true)) == (std::vector<size_t>{0, 11, 29}));
+        CHECK(occurrences(t, u"", false).empty());
+        CHECK(occurrences(t, u"nothing", false).empty());
+        CHECK(los(occurrences(u"aaaa", u"aa", false)) == (std::vector<size_t>{0, 2}));
+        // Punctuation at the match's edge may sit against a word.
+        CHECK(los(occurrences(u"f(x) g(x)", u"(x)", true)) == (std::vector<size_t>{1, 6}));
+        // Across lines.
+        CHECK(los(occurrences(u"a\nb a\nb", u"a\nb", false)) == (std::vector<size_t>{0, 4}));
+    }
+
+    GROUP("multicaret:next-occurrence");
+    {
+        const std::u16string t = u"count = count + counter;\nprint(count)";
+        // From an empty caret: the word, and whole words from then on.
+        Found f = addNextOccurrence(t, {{2, 2}}, {2, 2}, false);
+        CHECK(f.changed && f.wholeWord);
+        CHECK(f.carets.size() == 1 && f.carets[0] == (Caret{0, 5}));
+        CHECK(f.added == (Caret{0, 5}));
+        // Each press adds the next one, skipping "counter".
+        f = addNextOccurrence(t, f.carets, f.added, f.wholeWord);
+        CHECK(f.changed && los(f.carets) == (std::vector<size_t>{0, 8}));
+        f = addNextOccurrence(t, f.carets, f.added, f.wholeWord);
+        CHECK(f.changed && los(f.carets) == (std::vector<size_t>{0, 8, 31}));
+        CHECK(f.added == (Caret{31, 36}));
+        // All taken: nothing more.
+        Found g = addNextOccurrence(t, f.carets, f.added, f.wholeWord);
+        CHECK(!g.changed && g.carets == f.carets);
+        // Without whole words (a selection made by hand), "counter" counts.
+        Found h = addNextOccurrence(t, {{8, 13}}, {8, 13}, false);
+        CHECK(h.changed && !h.wholeWord && los(h.carets) == (std::vector<size_t>{8, 16}));
+        // Wrapping round to the start.
+        Found w = addNextOccurrence(t, {{31, 36}}, {31, 36}, true);
+        CHECK(w.changed && los(w.carets) == (std::vector<size_t>{0, 31}));
+        CHECK(w.added == (Caret{0, 5}));
+        // Case-sensitive.
+        const std::u16string u = u"Name name NAME name";
+        Found c = addNextOccurrence(u, {{5, 9}}, {5, 9}, true);
+        CHECK(sel(u, c.carets) == (std::vector<std::u16string>{u"name", u"name"}));
+        CHECK(los(c.carets) == (std::vector<size_t>{5, 15}));
+        // A caret on no word does nothing.
+        Found none = addNextOccurrence(u"a  b", {{2, 2}}, {2, 2}, false);
+        CHECK(!none.changed && none.carets.size() == 1);
+        // Several empty carets each take their word.
+        Found two = addNextOccurrence(t, {{1, 1}, {27, 27}}, {27, 27}, false);
+        CHECK(sel(t, two.carets) == (std::vector<std::u16string>{u"count", u"print"}));
+        CHECK(two.added == (Caret{25, 30}));
+        // A stale `last` past the text's end falls back to the last caret.
+        Found stale = addNextOccurrence(t, {{0, 5}}, {500, 505}, true);
+        CHECK(stale.changed && los(stale.carets) == (std::vector<size_t>{0, 8}));
+        // Overlapping text: the next place not already selected.
+        Found ov = addNextOccurrence(u"aaaa", {{0, 2}}, {0, 2}, false);
+        CHECK(ov.changed && los(ov.carets) == (std::vector<size_t>{0, 2}));
+    }
+
+    GROUP("multicaret:select-all-occurrences");
+    {
+        const std::u16string t = u"x = foo(x) + foobar + foo\n";
+        Found f = selectAllOccurrences(t, {5, 5}, false);   // the caret in "foo"
+        CHECK(f.changed && f.wholeWord);
+        CHECK(los(f.carets) == (std::vector<size_t>{4, 22}));
+        Found s = selectAllOccurrences(t, {4, 7}, false);   // "foo" selected by hand
+        CHECK(!s.wholeWord && los(s.carets) == (std::vector<size_t>{4, 13, 22}));
+        Found x = selectAllOccurrences(t, {0, 0}, false);
+        CHECK(los(x.carets) == (std::vector<size_t>{0, 8}));
+        Found none = selectAllOccurrences(t, {2, 2}, false);  // on "=", between blanks
+        CHECK(!none.changed && none.carets.size() == 1 && none.carets[0].empty());
+        // Every one of them selected, and typing replaces all.
+        Edit e = insert(f.carets, {u"bar"});
+        CHECK(applyEdit(t, e) == u"x = bar(x) + foobar + bar\n");
+    }
+}
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
@@ -7301,6 +7435,7 @@ int main() {
     testFileDetails();
     testChangeRequest();
     testMultiCaret();
+    testMultiCaretOccurrences();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

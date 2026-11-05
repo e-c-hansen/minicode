@@ -763,7 +763,7 @@ task lists, so files stay portable.
   span in `MarkdownPreview.kt` (`android/README.md`, "Task lists and the
   TODO list").
 - **Keys.** Toggle Task: Cmd+L / Ctrl+L / leader L (Markdown source only,
-  one undo step). TODOs: Shift+Cmd+L / Ctrl+Shift+L / leader W. Return in
+  one undo step). TODOs: Shift+Cmd+D (Shift+Cmd+L until 2026-11-05, now Select All Occurrences) / Ctrl+Shift+L / leader W. Return in
   a list item calls `MarkdownTasks::newline` before the keep-the-indent
   code on every port. The title shows "3 of 7 done", refreshed 0.3 s after
   typing stops.
@@ -786,7 +786,7 @@ task lists, so files stay portable.
   pictures looked at; Linux in the Docker container with real clicks and
   keys (it found and fixed a GTK crash: embedded widgets must come off
   the view before a re-render); Android build only, no phone connected.
-  A synthetic Shift+Cmd+L matches Cmd+L or nothing (the Export PDF trap
+  A synthetic Shift+Cmd+L (the TODOs key then) matched Cmd+L or nothing (the Export PDF trap
   above), so the TODOs menu item was checked by its key and mask. Needs
   a person: the look on a real screen everywhere, and every phone check
   listed in `android/README.md`. Known: a numbered task (`1. [ ] x`)
@@ -1121,6 +1121,63 @@ bracket or quote over a selection replaced it instead of wrapping it.
   user found it did nothing without a selection), caught by key code in
   `CodeTextView keyDown:` because AppKit sends two paragraph selectors for
   each; Shift+Option still copies. Checked offscreen (7 checks).
+- **VS Code's multi-cursor keys and a ruler** (2026-11-05, asked for by
+  the user, VS Code's key even where a minicode binding had to move).
+  Edit menu items answered by `CodeTextView` through the responder chain
+  (`addNextOccurrence:`, `selectAllOccurrences:`, `addCursorAbove:`,
+  `addCursorBelow:`; `validateMenuItem:` enables them only while it is
+  editable, so a preview, Find in Folder or TODOs window leaves them
+  off). Cmd+D: an empty caret selects its word (`MultiCaret::wordAt`:
+  letters, digits, _ and anything past ASCII), then each press adds the
+  next occurrence after the selection the last press added, wrapping,
+  skipping places already selected, case-sensitive, whole-word only when
+  it began at an empty caret (VS Code's rule; `wholeWordAt` lets a match
+  that starts or ends in punctuation touch a word). `MCMultiCarets` keeps
+  that state (`_findLast`, `_findWholeWord`) only while the carets and the
+  text length are what the last press left. Shift+Cmd+L: every
+  occurrence of the selection, or whole-word of the word at the caret
+  (`MultiCaret::selectAllOccurrences`). Option+Cmd+Down / Up: per caret,
+  as VS Code does, a new one a visual line below / above at its goal x
+  (the x Up and Down keep in `_goalX`, so a column grown past a short
+  line comes back to its place; a selection goes down as a selection);
+  none at the first or last line. Nothing to select beeps. Tests:
+  `multicaret:word-at`, `occurrences`, `next-occurrence`,
+  `select-all-occurrences`. TODOs moved from Shift+Cmd+L to Shift+Cmd+D:
+  "to do", and VS Code's Shift+Cmd+D is its Run and Debug view, which
+  minicode has no counterpart for (its others were taken here or likely
+  wanted: Shift+Cmd+O symbols, Shift+Cmd+M problems, Shift+Cmd+T reopen).
+  Linux keeps Ctrl+Shift+L for TODOs. **The ruler**: `editor.ruler` (a
+  column, a comma list without spaces such as 80,120, or off; 100 by
+  default, the user's VS Code value) and `editor.ruler-color` (#5A5A5A,
+  Dark+'s editorRuler.foreground), `Settings::rulers()` and
+  `rulerColor()`, `settings:ruler`. `CodeTextView drawViewBackgroundInRect:`
+  draws a 1 pt line, backing-aligned, at text container origin + line
+  fragment padding + column times the width of "0" in the typing font
+  (the 13 pt monospaced system font), so the text draws over it; none
+  while the view is read-only (Markdown preview, messages; the LaTeX
+  preview is its own view). EditorController's `applySettings` sets
+  `rulerColumns` and `rulerColor`. Not in the Adjust Settings map, which
+  would have changed what `missingSurfaceLines` adds for old files.
+  **Verified** offscreen (58 checks; main.mm included as `minicode_main`,
+  ordering, `keyWindow`/`mainWindow` and activation swizzled, scratch
+  HOME, settings and defaults suite): a dump of every menu key equivalent
+  (no clashes; Cmd+D, Shift+Cmd+L, Shift+Cmd+D, Option+Cmd+Up/Down on
+  their actions), every key as a `CGEventCreateKeyboardEvent` event
+  through the window's and the main menu's `performKeyEquivalent:`, Cmd+D
+  four times skipping `counter` then beeping, typing at every caret,
+  undo, a hand selection matching `counter`, Shift+Cmd+L from a caret
+  and from a selection, Option+Cmd+Down twice past a short line and back
+  up, a plain Down after, the first and last lines, a selection going
+  down; the ruler at column 100 to the pixel (2155 px at 2x, expected
+  2155.2) in a capture of the window, off, 80,120 in red, none over a
+  Markdown preview, the items disabled there; Shift+Cmd+L no longer
+  opening TODOs and Shift+Cmd+D opening them; the hints rows. Harness
+  traps: an offscreen window is never key, so a plain key through
+  `keyDown:` does nothing (the input system ignores it) and typing went
+  in as `insertText:`; one Cmd+Z took back two letters typed at the
+  carets in separate run-loop passes (typing coalescing, or the harness).
+  Needs the user: real keys, the ruler's look on a real screen, and
+  Cmd+D's beep when nothing is left.
 - **A tab's right click** (2026-11-04): `MCTabStrip menuForTab` gives
   EditorController's `menuForTabAtIndex:` (Close, Close Other Tabs, Close
   Tabs to the Right, Close All Tabs; for a file Copy Path, Copy Relative

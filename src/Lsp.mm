@@ -815,6 +815,59 @@ static NSColor *SeverityColor(NSInteger severity) {
     if (![_multi paste]) [super paste:sender];
 }
 
+// VS Code's multi-cursor keys, from the Edit menu (MultiCaretView.h).
+- (IBAction)addNextOccurrence:(id)sender {
+    if (!self.editable || ![_multi addNextOccurrence]) NSBeep();
+}
+
+- (IBAction)selectAllOccurrences:(id)sender {
+    if (!self.editable || ![_multi selectAllOccurrences]) NSBeep();
+}
+
+- (IBAction)addCursorAbove:(id)sender {
+    if (!self.editable || ![_multi addCursorVertically:-1]) NSBeep();
+}
+
+- (IBAction)addCursorBelow:(id)sender {
+    if (!self.editable || ![_multi addCursorVertically:1]) NSBeep();
+}
+
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    SEL a = item.action;
+    if (a == @selector(addNextOccurrence:) || a == @selector(selectAllOccurrences:) ||
+        a == @selector(addCursorAbove:) || a == @selector(addCursorBelow:))
+        return self.editable;
+    return [super validateMenuItem:item];
+}
+
+// ---- editor.ruler: drawn with the background, so the text covers it.
+- (void)setRulerColumns:(NSArray<NSNumber *> *)columns {
+    _rulerColumns = [columns copy];
+    self.needsDisplay = YES;
+}
+
+- (void)setRulerColor:(NSColor *)color {
+    _rulerColor = color;
+    self.needsDisplay = YES;
+}
+
+- (void)drawViewBackgroundInRect:(NSRect)rect {
+    [super drawViewBackgroundInRect:rect];
+    if (!self.editable || _rulerColumns.count == 0 || !_rulerColor) return;
+    NSFont *font = self.typingAttributes[NSFontAttributeName];
+    if (!font.fixedPitch) font = [NSFont monospacedSystemFontOfSize:13 weight:NSFontWeightRegular];
+    const CGFloat cw = [@"0" sizeWithAttributes:@{NSFontAttributeName: font}].width;
+    const CGFloat x0 = self.textContainerOrigin.x + self.textContainer.lineFragmentPadding;
+    [_rulerColor set];
+    for (NSNumber *col in _rulerColumns) {
+        NSRect line = [self backingAlignedRect:NSMakeRect(x0 + col.doubleValue * cw,
+                                                          NSMinY(rect), 1, NSHeight(rect))
+                                       options:NSAlignAllEdgesNearest];
+        if (NSMaxX(line) > NSWidth(self.bounds) || !NSIntersectsRect(line, rect)) continue;
+        NSRectFillUsingOperation(line, NSCompositingOperationSourceOver);
+    }
+}
+
 - (void)setSelectedRanges:(NSArray<NSValue *> *)ranges
                  affinity:(NSSelectionAffinity)affinity
            stillSelecting:(BOOL)still {
