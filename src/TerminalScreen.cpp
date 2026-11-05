@@ -36,6 +36,39 @@ const uint32_t kDecGraphics[32] = {
 
 int clampInt(int v, int lo, int hi) { return std::max(lo, std::min(v, hi)); }
 
+// The code points of a cell's text (or a query), appended to `out`. Bytes
+// that are not UTF-8 come out as U+FFFD, one each.
+void utf8Decode(const char* p, size_t n, std::vector<uint32_t>& out) {
+    size_t i = 0;
+    while (i < n) {
+        unsigned char c = (unsigned char)p[i];
+        int need = c < 0x80 ? 0 : (c >> 5) == 6 ? 1 : (c >> 4) == 14 ? 2
+                 : (c >> 3) == 30 ? 3 : -1;
+        uint32_t cp = need == 0 ? c : need == 1 ? (c & 0x1F)
+                    : need == 2 ? (c & 0x0F) : (c & 0x07);
+        bool ok = need >= 0 && i + need < n;
+        for (int k = 1; ok && k <= need; k++) {
+            unsigned char d = (unsigned char)p[i + k];
+            if ((d & 0xC0) != 0x80) ok = false;
+            else cp = cp << 6 | (d & 0x3F);
+        }
+        if (!ok) { out.push_back(0xFFFD); i++; continue; }
+        out.push_back(cp);
+        i += need + 1;
+    }
+}
+
+// Case folding for find: the letters of ASCII, Latin-1, Greek and Cyrillic.
+uint32_t foldCase(uint32_t cp) {
+    if (cp >= 'A' && cp <= 'Z') return cp + 32;
+    if (cp < 0xC0) return cp;
+    if (cp <= 0xDE && cp != 0xD7) return cp + 32;
+    if (cp >= 0x391 && cp <= 0x3A9 && cp != 0x3A2) return cp + 32;
+    if (cp >= 0x410 && cp <= 0x42F) return cp + 32;
+    if (cp >= 0x400 && cp <= 0x40F) return cp + 80;
+    return cp;
+}
+
 } // namespace
 
 struct TerminalScreen::Sink : TermParser::Handler {
@@ -54,6 +87,7 @@ TerminalScreen::TerminalScreen(int cols, int rows)
 }
 
 void TerminalScreen::fullReset() {
+    if (syncOutput_) syncEnds_++;
     main_.assign(rows_, Row(cols_, TermCell()));
     alt_.assign(rows_, Row(cols_, TermCell()));
     onAlt_ = false;
@@ -66,7 +100,7 @@ void TerminalScreen::fullReset() {
     autowrap_ = true;
     originMode_ = insertMode_ = false;
     cursorVisible_ = true;
-    appCursor_ = appKeypad_ = bracketedPaste_ = false;
+    appCursor_ = appKeypad_ = bracketedPaste_ = syncOutput_ = false;
     g0_ = g1_ = gl_ = 0;
     lastChar_.clear();
     resetTabs();
@@ -137,6 +171,97 @@ std::string TerminalScreen::textBetween(int r0, int c0, int r1, int c1) const {
         if (r < r1) out += "\n";
     }
     return out;
+}
+
+// ------------------------------------------------------------------- find
+std::vector<TermMatch> TerminalScreen::find(const std::string& query, bool matchCase,
+                                            size_t limit) const {
+    std::vector<TermMatch> found;
+    std::vector<uint32_t> q;
+    utf8Decode(query.data(), query.size(), q);
+    if (q.empty() || limit == 0) return found;
+    if (!matchCase)
+        for (uint32_t& cp : q) cp = foldCase(cp);
+    // One line at a time: its code points, and the cell each came from
+    // (a cell's combining marks share its column).
+    std::vector<uint32_t> cps;
+    std::vector<int> cellOf;
+    std::vector<uint8_t> widthOf;   // the width of each cell, by column
+    auto addCell = [&](const char* p, size_t n, int col, int width) {
+        utf8Decode(p, n, cps);
+        cellOf.resize(cps.size(), col);
+        if ((int)widthOf.size() <= col) widthOf.resize(col + 1, 1);
+        widthOf[col] = (uint8_t)(width == 2 ? 2 : 1);
+    };
+    auto search = [&](int line) {
+        if (cps.size() < q.size()) return;
+        if (!matchCase)
+            for (uint32_t& cp : cps) cp = foldCase(cp);
+        for (size_t i = 0; i + q.size() <= cps.size() && found.size() < limit; ) {
+            size_t k = 0;
+            while (k < q.size() && cps[i + k] == q[k]) k++;
+            if (k < q.size()) { i++; continue; }
+            // A match starts at its first cell and ends after its last
+            // one; one that starts on a combining mark is no match.
+            if (i > 0 && cellOf[i - 1] == cellOf[i]) { i++; continue; }
+            int c0 = cellOf[i], c1 = cellOf[i + q.size() - 1];
+            if (i + q.size() < cps.size() && cellOf[i + q.size()] == c1) { i++; continue; }
+            found.push_back({line, c0, c1 + widthOf[c1] - c0});
+            i += q.size();
+        }
+    };
+    if (!onAlt_) {
+        for (size_t h = 0; h < history_.size() && found.size() < limit; h++) {
+            const HistLine& hl = history_[h];
+            int line = (int)h - historySize();
+            cps.clear(); cellOf.clear(); widthOf.clear();
+            if (hl.cells.empty()) {   // a byte a cell, so plain ASCII
+                cps.assign(hl.text.begin(), hl.text.end());
+                cellOf.resize(cps.size());
+                for (size_t c = 0; c < cellOf.size(); c++) cellOf[c] = (int)c;
+                widthOf.assign(cps.size(), 1);
+            } else {
+                for (int c = 0; c < hl.width; c++) {
+                    size_t from = hl.cells[c] >> 8;
+                    size_t to = c + 1 < hl.width ? hl.cells[c + 1] >> 8 : hl.text.size();
+                    int w = (int)(hl.cells[c] & 0xFF);
+                    if (w == 0 || to == from) continue;   // the right half of a wide one
+                    addCell(hl.text.data() + from, to - from, c, w);
+                }
+            }
+            search(line);
+        }
+    }
+    const Grid& g = grid();
+    for (int r = 0; r < rows_ && found.size() < limit; r++) {
+        cps.clear(); cellOf.clear(); widthOf.clear();
+        for (int c = 0; c < cols_; c++) {
+            const TermCell& cell = g[r][c];
+            if (cell.width == 0 || cell.ch.empty()) continue;
+            addCell(cell.ch.data(), cell.ch.size(), c, cell.width);
+        }
+        search(r);
+    }
+    return found;
+}
+
+// ------------------------------------------------------------------ clear
+void TerminalScreen::clearAll() {
+    history_.clear();
+    if (onAlt_) return;
+    for (Row& row : main_) row.assign(cols_, TermCell());
+    x_ = y_ = 0;
+    wrapPending_ = false;
+}
+
+void TerminalScreen::clearToCursorLine() {
+    history_.clear();
+    if (onAlt_ || y_ == 0) return;
+    int up = y_;
+    main_.erase(main_.begin(), main_.begin() + up);
+    for (int i = 0; i < up; i++) main_.push_back(Row(cols_, TermCell()));
+    y_ = 0;
+    savedMain_.y = std::max(0, savedMain_.y - up);
 }
 
 // ------------------------------------------------------------- scrollback
@@ -551,13 +676,48 @@ void TerminalScreen::setMode(const std::string& csi, bool on) {
         case 1048: if (on) saveCursor(); else restoreCursor(); break;
         case 1049: switchScreen(on, true, true); break;
         case 2004: bracketedPaste_ = on; break;
+        case 2026:                               // synchronized output
+            if (syncOutput_ && !on) syncEnds_++;
+            syncOutput_ = on;
+            break;
         default: break;                          // mouse modes and the rest
         }
     }
 }
 
+// DECRQM, "CSI ? Ps $ p" (or without "?" for an ANSI mode): is the mode set?
+// The answer is "CSI ? Ps ; Pm $ y", Pm 1 set, 2 reset, 0 not known. A
+// program asks for 2026 to learn whether synchronized output is supported.
+void TerminalScreen::reportMode(const std::string& params) {
+    bool priv = !params.empty() && params[0] == '?';
+    auto p = TermParser::params(priv ? params.substr(1) : params);
+    int m = p.empty() ? -1 : p[0][0];
+    int state = 0;
+    auto is = [](bool on) { return on ? 1 : 2; };
+    if (priv) {
+        switch (m) {
+        case 1: state = is(appCursor_); break;
+        case 6: state = is(originMode_); break;
+        case 7: state = is(autowrap_); break;
+        case 25: state = is(cursorVisible_); break;
+        case 47: case 1047: case 1049: state = is(onAlt_); break;
+        case 2004: state = is(bracketedPaste_); break;
+        case 2026: state = is(syncOutput_); break;
+        default: break;
+        }
+    } else if (m == 4) {
+        state = is(insertMode_);
+    }
+    replies_ += std::string("\033[") + (priv ? "?" : "") + std::to_string(m < 0 ? 0 : m) +
+                ";" + std::to_string(state) + "$y";
+}
+
 void TerminalScreen::csi(const std::string& csi, unsigned char f) {
     char lead = csi.empty() ? 0 : csi[0];
+    if (f == 'p' && !csi.empty() && csi.back() == '$') {
+        reportMode(csi.substr(0, csi.size() - 1));
+        return;
+    }
     if (f == 'h' || f == 'l') { setMode(csi, f == 'h'); return; }
     if (lead == '>' || lead == '<' || lead == '=') return;   // xterm extensions
     if (lead == '?') return;                 // DECSED, DECRQM and friends

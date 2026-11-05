@@ -3263,6 +3263,132 @@ void testTerminalScreen() {
         CHECK(s.textBetween(0, 0, 2, 9) == "abc\ndefgh\nij");
     }
 
+    GROUP("screen:find");
+    {
+        TerminalScreen s(20, 3);
+        s.setScrollbackLimit(100);
+        s.feed("Error one\r\nok\r\nerror two ERROR\r\nfine\r\nlast error");
+        // Lines: -2 "Error one", -1 "ok", 0 "error two ERROR", 1 "fine", 2 "last error".
+        auto m = s.find("error", false);
+        CHECK(m.size() == 4);
+        CHECK(m.size() == 4 && m[0] == (TermMatch{-2, 0, 5}) &&
+              m[1] == (TermMatch{0, 0, 5}) && m[2] == (TermMatch{0, 10, 5}) &&
+              m[3] == (TermMatch{2, 5, 5}));
+        auto exact = s.find("error", true);
+        CHECK(exact.size() == 2 && exact[0].line == 0 && exact[1].line == 2);
+        CHECK(s.find("", false).empty() && s.find("nothing", false).empty());
+        CHECK(s.find("error", false, 2).size() == 2);           // the limit
+        // Overlapping text: matches do not overlap.
+        auto aa = screenAfter("aaaa", 10, 2).find("aa", false);
+        CHECK(aa.size() == 2 && aa[0].col == 0 && aa[1].col == 2);
+        // Wide characters, a combining mark and accented capitals: columns are
+        // cells, and the match covers both halves of a wide character.
+        TerminalScreen w(20, 2);
+        w.setScrollbackLimit(10);
+        w.feed("x\xe4\xb8\xad\xe6\x96\x87y \xc3\x89T\xc3\x89\r\n");   // x中文y ÉTÉ
+        auto wm = w.find("\xe4\xb8\xad\xe6\x96\x87y", false);
+        CHECK(wm.size() == 1 && wm[0] == (TermMatch{0, 1, 5}));
+        auto em = w.find("\xc3\xa9t\xc3\xa9", false);            // été
+        CHECK(em.size() == 1 && em[0] == (TermMatch{0, 7, 3}));
+        w.feed("cafe\xcc\x81 cafe\r\n");                         // café (e + U+0301), cafe
+        auto cm = w.find("cafe", false);
+        // "cafe" + a combining accent is not "cafe": only the plain one counts.
+        CHECK(cm.size() == 1 && cm[0] == (TermMatch{0, 5, 4}));
+        // In the scrollback too, packed lines with wide characters included.
+        w.feed("\r\n\r\n");
+        auto hm = w.find("\xe4\xb8\xad\xe6\x96\x87y", false);
+        CHECK(hm.size() == 1 && hm[0].line < 0 && hm[0].col == 1 && hm[0].width == 5);
+        CHECK(w.lineText(hm[0].line).find("\xe4\xb8\xad") != std::string::npos);
+        // Greek and Cyrillic fold; other scripts are matched as written.
+        CHECK(screenAfter("\xce\xa3\xce\x9f\xce\xa6 \xd0\x9c\xd0\x98\xd0\xa0", 20, 2)
+                  .find("\xcf\x83\xce\xbf\xcf\x86 \xd0\xbc\xd0\xb8\xd1\x80", false).size() == 1);
+        // The alternate screen is searched alone: its own rows, no scrollback.
+        s.feed("\033[?1049h\033[Hvim error");
+        auto am = s.find("error", false);
+        CHECK(am.size() == 1 && am[0] == (TermMatch{0, 4, 5}));
+        s.feed("\033[?1049l");
+        CHECK(s.find("error", false).size() == 4);
+        // A long scrollback stays quick enough to search as one types.
+        TerminalScreen big(100, 30);
+        big.setScrollbackLimit(10000);
+        std::string chunk;
+        for (int i = 0; i < 10000; i++)
+            chunk += "line " + std::to_string(i) + " of the build output, warning here\r\n";
+        big.feed(chunk);
+        auto t0 = std::chrono::steady_clock::now();
+        auto bm = big.find("WARNING", false);
+        double ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - t0).count();
+        CHECK(bm.size() == 10000);
+        std::printf("  screen:find  10,000 matches in 10,000 lines: %.1f ms\n", ms);
+    }
+
+    GROUP("screen:sync-output");
+    {
+        TerminalScreen s(10, 3);
+        CHECK(!s.synchronizedOutput());
+        s.feed("\033[?2026$p");                         // DECRQM: supported, reset
+        CHECK(s.takeReplies() == "\033[?2026;2$y");
+        s.feed("\033[?2026h");
+        CHECK(s.synchronizedOutput());
+        s.feed("\033[?2026$p");
+        CHECK(s.takeReplies() == "\033[?2026;1$y");
+        s.feed("frame\033[?2026l");
+        CHECK(!s.synchronizedOutput() && s.rowText(0) == "frame");
+        CHECK(s.synchronizedFramesEnded() == 1);
+        s.feed("\033[?2026l\033[?2026h\033[?2026h\033[?2026l\033[?2026h");
+        CHECK(s.synchronizedFramesEnded() == 2 && s.synchronizedOutput());
+        s.feed("\033[?2026l");
+        // Split across reads, as a pty delivers it.
+        s.feed("\033[?20");
+        CHECK(!s.synchronizedOutput());
+        s.feed("26h");
+        CHECK(s.synchronizedOutput());
+        // A full reset ends it, so a program that dies mid-frame cannot hold
+        // the screen.
+        s.feed("\033c");
+        CHECK(!s.synchronizedOutput());
+        // Other modes report their state, unknown ones 0, ANSI modes too.
+        s.feed("\033[?2004h\033[?2004$p\033[?25$p\033[?1000$p\033[4$p\033[4h\033[4$p");
+        CHECK(s.takeReplies() ==
+              "\033[?2004;1$y\033[?25;1$y\033[?1000;0$y\033[4;2$y\033[4;1$y");
+        // DECRQM never reaches the screen as text or a mode change.
+        CHECK(s.rowText(0).empty() && s.bracketedPaste());
+    }
+
+    GROUP("screen:clear");
+    {
+        TerminalScreen s(10, 4);
+        s.setScrollbackLimit(100);
+        s.feed("1\r\n2\r\n3\r\n4\r\n5\r\n$ ls");
+        CHECK(s.historySize() == 2 && s.cursorRow() == 3);
+        TerminalScreen running = s;
+        s.clearAll();
+        CHECK(s.historySize() == 0 && s.text().empty());
+        CHECK(s.cursorRow() == 0 && s.cursorCol() == 0);
+        // A running program: the cursor's line goes to the top, with what is
+        // below it; the scrollback goes.
+        running.feed("\033[2;1H");                     // cursor on "4"
+        running.feed("\033[4;1Hx\033[2;1H");
+        running.clearToCursorLine();
+        CHECK(running.historySize() == 0);
+        CHECK(running.rowText(0) == "4" && running.rowText(1) == "5" &&
+              running.rowText(2) == "x ls" && running.rowText(3).empty());
+        CHECK(running.cursorRow() == 0);
+        // Output after it continues from there.
+        running.feed("\r\nnext");
+        CHECK(running.rowText(1) == "next");
+        // On the alternate screen only the scrollback goes.
+        TerminalScreen alt(10, 3);
+        alt.setScrollbackLimit(10);
+        alt.feed("a\r\nb\r\nc\r\nd\033[?1049h\033[2;1Hvim");
+        alt.clearAll();
+        alt.clearToCursorLine();
+        CHECK(alt.historySize() == 0 && alt.rowText(1) == "vim" && alt.cursorRow() == 1);
+        alt.feed("\033[?1049l");
+        CHECK(alt.text() == "b\nc\nd");
+    }
+
     GROUP("screen:keys");
     {
         using K = TermKey;
