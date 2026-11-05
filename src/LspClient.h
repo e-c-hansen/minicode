@@ -2,7 +2,8 @@
 // message framing, the initialize/shutdown lifecycle, document sync, request
 // ids matched to their responses, and parsing of the results MiniCode uses
 // (diagnostics, completion, hover, definition, references, rename, code
-// actions) and the WorkspaceEdits rename and code actions answer with.
+// actions, document and workspace symbols) and the WorkspaceEdits rename and
+// code actions answer with.
 //
 // No I/O happens here. The client hands framed bytes to a send callback and is
 // fed whatever the server wrote with receive(); the GUI owns the process and
@@ -268,7 +269,8 @@ std::string programDisplayName(const std::string& program);
 
 // What a request is about, to choose which of a file's servers gets it.
 enum class Feature {
-    Completion, SignatureHelp, Hover, Definition, References, Rename, CodeActions
+    Completion, SignatureHelp, Hover, Definition, References, Rename, CodeActions,
+    DocumentSymbols, WorkspaceSymbols
 };
 // Does a server whose `initialize` answered with these capabilities offer it?
 bool offers(const Json& capabilities, Feature f);
@@ -460,6 +462,54 @@ struct HoverDoc {
 HoverDoc parseHoverDoc(const Json& result);
 // Location, Location[], LocationLink[], or null.
 std::vector<Location> parseLocations(const Json& result);
+
+// ------------------------------------------------------------ symbols
+// LSP's SymbolKind numbers, the ones named here; any of 1 to 26 may come.
+enum SymbolKind {
+    kSymFile = 1, kSymModule = 2, kSymNamespace = 3, kSymPackage = 4, kSymClass = 5,
+    kSymMethod = 6, kSymProperty = 7, kSymField = 8, kSymConstructor = 9, kSymEnum = 10,
+    kSymInterface = 11, kSymFunction = 12, kSymVariable = 13, kSymConstant = 14,
+    kSymString = 15, kSymNumber = 16, kSymBoolean = 17, kSymArray = 18, kSymObject = 19,
+    kSymKey = 20, kSymNull = 21, kSymEnumMember = 22, kSymStruct = 23, kSymEvent = 24,
+    kSymOperator = 25, kSymTypeParameter = 26,
+};
+// One symbol, from textDocument/documentSymbol, workspace/symbol or the
+// built-in outline (SymbolOutline.h).
+struct Symbol {
+    std::string name, detail;
+    std::string container;   // the enclosing symbol's name, "" at the top
+    int kind = 0;            // SymbolKind, 0 when unknown
+    int depth = 0;           // levels below the top in a tree of them
+    std::string uri;         // where it is (workspace symbols); "" for the file's own
+    Range range;             // the whole declaration
+    Range selectionRange;    // its name; the range when the server gave only one
+    bool hasRange = true;    // false: a WorkspaceSymbol that names only its file
+};
+// textDocument/documentSymbol answers with a tree of DocumentSymbols or a
+// flat list of SymbolInformation. A tree is flattened parent first, siblings
+// in order of position, each child's container its parent's name and its
+// depth one more; a flat list is put in order of position, its
+// containerName kept. Null, or anything else, is no symbols.
+std::vector<Symbol> parseDocumentSymbols(const Json& result);
+// workspace/symbol: SymbolInformation or WorkspaceSymbol (whose location may
+// be only {uri}), in the server's order.
+std::vector<Symbol> parseWorkspaceSymbols(const Json& result);
+// Several servers' answers as one list, in the servers' order; a symbol
+// with the same name, file and start as one already taken is left out.
+// `canonical` as for parseWorkspaceEdit.
+std::vector<Symbol> mergeSymbols(const std::vector<std::vector<Symbol>>& perServer,
+                                 const CanonicalUri& canonical = nullptr);
+// The innermost symbol whose range holds p (its start included, its end
+// too), or -1: the deepest, then the one starting last.
+int symbolAt(const std::vector<Symbol>& symbols, Position p);
+// What a kind is called, singular and plural, as VS Code's lists name them:
+// "function", "functions"; "symbol", "symbols" for one it does not know.
+std::string symbolKindName(int kind);
+std::string symbolKindPlural(int kind);
+// A one-character mark for a kind, drawn before the symbol's name, and the
+// color it is drawn in (0xRRGGBB, VS Code's symbol icon colors).
+std::u16string symbolKindGlyph(int kind);
+unsigned symbolKindColor(int kind);
 Json positionJson(Position p);
 Position parsePosition(const Json& j);
 Range parseRange(const Json& j);
@@ -591,6 +641,9 @@ public:
     int resolveCodeAction(const CodeAction& action, ResultHandler h);
     // workspace/executeCommand for a Command ({command, arguments}).
     int executeCommand(const Json& command, ResultHandler h);
+    // textDocument/documentSymbol and workspace/symbol (the query as typed).
+    int documentSymbols(const std::string& uri, ResultHandler h);
+    int workspaceSymbols(const std::string& query, ResultHandler h);
     // Drop interest in a request (its handler will not run). Sends
     // $/cancelRequest if it was already sent.
     void cancel(int id);

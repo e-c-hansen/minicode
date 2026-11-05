@@ -28,6 +28,8 @@
 #include "CommandPalette.h"
 #include "Backups.h"
 #include "InlineAgent.h"
+#include "SymbolOutline.h"
+#include "NavHistory.h"
 #include "LineIndex.h"
 #include "BracketMatch.h"
 #include "ControlProtocol.h"
@@ -42,6 +44,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -9467,6 +9470,7 @@ static void testMultiCaretOccurrences() {
 #include "agent_tests.inc"
 #include "lsp_also_tests.inc"
 #include "find_tests.inc"
+#include "symbols_tests.inc"
 #include "gutter_tests.inc"
 #include "control_tests.inc"
 #include "agent_index_tests.inc"
@@ -9527,6 +9531,7 @@ int main() {
     testLspSecondServer();
     testTextFind();
     testFolderReplace();
+    testSymbols();
     testLineIndex();
     testBrackets();
     testControlProtocol();
