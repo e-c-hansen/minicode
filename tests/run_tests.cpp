@@ -28,6 +28,8 @@
 #include "CommandPalette.h"
 #include "Backups.h"
 #include "InlineAgent.h"
+#include "AgentTranscript.h"
+#include "AgentIndex.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -9374,6 +9376,7 @@ static void testMultiCaretOccurrences() {
 #include "backups_tests.inc"
 #include "agent_tests.inc"
 #include "lsp_also_tests.inc"
+#include "agent_index_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9428,6 +9431,8 @@ int main() {
     testBackups();
     testInlineAgent();
     testLspSecondServer();
+    testAgentTranscript();
+    testAgentIndex();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
