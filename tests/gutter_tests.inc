@@ -199,7 +199,12 @@ static void testBrackets() {
         // VS Code's rules: from an opener to before its closer, from a closer
         // to before its opener, so pressing again comes back.
         CHECK(jumpFrom(t, 1) == 8);      // |( ... )  -> before ")"
-        CHECK(jumpFrom(t, 8) == 5);      // (b)|): the ")" before the caret wins
+        CHECK(jumpFrom(t, 8) == 1);      // (b)|): the ")" after the caret wins
+        // Closers back to back: there and back again.
+        //                       0123456
+        const std::u16string nested = u"f({x})";
+        CHECK(jumpFrom(nested, 2) == 5 && jumpFrom(nested, 5) == 1);
+        CHECK(matchAt(nested, 5).open == 2);   // the highlight takes the "}" before
         CHECK(jumpFrom(t, 9) == 1);      // after ")"
         CHECK(jumpFrom(t, 2) == 8);      // after "(" -> before ")"
         CHECK(jumpFrom(t, 6) == 7);      // (|b): after "(" of the inner pair

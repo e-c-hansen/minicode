@@ -282,6 +282,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Go to a line of the open file, by its number (42:7 for a column too) | Control G |  |  |
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G, or Ctrl G |
 | Go to tab 1 to 8, or the last tab | Control 1 to 9, or Shift Command 1 to 9 (macOS keeps Shift Command 3, 4 and 5 for screenshots) |  |  |
+| Go to the matching bracket, or to the closing bracket of the pair around the cursor | Shift Command backslash |  |  |
 | Go to the next or previous problem in the file, with its message at the cursor | F8, Shift F8 (F8 may need fn on a laptop) |  |  |
 | Go to the start or end of the file (Shift selects to it) | Command Home, Command End (fn Command Left, Right on a laptop) |  |  |
 | Indent or outdent the selected lines | Tab, Shift Tab | Tab, Shift Tab | Tab, Shift Tab |
@@ -314,6 +315,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Run the open file in the terminal | Shift Command Return |  |  |
 | Save | Command S | Ctrl S | S, or Ctrl S |
 | See the language servers, restart one, or choose the Python interpreter | Click the server in the status bar, or the minicode menu |  |  |
+| Select a line, or every line dragged over, by its number | Click or drag in the line numbers, Shift click to extend |  |  |
 | Select every place the selected text, or the word at the cursor, occurs | Shift Command L |  |  |
 | Select the cursor's line, and the next line with each press after | Command L |  |  |
 | Show or hide dotfiles | Shift Command . | Ctrl H, or Ctrl Shift . |  |
@@ -338,6 +340,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z | U, R, or Ctrl Z, Ctrl Shift Z (Ctrl U, Ctrl R also work) |
 | Wrap the selected text in brackets or quotes, at every cursor | Type ( [ { " ' or a backtick with text selected |  |  |
 | Zoom a PDF or the LaTeX preview in or out |  | Ctrl plus (or Ctrl equals), Ctrl minus, Ctrl with the scroll wheel, or a pinch on the touchpad |  |
+| Zoom the editor's text in or out, or back to its size in the settings | Command equals (or Command plus), Command minus, Option Command 0 (or Command with keypad 0) |  |  |
 | Zoom a PDF or the LaTeX preview back to the width of the pane |  | Ctrl Alt 0 |  |
 
 ## Limitations

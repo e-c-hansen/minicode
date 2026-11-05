@@ -25,6 +25,8 @@
 #import "BackupStore.h"
 #import "AgentPanel.h"
 #import "ProblemsPanel.h"
+#import "Gutter.h"
+#import "EditorFont.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #import <AVKit/AVKit.h>                 // video and audio in the editor's slot
 #import <AVFoundation/AVFoundation.h>
@@ -39,6 +41,7 @@
 #include "LineDiff.h"
 #include "Formatter.h"
 #include "LspClient.h"   // Lsp::serverDisplayName
+#include "BracketMatch.h"
 #include <memory>
 #include <string>
 
@@ -162,13 +165,24 @@ static const CGFloat kDragBarHeight = 12;
 }
 - (void)tile {
     [super tile];
-    _backdrop.frame = self.bounds;
+    // Not behind a ruler (the editor's line numbers), which paints its own
+    // background: a translucent color painted twice would come out darker.
+    NSRect back = self.bounds;
+    if (self.rulersVisible && self.hasVerticalRuler && self.verticalRulerView) {
+        const CGFloat ruler = NSMaxX(self.verticalRulerView.frame);
+        back.origin.x += ruler;
+        back.size.width = MAX(0, back.size.width - ruler);
+    }
+    _backdrop.frame = back;
     // A text view that wraps is exactly as wide as what shows of it. Left to
     // itself it kept the width it was created with (the whole window), so
     // lines, tables and pictures ran past the pane's right edge.
     NSTextView *tv = [self.documentView isKindOfClass:NSTextView.class]
                          ? (NSTextView *)self.documentView : nil;
-    const CGFloat width = self.contentSize.width;
+    // A ruler (the line numbers) is an inset of the clip view, which still
+    // spans the whole width.
+    const NSEdgeInsets in = self.contentView.contentInsets;
+    const CGFloat width = self.contentSize.width - in.left - in.right;
     if (tv && !tv.horizontallyResizable && width > 0 && tv.frame.size.width != width)
         [tv setFrameSize:NSMakeSize(width, tv.frame.size.height)];
 }
@@ -542,6 +556,7 @@ private:
     // tracks line states so only the changed lines are re-lexed.
     std::unique_ptr<IncrementalHighlighter<char16_t>> _hl;
     BOOL _liveHighlight;
+    BOOL _bracketMatchQueued;   // updateBracketMatch waits for the next turn
     // Rendered Markdown's headings, by GitHub's anchor spelling, for #links.
     NSDictionary<NSString *, NSNumber *> *_markdownAnchors;
     // Where the source view was when a preview took over, so coming back
@@ -621,6 +636,7 @@ private:
 @property(nonatomic, assign) BOOL hintsVisible;
 @property(nonatomic, strong) PanelHost *rightArea;
 @property(nonatomic, strong) PanelScrollView *editorScroll;
+@property(nonatomic, strong) MCLineGutter *gutter;   // the editor's line numbers
 @property(nonatomic, strong) MCTerminalPanel *terminalPanel;   // tabs of terminals
 @property(nonatomic, readonly) TerminalView *terminal;         // its active one
 @property(nonatomic, strong) DragBar *termDivider;
@@ -826,6 +842,7 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
     self.textView.autoresizingMask = NSViewWidthSizable;
     self.textView.textContainer.widthTracksTextView = YES;
     textScroll.documentView = self.textView;
+    self.gutter = [[MCLineGutter alloc] initWithTextView:self.textView];
 
     // Language servers: completion, go to definition, error underlines.
     self.lsp = [[LspSession alloc] initWithTextView:self.textView root:_root.path];
@@ -906,6 +923,9 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
     [[NSNotificationCenter defaultCenter]
         addObserver:self selector:@selector(applySettings)
                name:MCSettingsDidChangeNotification object:nil];
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self selector:@selector(editorZoomChanged:)
+               name:MCEditorZoomDidChangeNotification object:nil];
     [[NSNotificationCenter defaultCenter]
         addObserver:self selector:@selector(markdownWebImageArrived:)
                name:MCMarkdownWebImageNotification object:nil];
@@ -1056,6 +1076,7 @@ static void *kMediaItemContext = &kMediaItemContext;
     for (int column : st.rulers()) [rulers addObject:@(column)];
     self.textView.rulerColumns = rulers;
     self.textView.rulerColor = MCColor(st.rulerColor());
+    [self applyGutterSettings];   // and the font, which recolorEditor sets in the text
     [self recolorEditor];
 
     self.statusBar.layer.backgroundColor = [cfg background:Surface::Statusbar].CGColor;
@@ -1429,6 +1450,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⇧F9" label2:@"Sort keep-sorted blocks" state:nil];
     [self appendHintsRow:s key:@"⇥" label:@"Indent lines"
                     key2:@"⇧⇥" label2:@"Outdent lines" state:nil];
+    [self appendHintsRow:s key:@"⌘= ⌘-" label:@"Zoom in, out"
+                    key2:@"⌥⌘0" label2:@"Reset zoom" state:nil];
 
     [self appendHintsHeading:@"Files" to:s];
     [self appendHintsRow:s key:@"⌥⌘N" label:@"New window"
@@ -1446,7 +1469,7 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     [self appendHintsRow:s key:@"⇧⌘P" label:@"Command palette"
                     key2:@"⌘P" label2:@"Go to file" state:nil];
     [self appendHintsRow:s key:@"⌃G" label:@"Go to line"
-                    key2:nil label2:nil state:nil];
+                    key2:@"⇧⌘\\" label2:@"Go to bracket" state:nil];
     [self appendHintsRow:s key:@"⌘0" label:@"Focus tree"
                     key2:@"⌘1" label2:@"Focus editor" state:nil];
     [self appendHintsRow:s key:@"⌘2" label:@"Focus terminal"
@@ -5035,6 +5058,7 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
         return EditorTabs::indexForNumber((int)item.tag, (int)_tabs.count) >= 0;
     if (item.action == @selector(selectNextTab:) || item.action == @selector(selectPreviousTab:))
         return _tabs.count > 0;
+    if (item.action == @selector(goToBracket:)) return [self bracketMatchingApplies];
     if (item.action == @selector(exportPDF:)) return self.canExportPDF;
     if (item.action == @selector(togglePlayback:)) return self.canTogglePlayback;
     if (item.action == @selector(toggleProblems:)) {
@@ -5074,8 +5098,7 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 
 // Show the raw text as an editable, monospaced, syntax-highlighted document.
 - (void)displaySourceEditable {
-    NSFont *mono = [NSFont monospacedSystemFontOfSize:13
-                                               weight:NSFontWeightRegular];
+    NSFont *mono = MCEditorFont();   // editor.font-size and the zoom
     NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
     ps.lineSpacing = 2.0;
     NSDictionary *base = @{
@@ -5875,6 +5898,171 @@ static NSColor *ContrastColor(const Rgba &c) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{ [weakNote close]; });
     }
+}
+
+// ------------------------------------------- line numbers, brackets and zoom
+// The gutter's colors and mode, the bracket box's color, and the font (into
+// the source attributes; recolorEditor then sets it in the text).
+- (void)applyGutterSettings {
+    const Settings &st = [AppSettings shared].settings;
+    MCLineGutter *g = self.gutter;
+    const Settings::LineNumbers mode = st.lineNumbers();
+    g.mode = mode == Settings::LineNumbers::Off      ? MCLineNumbersOff
+           : mode == Settings::LineNumbers::Relative ? MCLineNumbersRelative
+                                                     : MCLineNumbersOn;
+    g.backgroundColor = MCColor(st.gutterBackground());
+    g.numberColor = MCColor(st.lineNumberColor());
+    g.activeNumberColor = MCColor(st.lineNumberActiveColor());
+    self.textView.bracketMatchColor = MCColor(st.bracketMatchColor());
+    [self setEditorFont:MCEditorFont()];
+}
+
+// The font for the source from now on: the attributes the highlighter
+// restyles with, what typing gets, and the gutter's numbers. The text on
+// show changes when it is next restyled.
+- (void)setEditorFont:(NSFont *)font {
+    self.gutter.font = font;
+    if (_sourceAttributes && ![_sourceAttributes[NSFontAttributeName] isEqual:font]) {
+        NSMutableDictionary *base = [_sourceAttributes mutableCopy];
+        base[NSFontAttributeName] = font;
+        _sourceAttributes = base;
+    }
+    if (self.textView.editable && _liveHighlight) {
+        NSMutableDictionary *typing = [self.textView.typingAttributes mutableCopy];
+        typing[NSFontAttributeName] = font;
+        self.textView.typingAttributes = typing;
+    }
+}
+
+// Zoom In, Zoom Out or Reset Zoom, from any window: the source on show
+// takes the new size at once, keeping the line at the top of the pane.
+- (void)editorZoomChanged:(NSNotification *)note {
+    (void)note;
+    NSFont *font = MCEditorFont();
+    const BOOL showing = _liveHighlight && self.textView.editable;
+    const BOOL changed = showing && ![_sourceAttributes[NSFontAttributeName] isEqual:font];
+    if (!changed) {
+        [self setEditorFont:font];
+        return;
+    }
+    NSTextView *tv = self.textView;
+    const NSUInteger n = tv.string.length;
+    NSFont *old = _sourceAttributes[NSFontAttributeName];
+    const CGFloat scale = old.pointSize > 0 ? font.pointSize / old.pointSize : 1;
+    NSUInteger top = 0;
+    CGFloat offset = 0;
+    if (n > 0) {
+        const NSRect visible = tv.visibleRect;
+        top = MIN([tv characterIndexForInsertionAtPoint:
+                      NSMakePoint(NSMinX(visible) + 20, NSMinY(visible) + 1)], n - 1);
+        const NSRect r = [self textRectForCharacter:top];
+        offset = NSIsEmptyRect(r) ? 0 : NSMinY(r) - NSMinY(visible);
+    }
+    [self setEditorFont:font];
+    [self applyHighlighting];   // every run in the new font
+    if (n > 0) {
+        const NSRect r = [self textRectForCharacter:top];
+        if (!NSIsEmptyRect(r)) {
+            [tv.layoutManager ensureLayoutForBoundingRect:
+                NSMakeRect(0, 0, CGFLOAT_MAX,
+                           NSMaxY(r) + 2 * NSHeight(self.editorScroll.contentView.bounds))
+                                          inTextContainer:tv.textContainer];
+            [self scrollEditorToY:NSMinY(r) - offset * scale];
+        }
+    }
+}
+
+// The stretches of [lo, hi) that are strings or comments, from the
+// highlighter's tokens of those lines, offset from lo (none without a
+// grammar, so every bracket counts).
+- (std::vector<Brackets::Span>)nonCodeSpansFrom:(NSUInteger)lo to:(NSUInteger)hi {
+    std::vector<Brackets::Span> spans;
+    if (!_hl || hi <= lo) return spans;
+    NSTextStorage *storage = self.textView.textStorage;
+    if (_hl->length() != storage.length) return spans;
+    std::vector<Token> tokens;
+    _hl->lineTokens(NSStringSource(storage.string), _hl->lineOf(lo), _hl->lineOf(hi - 1) + 1,
+                    tokens);
+    for (const Token &t : tokens) {
+        if (t.style != TokenStyle::String && t.style != TokenStyle::Comment) continue;
+        const size_t a = MAX((size_t)lo, t.start), b = MIN((size_t)hi, t.start + t.length);
+        if (b <= a) continue;
+        if (!spans.empty() && spans.back().end >= a - lo)
+            spans.back().end = MAX(spans.back().end, b - lo);
+        else
+            spans.push_back({a - lo, b - lo});
+    }
+    return spans;
+}
+
+// Bracket matching runs on a window of the text around the caret: what the
+// search may reach, and no more.
+- (NSRange)bracketWindowAround:(NSUInteger)caret {
+    const NSUInteger n = self.textView.textStorage.length;
+    const NSUInteger reach = Brackets::kDefaultScan + 1;
+    const NSUInteger lo = caret > reach ? caret - reach : 0;
+    const NSUInteger hi = MIN(n, caret + reach);
+    return NSMakeRange(lo, hi - lo);
+}
+
+- (BOOL)bracketMatchingApplies {
+    CodeTextView *tv = self.textView;
+    return _liveHighlight && tv.editable && !tv.multiCaretActive && !self.showingMessage;
+}
+
+- (void)textViewDidChangeSelection:(NSNotification *)note {
+    if (note.object != self.textView || _bracketMatchQueued) return;
+    // Once the edit or the selection settles (typing changes both).
+    _bracketMatchQueued = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self->_bracketMatchQueued = NO;
+        [self updateBracketMatch];
+    });
+}
+
+// The bracket beside the caret and its partner get a box, as in VS Code.
+- (void)updateBracketMatch {
+    CodeTextView *tv = self.textView;
+    const NSRange sel = tv.selectedRange;
+    NSString *s = tv.textStorage.string;
+    NSArray<NSValue *> *boxes = @[];
+    if ([self bracketMatchingApplies] && sel.length == 0 && sel.location <= s.length) {
+        const NSUInteger caret = sel.location;
+        const BOOL near = (caret > 0 && Brackets::isBracket([s characterAtIndex:caret - 1])) ||
+                          (caret < s.length && Brackets::isBracket([s characterAtIndex:caret]));
+        if (near) {
+            const NSRange w = [self bracketWindowAround:caret];
+            std::vector<unichar> buf(w.length);
+            [s getCharacters:buf.data() range:w];
+            const Brackets::Pair p = Brackets::match(
+                reinterpret_cast<const char16_t *>(buf.data()), buf.size(), caret - w.location,
+                [self nonCodeSpansFrom:w.location to:NSMaxRange(w)]);
+            if (p.found())
+                boxes = @[[NSValue valueWithRange:NSMakeRange(w.location + p.open, 1)],
+                          [NSValue valueWithRange:NSMakeRange(w.location + p.close, 1)]];
+        }
+    }
+    tv.bracketRanges = boxes;
+}
+
+// Shift+Cmd+\ (VS Code's Go to Bracket): to the partner of the bracket by
+// the caret, else to the closer of the pair around it, else to the next
+// bracket.
+- (void)goToBracket:(id)sender {
+    (void)sender;
+    CodeTextView *tv = self.textView;
+    if (![self bracketMatchingApplies]) { NSBeep(); return; }
+    const NSUInteger caret = NSMaxRange(tv.selectedRange);
+    NSString *s = tv.textStorage.string;
+    const NSRange w = [self bracketWindowAround:caret];
+    std::vector<unichar> buf(w.length);
+    [s getCharacters:buf.data() range:w];
+    const size_t to = Brackets::jumpTarget(reinterpret_cast<const char16_t *>(buf.data()),
+                                           buf.size(), caret - w.location,
+                                           [self nonCodeSpansFrom:w.location to:NSMaxRange(w)]);
+    if (to == Brackets::npos) { NSBeep(); return; }
+    tv.selectedRange = NSMakeRange(w.location + to, 0);
+    [tv scrollRangeToVisible:tv.selectedRange];
 }
 
 // -------------------------------------------------------------- editing hooks

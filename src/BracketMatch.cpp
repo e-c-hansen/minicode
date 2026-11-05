@@ -101,6 +101,12 @@ Pair enclosing(const char16_t* text, size_t length, size_t caret,
 
 size_t jumpTarget(const char16_t* text, size_t length, size_t caret,
                   const std::vector<Span>& skip, size_t maxScan) {
+    // Just before a closer, its opener, even with another closer just
+    // before the caret: "})" jumped to from "(" must jump back to "(".
+    if (caret < length && !isOpener(text[caret]) && inCode(text, caret, skip)) {
+        const size_t open = partner(text, length, caret, skip, maxScan);
+        if (open != npos) return open;
+    }
     Pair p = match(text, length, caret, skip, maxScan);
     if (p.found()) {
         // Touching the closer (just before or just after it): to the opener.

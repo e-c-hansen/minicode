@@ -61,7 +61,9 @@ Pair enclosing(const char16_t* text, size_t length, size_t caret,
 // Where Go to Bracket puts the caret, as VS Code's editor.action.jumpToBracket
 // does: touching a bracket, before its partner (from an opener to just before
 // its closer, from a closer to just before its opener); inside a pair, before
-// its closer; else before the next bracket. npos when there is none.
+// its closer; else before the next bracket. npos when there is none. Just
+// before a closer, that closer is the one taken, whatever is before the
+// caret, so a second press always comes back.
 size_t jumpTarget(const char16_t* text, size_t length, size_t caret,
                   const std::vector<Span>& skip, size_t maxScan = kDefaultScan);
 
