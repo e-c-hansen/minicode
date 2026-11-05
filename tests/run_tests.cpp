@@ -4974,8 +4974,8 @@ void testLspServers() {
     CHECK(!Lsp::languageForExtension("png", l));
     CHECK(!Lsp::languageForExtension("", l));
     CHECK((Lsp::defaultCommands("python") ==
-           std::vector<std::string>{"pyright-langserver --stdio",
-                                    "basedpyright-langserver --stdio", "pylsp",
+           std::vector<std::string>{"basedpyright-langserver --stdio",
+                                    "pyright-langserver --stdio", "pylsp",
                                     "jedi-language-server"}));
     // Every server the settings know has install commands.
     for (const std::string &server : Settings::lspServers())

@@ -258,7 +258,10 @@ bool languageForExtension(const std::string& extIn, Language& out) {
 std::vector<std::string> defaultCommands(const std::string& server) {
     if (server == "cpp") return {"clangd"};
     if (server == "python")
-        return {"pyright-langserver --stdio", "basedpyright-langserver --stdio", "pylsp",
+        // basedpyright first: it is the one the install hints recommend
+        // (uv brings its own Node for it), and where both are installed it
+        // is the one the user most likely chose.
+        return {"basedpyright-langserver --stdio", "pyright-langserver --stdio", "pylsp",
                 "jedi-language-server"};
     if (server == "go") return {"gopls"};
     if (server == "rust") return {"rust-analyzer"};
