@@ -2330,6 +2330,7 @@ struct Panel {
                 events += 'D'; lastStatus = e.status; break;
             case TermEvent::Directory:
                 events += 'P'; lastDir = e.text; break;
+            case TermEvent::InputStart:   events += 'B'; break;
             }
         }
     }
@@ -2551,7 +2552,15 @@ void testTerminalStream() {
         auto noStatus = ts.feed("\x1b]133;D\x1b\\");
         CHECK(noStatus.size() == 1 && noStatus[0].kind == TermEvent::CommandEnd &&
               noStatus[0].status == 0);
-        CHECK(ts.feed("\x1b]133;B\x07").empty());   // recognized, ignored
+        // B: the line editor reads input (the grid mode's integration).
+        auto b = ts.feed("\x1b]133;B\x07");
+        CHECK(b.size() == 1 && b[0].kind == TermEvent::InputStart);
+        // The command line from OSC 633;E travels with the next C, once.
+        auto c = ts.feed("\x1b]633;E;ls -la ~/my dir;x\x07\x1b]133;C\x07");
+        CHECK(c.size() == 1 && c[0].kind == TermEvent::CommandStart &&
+              c[0].text == "ls -la ~/my dir;x");
+        auto c2 = ts.feed("\x1b]133;C\x07");
+        CHECK(c2.size() == 1 && c2[0].text.empty());
         CHECK(ts.feed("\x1b]7;file://nohostpath\x07").empty());
     }
 
@@ -3029,6 +3038,131 @@ void testTerminalScreen() {
         CHECK(alt.altScreen() && alt.rowText(1) == "last");
     }
 
+    GROUP("screen:scrollback");
+    {
+        // Off until the host sets a limit: nothing kept, as before.
+        TerminalScreen none(10, 3);
+        none.feed("1\r\n2\r\n3\r\n4");
+        CHECK(none.historySize() == 0 && none.historyBase() == 1);
+        CHECK(none.text() == "2\n3\n4");
+
+        TerminalScreen s(10, 3);
+        s.setScrollbackLimit(5);
+        s.feed("1\r\n2\r\n3\r\n4\r\n5");
+        CHECK(s.historySize() == 2 && s.historyBase() == 2);
+        CHECK(s.lineText(-2) == "1" && s.lineText(-1) == "2");
+        CHECK(s.lineText(0) == "3" && s.text() == "3\n4\n5");
+        CHECK(s.lineCell(-2, 0).ch == "1" && s.lineCell(-2, 9).ch == " ");
+        CHECK(s.lineCell(-3, 0).ch == " " && s.lineCell(5, 0).ch == " ");
+        // The limit drops the oldest lines, and line numbers keep counting.
+        s.feed("\r\n6\r\n7\r\n8\r\n9");
+        CHECK(s.historySize() == 5 && s.historyBase() == 6);
+        CHECK(s.lineText(-5) == "2" && s.lineText(-1) == "6");
+        s.setScrollbackLimit(2);
+        CHECK(s.historySize() == 2 && s.lineText(-2) == "5");
+        // Selection text runs from the scrollback into the screen.
+        CHECK(s.textBetween(-2, 0, 1, 9) == "5\n6\n7\n8");
+        CHECK(s.textBetween(1, 0, -1, 0) == "6\n7\n8");
+        // Colors are kept.
+        TerminalScreen col(10, 2);
+        col.setScrollbackLimit(10);
+        col.feed("\033[31mred\033[m\r\nx\r\ny");
+        CHECK(col.lineText(-1) == "red" && col.lineCell(-1, 0).style.fg.index == 1);
+        // Trailing default blanks are not stored; colored ones are.
+        CHECK(col.lineWidth(-1) == 3);
+        TerminalScreen bg(10, 1);
+        bg.setScrollbackLimit(10);
+        bg.feed("a\033[41m  \033[m\r\n");
+        CHECK(bg.lineWidth(-1) == 3 && bg.lineCell(-1, 2).style.bg.index == 1);
+        CHECK(bg.textBetween(-1, 0, -1, 6) == "a" && bg.lineCell(-1, 7).ch == " ");
+
+        // A scroll region that does not start at the top keeps its lines out
+        // (a status line program), and so does the alternate screen.
+        TerminalScreen reg(10, 4);
+        reg.setScrollbackLimit(10);
+        reg.feed("\033[2;4r\033[4;1Ha\r\nb\r\nc");
+        CHECK(reg.historySize() == 0);
+        reg.feed("\033[r\033[4;1H\r\n");      // region reset: saved again
+        CHECK(reg.historySize() == 1);
+        TerminalScreen alt(10, 2);
+        alt.setScrollbackLimit(10);
+        alt.feed("\033[?1049h1\r\n2\r\n3\r\n4\033[?1049l");
+        CHECK(alt.historySize() == 0);
+        // Reverse index, inserting and deleting lines, and SU/SD never save.
+        TerminalScreen ops(10, 3);
+        ops.setScrollbackLimit(10);
+        ops.feed("a\r\nb\r\nc\033[1;1H\033M\033[M\033[L\033[2S\033[T");
+        CHECK(ops.historySize() == 0);
+
+        // ED 3 (clear's "erase saved lines") empties the scrollback only;
+        // ED 2 leaves it alone.
+        TerminalScreen ed(10, 2);
+        ed.setScrollbackLimit(10);
+        ed.feed("1\r\n2\r\n3");
+        ed.feed("\033[2J");
+        CHECK(ed.historySize() == 1 && ed.text().empty());
+        ed.feed("\033[H\033[2Jz\033[3J");
+        CHECK(ed.historySize() == 0 && ed.text() == "z");
+        // A full reset keeps it (it describes what was printed, not the screen).
+        TerminalScreen ris(10, 2);
+        ris.setScrollbackLimit(10);
+        ris.feed("1\r\n2\r\n3\033c");
+        CHECK(ris.historySize() == 1 && ris.text().empty());
+    }
+
+    GROUP("screen:scrollback-resize");
+    {
+        // Rows taken away go into the scrollback, and come back when the
+        // screen grows again, the cursor moving with its line.
+        TerminalScreen s(10, 4);
+        s.setScrollbackLimit(100);
+        s.feed("one\r\ntwo\r\nthree\r\nfour");
+        s.resize(10, 2);
+        CHECK(s.text() == "three\nfour" && s.historySize() == 2);
+        CHECK(s.lineText(-2) == "one" && s.cursorRow() == 1 && s.historyBase() == 2);
+        s.resize(10, 5);                      // two back down, one blank below
+        CHECK(s.historySize() == 0 && s.historyBase() == 0);
+        CHECK(s.text() == "one\ntwo\nthree\nfour" && s.cursorRow() == 3);
+        CHECK(s.cursorCol() == 4);
+        // Blank rows below the cursor are cut first: nothing to save.
+        TerminalScreen top(10, 6);
+        top.setScrollbackLimit(100);
+        top.feed("$ ");
+        top.resize(10, 3);
+        CHECK(top.historySize() == 0 && top.rowText(0) == "$");
+        // Lines keep their width: narrowing cuts what shows, widening the
+        // screen later does not bring cut text back on screen rows, but the
+        // scrollback still has its old width.
+        TerminalScreen w(8, 2);
+        w.setScrollbackLimit(10);
+        w.feed("abcdefgh\r\nx\r\ny");
+        CHECK(w.lineWidth(-1) == 8);
+        w.resize(4, 2);
+        CHECK(w.lineText(-1) == "abcdefgh" && w.lineWidth(-1) == 8);
+        CHECK(w.textBetween(-1, 0, -1, 3) == "abcdefgh");   // to the edge: all of it
+        CHECK(w.textBetween(-1, 1, -1, 2) == "bc");
+        CHECK(w.rowText(0) == "x" && w.lineWidth(0) == 4);
+        // A line pulled back down is cut to the screen's width.
+        w.resize(4, 3);
+        CHECK(w.rowText(0) == "abcd" && w.historySize() == 0);
+        // On the alternate screen the main screen behind it keeps its
+        // cursor's line too (the one saved on entering), and gets its rows
+        // back after; the alternate screen itself never touches the
+        // scrollback.
+        TerminalScreen a(10, 4);
+        a.setScrollbackLimit(10);
+        a.feed("p1\r\np2\r\np3\r\n$ \033[?1049h\033[Hvim");
+        a.resize(10, 2);
+        CHECK(a.altScreen() && a.historySize() == 2 && a.rowText(0) == "vim");
+        a.feed("\033[?1049l");
+        CHECK(a.rowText(1) == "$" && a.cursorRow() == 1 && a.cursorCol() == 2);
+        a.feed("\033[?1049h");
+        a.resize(10, 4);
+        CHECK(a.historySize() == 0);
+        a.feed("\033[?1049l");
+        CHECK(a.rowText(3) == "$" && a.cursorRow() == 3 && a.rowText(0) == "p1");
+    }
+
     GROUP("screen:selection-text");
     {
         auto s = screenAfter("abc\r\ndefgh\r\nij", 10, 3);
@@ -3057,6 +3191,10 @@ void testTerminalScreen() {
         CHECK(TerminalScreen::encodeKey(K::F5, 0, false) == "\033[15~");
         CHECK(TerminalScreen::encodeKey(K::F12, 0, false) == "\033[24~");
         CHECK(TerminalScreen::encodeKey(K::Enter, 0, false) == "\r");
+        // Shift+Return: ESC CR, a new line in Claude Code rather than submit.
+        CHECK(TerminalScreen::encodeKey(K::Enter, TermModShift, false) == "\033\r");
+        CHECK(TerminalScreen::encodeKey(K::Enter, TermModShift | TermModAlt, true) == "\033\r");
+        CHECK(TerminalScreen::encodeKey(K::Enter, TermModAlt, false) == "\033\r");
         CHECK(TerminalScreen::encodeKey(K::KeypadEnter, 0, false, true) == "\033OM");
         CHECK(TerminalScreen::encodeKey(K::KeypadEnter, 0, false, false) == "\r");
         CHECK(TerminalScreen::encodeKey(K::Backspace, 0, false) == "\x7f");
@@ -3323,8 +3461,8 @@ void testSettings() {
     // documented value is the real default.
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
-    // format, python, keep-sorted, ruler and develop keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 60);
+    // format, python, keep-sorted, ruler, terminal and develop keys.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 63);
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -3350,6 +3488,11 @@ void testSettings() {
     CHECK(un.pythonInterpreter().empty() && d.pythonInterpreter().empty());
     CHECK(un.keepSortedOnSave() == d.keepSortedOnSave());
     CHECK(un.rulers() == d.rulers() && un.rulerColor() == d.rulerColor());
+    CHECK(un.terminalLineMode() == d.terminalLineMode() && !d.terminalLineMode());
+    CHECK(un.terminalScrollback() == d.terminalScrollback() &&
+          d.terminalScrollback() == 10000);
+    CHECK(un.terminalOptionAsMeta() == d.terminalOptionAsMeta() &&
+          d.terminalOptionAsMeta());
     CHECK(un.developCommand() == d.developCommand() && d.developCommand() == "claude");
     CHECK(un.developSource().empty() && d.developSource().empty());
     for (const std::string &server : Settings::lspServers()) {
@@ -3392,6 +3535,29 @@ void testSettings() {
         std::vector<SettingsError> ce;
         parseSettings("editor.ruler-color = grey\n", &ce);
         CHECK(ce.size() == 1);
+    }
+
+    GROUP("settings:terminal");
+    {
+        std::vector<SettingsError> te;
+        Settings t = parseSettings("terminal.mode = line\nterminal.scrollback = 0\n"
+                                   "terminal.option-as-meta = false\n", &te);
+        CHECK(te.empty() && t.terminalLineMode() && t.terminalScrollback() == 0 &&
+              !t.terminalOptionAsMeta());
+        CHECK(!parseSettings("terminal.mode = GRID").terminalLineMode());
+        CHECK(parseSettings("terminal.scrollback = 100000").terminalScrollback() == 100000);
+        for (const char *bad : {"terminal.mode = tty", "terminal.scrollback = -1",
+                                "terminal.scrollback = 100001", "terminal.scrollback = 1e3",
+                                "terminal.option-as-meta = left", "terminal.colour = red"}) {
+            std::vector<SettingsError> be;
+            Settings b = parseSettings(bad, &be);
+            CHECK(be.size() == 1);
+            CHECK(!b.terminalLineMode() && b.terminalScrollback() == 10000 &&
+                  b.terminalOptionAsMeta());
+        }
+        // The surface keys under terminal. still work beside them.
+        CHECK(parseSettings("terminal.text = #FF0000\nterminal.mode = line")
+                  .text(Surface::Terminal).rgb() == 0xFF0000);
     }
 
     GROUP("settings:run");

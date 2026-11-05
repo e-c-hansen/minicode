@@ -40,7 +40,7 @@ this file covers the macOS app except where it says otherwise.
   folder search (on a scratch tree in the temp directory), and the git
   status and diff readers, the formatter planning and the line diff, and
   the file tree's sort orders, ages and folder totals (`tree:*`, `sizes:*`)
-  (3,667 checks on 2026-11-05, 107 of them the palette's; 3,560 on 2026-11-04; 3,543 on 2026-11-01; 3,523 on 2026-10-31; 3,259 on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
+  (4,1xx checks on 2026-11-05 after merging the palette, editor keys, highlighting, build, language-server and grid-terminal branches; 3,560 on 2026-11-04; 3,543 on 2026-11-01; 3,523 on 2026-10-31; 3,259 on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
   corpus in `tests/markdown/corpus.md` read from the repo root; the
   corpus checks skip themselves where that file is not found).
   Exits non-zero on failure. The Makefile uses clang++ on the Mac and make's
@@ -186,7 +186,10 @@ isolation. Keep them dependency-free.
   (xterm subset: CUP/CUU.., ED/EL/ECH, IL/DL/ICH/DCH, DECSTBM + IND/RI/SU/SD,
   alt screen 47/1047/1049, DECSC/DECRC, pending wrap, tabs, wide chars, DEC
   line drawing, DECCKM/keypad/bracketed paste, DSR/DA replies, resize), plus
-  key/paste encoding. Tests replay bytes recorded from vim and less.
+  key/paste encoding. Tests replay bytes recorded from vim and less. Also the
+  scrollback (`setScrollbackLimit`, `lineCell` with negative lines,
+  `historyBase`), off (0) unless the host sets a limit, so Android is
+  unchanged; see "The grid terminal".
 - `src/TermLinks.{h,cpp}` — what Cmd+click can open in a line of terminal
   output: `path:line:col`, Python's `File "x", line N`, `file(line,col)`
   from TypeScript and MSVC, and URLs with sentence punctuation trimmed.
@@ -269,15 +272,19 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 - `src/AppSettings.{h,mm}` — singleton that loads
   `~/.config/minicode/settings.conf` (or `$MINICODE_SETTINGS`), watches it,
   and posts `MCSettingsDidChangeNotification`.
-- `src/Terminal.{h,mm}` — one terminal: zsh on a pty via forkpty; a log view
-  with a line input, swapped for the grid while a program needs a screen.
+- `src/Terminal.{h,mm}` — one terminal: zsh on a pty via forkpty. Grid mode
+  (the default, `terminal.mode`): the grid is the terminal and zsh runs its
+  own line editor. Line mode: a log view with a line input, swapped for the
+  grid while a program needs a screen. See "The grid terminal".
 - `src/TerminalPanel.{h,mm}` — the dock holding the terminals: tabs, panes
   side by side in a tab, the active one. See "Several terminals".
 - `src/RunFile.{h,cpp}` (pure C++, tested) and `src/RunCommand.{h,mm}` —
   Run File's quoting, templates and virtualenv search, and the command for
   a file (`MCRunCommandForFile`, `MCPythonInterpreterFor`).
 - `src/TerminalGridView.{h,mm}` — draws a `TerminalScreen` and encodes keys
-  (via `TerminalScreen::encodeKey`/`encodeChar`) straight to the pty.
+  (via `TerminalScreen::encodeKey`/`encodeChar`) straight to the pty; in grid
+  mode also the scrollback view, selection, input methods and the right
+  click menu (`textInput`).
 - `src/Browser.{h,mm}` — WKWebView panel.
 - `src/TabStrip.{h,mm}` — the row of open files over the editor (draws and
   reports clicks; EditorController owns the tabs).
@@ -2187,6 +2194,129 @@ never closes.
   script). Needs a person: the strip's look, clicking its tabs, × and
   buttons, and a real Python run.
 
+## The grid terminal (Mac, 2026-11-05, on a branch, not merged)
+
+A reviewer called ZLE being off the biggest gap: no Tab completion, Ctrl+R,
+autosuggestions, fzf bindings or the user's prompt. The user chose a setting,
+`terminal.mode = grid | line`, grid by default; line mode stays, unchanged,
+for one release as a fallback. A change applies to terminals opened after
+it (`_lineMode` is read once in `initWithDirectory:`); both kinds can be open
+at once.
+
+- **Shell**: `zsh -l -i` (no `+Z`), `ZDOTDIR` at
+  `NSTemporaryDirectory()/MiniCode-zsh-grid/.zshenv` (`kZshGridIntegration`;
+  line mode keeps `MiniCode-zsh`). It hands ZDOTDIR back as before and, at
+  the first precmd (so after .zshrc and last in line), installs hooks that
+  only print: precmd `133;D;status` (only when preexec ran), OSC 7 and
+  `133;A`; a `zle-line-init` hook through `add-zle-hook-widget` prints
+  `133;B` (ZLE is reading; without the widget, B follows A); preexec prints
+  `633;E;<command line, control characters blanked>` then `133;C`. PS1, PS2,
+  RPS1, PROMPT_SP and the tty modes are never touched. HIST_IGNORE_SPACE is
+  set, as in line mode, so the ` cd` of `setDirectory:` stays out of history.
+- **Events**: `TerminalStream` still reads every byte, for its events only
+  (its lines are dropped): `InputStart` (new, 133;B) sets `_zleReady`, and
+  `CommandStart` carries the 633;E text in `text`, which becomes
+  `_runningCommand` (titles, `runningCommands`, the close questions). `busy`,
+  `atPrompt` and `MCTerminalCommandDidFinishNotification` work as in line
+  mode. `gridMode` now means "a program has the alternate screen" in grid
+  mode; `lineMode` says which kind a terminal is.
+- **Typing for the user** (`typeLine:run:`): a private key, `ESC [9999~`,
+  bound in emacs, viins and vicmd to `__minicode_push` (`zle push-input`,
+  then out of vicmd), comes first, so a half-typed line goes onto ZLE's
+  buffer stack and returns at the next prompt. `runCommand:` adds the line
+  and Return; `typeCommand:` pastes it in brackets when ZLE asked for
+  bracketed paste (a newline is then text), else flattens newlines, and
+  never presses Return. Both wait for `_zleReady` (B), not A: bytes sent
+  between precmd and ZLE starting are echoed by the tty in canonical mode
+  and show as `^[[9999~` junk. A shell still starting queues them
+  (`_pendingCommand`, `_pendingTyped`).
+- **Scrollback** (`TerminalScreen`): lines leaving the top on a line feed at
+  the bottom, main screen only and only when the scroll region starts at row
+  0 (as xterm saves them); RI, IL/DL and SU/SD never save. `ED 3` clears it
+  (as xterm; it used to erase the screen too) and `ED 2` keeps it; RIS keeps
+  it. Rows keep their width, trailing default blanks dropped (a cell is about
+  50 bytes; 10,000 full 111-column lines would be some 60 MB). Resize: rows
+  taken away go into it, rows added come back down from it (Terminal.app's
+  way), the main screen behind an alternate one keeps its saved cursor's
+  line. No reflow: a narrowed screen cuts its rows and widening does not
+  bring the text back (chosen for now; the README says so).
+  `terminal.scrollback` (10000, 0 to 100000) sets the limit, live.
+- **The view** (`TerminalGridView`, `textInput` on): rows drawn from
+  `lineCell(topLine + r)`; the scroll offset, the selection and the hovered
+  link are held as line numbers counted from `historyBase()`, so a view
+  scrolled back stays on its text while output arrives, and so does a
+  selection. Wheel and trackpad (3 lines a notch), Shift+PageUp/PageDown,
+  Cmd+Home/End; typing, pasting and a command the app types snap back; a
+  slim bar on the right shows the place. On the alternate screen the wheel
+  still sends arrows. Double click selects a word (anything but blanks,
+  brackets, quotes and `|;,`, so paths and URLs), triple click a line, a
+  drag past an edge scrolls, Cmd+A takes the scrollback too. Right click:
+  Copy, Paste, Select All, Clear Scrollback, Adjust Settings.
+- **Keys**: Ctrl with a letter, symbol or Space is claimed in the grid's
+  `performKeyEquivalent:` while it has the keyboard, because the window asks
+  views before the menu: Ctrl+Space (the editor's Complete) reaches zsh's
+  set-mark. Ctrl+Tab, Ctrl+Return, Ctrl+digits and Ctrl with Shift or Cmd stay
+  the app's; the key monitor's Ctrl+` and Ctrl+Shift+` run before all of it.
+  Option is Meta (`terminal.option-as-meta`, true); false sends Option keys
+  through the input system. Option+Left/Right send ESC b / ESC f on the main
+  screen (zsh binds those, as Terminal.app sends them). Shift+Return is ESC
+  CR in `encodeKey` (both modes: VS Code's Claude Code setup sends it, and
+  zsh inserts a line break with it). Typing goes through
+  `interpretKeyEvents:` (NSTextInputClient), so dead keys and input methods
+  compose, the marked text drawn at the cursor.
+- **Output flow** (both modes, 2026-11-05): the reader on the I/O queue
+  counts bytes handed to the main thread (`MCPtyReader`); past 1 MB it
+  suspends its source, so the pty buffer fills and the writer blocks, and the
+  main thread resumes it under 256 KB. The main thread parses the backlog in
+  16 KB pieces for about 12 ms per run-loop turn (`drainBacklog`, scheduled in
+  the common modes), so events and drawing go between. The source is resumed
+  before a cancel (a suspended source never finishes cancelling), and a
+  shell's last output is parsed before the "[shell exited]" note.
+  `cat` of 50 MB (colored lines), offscreen, -O2: grid mode 5.3 s with the
+  main thread blocked up to 1,370 ms and +115 MB before, 4.3 s, 34 ms and
+  +75 MB after (the full scrollback is most of that); line mode 171 s,
+  1,161 ms and +70 MB before, 27 s, 59 ms and +23 MB after.
+- **Line mode's log is capped** at `terminal.scrollback` lines, at least
+  1000 (`trimLog`, in steps of a tenth): it grew without end before, with
+  every frame a progress bar or Ink drew.
+- **Verified** offscreen (2026-11-05) with a harness that includes main.mm
+  (window ordering, `isKeyWindow`, `keyWindow`/`mainWindow`, activation,
+  `NSAlert runModal` and `+[NSPasteboard generalPasteboard]` swizzled; scratch
+  HOME, CFFIXED_USER_HOME, ZDOTDIR with its own .zshrc and history, TMPDIR,
+  settings and defaults suite; keys built with `CGEventCreateKeyboardEvent`
+  and routed window, menu, then `sendEvent:`; 100-odd checks): the custom
+  prompt, ech+Tab and file completion, Ctrl+R finding a history line, Ctrl+W
+  and Ctrl+U, Option+B, Shift+Return joining two lines, busy, title and
+  running commands for `sleep 2`, the finished notification, `seq 1 300`
+  into the scrollback, the wheel, a view staying on its text while output
+  arrived, Shift+PageUp, Cmd+Home, a drag selection in the scrollback copied
+  to a private pasteboard, double and triple click, Select All, a bracketed
+  paste left unrun, typeCommand left unrun with the user's draft back
+  afterwards, runCommand with a draft, Run File on a .py, less and vim taking
+  the alternate screen and giving it back, a resize (`tput cols` and
+  `lines`), setDirectory, the Ctrl keys claimed before the menu, a burst of
+  output with the main thread never blocked over 250 ms, closing with a
+  running command (Cancel, then Close, the shell gone), a line-mode terminal
+  beside grid ones and its capped log, and typeCommand and runCommand
+  waiting for a shell still starting with no `^[` junk. Pictures of the grid
+  were looked at. Traps: an `NSEvent keyEventWithType:` posted through
+  `NSApp` reached the key monitor but never the offscreen window's first
+  responder, and its Ctrl+W matched the Ctrl+Shift+W menu item; CGEvent
+  keys sent to the window behave. "ech" + Tab stops at "echo" (echotc and
+  echoti). A command the app types snaps a scrolled-back view to the
+  bottom, so test "stays on its text" with output from a command already
+  running. Another agent shares the scratchpad: keep harness files in a
+  folder of your own name.
+- **Needs the user**: everything on a real screen and keyboard (their own
+  .zshrc, prompt theme, autosuggestions and fzf; the look of the selection,
+  the scroll bar and the cursor; trackpad momentum), an input method and a
+  dead key, Option as Meta on a non-US layout, Claude Code's Shift+Return,
+  and the demo GIFs, which `tools/demo-settings.conf` keeps in line mode.
+  Not done: mouse reporting to programs (vim's `set mouse=a`, htop clicks),
+  reflow on resize, joining soft-wrapped lines when copying, OSC 0/2
+  titles, and Linux (VTE is a real terminal already) and Android (its own
+  grid) are unchanged.
+
 ## Opening from Finder and the Dock (Mac)
 
 Up to 1.4.8 the app declared no document types and its delegate had no open
@@ -3033,7 +3163,8 @@ holds, these give real runtime evidence rather than compile-only evidence:
   Checked offscreen (main.mm included, 16 checks with the tab menu's). "Running" is `ps -axo comm=` ending in
   `/MiniCode`: pgrep found nothing from Claude Code's shell.
   `MINICODE_LAUNCHER_DRYRUN=1` prints the command instead of running it.
-- **Terminal**: `zsh -l -i +Z` (interactive, line editor off) on a pty from
+- **Terminal** (line mode; grid mode is in "The grid terminal"):
+  `zsh -l -i +Z` (interactive, line editor off) on a pty from
   `forkpty`. `ZDOTDIR` points at a generated `.zshenv` (in
   `NSTemporaryDirectory()/MiniCode-zsh`) that hands `ZDOTDIR` straight back to
   the user, loads their files, and on the first `precmd` installs hooks that
@@ -3073,7 +3204,8 @@ holds, these give real runtime evidence rather than compile-only evidence:
   VTE's logical lines, so a wrapped path is found there. Its trap: VTE's
   scroll adjustment and its text calls number rows differently once `clear`
   has dropped the scrollback (`Terminal::topRow`).
-- **Terminal grid mode** (`feat/terminal-screen`): every pty chunk goes to
+- **Terminal grid mode** (line mode's full-screen grid, `feat/terminal-screen`;
+  not the grid terminal of `terminal.mode = grid`): every pty chunk goes to
   BOTH `TerminalStream` (log) and `TerminalScreen` (grid), so either is
   current when shown and no mid-chunk handoff is needed. `updateMode` shows
   the grid while `_screen.altScreen()`, or while `_stickyGrid`: a 0.1 s timer

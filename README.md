@@ -34,7 +34,7 @@ On the Mac the editor has VS Code's keys for several cursors. Command D selects 
 
 Markdown task lists make a TODO list, written the way GitHub, Obsidian, and VS Code read them: `- [ ] buy milk` is a task still to do and `- [x] buy milk` one that is done. In the preview each task has a box you click (or tap, on Android) to tick or clear it. The file then has unsaved changes, as after any edit made in the preview, until you save it. Done tasks are greyed out and struck through (markdown.done in the settings sets their color), and the title bar says how many of the file's tasks are done. In the source, Command L (Ctrl L on Linux) turns the line, or every selected line, into a task, ticks it if it already is one, and clears it if it was ticked. A line written as `[ ] buy milk`, without the dash, is not a task to GitHub or to minicode and shows as plain text, so select such lines and press Command L once: each gets its dash and keeps its box. Return at the end of a list item starts the next item, with an empty box after a task and the next number after a numbered one, and Return on an empty item ends the list. Shift Command D (Ctrl Shift L on Linux, the leader key and then W on Android) lists every TODO, FIXME, HACK, XXX, and BUG comment in the folder, along with the open tasks in its Markdown files, and opens the one you pick at its line.
 
-Control backtick opens a terminal at the bottom. It runs one persistent zsh with your own startup files, so aliases, history and state carry over from one command to the next, and colors come through. When a program wants the whole screen (vim, less, htop, git log's pager, ssh), the panel becomes a character grid until it exits.
+Control backtick opens a terminal at the bottom. It runs one persistent zsh with your own startup files, so aliases, history and state carry over from one command to the next, and colors come through. On the Mac it is a real terminal: zsh's own line editor runs in it, so your prompt, Tab completion, Control R history search, autosuggestions, fzf's key bindings and whatever else your .zshrc sets up work as they do in Terminal.app, and vim, less, htop and ssh draw on the same screen. Output scrolls up into 10,000 lines of scrollback (terminal.scrollback changes that), which the trackpad, the mouse wheel and Shift Page Up and Page Down page through, and Command Home and Command End jump to the top and the bottom; typing takes you back down. Drag to select, double click a word or a path, triple click a line, and Command C and Command V copy and paste. Option works as Meta for the shell's Alt keys, and terminal.option-as-meta = false lets it type the characters your keyboard layout puts on it instead. Shift Return sends what Claude Code takes as a new line rather than Enter. The older design, with the output as a log and an input line under it, is still there for a release with terminal.mode = line.
 
 ![The terminal panel running ls, git log and a Python script](docs/demos/terminal.gif)
 
@@ -271,6 +271,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Open the command palette, to find any menu command by name and run it | Shift Command P |  |  |
 | Open the right click menu of what has the keyboard, at the selected row or the cursor | Shift F10, or Control Return, or the Menu key of a PC keyboard |  |  |
 | Open the settings file | Command comma | Ctrl comma |  |
+| Page through the terminal's scrollback, or jump to its top or bottom | Shift Page Up, Shift Page Down, Command Home, Command End |  |  |
 | Play or pause a video or audio file | Shift Command Space | Ctrl Shift Space | Space in the player, or Ctrl Shift Space |
 | Refresh the file tree | Command R |  |  |
 | Rename the name at the cursor wherever it is used, with a language server | F2 |  |  |
@@ -306,7 +307,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 
 ## Limitations
 
-minicode does what I use every day and leaves out a good deal. The terminal does not pass mouse clicks to full screen programs, and has no scrollback while a program has the grid. The Markdown preview follows GitHub's rules for emphasis, links, lists, quotes and tables, but only a handful of HTML tags mean anything to it, and on Linux and Android math shows as its TeX. In the LaTeX preview, text produced inside your own macro definitions cannot be edited from the page. Rename, find references, and quick fixes from a language server are on the Mac only so far.
+minicode does what I use every day and leaves out a good deal. The terminal does not pass mouse clicks to full screen programs, and does not rewrap its lines when it gets narrower or wider. The Markdown preview follows GitHub's rules for emphasis, links, lists, quotes and tables, but only a handful of HTML tags mean anything to it, and on Linux and Android math shows as its TeX. In the LaTeX preview, text produced inside your own macro definitions cannot be edited from the page. Rename, find references, and quick fixes from a language server are on the Mac only so far.
 
 ## License
 

@@ -6,27 +6,52 @@
 // drawn in its own cell, so a fallback font's different advance can never
 // push the rest of the row out of its columns.
 //
+// Lines: the view shows the screen's lines from -scrollOffset down, so rows
+// above the screen come from the scrollback (TerminalScreen::lineCell). A
+// selection, the scroll position and the Cmd-hovered link are held as line
+// numbers counted from the first line ever (historyBase() + line), which
+// stay put while output scrolls the text up, so none of them slide off the
+// text they were on.
+//
 // Keys: Cmd shortcuts are left to the menu (they arrive through
 // performKeyEquivalent: before keyDown:), everything else is encoded by
-// TerminalScreen::encodeKey / encodeChar. Option is Meta (ESC prefix).
+// TerminalScreen::encodeKey / encodeChar. Option is Meta (ESC prefix) unless
+// optionAsMeta is off. With textInput on, ordinary typing goes through
+// interpretKeyEvents:, so dead keys and input methods compose (the marked
+// text is drawn at the cursor) before the result goes to the pty.
 #import "TerminalGridView.h"
 #import "Terminal.h"
 #import "AppSettings.h"
 #import "Appearance.h"
 #import <Carbon/Carbon.h>   // kVK_* key codes (header only, nothing linked)
+#include <climits>
+
+static const long long kNoLine = LLONG_MIN;
 
 @implementation TerminalGridView {
     BOOL _selecting, _hasSelection;
-    int _anchorRow, _anchorCol, _endRow, _endCol;
+    long long _anchorId, _endId;   // selection ends, as line numbers
+    int _anchorCol, _endCol;
+    int _unit;                     // what a drag extends by: 1 cell, 2 word, 3 line
+    long long _unitStartId, _unitEndId;   // the word or line first clicked
+    int _unitStartCol, _unitEndCol;
     CGFloat _scrollAccum;
-    // The link under the pointer while Cmd is held: its row and the cells it
-    // covers, [_linkCol0, _linkCol1). _linkRow is -1 when there is none.
+    int _offset;                   // lines scrolled back
+    long long _lastBase;           // historyBase() when last drawn
+    // The link under the pointer while Cmd is held: its line and the cells
+    // it covers, [_linkCol0, _linkCol1). _linkId is kNoLine when none.
     MCTermLink *_link;
-    int _linkRow, _linkCol0, _linkCol1;
+    long long _linkId;
+    int _linkCol0, _linkCol1;
+    NSString *_marked;             // input method text being composed
+    NSRange _markedSel;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
-    if ((self = [super initWithFrame:frame])) _linkRow = -1;
+    if ((self = [super initWithFrame:frame])) {
+        _linkId = kNoLine;
+        _optionAsMeta = YES;
+    }
     return self;
 }
 
@@ -67,20 +92,64 @@
 
 - (BOOL)isFlipped { return YES; }
 - (BOOL)acceptsFirstResponder { return YES; }
-// A right click while a full-screen program runs.
-- (NSMenu *)menuForEvent:(NSEvent *)event {
-    (void)event;
-    return MCAdjustSettingsMenu(@"terminal", self);
-}
 - (BOOL)acceptsFirstMouse:(NSEvent *)e { (void)e; return YES; }
 
 - (BOOL)becomeFirstResponder { [self setNeedsDisplay:YES]; return YES; }
 - (BOOL)resignFirstResponder { [self setNeedsDisplay:YES]; return YES; }
 
+// The right click. In line mode only the settings item, as before.
+- (NSMenu *)menuForEvent:(NSEvent *)event {
+    (void)event;
+    if (!self.textInput) return MCAdjustSettingsMenu(@"terminal", self);
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
+    [menu addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@""].target = self;
+    [menu addItemWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@""].target = self;
+    [menu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@""].target = self;
+    [menu addItem:[NSMenuItem separatorItem]];
+    [menu addItemWithTitle:@"Clear Scrollback" action:@selector(clearScrollback:)
+             keyEquivalent:@""].target = self;
+    MCAddAdjustSettingsItem(menu, @"terminal", self);
+    return menu;
+}
+
+// ---------------------------------------------------------------- lines
+- (long long)base { return self.screen ? self.screen->historyBase() : 0; }
+
+// The first line shown (row 0 of the view), as TerminalScreen numbers lines.
+- (int)topLine { return -_offset; }
+
+- (int)scrollOffset { return _offset; }
+
+- (int)maxOffset {
+    TerminalScreen *s = self.screen;
+    return (!s || s->altScreen()) ? 0 : s->historySize();
+}
+
+- (void)setOffset:(int)offset {
+    offset = MAX(0, MIN(offset, [self maxOffset]));
+    if (offset == _offset) return;
+    _offset = offset;
+    if (_linkId != kNoLine) [self updateLinkHover];
+    [self setNeedsDisplay:YES];
+}
+
+- (void)scrollToBottom { [self setOffset:0]; }
+
 - (void)screenChanged {
+    // New lines went into the scrollback: a view scrolled back moves with
+    // them, so the text it shows stays put. One at the bottom follows.
+    long long base = [self base];
+    if (_offset > 0 && base != _lastBase) _offset += (int)(base - _lastBase);
+    _lastBase = base;
+    _offset = MAX(0, MIN(_offset, [self maxOffset]));
+    // A selection whose lines left the scrollback goes.
+    if (_hasSelection && self.screen) {
+        long long first = base - self.screen->historySize();
+        if (MIN(_anchorId, _endId) < first) _hasSelection = NO;
+    }
     // What was under the pointer may have moved; look again, but only when
     // there is a link showing or Cmd is down, so ordinary output costs nothing.
-    if (_linkRow >= 0 || (NSEvent.modifierFlags & NSEventModifierFlagCommand))
+    if (_linkId != kNoLine || (NSEvent.modifierFlags & NSEventModifierFlagCommand))
         [self updateLinkHover];
     [self setNeedsDisplay:YES];
 }
@@ -127,6 +196,7 @@ static CellColors ColorsFor(const TermStyle &st) {
                       w * cs.width, cs.height);
 }
 
+// The view row and column under a point, clamped onto the grid.
 - (void)cellAtPoint:(NSPoint)p row:(int *)row col:(int *)col {
     NSSize cs = [TerminalGridView cellSize];
     CGFloat pad = [TerminalGridView padding];
@@ -136,13 +206,22 @@ static CellColors ColorsFor(const TermStyle &st) {
     *col = MAX(0, MIN(c, (self.screen ? self.screen->cols() : 1) - 1));
 }
 
-- (BOOL)isSelectedRow:(int)r col:(int)c {
+// Selection ends in reading order.
+- (void)selectionStart:(long long *)id0 col:(int *)c0 end:(long long *)id1 col:(int *)c1 {
+    long long a = _anchorId, b = _endId;
+    int ca = _anchorCol, cb = _endCol;
+    if (b < a || (b == a && cb < ca)) { std::swap(a, b); std::swap(ca, cb); }
+    *id0 = a; *c0 = ca; *id1 = b; *c1 = cb;
+}
+
+- (BOOL)isSelectedLine:(long long)lineId col:(int)c {
     if (!_hasSelection) return NO;
-    int r0 = _anchorRow, c0 = _anchorCol, r1 = _endRow, c1 = _endCol;
-    if (r1 < r0 || (r1 == r0 && c1 < c0)) { std::swap(r0, r1); std::swap(c0, c1); }
-    if (r < r0 || r > r1) return NO;
-    if (r == r0 && c < c0) return NO;
-    if (r == r1 && c > c1) return NO;
+    long long r0, r1;
+    int c0, c1;
+    [self selectionStart:&r0 col:&c0 end:&r1 col:&c1];
+    if (lineId < r0 || lineId > r1) return NO;
+    if (lineId == r0 && c < c0) return NO;
+    if (lineId == r1 && c > c1) return NO;
     return YES;
 }
 
@@ -157,18 +236,22 @@ static CellColors ColorsFor(const TermStyle &st) {
     int lastRow = MIN(rows - 1, (int)ceil((NSMaxY(dirty) - pad) / cs.height));
     BOOL focused = self.window.isKeyWindow && self.window.firstResponder == self;
     NSColor *selColor = [NSColor selectedTextBackgroundColor];
+    int top = [self topLine];
+    long long base = s->historyBase();
 
     for (int r = firstRow; r <= lastRow; r++) {
+        int line = top + r;
+        long long lineId = base + line;
         // Backgrounds and the selection, merged into runs.
         int c = 0;
         while (c < cols) {
-            const TermCell &cell = s->cell(r, c);
-            NSColor *bg = [self isSelectedRow:r col:c] ? selColor
-                                                        : ColorsFor(cell.style).bg;
+            const TermCell &cell = s->lineCell(line, c);
+            NSColor *bg = [self isSelectedLine:lineId col:c] ? selColor
+                                                             : ColorsFor(cell.style).bg;
             int start = c++;
             while (c < cols) {
-                NSColor *next = [self isSelectedRow:r col:c] ? selColor
-                                    : ColorsFor(s->cell(r, c).style).bg;
+                NSColor *next = [self isSelectedLine:lineId col:c] ? selColor
+                                    : ColorsFor(s->lineCell(line, c).style).bg;
                 if (next != bg && ![next isEqual:bg]) break;
                 c++;
             }
@@ -181,7 +264,7 @@ static CellColors ColorsFor(const TermStyle &st) {
         // Text: runs of plain ASCII in one style, other characters one by one.
         c = 0;
         while (c < cols) {
-            const TermCell &cell = s->cell(r, c);
+            const TermCell &cell = s->lineCell(line, c);
             if (cell.width == 0) { c++; continue; }
             bool ascii = cell.ch.size() == 1 && (unsigned char)cell.ch[0] < 0x80;
             int start = c;
@@ -189,7 +272,7 @@ static CellColors ColorsFor(const TermStyle &st) {
             c += cell.width == 2 ? 2 : 1;
             if (ascii) {
                 while (c < cols) {
-                    const TermCell &n = s->cell(r, c);
+                    const TermCell &n = s->lineCell(line, c);
                     if (n.width != 1 || n.ch.size() != 1 ||
                         (unsigned char)n.ch[0] >= 0x80 || n.style != cell.style)
                         break;
@@ -211,16 +294,30 @@ static CellColors ColorsFor(const TermStyle &st) {
     }
 
     // The Cmd-hovered link, underlined in the text color.
-    if (_linkRow >= firstRow && _linkRow <= lastRow) {
-        NSRect r = [self rectForRow:_linkRow col:_linkCol0 width:_linkCol1 - _linkCol0];
-        [[[AppSettings shared] text:Surface::Terminal] setFill];
-        NSRectFill(NSMakeRect(NSMinX(r), NSMaxY(r) - 1.5, NSWidth(r), 1));
+    if (_linkId != kNoLine) {
+        int linkRow = (int)(_linkId - base) - top;
+        if (linkRow >= firstRow && linkRow <= lastRow) {
+            NSRect r = [self rectForRow:linkRow col:_linkCol0 width:_linkCol1 - _linkCol0];
+            [[[AppSettings shared] text:Surface::Terminal] setFill];
+            NSRectFill(NSMakeRect(NSMinX(r), NSMaxY(r) - 1.5, NSWidth(r), 1));
+        }
     }
 
-    // The cursor: a block while focused, an outline otherwise.
-    int cr = s->cursorRow(), cc = s->cursorCol();
-    if (s->cursorVisible() && cr >= firstRow && cr <= lastRow) {
-        const TermCell &cell = s->cell(cr, cc);
+    // The cursor: a block while focused, an outline otherwise. Text being
+    // composed by an input method sits at the cursor, underlined.
+    int cr = s->cursorRow() - top, cc = s->cursorCol();
+    if (_marked.length && cr >= 0 && cr < rows) {
+        NSColor *fg = [[AppSettings shared] text:Surface::Terminal];
+        NSDictionary *attrs = @{NSFontAttributeName: [TerminalGridView cellFont],
+                                NSForegroundColorAttributeName: fg,
+                                NSUnderlineStyleAttributeName: @(NSUnderlineStyleSingle)};
+        NSRect cell = [self rectForRow:cr col:cc width:1];
+        NSSize size = [_marked sizeWithAttributes:attrs];
+        [MCColor([AppSettings shared].settings.background(Surface::Terminal)) setFill];
+        NSRectFill(NSMakeRect(NSMinX(cell), NSMinY(cell), ceil(size.width), cs.height));
+        [_marked drawAtPoint:cell.origin withAttributes:attrs];
+    } else if (s->cursorVisible() && cr >= firstRow && cr <= lastRow) {
+        const TermCell &cell = s->cell(cr + top, cc);
         int w = cell.width == 2 ? 2 : 1;
         NSRect rect = [self rectForRow:cr col:cc width:w];
         NSColor *cursor = [[AppSettings shared] text:Surface::Terminal];
@@ -243,23 +340,87 @@ static CellColors ColorsFor(const TermStyle &st) {
             [p stroke];
         }
     }
+
+    // Scrolled back: a slim bar at the right edge says where in the
+    // scrollback the view is.
+    int hist = [self maxOffset];
+    if (_offset > 0 && hist > 0) {
+        CGFloat H = self.bounds.size.height - 4;
+        CGFloat total = hist + rows;
+        CGFloat h = MAX(20, H * rows / total);
+        CGFloat y = 2 + (H - h) * (CGFloat)(hist - _offset) / hist;
+        NSRect bar = NSMakeRect(self.bounds.size.width - 6, y, 4, h);
+        [[[[AppSettings shared] text:Surface::Terminal] colorWithAlphaComponent:0.35] setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:bar xRadius:2 yRadius:2] fill];
+    }
 }
 
 // ---------------------------------------------------------------- keys
 - (void)send:(const std::string &)bytes {
     if (bytes.empty() || !self.onInput) return;
+    [self scrollToBottom];   // typing and pasting go back to the live screen
     self.onInput([NSData dataWithBytes:bytes.data() length:bytes.size()]);
+}
+
+// Grid mode: Control with a letter, a symbol or Space belongs to the shell
+// (Ctrl+R, Ctrl+W, Ctrl+Space for set-mark), even where a menu item has the
+// same key (Complete is Ctrl+Space in the editor). The window asks its views
+// before the menu, so taking them here keeps them. Ctrl+Tab, Ctrl+Return,
+// Ctrl+digits and anything with Shift or Command stay the app's.
+- (BOOL)performKeyEquivalent:(NSEvent *)e {
+    NSEventModifierFlags f = e.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
+    if (self.textInput && self.window.firstResponder == self &&
+        (f & NSEventModifierFlagControl) &&
+        !(f & (NSEventModifierFlagCommand | NSEventModifierFlagShift)) &&
+        e.keyCode != kVK_Tab && e.keyCode != kVK_Return && e.keyCode != kVK_ANSI_KeypadEnter) {
+        NSString *base = e.charactersIgnoringModifiers;
+        unichar c = base.length ? [base characterAtIndex:0] : 0;
+        if (!(c >= '0' && c <= '9') && !(c >= 0xF700 && c <= 0xF8FF)) {
+            [self keyDown:e];
+            return YES;
+        }
+    }
+    return [super performKeyEquivalent:e];
 }
 
 - (void)keyDown:(NSEvent *)e {
     TerminalScreen *s = self.screen;
     NSEventModifierFlags f = e.modifierFlags;
-    if ((f & NSEventModifierFlagCommand) || !s) { [super keyDown:e]; return; }
+    if (!s) { [super keyDown:e]; return; }
+    if (f & NSEventModifierFlagCommand) {
+        // Cmd+Home and Cmd+End: the top and the bottom of the scrollback, as
+        // in Terminal.app. Other Cmd keys the menu did not take beep.
+        if (e.keyCode == kVK_Home) { [self setOffset:[self maxOffset]]; return; }
+        if (e.keyCode == kVK_End) { [self scrollToBottom]; return; }
+        [super keyDown:e];
+        return;
+    }
+    // An input method composing gets every key until it is done.
+    if (self.textInput && _marked.length) {
+        [self interpretKeyEvents:@[e]];
+        return;
+    }
     int mods = ((f & NSEventModifierFlagShift) ? TermModShift : 0) |
                ((f & NSEventModifierFlagOption) ? TermModAlt : 0) |
                ((f & NSEventModifierFlagControl) ? TermModCtrl : 0);
+    // Shift+Page Up / Page Down page through the scrollback (on the main
+    // screen; a full-screen program gets them).
+    if (mods == TermModShift && !s->altScreen() &&
+        (e.keyCode == kVK_PageUp || e.keyCode == kVK_PageDown)) {
+        int page = MAX(1, s->rows() - 1);
+        [self setOffset:_offset + (e.keyCode == kVK_PageUp ? page : -page)];
+        return;
+    }
     if (_hasSelection) { _hasSelection = NO; [self setNeedsDisplay:YES]; }
     [NSCursor setHiddenUntilMouseMoves:YES];
+
+    // Option+Left and Right move by words at the shell's prompt, as they do
+    // in Terminal.app (zsh binds ESC b and ESC f, not xterm's Alt+arrows).
+    if (self.textInput && mods == TermModAlt && !s->altScreen() &&
+        (e.keyCode == kVK_LeftArrow || e.keyCode == kVK_RightArrow)) {
+        [self send:e.keyCode == kVK_LeftArrow ? "\x1b" "b" : "\x1b" "f"];
+        return;
+    }
 
     static const struct { unsigned short code; TermKey key; } keys[] = {
         {kVK_UpArrow, TermKey::Up}, {kVK_DownArrow, TermKey::Down},
@@ -275,17 +436,20 @@ static CellColors ColorsFor(const TermStyle &st) {
         {kVK_Delete, TermKey::Backspace}, {kVK_Tab, TermKey::Tab},
         {kVK_Escape, TermKey::Escape},
     };
+    int keyMods = self.optionAsMeta ? mods : (mods & ~TermModAlt);
     for (const auto &k : keys) {
         if (k.code == e.keyCode) {
-            [self send:TerminalScreen::encodeKey(k.key, mods, s->appCursorKeys(),
+            [self send:TerminalScreen::encodeKey(k.key, keyMods, s->appCursorKeys(),
                                                  s->appKeypad())];
             return;
         }
     }
 
-    if (mods & (TermModCtrl | TermModAlt)) {
+    BOOL meta = (mods & TermModAlt) && self.optionAsMeta;
+    if ((mods & TermModCtrl) || meta) {
         // Control codes and Meta come from the key itself, not from what
         // Option would have typed (Option+b is ESC b, not ∫).
+        int charMods = (mods & TermModCtrl) | (meta ? TermModAlt : 0);
         NSString *base = e.charactersIgnoringModifiers;
         std::string out;
         NSUInteger n = base.length;
@@ -297,13 +461,17 @@ static CellColors ColorsFor(const TermStyle &st) {
                  encoding:NSUTF32LittleEndianStringEncoding options:0
                     range:NSMakeRange(0, one.length) remainingRange:NULL];
             if (cp >= 0xF700 && cp <= 0xF8FF) return;   // unmapped function key
-            out += TerminalScreen::encodeChar(cp, mods & (TermModCtrl | TermModAlt));
+            out += TerminalScreen::encodeChar(cp, charMods);
             i = NSMaxRange(r);
         }
         [self send:out];
         return;
     }
 
+    if (self.textInput) {        // through the input system: dead keys, IMEs
+        [self interpretKeyEvents:@[e]];
+        return;
+    }
     NSString *chars = e.characters;
     if (!chars.length) return;
     unichar first = [chars characterAtIndex:0];
@@ -312,15 +480,72 @@ static CellColors ColorsFor(const TermStyle &st) {
     if (utf8) [self send:utf8];
 }
 
+// ------------------------------------------------------- NSTextInputClient
+// Only used with textInput on (keyDown: calls interpretKeyEvents: then).
+- (void)insertText:(id)string replacementRange:(NSRange)range {
+    (void)range;
+    NSString *str = [string isKindOfClass:[NSAttributedString class]]
+        ? [(NSAttributedString *)string string] : string;
+    BOOL hadMarked = _marked.length > 0;
+    _marked = nil;
+    if (hadMarked) [self setNeedsDisplay:YES];
+    const char *utf8 = str.UTF8String;
+    if (utf8 && *utf8) [self send:utf8];
+}
+
+- (void)setMarkedText:(id)string selectedRange:(NSRange)sel
+     replacementRange:(NSRange)range {
+    (void)range;
+    _marked = [[string isKindOfClass:[NSAttributedString class]]
+        ? [(NSAttributedString *)string string] : string copy];
+    _markedSel = sel;
+    if (_marked.length) [self scrollToBottom];
+    [self setNeedsDisplay:YES];
+}
+
+- (void)unmarkText {
+    _marked = nil;
+    [self setNeedsDisplay:YES];
+}
+
+- (BOOL)hasMarkedText { return _marked.length > 0; }
+- (NSRange)markedRange {
+    return _marked.length ? NSMakeRange(0, _marked.length) : NSMakeRange(NSNotFound, 0);
+}
+- (NSRange)selectedRange {
+    return _marked.length ? _markedSel : NSMakeRange(0, 0);
+}
+- (NSArray<NSAttributedStringKey> *)validAttributesForMarkedText { return @[]; }
+- (NSAttributedString *)attributedSubstringForProposedRange:(NSRange)range
+                                                actualRange:(NSRangePointer)actual {
+    (void)range; (void)actual;
+    return nil;
+}
+- (NSUInteger)characterIndexForPoint:(NSPoint)point {
+    (void)point;
+    return NSNotFound;
+}
+// The cursor's cell on screen, where an input method puts its candidates.
+- (NSRect)firstRectForCharacterRange:(NSRange)range actualRange:(NSRangePointer)actual {
+    (void)range; (void)actual;
+    TerminalScreen *s = self.screen;
+    if (!s || !self.window) return NSZeroRect;
+    NSRect r = [self rectForRow:s->cursorRow() + _offset col:s->cursorCol() width:1];
+    return [self.window convertRectToScreen:[self convertRect:r toView:nil]];
+}
+// Keys the input system turned into commands were all mapped in keyDown:
+// already; anything else is not for the terminal (and must not beep).
+- (void)doCommandBySelector:(SEL)selector { (void)selector; }
+
 // ---------------------------------------------------------------- links
-// A row's text as UTF-8, with the cell each byte came from. The right half of
-// a wide character contributes no bytes, so byte offsets from TermLinks map
-// back to the cells a link covers.
-- (std::string)textOfRow:(int)row cells:(std::vector<int> *)cellOfByte {
+// A line's text as UTF-8, with the cell each byte came from. The right half
+// of a wide character contributes no bytes, so byte offsets from TermLinks
+// map back to the cells a link covers.
+- (std::string)textOfLine:(int)line cells:(std::vector<int> *)cellOfByte {
     std::string text;
     TerminalScreen *s = self.screen;
     for (int c = 0; c < s->cols(); c++) {
-        const TermCell &cell = s->cell(row, c);
+        const TermCell &cell = s->lineCell(line, c);
         if (cell.width == 0) continue;
         const std::string &ch = cell.ch.empty() ? std::string(" ") : cell.ch;
         text += ch;
@@ -329,9 +554,9 @@ static CellColors ColorsFor(const TermStyle &st) {
     return text;
 }
 
-// The link at a point, with its row and cells, or nil. Points outside the
+// The link at a point, with its line and cells, or nil. Points outside the
 // grid find nothing (cellAtPoint: would clamp them onto the edge cells).
-- (MCTermLink *)linkAtPoint:(NSPoint)p row:(int *)row col0:(int *)col0 col1:(int *)col1 {
+- (MCTermLink *)linkAtPoint:(NSPoint)p line:(int *)lineOut col0:(int *)col0 col1:(int *)col1 {
     TerminalScreen *s = self.screen;
     if (!s || !self.linkAt) return nil;
     NSSize cs = [TerminalGridView cellSize];
@@ -339,9 +564,10 @@ static CellColors ColorsFor(const TermStyle &st) {
     int r = (int)floor((p.y - pad) / cs.height);
     int c = (int)floor((p.x - pad) / cs.width);
     if (r < 0 || r >= s->rows() || c < 0 || c >= s->cols()) return nil;
-    if (s->cell(r, c).width == 0 && c > 0) c--;   // right half of a wide character
+    int line = [self topLine] + r;
+    if (s->lineCell(line, c).width == 0 && c > 0) c--;   // right half of a wide character
     std::vector<int> cellOfByte;
-    std::string text = [self textOfRow:r cells:&cellOfByte];
+    std::string text = [self textOfLine:line cells:&cellOfByte];
     size_t byte = 0;
     while (byte < cellOfByte.size() && cellOfByte[byte] < c) byte++;
     if (byte >= cellOfByte.size()) return nil;
@@ -349,25 +575,27 @@ static CellColors ColorsFor(const TermStyle &st) {
     if (!link || link.byteLength == 0 ||
         link.byteStart + link.byteLength > cellOfByte.size()) return nil;
     size_t last = link.byteStart + link.byteLength - 1;
-    *row = r;
+    *lineOut = line;
     *col0 = cellOfByte[link.byteStart];
-    *col1 = cellOfByte[last] + (s->cell(r, cellOfByte[last]).width == 2 ? 2 : 1);
+    *col1 = cellOfByte[last] + (s->lineCell(line, cellOfByte[last]).width == 2 ? 2 : 1);
     return link;
 }
 
 - (void)updateLinkHover {
-    int row = -1, c0 = 0, c1 = 0;
+    long long lineId = kNoLine;
+    int line = 0, c0 = 0, c1 = 0;
     MCTermLink *link = nil;
     if ((NSEvent.modifierFlags & NSEventModifierFlagCommand) && self.window) {
         NSPoint p = [self convertPoint:[self.window mouseLocationOutsideOfEventStream]
                               fromView:nil];
         if (NSPointInRect(p, self.bounds))
-            link = [self linkAtPoint:p row:&row col0:&c0 col1:&c1];
+            link = [self linkAtPoint:p line:&line col0:&c0 col1:&c1];
     }
-    if (!link) row = -1;
-    BOOL changed = row != _linkRow || c0 != _linkCol0 || c1 != _linkCol1;
+    if (link) lineId = [self base] + line;
+    else c0 = c1 = 0;
+    BOOL changed = lineId != _linkId || c0 != _linkCol0 || c1 != _linkCol1;
     _link = link;
-    _linkRow = row; _linkCol0 = c0; _linkCol1 = c1;
+    _linkId = lineId; _linkCol0 = c0; _linkCol1 = c1;
     if (link) [[NSCursor pointingHandCursor] set];
     else if (changed) [[NSCursor arrowCursor] set];
     if (changed) [self setNeedsDisplay:YES];
@@ -388,41 +616,105 @@ static CellColors ColorsFor(const TermStyle &st) {
 - (void)mouseMoved:(NSEvent *)e { (void)e; [self updateLinkHover]; }
 - (void)mouseExited:(NSEvent *)e {
     (void)e;
-    if (_linkRow >= 0) { _link = nil; _linkRow = -1; [self setNeedsDisplay:YES]; }
+    if (_linkId != kNoLine) { _link = nil; _linkId = kNoLine; [self setNeedsDisplay:YES]; }
 }
 - (void)cursorUpdate:(NSEvent *)e {
     (void)e;
-    [(_linkRow >= 0 ? [NSCursor pointingHandCursor] : [NSCursor arrowCursor]) set];
+    [(_linkId != kNoLine ? [NSCursor pointingHandCursor] : [NSCursor arrowCursor]) set];
 }
 
 // ---------------------------------------------------------------- mouse
+// Characters a double-click takes as part of a word: anything but blanks,
+// brackets, quotes and the shell's separators, so a path or a URL is one.
+static BOOL IsWordCell(const TermCell &cell) {
+    if (cell.ch.empty() || cell.ch == " ") return NO;
+    if (cell.ch.size() > 1) return YES;
+    return strchr("()[]{}<>\"'`|;,", cell.ch[0]) == nullptr;
+}
+
+// The word (unit 2) or line (unit 3) around a cell, as columns of its line.
+- (void)unit:(int)unit atLine:(int)line col:(int)col from:(int *)from to:(int *)to {
+    TerminalScreen *s = self.screen;
+    int cols = s->cols();
+    if (unit == 3) { *from = 0; *to = cols - 1; return; }
+    if (s->lineCell(line, col).width == 0 && col > 0) col--;
+    if (!IsWordCell(s->lineCell(line, col))) { *from = *to = col; return; }
+    int a = col, b = col;
+    while (a > 0 && (s->lineCell(line, a - 1).width == 0 ||
+                     IsWordCell(s->lineCell(line, a - 1)))) a--;
+    while (b + 1 < cols && (s->lineCell(line, b + 1).width == 0 ||
+                            IsWordCell(s->lineCell(line, b + 1)))) b++;
+    *from = a; *to = b;
+}
+
 - (void)mouseDown:(NSEvent *)e {
     if (e.modifierFlags & NSEventModifierFlagCommand) {
-        int row, c0, c1;
+        int line, c0, c1;
         NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
-        MCTermLink *link = [self linkAtPoint:p row:&row col0:&c0 col1:&c1];
+        MCTermLink *link = [self linkAtPoint:p line:&line col0:&c0 col1:&c1];
         if (link) {
             _link = nil;
-            _linkRow = -1;
+            _linkId = kNoLine;
             [self setNeedsDisplay:YES];
             if (self.openLink) self.openLink(link);
             return;
         }
     }
     [self.window makeFirstResponder:self];
+    if (!self.screen) return;
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
-    [self cellAtPoint:p row:&_anchorRow col:&_anchorCol];
-    _endRow = _anchorRow;
-    _endCol = _anchorCol;
+    int row, col;
+    [self cellAtPoint:p row:&row col:&col];
+    int line = [self topLine] + row;
+    long long lineId = [self base] + line;
+    _unit = e.clickCount >= 3 ? 3 : e.clickCount == 2 ? 2 : 1;
+    if (_unit > 1) {
+        int from, to;
+        [self unit:_unit atLine:line col:col from:&from to:&to];
+        _unitStartId = _unitEndId = lineId;
+        _unitStartCol = from;
+        _unitEndCol = to;
+        _anchorId = lineId; _anchorCol = from;
+        _endId = lineId; _endCol = to;
+        _hasSelection = YES;
+    } else {
+        _anchorId = _endId = lineId;
+        _anchorCol = _endCol = col;
+        _hasSelection = NO;
+    }
     _selecting = YES;
-    if (_hasSelection) { _hasSelection = NO; [self setNeedsDisplay:YES]; }
+    [self setNeedsDisplay:YES];
 }
 
 - (void)mouseDragged:(NSEvent *)e {
-    if (!_selecting) return;
+    if (!_selecting || !self.screen) return;
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
-    [self cellAtPoint:p row:&_endRow col:&_endCol];
-    _hasSelection = _endRow != _anchorRow || _endCol != _anchorCol;
+    // Past the top or bottom edge, the view scrolls through the scrollback.
+    NSSize cs = [TerminalGridView cellSize];
+    if (p.y < 0) [self setOffset:_offset + MAX(1, (int)(-p.y / cs.height))];
+    else if (p.y > self.bounds.size.height)
+        [self setOffset:_offset - MAX(1, (int)((p.y - self.bounds.size.height) / cs.height))];
+    int row, col;
+    [self cellAtPoint:p row:&row col:&col];
+    int line = [self topLine] + row;
+    long long lineId = [self base] + line;
+    if (_unit == 1) {
+        _endId = lineId;
+        _endCol = col;
+        _hasSelection = _endId != _anchorId || _endCol != _anchorCol;
+    } else {
+        int from, to;
+        [self unit:_unit atLine:line col:col from:&from to:&to];
+        BOOL before = lineId < _unitStartId || (lineId == _unitStartId && from < _unitStartCol);
+        if (before) {
+            _anchorId = _unitEndId; _anchorCol = _unitEndCol;
+            _endId = lineId; _endCol = from;
+        } else {
+            _anchorId = _unitStartId; _anchorCol = _unitStartCol;
+            _endId = lineId; _endCol = to;
+        }
+        _hasSelection = YES;
+    }
     [self setNeedsDisplay:YES];
 }
 
@@ -431,11 +723,24 @@ static CellColors ColorsFor(const TermStyle &st) {
     _selecting = NO;
 }
 
-// In the alternate screen the wheel scrolls the program (arrow keys), the
-// way xterm's alternateScroll does; there is no scrollback of its own.
+// On the main screen the wheel scrolls back through the scrollback. In the
+// alternate screen it scrolls the program (arrow keys), the way xterm's
+// alternateScroll does; there is no scrollback there.
 - (void)scrollWheel:(NSEvent *)e {
     TerminalScreen *s = self.screen;
-    if (!s || !s->altScreen()) return;
+    if (!s) return;
+    if (!s->altScreen()) {
+        CGFloat lines = e.hasPreciseScrollingDeltas
+            ? e.scrollingDeltaY / [TerminalGridView cellSize].height
+            : e.scrollingDeltaY * 3;
+        _scrollAccum += lines;
+        int whole = (int)_scrollAccum;   // toward zero
+        if (whole) {
+            _scrollAccum -= whole;
+            [self setOffset:_offset + whole];
+        }
+        return;
+    }
     CGFloat lines = e.hasPreciseScrollingDeltas
         ? e.scrollingDeltaY / [TerminalGridView cellSize].height
         : e.scrollingDeltaY;
@@ -453,13 +758,22 @@ static CellColors ColorsFor(const TermStyle &st) {
 }
 
 // ---------------------------------------------------------------- edit menu
+- (NSString *)selectedText {
+    if (!_hasSelection || !self.screen) return nil;
+    long long id0, id1;
+    int c0, c1;
+    [self selectionStart:&id0 col:&c0 end:&id1 col:&c1];
+    long long base = [self base];
+    std::string text = self.screen->textBetween((int)(id0 - base), c0,
+                                                (int)(id1 - base), c1);
+    while (!text.empty() && text.back() == '\n') text.pop_back();
+    return [[NSString alloc] initWithBytes:text.data() length:text.size()
+                                  encoding:NSUTF8StringEncoding];
+}
+
 - (void)copy:(id)sender {
     (void)sender;
-    if (!_hasSelection || !self.screen) return;
-    std::string text = self.screen->textBetween(_anchorRow, _anchorCol,
-                                                _endRow, _endCol);
-    NSString *str = [[NSString alloc] initWithBytes:text.data() length:text.size()
-                                           encoding:NSUTF8StringEncoding];
+    NSString *str = [self selectedText];
     if (!str) return;
     NSPasteboard *pb = [NSPasteboard generalPasteboard];
     [pb clearContents];
@@ -475,13 +789,25 @@ static CellColors ColorsFor(const TermStyle &st) {
     [self send:TerminalScreen::encodePaste(utf8, self.screen->bracketedPaste())];
 }
 
+// Everything: the scrollback and the screen.
 - (void)selectAll:(id)sender {
     (void)sender;
-    if (!self.screen) return;
-    _anchorRow = 0; _anchorCol = 0;
-    _endRow = self.screen->rows() - 1; _endCol = self.screen->cols() - 1;
+    TerminalScreen *s = self.screen;
+    if (!s) return;
+    long long base = s->historyBase();
+    _anchorId = base - (s->altScreen() ? 0 : s->historySize());
+    _anchorCol = 0;
+    _endId = base + s->rows() - 1;
+    _endCol = s->cols() - 1;
     _hasSelection = YES;
     [self setNeedsDisplay:YES];
+}
+
+- (void)clearScrollback:(id)sender {
+    (void)sender;
+    if (!self.screen) return;
+    self.screen->clearHistory();
+    [self screenChanged];
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
@@ -490,6 +816,8 @@ static CellColors ColorsFor(const TermStyle &st) {
         return [[NSPasteboard generalPasteboard]
                    stringForType:NSPasteboardTypeString] != nil;
     if (item.action == @selector(selectAll:)) return YES;
+    if (item.action == @selector(clearScrollback:))
+        return self.screen && self.screen->historySize() > 0;
     return NO;
 }
 

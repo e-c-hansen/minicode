@@ -591,6 +591,33 @@ bool Settings::apply(const std::string& key, const std::string& value,
         rulerColor_ = color;
         return true;
     }
+    if (key == "terminal.mode") {
+        std::string v = lower(value);
+        if (v != "grid" && v != "line") {
+            error = "'" + value + "' is not grid or line";
+            return false;
+        }
+        terminalLineMode_ = v == "line";
+        return true;
+    }
+    if (key == "terminal.scrollback") {
+        bool digits = !value.empty() && value.size() <= 9;
+        for (char c : value) digits = digits && c >= '0' && c <= '9';
+        long lines = digits ? std::atol(value.c_str()) : -1;
+        if (lines < 0 || lines > 100000) {
+            error = "'" + value + "' is not a number of lines from 0 to 100000";
+            return false;
+        }
+        terminalScrollback_ = (int)lines;
+        return true;
+    }
+    if (key == "terminal.option-as-meta") {
+        if (!parseBool(value, terminalOptionAsMeta_)) {
+            error = "'" + value + "' is not true or false";
+            return false;
+        }
+        return true;
+    }
     if (key == "lsp.enabled") {
         if (!parseBool(value, lspEnabled_)) {
             error = "'" + value + "' is not true or false";
@@ -858,6 +885,16 @@ const char* Settings::defaultFileText() {
 # terminal.background = #181818
 # terminal.opacity = 1
 # terminal.text = #D4D4D4
+# grid: a real terminal, with zsh's own prompt, Tab completion, Ctrl+R and
+# the rest of its line editor. line: the older log with an input line below
+# it (a fallback, to be removed). Applies to terminals opened after a change.
+# terminal.mode = grid
+# Lines a terminal keeps above its screen, for scrolling back (0 for none).
+# terminal.scrollback = 10000
+# Option sends ESC before the key, for the shell's Alt bindings (Option+B and
+# Option+F move by words). false lets Option type what your keyboard layout
+# puts on it, such as @ and { on many European layouts.
+# terminal.option-as-meta = true
 
 # The browser's toolbar. Web pages draw their own background.
 # browser.background = #2A2A2A

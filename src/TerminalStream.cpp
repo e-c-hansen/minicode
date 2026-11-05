@@ -439,15 +439,23 @@ void TerminalStream::finishOsc(const std::string& s, std::vector<TermEvent>& out
         TermEvent e;
         switch (s[4]) {
             case 'A': e.kind = TermEvent::PromptStart; break;
-            case 'C': e.kind = TermEvent::CommandStart; break;
+            case 'B': e.kind = TermEvent::InputStart; break;
+            case 'C':
+                e.kind = TermEvent::CommandStart;
+                e.text.swap(commandLine_);
+                break;
             case 'D':
                 e.kind = TermEvent::CommandEnd;
                 if (s.size() > 6 && s[5] == ';') e.status = std::atoi(s.c_str() + 6);
                 break;
-            default: return;                 // B and others: nothing to do
+            default: return;                 // others: nothing to do
         }
         flushLine(out);                      // keep events in order
         out.push_back(e);
+    } else if (s.rfind("633;E;", 0) == 0) {
+        // The command line about to run, as VS Code's integration sends it;
+        // it travels with the CommandStart that follows.
+        commandLine_ = s.substr(6, 4096);
     } else {
         std::string path = termOsc7Path(s);
         if (!path.empty()) {
