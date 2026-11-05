@@ -19,9 +19,12 @@ CXXFLAGS ?= -std=c++17 -Wall -Wextra -O2
 BUILD    := build-make
 BIN      := $(BUILD)/minicode
 
-# Shared portable core (never copied — compiled straight from ../src).
+# Shared portable core (never copied — compiled straight from ../src). Keep it
+# the same list as core_sources in meson.build: CI builds only with Meson, so
+# a file missing here is noticed by nobody until someone runs this.
 CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEdit.cpp \
-        ../src/Settings.cpp ../src/LineComments.cpp ../src/FolderSearch.cpp \
+        ../src/MarkdownTasks.cpp ../src/Settings.cpp ../src/LineComments.cpp \
+        ../src/AutoIndent.cpp ../src/KeepSorted.cpp ../src/FolderSearch.cpp \
         ../src/LatexDoc.cpp ../src/SyncTex.cpp \
         ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp \
         ../src/GitStatus.cpp ../src/GitGraph.cpp

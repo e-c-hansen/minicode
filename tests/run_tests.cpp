@@ -7977,6 +7977,56 @@ static void testInstallHints() {
         }
 }
 
+// The core files a build file names: "../src/X.cpp" in the Makefile,
+// "core_dir / 'X.cpp'" in core_sources in meson.build.
+static std::set<std::string> coreFilesIn(const std::string &text, const std::string &before,
+                                         const std::string &after) {
+    std::set<std::string> out;
+    size_t at = 0;
+    while ((at = text.find(before, at)) != std::string::npos) {
+        at += before.size();
+        size_t end = text.find(after, at);
+        if (end == std::string::npos) break;
+        out.insert(text.substr(at, end - at));
+        at = end;
+    }
+    return out;
+}
+
+static void testLinuxBuildLists() {
+    GROUP("linux:build-lists");
+    // CI builds the GTK port with Meson only, so the plain Makefile's list of
+    // core files fell behind (MarkdownTasks, AutoIndent and KeepSorted were
+    // missing and it could not link). Both must name the same core files.
+    std::ifstream mf("linux/Makefile"), mb("linux/meson.build");
+    if (!mf || !mb) {
+        std::printf("  (linux/ not found here; build list checks skipped)\n");
+        return;
+    }
+    std::stringstream m, b;
+    m << mf.rdbuf();
+    b << mb.rdbuf();
+    std::string make = m.str(), meson = b.str();
+    // The Makefile's CORE variable, up to the first blank line.
+    size_t c0 = make.find("\nCORE :=");
+    size_t c1 = c0 == std::string::npos ? c0 : make.find("\n\n", c0);
+    CHECK(c0 != std::string::npos && c1 != std::string::npos);
+    if (c0 == std::string::npos || c1 == std::string::npos) return;
+    std::set<std::string> fromMake = coreFilesIn(make.substr(c0, c1 - c0), "../src/", ".cpp");
+    size_t s0 = meson.find("core_sources = [");
+    size_t s1 = s0 == std::string::npos ? s0 : meson.find("]", s0);
+    CHECK(s0 != std::string::npos && s1 != std::string::npos);
+    if (s0 == std::string::npos || s1 == std::string::npos) return;
+    std::set<std::string> fromMeson =
+        coreFilesIn(meson.substr(s0, s1 - s0), "core_dir / '", ".cpp'");
+    for (const std::string &f : fromMeson)
+        if (!fromMake.count(f)) std::printf("  linux/Makefile lacks ../src/%s.cpp\n", f.c_str());
+    for (const std::string &f : fromMake)
+        if (!fromMeson.count(f)) std::printf("  meson.build lacks %s.cpp\n", f.c_str());
+    CHECK(fromMeson.size() >= 16);
+    CHECK(fromMake == fromMeson);
+}
+
 static void testChangeRequest() {
     using namespace ChangeRequest;
     GROUP("change:prompt");
@@ -8695,6 +8745,7 @@ int main() {
     testEditorTabs();
     testFormatter();
     testInstallHints();
+    testLinuxBuildLists();
     testLineDiff();
     testAutoIndent();
     testKeepSorted();
