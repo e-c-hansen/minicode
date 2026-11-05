@@ -97,6 +97,38 @@ isolation. Keep them dependency-free.
   end is not carried. The frozen oracle never had them, so Python text
   that may hold one (`mayHoldFString` in the tests) is checked against a
   full lex instead; `syntax:python-fstrings` has the cases.
+  Literals (2026-11-05, after a review): JavaScript and TypeScript (not
+  the JSON family, `jsCode`) have their own line lexer, `lexJsLine`:
+  regex literals are String where an expression can start (line start,
+  after an operator, `( , = : [ ! & | ? { ; =>` and `return`, `typeof`,
+  `case` and the rest of `kJsBeforeRegex`), never after a name, number,
+  string, `) ] }` or `<` (so JSX's `{...p} />` and `</a>` stay out), and
+  only when they close on their line; template literals run over lines
+  with `${...}` fields lexed as code (`${` and `}` Keyword), nesting
+  through a stack ('T' per template, 1 + open braces per field) carried
+  as a `Template` state. Up to 2026-11-04 a backtick string ended with its
+  line. `lexLongString` adds strings that end at a fixed text: C++ raw
+  strings `R"d(...)d"` (u8R, uR, UR, LR; C++ extensions only), Rust
+  `r#"..."#` and plain `"..."` over lines, Rust lifetimes (`'a` Keyword,
+  no longer a string to the line's end), Go backtick strings, triple
+  quotes in Java, Swift, Dart, Groovy (escapes) and Kotlin, Scala (raw),
+  and C# `@"..."` and `"""..."""`. One open at a line's end carries as a
+  `RawString` state. Numbers take `1_000` (Python, JS, C family) and
+  `1'000'000` (C family but Rust; also Verilog's `4'b1010`). States that
+  need more than 16 bits (a 16-character delimiter, a template stack)
+  keep their text in one process-wide table (`stateTextId`, in the header's
+  LexState comment), so the same text has the same id in every
+  highlighter and equality stays two integer compares. The tests compare
+  against the oracle only where none of this can apply
+  (`mayHoldNewLiteral`; rs, go, cs, swift, kt and java are in `newGrammar`),
+  the random edits run rs, go, cs, swift and kt too, and the groups are `syntax:js-regex`,
+  `js-templates`, `cpp-raw`, `rust`, `go-raw`, `triple-quoted`,
+  `literal-misc`. Not done: Swift `#"..."#` and `\(...)` interpolation,
+  Kotlin, Scala, Dart and C# string templates (`"${a["k"]}"` still ends at
+  the inner quote), Groovy slashy strings, a field's block comment or
+  backslash-continued string over lines inside a JS template, and a
+  regex at the start of a line that continues a division from the line
+  above.
   TeX has its own line lexer (`lexTexLine`) and uses only the existing
   styles: commands are Keyword, preamble and definition commands
   (`\usepackage`, `\newcommand`) Preprocessor, sectioning commands Function,
