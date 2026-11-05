@@ -246,6 +246,46 @@ struct DiagnosticSpan {
 std::vector<DiagnosticSpan> diagnosticSpans(const std::u16string* base,
                                             const std::u16string& current,
                                             const std::vector<Diagnostic>& diags);
+
+// ------------------------------------------------------------ the Problems list
+// One diagnostic as the Problems list shows it: the file (a path), where it
+// is now (0-based line, UTF-16 column), and what it says.
+struct Problem {
+    std::string path;
+    int line = 0, column = 0;
+    Severity severity = Severity::Error;
+    std::string message, source, code;
+};
+// A row of the list: a heading for each file with its counts, then that
+// file's problems (`problem` is an index into the input). Files with errors
+// come first, then warnings, then the rest, by path within each; a file's
+// problems go by severity, then line and column, as VS Code orders them.
+struct ProblemRow {
+    bool heading = false;
+    std::string path;          // the heading's file
+    size_t problem = 0;        // a problem row's index into the input
+    int errors = 0, warnings = 0, others = 0;   // a heading's counts
+};
+std::vector<ProblemRow> problemRows(const std::vector<Problem>& problems);
+struct ProblemCounts {
+    int errors = 0, warnings = 0, infos = 0, hints = 0, files = 0;
+    int total() const { return errors + warnings + infos + hints; }
+};
+ProblemCounts countProblems(const std::vector<Problem>& problems);
+// "2 errors, 1 warning", "3 infos", "No problems". Information and hints
+// are named only when there are no errors or warnings to name.
+std::string problemCountsText(const ProblemCounts& counts);
+// The message on one line: its line breaks and runs of spaces as one space,
+// trimmed (clang and pyright write several lines for one problem).
+std::string problemOneLine(const std::string& message);
+// F8 and Shift+F8: where to go next among a file's problems, as `spans`
+// (start and end offsets, any order). Forward is the first starting after
+// the caret, else the first in the file (wrapping); backward the last
+// starting before it, else the last. `last` is the index the previous step
+// went to: while the caret is still at its start, the step goes on from it,
+// so several problems at one place are each visited. -1 when none.
+long stepProblem(const std::vector<std::pair<size_t, size_t>>& spans, size_t caret,
+                 long last, bool forward);
 // A CompletionList, a bare array of items, or null. Items come back sorted by
 // sortText (then label), which is the order servers mean them in.
 std::vector<CompletionItem> parseCompletion(const Json& result, bool* incomplete = nullptr);

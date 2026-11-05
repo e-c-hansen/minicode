@@ -6258,6 +6258,86 @@ void testLspCompletionEditsAndVersions() {
         sp = Lsp::diagnosticSpans(nullptr, b2, {diag(9, 0, 9, 4)});
         CHECK(sp.size() == 1 && sp[0].start == b2.size() && sp[0].end == b2.size());
     }
+
+    GROUP("lsp:problems-rows");
+    {
+        auto prob = [](const char *path, int line, int col, Lsp::Severity s, const char *msg) {
+            Lsp::Problem p;
+            p.path = path;
+            p.line = line;
+            p.column = col;
+            p.severity = s;
+            p.message = msg;
+            return p;
+        };
+        using S = Lsp::Severity;
+        std::vector<Lsp::Problem> ps = {
+            prob("/p/b.py", 9, 0, S::Warning, "w1"),        // 0
+            prob("/p/a.py", 5, 2, S::Hint, "h1"),           // 1
+            prob("/p/c.py", 7, 4, S::Error, "e-late"),      // 2
+            prob("/p/c.py", 2, 8, S::Warning, "w-early"),   // 3
+            prob("/p/c.py", 2, 1, S::Error, "e-early"),     // 4
+            prob("/p/b.py", 1, 0, S::Warning, "w0"),        // 5
+            prob("/p/d.py", 0, 0, S::Information, "i"),     // 6
+        };
+        std::vector<Lsp::ProblemRow> rows = Lsp::problemRows(ps);
+        // c.py (errors) first, then b.py (warnings), then a.py and d.py (the
+        // rest, by path); within a file by severity, then position.
+        std::vector<std::string> got;
+        for (const Lsp::ProblemRow &r : rows)
+            got.push_back(r.heading ? "# " + r.path : ps[r.problem].message);
+        std::vector<std::string> want = {"# /p/c.py", "e-early", "e-late", "w-early",
+                                         "# /p/b.py", "w0", "w1",
+                                         "# /p/a.py", "h1", "# /p/d.py", "i"};
+        CHECK(got == want);
+        CHECK(rows[0].errors == 2 && rows[0].warnings == 1 && rows[0].others == 0);
+        CHECK(rows[4].errors == 0 && rows[4].warnings == 2);
+        CHECK(rows[7].others == 1 && rows[9].others == 1);
+        CHECK(!rows[1].heading && rows[1].path == "/p/c.py" && rows[1].problem == 4);
+        CHECK(Lsp::problemRows({}).empty());
+
+        Lsp::ProblemCounts c = Lsp::countProblems(ps);
+        CHECK(c.errors == 2 && c.warnings == 3 && c.infos == 1 && c.hints == 1 &&
+              c.files == 4 && c.total() == 7);
+        CHECK(Lsp::problemCountsText(c) == "2 errors, 3 warnings");
+        CHECK(Lsp::problemCountsText(Lsp::countProblems({ps[0]})) == "1 warning");
+        CHECK(Lsp::problemCountsText(Lsp::countProblems({ps[4]})) == "1 error");
+        CHECK(Lsp::problemCountsText(Lsp::countProblems({ps[1], ps[6]})) == "1 info, 1 hint");
+        CHECK(Lsp::problemCountsText(Lsp::countProblems({})) == "No problems");
+        CHECK(Lsp::problemOneLine("  Argument of type \"int\"\n  is not\t\tassignable \r\n")
+              == "Argument of type \"int\" is not assignable");
+        CHECK(Lsp::problemOneLine("") == "" && Lsp::problemOneLine(" \n ") == "");
+    }
+
+    GROUP("lsp:problems-step");
+    {
+        // Out of order on purpose; two problems start at 20.
+        std::vector<std::pair<size_t, size_t>> sp = {{40, 45}, {10, 12}, {20, 30}, {20, 22}};
+        // Forward from the top: 10, then (as the caret sits at its start) on.
+        CHECK(Lsp::stepProblem(sp, 0, -1, true) == 1);
+        CHECK(Lsp::stepProblem(sp, 10, 1, true) == 3);    // {20,22} sorts before {20,30}
+        CHECK(Lsp::stepProblem(sp, 20, 3, true) == 2);    // the other one at 20
+        CHECK(Lsp::stepProblem(sp, 20, 2, true) == 0);
+        CHECK(Lsp::stepProblem(sp, 40, 0, true) == 1);    // wraps
+        // Backward the same way round.
+        CHECK(Lsp::stepProblem(sp, 40, 0, false) == 2);
+        CHECK(Lsp::stepProblem(sp, 20, 2, false) == 3);
+        CHECK(Lsp::stepProblem(sp, 20, 3, false) == 1);
+        CHECK(Lsp::stepProblem(sp, 10, 1, false) == 0);   // wraps to the last
+        // The caret moved since the last step: from the caret, not `last`.
+        CHECK(Lsp::stepProblem(sp, 25, 3, true) == 0);
+        CHECK(Lsp::stepProblem(sp, 25, 3, false) == 2);   // the last of the two at 20
+        CHECK(Lsp::stepProblem(sp, 50, -1, true) == 1);
+        CHECK(Lsp::stepProblem(sp, 5, -1, false) == 0);
+        // A caret on a problem's start with no step before goes past it.
+        CHECK(Lsp::stepProblem(sp, 10, -1, true) == 3);
+        CHECK(Lsp::stepProblem(sp, 10, -1, false) == 0);
+        // `last` out of range is ignored; none at all is -1; one wraps to itself.
+        CHECK(Lsp::stepProblem(sp, 0, 9, true) == 1);
+        CHECK(Lsp::stepProblem({}, 0, -1, true) == -1);
+        CHECK(Lsp::stepProblem({{3, 4}}, 3, 0, true) == 0);
+        CHECK(Lsp::stepProblem({{3, 4}}, 3, 0, false) == 0);
+    }
 }
 }  // namespace
 

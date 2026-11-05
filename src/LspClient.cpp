@@ -2,6 +2,7 @@
 #include "LspClient.h"
 #include <algorithm>
 #include <cctype>
+#include <set>
 
 namespace Lsp {
 
@@ -392,6 +393,123 @@ std::vector<DiagnosticSpan> diagnosticSpans(const std::u16string* base,
         out.push_back(DiagnosticSpan{a, b, i});
     }
     return out;
+}
+
+std::vector<ProblemRow> problemRows(const std::vector<Problem>& problems) {
+    // Each file's problems, with its worst severity.
+    std::map<std::string, std::vector<size_t>> byFile;
+    for (size_t i = 0; i < problems.size(); i++) byFile[problems[i].path].push_back(i);
+    struct File {
+        const std::string* path;
+        std::vector<size_t> list;
+        int worst;
+    };
+    std::vector<File> files;
+    for (auto& [path, list] : byFile) {
+        int worst = 4;
+        for (size_t i : list) worst = std::min(worst, (int)problems[i].severity);
+        files.push_back(File{&path, list, worst});
+    }
+    std::stable_sort(files.begin(), files.end(), [](const File& a, const File& b) {
+        int wa = std::min(a.worst, 3), wb = std::min(b.worst, 3);   // info and hint alike
+        if (wa != wb) return wa < wb;
+        return *a.path < *b.path;
+    });
+    std::vector<ProblemRow> rows;
+    for (File& f : files) {
+        std::stable_sort(f.list.begin(), f.list.end(), [&](size_t a, size_t b) {
+            const Problem &p = problems[a], &q = problems[b];
+            if (p.severity != q.severity) return (int)p.severity < (int)q.severity;
+            if (p.line != q.line) return p.line < q.line;
+            return p.column < q.column;
+        });
+        ProblemRow h;
+        h.heading = true;
+        h.path = *f.path;
+        for (size_t i : f.list) {
+            if (problems[i].severity == Severity::Error) h.errors++;
+            else if (problems[i].severity == Severity::Warning) h.warnings++;
+            else h.others++;
+        }
+        rows.push_back(h);
+        for (size_t i : f.list) {
+            ProblemRow r;
+            r.path = *f.path;
+            r.problem = i;
+            rows.push_back(r);
+        }
+    }
+    return rows;
+}
+
+ProblemCounts countProblems(const std::vector<Problem>& problems) {
+    ProblemCounts c;
+    std::set<std::string> files;
+    for (const Problem& p : problems) {
+        switch (p.severity) {
+        case Severity::Error: c.errors++; break;
+        case Severity::Warning: c.warnings++; break;
+        case Severity::Information: c.infos++; break;
+        case Severity::Hint: c.hints++; break;
+        }
+        files.insert(p.path);
+    }
+    c.files = (int)files.size();
+    return c;
+}
+
+std::string problemCountsText(const ProblemCounts& c) {
+    auto named = [](int n, const char* one, const char* many) {
+        return std::to_string(n) + " " + (n == 1 ? one : many);
+    };
+    std::vector<std::string> parts;
+    if (c.errors) parts.push_back(named(c.errors, "error", "errors"));
+    if (c.warnings) parts.push_back(named(c.warnings, "warning", "warnings"));
+    if (parts.empty()) {
+        if (c.infos) parts.push_back(named(c.infos, "info", "infos"));
+        if (c.hints) parts.push_back(named(c.hints, "hint", "hints"));
+    }
+    if (parts.empty()) return "No problems";
+    std::string s = parts[0];
+    for (size_t i = 1; i < parts.size(); i++) s += ", " + parts[i];
+    return s;
+}
+
+std::string problemOneLine(const std::string& message) {
+    std::string out;
+    bool space = false;
+    for (char ch : message) {
+        if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+            space = !out.empty();
+            continue;
+        }
+        if (space) out += ' ';
+        space = false;
+        out += ch;
+    }
+    return out;
+}
+
+long stepProblem(const std::vector<std::pair<size_t, size_t>>& spans, size_t caret,
+                 long last, bool forward) {
+    const long n = (long)spans.size();
+    if (n == 0) return -1;
+    std::vector<long> order((size_t)n);
+    for (long i = 0; i < n; i++) order[(size_t)i] = i;
+    std::stable_sort(order.begin(), order.end(),
+                     [&](long a, long b) { return spans[(size_t)a] < spans[(size_t)b]; });
+    if (last >= 0 && last < n && spans[(size_t)last].first == caret) {
+        long at = std::find(order.begin(), order.end(), last) - order.begin();
+        return order[(size_t)((at + (forward ? 1 : n - 1)) % n)];
+    }
+    if (forward) {
+        for (long i : order)
+            if (spans[(size_t)i].first > caret) return i;
+        return order.front();
+    }
+    for (auto it = order.rbegin(); it != order.rend(); ++it)
+        if (spans[(size_t)*it].first < caret) return *it;
+    return order.back();
 }
 
 std::vector<CompletionItem> parseCompletion(const Json& result, bool* incomplete) {
