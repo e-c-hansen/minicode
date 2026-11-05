@@ -25,6 +25,7 @@
 #include "ChangeRequest.h"
 #include "LineDiff.h"
 #include "MultiCaret.h"
+#include "Backups.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -7257,6 +7258,8 @@ static void testMultiCaret() {
     }
 }
 
+#include "backups_tests.inc"
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
@@ -7301,6 +7304,7 @@ int main() {
     testFileDetails();
     testChangeRequest();
     testMultiCaret();
+    testBackups();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

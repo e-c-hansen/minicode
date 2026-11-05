@@ -8,6 +8,7 @@
 #import "TerminalPanel.h"
 #import "TreeDetails.h"
 #import "ChangePanel.h"
+#import "BackupStore.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, MCRestarting>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
@@ -91,6 +92,9 @@
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
+    // After whichever windows this launch opens: folders whose unsaved
+    // buffers outlived a crash get theirs (BackupStore).
+    dispatch_async(dispatch_get_main_queue(), ^{ [self reopenFoldersWithBackups]; });
     // Started by Request a Change's restart: the windows that were open, and
     // the conversation with Claude where it was.
     NSDictionary *restart = MCTakeRestartRecord();
@@ -140,6 +144,27 @@
     MCBenchStart(c);  // no-op unless MINICODE_BENCH is set (make membench)
 }
 
+// A window for every folder with backups that no window holds (a crash in a
+// window on another folder than this launch's), behind the windows this
+// launch opened.
+- (void)reopenFoldersWithBackups {
+    MCBackupStore *store = [MCBackupStore shared];
+    if (!store) return;
+    NSMutableArray<NSString *> *open = [NSMutableArray array];
+    for (EditorController *c in self.controllers)
+        if (c.rootPath) [open addObject:c.rootPath.stringByResolvingSymlinksInPath];
+    NSWindow *front = self.controllers.lastObject.window;
+    BOOL opened = NO;
+    for (NSString *root in [store foldersToReopenExcept:open]) {
+        BOOL dir = NO;
+        if (![[NSFileManager defaultManager] fileExistsAtPath:root isDirectory:&dir] || !dir)
+            continue;   // its backups wait, and go after 30 days
+        [self openWindowAtPath:root];
+        opened = YES;
+    }
+    if (opened && front) [front makeKeyAndOrderFront:nil];
+}
+
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)a {
     return YES;
 }
@@ -170,6 +195,7 @@
         return NSTerminateCancel;
     for (EditorController *c in [self.controllers copy]) {
         if (!c.hasUnsavedChanges) continue;
+        if (restarting && [c keepUnsavedTabsForRestart]) continue;   // they come back
         [c.window makeKeyAndOrderFront:nil];
         if (![c confirmCloseAllTabs]) return NSTerminateCancel;
     }

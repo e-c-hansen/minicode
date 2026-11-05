@@ -59,6 +59,10 @@
 // Asks about every tab with unsaved changes (window close, quit). NO when
 // the user cancelled or a save failed.
 - (BOOL)confirmCloseAllTabs;
+// Request a Change's restart: every unsaved tab's backup written now, for
+// the new build to bring back, so they need no question. NO when that could
+// not be done (backups off, or a write failed), and the question is asked.
+- (BOOL)keepUnsavedTabsForRestart;
 @property(nonatomic, readonly) BOOL hasUnsavedChanges;
 // Commands still running in this window's terminals (empty when every shell
 // is idle), for the question asked before quitting.
