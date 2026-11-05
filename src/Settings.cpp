@@ -1139,8 +1139,7 @@ const char* Settings::defaultFileText() {
 # language is opened, its server is looked for on PATH and in the Homebrew,
 # npm, pipx, Cargo and Go folders. Give a command to use a different server
 # or an absolute path, or off to leave a language alone. For Python,
-# basedpyright, pylsp and jedi-language-server are tried, in that order, when
-# pyright is not installed.
+# basedpyright is tried first, then pyright, pylsp and jedi-language-server.
 #
 # The status bar shows the open file's server: click it, or choose Language
 # Servers... in the MiniCode menu, to see each server's state, where it was
@@ -1150,7 +1149,7 @@ const char* Settings::defaultFileText() {
 # section lists every command.
 # lsp.enabled = true
 # lsp.cpp = clangd
-# lsp.python = pyright-langserver --stdio
+# lsp.python = basedpyright-langserver --stdio
 # lsp.go = gopls
 # lsp.rust = rust-analyzer
 # lsp.typescript = typescript-language-server --stdio

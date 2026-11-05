@@ -258,7 +258,10 @@ bool languageForExtension(const std::string& extIn, Language& out) {
 std::vector<std::string> defaultCommands(const std::string& server) {
     if (server == "cpp") return {"clangd"};
     if (server == "python")
-        return {"pyright-langserver --stdio", "basedpyright-langserver --stdio", "pylsp",
+        // basedpyright first: it is the one the install hints recommend
+        // (uv brings its own Node for it), and where both are installed it
+        // is the one the user most likely chose.
+        return {"basedpyright-langserver --stdio", "pyright-langserver --stdio", "pylsp",
                 "jedi-language-server"};
     if (server == "go") return {"gopls"};
     if (server == "rust") return {"rust-analyzer"};
@@ -317,8 +320,9 @@ Range parseRange(const Json& j) {
     return Range{parsePosition(j["start"]), parsePosition(j["end"])};
 }
 
-std::vector<Diagnostic> parseDiagnostics(const Json& params, std::string* uri) {
+std::vector<Diagnostic> parseDiagnostics(const Json& params, std::string* uri, int* version) {
     if (uri) *uri = params["uri"].asString();
+    if (version) *version = params["version"].isNumber() ? (int)params["version"].asInt() : -1;
     std::vector<Diagnostic> out;
     for (const Json& d : params["diagnostics"].elements()) {
         Diagnostic diag;
@@ -333,6 +337,59 @@ std::vector<Diagnostic> parseDiagnostics(const Json& params, std::string* uri) {
         else if (code.isNumber()) diag.code = std::to_string(code.asInt());
         diag.raw = std::make_shared<const Json>(d);
         out.push_back(diag);
+    }
+    return out;
+}
+
+namespace {
+// A TextEdit[] (additionalTextEdits), skipping anything malformed.
+std::vector<TextEdit> parseTextEdits(const Json& list) {
+    std::vector<TextEdit> out;
+    for (const Json& e : list.elements()) {
+        if (!e.isObject() || !e["range"].isObject() || !e["newText"].isString()) continue;
+        TextEdit t;
+        t.range = parseRange(e["range"]);
+        if (positionBefore(t.range.end, t.range.start)) std::swap(t.range.start, t.range.end);
+        t.newText = e["newText"].asString();
+        out.push_back(t);
+    }
+    return out;
+}
+}  // namespace
+
+std::vector<DiagnosticSpan> diagnosticSpans(const std::u16string* base,
+                                            const std::u16string& current,
+                                            const std::vector<Diagnostic>& diags) {
+    std::vector<DiagnosticSpan> out;
+    const std::u16string& from = base ? *base : current;
+    // The part that changed since: what lies between the common head and
+    // the common tail. Typing between two syncs is one place (several
+    // carets make it one wider place), so this is all the diff needed.
+    size_t head = 0, tail = 0;
+    if (base && *base != current) {
+        const size_t n = std::min(from.size(), current.size());
+        while (head < n && from[head] == current[head]) head++;
+        while (tail < n - head &&
+               from[from.size() - 1 - tail] == current[current.size() - 1 - tail])
+            tail++;
+    }
+    const bool changed = base && *base != current;
+    const size_t oldEnd = from.size() - tail;           // [head, oldEnd) changed
+    const long delta = (long)current.size() - (long)from.size();
+    for (size_t i = 0; i < diags.size(); i++) {
+        size_t a = offsetForPosition(from, diags[i].range.start);
+        size_t b = offsetForPosition(from, diags[i].range.end);
+        if (b < a) std::swap(a, b);
+        if (changed) {
+            // Touching the changed part, at either end, counts: an error at
+            // the end of a word being typed is about the word as it was.
+            if (a <= oldEnd && b >= head) continue;
+            if (a > oldEnd) {
+                a = (size_t)((long)a + delta);
+                b = (size_t)((long)b + delta);
+            }
+        }
+        out.push_back(DiagnosticSpan{a, b, i});
     }
     return out;
 }
@@ -362,6 +419,10 @@ std::vector<CompletionItem> parseCompletion(const Json& result, bool* incomplete
             c.newText = edit["newText"].asString();
             if (edit.has("range")) c.editRange = parseRange(edit["range"]);
             else c.editRange = parseRange(edit["insert"]);   // InsertReplaceEdit
+        }
+        if (it["additionalTextEdits"].isArray()) {
+            c.hasAdditionalEdits = true;
+            c.additionalEdits = parseTextEdits(it["additionalTextEdits"]);
         }
         out.push_back(c);
     }
@@ -400,6 +461,57 @@ void applyResolved(CompletionItem& item, const Json& result) {
         item.documentation = doc;
         item.docIsMarkdown = md;
     }
+    if (result["additionalTextEdits"].isArray()) {
+        item.hasAdditionalEdits = true;
+        item.additionalEdits = parseTextEdits(result["additionalTextEdits"]);
+    }
+}
+
+bool completionWantsResolve(const CompletionItem& item, bool serverResolves) {
+    return serverResolves && item.raw && !item.resolved && !item.hasAdditionalEdits;
+}
+
+CompletionEdits completionEdits(const std::u16string& text, size_t start, size_t end,
+                                const std::u16string& insert,
+                                const std::vector<TextEdit>& additional) {
+    CompletionEdits out;
+    start = std::min(start, text.size());
+    end = std::min(std::max(end, start), text.size());
+    std::vector<OffsetEdit> extra;
+    for (const TextEdit& e : additional) {
+        size_t a = offsetForPosition(text, e.range.start);
+        size_t b = offsetForPosition(text, e.range.end);
+        if (b < a) std::swap(a, b);
+        extra.push_back(OffsetEdit{a, b - a, toUtf16(e.newText)});
+    }
+    std::stable_sort(extra.begin(), extra.end(),
+                     [](const OffsetEdit& x, const OffsetEdit& y) { return x.start < y.start; });
+    // Each one wholly before the main edit (ending at its start counts) or
+    // wholly after it, and none overlapping the next.
+    bool ok = true;
+    for (size_t i = 0; i < extra.size() && ok; i++) {
+        const size_t a = extra[i].start, b = a + extra[i].length;
+        if (!(b <= start || a >= end)) ok = false;
+        if (i > 0 && a < extra[i - 1].start + extra[i - 1].length) ok = false;
+    }
+    if (!ok) {
+        extra.clear();
+        out.droppedAdditional = true;
+    }
+    long shift = 0;   // what the edits before the main one add or remove
+    bool placed = false;
+    for (const OffsetEdit& e : extra) {
+        const bool before = e.start + e.length <= start;
+        if (!before && !placed) {
+            out.edits.push_back(OffsetEdit{start, end - start, insert});
+            placed = true;
+        }
+        if (before) shift += (long)e.text.size() - (long)e.length;
+        out.edits.push_back(e);
+    }
+    if (!placed) out.edits.push_back(OffsetEdit{start, end - start, insert});
+    out.caret = (size_t)((long)start + shift) + insert.size();
+    return out;
 }
 
 SignatureHelp parseSignatureHelp(const Json& result) {
@@ -1028,6 +1140,27 @@ const std::string* Client::openText(const std::string& uri) const {
     return it == docs_.end() ? nullptr : &it->second.text;
 }
 
+const Client::Doc* Client::findDoc(const std::string& uri) const {
+    auto it = docs_.find(uri);
+    if (it != docs_.end()) return &it->second;
+    const std::string path = pathFromUri(uri);
+    if (path.empty()) return nullptr;
+    for (const auto& kv : docs_)
+        if (pathFromUri(kv.first) == path) return &kv.second;
+    return nullptr;
+}
+
+const std::string* Client::textFor(const std::string& uri) const {
+    const Doc* d = findDoc(uri);
+    return d ? &d->text : nullptr;
+}
+
+std::vector<std::string> Client::openUris() const {
+    std::vector<std::string> out;
+    for (const auto& kv : docs_) out.push_back(kv.first);
+    return out;
+}
+
 void Client::didOpen(const std::string& uri, const std::string& languageId,
                      const std::string& text) {
     if (state_ == State::ShuttingDown || state_ == State::Exited) return;
@@ -1281,7 +1414,16 @@ void Client::handleMessage(const Json& msg) {
         const Json& params = msg["params"];
         if (method == "textDocument/publishDiagnostics") {
             std::string uri;
-            std::vector<Diagnostic> diags = parseDiagnostics(params, &uri);
+            int version = -1;
+            std::vector<Diagnostic> diags = parseDiagnostics(params, &uri, &version);
+            // Computed on a text the client has since replaced: their
+            // positions would land on the wrong characters, and the server
+            // publishes again for the text it has now.
+            const Doc* doc = findDoc(uri);
+            if (doc && version >= 0 && version < doc->version) {
+                staleDiagnostics_++;
+                return;
+            }
             if (onDiagnostics) onDiagnostics(uri, diags);
         } else if (method == "window/showMessage") {
             if (onShowMessage)

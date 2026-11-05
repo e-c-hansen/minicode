@@ -1507,6 +1507,24 @@ static NSString *StateText(MCLspState state) {
 @implementation MCLspEntry
 @end
 
+// A file open in a tab of this window, open on its language's server so the
+// server sees every tab's unsaved text (rename, references), not only the
+// one on show. Keyed by its canonical URI.
+@interface MCLspDoc : NSObject
+@property(nonatomic, copy) NSString *path;
+@property(nonatomic, strong) MCLspServer *server;
+@end
+@implementation MCLspDoc
+@end
+
+// A document's diagnostics as last published, with the text the server had
+// been sent when it computed them, so they are drawn on the text as it is
+// when they are shown (typed in since, perhaps) rather than as it was.
+struct MCDiagSet {
+    std::vector<Lsp::Diagnostic> list;
+    std::shared_ptr<const std::u16string> base;   // null: not known
+};
+
 // A server that crashes is started again after 1, 2, then 4 seconds; the
 // fourth crash in a row leaves it stopped, so a server that cannot start
 // never spins. Three minutes of running clears the count.
@@ -1523,7 +1541,9 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     NSString *_uri;           // its URI, when a server has it open
     MCLspServer *_server;     // the server for it, or nil
     NSString *_transient;     // a brief message ("No definition found")
-    std::map<std::string, std::vector<Lsp::Diagnostic>> _diags;
+    std::map<std::string, MCDiagSet> _diags;   // by canonical URI
+    NSMutableDictionary<NSString *, MCLspDoc *> *_docs;   // by canonical URI
+    NSUInteger _edits;        // counts edits to the text on show
     NSString *_settingsSignature, *_pythonSetting;
 
     MCCompletionPopup *_popup;
@@ -1564,6 +1584,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     _tv = textView;
     _root = [root copy];
     _entries = [NSMutableDictionary dictionary];
+    _docs = [NSMutableDictionary dictionary];
     _settingsSignature = [self currentSettingsSignature];
     _pythonSetting = NS([AppSettings shared].settings.pythonInterpreter());
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
@@ -1633,7 +1654,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
             int errors = 0, warnings = 0;
             auto it = _uri ? _diags.find(Std(_uri)) : _diags.end();
             if (it != _diags.end())
-                for (const Lsp::Diagnostic &d : it->second) {
+                for (const Lsp::Diagnostic &d : it->second.list) {
                     if (d.severity == Lsp::Severity::Error) errors++;
                     else if (d.severity == Lsp::Severity::Warning) warnings++;
                 }
@@ -1835,7 +1856,9 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     };
     c.onDiagnostics = [weakSelf, weakServer](const std::string &uri,
                                              const std::vector<Lsp::Diagnostic> &list) {
-        if (!weakServer.stopping) [weakSelf diagnosticsArrived:uri list:list];
+        MCLspServer *s = weakServer;
+        if (s && !s.stopping)
+            [weakSelf diagnosticsArrived:uri list:list base:s.client.textFor(uri)];
     };
     // A server that refuses the handshake would otherwise read "starting…"
     // for good while every request is dropped: stop it and say so.
@@ -1912,12 +1935,14 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
         e.generation++;
     }
     if (_server == server) [self detachDocument];
+    [self forgetDocumentsOf:server];
     [server stop];   // its client has already exited, so this just ends its input
     [self changed];
 }
 
 - (void)serverExited:(MCLspServer *)server {
     if (_server == server) [self detachDocument];
+    [self forgetDocumentsOf:server];
     MCLspEntry *e = [self entryOf:server];
     if (!e || server.stopping) { [self changed]; return; }
     // It went on its own: a crash. Start it again a few times, waiting
@@ -1953,6 +1978,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     MCLspServer *s = e.server;
     if (!s) return;
     if (_server == s) [self detachDocument];
+    [self forgetDocumentsOf:s];
     e.server = nil;
     [s stop];
 }
@@ -1960,7 +1986,18 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
 - (void)stopAllServers {
     for (MCLspEntry *e in _entries.allValues) [self stopEntry:e];
     [_entries removeAllObjects];
+    [_docs removeAllObjects];
     _diags.clear();
+}
+
+// A server going away takes its documents with it: nothing to close, and
+// what it said about them no longer holds. A restart opens them again.
+- (void)forgetDocumentsOf:(MCLspServer *)server {
+    for (NSString *uri in _docs.allKeys) {
+        if (_docs[uri].server != server) continue;
+        [_docs removeObjectForKey:uri];
+        _diags.erase(Std(uri));
+    }
 }
 
 - (void)restartServer:(NSString *)key {
@@ -2236,24 +2273,30 @@ static BOOL IsRunnable(NSString *path) {
     _referencesGen++;
     _actionGen++;
     if (!_applyingEdit) _renameGen++;
-    if (_uri) _diags.erase(Std(_uri));
+    // The document stays open on its server while its tab is open (see
+    // syncOpenDocuments), and so do its diagnostics, for when it is back.
     _server = nil;
     _uri = nil;
     _tv.diagnostics = @[];
 }
 
-// Open the current file on its language's server, starting it if need be.
+// Open the current file on its language's server, starting it if need be,
+// and with it every other tab's file that server handles.
 - (void)attachDocument {
-    if (_server || !_path || !_langKey || ![AppSettings shared].settings.lspEnabled()) return;
-    MCLspServer *server = [self ensureServer:_langKey];
-    if (!server) return;
-    _server = server;
-    _uri = NS(Lsp::uriFromPath(Std(RealPath(_path))));
-    server.client.didOpen(Std(_uri), Std(_languageId), Std(_tv.string));
+    if (!_server && _path && _langKey && [AppSettings shared].settings.lspEnabled()) {
+        MCLspServer *server = [self ensureServer:_langKey];
+        if (server) {
+            _server = server;
+            _uri = NS(Lsp::uriFromPath(Std(RealPath(_path))));
+        }
+    }
+    [self syncOpenDocuments];
+    if (_server && _uri) [self paintDiagnostics];
 }
 
+// Leaves the file on its server: the tab is still open. syncOpenDocuments
+// closes it there once its tab goes.
 - (void)closeDocument {
-    if (_server && _uri) _server.client.didClose(Std(_uri));
     [self detachDocument];
     _path = nil;
     _langKey = nil;
@@ -2273,8 +2316,72 @@ static BOOL IsRunnable(NSString *path) {
         // Only a real change reaches the server (same environment: nothing).
         if (wasRunning && [_langKey isEqualToString:@"python"])
             [self applyPythonInterpreterForSwitch:YES];
+    } else {
+        [self syncOpenDocuments];   // a tab that closed or stopped showing text
     }
     [self changed];
+}
+
+- (void)tabsChanged {
+    [self syncOpenDocuments];
+}
+
+// Every tab's file stays open on its language's server, with the tab's text,
+// so rename and references see unsaved changes in tabs not on show, and a
+// cross-file rename's edits (unsaved) are what the server reads, not the
+// disk. The file on show is the text view's; the others come from
+// bufferText. Only servers already running (or starting) for a file on show
+// take files from background tabs: a tab never starts a server unseen.
+// Files whose tabs have gone are closed. Cheap when nothing changed: an
+// unchanged text sends nothing (Client::didChange compares).
+- (void)syncOpenDocuments {
+    NSMutableDictionary<NSString *, MCLspDoc *> *wanted = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSString *, NSString *> *texts = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSString *, NSString *> *languageIds = [NSMutableDictionary dictionary];
+    if ([AppSettings shared].settings.lspEnabled()) {
+        if (_server && _uri) {
+            MCLspDoc *d = [MCLspDoc new];
+            d.path = _path;
+            d.server = _server;
+            wanted[_uri] = d;
+            texts[_uri] = _tv.string;
+            languageIds[_uri] = _languageId;
+        }
+        NSArray<NSString *> *paths = self.openPaths ? self.openPaths() : @[];
+        for (NSString *path in paths) {
+            Lsp::Language lang;
+            if (!Lsp::languageForExtension(Std(path.pathExtension.lowercaseString), lang))
+                continue;
+            MCLspServer *server = _entries[NS(lang.server)].server;
+            if (!server || server.stopping) continue;
+            NSString *uri = NS(Lsp::uriFromPath(Std(RealPath(path))));
+            if (wanted[uri]) continue;   // the file on show
+            NSString *text = self.bufferText ? self.bufferText(path) : nil;
+            if (!text) continue;         // not read yet, or not shown as text
+            MCLspDoc *d = [MCLspDoc new];
+            d.path = path;
+            d.server = server;
+            wanted[uri] = d;
+            texts[uri] = text;
+            languageIds[uri] = NS(lang.languageId);
+        }
+    }
+    // Closed first, so a file that moved to another server is closed on
+    // the old one before the new one opens it.
+    for (NSString *uri in _docs.allKeys) {
+        MCLspDoc *had = _docs[uri];
+        if (wanted[uri].server == had.server) continue;
+        if (!had.server.stopping) had.server.client.didClose(Std(uri));
+        [_docs removeObjectForKey:uri];
+        _diags.erase(Std(uri));
+    }
+    for (NSString *uri in wanted) {
+        MCLspDoc *d = wanted[uri];
+        // didOpen of an open document is a didChange (and nothing at all
+        // when the text is what the server has).
+        d.server.client.didOpen(Std(uri), Std(languageIds[uri]), Std(texts[uri]));
+        _docs[uri] = d;
+    }
 }
 
 - (void)documentSaved {
@@ -2308,6 +2415,7 @@ static BOOL IsRunnable(NSString *path) {
     NSTextStorage *ts = note.object;
     // Typing closes hover info and the lists; recoloring alone does not.
     if (ts.editedMask & NSTextStorageEditedCharacters) {
+        _edits++;
         [self closeHover];
         [self closePicker];
     }
@@ -2419,18 +2527,42 @@ static BOOL IsRunnable(NSString *path) {
     return pa.length && [RealPath(pa) isEqualToString:RealPath(pb)];
 }
 
+// `base` is the text the server had been sent for the file when it
+// published (Client::textFor), or null when it does not have it open.
 - (void)diagnosticsArrived:(const std::string &)uri
-                      list:(const std::vector<Lsp::Diagnostic> &)list {
-    if (![self uri:uri isSameFileAs:_uri]) {
-        _diags[uri] = list;   // another file; shown if it is opened while cached
+                      list:(const std::vector<Lsp::Diagnostic> &)list
+                      base:(const std::string *)base {
+    // A file no tab has open (a server reporting on the whole folder): not
+    // shown anywhere, and opening it brings fresh ones.
+    std::string key = CanonicalURI(uri);
+    if (!base && !_docs[NS(key)]) return;
+    MCDiagSet set;
+    set.list = list;
+    if (base) set.base = std::make_shared<const std::u16string>(Lsp::toUtf16(*base));
+    // Kept for another tab's file too, and drawn when that tab is shown.
+    _diags[key] = std::move(set);
+    if ([self uri:uri isSameFileAs:_uri]) [self paintDiagnostics];
+}
+
+// The file on show's diagnostics, drawn on its text as it is now: those
+// computed on text typed over since are left out until the server
+// publishes for the new text (Lsp::diagnosticSpans).
+- (void)paintDiagnostics {
+    if (!_uri) return;
+    auto it = _diags.find(Std(_uri));
+    if (it == _diags.end()) {
+        _tv.diagnostics = @[];
+        [self updateStatus];
         return;
     }
-    _diags[Std(_uri)] = list;
+    const std::vector<Lsp::Diagnostic> &list = it->second.list;
     std::u16string text = U16Of(_tv.string);
     NSMutableArray *marks = [NSMutableArray array];
-    for (const Lsp::Diagnostic &d : list) {
-        size_t a = Lsp::offsetForPosition(text, d.range.start);
-        size_t b = Lsp::offsetForPosition(text, d.range.end);
+    for (const Lsp::DiagnosticSpan &span :
+         Lsp::diagnosticSpans(it->second.base.get(), text, list)) {
+        const Lsp::Diagnostic &d = list[span.index];
+        size_t a = span.start;
+        size_t b = span.end;
         if (b <= a) {
             // An empty range: mark the word there, or at least one character.
             b = a;
@@ -2635,24 +2767,79 @@ static BOOL IsRunnable(NSString *path) {
     [_popup close];
 }
 
+// How long accepting an item waits for completionItem/resolve to bring its
+// additional edits (an auto-import). Keys pressed meanwhile wait in the
+// event queue and arrive after the completion, in order.
+static const NSTimeInterval kResolveBeforeAccept = 0.4;
+
+// completionItem/resolve for an item about to be accepted, waited for here,
+// at most kResolveBeforeAccept. YES when the item may still be accepted: the
+// server, the file and its text are as they were (the wait runs the main
+// queue, so a server's workspace/applyEdit could have got in).
+- (BOOL)resolveBeforeAccepting:(Lsp::CompletionItem &)item {
+    MCLspServer *server = _server;
+    if (!server || !Lsp::completionWantsResolve(item, server.client.canResolveCompletion()))
+        return YES;
+    struct Answer { bool done = false; Json result; };
+    auto answer = std::make_shared<Answer>();
+    int rid = server.client.resolveCompletion(item, [answer](const Json &r, const Json &e) {
+        answer->done = true;
+        if (e.isNull()) answer->result = r;
+    });
+    if (!rid) return YES;
+    NSString *uri = _uri;
+    const NSUInteger edits = _edits;
+    NSDate *until = [NSDate dateWithTimeIntervalSinceNow:kResolveBeforeAccept];
+    while (!answer->done && until.timeIntervalSinceNow > 0)
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:until];
+    if (!answer->done) {
+        server.client.cancel(rid);   // too slow: the word goes in without it
+        return _server == server && [_uri isEqualToString:uri] && _edits == edits;
+    }
+    Lsp::applyResolved(item, answer->result);
+    return _server == server && [_uri isEqualToString:uri] && _edits == edits;
+}
+
 - (void)acceptCompletion:(NSInteger)row {
     if (row < 0 || (size_t)row >= _shown.size()) { [self closeCompletion]; return; }
     Lsp::CompletionItem item = _shown[(size_t)row];
     NSUInteger cursor = [self cursor];
     NSUInteger start = _anchor;
+    [self closeCompletion];
+    // Answers for the list still on their way must not bring it back.
+    _completionGen++;
+    if (![self resolveBeforeAccepting:item]) return;
+    std::u16string text = U16Of(_tv.string);
     if (item.hasEdit) {
         // The edit's range was computed on the text as it was when asked;
         // everything before the word is unchanged since, so its start holds.
-        size_t editStart = Lsp::offsetForPosition(U16Of(_tv.string), item.editRange.start);
+        size_t editStart = Lsp::offsetForPosition(text, item.editRange.start);
         if (editStart <= cursor) start = editStart;
     }
-    [self closeCompletion];
-    NSString *insert = NS(item.textToInsert());
-    NSRange range = NSMakeRange(start, cursor - start);
-    if (![_tv shouldChangeTextInRange:range replacementString:insert]) return;
-    [_tv.textStorage replaceCharactersInRange:range withString:insert];
+    // The word, and the edits that go with it (an import at the top, an
+    // #include), as one replacement: one undo step, one change for the
+    // highlighter and the server.
+    Lsp::CompletionEdits ce = Lsp::completionEdits(text, start, cursor,
+                                                   Lsp::toUtf16(item.textToInsert()),
+                                                   item.additionalEdits);
+    NSMutableArray<NSValue *> *ranges = [NSMutableArray array];
+    NSMutableArray<NSString *> *strings = [NSMutableArray array];
+    for (const Lsp::OffsetEdit &e : ce.edits) {
+        [ranges addObject:[NSValue valueWithRange:NSMakeRange(e.start, e.length)]];
+        [strings addObject:[NSString stringWithCharacters:(const unichar *)e.text.data()
+                                                   length:e.text.size()]];
+    }
+    [_tv breakUndoCoalescing];
+    if (![_tv shouldChangeTextInRanges:ranges replacementStrings:strings]) return;
+    NSTextStorage *ts = _tv.textStorage;
+    [ts beginEditing];
+    for (NSInteger i = (NSInteger)ranges.count - 1; i >= 0; i--)
+        [ts replaceCharactersInRange:ranges[(NSUInteger)i].rangeValue
+                          withString:strings[(NSUInteger)i]];
+    [ts endEditing];
     [_tv didChangeText];
-    [_tv setSelectedRange:NSMakeRange(start + insert.length, 0)];
+    [_tv breakUndoCoalescing];
+    if (ce.caret <= _tv.string.length) [_tv setSelectedRange:NSMakeRange(ce.caret, 0)];
     [_tv scrollRangeToVisible:_tv.selectedRange];
 }
 
@@ -3072,8 +3259,8 @@ static NSString *ErrorText(const Json &error) {
     return m.empty() ? @"The language server refused" : NS(m);
 }
 
-// The text the server's positions in a file refer to: the editor's for the
-// file on show, a tab's buffer for another open file, else the disk's.
+// The text of a file as the editor has it: the text view's for the file on
+// show, a tab's buffer for another open file, else the disk's.
 - (NSString *)textOfPath:(NSString *)path uri:(const std::string &)uri {
     if ([self uri:uri isSameFileAs:_uri]) return _tv.string;
     NSString *buffer = self.bufferText ? self.bufferText(path) : nil;
@@ -3081,12 +3268,53 @@ static NSString *ErrorText(const Json &error) {
     return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
 }
 
+// The text a server's positions in a file refer to: what it was last sent
+// for the file when a server has it open (every tab's file is), else the
+// disk's.
+- (NSString *)serverTextOfPath:(NSString *)path uri:(const std::string &)uri {
+    for (MCLspEntry *e in _entries.allValues) {
+        const std::string *t = e.server ? e.server.client.textFor(uri) : nullptr;
+        if (t) return NS(*t);
+    }
+    return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+}
+
+- (BOOL)showsPath:(NSString *)path {
+    return _path && [RealPath(path) isEqualToString:RealPath(_path)];
+}
+
+// Show a file an edit is about to change in the editor, opening its tab if
+// need be (and noting a tab it had to make in `opened`). NO, with *why, when
+// it does not show as text to edit, holding `text`.
+- (BOOL)showEditFile:(NSString *)path text:(NSString *)text
+              opened:(NSMutableArray<NSString *> *)opened failure:(NSString **)why {
+    if (![self showsPath:path]) {
+        BOOL hadTab = NO;
+        for (NSString *p in self.openPaths ? self.openPaths() : @[])
+            if ([RealPath(p) isEqualToString:RealPath(path)]) hadTab = YES;
+        if (!self.openFile(path)) {
+            *why = [NSString stringWithFormat:@"Could not open %@", path.lastPathComponent];
+            return NO;
+        }
+        if (!hadTab && ![opened containsObject:path]) [opened addObject:path];
+    }
+    if (!_tv.editable || ![_tv.string isEqualToString:text]) {
+        *why = [NSString stringWithFormat:@"%@ is not open as text to edit",
+                                          path.lastPathComponent];
+        return NO;
+    }
+    return YES;
+}
+
 // Apply a WorkspaceEdit (rename, a quick fix, workspace/applyEdit). Each
 // file's edits go into its buffer as one undo step, through the text view,
 // so highlighting, the dirty mark and didChange follow as for typing. A file
 // not open gets a tab; nothing is saved, so the user reviews and saves.
-// Every file is read first, so an edit that cannot be made changes nothing.
-// Returns how many files changed, or -1 with *failure saying why.
+// All or nothing: every file is read and checked first, then opened in its
+// tab and checked again, and only then edited; a file that cannot be edited
+// after others were puts those back (their undo step undone), and tabs the
+// edit opened close again. Returns how many files changed, or -1 with
+// *failure saying why.
 - (NSInteger)applyWorkspaceEdit:(const Lsp::WorkspaceEdit &)we
                      actionName:(NSString *)name
                         failure:(NSString **)failure {
@@ -3097,6 +3325,7 @@ static NSString *ErrorText(const Json &error) {
     if (we.files.empty()) return 0;
     if (!self.openFile) { *failure = @"No window to edit in"; return -1; }
 
+    // 1. Read and check every file.
     NSMutableArray<NSString *> *paths = [NSMutableArray array], *texts = [NSMutableArray array];
     for (const Lsp::FileEdit &f : we.files) {
         NSString *path = [self treePathForURI:f.uri];
@@ -3105,33 +3334,30 @@ static NSString *ErrorText(const Json &error) {
                                                   f.uri.c_str()];
             return -1;
         }
-        BOOL current = [self uri:f.uri isSameFileAs:_uri];
         NSString *text = [self textOfPath:path uri:f.uri];
         if (!text) {
             *failure = [NSString stringWithFormat:@"Could not read %@", path.lastPathComponent];
             return -1;
         }
-        if (!current) {
-            // The server has only the file on show open, so its positions in
-            // another file are in the text on disk. A tab with unsaved
-            // changes is edited only when every range holds the same text in
-            // both; otherwise the edit would land in the wrong places.
-            NSString *disk = [NSString stringWithContentsOfFile:path
-                                                       encoding:NSUTF8StringEncoding error:nil];
-            if (disk && ![disk isEqualToString:text]) {
-                std::u16string a = U16Of(text), b = U16Of(disk);
-                for (const Lsp::TextEdit &e : f.edits) {
-                    size_t a0 = Lsp::offsetForPosition(a, e.range.start);
-                    size_t a1 = Lsp::offsetForPosition(a, e.range.end);
-                    size_t b0 = Lsp::offsetForPosition(b, e.range.start);
-                    size_t b1 = Lsp::offsetForPosition(b, e.range.end);
-                    if (a.compare(a0, a1 - a0, b, b0, b1 - b0) != 0 ||
-                        Lsp::positionForOffset(a, a0).line != e.range.start.line) {
-                        *failure = [NSString stringWithFormat:
-                            @"%@ has unsaved changes the language server has not seen; "
-                             "save it and try again", path.lastPathComponent];
-                        return -1;
-                    }
+        // The server's positions are in the text it has: a tab's text as
+        // last sent, or the disk's for a file no tab has open. Text that
+        // differs from that (typed since, or a tab the server was never
+        // sent) is edited only when every range holds the same text in
+        // both; otherwise the edit would land in the wrong places.
+        NSString *base = [self serverTextOfPath:path uri:f.uri];
+        if (base && ![base isEqualToString:text]) {
+            std::u16string a = U16Of(text), b = U16Of(base);
+            for (const Lsp::TextEdit &e : f.edits) {
+                size_t a0 = Lsp::offsetForPosition(a, e.range.start);
+                size_t a1 = Lsp::offsetForPosition(a, e.range.end);
+                size_t b0 = Lsp::offsetForPosition(b, e.range.start);
+                size_t b1 = Lsp::offsetForPosition(b, e.range.end);
+                if (a.compare(a0, a1 - a0, b, b0, b1 - b0) != 0 ||
+                    Lsp::positionForOffset(a, a0).line != e.range.start.line) {
+                    *failure = [NSString stringWithFormat:
+                        @"%@ has changes the language server has not seen; "
+                         "save it and try again", path.lastPathComponent];
+                    return -1;
                 }
             }
         }
@@ -3140,49 +3366,89 @@ static NSString *ErrorText(const Json &error) {
     }
 
     NSString *home = _path;
+    NSMutableArray<NSString *> *opened = [NSMutableArray array];   // tabs this edit made
+    NSMutableArray<NSNumber *> *applied = [NSMutableArray array];
     NSInteger changed = 0;
+    NSString *why = nil;
     _applyingEdit = YES;
-    for (NSUInteger i = 0; i < paths.count; i++) {
-        NSString *path = paths[i];
-        BOOL current = _path && [RealPath(path) isEqualToString:RealPath(_path)];
-        if (!current && !self.openFile(path)) {
-            *failure = [NSString stringWithFormat:@"Could not open %@", path.lastPathComponent];
-            break;
-        }
-        if (!_tv.editable || ![_tv.string isEqualToString:texts[i]]) {
-            *failure = [NSString stringWithFormat:@"%@ is not open as text to edit",
-                                                  path.lastPathComponent];
-            break;
-        }
+
+    // 2. Open every file in its tab, before anything is edited.
+    BOOL ok = YES;
+    for (NSUInteger i = 0; i < paths.count && ok; i++)
+        ok = [self showEditFile:paths[i] text:texts[i] opened:opened failure:&why];
+
+    // 3. Edit them, each in one multi-range replacement: one undo step, and
+    // the text view takes all of it or none.
+    for (NSUInteger i = 0; i < paths.count && ok; i++) {
+        ok = [self showEditFile:paths[i] text:texts[i] opened:opened failure:&why];
+        if (!ok) break;
         std::vector<Lsp::OffsetEdit> edits = Lsp::offsetEdits(U16Of(_tv.string), we.files[i].edits);
+        NSMutableArray<NSValue *> *ranges = [NSMutableArray array];
+        NSMutableArray<NSString *> *strings = [NSMutableArray array];
+        for (auto e = edits.rbegin(); e != edits.rend(); ++e) {   // ascending
+            [ranges addObject:[NSValue valueWithRange:NSMakeRange(e->start, e->length)]];
+            [strings addObject:[NSString stringWithCharacters:(const unichar *)e->text.data()
+                                                       length:e->text.size()]];
+        }
         NSRange sel = _tv.selectedRange;
         NSUndoManager *um = _tv.undoManager;
         [_tv breakUndoCoalescing];
         [um beginUndoGrouping];
-        for (const Lsp::OffsetEdit &e : edits) {   // last first
-            NSRange r = NSMakeRange(e.start, e.length);
-            NSString *text = [NSString stringWithCharacters:(const unichar *)e.text.data()
-                                                     length:e.text.size()];
-            if (![_tv shouldChangeTextInRange:r replacementString:text]) continue;
-            [_tv.textStorage replaceCharactersInRange:r withString:text];
+        BOOL may = [_tv shouldChangeTextInRanges:ranges replacementStrings:strings];
+        if (may) {
+            NSTextStorage *ts = _tv.textStorage;
+            [ts beginEditing];
+            for (NSInteger k = (NSInteger)ranges.count - 1; k >= 0; k--)
+                [ts replaceCharactersInRange:ranges[(NSUInteger)k].rangeValue
+                                  withString:strings[(NSUInteger)k]];
+            [ts endEditing];
             [_tv didChangeText];
             // The caret keeps its place in the text around it.
-            NSUInteger at = sel.location;
-            if (at >= NSMaxRange(r)) at = at - r.length + text.length;
-            else if (at > r.location) at = r.location + MIN(at - r.location, text.length);
-            sel = NSMakeRange(at, 0);
+            for (const Lsp::OffsetEdit &e : edits) {   // last first
+                NSUInteger at = sel.location, end = e.start + e.length;
+                if (at >= end) at = at - e.length + e.text.size();
+                else if (at > e.start) at = e.start + MIN(at - e.start, e.text.size());
+                sel = NSMakeRange(at, 0);
+            }
         }
         [um setActionName:name ?: @"Edit"];
         [um endUndoGrouping];
         [_tv breakUndoCoalescing];
+        if (!may) {
+            why = [NSString stringWithFormat:@"%@ could not be edited",
+                                             paths[i].lastPathComponent];
+            ok = NO;
+            break;
+        }
         if (NSMaxRange(sel) <= _tv.string.length) [_tv setSelectedRange:sel];
+        [applied addObject:@(i)];
         changed++;
     }
+
+    // 4. A failure part way: the files already edited go back as they were.
+    if (!ok) {
+        for (NSNumber *n in applied.reverseObjectEnumerator) {
+            NSUInteger i = n.unsignedIntegerValue;
+            if (![self showsPath:paths[i]] && !self.openFile(paths[i])) continue;
+            // Exactly the group this edit made, even inside the event's own
+            // group, which is still open while this runs.
+            NSUndoManager *um = _tv.undoManager;
+            if (um.canUndo) [um undoNestedGroup];
+            if (![_tv.string isEqualToString:texts[i]])
+                NSLog(@"MiniCode: could not put %@ back after a failed edit", paths[i]);
+        }
+        changed = 0;
+    }
     // Back to the file the edit was asked from.
-    if (home && !(_path && [RealPath(home) isEqualToString:RealPath(_path)])) self.openFile(home);
+    if (home && ![self showsPath:home]) self.openFile(home);
+    if (!ok && self.closeFile)
+        for (NSString *p in opened)
+            if (![self showsPath:p]) self.closeFile(p);
     _applyingEdit = NO;
     [self flushChanges];
-    return *failure ? -1 : changed;
+    [self syncOpenDocuments];
+    if (!ok) *failure = why ?: @"The edit could not be made";
+    return ok ? changed : -1;
 }
 
 // ---- rename
@@ -3272,7 +3538,9 @@ static NSString *ErrorText(const Json &error) {
         return;
     NSString *old = [_tv.string substringWithRange:_renameRange];
     if ([name isEqualToString:old]) return;
+    // Every tab's text as it is, so uses in unsaved tabs are renamed too.
     [self flushChanges];
+    [self syncOpenDocuments];
     __weak LspSession *weakSelf = self;
     NSString *uri = _uri;
     MCLspServer *server = _server;
@@ -3318,6 +3586,7 @@ static NSString *ErrorText(const Json &error) {
         return;
     [self closeTransients];
     [self flushChanges];
+    [self syncOpenDocuments];
     int gen = ++_referencesGen;
     _askedSelection = _tv.selectedRange;
     __weak LspSession *weakSelf = self;
@@ -3489,12 +3758,13 @@ static NSFont *PickerMono(void) {
     Lsp::Range range{Lsp::positionForOffset(text, sel.location),
                      Lsp::positionForOffset(text, NSMaxRange(sel))};
     auto it = _diags.find(Std(_uri));
-    Json diags = it != _diags.end() ? Lsp::diagnosticsInRange(it->second, range) : Json::array();
+    Json diags = it != _diags.end() ? Lsp::diagnosticsInRange(it->second.list, range)
+                                    : Json::array();
     // A caret on a line with a problem that is not under it (clang reports
     // a missing ';' at the next token): the line's problems, at the first.
     if (diags.size() == 0 && sel.length == 0 && it != _diags.end()) {
         Lsp::Range line{{range.start.line, 0}, {range.start.line, INT_MAX}};
-        Json onLine = Lsp::diagnosticsInRange(it->second, line);
+        Json onLine = Lsp::diagnosticsInRange(it->second.list, line);
         if (onLine.size() > 0) {
             diags = onLine;
             range = Lsp::parseRange(onLine[0]["range"]);
