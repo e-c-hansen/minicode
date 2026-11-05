@@ -30,6 +30,8 @@ Return indents the way the language expects. In Python a line ending in a colon 
 
 F9 sorts the selected lines. Lines between a `keep-sorted start` and a `keep-sorted end` comment, as used by Google's [keep-sorted](https://github.com/google/keep-sorted), are sorted the way that tool sorts them, its options included: F9 with the cursor inside such a block sorts it, Shift F9 sorts every block in the file, and editor.keep-sorted-on-save = true in the settings sorts them all whenever the file is saved. A start without an end leaves the file alone and the status bar says which line it is on.
 
+On the Mac, Command F opens a find bar at the top right of the editor, as in VS Code. It finds as you type, highlights every match, and says which one you are on ("3 of 17"). Return and Shift Return, or Command G and Shift Command G, go to the next and previous one, and Escape closes it. The three buttons beside the query, or Option Command C, W and R, match case, match whole words only, and read the query as a regular expression in JavaScript's syntax, which VS Code uses too. Option Command F adds a second field for the replacement, where $1, $2 and so on stand for a regular expression's groups. Return there replaces the selected match and moves on, and Option Command Return replaces them all in one undo step. Command E takes the selected text as the query. Shift Command F searches the whole folder with the same three options, and Option Shift Command F does so with a replacement: Replace All counts the matches first and asks ("Replace 42 matches in 7 files?"), and a result's right click menu replaces only that match or only that file. A file open in a tab is changed there, unsaved and undoable, as rename changes it; other files are written to disk whole, so nothing is left half written; and a file whose tab has unsaved changes is left alone and named.
+
 On the Mac the editor has VS Code's keys for several cursors. Command D selects the word at the cursor, and each press after that adds the next place the word occurs as a whole word, going round to the top of the file at the end; with text already selected, it adds the next place that text occurs. Shift Command L selects every place at once, and Option Command Down and Up add a cursor on the line below or above. Typing, Backspace, Paste, and the arrow keys then work at every cursor, each edit one step to undo, and Escape goes back to one. A thin line down the editor at column 100 shows where lines get long: editor.ruler in the settings moves it, adds more (80,120), or turns it off, and editor.ruler-color sets its color.
 
 Markdown task lists make a TODO list, written the way GitHub, Obsidian, and VS Code read them: `- [ ] buy milk` is a task still to do and `- [x] buy milk` one that is done. In the preview each task has a box you click (or tap, on Android) to tick or clear it. The file then has unsaved changes, as after any edit made in the preview, until you save it. Done tasks are greyed out and struck through (markdown.done in the settings sets their color), and the title bar says how many of the file's tasks are done. In the source, Command L (Ctrl L on Linux) turns the line, or every selected line, into a task, ticks it if it already is one, and clears it if it was ticked. A line written as `[ ] buy milk`, without the dash, is not a task to GitHub or to minicode and shows as plain text, so select such lines and press Command L once: each gets its dash and keeps its box. Return at the end of a list item starts the next item, with an empty box after a task and the next number after a numbered one, and Return on an empty item ends the list. Shift Command D (Ctrl Shift L on Linux, the leader key and then W on Android) lists every TODO, FIXME, HACK, XXX, and BUG comment in the folder, along with the open tasks in its Markdown files, and opens the one you pick at its line.
@@ -267,7 +269,8 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Export the typeset PDF of a LaTeX file | Shift Command S | Ctrl Shift S |  |
 | Find across the whole folder | Shift Command F | Ctrl Shift F |  |
 | Find every reference to the name at the cursor, with a language server | Shift F12 |  |  |
-| Find in the current file | Command F | Ctrl F |  |
+| Find in the current file, every match highlighted, Return and Shift Return for the next and previous one | Command F | Ctrl F |  |
+| Find with match case, whole word, or a regular expression, in the find bar or Find in Folder | Option Command C, Option Command W, Option Command R |  |  |
 | Find in the terminal, its scrollback included (Return and Shift Return for the next and previous match, Escape to close) | Command F, then Command G, Shift Command G |  |  |
 | Find next, find previous | Command G, Shift Command G | Ctrl G or F3, Shift F3 |  |
 | Focus the browser's address bar, opening the browser if it is hidden | Command 3 |  |  |
@@ -304,6 +307,8 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Refresh the file tree | Command R |  |  |
 | Rename the name at the cursor wherever it is used, with a language server | F2 |  |  |
 | Rename the selected file or folder | F2, in the file tree | F2, in the file tree |  |
+| Replace across the whole folder, after a count of what will change | Option Shift Command F |  |  |
+| Replace in the current file: the selected match and on to the next, or every match | Option Command F, then Return (or Shift Command 1) for one, Option Command Return for all |  |  |
 | Request a change to minicode itself, made by Claude Code in a terminal | Shift Command K |  |  |
 | Restart minicode, keeping its windows, tabs, unsaved changes and browser pages | The ↻ in the status bar, or Restart minicode in the minicode menu |  |  |
 | Run the open file in the terminal | Shift Command Return |  |  |
@@ -330,6 +335,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Toggle the source control panel in place of the file tree | Control Shift G | Ctrl Shift G | V, or Ctrl Shift G |
 | Toggle the terminal | Shift Command T, Command J, or Control backtick | Ctrl Shift T, or Ctrl backtick | T, or Ctrl T |
 | Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z | U, R, or Ctrl Z, Ctrl Shift Z (Ctrl U, Ctrl R also work) |
+| Use the selected text as what to find | Command E |  |  |
 | Wrap the selected text in brackets or quotes, at every cursor | Type ( [ { " ' or a backtick with text selected |  |  |
 | Zoom a PDF or the LaTeX preview in or out |  | Ctrl plus (or Ctrl equals), Ctrl minus, Ctrl with the scroll wheel, or a pinch on the touchpad |  |
 | Zoom a PDF or the LaTeX preview back to the width of the pane |  | Ctrl Alt 0 |  |
