@@ -31,13 +31,56 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/AutoIndent.cpp src/KeepSorted.cpp src/FileDetails.cpp \
             src/ChangeRequest.cpp src/MultiCaret.cpp
 
-.PHONY: all app run test dmg clean demos membench
+# Each source file compiles to its own object in build/obj (build/test-obj for
+# the tests), with a dependency file listing the headers it read, so touching
+# one file rebuilds that file and relinks. A change to the compiler or the
+# flags rebuilds everything (build/obj/flags.txt keeps the last command).
+OBJDIR   := build/obj
+OBJ      := $(patsubst src/%,$(OBJDIR)/%.o,$(SRC))
+TESTDIR  := build/test-obj
+TESTFLAGS := -std=c++17 -Wall -Wextra -Isrc -pthread
+TEST_OBJ := $(TESTDIR)/run_tests.cpp.o $(patsubst src/%,$(TESTDIR)/%.o,$(CORE_SRC))
+
+# Parallel by default, one job per core: GNU make 3.81 (the Mac's) cannot tell
+# a makefile whether -j was given, so `make JOBS=1` is the way to build one
+# file at a time. Only the top-level make sets it (a sub-make shares its
+# parent's jobs), and never alongside `clean`, which must finish first.
+JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+ifeq ($(MAKELEVEL),0)
+  ifeq ($(filter clean,$(MAKECMDGOALS)),)
+    MAKEFLAGS += -j$(JOBS)
+  endif
+endif
+
+# The command each object was built with, rewritten only when it changes, so
+# objects depend on the compiler and the flags. Skipped for a bare `make clean`.
+APPCMD    := $(CXX) $(CXXFLAGS)
+TESTCMD   := $(CXX) $(TESTFLAGS)
+ifneq ($(if $(MAKECMDGOALS),$(filter-out clean,$(MAKECMDGOALS)),all),)
+  $(shell mkdir -p $(OBJDIR) && printf '%s\n' '$(APPCMD)' | cmp -s - $(OBJDIR)/flags.txt || \
+          printf '%s\n' '$(APPCMD)' > $(OBJDIR)/flags.txt)
+  $(shell mkdir -p $(TESTDIR) && printf '%s\n' '$(TESTCMD)' | cmp -s - $(TESTDIR)/flags.txt || \
+          printf '%s\n' '$(TESTCMD)' > $(TESTDIR)/flags.txt)
+endif
+
+.PHONY: all app run test dmg dist-zip clean demos membench icon
 
 all: app
 
-$(BIN): $(SRC)
-	@mkdir -p build
-	$(CXX) $(CXXFLAGS) $(SRC) $(LDFLAGS) -o $(BIN)
+$(BIN): $(OBJ)
+	$(CXX) $(CXXFLAGS) $(OBJ) $(LDFLAGS) -o $(BIN)
+
+# After a `make clean` in the same run the folders and flags.txt are gone.
+$(OBJDIR)/flags.txt:
+	@mkdir -p $(@D) && printf '%s\n' '$(APPCMD)' > $@
+
+$(OBJDIR)/%.mm.o: src/%.mm $(OBJDIR)/flags.txt
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
+
+$(OBJDIR)/%.cpp.o: src/%.cpp $(OBJDIR)/flags.txt
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
 # Assemble a minimal .app bundle so Cocoa treats it as a real GUI app.
 app: $(BIN)
@@ -61,11 +104,22 @@ run: app
 
 # Unit-test the pure-C++ core (syntax highlighter, markdown parser, terminal
 # output stream).
-test:
-	@mkdir -p build
-	$(CXX) -std=c++17 -Wall -Wextra -Isrc tests/run_tests.cpp $(CORE_SRC) \
-		-pthread -o build/run_tests
+test: build/run_tests
 	@./build/run_tests
+
+build/run_tests: $(TEST_OBJ)
+	$(CXX) $(TESTFLAGS) $(TEST_OBJ) -o $@
+
+$(TESTDIR)/flags.txt:
+	@mkdir -p $(@D) && printf '%s\n' '$(TESTCMD)' > $@
+
+$(TESTDIR)/run_tests.cpp.o: tests/run_tests.cpp $(TESTDIR)/flags.txt
+	@mkdir -p $(@D)
+	$(CXX) $(TESTFLAGS) -MMD -MP -c $< -o $@
+
+$(TESTDIR)/%.cpp.o: src/%.cpp $(TESTDIR)/flags.txt
+	@mkdir -p $(@D)
+	$(CXX) $(TESTFLAGS) -MMD -MP -c $< -o $@
 
 # Regenerate the app icon (resources/AppIcon.icns) from tools/makeicon.m.
 icon:
@@ -94,8 +148,9 @@ build/makegif: tools/makegif.m
 demos: app build/makegif
 	POSTERS=$(POSTERS) ./scripts/demos.sh $(SCENES)
 
-# Package the app into a distributable (unsigned) disk image.
-dmg:
+# Package the app into a distributable (unsigned) disk image. The script runs
+# `make app` too, which finds the binary up to date.
+dmg: app
 	./scripts/make-dmg.sh
 
 # Zip the app for a GitHub Release (preserves the bundle correctly).
@@ -115,3 +170,5 @@ build/procmem: tools/procmem.c
 
 membench: app build/procmem
 	./scripts/membench.sh
+
+-include $(OBJ:.o=.d) $(TEST_OBJ:.o=.d)
