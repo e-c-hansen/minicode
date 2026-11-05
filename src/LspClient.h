@@ -115,6 +115,9 @@ struct CodeAction {
     Json command;   // a Command ({title, command, arguments}), or null
     std::string disabledReason;   // the server offers it but says why not
     std::shared_ptr<const Json> raw;   // as sent, for codeAction/resolve
+    // Which of a file's servers offered it, as mergeCodeActions numbers
+    // them (the caller's order); -1 when it came from one server alone.
+    int origin = -1;
     bool hasEdit() const { return edit.isObject(); }
     bool hasCommand() const { return command.isObject() && command["command"].isString(); }
 };
@@ -127,6 +130,22 @@ std::vector<CodeAction> parseCodeActions(const Json& result, bool canResolve = f
 // it sits in or at either end of), as the server sent them, for a
 // codeAction request's context.
 Json diagnosticsInRange(const std::vector<Diagnostic>& diags, Range range);
+// Code actions from several servers for one place, as one list. Each
+// server's list is as parseCodeActions gave it, and `origin` is set to the
+// server's index in `perServer`. Then, keeping the servers' order within
+// each: the preferred ones, quick fixes, refactorings, other actions, and
+// last the source actions that act on the whole file (Fix all, Organize
+// imports). An action with the same title and kind as one already taken
+// (two servers offering one fix) is left out.
+std::vector<CodeAction> mergeCodeActions(const std::vector<std::vector<CodeAction>>& perServer);
+// Does a code action kind fall under `kind` ("source.organizeImports.ruff"
+// under "source.organizeImports"; "" is under nothing)?
+bool kindUnder(const std::string& actionKind, const std::string& kind);
+// Organize Imports: which of a file's code actions to run, or -1. Only
+// source.organizeImports and its sub-kinds count. A sub-kind
+// (source.organizeImports.ruff) is a tool's own and comes before the bare
+// kind a general server offers; then the list's order.
+int pickOrganizeImports(const std::vector<CodeAction>& actions);
 
 struct CompletionItem {
     std::string label, detail, insertText, filterText, sortText;
@@ -228,6 +247,71 @@ std::string serverDisplayName(const std::string& server);
 // a backslash outside single quotes escapes the next character.
 std::vector<std::string> splitCommand(const std::string& command);
 
+// ------------------------------------------------- a second server per language
+// A language can have a second server beside its main one: lsp.<server>.also
+// in the settings, whose entry key is "<server>.also". The main one answers
+// what only one server can (completion, hover, signature help, definition,
+// references, rename); every one of them publishes diagnostics and is asked
+// for code actions.
+std::string alsoKey(const std::string& server);          // "python" -> "python.also"
+bool isAlsoKey(const std::string& key);
+std::string languageOfKey(const std::string& key);      // "python.also" -> "python"
+// The second server's command when the settings name none: Ruff's own
+// server for Python in a project that configures Ruff (ruff.toml,
+// .ruff.toml or a [tool.ruff] table, which Formatter::configFile finds);
+// "" otherwise. Only run when the program is found: it is never offered
+// for installing unasked.
+std::string defaultAlsoCommand(const std::string& server, bool projectConfiguresRuff);
+// The status bar's name for a server program ("ruff", "clangd"),
+// "-langserver" left off.
+std::string programDisplayName(const std::string& program);
+
+// What a request is about, to choose which of a file's servers gets it.
+enum class Feature {
+    Completion, SignatureHelp, Hover, Definition, References, Rename, CodeActions
+};
+// Does a server whose `initialize` answered with these capabilities offer it?
+bool offers(const Json& capabilities, Feature f);
+struct ServerView {
+    bool main = false;    // the language's main server (lsp.<server>)
+    bool ready = false;   // has answered `initialize`
+    const Json* capabilities = nullptr;
+};
+// Which of a file's servers answers a one-server request, or -1: the main
+// one while it starts (its requests wait for it) or when it offers the
+// feature, else the first other that is ready and offers it.
+int routeRequest(Feature f, const std::vector<ServerView>& servers);
+// The servers asked for code actions: every one that offers them, or is
+// still starting (main or not; its answer is waited for).
+std::vector<int> serversOffering(Feature f, const std::vector<ServerView>& servers);
+
+// The status bar for a file's servers. States are LSP's view of a server
+// entry (MCLspState in Lsp.h has the same values in the same order).
+enum class ServerState {
+    Idle, Starting, Running, NotInstalled, Off, Stopped, Failed, Restarting, Crashed
+};
+struct ServerStatus {
+    std::string name;        // "basedpyright", or "" when none was found
+    ServerState state = ServerState::Idle;
+    bool main = false;
+};
+enum class StatusDot { None, Gray, Green, Yellow, Red };
+struct StatusLine {
+    std::string text;
+    StatusDot dot = StatusDot::None;
+};
+// `language` names the language ("Python"); `servers` are its main server
+// then its others; the counts are every server's problems in the file.
+// The running servers share one part ("basedpyright + ruff: 2 errors" or
+// "...: no problems"), at the place of the first; each other server says
+// its own state ("ruff failed to start"), joined by " · ". A main server
+// that is missing reads "Install a Python language server…" (the click
+// shows how); a second server that is off or idle says nothing. The dot is
+// red when any has failed or crashed, else yellow while one starts, else
+// green when one runs, else gray.
+StatusLine statusLine(const std::string& language, const std::vector<ServerStatus>& servers,
+                      int errors, int warnings);
+
 // ------------------------------------------------------------ result parsing
 // `version`, when given, is the document version the diagnostics were
 // computed for, or -1 when the server left it out.
@@ -246,6 +330,49 @@ struct DiagnosticSpan {
 std::vector<DiagnosticSpan> diagnosticSpans(const std::u16string* base,
                                             const std::u16string& current,
                                             const std::vector<Diagnostic>& diags);
+
+// What several servers have published, kept per file and per server, so
+// one server publishing for a file never replaces another's list (Ruff's
+// and basedpyright's both stand). `server` is any id unique among the
+// servers.
+class DiagnosticStore {
+public:
+    struct Set {
+        std::string server;
+        std::vector<Diagnostic> list;
+        // The text the server had been sent when it computed them, or null.
+        std::shared_ptr<const std::u16string> base;
+    };
+    // A server's list for a file replaces its last one; an empty list
+    // removes it. Diagnostics that came without a source get `sourceName`,
+    // so each says which server it is from. Returns whether anything changed.
+    bool publish(const std::string& uri, const std::string& server,
+                 std::vector<Diagnostic> list, std::shared_ptr<const std::u16string> base,
+                 const std::string& sourceName = "");
+    bool erase(const std::string& uri, const std::string& server);
+    bool eraseServer(const std::string& server);
+    void clear() { files_.clear(); }
+    bool empty() const { return files_.empty(); }
+    bool has(const std::string& uri) const { return files_.count(uri) != 0; }
+    // A file's sets, in the order their servers first published for it.
+    std::vector<const Set*> forUri(const std::string& uri) const;
+    // A file's sets from one server only (0 or 1 of them).
+    const Set* find(const std::string& uri, const std::string& server) const;
+    std::vector<std::string> uris() const;
+    // Every server's diagnostics for a file, in one list.
+    std::vector<Diagnostic> merged(const std::string& uri) const;
+
+private:
+    std::map<std::string, std::vector<Set>> files_;
+};
+// diagnosticSpans over each of a file's sets, each against its own base,
+// as one list in order of where they start. `diag` points into the sets.
+struct MergedSpan {
+    size_t start = 0, end = 0;
+    const Diagnostic* diag = nullptr;
+};
+std::vector<MergedSpan> mergedDiagnosticSpans(const std::vector<const DiagnosticStore::Set*>& sets,
+                                              const std::u16string& current);
 
 // ------------------------------------------------------------ the Problems list
 // One diagnostic as the Problems list shows it: the file (a path), where it
@@ -456,7 +583,9 @@ public:
                ResultHandler h);
     // textDocument/codeAction for a range, with the diagnostics there (from
     // diagnosticsInRange) in its context.
-    int codeActions(const std::string& uri, Range range, Json diagnostics, ResultHandler h);
+    // `only` limits the kinds asked for (["source.organizeImports"]).
+    int codeActions(const std::string& uri, Range range, Json diagnostics, ResultHandler h,
+                    const std::vector<std::string>& only = {});
     // codeAction/resolve for an action from parseCodeActions; 0 (and no
     // request) when the server does not resolve or the action has no raw form.
     int resolveCodeAction(const CodeAction& action, ResultHandler h);
@@ -489,6 +618,7 @@ public:
     bool hasReferences() const;
     bool hasCodeActions() const;
     bool canResolveCodeAction() const;
+    bool offers(Feature f) const { return Lsp::offers(capabilities_, f); }
     std::string serverName() const { return serverName_; }
 
     // Callbacks.

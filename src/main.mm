@@ -108,7 +108,9 @@ static BOOL MCIsCommandPeriod(NSEvent *e) {
             [e.window.firstResponder keyDown:e];
             return nil;
         }
-        BOOL formatKey = opt && shift && !cmd && !ctrl && [ch isEqualToString:@"f"];
+        // Shift+Option+O (Organize Imports) the same way.
+        BOOL formatKey = opt && shift && !cmd && !ctrl &&
+                         ([ch isEqualToString:@"f"] || [ch isEqualToString:@"o"]);
         BOOL sortKey = e.keyCode == 101 /* kVK_F9 */ && !cmd && !ctrl && !opt;
         // F2 and Shift+F12 likewise (Rename Symbol, Find All References),
         // and F8 and Shift+F8 (Next and Previous Problem).
@@ -493,6 +495,7 @@ static BOOL MCEditorOnlyAction(SEL a) {
            a == @selector(triggerCompletion:) || a == @selector(goToDefinition:) ||
            a == @selector(showHoverInfo:) || a == @selector(renameSymbol:) ||
            a == @selector(findReferences:) || a == @selector(showQuickFixes:) ||
+           a == @selector(organizeImports:) ||
            a == @selector(nextProblem:) || a == @selector(previousProblem:);
 }
 // The File menu's tab commands and the tree's Sort By items, which the
@@ -678,6 +681,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)renameSymbol:(id)sender    { [[self current] renameSymbol:sender]; }
 - (void)findReferences:(id)sender  { [[self current] findReferences:sender]; }
 - (void)showQuickFixes:(id)sender  { [[self current] showQuickFixes:sender]; }
+- (void)organizeImports:(id)sender { [[self current] organizeImports:sender]; }
 - (void)nextProblem:(id)sender     { [[self current] nextProblem:sender]; }
 - (void)previousProblem:(id)sender { [[self current] previousProblem:sender]; }
 - (void)toggleProblems:(id)sender  { [[self current] toggleProblems:sender]; }
@@ -942,6 +946,14 @@ static void BuildMenu(void) {
     [editMenu addItem:renameSymbol];
     [editMenu addItemWithTitle:@"Quick Fix…"
                         action:@selector(showQuickFixes:) keyEquivalent:@"."];
+    // VS Code's key. Like Format Document it has no Command, so it is also
+    // a character (Ø on a US keyboard), which the key monitor above lets it
+    // type outside the editor.
+    NSMenuItem *organize = [[NSMenuItem alloc] initWithTitle:@"Organize Imports"
+                                                      action:@selector(organizeImports:)
+                                               keyEquivalent:@"o"];
+    organize.keyEquivalentModifierMask = NSEventModifierFlagOption | NSEventModifierFlagShift;
+    [editMenu addItem:organize];
     [editMenu addItem:[NSMenuItem separatorItem]];
 
     // Find bar (handled by NSTextView via performTextFinderAction:; the tag is

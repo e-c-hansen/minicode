@@ -29,14 +29,15 @@ struct Tool {
 };
 
 // The server MiniCode recommends for a language server key ("python",
-// "cpp", "go", "rust", "typescript"), or nullptr.
+// "cpp", "go", "rust", "typescript"), or for a second server's key
+// ("python.also": Ruff's), or nullptr.
 const Tool* server(const std::string& key);
 // A formatter by program name or path ("pyink", "/x/bin/clang-format"),
 // or nullptr for one MiniCode does not know.
 const Tool* formatter(const std::string& program);
 // Every tool, the servers first, then the formatters.
 std::vector<const Tool*> all();
-// The server keys `server` knows, in the README's order.
+// The main server keys `server` knows, in the README's order.
 const std::vector<std::string>& serverKeys();
 
 // How to get a program that a way needs. `command` is "" when there is no

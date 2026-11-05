@@ -237,6 +237,9 @@ public:
     bool lspEnabled() const { return lspEnabled_; }
     std::string lspCommand(const std::string& server) const;
     // lsp.<server> = off (or none, false): leave that language alone.
+    // lsp.<server>.also is a second server beside the main one, read the
+    // same way with "<server>.also" ("" for unset or auto: the built-in
+    // rule, Lsp::defaultAlsoCommand).
     bool lspOff(const std::string& server) const;
     static const std::vector<std::string>& lspServers();
     // python.interpreter: the Python the Python language server analyses

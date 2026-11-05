@@ -855,10 +855,20 @@ bool Settings::apply(const std::string& key, const std::string& value,
     }
     if (key.rfind("lsp.", 0) == 0) {
         std::string server = key.substr(4);
+        // lsp.<server>.also: a second server beside the language's main one.
+        // auto is the built-in rule, as if the line were not there.
+        const bool also = server.size() > 5 &&
+                          server.compare(server.size() - 5, 5, ".also") == 0;
+        const std::string language = also ? server.substr(0, server.size() - 5) : server;
         for (const std::string& known : lspServers())
-            if (server == known) { lspCommands_[server] = value; return true; }
+            if (language == known) {
+                if (also && lower(value) == "auto") lspCommands_.erase(server);
+                else lspCommands_[server] = value;
+                return true;
+            }
         error = "unknown setting '" + key + "' (language servers are lsp.cpp, "
-                "lsp.python, lsp.go, lsp.rust and lsp.typescript)";
+                "lsp.python, lsp.go, lsp.rust and lsp.typescript, and a second one "
+                "beside each is lsp.python.also and so on)";
         return false;
     }
 
@@ -1182,6 +1192,14 @@ const char* Settings::defaultFileText() {
 # lsp.go = gopls
 # lsp.rust = rust-analyzer
 # lsp.typescript = typescript-language-server --stdio
+# A second server can run beside a language's main one, for its problems
+# and quick fixes: lsp.<language>.also, a command like the ones above, or
+# off. The main server still answers completion, hover, definitions,
+# references and rename. For Python it is Ruff's own server (ruff server)
+# when ruff is installed and the project configures Ruff, in a ruff.toml, a
+# .ruff.toml or a [tool.ruff] table in pyproject.toml; auto keeps that rule.
+# Organize Imports (Shift+Option+O) asks every server of the file.
+# lsp.python.also = auto
 
 # Run File (Shift+Cmd+Return) types a command for the open file into the
 # terminal, as if you had typed it (macOS only for now). A terminal busy with

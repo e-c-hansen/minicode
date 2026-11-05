@@ -68,6 +68,14 @@ struct Plan {
 Plan plan(const std::string& lang, const std::string& setting,
           const std::string& path, const std::string& root, const Fs& fs);
 
+// The nearest project file that configures a tool (by its program name,
+// "ruff"), looked for as plan looks: from the file's folder upwards, up to
+// `root` or a folder holding .git. Unlike plan, any folder's counts, whatever
+// a nearer one configures for other tools: Ruff's linter runs beside
+// whichever formatter the project chose. "" when none does.
+std::string configFile(const std::string& program, const std::string& path,
+                       const std::string& root, const Fs& fs);
+
 // Folders that may hold a project's own Python tools, nearest first:
 // .venv/bin and venv/bin in the file's folder and each one above it up to
 // `root` (only the file's own folder when it is outside `root`), then

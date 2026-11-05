@@ -358,6 +358,20 @@ static std::vector<std::string> toolFolders(const std::string& path, const std::
     return dirs;
 }
 
+std::string configFile(const std::string& program, const std::string& path,
+                       const std::string& root, const Fs& fs) {
+    for (const std::string& dir : searchDirs(path, root, fs))
+        for (const Language& l : table())
+            for (const Tool& t : l.tools) {
+                if (program != t.program) continue;
+                for (const Marker& m : t.markers) {
+                    std::string file;
+                    if (markerMatches(m, dir, fs, file)) return file;
+                }
+            }
+    return "";
+}
+
 std::vector<std::string> venvBinDirs(const std::string& path, const std::string& root,
                                      const std::string& virtualEnv) {
     std::vector<std::string> out;

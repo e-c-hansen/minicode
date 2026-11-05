@@ -3680,7 +3680,7 @@ void testSettings() {
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
     // format, python, keep-sorted, auto-save, ruler, terminal and develop keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 67);
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 68);
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -9373,6 +9373,7 @@ static void testMultiCaretOccurrences() {
 }
 #include "backups_tests.inc"
 #include "agent_tests.inc"
+#include "lsp_also_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9426,6 +9427,7 @@ int main() {
     testMultiCaretOccurrences();
     testBackups();
     testInlineAgent();
+    testLspSecondServer();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

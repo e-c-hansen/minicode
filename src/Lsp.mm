@@ -7,6 +7,7 @@
 #import "Terminal.h"   // MCTerminalCommandDidFinishNotification
 #import "MultiCaretView.h"
 #import "LspPicker.h"
+#include "Formatter.h"
 #include "InstallHints.h"
 #include "LspClient.h"
 #include "MarkdownParser.h"
@@ -233,10 +234,7 @@ static NSString *ServerDisplayName(NSString *key, NSArray<NSString *> *argv) {
         Lsp::PythonServer kind = Lsp::pythonServerKind(ArgvWords(argv));
         if (kind != Lsp::PythonServer::Other) return NS(Lsp::pythonServerName(kind));
     }
-    NSString *name = argv.firstObject.lastPathComponent;
-    if ([name hasSuffix:@"-langserver"])
-        name = [name substringToIndex:name.length - @"-langserver".length];
-    return name;
+    return NS(Lsp::programDisplayName(Std(argv.firstObject)));
 }
 
 // ------------------------------------------------------------- MCLspServer
@@ -248,7 +246,10 @@ static NSString *ServerDisplayName(NSString *key, NSArray<NSString *> *argv) {
 static NSMutableSet<MCLspServer *> *gServers;   // every running server
 
 @interface MCLspServer : NSObject
-@property(nonatomic, readonly, copy) NSString *key;
+@property(nonatomic, readonly, copy) NSString *key;   // "python", or "python.also"
+// Unique among every server this process starts ("python.also#3"): what its
+// diagnostics are kept under.
+@property(nonatomic, readonly, copy) NSString *serverId;
 @property(nonatomic, readonly, copy) NSString *name;   // for the status bar: "pyright"
 @property(nonatomic, readonly, copy) NSString *program;
 @property(nonatomic, readonly, copy) NSArray<NSString *> *argv;
@@ -283,6 +284,8 @@ static NSMutableSet<MCLspServer *> *gServers;   // every running server
                        root:(NSString *)root {
     if (!(self = [super init])) return nil;
     _key = [key copy];
+    static NSUInteger serial;
+    _serverId = [NSString stringWithFormat:@"%@#%lu", key, (unsigned long)++serial];
     _argv = [argv copy];
     _program = [argv.firstObject copy];
     _name = [ServerDisplayName(key, argv) copy];
@@ -1518,30 +1521,27 @@ static NSString *StateText(MCLspState state) {
 // and which server it is.
 @property(nonatomic, copy) NSString *interpreter, *interpreterSource;
 @property(nonatomic, assign) Lsp::PythonServer pythonKind;
+// A second server (key "python.also"): the command it was started with,
+// decided by the settings or the project when it is first wanted.
+@property(nonatomic, copy) NSString *alsoCommand;
 @end
 @implementation MCLspEntry
 @end
 
-// A file open in a tab of this window, open on its language's server so the
-// server sees every tab's unsaved text (rename, references), not only the
-// one on show. Keyed by its canonical URI.
+// A file open in a tab of this window, open on its language's servers so
+// they see every tab's unsaved text (rename, references), not only the one
+// on show. One per file and server, keyed by DocKey.
 @interface MCLspDoc : NSObject
 @property(nonatomic, copy) NSString *path;
+@property(nonatomic, copy) NSString *uri;   // canonical
 @property(nonatomic, strong) MCLspServer *server;
 @end
 @implementation MCLspDoc
 @end
 
-// A document's diagnostics as last published, with the text the server had
-// been sent when it computed them, so they are drawn on the text as it is
-// when they are shown (typed in since, perhaps) rather than as it was.
-struct MCDiagSet {
-    std::vector<Lsp::Diagnostic> list;
-    std::shared_ptr<const std::u16string> base;   // null: not known
-    // For a file no tab has open: the server that reported on it, compared
-    // only (never followed), so its reports go when it does.
-    const void *server = nullptr;
-};
+static NSString *DocKey(NSString *uri, MCLspServer *server) {
+    return [NSString stringWithFormat:@"%@ %@", server.serverId, uri];
+}
 
 @implementation MCProblem
 @end
@@ -1560,16 +1560,23 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     NSString *_langKey;       // its language's server key, or nil
     NSString *_languageId;
     NSString *_uri;           // its URI, when a server has it open
-    MCLspServer *_server;     // the server for it, or nil
+    // The servers it is open on: its language's main one first, when that
+    // runs, then the second (lsp.<server>.also). Requests only one server
+    // answers go where routeRequest says; code actions go to each.
+    NSArray<MCLspServer *> *_servers;
+    NSString *_alsoKey;       // its language's second server's key, when wanted for it
+    // Whether a folder configures Ruff, asked again after a file opens.
+    NSMutableDictionary<NSString *, NSNumber *> *_ruffConfigured;
     NSString *_transient;     // a brief message ("No definition found")
-    std::map<std::string, MCDiagSet> _diags;   // by canonical URI
-    // What servers publish for files no tab has open (a server checking the
-    // whole folder): listed in Problems only.
-    std::map<std::string, MCDiagSet> _otherDiags;
+    // Every server's diagnostics, by canonical URI and server: for the
+    // files open in tabs (with the text they were computed on, so they are
+    // drawn on the text as it is now), and for files no tab has open (a
+    // server checking the whole folder), listed in Problems only.
+    Lsp::DiagnosticStore _store;
     // F8: the mark the last step went to, in the marks it was one of.
     NSArray<MCDiagnosticMark *> *_stepMarks;
     long _stepIndex;
-    NSMutableDictionary<NSString *, MCLspDoc *> *_docs;   // by canonical URI
+    NSMutableDictionary<NSString *, MCLspDoc *> *_docs;   // by DocKey
     NSUInteger _edits;        // counts edits to the text on show
     NSString *_settingsSignature, *_pythonSetting;
 
@@ -1585,6 +1592,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     int _completionGen, _definitionGen, _hoverGen, _resolveGen, _signatureGen;
     int _resolveId;
     MCLspServer *_resolveServer;
+    MCLspServer *_completionServer;   // the one the list was asked of
     MCHoverPopup *_hover;
     BOOL _hoverByMouse;       // shown for the pointer (else for Cmd+I)
     NSRange _hoverRange;      // the text it is about
@@ -1596,10 +1604,12 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     NSString *_pickerKind;                    // "references", "fixes", or nil
     std::vector<Lsp::Location> _refRows;      // per row; a heading's has no uri
     std::vector<Lsp::CodeAction> _actions;    // per row of the quick fix list
-    MCLspServer *_actionServer;               // the server the actions came from
+    // The servers the actions came from, by CodeAction::origin.
+    NSArray<MCLspServer *> *_actionServers;
     NSRange _askedSelection;                  // the selection when one was asked for
     int _referencesGen, _renameGen, _actionGen;
     MCRenameBox *_rename;
+    MCLspServer *_renameServer;               // the server rename was asked of
     NSRange _renameRange;                     // the name being renamed
     NSString *_renameText;                    // the text when the field opened
     BOOL _applyingEdit;                       // a WorkspaceEdit is going into the text
@@ -1612,6 +1622,8 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     _root = [root copy];
     _entries = [NSMutableDictionary dictionary];
     _docs = [NSMutableDictionary dictionary];
+    _servers = @[];
+    _ruffConfigured = [NSMutableDictionary dictionary];
     _settingsSignature = [self currentSettingsSignature];
     _pythonSetting = NS([AppSettings shared].settings.pythonInterpreter());
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
@@ -1645,7 +1657,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     textView.onScrolled = ^{ [weakSelf closeHover]; };
     textView.onCommandClick = ^BOOL(NSUInteger index) {
         LspSession *s = weakSelf;
-        if (!s || !s->_server) return NO;
+        if (!s || ![s serverFor:Lsp::Feature::Definition]) return NO;
         [s->_tv setSelectedRange:NSMakeRange(index, 0)];
         [s definitionAtIndex:index];
         return YES;
@@ -1675,57 +1687,22 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
         s = @"Language servers off";
         dot = DotGray();
     } else if (_langKey && e) {
-        NSString *name = e.server.name ?: e.serverName ?: language;
-        switch (e.state) {
-        case MCLspStateRunning: {
-            int errors = 0, warnings = 0;
-            auto it = _uri ? _diags.find(Std(_uri)) : _diags.end();
-            if (it != _diags.end())
-                for (const Lsp::Diagnostic &d : it->second.list) {
-                    if (d.severity == Lsp::Severity::Error) errors++;
-                    else if (d.severity == Lsp::Severity::Warning) warnings++;
-                }
-            NSMutableArray *parts = [NSMutableArray array];
-            if (errors) [parts addObject:[NSString stringWithFormat:@"%d error%@", errors,
-                                          errors == 1 ? @"" : @"s"]];
-            if (warnings) [parts addObject:[NSString stringWithFormat:@"%d warning%@",
-                                            warnings, warnings == 1 ? @"" : @"s"]];
-            s = [NSString stringWithFormat:@"%@: %@", name,
-                 parts.count ? [parts componentsJoinedByString:@", "] : @"no problems"];
-            dot = DotGreen();
-            break;
-        }
-        case MCLspStateStarting:
-            s = [NSString stringWithFormat:@"%@ starting…", name];
-            dot = DotYellow();
-            break;
-        case MCLspStateRestarting:
-            s = [NSString stringWithFormat:@"%@ crashed, restarting…", name];
-            dot = DotYellow();
-            break;
-        case MCLspStateNotInstalled:
-            // Clicking it shows how to install one.
-            s = [NSString stringWithFormat:@"Install a %@ language server…", language];
-            dot = DotGray();
-            break;
-        case MCLspStateOff:
-            s = [NSString stringWithFormat:@"%@ language server off", language];
-            dot = DotGray();
-            break;
-        case MCLspStateStopped:
-            s = [NSString stringWithFormat:@"%@ stopped", name];
-            dot = DotGray();
-            break;
-        case MCLspStateFailed:
-            s = [NSString stringWithFormat:@"%@ failed to start", name];
-            dot = DotRed();
-            break;
-        case MCLspStateCrashed:
-            s = [NSString stringWithFormat:@"%@ crashed", name];
-            dot = DotRed();
-            break;
-        case MCLspStateIdle:
-            break;
+        std::vector<Lsp::ServerStatus> servers = {[self statusOfKey:_langKey main:YES]};
+        if (_alsoKey) servers.push_back([self statusOfKey:_alsoKey main:NO]);
+        int errors = 0, warnings = 0;
+        if (_uri)
+            for (const Lsp::Diagnostic &d : _store.merged(Std(_uri))) {
+                if (d.severity == Lsp::Severity::Error) errors++;
+                else if (d.severity == Lsp::Severity::Warning) warnings++;
+            }
+        Lsp::StatusLine line = Lsp::statusLine(Std(language), servers, errors, warnings);
+        s = NS(line.text);
+        switch (line.dot) {
+        case Lsp::StatusDot::None: dot = nil; break;
+        case Lsp::StatusDot::Gray: dot = DotGray(); break;
+        case Lsp::StatusDot::Green: dot = DotGreen(); break;
+        case Lsp::StatusDot::Yellow: dot = DotYellow(); break;
+        case Lsp::StatusDot::Red: dot = DotRed(); break;
         }
     } else if ([self isSettingsFile:_path]) {
         // The settings file names the servers, so say where to see them.
@@ -1738,6 +1715,17 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     _statusText = s;
     _statusDot = dot;
     if (self.onStatus) self.onStatus(s, dot);
+}
+
+// One server entry as the status line sees it. MCLspState and
+// Lsp::ServerState list the same states in the same order.
+- (Lsp::ServerStatus)statusOfKey:(NSString *)key main:(BOOL)main {
+    MCLspEntry *e = _entries[key];
+    Lsp::ServerStatus st;
+    st.main = main;
+    st.state = (Lsp::ServerState)(e ? e.state : MCLspStateIdle);
+    st.name = Std(e.server.name ?: e.serverName ?: @"");
+    return st;
 }
 
 // Something the status bar or the popover shows has changed.
@@ -1768,12 +1756,68 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
 }
 
 - (void)lookAgainForMissingServer {
-    if (!self.missingServer) return;
+    BOOL also = [self lookAgainForAlso];
+    if (!self.missingServer && !also) return;
     [self attachDocument];   // ensureServer looks again for a missing one
-    if (!self.missingServer) [self changed];
+    if (!self.missingServer || also) [self changed];
 }
 
-- (BOOL)hasServer { return _server != nil; }
+// The open file's second server, when it may have turned up: ruff
+// installed since in a project that configures Ruff, or a missing one the
+// settings name. YES when attaching again may start it.
+- (BOOL)lookAgainForAlso {
+    if (!_langKey || !_path || ![AppSettings shared].settings.lspEnabled()) return NO;
+    if (_alsoKey) {
+        MCLspEntry *e = _entries[_alsoKey];
+        return !e.server && e.state == MCLspStateNotInstalled;
+    }
+    NSString *command = [self alsoCommandForLanguage:_langKey path:_path configured:NULL];
+    if (!command) return NO;
+    _alsoKey = NS(Lsp::alsoKey(Std(_langKey)));
+    MCLspEntry *e = [self entryForKey:_alsoKey];
+    if (!e.server) e.alsoCommand = command;
+    return YES;
+}
+
+- (BOOL)hasServer { return _servers.count > 0; }
+
+- (NSArray<NSString *> *)fileServerNames {
+    NSMutableArray *out = [NSMutableArray array];
+    for (MCLspServer *server in _servers) [out addObject:server.name];
+    return out;
+}
+
+// The one of the file's servers that answers a request about `f`, or nil
+// (Lsp::routeRequest: the main server, else another that offers it).
+- (MCLspServer *)serverFor:(Lsp::Feature)f {
+    if (!_uri || !_servers.count) return nil;
+    std::vector<Lsp::ServerView> views;
+    for (MCLspServer *server in _servers) {
+        Lsp::ServerView v;
+        v.main = !Lsp::isAlsoKey(Std(server.key));
+        v.ready = server.client.state() == Lsp::Client::State::Ready;
+        v.capabilities = &server.client.capabilities();
+        views.push_back(v);
+    }
+    int i = Lsp::routeRequest(f, views);
+    return i < 0 ? nil : _servers[(NSUInteger)i];
+}
+
+// The file's servers asked for code actions (Lsp::serversOffering).
+- (NSArray<MCLspServer *> *)serversFor:(Lsp::Feature)f {
+    if (!_uri) return @[];
+    std::vector<Lsp::ServerView> views;
+    for (MCLspServer *server in _servers) {
+        Lsp::ServerView v;
+        v.main = !Lsp::isAlsoKey(Std(server.key));
+        v.ready = server.client.state() == Lsp::Client::State::Ready;
+        v.capabilities = &server.client.capabilities();
+        views.push_back(v);
+    }
+    NSMutableArray *out = [NSMutableArray array];
+    for (int i : Lsp::serversOffering(f, views)) [out addObject:_servers[(NSUInteger)i]];
+    return out;
+}
 
 - (void)windowBecameKey:(NSNotification *)note {
     if (_tv.window && note.object == _tv.window) [self lookAgainForMissingServer];
@@ -1789,7 +1833,8 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     const Settings &st = [AppSettings shared].settings;
     NSMutableString *sig = [NSMutableString stringWithFormat:@"%d", st.lspEnabled()];
     for (const std::string &k : Settings::lspServers())
-        [sig appendFormat:@"|%s", st.lspCommand(k).c_str()];
+        [sig appendFormat:@"|%s|%s", st.lspCommand(k).c_str(),
+                          st.lspCommand(Lsp::alsoKey(k)).c_str()];
     return sig;
 }
 
@@ -1805,16 +1850,82 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
 }
 
 // The command lines to try for a key: the settings' own, else the defaults.
+// A second server runs the one command it was wanted with.
 - (std::vector<std::string>)commandsForKey:(const std::string &)key {
+    if (Lsp::isAlsoKey(key)) {
+        NSString *command = _entries[NS(key)].alsoCommand ?: [self alsoCommandForKey:NS(key)];
+        if (command.length) return {Std(command)};
+        return {};
+    }
     const Settings &st = [AppSettings shared].settings;
     if (!st.lspCommand(key).empty()) return {st.lspCommand(key)};
     return Lsp::defaultCommands(key);
 }
 
+// A second server's command when nothing has decided it yet (the popover,
+// Start): the settings' own, else the built-in one as if the project asked.
+- (NSString *)alsoCommandForKey:(NSString *)key {
+    const Settings &st = [AppSettings shared].settings;
+    std::string k = Std(key);
+    if (!st.lspCommand(k).empty() && !st.lspOff(k)) return NS(st.lspCommand(k));
+    std::string def = Lsp::defaultAlsoCommand(Lsp::languageOfKey(k), true);
+    return def.empty() ? nil : NS(def);
+}
+
+// Does the project around a file configure Ruff (Formatter::configFile)?
+// Remembered per folder until the next file opens.
+- (BOOL)projectConfiguresRuff:(NSString *)path {
+    if (!path.length) return NO;
+    NSString *dir = path.stringByDeletingLastPathComponent;
+    NSNumber *known = _ruffConfigured[dir];
+    if (known) return known.boolValue;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    Formatter::Fs fs;
+    fs.exists = [fm](const std::string &f) {
+        return (bool)[fm fileExistsAtPath:NS(f)];
+    };
+    fs.read = [](const std::string &f) {
+        NSString *t = [NSString stringWithContentsOfFile:NS(f) encoding:NSUTF8StringEncoding
+                                                   error:nil];
+        return t ? Std(t) : std::string();
+    };
+    NSString *root = RealPath(_root) ?: _root ?: @"/";
+    BOOL yes = !Formatter::configFile("ruff", Std(RealPath(path) ?: path), Std(root), fs).empty();
+    _ruffConfigured[dir] = @(yes);
+    return yes;
+}
+
+// The second server a language wants for a file, as the command to run, or
+// nil: lsp.<server>.also from the settings, else the built-in rule (Ruff's
+// own server in a project that configures Ruff, and only when ruff is
+// installed: a default is never offered for installing). *configured says
+// the built-in rule would want one, installed or not.
+- (NSString *)alsoCommandForLanguage:(NSString *)lang path:(NSString *)path
+                          configured:(BOOL *)configured {
+    const Settings &st = [AppSettings shared].settings;
+    std::string key = Lsp::alsoKey(Std(lang));
+    if (configured) *configured = NO;
+    if (!st.lspEnabled() || st.lspOff(key)) return nil;
+    if (!st.lspCommand(key).empty()) return NS(st.lspCommand(key));
+    std::string command = Lsp::defaultAlsoCommand(Std(lang), [self projectConfiguresRuff:path]);
+    if (command.empty()) return nil;
+    if (configured) *configured = YES;
+    if (!MCResolveCommand(command, [self firstDirsForKey:NS(key)])) return nil;
+    return NS(command);
+}
+
+// Whether a running second server takes a file from a tab: always when the
+// settings name it, else when the project around the file configures Ruff.
+- (BOOL)alsoWantsPath:(NSString *)path key:(NSString *)key {
+    const Settings &st = [AppSettings shared].settings;
+    if (!st.lspCommand(Std(key)).empty()) return !st.lspOff(Std(key));
+    return [self projectConfiguresRuff:path];
+}
+
 // Where a server is looked for before the usual folders: for Python, the
-// interpreter's own bin, where pylsp may be installed.
+// interpreter's own bin, where pylsp (or ruff) may be installed.
 - (NSArray<NSString *> *)firstDirsForKey:(NSString *)key {
-    if (![key isEqualToString:@"python"]) return nil;
+    if (Lsp::languageOfKey(Std(key)) != "python") return nil;
     NSString *source = nil;
     NSString *interp = [self pythonInterpreterWithSource:&source];
     return interp ? @[interp.stringByDeletingLastPathComponent] : nil;
@@ -1961,17 +2072,20 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
         e.server = nil;
         e.generation++;
     }
-    if (_server == server) [self detachDocument];
     [self forgetDocumentsOf:server];
+    [self dropServer:server];
     [server stop];   // its client has already exited, so this just ends its input
     [self changed];
 }
 
 - (void)serverExited:(MCLspServer *)server {
-    if (_server == server) [self detachDocument];
     [self forgetDocumentsOf:server];
     MCLspEntry *e = [self entryOf:server];
-    if (!e || server.stopping) { [self changed]; return; }
+    if (!e || server.stopping) {
+        [self dropServer:server];
+        [self changed];
+        return;
+    }
     // It went on its own: a crash. Start it again a few times, waiting
     // longer each time, then leave it to the popover's Start.
     e.server = nil;
@@ -1997,6 +2111,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     } else {
         e.state = MCLspStateCrashed;
     }
+    [self dropServer:server];
     [self changed];
 }
 
@@ -2004,9 +2119,9 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     e.generation++;
     MCLspServer *s = e.server;
     if (!s) return;
-    if (_server == s) [self detachDocument];
-    [self forgetDocumentsOf:s];
     e.server = nil;
+    [self forgetDocumentsOf:s];
+    [self dropServer:s];
     [s stop];
 }
 
@@ -2014,23 +2129,27 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     for (MCLspEntry *e in _entries.allValues) [self stopEntry:e];
     [_entries removeAllObjects];
     [_docs removeAllObjects];
-    _diags.clear();
-    _otherDiags.clear();
+    _store.clear();
+    [_ruffConfigured removeAllObjects];
     [self problemsChanged];
 }
 
 // A server going away takes its documents with it: nothing to close, and
 // what it said about them no longer holds. A restart opens them again.
 - (void)forgetDocumentsOf:(MCLspServer *)server {
-    for (NSString *uri in _docs.allKeys) {
-        if (_docs[uri].server != server) continue;
-        [_docs removeObjectForKey:uri];
-        _diags.erase(Std(uri));
-    }
-    const void *gone = (__bridge const void *)server;
-    for (auto it = _otherDiags.begin(); it != _otherDiags.end();)
-        it = it->second.server == gone ? _otherDiags.erase(it) : std::next(it);
+    for (NSString *key in _docs.allKeys)
+        if (_docs[key].server == server) [_docs removeObjectForKey:key];
+    _store.eraseServer(Std(server.serverId));
     [self problemsChanged];
+}
+
+// A server the file on show was open on is going: the file carries on with
+// its other servers, if any, or detaches.
+- (void)dropServer:(MCLspServer *)server {
+    if (![_servers containsObject:server]) return;
+    BOOL others = _servers.count > 1;
+    [self detachDocument];
+    if (others && _path) [self attachDocument];
 }
 
 - (void)restartServer:(NSString *)key {
@@ -2055,6 +2174,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
 - (void)startServer:(NSString *)key {
     MCLspEntry *e = [self entryForKey:key];
     if (e.server) return;
+    if (Lsp::isAlsoKey(Std(key)) && !e.alsoCommand) e.alsoCommand = [self alsoCommandForKey:key];
     e.crashes = 0;
     e.state = MCLspStateIdle;
     [self startEntry:e];
@@ -2072,64 +2192,106 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
 }
 
 - (NSArray<MCLspServerInfo *> *)serverInfos {
-    const Settings &st = [AppSettings shared].settings;
     NSMutableArray<NSString *> *keys = [NSMutableArray array];
     if (_langKey) [keys addObject:_langKey];
     for (const std::string &k : Settings::lspServers())
         if (![keys containsObject:NS(k)]) [keys addObject:NS(k)];
     NSMutableArray<MCLspServerInfo *> *out = [NSMutableArray array];
     for (NSString *key in keys) {
-        std::string k = Std(key);
-        MCLspEntry *e = _entries[key];
-        MCLspServerInfo *info = [MCLspServerInfo new];
-        info.key = key;
-        info.language = NS(Lsp::serverDisplayName(k));
-        info.current = [key isEqualToString:_langKey];
-        info.state = e ? e.state : MCLspStateIdle;
-        info.message = e.message;
-        if (e.server) {
-            info.serverName = e.server.name;
-            info.program = e.server.program;
-            info.command = e.command;
-            info.pid = e.server.pid;
-        } else {
-            // What would run: the first command that is installed.
-            std::vector<std::string> commands = [self commandsForKey:k];
-            NSArray *first = [self firstDirsForKey:key];
-            for (const std::string &cmd : commands) {
-                NSArray *argv = MCResolveCommand(cmd, first);
-                if (!argv) continue;
-                info.command = NS(cmd);
-                info.program = argv.firstObject;
-                info.serverName = ServerDisplayName(key, argv);
-                break;
-            }
-            if (!info.command) {
-                NSMutableArray *all = [NSMutableArray array];
-                for (const std::string &cmd : commands) [all addObject:NS(cmd)];
-                info.command = [all componentsJoinedByString:@", or "];
-                if (info.state == MCLspStateIdle) info.state = MCLspStateNotInstalled;
-            }
-        }
-        if (!st.lspEnabled() || st.lspOff(k)) info.state = MCLspStateOff;
-        if (info.state == MCLspStateNotInstalled) {
-            const Install::Tool *tool = Install::server(k);
-            if (tool && !tool->ways.empty()) info.installHint = NS(tool->ways.front().command);
-        }
-        if ([key isEqualToString:@"python"]) {
-            if (e.server) {
-                info.interpreter = e.interpreter;
-                info.interpreterSource = e.interpreterSource;
-            } else {
-                NSString *source = nil;
-                info.interpreter = [self pythonInterpreterWithSource:&source];
-                info.interpreterSource = source;
-            }
-        }
-        info.stateText = StateText(info.state);
-        [out addObject:info];
+        [out addObject:[self infoForKey:key]];
+        MCLspServerInfo *also = [self alsoInfoForLanguage:key];
+        if (also) [out addObject:also];
     }
     return out;
+}
+
+// What a server entry is doing, from its process when it runs, else from
+// the first of its commands that is installed.
+- (MCLspServerInfo *)infoForKey:(NSString *)key {
+    const Settings &st = [AppSettings shared].settings;
+    std::string k = Std(key);
+    MCLspEntry *e = _entries[key];
+    MCLspServerInfo *info = [MCLspServerInfo new];
+    info.key = key;
+    info.language = NS(Lsp::serverDisplayName(Lsp::languageOfKey(k)));
+    info.current = [key isEqualToString:_langKey] || [key isEqualToString:_alsoKey];
+    info.state = e ? e.state : MCLspStateIdle;
+    info.message = e.message;
+    if (e.server) {
+        info.serverName = e.server.name;
+        info.program = e.server.program;
+        info.command = e.command;
+        info.pid = e.server.pid;
+    } else {
+        // What would run: the first command that is installed.
+        std::vector<std::string> commands = [self commandsForKey:k];
+        NSArray *first = [self firstDirsForKey:key];
+        for (const std::string &cmd : commands) {
+            NSArray *argv = MCResolveCommand(cmd, first);
+            if (!argv) continue;
+            info.command = NS(cmd);
+            info.program = argv.firstObject;
+            info.serverName = ServerDisplayName(key, argv);
+            break;
+        }
+        if (!info.command) {
+            NSMutableArray *all = [NSMutableArray array];
+            for (const std::string &cmd : commands) [all addObject:NS(cmd)];
+            info.command = [all componentsJoinedByString:@", or "];
+            if (info.state == MCLspStateIdle) info.state = MCLspStateNotInstalled;
+        }
+    }
+    if (!st.lspEnabled() || st.lspOff(k)) info.state = MCLspStateOff;
+    if (info.state == MCLspStateNotInstalled) {
+        const Install::Tool *tool = Install::server(k);
+        if (tool && !tool->ways.empty()) info.installHint = NS(tool->ways.front().command);
+    }
+    if ([key isEqualToString:@"python"]) {
+        if (e.server) {
+            info.interpreter = e.interpreter;
+            info.interpreterSource = e.interpreterSource;
+        } else {
+            NSString *source = nil;
+            info.interpreter = [self pythonInterpreterWithSource:&source];
+            info.interpreterSource = source;
+        }
+    }
+    info.stateText = StateText(info.state);
+    return info;
+}
+
+// A language's second server, for the popover: when the settings name one
+// (or turn it off), when one has been started, or where the built-in rule
+// has one (Ruff for Python), even if this project does not want it, so the
+// popover says when it would run. Nil otherwise.
+- (MCLspServerInfo *)alsoInfoForLanguage:(NSString *)lang {
+    const Settings &st = [AppSettings shared].settings;
+    std::string key = Lsp::alsoKey(Std(lang));
+    NSString *alsoKey = NS(key);
+    MCLspEntry *e = _entries[alsoKey];
+    BOOL named = !st.lspCommand(key).empty();
+    std::string builtIn = Lsp::defaultAlsoCommand(Std(lang), true);
+    if (!named && !e && builtIn.empty()) return nil;
+    BOOL configured = NO;
+    BOOL here = [lang isEqualToString:_langKey] && _path;
+    if (here) [self alsoCommandForLanguage:lang path:_path configured:&configured];
+    MCLspServerInfo *info = [self infoForKey:alsoKey];
+    info.language = [NSString stringWithFormat:@"%@, second server",
+                                               NS(Lsp::serverDisplayName(Std(lang)))];
+    if (!e.server && !named && !configured && (info.state == MCLspStateIdle ||
+                                                info.state == MCLspStateNotInstalled)) {
+        // The built-in rule does not want it here: say when it would.
+        info.state = MCLspStateIdle;
+        info.installHint = nil;
+        info.notUsedHere = YES;
+        info.stateText = @"not used here";
+        if (!info.message.length)
+            info.message = @"Ruff's own server runs beside the main one in a project that "
+                           @"configures Ruff (a ruff.toml, a .ruff.toml, or a [tool.ruff] "
+                           @"table in pyproject.toml), when ruff is installed; "
+                           @"lsp.python.also in the settings file runs it everywhere.";
+    }
+    return info;
 }
 
 - (void)settingsChanged:(NSNotification *)note {
@@ -2306,25 +2468,32 @@ static BOOL IsRunnable(NSString *path) {
     _referencesGen++;
     _actionGen++;
     if (!_applyingEdit) _renameGen++;
-    // The document stays open on its server while its tab is open (see
+    // The document stays open on its servers while its tab is open (see
     // syncOpenDocuments), and so do its diagnostics, for when it is back.
-    _server = nil;
+    _servers = @[];
+    _completionServer = nil;
     _uri = nil;
     _tv.diagnostics = @[];
 }
 
-// Open the current file on its language's server, starting it if need be,
-// and with it every other tab's file that server handles.
+// Open the current file on its language's servers (the main one and a
+// second one when wanted), starting them if need be, and with it every
+// other tab's file those servers handle. Safe to call again: servers that
+// are running stay, and one that has come up since is added.
 - (void)attachDocument {
-    if (!_server && _path && _langKey && [AppSettings shared].settings.lspEnabled()) {
-        MCLspServer *server = [self ensureServer:_langKey];
-        if (server) {
-            _server = server;
-            _uri = NS(Lsp::uriFromPath(Std(RealPath(_path))));
+    if (_path && _langKey && [AppSettings shared].settings.lspEnabled()) {
+        NSMutableArray<MCLspServer *> *servers = [NSMutableArray array];
+        MCLspServer *main = [self ensureServer:_langKey];
+        if (main) [servers addObject:main];
+        if (_alsoKey) {
+            MCLspServer *also = [self ensureServer:_alsoKey];
+            if (also) [servers addObject:also];
         }
+        _servers = servers;
+        _uri = servers.count ? NS(Lsp::uriFromPath(Std(RealPath(_path)))) : nil;
     }
     [self syncOpenDocuments];
-    if (_server && _uri) [self paintDiagnostics];
+    if (_servers.count && _uri) [self paintDiagnostics];
 }
 
 // Leaves the file on its server: the tab is still open. syncOpenDocuments
@@ -2333,6 +2502,7 @@ static BOOL IsRunnable(NSString *path) {
     [self detachDocument];
     _path = nil;
     _langKey = nil;
+    _alsoKey = nil;
     _languageId = nil;
 }
 
@@ -2340,9 +2510,17 @@ static BOOL IsRunnable(NSString *path) {
     [self closeDocument];
     _path = [path copy];
     Lsp::Language lang;
+    // A project file may have been added or changed since (a ruff.toml).
+    [_ruffConfigured removeAllObjects];
     if (path && Lsp::languageForExtension(Std(path.pathExtension.lowercaseString), lang)) {
         _langKey = NS(lang.server);
         _languageId = NS(lang.languageId);
+        NSString *alsoCommand = [self alsoCommandForLanguage:_langKey path:path configured:NULL];
+        if (alsoCommand) {
+            _alsoKey = NS(Lsp::alsoKey(lang.server));
+            MCLspEntry *also = [self entryForKey:_alsoKey];
+            if (!also.server) also.alsoCommand = alsoCommand;
+        }
         BOOL wasRunning = _entries[_langKey].server != nil;
         [self attachDocument];
         // In automatic mode another file may sit in another environment.
@@ -2371,12 +2549,16 @@ static BOOL IsRunnable(NSString *path) {
     NSMutableDictionary<NSString *, MCLspDoc *> *wanted = [NSMutableDictionary dictionary];
     NSMutableDictionary<NSString *, NSString *> *texts = [NSMutableDictionary dictionary];
     NSMutableDictionary<NSString *, NSString *> *languageIds = [NSMutableDictionary dictionary];
+    auto want = ^(NSString *uri, NSString *path, MCLspServer *server) {
+        MCLspDoc *d = [MCLspDoc new];
+        d.path = path;
+        d.uri = uri;
+        d.server = server;
+        wanted[DocKey(uri, server)] = d;
+    };
     if ([AppSettings shared].settings.lspEnabled()) {
-        if (_server && _uri) {
-            MCLspDoc *d = [MCLspDoc new];
-            d.path = _path;
-            d.server = _server;
-            wanted[_uri] = d;
+        if (_servers.count && _uri) {
+            for (MCLspServer *server in _servers) want(_uri, _path, server);
             texts[_uri] = _tv.string;
             languageIds[_uri] = _languageId;
         }
@@ -2385,44 +2567,54 @@ static BOOL IsRunnable(NSString *path) {
             Lsp::Language lang;
             if (!Lsp::languageForExtension(Std(path.pathExtension.lowercaseString), lang))
                 continue;
-            MCLspServer *server = _entries[NS(lang.server)].server;
-            if (!server || server.stopping) continue;
             NSString *uri = NS(Lsp::uriFromPath(Std(RealPath(path))));
-            if (wanted[uri]) continue;   // the file on show
+            if (texts[uri]) continue;    // the file on show, or a tab seen already
             NSString *text = self.bufferText ? self.bufferText(path) : nil;
             if (!text) continue;         // not read yet, or not shown as text
-            MCLspDoc *d = [MCLspDoc new];
-            d.path = path;
-            d.server = server;
-            wanted[uri] = d;
+            BOOL any = NO;
+            for (NSString *key in @[NS(lang.server), NS(Lsp::alsoKey(lang.server))]) {
+                MCLspServer *server = _entries[key].server;
+                if (!server || server.stopping) continue;
+                if (Lsp::isAlsoKey(Std(key)) && ![self alsoWantsPath:path key:key]) continue;
+                want(uri, path, server);
+                any = YES;
+            }
+            if (!any) continue;
             texts[uri] = text;
             languageIds[uri] = NS(lang.languageId);
         }
     }
     // Closed first, so a file that moved to another server is closed on
     // the old one before the new one opens it.
-    for (NSString *uri in _docs.allKeys) {
-        MCLspDoc *had = _docs[uri];
-        if (wanted[uri].server == had.server) continue;
-        if (!had.server.stopping) had.server.client.didClose(Std(uri));
-        [_docs removeObjectForKey:uri];
-        _diags.erase(Std(uri));
-        [self problemsChanged];
+    for (NSString *key in _docs.allKeys) {
+        if (wanted[key]) continue;
+        MCLspDoc *had = _docs[key];
+        if (!had.server.stopping) had.server.client.didClose(Std(had.uri));
+        [_docs removeObjectForKey:key];
+        if (_store.erase(Std(had.uri), Std(had.server.serverId))) [self problemsChanged];
     }
-    for (NSString *uri in wanted) {
-        MCLspDoc *d = wanted[uri];
+    for (NSString *key in wanted) {
+        MCLspDoc *d = wanted[key];
         // didOpen of an open document is a didChange (and nothing at all
         // when the text is what the server has).
-        d.server.client.didOpen(Std(uri), Std(languageIds[uri]), Std(texts[uri]));
-        _docs[uri] = d;
+        d.server.client.didOpen(Std(d.uri), Std(languageIds[d.uri]), Std(texts[d.uri]));
+        _docs[key] = d;
     }
 }
 
+// The path a tab has a file under, for a canonical URI, or nil.
+- (NSString *)tabPathForURI:(NSString *)uri {
+    for (MCLspDoc *d in _docs.allValues)
+        if ([d.uri isEqualToString:uri]) return d.path;
+    return nil;
+}
+
 - (void)documentSaved {
-    if (!_server || !_uri) return;
+    if (!_servers.count || !_uri) return;
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushChanges)
                                                object:nil];
-    _server.client.didSave(Std(_uri), Std(_tv.string));
+    std::string text = Std(_tv.string);
+    for (MCLspServer *server in _servers) server.client.didSave(Std(_uri), text);
 }
 
 - (void)setRoot:(NSString *)root {
@@ -2442,7 +2634,9 @@ static BOOL IsRunnable(NSString *path) {
 - (void)flushChanges {
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushChanges)
                                                object:nil];
-    if (_server && _uri) _server.client.didChange(Std(_uri), Std(_tv.string));
+    if (!_servers.count || !_uri) return;
+    std::string text = Std(_tv.string);
+    for (MCLspServer *server in _servers) server.client.didChange(Std(_uri), text);
 }
 
 - (void)storageEdited:(NSNotification *)note {
@@ -2453,7 +2647,7 @@ static BOOL IsRunnable(NSString *path) {
         [self closeHover];
         [self closePicker];
     }
-    if (!(ts.editedMask & NSTextStorageEditedCharacters) || !_server || !_uri) return;
+    if (!(ts.editedMask & NSTextStorageEditedCharacters) || !_servers.count || !_uri) return;
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushChanges)
                                                object:nil];
     [self performSelector:@selector(flushChanges) withObject:nil afterDelay:0.3];
@@ -2465,11 +2659,13 @@ static BOOL IsRunnable(NSString *path) {
     BOOL typedOne = ts.changeInLength == 1 && er.length == 1;
     unichar c = typedOne ? [s characterAtIndex:er.location] : 0;
     unichar prev = typedOne && er.location > 0 ? [s characterAtIndex:er.location - 1] : 0;
-    Lsp::Client &client = _server.client;
+    MCLspServer *signatureServer = [self serverFor:Lsp::Feature::SignatureHelp];
+    MCLspServer *completionServer = [self serverFor:Lsp::Feature::Completion];
 
     // The signature hint: opened by the server's trigger characters ("(" and
     // ","), and brought up to date after any other edit while it shows.
-    if (client.hasSignatureHelp()) {
+    if (signatureServer && signatureServer.client.hasSignatureHelp()) {
+        Lsp::Client &client = signatureServer.client;
         std::string ch = typedOne ? Std([NSString stringWithCharacters:&c length:1]) : "";
         if (typedOne && (Contains(client.signatureTriggers(), ch) ||
                          (_signature.visible && Contains(client.signatureRetriggers(), ch)))) {
@@ -2480,6 +2676,7 @@ static BOOL IsRunnable(NSString *path) {
         }
     }
 
+    if (!completionServer) return;
     if (typedOne) {
         // The end of ".", "->" or "::"?
         NSString *trigger = nil;
@@ -2487,7 +2684,7 @@ static BOOL IsRunnable(NSString *path) {
         else if (c == '>' && prev == '-') trigger = @">";
         else if (c == ':' && prev == ':') trigger = @":";
         if (trigger) {
-            std::vector<std::string> triggers = client.completionTriggers();
+            std::vector<std::string> triggers = completionServer.client.completionTriggers();
             if (triggers.empty() || Contains(triggers, Std(trigger))) {
                 // After the text view has finished the edit and moved the caret.
                 dispatch_async(dispatch_get_main_queue(), ^{
@@ -2562,32 +2759,17 @@ static BOOL IsRunnable(NSString *path) {
 }
 
 // `base` is the text the server had been sent for the file when it
-// published (Client::textFor), or null when it does not have it open.
+// published (Client::textFor), or null when it does not have it open (a
+// file no tab has: listed in Problems only, and opening it brings fresh
+// ones). Each server's list stands beside the others'.
 - (void)diagnosticsArrived:(const std::string &)uri
                       list:(const std::vector<Lsp::Diagnostic> &)list
                       base:(const std::string *)base
                     server:(MCLspServer *)server {
     std::string key = CanonicalURI(uri);
-    if (!base && !_docs[NS(key)]) {
-        // A file no tab has open (a server reporting on the whole folder):
-        // only listed in Problems, and opening it brings fresh ones.
-        if (list.empty()) {
-            if (!_otherDiags.erase(key)) return;
-        } else {
-            MCDiagSet set;
-            set.list = list;
-            set.server = (__bridge const void *)server;
-            _otherDiags[key] = std::move(set);
-        }
-        [self problemsChanged];
-        return;
-    }
-    _otherDiags.erase(key);
-    MCDiagSet set;
-    set.list = list;
-    if (base) set.base = std::make_shared<const std::u16string>(Lsp::toUtf16(*base));
-    // Kept for another tab's file too, and drawn when that tab is shown.
-    _diags[key] = std::move(set);
+    std::shared_ptr<const std::u16string> text;
+    if (base) text = std::make_shared<const std::u16string>(Lsp::toUtf16(*base));
+    if (!_store.publish(key, Std(server.serverId), list, text, Std(server.name))) return;
     if ([self uri:uri isSameFileAs:_uri]) [self paintDiagnostics];
     [self problemsChanged];
 }
@@ -2626,27 +2808,26 @@ static BOOL IsRunnable(NSString *path) {
         p.code = d.code;
         out.push_back(p);
     };
-    for (auto &[key, set] : _diags) {
+    for (const std::string &key : _store.uris()) {
         NSString *uri = NS(key);
         BOOL onShow = _uri && [self uri:key isSameFileAs:_uri];
         // Listed under the tree's spelling of the path, as the files no tab
         // has are, so they sort together; the tab's own spelling finds its text.
-        NSString *tabPath = onShow ? _path : _docs[uri].path;
+        NSString *tabPath = onShow ? _path : [self tabPathForURI:uri];
         NSString *path = [self treePathForURI:key];
         if (!path.length) continue;
         NSString *text = onShow ? _tv.string
                        : tabPath && self.bufferText ? self.bufferText(tabPath) : nil;
-        std::u16string now = text ? U16Of(text)
-                                  : (set.base ? *set.base : std::u16string());
-        for (const Lsp::DiagnosticSpan &sp :
-             Lsp::diagnosticSpans(set.base.get(), now, set.list))
-            add(path, set.list[sp.index], Lsp::positionForOffset(now, sp.start),
+        std::vector<const Lsp::DiagnosticStore::Set *> sets = _store.forUri(key);
+        if (!text) {   // a file no tab has: as the server said
+            for (const Lsp::DiagnosticStore::Set *set : sets)
+                for (const Lsp::Diagnostic &d : set->list) add(path, d, d.range.start, d.range.end);
+            continue;
+        }
+        std::u16string now = U16Of(text);
+        for (const Lsp::MergedSpan &sp : Lsp::mergedDiagnosticSpans(sets, now))
+            add(path, *sp.diag, Lsp::positionForOffset(now, sp.start),
                 Lsp::positionForOffset(now, sp.end));
-    }
-    for (auto &[key, set] : _otherDiags) {
-        NSString *path = [self treePathForURI:key];
-        if (!path.length) continue;
-        for (const Lsp::Diagnostic &d : set.list) add(path, d, d.range.start, d.range.end);
     }
     return out;
 }
@@ -2681,15 +2862,14 @@ static BOOL IsRunnable(NSString *path) {
 
 - (Lsp::ProblemCounts)problemCounts {
     std::vector<Lsp::Problem> problems;
-    for (auto *m : {&_diags, &_otherDiags})
-        for (auto &[key, set] : *m)
-            for (const Lsp::Diagnostic &d : set.list) {
-                if (d.severity == Lsp::Severity::Hint) continue;
-                Lsp::Problem p;
-                p.path = key;
-                p.severity = d.severity;
-                problems.push_back(p);
-            }
+    for (const std::string &key : _store.uris())
+        for (const Lsp::Diagnostic &d : _store.merged(key)) {
+            if (d.severity == Lsp::Severity::Hint) continue;
+            Lsp::Problem p;
+            p.path = key;
+            p.severity = d.severity;
+            problems.push_back(p);
+        }
     return Lsp::countProblems(problems);
 }
 
@@ -2698,7 +2878,7 @@ static BOOL IsRunnable(NSString *path) {
 - (NSInteger)problemWarnings { return [self problemCounts].warnings; }
 
 - (BOOL)problemsKnown {
-    if (!_diags.empty() || !_otherDiags.empty()) return YES;
+    if (!_store.empty()) return YES;
     for (MCLspEntry *e in _entries.allValues)
         if (e.server) return YES;
     return NO;
@@ -2745,18 +2925,16 @@ static BOOL IsRunnable(NSString *path) {
 // publishes for the new text (Lsp::diagnosticSpans).
 - (void)paintDiagnostics {
     if (!_uri) return;
-    auto it = _diags.find(Std(_uri));
-    if (it == _diags.end()) {
+    std::vector<const Lsp::DiagnosticStore::Set *> sets = _store.forUri(Std(_uri));
+    if (sets.empty()) {
         _tv.diagnostics = @[];
         [self updateStatus];
         return;
     }
-    const std::vector<Lsp::Diagnostic> &list = it->second.list;
     std::u16string text = U16Of(_tv.string);
     NSMutableArray *marks = [NSMutableArray array];
-    for (const Lsp::DiagnosticSpan &span :
-         Lsp::diagnosticSpans(it->second.base.get(), text, list)) {
-        const Lsp::Diagnostic &d = list[span.index];
+    for (const Lsp::MergedSpan &span : Lsp::mergedDiagnosticSpans(sets, text)) {
+        const Lsp::Diagnostic &d = *span.diag;
         size_t a = span.start;
         size_t b = span.end;
         if (b <= a) {
@@ -2772,7 +2950,12 @@ static BOOL IsRunnable(NSString *path) {
         NSString *kind = d.severity == Lsp::Severity::Error ? @"Error"
                        : d.severity == Lsp::Severity::Warning ? @"Warning"
                        : d.severity == Lsp::Severity::Information ? @"Info" : @"Hint";
-        m.message = [NSString stringWithFormat:@"%@: %@", kind, NS(d.message)];
+        // Which server says so, as VS Code adds it: "(ruff F401)".
+        NSString *from = NS(d.code.empty() ? d.source
+                            : d.source.empty() ? d.code : d.source + " " + d.code);
+        m.message = from.length
+            ? [NSString stringWithFormat:@"%@: %@ (%@)", kind, NS(d.message), from]
+            : [NSString stringWithFormat:@"%@: %@", kind, NS(d.message)];
         [marks addObject:m];
     }
     _tv.diagnostics = marks;
@@ -2786,7 +2969,7 @@ static BOOL IsRunnable(NSString *path) {
 }
 
 - (void)triggerCompletion {
-    if (!_server) {
+    if (![self serverFor:Lsp::Feature::Completion]) {
         NSBeep();
         [self flash:_statusText.length ? _statusText : @"No language server for this file"];
         return;
@@ -2795,7 +2978,8 @@ static BOOL IsRunnable(NSString *path) {
 }
 
 - (void)requestCompletion:(NSString *)trigger origin:(Lsp::CompletionOrigin)origin {
-    if (!_server || !_uri) return;
+    MCLspServer *server = [self serverFor:Lsp::Feature::Completion];
+    if (!server || !_uri) return;
     [self flushChanges];
     NSString *s = _tv.string;
     NSUInteger cursor = [self cursor];
@@ -2818,7 +3002,8 @@ static BOOL IsRunnable(NSString *path) {
     __weak LspSession *weakSelf = self;
     NSString *uri = _uri;
     Lsp::Position pos = Lsp::positionForOffset(U16Of(s), cursor);
-    _server.client.completion(Std(uri), pos,
+    _completionServer = server;
+    server.client.completion(Std(uri), pos,
         [weakSelf, gen, uri](const Json &result, const Json &error) {
             (void)error;
             [weakSelf completionArrived:result gen:gen uri:uri];
@@ -2908,7 +3093,8 @@ static BOOL IsRunnable(NSString *path) {
     NSInteger row = _popup.selectedRow;
     if (row < 0 || (size_t)row >= _shown.size()) { [_popup showDoc:nil]; return; }
     const Lsp::CompletionItem &item = _shown[(size_t)row];
-    BOOL willResolve = !item.resolved && _server && _server.client.canResolveCompletion();
+    BOOL willResolve = !item.resolved && _completionServer &&
+                       _completionServer.client.canResolveCompletion();
     NSAttributedString *doc = MCCompletionDoc(item);
     // While the documentation is on its way, what shows stays rather than
     // flickering away and back as the arrows move.
@@ -2920,15 +3106,16 @@ static BOOL IsRunnable(NSString *path) {
 }
 
 - (void)resolveSelected {
-    if (!_server || !_completing) return;
+    MCLspServer *server = _completionServer;
+    if (!server || !_completing) return;
     NSInteger row = _popup.selectedRow;
     if (row < 0 || (size_t)row >= _shown.size() || _shown[(size_t)row].resolved) return;
     if (_resolveId && _resolveServer) _resolveServer.client.cancel(_resolveId);
     int gen = ++_resolveGen;
     int index = _shown[(size_t)row].index;
     __weak LspSession *weakSelf = self;
-    _resolveServer = _server;
-    _resolveId = _server.client.resolveCompletion(_shown[(size_t)row],
+    _resolveServer = server;
+    _resolveId = server.client.resolveCompletion(_shown[(size_t)row],
         [weakSelf, gen, index](const Json &result, const Json &error) {
             [weakSelf completionResolved:error.isNull() ? result : Json() gen:gen index:index];
         });
@@ -2973,7 +3160,7 @@ static const NSTimeInterval kResolveBeforeAccept = 0.4;
 // server, the file and its text are as they were (the wait runs the main
 // queue, so a server's workspace/applyEdit could have got in).
 - (BOOL)resolveBeforeAccepting:(Lsp::CompletionItem &)item {
-    MCLspServer *server = _server;
+    MCLspServer *server = _completionServer;
     if (!server || !Lsp::completionWantsResolve(item, server.client.canResolveCompletion()))
         return YES;
     struct Answer { bool done = false; Json result; };
@@ -2990,10 +3177,11 @@ static const NSTimeInterval kResolveBeforeAccept = 0.4;
         [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:until];
     if (!answer->done) {
         server.client.cancel(rid);   // too slow: the word goes in without it
-        return _server == server && [_uri isEqualToString:uri] && _edits == edits;
+        return [_servers containsObject:server] && [_uri isEqualToString:uri] &&
+               _edits == edits;
     }
     Lsp::applyResolved(item, answer->result);
-    return _server == server && [_uri isEqualToString:uri] && _edits == edits;
+    return [_servers containsObject:server] && [_uri isEqualToString:uri] && _edits == edits;
 }
 
 - (void)acceptCompletion:(NSInteger)row {
@@ -3061,7 +3249,8 @@ static const NSTimeInterval kResolveBeforeAccept = 0.4;
         if (sel == @selector(cancelOperation:)) { [self closePicker]; return YES; }
     }
     if (sel == @selector(complete:)) {
-        if (!_server) return NO;   // the text view's own word completion
+        // Without a server's, the text view's own word completion.
+        if (![self serverFor:Lsp::Feature::Completion]) return NO;
         [self requestCompletion:nil origin:Lsp::CompletionOrigin::Explicit];
         return YES;
     }
@@ -3132,14 +3321,15 @@ static const NSTimeInterval kResolveBeforeAccept = 0.4;
 }
 
 - (void)requestSignature:(NSString *)trigger {
-    if (!_server || !_uri || !_server.client.hasSignatureHelp()) return;
+    MCLspServer *server = [self serverFor:Lsp::Feature::SignatureHelp];
+    if (!server || !_uri || !server.client.hasSignatureHelp()) return;
     [self flushChanges];
     int gen = ++_signatureGen;
     __weak LspSession *weakSelf = self;
     NSString *uri = _uri;
     NSUInteger cursor = [self cursor];
     Lsp::Position pos = Lsp::positionForOffset(U16Of(_tv.string), cursor);
-    _server.client.signatureHelp(Std(uri), pos,
+    server.client.signatureHelp(Std(uri), pos,
         [weakSelf, gen, uri, cursor](const Json &result, const Json &error) {
             (void)error;
             [weakSelf signatureArrived:result gen:gen uri:uri cursor:cursor];
@@ -3171,7 +3361,7 @@ static const NSTimeInterval kResolveBeforeAccept = 0.4;
 
 // ---- go to definition
 - (void)goToDefinition {
-    if (!_server) {
+    if (![self serverFor:Lsp::Feature::Definition]) {
         NSBeep();
         [self flash:_statusText.length ? _statusText : @"No language server for this file"];
         return;
@@ -3180,14 +3370,15 @@ static const NSTimeInterval kResolveBeforeAccept = 0.4;
 }
 
 - (void)definitionAtIndex:(NSUInteger)index {
-    if (!_server || !_uri) return;
+    MCLspServer *server = [self serverFor:Lsp::Feature::Definition];
+    if (!server || !_uri) return;
     [self flushChanges];
     int gen = ++_definitionGen;
     _definitionSelection = _tv.selectedRange;
     __weak LspSession *weakSelf = self;
     NSString *uri = _uri;
     Lsp::Position pos = Lsp::positionForOffset(U16Of(_tv.string), index);
-    _server.client.definition(Std(uri), pos, [weakSelf, gen, uri](const Json &r, const Json &e) {
+    server.client.definition(Std(uri), pos, [weakSelf, gen, uri](const Json &r, const Json &e) {
         (void)e;
         [weakSelf definitionArrived:r gen:gen uri:uri];
     });
@@ -3236,7 +3427,7 @@ static const NSTimeInterval kResolveBeforeAccept = 0.4;
 // ---- hover
 // Cmd+I: about the caret, until the caret moves or Esc.
 - (void)showHoverInfo {
-    if (!_server || !_uri) {
+    if (!_servers.count || !_uri) {
         NSBeep();
         [self flash:_statusText.length ? _statusText : @"No language server for this file"];
         return;
@@ -3266,7 +3457,7 @@ static const NSTimeInterval kHoverDelay = 0.4, kHoverGrace = 0.3;
     if (_popup.visible) return NO;   // the completion list has the stage
     unichar c = [_tv.string characterAtIndex:index];
     if ([[NSCharacterSet whitespaceAndNewlineCharacterSet] characterIsMember:c]) return NO;
-    return (_server && _uri) || [_tv diagnosticMessageAtIndex:index] != nil;
+    return (_servers.count && _uri) || [_tv diagnosticMessageAtIndex:index] != nil;
 }
 
 - (BOOL)pointerInHover {
@@ -3277,7 +3468,7 @@ static const NSTimeInterval kHoverDelay = 0.4, kHoverGrace = 0.3;
 - (void)pointerRested {
     NSUInteger index = _pointerIndex;
     if (index == NSNotFound || ![self hoverWantedAt:index] || [self pointerInHover]) return;
-    if (!_server || !_uri) {   // only a diagnostic to show
+    if (![self serverFor:Lsp::Feature::Hover]) {   // only a diagnostic to show
         [self showHover:Json() gen:_hoverGen uri:_uri index:index byMouse:YES];
         return;
     }
@@ -3285,12 +3476,17 @@ static const NSTimeInterval kHoverDelay = 0.4, kHoverGrace = 0.3;
 }
 
 - (void)requestHoverAt:(NSUInteger)index byMouse:(BOOL)byMouse {
+    MCLspServer *server = [self serverFor:Lsp::Feature::Hover];
+    if (!server) {   // no server answers hover: what the diagnostics say there
+        [self showHover:Json() gen:_hoverGen uri:_uri index:index byMouse:byMouse];
+        return;
+    }
     [self flushChanges];
     int gen = ++_hoverGen;
     __weak LspSession *weakSelf = self;
     NSString *uri = _uri;
     Lsp::Position pos = Lsp::positionForOffset(U16Of(_tv.string), index);
-    _server.client.hover(Std(uri), pos, [weakSelf, gen, uri, index, byMouse](const Json &r,
+    server.client.hover(Std(uri), pos, [weakSelf, gen, uri, index, byMouse](const Json &r,
                                                                               const Json &e) {
         (void)e;
         [weakSelf showHover:r gen:gen uri:uri index:index byMouse:byMouse];
@@ -3424,19 +3620,25 @@ static const NSTimeInterval kHoverDelay = 0.4, kHoverGrace = 0.3;
     else [self flash:message];
 }
 
-// No server for the file, or it does not do this: beep and say so.
-- (BOOL)serverCan:(BOOL (^)(Lsp::Client &))can missing:(NSString *)what {
-    if (!_server || !_uri) {
+// The server that does `f` for the file, or nil after a beep and a word on
+// why: no server for the file, or none of its servers does it.
+- (MCLspServer *)serverFor:(Lsp::Feature)f missing:(NSString *)what {
+    if (!_servers.count || !_uri) {
         NSBeep();
         [self flash:_statusText.length ? _statusText : @"No language server for this file"];
-        return NO;
+        return nil;
     }
-    if (!can(_server.client)) {
+    MCLspServer *server = [self serverFor:f];
+    if (!server) {
         NSBeep();
-        [self note:[NSString stringWithFormat:@"%@ does not %@", _server.name, what]];
-        return NO;
+        NSMutableArray *names = [NSMutableArray array];
+        for (MCLspServer *x in _servers) [names addObject:x.name];
+        [self note:[NSString stringWithFormat:@"%@ %@ not %@",
+                                              [names componentsJoinedByString:@" and "],
+                                              names.count == 1 ? @"does" : @"do", what]];
+        return nil;
     }
-    return YES;
+    return server;
 }
 
 // The lists and the rename field make way for one another.
@@ -3592,12 +3794,17 @@ static NSString *ErrorText(const Json &error) {
         [um beginUndoGrouping];
         BOOL may = [_tv shouldChangeTextInRanges:ranges replacementStrings:strings];
         if (may) {
+            // Each edit its own storage edit, last first, so the
+            // highlighter, the squiggles and the server follow each as
+            // they follow typing; one beginEditing around them all
+            // stretched the squiggles between the first and the last over
+            // the whole run. One didChangeText for them all: NSTextView
+            // lays out from the edit onwards in every one, as
+            // replaceSourceWithText: found (EditorController.mm).
             NSTextStorage *ts = _tv.textStorage;
-            [ts beginEditing];
             for (NSInteger k = (NSInteger)ranges.count - 1; k >= 0; k--)
                 [ts replaceCharactersInRange:ranges[(NSUInteger)k].rangeValue
                                   withString:strings[(NSUInteger)k]];
-            [ts endEditing];
             [_tv didChangeText];
             // The caret keeps its place in the text around it.
             for (const Lsp::OffsetEdit &e : edits) {   // last first
@@ -3649,21 +3856,22 @@ static NSString *ErrorText(const Json &error) {
 
 // ---- rename
 - (void)renameSymbol {
-    if (![self serverCan:^BOOL(Lsp::Client &c) { return c.hasRename(); } missing:@"rename"])
-        return;
+    MCLspServer *server = [self serverFor:Lsp::Feature::Rename missing:@"rename"];
+    if (!server) return;
+    _renameServer = server;
     [self closeTransients];
     [self flushChanges];
     int gen = ++_renameGen;
     _askedSelection = _tv.selectedRange;
     NSUInteger index = _tv.selectedRange.location;
     NSString *uri = _uri;
-    if (!_server.client.canPrepareRename()) {
+    if (!server.client.canPrepareRename()) {
         [self openRenameAt:[self nameRangeAt:index] gen:gen placeholder:nil];
         return;
     }
     __weak LspSession *weakSelf = self;
     Lsp::Position pos = Lsp::positionForOffset(U16Of(_tv.string), index);
-    _server.client.prepareRename(Std(uri), pos, [weakSelf, gen, uri, index](const Json &r,
+    server.client.prepareRename(Std(uri), pos, [weakSelf, gen, uri, index](const Json &r,
                                                                         const Json &e) {
         [weakSelf prepareRenameArrived:r error:e gen:gen uri:uri index:index];
     });
@@ -3730,7 +3938,9 @@ static NSString *ErrorText(const Json &error) {
 }
 
 - (void)commitRename:(NSString *)name gen:(int)gen {
-    if (gen != _renameGen || !_server || !_uri || ![_tv.string isEqualToString:_renameText])
+    MCLspServer *server = _renameServer;
+    if (gen != _renameGen || ![_servers containsObject:server] || !_uri ||
+        ![_tv.string isEqualToString:_renameText])
         return;
     NSString *old = [_tv.string substringWithRange:_renameRange];
     if ([name isEqualToString:old]) return;
@@ -3739,9 +3949,8 @@ static NSString *ErrorText(const Json &error) {
     [self syncOpenDocuments];
     __weak LspSession *weakSelf = self;
     NSString *uri = _uri;
-    MCLspServer *server = _server;
     Lsp::Position pos = Lsp::positionForOffset(U16Of(_tv.string), _renameRange.location);
-    _server.client.rename(Std(uri), pos, Std(name), [weakSelf, gen, uri, server](const Json &r,
+    server.client.rename(Std(uri), pos, Std(name), [weakSelf, gen, uri, server](const Json &r,
                                                                             const Json &e) {
         (void)server;
         Json result = r, error = e;
@@ -3777,9 +3986,9 @@ static NSString *ErrorText(const Json &error) {
 
 // ---- references
 - (void)findReferences {
-    if (![self serverCan:^BOOL(Lsp::Client &c) { return c.hasReferences(); }
-                 missing:@"find references"])
-        return;
+    MCLspServer *server = [self serverFor:Lsp::Feature::References
+                                  missing:@"find references"];
+    if (!server) return;
     [self closeTransients];
     [self flushChanges];
     [self syncOpenDocuments];
@@ -3788,7 +3997,7 @@ static NSString *ErrorText(const Json &error) {
     __weak LspSession *weakSelf = self;
     NSString *uri = _uri;
     Lsp::Position pos = Lsp::positionForOffset(U16Of(_tv.string), _tv.selectedRange.location);
-    _server.client.references(Std(uri), pos, true, [weakSelf, gen, uri](const Json &r,
+    server.client.references(Std(uri), pos, true, [weakSelf, gen, uri](const Json &r,
                                                                     const Json &e) {
         [weakSelf referencesArrived:r error:e gen:gen uri:uri];
     });
@@ -3910,7 +4119,7 @@ static NSFont *PickerMono(void) {
     _pickerKind = nil;
     _refRows.clear();
     _actions.clear();
-    _actionServer = nil;
+    _actionServers = nil;
 }
 
 - (void)acceptPickerRow:(NSInteger)row {
@@ -3922,7 +4131,8 @@ static NSFont *PickerMono(void) {
         [self revealLocation:loc];
     } else if ([_pickerKind isEqualToString:@"fixes"] && (size_t)row < _actions.size()) {
         Lsp::CodeAction action = _actions[(size_t)row];
-        MCLspServer *server = _actionServer;
+        MCLspServer *server = action.origin >= 0 && (NSUInteger)action.origin < _actionServers.count
+                                  ? _actionServers[(NSUInteger)action.origin] : nil;
         [self closePicker];
         [self runCodeAction:action server:server];
     }
@@ -3940,39 +4150,120 @@ static NSFont *PickerMono(void) {
 - (NSTextField *)renameField { return _rename.visible ? _rename.field : nil; }
 - (NSView *)renameView { return _rename.visible ? _rename.contentView : nil; }
 
-// ---- quick fixes
-- (void)showQuickFixes {
-    if (![self serverCan:^BOOL(Lsp::Client &c) { return c.hasCodeActions(); }
-                 missing:@"offer quick fixes"])
-        return;
-    [self closeTransients];
-    [self flushChanges];
+// ---- quick fixes and Organize Imports
+// Ask every one of the file's servers that offers code actions for those at
+// `range` (each with its own diagnostics there, which it matches its fixes
+// on), and hand on the merged list (Lsp::mergeCodeActions) once all have
+// answered, or after a few seconds with what has. `done` is not called
+// when the file, the selection or a newer request has overtaken it.
+- (void)askCodeActionsInRange:(Lsp::Range)range
+                         only:(const std::vector<std::string> &)only
+                         done:(void (^)(std::vector<Lsp::CodeAction> actions,
+                                        NSArray<MCLspServer *> *servers,
+                                        NSString *error))done {
+    NSArray<MCLspServer *> *servers = [self serversFor:Lsp::Feature::CodeActions];
     int gen = ++_actionGen;
+    NSString *uri = _uri;
     NSRange sel = _tv.selectedRange;
     _askedSelection = sel;
+    struct Pending {
+        std::vector<std::vector<Lsp::CodeAction>> lists;
+        size_t waiting = 0;
+        bool finished = false;
+        std::string error;
+    };
+    auto pending = std::make_shared<Pending>();
+    pending->lists.resize(servers.count);
+    pending->waiting = servers.count;
+    __weak LspSession *weakSelf = self;
+    void (^finish)(void) = ^{
+        LspSession *me = weakSelf;
+        if (!me || pending->finished) return;
+        pending->finished = true;
+        if (gen != me->_actionGen || ![uri isEqualToString:me->_uri] ||
+            !NSEqualRanges(me->_tv.selectedRange, sel))
+            return;
+        std::vector<Lsp::CodeAction> merged = Lsp::mergeCodeActions(pending->lists);
+        done(merged, servers, merged.empty() && !pending->error.empty()
+                                  ? NS(pending->error) : nil);
+    };
+    for (NSUInteger i = 0; i < servers.count; i++) {
+        MCLspServer *server = servers[i];
+        const Lsp::DiagnosticStore::Set *set = _store.find(Std(uri), Std(server.serverId));
+        Json diags = set ? Lsp::diagnosticsInRange(set->list, range) : Json::array();
+        server.client.codeActions(Std(uri), range, diags,
+            [pending, i, server, finish](const Json &r, const Json &e) {
+                if (pending->finished) return;
+                if (NSString *why = ErrorText(e)) pending->error = Std(why);
+                else
+                    pending->lists[i] =
+                        Lsp::parseCodeActions(r, server.client.canResolveCodeAction());
+                if (--pending->waiting == 0) dispatch_async(dispatch_get_main_queue(), finish);
+            }, only);
+    }
+    // A server that never answers holds up the others' for 3 s at most.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC),
+                   dispatch_get_main_queue(), finish);
+}
+
+- (void)showQuickFixes {
+    if (![self serverFor:Lsp::Feature::CodeActions missing:@"offer quick fixes"]) return;
+    [self closeTransients];
+    [self flushChanges];
+    NSRange sel = _tv.selectedRange;
     std::u16string text = U16Of(_tv.string);
     Lsp::Range range{Lsp::positionForOffset(text, sel.location),
                      Lsp::positionForOffset(text, NSMaxRange(sel))};
-    auto it = _diags.find(Std(_uri));
-    Json diags = it != _diags.end() ? Lsp::diagnosticsInRange(it->second.list, range)
-                                    : Json::array();
     // A caret on a line with a problem that is not under it (clang reports
     // a missing ';' at the next token): the line's problems, at the first.
-    if (diags.size() == 0 && sel.length == 0 && it != _diags.end()) {
+    std::vector<Lsp::Diagnostic> all = _store.merged(Std(_uri));
+    if (sel.length == 0 && Lsp::diagnosticsInRange(all, range).size() == 0) {
         Lsp::Range line{{range.start.line, 0}, {range.start.line, INT_MAX}};
-        Json onLine = Lsp::diagnosticsInRange(it->second.list, line);
-        if (onLine.size() > 0) {
-            diags = onLine;
-            range = Lsp::parseRange(onLine[0]["range"]);
-        }
+        Json onLine = Lsp::diagnosticsInRange(all, line);
+        if (onLine.size() > 0) range = Lsp::parseRange(onLine[0]["range"]);
     }
     __weak LspSession *weakSelf = self;
+    [self askCodeActionsInRange:range only:{}
+                           done:^(std::vector<Lsp::CodeAction> actions,
+                                  NSArray<MCLspServer *> *servers, NSString *error) {
+        [weakSelf codeActionsArrived:actions servers:servers error:error];
+    }];
+}
+
+// Shift+Option+O: the servers' source.organizeImports action for the whole
+// file, applied at once (Ruff's own before a general server's, by
+// Lsp::pickOrganizeImports), through the same all-or-nothing edit as a
+// quick fix.
+- (void)organizeImports {
+    if (![self serverFor:Lsp::Feature::CodeActions missing:@"organize imports"]) return;
+    [self closeTransients];
+    [self flushChanges];
+    std::u16string text = U16Of(_tv.string);
+    Lsp::Range range{{0, 0}, Lsp::positionForOffset(text, text.size())};
+    __weak LspSession *weakSelf = self;
     NSString *uri = _uri;
-    MCLspServer *server = _server;
-    _server.client.codeActions(Std(uri), range, diags,
-        [weakSelf, gen, uri, server](const Json &r, const Json &e) {
-            [weakSelf codeActionsArrived:r error:e gen:gen uri:uri server:server];
-        });
+    [self askCodeActionsInRange:range only:{"source.organizeImports"}
+                           done:^(std::vector<Lsp::CodeAction> actions,
+                                  NSArray<MCLspServer *> *servers, NSString *error) {
+        LspSession *me = weakSelf;
+        if (!me) return;
+        int i = Lsp::pickOrganizeImports(actions);
+        if (i < 0) {
+            NSBeep();
+            [me note:error ?: @"The language servers have no way to organize these imports"];
+            return;
+        }
+        Lsp::CodeAction action = actions[(size_t)i];
+        MCLspServer *server = action.origin >= 0 && (NSUInteger)action.origin < servers.count
+                                  ? servers[(NSUInteger)action.origin] : nil;
+        NSString *before = [me->_tv.string copy];
+        [me runCodeAction:action server:server then:^{
+            LspSession *s = weakSelf;
+            if (!s || ![uri isEqualToString:s->_uri]) return;
+            if ([s->_tv.string isEqualToString:before]) [s note:@"The imports are in order"];
+            else [s note:[NSString stringWithFormat:@"Organized imports (%@)", server.name]];
+        }];
+    }];
 }
 
 static NSString *ActionKindName(const std::string &kind) {
@@ -3984,14 +4275,9 @@ static NSString *ActionKindName(const std::string &kind) {
     return NS(kind);
 }
 
-- (void)codeActionsArrived:(const Json &)result error:(const Json &)error gen:(int)gen
-                       uri:(NSString *)uri server:(MCLspServer *)server {
-    if (gen != _actionGen || ![uri isEqualToString:_uri] || server != _server ||
-        !NSEqualRanges(_tv.selectedRange, _askedSelection))
-        return;
-    if (NSString *why = ErrorText(error)) { NSBeep(); [self note:why]; return; }
-    std::vector<Lsp::CodeAction> actions =
-        Lsp::parseCodeActions(result, server.client.canResolveCodeAction());
+- (void)codeActionsArrived:(const std::vector<Lsp::CodeAction> &)actions
+                   servers:(NSArray<MCLspServer *> *)servers error:(NSString *)error {
+    if (error) { NSBeep(); [self note:error]; return; }
     if (actions.empty()) { [self note:@"No quick fixes"]; return; }
     NSMutableArray<NSAttributedString *> *rows = [NSMutableArray array];
     for (const Lsp::CodeAction &a : actions) {
@@ -4002,6 +4288,11 @@ static NSString *ActionKindName(const std::string &kind) {
         NSString *kind = ActionKindName(a.kind);
         if (a.preferred) kind = kind.length ? [kind stringByAppendingString:@", preferred"]
                                             : @"preferred";
+        // Which server offers it, when the file has more than one.
+        if (servers.count > 1 && a.origin >= 0 && (NSUInteger)a.origin < servers.count)
+            kind = kind.length ? [NSString stringWithFormat:@"%@, %@", kind,
+                                           servers[(NSUInteger)a.origin].name]
+                               : servers[(NSUInteger)a.origin].name;
         if (kind.length)
             [row appendAttributedString:[[NSAttributedString alloc]
                 initWithString:[@"   " stringByAppendingString:kind]
@@ -4010,7 +4301,7 @@ static NSString *ActionKindName(const std::string &kind) {
         [rows addObject:row];
     }
     _actions = actions;
-    _actionServer = server;
+    _actionServers = servers;
     _pickerKind = @"fixes";
     [self showPickerRows:rows headers:[NSIndexSet indexSet] select:0 width:440 maxRows:10];
 }
@@ -4018,11 +4309,18 @@ static NSString *ActionKindName(const std::string &kind) {
 // A chosen action: resolved first when it came without its edit and the
 // server can fill it in, then its edit applied and its command run.
 - (void)runCodeAction:(Lsp::CodeAction)action server:(MCLspServer *)server {
+    [self runCodeAction:action server:server then:nil];
+}
+
+// `then` runs once the action's edit has gone in (or failed), when it has
+// one; a command's edits come later, through workspace/applyEdit.
+- (void)runCodeAction:(Lsp::CodeAction)action server:(MCLspServer *)server
+                 then:(void (^)(void))then {
     if (!server || server.stopping) return;
     __weak LspSession *weakSelf = self;
     if (!action.hasEdit() && server.client.canResolveCodeAction() && action.raw) {
-        server.client.resolveCodeAction(action, [weakSelf, action, server](const Json &r,
-                                                                      const Json &e) {
+        server.client.resolveCodeAction(action, [weakSelf, action, server, then](const Json &r,
+                                                                            const Json &e) {
             Lsp::CodeAction done = action;
             if (e.isNull()) {
                 Lsp::CodeAction resolved = Lsp::parseCodeAction(r);
@@ -4030,23 +4328,25 @@ static NSString *ActionKindName(const std::string &kind) {
                 if (!done.hasCommand() && resolved.hasCommand()) done.command = resolved.command;
             }
             dispatch_async(dispatch_get_main_queue(), ^{
-                [weakSelf performCodeAction:done server:server];
+                [weakSelf performCodeAction:done server:server then:then];
             });
         });
         return;
     }
     dispatch_async(dispatch_get_main_queue(), ^{
-        [weakSelf performCodeAction:action server:server];
+        [weakSelf performCodeAction:action server:server then:then];
     });
 }
 
-- (void)performCodeAction:(const Lsp::CodeAction &)action server:(MCLspServer *)server {
+- (void)performCodeAction:(const Lsp::CodeAction &)action server:(MCLspServer *)server
+                     then:(void (^)(void))then {
     if (action.hasEdit()) {
         NSString *failure = nil;
         NSInteger n = [self applyWorkspaceEdit:Lsp::parseWorkspaceEdit(action.edit, CanonicalURI)
                                     actionName:NS(action.title)
                                        failure:&failure];
         if (n < 0) { NSBeep(); [self note:failure]; return; }
+        if (then && !action.hasCommand()) then();
     }
     if (action.hasCommand() && server && !server.stopping) {
         // The server makes its own edits with workspace/applyEdit while it
@@ -4055,8 +4355,8 @@ static NSString *ActionKindName(const std::string &kind) {
         __weak LspSession *weakSelf = self;
         NSString *title = NS(action.title);
         _commandTitle = title;
-        server.client.executeCommand(action.command, [weakSelf, title](const Json &r,
-                                                                       const Json &e) {
+        server.client.executeCommand(action.command, [weakSelf, title, then](const Json &r,
+                                                                             const Json &e) {
             (void)r;
             NSString *why = ErrorText(e);
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -4064,6 +4364,7 @@ static NSString *ActionKindName(const std::string &kind) {
                 if (!me) return;
                 if (me->_commandTitle == title) me->_commandTitle = nil;
                 if (why) [me note:why];
+                else if (then) then();
             });
         });
     } else if (!action.hasEdit()) {
