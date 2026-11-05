@@ -1969,6 +1969,16 @@ never closes.
 
 ## Current state (handoff, 2026-09-29)
 
+- **1.5.5** (2026-11-05): the command palette, Quick Open and Go to
+  Line; rename, references and quick fixes; the grid terminal with zsh's
+  line editor (the default); Cmd+D, Shift+Cmd+L and adding cursors, with
+  TODOs moved to Shift+Cmd+D; the ruler; JS, C++ raw and other string
+  literals; backups of unsaved tabs; per-file builds; git and tectonic
+  time limits; Ruff from lint config. Released without the PPA upload
+  (Docker not running): `scripts/ppa.sh 1.5.5` uploads it later.
+  Homebrew copy upgraded. Needs the user, most of all: the grid terminal
+  with their own .zshrc, prompt theme, autosuggestions and fzf.
+
 - **1.5.4** (2026-11-04): several carets, Copy and Move Line (Option or
   Cmd+Up/Down), wrapping a selection, a tab's right-click menu, Python
   f-string fields, Ctrl+W/U in the terminal input, `minicode -h/-v/-r/-n`
