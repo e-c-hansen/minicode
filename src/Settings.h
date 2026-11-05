@@ -199,6 +199,16 @@ public:
     // editor.keep-sorted-on-save: sort every keep-sorted block in a file
     // when it is saved (off by default).
     bool keepSortedOnSave() const { return keepSortedOnSave_; }
+    // editor.auto-save: off (the default), after-delay (each file with
+    // unsaved changes is written once typing has paused for
+    // editor.auto-save-delay milliseconds, 1000 by default, as VS Code's
+    // files.autoSave afterDelay), or focus-change (written when the editor
+    // loses the keyboard: another pane, another tab, another window or app).
+    // Auto-saves never format and never sort keep-sorted blocks, and never
+    // write over a file changed on disk since it was read.
+    enum class AutoSave { Off, AfterDelay, FocusChange };
+    AutoSave autoSave() const { return autoSave_; }
+    int autoSaveDelay() const { return autoSaveDelay_; }
     // editor.ruler: the columns a thin vertical line marks in the editor,
     // ascending ({100} by default; empty for off). editor.ruler-color is the
     // line's color.
@@ -294,6 +304,8 @@ private:
     bool webImages_ = true;
     bool math_ = true;
     bool keepSortedOnSave_ = false;
+    AutoSave autoSave_ = AutoSave::Off;
+    int autoSaveDelay_ = 1000;
     std::vector<int> rulers_ = {100};
     std::optional<Rgba> rulerColor_;
     bool terminalLineMode_ = false;

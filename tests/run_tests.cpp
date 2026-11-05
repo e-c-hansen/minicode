@@ -3553,8 +3553,8 @@ void testSettings() {
     // documented value is the real default.
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
-    // format, python, keep-sorted, ruler, terminal and develop keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 65);
+    // format, python, keep-sorted, auto-save, ruler, terminal and develop keys.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 67);
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -3581,6 +3581,8 @@ void testSettings() {
         CHECK(un.runTemplate(ext) == d.runTemplate(ext));
     CHECK(un.pythonInterpreter().empty() && d.pythonInterpreter().empty());
     CHECK(un.keepSortedOnSave() == d.keepSortedOnSave());
+    CHECK(un.autoSave() == d.autoSave() && d.autoSave() == Settings::AutoSave::Off);
+    CHECK(un.autoSaveDelay() == d.autoSaveDelay() && d.autoSaveDelay() == 1000);
     CHECK(un.rulers() == d.rulers() && un.rulerColor() == d.rulerColor());
     CHECK(un.terminalLineMode() == d.terminalLineMode() && !d.terminalLineMode());
     CHECK(un.terminalScrollback() == d.terminalScrollback() &&
@@ -3967,6 +3969,32 @@ void testSettings() {
     // The editor's colors still parse beside it.
     CHECK(parseSettings("editor.keep-sorted-on-save = true\neditor.text = #FF0000\n")
               .text(Surface::Editor) == Rgba::hex(0xFF0000));
+
+    GROUP("settings:auto-save");
+    {
+        using AS = Settings::AutoSave;
+        CHECK(parseSettings("").autoSave() == AS::Off);
+        CHECK(parseSettings("editor.auto-save = after-delay\n").autoSave() == AS::AfterDelay);
+        CHECK(parseSettings("Editor.Auto-Save = Focus-Change  # on leaving\n").autoSave() ==
+              AS::FocusChange);
+        CHECK(parseSettings("editor.auto-save = after-delay\neditor.auto-save = off\n")
+                  .autoSave() == AS::Off);
+        CHECK(parseSettings("editor.auto-save-delay = 250\n").autoSaveDelay() == 250);
+        CHECK(parseSettings("editor.auto-save-delay = 600000\n").autoSaveDelay() == 600000);
+        for (const char *bad : {"editor.auto-save = afterDelay\n", "editor.auto-save = on\n",
+                                "editor.auto-save-delay = 99\n",
+                                "editor.auto-save-delay = 600001\n",
+                                "editor.auto-save-delay = 1s\n",
+                                "editor.auto-save-delay = -5\n"}) {
+            std::vector<SettingsError> ae;
+            Settings a = parseSettings(bad, &ae);
+            CHECK(ae.size() == 1 && ae[0].line == 1);
+            CHECK(a.autoSave() == AS::Off && a.autoSaveDelay() == 1000);
+        }
+        std::vector<SettingsError> ae;
+        parseSettings("editor.auto-save = sometimes\n", &ae);
+        CHECK(ae.size() == 1 && ae[0].message.find("after-delay") != std::string::npos);
+    }
 
     GROUP("settings:math");
     std::vector<SettingsError> e7;
@@ -8638,6 +8666,107 @@ static void testMultiCaret() {
         CHECK(applyEdit(w, moveLines(w, carets({3}), false)) == u"b\r\na\r\nc");
         CHECK(applyEdit(u"x\n", moveLines(u"x\n", carets({0}), true)) == u"\nx");
         CHECK(moveLines(u"", carets({0}), true).changes.empty());
+    }
+
+    GROUP("multicaret:select-line");
+    {
+        const std::u16string t = u"one\ntwo\nthree";
+        // A caret selects its line with its break, from start to the next line.
+        std::vector<Caret> s = expandLineSelection(t, carets({5}));
+        CHECK(s.size() == 1 && s[0] == (Caret{4, 8}));
+        // Again: the next line joins.
+        s = expandLineSelection(t, s);
+        CHECK(s.size() == 1 && s[0] == (Caret{4, 13}));
+        // The last line has no break; once all of it is selected, nothing more.
+        CHECK(expandLineSelection(t, s)[0] == (Caret{4, 13}));
+        // A selection inside lines takes them whole.
+        CHECK(expandLineSelection(t, {{2, 5}})[0] == (Caret{0, 8}));
+        // A backwards selection too.
+        CHECK(expandLineSelection(t, {{5, 2}})[0] == (Caret{0, 8}));
+        // Several carets, each its line; neighbours merge into one selection.
+        std::vector<Caret> m = expandLineSelection(t, carets({1, 10}));
+        CHECK(m.size() == 2 && m[0] == (Caret{0, 4}) && m[1] == (Caret{8, 13}));
+        std::vector<Caret> j = expandLineSelection(t, carets({1, 5}));
+        CHECK(j.size() == 1 && j[0] == (Caret{0, 8}));
+        // CRLF: the break is both characters.
+        CHECK(expandLineSelection(u"a\r\nb", carets({0}))[0] == (Caret{0, 3}));
+        // An empty file, and an empty last line.
+        CHECK(expandLineSelection(u"", carets({0}))[0] == (Caret{0, 0}));
+        CHECK(expandLineSelection(u"x\n", carets({2}))[0] == (Caret{2, 2}));
+    }
+
+    GROUP("multicaret:delete-lines");
+    {
+        const std::u16string t = u"one\ntwo\nthree";
+        // The caret's line goes; the caret keeps its column on the line below.
+        Edit d = deleteLines(t, carets({5}));
+        CHECK(applyEdit(t, d) == u"one\nthree");
+        CHECK(heads(d.carets) == (std::vector<size_t>{5}));
+        // A long column clamps to the shorter line that takes its place.
+        Edit c = deleteLines(t, carets({12}));
+        CHECK(applyEdit(t, c) == u"one\ntwo");
+        CHECK(heads(c.carets) == (std::vector<size_t>{7}));   // the end of "two"
+        // The first line.
+        Edit f = deleteLines(t, carets({2}));
+        CHECK(applyEdit(t, f) == u"two\nthree");
+        CHECK(heads(f.carets) == (std::vector<size_t>{2}));
+        // A selection over two lines takes both; ending at a line start leaves it.
+        CHECK(applyEdit(t, deleteLines(t, {{1, 6}})) == u"three");
+        CHECK(applyEdit(t, deleteLines(t, {{0, 4}})) == u"two\nthree");
+        // Several carets apart: each line goes, one caret each, in the new text.
+        const std::u16string g = u"a1\nb2\nc3\nd4\ne5";
+        Edit k = deleteLines(g, carets({1, 7}));
+        CHECK(applyEdit(g, k) == u"b2\nd4\ne5");
+        CHECK(heads(k.carets) == (std::vector<size_t>{1, 4}));
+        // Neighbouring lines make one block and one caret.
+        Edit nb = deleteLines(g, carets({4, 7}));
+        CHECK(applyEdit(g, nb) == u"a1\nd4\ne5");
+        CHECK(heads(nb.carets) == (std::vector<size_t>{4}));
+        // The last line and a block reaching it.
+        Edit l = deleteLines(g, carets({10, 13}));
+        CHECK(applyEdit(g, l) == u"a1\nb2\nc3");
+        CHECK(heads(l.carets) == (std::vector<size_t>{7}));
+        // Everything.
+        Edit all = deleteLines(t, {{0, 13}});
+        CHECK(applyEdit(t, all) == u"" && heads(all.carets) == (std::vector<size_t>{0}));
+        CHECK(applyEdit(u"x", deleteLines(u"x", carets({1}))) == u"");
+        // CRLF, and a trailing newline (the empty last line goes with its break).
+        const std::u16string w = u"a\r\nb\r\nc";
+        CHECK(applyEdit(w, deleteLines(w, carets({3}))) == u"a\r\nc");
+        CHECK(applyEdit(w, deleteLines(w, carets({6}))) == u"a\r\nb");
+        CHECK(applyEdit(u"x\n", deleteLines(u"x\n", carets({0}))) == u"");
+        CHECK(applyEdit(u"x\n", deleteLines(u"x\n", carets({2}))) == u"x");
+    }
+
+    GROUP("multicaret:line-copy");
+    {
+        const std::u16string t = u"one\ntwo\nthree";
+        CHECK(lineCopy(t, carets({5})) == u"two\n");
+        CHECK(lineCopy(t, carets({10})) == u"three\n");   // a break added
+        CHECK(lineCopy(t, carets({1, 2, 10})) == u"one\nthree\n");   // each line once
+        CHECK(lineCopy(u"a\r\nb", carets({0})) == u"a\r\n");
+        CHECK(lineCopy(u"", carets({0})) == u"\n");
+        // Pasted with nothing selected: above the caret's line, caret kept.
+        Edit p = pasteLinesAbove(t, carets({6}), u"two\n");
+        CHECK(applyEdit(t, p) == u"one\ntwo\ntwo\nthree");
+        CHECK(heads(p.carets) == (std::vector<size_t>{10}));
+        // A copy with no final break gets one.
+        CHECK(applyEdit(t, pasteLinesAbove(t, carets({0}), u"x")) == u"x\none\ntwo\nthree");
+        // One line per caret line: one each; otherwise all at each.
+        Edit e = pasteLinesAbove(t, carets({1, 9}), u"A\nB\n");
+        CHECK(applyEdit(t, e) == u"A\none\ntwo\nB\nthree");
+        CHECK(heads(e.carets) == (std::vector<size_t>{3, 13}));
+        Edit a = pasteLinesAbove(t, carets({1, 9}), u"Z\n");
+        CHECK(applyEdit(t, a) == u"Z\none\ntwo\nZ\nthree");
+        CHECK(heads(a.carets) == (std::vector<size_t>{3, 13}));
+        // Two carets on one line: one paste.
+        Edit s = pasteLinesAbove(t, carets({0, 2}), u"Z\n");
+        CHECK(applyEdit(t, s) == u"Z\none\ntwo\nthree");
+        CHECK(heads(s.carets) == (std::vector<size_t>{2, 4}));
+        // The round trip: Cut a line, then Paste it back above another.
+        const std::u16string cut = lineCopy(t, carets({5}));
+        const std::u16string after = applyEdit(t, deleteLines(t, carets({5})));
+        CHECK(applyEdit(after, pasteLinesAbove(after, carets({0}), cut)) == u"two\none\nthree");
     }
 
     GROUP("multicaret:paste");

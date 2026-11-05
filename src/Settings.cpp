@@ -741,6 +741,28 @@ bool Settings::apply(const std::string& key, const std::string& value,
         }
         return true;
     }
+    if (key == "editor.auto-save") {
+        std::string v = lower(value);
+        if (v == "off" || v == "false" || v == "none") autoSave_ = AutoSave::Off;
+        else if (v == "after-delay") autoSave_ = AutoSave::AfterDelay;
+        else if (v == "focus-change") autoSave_ = AutoSave::FocusChange;
+        else {
+            error = "'" + value + "' is not off, after-delay or focus-change";
+            return false;
+        }
+        return true;
+    }
+    if (key == "editor.auto-save-delay") {
+        bool digits = !value.empty() && value.size() <= 7;
+        for (char c : value) digits = digits && c >= '0' && c <= '9';
+        long ms = digits ? std::atol(value.c_str()) : -1;
+        if (ms < 100 || ms > 600000) {
+            error = "'" + value + "' is not a delay in milliseconds from 100 to 600000";
+            return false;
+        }
+        autoSaveDelay_ = (int)ms;
+        return true;
+    }
     if (key == "editor.ruler") {
         // A column, a list of them without spaces (80,120), or off.
         std::string v = lower(value);
@@ -1082,6 +1104,13 @@ const char* Settings::defaultFileText() {
 # Sort the lines between "keep-sorted start" and "keep-sorted end" comments
 # every time a file is saved, as Google's keep-sorted tool would.
 # editor.keep-sorted-on-save = false
+# Save files by themselves (macOS): after-delay writes a file once typing has
+# paused for editor.auto-save-delay milliseconds, focus-change when the
+# editor loses the keyboard (another pane, tab, window or app). A file
+# changed on disk since it was read is never written over by an auto-save;
+# saving it by hand asks what to do.
+# editor.auto-save = off
+# editor.auto-save-delay = 1000
 
 # The terminal panel.
 # terminal.background = #181818
