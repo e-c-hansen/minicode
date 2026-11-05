@@ -168,7 +168,9 @@ isolation. Keep them dependency-free.
 - `src/Json.{h,cpp}` — small JSON value, strict parser, compact serializer.
 - `src/LspClient.{h,cpp}` — LSP client with no I/O: framing, handshake,
   document sync, request/response matching, result parsing (completion
-  with resolve, signature help), workspace/configuration, UTF-16
+  with resolve, signature help, references, prepareRename, code actions),
+  WorkspaceEdits flattened to sorted per-file edits, workspace/applyEdit,
+  workspace/configuration, UTF-16
   position conversion, server choice by extension, and how each Python
   server is told its interpreter. See "LSP" below.
 - `src/PythonEnvs.{h,cpp}` — finding Python interpreters (project venvs,
@@ -298,6 +300,9 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
   finds it, pipes the buffer through it off the main thread, times it out.
 - `src/LspPanel.{h,mm}` — the status bar's server item, the Language
   Servers popover and the Select Python Interpreter sheet.
+- `src/LspPicker.{h,mm}` — `MCPickerPopup`, the list by the caret for
+  references and quick fixes, and `MCRenameBox`, Rename Symbol's field.
+  See "Rename, references and quick fixes" under LSP.
 - `src/FileDetails.{h,cpp}` (pure C++, tested) and `src/TreeDetails.{h,mm}`
   — the file tree's sizes, dates and sort orders: `TreeSort` (the order of
   one folder's entries), `Age` ("5 min", "Saved 14:32"), `FolderSizes`
@@ -1780,6 +1785,97 @@ never closes.
   `MINICODE_SETTINGS` at a scratch file and `MINICODE_LSP_LOG` at a scratch
   log when doing this again. Other sessions (and the user's own MiniCode)
   may have clangd running: kill only PIDs the test started.
+- **Rename, references and quick fixes** (Mac, 2026-11-05). VS Code's keys:
+  F2 Rename Symbol, Shift+F12 Find All References, Cmd+. Quick Fix (Edit
+  and Navigate menus, the hints overlay, the README table).
+  - **Core** (`LspClient`, `lsp:rename*`, `lsp:references*`,
+    `lsp:codeaction*`): the requests, the capabilities (rename with
+    prepareSupport, references, codeAction literals with resolve and
+    isPreferred, workspaceEdit with documentChanges and no resource
+    operations, applyEdit, executeCommand), `parseWorkspaceEdit` (changes
+    and documentChanges, merged per file, sorted, exact duplicates dropped,
+    overlaps and file operations refused whole), `offsetEdits` (UTF-16,
+    last first), `groupReferences`, `parseCodeActions` (preferred first,
+    disabled left out), `diagnosticsInRange` (the diagnostics as the server
+    sent them, `Diagnostic::raw`, since servers match fixes on them), and
+    `onApplyEdit`, whose reply may come later and is sent once.
+  - **One way edits go in** (`applyWorkspaceEdit:actionName:failure:`
+    in Lsp.mm), for rename, a fix's edit and the server's
+    workspace/applyEdit: every file is read first (the editor for the file
+    on show, `bufferText` for another tab, else the disk), and a tab with
+    unsaved changes is edited only if each range holds the same text as on
+    disk, since the server has only the file on show open; then each file
+    is made the active tab with `openFile` (a file not open gets a tab) and
+    its edits go through shouldChangeText/replace/didChangeText inside one
+    undo group in that tab's undo manager, so highlighting, the dirty dot
+    and didChange follow; then back to the file it started from. Nothing is
+    saved. `_applyingEdit` keeps the typing heuristics (completion,
+    signature help) and the rename box's closing out of it.
+  - **Rename**: prepareRename when the server has it (null or an error is
+    "This can't be renamed", which is what a keyword gets), else the word
+    at the caret; `MCRenameBox` under the name, a key-capable child panel
+    (an NSPopover never shows for a window that is not on screen, so the
+    offscreen harness could not reach it); Return renames, Esc or losing
+    the keyboard cancels. The answer applies only to the text the name was
+    read from. "Renamed N occurrences in M files" goes to `showStatusNote:`
+    through `showNote`.
+  - **References and quick fixes** share `MCPickerPopup`, a child panel
+    that never takes the keyboard (like the completion list): Up, Down,
+    Page Up and Down, Return and Esc come through `handleCommand:`, and
+    typing, a caret move, focus loss or a document switch close it.
+    References are grouped by file (the file asked from first), headings
+    skipped by the keys, each row the line number and the line with the
+    match highlighted, the reference at the caret selected; Return or a
+    click opens one through `revealLocation:` (go to definition's path,
+    now shared). Quick fixes send the diagnostics touching the caret or
+    selection, or with none there the caret line's (clang reports a
+    missing ';' at the next token), and say "No quick fixes" when the list
+    is empty. A chosen action is resolved first when it came without its
+    edit, its edit applied, then its command run; edits the server sends
+    while the command runs are undone under the action's title.
+  - **Keys**: F2 and Shift+F12 are function keys, so the key monitor in
+    main.mm gives them to the menu first while the editor has the
+    keyboard (as F9). F2 in the tree is `ClickOutline keyDown:` (Rename…),
+    and `renameSymbol:` sends a tree's F2 that reached the menu to the
+    same place. Cmd+. is the key bindings' cancelOperation: everywhere, so
+    the monitor gives it to the menu only in an editable editor; elsewhere
+    it goes to the window's key equivalents and then the first
+    responder's keyDown:, which is where it went before (checked: a text
+    field's delegate still gets cancelOperation:). Shift+Cmd+. stays Show
+    Hidden Files.
+  - **Two traps.** The server was initialized with the tree's spelling of
+    the folder (/tmp/x) while didOpen used the resolved one
+    (/private/tmp/x), and basedpyright then took them for two files and
+    found every reference twice; `initialize` now gets the resolved folder,
+    and `CanonicalURI` merges spellings in references and edits anyway. In
+    a test, everything run from one timer callback lands in one undo group
+    by event (`groupingLevel` stays 1), so an undo there undoes every edit
+    since; end the groups by hand around a step.
+  - **Verified** with an offscreen harness (74 checks; main.mm included
+    as `minicode_main`, window ordering and `orderWindow:relativeTo:`
+    swizzled, keyWindow/mainWindow the test window, activation
+    Prohibited, NSAlert answered, scratch HOME, settings, defaults suite
+    and LSP log, the folder spelled through /tmp) against basedpyright
+    1.40.2 and the command line tools' clangd: F2 sent through
+    `[NSApp sendEvent:]` (monitor, menu), the field showing the name, a new
+    name typed and Return, "Renamed 4 occurrences in 2 files", util.py
+    opened as a tab and edited unsaved, both files untouched on disk, back
+    on main.py, undo per file (and redo), a keyword refused, Esc in the
+    field; Shift+F12 the same way, the rows and headings, the caret's
+    reference selected, arrows skipping headings and wrapping, Return
+    opening util.py at the definition, Esc; Cmd+. on an undefined `Path`
+    giving basedpyright's "from pathlib import Path" (applied, undone),
+    "No quick fixes", clangd's "insert ';'" from the start of the next
+    line applied with Return, clangd's rename, its "Extract subexpression
+    to variable" tweak arriving as workspace/applyEdit (answered
+    applied: true) and undone in one step; F2 in the tree renaming a file
+    by key and by the menu; every menu key claimed once; Cmd+. in a plain
+    text field reaching its delegate as cancelOperation:. Pictures of the
+    list, the fixes and the rename box were looked at. Needs the user: the
+    rename box and the lists on a real screen (focus going to the box and
+    back, a click elsewhere cancelling), real F2 and Shift+F12 from the
+    keyboard (fn on a laptop), Cmd+. in the terminal and the find bar, and
+    a rename across many files. The GTK and Android ports have none of it.
 
 ## Current state (handoff, 2026-09-29)
 

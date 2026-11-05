@@ -5078,7 +5078,7 @@ void testLspClient() {
         "\"params\":{\"items\":[{},{}]}}"));
     CHECK(srv.sent.back()["id"].asInt() == 5 && srv.sent.back()["result"].size() == 2);
     client.receive(Lsp::Framer::frame(
-        "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"workspace/applyEdit\",\"params\":{}}"));
+        "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"custom/somethingElse\",\"params\":{}}"));
     CHECK(srv.sent.back()["id"].asInt() == 6 &&
           srv.sent.back()["error"]["code"].asInt() == -32601);
 
@@ -5361,6 +5361,351 @@ void testLspFeatures() {
           !Lsp::pythonInterpreterNeedsRestart(PythonServer::Pylsp));
 }
 
+
+// Rename, references and code actions: the parsing, the WorkspaceEdit
+// flattening, and the requests against the scripted server.
+void testLspEditing() {
+    auto range = [](int l1, int c1, int l2, int c2) {
+        return "{\"start\":{\"line\":" + std::to_string(l1) + ",\"character\":" +
+               std::to_string(c1) + "},\"end\":{\"line\":" + std::to_string(l2) +
+               ",\"character\":" + std::to_string(c2) + "}}";
+    };
+    auto edit = [&](int l1, int c1, int l2, int c2, const std::string &text) {
+        return "{\"range\":" + range(l1, c1, l2, c2) + ",\"newText\":\"" + text + "\"}";
+    };
+
+    GROUP("lsp:rename-edit");
+    {
+        // `changes`: one file, edits given out of order come back sorted.
+        Lsp::WorkspaceEdit we = Lsp::parseWorkspaceEdit(parsed(
+            "{\"changes\":{\"file:///p/a.py\":[" + edit(2, 4, 2, 7, "new") + "," +
+            edit(0, 0, 0, 3, "new") + "],\"file:///p/b.py\":[" + edit(5, 1, 5, 4, "new") +
+            "]}}"));
+        CHECK(we.problem.empty() && !we.resourceOperations);
+        CHECK(we.files.size() == 2 && we.editCount() == 3);
+        CHECK(we.files.size() == 2 && we.files[0].uri == "file:///p/a.py" &&
+              we.files[0].edits[0].range.start == (Lsp::Position{0, 0}) &&
+              we.files[0].edits[1].range.start == (Lsp::Position{2, 4}));
+        const std::u16string text = u"old = 1\nprint(old)\nx = old + old\n";
+        Lsp::WorkspaceEdit w2 = Lsp::parseWorkspaceEdit(parsed(
+            "{\"changes\":{\"file:///a\":[" + edit(2, 10, 2, 13, "renamed") + "," +
+            edit(0, 0, 0, 3, "renamed") + "," + edit(1, 6, 1, 9, "renamed") + "," +
+            edit(2, 4, 2, 7, "renamed") + "]}}"));
+        CHECK(w2.files.size() == 1 &&
+              Lsp::applyTextEdits(text, w2.files[0].edits) ==
+                  u"renamed = 1\nprint(renamed)\nx = renamed + renamed\n");
+        // Offsets come last first, in UTF-16 units (é is one, 😀 two).
+        const std::u16string wide = u"é😀 ab ab";
+        std::vector<Lsp::TextEdit> two = {{{{0, 4}, {0, 6}}, "X"}, {{{0, 7}, {0, 9}}, "Y"}};
+        std::vector<Lsp::OffsetEdit> off = Lsp::offsetEdits(wide, two);
+        CHECK(off.size() == 2 && off[0].start == 7 && off[0].length == 2 &&
+              off[1].start == 4 && off[1].text == u"X");
+        CHECK(Lsp::applyTextEdits(wide, two) == u"é😀 X Y");
+        // Two insertions at one place keep the server's order.
+        std::vector<Lsp::TextEdit> ins = {{{{0, 1}, {0, 1}}, "a"}, {{{0, 1}, {0, 1}}, "b"}};
+        CHECK(Lsp::applyTextEdits(u"xy", ins) == u"xaby");
+        // A position past the end of its line clamps there; CRLF lines count once.
+        std::vector<Lsp::TextEdit> crlf = {{{{1, 0}, {1, 99}}, "Z"}};
+        CHECK(Lsp::applyTextEdits(u"a\r\nbcd\r\ne", crlf) == u"a\r\nZ\r\ne");
+    }
+
+    GROUP("lsp:rename-document-changes");
+    {
+        // documentChanges wins over changes; two entries for one file merge;
+        // an exact duplicate is dropped.
+        Lsp::WorkspaceEdit we = Lsp::parseWorkspaceEdit(parsed(
+            "{\"changes\":{\"file:///ignored\":[" + edit(0, 0, 0, 1, "q") + "]},"
+            "\"documentChanges\":["
+            "{\"textDocument\":{\"uri\":\"file:///p/b.py\",\"version\":3},\"edits\":[" +
+            edit(1, 0, 1, 3, "zz") + "]},"
+            "{\"textDocument\":{\"uri\":\"file:///p/a.py\",\"version\":null},\"edits\":[" +
+            edit(0, 0, 0, 3, "zz") + "," + edit(0, 0, 0, 3, "zz") + "]},"
+            "{\"textDocument\":{\"uri\":\"file:///p/b.py\",\"version\":3},\"edits\":[" +
+            edit(0, 0, 0, 3, "zz") + "]}]}"));
+        CHECK(we.problem.empty());
+        CHECK(we.files.size() == 2 && we.files[0].uri == "file:///p/b.py" &&
+              we.files[1].uri == "file:///p/a.py");
+        CHECK(we.files.size() == 2 && we.files[0].edits.size() == 2 &&
+              we.files[0].edits[0].range.start.line == 0 && we.files[1].edits.size() == 1);
+        // A file operation refuses the whole edit.
+        Lsp::WorkspaceEdit ops = Lsp::parseWorkspaceEdit(parsed(
+            "{\"documentChanges\":[{\"kind\":\"rename\",\"oldUri\":\"file:///a\","
+            "\"newUri\":\"file:///b\"},{\"textDocument\":{\"uri\":\"file:///c\"},\"edits\":[" +
+            edit(0, 0, 0, 1, "x") + "]}]}"));
+        CHECK(ops.resourceOperations && !ops.problem.empty() && ops.files.size() == 1);
+        // Overlapping edits are a problem, not a guess.
+        Lsp::WorkspaceEdit lap = Lsp::parseWorkspaceEdit(parsed(
+            "{\"changes\":{\"file:///p/a.py\":[" + edit(0, 0, 0, 5, "x") + "," +
+            edit(0, 3, 0, 8, "y") + "]}}"));
+        CHECK(!lap.problem.empty() && lap.problem.find("/p/a.py") != std::string::npos);
+        // Touching edits are fine; null and empty edits are nothing.
+        Lsp::WorkspaceEdit touch = Lsp::parseWorkspaceEdit(parsed(
+            "{\"changes\":{\"file:///a\":[" + edit(0, 0, 0, 2, "x") + "," +
+            edit(0, 2, 0, 4, "y") + "],\"file:///empty\":[]}}"));
+        CHECK(touch.problem.empty() && touch.files.size() == 1 && touch.editCount() == 2);
+        CHECK(Lsp::parseWorkspaceEdit(Json()).editCount() == 0);
+        CHECK(Lsp::parseWorkspaceEdit(parsed("{}")).files.empty());
+        // The same edit to one file named two ways is made once.
+        auto canon = [](const std::string &u) {
+            return u.rfind("file:///tmp/", 0) == 0 ? "file:///private/tmp/" + u.substr(12) : u;
+        };
+        const std::string both = "{\"changes\":{\"file:///tmp/p/a.py\":[" + edit(0, 0, 0, 3, "new") +
+                                 "],\"file:///private/tmp/p/a.py\":[" + edit(0, 0, 0, 3, "new") +
+                                 "," + edit(2, 0, 2, 3, "new") + "]}}";
+        Lsp::WorkspaceEdit merged = Lsp::parseWorkspaceEdit(parsed(both), canon);
+        CHECK(merged.problem.empty() && merged.files.size() == 1 && merged.editCount() == 2 &&
+              merged.files[0].uri == "file:///private/tmp/p/a.py");
+        CHECK(Lsp::parseWorkspaceEdit(parsed(both)).files.size() == 2);
+    }
+
+    GROUP("lsp:rename-prepare");
+    {
+        Lsp::PrepareRename p = Lsp::parsePrepareRename(parsed(range(3, 4, 3, 9)));
+        CHECK(p.ok && p.hasRange && p.range.start == (Lsp::Position{3, 4}) &&
+              p.range.end == (Lsp::Position{3, 9}) && p.placeholder.empty());
+        p = Lsp::parsePrepareRename(parsed("{\"range\":" + range(1, 0, 1, 3) +
+                                           ",\"placeholder\":\"foo\"}"));
+        CHECK(p.ok && p.hasRange && p.placeholder == "foo");
+        p = Lsp::parsePrepareRename(parsed("{\"defaultBehavior\":true}"));
+        CHECK(p.ok && !p.hasRange);
+        CHECK(!Lsp::parsePrepareRename(Json()).ok);   // a keyword: not renameable
+        CHECK(!Lsp::parsePrepareRename(parsed("{\"defaultBehavior\":false}")).ok);
+        CHECK(!Lsp::parsePrepareRename(parsed("[]")).ok);
+    }
+
+    GROUP("lsp:references-group");
+    {
+        std::vector<Lsp::Location> locs = Lsp::parseLocations(parsed(
+            "[{\"uri\":\"file:///p/z.py\",\"range\":" + range(9, 0, 9, 3) + "},"
+            "{\"uri\":\"file:///p/b.py\",\"range\":" + range(4, 2, 4, 5) + "},"
+            "{\"uri\":\"file:///p/main.py\",\"range\":" + range(7, 0, 7, 3) + "},"
+            "{\"uri\":\"file:///p/b.py\",\"range\":" + range(1, 0, 1, 3) + "},"
+            "{\"uri\":\"file:///p/main.py\",\"range\":" + range(2, 4, 2, 7) + "},"
+            "{\"uri\":\"file:///p/b.py\",\"range\":" + range(1, 0, 1, 3) + "}]"));
+        std::vector<Lsp::ReferenceFile> g = Lsp::groupReferences(locs, "file:///p/main.py");
+        CHECK(g.size() == 3 && g[0].uri == "file:///p/main.py" && g[1].uri == "file:///p/b.py" &&
+              g[2].uri == "file:///p/z.py");
+        CHECK(g.size() == 3 && g[0].ranges.size() == 2 && g[0].ranges[0].start.line == 2);
+        CHECK(g.size() == 3 && g[1].ranges.size() == 2);   // the duplicate went
+        CHECK(Lsp::groupReferences({}, "x").empty());
+        // One file named two ways (/tmp is /private/tmp) is one group.
+        auto canon = [](const std::string &u) {
+            return u.rfind("file:///tmp/", 0) == 0 ? "file:///private/tmp/" + u.substr(12) : u;
+        };
+        std::vector<Lsp::Location> twice = Lsp::parseLocations(parsed(
+            "[{\"uri\":\"file:///tmp/p/a.py\",\"range\":" + range(1, 0, 1, 3) + "},"
+            "{\"uri\":\"file:///private/tmp/p/a.py\",\"range\":" + range(1, 0, 1, 3) + "},"
+            "{\"uri\":\"file:///private/tmp/p/a.py\",\"range\":" + range(5, 0, 5, 3) + "}]"));
+        std::vector<Lsp::ReferenceFile> one = Lsp::groupReferences(twice, "file:///tmp/p/a.py", canon);
+        CHECK(one.size() == 1 && one[0].uri == "file:///private/tmp/p/a.py" &&
+              one[0].ranges.size() == 2);
+        CHECK(Lsp::groupReferences(twice, "").size() == 2);   // without it, two
+        CHECK(Lsp::lineOf(u"a\nbb\r\nccc", 1) == u"bb");
+        CHECK(Lsp::lineOf(u"a\nbb\r\nccc", 2) == u"ccc");
+        CHECK(Lsp::lineOf(u"a\nbb\r\nccc", 3).empty() && Lsp::lineOf(u"a", -1).empty());
+        CHECK(Lsp::lineOf(u"a\n", 1).empty() && Lsp::lineOf(u"a\n", 0) == u"a");
+    }
+
+    GROUP("lsp:codeaction-parse");
+    {
+        std::string json =
+            "[{\"title\":\"Run tests\",\"command\":\"test.run\",\"arguments\":[1]},"
+            "{\"title\":\"Remove unused import\",\"kind\":\"quickfix\",\"edit\":{\"changes\":"
+            "{\"file:///a.py\":[" + edit(0, 0, 1, 0, "") + "]}}},"
+            "{\"title\":\"Add import os\",\"kind\":\"quickfix\",\"isPreferred\":true,"
+            "\"command\":{\"title\":\"x\",\"command\":\"addImport\",\"arguments\":[\"os\"]}},"
+            "{\"title\":\"Extract\",\"kind\":\"refactor.extract\",\"disabled\":{\"reason\":"
+            "\"no selection\"}},"
+            "{\"title\":\"Needs resolve\",\"kind\":\"quickfix\",\"data\":{\"id\":3}},"
+            "{\"title\":\"\",\"command\":\"x\"}]";
+        std::vector<Lsp::CodeAction> a = Lsp::parseCodeActions(parsed(json));
+        CHECK(a.size() == 3);
+        CHECK(a.size() == 3 && a[0].title == "Add import os" && a[0].preferred &&
+              a[0].hasCommand() && !a[0].hasEdit());
+        CHECK(a.size() == 3 && a[1].title == "Run tests" && a[1].hasCommand() &&
+              a[1].command["arguments"][0].asInt() == 1 && !a[1].raw);
+        CHECK(a.size() == 3 && a[2].title == "Remove unused import" && a[2].hasEdit() &&
+              a[2].kind == "quickfix" &&
+              Lsp::parseWorkspaceEdit(a[2].edit).editCount() == 1);
+        // With resolve, an action with only data is offered too.
+        std::vector<Lsp::CodeAction> r = Lsp::parseCodeActions(parsed(json), true);
+        CHECK(r.size() == 4 && r[3].title == "Needs resolve" && r[3].raw &&
+              (*r[3].raw)["data"]["id"].asInt() == 3);
+        CHECK(Lsp::parseCodeActions(Json()).empty());
+        Lsp::CodeAction one = Lsp::parseCodeAction(parsed(
+            "{\"title\":\"T\",\"edit\":{\"changes\":{}},\"disabled\":{}}"));
+        CHECK(one.title == "T" && one.hasEdit() && !one.disabledReason.empty());
+    }
+
+    GROUP("lsp:codeaction-diagnostics");
+    {
+        std::vector<Lsp::Diagnostic> d = Lsp::parseDiagnostics(parsed(
+            "{\"uri\":\"file:///a.py\",\"diagnostics\":["
+            "{\"range\":" + range(0, 7, 0, 9) + ",\"message\":\"\\\"os\\\" is not accessed\","
+            "\"severity\":4,\"data\":{\"k\":1}},"
+            "{\"range\":" + range(3, 0, 3, 5) + ",\"message\":\"other\"}]}"));
+        CHECK(d.size() == 2 && d[0].raw && (*d[0].raw)["data"]["k"].asInt() == 1);
+        // A caret inside, or at either end of, the first; not the second.
+        Json in = Lsp::diagnosticsInRange(d, {{0, 8}, {0, 8}});
+        CHECK(in.size() == 1 && in[0]["message"].asString() == "\"os\" is not accessed" &&
+              in[0]["data"]["k"].asInt() == 1);
+        CHECK(Lsp::diagnosticsInRange(d, {{0, 9}, {0, 9}}).size() == 1);
+        CHECK(Lsp::diagnosticsInRange(d, {{0, 10}, {0, 10}}).size() == 0);
+        CHECK(Lsp::diagnosticsInRange(d, {{0, 0}, {5, 0}}).size() == 2);
+        Lsp::Diagnostic bare;
+        bare.range = {{1, 1}, {1, 2}};
+        bare.message = "m";
+        bare.code = "E1";
+        Json b = Lsp::diagnosticsInRange({bare}, {{1, 1}, {1, 1}});
+        CHECK(b.size() == 1 && b[0]["code"].asString() == "E1" && b[0]["severity"].asInt() == 1);
+    }
+
+    GROUP("lsp:rename-client");
+    FakeServer srv;
+    Lsp::Client client([&](const std::string &b) { srv.take(b); });
+    client.initialize("/p", 1);
+    {
+        const Json &caps = srv.sent[0]["params"]["capabilities"];
+        CHECK(caps["textDocument"]["rename"]["prepareSupport"].asBool());
+        CHECK(caps["textDocument"]["references"].isObject());
+        const Json &ca = caps["textDocument"]["codeAction"];
+        CHECK(ca["codeActionLiteralSupport"]["codeActionKind"]["valueSet"][1].asString() ==
+              "quickfix");
+        CHECK(ca["resolveSupport"]["properties"][0].asString() == "edit");
+        CHECK(ca["isPreferredSupport"].asBool() && ca["dataSupport"].asBool());
+        CHECK(caps["workspace"]["applyEdit"].asBool());
+        CHECK(caps["workspace"]["workspaceEdit"]["documentChanges"].asBool());
+        CHECK(caps["workspace"]["workspaceEdit"]["resourceOperations"].size() == 0);
+    }
+    client.receive(reply(1, "{\"capabilities\":{\"renameProvider\":{\"prepareProvider\":true},"
+                            "\"referencesProvider\":true,\"codeActionProvider\":"
+                            "{\"resolveProvider\":true}}}"));
+    CHECK(client.hasRename() && client.canPrepareRename() && client.hasReferences() &&
+          client.hasCodeActions() && client.canResolveCodeAction());
+    {
+        Lsp::PrepareRename prep;
+        int pid = client.prepareRename("file:///p/a.py", {2, 5}, [&](const Json &r, const Json &) {
+            prep = Lsp::parsePrepareRename(r);
+        });
+        CHECK(srv.sent.back()["method"].asString() == "textDocument/prepareRename" &&
+              srv.sent.back()["params"]["position"]["line"].asInt() == 2);
+        client.receive(reply(pid, range(2, 4, 2, 7)));
+        CHECK(prep.ok && prep.range.end.character == 7);
+        Lsp::WorkspaceEdit got;
+        int rid = client.rename("file:///p/a.py", {2, 5}, "count", [&](const Json &r, const Json &) {
+            got = Lsp::parseWorkspaceEdit(r);
+        });
+        CHECK(srv.sent.back()["method"].asString() == "textDocument/rename" &&
+              srv.sent.back()["params"]["newName"].asString() == "count" &&
+              srv.sent.back()["params"]["textDocument"]["uri"].asString() == "file:///p/a.py");
+        client.receive(reply(rid, "{\"changes\":{\"file:///p/a.py\":[" +
+                                      edit(2, 4, 2, 7, "count") + "]}}"));
+        CHECK(got.editCount() == 1 && got.files[0].edits[0].newText == "count");
+        // A keyword: prepareRename answers null, which refuses.
+        bool refused = false;
+        pid = client.prepareRename("file:///p/a.py", {0, 1}, [&](const Json &r, const Json &) {
+            refused = !Lsp::parsePrepareRename(r).ok;
+        });
+        client.receive(reply(pid, "null"));
+        CHECK(refused);
+        FakeServer s2;
+        Lsp::Client plain([&](const std::string &b) { s2.take(b); });
+        plain.initialize("/p", 1);
+        plain.receive(reply(1, "{\"capabilities\":{\"renameProvider\":true}}"));
+        CHECK(plain.hasRename() && !plain.canPrepareRename() && !plain.hasReferences() &&
+              !plain.hasCodeActions() && !plain.canResolveCodeAction());
+    }
+
+    GROUP("lsp:references-client");
+    {
+        size_t files = 0;
+        int id = client.references("file:///p/a.py", {1, 2}, true, [&](const Json &r, const Json &) {
+            files = Lsp::groupReferences(Lsp::parseLocations(r), "file:///p/a.py").size();
+        });
+        const Json &q = srv.sent.back();
+        CHECK(q["method"].asString() == "textDocument/references" &&
+              q["params"]["context"]["includeDeclaration"].asBool() &&
+              q["params"]["position"]["character"].asInt() == 2);
+        client.receive(reply(id, "[{\"uri\":\"file:///p/a.py\",\"range\":" + range(1, 0, 1, 3) +
+                                     "},{\"uri\":\"file:///p/b.py\",\"range\":" +
+                                     range(0, 0, 0, 3) + "}]"));
+        CHECK(files == 2);
+    }
+
+    GROUP("lsp:codeaction-client");
+    {
+        std::vector<Lsp::CodeAction> actions;
+        Json diags = parsed("[{\"range\":" + range(0, 7, 0, 9) + ",\"message\":\"m\"}]");
+        int id = client.codeActions("file:///p/a.py", {{0, 7}, {0, 9}}, diags,
+                                    [&](const Json &r, const Json &) {
+                                        actions = Lsp::parseCodeActions(r, true);
+                                    });
+        const Json &q = srv.sent.back();
+        CHECK(q["method"].asString() == "textDocument/codeAction" &&
+              q["params"]["range"]["end"]["character"].asInt() == 9 &&
+              q["params"]["context"]["diagnostics"][0]["message"].asString() == "m" &&
+              q["params"]["context"]["triggerKind"].asInt() == 1);
+        client.receive(reply(id, "[{\"title\":\"Remove import\",\"kind\":\"quickfix\","
+                                 "\"data\":{\"n\":5}}]"));
+        CHECK(actions.size() == 1 && !actions[0].hasEdit());
+        // Resolve sends the action back as it came, and the answer has the edit.
+        Lsp::CodeAction resolved;
+        int rid = actions.empty() ? 0 : client.resolveCodeAction(actions[0],
+            [&](const Json &r, const Json &) { resolved = Lsp::parseCodeAction(r); });
+        CHECK(rid > 0 && srv.sent.back()["method"].asString() == "codeAction/resolve" &&
+              srv.sent.back()["params"]["data"]["n"].asInt() == 5);
+        client.receive(reply(rid, "{\"title\":\"Remove import\",\"edit\":{\"changes\":"
+                                  "{\"file:///p/a.py\":[" + edit(0, 0, 1, 0, "") + "]}}}"));
+        CHECK(resolved.hasEdit() && Lsp::parseWorkspaceEdit(resolved.edit).editCount() == 1);
+        // A command goes out as workspace/executeCommand.
+        int eid = client.executeCommand(parsed("{\"title\":\"t\",\"command\":\"pyright.organize\","
+                                               "\"arguments\":[\"file:///p/a.py\"]}"),
+                                        nullptr);
+        CHECK(eid > 0 && srv.sent.back()["method"].asString() == "workspace/executeCommand" &&
+              srv.sent.back()["params"]["command"].asString() == "pyright.organize" &&
+              srv.sent.back()["params"]["arguments"][0].asString() == "file:///p/a.py");
+    }
+
+    GROUP("lsp:codeaction-apply-edit");
+    {
+        // workspace/applyEdit while the command runs: answered when the
+        // owner says, once.
+        Json gotEdit;
+        Lsp::Client::ApplyEditReply later;
+        client.onApplyEdit = [&](const Json &params, Lsp::Client::ApplyEditReply r) {
+            gotEdit = params["edit"];
+            later = r;
+        };
+        client.receive(Lsp::Framer::frame(
+            "{\"jsonrpc\":\"2.0\",\"id\":41,\"method\":\"workspace/applyEdit\",\"params\":"
+            "{\"label\":\"Organize\",\"edit\":{\"changes\":{\"file:///p/a.py\":[" +
+            edit(0, 0, 0, 0, "import os\\n") + "]}}}}"));
+        CHECK(Lsp::parseWorkspaceEdit(gotEdit).editCount() == 1);
+        size_t before = srv.sent.size();
+        CHECK(later != nullptr);
+        if (later) later(true, "");
+        CHECK(srv.sent.size() == before + 1 && srv.sent.back()["id"].asInt() == 41 &&
+              srv.sent.back()["result"]["applied"].asBool());
+        if (later) later(false, "again");   // a second answer is not sent
+        CHECK(srv.sent.size() == before + 1);
+        client.onApplyEdit = [&](const Json &, Lsp::Client::ApplyEditReply r) {
+            r(false, "unsaved changes");
+        };
+        client.receive(Lsp::Framer::frame(
+            "{\"jsonrpc\":\"2.0\",\"id\":42,\"method\":\"workspace/applyEdit\",\"params\":"
+            "{\"edit\":{}}}"));
+        CHECK(srv.sent.back()["id"].asInt() == 42 &&
+              !srv.sent.back()["result"]["applied"].asBool(true) &&
+              srv.sent.back()["result"]["failureReason"].asString() == "unsaved changes");
+        // Nobody to apply it: refused, not left unanswered.
+        client.onApplyEdit = nullptr;
+        client.receive(Lsp::Framer::frame(
+            "{\"jsonrpc\":\"2.0\",\"id\":43,\"method\":\"workspace/applyEdit\",\"params\":{}}"));
+        CHECK(srv.sent.back()["id"].asInt() == 43 &&
+              srv.sent.back()["result"].has("applied") &&
+              !srv.sent.back()["result"]["applied"].asBool(true));
+    }
+}
 }  // namespace
 
 // ------------------------------------------------------------- Python envs
@@ -7997,6 +8342,7 @@ int main() {
     testLspParsing();
     testLspClient();
     testLspFeatures();
+    testLspEditing();
     testPythonEnvs();
     testLatexClicks();
     testSyncTexText();

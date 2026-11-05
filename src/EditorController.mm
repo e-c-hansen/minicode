@@ -282,6 +282,7 @@ static BOOL gShowHidden = NO;
 @property(nonatomic, copy) void (^onRowClick)(NSInteger row, NSPoint pointInView);
 @property(nonatomic, copy) void (^onActivate)(NSInteger row);   // Return / Enter
 @property(nonatomic, copy) void (^onTrash)(void);   // Cmd+Delete, here only
+@property(nonatomic, copy) void (^onRename)(void);  // F2, here only
 @property(nonatomic, assign) BOOL dragBegan;   // set when a row is dragged
 @end
 
@@ -307,6 +308,12 @@ static BOOL gShowHidden = NO;
     if (mods == NSEventModifierFlagCommand && (event.keyCode == 51 || event.keyCode == 117) &&
         self.onTrash) {
         self.onTrash();
+        return;
+    }
+    // F2 renames the selected file, as in VS Code; in the editor it is
+    // Rename Symbol (the menu item, which also sends a tree's F2 here).
+    if (mods == 0 && event.keyCode == 120 /* kVK_F2 */ && self.onRename) {
+        self.onRename();
         return;
     }
     NSString *chars = event.charactersIgnoringModifiers;
@@ -721,6 +728,9 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
     self.outline.onTrash = ^{
         [weakSelf deleteSelected:nil];
     };
+    self.outline.onRename = ^{
+        [weakSelf renameSelected:nil];
+    };
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"file"];
     col.editable = NO;
     col.minWidth = 80;
@@ -804,6 +814,16 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
             [s openFileAtPath:p];
         return [s.currentPath isEqualToString:p];
     };
+    // Rename and quick fixes edit files in other tabs, and references show
+    // their lines, from the tab's unsaved text.
+    self.lsp.bufferText = ^NSString *(NSString *p) {
+        EditorController *s = weakSelf;
+        MCTab *t = [s tabForPath:p];
+        if (!t || !t.loaded || t.showingMessage) return nil;
+        if (t == s->_activeTab && s.textView.editable) return s.textView.string;
+        return t.sourceText;
+    };
+    self.lsp.showNote = ^(NSString *message) { [weakSelf showStatusNote:message]; };
 
     // Right side hosts the editor plus (lazily) a terminal dock and browser.
     self.rightArea = [[PanelHost alloc] initWithFrame:frame];
@@ -1273,6 +1293,10 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⌃Space" label2:@"Complete" state:nil];
     [self appendHintsRow:s key:@"F12" label:@"Go to definition"
                     key2:@"⌘I" label2:@"Hover info" state:nil];
+    [self appendHintsRow:s key:@"⇧F12" label:@"Find references"
+                    key2:@"F2" label2:@"Rename symbol" state:nil];
+    [self appendHintsRow:s key:@"⌘." label:@"Quick fixes"
+                    key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:@"⌥⇧F" label:@"Format document"
                     key2:@"⇥" label2:@"Take completion" state:nil];
     [self appendHintsRow:s key:@"F9" label:@"Sort lines"
@@ -1285,6 +1309,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⇧⌘N" label2:@"New folder" state:nil];
     [self appendHintsRow:s key:@"⌘⌫" label:@"Trash (in the tree)"
                     key2:@"⌘R" label2:@"Refresh tree" state:nil];
+    [self appendHintsRow:s key:@"F2" label:@"Rename (in the tree)"
+                    key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:@"⇧⌘." label:@"Show hidden files"
                     key2:@"⇧⌘I" label2:@"Sizes" state:nil];
     [self appendHintsRow:s key:@"⌥⇧⌘I" label:@"When last saved"
@@ -5254,6 +5280,22 @@ static NSColor *ContrastColor(const Rgba &c) {
 }
 - (void)showHoverInfo:(id)sender {
     if ([self lspActionAllowed]) [self.lsp showHoverInfo];
+}
+// F2 is VS Code's key for both: the symbol in the editor, the selected file
+// in the tree. The tree takes F2 itself (ClickOutline keyDown:), and a menu
+// key that reaches here from the tree goes the same way.
+- (void)renameSymbol:(id)sender {
+    if (self.window.firstResponder == self.outline) {
+        [self renameSelected:sender];
+        return;
+    }
+    if ([self lspActionAllowed]) [self.lsp renameSymbol];
+}
+- (void)findReferences:(id)sender {
+    if ([self lspActionAllowed]) [self.lsp findReferences];
+}
+- (void)showQuickFixes:(id)sender {
+    if ([self lspActionAllowed]) [self.lsp showQuickFixes];
 }
 - (void)showLanguageServers:(id)sender {
     __weak EditorController *weakSelf = self;
