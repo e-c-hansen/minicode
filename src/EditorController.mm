@@ -1283,6 +1283,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⌃⇧⌘I" label2:@"When created" state:nil];
 
     [self appendHintsHeading:@"Navigation" to:s];
+    [self appendHintsRow:s key:@"⇧⌘P" label:@"Command palette: any menu command by name"
+                    key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:@"⌘0" label:@"Focus tree"
                     key2:@"⌘1" label2:@"Focus editor" state:nil];
     [self appendHintsRow:s key:@"⌘2" label:@"Focus terminal"
@@ -1332,11 +1334,11 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                         key2:@"⌘⏎" label2:@"Commit (in the message)" state:nil];
     }
     if (self.isMarkdown) {
-        [self appendHintsRow:s key:@"⇧⌘P" label:@"Markdown preview"
+        [self appendHintsRow:s key:@"⇧⌘V" label:@"Markdown preview"
                         key2:nil label2:nil
                        state:self.previewMode ? @"rendered" : @"source"];
     } else if (self.isLatex) {
-        [self appendHintsRow:s key:@"⇧⌘P" label:@"LaTeX preview"
+        [self appendHintsRow:s key:@"⇧⌘V" label:@"LaTeX preview"
                         key2:nil label2:nil
                        state:self.previewMode ? @"typeset" : @"source"];
         [self appendHintsRow:s key:@"⇧⌘S" label:@"Export PDF"

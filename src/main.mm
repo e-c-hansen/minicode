@@ -8,6 +8,7 @@
 #import "TerminalPanel.h"
 #import "TreeDetails.h"
 #import "ChangePanel.h"
+#import "PalettePanel.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, MCRestarting>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
@@ -491,6 +492,10 @@ static BOOL MCEditorOnlyAction(SEL a) {
 - (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
 - (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
 - (void)requestChange:(id)sender   { [[self current] requestChange:sender]; }
+- (void)showCommandPalette:(id)sender {
+    (void)sender;
+    MCShowCommandPalette([self current].window);
+}
 // App-wide, so it works from any window.
 - (void)toggleTreeColumn:(id)sender { MCToggleTreeColumn((MCTreeColumns)[sender tag]); }
 - (void)showContextMenu:(id)sender {
@@ -726,10 +731,19 @@ static void BuildMenu(void) {
     NSMenuItem *viewItem = [[NSMenuItem alloc] init];
     [menubar addItem:viewItem];
     NSMenu *viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
+    // Shift+Cmd+P as in VS Code: every menu command by name (PalettePanel.h).
+    NSMenuItem *palette =
+        [[NSMenuItem alloc] initWithTitle:@"Command Palette…"
+                                   action:@selector(showCommandPalette:)
+                            keyEquivalent:@"p"];
+    palette.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [viewMenu addItem:palette];
+    // Shift+Cmd+V, VS Code's Markdown preview key (Shift+Cmd+P until 1.5.4).
     NSMenuItem *toggle =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Preview"
                                    action:@selector(togglePreview:)
-                            keyEquivalent:@"p"];
+                            keyEquivalent:@"v"];
     toggle.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:toggle];

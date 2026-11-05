@@ -25,6 +25,7 @@
 #include "ChangeRequest.h"
 #include "LineDiff.h"
 #include "MultiCaret.h"
+#include "CommandPalette.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -7257,6 +7258,172 @@ static void testMultiCaret() {
     }
 }
 
+// ------------------------------------------------------------ command palette
+static void testCommandPalette() {
+    using namespace CommandPalette;
+    auto entry = [](const std::u16string &menu, const std::u16string &title) {
+        Entry e;
+        e.label = menu + u" > " + title;
+        e.title = title;
+        std::string id;
+        for (char16_t c : e.label) id.push_back(c < 0x80 ? char(c) : '?');
+        e.id = id;
+        return e;
+    };
+    const std::vector<Entry> menu = {
+        entry(u"File", u"Save"),                      // 0
+        entry(u"File", u"Export PDF…"),               // 1
+        entry(u"Edit", u"Toggle Comment"),            // 2
+        entry(u"Edit", u"Find in Folder…"),           // 3
+        entry(u"View", u"Toggle Preview"),            // 4
+        entry(u"View", u"Toggle Terminal"),           // 5
+        entry(u"View", u"Toggle Sidebar"),            // 6
+        entry(u"View", u"Show Sizes"),                // 7
+        entry(u"Terminal", u"New Terminal"),          // 8
+        entry(u"Navigate", u"Go to Definition"),      // 9
+        entry(u"View > Adjust Settings", u"Editor"),  // 10
+    };
+    auto indices = [](const std::vector<Match> &v) {
+        std::vector<size_t> out;
+        for (const Match &m : v) out.push_back(m.index);
+        return out;
+    };
+    auto first = [&](const std::u16string &q, const std::vector<std::string> &recent = {}) {
+        std::vector<Match> v = rank(menu, q, recent);
+        return v.empty() ? size_t(999) : v[0].index;
+    };
+
+    GROUP("palette:word-starts");
+    {
+        const std::u16string t = u"View > Toggle Terminal";
+        CHECK(wordStart(t, 0));
+        CHECK(!wordStart(t, 1));
+        CHECK(!wordStart(t, 5));            // '>' is no word
+        CHECK(wordStart(t, 7));             // T of Toggle
+        CHECK(wordStart(t, 14));            // T of Terminal
+        CHECK(wordStart(u"goToDefinition", 2));   // camelCase
+        CHECK(!wordStart(u"goToDefinition", 3));
+        CHECK(wordStart(u"keep-sorted", 5));
+        CHECK(!wordStart(t, 99));
+    }
+
+    GROUP("palette:match");
+    {
+        int score = 0;
+        std::vector<size_t> pos;
+        CHECK(match(u"tt", u"View > Toggle Terminal", &score, &pos));
+        CHECK(pos == (std::vector<size_t>{7, 14}));          // both word starts
+        CHECK(tierOf(u"View > Toggle Terminal", pos) == Tier::WordStarts);
+        CHECK(match(u"TERM", u"View > Toggle Terminal", &score, &pos));   // case ignored
+        CHECK(pos == (std::vector<size_t>{14, 15, 16, 17}));
+        CHECK(tierOf(u"View > Toggle Terminal", pos) == Tier::WordStarts);
+        CHECK(!match(u"xyz", u"View > Toggle Terminal", &score, &pos));
+        CHECK(!match(u"terminals", u"Toggle Terminal", &score, &pos));
+        CHECK(match(u"", u"anything", &score, &pos) && pos.empty() && score == 0);
+        // Spaces in the query are skipped.
+        CHECK(match(u"tog term", u"View > Toggle Terminal", &score, &pos));
+        CHECK(pos.size() == 7 && pos[0] == 7 && pos[3] == 14);
+        // Inside a word, one run: a substring.
+        CHECK(match(u"erm", u"Toggle Terminal", &score, &pos));
+        CHECK(tierOf(u"Toggle Terminal", pos) == Tier::Substring);
+        // Scattered letters.
+        CHECK(match(u"oe", u"Toggle", &score, &pos));
+        CHECK(tierOf(u"Toggle", pos) == Tier::Scattered);
+        // A word start and a run beat the same letters scattered.
+        int a = 0, b = 0;
+        CHECK(match(u"sid", u"Toggle Sidebar", &a, nullptr));
+        CHECK(match(u"sid", u"Show Hidden Files", &b, nullptr));
+        CHECK(a > b);
+        // The alignment prefers word starts to the first occurrence.
+        CHECK(match(u"gd", u"Go to Definition", &score, &pos));
+        CHECK(pos == (std::vector<size_t>{0, 6}));
+        // Non-ASCII text survives (no crash, compared as is).
+        CHECK(match(u"pdf…", u"Export PDF…", &score, &pos) && pos.back() == 10);
+    }
+
+    GROUP("palette:rank");
+    {
+        // Everything for an empty query, in menu order.
+        std::vector<Match> all = rank(menu, u"", {});
+        CHECK(all.size() == menu.size());
+        CHECK(indices(all)[0] == 0 && indices(all)[10] == 10);
+        CHECK(rank(menu, u"   ", {}).size() == menu.size());
+        // A title prefix comes first, even against a word-start match.
+        CHECK(first(u"save") == 0);
+        CHECK(first(u"new") == 8);
+        CHECK(first(u"toggle t") == 5);
+        // Word starts beat a substring.
+        std::vector<Match> v = rank(menu, u"tp", {});
+        CHECK(!v.empty() && v[0].index == 4 && v[0].tier == Tier::WordStarts);
+        v = rank(menu, u"term", {});
+        CHECK(v.size() >= 2);
+        CHECK(v[0].index == 8 || v[0].index == 5);
+        // Only matches are listed.
+        v = rank(menu, u"zzz", {});
+        CHECK(v.empty());
+        v = rank(menu, u"gtd", {});
+        CHECK(v.size() == 1 && v[0].index == 9);
+        // The menu part matches too: "Adjust Settings > Editor".
+        CHECK(first(u"adjust ed") == 10);
+        // A title prefix highlights the title, not the menu.
+        v = rank(menu, u"Sav", {});
+        CHECK(v[0].positions == (std::vector<size_t>{7, 8, 9}));
+        // Shorter titles first among prefixes, then the menu's order.
+        v = rank(menu, u"toggle", {});
+        CHECK(v.size() == 4 && v[0].index == 2 && v[0].tier == Tier::Prefix);
+        CHECK(v[3].index == 5);   // Toggle Terminal, the longest
+    }
+
+    GROUP("palette:recent");
+    {
+        // An empty query lists recently run commands first, newest first.
+        std::vector<std::string> recent = {menu[5].id, menu[9].id};
+        std::vector<size_t> order = indices(rank(menu, u"", recent));
+        CHECK(order[0] == 5 && order[1] == 9 && order[2] == 0);
+        CHECK(order.size() == menu.size());
+        // Among equal matches (here, prefixes of "toggle") recent first.
+        std::vector<Match> v = rank(menu, u"toggle", {menu[6].id});
+        CHECK(v[0].index == 6);
+        // A better tier still wins over recency.
+        v = rank(menu, u"save", {menu[3].id});
+        CHECK(v[0].index == 0);
+        // An id no longer in the menu is harmless.
+        CHECK(rank(menu, u"", {"Gone > Away"}).size() == menu.size());
+
+        std::vector<std::string> r = noteRun({}, "a");
+        CHECK(r == (std::vector<std::string>{"a"}));
+        r = noteRun(r, "b");
+        r = noteRun(r, "c");
+        CHECK(r == (std::vector<std::string>{"c", "b", "a"}));
+        r = noteRun(r, "a");   // moves to the front, once
+        CHECK(r == (std::vector<std::string>{"a", "c", "b"}));
+        r = noteRun(r, "d", 3);
+        CHECK(r == (std::vector<std::string>{"d", "a", "c"}));
+    }
+
+    GROUP("palette:key-labels");
+    {
+        CHECK(keyLabel(u"p", Command | Shift) == u"⇧⌘P");
+        CHECK(keyLabel(u"P", Command) == u"⇧⌘P");   // a capital implies Shift
+        CHECK(keyLabel(u"v", Command | Shift) == u"⇧⌘V");
+        CHECK(keyLabel(u"f", Option | Shift) == u"⌥⇧F");
+        CHECK(keyLabel(u"i", Control | Option | Shift | Command) == u"⌃⌥⇧⌘I");
+        CHECK(keyLabel(u",", Command) == u"⌘,");
+        CHECK(keyLabel(u"\\", Command) == u"⌘\\");
+        CHECK(keyLabel(u"`", Control | Shift) == u"⌃⇧`");
+        CHECK(keyLabel(u" ", Control) == u"⌃Space");
+        CHECK(keyLabel(u"\r", Command | Shift) == u"⇧⌘⏎");
+        CHECK(keyLabel(u"\t", Control) == u"⌃⇥");
+        CHECK(keyLabel(std::u16string(1, char16_t(0xF70C)), 0) == u"F9");    // NSF9FunctionKey
+        CHECK(keyLabel(std::u16string(1, char16_t(0xF70D)), Shift) == u"⇧F10");
+        CHECK(keyLabel(std::u16string(1, char16_t(0xF70F)), 0) == u"F12");
+        CHECK(keyLabel(std::u16string(1, char16_t(0xF701)), Command) == u"⌘↓");
+        CHECK(keyLabel(std::u16string(1, char16_t(0x7F)), Command) == u"⌘⌫");
+        CHECK(keyLabel(u"", Command) == u"");
+        CHECK(keyLabel(u"1", Control) == u"⌃1");
+    }
+}
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
@@ -7301,6 +7468,7 @@ int main() {
     testFileDetails();
     testChangeRequest();
     testMultiCaret();
+    testCommandPalette();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -29,7 +29,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/Formatter.cpp src/InstallHints.cpp src/LineDiff.cpp \
             src/PythonEnvs.cpp \
             src/AutoIndent.cpp src/KeepSorted.cpp src/FileDetails.cpp \
-            src/ChangeRequest.cpp src/MultiCaret.cpp
+            src/ChangeRequest.cpp src/MultiCaret.cpp src/CommandPalette.cpp
 
 .PHONY: all app run test dmg clean demos membench
 
