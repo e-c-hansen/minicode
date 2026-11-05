@@ -71,8 +71,8 @@ struct AppearanceSurface {
 // as workbench.colorCustomizations do in VS Code. The themes are VS Code's
 // own built-in ones, read off their theme files and mapped onto minicode's
 // fewer keys: a surface's background and text, the seven syntax styles,
-// the Markdown preview's colors, its code background, the ruler, and the
-// terminal's input line.
+// the Markdown preview's colors, its code background, the ruler, the
+// terminal's input line, the gutter's line numbers and the bracket match.
 struct Theme {
     const char* id;              // "dark-modern", the value of the theme key
     const char* title;           // "Dark Modern", for menus
@@ -81,6 +81,7 @@ struct Theme {
     uint32_t syntax[8];          // indexed by TokenStyle; [0] is unused (editor text)
     uint32_t markdown[kMarkdownColorCount];
     uint32_t codeBackground, ruler, terminalInput;
+    uint32_t lineNumber, lineNumberActive, bracketMatch;
 };
 
 // A value on one line of the settings file, in UTF-16 offsets.
@@ -136,7 +137,8 @@ public:
     // color would give way to.
     static int colorOverrides(const std::string& text);
     // Whether `key` (lowercase) takes a color: *.background, *.text,
-    // syntax.*, markdown's colors, editor.ruler-color.
+    // syntax.*, markdown's colors, editor.ruler-color, the gutter's and the
+    // bracket match's.
     static bool isColorKey(const std::string& key);
 
     // Every surface "Adjust Appearance…" knows, and one by id (or null).
@@ -214,6 +216,25 @@ public:
     // line's color.
     const std::vector<int>& rulers() const { return rulers_; }
     Rgba rulerColor() const;
+    // editor.font-size: the editor's font in points (13 by default, 6 to
+    // 72). Zooming (Cmd+= and Cmd+-) adds to it without touching the file.
+    double editorFontSize() const { return editorFontSize_; }
+    static constexpr double kMinFontSize = 6, kMaxFontSize = 72;
+    // editor.line-numbers: the gutter beside the editor with each line's
+    // number (on, the default), none (off), or numbers counted from the
+    // caret's line, which shows its own (relative, as VS Code's).
+    enum class LineNumbers { Off, On, Relative };
+    LineNumbers lineNumbers() const { return lineNumbers_; }
+    // The gutter's background: editor.gutter-background, else the editor's
+    // own; editor.opacity applies to either.
+    Rgba gutterBackground() const;
+    // editor.line-number-color and editor.line-number-active-color (the
+    // number of the caret's line), from the theme unless set.
+    Rgba lineNumberColor() const;
+    Rgba lineNumberActiveColor() const;
+    // editor.bracket-match: the box drawn around the bracket beside the
+    // caret and its partner (filled with the same color, faintly).
+    Rgba bracketMatchColor() const;
 
     // The terminal. terminal.mode: grid (the default) makes each new
     // terminal a real one, the cell grid with zsh's own line editor, prompt
@@ -308,6 +329,10 @@ private:
     int autoSaveDelay_ = 1000;
     std::vector<int> rulers_ = {100};
     std::optional<Rgba> rulerColor_;
+    double editorFontSize_ = 13;
+    LineNumbers lineNumbers_ = LineNumbers::On;
+    std::optional<Rgba> gutterBackground_, lineNumberColor_, lineNumberActiveColor_,
+        bracketMatchColor_;
     bool terminalLineMode_ = false;
     int terminalScrollback_ = 10000;
     bool terminalOptionAsMeta_ = true;
