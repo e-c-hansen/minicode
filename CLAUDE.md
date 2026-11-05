@@ -1593,6 +1593,16 @@ never closes.
 
 ## Current state (handoff, 2026-09-29)
 
+- **1.5.4** (2026-11-04): several carets, Copy and Move Line (Option or
+  Cmd+Up/Down), wrapping a selection, a tab's right-click menu, Python
+  f-string fields, Ctrl+W/U in the terminal input, `minicode -h/-v/-r/-n`
+  with paths going to the running app, and the developer-mode Request a
+  Change bar. Released without the PPA upload (Docker not running):
+  `scripts/ppa.sh 1.5.4` uploads it later; the f-string highlighting is
+  the one change Ubuntu users would see. Homebrew copy upgraded. Needs the
+  user: a real right click on a tab, `minicode -r` against the running
+  app, the f-string colors and the bar on a real screen.
+
 - **1.5.3** (2026-10-31): the tree's size, last-saved and created columns
   on their own keys, and Request a Change (Shift+Cmd+K). Released without
   the PPA upload (Docker was not running; Mac-only changes):
