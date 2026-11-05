@@ -154,6 +154,18 @@ bool decode(const std::string &data, Entry *e, std::string *text) {
 }
 
 // ------------------------------------------------------------------ files
+// Writes a file's (or a folder's) data through to the disk itself, not just
+// to the drive's cache.
+static bool syncToDisk(int fd) {
+#ifdef F_FULLFSYNC
+    if (fcntl(fd, F_FULLFSYNC) == 0) return true;
+#endif
+    while (fsync(fd) != 0) {
+        if (errno != EINTR) return false;
+    }
+    return true;
+}
+
 Fs posixFs() {
     Fs fs;
     fs.list = [](const std::string &dir) {
@@ -208,11 +220,26 @@ Fs posixFs() {
             if (n <= 0) { ok = false; break; }
             done += (size_t)n;
         }
-        if (ok && fsync(fd) != 0) ok = false;
+        // On the Mac fsync only hands the data to the drive, whose cache
+        // can still lose it when the power goes; F_FULLFSYNC asks the
+        // drive to write it out. Some volumes (network ones) refuse it,
+        // and then plain fsync is the best there is.
+        if (ok && !syncToDisk(fd)) ok = false;
         if (close(fd) != 0) ok = false;
         if (ok && rename(tmp.c_str(), path.c_str()) != 0) ok = false;
-        if (!ok) unlink(tmp.c_str());
-        return ok;
+        if (!ok) {
+            unlink(tmp.c_str());
+            return false;
+        }
+        // The rename is an entry in the folder, so the folder is synced
+        // too, or after a power loss the backup may not be found under its
+        // name. A failure here leaves a complete file, so it is not one.
+        const int dfd = open(dir.c_str(), O_RDONLY | O_CLOEXEC);
+        if (dfd >= 0) {
+            syncToDisk(dfd);
+            close(dfd);
+        }
+        return true;
     };
     fs.remove = [](const std::string &path) {
         return unlink(path.c_str()) == 0 || errno == ENOENT;
