@@ -842,11 +842,25 @@ static NSColor *SeverityColor(NSInteger severity) {
     if (!self.editable || ![_multi addCursorVertically:1]) NSBeep();
 }
 
+// Cmd+L and Ctrl+Shift+K, as in VS Code.
+- (IBAction)expandLineSelection:(id)sender {
+    if (!self.editable) { NSBeep(); return; }
+    [_multi expandLineSelection];
+}
+
+- (IBAction)deleteLine:(id)sender {
+    if (!self.editable) { NSBeep(); return; }
+    [_multi deleteLines];
+}
+
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     SEL a = item.action;
     if (a == @selector(addNextOccurrence:) || a == @selector(selectAllOccurrences:) ||
-        a == @selector(addCursorAbove:) || a == @selector(addCursorBelow:))
+        a == @selector(addCursorAbove:) || a == @selector(addCursorBelow:) ||
+        a == @selector(expandLineSelection:) || a == @selector(deleteLine:))
         return self.editable;
+    // With nothing selected, Copy and Cut take the line (MultiCaretView.h).
+    if ((a == @selector(copy:) || a == @selector(cut:)) && self.editable) return YES;
     return [super validateMenuItem:item];
 }
 

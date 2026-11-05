@@ -45,6 +45,15 @@
 // previous line of each one, at the same x (the goal the arrow keys keep).
 // NO when no caret has a line there.
 - (BOOL)addCursorVertically:(int)direction;
+// Select Line (Cmd+L): every caret's whole line, and the next line on each
+// press after. Delete Line (Ctrl+Shift+K): the lines every caret touches.
+// For one caret or several.
+- (void)expandLineSelection;
+- (void)deleteLines;
+// Copy, Cut and Paste at several carets (YES when handled). With nothing
+// selected, at one caret or several, Copy and Cut take the whole lines and
+// mark the copy as lines, and Paste of such a copy puts it above the line
+// (VS Code's behaviour); the caller does the rest.
 - (BOOL)copy;
 - (BOOL)cut;
 - (BOOL)paste;

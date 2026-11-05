@@ -52,6 +52,10 @@
 - (IBAction)selectAllOccurrences:(id)sender;
 - (IBAction)addCursorAbove:(id)sender;
 - (IBAction)addCursorBelow:(id)sender;
+// Select Line (Cmd+L) and Delete Line (Ctrl+Shift+K), VS Code's, at every
+// caret. Enabled while the view is editable.
+- (IBAction)expandLineSelection:(id)sender;
+- (IBAction)deleteLine:(id)sender;
 // editor.ruler: thin lines behind the text at these columns of the
 // monospaced font (none while the view is read-only, as a preview is).
 @property(nonatomic, copy) NSArray<NSNumber *> *rulerColumns;

@@ -608,7 +608,50 @@ bool IsExtendPress(NSEvent *e) {
     return YES;
 }
 
+// ---- whole lines
+
+- (void)expandLineSelection {
+    NSTextView *tv = _tv;
+    _goalX.clear();
+    [self setCarets:MultiCaret::expandLineSelection(U16(tv.string), [self currentCarets])];
+    // setCarets: puts a single selection back in the text view, forwards.
+    if (!self.active) [tv scrollRangeToVisible:tv.selectedRange];
+}
+
+- (void)deleteLines {
+    NSTextView *tv = _tv;
+    _goalX.clear();
+    [self applyEdit:MultiCaret::deleteLines(U16(tv.string), [self currentCarets])
+             action:@"Delete Line"];
+    if (!self.active) [tv scrollRangeToVisible:tv.selectedRange];
+}
+
+// Copy, Cut and Paste with nothing selected work on whole lines (VS Code):
+// the copy is marked with a type of minicode's own beside the text, so a
+// paste can tell it from text copied anywhere else and put it above the
+// caret's line instead of at the caret. Another app's copy clears the mark
+// with the rest of the pasteboard.
+static NSPasteboardType const kLineCopyType = @"org.minicode.editor.line-copy";
+
+- (BOOL)nothingSelected {
+    for (const Caret &c : [self currentCarets])
+        if (!c.empty()) return NO;
+    return YES;
+}
+
+- (void)copyLines {
+    const std::u16string s = MultiCaret::lineCopy(U16(_tv.string), [self currentCarets]);
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
+    [pb clearContents];
+    [pb setString:NSFrom(s) forType:NSPasteboardTypeString];
+    [pb setString:NSFrom(s) forType:kLineCopyType];
+}
+
 - (BOOL)copy {
+    if (_tv.editable && [self nothingSelected]) {
+        [self copyLines];
+        return YES;
+    }
     if (!self.active) return NO;
     const std::u16string s = MultiCaret::copy(U16(_tv.string), _carets);
     if (s.empty()) return YES;   // nothing selected: leave the clipboard alone
@@ -619,6 +662,13 @@ bool IsExtendPress(NSEvent *e) {
 }
 
 - (BOOL)cut {
+    if (_tv.editable && [self nothingSelected]) {
+        [self copyLines];
+        _goalX.clear();
+        [self applyEdit:MultiCaret::deleteLines(U16(_tv.string), [self currentCarets])
+                 action:@"Cut"];
+        return YES;
+    }
     if (!self.active) return NO;
     [self copy];
     _goalX.clear();
@@ -627,8 +677,19 @@ bool IsExtendPress(NSEvent *e) {
 }
 
 - (BOOL)paste {
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
+    NSString *clip = [pb stringForType:NSPasteboardTypeString];
+    // A whole-line copy, still the text on the pasteboard, with no selection.
+    NSString *lines = [pb stringForType:kLineCopyType];
+    if (_tv.editable && clip.length && [lines isEqualToString:clip] && [self nothingSelected]) {
+        _goalX.clear();
+        [self applyEdit:MultiCaret::pasteLinesAbove(U16(_tv.string), [self currentCarets],
+                                                    U16(clip))
+                 action:@"Paste"];
+        if (!self.active) [_tv scrollRangeToVisible:_tv.selectedRange];
+        return YES;
+    }
     if (!self.active) return NO;
-    NSString *clip = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
     if (!clip.length) return YES;
     _goalX.clear();
     [self insertStrings:MultiCaret::pieces(U16(clip), _carets.size()) action:@"Paste"];
