@@ -4385,19 +4385,21 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 
 // After every edit and every change of a dirty flag, beside scheduleBackups.
 - (void)scheduleAutoSave {
-    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(autoSaveNow)
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(autoSaveAfterDelay)
                                                object:nil];
     if (_closing || [self autoSaveMode] != Settings::AutoSave::AfterDelay) return;
     BOOL any = NO;
     for (MCTab *t in _tabs) any = any || [self tabTakesAutoSave:t];
     if (!any) return;
     const int ms = [AppSettings shared].settings.autoSaveDelay();
-    [self performSelector:@selector(autoSaveNow) withObject:nil afterDelay:ms / 1000.0];
+    [self performSelector:@selector(autoSaveAfterDelay) withObject:nil afterDelay:ms / 1000.0];
 }
+- (void)autoSaveAfterDelay { [self autoSaveNow]; }
 
 // focus-change: the editor lost the keyboard, the window lost key, or the
 // tab on show is about to change. Saved on the next turn of the run loop,
-// not inside the responder change.
+// not inside the responder change (a selector of its own, which the
+// debounce above never cancels).
 - (void)autoSaveOnFocusChange {
     if (_closing || [self autoSaveMode] != Settings::AutoSave::FocusChange) return;
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(autoSaveNow)
