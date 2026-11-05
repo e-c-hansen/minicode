@@ -1,9 +1,10 @@
 // Lsp.h — Objective-C++. The GUI half of the language server client: the
 // server processes, and what the editor shows from them (error underlines,
 // the completion list with its documentation, the signature hint, go to
-// definition, hover info). The protocol itself is in LspClient.{h,cpp}; the
-// status bar item, the Language Servers popover and the Python interpreter
-// picker are in LspPanel.{h,mm}.
+// definition, hover info, rename, references and quick fixes). The protocol
+// itself is in LspClient.{h,cpp}, the lists and the rename field in
+// LspPicker.{h,mm}; the status bar item, the Language Servers popover and
+// the Python interpreter picker are in LspPanel.{h,mm}.
 //
 // EditorController owns one LspSession per window and tells it when a file is
 // opened, saved or closed. The session watches the text view for edits on its
@@ -109,6 +110,12 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 // Open a file (for go to definition). Return YES if it is now the current
 // file; the session then selects the target range.
 @property(nonatomic, copy) BOOL (^openFile)(NSString *path);
+// The unsaved text of a file open in a tab (another tab's included), or nil
+// when no tab has it: what references show and what an edit checks a
+// file's buffer against.
+@property(nonatomic, copy) NSString *(^bufferText)(NSString *path);
+// A message for the status bar ("Renamed 4 occurrences in 2 files").
+@property(nonatomic, copy) void (^showNote)(NSString *message);
 
 // The file now in the text view, or nil when the view shows no editable
 // source (a message, a binary file, a preview). Closes the previous one.
@@ -125,6 +132,17 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 - (void)triggerCompletion;
 - (void)goToDefinition;
 - (void)showHoverInfo;
+// F2: the name at the caret, through prepareRename when the server has it,
+// in a field under it; Return renames it everywhere the server says. Edits
+// to other files go into their tabs (opened when need be) as one undo step
+// each, unsaved.
+- (void)renameSymbol;
+// Shift+F12: every reference to the name at the caret, grouped by file, in
+// a list by the caret; Return or a click opens one.
+- (void)findReferences;
+// Cmd+.: the server's code actions for the caret or the selection, with the
+// diagnostics there, in a list by the caret; Return applies one.
+- (void)showQuickFixes;
 // Keys routed from the text view's doCommandBySelector: while the completion
 // list is open (arrows, Return, Tab, Esc), and complete: (Option+Esc).
 // Returns YES when handled.
@@ -175,6 +193,18 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 @property(nonatomic, readonly) NSColor *statusDot;
 @property(nonatomic, readonly) NSString *lastHoverText;
 @property(nonatomic, readonly) BOOL hoverVisible;
+// The references or quick fix list: its rows as text, which kind it is
+// ("references", "fixes", or nil when hidden), the selected row, its view.
+@property(nonatomic, readonly) NSArray<NSString *> *pickerRows;
+@property(nonatomic, readonly) NSString *pickerKind;
+@property(nonatomic, readonly) NSInteger pickerSelectedRow;
+@property(nonatomic, readonly) NSView *pickerView;
+- (void)acceptPickerRow:(NSInteger)row;
+// The rename field while it shows, else nil; and its popover's view.
+@property(nonatomic, readonly) NSTextField *renameField;
+@property(nonatomic, readonly) NSView *renameView;
+// The last note sent to showNote.
+@property(nonatomic, readonly) NSString *lastNote;
 @end
 
 // Where tools are looked for: PATH, then the package managers' directories

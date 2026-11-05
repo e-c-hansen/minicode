@@ -89,6 +89,9 @@
 - (void)triggerCompletion:(id)sender;  // Ctrl+Space language server completion
 - (void)goToDefinition:(id)sender;     // F12 (and Cmd+click)
 - (void)showHoverInfo:(id)sender;      // Cmd+I type and docs at the cursor
+- (void)renameSymbol:(id)sender;       // F2: the name at the cursor, or the tree's file
+- (void)findReferences:(id)sender;     // Shift+F12
+- (void)showQuickFixes:(id)sender;     // Cmd+.
 - (void)showLanguageServers:(id)sender;     // the servers popover (status bar click)
 - (void)restartLanguageServer:(id)sender;   // the open file's server
 - (void)selectPythonInterpreter:(id)sender; // the Python server's interpreter

@@ -18,6 +18,15 @@
 @property(nonatomic, copy) NSDictionary *restartRecord;
 @end
 
+// Command and the period key, nothing else held (Quick Fix, or cancel).
+static BOOL MCIsCommandPeriod(NSEvent *e) {
+    NSEventModifierFlags m = e.modifierFlags &
+        (NSEventModifierFlagCommand | NSEventModifierFlagShift |
+         NSEventModifierFlagOption | NSEventModifierFlagControl);
+    return m == NSEventModifierFlagCommand &&
+           [e.charactersIgnoringModifiers isEqualToString:@"."];
+}
+
 @implementation AppDelegate
 
 // Set up before any window can open: when Finder launches MiniCode to open
@@ -42,6 +51,22 @@
     // normal menu shortcut, which works in every pane (like Cmd+C does).
     self.keyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
                                           handler:^NSEvent *(NSEvent *e) {
+        // Cmd+. is Quick Fix in the editor and cancel everywhere else (a
+        // find field, the terminal, a sheet). In the editor the menu gets
+        // it; elsewhere the event goes where it went before the menu had
+        // the key: the window's own key equivalents (a sheet's Cancel),
+        // then the first responder, whose key bindings make Cmd+. the
+        // cancelOperation: that Esc also sends.
+        if (MCIsCommandPeriod(e) && e.window && !NSApp.modalWindow) {
+            NSResponder *fr = e.window.firstResponder;
+            if ([self controllerForWindow:e.window] && [fr isKindOfClass:[CodeTextView class]] &&
+                ((NSTextView *)fr).editable) {
+                if ([NSApp.mainMenu performKeyEquivalent:e]) return nil;
+                return e;
+            }
+            if (![e.window performKeyEquivalent:e]) [fr keyDown:e];
+            return nil;
+        }
         EditorController *c = [self controllerForWindow:e.window];
         if (!c) return e;
         NSEventModifierFlags m = e.modifierFlags;
@@ -75,7 +100,10 @@
         // and the text view takes it as typing (Ï). F9 and Shift+F9 too.
         BOOL formatKey = opt && shift && !cmd && !ctrl && [ch isEqualToString:@"f"];
         BOOL sortKey = e.keyCode == 101 /* kVK_F9 */ && !cmd && !ctrl && !opt;
-        if (formatKey || sortKey) {
+        // F2 and Shift+F12 likewise (Rename Symbol, Find All References).
+        BOOL lspKey = (e.keyCode == 120 /* kVK_F2 */ && !cmd && !ctrl && !opt && !shift) ||
+                      (e.keyCode == 111 /* kVK_F12 */ && shift && !cmd && !ctrl && !opt);
+        if (formatKey || sortKey || lspKey) {
             NSResponder *fr = e.window.firstResponder;
             if ([fr isKindOfClass:[CodeTextView class]]) {
                 if ([NSApp.mainMenu performKeyEquivalent:e]) return nil;
@@ -423,7 +451,8 @@ static BOOL MCEditorOnlyAction(SEL a) {
            a == @selector(fixKeepSorted:) || a == @selector(runCurrentFile:) ||
            a == @selector(toggleComment:) || a == @selector(toggleTask:) ||
            a == @selector(triggerCompletion:) || a == @selector(goToDefinition:) ||
-           a == @selector(showHoverInfo:);
+           a == @selector(showHoverInfo:) || a == @selector(renameSymbol:) ||
+           a == @selector(findReferences:) || a == @selector(showQuickFixes:);
 }
 - (BOOL)keyWindowIsEditor {
     NSWindow *key = NSApp.keyWindow;
@@ -528,6 +557,9 @@ static BOOL MCEditorOnlyAction(SEL a) {
 - (void)triggerCompletion:(id)sender { [[self current] triggerCompletion:sender]; }
 - (void)goToDefinition:(id)sender  { [[self current] goToDefinition:sender]; }
 - (void)showHoverInfo:(id)sender   { [[self current] showHoverInfo:sender]; }
+- (void)renameSymbol:(id)sender    { [[self current] renameSymbol:sender]; }
+- (void)findReferences:(id)sender  { [[self current] findReferences:sender]; }
+- (void)showQuickFixes:(id)sender  { [[self current] showQuickFixes:sender]; }
 - (void)showLanguageServers:(id)sender { [[self current] showLanguageServers:sender]; }
 - (void)restartLanguageServer:(id)sender { [[self current] restartLanguageServer:sender]; }
 - (void)selectPythonInterpreter:(id)sender {
@@ -690,6 +722,19 @@ static void BuildMenu(void) {
     [editMenu addItem:complete];
     [editMenu addItemWithTitle:@"Show Hover Info"
                         action:@selector(showHoverInfo:) keyEquivalent:@"i"];
+    // VS Code's keys: F2 (fn+F2 on a laptop) renames the name at the cursor,
+    // or in the file tree the selected file; Cmd+. lists the quick fixes.
+    // Both are also caught by the key monitor above, so the editor gets
+    // them first and Cmd+. stays cancel everywhere else.
+    NSMenuItem *renameSymbol =
+        [[NSMenuItem alloc] initWithTitle:@"Rename Symbol…"
+                                   action:@selector(renameSymbol:)
+                            keyEquivalent:[NSString stringWithFormat:@"%C",
+                                              (unichar)NSF2FunctionKey]];
+    renameSymbol.keyEquivalentModifierMask = 0;
+    [editMenu addItem:renameSymbol];
+    [editMenu addItemWithTitle:@"Quick Fix…"
+                        action:@selector(showQuickFixes:) keyEquivalent:@"."];
     [editMenu addItem:[NSMenuItem separatorItem]];
 
     // Find bar (handled by NSTextView via performTextFinderAction:; the tag is
@@ -961,6 +1006,13 @@ static void BuildMenu(void) {
                                               (unichar)NSF12FunctionKey]];
     definition.keyEquivalentModifierMask = 0;
     [navMenu addItem:definition];
+    NSMenuItem *references =
+        [[NSMenuItem alloc] initWithTitle:@"Find All References"
+                                   action:@selector(findReferences:)
+                            keyEquivalent:[NSString stringWithFormat:@"%C",
+                                              (unichar)NSF12FunctionKey]];
+    references.keyEquivalentModifierMask = NSEventModifierFlagShift;
+    [navMenu addItem:references];
     navItem.submenu = navMenu;
 }
 

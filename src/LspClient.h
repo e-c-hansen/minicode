@@ -1,7 +1,8 @@
 // LspClient.h — pure C++. The client half of the Language Server Protocol:
 // message framing, the initialize/shutdown lifecycle, document sync, request
 // ids matched to their responses, and parsing of the results MiniCode uses
-// (diagnostics, completion, hover, definition).
+// (diagnostics, completion, hover, definition, references, rename, code
+// actions) and the WorkspaceEdits rename and code actions answer with.
 //
 // No I/O happens here. The client hands framed bytes to a send callback and is
 // fed whatever the server wrote with receive(); the GUI owns the process and
@@ -41,7 +42,91 @@ struct Diagnostic {
     Range range;
     Severity severity = Severity::Error;
     std::string message, source, code;
+    // The diagnostic as the server sent it: textDocument/codeAction sends it
+    // back in its context, and servers match their fixes by its fields.
+    std::shared_ptr<const Json> raw;
 };
+
+// ------------------------------------------------------------- editing
+// A TextEdit, and a WorkspaceEdit flattened to the text edits per file:
+// `changes` and `documentChanges` both, edits to one file merged, sorted by
+// position (edits at one place keep the server's order), and exact
+// duplicates dropped. Creating, renaming or deleting a file is not done:
+// such an edit sets `resourceOperations`, and the caller refuses it whole.
+struct TextEdit {
+    Range range;
+    std::string newText;
+};
+struct FileEdit {
+    std::string uri;
+    std::vector<TextEdit> edits;   // sorted, none overlapping
+};
+struct WorkspaceEdit {
+    std::vector<FileEdit> files;   // in the order the server first named them
+    bool resourceOperations = false;
+    std::string problem;           // why it cannot be applied; "" when it can
+    size_t editCount() const;
+};
+// `canonical`, when given, turns a URI into the one spelling of its file
+// (a symlink resolved), so edits to one file named two ways are merged.
+using CanonicalUri = std::function<std::string(const std::string& uri)>;
+WorkspaceEdit parseWorkspaceEdit(const Json& edit, const CanonicalUri& canonical = nullptr);
+// a comes before b.
+bool positionBefore(Position a, Position b);
+// One file's edits as UTF-16 offsets into its text, last first, so applying
+// them in order leaves every offset still to come where it was.
+struct OffsetEdit {
+    size_t start = 0, length = 0;
+    std::u16string text;
+};
+std::vector<OffsetEdit> offsetEdits(const std::u16string& text,
+                                    const std::vector<TextEdit>& edits);
+std::u16string applyTextEdits(const std::u16string& text, const std::vector<TextEdit>& edits);
+
+// textDocument/prepareRename: a Range, {range, placeholder}, or
+// {defaultBehavior: true} (rename the word at the position). Null, or
+// anything else, means the symbol there cannot be renamed.
+struct PrepareRename {
+    bool ok = false;
+    bool hasRange = false;   // false: the word at the position
+    Range range;
+    std::string placeholder;
+};
+PrepareRename parsePrepareRename(const Json& result);
+
+// References grouped by file: `firstUri` (the file asked from) first, the
+// others by path; within a file by position, duplicates dropped.
+struct ReferenceFile {
+    std::string uri;
+    std::vector<Range> ranges;
+};
+std::vector<ReferenceFile> groupReferences(const std::vector<Location>& locs,
+                                           const std::string& firstUri = "",
+                                           const CanonicalUri& canonical = nullptr);
+// Line `line` of a text, without its line break ("" past the end).
+std::u16string lineOf(const std::u16string& text, int line);
+
+// textDocument/codeAction answers with Commands and CodeActions mixed. A bare
+// Command comes back as an action with only `command` set.
+struct CodeAction {
+    std::string title, kind;
+    bool preferred = false;
+    Json edit;      // a WorkspaceEdit, or null
+    Json command;   // a Command ({title, command, arguments}), or null
+    std::string disabledReason;   // the server offers it but says why not
+    std::shared_ptr<const Json> raw;   // as sent, for codeAction/resolve
+    bool hasEdit() const { return edit.isObject(); }
+    bool hasCommand() const { return command.isObject() && command["command"].isString(); }
+};
+CodeAction parseCodeAction(const Json& j);
+// The list in the server's order, the preferred ones first; disabled actions
+// and ones with neither an edit, a command nor anything to resolve are left
+// out.
+std::vector<CodeAction> parseCodeActions(const Json& result, bool canResolve = false);
+// The diagnostics whose ranges touch `range` (an empty range touches what
+// it sits in or at either end of), as the server sent them, for a
+// codeAction request's context.
+Json diagnosticsInRange(const std::vector<Diagnostic>& diags, Range range);
 
 struct CompletionItem {
     std::string label, detail, insertText, filterText, sortText;
@@ -274,6 +359,21 @@ public:
     int signatureHelp(const std::string& uri, Position p, ResultHandler h,
                       const std::string& triggerCharacter = "", bool isRetrigger = false);
     int definition(const std::string& uri, Position p, ResultHandler h);
+    // textDocument/references, the declaration included when asked.
+    int references(const std::string& uri, Position p, bool includeDeclaration,
+                   ResultHandler h);
+    // textDocument/prepareRename and textDocument/rename.
+    int prepareRename(const std::string& uri, Position p, ResultHandler h);
+    int rename(const std::string& uri, Position p, const std::string& newName,
+               ResultHandler h);
+    // textDocument/codeAction for a range, with the diagnostics there (from
+    // diagnosticsInRange) in its context.
+    int codeActions(const std::string& uri, Range range, Json diagnostics, ResultHandler h);
+    // codeAction/resolve for an action from parseCodeActions; 0 (and no
+    // request) when the server does not resolve or the action has no raw form.
+    int resolveCodeAction(const CodeAction& action, ResultHandler h);
+    // workspace/executeCommand for a Command ({command, arguments}).
+    int executeCommand(const Json& command, ResultHandler h);
     // Drop interest in a request (its handler will not run). Sends
     // $/cancelRequest if it was already sent.
     void cancel(int id);
@@ -296,6 +396,11 @@ public:
     bool hasSignatureHelp() const;
     std::vector<std::string> signatureTriggers() const;
     std::vector<std::string> signatureRetriggers() const;
+    bool hasRename() const;
+    bool canPrepareRename() const;
+    bool hasReferences() const;
+    bool hasCodeActions() const;
+    bool canResolveCodeAction() const;
     std::string serverName() const { return serverName_; }
 
     // Callbacks.
@@ -307,6 +412,12 @@ public:
     std::function<void(const std::string& uri, const std::vector<Diagnostic>&)> onDiagnostics;
     std::function<void(int type, const std::string& message)> onShowMessage;
     std::function<void(const std::string& problem)> onProtocolError;
+    // workspace/applyEdit from the server (often while a command it was
+    // asked to run is still going). The owner applies params["edit"] and
+    // calls `reply` once, now or later; it answers the server {applied,
+    // failureReason}. Without a handler the edit is refused.
+    using ApplyEditReply = std::function<void(bool applied, const std::string& failureReason)>;
+    std::function<void(const Json& params, ApplyEditReply reply)> onApplyEdit;
 
     size_t pendingRequests() const { return handlers_.size(); }
     size_t queuedMessages() const { return queue_.size(); }

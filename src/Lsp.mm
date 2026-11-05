@@ -6,6 +6,7 @@
 #import "AppSettings.h"
 #import "Terminal.h"   // MCTerminalCommandDidFinishNotification
 #import "MultiCaretView.h"
+#import "LspPicker.h"
 #include "InstallHints.h"
 #include "LspClient.h"
 #include "MarkdownParser.h"
@@ -55,6 +56,14 @@ static NSString *RealPath(NSString *p) {
     char buf[PATH_MAX];
     if (realpath(p.fileSystemRepresentation, buf)) return [NSString stringWithUTF8String:buf];
     return p.stringByStandardizingPath;
+}
+
+// A file URI with its path resolved, so one file named two ways (/tmp and
+// /private/tmp) is one file; anything else as it was.
+static std::string CanonicalURI(const std::string &uri) {
+    NSString *path = NS(Lsp::pathFromUri(uri));
+    if (!path.length) return uri;
+    return Lsp::uriFromPath(Std(RealPath(path)));
 }
 
 static BOOL IsIdentChar(unichar c) {
@@ -1481,6 +1490,20 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     NSRange _hoverRange;      // the text it is about
     NSUInteger _pointerIndex; // the character under the pointer, or NSNotFound
     MCSignaturePopup *_signature;
+
+    // Rename, references and quick fixes.
+    MCPickerPopup *_picker;
+    NSString *_pickerKind;                    // "references", "fixes", or nil
+    std::vector<Lsp::Location> _refRows;      // per row; a heading's has no uri
+    std::vector<Lsp::CodeAction> _actions;    // per row of the quick fix list
+    MCLspServer *_actionServer;               // the server the actions came from
+    NSRange _askedSelection;                  // the selection when one was asked for
+    int _referencesGen, _renameGen, _actionGen;
+    MCRenameBox *_rename;
+    NSRange _renameRange;                     // the name being renamed
+    NSString *_renameText;                    // the text when the field opened
+    BOOL _applyingEdit;                       // a WorkspaceEdit is going into the text
+    NSString *_commandTitle;                  // the quick fix whose command is running
 }
 
 - (instancetype)initWithTextView:(CodeTextView *)textView root:(NSString *)root {
@@ -1514,6 +1537,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
         [weakSelf closeCompletion];
         [weakSelf closeSignature];
         [weakSelf closeHoverUnlessPointer];
+        [weakSelf closePicker];
     };
     _pointerIndex = NSNotFound;
     textView.onMouseHover = ^(NSUInteger index) { [weakSelf pointerAt:index]; };
@@ -1772,11 +1796,36 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
         MCLspServer *s = weakServer;
         if (s && !s.stopping && type == 1) [weakSelf server:s said:NS(message)];
     };
+    // An edit the server makes itself, usually while running a quick fix's
+    // command. Applied once the reply has been read, never inside it.
+    c.onApplyEdit = [weakSelf, weakServer](const Json &params,
+                                           Lsp::Client::ApplyEditReply reply) {
+        MCLspServer *s = weakServer;
+        if (!s || s.stopping) { reply(false, "the server is stopping"); return; }
+        Json p = params;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            (void)s;   // keeps the client the reply goes through alive
+            LspSession *me = weakSelf;
+            if (!me) { reply(false, "the window closed"); return; }
+            NSString *failure = nil;
+            NSString *label = NS(p["label"].asString());
+            NSInteger n = [me applyWorkspaceEdit:Lsp::parseWorkspaceEdit(p["edit"], CanonicalURI)
+                                      actionName:label.length ? label
+                                                 : me->_commandTitle ?: @"Edit"
+                                         failure:&failure];
+            if (n < 0) [me note:failure];
+            reply(n >= 0, n < 0 ? Std(failure) : "");
+        });
+    };
     c.onProtocolError = [weakServer](const std::string &problem) {
         NSLog(@"MiniCode: %@: %s", weakServer.name, problem.c_str());
     };
     server.onExit = ^(MCLspServer *s) { [weakSelf serverExited:s]; };
-    c.initialize(Std(_root), (int)getpid());
+    // The folder as the server sees it is spelled as didOpen spells files
+    // (resolved), or it takes /tmp/x/a.py and /private/tmp/x/a.py for two
+    // files and finds every reference twice. Paths it sends back are mapped
+    // to the tree's spelling (treePathForURI:).
+    c.initialize(Std(RealPath(_root) ?: _root), (int)getpid());
     return server;
 }
 
@@ -2125,10 +2174,15 @@ static BOOL IsRunnable(NSString *path) {
     [self closeCompletion];
     [self closeSignature];
     [self closeHover];
+    [self closePicker];
+    if (!_applyingEdit) [_rename close];
     // Answers still on their way were for the document leaving the view.
     _completionGen++;
     _definitionGen++;
     _hoverGen++;
+    _referencesGen++;
+    _actionGen++;
+    if (!_applyingEdit) _renameGen++;
     if (_uri) _diags.erase(Std(_uri));
     _server = nil;
     _uri = nil;
@@ -2199,12 +2253,17 @@ static BOOL IsRunnable(NSString *path) {
 
 - (void)storageEdited:(NSNotification *)note {
     NSTextStorage *ts = note.object;
-    // Typing closes hover info; recoloring alone does not.
-    if (ts.editedMask & NSTextStorageEditedCharacters) [self closeHover];
+    // Typing closes hover info and the lists; recoloring alone does not.
+    if (ts.editedMask & NSTextStorageEditedCharacters) {
+        [self closeHover];
+        [self closePicker];
+    }
     if (!(ts.editedMask & NSTextStorageEditedCharacters) || !_server || !_uri) return;
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushChanges)
                                                object:nil];
     [self performSelector:@selector(flushChanges) withObject:nil afterDelay:0.3];
+    // A rename or a fix going in is not typing: no completion or signature.
+    if (_applyingEdit) return;
 
     NSRange er = ts.editedRange;
     NSString *s = ts.string;
@@ -2284,11 +2343,13 @@ static BOOL IsRunnable(NSString *path) {
     [self closeCompletion];
     [self closeSignature];
     [self closeHover];
+    [self closePicker];
 }
 
 - (void)selectionChanged:(NSNotification *)note {
     (void)note;
     [self closeHover];
+    if (!_applyingEdit) [self closePicker];
     if (_completing)
         dispatch_async(dispatch_get_main_queue(), ^{ [self refilterCompletion]; });
     if (_signature.visible) {
@@ -2543,6 +2604,26 @@ static BOOL IsRunnable(NSString *path) {
 }
 
 - (BOOL)handleCommand:(SEL)sel {
+    // The references or quick fix list: the arrows move through it, Return
+    // takes a row, Esc closes it. Any other key goes to the editor, and the
+    // list closes when the text or the caret changes.
+    if (_picker.visible) {
+        if (sel == @selector(moveUp:)) { [_picker moveSelection:-1]; return YES; }
+        if (sel == @selector(moveDown:)) { [_picker moveSelection:1]; return YES; }
+        if (sel == @selector(scrollPageUp:) || sel == @selector(pageUp:)) {
+            [_picker moveSelection:-10];
+            return YES;
+        }
+        if (sel == @selector(scrollPageDown:) || sel == @selector(pageDown:)) {
+            [_picker moveSelection:10];
+            return YES;
+        }
+        if (sel == @selector(insertNewline:)) {
+            [self acceptPickerRow:_picker.selectedRow];
+            return YES;
+        }
+        if (sel == @selector(cancelOperation:)) { [self closePicker]; return YES; }
+    }
     if (sel == @selector(complete:)) {
         if (!_server) return NO;   // the text view's own word completion
         [self requestCompletion:nil origin:Lsp::CompletionOrigin::Explicit];
@@ -2685,18 +2766,26 @@ static BOOL IsRunnable(NSString *path) {
         return;
     std::vector<Lsp::Location> locs = Lsp::parseLocations(result);
     if (locs.empty()) { NSBeep(); [self flash:@"No definition found"]; return; }
-    Lsp::Location loc = locs[0];
-    NSString *target = NS(Lsp::pathFromUri(loc.uri));
-    if (!target.length) return;
+    [self revealLocation:locs[0]];
+}
+
+// A file the server named, under the tree's own spelling of the path when it
+// is inside the folder (the server may say /private/tmp for a /tmp folder),
+// so the tree can select it. Nil when the URI is not a file.
+- (NSString *)treePathForURI:(const std::string &)uri {
+    NSString *target = NS(Lsp::pathFromUri(uri));
+    if (!target.length) return nil;
+    NSString *real = RealPath(target), *rootReal = RealPath(_root);
+    if (rootReal.length && [real hasPrefix:[rootReal stringByAppendingString:@"/"]])
+        return [_root stringByAppendingPathComponent:[real substringFromIndex:rootReal.length + 1]];
+    return target;
+}
+
+// Open a location's file (go to definition, a reference) and select its range.
+- (void)revealLocation:(const Lsp::Location &)loc {
     if (![self uri:loc.uri isSameFileAs:_uri]) {
-        // Open it under the tree's own spelling of the path when it is inside
-        // the folder, so the tree can select it.
-        NSString *real = RealPath(target), *rootReal = RealPath(_root);
-        NSString *path = target;
-        if (rootReal.length && [real hasPrefix:[rootReal stringByAppendingString:@"/"]])
-            path = [_root stringByAppendingPathComponent:
-                        [real substringFromIndex:rootReal.length + 1]];
-        if (!self.openFile || !self.openFile(path)) return;
+        NSString *path = [self treePathForURI:loc.uri];
+        if (!path.length || !self.openFile || !self.openFile(path)) return;
     }
     std::u16string text = U16Of(_tv.string);
     size_t a = Lsp::offsetForPosition(text, loc.range.start);
@@ -2890,4 +2979,576 @@ static const NSTimeInterval kHoverDelay = 0.4, kHoverGrace = 0.3;
 }
 
 - (BOOL)hoverVisible { return _hover.visible; }
+
+// ---- rename, references and quick fixes
+- (void)note:(NSString *)message {
+    if (!message.length) return;
+    _lastNote = [message copy];
+    if (self.showNote) self.showNote(message);
+    else [self flash:message];
+}
+
+// No server for the file, or it does not do this: beep and say so.
+- (BOOL)serverCan:(BOOL (^)(Lsp::Client &))can missing:(NSString *)what {
+    if (!_server || !_uri) {
+        NSBeep();
+        [self flash:_statusText.length ? _statusText : @"No language server for this file"];
+        return NO;
+    }
+    if (!can(_server.client)) {
+        NSBeep();
+        [self note:[NSString stringWithFormat:@"%@ does not %@", _server.name, what]];
+        return NO;
+    }
+    return YES;
+}
+
+// The lists and the rename field make way for one another.
+- (void)closeTransients {
+    [self closeCompletion];
+    [self closeSignature];
+    [self closeHover];
+    [self closePicker];
+    [_rename close];
+}
+
+// A server's error answer as a sentence, or nil when there was none.
+static NSString *ErrorText(const Json &error) {
+    if (error.isNull()) return nil;
+    std::string m = error["message"].asString();
+    return m.empty() ? @"The language server refused" : NS(m);
+}
+
+// The text the server's positions in a file refer to: the editor's for the
+// file on show, a tab's buffer for another open file, else the disk's.
+- (NSString *)textOfPath:(NSString *)path uri:(const std::string &)uri {
+    if ([self uri:uri isSameFileAs:_uri]) return _tv.string;
+    NSString *buffer = self.bufferText ? self.bufferText(path) : nil;
+    if (buffer) return buffer;
+    return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+}
+
+// Apply a WorkspaceEdit (rename, a quick fix, workspace/applyEdit). Each
+// file's edits go into its buffer as one undo step, through the text view,
+// so highlighting, the dirty mark and didChange follow as for typing. A file
+// not open gets a tab; nothing is saved, so the user reviews and saves.
+// Every file is read first, so an edit that cannot be made changes nothing.
+// Returns how many files changed, or -1 with *failure saying why.
+- (NSInteger)applyWorkspaceEdit:(const Lsp::WorkspaceEdit &)we
+                     actionName:(NSString *)name
+                        failure:(NSString **)failure {
+    __autoreleasing NSString *dummy = nil;
+    if (!failure) failure = &dummy;
+    *failure = nil;
+    if (!we.problem.empty()) { *failure = NS(we.problem); return -1; }
+    if (we.files.empty()) return 0;
+    if (!self.openFile) { *failure = @"No window to edit in"; return -1; }
+
+    NSMutableArray<NSString *> *paths = [NSMutableArray array], *texts = [NSMutableArray array];
+    for (const Lsp::FileEdit &f : we.files) {
+        NSString *path = [self treePathForURI:f.uri];
+        if (!path.length) {
+            *failure = [NSString stringWithFormat:@"The edit names %s, which is not a file",
+                                                  f.uri.c_str()];
+            return -1;
+        }
+        BOOL current = [self uri:f.uri isSameFileAs:_uri];
+        NSString *text = [self textOfPath:path uri:f.uri];
+        if (!text) {
+            *failure = [NSString stringWithFormat:@"Could not read %@", path.lastPathComponent];
+            return -1;
+        }
+        if (!current) {
+            // The server has only the file on show open, so its positions in
+            // another file are in the text on disk. A tab with unsaved
+            // changes is edited only when every range holds the same text in
+            // both; otherwise the edit would land in the wrong places.
+            NSString *disk = [NSString stringWithContentsOfFile:path
+                                                       encoding:NSUTF8StringEncoding error:nil];
+            if (disk && ![disk isEqualToString:text]) {
+                std::u16string a = U16Of(text), b = U16Of(disk);
+                for (const Lsp::TextEdit &e : f.edits) {
+                    size_t a0 = Lsp::offsetForPosition(a, e.range.start);
+                    size_t a1 = Lsp::offsetForPosition(a, e.range.end);
+                    size_t b0 = Lsp::offsetForPosition(b, e.range.start);
+                    size_t b1 = Lsp::offsetForPosition(b, e.range.end);
+                    if (a.compare(a0, a1 - a0, b, b0, b1 - b0) != 0 ||
+                        Lsp::positionForOffset(a, a0).line != e.range.start.line) {
+                        *failure = [NSString stringWithFormat:
+                            @"%@ has unsaved changes the language server has not seen; "
+                             "save it and try again", path.lastPathComponent];
+                        return -1;
+                    }
+                }
+            }
+        }
+        [paths addObject:path];
+        [texts addObject:text];
+    }
+
+    NSString *home = _path;
+    NSInteger changed = 0;
+    _applyingEdit = YES;
+    for (NSUInteger i = 0; i < paths.count; i++) {
+        NSString *path = paths[i];
+        BOOL current = _path && [RealPath(path) isEqualToString:RealPath(_path)];
+        if (!current && !self.openFile(path)) {
+            *failure = [NSString stringWithFormat:@"Could not open %@", path.lastPathComponent];
+            break;
+        }
+        if (!_tv.editable || ![_tv.string isEqualToString:texts[i]]) {
+            *failure = [NSString stringWithFormat:@"%@ is not open as text to edit",
+                                                  path.lastPathComponent];
+            break;
+        }
+        std::vector<Lsp::OffsetEdit> edits = Lsp::offsetEdits(U16Of(_tv.string), we.files[i].edits);
+        NSRange sel = _tv.selectedRange;
+        NSUndoManager *um = _tv.undoManager;
+        [_tv breakUndoCoalescing];
+        [um beginUndoGrouping];
+        for (const Lsp::OffsetEdit &e : edits) {   // last first
+            NSRange r = NSMakeRange(e.start, e.length);
+            NSString *text = [NSString stringWithCharacters:(const unichar *)e.text.data()
+                                                     length:e.text.size()];
+            if (![_tv shouldChangeTextInRange:r replacementString:text]) continue;
+            [_tv.textStorage replaceCharactersInRange:r withString:text];
+            [_tv didChangeText];
+            // The caret keeps its place in the text around it.
+            NSUInteger at = sel.location;
+            if (at >= NSMaxRange(r)) at = at - r.length + text.length;
+            else if (at > r.location) at = r.location + MIN(at - r.location, text.length);
+            sel = NSMakeRange(at, 0);
+        }
+        [um setActionName:name ?: @"Edit"];
+        [um endUndoGrouping];
+        [_tv breakUndoCoalescing];
+        if (NSMaxRange(sel) <= _tv.string.length) [_tv setSelectedRange:sel];
+        changed++;
+    }
+    // Back to the file the edit was asked from.
+    if (home && !(_path && [RealPath(home) isEqualToString:RealPath(_path)])) self.openFile(home);
+    _applyingEdit = NO;
+    [self flushChanges];
+    return *failure ? -1 : changed;
+}
+
+// ---- rename
+- (void)renameSymbol {
+    if (![self serverCan:^BOOL(Lsp::Client &c) { return c.hasRename(); } missing:@"rename"])
+        return;
+    [self closeTransients];
+    [self flushChanges];
+    int gen = ++_renameGen;
+    _askedSelection = _tv.selectedRange;
+    NSUInteger index = _tv.selectedRange.location;
+    NSString *uri = _uri;
+    if (!_server.client.canPrepareRename()) {
+        [self openRenameAt:[self nameRangeAt:index] gen:gen placeholder:nil];
+        return;
+    }
+    __weak LspSession *weakSelf = self;
+    Lsp::Position pos = Lsp::positionForOffset(U16Of(_tv.string), index);
+    _server.client.prepareRename(Std(uri), pos, [weakSelf, gen, uri, index](const Json &r,
+                                                                        const Json &e) {
+        [weakSelf prepareRenameArrived:r error:e gen:gen uri:uri index:index];
+    });
+}
+
+// The identifier at or just before a character, or an empty range.
+- (NSRange)nameRangeAt:(NSUInteger)index {
+    NSString *t = _tv.string;
+    if (index < t.length && IsIdentChar([t characterAtIndex:index])) return [self wordAt:index];
+    if (index > 0 && index <= t.length && IsIdentChar([t characterAtIndex:index - 1]))
+        return [self wordAt:index - 1];
+    return NSMakeRange(index, 0);
+}
+
+- (void)prepareRenameArrived:(const Json &)result error:(const Json &)error gen:(int)gen
+                         uri:(NSString *)uri index:(NSUInteger)index {
+    if (gen != _renameGen || ![uri isEqualToString:_uri] ||
+        !NSEqualRanges(_tv.selectedRange, _askedSelection))
+        return;
+    Lsp::PrepareRename p = Lsp::parsePrepareRename(result);
+    if (!p.ok) {
+        // Null for a keyword, a literal, or a name from a library.
+        NSBeep();
+        [self note:ErrorText(error) ?: @"This can't be renamed"];
+        return;
+    }
+    NSRange range = [self nameRangeAt:index];
+    if (p.hasRange) {
+        std::u16string text = U16Of(_tv.string);
+        size_t a = Lsp::offsetForPosition(text, p.range.start);
+        size_t b = Lsp::offsetForPosition(text, p.range.end);
+        if (b > a) range = NSMakeRange(a, b - a);
+    }
+    [self openRenameAt:range gen:gen placeholder:p.placeholder.empty() ? nil : NS(p.placeholder)];
+}
+
+- (void)openRenameAt:(NSRange)range gen:(int)gen placeholder:(NSString *)placeholder {
+    if (range.length == 0 || NSMaxRange(range) > _tv.string.length) {
+        NSBeep();
+        [self note:@"No name at the cursor to rename"];
+        return;
+    }
+    if (!_tv.window) return;
+    _renameRange = range;
+    _renameText = [_tv.string copy];
+    __block NSRect rect = NSZeroRect;
+    [_tv enumerateRectsForRange:range block:^(NSRect r) {
+        if (NSIsEmptyRect(rect)) rect = r;
+    }];
+    if (NSIsEmptyRect(rect)) return;
+    if (!_rename) {
+        _rename = [MCRenameBox new];
+        __weak LspSession *weakSelf = self;
+        _rename.onClose = ^{
+            LspSession *s = weakSelf;
+            CodeTextView *tv = s ? s->_tv : nil;
+            if (tv.window && tv.window.firstResponder != tv) [tv.window makeFirstResponder:tv];
+        };
+    }
+    __weak LspSession *weakSelf = self;
+    _rename.onCommit = ^(NSString *name) { [weakSelf commitRename:name gen:gen]; };
+    [_rename showWithName:placeholder ?: [_tv.string substringWithRange:range]
+           relativeToRect:rect ofView:_tv];
+}
+
+- (void)commitRename:(NSString *)name gen:(int)gen {
+    if (gen != _renameGen || !_server || !_uri || ![_tv.string isEqualToString:_renameText])
+        return;
+    NSString *old = [_tv.string substringWithRange:_renameRange];
+    if ([name isEqualToString:old]) return;
+    [self flushChanges];
+    __weak LspSession *weakSelf = self;
+    NSString *uri = _uri;
+    MCLspServer *server = _server;
+    Lsp::Position pos = Lsp::positionForOffset(U16Of(_tv.string), _renameRange.location);
+    _server.client.rename(Std(uri), pos, Std(name), [weakSelf, gen, uri, server](const Json &r,
+                                                                            const Json &e) {
+        (void)server;
+        Json result = r, error = e;
+        // Applied once the reply has been read: applying switches tabs,
+        // which talks to the server.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [weakSelf renameArrived:result error:error gen:gen uri:uri];
+        });
+    });
+}
+
+- (void)renameArrived:(const Json &)result error:(const Json &)error gen:(int)gen
+                  uri:(NSString *)uri {
+    // Only onto the text the name was read from.
+    if (gen != _renameGen || ![uri isEqualToString:_uri] ||
+        ![_tv.string isEqualToString:_renameText])
+        return;
+    if (NSString *why = ErrorText(error)) { NSBeep(); [self note:why]; return; }
+    Lsp::WorkspaceEdit we = Lsp::parseWorkspaceEdit(result, CanonicalURI);
+    if (we.editCount() == 0 && we.problem.empty()) {
+        NSBeep();
+        [self note:@"Nothing to rename"];
+        return;
+    }
+    NSString *failure = nil;
+    NSInteger files = [self applyWorkspaceEdit:we actionName:@"Rename" failure:&failure];
+    if (files < 0) { NSBeep(); [self note:failure]; return; }
+    size_t n = we.editCount();
+    [self note:[NSString stringWithFormat:@"Renamed %zu occurrence%@ in %ld file%@", n,
+                                          n == 1 ? @"" : @"s", (long)files,
+                                          files == 1 ? @"" : @"s"]];
+}
+
+// ---- references
+- (void)findReferences {
+    if (![self serverCan:^BOOL(Lsp::Client &c) { return c.hasReferences(); }
+                 missing:@"find references"])
+        return;
+    [self closeTransients];
+    [self flushChanges];
+    int gen = ++_referencesGen;
+    _askedSelection = _tv.selectedRange;
+    __weak LspSession *weakSelf = self;
+    NSString *uri = _uri;
+    Lsp::Position pos = Lsp::positionForOffset(U16Of(_tv.string), _tv.selectedRange.location);
+    _server.client.references(Std(uri), pos, true, [weakSelf, gen, uri](const Json &r,
+                                                                    const Json &e) {
+        [weakSelf referencesArrived:r error:e gen:gen uri:uri];
+    });
+}
+
+static NSFont *PickerMono(void) {
+    return [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+}
+
+- (void)referencesArrived:(const Json &)result error:(const Json &)error gen:(int)gen
+                      uri:(NSString *)uri {
+    if (gen != _referencesGen || ![uri isEqualToString:_uri] ||
+        !NSEqualRanges(_tv.selectedRange, _askedSelection))
+        return;
+    if (NSString *why = ErrorText(error)) { NSBeep(); [self note:why]; return; }
+    std::vector<Lsp::ReferenceFile> files =
+        Lsp::groupReferences(Lsp::parseLocations(result), Std(_uri), CanonicalURI);
+    if (files.empty()) { NSBeep(); [self note:@"No references found"]; return; }
+
+    NSMutableArray<NSAttributedString *> *rows = [NSMutableArray array];
+    NSMutableIndexSet *headers = [NSMutableIndexSet indexSet];
+    std::vector<Lsp::Location> where;
+    NSInteger select = -1;
+    NSUInteger caret = _tv.selectedRange.location;
+    NSDictionary *muted = @{NSFontAttributeName: PickerMono(),
+                            NSForegroundColorAttributeName: LHex(0x9CA3AF)};
+    NSDictionary *plain = @{NSFontAttributeName: PickerMono(),
+                            NSForegroundColorAttributeName: LHex(0xD4D4D4)};
+    NSString *rootReal = RealPath(_root);
+    size_t total = 0;
+    for (const Lsp::ReferenceFile &f : files) {
+        NSString *path = [self treePathForURI:f.uri] ?: NS(f.uri);
+        NSString *text = [self textOfPath:path uri:f.uri] ?: @"";
+        std::u16string u = U16Of(text);
+        BOOL current = [self uri:f.uri isSameFileAs:_uri];
+        // The heading: the file's name, its folder within the project, and
+        // how many references it holds.
+        NSString *real = RealPath(path), *folder = real.stringByDeletingLastPathComponent;
+        if (rootReal.length && [folder hasPrefix:rootReal])
+            folder = [folder substringFromIndex:rootReal.length];
+        if ([folder hasPrefix:@"/"] && rootReal.length) folder = [folder substringFromIndex:1];
+        NSMutableAttributedString *h = [[NSMutableAttributedString alloc]
+            initWithString:[NSString stringWithFormat:@" %@", path.lastPathComponent]
+                attributes:@{NSFontAttributeName: [NSFont boldSystemFontOfSize:12],
+                             NSForegroundColorAttributeName: LHex(0xE5E5E5)}];
+        NSString *tail = [NSString stringWithFormat:@"  %@%@%zu", folder,
+                                                    folder.length ? @"  " : @"",
+                                                    f.ranges.size()];
+        [h appendAttributedString:[[NSAttributedString alloc]
+            initWithString:tail attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
+                                             NSForegroundColorAttributeName: LHex(0x9CA3AF)}]];
+        [headers addIndex:rows.count];
+        [rows addObject:h];
+        where.push_back(Lsp::Location());
+        for (const Lsp::Range &r : f.ranges) {
+            std::u16string lu = Lsp::lineOf(u, r.start.line);
+            if (lu.size() > 400) lu.resize(400);   // a minified line
+            NSString *line = [NSString stringWithCharacters:(const unichar *)lu.data()
+                                                     length:lu.size()];
+            // Leading space goes; the match is highlighted where it is.
+            NSUInteger indent = 0;
+            while (indent < line.length &&
+                   [[NSCharacterSet whitespaceCharacterSet]
+                       characterIsMember:[line characterAtIndex:indent]])
+                indent++;
+            NSUInteger len = line.length;
+            NSUInteger a = MIN((NSUInteger)MAX(r.start.character, 0), len);
+            NSUInteger b = r.end.line == r.start.line ? MIN((NSUInteger)MAX(r.end.character, 0), len)
+                                                      : len;
+            NSString *shown = [line substringFromIndex:indent];
+            NSMutableAttributedString *row = [[NSMutableAttributedString alloc]
+                initWithString:[NSString stringWithFormat:@"  %5d  ", r.start.line + 1]
+                    attributes:muted];
+            NSUInteger start = row.length;
+            [row appendAttributedString:[[NSAttributedString alloc] initWithString:shown
+                                                                        attributes:plain]];
+            if (b > a && a >= indent) {
+                NSRange hl = NSMakeRange(start + a - indent, b - a);
+                if (NSMaxRange(hl) <= row.length)
+                    [row addAttributes:@{NSBackgroundColorAttributeName:
+                                             [LHex(0x4EA1F7) colorWithAlphaComponent:0.35],
+                                         NSForegroundColorAttributeName: LHex(0xFFFFFF)}
+                                 range:hl];
+            }
+            // The reference under the caret starts selected.
+            if (current && select < 0) {
+                size_t r0 = Lsp::offsetForPosition(u, r.start), r1 = Lsp::offsetForPosition(u, r.end);
+                if (caret >= r0 && caret <= r1) select = (NSInteger)rows.count;
+            }
+            [rows addObject:row];
+            where.push_back(Lsp::Location{f.uri, r});
+            total++;
+        }
+    }
+    _refRows = where;
+    _pickerKind = @"references";
+    [self showPickerRows:rows headers:headers select:select width:620 maxRows:14];
+    [self flash:[NSString stringWithFormat:@"%zu reference%@ in %zu file%@", total,
+                                           total == 1 ? @"" : @"s", files.size(),
+                                           files.size() == 1 ? @"" : @"s"]];
+}
+
+- (void)showPickerRows:(NSArray<NSAttributedString *> *)rows headers:(NSIndexSet *)headers
+                select:(NSInteger)select width:(CGFloat)width maxRows:(NSInteger)maxRows {
+    if (!_picker) {
+        _picker = [MCPickerPopup new];
+        __weak LspSession *weakSelf = self;
+        _picker.onAccept = ^(NSInteger row) { [weakSelf acceptPickerRow:row]; };
+    }
+    NSUInteger caret = _tv.selectedRange.location;
+    NSRect at = [_tv firstRectForCharacterRange:NSMakeRange(caret, 0) actualRange:NULL];
+    [_picker showRows:rows headers:headers select:select width:width maxRows:maxRows
+         atScreenRect:at parent:_tv.window];
+}
+
+- (void)closePicker {
+    if (!_picker.visible && !_pickerKind) return;
+    [_picker close];
+    _pickerKind = nil;
+    _refRows.clear();
+    _actions.clear();
+    _actionServer = nil;
+}
+
+- (void)acceptPickerRow:(NSInteger)row {
+    if (!_picker.visible || row < 0) return;
+    if ([_pickerKind isEqualToString:@"references"] && (size_t)row < _refRows.size() &&
+        !_refRows[(size_t)row].uri.empty()) {
+        Lsp::Location loc = _refRows[(size_t)row];
+        [self closePicker];
+        [self revealLocation:loc];
+    } else if ([_pickerKind isEqualToString:@"fixes"] && (size_t)row < _actions.size()) {
+        Lsp::CodeAction action = _actions[(size_t)row];
+        MCLspServer *server = _actionServer;
+        [self closePicker];
+        [self runCodeAction:action server:server];
+    }
+}
+
+- (NSArray<NSString *> *)pickerRows {
+    NSMutableArray *out = [NSMutableArray array];
+    if (_picker.visible)
+        for (NSAttributedString *r in _picker.rows) [out addObject:r.string];
+    return out;
+}
+- (NSString *)pickerKind { return _picker.visible ? _pickerKind : nil; }
+- (NSInteger)pickerSelectedRow { return _picker.visible ? _picker.selectedRow : -1; }
+- (NSView *)pickerView { return _picker.visible ? _picker.contentView : nil; }
+- (NSTextField *)renameField { return _rename.visible ? _rename.field : nil; }
+- (NSView *)renameView { return _rename.visible ? _rename.contentView : nil; }
+
+// ---- quick fixes
+- (void)showQuickFixes {
+    if (![self serverCan:^BOOL(Lsp::Client &c) { return c.hasCodeActions(); }
+                 missing:@"offer quick fixes"])
+        return;
+    [self closeTransients];
+    [self flushChanges];
+    int gen = ++_actionGen;
+    NSRange sel = _tv.selectedRange;
+    _askedSelection = sel;
+    std::u16string text = U16Of(_tv.string);
+    Lsp::Range range{Lsp::positionForOffset(text, sel.location),
+                     Lsp::positionForOffset(text, NSMaxRange(sel))};
+    auto it = _diags.find(Std(_uri));
+    Json diags = it != _diags.end() ? Lsp::diagnosticsInRange(it->second, range) : Json::array();
+    // A caret on a line with a problem that is not under it (clang reports
+    // a missing ';' at the next token): the line's problems, at the first.
+    if (diags.size() == 0 && sel.length == 0 && it != _diags.end()) {
+        Lsp::Range line{{range.start.line, 0}, {range.start.line, INT_MAX}};
+        Json onLine = Lsp::diagnosticsInRange(it->second, line);
+        if (onLine.size() > 0) {
+            diags = onLine;
+            range = Lsp::parseRange(onLine[0]["range"]);
+        }
+    }
+    __weak LspSession *weakSelf = self;
+    NSString *uri = _uri;
+    MCLspServer *server = _server;
+    _server.client.codeActions(Std(uri), range, diags,
+        [weakSelf, gen, uri, server](const Json &r, const Json &e) {
+            [weakSelf codeActionsArrived:r error:e gen:gen uri:uri server:server];
+        });
+}
+
+static NSString *ActionKindName(const std::string &kind) {
+    if (kind.empty()) return @"";
+    if (kind.compare(0, 8, "quickfix") == 0) return @"fix";
+    if (kind.compare(0, 22, "source.organizeImports") == 0) return @"imports";
+    if (kind.compare(0, 6, "source") == 0) return @"source";
+    if (kind.compare(0, 8, "refactor") == 0) return @"refactor";
+    return NS(kind);
+}
+
+- (void)codeActionsArrived:(const Json &)result error:(const Json &)error gen:(int)gen
+                       uri:(NSString *)uri server:(MCLspServer *)server {
+    if (gen != _actionGen || ![uri isEqualToString:_uri] || server != _server ||
+        !NSEqualRanges(_tv.selectedRange, _askedSelection))
+        return;
+    if (NSString *why = ErrorText(error)) { NSBeep(); [self note:why]; return; }
+    std::vector<Lsp::CodeAction> actions =
+        Lsp::parseCodeActions(result, server.client.canResolveCodeAction());
+    if (actions.empty()) { [self note:@"No quick fixes"]; return; }
+    NSMutableArray<NSAttributedString *> *rows = [NSMutableArray array];
+    for (const Lsp::CodeAction &a : actions) {
+        NSMutableAttributedString *row = [[NSMutableAttributedString alloc]
+            initWithString:[NSString stringWithFormat:@" %@", NS(a.title)]
+                attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5],
+                             NSForegroundColorAttributeName: LHex(0xD4D4D4)}];
+        NSString *kind = ActionKindName(a.kind);
+        if (a.preferred) kind = kind.length ? [kind stringByAppendingString:@", preferred"]
+                                            : @"preferred";
+        if (kind.length)
+            [row appendAttributedString:[[NSAttributedString alloc]
+                initWithString:[@"   " stringByAppendingString:kind]
+                    attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
+                                 NSForegroundColorAttributeName: LHex(0x9CA3AF)}]];
+        [rows addObject:row];
+    }
+    _actions = actions;
+    _actionServer = server;
+    _pickerKind = @"fixes";
+    [self showPickerRows:rows headers:[NSIndexSet indexSet] select:0 width:440 maxRows:10];
+}
+
+// A chosen action: resolved first when it came without its edit and the
+// server can fill it in, then its edit applied and its command run.
+- (void)runCodeAction:(Lsp::CodeAction)action server:(MCLspServer *)server {
+    if (!server || server.stopping) return;
+    __weak LspSession *weakSelf = self;
+    if (!action.hasEdit() && server.client.canResolveCodeAction() && action.raw) {
+        server.client.resolveCodeAction(action, [weakSelf, action, server](const Json &r,
+                                                                      const Json &e) {
+            Lsp::CodeAction done = action;
+            if (e.isNull()) {
+                Lsp::CodeAction resolved = Lsp::parseCodeAction(r);
+                if (resolved.hasEdit()) done.edit = resolved.edit;
+                if (!done.hasCommand() && resolved.hasCommand()) done.command = resolved.command;
+            }
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [weakSelf performCodeAction:done server:server];
+            });
+        });
+        return;
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [weakSelf performCodeAction:action server:server];
+    });
+}
+
+- (void)performCodeAction:(const Lsp::CodeAction &)action server:(MCLspServer *)server {
+    if (action.hasEdit()) {
+        NSString *failure = nil;
+        NSInteger n = [self applyWorkspaceEdit:Lsp::parseWorkspaceEdit(action.edit, CanonicalURI)
+                                    actionName:NS(action.title)
+                                       failure:&failure];
+        if (n < 0) { NSBeep(); [self note:failure]; return; }
+    }
+    if (action.hasCommand() && server && !server.stopping) {
+        // The server makes its own edits with workspace/applyEdit while it
+        // runs the command (onApplyEdit).
+        // Its edits are undone under the fix's title.
+        __weak LspSession *weakSelf = self;
+        NSString *title = NS(action.title);
+        _commandTitle = title;
+        server.client.executeCommand(action.command, [weakSelf, title](const Json &r,
+                                                                       const Json &e) {
+            (void)r;
+            NSString *why = ErrorText(e);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                LspSession *me = weakSelf;
+                if (!me) return;
+                if (me->_commandTitle == title) me->_commandTitle = nil;
+                if (why) [me note:why];
+            });
+        });
+    } else if (!action.hasEdit()) {
+        [self note:@"The language server gave nothing to apply"];
+    }
+}
 @end

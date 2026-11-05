@@ -66,7 +66,7 @@ Typesetting is done by [tectonic](https://tectonic-typesetting.github.io/). If i
 
 With a language server installed, minicode gives you completion, errors as you type, hover and go to definition. It knows clangd (C, C++, Objective-C), pyright, basedpyright, pylsp or jedi-language-server (Python), gopls (Go), rust-analyzer (Rust) and typescript-language-server (JavaScript and TypeScript), and finds them on your PATH and in the usual Homebrew, npm (nvm, fnm and volta included), pipx, uv, Cargo and Go folders. minicode never installs one itself, but it tells you how when one is missing; see [Installing servers and formatters](#installing-servers-and-formatters).
 
-Problems get a red or yellow squiggle, and the status bar counts them. Completion opens as you type, after a dot, an arrow or a double colon and on the second letter of any word, and Control Space opens it anywhere. On the Mac, Tab takes the selected item, and Return takes it too when you opened the list yourself, when it opened after a dot, an arrow or a double colon, or once you have moved through it with the arrow keys; a list that opened by itself on an ordinary word leaves Return a new line, as in VS Code and Zed. Beside the list, the selected item's signature and documentation show, fetched as you move through it. Typing an opening parenthesis or a comma shows the call's signature above the line, with the argument you are on in bold. F12 or Command click jumps to a definition. On the Mac, resting the pointer on a name for a moment shows its type and documentation, with any problem reported there, as VS Code does; the pointer can move into that box to scroll a long docstring, and moving away, typing or Escape closes it. Command I shows the same for the name at the cursor.
+Problems get a red or yellow squiggle, and the status bar counts them. Completion opens as you type, after a dot, an arrow or a double colon and on the second letter of any word, and Control Space opens it anywhere. On the Mac, Tab takes the selected item, and Return takes it too when you opened the list yourself, when it opened after a dot, an arrow or a double colon, or once you have moved through it with the arrow keys; a list that opened by itself on an ordinary word leaves Return a new line, as in VS Code and Zed. Beside the list, the selected item's signature and documentation show, fetched as you move through it. Typing an opening parenthesis or a comma shows the call's signature above the line, with the argument you are on in bold. F12 or Command click jumps to a definition. On the Mac, resting the pointer on a name for a moment shows its type and documentation, with any problem reported there, as VS Code does; the pointer can move into that box to scroll a long docstring, and moving away, typing or Escape closes it. Command I shows the same for the name at the cursor. Also on the Mac, F2 renames the name at the cursor everywhere the server finds it: files that were not open get a tab, and every changed file is left unsaved for you to look over, with one undo step per file. Shift F12 lists every reference to the name, grouped by file, and Return opens the one you pick. Command period lists the server's quick fixes for the line, such as adding a missing import or semicolon.
 
 The status bar shows the open file's server with a colored dot: green when it is running, yellow while it starts, red when it failed or crashed, and gray when there is none. Click it, or choose Language Servers in the minicode menu, to see every language's server, the command and program it runs, its process id, and why it stopped, with buttons to restart, stop and start it, and the command that installs a missing one. A server that crashes is started again after one, two and then four seconds, and after a fourth crash it waits for you. Restart Language Server in the same menu restarts the open file's.
 
@@ -236,6 +236,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Edit a column: a cursor on every line between two points, so typing adds the same text to each | Shift Command click at one end and Shift Command click (or drag) to the other, or Option drag; Escape goes back to one cursor |  |  |
 | Export the typeset PDF of a LaTeX file | Shift Command S | Ctrl Shift S |  |
 | Find across the whole folder | Shift Command F | Ctrl Shift F |  |
+| Find every reference to the name at the cursor, with a language server | Shift F12 |  |  |
 | Find in the current file | Command F | Ctrl F |  |
 | Find next, find previous | Command G, Shift Command G | Ctrl G or F3, Shift F3 |  |
 | Focus the browser's address bar, opening the browser if it is hidden | Command 3 |  |  |
@@ -263,7 +264,8 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Open the settings file | Command comma | Ctrl comma |  |
 | Play or pause a video or audio file | Shift Command Space | Ctrl Shift Space | Space in the player, or Ctrl Shift Space |
 | Refresh the file tree | Command R |  |  |
-| Rename the selected file or folder |  | F2, in the file tree |  |
+| Rename the name at the cursor wherever it is used, with a language server | F2 |  |  |
+| Rename the selected file or folder | F2, in the file tree | F2, in the file tree |  |
 | Request a change to minicode itself, made by Claude Code in a terminal | Shift Command K |  |  |
 | Run the open file in the terminal | Shift Command Return |  |  |
 | Save | Command S | Ctrl S | S, or Ctrl S |
@@ -273,6 +275,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Show or hide the sizes of files and folders in the file tree | Shift Command I |  |  |
 | Show or hide when each file in the file tree was created | Control Shift Command I |  |  |
 | Show or hide when each file in the file tree was last saved, and when the open file was saved | Option Shift Command I |  |  |
+| Show the language server's quick fixes for the cursor or the selection | Command period |  |  |
 | Show the type and documentation under the cursor | Command I | Ctrl I | K, or Ctrl K |
 | Split the terminal, with a new one beside it | Command backslash |  |  |
 | Sort every keep-sorted block in the file | Shift F9 | Shift F9 | Sort keep-sorted blocks in the ⋮ menu |
@@ -293,7 +296,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 
 ## Limitations
 
-minicode does what I use every day and leaves out a good deal. The terminal does not pass mouse clicks to full screen programs, and has no scrollback while a program has the grid. The Markdown preview follows GitHub's rules for emphasis, links, lists, quotes and tables, but only a handful of HTML tags mean anything to it, and on Linux and Android math shows as its TeX. In the LaTeX preview, text produced inside your own macro definitions cannot be edited from the page. The language server client has no rename, find references, or code actions yet.
+minicode does what I use every day and leaves out a good deal. The terminal does not pass mouse clicks to full screen programs, and has no scrollback while a program has the grid. The Markdown preview follows GitHub's rules for emphasis, links, lists, quotes and tables, but only a handful of HTML tags mean anything to it, and on Linux and Android math shows as its TeX. In the LaTeX preview, text produced inside your own macro definitions cannot be edited from the page. Rename, find references, and quick fixes from a language server are on the Mac only so far.
 
 ## License
 

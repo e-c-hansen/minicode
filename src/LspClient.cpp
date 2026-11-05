@@ -331,6 +331,7 @@ std::vector<Diagnostic> parseDiagnostics(const Json& params, std::string* uri) {
         const Json& code = d["code"];
         if (code.isString()) diag.code = code.asString();
         else if (code.isNumber()) diag.code = std::to_string(code.asInt());
+        diag.raw = std::make_shared<const Json>(d);
         out.push_back(diag);
     }
     return out;
@@ -665,6 +666,208 @@ std::vector<Location> parseLocations(const Json& result) {
     return out;
 }
 
+// ------------------------------------------------------------- editing
+bool positionBefore(Position a, Position b) {
+    return a.line < b.line || (a.line == b.line && a.character < b.character);
+}
+
+size_t WorkspaceEdit::editCount() const {
+    size_t n = 0;
+    for (const FileEdit& f : files) n += f.edits.size();
+    return n;
+}
+
+WorkspaceEdit parseWorkspaceEdit(const Json& j, const CanonicalUri& canonical) {
+    WorkspaceEdit we;
+    if (!j.isObject()) return we;
+    std::map<std::string, size_t> at;
+    auto add = [&](const std::string& named, const Json& edits) {
+        if (named.empty()) return;
+        std::string uri = canonical ? canonical(named) : named;
+        auto it = at.find(uri);
+        if (it == at.end()) {
+            it = at.emplace(uri, we.files.size()).first;
+            we.files.push_back(FileEdit{uri, {}});
+        }
+        for (const Json& e : edits.elements()) {
+            if (!e.isObject() || !e["range"].isObject() || !e["newText"].isString()) continue;
+            TextEdit t;
+            t.range = parseRange(e["range"]);
+            if (positionBefore(t.range.end, t.range.start)) std::swap(t.range.start, t.range.end);
+            t.newText = e["newText"].asString();
+            we.files[it->second].edits.push_back(t);
+        }
+    };
+    // documentChanges wins when a server sends both, as the spec says.
+    const Json& dc = j["documentChanges"];
+    if (dc.isArray()) {
+        for (const Json& c : dc.elements()) {
+            if (c["kind"].isString()) {   // create, rename or delete a file
+                we.resourceOperations = true;
+                continue;
+            }
+            add(c["textDocument"]["uri"].asString(), c["edits"]);
+        }
+    } else if (j["changes"].isObject()) {
+        for (const auto& kv : j["changes"].items()) add(kv.first, kv.second);
+    }
+    std::vector<FileEdit> kept;
+    for (FileEdit& f : we.files) {
+        std::stable_sort(f.edits.begin(), f.edits.end(), [](const TextEdit& a, const TextEdit& b) {
+            return positionBefore(a.range.start, b.range.start);
+        });
+        std::vector<TextEdit> unique;
+        for (const TextEdit& e : f.edits) {
+            bool dup = false;
+            for (auto k = unique.rbegin(); k != unique.rend() && k->range.start == e.range.start; ++k)
+                if (k->range.end == e.range.end && k->newText == e.newText) { dup = true; break; }
+            if (!dup) unique.push_back(e);
+        }
+        f.edits.swap(unique);
+        for (size_t i = 1; i < f.edits.size() && we.problem.empty(); i++)
+            if (positionBefore(f.edits[i].range.start, f.edits[i - 1].range.end))
+                we.problem = "The server's edits to " + pathFromUri(f.uri) + " overlap";
+        if (!f.edits.empty()) kept.push_back(std::move(f));
+    }
+    we.files.swap(kept);
+    if (we.resourceOperations)
+        we.problem = "The edit creates, renames or deletes files, which minicode does not do";
+    return we;
+}
+
+std::vector<OffsetEdit> offsetEdits(const std::u16string& text,
+                                    const std::vector<TextEdit>& edits) {
+    std::vector<OffsetEdit> out;
+    out.reserve(edits.size());
+    for (auto it = edits.rbegin(); it != edits.rend(); ++it) {
+        size_t a = offsetForPosition(text, it->range.start);
+        size_t b = offsetForPosition(text, it->range.end);
+        if (b < a) b = a;
+        out.push_back(OffsetEdit{a, b - a, toUtf16(it->newText)});
+    }
+    return out;
+}
+
+std::u16string applyTextEdits(const std::u16string& text, const std::vector<TextEdit>& edits) {
+    std::u16string out = text;
+    for (const OffsetEdit& e : offsetEdits(text, edits)) out.replace(e.start, e.length, e.text);
+    return out;
+}
+
+PrepareRename parsePrepareRename(const Json& result) {
+    PrepareRename p;
+    if (!result.isObject()) return p;
+    if (result.has("defaultBehavior")) {
+        p.ok = result["defaultBehavior"].asBool();
+    } else if (result["range"].isObject()) {
+        p.ok = p.hasRange = true;
+        p.range = parseRange(result["range"]);
+        p.placeholder = result["placeholder"].asString();
+    } else if (result["start"].isObject() && result["end"].isObject()) {
+        p.ok = p.hasRange = true;
+        p.range = parseRange(result);
+    }
+    return p;
+}
+
+std::vector<ReferenceFile> groupReferences(const std::vector<Location>& locs,
+                                           const std::string& firstUriIn,
+                                           const CanonicalUri& canonical) {
+    std::vector<ReferenceFile> files;
+    std::map<std::string, size_t> at;
+    const std::string firstUri = canonical && !firstUriIn.empty() ? canonical(firstUriIn)
+                                                                  : firstUriIn;
+    for (const Location& l : locs) {
+        std::string uri = canonical ? canonical(l.uri) : l.uri;
+        auto it = at.find(uri);
+        if (it == at.end()) {
+            it = at.emplace(uri, files.size()).first;
+            files.push_back(ReferenceFile{uri, {}});
+        }
+        files[it->second].ranges.push_back(l.range);
+    }
+    for (ReferenceFile& f : files) {
+        std::stable_sort(f.ranges.begin(), f.ranges.end(), [](const Range& a, const Range& b) {
+            return positionBefore(a.start, b.start) ||
+                   (a.start == b.start && positionBefore(a.end, b.end));
+        });
+        f.ranges.erase(std::unique(f.ranges.begin(), f.ranges.end(),
+                                   [](const Range& a, const Range& b) {
+                                       return a.start == b.start && a.end == b.end;
+                                   }),
+                       f.ranges.end());
+    }
+    std::stable_sort(files.begin(), files.end(), [&](const ReferenceFile& a,
+                                                     const ReferenceFile& b) {
+        bool fa = a.uri == firstUri, fb = b.uri == firstUri;
+        if (fa != fb) return fa;
+        std::string pa = pathFromUri(a.uri), pb = pathFromUri(b.uri);
+        return (pa.empty() ? a.uri : pa) < (pb.empty() ? b.uri : pb);
+    });
+    return files;
+}
+
+std::u16string lineOf(const std::u16string& text, int line) {
+    if (line < 0) return u"";
+    size_t start = offsetForPosition(text, Position{line, 0});
+    if (positionForOffset(text, start).line != line) return u"";
+    size_t end = start;
+    while (end < text.size() && text[end] != u'\n' && text[end] != u'\r') end++;
+    return text.substr(start, end - start);
+}
+
+CodeAction parseCodeAction(const Json& j) {
+    CodeAction a;
+    if (!j.isObject()) return a;
+    a.title = trim(j["title"].asString());
+    if (j["command"].isString()) {   // a bare Command
+        a.command = j;
+        return a;
+    }
+    a.kind = j["kind"].asString();
+    a.preferred = j["isPreferred"].asBool();
+    if (j["edit"].isObject()) a.edit = j["edit"];
+    if (j["command"].isObject()) a.command = j["command"];
+    if (j["disabled"].isObject()) {
+        a.disabledReason = j["disabled"]["reason"].asString();
+        if (a.disabledReason.empty()) a.disabledReason = "unavailable";
+    }
+    a.raw = std::make_shared<const Json>(j);
+    return a;
+}
+
+std::vector<CodeAction> parseCodeActions(const Json& result, bool canResolve) {
+    std::vector<CodeAction> out;
+    for (const Json& j : result.elements()) {
+        CodeAction a = parseCodeAction(j);
+        if (a.title.empty() || !a.disabledReason.empty()) continue;
+        if (!a.hasEdit() && !a.hasCommand() && !(canResolve && a.raw)) continue;
+        out.push_back(std::move(a));
+    }
+    std::stable_partition(out.begin(), out.end(), [](const CodeAction& a) { return a.preferred; });
+    return out;
+}
+
+Json diagnosticsInRange(const std::vector<Diagnostic>& diags, Range range) {
+    Json out = Json::array();
+    for (const Diagnostic& d : diags) {
+        if (positionBefore(d.range.end, range.start) || positionBefore(range.end, d.range.start))
+            continue;
+        if (d.raw) {
+            out.push(*d.raw);
+            continue;
+        }
+        Json j = Json::object({{"range", Json::object({{"start", positionJson(d.range.start)},
+                                                       {"end", positionJson(d.range.end)}})},
+                               {"severity", (int)d.severity},
+                               {"message", d.message}});
+        if (!d.source.empty()) j.set("source", d.source);
+        if (!d.code.empty()) j.set("code", d.code);
+        out.push(j);
+    }
+    return out;
+}
+
 std::vector<CompletionItem> filterCompletions(const std::vector<CompletionItem>& items,
                                               const std::string& prefix) {
     if (prefix.empty()) return items;
@@ -761,12 +964,37 @@ void Client::initialize(const std::string& rootPath, int processId,
         {"hover", Json::object({{"contentFormat",
                                  Json::array().push("markdown").push("plaintext")}})},
         {"definition", Json::object({{"linkSupport", true}})},
+        {"references", Json::object({{"dynamicRegistration", false}})},
+        {"rename", Json::object({{"prepareSupport", true},
+                                 {"prepareSupportDefaultBehavior", 1},
+                                 {"honorsChangeAnnotations", false}})},
+        {"codeAction", Json::object({
+             {"codeActionLiteralSupport", Json::object({{"codeActionKind", Json::object({
+                  {"valueSet", Json::array().push("").push("quickfix").push("refactor")
+                                   .push("refactor.extract").push("refactor.inline")
+                                   .push("refactor.rewrite").push("source")
+                                   .push("source.organizeImports")}})}})},
+             {"isPreferredSupport", true},
+             {"disabledSupport", true},
+             {"dataSupport", true},
+             {"resolveSupport", Json::object({{"properties", Json::array().push("edit")}})},
+         })},
         {"publishDiagnostics", Json::object({{"relatedInformation", false}})},
     });
     Json caps = Json::object({
         {"textDocument", textDocument},
         {"workspace", Json::object({{"workspaceFolders", true},
                                     {"configuration", true},
+                                    {"applyEdit", true},
+                                    // Text edits only: an edit that would
+                                    // create, rename or delete a file is
+                                    // refused whole.
+                                    {"workspaceEdit",
+                                     Json::object({{"documentChanges", true},
+                                                   {"resourceOperations", Json::array()},
+                                                   {"failureHandling", "abort"}})},
+                                    {"executeCommand",
+                                     Json::object({{"dynamicRegistration", false}})},
                                     {"didChangeConfiguration",
                                      Json::object({{"dynamicRegistration", false}})}})},
         {"general", Json::object({{"positionEncodings", Json::array().push("utf-16")}})},
@@ -874,6 +1102,62 @@ int Client::hover(const std::string& uri, Position p, ResultHandler h) {
 
 int Client::definition(const std::string& uri, Position p, ResultHandler h) {
     return request("textDocument/definition", docPosition(uri, p), std::move(h));
+}
+
+int Client::references(const std::string& uri, Position p, bool includeDeclaration,
+                       ResultHandler h) {
+    Json params = docPosition(uri, p);
+    params.set("context", Json::object({{"includeDeclaration", includeDeclaration}}));
+    return request("textDocument/references", params, std::move(h));
+}
+
+int Client::prepareRename(const std::string& uri, Position p, ResultHandler h) {
+    return request("textDocument/prepareRename", docPosition(uri, p), std::move(h));
+}
+
+int Client::rename(const std::string& uri, Position p, const std::string& newName,
+                   ResultHandler h) {
+    Json params = docPosition(uri, p);
+    params.set("newName", newName);
+    return request("textDocument/rename", params, std::move(h));
+}
+
+int Client::codeActions(const std::string& uri, Range range, Json diagnostics,
+                        ResultHandler h) {
+    if (!diagnostics.isArray()) diagnostics = Json::array();
+    Json params = Json::object({
+        {"textDocument", Json::object({{"uri", uri}})},
+        {"range", Json::object({{"start", positionJson(range.start)},
+                                {"end", positionJson(range.end)}})},
+        {"context", Json::object({{"diagnostics", diagnostics}, {"triggerKind", 1}})},
+    });
+    return request("textDocument/codeAction", params, std::move(h));
+}
+
+int Client::resolveCodeAction(const CodeAction& action, ResultHandler h) {
+    if (!canResolveCodeAction() || !action.raw) return 0;
+    return request("codeAction/resolve", *action.raw, std::move(h));
+}
+
+int Client::executeCommand(const Json& command, ResultHandler h) {
+    Json params = Json::object({{"command", command["command"].asString()}});
+    if (command["arguments"].isArray()) params.set("arguments", command["arguments"]);
+    return request("workspace/executeCommand", params, std::move(h));
+}
+
+namespace {
+// A provider capability: true, or an object of options.
+bool provides(const Json& cap) { return cap.isObject() || cap.asBool(); }
+}  // namespace
+
+bool Client::hasRename() const { return provides(capabilities_["renameProvider"]); }
+bool Client::canPrepareRename() const {
+    return capabilities_["renameProvider"]["prepareProvider"].asBool();
+}
+bool Client::hasReferences() const { return provides(capabilities_["referencesProvider"]); }
+bool Client::hasCodeActions() const { return provides(capabilities_["codeActionProvider"]); }
+bool Client::canResolveCodeAction() const {
+    return capabilities_["codeActionProvider"]["resolveProvider"].asBool();
 }
 
 bool Client::canResolveCompletion() const {
@@ -1066,6 +1350,22 @@ void Client::handleServerRequest(const Json& msg) {
         for (const Json& item : msg["params"]["items"].elements())
             out.push(configurationSection(settings_, item["section"].asString()));
         respond(id, out);
+    } else if (method == "workspace/applyEdit") {
+        if (!onApplyEdit) {
+            respond(id, Json::object({{"applied", false},
+                                      {"failureReason", "the client cannot apply edits now"}}));
+            return;
+        }
+        Json theId = id;
+        auto answered = std::make_shared<bool>(false);
+        onApplyEdit(msg["params"], [this, theId, answered](bool applied,
+                                                         const std::string& reason) {
+            if (*answered) return;
+            *answered = true;
+            Json result = Json::object({{"applied", applied}});
+            if (!applied && !reason.empty()) result.set("failureReason", reason);
+            respond(theId, result);
+        });
     } else if (method == "workspace/workspaceFolders") {
         std::string uri = uriFromPath(rootPath_);
         respond(id, Json::array().push(Json::object({{"uri", uri}, {"name", rootPath_}})));
