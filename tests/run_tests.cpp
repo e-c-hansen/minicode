@@ -28,6 +28,8 @@
 #include "CommandPalette.h"
 #include "Backups.h"
 #include "InlineAgent.h"
+#include "LineIndex.h"
+#include "BracketMatch.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -3680,7 +3682,7 @@ void testSettings() {
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
     // format, python, keep-sorted, auto-save, ruler, terminal and develop keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 68);
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 74);
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -3710,6 +3712,13 @@ void testSettings() {
     CHECK(un.autoSave() == d.autoSave() && d.autoSave() == Settings::AutoSave::Off);
     CHECK(un.autoSaveDelay() == d.autoSaveDelay() && d.autoSaveDelay() == 1000);
     CHECK(un.rulers() == d.rulers() && un.rulerColor() == d.rulerColor());
+    CHECK(un.editorFontSize() == d.editorFontSize() && d.editorFontSize() == 13);
+    CHECK(un.lineNumbers() == d.lineNumbers() &&
+          d.lineNumbers() == Settings::LineNumbers::On);
+    CHECK(un.gutterBackground() == d.gutterBackground());
+    CHECK(un.lineNumberColor() == d.lineNumberColor());
+    CHECK(un.lineNumberActiveColor() == d.lineNumberActiveColor());
+    CHECK(un.bracketMatchColor() == d.bracketMatchColor());
     CHECK(un.terminalLineMode() == d.terminalLineMode() && !d.terminalLineMode());
     CHECK(un.terminalScrollback() == d.terminalScrollback() &&
           d.terminalScrollback() == 10000);
@@ -3848,6 +3857,76 @@ void testSettings() {
         std::vector<SettingsError> ce;
         parseSettings("editor.ruler-color = grey\n", &ce);
         CHECK(ce.size() == 1);
+    }
+
+    GROUP("settings:gutter");
+    {
+        // VS Code's Dark+ values: editorLineNumber.foreground and
+        // activeForeground, editorBracketMatch.border.
+        CHECK(d.lineNumberColor() == Rgba::hex(0x858585));
+        CHECK(d.lineNumberActiveColor() == Rgba::hex(0xC6C6C6));
+        CHECK(d.bracketMatchColor() == Rgba::hex(0x888888));
+        // The gutter follows the editor's background, set or themed, and
+        // its opacity.
+        CHECK(d.gutterBackground() == d.background(Surface::Editor));
+        Settings eb = parseSettings("editor.background = #000000\neditor.opacity = 50%\n");
+        CHECK(eb.gutterBackground() == Rgba::hex(0x000000, 0.5));
+        Settings gb = parseSettings("editor.gutter-background = #102030\n"
+                                    "editor.opacity = 0.8\n");
+        CHECK(gb.gutterBackground() == Rgba::hex(0x102030, 0.8));
+        CHECK(gb.background(Surface::Editor) == Rgba::hex(0x1E1E1E, 0.8));
+        Settings lm = parseSettings("theme = light-plus\n");
+        CHECK(lm.lineNumberColor() == Rgba::hex(0x237893));
+        CHECK(lm.lineNumberActiveColor() == Rgba::hex(0x0B216F));
+        CHECK(lm.gutterBackground() == Rgba::hex(0xFFFFFF));
+        // A color of the file's own wins over the theme's.
+        Settings own = parseSettings("editor.line-number-color = #ABCDEF\ntheme = monokai\n"
+                                     "editor.bracket-match = #FF000080\n"
+                                     "editor.line-number-active-color = #fff\n");
+        CHECK(own.lineNumberColor() == Rgba::hex(0xABCDEF));
+        CHECK(own.lineNumberActiveColor() == Rgba::hex(0xFFFFFF));
+        CHECK(own.bracketMatchColor().r == 255 && own.bracketMatchColor().a < 0.51);
+        for (const Theme &t : Settings::themes())
+            CHECK(t.lineNumber != 0 && t.lineNumberActive != 0 && t.bracketMatch != 0 &&
+                  t.lineNumber != t.lineNumberActive);
+        for (const char *key : {"editor.gutter-background", "editor.line-number-color",
+                                "editor.line-number-active-color", "editor.bracket-match"})
+            CHECK(Settings::isColorKey(key));
+        CHECK(Settings::colorOverrides("editor.line-number-color = #ABCDEF\n") == 1);
+        // Line numbers: on, off, relative.
+        CHECK(parseSettings("editor.line-numbers = off\n").lineNumbers() ==
+              Settings::LineNumbers::Off);
+        CHECK(parseSettings("editor.line-numbers = Relative  # vim\n").lineNumbers() ==
+              Settings::LineNumbers::Relative);
+        CHECK(parseSettings("editor.line-numbers = true\n").lineNumbers() ==
+              Settings::LineNumbers::On);
+        std::vector<SettingsError> le;
+        Settings ln = parseSettings("editor.line-numbers = interval\n", &le);
+        CHECK(le.size() == 1 && ln.lineNumbers() == Settings::LineNumbers::On &&
+              le[0].message.find("on, off or relative") != std::string::npos);
+        // The font size: points, decimals allowed, 6 to 72.
+        CHECK(parseSettings("editor.font-size = 15\n").editorFontSize() == 15);
+        CHECK(parseSettings("editor.font-size = 12.5\n").editorFontSize() == 12.5);
+        CHECK(parseSettings("editor.font-size = 6\n").editorFontSize() == 6);
+        CHECK(parseSettings("editor.font-size = 72\n").editorFontSize() == 72);
+        for (const char *bad : {"editor.font-size = 5\n", "editor.font-size = 73\n",
+                                "editor.font-size = big\n", "editor.font-size = -14\n",
+                                "editor.font-size = 14pt\n"}) {
+            std::vector<SettingsError> fe;
+            Settings fs = parseSettings(bad, &fe);
+            CHECK(fe.size() == 1 && fs.editorFontSize() == 13);
+        }
+        CHECK(std::string(Settings::defaultFileText()).find("# editor.font-size = 13\n") !=
+              std::string::npos);
+        // The editor's Adjust Settings marks the gutter's keys too.
+        const AppearanceSurface *ed = Settings::appearanceSurface("editor");
+        int gutterKeys = 0;
+        for (const char *k : ed->keys)
+            if (std::string(k).find("line-number") != std::string::npos ||
+                std::string(k) == "editor.gutter-background" ||
+                std::string(k) == "editor.bracket-match")
+                gutterKeys++;
+        CHECK(gutterKeys == 4);
     }
 
     GROUP("settings:terminal");
@@ -4414,10 +4493,18 @@ void testSettingsColorEditing() {
         CHECK(m == "# A checked task's text (\"- [x] ...\"), which is also struck through.\n"
                    "# markdown.done = #858585\n");
         std::string e = Settings::missingSurfaceLines(old, "editor");
-        CHECK(e.rfind("# Syntax highlighting. Plain text uses editor.text.\n"
-                      "# syntax.keyword = #569CD6\n", 0) == 0);
+        // The gutter's and the bracket match's keys came later than the
+        // file, so they are added too, with their notes.
+        CHECK(e.rfind("# The gutter behind the numbers", 0) == 0);
+        CHECK(e.find("# editor.gutter-background = #1E1E1E\n") != std::string::npos);
+        CHECK(e.find("# The box around the bracket beside the caret and its partner.\n"
+                     "# editor.bracket-match = #888888\n") != std::string::npos);
+        CHECK(e.find("# Syntax highlighting. Plain text uses editor.text.\n"
+                     "# syntax.keyword = #569CD6\n") != std::string::npos);
         CHECK(e.find("syntax.function") != std::string::npos);
-        CHECK(e.find("# editor.") == std::string::npos && e.find("# window.") == std::string::npos);
+        CHECK(e.find("# editor.background") == std::string::npos &&
+              e.find("# editor.text") == std::string::npos &&
+              e.find("# window.") == std::string::npos);
         // Appended, the lines are found, so nothing is missing a second time.
         CHECK(Settings::missingSurfaceLines(old + "\n" + e, "editor").empty());
         CHECK(Settings::findKeyLine(old + "\n" + e, "syntax.keyword") > 0);
@@ -9375,6 +9462,7 @@ static void testMultiCaretOccurrences() {
 #include "agent_tests.inc"
 #include "lsp_also_tests.inc"
 #include "find_tests.inc"
+#include "gutter_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9431,6 +9519,8 @@ int main() {
     testLspSecondServer();
     testTextFind();
     testFolderReplace();
+    testLineIndex();
+    testBrackets();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

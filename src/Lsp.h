@@ -23,6 +23,10 @@
 
 @class MCMultiCarets;
 
+// The color a diagnostic's severity is drawn in (1 error ... 4 hint): the
+// squiggles, the hover box's messages and the gutter's dots.
+NSColor *MCDiagnosticColor(NSInteger severity);
+
 @interface CodeTextView : NSTextView
 @property(nonatomic, copy) NSArray<MCDiagnosticMark *> *diagnostics;
 // Cmd+click at a character index. Return NO to let the click through.
@@ -66,6 +70,10 @@
 // NSTextFinderAction tags) go here when set, in place of NSTextFinder.
 @property(nonatomic, copy) BOOL (^onFindAction)(NSInteger tag);
 @property(nonatomic, copy) BOOL (^validateFindAction)(NSInteger tag);
+// Bracket matching (EditorController decides which): a box around each of
+// these characters, behind the text, in this color (faintly filled with it).
+@property(nonatomic, copy) NSArray<NSValue *> *bracketRanges;
+@property(nonatomic, strong) NSColor *bracketMatchColor;
 // The character drawn at a point in the view, or NSNotFound.
 - (NSUInteger)characterIndexUnderPoint:(NSPoint)point;
 // The message of the diagnostic covering a character, or nil.

@@ -11,6 +11,7 @@
 #import "ChangePanel.h"
 #import "PalettePanel.h"
 #import "BackupStore.h"
+#import "EditorFont.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, MCRestarting>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
@@ -106,6 +107,12 @@ static BOOL MCIsCommandPeriod(NSEvent *e) {
         if (ctrl && !cmd && !opt && !shift && [ch isEqualToString:@"g"] &&
             [e.window.firstResponder isKindOfClass:NSClassFromString(@"TerminalGridView")]) {
             [e.window.firstResponder keyDown:e];
+            return nil;
+        }
+        // Cmd+keypad 0, VS Code's Reset Zoom; the menu would read it as
+        // Cmd+0, Focus File Tree.
+        if (e.keyCode == 82 /* kVK_ANSI_Keypad0 */ && cmd && !ctrl && !opt && !shift) {
+            [NSApp editorZoomReset:nil];
             return nil;
         }
         // Shift+Option+O (Organize Imports) the same way.
@@ -496,7 +503,8 @@ static BOOL MCEditorOnlyAction(SEL a) {
            a == @selector(showHoverInfo:) || a == @selector(renameSymbol:) ||
            a == @selector(findReferences:) || a == @selector(showQuickFixes:) ||
            a == @selector(organizeImports:) ||
-           a == @selector(nextProblem:) || a == @selector(previousProblem:);
+           a == @selector(nextProblem:) || a == @selector(previousProblem:) ||
+           a == @selector(goToBracket:);
 }
 // The File menu's tab commands and the tree's Sort By items, which the
 // window decides (enabled, checked), forwarded when another window is key.
@@ -660,6 +668,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)triggerCompletion:(id)sender { [[self current] triggerCompletion:sender]; }
 - (void)goToDefinition:(id)sender  { [[self current] goToDefinition:sender]; }
 - (void)showHoverInfo:(id)sender   { [[self current] showHoverInfo:sender]; }
+- (void)goToBracket:(id)sender     { [[self current] goToBracket:sender]; }
 - (void)inlineAgent:(id)sender     { [[self current] inlineAgent:sender]; }
 // Restart minicode, as after a rebuild from Request a Change but on demand:
 // the same questions, then the same bundle opened again with every window's
@@ -1064,6 +1073,33 @@ static void BuildMenu(void) {
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:hints];
 
+    // The editor's font, VS Code's keys: Cmd+= (and Shift+Cmd+=, Cmd++),
+    // Cmd+-, and reset on Option+Cmd+0, since Cmd+0 focuses the file tree
+    // as VS Code's focuses its side bar (Cmd+keypad 0, VS Code's reset, is
+    // caught by the key monitor above). Answered by NSApp (EditorFont.h).
+    NSMenuItem *zoomIn = [[NSMenuItem alloc] initWithTitle:@"Zoom In"
+                                                    action:@selector(editorZoomIn:)
+                                             keyEquivalent:@"="];
+    zoomIn.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    [viewMenu addItem:zoomIn];
+    NSMenuItem *zoomIn2 = [[NSMenuItem alloc] initWithTitle:@"Zoom In"
+                                                     action:@selector(editorZoomIn:)
+                                              keyEquivalent:@"="];
+    zoomIn2.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    zoomIn2.hidden = YES;
+    zoomIn2.allowsKeyEquivalentWhenHidden = YES;
+    [viewMenu addItem:zoomIn2];
+    NSMenuItem *zoomOut = [[NSMenuItem alloc] initWithTitle:@"Zoom Out"
+                                                     action:@selector(editorZoomOut:)
+                                              keyEquivalent:@"-"];
+    zoomOut.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    [viewMenu addItem:zoomOut];
+    NSMenuItem *zoomReset = [[NSMenuItem alloc] initWithTitle:@"Reset Zoom"
+                                                       action:@selector(editorZoomReset:)
+                                                keyEquivalent:@"0"];
+    zoomReset.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    [viewMenu addItem:zoomReset];
+
     [viewMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *sidebar =
@@ -1258,6 +1294,12 @@ static void BuildMenu(void) {
                                              keyEquivalent:@"g"];
     goLine.keyEquivalentModifierMask = NSEventModifierFlagControl;
     [navMenu addItem:goLine];
+    // VS Code's Go to Bracket. Shift+Cmd+\ (Cmd+\ splits the terminal).
+    NSMenuItem *goBracket = [[NSMenuItem alloc] initWithTitle:@"Go to Bracket"
+                                                       action:@selector(goToBracket:)
+                                                keyEquivalent:@"\\"];
+    goBracket.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [navMenu addItem:goBracket];
     [navMenu addItem:[NSMenuItem separatorItem]];
     [navMenu addItemWithTitle:@"Focus File Tree"
                        action:@selector(focusTree:)

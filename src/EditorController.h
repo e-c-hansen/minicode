@@ -119,6 +119,7 @@
 - (void)triggerCompletion:(id)sender;  // Ctrl+Space language server completion
 - (void)goToDefinition:(id)sender;     // F12 (and Cmd+click)
 - (void)showHoverInfo:(id)sender;      // Option+Cmd+I type and docs at the cursor
+- (void)goToBracket:(id)sender;        // Shift+Cmd+\ to the matching bracket
 - (void)inlineAgent:(id)sender;        // Cmd+I the agent, for whatever has the keyboard
 - (void)renameSymbol:(id)sender;       // F2: the name at the cursor, or the tree's file
 - (void)findReferences:(id)sender;     // Shift+F12

@@ -3,6 +3,7 @@
 // documentation (MCCompletionPopup), the signature hint (MCSignaturePopup)
 // and the per-window glue (LspSession).
 #import "Lsp.h"
+#import "EditorFont.h"
 #import "AppSettings.h"
 #import "Terminal.h"   // MCTerminalCommandDidFinishNotification
 #import "MultiCaretView.h"
@@ -538,6 +539,7 @@ NSUInteger MCLspRunningServerCount(void) { return gServers.count; }
 - (void)setDiagnostics:(NSArray<MCDiagnosticMark *> *)diagnostics {
     _diagnostics = [diagnostics copy];
     self.needsDisplay = YES;
+    self.enclosingScrollView.verticalRulerView.needsDisplay = YES;   // the gutter's dots
 }
 
 - (BOOL)resignFirstResponder {
@@ -661,6 +663,8 @@ static NSColor *SeverityColor(NSInteger severity) {
     default: return LHex(0x9CA3AF);  // hint
     }
 }
+
+NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity); }
 
 - (void)drawRect:(NSRect)dirty {
     [super drawRect:dirty];
@@ -886,12 +890,59 @@ static NSColor *SeverityColor(NSInteger severity) {
     self.needsDisplay = YES;
 }
 
+// ---- bracket matching: the boxes are drawn with the background too.
+- (void)setBracketRanges:(NSArray<NSValue *> *)ranges {
+    if ([ranges isEqualToArray:_bracketRanges ?: @[]] ||
+        (ranges.count == 0 && _bracketRanges.count == 0))
+        return;
+    for (NSValue *v in _bracketRanges) [self invalidateBracketBox:v.rangeValue];
+    _bracketRanges = [ranges copy];
+    for (NSValue *v in _bracketRanges) [self invalidateBracketBox:v.rangeValue];
+}
+
+- (void)setBracketMatchColor:(NSColor *)color {
+    _bracketMatchColor = color;
+    for (NSValue *v in _bracketRanges) [self invalidateBracketBox:v.rangeValue];
+}
+
+- (void)invalidateBracketBox:(NSRange)r {
+    if (NSMaxRange(r) > self.textStorage.length) return;
+    [self enumerateRectsForRange:r block:^(NSRect rect) {
+        [self setNeedsDisplayInRect:NSInsetRect(rect, -2, -2)];
+    }];
+}
+
+- (void)drawBracketBoxesInRect:(NSRect)dirty {
+    if (_bracketRanges.count == 0 || !_bracketMatchColor) return;
+    const NSUInteger n = self.textStorage.length;
+    NSColor *fill = [_bracketMatchColor colorWithAlphaComponent:_bracketMatchColor.alphaComponent * 0.25];
+    for (NSValue *v in _bracketRanges) {
+        const NSRange r = v.rangeValue;
+        if (NSMaxRange(r) > n) continue;
+        [self enumerateRectsForRange:r block:^(NSRect rect) {
+            if (!NSIntersectsRect(rect, dirty)) return;
+            // The glyph's box, a little shorter than its line fragment,
+            // which holds the line spacing below the text.
+            NSRect box = NSInsetRect([self backingAlignedRect:rect
+                                                      options:NSAlignAllEdgesNearest], 0.5, 0.5);
+            box.size.height = MAX(4, NSHeight(box) - 2);
+            [fill set];
+            NSRectFillUsingOperation(box, NSCompositingOperationSourceOver);
+            [self->_bracketMatchColor set];
+            NSBezierPath *p = [NSBezierPath bezierPathWithRect:box];
+            p.lineWidth = 1;
+            [p stroke];
+        }];
+    }
+}
+
 - (void)drawViewBackgroundInRect:(NSRect)rect {
     [super drawViewBackgroundInRect:rect];
     if (_drawBehindText) _drawBehindText(rect);
+    if (self.editable) [self drawBracketBoxesInRect:rect];
     if (!self.editable || _rulerColumns.count == 0 || !_rulerColor) return;
     NSFont *font = self.typingAttributes[NSFontAttributeName];
-    if (!font.fixedPitch) font = [NSFont monospacedSystemFontOfSize:13 weight:NSFontWeightRegular];
+    if (!font.fixedPitch) font = MCEditorFont();
     const CGFloat cw = [@"0" sizeWithAttributes:@{NSFontAttributeName: font}].width;
     const CGFloat x0 = self.textContainerOrigin.x + self.textContainer.lineFragmentPadding;
     [_rulerColor set];
@@ -944,6 +995,7 @@ static NSColor *SeverityColor(NSInteger severity) {
 // signature) in the monospaced font, the rest as plain text, with Markdown
 // read by the preview's own parser.
 static NSFont *DocFont(BOOL mono, BOOL bold, BOOL italic, CGFloat size) {
+    size = round(size * MCEditorScale() * 2) / 2;   // follows the editor's zoom
     NSFont *f = mono ? [NSFont monospacedSystemFontOfSize:size
                                                    weight:bold ? NSFontWeightSemibold
                                                                : NSFontWeightRegular]
@@ -1064,11 +1116,17 @@ static MCCompletionPanel *MakePopupPanel(NSRect frame) {
     __weak NSWindow *_parent;
     BOOL _docVisible;
 }
-static const CGFloat kRowHeight = 20, kPopupWidth = 420, kDocWidth = 400, kDocMaxHeight = 320;
+// Sizes at the editor's 13 points, scaled with its font (editor.font-size
+// and the zoom), as the list's text is.
+static CGFloat Zoomed(CGFloat size) { return round(size * MCEditorScale()); }
+static CGFloat RowHeight(void) { return Zoomed(20); }
+static CGFloat PopupWidth(void) { return Zoomed(420); }
+static CGFloat DocWidth(void) { return Zoomed(400); }
+static CGFloat DocMaxHeight(void) { return Zoomed(320); }
 static const NSInteger kMaxRows = 10;
 
 - (void)build {
-    _panel = MakePopupPanel(NSMakeRect(0, 0, kPopupWidth, 100));
+    _panel = MakePopupPanel(NSMakeRect(0, 0, PopupWidth(), 100));
     NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:_panel.contentView.bounds];
     scroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     scroll.hasVerticalScroller = YES;
@@ -1080,11 +1138,11 @@ static const NSInteger kMaxRows = 10;
 
     _table = [[NSTableView alloc] initWithFrame:scroll.bounds];
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"item"];
-    col.width = kPopupWidth - 4;
+    col.width = PopupWidth() - 4;
     col.resizingMask = NSTableColumnAutoresizingMask;
     [_table addTableColumn:col];
     _table.headerView = nil;
-    _table.rowHeight = kRowHeight;
+    _table.rowHeight = RowHeight();
     _table.intercellSpacing = NSMakeSize(0, 0);
     _table.backgroundColor = LHex(0x252526);
     _table.style = NSTableViewStylePlain;
@@ -1099,7 +1157,7 @@ static const NSInteger kMaxRows = 10;
 }
 
 - (void)buildDoc {
-    _docPanel = MakePopupPanel(NSMakeRect(0, 0, kDocWidth, 100));
+    _docPanel = MakePopupPanel(NSMakeRect(0, 0, DocWidth(), 100));
     _docScroll = [[NSScrollView alloc] initWithFrame:_docPanel.contentView.bounds];
     _docScroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     _docScroll.hasVerticalScroller = YES;
@@ -1139,7 +1197,8 @@ static const NSInteger kMaxRows = 10;
         f.stringValue = @"";
         return f;
     }
-    NSFont *mono = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+    NSFont *mono = [NSFont monospacedSystemFontOfSize:MCEditorFontSize() - 1
+                                               weight:NSFontWeightRegular];
     NSMutableAttributedString *s = [[NSMutableAttributedString alloc]
         initWithString:[@" " stringByAppendingString:_labels[(NSUInteger)row]]
             attributes:@{NSFontAttributeName: mono,
@@ -1172,6 +1231,9 @@ static const NSInteger kMaxRows = 10;
     if (!_panel) [self build];
     _labels = [labels copy];
     _details = [details copy];
+    // The zoom may have changed since the list was last shown.
+    _table.rowHeight = RowHeight();
+    _table.tableColumns.firstObject.width = PopupWidth() - 4;
     BOOL wasVisible = _visible;
     _visible = NO;   // no selection callbacks while the rows are replaced
     [_table reloadData];
@@ -1180,12 +1242,12 @@ static const NSInteger kMaxRows = 10;
         byExtendingSelection:NO];
     [_table scrollRowToVisible:row];
 
-    CGFloat h = MIN((NSInteger)labels.count, kMaxRows) * kRowHeight + 2;
-    NSRect frame = NSMakeRect(caret.origin.x - 6, caret.origin.y - h - 2, kPopupWidth, h);
+    CGFloat h = MIN((NSInteger)labels.count, kMaxRows) * RowHeight() + 2;
+    NSRect frame = NSMakeRect(caret.origin.x - 6, caret.origin.y - h - 2, PopupWidth(), h);
     NSScreen *screen = parent.screen ?: [NSScreen mainScreen];
     NSRect vis = screen.visibleFrame;
     if (NSMinY(frame) < NSMinY(vis)) frame.origin.y = NSMaxY(caret) + 2;   // above
-    if (NSMaxX(frame) > NSMaxX(vis)) frame.origin.x = NSMaxX(vis) - kPopupWidth;
+    if (NSMaxX(frame) > NSMaxX(vis)) frame.origin.x = NSMaxX(vis) - PopupWidth();
     [_panel setFrame:frame display:YES];
     if (!wasVisible || _parent != parent) {
         [_parent removeChildWindow:_panel];
@@ -1213,15 +1275,15 @@ static const NSInteger kMaxRows = 10;
 - (void)showDoc:(NSAttributedString *)doc {
     if (!doc.length || !_visible) { [self hideDoc]; return; }
     if (!_docPanel) [self buildDoc];
-    [_docPanel setContentSize:NSMakeSize(kDocWidth, kDocMaxHeight)];
+    [_docPanel setContentSize:NSMakeSize(DocWidth(), DocMaxHeight())];
     [_docView.textStorage setAttributedString:doc];
     NSLayoutManager *lm = _docView.layoutManager;
     [lm ensureLayoutForTextContainer:_docView.textContainer];
     CGFloat h = ceil([lm usedRectForTextContainer:_docView.textContainer].size.height) +
                 2 * _docView.textContainerInset.height + 2;
-    h = MIN(MAX(h, kRowHeight + 2), kDocMaxHeight);
+    h = MIN(MAX(h, RowHeight() + 2), DocMaxHeight());
     NSRect f = _docPanel.frame;
-    f.size = NSMakeSize(kDocWidth, h);
+    f.size = NSMakeSize(DocWidth(), h);
     [_docPanel setFrame:f display:NO];
     [self placeDoc];
     [_docView scrollRangeToVisible:NSMakeRange(0, 0)];
@@ -1307,7 +1369,9 @@ static const NSInteger kMaxRows = 10;
     NSTextView *_view;
     __weak NSWindow *_parent;
 }
-static const CGFloat kHoverMaxWidth = 520, kHoverMaxHeight = 320, kHoverMinWidth = 60;
+static const CGFloat kHoverMinWidth = 60;
+#define kHoverMaxWidth Zoomed(520)
+#define kHoverMaxHeight Zoomed(320)
 
 - (void)build {
     _panel = MakePopupPanel(NSMakeRect(0, 0, kHoverMaxWidth, 100));

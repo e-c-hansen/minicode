@@ -1,5 +1,6 @@
 // MultiCaretView.mm — see MultiCaretView.h.
 #import "MultiCaretView.h"
+#import "EditorFont.h"
 #include "AutoIndent.h"
 #include "MultiCaret.h"
 #include <string>
@@ -79,7 +80,7 @@ bool IsExtendPress(NSEvent *e) {
     NSRect inWindow = [tv.window convertRectFromScreen:screen];
     NSRect r = [tv convertRect:inWindow fromView:nil];
     if (r.size.height < 1) {
-        NSFont *f = tv.font ?: [NSFont monospacedSystemFontOfSize:13 weight:NSFontWeightRegular];
+        NSFont *f = tv.font ?: MCEditorFont();
         r.size.height = f.ascender - f.descender + f.leading;
     }
     return r;

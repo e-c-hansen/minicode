@@ -23,67 +23,79 @@ const char* const kMarkdownNames[kMarkdownColorCount] = {
 // in Surface order (title bar, sidebar, editor, terminal, browser toolbar,
 // status bar); syntax in TokenStyle order (plain unused, keyword, type,
 // string, comment, number, preprocessor, function); Markdown (heading, link,
-// code, quote, done); code block background, ruler, terminal input text.
+// code, quote, done); code block background, ruler, terminal input text;
+// line numbers, the caret line's number, the bracket match box.
 // Dark+ is minicode's look from the start, so its values are the defaults
 // the settings file documents; the others come from the themes' own files
 // (editor, sideBar, titleBar, panel and statusBar colors, the token colors
 // for comments, strings, keywords, keyword.control, types, numbers and
-// function names), the nearest where a theme leaves a color to its base.
+// function names, editorLineNumber's foreground and activeForeground,
+// editorBracketMatch's border), the nearest where a theme leaves a color to
+// its base.
 const Theme kThemes[] = {
     {"dark-modern", "Dark Modern", true,
      {0x181818, 0x181818, 0x1F1F1F, 0x181818, 0x1F1F1F, 0x181818},
      {0xCCCCCC, 0xCCCCCC, 0xCCCCCC, 0xCCCCCC, 0xCCCCCC, 0xCCCCCC},
      {0, 0x569CD6, 0x4EC9B0, 0xCE9178, 0x6A9955, 0xB5CEA8, 0xC586C0, 0xDCDCAA},
      {0xFFFFFF, 0x4DAAFC, 0xCE9178, 0x9D9D9D, 0x6E7681},
-     0x2B2B2B, 0x5A5A5A, 0xE6E6E6},
+     0x2B2B2B, 0x5A5A5A, 0xE6E6E6,
+     0x6E7681, 0xCCCCCC, 0x888888},
     {"dark-plus", "Dark+", true,
      {0x323233, 0x252526, 0x1E1E1E, 0x181818, 0x2A2A2A, 0x007ACC},
      {0xCCCCCC, 0xCCCCCC, 0xD4D4D4, 0xD4D4D4, 0xD4D4D4, 0xFFFFFF},
      {0, 0x569CD6, 0x4EC9B0, 0xCE9178, 0x6A9955, 0xB5CEA8, 0xC586C0, 0xDCDCAA},
      {0xFFFFFF, 0x4EA1F7, 0xCE9178, 0x9CA3AF, 0x858585},
-     0x2A2A2A, 0x5A5A5A, 0xEDEDED},
+     0x2A2A2A, 0x5A5A5A, 0xEDEDED,
+     0x858585, 0xC6C6C6, 0x888888},
     {"monokai", "Monokai", true,
      {0x1E1F1C, 0x1E1F1C, 0x272822, 0x1E1F1C, 0x1E1F1C, 0x414339},
      {0xCCCCCC, 0xCCCCCC, 0xF8F8F2, 0xF8F8F2, 0xF8F8F2, 0xFFFFFF},
      {0, 0xF92672, 0x66D9EF, 0xE6DB74, 0x88846F, 0xAE81FF, 0xF92672, 0xA6E22E},
      {0xF8F8F2, 0x66D9EF, 0xE6DB74, 0x88846F, 0x75715E},
-     0x3E3D32, 0x464741, 0xFFFFFF},
+     0x3E3D32, 0x464741, 0xFFFFFF,
+     0x90908A, 0xC2C2BF, 0x888888},
     {"solarized-dark", "Solarized Dark", true,
      {0x002C39, 0x00212B, 0x002B36, 0x00212B, 0x00212B, 0x00212B},
      {0x93A1A1, 0x93A1A1, 0x839496, 0x839496, 0x93A1A1, 0x93A1A1},
      {0, 0x859900, 0xB58900, 0x2AA198, 0x586E75, 0xD33682, 0xCB4B16, 0x268BD2},
      {0x93A1A1, 0x268BD2, 0x2AA198, 0x657B83, 0x586E75},
-     0x073642, 0x0C4A59, 0x93A1A1},
+     0x073642, 0x0C4A59, 0x93A1A1,
+     0x858585, 0x949494, 0x888888},
     {"tomorrow-night-blue", "Tomorrow Night Blue", true,
      {0x001126, 0x001C40, 0x002451, 0x001C40, 0x001C40, 0x001126},
      {0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF},
      {0, 0xEBBBFF, 0xFFEEAD, 0xD1F1A9, 0x7285B7, 0xFFC58F, 0xEBBBFF, 0xBBDAFF},
      {0xFFFFFF, 0xBBDAFF, 0xD1F1A9, 0x7285B7, 0x7285B7},
-     0x00346E, 0x003F8E, 0xFFFFFF},
+     0x00346E, 0x003F8E, 0xFFFFFF,
+     0x7285B7, 0xFFFFFF, 0x888888},
     {"light-modern", "Light Modern", false,
      {0xF8F8F8, 0xF8F8F8, 0xFFFFFF, 0xF8F8F8, 0xF8F8F8, 0xF8F8F8},
      {0x1E1E1E, 0x3B3B3B, 0x3B3B3B, 0x3B3B3B, 0x3B3B3B, 0x3B3B3B},
      {0, 0x0000FF, 0x267F99, 0xA31515, 0x008000, 0x098658, 0xAF00DB, 0x795E26},
      {0x1F1F1F, 0x005FB8, 0xA31515, 0x6E7781, 0x8B949E},
-     0xF0F0F0, 0xD3D3D3, 0x1F1F1F},
+     0xF0F0F0, 0xD3D3D3, 0x1F1F1F,
+     0x6E7681, 0x171184, 0xB9B9B9},
     {"light-plus", "Light+", false,
      {0xDDDDDD, 0xF3F3F3, 0xFFFFFF, 0xFFFFFF, 0xF3F3F3, 0x007ACC},
      {0x333333, 0x616161, 0x000000, 0x333333, 0x333333, 0xFFFFFF},
      {0, 0x0000FF, 0x267F99, 0xA31515, 0x008000, 0x098658, 0xAF00DB, 0x795E26},
      {0x000000, 0x006AB1, 0xA31515, 0x6A737D, 0x8E8E8E},
-     0xF3F3F3, 0xD3D3D3, 0x000000},
+     0xF3F3F3, 0xD3D3D3, 0x000000,
+     0x237893, 0x0B216F, 0xB9B9B9},
     {"quiet-light", "Quiet Light", false,
      {0xC4B7D7, 0xF2F2F2, 0xF5F5F5, 0xF5F5F5, 0xF2F2F2, 0x705697},
      {0x333333, 0x333333, 0x333333, 0x333333, 0x333333, 0xFFFFFF},
      {0, 0x4B83CD, 0x7A3E9D, 0x448C27, 0xAAAAAA, 0xAB6526, 0x7A3E9D, 0xAA3731},
      {0x333333, 0x4B83CD, 0x448C27, 0x777777, 0xAAAAAA},
-     0xE8E8E8, 0xD3D3D3, 0x000000},
+     0xE8E8E8, 0xD3D3D3, 0x000000,
+     0x6D705B, 0x9769DC, 0xB9B9B9},
     {"solarized-light", "Solarized Light", false,
      {0xEEE8D5, 0xEEE8D5, 0xFDF6E3, 0xEEE8D5, 0xEEE8D5, 0xEEE8D5},
      {0x586E75, 0x586E75, 0x657B83, 0x586E75, 0x586E75, 0x586E75},
      {0, 0x859900, 0xB58900, 0x2AA198, 0x93A1A1, 0xD33682, 0xCB4B16, 0x268BD2},
      {0x586E75, 0x268BD2, 0x2AA198, 0x93A1A1, 0x93A1A1},
-     0xEEE8D5, 0xDDD6C1, 0x073642},
+     0xEEE8D5, 0xDDD6C1, 0x073642,
+     0x237893, 0x567983, 0xB9B9B9},
 };
 
 const char* const kMaterials[] = {
@@ -198,7 +210,10 @@ bool Settings::isColorKey(const std::string& key) {
     size_t dot = key.find('.');
     if (dot == std::string::npos) return false;
     const std::string group = key.substr(0, dot), field = key.substr(dot + 1);
-    if (key == "editor.ruler-color" || key == "window.text") return true;
+    if (key == "editor.ruler-color" || key == "window.text" ||
+        key == "editor.gutter-background" || key == "editor.line-number-color" ||
+        key == "editor.line-number-active-color" || key == "editor.bracket-match")
+        return true;
     for (const char* name : kSurfaceNames)
         if (group == name) return field == "background" || field == "text";
     if (group == "syntax")
@@ -492,6 +507,8 @@ const std::vector<AppearanceSurface>& Settings::appearanceSurfaces() {
           "window.opacity", "window.text"}, false},
         {"editor", "Editor",
          {"editor.background", "editor.opacity", "editor.text",
+          "editor.gutter-background", "editor.line-number-color",
+          "editor.line-number-active-color", "editor.bracket-match",
           "syntax.keyword", "syntax.type", "syntax.string", "syntax.comment",
           "syntax.number", "syntax.preprocessor", "syntax.function",
           "window.opacity", "window.text"}, false},
@@ -796,6 +813,35 @@ bool Settings::apply(const std::string& key, const std::string& value,
         rulerColor_ = color;
         return true;
     }
+    if (key == "editor.font-size") {
+        double size;
+        if (!parseDecimal(value, size) || size < kMinFontSize || size > kMaxFontSize) {
+            error = "'" + value + "' is not a font size in points from 6 to 72";
+            return false;
+        }
+        editorFontSize_ = size;
+        return true;
+    }
+    if (key == "editor.line-numbers") {
+        std::string v = lower(value);
+        if (v == "on" || v == "true") lineNumbers_ = LineNumbers::On;
+        else if (v == "off" || v == "false" || v == "none") lineNumbers_ = LineNumbers::Off;
+        else if (v == "relative") lineNumbers_ = LineNumbers::Relative;
+        else {
+            error = "'" + value + "' is not on, off or relative";
+            return false;
+        }
+        return true;
+    }
+    if (key == "editor.gutter-background" || key == "editor.line-number-color" ||
+        key == "editor.line-number-active-color" || key == "editor.bracket-match") {
+        if (!parseColor(value, color)) { error = colorError(value); return false; }
+        (key == "editor.gutter-background"     ? gutterBackground_
+         : key == "editor.line-number-color"   ? lineNumberColor_
+         : key == "editor.bracket-match"       ? bracketMatchColor_
+                                               : lineNumberActiveColor_) = color;
+        return true;
+    }
     if (key == "terminal.mode") {
         std::string v = lower(value);
         if (v != "grid" && v != "line") {
@@ -982,6 +1028,26 @@ Rgba Settings::rulerColor() const {
     return rulerColor_ ? *rulerColor_ : Rgba::hex(theme_->ruler);
 }
 
+Rgba Settings::gutterBackground() const {
+    if (!gutterBackground_) return background(Surface::Editor);
+    Rgba c = *gutterBackground_;
+    c.a *= opacity(Surface::Editor);
+    return c;
+}
+
+Rgba Settings::lineNumberColor() const {
+    return lineNumberColor_ ? *lineNumberColor_ : Rgba::hex(theme_->lineNumber);
+}
+
+Rgba Settings::lineNumberActiveColor() const {
+    return lineNumberActiveColor_ ? *lineNumberActiveColor_
+                                  : Rgba::hex(theme_->lineNumberActive);
+}
+
+Rgba Settings::bracketMatchColor() const {
+    return bracketMatchColor_ ? *bracketMatchColor_ : Rgba::hex(theme_->bracketMatch);
+}
+
 Rgba Settings::terminalInputText() const {
     return textIsSet(Surface::Terminal) ? text(Surface::Terminal)
                                         : Rgba::hex(theme_->terminalInput);
@@ -1111,6 +1177,19 @@ const char* Settings::defaultFileText() {
 # a column, several without spaces (80,120), or off.
 # editor.ruler = 100
 # editor.ruler-color = #5A5A5A
+# The editor's font size in points. Cmd+= and Cmd+- zoom in and out from
+# it, and Option+Cmd+0 comes back to it (macOS).
+# editor.font-size = 13
+# Line numbers beside the editor: on, off, or relative (counted up and down
+# from the caret's line, which shows its own number).
+# editor.line-numbers = on
+# The gutter behind the numbers, which is the editor's background unless set
+# here. The caret's line has its number in the active color.
+# editor.gutter-background = #1E1E1E
+# editor.line-number-color = #858585
+# editor.line-number-active-color = #C6C6C6
+# The box around the bracket beside the caret and its partner.
+# editor.bracket-match = #888888
 # Sort the lines between "keep-sorted start" and "keep-sorted end" comments
 # every time a file is saved, as Google's keep-sorted tool would.
 # editor.keep-sorted-on-save = false
