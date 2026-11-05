@@ -21,6 +21,7 @@ struct SyntaxGrammar {
     bool tripleQuotes = false;               // Python-style """ / '''
     bool preprocHash = false;                // '#' at line start is preprocessor (C)
     bool decorators = false;                 // '@' at line start is a decorator (Python)
+    bool fStrings = false;                   // Python f-strings (and t-strings): {fields} are code
     bool tex = false;                        // TeX/LaTeX: lexed by lexTexLine
     bool bibEntries = false;                 // TeX grammar, plus @article etc. (.bib)
     bool texAtLetter = false;                // .sty/.cls: '@' is always a letter
@@ -128,7 +129,7 @@ SyntaxGrammar makeGrammar(const std::string& ext) {
         break;
     case Family::Python:
         d.lineComments = {"#"}; d.stringDelims = "\"'"; d.tripleQuotes = true;
-        d.decorators = true;
+        d.decorators = true; d.fStrings = true;
         d.keywords = kPy; d.types = kPyTypes;
         break;
     case Family::Js:
@@ -590,6 +591,206 @@ LexState lexTexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState st,
     return st;
 }
 
+// ------------------------------------------------------------ code pieces
+// An identifier at s[i]: a keyword, a type (a known one, or capitalized), a
+// function (followed by '('), or plain, which gets no token. Returns its end.
+template <class Ch, class Push>
+size_t lexIdent(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i,
+                std::string& word, Push& push) {
+    size_t st = i;
+    while (i < n && isIdentChar(s[i])) i++;
+    word.assign(i - st, ' ');
+    for (size_t k = st; k < i; ++k) word[k - st] = (char)code(s[k]);
+    TokenStyle sty = TokenStyle::Plain;
+    if (d.keywords.count(word)) sty = TokenStyle::Keyword;
+    else if (d.types.count(word)) sty = TokenStyle::Type;
+    else if (std::isupper((unsigned char)word[0]))
+        sty = TokenStyle::Type;
+    else {
+        size_t j = i;
+        while (j < n && (s[j] == Ch(' ') || s[j] == Ch('\t'))) j++;
+        if (j < n && s[j] == Ch('(')) sty = TokenStyle::Function;
+    }
+    if (sty != TokenStyle::Plain) push(st, i - st, sty);
+    return i;
+}
+
+template <class Ch>
+bool startsNumber(const Ch* s, size_t n, size_t i) {
+    return isDigit(s[i]) || (s[i] == Ch('.') && i + 1 < n && isDigit(s[i + 1]));
+}
+
+template <class Ch, class Push>
+size_t lexNumber(const Ch* s, size_t n, size_t i, Push& push) {
+    size_t st = i;
+    while (i < n && (isAlnum(s[i]) || s[i] == Ch('.') ||
+                     s[i] == Ch('x') || s[i] == Ch('X'))) i++;
+    push(st, i - st, TokenStyle::Number);
+    return i;
+}
+
+// ------------------------------------------------------------ f-strings
+//
+// Python's f-strings (and 3.14's t-strings) hold code: f"total {n + 1:>8}".
+// The text is String, the braces of a replacement field, its !r conversion
+// and its :format spec Keyword (as VS Code's Dark+ draws them), and the
+// expression inside is lexed as code. {{ and }} are literal braces. An
+// expression may hold strings, nested f-strings among them (3.12 lets those
+// reuse the outer quote). A triple-quoted or backslash-continued f-string
+// carries across lines with kFString set in its LexState's quote; a field
+// left open at a line's end is not carried (the next line is string again),
+// so a line's tokens still depend only on its text and the state above.
+const char16_t kFString = 0x100;
+const int kMaxFDepth = 8;   // nested f-strings past this are plain strings
+
+// Is the quote at s[i] preceded by a string prefix holding f or t (f, rf,
+// Fr, t, ...), with nothing of a longer word before it?
+template <class Ch>
+bool fPrefixBefore(const Ch* s, size_t i) {
+    size_t j = i;
+    while (j > 0 && i - j < 3 && isAlpha(s[j - 1])) j--;
+    if (j == i || i - j > 2 || (j > 0 && isIdentChar(s[j - 1]))) return false;
+    bool f = false;
+    for (size_t k = j; k < i; ++k) {
+        char c = (char)std::tolower((int)code(s[k]));
+        if (c != 'r' && c != 'b' && c != 'u' && c != 'f' && c != 't') return false;
+        f = f || c == 'f' || c == 't';
+    }
+    return f;
+}
+
+// Does the string opened by q (tripled or not) close at s[i]?
+template <class Ch>
+bool closesAt(const Ch* s, size_t n, size_t i, Ch q, bool triple) {
+    if (s[i] != q) return false;
+    return !triple || (i + 2 < n && s[i + 1] == q && s[i + 2] == q);
+}
+
+template <class Ch, class Push>
+size_t lexStringAt(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i, int depth,
+                   std::string& word, Push& push, LexState* state);
+
+// A replacement field's inside, from just after its '{'. Returns the end:
+// just past its '}', or where it stopped (a line end, or the string's close
+// inside a format spec).
+template <class Ch, class Push>
+size_t lexField(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i, Ch q,
+                bool triple, int depth, std::string& word, Push& push) {
+    int brackets = 0;
+    while (i < n) {
+        Ch c = s[i];
+        if (c == Ch('\n')) return i;
+        if (brackets == 0 && c == Ch('}')) { push(i, 1, TokenStyle::Keyword); return i + 1; }
+        if (c == Ch('(') || c == Ch('[') || c == Ch('{')) { brackets++; i++; continue; }
+        if (c == Ch(')') || c == Ch(']') || c == Ch('}')) {
+            if (brackets > 0) brackets--;
+            i++;
+            continue;
+        }
+        if (brackets == 0 && c == Ch('!') && !(i + 1 < n && s[i + 1] == Ch('='))) {
+            size_t st = i++;   // the conversion: !r, !s, !a
+            while (i < n && isIdentChar(s[i])) i++;
+            push(st, i - st, TokenStyle::Keyword);
+            continue;
+        }
+        if (brackets == 0 && c == Ch(':')) {
+            // The format spec, to the field's '}', with fields of its own.
+            size_t st = i;
+            while (i < n && s[i] != Ch('}') && s[i] != Ch('\n') &&
+                   !closesAt(s, n, i, q, triple)) {
+                if (s[i] == Ch('{')) {
+                    push(st, i - st, TokenStyle::Keyword);
+                    push(i, 1, TokenStyle::Keyword);
+                    i = lexField(d, s, n, i + 1, q, triple, depth, word, push);
+                    st = i;
+                    continue;
+                }
+                i++;
+            }
+            if (i < n && s[i] == Ch('}')) i++;
+            push(st, i - st, TokenStyle::Keyword);
+            return i;
+        }
+        if (isDelim(d, c)) {
+            LexState ignored;
+            i = lexStringAt(d, s, n, i, depth + 1, word, push, &ignored);
+            continue;
+        }
+        if (startsNumber(s, n, i)) { i = lexNumber(s, n, i, push); continue; }
+        if (isIdentStart(c)) { i = lexIdent(d, s, n, i, word, push); continue; }
+        i++;
+    }
+    return i;
+}
+
+// An f-string's text from i to its close, or to the line's end. `run` is
+// where the current String piece began (the prefix's quote, or the line's
+// start). *open says whether it carries on to the next line.
+template <class Ch, class Push>
+size_t lexFBody(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i, size_t run,
+                Ch q, bool triple, int depth, std::string& word, Push& push, bool* open) {
+    *open = false;
+    while (i < n) {
+        Ch c = s[i];
+        if (closesAt(s, n, i, q, triple)) {
+            i += triple ? 3 : 1;
+            push(run, i - run, TokenStyle::String);
+            return i;
+        }
+        if (c == Ch('\n') && !triple) {   // unterminated: it ends with the line
+            push(run, i - run, TokenStyle::String);
+            return i;
+        }
+        if (c == Ch('\\') && i + 1 < n) { i += 2; continue; }
+        if (c == Ch('{')) {
+            if (i + 1 < n && s[i + 1] == Ch('{')) { i += 2; continue; }
+            push(run, i - run, TokenStyle::String);
+            push(i, 1, TokenStyle::Keyword);
+            i = lexField(d, s, n, i + 1, q, triple, depth, word, push);
+            run = i;
+            continue;
+        }
+        i++;
+    }
+    push(run, n - run, TokenStyle::String);
+    // Past the end: a triple string is still open; a single-quoted one only
+    // when a backslash swallowed the '\n' (as scanString decides).
+    *open = triple || (n > 0 && s[n - 1] == Ch('\n'));
+    return n;
+}
+
+// A string opening at s[i], whose character is a delimiter. Pushes its
+// tokens and returns its end; *state is what the line ends in if the string
+// is still open at the line's end (Normal otherwise).
+template <class Ch, class Push>
+size_t lexStringAt(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i, int depth,
+                   std::string& word, Push& push, LexState* state) {
+    *state = LexState{};
+    const size_t st = i;
+    const Ch q = s[i];
+    const bool triple = d.tripleQuotes && i + 2 < n && s[i + 1] == q && s[i + 2] == q;
+    if (d.fStrings && depth < kMaxFDepth && fPrefixBefore(s, i)) {
+        bool open;
+        i = lexFBody(d, s, n, i + (triple ? 3 : 1), st, q, triple, depth, word, push, &open);
+        if (open)
+            *state = LexState{triple ? LexState::TripleString : LexState::StringCont,
+                              (char16_t)(code(q) | kFString)};
+        return i;
+    }
+    if (triple) {
+        bool closed;
+        i = scanTriple(s, n, i + 3, q, &closed);
+        push(st, i - st, TokenStyle::String);
+        if (!closed) *state = LexState{LexState::TripleString, (char16_t)q};
+    } else {
+        bool continues;
+        i = scanString(s, n, i + 1, q, &continues);
+        push(st, i - st, TokenStyle::String);
+        if (continues) *state = LexState{LexState::StringCont, (char16_t)q};
+    }
+    return i;
+}
+
 // Lex one line: s[0, n), ending in '\n' unless it is the last line. `in` is
 // the state the line above ended in. Tokens go to out at offset `base`.
 // Returns the state this line ends in.
@@ -613,22 +814,29 @@ LexState lexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
         atLineStart = false;
         break;
     }
-    case LexState::TripleString: {
-        bool closed;
-        i = scanTriple(s, n, 0, (Ch)in.quote, &closed);
-        push(0, i, TokenStyle::String);
-        if (!closed) return in;
+    case LexState::TripleString:
+    case LexState::StringCont:
+        if (in.quote & kFString) {
+            bool open;
+            i = lexFBody(d, s, n, 0, 0, (Ch)(in.quote & 0xFF),
+                         in.kind == LexState::TripleString, 0, word, push, &open);
+            if (open) return in;
+            atLineStart = false;
+            break;
+        }
+        if (in.kind == LexState::StringCont) {
+            bool continues;
+            i = scanString(s, n, 0, (Ch)in.quote, &continues);
+            push(0, i, TokenStyle::String);
+            if (continues) return in;
+        } else {
+            bool closed;
+            i = scanTriple(s, n, 0, (Ch)in.quote, &closed);
+            push(0, i, TokenStyle::String);
+            if (!closed) return in;
+        }
         atLineStart = false;
         break;
-    }
-    case LexState::StringCont: {
-        bool continues;
-        i = scanString(s, n, 0, (Ch)in.quote, &continues);
-        push(0, i, TokenStyle::String);
-        if (continues) return in;
-        atLineStart = false;
-        break;
-    }
     default:
         break;
     }
@@ -678,50 +886,23 @@ LexState lexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
 
         // Strings.
         if (isDelim(d, c)) {
-            size_t st = i;
-            Ch q = c;
-            if (d.tripleQuotes && i + 2 < n && s[i+1] == q && s[i+2] == q) {
-                bool closed;
-                i = scanTriple(s, n, i + 3, q, &closed);
-                push(st, i - st, TokenStyle::String);
-                if (!closed) return LexState{LexState::TripleString, (char16_t)q};
-            } else {
-                bool continues;
-                i = scanString(s, n, i + 1, q, &continues);
-                push(st, i - st, TokenStyle::String);
-                if (continues) return LexState{LexState::StringCont, (char16_t)q};
-            }
+            LexState open;
+            i = lexStringAt(d, s, n, i, 0, word, push, &open);
+            if (open.kind != LexState::Normal) return open;
             atLineStart = false;
             continue;
         }
 
         // Numbers.
-        if (isDigit(c) || (c == Ch('.') && i + 1 < n && isDigit(s[i+1]))) {
-            size_t st = i;
-            while (i < n && (isAlnum(s[i]) || s[i] == Ch('.') ||
-                             s[i] == Ch('x') || s[i] == Ch('X'))) i++;
-            push(st, i - st, TokenStyle::Number);
+        if (startsNumber(s, n, i)) {
+            i = lexNumber(s, n, i, push);
             atLineStart = false;
             continue;
         }
 
         // Identifiers / keywords.
         if (isIdentStart(c)) {
-            size_t st = i;
-            while (i < n && isIdentChar(s[i])) i++;
-            word.assign(i - st, ' ');
-            for (size_t k = st; k < i; ++k) word[k - st] = (char)code(s[k]);
-            TokenStyle sty = TokenStyle::Plain;
-            if (d.keywords.count(word)) sty = TokenStyle::Keyword;
-            else if (d.types.count(word)) sty = TokenStyle::Type;
-            else if (std::isupper((unsigned char)word[0]))
-                sty = TokenStyle::Type;
-            else {
-                size_t j = i;
-                while (j < n && (s[j] == Ch(' ') || s[j] == Ch('\t'))) j++;
-                if (j < n && s[j] == Ch('(')) sty = TokenStyle::Function;
-            }
-            if (sty != TokenStyle::Plain) push(st, i - st, sty);
+            i = lexIdent(d, s, n, i, word, push);
             atLineStart = false;
             continue;
         }

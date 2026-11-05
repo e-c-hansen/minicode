@@ -16,7 +16,7 @@ The macOS app links only against frameworks that ship with the system. The Linux
 
 ## What it does
 
-Open a folder and you get a file tree on the left and the file you click in the main pane. Each file you open gets a tab above the editor, keeping its own unsaved changes, undo history, and place, and a dot on the tab means it has changes to save. Typing something and deleting it again leaves nothing to save. Command W closes the tab, or the terminal or browser when it has the keyboard, and Shift Command W closes the window. The next time you open the folder, its tabs come back. The tree follows changes made elsewhere, in the terminal, in git or in another program, and right clicking an item offers new file, new folder, rename, move to trash, reveal in Finder and copy path.
+Open a folder and you get a file tree on the left and the file you click in the main pane. Each file you open gets a tab above the editor, keeping its own unsaved changes, undo history, and place, and a dot on the tab means it has changes to save. Typing something and deleting it again leaves nothing to save. Command W closes the tab, or the terminal or browser when it has the keyboard, and Shift Command W closes the window. The next time you open the folder, its tabs come back. The tree follows changes made elsewhere, in the terminal, in git or in another program, and right clicking an item offers new file, new folder, rename, move to trash, reveal in Finder, and copy path or the path from the folder. On the Mac, right clicking a tab offers the same for its file, plus showing it in the tree and closing the tab, the others, the ones to its right, or all of them.
 
 On the Mac the file tree can show up to three columns at the right of each row, each switched on and off by its own key: Shift Command I for sizes, Option Shift Command I for when each file was last saved, and Control Shift Command I for when it was created. They use Finder's units ("4 KB", "2 min", "yesterday", "12 Oct"), with the exact figures in the row's tooltip, and when the row gets narrow the rightmost column goes first. A folder's size is the total of everything inside it, hidden files included, as Finder and du count it; it is added up in the background, shows "…" until it is known, and is counted again when something inside changes. A very large folder stops being counted after a couple of seconds and shows "≥" before what it reached. While the last-saved column shows, the status bar also says when the open file was last saved. Sort By in the tree's right click menu orders the tree by name, date modified, size, or date created, ascending or descending, with folders first or mixed in with the files. Dates and sizes start newest and largest first, as in Finder, and each folder remembers its own order. Shift F10 or Control Return opens the right click menu of whatever has the keyboard, at the selected row or the cursor, so all of this works without the mouse.
 
@@ -48,7 +48,7 @@ Control Shift G swaps the file tree for a small source control panel, on the Mac
 
 Under the changes is the commit graph: the history of the current branch and its upstream, drawn in colored lanes the way VS Code's graph and `git log --graph` draw them, with branch, remote and tag labels on their commits. Commits you have not pushed yet are tinted blue with a hollow dot and an up arrow, commits on the upstream you have not pulled are tinted green with a down arrow, and a line above the graph says how many of each there are, or that the branch has no upstream. A checkbox shows every local and remote branch instead. The graph loads 200 commits at a time, with a row at the bottom for the next 200. Tab moves between the changes, the graph and the message box, the Down arrow goes from the last changed file into the graph, and Return or a click on a commit shows its author, date, message and diff in the main pane. The panel only reads history; checking out, branching, merging, pulling and pushing are left to the terminal.
 
-On the Mac, Shift Command K (Request a Change to minicode, in the minicode menu) changes minicode itself. A bar opens across the top of the window; describe the change and press Return, and a terminal tab opens in minicode's source folder running [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with your request, so you can follow it, answer its questions, and approve its edits right there. When Claude has rebuilt the app with make, the bar offers to restart into the new build. The restart asks about unsaved files the way quitting does, then reopens every window's folder with its tabs and continues the conversation with Claude in a terminal, so a follow-up request is one more message away. The source is the folder this minicode was built in; a copy installed from Homebrew has none, so the first request clones the release you are running into ~/Library/Application Support/MiniCode/source, in the same terminal, before Claude starts (this needs git, from Apple's command line tools). develop.source in the settings points it at a clone of your own instead, and develop.command sets the command, claude by default. Nothing is committed or released unless you ask Claude to.
+On the Mac, Shift Command K (Request a Change to minicode, in the minicode menu) changes minicode itself. A bar opens across the top of the window, marked in amber with a DEV tag so it is never mistaken for an ordinary field, and names the source folder Claude will work in. Describe the change in its box, which wraps your text and grows with it (Shift Return starts a new line), and press Return, and a terminal tab opens in minicode's source folder running [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with your request, so you can follow it, answer its questions, and approve its edits right there. When Claude has rebuilt the app with make, the bar offers to restart into the new build. The restart asks about unsaved files the way quitting does, then reopens every window's folder with its tabs and continues the conversation with Claude in a terminal, so a follow-up request is one more message away. The source is the folder this minicode was built in; a copy installed from Homebrew has none, so the first request clones the release you are running into ~/Library/Application Support/MiniCode/source, in the same terminal, before Claude starts (this needs git, from Apple's command line tools). develop.source in the settings points it at a clone of your own instead, and develop.command sets the command, claude by default. Nothing is committed or released unless you ask Claude to.
 
 Shift Command H lists the shortcuts that apply right now.
 
@@ -163,7 +163,7 @@ Zed set out with a similar goal, a lighter and more usable IDE, and it does much
 brew install --cask e-c-hansen/tap/minicode
 ```
 
-The app is not notarized, since that needs a paid Apple Developer account, so the cask clears the quarantine flag and it opens without a Gatekeeper warning. The install also puts a minicode command on your PATH: give it a folder or a file, or nothing for the current directory. In Finder, Open With offers minicode for text and source files, Markdown, LaTeX, images, PDFs, video, audio and folders, and you can drop any of them on its Dock icon. A file opens in the window whose folder already holds it, or else in a new window on the file's folder. minicode never makes itself the default app for a kind of file; pick it under Open With in Finder's Get Info if you want a double click to use it.
+The app is not notarized, since that needs a paid Apple Developer account, so the cask clears the quarantine flag and it opens without a Gatekeeper warning. The install also puts a minicode command on your PATH: give it folders or files, or nothing for the current directory, and `minicode -h` lists its options. In Finder, Open With offers minicode for text and source files, Markdown, LaTeX, images, PDFs, video, audio and folders, and you can drop any of them on its Dock icon. A file opens as a tab in the window whose folder already holds it, or else in the window in front, so `minicode notes.md` typed in minicode's own terminal opens it in that window; only with no window open does it get a new one. These are the rules VS Code's `code` command follows. As with `code`, `minicode -r` puts everything in the window in front, a folder included, and `minicode -n` opens a new window of its own. minicode never makes itself the default app for a kind of file; pick it under Open With in Finder's Get Info if you want a double click to use it.
 
 To build it yourself you need only the Xcode command line tools.
 
@@ -222,6 +222,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 
 | Action | macOS | Linux | Android |
 | --- | --- | --- | --- |
+| Add a cursor, or take one away, to type in several places at once | Option click, or Shift Command click |  |  |
 | Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
 | Close the active terminal | Control Shift W |  |  |
 | Close the application | Command Q | Ctrl Q |  |
@@ -229,6 +230,10 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Close the window | Shift Command W | Ctrl W |  |
 | Comment or uncomment the selected lines | Command / | Ctrl / |  |
 | Complete the word at the cursor, with a language server | Control Space, or Option Escape | Ctrl Space | N, or Ctrl N |
+| Copy the line, or the selected lines, below or above | Shift Command Down, Shift Command Up (or Shift Option Down, Up) |  |  |
+| Delete to the start of the line, at every cursor | Command Delete |  |  |
+| Delete the word before the cursor in the terminal's input line, or everything before it | Control W, Control U |  |  |
+| Edit a column: a cursor on every line between two points, so typing adds the same text to each | Shift Command click at one end and Shift Command click (or drag) to the other, or Option drag; Escape goes back to one cursor |  |  |
 | Export the typeset PDF of a LaTeX file | Shift Command S | Ctrl Shift S |  |
 | Find across the whole folder | Shift Command F | Ctrl Shift F |  |
 | Find in the current file | Command F | Ctrl F |  |
@@ -240,10 +245,12 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Format the file, or the selected lines where the formatter can | Shift Option F |  |  |
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G, or Ctrl G |
 | Go to tab 1 to 8, or the last tab | Control 1 to 9, or Shift Command 1 to 9 (macOS keeps Shift Command 3, 4 and 5 for screenshots) |  |  |
+| Go to the start or end of the file (Shift selects to it) | Command Home, Command End (fn Command Left, Right on a laptop) |  |  |
 | Indent or outdent the selected lines | Tab, Shift Tab | Tab, Shift Tab | Tab, Shift Tab |
 | Jump to the previous file |  | Ctrl Tab |  |
 | List the TODO comments and open Markdown tasks in the folder | Shift Command L | Ctrl Shift L | W, or Ctrl Shift L |
-| Move the selected file to the Trash | Command Delete | Delete, in the file tree |  |
+| Move the line, or the selected lines, down or up, at every cursor | Option Down, Option Up, or Command Down, Command Up |  |  |
+| Move the selected file to the Trash | Command Delete, in the file tree | Delete, in the file tree |  |
 | Move to the next or previous terminal, across split panes and tabs | Option Command ], Option Command [ |  |  |
 | New file | Control Command N | Ctrl Alt N | New file in the ⋮ menu |
 | New folder | Shift Command N | Ctrl Shift N |  |
@@ -280,6 +287,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Toggle the source control panel in place of the file tree | Control Shift G | Ctrl Shift G | V, or Ctrl Shift G |
 | Toggle the terminal | Shift Command T, or Control backtick | Ctrl Shift T, or Ctrl backtick | T, or Ctrl T |
 | Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z | U, R, or Ctrl Z, Ctrl Shift Z (Ctrl U, Ctrl R also work) |
+| Wrap the selected text in brackets or quotes, at every cursor | Type ( [ { " ' or a backtick with text selected |  |  |
 | Zoom a PDF or the LaTeX preview in or out |  | Ctrl plus (or Ctrl equals), Ctrl minus, Ctrl with the scroll wheel, or a pinch on the touchpad |  |
 | Zoom a PDF or the LaTeX preview back to the width of the pane |  | Ctrl Alt 0 |  |
 

@@ -238,6 +238,31 @@
 }
 
 // ------------------------------------------- opening from Finder and the Dock
+// `minicode -r` cannot say "reuse the window" through Launch Services, which
+// only passes paths, so it writes its request to a file in
+// $TMPDIR/MiniCode-open and opens that: "minicode-open-1", "reuse", then the
+// paths, each ended by a NUL. Only files in that folder of this user's own
+// temporary folder are read, and each is deleted once read.
+static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse) {
+    if (!url.isFileURL || ![url.pathExtension isEqualToString:@"minicode-open"]) return nil;
+    NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"MiniCode-open"]
+                        .stringByResolvingSymlinksInPath;
+    NSString *path = url.path.stringByResolvingSymlinksInPath;
+    if (![path.stringByDeletingLastPathComponent isEqualToString:dir]) return nil;
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    NSString *text = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+    const unichar nul = 0;
+    NSArray<NSString *> *fields =
+        [text componentsSeparatedByString:[NSString stringWithCharacters:&nul length:1]];
+    if (fields.count < 2 || ![fields[0] isEqualToString:@"minicode-open-1"]) return @[];
+    *reuse = [fields[1] isEqualToString:@"reuse"];
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    for (NSUInteger i = 2; i < fields.count; i++)
+        if ([fields[i] hasPrefix:@"/"]) [paths addObject:fields[i]];
+    return paths;
+}
+
 // Launch Services sends every open here: Open With, a double-click on a file
 // MiniCode is the default app for, and a drop on the Dock icon. Handling it
 // keeps AppKit from passing it to NSDocumentController, which MiniCode does
@@ -247,7 +272,14 @@
     NSFileManager *fm = [NSFileManager defaultManager];
     NSMutableArray<NSString *> *folders = [NSMutableArray array];
     NSMutableArray<NSString *> *files = [NSMutableArray array];
+    BOOL reuse = NO;
+    NSMutableArray<NSURL *> *all = [NSMutableArray array];
     for (NSURL *url in urls) {
+        NSArray<NSString *> *requested = MCTakeOpenRequest(url, &reuse);
+        if (!requested) { [all addObject:url]; continue; }
+        for (NSString *p in requested) [all addObject:[NSURL fileURLWithPath:p]];
+    }
+    for (NSURL *url in all) {
         if (!url.isFileURL) continue;
         // Resolved, as a path on the command line is, so that /tmp and
         // /private/tmp name one folder.
@@ -261,18 +293,37 @@
     if (!MCBenchActive()) [NSApp activateIgnoringOtherApps:YES];
 
     // Folders first, so a file dropped together with its folder lands in
-    // that folder's window.
+    // that folder's window. With -r the window in front takes the first
+    // folder and every file, as VS Code's --reuse-window does.
     EditorController *front = nil;
-    for (NSString *dir in folders)
+    EditorController *reused = reuse ? [self current] : nil;
+    for (NSString *dir in folders) {
+        if (reused && !front) {
+            if (![reused switchToFolder:dir]) return;   // Cancel at its unsaved tabs
+            front = reused;
+            continue;
+        }
         front = [self controllerRootedAt:dir] ?: [self openWindowAtPath:dir];
+    }
+    if (reused && !front) front = reused;
 
     // Files from one folder share a window, each in a tab, the last one on
-    // show. (showFile: no longer refuses, since a tab with unsaved changes
-    // simply stays open, but a window that did is not asked again.)
+    // show. A file no window's folder holds becomes a tab of the window in
+    // front (or of the folder just opened), as in VS Code: `minicode x.py`
+    // typed in a window's terminal opens it there. Only with no window at
+    // all does a new one open on the file's folder. (showFile: no longer
+    // refuses, since a tab with unsaved changes simply stays open, but a
+    // window that did is not asked again.)
     NSMutableSet<EditorController *> *declined = [NSMutableSet set];
     for (NSString *file in files) {
         NSString *inRoot = nil;
-        EditorController *c = [self controllerContaining:file spelled:&inRoot];
+        EditorController *c = reused ? nil : [self controllerContaining:file spelled:&inRoot];
+        if (reused && front) {
+            c = front;
+            NSString *below = MCPathBelow(MCComparablePath(c.rootPath), file);
+            inRoot = below ? [c.rootPath stringByAppendingPathComponent:below] : file;
+        }
+        if (!c && (c = front ?: [self current])) inRoot = file;
         if (!c) {
             c = [self openWindowAtPath:file.stringByDeletingLastPathComponent];
             inRoot = file;
@@ -560,12 +611,11 @@ static void BuildMenu(void) {
     [fileMenu addItem:newFolder];
     [fileMenu addItemWithTitle:@"Rename…"
                         action:@selector(renameSelected:) keyEquivalent:@""];
-    NSMenuItem *trash =
-        [[NSMenuItem alloc] initWithTitle:@"Move to Trash"
-                                   action:@selector(deleteSelected:)
-                            keyEquivalent:@"\b"];   // Cmd+Delete
-    trash.keyEquivalentModifierMask = NSEventModifierFlagCommand;
-    [fileMenu addItem:trash];
+    // No key equivalent: a menu key works from every pane, and Cmd+Delete
+    // in the editor or a text field deletes to the start of the line. The
+    // file tree takes Cmd+Delete itself (ClickOutline keyDown:).
+    [fileMenu addItemWithTitle:@"Move to Trash"
+                        action:@selector(deleteSelected:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Refresh File Tree"
                         action:@selector(refreshTree:) keyEquivalent:@"r"];
     [fileMenu addItem:[NSMenuItem separatorItem]];

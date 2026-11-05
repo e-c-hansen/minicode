@@ -28,7 +28,7 @@ this file covers the macOS app except where it says otherwise.
   folder search (on a scratch tree in the temp directory), and the git
   status and diff readers, the formatter planning and the line diff, and
   the file tree's sort orders, ages and folder totals (`tree:*`, `sizes:*`)
-  (3,453 checks on 2026-10-31; 3,259 on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
+  (3,560 checks on 2026-11-04; 3,543 on 2026-11-01; 3,523 on 2026-10-31; 3,259 on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
   corpus in `tests/markdown/corpus.md` read from the repo root; the
   corpus checks skip themselves where that file is not found).
   Exits non-zero on failure. The Makefile uses clang++ on the Mac and make's
@@ -89,6 +89,14 @@ isolation. Keep them dependency-free.
   oracle the tests compare against; it has no TeX, so for TeX the random
   edits are checked against a full lex by the new highlighter instead
   (`newGrammar` in the tests).
+  Python f-strings and t-strings (2026-11-04): the text is String, a
+  field's braces, `!r` and `:spec` Keyword (Dark+'s blue), and the
+  expression lexed as code, nested strings and f-strings included
+  (`lexStringAt`, `lexFBody`, `lexField`). A triple-quoted or continued
+  f-string carries `0x100` in its LexState quote; a field open at a line's
+  end is not carried. The frozen oracle never had them, so Python text
+  that may hold one (`mayHoldFString` in the tests) is checked against a
+  full lex instead; `syntax:python-fstrings` has the cases.
   TeX has its own line lexer (`lexTexLine`) and uses only the existing
   styles: commands are Keyword, preamble and definition commands
   (`\usepackage`, `\newcommand`) Preprocessor, sectioning commands Function,
@@ -191,6 +199,10 @@ isolation. Keep them dependency-free.
 - `src/ChangeRequest.{h,cpp}`: Request a Change's prompt, the commands
   typed into the terminal to start and resume Claude Code, and how the
   source folder and its fresh build are recognised (`change:*` tests).
+- `src/MultiCaret.{h,cpp}`: several carets (`multicaret:*` tests):
+  normalizing them, typing, Backspace and Delete (never across a line
+  break, so a column stays a column), the arrow moves, Paste one line per
+  caret, Copy. UTF-16 offsets. See "Several carets".
 - `src/KeepSorted.{h,cpp}`: Google's keep-sorted (`keep-sorted start` /
   `keep-sorted end` blocks), ported from its Go code with its options, and
   plain line sorting; the editors' commands in UTF-16. See "Indentation
@@ -252,6 +264,9 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
   sorting before a save. EditorController only calls in from
   `textView:doCommandBySelector:`, `shouldChangeTextInRange`,
   `textDidChange:`, two menu actions and `saveCurrentFile:`.
+- `src/MultiCaretView.{h,mm}` — `MCMultiCarets`, the editor's several
+  carets: the column drag, Option+click, the key commands while two or
+  more are in play, and drawing them. `CodeTextView` owns one.
 - `src/Demo.{h,mm}` — demo scenes and the window recorder behind
   `make demos`. Inert unless `MINICODE_DEMO` is set; two one-line hooks in
   `main.mm`. `tools/makegif.m` turns the recorded frames into a GIF.
@@ -994,7 +1009,20 @@ into the build, keeping its place.
 - **Shift+Cmd+K** (minicode menu, Request a Change to minicode…) shows
   `MCChangeBar` across the top of the right pane (`layoutChangeBarIn:`,
   carved off before everything else in `relayoutRightArea`, over editor
-  and browser), field focused; Esc closes and gives the keyboard back.
+  and browser), box focused; Esc closes and gives the keyboard back.
+  Developer mode looks it (2026-11-04, the user found the plain field
+  easy to take for any other): every mode has a 2 pt amber (#E8A33D,
+  inline hex) stripe on top, the sidebar color tinted 13% amber, and a
+  DEV pill; the prompt has a heading row (DEV, "Change minicode" in
+  amber, the source folder from `hintText`, ×) over the request box, an
+  NSTextView (TextKit 1, built by hand) in a scroll view with an amber
+  border that wraps and grows to 10 lines, then scrolls. The bar's height
+  is `heightForWidth:` (the text measured in a private layout manager at
+  the box's width), and `onResize` relays the pane out when a line comes
+  or goes. Return sends, Shift or Option+Return adds a line, Esc (which a
+  text view sends as `complete:`) closes, Tab moves to Send. Checked
+  offscreen (13 checks: growth, the cap, the keys with
+  `NSApp.currentEvent` swizzled, clearing, modes) and pictures looked at.
   Return writes the prompt (`ChangeRequest::prompt`: the request, then a
   paragraph asking for `make`, CLAUDE.md, and no commit, push, or release)
   to `$TMPDIR/MiniCode-change/request-<pid>-<n>.txt` and types
@@ -1046,6 +1074,110 @@ into the build, keeping its place.
   real relaunch through `open -n` (it would put a window on the user's
   screen) and real Claude Code in the terminal. Needs the user: one real
   request end to end.
+
+## Several carets, wrapping, and Cmd+Delete (Mac, 2026-10-31)
+
+The user could not Cmd+Shift+drag to add a prefix to several lines,
+Cmd+Delete in the editor trashed the tree's selected file, and typing a
+bracket or quote over a selection replaced it instead of wrapping it.
+
+- **Column**: Cmd+Shift+drag, Option+drag or Shift+Option+drag in the editor
+  (`MCMultiCarets mouseDown:`, first thing in `CodeTextView mouseDown:`;
+  this replaces NSTextView's own Option-drag rectangle) puts a caret or
+  selection on every line between the press and the pointer, from the
+  press's x to the pointer's, each found with
+  `characterIndexForInsertionAtPoint:` at that line's first fragment, so
+  tabs and wide characters line up as drawn. A short line gets a caret at
+  its end. Cmd+Shift (or Shift+Option) clicks work in pairs, as the user
+  asked after trying drags only: the first press puts the caret there and
+  remembers it as the column's anchor (character and x); the next, clicked
+  or dragged, makes the column from the anchor to it, and more presses move
+  the far end. The anchor holds while the carets and the text length are
+  what the last column press left (`_anchorCarets`); after typing or a
+  plain click the next press starts afresh. Option+click adds a caret, or
+  removes one; Option+drag is a fresh column from the press.
+- **Copy Line Down / Up**: Cmd+Shift+Down / Up and Shift+Option+Down / Up
+  (`MultiCaret::duplicateLines`, `multicaret:duplicate`): the whole lines
+  each caret touches copied below (the carets move to the copy) or above
+  (they stay on it), for one caret or several, one undo step. Caught in
+  `CodeTextView doCommandBySelector:` by selector *and* arrow key code,
+  from the event `keyDown:` records (`_keyEvent`, not `NSApp.currentEvent`,
+  which a direct `keyDown:` never sets), because Shift+Home and Shift+End
+  send the same selectors. So Cmd+Shift+Up / Down no longer select to the
+  top or end of the file (Shift+Home / End still do). Not menu items: a
+  menu key works in every pane and would take Cmd+Shift+Up from the find
+  field and the commit box.
+- **Move Line Down / Up** (2026-11-01, asked for by the user): Cmd+Down /
+  Up (`MultiCaret::moveLines`, `multicaret:move-lines`) swap the lines each
+  caret touches with the line below or above, selections and carets going
+  with them; carets on neighbouring lines move as one block, and nothing
+  moves when any block is already at the edge. Caught beside Copy Line, by
+  `moveToEndOfDocument:` / `moveToBeginningOfDocument:` plus the arrow key
+  code, only in an editable view. Going to the start or end of the file
+  moved to Cmd+Home / End (fn+Cmd+Left / Right on a laptop, Shift
+  selecting), caught by key code in `CodeTextView keyDown:`; plain Home and
+  End still only scroll, as in AppKit.
+- **Option+Up / Down** move lines too (2026-11-04, VS Code's Mac key; the
+  user found it did nothing without a selection), caught by key code in
+  `CodeTextView keyDown:` because AppKit sends two paragraph selectors for
+  each; Shift+Option still copies. Checked offscreen (7 checks).
+- **A tab's right click** (2026-11-04): `MCTabStrip menuForTab` gives
+  EditorController's `menuForTabAtIndex:` (Close, Close Other Tabs, Close
+  Tabs to the Right, Close All Tabs; for a file Copy Path, Copy Relative
+  Path, Reveal in Finder, Reveal in File Tree, Rename…, Move to Trash),
+  each item carrying its `MCTab`, and the strip adds Adjust Settings….
+  The tree's rename and trash became `renamePath:` and `trashPath:` for
+  both, and the tree gained Copy Relative Path (`pathFromRoot:`, compared
+  with symlinks resolved).
+- **Terminal input line**: Ctrl+W deletes the word before the caret (back
+  to a space, as bash and zsh do) and Ctrl+U everything before it, in
+  `TerminalView control:textView:doCommandBySelector:` (the shell's line
+  editor is off, so the field stands in for it). The grid already sent
+  them to the program.
+- **State**: NSTextView keeps only one empty selection, so the carets live
+  in `MCMultiCarets` (MultiCaret's terms); the text view's selection holds
+  the non-empty ones (it highlights them) or the first caret, and the view
+  draws every caret itself after `drawRect:` (its own insertion point is
+  off while active, steady and dimmed without the keyboard). Any selection
+  or text change not made by the carets (a plain click, undo, a reload, a
+  tab switch, Find) ends them; so do Esc and any command they do not know
+  (it then runs at the first caret). Scroll commands pass through.
+- **Edits** go through `shouldChangeTextInRanges:replacementStrings:` and one
+  `beginEditing`/`endEditing` batch, each its own undo step, so the
+  highlighter sees one edit spanning them, and the language server sees no
+  single typed character (no completion list). The electric dedent is off
+  while active (EditorController's `shouldChangeTextInRange`). Return keeps
+  each line's indentation; Tab inserts the file's indent unit.
+- **Wrapping**: an opener (`( [ {`, `" ' \``, `MultiCaret::closerFor`)
+  typed while every caret has a selection, one or several, puts the pair
+  around each and keeps the text selected (`MultiCaret::surround`), so a
+  second opener wraps again. `MCMultiCarets insertText:` takes it first even
+  with one caret; never while an input method composes (a dead key's
+  marked text). One undo step. The electric dedent also skips edits the
+  carets make (`multiCarets.applying`).
+- **Cmd+Delete** is no longer Move to Trash's menu key (a menu key works in
+  every pane, so it trashed the tree's selection from the editor, after a
+  confirm). The tree takes it in `ClickOutline keyDown:`; elsewhere it is
+  the system's delete to the start of the line, at every caret.
+- **Verified** offscreen (18 checks, a `CodeTextView` in a window never
+  ordered front): a Cmd+Shift drag down column 0 giving four carets, typing
+  `// ` on all of them, Backspace, undo in one step, an Option drag over
+  `int` on three lines replaced by typing, End passing through, line end,
+  Cmd+Delete at every caret, Paste a line per caret, Up, Esc, Option+click,
+  a plain selection ending them, and the drawn carets looked at; then
+  (26 in all) wrapping through real key events: `(` over a word, `"` over
+  it again, undo, `(` with no selection typing as usual, a letter replacing
+  a selection, `[` over two selections; then (45 in all) a Cmd+Shift click
+  at one end and another at the other giving the column, a third moving
+  its far end, a wider one giving selections and typing over them, a fresh
+  start after typing, Cmd+Shift+Down/Up and Shift+Option+Down as key
+  events over a selection, a caret and two carets, undo, Shift+End still
+  selecting, and Ctrl+W twice and Ctrl+U in a real TerminalView's input
+  line through `sendEvent:`; then (55 in all) Cmd+Down / Up as key events moving
+  a line, stopping at the bottom, undo in one step, a selection over two
+  lines, two neighbouring carets, Cmd+End and Shift+Cmd+Home, and a
+  read-only view left alone. Needs the user: real clicks and drags, the
+  look, Cmd+Delete in the tree, and quotes on a layout with dead keys.
 
 ## Formatting (Mac, 2026-10-20)
 
@@ -1783,8 +1915,9 @@ NSDocumentController, which answered "MiniCode cannot open files in the
   one odoc Apple Event, which AppKit hands to `application:openURLs:` in
   `main.mm`. Folders are taken first: a window already rooted there comes
   forward, else a new one opens. Then each file goes to the window with the
-  innermost root holding it, else to a new window on its folder, and several
-  files share that window (the last is shown). Paths are compared with
+  innermost root holding it, else to the window in front (or a folder just
+  opened with it; a new window on its folder only when none is open), and
+  several files share that window (the last is shown). Paths are compared with
   symlinks resolved, then respelled from the window's own root so
   `revealPath:` can walk the tree. `EditorController showFile:` opens even a
   dotfile the tree hides, and the command line uses it too.
@@ -2560,8 +2693,26 @@ holds, these give real runtime evidence rather than compile-only evidence:
 - **Window tabbing**: `setAllowsAutomaticWindowTabbing:NO`, otherwise macOS
   merges windows into tabs and Cmd+W closes the whole group.
 - **Two app instances**: launching the `.app` twice just activates the existing
-  one. The CLI launcher (`Contents/Resources/minicode`) runs the raw binary
-  detached, which does start a separate process.
+  one. The CLI launcher (`scripts/minicode-launcher`, installed as
+  `Contents/Resources/minicode`; `minicode -h`) hands its paths to the
+  running app with `open -b com.minicode.editor` (any copy, such as a build
+  Request a Change restarted into), else `open -a` its own bundle, so they
+  arrive through `application:openURLs:`; there a file no window's folder
+  holds becomes a tab of the window in front (2026-11-04; it used to get a
+  new window), which is how `minicode x` in a window's terminal lands in
+  that window. These are VS Code's `code` rules (the user remembered a
+  flag being needed; `code` needs none for files). `-r` (`--reuse-window`)
+  puts everything in the window in front, a folder through
+  `switchToFolder:` (Open Folder's questions, then `changeRootTo:`), files
+  even when another window's folder holds them. Launch Services passes
+  only paths, so `-r` writes a request file, "minicode-open-1", "reuse",
+  the paths, NUL-ended, to `$TMPDIR/MiniCode-open/*.minicode-open` and
+  opens that; `MCTakeOpenRequest` reads (and deletes) only files in that
+  folder of the app's own `NSTemporaryDirectory()`. `-n` runs the raw
+  binary detached, a separate process, as every launch did before.
+  Checked offscreen (main.mm included, 16 checks with the tab menu's). "Running" is `ps -axo comm=` ending in
+  `/MiniCode`: pgrep found nothing from Claude Code's shell.
+  `MINICODE_LAUNCHER_DRYRUN=1` prints the command instead of running it.
 - **Terminal**: `zsh -l -i +Z` (interactive, line editor off) on a pty from
   `forkpty`. `ZDOTDIR` points at a generated `.zshenv` (in
   `NSTemporaryDirectory()/MiniCode-zsh`) that hands `ZDOTDIR` straight back to

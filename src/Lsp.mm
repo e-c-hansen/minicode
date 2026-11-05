@@ -5,6 +5,7 @@
 #import "Lsp.h"
 #import "AppSettings.h"
 #import "Terminal.h"   // MCTerminalCommandDidFinishNotification
+#import "MultiCaretView.h"
 #include "InstallHints.h"
 #include "LspClient.h"
 #include "MarkdownParser.h"
@@ -500,10 +501,16 @@ NSUInteger MCLspRunningServerCount(void) { return gServers.count; }
 
 @implementation CodeTextView {
     NSTrackingArea *_hoverArea;
+    MCMultiCarets *_multi;
+    NSEvent *_keyEvent;   // the key being interpreted, during keyDown:
 }
+
+- (MCMultiCarets *)multiCarets { return _multi; }
+- (BOOL)multiCaretActive { return _multi.active; }
 
 - (instancetype)initWithFrame:(NSRect)frame {
     if ((self = [super initWithFrame:frame])) {
+        _multi = [[MCMultiCarets alloc] initWithTextView:self];
         [[NSNotificationCenter defaultCenter]
             addObserver:self selector:@selector(storageEdited:)
                    name:NSTextStorageDidProcessEditingNotification
@@ -523,6 +530,7 @@ NSUInteger MCLspRunningServerCount(void) { return gServers.count; }
 
 - (BOOL)resignFirstResponder {
     BOOL ok = [super resignFirstResponder];
+    if (ok && _multi.active) self.needsDisplay = YES;   // carets dimmed
     if (ok && self.onFocusLost) self.onFocusLost();
     return ok;
 }
@@ -531,6 +539,10 @@ NSUInteger MCLspRunningServerCount(void) { return gServers.count; }
 // fresh ones: shift those after the edit, stretch those it touches.
 - (void)storageEdited:(NSNotification *)note {
     NSTextStorage *ts = note.object;
+    // A change made by anyone but the carets themselves (undo, a reload, a
+    // formatter, a tab switch) leaves them pointing at the wrong text.
+    if ((ts.editedMask & NSTextStorageEditedCharacters) && _multi.active && !_multi.applying)
+        [_multi clear];
     if (!(ts.editedMask & NSTextStorageEditedCharacters) || _diagnostics.count == 0) return;
     NSRange er = ts.editedRange;
     NSInteger delta = ts.changeInLength;
@@ -639,6 +651,7 @@ static NSColor *SeverityColor(NSInteger severity) {
 
 - (void)drawRect:(NSRect)dirty {
     [super drawRect:dirty];
+    [_multi drawInRect:dirty];
     if (_diagnostics.count == 0) return;
     NSRange visible = [self visibleCharacterRange];
     // Errors last, so they draw over a warning on the same text.
@@ -721,7 +734,106 @@ static NSColor *SeverityColor(NSInteger severity) {
     [super scrollWheel:event];
 }
 
+// ---- several carets: everything that types, moves or sets the selection
+// goes to MCMultiCarets first while it has two or more.
+- (void)insertText:(id)string replacementRange:(NSRange)replacementRange {
+    if ([_multi insertText:string]) return;
+    [super insertText:string replacementRange:replacementRange];
+}
+
+- (void)setMarkedText:(id)string selectedRange:(NSRange)sel replacementRange:(NSRange)rep {
+    if (_multi.active) [_multi clear];   // an input method composes at one place
+    [super setMarkedText:string selectedRange:sel replacementRange:rep];
+}
+
+- (void)keyDown:(NSEvent *)event {
+    // Cmd+Home / End (Fn+Cmd+Left / Right on a laptop) go to the start or
+    // end of the document, with Shift selecting: Cmd+Up / Down move lines.
+    const NSEventModifierFlags mods = event.modifierFlags &
+        (NSEventModifierFlagCommand | NSEventModifierFlagShift | NSEventModifierFlagOption |
+         NSEventModifierFlagControl);
+    if ((event.keyCode == 115 || event.keyCode == 119) &&
+        (mods == NSEventModifierFlagCommand ||
+         mods == (NSEventModifierFlagCommand | NSEventModifierFlagShift))) {
+        const BOOL home = event.keyCode == 115, extend = (mods & NSEventModifierFlagShift) != 0;
+        [self doCommandBySelector:home ? (extend ? @selector(moveToBeginningOfDocumentAndModifySelection:)
+                                                 : @selector(moveToBeginningOfDocument:))
+                                       : (extend ? @selector(moveToEndOfDocumentAndModifySelection:)
+                                                 : @selector(moveToEndOfDocument:))];
+        return;
+    }
+    // Option+Up / Down move the lines too, as in VS Code on the Mac, with or
+    // without a selection (AppKit would move the caret by paragraph). Taken
+    // by key code here, since AppKit sends two selectors for each.
+    if ((event.keyCode == 125 || event.keyCode == 126) && mods == NSEventModifierFlagOption &&
+        self.editable) {
+        [_multi moveLinesDown:event.keyCode == 125];
+        return;
+    }
+    NSEvent *outer = _keyEvent;
+    _keyEvent = event;
+    [super keyDown:event];
+    _keyEvent = outer;
+}
+
+- (void)doCommandBySelector:(SEL)selector {
+    // Cmd+Shift+Up/Down (select to the top or end of the file in AppKit) and
+    // Shift+Option+Up/Down (select by paragraph) copy the lines instead, as
+    // in VS Code. Only from the arrow keys: Shift+Home and Shift+End send the
+    // same selectors and keep their meaning.
+    NSEvent *ev = _keyEvent;
+    if (self.editable && ev &&
+        (ev.keyCode == 125 || ev.keyCode == 126) &&
+        (selector == @selector(moveToEndOfDocumentAndModifySelection:) ||
+         selector == @selector(moveToBeginningOfDocumentAndModifySelection:) ||
+         selector == @selector(moveParagraphForwardAndModifySelection:) ||
+         selector == @selector(moveParagraphBackwardAndModifySelection:))) {
+        [_multi duplicateLinesDown:ev.keyCode == 125];
+        return;
+    }
+    // Cmd+Down / Up move the lines, as the user expects; the system's move
+    // to the end or start of the document is Cmd+End / Home (keyDown:).
+    if (self.editable && ev && (ev.keyCode == 125 || ev.keyCode == 126) &&
+        (selector == @selector(moveToEndOfDocument:) ||
+         selector == @selector(moveToBeginningOfDocument:))) {
+        [_multi moveLinesDown:ev.keyCode == 125];
+        return;
+    }
+    if ([_multi doCommand:selector]) return;
+    [super doCommandBySelector:selector];
+}
+
+- (void)copy:(id)sender {
+    if (![_multi copy]) [super copy:sender];
+}
+
+- (void)cut:(id)sender {
+    if (![_multi cut]) [super cut:sender];
+}
+
+- (void)paste:(id)sender {
+    if (![_multi paste]) [super paste:sender];
+}
+
+- (void)setSelectedRanges:(NSArray<NSValue *> *)ranges
+                 affinity:(NSSelectionAffinity)affinity
+           stillSelecting:(BOOL)still {
+    if (_multi.active && !_multi.applying) [_multi clear];
+    [super setSelectedRanges:ranges affinity:affinity stillSelecting:still];
+}
+
+- (BOOL)shouldDrawInsertionPoint {
+    return _multi.active ? NO : [super shouldDrawInsertionPoint];
+}
+
+- (BOOL)becomeFirstResponder {
+    BOOL ok = [super becomeFirstResponder];
+    if (_multi.active) self.needsDisplay = YES;   // carets back to full color
+    return ok;
+}
+
 - (void)mouseDown:(NSEvent *)event {
+    if ([_multi mouseDown:event]) return;
     NSEventModifierFlags mods = event.modifierFlags &
         NSEventModifierFlagDeviceIndependentFlagsMask;
     if (mods == NSEventModifierFlagCommand && self.onCommandClick) {

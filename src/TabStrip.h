@@ -19,6 +19,9 @@ extern const CGFloat kMCTabStripHeight;
 // A click on a tab, and a click on its close button or a middle click on it.
 @property(nonatomic, copy) void (^onSelect)(NSInteger index);
 @property(nonatomic, copy) void (^onClose)(NSInteger index);
+// A right click on a tab: its own menu (Adjust Settings… is added after it).
+// Without one, or off the tabs, the strip's menu is only Adjust Settings….
+@property(nonatomic, copy) NSMenu *(^menuForTab)(NSInteger index);
 // Colors: the strip behind the tabs, the active tab (the editor's own
 // background, so it runs into the editor), and the two text colors.
 @property(nonatomic, strong) NSColor *stripColor, *activeColor, *activeText, *inactiveText;

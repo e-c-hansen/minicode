@@ -24,6 +24,7 @@
 #include "InstallHints.h"
 #include "ChangeRequest.h"
 #include "LineDiff.h"
+#include "MultiCaret.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -112,6 +113,51 @@ void testSyntax() {
     CHECK(hasToken("s = \"hi\"", "py", "\"hi\"", TokenStyle::String));
     // A '#' comment must not be mistaken for anything else.
     CHECK(!hasStyle("# just a comment", "py", TokenStyle::Keyword));
+
+    GROUP("syntax:python-fstrings");
+    {
+        // The style at each byte, '-' where no token is.
+        auto styles = [](const std::string &text) {
+            std::string m(text.size(), '-');
+            const char *letters = "pktscnPf";   // TokenStyle order
+            for (const Token &t : SyntaxHighlighter::highlight(text, "py"))
+                for (size_t k = t.start; k < t.start + t.length && k < m.size(); ++k)
+                    m[k] = letters[(int)t.style];
+            return m;
+        };
+        // Text is String, the braces Keyword, the expression code.
+        CHECK(styles("x = f'a {name} b'") == "-----sssk----ksss");
+        CHECK(styles("f\"{len(x) + 1}\"") == "-skfff------nks");
+        // {{ and }} are literal braces.
+        CHECK(styles("f'{{x}}'") == "-sssssss");
+        // A plain string with braces is all string.
+        CHECK(styles("'{x}'") == "sssss");
+        // Conversion and format spec, with a nested field in the spec.
+        CHECK(styles("f'{v!r:>{w}}'") == "-sk-kkkkk-kks");
+        // A string inside a field, and code after the f-string.
+        CHECK(styles("f\"{d['k']}\" + len(x)") == "-sk--sss-ks---fff---");
+        // Other prefixes; a longer word is not a prefix.
+        CHECK(styles("rf'{x}'") == "--sk-ks");
+        CHECK(styles("F'{x}'") == "tsk-ks"   /* F reads as a capitalized name */);
+        CHECK(styles("t'{x}'") == "-sk-ks");
+        CHECK(styles("elif'{x}'") == "kkkksssss");
+        CHECK(styles("b'{x}'") == "-sssss");
+        // A keyword inside a field.
+        CHECK(styles("f'{x if y else z}'") == "-sk--kk---kkkk--ks");
+        // Triple-quoted, over lines: fields on the next line too, and code
+        // after the close.
+        std::string tri = "s = f\"\"\"a\n{x} b\n\"\"\"\nreturn";
+        CHECK(styles(tri) == "-----sssss" "k-ksss" "sss-" "kkkkkk");
+        IncrementalHighlighter<char> h("py");
+        h.reset(StringSource<char>(tri), nullptr);
+        CHECK(h.endState(0).kind == LexState::TripleString && (h.endState(0).quote & 0xFF) == u'"' &&
+              (h.endState(0).quote & 0x100));
+        CHECK(h.endState(2).kind == LexState::Normal);
+        // A backslash carries a single-quoted f-string over the line.
+        CHECK(styles("f'a\\\n{x}'") == "-ssss" "k-ks");
+        // An unclosed field ends with its line; the next line is code.
+        CHECK(styles("f'{x\ny = 1") == "-sk--" "----n");
+    }
 
     GROUP("syntax:cpp");
     std::string cpp = "int main() {\n  // c\n  return 0;\n}\n";
@@ -347,9 +393,25 @@ bool newGrammar(const std::string &ext) {
     return ext == "tex" || ext == "ltx" || ext == "latex" || ext == "sty" ||
            ext == "cls" || ext == "bib";
 }
+// Python text that may hold an f-string (a quote after an f or t prefix),
+// which the frozen lexer read as a plain string. Such text is checked
+// against a full lex too.
+bool mayHoldFString(const std::string &text, const std::string &ext) {
+    if (ext != "py") return false;
+    for (size_t i = 1; i < text.size(); ++i) {
+        if (text[i] != '\'' && text[i] != '"') continue;
+        size_t j = i;
+        while (j > 0 && i - j < 3 && std::isalpha((unsigned char)text[j - 1])) j--;
+        for (size_t k = j; k < i; ++k)
+            if (std::tolower((unsigned char)text[k]) == 'f' ||
+                std::tolower((unsigned char)text[k]) == 't') return true;
+    }
+    return false;
+}
 std::vector<Token> fullLex(const std::string &text, const std::string &ext) {
-    return newGrammar(ext) ? SyntaxHighlighter::highlight(text, ext)
-                           : legacy::highlight(text, ext);
+    return newGrammar(ext) || mayHoldFString(text, ext)
+               ? SyntaxHighlighter::highlight(text, ext)
+               : legacy::highlight(text, ext);
 }
 
 // The reference tokens for a document: the frozen whole-file lexer (or a full
@@ -376,6 +438,8 @@ const char *const kFragments[] = {
     ".5", " ", "\t", "\r\n", "if ", "return ", "def ", "self", "é", "日本",
     "\xF0\x9F\x98\x80", "/* c */", "\"s\"", "a = \"b\\\"c\"", "*/\n", "/*\n",
     "\"\"\"doc\n", "x", "}", "{\n",
+    // Python f-strings: fields, literal braces, conversions, specs.
+    "f'", "f\"", "rf'", "f\"\"\"", "{x}", "{{", "}}", "!r", ":>8", "{",
     // TeX: math, comments, verbatim and the environments that carry state.
     "$", "$$", "\\(", "\\)", "\\[", "\\]", "%", "\\%", "\\\\", "\\alpha",
     "\\section{A}", "\\begin{verbatim}", "\\end{verbatim}", "\\begin{equation}\n",
@@ -587,7 +651,8 @@ void testIncrementalHighlight() {
     bool same = true;
     for (const Sample &s : samples)
         for (const char *e : exts)
-            if (SyntaxHighlighter::highlight(s.text, e) != legacy::highlight(s.text, e)) {
+            if (!mayHoldFString(s.text, e) &&
+                SyntaxHighlighter::highlight(s.text, e) != legacy::highlight(s.text, e)) {
                 std::printf("    %s as %s differs from the old lexer\n", s.name.c_str(), e);
                 same = false;
             }
@@ -601,7 +666,8 @@ void testIncrementalHighlight() {
             for (int m = 0, len = 1 + (int)(rng() % 60); m < len; ++m)
                 t += kFragments[rng() % (sizeof(kFragments) / sizeof(kFragments[0]))];
             for (const char *e : exts)
-                soup = soup && SyntaxHighlighter::highlight(t, e) == legacy::highlight(t, e);
+                soup = soup && (mayHoldFString(t, e) ||
+                                SyntaxHighlighter::highlight(t, e) == legacy::highlight(t, e));
         }
         CHECK(soup);
     }
@@ -6968,6 +7034,229 @@ static void testChangeRequest() {
     CHECK(e2.size() == 1);
 }
 
+static void testMultiCaret() {
+    using namespace MultiCaret;
+    auto carets = [](std::initializer_list<size_t> at) {
+        std::vector<Caret> v;
+        for (size_t p : at) v.push_back({p, p});
+        return v;
+    };
+    auto heads = [](const std::vector<Caret> &v) {
+        std::vector<size_t> out;
+        for (const Caret &c : v) out.push_back(c.head);
+        return out;
+    };
+
+    GROUP("multicaret:normalize");
+    {
+        std::vector<Caret> v = normalize({{8, 8}, {2, 2}, {2, 2}, {20, 30}}, 10);
+        CHECK(v.size() == 3);
+        CHECK(v[0] == (Caret{2, 2}) && v[1] == (Caret{8, 8}) && v[2] == (Caret{10, 10}));
+        v = normalize({{2, 6}, {4, 9}}, 20);   // overlapping selections merge
+        CHECK(v.size() == 1 && v[0].lo() == 2 && v[0].hi() == 9);
+        v = normalize({{2, 5}, {5, 8}}, 20);   // touching selections stay two
+        CHECK(v.size() == 2);
+        v = normalize({{2, 5}, {5, 5}}, 20);   // a caret at a selection's end joins it
+        CHECK(v.size() == 1 && v[0].lo() == 2 && v[0].hi() == 5);
+        CHECK(normalize({}, 5).size() == 1);
+    }
+
+    GROUP("multicaret:prefix");
+    {
+        // The request that started it: a common prefix on every line.
+        const std::u16string t = u"alpha\nbeta\n\ngamma";
+        std::vector<Caret> c = carets({0, 6, 11, 12});
+        Edit e = insert(c, {u"// "});
+        CHECK(applyEdit(t, e) == u"// alpha\n// beta\n// \n// gamma");
+        CHECK(heads(e.carets) == (std::vector<size_t>{3, 12, 20, 24}));
+        // Typing on: the carets follow.
+        Edit e2 = insert(e.carets, {u"x"});
+        CHECK(applyEdit(applyEdit(t, e), e2) == u"// xalpha\n// xbeta\n// x\n// xgamma");
+    }
+
+    GROUP("multicaret:column-replace");
+    {
+        const std::u16string t = u"int a = 1;\nint b = 2;\nint c = 3;";
+        std::vector<Caret> c = {{0, 3}, {11, 14}, {22, 25}};
+        Edit e = insert(c, {u"long"});
+        CHECK(applyEdit(t, e) == u"long a = 1;\nlong b = 2;\nlong c = 3;");
+        CHECK(heads(e.carets) == (std::vector<size_t>{4, 16, 28}));
+        CHECK(copy(t, c) == u"int\nint\nint");
+        CHECK(copy(t, carets({1, 2})).empty());
+    }
+
+    GROUP("multicaret:backspace");
+    {
+        const std::u16string t = u"// a\n// b\nc";
+        Edit e = backspace(t, carets({3, 8}));
+        CHECK(applyEdit(t, e) == u"//a\n//b\nc");
+        CHECK(heads(e.carets) == (std::vector<size_t>{2, 6}));
+        // At a line's start nothing goes, so the column stays.
+        Edit e2 = backspace(t, carets({0, 5, 10}));
+        CHECK(e2.changes.empty());
+        CHECK(applyEdit(t, e2) == t);
+        CHECK(heads(e2.carets) == (std::vector<size_t>{0, 5, 10}));
+        // Mixed: one at a start, one not.
+        Edit e3 = backspace(t, carets({5, 3}));
+        CHECK(applyEdit(t, e3) == u"//a\n// b\nc");
+        // A surrogate pair goes whole.
+        const std::u16string emoji = u"a\U0001F600\nb\U0001F600";
+        Edit e4 = backspace(emoji, carets({3, 7}));
+        CHECK(applyEdit(emoji, e4) == u"a\nb");
+        // Two carets side by side end up as one.
+        Edit e5 = backspace(u"abc", carets({1, 2}));
+        CHECK(applyEdit(u"abc", e5) == u"c" && e5.carets.size() == 1 && e5.carets[0].head == 0);
+        // Selections are deleted whatever their size.
+        Edit e6 = backspace(u"abcd\nefgh", {{1, 3}, {6, 8}});
+        CHECK(applyEdit(u"abcd\nefgh", e6) == u"ad\neh");
+    }
+
+    GROUP("multicaret:delete-forward");
+    {
+        const std::u16string t = u"ab\ncd";
+        Edit e = deleteForward(t, carets({0, 3}));
+        CHECK(applyEdit(t, e) == u"b\nd");
+        Edit e2 = deleteForward(t, carets({2, 5}));   // line end, text end
+        CHECK(e2.changes.empty());
+    }
+
+    GROUP("multicaret:move");
+    {
+        const std::u16string t = u"    foo bar\n  baz.qux\nx";
+        std::vector<Caret> c = carets({8, 16});
+        CHECK(heads(move(t, c, Move::Left, false)) == (std::vector<size_t>{7, 15}));
+        CHECK(heads(move(t, c, Move::Right, false)) == (std::vector<size_t>{9, 17}));
+        CHECK(heads(move(t, c, Move::LineEnd, false)) == (std::vector<size_t>{11, 21}));
+        // Home: first non-blank, then column 0.
+        std::vector<Caret> h = move(t, c, Move::LineStart, false);
+        CHECK(heads(h) == (std::vector<size_t>{4, 14}));
+        CHECK(heads(move(t, h, Move::LineStart, false)) == (std::vector<size_t>{0, 12}));
+        CHECK(heads(move(t, c, Move::WordRight, false)) == (std::vector<size_t>{11, 17}));
+        CHECK(heads(move(t, carets({11, 21}), Move::WordLeft, false)) ==
+              (std::vector<size_t>{8, 18}));
+        // Extending keeps the anchors.
+        std::vector<Caret> x = move(t, c, Move::LineEnd, true);
+        CHECK(x[0] == (Caret{8, 11}) && x[1] == (Caret{16, 21}));
+        // Without Shift, Left and Right collapse a selection to its edge.
+        std::vector<Caret> s = {{8, 11}, {16, 21}};
+        CHECK(heads(move(t, s, Move::Left, false)) == (std::vector<size_t>{8, 16}));
+        CHECK(heads(move(t, s, Move::Right, false)) == (std::vector<size_t>{11, 21}));
+        // Carets that meet merge.
+        CHECK(move(u"ab", carets({0, 1}), Move::Left, false).size() == 1);
+    }
+
+    GROUP("multicaret:surround");
+    {
+        const std::u16string t = u"say hello now";
+        Edit e = surround({{4, 9}}, u'(');
+        CHECK(applyEdit(t, e) == u"say (hello) now");
+        CHECK(e.carets.size() == 1 && e.carets[0] == (Caret{5, 10}));
+        // Again: wraps the same text a second time.
+        Edit e2 = surround(e.carets, u'"');
+        CHECK(applyEdit(applyEdit(t, e), e2) == u"say (\"hello\") now");
+        // A backwards selection stays backwards.
+        Edit e3 = surround({{9, 4}}, u'[');
+        CHECK(applyEdit(t, e3) == u"say [hello] now" && e3.carets[0] == (Caret{10, 5}));
+        // Several selections, each wrapped, carets following.
+        const std::u16string u = u"a b\nc d";
+        Edit e4 = surround({{0, 1}, {4, 5}}, u'`');
+        CHECK(applyEdit(u, e4) == u"`a` b\n`c` d");
+        CHECK(e4.carets[0] == (Caret{1, 2}) && e4.carets[1] == (Caret{7, 8}));
+        CHECK(applyEdit(u, surround({{0, 3}}, u'{')) == u"{a b}\nc d");
+        CHECK(applyEdit(u, surround({{0, 1}}, u'\'')) == u"'a' b\nc d");
+        CHECK(closerFor(u'x') == 0 && closerFor(u'<') == 0);
+        CHECK(surround({{0, 1}}, u'x').changes.empty());
+    }
+
+    GROUP("multicaret:duplicate");
+    {
+        const std::u16string t = u"one\ntwo\nthree";
+        // A caret alone copies its line.
+        Edit d = duplicateLines(t, carets({5}), true);
+        CHECK(applyEdit(t, d) == u"one\ntwo\ntwo\nthree");
+        CHECK(heads(d.carets) == (std::vector<size_t>{9}));
+        Edit u = duplicateLines(t, carets({5}), false);
+        CHECK(applyEdit(t, u) == u"one\ntwo\ntwo\nthree");
+        CHECK(heads(u.carets) == (std::vector<size_t>{5}));
+        // A selection over two lines copies both, and stays selected on the copy.
+        Edit s2 = duplicateLines(t, {{1, 6}}, true);
+        CHECK(applyEdit(t, s2) == u"one\ntwo\none\ntwo\nthree");
+        CHECK(s2.carets[0] == (Caret{9, 14}));
+        // Ending at the start of a line leaves that line out.
+        Edit s3 = duplicateLines(t, {{0, 4}}, true);
+        CHECK(applyEdit(t, s3) == u"one\none\ntwo\nthree");
+        CHECK(s3.carets[0] == (Caret{4, 8}));
+        // The last line, with no newline after it.
+        Edit s4 = duplicateLines(t, carets({10}), true);
+        CHECK(applyEdit(t, s4) == u"one\ntwo\nthree\nthree");
+        CHECK(heads(s4.carets) == (std::vector<size_t>{16}));
+        // Several carets on different lines: each line copied, carets follow.
+        Edit s5 = duplicateLines(t, carets({1, 9}), true);
+        CHECK(applyEdit(t, s5) == u"one\none\ntwo\nthree\nthree");
+        CHECK(heads(s5.carets) == (std::vector<size_t>{5, 19}));
+        // Two carets on one line: one copy.
+        Edit s6 = duplicateLines(t, carets({4, 6}), false);
+        CHECK(applyEdit(t, s6) == u"one\ntwo\ntwo\nthree");
+        CHECK(heads(s6.carets) == (std::vector<size_t>{4, 6}));
+        // CRLF stays CRLF.
+        const std::u16string w = u"a\r\nb";
+        CHECK(applyEdit(w, duplicateLines(w, carets({0}), true)) == u"a\r\na\r\nb");
+        // An empty file.
+        CHECK(applyEdit(u"", duplicateLines(u"", carets({0}), true)) == u"\n");
+    }
+
+    GROUP("multicaret:move-lines");
+    {
+        const std::u16string t = u"one\ntwo\nthree";
+        // A caret moves its line down and up, staying at the same column.
+        Edit d = moveLines(t, carets({5}), true);
+        CHECK(applyEdit(t, d) == u"one\nthree\ntwo");
+        CHECK(heads(d.carets) == (std::vector<size_t>{11}));
+        Edit u = moveLines(t, carets({5}), false);
+        CHECK(applyEdit(t, u) == u"two\none\nthree");
+        CHECK(heads(u.carets) == (std::vector<size_t>{1}));
+        // At the edges nothing moves.
+        CHECK(moveLines(t, carets({1}), false).changes.empty());
+        CHECK(moveLines(t, carets({10}), true).changes.empty());
+        CHECK(heads(moveLines(t, carets({10}), true).carets) == (std::vector<size_t>{10}));
+        // A selection over two lines moves both and stays selected.
+        Edit s2 = moveLines(t, {{1, 6}}, true);
+        CHECK(applyEdit(t, s2) == u"three\none\ntwo");
+        CHECK(s2.carets[0] == (Caret{7, 12}));
+        // Ending at the start of a line leaves that line where it is.
+        Edit s3 = moveLines(t, {{0, 4}}, true);
+        CHECK(applyEdit(t, s3) == u"two\none\nthree");
+        CHECK(s3.carets[0] == (Caret{4, 8}));
+        // Carets on neighbouring lines move together; apart, each moves.
+        const std::u16string f = u"a\nb\nc\nd\ne";
+        Edit n = moveLines(f, carets({2, 4}), true);
+        CHECK(applyEdit(f, n) == u"a\nd\nb\nc\ne");
+        CHECK(heads(n.carets) == (std::vector<size_t>{4, 6}));
+        Edit a = moveLines(f, carets({0, 4}), true);
+        CHECK(applyEdit(f, a) == u"b\na\nd\nc\ne");
+        CHECK(heads(a.carets) == (std::vector<size_t>{2, 6}));
+        // One block at an edge holds them all.
+        CHECK(moveLines(f, carets({4, 8}), true).changes.empty());
+        // CRLF stays CRLF, and a trailing newline gives an empty last line.
+        const std::u16string w = u"a\r\nb\r\nc";
+        CHECK(applyEdit(w, moveLines(w, carets({3}), true)) == u"a\r\nc\r\nb");
+        CHECK(applyEdit(w, moveLines(w, carets({3}), false)) == u"b\r\na\r\nc");
+        CHECK(applyEdit(u"x\n", moveLines(u"x\n", carets({0}), true)) == u"\nx");
+        CHECK(moveLines(u"", carets({0}), true).changes.empty());
+    }
+
+    GROUP("multicaret:paste");
+    {
+        CHECK(pieces(u"a\nb\nc\n", 3) == (std::vector<std::u16string>{u"a", u"b", u"c"}));
+        CHECK(pieces(u"a\r\nb", 2) == (std::vector<std::u16string>{u"a", u"b"}));
+        CHECK(pieces(u"a\nb", 3) == (std::vector<std::u16string>{u"a\nb"}));
+        CHECK(pieces(u"x", 1) == (std::vector<std::u16string>{u"x"}));
+        const std::u16string t = u"1\n2\n3";
+        Edit e = insert(carets({0, 2, 4}), pieces(u"a\nb\nc", 3));
+        CHECK(applyEdit(t, e) == u"a1\nb2\nc3");
+    }
+}
+
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
@@ -7011,6 +7300,7 @@ int main() {
     testKeepSorted();
     testFileDetails();
     testChangeRequest();
+    testMultiCaret();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

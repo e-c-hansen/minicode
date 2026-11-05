@@ -20,6 +20,8 @@
 @property(nonatomic, copy) NSString *message;
 @end
 
+@class MCMultiCarets;
+
 @interface CodeTextView : NSTextView
 @property(nonatomic, copy) NSArray<MCDiagnosticMark *> *diagnostics;
 // Cmd+click at a character index. Return NO to let the click through.
@@ -35,6 +37,11 @@
 @property(nonatomic, copy) void (^onMouseHover)(NSUInteger index);
 // The view scrolled under the pointer (a wheel or trackpad).
 @property(nonatomic, copy) void (^onScrolled)(void);
+// Several carets (MultiCaretView.h): a column from Cmd+Shift+drag or
+// Option+drag, or carets added with Option+click.
+@property(nonatomic, readonly) MCMultiCarets *multiCarets;
+// Two or more carets are in play.
+@property(nonatomic, readonly) BOOL multiCaretActive;
 // The character drawn at a point in the view, or NSNotFound.
 - (NSUInteger)characterIndexUnderPoint:(NSPoint)point;
 // The message of the diagnostic covering a character, or nil.

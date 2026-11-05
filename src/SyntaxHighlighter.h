@@ -41,8 +41,9 @@ struct LexState {
     enum Kind : uint8_t {
         Normal,
         BlockComment,   // /* ... not closed yet
-        TripleString,   // Python """ or ''' not closed yet (quote = the char)
-        StringCont,     // "...\ : a backslash escaped the newline (quote = the char)
+        TripleString,   // Python """ or ''' not closed yet (quote = the char,
+                        // plus 0x100 for an f-string, whose {fields} are code)
+        StringCont,     // "...\ : a backslash escaped the newline (quote as above)
         TexMath,        // TeX math not closed yet; quote says what closes it:
                         // '$' for $, 'D' for $$, ')' for \), ']' for \]
         TexEnv,         // TeX verbatim, comment or math environment not ended

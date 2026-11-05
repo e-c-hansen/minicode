@@ -47,17 +47,24 @@ typedef NS_ENUM(NSInteger, MCChangeBarMode) {
     MCChangeBarNote,      // a message (a problem, or "restarted"), ×
 };
 
-@interface MCChangeBar : NSView <NSTextFieldDelegate>
+// Every mode is marked as developer mode (an amber stripe and tint, a DEV
+// pill). The prompt is a box that wraps the request and grows with it, up to
+// ten lines: Return sends, Shift+Return adds a line, Esc closes.
+@interface MCChangeBar : NSView <NSTextViewDelegate>
 @property(nonatomic) MCChangeBarMode mode;
 @property(nonatomic, copy) NSString *message;   // the label in every mode but Prompt
-@property(nonatomic, readonly) NSTextField *field;
+@property(nonatomic, copy) NSString *hint;      // the prompt's line beside its heading
+@property(nonatomic, readonly) NSTextView *textView;   // the request box
+@property(nonatomic, readonly) NSString *request;      // what is in it
 @property(nonatomic, readonly) NSButton *actionButton;   // Send, Show Terminal, Restart
 @property(nonatomic, copy) void (^onSend)(NSString *request);
 @property(nonatomic, copy) void (^onAction)(void);   // Show Terminal or Restart
 @property(nonatomic, copy) void (^onClose)(void);
-- (void)setBackground:(NSColor *)background text:(NSColor *)text;
+@property(nonatomic, copy) void (^onResize)(void);   // the box grew or shrank
+- (void)setBackground:(NSColor *)background text:(NSColor *)text field:(NSColor *)field;
+- (CGFloat)heightForWidth:(CGFloat)width;   // the bar's, at that width
+- (void)clearRequest;
 @end
-extern const CGFloat kMCChangeBarHeight;
 
 // One per window, made on first use.
 @interface MCChangeSession : NSObject

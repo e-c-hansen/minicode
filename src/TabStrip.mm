@@ -212,6 +212,12 @@ static const CGFloat kMinTab = 80, kMaxTab = 240;
 }
 
 - (NSMenu *)menuForEvent:(NSEvent *)event {
+    NSInteger i = [self tabAtPoint:[self convertPoint:event.locationInWindow fromView:nil]];
+    NSMenu *m = i >= 0 && self.menuForTab ? self.menuForTab(i) : nil;
+    if (m) {
+        if (self.surface) MCAddAdjustSettingsItem(m, self.surface, self);
+        return m;
+    }
     return self.surface ? MCAdjustSettingsMenu(self.surface, self) : nil;
 }
 

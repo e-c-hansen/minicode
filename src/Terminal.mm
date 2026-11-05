@@ -824,6 +824,31 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
             [self sendControl:0x1C];                // SIGQUIT
             return YES;
         }
+        // The shell's own line editing, which the input line stands in for:
+        // Ctrl+W deletes the word before the caret (up to the space before
+        // it, as bash and zsh do), Ctrl+U everything before the caret. A
+        // selection goes first, whole.
+        if ([key isEqualToString:@"w"] || [key isEqualToString:@"u"]) {
+            NSString *s = tv.string;
+            NSRange sel = tv.selectedRange;
+            NSRange cut = sel;
+            if (sel.length == 0) {
+                NSUInteger p = MIN(sel.location, s.length), q = p;
+                if ([key isEqualToString:@"u"]) {
+                    q = 0;
+                } else {
+                    while (q > 0 && [s characterAtIndex:q - 1] == ' ') q--;
+                    while (q > 0 && [s characterAtIndex:q - 1] != ' ') q--;
+                }
+                cut = NSMakeRange(q, p - q);
+            }
+            if (cut.length && [tv shouldChangeTextInRange:cut replacementString:@""]) {
+                [tv replaceCharactersInRange:cut withString:@""];
+                [tv didChangeText];
+                tv.selectedRange = NSMakeRange(cut.location, 0);
+            }
+            return YES;
+        }
     }
 
     if (control == self.secureInput) return NO;   // no history for secrets

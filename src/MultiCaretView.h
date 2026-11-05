@@ -1,0 +1,48 @@
+// MultiCaretView.h — several carets in the editor's text view.
+//
+// Cmd+Shift+drag (or Option+drag, or Shift+Option+drag) selects a column:
+// a caret or selection on every line between the press and the pointer,
+// from the press's x to the pointer's. Typing, Backspace, Delete, Return,
+// Tab, Paste, Copy, Cut, the arrows (with Shift, Option and Command) then
+// act at every caret, each edit one undo step. A Cmd+Shift (or
+// Shift+Option) click after another makes the column between them, and
+// Option+click adds a caret (or removes one already there). Esc, a plain
+// click, or anything else that sets the selection goes back to one caret.
+//
+// NSTextView can hold several selections but only one empty one, so the
+// carets live here (in MultiCaret's terms) and are drawn by the view; the
+// text view's own selection holds the non-empty ones, which it highlights.
+// The text logic is MultiCaret (pure C++, tested); this is the glue.
+#import <Cocoa/Cocoa.h>
+
+@interface MCMultiCarets : NSObject
+- (instancetype)initWithTextView:(NSTextView *)tv;
+// Two or more carets are in play.
+@property(nonatomic, readonly) BOOL active;
+// Set while this object edits the text or sets the selection, so the view
+// can tell its own changes from anyone else's.
+@property(nonatomic, readonly) BOOL applying;
+// A press with the column modifiers: tracks the drag (or the click) and
+// returns YES. NO for any other press.
+- (BOOL)mouseDown:(NSEvent *)event;
+// Typing and key commands while active; YES when handled.
+- (BOOL)insertText:(id)text;
+- (BOOL)doCommand:(SEL)selector;
+// Copy Line Down / Up (Cmd+Shift+Down / Up, Shift+Option+Down / Up), for
+// one caret or several.
+- (void)duplicateLinesDown:(BOOL)down;
+// Move Line Down / Up (Cmd+Down / Up): the lines swap with the one below
+// or above, for one caret or several.
+- (void)moveLinesDown:(BOOL)down;
+- (BOOL)copy;
+- (BOOL)cut;
+- (BOOL)paste;
+// Back to the text view's own single selection (left as it is).
+- (void)clear;
+// Draws the carets (call after the text view has drawn).
+- (void)drawInRect:(NSRect)dirty;
+// The carets, as ranges (location = the smaller end), for tests.
+- (NSArray<NSValue *> *)caretRanges;
+// Sets the carets directly, for tests and the demo: one range each.
+- (void)setCaretRanges:(NSArray<NSValue *> *)ranges;
+@end

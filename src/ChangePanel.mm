@@ -23,62 +23,164 @@ static NSColor *CHex(unsigned int rgb) {
 }
 
 // ------------------------------------------------------------ the bar
-const CGFloat kMCChangeBarHeight = 32;
+// Every mode of the bar is about changing minicode itself, which nobody does
+// in passing, so it looks the part: an amber stripe along its top, an amber
+// tint over the sidebar color, and a DEV pill. The amber is inline hex like
+// the other accents (see the UI map in CLAUDE.md), not a setting.
+static const unsigned kDevAmber = 0xE8A33D;
+static const CGFloat kStripe = 2;      // the amber line along the top
+static const CGFloat kRowH = 32;       // a one-line bar's row, under the stripe
+static const CGFloat kHeadH = 18;      // the prompt's heading row
+static const CGFloat kMaxLines = 10;   // the box grows to this many, then scrolls
+
+// The DEV pill: a rounded amber box with dark letters.
+@interface MCDevPill : NSView
+@end
+@implementation MCDevPill
+- (NSDictionary *)attrs {
+    return @{NSFontAttributeName: [NSFont systemFontOfSize:9.5 weight:NSFontWeightHeavy],
+             NSForegroundColorAttributeName: CHex(0x1E1E1E),
+             NSKernAttributeName: @0.6};
+}
+- (NSSize)intrinsicContentSize {
+    NSSize s = [@"DEV" sizeWithAttributes:[self attrs]];
+    return NSMakeSize(ceil(s.width) + 10, 15);
+}
+- (void)drawRect:(NSRect)r {
+    (void)r;
+    [CHex(kDevAmber) setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:3 yRadius:3] fill];
+    NSDictionary *a = [self attrs];
+    NSSize s = [@"DEV" sizeWithAttributes:a];
+    [@"DEV" drawAtPoint:NSMakePoint(round((NSWidth(self.bounds) - s.width) / 2),
+                                    round((NSHeight(self.bounds) - s.height) / 2))
+         withAttributes:a];
+}
+@end
+
+// The request box: a text view that wraps, with a placeholder.
+@interface MCChangeTextView : NSTextView
+@property(nonatomic, copy) NSString *placeholder;
+@property(nonatomic, strong) NSColor *placeholderColor;
+@end
+@implementation MCChangeTextView
+- (void)drawRect:(NSRect)r {
+    [super drawRect:r];
+    if (self.string.length || !self.placeholder.length) return;
+    const NSPoint o = self.textContainerOrigin;
+    [self.placeholder drawAtPoint:NSMakePoint(o.x + self.textContainer.lineFragmentPadding, o.y)
+                   withAttributes:@{NSFontAttributeName: self.font,
+                                    NSForegroundColorAttributeName:
+                                        self.placeholderColor ?: NSColor.grayColor}];
+}
+@end
 
 @implementation MCChangeBar {
-    NSTextField *_label;
-    NSTextField *_field;
+    MCDevPill *_pill;
+    NSTextField *_label, *_hintLabel;
+    NSScrollView *_box;
+    MCChangeTextView *_text;
     NSButton *_action, *_close;
-    NSView *_line;
+    NSView *_stripe, *_line;
     NSColor *_textColor;
 }
+
+- (BOOL)isFlipped { return YES; }
 
 - (instancetype)initWithFrame:(NSRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
     self.wantsLayer = YES;
+    _pill = [[MCDevPill alloc] initWithFrame:NSZeroRect];
+    _pill.toolTip = @"You are changing minicode itself: Claude Code edits its source and rebuilds it";
     _label = [NSTextField labelWithString:@""];
     _label.font = [NSFont systemFontOfSize:12];
     _label.lineBreakMode = NSLineBreakByTruncatingTail;
-    _field = [NSTextField textFieldWithString:@""];
-    _field.font = [NSFont systemFontOfSize:12];
-    _field.placeholderString = @"Describe a change to minicode, then press Return";
-    _field.bezelStyle = NSTextFieldRoundedBezel;
-    _field.focusRingType = NSFocusRingTypeNone;
-    _field.delegate = self;
-    _field.cell.scrollable = YES;
-    _field.cell.wraps = NO;
+    _hintLabel = [NSTextField labelWithString:@""];
+    _hintLabel.font = [NSFont systemFontOfSize:11];
+    _hintLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+
+    // TextKit 1 throughout, built by hand, so asking for the layout manager
+    // (to measure the text) never switches the view over mid-run.
+    NSTextStorage *storage = [NSTextStorage new];
+    NSLayoutManager *lm = [NSLayoutManager new];
+    [storage addLayoutManager:lm];
+    NSTextContainer *tc = [[NSTextContainer alloc] initWithSize:NSMakeSize(200, CGFLOAT_MAX)];
+    tc.widthTracksTextView = YES;
+    [lm addTextContainer:tc];
+    _text = [[MCChangeTextView alloc] initWithFrame:NSMakeRect(0, 0, 200, 24) textContainer:tc];
+    _text.font = [NSFont systemFontOfSize:13];
+    _text.richText = NO;
+    _text.importsGraphics = NO;
+    _text.allowsUndo = YES;
+    _text.usesFontPanel = NO;
+    // A request often names code: keep quotes and dashes as typed.
+    _text.automaticQuoteSubstitutionEnabled = NO;
+    _text.automaticDashSubstitutionEnabled = NO;
+    _text.automaticTextReplacementEnabled = NO;
+    _text.textContainerInset = NSMakeSize(4, 4);
+    _text.verticallyResizable = YES;
+    _text.horizontallyResizable = NO;
+    _text.autoresizingMask = NSViewWidthSizable;
+    _text.minSize = NSMakeSize(0, 0);
+    _text.maxSize = NSMakeSize(CGFLOAT_MAX, CGFLOAT_MAX);
+    _text.placeholder = @"Describe a change to minicode. Return sends, Shift Return adds a line, Esc closes.";
+    _text.delegate = self;
+    _box = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 200, 24)];
+    _box.hasVerticalScroller = YES;
+    _box.autohidesScrollers = YES;
+    _box.borderType = NSNoBorder;
+    _box.documentView = _text;
+    _box.wantsLayer = YES;
+    _box.layer.cornerRadius = 5;
+    _box.layer.borderWidth = 1;
+    _box.layer.masksToBounds = YES;
+
     _action = [NSButton buttonWithTitle:@"Send" target:self action:@selector(act:)];
     _action.controlSize = NSControlSizeSmall;
     _action.font = [NSFont systemFontOfSize:11];
     _action.bezelStyle = NSBezelStyleRounded;
     _close = [NSButton buttonWithTitle:@"×" target:self action:@selector(close:)];
     _close.bordered = NO;
+    _stripe = [NSView new];
+    _stripe.wantsLayer = YES;
+    _stripe.layer.backgroundColor = CHex(kDevAmber).CGColor;
     _line = [NSView new];
     _line.wantsLayer = YES;
-    _line.layer.backgroundColor = CHex(0x333333).CGColor;
-    for (NSView *v in @[_label, _field, _action, _close, _line]) [self addSubview:v];
-    [self setBackground:CHex(0x252526) text:CHex(0xCCCCCC)];
+    for (NSView *v in @[_pill, _label, _hintLabel, _box, _action, _close, _stripe, _line])
+        [self addSubview:v];
+    [self setBackground:CHex(0x252526) text:CHex(0xCCCCCC) field:CHex(0x1E1E1E)];
     self.mode = MCChangeBarPrompt;
     return self;
 }
 
-- (NSTextField *)field { return _field; }
+- (NSTextView *)textView { return _text; }
 - (NSButton *)actionButton { return _action; }
+- (NSString *)request { return _text.string.copy; }
+
+- (void)clearRequest {
+    _text.string = @"";
+    [self textDidChange:[NSNotification notificationWithName:NSTextDidChangeNotification
+                                                      object:_text]];
+}
 
 - (void)setMode:(MCChangeBarMode)mode {
     _mode = mode;
-    _field.hidden = mode != MCChangeBarPrompt;
+    const BOOL prompt = mode == MCChangeBarPrompt;
+    _box.hidden = !prompt;
+    _hintLabel.hidden = !prompt;
     _action.hidden = mode == MCChangeBarNote;
-    _action.title = mode == MCChangeBarPrompt ? @"Send"
+    _action.title = prompt ? @"Send"
                   : mode == MCChangeBarWorking ? @"Show Terminal" : @"Restart";
-    if (mode == MCChangeBarPrompt) {
-        _label.stringValue = @"Change minicode:";
+    _action.toolTip = prompt ? @"Send the request to Claude Code (Return)" : nil;
+    if (prompt) {
+        _label.stringValue = @"Change minicode";
         _close.toolTip = @"Close (Esc)";
     } else {
         _label.stringValue = _message ?: @"";
         _close.toolTip = @"Close";
     }
-    _label.toolTip = mode == MCChangeBarPrompt ? nil : _message;
+    _label.toolTip = prompt ? nil : _message;
+    [self applyLabelColors];
     self.needsLayout = YES;
 }
 
@@ -87,58 +189,175 @@ const CGFloat kMCChangeBarHeight = 32;
     self.mode = _mode;   // the label again
 }
 
-- (void)setBackground:(NSColor *)background text:(NSColor *)text {
-    self.layer.backgroundColor = background.CGColor;
+- (void)setHint:(NSString *)hint {
+    _hint = [hint copy];
+    _hintLabel.stringValue = _hint ?: @"";
+    _hintLabel.toolTip = _hint;
+    self.needsLayout = YES;
+}
+
+- (void)applyLabelColors {
+    if (!_textColor) return;
+    const BOOL prompt = _mode == MCChangeBarPrompt;
+    _label.textColor = prompt ? CHex(kDevAmber) : _textColor;
+    _label.font = prompt ? [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold]
+                         : [NSFont systemFontOfSize:12];
+}
+
+- (void)setBackground:(NSColor *)background text:(NSColor *)text field:(NSColor *)field {
+    NSColor *amber = CHex(kDevAmber);
+    NSColor *bg = [background colorUsingColorSpace:NSColorSpace.sRGBColorSpace] ?: background;
+    // Tinted toward amber, keeping the sidebar's opacity.
+    NSColor *tint = [[bg blendedColorWithFraction:0.13 ofColor:amber]
+                        colorWithAlphaComponent:bg.alphaComponent];
+    self.layer.backgroundColor = (tint ?: bg).CGColor;
     _textColor = text;
-    _label.textColor = text;
+    [self applyLabelColors];
+    _hintLabel.textColor = [text colorWithAlphaComponent:0.6];
+    _line.layer.backgroundColor = [amber colorWithAlphaComponent:0.35].CGColor;
+    _text.backgroundColor = field;
+    _text.drawsBackground = YES;
+    _box.backgroundColor = field;
+    _box.layer.borderColor = [amber colorWithAlphaComponent:0.75].CGColor;
+    _text.textColor = text;
+    _text.insertionPointColor = text;
+    _text.placeholderColor = [text colorWithAlphaComponent:0.4];
+    _text.typingAttributes = @{NSFontAttributeName: _text.font,
+                               NSForegroundColorAttributeName: text};
     _close.attributedTitle = [[NSAttributedString alloc] initWithString:@"×"
         attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:15],
                      NSForegroundColorAttributeName: [text colorWithAlphaComponent:0.7]}];
+    _text.needsDisplay = YES;
+}
+
+// The box's height for a box `width` wide: its text laid out at that width,
+// at least one line and at most kMaxLines, plus the insets.
+- (CGFloat)boxHeightForWidth:(CGFloat)width {
+    static NSTextStorage *storage;
+    static NSLayoutManager *lm;
+    static NSTextContainer *tc;
+    if (!storage) {
+        storage = [NSTextStorage new];
+        lm = [NSLayoutManager new];
+        [storage addLayoutManager:lm];
+        tc = [[NSTextContainer alloc] initWithSize:NSMakeSize(100, CGFLOAT_MAX)];
+        [lm addTextContainer:tc];
+    }
+    const NSSize inset = _text.textContainerInset;
+    tc.lineFragmentPadding = _text.textContainer.lineFragmentPadding;
+    tc.size = NSMakeSize(MAX(20, width - 2 * inset.width), CGFLOAT_MAX);
+    [storage setAttributedString:_text.textStorage];
+    [storage addAttribute:NSFontAttributeName value:_text.font
+                    range:NSMakeRange(0, storage.length)];
+    [lm ensureLayoutForTextContainer:tc];
+    const CGFloat line = [lm defaultLineHeightForFont:_text.font];
+    const CGFloat h = MIN(MAX(ceil([lm usedRectForTextContainer:tc].size.height), line),
+                          line * kMaxLines);
+    return h + 2 * inset.height;
+}
+
+- (CGFloat)boxWidthForWidth:(CGFloat)W {
+    [_action sizeToFit];
+    return MAX(60, W - 12 - 12 - 8 - NSWidth(_action.frame));
+}
+
+- (CGFloat)heightForWidth:(CGFloat)W {
+    if (_mode != MCChangeBarPrompt) return kStripe + kRowH;
+    return kStripe + 6 + kHeadH + 4 + [self boxHeightForWidth:[self boxWidthForWidth:W]] + 8;
 }
 
 - (void)layout {
     [super layout];
     const NSRect b = self.bounds;
-    const CGFloat H = NSHeight(b);
-    CGFloat x = NSMaxX(b) - 8;
+    const CGFloat W = NSWidth(b), H = NSHeight(b);
+    _stripe.frame = NSMakeRect(0, 0, W, kStripe);
+    _line.frame = NSMakeRect(0, H - 1, W, 1);
     [_close sizeToFit];
-    NSSize c = _close.frame.size;
-    x -= c.width;
-    _close.frame = NSMakeRect(x, round((H - c.height) / 2), c.width, c.height);
-    if (!_action.hidden) {
-        [_action sizeToFit];
-        NSSize a = _action.frame.size;
-        x -= a.width + 8;
-        _action.frame = NSMakeRect(x, round((H - a.height) / 2), a.width, a.height);
-    }
+    const NSSize c = _close.frame.size;
+    const NSSize p = _pill.intrinsicContentSize;
     const CGFloat lh = 16;
     if (_mode == MCChangeBarPrompt) {
+        // Heading: DEV, "Change minicode", the hint, ×. Under it the box,
+        // with Send beside its last line.
+        const CGFloat y0 = kStripe + 6;
+        _close.frame = NSMakeRect(W - 8 - c.width, y0 + round((kHeadH - c.height) / 2),
+                                  c.width, c.height);
+        _pill.frame = NSMakeRect(12, y0 + round((kHeadH - p.height) / 2), p.width, p.height);
         [_label sizeToFit];
-        const CGFloat lw = ceil(_label.frame.size.width);
-        _label.frame = NSMakeRect(12, round((H - lh) / 2), lw, lh);
-        const CGFloat fx = 12 + lw + 8, fh = 22;
-        _field.frame = NSMakeRect(fx, round((H - fh) / 2), MAX(40, x - 8 - fx), fh);
+        const CGFloat lx = NSMaxX(_pill.frame) + 7, lw = ceil(NSWidth(_label.frame));
+        _label.frame = NSMakeRect(lx, y0 + round((kHeadH - lh) / 2), lw, lh);
+        const CGFloat hx = lx + lw + 10;
+        _hintLabel.frame = NSMakeRect(hx, y0 + round((kHeadH - 15) / 2),
+                                      MAX(0, NSMinX(_close.frame) - 8 - hx), 15);
+        const CGFloat boxY = y0 + kHeadH + 4, boxW = [self boxWidthForWidth:W];
+        const CGFloat boxH = MAX(0, MIN([self boxHeightForWidth:boxW], H - boxY - 8));
+        _box.frame = NSMakeRect(12, boxY, boxW, boxH);
+        const NSSize a = _action.frame.size;
+        const CGFloat oneLine = [_text.layoutManager defaultLineHeightForFont:_text.font] +
+                                2 * _text.textContainerInset.height;
+        _action.frame = NSMakeRect(NSMaxX(_box.frame) + 8,
+                                   boxY + boxH - oneLine + round((oneLine - a.height) / 2),
+                                   a.width, a.height);
     } else {
-        _label.frame = NSMakeRect(12, round((H - lh) / 2), MAX(0, x - 20), lh);
+        const CGFloat y0 = kStripe;
+        _close.frame = NSMakeRect(W - 8 - c.width, y0 + round((kRowH - c.height) / 2),
+                                  c.width, c.height);
+        CGFloat x = NSMinX(_close.frame);
+        if (!_action.hidden) {
+            [_action sizeToFit];
+            const NSSize a = _action.frame.size;
+            x -= a.width + 8;
+            _action.frame = NSMakeRect(x, y0 + round((kRowH - a.height) / 2), a.width, a.height);
+        }
+        _pill.frame = NSMakeRect(12, y0 + round((kRowH - p.height) / 2), p.width, p.height);
+        const CGFloat lx = NSMaxX(_pill.frame) + 8;
+        _label.frame = NSMakeRect(lx, y0 + round((kRowH - lh) / 2), MAX(0, x - 8 - lx), lh);
     }
-    _line.frame = NSMakeRect(0, 0, NSWidth(b), 1);
 }
 
 - (void)act:(id)sender {
     (void)sender;
     if (_mode == MCChangeBarPrompt) {
-        if (self.onSend) self.onSend(_field.stringValue);
+        if (self.onSend) self.onSend(self.request);
     } else if (self.onAction) {
         self.onAction();
     }
 }
 - (void)close:(id)sender { (void)sender; if (self.onClose) self.onClose(); }
 
-// Return sends, Esc closes.
-- (BOOL)control:(NSControl *)control textView:(NSTextView *)tv doCommandBySelector:(SEL)sel {
-    (void)control; (void)tv;
-    if (sel == @selector(insertNewline:)) { [self act:nil]; return YES; }
-    if (sel == @selector(cancelOperation:)) { [self close:nil]; return YES; }
+// The box grew or shrank by a line: the window lays the pane out again.
+- (void)textDidChange:(NSNotification *)note {
+    (void)note;
+    _text.needsDisplay = YES;   // the placeholder
+    if (_mode != MCChangeBarPrompt || !self.superview) return;
+    if (fabs([self heightForWidth:NSWidth(self.bounds)] - NSHeight(self.bounds)) > 0.5) {
+        if (self.onResize) self.onResize();
+    } else {
+        self.needsLayout = YES;
+    }
+}
+
+// Return sends; Shift+Return or Option+Return starts a new line; Esc closes
+// (a text view sends complete: for it); Tab moves on to Send.
+- (BOOL)textView:(NSTextView *)tv doCommandBySelector:(SEL)sel {
+    if (sel == @selector(insertNewline:)) {
+        const NSEventModifierFlags f = NSApp.currentEvent.modifierFlags;
+        if (!(f & (NSEventModifierFlagShift | NSEventModifierFlagOption))) {
+            [self act:nil];
+            return YES;
+        }
+        sel = @selector(insertLineBreak:);
+    }
+    if (sel == @selector(insertLineBreak:) || sel == @selector(insertNewlineIgnoringFieldEditor:)) {
+        [tv insertText:@"\n" replacementRange:tv.selectedRange];
+        return YES;
+    }
+    if (sel == @selector(cancelOperation:) || sel == @selector(complete:)) {
+        [self close:nil];
+        return YES;
+    }
+    if (sel == @selector(insertTab:)) { [tv.window selectNextKeyView:nil]; return YES; }
+    if (sel == @selector(insertBacktab:)) { [tv.window selectPreviousKeyView:nil]; return YES; }
     return NO;
 }
 @end
@@ -248,11 +467,16 @@ static double MCFileTime(NSString *path) {
         _bar.onSend = ^(NSString *r) { [weakSelf send:r]; };
         _bar.onAction = ^{ [weakSelf barAction]; };
         _bar.onClose = ^{ [weakSelf closeBar]; };
+        _bar.onResize = ^{ [weakSelf barResized]; };
     }
     return _bar;
 }
 
 - (BOOL)barShown { return _shown; }
+
+- (void)barResized {
+    if (_shown) [_host changeBarDidChange];
+}
 
 - (void)showBar:(MCChangeBarMode)mode message:(NSString *)message {
     MCChangeBar *bar = self.bar;
@@ -291,9 +515,23 @@ static double MCFileTime(NSString *path) {
     }
     NSWindow *w = _host.window;
     NSResponder *fr = w.firstResponder;
-    if (fr != _bar.field.currentEditor && fr != _bar.field) _before = fr;
+    if (fr != _bar.textView) _before = fr;
     [self showBar:MCChangeBarPrompt message:nil];
-    [w makeFirstResponder:_bar.field];
+    _bar.hint = [self hintText];
+    [w makeFirstResponder:_bar.textView];
+}
+
+// The line beside the heading: where the change will be made.
+- (NSString *)hintText {
+    NSString *problem = nil;
+    NSString *source = MCChangeSourceFolder(&problem);
+    NSString *where = source
+        ? [NSString stringWithFormat:@"Claude Code edits %@ and rebuilds it.",
+              source.stringByAbbreviatingWithTildeInPath]
+        : problem ? @"develop.source in the settings is not minicode's source folder."
+                  : [NSString stringWithFormat:@"The source is cloned into %@ first.",
+                        MCChangeCloneFolder().stringByAbbreviatingWithTildeInPath];
+    return where;
 }
 
 - (void)send:(NSString *)request {
@@ -356,7 +594,7 @@ static double MCFileTime(NSString *path) {
         : NS(ChangeRequest::startCommand(command, Std(source), Std(file)));
     _source = [source copy];
     _request = [request copy];
-    _bar.field.stringValue = @"";
+    [_bar clearRequest];
     TerminalView *t = _terminal;
     if (t && [_host terminalIsOpen:t] && !t.busy) {
         [_host runCommand:line inTerminal:t focus:YES];

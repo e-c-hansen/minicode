@@ -1,9 +1,38 @@
 #!/bin/bash
-# CLI launcher for MiniCode, installed onto PATH as `minicode`.
-#   minicode            open the current directory
-#   minicode ~/project  open a folder
-#   minicode notes.md   open a file, with its folder in the sidebar
-# Launches detached so your terminal is free immediately.
+# CLI launcher for minicode, installed onto PATH as `minicode`. `minicode -h`
+# says what it does. Paths go to the running minicode, so a file opens as a
+# tab in an existing window; the terminal is free again at once.
+
+usage() {
+  cat <<'EOF'
+Usage: minicode [options] [path ...]
+
+Opens folders and files in minicode. With no path, opens the current folder.
+
+  minicode              open the current folder
+  minicode ~/project    open a folder, or bring forward the window showing it
+  minicode notes.md     open a file as a tab in the window whose folder holds
+                        it, else in the window in front (so, typed in
+                        minicode's own terminal, in that window)
+  minicode a.py b.py    open several files at once
+
+These are VS Code's rules for `code`: a file joins a window you already
+have, and a folder gets its own window unless you ask for the one in front.
+
+Options:
+  -r, --reuse-window open everything in the window in front: a folder
+                     replaces its folder (after asking about unsaved files),
+                     and files open there even when another window's folder
+                     holds them
+  -n, --new-window   open the path in a new window of its own, a separate
+                     minicode, even when a window already shows it
+  -v, --version      print the version
+  -h, --help         print this help
+
+Opening from Finder (Open With, or a drop on the Dock icon) follows the same
+rules as a file named here.
+EOF
+}
 
 # Resolve this script's real location, following the Homebrew symlink.
 src="${BASH_SOURCE[0]}"
@@ -13,11 +42,86 @@ while [ -L "$src" ]; do
   case "$src" in /*) ;; *) src="$dir/$src" ;; esac
 done
 dir="$(cd -P "$(dirname "$src")" && pwd)"
+# The launcher lives in Contents/Resources, the binary in Contents/MacOS.
+bundle="$(cd -P "$dir/../.." && pwd)"
+binary="$bundle/Contents/MacOS/MiniCode"
 
-# The app's own output is discarded below, so say here if the path is wrong.
-if [ -n "$1" ] && [ ! -e "$1" ]; then
-  echo "minicode: $1: no such file or directory" >&2
+new_window=0
+reuse=0
+paths=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -v|--version)
+      v="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+           "$bundle/Contents/Info.plist" 2>/dev/null)"
+      echo "minicode ${v:-unknown}"
+      exit 0 ;;
+    -n|--new-window) new_window=1 ;;
+    -r|--reuse-window) reuse=1 ;;
+    --) shift; paths+=("$@"); break ;;
+    -?*)
+      echo "minicode: unknown option $1" >&2
+      echo "Try 'minicode --help'." >&2
+      exit 2 ;;
+    *) paths+=("$1") ;;
+  esac
+  shift
+done
+[ ${#paths[@]} -eq 0 ] && paths=("$PWD")
+
+# The app's own output is discarded below, so say here if a path is wrong.
+status=0
+found=()
+for p in "${paths[@]}"; do
+  if [ ! -e "$p" ]; then
+    echo "minicode: $p: no such file or directory" >&2
+    status=1
+    continue
+  fi
+  case "$p" in /*) ;; *) p="$PWD/$p" ;; esac
+  found+=("$p")
+done
+[ ${#found[@]} -eq 0 ] && exit 1
+
+# For tests: print what would run instead of running it.
+run() {
+  if [ -n "$MINICODE_LAUNCHER_DRYRUN" ]; then printf '%q ' "$@"; echo
+  else "$@"; fi
+}
+
+if [ $new_window = 1 ] && [ $reuse = 1 ]; then
+  echo "minicode: --new-window and --reuse-window do not go together" >&2
+  exit 2
 fi
 
-# The launcher lives in Contents/Resources; the binary is in Contents/MacOS.
-"$dir/../MacOS/MiniCode" "${1:-$PWD}" >/dev/null 2>&1 &
+# Launch Services passes only paths, so -r goes as a request file the app
+# reads and deletes: "minicode-open-1", "reuse", the paths, each ended by a
+# NUL, in $TMPDIR/MiniCode-open (the app reads that folder only).
+if [ $reuse = 1 ]; then
+  req_dir="${TMPDIR:-/tmp}"
+  req_dir="${req_dir%/}/MiniCode-open"
+  mkdir -p "$req_dir" || exit 1
+  tmp="$(mktemp "$req_dir/request.XXXXXX")" || exit 1
+  { printf 'minicode-open-1\0reuse\0'; printf '%s\0' "${found[@]}"; } >"$tmp"
+  req="$tmp.minicode-open"
+  mv "$tmp" "$req" || exit 1
+  found=("$req")
+fi
+
+if [ $new_window = 1 ]; then
+  # A process of its own, as the launcher used to start every time; the
+  # binary takes one path.
+  if [ ${#found[@]} -gt 1 ]; then
+    echo "minicode: --new-window opens one path; opening ${found[0]}" >&2
+  fi
+  if [ -n "$MINICODE_LAUNCHER_DRYRUN" ]; then run "$binary" "${found[0]}"
+  else "$binary" "${found[0]}" >/dev/null 2>&1 & fi
+elif ps -axo comm= | grep -q "/MiniCode$"; then
+  # A minicode is running, maybe another copy of the app (a build that
+  # Request a Change restarted into): hand the paths to it.
+  run open -b com.minicode.editor "${found[@]}"
+else
+  run open -a "$bundle" "${found[@]}"
+fi
+exit $status

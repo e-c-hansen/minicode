@@ -17,6 +17,9 @@
 // spelled from rootPath, in its tab (a new one unless it is open already).
 - (BOOL)showFile:(NSString *)path;
 - (void)openFolder:(id)sender;    // menu action
+// This window moves to `dir` (minicode -r), asking about unsaved tabs first;
+// NO when the user cancelled.
+- (BOOL)switchToFolder:(NSString *)dir;
 - (void)saveCurrentFile:(id)sender;   // Cmd+S
 - (void)togglePreview:(id)sender;     // Markdown: source <-> rendered
 - (void)exportPDF:(id)sender;         // Shift+Cmd+S LaTeX: save the typeset PDF

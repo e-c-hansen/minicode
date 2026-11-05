@@ -9,6 +9,7 @@
 #import "Search.h"
 #import "AppSettings.h"
 #import "Lsp.h"
+#import "MultiCaretView.h"
 #import "LspPanel.h"
 #import "MarkdownImage.h"
 #import "MarkdownMath.h"
@@ -280,6 +281,7 @@ static BOOL gShowHidden = NO;
 @interface ClickOutline : NSOutlineView
 @property(nonatomic, copy) void (^onRowClick)(NSInteger row, NSPoint pointInView);
 @property(nonatomic, copy) void (^onActivate)(NSInteger row);   // Return / Enter
+@property(nonatomic, copy) void (^onTrash)(void);   // Cmd+Delete, here only
 @property(nonatomic, assign) BOOL dragBegan;   // set when a row is dragged
 @end
 
@@ -295,6 +297,18 @@ static BOOL gShowHidden = NO;
     if (row >= 0 && !self.dragBegan && self.onRowClick) self.onRowClick(row, p);
 }
 - (void)keyDown:(NSEvent *)event {
+    // Cmd+Delete trashes the selected file only while the tree has the
+    // keyboard, as in Finder. It used to be the menu item's key, so it
+    // trashed the tree's selection from the editor too, where Cmd+Delete
+    // means delete to the start of the line.
+    NSEventModifierFlags mods = event.modifierFlags &
+        (NSEventModifierFlagCommand | NSEventModifierFlagShift |
+         NSEventModifierFlagOption | NSEventModifierFlagControl);
+    if (mods == NSEventModifierFlagCommand && (event.keyCode == 51 || event.keyCode == 117) &&
+        self.onTrash) {
+        self.onTrash();
+        return;
+    }
     NSString *chars = event.charactersIgnoringModifiers;
     if (chars.length == 1) {
         unichar c = [chars characterAtIndex:0];
@@ -704,6 +718,9 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
     self.outline.onActivate = ^(NSInteger row) {
         [weakSelf activateRow:row];
     };
+    self.outline.onTrash = ^{
+        [weakSelf deleteSelected:nil];
+    };
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"file"];
     col.editable = NO;
     col.minWidth = 80;
@@ -1017,6 +1034,8 @@ static void *kMediaItemContext = &kMediaItemContext;
     [m addItem:[NSMenuItem separatorItem]];
     [m addItemWithTitle:@"Reveal in Finder" action:@selector(revealInFinder:) keyEquivalent:@""];
     [m addItemWithTitle:@"Copy Path" action:@selector(copyPath:) keyEquivalent:@""];
+    [m addItemWithTitle:@"Copy Relative Path" action:@selector(copyRelativePath:)
+          keyEquivalent:@""];
     [m addItemWithTitle:@"Refresh" action:@selector(refreshTree:) keyEquivalent:@""];
     [m addItem:[NSMenuItem separatorItem]];
     // How the tree is ordered (remembered per folder), and the sizes and
@@ -1234,6 +1253,12 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⌘A" label2:@"Select all" state:nil];
     [self appendHintsRow:s key:@"⌘/" label:@"Toggle comment"
                     key2:@"⇧⌘F" label2:@"Find in folder" state:nil];
+    [self appendHintsRow:s key:@"⇧⌘drag" label:@"Column, or two clicks"
+                    key2:@"⌥click" label2:@"Add a cursor" state:nil];
+    [self appendHintsRow:s key:@"⌥↓ ⌘↓" label:@"Move line down"
+                    key2:@"⌥↑ ⌘↑" label2:@"Move line up" state:nil];
+    [self appendHintsRow:s key:@"⇧⌘↓" label:@"Copy line down"
+                    key2:@"⇧⌘↑" label2:@"Copy line up" state:nil];
     [self appendHintsRow:s key:@"⌘L" label:@"Toggle task (Markdown)"
                     key2:@"⇧⌘L" label2:@"TODOs in folder" state:nil];
     [self appendHintsRow:s key:@"⌘," label:@"Settings"
@@ -1250,7 +1275,7 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     [self appendHintsHeading:@"Files" to:s];
     [self appendHintsRow:s key:@"⌃⌘N" label:@"New file"
                     key2:@"⇧⌘N" label2:@"New folder" state:nil];
-    [self appendHintsRow:s key:@"⌘⌫" label:@"Move to trash"
+    [self appendHintsRow:s key:@"⌘⌫" label:@"Trash (in the tree)"
                     key2:@"⌘R" label2:@"Refresh tree" state:nil];
     [self appendHintsRow:s key:@"⇧⌘." label:@"Show hidden files"
                     key2:@"⇧⌘I" label2:@"Sizes" state:nil];
@@ -2703,17 +2728,22 @@ static NSString *MCGroupedCount(long long n) {
 - (void)renameSelected:(id)sender {
     FileItem *node = [self clickedOrSelectedItem];
     if (!node) { NSBeep(); return; }
+    [self renamePath:node.path];
+}
+
+// Rename… from the tree and from a tab's menu.
+- (void)renamePath:(NSString *)path {
     NSString *name = [self promptForName:@"Rename to:"
-                                 default:node.path.lastPathComponent];
+                                 default:path.lastPathComponent];
     if (!name) return;
-    NSString *dst = [[node.path stringByDeletingLastPathComponent]
+    NSString *dst = [[path stringByDeletingLastPathComponent]
                         stringByAppendingPathComponent:name];
     NSError *err = nil;
-    if (![[NSFileManager defaultManager] moveItemAtPath:node.path
+    if (![[NSFileManager defaultManager] moveItemAtPath:path
                                                  toPath:dst error:&err]) {
         [self warn:err.localizedDescription]; return;
     }
-    [self pathMovedFrom:node.path to:dst];   // open tabs follow, a folder's too
+    [self pathMovedFrom:path to:dst];   // open tabs follow, a folder's too
     [self refreshTree:nil];
     [self revealPath:dst andOpen:NO];
 }
@@ -2721,24 +2751,29 @@ static NSString *MCGroupedCount(long long n) {
 - (void)deleteSelected:(id)sender {
     FileItem *node = [self clickedOrSelectedItem];
     if (!node) { NSBeep(); return; }
+    [self trashPath:node.path];
+}
+
+// Move to Trash from the tree and from a tab's menu, after asking.
+- (void)trashPath:(NSString *)path {
     NSAlert *a = [[NSAlert alloc] init];
     a.messageText = [NSString stringWithFormat:@"Move “%@” to the Trash?",
-                     node.path.lastPathComponent];
+                     path.lastPathComponent];
     [a addButtonWithTitle:@"Move to Trash"];
     [a addButtonWithTitle:@"Cancel"];
     if ([a runModal] != NSAlertFirstButtonReturn) return;
     NSError *err = nil;
-    NSURL *url = [NSURL fileURLWithPath:node.path];
+    NSURL *url = [NSURL fileURLWithPath:path];
     if (![[NSFileManager defaultManager] trashItemAtURL:url
                                        resultingItemURL:nil error:&err]) {
         [self warn:err.localizedDescription]; return;
     }
     // Tabs of what went away close, a folder's too, unless they hold unsaved
     // changes: those stay open, and saving writes the file again.
-    NSString *prefix = [node.path stringByAppendingString:@"/"];
+    NSString *prefix = [path stringByAppendingString:@"/"];
     for (MCTab *t in [_tabs copy]) {
         if (t.dirty || !t.currentPath) continue;
-        if ([t.currentPath isEqualToString:node.path] || [t.currentPath hasPrefix:prefix])
+        if ([t.currentPath isEqualToString:path] || [t.currentPath hasPrefix:prefix])
             [self closeTab:t prompt:NO];
     }
     [self refreshTree:nil];
@@ -2746,19 +2781,157 @@ static NSString *MCGroupedCount(long long n) {
 
 - (void)revealInFinder:(id)sender {
     FileItem *node = [self clickedOrSelectedItem];
-    NSString *p = node ? node.path : _root.path;
+    [self revealPathInFinder:node ? node.path : _root.path];
+}
+
+- (void)revealPathInFinder:(NSString *)path {
     [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:
-        @[[NSURL fileURLWithPath:p]]];
+        @[[NSURL fileURLWithPath:path]]];
 }
 
 // Puts an absolute path on the clipboard as plain text: the clicked item's,
 // else the selected one's, else the open folder's (as Reveal in Finder picks).
 - (void)copyPath:(id)sender {
     FileItem *node = [self clickedOrSelectedItem];
+    [self copyText:node ? node.path : _root.path];
+}
+
+// The same path from the open folder ("src/main.mm"); "." for the folder.
+- (void)copyRelativePath:(id)sender {
+    FileItem *node = [self clickedOrSelectedItem];
     NSString *p = node ? node.path : _root.path;
+    [self copyText:[self pathFromRoot:p] ?: p];
+}
+
+- (void)copyText:(NSString *)text {
     NSPasteboard *pb = [NSPasteboard generalPasteboard];
     [pb clearContents];
-    [pb setString:p forType:NSPasteboardTypeString];
+    [pb setString:text forType:NSPasteboardTypeString];
+}
+
+// path from the open folder, or nil when it is outside it. Compared with
+// symlinks resolved, since the tree may say /tmp where a file says
+// /private/tmp.
+- (NSString *)pathFromRoot:(NSString *)path {
+    NSString *root = _root.path.stringByResolvingSymlinksInPath;
+    NSString *p = path.stringByResolvingSymlinksInPath;
+    if (!root.length) return nil;
+    if ([p isEqualToString:root]) return @".";
+    NSString *prefix = [root hasSuffix:@"/"] ? root : [root stringByAppendingString:@"/"];
+    return [p hasPrefix:prefix] ? [p substringFromIndex:prefix.length] : nil;
+}
+
+// ---------------------------------------------------------- a tab's menu
+// A right click on a tab: closing it and its neighbours, and the file
+// commands the tree offers for its file. Each item carries its tab.
+- (NSMenu *)menuForTabAtIndex:(NSInteger)i {
+    if (i < 0 || i >= (NSInteger)_tabs.count) return nil;
+    MCTab *t = _tabs[(NSUInteger)i];
+    NSMenu *m = [[NSMenu alloc] init];
+    m.autoenablesItems = NO;
+    NSMenuItem *(^add)(NSString *, SEL, BOOL) = ^NSMenuItem *(NSString *title, SEL a, BOOL on) {
+        NSMenuItem *it = [m addItemWithTitle:title action:a keyEquivalent:@""];
+        it.target = self;
+        it.representedObject = t;
+        it.enabled = on;
+        return it;
+    };
+    const NSInteger count = (NSInteger)_tabs.count;
+    add(@"Close", @selector(closeTabFromMenu:), YES);
+    add(@"Close Other Tabs", @selector(closeOtherTabsFromMenu:), count > 1);
+    add(@"Close Tabs to the Right", @selector(closeTabsToTheRightFromMenu:), i < count - 1);
+    add(@"Close All Tabs", @selector(closeAllTabsFromMenu:), YES);
+    NSString *path = t.currentPath;
+    if (path) {
+        const BOOL inRoot = [self pathFromRoot:path] != nil;
+        const BOOL onDisk = [[NSFileManager defaultManager] fileExistsAtPath:path];
+        [m addItem:[NSMenuItem separatorItem]];
+        add(@"Copy Path", @selector(copyTabPath:), YES);
+        add(@"Copy Relative Path", @selector(copyTabRelativePath:), inRoot);
+        add(@"Reveal in Finder", @selector(revealTabInFinder:), onDisk);
+        add(@"Reveal in File Tree", @selector(revealTabInTree:), inRoot && onDisk);
+        [m addItem:[NSMenuItem separatorItem]];
+        add(@"Rename…", @selector(renameTabFile:), onDisk);
+        add(@"Move to Trash", @selector(trashTabFile:), onDisk);
+    }
+    return m;
+}
+
+- (MCTab *)tabOfMenuItem:(id)sender {
+    id t = [sender respondsToSelector:@selector(representedObject)]
+               ? [sender representedObject] : nil;
+    return [t isKindOfClass:MCTab.class] && [_tabs containsObject:t] ? t : nil;
+}
+
+- (void)closeTabFromMenu:(id)sender {
+    MCTab *t = [self tabOfMenuItem:sender];
+    if (t) [self closeTab:t prompt:YES];
+}
+
+// Closes `tabs` in turn; Cancel at any unsaved one stops there.
+- (void)closeTabsInList:(NSArray<MCTab *> *)tabs {
+    for (MCTab *each in tabs)
+        if (![self closeTab:each prompt:YES]) return;
+}
+
+- (void)closeOtherTabsFromMenu:(id)sender {
+    MCTab *t = [self tabOfMenuItem:sender];
+    if (!t) return;
+    NSMutableArray *others = [_tabs mutableCopy];
+    [others removeObject:t];
+    [self closeTabsInList:others];
+}
+
+- (void)closeTabsToTheRightFromMenu:(id)sender {
+    MCTab *t = [self tabOfMenuItem:sender];
+    if (!t) return;
+    const NSUInteger i = [_tabs indexOfObject:t];
+    [self closeTabsInList:[_tabs subarrayWithRange:NSMakeRange(i + 1, _tabs.count - i - 1)]];
+}
+
+- (void)closeAllTabsFromMenu:(id)sender {
+    [self closeTabsInList:[_tabs copy]];
+}
+
+- (void)copyTabPath:(id)sender {
+    MCTab *t = [self tabOfMenuItem:sender];
+    if (t.currentPath) [self copyText:t.currentPath];
+}
+
+- (void)copyTabRelativePath:(id)sender {
+    MCTab *t = [self tabOfMenuItem:sender];
+    NSString *rel = t.currentPath ? [self pathFromRoot:t.currentPath] : nil;
+    if (rel) [self copyText:rel];
+}
+
+- (void)revealTabInFinder:(id)sender {
+    MCTab *t = [self tabOfMenuItem:sender];
+    if (t.currentPath) [self revealPathInFinder:t.currentPath];
+}
+
+// Selects the tab's file in the tree, bringing the tree back if the sidebar
+// is collapsed or shows Source Control.
+- (void)revealTabInTree:(id)sender {
+    MCTab *t = [self tabOfMenuItem:sender];
+    NSString *rel = t.currentPath ? [self pathFromRoot:t.currentPath] : nil;
+    if (!rel) return;
+    if (self.gitPanelVisible) [self toggleSourceControl:nil];
+    if (self.sidebarCollapsed) [self toggleSidebar:nil];
+    // Spelled from the tree's root, which revealPath: walks down from.
+    [self revealPath:[rel isEqualToString:@"."] ? _root.path
+                                                : [_root.path stringByAppendingPathComponent:rel]
+             andOpen:NO];
+    [self.window makeFirstResponder:self.outline];
+}
+
+- (void)renameTabFile:(id)sender {
+    MCTab *t = [self tabOfMenuItem:sender];
+    if (t.currentPath) [self renamePath:t.currentPath];
+}
+
+- (void)trashTabFile:(id)sender {
+    MCTab *t = [self tabOfMenuItem:sender];
+    if (t.currentPath) [self trashPath:t.currentPath];
 }
 
 // Expand ancestor folders down to path, select it, and optionally open it.
@@ -3203,6 +3376,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     __weak EditorController *weakSelf = self;
     strip.onSelect = ^(NSInteger i) { [weakSelf selectTabAtIndex:i]; };
     strip.onClose = ^(NSInteger i) { [weakSelf closeTabAtIndex:i]; };
+    strip.menuForTab = ^NSMenu *(NSInteger i) { return [weakSelf menuForTabAtIndex:i]; };
     [self.rightArea addSubview:strip];
     self.tabStrip = strip;
     // With no file open the slot is empty but for one muted line.
@@ -4996,7 +5170,11 @@ static NSColor *ContrastColor(const Rgba &c) {
 // back; MCIndentDidChange (from textDidChange:) does it once the text is in.
 - (BOOL)textView:(NSTextView *)tv shouldChangeTextInRange:(NSRange)range
     replacementString:(NSString *)replacement {
-    if (tv == self.textView && replacement) MCIndentWillChange(tv, range, replacement);
+    // Several carets type the same character everywhere, and a selection
+    // wrapped in brackets keeps its place; no line moves.
+    if (tv == self.textView && replacement && !self.textView.multiCaretActive &&
+        !self.textView.multiCarets.applying)
+        MCIndentWillChange(tv, range, replacement);
     return YES;
 }
 
@@ -5092,7 +5270,7 @@ static NSColor *ContrastColor(const Rgba &c) {
         return area;
     }
     bar.hidden = NO;
-    const CGFloat h = MIN(kMCChangeBarHeight, NSHeight(area));
+    const CGFloat h = MIN([bar heightForWidth:NSWidth(area)], NSHeight(area));
     bar.frame = NSMakeRect(NSMinX(area), NSMaxY(area) - h, NSWidth(area), h);
     // Above the panes, which are added later and would cover it.
     if (self.rightArea.subviews.lastObject != bar)
@@ -5104,7 +5282,8 @@ static NSColor *ContrastColor(const Rgba &c) {
     if (!_change) return;
     AppSettings *cfg = [AppSettings shared];
     [_change.bar setBackground:[cfg background:Surface::Sidebar]
-                          text:[cfg text:Surface::Sidebar]];
+                          text:[cfg text:Surface::Sidebar]
+                         field:[cfg background:Surface::Editor]];
 }
 
 // MCChangeHost
@@ -6502,23 +6681,35 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
     panel.canChooseDirectories = YES;
     panel.canChooseFiles = NO;
     panel.allowsMultipleSelection = NO;
-    if ([panel runModal] == NSModalResponseOK) {
-        NSString *dir = panel.URLs.firstObject.path;
-        [self saveSession];       // the old folder's tabs, for when it is back
-        [self dropAllTabs];       // no stale preview or image over the new folder
-        _root = [FileItem new];
-        _root.path = dir; _root.isDir = YES;
-        [self rootChanged];
-        [_root loadChildren];
-        [self.lsp setRoot:dir];   // servers belong to the old folder
-        [self.outline reloadData];
-        [self.terminalPanel setDirectory:dir];   // keep terminal cwds in sync
-        self.terminalPanel.projectRoot = dir;
-        self.gitPanel.root = dir;           // the panel follows the folder
-        [self startWatching:dir];           // watch the new folder
-        [self updateTitle];
-        [self restoreSession];              // the new folder's tabs from last time
-    }
+    if ([panel runModal] == NSModalResponseOK)
+        [self changeRootTo:panel.URLs.firstObject.path];
+}
+
+// `minicode -r folder`: this window moves to the folder, asking about
+// unsaved tabs first as Open Folder does.
+- (BOOL)switchToFolder:(NSString *)dir {
+    if ([_root.path.stringByResolvingSymlinksInPath
+            isEqualToString:dir.stringByResolvingSymlinksInPath]) return YES;
+    if (![self confirmCloseAllTabs]) return NO;
+    [self changeRootTo:dir];
+    return YES;
+}
+
+- (void)changeRootTo:(NSString *)dir {
+    [self saveSession];       // the old folder's tabs, for when it is back
+    [self dropAllTabs];       // no stale preview or image over the new folder
+    _root = [FileItem new];
+    _root.path = dir; _root.isDir = YES;
+    [self rootChanged];
+    [_root loadChildren];
+    [self.lsp setRoot:dir];   // servers belong to the old folder
+    [self.outline reloadData];
+    [self.terminalPanel setDirectory:dir];   // keep terminal cwds in sync
+    self.terminalPanel.projectRoot = dir;
+    self.gitPanel.root = dir;           // the panel follows the folder
+    [self startWatching:dir];           // watch the new folder
+    [self updateTitle];
+    [self restoreSession];              // the new folder's tabs from last time
 }
 
 @end
