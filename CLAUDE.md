@@ -40,7 +40,7 @@ this file covers the macOS app except where it says otherwise.
   folder search (on a scratch tree in the temp directory), and the git
   status and diff readers, the formatter planning and the line diff, and
   the file tree's sort orders, ages and folder totals (`tree:*`, `sizes:*`)
-  (4,1xx checks on 2026-11-05 after merging the palette, editor keys, highlighting, build, language-server and grid-terminal branches; 3,560 on 2026-11-04; 3,543 on 2026-11-01; 3,523 on 2026-10-31; 3,259 on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
+  (4,238 checks on 2026-11-05 after merging the palette, editor keys, highlighting, build, language-server, grid-terminal and backups branches; 3,560 on 2026-11-04; 3,543 on 2026-11-01; 3,523 on 2026-10-31; 3,259 on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
   corpus in `tests/markdown/corpus.md` read from the repo root; the
   corpus checks skip themselves where that file is not found).
   Exits non-zero on failure. The Makefile uses clang++ on the Mac and make's
@@ -1119,6 +1119,8 @@ into the build, keeping its place.
   `terminate:`. `applicationShouldTerminate` asks the usual questions,
   titled "Restart minicode?" and leaving Claude's terminal out
   (`runningTerminalCommandsExceptChange`); Cancel clears the restart.
+  Unsaved tabs are not asked about: their backups are written at once and
+  the new build brings them back (see "Backups and hot exit").
   `applicationWillTerminate` writes `MCRestart` (windows' roots, which one
   resumes, source, command, time) and `MCLaunchAfterExit` spawns a
   detached `/bin/sh` (own session) that waits for our pid and runs `open
@@ -1216,6 +1218,87 @@ Quick Open, Go to Line and Cmd+J as well.
   real typing and clicks, a large real folder in Quick Open, and Ctrl+G
   reaching nano in the terminal (not checked: the monitor only sees events
   that come through `[NSApp sendEvent:]`).
+## Backups and hot exit (Mac, 2026-11-05)
+
+The tab session kept only paths, so a crash or a kill lost every unsaved
+buffer. Now every dirty tab's text is on disk while it is edited, as in
+VS Code's backups, but quitting still asks (the user wants the question;
+there is no silent hot exit on quit).
+
+- **Files.** `src/Backups.{h,cpp}` (pure C++, `backups:*` tests in
+  `tests/backups_tests.inc`, included by run_tests.cpp): the format, the
+  `Fs` of callbacks with `posixFs()`, `Store`, and the decisions (`plan`,
+  `foldersToReopen`, `expired`, `compare`). `src/BackupStore.{h,mm}`
+  (`MCBackupStore`): the folder, a serial queue for writes and removals,
+  and which process holds a backup. EditorController's "backups and hot
+  exit" section decides what and when; main.mm has two hooks.
+- **Store.** `~/Library/Application Support/MiniCode/Backups`
+  (NSHomeDirectory, so `CFFIXED_USER_HOME` moves it) or
+  `$MINICODE_BACKUP_DIR`; off under `MINICODE_DEMO` and `MINICODE_BENCH`.
+  One `<uuid>.mcbackup` per tab: a header (path, window folder resolved,
+  the disk file's mtime and inode the buffer was based on, whether it
+  existed, utf-8, line endings, time, owner pid and start time, byte
+  count), a blank line, the text. Each file's header is its index entry;
+  there is no shared index, so two windows or two processes (`minicode -n`)
+  never race over one. Written to a temporary beside it (0600, fsync,
+  rename; the folder made 0700), so a reader sees the old or the new one.
+  Never in the project.
+- **When.** `scheduleBackups` runs from `noteEdited` (every keystroke and
+  preview edit) and `updateTitle` (every dirty change): a clean tab's
+  backup goes at once; a changed dirty buffer (`sourceText` compared by
+  pointer with `backedUpText`, so 4 µs a keystroke) is written 1 s after
+  typing stops, at most 5 s after the first unwritten change. The main
+  thread hands the immutable NSString to the queue, which converts and
+  writes; a write overtaken by a newer one for the same id is skipped.
+  Only text tabs with a path (`tabTakesBackup:`); a preview with no source
+  edit is not dirty, so it gets none. Closing a tab (after Save / Don't
+  Save) and `dropAllTabs` (Open Folder, after its question) remove them,
+  and so does `windowWillClose:` (asked already).
+- **Restore.** `restoreSession` asks `planForRoot:` for the folder's
+  backups that no running process holds (owner pid alive with the same
+  start time, or claimed by a window of this process): a session file with
+  a backup is kept even if gone from disk, and backups of files the session
+  lost are appended. `takeBackup:intoTab:` makes the tab dirty with the
+  backup's text and its base mtime and inode as `fileModDate`/`fileID`;
+  the disk is read when the tab is first shown (`loadActiveTab` calls
+  `showRestoredText:`): the backup becomes the buffer, the disk text stays
+  `savedText`, undo starts empty, and the status bar says "Restored unsaved
+  changes to x". Changed on disk since: the note says so and `fileModDate`
+  stays the backup's, so the next window focus or Cmd+S asks Keep Mine /
+  Reload. Gone: a gone tab holding the text, Cmd+S asks before writing it
+  again. The first write after a restore puts this process's pid in it.
+  At launch `reopenFoldersWithBackups` (main.mm, after the launch's own
+  windows) opens a window for each folder with backups nobody holds.
+  Several backups of one file: the newest wins, the rest go. Orphans older
+  than 30 days and temporaries older than a day go (`cleanUpOnce`).
+- **Quitting** asks as before. NSApplicationWillTerminateNotification
+  (`backupsAppWillTerminate:`) then removes every tab's backup, since what
+  is still unsaved was answered Don't Save. **A restart** from Request a
+  Change instead calls `keepUnsavedTabsForRestart` from
+  `confirmQuitRestarting:`: every dirty buffer is written synchronously and
+  that window is not asked about unsaved tabs, so they come back unsaved in
+  the new build; if a write fails it falls back to the question. A crash,
+  SIGKILL, power loss or force quit runs none of this and leaves them.
+- **Verified** (2026-11-05): 99 `backups:*` checks; an offscreen harness
+  (main.mm included as `minicode_main`, ordering, keyWindow, mainWindow,
+  activation and `applicationDidFinishLaunching:` swizzled, NSAlert from a
+  queue, scratch HOME, settings, defaults suite and backup folder) in four
+  processes, 91 checks: no backup within the debounce, one after it (0600,
+  pid, root, base date), rewritten on more typing, gone on save, on undo
+  back to the disk text and on Don't Save at a tab's close, none for an
+  untouched preview; the process then SIGKILLs itself, b.txt is changed and
+  c.txt deleted, and the next process restores the session's tabs plus an
+  orphan the session lost, the text dirty with empty undo, the notes, Keep
+  Mine asked once for b, c as "(deleted)" with Cmd+S asking first, the 5 MB
+  buffer, adoption under the new pid, a second window on the folder
+  taking nothing, the other folder reopened, and Quit with Don't Save
+  leaving no backup; a restart asked nothing and kept a.txt's, the next
+  process restored it, and Quit with Save removed it. Timings (M3): 4 µs
+  per keystroke for `scheduleBackups`, 0.2 ms on the main thread to hand a
+  5 MB buffer over, on disk 50 ms later with the main thread never held up
+  past 15 ms meanwhile. Needs the user: a real crash or force quit (Activity
+  Monitor) with unsaved tabs, the note and the Keep Mine question on a real
+  screen, and the extra windows a crash in another folder brings at launch.
 
 ## Several carets, wrapping, and Cmd+Delete (Mac, 2026-10-31)
 

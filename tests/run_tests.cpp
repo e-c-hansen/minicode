@@ -26,6 +26,7 @@
 #include "LineDiff.h"
 #include "MultiCaret.h"
 #include "CommandPalette.h"
+#include "Backups.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -8479,6 +8480,7 @@ static void testMultiCaretOccurrences() {
         CHECK(applyEdit(t, e) == u"x = bar(x) + foobar + bar\n");
     }
 }
+#include "backups_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -8528,6 +8530,7 @@ int main() {
     testMultiCaret();
     testCommandPalette();
     testMultiCaretOccurrences();
+    testBackups();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

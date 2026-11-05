@@ -22,10 +22,12 @@
 #import "TreeDetails.h"
 #import "InstallPanel.h"
 #import "ChangePanel.h"
+#import "BackupStore.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #import <AVKit/AVKit.h>                 // video and audio in the editor's slot
 #import <AVFoundation/AVFoundation.h>
 #include <sys/stat.h>
+#include <map>
 #include "SyntaxHighlighter.h"
 #include "MarkdownParser.h"
 #include "MarkdownEdit.h"
@@ -502,6 +504,14 @@ private:
 @property(nonatomic, assign) CGFloat sourceCaretOffset;
 @property(nonatomic, assign) BOOL haveSourcePosition;
 @property(nonatomic, assign) NSPoint previewEntryScroll;
+// Its backup (BackupStore): the id, the text and path last written (so an
+// unchanged buffer is not written again), whether one is on disk, and
+// whether the buffer came back from one and waits to be shown over the
+// disk's text (loadActiveTab).
+@property(nonatomic, copy)   NSString *backupID;
+@property(nonatomic, strong) NSString *backedUpText;
+@property(nonatomic, copy)   NSString *backedUpPath;
+@property(nonatomic, assign) BOOL hasBackup, restoredBackup;
 @end
 
 @implementation MCTab
@@ -585,6 +595,7 @@ private:
     NSPopover *_installPopover;
     NSString *_missingBefore;              // the open file's missing server, last time
     MCChangeSession *_change;              // Request a Change (Shift+Cmd+K), made on first use
+    NSDate *_backupFirstPending;           // the oldest buffer change not yet backed up
 }
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) ClickOutline *outline;
@@ -881,6 +892,9 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
 
     [self startWatching:_root.path];   // live tree updates
     [self restoreSession];             // the files open here last time
+    [[NSNotificationCenter defaultCenter] addObserver:self
+        selector:@selector(backupsAppWillTerminate:)
+            name:NSApplicationWillTerminateNotification object:nil];
 }
 
 // KVO context for the player item (see observeMediaItem:).
@@ -3293,6 +3307,13 @@ static NSString *MCGroupedCount(long long n) {
 - (void)loadActiveTab {
     NSString *path = self.currentPath;
     if (!path) return;
+    // A buffer brought back from a backup (restoreSession) goes over the
+    // disk's text once that is read; what it was based on is compared then.
+    MCTab *restoring = _activeTab.restoredBackup && _activeTab.dirty ? _activeTab : nil;
+    NSString *restored = restoring.sourceText;
+    NSDate *restoredBase = restoring.fileModDate;
+    const uint64_t restoredInode = restoring.fileID;
+    _activeTab.restoredBackup = NO;
     _activeTab.loaded = YES;
     _activeTab.gone = NO;
     _activeTab.pendingSort = nil;
@@ -3316,6 +3337,8 @@ static NSString *MCGroupedCount(long long n) {
     NSString *content = [NSString stringWithContentsOfFile:path
                                                   encoding:NSUTF8StringEncoding
                                                      error:&err];
+    // The file is gone, or no longer reads as text: the backup is all there is.
+    if (!content && restored) content = @"";
     if (!content) {
         // resetViewMode above cleared the previous file's mode, so no stale
         // preview stays on screen and the text view is read-only, which keeps
@@ -3344,6 +3367,7 @@ static NSString *MCGroupedCount(long long n) {
     self.savedText = content;
     self.dirty = NO;
     [self recordModDate];
+    if (restored) [self showRestoredText:restored base:restoredBase inode:restoredInode];
     [self refreshDisplay];
     // Previews show rendered text, which no language server should see.
     [self.lsp documentOpened:self.previewMode ? nil : path];
@@ -3836,6 +3860,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     if (index == NSNotFound) return YES;
     if (t == _activeTab) [self saveBeforeLeavingFormatSave];   // saved, so not asked about
     if (prompt && ![self confirmCloseTab:t]) return NO;
+    [self discardBackupOf:t];   // saved, or let go
     std::vector<uint64_t> stamps;
     for (MCTab *each in _tabs) stamps.push_back(each.lastActive);
     const NSInteger active = _activeTab ? (NSInteger)[_tabs indexOfObject:_activeTab] : -1;
@@ -3863,7 +3888,10 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
 - (void)dropAllTabs {
     [self stashActiveTab];
     _activeTab = nil;
-    for (MCTab *t in _tabs) [t.latex removeFromSuperview];
+    for (MCTab *t in _tabs) {
+        [t.latex removeFromSuperview];
+        [self discardBackupOf:t];
+    }
     [_tabs removeAllObjects];
     [self showEmptyState];
 }
@@ -4009,23 +4037,46 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
 - (void)restoreSession {
     if (![self sessionsEnabled]) return;
     NSDictionary *s = [[self sessionDefaults] dictionaryForKey:kTabSessionsKey][[self sessionKey]];
-    if (![s isKindOfClass:NSDictionary.class]) return;
     EditorTabs::Session saved;
-    for (id f in s[@"files"])
-        if ([f isKindOfClass:NSString.class]) saved.files.push_back(Utf8String(f));
-    saved.active = [s[@"active"] intValue];
+    if ([s isKindOfClass:NSDictionary.class]) {
+        for (id f in s[@"files"])
+            if ([f isKindOfClass:NSString.class]) saved.files.push_back(Utf8String(f));
+        saved.active = [s[@"active"] intValue];
+    }
+    // Unsaved buffers kept from a crash, a force quit or a restart: a file of
+    // the session with a backup comes back even if it is gone from disk, and
+    // a backup of a file the session lost comes back after the session's.
+    std::map<std::string, std::string> backupFor;
+    std::vector<std::string> extra;
+    if (MCBackupStore *store = [MCBackupStore shared]) {
+        [store cleanUpOnce];
+        Backups::Restore plan = [store planForRoot:[self sessionKey] sessionFiles:saved.files];
+        for (const Backups::Restore::Item &item : plan.items) {
+            backupFor[item.path] = item.id;
+            if (!item.inSession) extra.push_back(item.path);
+        }
+    }
     NSFileManager *fm = [NSFileManager defaultManager];
-    EditorTabs::Session r = EditorTabs::restorable(saved, [fm](const std::string &f) {
+    EditorTabs::Session r = EditorTabs::restorable(saved, [fm, &backupFor](const std::string &f) {
         BOOL dir = NO;
-        return [fm fileExistsAtPath:[NSString stringWithUTF8String:f.c_str()] isDirectory:&dir] &&
-               !dir;
+        return backupFor.count(f) ||
+               ([fm fileExistsAtPath:[NSString stringWithUTF8String:f.c_str()] isDirectory:&dir] &&
+                !dir);
     });
-    if (r.files.empty() || r.active < 0) return;
+    for (const std::string &f : extra) r.files.push_back(f);
+    if (r.files.empty()) return;
+    if (r.active < 0) r.active = 0;
     for (const std::string &f : r.files) {
         MCTab *t = [MCTab new];
         t.currentPath = [NSString stringWithUTF8String:f.c_str()];
+        auto b = backupFor.find(f);
+        if (b != backupFor.end() && ![self takeBackup:@(b->second.c_str()) intoTab:t] &&
+            ![fm fileExistsAtPath:t.currentPath])
+            continue;   // nothing to show: the backup does not read and the file is gone
         [_tabs addObject:t];
     }
+    if (_tabs.count == 0) return;
+    if (r.active >= (int)_tabs.count) r.active = (int)_tabs.count - 1;
     // The tab on show is read now, while the window opens. One holding a
     // file too big for that (it held up every launch) or no plain file at
     // all waits for a click instead, and the nearest other tab is shown.
@@ -4045,6 +4096,164 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
         return;
     }
     [self activateTab:_tabs[(NSUInteger)active]];
+}
+
+// ------------------------------------------------- backups and hot exit
+// A tab whose buffer differs from disk has it written to the backup store
+// (BackupStore) a second after typing stops, and at least every five seconds
+// while it goes on; the backup goes as soon as the tab is clean again or is
+// closed. Quitting still asks about unsaved tabs, and Don't Save deletes
+// their backups; a crash, a force quit or a power loss leaves them, and the
+// folder's next window brings them back as unsaved tabs. Request a Change's
+// restart writes them at once and asks nothing about them.
+static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
+
+// Only text read from a file has anything to keep.
+- (BOOL)tabTakesBackup:(MCTab *)t {
+    return t.currentPath && t.sourceText && !t.isImage && !t.isPDF && !t.isMedia &&
+           !t.isDiff && !t.showingMessage;
+}
+
+- (BOOL)tabNeedsBackup:(MCTab *)t {
+    return t.dirty && [self tabTakesBackup:t] &&
+           (t.backedUpText != t.sourceText || ![t.backedUpPath isEqualToString:t.currentPath]);
+}
+
+// After every edit and every change of a dirty flag: a clean tab's backup
+// goes now, and a changed buffer is written when typing pauses. Costs a
+// pointer comparison per tab, so it can run on every keystroke.
+- (void)scheduleBackups {
+    if (_closing || ![MCBackupStore shared]) return;
+    BOOL pending = NO;
+    for (MCTab *t in _tabs) {
+        if (t.dirty && [self tabTakesBackup:t]) pending = pending || [self tabNeedsBackup:t];
+        else if (t.hasBackup) [self discardBackupOf:t];
+    }
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(writeBackups)
+                                               object:nil];
+    if (!pending) {
+        _backupFirstPending = nil;
+        return;
+    }
+    NSDate *now = [NSDate date];
+    if (!_backupFirstPending) _backupFirstPending = now;
+    const NSTimeInterval waited = [now timeIntervalSinceDate:_backupFirstPending];
+    [self performSelector:@selector(writeBackups) withObject:nil
+               afterDelay:MAX(0, MIN(kBackupDelay, kBackupMaxWait - waited))];
+}
+
+// Every changed buffer to the store's queue; the main thread only hands
+// over the (immutable) text.
+- (void)writeBackups {
+    _backupFirstPending = nil;
+    MCBackupStore *store = [MCBackupStore shared];
+    if (_closing || !store) return;
+    for (MCTab *t in _tabs) {
+        if (![self tabNeedsBackup:t]) continue;
+        if (!t.backupID) t.backupID = [store newID];
+        [store writeID:t.backupID path:t.currentPath root:[self sessionKey]
+              diskDate:t.fileModDate inode:t.fileID text:t.sourceText];
+        t.backedUpText = t.sourceText;
+        t.backedUpPath = t.currentPath;
+        t.hasBackup = YES;
+    }
+}
+
+- (void)discardBackupOf:(MCTab *)t {
+    if (t.backupID && t.hasBackup) [[MCBackupStore shared] removeID:t.backupID];
+    t.hasBackup = NO;
+    t.backedUpText = nil;
+    t.backedUpPath = nil;
+}
+
+// Request a Change's restart: every unsaved buffer written now, so the new
+// build brings them back. NO when backups are off or one could not be
+// written, and the usual question is asked instead.
+- (BOOL)keepUnsavedTabsForRestart {
+    MCBackupStore *store = [MCBackupStore shared];
+    if (!store || ![self sessionsEnabled]) return NO;
+    [self saveBeforeLeavingFormatSave];
+    if (self.textView.editable && _activeTab && !_activeTab.showingMessage)
+        self.sourceText = self.textView.string;
+    for (MCTab *t in _tabs) {
+        if (!t.dirty || ![self tabTakesBackup:t]) continue;
+        if (!t.backupID) t.backupID = [store newID];
+        if (![store writeNowID:t.backupID path:t.currentPath root:[self sessionKey]
+                      diskDate:t.fileModDate inode:t.fileID text:t.sourceText])
+            return NO;
+        t.backedUpText = t.sourceText;
+        t.backedUpPath = t.currentPath;
+        t.hasBackup = YES;
+    }
+    [self saveSession];
+    return YES;
+}
+
+// Quitting: the questions were asked (applicationShouldTerminate), so what
+// is still unsaved was let go with Don't Save, and its backups go. A restart
+// keeps them (keepUnsavedTabsForRestart wrote them).
+- (void)backupsAppWillTerminate:(NSNotification *)note {
+    MCBackupStore *store = [MCBackupStore shared];
+    if (!store) return;
+    id app = NSApp.delegate;
+    SEL restartApp = NSSelectorFromString(@"restartApp");
+    const BOOL restarting = [app respondsToSelector:restartApp] && [app valueForKey:@"restartApp"];
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(writeBackups)
+                                               object:nil];
+    if (!restarting)
+        for (MCTab *t in _tabs) [self discardBackupOf:t];
+    [store flush];
+}
+
+// A tab restored from the session takes its backup: the text, unsaved, and
+// what the disk file was when the backup was taken (fileModDate and fileID,
+// so a save checks the disk against that). The disk's own text is read when
+// the tab is first shown.
+- (BOOL)takeBackup:(NSString *)bid intoTab:(MCTab *)t {
+    Backups::Entry e;
+    NSString *text = nil;
+    if (![[MCBackupStore shared] loadID:bid entry:&e text:&text]) return NO;
+    t.backupID = bid;
+    t.hasBackup = YES;        // written again soon under this process's name
+    t.restoredBackup = YES;
+    t.sourceText = text;
+    t.dirty = YES;
+    t.fileModDate = e.diskExisted ? [NSDate dateWithTimeIntervalSince1970:e.diskMtime] : nil;
+    t.fileID = e.diskInode;
+    NSDictionary *a = [[NSFileManager defaultManager] attributesOfItemAtPath:t.currentPath error:nil];
+    t.gone = e.diskExisted && !a;
+    // Unchanged since: the disk's own date, exactly, so a save in the
+    // background does not take a rounding for a change made outside.
+    if (e.diskExisted && a &&
+        fabs(a.fileModificationDate.timeIntervalSince1970 - e.diskMtime) < 0.001 &&
+        (!e.diskInode || [a[NSFileSystemFileNumber] unsignedLongLongValue] == e.diskInode))
+        t.fileModDate = a.fileModificationDate;
+    return YES;
+}
+
+// The active tab was just read from disk (loadActiveTab) and had a backup:
+// the backup's text goes in as the unsaved buffer, with nothing to undo, and
+// the disk's text stays savedText. A file changed since the backup keeps the
+// backup's date, so the next check (window focus, Cmd+S) asks Keep Mine or
+// Reload; a file gone is a gone tab holding the text.
+- (void)showRestoredText:(NSString *)text base:(NSDate *)base inode:(uint64_t)inode {
+    MCTab *t = _activeTab;
+    NSString *name = t.currentPath.lastPathComponent;
+    NSString *note = [NSString stringWithFormat:@"Restored unsaved changes to %@", name];
+    self.sourceText = text;
+    if (base && !t.fileModDate) {
+        t.gone = YES;
+        t.fileModDate = base;
+        t.fileID = inode;
+        note = [note stringByAppendingString:@"; the file is no longer on disk"];
+    } else if (base && (fabs([t.fileModDate timeIntervalSinceDate:base]) > 0.001 ||
+                        (inode && t.fileID && inode != t.fileID))) {
+        t.fileModDate = base;
+        t.fileID = inode;
+        note = [note stringByAppendingString:@"; the file has changed on disk since"];
+    }
+    self.dirty = t.gone || ![text isEqualToString:self.savedText ?: @""];
+    if (self.dirty) [self showStatusNote:note];
 }
 
 // Called when the window regains focus: reconcile with on-disk changes.
@@ -4227,6 +4436,8 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
     return [self confirmCloseAllTabs];
 }
 - (void)windowWillClose:(NSNotification *)note {
+    // Asked already (windowShouldClose:): what is still unsaved was let go.
+    for (MCTab *t in _tabs) [self discardBackupOf:t];
     _closing = YES;
     // The shells go with the window (hung up and reaped), and the dock with
     // them, so nothing of the window outlives it.
@@ -4405,6 +4616,7 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
 // keystrokes cost nothing more; equal lengths compare the characters, a
 // fraction of a millisecond for a large file.
 - (void)noteEdited {
+    [self scheduleBackups];
     NSString *now = self.sourceText ?: @"", *saved = self.savedText ?: @"";
     // A file deleted outside has nothing on disk to match.
     const BOOL dirty = _activeTab.gone || now.length != saved.length ||
@@ -5914,6 +6126,7 @@ static NSString *MCFormatDuration(double seconds) {
     [self reloadTabStrip];   // the dots on the tabs
     [self updateSavedStatus];
     if (self.hintsVisible) [self updateHints];
+    [self scheduleBackups];   // dirty may have changed either way
 }
 
 - (void)renderMarkdown:(NSString *)content {
