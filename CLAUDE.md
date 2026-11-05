@@ -2127,6 +2127,16 @@ never closes.
 
 ## Current state (handoff, 2026-09-29)
 
+- **1.5.6** (2026-11-05): themes (`theme =`, View > Theme), the inline
+  agent (Cmd+I; hover moved to Option+Cmd+I), Restart minicode and the
+  status bar's ↻, the browser panel kept across restarts and relaunches,
+  dictation wrapping in the grid terminal, usage descriptions in
+  Info.plist, and the first release signed with "MiniCode Local Signing"
+  (the user made it with `scripts/make-signing-identity.sh`), so grants
+  now survive builds and releases. Released without the PPA upload
+  (Docker not running): `scripts/ppa.sh 1.5.6` uploads it later; the
+  `theme` key is what Ubuntu users would get. Homebrew copy upgraded.
+
 - **1.5.5** (2026-11-05): the command palette, Quick Open and Go to
   Line; rename, references and quick fixes; the grid terminal with zsh's
   line editor (the default); Cmd+D, Shift+Cmd+L and adding cursors, with
