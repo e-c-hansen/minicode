@@ -798,6 +798,15 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
     self.textView.linkTextAttributes =
         @{NSCursorAttributeName: [NSCursor pointingHandCursor]};
     self.textView.incrementalSearchingEnabled = YES;
+    // Layout stays contiguous (allowsNonContiguousLayout off, the default):
+    // laying out a character lays out everything before it, so the rects
+    // the editor reads (tab and Format Document scroll positions, the
+    // agent bar, Markdown place keeping, several carets) are exact. The
+    // price is in big files: an edit is laid out again from itself to where
+    // NSTextView asks (1.9 s to lay out 100,000 lines, which is what a
+    // Format Document touching both ends of such a file costs).
+    // Non-contiguous layout would remove that but makes far positions
+    // estimates; it needs trying on a real screen before it is turned on.
     // The backdrop paints the background over the whole scroll view; the text
     // view drawing it too would double a translucent color.
     self.textView.drawsBackground = NO;
@@ -6116,6 +6125,11 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 }
 
 - (void)textDidChange:(NSNotification *)note {
+    // A copy of the storage's string, but not of its characters: the
+    // storage's NSBigMutableString shares them with the copy, and the copy
+    // takes about a microsecond in a 3 MB file, as does the next edit with
+    // it held (measured). backedUpText's pointer compare relies on a new
+    // object per change.
     self.sourceText = self.textView.string;
     [self noteEdited];
     // The title's task count follows typing, a moment after it stops.
