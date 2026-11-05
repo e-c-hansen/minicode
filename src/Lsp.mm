@@ -3779,12 +3779,17 @@ static NSString *ErrorText(const Json &error) {
         [um beginUndoGrouping];
         BOOL may = [_tv shouldChangeTextInRanges:ranges replacementStrings:strings];
         if (may) {
+            // Each edit its own storage edit, last first, so the
+            // highlighter, the squiggles and the server follow each as
+            // they follow typing; one beginEditing around them all
+            // stretched the squiggles between the first and the last over
+            // the whole run. One didChangeText for them all: NSTextView
+            // lays out from the edit onwards in every one, as
+            // replaceSourceWithText: found (EditorController.mm).
             NSTextStorage *ts = _tv.textStorage;
-            [ts beginEditing];
             for (NSInteger k = (NSInteger)ranges.count - 1; k >= 0; k--)
                 [ts replaceCharactersInRange:ranges[(NSUInteger)k].rangeValue
                                   withString:strings[(NSUInteger)k]];
-            [ts endEditing];
             [_tv didChangeText];
             // The caret keeps its place in the text around it.
             for (const Lsp::OffsetEdit &e : edits) {   // last first
