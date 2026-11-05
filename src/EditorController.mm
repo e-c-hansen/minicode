@@ -1410,7 +1410,7 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     [self appendHintsRow:s key:@"F8" label:@"Next problem"
                     key2:@"⇧F8" label2:@"Previous problem" state:nil];
     [self appendHintsRow:s key:@"⌘." label:@"Quick fixes"
-                    key2:nil label2:nil state:nil];
+                    key2:@"⌥⇧O" label2:@"Organize imports" state:nil];
     [self appendHintsRow:s key:@"⌥⇧F" label:@"Format document"
                     key2:@"⇥" label2:@"Take completion" state:nil];
     [self appendHintsRow:s key:@"F9" label:@"Sort lines"
@@ -5701,6 +5701,9 @@ static NSColor *ContrastColor(const Rgba &c) {
 }
 - (void)showQuickFixes:(id)sender {
     if ([self lspActionAllowed]) [self.lsp showQuickFixes];
+}
+- (void)organizeImports:(id)sender {
+    if ([self lspActionAllowed]) [self.lsp organizeImports];
 }
 // F8 / Shift+F8: the next or previous problem in the file on show.
 - (void)nextProblem:(id)sender {

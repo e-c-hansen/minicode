@@ -76,8 +76,9 @@ typedef NS_ENUM(NSInteger, MCLspState) {
 };
 
 @interface MCLspServerInfo : NSObject
-@property(nonatomic, copy) NSString *key;          // cpp, python, go, rust, typescript
-@property(nonatomic, copy) NSString *language;     // "Python"
+// cpp, python, go, rust, typescript; a second server's is "python.also".
+@property(nonatomic, copy) NSString *key;
+@property(nonatomic, copy) NSString *language;     // "Python", "Python, second server"
 @property(nonatomic, assign) MCLspState state;
 @property(nonatomic, copy) NSString *stateText;    // "running", "not installed", ...
 @property(nonatomic, copy) NSString *serverName;   // "pyright", or nil when none found
@@ -91,7 +92,10 @@ typedef NS_ENUM(NSInteger, MCLspState) {
 // "automatic").
 @property(nonatomic, copy) NSString *interpreter;
 @property(nonatomic, copy) NSString *interpreterSource;
-@property(nonatomic, assign) BOOL current;         // the open file's language
+@property(nonatomic, assign) BOOL current;         // one of the open file's servers
+// A second server the built-in rule does not want for this project (no
+// Ruff configuration): the popover says when it would run, with no Start.
+@property(nonatomic, assign) BOOL notUsedHere;
 @end
 
 // One interpreter offered by Select Python Interpreter.
@@ -177,9 +181,14 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 // Shift+F12: every reference to the name at the caret, grouped by file, in
 // a list by the caret; Return or a click opens one.
 - (void)findReferences;
-// Cmd+.: the server's code actions for the caret or the selection, with the
-// diagnostics there, in a list by the caret; Return applies one.
+// Cmd+.: the servers' code actions for the caret or the selection, each
+// asked with its own diagnostics there, merged in one list by the caret
+// (fixes first, then refactorings, then whole-file actions such as Ruff's
+// Fix all); Return applies one.
 - (void)showQuickFixes;
+// Shift+Option+O: the servers' source.organizeImports action for the file,
+// applied at once as one undo step (Ruff's own when it runs).
+- (void)organizeImports;
 // ---- the Problems list (Shift+Cmd+M) and F8 / Shift+F8
 // Every diagnostic the window's servers have published: for the files open
 // in its tabs, and for any other file a server reports on (as the server
@@ -202,7 +211,8 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 - (BOOL)handleCommand:(SEL)selector;
 
 // ---- the servers, for the Language Servers popover
-// Every language MiniCode knows, the open file's first.
+// Every language MiniCode knows, the open file's first, each followed by its
+// second server when it has one (or the built-in rule would give it one).
 - (NSArray<MCLspServerInfo *> *)serverInfos;
 // The open file's language key, or nil.
 @property(nonatomic, readonly, copy) NSString *currentLanguage;
@@ -216,6 +226,8 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 - (void)lookAgainForMissingServer;
 // The open file is on a server (starting or running).
 @property(nonatomic, readonly) BOOL hasServer;
+// The names of the servers the open file is on, its main one first (tests).
+@property(nonatomic, readonly) NSArray<NSString *> *fileServerNames;
 - (void)restartServer:(NSString *)key;   // stop if running, then start
 - (void)stopServer:(NSString *)key;      // stays stopped until started
 - (void)startServer:(NSString *)key;

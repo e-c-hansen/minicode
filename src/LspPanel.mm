@@ -198,7 +198,7 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
     case MCLspStateOff:
         break;
     default:
-        if (info.program)
+        if (info.program && !info.notUsedHere)
             [row addObject:[self button:@"Start" action:@selector(start:) key:info.key]];
         break;
     }
@@ -285,7 +285,8 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
         }
         [stack addArrangedSubview:[self cardFor:infos[i]]];
     }
-    NSTextField *note = Label(@"Commands come from the lsp lines in the settings file, and "
+    NSTextField *note = Label(@"Commands come from the lsp lines in the settings file "
+                              @"(lsp.python.also for a second Python server), and "
                               @"python.interpreter sets the default Python. MiniCode never "
                               @"installs a server itself.",
                               Small(), PHex(0x9CA3AF), YES, NO);
