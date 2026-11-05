@@ -492,6 +492,16 @@ static BOOL MCEditorOnlyAction(SEL a) {
            a == @selector(showHoverInfo:) || a == @selector(renameSymbol:) ||
            a == @selector(findReferences:) || a == @selector(showQuickFixes:);
 }
+// The File menu's tab commands and the tree's Sort By items, which the
+// window decides (enabled, checked), forwarded when another window is key.
+static BOOL MCWindowTabAction(SEL a) {
+    return a == @selector(reopenClosedTab:) || a == @selector(closeOtherTabs:) ||
+           a == @selector(closeTabsToTheRight:) || a == @selector(closeAllTabs:) ||
+           a == @selector(copyActiveFilePath:) || a == @selector(copyActiveFileRelativePath:) ||
+           a == @selector(revealActiveFileInFinder:) || a == @selector(revealActiveFileInTree:) ||
+           a == @selector(sortTreeBy:) || a == @selector(setTreeSortDirection:) ||
+           a == @selector(toggleFoldersFirst:);
+}
 - (BOOL)keyWindowIsEditor {
     NSWindow *key = NSApp.keyWindow;
     return !key || [self controllerForWindow:key] != nil;
@@ -531,7 +541,8 @@ static BOOL MCEditorOnlyAction(SEL a) {
         return [self current].canTogglePlayback;
     // The tab items, and Cmd+W's title, are the window's to decide.
     if (item.action == @selector(closeFocused:) || item.action == @selector(selectTabNumber:) ||
-        item.action == @selector(selectNextTab:) || item.action == @selector(selectPreviousTab:)) {
+        item.action == @selector(selectNextTab:) || item.action == @selector(selectPreviousTab:) ||
+        MCWindowTabAction(item.action)) {
         EditorController *c = [self current];
         if (!c) return item.action == @selector(closeFocused:);
         if (item.action == @selector(closeFocused:) && NSApp.keyWindow &&
@@ -601,7 +612,28 @@ static BOOL MCEditorOnlyAction(SEL a) {
     if (key && ![self controllerForWindow:key]) [key performClose:sender];
     else [[self current] closeFocused:sender];
 }
-- (void)newFile:(id)sender         { [[self current] newFile:sender]; }
+// Cmd+N with no window open opens one, as New Window does.
+- (void)newFile:(id)sender {
+    EditorController *c = [self current];
+    if (c) [c newFile:sender];
+    else [self newWindow:sender];
+}
+- (void)revealInFinder:(id)sender  { [[self current] revealInFinder:sender]; }
+- (void)copyPath:(id)sender        { [[self current] copyPath:sender]; }
+- (void)copyRelativePath:(id)sender { [[self current] copyRelativePath:sender]; }
+- (void)sortTreeBy:(id)sender      { [[self current] sortTreeBy:sender]; }
+- (void)setTreeSortDirection:(id)sender { [[self current] setTreeSortDirection:sender]; }
+- (void)toggleFoldersFirst:(id)sender { [[self current] toggleFoldersFirst:sender]; }
+- (void)reopenClosedTab:(id)sender { [[self current] reopenClosedTab:sender]; }
+- (void)closeOtherTabs:(id)sender  { [[self current] closeOtherTabs:sender]; }
+- (void)closeTabsToTheRight:(id)sender { [[self current] closeTabsToTheRight:sender]; }
+- (void)closeAllTabs:(id)sender    { [[self current] closeAllTabs:sender]; }
+- (void)copyActiveFilePath:(id)sender { [[self current] copyActiveFilePath:sender]; }
+- (void)copyActiveFileRelativePath:(id)sender {
+    [[self current] copyActiveFileRelativePath:sender];
+}
+- (void)revealActiveFileInFinder:(id)sender { [[self current] revealActiveFileInFinder:sender]; }
+- (void)revealActiveFileInTree:(id)sender { [[self current] revealActiveFileInTree:sender]; }
 - (void)newFolder:(id)sender       { [[self current] newFolder:sender]; }
 - (void)renameSelected:(id)sender  { [[self current] renameSelected:sender]; }
 - (void)deleteSelected:(id)sender  { [[self current] deleteSelected:sender]; }
@@ -696,9 +728,16 @@ static void BuildMenu(void) {
     NSMenuItem *fileItem = [[NSMenuItem alloc] init];
     [menubar addItem:fileItem];
     NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
-    [fileMenu addItemWithTitle:@"New Window"
-                        action:@selector(newWindow:)
+    // Cmd+N is New File, as in VS Code. It was New Window, which moved to
+    // Option+Cmd+N (VS Code's Shift+Cmd+N is New Folder here).
+    [fileMenu addItemWithTitle:@"New File…"
+                        action:@selector(newFile:)
                  keyEquivalent:@"n"];
+    NSMenuItem *newWindow =
+        [[NSMenuItem alloc] initWithTitle:@"New Window"
+                                   action:@selector(newWindow:) keyEquivalent:@"n"];
+    newWindow.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    [fileMenu addItem:newWindow];
     [fileMenu addItemWithTitle:@"Open Folder…"
                         action:@selector(openFolder:)
                  keyEquivalent:@"o"];
@@ -713,12 +752,8 @@ static void BuildMenu(void) {
     [fileMenu addItem:exportPDF];
     [fileMenu addItem:[NSMenuItem separatorItem]];
 
-    NSMenuItem *newFile =
-        [[NSMenuItem alloc] initWithTitle:@"New File…"
-                                   action:@selector(newFile:) keyEquivalent:@"n"];
-    newFile.keyEquivalentModifierMask =
-        NSEventModifierFlagCommand | NSEventModifierFlagControl;
-    [fileMenu addItem:newFile];
+    // The file tree's commands, on its clicked or selected row (else the
+    // open folder), as in its right click menu.
     NSMenuItem *newFolder =
         [[NSMenuItem alloc] initWithTitle:@"New Folder…"
                                    action:@selector(newFolder:) keyEquivalent:@"n"];
@@ -732,8 +767,25 @@ static void BuildMenu(void) {
     // file tree takes Cmd+Delete itself (ClickOutline keyDown:).
     [fileMenu addItemWithTitle:@"Move to Trash"
                         action:@selector(deleteSelected:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Reveal in Finder"
+                        action:@selector(revealInFinder:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Copy Path"
+                        action:@selector(copyPath:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Copy Relative Path"
+                        action:@selector(copyRelativePath:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Refresh File Tree"
                         action:@selector(refreshTree:) keyEquivalent:@"r"];
+    [fileMenu addItem:[NSMenuItem separatorItem]];
+
+    // A tab's right click menu, for the tab on show (VS Code's names).
+    [fileMenu addItemWithTitle:@"Copy Path of Active File"
+                        action:@selector(copyActiveFilePath:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Copy Relative Path of Active File"
+                        action:@selector(copyActiveFileRelativePath:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Reveal Active File in Finder"
+                        action:@selector(revealActiveFileInFinder:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Reveal Active File in File Tree"
+                        action:@selector(revealActiveFileInTree:) keyEquivalent:@""];
     [fileMenu addItem:[NSMenuItem separatorItem]];
 
     // Cmd+W closes what has the keyboard: the tab on show, or the terminal
@@ -741,6 +793,19 @@ static void BuildMenu(void) {
     [fileMenu addItemWithTitle:@"Close Tab"
                         action:@selector(closeFocused:)
                  keyEquivalent:@"w"];
+    // VS Code's Shift+Cmd+T is Toggle Terminal here, so Option joins it.
+    NSMenuItem *reopen =
+        [[NSMenuItem alloc] initWithTitle:@"Reopen Closed Tab"
+                                   action:@selector(reopenClosedTab:) keyEquivalent:@"t"];
+    reopen.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift | NSEventModifierFlagOption;
+    [fileMenu addItem:reopen];
+    [fileMenu addItemWithTitle:@"Close Other Tabs"
+                        action:@selector(closeOtherTabs:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Close Tabs to the Right"
+                        action:@selector(closeTabsToTheRight:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Close All Tabs"
+                        action:@selector(closeAllTabs:) keyEquivalent:@""];
 
     // Cmd+Shift+W closes the whole window, asking about unsaved tabs first.
     NSMenuItem *closeWindow =
@@ -794,6 +859,16 @@ static void BuildMenu(void) {
                                               (unichar)NSDownArrowFunctionKey]];
     cursorBelow.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     [editMenu addItem:cursorBelow];
+    // VS Code's Cmd+L, and its Shift+Cmd+K with Control for Command, since
+    // Shift+Cmd+K is Request a Change. Enabled while the editor's text view
+    // has the keyboard, as the items above.
+    [editMenu addItemWithTitle:@"Select Line"
+                        action:@selector(expandLineSelection:) keyEquivalent:@"l"];
+    NSMenuItem *deleteLine =
+        [[NSMenuItem alloc] initWithTitle:@"Delete Line"
+                                   action:@selector(deleteLine:) keyEquivalent:@"k"];
+    deleteLine.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagShift;
+    [editMenu addItem:deleteLine];
     [editMenu addItem:[NSMenuItem separatorItem]];
     // VS Code's inline chat key. It works from every pane, and every window:
     // what has the keyboard decides what the agent does (AgentPanel.h).
@@ -802,8 +877,12 @@ static void BuildMenu(void) {
     [editMenu addItem:[NSMenuItem separatorItem]];
     [editMenu addItemWithTitle:@"Toggle Comment"
                         action:@selector(toggleComment:) keyEquivalent:@"/"];
-    [editMenu addItemWithTitle:@"Toggle Task"
-                        action:@selector(toggleTask:) keyEquivalent:@"l"];
+    // Option+Cmd+L: Cmd+L went to Select Line, VS Code's.
+    NSMenuItem *task = [[NSMenuItem alloc] initWithTitle:@"Toggle Task"
+                                                  action:@selector(toggleTask:)
+                                           keyEquivalent:@"l"];
+    task.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    [editMenu addItem:task];
     // VS Code's key on the Mac. It has no Command, so it is also a character
     // (Ï on a US keyboard); the key monitor above lets it type that outside
     // the editor. Nothing else here uses Option.
@@ -956,6 +1035,11 @@ static void BuildMenu(void) {
     // the status bar) and when created. Cmd+I alone is the inline agent,
     // and Option+Cmd+I Show Hover Info.
     for (NSMenuItem *it in MCTreeColumnMenuItems()) [viewMenu addItem:it];
+    // The tree's order, as its right click menu's Sort By has it.
+    NSMenuItem *sortTree = [[NSMenuItem alloc] initWithTitle:@"Sort File Tree By"
+                                                      action:nil keyEquivalent:@""];
+    sortTree.submenu = [EditorController treeSortMenu];
+    [viewMenu addItem:sortTree];
 
     // Terminal: Shift+Cmd+T in the menu, like the other pane toggles; Ctrl+`
     // also works, caught by the local key monitor above.

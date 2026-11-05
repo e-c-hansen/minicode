@@ -56,6 +56,26 @@
 - (void)selectPreviousTab:(id)sender; // Ctrl+Shift+Tab, Shift+Cmd+[
 - (void)selectTabNumber:(id)sender;   // Shift+Cmd+1..9, Ctrl+1..9 (tag = n; 9 = last)
 - (void)closeFocused:(id)sender;      // Cmd+W the tab, or the focused terminal/browser
+- (void)reopenClosedTab:(id)sender;   // Option+Shift+Cmd+T the last tab closed here
+// A tab's right click menu, for the tab on show, in the File menu (so the
+// command palette finds them too).
+- (void)closeOtherTabs:(id)sender;
+- (void)closeTabsToTheRight:(id)sender;
+- (void)closeAllTabs:(id)sender;
+- (void)copyActiveFilePath:(id)sender;
+- (void)copyActiveFileRelativePath:(id)sender;
+- (void)revealActiveFileInFinder:(id)sender;
+- (void)revealActiveFileInTree:(id)sender;
+// The file tree's right click menu: the clicked or selected row, else the
+// open folder. The Sort By items' tags are TreeSort keys (sortTreeBy:) and
+// 1 or 0 for ascending (setTreeSortDirection:).
+- (void)revealInFinder:(id)sender;
+- (void)copyPath:(id)sender;
+- (void)copyRelativePath:(id)sender;
+- (void)sortTreeBy:(id)sender;
+- (void)setTreeSortDirection:(id)sender;
+- (void)toggleFoldersFirst:(id)sender;
++ (NSMenu *)treeSortMenu;
 // Asks about every tab with unsaved changes (window close, quit). NO when
 // the user cancelled or a save failed.
 - (BOOL)confirmCloseAllTabs;
@@ -91,7 +111,7 @@
 - (void)showSettingsForSurface:(NSString *)surface;
 - (void)toggleComment:(id)sender;      // Cmd+/ comment or uncomment lines
 - (void)formatDocument:(id)sender;     // Shift+Option+F run the file's formatter
-- (void)toggleTask:(id)sender;         // Cmd+L Markdown task on the lines
+- (void)toggleTask:(id)sender;         // Option+Cmd+L Markdown task on the lines
 - (void)sortLines:(id)sender;          // F9 sort lines, or the keep-sorted block
 - (void)fixKeepSorted:(id)sender;      // Shift+F9 sort every keep-sorted block
 - (void)showTodos:(id)sender;          // Shift+Cmd+D TODOs in the folder
