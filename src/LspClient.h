@@ -148,6 +148,13 @@ struct CompletionItem {
     bool hasEdit = false;
     Range editRange;
     std::string newText;
+    // Edits elsewhere that go with accepting it: the import an auto-import
+    // completion needs, clangd's #include. Positions are in the text as it
+    // was when the list was asked for. `hasAdditionalEdits` says the server
+    // sent the field (an empty list included); a server that leaves it out
+    // may send it on completionItem/resolve instead.
+    std::vector<TextEdit> additionalEdits;
+    bool hasAdditionalEdits = false;
     // What typing is matched against: filterText, else the label.
     const std::string& filterKey() const { return filterText.empty() ? label : filterText; }
     // What accepting inserts: the edit's text, then insertText, then the label.
@@ -222,13 +229,49 @@ std::string serverDisplayName(const std::string& server);
 std::vector<std::string> splitCommand(const std::string& command);
 
 // ------------------------------------------------------------ result parsing
-std::vector<Diagnostic> parseDiagnostics(const Json& params, std::string* uri = nullptr);
+// `version`, when given, is the document version the diagnostics were
+// computed for, or -1 when the server left it out.
+std::vector<Diagnostic> parseDiagnostics(const Json& params, std::string* uri = nullptr,
+                                         int* version = nullptr);
+// Where diagnostics fall in the text on show. The server computed them on
+// `base`, the text it was last sent (nullptr: unknown, take them as given
+// against `current`), while the editor may have been typed in since. A
+// diagnostic outside the part that changed between the two moves with the
+// text around it; one that touches it is stale and is left out (the server
+// has a newer text coming and publishes again for it). UTF-16 offsets into
+// `current`, end >= start, with `index` the diagnostic's place in `diags`.
+struct DiagnosticSpan {
+    size_t start = 0, end = 0, index = 0;
+};
+std::vector<DiagnosticSpan> diagnosticSpans(const std::u16string* base,
+                                            const std::u16string& current,
+                                            const std::vector<Diagnostic>& diags);
 // A CompletionList, a bare array of items, or null. Items come back sorted by
 // sortText (then label), which is the order servers mean them in.
 std::vector<CompletionItem> parseCompletion(const Json& result, bool* incomplete = nullptr);
-// Fill in what completionItem/resolve answered: detail and documentation,
-// when it gave them. Marks the item resolved either way.
+// Fill in what completionItem/resolve answered: detail, documentation and
+// additionalTextEdits, when it gave them. Marks the item resolved either way.
 void applyResolved(CompletionItem& item, const Json& result);
+// Whether accepting the item should wait for completionItem/resolve first:
+// the server resolves, the item has not been, and it came without
+// additionalTextEdits (servers such as typescript-language-server send an
+// auto-import's edit only there).
+bool completionWantsResolve(const CompletionItem& item, bool serverResolves);
+// Accepting a completion: [start, end) of `text` becomes `insert`, and the
+// item's additional edits go in with it. The edits come back in ascending
+// order, none overlapping, ready for one multi-range replacement, with
+// where the caret goes afterwards (just after the inserted text, moved by
+// what the additional edits before it added or removed). Additional edits
+// that overlap the main one, or each other, are against the spec and are
+// all left out (`droppedAdditional`), so the word still goes in.
+struct CompletionEdits {
+    std::vector<OffsetEdit> edits;   // ascending
+    size_t caret = 0;
+    bool droppedAdditional = false;
+};
+CompletionEdits completionEdits(const std::u16string& text, size_t start, size_t end,
+                                const std::u16string& insert,
+                                const std::vector<TextEdit>& additional);
 // MarkupContent ({kind, value}) or a plain string. False for anything else.
 bool parseMarkup(const Json& j, std::string& text, bool& isMarkdown);
 SignatureHelp parseSignatureHelp(const Json& result);
@@ -343,6 +386,11 @@ public:
     bool isOpen(const std::string& uri) const { return docs_.count(uri) != 0; }
     int version(const std::string& uri) const;
     const std::string* openText(const std::string& uri) const;
+    // The text last sent for a document, found by its URI as given or, when
+    // the server spells it another way, by the file it names. What the
+    // positions in a server's answer about that document refer to.
+    const std::string* textFor(const std::string& uri) const;
+    std::vector<std::string> openUris() const;
 
     // Requests. The handler runs when the response arrives (with a null
     // result and the error object on failure). Returns the request id.
@@ -409,7 +457,12 @@ public:
     // and drops everything from here on, so the owner should stop the
     // process and say so, rather than wait for a Ready that never comes.
     std::function<void(const std::string& message)> onInitializeFailed;
+    // Diagnostics for a document. Ones published for an older version than
+    // the client has since sent are dropped before they get here (the
+    // server publishes again for the newer text); while the callback runs,
+    // textFor(uri) is the text they were computed on.
     std::function<void(const std::string& uri, const std::vector<Diagnostic>&)> onDiagnostics;
+    size_t staleDiagnosticsDropped() const { return staleDiagnostics_; }
     std::function<void(int type, const std::string& message)> onShowMessage;
     std::function<void(const std::string& problem)> onProtocolError;
     // workspace/applyEdit from the server (often while a command it was
@@ -438,6 +491,8 @@ private:
     Json initOptions_, settings_;
     std::string serverName_;
     std::string rootPath_;
+    size_t staleDiagnostics_ = 0;
+    const Doc* findDoc(const std::string& uri) const;
     std::function<void()> shutdownDone_;
 
     void write(const Json& msg, bool beforeReadyOk = false);

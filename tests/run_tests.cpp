@@ -5968,6 +5968,208 @@ void testLspEditing() {
               !srv.sent.back()["result"]["applied"].asBool(true));
     }
 }
+
+// Accepting a completion with the edits that go with it (auto-import,
+// #include), and diagnostics against the text they were computed on.
+void testLspCompletionEditsAndVersions() {
+    GROUP("lsp:completion-additional-edits");
+    {
+        std::vector<Lsp::CompletionItem> c = Lsp::parseCompletion(parsed(
+            "[{\"label\":\"Path\",\"data\":{\"k\":1},\"additionalTextEdits\":["
+            "{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,"
+            "\"character\":0}},\"newText\":\"from pathlib import Path\\n\"}]},"
+            "{\"label\":\"PurePath\",\"data\":{\"k\":2}},"
+            "{\"label\":\"none\",\"additionalTextEdits\":[]},"
+            "{\"label\":\"bad\",\"additionalTextEdits\":[{\"newText\":\"x\"},"
+            "{\"range\":{\"start\":{\"line\":2,\"character\":1},\"end\":{\"line\":1,"
+            "\"character\":0}},\"newText\":\"y\"}]}]"));
+        CHECK(c.size() == 4);
+        const Lsp::CompletionItem *path = nullptr, *pure = nullptr, *none = nullptr, *bad = nullptr;
+        for (const auto &it : c) {
+            if (it.label == "Path") path = &it;
+            if (it.label == "PurePath") pure = &it;
+            if (it.label == "none") none = &it;
+            if (it.label == "bad") bad = &it;
+        }
+        CHECK(path && path->hasAdditionalEdits && path->additionalEdits.size() == 1 &&
+              path->additionalEdits[0].newText == "from pathlib import Path\n" &&
+              path->additionalEdits[0].range.start == (Lsp::Position{0, 0}));
+        CHECK(pure && !pure->hasAdditionalEdits && pure->additionalEdits.empty());
+        CHECK(none && none->hasAdditionalEdits && none->additionalEdits.empty());
+        // A malformed edit is skipped; a backwards range is turned round.
+        CHECK(bad && bad->additionalEdits.size() == 1 &&
+              bad->additionalEdits[0].range.start == (Lsp::Position{1, 0}));
+        // Waiting for resolve: only for an unresolved item that came without
+        // the field, from a server that resolves.
+        CHECK(pure && Lsp::completionWantsResolve(*pure, true));
+        CHECK(pure && !Lsp::completionWantsResolve(*pure, false));
+        CHECK(path && !Lsp::completionWantsResolve(*path, true));
+        CHECK(none && !Lsp::completionWantsResolve(*none, true));
+        Lsp::CompletionItem noRaw;
+        noRaw.label = "x";
+        CHECK(!Lsp::completionWantsResolve(noRaw, true));
+        // The edit arriving on resolve (typescript-language-server's way).
+        Lsp::CompletionItem later = pure ? *pure : Lsp::CompletionItem();
+        Lsp::applyResolved(later, parsed(
+            "{\"label\":\"PurePath\",\"additionalTextEdits\":[{\"range\":{\"start\":"
+            "{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},"
+            "\"newText\":\"from pathlib import PurePath\\n\"}]}"));
+        CHECK(later.resolved && later.hasAdditionalEdits && later.additionalEdits.size() == 1);
+        CHECK(!Lsp::completionWantsResolve(later, true));
+        Lsp::CompletionItem plain = pure ? *pure : Lsp::CompletionItem();
+        Lsp::applyResolved(plain, parsed("{\"label\":\"PurePath\",\"detail\":\"class\"}"));
+        CHECK(plain.resolved && !plain.hasAdditionalEdits && plain.detail == "class");
+        CHECK(!Lsp::completionWantsResolve(plain, true));   // resolved: no second wait
+    }
+
+    GROUP("lsp:completion-edits");
+    {
+        auto u = [](const char *s) { return Lsp::toUtf16(s); };
+        auto apply = [](std::u16string text, const Lsp::CompletionEdits &ce) {
+            for (auto it = ce.edits.rbegin(); it != ce.edits.rend(); ++it)
+                text.replace(it->start, it->length, it->text);
+            return text;
+        };
+        auto te = [](int l0, int c0, int l1, int c1, const char *t) {
+            return Lsp::TextEdit{Lsp::Range{{l0, c0}, {l1, c1}}, t};
+        };
+        // basedpyright's auto-import: "Pa" becomes Path, the import goes on
+        // top, and the caret ends after the word, moved down by the import.
+        std::u16string text = u("import os\n\nx = Pa");
+        size_t start = text.size() - 2, end = text.size();
+        Lsp::CompletionEdits ce = Lsp::completionEdits(
+            text, start, end, u("Path"), {te(0, 0, 0, 0, "from pathlib import Path\n")});
+        CHECK(!ce.droppedAdditional && ce.edits.size() == 2);
+        CHECK(ce.edits.size() == 2 && ce.edits[0].start == 0 && ce.edits[1].start == start);
+        CHECK(apply(text, ce) == u("from pathlib import Path\nimport os\n\nx = Path"));
+        CHECK(ce.caret == apply(text, ce).size());
+        // No additional edits: the word alone.
+        ce = Lsp::completionEdits(text, start, end, u("Path"), {});
+        CHECK(ce.edits.size() == 1 && apply(text, ce) == u("import os\n\nx = Path") &&
+              ce.caret == text.size() + 2);
+        // An edit after the word is placed after it, and the caret does not
+        // move for it.
+        std::u16string cpp = u("int f() { return sq");
+        ce = Lsp::completionEdits(cpp, cpp.size() - 2, cpp.size(), u("sqrt"),
+                                  {te(0, 19, 0, 19, "\n#include <cmath>")});
+        CHECK(ce.edits.size() == 2 && ce.edits[0].text == u("sqrt"));
+        CHECK(apply(cpp, ce) == u("int f() { return sqrt\n#include <cmath>"));
+        CHECK(ce.caret == u("int f() { return sqrt").size());
+        // An edit that replaces text before the word shifts the caret by
+        // what it adds (here removes).
+        std::u16string t2 = u("aaaa\nbb x");
+        ce = Lsp::completionEdits(t2, t2.size() - 1, t2.size(), u("xyz"), {te(0, 0, 0, 4, "a")});
+        CHECK(apply(t2, ce) == u("a\nbb xyz") && ce.caret == u("a\nbb xyz").size());
+        // An edit inside the word being replaced is against the spec: all
+        // the additional edits go, the word still goes in.
+        ce = Lsp::completionEdits(t2, t2.size() - 1, t2.size(), u("xyz"),
+                                  {te(0, 0, 0, 0, "import\n"), te(1, 3, 1, 4, "Q")});
+        CHECK(ce.droppedAdditional && ce.edits.size() == 1 && apply(t2, ce) == u("aaaa\nbb xyz"));
+        // Two additional edits that overlap each other: the same.
+        ce = Lsp::completionEdits(t2, t2.size() - 1, t2.size(), u("xyz"),
+                                  {te(0, 0, 0, 3, "1"), te(0, 2, 0, 4, "2")});
+        CHECK(ce.droppedAdditional && apply(t2, ce) == u("aaaa\nbb xyz"));
+        // Several imports, given out of order, all go in, in order.
+        ce = Lsp::completionEdits(t2, t2.size() - 1, t2.size(), u("xyz"),
+                                  {te(1, 0, 1, 0, "B"), te(0, 0, 0, 0, "A")});
+        CHECK(!ce.droppedAdditional && apply(t2, ce) == u("Aaaaa\nBbb xyz") &&
+              ce.caret == u("Aaaaa\nBbb xyz").size());
+        // An insertion right where the word starts goes before it.
+        ce = Lsp::completionEdits(t2, t2.size() - 1, t2.size(), u("xyz"), {te(1, 3, 1, 3, "ns.")});
+        CHECK(!ce.droppedAdditional && apply(t2, ce) == u("aaaa\nbb ns.xyz") &&
+              ce.caret == u("aaaa\nbb ns.xyz").size());
+        // Out of range offsets are clamped, never past the text.
+        ce = Lsp::completionEdits(t2, 100, 50, u("z"), {});
+        CHECK(ce.edits.size() == 1 && ce.edits[0].start == t2.size() && ce.edits[0].length == 0);
+    }
+
+    GROUP("lsp:diagnostic-versions");
+    {
+        FakeServer srv;
+        Lsp::Client client([&](const std::string &b) { srv.take(b); });
+        client.initialize("/p", 1);
+        client.receive(reply(1, "{\"capabilities\":{}}"));
+        client.didOpen("file:///p/a.py", "python", "x = 1\n");
+        client.didChange("file:///p/a.py", "x = 12\n");   // version 2
+        int calls = 0;
+        std::string base;
+        client.onDiagnostics = [&](const std::string &uri, const std::vector<Lsp::Diagnostic> &) {
+            calls++;
+            const std::string *t = client.textFor(uri);
+            base = t ? *t : "(none)";
+        };
+        auto publish = [&](const std::string &uri, const std::string &version) {
+            client.receive(Lsp::Framer::frame(
+                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":"
+                "{\"uri\":\"" + uri + "\"" + (version.empty() ? "" : ",\"version\":" + version) +
+                ",\"diagnostics\":[]}}"));
+        };
+        publish("file:///p/a.py", "1");   // for the text before the change: dropped
+        CHECK(calls == 0 && client.staleDiagnosticsDropped() == 1);
+        publish("file:///p/a.py", "2");
+        CHECK(calls == 1 && base == "x = 12\n");
+        publish("file:///p/a.py", "");    // no version: taken as for the last text
+        CHECK(calls == 2 && base == "x = 12\n");
+        // The same file spelled another way (%61 is "a") is still found.
+        publish("file:///p/%61.py", "1");
+        CHECK(calls == 2 && client.staleDiagnosticsDropped() == 2);
+        publish("file:///p/%61.py", "2");
+        CHECK(calls == 3 && base == "x = 12\n");
+        // A document not open: passed on, with no text to go by.
+        publish("file:///p/b.py", "7");
+        CHECK(calls == 4 && base == "(none)");
+        CHECK((client.openUris() == std::vector<std::string>{"file:///p/a.py"}));
+    }
+
+    GROUP("lsp:diagnostic-spans");
+    {
+        auto u = [](const char *s) { return Lsp::toUtf16(s); };
+        auto diag = [](int l0, int c0, int l1, int c1) {
+            Lsp::Diagnostic d;
+            d.range = Lsp::Range{{l0, c0}, {l1, c1}};
+            return d;
+        };
+        // The server saw line 1 as "y = undefined_b"; since then "zz\n" was
+        // typed at the start of line 1, and line 0 was left alone.
+        std::u16string base = u("x = undefined_a\ny = undefined_b\nw = c\n");
+        std::u16string now = u("x = undefined_a\nzz\ny = undefined_b\nw = c\n");
+        std::vector<Lsp::Diagnostic> d = {diag(0, 4, 0, 15), diag(1, 4, 1, 15), diag(2, 4, 2, 5)};
+        std::vector<Lsp::DiagnosticSpan> sp = Lsp::diagnosticSpans(&base, now, d);
+        CHECK(sp.size() == 3);
+        auto textAt = [&](const std::u16string &t, const Lsp::DiagnosticSpan &s) {
+            return t.substr(s.start, s.end - s.start);
+        };
+        CHECK(sp.size() == 3 && textAt(now, sp[0]) == u("undefined_a") && sp[0].index == 0);
+        CHECK(sp.size() == 3 && textAt(now, sp[1]) == u("undefined_b") && sp[1].index == 1);
+        CHECK(sp.size() == 3 && textAt(now, sp[2]) == u("c") && sp[2].index == 2);
+        // Typing at the end of the word a diagnostic is about: that one is
+        // stale and left out, the others move or stay.
+        std::u16string typed = u("x = undefined_aXY\ny = undefined_b\nw = c\n");
+        sp = Lsp::diagnosticSpans(&base, typed, d);
+        CHECK(sp.size() == 2 && sp[0].index == 1 && sp[1].index == 2);
+        CHECK(sp.size() == 2 && textAt(typed, sp[0]) == u("undefined_b") &&
+              textAt(typed, sp[1]) == u("c"));
+        // Deleting text before them moves them back.
+        std::u16string cut = u("x = 1\ny = undefined_b\nw = c\n");
+        sp = Lsp::diagnosticSpans(&base, cut, d);
+        CHECK(sp.size() == 2 && textAt(cut, sp[0]) == u("undefined_b"));
+        // The text unchanged, or unknown: taken as given.
+        sp = Lsp::diagnosticSpans(&base, base, d);
+        CHECK(sp.size() == 3 && sp[1].start == 20 && sp[1].end == 31);
+        sp = Lsp::diagnosticSpans(nullptr, base, d);
+        CHECK(sp.size() == 3 && sp[1].start == 20);
+        // An empty range (clang's "expected ';'") right where the text
+        // changed touches it and goes; ones before and after stay.
+        std::u16string b2 = u("int a = 1\nint b = 2");
+        std::u16string n2 = u("int a = 1;\nint b = 2");
+        sp = Lsp::diagnosticSpans(&b2, n2, {diag(0, 9, 0, 9), diag(1, 9, 1, 9), diag(0, 0, 0, 3)});
+        CHECK(sp.size() == 2 && sp[0].index == 1 && sp[0].start == n2.size() &&
+              sp[1].index == 2 && sp[1].start == 0 && sp[1].end == 3);
+        // Positions past the end clamp.
+        sp = Lsp::diagnosticSpans(nullptr, b2, {diag(9, 0, 9, 4)});
+        CHECK(sp.size() == 1 && sp[0].start == b2.size() && sp[0].end == b2.size());
+    }
+}
 }  // namespace
 
 // ------------------------------------------------------------- Python envs
@@ -8607,6 +8809,7 @@ int main() {
     testLspClient();
     testLspFeatures();
     testLspEditing();
+    testLspCompletionEditsAndVersions();
     testPythonEnvs();
     testLatexClicks();
     testSyncTexText();
