@@ -47,6 +47,22 @@ const std::vector<std::pair<std::string, Tool>>& servers() {
     return t;
 }
 
+// Second servers (lsp.<server>.also), by their entry key.
+const std::vector<std::pair<std::string, Tool>>& alsoServers() {
+    static const std::vector<std::pair<std::string, Tool>> t = {
+        {"python.also",
+         {"ruff",
+          "Ruff's own server checks Python with the project's Ruff rules as you type, "
+          "beside basedpyright, and offers its fixes, Fix all, and Organize Imports "
+          "(Shift+Option+O).",
+          "https://docs.astral.sh/ruff/editors/",
+          {{"uv tool install ruff", "uv"},
+           {"pipx install ruff", "pipx"},
+           {"brew install ruff", "brew"}}}},
+    };
+    return t;
+}
+
 const std::vector<Tool>& formatters() {
     static const std::vector<Tool> t = {
         {"pyink",
@@ -108,6 +124,8 @@ std::string baseName(const std::string& program) {
 const Tool* server(const std::string& key) {
     for (const auto& s : servers())
         if (s.first == key) return &s.second;
+    for (const auto& s : alsoServers())
+        if (s.first == key) return &s.second;
     return nullptr;
 }
 
@@ -121,6 +139,7 @@ const Tool* formatter(const std::string& program) {
 std::vector<const Tool*> all() {
     std::vector<const Tool*> out;
     for (const auto& s : servers()) out.push_back(&s.second);
+    for (const auto& s : alsoServers()) out.push_back(&s.second);
     for (const Tool& t : formatters()) out.push_back(&t);
     return out;
 }

@@ -306,6 +306,137 @@ std::vector<std::string> splitCommand(const std::string& command) {
 }
 
 // ------------------------------------------------------------ result parsing
+// ------------------------------------------------- a second server per language
+std::string alsoKey(const std::string& server) { return server + ".also"; }
+
+bool isAlsoKey(const std::string& key) {
+    return key.size() > 5 && key.compare(key.size() - 5, 5, ".also") == 0;
+}
+
+std::string languageOfKey(const std::string& key) {
+    return isAlsoKey(key) ? key.substr(0, key.size() - 5) : key;
+}
+
+std::string defaultAlsoCommand(const std::string& server, bool projectConfiguresRuff) {
+    if (server == "python" && projectConfiguresRuff) return "ruff server";
+    return "";
+}
+
+std::string programDisplayName(const std::string& program) {
+    size_t slash = program.find_last_of('/');
+    std::string name = slash == std::string::npos ? program : program.substr(slash + 1);
+    static const std::string suffix = "-langserver";
+    if (name.size() > suffix.size() &&
+        name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0)
+        name = name.substr(0, name.size() - suffix.size());
+    return name;
+}
+
+bool offers(const Json& caps, Feature f) {
+    auto provides = [](const Json& cap) { return cap.isObject() || cap.asBool(); };
+    switch (f) {
+    case Feature::Completion: return provides(caps["completionProvider"]);
+    case Feature::SignatureHelp: return caps["signatureHelpProvider"].isObject();
+    case Feature::Hover: return provides(caps["hoverProvider"]);
+    case Feature::Definition: return provides(caps["definitionProvider"]);
+    case Feature::References: return provides(caps["referencesProvider"]);
+    case Feature::Rename: return provides(caps["renameProvider"]);
+    case Feature::CodeActions: return provides(caps["codeActionProvider"]);
+    }
+    return false;
+}
+
+int routeRequest(Feature f, const std::vector<ServerView>& servers) {
+    for (size_t i = 0; i < servers.size(); i++) {
+        const ServerView& v = servers[i];
+        if (!v.main) continue;
+        if (!v.ready || (v.capabilities && offers(*v.capabilities, f))) return (int)i;
+    }
+    for (size_t i = 0; i < servers.size(); i++) {
+        const ServerView& v = servers[i];
+        if (!v.main && v.ready && v.capabilities && offers(*v.capabilities, f)) return (int)i;
+    }
+    return -1;
+}
+
+std::vector<int> serversOffering(Feature f, const std::vector<ServerView>& servers) {
+    std::vector<int> out;
+    for (size_t i = 0; i < servers.size(); i++) {
+        const ServerView& v = servers[i];
+        if (!v.ready || (v.capabilities && offers(*v.capabilities, f))) out.push_back((int)i);
+    }
+    return out;
+}
+
+StatusLine statusLine(const std::string& language, const std::vector<ServerStatus>& servers,
+                      int errors, int warnings) {
+    static const std::string kEllipsis = "\xE2\x80\xA6", kDot = " \xC2\xB7 ";
+    StatusLine line;
+    std::vector<std::string> parts;
+    std::vector<std::string> running;
+    long runningAt = -1;
+    bool red = false, yellow = false, green = false, mainOff = false;
+    for (const ServerStatus& s : servers) {
+        const std::string name = s.name.empty() ? language : s.name;
+        std::string part;
+        switch (s.state) {
+        case ServerState::Running:
+            if (runningAt < 0) {
+                runningAt = (long)parts.size();
+                parts.push_back("");   // filled in below
+            }
+            running.push_back(name);
+            green = true;
+            continue;
+        case ServerState::Starting:
+            part = name + " starting" + kEllipsis;
+            yellow = true;
+            break;
+        case ServerState::Restarting:
+            part = name + " crashed, restarting" + kEllipsis;
+            yellow = true;
+            break;
+        case ServerState::NotInstalled:
+            part = s.main ? "Install a " + language + " language server" + kEllipsis
+                          : name + " not installed";
+            break;
+        case ServerState::Off:
+            if (s.main) mainOff = true;
+            break;
+        case ServerState::Stopped: part = name + " stopped"; break;
+        case ServerState::Failed:
+            part = name + " failed to start";
+            red = true;
+            break;
+        case ServerState::Crashed:
+            part = name + " crashed";
+            red = true;
+            break;
+        case ServerState::Idle: break;
+        }
+        if (!part.empty()) parts.push_back(part);
+    }
+    if (runningAt >= 0) {
+        std::string names;
+        for (size_t i = 0; i < running.size(); i++) names += (i ? " + " : "") + running[i];
+        auto plural = [](int n, const char* one) {
+            return std::to_string(n) + " " + one + (n == 1 ? "" : "s");
+        };
+        std::string counts;
+        if (errors) counts = plural(errors, "error");
+        if (warnings) counts += (counts.empty() ? "" : ", ") + plural(warnings, "warning");
+        parts[(size_t)runningAt] = names + ": " + (counts.empty() ? "no problems" : counts);
+    } else if (mainOff && parts.empty()) {
+        // Off says so only when nothing else runs for the language.
+        parts.push_back(language + " language server off");
+    }
+    for (size_t i = 0; i < parts.size(); i++) line.text += (i ? kDot : "") + parts[i];
+    if (line.text.empty()) return line;
+    line.dot = red ? StatusDot::Red : yellow ? StatusDot::Yellow
+             : green ? StatusDot::Green : StatusDot::Gray;
+    return line;
+}
+
 Json positionJson(Position p) {
     return Json::object({{"line", p.line}, {"character", p.character}});
 }
@@ -392,6 +523,83 @@ std::vector<DiagnosticSpan> diagnosticSpans(const std::u16string* base,
         }
         out.push_back(DiagnosticSpan{a, b, i});
     }
+    return out;
+}
+
+// ------------------------------------------------------- DiagnosticStore
+bool DiagnosticStore::publish(const std::string& uri, const std::string& server,
+                              std::vector<Diagnostic> list,
+                              std::shared_ptr<const std::u16string> base,
+                              const std::string& sourceName) {
+    if (list.empty()) return erase(uri, server);
+    if (!sourceName.empty())
+        for (Diagnostic& d : list)
+            if (d.source.empty()) d.source = sourceName;
+    std::vector<Set>& sets = files_[uri];
+    for (Set& set : sets)
+        if (set.server == server) {
+            set.list = std::move(list);
+            set.base = std::move(base);
+            return true;
+        }
+    sets.push_back(Set{server, std::move(list), std::move(base)});
+    return true;
+}
+
+bool DiagnosticStore::erase(const std::string& uri, const std::string& server) {
+    auto it = files_.find(uri);
+    if (it == files_.end()) return false;
+    std::vector<Set>& sets = it->second;
+    auto s = std::find_if(sets.begin(), sets.end(),
+                          [&](const Set& x) { return x.server == server; });
+    if (s == sets.end()) return false;
+    sets.erase(s);
+    if (sets.empty()) files_.erase(it);
+    return true;
+}
+
+bool DiagnosticStore::eraseServer(const std::string& server) {
+    bool any = false;
+    for (const std::string& uri : uris()) any = erase(uri, server) || any;
+    return any;
+}
+
+std::vector<const DiagnosticStore::Set*> DiagnosticStore::forUri(const std::string& uri) const {
+    std::vector<const Set*> out;
+    auto it = files_.find(uri);
+    if (it != files_.end())
+        for (const Set& s : it->second) out.push_back(&s);
+    return out;
+}
+
+const DiagnosticStore::Set* DiagnosticStore::find(const std::string& uri,
+                                                  const std::string& server) const {
+    for (const Set* s : forUri(uri))
+        if (s->server == server) return s;
+    return nullptr;
+}
+
+std::vector<std::string> DiagnosticStore::uris() const {
+    std::vector<std::string> out;
+    for (const auto& [uri, sets] : files_) out.push_back(uri);
+    return out;
+}
+
+std::vector<Diagnostic> DiagnosticStore::merged(const std::string& uri) const {
+    std::vector<Diagnostic> out;
+    for (const Set* s : forUri(uri)) out.insert(out.end(), s->list.begin(), s->list.end());
+    return out;
+}
+
+std::vector<MergedSpan> mergedDiagnosticSpans(
+    const std::vector<const DiagnosticStore::Set*>& sets, const std::u16string& current) {
+    std::vector<MergedSpan> out;
+    for (const DiagnosticStore::Set* set : sets)
+        for (const DiagnosticSpan& sp : diagnosticSpans(set->base.get(), current, set->list))
+            out.push_back(MergedSpan{sp.start, sp.end, &set->list[sp.index]});
+    std::stable_sort(out.begin(), out.end(), [](const MergedSpan& a, const MergedSpan& b) {
+        return a.start < b.start;
+    });
     return out;
 }
 
@@ -1098,6 +1306,49 @@ Json diagnosticsInRange(const std::vector<Diagnostic>& diags, Range range) {
     return out;
 }
 
+bool kindUnder(const std::string& actionKind, const std::string& kind) {
+    if (kind.empty() || actionKind.size() < kind.size()) return false;
+    if (actionKind.compare(0, kind.size(), kind) != 0) return false;
+    return actionKind.size() == kind.size() || actionKind[kind.size()] == '.';
+}
+
+std::vector<CodeAction> mergeCodeActions(const std::vector<std::vector<CodeAction>>& perServer) {
+    // 0 preferred, 1 quick fixes, 2 refactorings, 3 the rest, 4 source.
+    auto rank = [](const CodeAction& a) {
+        if (a.preferred) return 0;
+        if (kindUnder(a.kind, "quickfix")) return 1;
+        if (kindUnder(a.kind, "refactor")) return 2;
+        if (kindUnder(a.kind, "source")) return 4;
+        return 3;
+    };
+    std::vector<CodeAction> all;
+    for (size_t i = 0; i < perServer.size(); i++)
+        for (const CodeAction& a : perServer[i]) {
+            bool dup = false;
+            for (const CodeAction& b : all)
+                if (b.title == a.title && b.kind == a.kind) { dup = true; break; }
+            if (dup) continue;
+            all.push_back(a);
+            all.back().origin = (int)i;
+        }
+    std::stable_sort(all.begin(), all.end(), [&](const CodeAction& a, const CodeAction& b) {
+        return rank(a) < rank(b);
+    });
+    return all;
+}
+
+int pickOrganizeImports(const std::vector<CodeAction>& actions) {
+    static const std::string kKind = "source.organizeImports";
+    int bare = -1;
+    for (size_t i = 0; i < actions.size(); i++) {
+        const std::string& k = actions[i].kind;
+        if (!kindUnder(k, kKind)) continue;
+        if (k.size() > kKind.size()) return (int)i;
+        if (bare < 0) bare = (int)i;
+    }
+    return bare;
+}
+
 std::vector<CompletionItem> filterCompletions(const std::vector<CompletionItem>& items,
                                               const std::string& prefix) {
     if (prefix.empty()) return items;
@@ -1203,7 +1454,8 @@ void Client::initialize(const std::string& rootPath, int processId,
                   {"valueSet", Json::array().push("").push("quickfix").push("refactor")
                                    .push("refactor.extract").push("refactor.inline")
                                    .push("refactor.rewrite").push("source")
-                                   .push("source.organizeImports")}})}})},
+                                   .push("source.organizeImports")
+                                   .push("source.fixAll")}})}})},
              {"isPreferredSupport", true},
              {"disabledSupport", true},
              {"dataSupport", true},
@@ -1374,13 +1626,19 @@ int Client::rename(const std::string& uri, Position p, const std::string& newNam
 }
 
 int Client::codeActions(const std::string& uri, Range range, Json diagnostics,
-                        ResultHandler h) {
+                        ResultHandler h, const std::vector<std::string>& only) {
     if (!diagnostics.isArray()) diagnostics = Json::array();
+    Json context = Json::object({{"diagnostics", diagnostics}, {"triggerKind", 1}});
+    if (!only.empty()) {
+        Json kinds = Json::array();
+        for (const std::string& k : only) kinds.push(k);
+        context.set("only", kinds);
+    }
     Json params = Json::object({
         {"textDocument", Json::object({{"uri", uri}})},
         {"range", Json::object({{"start", positionJson(range.start)},
                                 {"end", positionJson(range.end)}})},
-        {"context", Json::object({{"diagnostics", diagnostics}, {"triggerKind", 1}})},
+        {"context", context},
     });
     return request("textDocument/codeAction", params, std::move(h));
 }
