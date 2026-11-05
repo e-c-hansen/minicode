@@ -140,35 +140,99 @@ std::string TerminalScreen::textBetween(int r0, int c0, int r1, int c1) const {
 }
 
 // ------------------------------------------------------------- scrollback
-const TermCell& TerminalScreen::lineCell(int line, int col) const {
-    static const TermCell kBlank;
-    if (col < 0) return kBlank;
+TerminalScreen::HistLine TerminalScreen::pack(const Row& row, size_t width) {
+    HistLine h;
+    h.width = (int)width;
+    bool simple = true;
+    size_t bytes = 0;
+    for (size_t c = 0; c < width; c++) {
+        const TermCell& cell = row[c];
+        bytes += cell.ch.size();
+        if (cell.ch.size() != 1 || cell.width != 1) simple = false;
+    }
+    h.text.reserve(bytes);
+    if (!simple) h.cells.reserve(width);
+    for (size_t c = 0; c < width; c++) {
+        const TermCell& cell = row[c];
+        if (!simple) h.cells.push_back((uint32_t)h.text.size() << 8 | cell.width);
+        h.text += cell.ch;
+        if (h.runs.empty() || h.runs.back().style != cell.style)
+            h.runs.push_back({(uint32_t)c, cell.style});
+    }
+    h.runs.shrink_to_fit();
+    return h;
+}
+
+TermCell TerminalScreen::histCell(const HistLine& h, int col) {
+    TermCell cell;
+    if (col < 0 || col >= h.width) return cell;
+    if (h.cells.empty()) {
+        cell.ch.assign(1, h.text[col]);
+    } else {
+        size_t from = h.cells[col] >> 8;
+        size_t to = col + 1 < h.width ? h.cells[col + 1] >> 8 : h.text.size();
+        cell.ch.assign(h.text, from, to - from);
+        cell.width = (uint8_t)(h.cells[col] & 0xFF);
+    }
+    // The last run starting at or before col.
+    auto it = std::upper_bound(h.runs.begin(), h.runs.end(), (uint32_t)col,
+                               [](uint32_t c, const StyleRun& r) { return c < r.col; });
+    if (it != h.runs.begin()) cell.style = (it - 1)->style;
+    return cell;
+}
+
+TerminalScreen::Row TerminalScreen::unpack(const HistLine& h) {
+    Row row;
+    row.reserve(h.width);
+    for (int c = 0; c < h.width; c++) row.push_back(histCell(h, c));
+    return row;
+}
+
+TermCell TerminalScreen::lineCell(int line, int col) const {
+    if (col < 0) return TermCell();
     if (line >= 0) {
-        if (line >= rows_ || col >= cols_) return kBlank;
+        if (line >= rows_ || col >= cols_) return TermCell();
         return grid()[line][col];
     }
     int i = historySize() + line;
-    if (i < 0) return kBlank;
-    const Row& row = history_[i];
-    return col < (int)row.size() ? row[col] : kBlank;
+    if (i < 0) return TermCell();
+    return histCell(history_[i], col);
 }
 
 int TerminalScreen::lineWidth(int line) const {
     if (line >= 0) return cols_;
     int i = historySize() + line;
-    return i < 0 ? 0 : (int)history_[i].size();
+    return i < 0 ? 0 : history_[i].width;
 }
 
 std::string TerminalScreen::lineText(int line) const {
-    std::string s;
-    size_t keep = 0;
-    for (int c = 0, w = lineWidth(line); c < w; c++) {
-        const TermCell& cell = lineCell(line, c);
-        s += cell.ch;
-        if (cell.ch != " ") keep = s.size();
+    if (line >= 0) return line < rows_ ? rowText(line) : std::string();
+    int i = historySize() + line;
+    if (i < 0) return std::string();
+    // The cells' text is h.text in order; trailing blanks dropped.
+    const HistLine& h = history_[i];
+    size_t keep = h.text.size();
+    while (keep > 0 && h.text[keep - 1] == ' ') keep--;
+    return h.text.substr(0, keep);
+}
+
+size_t TerminalScreen::historyBytes() const {
+    size_t n = 0;
+    for (const HistLine& h : history_) {
+        n += sizeof(HistLine);
+        // A short string lives inside the std::string itself.
+        if (h.text.capacity() >= sizeof(std::string) - 1) n += h.text.capacity() + 1;
+        n += h.cells.capacity() * sizeof(uint32_t);
+        n += h.runs.capacity() * sizeof(StyleRun);
     }
-    s.resize(keep);
-    return s;
+    return n;
+}
+
+size_t TerminalScreen::historyCellBytes() const {
+    size_t n = 0;
+    for (const HistLine& h : history_)
+        n += sizeof(Row) + h.width * sizeof(TermCell);
+    return n;
 }
 
 void TerminalScreen::setScrollbackLimit(int lines) {
@@ -176,21 +240,18 @@ void TerminalScreen::setScrollbackLimit(int lines) {
     while ((int)history_.size() > historyLimit_) history_.pop_front();
 }
 
-void TerminalScreen::pushHistory(Row row) {
+void TerminalScreen::pushHistory(const Row& row) {
     historyBase_++;
     if (historyLimit_ <= 0) return;
     // Trailing blanks in the default colors are dropped (lineCell gives a
-    // blank past a line's end anyway), since most lines are short and a
-    // cell costs some 50 bytes.
+    // blank past a line's end anyway), since most lines are short.
     size_t keep = row.size();
     while (keep > 0) {
         const TermCell& c = row[keep - 1];
         if (c.ch != " " || c.width != 1 || c.style != TermStyle()) break;
         keep--;
     }
-    row.resize(keep);
-    row.shrink_to_fit();
-    history_.push_back(std::move(row));
+    history_.push_back(pack(row, keep));
     while ((int)history_.size() > historyLimit_) history_.pop_front();
 }
 
@@ -226,7 +287,7 @@ void TerminalScreen::resize(int cols, int rows) {
         if (isMain && rows > (int)g->size())
             pull = std::min(rows - (int)g->size(), historySize());
         for (int i = 0; i < pull; i++) {
-            Row back = std::move(history_.back());
+            Row back = unpack(history_.back());
             history_.pop_back();
             historyBase_--;
             back.resize(cols, TermCell());

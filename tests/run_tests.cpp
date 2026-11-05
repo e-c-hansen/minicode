@@ -3165,6 +3165,95 @@ void testTerminalScreen() {
         CHECK(a.rowText(3) == "$" && a.cursorRow() == 3 && a.rowText(0) == "p1");
     }
 
+    GROUP("screen:scrollback-packed");
+    {
+        // Scrollback lines are stored packed (text plus style runs); every
+        // cell must read back as it was on the screen. Random lines of
+        // ASCII, accents with combining marks, wide characters and colors:
+        // before each line leaves the top, its row is copied, and after,
+        // lineCell(-1, c) must give the same cells.
+        std::mt19937 rng(7);
+        const char *pieces[] = {"a", "Z", "0", " ", "é", "e\xCC\x81", "日", "本",
+                                "\xF0\x9F\x98\x80", "─", "\t", "x"};
+        const char *styles[] = {"\033[m", "\033[31m", "\033[1;44m", "\033[38;5;208m",
+                                "\033[48;2;1;2;3m", "\033[4;7m", "\033[9;2m"};
+        TerminalScreen s(23, 3);
+        s.setScrollbackLimit(1000);
+        s.feed("\033[?7l");   // no autowrap: a long line must not scroll by itself
+        bool same = true, widths = true;
+        int compared = 0;
+        for (int line = 0; line < 400 && same; line++) {
+            s.feed("\033[3;1H\033[m\033[2K");
+            int n = (int)(rng() % 30);
+            for (int i = 0; i < n; i++) {
+                if (rng() % 4 == 0) s.feed(styles[rng() % 7]);
+                s.feed(pieces[rng() % 12]);
+            }
+            s.feed("\033[1;1H");
+            std::vector<TermCell> row;
+            for (int c = 0; c < s.cols(); c++) row.push_back(s.cell(0, c));
+            int keep = (int)row.size();
+            while (keep > 0 && row[keep - 1].ch == " " && row[keep - 1].width == 1 &&
+                   row[keep - 1].style == TermStyle())
+                keep--;
+            s.feed("\033[3;1H\n");
+            if (s.lineWidth(-1) != keep) widths = false;
+            for (int c = 0; c < s.cols() + 2; c++) {
+                TermCell want = c < keep ? row[c] : TermCell();
+                TermCell got = s.lineCell(-1, c);
+                if (got.ch != want.ch || got.width != want.width || got.style != want.style) {
+                    same = false;
+                    std::printf("    line %d col %d: '%s' w%d, want '%s' w%d\n", line, c,
+                                got.ch.c_str(), got.width, want.ch.c_str(), want.width);
+                    break;
+                }
+                compared++;
+            }
+        }
+        CHECK(same && widths && compared > 9000);
+        // A line with wide and combining characters comes back down whole.
+        TerminalScreen w(8, 2);
+        w.setScrollbackLimit(10);
+        w.feed("\033[32m日e\xCC\x81\033[m!\r\nx\r\ny");
+        CHECK(w.historySize() == 1 && w.lineText(-1) == "日e\xCC\x81!");
+        CHECK(w.lineCell(-1, 0).width == 2 && w.lineCell(-1, 1).width == 0 &&
+              w.lineCell(-1, 1).ch.empty() && w.lineCell(-1, 2).ch == "e\xCC\x81");
+        CHECK(w.lineCell(-1, 2).style.fg.index == 2 && w.lineCell(-1, 3).style == TermStyle());
+        w.resize(8, 3);
+        CHECK(w.historySize() == 0 && w.rowText(0) == "日e\xCC\x81!");
+        CHECK(w.cell(0, 0).width == 2 && w.cell(0, 1).width == 0 &&
+              w.cell(0, 0).style.fg.index == 2 && w.cell(0, 3).ch == "!");
+    }
+
+    GROUP("screen:scrollback-memory");
+    {
+        // 10,000 full-width lines in a background color (a status line, a
+        // test runner's colored bar), and 10,000 lines of ls-like colored
+        // words: a TermCell per cell took about 48 bytes, so the first
+        // alone was some 53 MB.
+        const int kCols = 111, kLines = 10000;
+        TerminalScreen bar(kCols, 5);
+        bar.setScrollbackLimit(kLines);
+        std::string row = "\033[44m PASS  tests/run_tests.cpp\033[K";
+        for (int i = 0; i < kLines + 5; i++) bar.feed(row + "\033[m\r\n");
+        TerminalScreen ls(kCols, 5);
+        ls.setScrollbackLimit(kLines);
+        std::string words;
+        for (int w = 0; w < 9; w++)
+            words += (w % 3 ? "\033[1;34m" : "\033[32m") + std::string("name") +
+                     std::to_string(w) + "\033[m      ";
+        for (int i = 0; i < kLines + 5; i++) ls.feed(words + "\r\n");
+        CHECK(bar.historySize() == kLines && ls.historySize() == kLines);
+        CHECK(bar.lineWidth(-1) == kCols && bar.lineCell(-1, kCols - 1).style.bg.index == 4);
+        size_t barOld = bar.historyCellBytes(), barNew = bar.historyBytes();
+        size_t lsOld = ls.historyCellBytes(), lsNew = ls.historyBytes();
+        CHECK(barNew * 20 < barOld && lsNew * 8 < lsOld);
+        std::printf("  scrollback: %d colored %d-column lines take %.1f MB "
+                    "(%.1f MB as cells); %d ls-like lines %.1f MB (%.1f MB)\n",
+                    kLines, kCols, barNew / 1048576.0, barOld / 1048576.0, kLines,
+                    lsNew / 1048576.0, lsOld / 1048576.0);
+    }
+
     GROUP("screen:selection-text");
     {
         auto s = screenAfter("abc\r\ndefgh\r\nij", 10, 3);
