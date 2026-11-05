@@ -1405,9 +1405,14 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                         key2:nil label2:nil state:nil];
         [self appendHintsRow:s key:@"⌘ click" label:@"Open a file:line or URL in the terminal"
                         key2:nil label2:nil state:nil];
-        if (!self.terminal.lineMode)
+        [self appendHintsRow:s key:@"⌘F" label:@"Find in the terminal"
+                        key2:@"⌘K" label2:@"Clear the terminal" state:nil];
+        if (!self.terminal.lineMode) {
             [self appendHintsRow:s key:@"⇧⇞" label:@"Scroll back"
                             key2:@"⌘↖" label2:@"Top of the scrollback" state:nil];
+            [self appendHintsRow:s key:@"⌘← ⌘→" label:@"Start, end of the line"
+                            key2:@"⌘⌫" label2:@"Delete to its start" state:nil];
+        }
     }
     [self appendHintsRow:s key:@"⇧⌘B" label:@"Browser"
                     key2:nil label2:nil state:openOr(self.browserVisible)];

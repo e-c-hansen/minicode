@@ -7,6 +7,14 @@
 #import <Cocoa/Cocoa.h>
 #include "TerminalScreen.h"
 
+// Line editing keys the grid gives the shell on the main screen (Command
+// Left, Right and Delete); the host decides the bytes.
+typedef NS_ENUM(NSInteger, MCLineEdit) {
+    MCLineEditStart,          // the start of the line (Ctrl+A)
+    MCLineEditEnd,            // its end (Ctrl+E)
+    MCLineEditDeleteToStart,  // delete back to its start (Ctrl+U)
+};
+
 @interface TerminalGridView : NSView <NSTextInputClient>
 // The screen to draw; owned by the TerminalView, which outlives this view.
 @property(nonatomic, assign) TerminalScreen *screen;
@@ -40,5 +48,31 @@
 + (CGFloat)padding;
 
 // The screen changed: redraw, keeping a scrolled-back view on the same text.
+// While the program draws a synchronized frame (mode 2026) the view waits
+// for it to end, kSyncLimit (0.15 s) at most.
 - (void)screenChanged;
+// The program is in the middle of a synchronized frame and the view is
+// holding its last picture (for tests).
+@property(nonatomic, readonly) BOOL waitingForFrame;
+// The screen and scrollback were cleared under the view (Cmd+K): the
+// selection goes and the view returns to the bottom.
+- (void)contentCleared;
+
+// Command Left, Right and Delete on the main screen.
+@property(nonatomic, copy) void (^onLineEdit)(MCLineEdit edit);
+
+// Find in the terminal (the find bar is TerminalView's). Matches are kept by
+// line number, so they stay on their text as output scrolls it, and they are
+// looked for again shortly after output arrives (onFindChanged then).
+// findText: starts or refines a search. The current match is the one at or
+// before the previous current one, or for a new search the newest at or
+// above the bottom of the view; it is scrolled into view.
+- (void)findText:(NSString *)text matchCase:(BOOL)matchCase;
+// The next match (newer, further down) or the previous one, wrapping.
+- (void)findNext:(BOOL)forward;
+- (void)endFind;
+@property(nonatomic, readonly) NSInteger findCount;   // matches, at most findLimit
+@property(nonatomic, readonly) NSInteger findIndex;   // the current one, -1 for none
+@property(nonatomic, readonly) NSInteger findLimit;
+@property(nonatomic, copy) void (^onFindChanged)(void);
 @end
