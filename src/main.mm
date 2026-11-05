@@ -608,6 +608,7 @@ static BOOL MCWindowTabAction(SEL a) {
     MCShowContextMenuInWindow(NSApp.keyWindow ?: NSApp.mainWindow);
 }
 - (void)openSearch:(id)sender      { [[self current] openSearch:sender]; }
+- (void)openReplaceInFolder:(id)sender { [[self current] openReplaceInFolder:sender]; }
 - (void)focusTree:(id)sender       { [[self current] focusTree:sender]; }
 - (void)focusEditor:(id)sender     { [[self current] focusEditor:sender]; }
 - (void)focusTerminal:(id)sender   { [[self current] focusTerminal:sender]; }
@@ -956,28 +957,73 @@ static void BuildMenu(void) {
     [editMenu addItem:organize];
     [editMenu addItem:[NSMenuItem separatorItem]];
 
-    // Find bar (handled by NSTextView via performTextFinderAction:; the tag is
-    // the NSTextFinderAction raw value).
+    // Find and replace. The items send performTextFinderAction: with the
+    // NSTextFinderAction value as the tag, which the editor (its find bar,
+    // EditorFind.h), a terminal (find, next and previous) and the diff view
+    // (NSTextFinder) each answer. VS Code's keys, except Replace's
+    // Shift+Cmd+1, which is Go to Tab 1 here and Replace only while the
+    // find bar has the keyboard (the bar takes it first).
     NSMenuItem *find = [editMenu addItemWithTitle:@"Find…"
                                            action:@selector(performTextFinderAction:)
                                     keyEquivalent:@"f"];
-    find.tag = 1;   // NSTextFinderActionShowFindInterface
+    find.tag = NSTextFinderActionShowFindInterface;
+    NSMenuItem *replace = [editMenu addItemWithTitle:@"Replace…"
+                                              action:@selector(performTextFinderAction:)
+                                       keyEquivalent:@"f"];
+    replace.tag = NSTextFinderActionShowReplaceInterface;
+    replace.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     NSMenuItem *findNext = [editMenu addItemWithTitle:@"Find Next"
                                                action:@selector(performTextFinderAction:)
                                         keyEquivalent:@"g"];
-    findNext.tag = 2;   // NSTextFinderActionNextMatch
+    findNext.tag = NSTextFinderActionNextMatch;
     NSMenuItem *findPrev = [editMenu addItemWithTitle:@"Find Previous"
                                                action:@selector(performTextFinderAction:)
                                         keyEquivalent:@"g"];
-    findPrev.tag = 3;   // NSTextFinderActionPreviousMatch
+    findPrev.tag = NSTextFinderActionPreviousMatch;
     findPrev.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    NSMenuItem *useSelection = [editMenu addItemWithTitle:@"Use Selection for Find"
+                                                   action:@selector(performTextFinderAction:)
+                                            keyEquivalent:@"e"];
+    useSelection.tag = NSTextFinderActionSetSearchString;
+    NSMenuItem *replaceOne = [editMenu addItemWithTitle:@"Replace"
+                                                 action:@selector(performTextFinderAction:)
+                                          keyEquivalent:@""];
+    replaceOne.tag = NSTextFinderActionReplaceAndFind;
+    NSMenuItem *replaceAll = [editMenu addItemWithTitle:@"Replace All"
+                                                 action:@selector(performTextFinderAction:)
+                                          keyEquivalent:@"\r"];
+    replaceAll.tag = NSTextFinderActionReplaceAll;
+    replaceAll.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    // The editor's find bar and Find in Folder each answer these for
+    // themselves (EditorController and SearchPanel, as window delegates).
+    NSMenu *findOptions = [[NSMenu alloc] initWithTitle:@"Find Options"];
+    NSString *const optionTitles[] = {@"Match Case", @"Match Whole Word", @"Use Regular Expression"};
+    NSString *const optionKeys[] = {@"c", @"w", @"r"};
+    SEL const optionActions[] = {@selector(toggleFindMatchCase:), @selector(toggleFindWholeWord:),
+                                 @selector(toggleFindRegex:)};
+    for (int i = 0; i < 3; i++) {
+        NSMenuItem *it = [findOptions addItemWithTitle:optionTitles[i] action:optionActions[i]
+                                         keyEquivalent:optionKeys[i]];
+        it.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    }
+    NSMenuItem *findOptionsItem = [[NSMenuItem alloc] initWithTitle:@"Find Options"
+                                                              action:nil keyEquivalent:@""];
+    findOptionsItem.submenu = findOptions;
+    [editMenu addItem:findOptionsItem];
     NSMenuItem *findInFolder =
         [[NSMenuItem alloc] initWithTitle:@"Find in Folder…"
                                    action:@selector(openSearch:) keyEquivalent:@"f"];
     findInFolder.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [editMenu addItem:findInFolder];
+    // VS Code's Replace in Files is Shift+Cmd+H, which is the hints here.
+    NSMenuItem *replaceInFolder =
+        [[NSMenuItem alloc] initWithTitle:@"Replace in Folder…"
+                                   action:@selector(openReplaceInFolder:) keyEquivalent:@"f"];
+    replaceInFolder.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift | NSEventModifierFlagOption;
+    [editMenu addItem:replaceInFolder];
     // Shift+Cmd+D ("to do"): Shift+Cmd+L is VS Code's Select All
     // Occurrences, and VS Code's Shift+Cmd+D opens its debugger, which
     // minicode has no counterpart for.

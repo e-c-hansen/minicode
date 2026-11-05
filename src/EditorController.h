@@ -45,6 +45,7 @@
 - (void)toggleHiddenFiles:(id)sender; // Cmd+Shift+. show/hide dotfiles
 - (void)toggleTreeColumn:(id)sender;  // the tree's size, saved and created columns (tag)
 - (void)openSearch:(id)sender;        // Cmd+Shift+F project-wide search
+- (void)openReplaceInFolder:(id)sender;   // Option+Shift+Cmd+F, the same with replace
 // The editor window itself, or a window it made for itself (Find in Folder,
 // TODOs, a sheet or child window of it).
 - (BOOL)ownsWindow:(NSWindow *)window;

@@ -24,6 +24,7 @@
 #import "ChangePanel.h"
 #import "BackupStore.h"
 #import "AgentPanel.h"
+#import "EditorFind.h"
 #import "ProblemsPanel.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #import <AVKit/AVKit.h>                 // video and audio in the editor's slot
@@ -599,6 +600,7 @@ private:
     NSString *_missingBefore;              // the open file's missing server, last time
     MCChangeSession *_change;              // Request a Change (Shift+Cmd+K), made on first use
     MCAgentSession *_agent;                // the inline agent (Cmd+I), made on first use
+    MCEditorFind *_editorFind;             // the editor's find and replace bar (EditorFind.h)
     NSDate *_backupFirstPending;           // the oldest buffer change not yet backed up
 }
 @property(nonatomic, strong) NSWindow *window;
@@ -793,7 +795,7 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
     self.textView.allowsUndo = YES;
     self.textView.automaticSpellingCorrectionEnabled = NO;
     self.textView.automaticDashSubstitutionEnabled = NO;
-    self.textView.usesFindBar = YES;               // Cmd+F find bar
+    self.textView.usesFindBar = NO;                // Cmd+F is MCEditorFind's bar
     // Not the Font panel: MiniCode sets its own fonts, and a text view that
     // uses it also pushes the color under the caret into the shared color
     // panel whenever the selection moves. With the panel picking a color for
@@ -881,6 +883,10 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
     self.rightArea.onLayout = ^{ [weakSelf relayoutRightArea]; };
     textScroll.frame = self.rightArea.bounds;
     [self.rightArea addSubview:textScroll];
+    _editorFind = [[MCEditorFind alloc] initWithTextView:self.textView];
+    _editorFind.onLayoutNeeded = ^{ [weakSelf relayoutRightArea]; };
+    _editorFind.onNote = ^(NSString *note) { [weakSelf flashStatus:note]; };
+    [self.rightArea addSubview:_editorFind.bar];
     [self buildTabStrip];
 
     [split addSubview:treeScroll];
@@ -1025,6 +1031,8 @@ static void *kMediaItemContext = &kMediaItemContext;
                                                                    : NSAppearanceNameAqua];
     if (![w.appearance.name isEqualToString:look.name]) w.appearance = look;
     self.blurView.appearance = look;
+
+    [_editorFind applySettings];
 
     BOOL custom = st.customTitlebar();
     w.titlebarAppearsTransparent = custom;
@@ -1399,6 +1407,14 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⌃⇧K" label2:@"Delete line" state:nil];
     [self appendHintsRow:s key:@"⌘/" label:@"Toggle comment"
                     key2:@"⇧⌘F" label2:@"Find in folder" state:nil];
+    [self appendHintsRow:s key:@"⌥⌘F" label:@"Replace in file"
+                    key2:@"⌥⇧⌘F" label2:@"Replace in folder" state:nil];
+    [self appendHintsRow:s key:@"⌘G ⇧⌘G" label:@"Next, previous match"
+                    key2:@"⌘E" label2:@"Use selection for find" state:nil];
+    [self appendHintsRow:s key:@"⌥⌘C ⌥⌘W" label:@"Match case, whole word"
+                    key2:@"⌥⌘R" label2:@"Regular expression" state:nil];
+    [self appendHintsRow:s key:@"⇧⌘1" label:@"Replace (in the find bar)"
+                    key2:@"⌥⌘⏎" label2:@"Replace all" state:nil];
     [self appendHintsRow:s key:@"⇧⌘drag" label:@"Column, or two clicks"
                     key2:@"⌥click" label2:@"Add a cursor" state:nil];
     [self appendHintsRow:s key:@"⌥↓ ⌘↓" label:@"Move line down"
@@ -1618,6 +1634,7 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     self.editorScroll.frame = editorRect;
     self.editorScroll.hidden = !showEditor || showLatex || showImage || showPDF ||
                                showMedia || showDiff;
+    [_editorFind layoutInEditorRect:editorRect visible:!self.editorScroll.hidden];
     if (self.diffScroll) {
         self.diffScroll.frame = editorRect;
         self.diffScroll.hidden = !showDiff;
@@ -1667,7 +1684,9 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     NSMutableArray<NSView *> *bars = [NSMutableArray array];
     if (self.browserDivider) [bars addObject:self.browserDivider];
     if (self.termDivider) [bars addObject:self.termDivider];
-    // The inline agent's bar floats over everything, the drag bars too.
+    // The find bar floats over the editor, and the inline agent's bar over
+    // everything, the drag bars too.
+    if (!_editorFind.bar.hidden) [bars addObject:_editorFind.bar];
     if (_agent.shown) {
         [_agent layout];
         [bars addObject:_agent.bar];
@@ -2209,6 +2228,22 @@ static const CGFloat kDividerGrabSlop = 5;
                           : MCGitDiffText(self.diffData, mono)];
 }
 
+// ------------------------------------------------- find and replace
+// The find items reach the text view first when it has the keyboard
+// (CodeTextView onFindAction); from anywhere else in the window (the tree,
+// the source control panel) they open the editor's bar while it shows text.
+- (void)performTextFinderAction:(id)sender {
+    if (self.editorScroll.hidden) {
+        NSBeep();
+        return;
+    }
+    [_editorFind performFindAction:[sender respondsToSelector:@selector(tag)] ? [sender tag] : 0];
+}
+// Option+Cmd+C, W and R (Edit > Find Options), VS Code's keys.
+- (void)toggleFindMatchCase:(id)sender { [_editorFind toggleMatchCase]; }
+- (void)toggleFindWholeWord:(id)sender { [_editorFind toggleWholeWord]; }
+- (void)toggleFindRegex:(id)sender { [_editorFind toggleRegex]; }
+
 // Cmd+Shift+. : show or hide dotfiles in the tree (like Finder).
 - (void)toggleHiddenFiles:(id)sender {
     gShowHidden = !gShowHidden;
@@ -2217,6 +2252,17 @@ static const CGFloat kDividerGrabSlop = 5;
 
 // Cmd+Shift+F : project-wide text search.
 - (void)openSearch:(id)sender {
+    [self makeSearchPanel];
+    [self.searchPanel show];
+}
+
+// Option+Shift+Cmd+F: the same window, the keyboard in its replace field.
+- (void)openReplaceInFolder:(id)sender {
+    [self makeSearchPanel];
+    [self.searchPanel showReplace];
+}
+
+- (void)makeSearchPanel {
     if (!self.searchPanel) {
         __weak EditorController *weakSelf = self;
         self.searchPanel = [[SearchPanel alloc]
@@ -2227,6 +2273,24 @@ static const CGFloat kDividerGrabSlop = 5;
                 [s jumpToLine:line];
                 [s.window makeKeyAndOrderFront:nil];
             }];
+        // Replace in Folder edits open tabs through their buffers, as
+        // rename does, and leaves a tab with unsaved changes alone.
+        self.searchPanel.openState = ^MCOpenFileState(NSString *path) {
+            return [weakSelf replaceStateOfPath:path];
+        };
+        self.searchPanel.tabText = ^NSString *(NSString *path) {
+            EditorController *s = weakSelf;
+            return s ? s.lsp.bufferText(path) : nil;
+        };
+        self.searchPanel.editTabs = ^NSInteger(NSArray<NSString *> *paths,
+                                               NSArray<NSArray<NSValue *> *> *ranges,
+                                               NSArray<NSArray<NSString *> *> *strings,
+                                               NSString **failure) {
+            EditorController *s = weakSelf;
+            if (!s) return -1;
+            return [s.lsp applyEditsToPaths:paths ranges:ranges strings:strings
+                                 actionName:@"Replace in Folder" failure:failure];
+        };
     }
     // If a folder is selected in the tree, scope the search to it; otherwise
     // leave the scope as it is (the opened folder by default).
@@ -2235,7 +2299,39 @@ static const CGFloat kDividerGrabSlop = 5;
         FileItem *node = [self.outline itemAtRow:row];
         if (node.isDir) [self.searchPanel setScope:node.path];
     }
-    [self.searchPanel show];
+}
+
+// How a tab of this window holds a file, for Replace in Folder: 0 none (or
+// one that will simply reload from disk: not read yet, or a clean preview),
+// 1 a text tab holding the disk's text, 2 a tab whose text the disk does
+// not have (unsaved changes, or a change on disk not taken in yet).
+- (int)tabHoldOfPath:(NSString *)path disk:(NSString *__strong *)disk {
+    MCTab *t = [self tabForPath:path];
+    if (!t || t.showingMessage || t.isImage || t.isPDF || t.isMedia || t.isDiff) return 0;
+    if (!t.loaded && !t.dirty) return 0;
+    NSString *text = self.lsp.bufferText(path);
+    if (!text) return t.dirty ? 2 : 0;
+    if (!*disk) *disk = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding
+                                                     error:nil] ?: @"";
+    if (![text isEqualToString:*disk]) return 2;
+    if (t.previewMode && !t.dirty) return 0;   // shows the disk's text: it reloads
+    return t.previewMode ? 2 : 1;
+}
+
+// Across every editor window: a tab with text the disk lacks anywhere
+// leaves the file alone; a tab here holding the disk's text is edited
+// there; otherwise the file is written (other windows' clean tabs reload).
+- (MCOpenFileState)replaceStateOfPath:(NSString *)path {
+    NSString *disk = nil;
+    MCOpenFileState state = MCOpenFileNone;
+    for (NSWindow *w in NSApp.windows) {
+        id d = w.delegate;
+        if (![d isKindOfClass:[EditorController class]]) continue;
+        int hold = [(EditorController *)d tabHoldOfPath:path disk:&disk];
+        if (hold == 2) return MCOpenFileConflict;
+        if (hold == 1 && d == self) state = MCOpenFileHere;
+    }
+    return state;
 }
 
 - (BOOL)ownsWindow:(NSWindow *)w {
@@ -5041,6 +5137,20 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
         item.state = self.problemsVisible ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
     }
+    if (item.action == @selector(toggleFindMatchCase:)) {
+        item.state = _editorFind.matchCase ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
+    if (item.action == @selector(toggleFindWholeWord:)) {
+        item.state = _editorFind.wholeWord ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
+    if (item.action == @selector(toggleFindRegex:)) {
+        item.state = _editorFind.regex ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
+    if (item.action == @selector(performTextFinderAction:))
+        return !self.editorScroll.hidden && [_editorFind validateFindAction:item.tag];
     if (item.action == @selector(undo:))
         return [self latexIsShowing] && [self.latex canUndoEdit];
     if (item.action == @selector(redo:))
@@ -5882,6 +5992,10 @@ static NSColor *ContrastColor(const Rgba &c) {
 // Option+Esc (complete:) asks the language server.
 - (BOOL)textView:(NSTextView *)tv doCommandBySelector:(SEL)sel {
     if ([self.lsp handleCommand:sel]) return YES;
+    // Esc with nothing else to close closes the find bar, as in VS Code.
+    if (tv == self.textView && sel == @selector(cancelOperation:) &&
+        !self.textView.multiCaretActive && [_editorFind closeFromEditor])
+        return YES;
     // Return, Tab, Shift+Tab and Backspace follow the language's indentation
     // (AutoIndent), and Return in a Markdown list continues the list.
     if (tv == self.textView && MCIndentCommand(tv, sel, self.currentPath, self.isMarkdown))

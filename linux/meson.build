@@ -21,6 +21,7 @@ core_sources = [
   core_dir / 'AutoIndent.cpp',
   core_dir / 'KeepSorted.cpp',
   core_dir / 'FolderSearch.cpp',
+  core_dir / 'TextFind.cpp',
   core_dir / 'LatexDoc.cpp',
   core_dir / 'SyncTex.cpp',
   core_dir / 'Json.cpp',

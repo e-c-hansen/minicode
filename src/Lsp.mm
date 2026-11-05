@@ -864,7 +864,15 @@ static NSColor *SeverityColor(NSInteger severity) {
         return self.editable;
     // With nothing selected, Copy and Cut take the line (MultiCaretView.h).
     if ((a == @selector(copy:) || a == @selector(cut:)) && self.editable) return YES;
+    if (a == @selector(performTextFinderAction:) && _validateFindAction)
+        return _validateFindAction(item.tag);
     return [super validateMenuItem:item];
+}
+
+- (void)performTextFinderAction:(id)sender {
+    NSInteger tag = [sender respondsToSelector:@selector(tag)] ? [sender tag] : 0;
+    if (_onFindAction && _onFindAction(tag)) return;
+    [super performTextFinderAction:sender];
 }
 
 // ---- editor.ruler: drawn with the background, so the text covers it.
@@ -880,6 +888,7 @@ static NSColor *SeverityColor(NSInteger severity) {
 
 - (void)drawViewBackgroundInRect:(NSRect)rect {
     [super drawViewBackgroundInRect:rect];
+    if (_drawBehindText) _drawBehindText(rect);
     if (!self.editable || _rulerColumns.count == 0 || !_rulerColor) return;
     NSFont *font = self.typingAttributes[NSFontAttributeName];
     if (!font.fixedPitch) font = [NSFont monospacedSystemFontOfSize:13 weight:NSFontWeightRegular];
@@ -3852,6 +3861,36 @@ static NSString *ErrorText(const Json &error) {
     [self syncOpenDocuments];
     if (!ok) *failure = why ?: @"The edit could not be made";
     return ok ? changed : -1;
+}
+
+- (NSInteger)applyEditsToPaths:(NSArray<NSString *> *)paths
+                        ranges:(NSArray<NSArray<NSValue *> *> *)ranges
+                       strings:(NSArray<NSArray<NSString *> *> *)strings
+                    actionName:(NSString *)name
+                       failure:(NSString **)failure {
+    [self flushChanges];
+    Lsp::WorkspaceEdit we;
+    for (NSUInteger i = 0; i < paths.count; i++) {
+        Lsp::FileEdit f;
+        f.uri = Lsp::uriFromPath(Std(RealPath(paths[i])));
+        NSString *text = [self textOfPath:paths[i] uri:f.uri];
+        if (!text) {
+            if (failure) *failure = [NSString stringWithFormat:@"Could not read %@",
+                                                               paths[i].lastPathComponent];
+            return -1;
+        }
+        const std::u16string u = U16Of(text);
+        for (NSUInteger k = 0; k < ranges[i].count; k++) {
+            NSRange r = ranges[i][k].rangeValue;
+            Lsp::TextEdit e;
+            e.range.start = Lsp::positionForOffset(u, r.location);
+            e.range.end = Lsp::positionForOffset(u, NSMaxRange(r));
+            e.newText = Std(strings[i][k]);
+            f.edits.push_back(e);
+        }
+        we.files.push_back(f);
+    }
+    return [self applyWorkspaceEdit:we actionName:name failure:failure];
 }
 
 // ---- rename

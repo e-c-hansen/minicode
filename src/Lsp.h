@@ -60,6 +60,12 @@
 // monospaced font (none while the view is read-only, as a preview is).
 @property(nonatomic, copy) NSArray<NSNumber *> *rulerColumns;
 @property(nonatomic, strong) NSColor *rulerColor;
+// Drawn behind the text, after the background: the find bar's highlights.
+@property(nonatomic, copy) void (^drawBehindText)(NSRect rect);
+// The Edit menu's find items (performTextFinderAction:, by their
+// NSTextFinderAction tags) go here when set, in place of NSTextFinder.
+@property(nonatomic, copy) BOOL (^onFindAction)(NSInteger tag);
+@property(nonatomic, copy) BOOL (^validateFindAction)(NSInteger tag);
 // The character drawn at a point in the view, or NSNotFound.
 - (NSUInteger)characterIndexUnderPoint:(NSPoint)point;
 // The message of the diagnostic covering a character, or nil.
@@ -185,6 +191,15 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 // to other files go into their tabs (opened when need be) as one undo step
 // each, unsaved.
 - (void)renameSymbol;
+// Edits to files open in tabs (Replace in Folder), made as rename makes
+// its: every file or none, each in its tab's buffer as one undo step,
+// unsaved. ranges[i] (UTF-16, ascending, not overlapping) and strings[i]
+// are paths[i]'s. Returns how many files changed, or -1 with *failure.
+- (NSInteger)applyEditsToPaths:(NSArray<NSString *> *)paths
+                        ranges:(NSArray<NSArray<NSValue *> *> *)ranges
+                       strings:(NSArray<NSArray<NSString *> *> *)strings
+                    actionName:(NSString *)name
+                       failure:(NSString **)failure;
 // Shift+F12: every reference to the name at the caret, grouped by file, in
 // a list by the caret; Return or a click opens one.
 - (void)findReferences;
