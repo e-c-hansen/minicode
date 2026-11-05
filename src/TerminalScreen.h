@@ -14,6 +14,7 @@
 #pragma once
 #include "TerminalStream.h"
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -41,19 +42,49 @@ public:
     void feed(const std::string& s) { feed(s.data(), s.size()); }
 
     // Change the size. Columns are cut or padded (no reflow); when rows are
-    // removed, lines scroll off the top as needed to keep the cursor's line.
+    // removed, lines scroll off the top as needed to keep the cursor's line
+    // (into the scrollback, on the main screen). When rows are added to the
+    // main screen and the scrollback has lines, they come back down from it,
+    // as in Terminal.app, so making a pane smaller and larger again loses
+    // nothing; otherwise blank rows are added below.
     void resize(int cols, int rows);
 
     int cols() const { return cols_; }
     int rows() const { return rows_; }
     const TermCell& cell(int row, int col) const { return grid()[row][col]; }
 
+    // Scrollback: lines that scrolled off the top of the main screen (a line
+    // feed at the bottom with the scroll region starting at the top row, as
+    // xterm saves them), oldest first, up to a limit; the alternate screen
+    // never adds any. The limit is 0 (none kept) until the host sets one.
+    // Lines keep the width they had; a lower limit drops the oldest at once.
+    void setScrollbackLimit(int lines);
+    int scrollbackLimit() const { return historyLimit_; }
+    int historySize() const { return (int)history_.size(); }
+    // How many lines have ever gone into the scrollback, so the number of
+    // screen row 0 if every line were counted from the first. A line's
+    // number (historyBase() + line) stays the same as it scrolls up, which
+    // lets a host keep a scrolled-back view or a selection on its text.
+    long long historyBase() const { return historyBase_; }
+    // A cell of a line of the scrollback and screen together: lines
+    // -historySize() .. -1 are the scrollback (-1 the newest), 0 .. rows()-1
+    // the screen. A blank past the end of a line or outside them.
+    const TermCell& lineCell(int line, int col) const;
+    // Characters in a line: cols() on the screen, its own width above it.
+    int lineWidth(int line) const;
+    // A line as UTF-8, trailing blanks dropped (rowText for screen rows).
+    std::string lineText(int line) const;
+    void clearHistory() { history_.clear(); }
+
     // One row as UTF-8, trailing blanks dropped.
     std::string rowText(int row) const;
     // Every row, joined with "\n", trailing blank rows dropped.
     std::string text() const;
     // The text between two cells, inclusive and in reading order, as a
-    // selection copies it: each row's trailing blanks dropped.
+    // selection copies it: each row's trailing blanks dropped. Rows are
+    // lines as lineCell numbers them, so negative ones are the scrollback.
+    // A selection that reaches the right edge of a scrollback line wider
+    // than the screen takes the whole line.
     std::string textBetween(int row0, int col0, int row1, int col1) const;
 
     int cursorRow() const { return y_; }
@@ -103,6 +134,9 @@ private:
     TermParser parser_;
     int cols_, rows_;
     Grid main_, alt_;
+    std::deque<Row> history_;         // above main_, oldest first
+    int historyLimit_ = 0;
+    long long historyBase_ = 0;
     bool onAlt_ = false;              // showing the alternate screen
     Grid& grid() { return onAlt_ ? alt_ : main_; }
     const Grid& grid() const { return onAlt_ ? alt_ : main_; }
@@ -135,7 +169,10 @@ private:
 
     void lineFeed();
     void reverseIndex();
-    void scrollUp(int n);             // within the scroll region
+    void scrollUp(int n, bool save = false);   // within the scroll region;
+                                      // save: what leaves the top goes to the
+                                      // scrollback (main screen, region at top)
+    void pushHistory(Row row);
     void scrollDown(int n);
     void moveTo(int x, int y);        // absolute; clamps, clears pending wrap
     void clearWide(int y, int x);     // blank the other half of a wide char

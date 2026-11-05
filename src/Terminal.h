@@ -2,8 +2,10 @@
 // zsh runs interactively on a pseudo-terminal, so programs see a tty: Ctrl+C
 // interrupts, prompts like sudo's work, and output streams line by line. Shell
 // integration marks (OSC 133 / OSC 7) delimit commands and report the cwd.
-// Ordinary output is shown as a colored log with a line input; full-screen
-// programs (vim, less, htop) get a cell grid that takes keys directly.
+// In grid mode (the default) the terminal is a cell grid with zsh's own line
+// editor, as in Terminal.app. In line mode ordinary output is shown as a
+// colored log with a line input, and full-screen programs (vim, less, htop)
+// get the cell grid, which takes keys directly.
 #import <Cocoa/Cocoa.h>
 
 // Something Cmd+click can open in terminal output: a file that exists (with
@@ -34,8 +36,12 @@ extern NSNotificationName const MCTerminalCommandDidFinishNotification;
 
 // zsh is waiting for a command (from the shell integration's marks).
 @property(nonatomic, readonly) BOOL atPrompt;
-// A full-screen program has the grid.
+// A full-screen program has the screen (vim, less). In line mode, that is
+// when the grid shows in place of the log.
 @property(nonatomic, readonly) BOOL gridMode;
+// This terminal opened in line mode (terminal.mode = line): the log and an
+// input line. Otherwise it is a grid terminal, with zsh's own line editor.
+@property(nonatomic, readonly) BOOL lineMode;
 // A command is running, or one is waiting to be typed: not a terminal to
 // type another command into. A shell still starting is not busy.
 @property(nonatomic, readonly) BOOL busy;
@@ -58,10 +64,11 @@ extern NSNotificationName const MCTerminalCommandDidFinishNotification;
 // goes into the shell's history like any other. Waits for the prompt when the
 // shell is still starting (or restarts a shell that exited).
 - (void)runCommand:(NSString *)line;
-// Puts a command in the input line and gives it the keyboard, for the user
-// to read and press Return (Run in Terminal for an install command). Never
-// runs it. NO when the terminal cannot take it now (a program has the grid,
-// or the terminal is busy); then nothing changed.
+// Puts a command in the input line (grid mode: at zsh's prompt, once it
+// shows) and gives it the keyboard, for the user to read and press Return
+// (Run in Terminal for an install command). Never runs it. NO when the
+// terminal cannot take it now (a program has the screen, or the terminal is
+// busy); then nothing changed.
 - (BOOL)typeCommand:(NSString *)line;
 // Ends the shell (SIGHUP, the pty closed) for good. The view is then dead.
 - (void)close;

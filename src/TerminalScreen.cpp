@@ -117,17 +117,20 @@ std::string TerminalScreen::text() const {
 
 std::string TerminalScreen::textBetween(int r0, int c0, int r1, int c1) const {
     if (r1 < r0 || (r1 == r0 && c1 < c0)) { std::swap(r0, r1); std::swap(c0, c1); }
-    r0 = clampInt(r0, 0, rows_ - 1);
-    r1 = clampInt(r1, 0, rows_ - 1);
+    int firstLine = -historySize();
+    r0 = clampInt(r0, firstLine, rows_ - 1);
+    r1 = clampInt(r1, firstLine, rows_ - 1);
     std::string out;
     for (int r = r0; r <= r1; r++) {
+        int width = lineWidth(r);
         int from = r == r0 ? clampInt(c0, 0, cols_ - 1) : 0;
-        int to = r == r1 ? clampInt(c1, 0, cols_ - 1) : cols_ - 1;
+        int to = r == r1 && c1 < cols_ - 1 ? clampInt(c1, 0, cols_ - 1) : width - 1;
         std::string line;
         size_t keep = 0;
         for (int c = from; c <= to; c++) {
-            line += grid()[r][c].ch;
-            if (grid()[r][c].ch != " ") keep = line.size();
+            const TermCell& cell = lineCell(r, c);
+            line += cell.ch;
+            if (cell.ch != " ") keep = line.size();
         }
         line.resize(keep);
         out += line;
@@ -136,22 +139,105 @@ std::string TerminalScreen::textBetween(int r0, int c0, int r1, int c1) const {
     return out;
 }
 
+// ------------------------------------------------------------- scrollback
+const TermCell& TerminalScreen::lineCell(int line, int col) const {
+    static const TermCell kBlank;
+    if (col < 0) return kBlank;
+    if (line >= 0) {
+        if (line >= rows_ || col >= cols_) return kBlank;
+        return grid()[line][col];
+    }
+    int i = historySize() + line;
+    if (i < 0) return kBlank;
+    const Row& row = history_[i];
+    return col < (int)row.size() ? row[col] : kBlank;
+}
+
+int TerminalScreen::lineWidth(int line) const {
+    if (line >= 0) return cols_;
+    int i = historySize() + line;
+    return i < 0 ? 0 : (int)history_[i].size();
+}
+
+std::string TerminalScreen::lineText(int line) const {
+    std::string s;
+    size_t keep = 0;
+    for (int c = 0, w = lineWidth(line); c < w; c++) {
+        const TermCell& cell = lineCell(line, c);
+        s += cell.ch;
+        if (cell.ch != " ") keep = s.size();
+    }
+    s.resize(keep);
+    return s;
+}
+
+void TerminalScreen::setScrollbackLimit(int lines) {
+    historyLimit_ = std::max(0, lines);
+    while ((int)history_.size() > historyLimit_) history_.pop_front();
+}
+
+void TerminalScreen::pushHistory(Row row) {
+    historyBase_++;
+    if (historyLimit_ <= 0) return;
+    // Trailing blanks in the default colors are dropped (lineCell gives a
+    // blank past a line's end anyway), since most lines are short and a
+    // cell costs some 50 bytes.
+    size_t keep = row.size();
+    while (keep > 0) {
+        const TermCell& c = row[keep - 1];
+        if (c.ch != " " || c.width != 1 || c.style != TermStyle()) break;
+        keep--;
+    }
+    row.resize(keep);
+    row.shrink_to_fit();
+    history_.push_back(std::move(row));
+    while ((int)history_.size() > historyLimit_) history_.pop_front();
+}
+
 // ----------------------------------------------------------------- resize
 void TerminalScreen::resize(int cols, int rows) {
     cols = std::max(cols, 1);
     rows = std::max(rows, 1);
     if (cols == cols_ && rows == rows_) return;
     for (Grid* g : {&main_, &alt_}) {
+        bool isMain = g == &main_;
         for (Row& row : *g) {
             row.resize(cols, TermCell());
             // A wide character cut in half at the new edge becomes a blank.
             if (cols > 0 && row[cols - 1].width == 2) row[cols - 1] = TermCell();
         }
-        // Drop lines off the top to keep the cursor's line on screen.
-        int drop = g == &grid() ? std::max(0, y_ + 1 - rows) : 0;
-        if (drop) g->erase(g->begin(), g->begin() + drop);
+        // The row this screen's cursor is on: the live cursor for the screen
+        // on show, the one saved on entering the alternate screen for the
+        // main screen behind it.
+        bool shown = g == &grid();
+        int* cursorY = shown ? &y_ : (isMain ? &savedMain_.y : nullptr);
+        // Drop lines off the top to keep the cursor's line on screen. On the
+        // main screen they go into the scrollback, as if scrolled off.
+        int drop = cursorY ? std::max(0, *cursorY + 1 - rows) : 0;
+        if (drop) {
+            if (isMain)
+                for (int r = 0; r < drop; r++) pushHistory((*g)[r]);
+            g->erase(g->begin(), g->begin() + drop);
+            *cursorY -= drop;
+        }
+        // Rows added to the main screen come back down from the scrollback
+        // first, the newest line nearest the screen.
+        int pull = 0;
+        if (isMain && rows > (int)g->size())
+            pull = std::min(rows - (int)g->size(), historySize());
+        for (int i = 0; i < pull; i++) {
+            Row back = std::move(history_.back());
+            history_.pop_back();
+            historyBase_--;
+            back.resize(cols, TermCell());
+            if (back[cols - 1].width == 2) back[cols - 1] = TermCell();
+            g->insert(g->begin(), std::move(back));
+        }
+        if (pull) {
+            if (shown) y_ += pull;
+            else savedMain_.y += pull;
+        }
         g->resize(rows, Row(cols, TermCell()));
-        if (g == &grid()) y_ -= drop;
     }
     cols_ = cols;
     rows_ = rows;
@@ -191,10 +277,12 @@ void TerminalScreen::moveTo(int x, int y) {
     wrapPending_ = false;
 }
 
-void TerminalScreen::scrollUp(int n) {
+void TerminalScreen::scrollUp(int n, bool save) {
     n = std::min(n, bottom_ - top_ + 1);
     if (n <= 0) return;
     Grid& g = grid();
+    if (save && !onAlt_ && top_ == 0)
+        for (int r = 0; r < n; r++) pushHistory(g[r]);
     std::rotate(g.begin() + top_, g.begin() + top_ + n, g.begin() + bottom_ + 1);
     for (int r = bottom_ - n + 1; r <= bottom_; r++) g[r].assign(cols_, blank());
 }
@@ -208,7 +296,7 @@ void TerminalScreen::scrollDown(int n) {
 }
 
 void TerminalScreen::lineFeed() {
-    if (y_ == bottom_) scrollUp(1);
+    if (y_ == bottom_) scrollUp(1, true);
     else if (y_ < rows_ - 1) y_++;
 }
 
@@ -499,8 +587,10 @@ void TerminalScreen::csi(const std::string& csi, unsigned char f) {
         } else if (raw == 1) {
             for (int r = 0; r < y_; r++) eraseCells(r, 0, cols_);
             eraseCells(y_, 0, x_ + 1);
-        } else if (raw == 2 || raw == 3) {
+        } else if (raw == 2) {
             for (int r = 0; r < rows_; r++) eraseCells(r, 0, cols_);
+        } else if (raw == 3) {
+            history_.clear();                    // xterm: erase saved lines
         }
         break;
     case 'K':                                    // EL
@@ -621,7 +711,12 @@ std::string TerminalScreen::encodeKey(TermKey key, int mods, bool appCursor,
     case TermKey::F10: return tilde(21);
     case TermKey::F11: return tilde(23);
     case TermKey::F12: return tilde(24);
-    case TermKey::Enter: return meta + "\r";
+    // Shift+Return is ESC CR, as VS Code's terminal setup for Claude Code
+    // sends it: Claude Code (and other Ink programs) take it as a new line
+    // rather than submitting, and zsh inserts a line break with it.
+    case TermKey::Enter:
+        if ((mods & TermModShift) && !(mods & TermModCtrl)) return "\x1b\r";
+        return meta + "\r";
     case TermKey::KeypadEnter: return appKeypad ? "\x1bOM" : meta + "\r";
     case TermKey::Backspace:
         return meta + ((mods & TermModCtrl) ? "\x08" : "\x7f");

@@ -111,6 +111,9 @@ struct TermEvent {
         CommandStart,    // OSC 133;C — a command began running
         CommandEnd,      // OSC 133;D[;status] — it finished
         Directory,       // OSC 7 — the shell's working directory changed
+        InputStart,      // OSC 133;B — the prompt is drawn and the line
+                         // editor reads input (sent by the grid mode's zsh
+                         // integration once ZLE has started)
     };
     Kind kind;
     // Line: the whole current line as styled runs. When `ended` is false the
@@ -118,7 +121,10 @@ struct TermEvent {
     // finished by a newline and the next Line event is a new line.
     std::vector<TermRun> runs;
     bool ended = false;
-    std::string text;    // Directory: the decoded path
+    std::string text;    // Directory: the decoded path. CommandStart: the
+                         // command line, when an OSC 633;E;<line> came
+                         // before it (the grid mode's zsh integration sends
+                         // one from preexec), else empty
     int status = 0;      // CommandEnd: exit status (0 if not reported)
 };
 
@@ -158,6 +164,7 @@ private:
     size_t col_ = 0;
     bool dirty_ = false;         // the live line changed since last emitted
     bool alt_ = false;           // on the alternate screen
+    std::string commandLine_;    // from OSC 633;E, for the next CommandStart
 
     void printCodepoint(uint32_t cp, const std::string& utf8);
     void newline(std::vector<TermEvent>& out);

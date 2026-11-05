@@ -158,6 +158,20 @@ public:
     // when it is saved (off by default).
     bool keepSortedOnSave() const { return keepSortedOnSave_; }
 
+    // The terminal. terminal.mode: grid (the default) makes each new
+    // terminal a real one, the cell grid with zsh's own line editor, prompt
+    // and key bindings; line is the older log with an input line below it,
+    // kept for a release as a fallback. A change applies to terminals opened
+    // after it. terminal.scrollback: lines kept above a grid terminal's
+    // screen (10000 by default, 0 for none, at most 100000).
+    // terminal.option-as-meta: Option sends ESC before the key, for the
+    // shell's Meta bindings (true by default); false lets Option type the
+    // characters the keyboard layout puts on it (@ { | on many European
+    // layouts) and dead keys.
+    bool terminalLineMode() const { return terminalLineMode_; }
+    int terminalScrollback() const { return terminalScrollback_; }
+    bool terminalOptionAsMeta() const { return terminalOptionAsMeta_; }
+
     // Language servers. lsp.enabled turns the whole client on or off (on by
     // default). lsp.<server> names the command for one server key (cpp,
     // python, go, rust, typescript): a whole command line, arguments and all,
@@ -224,6 +238,9 @@ private:
     bool webImages_ = true;
     bool math_ = true;
     bool keepSortedOnSave_ = false;
+    bool terminalLineMode_ = false;
+    int terminalScrollback_ = 10000;
+    bool terminalOptionAsMeta_ = true;
     std::map<std::string, std::string> lspCommands_;
     bool runInNewTerminal_ = false;
     std::map<std::string, std::string> runCommands_;
