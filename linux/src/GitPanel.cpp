@@ -1,8 +1,13 @@
 // GitPanel.cpp — see GitPanel.h. The Mac's src/GitPanel.mm, in GTK.
 #include "GitPanel.h"
 
+#include <signal.h>
+#include <sys/types.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <ctime>
 #include <mutex>
 
@@ -14,6 +19,7 @@ namespace {
 struct GitResult {
     int status = -1;
     std::string out, err;
+    bool timedOut = false;   // stopped at its time limit; err says so
     bool ok() const { return status == 0; }
 };
 
@@ -24,11 +30,75 @@ std::string bytesOf(GBytes* b) {
     return std::string(p ? p : "", n);
 }
 
+// Runs in the child between fork and exec: git leads a process group of its
+// own, so a time limit stops the hooks, filters and credential helpers it
+// started along with it. setpgid is async-signal-safe.
+void ownProcessGroup(gpointer) { setpgid(0, 0); }
+
+// What the two callbacks of one run hand back. Each holds a reference, so a
+// callback that comes late (or never, for a git stuck in the kernel) finds
+// it still there.
+struct GitRun {
+    bool waited = false;        // the wait callback ran
+    bool communicated = false;  // the communicate callback ran
+    GBytes* out = nullptr;
+    GBytes* err = nullptr;
+    GError* error = nullptr;
+    ~GitRun() {
+        if (out) g_bytes_unref(out);
+        if (err) g_bytes_unref(err);
+        g_clear_error(&error);
+    }
+};
+
+void gitWaited(GObject* src, GAsyncResult* res, gpointer data) {
+    auto* run = static_cast<std::shared_ptr<GitRun>*>(data);
+    g_subprocess_wait_finish(G_SUBPROCESS(src), res, nullptr);
+    (*run)->waited = true;
+    delete run;
+}
+
+void gitCommunicated(GObject* src, GAsyncResult* res, gpointer data) {
+    auto* run = static_cast<std::shared_ptr<GitRun>*>(data);
+    GitRun& r = **run;
+    g_subprocess_communicate_finish(G_SUBPROCESS(src), res, &r.out, &r.err, &r.error);
+    r.communicated = true;
+    delete run;
+}
+
+// Iterates `ctx` until `done` holds or `deadline` (monotonic microseconds)
+// passes; says whether it held.
+bool iterateUntil(GMainContext* ctx, gint64 deadline, const std::function<bool()>& done) {
+    while (!done()) {
+        const gint64 left = deadline - g_get_monotonic_time();
+        if (left <= 0) return false;
+        GSource* t = g_timeout_source_new((guint)std::min<gint64>((left + 999) / 1000, G_MAXINT));
+        g_source_set_callback(t, [](gpointer) -> gboolean { return G_SOURCE_REMOVE; }, nullptr,
+                              nullptr);
+        g_source_attach(t, ctx);
+        g_main_context_iteration(ctx, TRUE);
+        g_source_destroy(t);
+        g_source_unref(t);
+    }
+    return true;
+}
+
 // Runs one git, blocking; only ever called on the panel's git thread. An
 // argument vector, never a shell; stdin is /dev/null (GSubprocess's
 // default), and stdout and stderr are read together, so a chatty stderr
 // cannot fill its pipe and stall git.
-GitResult runGit(const std::string& dir, const std::vector<std::string>& args) {
+//
+// runGit gives every command the Mac's time limit (Git::timeoutFor: 30
+// seconds for reading, 2 minutes for add, restore and rm, 10 minutes for
+// commit; `limit` is in seconds), so a
+// git hung on a network filesystem, a lock or a credential helper cannot
+// hold the panel's one thread for ever. Past it git's whole process group
+// gets SIGTERM, then SIGKILL 2 seconds later, and the result says "git did
+// not answer within 30 seconds: git status ...", with timedOut set and
+// status -1. A git that exits while something it started keeps its pipes
+// open gets the same treatment, with its own message.
+GitResult runGitWithin(const std::string& dir, const std::vector<std::string>& args,
+                       double limit) {
     GitResult r;
     const std::string& git = gitExecutable();
     if (git.empty()) {
@@ -41,6 +111,7 @@ GitResult runGit(const std::string& dir, const std::vector<std::string>& args) {
     for (const GitUi::EnvVar& e : GitUi::gitEnvironment())
         g_subprocess_launcher_setenv(l, e.name, e.value, TRUE);
     g_subprocess_launcher_set_cwd(l, dir.c_str());
+    g_subprocess_launcher_set_child_setup(l, ownProcessGroup, nullptr, nullptr);
     std::vector<const char*> argv;
     argv.push_back(git.c_str());
     for (const std::string& a : args) argv.push_back(a.c_str());
@@ -53,20 +124,72 @@ GitResult runGit(const std::string& dir, const std::vector<std::string>& args) {
         g_clear_error(&err);
         return r;
     }
-    GBytes* out = nullptr;
-    GBytes* errb = nullptr;
-    if (!g_subprocess_communicate(p, nullptr, nullptr, &out, &errb, &err)) {
-        r.err = err ? err->message : "Git could not be read.";
-        g_clear_error(&err);
+    // The group's id is git's pid. Never 0 below: kill(0, ...) would signal
+    // minicode's own group.
+    const char* id = g_subprocess_get_identifier(p);
+    const pid_t pid = id ? (pid_t)std::atol(id) : 0;
+    auto killGroup = [pid](int sig) {
+        if (pid > 0) kill(-pid, sig);
+    };
+
+    // The callbacks come to a context of this thread's own, iterated only
+    // here, so nothing waits on the main loop.
+    GMainContext* ctx = g_main_context_new();
+    g_main_context_push_thread_default(ctx);
+    GCancellable* cancel = g_cancellable_new();
+    auto run = std::make_shared<GitRun>();
+    g_subprocess_wait_async(p, cancel, gitWaited, new std::shared_ptr<GitRun>(run));
+    g_subprocess_communicate_async(p, nullptr, cancel, gitCommunicated,
+                                   new std::shared_ptr<GitRun>(run));
+
+    auto in =[](double seconds) {
+        return g_get_monotonic_time() + (gint64)(seconds * G_USEC_PER_SEC);
+    };
+    const gint64 deadline = in(limit);
+    // A wait that failed for any reason but cancelling counts as over too.
+    auto exited = [&run] { return run->waited; };
+    auto communicated = [&run] { return run->communicated; };
+    if (!iterateUntil(ctx, deadline, exited)) {
+        r.timedOut = true;
+        r.err = Git::timeoutMessage(args, limit);
+        killGroup(SIGTERM);
+        if (!iterateUntil(ctx, in(2), exited)) {
+            killGroup(SIGKILL);
+            iterateUntil(ctx, in(2), exited);
+        } else {
+            killGroup(SIGKILL);   // what git started and left in its group
+        }
+    } else if (!iterateUntil(ctx, deadline, communicated) &&
+               !iterateUntil(ctx, in(2), communicated)) {
+        // git exited, but something it started (outside its group, or still
+        // running in it) holds the pipes open, which is a hang of its own.
+        r.timedOut = true;
+        r.err = Git::heldOutputMessage(args, limit);
+        killGroup(SIGKILL);
+    } else if (run->error) {
+        r.err = run->error->message;
     } else {
-        r.out = bytesOf(out);
-        r.err = bytesOf(errb);
-        if (g_subprocess_get_if_exited(p)) r.status = g_subprocess_get_exit_status(p);
+        r.out = bytesOf(run->out);
+        r.err = bytesOf(run->err);
+        if (g_subprocess_get_if_exited(p))
+            r.status = g_subprocess_get_exit_status(p);
+        else if (g_subprocess_get_if_signaled(p))
+            r.status = 128 + g_subprocess_get_term_sig(p);
     }
-    if (out) g_bytes_unref(out);
-    if (errb) g_bytes_unref(errb);
+    // Whatever is still pending ends now, so neither callback is left for a
+    // context nobody iterates. One for a git stuck in the kernel may never
+    // come; its GitRun then simply stays allocated.
+    g_cancellable_cancel(cancel);
+    iterateUntil(ctx, in(2), [&run] { return run->waited && run->communicated; });
+    g_main_context_pop_thread_default(ctx);
+    g_main_context_unref(ctx);
+    g_object_unref(cancel);
     g_object_unref(p);
     return r;
+}
+
+GitResult runGit(const std::string& dir, const std::vector<std::string>& args) {
+    return runGitWithin(dir, args, Git::timeoutFor(args));
 }
 
 std::string failure(const GitResult& r) {
@@ -109,6 +232,11 @@ std::shared_ptr<const GitUi::Graph> graphFor(const GitUi::Snapshot& s, int limit
                                              std::shared_ptr<const GitUi::Graph> previous) {
     const bool compare = GitUi::compareWithUpstream(s);
     GitResult refs = runGit(s.topLevel, GitUi::refArgs());
+    if (refs.timedOut) {   // a log now would only wait as long again
+        auto g = std::make_shared<GitUi::Graph>();
+        g->errorText = failure(refs);
+        return g;
+    }
     std::string key = GitUi::graphKey(s, limit, all, compare, refs.out);
     if (previous && previous->key == key) return previous;
     auto g = std::make_shared<GitUi::Graph>();

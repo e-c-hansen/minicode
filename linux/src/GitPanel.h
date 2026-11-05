@@ -7,7 +7,9 @@
 // What it shows and the git commands it runs are worked out in GitModel.h,
 // which is plain C++ and tested. Git runs off the main thread, one command at
 // a time in order, on a single-thread pool: an add and the status after it
-// cannot pass each other. Results come back on the main loop and are dropped
+// cannot pass each other. Each command has the Mac's time limit
+// (Git::timeoutFor), after which git's process group is stopped, so one hung
+// git holds the thread only that long. Results come back on the main loop and are dropped
 // when the folder changed meanwhile, or, for diffs and the graph, when a
 // newer one was asked for.
 #pragma once

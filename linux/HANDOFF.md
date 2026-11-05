@@ -814,6 +814,21 @@ character offsets, graph tooltips). It is tested in `tests/run_tests.cpp`.
   `g_idle_add` and are dropped when the panel is gone (a shared flag), the
   folder changed, or a newer diff or graph was asked for (generation
   counts). The environment and every argument vector are the Mac's.
+  So are the time limits (2026-11-05; `Git::timeoutFor` in the core, one
+  table for both): 30 s for reads, 2 minutes for add, restore and rm, 10
+  for commit. git leads its own process group (`setpgid` in the
+  launcher's child setup); at the limit the group gets SIGTERM and SIGKILL
+  2 s later, and the panel shows "git did not answer within 30 seconds:
+  git status ...". `runGitWithin` waits through `g_subprocess_wait_async`
+  and `communicate_async` on a main context of the git thread's own, so a
+  git that exits while something it started holds its pipes is caught too
+  ("git exited, but something it started kept its output open ..."). A
+  timed-out for-each-ref skips the log, as on the Mac. The one thread
+  stays: order matters, and a hung git now holds it only that long.
+  Checked on the Mac by building the running-git part against Homebrew's
+  GLib with fake gits (a hang, one ignoring SIGTERM, one holding its
+  pipes, 3 MB of output, a failure, a signal) and real git; the GTK file
+  itself has not been compiled since.
 - **Refreshing.** 50 ms debounce, only while the panel is shown. Triggers:
   showing it, every action, the window becoming active, a save, the file
   tree's folder monitors (`FileTree::setActivityCallback`, which reports
