@@ -582,6 +582,7 @@ private:
     __weak MCTab *_formatSaveTab;
     BOOL _closing;                         // windowWillClose: has run
     NSSet<MCTab *> *_approvedWrites;       // Save All: disk questions already answered
+    NSMutableArray<NSDictionary *> *_closedTabs;   // Reopen Closed Tab's stack, newest last
     // The tree's sizes, dates and order (see TreeDetails.h). Each folder's
     // order on show is worked out again when _sortGeneration moves on.
     MCFolderSizer *_sizer;
@@ -831,7 +832,8 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
     self.textView.onPreviewDoubleClick = ^BOOL(NSUInteger index, NSPoint point) {
         return [weakSelf editMarkdownAtCharacter:index point:point];
     };
-    self.lsp.onStatus = ^(NSString *text, NSColor *dot) {
+    self.textView.onBlur = ^{ [weakSelf autoSaveOnFocusChange]; };
+    self.lsp.onStatus =^(NSString *text, NSColor *dot) {
         [weakSelf.lspLabel setStatus:text dot:dot];
         [weakSelf updateInstallBar];
         [weakSelf updateProblemCounts];
@@ -1118,22 +1120,10 @@ static void *kMediaItemContext = &kMediaItemContext;
     [self focusEditor:nil];
 }
 
-- (NSMenu *)buildTreeContextMenu {
-    NSMenu *m = [[NSMenu alloc] init];
-    [m addItemWithTitle:@"New File…" action:@selector(newFile:) keyEquivalent:@""];
-    [m addItemWithTitle:@"New Folder…" action:@selector(newFolder:) keyEquivalent:@""];
-    [m addItem:[NSMenuItem separatorItem]];
-    [m addItemWithTitle:@"Rename…" action:@selector(renameSelected:) keyEquivalent:@""];
-    [m addItemWithTitle:@"Move to Trash" action:@selector(deleteSelected:) keyEquivalent:@""];
-    [m addItem:[NSMenuItem separatorItem]];
-    [m addItemWithTitle:@"Reveal in Finder" action:@selector(revealInFinder:) keyEquivalent:@""];
-    [m addItemWithTitle:@"Copy Path" action:@selector(copyPath:) keyEquivalent:@""];
-    [m addItemWithTitle:@"Copy Relative Path" action:@selector(copyRelativePath:)
-          keyEquivalent:@""];
-    [m addItemWithTitle:@"Refresh" action:@selector(refreshTree:) keyEquivalent:@""];
-    [m addItem:[NSMenuItem separatorItem]];
-    // How the tree is ordered (remembered per folder), and the sizes and
-    // dates at the right of each row (each its own switch, for every window).
+// The tree's Sort By items, targeting no one (the main menu's View > Sort
+// File Tree By reaches the key window's controller); the tree's own menu
+// targets them at its controller.
++ (NSMenu *)treeSortMenu {
     NSMenu *sort = [[NSMenu alloc] initWithTitle:@"Sort By"];
     const struct { NSString *title; TreeSort::Key key; } keys[] = {
         {@"Name", TreeSort::Key::Name},
@@ -1152,6 +1142,26 @@ static void *kMediaItemContext = &kMediaItemContext;
     [sort addItem:[NSMenuItem separatorItem]];
     [sort addItemWithTitle:@"Folders First" action:@selector(toggleFoldersFirst:)
              keyEquivalent:@""];
+    return sort;
+}
+
+- (NSMenu *)buildTreeContextMenu {
+    NSMenu *m = [[NSMenu alloc] init];
+    [m addItemWithTitle:@"New File…" action:@selector(newFile:) keyEquivalent:@""];
+    [m addItemWithTitle:@"New Folder…" action:@selector(newFolder:) keyEquivalent:@""];
+    [m addItem:[NSMenuItem separatorItem]];
+    [m addItemWithTitle:@"Rename…" action:@selector(renameSelected:) keyEquivalent:@""];
+    [m addItemWithTitle:@"Move to Trash" action:@selector(deleteSelected:) keyEquivalent:@""];
+    [m addItem:[NSMenuItem separatorItem]];
+    [m addItemWithTitle:@"Reveal in Finder" action:@selector(revealInFinder:) keyEquivalent:@""];
+    [m addItemWithTitle:@"Copy Path" action:@selector(copyPath:) keyEquivalent:@""];
+    [m addItemWithTitle:@"Copy Relative Path" action:@selector(copyRelativePath:)
+          keyEquivalent:@""];
+    [m addItemWithTitle:@"Refresh" action:@selector(refreshTree:) keyEquivalent:@""];
+    [m addItem:[NSMenuItem separatorItem]];
+    // How the tree is ordered (remembered per folder), and the sizes and
+    // dates at the right of each row (each its own switch, for every window).
+    NSMenu *sort = [EditorController treeSortMenu];
     for (NSMenuItem *it in sort.itemArray) it.target = self;
     NSMenuItem *sortItem = [m addItemWithTitle:@"Sort By" action:nil keyEquivalent:@""];
     sortItem.submenu = sort;
@@ -1377,14 +1387,16 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     };
 
     [self appendHintsHeading:@"Editing" to:s];
-    [self appendHintsRow:s key:@"⌘N" label:@"New window"
+    [self appendHintsRow:s key:@"⌘N" label:@"New file"
                     key2:@"⌘O" label2:@"Open folder" state:nil];
     [self appendHintsRow:s key:@"⌘S" label:@"Save"
                     key2:@"⌘F" label2:@"Find in file" state:nil];
     [self appendHintsRow:s key:@"⌘Z" label:@"Undo"
                     key2:@"⇧⌘Z" label2:@"Redo" state:nil];
-    [self appendHintsRow:s key:@"⌘C" label:@"Copy"
+    [self appendHintsRow:s key:@"⌘C ⌘X" label:@"Copy, cut (the line if none)"
                     key2:@"⌘A" label2:@"Select all" state:nil];
+    [self appendHintsRow:s key:@"⌘L" label:@"Select line"
+                    key2:@"⌃⇧K" label2:@"Delete line" state:nil];
     [self appendHintsRow:s key:@"⌘/" label:@"Toggle comment"
                     key2:@"⇧⌘F" label2:@"Find in folder" state:nil];
     [self appendHintsRow:s key:@"⇧⌘drag" label:@"Column, or two clicks"
@@ -1397,7 +1409,7 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⌥⌘↑" label2:@"Add cursor above" state:nil];
     [self appendHintsRow:s key:@"⌘D" label:@"Add next occurrence"
                     key2:@"⇧⌘L" label2:@"Select all occurrences" state:nil];
-    [self appendHintsRow:s key:@"⌘L" label:@"Toggle task (Markdown)"
+    [self appendHintsRow:s key:@"⌥⌘L" label:@"Toggle task (Markdown)"
                     key2:@"⇧⌘D" label2:@"TODOs in folder" state:nil];
     [self appendHintsRow:s key:@"⌘," label:@"Settings"
                     key2:@"⌃Space" label2:@"Complete" state:nil];
@@ -1419,7 +1431,7 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⇧⇥" label2:@"Outdent lines" state:nil];
 
     [self appendHintsHeading:@"Files" to:s];
-    [self appendHintsRow:s key:@"⌃⌘N" label:@"New file"
+    [self appendHintsRow:s key:@"⌥⌘N" label:@"New window"
                     key2:@"⇧⌘N" label2:@"New folder" state:nil];
     [self appendHintsRow:s key:@"⌘⌫" label:@"Trash (in the tree)"
                     key2:@"⌘R" label2:@"Refresh tree" state:nil];
@@ -1454,6 +1466,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     [self appendHintsRow:s key:@"⌃1…9" label:@"Tab 1 to 9 (also ⇧⌘1…9; 9 is the last)"
                     key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:@"⌘W" label:@"Close tab, or the focused panel"
+                    key2:nil label2:nil state:nil];
+    [self appendHintsRow:s key:@"⌥⇧⌘T" label:@"Reopen closed tab"
                     key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:@"⇧⌘W" label:@"Close window"
                     key2:@"⌘Q" label2:@"Quit" state:nil];
@@ -3129,6 +3143,52 @@ static NSString *MCGroupedCount(long long n) {
     [self.window makeFirstResponder:self.outline];
 }
 
+// The same commands in the main menu (File), for the tab on show, so the
+// menu bar and the command palette have them too.
+- (NSMenuItem *)menuItemForActiveTab {
+    NSMenuItem *it = [[NSMenuItem alloc] init];
+    it.representedObject = _activeTab;
+    return it;
+}
+- (void)closeOtherTabs:(id)sender {
+    if (_activeTab) [self closeOtherTabsFromMenu:[self menuItemForActiveTab]];
+}
+- (void)closeTabsToTheRight:(id)sender {
+    if (_activeTab) [self closeTabsToTheRightFromMenu:[self menuItemForActiveTab]];
+}
+- (void)closeAllTabs:(id)sender { [self closeAllTabsFromMenu:sender]; }
+- (void)copyActiveFilePath:(id)sender { [self copyTabPath:[self menuItemForActiveTab]]; }
+- (void)copyActiveFileRelativePath:(id)sender {
+    [self copyTabRelativePath:[self menuItemForActiveTab]];
+}
+- (void)revealActiveFileInFinder:(id)sender {
+    [self revealTabInFinder:[self menuItemForActiveTab]];
+}
+- (void)revealActiveFileInTree:(id)sender {
+    [self revealTabInTree:[self menuItemForActiveTab]];
+}
+
+// What those items can do for the tab on show, as its right click menu
+// decides it; NO for an action that is not one of them.
+- (BOOL)validateActiveTabAction:(SEL)a enabled:(BOOL *)enabled {
+    MCTab *t = _activeTab;
+    const NSInteger count = (NSInteger)_tabs.count;
+    const NSInteger i = t ? (NSInteger)[_tabs indexOfObject:t] : -1;
+    NSString *path = t.currentPath;
+    const BOOL inRoot = path && [self pathFromRoot:path] != nil;
+    const BOOL onDisk = path && [[NSFileManager defaultManager] fileExistsAtPath:path];
+    if (a == @selector(reopenClosedTab:)) *enabled = [self canReopenClosedTab];
+    else if (a == @selector(closeOtherTabs:)) *enabled = t && count > 1;
+    else if (a == @selector(closeTabsToTheRight:)) *enabled = t && i < count - 1;
+    else if (a == @selector(closeAllTabs:)) *enabled = count > 0;
+    else if (a == @selector(copyActiveFilePath:)) *enabled = path != nil;
+    else if (a == @selector(copyActiveFileRelativePath:)) *enabled = inRoot;
+    else if (a == @selector(revealActiveFileInFinder:)) *enabled = onDisk;
+    else if (a == @selector(revealActiveFileInTree:)) *enabled = inRoot && onDisk;
+    else return NO;
+    return YES;
+}
+
 - (void)renameTabFile:(id)sender {
     MCTab *t = [self tabOfMenuItem:sender];
     if (t.currentPath) [self renamePath:t.currentPath];
@@ -3681,6 +3741,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     tab.lastActive = ++_tabStamp;
     if (tab == _activeTab) { [self reloadTabStrip]; return; }
     [self stashActiveTab];
+    if (_activeTab) [self autoSaveOnFocusChange];   // the tab that leaves (focus-change)
     _activeTab = tab;
     if (!tab.loaded) {
         [self loadActiveTab];
@@ -3802,27 +3863,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
         return;
     }
     [self refreshDisplay];
-    if (!(t.isLatex && t.previewMode) && t.haveView) {
-        NSTextView *tv = self.textView;
-        const NSUInteger n = tv.string.length;
-        NSRange sel = t.selection;
-        if (sel.location > n) sel = NSMakeRange(n, 0);
-        if (NSMaxRange(sel) > n) sel.length = n - sel.location;
-        tv.selectedRange = sel;
-        if (n > 0) {
-            const NSRect r = [self textRectForCharacter:MIN(t.topCharacter, n - 1)];
-            // Laid out a screen past it too, or the scroll stops where the
-            // layout does, with that character at the bottom of the pane.
-            if (!tv.textLayoutManager && !NSIsEmptyRect(r))
-                [tv.layoutManager ensureLayoutForBoundingRect:
-                    NSMakeRect(0, 0, CGFLOAT_MAX,
-                               NSMaxY(r) + 2 * NSHeight(self.editorScroll.contentView.bounds))
-                                              inTextContainer:tv.textContainer];
-            if (!NSIsEmptyRect(r)) [self scrollEditorToY:NSMinY(r) - t.topOffset];
-        }
-        if (t.isMarkdown && t.previewMode)
-            _previewEntryScroll = self.editorScroll.contentView.bounds.origin;
-    }
+    [self restoreTextPlaceOf:t];
     // Sorted as it was saved in the background (saveTab:): the sort goes in
     // now, as one undo step, which leaves the buffer as the file is.
     if (t.pendingSort) {
@@ -3838,6 +3879,93 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     }
     [self.lsp documentOpened:self.previewMode ? nil : path];
     [self updateTitle];
+}
+
+// The selection and the scroll a tab kept (stashActiveTab), put back in the
+// text view once it shows the tab's text.
+- (void)restoreTextPlaceOf:(MCTab *)t {
+    if ((t.isLatex && t.previewMode) || !t.haveView) return;
+    NSTextView *tv = self.textView;
+    const NSUInteger n = tv.string.length;
+    NSRange sel = t.selection;
+    if (sel.location > n) sel = NSMakeRange(n, 0);
+    if (NSMaxRange(sel) > n) sel.length = n - sel.location;
+    tv.selectedRange = sel;
+    if (n > 0) {
+        const NSRect r = [self textRectForCharacter:MIN(t.topCharacter, n - 1)];
+        // Laid out a screen past it too, or the scroll stops where the
+        // layout does, with that character at the bottom of the pane.
+        if (!tv.textLayoutManager && !NSIsEmptyRect(r))
+            [tv.layoutManager ensureLayoutForBoundingRect:
+                NSMakeRect(0, 0, CGFLOAT_MAX,
+                           NSMaxY(r) + 2 * NSHeight(self.editorScroll.contentView.bounds))
+                                          inTextContainer:tv.textContainer];
+        if (!NSIsEmptyRect(r)) [self scrollEditorToY:NSMinY(r) - t.topOffset];
+    }
+    if (t.isMarkdown && t.previewMode)
+        _previewEntryScroll = self.editorScroll.contentView.bounds.origin;
+}
+
+// ------------------------------------------------- closed tabs, reopened
+// Option+Shift+Cmd+T (VS Code's Shift+Cmd+T is minicode's Toggle Terminal):
+// the last tab closed in this window comes back where it was in the strip,
+// with its selection, scroll and preview as it left them. A file already
+// open again is just shown; one no longer on disk is passed over.
+static const NSUInteger kMaxClosedTabs = 50;
+
+- (void)rememberClosedTab:(MCTab *)t index:(NSUInteger)index {
+    if (!t.currentPath || t.isDiff) return;
+    if (!_closedTabs) _closedTabs = [NSMutableArray array];
+    NSMutableDictionary *c = [@{@"path": t.currentPath, @"index": @(index),
+                                @"preview": @(t.previewMode)} mutableCopy];
+    if (t.haveView) {
+        c[@"selection"] = [NSValue valueWithRange:t.selection];
+        c[@"top"] = @(t.topCharacter);
+        c[@"topOffset"] = @(t.topOffset);
+    }
+    [_closedTabs addObject:c];
+    if (_closedTabs.count > kMaxClosedTabs) [_closedTabs removeObjectAtIndex:0];
+}
+
+- (BOOL)canReopenClosedTab { return _closedTabs.count > 0; }
+
+- (void)reopenClosedTab:(id)sender {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    while (_closedTabs.count) {
+        NSDictionary *c = _closedTabs.lastObject;
+        [_closedTabs removeLastObject];
+        NSString *path = c[@"path"];
+        if (MCTab *open = [self tabForPath:path]) {
+            [self activateTab:open];
+            [self focusActiveDocument];
+            return;
+        }
+        BOOL dir = NO;
+        if (![fm fileExistsAtPath:path isDirectory:&dir] || dir) continue;
+        MCTab *t = [MCTab new];
+        t.currentPath = path;
+        [_tabs insertObject:t atIndex:MIN([c[@"index"] unsignedIntegerValue], _tabs.count)];
+        [self activateTab:t];   // reads the file
+        if (_activeTab != t) return;
+        const BOOL preview = [c[@"preview"] boolValue];
+        if (self.canTogglePreview && self.previewMode != preview) {
+            if (self.textView.editable) self.sourceText = self.textView.string;
+            self.previewMode = preview;
+            [self refreshDisplay];
+            [self.lsp documentOpened:preview ? nil : path];
+            [self updateTitle];
+        }
+        if (c[@"selection"]) {
+            t.haveView = YES;
+            t.selection = [c[@"selection"] rangeValue];
+            t.topCharacter = [c[@"top"] unsignedIntegerValue];
+            t.topOffset = [c[@"topOffset"] doubleValue];
+            [self restoreTextPlaceOf:t];
+        }
+        [self focusActiveDocument];
+        return;
+    }
+    NSBeep();
 }
 
 // The editor's slot with no tab open: nothing to edit, one muted line.
@@ -4005,6 +4133,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
         [self stashActiveTab];
         _activeTab = nil;
     }
+    [self rememberClosedTab:t index:index];
     [t.latex removeFromSuperview];
     [_tabs removeObjectAtIndex:index];
     if (wasActive && next >= 0) {
@@ -4431,6 +4560,131 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     if (self.dirty) [self showStatusNote:note];
 }
 
+// ------------------------------------------------------------- auto-save
+// editor.auto-save (Settings.h). after-delay writes every tab with unsaved
+// changes once typing has paused for editor.auto-save-delay, as VS Code's
+// files.autoSave afterDelay; focus-change writes them when the editor loses
+// the keyboard, the window stops being key, or another tab is shown. An
+// auto-save is a plain write: no formatter (format.on-save stays with
+// Cmd+S, as VS Code leaves it with afterDelay), no keep-sorted (it would
+// rewrite text under the caret), and never a question. A file changed on
+// disk since it was read is skipped and named in the status bar, and Cmd+S
+// asks Keep Mine or Reload as before; a file gone from disk, a tab never
+// read yet, and a tab whose Cmd+S waits for its formatter are left alone.
+// Claude Code editing the same files is the case this is for: buffers are
+// written within a second, so they rarely differ from the disk when it
+// writes, and clean tabs follow its writes quietly (checkTabsOnDisk).
+
+- (Settings::AutoSave)autoSaveMode {
+    return [AppSettings shared].settings.autoSave();
+}
+
+- (BOOL)tabTakesAutoSave:(MCTab *)t {
+    return t.dirty && t.loaded && !t.gone && [self tabTakesBackup:t] &&
+           t != _formatSaveTab;
+}
+
+// After every edit and every change of a dirty flag, beside scheduleBackups.
+- (void)scheduleAutoSave {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(autoSaveAfterDelay)
+                                               object:nil];
+    if (_closing || [self autoSaveMode] != Settings::AutoSave::AfterDelay) return;
+    BOOL any = NO;
+    for (MCTab *t in _tabs) any = any || [self tabTakesAutoSave:t];
+    if (!any) return;
+    const int ms = [AppSettings shared].settings.autoSaveDelay();
+    [self performSelector:@selector(autoSaveAfterDelay) withObject:nil afterDelay:ms / 1000.0];
+}
+- (void)autoSaveAfterDelay { [self autoSaveNow]; }
+
+// focus-change: the editor lost the keyboard, the window lost key, or the
+// tab on show is about to change. Saved on the next turn of the run loop,
+// not inside the responder change (a selector of its own, which the
+// debounce above never cancels).
+- (void)autoSaveOnFocusChange {
+    if (_closing || [self autoSaveMode] != Settings::AutoSave::FocusChange) return;
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(autoSaveNow)
+                                               object:nil];
+    [self performSelector:@selector(autoSaveNow) withObject:nil afterDelay:0];
+}
+
+// Every tab that takes an auto-save, written now, unasked.
+- (void)autoSaveNow {
+    if (_closing || [self autoSaveMode] == Settings::AutoSave::Off) return;
+    if (_activeTab && self.textView.editable && !_activeTab.showingMessage)
+        self.sourceText = self.textView.string;
+    NSMutableArray<NSString *> *changed = [NSMutableArray array];
+    for (MCTab *t in [_tabs copy]) {
+        if (![self tabTakesAutoSave:t]) continue;
+        NSDate *disk = [self diskModDateFor:t.currentPath];
+        if (!disk && t.fileModDate) {   // deleted or moved: marked, not written again
+            [self tabWentMissing:t];
+            continue;
+        }
+        // Changed (or made) on disk since it was read: never written over
+        // unasked. Cmd+S asks.
+        if (t.fileModDate ? ![disk isEqualToDate:t.fileModDate] : disk != nil) {
+            [changed addObject:t.currentPath.lastPathComponent ?: @"?"];
+            continue;
+        }
+        [self writeTabForAutoSave:t];
+    }
+    if (changed.count)
+        [self showStatusNote:[NSString stringWithFormat:
+            @"Not auto-saved: %@ changed on disk. ⌘S asks what to do.",
+            [changed componentsJoinedByString:@", "]]];
+}
+
+- (BOOL)writeTabForAutoSave:(MCTab *)t {
+    const BOOL shown = t == _activeTab;
+    NSString *text = shown && self.textView.editable && !t.showingMessage
+                         ? [self.textView.string copy] : (t.sourceText ?: @"");
+    NSError *err = nil;
+    if (![text writeToFile:t.currentPath atomically:YES encoding:NSUTF8StringEncoding
+                     error:&err]) {
+        [self showStatusNote:[NSString stringWithFormat:@"Could not auto-save %@: %@",
+                              t.currentPath.lastPathComponent, err.localizedDescription]];
+        return NO;
+    }
+    t.sourceText = text;
+    t.savedText = text;
+    t.dirty = NO;
+    [self recordDiskStateOf:t];
+    if (shown) [self.lsp documentSaved];
+    [self updateTitle];
+    return YES;
+}
+
+// A tab with nothing unsaved whose file changed on disk takes the new text
+// with no question. The tab on show keeps its caret and the line at the top
+// of the pane (the change goes in as the lines that differ, as Format
+// Document's does), and loses its undo steps, which were for the old text.
+- (void)reloadCleanTab:(MCTab *)t {
+    NSString *fresh = [NSString stringWithContentsOfFile:t.currentPath
+                                                encoding:NSUTF8StringEncoding error:nil];
+    if (!fresh) return;
+    if ([fresh isEqualToString:t.savedText ?: @""] && !t.gone) {   // touched, not changed
+        [self recordDiskStateOf:t];
+        return;
+    }
+    if (t != _activeTab || !self.textView.editable || t.showingMessage) {
+        [self takeDiskText:fresh forTab:t];
+        return;
+    }
+    t.savedText = fresh;   // so the edit below reads as clean
+    NSUndoManager *um = self.textView.undoManager;
+    [um disableUndoRegistration];
+    [self replaceSourceWithText:fresh actionName:@"Reload"];
+    [um enableUndoRegistration];
+    self.sourceText = self.textView.string;
+    t.dirty = NO;
+    t.gone = NO;
+    t.pendingSort = nil;
+    [self recordDiskStateOf:t];
+    [self forgetHistoryOf:t];
+    [self updateTitle];
+}
+
 // Called when the window regains focus: reconcile with on-disk changes.
 - (void)checkExternalChange {
     if (!self.currentPath || !self.fileModDate) return;
@@ -4447,10 +4701,7 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     if (self.isPDF) { [self showPDFAtPath:self.currentPath]; return; }
     if (self.isMedia) { [self showMediaAtPath:self.currentPath]; return; }
     if (!self.dirty) {                       // no local edits: reload quietly
-        NSString *fresh = [NSString stringWithContentsOfFile:self.currentPath
-                                                    encoding:NSUTF8StringEncoding
-                                                       error:nil];
-        if (fresh) [self takeDiskText:fresh forTab:_activeTab];
+        [self reloadCleanTab:_activeTab];
         return;
     }
     NSAlert *a = [[NSAlert alloc] init];     // local edits AND disk changed
@@ -4535,16 +4786,22 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 }
 
 // After a change in the folder (FSEvents): every tab whose file went away
-// or came back. Nothing is read, so this is cheap; changed contents wait
-// until the tab is shown or the window comes forward, as before.
+// or came back, and every text tab with nothing unsaved whose file changed
+// (Claude Code in the terminal, git checkout), which takes the new text
+// quietly, keeping its place. A tab with unsaved changes is left as it is
+// until it is saved (Cmd+S asks, an auto-save skips it), shown again, or
+// the window comes forward.
 - (void)checkTabsOnDisk {
     for (MCTab *t in [_tabs copy]) {
         if (!t.currentPath || !t.fileModDate) continue;
-        BOOL there = [[NSFileManager defaultManager] fileExistsAtPath:t.currentPath];
-        if (!there) [self tabWentMissing:t];
+        NSDate *disk = [self diskModDateFor:t.currentPath];
+        if (!disk) [self tabWentMissing:t];
         else if (t.gone) {
             if (t == _activeTab) [self checkExternalChange];
             else [self tabCameBack:t];
+        } else if (!t.dirty && t.loaded && [self tabTakesBackup:t] &&
+                   ![disk isEqualToDate:t.fileModDate]) {
+            [self reloadCleanTab:t];
         }
     }
 }
@@ -4638,6 +4895,10 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 - (void)windowDidBecomeKey:(NSNotification *)note {
     [self checkExternalChange];
     if (self.gitPanelVisible) [self.gitPanel refresh];
+}
+// Another window or another app (editor.auto-save = focus-change).
+- (void)windowDidResignKey:(NSNotification *)note {
+    [self autoSaveOnFocusChange];
 }
 
 - (BOOL)canTogglePreview { return self.isMarkdown || self.isLatex; }
@@ -4742,6 +5003,8 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     else NSBeep();
 }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
+    BOOL enabled = NO;
+    if ([self validateActiveTabAction:item.action enabled:&enabled]) return enabled;
     if (item.action == @selector(sortTreeBy:)) {
         item.state = item.tag == (NSInteger)_treeSort.key ? NSControlStateValueOn
                                                           : NSControlStateValueOff;
@@ -4799,6 +5062,7 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 // fraction of a millisecond for a large file.
 - (void)noteEdited {
     [self scheduleBackups];
+    [self scheduleAutoSave];
     NSString *now = self.sourceText ?: @"", *saved = self.savedText ?: @"";
     // A file deleted outside has nothing on disk to match.
     const BOOL dirty = _activeTab.gone || now.length != saved.length ||
@@ -5357,7 +5621,7 @@ static NSColor *ContrastColor(const Rgba &c) {
     [self.textView.undoManager setActionName:@"Toggle Task"];
 }
 
-// Cmd+L in Markdown source: make the lines the selection touches tasks, or
+// Option+Cmd+L in Markdown source: make the lines the selection touches tasks, or
 // tick or clear them.
 - (void)toggleTask:(id)sender {
     NSTextView *tv = self.textView;
@@ -6677,6 +6941,7 @@ static NSString *MCFormatDuration(double seconds) {
     [self updateSavedStatus];
     if (self.hintsVisible) [self updateHints];
     [self scheduleBackups];   // dirty may have changed either way
+    [self scheduleAutoSave];
 }
 
 - (void)renderMarkdown:(NSString *)content {

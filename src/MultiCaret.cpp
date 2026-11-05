@@ -346,6 +346,102 @@ Edit moveLines(const std::u16string& text, const std::vector<Caret>& carets, boo
     return out;
 }
 
+std::vector<Caret> expandLineSelection(const std::u16string& text,
+                                       const std::vector<Caret>& carets) {
+    std::vector<Caret> out;
+    for (const Caret& c : normalize(carets, text.size())) {
+        const size_t s = lineStart(text, c.lo());
+        // A selection ending at a line's start already holds the line above
+        // it whole: the next line is added. Otherwise the caret's own line.
+        const size_t from = !c.empty() && c.hi() == lineStart(text, c.hi()) ? c.hi()
+                                                                            : lineEnd(text, c.hi());
+        const Caret line{s, stepRight(text, lineEnd(text, from))};
+        // Whole lines that meet make one selection, as one block of lines.
+        if (!out.empty() && line.lo() <= out.back().hi())
+            out.back().head = std::max(out.back().head, line.head);
+        else
+            out.push_back(line);
+    }
+    return normalize(out, text.size());
+}
+
+Edit deleteLines(const std::u16string& text, const std::vector<Caret>& carets) {
+    Edit out;
+    const size_t n = text.size();
+    long long shift = 0;
+    for (const Block& b : lineBlocks(text, carets, true)) {
+        const Caret& first = b.carets.front();
+        const size_t col = first.head - lineStart(text, first.head);
+        size_t from = b.start, to = b.end, land, landLength;
+        if (b.end < n) {
+            to = stepRight(text, b.end);   // the line below moves up into place
+            land = b.start;
+            landLength = lineEnd(text, to) - to;
+        } else if (b.start > 0) {
+            from = stepLeft(text, b.start);   // the last lines: the break above goes
+            land = lineStart(text, from);
+            landLength = from - land;
+        } else {
+            land = 0;
+            landLength = 0;
+        }
+        out.changes.push_back({from, to - from, u""});
+        const size_t at = (size_t)((long long)land + shift) + std::min(col, landLength);
+        out.carets.push_back({at, at});
+        shift -= (long long)(to - from);
+    }
+    out.carets = normalize(out.carets, (size_t)((long long)n + shift));
+    return out;
+}
+
+std::u16string lineCopy(const std::u16string& text, const std::vector<Caret>& carets) {
+    std::u16string out;
+    for (const Block& b : lineBlocks(text, carets, false)) {
+        out += text.substr(b.start, b.end - b.start);
+        const size_t next = stepRight(text, b.end);
+        out += next > b.end ? text.substr(b.end, next - b.end) : u"\n";
+    }
+    return out;
+}
+
+Edit pasteLinesAbove(const std::u16string& text, const std::vector<Caret>& carets,
+                     const std::u16string& clip) {
+    Edit out;
+    const std::vector<Caret> sorted = normalize(carets, text.size());
+    std::vector<size_t> starts;   // the lines holding a caret, by their start
+    for (const Caret& c : sorted) {
+        const size_t s = lineStart(text, c.lo());
+        if (starts.empty() || starts.back() != s) starts.push_back(s);
+    }
+    std::u16string whole = clip;
+    if (whole.empty() || !isBreak(whole.back())) whole += u'\n';
+    // The copy's lines, each with its break.
+    std::vector<std::u16string> lines;
+    for (size_t p = 0; p < whole.size();) {
+        size_t e = lineEnd(whole, p);
+        const size_t next = stepRight(whole, e);
+        lines.push_back(whole.substr(p, next - p));
+        p = next > e ? next : e + 1;
+    }
+    const bool oneEach = starts.size() > 1 && lines.size() == starts.size();
+    std::vector<long long> before(starts.size());   // inserted at or before each line
+    long long shift = 0;
+    for (size_t i = 0; i < starts.size(); i++) {
+        const std::u16string& piece = oneEach ? lines[i] : whole;
+        out.changes.push_back({starts[i], 0, piece});
+        shift += (long long)piece.size();
+        before[i] = shift;
+    }
+    for (const Caret& c : sorted) {
+        const size_t s = lineStart(text, c.lo());
+        const size_t i = (size_t)(std::lower_bound(starts.begin(), starts.end(), s) - starts.begin());
+        out.carets.push_back({(size_t)((long long)c.anchor + before[i]),
+                              (size_t)((long long)c.head + before[i])});
+    }
+    out.carets = normalize(out.carets, (size_t)((long long)text.size() + shift));
+    return out;
+}
+
 namespace {
 
 bool isWordChar(char16_t c) { return charClass(c) == 1; }

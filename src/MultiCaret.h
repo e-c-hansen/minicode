@@ -96,6 +96,36 @@ Edit duplicateLines(const std::u16string& text, const std::vector<Caret>& carets
 // length, so the carets of one block never shift another's.
 Edit moveLines(const std::u16string& text, const std::vector<Caret>& carets, bool down);
 
+// ---- whole lines (Cmd+L, Ctrl+Shift+K, and Copy, Cut and Paste with
+// nothing selected, as in VS Code)
+
+// Expand Line Selection (Cmd+L): each caret selects its whole line, line
+// break included, from the line's start (the anchor) to the next line's
+// start (the head). A selection already ending at the start of a line (as
+// the last press left it) takes the next line too, so pressing again goes
+// on down. Selections that come to overlap merge.
+std::vector<Caret> expandLineSelection(const std::u16string& text,
+                                       const std::vector<Caret>& carets);
+
+// Delete Line (Ctrl+Shift+K): the whole lines each caret touches go, with
+// their line break. Each caret lands on the line that took their place at
+// the column it had (or that line's end); lines at the end of the text take
+// the break before them instead, and the caret goes to the line above.
+// Carets on the same or neighbouring lines make one block, with one caret.
+Edit deleteLines(const std::u16string& text, const std::vector<Caret>& carets);
+
+// What Copy and Cut take when nothing is selected: the lines the carets are
+// on, each once, in order, each with its line break ("\n" added after a
+// last line that has none).
+std::u16string lineCopy(const std::u16string& text, const std::vector<Caret>& carets);
+
+// Paste of such a copy with nothing selected: the text goes in at the start
+// of each caret's line, so above it, and the carets stay on their
+// characters. When the copy has one line per line holding a caret, each of
+// those lines gets one, in order; otherwise each gets all of it.
+Edit pasteLinesAbove(const std::u16string& text, const std::vector<Caret>& carets,
+                     const std::u16string& clip);
+
 // ---- the selected text, found again (Cmd+D, Shift+Cmd+L, as in VS Code)
 
 // The word at p: the run of word characters (letters, digits, _ and anything
