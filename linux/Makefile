@@ -24,7 +24,7 @@ BIN      := $(BUILD)/minicode
 # a file missing here is noticed by nobody until someone runs this.
 CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEdit.cpp \
         ../src/MarkdownTasks.cpp ../src/Settings.cpp ../src/LineComments.cpp \
-        ../src/AutoIndent.cpp ../src/KeepSorted.cpp ../src/FolderSearch.cpp \
+        ../src/AutoIndent.cpp ../src/KeepSorted.cpp ../src/FolderSearch.cpp ../src/TextFind.cpp \
         ../src/LatexDoc.cpp ../src/SyncTex.cpp \
         ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp \
         ../src/GitStatus.cpp ../src/GitGraph.cpp

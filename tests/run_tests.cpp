@@ -9244,6 +9244,7 @@ static void testMultiCaretOccurrences() {
 }
 #include "backups_tests.inc"
 #include "agent_tests.inc"
+#include "find_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9297,6 +9298,8 @@ int main() {
     testMultiCaretOccurrences();
     testBackups();
     testInlineAgent();
+    testTextFind();
+    testFolderReplace();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

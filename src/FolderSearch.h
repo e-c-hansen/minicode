@@ -43,6 +43,8 @@
 #include <string>
 #include <vector>
 
+#include "TextFind.h"
+
 struct FolderSearchMatch {
     std::string path;          // full path: the root joined with relativePath
     std::string relativePath;  // relative to the searched root, '/' separated
@@ -60,6 +62,11 @@ struct FolderSearchOptions {
     std::uintmax_t maxFileSize = 1024 * 1024;   // bytes; larger files are skipped
     std::size_t   maxLineChars = 200;           // display text cap, in characters
     bool          caseSensitive = false;        // the Mac panel is insensitive
+    // VS Code's other two options (TextFind.h has the rules). With either
+    // set the line is matched by TextFind; a regex is not trimmed and needs
+    // one character, not two.
+    bool          wholeWord = false;
+    bool          regex = false;
 };
 
 struct FolderSearchResult {
@@ -68,6 +75,21 @@ struct FolderSearchResult {
     std::size_t filesMatched  = 0;   // files with at least one match
     bool truncated = false;          // stopped at maxMatches
     bool cancelled = false;          // the cancel flag was raised mid-search
+    std::string error;               // the regex did not compile: why
+};
+
+// Replace in Folder's count before it asks: every match in every file the
+// search would read (no limit on matches), by file.
+struct FolderReplaceFile {
+    std::string path;
+    std::string relativePath;
+    std::size_t matches = 0;
+};
+struct FolderReplacePlan {
+    std::vector<FolderReplaceFile> files;   // only files with matches, in search order
+    std::size_t matches = 0;                // in all of them
+    bool cancelled = false;
+    std::string error;                      // the regex did not compile: why
 };
 
 namespace FolderSearch {
@@ -111,6 +133,48 @@ bool findInLine(const std::string& line, const std::string& query,
 FolderSearchResult search(const std::string& root, const std::string& query,
                           const std::atomic<bool>* cancel = nullptr,
                           const FolderSearchOptions& options = {});
+
+// The query search() matches with these options: plain text trimmed as
+// normalizeQuery does, a regex as typed. Not usable() when there is nothing
+// to search for (see TextFind::Query::error for a regex that does not
+// compile).
+TextFind::Query makeQuery(const std::string& query, const FolderSearchOptions& options);
+
+// Whether search() would run this query: two characters of plain text, or a
+// regex of one character or more.
+bool isSearchable(const std::string& query, const FolderSearchOptions& options);
+
+// Count what Replace in Folder would replace: the same walk and files as
+// search(), every match in each.
+FolderReplacePlan planReplace(const std::string& root, const std::string& query,
+                              const std::atomic<bool>* cancel = nullptr,
+                              const FolderSearchOptions& options = {});
+
+// `content` (valid UTF-8) with every match of the query replaced, as
+// Replace in Folder writes it: TextFind::replaceInText with makeQuery's
+// query. Line endings are kept. *count says how many were replaced.
+std::string replaceInText(const std::string& content, const std::string& query,
+                          const std::string& replacement, const FolderSearchOptions& options,
+                          std::size_t* count = nullptr);
+
+// Only the match a result row stands for: the one starting at byteColumn of
+// 1-based `line`. False when it is no longer there.
+bool replaceMatchInText(const std::string& content, const std::string& query,
+                        const std::string& replacement, const FolderSearchOptions& options,
+                        int line, std::size_t byteColumn, std::string* out);
+
+// Read a file as search() does: a regular file (after symlinks) of at most
+// maxFileSize bytes holding valid UTF-8. False otherwise.
+bool readTextFile(const std::string& path, std::uintmax_t maxFileSize, std::string* out);
+
+// Write `content` to `path` so a reader sees the old file or the new one,
+// never half of each: a temporary in the same folder, given the file's
+// permissions (and owner, where allowed), synced, then renamed over it. A
+// symlink is followed, so the link stays a link; a file with other hard
+// links is written in place instead, so they all keep seeing it. False,
+// with *error saying why, when nothing was written.
+bool writeFileAtomically(const std::string& path, const std::string& content,
+                         std::string* error = nullptr);
 
 // The TODO list. Instead of a query, every line holding a TODO, FIXME,
 // HACK, XXX or BUG tag (uppercase, a whole word) after a comment opener

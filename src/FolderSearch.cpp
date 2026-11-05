@@ -8,6 +8,15 @@
 #include <set>
 #include <system_error>
 
+#include <cerrno>
+#include <climits>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 namespace fs = std::filesystem;
 
 namespace FolderSearch {
@@ -50,30 +59,7 @@ bool isControlOrFormat(char32_t cp) {
            cp == 0xFEFF;
 }
 
-// One-to-one case folding for the scripts people actually write code and
-// notes in. Everything else folds to itself.
-char32_t fold(char32_t c) {
-    if (c < 0x80) return (c >= 'A' && c <= 'Z') ? c + 32 : c;
-    if (c >= 0xC0 && c <= 0xDE && c != 0xD7) return c + 32;
-    if (c >= 0x0100 && c <= 0x017F) {
-        if ((c <= 0x012F) || (c >= 0x0132 && c <= 0x0137) ||
-            (c >= 0x014A && c <= 0x0177))
-            return (c % 2 == 0) ? c + 1 : c;
-        if ((c >= 0x0139 && c <= 0x0148) || (c >= 0x0179 && c <= 0x017E))
-            return (c % 2 == 1) ? c + 1 : c;
-        if (c == 0x0178) return 0x00FF;
-        return c;
-    }
-    if (c >= 0x0391 && c <= 0x03A9 && c != 0x03A2) return c + 32;
-    if (c == 0x0386) return 0x03AC;
-    if (c >= 0x0388 && c <= 0x038A) return c + 37;
-    if (c == 0x038C) return 0x03CC;
-    if (c == 0x038E || c == 0x038F) return c + 63;
-    if (c == 0x03C2) return 0x03C3;   // final sigma matches sigma
-    if (c >= 0x0410 && c <= 0x042F) return c + 32;
-    if (c >= 0x0400 && c <= 0x040F) return c + 80;
-    return c;
-}
+char32_t fold(char32_t c) { return TextFind::foldCase(c); }
 
 bool isAscii(const std::string& s) {
     for (unsigned char c : s) if (c >= 0x80) return false;
@@ -101,8 +87,10 @@ struct Walker {
     FolderSearchResult& out;
     std::set<std::string> visited;   // canonical folders already walked
     bool todos = false;              // the TODO list, not a query
+    const TextFind::Query* tq = nullptr;   // whole word or regex: TextFind matches
+    FolderReplacePlan* plan = nullptr;     // counting for Replace in Folder
 
-    bool full() const { return out.matches.size() >= opt.maxMatches; }
+    bool full() const { return !plan && out.matches.size() >= opt.maxMatches; }
 
     bool stop() {
         if (cancelled(cancel)) { out.cancelled = true; return true; }
@@ -122,6 +110,30 @@ struct Walker {
         if (content.size() > opt.maxFileSize) return;
         if (!isValidUtf8(content)) return;   // binary, or another encoding
         ++out.filesSearched;
+
+        if (plan) {   // Replace in Folder's count: every match
+            std::size_t count = 0;
+            std::size_t pos = 0, lines = 0;
+            const std::size_t n = content.size();
+            while (pos <= n) {
+                if ((++lines & 4095) == 0 && cancelled(cancel)) { out.cancelled = true; break; }
+                std::size_t end = pos;
+                while (end < n && content[end] != '\n' && content[end] != '\r' &&
+                       !(content[end] == '\xE2' && end + 2 < n && content[end + 1] == '\x80' &&
+                         content[end + 2] == '\xA9'))
+                    ++end;
+                count += TextFind::findAllInLine(content.substr(pos, end - pos), *tq).size();
+                if (end >= n) break;
+                pos = end + (content[end] == '\xE2' ? 3
+                             : (content[end] == '\r' && end + 1 < n && content[end + 1] == '\n') ? 2
+                                                                                                 : 1);
+            }
+            if (count) {
+                plan->files.push_back({path, rel, count});
+                plan->matches += count;
+            }
+            return;
+        }
 
         const std::size_t before = out.matches.size();
         // For the TODO list, a Markdown file's open tasks, by line.
@@ -164,6 +176,8 @@ struct Walker {
                     len = 3;
                     hit = col + len <= line.size();
                 }
+            } else if (tq) {
+                hit = TextFind::findInLine(line, *tq, &col, &len);
             } else {
                 hit = findInLine(line, query, opt.caseSensitive, &col, &len);
             }
@@ -380,15 +394,167 @@ FolderSearchResult search(const std::string& root, const std::string& query,
                           const std::atomic<bool>* cancel,
                           const FolderSearchOptions& options) {
     FolderSearchResult out;
-    const std::string q = normalizeQuery(query);
-    if (countChars(q) < kMinQueryChars || options.maxMatches == 0) return out;
+    if (!isSearchable(query, options) || options.maxMatches == 0) return out;
+    const std::string q = options.regex ? query : normalizeQuery(query);
+    TextFind::Query tq;
+    if (options.regex || options.wholeWord) {
+        tq = makeQuery(query, options);
+        if (!tq.usable()) {
+            out.error = tq.error();
+            return out;
+        }
+    }
     std::error_code ec;
     if (!fs::is_directory(root, ec)) return out;
     Walker w{q, cancel, options, out, {}};
+    if (tq.usable()) w.tq = &tq;
     const fs::path canon = fs::canonical(root, ec);
     if (!ec) w.visited.insert(canon.string());
     w.walk(root, "");
     return out;
+}
+
+TextFind::Query makeQuery(const std::string& query, const FolderSearchOptions& options) {
+    TextFind::Options o;
+    o.caseSensitive = options.caseSensitive;
+    o.wholeWord = options.wholeWord;
+    o.regex = options.regex;
+    return TextFind::Query::make(options.regex ? query : normalizeQuery(query), o);
+}
+
+bool isSearchable(const std::string& query, const FolderSearchOptions& options) {
+    if (options.regex) return !query.empty() && isValidUtf8(query);
+    return isSearchable(query);
+}
+
+FolderReplacePlan planReplace(const std::string& root, const std::string& query,
+                              const std::atomic<bool>* cancel,
+                              const FolderSearchOptions& options) {
+    FolderReplacePlan plan;
+    if (!isSearchable(query, options)) return plan;
+    const TextFind::Query tq = makeQuery(query, options);
+    if (!tq.usable()) {
+        plan.error = tq.error();
+        return plan;
+    }
+    std::error_code ec;
+    if (!fs::is_directory(root, ec)) return plan;
+    FolderSearchResult out;
+    const std::string none;
+    Walker w{none, cancel, options, out, {}};
+    w.tq = &tq;
+    w.plan = &plan;
+    const fs::path canon = fs::canonical(root, ec);
+    if (!ec) w.visited.insert(canon.string());
+    w.walk(root, "");
+    plan.cancelled = out.cancelled;
+    return plan;
+}
+
+std::string replaceInText(const std::string& content, const std::string& query,
+                          const std::string& replacement, const FolderSearchOptions& options,
+                          std::size_t* count) {
+    if (count) *count = 0;
+    if (!isSearchable(query, options)) return content;
+    return TextFind::replaceInText(content, makeQuery(query, options), replacement, count);
+}
+
+bool replaceMatchInText(const std::string& content, const std::string& query,
+                        const std::string& replacement, const FolderSearchOptions& options,
+                        int line, std::size_t byteColumn, std::string* out) {
+    if (!isSearchable(query, options)) return false;
+    return TextFind::replaceOneInText(content, makeQuery(query, options), replacement, line,
+                                      byteColumn, out);
+}
+
+bool readTextFile(const std::string& path, std::uintmax_t maxFileSize, std::string* out) {
+    std::error_code ec;
+    const fs::file_status st = fs::status(path, ec);
+    if (ec || !fs::is_regular_file(st)) return false;
+    const std::uintmax_t size = fs::file_size(path, ec);
+    if (ec || size > maxFileSize) return false;
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    std::string content;
+    content.resize(static_cast<std::size_t>(size) + 1);
+    in.read(&content[0], static_cast<std::streamsize>(content.size()));
+    content.resize(static_cast<std::size_t>(in.gcount()));
+    if (content.size() > maxFileSize || !isValidUtf8(content)) return false;
+    *out = std::move(content);
+    return true;
+}
+
+namespace {
+
+bool writeAll(int fd, const std::string& content) {
+    const char* p = content.data();
+    std::size_t left = content.size();
+    while (left > 0) {
+        const ssize_t n = ::write(fd, p, left);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
+        p += n;
+        left -= static_cast<std::size_t>(n);
+    }
+    return true;
+}
+
+bool fail(std::string* error, const std::string& what) {
+    if (error) *error = what + ": " + std::strerror(errno);
+    return false;
+}
+
+}  // namespace
+
+bool writeFileAtomically(const std::string& path, const std::string& content,
+                         std::string* error) {
+    // The file a symlink names, so the link stays a link.
+    char resolved[PATH_MAX];
+    const std::string target = ::realpath(path.c_str(), resolved) ? std::string(resolved) : path;
+    struct stat st;
+    const bool exists = ::stat(target.c_str(), &st) == 0;
+    if (exists && !S_ISREG(st.st_mode)) {
+        if (error) *error = "not a regular file";
+        return false;
+    }
+    if (exists && st.st_nlink > 1) {
+        // Hard links: a rename would part this name from the others.
+        const int fd = ::open(target.c_str(), O_WRONLY | O_TRUNC | O_CLOEXEC);
+        if (fd < 0) return fail(error, "could not open the file");
+        const bool ok = writeAll(fd, content) && ::fsync(fd) == 0;
+        const int saved = errno;
+        ::close(fd);
+        errno = saved;
+        return ok || fail(error, "could not write the file");
+    }
+    const std::size_t slash = target.rfind('/');
+    const std::string dir = slash == std::string::npos ? "." : target.substr(0, slash + 1);
+    const std::string base = slash == std::string::npos ? target : target.substr(slash + 1);
+    std::string tmp = dir + "." + base + ".minicode-XXXXXX";
+    std::vector<char> name(tmp.begin(), tmp.end());
+    name.push_back('\0');
+    const int fd = ::mkstemp(name.data());
+    if (fd < 0) return fail(error, "could not make a temporary file beside it");
+    tmp = name.data();
+    bool ok = true;
+    if (exists) {
+        ok = ::fchmod(fd, st.st_mode & 07777) == 0;
+        if (ok && ::fchown(fd, st.st_uid, st.st_gid) != 0) {}   // only root may give it away
+    } else {
+        const mode_t mask = ::umask(0);
+        ::umask(mask);
+        ok = ::fchmod(fd, 0666 & ~mask) == 0;
+    }
+    ok = ok && writeAll(fd, content) && ::fsync(fd) == 0;
+    int saved = errno;
+    ::close(fd);
+    if (ok && ::rename(tmp.c_str(), target.c_str()) == 0) return true;
+    if (ok) saved = errno;
+    ::unlink(tmp.c_str());
+    errno = saved;
+    return fail(error, "could not write the file");
 }
 
 bool isMarkdownPath(const std::string& path) {
