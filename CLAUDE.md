@@ -28,7 +28,7 @@ this file covers the macOS app except where it says otherwise.
   folder search (on a scratch tree in the temp directory), and the git
   status and diff readers, the formatter planning and the line diff, and
   the file tree's sort orders, ages and folder totals (`tree:*`, `sizes:*`)
-  (3,560 checks on 2026-11-04; 3,543 on 2026-11-01; 3,523 on 2026-10-31; 3,259 on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
+  (3,667 checks on 2026-11-05, 107 of them the palette's; 3,560 on 2026-11-04; 3,543 on 2026-11-01; 3,523 on 2026-10-31; 3,259 on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
   corpus in `tests/markdown/corpus.md` read from the repo root; the
   corpus checks skip themselves where that file is not found).
   Exits non-zero on failure. The Makefile uses clang++ on the Mac and make's
@@ -207,6 +207,10 @@ isolation. Keep them dependency-free.
   `keep-sorted end` blocks), ported from its Go code with its options, and
   plain line sorting; the editors' commands in UTF-16. See "Indentation
   and sorting".
+- `src/CommandPalette.{h,cpp}`: the palette's matching and order (fuzzy,
+  tiers, recent first), its modes (`>`, `:`), key equivalents as glyphs,
+  and Quick Open's file walk and ranking (`palette:*` tests). See "The
+  palette".
 
 The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 
@@ -267,6 +271,8 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 - `src/MultiCaretView.{h,mm}` — `MCMultiCarets`, the editor's several
   carets: the column drag, Option+click, the key commands while two or
   more are in play, and drawing them. `CodeTextView` owns one.
+- `src/PalettePanel.{h,mm}` — the palette over a window (Shift+Cmd+P,
+  Cmd+P, Ctrl+G): the menu walk, the overlay, the list. See "The palette".
 - `src/Demo.{h,mm}` — demo scenes and the window recorder behind
   `make demos`. Inert unless `MINICODE_DEMO` is set; two one-line hooks in
   `main.mm`. `tools/makegif.m` turns the recorded frames into a GIF.
@@ -1074,6 +1080,81 @@ into the build, keeping its place.
   real relaunch through `open -n` (it would put a window on the user's
   screen) and real Claude Code in the terminal. Needs the user: one real
   request end to end.
+
+## The palette: commands, Quick Open, Go to Line (Mac, 2026-11-04)
+
+The user asked for VS Code's command palette, with only the keys that
+clash with VS Code's for the same action moving; a review then asked for
+Quick Open, Go to Line and Cmd+J as well.
+
+- **Keys.** Shift+Cmd+P (View > Command Palette…) opens it with ">" in
+  the field, Cmd+P (Navigate > Go to File…) empty, on the folder's files,
+  Ctrl+G (Navigate > Go to Line…) with ":". The first character decides
+  (`CommandPalette::parse`), as in VS Code, so deleting the ">" lists
+  files and typing ":" asks for a line. Toggle Preview moved from
+  Shift+Cmd+P to Shift+Cmd+V (VS Code's Markdown preview key; the demo
+  scenes too). Cmd+J is a hidden second Toggle Terminal item (VS Code's
+  Toggle Panel). Ctrl+G is the menu's, except that the key monitor in
+  main.mm hands it to a TerminalGridView with the keyboard (nano, emacs
+  and less use it). Before adding them every menu key equivalent was
+  dumped: none of Cmd+P, Cmd+J, Ctrl+G or Shift+Cmd+V was taken, and no
+  two items share a key and modifiers.
+- **One view over the window** (`MCPaletteOverlay`, PalettePanel.mm), not
+  a window of its own, so the editor window stays key and validation and
+  the command see the same responder chain as the menu bar. It covers the
+  content view; a click outside the box lands on it and closes the
+  palette. Opening it remembers the first responder (a text field, not its
+  field editor, with the caret's range, since a field selects all its text
+  as it takes the keyboard back); Esc, a click outside or running
+  something puts the keyboard back first. The keyboard moving elsewhere (a
+  menu key such as Cmd+0) closes it.
+- **Commands** are read from `NSApp.mainMenu` each time it opens: every
+  submenu `update`d (validation against the key window's chain, which
+  also sets titles such as Close Terminal), then every enabled item that
+  is not a separator, hidden (the second keys of Next Tab, Cmd+J) or an
+  alternate, as "Menu > Item" ("minicode" for the app menu, whose item is
+  titled "NSMenuItem"), with its key equivalent as glyphs. New menu items,
+  such as the language server commands another branch adds, appear
+  without any change here. Return sends the item's action with
+  `[NSApp sendAction:to:from:]` and the item as sender (tags and
+  representedObject work: Find…, Adjust Settings > Editor), on the next
+  turn of the run loop. The last 20 run are in `MCCommandPaletteRecent`
+  (`MCAppDefaults()`).
+- **Matching** (`CommandPalette::rank`): a subsequence, case ignored and
+  spaces in the query skipped, aligned by a small DP that favours word
+  starts (after a space or punctuation, or camelCase) and runs. Tiers, best
+  first: the query starts the item's title (or label), every run of
+  matched characters begins a word, one run inside a word, scattered.
+  Within a tier recently run commands first, then the score, then menu
+  order; with nothing typed, recent ones then the menu's order.
+- **Quick Open** (`CommandPalette::listFiles` on a background queue, then
+  `rankFiles`): breadth first, Find in Folder's skips (dotfiles,
+  `FolderSearch::isSkippedDirectory`), symlinked folders once, 20,000
+  files at most; "Listing the folder's files…" until it arrives, and the
+  walk is cancelled when the palette closes. A query without "/" matches
+  the file name first (any name match beats a path-only one), with "/" the
+  path. Recently opened first: the window's tabs by last shown
+  (`recentTabPaths`), then files opened from Quick Open before
+  (`MCQuickOpenRecent`, 50); those rows say "recently opened". Return
+  opens through `revealPath:andOpen:YES`, as a click in the tree.
+- **Go to Line**: "42" or "42:7" (or "42,7") runs `goToLine:column:`
+  (now in EditorController.h, with `canGoToLine`); with an image, PDF,
+  player or diff on show the row says to open a file.
+- **Verified** offscreen (113 checks, 2026-11-05): a harness
+  that includes main.mm as `minicode_main`, swizzles window ordering,
+  `keyWindow`/`mainWindow` and activation, with scratch HOME, ZDOTDIR,
+  settings and defaults suite, and keys built with
+  `CGEventCreateKeyboardEvent` (menu keys through the window then the
+  menu, typing through `[window sendEvent:]`). Harness trap: `[NSApp run]`
+  calls `applicationWillFinishLaunching:` itself, which empties
+  `controllers`; calling it by hand first left a window the app no longer
+  knew, and the palette opened over another one. Let
+  `applicationDidFinishLaunching:` open the window from argv. Pictures
+  of the palette were looked at. Needs the user: the look on a real
+  screen (and the box's shadow, which `cacheDisplayInRect:` leaves out),
+  real typing and clicks, a large real folder in Quick Open, and Ctrl+G
+  reaching nano in the terminal (not checked: the monitor only sees events
+  that come through `[NSApp sendEvent:]`).
 
 ## Several carets, wrapping, and Cmd+Delete (Mac, 2026-10-31)
 
@@ -2957,7 +3038,7 @@ holds, these give real runtime evidence rather than compile-only evidence:
   the padding and builds an `NSTextTable` from the cells
   (`appendMarkdownTable:`), so wide tables wrap inside their columns.
   Every run also carries its source `line`, stored on the rendered text as
-  `kMarkdownSourceLine`: Shift+Cmd+P uses it to open the preview at the
+  `kMarkdownSourceLine`: Shift+Cmd+V (Shift+Cmd+P until 1.5.4) uses it to open the preview at the
   caret, and to open the source at a preview the user scrolled (otherwise
   the source comes back with its old selection and caret height). Links are
   real `NSLinkAttributeName`s, resolved in `openMarkdownLink:`: `#heading`

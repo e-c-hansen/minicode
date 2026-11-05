@@ -783,9 +783,9 @@ static void SceneTour(MCDemo *d) {
     [d pause:0.8];
     [d clickFile:@"README.md"];
     [d pause:1.8];
-    [d key:@"shift+cmd+p" caption:@"⇧⌘P  Markdown source"];
+    [d key:@"shift+cmd+v" caption:@"⇧⌘V  Markdown source"];
     [d pause:1.8];
-    [d key:@"shift+cmd+p" caption:@"⇧⌘P  Back to the preview"];
+    [d key:@"shift+cmd+v" caption:@"⇧⌘V  Back to the preview"];
     [d pause:1.4];
     [d clickFile:@"hello.py"];
     [d hidePointer];
@@ -982,7 +982,7 @@ static void SceneLatex(MCDemo *d) {
     [d waitFor:^BOOL(MCDemo *m) { return [pdfView(m) document] != before; }
        timeout:60 recorded:YES];
     [d pause:1.8];
-    [d key:@"shift+cmd+p" caption:@"⇧⌘P  The source, edited in place"];
+    [d key:@"shift+cmd+v" caption:@"⇧⌘V  The source, edited in place"];
     [d run:^(MCDemo *m) {
         NSTextView *tv = [m ui:@"textView"];
         NSRange r = [tv.string rangeOfString:@"Ask two friends for a review"];

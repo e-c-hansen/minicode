@@ -94,4 +94,10 @@
 - (void)selectPythonInterpreter:(id)sender; // the Python server's interpreter
 - (void)togglePlayback:(id)sender;     // Shift+Cmd+Space play or pause video/audio
 @property(nonatomic, readonly) BOOL canTogglePlayback;
+// For the palette (PalettePanel.h): a 1-based line and column (0: the line's
+// start) of the file on show, whether it has lines, and the tabs' files,
+// most recently shown first.
+- (void)goToLine:(int)line column:(int)column;
+@property(nonatomic, readonly) BOOL canGoToLine;
+- (NSArray<NSString *> *)recentTabPaths;
 @end
