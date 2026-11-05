@@ -68,13 +68,18 @@ public:
     long long historyBase() const { return historyBase_; }
     // A cell of a line of the scrollback and screen together: lines
     // -historySize() .. -1 are the scrollback (-1 the newest), 0 .. rows()-1
-    // the screen. A blank past the end of a line or outside them.
-    const TermCell& lineCell(int line, int col) const;
+    // the screen. A blank past the end of a line or outside them. A copy,
+    // since scrollback lines are stored packed (see HistLine).
+    TermCell lineCell(int line, int col) const;
     // Characters in a line: cols() on the screen, its own width above it.
     int lineWidth(int line) const;
     // A line as UTF-8, trailing blanks dropped (rowText for screen rows).
     std::string lineText(int line) const;
     void clearHistory() { history_.clear(); }
+    // Bytes the scrollback takes (its lines' own storage, as allocated),
+    // and what the same cells would take as TermCells, for the tests.
+    size_t historyBytes() const;
+    size_t historyCellBytes() const;
 
     // One row as UTF-8, trailing blanks dropped.
     std::string rowText(int row) const;
@@ -123,6 +128,24 @@ public:
 private:
     using Row = std::vector<TermCell>;
     using Grid = std::vector<Row>;
+    // A scrollback line, packed: a TermCell is about 48 bytes, and a
+    // terminal keeps thousands of lines. The cells' text is one string;
+    // the style is a run per change. `cells` is empty when every cell is one
+    // byte of width 1 (most lines), else a cell's offset into `text` << 8 |
+    // its width.
+    struct StyleRun {
+        uint32_t col;             // the first cell in this style
+        TermStyle style;
+    };
+    struct HistLine {
+        std::string text;
+        std::vector<uint32_t> cells;
+        std::vector<StyleRun> runs;   // by col, the first at 0
+        int width = 0;                // cells in the line
+    };
+    static HistLine pack(const Row& row, size_t width);
+    static Row unpack(const HistLine& line);
+    static TermCell histCell(const HistLine& line, int col);
     struct Saved {
         int x = 0, y = 0;
         TermStyle style;
@@ -134,7 +157,7 @@ private:
     TermParser parser_;
     int cols_, rows_;
     Grid main_, alt_;
-    std::deque<Row> history_;         // above main_, oldest first
+    std::deque<HistLine> history_;    // above main_, oldest first
     int historyLimit_ = 0;
     long long historyBase_ = 0;
     bool onAlt_ = false;              // showing the alternate screen
@@ -172,7 +195,7 @@ private:
     void scrollUp(int n, bool save = false);   // within the scroll region;
                                       // save: what leaves the top goes to the
                                       // scrollback (main screen, region at top)
-    void pushHistory(Row row);
+    void pushHistory(const Row& row);
     void scrollDown(int n);
     void moveTo(int x, int y);        // absolute; clamps, clears pending wrap
     void clearWide(int y, int x);     // blank the other half of a wide char
