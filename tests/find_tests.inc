@@ -171,6 +171,16 @@ static void testTextFind() {
         CHECK(!replaceOneInText("ab", a, "X", 5, 0, &out));
         CHECK(replaceOneInText("x\n", Query::make(std::string("^"), o), "y", 2, 0, &out) &&
               out == "x\ny");
+        // The same row applied to a tab's UTF-16 text: byte 6 of line 2 is
+        // after "é" (two bytes, one unit) and "😀" (four bytes, two units).
+        Edit16 e;
+        const std::u16string t = u"ab\n\u00e9\U0001F600ab ab";
+        CHECK(replaceOneAt(t, a, u"X", 2, 6, &e) && e.start == 6 && e.length == 2 && e.text == u"X");
+        CHECK(applyEdits(t, {e}) == u"ab\n\u00e9\U0001F600X ab");
+        CHECK(replaceOneAt(t, a, u"X", 2, 9, &e) && e.start == 9);
+        CHECK(!replaceOneAt(t, a, u"X", 2, 5, &e));    // inside a character
+        CHECK(!replaceOneAt(t, a, u"X", 3, 0, &e));
+        CHECK(replaceOneAt(t, a, u"X", 1, 0, &e) && e.start == 0);
     }
 }
 

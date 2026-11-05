@@ -126,6 +126,13 @@ long nextIndex(const std::vector<Match>& matches, std::size_t selStart,
 // The index of the match exactly covering [start, start + length), or -1.
 long indexOf(const std::vector<Match>& matches, std::size_t start, std::size_t length);
 
+// The edit replacing only the match that starts at `byteColumn` (UTF-8
+// bytes) of 1-based `line`: a Find in Folder row, applied to the text of a
+// tab that holds the file. False when no match starts there.
+bool replaceOneAt(const std::u16string& text, const Query& query,
+                  const std::u16string& replacement, int line, std::size_t byteColumn,
+                  Edit16* out);
+
 // ----------------------------------------------------- UTF-8 (Find in Folder)
 
 // The first match in one line (no line breaks; valid UTF-8): byte offset and

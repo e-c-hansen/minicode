@@ -412,6 +412,42 @@ long indexOf(const std::vector<Match>& matches, std::size_t start, std::size_t l
     return -1;
 }
 
+bool replaceOneAt(const std::u16string& text, const Query& query,
+                  const std::u16string& replacement, int line, std::size_t byteColumn,
+                  Edit16* out) {
+    if (!query.usable() || line < 1) return false;
+    std::size_t pos = 0, next = 0, end = 0;
+    for (int k = 1;; ++k) {
+        end = lineEnd(text, pos, &next);
+        if (k == line) break;
+        if (next >= text.size()) {
+            if (end < text.size() && k + 1 == line) {
+                pos = end = next = text.size();
+                break;
+            }
+            return false;
+        }
+        pos = next;
+    }
+    // The byte column in UTF-16 units: UTF-8 lengths summed along the line.
+    std::size_t at = pos, bytes = 0;
+    while (bytes < byteColumn && at < end) {
+        const char16_t c = text[at];
+        if (c >= 0xD800 && c <= 0xDBFF && at + 1 < end) { bytes += 4; at += 2; }
+        else { bytes += c < 0x80 ? 1 : c < 0x800 ? 2 : 3; at += 1; }
+    }
+    if (bytes != byteColumn) return false;
+    const std::u16string lineText = text.substr(pos, end - pos);
+    for (const Match& m : findAll(lineText, query)) {
+        if (m.start + pos != at) continue;
+        out->start = at;
+        out->length = m.length;
+        out->text = expand(replacement, lineText, m, query);
+        return true;
+    }
+    return false;
+}
+
 // ------------------------------------------------------------------ UTF-8
 std::vector<Match> findAllInLine(const std::string& line, const Query& query) {
     std::vector<Match> out;
