@@ -92,7 +92,7 @@ The settings file can pick a different server or turn one off (lsp.python = pyls
 
 ## Formatting
 
-Shift Option F formats the file with the formatter you have installed for its language, on macOS for now. If a project has its own configuration, such as a .clang-format, a [tool.pyink], [tool.black], or [tool.ruff] table in pyproject.toml, a .style.yapf, or a ruff.toml, that formatter runs with the project's style. Ruff's lint settings alone are enough, since a project that lints with Ruff nearly always formats with it too, unless the same folder also configures pyink, yapf, or Black. Otherwise minicode follows Google's style guides: clang-format with Google's style for C, C++, Objective-C, Java, JavaScript, TypeScript, Protocol Buffers, and C#; pyink at 80 columns for Python, or yapf's google style when pyink is not installed; gofmt for Go; rustfmt for Rust; and shfmt with two-space indents for shell scripts. Python formatters in the project's .venv or venv are used first.
+Shift Option F formats the file with the formatter you have installed for its language, on macOS for now. If a project has its own configuration, such as a .clang-format, a [tool.pyink], [tool.black], or [tool.ruff] table in pyproject.toml, a .style.yapf, or a ruff.toml, that formatter runs with the project's style. Ruff's lint settings alone are enough, since a project that lints with Ruff nearly always formats with it too, unless the same folder also configures pyink, yapf, or Black. JavaScript and TypeScript projects set up for Prettier (a .prettierrc, a prettier.config.js, or a "prettier" key in package.json) or Biome (a biome.json) are formatted with that. Otherwise minicode follows Google's style guides: clang-format with Google's style for C, C++, Objective-C, Java, JavaScript, TypeScript, Protocol Buffers, and C#; pyink at 80 columns for Python, or yapf's google style when pyink is not installed; gofmt for Go; rustfmt for Rust; and shfmt with two-space indents for shell scripts. Python formatters in the project's .venv or venv are used first, and Prettier or Biome in its node_modules.
 
 With some lines selected, clang-format, pyink, and yapf format only those lines. The change is one step to undo, the cursor stays on the code it was on, and a file the formatter cannot parse is left alone, with the formatter's complaint shown next to the cursor. When the formatter is not installed, the note next to the cursor says how to install it, as below.
 
@@ -119,13 +119,15 @@ The help shows the command to run, with a Copy button and a Run in Terminal butt
 | Black | Python projects set up for it | `uv tool install black`, `pipx install black`, or `brew install black` |
 | Ruff | Python projects set up for it | `uv tool install ruff`, `pipx install ruff`, or `brew install ruff` |
 | clang-format | C, C++, Objective-C, Java, JavaScript, TypeScript, Protocol Buffers, and C# | `xcode-select --install`, or `brew install clang-format` |
+| Prettier | JavaScript and TypeScript projects set up for it | `npm install -g prettier`, or `brew install prettier` |
+| Biome | JavaScript and TypeScript projects set up for it | `npm install -g @biomejs/biome`, or `brew install biome` |
 | gofmt | Go | `brew install go` |
 | rustfmt | Rust | `rustup component add rustfmt` |
 | shfmt | shell scripts | `brew install shfmt`, or `go install mvdan.cc/sh/v3/cmd/shfmt@latest` |
 
 The installers come from Homebrew: `brew install uv`, `brew install pipx`, `brew install node` for npm, and `brew install go`. Rust's rustup comes from [rustup.rs](https://rustup.rs), and Homebrew itself from [brew.sh](https://brew.sh).
 
-minicode looks for these programs on your PATH, in Homebrew's folders, in ~/.local/bin (where uv and pipx put them), in npm's global folder (nvm, fnm, and volta included), in ~/go/bin and ~/.cargo/bin, and, for the Python formatters, in the project's .venv or venv first. To use something else, give its command in the settings file: lsp.python = pylsp, or format.python = yapf --style=google. A command there always wins over these.
+minicode looks for these programs on your PATH, in Homebrew's folders, in ~/.local/bin (where uv and pipx put them), in npm's global folder (nvm, fnm, and volta included), and in ~/go/bin and ~/.cargo/bin, after the project's own: its .venv or venv for the Python formatters, and its node_modules for Prettier and Biome. To use something else, give its command in the settings file: lsp.python = pylsp, or format.python = yapf --style=google. A command there always wins over these.
 
 ## Settings and transparency
 

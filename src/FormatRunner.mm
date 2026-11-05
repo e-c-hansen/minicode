@@ -21,7 +21,8 @@ static std::string Std(NSString *s) {
 }
 
 // A program named by a plan: a path as given, else the project's virtualenv
-// for Python tools, else the usual search (PATH, Homebrew, ~/.local/bin, ...,
+// for Python tools or its node_modules/.bin for Prettier and Biome, else the
+// usual search (PATH, Homebrew, ~/.local/bin, ...,
 // never /usr/bin's xcrun shims).
 static NSString *FindFormatter(const std::string &program, const std::string &lang,
                                NSString *path, NSString *root) {
@@ -32,6 +33,15 @@ static NSString *FindFormatter(const std::string &program, const std::string &la
         NSFileManager *fm = [NSFileManager defaultManager];
         for (const std::string &dir :
              Formatter::venvBinDirs(Std(path), Std(root ?: @""), Std(venv))) {
+            NSString *p = [NS(dir) stringByAppendingPathComponent:name];
+            if ([fm isExecutableFileAtPath:p]) return p;
+        }
+    }
+    // Prettier and Biome are usually the project's own, at the version its
+    // package.json pins.
+    if (Formatter::fromNodeModules(program)) {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        for (const std::string &dir : Formatter::nodeBinDirs(Std(path), Std(root ?: @""))) {
             NSString *p = [NS(dir) stringByAppendingPathComponent:name];
             if ([fm isExecutableFileAtPath:p]) return p;
         }

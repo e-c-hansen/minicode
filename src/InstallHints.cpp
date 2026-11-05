@@ -72,6 +72,18 @@ const std::vector<Tool>& formatters() {
          "Protocol Buffers, and C# with Format Document (Shift+Option+F).",
          "https://clang.llvm.org/docs/ClangFormat.html",
          {{"xcode-select --install", ""}, {"brew install clang-format", "brew"}}},
+        // A project's own copy in node_modules/.bin is used first, so these
+        // matter only where the project's packages are not installed.
+        {"prettier",
+         "Prettier formats JavaScript and TypeScript projects set up for it with "
+         "Format Document (Shift+Option+F).",
+         "https://prettier.io",
+         {{"npm install -g prettier", "npm"}, {"brew install prettier", "brew"}}},
+        {"biome",
+         "Biome formats JavaScript and TypeScript projects set up for it with "
+         "Format Document (Shift+Option+F).",
+         "https://biomejs.dev",
+         {{"npm install -g @biomejs/biome", "npm"}, {"brew install biome", "brew"}}},
         {"gofmt", "gofmt, which comes with Go, formats Go with Format Document "
                   "(Shift+Option+F).",
          "https://go.dev/doc/install", {{"brew install go", "brew"}}},

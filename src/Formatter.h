@@ -8,7 +8,8 @@
 // language has a settings key, format.<lang>. When it is not set, the
 // project decides first and Google's style guides second:
 //   - A project that configures a formatter (a .clang-format, a pyproject.toml
-//     with [tool.pyink], a .style.yapf, ...) gets that formatter with its own
+//     with [tool.pyink], a .style.yapf, a .prettierrc or biome.json for
+//     JavaScript and TypeScript, ...) gets that formatter with its own
 //     configuration, and nothing else: falling back to another tool would
 //     reformat the project in a style it never chose.
 //   - Otherwise the language's Google-style command runs (clang-format
@@ -74,6 +75,13 @@ Plan plan(const std::string& lang, const std::string& setting,
 std::vector<std::string> venvBinDirs(const std::string& path, const std::string& root,
                                      const std::string& virtualEnv);
 
+// Folders that may hold a project's own Node tools (Prettier, Biome), nearest
+// first: node_modules/.bin in the file's folder and each one above it up to
+// `root`, as venvBinDirs.
+std::vector<std::string> nodeBinDirs(const std::string& path, const std::string& root);
+// Is this a formatter a project installs in node_modules ("prettier", "biome")?
+bool fromNodeModules(const std::string& program);
+
 // A command line -> argv. Words are split like lsp.* commands (quotes group,
 // backslash escapes), and {file} is replaced inside each word afterwards, so
 // a path with spaces or quotes stays one argument and never needs quoting.
@@ -100,6 +108,9 @@ bool tomlHasTable(const std::string& text, const std::string& name);
 bool iniHasSection(const std::string& text, const std::string& name);
 // The edition a Cargo.toml's [package] names, or "2021".
 std::string cargoEdition(const std::string& text);
+// Is the text a JSON object with this key at its top (package.json's
+// "prettier")?
+bool jsonHasKey(const std::string& text, const std::string& key);
 // Does an .editorconfig have a section that applies to shell scripts
 // ([*], or a glob naming sh or bash)?
 bool editorconfigCoversShell(const std::string& text);

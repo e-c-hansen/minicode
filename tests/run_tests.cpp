@@ -7483,6 +7483,7 @@ Formatter::Fs fakeFs(const std::map<std::string, std::string> &files) {
 
 void testFormatter() {
     using namespace Formatter;
+    bool ranged0 = true;
     GROUP("format:languages");
     CHECK(languageFor("/a/b/x.py") == "python");
     CHECK(languageFor("/a/b/X.PYI") == "python");
@@ -7622,6 +7623,79 @@ void testFormatter() {
                    fakeFs({{"/w/crate/Cargo.toml",
                             "[package]\nname = \"x\"\nedition = \"2024\"\n"}}));
     CHECK(rs.candidates.size() == 1 && rs.candidates[0].command == "rustfmt --edition 2024");
+
+    GROUP("format:javascript");
+    // No configuration: clang-format in Google's style, as before.
+    Plan js = plan("cpp", "", "/w/web/src/app.ts", "/w/web",
+                   fakeFs({{"/w/web/package.json", "{\"name\": \"web\"}"}}));
+    CHECK(js.candidates.size() == 1 && js.candidates[0].program == "clang-format" &&
+          !js.candidates[0].projectStyle && js.configFile.empty());
+    CHECK(defaultCommand("cpp").rfind("clang-format", 0) == 0);
+    // A .prettierrc, in the file's folder or above it.
+    Plan pr = plan("cpp", "", "/w/web/src/app.tsx", "/w/web",
+                   fakeFs({{"/w/web/.prettierrc", "{}"}}));
+    CHECK(pr.candidates.size() == 1 && pr.candidates[0].program == "prettier" &&
+          pr.candidates[0].projectStyle &&
+          pr.candidates[0].command == "prettier --stdin-filepath {file}" &&
+          pr.configFile == "/w/web/.prettierrc" && pr.installHint == "npm install -g prettier");
+    for (const char *name : {".prettierrc.json", ".prettierrc.yaml", ".prettierrc.mjs",
+                             "prettier.config.js", "prettier.config.ts"}) {
+        Plan each = plan("cpp", "", "/w/a.js", "/w", fakeFs({{std::string("/w/") + name, ""}}));
+        CHECK(each.candidates.size() == 1 && each.candidates[0].program == "prettier");
+    }
+    // A "prettier" key in package.json counts; a package.json without one,
+    // or one that only names Prettier as a dependency, does not.
+    Plan pj = plan("cpp", "", "/w/a.mjs", "/w",
+                   fakeFs({{"/w/package.json",
+                            "{\"name\": \"x\", \"prettier\": {\"semi\": false}}"}}));
+    CHECK(pj.candidates.size() == 1 && pj.candidates[0].program == "prettier" &&
+          pj.configFile == "/w/package.json");
+    Plan pd = plan("cpp", "", "/w/a.js", "/w",
+                   fakeFs({{"/w/package.json", "{\"devDependencies\": {\"prettier\": \"^3\"}}"}}));
+    CHECK(pd.candidates.size() == 1 && pd.candidates[0].program == "clang-format");
+    Plan pb = plan("cpp", "", "/w/a.js", "/w",
+                   fakeFs({{"/w/package.json", "{\"prettier\": "}}));   // broken JSON
+    CHECK(pb.candidates.size() == 1 && pb.candidates[0].program == "clang-format");
+    // Biome.
+    Plan bi = plan("cpp", "", "/w/pkg/a.cts", "/w", fakeFs({{"/w/biome.jsonc", "{}"}}));
+    CHECK(bi.candidates.size() == 1 && bi.candidates[0].program == "biome" &&
+          bi.candidates[0].command == "biome format --stdin-file-path={file}" &&
+          bi.installHint == "npm install -g @biomejs/biome");
+    CHECK(plan("cpp", "", "/w/a.js", "/w", fakeFs({{"/w/biome.json", "{}"}}))
+              .candidates[0].program == "biome");
+    // Only JavaScript and TypeScript: C++ and Java beside a .prettierrc keep
+    // clang-format, and a .clang-format beside one loses for scripts only.
+    Plan cc = plan("cpp", "", "/w/m.cc", "/w", fakeFs({{"/w/.prettierrc", "{}"}}));
+    CHECK(cc.candidates.size() == 1 && cc.candidates[0].program == "clang-format" &&
+          cc.configFile.empty());
+    Plan jv = plan("cpp", "", "/w/A.java", "/w", fakeFs({{"/w/biome.json", "{}"}}));
+    CHECK(jv.candidates[0].program == "clang-format");
+    Fs both = fakeFs({{"/w/.prettierrc", "{}"}, {"/w/.clang-format", ""}});
+    CHECK(plan("cpp", "", "/w/a.ts", "/w", both).candidates[0].program == "prettier");
+    CHECK(plan("cpp", "", "/w/a.cpp", "/w", both).candidates[0].program == "clang-format");
+    // The nearest folder still decides.
+    Plan near = plan("cpp", "", "/w/web/a.ts", "/w",
+                     fakeFs({{"/w/web/.clang-format", ""}, {"/w/.prettierrc", "{}"}}));
+    CHECK(near.candidates[0].program == "clang-format" &&
+          near.configFile == "/w/web/.clang-format");
+    // The settings still win.
+    Plan st = plan("cpp", "clang-format", "/w/a.ts", "/w", fakeFs({{"/w/.prettierrc", "{}"}}));
+    CHECK(st.fromSettings && st.candidates[0].command == "clang-format");
+    CHECK(jsonHasKey("{\"prettier\": \"@company/config\"}", "prettier"));
+    CHECK(!jsonHasKey("[\"prettier\"]", "prettier"));
+    CHECK(!jsonHasKey("", "prettier"));
+    // The project's own copy, in node_modules/.bin up to the open folder.
+    std::vector<std::string> nb = nodeBinDirs("/w/web/src/a.ts", "/w/web");
+    CHECK(nb.size() == 2 && nb[0] == "/w/web/src/node_modules/.bin" &&
+          nb[1] == "/w/web/node_modules/.bin");
+    CHECK(nodeBinDirs("/elsewhere/a.ts", "/w") ==
+          std::vector<std::string>{"/elsewhere/node_modules/.bin"});
+    CHECK(fromNodeModules("prettier") && fromNodeModules("/x/node_modules/.bin/biome") &&
+          !fromNodeModules("clang-format") && !fromNodeModules("pyink"));
+    // No line ranges for them: the whole file is formatted.
+    std::vector<std::string> pa =
+        arguments("prettier --stdin-filepath {file}", "/w/a b.ts", 2, 3, &ranged0);
+    CHECK(!ranged0 && pa.size() == 3 && pa[2] == "/w/a b.ts");
 
     GROUP("format:project files");
     CHECK(tomlHasTable("[tool.pyink]\n", "tool.pyink"));
@@ -7810,7 +7884,10 @@ static void testInstallHints() {
     CHECK(Install::formatter("clang-format") &&
           Install::formatter("clang-format")->ways.size() == 2);
     CHECK(Install::formatter("rustfmt") && Install::formatter("gofmt"));
-    CHECK(Install::formatter("prettier") == nullptr);
+    CHECK(Install::formatter("dprint") == nullptr);
+    CHECK(Install::formatter("node_modules/.bin/prettier") &&
+          Install::formatter("prettier")->ways.front().command == "npm install -g prettier");
+    CHECK(Install::formatter("biome") && Install::formatter("biome")->ways.size() == 2);
     // Every formatter Format Document can pick has a hint.
     for (const std::string &lang : Formatter::languages()) {
         Formatter::Fs none;

@@ -1,6 +1,7 @@
 // Formatter.cpp — see Formatter.h.
 #include "Formatter.h"
 #include "InstallHints.h"
+#include "Json.h"
 #include "LspClient.h"   // Lsp::splitCommand, shared with lsp.* commands
 #include <algorithm>
 #include <cctype>
@@ -43,7 +44,7 @@ std::string join(const std::string& dir, const std::string& name) {
 
 // A project file that says a tool is configured: the file itself, or a
 // table/section in it.
-enum class Kind { Any, TomlTable, IniSection, EditorConfigShell };
+enum class Kind { Any, TomlTable, IniSection, EditorConfigShell, JsonKey };
 struct Marker {
     const char* file;
     Kind kind;
@@ -56,7 +57,13 @@ struct Tool {
     const char* project;    // the command when it does
     std::vector<Marker> markers;
     bool byDefault;         // tried without project configuration
+    // The extensions it formats, when only some of the language's (empty: all).
+    std::vector<const char*> only = {};
 };
+
+// The JavaScript and TypeScript extensions, which Prettier and Biome format
+// in place of clang-format when the project configures them.
+#define MC_JS_EXTENSIONS {"js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"}
 
 struct Language {
     const char* key;
@@ -104,6 +111,34 @@ const std::vector<Language>& table() {
           "inl", "tpp", "cu", "cuh", "m", "mm", "java", "js", "mjs", "cjs", "jsx",
           "ts", "mts", "cts", "tsx", "proto", "cs"},
          {
+             // A JavaScript or TypeScript project that configures Prettier or
+             // Biome formats with it. They come before clang-format, so a
+             // folder holding a .prettierrc and a .clang-format (a project
+             // with both kinds of code) formats its scripts with Prettier.
+             {"prettier", "", "prettier --stdin-filepath {file}",
+              {{".prettierrc", Kind::Any, ""},
+               {".prettierrc.json", Kind::Any, ""},
+               {".prettierrc.json5", Kind::Any, ""},
+               {".prettierrc.yaml", Kind::Any, ""},
+               {".prettierrc.yml", Kind::Any, ""},
+               {".prettierrc.toml", Kind::Any, ""},
+               {".prettierrc.js", Kind::Any, ""},
+               {".prettierrc.cjs", Kind::Any, ""},
+               {".prettierrc.mjs", Kind::Any, ""},
+               {".prettierrc.ts", Kind::Any, ""},
+               {".prettierrc.cts", Kind::Any, ""},
+               {".prettierrc.mts", Kind::Any, ""},
+               {"prettier.config.js", Kind::Any, ""},
+               {"prettier.config.cjs", Kind::Any, ""},
+               {"prettier.config.mjs", Kind::Any, ""},
+               {"prettier.config.ts", Kind::Any, ""},
+               {"prettier.config.cts", Kind::Any, ""},
+               {"prettier.config.mts", Kind::Any, ""},
+               {"package.json", Kind::JsonKey, "prettier"}},
+              false, MC_JS_EXTENSIONS},
+             {"biome", "", "biome format --stdin-file-path={file}",
+              {{"biome.json", Kind::Any, ""}, {"biome.jsonc", Kind::Any, ""}},
+              false, MC_JS_EXTENSIONS},
              // --style=file uses the nearest .clang-format and falls back to
              // Google's style when the project has none.
              {"clang-format",
@@ -142,6 +177,14 @@ std::string hintFor(const std::string& program) {
     return t && !t->ways.empty() ? t->ways.front().command : "";
 }
 
+bool appliesTo(const Tool& t, const std::string& path) {
+    if (t.only.empty()) return true;
+    std::string ext = extensionOf(path);
+    for (const char* e : t.only)
+        if (ext == e) return true;
+    return false;
+}
+
 bool markerMatches(const Marker& m, const std::string& dir, const Fs& fs,
                    std::string& file) {
     file = join(dir, m.file);
@@ -152,6 +195,7 @@ bool markerMatches(const Marker& m, const std::string& dir, const Fs& fs,
         case Kind::TomlTable: return tomlHasTable(text, m.section);
         case Kind::IniSection: return iniHasSection(text, m.section);
         case Kind::EditorConfigShell: return editorconfigCoversShell(text);
+        case Kind::JsonKey: return jsonHasKey(text, m.section);
         case Kind::Any: break;
     }
     return true;
@@ -226,7 +270,10 @@ std::string displayName(const std::string& lang) {
 
 std::string defaultCommand(const std::string& lang) {
     const Language* l = findLanguage(lang);
-    return l ? l->tools.front().google : "";
+    if (!l) return "";
+    for (const Tool& t : l->tools)
+        if (t.byDefault) return t.google;
+    return "";
 }
 
 Plan plan(const std::string& lang, const std::string& setting,
@@ -251,6 +298,7 @@ Plan plan(const std::string& lang, const std::string& setting,
     const Tool* chosen = nullptr;
     for (const std::string& dir : searchDirs(path, root, fs)) {
         for (const Tool& t : l->tools) {
+            if (!appliesTo(t, path)) continue;
             for (const Marker& m : t.markers) {
                 std::string file;
                 if (markerMatches(m, dir, fs, file)) {
@@ -269,7 +317,7 @@ Plan plan(const std::string& lang, const std::string& setting,
         p.installHint = hintFor(chosen->program);
     } else {
         for (const Tool& t : l->tools) {
-            if (!t.byDefault) continue;
+            if (!t.byDefault || !appliesTo(t, path)) continue;
             p.candidates.push_back({t.program, t.google, false});
             if (p.installHint.empty()) p.installHint = hintFor(t.program);
         }
@@ -292,11 +340,10 @@ Plan plan(const std::string& lang, const std::string& setting,
     return p;
 }
 
-std::vector<std::string> venvBinDirs(const std::string& path, const std::string& root,
-                                     const std::string& virtualEnv) {
-    std::vector<std::string> out;
-    // Up to the open folder; a file outside it has only its own folder
-    // searched, so a stray .venv higher up never supplies the tools.
+// The folders whose project tools a file may use, nearest first: up to the
+// open folder; a file outside it has only its own folder searched, so a
+// stray .venv or node_modules higher up never supplies the tools.
+static std::vector<std::string> toolFolders(const std::string& path, const std::string& root) {
     std::string r = root;
     while (r.size() > 1 && r.back() == '/') r.pop_back();
     std::string folder = parentOf(path);
@@ -308,7 +355,13 @@ std::vector<std::string> venvBinDirs(const std::string& path, const std::string&
     } else if (!folder.empty()) {
         dirs.push_back(folder);
     }
-    for (const std::string& dir : dirs) {
+    return dirs;
+}
+
+std::vector<std::string> venvBinDirs(const std::string& path, const std::string& root,
+                                     const std::string& virtualEnv) {
+    std::vector<std::string> out;
+    for (const std::string& dir : toolFolders(path, root)) {
         out.push_back(join(dir, ".venv/bin"));
         out.push_back(join(dir, "venv/bin"));
     }
@@ -317,6 +370,23 @@ std::vector<std::string> venvBinDirs(const std::string& path, const std::string&
         if (std::find(out.begin(), out.end(), bin) == out.end()) out.push_back(bin);
     }
     return out;
+}
+
+std::vector<std::string> nodeBinDirs(const std::string& path, const std::string& root) {
+    std::vector<std::string> out;
+    for (const std::string& dir : toolFolders(path, root))
+        out.push_back(join(dir, "node_modules/.bin"));
+    return out;
+}
+
+bool fromNodeModules(const std::string& program) {
+    std::string name = programName(program);
+    return name == "prettier" || name == "biome";
+}
+
+bool jsonHasKey(const std::string& text, const std::string& key) {
+    Json j;
+    return Json::parse(text, j) && j.isObject() && j.has(key);
 }
 
 std::string programName(const std::string& program) {
