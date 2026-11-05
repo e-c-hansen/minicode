@@ -1524,6 +1524,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     MCLspServer *_server;     // the server for it, or nil
     NSString *_transient;     // a brief message ("No definition found")
     std::map<std::string, std::vector<Lsp::Diagnostic>> _diags;
+    NSUInteger _edits;        // counts edits to the text on show
     NSString *_settingsSignature, *_pythonSetting;
 
     MCCompletionPopup *_popup;
@@ -2308,6 +2309,7 @@ static BOOL IsRunnable(NSString *path) {
     NSTextStorage *ts = note.object;
     // Typing closes hover info and the lists; recoloring alone does not.
     if (ts.editedMask & NSTextStorageEditedCharacters) {
+        _edits++;
         [self closeHover];
         [self closePicker];
     }
@@ -2635,24 +2637,79 @@ static BOOL IsRunnable(NSString *path) {
     [_popup close];
 }
 
+// How long accepting an item waits for completionItem/resolve to bring its
+// additional edits (an auto-import). Keys pressed meanwhile wait in the
+// event queue and arrive after the completion, in order.
+static const NSTimeInterval kResolveBeforeAccept = 0.4;
+
+// completionItem/resolve for an item about to be accepted, waited for here,
+// at most kResolveBeforeAccept. YES when the item may still be accepted: the
+// server, the file and its text are as they were (the wait runs the main
+// queue, so a server's workspace/applyEdit could have got in).
+- (BOOL)resolveBeforeAccepting:(Lsp::CompletionItem &)item {
+    MCLspServer *server = _server;
+    if (!server || !Lsp::completionWantsResolve(item, server.client.canResolveCompletion()))
+        return YES;
+    struct Answer { bool done = false; Json result; };
+    auto answer = std::make_shared<Answer>();
+    int rid = server.client.resolveCompletion(item, [answer](const Json &r, const Json &e) {
+        answer->done = true;
+        if (e.isNull()) answer->result = r;
+    });
+    if (!rid) return YES;
+    NSString *uri = _uri;
+    const NSUInteger edits = _edits;
+    NSDate *until = [NSDate dateWithTimeIntervalSinceNow:kResolveBeforeAccept];
+    while (!answer->done && until.timeIntervalSinceNow > 0)
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:until];
+    if (!answer->done) {
+        server.client.cancel(rid);   // too slow: the word goes in without it
+        return _server == server && [_uri isEqualToString:uri] && _edits == edits;
+    }
+    Lsp::applyResolved(item, answer->result);
+    return _server == server && [_uri isEqualToString:uri] && _edits == edits;
+}
+
 - (void)acceptCompletion:(NSInteger)row {
     if (row < 0 || (size_t)row >= _shown.size()) { [self closeCompletion]; return; }
     Lsp::CompletionItem item = _shown[(size_t)row];
     NSUInteger cursor = [self cursor];
     NSUInteger start = _anchor;
+    [self closeCompletion];
+    // Answers for the list still on their way must not bring it back.
+    _completionGen++;
+    if (![self resolveBeforeAccepting:item]) return;
+    std::u16string text = U16Of(_tv.string);
     if (item.hasEdit) {
         // The edit's range was computed on the text as it was when asked;
         // everything before the word is unchanged since, so its start holds.
-        size_t editStart = Lsp::offsetForPosition(U16Of(_tv.string), item.editRange.start);
+        size_t editStart = Lsp::offsetForPosition(text, item.editRange.start);
         if (editStart <= cursor) start = editStart;
     }
-    [self closeCompletion];
-    NSString *insert = NS(item.textToInsert());
-    NSRange range = NSMakeRange(start, cursor - start);
-    if (![_tv shouldChangeTextInRange:range replacementString:insert]) return;
-    [_tv.textStorage replaceCharactersInRange:range withString:insert];
+    // The word, and the edits that go with it (an import at the top, an
+    // #include), as one replacement: one undo step, one change for the
+    // highlighter and the server.
+    Lsp::CompletionEdits ce = Lsp::completionEdits(text, start, cursor,
+                                                   Lsp::toUtf16(item.textToInsert()),
+                                                   item.additionalEdits);
+    NSMutableArray<NSValue *> *ranges = [NSMutableArray array];
+    NSMutableArray<NSString *> *strings = [NSMutableArray array];
+    for (const Lsp::OffsetEdit &e : ce.edits) {
+        [ranges addObject:[NSValue valueWithRange:NSMakeRange(e.start, e.length)]];
+        [strings addObject:[NSString stringWithCharacters:(const unichar *)e.text.data()
+                                                   length:e.text.size()]];
+    }
+    [_tv breakUndoCoalescing];
+    if (![_tv shouldChangeTextInRanges:ranges replacementStrings:strings]) return;
+    NSTextStorage *ts = _tv.textStorage;
+    [ts beginEditing];
+    for (NSInteger i = (NSInteger)ranges.count - 1; i >= 0; i--)
+        [ts replaceCharactersInRange:ranges[(NSUInteger)i].rangeValue
+                          withString:strings[(NSUInteger)i]];
+    [ts endEditing];
     [_tv didChangeText];
-    [_tv setSelectedRange:NSMakeRange(start + insert.length, 0)];
+    [_tv breakUndoCoalescing];
+    if (ce.caret <= _tv.string.length) [_tv setSelectedRange:NSMakeRange(ce.caret, 0)];
     [_tv scrollRangeToVisible:_tv.selectedRange];
 }
 
