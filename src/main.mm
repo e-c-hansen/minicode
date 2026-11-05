@@ -11,8 +11,9 @@
 #import "ChangePanel.h"
 #import "PalettePanel.h"
 #import "BackupStore.h"
+#import "ControlServer.h"
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, MCRestarting>
+@interface AppDelegate : NSObject <NSApplicationDelegate, MCRestarting, MCControlAppHost>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
 @property(nonatomic, strong) id keyMonitor;
 // Request a Change's restart, between the question and the quit: the app
@@ -108,6 +109,14 @@ static BOOL MCIsCommandPeriod(NSEvent *e) {
             [e.window.firstResponder keyDown:e];
             return nil;
         }
+        // Option+] and Option+[ step through an agent's tour, only while one
+        // is on in this window; otherwise they type their characters.
+        if (opt && !cmd && !ctrl && !shift && c.tourActive &&
+            (e.keyCode == 30 || e.keyCode == 33)) {
+            if (e.keyCode == 30) [c nextTourStop:nil];
+            else [c previousTourStop:nil];
+            return nil;
+        }
         BOOL formatKey = opt && shift && !cmd && !ctrl && [ch isEqualToString:@"f"];
         BOOL sortKey = e.keyCode == 101 /* kVK_F9 */ && !cmd && !ctrl && !opt;
         // F2 and Shift+F12 likewise (Rename Symbol, Find All References),
@@ -128,6 +137,9 @@ static BOOL MCIsCommandPeriod(NSEvent *e) {
         }
         return e;
     }];
+
+    // The control channel (`minicode open`, `state`, ...; ControlServer.h).
+    MCControlServerStart(self);
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
@@ -246,6 +258,7 @@ static BOOL MCIsCommandPeriod(NSEvent *e) {
     // Every window's session as it is now: the browser's page moves without
     // anything else saving it.
     for (EditorController *c in self.controllers) [c saveSession];
+    MCControlServerStop();
     MCLspTerminateAllServers();
     if (self.restartApp) {
         MCSaveRestartRecord(self.restartRecord ?: @{});
@@ -457,6 +470,20 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
     return best;
 }
 
+// ------------------------------------------- the control channel's host
+- (NSArray<EditorController *> *)controlControllers { return [self.controllers copy]; }
+- (EditorController *)controlFrontController { return self.controllers.count ? [self current] : nil; }
+- (EditorController *)controlControllerContaining:(NSString *)file spelled:(NSString **)spelled {
+    NSString *inRoot = nil;
+    EditorController *c = [self controllerContaining:MCComparablePath(file) spelled:&inRoot];
+    if (spelled) *spelled = inRoot;
+    return c;
+}
+- (EditorController *)controlControllerRootedAt:(NSString *)dir {
+    return [self controllerRootedAt:MCComparablePath(dir)];
+}
+- (EditorController *)controlOpenWindowAtPath:(NSString *)dir { return [self openWindowAtPath:dir]; }
+
 // ------------------------------------------------------- window management
 - (EditorController *)openWindowAtPath:(NSString *)path {
     EditorController *c = [[EditorController alloc] initWithRootPath:path];
@@ -542,6 +569,8 @@ static BOOL MCWindowTabAction(SEL a) {
     if (item.action == @selector(exportPDF:)) return [self current].canExportPDF;
     if (item.action == @selector(togglePlayback:))
         return [self current].canTogglePlayback;
+    if (item.action == @selector(nextTourStop:) || item.action == @selector(previousTourStop:))
+        return [self current].tourActive;
     if (item.action == @selector(toggleProblems:)) {
         EditorController *c = [self current];
         return c ? [c validateMenuItem:item] : NO;
@@ -562,6 +591,8 @@ static BOOL MCWindowTabAction(SEL a) {
     return YES;
 }
 - (void)togglePlayback:(id)sender  { [[self current] togglePlayback:sender]; }
+- (void)nextTourStop:(id)sender    { [[self current] nextTourStop:sender]; }
+- (void)previousTourStop:(id)sender { [[self current] previousTourStop:sender]; }
 - (void)toggleHints:(id)sender     { [[self current] toggleHints:sender]; }
 - (void)toggleTerminal:(id)sender  { [[self current] toggleTerminal:sender]; }
 - (void)newTerminal:(id)sender     { [[self current] newTerminal:sender]; }
@@ -1291,6 +1322,19 @@ static void BuildMenu(void) {
                                                       keyEquivalent:f8];
     previousProblem.keyEquivalentModifierMask = NSEventModifierFlagShift;
     [navMenu addItem:previousProblem];
+    // An agent's tour (`minicode tour`): enabled only while one is on, and
+    // the key monitor takes the keys only then, so Option+] still types ‘.
+    [navMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *nextStop = [[NSMenuItem alloc] initWithTitle:@"Next Tour Stop"
+                                                      action:@selector(nextTourStop:)
+                                               keyEquivalent:@"]"];
+    nextStop.keyEquivalentModifierMask = NSEventModifierFlagOption;
+    [navMenu addItem:nextStop];
+    NSMenuItem *prevStop = [[NSMenuItem alloc] initWithTitle:@"Previous Tour Stop"
+                                                      action:@selector(previousTourStop:)
+                                               keyEquivalent:@"["];
+    prevStop.keyEquivalentModifierMask = NSEventModifierFlagOption;
+    [navMenu addItem:prevStop];
     navItem.submenu = navMenu;
 }
 

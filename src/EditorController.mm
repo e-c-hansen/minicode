@@ -25,6 +25,8 @@
 #import "BackupStore.h"
 #import "AgentPanel.h"
 #import "ProblemsPanel.h"
+#import "AgentNotes.h"
+#import "CompareView.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #import <AVKit/AVKit.h>                 // video and audio in the editor's slot
 #import <AVFoundation/AVFoundation.h>
@@ -39,6 +41,7 @@
 #include "LineDiff.h"
 #include "Formatter.h"
 #include "LspClient.h"   // Lsp::serverDisplayName
+#include "ControlProtocol.h"   // the selection's size limit
 #include <memory>
 #include <string>
 
@@ -488,6 +491,12 @@ private:
 @property(nonatomic, assign) BOOL isDiff, diffIsCommit;
 @property(nonatomic, copy)   NSString *diffName;
 @property(nonatomic, strong) NSData *diffData;
+// A side-by-side diff (isDiff too): what it compares (CompareView.h).
+@property(nonatomic, strong) MCComparison *comparison;
+// The window's agent preview tab: what `minicode open --note` and the like
+// show, replaced by the next such open; an edit or a double-click on its
+// title keeps it as an ordinary tab.
+@property(nonatomic, assign) BOOL agentPreview;
 @property(nonatomic, strong) NSUndoManager *undoManager;
 @property(nonatomic, assign) uint64_t lastActive;     // for the tab shown after a close
 // Where the view was when another tab took over.
@@ -528,7 +537,8 @@ private:
 @end
 
 // ---------------------------------------------------------------------------
-@interface EditorController () <NSTextStorageDelegate, MCChangeHost, MCAgentHost> {
+@interface EditorController () <NSTextStorageDelegate, MCChangeHost, MCAgentHost,
+                                 MCAgentNotesHost> {
     FileItem *_root;
     // The open files, in the order the strip shows them, and the one shown.
     NSMutableArray<MCTab *> *_tabs;
@@ -600,6 +610,7 @@ private:
     MCChangeSession *_change;              // Request a Change (Shift+Cmd+K), made on first use
     MCAgentSession *_agent;                // the inline agent (Cmd+I), made on first use
     NSDate *_backupFirstPending;           // the oldest buffer change not yet backed up
+    MCAgentNotes *_notes;                  // notes and tours over the editor, made on first use
 }
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) ClickOutline *outline;
@@ -671,6 +682,7 @@ private:
 @property(nonatomic, assign) BOOL gitPanelVisible;
 @property(nonatomic, strong) PanelScrollView *diffScroll;   // editor's slot, for a diff
 @property(nonatomic, strong) NSTextView *diffView;
+@property(nonatomic, strong) MCCompareView *compareView;   // editor's slot, side by side
 @property(nonatomic, assign) BOOL isDiff;
 @property(nonatomic, copy)   NSString *diffName;     // for the title
 @property(nonatomic, strong) NSData *diffData;       // re-colored on a settings change
@@ -1526,6 +1538,10 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
         [self appendHintsRow:s key:@"⇧⌘Space" label:@"Play or pause"
                         key2:@"⌘1" label2:@"Focus the player" state:nil];
     }
+    if (_notes.tourActive) {
+        [self appendHintsRow:s key:@"⌥]" label:@"Next stop of the tour"
+                        key2:@"⌥[" label2:@"Previous stop" state:nil];
+    }
 
     // A short gap, not a whole empty heading, before the way out.
     [s appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"
@@ -1614,13 +1630,19 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     BOOL showImage = showEditor && self.imageView != nil && self.isImage;
     BOOL showPDF = showEditor && self.pdfView != nil && self.isPDF;
     BOOL showMedia = showEditor && self.playerView != nil && self.isMedia;
-    BOOL showDiff = showEditor && self.diffScroll != nil && self.isDiff;
+    BOOL showCompare = showEditor && self.compareView != nil && self.isDiff &&
+                       _activeTab.comparison != nil;
+    BOOL showDiff = showEditor && self.diffScroll != nil && self.isDiff && !showCompare;
     self.editorScroll.frame = editorRect;
     self.editorScroll.hidden = !showEditor || showLatex || showImage || showPDF ||
-                               showMedia || showDiff;
+                               showMedia || showDiff || showCompare;
     if (self.diffScroll) {
         self.diffScroll.frame = editorRect;
         self.diffScroll.hidden = !showDiff;
+    }
+    if (self.compareView) {
+        self.compareView.frame = editorRect;
+        self.compareView.hidden = !showCompare;
     }
     if (self.pdfView) {
         self.pdfView.frame = editorRect;
@@ -1732,9 +1754,10 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
 
 // The terminal dock, with its first terminal, made when first needed and
 // again after its last terminal was closed.
-- (void)makeTerminalPanel {
+- (void)makeTerminalPanel { [self makeTerminalPanelFirstIn:nil]; }
+- (void)makeTerminalPanelFirstIn:(NSString *)first {
     if (self.terminalPanel) return;
-    self.terminalPanel = [[MCTerminalPanel alloc] initWithDirectory:_root.path];
+    self.terminalPanel = [[MCTerminalPanel alloc] initWithDirectory:_root.path firstIn:first];
     self.terminalPanel.projectRoot = _root.path;
     __weak EditorController *weakSelf = self;
     self.terminalPanel.onOpenLink = ^(MCTermLink *link) {
@@ -2153,7 +2176,7 @@ static const CGFloat kDividerGrabSlop = 5;
     // Diffs and commits share one tab, which each new one replaces, so
     // stepping through the changed files does not leave a tab for each.
     MCTab *tab = nil;
-    for (MCTab *t in _tabs) if (t.isDiff) { tab = t; break; }
+    for (MCTab *t in _tabs) if (t.isDiff && !t.comparison) { tab = t; break; }
     if (!tab) {
         tab = [MCTab new];
         tab.loaded = YES;
@@ -2203,6 +2226,10 @@ static const CGFloat kDividerGrabSlop = 5;
 }
 
 - (void)renderDiff {
+    if (_activeTab.comparison) {
+        [self compareViewMade].comparison = _activeTab.comparison;
+        return;
+    }
     NSFont *mono = [NSFont monospacedSystemFontOfSize:12.5 weight:NSFontWeightRegular];
     [self.diffView.textStorage setAttributedString:
         self.diffIsCommit ? MCGitCommitText(self.diffData, mono)
@@ -3266,6 +3293,7 @@ static NSString *MCGroupedCount(long long n) {
     self.diffName = nil;
     self.diffData = nil;
     self.diffIsCommit = NO;
+    _activeTab.comparison = nil;
     [self.diffView.textStorage setAttributedString:[NSAttributedString new]];
 }
 
@@ -3652,6 +3680,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     strip.onSelect = ^(NSInteger i) { [weakSelf selectTabAtIndex:i]; };
     strip.onClose = ^(NSInteger i) { [weakSelf closeTabAtIndex:i]; };
     strip.menuForTab = ^NSMenu *(NSInteger i) { return [weakSelf menuForTabAtIndex:i]; };
+    strip.onDoubleClick = ^(NSInteger i) { [weakSelf keepAgentPreviewTabAtIndex:i]; };
     [self.rightArea addSubview:strip];
     self.tabStrip = strip;
     // With no file open the slot is empty but for one muted line.
@@ -3700,7 +3729,9 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     for (NSUInteger i = 0; i < _tabs.count; i++) {
         MCTab *t = _tabs[i];
         MCTabStripItem *item = [MCTabStripItem new];
-        if (t.isDiff)
+        if (t.comparison)
+            item.title = t.comparison.title ?: @"Diff";
+        else if (t.isDiff)
             item.title = t.diffIsCommit ? (t.diffName ?: @"Commit")
                                         : [NSString stringWithFormat:@"%@ (diff)", t.diffName ?: @""];
         else
@@ -3708,6 +3739,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
         if (t.gone) item.title = [item.title stringByAppendingString:@" (deleted)"];
         item.toolTip = t.currentPath ?: item.title;
         item.dirty = t.dirty;
+        item.preview = t.agentPreview;
         [items addObject:item];
     }
     const BOOL wasShown = !self.tabStrip.hidden;
@@ -3740,6 +3772,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     [self revealEditor];
     tab.lastActive = ++_tabStamp;
     if (tab == _activeTab) { [self reloadTabStrip]; return; }
+    [_notes activeTabWillChange];
     [self stashActiveTab];
     if (_activeTab) [self autoSaveOnFocusChange];   // the tab that leaves (focus-change)
     _activeTab = tab;
@@ -3752,6 +3785,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     [self reselectCurrentFileInTree];
     [self reloadTabStrip];
     [self saveSession];
+    [_notes activeTabDidChange];
 }
 
 // The active tab is about to leave the screen: remember where its view
@@ -3788,6 +3822,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     }
     t.haveView = YES;
     if (t.isDiff && self.diffScroll) t.diffScroll = self.diffScroll.contentView.bounds.origin;
+    if (t.isDiff && t.comparison && self.compareView) t.diffScroll = self.compareView.scrollOrigin;
     t.sourceSelection = _sourceSelection;
     t.sourceCaretOffset = _sourceCaretOffset;
     t.haveSourcePosition = _haveSourcePosition;
@@ -3850,7 +3885,8 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
         [self setPlainMessage:@""];
         [self renderDiff];
         [self relayoutRightArea];
-        [self.diffView scrollPoint:t.diffScroll];
+        if (t.comparison) self.compareView.scrollOrigin = t.diffScroll;
+        else [self.diffView scrollPoint:t.diffScroll];
         [self.lsp documentOpened:nil];
         [self updateTitle];
         return;
@@ -3970,6 +4006,7 @@ static const NSUInteger kMaxClosedTabs = 50;
 
 // The editor's slot with no tab open: nothing to edit, one muted line.
 - (void)showEmptyState {
+    [_notes activeTabWillChange];
     _activeTab = nil;
     [self resetViewMode];
     [self setPlainMessage:@""];
@@ -3978,12 +4015,15 @@ static const NSUInteger kMaxClosedTabs = 50;
     [self reloadTabStrip];
     [self relayoutRightArea];
     [self updateTitle];
+    [_notes activeTabDidChange];
 }
 
 - (void)focusActiveDocument {
     if ([self latexIsShowing]) [self.window makeFirstResponder:self.latex];
     else if (self.isMedia && self.playerView) [self.window makeFirstResponder:self.playerView];
     else if (self.isPDF && self.pdfView) [self.window makeFirstResponder:self.pdfView];
+    else if (self.isDiff && _activeTab.comparison && self.compareView)
+        [self.window makeFirstResponder:self.compareView.leftView];
     else if (self.isDiff && self.diffView) [self.window makeFirstResponder:self.diffView];
     else if (self.isImage) [self.window makeFirstResponder:nil];   // nothing in it takes keys
     else [self.window makeFirstResponder:self.textView];
@@ -4240,7 +4280,7 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
 - (NSArray<NSString *> *)sessionFilePaths {
     NSMutableArray<NSString *> *files = [NSMutableArray array];
     for (MCTab *t in _tabs)
-        if (t.currentPath) [files addObject:t.currentPath];
+        if (t.currentPath && !t.agentPreview) [files addObject:t.currentPath];
     return files;
 }
 
@@ -5067,6 +5107,11 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     // A file deleted outside has nothing on disk to match.
     const BOOL dirty = _activeTab.gone || now.length != saved.length ||
                        ![now isEqualToString:saved];
+    if (dirty && _activeTab.agentPreview) {
+        _activeTab.agentPreview = NO;   // typed in: the user's tab now
+        [self reloadTabStrip];
+        [self saveSession];
+    }
     if (dirty == self.dirty) return;
     self.dirty = dirty;
     [self updateTitle];
@@ -5881,6 +5926,7 @@ static NSColor *ContrastColor(const Rgba &c) {
 // Arrows, Return, Tab and Esc drive the completion list while it is open;
 // Option+Esc (complete:) asks the language server.
 - (BOOL)textView:(NSTextView *)tv doCommandBySelector:(SEL)sel {
+    if (tv == self.textView && [_notes handleCommand:sel]) return YES;
     if ([self.lsp handleCommand:sel]) return YES;
     // Return, Tab, Shift+Tab and Backspace follow the language's indentation
     // (AutoIndent), and Return in a Markdown list continues the list.
@@ -6903,7 +6949,8 @@ static NSString *MCFormatDuration(double seconds) {
     if (!name.length) name = @"MiniCode";
     if (_activeTab.gone) name = [name stringByAppendingString:@" (deleted)"];
     if (self.isDiff)
-        name = self.diffIsCommit ? self.diffName
+        name = _activeTab.comparison ? (_activeTab.comparison.title ?: @"Diff")
+             : self.diffIsCommit ? self.diffName
                                  : [NSString stringWithFormat:@"%@ (diff)", self.diffName];
     NSString *flag = self.dirty ? @"● " : @"";
     NSString *mode = (self.canTogglePreview && self.previewMode) ? @"  [Preview]" : @"";
@@ -7812,5 +7859,233 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
     [self updateTitle];
     [self restoreSession];              // the new folder's tabs from last time
 }
+
+// ----------------------------------------------------- the control channel
+// What ControlCommands.mm asks of a window (`minicode open`, `term`, `state`
+// and the rest), and what the agent notes need (MCAgentNotesHost). None of
+// it moves the keyboard: an agent's command lands beside the user's work,
+// never in its way, so whatever had the keyboard has it again afterwards.
+
+- (MCAgentNotes *)agentNotes {
+    if (!_notes) _notes = [[MCAgentNotes alloc] initWithHost:self];
+    return _notes;
+}
+
+// The first responder, and a text field's selection, to put back after
+// opening and showing things for an agent (a field takes the keyboard back
+// with all its text selected).
+- (void)keepKeyboardDuring:(void (^)(void))block {
+    NSResponder *keep = self.window.firstResponder;
+    NSRange fieldSelection = NSMakeRange(NSNotFound, 0);
+    if ([keep isKindOfClass:NSTextView.class] && ((NSTextView *)keep).isFieldEditor) {
+        fieldSelection = ((NSTextView *)keep).selectedRange;
+        id field = ((NSTextView *)keep).delegate;
+        if ([field isKindOfClass:NSResponder.class]) keep = field;
+    }
+    block();
+    if (!keep || keep == self.window || self.window.firstResponder == keep) return;
+    if ([keep isKindOfClass:NSTextField.class] &&
+        [(NSTextField *)keep currentEditor]) return;   // it has it already
+    [self.window makeFirstResponder:keep];
+    if (fieldSelection.location != NSNotFound && [keep isKindOfClass:NSTextField.class]) {
+        NSText *editor = [(NSTextField *)keep currentEditor];
+        if (NSMaxRange(fieldSelection) <= editor.string.length) editor.selectedRange = fieldSelection;
+    }
+}
+
+- (NSTextView *)notesTextView {
+    if (!_activeTab || !self.currentPath || self.showingMessage || self.isImage || self.isPDF ||
+        self.isMedia || self.isDiff)
+        return nil;
+    // Lines are in the source, so a Markdown or LaTeX preview shows its source.
+    if (self.previewMode && self.canTogglePreview)
+        [self keepKeyboardDuring:^{ [self togglePreview:nil]; }];
+    return self.previewMode ? nil : self.textView;
+}
+
+- (id)notesActiveTab { return _activeTab; }
+
+- (BOOL)openFileForAgent:(NSString *)path preview:(BOOL)preview {
+    if (!path.length) return NO;
+    [self keepKeyboardDuring:^{
+        MCTab *existing = [self tabForPath:path];
+        if (existing) {
+            [self activateTab:existing];   // open already: shown where it is
+            return;
+        }
+        if (!preview) {
+            [self openFileAtPath:path];
+            return;
+        }
+        // The window's one preview tab takes the file, in its place.
+        MCTab *old = nil;
+        for (MCTab *t in self->_tabs)
+            if (t.agentPreview) { old = t; break; }
+        MCTab *tab = [MCTab new];
+        tab.currentPath = path;
+        tab.agentPreview = YES;
+        if (old) [self->_tabs insertObject:tab atIndex:[self->_tabs indexOfObject:old]];
+        else [self insertTab:tab];
+        [self activateTab:tab];
+        if (old) [self dropAgentPreviewTab:old];
+    }];
+    return [self tabForPath:path] == _activeTab && _activeTab != nil;
+}
+
+// The preview tab a newer one replaced: no question (it never has unsaved
+// changes, since an edit makes it an ordinary tab) and no place in Reopen
+// Closed Tab.
+- (void)dropAgentPreviewTab:(MCTab *)t {
+    if (t == _activeTab || ![_tabs containsObject:t]) return;
+    [self discardBackupOf:t];
+    [t.latex removeFromSuperview];
+    [_tabs removeObject:t];
+    [self.lsp tabsChanged];
+    [self reloadTabStrip];
+    [self saveSession];
+}
+
+// A double-click on the preview tab's title keeps it, as in VS Code.
+- (void)keepAgentPreviewTabAtIndex:(NSInteger)i {
+    if (i < 0 || i >= (NSInteger)_tabs.count) return;
+    MCTab *t = _tabs[(NSUInteger)i];
+    if (!t.agentPreview) return;
+    t.agentPreview = NO;
+    [self reloadTabStrip];
+    [self saveSession];
+}
+
+- (void)showComparison:(MCComparison *)comparison preview:(BOOL)preview {
+    if (!comparison) return;
+    [self keepKeyboardDuring:^{
+        [self revealEditor];
+        MCTab *old = nil;
+        if (preview)
+            for (MCTab *t in self->_tabs)
+                if (t.agentPreview) { old = t; break; }
+        MCTab *tab = [MCTab new];
+        tab.loaded = YES;
+        tab.isDiff = YES;
+        tab.comparison = comparison;
+        tab.diffName = comparison.title;
+        tab.agentPreview = preview;
+        if (old) [self->_tabs insertObject:tab atIndex:[self->_tabs indexOfObject:old]];
+        else [self insertTab:tab];
+        [self compareViewMade];
+        [self activateTab:tab];
+        if (old) [self dropAgentPreviewTab:old];
+    }];
+}
+
+// The side-by-side view, made on first use in the editor's slot.
+- (MCCompareView *)compareViewMade {
+    if (!self.compareView) {
+        self.compareView = [[MCCompareView alloc] initWithFrame:NSMakeRect(0, 0, 400, 400)];
+        self.compareView.hidden = YES;
+        [self.rightArea addSubview:self.compareView positioned:NSWindowBelow
+                        relativeTo:self.termDivider];
+    }
+    return self.compareView;
+}
+
+- (TerminalView *)newTerminalForAgentIn:(NSString *)dir beside:(BOOL)beside {
+    __block TerminalView *t = nil;
+    [self keepKeyboardDuring:^{
+        if (!self.terminalPanel) {
+            [self makeTerminalPanelFirstIn:dir];
+            [self showTerminalPanel];
+            t = self.terminalPanel.activeTerminal;
+            return;
+        }
+        [self showTerminalPanel];
+        t = beside ? [self.terminalPanel splitActiveInDirectory:dir]
+                   : [self.terminalPanel addTabInDirectory:dir];
+    }];
+    return t;
+}
+
+- (void)browseForAgent:(NSString *)url {
+    [self keepKeyboardDuring:^{
+        if (!self.browser) [self makeBrowserWithHome:url];
+        else [self.browser navigateToString:url];
+        if (!self.browserVisible) {
+            self.browserVisible = YES;
+            [self showRightArea];
+            [self relayoutRightArea];
+            if (self.hintsVisible) [self updateHints];
+        }
+    }];
+}
+
+- (NSArray<NSDictionary *> *)controlTabs {
+    NSMutableArray<NSDictionary *> *out = [NSMutableArray array];
+    for (MCTab *t in _tabs) {
+        NSString *kind = t.comparison ? @"diff" : t.isDiff ? (t.diffIsCommit ? @"commit" : @"git-diff")
+                       : t.isImage ? @"image" : t.isPDF ? @"pdf" : t.isMedia ? @"media" : @"text";
+        NSString *path = t.currentPath ?: t.comparison.path;
+        NSString *title = t.comparison ? t.comparison.title
+                        : t.isDiff ? t.diffName : t.currentPath.lastPathComponent;
+        [out addObject:@{@"path": path ?: (id)NSNull.null,
+                         @"title": title ?: @"",
+                         @"kind": kind,
+                         @"dirty": @(t.dirty),
+                         @"active": @(t == _activeTab),
+                         @"preview": @(t.agentPreview)}];
+    }
+    return out;
+}
+
+static NSDictionary *MCLineColumn(NSString *s, NSUInteger index) {
+    NSUInteger line = 1, start = 0;
+    for (NSUInteger i = 0; i < index && i < s.length; i++)
+        if ([s characterAtIndex:i] == '\n') { line++; start = i + 1; }
+    return @{@"line": @(line), @"column": @(index - start + 1)};
+}
+
+- (NSDictionary *)controlSelection {
+    if (!_activeTab || !self.currentPath || self.showingMessage || self.isImage ||
+        self.isPDF || self.isMedia || self.isDiff)
+        return nil;
+    NSTextView *tv = self.textView;
+    NSString *s = tv.string;
+    NSRange r = tv.selectedRange;
+    if (NSMaxRange(r) > s.length) r = NSMakeRange(MIN(r.location, s.length), 0);
+    NSString *text = [s substringWithRange:r];
+    BOOL cut = NO;
+    std::string utf8 = Utf8String(text);
+    if (utf8.size() > ControlChannel::kMaxSelectionBytes) {
+        utf8 = ControlChannel::clipUtf8(utf8, ControlChannel::kMaxSelectionBytes);
+        text = [NSString stringWithUTF8String:utf8.c_str()] ?: @"";
+        cut = YES;
+    }
+    return @{@"path": self.currentPath,
+             @"text": text,
+             @"start": MCLineColumn(s, r.location),
+             @"end": MCLineColumn(s, NSMaxRange(r)),
+             @"preview": @(self.previewMode),
+             @"truncated": @(cut)};
+}
+
+- (NSArray<TerminalView *> *)controlTerminals {
+    return self.terminalPanel ? self.terminalPanel.terminals : @[];
+}
+
+- (NSDictionary *)controlBrowser {
+    if (!self.browser) return nil;
+    return @{@"url": self.browser.pageURL ?: @"", @"title": self.browser.pageTitle ?: @"",
+             @"visible": @(self.browserVisible)};
+}
+
+// Option+] and Option+[ (the key monitor, while a tour is on).
+- (void)nextTourStop:(id)sender {
+    (void)sender;
+    if (![_notes stepTour:1]) NSBeep();
+    if (self.hintsVisible) [self updateHints];
+}
+- (void)previousTourStop:(id)sender {
+    (void)sender;
+    if (![_notes stepTour:-1]) NSBeep();
+}
+- (BOOL)tourActive { return _notes.tourActive; }
 
 @end

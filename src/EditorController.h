@@ -1,6 +1,8 @@
 // EditorController.h — Cocoa window: file tree (left) + editor/preview (right).
 #import <Cocoa/Cocoa.h>
 
+@class MCAgentNotes, MCComparison, TerminalView;
+
 @interface EditorController : NSObject <NSOutlineViewDataSource,
                                         NSOutlineViewDelegate,
                                         NSSplitViewDelegate,
@@ -136,4 +138,28 @@
 - (void)goToLine:(int)line column:(int)column;
 @property(nonatomic, readonly) BOOL canGoToLine;
 - (NSArray<NSString *> *)recentTabPaths;
+
+// ---- the control channel (ControlCommands.mm) and agent notes (AgentNotes.h)
+// None of these moves the keyboard; they only add tabs and terminals.
+@property(nonatomic, readonly) MCAgentNotes *agentNotes;   // made on first use
+// Opens a file as `minicode open` does: in its tab when open already, else
+// in the window's agent preview tab (replacing the file it showed) or a tab
+// of its own. YES when it is on show.
+- (BOOL)openFileForAgent:(NSString *)path preview:(BOOL)preview;
+// A side-by-side diff in the agent preview tab, or a tab of its own.
+- (void)showComparison:(MCComparison *)comparison preview:(BOOL)preview;
+// A new terminal starting in `dir`: a new tab, or beside the active terminal
+// (nil when there is no room to split).
+- (TerminalView *)newTerminalForAgentIn:(NSString *)dir beside:(BOOL)beside;
+- (void)browseForAgent:(NSString *)url;   // the browser pane, shown beside the editor
+// For `minicode state`: each tab (path, title, kind, dirty, active, preview),
+// the editor's selection (path, text up to 64 KB, start and end line and
+// column; nil when no text file shows), the terminals, the browser's page.
+- (NSArray<NSDictionary *> *)controlTabs;
+- (NSDictionary *)controlSelection;
+- (NSArray<TerminalView *> *)controlTerminals;
+- (NSDictionary *)controlBrowser;
+- (void)nextTourStop:(id)sender;       // Option+]
+- (void)previousTourStop:(id)sender;   // Option+[
+@property(nonatomic, readonly) BOOL tourActive;
 @end
