@@ -825,7 +825,8 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
     self.textView.onPreviewDoubleClick = ^BOOL(NSUInteger index, NSPoint point) {
         return [weakSelf editMarkdownAtCharacter:index point:point];
     };
-    self.lsp.onStatus = ^(NSString *text, NSColor *dot) {
+    self.textView.onBlur = ^{ [weakSelf autoSaveOnFocusChange]; };
+    self.lsp.onStatus =^(NSString *text, NSColor *dot) {
         [weakSelf.lspLabel setStatus:text dot:dot];
         [weakSelf updateInstallBar];
     };
@@ -3612,6 +3613,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     tab.lastActive = ++_tabStamp;
     if (tab == _activeTab) { [self reloadTabStrip]; return; }
     [self stashActiveTab];
+    if (_activeTab) [self autoSaveOnFocusChange];   // the tab that leaves (focus-change)
     _activeTab = tab;
     if (!tab.loaded) {
         [self loadActiveTab];
@@ -4357,6 +4359,129 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     if (self.dirty) [self showStatusNote:note];
 }
 
+// ------------------------------------------------------------- auto-save
+// editor.auto-save (Settings.h). after-delay writes every tab with unsaved
+// changes once typing has paused for editor.auto-save-delay, as VS Code's
+// files.autoSave afterDelay; focus-change writes them when the editor loses
+// the keyboard, the window stops being key, or another tab is shown. An
+// auto-save is a plain write: no formatter (format.on-save stays with
+// Cmd+S, as VS Code leaves it with afterDelay), no keep-sorted (it would
+// rewrite text under the caret), and never a question. A file changed on
+// disk since it was read is skipped and named in the status bar, and Cmd+S
+// asks Keep Mine or Reload as before; a file gone from disk, a tab never
+// read yet, and a tab whose Cmd+S waits for its formatter are left alone.
+// Claude Code editing the same files is the case this is for: buffers are
+// written within a second, so they rarely differ from the disk when it
+// writes, and clean tabs follow its writes quietly (checkTabsOnDisk).
+
+- (Settings::AutoSave)autoSaveMode {
+    return [AppSettings shared].settings.autoSave();
+}
+
+- (BOOL)tabTakesAutoSave:(MCTab *)t {
+    return t.dirty && t.loaded && !t.gone && [self tabTakesBackup:t] &&
+           t != _formatSaveTab;
+}
+
+// After every edit and every change of a dirty flag, beside scheduleBackups.
+- (void)scheduleAutoSave {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(autoSaveNow)
+                                               object:nil];
+    if (_closing || [self autoSaveMode] != Settings::AutoSave::AfterDelay) return;
+    BOOL any = NO;
+    for (MCTab *t in _tabs) any = any || [self tabTakesAutoSave:t];
+    if (!any) return;
+    const int ms = [AppSettings shared].settings.autoSaveDelay();
+    [self performSelector:@selector(autoSaveNow) withObject:nil afterDelay:ms / 1000.0];
+}
+
+// focus-change: the editor lost the keyboard, the window lost key, or the
+// tab on show is about to change. Saved on the next turn of the run loop,
+// not inside the responder change.
+- (void)autoSaveOnFocusChange {
+    if (_closing || [self autoSaveMode] != Settings::AutoSave::FocusChange) return;
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(autoSaveNow)
+                                               object:nil];
+    [self performSelector:@selector(autoSaveNow) withObject:nil afterDelay:0];
+}
+
+// Every tab that takes an auto-save, written now, unasked.
+- (void)autoSaveNow {
+    if (_closing || [self autoSaveMode] == Settings::AutoSave::Off) return;
+    if (_activeTab && self.textView.editable && !_activeTab.showingMessage)
+        self.sourceText = self.textView.string;
+    NSMutableArray<NSString *> *changed = [NSMutableArray array];
+    for (MCTab *t in [_tabs copy]) {
+        if (![self tabTakesAutoSave:t]) continue;
+        NSDate *disk = [self diskModDateFor:t.currentPath];
+        if (!disk && t.fileModDate) {   // deleted or moved: marked, not written again
+            [self tabWentMissing:t];
+            continue;
+        }
+        // Changed (or made) on disk since it was read: never written over
+        // unasked. Cmd+S asks.
+        if (t.fileModDate ? ![disk isEqualToDate:t.fileModDate] : disk != nil) {
+            [changed addObject:t.currentPath.lastPathComponent ?: @"?"];
+            continue;
+        }
+        [self writeTabForAutoSave:t];
+    }
+    if (changed.count)
+        [self showStatusNote:[NSString stringWithFormat:
+            @"Not auto-saved: %@ changed on disk. ⌘S asks what to do.",
+            [changed componentsJoinedByString:@", "]]];
+}
+
+- (BOOL)writeTabForAutoSave:(MCTab *)t {
+    const BOOL shown = t == _activeTab;
+    NSString *text = shown && self.textView.editable && !t.showingMessage
+                         ? [self.textView.string copy] : (t.sourceText ?: @"");
+    NSError *err = nil;
+    if (![text writeToFile:t.currentPath atomically:YES encoding:NSUTF8StringEncoding
+                     error:&err]) {
+        [self showStatusNote:[NSString stringWithFormat:@"Could not auto-save %@: %@",
+                              t.currentPath.lastPathComponent, err.localizedDescription]];
+        return NO;
+    }
+    t.sourceText = text;
+    t.savedText = text;
+    t.dirty = NO;
+    [self recordDiskStateOf:t];
+    if (shown) [self.lsp documentSaved];
+    [self updateTitle];
+    return YES;
+}
+
+// A tab with nothing unsaved whose file changed on disk takes the new text
+// with no question. The tab on show keeps its caret and the line at the top
+// of the pane (the change goes in as the lines that differ, as Format
+// Document's does), and loses its undo steps, which were for the old text.
+- (void)reloadCleanTab:(MCTab *)t {
+    NSString *fresh = [NSString stringWithContentsOfFile:t.currentPath
+                                                encoding:NSUTF8StringEncoding error:nil];
+    if (!fresh) return;
+    if ([fresh isEqualToString:t.savedText ?: @""] && !t.gone) {   // touched, not changed
+        [self recordDiskStateOf:t];
+        return;
+    }
+    if (t != _activeTab || !self.textView.editable || t.showingMessage) {
+        [self takeDiskText:fresh forTab:t];
+        return;
+    }
+    t.savedText = fresh;   // so the edit below reads as clean
+    NSUndoManager *um = self.textView.undoManager;
+    [um disableUndoRegistration];
+    [self replaceSourceWithText:fresh actionName:@"Reload"];
+    [um enableUndoRegistration];
+    self.sourceText = self.textView.string;
+    t.dirty = NO;
+    t.gone = NO;
+    t.pendingSort = nil;
+    [self recordDiskStateOf:t];
+    [self forgetHistoryOf:t];
+    [self updateTitle];
+}
+
 // Called when the window regains focus: reconcile with on-disk changes.
 - (void)checkExternalChange {
     if (!self.currentPath || !self.fileModDate) return;
@@ -4373,10 +4498,7 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     if (self.isPDF) { [self showPDFAtPath:self.currentPath]; return; }
     if (self.isMedia) { [self showMediaAtPath:self.currentPath]; return; }
     if (!self.dirty) {                       // no local edits: reload quietly
-        NSString *fresh = [NSString stringWithContentsOfFile:self.currentPath
-                                                    encoding:NSUTF8StringEncoding
-                                                       error:nil];
-        if (fresh) [self takeDiskText:fresh forTab:_activeTab];
+        [self reloadCleanTab:_activeTab];
         return;
     }
     NSAlert *a = [[NSAlert alloc] init];     // local edits AND disk changed
@@ -4461,16 +4583,22 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 }
 
 // After a change in the folder (FSEvents): every tab whose file went away
-// or came back. Nothing is read, so this is cheap; changed contents wait
-// until the tab is shown or the window comes forward, as before.
+// or came back, and every text tab with nothing unsaved whose file changed
+// (Claude Code in the terminal, git checkout), which takes the new text
+// quietly, keeping its place. A tab with unsaved changes is left as it is
+// until it is saved (Cmd+S asks, an auto-save skips it), shown again, or
+// the window comes forward.
 - (void)checkTabsOnDisk {
     for (MCTab *t in [_tabs copy]) {
         if (!t.currentPath || !t.fileModDate) continue;
-        BOOL there = [[NSFileManager defaultManager] fileExistsAtPath:t.currentPath];
-        if (!there) [self tabWentMissing:t];
+        NSDate *disk = [self diskModDateFor:t.currentPath];
+        if (!disk) [self tabWentMissing:t];
         else if (t.gone) {
             if (t == _activeTab) [self checkExternalChange];
             else [self tabCameBack:t];
+        } else if (!t.dirty && t.loaded && [self tabTakesBackup:t] &&
+                   ![disk isEqualToDate:t.fileModDate]) {
+            [self reloadCleanTab:t];
         }
     }
 }
@@ -4564,6 +4692,10 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 - (void)windowDidBecomeKey:(NSNotification *)note {
     [self checkExternalChange];
     if (self.gitPanelVisible) [self.gitPanel refresh];
+}
+// Another window or another app (editor.auto-save = focus-change).
+- (void)windowDidResignKey:(NSNotification *)note {
+    [self autoSaveOnFocusChange];
 }
 
 - (BOOL)canTogglePreview { return self.isMarkdown || self.isLatex; }
@@ -4720,6 +4852,7 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 // fraction of a millisecond for a large file.
 - (void)noteEdited {
     [self scheduleBackups];
+    [self scheduleAutoSave];
     NSString *now = self.sourceText ?: @"", *saved = self.savedText ?: @"";
     // A file deleted outside has nothing on disk to match.
     const BOOL dirty = _activeTab.gone || now.length != saved.length ||
@@ -6526,6 +6659,7 @@ static NSString *MCFormatDuration(double seconds) {
     [self updateSavedStatus];
     if (self.hintsVisible) [self updateHints];
     [self scheduleBackups];   // dirty may have changed either way
+    [self scheduleAutoSave];
 }
 
 - (void)renderMarkdown:(NSString *)content {

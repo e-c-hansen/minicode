@@ -541,6 +541,7 @@ NSUInteger MCLspRunningServerCount(void) { return gServers.count; }
     BOOL ok = [super resignFirstResponder];
     if (ok && _multi.active) self.needsDisplay = YES;   // carets dimmed
     if (ok && self.onFocusLost) self.onFocusLost();
+    if (ok && self.onBlur) self.onBlur();
     return ok;
 }
 

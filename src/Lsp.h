@@ -33,6 +33,9 @@
 @property(nonatomic, copy) BOOL (^onPreviewDoubleClick)(NSUInteger index, NSPoint point);
 // The keyboard left the view (the terminal, the tree, another window...).
 @property(nonatomic, copy) void (^onFocusLost)(void);
+// The same, for the window's controller (editor.auto-save = focus-change);
+// onFocusLost belongs to the language server session.
+@property(nonatomic, copy) void (^onBlur)(void);
 // The pointer moved: the character under it, or NSNotFound when it is over
 // no character (past a line's end, between lines) or left the view.
 @property(nonatomic, copy) void (^onMouseHover)(NSUInteger index);
