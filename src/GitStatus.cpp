@@ -1,8 +1,61 @@
 // GitStatus.cpp — pure C++. See GitStatus.h.
 #include "GitStatus.h"
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 
 namespace Git {
+
+// ------------------------------------------------------- running, its limits
+std::string subcommand(const std::vector<std::string>& args) {
+    for (size_t i = 0; i < args.size(); i++) {
+        const std::string& a = args[i];
+        if (a == "-c" || a == "-C") { i++; continue; }
+        if (a.empty() || a[0] != '-') return a;
+    }
+    return "";
+}
+
+double timeoutFor(const std::vector<std::string>& args) {
+    const std::string cmd = subcommand(args);
+    if (cmd == "commit") return 600;
+    if (cmd == "add" || cmd == "restore" || cmd == "rm") return 120;
+    return 30;
+}
+
+std::string durationText(double t) {
+    if (t >= 120 && std::fmod(t, 60) == 0)
+        return std::to_string((long long)(t / 60)) + " minutes";
+    if (t == 1) return "1 second";
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%g seconds", t);
+    return buf;
+}
+
+std::string commandLine(const std::vector<std::string>& args) {
+    std::string s = "git";
+    for (const std::string& a : args) s += " " + a;
+    for (char& c : s)
+        if (c == '\n' || c == '\r') c = ' ';
+    // Past 160 characters (code points, not bytes): 159 and an ellipsis.
+    size_t chars = 0, cut = std::string::npos;
+    for (size_t i = 0; i < s.size(); i++) {
+        if (((unsigned char)s[i] & 0xC0) == 0x80) continue;
+        if (chars == 159) cut = i;
+        chars++;
+    }
+    if (chars > 160) s = s.substr(0, cut) + "\xE2\x80\xA6";
+    return s;
+}
+
+std::string timeoutMessage(const std::vector<std::string>& args, double seconds) {
+    return "git did not answer within " + durationText(seconds) + ": " + commandLine(args);
+}
+
+std::string heldOutputMessage(const std::vector<std::string>& args, double seconds) {
+    return "git exited, but something it started kept its output open for " +
+           durationText(seconds) + ": " + commandLine(args);
+}
 
 namespace {
 

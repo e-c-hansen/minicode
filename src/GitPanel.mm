@@ -43,41 +43,16 @@ NSString *MCGitExecutable(void) {
     return git;
 }
 
-// The subcommand in `args`: the first word that is not an option, skipping
-// the value of each -c.
-static NSString *MCGitSubcommand(NSArray<NSString *> *args) {
-    for (NSUInteger i = 0; i < args.count; i++) {
-        NSString *a = args[i];
-        if ([a isEqualToString:@"-c"] || [a isEqualToString:@"-C"]) { i++; continue; }
-        if (![a hasPrefix:@"-"]) return a;
-    }
-    return @"";
+static std::vector<std::string> MCGitStdArgs(NSArray<NSString *> *args) {
+    std::vector<std::string> out;
+    for (NSString *a in args) out.push_back(a.UTF8String ?: "");
+    return out;
 }
 
+// The limits and their messages are the core's (Git::timeoutFor), shared
+// with the GTK port.
 NSTimeInterval MCGitTimeoutFor(NSArray<NSString *> *args) {
-    NSString *cmd = MCGitSubcommand(args);
-    if ([cmd isEqualToString:@"commit"]) return 600;
-    if ([cmd isEqualToString:@"add"] || [cmd isEqualToString:@"restore"] ||
-        [cmd isEqualToString:@"rm"])
-        return 120;
-    return 30;
-}
-
-static NSString *MCGitDurationText(NSTimeInterval t) {
-    if (t >= 120 && fmod(t, 60) == 0)
-        return [NSString stringWithFormat:@"%.0f minutes", t / 60];
-    if (t == 1) return @"1 second";
-    return [NSString stringWithFormat:@"%g seconds", t];
-}
-
-// The command as the user would type it, on one line and cut short (a
-// commit message can be long).
-static NSString *MCGitCommandLine(NSArray<NSString *> *args) {
-    NSString *s = [@"git " stringByAppendingString:[args componentsJoinedByString:@" "]];
-    s = [[s componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]
-            componentsJoinedByString:@" "];
-    if (s.length > 160) s = [[s substringToIndex:159] stringByAppendingString:@"…"];
-    return s;
+    return Git::timeoutFor(MCGitStdArgs(args));
 }
 
 // Reads `fd` to its end into `into`, then closes it.
@@ -207,9 +182,7 @@ MCGitResult *MCGitRunSyncWithTimeout(NSString *dir, NSArray<NSString *> *args,
     const dispatch_time_t deadline = after(timeout);
     if (dispatch_semaphore_wait(exited, deadline) != 0) {
         r.timedOut = YES;
-        r.errorText = [NSString stringWithFormat:@"git did not answer within %@: %@",
-                                                 MCGitDurationText(timeout),
-                                                 MCGitCommandLine(args)];
+        r.errorText = NSFromBytes(Git::timeoutMessage(MCGitStdArgs(args), timeout));
         kill(-pid, SIGTERM);
         if (dispatch_semaphore_wait(exited, after(2)) != 0) {
             kill(-pid, SIGKILL);
@@ -224,9 +197,7 @@ MCGitResult *MCGitRunSyncWithTimeout(NSString *dir, NSArray<NSString *> *args,
     // which is a hang of its own.
     if (dispatch_group_wait(io, deadline) != 0 && dispatch_group_wait(io, after(2)) != 0) {
         r.timedOut = YES;
-        r.errorText = [NSString stringWithFormat:
-            @"git exited, but something it started kept its output open for %@: %@",
-            MCGitDurationText(timeout), MCGitCommandLine(args)];
+        r.errorText = NSFromBytes(Git::heldOutputMessage(MCGitStdArgs(args), timeout));
         kill(-pid, SIGKILL);
         return r;
     }

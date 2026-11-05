@@ -6607,6 +6607,49 @@ static void testGitStatus() {
                                            " R100 new.txt"}));
         CHECK(r.entries.size() == 1 && r.entries[0].origPath.empty());
     }
+
+    GROUP("git:time-limits");
+    using V = std::vector<std::string>;
+    // What the Mac's and the GTK port's panels run, and their limits.
+    CHECK(subcommand({"-c", "core.quotePath=false", "diff", "--no-color"}) == "diff");
+    CHECK(subcommand({"-C", "/x", "status"}) == "status");
+    CHECK(subcommand({"--literal-pathspecs", "add", "--", "a"}) == "add");
+    CHECK(subcommand({"-c"}).empty() && subcommand({}).empty());
+    CHECK(timeoutFor(V{"status", "--porcelain=v2", "--branch", "-z"}) == 30);
+    CHECK(timeoutFor(V{"-c", "log.showSignature=false", "log", "-z"}) == 30);
+    CHECK(timeoutFor(V{"rev-parse", "--show-toplevel"}) == 30);
+    CHECK(timeoutFor(V{"--literal-pathspecs", "add", "--", "a.txt"}) == 120);
+    CHECK(timeoutFor(V{"--literal-pathspecs", "restore", "--staged", "--", "a"}) == 120);
+    CHECK(timeoutFor(V{"--literal-pathspecs", "rm", "--cached", "--force", "--", "a"}) == 120);
+    CHECK(timeoutFor(V{"commit", "-m", "x"}) == 600);
+    // A -c value that reads like a subcommand is skipped.
+    CHECK(timeoutFor(V{"-c", "commit", "status"}) == 30);
+    CHECK(durationText(30) == "30 seconds");
+    CHECK(durationText(120) == "2 minutes");
+    CHECK(durationText(600) == "10 minutes");
+    CHECK(durationText(1) == "1 second");
+    CHECK(durationText(0.5) == "0.5 seconds");
+    CHECK(durationText(90) == "90 seconds");
+    CHECK(timeoutMessage(V{"status", "--porcelain=v2", "--branch", "-z",
+                           "--untracked-files=all"}, 30) ==
+          "git did not answer within 30 seconds: git status --porcelain=v2 --branch -z "
+          "--untracked-files=all");
+    CHECK(heldOutputMessage(V{"add", "--", "a"}, 120) ==
+          "git exited, but something it started kept its output open for 2 minutes: "
+          "git add -- a");
+    // A long commit message: one line, cut to 160 characters with "…".
+    std::string msg = "Subject\n\nBody " + std::string(300, 'x');
+    std::string line = commandLine(V{"commit", "-m", msg});
+    CHECK(line.find('\n') == std::string::npos);
+    CHECK(line.size() == 159 + 3 && line.substr(159) == "\xE2\x80\xA6");
+    CHECK(line.rfind("git commit -m Subject  Body xx", 0) == 0);
+    // Cut by characters, never inside one.
+    std::string wide;
+    for (int i = 0; i < 200; i++) wide += "\xC3\xA9";   // é
+    std::string cut = commandLine(V{"commit", "-m", wide});
+    CHECK(cut.size() == 14 + 145 * 2 + 3);   // "git commit -m " then 145 é
+    std::string exact = commandLine(V{std::string(156, 'a')});   // 160 in all
+    CHECK(exact.size() == 160 && exact.find("\xE2\x80\xA6") == std::string::npos);
 }
 
 static void testGitDiff() {

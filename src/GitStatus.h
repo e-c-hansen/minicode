@@ -98,4 +98,34 @@ std::vector<FileDiff> parseDiff(const std::string& out);
 // C escapes (\t, \", \\, \303\251) when it holds unusual characters.
 std::string unquotePath(const std::string& s);
 
+// ------------------------------------------------------- running, its limits
+// How long each port lets one git command run before stopping it and its
+// process group (hooks, filters and credential helpers included). Still no
+// I/O here: the ports run git and ask these for the limit and the words.
+
+// The subcommand in `args` (git's arguments, without "git"): the first word
+// that is not an option, skipping the value of each -c and -C. "" if none.
+std::string subcommand(const std::vector<std::string>& args);
+
+// Seconds a command may take: 600 for commit (its hooks may run a test
+// suite, its signing may wait on a passphrase), 120 for add, restore and rm
+// (clean filters such as Git LFS, another process's index.lock), 30 for
+// everything else, which only reads.
+double timeoutFor(const std::vector<std::string>& args);
+
+// "30 seconds", "2 minutes", "1 second", "0.5 seconds".
+std::string durationText(double seconds);
+
+// The command as the user would type it ("git status --porcelain=v2 ..."),
+// line breaks made spaces and cut to 160 characters with an ellipsis, since
+// a commit message can be long.
+std::string commandLine(const std::vector<std::string>& args);
+
+// "git did not answer within 30 seconds: git status ..."
+std::string timeoutMessage(const std::vector<std::string>& args, double seconds);
+// git exited but something it started still holds its output open:
+// "git exited, but something it started kept its output open for 30
+// seconds: git ..."
+std::string heldOutputMessage(const std::vector<std::string>& args, double seconds);
+
 }  // namespace Git
