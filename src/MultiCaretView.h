@@ -34,6 +34,17 @@
 // Move Line Down / Up (Cmd+Down / Up): the lines swap with the one below
 // or above, for one caret or several.
 - (void)moveLinesDown:(BOOL)down;
+// Add Next Occurrence (Cmd+D): an empty caret selects its word, and each
+// press after it adds the next place its text occurs, as in VS Code. NO
+// when there was nothing (more) to select.
+- (BOOL)addNextOccurrence;
+// Select All Occurrences (Shift+Cmd+L): every place the selection's text,
+// or the word at the caret, occurs. NO when there is nothing to select.
+- (BOOL)selectAllOccurrences;
+// Add Cursor Below / Above (Option+Cmd+Down / Up): a caret on the next or
+// previous line of each one, at the same x (the goal the arrow keys keep).
+// NO when no caret has a line there.
+- (BOOL)addCursorVertically:(int)direction;
 - (BOOL)copy;
 - (BOOL)cut;
 - (BOOL)paste;

@@ -42,6 +42,16 @@
 @property(nonatomic, readonly) MCMultiCarets *multiCarets;
 // Two or more carets are in play.
 @property(nonatomic, readonly) BOOL multiCaretActive;
+// VS Code's multi-cursor commands (Edit menu, MultiCaretView.h): Cmd+D,
+// Shift+Cmd+L, Option+Cmd+Up / Down. Enabled while the view is editable.
+- (IBAction)addNextOccurrence:(id)sender;
+- (IBAction)selectAllOccurrences:(id)sender;
+- (IBAction)addCursorAbove:(id)sender;
+- (IBAction)addCursorBelow:(id)sender;
+// editor.ruler: thin lines behind the text at these columns of the
+// monospaced font (none while the view is read-only, as a preview is).
+@property(nonatomic, copy) NSArray<NSNumber *> *rulerColumns;
+@property(nonatomic, strong) NSColor *rulerColor;
 // The character drawn at a point in the view, or NSNotFound.
 - (NSUInteger)characterIndexUnderPoint:(NSPoint)point;
 // The message of the diagnostic covering a character, or nil.

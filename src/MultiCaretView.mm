@@ -51,6 +51,14 @@ bool IsExtendPress(NSEvent *e) {
     NSUInteger _anchorIndex, _anchorLength;
     CGFloat _anchorX;
     std::vector<Caret> _anchorCarets;
+    // What the last Cmd+D or Shift+Cmd+L left: the selection it added (the
+    // next press searches on from it), whether it matches whole words, and
+    // the carets and text length then, to tell whether it still holds.
+    BOOL _hasFind;
+    Caret _findLast;
+    BOOL _findWholeWord;
+    std::vector<Caret> _findCarets;
+    NSUInteger _findLength;
 }
 
 - (instancetype)initWithTextView:(NSTextView *)tv {
@@ -498,6 +506,106 @@ bool IsExtendPress(NSEvent *e) {
     [self applyEdit:MultiCaret::moveLines(U16(tv.string), [self currentCarets], down)
              action:down ? @"Move Line Down" : @"Move Line Up"];
     if (!self.active) [tv scrollRangeToVisible:tv.selectedRange];
+}
+
+// ---- VS Code's selection commands
+
+- (BOOL)findStateHolds {
+    return _hasFind && _findLength == _tv.string.length && [self currentCarets] == _findCarets;
+}
+
+- (void)rememberFind:(const MultiCaret::Found &)f {
+    _hasFind = YES;
+    _findLast = f.added;
+    _findWholeWord = f.wholeWord;
+    _findCarets = [self currentCarets];
+    _findLength = _tv.string.length;
+}
+
+- (BOOL)addNextOccurrence {
+    NSTextView *tv = _tv;
+    const std::vector<Caret> current = [self currentCarets];
+    if (current.empty()) return NO;
+    // A selection made by hand starts a plain search; one that Cmd+D began
+    // from an empty caret goes on matching whole words (VS Code's rule).
+    const BOOL holds = [self findStateHolds];
+    const MultiCaret::Found f = MultiCaret::addNextOccurrence(
+        U16(tv.string), current, holds ? _findLast : current.back(), holds && _findWholeWord);
+    if (!f.changed) return NO;
+    _goalX.clear();
+    [self setCarets:f.carets];
+    [tv scrollRangeToVisible:NSMakeRange(f.added.lo(), f.added.hi() - f.added.lo())];
+    [self rememberFind:f];
+    return YES;
+}
+
+- (BOOL)selectAllOccurrences {
+    NSTextView *tv = _tv;
+    const std::vector<Caret> current = [self currentCarets];
+    if (current.empty()) return NO;
+    const BOOL holds = [self findStateHolds];
+    const MultiCaret::Found f = MultiCaret::selectAllOccurrences(
+        U16(tv.string), holds ? _findLast : current.back(), holds && _findWholeWord);
+    if (!f.changed) return NO;
+    _goalX.clear();
+    [self setCarets:f.carets];
+    [self rememberFind:f];
+    return YES;
+}
+
+// Where index i lands one line up or down at x, or NSNotFound when there is
+// no line there (the first or last line).
+- (NSUInteger)indexFrom:(NSUInteger)i x:(CGFloat)x direction:(int)dir {
+    NSTextView *tv = _tv;
+    const NSRect r = [self caretRectAt:i];
+    const CGFloat y = dir < 0 ? NSMinY(r) - r.size.height / 2 : NSMaxY(r) + r.size.height / 2;
+    if (y < 0 || y > NSHeight(tv.bounds)) return NSNotFound;
+    const NSUInteger p = [self indexAtPoint:NSMakePoint(x, y)];
+    const NSRect q = [self caretRectAt:p];
+    if (fabs(NSMidY(q) - NSMidY(r)) < r.size.height / 4) return NSNotFound;   // same line
+    if (dir > 0 ? NSMidY(q) < NSMidY(r) : NSMidY(q) > NSMidY(r)) return NSNotFound;
+    return p;
+}
+
+- (BOOL)addCursorVertically:(int)dir {
+    NSTextView *tv = _tv;
+    const std::vector<Caret> current = [self currentCarets];
+    if (current.empty()) return NO;
+    // Each caret keeps the x it had when Up or Down began, so a column
+    // grown past a short line comes back to its place below it.
+    std::vector<CGFloat> goals;
+    if (self.active && _goalX.size() == _carets.size()) goals = _goalX;
+    else
+        for (const Caret &c : current) goals.push_back(NSMinX([self caretRectAt:c.head]));
+    std::vector<Caret> all = current;
+    std::vector<CGFloat> allGoals = goals;
+    NSUInteger reveal = NSNotFound;
+    for (size_t i = 0; i < current.size(); i++) {
+        const Caret &c = current[i];
+        const NSUInteger head = [self indexFrom:c.head x:goals[i] direction:dir];
+        if (head == NSNotFound) continue;
+        NSUInteger anchor = head;
+        if (!c.empty()) {
+            anchor = [self indexFrom:c.anchor x:NSMinX([self caretRectAt:c.anchor]) direction:dir];
+            if (anchor == NSNotFound) anchor = head;
+        }
+        all.push_back({anchor, head});
+        allGoals.push_back(goals[i]);
+        if (reveal == NSNotFound || (dir > 0 ? head > reveal : head < reveal)) reveal = head;
+    }
+    if (reveal == NSNotFound) return NO;
+    [self setCarets:all];
+    // The goals follow their carets into normalize's order.
+    std::vector<CGFloat> kept;
+    for (const Caret &c : _carets) {
+        CGFloat g = NSMinX([self caretRectAt:c.head]);
+        for (size_t k = 0; k < all.size(); k++)
+            if (all[k].head == c.head) { g = allGoals[k]; break; }
+        kept.push_back(g);
+    }
+    _goalX = kept;
+    [tv scrollRangeToVisible:NSMakeRange(reveal, 0)];
+    return YES;
 }
 
 - (BOOL)copy {

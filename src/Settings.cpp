@@ -1,5 +1,6 @@
 // Settings.cpp — see Settings.h.
 #include "Settings.h"
+#include <algorithm>
 #include <cctype>
 
 namespace {
@@ -57,6 +58,7 @@ const struct { const char* language; const char* command; } kRunDefaults[] = {
 };
 
 const uint32_t kCodeBackground = 0x2A2A2A;
+const uint32_t kRulerColor = 0x5A5A5A;   // VS Code Dark+'s editorRuler.foreground
 const uint32_t kTerminalInputText = 0xEDEDED;
 
 std::string trim(const std::string& s) {
@@ -556,6 +558,39 @@ bool Settings::apply(const std::string& key, const std::string& value,
         }
         return true;
     }
+    if (key == "editor.ruler") {
+        // A column, a list of them without spaces (80,120), or off.
+        std::string v = lower(value);
+        std::vector<int> cols;
+        if (v != "off" && v != "none" && v != "false") {
+            size_t i = 0;
+            while (i <= v.size()) {
+                size_t comma = v.find(',', i);
+                if (comma == std::string::npos) comma = v.size();
+                const std::string part = v.substr(i, comma - i);
+                bool digits = !part.empty() && part.size() <= 4;
+                for (char c : part)
+                    if (c < '0' || c > '9') digits = false;
+                const int col = digits ? std::stoi(part) : 0;
+                if (col < 1 || col > 1000) {
+                    error = "'" + value + "' is not a column (use a number such as 100, "
+                            "a list such as 80,120, or off)";
+                    return false;
+                }
+                cols.push_back(col);
+                i = comma + 1;
+            }
+            std::sort(cols.begin(), cols.end());
+            cols.erase(std::unique(cols.begin(), cols.end()), cols.end());
+        }
+        rulers_ = cols;
+        return true;
+    }
+    if (key == "editor.ruler-color") {
+        if (!parseColor(value, color)) { error = colorError(value); return false; }
+        rulerColor_ = color;
+        return true;
+    }
     if (key == "lsp.enabled") {
         if (!parseBool(value, lspEnabled_)) {
             error = "'" + value + "' is not true or false";
@@ -697,6 +732,10 @@ Rgba Settings::markdownCodeBackground() const {
     return Rgba::hex(kCodeBackground, opacity(Surface::Editor));
 }
 
+Rgba Settings::rulerColor() const {
+    return rulerColor_ ? *rulerColor_ : Rgba::hex(kRulerColor);
+}
+
 Rgba Settings::terminalInputText() const {
     return textIsSet(Surface::Terminal) ? text(Surface::Terminal)
                                         : Rgba::hex(kTerminalInputText);
@@ -807,6 +846,10 @@ const char* Settings::defaultFileText() {
 # editor.background = #1E1E1E
 # editor.opacity = 1
 # editor.text = #D4D4D4
+# A thin line down the editor at this column, to show where lines get long:
+# a column, several without spaces (80,120), or off.
+# editor.ruler = 100
+# editor.ruler-color = #5A5A5A
 # Sort the lines between "keep-sorted start" and "keep-sorted end" comments
 # every time a file is saved, as Google's keep-sorted tool would.
 # editor.keep-sorted-on-save = false

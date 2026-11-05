@@ -683,6 +683,31 @@ static void BuildMenu(void) {
     [editMenu addItemWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@"v"];
     [editMenu addItemWithTitle:@"Select All"
                         action:@selector(selectAll:) keyEquivalent:@"a"];
+    // VS Code's multi-cursor keys on the Mac, answered by the editor's text
+    // view (CodeTextView) through the responder chain, so they are enabled
+    // only while it has the keyboard.
+    [editMenu addItemWithTitle:@"Add Next Occurrence"
+                        action:@selector(addNextOccurrence:) keyEquivalent:@"d"];
+    NSMenuItem *allOccurrences =
+        [[NSMenuItem alloc] initWithTitle:@"Select All Occurrences"
+                                   action:@selector(selectAllOccurrences:) keyEquivalent:@"l"];
+    allOccurrences.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [editMenu addItem:allOccurrences];
+    NSMenuItem *cursorAbove =
+        [[NSMenuItem alloc] initWithTitle:@"Add Cursor Above"
+                                   action:@selector(addCursorAbove:)
+                            keyEquivalent:[NSString stringWithFormat:@"%C",
+                                              (unichar)NSUpArrowFunctionKey]];
+    cursorAbove.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    [editMenu addItem:cursorAbove];
+    NSMenuItem *cursorBelow =
+        [[NSMenuItem alloc] initWithTitle:@"Add Cursor Below"
+                                   action:@selector(addCursorBelow:)
+                            keyEquivalent:[NSString stringWithFormat:@"%C",
+                                              (unichar)NSDownArrowFunctionKey]];
+    cursorBelow.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    [editMenu addItem:cursorBelow];
     [editMenu addItem:[NSMenuItem separatorItem]];
     [editMenu addItemWithTitle:@"Toggle Comment"
                         action:@selector(toggleComment:) keyEquivalent:@"/"];
@@ -744,9 +769,12 @@ static void BuildMenu(void) {
     findInFolder.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [editMenu addItem:findInFolder];
+    // Shift+Cmd+D ("to do"): Shift+Cmd+L is VS Code's Select All
+    // Occurrences, and VS Code's Shift+Cmd+D opens its debugger, which
+    // minicode has no counterpart for.
     NSMenuItem *todos =
         [[NSMenuItem alloc] initWithTitle:@"TODOs in Folder…"
-                                   action:@selector(showTodos:) keyEquivalent:@"l"];
+                                   action:@selector(showTodos:) keyEquivalent:@"d"];
     todos.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [editMenu addItem:todos];

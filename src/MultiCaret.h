@@ -96,6 +96,41 @@ Edit duplicateLines(const std::u16string& text, const std::vector<Caret>& carets
 // length, so the carets of one block never shift another's.
 Edit moveLines(const std::u16string& text, const std::vector<Caret>& carets, bool down);
 
+// ---- the selected text, found again (Cmd+D, Shift+Cmd+L, as in VS Code)
+
+// The word at p: the run of word characters (letters, digits, _ and anything
+// past ASCII) holding p or touching it on either side, selected from its
+// start to its end. An empty caret at p when no word is there.
+Caret wordAt(const std::u16string& text, size_t p);
+
+// Every place needle occurs, in order, case-sensitive and never overlapping
+// (each searched for after the previous one's end), selected from start to
+// end. With wholeWord, only places with no word character running on into
+// them on either side.
+std::vector<Caret> occurrences(const std::u16string& text, const std::u16string& needle,
+                               bool wholeWord);
+
+struct Found {
+    std::vector<Caret> carets;   // in normalize's order
+    Caret added;                 // the selection this press made (the next one goes on from it)
+    bool wholeWord = false;      // what the next press should search with
+    bool changed = false;        // false: nothing (more) to select
+};
+
+// Add Selection To Next Find Match (Cmd+D). When any caret is empty, each
+// empty caret selects the word at it and later presses match whole words
+// only (wholeWord comes back true); that is all this press does. Otherwise
+// the text of `last` (the selection the previous press added) is looked
+// for after it, wrapping round to the start, skipping places already
+// selected, and the first one found is added.
+Found addNextOccurrence(const std::u16string& text, const std::vector<Caret>& carets,
+                        Caret last, bool wholeWord);
+
+// Select All Occurrences (Shift+Cmd+L): a selection at every place the text
+// of `last` occurs, or, when `last` is empty, every whole-word occurrence of
+// the word at it.
+Found selectAllOccurrences(const std::u16string& text, Caret last, bool wholeWord);
+
 // Applies an edit to a string (the tests use it; the GUI goes through the
 // text view so undo sees the change).
 std::u16string applyEdit(const std::u16string& text, const Edit& e);
