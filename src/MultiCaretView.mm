@@ -645,7 +645,22 @@ bool IsExtendPress(NSEvent *e) {
     if (!key) color = [color colorWithAlphaComponent:0.45];
     [color set];
     const NSRect visible = tv.visibleRect;
+    // Only carets in the characters on screen are placed: finding where a
+    // caret is drawn costs a layout query, and 50,000 of them took 6 s a
+    // frame. The editor is TextKit 1 (see Lsp.mm); never ask a TextKit 2
+    // view for its layout manager, which would switch it over.
+    NSUInteger lo = 0, hi = NSUIntegerMax;
+    if (!tv.textLayoutManager && tv.layoutManager && tv.textContainer) {
+        const NSPoint o = tv.textContainerOrigin;
+        NSRect area = NSOffsetRect(NSInsetRect(visible, 0, -4), -o.x, -o.y);
+        NSLayoutManager *lm = tv.layoutManager;
+        NSRange glyphs = [lm glyphRangeForBoundingRect:area inTextContainer:tv.textContainer];
+        NSRange chars = [lm characterRangeForGlyphRange:glyphs actualGlyphRange:NULL];
+        lo = chars.location;
+        hi = NSMaxRange(chars);
+    }
     for (const Caret &c : _carets) {
+        if (c.head < lo || c.head > hi) continue;
         NSRect r = [self caretRectAt:c.head];
         if (!NSIntersectsRect(NSInsetRect(r, -2, 0), visible)) continue;
         NSRect bar = NSMakeRect(floor(r.origin.x), r.origin.y, 1.5, r.size.height);
