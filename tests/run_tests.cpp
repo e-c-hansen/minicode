@@ -32,6 +32,9 @@
 #include "BracketMatch.h"
 #include "ControlProtocol.h"
 #include "SideBySide.h"
+#include "AgentTranscript.h"
+#include "AgentIndex.h"
+#include "AgentEvidence.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -9466,6 +9469,8 @@ static void testMultiCaretOccurrences() {
 #include "find_tests.inc"
 #include "gutter_tests.inc"
 #include "control_tests.inc"
+#include "agent_index_tests.inc"
+#include "agent_evidence_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9526,6 +9531,9 @@ int main() {
     testBrackets();
     testControlProtocol();
     testSideBySide();
+    testAgentTranscript();
+    testAgentIndex();
+    testAgentEvidence();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
