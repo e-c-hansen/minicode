@@ -24,6 +24,7 @@
 #import "ChangePanel.h"
 #import "BackupStore.h"
 #import "AgentPanel.h"
+#import "ProblemsPanel.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #import <AVKit/AVKit.h>                 // video and audio in the editor's slot
 #import <AVFoundation/AVFoundation.h>
@@ -659,6 +660,11 @@ private:
 @property(nonatomic, assign) NSUInteger keyFlashGeneration;  // Adjust Settings' tint
 @property(nonatomic, strong) LspSession *lsp;         // language servers
 @property(nonatomic, strong) MCLspStatusField *lspLabel;   // their status; click for more
+// Every problem the servers report, across the bottom above the terminal
+// (Shift+Cmd+M), and their counts in the status bar (click to toggle it).
+@property(nonatomic, strong) MCProblemsPanel *problemsPanel;
+@property(nonatomic, assign) BOOL problemsVisible;
+@property(nonatomic, strong) MCLspStatusField *problemsLabel;
 @property(nonatomic, strong) MCInstallBar *installBar;     // "No Python language server..."
 @property(nonatomic, strong) MCGitPanel *gitPanel;    // Source Control, in the sidebar's place
 @property(nonatomic, assign) BOOL gitPanelVisible;
@@ -819,14 +825,20 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
     self.lsp.onStatus = ^(NSString *text, NSColor *dot) {
         [weakSelf.lspLabel setStatus:text dot:dot];
         [weakSelf updateInstallBar];
+        [weakSelf updateProblemCounts];
     };
+    self.lsp.onProblemsChanged = ^{ [weakSelf updateProblems]; };
     self.lsp.openFile = ^BOOL(NSString *p) {
         EditorController *s = weakSelf;
         if ([p hasPrefix:[s.rootPath stringByAppendingString:@"/"]])
             [s revealPath:p andOpen:YES];
         else
             [s openFileAtPath:p];
-        return [s.currentPath isEqualToString:p];
+        // A tab opened under another spelling (/private/tmp for /tmp) is
+        // the same file.
+        return [s.currentPath isEqualToString:p] ||
+               [s.currentPath.stringByResolvingSymlinksInPath
+                   isEqualToString:p.stringByResolvingSymlinksInPath];
     };
     // Rename and quick fixes edit files in other tabs, and references show
     // their lines, from the tab's unsaved text.
@@ -1043,6 +1055,9 @@ static void *kMediaItemContext = &kMediaItemContext;
     self.settingsLabel.textColor = [cfg text:Surface::Statusbar];
     self.savedLabel.textColor = [cfg text:Surface::Statusbar];
     self.lspLabel.textColor = [cfg text:Surface::Statusbar];
+    self.problemsLabel.textColor = [cfg text:Surface::Statusbar];
+    [self layoutStatusRight];
+    [self.problemsPanel applySettings];
     [self applyInstallBarColors];
     [self applyChangeBarColors];
     [_agent applyColors];
@@ -1202,7 +1217,34 @@ static void *kMediaItemContext = &kMediaItemContext;
     };
     self.lspLabel = lsp;
     [self.statusBar addSubview:lsp];
+    // Left of it: the window's problems, every open file's, clickable to
+    // show the Problems list.
+    MCLspStatusField *problems = [[MCLspStatusField alloc] initWithFrame:NSZeroRect];
+    problems.font = [NSFont systemFontOfSize:11];
+    problems.alignment = NSTextAlignmentRight;
+    problems.lineBreakMode = NSLineBreakByTruncatingTail;
+    problems.autoresizingMask = NSViewMinXMargin;
+    problems.toolTip = @"Problems in the open files: click to list them (⇧⌘M)";
+    problems.hidden = YES;
+    problems.onClick = ^{ [weakSelf toggleProblems:nil]; };
+    self.problemsLabel = problems;
+    [self.statusBar addSubview:problems];
     [container addSubview:self.statusBar];
+    [self layoutStatusRight];
+}
+
+// The right of the status bar: the problem counts, then the language
+// server, each as wide as its text, ending where the shortcuts hint begins.
+- (void)layoutStatusRight {
+    if (!self.statusBar) return;
+    const CGFloat W = self.statusBar.bounds.size.width;
+    const CGFloat right = W - 150;
+    CGFloat lw = MIN(340, ceil(self.lspLabel.attributedStringValue.size.width) + 6);
+    self.lspLabel.frame = NSMakeRect(right - lw, 3, lw, 16);
+    if (!self.problemsLabel.hidden) {
+        CGFloat pw = MIN(220, ceil(self.problemsLabel.attributedStringValue.size.width) + 6);
+        self.problemsLabel.frame = NSMakeRect(right - lw - 16 - pw, 3, pw, 16);
+    }
 }
 
 - (void)buildHintsPanelInContainer:(NSView *)container {
@@ -1356,6 +1398,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:@"⇧F12" label:@"Find references"
                     key2:@"F2" label2:@"Rename symbol" state:nil];
+    [self appendHintsRow:s key:@"F8" label:@"Next problem"
+                    key2:@"⇧F8" label2:@"Previous problem" state:nil];
     [self appendHintsRow:s key:@"⌘." label:@"Quick fixes"
                     key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:@"⌥⇧F" label:@"Format document"
@@ -1427,6 +1471,12 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:nil label2:nil state:openOr(self.browserVisible)];
     [self appendHintsRow:s key:@"⌃⇧G" label:@"Source control"
                     key2:nil label2:nil state:openOr(self.gitPanelVisible)];
+    [self appendHintsRow:s key:@"⇧⌘M" label:@"Problems"
+                    key2:nil label2:nil state:openOr(self.problemsVisible)];
+    if (self.problemsVisible) {
+        [self appendHintsRow:s key:@"⏎" label:@"Go to the problem"
+                        key2:@"⎋" label2:@"Back to the editor" state:nil];
+    }
     if (self.gitPanelVisible) {
         [self appendHintsRow:s key:@"⏎" label:@"Show the diff or commit"
                         key2:@"Space" label2:@"Stage or unstage" state:nil];
@@ -1490,12 +1540,25 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     BOOL showEditor = !self.editorHidden;
     BOOL topShown = showBrowser || showEditor;
 
+    // The Problems list sits between the top and the terminal, at a fixed
+    // share of the height; alone at the bottom it takes it all.
+    BOOL showProblems = self.problemsVisible && self.problemsPanel != nil;
+    CGFloat probH = 0;
+    if (showProblems)
+        probH = (topShown || showTerm)
+            ? MIN(MAX(round(H * 0.3), 100), MAX(60, H - kMinTopSlotHeight - (showTerm ? 80 : 0)))
+            : H;
+    const CGFloat Hrest = MAX(0, H - probH);
     CGFloat termH = 0;
     if (showTerm)
         termH = topShown ? MIN(MAX(self.terminalHeight, 80),
-                               MAX(80, H - kMinTopSlotHeight))
-                         : H;
-    NSRect topRect = NSMakeRect(0, termH, W, MAX(0, H - termH));
+                               MAX(80, Hrest - kMinTopSlotHeight))
+                         : Hrest;
+    NSRect topRect = NSMakeRect(0, termH + probH, W, MAX(0, Hrest - termH));
+    if (self.problemsPanel) {
+        self.problemsPanel.frame = NSMakeRect(0, termH, W, probH);
+        self.problemsPanel.hidden = !showProblems;
+    }
 
     // Side by side, the browser gets its remembered share of the width, but
     // neither pane goes below kMinSideWidth while there is room for both.
@@ -1565,7 +1628,7 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
         // With the top slot empty the bar sits at the top edge, still inside
         // the pane, so it can be dragged back down.
         CGFloat barY = topShown ? termH - kDragBarHeight / 2
-                                : H - kDragBarHeight;
+                                : Hrest - kDragBarHeight;
         self.termDivider.frame = NSMakeRect(0, barY, W, kDragBarHeight);
         self.termDivider.hidden = !showTerm;
     }
@@ -1993,6 +2056,7 @@ static const CGFloat kDividerGrabSlop = 5;
 // an empty panel; collapse it so the file tree fills the window.
 - (void)collapseRightAreaIfEmpty {
     BOOL empty = self.editorHidden && !(self.terminalVisible && self.terminal) &&
+                 !(self.problemsVisible && self.problemsPanel) &&
                  !(self.browserVisible && self.browser);
     if (!empty || self.rightAreaCollapsed) return;
     NSView *sidebar = self.splitView.subviews.firstObject;
@@ -3975,16 +4039,21 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     case 3:
         [self closeTab:_activeTab prompt:YES];
         return;
+    case 4:
+        [self toggleProblems:nil];
+        return;
     default:
         [self.window performClose:sender];
     }
 }
 
 // What Cmd+W would close: 1 the terminal, 2 the browser, 3 the active tab,
-// 0 the window.
+// 4 the Problems list, 0 the window.
 - (int)focusedCloseTarget {
     NSResponder *fr = self.window.firstResponder;
     NSView *v = [fr isKindOfClass:NSView.class] ? (NSView *)fr : nil;
+    if (v && self.problemsPanel && self.problemsVisible &&
+        [v isDescendantOf:self.problemsPanel]) return 4;
     if (v && self.terminalPanel && self.terminalVisible &&
         [v isDescendantOf:self.terminalPanel]) return 1;
     if (v && self.browser && self.browserVisible && [v isDescendantOf:self.browser]) return 2;
@@ -4680,7 +4749,8 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     }
     if (item.action == @selector(closeFocused:)) {
         static NSString *const titles[] = {@"Close Window", @"Close Terminal",
-                                           @"Close Browser", @"Close Tab"};
+                                           @"Close Browser", @"Close Tab",
+                                           @"Close Problems"};
         item.title = titles[[self focusedCloseTarget]];
         return YES;
     }
@@ -4690,6 +4760,10 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
         return _tabs.count > 0;
     if (item.action == @selector(exportPDF:)) return self.canExportPDF;
     if (item.action == @selector(togglePlayback:)) return self.canTogglePlayback;
+    if (item.action == @selector(toggleProblems:)) {
+        item.state = self.problemsVisible ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
     if (item.action == @selector(undo:))
         return [self latexIsShowing] && [self.latex canUndoEdit];
     if (item.action == @selector(redo:))
@@ -5605,6 +5679,78 @@ static NSColor *ContrastColor(const Rgba &c) {
 }
 - (void)showQuickFixes:(id)sender {
     if ([self lspActionAllowed]) [self.lsp showQuickFixes];
+}
+// F8 / Shift+F8: the next or previous problem in the file on show.
+- (void)nextProblem:(id)sender {
+    if ([self lspActionAllowed]) [self.lsp goToProblem:YES];
+}
+- (void)previousProblem:(id)sender {
+    if ([self lspActionAllowed]) [self.lsp goToProblem:NO];
+}
+
+// Shift+Cmd+M, as in VS Code: shows the Problems list with the keyboard in
+// it; pressed in it, hides it again; pressed elsewhere while it shows,
+// gives it the keyboard.
+- (void)toggleProblems:(id)sender {
+    if (self.problemsVisible && !self.problemsPanel.hasFocus &&
+        [sender isKindOfClass:NSMenuItem.class]) {
+        [self.problemsPanel focusList];
+        return;
+    }
+    if (self.problemsVisible) {
+        BOOL hadFocus = self.problemsPanel.hasFocus;
+        self.problemsVisible = NO;
+        [self relayoutRightArea];
+        [self collapseRightAreaIfEmpty];
+        if (hadFocus) [self focusAfterClosingPanel];
+    } else {
+        if (!self.problemsPanel) {
+            MCProblemsPanel *panel = [[MCProblemsPanel alloc] initWithFrame:NSZeroRect];
+            __weak EditorController *weakSelf = self;
+            panel.onOpen = ^(MCProblem *p) { [weakSelf.lsp openProblem:p]; };
+            panel.onEscape = ^{ [weakSelf focusEditor:nil]; };
+            panel.onClose = ^{
+                EditorController *s = weakSelf;
+                if (s.problemsVisible) [s toggleProblems:nil];
+            };
+            panel.hidden = YES;
+            [self.rightArea addSubview:panel];
+            self.problemsPanel = panel;
+        }
+        self.problemsVisible = YES;
+        [self updateProblems];
+        [self showRightArea];
+        [self relayoutRightArea];
+        [self.problemsPanel focusList];
+    }
+    if (self.hintsVisible) [self updateHints];
+}
+
+// The servers' diagnostics changed: the counts in the status bar, and the
+// list when it shows.
+- (void)updateProblems {
+    [self updateProblemCounts];
+    if (self.problemsVisible)
+        [self.problemsPanel setRows:[self.lsp problemRows] counts:self.lsp.problemCountsText
+                               root:_root.path];
+}
+
+// The status bar's counts alone (cheap: no text is read), on every change
+// of the language server's status too.
+- (void)updateProblemCounts {
+    LspSession *lsp = self.lsp;
+    BOOL known = lsp.problemsKnown;
+    self.problemsLabel.hidden = !known;
+    if (known) {
+        NSInteger errors = lsp.problemErrors, warnings = lsp.problemWarnings;
+        NSColor *dot = errors ? [NSColor colorWithSRGBRed:0xF1 / 255.0 green:0x4C / 255.0
+                                                     blue:0x4C / 255.0 alpha:1]
+                     : warnings ? [NSColor colorWithSRGBRed:0xCC / 255.0 green:0xA7 / 255.0
+                                                       blue:0 alpha:1]
+                     : nil;
+        [self.problemsLabel setStatus:lsp.problemCountsText dot:dot];
+    }
+    [self layoutStatusRight];
 }
 - (void)showLanguageServers:(id)sender {
     __weak EditorController *weakSelf = self;

@@ -102,6 +102,20 @@ typedef NS_ENUM(NSInteger, MCLspState) {
 @property(nonatomic, copy) NSString *version;   // "" when unknown
 @end
 
+// One row of the Problems list (ProblemsPanel.h): a file's heading, or one
+// diagnostic a server published for it. Positions are 0-based, columns in
+// UTF-16 units, in the text as it is now (a tab's unsaved text included).
+@interface MCProblem : NSObject
+@property(nonatomic, assign) BOOL heading;
+@property(nonatomic, copy) NSString *path;       // the file, as the tree spells it
+@property(nonatomic, assign) NSInteger line, column, endLine, endColumn;
+@property(nonatomic, assign) NSInteger severity;   // 1 error ... 4 hint
+@property(nonatomic, copy) NSString *message;    // on one line
+@property(nonatomic, copy) NSString *fullMessage;
+@property(nonatomic, copy) NSString *source, *code;
+@property(nonatomic, assign) NSInteger errors, warnings, others;   // a heading's
+@end
+
 // Posted (object: the session) whenever a server's state, the open file's
 // language or the Python interpreter changes.
 extern NSNotificationName const MCLspSessionDidChangeNotification;
@@ -132,6 +146,9 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 @property(nonatomic, copy) NSArray<NSString *> *(^openPaths)(void);
 // Close the tab of a file that an edit opened and then could not change.
 @property(nonatomic, copy) void (^closeFile)(NSString *path);
+// The diagnostics changed (published, a file closed, a server stopped):
+// called once for a burst, a moment after it.
+@property(nonatomic, copy) void (^onProblemsChanged)(void);
 
 // The file now in the text view, or nil when the view shows no editable
 // source (a message, a binary file, a preview). The previous one stays open
@@ -163,6 +180,22 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 // Cmd+.: the server's code actions for the caret or the selection, with the
 // diagnostics there, in a list by the caret; Return applies one.
 - (void)showQuickFixes;
+// ---- the Problems list (Shift+Cmd+M) and F8 / Shift+F8
+// Every diagnostic the window's servers have published: for the files open
+// in its tabs, and for any other file a server reports on (as the server
+// said, against the file on disk). Grouped by file (Lsp::problemRows).
+- (NSArray<MCProblem *> *)problemRows;
+// "2 errors, 3 warnings" over all of them, or "No problems".
+@property(nonatomic, readonly, copy) NSString *problemCountsText;
+@property(nonatomic, readonly) NSInteger problemErrors, problemWarnings;
+// Some server is running, or something was published: worth a status item.
+@property(nonatomic, readonly) BOOL problemsKnown;
+// Open a problem's file (a tab) and select what it is about.
+- (void)openProblem:(MCProblem *)problem;
+// F8 / Shift+F8: the caret to the next or previous problem in the file on
+// show, wrapping, with its message in the hover box. Beeps when it has none.
+- (void)goToProblem:(BOOL)forward;
+
 // Keys routed from the text view's doCommandBySelector: while the completion
 // list is open (arrows, Return, Tab, Esc), and complete: (Option+Esc).
 // Returns YES when handled.

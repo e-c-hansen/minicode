@@ -249,10 +249,10 @@ std::vector<DiagnosticSpan> diagnosticSpans(const std::u16string* base,
 
 // ------------------------------------------------------------ the Problems list
 // One diagnostic as the Problems list shows it: the file (a path), where it
-// is now (0-based line, UTF-16 column), and what it says.
+// is now (0-based lines, UTF-16 columns), and what it says.
 struct Problem {
     std::string path;
-    int line = 0, column = 0;
+    int line = 0, column = 0, endLine = 0, endColumn = 0;
     Severity severity = Severity::Error;
     std::string message, source, code;
 };
