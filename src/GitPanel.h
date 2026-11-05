@@ -14,6 +14,7 @@
 @property(nonatomic, assign) int status;          // exit status; -1 if git never ran
 @property(nonatomic, strong) NSData *output;      // stdout, bytes as git wrote them
 @property(nonatomic, copy) NSString *errorText;   // stderr, trimmed
+@property(nonatomic, assign) BOOL timedOut;       // stopped at its time limit
 @property(nonatomic, readonly) BOOL ok;           // status == 0
 @end
 
@@ -26,7 +27,21 @@ NSString *MCGitExecutable(void);
 // The environment keeps git from prompting (no terminal, no editor) and from
 // taking optional locks, so a status never writes to .git (the folder is
 // watched, and a write there would trigger another refresh).
+//
+// Every command has a time limit, so a git hung on a network filesystem, a
+// lock or a credential helper cannot hold the panel's queue for ever:
+// MCGitTimeoutFor gives 30 seconds for the commands that only read (status,
+// diff, log, show, rev-parse, for-each-ref, rev-list), 2 minutes for add,
+// restore and rm (clean filters such as Git LFS run on add, and git waits on
+// another process's index.lock), and 10 minutes for commit, whose hooks may
+// run a test suite and whose signing may wait on a passphrase dialog. Past it
+// git and everything it started (its own process group) get SIGTERM, then
+// SIGKILL 2 seconds later, and errorText says "git did not answer within 30
+// seconds: git status ...", with timedOut set and status -1.
 MCGitResult *MCGitRunSync(NSString *dir, NSArray<NSString *> *args);
+MCGitResult *MCGitRunSyncWithTimeout(NSString *dir, NSArray<NSString *> *args,
+                                     NSTimeInterval timeout);
+NSTimeInterval MCGitTimeoutFor(NSArray<NSString *> *args);
 
 // A diff as colored text: added lines green, removed red, hunk and file
 // headers muted. `font` is the monospaced font to use.

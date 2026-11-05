@@ -394,14 +394,35 @@ static const CGFloat kStatusHeight = 26;
         NSError *runErr = nil;
         NSData *output = nil;
         int status = -1;
+        NSString *stopped = nil;
         if ([task launchAndReturnError:&runErr]) {
+            // A document that loops (\def\x{\x}\x) never finishes, and every
+            // later edit would queue behind it, so the run has a limit: long
+            // enough for a first run's downloads on a slow network.
+            const int64_t limitMinutes = 5;
+            dispatch_queue_t utility = dispatch_get_global_queue(QOS_CLASS_UTILITY, 0);
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, limitMinutes * 60 * NSEC_PER_SEC),
+                           utility, ^{
+                if (!task.running) return;
+                [task terminate];
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), utility, ^{
+                    if (task.running) kill(task.processIdentifier, SIGKILL);
+                });
+            });
             output = [pipe.fileHandleForReading readDataToEndOfFile];
             [task waitUntilExit];
             status = task.terminationStatus;
+            if (task.terminationReason == NSTaskTerminationReasonUncaughtSignal) {
+                status = 128 + status;
+                stopped = [NSString stringWithFormat:@"tectonic did not finish within %lld "
+                                                      "minutes, so it was stopped.\n\n",
+                                                     (long long)limitMinutes];
+            }
         }
         NSString *log = output.length
             ? [[NSString alloc] initWithData:output encoding:NSUTF8StringEncoding]
             : (runErr.localizedDescription ?: @"");
+        if (stopped) log = [stopped stringByAppendingString:log ?: @""];
         NSString *pdfPath = [outDir stringByAppendingPathComponent:
             [stem stringByAppendingPathExtension:@"pdf"]];
         NSString *syncPath = [outDir stringByAppendingPathComponent:

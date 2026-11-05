@@ -89,10 +89,14 @@ const std::vector<Language>& table() {
              {"black", "", "black --quiet --stdin-filename {file} -",
               {{"pyproject.toml", Kind::TomlTable, "tool.black"}},
               false},
+             // Any [tool.ruff] table counts, lint settings alone included: a
+             // project that lints with Ruff almost always formats with it, and
+             // its line length lives in [tool.ruff]. A pyink, yapf or black
+             // table in the same folder still wins, being checked first.
              {"ruff", "", "ruff format --stdin-filename {file} -",
               {{"ruff.toml", Kind::Any, ""},
                {".ruff.toml", Kind::Any, ""},
-               {"pyproject.toml", Kind::TomlTable, "tool.ruff.format"}},
+               {"pyproject.toml", Kind::TomlTable, "tool.ruff"}},
               false},
          }},
         {"cpp", "C-family",

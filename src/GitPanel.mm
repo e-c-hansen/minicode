@@ -5,6 +5,11 @@
 #import "Lsp.h"   // MCFindProgram, MCSearchDirs
 #include "GitStatus.h"
 #include "GitGraph.h"
+#include <fcntl.h>
+#include <signal.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -38,7 +43,64 @@ NSString *MCGitExecutable(void) {
     return git;
 }
 
+// The subcommand in `args`: the first word that is not an option, skipping
+// the value of each -c.
+static NSString *MCGitSubcommand(NSArray<NSString *> *args) {
+    for (NSUInteger i = 0; i < args.count; i++) {
+        NSString *a = args[i];
+        if ([a isEqualToString:@"-c"] || [a isEqualToString:@"-C"]) { i++; continue; }
+        if (![a hasPrefix:@"-"]) return a;
+    }
+    return @"";
+}
+
+NSTimeInterval MCGitTimeoutFor(NSArray<NSString *> *args) {
+    NSString *cmd = MCGitSubcommand(args);
+    if ([cmd isEqualToString:@"commit"]) return 600;
+    if ([cmd isEqualToString:@"add"] || [cmd isEqualToString:@"restore"] ||
+        [cmd isEqualToString:@"rm"])
+        return 120;
+    return 30;
+}
+
+static NSString *MCGitDurationText(NSTimeInterval t) {
+    if (t >= 120 && fmod(t, 60) == 0)
+        return [NSString stringWithFormat:@"%.0f minutes", t / 60];
+    if (t == 1) return @"1 second";
+    return [NSString stringWithFormat:@"%g seconds", t];
+}
+
+// The command as the user would type it, on one line and cut short (a
+// commit message can be long).
+static NSString *MCGitCommandLine(NSArray<NSString *> *args) {
+    NSString *s = [@"git " stringByAppendingString:[args componentsJoinedByString:@" "]];
+    s = [[s componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]
+            componentsJoinedByString:@" "];
+    if (s.length > 160) s = [[s substringToIndex:159] stringByAppendingString:@"…"];
+    return s;
+}
+
+// Reads `fd` to its end into `into`, then closes it.
+static void MCGitDrain(int fd, NSMutableData *into) {
+    char buf[65536];
+    for (;;) {
+        ssize_t n = read(fd, buf, sizeof buf);
+        if (n > 0) [into appendBytes:buf length:(NSUInteger)n];
+        else if (n < 0 && errno == EINTR) continue;
+        else break;
+    }
+    close(fd);
+}
+
 MCGitResult *MCGitRunSync(NSString *dir, NSArray<NSString *> *args) {
+    return MCGitRunSyncWithTimeout(dir, args, MCGitTimeoutFor(args));
+}
+
+// posix_spawn rather than NSTask, for the one thing NSTask cannot do: start
+// git in a process group of its own, so a timeout stops the hooks, filters
+// and credential helpers it started along with it.
+MCGitResult *MCGitRunSyncWithTimeout(NSString *dir, NSArray<NSString *> *args,
+                                     NSTimeInterval timeout) {
     MCGitResult *r = [MCGitResult new];
     r.status = -1;
     r.output = [NSData data];
@@ -48,43 +110,129 @@ MCGitResult *MCGitRunSync(NSString *dir, NSArray<NSString *> *args) {
                        "(xcode-select --install) or git from Homebrew.";
         return r;
     }
-    NSTask *task = [NSTask new];
-    task.executableURL = [NSURL fileURLWithPath:git];
-    task.arguments = args;
-    task.currentDirectoryURL = [NSURL fileURLWithPath:dir isDirectory:YES];
     NSMutableDictionary *env = [NSProcessInfo.processInfo.environment mutableCopy];
     env[@"PATH"] = [MCSearchDirs() componentsJoinedByString:@":"];
     env[@"GIT_TERMINAL_PROMPT"] = @"0";   // never wait for a password
     env[@"GIT_EDITOR"] = @"true";         // never wait for an editor
     env[@"GIT_OPTIONAL_LOCKS"] = @"0";    // status must not write the index
     env[@"GIT_PAGER"] = @"cat";
-    task.environment = env;
-    NSPipe *outPipe = [NSPipe pipe], *errPipe = [NSPipe pipe];
-    task.standardOutput = outPipe;
-    task.standardError = errPipe;
-    task.standardInput = [NSFileHandle fileHandleWithNullDevice];
-    dispatch_semaphore_t exited = dispatch_semaphore_create(0);
-    task.terminationHandler = ^(NSTask *t) {
-        (void)t;
-        dispatch_semaphore_signal(exited);
-    };
-    NSError *err = nil;
-    if (![task launchAndReturnError:&err]) {
-        r.errorText = err.localizedDescription ?: @"Git could not be started.";
+
+    // Everything the child needs, built before the spawn.
+    std::vector<std::string> argStore, envStore;
+    argStore.push_back(git.fileSystemRepresentation);
+    for (NSString *a in args) argStore.push_back(a.UTF8String ?: "");
+    for (NSString *k in env)
+        envStore.push_back(std::string(k.UTF8String ?: "") + "=" +
+                           ([env[k] UTF8String] ?: ""));
+    std::vector<char *> argv, envp;
+    for (std::string &a : argStore) argv.push_back(a.data());
+    argv.push_back(nullptr);
+    for (std::string &e : envStore) envp.push_back(e.data());
+    envp.push_back(nullptr);
+
+    int outFds[2], errFds[2];
+    if (pipe(outFds) != 0) {
+        r.errorText = @"Git could not be started (no pipe).";
         return r;
     }
+    if (pipe(errFds) != 0) {
+        close(outFds[0]);
+        close(outFds[1]);
+        r.errorText = @"Git could not be started (no pipe).";
+        return r;
+    }
+    for (int fd : {outFds[0], outFds[1], errFds[0], errFds[1]})
+        fcntl(fd, F_SETFD, FD_CLOEXEC);
+
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
+    posix_spawn_file_actions_adddup2(&fa, outFds[1], 1);
+    posix_spawn_file_actions_adddup2(&fa, errFds[1], 2);
+    // The _np name is deprecated in macOS 26 for posix_spawn_file_actions_addchdir,
+    // which macOS 11 to 15 do not have; the old name still works on all.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    posix_spawn_file_actions_addchdir_np(&fa, dir.fileSystemRepresentation);
+#pragma clang diagnostic pop
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    sigset_t none, all;
+    sigemptyset(&none);
+    sigfillset(&all);
+    sigdelset(&all, SIGKILL);
+    sigdelset(&all, SIGSTOP);
+    posix_spawnattr_setsigmask(&attr, &none);
+    posix_spawnattr_setsigdefault(&attr, &all);
+    posix_spawnattr_setpgroup(&attr, 0);   // a group of its own, led by git
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK |
+                                        POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_CLOEXEC_DEFAULT);
+    pid_t pid = 0;
+    const int rc = posix_spawn(&pid, argv[0], &fa, &attr, argv.data(), envp.data());
+    posix_spawn_file_actions_destroy(&fa);
+    posix_spawnattr_destroy(&attr);
+    close(outFds[1]);
+    close(errFds[1]);
+    if (rc != 0) {
+        close(outFds[0]);
+        close(errFds[0]);
+        r.errorText = [NSString stringWithFormat:@"Git could not be started: %s.",
+                                                 strerror(rc)];
+        return r;
+    }
+
     // Both pipes are drained at once, or a chatty stderr could fill its pipe
-    // and stall git while we wait on stdout.
-    __block NSData *errData = nil;
-    dispatch_group_t group = dispatch_group_create();
-    dispatch_group_async(group, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        errData = [errPipe.fileHandleForReading readDataToEndOfFile];
+    // and stall git while we wait on stdout. Each reader owns its descriptor,
+    // so one given up on below closes it whenever its writer goes.
+    dispatch_queue_t q = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
+    NSMutableData *outData = [NSMutableData data], *errData = [NSMutableData data];
+    dispatch_group_t io = dispatch_group_create();
+    const int outRead = outFds[0], errRead = errFds[0];
+    dispatch_group_async(io, q, ^{ MCGitDrain(outRead, outData); });
+    dispatch_group_async(io, q, ^{ MCGitDrain(errRead, errData); });
+    // Reaped on a thread of its own: a git stuck in the kernel (a dead NFS
+    // server) outlives even SIGKILL, and then only that thread waits on it.
+    __block int waitStatus = 0;
+    dispatch_semaphore_t exited = dispatch_semaphore_create(0);
+    dispatch_async(q, ^{
+        int st = 0;
+        while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+        waitStatus = st;
+        dispatch_semaphore_signal(exited);
     });
-    NSData *outData = [outPipe.fileHandleForReading readDataToEndOfFile];
-    dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
-    dispatch_semaphore_wait(exited, DISPATCH_TIME_FOREVER);
-    r.status = task.terminationStatus;
-    r.output = outData ?: [NSData data];
+
+    auto after = [](double seconds) {
+        return dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds * NSEC_PER_SEC));
+    };
+    const dispatch_time_t deadline = after(timeout);
+    if (dispatch_semaphore_wait(exited, deadline) != 0) {
+        r.timedOut = YES;
+        r.errorText = [NSString stringWithFormat:@"git did not answer within %@: %@",
+                                                 MCGitDurationText(timeout),
+                                                 MCGitCommandLine(args)];
+        kill(-pid, SIGTERM);
+        if (dispatch_semaphore_wait(exited, after(2)) != 0) {
+            kill(-pid, SIGKILL);
+            dispatch_semaphore_wait(exited, after(2));
+        } else {
+            kill(-pid, SIGKILL);   // what git started and left in its group
+        }
+        return r;
+    }
+    // git exited. Its output follows at once, unless something it started
+    // (outside its group, or still running in it) holds the pipes open,
+    // which is a hang of its own.
+    if (dispatch_group_wait(io, deadline) != 0 && dispatch_group_wait(io, after(2)) != 0) {
+        r.timedOut = YES;
+        r.errorText = [NSString stringWithFormat:
+            @"git exited, but something it started kept its output open for %@: %@",
+            MCGitDurationText(timeout), MCGitCommandLine(args)];
+        kill(-pid, SIGKILL);
+        return r;
+    }
+    if (WIFEXITED(waitStatus)) r.status = WEXITSTATUS(waitStatus);
+    else if (WIFSIGNALED(waitStatus)) r.status = 128 + WTERMSIG(waitStatus);
+    r.output = outData;
     std::string e((const char *)errData.bytes, errData.length);
     r.errorText = [NSFromBytes(e) stringByTrimmingCharactersInSet:
                       NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -1129,6 +1277,11 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
                                             [NSString stringWithFormat:@"--format=%s",
                                                                        Git::refFormat()],
                                             @"refs/heads", @"refs/remotes", @"refs/tags"]);
+    if (refs.timedOut) {   // a log now would only wait as long again
+        MCGitGraph *g = [MCGitGraph new];
+        g.errorText = MCGitFailureText(refs);
+        return g;
+    }
     // Everything the graph depends on, so an unchanged repository (most
     // refreshes come from saving a file) costs one for-each-ref.
     NSMutableData *key = [NSMutableData data];

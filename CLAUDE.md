@@ -17,7 +17,19 @@ this file covers the macOS app except where it says otherwise.
 ## Build / test / run / release
 
 - `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
-  run on Apple Silicon and to keep granted permissions stable).
+  run on Apple Silicon and to keep granted permissions stable). Each source
+  file is its own object in `build/obj` with a `-MMD -MP` dependency file, so
+  touching one `.mm` rebuilds that file and relinks (2.5 s for Settings.cpp,
+  5 to 6 s for EditorController.mm, where everything took 78 s before, all
+  under load from other sessions), and a clean build takes 27 to 47 s on
+  the 8-core M3 instead of 126 s.
+  It runs one job per core by default: the Mac's GNU make 3.81 cannot tell a
+  makefile whether `-j` was given, so the top-level make adds `-j$(JOBS)`
+  itself (never with `clean` among the goals), and `make JOBS=1` builds one
+  file at a time. `build/obj/flags.txt` holds the compile command, so a new
+  compiler or new flags rebuild everything. `make test` does the same in
+  `build/test-obj` with the tests' own flags (no -O2, as before), and still
+  works with g++ on Linux.
 - `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
   1403 checks over the tokenizer (including ~25,000 random edits comparing
   incremental against full highlighting, and a timing line for a 100k-line
@@ -470,7 +482,12 @@ same way Markdown does; `LatexView` takes the editor's slot in
   and the user's file is never written. It is deleted when tectonic exits.
   Output (PDF + `.synctex.gz`) goes to `NSTemporaryDirectory()/MiniCode-latex`.
 - **Compiles are debounced (0.6s) and generation-counted**; a result from a
-  stale run is dropped. The scroll position and zoom are restored by page index
+  stale run is dropped. A run has 5 minutes (2026-11-05), then SIGTERM and
+  SIGKILL 2 s later, and the log starts "tectonic did not finish within 5
+  minutes, so it was stopped." Before, a document that loops
+  (`\def\x{\x}\x`) spun a core for ever and every later edit queued behind
+  it; the limit is long for the sake of a first run's downloads on a slow
+  network. Checked offscreen with a tectonic that ignores SIGTERM. The scroll position and zoom are restored by page index
   and point, since the `PDFDestination` belongs to the old document.
 - **Unknown commands are looked through, not skipped.** Real documents (and
   custom classes like an Overleaf resume) wrap their text in `\normalfont{}`,
@@ -1358,7 +1375,10 @@ through an external formatter; nothing is bundled.
   whole command line like `lsp.*` (`{file}` is the path; `off` disables) and
   runs exactly as written. Unset, the nearest folder (up to the open folder or
   a `.git`) with a formatter's config decides: `[tool.pyink]`, `.style.yapf`,
-  `[yapf]` in setup.cfg, `[tool.black]`, ruff.toml or `[tool.ruff.format]`,
+  `[yapf]` in setup.cfg, `[tool.black]`, ruff.toml, .ruff.toml or any
+  `[tool.ruff]` table (lint settings alone count since 2026-11-05: a project
+  that lints with Ruff almost always formats with it; a pyink, yapf or black
+  table in the same folder still wins, being checked first),
   `.clang-format`, rustfmt.toml, an `.editorconfig` with a shell section. That
   tool runs with no style flags, and if it is missing the user is told to
   install it; another tool would restyle the project. With no config, the
@@ -2250,8 +2270,8 @@ Ctrl+Shift+G is VS Code's key and was free in the menus.
   plus rm --cached --force before the first commit (restore --staged needs
   a HEAD and fails with "could not resolve HEAD"; with --cached, --force
   only lets it drop an index entry that differs from the file, the file is
-  never touched). Never a shell string: `MCGitRunSync` is an NSTask with an
-  argument array, cwd = the repository's top level (from `rev-parse
+  never touched). Never a shell string: `MCGitRunSync` is a posix_spawn of
+  an argument array, cwd = the repository's top level (from `rev-parse
   --show-toplevel` in the window's folder, so a subfolder works and paths
   from status are used as they are). Every path goes after `--`, and add,
   restore and rm get `--literal-pathspecs`, so a file called `sp*ecial.txt`
@@ -2270,8 +2290,32 @@ Ctrl+Shift+G is VS Code's key and was free in the menus.
   panel refreshes on FSEvents: that would loop. Checked: the index's mtime
   does not move across a refresh. Also `GIT_TERMINAL_PROMPT=0`,
   `GIT_EDITOR=true`, stdin /dev/null, the wide PATH for hooks. stdout and
-  stderr are drained at once (stderr on another queue), so a chatty stderr
+  stderr are drained at once (each on its own queue), so a chatty stderr
   cannot fill its pipe and stall git.
+- **Time limits** (2026-11-05): `MCGitTimeoutFor` gives 30 s to the
+  commands that only read (status, diff, log, show, rev-parse,
+  for-each-ref, rev-list), 2 minutes to add, restore and rm (clean filters
+  such as Git LFS run on add, and git waits on another process's
+  index.lock), and 10 minutes to commit, whose hooks may run a test suite
+  and whose signing may wait on a passphrase dialog. Before, a git hung on
+  a network filesystem, a lock or a credential helper held the panel's
+  queue for ever. git is spawned (posix_spawn rather than NSTask, for this)
+  as the leader of its own process group, so at the limit the whole group
+  gets SIGTERM, then SIGKILL 2 s later, hooks, filters and credential
+  helpers included. The result has `timedOut` set and status -1, and the
+  panel shows "git did not answer within 30 seconds: git status
+  --porcelain=v2 --branch -z --untracked-files=all" (the command on one
+  line, cut at 160 characters, since a commit message can be long). A git
+  that exits but leaves something holding its pipes gets "git exited, but
+  something it started kept its output open". git is reaped on a thread of
+  its own, so one stuck in the kernel (a dead NFS server) ties up only that
+  thread. A timed-out for-each-ref skips the log after it. Checked with an
+  offscreen harness and a fake git first on PATH (30 checks: the limits by
+  command, real git through the wrapper, 2 MB of stdout with 1 MB of
+  stderr, a hang, a child holding the pipes, a git ignoring SIGTERM, one
+  that exits leaving a child, every process gone after each, and the panel
+  itself showing the 30 s message after 30.2 s and recovering on the next
+  refresh).
 - **Threads**: one serial queue per panel, so an add and the status after it
   run in order; results come back on the main queue and are dropped if the
   folder changed (`root` compared) or, for diffs, a newer diff was asked for

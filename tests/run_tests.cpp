@@ -6951,9 +6951,48 @@ void testFormatter() {
     Plan rf = plan("python", "", "/w/a.py", "/w",
                    fakeFs({{"/w/pyproject.toml", "[tool.ruff.format]\nquote-style='single'\n"}}));
     CHECK(rf.candidates.size() == 1 && rf.candidates[0].program == "ruff");
+    // Any [tool.ruff] table means Ruff, lint settings alone included.
+    Plan rt = plan("python", "", "/w/pkg/a.py", "/w",
+                   fakeFs({{"/w/pyproject.toml",
+                            "[project]\nname = 'x'\n\n[tool.ruff]\nline-length = 100\n"}}));
+    CHECK(rt.candidates.size() == 1 && rt.candidates[0].program == "ruff" &&
+          rt.candidates[0].projectStyle &&
+          rt.candidates[0].command == "ruff format --stdin-filename {file} -" &&
+          rt.configFile == "/w/pyproject.toml" && rt.installHint == "uv tool install ruff");
+    Plan rl = plan("python", "", "/w/a.py", "/w",
+                   fakeFs({{"/w/pyproject.toml", "[tool.ruff.lint]\nselect = ['E']\n"}}));
+    CHECK(rl.candidates.size() == 1 && rl.candidates[0].program == "ruff");
+    Plan rp = plan("python", "", "/w/a.py", "/w",
+                   fakeFs({{"/w/pyproject.toml",
+                            "[tool.ruff.lint.per-file-ignores]\n\"__init__.py\" = ['F401']\n"}}));
+    CHECK(rp.candidates.size() == 1 && rp.candidates[0].program == "ruff");
+    Plan rq = plan("python", "", "/w/a.py", "/w",
+                   fakeFs({{"/w/pyproject.toml", "[ tool . \"ruff\" ]\nline-length = 90\n"}}));
+    CHECK(rq.candidates.size() == 1 && rq.candidates[0].program == "ruff");
+    Plan rd = plan("python", "", "/w/a.py", "/w", fakeFs({{"/w/.ruff.toml", "line-length = 88\n"}}));
+    CHECK(rd.candidates.size() == 1 && rd.candidates[0].program == "ruff" &&
+          rd.configFile == "/w/.ruff.toml");
+    // A formatter named beside Ruff's lint settings is the one that formats.
+    Plan rb = plan("python", "", "/w/a.py", "/w",
+                   fakeFs({{"/w/pyproject.toml",
+                            "[tool.ruff]\nselect = ['E']\n[tool.black]\nline-length = 88\n"}}));
+    CHECK(rb.candidates.size() == 1 && rb.candidates[0].program == "black");
+    Plan ri = plan("python", "", "/w/a.py", "/w",
+                   fakeFs({{"/w/pyproject.toml", "[tool.ruff]\n[tool.pyink]\n"}}));
+    CHECK(ri.candidates.size() == 1 && ri.candidates[0].program == "pyink");
+    // The nearest folder still decides.
+    Plan rn = plan("python", "", "/w/sub/a.py", "/w",
+                   fakeFs({{"/w/sub/pyproject.toml", "[tool.ruff]\n"},
+                           {"/w/pyproject.toml", "[tool.black]\n"}}));
+    CHECK(rn.candidates.size() == 1 && rn.candidates[0].program == "ruff" &&
+          rn.configFile == "/w/sub/pyproject.toml");
+    // A name that only starts like Ruff's is not Ruff.
+    Plan rx = plan("python", "", "/w/a.py", "/w",
+                   fakeFs({{"/w/pyproject.toml", "[tool.ruffle]\n[tool.ruff-lsp]\n"}}));
+    CHECK(rx.candidates.size() == 2 && rx.configFile.empty());
     // A pyproject.toml that configures no formatter changes nothing.
     Plan np = plan("python", "", "/w/a.py", "/w",
-                   fakeFs({{"/w/pyproject.toml", "[tool.ruff.lint]\nselect = ['E']\n"}}));
+                   fakeFs({{"/w/pyproject.toml", "[tool.mypy]\nstrict = true\n"}}));
     CHECK(np.candidates.size() == 2 && np.configFile.empty());
     // The search stops at the open folder, and at a repository's top.
     Plan above = plan("cpp", "", "/w/proj/m.cc", "/w/proj",
