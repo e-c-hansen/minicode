@@ -1507,6 +1507,24 @@ static NSString *StateText(MCLspState state) {
 @implementation MCLspEntry
 @end
 
+// A file open in a tab of this window, open on its language's server so the
+// server sees every tab's unsaved text (rename, references), not only the
+// one on show. Keyed by its canonical URI.
+@interface MCLspDoc : NSObject
+@property(nonatomic, copy) NSString *path;
+@property(nonatomic, strong) MCLspServer *server;
+@end
+@implementation MCLspDoc
+@end
+
+// A document's diagnostics as last published, with the text the server had
+// been sent when it computed them, so they are drawn on the text as it is
+// when they are shown (typed in since, perhaps) rather than as it was.
+struct MCDiagSet {
+    std::vector<Lsp::Diagnostic> list;
+    std::shared_ptr<const std::u16string> base;   // null: not known
+};
+
 // A server that crashes is started again after 1, 2, then 4 seconds; the
 // fourth crash in a row leaves it stopped, so a server that cannot start
 // never spins. Three minutes of running clears the count.
@@ -1523,7 +1541,8 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     NSString *_uri;           // its URI, when a server has it open
     MCLspServer *_server;     // the server for it, or nil
     NSString *_transient;     // a brief message ("No definition found")
-    std::map<std::string, std::vector<Lsp::Diagnostic>> _diags;
+    std::map<std::string, MCDiagSet> _diags;   // by canonical URI
+    NSMutableDictionary<NSString *, MCLspDoc *> *_docs;   // by canonical URI
     NSUInteger _edits;        // counts edits to the text on show
     NSString *_settingsSignature, *_pythonSetting;
 
@@ -1565,6 +1584,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     _tv = textView;
     _root = [root copy];
     _entries = [NSMutableDictionary dictionary];
+    _docs = [NSMutableDictionary dictionary];
     _settingsSignature = [self currentSettingsSignature];
     _pythonSetting = NS([AppSettings shared].settings.pythonInterpreter());
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
@@ -1634,7 +1654,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
             int errors = 0, warnings = 0;
             auto it = _uri ? _diags.find(Std(_uri)) : _diags.end();
             if (it != _diags.end())
-                for (const Lsp::Diagnostic &d : it->second) {
+                for (const Lsp::Diagnostic &d : it->second.list) {
                     if (d.severity == Lsp::Severity::Error) errors++;
                     else if (d.severity == Lsp::Severity::Warning) warnings++;
                 }
@@ -1836,7 +1856,9 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     };
     c.onDiagnostics = [weakSelf, weakServer](const std::string &uri,
                                              const std::vector<Lsp::Diagnostic> &list) {
-        if (!weakServer.stopping) [weakSelf diagnosticsArrived:uri list:list];
+        MCLspServer *s = weakServer;
+        if (s && !s.stopping)
+            [weakSelf diagnosticsArrived:uri list:list base:s.client.textFor(uri)];
     };
     // A server that refuses the handshake would otherwise read "starting…"
     // for good while every request is dropped: stop it and say so.
@@ -1913,12 +1935,14 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
         e.generation++;
     }
     if (_server == server) [self detachDocument];
+    [self forgetDocumentsOf:server];
     [server stop];   // its client has already exited, so this just ends its input
     [self changed];
 }
 
 - (void)serverExited:(MCLspServer *)server {
     if (_server == server) [self detachDocument];
+    [self forgetDocumentsOf:server];
     MCLspEntry *e = [self entryOf:server];
     if (!e || server.stopping) { [self changed]; return; }
     // It went on its own: a crash. Start it again a few times, waiting
@@ -1954,6 +1978,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     MCLspServer *s = e.server;
     if (!s) return;
     if (_server == s) [self detachDocument];
+    [self forgetDocumentsOf:s];
     e.server = nil;
     [s stop];
 }
@@ -1961,7 +1986,18 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
 - (void)stopAllServers {
     for (MCLspEntry *e in _entries.allValues) [self stopEntry:e];
     [_entries removeAllObjects];
+    [_docs removeAllObjects];
     _diags.clear();
+}
+
+// A server going away takes its documents with it: nothing to close, and
+// what it said about them no longer holds. A restart opens them again.
+- (void)forgetDocumentsOf:(MCLspServer *)server {
+    for (NSString *uri in _docs.allKeys) {
+        if (_docs[uri].server != server) continue;
+        [_docs removeObjectForKey:uri];
+        _diags.erase(Std(uri));
+    }
 }
 
 - (void)restartServer:(NSString *)key {
@@ -2237,24 +2273,30 @@ static BOOL IsRunnable(NSString *path) {
     _referencesGen++;
     _actionGen++;
     if (!_applyingEdit) _renameGen++;
-    if (_uri) _diags.erase(Std(_uri));
+    // The document stays open on its server while its tab is open (see
+    // syncOpenDocuments), and so do its diagnostics, for when it is back.
     _server = nil;
     _uri = nil;
     _tv.diagnostics = @[];
 }
 
-// Open the current file on its language's server, starting it if need be.
+// Open the current file on its language's server, starting it if need be,
+// and with it every other tab's file that server handles.
 - (void)attachDocument {
-    if (_server || !_path || !_langKey || ![AppSettings shared].settings.lspEnabled()) return;
-    MCLspServer *server = [self ensureServer:_langKey];
-    if (!server) return;
-    _server = server;
-    _uri = NS(Lsp::uriFromPath(Std(RealPath(_path))));
-    server.client.didOpen(Std(_uri), Std(_languageId), Std(_tv.string));
+    if (!_server && _path && _langKey && [AppSettings shared].settings.lspEnabled()) {
+        MCLspServer *server = [self ensureServer:_langKey];
+        if (server) {
+            _server = server;
+            _uri = NS(Lsp::uriFromPath(Std(RealPath(_path))));
+        }
+    }
+    [self syncOpenDocuments];
+    if (_server && _uri) [self paintDiagnostics];
 }
 
+// Leaves the file on its server: the tab is still open. syncOpenDocuments
+// closes it there once its tab goes.
 - (void)closeDocument {
-    if (_server && _uri) _server.client.didClose(Std(_uri));
     [self detachDocument];
     _path = nil;
     _langKey = nil;
@@ -2274,8 +2316,72 @@ static BOOL IsRunnable(NSString *path) {
         // Only a real change reaches the server (same environment: nothing).
         if (wasRunning && [_langKey isEqualToString:@"python"])
             [self applyPythonInterpreterForSwitch:YES];
+    } else {
+        [self syncOpenDocuments];   // a tab that closed or stopped showing text
     }
     [self changed];
+}
+
+- (void)tabsChanged {
+    [self syncOpenDocuments];
+}
+
+// Every tab's file stays open on its language's server, with the tab's text,
+// so rename and references see unsaved changes in tabs not on show, and a
+// cross-file rename's edits (unsaved) are what the server reads, not the
+// disk. The file on show is the text view's; the others come from
+// bufferText. Only servers already running (or starting) for a file on show
+// take files from background tabs: a tab never starts a server unseen.
+// Files whose tabs have gone are closed. Cheap when nothing changed: an
+// unchanged text sends nothing (Client::didChange compares).
+- (void)syncOpenDocuments {
+    NSMutableDictionary<NSString *, MCLspDoc *> *wanted = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSString *, NSString *> *texts = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSString *, NSString *> *languageIds = [NSMutableDictionary dictionary];
+    if ([AppSettings shared].settings.lspEnabled()) {
+        if (_server && _uri) {
+            MCLspDoc *d = [MCLspDoc new];
+            d.path = _path;
+            d.server = _server;
+            wanted[_uri] = d;
+            texts[_uri] = _tv.string;
+            languageIds[_uri] = _languageId;
+        }
+        NSArray<NSString *> *paths = self.openPaths ? self.openPaths() : @[];
+        for (NSString *path in paths) {
+            Lsp::Language lang;
+            if (!Lsp::languageForExtension(Std(path.pathExtension.lowercaseString), lang))
+                continue;
+            MCLspServer *server = _entries[NS(lang.server)].server;
+            if (!server || server.stopping) continue;
+            NSString *uri = NS(Lsp::uriFromPath(Std(RealPath(path))));
+            if (wanted[uri]) continue;   // the file on show
+            NSString *text = self.bufferText ? self.bufferText(path) : nil;
+            if (!text) continue;         // not read yet, or not shown as text
+            MCLspDoc *d = [MCLspDoc new];
+            d.path = path;
+            d.server = server;
+            wanted[uri] = d;
+            texts[uri] = text;
+            languageIds[uri] = NS(lang.languageId);
+        }
+    }
+    // Closed first, so a file that moved to another server is closed on
+    // the old one before the new one opens it.
+    for (NSString *uri in _docs.allKeys) {
+        MCLspDoc *had = _docs[uri];
+        if (wanted[uri].server == had.server) continue;
+        if (!had.server.stopping) had.server.client.didClose(Std(uri));
+        [_docs removeObjectForKey:uri];
+        _diags.erase(Std(uri));
+    }
+    for (NSString *uri in wanted) {
+        MCLspDoc *d = wanted[uri];
+        // didOpen of an open document is a didChange (and nothing at all
+        // when the text is what the server has).
+        d.server.client.didOpen(Std(uri), Std(languageIds[uri]), Std(texts[uri]));
+        _docs[uri] = d;
+    }
 }
 
 - (void)documentSaved {
@@ -2421,18 +2527,42 @@ static BOOL IsRunnable(NSString *path) {
     return pa.length && [RealPath(pa) isEqualToString:RealPath(pb)];
 }
 
+// `base` is the text the server had been sent for the file when it
+// published (Client::textFor), or null when it does not have it open.
 - (void)diagnosticsArrived:(const std::string &)uri
-                      list:(const std::vector<Lsp::Diagnostic> &)list {
-    if (![self uri:uri isSameFileAs:_uri]) {
-        _diags[uri] = list;   // another file; shown if it is opened while cached
+                      list:(const std::vector<Lsp::Diagnostic> &)list
+                      base:(const std::string *)base {
+    // A file no tab has open (a server reporting on the whole folder): not
+    // shown anywhere, and opening it brings fresh ones.
+    std::string key = CanonicalURI(uri);
+    if (!base && !_docs[NS(key)]) return;
+    MCDiagSet set;
+    set.list = list;
+    if (base) set.base = std::make_shared<const std::u16string>(Lsp::toUtf16(*base));
+    // Kept for another tab's file too, and drawn when that tab is shown.
+    _diags[key] = std::move(set);
+    if ([self uri:uri isSameFileAs:_uri]) [self paintDiagnostics];
+}
+
+// The file on show's diagnostics, drawn on its text as it is now: those
+// computed on text typed over since are left out until the server
+// publishes for the new text (Lsp::diagnosticSpans).
+- (void)paintDiagnostics {
+    if (!_uri) return;
+    auto it = _diags.find(Std(_uri));
+    if (it == _diags.end()) {
+        _tv.diagnostics = @[];
+        [self updateStatus];
         return;
     }
-    _diags[Std(_uri)] = list;
+    const std::vector<Lsp::Diagnostic> &list = it->second.list;
     std::u16string text = U16Of(_tv.string);
     NSMutableArray *marks = [NSMutableArray array];
-    for (const Lsp::Diagnostic &d : list) {
-        size_t a = Lsp::offsetForPosition(text, d.range.start);
-        size_t b = Lsp::offsetForPosition(text, d.range.end);
+    for (const Lsp::DiagnosticSpan &span :
+         Lsp::diagnosticSpans(it->second.base.get(), text, list)) {
+        const Lsp::Diagnostic &d = list[span.index];
+        size_t a = span.start;
+        size_t b = span.end;
         if (b <= a) {
             // An empty range: mark the word there, or at least one character.
             b = a;
@@ -3316,6 +3446,7 @@ static NSString *ErrorText(const Json &error) {
             if (![self showsPath:p]) self.closeFile(p);
     _applyingEdit = NO;
     [self flushChanges];
+    [self syncOpenDocuments];
     if (!ok) *failure = why ?: @"The edit could not be made";
     return ok ? changed : -1;
 }
@@ -3407,7 +3538,9 @@ static NSString *ErrorText(const Json &error) {
         return;
     NSString *old = [_tv.string substringWithRange:_renameRange];
     if ([name isEqualToString:old]) return;
+    // Every tab's text as it is, so uses in unsaved tabs are renamed too.
     [self flushChanges];
+    [self syncOpenDocuments];
     __weak LspSession *weakSelf = self;
     NSString *uri = _uri;
     MCLspServer *server = _server;
@@ -3453,6 +3586,7 @@ static NSString *ErrorText(const Json &error) {
         return;
     [self closeTransients];
     [self flushChanges];
+    [self syncOpenDocuments];
     int gen = ++_referencesGen;
     _askedSelection = _tv.selectedRange;
     __weak LspSession *weakSelf = self;
@@ -3624,12 +3758,13 @@ static NSFont *PickerMono(void) {
     Lsp::Range range{Lsp::positionForOffset(text, sel.location),
                      Lsp::positionForOffset(text, NSMaxRange(sel))};
     auto it = _diags.find(Std(_uri));
-    Json diags = it != _diags.end() ? Lsp::diagnosticsInRange(it->second, range) : Json::array();
+    Json diags = it != _diags.end() ? Lsp::diagnosticsInRange(it->second.list, range)
+                                    : Json::array();
     // A caret on a line with a problem that is not under it (clang reports
     // a missing ';' at the next token): the line's problems, at the first.
     if (diags.size() == 0 && sel.length == 0 && it != _diags.end()) {
         Lsp::Range line{{range.start.line, 0}, {range.start.line, INT_MAX}};
-        Json onLine = Lsp::diagnosticsInRange(it->second, line);
+        Json onLine = Lsp::diagnosticsInRange(it->second.list, line);
         if (onLine.size() > 0) {
             diags = onLine;
             range = Lsp::parseRange(onLine[0]["range"]);

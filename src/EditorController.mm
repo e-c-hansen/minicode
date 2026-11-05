@@ -838,7 +838,7 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
         return t.sourceText;
     };
     self.lsp.showNote = ^(NSString *message) { [weakSelf showStatusNote:message]; };
-    // The files open in tabs.
+    // Every tab's file stays open on its server, with the tab's text.
     self.lsp.openPaths = ^NSArray<NSString *> *{
         EditorController *s = weakSelf;
         NSMutableArray<NSString *> *paths = [NSMutableArray array];
@@ -2333,7 +2333,10 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
         else if (t.latex) [t.latex setPath:moved source:t.sourceText ?: @""];
     }
     if (any) { [self reloadTabStrip]; [self saveSession]; }
-    if (!activeMoved) return;
+    if (!activeMoved) {
+        if (any) [self.lsp tabsChanged];   // the files open on the servers follow
+        return;
+    }
     NSString *moved = self.currentPath;
     [self.lsp documentOpened:self.previewMode ? nil : moved];
     // Relative \input and pictures now resolve from the new folder.
@@ -3930,6 +3933,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
         [self activateTab:_tabs[(NSUInteger)next]];
     } else {
         if (wasActive) [self showEmptyState];
+        else [self.lsp tabsChanged];   // its file is closed on its server
         [self reloadTabStrip];
         [self updateTitle];
         [self saveSession];
@@ -4397,6 +4401,7 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     [self recordDiskStateOf:t];
     [self forgetHistoryOf:t];
     if (t == _activeTab) [self refreshDisplay];
+    else [self.lsp tabsChanged];   // the server gets the disk's text for it too
     [self updateTitle];
 }
 
