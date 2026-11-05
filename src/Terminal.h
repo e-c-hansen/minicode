@@ -58,6 +58,9 @@ extern NSNotificationName const MCTerminalCommandDidFinishNotification;
 @property(nonatomic, readonly, copy) NSString *pendingCommand;
 // What a tab shows: the command running, else the folder's name.
 @property(nonatomic, readonly, copy) NSString *title;
+// A title given from outside (`minicode term --title`), shown in place of
+// the one above; nil for none.
+@property(nonatomic, copy) NSString *fixedTitle;
 @property(nonatomic, readonly, copy) NSString *directory;   // the shell's cwd
 @property(nonatomic, copy) void (^onTitleChange)(void);
 // Types a command as if it were entered in the input line, so it shows and

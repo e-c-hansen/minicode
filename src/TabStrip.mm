@@ -141,7 +141,11 @@ static const CGFloat kMinTab = 80, kMaxTab = 240;
 
         NSColor *text = active ? (self.activeText ?: TabHex(0xE0E0E0, 1))
                                : (self.inactiveText ?: TabHex(0x9CA3AF, 1));
-        NSDictionary *attrs = @{NSFontAttributeName: [self titleFont],
+        NSFont *font = [self titleFont];
+        if (item.preview)
+            font = [[NSFontManager sharedFontManager] convertFont:font
+                                                      toHaveTrait:NSFontItalicTrait];
+        NSDictionary *attrs = @{NSFontAttributeName: font,
                                 NSForegroundColorAttributeName: text,
                                 NSParagraphStyleAttributeName: ps};
         NSRect close = [self closeRectForTab:i];
@@ -231,6 +235,7 @@ static const CGFloat kMinTab = 80, kMaxTab = 240;
         return;
     }
     if (self.onSelect) self.onSelect(i);
+    if (event.clickCount == 2 && self.onDoubleClick) self.onDoubleClick(i);
 }
 
 - (void)mouseUp:(NSEvent *)event {

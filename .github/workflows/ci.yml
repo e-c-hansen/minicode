@@ -18,6 +18,12 @@ jobs:
       - name: Build the app
         run: make app
 
+      # The app driven offscreen (tests/gui/Harness.h): no window ever
+      # reaches the screen, and the run has its own home, settings and
+      # temporary folder.
+      - name: Run the GUI checks
+        run: make guitest
+
   linux:
     name: GTK4 port
     runs-on: ubuntu-latest

@@ -29,9 +29,14 @@
 - (NSArray<TerminalView *> *)terminalsInTab:(NSUInteger)tab;
 
 - (TerminalView *)addTab;         // a new terminal in a new tab, made active
+// The same, its shell starting in `dir` (nil: the panel's folder).
+- (TerminalView *)addTabInDirectory:(NSString *)dir;
+// A panel whose first terminal starts in `first` rather than `dir`.
+- (instancetype)initWithDirectory:(NSString *)dir firstIn:(NSString *)first;
 // A new terminal beside the active one; nil (a beep and a status note) when
 // each pane would be narrower than 20 columns.
 - (TerminalView *)splitActive;
+- (TerminalView *)splitActiveInDirectory:(NSString *)dir;
 - (void)selectTab:(NSUInteger)tab;
 // Next (+1) or previous (-1) terminal: through the shown tab's panes, then on
 // to the next tab, wrapping around.

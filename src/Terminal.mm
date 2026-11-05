@@ -1217,7 +1217,13 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
 // A path in the command shows as its last part, so "/x/.venv/bin/python
 // /x/app/main.py" reads "python main.py".
+- (void)setFixedTitle:(NSString *)title {
+    _fixedTitle = title.length ? [title copy] : nil;
+    [self titleChanged];
+}
+
 - (NSString *)title {
+    if (_fixedTitle) return _fixedTitle;
     if (_runningCommand.length) {
         NSMutableArray *words = [NSMutableArray array];
         for (NSString *w in [_runningCommand componentsSeparatedByString:@" "]) {
