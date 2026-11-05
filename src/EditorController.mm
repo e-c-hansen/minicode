@@ -5624,38 +5624,54 @@ static NSColor *ContrastColor(const Rgba &c) {
     return rel.length ? rel : path;
 }
 
-// 1-based line of a UTF-16 offset.
+// 1-based line of a UTF-16 offset. Read a block at a time: characterAtIndex
+// on the editor's string costs a message per character.
 static int MCLineAt(NSString *text, NSUInteger index) {
     index = MIN(index, text.length);
     int line = 1;
-    for (NSUInteger i = 0; i < index; i++)
-        if ([text characterAtIndex:i] == '\n') line++;
+    unichar buf[4096];
+    for (NSUInteger at = 0; at < index; at += 4096) {
+        const NSUInteger n = MIN((NSUInteger)4096, index - at);
+        [text getCharacters:buf range:NSMakeRange(at, n)];
+        for (NSUInteger i = 0; i < n; i++)
+            if (buf[i] == '\n') line++;
+    }
     return line;
 }
 
 // The start of a 0-based source line, in UTF-16.
 static NSUInteger MCLineStart(NSString *text, int line) {
-    NSUInteger i = 0;
-    for (int l = 0; l < line && i < text.length; i++)
-        if ([text characterAtIndex:i] == '\n') l++;
-    return MIN(i, text.length);
+    if (line <= 0) return 0;
+    unichar buf[4096];
+    int l = 0;
+    for (NSUInteger at = 0; at < text.length; at += 4096) {
+        const NSUInteger n = MIN((NSUInteger)4096, text.length - at);
+        [text getCharacters:buf range:NSMakeRange(at, n)];
+        for (NSUInteger i = 0; i < n; i++)
+            if (buf[i] == '\n' && ++l == line) return at + i + 1;
+    }
+    return text.length;
 }
 
 // The line fragment holding character `index`, in the text view's
-// coordinates (the editor is TextKit 1; see LSP in CLAUDE.md).
+// coordinates (the editor is TextKit 1; see LSP in CLAUDE.md). Only the
+// layout up to that character is asked for: the whole text's took 1.9 s
+// in a 100,000-line file the first time the bar opened, before background
+// layout had got there.
 - (NSRect)agentLineRectAt:(NSUInteger)index {
     CodeTextView *tv = self.textView;
     NSLayoutManager *lm = tv.layoutManager;
-    NSTextContainer *tc = tv.textContainer;
-    [lm ensureLayoutForTextContainer:tc];
+    const NSUInteger length = tv.string.length;
+    if (length) [lm ensureLayoutForCharacterRange:NSMakeRange(MIN(index, length - 1), 1)];
     NSRect r;
-    if (index >= tv.string.length && !NSIsEmptyRect(lm.extraLineFragmentRect)) {
+    if (index >= length && !NSIsEmptyRect(lm.extraLineFragmentRect)) {
         r = lm.extraLineFragmentRect;
-    } else if (lm.numberOfGlyphs == 0) {
+    } else if (length == 0) {
         r = NSMakeRect(0, 0, 10, [lm defaultLineHeightForFont:tv.font ?: [NSFont systemFontOfSize:13]]);
     } else {
-        NSUInteger glyph = [lm glyphIndexForCharacterAtIndex:MIN(index, tv.string.length - 1)];
-        r = [lm lineFragmentRectForGlyphAtIndex:MIN(glyph, lm.numberOfGlyphs - 1) effectiveRange:NULL];
+        // numberOfGlyphs would generate the glyphs of the whole text.
+        NSUInteger glyph = [lm glyphIndexForCharacterAtIndex:MIN(index, length - 1)];
+        r = [lm lineFragmentRectForGlyphAtIndex:glyph effectiveRange:NULL];
     }
     const NSPoint o = tv.textContainerOrigin;
     return NSOffsetRect(r, o.x, o.y);
