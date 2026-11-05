@@ -551,6 +551,132 @@ void testAutoIndentFuzz() {
     std::printf("  auto-indent: Return at the end of an 80,000-line Python file in %.1f ms\n", ms);
 }
 
+void testAutoIndentScanCache() {
+    GROUP("indent:scan-cache");
+    // With a cache told about every edit, Return and the typed closers give
+    // exactly what they give without one, wherever the caret and the edits.
+    const char16_t alphabet[] = u"ab :#\\\"'`([{}])\n\n\n\n\r\t    /*-|>,=\u00E9\U0001F600";
+    const size_t alphaLen = sizeof(alphabet) / sizeof(alphabet[0]) - 1;
+    const char *files[] = {"a.py", "a.c", "a.js", "a.yml", "a.sh", "a.go", "a.rs", "a.kt",
+                           "a.css", "a.lua", "a.json", "a.tex"};
+    std::mt19937 rng(11);
+    int differ = 0, compared = 0, hits = 0;
+    auto same = [](const AutoIndent::Edit &x, const AutoIndent::Edit &y) {
+        return x.changed == y.changed && x.replaceStart == y.replaceStart &&
+               x.replaceLength == y.replaceLength && x.replacement == y.replacement &&
+               x.selStart == y.selStart && x.selEnd == y.selEnd;
+    };
+    for (const char *f : files) {
+        std::u16string t;
+        for (size_t i = 0; i < 30000; ++i) t += alphabet[rng() % alphaLen];
+        AutoIndent::ScanCache cache;
+        for (int round = 0; round < 400; ++round) {
+            // An edit now and then: a few characters in, out or replaced.
+            if (round % 3 == 0) {
+                size_t at = rng() % (t.size() + 1);
+                size_t del = std::min<size_t>(rng() % 4, t.size() - at);
+                std::u16string ins;
+                for (size_t k = rng() % 5; k > 0; --k) ins += alphabet[rng() % alphaLen];
+                t.replace(at, del, ins);
+                cache.edited(at);
+            }
+            size_t a = rng() % (t.size() + 1);
+            size_t b = rng() % 5 == 0 ? std::min(t.size(), a + rng() % 40) : a;
+            const AutoIndent::Unit u = AutoIndent::detect(t, f);
+            AutoIndent::Unit uc = AutoIndent::detect(t, f, &cache);
+            if (u.tabs != uc.tabs || u.width != uc.width || u.fromFile != uc.fromFile) ++differ;
+            ++compared;
+            if (!same(AutoIndent::newline(t, a, b, f, u),
+                      AutoIndent::newline(t, a, b, f, u, &cache)))
+                ++differ;
+            // typed() after a closer or a colon somewhere near the caret.
+            size_t c = a;
+            while (c < t.size() && c < a + 200 && t[c] != u')' && t[c] != u'}' && t[c] != u':')
+                ++c;
+            if (c < t.size() && c < a + 200) {
+                ++hits;
+                if (!same(AutoIndent::typed(t, c + 1, f, u),
+                          AutoIndent::typed(t, c + 1, f, u, &cache)))
+                    ++differ;
+            }
+        }
+    }
+    CHECK(differ == 0);
+    CHECK(compared == 400 * 12);
+    CHECK(hits > 1000);
+
+    // Code a person writes, edited at the top and then deep down, with the
+    // caret moving back and forth past the cache's points.
+    std::string py;
+    for (int i = 0; i < 3000; ++i)
+        py += "class C" + std::to_string(i) + ":\n    \"\"\"Doc (\n    ]\"\"\"\n"
+              "    def f(self, a,\n          b):\n        x = [a,  # (\n             b]\n"
+              "        if x:\n            return x\n        else:\n            pass\n";
+    std::u16string pt = toU16(py);
+    AutoIndent::ScanCache pc;
+    const AutoIndent::Unit pu = AutoIndent::detect(pt, "p.py", &pc);
+    int pyDiffer = 0;
+    auto checkAt = [&](size_t a) {
+        if (!same(AutoIndent::newline(pt, a, a, "p.py", pu),
+                  AutoIndent::newline(pt, a, a, "p.py", pu, &pc)))
+            ++pyDiffer;
+        size_t e = pt.find(u"else:", a);
+        if (e != std::u16string::npos &&
+            !same(AutoIndent::typed(pt, e + 5, "p.py", pu),
+                  AutoIndent::typed(pt, e + 5, "p.py", pu, &pc)))
+            ++pyDiffer;
+    };
+    for (size_t a : {pt.size() - 3, (size_t)500, pt.size() / 2, pt.size() - 100, (size_t)70000})
+        checkAt(a);
+    pt.insert(10, u"(");   // an open bracket at the top changes everything below
+    pc.edited(10);
+    for (size_t a : {pt.size() - 3, pt.size() / 3, (size_t)9, (size_t)11}) checkAt(a);
+    pt.erase(10, 1);
+    pc.edited(10);
+    pt.insert(pt.size() / 2, u"\"\"\"");   // a string opened halfway
+    pc.edited(pt.size() / 2);
+    for (size_t a : {pt.size() - 3, pt.size() / 4, pt.size() / 2 + 4}) checkAt(a);
+    CHECK(pyDiffer == 0);
+
+    // detect's answer is kept past its 20,000 lines and dropped within them.
+    std::string tabs;
+    for (int i = 0; i < 25000; ++i) tabs += "if (x) {\n\ty();\n}\n";
+    std::u16string tt = toU16(tabs);
+    AutoIndent::ScanCache tc;
+    CHECK(AutoIndent::detect(tt, "t.c", &tc).tabs);
+    std::u16string spaced;
+    for (int i = 0; i < 25000; ++i) spaced += u"if (x) {\n  y();\n}\n";
+    tt = tt.substr(0, tt.size() - 3) + spaced;   // past what detect reads
+    tc.edited(tt.size() - spaced.size());
+    CHECK(AutoIndent::detect(tt, "t.c", &tc).tabs);
+    tt = spaced + tt;                            // before it
+    tc.edited(0);
+    CHECK(!AutoIndent::detect(tt, "t.c", &tc).tabs);
+    CHECK(AutoIndent::detect(tt, "t.c", &tc).width == 2);
+
+    // A text that shrank without a word starts the cache again.
+    AutoIndent::ScanCache sc;
+    std::u16string st = toU16(py);
+    AutoIndent::newline(st, st.size(), st.size(), "p.py", pu, &sc);
+    std::u16string small = u"if x:";
+    CHECK(AutoIndent::newline(small, 5, 5, "p.py", pu, &sc).replacement == u"\n    ");
+
+    // The time it saves: Return at the end of the 39,000-line file.
+    auto t0 = std::chrono::steady_clock::now();
+    AutoIndent::newline(st, st.size() - 1, st.size() - 1, "p.py", pu);
+    double cold = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    AutoIndent::ScanCache wc;
+    AutoIndent::newline(st, st.size() - 1, st.size() - 1, "p.py", pu, &wc);
+    t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < 100; ++i) {
+        wc.edited(st.size() - 2);
+        AutoIndent::newline(st, st.size() - 1, st.size() - 1, "p.py", pu, &wc);
+    }
+    double warm = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / 100;
+    std::printf("  auto-indent: Return deep in a %zu-unit file %.2f ms, %.3f ms with a cache\n",
+                st.size(), cold, warm);
+}
+
 void testAutoIndent() {
     testAutoIndentLanguages();
     testAutoIndentDetect();
@@ -560,6 +686,7 @@ void testAutoIndent() {
     testAutoIndentOthers();
     testAutoIndentKeys();
     testAutoIndentFuzz();
+    testAutoIndentScanCache();
 }
 
 }  // namespace

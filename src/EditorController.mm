@@ -798,6 +798,15 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
     self.textView.linkTextAttributes =
         @{NSCursorAttributeName: [NSCursor pointingHandCursor]};
     self.textView.incrementalSearchingEnabled = YES;
+    // Layout stays contiguous (allowsNonContiguousLayout off, the default):
+    // laying out a character lays out everything before it, so the rects
+    // the editor reads (tab and Format Document scroll positions, the
+    // agent bar, Markdown place keeping, several carets) are exact. The
+    // price is in big files: an edit is laid out again from itself to where
+    // NSTextView asks (1.9 s to lay out 100,000 lines, which is what a
+    // Format Document touching both ends of such a file costs).
+    // Non-contiguous layout would remove that but makes far positions
+    // estimates; it needs trying on a real screen before it is turned on.
     // The backdrop paints the background over the whole scroll view; the text
     // view drawing it too would double a translucent color.
     self.textView.drawsBackground = NO;
@@ -5390,20 +5399,20 @@ static NSColor *ContrastColor(const Rgba &c) {
 // lines that differ, so the highlighter and the language server see an
 // ordinary edit and the caret and the scroll position stay with their text.
 // NO when the text is the same.
+//
+// The hunks go in with one shouldChangeTextInRanges (one undo step) and one
+// didChangeText. Each hunk is still its own storage edit, so the
+// highlighter, the squiggles and the language server follow each one as
+// they follow typing. Each hunk used to get a didChangeText too, and
+// NSTextView lays out from the edit onwards in every one: 298 hunks spread
+// over a 100,000-line file took 58 s, against 2 s now (most of it the
+// layout of the lines between the first hunk and the last, which a
+// contiguous layout has to redo).
 - (BOOL)replaceSourceWithText:(NSString *)text actionName:(NSString *)name {
     CodeTextView *tv = self.textView;
     const std::u16string a = U16(tv.string), b = U16(text);
     std::vector<LineDiff::Hunk> hunks = LineDiff::diff(a, b);
     if (hunks.empty()) return NO;
-    // Each hunk is an edit with its own layout pass; past a few hundred, one
-    // replacement from the first to the last is quicker.
-    if (hunks.size() > 300) {
-        LineDiff::Hunk h = hunks.front();
-        const LineDiff::Hunk &z = hunks.back();
-        h.oldLength = z.oldStart + z.oldLength - h.oldStart;
-        h.newLength = z.newStart + z.newLength - h.newStart;
-        hunks.assign(1, h);
-    }
 
     // Where the view is: the character at the top of the pane, and how far
     // above or below the top its line sits.
@@ -5418,19 +5427,27 @@ static NSColor *ContrastColor(const Rgba &c) {
         }];
     NSRange sel = tv.selectedRange;
 
+    NSMutableArray<NSValue *> *ranges = [NSMutableArray arrayWithCapacity:hunks.size()];
+    NSMutableArray<NSString *> *strings = [NSMutableArray arrayWithCapacity:hunks.size()];
+    for (const LineDiff::Hunk &h : hunks) {
+        [ranges addObject:[NSValue valueWithRange:NSMakeRange(h.oldStart, h.oldLength)]];
+        [strings addObject:FromU16(b.substr(h.newStart, h.newLength))];
+    }
     NSUndoManager *um = tv.undoManager;
     [tv breakUndoCoalescing];
     [um beginUndoGrouping];
-    for (auto it = hunks.rbegin(); it != hunks.rend(); ++it) {
-        NSRange range = NSMakeRange(it->oldStart, it->oldLength);
-        NSString *replacement = FromU16(b.substr(it->newStart, it->newLength));
-        if (![tv shouldChangeTextInRange:range replacementString:replacement]) continue;
-        [tv.textStorage replaceCharactersInRange:range withString:replacement];
+    const BOOL ok = [tv shouldChangeTextInRanges:ranges replacementStrings:strings];
+    if (ok) {
+        NSTextStorage *storage = tv.textStorage;
+        for (NSInteger i = (NSInteger)ranges.count - 1; i >= 0; i--)   // last first
+            [storage replaceCharactersInRange:ranges[(NSUInteger)i].rangeValue
+                                   withString:strings[(NSUInteger)i]];
         [tv didChangeText];
     }
     [um setActionName:name];
     [um endUndoGrouping];
     [tv breakUndoCoalescing];
+    if (!ok) return NO;
 
     size_t start = LineDiff::mapOffset(a, b, hunks, sel.location);
     size_t end = sel.length ? LineDiff::mapOffset(a, b, hunks, NSMaxRange(sel)) : start;
@@ -5635,38 +5652,54 @@ static NSColor *ContrastColor(const Rgba &c) {
     return rel.length ? rel : path;
 }
 
-// 1-based line of a UTF-16 offset.
+// 1-based line of a UTF-16 offset. Read a block at a time: characterAtIndex
+// on the editor's string costs a message per character.
 static int MCLineAt(NSString *text, NSUInteger index) {
     index = MIN(index, text.length);
     int line = 1;
-    for (NSUInteger i = 0; i < index; i++)
-        if ([text characterAtIndex:i] == '\n') line++;
+    unichar buf[4096];
+    for (NSUInteger at = 0; at < index; at += 4096) {
+        const NSUInteger n = MIN((NSUInteger)4096, index - at);
+        [text getCharacters:buf range:NSMakeRange(at, n)];
+        for (NSUInteger i = 0; i < n; i++)
+            if (buf[i] == '\n') line++;
+    }
     return line;
 }
 
 // The start of a 0-based source line, in UTF-16.
 static NSUInteger MCLineStart(NSString *text, int line) {
-    NSUInteger i = 0;
-    for (int l = 0; l < line && i < text.length; i++)
-        if ([text characterAtIndex:i] == '\n') l++;
-    return MIN(i, text.length);
+    if (line <= 0) return 0;
+    unichar buf[4096];
+    int l = 0;
+    for (NSUInteger at = 0; at < text.length; at += 4096) {
+        const NSUInteger n = MIN((NSUInteger)4096, text.length - at);
+        [text getCharacters:buf range:NSMakeRange(at, n)];
+        for (NSUInteger i = 0; i < n; i++)
+            if (buf[i] == '\n' && ++l == line) return at + i + 1;
+    }
+    return text.length;
 }
 
 // The line fragment holding character `index`, in the text view's
-// coordinates (the editor is TextKit 1; see LSP in CLAUDE.md).
+// coordinates (the editor is TextKit 1; see LSP in CLAUDE.md). Only the
+// layout up to that character is asked for: the whole text's took 1.9 s
+// in a 100,000-line file the first time the bar opened, before background
+// layout had got there.
 - (NSRect)agentLineRectAt:(NSUInteger)index {
     CodeTextView *tv = self.textView;
     NSLayoutManager *lm = tv.layoutManager;
-    NSTextContainer *tc = tv.textContainer;
-    [lm ensureLayoutForTextContainer:tc];
+    const NSUInteger length = tv.string.length;
+    if (length) [lm ensureLayoutForCharacterRange:NSMakeRange(MIN(index, length - 1), 1)];
     NSRect r;
-    if (index >= tv.string.length && !NSIsEmptyRect(lm.extraLineFragmentRect)) {
+    if (index >= length && !NSIsEmptyRect(lm.extraLineFragmentRect)) {
         r = lm.extraLineFragmentRect;
-    } else if (lm.numberOfGlyphs == 0) {
+    } else if (length == 0) {
         r = NSMakeRect(0, 0, 10, [lm defaultLineHeightForFont:tv.font ?: [NSFont systemFontOfSize:13]]);
     } else {
-        NSUInteger glyph = [lm glyphIndexForCharacterAtIndex:MIN(index, tv.string.length - 1)];
-        r = [lm lineFragmentRectForGlyphAtIndex:MIN(glyph, lm.numberOfGlyphs - 1) effectiveRange:NULL];
+        // numberOfGlyphs would generate the glyphs of the whole text.
+        NSUInteger glyph = [lm glyphIndexForCharacterAtIndex:MIN(index, length - 1)];
+        r = [lm lineFragmentRectForGlyphAtIndex:glyph effectiveRange:NULL];
     }
     const NSPoint o = tv.textContainerOrigin;
     return NSOffsetRect(r, o.x, o.y);
@@ -6111,6 +6144,11 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 }
 
 - (void)textDidChange:(NSNotification *)note {
+    // A copy of the storage's string, but not of its characters: the
+    // storage's NSBigMutableString shares them with the copy, and the copy
+    // takes about a microsecond in a 3 MB file, as does the next edit with
+    // it held (measured). backedUpText's pointer compare relies on a new
+    // object per change.
     self.sourceText = self.textView.string;
     [self noteEdited];
     // The title's task count follows typing, a moment after it stops.
