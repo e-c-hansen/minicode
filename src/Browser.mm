@@ -85,6 +85,60 @@
 @end
 
 @implementation BrowserView
+- (NSString *)pageURL { return self.web.URL.absoluteString; }
+
+// A record past this size is left out; the address still comes back.
+static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
+
+- (NSDictionary *)savedState {
+    NSMutableDictionary *s = [NSMutableDictionary dictionary];
+    NSString *url = self.web.URL.absoluteString;
+    if (url.length) s[@"url"] = url;
+    if (@available(macOS 12.0, *)) {
+        id state = self.web.interactionState;
+        NSData *data = nil;
+        BOOL archived = NO;
+        if ([state isKindOfClass:NSData.class]) {
+            data = state;
+        } else if (state) {
+            data = [NSKeyedArchiver archivedDataWithRootObject:state requiringSecureCoding:NO
+                                                         error:nil];
+            archived = YES;
+        }
+        if (data.length && data.length <= kMaxBrowserState) {
+            s[@"state"] = data;
+            s[@"archived"] = @(archived);
+        }
+    }
+    return s.count ? s : nil;
+}
+
+- (void)restoreState:(NSDictionary *)state {
+    if (![state isKindOfClass:NSDictionary.class]) return;
+    NSString *url = [state[@"url"] isKindOfClass:NSString.class] ? state[@"url"] : nil;
+    NSData *data = [state[@"state"] isKindOfClass:NSData.class] ? state[@"state"] : nil;
+    self.web.toolbarNavigation = NO;   // a restored page never takes the keyboard
+    if (@available(macOS 12.0, *)) {
+        if (data) {
+            id record = data;
+            if ([state[@"archived"] boolValue]) {
+                NSKeyedUnarchiver *u = [[NSKeyedUnarchiver alloc] initForReadingFromData:data
+                                                                                  error:nil];
+                u.requiresSecureCoding = NO;
+                record = [u decodeObjectForKey:NSKeyedArchiveRootObjectKey];
+                [u finishDecoding];
+            }
+            @try {
+                if (record) self.web.interactionState = record;
+            } @catch (NSException *e) {
+                (void)e;   // a record from another WebKit: the address will do
+            }
+            if (self.web.URL || self.web.isLoading) return;
+        }
+    }
+    if (url.length) [self loadString:url];
+}
+- (NSString *)pageTitle { return self.web.title.length ? self.web.title : nil; }
 
 - (instancetype)initWithHomeURL:(NSString *)url {
     if ((self = [super initWithFrame:NSMakeRect(0, 0, 600, 400)])) {

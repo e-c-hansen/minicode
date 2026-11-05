@@ -2,45 +2,88 @@
 #include "Settings.h"
 #include <algorithm>
 #include <cctype>
+#include <iterator>
 
 namespace {
 
-struct SurfaceDefaults {
-    const char* name;
-    uint32_t background, text;
-};
-// Indexed by Surface. VS Code Dark+ values, matching the built-in look.
-const SurfaceDefaults kSurfaces[kSurfaceCount] = {
-    {"titlebar",  0x323233, 0xCCCCCC},
-    {"sidebar",   0x252526, 0xCCCCCC},
-    {"editor",    0x1E1E1E, 0xD4D4D4},
-    {"terminal",  0x181818, 0xD4D4D4},
-    {"browser",   0x2A2A2A, 0xD4D4D4},
-    {"statusbar", 0x007ACC, 0xFFFFFF},
-};
-
-struct NamedColor {
-    const char* name;
-    uint32_t color;
+// Indexed by Surface.
+const char* const kSurfaceNames[kSurfaceCount] = {
+    "titlebar", "sidebar", "editor", "terminal", "browser", "statusbar",
 };
 // Indexed by TokenStyle; Plain has no key of its own (it is editor.text).
-const NamedColor kSyntax[8] = {
-    {nullptr,        0xD4D4D4},
-    {"keyword",      0x569CD6},
-    {"type",         0x4EC9B0},
-    {"string",       0xCE9178},
-    {"comment",      0x6A9955},
-    {"number",       0xB5CEA8},
-    {"preprocessor", 0xC586C0},
-    {"function",     0xDCDCAA},
+const char* const kSyntaxNames[8] = {
+    nullptr, "keyword", "type", "string", "comment", "number", "preprocessor", "function",
 };
 // Indexed by MarkdownColor.
-const NamedColor kMarkdown[kMarkdownColorCount] = {
-    {"heading", 0xFFFFFF},
-    {"link",    0x4EA1F7},
-    {"code",    0xCE9178},
-    {"quote",   0x9CA3AF},
-    {"done",    0x858585},
+const char* const kMarkdownNames[kMarkdownColorCount] = {
+    "heading", "link", "code", "quote", "done",
+};
+
+// VS Code's built-in themes. Each row: id, title, dark; backgrounds and texts
+// in Surface order (title bar, sidebar, editor, terminal, browser toolbar,
+// status bar); syntax in TokenStyle order (plain unused, keyword, type,
+// string, comment, number, preprocessor, function); Markdown (heading, link,
+// code, quote, done); code block background, ruler, terminal input text.
+// Dark+ is minicode's look from the start, so its values are the defaults
+// the settings file documents; the others come from the themes' own files
+// (editor, sideBar, titleBar, panel and statusBar colors, the token colors
+// for comments, strings, keywords, keyword.control, types, numbers and
+// function names), the nearest where a theme leaves a color to its base.
+const Theme kThemes[] = {
+    {"dark-modern", "Dark Modern", true,
+     {0x181818, 0x181818, 0x1F1F1F, 0x181818, 0x1F1F1F, 0x181818},
+     {0xCCCCCC, 0xCCCCCC, 0xCCCCCC, 0xCCCCCC, 0xCCCCCC, 0xCCCCCC},
+     {0, 0x569CD6, 0x4EC9B0, 0xCE9178, 0x6A9955, 0xB5CEA8, 0xC586C0, 0xDCDCAA},
+     {0xFFFFFF, 0x4DAAFC, 0xCE9178, 0x9D9D9D, 0x6E7681},
+     0x2B2B2B, 0x5A5A5A, 0xE6E6E6},
+    {"dark-plus", "Dark+", true,
+     {0x323233, 0x252526, 0x1E1E1E, 0x181818, 0x2A2A2A, 0x007ACC},
+     {0xCCCCCC, 0xCCCCCC, 0xD4D4D4, 0xD4D4D4, 0xD4D4D4, 0xFFFFFF},
+     {0, 0x569CD6, 0x4EC9B0, 0xCE9178, 0x6A9955, 0xB5CEA8, 0xC586C0, 0xDCDCAA},
+     {0xFFFFFF, 0x4EA1F7, 0xCE9178, 0x9CA3AF, 0x858585},
+     0x2A2A2A, 0x5A5A5A, 0xEDEDED},
+    {"monokai", "Monokai", true,
+     {0x1E1F1C, 0x1E1F1C, 0x272822, 0x1E1F1C, 0x1E1F1C, 0x414339},
+     {0xCCCCCC, 0xCCCCCC, 0xF8F8F2, 0xF8F8F2, 0xF8F8F2, 0xFFFFFF},
+     {0, 0xF92672, 0x66D9EF, 0xE6DB74, 0x88846F, 0xAE81FF, 0xF92672, 0xA6E22E},
+     {0xF8F8F2, 0x66D9EF, 0xE6DB74, 0x88846F, 0x75715E},
+     0x3E3D32, 0x464741, 0xFFFFFF},
+    {"solarized-dark", "Solarized Dark", true,
+     {0x002C39, 0x00212B, 0x002B36, 0x00212B, 0x00212B, 0x00212B},
+     {0x93A1A1, 0x93A1A1, 0x839496, 0x839496, 0x93A1A1, 0x93A1A1},
+     {0, 0x859900, 0xB58900, 0x2AA198, 0x586E75, 0xD33682, 0xCB4B16, 0x268BD2},
+     {0x93A1A1, 0x268BD2, 0x2AA198, 0x657B83, 0x586E75},
+     0x073642, 0x0C4A59, 0x93A1A1},
+    {"tomorrow-night-blue", "Tomorrow Night Blue", true,
+     {0x001126, 0x001C40, 0x002451, 0x001C40, 0x001C40, 0x001126},
+     {0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF},
+     {0, 0xEBBBFF, 0xFFEEAD, 0xD1F1A9, 0x7285B7, 0xFFC58F, 0xEBBBFF, 0xBBDAFF},
+     {0xFFFFFF, 0xBBDAFF, 0xD1F1A9, 0x7285B7, 0x7285B7},
+     0x00346E, 0x003F8E, 0xFFFFFF},
+    {"light-modern", "Light Modern", false,
+     {0xF8F8F8, 0xF8F8F8, 0xFFFFFF, 0xF8F8F8, 0xF8F8F8, 0xF8F8F8},
+     {0x1E1E1E, 0x3B3B3B, 0x3B3B3B, 0x3B3B3B, 0x3B3B3B, 0x3B3B3B},
+     {0, 0x0000FF, 0x267F99, 0xA31515, 0x008000, 0x098658, 0xAF00DB, 0x795E26},
+     {0x1F1F1F, 0x005FB8, 0xA31515, 0x6E7781, 0x8B949E},
+     0xF0F0F0, 0xD3D3D3, 0x1F1F1F},
+    {"light-plus", "Light+", false,
+     {0xDDDDDD, 0xF3F3F3, 0xFFFFFF, 0xFFFFFF, 0xF3F3F3, 0x007ACC},
+     {0x333333, 0x616161, 0x000000, 0x333333, 0x333333, 0xFFFFFF},
+     {0, 0x0000FF, 0x267F99, 0xA31515, 0x008000, 0x098658, 0xAF00DB, 0x795E26},
+     {0x000000, 0x006AB1, 0xA31515, 0x6A737D, 0x8E8E8E},
+     0xF3F3F3, 0xD3D3D3, 0x000000},
+    {"quiet-light", "Quiet Light", false,
+     {0xC4B7D7, 0xF2F2F2, 0xF5F5F5, 0xF5F5F5, 0xF2F2F2, 0x705697},
+     {0x333333, 0x333333, 0x333333, 0x333333, 0x333333, 0xFFFFFF},
+     {0, 0x4B83CD, 0x7A3E9D, 0x448C27, 0xAAAAAA, 0xAB6526, 0x7A3E9D, 0xAA3731},
+     {0x333333, 0x4B83CD, 0x448C27, 0x777777, 0xAAAAAA},
+     0xE8E8E8, 0xD3D3D3, 0x000000},
+    {"solarized-light", "Solarized Light", false,
+     {0xEEE8D5, 0xEEE8D5, 0xFDF6E3, 0xEEE8D5, 0xEEE8D5, 0xEEE8D5},
+     {0x586E75, 0x586E75, 0x657B83, 0x586E75, 0x586E75, 0x586E75},
+     {0, 0x859900, 0xB58900, 0x2AA198, 0x93A1A1, 0xD33682, 0xCB4B16, 0x268BD2},
+     {0x586E75, 0x268BD2, 0x2AA198, 0x93A1A1, 0x93A1A1},
+     0xEEE8D5, 0xDDD6C1, 0x073642},
 };
 
 const char* const kMaterials[] = {
@@ -57,9 +100,6 @@ const struct { const char* language; const char* command; } kRunDefaults[] = {
     {"rb",     "ruby {file}"},
 };
 
-const uint32_t kCodeBackground = 0x2A2A2A;
-const uint32_t kRulerColor = 0x5A5A5A;   // VS Code Dark+'s editorRuler.foreground
-const uint32_t kTerminalInputText = 0xEDEDED;
 
 std::string trim(const std::string& s) {
     size_t a = 0, b = s.size();
@@ -140,7 +180,141 @@ bool Settings::parseOpacity(const std::string& s, double& out) {
     return true;
 }
 
-const char* Settings::surfaceName(Surface s) { return kSurfaces[(int)s].name; }
+const char* Settings::surfaceName(Surface s) { return kSurfaceNames[(int)s]; }
+
+const std::vector<Theme>& Settings::themes() {
+    static const std::vector<Theme> all(std::begin(kThemes), std::end(kThemes));
+    return all;
+}
+
+const Theme* Settings::findTheme(const std::string& id) {
+    const std::string want = lower(trim(id));
+    for (const Theme& t : themes())
+        if (want == t.id) return &t;
+    return nullptr;
+}
+
+bool Settings::isColorKey(const std::string& key) {
+    size_t dot = key.find('.');
+    if (dot == std::string::npos) return false;
+    const std::string group = key.substr(0, dot), field = key.substr(dot + 1);
+    if (key == "editor.ruler-color" || key == "window.text") return true;
+    for (const char* name : kSurfaceNames)
+        if (group == name) return field == "background" || field == "text";
+    if (group == "syntax")
+        for (const char* name : kSyntaxNames)
+            if (name && field == name) return true;
+    if (group == "markdown")
+        for (const char* name : kMarkdownNames)
+            if (field == name) return true;
+    return false;
+}
+
+namespace {
+// The text as lines, each without its "\n" (a "\r" stays on its line), and
+// back. A text ending in "\n" gives a last empty line, so the round trip is
+// exact.
+std::vector<std::string> splitLines(const std::string& text) {
+    std::vector<std::string> lines;
+    size_t pos = 0;
+    while (true) {
+        size_t nl = text.find('\n', pos);
+        if (nl == std::string::npos) { lines.push_back(text.substr(pos)); break; }
+        lines.push_back(text.substr(pos, nl - pos));
+        pos = nl + 1;
+    }
+    return lines;
+}
+std::string joinLines(const std::vector<std::string>& lines) {
+    std::string out;
+    for (size_t i = 0; i < lines.size(); i++) {
+        if (i) out += '\n';
+        out += lines[i];
+    }
+    return out;
+}
+// The key of an uncommented "key = value" line, lowercased; "" otherwise.
+std::string activeKey(const std::string& line) {
+    std::string t = trim(line);
+    if (t.empty() || t[0] == '#') return "";
+    size_t eq = t.find('=');
+    if (eq == std::string::npos) return "";
+    return lower(trim(t.substr(0, eq)));
+}
+// The key of a commented-out "# key = value" line, lowercased; "" otherwise.
+std::string commentedKey(const std::string& line) {
+    std::string t = trim(line);
+    if (t.empty() || t[0] != '#') return "";
+    t = trim(t.substr(1));
+    size_t eq = t.find('=');
+    if (eq == std::string::npos) return "";
+    std::string key = lower(trim(t.substr(0, eq)));
+    for (char c : key)
+        if (!(std::isalnum((unsigned char)c) || c == '.' || c == '-' || c == '_')) return "";
+    return key;
+}
+}  // namespace
+
+int Settings::colorOverrides(const std::string& text) {
+    int n = 0;
+    for (const std::string& line : splitLines(text))
+        if (isColorKey(activeKey(line))) n++;
+    return n;
+}
+
+std::string Settings::withTheme(const std::string& text, const std::string& id,
+                                bool commentColors) {
+    if (text.empty()) return "theme = " + id + "\n";
+    std::vector<std::string> lines = splitLines(text);
+    auto indentOf = [](const std::string& line) {
+        size_t i = 0;
+        while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) i++;
+        return line.substr(0, i);
+    };
+    auto endOf = [](const std::string& line) {
+        return !line.empty() && line.back() == '\r' ? std::string("\r") : std::string();
+    };
+    int active = -1, commented = -1;
+    for (size_t i = 0; i < lines.size(); i++) {
+        if (activeKey(lines[i]) == "theme") active = (int)i;
+        else if (commented < 0 && commentedKey(lines[i]) == "theme") commented = (int)i;
+    }
+    const int at = active >= 0 ? active : commented;
+    if (at >= 0) {
+        // Keep a comment after the value ("theme = x  # mine").
+        const std::string& old = lines[at];
+        std::string tail;
+        if (active >= 0) {
+            size_t eq = old.find('=');
+            size_t hash = old.find(" #", eq);
+            if (hash != std::string::npos) {
+                while (hash > eq + 1 && (old[hash - 1] == ' ' || old[hash - 1] == '\t')) hash--;
+                tail = old.substr(hash);
+            }
+            if (!tail.empty() && tail.back() == '\r') tail.pop_back();
+        }
+        lines[at] = indentOf(old) + "theme = " + id + tail + endOf(old);
+    } else {
+        // After the file's opening comment and the blank line ending it, or
+        // at the top of a file that starts with a setting.
+        size_t i = 0;
+        while (i < lines.size() && !trim(lines[i]).empty() && trim(lines[i])[0] == '#') i++;
+        const std::string eol = lines.empty() ? "" : endOf(lines[0]);
+        if (i == 0) {
+            lines.insert(lines.begin(), {"theme = " + id + eol, eol});
+        } else {
+            while (i < lines.size() && trim(lines[i]).empty()) i++;
+            lines.insert(lines.begin() + i, {"theme = " + id + eol, eol});
+        }
+    }
+    if (commentColors)
+        for (std::string& line : lines)
+            if (isColorKey(activeKey(line))) {
+                const std::string indent = indentOf(line);
+                line = indent + "# " + line.substr(indent.size());
+            }
+    return joinLines(lines);
+}
 
 bool Settings::findColor(const std::u16string& line, ColorSpan& out) {
     size_t eq = line.find(u'=');
@@ -474,7 +648,7 @@ Settings Settings::parse(const std::string& text,
         if ((key.rfind("lsp.", 0) == 0 && key != "lsp.enabled") ||
             (key.rfind("run.", 0) == 0 && key != "run.terminal") ||
             (key.rfind("format.", 0) == 0 && key != "format.on-save") ||
-            key == "develop.command") {
+            key == "develop.command" || key == "agent.command") {
             std::string command = trim(rest.substr(0, commandLineEnd(rest)));
             if (command.empty() || command[0] == '#') {
                 fail("missing value for " + key);
@@ -537,6 +711,15 @@ bool Settings::apply(const std::string& key, const std::string& value,
         return false;
     }
 
+    if (key == "theme") {
+        if (const Theme* t = findTheme(value)) { theme_ = t; return true; }
+        error = "unknown theme '" + value + "' (use ";
+        for (size_t i = 0; i < themes().size(); i++)
+            error += std::string(i ? (i + 1 == themes().size() ? " or " : ", ") : "") +
+                     themes()[i].id;
+        error += ")";
+        return false;
+    }
     if (key == "markdown.web-images") {
         if (!parseBool(value, webImages_)) {
             error = "'" + value + "' is not true or false";
@@ -661,6 +844,10 @@ bool Settings::apply(const std::string& key, const std::string& value,
         developCommand_ = value;
         return true;
     }
+    if (key == "agent.command") {
+        agentCommand_ = value;
+        return true;
+    }
 
     if (key == "format.on-save") {
         if (!parseBool(value, formatOnSave_)) {
@@ -682,7 +869,7 @@ bool Settings::apply(const std::string& key, const std::string& value,
     if (dot != std::string::npos) {
         std::string group = key.substr(0, dot), field = key.substr(dot + 1);
         for (int i = 0; i < kSurfaceCount; i++) {
-            if (group != kSurfaces[i].name) continue;
+            if (group != kSurfaceNames[i]) continue;
             SurfaceSettings& s = surfaces_[i];
             if (field == "opacity") {
                 if (!opacityValue()) return false;
@@ -698,10 +885,10 @@ bool Settings::apply(const std::string& key, const std::string& value,
         }
         if (group == "syntax" || group == "markdown") {
             bool syntax = group == "syntax";
-            const NamedColor* table = syntax ? kSyntax : kMarkdown;
+            const char* const* table = syntax ? kSyntaxNames : kMarkdownNames;
             int count = syntax ? 8 : kMarkdownColorCount;
             for (int i = 0; i < count; i++) {
-                if (!table[i].name || field != table[i].name) continue;
+                if (!table[i] || field != table[i]) continue;
                 if (!parseColor(value, color)) { error = colorError(value); return false; }
                 (syntax ? syntax_[i] : markdown_[i]) = color;
                 return true;
@@ -728,7 +915,7 @@ double Settings::opacity(Surface s) const {
 
 Rgba Settings::background(Surface s) const {
     const SurfaceSettings& ss = surfaces_[(int)s];
-    Rgba c = ss.background ? *ss.background : Rgba::hex(kSurfaces[(int)s].background);
+    Rgba c = ss.background ? *ss.background : Rgba::hex(theme_->background[(int)s]);
     c.a *= opacity(s);
     return c;
 }
@@ -737,7 +924,7 @@ Rgba Settings::text(Surface s) const {
     const SurfaceSettings& ss = surfaces_[(int)s];
     if (ss.text) return *ss.text;
     if (windowText_) return *windowText_;
-    return Rgba::hex(kSurfaces[(int)s].text);
+    return Rgba::hex(theme_->text[(int)s]);
 }
 
 bool Settings::textIsSet(Surface s) const {
@@ -747,25 +934,32 @@ bool Settings::textIsSet(Surface s) const {
 Rgba Settings::syntax(TokenStyle s) const {
     int i = (int)s;
     if (i <= 0 || i >= 8) return text(Surface::Editor);
-    return syntax_[i] ? *syntax_[i] : Rgba::hex(kSyntax[i].color);
+    return syntax_[i] ? *syntax_[i] : Rgba::hex(theme_->syntax[i]);
 }
 
 Rgba Settings::markdown(MarkdownColor c) const {
     int i = (int)c;
-    return markdown_[i] ? *markdown_[i] : Rgba::hex(kMarkdown[i].color);
+    return markdown_[i] ? *markdown_[i] : Rgba::hex(theme_->markdown[i]);
 }
 
 Rgba Settings::markdownCodeBackground() const {
-    return Rgba::hex(kCodeBackground, opacity(Surface::Editor));
+    return Rgba::hex(theme_->codeBackground, opacity(Surface::Editor));
 }
 
 Rgba Settings::rulerColor() const {
-    return rulerColor_ ? *rulerColor_ : Rgba::hex(kRulerColor);
+    return rulerColor_ ? *rulerColor_ : Rgba::hex(theme_->ruler);
 }
 
 Rgba Settings::terminalInputText() const {
     return textIsSet(Surface::Terminal) ? text(Surface::Terminal)
-                                        : Rgba::hex(kTerminalInputText);
+                                        : Rgba::hex(theme_->terminalInput);
+}
+
+bool Settings::isDark() const {
+    Rgba bg = background(Surface::Editor);
+    bg.a = 1;
+    const double lum = (0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b) / 255;
+    return lum < 0.5;
 }
 
 bool Settings::windowIsOpaque() const {
@@ -846,6 +1040,14 @@ const char* Settings::defaultFileText() {
 # Colors are #RRGGBB, or #RRGGBBAA with an alpha channel. Opacity is a number
 # from 0 to 1, or a percentage such as 80%. Opacity applies to a panel's
 # background only, so text stays solid while the desktop shows through.
+
+# The color theme, one of VS Code's built-in themes: dark-modern (VS Code's
+# own default), dark-plus, monokai, solarized-dark, tomorrow-night-blue,
+# light-modern, light-plus, quiet-light, or solarized-light. View > Theme
+# sets this line for you. Every color below that you uncomment wins over the
+# theme's, so a theme can be adjusted color by color; the colors shown below
+# are Dark+'s, the theme used when none is chosen.
+# theme = dark-plus
 
 # The whole window. window.opacity is the default for every panel below that
 # doesn't set its own, and window.text is the default text color.
@@ -1008,5 +1210,15 @@ const char* Settings::defaultFileText() {
 # running into ~/Library/Application Support/MiniCode/source on first use.
 # develop.command = claude
 # develop.source = auto
+
+# The inline agent (Cmd+I, macOS only for now) asks Claude Code about
+# whatever has the keyboard. In a file it changes the code at the cursor or
+# the selection, as an edit you keep with Return or throw away with Esc; in
+# a terminal it writes a command and types it at the prompt for you to run;
+# anywhere else, and with Cmd+Return from any of them, it hands the request
+# to Claude Code in a new terminal tab of the open folder. agent.command is
+# the command it runs (add flags such as --model here); the answers in the
+# bar run it in print mode, allowed to read the project but not to change it.
+# agent.command = claude
 )CONF";
 }

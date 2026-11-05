@@ -20,6 +20,14 @@ NSMenu *MCAdjustSettingsMenu(NSString *surface, NSView *source);
 // up the responder chain with the surface id as its representedObject.
 NSMenu *MCAdjustSettingsSubmenu(void);
 
+// View > Theme: a row per theme (Settings::themes), the one in use checked.
+// Choosing one writes `theme = <id>` into the settings file, first asking,
+// when the file sets colors of its own, whether to comment those out so the
+// whole theme shows.
+NSMenu *MCThemeSubmenu(void);
+// The same choice without the menu (tests, the palette): YES when written.
+BOOL MCChooseTheme(NSString *themeId);
+
 // What the window's EditorController answers.
 @protocol MCAppearanceTarget
 - (void)showSettingsForSurface:(NSString *)surface;

@@ -1,5 +1,6 @@
 // Appearance.mm — see Appearance.h.
 #import "Appearance.h"
+#import "AppSettings.h"
 #include "Settings.h"
 
 // The menu item's target. NSMenuItem holds its target weakly, so the item
@@ -134,3 +135,69 @@ static NSPopover *gOpacityPopover;
 }
 + (NSPopover *)current { return gOpacityPopover; }
 @end
+
+// ------------------------------------------------------------ View > Theme
+@interface MCThemeMenuTarget : NSObject <NSMenuItemValidation>
++ (instancetype)shared;
+@end
+
+@implementation MCThemeMenuTarget
++ (instancetype)shared {
+    static MCThemeMenuTarget *t;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ t = [MCThemeMenuTarget new]; });
+    return t;
+}
+- (void)chooseTheme:(NSMenuItem *)sender {
+    MCChooseTheme(sender.representedObject);
+}
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    NSString *current = @([AppSettings shared].settings.theme().id);
+    item.state = [item.representedObject isEqual:current] ? NSControlStateValueOn
+                                                          : NSControlStateValueOff;
+    return YES;
+}
+@end
+
+NSMenu *MCThemeSubmenu(void) {
+    NSMenu *m = [[NSMenu alloc] initWithTitle:@"Theme"];
+    BOOL lastDark = YES;
+    for (const Theme &t : Settings::themes()) {
+        if (!t.dark && lastDark && m.numberOfItems) [m addItem:[NSMenuItem separatorItem]];
+        lastDark = t.dark;
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:@(t.title)
+                                                      action:@selector(chooseTheme:)
+                                               keyEquivalent:@""];
+        item.target = [MCThemeMenuTarget shared];
+        item.representedObject = @(t.id);
+        [m addItem:item];
+    }
+    return m;
+}
+
+BOOL MCChooseTheme(NSString *themeId) {
+    AppSettings *cfg = [AppSettings shared];
+    const Theme *theme = Settings::findTheme(themeId.UTF8String ?: "");
+    if (!theme) return NO;
+    const int own = Settings::colorOverrides(cfg.fileText.UTF8String ?: "");
+    BOOL comment = NO;
+    if (own > 0) {
+        NSAlert *a = [[NSAlert alloc] init];
+        a.messageText = [NSString stringWithFormat:@"Your settings file sets %d color%@ of its own",
+                                                   own, own == 1 ? @"" : @"s"];
+        a.informativeText = [NSString stringWithFormat:
+            @"%@ covers only what they leave. Comment them out to see the whole theme; "
+            @"they stay in the file, so you can bring any of them back.", @(theme->title)];
+        [a addButtonWithTitle:@"Use the Theme's Colors"];
+        [a addButtonWithTitle:@"Keep My Colors"];
+        [a addButtonWithTitle:@"Cancel"];
+        NSModalResponse r = [a runModal];
+        if (r == NSAlertThirdButtonReturn) return NO;
+        comment = r == NSAlertFirstButtonReturn;
+    }
+    if (![cfg writeTheme:themeId commentColors:comment]) {
+        NSBeep();
+        return NO;
+    }
+    return YES;
+}

@@ -56,6 +56,7 @@
 #include <sys/wait.h>
 #include <sys/sysctl.h>
 #include <libproc.h>
+#include <algorithm>
 #include <atomic>
 #include <map>
 #include <signal.h>
@@ -730,6 +731,26 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 // Line mode: the grid is showing for a full-screen program. Grid mode,
 // where the grid always shows: a program has the alternate screen.
 - (BOOL)gridMode { return _lineMode ? _gridMode : _screen.altScreen(); }
+
+- (NSString *)recentText:(NSUInteger)maxLines {
+    std::vector<std::string> lines;
+    if (!_lineMode || _gridMode) {
+        // The grid, scrollback above it; blank rows at the bottom dropped.
+        int last = _screen.rows() - 1;
+        while (last >= 0 && _screen.lineText(last).empty()) last--;
+        for (int line = last; line >= -_screen.historySize() && lines.size() < maxLines; line--)
+            lines.push_back(_screen.lineText(line));
+        std::reverse(lines.begin(), lines.end());
+    } else {
+        NSArray<NSString *> *all = [self.output.string componentsSeparatedByString:@"\n"];
+        NSUInteger from = all.count > maxLines ? all.count - maxLines : 0;
+        for (NSUInteger i = from; i < all.count; i++) lines.push_back(all[i].UTF8String ?: "");
+    }
+    std::string out;
+    for (const std::string &l : lines) out += l + "\n";
+    while (!out.empty() && (out.back() == '\n' || out.back() == ' ')) out.pop_back();
+    return [NSString stringWithUTF8String:out.c_str()] ?: @"";
+}
 - (BOOL)lineMode { return _lineMode; }
 - (NSString *)directory { return _cwd; }
 

@@ -25,6 +25,9 @@
 #import "Appearance.h"
 #import <Carbon/Carbon.h>   // kVK_* key codes (header only, nothing linked)
 #include <climits>
+#include <utility>
+#include <vector>
+#include "TerminalStream.h"   // termCharWidth
 
 static const long long kNoLine = LLONG_MIN;
 
@@ -189,6 +192,62 @@ static CellColors ColorsFor(const TermStyle &st) {
 }
 
 // ---------------------------------------------------------------- geometry
+// Text an input method or dictation is still composing, drawn over the grid
+// from the cursor, a character to a cell, wrapping at the right edge onto
+// the rows below, as the program will wrap it once it arrives. Dictation
+// keeps a whole sentence composing while you speak, and drawn as one line
+// it ran off the edge. Past the bottom, the rows go up so its end shows.
+- (void)drawMarkedTextAtRow:(int)row col:(int)col rows:(int)rows cols:(int)cols {
+    if (cols <= 0 || rows <= 0) return;
+    struct Piece { NSString *text; int width; };
+    __block std::vector<Piece> pieces;
+    [_marked enumerateSubstringsInRange:NSMakeRange(0, _marked.length)
+                                options:NSStringEnumerationByComposedCharacterSequences
+                             usingBlock:^(NSString *sub, NSRange r, NSRange e, BOOL *stop) {
+        (void)r; (void)e; (void)stop;
+        uint32_t cp = 0;
+        [sub getBytes:&cp maxLength:4 usedLength:NULL encoding:NSUTF32LittleEndianStringEncoding
+              options:0 range:NSMakeRange(0, sub.length) remainingRange:NULL];
+        const BOOL newline = [sub isEqualToString:@"\n"] || [sub isEqualToString:@"\r\n"] ||
+                             [sub isEqualToString:@"\r"];
+        const int w = termCharWidth(cp);
+        pieces.push_back({sub, newline ? -1 : (w <= 0 ? 1 : w)});   // -1: a new row
+    }];
+    // Where each piece goes, starting at the cursor.
+    std::vector<std::pair<int, int>> at;
+    int r = 0, c = col;
+    for (const Piece &p : pieces) {
+        if (p.width < 0) { r++; c = 0; at.push_back({-1, -1}); continue; }
+        if (c + p.width > cols) { r++; c = 0; }
+        at.push_back({r, c});
+        c += p.width;
+    }
+    const int used = r + 1;
+    const int first = MAX(0, MIN(row, rows - used));   // up, if it would pass the bottom
+    NSColor *fg = [[AppSettings shared] text:Surface::Terminal];
+    NSColor *bg = MCColor([AppSettings shared].settings.background(Surface::Terminal));
+    NSDictionary *attrs = @{NSFontAttributeName: [TerminalGridView cellFont],
+                            NSForegroundColorAttributeName: fg,
+                            NSUnderlineStyleAttributeName: @(NSUnderlineStyleSingle)};
+    // Each row's cells cleared first, so the grid's text never shows through.
+    for (int k = 0; k < used; k++) {
+        const int y = first + k;
+        if (y >= rows) break;
+        int from = k == 0 ? col : 0, to = from;
+        for (size_t i = 0; i < pieces.size(); i++)
+            if (at[i].first == k) to = MAX(to, at[i].second + pieces[i].width);
+        if (to > from) {
+            [bg setFill];
+            NSRectFill([self rectForRow:y col:from width:to - from]);
+        }
+    }
+    for (size_t i = 0; i < pieces.size(); i++) {
+        if (at[i].first < 0 || first + at[i].first >= rows) continue;
+        NSRect cell = [self rectForRow:first + at[i].first col:at[i].second width:pieces[i].width];
+        [pieces[i].text drawAtPoint:cell.origin withAttributes:attrs];
+    }
+}
+
 - (NSRect)rectForRow:(int)row col:(int)col width:(int)w {
     NSSize cs = [TerminalGridView cellSize];
     CGFloat pad = [TerminalGridView padding];
@@ -307,15 +366,7 @@ static CellColors ColorsFor(const TermStyle &st) {
     // composed by an input method sits at the cursor, underlined.
     int cr = s->cursorRow() - top, cc = s->cursorCol();
     if (_marked.length && cr >= 0 && cr < rows) {
-        NSColor *fg = [[AppSettings shared] text:Surface::Terminal];
-        NSDictionary *attrs = @{NSFontAttributeName: [TerminalGridView cellFont],
-                                NSForegroundColorAttributeName: fg,
-                                NSUnderlineStyleAttributeName: @(NSUnderlineStyleSingle)};
-        NSRect cell = [self rectForRow:cr col:cc width:1];
-        NSSize size = [_marked sizeWithAttributes:attrs];
-        [MCColor([AppSettings shared].settings.background(Surface::Terminal)) setFill];
-        NSRectFill(NSMakeRect(NSMinX(cell), NSMinY(cell), ceil(size.width), cs.height));
-        [_marked drawAtPoint:cell.origin withAttributes:attrs];
+        [self drawMarkedTextAtRow:cr col:cc rows:rows cols:cols];
     } else if (s->cursorVisible() && cr >= firstRow && cr <= lastRow) {
         const TermCell &cell = s->cell(cr + top, cc);
         int w = cell.width == 2 ? 2 : 1;

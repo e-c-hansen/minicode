@@ -5,6 +5,7 @@
 #import "Demo.h"
 #import "Bench.h"
 #import "Appearance.h"
+#import "AppSettings.h"
 #import "TerminalPanel.h"
 #import "TreeDetails.h"
 #import "ChangePanel.h"
@@ -240,6 +241,9 @@ static BOOL MCIsCommandPeriod(NSEvent *e) {
 
 // Language servers are child processes; none may outlive the app.
 - (void)applicationWillTerminate:(NSNotification *)note {
+    // Every window's session as it is now: the browser's page moves without
+    // anything else saving it.
+    for (EditorController *c in self.controllers) [c saveSession];
     MCLspTerminateAllServers();
     if (self.restartApp) {
         MCSaveRestartRecord(self.restartRecord ?: @{});
@@ -613,6 +617,25 @@ static BOOL MCEditorOnlyAction(SEL a) {
 - (void)triggerCompletion:(id)sender { [[self current] triggerCompletion:sender]; }
 - (void)goToDefinition:(id)sender  { [[self current] goToDefinition:sender]; }
 - (void)showHoverInfo:(id)sender   { [[self current] showHoverInfo:sender]; }
+- (void)inlineAgent:(id)sender     { [[self current] inlineAgent:sender]; }
+// Restart minicode, as after a rebuild from Request a Change but on demand:
+// the same questions, then the same bundle opened again with every window's
+// folder, its tabs, unsaved changes and browser page. A conversation with
+// Claude from Request a Change still running in a window goes on there.
+- (void)restartMinicode:(id)sender {
+    (void)sender;
+    NSString *app = NSBundle.mainBundle.bundlePath;
+    if (![app.pathExtension isEqualToString:@"app"]) { NSBeep(); return; }
+    EditorController *resume = [self current];
+    NSString *source = nil;
+    for (EditorController *c in self.controllers) {
+        NSString *s = [c changeSourceToResume];
+        if (s.length) { resume = c; source = s; break; }
+    }
+    NSString *command = source
+        ? @([AppSettings shared].settings.developCommand().c_str()) : nil;
+    [self restartIntoApp:app resumingIn:resume source:source command:command];
+}
 - (void)renameSymbol:(id)sender    { [[self current] renameSymbol:sender]; }
 - (void)findReferences:(id)sender  { [[self current] findReferences:sender]; }
 - (void)showQuickFixes:(id)sender  { [[self current] showQuickFixes:sender]; }
@@ -658,6 +681,11 @@ static void BuildMenu(void) {
                                              keyEquivalent:@"k"];
     change.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [appMenu addItem:change];
+    // Ad hoc, as VS Code's Reload Window: no key of its own (Cmd+R refreshes
+    // the file tree); the palette and the status bar's ↻ reach it.
+    [appMenu addItemWithTitle:@"Restart minicode"
+                       action:@selector(restartMinicode:)
+                keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Quit MiniCode"
                        action:@selector(terminate:)
@@ -767,6 +795,11 @@ static void BuildMenu(void) {
     cursorBelow.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     [editMenu addItem:cursorBelow];
     [editMenu addItem:[NSMenuItem separatorItem]];
+    // VS Code's inline chat key. It works from every pane, and every window:
+    // what has the keyboard decides what the agent does (AgentPanel.h).
+    [editMenu addItemWithTitle:@"Inline Agent…"
+                        action:@selector(inlineAgent:) keyEquivalent:@"i"];
+    [editMenu addItem:[NSMenuItem separatorItem]];
     [editMenu addItemWithTitle:@"Toggle Comment"
                         action:@selector(toggleComment:) keyEquivalent:@"/"];
     [editMenu addItemWithTitle:@"Toggle Task"
@@ -801,8 +834,12 @@ static void BuildMenu(void) {
                             keyEquivalent:@" "];
     complete.keyEquivalentModifierMask = NSEventModifierFlagControl;
     [editMenu addItem:complete];
-    [editMenu addItemWithTitle:@"Show Hover Info"
-                        action:@selector(showHoverInfo:) keyEquivalent:@"i"];
+    // Option+Cmd+I: Cmd+I is VS Code's inline chat key, and the agent's here.
+    NSMenuItem *hover = [[NSMenuItem alloc] initWithTitle:@"Show Hover Info"
+                                                   action:@selector(showHoverInfo:)
+                                            keyEquivalent:@"i"];
+    hover.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    [editMenu addItem:hover];
     // VS Code's keys: F2 (fn+F2 on a laptop) renames the name at the cursor,
     // or in the file tree the selected file; Cmd+. lists the quick fixes.
     // Both are also caught by the key monitor above, so the editor gets
@@ -916,7 +953,8 @@ static void BuildMenu(void) {
 
     // Columns at the right of the file tree's rows, each on its own key:
     // sizes, when last saved (which also shows the open file's last save in
-    // the status bar) and when created. Cmd+I alone is Show Hover Info.
+    // the status bar) and when created. Cmd+I alone is the inline agent,
+    // and Option+Cmd+I Show Hover Info.
     for (NSMenuItem *it in MCTreeColumnMenuItems()) [viewMenu addItem:it];
 
     // Terminal: Shift+Cmd+T in the menu, like the other pane toggles; Ctrl+`
@@ -983,6 +1021,11 @@ static void BuildMenu(void) {
                                                     action:nil keyEquivalent:@""];
     adjust.submenu = MCAdjustSettingsSubmenu();
     [viewMenu addItem:adjust];
+    // VS Code's built-in color themes; the choice is the settings file's
+    // theme line, so it stays one plain line there.
+    NSMenuItem *themes = [[NSMenuItem alloc] initWithTitle:@"Theme" action:nil keyEquivalent:@""];
+    themes.submenu = MCThemeSubmenu();
+    [viewMenu addItem:themes];
 
     viewItem.submenu = viewMenu;
 

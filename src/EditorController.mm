@@ -23,6 +23,7 @@
 #import "InstallPanel.h"
 #import "ChangePanel.h"
 #import "BackupStore.h"
+#import "AgentPanel.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #import <AVKit/AVKit.h>                 // video and audio in the editor's slot
 #import <AVFoundation/AVFoundation.h>
@@ -526,7 +527,7 @@ private:
 @end
 
 // ---------------------------------------------------------------------------
-@interface EditorController () <NSTextStorageDelegate, MCChangeHost> {
+@interface EditorController () <NSTextStorageDelegate, MCChangeHost, MCAgentHost> {
     FileItem *_root;
     // The open files, in the order the strip shows them, and the one shown.
     NSMutableArray<MCTab *> *_tabs;
@@ -595,10 +596,12 @@ private:
     NSPopover *_installPopover;
     NSString *_missingBefore;              // the open file's missing server, last time
     MCChangeSession *_change;              // Request a Change (Shift+Cmd+K), made on first use
+    MCAgentSession *_agent;                // the inline agent (Cmd+I), made on first use
     NSDate *_backupFirstPending;           // the oldest buffer change not yet backed up
 }
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) ClickOutline *outline;
+@property(nonatomic, strong) NSButton *restartButton;      // the status bar's ↻
 @property(nonatomic, strong) CodeTextView *textView;
 @property(nonatomic, strong) NSTextField *statusLabel;
 @property(nonatomic, copy)   NSString *currentPath;
@@ -892,6 +895,7 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
 
     [self startWatching:_root.path];   // live tree updates
     [self restoreSession];             // the files open here last time
+    [self restoreBrowserFromSession];  // and the browser, where it was
     [[NSNotificationCenter defaultCenter] addObserver:self
         selector:@selector(backupsAppWillTerminate:)
             name:NSApplicationWillTerminateNotification object:nil];
@@ -978,6 +982,12 @@ static void *kMediaItemContext = &kMediaItemContext;
                                : [NSColor clearColor];
     self.blurView.hidden = !st.blur();
     self.blurView.material = cfg.material;
+    // The window's own controls (scroll bars, text fields, the find bar,
+    // menus opened in it) go light or dark with the theme as drawn.
+    NSAppearance *look = [NSAppearance appearanceNamed:st.isDark() ? NSAppearanceNameDarkAqua
+                                                                   : NSAppearanceNameAqua];
+    if (![w.appearance.name isEqualToString:look.name]) w.appearance = look;
+    self.blurView.appearance = look;
 
     BOOL custom = st.customTitlebar();
     w.titlebarAppearsTransparent = custom;
@@ -992,6 +1002,10 @@ static void *kMediaItemContext = &kMediaItemContext;
     [self refreshTreeCells];   // names, and their sizes and dates
 
     self.editorScroll.panelColor = [cfg background:Surface::Editor];
+    // A selection keeps the syntax colors under it, in every theme (AppKit's
+    // own selected-text color took over after a switch between light and dark).
+    self.textView.selectedTextAttributes =
+        @{NSBackgroundColorAttributeName: [NSColor selectedTextBackgroundColor]};
     for (MCTab *t in _tabs) [t.latex applySettings];
     [self applyTabSettings];
     self.imageView.layer.backgroundColor = [cfg background:Surface::Editor].CGColor;
@@ -1009,11 +1023,15 @@ static void *kMediaItemContext = &kMediaItemContext;
 
     self.statusBar.layer.backgroundColor = [cfg background:Surface::Statusbar].CGColor;
     self.statusLabel.textColor = [cfg text:Surface::Statusbar];
+    self.restartButton.attributedTitle = [[NSAttributedString alloc] initWithString:@"↻"
+        attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:13],
+                     NSForegroundColorAttributeName: [cfg text:Surface::Statusbar]}];
     self.settingsLabel.textColor = [cfg text:Surface::Statusbar];
     self.savedLabel.textColor = [cfg text:Surface::Statusbar];
     self.lspLabel.textColor = [cfg text:Surface::Statusbar];
     [self applyInstallBarColors];
     [self applyChangeBarColors];
+    [_agent applyColors];
     [self showSettingsErrors];
 
     [w invalidateShadow];
@@ -1116,11 +1134,24 @@ static void *kMediaItemContext = &kMediaItemContext;
     NSTextField *label = [NSTextField labelWithString:@"⇧⌘H  Shortcuts"];
     label.font = [NSFont systemFontOfSize:11];
     label.backgroundColor = [NSColor clearColor];
-    label.frame = NSMakeRect(0, 3, container.bounds.size.width - 12, 16);
+    label.frame = NSMakeRect(0, 3, container.bounds.size.width - 34, 16);
     label.alignment = NSTextAlignmentRight;
     label.autoresizingMask = NSViewWidthSizable;
     self.statusLabel = label;
     [self.statusBar addSubview:label];
+
+    // Far right: restart minicode, keeping its windows, tabs, unsaved
+    // changes, browser pages and a conversation with Claude (restartMinicode:).
+    NSButton *restart = [NSButton buttonWithTitle:@"↻" target:nil
+                                           action:NSSelectorFromString(@"restartMinicode:")];
+    restart.bordered = NO;
+    restart.font = [NSFont systemFontOfSize:13];
+    restart.toolTip = @"Restart minicode, keeping its windows, tabs, unsaved changes "
+                      @"and browser pages";
+    restart.frame = NSMakeRect(container.bounds.size.width - 28, 1, 22, 20);
+    restart.autoresizingMask = NSViewMinXMargin;
+    self.restartButton = restart;
+    [self.statusBar addSubview:restart];
 
     // Left side: the first problem in the settings file, if any.
     NSTextField *errors = [NSTextField labelWithString:@""];
@@ -1305,8 +1336,10 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⇧⌘D" label2:@"TODOs in folder" state:nil];
     [self appendHintsRow:s key:@"⌘," label:@"Settings"
                     key2:@"⌃Space" label2:@"Complete" state:nil];
+    [self appendHintsRow:s key:@"⌘I" label:@"Inline agent"
+                    key2:@"⌥⌘I" label2:@"Hover info" state:nil];
     [self appendHintsRow:s key:@"F12" label:@"Go to definition"
-                    key2:@"⌘I" label2:@"Hover info" state:nil];
+                    key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:@"⇧F12" label:@"Find references"
                     key2:@"F2" label2:@"Rename symbol" state:nil];
     [self appendHintsRow:s key:@"⌘." label:@"Quick fixes"
@@ -1529,6 +1562,11 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     NSMutableArray<NSView *> *bars = [NSMutableArray array];
     if (self.browserDivider) [bars addObject:self.browserDivider];
     if (self.termDivider) [bars addObject:self.termDivider];
+    // The inline agent's bar floats over everything, the drag bars too.
+    if (_agent.shown) {
+        [_agent layout];
+        [bars addObject:_agent.bar];
+    }
     NSArray<NSView *> *subs = self.rightArea.subviews;
     BOOL inOrder = subs.count >= bars.count &&
         [[subs subarrayWithRange:NSMakeRange(subs.count - bars.count, bars.count)]
@@ -1840,20 +1878,21 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     return paths;
 }
 
-- (void)toggleBrowser:(id)sender {
-    if (!self.browser) {
-        self.browser = [[BrowserView alloc]
-            initWithHomeURL:@"https://duckduckgo.com"];
-        [self.rightArea addSubview:self.browser];
+- (void)makeBrowserWithHome:(NSString *)home {
+    if (self.browser) return;
+    self.browser = [[BrowserView alloc] initWithHomeURL:home];
+    [self.rightArea addSubview:self.browser];
+    self.browserDivider = [[DragBar alloc] initWithFrame:NSZeroRect];
+    self.browserDivider.vertical = YES;
+    __weak EditorController *weakSelf = self;
+    self.browserDivider.onDrag = ^(CGFloat x) {
+        [weakSelf browserBarDraggedTo:x];
+    };
+    [self.rightArea addSubview:self.browserDivider];
+}
 
-        self.browserDivider = [[DragBar alloc] initWithFrame:NSZeroRect];
-        self.browserDivider.vertical = YES;
-        __weak EditorController *weakSelf = self;
-        self.browserDivider.onDrag = ^(CGFloat x) {
-            [weakSelf browserBarDraggedTo:x];
-        };
-        [self.rightArea addSubview:self.browserDivider];
-    }
+- (void)toggleBrowser:(id)sender {
+    [self makeBrowserWithHome:@"https://duckduckgo.com"];
     self.browserVisible = !self.browserVisible;
     if (self.browserVisible) [self showRightArea];
     [self relayoutRightArea];
@@ -3621,6 +3660,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
 
 // Show the active tab again from what it kept.
 - (void)showActiveTab {
+    [_agent documentChanged];   // an edit bar for the tab that left closes
     MCTab *t = _activeTab;
     NSString *path = t.currentPath;
     _sourceSelection = t.sourceSelection;
@@ -4013,11 +4053,16 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
     NSUserDefaults *d = [self sessionDefaults];
     NSMutableDictionary *all = [[d dictionaryForKey:kTabSessionsKey] mutableCopy]
                                ?: [NSMutableDictionary dictionary];
-    if (files.count == 0) {
+    // The browser panel: where it was, and whether it showed.
+    NSDictionary *browser = [self browserSessionState];
+    if (files.count == 0 && !browser) {
         [all removeObjectForKey:key];
     } else {
-        all[key] = @{@"files": files, @"active": @(active),
-                     @"used": @([NSDate date].timeIntervalSince1970)};
+        NSMutableDictionary *entry = [@{@"files": files, @"active": @(active),
+                                        @"used": @([NSDate date].timeIntervalSince1970)}
+                                      mutableCopy];
+        if (browser) entry[@"browser"] = browser;
+        all[key] = entry;
         while (all.count > kMaxTabSessions) {
             NSString *oldest = nil;
             double when = DBL_MAX;
@@ -4030,6 +4075,35 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
         }
     }
     [d setObject:all forKey:kTabSessionsKey];
+}
+
+// The browser panel's part of the session: its page (BrowserView
+// savedState), whether it showed, and its share of the width. nil with no
+// browser, or one that never loaded a page.
+- (NSDictionary *)browserSessionState {
+    if (!self.browser) return nil;
+    NSDictionary *page = [self.browser savedState];
+    if (!page) return nil;
+    return @{@"page": page, @"visible": @(self.browserVisible),
+             @"fraction": @(self.browserFraction)};
+}
+
+// A new window's browser comes back as it was: made now if the folder's
+// session had one, shown if it showed, without taking the keyboard.
+- (void)restoreBrowserFromSession {
+    if (![self sessionsEnabled]) return;
+    NSDictionary *s = [[self sessionDefaults] dictionaryForKey:kTabSessionsKey][[self sessionKey]];
+    NSDictionary *b = [s isKindOfClass:NSDictionary.class] ? s[@"browser"] : nil;
+    if (![b isKindOfClass:NSDictionary.class] || self.browser) return;
+    [self makeBrowserWithHome:@""];
+    [self.browser restoreState:b[@"page"]];
+    const double fraction = [b[@"fraction"] doubleValue];
+    if (fraction > 0.05 && fraction < 0.95) self.browserFraction = fraction;
+    if ([b[@"visible"] boolValue]) {
+        self.browserVisible = YES;
+        [self showRightArea];
+    }
+    [self relayoutRightArea];
 }
 
 // Open the tabs this folder had last time; only the one on show is read
@@ -4436,6 +4510,7 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     return [self confirmCloseAllTabs];
 }
 - (void)windowWillClose:(NSNotification *)note {
+    [_agent close];
     // Asked already (windowShouldClose:): what is still unsaved was let go.
     for (MCTab *t in _tabs) [self discardBackupOf:t];
     _closing = YES;
@@ -5480,7 +5555,7 @@ static NSColor *ContrastColor(const Rgba &c) {
     self.statusLabel.toolTip = nil;
 }
 
-// Ctrl+Space, F12, Cmd+I. The session beeps and says why when the file has
+// Ctrl+Space, F12, Option+Cmd+I. The session beeps and says why when the file has
 // no language server.
 - (BOOL)lspActionAllowed {
     if (self.window.firstResponder == self.textView && self.textView.editable) return YES;
@@ -5517,6 +5592,267 @@ static NSColor *ContrastColor(const Rgba &c) {
     MCShowLanguageServers(self.lsp, self.lspLabel, ^(NSString *command) {
         [weakSelf typeCommandInTerminal:command];
     });
+}
+
+// ------------------------------------------------ the inline agent (Cmd+I)
+// See AgentPanel.h. What has the keyboard decides what the agent does: the
+// editor's file is edited, a terminal gets a command, anything else becomes
+// a task for Claude Code in a terminal tab. The context built here is all
+// the agent knows of the window.
+- (MCAgentSession *)agentSession {
+    if (!_agent) _agent = [[MCAgentSession alloc] initWithHost:self];
+    return _agent;
+}
+- (NSView *)agentBarHost { return self.rightArea; }
+- (void)agentBarDidChange { [self relayoutRightArea]; }
+- (void)agentRunInTerminal:(NSString *)command {
+    [self changeTerminalRunning:command focus:YES];
+}
+
+// A path as the agent is told it: from the open folder, when it is inside.
+- (NSString *)agentPathFor:(NSString *)path {
+    if (!path.length) return @"";
+    NSString *rel = [self pathFromRoot:path];
+    return rel.length ? rel : path;
+}
+
+// 1-based line of a UTF-16 offset.
+static int MCLineAt(NSString *text, NSUInteger index) {
+    index = MIN(index, text.length);
+    int line = 1;
+    for (NSUInteger i = 0; i < index; i++)
+        if ([text characterAtIndex:i] == '\n') line++;
+    return line;
+}
+
+// The start of a 0-based source line, in UTF-16.
+static NSUInteger MCLineStart(NSString *text, int line) {
+    NSUInteger i = 0;
+    for (int l = 0; l < line && i < text.length; i++)
+        if ([text characterAtIndex:i] == '\n') l++;
+    return MIN(i, text.length);
+}
+
+// The line fragment holding character `index`, in the text view's
+// coordinates (the editor is TextKit 1; see LSP in CLAUDE.md).
+- (NSRect)agentLineRectAt:(NSUInteger)index {
+    CodeTextView *tv = self.textView;
+    NSLayoutManager *lm = tv.layoutManager;
+    NSTextContainer *tc = tv.textContainer;
+    [lm ensureLayoutForTextContainer:tc];
+    NSRect r;
+    if (index >= tv.string.length && !NSIsEmptyRect(lm.extraLineFragmentRect)) {
+        r = lm.extraLineFragmentRect;
+    } else if (lm.numberOfGlyphs == 0) {
+        r = NSMakeRect(0, 0, 10, [lm defaultLineHeightForFont:tv.font ?: [NSFont systemFontOfSize:13]]);
+    } else {
+        NSUInteger glyph = [lm glyphIndexForCharacterAtIndex:MIN(index, tv.string.length - 1)];
+        r = [lm lineFragmentRectForGlyphAtIndex:MIN(glyph, lm.numberOfGlyphs - 1) effectiveRange:NULL];
+    }
+    const NSPoint o = tv.textContainerOrigin;
+    return NSOffsetRect(r, o.x, o.y);
+}
+
+- (void)agentTintAgainst:(NSString *)original {
+    CodeTextView *tv = self.textView;
+    NSLayoutManager *lm = tv.layoutManager;
+    const NSRange all = NSMakeRange(0, tv.string.length);
+    [lm removeTemporaryAttribute:NSBackgroundColorAttributeName forCharacterRange:all];
+    if (!original || !tv.editable) return;
+    NSColor *tint = [[NSColor colorWithSRGBRed:0x73 / 255.0 green:0xC9 / 255.0 blue:0x91 / 255.0
+                                         alpha:1] colorWithAlphaComponent:0.2];
+    for (const LineDiff::Hunk &h : LineDiff::diff(U16(original), U16(tv.string)))
+        if (h.newLength > 0 && h.newStart + h.newLength <= all.length)
+            [lm addTemporaryAttribute:NSBackgroundColorAttributeName value:tint
+                    forCharacterRange:NSMakeRange(h.newStart, h.newLength)];
+}
+
+- (void)inlineAgent:(id)sender {
+    (void)sender;
+    NSWindow *w = self.window;
+    NSString *otherWindow = nil;
+    NSWindow *key = NSApp.keyWindow;
+    if (key && key != w && !key.sheet && key.parentWindow != w) {
+        otherWindow = key.title.length ? key.title : @"another";
+        [w makeKeyAndOrderFront:nil];
+    }
+    NSResponder *fr = w.firstResponder;
+    NSView *view = [fr isKindOfClass:NSView.class] ? (NSView *)fr : nil;
+    // A text field's field editor stands for the field.
+    if ([fr isKindOfClass:NSTextView.class] && ((NSTextView *)fr).isFieldEditor &&
+        [((NSTextView *)fr).delegate isKindOfClass:NSView.class])
+        view = (NSView *)((NSTextView *)fr).delegate;
+    if (_agent.shown && view && [view isDescendantOf:_agent.bar]) return;   // already there
+
+    [self showRightArea];
+    MCAgentContext *ctx = [MCAgentContext new];
+    ctx.root = self.rootPath;
+    ctx.returnFocus = fr;
+    ctx.path = [self agentPathFor:self.currentPath];
+    __weak EditorController *weakSelf = self;
+    // Anywhere: under the top of the right pane, in its middle.
+    ctx.area = ^NSRect { return weakSelf.rightArea.bounds; };
+    ctx.anchor = ^NSRect {
+        const NSRect b = weakSelf.rightArea.bounds;
+        return NSMakeRect(NSMidX(b) - 360, NSMaxY(b) - 6, 0, 0);
+    };
+
+    CodeTextView *tv = self.textView;
+    const BOOL inEditor = view == tv && !tv.isHiddenOrHasHiddenAncestor;
+    const BOOL preview = self.isMarkdown && self.previewMode && !tv.editable;
+    TerminalView *term = self.terminalPanel.activeTerminal;
+    const BOOL inTerminal = !otherWindow && term && view && [view isDescendantOf:self.terminalPanel];
+
+    // The editor's selection, for a task as much as an edit.
+    if (inEditor && self.currentPath && tv.editable && !self.showingMessage) {
+        const NSRange sel = tv.selectedRange;
+        if (sel.length) {
+            NSString *text = tv.string;
+            ctx.selectionText = [text substringWithRange:sel];
+            ctx.firstLine = MCLineAt(text, sel.location);
+            ctx.lastLine = MCLineAt(text, NSMaxRange(sel) -
+                                    ([text characterAtIndex:NSMaxRange(sel) - 1] == '\n' &&
+                                     sel.length > 1 ? 1 : 0));
+        }
+    }
+
+    if (!otherWindow && inEditor && self.currentPath && !self.showingMessage &&
+        (tv.editable || preview)) {
+        MCTab *tab = _activeTab;
+        __weak MCTab *weakTab = tab;
+        ctx.target = MCAgentTargetEdit;
+        ctx.owner = tab;
+        ctx.where = [NSString stringWithFormat:@"%@ in the editor", ctx.path];
+        ctx.currentText = ^NSString * {
+            EditorController *s = weakSelf;
+            if (!s || !weakTab || weakTab != s->_activeTab) return nil;
+            // Copies: the text view's string is its live storage.
+            if (s.textView.editable) return [s.textView.string copy];
+            if (s.isMarkdown && s.previewMode) return [s.sourceText copy] ?: @"";
+            return nil;
+        };
+        ctx.applyText = ^BOOL(NSString *text, NSString *name) {
+            EditorController *s = weakSelf;
+            if (!s || !weakTab || weakTab != s->_activeTab) return NO;
+            if (s.textView.editable) {
+                [s replaceSourceWithText:text actionName:name];
+                return YES;
+            }
+            if (s.isMarkdown && s.previewMode) {
+                [s applyMarkdownSource:text];
+                return YES;
+            }
+            return NO;
+        };
+        if (preview) {
+            // The source line the preview's caret sits in.
+            NSRange sel = NSMakeRange(0, 0);
+            NSTextStorage *st = tv.textStorage;
+            if (st.length) {
+                NSNumber *line = [st attribute:kMarkdownSourceLine
+                                       atIndex:MIN(tv.selectedRange.location, st.length - 1)
+                                effectiveRange:NULL];
+                if (line) sel.location = MCLineStart(self.sourceText ?: @"", line.intValue);
+            }
+            ctx.selection = sel;
+            ctx.hint = [NSString stringWithFormat:@"Editing %@ from its preview",
+                                                  self.currentPath.lastPathComponent];
+            ctx.anchor = ^NSRect {
+                const NSRect f = weakSelf.editorScroll.frame;
+                return NSMakeRect(NSMinX(f) + 24, NSMaxY(f) - 6, 0, 0);
+            };
+        } else {
+            ctx.selection = tv.selectedRange;
+            ctx.currentSelection = ^NSRange { return weakSelf.textView.selectedRange; };
+            ctx.tint = ^(NSString *original) { [weakSelf agentTintAgainst:original]; };
+            NSString *lines = ctx.selectionText
+                ? (ctx.firstLine == ctx.lastLine
+                       ? [NSString stringWithFormat:@"line %d", ctx.firstLine]
+                       : [NSString stringWithFormat:@"lines %d to %d", ctx.firstLine, ctx.lastLine])
+                : [NSString stringWithFormat:@"line %d", MCLineAt(tv.string, tv.selectedRange.location)];
+            ctx.hint = [NSString stringWithFormat:@"Editing %@, %@",
+                                                  self.currentPath.lastPathComponent, lines];
+            ctx.followScroll = self.editorScroll.contentView;
+            // Under the selection's last line, or over its first.
+            ctx.anchor = ^NSRect {
+                EditorController *s = weakSelf;
+                CodeTextView *t = s.textView;
+                const NSRange r = t.selectedRange;
+                const NSUInteger len = t.string.length;
+                NSRect u = NSUnionRect([s agentLineRectAt:MIN(r.location, len)],
+                                       [s agentLineRectAt:MIN(r.length ? NSMaxRange(r) - 1
+                                                                       : r.location, len)]);
+                u = [s.rightArea convertRect:u fromView:t];
+                u.origin.x = NSMinX(s.editorScroll.frame) + 24;
+                u.size.width = 0;
+                return u;
+            };
+            ctx.area = ^NSRect { return weakSelf.editorScroll.frame; };
+        }
+    } else if (inTerminal && !term.busy) {
+        __weak TerminalView *weakTerm = term;
+        ctx.target = MCAgentTargetCommand;
+        ctx.owner = term;
+        NSString *dir = term.directory ?: self.rootPath;
+        ctx.directory = dir;
+        ctx.screen = [term recentText:60];
+        ctx.where = [NSString stringWithFormat:@"a terminal in %@", dir];
+        ctx.hint = [NSString stringWithFormat:@"A command for %@",
+                                              [dir stringByAbbreviatingWithTildeInPath]];
+        ctx.typeCommand = ^BOOL(NSString *command) {
+            EditorController *s = weakSelf;
+            TerminalView *t = weakTerm;
+            if (!s || ![s terminalIsOpen:t] || t.busy || ![t typeCommand:command]) return NO;
+            [s focusChangeTerminal:t];
+            return YES;
+        };
+        ctx.area = ^NSRect { return weakSelf.terminalPanel.frame; };
+        ctx.anchor = ^NSRect {
+            const NSRect f = weakSelf.terminalPanel.frame;
+            return NSMakeRect(NSMinX(f) + 24, NSMinY(f) + 4, 0, 0);
+        };
+        ctx.anchorAbove = YES;
+    } else {
+        ctx.target = MCAgentTargetTask;
+        NSString *where = nil;
+        if (otherWindow) {
+            where = [NSString stringWithFormat:@"the %@ window", otherWindow];
+        } else if (inTerminal) {
+            ctx.screen = [term recentText:60];
+            where = [NSString stringWithFormat:@"a terminal running %@",
+                                               term.runningCommand ?: @"a program"];
+            ctx.owner = term;
+        } else if (view && (view == self.outline || [view isDescendantOf:self.outline])) {
+            FileItem *item = [self clickedOrSelectedItem];
+            where = item ? [NSString stringWithFormat:@"the file tree, with %@ selected",
+                                                      [self agentPathFor:item.path]]
+                         : @"the file tree";
+            ctx.owner = self.outline;
+        } else if (view && self.gitPanel && [view isDescendantOf:self.gitPanel]) {
+            where = @"the Source Control panel";
+            ctx.owner = self.gitPanel;
+        } else if (view && self.browser && [view isDescendantOf:self.browser]) {
+            NSString *url = self.browser.pageURL;
+            NSString *title = self.browser.pageTitle;
+            where = url ? [NSString stringWithFormat:@"the browser panel, showing %@%@", url,
+                                                     title ? [NSString stringWithFormat:@" (%@)", title] : @""]
+                        : @"the browser panel";
+            ctx.owner = self.browser;
+        } else if (self.isLatex && self.previewMode && self.currentPath) {
+            where = [NSString stringWithFormat:@"the LaTeX preview of %@", ctx.path];
+            ctx.owner = _activeTab;
+        } else if (self.isDiff) {
+            where = self.diffIsCommit ? @"a commit shown in the editor" : @"a diff shown in the editor";
+        } else if (self.currentPath) {
+            where = [NSString stringWithFormat:@"the editor, showing %@", ctx.path];
+            ctx.owner = _activeTab;
+        } else {
+            where = @"the minicode window";
+        }
+        ctx.where = where;
+        ctx.hint = @"For Claude Code, in a new terminal tab";
+    }
+    [[self agentSession] beginWithContext:ctx];
 }
 
 // ----------------------------------------- Request a Change (Shift+Cmd+K)
@@ -5569,6 +5905,12 @@ static NSColor *ContrastColor(const Rgba &c) {
     [_change.bar setBackground:[cfg background:Surface::Sidebar]
                           text:[cfg text:Surface::Sidebar]
                          field:[cfg background:Surface::Editor]];
+}
+
+// Restart minicode: a conversation with Claude from Request a Change, still
+// running here, carries over as it does after a rebuild.
+- (NSString *)changeSourceToResume {
+    return [self changeTerminal] ? _change.source : nil;
 }
 
 // MCChangeHost

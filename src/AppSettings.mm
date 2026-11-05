@@ -118,6 +118,26 @@ NSColor *MCColor(const Rgba &c) {
     return ok;
 }
 
+- (NSString *)fileText {
+    return [NSString stringWithContentsOfFile:_path encoding:NSUTF8StringEncoding
+                                        error:nil] ?: @"";
+}
+
+- (BOOL)writeTheme:(NSString *)themeId commentColors:(BOOL)commentColors {
+    if (!Settings::findTheme(themeId.UTF8String ?: "")) return NO;
+    if (![self ensureFileExists]) return NO;
+    const std::string text = Settings::withTheme(self.fileText.UTF8String ?: "",
+                                                 themeId.UTF8String, commentColors);
+    NSString *body = [NSString stringWithUTF8String:text.c_str()];
+    if (!body || ![body writeToFile:_path atomically:YES encoding:NSUTF8StringEncoding
+                              error:nil])
+        return NO;
+    // Now, rather than when the watch notices the rename.
+    [self reload];
+    [self watch];
+    return YES;
+}
+
 - (NSColor *)background:(Surface)s { return MCColor(_settings.background(s)); }
 - (NSColor *)text:(Surface)s       { return MCColor(_settings.text(s)); }
 - (NSColor *)syntax:(TokenStyle)s  { return MCColor(_settings.syntax(s)); }

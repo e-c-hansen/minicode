@@ -29,7 +29,8 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/Formatter.cpp src/InstallHints.cpp src/LineDiff.cpp \
             src/PythonEnvs.cpp \
             src/AutoIndent.cpp src/KeepSorted.cpp src/FileDetails.cpp \
-            src/ChangeRequest.cpp src/MultiCaret.cpp src/CommandPalette.cpp src/Backups.cpp
+            src/ChangeRequest.cpp src/MultiCaret.cpp src/CommandPalette.cpp src/Backups.cpp \
+            src/InlineAgent.cpp
 
 # Each source file compiles to its own object in build/obj (build/test-obj for
 # the tests), with a dependency file listing the headers it read, so touching
@@ -82,6 +83,9 @@ $(OBJDIR)/%.cpp.o: src/%.cpp $(OBJDIR)/flags.txt
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
+# The identity `make app` signs with: the local certificate when present.
+SIGN_IDENTITY ?= $(shell security find-certificate -c "MiniCode Local Signing" >/dev/null 2>&1 && echo "MiniCode Local Signing")
+
 # Assemble a minimal .app bundle so Cocoa treats it as a real GUI app.
 app: $(BIN)
 	@rm -rf $(BUNDLE)
@@ -92,10 +96,19 @@ app: $(BIN)
 	@cp resources/AppIcon.icns $(BUNDLE)/Contents/Resources/AppIcon.icns
 	@cp scripts/minicode-launcher $(BUNDLE)/Contents/Resources/minicode
 	@chmod +x $(BUNDLE)/Contents/Resources/minicode
-	@# Ad-hoc signature (free, no Apple account). Required to run on Apple
-	@# Silicon and keeps granted permissions stable across launches. It does
-	@# NOT remove the Gatekeeper download warning — only notarization does.
-	@codesign --force --sign - $(BUNDLE) 2>/dev/null || true
+	@# Signed with "MiniCode Local Signing" when the login keychain has it
+	@# (scripts/make-signing-identity.sh makes it, once), so macOS keeps
+	@# what the app was allowed (folders, the microphone) from one build to
+	@# the next; an ad-hoc signature names the exact binary, and every build
+	@# had to ask again. Ad-hoc otherwise, or if that signing fails. A
+	@# signature is required to run on Apple Silicon; neither kind removes
+	@# the Gatekeeper download warning, which only notarization does.
+	@if [ -n "$(SIGN_IDENTITY)" ] && codesign --force --sign "$(SIGN_IDENTITY)" $(BUNDLE) 2>/dev/null; then \
+	    echo "Signed with $(SIGN_IDENTITY)"; \
+	else \
+	    codesign --force --sign - $(BUNDLE) 2>/dev/null || true; \
+	    echo "Signed ad hoc (scripts/make-signing-identity.sh keeps permissions across builds)"; \
+	fi
 	@echo "Built $(BUNDLE)"
 
 # Launch, opening the given folder (defaults to current directory).

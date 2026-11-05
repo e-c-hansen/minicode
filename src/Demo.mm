@@ -1027,7 +1027,7 @@ static void SceneLsp(MCDemo *d) {
     [d clickAt:^NSPoint { return [d pointForText:@"lengthSquared;" after:nil atEnd:NO]; }];
     [d hidePointer];
     [d pause:0.1];
-    [d key:@"cmd+i" caption:@"⌘I  What is wrong here"];
+    [d key:@"opt+cmd+i" caption:@"⌥⌘I  What is wrong here"];
     [d pause:2.2];
     [d run:^(MCDemo *m) { [[[m ui:@"lsp"] valueForKey:@"hover"] close]; }];
     [d clickAt:^NSPoint { return [d pointForText:@"lengthSquared" after:@"double d" atEnd:YES]; }];
@@ -1038,7 +1038,7 @@ static void SceneLsp(MCDemo *d) {
     [d pause:0.5];
     [d clickAt:^NSPoint { return [d pointForText:@"scaled" after:nil atEnd:NO]; }];
     [d hidePointer];
-    [d key:@"cmd+i" caption:@"⌘I  Hover info"];
+    [d key:@"opt+cmd+i" caption:@"⌥⌘I  Hover info"];
     [d pause:2.0];
     [d run:^(MCDemo *m) { [[[m ui:@"lsp"] valueForKey:@"hover"] close]; }];
     // Saved first, or leaving the file asks about the unsaved edit.

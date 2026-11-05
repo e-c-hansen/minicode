@@ -54,6 +54,16 @@ Under the changes is the commit graph: the history of the current branch and its
 
 On the Mac, Shift Command K (Request a Change to minicode, in the minicode menu) changes minicode itself. A bar opens across the top of the window, marked in amber with a DEV tag so it is never mistaken for an ordinary field, and names the source folder Claude will work in. Describe the change in its box, which wraps your text and grows with it (Shift Return starts a new line), and press Return, and a terminal tab opens in minicode's source folder running [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with your request, so you can follow it, answer its questions, and approve its edits right there. When Claude has rebuilt the app with make, the bar offers to restart into the new build. The restart asks nothing about unsaved files: their backups come along, and the new build reopens every window's folder with its tabs, unsaved changes included, and continues the conversation with Claude in a terminal, so a follow-up request is one more message away. The source is the folder this minicode was built in; a copy installed from Homebrew has none, so the first request clones the release you are running into ~/Library/Application Support/MiniCode/source, in the same terminal, before Claude starts (this needs git, from Apple's command line tools). develop.source in the settings points it at a clone of your own instead, and develop.command sets the command, claude by default. Nothing is committed or released unless you ask Claude to.
 
+Command I calls up the inline agent, as it does for VS Code's inline chat, wherever the keyboard is in minicode (Show Hover Info moved to Option Command I to make room). It asks [Claude Code](https://docs.anthropic.com/en/docs/claude-code), so that needs to be installed and signed in, and what it does depends on where you are:
+
+- In a file, a bar opens under the cursor's line. Ask for a change ("add type hints", "handle the empty list") and Claude's edit goes straight into the file, on the selection if there is one, with the changed lines tinted. Return keeps it and Escape puts the text back; it is also one Command Z. Ask again in the same bar and the next change builds on the last. A question gets its answer in the bar instead, and the file is left alone. The agent sees the file as it is in the editor, unsaved changes and all, and may read the rest of the project, but it changes only this file and saves nothing. The Markdown preview works the same way, on the file's source.
+- In a terminal, it writes the command you describe and types it at the prompt, for you to read and run with Return. It sees the folder and the last lines on the screen, so "rerun that with verbose output" works.
+- Anywhere else, the file tree, the browser, the source control panel, a picture or a PDF, it hands your request to Claude Code in a new terminal tab of the open folder, with a note of where you asked from (the selected file, the page's address), so you can follow along and answer its questions. Command Return does the same from the other two, with the selection or the terminal's last lines included.
+
+The answers in the bar come from Claude Code's print mode, allowed to read the project but not to change anything; the edit is minicode's to make. agent.command in the settings is the command it runs, claude by default, with flags such as --model if you want them.
+
+Restart minicode, in the minicode menu or the ↻ at the right end of the status bar, does the same restart on demand, as VS Code's Reload Window does: the same bundle opens again with every window's folder, tabs, unsaved changes and browser page, and a conversation with Claude from Request a Change goes on where it was. The browser panel comes back on the page it was showing, with its back and forward history and its scroll position, after a restart and after an ordinary quit too.
+
 Shift Command H lists the shortcuts that apply right now.
 
 ## LaTeX
@@ -130,6 +140,14 @@ terminal.text = #E0E0E0
 
 Every color in the file shows as a swatch, and clicking one opens the color picker, with an opacity slider for see-through colors; the window follows along as you drag. An opacity value is underlined with dots, and clicking it opens a slider. Either way the line is switched on for you if it was still commented out. A line with a mistake is ignored, and the status bar says which one and why.
 
+The colors start from a theme, one of VS Code's built-in ones: Dark Modern (VS Code's own default), Dark+ (minicode's look, and the theme when none is set), Monokai, Solarized Dark, Tomorrow Night Blue, Light Modern, Light+, Quiet Light and Solarized Light. On the Mac, View > Theme switches between them, and so does typing the theme's name into the command palette; either way it is one line in the settings file, which you can also write yourself, here on Linux too:
+
+```
+theme = light-modern
+```
+
+Any color the file sets of its own wins over the theme's, so you can take a theme and change the few colors you would rather have. When you pick a theme and the file already sets colors, minicode asks whether to comment those lines out so the whole theme shows; they stay in the file to switch back on. A light theme gives the window light scroll bars, fields and menus too.
+
 On the Mac you don't have to find the right line yourself. Right-click the file tree, the editor, the Markdown preview, the terminal, the browser, the status bar, the title bar, or the source control panel, and choose Adjust Settings at the bottom of the menu. The settings file opens with that part's keys in the middle of the pane and briefly highlighted, its first value selected. View > Adjust Settings lists the same parts.
 
 ![Picking new colors for the file tree, the editor and the status bar](docs/demos/settings.gif)
@@ -176,6 +194,8 @@ git clone https://github.com/e-c-hansen/minicode.git
 cd minicode
 make
 ```
+
+macOS remembers what an app may do, such as reading a folder in Documents or letting a program in its terminal use the microphone, by the app's signature. Run `scripts/make-signing-identity.sh` once before building and make signs with a certificate of your own in your login keychain, so those answers carry over from one build to the next; without it each build is signed ad hoc and asks again.
 
 The demo folder has a Python file, C++, Markdown, a short LaTeX paper in demo/paper and a two file C++ example in demo/vec for trying clangd. make test runs the unit tests of the shared core. To run it:
 
@@ -229,6 +249,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Add a cursor on the line below or above each cursor, at the same column | Option Command Down, Option Command Up |  |  |
 | Add a cursor, or take one away, to type in several places at once | Option click, or Shift Command click |  |  |
 | Add the next place the selected text occurs to the selection, or select the word at the cursor | Command D |  |  |
+| Ask the inline agent: change the file at the cursor, write a terminal command, or hand a task to Claude Code | Command I |  |  |
 | Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
 | Close the active terminal | Control Shift W |  |  |
 | Close the application | Command Q | Ctrl Q |  |
@@ -277,6 +298,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Rename the name at the cursor wherever it is used, with a language server | F2 |  |  |
 | Rename the selected file or folder | F2, in the file tree | F2, in the file tree |  |
 | Request a change to minicode itself, made by Claude Code in a terminal | Shift Command K |  |  |
+| Restart minicode, keeping its windows, tabs, unsaved changes and browser pages | The ↻ in the status bar, or Restart minicode in the minicode menu |  |  |
 | Run the open file in the terminal | Shift Command Return |  |  |
 | Save | Command S | Ctrl S | S, or Ctrl S |
 | See the language servers, restart one, or choose the Python interpreter | Click the server in the status bar, or the minicode menu |  |  |
@@ -287,7 +309,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Show or hide when each file in the file tree was created | Control Shift Command I |  |  |
 | Show or hide when each file in the file tree was last saved, and when the open file was saved | Option Shift Command I |  |  |
 | Show the language server's quick fixes for the cursor or the selection | Command period |  |  |
-| Show the type and documentation under the cursor | Command I | Ctrl I | K, or Ctrl K |
+| Show the type and documentation under the cursor | Option Command I | Ctrl I | K, or Ctrl K |
 | Split the terminal, with a new one beside it | Command backslash |  |  |
 | Sort every keep-sorted block in the file | Shift F9 | Shift F9 | Sort keep-sorted blocks in the ⋮ menu |
 | Sort the selected lines, or the keep-sorted block around the cursor | F9 (F9 may need fn on a laptop) | F9 | J, or Ctrl J |

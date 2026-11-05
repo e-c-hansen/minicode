@@ -15,4 +15,13 @@
 - (void)focusURLBar;
 // Loads an address, or searches for words that are not one.
 - (void)navigateToString:(NSString *)raw;
+// What the panel shows, to bring back after a restart or a relaunch: the
+// address, and WebKit's own record of the back and forward list and the
+// scroll position (macOS 12 and later). restoreState: takes it back, and
+// loads the address alone when the record is missing or refused.
+- (NSDictionary *)savedState;
+- (void)restoreState:(NSDictionary *)state;
+// The page on show: its address and title (nil before any page).
+@property(nonatomic, readonly) NSString *pageURL;
+@property(nonatomic, readonly) NSString *pageTitle;
 @end

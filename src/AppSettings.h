@@ -25,6 +25,11 @@ extern NSNotificationName const MCSettingsDidChangeNotification;
 - (BOOL)ensureFileExists;
 // Re-read the file now and notify if anything changed.
 - (void)reload;
+// The file's text as it is on disk now ("" when there is none).
+- (NSString *)fileText;
+// Writes `theme = <themeId>` into the file (Settings::withTheme), commenting
+// out the file's own colors with `commentColors`, and applies it at once.
+- (BOOL)writeTheme:(NSString *)themeId commentColors:(BOOL)commentColors;
 @end
 
 NSColor *MCColor(const Rgba &c);

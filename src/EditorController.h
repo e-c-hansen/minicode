@@ -70,6 +70,11 @@
 // The same, leaving out Claude's terminal from Request a Change, which a
 // restart into the new build resumes instead of ending.
 - (NSArray<NSString *> *)runningTerminalCommandsExceptChange;
+// The source folder of a Request a Change conversation still running in
+// this window, which a restart continues; nil when there is none.
+- (NSString *)changeSourceToResume;
+// Writes this window's session (tabs, browser) now; quitting calls it.
+- (void)saveSession;
 // Shift+Cmd+K: Request a Change to minicode (see ChangePanel.h).
 - (void)requestChange:(id)sender;
 // After a restart: the conversation in `source` continued in a terminal here.
@@ -92,7 +97,8 @@
 - (void)showTodos:(id)sender;          // Shift+Cmd+D TODOs in the folder
 - (void)triggerCompletion:(id)sender;  // Ctrl+Space language server completion
 - (void)goToDefinition:(id)sender;     // F12 (and Cmd+click)
-- (void)showHoverInfo:(id)sender;      // Cmd+I type and docs at the cursor
+- (void)showHoverInfo:(id)sender;      // Option+Cmd+I type and docs at the cursor
+- (void)inlineAgent:(id)sender;        // Cmd+I the agent, for whatever has the keyboard
 - (void)renameSymbol:(id)sender;       // F2: the name at the cursor, or the tree's file
 - (void)findReferences:(id)sender;     // Shift+F12
 - (void)showQuickFixes:(id)sender;     // Cmd+.

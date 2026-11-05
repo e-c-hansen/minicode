@@ -65,6 +65,24 @@ struct AppearanceSurface {
     bool placeholder;                // for views not built yet; kept out of menus
 };
 
+// A color theme: a color for everything the settings file can color. The
+// settings file's `theme` key picks one (dark-plus, minicode's look since
+// the start, when unset), and a color set in the file wins over the theme's,
+// as workbench.colorCustomizations do in VS Code. The themes are VS Code's
+// own built-in ones, read off their theme files and mapped onto minicode's
+// fewer keys: a surface's background and text, the seven syntax styles,
+// the Markdown preview's colors, its code background, the ruler, and the
+// terminal's input line.
+struct Theme {
+    const char* id;              // "dark-modern", the value of the theme key
+    const char* title;           // "Dark Modern", for menus
+    bool dark;                   // dark backgrounds: the window's controls go dark too
+    uint32_t background[kSurfaceCount], text[kSurfaceCount];   // indexed by Surface
+    uint32_t syntax[8];          // indexed by TokenStyle; [0] is unused (editor text)
+    uint32_t markdown[kMarkdownColorCount];
+    uint32_t codeBackground, ruler, terminalInput;
+};
+
 // A value on one line of the settings file, in UTF-16 offsets.
 struct ValueSpan {
     size_t start = 0, length = 0;
@@ -103,6 +121,24 @@ public:
     // setColor does. Lines without an opacity come back unchanged.
     static std::u16string setOpacity(const std::u16string& line, double value);
 
+    // Every theme, in menu order (dark ones, then light ones), and one by id
+    // (null for an unknown id).
+    static const std::vector<Theme>& themes();
+    static const Theme* findTheme(const std::string& id);
+    // The settings text with `theme = id` in it: the line that sets the theme
+    // changed, else the commented-out "# theme = ..." line uncommented, else a
+    // new line after the file's opening comment. With commentColors, every
+    // line that sets a color of its own (and so would cover the theme's) is
+    // commented out too, so the theme shows whole; nothing else changes.
+    static std::string withTheme(const std::string& text, const std::string& id,
+                                 bool commentColors);
+    // How many lines of the text set a color (uncommented), which a theme's
+    // color would give way to.
+    static int colorOverrides(const std::string& text);
+    // Whether `key` (lowercase) takes a color: *.background, *.text,
+    // syntax.*, markdown's colors, editor.ruler-color.
+    static bool isColorKey(const std::string& key);
+
     // Every surface "Adjust Appearance…" knows, and one by id (or null).
     static const std::vector<AppearanceSurface>& appearanceSurfaces();
     static const AppearanceSurface* appearanceSurface(const std::string& id);
@@ -120,6 +156,12 @@ public:
     // Black or white text, whichever reads better on a swatch of `c` drawn
     // over the editor background.
     Rgba contrastText(const Rgba& c) const;
+
+    // The theme the file picks (dark-plus when it names none).
+    const Theme& theme() const { return *theme_; }
+    // Whether the editor's background, as resolved, is dark: the window's
+    // own controls (scroll bars, menus in it, text fields) follow this.
+    bool isDark() const;
 
     // A surface's background color with its opacity applied.
     Rgba background(Surface s) const;
@@ -224,9 +266,18 @@ public:
         return developCommand_.empty() ? "claude" : developCommand_;
     }
     const std::string& developSource() const { return developSource_; }
+    // The inline agent (Cmd+I, macOS). agent.command is the Claude Code
+    // command line it runs, a whole command line like lsp.* ("claude" when
+    // unset): print mode and the read-only tools are added to it for an
+    // answer in the bar, and it runs as written, with the request, for a
+    // task handed to a terminal.
+    std::string agentCommand() const {
+        return agentCommand_.empty() ? "claude" : agentCommand_;
+    }
     static const std::vector<std::string>& formatLanguages();
 
 private:
+    const Theme* theme_ = findTheme("dark-plus");
     struct SurfaceSettings {
         std::optional<Rgba> background, text;
         std::optional<double> opacity;
@@ -256,6 +307,7 @@ private:
     std::string pythonInterpreter_;
     std::string developCommand_;
     std::string developSource_;
+    std::string agentCommand_;
 
     bool apply(const std::string& key, const std::string& value,
                std::string& error);

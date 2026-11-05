@@ -16,8 +16,27 @@ this file covers the macOS app except where it says otherwise.
 
 ## Build / test / run / release
 
-- `make` — build `MiniCode.app` (ad-hoc signed; that signature is required to
-  run on Apple Silicon and to keep granted permissions stable). Each source
+- `make` — build `MiniCode.app`, signed with "MiniCode Local Signing" when
+  the login keychain has it, else ad hoc (a signature is required to run on
+  Apple Silicon). **Why the certificate** (2026-11-05): macOS keys what an
+  app was allowed (a protected folder, the microphone a terminal program
+  asks for) to its designated requirement, and an ad-hoc one is
+  `cdhash H"..."`, the exact binary, so every build, every restart into one
+  and every release asked again; the user saw it on every restart. Signed
+  with a certificate it is `identifier "com.minicode.editor" and
+  certificate leaf = H"..."`, the same from build to build. The certificate
+  is self-signed and untrusted, which neither codesign nor TCC minds
+  (checked in a scratch keychain: signing, `--verify --strict`, the binary
+  running). `scripts/make-signing-identity.sh` makes it once (openssl, then
+  `security import -T /usr/bin/codesign`, so codesign uses it with no
+  password prompt); the auto-mode classifier refused to run it for the
+  user, who runs it themselves. Releases built on that Mac are signed with
+  it too, so installs keep their answers across releases after the first.
+  Info.plist carries the usage descriptions (microphone, camera, Apple
+  events, Desktop, Documents, Downloads, removable and network volumes):
+  programs in the terminal count as minicode to macOS, and without
+  `NSMicrophoneUsageDescription` Claude Code's voice input was refused
+  without a prompt. Each source
   file is its own object in `build/obj` with a `-MMD -MP` dependency file, so
   touching one `.mm` rebuilds that file and relinks (2.5 s for Settings.cpp,
   5 to 6 s for EditorController.mm, where everything took 78 s before, all
@@ -40,7 +59,7 @@ this file covers the macOS app except where it says otherwise.
   folder search (on a scratch tree in the temp directory), and the git
   status and diff readers, the formatter planning and the line diff, and
   the file tree's sort orders, ages and folder totals (`tree:*`, `sizes:*`)
-  (4,238 checks on 2026-11-05 after merging the palette, editor keys, highlighting, build, language-server, grid-terminal and backups branches; 3,560 on 2026-11-04; 3,543 on 2026-11-01; 3,523 on 2026-10-31; 3,259 on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
+  (4,466 checks on 2026-11-05 with the themes and the inline agent; 4,238 earlier that day after merging the palette, editor keys, highlighting, build, language-server, grid-terminal and backups branches; 3,560 on 2026-11-04; 3,543 on 2026-11-01; 3,523 on 2026-10-31; 3,259 on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
   corpus in `tests/markdown/corpus.md` read from the repo root; the
   corpus checks skip themselves where that file is not found).
   Exits non-zero on failure. The Makefile uses clang++ on the Mac and make's
@@ -256,6 +275,11 @@ isolation. Keep them dependency-free.
   `keep-sorted end` blocks), ported from its Go code with its options, and
   plain line sorting; the editors' commands in UTF-16. See "Indentation
   and sorting".
+- `src/InlineAgent.{h,cpp}`: the inline agent's prompts and answers, no
+  I/O (`agent:*` tests in `tests/agent_tests.inc`): the edit prompt, the
+  SEARCH/REPLACE reply and applying it to a buffer, the terminal command
+  prompt and reading the command back, the task prompt. See "The inline
+  agent".
 - `src/CommandPalette.{h,cpp}`: the palette's matching and order (fuzzy,
   tiers, recent first), its modes (`>`, `:`), key equivalents as glyphs,
   and Quick Open's file walk and ranking (`palette:*` tests). See "The
@@ -327,6 +351,10 @@ The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
 - `src/MultiCaretView.{h,mm}` — `MCMultiCarets`, the editor's several
   carets: the column drag, Option+click, the key commands while two or
   more are in play, and drawing them. `CodeTextView` owns one.
+- `src/AgentPanel.{h,mm}` — the inline agent (Cmd+I): `MCAgentBar`,
+  `MCAgentRun` (Claude Code in print mode, off the main thread) and
+  `MCAgentSession`, one per window. EditorController's `inlineAgent:`
+  builds an `MCAgentContext` for what has the keyboard.
 - `src/PalettePanel.{h,mm}` — the palette over a window (Shift+Cmd+P,
   Cmd+P, Ctrl+G): the menu walk, the overlay, the list. See "The palette".
 - `src/Demo.{h,mm}` — demo scenes and the window recorder behind
@@ -993,7 +1021,7 @@ keyboard.
   and a capture looked at.
 
 - **Shift+Cmd+I** (View > Show Sizes and Dates, and in the tree's menu;
-  Cmd+I is Show Hover Info) shows each row's size and age right-aligned
+  Cmd+I is the inline agent) shows each row's size and age right-aligned
   and muted (sidebar text at 55%), in two fixed columns (`MCTreeCell`,
   laid out by hand): the age goes first, then the size, when the name
   would get under 72 points; with details on, the name truncates in the
@@ -1131,6 +1159,30 @@ into the build, keeping its place.
   So after the first restart the user runs the repo's build, not
   Homebrew's, until the next `brew upgrade`; launching it registers that
   bundle with Launch Services (see the mc-dev note).
+- **Restart on demand** (2026-11-05, asked for as VS Code's restart):
+  minicode menu > Restart minicode and the status bar's ↻
+  (`restartButton`, far right, nil-targeted at `restartMinicode:`), no
+  key (Cmd+R is Refresh File Tree). AppDelegate `restartMinicode:` calls
+  the same `restartIntoApp:resumingIn:source:command:` with
+  `NSBundle.mainBundle.bundlePath` (beeps when that is not a .app, as in
+  a harness); a window whose Request a Change terminal still runs
+  (`changeSourceToResume`) is the one resumed, with `develop.command`,
+  so Claude's conversation goes on.
+- **The browser panel comes back** (2026-11-05; the user lost every page
+  on a restart): the folder's `MCTabSessions` entry has a `browser` key
+  (`browserSessionState`: `page` from `BrowserView savedState`, the
+  address plus `WKWebView.interactionState`, which is plain NSData of
+  about 2.6 KB holding the back and forward list and the scroll position,
+  macOS 12 and later, left out past 2 MB; `visible`; `fraction`). A new
+  window builds it in `restoreBrowserFromSession` right after
+  `restoreSession`, never on an Open Folder switch, and the page never
+  takes the keyboard. `applicationWillTerminate` saves every window's
+  session, since navigating saves nothing. Cookies and logins were
+  already kept (the default persistent website data store). Checked
+  offscreen (11 checks, a local http server: page 2 back with its back
+  item and scrollY 3000, hidden stays hidden, the ↻ and the menu item
+  reaching the delegate). Harness trap: clear the test defaults suite
+  before each run, or the last run's session opens a browser first.
 - **Verified** offscreen (71 checks with the tree's, 2026-10-31: all of
   src/ with main.mm included as `minicode_main`, ordering, `keyWindow`,
   activation, `setActivationPolicy:` and `terminate:` swizzled; scratch
@@ -1143,6 +1195,111 @@ into the build, keeping its place.
   real relaunch through `open -n` (it would put a window on the user's
   screen) and real Claude Code in the terminal. Needs the user: one real
   request end to end.
+
+## Themes (2026-11-05)
+
+The user asked for themed colors chosen in the UI, "particularly
+considering the defaults with VS Code", cleanly in the settings file.
+
+- **One key.** `theme = <id>` picks one of `Settings::themes()` (Settings.cpp,
+  `kThemes`): VS Code's built-in dark-modern, dark-plus, monokai,
+  solarized-dark, tomorrow-night-blue, light-modern, light-plus,
+  quiet-light, solarized-light. A theme gives a value to every color the
+  file can set (surfaces, syntax, Markdown, the code block background, the
+  ruler, the terminal input line); any color the file sets wins, in either
+  order, as VS Code's colorCustomizations do. Unset is dark-plus, value for
+  value the old built-in look, so nothing moved for anyone; the commented
+  defaults in `defaultFileText` stay Dark+'s and say so. Opacity is
+  separate and still applies. The values were mapped by hand from the
+  themes' files onto minicode's fewer keys (keyword.control is
+  "preprocessor", for one); the user's eyes decide whether each reads right.
+- **The menu.** View > Theme (`MCThemeSubmenu`, Appearance.mm, its own
+  target with the check mark from `validateMenuItem:`), so the palette lists
+  "View > Theme > Monokai" too. Choosing writes the line through
+  `Settings::withTheme` (the active line, else the commented one
+  uncommented, else a new line after the file's opening comment; CRLF kept)
+  and `AppSettings writeTheme:`; the watcher's notification recolors every
+  window. When the file sets colors of its own (`colorOverrides`, the
+  user's does: black panels, #0d1117), an alert asks first: "Use the
+  Theme's Colors" comments those lines out (`# ` before them, so they come
+  back by uncommenting), "Keep My Colors" leaves them.
+- **Light themes.** `Settings::isDark()` (the editor background as drawn)
+  sets the window's NSAppearance (Aqua or DarkAqua) in `applySettings`, so
+  scroll bars, fields and menus follow; the popovers that force DarkAqua
+  (LSP lists, install notes) and the inline hex accents and dividers are
+  unchanged. The editor's `selectedTextAttributes` is now only a background,
+  because after a switch AppKit drew selected text in its own color and
+  dropped the syntax colors.
+- Linux gets the key for free (the GTK port reads `Settings`), with no menu
+  and its own inline colors (`linux/src/Palette.h`) left as they were.
+  Tests: `settings:themes`, `settings:with-theme`.
+
+## The inline agent (Mac, 2026-11-05)
+
+The user asked for VS Code's Cmd+I inline chat, callable "anywhere and
+everywhere". Cmd+I is Edit > Inline Agent…; Show Hover Info moved to
+Option+Cmd+I (VS Code's own is a Cmd+K chord). The agent is Claude Code
+(`agent.command`, default `claude`); nothing else is talked to.
+
+- **What has the keyboard decides** (`inlineAgent:` in EditorController):
+  the editor with a text file, or a Markdown preview (on the source, through
+  `applyMarkdownSource:`), is an **edit**; an idle terminal is a
+  **command**; anything else (tree, git panel, browser, a LaTeX preview, a
+  picture, a busy terminal, another window) is a **task**. Cmd+Return in
+  the bar hands any request over as a task, with the selection or the
+  terminal's last lines. The context carries blocks (current text, apply,
+  tint, type a command, area and anchor) so `AgentPanel.mm` knows nothing
+  of the window's views.
+- **Edits.** `MCAgentRun` runs `/bin/zsh -l -c 'exec <agent.command> -p
+  --tools Read,Grep,Glob --no-session-persistence --output-format text'` in
+  the folder, the prompt on stdin (written off the main thread; a big buffer
+  outgrows a pipe), PATH widened with `MCSearchDirs`, five minutes then
+  SIGTERM and SIGKILL, exit 127 read as "not installed". The prompt
+  (`InlineAgent::editPrompt`) holds the buffer as it is (or 800 lines around
+  the cursor past 120 KB), the cursor line or the selection, earlier
+  requests of the same bar, and asks for SEARCH/REPLACE blocks or a plain
+  answer. `applyEdits` finds each SEARCH as whole lines, then as text, then
+  ignoring trailing and then all surrounding whitespace, nearest the cursor
+  among several, all or nothing; so typing elsewhere while it thinks does
+  not get in the way. The result goes in through `replaceSourceWithText:`
+  (LineDiff hunks, one undo step, caret kept), the changed lines tinted
+  with a layout-manager temporary attribute. Return keeps, Esc puts back
+  the text from before the bar's first edit (only if the buffer is still
+  what the agent left). Measured: about 3 s an answer for a small file.
+- **Commands** are typed with `typeCommand:` and never run; a "#" answer
+  is shown as a note. **Tasks** write the prompt to
+  `$TMPDIR/MiniCode-agent/task-<pid>-<n>.txt` and run `cd <root> &&
+  <agent.command> "$(cat file)"` in a new terminal tab
+  (`changeTerminalRunning:focus:YES`), as Request a Change does.
+- **The bar** (`MCAgentBar`) is a view in the right pane, above everything
+  (the drag bars' order check in `relayoutRightArea` counts it last), under
+  the cursor's line or the selection (over it when there is no room),
+  following the editor's scrolling; at the bottom of the terminal; at the
+  top middle otherwise. A tab switch closes an edit bar, keeping its edit.
+- **Trap paid for**: `NSTextView string` is the live storage, so "the text
+  before the edit" must be a copy, or Discard puts back the edited text.
+  `firstRectForCharacterRange:` gave nothing usable in an offscreen window;
+  the anchor uses the layout manager's line fragments.
+- **Verified** (2026-11-05): 58 `agent:*` checks; prompts run by hand
+  against real Claude Code 2.1.318 (an edit, a question, a command); an
+  offscreen harness (main.mm as `minicode_main`, ordering, keyWindow,
+  mainWindow, activation and NSAlert swizzled, scratch settings, defaults
+  suite, backups and ZDOTDIR; agent.command a script that passes `-p` runs
+  to the real claude and records anything else), 78 checks: the menu keys
+  (no clashes), Cmd+I through the menu in the editor, the bar's place and
+  keyboard, Esc, a real edit (unsaved, tinted, disk untouched), Discard,
+  an edit on a selection and a follow-up in the same bar, Keep and undo, a
+  question answered with the file untouched, a real command typed at a
+  real zsh prompt and not run, a task from the tree reaching the terminal
+  with its note, the theme alert, the file rewritten, Light Modern's
+  colors and Aqua, the menu's check marks, Monokai through the menu item.
+  Pictures looked at. Harness trap: every edit made from one timer
+  callback shares one undo group, so one undo took back three edits there.
+- **Needs the user**: real keys (Cmd+I in the browser's page and in the
+  grid terminal running a program, where it becomes a task), the look of
+  the bar and the tint on a real screen, a large real file, and an
+  interactive task with their own Claude Code. Linux and Android have none
+  of it.
 
 ## The palette: commands, Quick Open, Go to Line (Mac, 2026-11-04)
 
@@ -1854,8 +2011,9 @@ never closes.
   the range the server named (or the word) or inside the box; leaving
   either closes it after 0.3 s; typing, a caret move, a scroll, Esc,
   focus or key loss and a document switch close it at once. Not in a
-  read-only view (previews) or while the completion list shows. Cmd+I
-  shows the same box at the caret, closed by the caret moving, not the
+  read-only view (previews) or while the completion list shows.
+  Option+Cmd+I (Cmd+I until 1.5.5; it is now the inline agent) shows the
+  same box at the caret, closed by the caret moving, not the
   pointer. Linux and Android still flatten hover to text (`parseHover`,
   which now also drops Markdown rules). Verified offscreen against
   basedpyright (26 checks, window ordering and `addChildWindow:` swizzled)
@@ -2356,7 +2514,10 @@ at once.
   CR in `encodeKey` (both modes: VS Code's Claude Code setup sends it, and
   zsh inserts a line break with it). Typing goes through
   `interpretKeyEvents:` (NSTextInputClient), so dead keys and input methods
-  compose, the marked text drawn at the cursor.
+  compose, the marked text drawn at the cursor, a character to a cell and
+  wrapping onto the rows below (`drawMarkedTextAtRow:`, 2026-11-05): macOS
+  dictation keeps a whole sentence composing while the user speaks, and
+  drawn as one line it ran off the right edge.
 - **Output flow** (both modes, 2026-11-05): the reader on the I/O queue
   counts bytes handed to the main thread (`MCPtyReader`); past 1 MB it
   suspends its source, so the pty buffer fills and the writer blocks, and the

@@ -72,4 +72,7 @@ extern NSNotificationName const MCTerminalCommandDidFinishNotification;
 - (BOOL)typeCommand:(NSString *)line;
 // Ends the shell (SIGHUP, the pty closed) for good. The view is then dead.
 - (void)close;
+// The last `maxLines` lines the terminal shows, scrollback included, as
+// plain text: what the inline agent is told the terminal holds.
+- (NSString *)recentText:(NSUInteger)maxLines;
 @end

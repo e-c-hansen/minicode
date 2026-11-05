@@ -27,6 +27,7 @@
 #include "MultiCaret.h"
 #include "CommandPalette.h"
 #include "Backups.h"
+#include "InlineAgent.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -3243,7 +3244,8 @@ std::string uncommentKeys(const std::string &text) {
         // "# group.field = value", not prose that happens to contain " = ".
         size_t eq = line.find(" = ");
         std::string key = eq == std::string::npos ? "" : line.substr(2, eq - 2);
-        bool isKey = line.rfind("# ", 0) == 0 && key.find('.') != std::string::npos;
+        bool isKey = line.rfind("# ", 0) == 0 &&
+                     (key.find('.') != std::string::npos || key == "theme");
         for (char ch : key)
             if (!(ch == '.' || ch == '-' || (ch >= 'a' && ch <= 'z'))) isKey = false;
         if (isKey) out += line.substr(2) + "\n";
@@ -3463,7 +3465,7 @@ void testSettings() {
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
     // format, python, keep-sorted, ruler, terminal and develop keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 63);
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 65);
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -3479,6 +3481,8 @@ void testSettings() {
     for (int i = 0; i < kMarkdownColorCount; i++)
         CHECK(un.markdown((MarkdownColor)i) == d.markdown((MarkdownColor)i));
     CHECK(un.material() == d.material() && un.blur() == d.blur());
+    CHECK(std::string(un.theme().id) == d.theme().id &&
+          std::string(d.theme().id) == "dark-plus");
     // The documented servers are the first ones the built-in search tries.
     CHECK(un.lspEnabled() == d.lspEnabled());
     CHECK(un.webImages() == d.webImages());
@@ -3496,6 +3500,9 @@ void testSettings() {
           d.terminalOptionAsMeta());
     CHECK(un.developCommand() == d.developCommand() && d.developCommand() == "claude");
     CHECK(un.developSource().empty() && d.developSource().empty());
+    CHECK(un.agentCommand() == d.agentCommand() && d.agentCommand() == "claude");
+    CHECK(parseSettings("agent.command = claude --model sonnet  # quick\n").agentCommand() ==
+          "claude --model sonnet");
     for (const std::string &server : Settings::lspServers()) {
         std::vector<std::string> cmds = Lsp::defaultCommands(server);
         CHECK(!cmds.empty() && un.lspCommand(server) == cmds[0]);
@@ -3511,6 +3518,94 @@ void testSettings() {
     CHECK(!d.formatOnSave());
     CHECK(!parseSettings(std::string(Settings::defaultFileText()) +
                          "format.on-save = false\n").formatOnSave());
+
+    GROUP("settings:themes");
+    {
+        // Dark+ is the built-in look, value for value.
+        const Theme *plus = Settings::findTheme("dark-plus");
+        CHECK(plus && &d.theme() == plus && d.isDark());
+        CHECK(d.background(Surface::Editor) == Rgba::hex(0x1E1E1E));
+        CHECK(d.syntax(TokenStyle::Keyword) == Rgba::hex(0x569CD6));
+        CHECK(Settings::findTheme(" Light-Plus ") == Settings::findTheme("light-plus"));
+        CHECK(!Settings::findTheme("dracula"));
+        // Every theme is whole: no color left at 0 by mistake (black is a
+        // real color, so only the code background, ruler and the syntax
+        // entries are checked against 0), dark ones dark, light ones light.
+        std::set<std::string> ids;
+        for (const Theme &t : Settings::themes()) {
+            ids.insert(t.id);
+            Settings s = parseSettings(std::string("theme = ") + t.id + "\n");
+            CHECK(&s.theme() == &t);
+            CHECK(s.isDark() == t.dark);
+            for (int i = 1; i < 8; i++) CHECK(t.syntax[i] != 0);
+            CHECK(t.codeBackground != 0 && t.ruler != 0);
+            CHECK(s.background(Surface::Editor) == Rgba::hex(t.background[(int)Surface::Editor]));
+            CHECK(s.text(Surface::Terminal) == Rgba::hex(t.text[(int)Surface::Terminal]));
+            CHECK(s.markdown(MarkdownColor::Link) == Rgba::hex(t.markdown[(int)MarkdownColor::Link]));
+            CHECK(s.syntax(TokenStyle::Plain) == s.text(Surface::Editor));
+            // Every theme is named in the settings file's own comment.
+            CHECK(std::string(Settings::defaultFileText()).find(t.id) != std::string::npos);
+        }
+        CHECK(ids.size() == Settings::themes().size());
+        // A color of the file's own wins over the theme's, in either order.
+        Settings m = parseSettings("syntax.string = #123456\ntheme = monokai\n");
+        CHECK(m.syntax(TokenStyle::String) == Rgba::hex(0x123456));
+        CHECK(m.syntax(TokenStyle::Keyword) == Rgba::hex(0xF92672));
+        Settings o = parseSettings("theme = light-plus\neditor.background = #000000\n");
+        CHECK(o.isDark() && !o.theme().dark);   // the editor as drawn decides
+        // Opacity still applies to a theme's colors.
+        Settings op = parseSettings("theme = light-modern\neditor.opacity = 50%\n");
+        CHECK(op.background(Surface::Editor).a == 0.5);
+        CHECK(op.markdownCodeBackground().a == 0.5);
+        std::vector<SettingsError> te;
+        Settings bad = parseSettings("theme = dracula\n", &te);
+        CHECK(te.size() == 1 && &bad.theme() == plus);
+        CHECK(te.size() == 1 && te[0].message.find("unknown theme 'dracula'") == 0 &&
+              te[0].message.find("solarized-light") != std::string::npos);
+
+        GROUP("settings:with-theme");
+        CHECK(Settings::isColorKey("editor.background") && Settings::isColorKey("syntax.type"));
+        CHECK(Settings::isColorKey("markdown.done") && Settings::isColorKey("window.text"));
+        CHECK(Settings::isColorKey("editor.ruler-color"));
+        CHECK(!Settings::isColorKey("editor.opacity") && !Settings::isColorKey("markdown.math"));
+        CHECK(!Settings::isColorKey("theme") && !Settings::isColorKey("lsp.cpp"));
+        // The default file: the commented line is uncommented in place.
+        const std::string df2 = Settings::defaultFileText();
+        std::string w = Settings::withTheme(df2, "monokai", false);
+        CHECK(w.find("\ntheme = monokai\n") != std::string::npos);
+        CHECK(w.find("# theme = ") == std::string::npos);
+        CHECK(w.size() == df2.size() - 2 - std::string("dark-plus").size() + 7);
+        CHECK(&parseSettings(w).theme() == Settings::findTheme("monokai"));
+        // Set again: the active line changes, keeping its comment.
+        std::string w2 = Settings::withTheme("theme = monokai  # mine\nx.y = 1\n",
+                                             "light-plus", false);
+        CHECK(w2 == "theme = light-plus  # mine\nx.y = 1\n");
+        // Neither: a new line after the opening comment, or at the top.
+        CHECK(Settings::withTheme("# my file\n# notes\n\neditor.opacity = 1\n",
+                                  "monokai", false) ==
+              "# my file\n# notes\n\ntheme = monokai\n\neditor.opacity = 1\n");
+        CHECK(Settings::withTheme("editor.opacity = 1\n", "monokai", false) ==
+              "theme = monokai\n\neditor.opacity = 1\n");
+        CHECK(Settings::withTheme("", "monokai", false) == "theme = monokai\n");
+        // CRLF stays CRLF.
+        CHECK(Settings::withTheme("# theme = dark-plus\r\na = 1\r\n", "monokai", false) ==
+              "theme = monokai\r\na = 1\r\n");
+        // The file's own colors: counted, and commented out on request,
+        // leaving opacity and everything else alone.
+        const std::string mine = "theme = dark-plus\n  editor.background = #0d1117\n"
+                                 "editor.opacity = 0.8\n# syntax.type = #FFFFFF\n"
+                                 "markdown.code = #40CE2C  # green\nlsp.cpp = clangd\n";
+        CHECK(Settings::colorOverrides(mine) == 2);
+        std::string cleared = Settings::withTheme(mine, "solarized-light", true);
+        CHECK(cleared == "theme = solarized-light\n  # editor.background = #0d1117\n"
+                         "editor.opacity = 0.8\n# syntax.type = #FFFFFF\n"
+                         "# markdown.code = #40CE2C  # green\nlsp.cpp = clangd\n");
+        CHECK(Settings::colorOverrides(cleared) == 0);
+        Settings cs = parseSettings(cleared);
+        CHECK(cs.background(Surface::Editor) == Rgba::hex(0xFDF6E3, 0.8));
+        CHECK(Settings::withTheme(mine, "monokai", false).find("  editor.background = #0d1117") !=
+              std::string::npos);
+    }
 
     GROUP("settings:ruler");
     {
@@ -8481,6 +8576,7 @@ static void testMultiCaretOccurrences() {
     }
 }
 #include "backups_tests.inc"
+#include "agent_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -8531,6 +8627,7 @@ int main() {
     testCommandPalette();
     testMultiCaretOccurrences();
     testBackups();
+    testInlineAgent();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
