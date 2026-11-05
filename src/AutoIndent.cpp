@@ -231,16 +231,118 @@ bool rustLifetime(const U& t, size_t i) {
     return start && !(i + 2 < t.size() && t[i + 2] == u'\'');
 }
 
-// Reads the code from the top of the file up to `end`. `stmts`, if given,
-// gets the start of every Python statement's first line.
-Ctx scan(const U& t, size_t end, const Lexer& lx, std::vector<size_t>* stmts) {
+enum Mode { CODE, STR, BLOCK };
+
+// Everything the scanner knows at a point of the text: what scan returns,
+// and the string or comment it is in.
+struct ScanState {
     Ctx c;
-    end = std::min(end, t.size());
-    const bool py = lx.lang == Lang::Python;
-    enum { CODE, STR, BLOCK } mode = CODE;
+    Mode mode = CODE;
     char16_t q = 0;
     bool multi = false, tripleQ = false, escapes = true;
-    if (stmts) stmts->push_back(0);
+};
+
+}  // namespace
+
+// The scanner's state at line starts. The state at a line start depends
+// only on the text before it, since scan never looks past a newline from a
+// character before it, so an edit leaves every point at or before it good.
+struct ScanCache::Impl {
+    struct Point {
+        size_t pos;          // a line start: 0, or just after a '\n'
+        ScanState state;
+        size_t stmtCount;    // Python: how many of `stmts` come before pos
+    };
+    std::string key;             // the file name the points were read for
+    std::vector<Point> points;   // ascending; points[0] is the top of the text
+    std::vector<size_t> stmts;   // Python statement starts before points.back()
+    bool haveUnit = false;       // detect's answer, while it holds
+    std::string unitKey;
+    Unit unit;
+    size_t unitLimit = 0;        // detect read the text before this
+    bool unitAll = false;        // ... which was all of it
+
+    void reset(const std::string& k) {
+        key = k;
+        points.assign(1, Point{0, ScanState(), 1});
+        stmts.assign(1, 0);
+    }
+};
+
+ScanCache::ScanCache() : impl_(new Impl) { impl_->reset(""); }
+ScanCache::~ScanCache() = default;
+
+void ScanCache::edited(size_t pos) {
+    Impl& m = *impl_;
+    while (m.points.size() > 1 && m.points.back().pos > pos) m.points.pop_back();
+    m.stmts.resize(m.points.back().stmtCount);
+    if (m.haveUnit && (m.unitAll || pos < m.unitLimit)) m.haveUnit = false;
+}
+
+void ScanCache::clear() {
+    impl_->reset("");
+    impl_->haveUnit = false;
+}
+
+namespace {
+
+// How far apart the points are, in UTF-16 units: a scan from the nearest
+// one reads at most this much more than the caret's own line.
+constexpr size_t kPointSpacing = 4096;
+
+// The cache, ready for `filename` and a text of `size` units. A point past
+// the end of the text means an edit went unreported; start again then.
+ScanCache::Impl* prepared(ScanCache* cache, const std::string& filename, size_t size) {
+    if (!cache) return nullptr;
+    ScanCache::Impl* m = cache->impl();
+    if (m->key != filename || m->points.back().pos > size) m->reset(filename);
+    return m;
+}
+
+// Reads the code from the top of the file up to `end`. `stmts`, if given,
+// gets the start of every Python statement's first line. With a cache, the
+// reading starts from the cache's last point at or before `end`, and leaves
+// new points behind it when it reads past the last one.
+Ctx scan(const U& t, size_t end, const Lexer& lx, std::vector<size_t>* stmts,
+         ScanCache::Impl* cache = nullptr) {
+    end = std::min(end, t.size());
+    const bool py = lx.lang == Lang::Python;
+    ScanState st;
+    size_t i = 0;
+    std::vector<size_t>* sink = stmts;   // where statement starts go
+    bool extend = false;                 // reading past the cache's last point
+    size_t nextPoint = npos;
+    if (cache) {
+        const auto& pts = cache->points;
+        auto after = std::upper_bound(
+            pts.begin(), pts.end(), end,
+            [](size_t e, const ScanCache::Impl::Point& p) { return e < p.pos; });
+        const size_t k = (size_t)(after - pts.begin()) - 1;   // pts[0].pos is 0
+        st = pts[k].state;
+        i = pts[k].pos;
+        const size_t count = pts[k].stmtCount;
+        extend = k + 1 == pts.size();
+        if (extend) {
+            nextPoint = i + kPointSpacing;
+            if (py) sink = &cache->stmts;
+            else if (stmts) stmts->push_back(0);
+        } else if (stmts) {
+            if (py) stmts->assign(cache->stmts.begin(), cache->stmts.begin() + count);
+            else stmts->push_back(0);
+        }
+    } else if (stmts) {
+        stmts->push_back(0);
+    }
+    Ctx& c = st.c;
+    Mode& mode = st.mode;
+    char16_t& q = st.q;
+    bool &multi = st.multi, &tripleQ = st.tripleQ, &escapes = st.escapes;
+    // The cache's statement list keeps only what comes before its last point.
+    auto finish = [&]() {
+        if (!cache || !extend || !py) return;
+        if (stmts) *stmts = cache->stmts;
+        cache->stmts.resize(cache->points.back().stmtCount);
+    };
 
     auto sig = [&](char16_t ch, size_t pos) {
         c.lastSig = ch;
@@ -268,7 +370,7 @@ Ctx scan(const U& t, size_t end, const Lexer& lx, std::vector<size_t>* stmts) {
         c.stmtStart = next;
         c.lastSig = 0;
         c.lastSigPos = npos;
-        if (stmts) stmts->push_back(next);
+        if (sink) sink->push_back(next);
     };
     auto openString = [&](char16_t quote, size_t& i, bool triple, bool spans, bool esc) {
         mode = STR;
@@ -279,8 +381,11 @@ Ctx scan(const U& t, size_t end, const Lexer& lx, std::vector<size_t>* stmts) {
         i += triple ? 3 : 1;
     };
 
-    size_t i = 0;
     while (i < end) {
+        if (i >= nextPoint && t[i - 1] == u'\n') {
+            cache->points.push_back({i, st, py ? cache->stmts.size() : 0});
+            nextPoint = i + kPointSpacing;
+        }
         char16_t ch = t[i];
         if (mode == STR) {
             if (ch == u'\\' && escapes) {
@@ -352,6 +457,7 @@ Ctx scan(const U& t, size_t end, const Lexer& lx, std::vector<size_t>* stmts) {
             if (nl == npos) nl = t.size();
             if (nl >= end) {
                 c.where = Where::Comment;
+                finish();
                 return c;
             }
             i = nl;
@@ -424,6 +530,7 @@ Ctx scan(const U& t, size_t end, const Lexer& lx, std::vector<size_t>* stmts) {
     }
     if (mode == STR) c.where = multi ? Where::BlockString : Where::LineString;
     else if (mode == BLOCK) c.where = Where::BlockComment;
+    finish();
     return c;
 }
 
@@ -518,6 +625,12 @@ std::u16string Unit::text() const {
 }
 
 Unit detect(const std::u16string& t, const std::string& filename) {
+    return detect(t, filename, nullptr);
+}
+
+// detect, saying how much of the text it read: `read` is the position
+// before which it looked, past the text's end when it read all of it.
+static Unit detectReading(const std::u16string& t, const std::string& filename, size_t* read) {
     const Lang lang = languageFor(filename);
     const Name n = nameOf(filename);
     Unit u;
@@ -561,6 +674,7 @@ Unit detect(const std::u16string& t, const std::string& filename) {
         }
         i = e + 1;
     }
+    *read = i;
     if (tabLines > spaceLines) {
         u.tabs = true;
         u.width = 4;
@@ -582,12 +696,26 @@ Unit detect(const std::u16string& t, const std::string& filename) {
     return u;
 }
 
+Unit detect(const std::u16string& t, const std::string& filename, ScanCache* cache) {
+    size_t read = 0;
+    if (!cache) return detectReading(t, filename, &read);
+    ScanCache::Impl& m = *cache->impl();
+    if (m.haveUnit && m.unitKey == filename && (m.unitAll || m.unitLimit <= t.size()))
+        return m.unit;
+    m.unit = detectReading(t, filename, &read);
+    m.unitKey = filename;
+    m.unitLimit = read;
+    m.unitAll = read >= t.size();
+    m.haveUnit = true;
+    return m.unit;
+}
+
 Edit newline(const std::u16string& t, size_t a, size_t b, const std::string& filename) {
     return newline(t, a, b, filename, detect(t, filename));
 }
 
 Edit newline(const std::u16string& t, size_t a, size_t b, const std::string& filename,
-             const Unit& u) {
+             const Unit& u, ScanCache* cache) {
     order(t, a, b);
     const Lang lang = languageFor(filename);
     const U nl = lineEnding(t);
@@ -605,7 +733,7 @@ Edit newline(const std::u16string& t, size_t a, size_t b, const std::string& fil
     if (lang == Lang::Plain) return keep();
 
     const Lexer lx = lexerFor(filename, lang);
-    const Ctx c = scan(t, a, lx, nullptr);
+    const Ctx c = scan(t, a, lx, nullptr, prepared(cache, filename, t.size()));
     if (c.where == Where::LineString || c.where == Where::BlockString) return keep();
     if (c.where == Where::BlockComment) {
         // Continue a /* ... */ comment: " * " under the opening line's star.
@@ -705,7 +833,7 @@ Edit typed(const std::u16string& t, size_t caret, const std::string& filename) {
 }
 
 Edit typed(const std::u16string& t, size_t caret, const std::string& filename,
-           const Unit& u) {
+           const Unit& u, ScanCache* cache) {
     if (caret == 0 || caret > t.size()) return {};
     const Lang lang = languageFor(filename);
     if (lang == Lang::Plain || lang == Lang::Yaml) return {};
@@ -721,7 +849,7 @@ Edit typed(const std::u16string& t, size_t caret, const std::string& filename,
         size_t le = contentEnd(t, caret);
         for (size_t p = caret; p < le; ++p)
             if (!isWs(t[p])) return {};
-        Ctx c = scan(t, caret - 1, lx, nullptr);
+        Ctx c = scan(t, caret - 1, lx, nullptr, prepared(cache, filename, t.size()));
         if (c.where != Where::Code || c.stack.empty()) return {};
         const Bracket& B = c.stack.back();
         if (B.ch != openerOf(ch)) return {};
@@ -735,7 +863,7 @@ Edit typed(const std::u16string& t, size_t caret, const std::string& filename,
 
     if (lang == Lang::Python && ch == u':') {
         std::vector<size_t> stmts;
-        Ctx c = scan(t, caret, lx, &stmts);
+        Ctx c = scan(t, caret, lx, &stmts, prepared(cache, filename, t.size()));
         if (c.where != Where::Code || !c.stack.empty() || c.lastSig != u':' ||
             c.lastSigPos != caret - 1)
             return {};

@@ -30,9 +30,36 @@
 // moved text loses its leading spaces.
 #pragma once
 #include <cstddef>
+#include <memory>
 #include <string>
 
 namespace AutoIndent {
+
+// Return and the typed closers read the code from the top of the file to
+// the caret, which at line 90,000 of a 3 MB Python file is 5 ms a key.
+// A ScanCache keeps what that reading knew at line starts a few thousand
+// characters apart, so the next reading starts from the last one before
+// the caret, and keeps detect's answer. One cache serves one text: the
+// editor tells it about every change with `edited` (the position of the
+// first character changed, in the text before or after the change, which
+// is the same), and the results are exactly those without a cache.
+class ScanCache {
+public:
+    ScanCache();
+    ~ScanCache();
+    ScanCache(const ScanCache&) = delete;
+    ScanCache& operator=(const ScanCache&) = delete;
+    // The text changed at `pos` or after it.
+    void edited(size_t pos);
+    // The text was replaced, or nothing is known about it.
+    void clear();
+
+    struct Impl;
+    Impl* impl() { return impl_.get(); }
+
+private:
+    std::unique_ptr<Impl> impl_;
+};
 
 enum class Lang { Plain, Python, CLike, Yaml, Generic };
 
@@ -52,6 +79,9 @@ struct Unit {
 // one line's indentation and the next deeper one. Defaults when the file has
 // none: 4 spaces (2 for YAML), tabs for Go and Makefiles.
 Unit detect(const std::u16string& text, const std::string& filename);
+// The same, kept in `cache` (nullptr for none) until an edit within the
+// lines it read.
+Unit detect(const std::u16string& text, const std::string& filename, ScanCache* cache);
 
 // One replacement: [replaceStart, replaceStart + replaceLength) becomes
 // `replacement`, and the selection moves to [selStart, selEnd) in the new
@@ -67,7 +97,7 @@ struct Edit {
 Edit newline(const std::u16string& text, size_t selStart, size_t selEnd,
              const std::string& filename);
 Edit newline(const std::u16string& text, size_t selStart, size_t selEnd,
-             const std::string& filename, const Unit& unit);
+             const std::string& filename, const Unit& unit, ScanCache* cache = nullptr);
 
 // After a character was typed, with the caret just after it: a closer
 // ( ) ] } ) typed on an otherwise blank line moves to its opener's
@@ -76,7 +106,7 @@ Edit newline(const std::u16string& text, size_t selStart, size_t selEnd,
 // if/for/while/try/case it belongs to, when it sits deeper than that.
 Edit typed(const std::u16string& text, size_t caret, const std::string& filename);
 Edit typed(const std::u16string& text, size_t caret, const std::string& filename,
-           const Unit& unit);
+           const Unit& unit, ScanCache* cache = nullptr);
 
 // Tab: with a selection over more than one line, indent those lines one
 // level; otherwise, when the file indents with spaces, insert spaces to the

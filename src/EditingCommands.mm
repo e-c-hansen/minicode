@@ -6,7 +6,47 @@
 #include "MarkdownTasks.h"
 #include <string>
 
+// AutoIndent's scan cache for one text storage, told about every change to
+// its characters (all of them reach NSTextStorageDidProcessEditing: typing,
+// undo, a formatter, a tab switch replacing the whole text).
+@interface MCIndentCache : NSObject {
+@public
+    AutoIndent::ScanCache _cache;
+}
+@end
+
+@implementation MCIndentCache
+- (instancetype)initWithStorage:(NSTextStorage *)storage {
+    if ((self = [super init]))
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(storageEdited:)
+                                                     name:NSTextStorageDidProcessEditingNotification
+                                                   object:storage];
+    return self;
+}
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+- (void)storageEdited:(NSNotification *)note {
+    NSTextStorage *storage = note.object;
+    if (storage.editedMask & NSTextStorageEditedCharacters) _cache.edited(storage.editedRange.location);
+}
+@end
+
 namespace {
+
+const void *const kIndentCacheKey = &kIndentCacheKey;
+
+AutoIndent::ScanCache *CacheFor(NSTextView *tv) {
+    NSTextStorage *storage = tv.textStorage;
+    if (!storage) return nullptr;
+    MCIndentCache *c = objc_getAssociatedObject(storage, kIndentCacheKey);
+    if (!c) {
+        c = [[MCIndentCache alloc] initWithStorage:storage];
+        objc_setAssociatedObject(storage, kIndentCacheKey, c, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    return &c->_cache;
+}
 
 std::u16string U16(NSString *s) {
     std::u16string u(s.length, u'\0');
@@ -80,24 +120,34 @@ BOOL MCIndentCommand(NSTextView *tv, SEL command, NSString *path, BOOL markdown)
                 return YES;
             }
         }
-        AutoIndent::Edit e = AutoIndent::newline(text, a, b, name);
+        AutoIndent::ScanCache *cache = CacheFor(tv);
+        AutoIndent::Edit e =
+            AutoIndent::newline(text, a, b, name, AutoIndent::detect(text, name, cache), cache);
         if (!e.changed) return NO;
         Apply(tv, e.replaceStart, e.replaceLength, e.replacement, e.selStart, e.selEnd, @"Typing");
         return YES;
     }
     AutoIndent::Edit e;
     NSString *action = @"Typing";
+    // The file's indentation unit, kept until an edit within the lines
+    // detect reads.
+    auto unit = [&](const std::u16string &text) {
+        return AutoIndent::detect(text, name, CacheFor(tv));
+    };
     if (command == @selector(insertTab:)) {
-        e = AutoIndent::tab(U16(tv.string), a, b, name);
+        const std::u16string text = U16(tv.string);
+        e = AutoIndent::tab(text, a, b, name, unit(text));
         if (e.changed && e.replacement.find(u'\n') != std::u16string::npos) action = @"Indent";
     } else if (command == @selector(insertBacktab:)) {
-        e = AutoIndent::backtab(U16(tv.string), a, b, name);
+        const std::u16string text = U16(tv.string);
+        e = AutoIndent::backtab(text, a, b, name, unit(text));
         action = @"Outdent";
         if (!e.changed) return YES;   // Shift+Tab never leaves the editor
     } else if (command == @selector(deleteBackward:)) {
         // Only ever in leading spaces: look before copying the whole text.
         if (sel.length != 0 || a == 0 || [tv.string characterAtIndex:a - 1] != ' ') return NO;
-        e = AutoIndent::backspace(U16(tv.string), a, b, name);
+        const std::u16string text = U16(tv.string);
+        e = AutoIndent::backspace(text, a, b, name, unit(text));
     } else {
         return NO;
     }
@@ -125,7 +175,27 @@ void MCIndentDidChange(NSTextView *tv, NSString *path) {
     if (gApplying || sel.length != 0 || sel.location != caret || caret > tv.string.length ||
         tv.hasMarkedText)
         return;
-    AutoIndent::Edit e = AutoIndent::typed(U16(tv.string), caret, FileName(path));
+    // Only a closer first on its line, or a colon on a line starting with
+    // one of Python's dedenting words, can move it: look at the line before
+    // copying the whole text.
+    NSString *s = tv.string;
+    const unichar ch = [s characterAtIndex:caret - 1];
+    const NSUInteger ls = [s lineRangeForRange:NSMakeRange(caret - 1, 0)].location;
+    NSString *lead = [[s substringWithRange:NSMakeRange(ls, caret - 1 - ls)]
+        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    if (ch == ':') {
+        BOOL dedents = NO;
+        for (NSString *w in @[ @"else", @"elif", @"except", @"finally", @"case" ])
+            dedents = dedents || [lead hasPrefix:w];
+        if (!dedents) return;
+    } else if (lead.length) {
+        return;
+    }
+    const std::string name = FileName(path);
+    const std::u16string text = U16(s);
+    AutoIndent::ScanCache *cache = CacheFor(tv);
+    AutoIndent::Edit e =
+        AutoIndent::typed(text, caret, name, AutoIndent::detect(text, name, cache), cache);
     if (!e.changed) return;
     Apply(tv, e.replaceStart, e.replaceLength, e.replacement, e.selStart, e.selEnd, @"Indent");
 }
