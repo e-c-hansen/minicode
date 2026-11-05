@@ -838,6 +838,20 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
         return t.sourceText;
     };
     self.lsp.showNote = ^(NSString *message) { [weakSelf showStatusNote:message]; };
+    // The files open in tabs.
+    self.lsp.openPaths = ^NSArray<NSString *> *{
+        EditorController *s = weakSelf;
+        NSMutableArray<NSString *> *paths = [NSMutableArray array];
+        for (MCTab *t in s ? s->_tabs : @[]) if (t.currentPath) [paths addObject:t.currentPath];
+        return paths;
+    };
+    // A tab an edit opened, then could not change (it is unedited, so
+    // nothing is asked).
+    self.lsp.closeFile = ^(NSString *p) {
+        EditorController *s = weakSelf;
+        MCTab *t = [s tabForPath:p];
+        if (t && !t.dirty) [s closeTab:t prompt:NO];
+    };
 
     // Right side hosts the editor plus (lazily) a terminal dock and browser.
     self.rightArea = [[PanelHost alloc] initWithFrame:frame];

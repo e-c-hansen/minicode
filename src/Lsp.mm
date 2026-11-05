@@ -3129,8 +3129,8 @@ static NSString *ErrorText(const Json &error) {
     return m.empty() ? @"The language server refused" : NS(m);
 }
 
-// The text the server's positions in a file refer to: the editor's for the
-// file on show, a tab's buffer for another open file, else the disk's.
+// The text of a file as the editor has it: the text view's for the file on
+// show, a tab's buffer for another open file, else the disk's.
 - (NSString *)textOfPath:(NSString *)path uri:(const std::string &)uri {
     if ([self uri:uri isSameFileAs:_uri]) return _tv.string;
     NSString *buffer = self.bufferText ? self.bufferText(path) : nil;
@@ -3138,12 +3138,53 @@ static NSString *ErrorText(const Json &error) {
     return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
 }
 
+// The text a server's positions in a file refer to: what it was last sent
+// for the file when a server has it open (every tab's file is), else the
+// disk's.
+- (NSString *)serverTextOfPath:(NSString *)path uri:(const std::string &)uri {
+    for (MCLspEntry *e in _entries.allValues) {
+        const std::string *t = e.server ? e.server.client.textFor(uri) : nullptr;
+        if (t) return NS(*t);
+    }
+    return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+}
+
+- (BOOL)showsPath:(NSString *)path {
+    return _path && [RealPath(path) isEqualToString:RealPath(_path)];
+}
+
+// Show a file an edit is about to change in the editor, opening its tab if
+// need be (and noting a tab it had to make in `opened`). NO, with *why, when
+// it does not show as text to edit, holding `text`.
+- (BOOL)showEditFile:(NSString *)path text:(NSString *)text
+              opened:(NSMutableArray<NSString *> *)opened failure:(NSString **)why {
+    if (![self showsPath:path]) {
+        BOOL hadTab = NO;
+        for (NSString *p in self.openPaths ? self.openPaths() : @[])
+            if ([RealPath(p) isEqualToString:RealPath(path)]) hadTab = YES;
+        if (!self.openFile(path)) {
+            *why = [NSString stringWithFormat:@"Could not open %@", path.lastPathComponent];
+            return NO;
+        }
+        if (!hadTab && ![opened containsObject:path]) [opened addObject:path];
+    }
+    if (!_tv.editable || ![_tv.string isEqualToString:text]) {
+        *why = [NSString stringWithFormat:@"%@ is not open as text to edit",
+                                          path.lastPathComponent];
+        return NO;
+    }
+    return YES;
+}
+
 // Apply a WorkspaceEdit (rename, a quick fix, workspace/applyEdit). Each
 // file's edits go into its buffer as one undo step, through the text view,
 // so highlighting, the dirty mark and didChange follow as for typing. A file
 // not open gets a tab; nothing is saved, so the user reviews and saves.
-// Every file is read first, so an edit that cannot be made changes nothing.
-// Returns how many files changed, or -1 with *failure saying why.
+// All or nothing: every file is read and checked first, then opened in its
+// tab and checked again, and only then edited; a file that cannot be edited
+// after others were puts those back (their undo step undone), and tabs the
+// edit opened close again. Returns how many files changed, or -1 with
+// *failure saying why.
 - (NSInteger)applyWorkspaceEdit:(const Lsp::WorkspaceEdit &)we
                      actionName:(NSString *)name
                         failure:(NSString **)failure {
@@ -3154,6 +3195,7 @@ static NSString *ErrorText(const Json &error) {
     if (we.files.empty()) return 0;
     if (!self.openFile) { *failure = @"No window to edit in"; return -1; }
 
+    // 1. Read and check every file.
     NSMutableArray<NSString *> *paths = [NSMutableArray array], *texts = [NSMutableArray array];
     for (const Lsp::FileEdit &f : we.files) {
         NSString *path = [self treePathForURI:f.uri];
@@ -3162,33 +3204,30 @@ static NSString *ErrorText(const Json &error) {
                                                   f.uri.c_str()];
             return -1;
         }
-        BOOL current = [self uri:f.uri isSameFileAs:_uri];
         NSString *text = [self textOfPath:path uri:f.uri];
         if (!text) {
             *failure = [NSString stringWithFormat:@"Could not read %@", path.lastPathComponent];
             return -1;
         }
-        if (!current) {
-            // The server has only the file on show open, so its positions in
-            // another file are in the text on disk. A tab with unsaved
-            // changes is edited only when every range holds the same text in
-            // both; otherwise the edit would land in the wrong places.
-            NSString *disk = [NSString stringWithContentsOfFile:path
-                                                       encoding:NSUTF8StringEncoding error:nil];
-            if (disk && ![disk isEqualToString:text]) {
-                std::u16string a = U16Of(text), b = U16Of(disk);
-                for (const Lsp::TextEdit &e : f.edits) {
-                    size_t a0 = Lsp::offsetForPosition(a, e.range.start);
-                    size_t a1 = Lsp::offsetForPosition(a, e.range.end);
-                    size_t b0 = Lsp::offsetForPosition(b, e.range.start);
-                    size_t b1 = Lsp::offsetForPosition(b, e.range.end);
-                    if (a.compare(a0, a1 - a0, b, b0, b1 - b0) != 0 ||
-                        Lsp::positionForOffset(a, a0).line != e.range.start.line) {
-                        *failure = [NSString stringWithFormat:
-                            @"%@ has unsaved changes the language server has not seen; "
-                             "save it and try again", path.lastPathComponent];
-                        return -1;
-                    }
+        // The server's positions are in the text it has: a tab's text as
+        // last sent, or the disk's for a file no tab has open. Text that
+        // differs from that (typed since, or a tab the server was never
+        // sent) is edited only when every range holds the same text in
+        // both; otherwise the edit would land in the wrong places.
+        NSString *base = [self serverTextOfPath:path uri:f.uri];
+        if (base && ![base isEqualToString:text]) {
+            std::u16string a = U16Of(text), b = U16Of(base);
+            for (const Lsp::TextEdit &e : f.edits) {
+                size_t a0 = Lsp::offsetForPosition(a, e.range.start);
+                size_t a1 = Lsp::offsetForPosition(a, e.range.end);
+                size_t b0 = Lsp::offsetForPosition(b, e.range.start);
+                size_t b1 = Lsp::offsetForPosition(b, e.range.end);
+                if (a.compare(a0, a1 - a0, b, b0, b1 - b0) != 0 ||
+                    Lsp::positionForOffset(a, a0).line != e.range.start.line) {
+                    *failure = [NSString stringWithFormat:
+                        @"%@ has changes the language server has not seen; "
+                         "save it and try again", path.lastPathComponent];
+                    return -1;
                 }
             }
         }
@@ -3197,49 +3236,88 @@ static NSString *ErrorText(const Json &error) {
     }
 
     NSString *home = _path;
+    NSMutableArray<NSString *> *opened = [NSMutableArray array];   // tabs this edit made
+    NSMutableArray<NSNumber *> *applied = [NSMutableArray array];
     NSInteger changed = 0;
+    NSString *why = nil;
     _applyingEdit = YES;
-    for (NSUInteger i = 0; i < paths.count; i++) {
-        NSString *path = paths[i];
-        BOOL current = _path && [RealPath(path) isEqualToString:RealPath(_path)];
-        if (!current && !self.openFile(path)) {
-            *failure = [NSString stringWithFormat:@"Could not open %@", path.lastPathComponent];
-            break;
-        }
-        if (!_tv.editable || ![_tv.string isEqualToString:texts[i]]) {
-            *failure = [NSString stringWithFormat:@"%@ is not open as text to edit",
-                                                  path.lastPathComponent];
-            break;
-        }
+
+    // 2. Open every file in its tab, before anything is edited.
+    BOOL ok = YES;
+    for (NSUInteger i = 0; i < paths.count && ok; i++)
+        ok = [self showEditFile:paths[i] text:texts[i] opened:opened failure:&why];
+
+    // 3. Edit them, each in one multi-range replacement: one undo step, and
+    // the text view takes all of it or none.
+    for (NSUInteger i = 0; i < paths.count && ok; i++) {
+        ok = [self showEditFile:paths[i] text:texts[i] opened:opened failure:&why];
+        if (!ok) break;
         std::vector<Lsp::OffsetEdit> edits = Lsp::offsetEdits(U16Of(_tv.string), we.files[i].edits);
+        NSMutableArray<NSValue *> *ranges = [NSMutableArray array];
+        NSMutableArray<NSString *> *strings = [NSMutableArray array];
+        for (auto e = edits.rbegin(); e != edits.rend(); ++e) {   // ascending
+            [ranges addObject:[NSValue valueWithRange:NSMakeRange(e->start, e->length)]];
+            [strings addObject:[NSString stringWithCharacters:(const unichar *)e->text.data()
+                                                       length:e->text.size()]];
+        }
         NSRange sel = _tv.selectedRange;
         NSUndoManager *um = _tv.undoManager;
         [_tv breakUndoCoalescing];
         [um beginUndoGrouping];
-        for (const Lsp::OffsetEdit &e : edits) {   // last first
-            NSRange r = NSMakeRange(e.start, e.length);
-            NSString *text = [NSString stringWithCharacters:(const unichar *)e.text.data()
-                                                     length:e.text.size()];
-            if (![_tv shouldChangeTextInRange:r replacementString:text]) continue;
-            [_tv.textStorage replaceCharactersInRange:r withString:text];
+        BOOL may = [_tv shouldChangeTextInRanges:ranges replacementStrings:strings];
+        if (may) {
+            NSTextStorage *ts = _tv.textStorage;
+            [ts beginEditing];
+            for (NSInteger k = (NSInteger)ranges.count - 1; k >= 0; k--)
+                [ts replaceCharactersInRange:ranges[(NSUInteger)k].rangeValue
+                                  withString:strings[(NSUInteger)k]];
+            [ts endEditing];
             [_tv didChangeText];
             // The caret keeps its place in the text around it.
-            NSUInteger at = sel.location;
-            if (at >= NSMaxRange(r)) at = at - r.length + text.length;
-            else if (at > r.location) at = r.location + MIN(at - r.location, text.length);
-            sel = NSMakeRange(at, 0);
+            for (const Lsp::OffsetEdit &e : edits) {   // last first
+                NSUInteger at = sel.location, end = e.start + e.length;
+                if (at >= end) at = at - e.length + e.text.size();
+                else if (at > e.start) at = e.start + MIN(at - e.start, e.text.size());
+                sel = NSMakeRange(at, 0);
+            }
         }
         [um setActionName:name ?: @"Edit"];
         [um endUndoGrouping];
         [_tv breakUndoCoalescing];
+        if (!may) {
+            why = [NSString stringWithFormat:@"%@ could not be edited",
+                                             paths[i].lastPathComponent];
+            ok = NO;
+            break;
+        }
         if (NSMaxRange(sel) <= _tv.string.length) [_tv setSelectedRange:sel];
+        [applied addObject:@(i)];
         changed++;
     }
+
+    // 4. A failure part way: the files already edited go back as they were.
+    if (!ok) {
+        for (NSNumber *n in applied.reverseObjectEnumerator) {
+            NSUInteger i = n.unsignedIntegerValue;
+            if (![self showsPath:paths[i]] && !self.openFile(paths[i])) continue;
+            // Exactly the group this edit made, even inside the event's own
+            // group, which is still open while this runs.
+            NSUndoManager *um = _tv.undoManager;
+            if (um.canUndo) [um undoNestedGroup];
+            if (![_tv.string isEqualToString:texts[i]])
+                NSLog(@"MiniCode: could not put %@ back after a failed edit", paths[i]);
+        }
+        changed = 0;
+    }
     // Back to the file the edit was asked from.
-    if (home && !(_path && [RealPath(home) isEqualToString:RealPath(_path)])) self.openFile(home);
+    if (home && ![self showsPath:home]) self.openFile(home);
+    if (!ok && self.closeFile)
+        for (NSString *p in opened)
+            if (![self showsPath:p]) self.closeFile(p);
     _applyingEdit = NO;
     [self flushChanges];
-    return *failure ? -1 : changed;
+    if (!ok) *failure = why ?: @"The edit could not be made";
+    return ok ? changed : -1;
 }
 
 // ---- rename

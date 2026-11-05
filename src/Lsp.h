@@ -126,6 +126,10 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 @property(nonatomic, copy) NSString *(^bufferText)(NSString *path);
 // A message for the status bar ("Renamed 4 occurrences in 2 files").
 @property(nonatomic, copy) void (^showNote)(NSString *message);
+// The paths of every file open in a tab of the window, in any order.
+@property(nonatomic, copy) NSArray<NSString *> *(^openPaths)(void);
+// Close the tab of a file that an edit opened and then could not change.
+@property(nonatomic, copy) void (^closeFile)(NSString *path);
 
 // The file now in the text view, or nil when the view shows no editable
 // source (a message, a binary file, a preview). Closes the previous one.
