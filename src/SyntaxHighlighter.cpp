@@ -9,6 +9,7 @@
 #include "SyntaxHighlighter.h"
 #include <algorithm>
 #include <cctype>
+#include <mutex>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -25,6 +26,17 @@ struct SyntaxGrammar {
     bool tex = false;                        // TeX/LaTeX: lexed by lexTexLine
     bool bibEntries = false;                 // TeX grammar, plus @article etc. (.bib)
     bool texAtLetter = false;                // .sty/.cls: '@' is always a letter
+    bool jsCode = false;                     // JavaScript/TypeScript: regex literals and
+                                             // template literals (lexJsLine)
+    bool cppRaw = false;                     // C++ raw strings, R"d( ... )d"
+    bool rust = false;                       // Rust: r#"..."#, "..." over lines, 'a lifetimes
+    bool goRaw = false;                      // Go: `raw strings`, over lines
+    std::string tripleChars;                 // a tripled quote opens a string over lines
+    bool tripleEscapes = false;              // ... in which a backslash escapes
+    bool csStrings = false;                  // C#: @"verbatim" and """raw""" strings
+    bool digitQuote = false;                 // 1'000'000 is one number (C++14, C23)
+    bool numUnderscore = false;              // 1_000_000 is one number
+    bool longOpeners[128] = {};              // characters lexLongString may start at
     std::unordered_set<std::string> keywords;
     std::unordered_set<std::string> types;
 };
@@ -129,12 +141,17 @@ SyntaxGrammar makeGrammar(const std::string& ext) {
         break;
     case Family::Python:
         d.lineComments = {"#"}; d.stringDelims = "\"'"; d.tripleQuotes = true;
-        d.decorators = true; d.fStrings = true;
+        d.decorators = true; d.fStrings = true; d.numUnderscore = true;
         d.keywords = kPy; d.types = kPyTypes;
         break;
     case Family::Js:
         d.lineComments = {"//"}; d.blockStart = "/*"; d.blockEnd = "*/";
         d.stringDelims = "\"'`"; d.keywords = kJs; d.types = kCTypes;
+        d.numUnderscore = true;
+        // The JSON family shares the grammar but has no regexes or templates.
+        d.jsCode = ext == "js" || ext == "mjs" || ext == "cjs" || ext == "jsx" ||
+                   ext == "ts" || ext == "mts" || ext == "cts" || ext == "tsx" ||
+                   ext == "as";
         break;
     case Family::Css:   // plain CSS has no line comments; a URL would end in one
         if (ext != "css") d.lineComments = {"//"};
@@ -157,6 +174,29 @@ SyntaxGrammar makeGrammar(const std::string& ext) {
         d.lineComments = {"//"}; d.blockStart = "/*"; d.blockEnd = "*/";
         d.stringDelims = "\"'"; d.preprocHash = true;
         d.keywords = kCLike; d.types = kCTypes;
+        if (it == families().end()) break;   // an unknown extension: plain C
+        d.numUnderscore = true;
+        d.rust = ext == "rs";
+        d.digitQuote = !d.rust;
+        d.goRaw = ext == "go";
+        d.csStrings = ext == "cs";
+        d.cppRaw = ext == "cpp" || ext == "cc" || ext == "cxx" || ext == "c++" ||
+                   ext == "h" || ext == "hpp" || ext == "hxx" || ext == "hh" ||
+                   ext == "h++" || ext == "inl" || ext == "ipp" || ext == "tpp" ||
+                   ext == "cu" || ext == "cuh" || ext == "mm" || ext == "ino";
+        if (ext == "java" || ext == "swift" || ext == "dart" || ext == "groovy" ||
+            ext == "gradle") {
+            d.tripleChars = ext == "java" || ext == "swift" ? "\"" : "\"'";
+            d.tripleEscapes = true;
+        } else if (ext == "kt" || ext == "kts" || ext == "scala" || ext == "sc") {
+            d.tripleChars = "\"";   // raw: a backslash is just a backslash
+        }
+        auto opens = [&d](const char* cs) { for (; *cs; ++cs) d.longOpeners[(int)*cs] = true; };
+        if (d.cppRaw) opens("RuUL");
+        if (d.rust) opens("rbc\"'");
+        if (d.goRaw) opens("`");
+        if (d.csStrings) opens("@\"");
+        opens(d.tripleChars.c_str());
         break;
     }
     return d;
@@ -620,11 +660,22 @@ bool startsNumber(const Ch* s, size_t n, size_t i) {
     return isDigit(s[i]) || (s[i] == Ch('.') && i + 1 < n && isDigit(s[i + 1]));
 }
 
+// A number: letters, digits and dots (0x1F, 3.14f, 10n), and digit
+// separators where the language has them, an '_' or '\'' between two of
+// those (1_000, 1'000'000, Verilog's 4'b1010), so the quote never opens a
+// character literal.
 template <class Ch, class Push>
-size_t lexNumber(const Ch* s, size_t n, size_t i, Push& push) {
+size_t lexNumber(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i, Push& push) {
     size_t st = i;
-    while (i < n && (isAlnum(s[i]) || s[i] == Ch('.') ||
-                     s[i] == Ch('x') || s[i] == Ch('X'))) i++;
+    while (i < n) {
+        if (isAlnum(s[i]) || s[i] == Ch('.')) { i++; continue; }
+        if (((d.numUnderscore && s[i] == Ch('_')) || (d.digitQuote && s[i] == Ch('\''))) &&
+            i + 1 < n && isAlnum(s[i + 1])) {
+            i += 2;
+            continue;
+        }
+        break;
+    }
     push(st, i - st, TokenStyle::Number);
     return i;
 }
@@ -716,7 +767,7 @@ size_t lexField(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i, Ch q,
             i = lexStringAt(d, s, n, i, depth + 1, word, push, &ignored);
             continue;
         }
-        if (startsNumber(s, n, i)) { i = lexNumber(s, n, i, push); continue; }
+        if (startsNumber(s, n, i)) { i = lexNumber(d, s, n, i, push); continue; }
         if (isIdentStart(c)) { i = lexIdent(d, s, n, i, word, push); continue; }
         i++;
     }
@@ -791,6 +842,402 @@ size_t lexStringAt(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i, int 
     return i;
 }
 
+// ------------------------------------------------------------ state texts
+//
+// The process-wide table behind the RawString and Template states (see
+// LexState in SyntaxHighlighter.h): the same text always gets the same id.
+// Ids start at 1; 0 means the table is full.
+struct StateTexts {
+    std::mutex lock;
+    std::unordered_map<std::string, char16_t> ids;
+    std::vector<std::string> texts{std::string()};
+};
+StateTexts& stateTexts() {
+    static StateTexts* t = new StateTexts;   // never destroyed, so usable at exit too
+    return *t;
+}
+const size_t kMaxStateTexts = 0x7FFF;   // ids fit in 15 bits (RawString uses the 16th)
+
+char16_t stateTextId(const std::string& text) {
+    StateTexts& t = stateTexts();
+    std::lock_guard<std::mutex> guard(t.lock);
+    auto it = t.ids.find(text);
+    if (it != t.ids.end()) return it->second;
+    if (t.texts.size() > kMaxStateTexts) return 0;
+    char16_t id = (char16_t)t.texts.size();
+    t.texts.push_back(text);
+    t.ids.emplace(text, id);
+    return id;
+}
+
+std::string stateText(char16_t id) {
+    StateTexts& t = stateTexts();
+    std::lock_guard<std::mutex> guard(t.lock);
+    return id < t.texts.size() ? t.texts[id] : std::string();
+}
+
+// ------------------------------------------------------------ long strings
+//
+// Strings whose end is a fixed text and which may run over lines, so that
+// text is all the next line needs to know (lexLongString):
+//
+//   C++     R"d( ... )d", also u8R, uR, UR and LR: quotes and backslashes in
+//           the body are just text. d is at most 16 characters, none of them
+//           a space, parenthesis or backslash; otherwise it is no raw string.
+//   Rust    r"...", r#"..."# with any number of #, br and cr too; and plain
+//           "...", which Rust lets run over lines. A ' opens a character
+//           literal only when one closes it right after ('x', '\n',
+//           '\u{1F600}', 'é'); otherwise it is a lifetime or loop label
+//           ('a, 'static), Keyword, and never a string to the line's end.
+//   Go      `...`, raw, over lines.
+//   Java, Swift, Dart, Groovy   """...""" (Dart and Groovy ''' too), where
+//           a backslash escapes; Kotlin and Scala """...""", raw.
+//   C#      @"..." verbatim (a doubled "" inside reads as two strings side
+//           by side, which looks the same), and """...""" raw strings,
+//           closed by as many quotes as opened them.
+//
+// One still open at the line's end carries on as a RawString state whose
+// text is the closing text, with kRawEscapes when backslashes escape.
+const char16_t kRawEscapes = 0x8000;
+
+template <class Ch>
+size_t scanRaw(const Ch* s, size_t n, size_t i, const std::string& close,
+               bool escapes, bool* closed) {
+    while (i < n) {
+        if (escapes && s[i] == Ch('\\') && i + 1 < n) { i += 2; continue; }
+        if (matchesAt(s, n, i, close)) { *closed = true; return i + close.size(); }
+        i++;
+    }
+    *closed = false;
+    return n;
+}
+
+template <class Ch> inline bool isRawDelimChar(Ch c) {
+    unsigned u = code(c);
+    return u > 0x20 && u < 0x7F && u != '(' && u != ')' && u != '\\';
+}
+
+// A unit that continues a character: a UTF-8 byte 10xxxxxx, or a UTF-16 low
+// surrogate. Skipping them reads one whole character in either encoding.
+template <class Ch> inline bool isContinuation(Ch c) {
+    unsigned u = code(c);
+    return sizeof(Ch) == 1 ? (u & 0xC0) == 0x80 : (u >= 0xDC00 && u < 0xE000);
+}
+
+// A long string, or a Rust character literal or lifetime, at s[i]: pushes
+// its token and returns its end, or returns 0 when none starts there.
+// *open is the state to end the line in (Normal unless the string is open).
+template <class Ch, class Push>
+size_t lexLongString(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i,
+                     Push& push, LexState* open) {
+    *open = LexState{};
+    const Ch c = s[i];
+    const bool wordStart = i == 0 || !isIdentChar(s[i - 1]);
+    std::string close;
+    bool escapes = false;
+    size_t body = 0;   // where the string's text starts; 0 = no string here
+    if (d.cppRaw && wordStart &&
+        (c == Ch('R') || c == Ch('u') || c == Ch('U') || c == Ch('L'))) {
+        size_t j = i;
+        if (c == Ch('u') && j + 1 < n && s[j + 1] == Ch('8')) j += 2;
+        else if (c != Ch('R')) j += 1;
+        if (j + 1 < n && s[j] == Ch('R') && s[j + 1] == Ch('"')) {
+            size_t k = j + 2;
+            while (k < n && k - (j + 2) < 16 && isRawDelimChar(s[k])) k++;
+            if (k < n && s[k] == Ch('(')) {
+                close = ")";
+                for (size_t m = j + 2; m < k; ++m) close += (char)code(s[m]);
+                close += '"';
+                body = k + 1;
+            }
+        }
+    }
+    if (d.rust) {
+        size_t j = i;
+        if (wordStart && (c == Ch('b') || c == Ch('c')) && j + 1 < n && s[j + 1] == Ch('r'))
+            j++;
+        if (wordStart && s[j] == Ch('r')) {
+            size_t k = j + 1;
+            while (k < n && s[k] == Ch('#') && k - j <= 255) k++;
+            if (k < n && s[k] == Ch('"')) {
+                close = "\"" + std::string(k - j - 1, '#');
+                body = k + 1;
+            }
+        } else if (c == Ch('"')) {
+            close = "\"";
+            escapes = true;
+            body = i + 1;
+        } else if (c == Ch('\'')) {
+            size_t k = i + 1;
+            if (k < n && s[k] == Ch('\\')) {
+                k += 2;   // the backslash and the character it escapes
+                while (k < n && s[k] != Ch('\'') && s[k] != Ch('\n') && k - i < 14) k++;
+            } else if (k < n && s[k] != Ch('\'') && s[k] != Ch('\n')) {
+                k++;
+                while (k < n && isContinuation(s[k])) k++;
+            }
+            if (k < n && k > i + 1 && s[k] == Ch('\'')) {
+                push(i, k + 1 - i, TokenStyle::String);
+                return k + 1;
+            }
+            if (i + 1 < n && isIdentStart(s[i + 1])) {
+                size_t e = i + 1;
+                while (e < n && isIdentChar(s[e])) e++;
+                push(i, e - i, TokenStyle::Keyword);
+                return e;
+            }
+            return i + 1;   // a stray quote
+        }
+    }
+    if (!body && d.goRaw && c == Ch('`')) {
+        close = "`";
+        body = i + 1;
+    }
+    if (!body && d.csStrings) {
+        if (c == Ch('@') && i + 1 < n && s[i + 1] == Ch('"')) {
+            close = "\"";
+            body = i + 2;
+        } else if (c == Ch('@') && i + 2 < n && s[i + 1] == Ch('$') && s[i + 2] == Ch('"')) {
+            close = "\"";
+            body = i + 3;
+        } else if (c == Ch('"') && i + 2 < n && s[i + 1] == c && s[i + 2] == c) {
+            size_t k = i;
+            while (k < n && s[k] == c && k - i < 32) k++;
+            close.assign(k - i, '"');
+            body = k;
+        }
+    }
+    if (!body && !d.tripleChars.empty() && code(c) < 128 && code(c) != 0 &&
+        d.tripleChars.find((char)code(c)) != std::string::npos &&
+        i + 2 < n && s[i + 1] == c && s[i + 2] == c) {
+        close.assign(3, (char)code(c));
+        escapes = d.tripleEscapes;
+        body = i + 3;
+    }
+    if (!body) return 0;
+    bool closed;
+    size_t e = scanRaw(s, n, body, close, escapes, &closed);
+    push(i, e - i, TokenStyle::String);
+    if (!closed) {
+        char16_t id = stateTextId(close);
+        if (id) *open = LexState{LexState::RawString, (char16_t)(id | (escapes ? kRawEscapes : 0))};
+    }
+    return e;
+}
+
+// ------------------------------------------------------------ JavaScript
+//
+// JavaScript and TypeScript have their own line lexer (lexJsLine), for two
+// things the shared one cannot do:
+//
+//   /regex/flags  String, as VS Code colors them. A '/' starts one only
+//                 where an expression can start: at the line's start, after
+//                 an operator or ( , = : [ ! & | ? { ; =>, and after return,
+//                 typeof, case and the other words in kJsBeforeRegex; never
+//                 after a name, a number, a string, ) ] or } (the last also
+//                 keeps JSX's {...props} /> out), nor after < (JSX's </a>).
+//                 It must close on its line (after one '/' that does not,
+//                 the line looks no more). Inside, a backslash escapes and
+//                 a '/' in [...] does not close it. "//" and "/*" are always
+//                 comments, as in JavaScript.
+//   `template`    String, over lines, with ${...} fields whose ${ and } are
+//                 Keyword and whose inside is code: names, nested templates,
+//                 strings with braces in them, regexes, objects in braces.
+//
+// Templates and fields nest, so what a line ends inside is a stack: 'T' for
+// a template, and for a field a character counting the braces open inside
+// it (1 + that count). A line that ends with any of it open ends in a
+// Template state whose text is that stack. Inside a field, only templates
+// and braces are carried that way; a block comment or backslash-continued
+// string open there at the line's end ends with the line.
+const std::unordered_set<std::string> kJsBeforeRegex = {
+    "return","typeof","instanceof","case","do","else","in","of","new","delete",
+    "void","throw","yield","await"};
+const size_t kMaxTemplateStack = 16;   // deeper templates and fields are plain text
+const char kFieldMaxBraces = 80;       // a field's count stops here, short of 'T'
+
+// A regex literal at s[i] ('/'): its end, flags included, or 0 when it does
+// not close on this line.
+template <class Ch>
+size_t scanRegex(const Ch* s, size_t n, size_t i) {
+    bool cls = false;
+    for (size_t j = i + 1; j < n && s[j] != Ch('\n'); ++j) {
+        Ch c = s[j];
+        if (c == Ch('\\')) {
+            if (j + 1 >= n || s[j + 1] == Ch('\n')) return 0;
+            ++j;
+        } else if (cls) {
+            if (c == Ch(']')) cls = false;
+        } else if (c == Ch('[')) {
+            cls = true;
+        } else if (c == Ch('/')) {
+            ++j;
+            while (j < n && isIdentChar(s[j])) ++j;
+            return j;
+        }
+    }
+    return 0;
+}
+
+template <class Ch>
+LexState lexJsLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
+                   size_t base, std::vector<Token>& out, std::string& word) {
+    auto push = [&](size_t start, size_t len, TokenStyle st) {
+        if (len) out.push_back({base + start, len, st});
+    };
+    std::string stack;      // see above; the innermost is last
+    size_t i = 0;
+    size_t text = 0;        // where the current piece of template text began
+    bool regexOk = true;    // could an expression start here?
+    bool regexFailed = false;   // a '/' found no close on this line
+
+    switch (in.kind) {
+    case LexState::BlockComment:
+        while (i < n && !matchesAt(s, n, i, d.blockEnd)) i++;
+        if (i >= n) { push(0, n, TokenStyle::Comment); return in; }
+        i += d.blockEnd.size();
+        push(0, i, TokenStyle::Comment);
+        break;
+    case LexState::StringCont: {
+        bool continues;
+        i = scanString(s, n, 0, (Ch)in.quote, &continues);
+        push(0, i, TokenStyle::String);
+        if (continues) return in;
+        regexOk = false;
+        break;
+    }
+    case LexState::Template:
+        stack = stateText(in.quote);
+        break;
+    default:
+        break;
+    }
+
+    while (i < n) {
+        if (!stack.empty() && stack.back() == 'T') {
+            // Template text, up to its closing backtick or a field.
+            bool left = false;
+            while (i < n && !left) {
+                Ch c = s[i];
+                if (c == Ch('`')) {
+                    i++;
+                    push(text, i - text, TokenStyle::String);
+                    stack.pop_back();
+                    regexOk = false;
+                    left = true;
+                } else if (c == Ch('\\') && i + 1 < n) {
+                    i += 2;
+                } else if (c == Ch('$') && i + 1 < n && s[i + 1] == Ch('{') &&
+                           stack.size() < kMaxTemplateStack) {
+                    push(text, i - text, TokenStyle::String);
+                    push(i, 2, TokenStyle::Keyword);
+                    i += 2;
+                    stack.push_back(1);
+                    regexOk = true;
+                    left = true;
+                } else {
+                    i++;
+                }
+            }
+            if (!left) push(text, n - text, TokenStyle::String);
+            continue;
+        }
+
+        // Code, at the top level or in a field.
+        Ch c = s[i];
+        if (c == Ch('\n') || c == Ch(' ') || c == Ch('\t') || c == Ch('\r')) { i++; continue; }
+        if (c == Ch('/') && i + 1 < n && s[i + 1] == Ch('/')) {
+            size_t st = i;
+            while (i < n && s[i] != Ch('\n')) i++;
+            push(st, i - st, TokenStyle::Comment);
+            continue;
+        }
+        if (c == Ch('/') && i + 1 < n && s[i + 1] == Ch('*')) {
+            size_t st = i;
+            i += 2;
+            while (i < n && !matchesAt(s, n, i, d.blockEnd)) i++;
+            if (i >= n) {
+                push(st, n - st, TokenStyle::Comment);
+                if (stack.empty()) return LexState{LexState::BlockComment, 0};
+                break;
+            }
+            i += d.blockEnd.size();
+            push(st, i - st, TokenStyle::Comment);
+            continue;
+        }
+        if (c == Ch('`') && stack.size() < kMaxTemplateStack) {
+            stack.push_back('T');
+            text = i++;
+            continue;
+        }
+        if (c == Ch('"') || c == Ch('\'') || c == Ch('`')) {
+            bool continues;
+            size_t e = scanString(s, n, i + 1, c, &continues);
+            push(i, e - i, TokenStyle::String);
+            i = e;
+            regexOk = false;
+            if (continues && stack.empty() && c != Ch('`'))
+                return LexState{LexState::StringCont, (char16_t)c};
+            continue;
+        }
+        if (c == Ch('/') && regexOk && !regexFailed) {
+            size_t e = scanRegex(s, n, i);
+            if (e) {
+                push(i, e - i, TokenStyle::String);
+                i = e;
+                regexOk = false;
+                continue;
+            }
+            // Nothing closed it before the line's end. Stop looking on this
+            // line, or a long line of (/(/(/ would be scanned once per slash.
+            regexFailed = true;
+        }
+        if (startsNumber(s, n, i)) {
+            i = lexNumber(d, s, n, i, push);
+            regexOk = false;
+            continue;
+        }
+        if (isIdentStart(c)) {
+            i = lexIdent(d, s, n, i, word, push);
+            regexOk = kJsBeforeRegex.count(word) > 0;
+            continue;
+        }
+        i++;
+        if (!stack.empty()) {   // in a field: count its braces
+            char& top = stack.back();
+            if (c == Ch('{')) {
+                if (top < kFieldMaxBraces) top++;
+            } else if (c == Ch('}')) {
+                if (top == 1) {   // the field's own '}'
+                    push(i - 1, 1, TokenStyle::Keyword);
+                    stack.pop_back();
+                    text = i;
+                    continue;
+                }
+                top--;
+            }
+        }
+        switch (code(c)) {
+        case ')': case ']': case '}': case '<': case '$': case '.':
+            regexOk = false;
+            break;
+        case '>':   // only the arrow: a > /x/ means nothing
+            regexOk = i >= 2 && s[i - 2] == Ch('=');
+            break;
+        case '+': case '-':   // x++ / 2 is a division
+            if (i < n && s[i] == c) { i++; regexOk = false; }
+            else regexOk = true;
+            break;
+        default:
+            regexOk = code(c) < 128;   // other punctuation; not a letter elsewhere
+            break;
+        }
+    }
+    if (stack.empty()) return LexState{};
+    char16_t id = stateTextId(stack);
+    return id ? LexState{LexState::Template, id} : LexState{};
+}
+
 // Lex one line: s[0, n), ending in '\n' unless it is the last line. `in` is
 // the state the line above ended in. Tokens go to out at offset `base`.
 // Returns the state this line ends in.
@@ -798,6 +1245,7 @@ template <class Ch>
 LexState lexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
                  size_t base, std::vector<Token>& out, std::string& word) {
     if (d.tex) return lexTexLine(d, s, n, in, base, out, word);
+    if (d.jsCode) return lexJsLine(d, s, n, in, base, out, word);
     size_t i = 0;
     bool atLineStart = true;
     auto push = [&](size_t start, size_t len, TokenStyle st) {
@@ -837,6 +1285,15 @@ LexState lexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
         }
         atLineStart = false;
         break;
+    case LexState::RawString: {
+        bool closed;
+        i = scanRaw(s, n, 0, stateText((char16_t)(in.quote & ~kRawEscapes)), (in.quote & kRawEscapes) != 0,
+                    &closed);
+        push(0, i, TokenStyle::String);
+        if (!closed) return in;
+        atLineStart = false;
+        break;
+    }
     default:
         break;
     }
@@ -884,6 +1341,18 @@ LexState lexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
             continue;
         }
 
+        // Raw strings and the other kinds in lexLongString.
+        if (code(c) < 128 && d.longOpeners[code(c)]) {
+            LexState open;
+            size_t e = lexLongString(d, s, n, i, push, &open);
+            if (e) {
+                if (open.kind != LexState::Normal) return open;
+                i = e;
+                atLineStart = false;
+                continue;
+            }
+        }
+
         // Strings.
         if (isDelim(d, c)) {
             LexState open;
@@ -895,7 +1364,7 @@ LexState lexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
 
         // Numbers.
         if (startsNumber(s, n, i)) {
-            i = lexNumber(s, n, i, push);
+            i = lexNumber(d, s, n, i, push);
             atLineStart = false;
             continue;
         }

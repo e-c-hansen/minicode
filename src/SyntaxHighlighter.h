@@ -51,7 +51,26 @@ struct LexState {
         BibEntry,       // inside a .bib entry; quote = brace depth, with
                         // 0x8000 set when the entry opened with '('
         Unknown,       // never produced by the lexer; marks lines not lexed yet
+        RawString,      // a string that ends at a fixed text, not closed yet:
+                        // C++ R"d( ... )d", Rust r#"..."# and "...", Go `...`,
+                        // triple quotes in Java, Kotlin, Swift, C#, ... The
+                        // low 15 bits of quote are the state text id of the
+                        // closing text (see below); 0x8000 = backslash escapes
+        Template,       // inside a JavaScript template literal, maybe inside
+                        // one of its ${} fields: quote = the state text id of
+                        // the stack of templates and fields that are open
     };
+    // Some states need more than 16 bits: the delimiter of a raw string can
+    // be 16 characters long, and a template literal can sit in a field of
+    // another one. Their text goes into one table for the whole process,
+    // where the same text always gets the same id and different texts
+    // different ids, and quote holds the id. So two states are still equal
+    // exactly when the lexer would read what follows them the same way,
+    // which is what IncrementalHighlighter's "re-lex until a line ends in
+    // the state it ended in before" depends on, and equality stays two
+    // integer compares, whichever highlighter made the state. The table only
+    // grows (a few bytes per distinct delimiter or nesting ever seen); when
+    // it is full (32,767 texts), such a string simply ends with its line.
     uint8_t kind = Normal;
     char16_t quote = 0;
     bool operator==(const LexState& o) const { return kind == o.kind && quote == o.quote; }

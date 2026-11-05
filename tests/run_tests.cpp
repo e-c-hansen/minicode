@@ -295,6 +295,215 @@ void testSyntax() {
                    TokenStyle::String));
 }
 
+// Literals the lexer once got wrong (2026-11-04): JavaScript regexes and
+// templates, raw strings in C++, Rust and Go, triple quotes, Rust lifetimes,
+// C# verbatim strings, digit separators.
+void testSyntaxLiterals() {
+    // The style at each unit, '-' where no token is (TokenStyle order).
+    auto styles = [](const std::string &text, const std::string &ext) {
+        std::string m(text.size(), '-');
+        const char *letters = "pktscnPf";
+        for (const Token &t : SyntaxHighlighter::highlight(text, ext))
+            for (size_t k = t.start; k < t.start + t.length && k < m.size(); ++k)
+                m[k] = letters[(int)t.style];
+        return m;
+    };
+    auto endStates = [](const std::string &text, const std::string &ext) {
+        IncrementalHighlighter<char> h(ext);
+        h.reset(StringSource<char>(text), nullptr);
+        std::vector<LexState> v;
+        for (size_t k = 0; k < h.lineCount(); ++k) v.push_back(h.endState(k));
+        return v;
+    };
+
+    GROUP("syntax:js-regex");
+    // The review's case: /* inside a regex opened a comment to the file's end.
+    CHECK(styles("x = s.replace(/\\/*$/, \"\"); y = 1;", "js") ==
+          "------fffffff-ssssss--ss-------n-");
+    CHECK(hasToken("a = /\\/*$/;\nb = 1;\n", "js", "1", TokenStyle::Number));
+    CHECK(!hasStyle("a = /\\/*$/;\nb = 1;\n", "js", TokenStyle::Comment));
+    CHECK(endStates("a = /\\/*$/;\nb\n", "js")[0].kind == LexState::Normal);
+    // A '/' in a class does not close it; flags belong to it; keywords
+    // before a regex.
+    CHECK(styles("if (/[/]/.test(s)) return /x/g;", "js") ==
+          "kk--sssss-ffff-----kkkkkk-ssss-");
+    CHECK(hasToken("x => /re/.test(x)", "js", "/re/", TokenStyle::String));
+    CHECK(hasToken("f(a, /b/i)", "ts", "/b/i", TokenStyle::String));
+    CHECK(hasToken("x = typeof /a/", "tsx", "/a/", TokenStyle::String));
+    // Division: after a name, a number, ) ] and x++.
+    CHECK(!hasStyle("a = b / c / d", "js", TokenStyle::String));
+    CHECK(!hasStyle("a = (b) / c / d", "js", TokenStyle::String));
+    CHECK(!hasStyle("a = b[1] / 2 / 3", "js", TokenStyle::String));
+    CHECK(!hasStyle("i++ / 2 / 3", "js", TokenStyle::String));
+    // Never over lines.
+    CHECK(!hasStyle("a = /b\nc / d", "js", TokenStyle::String));
+    {
+        // A long line of regexes that never close (a class stays open) is
+        // read once, not once per slash, which would be quadratic.
+        std::string slashes;
+        for (int k = 0; k < 50000; ++k) slashes += "(/[";
+        CHECK(!hasStyle(slashes, "js", TokenStyle::String));
+    }
+    // JSX's closing tags and self-closing elements are not regexes.
+    CHECK(styles("<li><a href=\"#\">Home</a></li>", "jsx") ==
+          "------------sss-tttt---------");
+    CHECK(!hasStyle("<Foo {...p} /><Bar x={1} />", "jsx", TokenStyle::String));
+    // JSON has none: there a '/' is just punctuation.
+    CHECK(!hasStyle("[1, /x/]", "json", TokenStyle::String));
+    // A '//' inside a string is not a comment.
+    CHECK(styles("const u = \"http://x\"; // c", "js") ==
+          "kkkkk-----ssssssssss--cccc");
+
+    GROUP("syntax:js-templates");
+    // Fields are code with Keyword braces; templates nest inside them.
+    CHECK(styles("const t = `a ${b + `c ${d}`} e`;", "js") ==
+          "kkkkk-----ssskk----ssskk-ksksss-");
+    // A '}' in a string inside a field does not close it.
+    CHECK(styles("f(`x ${ \"}\" } y`)", "js") == "f-ssskk-sss-ksss-");
+    // Objects in a field; an escaped ${ is text.
+    CHECK(styles("n = `\\${not} ${o({a: 1})}`", "js") ==
+          "----ssssssssskkf-----n--ks");
+    // Over lines, with fields on the later lines and code after the close.
+    {
+        std::string t = "s = `line1\n${x} line2\nend` + 1\nq";
+        CHECK(styles(t, "js") == "----ssssss" "s" "kk-kssssss" "s" "ssss---n" "-" "-");
+        std::vector<LexState> st = endStates(t, "js");
+        CHECK(st[0].kind == LexState::Template && st[1] == st[0]);
+        CHECK(st[2].kind == LexState::Normal);
+    }
+    // A field open at a line's end carries on: the next line is code.
+    {
+        std::string t = "const s = `${items.map(x => {\n  return `<li>${x}</li>`;\n"
+                        "}).join('')}`;\nconst y = 1;\n";
+        CHECK(hasToken(t, "js", "return", TokenStyle::Keyword));
+        CHECK(hasToken(t, "js", "''", TokenStyle::String));
+        CHECK(hasToken(t, "js", "1", TokenStyle::Number));
+        std::vector<LexState> st = endStates(t, "js");
+        CHECK(st[0].kind == LexState::Template && st[1] == st[0]);
+        CHECK(st[2].kind == LexState::Normal && st[3].kind == LexState::Normal);
+    }
+    // A template inside a field, itself over lines (lit's html`...`).
+    {
+        std::string t = "h = html`<ul>${items.map(i => html`\n  <li>${i}</li>\n"
+                        "`)}</ul>`;\nz = 1\n";
+        CHECK(hasToken(t, "js", "1", TokenStyle::Number));
+        std::vector<LexState> st = endStates(t, "js");
+        CHECK(st[0].kind == LexState::Template && st[1] == st[0]);
+        CHECK(st[2].kind == LexState::Normal);
+        // Same text, same state, in another highlighter too.
+        CHECK(endStates("x = html`<ul>${items.map(i => html`\n", "ts")[0] == st[0]);
+        CHECK(endStates("x = `\n", "js")[0] != st[0]);
+    }
+    // JSON keeps reading a backtick as a one-line string.
+    CHECK(endStates("`a\nb`", "json")[0].kind == LexState::Normal);
+
+    GROUP("syntax:cpp-raw");
+    CHECK(hasToken("auto s = R\"(a \"quoted\" \\ back)\" + x;", "cpp",
+                   "R\"(a \"quoted\" \\ back)\"", TokenStyle::String));
+    {
+        std::string t = "auto j = R\"json({\n  \"k\": \"v)\"\n})json\"; int y = 1;\n";
+        CHECK(hasToken(t, "cpp", "R\"json({\n  \"k\": \"v)\"\n})json\"", TokenStyle::String));
+        CHECK(hasToken(t, "cpp", "int", TokenStyle::Type));
+        CHECK(hasToken(t, "cpp", "1", TokenStyle::Number));
+        std::vector<LexState> st = endStates(t, "cpp");
+        CHECK(st[0].kind == LexState::RawString && st[1] == st[0]);
+        CHECK(st[2].kind == LexState::Normal);
+        // The delimiter is part of the state: )x" does not close R"y(.
+        CHECK(endStates("R\"x(\n", "cpp")[0] != endStates("R\"y(\n", "cpp")[0]);
+        CHECK(endStates("R\"x(\n", "hpp")[0] == endStates("u8R\"x(\n", "cc")[0]);
+        CHECK(hasToken("R\"y(\n)x\"\n)y\" z", "cpp", "R\"y(\n)x\"\n)y\"", TokenStyle::String));
+    }
+    // Prefixes; a 16-character delimiter; 17 is no raw string.
+    CHECK(styles("u8R\"x(a)x\" LR\"(b)\" uR\"(c)\" UR\"(d)\"", "cpp") ==
+          "ssssssssss-sssssss-sssssss-sssssss");
+    CHECK(hasToken("R\"1234567890123456(a)1234567890123456\"", "cpp",
+                   "R\"1234567890123456(a)1234567890123456\"", TokenStyle::String));
+    CHECK(hasToken("R\"12345678901234567(no)\"", "cpp", "R", TokenStyle::Type));
+    CHECK(hasToken("FooR\"(x)\"", "cpp", "FooR", TokenStyle::Type));
+    // Only C++: C, C# and Java read R as a name.
+    for (const char *e : {"c", "cs", "java"})
+        CHECK(hasToken("s = R\"(x)\";", e, "R", TokenStyle::Type));
+    // Digit separators: one number, not a character literal.
+    CHECK(styles("int n = 1'000'000; char c = 'a';", "cpp") ==
+          "ttt-----nnnnnnnnn--tttt-----sss-");
+    CHECK(hasToken("x = 0xFF'FF + 0b1010'1010;", "c", "0xFF'FF", TokenStyle::Number));
+    CHECK(hasToken("assign a = 4'b1010;", "v", "4'b1010", TokenStyle::Number));
+    CHECK(hasToken("auto d = 100_km;", "cpp", "100_km", TokenStyle::Number));
+
+    GROUP("syntax:rust");
+    {
+        std::string t = "fn f<'a>(x: &'a str) -> &'static str { 'outer: loop { "
+                        "let c = 'x'; let d = '\\n'; let e = '\\u{1F600}'; let q = '\\''; } }";
+        CHECK(hasToken(t, "rs", "'a", TokenStyle::Keyword));
+        CHECK(hasToken(t, "rs", "'static", TokenStyle::Keyword));
+        CHECK(hasToken(t, "rs", "'outer", TokenStyle::Keyword));
+        CHECK(hasToken(t, "rs", "'x'", TokenStyle::String));
+        CHECK(hasToken(t, "rs", "'\\n'", TokenStyle::String));
+        CHECK(hasToken(t, "rs", "'\\u{1F600}'", TokenStyle::String));
+        CHECK(hasToken(t, "rs", "'\\''", TokenStyle::String));
+        // No string runs on from a lifetime.
+        CHECK(!hasToken(t, "rs", "'a>(x: &'", TokenStyle::String));
+        CHECK(hasToken("let c = '\xC3\xA9';", "rs", "'\xC3\xA9'", TokenStyle::String));
+    }
+    CHECK(hasToken("let r = r#\"a \"b\" c\"#; x", "rs", "r#\"a \"b\" c\"#", TokenStyle::String));
+    CHECK(hasToken("let z = r##\"has \"# inside\"## + 1;", "rs",
+                   "r##\"has \"# inside\"##", TokenStyle::String));
+    CHECK(hasToken("let s = br\"x\\\"; y", "rs", "br\"x\\\"", TokenStyle::String));
+    {
+        // Rust's plain strings run over lines.
+        std::string t = "let t = \"multi\nline \\\" still\nend\"; let u = 1_000u32;";
+        CHECK(hasToken(t, "rs", "\"multi\nline \\\" still\nend\"", TokenStyle::String));
+        CHECK(hasToken(t, "rs", "1_000u32", TokenStyle::Number));
+        std::vector<LexState> st = endStates(t, "rs");
+        CHECK(st[0].kind == LexState::RawString && st[2].kind == LexState::Normal);
+    }
+
+    GROUP("syntax:go-raw");
+    {
+        std::string t = "s := `http://x \"y\"\nz` + \"a\"\nc := 'x'";
+        CHECK(!hasStyle(t, "go", TokenStyle::Comment));
+        CHECK(hasToken(t, "go", "`http://x \"y\"\nz`", TokenStyle::String));
+        CHECK(hasToken(t, "go", "\"a\"", TokenStyle::String));
+        CHECK(hasToken(t, "go", "'x'", TokenStyle::String));
+        CHECK(endStates(t, "go")[0].kind == LexState::RawString);
+    }
+
+    GROUP("syntax:triple-quoted");
+    {
+        // Java's text blocks: escapes, over lines.
+        std::string t = "String s = \"\"\"\n    hello \"x\" \\\"\"\" still\n    \"\"\"; int y = 1;";
+        CHECK(hasToken(t, "java", "\"\"\"\n    hello \"x\" \\\"\"\" still\n    \"\"\"",
+                       TokenStyle::String));
+        CHECK(hasToken(t, "java", "1", TokenStyle::Number));
+        CHECK(hasToken("let s = \"\"\"\na \"b\"\n\"\"\"\nlet x = 1", "swift", "1",
+                       TokenStyle::Number));
+        // Kotlin's are raw: a backslash does not escape.
+        CHECK(hasToken("val s = \"\"\"a\\\"\"\" + 1", "kt", "\"\"\"a\\\"\"\"", TokenStyle::String));
+        CHECK(hasToken("val s = \"\"\"a\\\"\"\" + 1", "kt", "1", TokenStyle::Number));
+        CHECK(hasToken("var s = '''a\nb''' + 1", "dart", "'''a\nb'''", TokenStyle::String));
+        // An empty string is still an empty string.
+        CHECK(hasToken("String s = \"\" + 1;", "java", "\"\"", TokenStyle::String));
+        CHECK(hasToken("String s = \"\" + 1;", "java", "1", TokenStyle::Number));
+    }
+    // C#: verbatim strings, where a backslash is text, and raw strings.
+    CHECK(styles("var p = @\"C:\\path\\\"; var q = 1;", "cs") ==
+          "--------sssssssssss----------n-");
+    CHECK(hasToken("var v = @$\"x {y}\";", "cs", "@$\"x {y}\"", TokenStyle::String));
+    CHECK(hasToken("var r = \"\"\"\n  {\"a\": 1}\n  \"\"\"; var z = 2;", "cs", "2",
+                   TokenStyle::Number));
+    CHECK(hasToken("var r = \"\"\"\"x\"\"\"y\"\"\"\" + 3;", "cs", "3", TokenStyle::Number));
+
+    GROUP("syntax:literal-misc");
+    // A '#' in an f-string's field is not a comment (Python 3.12 allows them
+    // only in fields over lines); one in a string in a field is text.
+    CHECK(!hasStyle("f'{x # y}' + f\"{'#'}\"", "py", TokenStyle::Comment));
+    CHECK(hasToken("n = 1_000_000 + 0x_FF", "py", "1_000_000", TokenStyle::Number));
+    CHECK(hasToken("n = 1_000n", "js", "1_000n", TokenStyle::Number));
+    // Shell has no separators; a plain file no grammar at all.
+    CHECK(hasToken("x=1_000", "sh", "1", TokenStyle::Number));
+    CHECK(SyntaxHighlighter::highlight("it's 1'000 and 1_000", "txt").size() == 3);
+}
+
 // ------------------------------------------------ incremental highlighting
 // The line-at-a-time lexer must give exactly the old whole-file tokens, and
 // the incremental highlighter must, after any edit, leave every line with
@@ -391,7 +600,43 @@ std::string toU8(const std::u16string &u, std::vector<size_t> *u16AtByte) {
 // that UTF-16 gives the same tokens as UTF-8.
 bool newGrammar(const std::string &ext) {
     return ext == "tex" || ext == "ltx" || ext == "latex" || ext == "sty" ||
-           ext == "cls" || ext == "bib";
+           ext == "cls" || ext == "bib" ||
+           // C-family languages whose strings the frozen lexer read as C's
+           // (raw strings, triple quotes, Rust's lifetimes): see mayHoldNewLiteral.
+           ext == "rs" || ext == "go" || ext == "cs" || ext == "swift" ||
+           ext == "kt" || ext == "java";
+}
+// Text the frozen lexer read differently since literals were added
+// (2026-11-04), for the grammars it is still compared against: a number with
+// a digit separator (1_000 in Python, JavaScript and C++, 1'000 in C++), a
+// C++ raw string (R"), and in JavaScript a template literal (any backtick)
+// or a '/' that might start a regex (one that opens no comment and has
+// another '/' after it on its line). Such text is checked against a full
+// lex instead.
+bool mayHoldNewLiteral(const std::string &text, const std::string &ext) {
+    const bool js = ext == "js", cpp = ext == "cpp";
+    if (!js && !cpp && ext != "py") return false;
+    auto ident = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
+    for (size_t i = 0; i + 1 < text.size(); ++i) {
+        char c = text[i], d = text[i + 1];
+        bool sep = d == '_' || (cpp && d == '\'');
+        if (sep && (std::isalnum((unsigned char)c) || c == '.')) {
+            // Might c be part of a number: does a digit start one in the run
+            // of letters, digits, '_' and '.' that ends at c?
+            size_t j = i;
+            while (j > 0 && (ident(text[j - 1]) || text[j - 1] == '.')) j--;
+            for (size_t k = j; k <= i; ++k)
+                if (std::isdigit((unsigned char)text[k]) && (k == j || !ident(text[k - 1])))
+                    return true;
+        }
+        if (cpp && c == 'R' && d == '"') return true;
+        if (js && c == '`') return true;
+        if (js && c == '/' && d != '/' && d != '*') {
+            size_t eol = text.find('\n', i + 1);
+            if (text.find('/', i + 1) < eol) return true;
+        }
+    }
+    return js && !text.empty() && text.back() == '`';
 }
 // Python text that may hold an f-string (a quote after an f or t prefix),
 // which the frozen lexer read as a plain string. Such text is checked
@@ -409,7 +654,7 @@ bool mayHoldFString(const std::string &text, const std::string &ext) {
     return false;
 }
 std::vector<Token> fullLex(const std::string &text, const std::string &ext) {
-    return newGrammar(ext) || mayHoldFString(text, ext)
+    return newGrammar(ext) || mayHoldFString(text, ext) || mayHoldNewLiteral(text, ext)
                ? SyntaxHighlighter::highlight(text, ext)
                : legacy::highlight(text, ext);
 }
@@ -449,6 +694,12 @@ const char *const kFragments[] = {
     "\\href{h%7E}{t}", "@book(", ")", "(", "10.1000%2Fabc", "\\begin{minted}[n]{py}",
     "\\end{minted}", "\\begin{lstlisting}[language=C]", "\\end{lstlisting}", "{",
     "\\begin{align}", "\\end{align}",
+    // Literals added 2026-11-04: JavaScript regexes and templates, C++ and
+    // Rust raw strings, Rust lifetimes, Go raw strings, triple quotes, C#
+    // verbatim strings, digit separators.
+    "/a/g", "= /[/*]/", "/\\/*$/", "return /x/", ") / 2 /", "`a${", "${x}", "${",
+    "}`", "`${`", "R\"(", ")\"", "R\"d(", ")d\"", "u8R\"x(\"", "r#\"", "\"#",
+    "'a", "'x'", "'\\n'", "1'000", "1_000", "@\"", "\"\"\"\n", "\\\"",
 };
 
 template <class Ch>
@@ -629,6 +880,14 @@ void testIncrementalHighlight() {
     samples.push_back({"conf", "# settings\nwindow.background = #1E1E1E\n"
                                "key = \"quoted # not comment\"\n"});
     samples.push_back({"empty", ""});
+    // The literals of 2026-11-04, every kind in one text (read as each
+    // language in turn, so each grammar sees the others' as noise).
+    samples.push_back({"literals",
+        "s = x.replace(/\\/*$/, '') + `a ${b + `c ${d}`}\nline ${e({f: 1})}` / 2;\n"
+        "h = html`<ul>${items.map(i => html`\n  <li>${i}</li>\n`)}</ul>`;\n"
+        "auto j = R\"json({\n  \"k\": \"v)\" \xC3\xA9\n})json\" + u8R\"(x)\"; int n = 1'000;\n"
+        "fn f<'a>(x: &'a str) { let c = '\xC3\xA9'; let r = r#\"a \"b\"\n\"#; }\n"
+        "s := `raw // \"q\"\n` + \"\"\"\ntext \\\"\"\"\n\"\"\" + @\"C:\\x\\\" + 1_000\n"});
     samples.push_back({"unicode", "s = \"h\xC3\xA9llo \xF0\x9F\x98\x80\"; /* \xE6\x97\xA5\n"
                                   "\xE6\x9C\xAC */ int caf\xC3\xA9(x);\n"});
     samples.push_back({"tex",
@@ -644,14 +903,15 @@ void testIncrementalHighlight() {
     // The old-lexer comparison covers only the grammars it had; the random
     // edits also run TeX, checked against a full lex (see newGrammar).
     const char *exts[] = {"cpp", "py", "js", "sh", "txt"};
-    const char *fuzzExts[] = {"cpp", "py", "js", "sh", "txt", "tex", "bib", "sty"};
+    const char *fuzzExts[] = {"cpp", "py", "js", "sh", "txt", "tex", "bib", "sty",
+                              "rs", "go", "cs", "swift", "kt"};
 
     GROUP("incremental:matches-old-lexer");
     // The line lexer changed no token anywhere, joined back into whole tokens.
     bool same = true;
     for (const Sample &s : samples)
         for (const char *e : exts)
-            if (!mayHoldFString(s.text, e) &&
+            if (!mayHoldFString(s.text, e) && !mayHoldNewLiteral(s.text, e) &&
                 SyntaxHighlighter::highlight(s.text, e) != legacy::highlight(s.text, e)) {
                 std::printf("    %s as %s differs from the old lexer\n", s.name.c_str(), e);
                 same = false;
@@ -666,7 +926,7 @@ void testIncrementalHighlight() {
             for (int m = 0, len = 1 + (int)(rng() % 60); m < len; ++m)
                 t += kFragments[rng() % (sizeof(kFragments) / sizeof(kFragments[0]))];
             for (const char *e : exts)
-                soup = soup && (mayHoldFString(t, e) ||
+                soup = soup && (mayHoldFString(t, e) || mayHoldNewLiteral(t, e) ||
                                 SyntaxHighlighter::highlight(t, e) == legacy::highlight(t, e));
         }
         CHECK(soup);
@@ -7260,6 +7520,7 @@ static void testMultiCaret() {
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
+    testSyntaxLiterals();
     testIncrementalHighlight();
     testTermLinks();
     benchIncrementalHighlight();
