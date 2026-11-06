@@ -877,7 +877,13 @@ view is disposed (on `unrealize`), or dispose loops forever.
   `$CONDA_PREFIX`, else the server's own (/usr/bin/python3 skipped). Sent only
   when it differs: `python.pythonPath` by workspace/configuration for the
   pyrights, `pylsp.plugins.jedi.environment`, jedi's `initializationOptions` (a
-  restart).
+  restart). **An environment inside the folder needs the user's yes**
+  (2026-11-06, review 3): a server runs the interpreter it is given and is
+  looked for in its bin, so `serverPythonInterpreterWithSource:` leaves the
+  .venv out until the folder's answer (`MCPythonEnvironmentConsent` in
+  `MCAppDefaults()`) is "allow"; the install bar asks first (Use It, Don't Use
+  It, × for this launch). Run File, which the user starts, still uses it
+  (`pythonInterpreterWithSource:`).
 - **Completion** opens after `.`/`->`/`::` and on a word's second letter; an
   `isIncomplete` list is asked again. `Lsp::completionKeyAccepts`: Tab takes;
   Return only when asked for (Ctrl+Space, Option+Esc), after a trigger
@@ -897,8 +903,14 @@ view is disposed (on `unrealize`), or dispose loops forever.
   for the viewport, from marks (NSRanges that follow edits). Kept per open file
   with the text they were computed on; `diagnosticSpans` places them on the
   text as it is now, leaving out ones about text typed over. Publishes for a
-  version older than one since sent are dropped; `Client::textFor` gives a
-  publish's text. Files no tab has open are kept apart (`_otherDiags`) for
+  version older than one since sent are dropped (versions count on across a
+  close and reopen); `Client::textFor` gives a publish's text. Tags: an
+  Unnecessary one is faded (no squiggle for a hint), a Deprecated one struck
+  through, a plain hint three dots. Positions convert through one
+  `Lsp::PositionIndex` per text, never a scan per position. Workspace edits
+  carry the server's document versions from when they were asked
+  (`Client::versions`, `staleEditFile`) and are refused for a file that moved
+  on. Files no tab has open are kept apart (`_otherDiags`) for
   Problems.
 - **Problems** (Shift+Cmd+M, `MCProblemsPanel`, above the terminal):
   `problemRows` (files with errors first, then severity, line, column),
