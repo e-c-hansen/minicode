@@ -11,7 +11,15 @@
 // selection, the scroll position and the Cmd-hovered link are held as line
 // numbers counted from the first line ever (historyBase() + line), which
 // stay put while output scrolls the text up, so none of them slide off the
-// text they were on.
+// text they were on. A resize reflows the lines (resizeScreenToCols:rows:),
+// and carries them along through TerminalScreen::resize.
+//
+// Soft wraps: rows the terminal wrapped are one line to a double-click, a
+// triple-click, a Cmd-click link and find, and copy without a line break.
+//
+// Mouse reporting: when a program asks (vim's mouse=a, htop, less with
+// --mouse), clicks, drags and the wheel go to it as TerminalScreen encodes
+// them; Shift keeps them for selection, and Cmd-click still opens links.
 //
 // Keys: Cmd shortcuts are left to the menu (they arrive through
 // performKeyEquivalent: before keyDown:), everything else is encoded by
@@ -44,11 +52,17 @@ static const NSTimeInterval kSyncLimit = 0.15;
     CGFloat _scrollAccum;
     int _offset;                   // lines scrolled back
     long long _lastBase;           // historyBase() when last drawn
-    // The link under the pointer while Cmd is held: its line and the cells
-    // it covers, [_linkCol0, _linkCol1). _linkId is kNoLine when none.
+    // The link under the pointer while Cmd is held: from _linkCol0 of line
+    // _linkId to _linkCol1 (exclusive) of line _linkEndId, which is a later
+    // line when the link runs over a soft wrap. _linkId is kNoLine when none.
     MCTermLink *_link;
-    long long _linkId;
+    long long _linkId, _linkEndId;
     int _linkCol0, _linkCol1;
+    // Mouse reporting: the button held down and reported (-1 none), and the
+    // cell last reported, so motion is sent once per cell.
+    int _reportButton;
+    int _reportRow, _reportCol;
+    BOOL _focusReported, _focusKnown;
     NSString *_marked;             // input method text being composed
     NSRange _markedSel;
     // Synchronized output (mode 2026): when the view began waiting for the
@@ -62,7 +76,7 @@ static const NSTimeInterval kSyncLimit = 0.15;
     int _syncIgnoredAt;
     // Find: the matches in reading order, by line number (historyBase() +
     // line), the current one, and what was asked for.
-    struct Found { long long id; int col, width; };
+    struct Found { long long id; int col, width; long long endId; int endCol; };
     std::vector<Found> _found;
     NSInteger _foundIndex;
     BOOL _finding, _findRefreshQueued;
@@ -72,7 +86,8 @@ static const NSTimeInterval kSyncLimit = 0.15;
 
 - (instancetype)initWithFrame:(NSRect)frame {
     if ((self = [super initWithFrame:frame])) {
-        _linkId = kNoLine;
+        _linkId = _linkEndId = kNoLine;
+        _reportButton = -1;
         _optionAsMeta = YES;
         _foundIndex = -1;
     }
@@ -118,12 +133,54 @@ static const NSTimeInterval kSyncLimit = 0.15;
 - (BOOL)acceptsFirstResponder { return YES; }
 - (BOOL)acceptsFirstMouse:(NSEvent *)e { (void)e; return YES; }
 
-- (BOOL)becomeFirstResponder { [self setNeedsDisplay:YES]; return YES; }
-- (BOOL)resignFirstResponder { [self setNeedsDisplay:YES]; return YES; }
+- (BOOL)becomeFirstResponder {
+    [self setNeedsDisplay:YES];
+    [self performSelector:@selector(reportFocus) withObject:nil afterDelay:0];
+    return YES;
+}
+- (BOOL)resignFirstResponder {
+    [self setNeedsDisplay:YES];
+    [self performSelector:@selector(reportFocus) withObject:nil afterDelay:0];
+    return YES;
+}
 
-// The right click. In line mode only the settings item, as before.
+// Focus events (DECSET 1004): the program hears "CSI I" when the terminal
+// gets the keyboard (it is first responder in the key window) and "CSI O"
+// when it loses it, once per change.
+- (void)viewDidMoveToWindow {
+    [super viewDidMoveToWindow];
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc removeObserver:self name:NSWindowDidBecomeKeyNotification object:nil];
+    [nc removeObserver:self name:NSWindowDidResignKeyNotification object:nil];
+    if (!self.window) return;
+    [nc addObserver:self selector:@selector(reportFocus)
+               name:NSWindowDidBecomeKeyNotification object:self.window];
+    [nc addObserver:self selector:@selector(reportFocus)
+               name:NSWindowDidResignKeyNotification object:self.window];
+}
+
+- (BOOL)hasKeyboard {
+    return self.window.isKeyWindow && self.window.firstResponder == self && !self.hidden;
+}
+
+- (void)reportFocus {
+    TerminalScreen *s = self.screen;
+    BOOL focused = [self hasKeyboard];
+    if (!s || !s->focusEvents()) { _focusKnown = NO; return; }
+    if (_focusKnown && focused == _focusReported) return;
+    _focusKnown = YES;
+    _focusReported = focused;
+    if (self.onInput) {
+        std::string bytes = TerminalScreen::encodeFocus(focused);
+        self.onInput([NSData dataWithBytes:bytes.data() length:bytes.size()]);
+    }
+}
+
+// The right click. In line mode only the settings item, as before. A
+// Control-click goes to a program that asked for mouse events, as a click
+// with Control.
 - (NSMenu *)menuForEvent:(NSEvent *)event {
-    (void)event;
+    if (event.type == NSEventTypeLeftMouseDown && [self reportsMouse:event]) return nil;
     if (!self.textInput) return MCAdjustSettingsMenu(@"terminal", self);
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
     [menu addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@""].target = self;
@@ -247,6 +304,45 @@ static const NSTimeInterval kSyncLimit = 0.15;
 
 - (void)dealloc {
     [NSObject cancelPreviousPerformRequestsWithTarget:self];
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+// A new size: the screen reflows, and the view's places (the top line of a
+// scrolled-back view, the selection, the current find match) go with their
+// text, so a view scrolled back stays on what it showed.
+- (void)resizeScreenToCols:(int)cols rows:(int)rows {
+    TerminalScreen *s = self.screen;
+    if (!s) return;
+    long long base = s->historyBase();
+    auto rel = [&](long long lineId) {
+        long long l = lineId - base;
+        return (int)MAX((long long)INT_MIN / 2, MIN((long long)INT_MAX / 2, l));
+    };
+    BOOL hasMatch = _foundIndex >= 0 && _foundIndex < (NSInteger)_found.size();
+    std::vector<TermPos> keep = {
+        {-_offset, 0},
+        {rel(_anchorId), _anchorCol}, {rel(_endId), _endCol},
+        {rel(_unitStartId), _unitStartCol}, {rel(_unitEndId), _unitEndCol},
+        {hasMatch ? rel(_found[_foundIndex].id) : 0, hasMatch ? _found[_foundIndex].col : 0},
+    };
+    s->resize(cols, rows, &keep);
+    long long nb = s->historyBase();
+    int first = -s->historySize();
+    _lastBase = nb;
+    if (_offset > 0) _offset = MAX(0, MIN(-keep[0].line, [self maxOffset]));
+    if (_hasSelection && (keep[1].line < first || keep[2].line < first)) _hasSelection = NO;
+    _anchorId = nb + keep[1].line; _anchorCol = keep[1].col;
+    _endId = nb + keep[2].line; _endCol = keep[2].col;
+    _unitStartId = nb + keep[3].line; _unitStartCol = keep[3].col;
+    _unitEndId = nb + keep[4].line; _unitEndCol = keep[4].col;
+    _link = nil;
+    _linkId = _linkEndId = kNoLine;
+    if (hasMatch) {
+        _found[_foundIndex].id = nb + keep[5].line;
+        _found[_foundIndex].col = keep[5].col;
+    }
+    if (_finding) [self refreshFind];
+    [self setNeedsDisplay:YES];
 }
 
 // ---------------------------------------------------------------- find
@@ -261,7 +357,7 @@ static const NSTimeInterval kSyncLimit = 0.15;
     if (!s || _findQuery.empty()) return out;
     long long base = s->historyBase();
     for (const TermMatch &m : s->find(_findQuery, _findCase, (size_t)[self findLimit]))
-        out.push_back({base + m.line, m.col, m.width});
+        out.push_back({base + m.line, m.col, m.width, base + m.endLine, m.endCol});
     return out;
 }
 
@@ -347,21 +443,27 @@ static const NSTimeInterval kSyncLimit = 0.15;
 }
 
 // The matches on one line, highlighted under the text: the current one
-// strongly, the rest faintly (VS Code's find colors).
+// strongly, the rest faintly (VS Code's find colors). A match that runs over
+// a soft wrap is drawn on each of its rows. Matches never overlap, so their
+// ends are in order as their starts are.
 - (void)drawMatchesOnLine:(long long)lineId row:(int)r {
     if (_found.empty()) return;
     auto it = std::lower_bound(_found.begin(), _found.end(), lineId,
-                               [](const Found &f, long long id) { return f.id < id; });
+                               [](const Found &f, long long id) { return f.endId < id; });
     BOOL dark = [AppSettings shared].settings.isDark();
-    for (; it != _found.end() && it->id == lineId; ++it) {
+    int cols = self.screen ? self.screen->cols() : 0;
+    for (; it != _found.end() && it->id <= lineId; ++it) {
         BOOL current = (NSInteger)(it - _found.begin()) == _foundIndex;
         NSColor *c = current
             ? (dark ? [NSColor colorWithSRGBRed:0x9E / 255.0 green:0x6A / 255.0 blue:0x03 / 255.0 alpha:1]
                     : [NSColor colorWithSRGBRed:0xF6 / 255.0 green:0xB9 / 255.0 blue:0x4D / 255.0 alpha:1])
             : [NSColor colorWithSRGBRed:0xEA / 255.0 green:0x5C / 255.0 blue:0x00 / 255.0 alpha:0.33];
         [c setFill];
-        NSRectFillUsingOperation([self rectForRow:r col:it->col width:it->width],
-                                 NSCompositingOperationSourceOver);
+        int c0 = it->id == lineId ? it->col : 0;
+        int c1 = it->endId == lineId ? it->endCol : cols;
+        if (c1 > c0)
+            NSRectFillUsingOperation([self rectForRow:r col:c0 width:c1 - c0],
+                                     NSCompositingOperationSourceOver);
     }
 }
 
@@ -561,12 +663,18 @@ static CellColors ColorsFor(const TermStyle &st) {
         }
     }
 
-    // The Cmd-hovered link, underlined in the text color.
+    // The Cmd-hovered link, underlined in the text color, on each row it
+    // covers.
     if (_linkId != kNoLine) {
-        int linkRow = (int)(_linkId - base) - top;
-        if (linkRow >= firstRow && linkRow <= lastRow) {
-            NSRect r = [self rectForRow:linkRow col:_linkCol0 width:_linkCol1 - _linkCol0];
-            [[[AppSettings shared] text:Surface::Terminal] setFill];
+        [[[AppSettings shared] text:Surface::Terminal] setFill];
+        for (long long id = _linkId; id <= _linkEndId; id++) {
+            int line = (int)(id - base);
+            int linkRow = line - top;
+            if (linkRow < firstRow || linkRow > lastRow) continue;
+            int c0 = id == _linkId ? _linkCol0 : 0;
+            int c1 = id == _linkEndId ? _linkCol1 : s->lineTextWidth(line);
+            if (c1 <= c0) continue;
+            NSRect r = [self rectForRow:linkRow col:c0 width:c1 - c0];
             NSRectFill(NSMakeRect(NSMinX(r), NSMaxY(r) - 1.5, NSWidth(r), 1));
         }
     }
@@ -814,25 +922,46 @@ static CellColors ColorsFor(const TermStyle &st) {
 - (void)doCommandBySelector:(SEL)selector { (void)selector; }
 
 // ---------------------------------------------------------------- links
-// A line's text as UTF-8, with the cell each byte came from. The right half
-// of a wide character contributes no bytes, so byte offsets from TermLinks
-// map back to the cells a link covers.
-- (std::string)textOfLine:(int)line cells:(std::vector<int> *)cellOfByte {
+// Soft-wrapped rows are looked through as one line, this far each way.
+static const int kMaxJoinedRows = 64;
+
+// The first and last line of the soft-wrapped line holding `line`.
+- (void)logicalLineAt:(int)line first:(int *)first last:(int *)last {
+    TerminalScreen *s = self.screen;
+    int lo = -s->historySize(), hi = s->rows() - 1;
+    int a = line, b = line;
+    while (a > lo && line - a < kMaxJoinedRows && s->lineWraps(a - 1)) a--;
+    while (b < hi && b - line < kMaxJoinedRows && s->lineWraps(b)) b++;
+    *first = a;
+    *last = b;
+}
+
+// A line's text as UTF-8, rows joined where they wrapped, with the line and
+// cell each byte came from. The right half of a wide character contributes
+// no bytes, so byte offsets from TermLinks map back to the cells a link
+// covers.
+struct CellAt { int line, col; };
+- (std::string)textOfLines:(int)first to:(int)last cells:(std::vector<CellAt> *)cellOfByte {
     std::string text;
     TerminalScreen *s = self.screen;
-    for (int c = 0; c < s->cols(); c++) {
-        const TermCell &cell = s->lineCell(line, c);
-        if (cell.width == 0) continue;
-        const std::string &ch = cell.ch.empty() ? std::string(" ") : cell.ch;
-        text += ch;
-        cellOfByte->insert(cellOfByte->end(), ch.size(), c);
+    for (int line = first; line <= last; line++) {
+        int width = line < last ? s->lineTextWidth(line) : s->cols();
+        for (int c = 0; c < width; c++) {
+            const TermCell cell = s->lineCell(line, c);
+            if (cell.width == 0) continue;
+            const std::string ch = cell.ch.empty() ? std::string(" ") : cell.ch;
+            text += ch;
+            cellOfByte->insert(cellOfByte->end(), ch.size(), CellAt{line, c});
+        }
     }
     return text;
 }
 
-// The link at a point, with its line and cells, or nil. Points outside the
-// grid find nothing (cellAtPoint: would clamp them onto the edge cells).
-- (MCTermLink *)linkAtPoint:(NSPoint)p line:(int *)lineOut col0:(int *)col0 col1:(int *)col1 {
+// The link at a point, with the line and cell it starts at and the line and
+// cell after its end, or nil. Points outside the grid find nothing
+// (cellAtPoint: would clamp them onto the edge cells).
+- (MCTermLink *)linkAtPoint:(NSPoint)p line:(int *)lineOut col0:(int *)col0
+                    endLine:(int *)endLineOut col1:(int *)col1 {
     TerminalScreen *s = self.screen;
     if (!s || !self.linkAt) return nil;
     NSSize cs = [TerminalGridView cellSize];
@@ -842,36 +971,42 @@ static CellColors ColorsFor(const TermStyle &st) {
     if (r < 0 || r >= s->rows() || c < 0 || c >= s->cols()) return nil;
     int line = [self topLine] + r;
     if (s->lineCell(line, c).width == 0 && c > 0) c--;   // right half of a wide character
-    std::vector<int> cellOfByte;
-    std::string text = [self textOfLine:line cells:&cellOfByte];
+    int first, last;
+    [self logicalLineAt:line first:&first last:&last];
+    std::vector<CellAt> cellOfByte;
+    std::string text = [self textOfLines:first to:last cells:&cellOfByte];
     size_t byte = 0;
-    while (byte < cellOfByte.size() && cellOfByte[byte] < c) byte++;
-    if (byte >= cellOfByte.size()) return nil;
+    while (byte < cellOfByte.size() &&
+           (cellOfByte[byte].line < line || (cellOfByte[byte].line == line && cellOfByte[byte].col < c)))
+        byte++;
+    if (byte >= cellOfByte.size() || cellOfByte[byte].line != line) return nil;
     MCTermLink *link = self.linkAt(text, byte);
     if (!link || link.byteLength == 0 ||
         link.byteStart + link.byteLength > cellOfByte.size()) return nil;
-    size_t last = link.byteStart + link.byteLength - 1;
-    *lineOut = line;
-    *col0 = cellOfByte[link.byteStart];
-    *col1 = cellOfByte[last] + (s->lineCell(line, cellOfByte[last]).width == 2 ? 2 : 1);
+    size_t lastByte = link.byteStart + link.byteLength - 1;
+    CellAt a = cellOfByte[link.byteStart], z = cellOfByte[lastByte];
+    *lineOut = a.line;
+    *col0 = a.col;
+    *endLineOut = z.line;
+    *col1 = z.col + (s->lineCell(z.line, z.col).width == 2 ? 2 : 1);
     return link;
 }
 
 - (void)updateLinkHover {
-    long long lineId = kNoLine;
-    int line = 0, c0 = 0, c1 = 0;
+    long long lineId = kNoLine, endId = kNoLine;
+    int line = 0, endLine = 0, c0 = 0, c1 = 0;
     MCTermLink *link = nil;
     if ((NSEvent.modifierFlags & NSEventModifierFlagCommand) && self.window) {
         NSPoint p = [self convertPoint:[self.window mouseLocationOutsideOfEventStream]
                               fromView:nil];
         if (NSPointInRect(p, self.bounds))
-            link = [self linkAtPoint:p line:&line col0:&c0 col1:&c1];
+            link = [self linkAtPoint:p line:&line col0:&c0 endLine:&endLine col1:&c1];
     }
-    if (link) lineId = [self base] + line;
+    if (link) { lineId = [self base] + line; endId = [self base] + endLine; }
     else c0 = c1 = 0;
-    BOOL changed = lineId != _linkId || c0 != _linkCol0 || c1 != _linkCol1;
+    BOOL changed = lineId != _linkId || endId != _linkEndId || c0 != _linkCol0 || c1 != _linkCol1;
     _link = link;
-    _linkId = lineId; _linkCol0 = c0; _linkCol1 = c1;
+    _linkId = lineId; _linkEndId = endId; _linkCol0 = c0; _linkCol1 = c1;
     if (link) [[NSCursor pointingHandCursor] set];
     else if (changed) [[NSCursor arrowCursor] set];
     if (changed) [self setNeedsDisplay:YES];
@@ -889,10 +1024,17 @@ static CellColors ColorsFor(const TermStyle &st) {
                owner:self userInfo:nil]];
 }
 
-- (void)mouseMoved:(NSEvent *)e { (void)e; [self updateLinkHover]; }
+- (void)mouseMoved:(NSEvent *)e {
+    [self updateLinkHover];
+    // DECSET 1003: motion with no button down too.
+    TerminalScreen *s = self.screen;
+    if (s && s->mouseTracking() == 1003 && _reportButton < 0 && [self reportsMouse:e] &&
+        NSPointInRect([self convertPoint:e.locationInWindow fromView:nil], self.bounds))
+        [self report:TermMouse::Motion button:-1 event:e];
+}
 - (void)mouseExited:(NSEvent *)e {
     (void)e;
-    if (_linkId != kNoLine) { _link = nil; _linkId = kNoLine; [self setNeedsDisplay:YES]; }
+    if (_linkId != kNoLine) { _link = nil; _linkId = _linkEndId = kNoLine; [self setNeedsDisplay:YES]; }
 }
 - (void)cursorUpdate:(NSEvent *)e {
     (void)e;
@@ -908,29 +1050,53 @@ static BOOL IsWordCell(const TermCell &cell) {
     return strchr("()[]{}<>\"'`|;,", cell.ch[0]) == nullptr;
 }
 
-// The word (unit 2) or line (unit 3) around a cell, as columns of its line.
-- (void)unit:(int)unit atLine:(int)line col:(int)col from:(int *)from to:(int *)to {
+// The word (unit 2) or line (unit 3) around a cell, from (fromLine, from) to
+// (toLine, to) inclusive. Both run over soft wraps: a triple-click takes the
+// whole wrapped line, a double-click a path the terminal wrapped.
+- (void)unit:(int)unit atLine:(int)line col:(int)col
+    fromLine:(int *)fromLine from:(int *)from toLine:(int *)toLine to:(int *)to {
     TerminalScreen *s = self.screen;
-    int cols = s->cols();
-    if (unit == 3) { *from = 0; *to = cols - 1; return; }
+    int first, last;
+    [self logicalLineAt:line first:&first last:&last];
+    if (unit == 3) {
+        *fromLine = first; *from = 0;
+        *toLine = last; *to = s->cols() - 1;
+        return;
+    }
     if (s->lineCell(line, col).width == 0 && col > 0) col--;
+    *fromLine = *toLine = line;
     if (!IsWordCell(s->lineCell(line, col))) { *from = *to = col; return; }
-    int a = col, b = col;
-    while (a > 0 && (s->lineCell(line, a - 1).width == 0 ||
-                     IsWordCell(s->lineCell(line, a - 1)))) a--;
-    while (b + 1 < cols && (s->lineCell(line, b + 1).width == 0 ||
-                            IsWordCell(s->lineCell(line, b + 1)))) b++;
-    *from = a; *to = b;
+    auto wordAt = [&](int l, int c) {
+        TermCell cell = s->lineCell(l, c);
+        return cell.width == 0 || IsWordCell(cell);
+    };
+    int al = line, a = col, bl = line, b = col;
+    for (;;) {
+        if (a > 0 && wordAt(al, a - 1)) { a--; continue; }
+        if (a == 0 && al > first) {
+            int w = s->lineTextWidth(al - 1);
+            if (w > 0 && wordAt(al - 1, w - 1)) { al--; a = w - 1; continue; }
+        }
+        break;
+    }
+    for (;;) {
+        int w = bl < last ? s->lineTextWidth(bl) : s->cols();
+        if (b + 1 < w && wordAt(bl, b + 1)) { b++; continue; }
+        if (b + 1 >= w && bl < last && wordAt(bl + 1, 0)) { bl++; b = 0; continue; }
+        break;
+    }
+    *fromLine = al; *from = a;
+    *toLine = bl; *to = b;
 }
 
 - (void)mouseDown:(NSEvent *)e {
     if (e.modifierFlags & NSEventModifierFlagCommand) {
-        int line, c0, c1;
+        int line, endLine, c0, c1;
         NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
-        MCTermLink *link = [self linkAtPoint:p line:&line col0:&c0 col1:&c1];
+        MCTermLink *link = [self linkAtPoint:p line:&line col0:&c0 endLine:&endLine col1:&c1];
         if (link) {
             _link = nil;
-            _linkId = kNoLine;
+            _linkId = _linkEndId = kNoLine;
             [self setNeedsDisplay:YES];
             if (self.openLink) self.openLink(link);
             return;
@@ -938,6 +1104,12 @@ static BOOL IsWordCell(const TermCell &cell) {
     }
     [self.window makeFirstResponder:self];
     if (!self.screen) return;
+    if ([self reportsMouse:e]) {
+        if (_hasSelection) { _hasSelection = NO; [self setNeedsDisplay:YES]; }
+        _reportButton = 0;
+        [self report:TermMouse::Press button:0 event:e];
+        return;
+    }
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
     int row, col;
     [self cellAtPoint:p row:&row col:&col];
@@ -945,13 +1117,15 @@ static BOOL IsWordCell(const TermCell &cell) {
     long long lineId = [self base] + line;
     _unit = e.clickCount >= 3 ? 3 : e.clickCount == 2 ? 2 : 1;
     if (_unit > 1) {
-        int from, to;
-        [self unit:_unit atLine:line col:col from:&from to:&to];
-        _unitStartId = _unitEndId = lineId;
+        int fromLine, from, toLine, to;
+        [self unit:_unit atLine:line col:col fromLine:&fromLine from:&from toLine:&toLine to:&to];
+        long long base = [self base];
+        _unitStartId = base + fromLine;
+        _unitEndId = base + toLine;
         _unitStartCol = from;
         _unitEndCol = to;
-        _anchorId = lineId; _anchorCol = from;
-        _endId = lineId; _endCol = to;
+        _anchorId = _unitStartId; _anchorCol = from;
+        _endId = _unitEndId; _endCol = to;
         _hasSelection = YES;
     } else {
         _anchorId = _endId = lineId;
@@ -962,7 +1136,73 @@ static BOOL IsWordCell(const TermCell &cell) {
     [self setNeedsDisplay:YES];
 }
 
+// ---------------------------------------------------------- mouse reporting
+// A mouse event goes to the program when it asked for mouse events, the view
+// shows the live screen, and neither Shift (select, as in other terminals)
+// nor Cmd (links) is held.
+- (BOOL)reportsMouse:(NSEvent *)e {
+    TerminalScreen *s = self.screen;
+    if (!s || !s->mouseTracking() || _offset != 0) return NO;
+    return !(e.modifierFlags & (NSEventModifierFlagShift | NSEventModifierFlagCommand));
+}
+
+// Sends one mouse event at the event's cell; motion only when the cell
+// changed. Option is Meta and Control is Control, as xterm reports them.
+- (void)report:(TermMouse)kind button:(int)button event:(NSEvent *)e {
+    TerminalScreen *s = self.screen;
+    if (!s) return;
+    NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+    int row, col;
+    [self cellAtPoint:p row:&row col:&col];
+    if (kind == TermMouse::Motion && row == _reportRow && col == _reportCol) return;
+    _reportRow = row;
+    _reportCol = col;
+    NSEventModifierFlags f = e.modifierFlags;
+    int mods = ((f & NSEventModifierFlagOption) ? TermModAlt : 0) |
+               ((f & NSEventModifierFlagControl) ? TermModCtrl : 0);
+    std::string bytes = s->encodeMouse(kind, button, col, row, mods);
+    if (!bytes.empty() && self.onInput)
+        self.onInput([NSData dataWithBytes:bytes.data() length:bytes.size()]);
+}
+
+- (void)rightMouseDown:(NSEvent *)e {
+    if (![self reportsMouse:e]) { [super rightMouseDown:e]; return; }
+    [self.window makeFirstResponder:self];
+    _reportButton = 2;
+    [self report:TermMouse::Press button:2 event:e];
+}
+
+- (void)rightMouseDragged:(NSEvent *)e {
+    if (_reportButton == 2) [self report:TermMouse::Motion button:2 event:e];
+    else [super rightMouseDragged:e];
+}
+
+- (void)rightMouseUp:(NSEvent *)e {
+    if (_reportButton != 2) { [super rightMouseUp:e]; return; }
+    [self report:TermMouse::Release button:2 event:e];
+    _reportButton = -1;
+}
+
+- (void)otherMouseDown:(NSEvent *)e {
+    if (e.buttonNumber != 2 || ![self reportsMouse:e]) { [super otherMouseDown:e]; return; }
+    [self.window makeFirstResponder:self];
+    _reportButton = 1;
+    [self report:TermMouse::Press button:1 event:e];
+}
+
+- (void)otherMouseDragged:(NSEvent *)e {
+    if (_reportButton == 1) [self report:TermMouse::Motion button:1 event:e];
+    else [super otherMouseDragged:e];
+}
+
+- (void)otherMouseUp:(NSEvent *)e {
+    if (_reportButton != 1) { [super otherMouseUp:e]; return; }
+    [self report:TermMouse::Release button:1 event:e];
+    _reportButton = -1;
+}
+
 - (void)mouseDragged:(NSEvent *)e {
+    if (_reportButton == 0) { [self report:TermMouse::Motion button:0 event:e]; return; }
     if (!_selecting || !self.screen) return;
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
     // Past the top or bottom edge, the view scrolls through the scrollback.
@@ -979,15 +1219,17 @@ static BOOL IsWordCell(const TermCell &cell) {
         _endCol = col;
         _hasSelection = _endId != _anchorId || _endCol != _anchorCol;
     } else {
-        int from, to;
-        [self unit:_unit atLine:line col:col from:&from to:&to];
-        BOOL before = lineId < _unitStartId || (lineId == _unitStartId && from < _unitStartCol);
+        int fromLine, from, toLine, to;
+        [self unit:_unit atLine:line col:col fromLine:&fromLine from:&from toLine:&toLine to:&to];
+        long long base = [self base];
+        long long fromId = base + fromLine, toId = base + toLine;
+        BOOL before = fromId < _unitStartId || (fromId == _unitStartId && from < _unitStartCol);
         if (before) {
             _anchorId = _unitEndId; _anchorCol = _unitEndCol;
-            _endId = lineId; _endCol = from;
+            _endId = fromId; _endCol = from;
         } else {
             _anchorId = _unitStartId; _anchorCol = _unitStartCol;
-            _endId = lineId; _endCol = to;
+            _endId = toId; _endCol = to;
         }
         _hasSelection = YES;
     }
@@ -995,16 +1237,38 @@ static BOOL IsWordCell(const TermCell &cell) {
 }
 
 - (void)mouseUp:(NSEvent *)e {
-    (void)e;
+    if (_reportButton == 0) {
+        [self report:TermMouse::Release button:0 event:e];
+        _reportButton = -1;
+        return;
+    }
     _selecting = NO;
 }
 
 // On the main screen the wheel scrolls back through the scrollback. In the
 // alternate screen it scrolls the program (arrow keys), the way xterm's
-// alternateScroll does; there is no scrollback there.
+// alternateScroll does; there is no scrollback there. A program that asked
+// for mouse events gets the wheel as buttons 4 and 5 instead (Shift keeps
+// the old behavior).
 - (void)scrollWheel:(NSEvent *)e {
     TerminalScreen *s = self.screen;
     if (!s) return;
+    if ([self reportsMouse:e]) {
+        CGFloat lines = e.hasPreciseScrollingDeltas
+            ? e.scrollingDeltaY / [TerminalGridView cellSize].height
+            : e.scrollingDeltaY;
+        _scrollAccum += lines;
+        _reportRow = _reportCol = -1;
+        while (_scrollAccum >= 1) {
+            [self report:TermMouse::WheelUp button:-1 event:e];
+            _scrollAccum -= 1;
+        }
+        while (_scrollAccum <= -1) {
+            [self report:TermMouse::WheelDown button:-1 event:e];
+            _scrollAccum += 1;
+        }
+        return;
+    }
     if (!s->altScreen()) {
         CGFloat lines = e.hasPreciseScrollingDeltas
             ? e.scrollingDeltaY / [TerminalGridView cellSize].height

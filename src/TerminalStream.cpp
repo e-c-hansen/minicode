@@ -456,6 +456,25 @@ void TerminalStream::finishOsc(const std::string& s, std::vector<TermEvent>& out
         // The command line about to run, as VS Code's integration sends it;
         // it travels with the CommandStart that follows.
         commandLine_ = s.substr(6, 4096);
+    } else if (s.rfind("0;", 0) == 0 || s.rfind("2;", 0) == 0) {
+        // A window title (OSC 0 sets the icon's name too; OSC 1 alone is
+        // not a title). Control characters dropped, at most 256 bytes, cut
+        // at a character's start.
+        TermEvent e;
+        e.kind = TermEvent::Title;
+        for (size_t i = 2; i < s.size(); i++) {
+            unsigned char c = (unsigned char)s[i];
+            if (c < 0x20 || c == 0x7F) continue;
+            if (e.text.size() >= 256 && (c & 0xC0) != 0x80) break;
+            e.text += (char)c;
+        }
+        while (e.text.size() > 256) {           // a character cut in two
+            size_t cut = e.text.size() - 1;
+            while (cut > 0 && ((unsigned char)e.text[cut] & 0xC0) == 0x80) cut--;
+            e.text.resize(cut);
+        }
+        flushLine(out);
+        out.push_back(e);
     } else {
         std::string path = termOsc7Path(s);
         if (!path.empty()) {

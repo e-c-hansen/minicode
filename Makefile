@@ -33,6 +33,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/InlineAgent.cpp src/LineIndex.cpp src/BracketMatch.cpp \
             src/ControlProtocol.cpp src/SideBySide.cpp \
             src/AgentTranscript.cpp src/AgentIndex.cpp src/AgentEvidence.cpp \
+            src/SymbolOutline.cpp src/NavHistory.cpp \
             src/Folding.cpp
 
 # Each source file compiles to its own object in build/obj (build/test-obj for

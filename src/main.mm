@@ -635,11 +635,16 @@ static BOOL MCWindowTabAction(SEL a) {
         ctx.goToLine = ^(NSInteger line, NSInteger column) {
             [weak goToLine:(int)line column:(int)column];
         };
+    [c addSymbolsToPaletteContext:ctx];
     MCShowPalette(c.window, text, ctx);
 }
 - (void)showCommandPalette:(id)sender { (void)sender; [self showPaletteWithText:@">"]; }
 - (void)quickOpen:(id)sender          { (void)sender; [self showPaletteWithText:@""]; }
 - (void)goToLinePrompt:(id)sender     { (void)sender; [self showPaletteWithText:@":"]; }
+- (void)goToSymbolInFile:(id)sender   { (void)sender; [self showPaletteWithText:@"@"]; }
+- (void)goToSymbolInWorkspace:(id)sender { (void)sender; [self showPaletteWithText:@"#"]; }
+- (void)navigateBack:(id)sender       { [[self current] navigateBack:sender]; }
+- (void)navigateForward:(id)sender    { [[self current] navigateForward:sender]; }
 // App-wide, so it works from any window.
 - (void)toggleTreeColumn:(id)sender { MCToggleTreeColumn((MCTreeColumns)[sender tag]); }
 - (void)showContextMenu:(id)sender {
@@ -1361,6 +1366,29 @@ static void BuildMenu(void) {
                                              keyEquivalent:@"g"];
     goLine.keyEquivalentModifierMask = NSEventModifierFlagControl;
     [navMenu addItem:goLine];
+    // VS Code's keys: Shift+Cmd+O the file's symbols ("@" in the palette),
+    // Cmd+T the workspace's ("#"), from the language servers or, for the
+    // file, the built-in outline.
+    NSMenuItem *fileSymbol = [[NSMenuItem alloc] initWithTitle:@"Go to Symbol in File…"
+                                                        action:@selector(goToSymbolInFile:)
+                                                 keyEquivalent:@"o"];
+    fileSymbol.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [navMenu addItem:fileSymbol];
+    [navMenu addItemWithTitle:@"Go to Symbol in Workspace…"
+                       action:@selector(goToSymbolInWorkspace:)
+                keyEquivalent:@"t"];
+    // Ctrl+- and Ctrl+Shift+-, VS Code's Mac keys. A program on the
+    // terminal's grid gets Ctrl+- instead (TerminalGridView claims Ctrl).
+    NSMenuItem *back = [[NSMenuItem alloc] initWithTitle:@"Go Back"
+                                                  action:@selector(navigateBack:)
+                                           keyEquivalent:@"-"];
+    back.keyEquivalentModifierMask = NSEventModifierFlagControl;
+    [navMenu addItem:back];
+    NSMenuItem *forward = [[NSMenuItem alloc] initWithTitle:@"Go Forward"
+                                                     action:@selector(navigateForward:)
+                                              keyEquivalent:@"-"];
+    forward.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagShift;
+    [navMenu addItem:forward];
     // VS Code's Go to Bracket. Shift+Cmd+\ (Cmd+\ splits the terminal).
     NSMenuItem *goBracket = [[NSMenuItem alloc] initWithTitle:@"Go to Bracket"
                                                        action:@selector(goToBracket:)
