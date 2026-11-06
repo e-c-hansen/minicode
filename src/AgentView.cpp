@@ -20,6 +20,47 @@ std::vector<FileGroup> groupFiles(const std::vector<AgentIndex::FileTouch> &file
     return out;
 }
 
+static std::string parentOf(const std::string &path) {
+    size_t slash = path.rfind('/');
+    if (slash == std::string::npos) return "";
+    return slash == 0 ? "/" : path.substr(0, slash);
+}
+
+// `dir` below `root`: "" for root itself, "a/b" below it; npos-like false
+// when it is not inside.
+static bool below(const std::string &dir, const std::string &root, std::string *out) {
+    if (root.empty()) return false;
+    if (dir == root) { *out = ""; return true; }
+    if (dir.size() > root.size() && dir.compare(0, root.size(), root) == 0 && dir[root.size()] == '/') {
+        *out = dir.substr(root.size() + 1);
+        return true;
+    }
+    return false;
+}
+
+std::string folderText(const std::string &path, AgentIndex::Place place,
+                       const std::string &folder, const std::string &worktree,
+                       const std::string &scratchpad, const std::string &home) {
+    const std::string dir = parentOf(AgentIndex::normalizePath(path));
+    std::string rel;
+    if (place == AgentIndex::Place::Worktree) {
+        if (below(dir, AgentIndex::normalizePath(worktree), &rel)) return rel;
+        const std::string mark = "/.claude/worktrees/";
+        size_t at = dir.find(mark);
+        if (at != std::string::npos) {
+            size_t start = at + mark.size();
+            size_t end = dir.find('/', start);
+            return end == std::string::npos ? "" : dir.substr(end + 1);
+        }
+    }
+    if (place == AgentIndex::Place::Main && below(dir, AgentIndex::normalizePath(folder), &rel))
+        return rel;
+    if (!scratchpad.empty() && below(dir, AgentIndex::normalizePath(scratchpad), &rel))
+        return rel.empty() ? "scratchpad" : "scratchpad/" + rel;
+    if (below(dir, home, &rel)) return rel.empty() ? "~" : "~/" + rel;
+    return dir;
+}
+
 static std::string plural(int n, const char *one, const char *many) {
     return std::to_string(n) + " " + (n == 1 ? one : many);
 }

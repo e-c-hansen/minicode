@@ -26,6 +26,24 @@ static void testAgentView() {
         CHECK(groupFiles(onlyFailed).empty());
     }
 
+    GROUP("agentview:folder-text");
+    CHECK(folderText("/p/src/a.cpp", Place::Main, "/p", "", "", "/h") == "src");
+    CHECK(folderText("/p/a.cpp", Place::Main, "/p", "", "", "/h") == "");
+    CHECK(folderText("/p/.claude/worktrees/agent-1/src/x.h", Place::Worktree, "/p",
+                     "/p/.claude/worktrees/agent-1", "", "/h") == "src");
+    // Another session's worktree, found by its folder name.
+    CHECK(folderText("/p/.claude/worktrees/agent-2/lib/y.h", Place::Worktree, "/p",
+                     "/p/.claude/worktrees/agent-1", "", "/h") == "lib");
+    CHECK(folderText("/p/.claude/worktrees/agent-2/y.h", Place::Worktree, "/p", "", "", "/h") == "");
+    CHECK(folderText("/t/c/-p/s1/scratchpad/r.md", Place::Outside, "/p", "", "/t/c/-p/s1/scratchpad",
+                     "/h") == "scratchpad");
+    CHECK(folderText("/t/c/-p/s1/scratchpad/out/r.md", Place::Outside, "/p", "",
+                     "/t/c/-p/s1/scratchpad", "/h") == "scratchpad/out");
+    CHECK(folderText("/h/notes/x.md", Place::Outside, "/p", "", "", "/h") == "~/notes");
+    CHECK(folderText("/h/x.md", Place::Outside, "/p", "", "", "/h") == "~");
+    CHECK(folderText("/hx/x.md", Place::Outside, "/p", "", "", "/h") == "/hx");
+    CHECK(folderText("/tmp/../tmp/x.md", Place::Outside, "/p", "", "", "/h") == "/tmp");
+
     GROUP("agentview:row-text");
     CHECK(countsText(3, 12) == "3 files, 12 commands");
     CHECK(countsText(1, 1) == "1 file, 1 command");

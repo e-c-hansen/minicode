@@ -8,7 +8,8 @@
                                         NSSplitViewDelegate,
                                         NSTextViewDelegate,
                                         NSWindowDelegate,
-                                        NSMenuItemValidation>
+                                        NSMenuItemValidation,
+                                        NSMenuDelegate>
 @property(nonatomic, readonly) BOOL canTogglePreview;
 @property(nonatomic, readonly, strong) NSWindow *window;
 @property(nonatomic, readonly, copy) NSString *rootPath;
@@ -43,6 +44,7 @@
 - (void)toggleBrowser:(id)sender;     // Shift+Cmd+B embedded browser
 - (void)toggleSidebar:(id)sender;     // Cmd+B collapse/restore file tree
 - (void)toggleSourceControl:(id)sender;   // Ctrl+Shift+G git panel in the sidebar
+- (void)toggleAgents:(id)sender;          // Shift+Cmd+A agent sessions in the sidebar
 - (void)toggleEditor:(id)sender;      // Shift+Cmd+E hide/restore the file editor
 - (void)toggleHiddenFiles:(id)sender; // Cmd+Shift+. show/hide dotfiles
 - (void)toggleTreeColumn:(id)sender;  // the tree's size, saved and created columns (tag)

@@ -24,6 +24,15 @@ struct FileGroup {
 };
 std::vector<FileGroup> groupFiles(const std::vector<AgentIndex::FileTouch> &files);
 
+// The folder a file row shows beside its name: from the window's folder
+// ("src", "" at its top) for a file in it, from its worktree for one in a
+// worktree (the session's own, else whichever .claude/worktrees/<x> holds
+// it), "scratchpad/..." in the session's scratchpad, else the whole folder
+// with the home folder as "~".
+std::string folderText(const std::string &path, AgentIndex::Place place,
+                       const std::string &folder, const std::string &worktree,
+                       const std::string &scratchpad, const std::string &home);
+
 // "3 files, 12 commands", "1 file, 1 command", "no files, 2 commands",
 // "no files or commands".
 std::string countsText(int files, int commands);

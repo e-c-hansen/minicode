@@ -615,6 +615,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
 - (void)toggleSidebar:(id)sender   { [[self current] toggleSidebar:sender]; }
 - (void)toggleSourceControl:(id)sender { [[self current] toggleSourceControl:sender]; }
+- (void)toggleAgents:(id)sender    { [[self current] toggleAgents:sender]; }
 - (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
 - (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
 - (void)requestChange:(id)sender   { [[self current] requestChange:sender]; }
@@ -1148,6 +1149,16 @@ static void BuildMenu(void) {
     git.keyEquivalentModifierMask =
         NSEventModifierFlagControl | NSEventModifierFlagShift;
     [viewMenu addItem:git];
+
+    // Shift+Cmd+A: the agent sessions that worked in the folder, in the
+    // sidebar's place (AgentsPanel.h).
+    NSMenuItem *agents =
+        [[NSMenuItem alloc] initWithTitle:@"Toggle Agents"
+                                   action:@selector(toggleAgents:)
+                            keyEquivalent:@"a"];
+    agents.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [viewMenu addItem:agents];
 
     // Shift+Cmd+M as in VS Code: every problem the language servers report,
     // above the terminal.
