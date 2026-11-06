@@ -6,6 +6,8 @@
 #import "TreeDetails.h"   // MCAppDefaults
 #include "ChangeRequest.h"
 
+#include <cerrno>
+#include <signal.h>
 #include <spawn.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -580,7 +582,9 @@ static double MCFileTime(NSString *path) {
     // The prompt in a file the command reads, so the typed line stays short.
     NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"MiniCode-change"];
     [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES
-                                               attributes:nil error:nil];
+                                               attributes:@{NSFilePosixPermissions: @0700}
+                                                    error:nil];
+    MCRemoveStalePromptFiles(dir);
     static NSUInteger serial;
     NSString *file = [dir stringByAppendingPathComponent:[NSString stringWithFormat:
         @"request-%d-%lu.txt", getpid(), (unsigned long)++serial]];
@@ -612,10 +616,18 @@ static double MCFileTime(NSString *path) {
 }
 
 - (void)resumeWithSource:(NSString *)source command:(NSString *)command {
+    // The restart record only says where to go on; what runs is
+    // develop.command, as for a request, never a command line read back
+    // from the defaults (anything of the user's could have written it).
+    (void)command;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (!ChangeRequest::looksLikeSource(Std(source), [fm](const std::string &p) {
+            return (bool)[fm fileExistsAtPath:NS(p)];
+        }))
+        return;
     _source = [source copy];
     NSString *line = NS(ChangeRequest::resumeCommand(
-        command.length ? Std(command) : [AppSettings shared].settings.developCommand(),
-        Std(source)));
+        [AppSettings shared].settings.developCommand(), Std(source)));
     _terminal = [_host changeTerminalRunning:line focus:NO];
     [self watchFrom:MCFileTime(NS(ChangeRequest::buildStamp(Std(source))))];
     [self showBar:MCChangeBarNote message:
@@ -682,3 +694,17 @@ static double MCFileTime(NSString *path) {
 
 - (void)dealloc { [_timer invalidate]; }
 @end
+
+void MCRemoveStalePromptFiles(NSString *dir) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    const double now = [NSDate date].timeIntervalSince1970;
+    for (NSString *name in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+        NSString *path = [dir stringByAppendingPathComponent:name];
+        NSDate *written = [fm attributesOfItemAtPath:path error:nil].fileModificationDate;
+        const double age = written ? now - written.timeIntervalSince1970 : 0;
+        if (ChangeRequest::promptFileIsStale(Std(name), age, [](int pid) {
+                return pid == getpid() || kill(pid, 0) == 0 || errno == EPERM;
+            }))
+            [fm removeItemAtPath:path error:nil];
+    }
+}

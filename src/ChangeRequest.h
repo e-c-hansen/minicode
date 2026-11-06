@@ -53,6 +53,13 @@ std::string cloneThenStartCommand(const std::string &version, const std::string 
 // folder, after a restart.
 std::string resumeCommand(const std::string &command, const std::string &source);
 
+// The prompt files minicode writes for Claude Code to read as it starts
+// ("request-<pid>-<n>.txt" for Request a Change, "task-<pid>-<n>.txt" for
+// the inline agent's tasks): one may go once the process that wrote it has
+// gone, or a day after it was written. Other names are never stale.
+bool promptFileIsStale(const std::string &name, double ageSeconds,
+                       const std::function<bool(int)> &alive);
+
 // A folder holding minicode's source: a Makefile and src/EditorController.mm.
 bool looksLikeSource(const std::string &dir,
                      const std::function<bool(const std::string &)> &exists);

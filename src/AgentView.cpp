@@ -2,6 +2,7 @@
 #include "AgentView.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <set>
 
@@ -110,6 +111,33 @@ std::string mainRef(const std::vector<AgentIndex::Worktree> &all) {
         return w.head;
     }
     return "";
+}
+
+CompareBase compareBase(const std::string &mainRef, const std::string &mergeBase) {
+    std::string sha = mergeBase;
+    while (!sha.empty() && std::isspace((unsigned char)sha.back())) sha.pop_back();
+    while (!sha.empty() && std::isspace((unsigned char)sha.front())) sha.erase(0, 1);
+    bool hex = sha.size() >= 7;
+    for (char c : sha) hex = hex && ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
+    CompareBase b;
+    if (!hex) {
+        b.ref = mainRef;
+        b.label = mainRef;
+        return b;
+    }
+    b.ref = sha;
+    b.label = mainRef + " at the branch point (" + sha.substr(0, 7) + ")";
+    return b;
+}
+
+bool indexesFolder(const std::string &folder, const std::string &home) {
+    auto trim = [](std::string p) {
+        while (p.size() > 1 && p.back() == '/') p.pop_back();
+        return p;
+    };
+    const std::string f = trim(folder);
+    if (f.empty() || f == "/") return false;
+    return home.empty() || f != trim(home);
 }
 
 static std::vector<std::string> splitNul(const std::string &s) {

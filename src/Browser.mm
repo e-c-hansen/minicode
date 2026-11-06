@@ -82,6 +82,10 @@
 @property(nonatomic, strong) NSButton    *back;
 @property(nonatomic, strong) NSButton    *forward;
 @property(nonatomic, strong) NSButton    *reload;
+// The pages agents loaded (`minicode browse`), as history items, to tell
+// them from pages the user loaded; and the agent's load still on its way.
+@property(nonatomic, strong) NSHashTable<WKBackForwardListItem *> *agentItems;
+@property(nonatomic, weak) WKNavigation *agentNavigation;
 @end
 
 @implementation BrowserView
@@ -233,13 +237,30 @@ static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
 // take the keyboard when it loads.
 - (void)navigateToString:(NSString *)raw {
     self.web.toolbarNavigation = NO;
+    self.agentNavigation = nil;
     [self loadString:raw];
 }
 
-- (void)loadString:(NSString *)raw {
+- (void)navigateForAgent:(NSString *)raw {
+    self.web.toolbarNavigation = NO;
+    WKNavigation *nav = [self loadString:raw];
+    self.agentNavigation = nav;
+}
+
+// A page is the user's when they loaded it, from the address bar, a link
+// in the page, back and forward, a restored session or a link elsewhere in
+// minicode; an agent's page stays the agent's through its redirects (one
+// navigation). Nothing on show yet is nobody's.
+- (BOOL)showsUserPage {
+    WKBackForwardListItem *current = self.web.backForwardList.currentItem;
+    if (!current) return NO;
+    return ![self.agentItems containsObject:current];
+}
+
+- (WKNavigation *)loadString:(NSString *)raw {
     NSString *s =[raw stringByTrimmingCharactersInSet:
                    [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (s.length == 0) return;
+    if (s.length == 0) return nil;
     NSString *urlStr = s;
     BOOL hasScheme = [s hasPrefix:@"http://"] || [s hasPrefix:@"https://"] ||
                      [s hasPrefix:@"file://"];
@@ -254,7 +275,7 @@ static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
                         [NSCharacterSet URLQueryAllowedCharacterSet]]];
     }
     NSURL *url = [NSURL URLWithString:urlStr];
-    if (url) [self.web loadRequest:[NSURLRequest requestWithURL:url]];
+    return url ? [self.web loadRequest:[NSURLRequest requestWithURL:url]] : nil;
 }
 
 // From the toolbar: the page asked for may focus its own field, as long as
@@ -287,6 +308,10 @@ static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
 - (void)reloadPage:(id)sender { self.web.toolbarNavigation = YES; [self.web reload]; }
 
 - (void)webView:(WKWebView *)wv didCommitNavigation:(WKNavigation *)nav {
+    if (nav && nav == self.agentNavigation && wv.backForwardList.currentItem) {
+        if (!self.agentItems) self.agentItems = [NSHashTable weakObjectsHashTable];
+        [self.agentItems addObject:wv.backForwardList.currentItem];
+    }
     self.urlBar.stringValue = wv.URL.absoluteString ?: @"";
     self.back.enabled = wv.canGoBack;
     self.forward.enabled = wv.canGoForward;

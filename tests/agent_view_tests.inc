@@ -76,6 +76,16 @@ static void testAgentView() {
             "worktree /p\nHEAD abcd\ndetached\n\n");
         CHECK(mainRef(detached) == "abcd");
         CHECK(mainRef({}) == "");
+        // Compared with main where the branch left it, when that was found.
+        CompareBase base = compareBase("main", "0123456789abcdef0123456789abcdef01234567\n");
+        CHECK(base.ref == "0123456789abcdef0123456789abcdef01234567");
+        CHECK(base.label == "main at the branch point (0123456)");
+        CHECK(compareBase("main", "").ref == "main" && compareBase("main", "").label == "main");
+        CHECK(compareBase("main", "fatal: no merge base\n").ref == "main");
+        // No sessions for / or the home folder.
+        CHECK(!indexesFolder("/", "/Users/me") && !indexesFolder("/Users/me", "/Users/me") &&
+              !indexesFolder("/Users/me/", "/Users/me") && !indexesFolder("", "/Users/me"));
+        CHECK(indexesFolder("/Users/me/code", "/Users/me") && indexesFolder("/Users", "/Users/me"));
     }
     {
         static const char nsz[] =

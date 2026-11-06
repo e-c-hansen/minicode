@@ -8,8 +8,11 @@ description: Show work in minicode, the user's editor, instead of only describin
 minicode is the user's editor. The `minicode` command drives the copy that
 is running: it opens files at lines with a short note, shows diffs side by
 side, opens terminals and pages, and reports what the user is looking at.
-Commands never take the keyboard or close, replace or reorder the user's
-tabs and terminals; they only add.
+Commands never close, replace or reorder the user's tabs, terminals or
+browser page; they only add. They leave the keyboard where it is: while the
+user is typing in the editor, a file or diff opens in a tab beside theirs
+without being shown (the command says so on stderr), so say in the reply
+that it is there. `window` and `--folder` can bring another window forward.
 
 If `minicode` is not on PATH, or a command exits with code 3 (no minicode
 to talk to), give plain paths in the reply instead and do not retry.
@@ -40,11 +43,11 @@ to talk to), give plain paths in the reply instead and do not retry.
 | `minicode open <path>[:line[:col]] ...` | Opens files at a line, in the window whose folder holds them | |
 | `minicode open <path>:<line> [--to L[:C]] --note "TEXT" [--from NAME] [--keep]` | Highlights the lines, scrolls them into view, shows TEXT above them in the agent preview tab (replaced by the next note; `--keep` for a tab of its own) | |
 | `minicode tour <file.json>` | A sequence of notes; the user steps with Option+] and Option+[ | |
-| `minicode diff <path> [--base REF]` | Side-by-side diff against a git ref (default `HEAD`) | |
-| `minicode diff <a> <b>` | Side-by-side diff of two files | |
+| `minicode diff <path> [--base REF]` | Side-by-side diff against a git ref (default `HEAD`), in the diff preview tab (its own, so a note's tab stays) | |
+| `minicode diff <a> <b>` | Side-by-side diff of two files (each up to 16 MB) | |
 | `minicode term [--cwd D] [--title T] [--run CMD]` | A new terminal tab; `--run` types CMD and presses Return, visibly | terminal id |
 | `minicode term-output <id> [--lines N]` | The terminal's last N lines (200), scrollback included | text |
-| `minicode browse <url>` | The page in the browser pane beside the editor | |
+| `minicode browse <url>` | The page in the browser pane beside the editor; refused while it shows a page the user opened | |
 | `minicode split [--right\|--below] term ...` | `term --right` splits the active terminal | |
 | `minicode window [--folder D] [--new]` | Brings forward, or opens, the window on a folder | window id |
 | `minicode state [--pretty]` | JSON: windows, folders, tabs, selection, terminals, browser, note, tour | JSON |
@@ -52,7 +55,8 @@ to talk to), give plain paths in the reply instead and do not retry.
 
 Add `--window ID` or `--folder DIR` to act in a given window (default: the
 frontmost). Exit codes: 0 done, 1 the command failed (stderr says why), 2
-usage error, 3 no minicode. `minicode help <command>` has the details.
+usage error, 3 no minicode (`state`, `selection` and `term-output` never
+start one). `minicode help <command>` has the details.
 
 ## Notes and tours
 
@@ -79,14 +83,15 @@ After fixing a bug in `src/parser.c` and adding a test:
 ```sh
 minicode open src/parser.c:212 --to 230 \
   --note "The fix: a quoted field may now hold the delimiter; the old code split on it."
-minicode diff src/parser.c            # against HEAD, side by side
+minicode diff src/parser.c            # against HEAD, in a tab of its own
 minicode term --title Tests --run "make test"
 ```
 
-Then say in the reply what was changed and that the diff and the test run
-are open in minicode. For a change across files, write the stops to a
-scratch file and run `minicode tour /path/to/tour.json` instead of the
-`open` line.
+The note and the diff end up in two tabs side by side (the diff on show),
+and the test run in a terminal. Say in the reply what was changed and that
+the note, the diff and the test run are open in minicode. For a change
+across files, write the stops to a scratch file and run
+`minicode tour /path/to/tour.json` instead of the `open` line.
 
 ## Example: a workspace script, when asked
 

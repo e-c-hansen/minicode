@@ -32,17 +32,39 @@ static NSArray<NSString *> *MCLines(NSString *text) {
 }
 
 // ---------------------------------------------------------------- the model
+@interface MCComparison ()
+- (const std::vector<SideBySide::Row> &)rows;
+@end
+
 @implementation MCComparison {
+    std::vector<SideBySide::Row> _rows;
     NSUInteger _changed;
-    BOOL _counted;
+    BOOL _prepared;
+}
+- (void)setLeftText:(NSString *)text {
+    _leftText = [text copy];
+    _prepared = NO;
+}
+- (void)setRightText:(NSString *)text {
+    _rightText = [text copy];
+    _prepared = NO;
+}
+// The alignment, once: it is the costly part of a big comparison, and both
+// the count and the view need it.
+- (void)prepare {
+    if (_prepared) return;
+    _rows = SideBySide::align(U16(_leftText ?: @""), U16(_rightText ?: @""));
+    _changed = 0;
+    for (const SideBySide::Row &r : _rows)
+        if (r.kind != SideBySide::Kind::Same) _changed++;
+    _prepared = YES;
+}
+- (const std::vector<SideBySide::Row> &)rows {
+    [self prepare];
+    return _rows;
 }
 - (NSUInteger)changedRows {
-    if (!_counted) {
-        _counted = YES;
-        for (const SideBySide::Row &r :
-             SideBySide::align(U16(self.leftText ?: @""), U16(self.rightText ?: @"")))
-            if (r.kind != SideBySide::Kind::Same) _changed++;
-    }
+    [self prepare];
     return _changed;
 }
 @end
@@ -271,7 +293,8 @@ static const CGFloat kGutter = 52;
 - (void)fillPanes {
     MCComparison *c = self.comparison;
     NSString *a = c.leftText ?: @"", *b = c.rightText ?: @"";
-    std::vector<SideBySide::Row> rows = SideBySide::align(U16(a), U16(b));
+    static const std::vector<SideBySide::Row> none;
+    const std::vector<SideBySide::Row> &rows = c ? [c rows] : none;
     NSArray<NSString *> *la = MCLines(a), *lb = MCLines(b);
     NSMutableString *left = [NSMutableString string], *right = [NSMutableString string];
     std::vector<NSUInteger> ls, rs;
