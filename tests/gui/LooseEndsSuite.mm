@@ -1,4 +1,5 @@
 // LooseEndsSuite.mm — smaller checks gathered in one file:
+//   make guitest SUITES=multicaret_rows   Up and Down with 50,000 carets
 //   make guitest SUITES=terminal_zoom     terminal.font-size, and the zoom
 //                                         scaling terminals and the preview
 //   make guitest SUITES=terminal_keys     Ctrl+Shift keys of disabled items
@@ -338,5 +339,122 @@ MC_GUI_SUITE(terminal_exec) {
     MCGuiStep(@"and a command there", ^{ [s.term runCommand:@"echo zsh-at-last"]; });
     MCGuiWait(@"it runs", 10, ^BOOL {
         return s.term.atPrompt && [[s.term recentText:3] containsString:@"\nzsh-at-last"];
+    });
+}
+
+// ------------------------------------------------- Up and Down, many carets
+MC_GUI_SUITE(multicaret_rows) {
+    __block EditorController *c = nil;
+    __block CodeTextView *tv = nil;
+    static const int kLines = 50000;
+    NSString *path = MCGuiProjectFile(@"many-lines.txt");
+    MCGuiStep(@"a 50,000-line file", ^{
+        NSMutableString *s = [NSMutableString string];
+        for (int i = 0; i < kLines; i++) [s appendFormat:@"line %06d of the file\n", i];
+        MCGuiWriteFile(path, s);
+        c = MCGuiController();
+        [c focusEditor:nil];
+        GCHECK([c showFile:path]);
+        tv = (CodeTextView *)Text(c);
+        GCHECK([tv isKindOfClass:CodeTextView.class]);
+    });
+    MCGuiStep(@"a caret at column 5 of every line, then Down and Up", ^{
+        NSMutableArray<NSValue *> *ranges = [NSMutableArray array];
+        const NSUInteger lineLen = [@"line 000000 of the file\n" length];
+        for (int i = 0; i < kLines; i++)
+            [ranges addObject:[NSValue valueWithRange:NSMakeRange(i * lineLen + 5, 0)]];
+        [tv.multiCarets setCaretRanges:ranges];
+        GCHECK(tv.multiCarets.caretRanges.count == (NSUInteger)kLines);
+        double t0 = Now();
+        GCHECK([tv.multiCarets doCommand:@selector(moveDown:)]);
+        double down = Now() - t0;
+        NSArray<NSValue *> *after = tv.multiCarets.caretRanges;
+        // The last caret has no line below but the empty one at the end.
+        MCGuiNote(@"carets after Down: %lu", (unsigned long)after.count);
+        GCHECK(after.count == (NSUInteger)kLines);
+        GCHECK(after.count > 2 && after[0].rangeValue.location == lineLen + 5 &&
+               after[1].rangeValue.location == 2 * lineLen + 5);
+        t0 = Now();
+        GCHECK([tv.multiCarets doCommand:@selector(moveUp:)]);
+        double up = Now() - t0;
+        after = tv.multiCarets.caretRanges;
+        GCHECK(after.count > 2 && after[0].rangeValue.location == 5 &&
+               after[1].rangeValue.location == lineLen + 5);
+        t0 = Now();
+        GCHECK([tv.multiCarets doCommand:@selector(moveDown:)]);
+        double again = Now() - t0;
+        MCGuiNote(@"50,000 carets: Down %.0f ms, Up %.0f ms, Down again %.0f ms",
+                  down * 1000, up * 1000, again * 1000);
+        [tv.multiCarets clear];
+        tv.selectedRange = NSMakeRange(0, 0);
+    });
+    // Lines of different lengths: a short line takes the caret to its end,
+    // the next line gives it its column back, the last line keeps it there,
+    // and Shift extends.
+    NSString *small = MCGuiProjectFile(@"rows.txt");
+    MCGuiStep(@"short lines, the last line, the goal column, Shift", ^{
+        MCGuiWriteFile(small, @"abcdefgh\nab\nabcdefgh\nabcdefgh\nxy");
+        GCHECK([c showFile:small]);
+        tv = (CodeTextView *)Text(c);
+        NSString *t = tv.string;
+        auto at = ^NSUInteger(int line, int col) {
+            NSUInteger i = 0;
+            for (int l = 0; l < line; l++) i = NSMaxRange([t lineRangeForRange:NSMakeRange(i, 0)]);
+            return i + col;
+        };
+        auto heads = ^NSString *(void) {
+            NSMutableArray *out = [NSMutableArray array];
+            for (NSValue *v in tv.multiCarets.caretRanges) {
+                NSRange r = v.rangeValue;
+                [out addObject:r.length ? [NSString stringWithFormat:@"%lu-%lu",
+                                           (unsigned long)r.location, (unsigned long)NSMaxRange(r)]
+                                        : [NSString stringWithFormat:@"%lu",
+                                           (unsigned long)r.location]];
+            }
+            return [out componentsJoinedByString:@" "];
+        };
+        [tv.multiCarets setCaretRanges:@[[NSValue valueWithRange:NSMakeRange(at(0, 5), 0)],
+                                         [NSValue valueWithRange:NSMakeRange(at(3, 5), 0)]]];
+        [tv.multiCarets doCommand:@selector(moveDown:)];
+        GCHECK_EQ_STR(heads(), ([NSString stringWithFormat:@"%lu %lu",
+                                 (unsigned long)at(1, 2), (unsigned long)at(4, 2)]));
+        [tv.multiCarets doCommand:@selector(moveDown:)];
+        GCHECK_EQ_STR(heads(), ([NSString stringWithFormat:@"%lu %lu",
+                                 (unsigned long)at(2, 5), (unsigned long)t.length]));
+        [tv.multiCarets doCommand:@selector(moveUp:)];
+        GCHECK_EQ_STR(heads(), ([NSString stringWithFormat:@"%lu %lu",
+                                 (unsigned long)at(1, 2), (unsigned long)at(3, 5)]));
+        [tv.multiCarets doCommand:@selector(moveUp:)];
+        [tv.multiCarets doCommand:@selector(moveUp:)];
+        GCHECK_EQ_STR(heads(), ([NSString stringWithFormat:@"0 %lu", (unsigned long)at(1, 2)]));
+        // Shift+Down from carets at column 1 of lines 0 and 2.
+        [tv.multiCarets setCaretRanges:@[[NSValue valueWithRange:NSMakeRange(at(0, 1), 0)],
+                                         [NSValue valueWithRange:NSMakeRange(at(2, 1), 0)]]];
+        [tv.multiCarets doCommand:@selector(moveDownAndModifySelection:)];
+        GCHECK_EQ_STR(heads(), ([NSString stringWithFormat:@"%lu-%lu %lu-%lu",
+                                 (unsigned long)at(0, 1), (unsigned long)at(1, 1),
+                                 (unsigned long)at(2, 1), (unsigned long)at(3, 1)]));
+        [tv.multiCarets clear];
+        // A text ending in a line break: Down from the last line reaches
+        // the empty line after it, and Up comes back to the column.
+        MCGuiWriteFile(small, @"abcdef\nabcdef\n");
+    });
+    MCGuiPause(0.3);
+    MCGuiStep(@"the empty line after a final line break", ^{
+        [c showFile:small];
+        tv = (CodeTextView *)Text(c);
+        if (![tv.string isEqualToString:@"abcdef\nabcdef\n"]) {
+            MCGuiNote(@"rows.txt not reloaded yet: %@", tv.string);
+            return;
+        }
+        [tv.multiCarets setCaretRanges:@[[NSValue valueWithRange:NSMakeRange(3, 0)],
+                                         [NSValue valueWithRange:NSMakeRange(10, 0)]]];
+        [tv.multiCarets doCommand:@selector(moveDown:)];
+        NSArray<NSValue *> *r = tv.multiCarets.caretRanges;
+        GCHECK(r.count == 2 && r[0].rangeValue.location == 10 && r[1].rangeValue.location == 14);
+        [tv.multiCarets doCommand:@selector(moveUp:)];
+        r = tv.multiCarets.caretRanges;
+        GCHECK(r.count == 2 && r[0].rangeValue.location == 3 && r[1].rangeValue.location == 10);
+        [tv.multiCarets clear];
     });
 }
