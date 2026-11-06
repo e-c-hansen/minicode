@@ -40,4 +40,34 @@ MC_GUI_SUITE(structure) {
         c = nil;
         MCGuiSetKeyWindow(nil);
     });
+
+    // `minicode install-skill`, run from the checkout's scripts/ (the
+    // bundle's copy finds its own in Contents/Resources), into the scratch
+    // home this process runs with.
+    NSString *repo = MCGuiBuildDir().stringByDeletingLastPathComponent;
+    NSString *launcher = [repo stringByAppendingPathComponent:@"scripts/minicode-launcher"];
+    NSString *home = [MCGuiScratch() stringByAppendingPathComponent:@"skillhome"];
+    NSString *installed = [home stringByAppendingPathComponent:@".claude/skills/minicode/SKILL.md"];
+    NSDictionary *env = @{@"HOME": home, @"CLAUDE_CONFIG_DIR": @""};
+    MCGuiAsync(@"install-skill copies the skill into ~/.claude/skills", 20, ^(MCGuiDone done) {
+        GCHECK([home hasPrefix:MCGuiScratch()]);
+        MCGuiRunProcess(@[@"/bin/bash", launcher, @"install-skill"], env,
+                        ^(int s, NSString *out, NSString *err) {
+            GCHECK(s == 0);
+            if (s) MCGuiNote(@"install-skill: %@%@", out, err);
+            GCHECK([out containsString:@"Installed the minicode skill"]);
+            NSData *a = [NSData dataWithContentsOfFile:installed];
+            NSData *b = [NSData dataWithContentsOfFile:
+                [repo stringByAppendingPathComponent:@"skills/minicode/SKILL.md"]];
+            GCHECK(a.length > 0 && [a isEqualToData:b]);
+            done();
+        });
+    });
+    MCGuiAsync(@"again: up to date", 20, ^(MCGuiDone done) {
+        MCGuiRunProcess(@[@"/bin/bash", launcher, @"install-skill"], env,
+                        ^(int s, NSString *out, NSString *) {
+            GCHECK(s == 0 && [out containsString:@"up to date"]);
+            done();
+        });
+    });
 }

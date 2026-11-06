@@ -32,6 +32,12 @@ Options:
 Opening from Finder (Open With, or a drop on the Dock icon) follows the same
 rules as a file named here.
 
+  minicode install-skill [--dir DIR]
+                     install the Claude Code skill that teaches Claude to
+                     show its work in minicode, in DIR (by default
+                     ~/.claude/skills/minicode, or under $CLAUDE_CONFIG_DIR);
+                     run it again after an upgrade
+
 Subcommands drive the running minicode instead, without bringing it to the
 front (a word below is always a subcommand; write ./open for a file of that
 name). `minicode help <command>` says more about one.
@@ -56,7 +62,38 @@ binary="$bundle/Contents/MacOS/MiniCode"
 # other subcommands talk to the running minicode through it.
 cli="$bundle/Contents/MacOS/minicode-cli"
 
+# Installs the Claude Code skill shipped in the bundle (or, run from a
+# checkout's scripts/, the checkout's own), as `make install` does.
+install_skill() {
+  local skill="$bundle/Contents/Resources/skills/minicode/SKILL.md"
+  [ -f "$skill" ] || skill="$dir/../skills/minicode/SKILL.md"
+  if [ ! -f "$skill" ]; then
+    echo "minicode: this copy has no skill to install" >&2
+    return 3
+  fi
+  local to="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/minicode"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dir) [ -n "$2" ] || { echo "minicode: --dir needs a folder" >&2; return 2; }
+             to="$2"; shift ;;
+      -h|--help) echo "Usage: minicode install-skill [--dir DIR]"; return 0 ;;
+      *) echo "minicode: install-skill: unexpected $1" >&2; return 2 ;;
+    esac
+    shift
+  done
+  if cmp -s "$skill" "$to/SKILL.md"; then
+    echo "The minicode skill in $to is up to date"
+    return 0
+  fi
+  mkdir -p "$to" && cp "$skill" "$to/SKILL.md" || return 1
+  echo "Installed the minicode skill in $to"
+}
+
+# The words below are the control channel's subcommands, which
+# ControlChannel::isSubcommand lists too; the core tests
+# (control:launcher-words) check the two lists agree.
 case "$1" in
+  install-skill) shift; install_skill "$@"; exit $? ;;
   open|window|browse|term|diff|split|state|selection|term-output|tour|help)
     if [ ! -x "$cli" ]; then
       echo "minicode: this copy has no control channel ($cli is missing)" >&2

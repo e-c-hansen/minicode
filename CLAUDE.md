@@ -66,8 +66,10 @@ opening comment says what it does in more detail than the lines below.
 - `make guitest [SUITES="control agents"]`: the offscreen GUI checks in
   `tests/gui` (see "Verification").
 - `make run [DIR=~/path]`, `make icon` (from `tools/makeicon.m`), `make demos
-  [SCENES="tour latex"] [POSTERS=1]`, `make membench`, `make install` (copies
-  `skills/minicode/SKILL.md` to `~/.claude/skills/minicode`), `make dist-zip`,
+  [SCENES="tour latex"] [POSTERS=1]`, `make membench`, `make install` (runs `minicode
+  install-skill` from the checkout: `skills/minicode/SKILL.md` to
+  `~/.claude/skills/minicode`; the bundle carries the skill in
+  `Contents/Resources/skills`, so a Homebrew copy can install it too), `make dist-zip`,
   `make dmg`.
 - `scripts/release.sh 1.2.0` cuts a release from a clean `main`: runs the
   core tests, and `make guitest` unless CI passed on that very commit, builds
@@ -1664,7 +1666,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   text before its note is placed (`notesCatchUpWithDisk`), or the reload a
   moment later closed it. Tours step with Option+] and [ (keymap commands
   enabled only during a tour) and show "2 of 3".
-- `skills/minicode/SKILL.md` (under 150 lines; `make install`): show work as
+- `skills/minicode/SKILL.md` (under 150 lines; `minicode install-skill` or
+  `make install`): show work as
   notes, a diff and tests in a terminal; open code with a note when asked where
   something is; read `state` and `selection` for "this"; never rearrange the
   user's tabs, `--run` long or destructive commands, or write workspace scripts

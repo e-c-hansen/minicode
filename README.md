@@ -247,7 +247,7 @@ A note is a line or two of plain text over a highlighted range, labelled with wh
 
 Each running minicode listens on a socket in your own temporary folder that only your user account can open, and nothing in minicode runs a command or a script by itself: `term --run` types what it was given into a terminal you can see. A script that sets up a workspace (a server in a terminal, its page in the browser, the README open) is just these commands in a file you run yourself.
 
-The repository has a skill for Claude Code in skills/minicode that teaches it all of this: when reporting work, open the changed lines with a note, show the diff and run the tests in a terminal; when asked "where is X", open it rather than quote a path; read `state` and `selection` when you say "this". `make install` copies it to ~/.claude/skills/minicode.
+The repository has a skill for Claude Code in skills/minicode that teaches it all of this: when reporting work, open the changed lines with a note, show the diff and run the tests in a terminal; when asked "where is X", open it rather than quote a path; read `state` and `selection` when you say "this". The app carries it too: `minicode install-skill` copies it to ~/.claude/skills/minicode (run it again after an upgrade), and `make install` does the same from a checkout.
 
 ## Seeing what agents did
 

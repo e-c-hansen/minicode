@@ -142,7 +142,8 @@ SIGN_IDENTITY ?= $(shell security find-certificate -c "MiniCode Local Signing" >
 # their dates alone (Request a Change takes a newer CodeResources for a
 # fresh build).
 APP_STAMP := $(BUNDLE)/Contents/_CodeSignature/CodeResources
-APP_FILES := $(BIN) $(CLI) Info.plist resources/AppIcon.icns scripts/minicode-launcher
+APP_FILES := $(BIN) $(CLI) Info.plist resources/AppIcon.icns scripts/minicode-launcher \
+             skills/minicode/SKILL.md
 
 app: $(APP_STAMP)
 
@@ -155,6 +156,10 @@ $(APP_STAMP): $(APP_FILES)
 	@cp resources/AppIcon.icns $(BUNDLE)/Contents/Resources/AppIcon.icns
 	@cp scripts/minicode-launcher $(BUNDLE)/Contents/Resources/minicode
 	@chmod +x $(BUNDLE)/Contents/Resources/minicode
+	@# The Claude Code skill, for `minicode install-skill` (a Homebrew copy
+	@# has no checkout to `make install` from).
+	@mkdir -p $(BUNDLE)/Contents/Resources/skills/minicode
+	@cp skills/minicode/SKILL.md $(BUNDLE)/Contents/Resources/skills/minicode/SKILL.md
 	@cp $(CLI) $(BUNDLE)/Contents/MacOS/minicode-cli
 	@# Signed with "MiniCode Local Signing" when the login keychain has it
 	@# (scripts/make-signing-identity.sh makes it, once), so macOS keeps
@@ -237,12 +242,10 @@ fakelsp: $(FAKELSP)
 guitest: build/guitest $(CLI) $(FAKELSP)
 	@./build/guitest $(SUITES)
 
-# The agent skill (skills/minicode) for Claude Code, in ~/.claude/skills.
-SKILL_DIR ?= $(HOME)/.claude/skills/minicode
+# The agent skill (skills/minicode) for Claude Code, in ~/.claude/skills,
+# the same as `minicode install-skill` does from the app's bundle.
 install:
-	@mkdir -p "$(SKILL_DIR)"
-	@cp skills/minicode/SKILL.md "$(SKILL_DIR)/SKILL.md"
-	@echo "Installed the minicode skill in $(SKILL_DIR)"
+	@bash scripts/minicode-launcher install-skill
 
 # Regenerate the app icon (resources/AppIcon.icns) from tools/makeicon.m.
 icon:
