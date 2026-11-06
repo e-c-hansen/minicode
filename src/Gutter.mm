@@ -147,9 +147,11 @@ static const NSUInteger kMinDigits = 3;
         [self reindex];   // out of step (never expected): start again
     } else {
         std::vector<unichar> buf(er.length);
-        if (er.length) [ts.string getCharacters:buf.data() range:er];
+        NSString *s = ts.string;
+        if (er.length) [s getCharacters:buf.data() range:er];
         _index.edit(er.location, oldLen, reinterpret_cast<const char16_t *>(buf.data()),
-                    buf.size());
+                    buf.size(), er.location ? [s characterAtIndex:er.location - 1] : 0,
+                    NSMaxRange(er) < s.length ? [s characterAtIndex:NSMaxRange(er)] : 0);
     }
     [self updateThicknessLater];
     self.needsDisplay = YES;

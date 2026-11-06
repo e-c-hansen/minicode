@@ -77,14 +77,19 @@ static dispatch_queue_t FoldQueue(void) {
     if (_index.length() != _tv.textStorage.length) [self reindex];
 }
 
-// Where a line's text ends: before its "\n" or "\r\n".
+// Where a line's text ends: before its "\n", "\r\n", "\r" or U+2029.
 - (NSUInteger)contentEndOfLine:(size_t)line {
     NSString *s = _tv.textStorage.string;
     const size_t a = _index.lineStart(line);
     size_t e = _index.lineEnd(line);
-    if (e > a && [s characterAtIndex:e - 1] == '\n') {
-        e--;
-        if (e > a && [s characterAtIndex:e - 1] == '\r') e--;
+    if (e > a) {
+        const unichar last = [s characterAtIndex:e - 1];
+        if (last == '\n') {
+            e--;
+            if (e > a && [s characterAtIndex:e - 1] == '\r') e--;
+        } else if (last == '\r' || last == 0x2029) {
+            e--;
+        }
     }
     return e;
 }
@@ -131,8 +136,10 @@ static dispatch_queue_t FoldQueue(void) {
         _index.length() + er.length - oldLen != ts.length) {
         [self reindex];
     } else {
+        NSString *s = ts.string;
         _index.edit(er.location, oldLen, reinterpret_cast<const char16_t *>(buf.data()),
-                    buf.size());
+                    buf.size(), er.location ? [s characterAtIndex:er.location - 1] : 0,
+                    NSMaxRange(er) < s.length ? [s characterAtIndex:NSMaxRange(er)] : 0);
     }
     _generation++;
     if (!_folds.empty()) {
