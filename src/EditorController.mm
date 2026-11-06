@@ -677,6 +677,7 @@ private:
     NSString *_missingBefore;              // the open file's missing server, last time
     MCChangeSession *_change;              // Request a Change (Shift+Cmd+K), made on first use
     MCAgentSession *_agent;                // the inline agent (Cmd+I), made on first use
+    MCSourceStorage *_sourceStorage;       // the editor's text storage (the view does not own it)
     MCEditorFind *_editorFind;             // the editor's find and replace bar (EditorFind.h)
     NSDate *_backupFirstPending;           // the oldest buffer change not yet backed up
     MCAgentNotes *_notes;                  // notes and tours over the editor, made on first use
@@ -876,10 +877,17 @@ static const NSInteger kWorktreeMenuTag = 7701;
     textScroll.autohidesScrollers = YES;
     textScroll.automaticallyAdjustsContentInsets = NO;
 
-    self.textView = [[CodeTextView alloc] initWithFrame:frame];
-    // A storage that fixes attributes as edits happen, not in 64K blocks
-    // around every keystroke (SourceStorage.h).
-    [self.textView.layoutManager replaceTextStorage:[MCSourceStorage new]];
+    // TextKit 1, over a storage that fixes attributes as edits happen, not
+    // in 64K blocks around every keystroke (SourceStorage.h). Built here
+    // so the view and what it makes at init (carets, folds) watch that
+    // storage; the controller keeps it, since a layout manager does not.
+    _sourceStorage = [MCSourceStorage new];
+    NSLayoutManager *layout = [NSLayoutManager new];
+    [_sourceStorage addLayoutManager:layout];
+    NSTextContainer *textBox =
+        [[NSTextContainer alloc] initWithSize:NSMakeSize(NSWidth(frame), CGFLOAT_MAX)];
+    [layout addTextContainer:textBox];
+    self.textView = [[CodeTextView alloc] initWithFrame:frame textContainer:textBox];
     self.textView.editable = YES;
     self.textView.delegate = self;
     self.textView.textStorage.delegate = self;   // incremental highlighting

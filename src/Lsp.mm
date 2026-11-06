@@ -525,8 +525,11 @@ NSUInteger MCLspRunningServerCount(void) { return gServers.count; }
 - (MCFolds *)folds { return _folds; }
 - (BOOL)multiCaretActive { return _multi.active; }
 
-- (instancetype)initWithFrame:(NSRect)frame {
-    if ((self = [super initWithFrame:frame])) {
+// The designated initializer (initWithFrame: comes through it too), so a
+// view made over a text storage of its own (the editor's MCSourceStorage)
+// watches that storage.
+- (instancetype)initWithFrame:(NSRect)frame textContainer:(NSTextContainer *)container {
+    if ((self = [super initWithFrame:frame textContainer:container])) {
         _multi = [[MCMultiCarets alloc] initWithTextView:self];
         _folds = [[MCFolds alloc] initWithTextView:self];
         [[NSNotificationCenter defaultCenter]

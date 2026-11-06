@@ -149,6 +149,22 @@ MC_GUI_SUITE(keystroke) {
         [tv.undoManager undo];
         GCHECK([tv.string rangeOfString:@"\"return x + 15000"].location == NSNotFound);
     });
+    // A squiggle's mark follows typing before it (the view watches the
+    // editor's own storage), and a caret set elsewhere ends several carets.
+    MCGuiStep(@"a diagnostic mark moves with typing before it", ^{
+        CodeTextView *ctv = (CodeTextView *)tv;
+        MCDiagnosticMark *m = [MCDiagnosticMark new];
+        m.range = NSMakeRange(at + 20, 4);
+        m.severity = 1;
+        m.message = @"a test problem";
+        ctv.diagnostics = @[m];
+        tv.selectedRange = NSMakeRange(at, 0);
+        TypeChars(tv, @"xyz");
+        MCDiagnosticMark *moved = ctv.diagnostics.firstObject;
+        GCHECK(moved && moved.range.location == at + 23 && moved.range.length == 4);
+        for (int i = 0; i < 3; i++) [tv.undoManager undo];
+        ctv.diagnostics = @[];
+    });
     // Fixing attributes still happens: a character the editor's font lacks
     // gets a font that has it, typed or highlighted again.
     MCGuiStep(@"an emoji and a CJK character get fonts that have them", ^{
