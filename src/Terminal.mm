@@ -51,6 +51,7 @@
 #include "TerminalStream.h"
 #include "TerminalScreen.h"
 #include "TermLinks.h"
+#include "AgentIndex.h"
 
 #include <util.h>
 #include <termios.h>
@@ -490,6 +491,9 @@ static const CFTimeInterval kSliceSeconds = 0.012;
     });
 }
 
+@end
+
+@implementation MCTermLinkMatch
 @end
 
 @implementation MCTermLink
@@ -1657,36 +1661,45 @@ static BOOL MCIsOtherShell(pid_t pid) {
     }];
 }
 
-// A path as written, resolved to an existing file or folder, or nil.
-- (NSString *)resolvePath:(NSString *)written isDirectory:(BOOL *)isDir {
+// Every place a path as written exists, newest first, looked for under the
+// shell's folder, the window's, then extraLinkRoots (AgentIndex::resolveTarget);
+// *tried gets the roots looked in. Cached until the next output or cwd change.
+- (NSArray<MCTermLinkMatch *> *)matchesForPath:(NSString *)written tried:(NSArray **)tried {
     if (!_linkCache) _linkCache = [NSMutableDictionary dictionary];
-    NSFileManager *fm = [NSFileManager defaultManager];
-    id cached = _linkCache[written];
+    NSArray *cached = _linkCache[written];
     if (cached) {
-        if (cached == [NSNull null]) return nil;
-        [fm fileExistsAtPath:cached isDirectory:isDir];
-        return cached;
+        if (tried) *tried = cached[1];
+        return cached[0];
     }
-    NSString *expanded = written.stringByExpandingTildeInPath;
-    NSMutableArray<NSString *> *candidates = [NSMutableArray array];
-    if (expanded.isAbsolutePath) {
-        [candidates addObject:expanded];
-    } else {
-        if (_cwd.length) [candidates addObject:[_cwd stringByAppendingPathComponent:expanded]];
-        if (self.projectRoot.length)
-            [candidates addObject:[self.projectRoot stringByAppendingPathComponent:expanded]];
-    }
-    NSString *found = nil;
-    for (NSString *c in candidates) {
+    AgentIndex::Roots roots;
+    roots.cwd = _cwd.UTF8String ?: "";
+    roots.folder = self.projectRoot.UTF8String ?: "";
+    if (self.extraLinkRoots)
+        for (NSString *r in self.extraLinkRoots()) roots.worktrees.push_back(r.UTF8String ?: "");
+    roots.home = NSHomeDirectory().UTF8String ?: "";
+    AgentIndex::Resolution res =
+        AgentIndex::resolveTarget(written.UTF8String ?: "", 0, 0, roots, AgentTranscript::posixFs());
+    NSMutableArray<MCTermLinkMatch *> *matches = [NSMutableArray array];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    for (const AgentIndex::Match &m : res.matches) {
         // Spelled the way the window spells its root (/tmp, not the
         // /private/tmp the shell reports), so a file inside the folder is
         // recognised as inside it.
-        NSString *path = c.stringByStandardizingPath.stringByResolvingSymlinksInPath;
-        if ([fm fileExistsAtPath:path isDirectory:isDir]) { found = path; break; }
+        NSString *path = [@(m.path.c_str()) stringByStandardizingPath].stringByResolvingSymlinksInPath;
+        if (!path.length || [seen containsObject:path]) continue;
+        [seen addObject:path];
+        MCTermLinkMatch *x = [MCTermLinkMatch new];
+        x.path = path;
+        x.modified = m.mtime;
+        x.isDirectory = m.isDir;
+        [matches addObject:x];
     }
+    NSMutableArray<NSString *> *looked = [NSMutableArray array];
+    for (const std::string &t : res.tried) [looked addObject:@(t.c_str())];
     if (_linkCache.count > 500) [_linkCache removeAllObjects];
-    _linkCache[written] = found ?: (id)[NSNull null];
-    return found;
+    _linkCache[written] = @[matches, looked];
+    if (tried) *tried = looked;
+    return matches;
 }
 
 - (MCTermLink *)linkInLine:(const std::string &)line atByte:(size_t)byte {
@@ -1707,11 +1720,19 @@ static BOOL MCIsOtherShell(pid_t pid) {
         link.target = target;
         return link;
     }
-    BOOL isDir = NO;
-    NSString *path = [self resolvePath:target isDirectory:&isDir];
-    if (!path) return nil;
-    link.target = path;
-    link.isDirectory = isDir;
+    NSArray *tried = nil;
+    NSArray<MCTermLinkMatch *> *matches = [self matchesForPath:target tried:&tried];
+    link.matches = matches;
+    if (!matches.count) {
+        // Found nowhere: still a link when it is plainly a path, so a click
+        // can say where it was looked for.
+        if (l->line <= 0 && [target rangeOfString:@"/"].location == NSNotFound) return nil;
+        link.target = target;
+        link.tried = tried;
+        return link;
+    }
+    link.target = matches.firstObject.path;
+    link.isDirectory = matches.firstObject.isDirectory;
     return link;
 }
 

@@ -161,6 +161,7 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
 - (TerminalView *)makeTerminalIn:(NSString *)dir {
     TerminalView *t = [[TerminalView alloc] initWithDirectory:dir.length ? dir : _dir];
     t.projectRoot = self.projectRoot;
+    t.extraLinkRoots = self.extraLinkRoots;
     __weak MCTerminalPanel *weakSelf = self;
     t.onOpenLink = ^(MCTermLink *link) {
         MCTerminalPanel *s = weakSelf;
@@ -185,6 +186,11 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
 - (void)setProjectRoot:(NSString *)root {
     _projectRoot = [root copy];
     for (TerminalView *t in self.terminals) t.projectRoot = root;
+}
+
+- (void)setExtraLinkRoots:(NSArray<NSString *> *(^)(void))roots {
+    _extraLinkRoots = [roots copy];
+    for (TerminalView *t in self.terminals) t.extraLinkRoots = _extraLinkRoots;
 }
 
 - (void)setDirectory:(NSString *)dir {

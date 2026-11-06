@@ -13,6 +13,9 @@ struct MdRun {
     bool strike    = false;  // ~~struck through~~
     bool code      = false;  // inline `code` or fenced block content
     bool codeBlock = false;  // part of a fenced or indented code block
+    // A fenced block's language, the first word of its info string
+    // lowercased ("python" for ```python), on its runs; "" otherwise.
+    std::string lang;
     bool quote     = false;  // inside a block quote
     bool rule      = false;  // horizontal rule (--- )
     bool table     = false;  // part of a table, laid out as padded monospace
@@ -95,4 +98,7 @@ public:
     // not, § and emoji included) dropped. Letters and digits of any script,
     // '-' and '_' are kept.
     static std::string anchor(const std::string& headingText);
+    // The extension SyntaxHighlighter knows a fenced block's language by
+    // ("python" and "py" give "py", "c++" gives "cpp"), or "" for none.
+    static std::string extensionForLanguage(const std::string& lang);
 };

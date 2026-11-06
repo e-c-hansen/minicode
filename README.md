@@ -26,7 +26,19 @@ Source files are highlighted by extension: Python, the C family, JavaScript, Typ
 
 ![Opening a PNG and then a PDF from the file tree](docs/demos/files.gif)
 
+On the Mac, a file minicode has no viewer of its own for, such as a Word, Excel, PowerPoint, Pages, Numbers or Keynote document, opens in a tab as a Quick Look preview, the one Finder shows, and so does any binary file: minicode looks at the first few kilobytes, and a file with a zero byte in them is never opened as text, whatever its name says. Space on a file in the tree opens the Quick Look panel on it, as in Finder, and Space again or Escape closes it; while it is open, the arrow keys move it through the files.
+
+On the Mac, CSV and TSV files open as a table, and Shift Command V flips to the text and back. Double click a cell, or press Return on a row, to edit it; the right click menu inserts and deletes rows and columns. The table edits the file's text, so it has unsaved changes, undo, backups, and auto-save like any other file, and saving writes back only what you changed: the delimiter (comma, semicolon, tab, or pipe), each field's quotes, and the line endings stay as they were, a file saved with no edits comes back byte for byte, and one changed cell changes one line. A file over 50 MB opens read-only, showing its first 100,000 rows.
+
+A JSON file on the Mac opens as text with an outline of it at the right, its objects and arrays folded and unfolded like folders. Clicking a value, or moving to it with the arrow keys, selects its text in the editor, and moving the cursor in the text selects the value it is in. You edit in the text; the outline catches up a moment after you stop typing, and while the text is not valid JSON it keeps the last good outline and says where the error is. Shift Command V hides the outline and brings it back.
+
+Jupyter notebooks open on the Mac rendered and read-only, the way the Markdown preview shows Markdown: the text cells as formatted text, the code cells highlighted in the notebook's language, and under each code cell what it printed, its pictures, and its errors, from the outputs saved in the file. Nothing is run, since minicode has no kernel; an HTML result, such as a pandas table, shows as its plain text. Shift Command V shows the notebook's JSON. Fenced code blocks that name their language, as in ```python, are now highlighted in every Markdown preview on the Mac.
+
+A SQLite database (.sqlite, .db, or any file that starts with SQLite's header) opens on the Mac read-only: its tables and views down the left with the selected one's schema under them, and the first 1,000 rows of the selected one on the right. The box above the rows runs a query of your own when you press Return. minicode opens the database in SQLite's read-only mode, so nothing can change the file: a statement that would write is refused before it runs, and a query that runs longer than five seconds is stopped.
+
 Return indents the way the language expects. In Python a line ending in a colon starts an indented block, the line after return, pass, break, continue, or raise goes back a level, and a new line inside an open bracket lines up with whatever follows the bracket, or is indented one level when the bracket ends its line. The line after a call spread over several lines goes back to where the call started, not to its last argument. In C, JavaScript, Go, Rust, and the other brace languages, Return after an opening brace indents, and in YAML so does Return after a key that ends in a colon. Return between a pair of brackets, as in `foo()`, puts the closing bracket on a line of its own. Typing the colon of else, elif, except, or finally moves the line back under its if or try, and a closing brace typed on an empty line moves back under the line that opened it. How far to indent comes from the file, whether tabs or two or four spaces: Tab inserts that much, Backspace in leading spaces removes that much, and Tab and Shift Tab on a selection indent and outdent its lines.
+
+On the Mac, code folds the way VS Code folds it. An arrow beside the line number, shown while the pointer is over the line numbers, folds or unfolds a block, and a folded line ends in a small ⋯ that unfolds it when clicked. Control Command [ folds the block the cursor is in and Control Command ] unfolds it; VS Code's Option Command [ and ] already move between minicode's terminals. Blocks come from the language server when it offers them, otherwise from brackets in C, JavaScript, Go, Rust, JSON, and the other brace languages, from indentation in Python, YAML, and the rest, from headings and fenced code in Markdown, and from sections and environments in LaTeX. Comments over several lines fold too, and so do #region and #endregion comments. The text itself never changes: copying across a fold copies what it hides, and Find, Go to Line, and go to definition open a fold when what they go to is inside it.
 
 F9 sorts the selected lines. Lines between a `keep-sorted start` and a `keep-sorted end` comment, as used by Google's [keep-sorted](https://github.com/google/keep-sorted), are sorted the way that tool sorts them, its options included: F9 with the cursor inside such a block sorts it, Shift F9 sorts every block in the file, and editor.keep-sorted-on-save = true in the settings sorts them all whenever the file is saved. A start without an end leaves the file alone and the status bar says which line it is on.
 
@@ -235,6 +247,18 @@ Each running minicode listens on a socket in your own temporary folder that only
 
 The repository has a skill for Claude Code in skills/minicode that teaches it all of this: when reporting work, open the changed lines with a note, show the diff and run the tests in a terminal; when asked "where is X", open it rather than quote a path; read `state` and `selection` when you say "this". `make install` copies it to ~/.claude/skills/minicode.
 
+## Seeing what agents did
+
+When Claude Code works in a folder, much of what it does never shows in the folder itself: subagents work in worktrees under .claude/worktrees, notes and reports go to scratchpads in /tmp, and the paths it mentions may be in any of them. On the Mac, minicode reads Claude Code's transcripts in ~/.claude/projects to show where that work is. It only reads them; nothing of Claude Code's is ever written, moved, or deleted, and nothing leaves your Mac.
+
+Shift Command A swaps the file tree for the agents panel, the way Control Shift G swaps in source control. Each session that worked in the folder or below it gets a row, newest first, with its subagents under it: what it was asked to do, whether it is still running, the branch it worked on, how long ago it was last active, and how many files it wrote and commands it ran. Opening a row lists the files it wrote or edited, in three groups: in the folder, in its worktree, and outside the folder. A file that has since gone is struck through, and any other opens with a click or Return. The panel keeps up as sessions write, within a second or two.
+
+Return or a click on a session shows its evidence in a tab of its own: the session's last message at the top, beside the result of the last test command it ran and the test runner's own summary ("2 failed, 10 passed"), then every shell command in order, with the description the agent gave, the command, whether it reported an error, a mark on the ones that ran tests, and the first and last 20 lines of what it printed. Show all brings in the rest, read from the transcript only when asked, so a run that printed megabytes opens as quickly as any other. minicode reports what was run and printed and draws no conclusions; whether that matches the last message is for you to judge. Open in Terminal types a command into a new terminal in the session's folder and leaves it for you to run.
+
+The worktrees under .claude/worktrees appear as one Worktrees node at the top of the file tree, whether hidden files are shown or not, each named after the task its agent was given, with how many commits it is ahead of the main branch and whether it has changes not yet committed. Right-click one for Compare with Main, which lists the files it changed (committed, uncommitted, and new) and shows each beside the main branch's version, or Open in New Window.
+
+Command clicking a path in the terminal also looks in those places: the terminal's own folder first, then the window's folder, the worktrees under it, and the scratchpads of the sessions found for it. When a path is in more than one of them, such as a file an agent changed in its worktree, a small list offers each copy with its full path and when it was modified, newest first. When it is in none, the status bar says so and lists where it looked.
+
 ## Linux
 
 The Linux version, in the linux folder, is built on GTK4 with a VTE terminal, a WebKitGTK browser and poppler for PDFs. It has everything described above, including the LaTeX preview and language servers, with Control where the Mac uses Command. What it lacks is tabs, so a window holds one file at a time, typeset math in the Markdown preview, which shows the TeX for now, and blur behind the window, which GNOME gives applications no way to ask for.
@@ -308,6 +332,8 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Focus the editor, or the player when a video or audio file is open | Command 1 | Ctrl 1 |  |
 | Focus the file tree | Command 0 | Ctrl 0 |  |
 | Focus the terminal, opening it if it is hidden | Command 2 |  |  |
+| Fold every region, or every one at a level, or unfold them all | Control Command 0, Control Command 1 to 7, Control Command J |  |  |
+| Fold the region the cursor is in, or the next one out with each press; unfold the fold on the cursor's line | Control Command [, Control Command ] (Option Command [ and ] are the terminals); or click the arrow beside the line number, or the ⋯ after a folded line |  |  |
 | Format the file, or the selected lines where the formatter can | Shift Option F |  |  |
 | Go back to where you were before a jump (a definition, a symbol, a line, a problem, another tab), or forward again | Control minus, Control Shift minus |  |  |
 | Go to a line of the open file, by its number (42:7 for a column too) | Control G |  |  |
@@ -342,6 +368,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Organize the file's imports, with a language server (Ruff's, when it runs) | Shift Option O |  |  |
 | Page through the terminal's scrollback, or jump to its top or bottom | Shift Page Up, Shift Page Down, Command Home, Command End |  |  |
 | Play or pause a video or audio file | Shift Command Space | Ctrl Shift Space | Space in the player, or Ctrl Shift Space |
+| Preview the selected file in the tree with Quick Look, as in Finder, and close the preview | Space, then Space or Escape |  |  |
 | Refresh the file tree | Command R |  |  |
 | Rename the name at the cursor wherever it is used, with a language server | F2 |  |  |
 | Rename the selected file or folder | F2, in the file tree | F2, in the file tree |  |
@@ -368,10 +395,12 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Sort the selected lines, or the keep-sorted block around the cursor | F9 (F9 may need fn on a laptop) | F9 | J, or Ctrl J |
 | Take the selected completion | Tab; Return too after Control Space, after a dot, or once the arrow keys have moved through the list |  |  |
 | Tick or clear a Markdown task, or make the selected lines tasks | Option Command L, or click its box in the preview | Ctrl L, or click its box in the preview | L, or Ctrl L, or tap its box in the preview |
+| Toggle the agents panel in place of the file tree | Shift Command A |  |  |
+| Toggle the fold on the cursor's line | Control Command L |  |  |
 | Toggle the browser | Shift Command B | Ctrl Shift B | B, or Ctrl Shift B |
 | Toggle the editor, giving its space to the terminal and browser | Shift Command E | Ctrl Shift E |  |
 | Toggle the file list or sidebar | Command B | Ctrl B | F, or Ctrl B or Ctrl F |
-| Toggle the preview of a Markdown or LaTeX file | Shift Command V | Ctrl Shift P | P, or Ctrl P |
+| Toggle the preview of a Markdown or LaTeX file, the table of a CSV file, the outline of a JSON file, or a rendered notebook (the last three on the Mac) | Shift Command V | Ctrl Shift P | P, or Ctrl P |
 | Toggle the shortcut hints | Shift Command H | Ctrl Shift H | H, or Ctrl H |
 | Toggle the source control panel in place of the file tree | Control Shift G | Ctrl Shift G | V, or Ctrl Shift G |
 | Toggle the terminal | Shift Command T, Command J, or Control backtick | Ctrl Shift T, or Ctrl backtick | T, or Ctrl T |

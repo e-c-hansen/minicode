@@ -7,6 +7,7 @@
 #import "AppSettings.h"
 #import "Terminal.h"   // MCTerminalCommandDidFinishNotification
 #import "MultiCaretView.h"
+#import "FoldView.h"
 #import "LspPicker.h"
 #include "Formatter.h"
 #include "InstallHints.h"
@@ -516,15 +517,18 @@ NSUInteger MCLspRunningServerCount(void) { return gServers.count; }
 @implementation CodeTextView {
     NSTrackingArea *_hoverArea;
     MCMultiCarets *_multi;
+    MCFolds *_folds;
     NSEvent *_keyEvent;   // the key being interpreted, during keyDown:
 }
 
 - (MCMultiCarets *)multiCarets { return _multi; }
+- (MCFolds *)folds { return _folds; }
 - (BOOL)multiCaretActive { return _multi.active; }
 
 - (instancetype)initWithFrame:(NSRect)frame {
     if ((self = [super initWithFrame:frame])) {
         _multi = [[MCMultiCarets alloc] initWithTextView:self];
+        _folds = [[MCFolds alloc] initWithTextView:self];
         [[NSNotificationCenter defaultCenter]
             addObserver:self selector:@selector(storageEdited:)
                    name:NSTextStorageDidProcessEditingNotification
@@ -669,6 +673,8 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
 
 - (void)drawRect:(NSRect)dirty {
     [super drawRect:dirty];
+    if (_folds.hasFolds && self.editable)
+        [_folds drawPlaceholdersInRect:dirty color:_bracketMatchColor ?: [NSColor grayColor]];
     [_multi drawInRect:dirty];
     if (_diagnostics.count == 0) return;
     NSRange visible = [self visibleCharacterRange];
@@ -681,6 +687,7 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
     for (MCDiagnosticMark *m in ordered) {
         NSRange r = m.range;
         if (NSMaxRange(r) < visible.location || r.location > NSMaxRange(visible)) continue;
+        if ([_folds rangeIsHidden:r]) continue;   // folded away
         NSColor *color = SeverityColor(m.severity);
         [self enumerateRectsForRange:r block:^(NSRect rect) {
             if (!NSIntersectsRect(NSInsetRect(rect, 0, -3), dirty)) return;
@@ -795,6 +802,13 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
 }
 
 - (void)doCommandBySelector:(SEL)selector {
+    // Backspace just after a fold's placeholder, or Delete just before it,
+    // opens the fold rather than deleting text nobody can see.
+    if (_folds.hasFolds && self.editable && !_multi.active && self.selectedRange.length == 0) {
+        const NSUInteger at = self.selectedRange.location;
+        if (selector == @selector(deleteBackward:) && [_folds openFoldEndingAt:at]) return;
+        if (selector == @selector(deleteForward:) && [_folds openFoldStartingAt:at]) return;
+    }
     // Cmd+Shift+Up/Down (select to the top or end of the file in AppKit) and
     // Shift+Option+Up/Down (select by paragraph) copy the lines instead, as
     // in VS Code. Only from the arrow keys: Shift+Home and Shift+End send the
@@ -861,8 +875,37 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
     [_multi deleteLines];
 }
 
+// ---- folding (View > Folding)
+- (void)foldCommand:(BOOL (^)(MCFolds *f))command {
+    if (!self.editable || !command(_folds)) NSBeep();
+}
+- (IBAction)foldRegion:(id)sender { [self foldCommand:^BOOL(MCFolds *f) { return [f foldAtCarets]; }]; }
+- (IBAction)unfoldRegion:(id)sender { [self foldCommand:^BOOL(MCFolds *f) { return [f unfoldAtCarets]; }]; }
+- (IBAction)toggleFold:(id)sender { [self foldCommand:^BOOL(MCFolds *f) { return [f toggleAtCarets]; }]; }
+- (IBAction)foldRecursively:(id)sender {
+    [self foldCommand:^BOOL(MCFolds *f) { return [f foldRecursivelyAtCarets]; }];
+}
+- (IBAction)unfoldRecursively:(id)sender {
+    [self foldCommand:^BOOL(MCFolds *f) { return [f unfoldRecursivelyAtCarets]; }];
+}
+- (IBAction)foldAll:(id)sender { [self foldCommand:^BOOL(MCFolds *f) { return [f foldAll]; }]; }
+- (IBAction)unfoldAll:(id)sender { [self foldCommand:^BOOL(MCFolds *f) { return [f unfoldAll]; }]; }
+- (IBAction)foldLevel:(id)sender {
+    const NSInteger level = [sender respondsToSelector:@selector(tag)] ? [sender tag] : 1;
+    [self foldCommand:^BOOL(MCFolds *f) { return [f foldLevel:level]; }];
+}
+- (IBAction)foldAllComments:(id)sender {
+    [self foldCommand:^BOOL(MCFolds *f) { return [f foldAllComments]; }];
+}
+
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     SEL a = item.action;
+    if (a == @selector(foldRegion:) || a == @selector(unfoldRegion:) ||
+        a == @selector(toggleFold:) || a == @selector(foldRecursively:) ||
+        a == @selector(unfoldRecursively:) || a == @selector(foldAll:) ||
+        a == @selector(unfoldAll:) || a == @selector(foldLevel:) ||
+        a == @selector(foldAllComments:))
+        return self.editable;
     if (a == @selector(addNextOccurrence:) || a == @selector(selectAllOccurrences:) ||
         a == @selector(addCursorAbove:) || a == @selector(addCursorBelow:) ||
         a == @selector(expandLineSelection:) || a == @selector(deleteLine:))
@@ -960,6 +1003,9 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
                  affinity:(NSSelectionAffinity)affinity
            stillSelecting:(BOOL)still {
     if (_multi.active && !_multi.applying) [_multi clear];
+    // A selection that lands inside a fold (Find, Go to Line, a definition,
+    // F8) opens it, so what was gone to is seen.
+    if (_folds.hasFolds && !still) [_folds revealRanges:ranges];
     [super setSelectedRanges:ranges affinity:affinity stillSelecting:still];
 }
 
@@ -974,6 +1020,7 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
 }
 
 - (void)mouseDown:(NSEvent *)event {
+    if (self.editable && [_folds mouseDown:event]) return;   // a fold's placeholder
     if ([_multi mouseDown:event]) return;
     NSEventModifierFlags mods = event.modifierFlags &
         NSEventModifierFlagDeviceIndependentFlagsMask;
@@ -1824,6 +1871,11 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [self shutdown];
+    // shutdown reports the problems gone (problemsChanged), which schedules
+    // reportProblems on self; a retain taken while deallocating keeps
+    // nothing alive, and the perform then fired on a freed session, crashing
+    // the app about 50 ms after a window closed.
+    [NSObject cancelPreviousPerformRequestsWithTarget:self];
 }
 
 // ---- status
@@ -2679,6 +2731,7 @@ static BOOL IsRunnable(NSString *path) {
         }
         BOOL wasRunning = _entries[_langKey].server != nil;
         [self attachDocument];
+        [self scheduleFoldingRanges:0.1];
         // In automatic mode another file may sit in another environment.
         // Only a real change reaches the server (same environment: nothing).
         if (wasRunning && [_langKey isEqualToString:@"python"])
@@ -2691,6 +2744,38 @@ static BOOL IsRunnable(NSString *path) {
 
 - (void)tabsChanged {
     [self syncOpenDocuments];
+}
+
+// ---- folding ranges: the server's, when it offers them, take the place of
+// the editor's own (FoldView.h) for as long as the text stays as it was.
+- (void)scheduleFoldingRanges:(NSTimeInterval)delay {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(requestFoldingRanges)
+                                               object:nil];
+    [self performSelector:@selector(requestFoldingRanges) withObject:nil afterDelay:delay];
+}
+
+- (void)requestFoldingRanges {
+    if (!_uri || !_tv.editable) return;
+    MCLspServer *server = [self serverFor:Lsp::Feature::FoldingRange];
+    if (!server) return;
+    [self flushChanges];
+    MCFolds *folds = _tv.folds;
+    const uint64_t gen = folds.generation;
+    NSString *uri = _uri;
+    __weak LspSession *weakSelf = self;
+    server.client.foldingRanges(Std(uri), [weakSelf, uri, gen](const Json &r, const Json &e) {
+        LspSession *me = weakSelf;
+        if (!me || !e.isNull() || ![uri isEqualToString:me->_uri]) return;
+        NSMutableArray<NSValue *> *ranges = [NSMutableArray array];
+        NSMutableArray<NSString *> *kinds = [NSMutableArray array];
+        for (const Lsp::FoldingRange &f : Lsp::parseFoldingRanges(r)) {
+            [ranges addObject:[NSValue valueWithRange:NSMakeRange((NSUInteger)f.startLine,
+                                                                  (NSUInteger)(f.endLine - f.startLine))]];
+            [kinds addObject:NS(f.kind)];
+        }
+        [me->_tv.folds setServerRanges:ranges kinds:kinds generation:gen];
+    });
 }
 
 // Every tab's file stays open on its language's server, with the tab's text,
@@ -2807,6 +2892,7 @@ static BOOL IsRunnable(NSString *path) {
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushChanges)
                                                object:nil];
     [self performSelector:@selector(flushChanges) withObject:nil afterDelay:0.3];
+    [self scheduleFoldingRanges:0.6];
     // A rename or a fix going in is not typing: no completion or signature.
     if (_applyingEdit) return;
 

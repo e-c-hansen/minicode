@@ -22,6 +22,7 @@
 @end
 
 @class MCMultiCarets;
+@class MCFolds;
 
 // The color a diagnostic's severity is drawn in (1 error ... 4 hint): the
 // squiggles, the hover box's messages and the gutter's dots.
@@ -60,6 +61,19 @@ NSColor *MCDiagnosticColor(NSInteger severity);
 // caret. Enabled while the view is editable.
 - (IBAction)expandLineSelection:(id)sender;
 - (IBAction)deleteLine:(id)sender;
+// Code folding (FoldView.h): the folds, and the View > Folding commands,
+// enabled while the view is editable. foldLevel: takes the level from the
+// sender's tag.
+@property(nonatomic, readonly) MCFolds *folds;
+- (IBAction)foldRegion:(id)sender;
+- (IBAction)unfoldRegion:(id)sender;
+- (IBAction)toggleFold:(id)sender;
+- (IBAction)foldRecursively:(id)sender;
+- (IBAction)unfoldRecursively:(id)sender;
+- (IBAction)foldAll:(id)sender;
+- (IBAction)unfoldAll:(id)sender;
+- (IBAction)foldLevel:(id)sender;
+- (IBAction)foldAllComments:(id)sender;
 // editor.ruler: thin lines behind the text at these columns of the
 // monospaced font (none while the view is read-only, as a preview is).
 @property(nonatomic, copy) NSArray<NSNumber *> *rulerColumns;

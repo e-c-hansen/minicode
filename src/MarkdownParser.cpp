@@ -1324,6 +1324,7 @@ struct Block {
     enum Kind { Para, Heading, Item, Code, Rule, Table, Math };
     Kind kind = Para;
     bool math = false;           // a ```math fence: display math, not code
+    std::string lang;            // a fence's language, from its info string
     std::string tex;             // a Math block's TeX
     int first = 0, last = 0;     // source lines
     int edit = -1;               // MdLine::block of its lines
@@ -1771,6 +1772,7 @@ Doc analyze(const std::string& md) {
             Block& f = newBlock(Block::Code, (int)i);
             f.edit = editIds++;
             f.math = info == "math";
+            f.lang = info;
             fenceBlock = (int)d.blocks.size() - 1;
             fenceIndent = cols;
             inFence = true;
@@ -2086,6 +2088,7 @@ void emitBlock(const Block& b, const Refs& refs, int& tables, std::vector<MdRun>
         for (const auto& line : b.code) {
             MdRun r;
             r.code = r.codeBlock = true;
+            r.lang = b.lang;
             r.quote = b.quote;
             r.text = line.first + "\n";
             r.line = line.second;
@@ -2192,4 +2195,28 @@ std::string MarkdownParser::anchor(const std::string& headingText) {
         out += encodeUtf8(c);
     }
     return out;
+}
+
+std::string MarkdownParser::extensionForLanguage(const std::string& lang) {
+    static const std::map<std::string, std::string> names = {
+        {"python", "py"}, {"python3", "py"}, {"py", "py"}, {"ipython", "py"}, {"ipython3", "py"},
+        {"javascript", "js"}, {"js", "js"}, {"jsx", "jsx"}, {"node", "js"},
+        {"typescript", "ts"}, {"ts", "ts"}, {"tsx", "tsx"},
+        {"c", "c"}, {"h", "h"}, {"cpp", "cpp"}, {"c++", "cpp"}, {"cxx", "cpp"}, {"hpp", "hpp"},
+        {"objc", "m"}, {"objective-c", "m"}, {"objectivec", "m"}, {"objective-c++", "mm"},
+        {"csharp", "cs"}, {"c#", "cs"}, {"cs", "cs"}, {"java", "java"}, {"kotlin", "kt"},
+        {"kt", "kt"}, {"swift", "swift"}, {"go", "go"}, {"golang", "go"}, {"rust", "rs"},
+        {"rs", "rs"}, {"scala", "scala"}, {"dart", "dart"},
+        {"bash", "sh"}, {"sh", "sh"}, {"shell", "sh"}, {"zsh", "zsh"}, {"console", "sh"},
+        {"ruby", "rb"}, {"rb", "rb"}, {"perl", "pl"}, {"r", "r"}, {"julia", "jl"}, {"jl", "jl"},
+        {"lua", "lua"}, {"sql", "sql"}, {"haskell", "hs"}, {"hs", "hs"},
+        {"json", "json"}, {"jsonl", "jsonl"}, {"yaml", "yaml"}, {"yml", "yaml"},
+        {"toml", "toml"}, {"ini", "ini"}, {"css", "css"}, {"scss", "scss"},
+        {"tex", "tex"}, {"latex", "tex"}, {"makefile", "mk"}, {"make", "mk"},
+        {"dockerfile", "dockerfile"}, {"lisp", "lisp"}, {"clojure", "clj"}, {"elixir", "ex"},
+    };
+    std::string key;
+    for (char ch : lang) key += (char)std::tolower((unsigned char)ch);
+    auto it = names.find(key);
+    return it == names.end() ? std::string() : it->second;
 }

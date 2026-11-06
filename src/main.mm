@@ -615,6 +615,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
 - (void)toggleSidebar:(id)sender   { [[self current] toggleSidebar:sender]; }
 - (void)toggleSourceControl:(id)sender { [[self current] toggleSourceControl:sender]; }
+- (void)toggleAgents:(id)sender    { [[self current] toggleAgents:sender]; }
 - (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
 - (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
 - (void)requestChange:(id)sender   { [[self current] requestChange:sender]; }
@@ -1136,6 +1137,42 @@ static void BuildMenu(void) {
     zoomReset.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     [viewMenu addItem:zoomReset];
 
+    // Folding (FoldView.h). VS Code's Option+Cmd+[ and ] are minicode's
+    // previous and next terminal, and its other folding keys are Cmd+K
+    // chords, which minicode has none of; so Control+Command with the
+    // chord's second key: [ fold, ] unfold, L toggle, 0 fold all, J unfold
+    // all, / fold comments, 1 to 7 a level. Answered by the editor's text
+    // view while it has the keyboard.
+    NSMenuItem *foldingItem = [[NSMenuItem alloc] initWithTitle:@"Folding" action:nil
+                                                  keyEquivalent:@""];
+    NSMenu *foldingMenu = [[NSMenu alloc] initWithTitle:@"Folding"];
+    const NSEventModifierFlags ctrlCmd = NSEventModifierFlagControl | NSEventModifierFlagCommand;
+    NSMenuItem *(^addFold)(NSString *, SEL, NSString *) =
+        ^NSMenuItem *(NSString *title, SEL action, NSString *key) {
+            NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:title action:action
+                                                 keyEquivalent:key];
+            it.keyEquivalentModifierMask = key.length ? ctrlCmd : 0;
+            [foldingMenu addItem:it];
+            return it;
+        };
+    addFold(@"Fold", @selector(foldRegion:), @"[");
+    addFold(@"Unfold", @selector(unfoldRegion:), @"]");
+    addFold(@"Toggle Fold", @selector(toggleFold:), @"l");
+    addFold(@"Fold Recursively", @selector(foldRecursively:), @"");
+    addFold(@"Unfold Recursively", @selector(unfoldRecursively:), @"");
+    [foldingMenu addItem:[NSMenuItem separatorItem]];
+    addFold(@"Fold All", @selector(foldAll:), @"0");
+    addFold(@"Unfold All", @selector(unfoldAll:), @"j");
+    addFold(@"Fold All Comments", @selector(foldAllComments:), @"/");
+    for (NSInteger level = 1; level <= 7; level++) {
+        NSMenuItem *it = addFold([NSString stringWithFormat:@"Fold Level %ld", (long)level],
+                                 @selector(foldLevel:),
+                                 [NSString stringWithFormat:@"%ld", (long)level]);
+        it.tag = level;
+    }
+    foldingItem.submenu = foldingMenu;
+    [viewMenu addItem:foldingItem];
+
     [viewMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *sidebar =
@@ -1153,6 +1190,16 @@ static void BuildMenu(void) {
     git.keyEquivalentModifierMask =
         NSEventModifierFlagControl | NSEventModifierFlagShift;
     [viewMenu addItem:git];
+
+    // Shift+Cmd+A: the agent sessions that worked in the folder, in the
+    // sidebar's place (AgentsPanel.h).
+    NSMenuItem *agents =
+        [[NSMenuItem alloc] initWithTitle:@"Toggle Agents"
+                                   action:@selector(toggleAgents:)
+                            keyEquivalent:@"a"];
+    agents.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [viewMenu addItem:agents];
 
     // Shift+Cmd+M as in VS Code: every problem the language servers report,
     // above the terminal.

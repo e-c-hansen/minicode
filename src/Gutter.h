@@ -14,7 +14,9 @@
 // The gutter shows only while the text view is editable (source, never a
 // preview or a message) and the setting is not off. Its background is a
 // plain layer color, painted once (see PanelScrollView), so it is right at
-// any opacity. Its right side is kept free for fold markers.
+// any opacity. Its right side is the fold lane (FoldView.h): a chevron by
+// each line a region starts on while the pointer is over the gutter, and
+// always by a closed fold; a click there folds or unfolds.
 #import <Cocoa/Cocoa.h>
 
 @class CodeTextView;

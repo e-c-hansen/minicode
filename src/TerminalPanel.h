@@ -20,6 +20,7 @@
 // A passing note for the status bar (a queued command dropped by a close).
 @property(nonatomic, copy) void (^onNote)(NSString *note);
 @property(nonatomic, copy) NSString *projectRoot;     // passed to every terminal
+@property(nonatomic, copy) NSArray<NSString *> *(^extraLinkRoots)(void);   // likewise
 
 @property(nonatomic, readonly) TerminalView *activeTerminal;
 @property(nonatomic, readonly) NSArray<TerminalView *> *terminals;   // tab by tab

@@ -270,7 +270,7 @@ std::string programDisplayName(const std::string& program);
 // What a request is about, to choose which of a file's servers gets it.
 enum class Feature {
     Completion, SignatureHelp, Hover, Definition, References, Rename, CodeActions,
-    DocumentSymbols, WorkspaceSymbols
+    DocumentSymbols, WorkspaceSymbols, FoldingRange
 };
 // Does a server whose `initialize` answered with these capabilities offer it?
 bool offers(const Json& capabilities, Feature f);
@@ -462,6 +462,15 @@ struct HoverDoc {
 HoverDoc parseHoverDoc(const Json& result);
 // Location, Location[], LocationLink[], or null.
 std::vector<Location> parseLocations(const Json& result);
+// textDocument/foldingRange's answer: whole lines, as the client asks
+// (lineFoldingOnly), the start line staying in view and the lines after it
+// down to endLine hidden. Ranges with no lines to hide, or numbers that are
+// not lines, are left out; kind is "comment", "imports", "region" or "".
+struct FoldingRange {
+    int startLine = 0, endLine = 0;
+    std::string kind;
+};
+std::vector<FoldingRange> parseFoldingRanges(const Json& result);
 
 // ------------------------------------------------------------ symbols
 // LSP's SymbolKind numbers, the ones named here; any of 1 to 26 may come.
@@ -627,6 +636,8 @@ public:
     // textDocument/references, the declaration included when asked.
     int references(const std::string& uri, Position p, bool includeDeclaration,
                    ResultHandler h);
+    // textDocument/foldingRange for a whole document.
+    int foldingRanges(const std::string& uri, ResultHandler h);
     // textDocument/prepareRename and textDocument/rename.
     int prepareRename(const std::string& uri, Position p, ResultHandler h);
     int rename(const std::string& uri, Position p, const std::string& newName,

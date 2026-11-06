@@ -37,6 +37,12 @@
 #include "AgentTranscript.h"
 #include "AgentIndex.h"
 #include "AgentEvidence.h"
+#include "AgentView.h"
+#include "Folding.h"
+#include "FileSniff.h"
+#include "Csv.h"
+#include "JsonOutline.h"
+#include "Notebook.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -9506,6 +9512,9 @@ static void testMultiCaretOccurrences() {
 #include "control_tests.inc"
 #include "agent_index_tests.inc"
 #include "agent_evidence_tests.inc"
+#include "agent_view_tests.inc"
+#include "fold_tests.inc"
+#include "previews_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9572,6 +9581,12 @@ int main() {
     testAgentTranscript();
     testAgentIndex();
     testAgentEvidence();
+    testAgentView();
+    testFolding();
+    testFileSniff();
+    testCsv();
+    testJsonOutline();
+    testNotebook();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
