@@ -1273,9 +1273,22 @@ for full-screen programs. Both can be open at once.
   `633;E;<command, control characters blanked>` then `133;C`. PS1, PS2, RPS1,
   PROMPT_SP and tty modes are untouched; HIST_IGNORE_SPACE keeps
   `setDirectory:`'s ` cd` out of history; `TERM=xterm-256color`.
+  Every mark ends in `;mc=<nonce>` (`__minicode_mark`): 128 random bits per
+  shell in `MINICODE_NONCE`, which the .zshenv reads and unsets, and
+  `TerminalStream::setMarkNonce` drops marks without it (2026-11-06; any
+  program could print them: a remote shell with iTerm2's integration made
+  Run File type into ssh). OSC 7 percent-encodes `%`, `;` and control
+  characters. B only in ZLE's `start` and `cont` contexts (not vared). The
+  precmd puts our line-init hook back at every prompt (`-d` then add, since
+  add-zle-hook-widget keeps a plugin's widget only when ours is not still on
+  its list): a plugin taking zle-line-init over in its first precmd (as
+  zsh-vi-mode does) stopped B for good.
 - **exec**: preexec looks for `exec` as a command word (first, or after `; &&
-  || & |`) and for that command exports ZDOTDIR as the integration folder (the
-  user's in `MINICODE_USER_ZDOTDIR`) with `MINICODE_EXEC=1`, so an exec'd zsh
+  || & |`, `then`, `do`, `else`, `{`, `!`, and past `builtin`, `command`,
+  `noglob`) and for that command exports ZDOTDIR as the integration folder (the
+  user's in `MINICODE_USER_ZDOTDIR`) with `MINICODE_EXEC=1`, and the nonce
+  when the program is a shell (a bash keeps it in its environment, so a zsh
+  started from it marks again; `exec claude` gets none), so an exec'd zsh
   loads the integration and reports the exec finished (133;D;0); the next
   precmd restores both if the exec failed. Line mode also `unsetopt ZLE` there.
   Exec into another shell (bash, sh, dash, fish, ksh, tcsh, csh, nu, elvish,
@@ -1294,10 +1307,15 @@ for full-screen programs. Both can be open at once.
 - **Typing for the user** (`typeLine:run:`): first a private key, `ESC [9999~`,
   bound in emacs, viins and vicmd to `zle push-input` (`__minicode_push`), so a
   half-typed line returns at the next prompt; `runCommand:` adds Return;
-  `typeCommand:` pastes in brackets when ZLE asked, never pressing Return. Both
-  wait for `_zleReady` (B), not A: bytes sent between precmd and ZLE start echo
-  as `^[[9999~`. A starting shell queues them (`_pendingCommand`,
-  `_pendingTyped`). Private keys sent only while ZLE reads: `ESC[9998~`
+  `typeCommand:` pastes in brackets when ZLE asked, never pressing Return;
+  outside brackets control characters are dropped. Both go through
+  `canTypeNow`: `tcgetpgrp(master)` must be the shell, and `_zleReady` (B),
+  not A, since bytes sent between precmd and ZLE start echo as `^[[9999~`;
+  with no B, a prompt 0.3 s old whose tty is raw counts. Typing uses the
+  prompt up (`_zleReady`, `_atPrompt` cleared), so a second command waits.
+  What cannot go in yet is queued (`_pendingCommand`, `_pendingTyped`) and
+  `flushPendingInput` tries again on every event and every 0.1 s. `busy` is
+  also YES while another program holds the foreground. Private keys sent only while ZLE reads: `ESC[9998~`
   beginning-of-line, 9997 end-of-line, 9996 backward-kill-line, 9995
   clear-screen (Cmd+Left, Cmd+Right, Cmd+Delete, Cmd+K); elsewhere on the main
   screen Cmd+arrows and Cmd+Delete send Ctrl+A, Ctrl+E, Ctrl+U (zsh's emacs
@@ -1307,8 +1325,12 @@ for full-screen programs. Both can be open at once.
   the bottom, main screen, scroll region at row 0 (as xterm); RI, IL/DL, SU/SD
   never save; `ED 3` clears it, `ED 2` and RIS keep it. Stored packed
   (`HistLine`: text in one string, a style run per change, a per-cell table
-  only for lines with anything but one byte of width 1 per cell; 2 to 6 MB per
-  10,000 lines where cells took 30 to 59 MB). `lineCell` returns by value;
+  only for lines with anything but one byte of width 1 per cell, offset << 2 |
+  width, offsets under 1 GiB; 2 to 6 MB per 10,000 lines where cells took 30
+  to 59 MB). A cell keeps at most `kTermMaxCellBytes` (32) of character and
+  marks, in both models: 4 MB of U+0301 made one cell every frame copied,
+  and past 16 MiB on a line the old 24-bit offsets wrapped and find read out
+  of bounds. `lineCell` returns by value;
   `historyBytes()`. `terminal.scrollback` (10000, up to 100000) sets it live; 0
   unless the host sets it, so Android has none.
 - **Reflow**: a row's `wrap` byte (0 end, 1 wrapped, 2 wrapped with a wide
@@ -1318,7 +1340,9 @@ for full-screen programs. Both can be open at once.
   their characters, places in `keep` (the view's top line, a selection, a find
   match) follow their text, blank rows below the text go first, lines come back
   down when there is room, and `historyBase() - historySize()` is unchanged.
-  The alternate screen is cut. Lines are moved, not copied (10,000 in about 1
+  Lines below the cursor that a shorter screen cannot hold go to `below_` and
+  come back first when it grows (dropped once the main screen scrolls or is
+  erased). At least 2 columns. The alternate screen is cut. Lines are moved, not copied (10,000 in about 1
   ms). Erasing ends wraps as xterm.js does; the wrap of zsh's PROMPT_SP after
   unfinished output (`promptSp_`, seen through the 133;A after it) is not soft.
   `textBetween`, `find` (`TermMatch` end line and column), links, words and

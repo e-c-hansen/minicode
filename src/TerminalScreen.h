@@ -81,10 +81,14 @@ public:
     // row moves to the next), and the cursor and the saved cursor stay on
     // their characters. When rows are removed, or reflowed lines take more
     // rows, lines go up into the scrollback to keep the cursor and the text
-    // on screen; blank rows below them are cut first. When rows are added,
-    // or lines take fewer, lines come back down from the scrollback, as in
+    // on screen; blank rows below them are cut first. Lines below the
+    // cursor that no longer fit are set aside (the cursor must stay on
+    // screen) and come back first when the screen grows, unless the main
+    // screen scrolls or is erased in between. When rows are added, or lines
+    // take fewer, lines come back down from the scrollback, as in
     // Terminal.app, so making a pane smaller and larger again loses
     // nothing. The alternate screen is cut or padded, not reflowed.
+    // At least two columns (a wide character needs two cells).
     // `keep`, if given, holds places (a view's top line, a selection) that
     // are moved with their text; one whose line left the scrollback ends up
     // above -historySize().
@@ -232,8 +236,8 @@ private:
     // A scrollback line, packed: a TermCell is about 48 bytes, and a
     // terminal keeps thousands of lines. The cells' text is one string;
     // the style is a run per change. `cells` is empty when every cell is one
-    // byte of width 1 (most lines), else a cell's offset into `text` << 8 |
-    // its width.
+    // byte of width 1 (most lines), else a cell's offset into `text` << 2 |
+    // its width (packCell in the .cpp; offsets stop short of 1 GiB).
     struct StyleRun {
         uint32_t col;             // the first cell in this style
         TermStyle style;
@@ -268,6 +272,8 @@ private:
     int cols_, rows_;
     Grid main_, alt_;
     std::deque<HistLine> history_;    // above main_, oldest first
+    std::vector<HistLine> below_;     // lines a shrink pushed off the bottom
+                                      // of the main screen (see resize)
     int historyLimit_ = 0;
     long long historyBase_ = 0;
     bool onAlt_ = false;              // showing the alternate screen

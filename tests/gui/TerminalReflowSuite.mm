@@ -3,7 +3,11 @@
 // text), rows it wrapped copying, finding and Cmd-clicking as one line,
 // mouse reporting to vim (click, wheel, Shift to select instead), focus
 // events, a program's title on its tab, and mouse modes a program left on
-// going when the prompt comes back. Real zsh and /usr/bin/vim.
+// going when the prompt comes back. Then what the terminal trusts: marks
+// without the shell's nonce ignored, nothing typed while another program
+// has the foreground, a second command waiting for the first, a prompt
+// without 133;B, control characters kept out of typeCommand:, and the
+// screen reset after a shell killed mid-frame. Real zsh and /usr/bin/vim.
 #import "Harness.h"
 #import "EditorController.h"
 #import "Terminal.h"
@@ -301,4 +305,118 @@ MC_GUI_SUITE(terminal_reflow) {
         if (lines.count > 5) GCHECK_EQ_STR(lines[3], @"line 04 abcdef");
     });
     MCGuiStep(@"the window back to its width", ^{ [c.window setFrame:wide display:NO]; });
+
+    // ------------------------------------------- trusting the shell's marks
+    // A line of the terminal's text that is exactly `s` (an output line, not
+    // the command line that printed it).
+    BOOL (^hasLine)(NSString *) = ^BOOL(NSString *s) {
+        return [[[term recentText:12] componentsSeparatedByString:@"\n"] containsObject:s];
+    };
+    MCGuiStep(@"marks without the nonce, printed by a program, then cat", ^{
+        [term runCommand:@"printf '\\e]133;A\\a\\e]133;B\\a\\e]7;file:///forged\\a"
+                          "\\e]133;A;mc=0\\a\\e]133;B;mc=0\\a'; cat"];
+    });
+    MCGuiWait(@"cat runs", 10, ^BOOL { return term.busy && !term.atPrompt; });
+    MCGuiPause(0.4);
+    MCGuiStep(@"they are not believed, and a command waits", ^{
+        GCHECK(!term.atPrompt && term.busy);
+        GCHECK(![term.directory isEqualToString:@"/forged"]);
+        [term runCommand:@"echo typed-after"];
+        GCHECK_EQ_STR(term.pendingCommand, @"echo typed-after");
+    });
+    MCGuiPause(0.5);
+    MCGuiStep(@"cat was given nothing", ^{
+        GCHECK(![[term recentText:6] containsString:@"typed-after"]);
+        Send(grid, @"\x03");
+    });
+    MCGuiWait(@"at the prompt the command runs", 10, ^BOOL {
+        return !term.pendingCommand && term.atPrompt && hasLine(@"typed-after");
+    });
+
+    MCGuiStep(@"marks with the nonce while another program has the terminal", ^{
+        // The shell's own function prints them from a background job, so
+        // they are real, but cat holds the foreground.
+        [term runCommand:@"(sleep 0.6; __minicode_mark '133;A'; __minicode_mark '133;B') & cat"];
+    });
+    MCGuiWait(@"cat runs", 10, ^BOOL { return term.busy && !term.atPrompt; });
+    MCGuiWait(@"the marks arrive", 10, ^BOOL { return term.atPrompt; });
+    MCGuiStep(@"the foreground decides: busy, and a command waits", ^{
+        GCHECK(term.busy);
+        [term runCommand:@"echo fg-waited"];
+        GCHECK_EQ_STR(term.pendingCommand, @"echo fg-waited");
+    });
+    MCGuiPause(0.5);
+    MCGuiStep(@"cat was given nothing", ^{
+        GCHECK(![[term recentText:6] containsString:@"fg-waited"]);
+        Send(grid, @"\x03");
+    });
+    MCGuiWait(@"it runs at the prompt", 10, ^BOOL {
+        return !term.pendingCommand && term.atPrompt && hasLine(@"fg-waited");
+    });
+
+    MCGuiStep(@"two commands at once: the second waits for the first", ^{
+        [term runCommand:@"read -t 2 x; echo \"got=[$x]\""];
+        GCHECK(term.busy);
+        [term runCommand:@"echo second-ran"];
+        GCHECK_EQ_STR(term.pendingCommand, @"echo second-ran");
+    });
+    MCGuiWait(@"read timed out with nothing, then the second ran", 10, ^BOOL {
+        return term.atPrompt && !term.pendingCommand && hasLine(@"got=[]") && hasLine(@"second-ran");
+    });
+
+    MCGuiStep(@"the programs it runs never see the nonce", ^{
+        [term runCommand:@"env | grep -c MINICODE_NONCE"];
+    });
+    MCGuiWait(@"none", 10, ^BOOL { return term.atPrompt && hasLine(@"0"); });
+
+    // A hook that, like a plugin, takes zle-line-init over after ours at
+    // every prompt: no 133;B ever, and commands still go in once ZLE has
+    // the terminal in raw mode.
+    MCGuiStep(@"a hook that ends 133;B", ^{
+        [term runCommand:@"mc_noop_init() { : }; mc_kill_b() { zle -N zle-line-init mc_noop_init }; "
+                          "precmd_functions+=(mc_kill_b)"];
+    });
+    MCGuiWait(@"the prompt, without B", 10, ^BOOL {
+        return term.atPrompt && ![[term valueForKey:@"zleReady"] boolValue];
+    });
+    MCGuiStep(@"a command typed all the same", ^{ [term runCommand:@"echo no-b-ran"]; });
+    MCGuiWait(@"it ran", 10, ^BOOL { return term.atPrompt && hasLine(@"no-b-ran"); });
+    MCGuiStep(@"the hook goes", ^{
+        [term runCommand:@"precmd_functions=(${precmd_functions:#mc_kill_b})"];
+    });
+    MCGuiWait(@"and B is back, from our hook put back at the prompt", 10, ^BOOL {
+        return term.atPrompt && [[term valueForKey:@"zleReady"] boolValue];
+    });
+
+    MCGuiStep(@"without bracketed paste, typeCommand drops control characters", ^{
+        [term runCommand:@"unset zle_bracketed_paste"];
+    });
+    MCGuiWait(@"the prompt", 10, ^BOOL {
+        return term.atPrompt && [[term valueForKey:@"zleReady"] boolValue] &&
+               !Screen(term)->bracketedPaste();
+    });
+    MCGuiStep(@"typed, not run", ^{
+        GCHECK([term typeCommand:@"echo strip\x03\x1b\x7fped"]);
+    });
+    MCGuiPause(0.3);
+    MCGuiStep(@"Return", ^{ Send(grid, @"\r"); });
+    MCGuiWait(@"one word came out", 10, ^BOOL { return term.atPrompt && hasLine(@"stripped"); });
+    MCGuiStep(@"bracketed paste back", ^{
+        [term runCommand:@"zle_bracketed_paste=($'\\e[?2004h' $'\\e[?2004l')"];
+    });
+    MCGuiWait(@"the prompt", 10, ^BOOL { return term.atPrompt && Screen(term)->bracketedPaste(); });
+
+    // The shell dies in DEC line drawing and a synchronized frame; the
+    // screen is reset before the new shell's prompt.
+    MCGuiStep(@"a shell killed mid-frame", ^{
+        [term runCommand:@"printf '\\e(0\\e[?2026h'; kill -9 $$"];
+    });
+    MCGuiWait(@"a new shell's prompt", 20, ^BOOL {
+        return term.atPrompt && [[term recentText:8] containsString:@"shell exited"];
+    });
+    MCGuiStep(@"q is q again, and the frame is over", ^{
+        GCHECK(!Screen(term)->synchronizedOutput());
+        [term runCommand:@"echo qqq"];
+    });
+    MCGuiWait(@"qqq", 10, ^BOOL { return term.atPrompt && hasLine(@"qqq"); });
 }
