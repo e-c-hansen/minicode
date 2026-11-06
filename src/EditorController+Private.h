@@ -310,41 +310,6 @@ static const NSInteger kWorktreeMenuTag = 7701;
 // Still in EditorController.mm.
 - (BOOL)showsRenderedMarkdown;
 - (NSString *)markdownToRender;
-- (void)noteEdited;
-- (BOOL)isSettingsFile;
-- (void)decorateColorsIn:(NSTextStorage *)storage range:(NSRange)range;
-- (BOOL)textView:(NSTextView *)tv clickedOnLink:(id)link atIndex:(NSUInteger)i;
-- (void)pickColorAtIndex:(NSUInteger)i;
-- (void)colorPicked:(NSColorPanel *)panel;
-- (NSRect)editorRectForRange:(NSRange)range;
-- (void)pickOpacityAtIndex:(NSUInteger)i;
-- (void)opacityPicked:(double)value;
-- (NSMenu *)textView:(NSTextView *)tv menu:(NSMenu *)menu forEvent:(NSEvent *)event
-             atIndex:(NSUInteger)index;
-- (void)appendSettingsLines:(const std::string &)lines title:(const char *)title;
-- (void)centerEditorOnRange:(NSRange)range;
-- (void)tintKeyLines:(NSArray<NSValue *> *)lines;
-- (void)toggleTaskOnSourceLine:(int)line;
-- (BOOL)canFormatSource;
-- (void)formatSourceQuietly:(BOOL)quiet then:(void (^)(void))then;
-- (BOOL)formatBeforeSaving;
-- (void)finishFormatSave;
-- (void)saveBeforeLeavingFormatSave;
-- (BOOL)replaceSourceWithText:(NSString *)text actionName:(NSString *)name;
-- (void)showFormatNote:(NSString *)message error:(BOOL)error;
-- (void)showFormatNote:(NSString *)message error:(BOOL)error
-               install:(NSArray<NSString *> *)install;
-- (void)applyGutterSettings;
-- (void)setEditorFont:(NSFont *)font;
-- (void)editorZoomChanged:(NSNotification *)note;
-- (std::vector<Brackets::Span>)nonCodeSpansFrom:(NSUInteger)lo to:(NSUInteger)hi;
-- (NSRange)bracketWindowAround:(NSUInteger)caret;
-- (BOOL)bracketMatchingApplies;
-- (void)textViewDidChangeSelection:(NSNotification *)note;
-- (void)updateBracketMatch;
-- (BOOL)textView:(NSTextView *)tv doCommandBySelector:(SEL)sel;
-- (BOOL)textView:(NSTextView *)tv shouldChangeTextInRange:(NSRange)range
-    replacementString:(NSString *)replacement;
 - (BOOL)lspActionAllowed;
 - (void)updateProblems;
 - (void)updateProblemCounts;
@@ -354,7 +319,6 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (void)closeInstallBarMuting:(BOOL)mute;
 - (void)showInstallHelpFrom:(NSView *)anchor;
 - (void)typeCommandInTerminal:(NSString *)command;
-- (void)textDidChange:(NSNotification *)note;
 - (NSRect)textRectForCharacter:(NSUInteger)i;
 - (void)scrollEditorToY:(CGFloat)y;
 - (NSInteger)lineOfCharacter:(NSUInteger)i inString:(NSString *)s;
@@ -671,6 +635,54 @@ static const NSInteger kWorktreeMenuTag = 7701;
         changeInLength:(NSInteger)delta;
 - (void)flushHighlightingLater;
 - (void)flushHighlighting;
+@end
+
+// EditorController+Settings.mm: the settings file: color swatches, opacity, Adjust Settings.
+@interface EditorController (Settings)
+- (BOOL)isSettingsFile;
+- (void)decorateColorsIn:(NSTextStorage *)storage range:(NSRange)range;
+- (BOOL)textView:(NSTextView *)tv clickedOnLink:(id)link atIndex:(NSUInteger)i;
+- (void)pickColorAtIndex:(NSUInteger)i;
+- (void)colorPicked:(NSColorPanel *)panel;
+- (NSRect)editorRectForRange:(NSRange)range;
+- (void)pickOpacityAtIndex:(NSUInteger)i;
+- (void)opacityPicked:(double)value;
+- (NSMenu *)textView:(NSTextView *)tv menu:(NSMenu *)menu forEvent:(NSEvent *)event
+             atIndex:(NSUInteger)index;
+- (void)appendSettingsLines:(const std::string &)lines title:(const char *)title;
+- (void)centerEditorOnRange:(NSRange)range;
+- (void)tintKeyLines:(NSArray<NSValue *> *)lines;
+@end
+
+// EditorController+Format.mm: Format Document.
+@interface EditorController (Format)
+- (BOOL)canFormatSource;
+- (void)formatSourceQuietly:(BOOL)quiet then:(void (^)(void))then;
+- (BOOL)formatBeforeSaving;
+- (void)finishFormatSave;
+- (void)saveBeforeLeavingFormatSave;
+- (BOOL)replaceSourceWithText:(NSString *)text actionName:(NSString *)name;
+- (void)showFormatNote:(NSString *)message error:(BOOL)error;
+- (void)showFormatNote:(NSString *)message error:(BOOL)error
+               install:(NSArray<NSString *> *)install;
+@end
+
+// EditorController+EditorView.mm: the editor: line numbers, brackets, zoom, comments, tasks and the editing hooks.
+@interface EditorController (EditorView)
+- (void)noteEdited;
+- (void)toggleTaskOnSourceLine:(int)line;
+- (void)applyGutterSettings;
+- (void)setEditorFont:(NSFont *)font;
+- (void)editorZoomChanged:(NSNotification *)note;
+- (std::vector<Brackets::Span>)nonCodeSpansFrom:(NSUInteger)lo to:(NSUInteger)hi;
+- (NSRange)bracketWindowAround:(NSUInteger)caret;
+- (BOOL)bracketMatchingApplies;
+- (void)textViewDidChangeSelection:(NSNotification *)note;
+- (void)updateBracketMatch;
+- (BOOL)textView:(NSTextView *)tv doCommandBySelector:(SEL)sel;
+- (BOOL)textView:(NSTextView *)tv shouldChangeTextInRange:(NSRange)range
+    replacementString:(NSString *)replacement;
+- (void)textDidChange:(NSNotification *)note;
 @end
 
 // EditorController+Navigation.mm: Go to Line, Go Back and Forward, Go to Symbol.

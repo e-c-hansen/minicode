@@ -20,21 +20,9 @@
 // Commands still running in this window's terminals (empty when every shell
 // is idle), for the question asked before quitting.
 - (NSArray<NSString *> *)runningTerminalCommands;
-- (void)openSettings:(id)sender;       // Cmd+, open the settings file
-- (void)openKeyboardShortcuts:(id)sender;   // keys.conf, written the first time
-// View > Adjust Settings > (part): the settings file at that part's keys. The
-// sender's representedObject is a surface id (Settings::appearanceSurfaces).
-- (void)adjustAppearance:(id)sender;
-- (void)showSettingsForSurface:(NSString *)surface;
-- (void)toggleComment:(id)sender;      // Cmd+/ comment or uncomment lines
-- (void)formatDocument:(id)sender;     // Shift+Option+F run the file's formatter
-- (void)toggleTask:(id)sender;         // Option+Cmd+L Markdown task on the lines
-- (void)sortLines:(id)sender;          // F9 sort lines, or the keep-sorted block
-- (void)fixKeepSorted:(id)sender;      // Shift+F9 sort every keep-sorted block
 - (void)triggerCompletion:(id)sender;  // Ctrl+Space language server completion
 - (void)goToDefinition:(id)sender;     // F12 (and Cmd+click)
 - (void)showHoverInfo:(id)sender;      // Option+Cmd+I type and docs at the cursor
-- (void)goToBracket:(id)sender;        // Shift+Cmd+\ to the matching bracket
 - (void)renameSymbol:(id)sender;       // F2: the name at the cursor, or the tree's file
 - (void)findReferences:(id)sender;     // Shift+F12
 - (void)showQuickFixes:(id)sender;     // Cmd+.
@@ -164,6 +152,30 @@
 @property(nonatomic, readonly) BOOL canExportPDF;
 - (void)togglePlayback:(id)sender;     // Shift+Cmd+Space play or pause video/audio
 @property(nonatomic, readonly) BOOL canTogglePlayback;
+@end
+
+// EditorController+Settings.mm
+@interface EditorController (Settings)
+- (void)openSettings:(id)sender;       // Cmd+, open the settings file
+- (void)openKeyboardShortcuts:(id)sender;   // keys.conf, written the first time
+// View > Adjust Settings > (part): the settings file at that part's keys. The
+// sender's representedObject is a surface id (Settings::appearanceSurfaces).
+- (void)adjustAppearance:(id)sender;
+- (void)showSettingsForSurface:(NSString *)surface;
+@end
+
+// EditorController+Format.mm
+@interface EditorController (Format)
+- (void)formatDocument:(id)sender;     // Shift+Option+F run the file's formatter
+@end
+
+// EditorController+EditorView.mm
+@interface EditorController (EditorView)
+- (void)toggleComment:(id)sender;      // Cmd+/ comment or uncomment lines
+- (void)toggleTask:(id)sender;         // Option+Cmd+L Markdown task on the lines
+- (void)sortLines:(id)sender;          // F9 sort lines, or the keep-sorted block
+- (void)fixKeepSorted:(id)sender;      // Shift+F9 sort every keep-sorted block
+- (void)goToBracket:(id)sender;        // Shift+Cmd+\ to the matching bracket
 @end
 
 // EditorController+Navigation.mm
