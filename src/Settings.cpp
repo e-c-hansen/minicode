@@ -862,6 +862,15 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                s.developSource_ = lower(v) == "auto" ? "" : v;
                return true;),
         MC_KEY("agent.command", CommandLine, false, s.agentCommand_ = v; return true;),
+        MC_KEY("git.autofetch", Word, false, return boolValue(v, s.gitAutoFetch_, e);),
+        MC_KEY("git.autofetch-period", Word, false,
+               long seconds;
+               if (!countValue(v, 6, 180, 86400, seconds)) {
+                   e = "'" + v + "' is not a number of seconds from 180 to 86400";
+                   return false;
+               }
+               s.gitAutoFetchPeriod_ = (int)seconds;
+               return true;),
     };
     return table;
 }
@@ -1322,6 +1331,17 @@ const char* Settings::defaultFileText() {
 # folder. Select Python Interpreter... in the MiniCode menu chooses one for
 # the open folder alone, which wins over this.
 # python.interpreter = auto
+
+# Source Control (Ctrl+Shift+G, macOS only for now). With autofetch on, the
+# folder's repository is fetched in the background every
+# git.autofetch-period seconds (180 at least) while its window is in front,
+# as VS Code's git.autofetch does, so the panel's "to pull" count is current.
+# A repository with no remote is never fetched, and one that cannot be (no
+# network, a missing password) is tried less and less often, up to once an
+# hour. Fetch, Pull, Push and Sync are in the panel's menu and the command
+# palette; none of them ever asks for a password.
+# git.autofetch = false
+# git.autofetch-period = 180
 
 # Request a Change to minicode (Shift+Cmd+K, macOS only for now) hands what
 # you describe to Claude Code, in a terminal tab opened in minicode's own

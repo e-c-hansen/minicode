@@ -316,6 +316,12 @@ public:
         return agentCommand_.empty() ? "claude" : agentCommand_;
     }
     static const std::vector<std::string>& formatLanguages();
+    // git.autofetch: fetch the folder's repository in the background, as
+    // VS Code's git.autofetch (off by default); git.autofetch-period, the
+    // seconds between fetches (180, VS Code's default and the least, to
+    // 86400). See GitUi::autoFetchDue.
+    bool gitAutoFetch() const { return gitAutoFetch_; }
+    int gitAutoFetchPeriod() const { return gitAutoFetchPeriod_; }
 
     // Every key with one value of its own, from the key table (Settings.cpp),
     // in table order: "window.opacity", "theme", "editor.ruler", ... The
@@ -342,6 +348,8 @@ private:
     bool math_ = true;
     bool keepSortedOnSave_ = false;
     bool organizeImportsOnSave_ = false;
+    bool gitAutoFetch_ = false;
+    int gitAutoFetchPeriod_ = 180;
     AutoSave autoSave_ = AutoSave::Off;
     int autoSaveDelay_ = 1000;
     std::vector<int> rulers_ = {100};

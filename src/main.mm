@@ -549,6 +549,10 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
 - (void)toggleSidebar:(id)sender   { [[self current] toggleSidebar:sender]; }
 - (void)toggleSourceControl:(id)sender { [[self current] toggleSourceControl:sender]; }
+- (void)gitFetch:(id)sender { [[self current] gitFetch:sender]; }
+- (void)gitPull:(id)sender  { [[self current] gitPull:sender]; }
+- (void)gitPush:(id)sender  { [[self current] gitPush:sender]; }
+- (void)gitSync:(id)sender  { [[self current] gitSync:sender]; }
 - (void)toggleAgents:(id)sender    { [[self current] toggleAgents:sender]; }
 - (void)toggleProcesses:(id)sender { [[self current] toggleProcesses:sender]; }
 - (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
@@ -1132,6 +1136,17 @@ static void BuildMenu(void) {
     git.keyEquivalentModifierMask =
         NSEventModifierFlagControl | NSEventModifierFlagShift;
     [viewMenu addItem:git];
+    // Pushing and pulling (git.fetch, git.pull, git.push, git.sync), with
+    // no keys, as in VS Code; the panel's button and menu run them too.
+    NSMenuItem *gitItem = [[NSMenuItem alloc] initWithTitle:@"Source Control" action:nil
+                                              keyEquivalent:@""];
+    NSMenu *gitMenu = [[NSMenu alloc] initWithTitle:@"Source Control"];
+    [gitMenu addItemWithTitle:@"Fetch" action:@selector(gitFetch:) keyEquivalent:@""];
+    [gitMenu addItemWithTitle:@"Pull" action:@selector(gitPull:) keyEquivalent:@""];
+    [gitMenu addItemWithTitle:@"Push" action:@selector(gitPush:) keyEquivalent:@""];
+    [gitMenu addItemWithTitle:@"Sync" action:@selector(gitSync:) keyEquivalent:@""];
+    gitItem.submenu = gitMenu;
+    [viewMenu addItem:gitItem];
 
     // Shift+Cmd+A: the agent sessions that worked in the folder, in the
     // sidebar's place (AgentsPanel.h).

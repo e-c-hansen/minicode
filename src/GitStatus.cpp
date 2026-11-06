@@ -18,9 +18,16 @@ std::string subcommand(const std::vector<std::string>& args) {
 
 double timeoutFor(const std::vector<std::string>& args) {
     const std::string cmd = subcommand(args);
-    if (cmd == "commit") return 600;
+    if (cmd == "commit" || cmd == "push") return 600;
+    if (cmd == "pull") return 300;
+    if (cmd == "fetch") return 120;
     if (cmd == "add" || cmd == "restore" || cmd == "rm") return 120;
     return 30;
+}
+
+bool talksToRemote(const std::vector<std::string>& args) {
+    const std::string cmd = subcommand(args);
+    return cmd == "fetch" || cmd == "pull" || cmd == "push" || cmd == "ls-remote";
 }
 
 std::string durationText(double t) {

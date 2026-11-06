@@ -258,6 +258,161 @@ std::vector<std::string> commitArgs(const std::string& message) {
     return {"commit", "-m", message};
 }
 
+// ------------------------------------------------ pushing and pulling
+std::vector<std::string> remoteArgs() { return {"remote"}; }
+
+std::vector<std::string> parseRemotes(const std::string& out) {
+    std::vector<std::string> r;
+    for (const std::string& l : nonBlankLines(out))
+        if (l[0] != '-' && l.find_first_of(" \t") == std::string::npos) r.push_back(l);
+    return r;
+}
+
+std::string publishRemote(const Snapshot& s) {
+    for (const std::string& r : s.remotes)
+        if (r == "origin") return r;
+    return s.remotes.size() == 1 ? s.remotes[0] : "";
+}
+
+std::string upstreamRemote(const Snapshot& s) {
+    std::string best;
+    if (s.detached) return best;
+    for (const std::string& r : s.remotes)
+        if (s.upstream.size() > r.size() + 1 && s.upstream.compare(0, r.size(), r) == 0 &&
+            s.upstream[r.size()] == '/' && r.size() > best.size())
+            best = r;
+    return best;
+}
+
+namespace {
+
+// Why a branch cannot be published, or "".
+std::string publishRefusal(const Snapshot& s) {
+    if (s.remotes.empty()) return "This repository has no remote to push to.";
+    if (publishRemote(s).empty())
+        return "This repository has several remotes and none is called origin: push "
+               "it once from the terminal (git push -u <remote> " + s.branch +
+               ") to choose.";
+    return "";
+}
+
+}  // namespace
+
+SyncPlan syncPlan(SyncOp op, const Snapshot& s) {
+    SyncPlan p;
+    if (!s.inRepository) { p.refusal = "This folder is not in a git repository."; return p; }
+    const bool hasUpstream = !s.upstream.empty();
+    if (op == SyncOp::Fetch) {
+        if (s.remotes.empty()) { p.refusal = "This repository has no remote to fetch from."; return p; }
+        p.fetches = true;
+        // The upstream's remote, as a plain fetch would; else origin, else
+        // the first.
+        std::string remote = upstreamRemote(s);
+        if (remote.empty()) remote = publishRemote(s);
+        if (remote.empty()) remote = s.remotes[0];
+        p.steps.push_back({"fetch", remote});
+        p.busyText = "Fetching from " + remote + "…";
+        p.doneText = "Fetched from " + remote + ".";
+        return p;
+    }
+    if (s.initial) { p.refusal = "There is no commit yet to push or pull."; return p; }
+    if (s.detached) {
+        p.refusal = "HEAD is detached: check out a branch to push or pull it.";
+        return p;
+    }
+    if (!hasUpstream) {
+        if (op == SyncOp::Pull) {
+            p.refusal = s.branch + " has no upstream branch to pull from.";
+            return p;
+        }
+        p.refusal = publishRefusal(s);
+        if (!p.refusal.empty()) return p;
+        const std::string remote = publishRemote(s);
+        p.steps.push_back({"push", "--set-upstream", remote, s.branch});
+        p.busyText = "Publishing " + s.branch + " to " + remote + "…";
+        p.doneText = "Published " + s.branch + " to " + remote + ".";
+        return p;
+    }
+    if (!s.hasAheadBehind) {
+        p.refusal = "The upstream " + s.upstream + " is gone: push it again from the "
+                    "terminal (git push -u <remote> " + s.branch + ").";
+        return p;
+    }
+    switch (op) {
+    case SyncOp::Pull:
+        p.steps.push_back({"pull"});
+        p.fetches = true;
+        p.busyText = "Pulling from " + s.upstream + "…";
+        p.doneText = "Pulled from " + s.upstream + ".";
+        break;
+    case SyncOp::Push:
+        p.steps.push_back({"push"});
+        p.busyText = "Pushing to " + s.upstream + "…";
+        p.doneText = "Pushed to " + s.upstream + ".";
+        break;
+    default:   // Sync: what is new there first, then what is new here.
+        p.steps.push_back({"pull"});
+        p.steps.push_back({"push"});
+        p.fetches = true;
+        p.busyText = "Syncing with " + s.upstream + "…";
+        p.doneText = "Synced with " + s.upstream + ".";
+        break;
+    }
+    return p;
+}
+
+std::string syncButtonTitle(const Snapshot& s) {
+    if (!s.inRepository || s.initial || s.detached || !s.errorText.empty()) return "";
+    if (s.upstream.empty()) return publishRefusal(s).empty() ? "Publish Branch" : "";
+    if (!s.hasAheadBehind || (!s.ahead && !s.behind)) return "";
+    std::string t = "Sync Changes";
+    if (s.behind) t += "  ↓ " + std::to_string(s.behind);
+    if (s.ahead) t += "  ↑ " + std::to_string(s.ahead);
+    return t;
+}
+
+std::string syncButtonToolTip(const Snapshot& s) {
+    if (s.upstream.empty())
+        return "Push " + s.branch + " to " + publishRemote(s) + " and track it there";
+    std::string t;
+    if (s.behind) t = "Pull " + std::to_string(s.behind) + (s.behind == 1 ? " commit" : " commits");
+    if (s.ahead) {
+        t += t.empty() ? "Push " : ", then push ";
+        t += std::to_string(s.ahead) + (s.ahead == 1 ? " commit" : " commits");
+    }
+    return t + (s.behind ? " from and to " : " to ") + s.upstream;
+}
+
+std::string networkFailureText(int status, const std::string& out, const std::string& err) {
+    std::string t = failureText(status, out, err);
+    auto has = [&](const char* needle) { return t.find(needle) != std::string::npos; };
+    if (has("terminal prompts disabled") || has("could not read Username") ||
+        has("could not read Password") || has("Authentication failed") ||
+        has("Invalid username or password"))
+        return t + "\nminicode never asks for a password: set up a credential helper "
+                   "(gh auth setup-git, or the macOS keychain), or push once from the "
+                   "terminal.";
+    if (has("Permission denied (publickey") || has("Host key verification failed") ||
+        has("passphrase"))
+        return t + "\nminicode cannot type an ssh passphrase or accept a new host key: "
+                   "add the key to the agent (ssh-add --apple-use-keychain) or connect "
+                   "once from the terminal.";
+    return t;
+}
+
+// ------------------------------------------------------------ autofetch
+double autoFetchWait(int period, int failures) {
+    double wait = std::max(period, kAutoFetchMinPeriod);
+    for (int i = 0; i < failures && wait < kAutoFetchMaxBackoff; i++) wait *= 2;
+    return failures ? std::min(wait, (double)std::max(kAutoFetchMaxBackoff, period)) : wait;
+}
+
+bool autoFetchDue(bool enabled, bool windowActive, const Snapshot& s, bool busy,
+                  const AutoFetchState& st, double now, int period) {
+    if (!enabled || !windowActive || busy || !s.inRepository || s.remotes.empty()) return false;
+    return st.lastStart < 0 || now - st.lastStart >= autoFetchWait(period, st.failures);
+}
+
 const std::vector<EnvVar>& gitEnvironment() {
     static const std::vector<EnvVar> env = {
         {"GIT_OPTIONAL_LOCKS", "0"},   // status must not write the index

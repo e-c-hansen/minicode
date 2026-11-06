@@ -29,6 +29,17 @@
 - (void)toggleEditor:(id)sender;      // Shift+Cmd+E hide/restore the file editor
 @end
 
+// EditorController+Git.mm: pushing and pulling, on the Source Control
+// panel's object whether it shows or not (MCGitPanel).
+@class MCGitPanel;
+@interface EditorController (Git)
+- (MCGitPanel *)ensureGitPanel;   // made with the window, for autofetch
+- (void)gitFetch:(id)sender;
+- (void)gitPull:(id)sender;
+- (void)gitPush:(id)sender;
+- (void)gitSync:(id)sender;       // pull, then push
+@end
+
 // EditorController+Processes.mm
 @interface EditorController (Processes)
 // The Processes panel in the sidebar's place, as Agents is (ProcessesPanel.h).

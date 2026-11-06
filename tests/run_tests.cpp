@@ -3717,7 +3717,7 @@ void testSettings() {
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
     // format, python, keep-sorted, auto-save, ruler, terminal and develop keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 76);
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 78);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -3772,6 +3772,8 @@ void testSettings() {
     CHECK(un.pythonInterpreter().empty() && d.pythonInterpreter().empty());
     CHECK(un.keepSortedOnSave() == d.keepSortedOnSave());
     CHECK(un.organizeImportsOnSave() == d.organizeImportsOnSave() && !d.organizeImportsOnSave());
+    CHECK(un.gitAutoFetch() == d.gitAutoFetch() && !d.gitAutoFetch());
+    CHECK(un.gitAutoFetchPeriod() == d.gitAutoFetchPeriod() && d.gitAutoFetchPeriod() == 180);
     CHECK(un.autoSave() == d.autoSave() && d.autoSave() == Settings::AutoSave::Off);
     CHECK(un.autoSaveDelay() == d.autoSaveDelay() && d.autoSaveDelay() == 1000);
     CHECK(un.rulers() == d.rulers() && un.rulerColor() == d.rulerColor());
@@ -4244,6 +4246,14 @@ void testSettings() {
     std::vector<SettingsError> eks;
     CHECK(!parseSettings("").keepSortedOnSave());
     CHECK(!parseSettings("").organizeImportsOnSave());
+    {
+        std::vector<SettingsError> eg;
+        Settings g = parseSettings("git.autofetch = true\ngit.autofetch-period = 600\n"
+                                   "git.autofetch-period = 60\ngit.autofetch = sometimes\n", &eg);
+        CHECK(g.gitAutoFetch() && g.gitAutoFetchPeriod() == 600);
+        CHECK(eg.size() == 2 && eg[0].line == 3 && eg[1].line == 4);
+        CHECK(eg.size() == 2 && eg[0].message.find("from 180 to 86400") != std::string::npos);
+    }
     CHECK(parseSettings("editor.organize-imports-on-save = true\n").organizeImportsOnSave());
     {
         std::vector<SettingsError> eo;
@@ -7328,6 +7338,12 @@ static void testGitStatus() {
     CHECK(timeoutFor(V{"--literal-pathspecs", "restore", "--staged", "--", "a"}) == 120);
     CHECK(timeoutFor(V{"--literal-pathspecs", "rm", "--cached", "--force", "--", "a"}) == 120);
     CHECK(timeoutFor(V{"commit", "-m", "x"}) == 600);
+    CHECK(timeoutFor(V{"push"}) == 600 && timeoutFor(V{"push", "--set-upstream", "o", "b"}) == 600);
+    CHECK(timeoutFor(V{"pull"}) == 300 && timeoutFor(V{"fetch", "origin"}) == 120);
+    CHECK(talksToRemote(V{"fetch", "origin"}) && talksToRemote(V{"pull"}) &&
+          talksToRemote(V{"push"}) && talksToRemote(V{"-c", "x=y", "ls-remote"}));
+    CHECK(!talksToRemote(V{"status"}) && !talksToRemote(V{"remote"}) &&
+          !talksToRemote(V{"-c", "push", "status"}));
     // A -c value that reads like a subcommand is skipped.
     CHECK(timeoutFor(V{"-c", "commit", "status"}) == 30);
     CHECK(durationText(30) == "30 seconds");
