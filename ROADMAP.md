@@ -2,7 +2,8 @@
 
 What is not built yet, roughly ordered by value. Nothing here is needed for
 the current version to stand on its own. Last rewritten 2026-11-05, after the
-second review's list was worked through.
+second review's list was worked through; brought up to date with 1.5.8 on
+2026-11-06.
 
 ## Not planned
 
@@ -12,13 +13,10 @@ second review's list was worked through.
 
 ## For daily work on the Mac
 
-- **Claude Code's IDE link** (M to L). Claude Code connects to VS Code and
-  JetBrains through an extension that tells it the open file and selection
-  and shows its proposed edits as diffs in the editor. minicode has the
-  pieces (the control channel, the side-by-side diff, notes on the code) but
-  does not speak that protocol, so a Claude Code session in its terminal
-  does not know what the user is looking at unless the skill's `minicode
-  state` and `minicode selection` are used.
+- **Claude Code's IDE link against a real session.** Built in 1.5.8 (View >
+  Claude Code IDE Link) from the protocol as read in Claude Code's and the
+  VS Code extension's code, and checked with a WebSocket client of its own;
+  it has not yet been run against a real Claude Code session.
 - **One text storage per tab** (M). The window has one text view and swaps
   each tab's text into it, so a switch relexes and relays out the file.
 - **Non-contiguous layout** (M). Contiguous layout is left on because
@@ -46,11 +44,12 @@ second review's list was worked through.
   first and the rest in idle time, as the GTK port already does.
 - Broader, more correct highlighting would mean tree-sitter, the one place a
   dependency might be weighed.
-- Terminal: OSC 8 hyperlinks that programs print themselves (`ls
-  --hyperlink`, GCC's diagnostic URLs), on both desktop ports. Other shells
-  (bash, fish) run without the shell integration's marks.
-- Settings: the terminal's ANSI palette as keys; the Search window and the
-  hints overlay still use fixed colors.
+- Terminal: OSC 8 hyperlinks on Linux (the Mac opens them; VTE is told to
+  allow them, but Ctrl+click reads only the text). Other shells (bash, fish)
+  run without the shell integration's marks.
+- Settings: the terminal's ANSI palette as keys; the find bar and Find in
+  Folder follow the theme but have no keys of their own, and the hints
+  overlay still uses fixed colors.
 
 ## LaTeX
 
@@ -107,7 +106,13 @@ logic already in the shared core where it could be:
 - Format Document (`Formatter`), themes from a menu, Adjust Settings;
 - the inline agent, Request a Change, the control channel, the Agents
   panel and Evidence (`InlineAgent`, `ChangeRequest`, `ControlProtocol`, the
-  Agent* core);
+  Agent* core), agent pages in the browser (`PageCheck`), the terminals
+  waiting for you (`ClaudeHooks`, `AttentionBoard`), the Processes panel
+  (`ProcessTable`) and the Claude Code IDE link (`IdeLink`);
+- push, pull, sync and autofetch in the source control panel
+  (`GitUi::syncPlan` in `GitModel`, which the port already draws from);
+- Mermaid diagrams in the Markdown preview (`MermaidDiagram`), page zoom,
+  and Maximize Pane;
 - the viewers for CSV, JSON, notebooks and SQLite (`FileSniff`, `Csv`,
   `JsonOutline`, `Notebook`);
 - typeset math (above). Blur is not possible on GNOME: GTK 4 has no API for
