@@ -31,6 +31,28 @@ char32_t foldCase(char32_t c) {
     return c;
 }
 
+char32_t upperCase(char32_t c) {
+    if (c < 0x80) return (c >= 'a' && c <= 'z') ? c - 32 : c;
+    if (c >= 0xE0 && c <= 0xFE && c != 0xF7) return c - 32;
+    if (c == 0xFF) return 0x0178;
+    if (c >= 0x0100 && c <= 0x017F) {
+        if ((c <= 0x012F) || (c >= 0x0132 && c <= 0x0137) || (c >= 0x014A && c <= 0x0177))
+            return (c % 2 == 1) ? c - 1 : c;
+        if ((c >= 0x0139 && c <= 0x0148) || (c >= 0x0179 && c <= 0x017E))
+            return (c % 2 == 0) ? c - 1 : c;
+        return c;
+    }
+    if (c >= 0x03B1 && c <= 0x03C9 && c != 0x03C2) return c - 32;
+    if (c == 0x03C2) return 0x03A3;
+    if (c == 0x03AC) return 0x0386;
+    if (c >= 0x03AD && c <= 0x03AF) return c - 37;
+    if (c == 0x03CC) return 0x038C;
+    if (c == 0x03CD || c == 0x03CE) return c - 63;
+    if (c >= 0x0430 && c <= 0x044F) return c - 32;
+    if (c >= 0x0450 && c <= 0x045F) return c - 80;
+    return c;
+}
+
 bool isWordChar(char32_t c) {
     if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_')
         return true;
@@ -361,7 +383,7 @@ void toUnits(const std::vector<CpMatch>& cms, const Line& l, std::size_t base,
 }
 
 template <class S>
-S expandT(const S& tmpl, const S& text, const Match& m, bool regex) {
+S expandRaw(const S& tmpl, const S& text, const Match& m, bool regex) {
     using Ch = typename S::value_type;
     if (!regex) return tmpl;
     S out;
@@ -400,7 +422,144 @@ S expandT(const S& tmpl, const S& text, const Match& m, bool regex) {
     return out;
 }
 
+// ------------------------------------------------------- preserve case
+using U32 = std::u32string;
+
+U32 to32(const std::u16string& s) {
+    Line l;
+    decode16(s.data(), s.size(), l);
+    return U32(l.cps.begin(), l.cps.end());
+}
+U32 to32(const std::string& s) {
+    Line l;
+    decode8(s.data(), s.size(), l);
+    return U32(l.cps.begin(), l.cps.end());
+}
+void from32(const U32& u, std::u16string* out) {
+    out->clear();
+    for (char32_t c : u) {
+        if (c >= 0x10000) {
+            out->push_back(static_cast<char16_t>(0xD800 + ((c - 0x10000) >> 10)));
+            out->push_back(static_cast<char16_t>(0xDC00 + ((c - 0x10000) & 0x3FF)));
+        } else {
+            out->push_back(static_cast<char16_t>(c));
+        }
+    }
+}
+void from32(const U32& u, std::string* out) {
+    out->clear();
+    for (char32_t c : u) {
+        if (c < 0x80) {
+            out->push_back(static_cast<char>(c));
+        } else if (c < 0x800) {
+            out->push_back(static_cast<char>(0xC0 | (c >> 6)));
+            out->push_back(static_cast<char>(0x80 | (c & 0x3F)));
+        } else if (c < 0x10000) {
+            out->push_back(static_cast<char>(0xE0 | (c >> 12)));
+            out->push_back(static_cast<char>(0x80 | ((c >> 6) & 0x3F)));
+            out->push_back(static_cast<char>(0x80 | (c & 0x3F)));
+        } else {
+            out->push_back(static_cast<char>(0xF0 | (c >> 18)));
+            out->push_back(static_cast<char>(0x80 | ((c >> 12) & 0x3F)));
+            out->push_back(static_cast<char>(0x80 | ((c >> 6) & 0x3F)));
+            out->push_back(static_cast<char>(0x80 | (c & 0x3F)));
+        }
+    }
+}
+
+U32 upper32(U32 s) {
+    for (char32_t& c : s) c = upperCase(c);
+    return s;
+}
+U32 lower32(U32 s) {
+    for (char32_t& c : s) c = foldCase(c);
+    return s;
+}
+
+std::vector<U32> split32(const U32& s, char32_t sep) {
+    std::vector<U32> parts(1);
+    for (char32_t c : s) {
+        if (c == sep) parts.emplace_back();
+        else parts.back().push_back(c);
+    }
+    return parts;
+}
+
+U32 casePreserved(const U32& match, const U32& pattern);
+
+// VS Code's validateSpecificSpecialCharacter: both hold the separator, in
+// as many parts.
+bool sameParts(const U32& match, const U32& pattern, char32_t sep) {
+    return match.find(sep) != U32::npos && pattern.find(sep) != U32::npos &&
+           split32(match, sep).size() == split32(pattern, sep).size();
+}
+
+U32 byParts(const U32& match, const U32& pattern, char32_t sep) {
+    const std::vector<U32> ps = split32(pattern, sep), ms = split32(match, sep);
+    U32 out;
+    for (std::size_t i = 0; i < ps.size(); ++i) {
+        if (i) out.push_back(sep);
+        out += casePreserved(ms[i], ps[i]);
+    }
+    return out;
+}
+
+// VS Code's buildReplaceStringWithCasePreserved, step for step.
+U32 casePreserved(const U32& match, const U32& pattern) {
+    if (match.empty()) return pattern;
+    const bool hyphens = sameParts(match, pattern, U'-');
+    const bool underscores = sameParts(match, pattern, U'_');
+    if (hyphens && !underscores) return byParts(match, pattern, U'-');
+    if (!hyphens && underscores) return byParts(match, pattern, U'_');
+    if (upper32(match) == match) return upper32(pattern);
+    if (lower32(match) == match) return lower32(pattern);
+    if (pattern.empty()) return pattern;
+    const U32 first(1, match[0]);
+    if (lower32(first) != first)   // a capital first
+        return upper32(pattern.substr(0, 1)) + pattern.substr(1);
+    if (upper32(first) != first)   // a small letter first
+        return lower32(pattern.substr(0, 1)) + pattern.substr(1);
+    return pattern;
+}
+
+template <class S>
+S preserveCaseT(const S& matched, const S& replacement) {
+    S out;
+    from32(casePreserved(to32(matched), to32(replacement)), &out);
+    return out;
+}
+
+// A replacement that takes nothing from the match: VS Code preserves case
+// only for those.
+template <class S>
+bool isStatic(const S& tmpl, bool regex) {
+    using Ch = typename S::value_type;
+    if (!regex) return true;
+    for (std::size_t i = 0; i + 1 < tmpl.size(); ++i) {
+        if (tmpl[i] != Ch('$')) continue;
+        const Ch d = tmpl[i + 1];
+        if (d == Ch('$')) { ++i; continue; }
+        if (d == Ch('&') || (d >= Ch('0') && d <= Ch('9'))) return false;
+    }
+    return true;
+}
+
+template <class S>
+S expandT(const S& tmpl, const S& text, const Match& m, const Options& o) {
+    S out = expandRaw(tmpl, text, m, o.regex);
+    if (o.preserveCase && isStatic(tmpl, o.regex))
+        out = preserveCaseT(text.substr(m.start, m.length), out);
+    return out;
+}
+
 }  // namespace
+
+std::u16string preserveCase(const std::u16string& matched, const std::u16string& replacement) {
+    return preserveCaseT(matched, replacement);
+}
+std::string preserveCase(const std::string& matched, const std::string& replacement) {
+    return preserveCaseT(matched, replacement);
+}
 
 // ----------------------------------------------------------------- UTF-16
 std::vector<Match> findAll(const std::u16string& text, const Query& query, std::size_t limit,
@@ -449,7 +608,7 @@ std::vector<Match> findAll(const std::u16string& text, const Query& query, std::
 
 std::u16string expand(const std::u16string& replacement, const std::u16string& text,
                       const Match& match, const Query& query) {
-    return expandT(replacement, text, match, query.options().regex);
+    return expandT(replacement, text, match, query.options());
 }
 
 std::vector<Edit16> replaceAll(const std::u16string& text, const Query& query,
@@ -579,7 +738,7 @@ std::string replaceInText(const std::string& content, const Query& query,
         std::size_t at = 0;
         for (const Match& m : findAllInLine(line, query)) {
             out.append(line, at, m.start - at);
-            out += expandT(replacement, line, m, query.options().regex);
+            out += expandT(replacement, line, m, query.options());
             at = m.start + m.length;
             ++total;
         }
@@ -619,7 +778,7 @@ bool replaceOneInText(const std::string& content, const Query& query,
     for (const Match& m : findAllInLine(text, query)) {
         if (m.start != byteColumn) continue;
         std::string r = content.substr(0, pos + m.start);
-        r += expandT(replacement, text, m, query.options().regex);
+        r += expandT(replacement, text, m, query.options());
         r.append(content, pos + m.start + m.length, std::string::npos);
         *out = std::move(r);
         return true;

@@ -186,6 +186,42 @@ static void testTextFind() {
         CHECK(replaceAll(u"abc", q16(u"z"), u"y").empty());
     }
 
+    GROUP("find:preserve-case");
+    {
+        // VS Code's buildReplaceStringWithCasePreserved cases (search.test.ts).
+        CHECK(preserveCase(u"abc", u"Def") == u"def");
+        CHECK(preserveCase(u"Abc", u"Def") == u"Def");
+        CHECK(preserveCase(u"ABC", u"Def") == u"DEF");
+        CHECK(preserveCase(u"abc", u"DEF") == u"def");
+        CHECK(preserveCase(u"aBC", u"Def") == u"def");   // a small letter first
+        CHECK(preserveCase(u"Abc", u"dEF") == u"DEF");   // a capital first
+        CHECK(preserveCase(u"Foo-Bar", u"newfoo-newbar") == u"Newfoo-Newbar");
+        CHECK(preserveCase(u"Foo-Bar-Abc", u"newfoo-newbar-newabc") == u"Newfoo-Newbar-Newabc");
+        CHECK(preserveCase(u"Foo-Bar-abc", u"newfoo-newbar") == u"Newfoo-newbar");
+        CHECK(preserveCase(u"foo-Bar", u"newfoo-newbar") == u"newfoo-Newbar");
+        CHECK(preserveCase(u"foo_Bar", u"newfoo_newbar") == u"newfoo_Newbar");
+        CHECK(preserveCase(u"Foo_Bar", u"newfoo_newbar") == u"Newfoo_Newbar");
+        CHECK(preserveCase(u"Foo_Bar-Abc", u"newfoo_newbar-abc") == u"Newfoo_newbar-abc");
+        CHECK(preserveCase(u"", u"Def") == u"Def");
+        CHECK(preserveCase(u"ÉTÉ", u"hiver") == u"HIVER");
+        CHECK(preserveCase(std::string("Été"), std::string("hiver")) == "Hiver");
+        CHECK(preserveCase(std::string("ПРИВЕТ"), std::string("мир")) == "МИР");
+        // Through Replace: case-insensitive matches each keep their case.
+        TextFind::Options o;
+        o.preserveCase = true;
+        const Query pc = Query::make(std::u16string(u"foo"), o);
+        CHECK(replaced(u"foo Foo FOO", pc, u"bar") == u"bar Bar BAR");
+        // A regex replacement with a group takes its case from the group.
+        o.regex = true;
+        CHECK(replaced(u"Foo", Query::make(std::u16string(u"(f)oo"), o), u"$1ix") == u"Fix");
+        CHECK(replaced(u"Foo", Query::make(std::u16string(u"foo"), o), u"bar") == u"Bar");
+        std::size_t n = 0;
+        TextFind::Options o8;
+        o8.preserveCase = true;
+        CHECK(replaceInText("cat Cat CAT\n", Query::make(std::string("cat"), o8), "dog", &n) ==
+                  "dog Dog DOG\n" && n == 3);
+    }
+
     GROUP("find:next");
     {
         const auto ms = findAll(u"ab ab ab", q16(u"ab"));   // 0, 3, 6
@@ -281,6 +317,81 @@ static void testFolderReplace() {
         // A regex is not trimmed.
         CHECK(search(root.string(), " bar", nullptr, o).matches.size() == 1);
         CHECK(search(root.string(), "o b", nullptr, o).matches.size() == 1);
+    }
+
+    GROUP("find:globs");
+    {
+        CHECK(globMatch("*.py", "b.py") && !globMatch("*.py", "src/b.py"));
+        CHECK(globMatch("**/*.py", "src/b.py") && globMatch("**/*.py", "b.py"));
+        CHECK(globMatch("src/**", "src/a/b.c") && !globMatch("src/**", "srcx/a"));
+        CHECK(globMatch("a/**/b", "a/b") && globMatch("a/**/b", "a/x/y/b") && !globMatch("a/**/b", "a/xb"));
+        CHECK(globMatch("?.txt", "a.txt") && !globMatch("?.txt", "ab.txt") && !globMatch("?", "/"));
+        CHECK(globMatch("[ab].c", "b.c") && !globMatch("[ab].c", "c.c"));
+        CHECK(globMatch("[!ab].c", "c.c") && !globMatch("[^ab].c", "a.c"));
+        CHECK(globMatch("f[0-9]", "f7") && !globMatch("f[0-9]", "fx"));
+        CHECK(globMatch("[", "[") && globMatch("a\\*", "a*") && !globMatch("a\\*", "ab"));
+        CHECK(!globMatch("*.PY", "b.py"));   // case counts
+        using V = std::vector<std::string>;
+        CHECK(splitGlobList(" *.ts , src/{a,b}/** ,, [,]x ") == (V{"*.ts", "src/{a,b}/**", "[,]x"}));
+        CHECK(splitGlobList("").empty());
+
+        // VS Code's expansions (queryBuilder.ts).
+        CHECK(PathFilter("foo", "/r").globs() == (V{"**/foo/**", "**/foo"}));
+        CHECK(PathFilter(".js", "/r").globs() == (V{"**/*.js/**", "**/*.js"}));
+        CHECK(PathFilter("src/", "/r").globs() == (V{"**/src/**", "**/src"}));
+        CHECK(PathFilter("**/*.ts", "/r").globs() == (V{"**/*.ts/**", "**/*.ts"}));
+        CHECK(PathFilter("./src", "/r").globs() == (V{"src", "src/**"}));
+        CHECK(PathFilter("./src/**", "/r/").globs() == (V{"src/**"}));
+        CHECK(PathFilter("/r/lib", "/r").globs() == (V{"lib", "lib/**"}));
+        CHECK(PathFilter("./", "/r").globs() == (V{"**"}));
+        CHECK(PathFilter("*.{c,h}", "/r").globs() == (V{"**/*.c/**", "**/*.h/**", "**/*.c", "**/*.h"}));
+        PathFilter src("src", "/r");
+        CHECK(src.matches("src") && src.matches("src/x.py") && src.matches("a/src/b/c"));
+        CHECK(!src.matches("srcs/x.py") && !src.matches("x/src.py"));
+        PathFilter rooted("./src", "/r");
+        CHECK(rooted.matches("src/b.py") && !rooted.matches("a/src/b.py"));
+        PathFilter outside("../elsewhere, /etc", "/r");
+        CHECK(!outside.empty() && !outside.matches("elsewhere") && !outside.matches("etc"));
+        PathFilter up("./src/../lib", "/r");
+        CHECK(up.matches("lib/a") && !up.matches("src/a"));
+        CHECK(PathFilter("", "/r").empty() && PathFilter(" , ", "/r").empty());
+
+        // In the walk: files to include, files to exclude, and both.
+        FolderSearchOptions o;
+        o.include = "*.py";
+        auto r = search(root.string(), "foo", nullptr, o);
+        CHECK(r.matches.size() == 1 && r.matches[0].relativePath == "src/b.py");
+        o.include = "./src";
+        CHECK(search(root.string(), "foo", nullptr, o).matches.size() == 1);
+        o.include = "";
+        o.exclude = "src";
+        r = search(root.string(), "foo", nullptr, o);
+        CHECK(r.matches.size() == 2 && r.matches[0].relativePath == "a.txt");
+        o.exclude = "*.txt, *.py";
+        CHECK(search(root.string(), "foo", nullptr, o).matches.empty());
+        o.include = "src";
+        o.exclude = "*.md";
+        CHECK(search(root.string(), "here", nullptr, o).matches.empty());
+        o.exclude = "";
+        CHECK(search(root.string(), "here", nullptr, o).matches.size() == 1);
+        // Replace in Folder counts the same files.
+        o.include = "a.txt";
+        CHECK(planReplace(root.string(), "foo", nullptr, o).matches == 4);
+        o.include = "";
+        o.exclude = "a.txt";
+        CHECK(planReplace(root.string(), "foo", nullptr, o).matches == 1);
+        // And the TODO list.
+        writeFile(root / "src" / "t.py", "# TODO: one\n");
+        FolderSearchOptions t;
+        CHECK(findTodos(root.string(), nullptr, t).matches.size() == 1);
+        t.exclude = "*.py";
+        CHECK(findTodos(root.string(), nullptr, t).matches.empty());
+        fsys::remove(root / "src" / "t.py", ec);
+        // Preserve case through Replace in Folder.
+        FolderSearchOptions pc;
+        pc.preserveCase = true;
+        std::size_t n = 0;
+        CHECK(replaceInText("Foo foo\n", "foo", "bar", pc, &n) == "Bar bar\n" && n == 2);
     }
 
     GROUP("find:folder-plan");

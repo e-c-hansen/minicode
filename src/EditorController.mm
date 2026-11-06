@@ -190,6 +190,15 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
         item.state = _editorFind.regex ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
     }
+    if (item.action == @selector(toggleFindPreserveCase:)) {
+        item.state = _editorFind.preserveCase ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
+    if (item.action == @selector(toggleFindInSelection:)) {
+        item.state = _editorFind.findInSelection ? NSControlStateValueOn : NSControlStateValueOff;
+        return !self.editorScroll.hidden &&
+               (_editorFind.findInSelection || self.textView.selectedRange.length > 0);
+    }
     if (item.action == @selector(performTextFinderAction:))
         return !self.editorScroll.hidden && [_editorFind validateFindAction:item.tag];
     if (item.action == @selector(undo:))

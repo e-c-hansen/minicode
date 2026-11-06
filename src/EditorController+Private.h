@@ -408,6 +408,8 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)toggleFindMatchCase:(id)sender;
 - (void)toggleFindWholeWord:(id)sender;
 - (void)toggleFindRegex:(id)sender;
+- (void)toggleFindPreserveCase:(id)sender;
+- (void)toggleFindInSelection:(id)sender;
 - (void)makeSearchPanel;
 - (int)tabHoldOfPath:(NSString *)path disk:(NSString *__strong *)disk;
 - (MCOpenFileState)replaceStateOfPath:(NSString *)path;

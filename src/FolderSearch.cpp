@@ -104,6 +104,17 @@ struct Walker {
     // folder searched, to tell a file reached through a symlink to outside.
     std::set<std::pair<std::uint64_t, std::uint64_t>> files = {};
     std::string rootCanon = {};
+    // Files to include and exclude (the options' boxes).
+    PathFilter include = {}, exclude = {};
+
+    void setFilters(const std::string& root) {
+        include = PathFilter(opt.include, root);
+        exclude = PathFilter(opt.exclude, root);
+    }
+    bool wanted(const std::string& rel) const {
+        if (!exclude.empty() && exclude.matches(rel)) return false;
+        return include.empty() || include.matches(rel);
+    }
 
     bool full() const { return !plan && out.matches.size() >= opt.maxMatches; }
 
@@ -267,10 +278,12 @@ struct Walker {
             if (useIgnore && !rules.empty() && rules.ignored(ignorePath(childRel), isDir))
                 continue;
             if (isDir) {
-                if (!isSkippedDirectory(name)) subdirs.push_back(name);
+                if (!isSkippedDirectory(name) && !(!exclude.empty() && exclude.matches(childRel)))
+                    subdirs.push_back(name);
                 continue;
             }
             if (!fs::is_regular_file(st)) continue;   // pipes, sockets, devices
+            if (!wanted(childRel)) continue;
             const std::uintmax_t size = fs::file_size(full, ec);
             if (ec || size > opt.maxFileSize) continue;
             if (plan) {   // one file under two names is replaced once
@@ -767,6 +780,7 @@ FolderSearchResult search(const std::string& root, const std::string& query,
     if (counter.usable()) w.counter = &counter;
     const fs::path canon = fs::canonical(root, ec);
     if (!ec) w.visited.insert(canon.string());
+    w.setFilters(root);
     w.start(root);
     return out;
 }
@@ -776,6 +790,7 @@ TextFind::Query makeQuery(const std::string& query, const FolderSearchOptions& o
     o.caseSensitive = options.caseSensitive;
     o.wholeWord = options.wholeWord;
     o.regex = options.regex;
+    o.preserveCase = options.preserveCase;
     return TextFind::Query::make(options.regex ? query : normalizeQuery(query), o);
 }
 
@@ -806,6 +821,7 @@ FolderReplacePlan planReplace(const std::string& root, const std::string& query,
         w.visited.insert(canon.string());
         w.rootCanon = canon.string();
     }
+    w.setFilters(root);
     w.start(root);
     plan.cancelled = out.cancelled;
     return plan;
@@ -1176,8 +1192,234 @@ FolderSearchResult findTodos(const std::string& root, const std::atomic<bool>* c
     Walker w{none, cancel, options, out, {}, true};
     const fs::path canon = fs::canonical(root, ec);
     if (!ec) w.visited.insert(canon.string());
+    w.setFilters(root);
     w.start(root);
     return out;
+}
+
+// ------------------------------------------- files to include / exclude
+namespace {
+
+// One character class at p ('[' ... ']'): whether c is in it, and where the
+// pattern goes on. False with *next == p when it is not a class at all (no
+// closing bracket), so the '[' is taken literally.
+bool classMatch(const std::string& p, std::size_t at, char c, std::size_t* next, bool* in) {
+    std::size_t i = at + 1;
+    bool negate = false;
+    if (i < p.size() && (p[i] == '!' || p[i] == '^')) {
+        negate = true;
+        ++i;
+    }
+    bool found = false;
+    bool first = true;
+    for (; i < p.size(); ++i) {
+        if (p[i] == ']' && !first) {
+            *next = i + 1;
+            *in = found != negate;
+            return true;
+        }
+        first = false;
+        char lo = p[i];
+        if (lo == '\\' && i + 1 < p.size()) lo = p[++i];
+        char hi = lo;
+        if (i + 2 < p.size() && p[i + 1] == '-' && p[i + 2] != ']') {
+            hi = p[i + 2];
+            i += 2;
+        }
+        if (c >= lo && c <= hi) found = true;
+    }
+    *next = at;
+    return false;
+}
+
+bool globAt(const std::string& p, std::size_t pi, const std::string& s, std::size_t si) {
+    while (pi < p.size()) {
+        const char c = p[pi];
+        if (c == '*') {
+            const bool star2 = pi + 1 < p.size() && p[pi + 1] == '*' &&
+                               (pi == 0 || p[pi - 1] == '/') &&
+                               (pi + 2 == p.size() || p[pi + 2] == '/');
+            if (star2) {
+                if (pi + 2 == p.size()) return true;   // everything below
+                const std::size_t rest = pi + 3;       // after "**/"
+                if (globAt(p, rest, s, si)) return true;
+                for (std::size_t k = si; k < s.size(); ++k)
+                    if (s[k] == '/' && globAt(p, rest, s, k + 1)) return true;
+                return false;
+            }
+            while (pi < p.size() && p[pi] == '*') ++pi;
+            for (std::size_t k = si;; ++k) {
+                if (globAt(p, pi, s, k)) return true;
+                if (k >= s.size() || s[k] == '/') return false;
+            }
+        }
+        if (si >= s.size()) return false;
+        if (c == '?') {
+            if (s[si] == '/') return false;
+            ++pi;
+            ++si;
+            continue;
+        }
+        if (c == '[') {
+            std::size_t next;
+            bool in;
+            if (classMatch(p, pi, s[si], &next, &in)) {
+                if (!in || s[si] == '/') return false;
+                pi = next;
+                ++si;
+                continue;
+            }
+        }
+        char lit = c;
+        if (c == '\\' && pi + 1 < p.size()) lit = p[++pi];
+        if (lit != s[si]) return false;
+        ++pi;
+        ++si;
+    }
+    return si == s.size();
+}
+
+// {a,b} alternatives spelled out: "x.{c,h}" -> "x.c", "x.h". Nested braces
+// expand from the inside out; a brace without its partner is literal.
+void expandBraces(const std::string& p, std::vector<std::string>* out) {
+    int depth = 0;
+    std::size_t open = std::string::npos;
+    for (std::size_t i = 0; i < p.size(); ++i) {
+        if (p[i] == '\\') {
+            ++i;
+            continue;
+        }
+        if (p[i] == '{') {
+            if (depth++ == 0) open = i;
+        } else if (p[i] == '}' && depth > 0 && --depth == 0) {
+            std::vector<std::string> alts;
+            std::string cur;
+            int d = 0;
+            for (std::size_t k = open + 1; k < i; ++k) {
+                const char ch = p[k];
+                if (ch == '{') ++d;
+                if (ch == '}') --d;
+                if (ch == ',' && d == 0) {
+                    alts.push_back(cur);
+                    cur.clear();
+                } else {
+                    cur.push_back(ch);
+                }
+            }
+            alts.push_back(cur);
+            const std::string head = p.substr(0, open), tail = p.substr(i + 1);
+            for (const std::string& a : alts) expandBraces(head + a + tail, out);
+            return;
+        }
+    }
+    out->push_back(p);
+}
+
+std::string collapseGlobstars(std::string p) {
+    for (std::size_t at; (at = p.find("**/**")) != std::string::npos;) p.erase(at, 3);
+    return p;
+}
+
+// "/a/./b/../c" -> "/a/c".
+std::string normalizePath(const std::string& path) {
+    std::vector<std::string> parts;
+    std::size_t i = 0;
+    while (i <= path.size()) {
+        std::size_t j = path.find('/', i);
+        if (j == std::string::npos) j = path.size();
+        const std::string seg = path.substr(i, j - i);
+        if (seg == "..") {
+            if (!parts.empty()) parts.pop_back();
+        } else if (!seg.empty() && seg != ".") {
+            parts.push_back(seg);
+        }
+        i = j + 1;
+    }
+    std::string out;
+    for (const std::string& s : parts) out += "/" + s;
+    return out.empty() ? "/" : out;
+}
+
+}  // namespace
+
+bool globMatch(const std::string& pattern, const std::string& path) {
+    return globAt(pattern, 0, path, 0);
+}
+
+std::vector<std::string> splitGlobList(const std::string& text) {
+    std::vector<std::string> out;
+    std::string cur;
+    int braces = 0;
+    bool inClass = false;
+    auto flush = [&] {
+        std::size_t a = cur.find_first_not_of(" \t\r\n");
+        std::size_t b = cur.find_last_not_of(" \t\r\n");
+        if (a != std::string::npos) out.push_back(cur.substr(a, b - a + 1));
+        cur.clear();
+    };
+    for (char c : text) {
+        if (c == '[' && !inClass) inClass = true;
+        else if (c == ']' && inClass) inClass = false;
+        else if (c == '{' && !inClass) ++braces;
+        else if (c == '}' && !inClass && braces > 0) --braces;
+        if (c == ',' && braces == 0 && !inClass) {
+            flush();
+            continue;
+        }
+        cur.push_back(c);
+    }
+    flush();
+    return out;
+}
+
+PathFilter::PathFilter(const std::string& text, const std::string& root) {
+    std::string base = root;
+    while (base.size() > 1 && base.back() == '/') base.pop_back();
+    base = normalizePath(base);
+    auto add = [&](const std::string& glob) {
+        std::vector<std::string> alts;
+        expandBraces(collapseGlobstars(glob), &alts);
+        for (const std::string& a : alts) globs_.push_back(a);
+    };
+    for (std::string p : splitGlobList(text)) {
+        for (char& c : p)
+            if (c == '\\') c = '/';
+        if (p[0] == '~' && (p.size() == 1 || p[1] == '/')) {
+            const char* home = std::getenv("HOME");
+            if (home) p = std::string(home) + p.substr(1);
+        }
+        const bool searchPath = p[0] == '/' || p == "." || p == ".." ||
+                                p.rfind("./", 0) == 0 || p.rfind("../", 0) == 0;
+        if (searchPath) {
+            const std::string full = normalizePath(p[0] == '/' ? p : base + "/" + p);
+            std::string rel;
+            if (full == base) {
+                add("**");
+                continue;
+            }
+            const std::string prefix = base == "/" ? "/" : base + "/";
+            if (full.compare(0, prefix.size(), prefix) != 0) {
+                // Outside the folder: a glob no relative path can match.
+                globs_.push_back(std::string(1, '\0'));
+                continue;
+            }
+            rel = full.substr(prefix.size());
+            add(rel);
+            if (rel.size() < 2 || rel.compare(rel.size() - 2, 2, "**") != 0) add(rel + "/**");
+            continue;
+        }
+        while (!p.empty() && p.back() == '/') p.pop_back();
+        if (p.empty()) continue;
+        if (p[0] == '.') p = "*" + p;   // ".js" is "*.js"
+        add("**/" + p + "/**");
+        add("**/" + p);
+    }
+}
+
+bool PathFilter::matches(const std::string& relativePath) const {
+    for (const std::string& g : globs_)
+        if (globMatch(g, relativePath)) return true;
+    return false;
 }
 
 }  // namespace FolderSearch

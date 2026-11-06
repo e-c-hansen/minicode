@@ -150,7 +150,8 @@ goes here first, with tests; the GUI only displays it.
   `EditorPanes` (`PanelHost`, `DragBar`, `PanelScrollView`), `FileTree`
   (`FileItem`, `ClickOutline`, `gShowHidden`), `EditorPage.h`.
 - The editor: `SourceStorage` (`MCSourceStorage`), `CodeTextView.mm`, `Gutter`,
-  `FoldView`, `EditorFont`, `EditorFind`, `MultiCaretView`, `EditingCommands`
+  `FoldView`, `EditorFont`, `EditorFind`, `FindWidget` (the find bar's and
+  Find in Folder's colors, icon buttons and inputs), `MultiCaretView`, `EditingCommands`
   (AutoIndent and KeepSorted on an NSTextView), `MarkdownCode` (code colors in
   previews).
 - Language servers: `Lsp.mm` (`LspSession`, one per window), `LspServer`
@@ -827,10 +828,22 @@ container (PanelHost, laid out by hand in layoutContainer)
   with `match_prev_avail`, so lines are walked with `std::regex_iterator`;
   libstdc++ tests bracket ranges through the C locale's ctype, so `[а-я]`
   ignoring case missed Ж on CI's Linux job, and a case-insensitive regex now
-  runs over the line folded to lower case, one code point for one.
-- `MCEditorFind` replaced NSTextFinder (`usesFindBar = NO`): a box at the
-  editor's top right with "3 of 17", the toggles, and a replace row
-  (Option+Cmd+F). It searches as you type on a serial queue (cancelled between
+  runs over the line folded to lower case, one code point for one. Preserve
+  case is VS Code's buildReplaceStringWithCasePreserved, for replacements
+  with no groups.
+- `MCEditorFind` replaced NSTextFinder (`usesFindBar = NO`). Since 2026-11-06
+  it is laid out from VS Code's findWidget.ts and CSS, measure for measure
+  (the owner asked for VS Code's look; the toggles had sat far from the
+  query): 419 wide, the replace chevron down the left edge, the toggles
+  inside the query, then the count, arrows, Find in Selection, close; the
+  reduced/narrow/collapsed widths; a sash on the left edge. The find_bar
+  suite checks the frames against the CSS. Cmd+F seeds as VS Code's default
+  ("always": one-line selection, else the word at the caret, never several
+  lines). Find in Selection's VS Code key, Option+Cmd+L, is Toggle Task's in
+  the editor, so the bar takes it only while its fields have the keyboard
+  and the menu item has no key. Trap: CALayer copies `shadowPath`, so
+  release the path you made, never the one the getter returns (that crashed
+  in the next CA commit). It searches as you type on a serial queue (cancelled between
   lines, applied `whenCurrent:`) and draws through `drawBehindText`. Cmd+G /
   Shift+Cmd+G, Return / Shift+Return; Option+Cmd+C, W, R; Return in the replace
   field replaces and moves on; Shift+Cmd+1 replaces only while the bar has the
@@ -838,6 +851,13 @@ container (PanelHost, laid out by hand in layoutContainer)
   programmatic edit; Esc; Cmd+E. A preview finds but does not replace. Menu
   items still send `performTextFinderAction:` with NSTextFinderAction tags, so
   the terminal and diff view answer their own.
+- Find in Folder's window is VS Code's search view (searchview.css): query
+  and replace with their toggles inside, Replace All beside, files to
+  include/exclude (`FolderSearch::PathFilter`, VS Code's queryBuilder rules)
+  behind "...", and an NSOutlineView of files (count badges) over lines (the
+  match highlighted, or struck through beside its replacement). `hits`
+  stays the flat list of lines that tests and `replaceMatchAtRow:` index.
+  Find in Folder on a subfolder puts `./sub` in files to include.
 - Find in Folder uses `FolderSearch::search` (two characters, one for an
   untrimmed regex; `.git`, `node_modules`, `build`, the venvs and caches and
   what the folder's `.gitignore`/`.ignore` files ignore (from the window's

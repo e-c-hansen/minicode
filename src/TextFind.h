@@ -27,6 +27,11 @@
 //   the groups (an unmatched one is empty), $0 and $& the whole match, $$ a
 //   dollar sign, and \n, \t and \\ a newline, a tab and a backslash, as in
 //   VS Code. Any other $ or \ is itself.
+// - Preserve case (Options::preserveCase, VS Code's AB toggle by the
+//   replacement): a replacement with no groups in it takes the case of the
+//   text it replaces, by VS Code's buildReplaceStringWithCasePreserved:
+//   all capitals, all small, a capital first or a small first; and part by
+//   part when both hold the same number of "-" (or "_") separated parts.
 //
 // A known limit of std::regex: it backtracks, so a pattern such as (a|b)*c
 // against a very long line takes time quadratic in the line's length. The
@@ -52,6 +57,7 @@ struct Options {
     bool caseSensitive = false;
     bool wholeWord = false;
     bool regex = false;
+    bool preserveCase = false;   // replacing only; matching ignores it
 };
 
 // One match, in the code units of the text it was found in (UTF-16 units for
@@ -98,6 +104,13 @@ char32_t foldCase(char32_t c);
 
 // A word character for whole-word matching.
 bool isWordChar(char32_t c);
+
+// The capital of a small letter (the inverse of foldCase's table), else c.
+char32_t upperCase(char32_t c);
+
+// `replacement` in the case of `matched`, as preserve case makes it.
+std::u16string preserveCase(const std::u16string& matched, const std::u16string& replacement);
+std::string preserveCase(const std::string& matched, const std::string& replacement);
 
 // ------------------------------------------------------------ UTF-16 (editor)
 
