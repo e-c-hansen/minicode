@@ -135,10 +135,13 @@ private:
     NSString *s_;
 };
 
+typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCancel };
+
+// The tree menu's items for a worktree (shown only on one).
+static const NSInteger kWorktreeMenuTag = 7701;
+
 // ---------------------------------------------------------------------------
-@interface EditorController () <NSTextStorageDelegate, MCChangeHost,
-                                MCAgentHost, MCAgentNotesHost, MCNavigatorHost,
-                                MCAgentWorkHost> {
+@interface EditorController () <NSTextStorageDelegate> {
     FileItem *_root;
     // The open files, in the order the strip shows them, and the one shown.
     NSMutableArray<MCTab *> *_tabs;
@@ -303,9 +306,373 @@ private:
 @property(nonatomic, strong) MCTabStrip *tabStrip;   // the open files, over the editor
 @property(nonatomic, strong) NSTextField *emptyLabel; // the editor's slot with no file open
 @property(nonatomic, strong) NSTextField *savedLabel; // "Saved 14:32", with details on
+
+// Still in EditorController.mm.
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
+                        change:(NSDictionary *)change context:(void *)context;
+- (CGFloat)titlebarHeight;
+- (void)layoutContainer;
+- (void)buildTitlebarInContainer:(NSView *)container;
+- (void)applySettings;
+- (void)showSettingsErrors;
+- (void)keymapChanged:(NSNotification *)note;
+- (void)recolorEditor;
+- (NSMenu *)buildTreeContextMenu;
+- (void)buildStatusBarInContainer:(NSView *)container height:(CGFloat)barH;
+- (void)layoutStatusRight;
+- (void)buildHintsPanelInContainer:(NSView *)container;
+- (void)updateHints;
+- (void)appendHintsHeading:(NSString *)title to:(NSMutableAttributedString *)s;
+- (void)appendHintsRow:(NSMutableAttributedString *)s
+                   key:(NSString *)key1 label:(NSString *)label1
+                  key2:(NSString *)key2 label2:(NSString *)label2
+                 state:(NSString *)state;
+- (NSString *)hk:(NSString *)commandId;
+- (NSString *)hkAll:(NSString *)commandId;
+- (NSString *)hk:(NSString *)commandId at:(NSUInteger)index;
+- (NSString *)hkAlso:(NSString *)commandId title:(NSString *)title;
+- (NSAttributedString *)hintsText;
+- (void)relayoutRightArea;
+- (void)terminalBarDraggedTo:(CGFloat)y;
+- (void)browserBarDraggedTo:(CGFloat)x;
+- (void)makeTerminalPanel;
+- (void)makeTerminalPanelFirstIn:(NSString *)first;
+- (void)terminalPanelEmptied;
+- (void)showTerminalPanel;
+- (void)showStatusNote:(NSString *)note;
+- (void)openTerminalLink:(MCTermLink *)link;
+- (void)openTerminalLinkNow:(MCTermLink *)link;
+- (void)makeBrowserWithHome:(NSString *)home;
+- (BOOL)rightAreaCollapsed;
+- (BOOL)splitView:(NSSplitView *)sv shouldAdjustSizeOfSubview:(NSView *)view;
+- (NSRect)splitView:(NSSplitView *)sv effectiveRect:(NSRect)proposed
+          forDrawnRect:(NSRect)drawn ofDividerAtIndex:(NSInteger)i;
+- (BOOL)splitView:(NSSplitView *)sv canCollapseSubview:(NSView *)view;
+- (CGFloat)splitView:(NSSplitView *)sv
+    constrainMinCoordinate:(CGFloat)min
+               ofSubviewAt:(NSInteger)i;
+- (CGFloat)splitView:(NSSplitView *)sv
+    constrainMaxCoordinate:(CGFloat)max
+               ofSubviewAt:(NSInteger)i;
+- (void)revealEditor;
+- (void)showRightArea;
+- (void)collapseRightAreaIfEmpty;
+- (NSView *)sidebarViewOnShow;
+- (void)showDiffNamed:(NSString *)name path:(NSString *)path data:(NSData *)diff;
+- (void)showCommitTitled:(NSString *)title data:(NSData *)show;
+- (void)showDiffTitled:(NSString *)name data:(NSData *)diff commit:(BOOL)commit;
+- (void)renderDiff;
+- (void)performTextFinderAction:(id)sender;
+- (void)toggleFindMatchCase:(id)sender;
+- (void)toggleFindWholeWord:(id)sender;
+- (void)toggleFindRegex:(id)sender;
+- (void)makeSearchPanel;
+- (int)tabHoldOfPath:(NSString *)path disk:(NSString *__strong *)disk;
+- (MCOpenFileState)replaceStateOfPath:(NSString *)path;
+- (void)jumpToLine:(NSInteger)line;
+- (NSInteger)outlineView:(NSOutlineView *)ov numberOfChildrenOfItem:(id)item;
+- (id)outlineView:(NSOutlineView *)ov child:(NSInteger)i ofItem:(id)item;
+- (BOOL)outlineView:(NSOutlineView *)ov isItemExpandable:(id)item;
+- (NSView *)outlineView:(NSOutlineView *)ov
+     viewForTableColumn:(NSTableColumn *)col
+                   item:(id)item;
+- (id<NSPasteboardWriting>)outlineView:(NSOutlineView *)ov
+               pasteboardWriterForItem:(id)item;
+- (void)outlineView:(NSOutlineView *)ov draggingSession:(NSDraggingSession *)session
+   willBeginAtPoint:(NSPoint)pt forItems:(NSArray *)items;
+- (void)outlineView:(NSOutlineView *)ov draggingSession:(NSDraggingSession *)session
+       endedAtPoint:(NSPoint)pt operation:(NSDragOperation)op;
+- (NSArray<NSString *> *)droppedPaths:(id<NSDraggingInfo>)info local:(BOOL)local;
+- (NSDragOperation)outlineView:(NSOutlineView *)ov validateDrop:(id<NSDraggingInfo>)info
+                  proposedItem:(id)item proposedChildIndex:(NSInteger)index;
+- (BOOL)outlineView:(NSOutlineView *)ov acceptDrop:(id<NSDraggingInfo>)info
+               item:(id)item childIndex:(NSInteger)index;
+- (void)pathMovedFrom:(NSString *)src to:(NSString *)dst;
+- (void)handleRowClick:(NSInteger)row atPoint:(NSPoint)pt;
+- (void)activateRow:(NSInteger)row;
+- (void)startWatching:(NSString *)path;
+- (void)stopWatching;
+- (void)reloadTreeKeepingState:(BOOL)rescan;
+- (void)reExpand:(FileItem *)node usingSet:(NSSet<NSString *> *)expanded;
+- (void)setUpTreeDetails;
+- (void)rootChanged;
+- (NSArray<FileItem *> *)childrenOf:(FileItem *)node;
+- (NSString *)worktreesFolder;
+- (NSArray<FileItem *> *)withWorktreesNode:(NSArray<FileItem *> *)shown of:(FileItem *)node;
+- (BOOL)isWorktreeRow:(FileItem *)node;
+- (NSAttributedString *)worktreeTitleFor:(FileItem *)node color:(NSColor *)text
+                                    icon:(NSString **)icon tint:(NSColor **)tint
+                                     tip:(NSString **)tip;
+- (FileItem *)worktreeMenuItem;
+- (void)compareWorktreeWithMain:(id)sender;
+- (void)openWorktreeInNewWindow:(id)sender;
+- (void)menuNeedsUpdate:(NSMenu *)menu;
+- (void)outlineViewItemDidExpand:(NSNotification *)note;
+- (NSArray<FileItem *> *)orderOf:(NSArray<FileItem *> *)items;
+- (void)configureTreeCell:(MCTreeCell *)cell item:(FileItem *)node;
+- (void)refreshTreeCells;
+- (void)folderTotalsArrived:(NSSet<NSString *> *)paths;
+- (void)reorderNode:(FileItem *)node changed:(BOOL *)changed;
+- (void)folderChangedOnDisk:(NSString *)path subtree:(BOOL)subtree;
+- (void)setTreeSort:(TreeSort::Options)options;
+- (TreeSort::Options)treeSortOptions;
+- (void)treeDetailsChanged:(NSNotification *)note;
+- (void)updateDetailsTimer;
+- (void)updateSavedStatus;
+- (void)layoutStatusLabels;
+- (NSString *)targetDirectory;
+- (FileItem *)clickedOrSelectedItem;
+- (NSString *)promptForName:(NSString *)title default:(NSString *)initial;
+- (void)renamePath:(NSString *)path;
+- (void)trashPath:(NSString *)path;
+- (void)revealPathInFinder:(NSString *)path;
+- (void)copyText:(NSString *)text;
+- (NSString *)pathFromRoot:(NSString *)path;
+- (NSMenu *)menuForTabAtIndex:(NSInteger)i;
+- (MCTab *)tabOfMenuItem:(id)sender;
+- (void)closeTabFromMenu:(id)sender;
+- (void)closeTabsInList:(NSArray<MCTab *> *)tabs;
+- (void)closeOtherTabsFromMenu:(id)sender;
+- (void)closeTabsToTheRightFromMenu:(id)sender;
+- (void)closeAllTabsFromMenu:(id)sender;
+- (void)copyTabPath:(id)sender;
+- (void)copyTabRelativePath:(id)sender;
+- (void)revealTabInFinder:(id)sender;
+- (void)revealTabInTree:(id)sender;
+- (NSMenuItem *)menuItemForActiveTab;
+- (BOOL)validateActiveTabAction:(SEL)a enabled:(BOOL *)enabled;
+- (void)renameTabFile:(id)sender;
+- (void)trashTabFile:(id)sender;
+- (void)warn:(NSString *)msg;
+- (void)resetViewMode;
++ (BOOL)isImagePath:(NSString *)path;
+- (BOOL)showImageAtPath:(NSString *)path;
+- (BOOL)showPDFAtPath:(NSString *)path;
++ (BOOL)isMediaPath:(NSString *)path;
+- (void)observeMediaItem:(AVPlayerItem *)item;
+- (void)stopMedia;
+- (void)mediaItemChanged:(AVPlayerItem *)item;
+- (BOOL)showMediaAtPath:(NSString *)path;
+- (MCFileViewers *)viewers;
+- (void)viewerEditedText:(NSString *)text actionName:(NSString *)name;
+- (void)setViewerText:(NSString *)text actionName:(NSString *)name reshow:(BOOL)reshow;
+- (BOOL)showViewer:(MCViewerKind)kind;
+- (void)openFileAtPath:(NSString *)path;
+- (void)loadActiveTab;
+- (NSDate *)diskModDateFor:(NSString *)path;
+- (void)recordDiskStateOf:(MCTab *)t;
+- (void)recordModDate;
+- (void)forgetHistoryOf:(MCTab *)t;
+- (void)reselectCurrentFileInTree;
+- (NSUndoManager *)undoManagerForTextView:(NSTextView *)view;
+- (void)buildTabStrip;
+- (void)applyTabSettings;
+- (NSRect)layoutTabStripIn:(NSRect)slot editorShown:(BOOL)shown;
+- (void)reloadTabStrip;
+- (MCTab *)tabForPath:(NSString *)path;
+- (void)insertTab:(MCTab *)tab;
+- (void)activateTab:(MCTab *)tab;
+- (void)stashActiveTab;
+- (void)showActiveTab;
+- (void)restoreTextPlaceOf:(MCTab *)t;
+- (void)rememberClosedTab:(MCTab *)t index:(NSUInteger)index;
+- (BOOL)canReopenClosedTab;
+- (void)showEmptyState;
+- (void)focusActiveDocument;
+- (void)selectTabAtIndex:(NSInteger)i;
+- (void)closeTabAtIndex:(NSInteger)i;
+- (void)stepTab:(int)delta;
+- (BOOL)confirmCloseTab:(MCTab *)t;
+- (BOOL)saveTab:(MCTab *)t;
+- (BOOL)closeTab:(MCTab *)t prompt:(BOOL)prompt;
+- (void)dropAllTabs;
+- (int)focusedCloseTarget;
+- (void)focusAfterClosingPanel;
+- (NSUserDefaults *)sessionDefaults;
+- (BOOL)sessionsEnabled;
+- (NSString *)sessionKey;
+- (NSArray<NSString *> *)sessionFilePaths;
+- (NSDictionary *)browserSessionState;
+- (void)restoreBrowserFromSession;
+- (void)restoreSession;
+- (BOOL)tabTakesBackup:(MCTab *)t;
+- (BOOL)tabNeedsBackup:(MCTab *)t;
+- (void)scheduleBackups;
+- (void)writeBackups;
+- (void)discardBackupOf:(MCTab *)t;
+- (void)backupsAppWillTerminate:(NSNotification *)note;
+- (BOOL)takeBackup:(NSString *)bid intoTab:(MCTab *)t;
+- (void)showRestoredText:(NSString *)text base:(NSDate *)base inode:(uint64_t)inode;
+- (Settings::AutoSave)autoSaveMode;
+- (BOOL)tabTakesAutoSave:(MCTab *)t;
+- (void)scheduleAutoSave;
+- (void)autoSaveAfterDelay;
+- (void)autoSaveOnFocusChange;
+- (void)autoSaveNow;
+- (BOOL)writeTabForAutoSave:(MCTab *)t;
+- (void)reloadCleanTab:(MCTab *)t;
+- (void)checkExternalChange;
+- (void)takeDiskText:(NSString *)fresh forTab:(MCTab *)t;
+- (void)tabWentMissing:(MCTab *)t;
+- (void)tabCameBack:(MCTab *)t;
+- (NSString *)renamedFileFor:(MCTab *)t;
+- (void)checkTabsOnDisk;
+- (BOOL)mayWriteTab:(MCTab *)t;
+- (void)reloadTabFromDisk:(MCTab *)t;
+- (MCDiskDecision)diskDecisionForTab:(MCTab *)t;
+- (BOOL)showsRenderedMarkdown;
+- (NSString *)markdownToRender;
+- (void)refreshDisplay;
+- (void)showLatexPreview;
+- (BOOL)latexIsShowing;
+- (void)latexDidEditSource:(NSString *)newSource;
+- (void)noteEdited;
+- (void)displaySourceEditable;
+- (void)applyHighlighting;
+- (void)restyleRange:(NSRange)range tokens:(const std::vector<Token> &)tokens
+           inStorage:(NSTextStorage *)storage;
+- (NSDictionary *)attributesForStyle:(int)style;
+- (void)restyleChangedIn:(NSRange)range tokens:(const std::vector<Token> &)tokens
+               inStorage:(NSTextStorage *)storage;
+- (void)textStorage:(NSTextStorage *)storage
+    willProcessEditing:(NSTextStorageEditActions)actions
+                 range:(NSRange)edited
+        changeInLength:(NSInteger)delta;
+- (void)flushHighlightingLater;
+- (void)flushHighlighting;
+- (BOOL)isSettingsFile;
+- (void)decorateColorsIn:(NSTextStorage *)storage range:(NSRange)range;
+- (BOOL)textView:(NSTextView *)tv clickedOnLink:(id)link atIndex:(NSUInteger)i;
+- (void)pickColorAtIndex:(NSUInteger)i;
+- (void)colorPicked:(NSColorPanel *)panel;
+- (NSRect)editorRectForRange:(NSRange)range;
+- (void)pickOpacityAtIndex:(NSUInteger)i;
+- (void)opacityPicked:(double)value;
+- (NSMenu *)textView:(NSTextView *)tv menu:(NSMenu *)menu forEvent:(NSEvent *)event
+             atIndex:(NSUInteger)index;
+- (void)appendSettingsLines:(const std::string &)lines title:(const char *)title;
+- (void)centerEditorOnRange:(NSRange)range;
+- (void)tintKeyLines:(NSArray<NSValue *> *)lines;
+- (void)toggleTaskOnSourceLine:(int)line;
+- (BOOL)canFormatSource;
+- (void)formatSourceQuietly:(BOOL)quiet then:(void (^)(void))then;
+- (BOOL)formatBeforeSaving;
+- (void)finishFormatSave;
+- (void)saveBeforeLeavingFormatSave;
+- (BOOL)replaceSourceWithText:(NSString *)text actionName:(NSString *)name;
+- (void)showFormatNote:(NSString *)message error:(BOOL)error;
+- (void)showFormatNote:(NSString *)message error:(BOOL)error
+               install:(NSArray<NSString *> *)install;
+- (void)applyGutterSettings;
+- (void)setEditorFont:(NSFont *)font;
+- (void)editorZoomChanged:(NSNotification *)note;
+- (std::vector<Brackets::Span>)nonCodeSpansFrom:(NSUInteger)lo to:(NSUInteger)hi;
+- (NSRange)bracketWindowAround:(NSUInteger)caret;
+- (BOOL)bracketMatchingApplies;
+- (void)textViewDidChangeSelection:(NSNotification *)note;
+- (void)updateBracketMatch;
+- (BOOL)textView:(NSTextView *)tv doCommandBySelector:(SEL)sel;
+- (BOOL)textView:(NSTextView *)tv shouldChangeTextInRange:(NSRange)range
+    replacementString:(NSString *)replacement;
+- (void)flashStatus:(NSString *)message;
+- (void)endFlash;
+- (BOOL)lspActionAllowed;
+- (void)updateProblems;
+- (void)updateProblemCounts;
+- (void)updateInstallBar;
+- (NSRect)layoutInstallBarIn:(NSRect)slot editorShown:(BOOL)shown;
+- (void)applyInstallBarColors;
+- (void)closeInstallBarMuting:(BOOL)mute;
+- (void)showInstallHelpFrom:(NSView *)anchor;
+- (void)typeCommandInTerminal:(NSString *)command;
+- (void)textDidChange:(NSNotification *)note;
+- (NSRect)textRectForCharacter:(NSUInteger)i;
+- (void)scrollEditorToY:(CGFloat)y;
+- (NSInteger)lineOfCharacter:(NSUInteger)i inString:(NSString *)s;
+- (NSUInteger)characterAtStartOfLine:(NSInteger)line inString:(NSString *)s;
+- (NSUInteger)markdownCharacterForSourceLine:(NSInteger)line;
+- (NSInteger)markdownSourceLineNear:(NSUInteger)i;
+- (BOOL)editMarkdownAtCharacter:(NSUInteger)index point:(NSPoint)point;
+- (void)applyMarkdownSource:(NSString *)source;
+- (void)openMarkdownLink:(NSString *)href;
+- (BOOL)scrollToMarkdownAnchor:(NSString *)anchor;
+- (void)updateTitle;
+- (void)renderMarkdown:(NSString *)content;
+- (BOOL)typesetsMath;
+- (BOOL)mathNoteWanted;
+- (NSAttributedString *)mathNoteText:(NSString *)text link:(NSString *)link;
+- (NSAttributedString *)mathNoteForProblem:(NSString *)problem;
+- (NSAttributedString *)mathNoteTypesetting:(NSUInteger)count;
+- (NSAttributedString *)mathNote;
+- (void)downloadTectonicForMath;
+- (NSUInteger)mathNoteLength;
+- (MCMathFormula *)typesetFormulaFor:(const MdRun &)r;
+- (void)markdownMathArrived:(NSNotification *)note;
+- (void)showArrivedMathForPath:(NSString *)path;
+- (void)markdownWebImageArrived:(NSNotification *)note;
+- (void)showArrivedWebImagesForPath:(NSString *)path;
+- (void)renderMarkdownKeepingPlace;
+- (NSParagraphStyle *)markdownParagraphFor:(const MdRun &)r
+                                     quote:(NSTextBlock * __strong *)quote
+                                      code:(NSTextBlock * __strong *)code;
+- (NSAttributedString *)markdownRun:(const MdRun &)r
+                              style:(NSParagraphStyle *)ps
+                             inCell:(BOOL)inCell;
+- (void)appendMarkdownTable:(const std::vector<MdRun> &)runs
+                       from:(size_t)first
+                         to:(size_t)end
+                       into:(NSMutableAttributedString *)out;
+- (void)setPlainMessage:(NSString *)msg;
+- (void)setStatus:(NSString *)path;
+- (void)changeRootTo:(NSString *)dir;
 @end
 
-typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCancel };
+// Each category's own methods. EditorController.h declares the ones the
+// rest of the app calls, in an @interface of the same name, which is
+// what the warning below is about.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wobjc-duplicate-category-definition"
 
-// The tree menu's items for a worktree (shown only on one).
-static const NSInteger kWorktreeMenuTag = 7701;
+// EditorController+Navigation.mm: Go to Line, Go Back and Forward, Go to Symbol.
+@interface EditorController (Navigation) <MCNavigatorHost>
+- (void)moveToLine:(int)line column:(int)column;
+- (NSString *)navigationPath:(BOOL *)hasText;
+- (BOOL)showNavigationPlace:(MCPlace *)place;
+- (void)revealSymbolRange:(NSRange)r;
+@end
+
+// EditorController+Agents.mm: the inline agent, Request a Change, the control channel and agent work.
+@interface EditorController (Agents) <MCChangeHost, MCAgentHost,
+                                      MCAgentNotesHost, MCAgentWorkHost>
+- (MCAgentSession *)agentSession;
+- (NSView *)agentBarHost;
+- (void)agentBarDidChange;
+- (void)agentRunInTerminal:(NSString *)command;
+- (NSString *)agentPathFor:(NSString *)path;
+- (NSRect)agentLineRectAt:(NSUInteger)index;
+- (void)agentTintAgainst:(NSString *)original;
+- (MCChangeSession *)changeSession;
+- (NSRect)layoutChangeBarIn:(NSRect)area;
+- (void)applyChangeBarColors;
+- (TerminalView *)changeTerminalRunning:(NSString *)command focus:(BOOL)focus;
+- (void)runCommand:(NSString *)command inTerminal:(TerminalView *)terminal focus:(BOOL)focus;
+- (BOOL)terminalIsOpen:(TerminalView *)terminal;
+- (void)focusChangeTerminal:(TerminalView *)terminal;
+- (void)changeBarDidChange;
+- (void)restartIntoApp:(NSString *)appPath source:(NSString *)source
+               command:(NSString *)command;
+- (TerminalView *)changeTerminal;
+- (void)keepKeyboardDuring:(void (^)(void))block;
+- (NSTextView *)notesTextView;
+- (id)notesActiveTab;
+- (void)dropAgentPreviewTab:(MCTab *)t;
+- (void)keepAgentPreviewTabAtIndex:(NSInteger)i;
+- (void)showPage:(id<MCEditorPage>)page;
+- (void)closePageOf:(MCTab *)t;
+- (void)agentWorktreesChanged;
+- (BOOL)agentWorktreesOnShow;
+- (void)agentFolderChangedOnDisk:(NSString *)path;
+- (MCCompareView *)compareViewMade;
+@end
+
+#pragma clang diagnostic pop

@@ -92,18 +92,8 @@
 // Commands still running in this window's terminals (empty when every shell
 // is idle), for the question asked before quitting.
 - (NSArray<NSString *> *)runningTerminalCommands;
-// The same, leaving out Claude's terminal from Request a Change, which a
-// restart into the new build resumes instead of ending.
-- (NSArray<NSString *> *)runningTerminalCommandsExceptChange;
-// The source folder of a Request a Change conversation still running in
-// this window, which a restart continues; nil when there is none.
-- (NSString *)changeSourceToResume;
 // Writes this window's session (tabs, browser) now; quitting calls it.
 - (void)saveSession;
-// Shift+Cmd+K: Request a Change to minicode (see ChangePanel.h).
-- (void)requestChange:(id)sender;
-// After a restart: the conversation in `source` continued in a terminal here.
-- (void)resumeChangeWithSource:(NSString *)source command:(NSString *)command;
 - (void)newFile:(id)sender;
 - (void)newFolder:(id)sender;
 - (void)renameSelected:(id)sender;
@@ -125,7 +115,6 @@
 - (void)goToDefinition:(id)sender;     // F12 (and Cmd+click)
 - (void)showHoverInfo:(id)sender;      // Option+Cmd+I type and docs at the cursor
 - (void)goToBracket:(id)sender;        // Shift+Cmd+\ to the matching bracket
-- (void)inlineAgent:(id)sender;        // Cmd+I the agent, for whatever has the keyboard
 - (void)renameSymbol:(id)sender;       // F2: the name at the cursor, or the tree's file
 - (void)findReferences:(id)sender;     // Shift+F12
 - (void)showQuickFixes:(id)sender;     // Cmd+.
@@ -138,18 +127,37 @@
 - (void)selectPythonInterpreter:(id)sender; // the Python server's interpreter
 - (void)togglePlayback:(id)sender;     // Shift+Cmd+Space play or pause video/audio
 @property(nonatomic, readonly) BOOL canTogglePlayback;
+- (NSArray<NSString *> *)recentTabPaths;
+@end
+
+// EditorController+Navigation.mm
+@interface EditorController (Navigation)
 // For the palette (PalettePanel.h): a 1-based line and column (0: the line's
 // start) of the file on show, whether it has lines, and the tabs' files,
 // most recently shown first.
 - (void)goToLine:(int)line column:(int)column;
 @property(nonatomic, readonly) BOOL canGoToLine;
-- (NSArray<NSString *> *)recentTabPaths;
 // Go to Symbol in File ("@", Shift+Cmd+O) and in Workspace ("#", Cmd+T):
 // what the file on show and the window's language servers offer, and how
 // the editor shows a symbol while the list moves.
 - (void)addSymbolsToPaletteContext:(MCPaletteContext *)context;
 - (void)navigateBack:(id)sender;       // Ctrl+-: the place before the last jump
 - (void)navigateForward:(id)sender;    // Ctrl+Shift+-
+@end
+
+// EditorController+Agents.mm
+@interface EditorController (Agents)
+// runningTerminalCommands, leaving out Claude's terminal from Request a
+// Change, which a restart into the new build resumes instead of ending.
+- (NSArray<NSString *> *)runningTerminalCommandsExceptChange;
+// The source folder of a Request a Change conversation still running in
+// this window, which a restart continues; nil when there is none.
+- (NSString *)changeSourceToResume;
+// Shift+Cmd+K: Request a Change to minicode (see ChangePanel.h).
+- (void)requestChange:(id)sender;
+// After a restart: the conversation in `source` continued in a terminal here.
+- (void)resumeChangeWithSource:(NSString *)source command:(NSString *)command;
+- (void)inlineAgent:(id)sender;        // Cmd+I the agent, for whatever has the keyboard
 
 // ---- the control channel (ControlCommands.mm) and agent notes (AgentNotes.h)
 // None of these moves the keyboard; they only add tabs and terminals.
