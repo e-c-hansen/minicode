@@ -60,7 +60,8 @@ opening comment says what it does in more detail than the lines below.
   on the Mac. Checks that read the docs: `commands:readme` (every default key
   is in the README's macOS column), `install:readme` (every install command is
   in the README in backticks), `linux:build-lists` (linux/Makefile and
-  meson.build name the same core files), and the `settings:*` count of keys in
+  meson.build name the same core files, and Android's CMakeLists names every
+  core file its own files include), and the `settings:*` count of keys in
   the default settings file.
 - `make guitest [SUITES="control agents"]`: the offscreen GUI checks in
   `tests/gui` (see "Verification").
@@ -69,7 +70,8 @@ opening comment says what it does in more detail than the lines below.
   `skills/minicode/SKILL.md` to `~/.claude/skills/minicode`), `make dist-zip`,
   `make dmg`.
 - `scripts/release.sh 1.2.0` cuts a release from a clean `main`: runs the
-  tests, stamps the version into `Info.plist` and `packaging/minicode.rb` and
+  core tests, and `make guitest` unless CI passed on that very commit, builds
+  the signed APK before anything is stamped, stamps the version into `Info.plist` and `packaging/minicode.rb` and
   commits that, builds the zip and checks the built app reports the version,
   publishes it on the Homebrew tap repo, bumps the cask's version and sha256,
   then tags `v1.2.0` and pushes `main` with the tag, and runs the PPA upload
@@ -1657,11 +1659,21 @@ session has a display. Check first.
   `MCGuiAsync`, `MCGuiPause`, `GCHECK`) from the run loop; it fails if any
   window reaches the screen. `MC_GUI_SNAPSHOTS=dir` saves pictures to look at,
   `MC_GUI_KEEP=1` keeps the scratch folder, `MC_GUI_SAMPLE=file` samples the
-  keystroke suite. Suites: control, agents, folding, foldperf, keymap,
-  keystroke, previews, symbols, terminal_reflow, and in LooseEndsSuite.mm
-  terminal_exec, terminal_keys, terminal_zoom, agent_autosave, multicaret_rows.
-  Checks needing a language server (basedpyright in symbols) run only when it
-  is installed. **New user-visible behaviour gets a committed check here.**
+  keystroke suite (`MC_GUI_FULL_PERF=1` runs foldperf on 100,000 lines, not
+  20,000). Suites: control, agents, backups, find_bar, folding, foldperf,
+  format, git_panel, keymap, keystroke, lsp_fixes, palette, paste, previews,
+  problems, replace_in_folder, run_file, symbols, terminal_reflow, and in
+  LooseEndsSuite.mm terminal_exec, terminal_keys, terminal_zoom,
+  agent_autosave, multicaret_rows. **Language server checks use the scripted
+  server** `build/fakelsp` (`tests/fakelsp/fakelsp.cpp`, built by `make
+  guitest`): `MCGuiFakeLsp(name, script, program, words)` writes a JSON
+  script of rules and returns the command line for `lsp.<language>`, and
+  `MCGuiFakeLspReceived` reads what the client sent; the file's header
+  describes the script. basedpyright, where installed, runs as well in
+  symbols, never instead. A suite named `_x` runs only when named, as a
+  second app that `MCGuiRunChild` starts in the same world (backups SIGKILLs
+  one). Wait for a condition; never pause before a positive check. **New
+  user-visible behaviour gets a committed check here.**
 - **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the
   window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events
   through the window then the main menu (`MCGuiPerformMenuKey`, built from the
@@ -1742,7 +1754,9 @@ widgets off the view before a re-render, `Terminal::topRow`.
 16, 576 by 640 dp, hardware keyboard, Termux and F-Droid); wireless debugging
 changes port on every reconnect, so ask for it (restart the adb server if
 connect says "No route"); test files are in `/sdcard/mc-test`. Gradle 8.14.3
-via the wrapper, JDK 21, SDK and NDK from `sdkmanager`. Traps paid for:
+via the wrapper, JDK 21, SDK and NDK from `sdkmanager`. CI builds the debug
+APK (no key needed); `linux:build-lists` checks the CMakeLists names every
+core file its files include. Traps paid for:
 
 - The core compiles with the NDK and its tests pass on the phone. `TermKey`
   ordinals in `Pty.kt` mirror `src/TerminalScreen.h` (Enter numbered as Escape
