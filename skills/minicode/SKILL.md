@@ -1,6 +1,6 @@
 ---
 name: minicode
-description: Show work in minicode, the user's editor, instead of only describing it. Use when reporting finished changes (open the changed lines with a note, a diff against the base, test output in a terminal), when pointing at code ("where is X", "what does this file do"), and when the user says "this", "here" or "what I'm looking at" (read minicode's state and selection). Also for writing a workspace setup script, only when the user asks for one.
+description: Show work in minicode, the user's editor, instead of only describing it. Use when reporting finished changes (open the changed lines with a note, a diff against the base, test output in a terminal), when pointing at code ("where is X", "what does this file do"), when checking a local web page (a dev server: load it in minicode's browser pane and read its text, console and screenshots before reaching for Playwright), and when the user says "this", "here" or "what I'm looking at" (read minicode's state and selection). Also for writing a workspace setup script, only when the user asks for one.
 ---
 
 # minicode
@@ -47,7 +47,8 @@ to talk to), give plain paths in the reply instead and do not retry.
 | `minicode diff <a> <b>` | Side-by-side diff of two files (each up to 16 MB) | |
 | `minicode term [--cwd D] [--title T] [--run CMD]` | A new terminal tab; `--run` types CMD and presses Return, visibly | terminal id |
 | `minicode term-output <id> [--lines N]` | The terminal's last N lines (200), scrollback included | text |
-| `minicode browse <url>` | The page in the browser pane beside the editor; refused while it shows a page the user opened | |
+| `minicode browse <url> [--wait]` | The page in the browser pane's agent page, beside the user's; `--wait` returns once loaded (15 s at most) | `--wait`: JSON url, status, title |
+| `minicode page --url \| --text \| --console [--since N] \| --screenshot OUT.png [--full] \| --reload [--wait]` | Reads the agent page (`--yours`: the user's); text, console and screenshots of local pages only | JSON, text, JSON lines, path |
 | `minicode split [--right\|--below] term ...` | `term --right` splits the active terminal | |
 | `minicode window [--folder D] [--new]` | Brings forward, or opens, the window on a folder | window id |
 | `minicode state [--pretty]` | JSON: windows, folders, tabs, selection, terminals, browser, note, tour | JSON |
@@ -66,6 +67,21 @@ servers, watchers, browsers). Stop only processes you started, and only
 with `kill <pid>` after listing them; never anything the user started, and
 never by name (`pkill`, `killall`). Leave a server running when the user
 is meant to look at it, and say so in the reply.
+
+## Checking a local page
+
+For a page on this Mac (a dev server, a file), use `browse --wait` and
+`page` before Playwright, a headless browser or an extension. Only local
+pages (localhost, 127.0.0.1, ::1, *.localhost, file://) can be read; others
+fail naming `control.page-any-origin`, the user's to set. Nothing runs your
+JavaScript or clicks. `--yours` only when the user means the page they see;
+screenshots go in the session's scratchpad, never in the project.
+
+```sh
+minicode browse localhost:5173 --wait   # {"url":...,"status":200,"title":...}
+minicode page --text                    # visible text; --console: logs, uncaught errors
+minicode page --screenshot <scratchpad>/home.png --full
+```
 
 ## Notes and tours
 
@@ -129,5 +145,5 @@ minicode term-output 3 --lines 50       # what a terminal shows (ids in state)
 `state` lists each window's `id`, `folder`, `front`, `tabs` (`path`,
 `title`, `kind`, `dirty`, `active`, `preview`), `selection` (`path`,
 `text` up to 64 KB, `start` and `end` with `line` and `column`),
-`terminals` (`id`, `cwd`, `title`, `command`, `busy`), `browser` (`url`,
-`title`), and the `note` and `tour` on show.
+`terminals` (`id`, `cwd`, `title`, `command`, `busy`), `browser` (`page`,
+`url`, `title`, `status`, `shown`), and the `note` and `tour` on show.

@@ -227,7 +227,8 @@ bool exchange(const Candidate &to, const std::string &request, std::string &answ
     }
     int on = 1;
     setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on);
-    // A diff waits for git; nothing else takes more than a moment.
+    // A diff waits for git and browse --wait for a page (15 s at most);
+    // nothing else takes more than a moment.
     struct timeval tv = {timeoutSeconds, 0};
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
@@ -543,8 +544,22 @@ int main(int argc, char **argv) {
     if (result["background"].asBool())
         std::fprintf(stderr, "minicode: the user is typing in the editor, so this opened in a tab "
                              "beside theirs; it shows when they switch to it\n");
+    if (result["pane_busy"].asBool())
+        std::fprintf(stderr, "minicode: the user is using the browser pane, so the agent page "
+                             "loaded without being shown; it shows when they pick Agent there\n");
+    if (result["timed_out"].asBool())
+        std::fprintf(stderr, "minicode: the page was still loading after 15 seconds\n");
+    if (result["dropped"].asInt() > 0)
+        std::fprintf(stderr, "minicode: %lld earlier messages of this page were dropped (the "
+                             "last 500 are kept)\n", (long long)result["dropped"].asInt());
     switch (c.output) {
     case Output::None: break;
+    case Output::Line: std::printf("%s\n", result[c.outputField].asString().c_str()); break;
+    case Output::JsonLines: {
+        const Json &list = result[c.outputField];
+        for (size_t i = 0; i < list.size(); i++) std::printf("%s\n", list[i].dump().c_str());
+        break;
+    }
     case Output::Id: std::printf("%s\n", result[c.outputField].dump().c_str()); break;
     case Output::Json:
         std::printf("%s\n", c.pretty ? prettyJson(result).c_str() : result.dump().c_str());

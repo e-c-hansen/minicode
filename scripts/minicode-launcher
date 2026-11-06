@@ -94,7 +94,7 @@ install_skill() {
 # (control:launcher-words) check the two lists agree.
 case "$1" in
   install-skill) shift; install_skill "$@"; exit $? ;;
-  open|window|browse|term|diff|split|state|selection|term-output|tour|procs|notify|hooks|help)
+  open|window|browse|term|diff|split|state|selection|term-output|tour|procs|notify|hooks|page|help)
     if [ ! -x "$cli" ]; then
       # A hook runs `minicode notify`; it must never fail because of us.
       if [ "$1" = notify ]; then [ -t 0 ] || cat >/dev/null 2>&1; exit 0; fi

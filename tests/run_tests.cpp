@@ -33,6 +33,7 @@
 #include "LineIndex.h"
 #include "BracketMatch.h"
 #include "ControlProtocol.h"
+#include "PageCheck.h"
 #include "SideBySide.h"
 #include "AgentTranscript.h"
 #include "AgentIndex.h"
@@ -3716,8 +3717,9 @@ void testSettings() {
     // documented value is the real default.
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
-    // format, python, keep-sorted, auto-save, ruler, terminal and develop keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 82);
+    // format, python, keep-sorted, auto-save, ruler, terminal, develop,
+    // git and control keys.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 83);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -9847,6 +9849,7 @@ static void testMultiCaretOccurrences() {
 #include "commands_tests.inc"
 #include "procs_tests.inc"
 #include "attention_tests.inc"
+#include "page_check_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9916,6 +9919,7 @@ int main() {
     testBrackets();
     testControlProtocol();
     testProcs();
+    testPageCheck();
     testSideBySide();
     testAgentTranscript();
     testAgentIndex();

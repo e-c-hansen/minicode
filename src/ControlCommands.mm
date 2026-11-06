@@ -124,7 +124,7 @@ static EditorController *MCWindowWithID(id<MCControlAppHost> host, NSInteger wid
 
 // The window a command acts in: --window, else --folder (opened if no window
 // shows it), else `fallback`, else the frontmost.
-static EditorController *MCTarget(id<MCControlAppHost> host, const Json &args,
+EditorController *MCControlTarget(id<MCControlAppHost> host, const Json &args,
                                   EditorController *fallback, std::string &error) {
     if (args.has("window")) {
         EditorController *c = MCWindowWithID(host, (NSInteger)args["window"].asInt());
@@ -142,6 +142,11 @@ static EditorController *MCTarget(id<MCControlAppHost> host, const Json &args,
     EditorController *c = fallback ?: [host controlFrontController];
     if (!c) error = "no window is open";
     return c;
+}
+
+static EditorController *MCTarget(id<MCControlAppHost> host, const Json &args,
+                                  EditorController *fallback, std::string &error) {
+    return MCControlTarget(host, args, fallback, error);
 }
 
 static Json MCWindowResult(EditorController *c) {
@@ -184,9 +189,7 @@ static Json MCWindowState(EditorController *c, BOOL front) {
     Json terms = Json::array();
     for (TerminalView *t in [c controlTerminals]) terms.push(MCTerminalState(t));
     w.set("terminals", terms);
-    Json browser = Json::array();
-    if (NSDictionary *b = [c controlBrowser]) browser.push(JFromObject(b));
-    w.set("browser", browser);
+    w.set("browser", MCControlBrowserPages(c));
     MCAgentNotes *notes = c.agentNotes;
     if (notes.noteShown) {
         Json n = Json::object();
@@ -408,40 +411,6 @@ void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
         respond(Result::success(r));
     });
 
-    d.on("browse", [weakHost](const Request &req, Dispatcher::Respond respond) {
-        const Json &a = req.args;
-        if (a["split"].asString() == "below") {
-            respond(Result::failure("the browser opens beside the editor: use --right"));
-            return;
-        }
-        NSString *url = [NS(a["url"]) stringByTrimmingCharactersInSet:
-                         NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        if (!url.length) {
-            respond(Result::failure("browse needs an address"));
-            return;
-        }
-        // What an agent means by an address the browser's own field would
-        // take for words to search: a local server, or a file.
-        if (![url containsString:@"://"]) {
-            NSRegularExpression *hostPort = [NSRegularExpression
-                regularExpressionWithPattern:@"^(localhost|[0-9.]+|[A-Za-z0-9.-]+:[0-9]+)(:[0-9]+)?(/.*)?$"
-                                     options:0 error:nil];
-            if ([url hasPrefix:@"/"] && [[NSFileManager defaultManager] fileExistsAtPath:url])
-                url = [NSURL fileURLWithPath:url].absoluteString;
-            else if ([hostPort firstMatchInString:url options:0 range:NSMakeRange(0, url.length)])
-                url = [@"http://" stringByAppendingString:url];
-        }
-        std::string error;
-        EditorController *c = MCTarget(weakHost, a, nil, error);
-        if (!c) { respond(Result::failure(error)); return; }
-        NSString *refused = nil;
-        if (![c browseForAgent:url error:&refused]) {
-            respond(Result::failure(refused.UTF8String ?: "the browser shows the user's page"));
-            return;
-        }
-        respond(Result::success(MCWindowResult(c)));
-    });
-
     d.on("term", [weakHost](const Request &req, Dispatcher::Respond respond) {
         const Json &a = req.args;
         std::string error;
@@ -646,4 +615,6 @@ void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
         if (!c.agentNotes.noteShown) r.set("background", true);   // beside the user's tab
         respond(Result::success(r));
     });
+
+    MCControlRegisterPageCommands(d, hostIn);   // browse and page (ControlPageCommands.mm)
 }

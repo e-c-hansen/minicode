@@ -902,6 +902,7 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                }
                s.gitAutoFetchPeriod_ = (int)seconds;
                return true;),
+        MC_KEY("control.page-any-origin", Word, false, return boolValue(v, s.pageAnyOrigin_, e);),
     };
     return table;
 }
@@ -1428,6 +1429,14 @@ const char* Settings::defaultFileText() {
 # palette; none of them ever asks for a password.
 # git.autofetch = false
 # git.autofetch-period = 180
+
+# Agents can check pages in the browser pane (minicode browse and minicode
+# page, macOS only for now): they load into a page of their own beside
+# yours, and read its text, its console and pictures of it. Those reads work
+# only for local pages (localhost, 127.0.0.1, ::1, *.localhost and file://),
+# so an agent never reads a site you are logged in to. Set this to true to
+# let them read any page.
+# control.page-any-origin = false
 
 # Request a Change to minicode (Shift+Cmd+K, macOS only for now) hands what
 # you describe to Claude Code, in a terminal tab opened in minicode's own

@@ -12,6 +12,15 @@
 
 void MCControlRegisterCommands(ControlChannel::Dispatcher &dispatcher, id<MCControlAppHost> host);
 
+// `browse` and `page`, in ControlPageCommands.mm (registered by the above).
+void MCControlRegisterPageCommands(ControlChannel::Dispatcher &dispatcher, id<MCControlAppHost> host);
+// `state`'s list of a window's browser pages: the user's, and the agent's.
+Json MCControlBrowserPages(EditorController *controller);
+// The window a command acts in: --window, else --folder (opened if no window
+// shows it), else `fallback`, else the frontmost; nil with `error` set.
+EditorController *MCControlTarget(id<MCControlAppHost> host, const Json &args,
+                                  EditorController *fallback, std::string &error);
+
 // Ids that stay the same for the life of a window or terminal, given out on
 // first use (`minicode state` lists them).
 NSInteger MCControlWindowID(EditorController *controller);

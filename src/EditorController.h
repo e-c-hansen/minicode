@@ -1,7 +1,7 @@
 // EditorController.h — Cocoa window: file tree (left) + editor/preview (right).
 #import <Cocoa/Cocoa.h>
 
-@class MCAgentNotes, MCComparison, MCPaletteContext, TerminalView;
+@class BrowserView, MCAgentNotes, MCComparison, MCPaletteContext, TerminalView;
 
 @interface EditorController : NSObject <NSOutlineViewDataSource,
                                         NSOutlineViewDelegate,
@@ -253,11 +253,11 @@
 // A new terminal starting in `dir`: a new tab, or beside the active terminal
 // (nil when there is no room to split).
 - (TerminalView *)newTerminalForAgentIn:(NSString *)dir beside:(BOOL)beside;
-- (void)browseForAgent:(NSString *)url;   // the browser pane, shown beside the editor
-// The same for `minicode browse`, refused (NO, *error says why) while the
-// pane shows a page the user loaded: the browser has one page, and an agent
-// never replaces the user's.
-- (BOOL)browseForAgent:(NSString *)url error:(NSString **)error;
+// The browser pane for `minicode browse` and `page`, made and shown beside
+// the editor if need be, the keyboard left where it was; or nil-able as it
+// is. Agents load into its agent page (Browser.h), never the user's.
+- (BrowserView *)agentBrowserPane;
+- (BrowserView *)browserPane;
 // For `minicode state`: each tab (path, title, kind, dirty, active, preview),
 // the editor's selection (path, text up to 64 KB, start and end line and
 // column; nil when no text file shows), the terminals, the browser's page.

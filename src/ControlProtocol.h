@@ -111,8 +111,10 @@ PathSpec splitPathSpec(const std::string& spec,
 std::string absolutePath(const std::string& path, const std::string& cwd,
                          const std::string& home);
 
-// Procs: `minicode procs` as a table (Procs::formatTable).
-enum class Output { None, Id, Json, Text, Procs };
+// Procs: `minicode procs` as a table (Procs::formatTable). Line: a string
+// result field and a line break; JsonLines: each element of a list field
+// as one line of JSON.
+enum class Output { None, Id, Json, Text, Procs, Line, JsonLines };
 
 struct CliCommand {
     bool help = false;          // `minicode help`, or -h after a subcommand
