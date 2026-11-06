@@ -14,7 +14,6 @@
 @property(nonatomic, readonly, strong) NSWindow *window;
 @property(nonatomic, readonly, copy) NSString *rootPath;
 - (instancetype)initWithRootPath:(NSString *)path;
-- (void)showWindow;
 - (void)revealPath:(NSString *)path andOpen:(BOOL)open;  // select in tree
 // Open a file handed in from outside (Finder, the Dock, the command line),
 // spelled from rootPath, in its tab (a new one unless it is open already).
@@ -29,7 +28,6 @@
 @property(nonatomic, readonly) BOOL canExportPDF;
 - (void)undo:(id)sender;              // Cmd+Z; the text view handles its own
 - (void)redo:(id)sender;              // Shift+Cmd+Z
-- (void)toggleHints:(id)sender;       // Shift+Cmd+H shortcut-hints overlay
 - (void)toggleTerminal:(id)sender;    // Ctrl+` bottom terminal dock
 - (void)newTerminal:(id)sender;       // Ctrl+Shift+` a terminal in a new tab
 - (void)splitTerminal:(id)sender;     // Cmd+\ a terminal beside the active one
@@ -42,10 +40,6 @@
 - (BOOL)closeFocusedTerminal;
 - (void)runCurrentFile:(id)sender;    // Shift+Cmd+Return run the file in a terminal
 - (void)toggleBrowser:(id)sender;     // Shift+Cmd+B embedded browser
-- (void)toggleSidebar:(id)sender;     // Cmd+B collapse/restore file tree
-- (void)toggleSourceControl:(id)sender;   // Ctrl+Shift+G git panel in the sidebar
-- (void)toggleAgents:(id)sender;          // Shift+Cmd+A agent sessions in the sidebar
-- (void)toggleEditor:(id)sender;      // Shift+Cmd+E hide/restore the file editor
 - (void)toggleHiddenFiles:(id)sender; // Cmd+Shift+. show/hide dotfiles
 - (void)toggleTreeColumn:(id)sender;  // the tree's size, saved and created columns (tag)
 - (void)openSearch:(id)sender;        // Cmd+Shift+F project-wide search
@@ -128,6 +122,20 @@
 - (void)togglePlayback:(id)sender;     // Shift+Cmd+Space play or pause video/audio
 @property(nonatomic, readonly) BOOL canTogglePlayback;
 - (NSArray<NSString *> *)recentTabPaths;
+@end
+
+// EditorController+Layout.mm
+@interface EditorController (Layout)
+- (void)showWindow;
+- (void)toggleSidebar:(id)sender;     // Cmd+B collapse/restore file tree
+- (void)toggleSourceControl:(id)sender;   // Ctrl+Shift+G git panel in the sidebar
+- (void)toggleAgents:(id)sender;          // Shift+Cmd+A agent sessions in the sidebar
+- (void)toggleEditor:(id)sender;      // Shift+Cmd+E hide/restore the file editor
+@end
+
+// EditorController+StatusBar.mm
+@interface EditorController (StatusBar)
+- (void)toggleHints:(id)sender;       // Shift+Cmd+H shortcut-hints overlay
 @end
 
 // EditorController+Navigation.mm

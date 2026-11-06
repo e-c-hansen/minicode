@@ -310,54 +310,14 @@ static const NSInteger kWorktreeMenuTag = 7701;
 // Still in EditorController.mm.
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
                         change:(NSDictionary *)change context:(void *)context;
-- (CGFloat)titlebarHeight;
-- (void)layoutContainer;
-- (void)buildTitlebarInContainer:(NSView *)container;
-- (void)applySettings;
-- (void)showSettingsErrors;
-- (void)keymapChanged:(NSNotification *)note;
-- (void)recolorEditor;
 - (NSMenu *)buildTreeContextMenu;
-- (void)buildStatusBarInContainer:(NSView *)container height:(CGFloat)barH;
-- (void)layoutStatusRight;
-- (void)buildHintsPanelInContainer:(NSView *)container;
-- (void)updateHints;
-- (void)appendHintsHeading:(NSString *)title to:(NSMutableAttributedString *)s;
-- (void)appendHintsRow:(NSMutableAttributedString *)s
-                   key:(NSString *)key1 label:(NSString *)label1
-                  key2:(NSString *)key2 label2:(NSString *)label2
-                 state:(NSString *)state;
-- (NSString *)hk:(NSString *)commandId;
-- (NSString *)hkAll:(NSString *)commandId;
-- (NSString *)hk:(NSString *)commandId at:(NSUInteger)index;
-- (NSString *)hkAlso:(NSString *)commandId title:(NSString *)title;
-- (NSAttributedString *)hintsText;
-- (void)relayoutRightArea;
-- (void)terminalBarDraggedTo:(CGFloat)y;
-- (void)browserBarDraggedTo:(CGFloat)x;
 - (void)makeTerminalPanel;
 - (void)makeTerminalPanelFirstIn:(NSString *)first;
 - (void)terminalPanelEmptied;
 - (void)showTerminalPanel;
-- (void)showStatusNote:(NSString *)note;
 - (void)openTerminalLink:(MCTermLink *)link;
 - (void)openTerminalLinkNow:(MCTermLink *)link;
 - (void)makeBrowserWithHome:(NSString *)home;
-- (BOOL)rightAreaCollapsed;
-- (BOOL)splitView:(NSSplitView *)sv shouldAdjustSizeOfSubview:(NSView *)view;
-- (NSRect)splitView:(NSSplitView *)sv effectiveRect:(NSRect)proposed
-          forDrawnRect:(NSRect)drawn ofDividerAtIndex:(NSInteger)i;
-- (BOOL)splitView:(NSSplitView *)sv canCollapseSubview:(NSView *)view;
-- (CGFloat)splitView:(NSSplitView *)sv
-    constrainMinCoordinate:(CGFloat)min
-               ofSubviewAt:(NSInteger)i;
-- (CGFloat)splitView:(NSSplitView *)sv
-    constrainMaxCoordinate:(CGFloat)max
-               ofSubviewAt:(NSInteger)i;
-- (void)revealEditor;
-- (void)showRightArea;
-- (void)collapseRightAreaIfEmpty;
-- (NSView *)sidebarViewOnShow;
 - (void)showDiffNamed:(NSString *)name path:(NSString *)path data:(NSData *)diff;
 - (void)showCommitTitled:(NSString *)title data:(NSData *)show;
 - (void)showDiffTitled:(NSString *)name data:(NSData *)diff commit:(BOOL)commit;
@@ -418,8 +378,6 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (TreeSort::Options)treeSortOptions;
 - (void)treeDetailsChanged:(NSNotification *)note;
 - (void)updateDetailsTimer;
-- (void)updateSavedStatus;
-- (void)layoutStatusLabels;
 - (NSString *)targetDirectory;
 - (FileItem *)clickedOrSelectedItem;
 - (NSString *)promptForName:(NSString *)title default:(NSString *)initial;
@@ -574,8 +532,6 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (BOOL)textView:(NSTextView *)tv doCommandBySelector:(SEL)sel;
 - (BOOL)textView:(NSTextView *)tv shouldChangeTextInRange:(NSRange)range
     replacementString:(NSString *)replacement;
-- (void)flashStatus:(NSString *)message;
-- (void)endFlash;
 - (BOOL)lspActionAllowed;
 - (void)updateProblems;
 - (void)updateProblemCounts;
@@ -596,7 +552,6 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (void)applyMarkdownSource:(NSString *)source;
 - (void)openMarkdownLink:(NSString *)href;
 - (BOOL)scrollToMarkdownAnchor:(NSString *)anchor;
-- (void)updateTitle;
 - (void)renderMarkdown:(NSString *)content;
 - (BOOL)typesetsMath;
 - (BOOL)mathNoteWanted;
@@ -632,6 +587,59 @@ static const NSInteger kWorktreeMenuTag = 7701;
 // what the warning below is about.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wobjc-duplicate-category-definition"
+
+// EditorController+Layout.mm: window setup, layout and look, the splits and what fills the sidebar, the title.
+@interface EditorController (Layout)
+- (CGFloat)titlebarHeight;
+- (void)layoutContainer;
+- (void)buildTitlebarInContainer:(NSView *)container;
+- (void)applySettings;
+- (void)showSettingsErrors;
+- (void)keymapChanged:(NSNotification *)note;
+- (void)recolorEditor;
+- (void)relayoutRightArea;
+- (void)terminalBarDraggedTo:(CGFloat)y;
+- (void)browserBarDraggedTo:(CGFloat)x;
+- (BOOL)rightAreaCollapsed;
+- (BOOL)splitView:(NSSplitView *)sv shouldAdjustSizeOfSubview:(NSView *)view;
+- (NSRect)splitView:(NSSplitView *)sv effectiveRect:(NSRect)proposed
+          forDrawnRect:(NSRect)drawn ofDividerAtIndex:(NSInteger)i;
+- (BOOL)splitView:(NSSplitView *)sv canCollapseSubview:(NSView *)view;
+- (CGFloat)splitView:(NSSplitView *)sv
+    constrainMinCoordinate:(CGFloat)min
+               ofSubviewAt:(NSInteger)i;
+- (CGFloat)splitView:(NSSplitView *)sv
+    constrainMaxCoordinate:(CGFloat)max
+               ofSubviewAt:(NSInteger)i;
+- (void)revealEditor;
+- (void)showRightArea;
+- (void)collapseRightAreaIfEmpty;
+- (NSView *)sidebarViewOnShow;
+- (void)updateTitle;
+@end
+
+// EditorController+StatusBar.mm: the status bar, its notes and "Saved ...", and the shortcut hints.
+@interface EditorController (StatusBar)
+- (void)buildStatusBarInContainer:(NSView *)container height:(CGFloat)barH;
+- (void)layoutStatusRight;
+- (void)buildHintsPanelInContainer:(NSView *)container;
+- (void)updateHints;
+- (void)appendHintsHeading:(NSString *)title to:(NSMutableAttributedString *)s;
+- (void)appendHintsRow:(NSMutableAttributedString *)s
+                   key:(NSString *)key1 label:(NSString *)label1
+                  key2:(NSString *)key2 label2:(NSString *)label2
+                 state:(NSString *)state;
+- (NSString *)hk:(NSString *)commandId;
+- (NSString *)hkAll:(NSString *)commandId;
+- (NSString *)hk:(NSString *)commandId at:(NSUInteger)index;
+- (NSString *)hkAlso:(NSString *)commandId title:(NSString *)title;
+- (NSAttributedString *)hintsText;
+- (void)showStatusNote:(NSString *)note;
+- (void)updateSavedStatus;
+- (void)layoutStatusLabels;
+- (void)flashStatus:(NSString *)message;
+- (void)endFlash;
+@end
 
 // EditorController+Navigation.mm: Go to Line, Go Back and Forward, Go to Symbol.
 @interface EditorController (Navigation) <MCNavigatorHost>
