@@ -319,8 +319,9 @@ void MCLspSetMaxQueuedBytes(size_t bytes) { gMaxQueuedBytes = bytes ? bytes : 64
     if (_unresponsive) return;
     _unresponsive = YES;
     _stopReason = [NSString stringWithFormat:
-        @"stopped reading what minicode sent (%zu MB waiting), so it was stopped",
-        _queued->load() >> 20];
+        @"stopped reading what minicode sent (%@ waiting), so it was stopped",
+        [NSByteCountFormatter stringFromByteCount:(long long)_queued->load()
+                                       countStyle:NSByteCountFormatterCountStyleFile]];
     NSLog(@"MiniCode: %@ %@", _name, _stopReason);
     if (_running && _pid > 0) kill(_pid, SIGKILL);
 }
