@@ -550,6 +550,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)toggleSidebar:(id)sender   { [[self current] toggleSidebar:sender]; }
 - (void)toggleSourceControl:(id)sender { [[self current] toggleSourceControl:sender]; }
 - (void)toggleAgents:(id)sender    { [[self current] toggleAgents:sender]; }
+- (void)toggleProcesses:(id)sender { [[self current] toggleProcesses:sender]; }
 - (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
 - (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
 - (void)requestChange:(id)sender   { [[self current] requestChange:sender]; }
@@ -1141,6 +1142,13 @@ static void BuildMenu(void) {
     agents.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:agents];
+
+    // What this window's terminals started and what runs in its folder, in
+    // the sidebar's place (ProcessesPanel.h). No key by default: keys.conf
+    // can give it one (minicode.toggleProcesses).
+    [viewMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Toggle Processes"
+                                                 action:@selector(toggleProcesses:)
+                                          keyEquivalent:@""]];
 
     // Shift+Cmd+M as in VS Code: every problem the language servers report,
     // above the terminal.

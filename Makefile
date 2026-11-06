@@ -49,7 +49,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/SymbolOutline.cpp src/NavHistory.cpp \
             src/Folding.cpp \
             src/FileSniff.cpp src/Csv.cpp src/JsonOutline.cpp src/Notebook.cpp \
-            src/Commands.cpp src/ClaudeHooks.cpp src/AttentionBoard.cpp
+            src/Commands.cpp src/ProcessTable.cpp src/ClaudeHooks.cpp src/AttentionBoard.cpp
 
 # Each source file compiles to its own object in build/obj (build/test-obj for
 # the tests), with a dependency file listing the headers it read, so touching
@@ -94,7 +94,7 @@ $(BIN): $(OBJ)
 # hands it every subcommand. Only the protocol and JSON from the core.
 CLI     := build/minicode-cli
 CLI_OBJ := $(OBJDIR)/tools/minicode-cli.cpp.o $(OBJDIR)/ControlProtocol.cpp.o $(OBJDIR)/Json.cpp.o \
-           $(OBJDIR)/ClaudeHooks.cpp.o
+           $(OBJDIR)/ProcessTable.cpp.o $(OBJDIR)/ClaudeHooks.cpp.o
 
 $(OBJDIR)/tools/%.cpp.o: tools/%.cpp $(OBJDIR)/flags.txt
 	@mkdir -p $(@D)

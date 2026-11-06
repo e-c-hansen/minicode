@@ -52,11 +52,20 @@ to talk to), give plain paths in the reply instead and do not retry.
 | `minicode window [--folder D] [--new]` | Brings forward, or opens, the window on a folder | window id |
 | `minicode state [--pretty]` | JSON: windows, folders, tabs, selection, terminals, browser, note, tour | JSON |
 | `minicode selection` | The text selected in the editor | text |
+| `minicode procs [--folder D] [--json]` | What the window's terminals started, what they left behind (orphans), and what else runs in its folder: pid, memory, CPU, ports, command | table, or JSON |
 
 Add `--window ID` or `--folder DIR` to act in a given window (default: the
 frontmost). Exit codes: 0 done, 1 the command failed (stderr says why), 2
-usage error, 3 no minicode (`state`, `selection` and `term-output` never
-start one). `minicode help <command>` has the details.
+usage error, 3 no minicode (`state`, `selection`, `term-output` and `procs`
+never start one). `minicode help <command>` has the details.
+
+## Cleaning up after yourself
+
+Before reporting, run `minicode procs` to see what you left running (dev
+servers, watchers, browsers). Stop only processes you started, and only
+with `kill <pid>` after listing them; never anything the user started, and
+never by name (`pkill`, `killall`). Leave a server running when the user
+is meant to look at it, and say so in the reply.
 
 ## Notes and tours
 

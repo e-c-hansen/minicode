@@ -111,7 +111,8 @@ PathSpec splitPathSpec(const std::string& spec,
 std::string absolutePath(const std::string& path, const std::string& cwd,
                          const std::string& home);
 
-enum class Output { None, Id, Json, Text };
+// Procs: `minicode procs` as a table (Procs::formatTable).
+enum class Output { None, Id, Json, Text, Procs };
 
 struct CliCommand {
     bool help = false;          // `minicode help`, or -h after a subcommand
@@ -141,7 +142,7 @@ CliCommand parseCommandLine(const std::vector<std::string>& argv, const std::str
 // Whether `word` is one of the subcommands (the launcher passes those on).
 bool isSubcommand(const std::string& word);
 // Whether the command line starts minicode when none is running. Reads
-// (state, selection, term-output) do not: there would be nothing to read,
+// (state, selection, term-output, procs) do not: there would be nothing to read,
 // and an agent should not reopen an app the user has just quit.
 bool launchesApp(const std::string& cmd);
 // Whether `ref` may be handed to git as a revision: not empty, and not

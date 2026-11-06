@@ -9625,6 +9625,7 @@ static void testMultiCaretOccurrences() {
 #include "fold_tests.inc"
 #include "previews_tests.inc"
 #include "commands_tests.inc"
+#include "procs_tests.inc"
 #include "attention_tests.inc"
 
 int main() {
@@ -9692,6 +9693,7 @@ int main() {
     testLineIndex();
     testBrackets();
     testControlProtocol();
+    testProcs();
     testSideBySide();
     testAgentTranscript();
     testAgentIndex();

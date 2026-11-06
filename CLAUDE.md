@@ -130,7 +130,8 @@ goes here first, with tests; the GUI only displays it.
   (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
   line's parsing), `SideBySide` (diff rows).
-- Agent work: `AgentTranscript`, `AgentIndex`, `AgentEvidence`, `AgentView`.
+- Agent work: `AgentTranscript`, `AgentIndex`, `AgentEvidence`, `AgentView`;
+  `ProcessTable` (processes and ports per folder: tracking, groups, Stop's plan).
 - Files: `FileSniff` (how a file is shown), `Csv`, `JsonOutline`, `Notebook`.
 
 ### The Mac app (Objective-C++)
@@ -161,7 +162,8 @@ goes here first, with tests; the GUI only displays it.
   `PalettePanel`, `Navigation`.
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
   `ControlServer`, `ControlCommands`, `AgentNotes`, `AgentModel`,
-  `AgentsPanel`, `AgentPages`, `AgentWindow`.
+  `AgentsPanel`, `AgentPages`, `AgentWindow`, `ProcessMonitor` (libproc,
+  `minicode procs`), `ProcessesPanel`.
 - `Demo` (`make demos`, inert unless `MINICODE_DEMO`), `Bench`
   (`MINICODE_BENCH`).
 - Elsewhere: `tools/minicode-cli.cpp`, `scripts/minicode-launcher`,
@@ -179,7 +181,8 @@ Tabs (tabs, closed tabs, saving), Persistence (sessions, backups, auto-save,
 files changed outside), Rendering (what the editor's slot shows), Highlighting,
 Settings, Format, EditorView (line numbers, brackets, zoom, comments, tasks,
 editing hooks), Navigation, LanguageServers, Agents (inline agent, Request a
-Change, control channel, agent work), Markdown and MarkdownRender. Rules, so it
+Change, control channel, agent work), Processes (the Processes panel's
+hooks, its state in associated objects), Markdown and MarkdownRender. Rules, so it
 stays warning-free:
 
 - `EditorController+Private.h` holds the class extension (ivars in its ivar
@@ -206,8 +209,9 @@ container (PanelHost, laid out by hand in layoutContainer)
 ├── titlebarView + titleLabel                     with a custom title bar
 ├── NSSplitView (vertical)                        sidebar | right pane
 │   ├── treeScroll → ClickOutline                 file tree, MCTreeCell rows,
-│   │   a Worktrees node first; or MCGitPanel (Ctrl+Shift+G) or the
-│   │   Agents panel (Shift+Cmd+A) swapped in with replaceSubview:
+│   │   a Worktrees node first; or MCGitPanel (Ctrl+Shift+G), the Agents
+│   │   panel (Shift+Cmd+A) or MCProcessesPanel (View > Toggle Processes)
+│   │   swapped in with replaceSubview:
 │   └── rightArea (PanelHost, relayoutRightArea)
 │       ├── changeBar (MCChangeBar)                Request a Change, top, over all
 │       ├── tabStrip (MCTabStrip)                  top of the editor's side
@@ -1626,7 +1630,7 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   shell's TMPDIR differs from the app's), only in folders that are the
   user's, real and 0700, moving on to the next when one refuses the
   connection; starting minicode and waiting 10 s when none runs, except for
-  reads (`state`, `selection`, `term-output`), which exit 3 at once; a
+  reads (`state`, `selection`, `term-output`, `procs`), which exit 3 at once; a
   running minicode with no socket (older than the channel) gets "quit and
   open it again", nothing launched. Exit codes 0, 1 command error, 2 usage, 3
   no app.
@@ -1635,7 +1639,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   user loaded is never replaced: `BrowserView showsUserPage`, the history
   items an agent's navigations committed), `term` (`--cwd`, `--title`,
   `--run` typed and entered visibly), `diff` (`--base` never starting with
-  "-"), `split`, `state` (`--pretty`), `selection`, `term-output`, `tour`.
+  "-"), `split`, `state` (`--pretty`), `selection`, `term-output`, `tour`, `procs`
+  (`--json`; see "Processes and ports").
   None closes, replaces or reorders the user's tabs and terminals. `open`,
   `diff` and `tour` read and open only plain files (a FIFO blocks `open(2)`
   for good), `diff` up to 16 MB a side, reading and aligning off the main
@@ -1717,6 +1722,41 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   AppKit redraws its own Emoji & Symbols and Start Dictation items in their
   Globe-key form beside hidden twins with the same key; a menu key clash
   check must skip them (ControlSuite does).
+
+## Processes and ports (Mac)
+
+- **Core** (`ProcessTable`, `procs:*`): a `Tracker` samples a `Source`
+  (the table, then per process cwd, command line, footprint, CPU time,
+  listening TCP ports) and keys processes by (pid, start time). Tracked:
+  descendants of terminal shells (the shells themselves not), kept with
+  their origin after re-parenting to launchd, and their children; the
+  user's processes outside minicode's own tree (language servers, git and
+  shells are in it) whose cwd is in an open window's folder ("not started
+  here", dropped when the cwd leaves). The command line is read again when
+  the short name changes (a fork seen before its exec). Exited ones stay a
+  minute. `buildView` groups per window: its terminals, orphans (terminal
+  gone; shown by window or by cwd), not started here. `planStop` signals the
+  process group only when every member is the process or below it, so a
+  server Claude started never takes Claude's group down; never minicode, its
+  group, a shell, pid 1.
+- **Mac**: `MCProcessMonitor` starts itself at launch (`+load` observes
+  didFinishLaunching), samples on its own serial queue every 10 s, 2 s while
+  a panel shows; at each look it asks AppDelegate's `controlControllers` for
+  folders (`realpath`, not `stringByResolvingSymlinksInPath`, which turns
+  /private/tmp into /tmp while the kernel reports /private/tmp) and
+  terminals (`MCControlTerminalID`, `TerminalView shellPid`). CPU times from
+  `proc_pid_rusage` are Mach ticks: convert with the timebase. Stop checks
+  each pid's start time before SIGTERM and again before the SIGKILL 3 s
+  later. `minicode procs` samples once more before answering, and never
+  opens a window for `--folder`. Session (R7.4) is a field the terminals
+  could fill; nothing sets it yet.
+- **Checks**: the `processes` suite starts a server (python3 found with
+  `MCFindProgram`, else `nc -lk`) in its own terminal, disowns it, closes
+  the terminal, stops the orphan; a sleep for Stop's question; a server
+  started by `sh` that exits at once (launchd its parent) for "not started
+  here"; times five looks with at least 200 processes. Trap: in `sh -c 'cd
+  d && prog &'` the `&` takes the whole list, so a subshell holds the
+  pipes and is the parent; write `cd d || exit; prog &`.
 
 ## Opening from Finder, the Dock and the command line (Mac)
 
@@ -1814,7 +1854,7 @@ session has a display. Check first.
   keystroke suite (`MC_GUI_FULL_PERF=1` runs foldperf on 100,000 lines, not
   20,000). Suites: control, agents, backups, find_bar, folding, foldperf,
   format, git_panel, keymap, keystroke, lsp_fixes, palette, paste, previews,
-  problems, replace_in_folder, run_file, symbols, terminal_reflow, and in
+  problems, processes, replace_in_folder, run_file, symbols, terminal_reflow, and in
   LooseEndsSuite.mm terminal_exec, terminal_keys, terminal_zoom,
   agent_autosave, multicaret_rows. **Language server checks use the scripted
   server** `build/fakelsp` (`tests/fakelsp/fakelsp.cpp`, built by `make
