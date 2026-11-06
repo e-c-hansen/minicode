@@ -332,10 +332,15 @@ bool launchesApp(const std::string& cmd) {
     return cmd != "state" && cmd != "selection" && cmd != "term-output" && cmd != "ping";
 }
 
+const std::vector<std::string>& subcommands() {
+    static const std::vector<std::string> words = {"open", "window", "browse", "term",
+                                                   "diff", "split", "state", "selection",
+                                                   "term-output", "tour", "help"};
+    return words;
+}
+
 bool isSubcommand(const std::string& word) {
-    static const char* words[] = {"open", "window", "browse", "term", "diff", "split",
-                                  "state", "selection", "term-output", "tour", "help"};
-    for (const char* w : words)
+    for (const std::string& w : subcommands())
         if (word == w) return true;
     return false;
 }
