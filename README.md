@@ -300,6 +300,16 @@ To install it, download MiniCode-*version*.apk from the [latest release](https:/
 
 A blank cell means that port does not have the action yet. On Android, a letter alone means the leader key and then that letter, because a phone keyboard often has no Control: on a Unihertz Titan 2 the leader is the unlabelled key left of the right Shift, and elsewhere the Menu key. A held Ctrl works too, on a USB or Bluetooth keyboard or a phone whose Fn key is set to act as Ctrl. While the terminal has the keyboard, Ctrl and a letter go to the shell, so add Shift there. [android/README.md](android/README.md) has the rest.
 
+On the Mac every key below can be changed in ~/.config/minicode/keys.conf, which minicode > Keyboard Shortcuts… opens, written the first time with every command, its ID and its keys, commented out. The IDs are VS Code's where VS Code has the command. A line gives a command another key, and a minus takes a key away, from every command or from one:
+
+```
+ctrl+alt+cmd+k = editor.action.deleteLines
+ctrl+shift+k = -
+cmd+k = -workbench.action.terminal.clear
+```
+
+The menus, the command palette and the shortcut hints follow the file as soon as it is saved. A key given to a command is taken from whatever had it before, unless one of the two works only in the editor and the other only in the terminal. Two lines giving one key to two commands are a mistake, and the status bar says so, as it does for the settings file. The few keys the editor and the terminal handle themselves, such as moving lines with Option Up and Down, are listed at the end of the file and cannot be changed yet.
+
 | Action | macOS | Linux | Android |
 | --- | --- | --- | --- |
 | Add a cursor on the line below or above each cursor, at the same column | Option Command Down, Option Command Up |  |  |
