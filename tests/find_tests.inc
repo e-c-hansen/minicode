@@ -105,6 +105,60 @@ static void testTextFind() {
         CHECK(spans(findAll(u"a.c abc", q16(u"a.c"))) == (V{"0+3"}));
     }
 
+    GROUP("find:regex-long-lines");
+    {
+        // A line over 2,000 characters is searched a start position at a
+        // time; the matches are the same as in one search.
+        const std::u16string dashes(2500, u'-');
+        CHECK(spans(findAll(dashes + u"a1 b22 c333", q16(u"\\d+", false, false, true))) ==
+              (V{"2501+1", "2504+2", "2508+3"}));
+        CHECK(spans(findAll(dashes, q16(u"^-", false, false, true))) == (V{"0+1"}));
+        CHECK(spans(findAll(dashes, q16(u"-$", false, false, true))) == (V{"2499+1"}));
+        CHECK(spans(findAll(dashes + u"a-b", q16(u"\\b\\w", false, false, true))) ==
+              (V{"2500+1", "2502+1"}));
+        // a* finds the empty match at every dash, then "a", then empty at the end.
+        const auto stars = findAll(dashes + u"a", q16(u"a*", false, false, true));
+        CHECK(stars.size() == 2502 && stars[2500].start == 2500 && stars[2500].length == 1 &&
+              stars[2501].start == 2501 && stars[2501].length == 0);
+        CHECK(spans(findAll(dashes + u"Ab", q16(u"ab", false, false, true))) == (V{"2500+2"}));
+        // Many matches on one long line stay linear (each search used to
+        // copy the rest of the line).
+        std::u16string commas;
+        for (int i = 0; i < 100000; i++) commas += u"a,";
+        auto t0 = std::chrono::steady_clock::now();
+        CHECK(findAll(commas, q16(u",", false, false, true)).size() == 100000);
+        const double manyMs = std::chrono::duration<double, std::milli>(
+                                  std::chrono::steady_clock::now() - t0).count();
+        CHECK(manyMs < 1000);
+        // A regex that backtracks over a long line gives up on it after
+        // about a second (it ran for more than eight before), and the next
+        // line is still searched.
+        const std::u16string as(50000, u'a');
+        t0 = std::chrono::steady_clock::now();
+        const auto slow = findAll(as + u"\naz", q16(u"a(.*)z", false, false, true));
+        const double slowS = std::chrono::duration<double>(
+                                 std::chrono::steady_clock::now() - t0).count();
+        CHECK(spans(slow) == (V{"50001+2"}));
+        CHECK(slowS < 4);
+        // A cancel stops it within the line.
+        std::atomic<bool> cancel(false);
+        bool cancelled = false;
+        std::thread raiser([&cancel] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            cancel = true;
+        });
+        t0 = std::chrono::steady_clock::now();
+        findAll(as + u"\n" + as + u"\n" + as, q16(u"a(.*)z", false, false, true), 0, nullptr,
+                &cancel, &cancelled);
+        const double cancelS = std::chrono::duration<double>(
+                                   std::chrono::steady_clock::now() - t0).count();
+        raiser.join();
+        CHECK(cancelled && cancelS < 2);
+        std::printf("  regex on long lines: 100,000 matches on one line %.0f ms, a backtracking "
+                    "line given up after %.2f s, cancelled after %.2f s\n",
+                    manyMs, slowS, cancelS);
+    }
+
     GROUP("find:replace");
     {
         CHECK(replaced(u"foo Foo food", q16(u"foo", false, true), u"bar") == u"bar bar food");
