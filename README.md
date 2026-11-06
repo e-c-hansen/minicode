@@ -327,7 +327,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Action | macOS | Linux | Android |
 | --- | --- | --- | --- |
 | Add a cursor on the line below or above each cursor, at the same column | Option Command Down, Option Command Up |  |  |
-| Add a cursor, or take one away, to type in several places at once | Option click, or Shift Command click |  |  |
+| Add a cursor, or take one away, to type in several places at once | Option click |  |  |
 | Add the next place the selected text occurs to the selection, or select the word at the cursor | Command D |  |  |
 | Ask the inline agent: change the file at the cursor, write a terminal command, or hand a task to Claude Code | Command I |  |  |
 | Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
@@ -344,7 +344,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Delete the line, or every line the selection touches, at every cursor | Control Shift K |  |  |
 | Delete to the start of the line, at every cursor | Command Delete |  |  |
 | Delete the word before the cursor in the terminal's input line, or everything before it | Control W, Control U |  |  |
-| Edit a column: a cursor on every line between two points, so typing adds the same text to each | Shift Command click at one end and Shift Command click (or drag) to the other, or Option drag; Escape goes back to one cursor |  |  |
+| Edit a column: a cursor on every line between two points, so typing adds the same text to each | Shift Command click at one end and Shift Command click (or drag) to the other; Shift Option click (or drag) for a column from the cursor, as in VS Code; Option drag, or a middle-button drag; Escape goes back to one cursor |  |  |
 | Export the typeset PDF of a LaTeX file | Shift Command S | Ctrl Shift S |  |
 | Find across the whole folder | Shift Command F | Ctrl Shift F |  |
 | Find every reference to the name at the cursor, with a language server | Shift F12 |  |  |

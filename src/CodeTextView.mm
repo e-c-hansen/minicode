@@ -645,4 +645,9 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
     }
     [super mouseDown:event];
 }
+
+- (void)otherMouseDown:(NSEvent *)event {
+    if ([_multi otherMouseDown:event]) return;   // VS Code's middle-button column
+    [super otherMouseDown:event];
+}
 @end

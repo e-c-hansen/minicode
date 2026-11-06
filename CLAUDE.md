@@ -695,11 +695,22 @@ container (PanelHost, laid out by hand in layoutContainer)
   sees no single typed character (no completion); the electric dedent is off
   while they apply (`multiCarets.applying`); typing never crosses a line break,
   so a column stays a column.
-- Column: Cmd+Shift-, Option- or Shift+Option-drag (`MCMultiCarets mouseDown:`,
-  first in `CodeTextView mouseDown:`), each line's caret from
+- Column: Cmd+Shift-, Option- or middle-button drag (`MCMultiCarets mouseDown:`
+  and `otherMouseDown:`, first in CodeTextView's), each line's caret from
   `characterIndexForInsertionAtPoint:` at its first fragment; Cmd+Shift clicks
-  pair up, the anchor holding while carets and length are as the last press
-  left them (`_anchorCarets`); Option+click adds or removes a caret.
+  pair up (the owner's binding), the anchor holding while carets and length
+  are as the last press left them (`_anchorCarets`); Shift+Option click or
+  drag is VS Code's box from the caret's selection start (or the live
+  anchor) to the pointer; Option+click adds or removes a caret. VS Code's
+  own Cmd+Shift click is a Shift click. **Trap (2026-11-06)**: the window
+  server counts clicks by time alone (HIDClickSpace is (0,0)), so a second
+  click within 0.5 s is clickCount 2 wherever it lands; the old `clickCount
+  > 1` bail sent the owner's quick second Cmd+Shift click to NSTextView. A
+  press counts as a double-click only on the character the last press hit
+  (VS Code's `trySetCount` does the same). Offscreen, neither `[window
+  sendEvent:]` nor CGEventPostToPid delivers a mouse-down to the view;
+  `MultiCaretClickSuite` hit-tests and calls the view with CGEvent-made
+  events carrying the real click counts.
 - Cmd+D (word at an empty caret by `MultiCaret::wordAt`, then the next
   occurrence after the last added, wrapping, case-sensitive, whole-word only
   when begun at an empty caret), Shift+Cmd+L, Option+Cmd+Down/Up (a caret a

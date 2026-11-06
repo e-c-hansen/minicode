@@ -1,13 +1,14 @@
 // MultiCaretView.h — several carets in the editor's text view.
 //
-// Cmd+Shift+drag (or Option+drag, or Shift+Option+drag) selects a column:
-// a caret or selection on every line between the press and the pointer,
-// from the press's x to the pointer's. Typing, Backspace, Delete, Return,
-// Tab, Paste, Copy, Cut, the arrows (with Shift, Option and Command) then
-// act at every caret, each edit one undo step. A Cmd+Shift (or
-// Shift+Option) click after another makes the column between them, and
-// Option+click adds a caret (or removes one already there). Esc, a plain
-// click, or anything else that sets the selection goes back to one caret.
+// Cmd+Shift+drag, Option+drag or a middle-button drag selects a column: a
+// caret or selection on every line between the press and the pointer, from
+// the press's x to the pointer's. Typing, Backspace, Delete, Return, Tab,
+// Paste, Copy, Cut, the arrows (with Shift, Option and Command) then act at
+// every caret, each edit one undo step. A Cmd+Shift click after another
+// makes the column between them. Shift+Option click or drag is VS Code's
+// box selection: the column from the caret to the pointer. Option+click
+// adds a caret (or removes one already there). Esc, a plain click, or
+// anything else that sets the selection goes back to one caret.
 //
 // NSTextView can hold several selections but only one empty one, so the
 // carets live here (in MultiCaret's terms) and are drawn by the view; the
@@ -25,6 +26,8 @@
 // A press with the column modifiers: tracks the drag (or the click) and
 // returns YES. NO for any other press.
 - (BOOL)mouseDown:(NSEvent *)event;
+// A middle-button press (no modifiers): a column from it, as in VS Code.
+- (BOOL)otherMouseDown:(NSEvent *)event;
 // Typing and key commands while active; YES when handled.
 - (BOOL)insertText:(id)text;
 - (BOOL)doCommand:(SEL)selector;
