@@ -72,7 +72,9 @@ opening comment says what it does in more detail than the lines below.
 - `scripts/release.sh 1.2.0` cuts a release from a clean `main`: runs the
   core tests, and `make guitest` unless CI passed on that very commit, builds
   the signed APK before anything is stamped, stamps the version into `Info.plist` and `packaging/minicode.rb` and
-  commits that, builds the zip and checks the built app reports the version,
+  commits that, builds the zip as a release (`make dist-zip RELEASE=1`: no
+  `Demo.mm` or `Bench.mm`, main.mm gets their stubs, checked with `nm`) and
+  checks the built app reports the version,
   publishes it on the Homebrew tap repo, bumps the cask's version and sha256,
   then tags `v1.2.0` and pushes `main` with the tag, and runs the PPA upload
   last (skipped when no key is configured). The version on the command line is

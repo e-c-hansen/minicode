@@ -57,6 +57,16 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
 # flags rebuilds everything (build/obj/flags.txt keeps the last command).
 OBJDIR   := build/obj
 OBJ      := $(patsubst src/%,$(OBJDIR)/%.o,$(SRC))
+
+# A release build (`make dist-zip RELEASE=1`, as scripts/release.sh runs it)
+# leaves out the demo scenes and the memory benchmark (src/Demo.mm,
+# src/Bench.mm), which only `make demos` and `make membench` use; main.mm is
+# compiled with MC_RELEASE and gets their stubs from Demo.h and Bench.h. Only
+# main.mm and the link differ, so switching costs one file and a relink
+# (build/obj/variant.txt says which was built last).
+RELEASE_ONLY_OUT := $(OBJDIR)/Demo.mm.o $(OBJDIR)/Bench.mm.o
+APP_OBJ  := $(if $(RELEASE),$(filter-out $(RELEASE_ONLY_OUT),$(OBJ)),$(OBJ))
+VARIANT  := $(if $(RELEASE),release,development)
 TESTDIR  := build/test-obj
 TESTFLAGS := -std=c++17 -Wall -Wextra -Isrc -pthread $(MINFLAGS)
 TEST_OBJ := $(TESTDIR)/run_tests.cpp.o $(patsubst src/%,$(TESTDIR)/%.o,$(CORE_SRC))
@@ -81,14 +91,16 @@ ifneq ($(if $(MAKECMDGOALS),$(filter-out clean,$(MAKECMDGOALS)),all),)
           printf '%s\n' '$(APPCMD)' > $(OBJDIR)/flags.txt)
   $(shell mkdir -p $(TESTDIR) && printf '%s\n' '$(TESTCMD)' | cmp -s - $(TESTDIR)/flags.txt || \
           printf '%s\n' '$(TESTCMD)' > $(TESTDIR)/flags.txt)
+  $(shell printf '%s\n' '$(VARIANT)' | cmp -s - $(OBJDIR)/variant.txt || \
+          printf '%s\n' '$(VARIANT)' > $(OBJDIR)/variant.txt)
 endif
 
 .PHONY: all app run test guitest fakelsp install dmg dist-zip clean demos membench icon
 
 all: app
 
-$(BIN): $(OBJ)
-	$(CXX) $(CXXFLAGS) $(OBJ) $(LDFLAGS) -o $(BIN)
+$(BIN): $(APP_OBJ) $(OBJDIR)/variant.txt
+	$(CXX) $(CXXFLAGS) $(APP_OBJ) $(LDFLAGS) -o $(BIN)
 
 # The control channel's client (`minicode open`, `state`, ...): the launcher
 # hands it every subcommand. Only the protocol and JSON from the core.
@@ -105,6 +117,13 @@ $(CLI): $(CLI_OBJ)
 # After a `make clean` in the same run the folders and flags.txt are gone.
 $(OBJDIR)/flags.txt:
 	@mkdir -p $(@D) && printf '%s\n' '$(APPCMD)' > $@
+
+$(OBJDIR)/variant.txt:
+	@mkdir -p $(@D) && printf '%s\n' '$(VARIANT)' > $@
+
+$(OBJDIR)/main.mm.o: src/main.mm $(OBJDIR)/flags.txt $(OBJDIR)/variant.txt
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS)$(if $(RELEASE), -DMC_RELEASE) -MMD -MP -c $< -o $@
 
 $(OBJDIR)/%.mm.o: src/%.mm $(OBJDIR)/flags.txt
 	@mkdir -p $(@D)
@@ -243,12 +262,13 @@ build/makegif: tools/makegif.m
 demos: app build/makegif
 	POSTERS=$(POSTERS) ./scripts/demos.sh $(SCENES)
 
-# Package the app into a distributable (unsigned) disk image. The script runs
-# `make app` too, which finds the binary up to date.
-dmg: app
+# Package the app into a distributable (unsigned) disk image. The script
+# builds it as a release (`make app RELEASE=1`).
+dmg:
 	./scripts/make-dmg.sh
 
-# Zip the app for a GitHub Release (preserves the bundle correctly).
+# Zip the app for a GitHub Release (preserves the bundle correctly);
+# scripts/release.sh runs `make dist-zip RELEASE=1`.
 dist-zip: app
 	@ditto -c -k --sequesterRsrc --keepParent $(BUNDLE) $(APP).zip
 	@echo "Created $(APP).zip"

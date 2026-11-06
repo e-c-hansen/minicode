@@ -175,7 +175,11 @@ echo "==> Stamping version $VERSION"
 "$BUDDY" -c "Set :CFBundleVersion $VERSION" "$PLIST"
 
 echo "==> Building release artifact"
-make dist-zip
+make dist-zip RELEASE=1
+# A release build leaves the demo scenes and the benchmark out (Makefile, RELEASE).
+if nm MiniCode.app/Contents/MacOS/MiniCode | grep -q 'MCDemoStart\|MCBenchStart'; then
+    echo "error: the built app still has the demo scenes or the benchmark in it" >&2; exit 1
+fi
 BUILT="$("$BUDDY" -c "Print :CFBundleShortVersionString" MiniCode.app/Contents/Info.plist)"
 if [ "$BUILT" != "$VERSION" ]; then
     echo "error: the built app says $BUILT, expected $VERSION" >&2; exit 1

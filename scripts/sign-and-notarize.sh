@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 DEV_ID="Developer ID Application: YOUR NAME (YOURTEAMID)"   # <-- edit this
 NOTARY_PROFILE="minicode-notary"
 
-make app
+make app RELEASE=1   # no demo scenes or benchmark (Makefile, RELEASE)
 
 # Sign with the hardened runtime (required for notarization). MiniCode uses no
 # private APIs, so no special entitlements are needed; if a future change needs
