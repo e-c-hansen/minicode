@@ -935,6 +935,13 @@ bool Settings::apply(const std::string& key, const std::string& value,
         agentCommand_ = value;
         return true;
     }
+    if (key == "control.page-any-origin") {
+        if (!parseBool(value, pageAnyOrigin_)) {
+            error = "'" + value + "' is not true or false";
+            return false;
+        }
+        return true;
+    }
 
     if (key == "format.on-save") {
         if (!parseBool(value, formatOnSave_)) {
@@ -1336,6 +1343,14 @@ const char* Settings::defaultFileText() {
 # folder. Select Python Interpreter... in the MiniCode menu chooses one for
 # the open folder alone, which wins over this.
 # python.interpreter = auto
+
+# Agents can check pages in the browser pane (minicode browse and minicode
+# page, macOS only for now): they load into a page of their own beside
+# yours, and read its text, its console and pictures of it. Those reads work
+# only for local pages (localhost, 127.0.0.1, ::1, *.localhost and file://),
+# so an agent never reads a site you are logged in to. Set this to true to
+# let them read any page.
+# control.page-any-origin = false
 
 # Request a Change to minicode (Shift+Cmd+K, macOS only for now) hands what
 # you describe to Claude Code, in a terminal tab opened in minicode's own

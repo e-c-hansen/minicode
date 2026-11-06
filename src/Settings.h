@@ -310,6 +310,10 @@ public:
     std::string agentCommand() const {
         return agentCommand_.empty() ? "claude" : agentCommand_;
     }
+    // control.page-any-origin: whether agents may read the text, console
+    // and pictures of any page in the browser pane (`minicode page`), not
+    // only local ones (off by default; PageCheck.h).
+    bool pageAnyOrigin() const { return pageAnyOrigin_; }
     static const std::vector<std::string>& formatLanguages();
 
 private:
@@ -351,6 +355,7 @@ private:
     std::string developCommand_;
     std::string developSource_;
     std::string agentCommand_;
+    bool pageAnyOrigin_ = false;
 
     bool apply(const std::string& key, const std::string& value,
                std::string& error);

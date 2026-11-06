@@ -37,8 +37,18 @@ std::vector<CommandSpec> makeCommands() {
     c.push_back({"window", "Select or create a window",
                  {arg("folder", ArgType::String), arg("new", ArgType::Bool)}});
     {
-        CommandSpec s{"browse", "Open an address in the window's browser pane",
-                      {arg("url", ArgType::String, true), arg("split", ArgType::String)}};
+        CommandSpec s{"browse", "Open an address in the agent page of the window's browser pane",
+                      {arg("url", ArgType::String, true), arg("split", ArgType::String),
+                       arg("wait", ArgType::Bool)}};
+        addTarget(s.args);
+        c.push_back(s);
+    }
+    {
+        // One of reload, text, screenshot, console or url (PageCheck.h).
+        CommandSpec s{"page", "Reload or read the agent page (or with yours, the user's)",
+                      {arg("action", ArgType::String, true), arg("wait", ArgType::Bool),
+                       arg("yours", ArgType::Bool), arg("path", ArgType::String),
+                       arg("full", ArgType::Bool), arg("since", ArgType::Int)}};
         addTarget(s.args);
         c.push_back(s);
     }
@@ -329,12 +339,13 @@ bool isSafeRef(const std::string& ref) {
 }
 
 bool launchesApp(const std::string& cmd) {
-    return cmd != "state" && cmd != "selection" && cmd != "term-output" && cmd != "ping";
+    return cmd != "state" && cmd != "selection" && cmd != "term-output" && cmd != "ping" &&
+           cmd != "page";
 }
 
 bool isSubcommand(const std::string& word) {
     static const char* words[] = {"open", "window", "browse", "term", "diff", "split",
-                                  "state", "selection", "term-output", "tour", "help"};
+                                  "state", "selection", "term-output", "tour", "page", "help"};
     for (const char* w : words)
         if (word == w) return true;
     return false;
@@ -361,8 +372,27 @@ const Help kHelp[] = {
      "    (always a new one with --new), and prints its id. Without --folder,\n"
      "    the frontmost window.\n"},
     {"browse",
-     "minicode browse <url>\n"
-     "    Opens the address in the window's browser pane, beside the editor.\n"},
+     "minicode browse <url> [--wait]\n"
+     "    Opens the address in the agent page of the window's browser pane,\n"
+     "    beside the editor: a page of its own, so the user's page stays as it\n"
+     "    was (the pane's switcher shows Yours and Agent). Takes http, https\n"
+     "    and file addresses, host:port (as http) and paths of files; it never\n"
+     "    searches. With --wait it returns when the page has loaded, or after\n"
+     "    15 seconds, and prints JSON: url, status (HTTP), title, loading.\n"},
+    {"page",
+     "minicode page --url | --text | --console [--since SEQ] | --reload [--wait]\n"
+     "              | --screenshot OUT.png [--full]   [--yours]\n"
+     "    Reads the agent page: --url prints JSON (url, status, title,\n"
+     "    loading); --text its visible text (up to 1 MB); --console the\n"
+     "    console messages and uncaught errors since it loaded, a JSON object\n"
+     "    a line (seq, level, text, source, line, column), only those after\n"
+     "    SEQ with --since; --screenshot writes a PNG of the visible area, or\n"
+     "    of the whole page up to 16,384 pixels tall with --full, and prints\n"
+     "    its path; --reload loads it again (--wait as for browse). --yours\n"
+     "    reads the user's own page instead (not its console). Text, console\n"
+     "    and screenshots work only for local pages (localhost, 127.0.0.1,\n"
+     "    ::1, *.localhost, file://) unless the settings file has\n"
+     "    control.page-any-origin = true. No command runs JavaScript of yours.\n"},
     {"term",
      "minicode term [--cwd DIR] [--title TITLE] [--run COMMAND]\n"
      "    Opens a new terminal tab and prints its id. --run types COMMAND at\n"
@@ -412,7 +442,7 @@ const char* kCommon =
     "or diff opens in a tab beside theirs without being shown. `window` and\n"
     "--folder can bring another window to the front. When minicode is not\n"
     "running, it is started and the command waits up to 10 seconds for it;\n"
-    "state, selection and term-output exit with 3 instead.\n"
+    "state, selection, term-output and page exit with 3 instead.\n"
     "Exit codes: 0 done, 1 the command failed (why is on stderr), 2 a usage\n"
     "error, 3 no minicode to talk to.\n";
 
@@ -557,6 +587,26 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
             if (c.error.empty() && (!parsePositiveInt(v, n) || n <= 0))
                 c.error = "--lines needs a number";
             c.args.set("lines", n);
+        } else if ((sub == "browse" || sub == "page") && w == "--wait") {
+            c.args.set("wait", true);
+        } else if (sub == "page" && (w == "--reload" || w == "--text" || w == "--console" ||
+                                     w == "--url")) {
+            if (c.args.has("action")) c.error = "page takes one of --url, --text, --console, "
+                                                "--screenshot and --reload";
+            c.args.set("action", w.substr(2));
+        } else if (sub == "page" && takeValue(a, i, "screenshot", v, c.error)) {
+            if (c.error.empty() && c.args.has("action"))
+                c.error = "page takes one of --url, --text, --console, --screenshot and --reload";
+            c.args.set("action", "screenshot");
+            c.args.set("path", absolutePath(v, cwd, home));
+        } else if (sub == "page" && w == "--full") {
+            c.args.set("full", true);
+        } else if (sub == "page" && w == "--yours") {
+            c.args.set("yours", true);
+        } else if (sub == "page" && takeValue(a, i, "since", v, c.error)) {
+            int n = 0;
+            if (c.error.empty() && !parsePositiveInt(v, n)) c.error = "--since needs a number";
+            c.args.set("since", n);
         } else if (sub == "state" && w == "--pretty") {
             c.pretty = true;
         } else if (startsWith(w, "-") && w.size() > 1) {
@@ -600,7 +650,12 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
         c.args.set("files", files);
     } else if (sub == "browse") {
         if (positional.size() != 1) { c.error = "browse needs one address"; return c; }
-        c.args.set("url", positional[0]);
+        // A file named from here is opened as one, not taken for a site.
+        std::string url = positional[0];
+        if (url.find("://") == std::string::npos && exists && exists(absolutePath(url, cwd, home)))
+            url = absolutePath(url, cwd, home);
+        c.args.set("url", url);
+        if (c.args["wait"].asBool()) c.output = Output::Json;
     } else if (sub == "diff") {
         if (positional.empty() || positional.size() > 2) {
             c.error = "diff needs a path, or two";
@@ -623,6 +678,30 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
     } else if (sub == "tour") {
         if (positional.size() != 1) { c.error = "tour needs a file"; return c; }
         c.tourFile = absolutePath(positional[0], cwd, home);
+    } else if (sub == "page") {
+        if (!positional.empty()) { c.error = "page takes no argument " + positional[0]; return c; }
+        const std::string action = c.args["action"].asString();
+        if (action.empty()) {
+            c.error = "page needs one of --url, --text, --console, --screenshot and --reload";
+            return c;
+        }
+        if (c.args.has("full") && action != "screenshot") {
+            c.error = "--full goes with --screenshot";
+            return c;
+        }
+        if (c.args.has("since") && action != "console") {
+            c.error = "--since goes with --console";
+            return c;
+        }
+        if (c.args.has("wait") && action != "reload") {
+            c.error = "--wait goes with --reload";
+            return c;
+        }
+        if (action == "url" || (action == "reload" && c.args["wait"].asBool()))
+            c.output = Output::Json;
+        if (action == "text") { c.output = Output::Text; c.outputField = "text"; }
+        if (action == "screenshot") { c.output = Output::Line; c.outputField = "path"; }
+        if (action == "console") { c.output = Output::JsonLines; c.outputField = "entries"; }
     } else if (!positional.empty()) {
         c.error = sub + " takes no " + (positional.size() == 1 ? "argument " : "arguments ") +
                   positional[0];

@@ -1,6 +1,6 @@
 ---
 name: minicode
-description: Show work in minicode, the user's editor, instead of only describing it. Use when reporting finished changes (open the changed lines with a note, a diff against the base, test output in a terminal), when pointing at code ("where is X", "what does this file do"), and when the user says "this", "here" or "what I'm looking at" (read minicode's state and selection). Also for writing a workspace setup script, only when the user asks for one.
+description: Show work in minicode, the user's editor, instead of only describing it. Use when reporting finished changes (open the changed lines with a note, a diff against the base, test output in a terminal), when pointing at code ("where is X", "what does this file do"), when checking a local web page (a dev server: load it in minicode's browser pane and read its text, console and screenshots before reaching for Playwright), and when the user says "this", "here" or "what I'm looking at" (read minicode's state and selection). Also for writing a workspace setup script, only when the user asks for one.
 ---
 
 # minicode
@@ -9,7 +9,8 @@ minicode is the user's editor. The `minicode` command drives the copy that
 is running: it opens files at lines with a short note, shows diffs side by
 side, opens terminals and pages, and reports what the user is looking at.
 Commands never close, replace or reorder the user's tabs, terminals or
-browser page; they only add. They leave the keyboard where it is: while the
+browser page (pages you load go in an agent page beside theirs); they only
+add. They leave the keyboard where it is: while the
 user is typing in the editor, a file or diff opens in a tab beside theirs
 without being shown (the command says so on stderr), so say in the reply
 that it is there. `window` and `--folder` can bring another window forward.
@@ -47,7 +48,8 @@ to talk to), give plain paths in the reply instead and do not retry.
 | `minicode diff <a> <b>` | Side-by-side diff of two files (each up to 16 MB) | |
 | `minicode term [--cwd D] [--title T] [--run CMD]` | A new terminal tab; `--run` types CMD and presses Return, visibly | terminal id |
 | `minicode term-output <id> [--lines N]` | The terminal's last N lines (200), scrollback included | text |
-| `minicode browse <url>` | The page in the browser pane beside the editor; refused while it shows a page the user opened | |
+| `minicode browse <url> [--wait]` | The page in the browser pane's agent page; `--wait` returns once loaded (15 s at most) | `--wait`: JSON url, status, title |
+| `minicode page --url \| --text \| --console [--since N] \| --screenshot OUT.png [--full] \| --reload [--wait]` | Reads the agent page (`--yours`: the user's); text, console and screenshots of local pages only | JSON, text, JSON lines, path |
 | `minicode split [--right\|--below] term ...` | `term --right` splits the active terminal | |
 | `minicode window [--folder D] [--new]` | Brings forward, or opens, the window on a folder | window id |
 | `minicode state [--pretty]` | JSON: windows, folders, tabs, selection, terminals, browser, note, tour | JSON |
@@ -57,6 +59,27 @@ Add `--window ID` or `--folder DIR` to act in a given window (default: the
 frontmost). Exit codes: 0 done, 1 the command failed (stderr says why), 2
 usage error, 3 no minicode (`state`, `selection` and `term-output` never
 start one). `minicode help <command>` has the details.
+
+## Checking a local page
+
+For a page on this Mac (a dev server, a file), use `minicode browse --wait`
+and `minicode page` before reaching for Playwright, a headless browser or a
+browser extension: the page is already there, costs nothing extra, and the
+user sees what you checked.
+
+```sh
+minicode browse localhost:5173 --wait      # {"url":...,"status":200,"title":...}
+minicode page --text                       # the visible text, up to 1 MB
+minicode page --console                    # console lines and uncaught errors, with source:line
+minicode page --screenshot <scratchpad>/home.png --full
+minicode page --reload --wait              # after a change; --console --since N for new lines
+```
+
+- Only local pages (localhost, 127.0.0.1, ::1, *.localhost, file://) can be
+  read; others fail naming `control.page-any-origin`, which is the user's to
+  set. Nothing runs JavaScript of yours, and there is no clicking or typing.
+- Use `--yours` only when the user refers to the page they are looking at.
+- Screenshots go in the session's scratchpad, never in the project.
 
 ## Notes and tours
 
@@ -120,5 +143,6 @@ minicode term-output 3 --lines 50       # what a terminal shows (ids in state)
 `state` lists each window's `id`, `folder`, `front`, `tabs` (`path`,
 `title`, `kind`, `dirty`, `active`, `preview`), `selection` (`path`,
 `text` up to 64 KB, `start` and `end` with `line` and `column`),
-`terminals` (`id`, `cwd`, `title`, `command`, `busy`), `browser` (`url`,
-`title`), and the `note` and `tour` on show.
+`terminals` (`id`, `cwd`, `title`, `command`, `busy`), `browser` (each page:
+`page` yours or agent, `url`, `title`, `status`, `shown`), and the `note` and
+`tour` on show.
