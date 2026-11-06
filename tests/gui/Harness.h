@@ -43,6 +43,9 @@
 //   }
 //
 // `make guitest` runs every suite; `make guitest SUITES="control"` some.
+// A suite whose name starts with "_" runs only when named: it is a part
+// another suite runs in a second process (MCGuiRunChild), as BackupsSuite
+// does to SIGKILL an app and start another on what it left.
 // Traps worth knowing: everything done in one step lands in one undo group
 // (wrap a simulated edit in MCGuiUndoGroup); a key event for the app's key
 // monitor must go through [NSApp sendEvent:] with the window's number
@@ -137,3 +140,9 @@ void MCGuiUndoGroup(NSUndoManager *undo, void (^block)(void));
 // on the main thread.
 void MCGuiRunProcess(NSArray<NSString *> *argv, NSDictionary<NSString *, NSString *> *env,
                      void (^done)(int status, NSString *out, NSString *err));
+// Runs this program again as a second app in the same scratch world (home,
+// settings, backups, temporary folder), opening `folder`, with only the
+// suite named `suite` (a "_" one). Children share a defaults suite of their
+// own, so one sees the tab sessions an earlier one left. `done` gets the
+// exit status (a signal's number when one killed it) and the output.
+void MCGuiRunChild(NSString *suite, NSString *folder, void (^done)(int status, NSString *out));

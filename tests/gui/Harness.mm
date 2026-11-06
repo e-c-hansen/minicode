@@ -347,6 +347,16 @@ void MCGuiRunProcess(NSArray<NSString *> *argv, NSDictionary<NSString *, NSStrin
     });
 }
 
+void MCGuiRunChild(NSString *suite, NSString *folder, void (^done)(int status, NSString *out)) {
+    NSString *defaults = [Env(@"MINICODE_DEFAULTS_SUITE") stringByAppendingString:@".child"];
+    MCGuiRunProcess(@[[MCGuiBuildDir() stringByAppendingPathComponent:@"guitest"], folder],
+                    @{@"MC_GUI_CHILD": @"1", @"MC_GUI_SUITES": suite, @"MC_GUI_KEEP": @"1",
+                      @"MINICODE_DEFAULTS_SUITE": defaults},
+                    ^(int status, NSString *out, NSString *err) {
+                        done(status, [out stringByAppendingString:err ?: @""]);
+                    });
+}
+
 // --------------------------------------------------------------- runner
 @interface MCGuiRunner : NSObject
 + (instancetype)shared;
@@ -378,6 +388,9 @@ void MCGuiRunProcess(NSArray<NSString *> *argv, NSDictionary<NSString *, NSStrin
     for (const Suite &s : suites()) {
         NSString *name = [NSString stringWithUTF8String:s.name.c_str()];
         if (wanted.count && ![wanted containsObject:name]) continue;
+        // A suite named with a leading underscore is a part another suite
+        // runs in a process of its own (BackupsSuite): only when named.
+        if (!wanted.count && [name hasPrefix:@"_"]) continue;
         MCGuiItem *marker = [MCGuiItem new];
         marker.kind = MCGuiKindSuite;
         marker.name = name;
