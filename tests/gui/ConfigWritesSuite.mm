@@ -41,6 +41,7 @@ MC_GUI_SUITE(config_writes) {
     NSString *keys = [MCKeymap shared].path;
     __block NSString *before = nil;
     __block EditorController *c = nil;
+    __block NSString *configBefore = nil;
 
     MCGuiStep(@"settings.conf is a symlink into a dotfiles folder", ^{
         c = MCGuiController();
@@ -52,7 +53,10 @@ MC_GUI_SUITE(config_writes) {
         GCHECK(IsLink(settings));
     });
     MCGuiStep(@"View > Theme writes the dotfiles copy and keeps the link", ^{
-        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);   // keep any colors of the file's own
+        // Keep any colors of the file's own; the question comes only then,
+        // and an answer left queued would go to a later suite's alert.
+        if (Settings::colorOverrides([AppSettings shared].fileText.UTF8String ?: "") > 0)
+            MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);
         GCHECK(MCChooseTheme(@"monokai"));
         GCHECK(IsLink(settings));
         GCHECK([Disk(Dots(@"settings.conf")) containsString:@"theme = monokai"]);
@@ -63,6 +67,11 @@ MC_GUI_SUITE(config_writes) {
                 GCHECK(![name containsString:@".minicode-"]);
     });
     MCGuiStep(@"the IDE link toggle too, on and off", ^{
+        // With no Claude Code folder, so the link never starts: the idelink
+        // suite needs its first start (which clears dead lock files) itself.
+        const char *config = getenv("CLAUDE_CONFIG_DIR");
+        configBefore = config ? @(config) : nil;
+        setenv("CLAUDE_CONFIG_DIR", Dots(@"no-claude").fileSystemRepresentation, 1);
         NSMenuItem *item = MCIdeLinkMenuItem();
         const BOOL was = [AppSettings shared].settings.ideLink();
         GCHECK([NSApp sendAction:item.action to:item.target from:item]);
@@ -99,6 +108,8 @@ MC_GUI_SUITE(config_writes) {
         [NSApp sendAction:item.action to:item.target from:item];
         GCHECK([AppSettings shared].settings.ideLink() == was);
         GCHECK_EQ_STR(Disk(Dots(@"settings.conf")), disk);
+        if (configBefore) setenv("CLAUDE_CONFIG_DIR", configBefore.fileSystemRepresentation, 1);
+        else unsetenv("CLAUDE_CONFIG_DIR");
     });
     MCGuiStep(@"once the edit is undone, the theme is written", ^{
         NSUndoManager *u = TV(c).undoManager;
