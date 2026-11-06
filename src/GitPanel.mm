@@ -5,6 +5,7 @@
 #import "Lsp.h"   // MCFindProgram, MCSearchDirs
 #include "GitStatus.h"
 #include "GitGraph.h"
+#include "GitModel.h"
 #include <fcntl.h>
 #include <signal.h>
 #include <spawn.h>
@@ -29,6 +30,16 @@ static NSString *NSFromBytes(const std::string &s) {
     // bytes one per character rather than nothing.
     return r ?: [[NSString alloc] initWithBytes:s.data() length:s.size()
                                        encoding:NSISOLatin1StringEncoding];
+}
+
+// The core's argument vectors (GitModel.h) as MCGitRunSync takes them.
+static NSArray<NSString *> *NSArgs(const std::vector<std::string> &v) {
+    NSMutableArray *out = [NSMutableArray arrayWithCapacity:v.size()];
+    for (const std::string &a : v) [out addObject:NSFromBytes(a) ?: @""];
+    return out;
+}
+static std::string Bytes(NSData *d) {
+    return d.length ? std::string((const char *)d.bytes, d.length) : std::string();
 }
 
 // ------------------------------------------------------------- running git
@@ -210,106 +221,15 @@ MCGitResult *MCGitRunSyncWithTimeout(NSString *dir, NSArray<NSString *> *args,
     return r;
 }
 
-// The non-blank lines of `s`, trimmed.
-static NSArray<NSString *> *NonBlankLines(NSString *s) {
-    NSMutableArray *out = [NSMutableArray array];
-    for (NSString *line in [s componentsSeparatedByCharactersInSet:
-                                  NSCharacterSet.newlineCharacterSet]) {
-        NSString *t = [line stringByTrimmingCharactersInSet:
-                          NSCharacterSet.whitespaceCharacterSet];
-        if (t.length) [out addObject:t];
-    }
-    return out;
-}
-
-// What to tell the user about a failed command: git's stderr without its
-// blank lines; else the last line of stdout (a commit with nothing staged
-// prints a whole status there and ends with the reason); else the exit
-// status.
+// What to tell the user about a failed command (GitUi::failureText).
 static NSString *MCGitFailureText(MCGitResult *r) {
-    NSArray *err = NonBlankLines(r.errorText ?: @"");
-    if (err.count) return [err componentsJoinedByString:@"\n"];
-    std::string out((const char *)r.output.bytes, r.output.length);
-    NSArray *lines = NonBlankLines(NSFromBytes(out));
-    if (lines.count) return lines.lastObject;
-    return [NSString stringWithFormat:@"git exited with status %d.", r.status];
+    return NSFromBytes(GitUi::failureText(r.status, Bytes(r.output),
+                                          (r.errorText ?: @"").UTF8String ?: ""));
 }
 
 // ------------------------------------------------------------- diff colors
-static const size_t kMaxDiffBytes = 4 << 20;
-
-NSAttributedString *MCGitDiffText(NSData *diff, NSFont *font) {
-    AppSettings *cfg = [AppSettings shared];
-    NSColor *plain = [cfg text:Surface::Editor];
-    NSColor *muted = GHex(0x9CA3AF);
-    NSFont *bold = [[NSFontManager sharedFontManager] convertFont:font
-                                                     toHaveTrait:NSBoldFontMask];
-    NSDictionary *base = @{NSFontAttributeName: font,
-                           NSForegroundColorAttributeName: plain};
-    if (diff.length == 0) {
-        return [[NSAttributedString alloc]
-            initWithString:@"No differences to show."
-                attributes:@{NSFontAttributeName: font,
-                             NSForegroundColorAttributeName: muted}];
-    }
-    std::string bytes((const char *)diff.bytes, diff.length);
-    bool cut = false;
-    if (bytes.size() > kMaxDiffBytes) {
-        size_t nl = bytes.rfind('\n', kMaxDiffBytes);
-        bytes.resize(nl == std::string::npos ? kMaxDiffBytes : nl + 1);
-        cut = true;
-    }
-    // Build the text once, then color runs of lines, which is far quicker
-    // than appending an attributed string per line on a long diff.
-    NSMutableString *text = [NSMutableString string];
-    struct Run { NSUInteger start, length; Git::LineKind kind; };
-    std::vector<Run> runs;
-    for (const Git::DiffLine &l : Git::classifyDiff(bytes)) {
-        NSUInteger start = text.length;
-        [text appendString:NSFromBytes(l.text) ?: @""];
-        [text appendString:@"\n"];
-        NSUInteger len = text.length - start;
-        if (!runs.empty() && runs.back().kind == l.kind &&
-            runs.back().start + runs.back().length == start)
-            runs.back().length += len;
-        else
-            runs.push_back({start, len, l.kind});
-    }
-    if (cut) [text appendString:@"\n(The diff is longer than 4 MB; the rest is not shown.)\n"];
-    NSMutableAttributedString *out =
-        [[NSMutableAttributedString alloc] initWithString:text attributes:base];
-    NSColor *added = GHex(0x73C991), *removed = GHex(0xF14C4C);
-    for (const Run &r : runs) {
-        NSRange range = NSMakeRange(r.start, r.length);
-        switch (r.kind) {
-        case Git::LineKind::Added:
-            [out addAttribute:NSForegroundColorAttributeName value:added range:range];
-            break;
-        case Git::LineKind::Removed:
-            [out addAttribute:NSForegroundColorAttributeName value:removed range:range];
-            break;
-        case Git::LineKind::FileHeader:
-            [out addAttributes:@{NSForegroundColorAttributeName: muted,
-                                 NSFontAttributeName: bold} range:range];
-            break;
-        case Git::LineKind::HunkHeader:
-        case Git::LineKind::NoNewline:
-        case Git::LineKind::Other:
-            [out addAttribute:NSForegroundColorAttributeName value:muted range:range];
-            break;
-        case Git::LineKind::Context:
-            break;
-        }
-    }
-    if (cut)
-        [out addAttribute:NSForegroundColorAttributeName value:muted
-                    range:NSMakeRange(runs.empty() ? 0 : runs.back().start + runs.back().length,
-                                      out.length - (runs.empty() ? 0 : runs.back().start +
-                                                                       runs.back().length))];
-    return out;
-}
-
-static NSString *MCGitDateText(long long t) {
+// A commit's date in the user's locale and format, for GitUi's texts.
+static std::string MCGitDate(long long t) {
     static NSDateFormatter *f;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -317,143 +237,153 @@ static NSString *MCGitDateText(long long t) {
         f.dateStyle = NSDateFormatterMediumStyle;
         f.timeStyle = NSDateFormatterShortStyle;
     });
-    return [f stringFromDate:[NSDate dateWithTimeIntervalSince1970:(double)t]];
+    return [f stringFromDate:[NSDate dateWithTimeIntervalSince1970:(double)t]].UTF8String ?: "";
 }
 
-static NSString *MCGitRelativeText(long long t) {
-    return NSFromBytes(Git::relativeTime(t, (long long)NSDate.date.timeIntervalSince1970));
-}
+static long long MCGitNow(void) { return (long long)NSDate.date.timeIntervalSince1970; }
 
-NSAttributedString *MCGitCommitText(NSData *show, NSFont *font) {
-    std::string bytes((const char *)show.bytes, show.length);
-    Git::CommitDetail d;
-    if (!Git::parseShow(bytes, d)) return MCGitDiffText(show, font);
+// The core's styled text (GitUi::StyledText, runs counted in characters) as
+// an attributed string: added green, removed red, muted grey, file headers
+// muted bold, a hash amber, a subject bold.
+static NSAttributedString *MCGitStyledText(const GitUi::StyledText &t, NSFont *font) {
     AppSettings *cfg = [AppSettings shared];
     NSColor *plain = [cfg text:Surface::Editor];
     NSColor *muted = GHex(0x9CA3AF);
     NSFont *bold = [[NSFontManager sharedFontManager] convertFont:font
                                                      toHaveTrait:NSBoldFontMask];
-    NSDictionary *label = @{NSFontAttributeName: font, NSForegroundColorAttributeName: muted};
-    NSDictionary *value = @{NSFontAttributeName: font, NSForegroundColorAttributeName: plain};
-    NSMutableAttributedString *out = [NSMutableAttributedString new];
-    void (^add)(NSString *, NSDictionary *) = ^(NSString *s, NSDictionary *a) {
-        [out appendAttributedString:[[NSAttributedString alloc] initWithString:s ?: @""
-                                                                    attributes:a]];
+    NSString *text = [[NSString alloc] initWithBytes:t.text.data() length:t.text.size()
+                                            encoding:NSUTF8StringEncoding] ?: @"";
+    NSMutableAttributedString *out = [[NSMutableAttributedString alloc]
+        initWithString:text
+            attributes:@{NSFontAttributeName: font, NSForegroundColorAttributeName: plain}];
+    // Characters to UTF-16 units in one walk of the (valid) UTF-8.
+    size_t byte = 0, ch = 0;
+    NSUInteger unit = 0;
+    auto advanceTo = [&](size_t target) {
+        while (ch < target && byte < t.text.size()) {
+            const unsigned char c = (unsigned char)t.text[byte];
+            const size_t n = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+            byte += n;
+            unit += n == 4 ? 2 : 1;
+            ch++;
+        }
     };
-    auto line = ^(NSString *name, NSString *text) {
-        add([name stringByPaddingToLength:10 withString:@" " startingAtIndex:0], label);
-        add(text, value);
-        add(@"\n", value);
-    };
-    add(@"commit    ", label);
-    add(NSFromBytes(d.hash), @{NSFontAttributeName: font,
-                               NSForegroundColorAttributeName: GHex(0xE2C08D)});
-    add(@"\n", value);
-    NSMutableArray *parents = [NSMutableArray array];
-    for (const std::string &p : d.parents) [parents addObject:NSFromBytes(Git::shortHash(p))];
-    if (parents.count > 1)
-        line(@"Merge", [parents componentsJoinedByString:@" "]);
-    else if (parents.count == 1)
-        line(@"Parent", parents[0]);
-    line(@"Author", [NSString stringWithFormat:@"%@ <%@>", NSFromBytes(d.author),
-                                               NSFromBytes(d.email)]);
-    if (!d.committer.empty()) line(@"Committer", NSFromBytes(d.committer));
-    line(@"Date", [NSString stringWithFormat:@"%@ (%@)", MCGitDateText(d.time),
-                                             MCGitRelativeText(d.time)]);
-    add(@"\n", value);
-    // The message: its subject bold, the body as written.
-    NSString *msg = NSFromBytes(d.message);
-    NSRange nl = [msg rangeOfString:@"\n"];
-    NSString *subject = nl.location == NSNotFound ? msg : [msg substringToIndex:nl.location];
-    add(subject, @{NSFontAttributeName: bold, NSForegroundColorAttributeName: plain});
-    if (nl.location != NSNotFound) add([msg substringFromIndex:nl.location], value);
-    add(@"\n\n", value);
-    if (parents.count > 1)
-        add(@"Changes against the first parent, which is what the merge brought in.\n\n",
-            label);
-    if (d.patch.empty()) {
-        add(@"No changes in this commit.\n", label);
-    } else {
-        NSData *patch = [NSData dataWithBytes:d.patch.data() length:d.patch.size()];
-        [out appendAttributedString:MCGitDiffText(patch, font)];
+    NSColor *added = GHex(0x73C991), *removed = GHex(0xF14C4C), *hash = GHex(0xE2C08D);
+    for (const GitUi::StyledText::Run &r : t.runs) {
+        advanceTo(r.start);
+        const NSUInteger from = unit;
+        advanceTo(r.start + r.length);
+        const NSRange range = NSMakeRange(from, MIN(unit, out.length) - MIN(from, out.length));
+        switch (r.style) {
+        case GitUi::Style::Plain: break;
+        case GitUi::Style::Added:
+            [out addAttribute:NSForegroundColorAttributeName value:added range:range];
+            break;
+        case GitUi::Style::Removed:
+            [out addAttribute:NSForegroundColorAttributeName value:removed range:range];
+            break;
+        case GitUi::Style::Muted:
+            [out addAttribute:NSForegroundColorAttributeName value:muted range:range];
+            break;
+        case GitUi::Style::FileHeader:
+            [out addAttributes:@{NSForegroundColorAttributeName: muted,
+                                 NSFontAttributeName: bold} range:range];
+            break;
+        case GitUi::Style::Hash:
+            [out addAttribute:NSForegroundColorAttributeName value:hash range:range];
+            break;
+        case GitUi::Style::Bold:
+            [out addAttribute:NSFontAttributeName value:bold range:range];
+            break;
+        }
     }
     return out;
 }
 
+NSAttributedString *MCGitDiffText(NSData *diff, NSFont *font) {
+    return MCGitStyledText(GitUi::diffText(Bytes(diff)), font);
+}
+
+NSAttributedString *MCGitCommitText(NSData *show, NSFont *font) {
+    return MCGitStyledText(GitUi::commitText(Bytes(show), MCGitNow(), MCGitDate), font);
+}
+
 // ------------------------------------------------------------------- rows
-@interface MCGitRow : NSObject
-@property(nonatomic, assign) BOOL header;
-@property(nonatomic, copy) NSString *title;       // header text
-@property(nonatomic, assign) BOOL staged;         // which list it is in
-@property(nonatomic, assign) unichar letter;
-@property(nonatomic, copy) NSString *path;        // relative to the top level
-@property(nonatomic, copy) NSString *origPath;    // a rename's source, or nil
-@property(nonatomic, assign) BOOL untracked;
-@property(nonatomic, assign) BOOL unmerged;
+// One line of the change lists: the core's row (GitUi::Row), with its text
+// as NSStrings for drawing.
+@interface MCGitRow : NSObject {
+@public
+    GitUi::Row model;
+}
+- (instancetype)initWithModel:(const GitUi::Row &)row;
+@property(nonatomic, readonly) BOOL header, staged, untracked, unmerged;
+@property(nonatomic, readonly) unichar letter;
+@property(nonatomic, readonly, copy) NSString *title;      // a heading's text
+@property(nonatomic, readonly, copy) NSString *path;       // relative to the top level
+@property(nonatomic, readonly, copy) NSString *origPath;   // a rename's source, or nil
 @end
 @implementation MCGitRow
-- (NSString *)key {
-    return [NSString stringWithFormat:@"%d:%@", self.staged, self.path ?: self.title];
+- (instancetype)initWithModel:(const GitUi::Row &)row {
+    if ((self = [super init])) {
+        model = row;
+        _title = row.header ? NSFromBytes(row.title) : nil;
+        _path = row.path.empty() ? nil : NSFromBytes(row.path);
+        _origPath = row.origPath.empty() ? nil : NSFromBytes(row.origPath);
+    }
+    return self;
 }
+- (BOOL)header { return model.header; }
+- (BOOL)staged { return model.staged; }
+- (BOOL)untracked { return model.untracked; }
+- (BOOL)unmerged { return model.unmerged; }
+- (unichar)letter { return (unichar)(unsigned char)model.letter; }
 @end
 
-// What one refresh found, built off the main thread.
-@interface MCGitSnapshot : NSObject
-@property(nonatomic, assign) BOOL inRepository;
-@property(nonatomic, copy) NSString *topLevel;
-@property(nonatomic, copy) NSString *branchText;
-@property(nonatomic, assign) BOOL initial;        // no commit yet
+static std::vector<GitUi::Row> ModelRows(NSArray<MCGitRow *> *rows) {
+    std::vector<GitUi::Row> out;
+    out.reserve(rows.count);
+    for (MCGitRow *r in rows) out.push_back(r->model);
+    return out;
+}
+
+// What one refresh found, built off the main thread: the core's snapshot.
+@interface MCGitSnapshot : NSObject {
+@public
+    GitUi::Snapshot model;
+}
 @property(nonatomic, copy) NSArray<MCGitRow *> *rows;
-@property(nonatomic, copy) NSString *errorText;   // a command failed
-@property(nonatomic, copy) NSString *notice;      // one plain line for the list
-// What the graph needs from the status.
-@property(nonatomic, copy) NSString *headOid;     // nil before the first commit
-@property(nonatomic, copy) NSString *branch;      // nil when detached
-@property(nonatomic, assign) BOOL detached;
-@property(nonatomic, copy) NSString *upstream;    // nil when there is none
-@property(nonatomic, assign) BOOL hasAheadBehind; // false when the upstream is gone
-@property(nonatomic, assign) int ahead, behind;
+@property(nonatomic, readonly) BOOL inRepository, initial;
+@property(nonatomic, readonly, copy) NSString *topLevel, *branchText, *errorText, *notice;
 @end
 @implementation MCGitSnapshot
+static NSString *NonEmpty(const std::string &s) { return s.empty() ? nil : NSFromBytes(s); }
+- (BOOL)inRepository { return model.inRepository; }
+- (BOOL)initial { return model.initial; }
+- (NSString *)topLevel { return NonEmpty(model.topLevel); }
+- (NSString *)branchText { return NonEmpty(model.branchText); }
+- (NSString *)errorText { return NonEmpty(model.errorText); }
+- (NSString *)notice { return NonEmpty(model.notice); }
 @end
 
 // ------------------------------------------------------------------ graph
 // One load of the commit graph, built off the main thread and not changed
-// after: the commits, their lanes, labels and which ones are not pushed.
+// after: the core's GitUi::Graph (commits, lanes, labels, what is pushed).
 @interface MCGitGraph : NSObject {
 @public
-    std::vector<Git::Commit> commits;
-    std::vector<Git::GraphRow> rows;
-    std::unordered_map<std::string, std::vector<Git::Ref>> labels;
-    Git::Divergence divergence;
-    std::string head;
-    int maxWidth;
+    GitUi::Graph g;
 }
-@property(nonatomic, strong) NSData *key;         // what it was built from; same key, same graph
-@property(nonatomic, assign) BOOL hasMore;        // the limit cut the history short
-@property(nonatomic, assign) NSInteger limit;
-@property(nonatomic, copy) NSString *errorText;
+@property(nonatomic, readonly) BOOL hasMore;        // the limit cut the history short
+@property(nonatomic, readonly, copy) NSString *errorText;
 @end
 @implementation MCGitGraph
+- (BOOL)hasMore { return g.hasMore; }
+- (NSString *)errorText { return NonEmpty(g.errorText); }
 @end
 
-static const NSInteger kGraphBatch = 200;
+static const NSInteger kGraphBatch = GitUi::kGraphBatch;
 
-// Lane colors: the first is the accent blue (HEAD's lane is usually first),
-// the rest VS Code's graph colors.
-static NSColor *LaneColor(int i) {
-    static const unsigned int palette[] = {0x59A4F9, 0xFFB000, 0xDC267F, 0x40B0A6,
-                                           0xB66DFF, 0xE0823D, 0x8FCB5A};
-    const int n = sizeof(palette) / sizeof(palette[0]);
-    return GHex(palette[((i % n) + n) % n]);
-}
-
-// The width of one lane: 12 points, narrower when many lanes would take
-// more than two fifths of the row.
-static CGFloat LaneWidth(CGFloat rowWidth, int lanes) {
-    if (lanes <= 0) return 12;
-    return MAX(4.0, MIN(12.0, (rowWidth * 0.4 - 8) / lanes));
-}
+// Lane colors, the accent blue first (HEAD's lane is usually first).
+static NSColor *LaneColor(int i) { return GHex(GitUi::laneColor(i)); }
 
 // One row of the graph, drawn by hand: its lines and dot, the ref labels as
 // pills, the subject, and an arrow at the right for a commit to push or pull.
@@ -468,10 +398,7 @@ static CGFloat LaneWidth(CGFloat rowWidth, int lanes) {
 // A label: filled for HEAD's own branch (or a detached HEAD), outlined for
 // the rest, blue for local branches, purple for remote ones, amber for tags.
 static CGFloat DrawPill(const Git::Ref &r, CGFloat x, CGFloat midY, CGFloat maxW) {
-    NSColor *c = r.kind == Git::RefKind::Head     ? GHex(0xEA5C00)
-               : r.kind == Git::RefKind::Remote   ? GHex(0xB180D7)
-               : r.kind == Git::RefKind::Tag      ? GHex(0xE2C08D)
-                                                  : GHex(0x59A4F9);
+    NSColor *c = GHex(GitUi::pillColor(r.kind));
     NSString *name = NSFromBytes(r.name);
     if (r.kind == Git::RefKind::Tag) name = [@"tag " stringByAppendingString:name];
     NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
@@ -510,18 +437,18 @@ static CGFloat DrawPill(const Git::Ref &r, CGFloat x, CGFloat midY, CGFloat maxW
     const NSRect b = self.bounds;
     const CGFloat h = b.size.height, mid = floor(h / 2);
     NSColor *muted = GHex(0x9CA3AF);
-    if (self.index >= (NSInteger)g->commits.size()) {
+    if (self.index >= (NSInteger)g->g.commits.size()) {
         [[NSString stringWithFormat:@"Show %ld more…", (long)kGraphBatch]
             drawAtPoint:NSMakePoint(18, 3)
          withAttributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12],
                           NSForegroundColorAttributeName: GHex(0x4EA1F7)}];
         return;
     }
-    const Git::Commit &c = g->commits[self.index];
-    const Git::GraphRow &row = g->rows[self.index];
-    const bool outgoing = g->divergence.outgoing.count(c.hash) > 0;
-    const bool incoming = g->divergence.incoming.count(c.hash) > 0;
-    const CGFloat lw = LaneWidth(b.size.width, g->maxWidth);
+    const Git::Commit &c = g->g.commits[self.index];
+    const Git::GraphRow &row = g->g.rows[self.index];
+    const bool outgoing = g->g.divergence.outgoing.count(c.hash) > 0;
+    const bool incoming = g->g.divergence.incoming.count(c.hash) > 0;
+    const CGFloat lw = GitUi::laneWidth(b.size.width, g->g.maxWidth);
     auto X = [&](int lane) { return 8 + lane * lw + lw / 2; };
 
     if (outgoing || incoming) {
@@ -567,7 +494,7 @@ static CGFloat DrawPill(const Git::Ref &r, CGFloat x, CGFloat midY, CGFloat maxW
         return [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(cx - r, mid - r, 2 * r, 2 * r)];
     };
     const bool merge = c.parents.size() > 1;
-    if (c.hash == g->head) {
+    if (c.hash == g->g.head) {
         [bg setFill];
         [circle(6.5) fill];
         NSBezierPath *ring = circle(6);
@@ -592,8 +519,8 @@ static CGFloat DrawPill(const Git::Ref &r, CGFloat x, CGFloat midY, CGFloat maxW
     // Labels, then the subject.
     CGFloat x = 8 + row.width * lw + 6;
     const CGFloat right = b.size.width - ((outgoing || incoming) ? 20 : 6);
-    auto it = g->labels.find(c.hash);
-    if (it != g->labels.end()) {
+    auto it = g->g.labels.find(c.hash);
+    if (it != g->g.labels.end()) {
         size_t shown = 0;
         for (const Git::Ref &r : it->second) {
             CGFloat room = MIN(120.0, right - x - 40);
@@ -638,14 +565,7 @@ static CGFloat DrawPill(const Git::Ref &r, CGFloat x, CGFloat midY, CGFloat maxW
 @end
 
 static NSColor *LetterColor(unichar c, BOOL unmerged) {
-    if (unmerged) return GHex(0xE4676B);
-    switch (c) {
-    case 'M': case 'T': return GHex(0xE2C08D);
-    case 'A': return GHex(0x81B88B);
-    case 'D': return GHex(0xC74E39);
-    case 'R': case 'C': case 'U': return GHex(0x73C991);
-    default: return GHex(0x9CA3AF);
-    }
+    return GHex(GitUi::letterColor((char)c, unmerged));
 }
 
 // One line of the list, drawn by hand: a file's name, its folder (muted)
@@ -1231,7 +1151,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
             if (![root isEqualToString:self.root]) return;   // folder changed
             [self applySnapshot:snap];
         });
-        if (!snap.inRepository || snap.initial || !snap.headOid) return;
+        if (!GitUi::graphWanted(snap->model)) return;
         MCGitGraph *graph = [MCGitPanel graphFor:snap limit:limit all:all previous:previous];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (![root isEqualToString:self.root] || gen != self->_graphGeneration) return;
@@ -1243,78 +1163,37 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 + (MCGitGraph *)graphFor:(MCGitSnapshot *)s limit:(NSInteger)limit all:(BOOL)all
                 previous:(MCGitGraph *)previous {
     NSString *dir = s.topLevel;
-    BOOL compare = s.upstream.length && s.hasAheadBehind && !s.detached;
-    MCGitResult *refs = MCGitRunSync(dir, @[@"for-each-ref",
-                                            [NSString stringWithFormat:@"--format=%s",
-                                                                       Git::refFormat()],
-                                            @"refs/heads", @"refs/remotes", @"refs/tags"]);
+    const GitUi::Snapshot &snap = s->model;
+    const bool compare = GitUi::compareWithUpstream(snap);
+    MCGitResult *refs = MCGitRunSync(dir, NSArgs(GitUi::refArgs()));
+    MCGitGraph *g = [MCGitGraph new];
     if (refs.timedOut) {   // a log now would only wait as long again
-        MCGitGraph *g = [MCGitGraph new];
-        g.errorText = MCGitFailureText(refs);
+        g->g.errorText = MCGitFailureText(refs).UTF8String ?: "";
         return g;
     }
     // Everything the graph depends on, so an unchanged repository (most
     // refreshes come from saving a file) costs one for-each-ref.
-    NSMutableData *key = [NSMutableData data];
-    NSString *head = [NSString stringWithFormat:@"%@ %@ %d %ld %d %@\n", s.headOid,
-                                                s.branch ?: @"", compare, (long)limit, all,
-                                                s.upstream ?: @""];
-    [key appendData:[head dataUsingEncoding:NSUTF8StringEncoding]];
-    [key appendData:refs.output];
-    if (previous && [previous.key isEqualToData:key]) return previous;
-
-    MCGitGraph *g = [MCGitGraph new];
-    g.key = key;
-    g.limit = limit;
-    NSMutableArray *args = [@[@"-c", @"log.showSignature=false", @"log", @"-z",
-                              @"--topo-order", @"--no-color",
-                              [NSString stringWithFormat:@"--format=%s", Git::logFormat()],
-                              [NSString stringWithFormat:@"--max-count=%ld", (long)limit]]
-                               mutableCopy];
-    if (all) [args addObjectsFromArray:@[@"--branches", @"--remotes"]];
-    [args addObject:@"HEAD"];
-    if (compare) [args addObject:@"@{upstream}"];
-    [args addObject:@"--"];
-    MCGitResult *log = MCGitRunSync(dir, args);
+    const std::string refBytes = Bytes(refs.output);
+    std::string key = GitUi::graphKey(snap, (int)limit, all, compare, refBytes);
+    if (previous && previous->g.key == key) return previous;
+    g->g.key = std::move(key);
+    g->g.limit = (int)limit;
+    MCGitResult *log = MCGitRunSync(dir, NSArgs(GitUi::logArgs((int)limit, all, compare)));
     if (!log.ok) {
-        g.errorText = MCGitFailureText(log);
+        g->g.errorText = MCGitFailureText(log).UTF8String ?: "";
         return g;
     }
-    g->commits = Git::parseLog(std::string((const char *)log.output.bytes, log.output.length));
-    g.hasMore = (NSInteger)g->commits.size() >= limit;
-    g->rows = Git::layoutGraph(g->commits);
-    g->maxWidth = 1;
-    for (const Git::GraphRow &r : g->rows) g->maxWidth = std::max(g->maxWidth, r.width);
-    g->head = s.headOid.UTF8String;
-    std::string refBytes((const char *)refs.output.bytes, refs.output.length);
-    g->labels = Git::labelsByCommit(Git::parseRefs(refBytes), g->head,
-                                    s.branch ? std::string(s.branch.UTF8String) : "",
-                                    s.detached);
-    if (compare && (s.ahead || s.behind)) {
-        MCGitResult *lr = MCGitRunSync(dir, @[@"rev-list", @"--left-right",
-                                              @"HEAD...@{upstream}", @"--"]);
-        if (lr.ok)
-            g->divergence = Git::parseLeftRight(
-                std::string((const char *)lr.output.bytes, lr.output.length));
+    GitUi::buildGraph(g->g, snap, Bytes(log.output), refBytes, (int)limit);
+    if (compare && (snap.ahead || snap.behind)) {
+        MCGitResult *lr = MCGitRunSync(dir, NSArgs(GitUi::leftRightArgs()));
+        if (lr.ok) g->g.divergence = Git::parseLeftRight(Bytes(lr.output));
     }
     return g;
 }
 
 // What is pushed, in one line over the graph.
 - (NSString *)summaryFor:(MCGitSnapshot *)s {
-    if (s.detached) return @"HEAD is detached, so there is no upstream to compare with.";
-    if (!s.upstream.length)
-        return [NSString stringWithFormat:@"%@ has no upstream, so nothing here is marked "
-                                           "as pushed or not.", s.branch ?: @"This branch"];
-    if (!s.hasAheadBehind)
-        return [NSString stringWithFormat:@"The upstream %@ is gone.", s.upstream];
-    if (!s.ahead && !s.behind)
-        return [NSString stringWithFormat:@"Up to date with %@.", s.upstream];
-    NSMutableArray *parts = [NSMutableArray array];
-    if (s.ahead) [parts addObject:[NSString stringWithFormat:@"↑ %d to push", s.ahead]];
-    if (s.behind) [parts addObject:[NSString stringWithFormat:@"↓ %d to pull", s.behind]];
-    return [NSString stringWithFormat:@"%@, against %@", [parts componentsJoinedByString:@", "],
-                                      s.upstream];
+    return NSFromBytes(GitUi::summaryText(s->model));
 }
 
 - (void)applyGraph:(MCGitGraph *)g {
@@ -1325,16 +1204,16 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     // Keep the selection on the same commit.
     std::string was;
     NSInteger sel = _graphTable.selectedRow;
-    if (_graph && sel >= 0 && sel < (NSInteger)_graph->commits.size())
-        was = _graph->commits[sel].hash;
-    BOOL wasMoreRow = _graph && sel == (NSInteger)_graph->commits.size();
+    if (_graph && sel >= 0 && sel < (NSInteger)_graph->g.commits.size())
+        was = _graph->g.commits[sel].hash;
+    BOOL wasMoreRow = _graph && sel == (NSInteger)_graph->g.commits.size();
     _graph = g;
     [_graphTable reloadData];
     NSInteger pick = -1;
-    for (size_t i = 0; !was.empty() && i < g->commits.size(); i++)
-        if (g->commits[i].hash == was) { pick = (NSInteger)i; break; }
+    for (size_t i = 0; !was.empty() && i < g->g.commits.size(); i++)
+        if (g->g.commits[i].hash == was) { pick = (NSInteger)i; break; }
     // After "Show more", the first of the new commits.
-    if (pick < 0 && wasMoreRow && sel < (NSInteger)g->commits.size()) pick = sel;
+    if (pick < 0 && wasMoreRow && sel < (NSInteger)g->g.commits.size()) pick = sel;
     if (pick >= 0) {
         [_graphTable selectRowIndexes:[NSIndexSet indexSetWithIndex:pick]
                  byExtendingSelection:NO];
@@ -1349,79 +1228,30 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 + (MCGitSnapshot *)snapshotAt:(NSString *)root {
     MCGitSnapshot *s = [MCGitSnapshot new];
     s.rows = @[];
+    GitUi::Snapshot &m = s->model;
     if (!MCGitExecutable()) {
-        s.notice = @"Git was not found. Install the command line tools "
-                    "(xcode-select --install) or git from Homebrew.";
+        m.notice = "Git was not found. Install the command line tools "
+                   "(xcode-select --install) or git from Homebrew.";
         return s;
     }
-    MCGitResult *top = MCGitRunSync(root, @[@"rev-parse", @"--show-toplevel"]);
-    if (!top.ok) {
+    MCGitResult *top = MCGitRunSync(root, NSArgs(GitUi::topLevelArgs()));
+    if (!top.ok || !GitUi::parseTopLevel(Bytes(top.output), m.topLevel, m.gitDir)) {
         if ([top.errorText rangeOfString:@"not a git repository"].location != NSNotFound)
-            s.notice = @"This folder is not in a git repository.";
+            m.notice = "This folder is not in a git repository.";
         else
-            s.errorText = MCGitFailureText(top);
+            m.errorText = MCGitFailureText(top).UTF8String ?: "";
         return s;
     }
-    std::string t((const char *)top.output.bytes, top.output.length);
-    while (!t.empty() && (t.back() == '\n' || t.back() == '\r')) t.pop_back();
-    s.topLevel = NSFromBytes(t);
-    s.inRepository = YES;
-    MCGitResult *st = MCGitRunSync(s.topLevel, @[@"status", @"--porcelain=v2", @"--branch",
-                                                 @"-z", @"--untracked-files=all"]);
+    m.inRepository = true;
+    MCGitResult *st = MCGitRunSync(s.topLevel, NSArgs(GitUi::statusArgs()));
     if (!st.ok) {
-        s.errorText = MCGitFailureText(st);
+        m.errorText = MCGitFailureText(st).UTF8String ?: "";
         return s;
     }
-    Git::Status status = Git::parseStatus(
-        std::string((const char *)st.output.bytes, st.output.length));
-    s.initial = status.initial;
-    s.headOid = status.oid.empty() ? nil : NSFromBytes(status.oid);
-    s.branch = status.branch.empty() ? nil : NSFromBytes(status.branch);
-    s.detached = status.detached;
-    s.upstream = status.upstream.empty() ? nil : NSFromBytes(status.upstream);
-    s.hasAheadBehind = status.hasAheadBehind;
-    s.ahead = status.ahead;
-    s.behind = status.behind;
-    NSString *branch = NSFromBytes(Git::branchLabel(status));
-    if (status.initial) branch = [branch stringByAppendingString:@"  (no commits yet)"];
-    s.branchText = branch;
-
-    NSMutableArray<MCGitRow *> *staged = [NSMutableArray array];
-    NSMutableArray<MCGitRow *> *changes = [NSMutableArray array];
-    for (const Git::Entry &e : status.entries) {
-        if (Git::isStaged(e)) {
-            MCGitRow *r = [MCGitRow new];
-            r.staged = YES;
-            r.letter = (unichar)Git::stagedLetter(e);
-            r.path = NSFromBytes(e.path);
-            r.origPath = e.origPath.empty() ? nil : NSFromBytes(e.origPath);
-            [staged addObject:r];
-        }
-        if (Git::hasUnstaged(e)) {
-            MCGitRow *r = [MCGitRow new];
-            r.letter = (unichar)Git::unstagedLetter(e);
-            r.path = NSFromBytes(e.path);
-            r.untracked = e.untracked;
-            r.unmerged = e.unmerged;
-            [changes addObject:r];
-        }
-    }
-    NSMutableArray<MCGitRow *> *rows = [NSMutableArray array];
-    void (^section)(NSString *, NSArray<MCGitRow *> *, BOOL) =
-        ^(NSString *title, NSArray<MCGitRow *> *items, BOOL isStaged) {
-            if (!items.count) return;
-            MCGitRow *h = [MCGitRow new];
-            h.header = YES;
-            h.staged = isStaged;
-            h.title = [NSString stringWithFormat:@"%@  %lu", title,
-                                                 (unsigned long)items.count];
-            [rows addObject:h];
-            [rows addObjectsFromArray:items];
-        };
-    section(@"Staged changes", staged, YES);
-    section(@"Changes", changes, NO);
+    GitUi::applyStatus(m, Git::parseStatus(Bytes(st.output)));
+    NSMutableArray<MCGitRow *> *rows = [NSMutableArray arrayWithCapacity:m.rows.size()];
+    for (const GitUi::Row &r : m.rows) [rows addObject:[[MCGitRow alloc] initWithModel:r]];
     s.rows = rows;
-    if (!rows.count) s.notice = @"No changes.";
     return s;
 }
 
@@ -1429,11 +1259,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     // Keep the selection on the same file, or failing that at the same place
     // in the same list, so Space can be pressed down a list of files.
     NSInteger sel = _table.selectedRow;
-    MCGitRow *was = sel >= 0 && sel < (NSInteger)_rows.count ? _rows[sel] : nil;
-    NSInteger wasIndex = 0;
-    if (was) {
-        for (NSInteger i = sel; i >= 0 && !_rows[i].header; i--) wasIndex = sel - i;
-    }
+    const std::vector<GitUi::Row> oldRows = ModelRows(_rows);
 
     _inRepository = s.inRepository;
     _topLevel = [s.topLevel copy];
@@ -1453,7 +1279,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
         [self setError:nil info:NO];
     }
     [_table reloadData];
-    BOOL graph = s.inRepository && !s.initial && s.headOid && !s.errorText.length;
+    BOOL graph = GitUi::graphWanted(s->model);
     [self showGraph:graph];
     _graphSummary = graph ? [self summaryFor:s] : nil;
     _summaryLabel.stringValue = _graphSummary ?: @"";
@@ -1463,25 +1289,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
         [_graphTable reloadData];
     }
 
-    NSInteger pick = -1, n = (NSInteger)_rows.count;
-    if (was) {
-        for (NSInteger i = 0; i < n; i++)
-            if (!_rows[i].header && [[_rows[i] key] isEqualToString:[was key]]) { pick = i; break; }
-        if (pick < 0) {
-            // The file left its list: the row now at its place in that list
-            // (or the list's last), else the first file anywhere.
-            NSInteger head = -1;
-            for (NSInteger i = 0; i < n; i++)
-                if (_rows[i].header && _rows[i].staged == was.staged) { head = i; break; }
-            if (head >= 0) {
-                NSInteger count = 0;
-                while (head + 1 + count < n && !_rows[head + 1 + count].header) count++;
-                if (count) pick = head + 1 + MIN(wasIndex, count - 1);
-            }
-            for (NSInteger i = 0; pick < 0 && i < n; i++)
-                if (!_rows[i].header) pick = i;
-        }
-    }
+    NSInteger pick = GitUi::pickAfterRefresh(oldRows, (int)sel, ModelRows(_rows));
     if (pick >= 0) {
         [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:pick] byExtendingSelection:NO];
         [_table scrollRowToVisible:pick];
@@ -1530,55 +1338,28 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 - (void)toggleStageAtRow:(NSInteger)row {
     MCGitRow *r = [self fileRow:row];
     if (!r) { NSBeep(); return; }
-    NSMutableArray *args;
-    if (r.staged) {
-        if (_initial) {
-            // restore --staged needs a HEAD; before the first commit rm
-            // --cached does the same. --force only lets it drop an entry that
-            // differs from the file; with --cached the file is never touched.
-            args = [@[@"--literal-pathspecs", @"rm", @"--cached", @"--force", @"-q", @"--",
-                      r.path] mutableCopy];
-        } else {
-            args = [@[@"--literal-pathspecs", @"restore", @"--staged", @"--", r.path]
-                       mutableCopy];
-            if (r.origPath) [args addObject:r.origPath];   // both halves of a rename
-        }
-    } else {
-        // -A so a deleted file is staged as a deletion.
-        args = [@[@"--literal-pathspecs", @"add", @"-A", @"--", r.path] mutableCopy];
-    }
-    [self runAction:args done:nil];
+    // add -A (a deletion staged as one); restore --staged, both halves of a
+    // rename; rm --cached --force before the first commit, which has no HEAD.
+    [self runAction:NSArgs(GitUi::stageArgs(r->model, _initial)) done:nil];
 }
 
 - (void)commit {
     if (!_inRepository) return;
     NSString *msg = _message.string ?: @"";
-    [self runAction:@[@"commit", @"-m", msg] done:^(MCGitResult *r) {
+    [self runAction:NSArgs(GitUi::commitArgs(msg.UTF8String ?: "")) done:^(MCGitResult *r) {
         if (!r.ok) return;
         [self->_message setString:@""];
         [self->_message setNeedsDisplay:YES];
-        std::string out((const char *)r.output.bytes, r.output.length);
-        size_t nl = out.find('\n');
-        if (nl != std::string::npos) out.resize(nl);
-        [self setError:NSFromBytes(out) info:YES];   // "[main 1a2b3c4] Message"
+        // "[main 1a2b3c4] Message"
+        [self setError:NSFromBytes(GitUi::firstLine(Bytes(r.output))) info:YES];
     }];
 }
 
 - (void)showDiffAtRow:(NSInteger)row {
     MCGitRow *r = [self fileRow:row];
     if (!r || !_topLevel) return;
-    NSMutableArray *args = [@[@"-c", @"core.quotePath=false", @"--literal-pathspecs",
-                              @"diff", @"--no-color", @"--no-ext-diff",
-                              @"--src-prefix=a/", @"--dst-prefix=b/"] mutableCopy];
-    if (r.untracked) {
-        // The whole file as added lines. Exit status 1 means "differs".
-        [args addObjectsFromArray:@[@"--no-index", @"--", @"/dev/null", r.path]];
-    } else if (r.staged) {
-        [args addObjectsFromArray:@[@"--cached", @"-M", @"--", r.path]];
-        if (r.origPath) [args addObject:r.origPath];
-    } else {
-        [args addObjectsFromArray:@[@"--", r.path]];
-    }
+    // Exit status 1 means "differs" for an untracked file's --no-index diff.
+    NSArray *args = NSArgs(GitUi::diffArgs(r->model));
     NSUInteger gen = ++_diffGeneration;
     NSString *dir = _topLevel, *root = self.root;
     NSString *path = [dir stringByAppendingPathComponent:r.path];
@@ -1603,19 +1384,13 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 // combined diff that is usually empty).
 - (void)showCommitAtRow:(NSInteger)row {
     if (!_graph || row < 0 || !_topLevel) return;
-    if (row >= (NSInteger)_graph->commits.size()) {
+    if (row >= (NSInteger)_graph->g.commits.size()) {
         if (_graph.hasMore) [self showMore];
         return;
     }
-    const Git::Commit &c = _graph->commits[row];
-    NSString *hash = NSFromBytes(c.hash);
-    NSString *title = [NSString stringWithFormat:@"%@ %@", NSFromBytes(Git::shortHash(c.hash)),
-                                                 NSFromBytes(c.subject)];
-    NSArray *args = @[@"-c", @"core.quotePath=false", @"show", @"--no-color", @"--no-ext-diff",
-                      @"--src-prefix=a/", @"--dst-prefix=b/", @"-M",
-                      @"--diff-merges=first-parent", @"--stat", @"--patch",
-                      [NSString stringWithFormat:@"--format=%s", Git::showFormat()],
-                      hash, @"--"];
+    const Git::Commit &c = _graph->g.commits[row];
+    NSString *title = NSFromBytes(GitUi::commitTitle(c));
+    NSArray *args = NSArgs(GitUi::showArgs(c.hash));
     NSUInteger gen = ++_diffGeneration;
     NSString *dir = _topLevel, *root = self.root;
     dispatch_async(_queue, ^{
@@ -1634,52 +1409,19 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 - (NSArray<NSString *> *)graphDescriptions {
     NSMutableArray *out = [NSMutableArray array];
     if (!_graph) return out;
-    for (size_t i = 0; i < _graph->commits.size(); i++) {
-        const Git::Commit &c = _graph->commits[i];
-        NSMutableString *line = [NSMutableString stringWithFormat:@"%@ lane=%d",
-            NSFromBytes(Git::shortHash(c.hash)), _graph->rows[i].lane];
-        if (c.hash == _graph->head) [line appendString:@" head"];
-        if (_graph->divergence.outgoing.count(c.hash)) [line appendString:@" out"];
-        if (_graph->divergence.incoming.count(c.hash)) [line appendString:@" in"];
-        [line appendFormat:@" %@", NSFromBytes(c.subject)];
-        auto it = _graph->labels.find(c.hash);
-        if (it != _graph->labels.end()) {
-            NSMutableArray *names = [NSMutableArray array];
-            for (const Git::Ref &r : it->second)
-                [names addObject:[NSString stringWithFormat:@"%@%@",
-                                  r.current ? @"*" : @"", NSFromBytes(r.name)]];
-            [line appendFormat:@" [%@]", [names componentsJoinedByString:@","]];
-        }
-        [out addObject:line];
-    }
-    if (_graph.hasMore) [out addObject:@"(more)"];
+    for (const std::string &line : GitUi::graphDescriptions(_graph->g))
+        [out addObject:NSFromBytes(line) ?: @""];
     return out;
 }
 
 - (NSString *)graphToolTip:(NSInteger)row {
-    if (row >= (NSInteger)_graph->commits.size())
-        return [NSString stringWithFormat:@"Load the next %ld commits", (long)kGraphBatch];
-    const Git::Commit &c = _graph->commits[row];
-    NSMutableString *t = [NSMutableString stringWithFormat:@"%@  %@, %@ (%@)\n%@",
-        NSFromBytes(Git::shortHash(c.hash)), NSFromBytes(c.author), MCGitRelativeText(c.time),
-        MCGitDateText(c.time), NSFromBytes(c.subject)];
-    if (_graph->divergence.outgoing.count(c.hash))
-        [t appendString:@"\nNot pushed yet: on this branch but not its upstream."];
-    if (_graph->divergence.incoming.count(c.hash))
-        [t appendString:@"\nNot pulled yet: on the upstream but not this branch."];
-    auto it = _graph->labels.find(c.hash);
-    if (it != _graph->labels.end()) {
-        NSMutableArray *names = [NSMutableArray array];
-        for (const Git::Ref &r : it->second) [names addObject:NSFromBytes(r.name)];
-        [t appendFormat:@"\n%@", [names componentsJoinedByString:@", "]];
-    }
-    return t;
+    return NSFromBytes(GitUi::graphToolTip(_graph->g, (size_t)row, MCGitNow(), MCGitDate));
 }
 
 // ------------------------------------------------------------ table view
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tv {
     if (tv == _graphTable)
-        return _graph ? (NSInteger)_graph->commits.size() + (_graph.hasMore ? 1 : 0) : 0;
+        return _graph ? (NSInteger)_graph->g.commits.size() + (_graph.hasMore ? 1 : 0) : 0;
     return (NSInteger)_rows.count;
 }
 
@@ -1708,15 +1450,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     MCGitRow *r = _rows[row];
     cell.row = r;
     cell.textColor = _text;
-    if (r.header) {
-        cell.toolTip = nil;
-    } else {
-        NSString *what = r.unmerged ? @"conflict" : r.untracked ? @"untracked"
-                       : r.staged ? @"staged" : @"changed";
-        cell.toolTip = r.origPath
-            ? [NSString stringWithFormat:@"%@ (renamed from %@), %@", r.path, r.origPath, what]
-            : [NSString stringWithFormat:@"%@, %@", r.path, what];
-    }
+    cell.toolTip = r.header ? nil : NSFromBytes(GitUi::rowToolTip(r->model));
     [cell setNeedsDisplay:YES];
     return cell;
 }

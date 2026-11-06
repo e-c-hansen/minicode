@@ -813,12 +813,13 @@ have them either.
 
 ### 10. The Source Control panel (done, September 2026)
 
-Mac: `src/GitPanel.mm` and "Git panel" in `../CLAUDE.md`, over the shared
-`GitStatus` and `GitGraph`. GTK: `src/GitPanel.{h,cpp}` over
-`src/GitModel.{h,cpp}`, which is plain C++ and holds everything that can be
-decided without GTK (rows, keys, the selection after a refresh, argument
-vectors, the summary line, error text, diff and commit text with styles in
-character offsets, graph tooltips). It is tested in `tests/run_tests.cpp`.
+Mac: `src/GitPanel.mm` and "Git panel" in `../CLAUDE.md`. GTK:
+`src/GitPanel.{h,cpp}`. Both, and Android, over the core's
+`../src/GitModel.{h,cpp}` (it lived here until 2026-11-06), which is plain
+C++ and holds everything that can be decided without a GUI (rows, keys, the
+selection after a refresh, argument vectors, the summary line, error text,
+diff and commit text with styles in character offsets, graph tooltips). It
+is tested in the core's `tests/gitmodel_tests.inc`.
 
 - **Toggling.** The sidebar is a `GtkStack` (`App::sidebar` in `main.cpp`)
   holding the tree and, from the first Ctrl+Shift+G, the panel, so the

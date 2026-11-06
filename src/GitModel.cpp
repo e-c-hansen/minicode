@@ -325,12 +325,12 @@ std::string dateText(long long t) {
     return s;
 }
 
-std::string graphToolTip(const Graph& g, size_t row, long long now) {
+std::string graphToolTip(const Graph& g, size_t row, long long now, DateFormat date) {
     if (row >= g.commits.size())
         return "Load the next " + std::to_string(kGraphBatch) + " commits";
     const Git::Commit& c = g.commits[row];
     std::string t = Git::shortHash(c.hash) + "  " + validUtf8(c.author) + ", " +
-                    Git::relativeTime(c.time, now) + " (" + dateText(c.time) + ")\n" +
+                    Git::relativeTime(c.time, now) + " (" + date(c.time) + ")\n" +
                     validUtf8(c.subject);
     if (g.divergence.outgoing.count(c.hash))
         t += "\nNot pushed yet: on this branch but not its upstream.";
@@ -466,7 +466,7 @@ StyledText diffText(const std::string& bytes) {
     return out;
 }
 
-StyledText commitText(const std::string& show, long long now) {
+StyledText commitText(const std::string& show, long long now, DateFormat date) {
     Git::CommitDetail d;
     if (!Git::parseShow(show, d)) return diffText(show);
     StyledText out;
@@ -485,7 +485,7 @@ StyledText commitText(const std::string& show, long long now) {
     else if (d.parents.size() == 1) line("Parent", parents);
     line("Author", d.author + " <" + d.email + ">");
     if (!d.committer.empty()) line("Committer", d.committer);
-    line("Date", dateText(d.time) + " (" + Git::relativeTime(d.time, now) + ")");
+    line("Date", date(d.time) + " (" + Git::relativeTime(d.time, now) + ")");
     out.add("\n", Style::Plain);
     const std::string msg = validUtf8(d.message);
     const size_t nl = msg.find('\n');

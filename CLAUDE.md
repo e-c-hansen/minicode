@@ -129,7 +129,8 @@ goes here first, with tests; the GUI only displays it.
   `applySgr`, `termCharWidth`), `TerminalScreen` (the grid, scrollback, reflow,
   find, mouse encoding), `TermLinks`.
 - `FolderSearch` (Find and Replace in Folder, atomic writes, TODOs),
-  `GitStatus` (status, diffs, git time limits), `GitGraph` (log, refs, lanes).
+  `GitStatus` (status, diffs, git time limits), `GitGraph` (log, refs, lanes),
+  `GitModel` (what every port's Source Control panel shows and runs).
 - `CommandPalette` (matching, modes, Quick Open, symbol rows), `SymbolOutline`
   (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
@@ -1461,9 +1462,16 @@ for full-screen programs. Both can be open at once.
 ## Git panel (all three ports)
 
 Ctrl+Shift+G swaps the tree for `MCGitPanel` (`replaceSubview:with:`, same
-frame). The GTK port (`linux/src/GitPanel`, `GitModel`) and Android
-(`GitPanel.kt`, `git_jni.cpp`, git in Termux through one bash loop) follow its
-rules and wording (`linux/HANDOFF.md` item 10; `android/README.md`, "Source
+frame). All three panels draw from the core's `src/GitModel.{h,cpp}`
+(`GitUi`: rows, the selection after a refresh, every argument vector, the
+summary line, failure text, the graph's build, key, colors and tooltips, and
+diff and commit text as styled runs in characters, which `MCGitStyledText`
+maps to UTF-16; tested in `tests/gitmodel_tests.inc`, `git-ui:*`). It was
+the GTK port's until 2026-11-06, when the Mac's `GitPanel.mm` still had its
+own copy of every rule. The Mac passes its own date format (`DateFormat`,
+the user's locale). A rule or wording changes there, once. The GTK port
+(`linux/src/GitPanel`) and Android (`GitPanel.kt`, `git_jni.cpp`, git in
+Termux through one bash loop) follow the same rules and wording (`linux/HANDOFF.md` item 10; `android/README.md`, "Source
 control"). Logging: `G_MESSAGES_DEBUG=minicode-git` on Linux, `adb shell
 setprop log.tag.MiniCodeGit DEBUG` on Android.
 
@@ -1900,7 +1908,7 @@ session has a display. Check first.
 `linux/HANDOFF.md` (items 1 to 14) and `BUILD-LINUX.md` (build, and what is
 unverified). It shares the highlighter, Markdown, tasks, settings, comments,
 AutoIndent, KeepSorted, FolderSearch, TextFind, LatexDoc, SyncTex, Json,
-LspClient, TermLinks, GitStatus and GitGraph; VTE is its terminal. The core
+LspClient, TermLinks, GitStatus, GitGraph and GitModel; VTE is its terminal. The core
 lists in `linux/meson.build` and `linux/Makefile` must agree
 (`linux:build-lists`; CI builds only with Meson). Its traps are in HANDOFF.md:
 accelerators taking keys from VTE (`updateShellKeys`), the selection color

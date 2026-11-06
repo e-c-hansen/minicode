@@ -8,9 +8,6 @@ project(minicode C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CORE ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../src)
-# The Source Control panel's model is the GTK port's GitModel, which is plain
-# C++ with no GTK in it (tested in linux/tests/run_tests.cpp).
-set(LINUX ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../linux/src)
 
 add_library(minicode SHARED
     minicode_jni.cpp
@@ -39,7 +36,7 @@ add_library(minicode SHARED
     ${CORE}/TermLinks.cpp
     ${CORE}/GitStatus.cpp
     ${CORE}/GitGraph.cpp
-    ${LINUX}/GitModel.cpp)
+    ${CORE}/GitModel.cpp)
 
 target_include_directories(minicode PRIVATE ${CORE})
 target_compile_options(minicode PRIVATE -Wall -Wextra)

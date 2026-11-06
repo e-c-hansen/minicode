@@ -2,9 +2,9 @@
 //
 // Everything that can be decided without a GUI is already written, and
 // tested, for the other ports: the core's GitStatus and GitGraph read what
-// git prints, and the GTK port's GitModel (../../../../../linux/src/GitModel,
-// plain C++ with no GTK in it) turns that into rows, argument vectors,
-// summary and error text, and styled diff text. This file puts those behind
+// git prints, and its GitModel (src/GitModel, which the Mac and GTK panels
+// use too) turns that into rows, argument vectors, summary and error text,
+// and styled diff text. This file puts those behind
 // JNI; GitPanel.kt runs git (through Termux, see GitRunner.kt) and draws.
 //
 // Two handles cross: a Snapshot (one status: branch, rows) and a Graph (one
@@ -18,7 +18,7 @@
 #include <string>
 #include <vector>
 
-#include "../../../../../linux/src/GitModel.h"
+#include "GitModel.h"
 #include "jni_strings.h"
 
 namespace {

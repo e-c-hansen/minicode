@@ -15,6 +15,7 @@
 #import "Harness.h"
 #import "EditorController.h"
 #import "Keymap.h"
+#import "GitPanel.h"
 
 namespace {
 // The controller's FSEvents stream, read through the runtime (it is a
@@ -126,6 +127,41 @@ MC_GUI_SUITE(structure) {
     MCGuiStep(@"done with the window", ^{
         c = nil;
         MCGuiSetKeyWindow(nil);
+    });
+
+    // The Mac's diff text is the core's (GitModel's diffText), its runs
+    // counted in characters and mapped to UTF-16 here: a character outside
+    // the BMP before a line must not shift that line's color.
+    MCGuiStep(@"the diff view colors the core's runs, emoji and Latin-1 included", ^{
+        const char raw[] = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n"
+                           " same \xF0\x9F\x98\x80\n-old \xF0\x9F\x98\x80\n+new caf\xE9\n";
+        NSData *d = [NSData dataWithBytes:raw length:sizeof raw - 1];
+        NSFont *mono = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+        NSAttributedString *a = MCGitDiffText(d, mono);
+        NSString *t = a.string;
+        GCHECK([t containsString:@"+new café"]);
+        auto colorAt = [&](NSString *piece) -> NSColor * {
+            NSRange r = [t rangeOfString:piece];
+            if (r.location == NSNotFound) return nil;
+            return [[a attribute:NSForegroundColorAttributeName atIndex:r.location
+                  effectiveRange:NULL] colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+        };
+        auto isHex = [](NSColor *c, unsigned rgb) {
+            return c && fabs(c.redComponent * 255 - ((rgb >> 16) & 0xFF)) < 1 &&
+                   fabs(c.greenComponent * 255 - ((rgb >> 8) & 0xFF)) < 1 &&
+                   fabs(c.blueComponent * 255 - (rgb & 0xFF)) < 1;
+        };
+        GCHECK(isHex(colorAt(@"-old"), 0xF14C4C));
+        GCHECK(isHex(colorAt(@"+new"), 0x73C991));
+        GCHECK(isHex(colorAt(@"@@ -1,2"), 0x9CA3AF));
+        // The whole added line, to its last character, is green.
+        NSRange added = [t rangeOfString:@"+new café\n"];
+        NSRange eff;
+        [a attribute:NSForegroundColorAttributeName atIndex:added.location effectiveRange:&eff];
+        GCHECK(NSMaxRange(eff) >= NSMaxRange(added));
+        NSFont *f = [a attribute:NSFontAttributeName atIndex:0 effectiveRange:NULL];
+        GCHECK(f && (f.fontDescriptor.symbolicTraits & NSFontDescriptorTraitBold));
+        GCHECK_EQ_STR(MCGitDiffText([NSData data], mono).string, @"No differences to show.");
     });
 
     // `minicode install-skill`, run from the checkout's scripts/ (the

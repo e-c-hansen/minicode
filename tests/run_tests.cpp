@@ -9722,6 +9722,7 @@ static void testMultiCaretOccurrences() {
 #include "terminal_reflow_tests.inc"
 #include "terminal_fuzz.inc"
 #include "control_tests.inc"
+#include "gitmodel_tests.inc"
 #include "agent_index_tests.inc"
 #include "agent_evidence_tests.inc"
 #include "agent_view_tests.inc"
@@ -9771,6 +9772,7 @@ int main() {
     testGitStatus();
     testGitDiff();
     testGitGraph();
+    testGitModel();
     testEditorTabs();
     testFormatter();
     testInstallHints();

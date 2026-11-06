@@ -29,6 +29,7 @@ core_sources = [
   core_dir / 'TermLinks.cpp',
   core_dir / 'GitStatus.cpp',
   core_dir / 'GitGraph.cpp',
+  core_dir / 'GitModel.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -54,8 +55,7 @@ gui_sources = [
   'src/Latex.cpp',
   # Resolves the terminal's Ctrl+click file references; plain C++.
   'src/TermLinkPath.cpp',
-  # The Source Control panel (GitPanel) over its plain C++ half (GitModel).
-  'src/GitModel.cpp',
+  # The Source Control panel, over the core's GitModel (../src).
   'src/GitPanel.cpp',
   # Web pictures in the Markdown preview: the libsoup half (#ifdef-guarded,
   # like Terminal.cpp) over its plain C++ half.
@@ -169,7 +169,7 @@ port_tests = executable('minicode-linux-tests',
              core_dir / 'LatexDoc.cpp', core_dir / 'SyncTex.cpp',
              core_dir / 'TermLinks.cpp',
   core_dir / 'GitStatus.cpp',
-  core_dir / 'GitGraph.cpp', 'src/TermLinkPath.cpp', 'src/GitModel.cpp',
+  core_dir / 'GitGraph.cpp', 'src/TermLinkPath.cpp', core_dir / 'GitModel.cpp',
   'src/WebImageRules.cpp'],
   include_directories : inc,
   install : false)
