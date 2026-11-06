@@ -11,6 +11,7 @@
 #import "QuickLook.h"
 #import "CsvTable.h"
 #import "JsonOutlineView.h"
+#import "AppSettings.h"
 #import <AVFoundation/AVFoundation.h>
 #import <ImageIO/ImageIO.h>
 #import <Quartz/Quartz.h>
@@ -239,6 +240,7 @@ void PressInTree(EditorController *c, unsigned short keyCode, NSString *chars) {
 
 static void CsvSteps(void);
 static void JsonSteps(void);
+static void NotebookSteps(void);
 
 MC_GUI_SUITE(previews) {
     QuietQuickLookPanel();
@@ -405,6 +407,7 @@ MC_GUI_SUITE(previews) {
     });
     CsvSteps();
     JsonSteps();
+    NotebookSteps();
 }
 
 // ---------------------------------------------------------------- CSV
@@ -745,5 +748,131 @@ static void JsonSteps(void) {
     });
     MCGuiWait(@"the outline is read again", 5, ^BOOL {
         return RowStarting(Outline(MCGuiController()), @"added null") >= 0;
+    });
+}
+
+// ---------------------------------------------------------------- notebooks
+namespace {
+
+NSString *PngBase64(void) {
+    NSString *path = Fixture(@"picture.png");
+    return [[NSData dataWithContentsOfFile:path] base64EncodedStringWithOptions:0];
+}
+
+NSString *NotebookText(void) {
+    NSDictionary *nb = @{
+        @"nbformat": @4, @"nbformat_minor": @5,
+        @"metadata": @{@"kernelspec": @{@"language": @"python", @"name": @"python3"},
+                       @"language_info": @{@"name": @"python"}},
+        @"cells": @[
+            @{@"cell_type": @"markdown", @"metadata": @{},
+              @"source": @[@"# Analysis\n", @"Some **bold** words."]},
+            @{@"cell_type": @"code", @"execution_count": @1, @"metadata": @{},
+              @"source": @[@"def double(x):\n", @"    return x * 2\n", @"print(double(21))"],
+              @"outputs": @[
+                  @{@"output_type": @"stream", @"name": @"stdout", @"text": @[@"42\n"]},
+                  @{@"output_type": @"display_data", @"metadata": @{},
+                    @"data": @{@"image/png": PngBase64(), @"text/plain": @[@"<Figure>"]}},
+                  @{@"output_type": @"display_data", @"metadata": @{},
+                    @"data": @{@"text/html": @[@"<table><tr><td>cell one</td></tr></table>"]}},
+                  @{@"output_type": @"error", @"ename": @"KeyError", @"evalue": @"'k'",
+                    @"traceback": @[@"\x1b[0;31mKeyError\x1b[0m: 'k'"]},
+              ]},
+        ],
+    };
+    NSData *d = [NSJSONSerialization dataWithJSONObject:nb options:NSJSONWritingPrettyPrinted error:nil];
+    return [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+}
+
+// The color the text view draws the first `word` of its text in.
+NSColor *ColorOf(NSTextView *tv, NSString *word, NSUInteger from) {
+    NSRange r = [tv.string rangeOfString:word options:0 range:NSMakeRange(from, tv.string.length - from)];
+    if (r.location == NSNotFound) return nil;
+    return [tv.textStorage attribute:NSForegroundColorAttributeName atIndex:r.location effectiveRange:nil];
+}
+
+BOOL SameColor(NSColor *a, NSColor *b) {
+    if (!a || !b) return NO;
+    NSColor *x = [a colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    NSColor *y = [b colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    return fabs(x.redComponent - y.redComponent) < 0.01 && fabs(x.greenComponent - y.greenComponent) < 0.01 &&
+           fabs(x.blueComponent - y.blueComponent) < 0.01;
+}
+
+NSUInteger Attachments(NSTextView *tv) {
+    __block NSUInteger n = 0;
+    [tv.textStorage enumerateAttribute:NSAttachmentAttributeName
+                               inRange:NSMakeRange(0, tv.textStorage.length) options:0
+                            usingBlock:^(id value, NSRange, BOOL *) { if (value) n++; }];
+    return n;
+}
+
+}  // namespace
+
+static void NotebookSteps(void) {
+    MCGuiStep(@"a notebook opens rendered, read-only", ^{
+        MCGuiWriteFile(Fixture(@"analysis.ipynb"), NotebookText());
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"analysis.ipynb")]);
+        GCHECK_EQ_STR(ActiveKind(c), @"notebook");
+        NSTextView *tv = EditorText(c);
+        GCHECK(!tv.editable);
+        GCHECK(!EditorScroll(c).hidden);
+        NSString *s = tv.string;
+        GCHECK([s containsString:@"Analysis\n"]);
+        GCHECK(![s containsString:@"# Analysis"]);              // a heading, not text
+        GCHECK([s containsString:@"def double(x):"]);
+        GCHECK([s containsString:@"42"]);
+        GCHECK([s containsString:@"cell one"]);                  // the HTML's text
+        GCHECK([s containsString:@"KeyError: 'k'"]);
+        GCHECK(![s containsString:@"\x1b"]);                     // colors stripped
+        GCHECK(![s containsString:@"\"cell_type\""]);            // no JSON on show
+        GCHECK(Attachments(tv) == 1);                            // the plot
+        MCGuiSnapshot(c.window.contentView, @"previews-notebook");
+    });
+    MCGuiStep(@"its code is colored by the editor's highlighter", ^{
+        EditorController *c = MCGuiController();
+        NSTextView *tv = EditorText(c);
+        AppSettings *cfg = [AppSettings shared];
+        GCHECK(SameColor(ColorOf(tv, @"def", 0), [cfg syntax:TokenStyle::Keyword]));
+        GCHECK(SameColor(ColorOf(tv, @"return", 0), [cfg syntax:TokenStyle::Keyword]));
+        GCHECK(SameColor(ColorOf(tv, @"2", [tv.string rangeOfString:@"x * "].location),
+                         [cfg syntax:TokenStyle::Number]));
+        // Output is not code: "42" keeps the code block's own color.
+        const NSUInteger out = [tv.string rangeOfString:@"\n42"].location + 1;
+        GCHECK(!SameColor(ColorOf(tv, @"42", out), [cfg syntax:TokenStyle::Number]));
+    });
+    MCGuiStep(@"saved unedited it is untouched; Shift+Cmd+V shows its JSON", ^{
+        EditorController *c = MCGuiController();
+        NSData *before = [NSData dataWithContentsOfFile:Fixture(@"analysis.ipynb")];
+        [c saveCurrentFile:nil];
+        GCHECK([[NSData dataWithContentsOfFile:Fixture(@"analysis.ipynb")] isEqualToData:before]);
+        GCHECK(c.canTogglePreview);
+        [c togglePreview:nil];
+        NSTextView *tv = EditorText(c);
+        GCHECK(tv.editable);
+        GCHECK([tv.string containsString:@"\"cell_type\""]);
+        [c togglePreview:nil];
+        GCHECK(!tv.editable);
+        GCHECK([tv.string containsString:@"def double(x):"]);
+    });
+    MCGuiStep(@"a file that is not a notebook says so", ^{
+        MCGuiWriteFile(Fixture(@"broken.ipynb"), @"{\"cells\": [");
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"broken.ipynb")]);
+        GCHECK([EditorText(c).string containsString:@"This notebook cannot be read"]);
+    });
+    MCGuiStep(@"a Markdown file's fenced code is colored too", ^{
+        MCGuiWriteFile(Fixture(@"notes.md"), @"# Notes\n\n```python\nimport os\nx = 10\n```\n\n"
+                                             @"```\nimport plain\n```\n");
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"notes.md")]);
+        NSTextView *tv = EditorText(c);
+        AppSettings *cfg = [AppSettings shared];
+        GCHECK(SameColor(ColorOf(tv, @"import", 0), [cfg syntax:TokenStyle::Keyword]));
+        GCHECK(SameColor(ColorOf(tv, @"10", 0), [cfg syntax:TokenStyle::Number]));
+        // A block with no language stays plain.
+        const NSUInteger plain = [tv.string rangeOfString:@"import plain"].location;
+        GCHECK(!SameColor(ColorOf(tv, @"import", plain), [cfg syntax:TokenStyle::Keyword]));
     });
 }

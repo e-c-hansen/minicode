@@ -24,6 +24,7 @@ typedef NS_ENUM(NSInteger, MCViewerKind) {
     MCViewerTsv,           // over the text: a table, tab separated
     MCViewerCsvLarge,      // without text: a CSV or TSV too large to edit
     MCViewerJson,          // beside the text: an outline of a JSON file
+    MCViewerNotebook,      // over the text: a Jupyter notebook, rendered
 };
 
 // Files over this many bytes open read-only in the table (MCViewerCsvLarge).
@@ -42,6 +43,11 @@ BOOL MCViewerKindOverText(MCViewerKind kind);
 // A viewer shown beside the editable text (the JSON outline), which
 // Shift+Cmd+V hides and shows again.
 BOOL MCViewerKindBesideText(MCViewerKind kind);
+// A file shown, in preview mode, as Markdown made from it (a notebook):
+// the Markdown preview renders it, read-only, in the text view.
+BOOL MCViewerKindRendersMarkdown(MCViewerKind kind);
+// That Markdown, for a notebook's text (Notebook.h).
+NSString *MCNotebookMarkdown(NSString *json);
 
 @interface MCFileViewers : NSObject
 // Views are made on first use, as subviews of `container` below `sibling`.

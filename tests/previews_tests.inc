@@ -388,3 +388,114 @@ static void testJsonOutline() {
         CHECK(!cap.ok && cap.truncated);
     }
 }
+
+static void testNotebook() {
+    GROUP("notebook:parse");
+    {
+        const std::string nb = R"nb({
+ "cells": [
+  {"cell_type": "markdown", "metadata": {}, "source": ["# Title\n", "Some *text*."]},
+  {"cell_type": "code", "execution_count": 3, "metadata": {}, "source": "print('hi')\nx = 1",
+   "outputs": [
+     {"output_type": "stream", "name": "stdout", "text": ["hi\n"]},
+     {"output_type": "execute_result", "execution_count": 3,
+      "data": {"text/plain": ["1"], "text/html": ["<b>1</b>"]}, "metadata": {}},
+     {"output_type": "display_data", "metadata": {},
+      "data": {"image/png": "iVBORw0K\nGgo=\n", "text/plain": ["<Figure>"]}},
+     {"output_type": "error", "ename": "ValueError", "evalue": "bad",
+      "traceback": ["\u001b[0;31mValueError\u001b[0m: bad"]}
+   ]},
+  {"cell_type": "raw", "metadata": {}, "source": "raw text"},
+  {"cell_type": "code", "execution_count": null, "metadata": {}, "source": [], "outputs": []}
+ ],
+ "metadata": {"kernelspec": {"language": "python", "name": "python3"},
+              "language_info": {"name": "python"}},
+ "nbformat": 4, "nbformat_minor": 5
+})nb";
+        Notebook::Document d;
+        std::string err;
+        CHECK(Notebook::parse(nb, d, &err));
+        CHECK(d.language == "python");
+        CHECK(d.cells.size() == 4);
+        CHECK(d.cells[0].kind == Notebook::Cell::Kind::Markdown);
+        CHECK(d.cells[0].source == "# Title\nSome *text*.");
+        CHECK(d.cells[1].executionCount == 3);
+        CHECK(d.cells[1].outputs.size() == 4);
+        CHECK(d.cells[1].outputs[0].kind == Notebook::Output::Kind::Stream);
+        CHECK(d.cells[1].outputs[0].text == "hi\n");
+        CHECK(d.cells[1].outputs[1].kind == Notebook::Output::Kind::Text);
+        CHECK(d.cells[1].outputs[1].text == "1");   // plain text before HTML
+        CHECK(d.cells[1].outputs[2].kind == Notebook::Output::Kind::Image);
+        CHECK(d.cells[1].outputs[2].base64 == "iVBORw0KGgo=");
+        CHECK(d.cells[1].outputs[3].text == "ValueError: bad\n");   // colors stripped
+        CHECK(d.cells[2].kind == Notebook::Cell::Kind::Raw);
+        CHECK(d.cells[3].executionCount == -1 && d.cells[3].source.empty());
+
+        const std::string md = Notebook::toMarkdown(d);
+        CHECK(md.find("# Title\nSome *text*.\n\n") == 0);
+        CHECK(md.find("```python\nprint('hi')\nx = 1\n```\n") != std::string::npos);
+        CHECK(md.find("```\nhi\n```\n") != std::string::npos);
+        CHECK(md.find("![output](data:image/png;base64,iVBORw0KGgo=)") != std::string::npos);
+        CHECK(md.find("```\nValueError: bad\n```") != std::string::npos);
+        // The preview reads it as intended: the code is a python block.
+        bool sawPython = false, sawImage = false;
+        for (const MdRun &r : MarkdownParser::parse(md)) {
+            if (r.codeBlock && r.lang == "python" && r.text == "print('hi')\n") sawPython = true;
+            if (r.image && r.src.rfind("data:image/png;base64,", 0) == 0) sawImage = true;
+        }
+        CHECK(sawPython);
+        CHECK(sawImage);
+    }
+    GROUP("notebook:edges");
+    {
+        Notebook::Document d;
+        std::string err;
+        CHECK(!Notebook::parse("[1, 2]", d, &err));
+        CHECK(err.find("not a notebook") == 0);
+        CHECK(!Notebook::parse("{", d, &err));
+        CHECK(err.find("not valid JSON") == 0);
+        CHECK(Notebook::markdownForFile("{").find("cannot be read") != std::string::npos);
+        CHECK(Notebook::markdownForFile("{\"cells\": [], \"nbformat\": 4}") ==
+              "*This notebook has no cells.*\n");
+        // Backticks in a cell lengthen its fence.
+        CHECK(Notebook::fenceFor("a ``` b") == "````");
+        CHECK(Notebook::fenceFor("plain") == "```");
+        // An attached picture is inlined.
+        const std::string att = R"nb({"cells": [{"cell_type": "markdown",
+            "source": "![x](attachment:p.png)",
+            "attachments": {"p.png": {"image/png": "AAAA"}}}], "nbformat": 4})nb";
+        CHECK(Notebook::markdownForFile(att).find("![x](data:image/png;base64,AAAA)") == 0);
+        // HTML with no plain text is read as text; a table's cells by tabs.
+        CHECK(Notebook::htmlToText("<table><tr><th>a</th><th>b</th></tr>"
+                                   "<tr><td>1 &amp; 2</td><td>&lt;3</td></tr></table>") ==
+              "a\tb\n1 & 2\t<3");
+        CHECK(Notebook::htmlToText("<style>p{}</style><p>Hi<br>there</p>") == "Hi\nthere");
+        CHECK(Notebook::stripAnsi("\x1b[1;32mok\x1b[0m done") == "ok done");
+        // nbformat 3: worksheets, input, prompt_number, pyout.
+        const std::string v3 = R"nb({"nbformat": 3, "metadata": {"language": "python"},
+            "worksheets": [{"cells": [
+              {"cell_type": "heading", "level": 2, "source": "Old"},
+              {"cell_type": "code", "input": "1+1", "prompt_number": 1, "language": "python",
+               "outputs": [{"output_type": "pyout", "text": ["2"]},
+                           {"output_type": "stream", "stream": "stdout", "text": "x"}]}]}]})nb";
+        CHECK(Notebook::parse(v3, d, &err));
+        CHECK(d.cells.size() == 2);
+        CHECK(d.cells[0].source == "## Old");
+        CHECK(d.cells[1].source == "1+1" && d.cells[1].executionCount == 1);
+        CHECK(d.cells[1].outputs.size() == 2 && d.cells[1].outputs[0].text == "2");
+    }
+    GROUP("md:fence-lang");
+    {
+        std::vector<MdRun> runs = MarkdownParser::parse("```Python {.x}\na = 1\n```\n\n```\nb\n```\n");
+        std::string langs;
+        for (const MdRun &r : runs)
+            if (r.codeBlock) langs += "[" + r.lang + "]";
+        CHECK(langs == "[python][]");
+        CHECK(MarkdownParser::extensionForLanguage("Python") == "py");
+        CHECK(MarkdownParser::extensionForLanguage("c++") == "cpp");
+        CHECK(MarkdownParser::extensionForLanguage("bash") == "sh");
+        CHECK(MarkdownParser::extensionForLanguage("klingon") == "");
+        for (const char *l : {"python", "js", "typescript", "cpp", "go", "rust", "bash", "json", "yaml"})
+            CHECK(SyntaxHighlighter::supports(MarkdownParser::extensionForLanguage(l)));
+    }
+}

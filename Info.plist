@@ -81,6 +81,7 @@
 				<string>env</string>
 				<string>cmake</string>
 				<string>gradle</string>
+				<string>ipynb</string>
 			</array>
 			<key>CFBundleTypeName</key>
 			<string>Source code</string>

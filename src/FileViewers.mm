@@ -4,6 +4,7 @@
 #import "CsvTable.h"
 #import "JsonOutlineView.h"
 #include "FileSniff.h"
+#include "Notebook.h"
 #include <string>
 
 const unsigned long long MCCsvEditableBytes = 50ull * 1000 * 1000;
@@ -31,6 +32,7 @@ MCViewerKind MCViewerKindForFile(NSString *path) {
     case FileSniff::Kind::Csv: return large ? MCViewerCsvLarge : MCViewerCsv;
     case FileSniff::Kind::Tsv: return large ? MCViewerCsvLarge : MCViewerTsv;
     case FileSniff::Kind::Json: return MCViewerJson;
+    case FileSniff::Kind::Notebook: return MCViewerNotebook;
     default: return MCViewerNone;
     }
 }
@@ -45,6 +47,17 @@ BOOL MCViewerKindOverText(MCViewerKind kind) {
 
 BOOL MCViewerKindBesideText(MCViewerKind kind) {
     return kind == MCViewerJson;
+}
+
+BOOL MCViewerKindRendersMarkdown(MCViewerKind kind) {
+    return kind == MCViewerNotebook;
+}
+
+NSString *MCNotebookMarkdown(NSString *json) {
+    const char *c = json.UTF8String;
+    const std::string md = Notebook::markdownForFile(c ? c : "");
+    return [[NSString alloc] initWithBytes:md.data() length:md.size()
+                                  encoding:NSUTF8StringEncoding] ?: @"";
 }
 
 static BOOL IsTsvPath(NSString *path) {

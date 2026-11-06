@@ -32,6 +32,7 @@
 #import "CompareView.h"
 #import "FileViewers.h"
 #import "QuickLook.h"
+#import "MarkdownCode.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #import <AVKit/AVKit.h>                 // video and audio in the editor's slot
 #import <AVFoundation/AVFoundation.h>
@@ -1174,9 +1175,9 @@ static void *kMediaItemContext = &kMediaItemContext;
 // position and selection.
 - (void)recolorEditor {
     if (self.showingMessage || !self.currentPath) return;
-    if (self.isMarkdown && self.previewMode) {
+    if ([self showsRenderedMarkdown]) {
         NSPoint origin = self.editorScroll.contentView.bounds.origin;
-        [self renderMarkdown:self.sourceText];
+        [self renderMarkdown:[self markdownToRender]];
         [self.editorScroll.contentView scrollToPoint:origin];
         [self.editorScroll reflectScrolledClipView:self.editorScroll.contentView];
     } else {
@@ -3818,8 +3819,11 @@ static NSString *MCGroupedCount(long long n) {
                      NSCharacterSet.whitespaceAndNewlineCharacterSet].length == 0;
     // A CSV opens as its table, the text a Shift+Cmd+V away; a JSON file
     // gets an outline beside its text.
-    if (MCViewerKindOverText(viewer) || MCViewerKindBesideText(viewer)) self.viewerKind = viewer;
-    self.previewMode = (self.isMarkdown || self.isLatex || MCViewerKindOverText(viewer)) && !blank;
+    if (MCViewerKindOverText(viewer) || MCViewerKindBesideText(viewer) ||
+        MCViewerKindRendersMarkdown(viewer))
+        self.viewerKind = viewer;
+    self.previewMode = (self.isMarkdown || self.isLatex || MCViewerKindOverText(viewer) ||
+                        MCViewerKindRendersMarkdown(viewer)) && !blank;
     self.savedText = content;
     self.dirty = NO;
     [self recordModDate];
@@ -5186,7 +5190,20 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 
 - (BOOL)canTogglePreview {
     return self.isMarkdown || self.isLatex || MCViewerKindOverText(self.viewerKind) ||
-           MCViewerKindBesideText(self.viewerKind);
+           MCViewerKindBesideText(self.viewerKind) || MCViewerKindRendersMarkdown(self.viewerKind);
+}
+
+// The rendered Markdown preview is up: a Markdown file's, or a notebook's,
+// which is Markdown made from it (read-only: double-click editing, task
+// boxes and the like stay with Markdown files).
+- (BOOL)showsRenderedMarkdown {
+    return (self.isMarkdown || MCViewerKindRendersMarkdown(self.viewerKind)) && self.previewMode;
+}
+
+// The Markdown that preview renders.
+- (NSString *)markdownToRender {
+    if (MCViewerKindRendersMarkdown(self.viewerKind)) return MCNotebookMarkdown(self.sourceText ?: @"");
+    return self.sourceText;
 }
 
 // Decide what to show for the current file/mode.
@@ -5212,9 +5229,9 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     // image, the LaTeX preview) has to give it back to the text view.
     if (self.latex) self.latex.hidden = YES;
     [self relayoutRightArea];
-    if (self.isMarkdown && self.previewMode) {
+    if ([self showsRenderedMarkdown]) {
         self.textView.editable = NO;
-        [self renderMarkdown:self.sourceText];
+        [self renderMarkdown:[self markdownToRender]];
     } else {
         [self displaySourceEditable];
         // The JSON outline, beside the text it follows.
@@ -5618,7 +5635,7 @@ static NSColor *ContrastColor(const Rgba &c) {
         [self downloadTectonicForMath];
         return YES;
     }
-    if (self.isMarkdown && self.previewMode && [link isKindOfClass:NSString.class]) {
+    if ([self showsRenderedMarkdown] && [link isKindOfClass:NSString.class]) {
         [self openMarkdownLink:link];
         return YES;
     }
@@ -7466,6 +7483,7 @@ static NSString *MCFormatDuration(double seconds) {
     NSParagraphStyle *para = nil;
     NSTextBlock *quoteBlock = nil, *codeBox = nil;
     BOOL lineStart = YES;
+    MCMarkdownCodeBlocks *codeColors = [MCMarkdownCodeBlocks new];   // ```python and the like
     for (size_t i = 0; i < runs.size();) {
         const MdRun &r = runs[i];
         if (r.tableId > 0) {
@@ -7495,11 +7513,13 @@ static NSString *MCFormatDuration(double seconds) {
         }
         NSAttributedString *piece = [self markdownRun:r style:para inCell:NO];
         if (piece.length) {
+            if (r.codeBlock) [codeColors noteRun:NSMakeRange(out.length, piece.length) language:r.lang];
             [out appendAttributedString:piece];
             lineStart = [piece.string hasSuffix:@"\n"];
         }
         i++;
     }
+    [codeColors colorPage:out];
     // A page whose math cannot be typeset says why in a line at its top.
     BOOL hasMath = NO;
     for (const MdRun &r : runs) hasMath = hasMath || r.math;
@@ -7677,7 +7697,7 @@ static CGFloat MCMathScaleFor(CGFloat fontSize) {
 
 - (void)showArrivedMathForPath:(NSString *)path {
     _mathRenderQueued = NO;
-    if (!_awaitedMath || !self.isMarkdown || !self.previewMode || !path ||
+    if (!_awaitedMath || ![self showsRenderedMarkdown] || !path ||
         ![path isEqualToString:self.currentPath])
         return;
     [self renderMarkdownKeepingPlace];
@@ -7704,7 +7724,7 @@ static CGFloat MCMathScaleFor(CGFloat fontSize) {
     _webImageRenderQueued = NO;
     // Not after the window closed, another file was opened, or the source
     // took the preview's place (the preview renders anew when it is back).
-    if (!_awaitedWebImages || !self.isMarkdown || !self.previewMode || !path ||
+    if (!_awaitedWebImages || ![self showsRenderedMarkdown] || !path ||
         ![path isEqualToString:self.currentPath])
         return;
     [self renderMarkdownKeepingPlace];
@@ -7767,7 +7787,7 @@ static CGFloat MCMathScaleFor(CGFloat fontSize) {
         }
     }
     const NSUInteger noteBefore = [self mathNoteLength];
-    [self renderMarkdown:self.sourceText];
+    [self renderMarkdown:[self markdownToRender]];
     // The line about tectonic at the top may have come or gone.
     const NSUInteger noteAfter = [self mathNoteLength];
     if (anchor != NSNotFound) {
@@ -8480,7 +8500,8 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
                        : t.isImage ? @"image" : t.isPDF ? @"pdf" : t.isMedia ? @"media"
                        : t.viewerKind == MCViewerQuickLook ? @"quicklook"
                        : t.viewerKind == MCViewerCsv || t.viewerKind == MCViewerTsv ||
-                         t.viewerKind == MCViewerCsvLarge ? @"table" : @"text";
+                         t.viewerKind == MCViewerCsvLarge ? @"table"
+                       : t.viewerKind == MCViewerNotebook ? @"notebook" : @"text";
         NSString *path = t.currentPath ?: t.comparison.path;
         NSString *title = t.comparison ? t.comparison.title
                         : t.isDiff ? t.diffName : t.currentPath.lastPathComponent;
