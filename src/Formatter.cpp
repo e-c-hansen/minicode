@@ -403,6 +403,23 @@ bool fromNodeModules(const std::string& program) {
     return name == "prettier" || name == "biome";
 }
 
+bool insideFolder(const std::string& path, const std::string& root) {
+    if (root.empty() || path.empty() || path[0] != '/' || root[0] != '/') return false;
+    std::string r = root;
+    while (r.size() > 1 && r.back() == '/') r.pop_back();
+    if (r == "/") return true;
+    return path == r || path.rfind(r + "/", 0) == 0;
+}
+
+Source chooseProgram(bool fromSettings, const std::string& local, const std::string& outside,
+                     const std::string& consent) {
+    if (local.empty()) return outside.empty() ? Source::None : Source::Outside;
+    if (consent == "allow") return Source::Local;
+    if (consent == "deny" || (fromSettings && !outside.empty()))
+        return outside.empty() ? Source::None : Source::Outside;
+    return Source::Ask;
+}
+
 bool jsonHasKey(const std::string& text, const std::string& key) {
     Json j;
     return Json::parse(text, j) && j.isObject() && j.has(key);

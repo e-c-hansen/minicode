@@ -9957,6 +9957,7 @@ static void testMultiCaretOccurrences() {
 #include "page_check_tests.inc"
 #include "terminal_links_tests.inc"
 #include "ide_link_tests.inc"
+#include "format_consent_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10004,6 +10005,7 @@ int main() {
     testGitModel();
     testEditorTabs();
     testFormatter();
+    testFormatConsent();
     testInstallHints();
     testLinuxBuildLists();
     testEditorControllerIvars();

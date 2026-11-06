@@ -337,6 +337,25 @@ static NSString *const kEnvConsentDefaultsKey = @"MCPythonEnvironmentConsent";
 NSNotificationName const MCPythonEnvironmentConsentDidChangeNotification =
     @"MCPythonEnvironmentConsentDidChange";
 
+// Also Format Document's answer for a formatter in the folder (Lsp.h).
+NSString *MCFolderToolsConsent(NSString *root) {
+    NSDictionary *all = [MCAppDefaults() dictionaryForKey:kEnvConsentDefaultsKey];
+    id v = all[RealPath(root) ?: @""];
+    return [v isKindOfClass:[NSString class]] ? v : nil;
+}
+
+void MCSetFolderToolsConsent(NSString *root, BOOL allow) {
+    NSString *key = RealPath(root) ?: @"";
+    NSUserDefaults *d = MCAppDefaults();
+    NSMutableDictionary *all = [[d dictionaryForKey:kEnvConsentDefaultsKey] mutableCopy]
+                                   ?: [NSMutableDictionary dictionary];
+    all[key] = allow ? @"allow" : @"deny";
+    [d setObject:all forKey:kEnvConsentDefaultsKey];
+    // Every window on this folder follows, its formatters and servers alike.
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:MCPythonEnvironmentConsentDidChangeNotification object:key];
+}
+
 @implementation LspSession {
     __weak CodeTextView *_tv;
     NSMutableDictionary<NSString *, MCLspEntry *> *_entries;
@@ -1292,9 +1311,7 @@ static BOOL IsRunnable(NSString *path) {
 // ---- the folder's own Python environment
 // "allow", "deny", or nil when the user has not been asked for this folder.
 - (NSString *)folderEnvironmentConsent {
-    NSDictionary *all = [MCAppDefaults() dictionaryForKey:kEnvConsentDefaultsKey];
-    id v = all[[self rootKey]];
-    return [v isKindOfClass:[NSString class]] ? v : nil;
+    return MCFolderToolsConsent(_root);
 }
 
 - (BOOL)folderEnvironmentAllowed {
@@ -1325,15 +1342,7 @@ static BOOL IsRunnable(NSString *path) {
 }
 
 - (void)setFolderEnvironmentAllowed:(BOOL)allow {
-    NSUserDefaults *d = MCAppDefaults();
-    NSMutableDictionary *all = [[d dictionaryForKey:kEnvConsentDefaultsKey] mutableCopy]
-                                   ?: [NSMutableDictionary dictionary];
-    all[[self rootKey]] = allow ? @"allow" : @"deny";
-    [d setObject:all forKey:kEnvConsentDefaultsKey];
-    // Every window on this folder follows, this one included.
-    [[NSNotificationCenter defaultCenter]
-        postNotificationName:MCPythonEnvironmentConsentDidChangeNotification
-                      object:[self rootKey]];
+    MCSetFolderToolsConsent(_root, allow);
 }
 
 // The answer changes which interpreter the Python servers get and where

@@ -8,6 +8,7 @@
 #import "Harness.h"
 #import "EditorController.h"
 #import "Lsp.h"
+#import "TreeDetails.h"   // MCAppDefaults
 #include <sys/stat.h>
 
 namespace {
@@ -98,6 +99,146 @@ MC_GUI_SUITE(format) {
         GCHECK(changes == 0);
         GCHECK_EQ_STR(Text(c).string, original);
         [[NSNotificationCenter defaultCenter] removeObserver:observer];
+        MCGuiSetSettings(@"lsp.enabled = false\n");
+    });
+}
+
+// `make guitest SUITES=format_consent`: a formatter in the project's own
+// .venv runs only once the folder's own programs are allowed, the answer
+// the language servers ask for (MCPythonEnvironmentConsent, one per
+// folder); format.<lang> in the settings never asks while the tool is
+// installed outside the folder (the owner's `format.python = ruff ...`).
+MC_GUI_SUITE(format_consent) {
+    __block EditorController *c = nil;
+    __block id consentBefore = nil;
+    __block NSUInteger alerts = 0;
+    NSString *dir = MCGuiProjectFile(@"fmtc");
+    NSString *file = [dir stringByAppendingPathComponent:@"a.py"];
+    NSString *local = [dir stringByAppendingPathComponent:@".venv/bin/mcfmt"];
+    NSString *localBlack = [dir stringByAppendingPathComponent:@".venv/bin/black"];
+    NSString *outside = [NSHomeDirectory() stringByAppendingPathComponent:@".local/bin/mcfmt"];
+    NSString *ranLocal = [MCGuiScratch() stringByAppendingPathComponent:@"fmtc-local-ran"];
+    NSString *ranOutside = [MCGuiScratch() stringByAppendingPathComponent:@"fmtc-outside-ran"];
+    NSString *ranBlack = [MCGuiScratch() stringByAppendingPathComponent:@"fmtc-black-ran"];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *(^script)(NSString *) = ^NSString *(NSString *marker) {
+        return [NSString stringWithFormat:
+            @"#!/bin/sh\n/usr/bin/touch '%@'\nexec /usr/bin/sed -E 's/^x=1$/x = 1/'\n", marker];
+    };
+    void (^forget)(void) = ^{
+        [MCAppDefaults() removeObjectForKey:@"MCPythonEnvironmentConsent"];
+    };
+    NSString *(^answer)(void) = ^NSString * { return MCFolderToolsConsent(MCGuiProject()); };
+    BOOL (^ran)(NSString *) = ^BOOL(NSString *p) { return [fm fileExistsAtPath:p]; };
+
+    MCGuiStep(@"mcfmt in the folder's fmtc/.venv and in ~/.local/bin; format.python = mcfmt", ^{
+        consentBefore = [MCAppDefaults() objectForKey:@"MCPythonEnvironmentConsent"];
+        forget();
+        MCGuiWriteFile(file, @"x=1\n");
+        Script(local, script(ranLocal));
+        Script(outside, script(ranOutside));
+        MCGuiSetSettings(@"lsp.enabled = false\nformat.python = mcfmt\n");
+        c = MCGuiController();
+        GCHECK([c showFile:file]);
+        alerts = MCGuiAlertsShown().count;
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"formatted by the copy outside the folder", 15, ^BOOL {
+        return [Text(c).string isEqualToString:@"x = 1\n"];
+    });
+    MCGuiStep(@"no question asked, the folder's copy not run, nothing stored", ^{
+        GCHECK(MCGuiAlertsShown().count == alerts);
+        GCHECK(ran(ranOutside));
+        GCHECK(!ran(ranLocal));
+        GCHECK(answer() == nil);
+        [Text(c).undoManager undo];
+        GCHECK_EQ_STR(Text(c).string, @"x=1\n");
+        [fm removeItemAtPath:outside error:nil];
+        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);   // Don't Allow
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"only the folder has it: asked, Don't Allow, a note", 15, ^BOOL {
+        return MCGuiAlertsShown().count == alerts + 1 &&
+               [[c valueForKey:@"lastFormatNote"] containsString:@"not allowed"];
+    });
+    MCGuiStep(@"the question named the tool and its folder; nothing ran; deny kept", ^{
+        NSString *asked = MCGuiAlertsShown().lastObject;
+        MCGuiNote(@"asked: %@; the note: %@", asked, [c valueForKey:@"lastFormatNote"]);
+        GCHECK([asked containsString:@"mcfmt"] && [asked containsString:@"fmtc/.venv"]);
+        GCHECK(!ran(ranLocal));
+        GCHECK_EQ_STR(Text(c).string, @"x=1\n");
+        GCHECK_EQ_STR(answer(), @"deny");
+        [c setValue:nil forKey:@"lastFormatNote"];
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"formatting again: the note at once", 15, ^BOOL {
+        return [[c valueForKey:@"lastFormatNote"] containsString:@"not allowed"];
+    });
+    MCGuiStep(@"not asked again, still nothing ran; then forgotten, and Allow", ^{
+        GCHECK(MCGuiAlertsShown().count == alerts + 1);
+        GCHECK(!ran(ranLocal));
+        forget();
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);   // Allow
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"Allow: the folder's copy formats", 15, ^BOOL {
+        return [Text(c).string isEqualToString:@"x = 1\n"];
+    });
+    MCGuiStep(@"asked once, the folder's copy ran, allow kept", ^{
+        GCHECK(MCGuiAlertsShown().count == alerts + 2);
+        GCHECK(ran(ranLocal));
+        GCHECK_EQ_STR(answer(), @"allow");
+        [Text(c).undoManager undo];
+        [fm removeItemAtPath:ranLocal error:nil];
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"a second format runs it without asking", 15, ^BOOL {
+        return [Text(c).string isEqualToString:@"x = 1\n"];
+    });
+    MCGuiStep(@"the answer persists", ^{
+        GCHECK(MCGuiAlertsShown().count == alerts + 2);
+        GCHECK(ran(ranLocal));
+        [Text(c).undoManager undo];
+        [fm removeItemAtPath:ranLocal error:nil];
+        // The project chooses Black ([tool.black]) and has it in its .venv:
+        // asked, whatever black is installed elsewhere; Cancel stores
+        // nothing and runs nothing.
+        forget();
+        MCGuiWriteFile([dir stringByAppendingPathComponent:@"pyproject.toml"],
+                       @"[tool.black]\nline-length = 88\n");
+        Script(localBlack, script(ranBlack));
+        MCGuiSetSettings(@"lsp.enabled = false\n");
+        MCGuiAnswerAlerts(@[@(NSAlertThirdButtonReturn)]);   // Cancel
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"the project's black: asked", 15, ^BOOL {
+        return MCGuiAlertsShown().count == alerts + 3;
+    });
+    MCGuiPause(0.5);   // before a negative check: black must not start
+    MCGuiStep(@"Cancel: black not run, nothing stored, the buffer as it was", ^{
+        GCHECK([MCGuiAlertsShown().lastObject containsString:@"black"]);
+        GCHECK(!ran(ranBlack));
+        GCHECK(answer() == nil);
+        GCHECK_EQ_STR(Text(c).string, @"x=1\n");
+        // format.on-save: Cmd+S asks too, and Don't Allow saves unformatted.
+        [fm removeItemAtPath:[dir stringByAppendingPathComponent:@"pyproject.toml"] error:nil];
+        MCGuiSetSettings(@"lsp.enabled = false\nformat.python = mcfmt\nformat.on-save = true\n");
+        [Text(c) insertText:@"y=2\n" replacementRange:NSMakeRange(Text(c).string.length, 0)];
+        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);   // Don't Allow
+        [c saveCurrentFile:c];
+    });
+    MCGuiWait(@"Cmd+S: asked, then saved as typed", 15, ^BOOL {
+        return MCGuiAlertsShown().count == alerts + 4 &&
+               [Disk(file) isEqualToString:@"x=1\ny=2\n"];
+    });
+    MCGuiStep(@"nothing from the folder ran; put everything back", ^{
+        GCHECK(!ran(ranLocal));
+        GCHECK_EQ_STR(answer(), @"deny");
+        if (consentBefore)
+            [MCAppDefaults() setObject:consentBefore forKey:@"MCPythonEnvironmentConsent"];
+        else
+            forget();
+        [fm removeItemAtPath:dir error:nil];
         MCGuiSetSettings(@"lsp.enabled = false\n");
     });
 }
