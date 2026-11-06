@@ -9,11 +9,13 @@
 #import "EditorController.h"
 #import "FileViewers.h"
 #import "QuickLook.h"
+#import "CsvTable.h"
 #import <AVFoundation/AVFoundation.h>
 #import <ImageIO/ImageIO.h>
 #import <Quartz/Quartz.h>
 #import <objc/runtime.h>
 #include <zlib.h>
+#include <string>
 
 namespace {
 
@@ -234,6 +236,8 @@ void PressInTree(EditorController *c, unsigned short keyCode, NSString *chars) {
 
 }  // namespace
 
+static void CsvSteps(void);
+
 MC_GUI_SUITE(previews) {
     QuietQuickLookPanel();
     NSFileManager *fm = [NSFileManager defaultManager];
@@ -396,5 +400,213 @@ MC_GUI_SUITE(previews) {
         GCHECK([[MCQuickLookPanel shared].items.firstObject.path isEqualToString:now]);
         [[MCQuickLookPanel shared] close];
         GCHECK(![MCQuickLookPanel shared].shown);
+    });
+    CsvSteps();
+}
+
+// ---------------------------------------------------------------- CSV
+namespace {
+
+NSString *const kCsvText =
+    @"id,name,notes\n"
+    @"1,\"Smith, J\",\"line one\nline two\"\n"
+    @"2,Doe,plain\n"
+    @"3,\"Roe, R\",\"a, b, c\"\n";
+
+NSData *Bytes(NSString *path) { return [NSData dataWithContentsOfFile:path]; }
+NSString *Text(NSString *path) {
+    return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+}
+
+// How many lines differ between two texts, line by line.
+NSUInteger ChangedLines(NSString *a, NSString *b) {
+    NSArray *x = [a componentsSeparatedByString:@"\n"], *y = [b componentsSeparatedByString:@"\n"];
+    NSUInteger n = 0;
+    for (NSUInteger i = 0; i < MAX(x.count, y.count); i++)
+        if (i >= x.count || i >= y.count || ![x[i] isEqualToString:y[i]]) n++;
+    return n;
+}
+
+MCCsvTableView *Csv(EditorController *c) { return Viewers(c).csv; }
+
+// An edit as one undo step of its own. Steps run from timers, where the
+// group the undo manager opens by itself is never closed (Harness.h), so
+// it is closed first, or every edit since would undo as one.
+void OwnUndoGroup(NSUndoManager *u, void (^block)(void)) {
+    if (u.groupsByEvent && u.groupingLevel > 0) [u endUndoGrouping];
+    MCGuiUndoGroup(u, block);
+}
+BOOL Dirty(EditorController *c) { return [ActiveTab(c)[@"dirty"] boolValue]; }
+
+}  // namespace
+
+static void CsvSteps(void) {
+    MCGuiStep(@"CSV fixtures", ^{
+        MCGuiWriteFile(Fixture(@"people.csv"), kCsvText);
+        MCGuiWriteFile(Fixture(@"crlf.csv"), @"a;b\r\n\"x; y\";2\r\n");
+        MCGuiWriteFile(Fixture(@"cols.tsv"), @"k\tv\nalpha\tone, two\n");
+    });
+    MCGuiStep(@"a CSV opens as a table, the text view hidden", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"people.csv")]);
+        GCHECK_EQ_STR(ActiveKind(c), @"table");
+        MCCsvTableView *t = Csv(c);
+        GCHECK(t != nil && !t.hidden);
+        GCHECK(EditorScroll(c).hidden);
+        GCHECK(t.editable);
+        GCHECK(t.rowCount == 4 && t.columnCount == 3);
+        GCHECK_EQ_STR([t cellAtRow:1 column:1], @"Smith, J");
+        GCHECK_EQ_STR([t cellAtRow:1 column:2], @"line one\nline two");
+        GCHECK(t.table.numberOfRows == 4 && t.table.numberOfColumns == 4);   // # and A..C
+        GCHECK_EQ_STR(t.table.tableColumns[1].title, @"A");
+        GCHECK([t.infoText hasPrefix:@"4 rows, 3 columns, comma separated"]);
+        GCHECK(c.canTogglePreview);
+        GCHECK(!Dirty(c));
+        MCGuiSnapshot(c.window.contentView, @"previews-csv");
+    });
+    MCGuiStep(@"saved with no edits it comes back byte-identical", ^{
+        EditorController *c = MCGuiController();
+        NSData *before = Bytes(Fixture(@"people.csv"));
+        [c saveCurrentFile:nil];
+        GCHECK([Bytes(Fixture(@"people.csv")) isEqualToData:before]);
+    });
+    MCGuiStep(@"one cell edit changes one line, unsaved until Cmd+S", ^{
+        EditorController *c = MCGuiController();
+        MCCsvTableView *t = Csv(c);
+        GCHECK([t setCell:@"edited" row:2 column:2]);
+        GCHECK(Dirty(c));
+        GCHECK_EQ_STR(Text(Fixture(@"people.csv")), kCsvText);   // the disk is untouched
+        [c saveCurrentFile:nil];
+        NSString *now = Text(Fixture(@"people.csv"));
+        GCHECK(ChangedLines(kCsvText, now) == 1);
+        GCHECK([now containsString:@"\n2,Doe,edited\n"]);
+        GCHECK([now containsString:@"\"line one\nline two\""]);
+        GCHECK(!Dirty(c));
+    });
+    MCGuiStep(@"undo and redo go through the tab's undo manager", ^{
+        EditorController *c = MCGuiController();
+        MCCsvTableView *t = Csv(c);
+        GCHECK([(id<NSMenuItemValidation>)t.table validateMenuItem:[[NSMenuItem alloc] initWithTitle:@"Undo"
+                                                                     action:@selector(undo:)
+                                                              keyEquivalent:@""]]);
+        [(id)t.table undo:nil];
+        GCHECK_EQ_STR([t cellAtRow:2 column:2], @"plain");
+        GCHECK(Dirty(c));   // differs from the saved file
+        [(id)t.table redo:nil];
+        GCHECK_EQ_STR([t cellAtRow:2 column:2], @"edited");
+        GCHECK(!Dirty(c));
+    });
+    MCGuiStep(@"a cell typed in the table's own editor", ^{
+        EditorController *c = MCGuiController();
+        MCCsvTableView *t = Csv(c);
+        [c.window makeFirstResponder:t.table];
+        [t.table editColumn:1 row:3 withEvent:nil select:YES];
+        NSText *editor = t.table.currentEditor;
+        GCHECK(editor != nil);
+        editor.string = @"0";
+        OwnUndoGroup([c valueForKeyPath:@"textView.undoManager"], ^{
+            [c.window makeFirstResponder:t.table];   // ends editing, as a click away does
+        });
+        GCHECK_EQ_STR([t cellAtRow:3 column:0], @"0");
+        GCHECK(Dirty(c));
+    });
+    MCGuiStep(@"rows and columns come and go from the right click menu", ^{
+        EditorController *c = MCGuiController();
+        MCCsvTableView *t = Csv(c);
+        NSMenu *m = [t menuForRow:1 column:2];   // row 1, column B
+        NSMutableArray *titles = [NSMutableArray array];
+        for (NSMenuItem *i in m.itemArray) if (i.title.length) [titles addObject:i.title];
+        GCHECK([titles containsObject:@"Insert Row Below"]);
+        GCHECK([titles containsObject:@"Delete Column"]);
+        GCHECK([titles containsObject:@"Adjust Settings…"]);
+        // Each edit its own undo group, as each click would be.
+        NSUndoManager *u = [c valueForKeyPath:@"textView.undoManager"];
+        NSMenuItem *below = [m itemWithTitle:@"Insert Row Below"];
+        OwnUndoGroup(u, ^{ [NSApp sendAction:below.action to:below.target from:below]; });
+        GCHECK(t.rowCount == 5);
+        GCHECK_EQ_STR([t cellAtRow:2 column:0], @"");
+        NSMenuItem *delCol = [m itemWithTitle:@"Delete Column"];
+        OwnUndoGroup(u, ^{ [NSApp sendAction:delCol.action to:delCol.target from:delCol]; });
+        GCHECK(t.columnCount == 2);
+        GCHECK_EQ_STR([t cellAtRow:0 column:1], @"notes");
+        OwnUndoGroup(u, ^{ GCHECK([t insertColumnAt:0]); });
+        GCHECK(t.columnCount == 3);
+        OwnUndoGroup(u, ^{ GCHECK([t deleteRowAt:2]); });
+        GCHECK(t.rowCount == 4);
+    });
+    MCGuiStep(@"undo walks back through them, one step each", ^{
+        EditorController *c = MCGuiController();
+        MCCsvTableView *t = Csv(c);
+        for (int i = 0; i < 4; i++) [(id)t.table undo:nil];
+        GCHECK_EQ_STR([t cellAtRow:0 column:1], @"name");
+        GCHECK(t.rowCount == 4 && t.columnCount == 3);
+        GCHECK_EQ_STR([t cellAtRow:3 column:0], @"0");   // the typed cell stays
+    });
+    MCGuiStep(@"Shift+Cmd+V shows the text and back, edits carried both ways", ^{
+        EditorController *c = MCGuiController();
+        [c togglePreview:nil];
+        GCHECK(!EditorScroll(c).hidden);
+        GCHECK(Csv(c).hidden);
+        NSTextView *tv = EditorText(c);
+        GCHECK(tv.editable);
+        GCHECK([tv.string hasPrefix:@"id,name,notes\n"]);
+        [tv insertText:@"key" replacementRange:NSMakeRange(0, 2)];
+        [c togglePreview:nil];
+        GCHECK(!Csv(c).hidden);
+        GCHECK(EditorScroll(c).hidden);
+        GCHECK_EQ_STR([Csv(c) cellAtRow:0 column:0], @"key");
+        GCHECK(c.window.firstResponder == Csv(c).table);
+    });
+    MCGuiStep(@"semicolons and CRLF are kept, a TSV gets tabs", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"crlf.csv")]);
+        MCCsvTableView *t = Csv(c);
+        GCHECK_EQ_STR([t cellAtRow:1 column:0], @"x; y");
+        GCHECK([t.infoText containsString:@"semicolon"]);
+        [t setCell:@"3" row:1 column:1];
+        [c saveCurrentFile:nil];
+        GCHECK_EQ_STR(Text(Fixture(@"crlf.csv")), @"a;b\r\n\"x; y\";3\r\n");
+        GCHECK([c showFile:Fixture(@"cols.tsv")]);
+        GCHECK_EQ_STR(ActiveKind(c), @"table");
+        GCHECK_EQ_STR([Csv(c) cellAtRow:1 column:1], @"one, two");
+        GCHECK([Csv(c).infoText containsString:@"tab separated"]);
+    });
+    MCGuiStep(@"a tab switch keeps the table's unsaved edits", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"people.csv")]);
+        GCHECK_EQ_STR(ActiveKind(c), @"table");
+        GCHECK_EQ_STR([Csv(c) cellAtRow:0 column:0], @"key");
+        GCHECK(Dirty(c));
+        [c saveCurrentFile:nil];
+        GCHECK([Text(Fixture(@"people.csv")) hasPrefix:@"key,name,notes\n"]);
+    });
+    MCGuiStep(@"a CSV over 50 MB opens read-only with its first 100,000 rows", ^{
+        EditorController *c = MCGuiController();
+        std::string big = "n,name,value\n";
+        big.reserve(52 * 1000 * 1000);
+        char line[64];
+        for (int i = 0; big.size() <= MCCsvEditableBytes; i++) {
+            int n = snprintf(line, sizeof line, "%d,\"row %d, quoted\",%d.5\n", i, i, i * 3);
+            big.append(line, (size_t)n);
+        }
+        NSString *path = Fixture(@"huge.csv");
+        [[NSData dataWithBytes:big.data() length:big.size()] writeToFile:path atomically:NO];
+        NSDate *mtime = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil]
+                            .fileModificationDate;
+        GCHECK([c showFile:path]);
+        GCHECK_EQ_STR(ActiveKind(c), @"table");
+        MCCsvTableView *t = Csv(c);
+        GCHECK(!t.editable);
+        GCHECK(t.rowCount == MCCsvLargeRows);
+        GCHECK(t.truncated);
+        GCHECK_EQ_STR([t cellAtRow:1 column:1], @"row 0, quoted");
+        GCHECK([t.infoText hasPrefix:@"Read-only"]);
+        GCHECK(![t setCell:@"x" row:1 column:1]);
+        GCHECK(!c.canTogglePreview);
+        [c saveCurrentFile:nil];
+        NSDictionary *after = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+        GCHECK([after.fileModificationDate isEqualToDate:mtime]);
+        GCHECK(after.fileSize == big.size());
+        [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
     });
 }

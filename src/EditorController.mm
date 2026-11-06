@@ -3661,9 +3661,40 @@ static NSString *MCGroupedCount(long long n) {
 }
 
 - (MCFileViewers *)viewers {
-    if (!_viewers)
+    if (!_viewers) {
         _viewers = [[MCFileViewers alloc] initWithContainer:self.rightArea below:self.termDivider];
+        __weak EditorController *weakSelf = self;
+        _viewers.onTextEdited = ^(NSString *text, NSString *name) {
+            [weakSelf viewerEditedText:text actionName:name];
+        };
+        _viewers.undoManagerProvider = ^NSUndoManager * {
+            EditorController *me = weakSelf;
+            return me ? me->_activeTab.undoManager : nil;
+        };
+    }
     return _viewers;
+}
+
+// An edit made in a viewer over the text (a cell of a CSV table): the
+// file's new text becomes the tab's, dirty and undoable like typing.
+- (void)viewerEditedText:(NSString *)text actionName:(NSString *)name {
+    [self setViewerText:text actionName:name reshow:NO];
+}
+
+- (void)setViewerText:(NSString *)text actionName:(NSString *)name reshow:(BOOL)reshow {
+    NSString *old = self.sourceText ?: @"";
+    if (!text || [text isEqualToString:old]) return;
+    NSUndoManager *undo = _activeTab.undoManager;
+    __weak EditorController *weakSelf = self;
+    [undo registerUndoWithTarget:self handler:^(EditorController *target) {
+        (void)target;
+        [weakSelf setViewerText:old actionName:name reshow:YES];
+    }];
+    [undo setActionName:name];
+    self.sourceText = text;
+    [self noteEdited];
+    [self updateTitle];
+    if (reshow) [self refreshDisplay];   // an undo: the viewer (or the text) shows it
 }
 
 // Show the active tab's file in a viewer that holds no text (Quick Look,
@@ -3785,7 +3816,9 @@ static NSString *MCGroupedCount(long long n) {
     // empty: a blank preview of a new file looks like nothing opened.
     BOOL blank = [content stringByTrimmingCharactersInSet:
                      NSCharacterSet.whitespaceAndNewlineCharacterSet].length == 0;
-    self.previewMode = (self.isMarkdown || self.isLatex) && !blank;
+    // A CSV opens as its table; the text is a Shift+Cmd+V away.
+    if (MCViewerKindOverText(viewer)) self.viewerKind = viewer;
+    self.previewMode = (self.isMarkdown || self.isLatex || MCViewerKindOverText(viewer)) && !blank;
     self.savedText = content;
     self.dirty = NO;
     [self recordModDate];
@@ -5150,7 +5183,9 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     [self autoSaveOnFocusChange];
 }
 
-- (BOOL)canTogglePreview { return self.isMarkdown || self.isLatex; }
+- (BOOL)canTogglePreview {
+    return self.isMarkdown || self.isLatex || MCViewerKindOverText(self.viewerKind);
+}
 
 // Decide what to show for the current file/mode.
 - (void)refreshDisplay {
@@ -5159,6 +5194,18 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
         [self showLatexPreview];
         return;
     }
+    // A viewer over the text (a CSV table) holds the slot in preview mode;
+    // the hidden text view holds nothing, and saving writes the tab's text.
+    if (self.previewMode && MCViewerKindOverText(self.viewerKind)) {
+        if (self.latex) self.latex.hidden = YES;
+        self.textView.editable = NO;
+        _liveHighlight = NO;
+        [self.textView.textStorage setAttributedString:[NSAttributedString new]];
+        [self.viewers showText:self.sourceText ?: @"" kind:self.viewerKind path:self.currentPath];
+        [self relayoutRightArea];
+        return;
+    }
+    if (!MCViewerKindWithoutText(self.viewerKind)) [_viewers clear];
     // Always relay out: whatever held the editor's slot before (a PDF, an
     // image, the LaTeX preview) has to give it back to the text view.
     if (self.latex) self.latex.hidden = YES;
@@ -7104,6 +7151,8 @@ static NSUInteger MCLineStart(NSString *text, int line) {
         if (!NSIsEmptyRect(r)) [self scrollEditorToY:NSMinY(r) - _sourceCaretOffset];
     }
     if (!self.previewMode) [self.window makeFirstResponder:tv];
+    else if (MCViewerKindOverText(self.viewerKind) && _viewers.focusView)
+        [self.window makeFirstResponder:_viewers.focusView];
 }
 
 // Where character `i` of the editor is drawn, in the text view's coordinates;
@@ -8417,7 +8466,9 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
     for (MCTab *t in _tabs) {
         NSString *kind = t.comparison ? @"diff" : t.isDiff ? (t.diffIsCommit ? @"commit" : @"git-diff")
                        : t.isImage ? @"image" : t.isPDF ? @"pdf" : t.isMedia ? @"media"
-                       : t.viewerKind == MCViewerQuickLook ? @"quicklook" : @"text";
+                       : t.viewerKind == MCViewerQuickLook ? @"quicklook"
+                       : t.viewerKind == MCViewerCsv || t.viewerKind == MCViewerTsv ||
+                         t.viewerKind == MCViewerCsvLarge ? @"table" : @"text";
         NSString *path = t.currentPath ?: t.comparison.path;
         NSString *title = t.comparison ? t.comparison.title
                         : t.isDiff ? t.diffName : t.currentPath.lastPathComponent;
