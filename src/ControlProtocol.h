@@ -134,6 +134,13 @@ CliCommand parseCommandLine(const std::vector<std::string>& argv, const std::str
                             const std::function<bool(const std::string&)>& exists);
 // Whether `word` is one of the subcommands (the launcher passes those on).
 bool isSubcommand(const std::string& word);
+// Whether the command line starts minicode when none is running. Reads
+// (state, selection, term-output) do not: there would be nothing to read,
+// and an agent should not reopen an app the user has just quit.
+bool launchesApp(const std::string& cmd);
+// Whether `ref` may be handed to git as a revision: not empty, and not
+// starting with "-" (which git would read as an option).
+bool isSafeRef(const std::string& ref);
 // The help text for every subcommand, or for one.
 std::string usageText(const std::string& topic = "");
 
@@ -143,8 +150,11 @@ std::string usageText(const std::string& topic = "");
 bool tourStops(const std::string& text, const std::string& cwd, const std::string& home,
                Json& stops, std::string& error);
 
-// Note text as shown: control characters and line breaks become spaces,
-// runs of spaces one, trimmed, cut to kMaxNoteChars characters with "…".
+// Note text as shown: control characters (C0 and C1), line breaks and the
+// line and paragraph separators become spaces, runs of spaces one; bidi
+// controls (U+200E-200F, U+202A-202E, U+2066-2069) are dropped; trimmed, and
+// cut to kMaxNoteChars characters with "…". The app cleans every note it is
+// sent, not only the command line's.
 std::string cleanNoteText(const std::string& text);
 // Text cut to at most `maxBytes` bytes on a UTF-8 character boundary.
 std::string clipUtf8(const std::string& text, size_t maxBytes);
@@ -158,6 +168,12 @@ std::string socketName(int pid);
 struct SocketEntry { int pid; int64_t started; };
 int chooseSocket(const std::vector<SocketEntry>& found, int wantPid,
                  const std::function<bool(int)>& alive);
+// Every candidate in the order to try them: the live ones, newest first,
+// each pid once (the same one can be found in two folders), or only
+// `wantPid`. The command line moves on to the next when one refuses the
+// connection (a socket left by a process whose pid was reused).
+std::vector<int> rankSockets(const std::vector<SocketEntry>& found, int wantPid,
+                             const std::function<bool(int)>& alive);
 
 // JSON with two-space indents, for `state --pretty`.
 std::string prettyJson(const Json& value);
