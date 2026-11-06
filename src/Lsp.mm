@@ -402,11 +402,21 @@ NSNotificationName const MCPythonEnvironmentConsentDidChangeNotification =
 
     // Go to Symbol: answers for an older request are dropped.
     int _symbolGen, _workspaceGen;
-    NSMutableArray<NSArray *> *_workspaceRequests;   // [server, request id] still out
+    // [server, request id, answer block] still out; a server that exits
+    // gets its answer block called with nothing, so the search finishes.
+    NSMutableArray<NSArray *> *_workspaceRequests;
+}
+
+// Every window's session, so a workspace edit can see other windows' tabs.
+static NSHashTable<LspSession *> *AllSessions(void) {
+    static NSHashTable<LspSession *> *all;
+    if (!all) all = [NSHashTable weakObjectsHashTable];
+    return all;
 }
 
 - (instancetype)initWithTextView:(CodeTextView *)textView root:(NSString *)root {
     if (!(self = [super init])) return nil;
+    [AllSessions() addObject:self];
     _tv = textView;
     _root = [root copy];
     _entries = [NSMutableDictionary dictionary];
@@ -880,6 +890,7 @@ NSNotificationName const MCPythonEnvironmentConsentDidChangeNotification =
 
 - (void)serverExited:(MCLspServer *)server {
     [self forgetDocumentsOf:server];
+    [self finishWorkspaceSymbolsOf:server];
     MCLspEntry *e = [self entryOf:server];
     if (!e || server.stopping) {
         [self dropServer:server];
@@ -921,6 +932,7 @@ NSNotificationName const MCPythonEnvironmentConsentDidChangeNotification =
     if (!s) return;
     e.server = nil;
     [self forgetDocumentsOf:s];
+    [self finishWorkspaceSymbolsOf:s];
     [self dropServer:s];
     [s stop];
 }
@@ -3015,11 +3027,14 @@ static NSString *ErrorText(const Json &error) {
     __weak LspSession *weakSelf = self;
     for (NSUInteger i = 0; i < servers.count; i++) {
         MCLspServer *server = servers[i];
-        int rid = server.client.workspaceSymbols(Std(query), [weakSelf, gen, answers, pending, i,
-                                                              done](const Json &r, const Json &e) {
+        auto answered = std::make_shared<bool>(false);
+        // One answer per server: its reply, or nothing when it exits first
+        // (serverExited:), which used to leave the palette searching.
+        void (^answer)(const Json *) = ^(const Json *r) {
             LspSession *s = weakSelf;
-            if (!s || gen != s->_workspaceGen) return;
-            if (e.isNull()) (*answers)[i] = Lsp::parseWorkspaceSymbols(r);
+            if (!s || gen != s->_workspaceGen || *answered) return;
+            *answered = true;
+            if (r) (*answers)[i] = Lsp::parseWorkspaceSymbols(*r);
             if (*pending > 0) (*pending)--;
             std::vector<Lsp::Symbol> merged = Lsp::mergeSymbols(*answers, CanonicalURI);
             NSMutableArray<MCSymbolItem *> *items = [NSMutableArray array];
@@ -3029,8 +3044,23 @@ static NSString *ErrorText(const Json &error) {
                 if (it.path.length) [items addObject:it];
             }
             done(items, *pending == 0, nil);
+        };
+        int rid = server.client.workspaceSymbols(Std(query), [answer](const Json &r,
+                                                                      const Json &e) {
+            answer(e.isNull() ? &r : nullptr);
         });
-        [_workspaceRequests addObject:@[server, @(rid)]];
+        [_workspaceRequests addObject:@[server, @(rid), (id)answer]];
+    }
+}
+
+// A server that exits takes its replies with it: what it was asked for
+// Go to Symbol in Workspace counts as answered with nothing.
+- (void)finishWorkspaceSymbolsOf:(MCLspServer *)server {
+    for (NSArray *entry in [_workspaceRequests copy]) {
+        if (entry[0] != server) continue;
+        [_workspaceRequests removeObject:entry];
+        void (^answer)(const Json *) = entry[2];
+        answer(nullptr);
     }
 }
 
