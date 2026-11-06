@@ -10,6 +10,7 @@
 #pragma once
 #include <map>
 #include <string>
+#include <vector>
 
 namespace RunFile {
 
@@ -32,5 +33,28 @@ std::string expand(const std::string& tmpl,
 // `root` (only the file's own folder when it is outside root). "" when there
 // is none.
 std::string findVirtualenvPython(const std::string& file, const std::string& root);
+
+// Shift+Return in Python (python.execSelectionInTerminal): the lines to send
+// a Python REPL for `code`, the selection or the cursor's line. Their
+// common indentation goes (a block picked out of a function runs at the top
+// level), and so do trailing blank lines; without bracketed paste every
+// blank line goes too, since one ends a block at the REPL's prompt.
+// *extraReturn: the last line is indented, so one more Return is needed to
+// end its block.
+std::vector<std::string> pythonReplLines(const std::string& code, bool bracketed,
+                                         bool* extraReturn);
+
+// What a new terminal activates for an interpreter (terminal.activate-venv):
+// the virtual environment it is in (the folder two above it, holding a
+// pyvenv.cfg), and the name to put before the prompt (pyvenv.cfg's prompt,
+// else the folder's name), cut to letters, digits, spaces and ._-+@:, since
+// it goes into the shell's prompt, where $( and % mean something. False for
+// an interpreter in no virtual environment (a system or Homebrew Python, a
+// conda environment, which conda's own hooks activate).
+struct Activation {
+    std::string prefix;   // the environment's folder
+    std::string prompt;   // ".venv", "myproject"
+};
+bool activationFor(const std::string& python, Activation* out);
 
 }  // namespace RunFile

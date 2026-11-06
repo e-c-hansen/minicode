@@ -1,6 +1,11 @@
 // RunFile.cpp — see RunFile.h.
 #include "RunFile.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <cstring>
+
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -126,6 +131,100 @@ std::string findVirtualenvPython(const std::string& file, const std::string& roo
         dir = parentOf(dir);
     }
     return "";
+}
+
+std::vector<std::string> pythonReplLines(const std::string& code, bool bracketed,
+                                         bool* extraReturn) {
+    if (extraReturn) *extraReturn = false;
+    std::vector<std::string> lines;
+    size_t at = 0;
+    while (at <= code.size()) {
+        size_t nl = code.find('\n', at);
+        std::string line = code.substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+        at = nl == std::string::npos ? code.size() + 1 : nl + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        lines.push_back(line);
+    }
+    auto blank = [](const std::string& l) {
+        return l.find_first_not_of(" \t") == std::string::npos;
+    };
+    while (!lines.empty() && blank(lines.back())) lines.pop_back();
+    while (!lines.empty() && blank(lines.front())) lines.erase(lines.begin());
+    // The common indentation of the lines with text, by characters.
+    size_t common = std::string::npos;
+    for (const std::string& l : lines) {
+        if (blank(l)) continue;
+        common = std::min(common, l.find_first_not_of(" \t"));
+    }
+    std::vector<std::string> out;
+    for (const std::string& l : lines) {
+        if (blank(l)) {
+            if (bracketed) out.push_back("");
+            continue;
+        }
+        out.push_back(common == std::string::npos ? l : l.substr(common));
+    }
+    if (extraReturn && !out.empty()) {
+        const std::string& last = out.back();
+        *extraReturn = !last.empty() && (last[0] == ' ' || last[0] == '\t');
+        // A one-line block ("for x in y: f(x)") ends at once; a block header
+        // alone ("if x:") still waits for its body, which is not ours to give.
+    }
+    return out;
+}
+
+bool activationFor(const std::string& python, Activation* out) {
+    // bin/python -> the environment's folder.
+    auto parent = [](const std::string& p) {
+        size_t slash = p.find_last_of('/');
+        return slash == std::string::npos || slash == 0 ? std::string() : p.substr(0, slash);
+    };
+    const std::string bin = parent(python), prefix = parent(bin);
+    if (prefix.empty() || bin.substr(bin.find_last_of('/') + 1) != "bin") return false;
+    std::string cfg;
+    {
+        struct stat st;
+        const std::string path = prefix + "/pyvenv.cfg";
+        if (::stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode) || st.st_size > 65536)
+            return false;
+        FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f) return false;
+        char buf[4096];
+        size_t n;
+        while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) cfg.append(buf, n);
+        std::fclose(f);
+    }
+    std::string prompt;
+    size_t at = 0;
+    while (at < cfg.size()) {
+        size_t nl = cfg.find('\n', at);
+        std::string line = cfg.substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+        at = nl == std::string::npos ? cfg.size() : nl + 1;
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string key = line.substr(0, eq), value = line.substr(eq + 1);
+        auto trim = [](std::string s) {
+            size_t a = s.find_first_not_of(" \t\r"), b = s.find_last_not_of(" \t\r");
+            return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+        };
+        if (trim(key) != "prompt") continue;
+        prompt = trim(value);
+        // venv writes prompt = 'name' with quotes on some versions.
+        if (prompt.size() >= 2 && (prompt.front() == '\'' || prompt.front() == '"') &&
+            prompt.back() == prompt.front())
+            prompt = prompt.substr(1, prompt.size() - 2);
+    }
+    if (prompt.empty()) prompt = prefix.substr(prefix.find_last_of('/') + 1);
+    std::string safe;
+    for (char c : prompt) {
+        const unsigned char u = (unsigned char)c;
+        if (std::isalnum(u) || std::strchr(" ._-+@:", c)) safe += c;
+    }
+    if (out) {
+        out->prefix = prefix;
+        out->prompt = safe.empty() ? "venv" : safe;
+    }
+    return true;
 }
 
 }  // namespace RunFile

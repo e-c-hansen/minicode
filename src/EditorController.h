@@ -164,6 +164,21 @@
 - (void)formatDocument:(id)sender;     // Shift+Option+F run the file's formatter
 @end
 
+// EditorController+EditCommands.mm
+@interface EditorController (EditCommands)
+- (void)indentLines:(id)sender;         // Cmd+] the lines in one level
+- (void)outdentLines:(id)sender;        // Cmd+[ and out
+- (void)insertLineBelow:(id)sender;     // Cmd+Return
+- (void)insertLineAbove:(id)sender;
+- (void)toggleBold:(id)sender;          // Markdown ** around the selection or word
+- (void)toggleItalic:(id)sender;        // Markdown *
+- (void)runSelectionInTerminal:(id)sender;   // Shift+Return in Python: to a REPL
+- (void)saveFileAs:(id)sender;
+- (BOOL)saveActiveTabAs:(NSString *)path;    // Save As without the panel
+- (void)saveAllFiles:(id)sender;        // Option+Cmd+S
+- (NSString *)keymapLanguage;           // "markdown", "python" or nil (Keymap.h)
+@end
+
 // EditorController+EditorView.mm
 @interface EditorController (EditorView)
 - (void)toggleComment:(id)sender;      // Cmd+/ comment or uncomment lines

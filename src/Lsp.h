@@ -361,6 +361,15 @@ extern NSNotificationName const MCPythonEnvironmentConsentDidChangeNotification;
 // The servers' choice leaving this folder's own choice out: what
 // "Automatic" means.
 - (NSString *)defaultPythonInterpreterWithSource:(NSString **)source;
+// The interpreter a new terminal opened in `dir` activates
+// (terminal.activate-venv), as the servers' choice is made but from that
+// folder: this folder's choice, python.interpreter, then automatic with the
+// folder's own environment only once allowed. With the folder's own
+// environment there and not yet asked about, *waiting is set (and nil
+// returned when nothing else applies): a terminal's PATH would put the
+// environment's programs in front of the shell's, and a prompt that runs
+// git would run one planted there, unasked.
+- (NSString *)terminalPythonInterpreterInDirectory:(NSString *)dir waiting:(BOOL *)waiting;
 // The folder's own environment (".venv", as the folder names it) when the
 // open Python file would use it but the user has not been asked for this
 // folder yet; nil otherwise. Nothing runs from it until they say yes.

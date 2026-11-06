@@ -392,7 +392,16 @@ container (PanelHost, laid out by hand in layoutContainer)
   adds, `key = -` takes the key from every command, `key = -id` from one; a key
   given to a command leaves any that had it where both apply; two lines giving
   one key to two commands in one place are a conflict and the later is refused
-  with its line number.
+  with its line number. A command may also have a language (`language`,
+  "markdown" or "python", by `Commands::languageOfPath`; its `when` is then
+  `Editor`): it applies only in the editor on such a file, shadows a key
+  another command has elsewhere without a conflict (Option+C toggles a task in
+  Markdown and types ç anywhere else), may have a typing key (Shift+Return in
+  Python), and its keys go on its menu item only when no other command has
+  them and they hold Command or Control. The window's delegate says the
+  language (`MCKeymapLanguage`). Cmd+B stays the sidebar and Cmd+I the inline
+  agent in Markdown (the owner's call, 2026-11-06): Toggle Bold and Italic
+  have no key.
 - `Keymap.mm` reads and watches the file and puts the keys on the menu items
   found by action and tag (the first on the item, others on hidden items beside
   it, `allowsKeyEquivalentWhenHidden`). Errors join the settings errors in the
@@ -416,7 +425,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   (Ctrl+G for nano) unless Global. Plain typing skips the keymap at once. Cmd+.
   is the key bindings' `cancelOperation:` everywhere, so only an editable
   editor sends it to the menu. Validation decides: a command that cannot act
-  lets the key go (Option+] types ‘ with no tour).
+  lets the key go (Option+] types ‘ with no tour). A language command runs
+  from here too, first, where it applies; a typing key is looked up only
+  while the editor has the keyboard.
 - **Trap (1.5.0 and 1.5.1)**: Shift+Option+F typed Ï, because the "verified"
   check had sent the event to the menu directly. Test such keys through
   `[window sendEvent:]` or `MCGuiSendKeyToApp`, never the menu alone.
@@ -788,7 +799,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   items still send `performTextFinderAction:` with NSTextFinderAction tags, so
   the terminal and diff view answer their own.
 - Find in Folder uses `FolderSearch::search` (two characters, one for an
-  untrimmed regex; dotfiles and `node_modules`/`build`/... skipped; 1 MB and
+  untrimmed regex; `.git`, `node_modules`, `build`, the venvs and caches and
+  what the folder's `.gitignore`/`.ignore` files ignore (from the window's
+  folder down, `search.use-ignore-files`) skipped, dotfiles searched; 1 MB and
   UTF-8 only; 2000 matches; ANSI stripped; symlink loops and named pipes safe;
   generation-counted and cancelled per file). Replace in Folder
   (Option+Shift+Cmd+F) counts and asks; a file in a clean tab here is edited in
@@ -869,7 +882,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   subsequence aligned by a small DP favouring word starts and runs, in tiers,
   then recent (`MCCommandPaletteRecent`), score, menu order.
 - Quick Open: `listFiles` breadth first on a background queue (Find in Folder's
-  skips, symlinked folders once, 20,000 files, cancelled on close); the name
+  skips and ignore files, dotfiles listed, symlinked folders once, 20,000
+  files, cancelled on close); the name
   matches before the path; recent tabs and `MCQuickOpenRecent` first. Go to
   Line takes "42", "42:7" or "42,7".
 - Symbols: `textDocument/documentSymbol` from the main server (`Lsp::Symbol`, a
@@ -1306,6 +1320,15 @@ for full-screen programs. Both can be open at once.
   `633;E;<command, control characters blanked>` then `133;C`. PS1, PS2, RPS1,
   PROMPT_SP and tty modes are untouched; HIST_IGNORE_SPACE keeps
   `setDirectory:`'s ` cd` out of history; `TERM=xterm-256color`.
+  `terminal.activate-venv` (both modes, 2026-11-06): the panel asks the
+  window for each new terminal's environment, and `MINICODE_VENV` (with
+  `MINICODE_VENV_PROMPT`) makes the first precmd do what bin/activate does,
+  VIRTUAL_ENV, the bin first on PATH (after .zshrc and path_helper), PYTHONHOME
+  unset, the name before PS1, a deactivate; nothing of the environment's is
+  sourced or run. The interpreter is Run File's choice from the terminal's
+  folder, but the folder's own .venv only once allowed by the P5 consent
+  (`terminalPythonInterpreterInDirectory:waiting:`), since a prompt that runs
+  git would otherwise run a planted .venv/bin/git unasked.
   Every mark ends in `;mc=<nonce>` (`__minicode_mark`): 128 random bits per
   shell in `MINICODE_NONCE`, which the .zshenv reads and unsets, and
   `TerminalStream::setMarkNonce` drops marks without it (2026-11-06; any

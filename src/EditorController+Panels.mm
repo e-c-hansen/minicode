@@ -9,9 +9,15 @@
 - (void)makeTerminalPanel { [self makeTerminalPanelFirstIn:nil]; }
 - (void)makeTerminalPanelFirstIn:(NSString *)first {
     if (self.terminalPanel) return;
-    self.terminalPanel = [[MCTerminalPanel alloc] initWithDirectory:_root.path firstIn:first];
-    self.terminalPanel.projectRoot = _root.path;
     __weak EditorController *weakSelf = self;
+    // terminal.activate-venv: each new terminal's shell gets the folder's
+    // Python environment to activate (EditorController+EditCommands.mm).
+    self.terminalPanel = [[MCTerminalPanel alloc]
+        initWithDirectory:_root.path firstIn:first
+              environment:^NSDictionary<NSString *, NSString *> *(NSString *dir) {
+                  return [weakSelf terminalEnvironmentForDirectory:dir];
+              }];
+    self.terminalPanel.projectRoot = _root.path;
     self.terminalPanel.extraLinkRoots = ^NSArray<NSString *> *{
         EditorController *s = weakSelf;
         return s ? [s->_agents linkRoots] : @[];

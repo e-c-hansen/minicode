@@ -3717,7 +3717,7 @@ void testSettings() {
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
     // format, python, keep-sorted, auto-save, ruler, terminal and develop keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 75);
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 77);   // + activate-venv, search
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4173,6 +4173,52 @@ void testSettings() {
               (base / "other" / "venv" / "bin" / "python").string());
         // No root at all: the file's folder only.
         CHECK(RunFile::findVirtualenvPython(deep, "").empty());
+        fs::remove_all(base);
+    }
+
+    GROUP("runfile:repl");
+    {
+        using V = std::vector<std::string>;
+        bool extra = true;
+        CHECK(RunFile::pythonReplLines("x = 1", false, &extra) == V{"x = 1"} && !extra);
+        // A block picked out of a function loses its common indentation.
+        CHECK(RunFile::pythonReplLines("    a = 1\n    b = 2\n", false, &extra) ==
+              (V{"a = 1", "b = 2"}));
+        // Blank lines would end the block at the prompt: dropped, unless
+        // the REPL takes bracketed paste; the indented last line needs one
+        // more Return.
+        CHECK(RunFile::pythonReplLines("def f():\n    a = 1\n\n    return a\n\n", false, &extra) ==
+              (V{"def f():", "    a = 1", "    return a"}));
+        CHECK(extra);
+        CHECK(RunFile::pythonReplLines("def f():\n    a = 1\n\n    return a\n", true, &extra) ==
+              (V{"def f():", "    a = 1", "", "    return a"}));
+        CHECK(RunFile::pythonReplLines("\n\n", false, &extra).empty() && !extra);
+        CHECK(RunFile::pythonReplLines("a\r\nb", false, nullptr) == (V{"a", "b"}));
+    }
+
+    GROUP("runfile:activation");
+    {
+        namespace fs = std::filesystem;
+        fs::path base = fs::temp_directory_path() /
+            ("minicode-activate-test-" + std::to_string(::getpid()));
+        fs::remove_all(base);
+        fs::create_directories(base / "proj" / ".venv" / "bin");
+        std::ofstream(base / "proj" / ".venv" / "bin" / "python") << "";
+        RunFile::Activation a;
+        const std::string py = (base / "proj" / ".venv" / "bin" / "python").string();
+        CHECK(!RunFile::activationFor(py, &a));   // no pyvenv.cfg: not a venv
+        std::ofstream(base / "proj" / ".venv" / "pyvenv.cfg") << "home = /usr/bin\n";
+        CHECK(RunFile::activationFor(py, &a) && a.prefix == (base / "proj" / ".venv").string() &&
+              a.prompt == ".venv");
+        // uv names it after the project; a name with shell or prompt
+        // syntax in it is cut to plain characters.
+        std::ofstream(base / "proj" / ".venv" / "pyvenv.cfg")
+            << "home = /usr/bin\nprompt = my-proj\n";
+        CHECK(RunFile::activationFor(py, &a) && a.prompt == "my-proj");
+        std::ofstream(base / "proj" / ".venv" / "pyvenv.cfg") << "prompt = '$(rm -rf ~)%n`x`'\n";
+        CHECK(RunFile::activationFor(py, &a) && a.prompt == "rm -rf nx");
+        CHECK(!RunFile::activationFor("/usr/bin/python3", &a));
+        CHECK(!RunFile::activationFor("python3", &a));
         fs::remove_all(base);
     }
 
@@ -7928,6 +7974,24 @@ std::string taskEdit(const std::string &marked, bool isNewline) {
     return out.insert(e.selStart, "{");
 }
 std::string taskToggled(const std::string &m) { return taskEdit(m, false); }
+// Toggle Bold or Italic on `marked`, written as taskEdit writes it.
+std::string wrapped(const std::string &marked, const char16_t *marker) {
+    std::u16string text;
+    size_t a = std::string::npos, b = std::string::npos;
+    for (char c : marked) {
+        if (c == '|') { a = b = text.size(); continue; }
+        if (c == '{') { a = text.size(); continue; }
+        if (c == '}') { b = text.size(); continue; }
+        text += (char16_t)(unsigned char)c;
+    }
+    MarkdownTasks::Edit e = MarkdownTasks::toggleWrap(text, a, b, marker);
+    if (!e.changed) return "unchanged";
+    text.replace(e.replaceStart, e.replaceLength, e.replacement);
+    std::string out = narrow(text);
+    if (e.selStart == e.selEnd) return out.insert(e.selStart, "|");
+    out.insert(e.selEnd, "}");
+    return out.insert(e.selStart, "{");
+}
 std::string taskReturn(const std::string &m) { return taskEdit(m, true); }
 
 void testMarkdownTasks() {
@@ -7985,6 +8049,25 @@ void testMarkdownTasks() {
         CHECK(e.changed && e.replaceStart == 3 && e.replacement == u"x");
         CHECK(e.selStart == t.size());
     }
+
+    GROUP("tasks:bold-italic");
+    CHECK(wrapped("a {word} b", u"**") == "a **{word}** b");
+    CHECK(wrapped("a **{word}** b", u"**") == "a {word} b");      // just outside
+    CHECK(wrapped("a {**word**} b", u"**") == "a {word} b");      // inside the selection
+    CHECK(wrapped("a wo|rd b", u"**") == "a **wo|rd** b");        // the word at the caret
+    CHECK(wrapped("a **wo|rd** b", u"**") == "a wo|rd b");
+    CHECK(wrapped("a | b", u"**") == "a **|** b");                // an empty pair
+    CHECK(wrapped("a **|** b", u"**") == "a | b");
+    CHECK(wrapped("x {word} y", u"*") == "x *{word}* y");
+    CHECK(wrapped("x *{word}* y", u"*") == "x {word} y");
+    CHECK(wrapped("x wo|rd y", u"*") == "x *wo|rd* y");
+    // Italic never takes a star from bold; three stars are both.
+    CHECK(wrapped("**{word}**", u"*") == "***{word}***");
+    CHECK(wrapped("***{word}***", u"*") == "**{word}**");
+    CHECK(wrapped("***{word}***", u"**") == "*{word}*");
+    CHECK(wrapped("*{word}*", u"**") == "***{word}***");
+    CHECK(wrapped("{two\nlines}", u"**") == "**{two\nlines}**");
+    CHECK(wrapped("caf\xC3|", u"*") != "unchanged");             // past ASCII counts as a word
 
     GROUP("tasks:return");
     CHECK(taskReturn("- [ ] a|") == "- [ ] a\n- [ ] |");
@@ -9853,6 +9936,7 @@ int main() {
     testCommandKeys();
     testCommandTable();
     testKeymapFile();
+    testCommandLanguages();
     testCommandsReadme();
     testClaudeHooks();
     testNotifyCommandLine();

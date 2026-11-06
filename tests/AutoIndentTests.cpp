@@ -473,6 +473,19 @@ void testAutoIndentKeys() {
     AI_EQ(aiTab("a.go", "\u2039a\nb\u203A"), "\u2039\ta\n\tb\u203A");
     AI_EQ(aiTab("a.py", "\u2039a\r\nb\u203A\r\n"), "\u2039    a\r\n    b\u203A\r\n");
 
+    GROUP("indent:indent-lines");
+    auto aiIndent = [](const std::string &file, const std::string &s) {
+        AiText p = aiParse(s);
+        return aiShow(p.text, AutoIndent::indentLines(p.text, p.a, p.b, file));
+    };
+    AI_EQ(aiIndent("a.py", "ab|x"), "    ab|x");                // the whole line
+    AI_EQ(aiIndent("a.py", "|x"), "    |x");                    // the caret goes along
+    AI_EQ(aiIndent("a.txt", "x|"), "    x|");                   // any file
+    AI_EQ(aiIndent("a.go", "x|"), "\tx|");
+    AI_EQ(aiIndent("a.py", "|"), "    |");                      // a blank line alone
+    AI_EQ(aiIndent("a.py", "‹a\n\nb›"), "‹    a\n\n    b›");
+    AI_EQ(aiIndent("a.py", "def f():\n  x|"), "def f():\n    x|");   // the file's 2
+
     GROUP("indent:backtab");
     AI_EQ(aiBacktab("a.py", "    x|"), "x|");
     AI_EQ(aiBacktab("a.py", "      x|"), "    x|");

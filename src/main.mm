@@ -15,6 +15,7 @@
 #import "ControlServer.h"
 #import "Keymap.h"
 #import "TerminalAttention.h"
+#import "RecentFolders.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, MCRestarting, MCControlAppHost>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
@@ -463,6 +464,10 @@ static BOOL MCEditorOnlyAction(SEL a) {
            a == @selector(showHoverInfo:) || a == @selector(renameSymbol:) ||
            a == @selector(findReferences:) || a == @selector(showQuickFixes:) ||
            a == @selector(organizeImports:) ||
+           a == @selector(indentLines:) || a == @selector(outdentLines:) ||
+           a == @selector(insertLineBelow:) || a == @selector(insertLineAbove:) ||
+           a == @selector(toggleBold:) || a == @selector(toggleItalic:) ||
+           a == @selector(runSelectionInTerminal:) ||
            a == @selector(nextProblem:) || a == @selector(previousProblem:) ||
            a == @selector(goToBracket:);
 }
@@ -474,6 +479,7 @@ static BOOL MCWindowTabAction(SEL a) {
            a == @selector(copyActiveFilePath:) || a == @selector(copyActiveFileRelativePath:) ||
            a == @selector(revealActiveFileInFinder:) || a == @selector(revealActiveFileInTree:) ||
            a == @selector(sortTreeBy:) || a == @selector(setTreeSortDirection:) ||
+           a == @selector(saveFileAs:) || a == @selector(saveAllFiles:) ||
            a == @selector(toggleFoldersFirst:);
 }
 - (BOOL)keyWindowIsEditor {
@@ -499,6 +505,41 @@ static BOOL MCWindowTabAction(SEL a) {
 // -------------------------------- menu actions -> frontmost window's controller
 - (void)openFolder:(id)sender      { [[self current] openFolder:sender]; }
 - (void)saveCurrentFile:(id)sender { [[self current] saveCurrentFile:sender]; }
+- (void)saveFileAs:(id)sender      { [[self current] saveFileAs:sender]; }
+- (void)saveAllFiles:(id)sender    { [[self current] saveAllFiles:sender]; }
+- (void)indentLines:(id)sender     { [[self current] indentLines:sender]; }
+- (void)outdentLines:(id)sender    { [[self current] outdentLines:sender]; }
+- (void)insertLineBelow:(id)sender { [[self current] insertLineBelow:sender]; }
+- (void)insertLineAbove:(id)sender { [[self current] insertLineAbove:sender]; }
+- (void)toggleBold:(id)sender      { [[self current] toggleBold:sender]; }
+- (void)toggleItalic:(id)sender    { [[self current] toggleItalic:sender]; }
+- (void)runSelectionInTerminal:(id)sender { [[self current] runSelectionInTerminal:sender]; }
+// Ctrl+R, VS Code's Open Recent: the palette on File > Open Recent's
+// folders (RecentFolders.h), filtered as it is typed into.
+- (void)openRecent:(id)sender { (void)sender; [self showPaletteWithText:@">Open Recent > "]; }
+// A folder from File > Open Recent: the window already on it comes
+// forward, else the window in front moves to it (asking about unsaved tabs,
+// as Open Folder does), else a window opens on it.
+- (void)openRecentFolder:(id)sender {
+    NSString *path = [sender respondsToSelector:@selector(representedObject)]
+                         ? [sender representedObject] : nil;
+    if (![path isKindOfClass:[NSString class]] || !path.length) return;
+    BOOL dir = NO;
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&dir] || !dir) {
+        NSBeep();
+        return;
+    }
+    NSString *real = path.stringByResolvingSymlinksInPath;
+    for (EditorController *c in self.controllers)
+        if ([c.rootPath.stringByResolvingSymlinksInPath isEqualToString:real]) {
+            [c.window makeKeyAndOrderFront:nil];
+            return;
+        }
+    EditorController *c = [self current];
+    if (c) [c switchToFolder:path];
+    else [self openWindowAtPath:path];
+}
+- (void)clearRecentFolders:(id)sender { (void)sender; MCClearRecentFolders(); }
 - (void)togglePreview:(id)sender   { [[self current] togglePreview:sender]; }
 - (void)exportPDF:(id)sender       { [[self current] exportPDF:sender]; }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
@@ -744,9 +785,30 @@ static void BuildMenu(void) {
     [fileMenu addItemWithTitle:@"Open Folder…"
                         action:@selector(openFolder:)
                  keyEquivalent:@"o"];
+    // The folders opened before (RecentFolders.h), and Ctrl+R, VS Code's
+    // key, for the same list in the palette.
+    NSMenuItem *recentItem = [[NSMenuItem alloc] initWithTitle:@"Open Recent" action:nil
+                                                 keyEquivalent:@""];
+    NSMenu *recentMenu = [[NSMenu alloc] initWithTitle:@"Open Recent"];
+    MCInstallRecentFoldersMenu(recentMenu);
+    recentItem.submenu = recentMenu;
+    [fileMenu addItem:recentItem];
+    NSMenuItem *openRecent = [[NSMenuItem alloc] initWithTitle:@"Open Recent…"
+                                                        action:@selector(openRecent:)
+                                                 keyEquivalent:@"r"];
+    openRecent.keyEquivalentModifierMask = NSEventModifierFlagControl;
+    [fileMenu addItem:openRecent];
     [fileMenu addItemWithTitle:@"Save"
                         action:@selector(saveCurrentFile:)
                  keyEquivalent:@"s"];
+    // VS Code's Save As key, Shift+Cmd+S, is Export PDF here.
+    [fileMenu addItemWithTitle:@"Save As…"
+                        action:@selector(saveFileAs:) keyEquivalent:@""];
+    NSMenuItem *saveAll = [[NSMenuItem alloc] initWithTitle:@"Save All"
+                                                     action:@selector(saveAllFiles:)
+                                              keyEquivalent:@"s"];
+    saveAll.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    [fileMenu addItem:saveAll];
     NSMenuItem *exportPDF =
         [[NSMenuItem alloc] initWithTitle:@"Export PDF…"
                                    action:@selector(exportPDF:) keyEquivalent:@"s"];
@@ -803,8 +865,11 @@ static void BuildMenu(void) {
     reopen.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift | NSEventModifierFlagOption;
     [fileMenu addItem:reopen];
-    [fileMenu addItemWithTitle:@"Close Other Tabs"
-                        action:@selector(closeOtherTabs:) keyEquivalent:@""];
+    NSMenuItem *closeOthers = [[NSMenuItem alloc] initWithTitle:@"Close Other Tabs"
+                                                         action:@selector(closeOtherTabs:)
+                                                  keyEquivalent:@"t"];
+    closeOthers.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    [fileMenu addItem:closeOthers];
     [fileMenu addItemWithTitle:@"Close Tabs to the Right"
                         action:@selector(closeTabsToTheRight:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Close All Tabs"
@@ -872,6 +937,14 @@ static void BuildMenu(void) {
                                    action:@selector(deleteLine:) keyEquivalent:@"k"];
     deleteLine.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagShift;
     [editMenu addItem:deleteLine];
+    // VS Code's Indent Line and Outdent Line, and Insert Line Below (its
+    // Insert Line Above, Shift+Cmd+Return, is Run File here).
+    [editMenu addItemWithTitle:@"Indent Lines" action:@selector(indentLines:) keyEquivalent:@"]"];
+    [editMenu addItemWithTitle:@"Outdent Lines" action:@selector(outdentLines:) keyEquivalent:@"["];
+    [editMenu addItemWithTitle:@"Insert Line Below"
+                        action:@selector(insertLineBelow:) keyEquivalent:@"\r"];
+    [editMenu addItemWithTitle:@"Insert Line Above"
+                        action:@selector(insertLineAbove:) keyEquivalent:@""];
     [editMenu addItem:[NSMenuItem separatorItem]];
     // VS Code's inline chat key. It works from every pane, and every window:
     // what has the keyboard decides what the agent does (AgentPanel.h).
@@ -886,6 +959,10 @@ static void BuildMenu(void) {
                                            keyEquivalent:@"l"];
     task.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     [editMenu addItem:task];
+    // In Markdown. No keys: markdown-all-in-one's Cmd+B and Cmd+I are the
+    // sidebar and the inline agent here, as in VS Code itself.
+    [editMenu addItemWithTitle:@"Toggle Bold" action:@selector(toggleBold:) keyEquivalent:@""];
+    [editMenu addItemWithTitle:@"Toggle Italic" action:@selector(toggleItalic:) keyEquivalent:@""];
     // VS Code's key on the Mac. It has no Command, so it is also a character
     // (Ï on a US keyboard); the key monitor above lets it type that outside
     // the editor. Nothing else here uses Option.
@@ -1319,6 +1396,10 @@ static void BuildMenu(void) {
     runFile.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [termMenu addItem:runFile];
+    // Shift+Return in a Python file, which the key monitor runs (Keymap.h):
+    // a menu key without Command would take Shift+Return from every field.
+    [termMenu addItemWithTitle:@"Run Selection or Line in Python REPL"
+                        action:@selector(runSelectionInTerminal:) keyEquivalent:@""];
     termItem.submenu = termMenu;
 
     // Navigate menu — keyboard-driven movement.

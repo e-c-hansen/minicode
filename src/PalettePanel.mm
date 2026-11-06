@@ -342,10 +342,11 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
     _cancelListing = cancel;
     __weak MCPaletteOverlay *weakSelf = self;
     const std::string rootUtf8 = root.fileSystemRepresentation;
+    const bool useIgnore = [AppSettings shared].settings.searchUseIgnoreFiles();
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         bool truncated = false;
-        std::vector<std::string> found =
-            CommandPalette::listFiles(rootUtf8, kQuickOpenMaxFiles, cancel.get(), &truncated);
+        std::vector<std::string> found = CommandPalette::listFiles(
+            rootUtf8, kQuickOpenMaxFiles, cancel.get(), &truncated, useIgnore);
         if (cancel->load()) return;
         NSMutableArray<NSString *> *files = [NSMutableArray arrayWithCapacity:found.size()];
         for (const std::string &rel : found) {

@@ -160,6 +160,26 @@ Commands::When WhereIs(NSResponder *fr) {
     return Commands::When::Any;
 }
 
+// The language of the file the editor shows, for commands scoped to one
+// (Commands::Command::language): the window's controller says.
+std::string LanguageIn(NSWindow *w) {
+    id d = w.delegate;
+    if (![d respondsToSelector:@selector(keymapLanguage)]) return std::string();
+    NSString *lang = [(id<MCKeymapLanguage>)d keymapLanguage];
+    return lang.length ? std::string(lang.UTF8String) : std::string();
+}
+
+// Whether a menu item may hold this key of the command: a menu key works in
+// every pane, so never a tree command's, and a language command's only when
+// it is the key's one command and has Command or Control (Option+C would
+// stop typing its character in every field).
+bool MenuShows(const Commands::Command *c, const Key &k, const Commands::Keymap &map) {
+    if (!EquivalentFor(k) || c->when == Commands::When::Tree) return false;
+    if (c->language)
+        return (k.mods & (Commands::Cmd | Commands::Ctrl)) && map.commandsFor(k).size() == 1;
+    return true;
+}
+
 }  // namespace
 
 // ------------------------------------------------------------ the keymap
@@ -326,6 +346,7 @@ static void MCSetKey(NSMenuItem *it, const Key *k) {
     MCCollect(menu, nil, items, paths);
     if (first) {
         // What the menus were built with, against the registry's defaults.
+        const Commands::Keymap defaults = Commands::defaults();
         NSMutableArray *problems = [NSMutableArray array];
         for (NSMenuItem *it in items[@""])
             [problems addObject:[NSString stringWithFormat:@"%@ (%@ %@) has a key but no command",
@@ -334,15 +355,15 @@ static void MCSetKey(NSMenuItem *it, const Key *k) {
         for (NSString *cid in items) {
             if (!cid.length) continue;
             const Commands::Command *c = Commands::find(cid.UTF8String);
-            std::vector<Key> defaults = Commands::defaultKeys(*c);
+            std::vector<Key> defaultKeys = Commands::defaultKeys(*c);
             NSArray<NSMenuItem *> *group = items[cid];
             for (NSUInteger i = 0; i < group.count; i++) {
                 Key built = KeyForItem(group[i]);
                 // The default keys a menu can show, in order (none of a
                 // tree command's, which run only from the tree).
                 std::vector<Key> shown;
-                for (const Key &k : defaults)
-                    if (EquivalentFor(k) && c->when != Commands::When::Tree) shown.push_back(k);
+                for (const Key &k : defaultKeys)
+                    if (MenuShows(c, k, defaults)) shown.push_back(k);
                 Key want = i < shown.size() ? shown[i] : Key();
                 if (built != want)
                     [problems addObject:[NSString stringWithFormat:
@@ -359,9 +380,9 @@ static void MCSetKey(NSMenuItem *it, const Key *k) {
         std::vector<Key> keys;
         const Commands::Command *cmd = Commands::find(cid.UTF8String);
         // A menu key works in every pane, so a tree command's stays off it.
-        if (!cmd || cmd->when != Commands::When::Tree)
+        if (cmd)
             for (const Key &k : _map.keysOf(cid.UTF8String))
-                if (EquivalentFor(k)) keys.push_back(k);
+                if (MenuShows(cmd, k, _map)) keys.push_back(k);
         NSMenuItem *primary = group.firstObject;
         for (NSMenuItem *it in group)
             if (!it.isHidden) {
@@ -454,7 +475,10 @@ static BOOL MCJustTyping(NSEvent *e) {
 }
 
 BOOL MCKeymapHandleKeyDown(NSEvent *e) {
-    if (MCJustTyping(e)) return NO;
+    // A typing key is a command's only in one language's files
+    // (Shift+Return in Python), and only in the editor there.
+    const BOOL typing = MCJustTyping(e);
+    if (typing && ![e.window.firstResponder isKindOfClass:[CodeTextView class]]) return NO;
     Key k = KeyForEvent(e);
     if (k.empty()) return NO;
     const Commands::Keymap &map = [[MCKeymap shared] map];
@@ -464,8 +488,21 @@ BOOL MCKeymapHandleKeyDown(NSEvent *e) {
     if (all.empty()) return NO;
     NSResponder *fr = e.window.firstResponder;
     const Commands::When where = WhereIs(fr);
-    const Commands::Command *c = map.commandFor(k, where);
+    const std::string language =
+        where == Commands::When::Editor ? LanguageIn(e.window) : std::string();
+    const Commands::Command *c = map.commandFor(k, where, language);
     if (c && (c->flags & Commands::Fixed)) c = nullptr;
+    if (typing) {
+        // An input method composing (marked text) gets the key, as typing.
+        if (!c || !c->language || ((NSTextView *)fr).hasMarkedText) return NO;
+        return MCPerform(c);
+    }
+    // A command for the file's language goes first where it applies.
+    if (c && c->language) {
+        if (MCPerform(c)) return YES;
+        c = map.commandFor(k, where);   // off (a preview): what the key is elsewhere
+        if (!c || (c->flags & Commands::Fixed)) return NO;
+    }
     const BOOL cmd = (k.mods & Commands::Cmd) != 0, ctrl = (k.mods & Commands::Ctrl) != 0;
     if (c && (c->flags & Commands::Global)) return MCPerform(c);
     // The file tree's commands (F2, Cmd+Delete) have no menu key, so they

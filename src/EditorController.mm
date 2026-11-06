@@ -3,6 +3,7 @@
 #import "EditorController+Private.h"
 // Every category's own instance variables, laid out here.
 #import "EditorController+AgentsIvars.h"
+#import "EditorController+EditCommandsIvars.h"
 #import "EditorController+EditorViewIvars.h"
 #import "EditorController+FormatIvars.h"
 #import "EditorController+HighlightingIvars.h"
@@ -163,6 +164,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     if (item.action == @selector(selectNextTab:) || item.action == @selector(selectPreviousTab:))
         return _tabs.count > 0;
     if (item.action == @selector(goToBracket:)) return [self bracketMatchingApplies];
+    if ([self isEditCommand:item.action]) return [self validateEditCommand:item];
     // Off without a tour, so Option+] and Option+[ type their characters.
     if (item.action == @selector(nextTourStop:) || item.action == @selector(previousTourStop:))
         return self.tourActive;
