@@ -2583,13 +2583,14 @@ static NSString *ErrorText(const Json &error) {
         NSString *base = [self serverTextOfPath:path uri:f.uri];
         if (base && ![base isEqualToString:text]) {
             std::u16string a = U16Of(text), b = U16Of(base);
+            const Lsp::PositionIndex ia(a), ib(b);
             for (const Lsp::TextEdit &e : f.edits) {
-                size_t a0 = Lsp::offsetForPosition(a, e.range.start);
-                size_t a1 = Lsp::offsetForPosition(a, e.range.end);
-                size_t b0 = Lsp::offsetForPosition(b, e.range.start);
-                size_t b1 = Lsp::offsetForPosition(b, e.range.end);
+                size_t a0 = ia.offset(e.range.start);
+                size_t a1 = ia.offset(e.range.end);
+                size_t b0 = ib.offset(e.range.start);
+                size_t b1 = ib.offset(e.range.end);
                 if (a.compare(a0, a1 - a0, b, b0, b1 - b0) != 0 ||
-                    Lsp::positionForOffset(a, a0).line != e.range.start.line) {
+                    ia.position(a0).line != e.range.start.line) {
                     *failure = [NSString stringWithFormat:
                         @"%@ has changes the language server has not seen; "
                          "save it and try again", path.lastPathComponent];
@@ -2709,11 +2710,12 @@ static NSString *ErrorText(const Json &error) {
             return -1;
         }
         const std::u16string u = U16Of(text);
+        const Lsp::PositionIndex index(u);
         for (NSUInteger k = 0; k < ranges[i].count; k++) {
             NSRange r = ranges[i][k].rangeValue;
             Lsp::TextEdit e;
-            e.range.start = Lsp::positionForOffset(u, r.location);
-            e.range.end = Lsp::positionForOffset(u, NSMaxRange(r));
+            e.range.start = index.position(r.location);
+            e.range.end = index.position(NSMaxRange(r));
             e.newText = Std(strings[i][k]);
             f.edits.push_back(e);
         }
@@ -3011,6 +3013,7 @@ static NSFont *PickerMono(void) {
         NSString *path = [self treePathForURI:f.uri] ?: NS(f.uri);
         NSString *text = [self textOfPath:path uri:f.uri] ?: @"";
         std::u16string u = U16Of(text);
+        const Lsp::PositionIndex index(u);   // one pass, then a search per reference
         BOOL current = [self uri:f.uri isSameFileAs:_uri];
         // The heading: the file's name, its folder within the project, and
         // how many references it holds.
@@ -3032,7 +3035,7 @@ static NSFont *PickerMono(void) {
         [rows addObject:h];
         where.push_back(Lsp::Location());
         for (const Lsp::Range &r : f.ranges) {
-            std::u16string lu = Lsp::lineOf(u, r.start.line);
+            std::u16string lu = Lsp::lineOf(index, r.start.line);
             if (lu.size() > 400) lu.resize(400);   // a minified line
             NSString *line = [NSString stringWithCharacters:(const unichar *)lu.data()
                                                      length:lu.size()];
@@ -3063,7 +3066,7 @@ static NSFont *PickerMono(void) {
             }
             // The reference under the caret starts selected.
             if (current && select < 0) {
-                size_t r0 = Lsp::offsetForPosition(u, r.start), r1 = Lsp::offsetForPosition(u, r.end);
+                size_t r0 = index.offset(r.start), r1 = index.offset(r.end);
                 if (caret >= r0 && caret <= r1) select = (NSInteger)rows.count;
             }
             [rows addObject:row];
