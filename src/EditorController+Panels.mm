@@ -211,7 +211,7 @@
 
     if (link.isDirectory) {
         if (!inside) { NSBeep(); return; }
-        if (self.sidebarCollapsed) [self toggleSidebar:nil];
+        if (self.sidebarCollapsed) [self toggleSidebarVisibility:nil];
         [self revealPath:path andOpen:NO];
         return;
     }

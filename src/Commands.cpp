@@ -368,7 +368,7 @@ const std::vector<Command>& all() {
         {"editor.foldLevel7", "Fold Level 7", "View > Folding", "ctrl+cmd+7", E, "foldLevel:", 7,
          0, nullptr},
         {"workbench.action.toggleSidebarVisibility", "Toggle Sidebar", "View", "cmd+b", A,
-         "toggleSidebar:", 0, 0, nullptr},
+         "toggleSidebarVisibility:", 0, 0, nullptr},
         {"workbench.view.scm", "Toggle Source Control", "View", "ctrl+shift+g", A,
          "toggleSourceControl:", 0, 0, nullptr},
         {"minicode.toggleAgents", "Toggle Agents", "View", "shift+cmd+a", A, "toggleAgents:", 0,

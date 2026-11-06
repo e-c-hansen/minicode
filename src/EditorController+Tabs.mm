@@ -112,7 +112,7 @@
     if (!rel) return;
     if (self.gitPanelVisible) [self toggleSourceControl:nil];
     if (self.agentsVisible) [self toggleAgents:nil];
-    if (self.sidebarCollapsed) [self toggleSidebar:nil];
+    if (self.sidebarCollapsed) [self toggleSidebarVisibility:nil];
     // Spelled from the tree's root, which revealPath: walks down from.
     [self revealPath:[rel isEqualToString:@"."] ? _root.path
                                                 : [_root.path stringByAppendingPathComponent:rel]

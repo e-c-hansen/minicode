@@ -547,7 +547,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)nextWaitingTerminal:(id)sender { MCJumpToNextWaitingTerminal(); }
 - (void)runCurrentFile:(id)sender  { [[self current] runCurrentFile:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
-- (void)toggleSidebar:(id)sender   { [[self current] toggleSidebar:sender]; }
+- (void)toggleSidebarVisibility:(id)sender   { [[self current] toggleSidebarVisibility:sender]; }
 - (void)toggleSourceControl:(id)sender { [[self current] toggleSourceControl:sender]; }
 - (void)toggleAgents:(id)sender    { [[self current] toggleAgents:sender]; }
 - (void)toggleProcesses:(id)sender { [[self current] toggleProcesses:sender]; }
@@ -1119,7 +1119,7 @@ static void BuildMenu(void) {
 
     NSMenuItem *sidebar =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Sidebar"
-                                   action:@selector(toggleSidebar:)
+                                   action:@selector(toggleSidebarVisibility:)
                             keyEquivalent:@"b"];
     sidebar.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     [viewMenu addItem:sidebar];

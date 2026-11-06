@@ -7,5 +7,6 @@
 
 @interface EditorController () {
     MCSourceStorage *_sourceStorage;       // the editor's text storage (the view does not own it)
+    CGFloat _sidebarShownWidth;            // the sidebar's width when Cmd+B last hid it
 }
 @end

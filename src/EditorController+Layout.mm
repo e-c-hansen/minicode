@@ -735,11 +735,30 @@ static const CGFloat kDividerGrabSlop = 5;
     [self.window makeFirstResponder:self.outline];
 }
 
-// Cmd+B: collapse or restore the file-tree sidebar.
-- (void)toggleSidebar:(id)sender {
-    self.sidebarCollapsed = !self.sidebarCollapsed;
-    [self.splitView setPosition:(self.sidebarCollapsed ? 0 : 260)
-               ofDividerAtIndex:0];
+// Cmd+B: hide or show the sidebar (the file tree, or the panel in its
+// place), at the width it had. The action is not toggleSidebar:, which
+// NSSplitView and NSWindow answer themselves on current macOS: the split
+// view is in every pane's responder chain, so Cmd+B reached it, not this,
+// from everywhere in the window and did nothing.
+- (void)toggleSidebarVisibility:(id)sender {
+    NSView *sidebar = self.splitView.subviews.firstObject;
+    const BOOL shown = !self.sidebarCollapsed && sidebar.frame.size.width >= 1;
+    if (shown) {
+        _sidebarShownWidth = sidebar.frame.size.width;
+        self.sidebarCollapsed = YES;
+        [self.splitView setPosition:0 ofDividerAtIndex:0];
+        // The keyboard leaves a sidebar that is no longer there.
+        NSResponder *fr = self.window.firstResponder;
+        if ([fr isKindOfClass:NSView.class] && [(NSView *)fr isDescendantOf:sidebar])
+            [self focusActiveDocument];
+    } else {
+        self.sidebarCollapsed = NO;
+        CGFloat W = self.splitView.bounds.size.width;
+        CGFloat width = _sidebarShownWidth >= 160 ? _sidebarShownWidth : 260;
+        width = MIN(width, MAX(160, W - kMinRightAreaWidth));
+        [self.splitView setPosition:width ofDividerAtIndex:0];
+    }
+    if (self.hintsVisible) [self updateHints];
 }
 
 // Ctrl+Shift+G: the Source Control panel takes the file tree's place in the
