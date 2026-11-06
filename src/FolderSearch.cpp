@@ -3,6 +3,9 @@
 #include "MarkdownTasks.h"
 
 #include <algorithm>
+#include <cctype>
+#include <iterator>
+#include <memory>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -221,7 +224,24 @@ struct Walker {
         if (out.matches.size() > before) ++out.filesMatched;
     }
 
-    void walk(const std::string& dir, const std::string& rel) {
+    // The ignore files' view: the scope's path from their top, and whether
+    // they are read at all.
+    std::string ignorePrefix = {};
+    bool useIgnore = false;
+
+    std::string ignorePath(const std::string& rel) const {
+        return ignorePrefix.empty() ? rel : ignorePrefix + "/" + rel;
+    }
+
+    // Start at root, with the ignore files the options name.
+    void start(const std::string& root) {
+        Ignore::Rules rules;
+        useIgnore = opt.useIgnoreFiles;
+        if (useIgnore) rules = Ignore::rulesFor(opt.ignoreTop, root, &ignorePrefix);
+        walk(root, "", rules);
+    }
+
+    void walk(const std::string& dir, const std::string& rel, const Ignore::Rules& rules) {
         std::error_code ec;
         std::vector<std::string> names;
         fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
@@ -229,7 +249,7 @@ struct Walker {
         for (fs::directory_iterator end; it != end; it.increment(ec)) {
             if (ec) break;
             std::string name = it->path().filename().string();
-            if (name.empty() || name[0] == '.') continue;   // hidden
+            if (name.empty() || isSkippedFile(name)) continue;
             names.push_back(std::move(name));
             if (cancelled(cancel)) { out.cancelled = true; return; }
         }
@@ -243,7 +263,10 @@ struct Walker {
             // status() follows symlinks, as the Mac's fileExistsAtPath does.
             const fs::file_status st = fs::status(full, ec);
             if (ec) continue;   // broken symlink, vanished, unreadable
-            if (fs::is_directory(st)) {
+            const bool isDir = fs::is_directory(st);
+            if (useIgnore && !rules.empty() && rules.ignored(ignorePath(childRel), isDir))
+                continue;
+            if (isDir) {
                 if (!isSkippedDirectory(name)) subdirs.push_back(name);
                 continue;
             }
@@ -265,7 +288,8 @@ struct Walker {
             const fs::path canon = fs::canonical(full, ec);
             if (ec) continue;
             if (!visited.insert(canon.string()).second) continue;   // loop / seen
-            walk(full, rel.empty() ? name : rel + "/" + name);
+            const std::string childRel = rel.empty() ? name : rel + "/" + name;
+            walk(full, childRel, useIgnore ? rules.enter(full, ignorePath(childRel)) : rules);
         }
     }
 };
@@ -296,12 +320,311 @@ bool isSearchable(const std::string& query) {
 }
 
 bool isSkippedDirectory(const std::string& name) {
-    static const char* const kSkip[] = {".git", "node_modules", "build", ".build",
-                                        "DerivedData", "dist", ".venv", "venv",
-                                        "__pycache__"};
+    static const char* const kSkip[] = {".git", ".svn", ".hg", "node_modules", "build",
+                                        ".build", "DerivedData", "dist", ".venv", "venv",
+                                        "__pycache__", ".mypy_cache", ".pytest_cache",
+                                        ".ruff_cache", ".tox", ".nox"};
     for (const char* s : kSkip) if (name == s) return true;
     return false;
 }
+
+bool isSkippedFile(const std::string& name) { return name == ".DS_Store"; }
+
+// ----------------------------------------------------------- ignore files
+namespace Ignore {
+
+namespace {
+
+enum { kMatch = 0, kNoMatch = 1, kAbortAll = -1, kAbortToStarStar = -2 };
+
+unsigned char fold(unsigned char c, bool caseFold) {
+    return caseFold && c >= 'A' && c <= 'Z' ? (unsigned char)(c - 'A' + 'a') : c;
+}
+
+bool inClass(const std::string& name, unsigned char c) {
+    if (name == "alnum") return std::isalnum(c);
+    if (name == "alpha") return std::isalpha(c);
+    if (name == "blank") return c == ' ' || c == '\t';
+    if (name == "cntrl") return std::iscntrl(c);
+    if (name == "digit") return std::isdigit(c);
+    if (name == "graph") return std::isgraph(c);
+    if (name == "lower") return std::islower(c);
+    if (name == "print") return std::isprint(c);
+    if (name == "punct") return std::ispunct(c);
+    if (name == "space") return std::isspace(c);
+    if (name == "upper") return std::isupper(c);
+    if (name == "xdigit") return std::isxdigit(c);
+    return false;
+}
+
+// git's dowild (wildmatch.c), with WM_PATHNAME always on.
+int dowild(const unsigned char* p, const unsigned char* text, bool caseFold) {
+    const unsigned char* pattern = p;
+    for (unsigned char pc; (pc = *p) != '\0'; text++, p++) {
+        unsigned char tc = *text;
+        if (tc == '\0' && pc != '*') return kAbortAll;
+        tc = fold(tc, caseFold);
+        switch (pc) {
+        case '\\':
+            pc = *++p;
+            if (pc == '\0') return kAbortAll;
+            [[fallthrough]];
+        default:
+            if (tc != fold(pc, caseFold)) return kNoMatch;
+            continue;
+        case '?':
+            if (tc == '/') return kNoMatch;
+            continue;
+        case '*': {
+            bool matchSlash;
+            if (*++p == '*') {
+                const unsigned char* prev = p - 2;
+                while (*++p == '*') {}
+                if ((prev < pattern || *prev == '/') &&
+                    (*p == '\0' || *p == '/' || (p[0] == '\\' && p[1] == '/'))) {
+                    // "**/" also matches no folder at all.
+                    if (p[0] == '/' && dowild(p + 1, text, caseFold) == kMatch) return kMatch;
+                    matchSlash = true;
+                } else {
+                    matchSlash = false;   // "**" inside a component is "*"
+                }
+            } else {
+                matchSlash = false;
+            }
+            if (*p == '\0') {
+                if (!matchSlash && std::strchr((const char*)text, '/')) return kNoMatch;
+                return kMatch;
+            }
+            if (!matchSlash && *p == '/') {
+                // One "*" then "/": the rest of this component.
+                const char* slash = std::strchr((const char*)text, '/');
+                if (!slash) return kNoMatch;
+                text = (const unsigned char*)slash;
+                break;   // the loop's increments step over both slashes
+            }
+            for (;;) {
+                if (tc == '\0') break;
+                const int m = dowild(p, text, caseFold);
+                if (m != kNoMatch) {
+                    if (!matchSlash || m != kAbortToStarStar) return m;
+                } else if (!matchSlash && tc == '/') {
+                    return kAbortToStarStar;
+                }
+                tc = fold(*++text, caseFold);
+            }
+            return kAbortAll;
+        }
+        case '[': {
+            pc = *++p;
+            if (pc == '^') pc = '!';
+            const bool negated = pc == '!';
+            if (negated) pc = *++p;
+            unsigned char prevc = 0;
+            bool matched = false;
+            do {
+                if (!pc) return kAbortAll;
+                if (pc == '\\') {
+                    pc = *++p;
+                    if (!pc) return kAbortAll;
+                    if (tc == fold(pc, caseFold)) matched = true;
+                } else if (pc == '-' && prevc && p[1] && p[1] != ']') {
+                    pc = *++p;
+                    if (pc == '\\') {
+                        pc = *++p;
+                        if (!pc) return kAbortAll;
+                    }
+                    if (tc <= pc && tc >= prevc) {
+                        matched = true;
+                    } else if (caseFold && tc >= 'a' && tc <= 'z') {
+                        // tc is folded; "A-Z" takes it in its upper case
+                        const unsigned char up = (unsigned char)(tc - 'a' + 'A');
+                        if (up <= pc && up >= prevc) matched = true;
+                    }
+                    pc = 0;   // so prevc becomes 0
+                } else if (pc == '[' && p[1] == ':') {
+                    const unsigned char* s = p + 2;
+                    const unsigned char* e = s;
+                    while (*e && *e != ']') e++;
+                    if (!*e) return kAbortAll;
+                    if (e - s < 1 || e[-1] != ':') {
+                        // Not a class after all: a literal "[".
+                        if (tc == '[') matched = true;
+                    } else {
+                        const std::string name((const char*)s, (size_t)(e - s - 1));
+                        if (inClass(name, *text) || (caseFold && inClass(name, tc))) matched = true;
+                        p = e;
+                        pc = 0;
+                    }
+                } else if (tc == fold(pc, caseFold)) {
+                    matched = true;
+                }
+                prevc = pc;
+            } while ((pc = *++p) != ']');
+            if (matched == negated || tc == '/') return kNoMatch;
+            continue;
+        }
+        }
+    }
+    return *text ? kNoMatch : kMatch;
+}
+
+std::string readSmall(const std::string& path) {
+    struct stat st;
+    if (::stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode) || st.st_size > 1024 * 1024)
+        return std::string();
+    std::ifstream in(path, std::ios::binary);
+    std::string s((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return s;
+}
+
+}  // namespace
+
+bool wildmatch(const std::string& pattern, const std::string& text, bool caseFold) {
+    return dowild((const unsigned char*)pattern.c_str(), (const unsigned char*)text.c_str(),
+                  caseFold) == kMatch;
+}
+
+bool defaultCaseFold() {
+#ifdef __APPLE__
+    return true;
+#else
+    return false;
+#endif
+}
+
+std::vector<Rule> parse(const std::string& text) {
+    std::vector<Rule> out;
+    std::size_t at = 0;
+    while (at <= text.size()) {
+        std::size_t nl = text.find('\n', at);
+        std::string line = text.substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+        at = nl == std::string::npos ? text.size() + 1 : nl + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty() || line[0] == '#') continue;
+        // Trailing spaces go, unless the last one is escaped ("a\ ").
+        while (!line.empty() && line.back() == ' ') {
+            std::size_t backslashes = 0;
+            for (std::size_t i = line.size() - 1; i > 0 && line[i - 1] == '\\'; i--) backslashes++;
+            if (backslashes % 2) break;
+            line.pop_back();
+        }
+        Rule r;
+        if (!line.empty() && line[0] == '!') {
+            r.negate = true;
+            line.erase(0, 1);
+        }
+        if (!line.empty() && line.back() == '/') {
+            r.dirOnly = true;
+            line.pop_back();
+        }
+        if (line.empty()) continue;
+        r.anchored = line.find('/') != std::string::npos;
+        if (line[0] == '/') line.erase(0, 1);
+        if (line.empty()) continue;
+        r.pattern = line;
+        out.push_back(std::move(r));
+    }
+    return out;
+}
+
+struct Rules::Node {
+    std::string base;   // the file's folder from the top, with a trailing '/'; "" at the top
+    std::vector<Rule> rules;
+    std::shared_ptr<const Node> parent;
+};
+
+Rules Rules::with(const std::string& relDir, const std::string& gitignore,
+                  const std::string& ignore) const {
+    Rules r = *this;
+    const std::string base = relDir.empty() ? std::string() : relDir + "/";
+    // .gitignore first, then .ignore over it: the head is checked first.
+    for (const std::string* text : {&gitignore, &ignore}) {
+        if (text->empty()) continue;
+        std::vector<Rule> rules = parse(*text);
+        if (rules.empty()) continue;
+        auto n = std::make_shared<Node>();
+        n->base = base;
+        n->rules = std::move(rules);
+        n->parent = r.head_;
+        r.head_ = std::move(n);
+    }
+    return r;
+}
+
+Rules Rules::enter(const std::string& dirPath, const std::string& relDir) const {
+    return with(relDir, readSmall(joinPath(dirPath, ".gitignore")),
+                readSmall(joinPath(dirPath, ".ignore")));
+}
+
+Rules Rules::atTop(const std::string& top, bool caseFold) {
+    Rules r;
+    r.fold_ = caseFold;
+    // The repository's own excludes, below its .gitignore files.
+    const std::string exclude = readSmall(joinPath(joinPath(top, ".git"), "info/exclude"));
+    r = r.with("", exclude, "");
+    return r.enter(top, "");
+}
+
+bool Rules::ignored(const std::string& relPath, bool isDir) const {
+    const std::size_t slash = relPath.rfind('/');
+    const std::string name = slash == std::string::npos ? relPath : relPath.substr(slash + 1);
+    for (const Node* n = head_.get(); n; n = n->parent.get()) {
+        if (relPath.compare(0, n->base.size(), n->base) != 0) continue;
+        const std::string fromBase = relPath.substr(n->base.size());
+        for (auto it = n->rules.rbegin(); it != n->rules.rend(); ++it) {
+            if (it->dirOnly && !isDir) continue;
+            const bool hit = it->anchored ? wildmatch(it->pattern, fromBase, fold_)
+                                          : wildmatch(it->pattern, name, fold_);
+            if (hit) return !it->negate;
+        }
+    }
+    return false;
+}
+
+Rules rulesFor(const std::string& top, const std::string& scope, std::string* scopeRel,
+               bool caseFold) {
+    if (scopeRel) scopeRel->clear();
+    auto trimmed = [](std::string s) {
+        while (s.size() > 1 && s.back() == '/') s.pop_back();
+        return s;
+    };
+    const std::string t = trimmed(top), sc = trimmed(scope);
+    std::string rel;
+    if (!t.empty() && sc != t) {
+        // The scope's path from the top, by spelling, then by real paths
+        // (the tree may say /tmp where the scope says /private/tmp).
+        auto inside = [&](const std::string& a, const std::string& b, std::string* r) {
+            if (b.size() > a.size() + 1 && b.compare(0, a.size(), a) == 0 && b[a.size()] == '/') {
+                *r = b.substr(a.size() + 1);
+                return true;
+            }
+            return false;
+        };
+        if (!inside(t, sc, &rel)) {
+            std::error_code e1, e2;
+            const std::string ct = fs::canonical(t, e1).string(), cs = fs::canonical(sc, e2).string();
+            if (e1 || e2 || !inside(ct, cs, &rel)) return Rules::atTop(sc, caseFold);
+        }
+    } else {
+        return Rules::atTop(sc, caseFold);
+    }
+    Rules r = Rules::atTop(t, caseFold);
+    std::string dir = t, sofar;
+    std::size_t at = 0;
+    while (at <= rel.size()) {
+        std::size_t slash = rel.find('/', at);
+        const std::string part = rel.substr(at, slash == std::string::npos ? std::string::npos : slash - at);
+        at = slash == std::string::npos ? rel.size() + 1 : slash + 1;
+        if (part.empty()) continue;
+        dir = joinPath(dir, part);
+        sofar = sofar.empty() ? part : sofar + "/" + part;
+        r = r.enter(dir, sofar);
+    }
+    if (scopeRel) *scopeRel = rel;
+    return r;
+}
+
+}  // namespace Ignore
 
 bool isValidUtf8(const std::string& s) {
     const std::size_t n = s.size();
@@ -444,7 +767,7 @@ FolderSearchResult search(const std::string& root, const std::string& query,
     if (counter.usable()) w.counter = &counter;
     const fs::path canon = fs::canonical(root, ec);
     if (!ec) w.visited.insert(canon.string());
-    w.walk(root, "");
+    w.start(root);
     return out;
 }
 
@@ -483,7 +806,7 @@ FolderReplacePlan planReplace(const std::string& root, const std::string& query,
         w.visited.insert(canon.string());
         w.rootCanon = canon.string();
     }
-    w.walk(root, "");
+    w.start(root);
     plan.cancelled = out.cancelled;
     return plan;
 }
@@ -853,7 +1176,7 @@ FolderSearchResult findTodos(const std::string& root, const std::atomic<bool>* c
     Walker w{none, cancel, options, out, {}, true};
     const fs::path canon = fs::canonical(root, ec);
     if (!ec) w.visited.insert(canon.string());
-    w.walk(root, "");
+    w.start(root);
     return out;
 }
 

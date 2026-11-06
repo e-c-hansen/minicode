@@ -7001,8 +7001,6 @@ void testFolderSearch() {
     writeFile(root / "nul.txt", std::string("hello\0there", 11));
     writeFile(root / "build.txt", "hello from a file named like a skipped folder\n");
     writeFile(root / "bom.txt", "\xEF\xBB\xBFhello bom\n");
-    writeFile(root / ".dotfile", "hello hidden\n");
-    writeFile(root / ".hidden" / "x.txt", "hello hidden dir\n");
     writeFile(root / ".git" / "config", "hello git\n");
     for (const char *d : {"node_modules", "build", "dist", "__pycache__", "venv",
                           "DerivedData"})
@@ -7042,8 +7040,6 @@ void testFolderSearch() {
     CHECK(hasHit(r, "bom.txt:1:2"));                     // the BOM is a character in line 1
     CHECK(hasHit(r, "exactly1mb.txt:1:1"));
     CHECK(hasHit(r, "long.txt:1:51"));
-    CHECK(!anyHitIn(r, ".dotfile"));
-    CHECK(!anyHitIn(r, ".hidden"));
     CHECK(!anyHitIn(r, ".git"));
     CHECK(!anyHitIn(r, "node_modules"));
     CHECK(!anyHitIn(r, "build/"));
@@ -8091,20 +8087,24 @@ void testMarkdownTasks() {
     writeFile(root / "notes.md",
               "# TODO heading\n- [ ] task\n```\n- [ ] no\n```\n- [x] done\n<!-- FIXME: hidden -->\n");
     writeFile(root / "sub" / "b.py", "def f():\n    pass  # XXX slow\n");
-    writeFile(root / ".hidden.py", "# TODO: hidden file\n");
+    // A dot folder is listed, and what .gitignore names is not.
+    writeFile(root / ".github" / "ci.yml", "# TODO: in a dot folder\n");
+    writeFile(root / ".gitignore", "ignored.py\n");
+    writeFile(root / "ignored.py", "# TODO: ignored\n");
     writeFile(root / "node_modules" / "m.js", "// TODO: skipped\n");
     FolderSearchResult r = FolderSearch::findTodos(root.string());
-    CHECK(r.matches.size() == 4);
-    if (r.matches.size() == 4) {
+    CHECK(r.matches.size() == 5);
+    if (r.matches.size() == 5) {
         CHECK(r.matches[0].relativePath == "a.cpp" && r.matches[0].line == 2 &&
               r.matches[0].text == "// TODO: one" && r.matches[0].column == 4);
         CHECK(r.matches[1].relativePath == "notes.md" && r.matches[1].line == 2 &&
               r.matches[1].byteColumn == 2 && r.matches[1].byteLength == 3);
         CHECK(r.matches[2].relativePath == "notes.md" && r.matches[2].line == 7 &&
               r.matches[2].byteColumn == 5);
-        CHECK(r.matches[3].relativePath == "sub/b.py" && r.matches[3].line == 2);
+        CHECK(r.matches[3].relativePath == ".github/ci.yml" && r.matches[3].line == 1);
+        CHECK(r.matches[4].relativePath == "sub/b.py" && r.matches[4].line == 2);
     }
-    CHECK(r.filesMatched == 3);
+    CHECK(r.filesMatched == 4);
     std::atomic<bool> stop{true};
     CHECK(FolderSearch::findTodos(root.string(), &stop).cancelled);
     CHECK(FolderSearch::findTodos((root / "a.cpp").string()).matches.empty());
@@ -9572,16 +9572,27 @@ static void testCommandPalette() {
         bool truncated = true;
         std::vector<std::string> files = listFiles(root.string(), 100, nullptr, &truncated);
         CHECK(!truncated);
-        // Breadth first: the root's files, then src's, then deeper.
-        CHECK(files.size() == 4);
-        CHECK(files == (std::vector<std::string>{"a.py", "b.txt", "src/main.cpp", "src/deep/inner.h"}) ||
-              files == (std::vector<std::string>{"a.py", "b.txt", "loop/main.cpp", "loop/deep/inner.h"}));
+        // Breadth first: the root's files, then the next level's, then
+        // deeper. Dotfiles and dot folders are listed (not .git).
+        CHECK(files.size() == 6);
+        CHECK(files == (std::vector<std::string>{".hidden", "a.py", "b.txt", "loop/main.cpp",
+                                                 "docs/.secret/x.md", "loop/deep/inner.h"}) ||
+              files == (std::vector<std::string>{".hidden", "a.py", "b.txt", "src/main.cpp",
+                                                 "docs/.secret/x.md", "src/deep/inner.h"}));
         for (const std::string &f : files) {
             CHECK(f.find(".git") == std::string::npos && f.find("node_modules") == std::string::npos);
             CHECK(f.find("build/") == std::string::npos && f.find("venv/") == std::string::npos);
         }
         files = listFiles(root.string(), 3, nullptr, &truncated);
         CHECK(files.size() == 3 && truncated);
+        // A .gitignore leaves its files out, unless told to read none.
+        std::ofstream(root / ".gitignore") << "*.txt\ndocs/\n";
+        files = listFiles(root.string(), 100, nullptr, &truncated);
+        CHECK(std::find(files.begin(), files.end(), "b.txt") == files.end());
+        CHECK(std::find(files.begin(), files.end(), "docs/.secret/x.md") == files.end());
+        CHECK(std::find(files.begin(), files.end(), ".gitignore") != files.end());
+        files = listFiles(root.string(), 100, nullptr, &truncated, false);
+        CHECK(std::find(files.begin(), files.end(), "b.txt") != files.end());
         std::atomic<bool> stop(true);
         CHECK(listFiles(root.string(), 100, &stop, nullptr).empty());
         CHECK(listFiles((root / "missing").string()).empty());
@@ -9758,6 +9769,7 @@ static void testMultiCaretOccurrences() {
 #include "commands_tests.inc"
 #include "procs_tests.inc"
 #include "attention_tests.inc"
+#include "ignore_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9820,6 +9832,7 @@ int main() {
     testLspSecondServer();
     testLspReviewFixes();
     testTextFind();
+    testIgnoreFiles();
     testFolderReplace();
     testSavingToDisk();
     testSymbols();
