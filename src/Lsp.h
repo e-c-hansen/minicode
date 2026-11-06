@@ -417,6 +417,11 @@ extern NSNotificationName const MCPythonEnvironmentConsentDidChangeNotification;
 @property(nonatomic, readonly) NSView *renameView;
 // The last note sent to showNote.
 @property(nonatomic, readonly) NSString *lastNote;
+// The folders watched for the servers' workspace/didChangeWatchedFiles
+// (none until a server registers a watcher), and the batches of changes
+// handed to the servers so far.
+@property(nonatomic, readonly) NSArray<NSString *> *watchedFolders;
+@property(nonatomic, readonly) NSUInteger watchedBatches;
 @end
 
 // Where tools are looked for: PATH, then the package managers' directories

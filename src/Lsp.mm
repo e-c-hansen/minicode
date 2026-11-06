@@ -6,6 +6,7 @@
 #import "EditorFont.h"
 #import "LspServer.h"
 #import "LspPopups.h"
+#import "LspWatcher.h"
 #import "TreeDetails.h"
 
 NSNotificationName const MCLspSessionDidChangeNotification = @"MCLspSessionDidChange";
@@ -405,6 +406,13 @@ NSNotificationName const MCPythonEnvironmentConsentDidChangeNotification =
     // [server, request id, answer block] still out; a server that exits
     // gets its answer block called with nothing, so the search finishes.
     NSMutableArray<NSArray *> *_workspaceRequests;
+
+    // Files changed on disk, for the servers that registered watchers
+    // (workspace/didChangeWatchedFiles): made with the first registration,
+    // remade when the folders wanted change, gone with the last.
+    MCLspWatcher *_watcher;
+    NSUInteger _watchedBatches;
+    BOOL _stoppingAll;   // stopAllServers is going: the watcher just goes
 }
 
 // Every window's session, so a workspace edit can see other windows' tabs.
@@ -881,6 +889,12 @@ static NSHashTable<LspSession *> *AllSessions(void) {
             reply(n >= 0, n < 0 ? Std(failure) : "");
         });
     };
+    // A server registered or dropped file watchers: the folders watched
+    // follow, once the request it came in has been answered.
+    c.setFileWatching(true);
+    c.onWatchersChanged = [weakSelf] {
+        dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf updateFileWatcher]; });
+    };
     c.onProtocolError = [weakServer](const std::string &problem) {
         NSLog(@"MiniCode: %@: %s", weakServer.name, problem.c_str());
     };
@@ -931,6 +945,8 @@ static NSHashTable<LspSession *> *AllSessions(void) {
 - (void)serverExited:(MCLspServer *)server {
     [self forgetDocumentsOf:server];
     [self finishWorkspaceSymbolsOf:server];
+    __weak LspSession *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf updateFileWatcher]; });
     MCLspEntry *e = [self entryOf:server];
     if (!e || server.stopping) {
         [self dropServer:server];
@@ -975,10 +991,15 @@ static NSHashTable<LspSession *> *AllSessions(void) {
     [self finishWorkspaceSymbolsOf:s];
     [self dropServer:s];
     [s stop];
+    [self updateFileWatcher];
 }
 
 - (void)stopAllServers {
+    _stoppingAll = YES;
     for (MCLspEntry *e in _entries.allValues) [self stopEntry:e];
+    _stoppingAll = NO;
+    [_watcher stop];
+    _watcher = nil;
     [_entries removeAllObjects];
     [_docs removeAllObjects];
     _store.clear();
@@ -1626,6 +1647,81 @@ static BOOL IsRunnable(NSString *path) {
         d.server.client.didSave(Std(d.uri), utf8);
     }
 }
+
+// ---- watched files
+// The servers that registered watchers, running and not on their way out.
+- (NSArray<MCLspServer *> *)watchingServers {
+    NSMutableArray *out = [NSMutableArray array];
+    for (MCLspEntry *e in _entries.allValues) {
+        MCLspServer *s = e.server;
+        if (s && !s.stopping && s.client.state() == Lsp::Client::State::Ready &&
+            s.client.watchesFiles())
+            [out addObject:s];
+    }
+    return out;
+}
+
+// The folder (unless it is / or there is none) and the servers'
+// RelativePattern folders, resolved, as FSEvents reports them; only
+// existing folders, none inside another, as MCLspWatcher keeps them.
+- (NSArray<NSString *> *)wantedWatchFolders {
+    NSArray<MCLspServer *> *servers = [self watchingServers];
+    if (!servers.count) return @[];
+    NSMutableOrderedSet<NSString *> *want = [NSMutableOrderedSet orderedSet];
+    NSString *root = RealPath(_root);
+    if (root.length && ![root isEqualToString:@"/"]) [want addObject:root];
+    for (MCLspServer *s in servers)
+        for (const std::string &base : s.client.watchedBases()) {
+            NSString *b = RealPath(NS(base));
+            if (b.length && ![b isEqualToString:@"/"] && want.count < 64) [want addObject:b];
+        }
+    NSMutableArray<NSString *> *kept = [NSMutableArray array];
+    for (NSString *p in [want.array sortedArrayUsingSelector:@selector(compare:)]) {
+        BOOL dir = NO;
+        if (![[NSFileManager defaultManager] fileExistsAtPath:p isDirectory:&dir] || !dir) continue;
+        BOOL inside = NO;
+        for (NSString *k in kept)
+            if ([p isEqualToString:k] || [p hasPrefix:[k stringByAppendingString:@"/"]]) inside = YES;
+        if (!inside) [kept addObject:p];
+    }
+    return kept;
+}
+
+- (void)updateFileWatcher {
+    if (_stoppingAll) return;
+    NSArray<NSString *> *want = [self wantedWatchFolders];
+    if (_watcher && [want isEqualToArray:_watcher.paths]) return;
+    [_watcher stop];
+    _watcher = nil;
+    if (!want.count) return;
+    __weak LspSession *weakSelf = self;
+    _watcher = [[MCLspWatcher alloc] initWithPaths:want
+                                           handler:^(const std::vector<Lsp::FileChange> &changes) {
+        [weakSelf filesChangedOnDisk:changes];
+    }];
+}
+
+// A batch from the watcher: each server gets the changes its watchers
+// want. A base a server spelled another way than FSEvents does (through a
+// link) gets the change under its own spelling too.
+- (void)filesChangedOnDisk:(const std::vector<Lsp::FileChange> &)changes {
+    _watchedBatches++;
+    for (MCLspServer *s in [self watchingServers]) {
+        std::vector<Lsp::FileChange> mine = changes;
+        for (const std::string &base : s.client.watchedBases()) {
+            std::string real = Std(RealPath(NS(base)));
+            if (real.empty() || real == base) continue;
+            for (const Lsp::FileChange &c : changes)
+                if (c.path.size() > real.size() && c.path.compare(0, real.size(), real) == 0 &&
+                    c.path[real.size()] == '/')
+                    mine.push_back({base + c.path.substr(real.size()), c.type});
+        }
+        s.client.didChangeWatchedFiles(mine);
+    }
+}
+
+- (NSArray<NSString *> *)watchedFolders { return _watcher.paths ?: @[]; }
+- (NSUInteger)watchedBatches { return _watchedBatches; }
 
 - (void)setRoot:(NSString *)root {
     [self closeDocument];

@@ -126,8 +126,8 @@ goes here first, with tests; the GUI only displays it.
   (Format Document's plan), `InstallHints`.
 - Language servers: `LspClient` (protocol, results, WorkspaceEdits, diagnostics
   with versions, completion edits, symbols, folding ranges, the second server's
-  routing and `DiagnosticStore`, the Problems rows), `PythonEnvs` (interpreters
-  found without running any).
+  routing and `DiagnosticStore`, the Problems rows, watched files' globs and
+  registrations), `PythonEnvs` (interpreters found without running any).
 - Terminal: `TerminalStream` (bytes to lines and shell events; `TermParser`,
   `applySgr`, `termCharWidth`), `TerminalScreen` (the grid, scrollback, reflow,
   find, mouse encoding), `TermLinks`.
@@ -158,8 +158,8 @@ goes here first, with tests; the GUI only displays it.
 - Language servers: `Lsp.mm` (`LspSession`, one per window), `LspServer`
   (processes), `LspPopups` (completion, hover, signature), `LspShared.h` (only
   the Lsp files import it), `LspPanel` (status item, popover, interpreter
-  sheet), `LspPicker` (references and fixes list, rename box), `ProblemsPanel`,
-  `InstallPanel`.
+  sheet), `LspPicker` (references and fixes list, rename box), `LspWatcher`
+  (files changed on disk, for the servers), `ProblemsPanel`, `InstallPanel`.
 - `AppSettings`, `Appearance` (Adjust Settings, Theme menu, opacity popover),
   `Keymap`.
 - Terminal: `Terminal` (`TerminalView`, `MCPty`, the shell integration),
@@ -1000,6 +1000,19 @@ view is disposed (on `unrealize`), or dispose loops forever.
   edited-but-unsaved files from disk.
 - Requests during the handshake are queued; server-to-client requests are
   always answered (nulls for configuration, -32601 for unknown methods).
+- **Watched files** (2026-11-06): `client/registerCapability` for
+  `workspace/didChangeWatchedFiles` is kept (others are answered null and
+  ignored), and `MCLspWatcher`, made with the first registration, sends
+  what the servers' globs want (`Lsp::globMatch`, RelativePatterns below
+  their base): its own FSEvents stream with file events on the folder and
+  the patterns' folders outside it (basedpyright registers `**` and its
+  site-packages, Ruff its config files), files open in tabs included,
+  `.git`, `.hg/store` and node_modules' packages left out. The capability
+  is offered only by an owner that sends (`setFileWatching`, the Mac): told
+  the client watches, rust-analyzer stops watching itself, so the GTK port
+  does not offer it. Trap: FSEvents keeps a file's created flag on its
+  later events, so a path already reported is Changed whatever the flags
+  say (`Lsp::FileEventClassifier`).
 - **Lookup** (`MCFindProgram`): PATH plus Homebrew, Cargo, Go, ~/.local/bin,
   npm's prefixes, nvm and fnm (newest first), volta, pnpm, bun, pip --user,
   pyenv, MacPorts, /usr/bin and keg-only llvm, since a Finder-launched app has
@@ -1045,7 +1058,8 @@ view is disposed (on `unrealize`), or dispose loops forever.
   (`Lsp::mergeCodeActions`, 3 s); Organize Imports (Shift+Option+O) prefers a
   tool's `source.organizeImports.<tool>` (`pickOrganizeImports`); basedpyright
   offers none. Traps: Ruff's diagnostic source is "Ruff", its server name
-  "ruff"; editing ruff.toml needs a restart (no dynamic registration).
+  "ruff". Editing ruff.toml reaches Ruff through watched files, with no
+  restart (`lsp_watch` checks it where Ruff is installed).
 - **Python interpreter**: the folder's choice (`MCPythonInterpreters`),
   `python.interpreter`, the nearest .venv/venv/env, `$VIRTUAL_ENV`,
   `$CONDA_PREFIX`, else the server's own (/usr/bin/python3 skipped). Sent only
