@@ -6,6 +6,32 @@
 @protocol MCEditorPage;
 
 // ---------------------------------------------------------------------------
+// A file on disk as the tabs see it (FolderSearch's FileStamp and stable
+// read). Symlinks are followed: a tab on a link watches the file it names.
+// ---------------------------------------------------------------------------
+@interface MCDiskStamp : NSObject
+@property(nonatomic, strong) NSDate *modDate;
+@property(nonatomic, assign) uint64_t fileID;   // the inode
+@property(nonatomic, assign) uint64_t size;
+@property(nonatomic, assign) BOOL regular;
+@end
+// nil when nothing is at the path.
+MCDiskStamp *MCStampOfFile(NSString *path);
+
+@interface MCDiskText : NSObject
+@property(nonatomic, copy)   NSString *text;    // nil: missing, unreadable, too large or not UTF-8
+@property(nonatomic, assign) BOOL bom;          // the file starts with a UTF-8 byte order mark
+@property(nonatomic, assign) BOOL tooLarge;     // over the limit asked for: not read
+// The file as it was before the read (nil when missing): a writer that
+// finished during the read shows as a change at the next look, never as
+// the text read.
+@property(nonatomic, strong) MCDiskStamp *stamp;
+@end
+// Read a file as UTF-8 text, the byte order mark kept apart, stat'ed
+// before reading (FolderSearch::readFileStable). Safe off the main thread.
+MCDiskText *MCReadDiskText(NSString *path, unsigned long long maxBytes);
+
+// ---------------------------------------------------------------------------
 // MCTab: one open document of a window, and everything that belongs to it
 // rather than to the window: the file, its text and mode, whether it has
 // unsaved changes, its own undo stack and LaTeX preview, and where its view
@@ -27,6 +53,19 @@
 @property(nonatomic, strong) NSDate *fileModDate;
 // The file's inode when last read or saved, to follow a rename made outside.
 @property(nonatomic, assign) uint64_t fileID;
+// Its size then, or -1 when not known (a tab restored from a backup): with
+// the date and inode, what tells a change made outside (a date alone misses
+// a write in the same tick on SMB or exFAT).
+@property(nonatomic, assign) int64_t fileSize;
+// The file starts with a UTF-8 byte order mark, kept out of the text and
+// written back on save (Excel's "CSV UTF-8" files have one).
+@property(nonatomic, assign) BOOL bom;
+// A read of the file in the background (a clean tab following its file):
+// a newer one, or an edit meanwhile, drops the older result.
+@property(nonatomic, assign) NSUInteger diskReadGeneration;
+// The file changed on disk while too large to follow live: said once, and
+// read again when the tab is shown or the window comes forward.
+@property(nonatomic, assign) BOOL tooLargeToFollow;
 // The file is no longer at its path (deleted, or moved where it could not
 // be followed): the tab says "(deleted)", counts as unsaved, and Cmd+S asks
 // before writing it again.

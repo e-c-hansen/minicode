@@ -67,6 +67,18 @@
 #import "EditorPanes.h"
 #import "FileTree.h"
 #import "EditorTab.h"
+#include "FolderSearch.h"   // the one writer's atomic write
+
+// The stamp FolderSearch::writeFileAtomically gives for what it wrote.
+MCDiskStamp *MCDiskStampFromFileStamp(const FolderSearch::FileStamp &s);
+
+// A line diff of the source made ahead of time (off the main thread, for a
+// clean tab following its file): the text it was made from, the new text,
+// and the hunks between them (replaceSourceWithDiff:).
+struct MCSourceDiff {
+    std::u16string from, to;
+    std::vector<LineDiff::Hunk> hunks;
+};
 
 // ---------------------------------------------------------------------------
 // Dark theme colors (VS Code "Dark+" inspired).
@@ -506,6 +518,8 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (void)stepTab:(int)delta;
 - (BOOL)confirmCloseTab:(MCTab *)t;
 - (BOOL)saveTab:(MCTab *)t;
+- (BOOL)tabHasTextToWrite:(MCTab *)t;
+- (BOOL)writeText:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive;
 - (BOOL)closeTab:(MCTab *)t prompt:(BOOL)prompt;
 - (void)dropAllTabs;
 - (int)focusedCloseTarget;
@@ -537,8 +551,13 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (void)autoSaveNow;
 - (BOOL)writeTabForAutoSave:(MCTab *)t;
 - (void)reloadCleanTab:(MCTab *)t;
+- (void)followCleanTabInBackground:(MCTab *)t;
+- (void)takeDiskRead:(MCDiskText *)d intoCleanTab:(MCTab *)t
+                diff:(std::shared_ptr<MCSourceDiff>)diff;
+- (void)registerReloadUndoForTab:(MCTab *)t text:(NSString *)old;
+- (void)putBackText:(NSString *)text inTab:(MCTab *)t;
 - (void)checkExternalChange;
-- (void)takeDiskText:(NSString *)fresh forTab:(MCTab *)t;
+- (void)takeDiskText:(MCDiskText *)d forTab:(MCTab *)t;
 - (void)tabWentMissing:(MCTab *)t;
 - (void)tabCameBack:(MCTab *)t;
 - (NSString *)renamedFileFor:(MCTab *)t;
@@ -574,6 +593,8 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (void)loadActiveTab;
 - (NSDate *)diskModDateFor:(NSString *)path;
 - (void)recordDiskStateOf:(MCTab *)t;
+- (void)recordStamp:(MCDiskStamp *)s ofTab:(MCTab *)t;
+- (BOOL)tab:(MCTab *)t changedOnDisk:(MCDiskStamp *)s;
 - (void)recordModDate;
 - (void)forgetHistoryOf:(MCTab *)t;
 - (void)reselectCurrentFileInTree;
@@ -627,6 +648,7 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (void)finishFormatSave;
 - (void)saveBeforeLeavingFormatSave;
 - (BOOL)replaceSourceWithText:(NSString *)text actionName:(NSString *)name;
+- (BOOL)replaceSourceWithDiff:(std::shared_ptr<MCSourceDiff>)diff actionName:(NSString *)name;
 - (void)showFormatNote:(NSString *)message error:(BOOL)error;
 - (void)showFormatNote:(NSString *)message error:(BOOL)error
                install:(NSArray<NSString *> *)install;

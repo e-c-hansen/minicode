@@ -483,16 +483,18 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
         return;
     }
     // Binary by its content (or a document only Quick Look shows) is never
-    // opened as text; a backup, being text, still is.
-    const MCViewerKind viewer = restored ? MCViewerNone : MCViewerKindForFile(path);
+    // opened as text; a backup, being text, still is, and in the viewer its
+    // kind of file has over its text (a CSV's table, a JSON outline).
+    MCViewerKind viewer = MCViewerKindForFile(path);
+    if (restored && MCViewerKindWithoutText(viewer)) viewer = MCViewerNone;
     if (MCViewerKindWithoutText(viewer) && [self showViewer:viewer]) {
         [self recordModDate];
         return;
     }
-    NSError *err = nil;
-    NSString *content = [NSString stringWithContentsOfFile:path
-                                                  encoding:NSUTF8StringEncoding
-                                                     error:&err];
+    // Stat'ed before it is read, so a file still being written when it is
+    // read never counts as matching the disk (FolderSearch::readFileStable).
+    MCDiskText *disk = MCReadDiskText(path, ULLONG_MAX);
+    NSString *content = disk.text;
     // The file is gone, or no longer reads as text: the backup is all there is.
     if (!content && restored) content = @"";
     // Not UTF-8: Quick Look shows what it can (text in another encoding,
@@ -535,7 +537,8 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
                         MCViewerKindRendersMarkdown(viewer)) && !blank;
     self.savedText = content;
     self.dirty = NO;
-    [self recordModDate];
+    _activeTab.bom = disk.bom;
+    [self recordStamp:disk.stamp ofTab:_activeTab];
     if (restored) [self showRestoredText:restored base:restoredBase inode:restoredInode];
     [self refreshDisplay];
     // Previews show rendered text, which no language server should see.
@@ -543,23 +546,36 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     [self updateTitle];
 }
 
-// The on-disk modification time of the current file, or nil.
+// The on-disk modification time of a file (a symlink's target's), or nil.
 - (NSDate *)diskModDateFor:(NSString *)path {
-    if (!path) return nil;
-    NSDictionary *attrs = [[NSFileManager defaultManager]
-        attributesOfItemAtPath:path error:nil];
-    return attrs.fileModificationDate;
+    return MCStampOfFile(path).modDate;
 }
-// What the tab knows of its file on disk: when it was last changed, and its
-// inode, so a rename made outside can be followed.
+// What the tab knows of its file on disk: when it was last changed, its
+// inode, so a rename made outside can be followed, and its size. Symlinks
+// are followed (attributesOfItemAtPath: did not, so a tab on a link never
+// saw its file change).
 - (void)recordDiskStateOf:(MCTab *)t {
-    NSDictionary *attrs = t.currentPath
-        ? [[NSFileManager defaultManager] attributesOfItemAtPath:t.currentPath error:nil] : nil;
-    t.fileModDate = attrs.fileModificationDate;
-    t.fileID = [attrs[NSFileSystemFileNumber] unsignedLongLongValue];
+    [self recordStamp:MCStampOfFile(t.currentPath) ofTab:t];
+}
+- (void)recordStamp:(MCDiskStamp *)s ofTab:(MCTab *)t {
+    if (!t) return;
+    t.fileModDate = s.modDate;
+    t.fileID = s.fileID;
+    t.fileSize = s ? (int64_t)s.size : -1;
+    t.tooLargeToFollow = NO;
     if (t == _activeTab) [self updateSavedStatus];
 }
 - (void)recordModDate { [self recordDiskStateOf:_activeTab]; }
+
+// Whether the file is not as the tab last saw it: another date, inode or
+// size, or gone. Unknowns (no inode, no size, from a backup) are not
+// compared.
+- (BOOL)tab:(MCTab *)t changedOnDisk:(MCDiskStamp *)s {
+    if (!s || !t.fileModDate) return s != nil || t.fileModDate != nil;
+    if (![s.modDate isEqualToDate:t.fileModDate]) return YES;
+    if (t.fileID && s.fileID != t.fileID) return YES;
+    return t.fileSize >= 0 && (int64_t)s.size != t.fileSize;
+}
 
 // The tab's text was replaced from disk. Its undo steps were made for the
 // old text, and taken now they would edit the new text at the old places
