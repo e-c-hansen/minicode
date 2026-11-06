@@ -50,6 +50,7 @@
 #include "TerminalStream.h"
 #include "TerminalScreen.h"
 #include "TermLinks.h"
+#include "AgentIndex.h"
 
 #include <util.h>
 #include <termios.h>
@@ -491,6 +492,9 @@ static const CFTimeInterval kSliceSeconds = 0.012;
 
 @end
 
+@implementation MCTermLinkMatch
+@end
+
 @implementation MCTermLink
 @end
 
@@ -656,6 +660,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     BOOL _userCommand;           // the command in flight came from the input
     BOOL _seenPrompt;            // this shell has reached its first prompt
     NSString *_runningCommand;   // what was entered, until the next prompt
+    NSString *_programTitle;     // OSC 0 or 2 from the running program, until the prompt
     NSString *_pendingCommand;   // runCommand: waiting for the prompt
     BOOL _closed;                // close was called: never start a shell again
     BOOL _lineMode;              // terminal.mode = line when this one opened
@@ -1101,11 +1106,17 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 - (NSString *)recentText:(NSUInteger)maxLines {
     std::vector<std::string> lines;
     if (!_lineMode || _gridMode) {
-        // The grid, scrollback above it; blank rows at the bottom dropped.
+        // The grid, scrollback above it; blank rows at the bottom dropped,
+        // and rows the terminal wrapped joined into the lines they were.
         int last = _screen.rows() - 1;
         while (last >= 0 && _screen.lineText(last).empty()) last--;
-        for (int line = last; line >= -_screen.historySize() && lines.size() < maxLines; line--)
-            lines.push_back(_screen.lineText(line));
+        int first = -_screen.historySize();
+        for (int line = last; line >= first && lines.size() < maxLines; line--) {
+            int start = line;
+            while (start > first && _screen.lineWraps(start - 1)) start--;
+            lines.push_back(_screen.textBetween(start, 0, line, _screen.cols() - 1));
+            line = start;
+        }
         std::reverse(lines.begin(), lines.end());
     } else {
         NSArray<NSString *> *all = [self.output.string componentsSeparatedByString:@"\n"];
@@ -1223,7 +1234,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 }
 
 - (NSString *)title {
-    if (_fixedTitle) return _fixedTitle;
+    if (_fixedTitle) return _fixedTitle;     // minicode term --title
+    if (_programTitle.length) return _programTitle;
     if (_runningCommand.length) {
         NSMutableArray *words = [NSMutableArray array];
         for (NSString *w in [_runningCommand componentsSeparatedByString:@" "]) {
@@ -1240,6 +1252,34 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
 - (void)titleChanged {
     if (self.onTitleChange) self.onTitleChange();
+}
+
+// OSC 0 or 2. A program's title (vim, ssh, Claude Code) names the tab while
+// it runs; the shell's own, set at its prompt, does not, so only titles
+// that come between a command's start (133;C) and the next prompt count.
+// Without the shell integration there are no marks, and every title counts.
+- (void)programTitled:(const std::string &)text {
+    if (_integrated && !_commandStarted) return;
+    NSString *title = [[NSString alloc] initWithBytes:text.data() length:text.size()
+                                             encoding:NSUTF8StringEncoding];
+    title = [title stringByTrimmingCharactersInSet:
+             [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (!title.length) title = nil;
+    if (title == _programTitle || [title isEqualToString:_programTitle]) return;
+    _programTitle = title;
+    [self titleChanged];
+}
+
+// The prompt is back: the program's title goes, and so does mouse
+// reporting or focus reporting it left on (a program killed before it
+// could turn them off), or the next click would type into the prompt.
+- (void)promptReturned {
+    if (_programTitle) {
+        _programTitle = nil;
+        [self titleChanged];
+    }
+    if (!_screen.altScreen() && (_screen.mouseTracking() || _screen.focusEvents()))
+        _screen.resetMouseModes();
 }
 
 - (void)runCommand:(NSString *)line {
@@ -1509,36 +1549,45 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     }];
 }
 
-// A path as written, resolved to an existing file or folder, or nil.
-- (NSString *)resolvePath:(NSString *)written isDirectory:(BOOL *)isDir {
+// Every place a path as written exists, newest first, looked for under the
+// shell's folder, the window's, then extraLinkRoots (AgentIndex::resolveTarget);
+// *tried gets the roots looked in. Cached until the next output or cwd change.
+- (NSArray<MCTermLinkMatch *> *)matchesForPath:(NSString *)written tried:(NSArray **)tried {
     if (!_linkCache) _linkCache = [NSMutableDictionary dictionary];
-    NSFileManager *fm = [NSFileManager defaultManager];
-    id cached = _linkCache[written];
+    NSArray *cached = _linkCache[written];
     if (cached) {
-        if (cached == [NSNull null]) return nil;
-        [fm fileExistsAtPath:cached isDirectory:isDir];
-        return cached;
+        if (tried) *tried = cached[1];
+        return cached[0];
     }
-    NSString *expanded = written.stringByExpandingTildeInPath;
-    NSMutableArray<NSString *> *candidates = [NSMutableArray array];
-    if (expanded.isAbsolutePath) {
-        [candidates addObject:expanded];
-    } else {
-        if (_cwd.length) [candidates addObject:[_cwd stringByAppendingPathComponent:expanded]];
-        if (self.projectRoot.length)
-            [candidates addObject:[self.projectRoot stringByAppendingPathComponent:expanded]];
-    }
-    NSString *found = nil;
-    for (NSString *c in candidates) {
+    AgentIndex::Roots roots;
+    roots.cwd = _cwd.UTF8String ?: "";
+    roots.folder = self.projectRoot.UTF8String ?: "";
+    if (self.extraLinkRoots)
+        for (NSString *r in self.extraLinkRoots()) roots.worktrees.push_back(r.UTF8String ?: "");
+    roots.home = NSHomeDirectory().UTF8String ?: "";
+    AgentIndex::Resolution res =
+        AgentIndex::resolveTarget(written.UTF8String ?: "", 0, 0, roots, AgentTranscript::posixFs());
+    NSMutableArray<MCTermLinkMatch *> *matches = [NSMutableArray array];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    for (const AgentIndex::Match &m : res.matches) {
         // Spelled the way the window spells its root (/tmp, not the
         // /private/tmp the shell reports), so a file inside the folder is
         // recognised as inside it.
-        NSString *path = c.stringByStandardizingPath.stringByResolvingSymlinksInPath;
-        if ([fm fileExistsAtPath:path isDirectory:isDir]) { found = path; break; }
+        NSString *path = [@(m.path.c_str()) stringByStandardizingPath].stringByResolvingSymlinksInPath;
+        if (!path.length || [seen containsObject:path]) continue;
+        [seen addObject:path];
+        MCTermLinkMatch *x = [MCTermLinkMatch new];
+        x.path = path;
+        x.modified = m.mtime;
+        x.isDirectory = m.isDir;
+        [matches addObject:x];
     }
+    NSMutableArray<NSString *> *looked = [NSMutableArray array];
+    for (const std::string &t : res.tried) [looked addObject:@(t.c_str())];
     if (_linkCache.count > 500) [_linkCache removeAllObjects];
-    _linkCache[written] = found ?: (id)[NSNull null];
-    return found;
+    _linkCache[written] = @[matches, looked];
+    if (tried) *tried = looked;
+    return matches;
 }
 
 - (MCTermLink *)linkInLine:(const std::string &)line atByte:(size_t)byte {
@@ -1559,11 +1608,19 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         link.target = target;
         return link;
     }
-    BOOL isDir = NO;
-    NSString *path = [self resolvePath:target isDirectory:&isDir];
-    if (!path) return nil;
-    link.target = path;
-    link.isDirectory = isDir;
+    NSArray *tried = nil;
+    NSArray<MCTermLinkMatch *> *matches = [self matchesForPath:target tried:&tried];
+    link.matches = matches;
+    if (!matches.count) {
+        // Found nowhere: still a link when it is plainly a path, so a click
+        // can say where it was looked for.
+        if (l->line <= 0 && [target rangeOfString:@"/"].location == NSNotFound) return nil;
+        link.target = target;
+        link.tried = tried;
+        return link;
+    }
+    link.target = matches.firstObject.path;
+    link.isDirectory = matches.firstObject.isDirectory;
     return link;
 }
 
@@ -1639,7 +1696,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     ws.ws_ypixel = (unsigned short)(ws.ws_row * cell.height);
     if (ws.ws_col == _winsize.ws_col && ws.ws_row == _winsize.ws_row) return;
     _winsize = ws;
-    _screen.resize(ws.ws_col, ws.ws_row);
+    if (self.grid.screen) [self.grid resizeScreenToCols:ws.ws_col rows:ws.ws_row];
+    else _screen.resize(ws.ws_col, ws.ws_row);
     [self.grid screenChanged];
     if (_master >= 0) ioctl(_master, TIOCSWINSZ, &_winsize);
 }
@@ -1703,6 +1761,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     _stream = TerminalStream();
     _seenPrompt = NO;
     _runningCommand = nil;
+    _programTitle = nil;
     _atPrompt = NO;
     _commandStarted = NO;
     _userCommand = NO;
@@ -1785,6 +1844,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     [self updateSecureInput];
     if (_lineMode) [self ensureNewline];
     else _screen.feed("\x1b[?1049l\x1b[!p\x1b[?2004l\r\n");   // out of whatever it left
+    _commandStarted = NO;
+    [self promptReturned];       // no program title, no mouse reporting left on
     // Restart right away, unless the shell is dying at startup; then wait for
     // Enter so a broken startup file can't spin in a loop.
     if (-[_shellStarted timeIntervalSinceNow] > 2.0) {
@@ -1901,6 +1962,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
             _commandStarted = NO;
             _stickyGrid = NO;
             [self stopRawWatch];
+            [self promptReturned];
             if (_runningCommand) { _runningCommand = nil; [self titleChanged]; }
             break;
         case TermEvent::CommandStart:
@@ -1925,6 +1987,9 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
             [_linkCache removeAllObjects];
             [self updatePrompt];
             [self titleChanged];
+            break;
+        case TermEvent::Title:
+            [self programTitled:e.text];
             break;
         case TermEvent::InputStart:   // grid mode's integration only
             break;
@@ -1956,6 +2021,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
             _seenPrompt = YES;
             _commandStarted = NO;
             _zleReady = NO;
+            [self promptReturned];
             if (_runningCommand) { _runningCommand = nil; [self titleChanged]; }
             break;
         case TermEvent::InputStart:
@@ -1985,6 +2051,9 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
                                             length:e.text.size()];
             [self updatePrompt];
             [self titleChanged];
+            break;
+        case TermEvent::Title:
+            [self programTitled:e.text];
             break;
         }
     }

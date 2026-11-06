@@ -1,14 +1,15 @@
 // EditorController.h — Cocoa window: file tree (left) + editor/preview (right).
 #import <Cocoa/Cocoa.h>
 
-@class MCAgentNotes, MCComparison, TerminalView;
+@class MCAgentNotes, MCComparison, MCPaletteContext, TerminalView;
 
 @interface EditorController : NSObject <NSOutlineViewDataSource,
                                         NSOutlineViewDelegate,
                                         NSSplitViewDelegate,
                                         NSTextViewDelegate,
                                         NSWindowDelegate,
-                                        NSMenuItemValidation>
+                                        NSMenuItemValidation,
+                                        NSMenuDelegate>
 @property(nonatomic, readonly) BOOL canTogglePreview;
 @property(nonatomic, readonly, strong) NSWindow *window;
 @property(nonatomic, readonly, copy) NSString *rootPath;
@@ -43,6 +44,7 @@
 - (void)toggleBrowser:(id)sender;     // Shift+Cmd+B embedded browser
 - (void)toggleSidebar:(id)sender;     // Cmd+B collapse/restore file tree
 - (void)toggleSourceControl:(id)sender;   // Ctrl+Shift+G git panel in the sidebar
+- (void)toggleAgents:(id)sender;          // Shift+Cmd+A agent sessions in the sidebar
 - (void)toggleEditor:(id)sender;      // Shift+Cmd+E hide/restore the file editor
 - (void)toggleHiddenFiles:(id)sender; // Cmd+Shift+. show/hide dotfiles
 - (void)toggleTreeColumn:(id)sender;  // the tree's size, saved and created columns (tag)
@@ -141,6 +143,12 @@
 - (void)goToLine:(int)line column:(int)column;
 @property(nonatomic, readonly) BOOL canGoToLine;
 - (NSArray<NSString *> *)recentTabPaths;
+// Go to Symbol in File ("@", Shift+Cmd+O) and in Workspace ("#", Cmd+T):
+// what the file on show and the window's language servers offer, and how
+// the editor shows a symbol while the list moves.
+- (void)addSymbolsToPaletteContext:(MCPaletteContext *)context;
+- (void)navigateBack:(id)sender;       // Ctrl+-: the place before the last jump
+- (void)navigateForward:(id)sender;    // Ctrl+Shift+-
 
 // ---- the control channel (ControlCommands.mm) and agent notes (AgentNotes.h)
 // None of these moves the keyboard; they only add tabs and terminals.

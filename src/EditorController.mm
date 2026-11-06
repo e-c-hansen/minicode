@@ -15,6 +15,10 @@
 #import "MarkdownMath.h"
 #import "MarkdownEditPanel.h"
 #import "GitPanel.h"
+#import "AgentWindow.h"
+#import "AgentsPanel.h"
+#import "AgentModel.h"
+#import "EditorPage.h"
 #import "Appearance.h"
 #import "TabStrip.h"
 #import "FormatRunner.h"
@@ -26,7 +30,10 @@
 #import "AgentPanel.h"
 #import "EditorFind.h"
 #import "ProblemsPanel.h"
+#import "PalettePanel.h"
+#import "Navigation.h"
 #import "Gutter.h"
+#import "FoldView.h"
 #import "EditorFont.h"
 #import "AgentNotes.h"
 #import "CompareView.h"
@@ -544,6 +551,9 @@ private:
 @property(nonatomic, strong) NSData *diffData;
 // A side-by-side diff (isDiff too): what it compares (CompareView.h).
 @property(nonatomic, strong) MCComparison *comparison;
+// A page of its own in the editor's slot (isDiff too): the Evidence view, a
+// worktree's changes (EditorPage.h).
+@property(nonatomic, strong) id<MCEditorPage> page;
 // The window's agent preview tab: what `minicode open --note` and the like
 // show, replaced by the next such open; an edit or a double-click on its
 // title keeps it as an ordinary tab.
@@ -566,6 +576,9 @@ private:
 @property(nonatomic, assign) CGFloat sourceCaretOffset;
 @property(nonatomic, assign) BOOL haveSourcePosition;
 @property(nonatomic, assign) NSPoint previewEntryScroll;
+// Its closed folds (FoldView.h), as UTF-16 spans of the source, while
+// another tab is shown; forgotten when the text is read again from disk.
+@property(nonatomic, copy)   NSArray<NSValue *> *folds;
 // Its backup (BackupStore): the id, the text and path last written (so an
 // unchanged buffer is not written again), whether one is on disk, and
 // whether the buffer came back from one and waits to be shown over the
@@ -589,7 +602,7 @@ private:
 
 // ---------------------------------------------------------------------------
 @interface EditorController () <NSTextStorageDelegate, MCChangeHost, MCAgentHost,
-                                 MCAgentNotesHost> {
+                                 MCAgentNotesHost, MCNavigatorHost, MCAgentWorkHost> {
     FileItem *_root;
     // The open files, in the order the strip shows them, and the one shown.
     NSMutableArray<MCTab *> *_tabs;
@@ -666,6 +679,8 @@ private:
     MCEditorFind *_editorFind;             // the editor's find and replace bar (EditorFind.h)
     NSDate *_backupFirstPending;           // the oldest buffer change not yet backed up
     MCAgentNotes *_notes;                  // notes and tours over the editor, made on first use
+    MCAgentWindow *_agents;                // the Agents panel, worktrees, evidence (AgentWindow.h)
+    FileItem *_worktreesItem;              // the tree's Worktrees node, while there is one
 }
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) ClickOutline *outline;
@@ -728,6 +743,7 @@ private:
 @property(nonatomic, assign) NSUInteger opacityLineStart;   // line the opacity slider edits
 @property(nonatomic, assign) NSUInteger keyFlashGeneration;  // Adjust Settings' tint
 @property(nonatomic, strong) LspSession *lsp;         // language servers
+@property(nonatomic, strong) MCNavigator *navigator;  // Go Back and Go Forward
 @property(nonatomic, strong) MCLspStatusField *lspLabel;   // their status; click for more
 // Every problem the servers report, across the bottom above the terminal
 // (Shift+Cmd+M), and their counts in the status bar (click to toggle it).
@@ -737,6 +753,7 @@ private:
 @property(nonatomic, strong) MCInstallBar *installBar;     // "No Python language server..."
 @property(nonatomic, strong) MCGitPanel *gitPanel;    // Source Control, in the sidebar's place
 @property(nonatomic, assign) BOOL gitPanelVisible;
+@property(nonatomic, assign) BOOL agentsVisible;      // the Agents panel in the sidebar's place
 @property(nonatomic, strong) PanelScrollView *diffScroll;   // editor's slot, for a diff
 @property(nonatomic, strong) NSTextView *diffView;
 @property(nonatomic, strong) MCCompareView *compareView;   // editor's slot, side by side
@@ -751,6 +768,9 @@ private:
 
 typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCancel };
 
+// The tree menu's items for a worktree (shown only on one).
+static const NSInteger kWorktreeMenuTag = 7701;
+
 @implementation EditorController
 
 - (instancetype)initWithRootPath:(NSString *)path {
@@ -764,6 +784,7 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
         _noTabUndo = [NSUndoManager new];
         _pendingStart = _pendingEnd = NSNotFound;
         [self setUpTreeDetails];
+        _agents = [[MCAgentWindow alloc] initWithHost:self];
     }
     return self;
 }
@@ -899,6 +920,13 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
 
     // Language servers: completion, go to definition, error underlines.
     self.lsp = [[LspSession alloc] initWithTextView:self.textView root:_root.path];
+    // Jumps (definition, references, symbols, lines) are remembered for Ctrl+-.
+    self.navigator = [[MCNavigator alloc] initWithTextView:self.textView host:self];
+    self.lsp.aroundJump = ^(dispatch_block_t jump) {
+        EditorController *s = weakSelf;
+        if (s) [s.navigator jump:jump];
+        else jump();
+    };
     self.textView.onPreviewDoubleClick = ^BOOL(NSUInteger index, NSPoint point) {
         return [weakSelf editMarkdownAtCharacter:index point:point];
     };
@@ -1130,6 +1158,9 @@ static void *kMediaItemContext = &kMediaItemContext;
     self.diffScroll.panelColor = [cfg background:Surface::Editor];
     if (self.isDiff && self.diffData) [self renderDiff];
     [self.gitPanel applySettings];
+    if (_agents.started) [_agents.panel applySettings];
+    for (MCTab *t in _tabs)
+        if ([t.page respondsToSelector:@selector(pageApplySettings)]) [t.page pageApplySettings];
     self.textView.insertionPointColor = [cfg text:Surface::Editor];
     NSMutableArray *rulers = [NSMutableArray array];
     for (int column : st.rulers()) [rulers addObject:@(column)];
@@ -1227,6 +1258,14 @@ static void *kMediaItemContext = &kMediaItemContext;
 
 - (NSMenu *)buildTreeContextMenu {
     NSMenu *m = [[NSMenu alloc] init];
+    m.delegate = self;   // menuNeedsUpdate: shows a worktree's items only on a worktree
+    [m addItemWithTitle:@"Compare with Main" action:@selector(compareWorktreeWithMain:)
+          keyEquivalent:@""].tag = kWorktreeMenuTag;
+    [m addItemWithTitle:@"Open in New Window" action:@selector(openWorktreeInNewWindow:)
+          keyEquivalent:@""].tag = kWorktreeMenuTag;
+    NSMenuItem *wtLine = [NSMenuItem separatorItem];
+    wtLine.tag = kWorktreeMenuTag;
+    [m addItem:wtLine];
     [m addItemWithTitle:@"New File…" action:@selector(newFile:) keyEquivalent:@""];
     [m addItemWithTitle:@"New Folder…" action:@selector(newFolder:) keyEquivalent:@""];
     [m addItem:[NSMenuItem separatorItem]];
@@ -1519,6 +1558,12 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⇧⇥" label2:@"Outdent lines" state:nil];
     [self appendHintsRow:s key:@"⌘= ⌘-" label:@"Zoom in, out"
                     key2:@"⌥⌘0" label2:@"Reset zoom" state:nil];
+    [self appendHintsRow:s key:@"⌃⌘[" label:@"Fold"
+                    key2:@"⌃⌘]" label2:@"Unfold" state:nil];
+    [self appendHintsRow:s key:@"⌃⌘0" label:@"Fold all"
+                    key2:@"⌃⌘J" label2:@"Unfold all" state:nil];
+    [self appendHintsRow:s key:@"⌃⌘L" label:@"Toggle fold"
+                    key2:@"⌃⌘1…7" label2:@"Fold level 1 to 7" state:nil];
 
     [self appendHintsHeading:@"Files" to:s];
     [self appendHintsRow:s key:@"⌥⌘N" label:@"New window"
@@ -1537,6 +1582,10 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⌘P" label2:@"Go to file" state:nil];
     [self appendHintsRow:s key:@"⌃G" label:@"Go to line"
                     key2:@"⇧⌘\\" label2:@"Go to bracket" state:nil];
+    [self appendHintsRow:s key:@"⇧⌘O" label:@"Go to symbol"
+                    key2:@"⌘T" label2:@"Symbol in workspace" state:nil];
+    [self appendHintsRow:s key:@"⌃- ⌃⇧-" label:@"Back, forward"
+                    key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:@"⌘0" label:@"Focus tree"
                     key2:@"⌘1" label2:@"Focus editor" state:nil];
     [self appendHintsRow:s key:@"⌘2" label:@"Focus terminal"
@@ -1589,11 +1638,17 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:nil label2:nil state:openOr(self.browserVisible)];
     [self appendHintsRow:s key:@"⌃⇧G" label:@"Source control"
                     key2:nil label2:nil state:openOr(self.gitPanelVisible)];
+    [self appendHintsRow:s key:@"⇧⌘A" label:@"Agents"
+                    key2:nil label2:nil state:openOr(self.agentsVisible)];
     [self appendHintsRow:s key:@"⇧⌘M" label:@"Problems"
                     key2:nil label2:nil state:openOr(self.problemsVisible)];
     if (self.problemsVisible) {
         [self appendHintsRow:s key:@"⏎" label:@"Go to the problem"
                         key2:@"⎋" label2:@"Back to the editor" state:nil];
+    }
+    if (self.agentsVisible) {
+        [self appendHintsRow:s key:@"⏎" label:@"Evidence, or open the file"
+                        key2:@"Space" label2:@"Expand or collapse" state:nil];
     }
     if (self.gitPanelVisible) {
         [self appendHintsRow:s key:@"⏎" label:@"Show the diff or commit"
@@ -1710,7 +1765,17 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     BOOL showMedia = showEditor && self.playerView != nil && self.isMedia;
     BOOL showCompare = showEditor && self.compareView != nil && self.isDiff &&
                        _activeTab.comparison != nil;
-    BOOL showDiff = showEditor && self.diffScroll != nil && self.isDiff && !showCompare;
+    BOOL showPage = showEditor && self.isDiff && _activeTab.page != nil;
+    for (MCTab *t in _tabs) {
+        if (!t.page) continue;
+        NSView *v = t.page.pageView;
+        const BOOL on = showPage && t == _activeTab;
+        if (on && v.superview != self.rightArea)
+            [self.rightArea addSubview:v positioned:NSWindowBelow relativeTo:self.termDivider];
+        if (on) v.frame = editorRect;
+        v.hidden = !on;
+    }
+    BOOL showDiff = showEditor && self.diffScroll != nil && self.isDiff && !showCompare && !showPage;
     // Quick Look and the other viewers (FileViewers.h): the whole slot, or
     // a part of it beside the text.
     BOOL showViewer = NO;
@@ -1719,7 +1784,7 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
                                : editorRect;
     self.editorScroll.frame = textRect;
     self.editorScroll.hidden = !showEditor || showLatex || showImage || showPDF ||
-                               showMedia || showDiff || showCompare || showViewer;
+                               showMedia || showDiff || showCompare || showPage || showViewer;
     [_editorFind layoutInEditorRect:textRect visible:!self.editorScroll.hidden];
     if (self.diffScroll) {
         self.diffScroll.frame = editorRect;
@@ -1847,6 +1912,10 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     self.terminalPanel = [[MCTerminalPanel alloc] initWithDirectory:_root.path firstIn:first];
     self.terminalPanel.projectRoot = _root.path;
     __weak EditorController *weakSelf = self;
+    self.terminalPanel.extraLinkRoots = ^NSArray<NSString *> *{
+        EditorController *s = weakSelf;
+        return s ? [s->_agents linkRoots] : @[];
+    };
     self.terminalPanel.onOpenLink = ^(MCTermLink *link) {
         [weakSelf openTerminalLink:link];
     };
@@ -2015,6 +2084,15 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
 // file opens in the editor at the line and column the reference named; a
 // folder is shown in the tree.
 - (void)openTerminalLink:(MCTermLink *)link {
+    // Found in several places (a worktree's copy and the folder's), or in
+    // none: the picker, or a note saying where it was looked for.
+    __weak EditorController *weakSelf = self;
+    if ([_agents handleLink:link open:^(MCTermLink *chosen) { [weakSelf openTerminalLink:chosen]; }])
+        return;
+    [self.navigator jump:^{ [self openTerminalLinkNow:link]; }];
+}
+
+- (void)openTerminalLinkNow:(MCTermLink *)link {
     if (link.isURL) {
         if (!self.browserVisible) [self toggleBrowser:nil];
         [self.browser navigateToString:link.target];
@@ -2040,8 +2118,10 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
         [self revealPath:path andOpen:NO];
         return;
     }
-    if (inside) [self revealPath:path andOpen:YES];
-    else [self openFileAtPath:path];
+    // Selected in the tree when the tree lists it, and opened either way (a
+    // file in a worktree under the hidden .claude folder, a dotfile).
+    if (inside) [self revealPath:path andOpen:NO];
+    [self openFileAtPath:path];
     // Opening can be refused ("Save changes?" answered Cancel), and an image
     // or PDF has no lines to go to.
     if (![self.currentPath isEqualToString:path] || self.isImage || self.isPDF ||
@@ -2054,6 +2134,10 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
 // characters, and 0 means the start of the line), showing the source first
 // if a preview is up.
 - (void)goToLine:(int)line column:(int)column {
+    [self.navigator jump:^{ [self moveToLine:line column:column]; }];
+}
+
+- (void)moveToLine:(int)line column:(int)column {
     if (self.previewMode && self.canTogglePreview) [self togglePreview:nil];
     NSString *text = self.textView.string;
     NSUInteger index = 0;
@@ -2227,11 +2311,12 @@ static const CGFloat kDividerGrabSlop = 5;
             [weakSelf showCommitTitled:title data:show];
         };
     }
-    NSView *from = self.gitPanelVisible ? self.gitPanel : self.sidebarScroll;
+    NSView *from = [self sidebarViewOnShow];
     NSView *to = self.gitPanelVisible ? self.sidebarScroll : self.gitPanel;
     to.frame = from.frame;
-    [self.splitView replaceSubview:from with:to];
+    if (from != to) [self.splitView replaceSubview:from with:to];
     self.gitPanelVisible = !self.gitPanelVisible;
+    self.agentsVisible = NO;
     if (self.sidebarCollapsed || from.frame.size.width < 1) {
         self.sidebarCollapsed = NO;
         [self.splitView setPosition:260 ofDividerAtIndex:0];
@@ -2242,6 +2327,30 @@ static const CGFloat kDividerGrabSlop = 5;
     } else {
         [self.window makeFirstResponder:self.outline];
     }
+    if (self.hintsVisible) [self updateHints];
+}
+
+// What the sidebar's place holds now: the tree, Source Control or Agents.
+- (NSView *)sidebarViewOnShow {
+    return self.agentsVisible ? _agents.panel : self.gitPanelVisible ? self.gitPanel : self.sidebarScroll;
+}
+
+// Shift+Cmd+A: the Agents panel takes the sidebar's place as Source Control
+// does (AgentsPanel.h), and gives the tree back when toggled again.
+- (void)toggleAgents:(id)sender {
+    (void)sender;
+    NSView *from = [self sidebarViewOnShow];
+    NSView *to = self.agentsVisible ? self.sidebarScroll : _agents.panel;
+    to.frame = from.frame;
+    if (from != to) [self.splitView replaceSubview:from with:to];
+    self.agentsVisible = !self.agentsVisible;
+    self.gitPanelVisible = NO;
+    if (self.sidebarCollapsed || from.frame.size.width < 1) {
+        self.sidebarCollapsed = NO;
+        [self.splitView setPosition:260 ofDividerAtIndex:0];
+    }
+    if (self.agentsVisible) [_agents.panel focusList];
+    else [self.window makeFirstResponder:self.outline];
     if (self.hintsVisible) [self updateHints];
 }
 
@@ -2263,7 +2372,7 @@ static const CGFloat kDividerGrabSlop = 5;
     // Diffs and commits share one tab, which each new one replaces, so
     // stepping through the changed files does not leave a tab for each.
     MCTab *tab = nil;
-    for (MCTab *t in _tabs) if (t.isDiff && !t.comparison) { tab = t; break; }
+    for (MCTab *t in _tabs) if (t.isDiff && !t.comparison && !t.page) { tab = t; break; }
     if (!tab) {
         tab = [MCTab new];
         tab.loaded = YES;
@@ -2313,6 +2422,7 @@ static const CGFloat kDividerGrabSlop = 5;
 }
 
 - (void)renderDiff {
+    if (_activeTab.page) return;   // a page draws itself
     if (_activeTab.comparison) {
         [self compareViewMade].comparison = _activeTab.comparison;
         return;
@@ -2364,8 +2474,10 @@ static const CGFloat kDividerGrabSlop = 5;
             initWithRoot:_root.path
              openHandler:^(NSString *path, NSInteger line) {
                 EditorController *s = weakSelf;
-                [s openFileAtPath:path];
-                [s jumpToLine:line];
+                [s.navigator jump:^{
+                    [s openFileAtPath:path];
+                    [s jumpToLine:line];
+                }];
                 [s.window makeKeyAndOrderFront:nil];
             }];
         // Replace in Folder edits open tabs through their buffers, as
@@ -2597,6 +2709,7 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
 // Every open tab follows a file or folder that moved; the one on show also
 // tells the language server and the previews.
 - (void)pathMovedFrom:(NSString *)src to:(NSString *)dst {
+    [self.navigator pathMovedFrom:src to:dst];
     NSString *(^follow)(NSString *) = ^NSString *(NSString *p) {
         if ([p isEqualToString:src]) return dst;
         NSString *prefix = [src stringByAppendingString:@"/"];
@@ -2665,6 +2778,7 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
 - (void)focusTree:(id)sender {
     // The sidebar holds the Source Control panel instead: focus its list.
     if (self.gitPanelVisible) { [self.gitPanel focusList]; return; }
+    if (self.agentsVisible) { [_agents.panel focusList]; return; }
     if (self.outline.selectedRow < 0 && self.outline.numberOfRows > 0)
         [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:0]
                   byExtendingSelection:NO];
@@ -2698,10 +2812,12 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     EditorController *self = (__bridge EditorController *)info;
     // Folder totals under the folders that changed are counted again.
     char **changed = (char **)paths;
-    for (size_t i = 0; i < n; i++)
+    for (size_t i = 0; i < n; i++) {
         [self folderChangedOnDisk:@(changed[i])
                           subtree:(flags[i] & (kFSEventStreamEventFlagMustScanSubDirs |
                                                kFSEventStreamEventFlagRootChanged)) != 0];
+        [self agentFolderChangedOnDisk:@(changed[i])];   // a worktree made or committed to
+    }
     [self refreshTree:nil];
     if (self.gitPanelVisible) [self.gitPanel refresh];   // a commit or edit made elsewhere
     [self checkTabsOnDisk];   // a tab's file moved or deleted in the terminal
@@ -2754,8 +2870,13 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     const NSPoint origin = clip.bounds.origin;
 
     if (rescan) [_root refresh];
+    if (rescan) [_worktreesItem refresh];
     [self.outline reloadData];
     [self reExpand:_root usingSet:expanded];
+    if (_worktreesItem && [expanded containsObject:_worktreesItem.path]) {
+        [self.outline expandItem:_worktreesItem];
+        [self reExpand:_worktreesItem usingSet:expanded];
+    }
 
     if (selPath) {
         for (NSInteger r = 0; r < self.outline.numberOfRows; r++) {
@@ -2814,7 +2935,126 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     if (node.shown && node.shownGeneration == _sortGeneration) return node.shown;
     node.shown = [self orderOf:node.children];
     node.shownGeneration = _sortGeneration;
+    node.shown = [self withWorktreesNode:node.shown of:node];
     return node.shown;
+}
+
+// R2.8: the worktrees Claude Code makes under <folder>/.claude/worktrees
+// show as one Worktrees node first in the folder, hidden files or not, and
+// not again as plain folders inside .claude.
+- (NSString *)worktreesFolder {
+    return _root.path ? [_root.path stringByAppendingPathComponent:@".claude/worktrees"] : nil;
+}
+
+- (NSArray<FileItem *> *)withWorktreesNode:(NSArray<FileItem *> *)shown of:(FileItem *)node {
+    NSString *dir = [self worktreesFolder];
+    if (!dir) return shown;
+    if (node == _root) {
+        BOOL any = NO;
+        for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:dir error:nil]) {
+            BOOL isDir = NO;
+            if (![name hasPrefix:@"."] &&
+                [NSFileManager.defaultManager fileExistsAtPath:[dir stringByAppendingPathComponent:name]
+                                                   isDirectory:&isDir] && isDir) {
+                any = YES;
+                break;
+            }
+        }
+        if (!any) {
+            _worktreesItem = nil;
+            return shown;
+        }
+        if (![_worktreesItem.path isEqualToString:dir]) {
+            _worktreesItem = [FileItem new];
+            _worktreesItem.path = dir;
+            [_worktreesItem readStat];
+        }
+        return [@[_worktreesItem] arrayByAddingObjectsFromArray:shown];
+    }
+    if ([node.path isEqualToString:dir.stringByDeletingLastPathComponent]) {
+        NSMutableArray *out = [shown mutableCopy];
+        for (FileItem *c in shown)
+            if ([c.path isEqualToString:dir]) [out removeObject:c];
+        return out;
+    }
+    return shown;
+}
+
+- (BOOL)isWorktreeRow:(FileItem *)node {
+    return node && _worktreesItem &&
+           [node.path.stringByDeletingLastPathComponent isEqualToString:_worktreesItem.path];
+}
+
+// The Worktrees node's title, and a worktree's: its agent's description and
+// how it stands against the main branch ("3 ahead · modified").
+- (NSAttributedString *)worktreeTitleFor:(FileItem *)node color:(NSColor *)text
+                                    icon:(NSString **)icon tint:(NSColor **)tint
+                                     tip:(NSString **)tip {
+    NSFont *font = [NSFont systemFontOfSize:12.5];
+    if (node == _worktreesItem) {
+        *icon = @"arrow.triangle.branch";
+        *tint = Hex(0x9CA3AF);
+        *tip = [NSString stringWithFormat:@"The agents' worktrees, in %@\n"
+                @"Right click one: Compare with Main, Open in New Window",
+                [node.path stringByAbbreviatingWithTildeInPath]];
+        return [[NSAttributedString alloc] initWithString:@"Worktrees"
+            attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5 weight:NSFontWeightMedium],
+                         NSForegroundColorAttributeName: text}];
+    }
+    if (![self isWorktreeRow:node]) return nil;
+    MCAgentWorktree *w = [_agents worktreeAtPath:node.path];
+    *icon = @"arrow.triangle.branch";
+    *tint = w.running ? Hex(0x73C991) : Hex(0xC09553);
+    NSMutableAttributedString *s = [[NSMutableAttributedString alloc]
+        initWithString:w.label ?: node.name
+            attributes:@{NSFontAttributeName: font, NSForegroundColorAttributeName: text}];
+    NSString *badge = w.badge;
+    if (badge.length)
+        [s appendAttributedString:[[NSAttributedString alloc]
+            initWithString:[@"  " stringByAppendingString:badge]
+                attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
+                             NSForegroundColorAttributeName: [text colorWithAlphaComponent:0.55]}]];
+    // A long description gives way in its middle, so the badge stays in view.
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    [s addAttribute:NSParagraphStyleAttributeName value:ps range:NSMakeRange(0, s.length)];
+    NSMutableArray *lines = [NSMutableArray arrayWithObject:w.label ?: node.name];
+    [lines addObject:[node.path stringByAbbreviatingWithTildeInPath]];
+    if (w.branch.length) [lines addObject:[@"Branch " stringByAppendingString:w.branch]];
+    if (badge.length) [lines addObject:badge];
+    if (w.running) [lines addObject:@"Its agent is running"];
+    [lines addObject:@"Right click: Compare with Main, Open in New Window"];
+    *tip = [lines componentsJoinedByString:@"\n"];
+    return s;
+}
+
+- (FileItem *)worktreeMenuItem {
+    FileItem *it = [self clickedOrSelectedItem];
+    return [self isWorktreeRow:it] ? it : nil;
+}
+
+// The tree's right click on a worktree (R2.9).
+- (void)compareWorktreeWithMain:(id)sender {
+    (void)sender;
+    FileItem *it = [self worktreeMenuItem];
+    if (it) [_agents compareWorktreeAt:it.path];
+}
+- (void)openWorktreeInNewWindow:(id)sender {
+    (void)sender;
+    FileItem *it = [self worktreeMenuItem];
+    if (it) [_agents openFolderInNewWindow:it.path];
+}
+
+// Only a worktree's right click offers its two items.
+- (void)menuNeedsUpdate:(NSMenu *)menu {
+    if (menu != self.outline.menu) return;
+    const BOOL wt = [self worktreeMenuItem] != nil;
+    for (NSMenuItem *item in menu.itemArray)
+        if (item.tag == kWorktreeMenuTag) item.hidden = !wt;
+}
+
+- (void)outlineViewItemDidExpand:(NSNotification *)note {
+    if (note.userInfo[@"NSObject"] == _worktreesItem) [_agents.model refreshWorktrees];
 }
 
 - (NSArray<FileItem *> *)orderOf:(NSArray<FileItem *> *)items {
@@ -2868,8 +3108,19 @@ static NSString *MCGroupedCount(long long n) {
     cell.textField.textColor = text;
     cell.textField.font = [NSFont systemFontOfSize:12.5];
     NSString *sym = node.isDir ? @"folder.fill" : @"doc.text";
+    NSColor *tint = node.isDir ? Hex(0xC09553) : Hex(0x8A99A8);
+    NSString *worktreeTip = nil;
+    NSAttributedString *worktree = [self worktreeTitleFor:node color:text icon:&sym tint:&tint
+                                                      tip:&worktreeTip];
+    if (worktree) cell.textField.attributedStringValue = worktree;
     cell.imageView.image = [NSImage imageWithSystemSymbolName:sym accessibilityDescription:nil];
-    cell.imageView.contentTintColor = node.isDir ? Hex(0xC09553) : Hex(0x8A99A8);
+    cell.imageView.contentTintColor = tint;
+    if (worktree) {
+        [cell setSize:nil saved:nil created:nil color:nil];
+        cell.textField.attributedStringValue = worktree;   // after setSize, which sets clipping
+        cell.toolTip = worktreeTip;
+        return;
+    }
     const MCTreeColumns columns = MCTreeColumnsShown();
     if (!columns) {
         [cell setSize:nil saved:nil created:nil color:nil];
@@ -3179,6 +3430,7 @@ static NSString *MCGroupedCount(long long n) {
                                        resultingItemURL:nil error:&err]) {
         [self warn:err.localizedDescription]; return;
     }
+    [self.navigator pathRemoved:path];
     // Tabs of what went away close, a folder's too, unless they hold unsaved
     // changes: those stay open, and saving writes the file again.
     NSString *prefix = [path stringByAppendingString:@"/"];
@@ -3327,6 +3579,7 @@ static NSString *MCGroupedCount(long long n) {
     NSString *rel = t.currentPath ? [self pathFromRoot:t.currentPath] : nil;
     if (!rel) return;
     if (self.gitPanelVisible) [self toggleSourceControl:nil];
+    if (self.agentsVisible) [self toggleAgents:nil];
     if (self.sidebarCollapsed) [self toggleSidebar:nil];
     // Spelled from the tree's root, which revealPath: walks down from.
     [self revealPath:[rel isEqualToString:@"."] ? _root.path
@@ -3397,6 +3650,13 @@ static NSString *MCGroupedCount(long long n) {
     NSArray<NSString *> *parts = path.pathComponents;
     FileItem *node = _root;
     NSString *acc = _root.path;
+    // A worktree's files are reached through the Worktrees node.
+    if (_worktreesItem && [path hasPrefix:[_worktreesItem.path stringByAppendingString:@"/"]]) {
+        node = _worktreesItem;
+        acc = _worktreesItem.path;
+        rootParts = acc.pathComponents;
+        [self.outline expandItem:node];
+    }
     for (NSUInteger i = rootParts.count; i < parts.count; i++) {
         acc = [acc stringByAppendingPathComponent:parts[i]];
         [node loadChildren];
@@ -3857,6 +4117,7 @@ static NSString *MCGroupedCount(long long n) {
 // (or throw past its end), so they go, and so do the LaTeX preview's.
 - (void)forgetHistoryOf:(MCTab *)t {
     [t.undoManager removeAllActions];
+    t.folds = nil;
     [t.latex forgetEdits];
 }
 
@@ -3968,7 +4229,9 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     for (NSUInteger i = 0; i < _tabs.count; i++) {
         MCTab *t = _tabs[i];
         MCTabStripItem *item = [MCTabStripItem new];
-        if (t.comparison)
+        if (t.page)
+            item.title = t.page.pageTitle ?: @"";
+        else if (t.comparison)
             item.title = t.comparison.title ?: @"Diff";
         else if (t.isDiff)
             item.title = t.diffIsCommit ? (t.diffName ?: @"Commit")
@@ -4011,6 +4274,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     [self revealEditor];
     tab.lastActive = ++_tabStamp;
     if (tab == _activeTab) { [self reloadTabStrip]; return; }
+    [self.navigator tabWillSwitch];   // Go Back returns to the tab left
     [_notes activeTabWillChange];
     [self stashActiveTab];
     if (_activeTab) [self autoSaveOnFocusChange];   // the tab that leaves (focus-change)
@@ -4024,6 +4288,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     [self reselectCurrentFileInTree];
     [self reloadTabStrip];
     [self saveSession];
+    [self.navigator tabDidSwitch];
     [_notes activeTabDidChange];
 }
 
@@ -4046,6 +4311,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     [tv breakUndoCoalescing];   // typing in the next tab is a new undo step
     [self flushHighlighting];
     if (tv.editable && !t.showingMessage) t.sourceText = tv.string;
+    if (tv.editable && !t.showingMessage) t.folds = [self.textView.folds snapshot];
     t.selection = tv.selectedRange;
     t.topCharacter = 0;
     t.topOffset = 0;
@@ -4130,7 +4396,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
         [self renderDiff];
         [self relayoutRightArea];
         if (t.comparison) self.compareView.scrollOrigin = t.diffScroll;
-        else [self.diffView scrollPoint:t.diffScroll];
+        else if (!t.page) [self.diffView scrollPoint:t.diffScroll];
         [self.lsp documentOpened:nil];
         [self updateTitle];
         return;
@@ -4167,6 +4433,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     if ((t.isLatex && t.previewMode) || !t.haveView) return;
     NSTextView *tv = self.textView;
     const NSUInteger n = tv.string.length;
+    if (t.folds.count && tv.editable) [self.textView.folds restore:t.folds];
     NSRange sel = t.selection;
     if (sel.location > n) sel = NSMakeRange(n, 0);
     if (NSMaxRange(sel) > n) sel.length = n - sel.location;
@@ -4266,6 +4533,8 @@ static const NSUInteger kMaxClosedTabs = 50;
     if ([self latexIsShowing]) [self.window makeFirstResponder:self.latex];
     else if (self.isMedia && self.playerView) [self.window makeFirstResponder:self.playerView];
     else if (self.isPDF && self.pdfView) [self.window makeFirstResponder:self.pdfView];
+    else if (self.isDiff && _activeTab.page)
+        [self.window makeFirstResponder:_activeTab.page.pageFocusView];
     else if (self.isDiff && _activeTab.comparison && self.compareView)
         [self.window makeFirstResponder:self.compareView.leftView];
     else if (self.isDiff && self.diffView) [self.window makeFirstResponder:self.diffView];
@@ -4421,6 +4690,7 @@ static const NSUInteger kMaxClosedTabs = 50;
     }
     [self rememberClosedTab:t index:index];
     [t.latex removeFromSuperview];
+    [self closePageOf:t];
     [_tabs removeObjectAtIndex:index];
     if (wasActive && next >= 0) {
         [self activateTab:_tabs[(NSUInteger)next]];
@@ -4441,6 +4711,7 @@ static const NSUInteger kMaxClosedTabs = 50;
     _activeTab = nil;
     for (MCTab *t in _tabs) {
         [t.latex removeFromSuperview];
+        [self closePageOf:t];
         [self discardBackupOf:t];
     }
     [_tabs removeAllObjects];
@@ -5178,10 +5449,12 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     _formatGeneration++;   // a formatter still running finds nothing to apply
     [self.lsp shutdown];   // never leave a server running for a closed window
     [_change stop];        // no build watched for a closed window
+    [_agents stop];        // no transcripts watched for a closed window
 }
 - (void)windowDidBecomeKey:(NSNotification *)note {
     [self checkExternalChange];
     if (self.gitPanelVisible) [self.gitPanel refresh];
+    [_agents windowBecameKey];
 }
 // Another window or another app (editor.auto-save = focus-change).
 - (void)windowDidResignKey:(NSNotification *)note {
@@ -5324,6 +5597,8 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     BOOL enabled = NO;
+    if (item.action == @selector(navigateBack:)) return [self.navigator canGoBack];
+    if (item.action == @selector(navigateForward:)) return [self.navigator canGoForward];
     if ([self validateActiveTabAction:item.action enabled:&enabled]) return enabled;
     if (item.action == @selector(sortTreeBy:)) {
         item.state = item.tag == (NSInteger)_treeSort.key ? NSControlStateValueOn
@@ -5430,6 +5705,9 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     [self.textView.textStorage setAttributedString:attr];
     self.textView.typingAttributes = base;      // typed text stays monospaced
     self.textView.editable = YES;
+    // Regions by the file's name; an untitled buffer by its extension.
+    self.textView.folds.fileName = self.currentPath ?:
+        [@"untitled." stringByAppendingString:self.currentExt ?: @"txt"];
     [self applyHighlighting];
     [self.textView scrollToBeginningOfDocument:nil];
 }
@@ -6472,6 +6750,146 @@ static NSColor *ContrastColor(const Rgba &c) {
 - (void)findReferences:(id)sender {
     if ([self lspActionAllowed]) [self.lsp findReferences];
 }
+
+// ---------------------------------------------- Go Back, Go to Symbol
+// Ctrl+- and Ctrl+Shift+-, VS Code's Mac keys (Navigation.h). The grid
+// terminal keeps Ctrl+- for its program (it claims Ctrl keys first).
+- (void)navigateBack:(id)sender {
+    (void)sender;
+    [self.navigator goBack];
+}
+- (void)navigateForward:(id)sender {
+    (void)sender;
+    [self.navigator goForward];
+}
+
+// MCNavigatorHost: the file on show, and whether the editor holds its text.
+- (NSString *)navigationPath:(BOOL *)hasText {
+    if (hasText)
+        *hasText = self.canGoToLine && !self.previewMode && self.textView.editable;
+    return _activeTab ? self.currentPath : nil;
+}
+
+- (BOOL)showNavigationPlace:(MCPlace *)place {
+    NSString *path = place.path;
+    if (!path.length) return NO;
+    if (![path isEqualToString:self.currentPath]) {
+        MCTab *tab = [self tabForPath:path];
+        if (tab) [self activateTab:tab];
+        else if ([[NSFileManager defaultManager] fileExistsAtPath:path]) [self showFile:path];
+        if (![self.currentPath isEqualToString:path]) return NO;
+    }
+    [self revealEditor];
+    NSTextView *tv = self.textView;
+    if (place.hasText && self.canGoToLine && !self.previewMode && tv.editable) {
+        const NSUInteger n = tv.string.length;
+        NSRange r = place.selection;
+        if (r.location > n) r = NSMakeRange(n, 0);
+        if (NSMaxRange(r) > n) r.length = n - r.location;
+        [self.window makeFirstResponder:tv];
+        [tv setSelectedRange:r];
+        [self revealSymbolRange:r];
+    } else {
+        [self focusActiveDocument];
+    }
+    return YES;
+}
+
+// A symbol's range in view: left where it is when it already shows, else a
+// third of the way down the pane, as VS Code centres it.
+- (void)revealSymbolRange:(NSRange)r {
+    NSTextView *tv = self.textView;
+    NSRect rect = [self textRectForCharacter:r.location];
+    if (NSIsEmptyRect(rect)) {
+        [tv scrollRangeToVisible:r];
+        return;
+    }
+    if (!NSContainsRect(tv.visibleRect, rect))
+        [self scrollEditorToY:NSMinY(rect) - NSHeight(tv.visibleRect) / 3];
+}
+
+- (void)addSymbolsToPaletteContext:(MCPaletteContext *)ctx {
+    __weak EditorController *weakSelf = self;
+    // "#" asks every language server running in the window.
+    ctx.workspaceSymbols = ^(NSString *query,
+                             void (^done)(NSArray<MCSymbolItem *> *, BOOL, NSString *)) {
+        [weakSelf.lsp workspaceSymbols:query completion:done];
+    };
+    ctx.cancelWorkspaceSymbols = ^{ [weakSelf.lsp cancelWorkspaceSymbols]; };
+    ctx.openWorkspaceSymbol = ^(MCSymbolItem *item) { [weakSelf.lsp revealSymbol:item]; };
+
+    if (!self.canGoToLine || self.showingMessage) return;
+    NSString *path = self.currentPath;
+    NSTextView *tv = self.textView;
+    // Where the editor is now, for Esc and for Go Back after a symbol.
+    const NSRange selection = tv.selectedRange;
+    const NSPoint scroll = self.editorScroll.contentView.bounds.origin;
+    MCPlace *from = [self.navigator currentPlace];
+    void (^restore)(void) = ^{
+        EditorController *s = weakSelf;
+        if (!s || ![s.currentPath isEqualToString:path]) return;
+        [s.navigator beQuiet:^{
+            NSTextView *t = s.textView;
+            if (t.editable && NSMaxRange(selection) <= t.string.length)
+                t.selectedRange = selection;
+            [s scrollEditorToY:scroll.y];
+        }];
+    };
+    if (self.previewMode) {
+        // A rendered Markdown page: its headings, from the source, and the
+        // page scrolled to each.
+        if (!self.isMarkdown) return;
+        NSString *source = self.sourceText ?: @"";
+        ctx.documentSymbols = ^(void (^done)(NSArray<MCSymbolItem *> *, NSInteger, NSString *)) {
+            done(MCOutlineSymbols(path, source, 0, NULL), -1, @"outline");
+        };
+        void (^show)(MCSymbolItem *) = ^(MCSymbolItem *item) {
+            EditorController *s = weakSelf;
+            if (!s || ![s.currentPath isEqualToString:path] || !s.previewMode) return;
+            NSUInteger at = [s markdownCharacterForSourceLine:item.line];
+            NSRect r = [s textRectForCharacter:at];
+            if (!NSIsEmptyRect(r)) [s scrollEditorToY:NSMinY(r) - 8];
+        };
+        ctx.previewSymbol = show;
+        ctx.goToSymbol = ^(MCSymbolItem *item) {
+            show(item);
+            [weakSelf focusActiveDocument];
+        };
+        ctx.endPreview = restore;
+        return;
+    }
+    ctx.documentSymbols = ^(void (^done)(NSArray<MCSymbolItem *> *, NSInteger, NSString *)) {
+        EditorController *s = weakSelf;
+        if (!s || ![s.currentPath isEqualToString:path]) { done(nil, -1, nil); return; }
+        [s.lsp documentSymbolsWithCompletion:done];
+    };
+    ctx.previewSymbol = ^(MCSymbolItem *item) {
+        EditorController *s = weakSelf;
+        if (!s || ![s.currentPath isEqualToString:path] || item.range.location == NSNotFound)
+            return;
+        NSTextView *t = s.textView;
+        if (NSMaxRange(item.range) > t.string.length) return;
+        [s.navigator beQuiet:^{
+            t.selectedRange = item.range;
+            [s revealSymbolRange:item.range];
+        }];
+    };
+    ctx.goToSymbol = ^(MCSymbolItem *item) {
+        EditorController *s = weakSelf;
+        if (!s || ![s.currentPath isEqualToString:path] || item.range.location == NSNotFound)
+            return;
+        NSTextView *t = s.textView;
+        if (NSMaxRange(item.range) > t.string.length) return;
+        [s.navigator jumpFrom:from body:^{
+            [s.window makeFirstResponder:t];
+            t.selectedRange = item.range;
+            [s revealSymbolRange:item.range];
+            [t showFindIndicatorForRange:item.range];
+        }];
+    };
+    ctx.endPreview = restore;
+}
+
 - (void)showQuickFixes:(id)sender {
     if ([self lspActionAllowed]) [self.lsp showQuickFixes];
 }
@@ -7422,7 +7840,8 @@ static NSString *MCFormatDuration(double seconds) {
     if (!name.length) name = @"MiniCode";
     if (_activeTab.gone) name = [name stringByAppendingString:@" (deleted)"];
     if (self.isDiff)
-        name = _activeTab.comparison ? (_activeTab.comparison.title ?: @"Diff")
+        name = _activeTab.page ? (_activeTab.page.pageTitle ?: @"")
+             : _activeTab.comparison ? (_activeTab.comparison.title ?: @"Diff")
              : self.diffIsCommit ? self.diffName
                                  : [NSString stringWithFormat:@"%@ (diff)", self.diffName];
     NSString *flag = self.dirty ? @"● " : @"";
@@ -8322,6 +8741,7 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
 - (void)changeRootTo:(NSString *)dir {
     [self saveSession];       // the old folder's tabs, for when it is back
     [self dropAllTabs];       // no stale preview or image over the new folder
+    [self.navigator clear];   // places in the old folder
     _root = [FileItem new];
     _root.path = dir; _root.isDir = YES;
     [self rootChanged];
@@ -8331,6 +8751,7 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
     [self.terminalPanel setDirectory:dir];   // keep terminal cwds in sync
     self.terminalPanel.projectRoot = dir;
     self.gitPanel.root = dir;           // the panel follows the folder
+    [_agents setRoot:dir];              // and so do the agents
     [self startWatching:dir];           // watch the new folder
     [self updateTitle];
     [self restoreSession];              // the new folder's tabs from last time
@@ -8453,6 +8874,49 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
     }];
 }
 
+// A page in the editor's slot (EditorPage.h), in a tab of its own; a page
+// with the same key as one already open selects that tab instead.
+- (void)showPage:(id<MCEditorPage>)page {
+    if (!page) return;
+    for (MCTab *t in _tabs)
+        if (t.page && [t.page.pageKey isEqualToString:page.pageKey]) {
+            [self revealEditor];
+            [self activateTab:t];
+            [self focusActiveDocument];
+            return;
+        }
+    [self revealEditor];
+    MCTab *tab = [MCTab new];
+    tab.loaded = YES;
+    tab.isDiff = YES;
+    tab.page = page;
+    tab.diffName = page.pageTitle;
+    [self insertTab:tab];
+    [self activateTab:tab];
+    [self focusActiveDocument];
+}
+
+- (void)closePageOf:(MCTab *)t {
+    if (!t.page) return;
+    [t.page.pageView removeFromSuperview];
+    if ([t.page respondsToSelector:@selector(pageClosed)]) [t.page pageClosed];
+}
+
+// ------------------------------------------------------------ agent work
+// The model's worktrees changed: the tree's Worktrees rows say so.
+- (void)agentWorktreesChanged {
+    if (_worktreesItem) [self refreshTreeCells];
+}
+
+- (BOOL)agentWorktreesOnShow {
+    return _worktreesItem && [self sidebarViewOnShow] == self.sidebarScroll &&
+           [self.outline isItemExpanded:_worktreesItem];
+}
+
+- (void)agentFolderChangedOnDisk:(NSString *)path {
+    [_agents folderChangedOnDisk:path];
+}
+
 // The side-by-side view, made on first use in the editor's slot.
 - (MCCompareView *)compareViewMade {
     if (!self.compareView) {
@@ -8496,7 +8960,7 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
 - (NSArray<NSDictionary *> *)controlTabs {
     NSMutableArray<NSDictionary *> *out = [NSMutableArray array];
     for (MCTab *t in _tabs) {
-        NSString *kind = t.comparison ? @"diff" : t.isDiff ? (t.diffIsCommit ? @"commit" : @"git-diff")
+        NSString *kind = t.page ? t.page.pageKind : t.comparison ? @"diff" : t.isDiff ? (t.diffIsCommit ? @"commit" : @"git-diff")
                        : t.isImage ? @"image" : t.isPDF ? @"pdf" : t.isMedia ? @"media"
                        : t.viewerKind == MCViewerQuickLook ? @"quicklook"
                        : t.viewerKind == MCViewerCsv || t.viewerKind == MCViewerTsv ||
@@ -8504,7 +8968,7 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
                        : t.viewerKind == MCViewerNotebook ? @"notebook"
                        : t.viewerKind == MCViewerSqlite ? @"sqlite" : @"text";
         NSString *path = t.currentPath ?: t.comparison.path;
-        NSString *title = t.comparison ? t.comparison.title
+        NSString *title = t.page ? t.page.pageTitle : t.comparison ? t.comparison.title
                         : t.isDiff ? t.diffName : t.currentPath.lastPathComponent;
         [out addObject:@{@"path": path ?: (id)NSNull.null,
                          @"title": title ?: @"",

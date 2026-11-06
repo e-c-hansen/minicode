@@ -120,6 +120,8 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
 @property(nonatomic, strong) NSAttributedString *text;
 @property(nonatomic, copy) NSString *keys;
 @property(nonatomic, copy) void (^run)(void);   // nil: nothing to run
+@property(nonatomic, copy) void (^preview)(void);   // when the list comes to it
+@property(nonatomic) BOOL heading;   // a kind's heading in "@:": never selected
 @end
 @implementation MCPaletteItem
 @end
@@ -189,12 +191,28 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
 @property(nonatomic) NSInteger selected;
 @property(nonatomic) BOOL closing;
 @property(nonatomic, strong) NSColor *textColor, *mutedColor;
+// Go to Symbol: the file's symbols once they arrive, the one at the caret,
+// whether one was shown in the editor, and whether a row was run.
+@property(nonatomic) BOOL askedSymbols;
+@property(nonatomic, strong) NSArray<MCSymbolItem *> *symbols;
+@property(nonatomic) NSInteger caretSymbol;
+@property(nonatomic, copy) NSString *symbolSource;
+@property(nonatomic) BOOL previewed;
+@property(nonatomic) BOOL ran;
+// Go to Symbol in Workspace: the last answer, the query it was for and the
+// one asked now.
+@property(nonatomic, strong) NSArray<MCSymbolItem *> *workspaceItems;
+@property(nonatomic, copy) NSString *workspaceAsked;
+@property(nonatomic) BOOL workspaceComplete;
+@property(nonatomic, copy) NSString *workspaceNote;
 @end
 
 @implementation MCPaletteOverlay {
     std::vector<CommandPalette::Entry> _entries;
     std::vector<std::u16string> _fileKeys;
     std::shared_ptr<std::atomic<bool>> _cancelListing;
+    std::vector<Lsp::Symbol> _symbolKeys, _workspaceKeys;   // names and kinds, for ranking
+    NSInteger _preselect;   // the row "@" selects first
 }
 
 - (instancetype)initWithFrame:(NSRect)frame commands:(NSArray<MCPaletteCommand *> *)commands
@@ -247,7 +265,7 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
     f.usesSingleLineMode = YES;
     f.cell.scrollable = YES;
     f.placeholderAttributedString = [[NSAttributedString alloc]
-        initWithString:@"Search files by name (> for commands, : for a line)"
+        initWithString:@"Search files by name (> commands, : a line, @ a symbol, # in the workspace)"
             attributes:@{NSForegroundColorAttributeName: self.mutedColor,
                          NSFontAttributeName: f.font}];
     f.delegate = self;
@@ -434,6 +452,10 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
                              NSForegroundColorAttributeName:
                                  it.run ? self.textColor : self.mutedColor}];
         [items addObject:it];
+    } else if (p.mode == Mode::Symbols) {
+        empty = [self symbolItems:items query:p.query byKind:p.byKind];
+    } else if (p.mode == Mode::WorkspaceSymbols) {
+        empty = [self workspaceItems:items query:p.query];
     } else if (!self.files) {
         empty = @"Listing the folder's files…";
     } else {
@@ -475,14 +497,249 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
         if (!items.count)
             empty = self.files.count ? @"No matching files" : @"No files in this folder";
     }
+    // Out of "@", the editor goes back to where it was.
+    if (p.mode != Mode::Symbols && self.previewed) {
+        self.previewed = NO;
+        if (self.context.endPreview) self.context.endPreview();
+    }
+    if (p.mode != Mode::WorkspaceSymbols && self.workspaceAsked) {
+        self.workspaceAsked = nil;
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(askWorkspace:)
+                                                   object:nil];
+        if (self.context.cancelWorkspaceSymbols) self.context.cancelWorkspaceSymbols();
+    }
+    NSInteger first = -1;
+    for (NSUInteger i = 0; i < items.count && first < 0; i++)
+        if (!items[i].heading) first = (NSInteger)i;
+    if (p.mode == Mode::Symbols && _preselect >= 0 && _preselect < (NSInteger)items.count)
+        first = _preselect;
     self.items = items;
-    self.selected = items.count ? 0 : -1;
+    self.selected = first;
     [self.table reloadData];
     self.emptyLabel.stringValue = empty;
     self.emptyLabel.hidden = items.count > 0;
     [self relayout];
-    if (self.selected >= 0) [self.table scrollRowToVisible:0];
+    if (self.selected >= 0) [self.table scrollRowToVisible:self.selected];
+    // Typing in "@" shows the best match in the editor, as VS Code does.
+    if (p.mode == Mode::Symbols && !p.query.empty() && self.selected >= 0 &&
+        self.items[(NSUInteger)self.selected].preview)
+        self.items[(NSUInteger)self.selected].preview();
 }
+
+// ------------------------------------------------------------- symbols
+// A symbol's row: its kind's mark in the kind's color, the name with the
+// matched characters marked, and what contains it, muted.
+- (NSAttributedString *)symbolText:(MCSymbolItem *)sym match:(const CommandPalette::Match &)m
+                             extra:(NSString *)extra {
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.lineBreakMode = NSLineBreakByTruncatingTail;
+    // The mark in a box of fixed width, so the names line up.
+    ps.tabStops = @[[[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft location:20
+                                                     options:@{}]];
+    NSMutableAttributedString *s = [NSMutableAttributedString new];
+    const unsigned rgb = Lsp::symbolKindColor((int)sym.kind);
+    NSString *glyph = PNS(Lsp::symbolKindGlyph((int)sym.kind));
+    [s appendAttributedString:[[NSAttributedString alloc]
+        initWithString:[glyph stringByAppendingString:@"\t"]
+            attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:13
+                                                                weight:NSFontWeightSemibold],
+                         NSForegroundColorAttributeName: PHex(rgb),
+                         NSParagraphStyleAttributeName: ps}]];
+    const NSUInteger nameAt = s.length;
+    NSString *name = sym.name ?: @"";
+    [s appendAttributedString:[[NSAttributedString alloc]
+        initWithString:name
+            attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:13],
+                         NSForegroundColorAttributeName: self.textColor,
+                         NSParagraphStyleAttributeName: ps}]];
+    NSFont *bold = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
+    for (size_t pos : m.positions) {
+        if (pos >= name.length) continue;
+        [s addAttributes:@{NSFontAttributeName: bold, NSForegroundColorAttributeName: PAccent()}
+                   range:NSMakeRange(nameAt + pos, 1)];
+    }
+    if (extra.length)
+        [s appendAttributedString:[[NSAttributedString alloc]
+            initWithString:[@"   " stringByAppendingString:extra]
+                attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12],
+                             NSForegroundColorAttributeName: self.mutedColor,
+                             NSParagraphStyleAttributeName: ps}]];
+    return s;
+}
+
+static NSString *POneLine(NSString *s) {
+    if (!s.length) return s;
+    NSArray *parts = [s componentsSeparatedByCharactersInSet:
+        NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSMutableArray *kept = [NSMutableArray array];
+    for (NSString *p in parts) if (p.length) [kept addObject:p];
+    return [kept componentsJoinedByString:@" "];
+}
+
+// Go to Symbol in File: the rows for "@" (or "@:", grouped by kind), the
+// file's symbols asked for the first time. Returns what to say when there
+// are none.
+- (NSString *)symbolItems:(NSMutableArray<MCPaletteItem *> *)items
+                    query:(const std::u16string &)query
+                   byKind:(BOOL)byKind {
+    _preselect = -1;
+    if (!self.context.documentSymbols) return @"Open a file to go to one of its symbols";
+    if (!self.askedSymbols) {
+        self.askedSymbols = YES;
+        __weak MCPaletteOverlay *weakSelf = self;
+        self.context.documentSymbols(^(NSArray<MCSymbolItem *> *got, NSInteger caretIndex,
+                                       NSString *source) {
+            // Never in the middle of a refilter, even when it answers at once.
+            dispatch_async(dispatch_get_main_queue(), ^{
+                MCPaletteOverlay *me = weakSelf;
+                if (!me || me.closing) return;
+                [me setDocumentSymbols:got ?: @[] caret:caretIndex source:source];
+            });
+        });
+    }
+    if (!self.symbols) return @"Listing the file's symbols…";
+    int pre = -1;
+    std::vector<CommandPalette::SymbolRow> rows = CommandPalette::symbolRows(
+        _symbolKeys, query, byKind, (int)self.caretSymbol, &pre);
+    __weak MCPaletteOverlay *weakSelf = self;
+    void (^preview)(MCSymbolItem *) = self.context.previewSymbol;
+    void (^go)(MCSymbolItem *) = self.context.goToSymbol;
+    for (const CommandPalette::SymbolRow &r : rows) {
+        MCPaletteItem *it = [MCPaletteItem new];
+        if (r.heading) {
+            it.heading = YES;
+            it.label = PNS(r.text);
+            it.text = [[NSAttributedString alloc]
+                initWithString:it.label
+                    attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11
+                                                                        weight:NSFontWeightSemibold],
+                                 NSForegroundColorAttributeName: self.mutedColor}];
+            [items addObject:it];
+            continue;
+        }
+        MCSymbolItem *sym = self.symbols[r.symbol];
+        NSString *extra = sym.container.length ? sym.container : POneLine(sym.detail);
+        it.label = sym.name;
+        it.text = [self symbolText:sym match:r.match extra:extra];
+        it.keys = [NSString stringWithFormat:@"%ld", (long)sym.line + 1];
+        it.preview = ^{
+            MCPaletteOverlay *me = weakSelf;
+            if (!me || !preview) return;
+            me.previewed = YES;
+            preview(sym);
+        };
+        it.run = ^{
+            MCPaletteOverlay *me = weakSelf;
+            me.ran = YES;
+            [me closeRestoringFocus:YES];
+            if (go) dispatch_async(dispatch_get_main_queue(), ^{ go(sym); });
+        };
+        [items addObject:it];
+    }
+    _preselect = pre;
+    if (items.count) return @"";
+    if (!self.symbols.count)
+        return [self.symbolSource isEqualToString:@"outline"]
+            ? @"No symbols found in this file" : @"The language server lists no symbols here";
+    return @"No matching symbols";
+}
+
+- (void)setDocumentSymbols:(NSArray<MCSymbolItem *> *)got caret:(NSInteger)caret
+                    source:(NSString *)source {
+    self.symbols = got;
+    self.caretSymbol = caret;
+    self.symbolSource = source;
+    _symbolKeys.clear();
+    for (MCSymbolItem *it in got) {
+        Lsp::Symbol k;
+        k.name = it.name.UTF8String ?: "";
+        k.kind = (int)it.kind;
+        _symbolKeys.push_back(k);
+    }
+    if (CommandPalette::parse(PU16(self.field.stringValue ?: @"")).mode ==
+        CommandPalette::Mode::Symbols)
+        [self refilter];
+}
+
+// Go to Symbol in Workspace: the last answer ranked against what is typed
+// now, while the servers are asked again (a moment after typing stops).
+- (NSString *)workspaceItems:(NSMutableArray<MCPaletteItem *> *)items
+                       query:(const std::u16string &)query {
+    if (!self.context.workspaceSymbols) return @"No language server is running in this window";
+    NSString *q = PNS(query);
+    if (!q.length) {
+        self.workspaceAsked = nil;
+        self.workspaceItems = nil;
+        _workspaceKeys.clear();
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(askWorkspace:)
+                                                   object:nil];
+        if (self.context.cancelWorkspaceSymbols) self.context.cancelWorkspaceSymbols();
+        return @"Type the name of a symbol to look for it in the workspace";
+    }
+    if (![q isEqualToString:self.workspaceAsked]) {
+        self.workspaceAsked = q;
+        self.workspaceComplete = NO;
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(askWorkspace:)
+                                                   object:nil];
+        [self performSelector:@selector(askWorkspace:) withObject:q afterDelay:0.15];
+    }
+    if (self.workspaceItems.count) {
+        int pre = -1;
+        std::vector<CommandPalette::SymbolRow> rows =
+            CommandPalette::symbolRows(_workspaceKeys, query, false, -1, &pre, 300);
+        NSString *root = self.context.root ?: @"";
+        NSString *prefix = [root hasSuffix:@"/"] ? root : [root stringByAppendingString:@"/"];
+        __weak MCPaletteOverlay *weakSelf = self;
+        void (^open)(MCSymbolItem *) = self.context.openWorkspaceSymbol;
+        for (const CommandPalette::SymbolRow &r : rows) {
+            MCSymbolItem *sym = self.workspaceItems[r.symbol];
+            MCPaletteItem *it = [MCPaletteItem new];
+            it.label = sym.name;
+            it.text = [self symbolText:sym match:r.match extra:sym.container];
+            NSString *path = sym.path ?: @"";
+            if (root.length && [path hasPrefix:prefix]) path = [path substringFromIndex:prefix.length];
+            it.keys = [NSString stringWithFormat:@"%@:%ld", path, (long)sym.line + 1];
+            it.run = ^{
+                MCPaletteOverlay *me = weakSelf;
+                me.ran = YES;
+                [me closeRestoringFocus:YES];
+                if (open) dispatch_async(dispatch_get_main_queue(), ^{ open(sym); });
+            };
+            [items addObject:it];
+        }
+    }
+    if (items.count) return @"";
+    if (!self.workspaceComplete) return @"Searching the workspace's symbols…";
+    return self.workspaceNote ?: @"No matching symbols";
+}
+
+- (void)askWorkspace:(NSString *)query {
+    if (self.closing || ![query isEqualToString:self.workspaceAsked]) return;
+    __weak MCPaletteOverlay *weakSelf = self;
+    self.context.workspaceSymbols(query, ^(NSArray<MCSymbolItem *> *got, BOOL complete,
+                                           NSString *note) {
+        MCPaletteOverlay *me = weakSelf;
+        if (!me || me.closing || ![query isEqualToString:me.workspaceAsked]) return;
+        // A partial answer with nothing in it leaves the last list up, so a
+        // slow server never empties what another has filled.
+        if (got.count || complete) {
+            me.workspaceItems = got;
+            me->_workspaceKeys.clear();
+            for (MCSymbolItem *it in got) {
+                Lsp::Symbol k;
+                k.name = it.name.UTF8String ?: "";
+                k.kind = (int)it.kind;
+                me->_workspaceKeys.push_back(k);
+            }
+        }
+        me.workspaceComplete = complete;
+        me.workspaceNote = note;
+        if (CommandPalette::parse(PU16(me.field.stringValue ?: @"")).mode ==
+            CommandPalette::Mode::WorkspaceSymbols)
+            [me refilter];
+    });
+}
+
 
 // The part before the title muted (a command's menu, a file's folder), the
 // title in the text color, the matched characters in the accent color and
@@ -520,13 +777,19 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
 - (void)select:(NSInteger)row {
     const NSInteger n = (NSInteger)self.items.count;
     if (n == 0) return;
+    const NSInteger step = row < self.selected ? -1 : 1;
     row = ((row % n) + n) % n;   // wraps, as VS Code's list does
+    // Over the headings of "@:", in the direction moved.
+    for (NSInteger k = 0; k < n && self.items[(NSUInteger)row].heading; k++)
+        row = ((row + step) % n + n) % n;
+    if (self.items[(NSUInteger)row].heading) return;
     NSInteger old = self.selected;
     self.selected = row;
     NSMutableIndexSet *rows = [NSMutableIndexSet indexSetWithIndex:row];
     if (old >= 0 && old < n) [rows addIndex:old];
     [self.table reloadDataForRowIndexes:rows columnIndexes:[NSIndexSet indexSetWithIndex:0]];
     [self.table scrollRowToVisible:row];
+    if (row != old && self.items[(NSUInteger)row].preview) self.items[(NSUInteger)row].preview();
 }
 
 // Page moves stop at the ends instead of wrapping.
@@ -624,6 +887,12 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
     if (self.closing) return;
     self.closing = YES;
     if (_cancelListing) _cancelListing->store(true);
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(askWorkspace:)
+                                               object:nil];
+    if (self.workspaceAsked && self.context.cancelWorkspaceSymbols)
+        self.context.cancelWorkspaceSymbols();
+    // Closed without going to a symbol: the editor goes back to where it was.
+    if (self.previewed && !self.ran && self.context.endPreview) self.context.endPreview();
     NSWindow *w = self.window;
     if (restore && w) {
         NSResponder *r = self.restore;

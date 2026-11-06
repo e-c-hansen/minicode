@@ -308,7 +308,7 @@ static void testJsonOutline() {
     {
         const std::string text = "{\n  \"name\": \"minicode\",\n  \"tags\": [1, true, null],\n"
                                  "  \"nested\": {\"k\": -2.5e3}\n}\n";
-        Outline o = parse(text);
+        JsonOutline::Outline o = parse(text);
         CHECK(o.ok);
         CHECK(o.nodes.size() == 8);
         const Node &root = o.nodes[0];
@@ -336,7 +336,7 @@ static void testJsonOutline() {
     {
         // é is 2 bytes and 1 unit; 😀 is 4 bytes and 2 units.
         const std::string text = "{\"\xC3\xA9\": \"\xF0\x9F\x98\x80\", \"b\": 1}";
-        Outline o = parse(text);
+        JsonOutline::Outline o = parse(text);
         CHECK(o.ok);
         const Node &e = o.nodes[o.nodes[0].children[0]];
         CHECK(e.key == "\xC3\xA9");
@@ -352,14 +352,14 @@ static void testJsonOutline() {
     }
     GROUP("jsonoutline:strings");
     {
-        Outline o = parse("[\"a\\n\\u00e9\\ud83d\\ude00\\\"\"]");
+        JsonOutline::Outline o = parse("[\"a\\n\\u00e9\\ud83d\\ude00\\\"\"]");
         CHECK(o.ok);
         CHECK(o.nodes[1].preview == "a\n\xC3\xA9\xF0\x9F\x98\x80\"");
         // Long strings are cut for the outline, never mid-character.
         std::string longText = "[\"";
         for (int i = 0; i < 400; i++) longText += "\xC3\xA9";
         longText += "\"]";
-        Outline l = parse(longText);
+        JsonOutline::Outline l = parse(longText);
         CHECK(l.ok);
         const std::string &p = l.nodes[1].preview;
         CHECK(p.size() < 600);
@@ -368,7 +368,7 @@ static void testJsonOutline() {
     }
     GROUP("jsonoutline:errors");
     {
-        Outline o = parse("{\n  \"a\": 1,\n  \"b\" 2\n}");
+        JsonOutline::Outline o = parse("{\n  \"a\": 1,\n  \"b\" 2\n}");
         CHECK(!o.ok);
         CHECK(o.error == "Expected ':'");
         CHECK(o.errorLine == 3 && o.errorColumn == 7);
@@ -384,7 +384,7 @@ static void testJsonOutline() {
         std::string deep(600, '[');
         deep += std::string(600, ']');
         CHECK(!parse(deep).ok);
-        Outline cap = parse("[1,2,3,4,5]", 3);
+        JsonOutline::Outline cap = parse("[1,2,3,4,5]", 3);
         CHECK(!cap.ok && cap.truncated);
     }
 }

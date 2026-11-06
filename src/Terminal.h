@@ -8,14 +8,29 @@
 // get the cell grid, which takes keys directly.
 #import <Cocoa/Cocoa.h>
 
+// One place a path in the output was found (R2.10).
+@interface MCTermLinkMatch : NSObject
+@property(nonatomic, copy) NSString *path;
+@property(nonatomic) NSTimeInterval modified;   // Unix seconds
+@property(nonatomic) BOOL isDirectory;
+@end
+
 // Something Cmd+click can open in terminal output: a file that exists (with
 // the line and column the reference named, 1-based, 0 when absent) or a URL.
+// A relative path is looked for under the shell's folder, the window's
+// folder, then the roots extraLinkRoots gives (worktrees, scratchpads);
+// `matches` has every place it exists, newest first, and `target` the first.
+// A path-like reference found nowhere (one with a slash or a line number)
+// is a link too, with no matches, `target` as written and `tried` the roots
+// looked in, so a click can say where it looked.
 @interface MCTermLink : NSObject
 @property(nonatomic, copy) NSString *target;   // absolute path, or the URL
 @property(nonatomic) BOOL isURL;
 @property(nonatomic) BOOL isDirectory;
 @property(nonatomic) int line, column;
 @property(nonatomic) NSUInteger byteStart, byteLength;   // within the line's UTF-8
+@property(nonatomic, copy) NSArray<MCTermLinkMatch *> *matches;
+@property(nonatomic, copy) NSArray<NSString *> *tried;
 @end
 
 // Posted (object: the TerminalView) when a command typed or run in a
@@ -29,6 +44,10 @@ extern NSNotificationName const MCTerminalCommandDidFinishNotification;
 // Where a relative path is looked for when the shell's own directory does
 // not have it: the window's folder.
 @property(nonatomic, copy) NSString *projectRoot;
+// More folders a relative path is looked for in, after the shell's and the
+// window's, in order: the worktrees under the folder, then the indexed agent
+// sessions' scratchpads (AgentModel's worktreeRoots).
+@property(nonatomic, copy) NSArray<NSString *> *(^extraLinkRoots)(void);
 - (instancetype)initWithDirectory:(NSString *)dir;
 - (void)setDirectory:(NSString *)dir;   // sync cwd when the open folder changes
 - (void)focusInput;                     // the input line, or the grid when shown
@@ -56,7 +75,8 @@ extern NSNotificationName const MCTerminalCommandDidFinishNotification;
 @property(nonatomic, readonly, copy) NSString *runningCommand;
 // A runCommand: line still waiting for the shell's prompt, or nil.
 @property(nonatomic, readonly, copy) NSString *pendingCommand;
-// What a tab shows: the command running, else the folder's name.
+// What a tab shows: the running program's own title (OSC 0 or 2), else
+// the command running, else the folder's name.
 @property(nonatomic, readonly, copy) NSString *title;
 // A title given from outside (`minicode term --title`), shown in place of
 // the one above; nil for none.

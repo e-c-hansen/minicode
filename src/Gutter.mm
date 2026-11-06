@@ -3,13 +3,15 @@
 #import "Lsp.h"
 #import "MultiCaretView.h"
 #import "EditorFont.h"
+#import "FoldView.h"
 #include "LineIndex.h"
 #include <map>
 #include <set>
 #include <vector>
 
-// Lanes, left to right: a diagnostic dot, the numbers, and a gap before
-// the text that fold markers will take.
+// Lanes, left to right: a diagnostic dot, the numbers, and the fold lane:
+// a chevron beside each line a region starts on, shown while the pointer
+// is over the gutter (as VS Code does), and always for a closed fold.
 static const CGFloat kDotLane = 12;
 static const CGFloat kFoldLane = 14;
 static const NSUInteger kMinDigits = 3;
@@ -22,6 +24,8 @@ static const NSUInteger kMinDigits = 3;
     NSUInteger _dragAnchorLine;
     BOOL _observing;
     BOOL _thicknessQueued;
+    BOOL _hovering;                 // the pointer is over the gutter
+    NSTrackingArea *_tracking;
 }
 
 - (instancetype)initWithTextView:(CodeTextView *)tv {
@@ -54,6 +58,8 @@ static const NSUInteger kMinDigits = 3;
         [nc addObserver:self selector:@selector(redraw:)
                    name:NSViewFrameDidChangeNotification object:tv];
         [tv addObserver:self forKeyPath:@"editable" options:0 context:NULL];
+        __weak MCLineGutter *weakSelf = self;
+        tv.folds.onChange = ^{ weakSelf.needsDisplay = YES; };
         _observing = YES;
         [self updateVisibility];
     }
@@ -225,6 +231,8 @@ static const NSUInteger kMinDigits = 3;
     }
 
     const CGFloat ascender = _font.ascender;
+    MCFolds *folds = tv.folds;
+    const BOOL hovering = _hovering;
     void (^drawLine)(size_t, CGFloat) = ^(size_t line, CGFloat baseline) {
         // baseline: in the text view's coordinates.
         const CGFloat y = [self convertPoint:NSMakePoint(0, baseline) fromView:tv].y;
@@ -235,6 +243,11 @@ static const NSUInteger kMinDigits = 3;
         NSDictionary *attrs = carets.count(line) ? active : plain;
         const CGFloat w = [label sizeWithAttributes:attrs].width;
         [label drawAtPoint:NSMakePoint(right - w, y - ascender) withAttributes:attrs];
+        if (folds && (folds.hasFolds || hovering)) {
+            const BOOL closed = [folds lineStartsFold:line];
+            if (closed || (hovering && [folds lineStartsRegion:line]))
+                [self drawChevronClosed:closed midY:y - self->_font.xHeight / 2 color:plain[NSForegroundColorAttributeName]];
+        }
         auto mark = marks.find(line);
         if (mark != marks.end()) {
             const CGFloat d = 6;
@@ -269,6 +282,49 @@ static const NSUInteger kMinDigits = 3;
         drawLine(index.lineCount() - 1, origin.y + NSMinY(extra) + textBaseline);
 }
 
+// A chevron in the fold lane: pointing down for an open region, right for a
+// closed fold.
+- (void)drawChevronClosed:(BOOL)closed midY:(CGFloat)mid color:(NSColor *)color {
+    const CGFloat cx = NSWidth(self.bounds) - kFoldLane / 2 - 1;
+    const CGFloat r = MAX(2.5, round(_font.pointSize * 0.24 * 2) / 2);
+    NSBezierPath *p = [NSBezierPath bezierPath];
+    if (closed) {
+        [p moveToPoint:NSMakePoint(cx - r / 2, mid - r)];
+        [p lineToPoint:NSMakePoint(cx + r / 2, mid)];
+        [p lineToPoint:NSMakePoint(cx - r / 2, mid + r)];
+    } else {
+        [p moveToPoint:NSMakePoint(cx - r, mid - r / 2)];
+        [p lineToPoint:NSMakePoint(cx, mid + r / 2)];
+        [p lineToPoint:NSMakePoint(cx + r, mid - r / 2)];
+    }
+    p.lineWidth = 1.25;
+    p.lineCapStyle = NSLineCapStyleRound;
+    p.lineJoinStyle = NSLineJoinStyleRound;
+    [(closed ? (_activeNumberColor ?: color) : color) set];
+    [p stroke];
+}
+
+// ---- the pointer, for the chevrons
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    if (_tracking) [self removeTrackingArea:_tracking];
+    _tracking = [[NSTrackingArea alloc]
+        initWithRect:NSZeroRect
+             options:NSTrackingMouseEnteredAndExited | NSTrackingActiveInKeyWindow |
+                     NSTrackingInVisibleRect
+               owner:self userInfo:nil];
+    [self addTrackingArea:_tracking];
+}
+
+- (void)setHovering:(BOOL)hovering {
+    if (_hovering == hovering) return;
+    _hovering = hovering;
+    self.needsDisplay = YES;
+}
+
+- (void)mouseEntered:(NSEvent *)event { (void)event; [self setHovering:YES]; }
+- (void)mouseExited:(NSEvent *)event { (void)event; [self setHovering:NO]; }
+
 // ---- selecting lines
 - (NSUInteger)lineAtEvent:(NSEvent *)event {
     CodeTextView *tv = _tv;
@@ -290,6 +346,14 @@ static const NSUInteger kMinDigits = 3;
     if (!tv) return;
     [tv.window makeFirstResponder:tv];
     const NSUInteger line = [self lineAtEvent:event];
+    // The fold lane: a click on a region's line folds or unfolds it.
+    const NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+    if (p.x >= NSWidth(self.bounds) - kFoldLane - 2 && tv.editable &&
+        ([tv.folds lineStartsFold:line] || [tv.folds lineStartsRegion:line])) {
+        _dragAnchorLine = NSNotFound;
+        [tv.folds toggleLine:line];
+        return;
+    }
     if (event.modifierFlags & NSEventModifierFlagShift) {
         // From the line the selection starts on to this one.
         const NSRange sel = tv.selectedRange;
@@ -306,6 +370,7 @@ static const NSUInteger kMinDigits = 3;
 - (void)mouseDragged:(NSEvent *)event {
     CodeTextView *tv = _tv;
     if (!tv) return;
+    if (_dragAnchorLine == NSNotFound) return;   // pressed on a chevron
     [tv autoscroll:event];
     [self selectLinesFrom:_dragAnchorLine to:[self lineAtEvent:event]];
 }

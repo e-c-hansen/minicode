@@ -114,6 +114,8 @@ struct TermEvent {
         InputStart,      // OSC 133;B — the prompt is drawn and the line
                          // editor reads input (sent by the grid mode's zsh
                          // integration once ZLE has started)
+        Title,           // OSC 0 or 2 — a program named the window (text;
+                         // empty to clear it)
     };
     Kind kind;
     // Line: the whole current line as styled runs. When `ended` is false the
