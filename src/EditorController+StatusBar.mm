@@ -297,6 +297,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:[self hk:@"python.execSelectionInTerminal"] label2:@"Line to Python REPL" state:nil];
     [self appendHintsRow:s key:[NSString stringWithFormat:@"%@ %@", [self hk:@"editor.action.fontZoomIn"], [self hk:@"editor.action.fontZoomOut"]] label:@"Zoom in, out"
                     key2:[self hk:@"editor.action.fontZoomReset"] label2:@"Reset zoom" state:nil];
+    [self appendHintsRow:s key:[self hk:@"editor.action.toggleWordWrap"] label:@"Word wrap"
+                    key2:nil label2:nil state:MCEditorWordWrap() ? @"on" : @"off"];
     [self appendHintsRow:s key:[self hk:@"editor.fold"] label:@"Fold"
                     key2:[self hk:@"editor.unfold"] label2:@"Unfold" state:nil];
     [self appendHintsRow:s key:[self hk:@"editor.foldAll"] label:@"Fold all"
@@ -379,6 +381,16 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     }
     [self appendHintsRow:s key:[self hk:@"minicode.toggleBrowser"] label:@"Browser"
                     key2:nil label2:nil state:openOr(self.browserVisible)];
+    if (self.browserVisible) {
+        // A page's own keys, kept off the menus (Keymap.mm).
+        [self appendHintsRow:s key:[NSString stringWithFormat:@"%@ %@", [self hk:@"minicode.page.zoomIn"],
+                                    [self hk:@"minicode.page.zoomOut"]]
+                       label:@"Zoom the page or a PDF"
+                        key2:[self hk:@"minicode.page.actualSize"] label2:@"Actual size" state:nil];
+    }
+    [self appendHintsRow:s key:[self hk:@"minicode.toggleMaximizedPane"] label:@"Maximize pane"
+                    key2:nil label2:nil
+                   state:self.maximizedPane != MCPaneNone ? @"maximized" : nil];
     [self appendHintsRow:s key:[self hk:@"workbench.view.scm"] label:@"Source control"
                     key2:nil label2:nil state:openOr(self.gitPanelVisible)];
     [self appendHintsRow:s key:[self hk:@"minicode.toggleAgents"] label:@"Agents"

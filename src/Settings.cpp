@@ -882,6 +882,17 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                    return false;
                }
                return true;),
+        MC_KEY("editor.word-wrap", Word, false,
+               const std::string w = lower(v);
+               bool on = true;
+               if (w == "on") on = true;
+               else if (w == "off") on = false;
+               else if (!parseBool(w, on)) {
+                   e = "'" + v + "' is not on or off";
+                   return false;
+               }
+               s.wordWrap_ = on;
+               return true;),
         MC_KEY("editor.gutter-background", Word, true,
                return colorValue(v, s.gutterBackground_, e);),
         MC_KEY("editor.line-number-color", Word, true,
@@ -1297,6 +1308,10 @@ const char* Settings::defaultFileText() {
 # Line numbers beside the editor: on, off, or relative (counted up and down
 # from the caret's line, which shows its own number).
 # editor.line-numbers = on
+# Long lines wrap at the edge of the pane (on), or run past it with a
+# horizontal scroll bar (off). View > Word Wrap, Option+Z, turns it over
+# for the session (macOS).
+# editor.word-wrap = on
 # The gutter behind the numbers, which is the editor's background unless set
 # here. The caret's line has its number in the active color.
 # editor.gutter-background = #1E1E1E

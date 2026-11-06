@@ -239,6 +239,9 @@ public:
     // caret's line, which shows its own (relative, as VS Code's).
     enum class LineNumbers { Off, On, Relative };
     LineNumbers lineNumbers() const { return lineNumbers_; }
+    // editor.word-wrap: long lines wrap at the pane's edge (on, the
+    // default), or run on past it with a horizontal scroll bar (off).
+    bool wordWrap() const { return wordWrap_; }
     // The gutter's background: editor.gutter-background, else the editor's
     // own; editor.opacity applies to either.
     Rgba gutterBackground() const;
@@ -399,6 +402,7 @@ private:
     std::optional<Rgba> rulerColor_;
     double editorFontSize_ = 13;
     LineNumbers lineNumbers_ = LineNumbers::On;
+    bool wordWrap_ = true;
     std::optional<Rgba> gutterBackground_, lineNumberColor_, lineNumberActiveColor_,
         bracketMatchColor_;
     bool terminalLineMode_ = false;

@@ -6,6 +6,7 @@
 // Editing that text replaces exactly its bytes in the source; everything the
 // parser does not understand is left alone.
 #import <Cocoa/Cocoa.h>
+#import <Quartz/Quartz.h>
 
 @interface LatexView : NSView <NSMenuItemValidation>
 - (instancetype)initWithPath:(NSString *)texPath source:(NSString *)source;
@@ -32,6 +33,8 @@
 - (void)pdfForPath:(NSString *)texPath source:(NSString *)source
         completion:(void (^)(NSData *pdf, NSString *error))done;
 - (void)applySettings;
+// The PDF on show (PageZoom.h zooms it with Cmd+=, Cmd+- and Cmd+0).
+- (PDFView *)latexPDFView;
 @end
 
 // Where tectonic was found, or nil. Exposed for the status line and tests.

@@ -116,6 +116,12 @@
     const CGFloat width = self.contentSize.width - in.left - in.right;
     if (tv && !tv.horizontallyResizable && width > 0 && tv.frame.size.width != width)
         [tv setFrameSize:NSMakeSize(width, tv.frame.size.height)];
+    // One that does not wrap (editor.word-wrap = off) is as wide as its
+    // longest line, and never narrower than the pane.
+    if (tv && tv.horizontallyResizable && width > 0) {
+        if (tv.minSize.width != width) tv.minSize = NSMakeSize(width, tv.minSize.height);
+        if (tv.frame.size.width < width) [tv setFrameSize:NSMakeSize(width, tv.frame.size.height)];
+    }
 }
 - (void)setPanelColor:(NSColor *)color {
     _panelColor = color;

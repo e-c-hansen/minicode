@@ -24,7 +24,11 @@
 //     Ctrl+Shift with punctuation);
 //   - the command is the file tree's (F2 renames, Cmd+Delete trashes) and
 //     the tree has the keyboard. A tree command's keys are never put on its
-//     menu item, since a menu key works in every pane.
+//     menu item, since a menu key works in every pane;
+//   - the command is a page's (Cmd+=, Cmd+- and Cmd+0 zoom a web page or a
+//     PDF) and the page has the keyboard, or the pointer was last there: a
+//     scroll or a click in it, and no key since (PageZoom.h). Its keys are
+//     kept off its menu item as a tree command's are.
 // A plain Control key with a letter or symbol goes to the terminal's grid
 // while it has the keyboard (Ctrl+G for nano), unless its command is Global.
 // A command scoped to one language (Toggle Task's Option+C in Markdown,

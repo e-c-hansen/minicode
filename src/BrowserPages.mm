@@ -243,6 +243,22 @@ NSString *IsolatedListener(NSString *eventName) {
     }];
 }
 
+- (void)readWidths:(void (^)(double, double, NSString *))done {
+    NSString *script =
+        @"(function(){var d=document.documentElement,b=document.body;"
+        @"if(!d)return [0,0];"
+        @"return [d.clientWidth,Math.max(d.scrollWidth,b?b.scrollWidth:0)];})()";
+    [self evaluate:script done:^(id value, NSString *error) {
+        NSArray *a = [value isKindOfClass:NSArray.class] ? value : nil;
+        if (error || a.count != 2 || ![a[0] isKindOfClass:NSNumber.class] ||
+            ![a[1] isKindOfClass:NSNumber.class]) {
+            done(0, 0, error ?: @"the page has no width");
+            return;
+        }
+        done([a[0] doubleValue], [a[1] doubleValue], nil);
+    }];
+}
+
 - (void)readText:(void (^)(NSString *, BOOL, NSString *))done {
     NSString *script = [NSString stringWithFormat:
         @"(function(){var b=document.body;var t=b?b.innerText:'';"

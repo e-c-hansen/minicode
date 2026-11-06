@@ -3,6 +3,7 @@
 #import "Lsp.h"                // CodeTextView
 #import "Terminal.h"           // TerminalView
 #import "TerminalGridView.h"
+#import "PageZoom.h"
 #include "Commands.h"
 #include <fcntl.h>
 #include <unistd.h>
@@ -157,7 +158,16 @@ Commands::When WhereIs(NSResponder *fr) {
             return Commands::When::Terminal;
         if (outline && [v isKindOfClass:outline]) return Commands::When::Tree;
     }
+    // A web page in the browser pane (or its toolbar), or a PDF.
+    if (MCPageViewForResponder(fr)) return Commands::When::Page;
     return Commands::When::Any;
+}
+
+// Keys that run only where they apply, from the key monitor, and never sit
+// on a menu item (which would run them from every pane): the file tree's
+// and a page's.
+bool KeysOffMenu(const Commands::Command *c) {
+    return c && (c->when == Commands::When::Tree || c->when == Commands::When::Page);
 }
 
 // The language of the file the editor shows, for commands scoped to one
@@ -174,7 +184,7 @@ std::string LanguageIn(NSWindow *w) {
 // it is the key's one command and has Command or Control (Option+C would
 // stop typing its character in every field).
 bool MenuShows(const Commands::Command *c, const Key &k, const Commands::Keymap &map) {
-    if (!EquivalentFor(k) || c->when == Commands::When::Tree) return false;
+    if (!EquivalentFor(k) || KeysOffMenu(c)) return false;
     if (c->language)
         return (k.mods & (Commands::Cmd | Commands::Ctrl)) && map.commandsFor(k).size() == 1;
     return true;
@@ -379,7 +389,8 @@ static void MCSetKey(NSMenuItem *it, const Key *k) {
         NSMutableArray<NSMenuItem *> *group = items[cid];
         std::vector<Key> keys;
         const Commands::Command *cmd = Commands::find(cid.UTF8String);
-        // A menu key works in every pane, so a tree command's stays off it.
+        // A menu key works in every pane, so a tree or page command's stays
+        // off it (MenuShows).
         if (cmd)
             for (const Key &k : _map.keysOf(cid.UTF8String))
                 if (MenuShows(cmd, k, _map)) keys.push_back(k);
@@ -430,6 +441,7 @@ static void MCSetKey(NSMenuItem *it, const Key *k) {
 void MCKeymapInstall(void) {
     MCKeymap *k = [MCKeymap shared];
     [k applyToMenu:NSApp.mainMenu];
+    MCPageWatchPointer();   // a scroll or click in a page makes Cmd+= its
 }
 
 // ------------------------------------------------------------ running
@@ -478,20 +490,33 @@ BOOL MCKeymapHandleKeyDown(NSEvent *e) {
     // A typing key is a command's only in one language's files
     // (Shift+Return in Python), and only in the editor there.
     const BOOL typing = MCJustTyping(e);
-    if (typing && ![e.window.firstResponder isKindOfClass:[CodeTextView class]]) return NO;
+    if (typing && ![e.window.firstResponder isKindOfClass:[CodeTextView class]]) {
+        MCPageForgetPointer();
+        return NO;
+    }
     Key k = KeyForEvent(e);
     if (k.empty()) return NO;
     const Commands::Keymap &map = [[MCKeymap shared] map];
     std::vector<const Commands::Command *> all;
     for (const Commands::Command *c : map.commandsFor(k))
         if (!(c->flags & Commands::Fixed)) all.push_back(c);
-    if (all.empty()) return NO;
+    if (all.empty()) {
+        MCPageForgetPointer();
+        return NO;
+    }
     NSResponder *fr = e.window.firstResponder;
     const Commands::When where = WhereIs(fr);
     const std::string language =
         where == Commands::When::Editor ? LanguageIn(e.window) : std::string();
     const Commands::Command *c = map.commandFor(k, where, language);
     if (c && (c->flags & Commands::Fixed)) c = nullptr;
+    // A page the pointer was last in (a scroll or a click, no key since)
+    // takes its own keys, Cmd+= and the rest, from wherever the keyboard is.
+    if (where != Commands::When::Page && MCPagePointedAt(e.window)) {
+        const Commands::Command *pc = map.commandFor(k, Commands::When::Page);
+        if (pc && pc->when == Commands::When::Page && !(pc->flags & Commands::Fixed)) c = pc;
+    }
+    if (!c || c->when != Commands::When::Page) MCPageForgetPointer();
     if (typing) {
         // An input method composing (marked text) gets the key, as typing.
         if (!c || !c->language || ((NSTextView *)fr).hasMarkedText) return NO;
@@ -505,9 +530,10 @@ BOOL MCKeymapHandleKeyDown(NSEvent *e) {
     }
     const BOOL cmd = (k.mods & Commands::Cmd) != 0, ctrl = (k.mods & Commands::Ctrl) != 0;
     if (c && (c->flags & Commands::Global)) return MCPerform(c);
-    // The file tree's commands (F2, Cmd+Delete) have no menu key, so they
-    // run from here while the tree has the keyboard, or not at all.
-    if (c && c->when == Commands::When::Tree) return MCPerform(c);
+    // The file tree's commands (F2, Cmd+Delete) and a page's (Cmd+= in the
+    // browser) have no menu key, so they run from here while the tree or
+    // the page has the keyboard, or not at all.
+    if (KeysOffMenu(c)) return MCPerform(c);
     // A Control key whose command does not apply in the terminal is the
     // program's there (Ctrl+Shift+K, the editor's Delete Line, for one).
     if (!c && ctrl && !cmd && [fr isKindOfClass:[TerminalGridView class]]) {

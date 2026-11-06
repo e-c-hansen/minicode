@@ -589,7 +589,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)nextWaitingTerminal:(id)sender { MCJumpToNextWaitingTerminal(); }
 - (void)runCurrentFile:(id)sender  { [[self current] runCurrentFile:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
-- (void)toggleSidebar:(id)sender   { [[self current] toggleSidebar:sender]; }
+- (void)toggleSidebarVisibility:(id)sender   { [[self current] toggleSidebarVisibility:sender]; }
 - (void)toggleSourceControl:(id)sender { [[self current] toggleSourceControl:sender]; }
 - (void)gitFetch:(id)sender { [[self current] gitFetch:sender]; }
 - (void)gitPull:(id)sender  { [[self current] gitPull:sender]; }
@@ -1161,6 +1161,31 @@ static void BuildMenu(void) {
     zoomReset.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     [viewMenu addItem:zoomReset];
 
+    // The browser's page or a PDF (EditorController+ZoomFit.mm). Cmd+=,
+    // Cmd+- and Cmd+0 do these while one has the keyboard or the pointer;
+    // the keys stay off the items, which would take them from the editor.
+    NSMenuItem *pageZoomItem = [[NSMenuItem alloc] initWithTitle:@"Page Zoom" action:nil
+                                                   keyEquivalent:@""];
+    NSMenu *pageZoomMenu = [[NSMenu alloc] initWithTitle:@"Page Zoom"];
+    [pageZoomMenu addItemWithTitle:@"Zoom In" action:@selector(zoomPageIn:) keyEquivalent:@""];
+    [pageZoomMenu addItemWithTitle:@"Zoom Out" action:@selector(zoomPageOut:) keyEquivalent:@""];
+    [pageZoomMenu addItemWithTitle:@"Actual Size" action:@selector(zoomPageToActualSize:)
+                     keyEquivalent:@""];
+    [pageZoomMenu addItem:[NSMenuItem separatorItem]];
+    [pageZoomMenu addItemWithTitle:@"Zoom to Fit Width" action:@selector(zoomPageToFitWidth:)
+                     keyEquivalent:@""];
+    [pageZoomMenu addItemWithTitle:@"Zoom to Fit Page" action:@selector(zoomPageToFit:)
+                     keyEquivalent:@""];
+    pageZoomItem.submenu = pageZoomMenu;
+    [viewMenu addItem:pageZoomItem];
+
+    // Option+Z, VS Code's: long lines wrap or run on (editor.word-wrap).
+    NSMenuItem *wrap = [[NSMenuItem alloc] initWithTitle:@"Word Wrap"
+                                                  action:@selector(toggleWordWrap:)
+                                           keyEquivalent:@"z"];
+    wrap.keyEquivalentModifierMask = NSEventModifierFlagOption;
+    [viewMenu addItem:wrap];
+
     // Folding (FoldView.h). VS Code's Option+Cmd+[ and ] are minicode's
     // previous and next terminal, and its other folding keys are Cmd+K
     // chords, which minicode has none of; so Control+Command with the
@@ -1201,7 +1226,7 @@ static void BuildMenu(void) {
 
     NSMenuItem *sidebar =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Sidebar"
-                                   action:@selector(toggleSidebar:)
+                                   action:@selector(toggleSidebarVisibility:)
                             keyEquivalent:@"b"];
     sidebar.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     [viewMenu addItem:sidebar];
@@ -1262,6 +1287,13 @@ static void BuildMenu(void) {
     editorPane.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:editorPane];
+
+    // The pane with the keyboard takes the whole right area, and back.
+    NSMenuItem *maximize = [[NSMenuItem alloc] initWithTitle:@"Maximize Pane"
+                                                      action:@selector(toggleMaximizedPane:)
+                                               keyEquivalent:@"m"];
+    maximize.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
+    [viewMenu addItem:maximize];
 
     NSMenuItem *hidden =
         [[NSMenuItem alloc] initWithTitle:@"Show Hidden Files"

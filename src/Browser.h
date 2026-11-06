@@ -55,4 +55,14 @@
 // The page on show: its address and title (nil before any page).
 @property(nonatomic, readonly) NSString *pageURL;
 @property(nonatomic, readonly) NSString *pageTitle;
+
+// Zoom (PageZoom.h), of the page on show: a step of Safari's in or out
+// (dir 0: actual size), or as small as it takes for the page's content to
+// fit the pane's width (never larger than actual size). The user's page
+// keeps a zoom per site, across launches, as Safari does; the agent page's
+// lasts until it closes. The toolbar shows the new percentage for a moment.
+- (void)zoomStep:(int)dir;
+- (void)zoomToFitWidth;
+@property(nonatomic, readonly) CGFloat pageZoom;
+@property(nonatomic, readonly) NSTextField *zoomLabel;   // "75%", shown for a moment
 @end
