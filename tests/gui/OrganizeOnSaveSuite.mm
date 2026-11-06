@@ -177,10 +177,14 @@ MC_GUI_SUITE(organize_on_save) {
         GCHECK(![[c valueForKey:@"dirty"] boolValue]);
     });
 
-    MCGuiStep(@"language servers off again; unsaved tabs closed unasked", ^{
+    // Every tab was saved, so closing asks nothing; an answer queued here
+    // would be left for the next suite's first alert.
+    MCGuiStep(@"language servers off again; the tabs closed", ^{
         MCGuiSetSettings(@"lsp.enabled = false\n");
-        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);   // Don't Save
+        GCHECK(![[c valueForKey:@"dirty"] boolValue]);
+        NSUInteger alerts = MCGuiAlertsShown().count;
         [c closeAllTabs:nil];
+        GCHECK(MCGuiAlertsShown().count == alerts);
     });
     MCGuiPause(0.3);
 }
