@@ -2,6 +2,7 @@
 #import "Browser.h"
 #import "AppSettings.h"
 #import "Appearance.h"
+#import "BrowserPages.h"
 #import <WebKit/WebKit.h>
 
 // The page's own context menu (Back, Reload, Inspect...) ends with Adjust
@@ -77,19 +78,24 @@
 @end
 
 @interface BrowserView () <WKNavigationDelegate, NSTextFieldDelegate>
-@property(nonatomic, strong) MCWebView   *web;
+@property(nonatomic, strong) MCWebView   *web;        // the user's page
+@property(nonatomic, strong) MCWebView   *agentWeb;   // the agent's, once it loaded one
+@property(nonatomic, strong) MCPageProbe *userProbe;
+@property(nonatomic, strong) MCPageProbe *agentProbe;
+@property(nonatomic) BOOL agentPageShown;
 @property(nonatomic, strong) NSTextField *urlBar;
 @property(nonatomic, strong) NSButton    *back;
 @property(nonatomic, strong) NSButton    *forward;
 @property(nonatomic, strong) NSButton    *reload;
-// The pages agents loaded (`minicode browse`), as history items, to tell
-// them from pages the user loaded; and the agent's load still on its way.
-@property(nonatomic, strong) NSHashTable<WKBackForwardListItem *> *agentItems;
-@property(nonatomic, weak) WKNavigation *agentNavigation;
+@property(nonatomic, strong) NSSegmentedControl *switcher;   // Yours | Agent
+@property(nonatomic, strong) NSButton    *closeAgent;
 @end
 
 @implementation BrowserView
-- (NSString *)pageURL { return self.web.URL.absoluteString; }
+- (MCWebView *)shownWeb { return self.agentPageShown && self.agentWeb ? self.agentWeb : self.web; }
+- (NSString *)pageURL { return self.shownWeb.URL.absoluteString; }
+- (NSString *)pageTitle { return self.shownWeb.title.length ? self.shownWeb.title : nil; }
+- (BOOL)hasAgentPage { return self.agentWeb != nil; }
 
 // A record past this size is left out; the address still comes back.
 static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
@@ -142,7 +148,6 @@ static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
     }
     if (url.length) [self loadString:url];
 }
-- (NSString *)pageTitle { return self.web.title.length ? self.web.title : nil; }
 
 - (instancetype)initWithHomeURL:(NSString *)url {
     if ((self = [super initWithFrame:NSMakeRect(0, 0, 600, 400)])) {
@@ -155,6 +160,10 @@ static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
         [self navigateToString:url];
     }
     return self;
+}
+
+- (void)dealloc {
+    [self.agentProbe detach];
 }
 
 // The toolbar follows the settings file. The URL field keeps the system's
@@ -179,6 +188,13 @@ static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
     return b;
 }
 
+- (MCWebView *)makeWebViewWith:(WKWebViewConfiguration *)cfg {
+    MCWebView *web = [[MCWebView alloc] initWithFrame:self.bounds configuration:cfg];
+    web.chrome = self;
+    web.navigationDelegate = self;
+    return web;
+}
+
 - (void)buildChrome {
     self.back    = [self navButton:@"◀" action:@selector(goBack:)];
     self.forward = [self navButton:@"▶" action:@selector(goForward:)];
@@ -186,6 +202,23 @@ static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
     [self addSubview:self.back];
     [self addSubview:self.forward];
     [self addSubview:self.reload];
+
+    // The switcher and the agent page's close button show once an agent
+    // has a page.
+    self.switcher = [NSSegmentedControl segmentedControlWithLabels:@[@"Yours", @"Agent"]
+                                                      trackingMode:NSSegmentSwitchTrackingSelectOne
+                                                            target:self
+                                                            action:@selector(switcherChanged:)];
+    self.switcher.font = [NSFont systemFontOfSize:11];
+    self.switcher.selectedSegment = 0;
+    self.switcher.hidden = YES;
+    self.switcher.toolTip = @"Your page, or the page an agent loaded with minicode browse";
+    [self addSubview:self.switcher];
+    self.closeAgent = [self navButton:@"✕" action:@selector(closeAgentPage:)];
+    self.closeAgent.font = [NSFont systemFontOfSize:11];
+    self.closeAgent.toolTip = @"Close the agent page";
+    self.closeAgent.hidden = YES;
+    [self addSubview:self.closeAgent];
 
     MCSurfaceTextField *urlBar = [[MCSurfaceTextField alloc] init];
     urlBar.appearanceSurface = @"browser";
@@ -197,17 +230,20 @@ static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
     self.urlBar.action = @selector(urlEntered:);
     [self addSubview:self.urlBar];
 
-    WKWebViewConfiguration *cfg = [[WKWebViewConfiguration alloc] init];
-    self.web = [[MCWebView alloc] initWithFrame:self.bounds configuration:cfg];
-    self.web.chrome = self;
-    self.web.navigationDelegate = self;
+    self.web = [self makeWebViewWith:[[WKWebViewConfiguration alloc] init]];
+    self.userProbe = [[MCPageProbe alloc] initRecordingConsole:NO];
+    self.userProbe.webView = self.web;
     [self addSubview:self.web];
-    // Tab from the address bar goes into the page (MCWebView lets a Tab out
-    // of the toolbar in), and out of the page's last field back to the
-    // toolbar. The buttons are key views only with full keyboard access on;
-    // otherwise the loop passes them by.
-    self.urlBar.nextKeyView = self.web;
-    self.web.nextKeyView = self.back;
+    [self updateKeyViewLoop];
+}
+
+// Tab from the address bar goes into the page on show (MCWebView lets a Tab
+// out of the toolbar in), and out of the page's last field back to the
+// toolbar. The buttons are key views only with full keyboard access on;
+// otherwise the loop passes them by.
+- (void)updateKeyViewLoop {
+    self.urlBar.nextKeyView = self.shownWeb;
+    self.shownWeb.nextKeyView = self.back;
     self.back.nextKeyView = self.forward;
     self.forward.nextKeyView = self.reload;
     self.reload.nextKeyView = self.urlBar;
@@ -226,35 +262,128 @@ static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
     self.back.frame    = NSMakeRect(x, by, bw, 26); x += bw + 2;
     self.forward.frame = NSMakeRect(x, by, bw, 26); x += bw + 2;
     self.reload.frame  = NSMakeRect(x, by, bw, 26); x += bw + pad;
+    if (!self.switcher.hidden) {
+        const CGFloat sw = MAX(110, self.switcher.intrinsicContentSize.width);
+        self.switcher.frame = NSMakeRect(x, by + 1, sw, 24); x += sw + 2;
+        self.closeAgent.frame = NSMakeRect(x, by, 28, 26); x += 28 + pad;
+    }
     self.urlBar.frame  = NSMakeRect(x, by, MAX(0, W - x - pad), 24);
-    self.web.frame     = NSMakeRect(0, 0, W, MAX(0, H - barH));
+    const NSRect page = NSMakeRect(0, 0, W, MAX(0, H - barH));
+    self.web.frame = page;
+    self.agentWeb.frame = page;   // hidden pages keep their size
 }
 
 - (void)focusURLBar { [self.window makeFirstResponder:self.urlBar]; }
 
+// ------------------------------------------------------------ the pages
+// The page on show, its toolbar state and the switcher.
+- (void)showPage:(BOOL)agent {
+    self.agentPageShown = agent && self.agentWeb != nil;
+    self.web.hidden = self.agentPageShown;
+    self.agentWeb.hidden = !self.agentPageShown;
+    self.switcher.hidden = self.closeAgent.hidden = self.agentWeb == nil;
+    self.switcher.selectedSegment = self.agentPageShown ? 1 : 0;
+    [self updateKeyViewLoop];
+    [self updateToolbar];
+    [self layoutChildren];
+}
+
+- (void)updateToolbar {
+    MCWebView *wv = self.shownWeb;
+    // An address being typed stays.
+    if (!self.urlBar.currentEditor) self.urlBar.stringValue = wv.URL.absoluteString ?: @"";
+    self.back.enabled = wv.canGoBack;
+    self.forward.enabled = wv.canGoForward;
+}
+
+- (MCPageProbe *)openAgentPage {
+    if (self.agentWeb) return self.agentProbe;
+    self.agentProbe = [[MCPageProbe alloc] initRecordingConsole:YES];
+    self.agentWeb = [self makeWebViewWith:[MCPageProbe agentPageConfigurationFor:self.agentProbe]];
+    self.agentProbe.webView = self.agentWeb;
+    self.agentWeb.hidden = YES;
+    [self addSubview:self.agentWeb];
+    [self showPage:self.agentPageShown];
+    return self.agentProbe;
+}
+
+- (WKNavigation *)loadInAgentPage:(NSString *)url {
+    [self openAgentPage];
+    NSURL *u = [NSURL URLWithString:url];
+    if (!u) return nil;
+    self.agentWeb.toolbarNavigation = NO;
+    if (u.isFileURL)
+        return [self.agentWeb loadFileURL:u allowingReadAccessToURL:u.URLByDeletingLastPathComponent];
+    return [self.agentWeb loadRequest:[NSURLRequest requestWithURL:u]];
+}
+
+- (WKNavigation *)reloadAgentPage {
+    self.agentWeb.toolbarNavigation = NO;
+    return self.agentWeb.URL ? [self.agentWeb reload] : nil;
+}
+
+- (WKNavigation *)reloadUserPage {
+    self.web.toolbarNavigation = NO;
+    return self.web.URL ? [self.web reload] : nil;
+}
+
+// Whether the keyboard is in the pane: a page, the address bar (its field
+// editor), or a button.
+- (BOOL)keyboardInPane {
+    NSResponder *r = self.window.firstResponder;
+    if ([r isKindOfClass:NSTextView.class] && [(NSTextView *)r isFieldEditor] &&
+        [[(NSTextView *)r delegate] isKindOfClass:NSView.class])
+        r = (NSView *)[(NSTextView *)r delegate];
+    return [r isKindOfClass:NSView.class] && [(NSView *)r isDescendantOf:self];
+}
+
+- (BOOL)showAgentPageQuietly {
+    if (!self.agentWeb) return NO;
+    if (self.agentPageShown) return YES;
+    if (!self.hiddenOrHasHiddenAncestor && [self keyboardInPane]) return NO;
+    [self showPage:YES];
+    return YES;
+}
+
+- (void)showUserPage { [self showPage:NO]; }
+
+- (void)closeAgentPage {
+    if (!self.agentWeb) return;
+    // The keyboard in the agent page goes to the user's, which it shows.
+    const BOOL hadKeyboard = [self keyboardInPane] &&
+        [self.window.firstResponder isKindOfClass:NSView.class] &&
+        [(NSView *)self.window.firstResponder isDescendantOf:self.agentWeb];
+    [self.agentProbe detach];
+    [self.agentWeb stopLoading];
+    [self.agentWeb removeFromSuperview];
+    self.agentWeb.navigationDelegate = nil;
+    self.agentWeb = nil;
+    self.agentProbe = nil;
+    [self showPage:NO];
+    if (hadKeyboard) [self.window makeFirstResponder:self.urlBar];
+}
+
+- (void)closeAgentPage:(id)sender {
+    (void)sender;
+    [self closeAgentPage];
+}
+
+- (void)switcherChanged:(id)sender {
+    (void)sender;
+    [self showPage:self.switcher.selectedSegment == 1];
+}
+
+- (BOOL)showsUserPage {
+    return !self.agentPageShown && self.web.backForwardList.currentItem != nil;
+}
+
 // -------------------------------------------------------------- navigation
-// From outside (a link in the terminal or a Markdown file): the page may not
-// take the keyboard when it loads.
+// From outside (a link in the terminal or a Markdown file): the user's
+// page, which shows; it may not take the keyboard when it loads.
 - (void)navigateToString:(NSString *)raw {
     self.web.toolbarNavigation = NO;
-    self.agentNavigation = nil;
+    if (self.agentPageShown) [self showPage:NO];
     [self loadString:raw];
-}
-
-- (void)navigateForAgent:(NSString *)raw {
-    self.web.toolbarNavigation = NO;
-    WKNavigation *nav = [self loadString:raw];
-    self.agentNavigation = nav;
-}
-
-// A page is the user's when they loaded it, from the address bar, a link
-// in the page, back and forward, a restored session or a link elsewhere in
-// minicode; an agent's page stays the agent's through its redirects (one
-// navigation). Nothing on show yet is nobody's.
-- (BOOL)showsUserPage {
-    WKBackForwardListItem *current = self.web.backForwardList.currentItem;
-    if (!current) return NO;
-    return ![self.agentItems containsObject:current];
 }
 
 - (WKNavigation *)loadString:(NSString *)raw {
@@ -278,9 +407,12 @@ static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
     return url ? [self.web loadRequest:[NSURLRequest requestWithURL:url]] : nil;
 }
 
-// From the toolbar: the page asked for may focus its own field, as long as
-// the keyboard is still in the toolbar when it does.
+// From the toolbar: an address typed there is the user's, so it loads in
+// their page, which shows. The page asked for may focus its own field, as
+// long as the keyboard is still in the toolbar when it does.
 - (void)urlEntered:(id)sender {
+    (void)sender;
+    if (self.agentPageShown) [self showPage:NO];
     self.web.toolbarNavigation = YES;
     [self loadString:self.urlBar.stringValue];
 }
@@ -303,18 +435,40 @@ static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
     return NO;
 }
 
-- (void)goBack:(id)sender     { self.web.toolbarNavigation = YES; [self.web goBack]; }
-- (void)goForward:(id)sender  { self.web.toolbarNavigation = YES; [self.web goForward]; }
-- (void)reloadPage:(id)sender { self.web.toolbarNavigation = YES; [self.web reload]; }
+- (void)goBack:(id)sender     { self.shownWeb.toolbarNavigation = YES; [self.shownWeb goBack]; }
+- (void)goForward:(id)sender  { self.shownWeb.toolbarNavigation = YES; [self.shownWeb goForward]; }
+- (void)reloadPage:(id)sender { self.shownWeb.toolbarNavigation = YES; [self.shownWeb reload]; }
+
+- (MCPageProbe *)probeFor:(WKWebView *)wv {
+    return wv == self.agentWeb ? self.agentProbe : wv == self.web ? self.userProbe : nil;
+}
+
+// The HTTP status of each page's document comes from here. What a page may
+// show is what WebKit allows without this method: what it can display.
+- (void)webView:(WKWebView *)wv decidePolicyForNavigationResponse:(WKNavigationResponse *)response
+    decisionHandler:(void (^)(WKNavigationResponsePolicy))decisionHandler {
+    [[self probeFor:wv] noteResponse:response];
+    decisionHandler(response.canShowMIMEType ? WKNavigationResponsePolicyAllow
+                                             : WKNavigationResponsePolicyCancel);
+}
 
 - (void)webView:(WKWebView *)wv didCommitNavigation:(WKNavigation *)nav {
-    if (nav && nav == self.agentNavigation && wv.backForwardList.currentItem) {
-        if (!self.agentItems) self.agentItems = [NSHashTable weakObjectsHashTable];
-        [self.agentItems addObject:wv.backForwardList.currentItem];
-    }
-    self.urlBar.stringValue = wv.URL.absoluteString ?: @"";
-    self.back.enabled = wv.canGoBack;
-    self.forward.enabled = wv.canGoForward;
+    [[self probeFor:wv] noteCommit:nav];
+    if (wv == self.shownWeb) [self updateToolbar];
+}
+
+- (void)webView:(WKWebView *)wv didFinishNavigation:(WKNavigation *)nav {
+    [[self probeFor:wv] noteFinish:nav];
+    if (wv == self.shownWeb) [self updateToolbar];
+}
+
+- (void)webView:(WKWebView *)wv didFailNavigation:(WKNavigation *)nav withError:(NSError *)error {
+    [[self probeFor:wv] noteFail:nav error:error];
+}
+
+- (void)webView:(WKWebView *)wv didFailProvisionalNavigation:(WKNavigation *)nav
+      withError:(NSError *)error {
+    [[self probeFor:wv] noteFail:nav error:error];
 }
 
 @end
