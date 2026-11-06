@@ -525,14 +525,27 @@ container (PanelHost, laid out by hand in layoutContainer)
   character needed. `textDidChange:`'s copy into `sourceText` shares characters
   (about a microsecond) and the backups rely on a new object per change;
   measured, leave it.
-- **Programmatic edits** (`replaceSourceWithText:actionName:` for Format
-  Document, the inline agent, a clean tab following the disk, a pending sort;
-  the same shape in the workspace edit applier and Replace All): ranges go in
-  with one `shouldChangeTextInRanges` (one undo step), then each as its own
-  storage edit, last first, then one `didChangeText`, so layout runs once and
-  the highlighter, squiggles and server follow each edit. Never wrap them in
-  `beginEditing`/`endEditing`: the storage then reports one edit from first to
-  last and every squiggle between is stretched over it. The caret and top
+- **Programmatic edits** go through `CodeTextView replaceRanges:withStrings:
+  actionName:` (Lsp.h): `replaceSourceWithText:actionName:` (Format
+  Document, the inline agent, a clean tab following the disk, a pending
+  sort), several carets (`MCMultiCarets applyEdit:`) and Replace All; the
+  workspace edit applier and completion's extra edits (Lsp.mm) have the same
+  shape. One `shouldChangeTextInRanges`, each range its own storage edit,
+  last first, one `didChangeText`, so layout runs once and the highlighter,
+  folds, squiggles, gutter, Go Back and server follow each edit. Never wrap
+  them in `beginEditing`/`endEditing`: the storage then reports one edit from
+  first to last, folds between open, squiggles stretch over it, and the
+  highlighter relexes all of it (a quote at two carets 99,800 lines apart
+  took 4.5 s; 3 ms now). The undo step is the view's own (allowsUndo off
+  around shouldChangeTextInRanges), putting the old text back as plain
+  strings through the same method: NSTextView's inserts each as an
+  attributed string, splitting the attribute runs one at a time, and
+  undoing a letter typed at 20,000 selections ran for minutes. The
+  highlighter keeps its pending ranges apart (`_pending`, distances from the
+  end) and restyles each in its own attribute edit. Select All Occurrences,
+  Cmd+D and Add Cursor stop at 10,000 carets (VS Code's limit); typing at
+  10,000 in a 100,000-line file still costs about a second, most of it the
+  flat string's memmove per edit. The caret and top
   character are mapped by counting non-whitespace characters within a hunk;
   hunks with only blank lines between are joined. Small edits (Cmd+/, F9) call
   `breakUndoCoalescing`, so each is its own undo step.
@@ -545,7 +558,9 @@ container (PanelHost, laid out by hand in layoutContainer)
 - **Line numbers** (`MCLineGutter`): a vertical NSRulerView; each logical line
   numbered on its first fragment, the carets' lines in the active color, a dot
   for errors and warnings, the fold lane (`kFoldLane`). Only fragments on
-  screen are visited and numbers come from a `LineIndex` fed by storage edits.
+  screen are visited and numbers come from a `LineIndex` fed by storage edits
+  (with the characters either side, since a line ends after '\n', U+2029 or
+  a '\r' not before '\n', as in TextFind; the folds count lines the same way).
   Width by digit count (three at least); click, drag and Shift+click select
   lines; shown only while editable. Settings: `editor.line-numbers` (on, off,
   relative), `editor.gutter-background`, `editor.line-number-color`,
@@ -642,7 +657,7 @@ container (PanelHost, laid out by hand in layoutContainer)
   and the view draws every caret after `drawRect:`. Any change not made by the
   carets (a click, undo, reload, tab switch, Find), Esc, or an unknown command
   (run at the first caret) ends them; scrolling passes. Edits go through
-  `shouldChangeTextInRanges:replacementStrings:` as one undo step; the server
+  `replaceRanges:withStrings:actionName:` as one undo step; the server
   sees no single typed character (no completion); the electric dedent is off
   while they apply (`multiCarets.applying`); typing never crosses a line break,
   so a column stays a column.

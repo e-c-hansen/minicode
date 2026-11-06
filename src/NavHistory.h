@@ -9,7 +9,8 @@
 // so the list holds where the user really was. A new jump drops what lay
 // ahead of the current entry, as a browser's history does. Back from a
 // place far from the current entry first records it, so Forward comes back
-// to it.
+// to it. Places follow edits to their file's text (edited), so Back after
+// typing above a place lands where that text went.
 #pragma once
 #include <cstddef>
 #include <functional>
@@ -30,6 +31,9 @@ struct Place {
     size_t location = 0, length = 0;
     int line = 0;
     bool hasText = true;
+    // An edit before the place may have moved its line (edited); fixLines
+    // counts it again.
+    bool lineStale = false;
 };
 
 // The same file, and within kFarLines lines (or either has no text place).
@@ -48,6 +52,18 @@ public:
     bool forward(const Place& here, Place* out);
     bool canGoBack(const Place& here) const;
     bool canGoForward() const;
+
+    // The text of `path` changed: the units [pos, pos + oldLen) became
+    // newLen units. Places after the edit move with their text, places
+    // inside it go to where its new text is (as far into it as they were,
+    // at most its end), and every place past pos has its line marked stale.
+    void edited(const std::string& path, size_t pos, size_t oldLen, size_t newLen);
+    // Whether any place of `path` waits for fixLines.
+    bool hasStaleLines(const std::string& path) const;
+    // Counts the stale lines of `path`'s places again: `lines` gets their
+    // offsets, ascending, and gives back each one's 0-based line.
+    void fixLines(const std::string& path,
+                  const std::function<std::vector<int>(const std::vector<size_t>& offsets)>& lines);
 
     // A file or folder moved: entries for it, or below it, follow.
     void moved(const std::string& from, const std::string& to);

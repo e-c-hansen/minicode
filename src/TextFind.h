@@ -31,7 +31,12 @@
 // A known limit of std::regex: it backtracks, so a pattern such as (a|b)*c
 // against a very long line takes time quadratic in the line's length. The
 // front ends search off the main thread and poll a cancel flag between
-// lines.
+// lines. A line over 2,000 characters is searched by a regex one start
+// position at a time, so the flag is also polled within it, and after a
+// second or so on such a line the search gives up on the rest of it (a minified
+// file kept the find queue busy for many seconds). A single attempt that
+// backtracks exponentially, as (a+)+b can on a short line, cannot be
+// stopped: std::regex has no step limit.
 #pragma once
 
 #include <atomic>

@@ -90,7 +90,7 @@ struct Span {
 };
 // lineEnd is a line's end without its line break.
 Span spanOf(size_t firstLineContentEnd, size_t lastLineContentEnd);
-// The end of a line's content: before "\n" or "\r\n" (lineEnd is where the
+// The end of a line's content: before "\n", "\r\n", "\r" or U+2029 (lineEnd is where the
 // next line starts, or the text's length).
 size_t contentEnd(const char16_t* text, size_t lineStart, size_t lineEnd);
 

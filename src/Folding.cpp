@@ -26,6 +26,12 @@ std::string extOf(const std::string& filename) {
 }
 
 bool isBlank(char16_t c) { return c == u' ' || c == u'\t' || c == u'\r' || c == u'\f'; }
+// Whether t[i] ends a line: '\n', U+2029, or a '\r' not followed by '\n'
+// (an old Mac file), as LineIndex and TextFind count lines.
+bool endsLine(const char16_t* t, size_t n, size_t i) {
+    const char16_t c = t[i];
+    return c == u'\n' || c == 0x2029 || (c == u'\r' && (i + 1 >= n || t[i + 1] != u'\n'));
+}
 bool isWordChar(char16_t c) {
     return (c >= u'a' && c <= u'z') || (c >= u'A' && c <= u'Z') || (c >= u'0' && c <= u'9') ||
            c == u'_';
@@ -44,7 +50,7 @@ private:
     size_t n_;
 };
 
-// The text's lines: where each starts. A line ends after '\n'.
+// The text's lines: where each starts (endsLine).
 struct Lines {
     const char16_t* t;
     size_t n;
@@ -52,7 +58,7 @@ struct Lines {
     Lines(const char16_t* text, size_t length) : t(text), n(length) {
         starts.push_back(0);
         for (size_t i = 0; i < n; i++)
-            if (t[i] == u'\n') starts.push_back(i + 1);
+            if (endsLine(t, n, i)) starts.push_back(i + 1);
     }
     size_t count() const { return starts.size(); }
     size_t start(size_t l) const { return starts[l]; }
@@ -65,7 +71,7 @@ struct Lines {
     }
     bool blank(size_t l) const {
         size_t i = firstText(l);
-        return i >= end(l) || t[i] == u'\n';
+        return i >= end(l) || t[i] == u'\n' || t[i] == 0x2029;
     }
     size_t lineOf(size_t pos) const {
         return (size_t)(std::upper_bound(starts.begin(), starts.end(), pos) - starts.begin()) - 1;
@@ -196,7 +202,7 @@ void addCommentRuns(const Lines& L, const std::vector<Token>& tokens,
         if (inside[l] || L.firstText(l) != tk.start) continue;
         size_t end = tk.start + tk.length, le = L.end(l);
         while (end < le && isBlank(L.t[end])) end++;
-        if (end < le && L.t[end] != u'\n') continue;   // code after it, or it runs on
+        if (end < le && L.t[end] != u'\n' && L.t[end] != 0x2029) continue;   // code after it, or it runs on
         if (markerAt(L, l)) continue;
         only[l] = true;
     }
@@ -238,7 +244,7 @@ void byBrackets(const Lines& L, const std::vector<Token>& tokens, std::vector<Ra
     size_t line = 0;
     for (size_t i = 0; i < L.n; i++) {
         const char16_t c = L.t[i];
-        if (c == u'\n') { line++; continue; }
+        if (endsLine(L.t, L.n, i)) { line++; continue; }
         if (c != u'(' && c != u'[' && c != u'{' && c != u')' && c != u']' && c != u'}') continue;
         while (tk < tokens.size() && tokens[tk].start + tokens[tk].length <= i) tk++;
         // Tokens never overlap, so only this one can hold i.
@@ -549,6 +555,8 @@ size_t contentEnd(const char16_t* text, size_t lineStart, size_t lineEnd) {
     if (e > lineStart && text[e - 1] == u'\n') {
         e--;
         if (e > lineStart && text[e - 1] == u'\r') e--;
+    } else if (e > lineStart && (text[e - 1] == u'\r' || text[e - 1] == 0x2029)) {
+        e--;
     }
     return e;
 }
@@ -608,10 +616,10 @@ void Collapsed::edit(size_t pos, size_t oldLen, const char16_t* inserted, size_t
     const size_t end = pos + oldLen;
     bool insertsLineBreak = false;
     for (size_t i = 0; i < newLen && !insertsLineBreak; i++)
-        insertsLineBreak = inserted[i] == u'\n' || inserted[i] == u'\r';
+        insertsLineBreak = inserted[i] == u'\n' || inserted[i] == u'\r' || inserted[i] == 0x2029;
     // What stands at pos once the edit is made: still the end of a line?
     const char16_t at = newLen > 0 ? inserted[0] : following;
-    const bool endsLine = at == 0 || at == u'\n' || at == u'\r';
+    const bool endsLine = at == 0 || at == u'\n' || at == u'\r' || at == 0x2029;
     const long delta = (long)newLen - (long)oldLen;
     std::vector<Span> kept;
     kept.reserve(folds_.size());

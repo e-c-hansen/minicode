@@ -59,6 +59,10 @@
 - (BOOL)paste;
 // Back to the text view's own single selection (left as it is).
 - (void)clear;
+// A line for the status bar: Select All Occurrences, Add Next Occurrence
+// and Add Cursor make at most 10,000 carets, as in VS Code, and say so here
+// when they stop there.
+@property(nonatomic, copy) void (^onNote)(NSString *note);
 // Draws the carets (call after the text view has drawn).
 - (void)drawInRect:(NSRect)dirty;
 // The carets, as ranges (location = the smaller end), for tests.

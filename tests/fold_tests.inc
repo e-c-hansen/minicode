@@ -180,6 +180,27 @@ static void testFolding() {
         CHECK(foldsOf(u16("% #region\nx\n% #endregion\n"), "c.tex") == "0-2");
     }
 
+    GROUP("fold:cr-lines");
+    {
+        // An old Mac file (lines ending in '\r' alone) folds as the same
+        // file with '\n' does, and so does one with U+2029 between lines.
+        auto withBreak = [](const std::string &lf, char16_t br) {
+            std::u16string t = u16(lf.c_str());
+            for (char16_t &c : t)
+                if (c == u'\n') c = br;
+            return t;
+        };
+        const std::string py = "def f(x):\n    if x:\n        return 1\n    return 2\n\nx = 3\n";
+        const std::string c = "int main() {\n    if (a) {\n        b();\n    }\n    return 0;\n}\n";
+        CHECK(!foldsOf(u16(py.c_str()), "a.py").empty());
+        CHECK(foldsOf(withBreak(py, u'\r'), "a.py") == foldsOf(u16(py.c_str()), "a.py"));
+        CHECK(foldsOf(withBreak(c, u'\r'), "a.c") == foldsOf(u16(c.c_str()), "a.c"));
+        CHECK(foldsOf(withBreak(c, 0x2029), "a.c") == foldsOf(u16(c.c_str()), "a.c"));
+        CHECK(Fold::contentEnd(u"ab\rcd", 0, 3) == 2);
+        CHECK(Fold::contentEnd(u"ab\r\ncd", 0, 4) == 2);
+        CHECK(Fold::contentEnd(u"ab\u2029cd", 0, 3) == 2);
+    }
+
     GROUP("fold:sanitize");
     {
         using R = Fold::Range;

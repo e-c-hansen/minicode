@@ -61,6 +61,9 @@ static MCPlace *PlaceFrom(const Nav::Place &p) {
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(selectionChanged:)
                                                  name:NSTextViewDidChangeSelectionNotification
                                                object:textView];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(storageEdited:)
+                                                 name:NSTextStorageDidProcessEditingNotification
+                                               object:textView.textStorage];
     return self;
 }
 
@@ -93,8 +96,48 @@ static MCPlace *PlaceFrom(const Nav::Place &p) {
     _lastTextLength = _tv.string.length;
 }
 
+// The text on show changed: its places move with their text. A change of
+// the whole text is another file (or the same one read again) coming in,
+// which no place follows.
+- (void)storageEdited:(NSNotification *)note {
+    NSTextStorage *ts = note.object;
+    if (!(ts.editedMask & NSTextStorageEditedCharacters)) return;
+    const NSRange er = ts.editedRange;
+    if (er.location == 0 && er.length == ts.length) return;
+    BOOL hasText = NO;
+    NSString *path = [_host navigationPath:&hasText];
+    if (!hasText || !path.length) return;
+    const NSInteger delta = ts.changeInLength;
+    _history.edited(path.UTF8String ?: "", er.location,
+                    (size_t)((NSInteger)er.length - delta), er.length);
+}
+
+// Lines an edit may have moved are counted again, in one pass over the
+// text, before the history compares or shows them.
+- (void)fixLines {
+    BOOL hasText = NO;
+    NSString *path = [_host navigationPath:&hasText];
+    if (!hasText || !path.length) return;
+    const std::string p = path.UTF8String ?: "";
+    if (!_history.hasStaleLines(p)) return;
+    NSString *s = _tv.string;
+    _history.fixLines(p, [s](const std::vector<size_t> &offsets) {
+        std::vector<int> out;
+        NSUInteger at = 0;
+        NSInteger line = 0;
+        for (size_t o : offsets) {
+            const NSUInteger to = MIN((NSUInteger)o, s.length);
+            line += MCLineBreaks(s, at, to, NSIntegerMax);
+            at = to;
+            out.push_back((int)line);
+        }
+        return out;
+    });
+}
+
 - (void)record:(MCPlace *)from to:(MCPlace *)to {
     if (!from || !to) return;
+    [self fixLines];
     if ([from.path isEqualToString:to.path] && from.hasText == to.hasText &&
         NSEqualRanges(from.selection, to.selection))
         return;   // nothing moved (no definition found, a refused open)
@@ -150,6 +193,7 @@ static MCPlace *PlaceFrom(const Nav::Place &p) {
 }
 
 - (void)tabWillSwitch {
+    if (_switching == 0) [self fixLines];   // while the text is still the one they count in
     if (_switching++ == 0 && !_jumpDepth && !_navigating && !_quiet)
         _switchFrom = [self currentPlace];
 }
@@ -172,6 +216,7 @@ static MCPlace *PlaceFrom(const Nav::Place &p) {
 }
 
 - (BOOL)canGoBack {
+    [self fixLines];
     MCPlace *here = [self currentPlace];
     if (!here) return !_history.entries().empty();
     return _history.canGoBack(NavPlace(here));
@@ -181,6 +226,7 @@ static MCPlace *PlaceFrom(const Nav::Place &p) {
 
 - (void)go:(BOOL)back {
     [self dropMissing];
+    [self fixLines];
     for (int tries = 0; tries < 50; tries++) {
         MCPlace *here = [self currentPlace];
         Nav::Place target;
@@ -227,6 +273,7 @@ static MCPlace *PlaceFrom(const Nav::Place &p) {
 }
 
 - (NSArray<NSString *> *)entries {
+    [self fixLines];
     NSMutableArray *out = [NSMutableArray array];
     for (const Nav::Place &p : _history.entries())
         [out addObject:[NSString stringWithFormat:@"%s:%d", p.path.c_str(), p.line]];

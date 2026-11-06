@@ -97,6 +97,18 @@ NSColor *MCDiagnosticColor(NSInteger severity);
 - (NSString *)diagnosticMessageAtIndex:(NSUInteger)index;
 // The line fragments a character range covers, in view coordinates.
 - (void)enumerateRectsForRange:(NSRange)range block:(void (^)(NSRect rect))block;
+// Several replacements as one undo step (CodeTextView.mm): `ranges`
+// ascending and apart, in the text as it is, each replaced by the string
+// at its index. Every multi-range edit goes through here (several carets,
+// Replace All, Format Document, completion's extra edits): one
+// shouldChangeTextInRanges, each replacement its own storage edit, last
+// first and never inside one beginEditing (which reported one edit from
+// the first range to the last: folds between opened, squiggles stretched,
+// the whole span was relexed), and one didChangeText. NO when the view
+// refuses the change.
+- (BOOL)replaceRanges:(NSArray<NSValue *> *)ranges
+          withStrings:(NSArray<NSString *> *)strings
+           actionName:(NSString *)name;
 @end
 
 // What one language's server is doing, as the status bar and the Language

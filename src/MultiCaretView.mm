@@ -1,9 +1,11 @@
 // MultiCaretView.mm — see MultiCaretView.h.
 #import "MultiCaretView.h"
 #import "EditorFont.h"
+#import "Lsp.h"
 #import "TextKit2.h"
 #include "AutoIndent.h"
 #include "MultiCaret.h"
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -37,6 +39,16 @@ bool IsExtendPress(NSEvent *e) {
     NSEventModifierFlags m = e.modifierFlags & kModMask;
     return m == (NSEventModifierFlagCommand | NSEventModifierFlagShift) ||
            m == (NSEventModifierFlagOption | NSEventModifierFlagShift);
+}
+
+// Select All Occurrences, Add Next Occurrence and Add Cursor stop at this
+// many carets, VS Code's editor.multiCursorLimit: past it a keystroke at
+// every caret costs more than it is worth (each is its own edit). A column
+// drag over more lines still gets a caret on each.
+constexpr size_t kMaxCarets = 10000;
+
+NSString *LimitNote() {
+    return [NSString stringWithFormat:@"The number of cursors has been limited to %zu", kMaxCarets];
 }
 
 }  // namespace
@@ -269,38 +281,24 @@ bool IsExtendPress(NSEvent *e) {
 // ---- edits
 
 // Applies an edit as one undo step, through the text view so undo, the
-// highlighter, the language server and the dirty mark all see it.
+// highlighter, the language server and the dirty mark all see it, each
+// change its own storage edit (CodeTextView replaceRanges:).
 - (void)applyEdit:(const MultiCaret::Edit &)e action:(NSString *)action {
-    NSTextView *tv = _tv;
+    CodeTextView *tv = (CodeTextView *)_tv;
     if (e.changes.empty()) {
         [self setCarets:e.carets];
         return;
     }
-    NSMutableArray *ranges = [NSMutableArray array];
-    NSMutableArray *strings = [NSMutableArray array];
+    NSMutableArray *ranges = [NSMutableArray arrayWithCapacity:e.changes.size()];
+    NSMutableArray *strings = [NSMutableArray arrayWithCapacity:e.changes.size()];
     for (const MultiCaret::Change &c : e.changes) {
         [ranges addObject:[NSValue valueWithRange:NSMakeRange(c.start, c.length)]];
         [strings addObject:NSFrom(c.text)];
     }
     _applying = YES;
-    [tv breakUndoCoalescing];
-    if ([tv shouldChangeTextInRanges:ranges replacementStrings:strings]) {
-        NSTextStorage *ts = tv.textStorage;
-        NSDictionary *attrs = tv.typingAttributes;
-        [ts beginEditing];
-        for (NSInteger i = (NSInteger)ranges.count - 1; i >= 0; i--) {
-            NSAttributedString *a = [[NSAttributedString alloc] initWithString:strings[i]
-                                                                    attributes:attrs];
-            [ts replaceCharactersInRange:[ranges[i] rangeValue] withAttributedString:a];
-        }
-        [ts endEditing];
-        [tv didChangeText];
-        [tv breakUndoCoalescing];
-        if (action) [tv.undoManager setActionName:action];
-        _applying = NO;
-        [self setCarets:e.carets];
-    }
+    const BOOL ok = [tv replaceRanges:ranges withStrings:strings actionName:action];
     _applying = NO;
+    if (ok) [self setCarets:e.carets];
 }
 
 - (void)insertStrings:(const std::vector<std::u16string> &)texts action:(NSString *)action {
@@ -352,16 +350,19 @@ bool IsExtendPress(NSEvent *e) {
 // glyphs of its line fragment, from TextKit 1's layout manager (which lays
 // out what it needs, on screen or not). The end of a text ending in a line
 // break is the extra line fragment, given an empty glyph range at the end.
+// The glyph count, which generates every glyph, is asked for only at the
+// end of the text, which is then laid out anyway.
 static CGFloat MCCaretX(NSLayoutManager *lm, NSTextContainer *tc, NSPoint origin,
                         NSUInteger i, NSUInteger n, NSRange *lineGlyphs, NSRect *lineRect) {
-    const NSUInteger glyphs = lm.numberOfGlyphs;
-    if (i >= n && (glyphs == 0 || !NSIsEmptyRect(lm.extraLineFragmentRect))) {
-        const NSRect r = lm.extraLineFragmentRect;
-        *lineGlyphs = NSMakeRange(glyphs, 0);
-        *lineRect = r;
-        return origin.x + NSMinX(r) + tc.lineFragmentPadding;
-    }
-    if (i >= n) {   // after the last character, on its line
+    if (i >= n) {
+        const NSUInteger glyphs = lm.numberOfGlyphs;
+        if (glyphs == 0 || !NSIsEmptyRect(lm.extraLineFragmentRect)) {
+            const NSRect r = lm.extraLineFragmentRect;
+            *lineGlyphs = NSMakeRange(glyphs, 0);
+            *lineRect = r;
+            return origin.x + NSMinX(r) + tc.lineFragmentPadding;
+        }
+        // After the last character, on its line.
         const NSUInteger last = glyphs - 1;
         *lineRect = [lm lineFragmentRectForGlyphAtIndex:last effectiveRange:lineGlyphs];
         const NSRect box = [lm boundingRectForGlyphRange:NSMakeRange(last, 1) inTextContainer:tc];
@@ -370,6 +371,21 @@ static CGFloat MCCaretX(NSLayoutManager *lm, NSTextContainer *tc, NSPoint origin
     const NSUInteger g = [lm glyphIndexForCharacterAtIndex:i];
     *lineRect = [lm lineFragmentRectForGlyphAtIndex:g effectiveRange:lineGlyphs];
     return origin.x + NSMinX(*lineRect) + [lm locationForGlyphAtIndex:g].x;
+}
+
+// Lays out the text up to the line after the one holding `furthest`, which
+// is all Up, Down and Add Cursor need: a whole layout of 100,000 lines took
+// about 2 s, and every edit made the next press pay again from there.
+static void MCLayOutPast(NSLayoutManager *lm, NSTextContainer *tc, NSString *text,
+                         NSUInteger furthest) {
+    const NSUInteger n = text.length;
+    NSUInteger end = n;
+    if (furthest < n) {
+        end = NSMaxRange([text lineRangeForRange:NSMakeRange(furthest, 0)]);
+        if (end < n) end = NSMaxRange([text lineRangeForRange:NSMakeRange(end, 0)]);
+    }
+    if (end >= n) [lm ensureLayoutForTextContainer:tc];
+    else [lm ensureLayoutForCharacterRange:NSMakeRange(0, end)];
 }
 
 // The caret index on the line fragment holding glyphs `line` (rect `rect`)
@@ -415,6 +431,41 @@ static NSUInteger MCIndexOnLine(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
     return MAX(chars.location, MIN(ch, end));
 }
 
+// Where a caret on the line fragment `line` goes one fragment up (dir < 0)
+// or down, at x `goal` (view coordinates), or NSNotFound when there is no
+// line there: up from the first line, down from the last (or from the last
+// text line when no line break ends the text; after one, the empty line
+// below it is the end). The layout must reach the line below.
+static NSUInteger MCIndexAcross(NSLayoutManager *lm, NSTextContainer *tc, NSPoint origin,
+                                NSString *text, NSRange line, int dir, CGFloat goal) {
+    const NSUInteger n = text.length;
+    if (dir > 0) {
+        if (line.length == 0) return NSNotFound;   // the extra line is the last
+        const NSUInteger chars = NSMaxRange([lm characterRangeForGlyphRange:line
+                                                           actualGlyphRange:NULL]);
+        if (chars >= n) {
+            const unichar last = n ? [text characterAtIndex:n - 1] : 0;
+            return last == '\n' || last == '\r' || last == 0x2029 ? n : NSNotFound;
+        }
+        NSRange below;
+        const NSRect r = [lm lineFragmentRectForGlyphAtIndex:NSMaxRange(line) effectiveRange:&below];
+        return MCIndexOnLine(lm, tc, origin, text, below, r, goal);
+    }
+    NSUInteger glyph;
+    if (line.length == 0) {   // from the extra line to the last line
+        const NSUInteger glyphs = lm.numberOfGlyphs;
+        if (glyphs == 0) return NSNotFound;
+        glyph = glyphs - 1;
+    } else if (line.location == 0) {
+        return NSNotFound;
+    } else {
+        glyph = line.location - 1;
+    }
+    NSRange above;
+    const NSRect r = [lm lineFragmentRectForGlyphAtIndex:glyph effectiveRange:&above];
+    return MCIndexOnLine(lm, tc, origin, text, above, r, goal);
+}
+
 // The carets moved one line up or down, keeping their x. Through the
 // layout manager, line by line: firstRectForCharacterRange:, used before,
 // cost about 65 µs a caret (3.3 s for 50,000) and gave nothing for lines
@@ -428,8 +479,9 @@ static NSUInteger MCIndexOnLine(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
     NSString *text = tv.string;
     const NSUInteger n = text.length;
     const NSPoint origin = tv.textContainerOrigin;
-    [lm ensureLayoutForTextContainer:tc];
-    const NSUInteger glyphs = lm.numberOfGlyphs;
+    NSUInteger furthest = 0;
+    for (const Caret &c : _carets) furthest = MAX(furthest, MAX(c.head, c.anchor));
+    MCLayOutPast(lm, tc, text, furthest);
     const BOOL keepGoals = _goalX.size() == _carets.size();
     std::vector<Caret> out;
     std::vector<CGFloat> goals;
@@ -441,31 +493,8 @@ static NSUInteger MCIndexOnLine(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
         NSRect rect;
         const CGFloat x = MCCaretX(lm, tc, origin, c.head, n, &line, &rect);
         const CGFloat goal = keepGoals ? _goalX[i] : x;
-        NSUInteger p;
-        if (dir > 0) {
-            const NSUInteger next = NSMaxRange(line);
-            // From the last line: the end (the empty line after a final
-            // line break, or the end of the last line).
-            if (line.length == 0 || next >= glyphs) p = n;
-            else {
-                NSRange below;
-                const NSRect r = [lm lineFragmentRectForGlyphAtIndex:next effectiveRange:&below];
-                p = MCIndexOnLine(lm, tc, origin, text, below, r, goal);
-            }
-        } else {
-            if (line.length == 0 && glyphs > 0) {   // from the extra line to the last line
-                NSRange above;
-                const NSRect r = [lm lineFragmentRectForGlyphAtIndex:glyphs - 1 effectiveRange:&above];
-                p = MCIndexOnLine(lm, tc, origin, text, above, r, goal);
-            } else if (line.location == 0) {
-                p = 0;
-            } else {
-                NSRange above;
-                const NSRect r = [lm lineFragmentRectForGlyphAtIndex:line.location - 1
-                                                      effectiveRange:&above];
-                p = MCIndexOnLine(lm, tc, origin, text, above, r, goal);
-            }
-        }
+        NSUInteger p = MCIndexAcross(lm, tc, origin, text, line, dir, goal);
+        if (p == NSNotFound) p = dir > 0 ? n : 0;   // the end, or the start, of the text
         out.push_back(extend ? Caret{c.anchor, p} : Caret{p, p});
         goals.push_back(goal);
     }
@@ -660,6 +689,10 @@ static NSUInteger MCIndexOnLine(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
     // A selection made by hand starts a plain search; one that Cmd+D began
     // from an empty caret goes on matching whole words (VS Code's rule).
     const BOOL holds = [self findStateHolds];
+    if (current.size() >= kMaxCarets) {
+        if (_onNote) _onNote(LimitNote());
+        return NO;
+    }
     const MultiCaret::Found f = MultiCaret::addNextOccurrence(
         U16(tv.string), current, holds ? _findLast : current.back(), holds && _findWholeWord);
     if (!f.changed) return NO;
@@ -675,9 +708,20 @@ static NSUInteger MCIndexOnLine(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
     const std::vector<Caret> current = [self currentCarets];
     if (current.empty()) return NO;
     const BOOL holds = [self findStateHolds];
-    const MultiCaret::Found f = MultiCaret::selectAllOccurrences(
+    MultiCaret::Found f = MultiCaret::selectAllOccurrences(
         U16(tv.string), holds ? _findLast : current.back(), holds && _findWholeWord);
     if (!f.changed) return NO;
+    if (f.carets.size() > kMaxCarets) {
+        // The ones around the selection it started from.
+        const auto at = std::lower_bound(f.carets.begin(), f.carets.end(), f.added,
+                                         [](const Caret &a, const Caret &b) { return a.lo() < b.lo(); });
+        const size_t i = (size_t)(at - f.carets.begin());
+        const size_t from = std::min(i > kMaxCarets / 2 ? i - kMaxCarets / 2 : 0,
+                                     f.carets.size() - kMaxCarets);
+        f.carets = std::vector<Caret>(f.carets.begin() + (long)from,
+                                      f.carets.begin() + (long)(from + kMaxCarets));
+        if (_onNote) _onNote(LimitNote());
+    }
     _goalX.clear();
     [self setCarets:f.carets];
     [self rememberFind:f];
@@ -702,37 +746,70 @@ static NSUInteger MCIndexOnLine(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
     NSTextView *tv = _tv;
     const std::vector<Caret> current = [self currentCarets];
     if (current.empty()) return NO;
+    if (current.size() * 2 > kMaxCarets) {
+        if (_onNote) _onNote(LimitNote());
+        return NO;
+    }
     // Each caret keeps the x it had when Up or Down began, so a column
     // grown past a short line comes back to its place below it.
-    std::vector<CGFloat> goals;
-    if (self.active && _goalX.size() == _carets.size()) goals = _goalX;
-    else
-        for (const Caret &c : current) goals.push_back(NSMinX([self caretRectAt:c.head]));
+    const BOOL keepGoals = self.active && _goalX.size() == _carets.size();
+    // Through the layout manager, as Up and Down are: a caret costs a few
+    // layout queries (firstRectForCharacterRange: cost 65 µs), laid out
+    // only as far as the furthest caret.
+    NSLayoutManager *lm = MCUsesTextKit2(tv) ? nil : tv.layoutManager;
+    NSTextContainer *tc = tv.textContainer;
+    NSString *text = tv.string;
+    const NSUInteger n = text.length;
+    const NSPoint origin = tv.textContainerOrigin;
+    if (lm && tc) {
+        NSUInteger furthest = 0;
+        for (const Caret &c : current) furthest = MAX(furthest, MAX(c.head, c.anchor));
+        MCLayOutPast(lm, tc, text, furthest);
+    }
+    // Where i goes, and the x it is at.
+    auto across = [&](NSUInteger i, CGFloat goal, BOOL useGoal, CGFloat *x) -> NSUInteger {
+        if (lm && tc) {
+            NSRange line;
+            NSRect rect;
+            *x = MCCaretX(lm, tc, origin, i, n, &line, &rect);
+            return MCIndexAcross(lm, tc, origin, text, line, dir, useGoal ? goal : *x);
+        }
+        *x = NSMinX([self caretRectAt:i]);
+        return [self indexFrom:i x:useGoal ? goal : *x direction:dir];
+    };
     std::vector<Caret> all = current;
-    std::vector<CGFloat> allGoals = goals;
+    std::vector<std::pair<NSUInteger, CGFloat>> goalAt;   // head, goal
+    goalAt.reserve(current.size() * 2);
     NSUInteger reveal = NSNotFound;
     for (size_t i = 0; i < current.size(); i++) {
         const Caret &c = current[i];
-        const NSUInteger head = [self indexFrom:c.head x:goals[i] direction:dir];
+        CGFloat x = 0;
+        const NSUInteger head = across(c.head, keepGoals ? _goalX[i] : 0, keepGoals, &x);
+        const CGFloat goal = keepGoals ? _goalX[i] : x;
+        goalAt.push_back({c.head, goal});
         if (head == NSNotFound) continue;
         NSUInteger anchor = head;
         if (!c.empty()) {
-            anchor = [self indexFrom:c.anchor x:NSMinX([self caretRectAt:c.anchor]) direction:dir];
+            CGFloat ax = 0;
+            anchor = across(c.anchor, 0, NO, &ax);
             if (anchor == NSNotFound) anchor = head;
         }
         all.push_back({anchor, head});
-        allGoals.push_back(goals[i]);
+        goalAt.push_back({head, goal});
         if (reveal == NSNotFound || (dir > 0 ? head > reveal : head < reveal)) reveal = head;
     }
     if (reveal == NSNotFound) return NO;
     [self setCarets:all];
     // The goals follow their carets into normalize's order.
+    std::stable_sort(goalAt.begin(), goalAt.end(),
+                     [](const auto &a, const auto &b) { return a.first < b.first; });
     std::vector<CGFloat> kept;
+    kept.reserve(_carets.size());
     for (const Caret &c : _carets) {
-        CGFloat g = NSMinX([self caretRectAt:c.head]);
-        for (size_t k = 0; k < all.size(); k++)
-            if (all[k].head == c.head) { g = allGoals[k]; break; }
-        kept.push_back(g);
+        auto it = std::lower_bound(goalAt.begin(), goalAt.end(), c.head,
+                                   [](const auto &a, NSUInteger h) { return a.first < h; });
+        kept.push_back(it != goalAt.end() && it->first == c.head ? it->second
+                                                                 : NSMinX([self caretRectAt:c.head]));
     }
     _goalX = kept;
     [tv scrollRangeToVisible:NSMakeRange(reveal, 0)];
