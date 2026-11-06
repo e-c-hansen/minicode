@@ -37,12 +37,21 @@ struct TermColor {
 
 struct TermStyle {
     TermColor fg, bg;
-    bool bold = false, dim = false, italic = false, underline = false,
-         inverse = false, strike = false;
+    // One byte for all six, so the link below keeps the style at 16 bytes
+    // (the scrollback stores one per style run). C++17 has no default
+    // member initializers for bit-fields, hence the constructor.
+    bool bold : 1, dim : 1, italic : 1, underline : 1, inverse : 1, strike : 1;
+    // An OSC 8 hyperlink the text belongs to: an id in the TerminalScreen's
+    // table (TerminalScreen::linkURI), 0 for none. Only the screen sets it,
+    // on the cells it prints, keeping the open link apart from the SGR
+    // state, so a reset (SGR 0) inside a link stays in the link.
+    uint32_t link = 0;
+    TermStyle()
+        : bold(false), dim(false), italic(false), underline(false), inverse(false), strike(false) {}
     bool operator==(const TermStyle& o) const {
         return fg == o.fg && bg == o.bg && bold == o.bold && dim == o.dim &&
                italic == o.italic && underline == o.underline &&
-               inverse == o.inverse && strike == o.strike;
+               inverse == o.inverse && strike == o.strike && link == o.link;
     }
     bool operator!=(const TermStyle& o) const { return !(*this == o); }
 };

@@ -247,6 +247,12 @@
 // is. Agents load into its agent page (Browser.h), never the user's.
 - (BrowserView *)agentBrowserPane;
 - (BrowserView *)browserPane;
+// A web address from a terminal (a Cmd+click on a link, or a program
+// through BROWSER and `minicode open-url`): the user's page loads it, the
+// pane shows beside the editor if it was hidden, and the keyboard stays
+// where it was. 0.0.0.0 and [::] are read as localhost
+// (TermLinks::browserAddress).
+- (void)openWebAddressFromTerminal:(NSString *)url;
 // For `minicode state`: each tab (path, title, kind, dirty, active, preview),
 // the editor's selection (path, text up to 64 KB, start and end line and
 // column; nil when no text file shows), the terminals, the browser's page.

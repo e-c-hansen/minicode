@@ -9761,6 +9761,7 @@ static void testMultiCaretOccurrences() {
 #include "procs_tests.inc"
 #include "attention_tests.inc"
 #include "page_check_tests.inc"
+#include "terminal_links_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9782,6 +9783,7 @@ int main() {
     testTerminalMouse();
     testTerminalTrust();
     testTerminalFuzz();
+    testTerminalHyperlinks();
     testSettings();
     testSettingsColorEditing();
     testLineComments();
