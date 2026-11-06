@@ -314,6 +314,7 @@
     [self saveBeforeLeavingFormatSave];   // Cmd+S is never lost to a tab switch
     NSTextView *tv = self.textView;
     [self.markdownEditPanel close];
+    [_viewers commitEditing];   // a CSV cell typed into lands in this tab's file
     // A color pick saves the settings file a moment later (colorPicked:);
     // that save belongs to this tab, so it happens now, not in the next one.
     [NSObject cancelPreviousPerformRequestsWithTarget:self

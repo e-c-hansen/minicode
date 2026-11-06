@@ -587,6 +587,7 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (MCFileViewers *)viewers;
 - (void)viewerEditedText:(NSString *)text actionName:(NSString *)name;
 - (void)setViewerText:(NSString *)text actionName:(NSString *)name reshow:(BOOL)reshow;
+- (BOOL)registerViewerUndoFrom:(NSString *)old to:(NSString *)now actionName:(NSString *)name;
 - (BOOL)showViewer:(MCViewerKind)kind;
 - (void)openFileAtPath:(NSString *)path;
 - (void)loadActiveTab;
@@ -725,6 +726,7 @@ static const NSInteger kWorktreeMenuTag = 7701;
 
 // EditorController+Markdown.mm: the Markdown preview: switching to it, editing from it, links, math and web pictures arriving.
 @interface EditorController (Markdown)
+- (void)endTextSessionOfTab:(MCTab *)t;
 - (BOOL)showsRenderedMarkdown;
 - (NSString *)markdownToRender;
 - (NSRect)textRectForCharacter:(NSUInteger)i;

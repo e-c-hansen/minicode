@@ -39,6 +39,10 @@
 @property(nonatomic, assign) BOOL isImage, isPDF, isMedia;
 // A viewer of FileViewers.h (Quick Look and the like), or MCViewerNone.
 @property(nonatomic, assign) MCViewerKind viewerKind;
+// A viewer over the text (a CSV table) whose text is on show: the text
+// when it was put on show. Going back to the viewer turns what was typed
+// since into one undo step from it (togglePreview:).
+@property(nonatomic, copy)   NSString *textSessionStart;
 @property(nonatomic, assign) NSSize imagePixels, mediaPixels;
 @property(nonatomic, assign) double mediaSeconds;
 @property(nonatomic, assign) BOOL showingMessage;

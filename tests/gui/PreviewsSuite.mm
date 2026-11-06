@@ -590,6 +590,97 @@ static void CsvSteps(void) {
         [c saveCurrentFile:nil];
         GCHECK([Text(Fixture(@"people.csv")) hasPrefix:@"key,name,notes\n"]);
     });
+    MCGuiStep(@"a cell being typed into lands in its own file when the tab changes", ^{
+        EditorController *c = MCGuiController();
+        MCCsvTableView *t = Csv(c);
+        GCHECK(!Dirty(c));
+        GCHECK_EQ_STR([t cellAtRow:2 column:1], @"Doe");
+        [c.window makeFirstResponder:t.table];
+        [t.table editColumn:2 row:2 withEvent:nil select:YES];   // # A B: B is "name"
+        GCHECK(t.table.currentEditor != nil);
+        t.table.currentEditor.string = @"TYPED";
+        NSData *crlfBefore = Bytes(Fixture(@"crlf.csv"));
+        OwnUndoGroup([c valueForKeyPath:@"textView.undoManager"], ^{
+            GCHECK([c showFile:Fixture(@"crlf.csv")]);   // a tab switch, as Ctrl+Tab makes
+        });
+        // The other CSV is as it was: not edited, not dirty, not written.
+        GCHECK_EQ_STR(ActiveName(c), @"crlf.csv");
+        GCHECK_EQ_STR([Csv(c) cellAtRow:1 column:0], @"x; y");
+        GCHECK_EQ_STR([Csv(c) cellAtRow:1 column:1], @"3");
+        GCHECK(!Dirty(c));
+        GCHECK([Bytes(Fixture(@"crlf.csv")) isEqualToData:crlfBefore]);
+        // The value went into people.csv, where it was typed.
+        GCHECK([c showFile:Fixture(@"people.csv")]);
+        GCHECK_EQ_STR([Csv(c) cellAtRow:2 column:1], @"TYPED");
+        GCHECK(Dirty(c));
+        [c saveCurrentFile:nil];
+    });
+    MCGuiStep(@"a cell being typed into when the file changes on disk is dropped, not misplaced", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"crlf.csv")]);
+        MCCsvTableView *t = Csv(c);
+        [c.window makeFirstResponder:t.table];
+        [t.table editColumn:2 row:1 withEvent:nil select:YES];
+        GCHECK(t.table.currentEditor != nil);
+        t.table.currentEditor.string = @"TYPED";
+        // A script sorts the rows: another record now sits on row 1.
+        NSString *path = Fixture(@"crlf.csv");
+        MCGuiWriteFile(path, @"a;b\r\nnew;row\r\n\"x; y\";3\r\n");
+        [[NSFileManager defaultManager] setAttributes:@{NSFileModificationDate:
+                                                            [NSDate dateWithTimeIntervalSinceNow:5]}
+                                         ofItemAtPath:path error:nil];
+        [c performSelector:@selector(checkExternalChange)];
+        GCHECK(t.table.currentEditor == nil);
+        GCHECK_EQ_STR([t cellAtRow:1 column:1], @"row");
+        GCHECK_EQ_STR([t cellAtRow:2 column:1], @"3");
+        GCHECK(!Dirty(c));
+        GCHECK_EQ_STR(Text(path), @"a;b\r\nnew;row\r\n\"x; y\";3\r\n");
+    });
+    MCGuiStep(@"typing in a CSV's text, then Cmd+Z back in the table undoes the typing", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"people.csv")]);
+        NSUndoManager *u = [c valueForKeyPath:@"textView.undoManager"];
+        OwnUndoGroup(u, ^{ [c togglePreview:nil]; });
+        NSTextView *tv = EditorText(c);
+        GCHECK(tv.editable);
+        OwnUndoGroup(u, ^{ [tv insertText:@"Z" replacementRange:NSMakeRange(0, 0)]; });
+        OwnUndoGroup(u, ^{ [tv insertText:@"Y" replacementRange:NSMakeRange(1, 0)]; });
+        OwnUndoGroup(u, ^{ [c togglePreview:nil]; });
+        MCCsvTableView *t = Csv(c);
+        GCHECK(!t.hidden);
+        GCHECK_EQ_STR([t cellAtRow:0 column:0], @"ZYkey");
+        GCHECK(Dirty(c));
+        // One step for what was typed, taken in the table: the text comes
+        // back, not an exception in the hidden, empty text view.
+        GCHECK(u.canUndo);
+        GCHECK_EQ_STR(u.undoActionName, @"Typing");
+        [(id)t.table undo:nil];
+        GCHECK_EQ_STR([t cellAtRow:0 column:0], @"key");
+        GCHECK([[c valueForKey:@"sourceText"] hasPrefix:@"key,name,notes\n"]);
+        GCHECK(!Dirty(c));
+        [(id)t.table redo:nil];
+        GCHECK_EQ_STR([t cellAtRow:0 column:0], @"ZYkey");
+        [(id)t.table undo:nil];
+        GCHECK(!Dirty(c));
+    });
+    MCGuiStep(@"undo keeps only what changed, and never splits a character", ^{
+        EditorController *c = MCGuiController();
+        MCCsvTableView *t = Csv(c);
+        NSUndoManager *u = [c valueForKeyPath:@"textView.undoManager"];
+        OwnUndoGroup(u, ^{ GCHECK([t setCell:@"\U0001F600" row:2 column:2]); });
+        OwnUndoGroup(u, ^{ GCHECK([t setCell:@"\U0001F601" row:2 column:2]); });
+        [(id)t.table undo:nil];
+        GCHECK_EQ_STR([t cellAtRow:2 column:2], @"\U0001F600");
+        [(id)t.table undo:nil];
+        GCHECK_EQ_STR([t cellAtRow:2 column:2], @"edited");
+        GCHECK(!Dirty(c));
+        [(id)t.table redo:nil];
+        [(id)t.table redo:nil];
+        GCHECK_EQ_STR([t cellAtRow:2 column:2], @"\U0001F601");
+        [(id)t.table undo:nil];
+        [(id)t.table undo:nil];
+        GCHECK(!Dirty(c));
+    });
     MCGuiStep(@"a CSV over 50 MB opens read-only with its first 100,000 rows", ^{
         EditorController *c = MCGuiController();
         std::string big = "n,name,value\n";
