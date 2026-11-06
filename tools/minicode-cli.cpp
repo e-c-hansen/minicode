@@ -6,13 +6,14 @@
 // temporary folder), prints the answer, and exits 0 (done), 1 (the command
 // failed), 2 (a usage error) or 3 (no minicode to talk to). With no minicode
 // running it starts one the way the launcher does, then waits up to 10
-// seconds for its socket; reads (state, selection, term-output) exit 3 at
+// seconds for its socket; reads (state, selection, term-output, procs) exit 3 at
 // once instead.
 //
 // For tests: MINICODE_LAUNCHER_DRYRUN prints the launch command instead of
 // running it, MINICODE_CLI_WAIT sets the wait in seconds, and
 // MINICODE_CONTROL_DIR names the one folder to look for sockets in.
 #include "ControlProtocol.h"
+#include "ProcessTable.h"
 #include <cerrno>
 #include <climits>
 #include <cstdio>
@@ -375,6 +376,11 @@ int main(int argc, char **argv) {
     case Output::Json:
         std::printf("%s\n", c.pretty ? prettyJson(result).c_str() : result.dump().c_str());
         break;
+    case Output::Procs: {
+        const std::string text = Procs::formatTable(result);
+        std::fwrite(text.data(), 1, text.size(), stdout);
+        break;
+    }
     case Output::Text: {
         const std::string &text = result[c.outputField].asString();
         std::fwrite(text.data(), 1, text.size(), stdout);

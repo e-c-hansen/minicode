@@ -65,6 +65,11 @@ std::vector<CommandSpec> makeCommands() {
     c.push_back({"term-output", "The last lines a terminal shows, scrollback included",
                  {arg("terminal", ArgType::Int, true), arg("lines", ArgType::Int)}});
     {
+        CommandSpec s{"procs", "What the window's terminals started and what runs in its folder", {}};
+        addTarget(s.args);
+        c.push_back(s);
+    }
+    {
         CommandSpec s{"tour", "A sequence of notes, stepped through with Option+] and Option+[",
                       {arg("stops", ArgType::Objects, true,
                            {arg("path", ArgType::String, true), arg("line", ArgType::Int, true),
@@ -329,12 +334,14 @@ bool isSafeRef(const std::string& ref) {
 }
 
 bool launchesApp(const std::string& cmd) {
-    return cmd != "state" && cmd != "selection" && cmd != "term-output" && cmd != "ping";
+    return cmd != "state" && cmd != "selection" && cmd != "term-output" && cmd != "ping" &&
+           cmd != "procs";
 }
 
 bool isSubcommand(const std::string& word) {
     static const char* words[] = {"open", "window", "browse", "term", "diff", "split",
-                                  "state", "selection", "term-output", "tour", "help"};
+                                  "state", "selection", "term-output", "tour", "procs",
+                                  "help"};
     for (const char* w : words)
         if (word == w) return true;
     return false;
@@ -392,6 +399,14 @@ const Help kHelp[] = {
      "minicode term-output <id> [--lines N]\n"
      "    Prints the last N lines (200 by default) of a terminal's screen and\n"
      "    scrollback, as plain text.\n"},
+    {"procs",
+     "minicode procs [--folder DIR] [--json]\n"
+     "    Lists what the window's terminals started (their children, and what\n"
+     "    those left running after their terminal closed: \"orphans\") and what\n"
+     "    other programs run in its folder (\"not started here\"), with each\n"
+     "    process's id, memory, CPU, listening TCP ports and command line.\n"
+     "    --json prints it as JSON. Nothing is stopped: stop only a process\n"
+     "    you started, with kill <pid>.\n"},
     {"tour",
      "minicode tour <file.json>\n"
      "    A tour of notes: the file holds a list of {\"path\", \"line\", \"to\",\n"
@@ -412,7 +427,7 @@ const char* kCommon =
     "or diff opens in a tab beside theirs without being shown. `window` and\n"
     "--folder can bring another window to the front. When minicode is not\n"
     "running, it is started and the command waits up to 10 seconds for it;\n"
-    "state, selection and term-output exit with 3 instead.\n"
+    "state, selection, term-output and procs exit with 3 instead.\n"
     "Exit codes: 0 done, 1 the command failed (why is on stderr), 2 a usage\n"
     "error, 3 no minicode to talk to.\n";
 
@@ -559,6 +574,8 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
             c.args.set("lines", n);
         } else if (sub == "state" && w == "--pretty") {
             c.pretty = true;
+        } else if (sub == "procs" && w == "--json") {
+            c.args.set("json", true);   // taken out again below: the app never sees it
         } else if (startsWith(w, "-") && w.size() > 1) {
             c.error = "unknown option " + w + " for " + sub;
         } else {
@@ -631,6 +648,13 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
     if (sub == "window") { c.output = Output::Id; c.outputField = "window"; }
     if (sub == "term") { c.output = Output::Id; c.outputField = "terminal"; }
     if (sub == "state") c.output = Output::Json;
+    if (sub == "procs") {
+        c.output = c.args["json"].asBool() ? Output::Json : Output::Procs;
+        Json args = Json::object();
+        for (const auto& kv : c.args.items())
+            if (kv.first != "json") args.set(kv.first, kv.second);
+        c.args = args;
+    }
     if (sub == "selection") { c.output = Output::Text; c.outputField = "text"; }
     return c;
 }
