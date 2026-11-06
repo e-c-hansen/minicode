@@ -1406,7 +1406,10 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 - **The Worktrees node** (first, shown with or without hidden files, not again
   inside .claude): each worktree named for its agent with its ahead count and
   changes (git off the main thread); right click Compare with Main (each
-  changed file side by side with main's) and Open in New Window.
+  changed file side by side with main at the merge base, so main's later work
+  never shows as the agent deleting it; `AgentView::compareBase`) and Open in
+  New Window. A window on `/` or the home folder indexes no sessions
+  (`AgentView::indexesFolder`): every transcript on the Mac is inside them.
 - **Columns** (`MCTreeColumns` bitmask, `toggleTreeColumn:`): size, saved and
   created (`st_birthtimespec`) on their own keys, the rightmost dropped first
   on a narrow row; switching one on widens a narrow sidebar
@@ -1477,15 +1480,17 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   claude ...`). "Source" means a Makefile and `src/EditorController.mm`. A 2 s
   timer watches `<source>/MiniCode.app/Contents/_CodeSignature/CodeResources`
   (codesign is `make app`'s last step) and offers Restart once it is newer and
-  stable.
+  stable. Prompt files whose writer has quit, or a day old, are removed as
+  the next is written (`MCRemoveStalePromptFiles`, the inline agent's too).
 - **Restart** (`AppDelegate restartIntoApp:resumingIn:source:command:`,
   `MCRestarting`): the quit questions titled "Restart minicode?", leaving
   Claude's terminal out; unsaved tabs come back from backups;
   `applicationWillTerminate` writes `MCRestart` and `MCLaunchAfterExit` spawns
   a detached `/bin/sh` that waits for our pid and runs `open -n
   <source>/MiniCode.app`; the new process takes a record under two minutes old
-  (`reopenAfterRestart:`) and runs `<command> --continue` in the resuming
-  window. After a restart the user runs the repo's build until the next `brew
+  (`reopenAfterRestart:`) and runs `develop.command --continue` in the
+  resuming window (never the record's command, and only in a folder that
+  looks like the source). After a restart the user runs the repo's build until the next `brew
   upgrade`. Restart minicode (minicode menu, the status bar's ↻,
   `restartMinicode:`; no key, Cmd+R is Refresh) uses
   `NSBundle.mainBundle.bundlePath` (beeps when not a .app).
@@ -1502,29 +1507,59 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 ## The control channel, notes and tours (Mac)
 
 - Each minicode listens on `$TMPDIR/MiniCode/<pid>.sock` (0600 in a 0700
-  folder; another uid refused by `getpeereid`; removed on exit; stale sockets
-  of dead pids removed at startup). Use `getenv("TMPDIR")`:
-  `NSTemporaryDirectory()` ignores it. One JSON object per line, checked
-  against `ControlProtocol`'s table of commands and arguments (unknown or
-  wrongly typed is an error answer, never a crash), handled on the main thread
-  within 100 ms (`ControlServer.mm`, `ControlCommands.mm`).
+  folder; another uid refused by `getpeereid`; removed on exit; at startup
+  sockets of dead pids, and of live pids where nothing listens, are removed).
+  Use `getenv("TMPDIR")`: `NSTemporaryDirectory()` ignores it; without it,
+  `confstr(_CS_DARWIN_USER_TEMP_DIR)`. `MINICODE_CONTROL_DIR` overrides both
+  sides (tests). One JSON object per line, checked against
+  `ControlProtocol`'s table of commands and arguments (unknown or wrongly
+  typed is an error answer, never a crash), handled on the main thread within
+  100 ms (`ControlServer.mm`, `ControlCommands.mm`). A connection has one
+  request at a time with the main thread (the next line is read once the
+  answer is out), writes are non-blocking with a write source, and a peer
+  that takes nothing for 10 s is dropped, so one client can neither queue
+  unbounded main-thread work nor hold up the others.
 - `tools/minicode-cli.cpp` builds `Contents/MacOS/minicode-cli`, which the
-  launcher execs for subcommands: newest live socket (or `--pid`), starting
-  minicode and waiting 10 s when none runs; a running minicode with no socket
-  (older than the channel) gets "quit and open it again", nothing launched.
-  Exit codes 0, 1 command error, 2 usage, 3 no app.
+  launcher execs for subcommands: newest live socket (or `--pid`) in the
+  shell's `$TMPDIR/MiniCode` and the user's own temporary folder's (a nix
+  shell's TMPDIR differs from the app's), only in folders that are the
+  user's, real and 0700, moving on to the next when one refuses the
+  connection; starting minicode and waiting 10 s when none runs, except for
+  reads (`state`, `selection`, `term-output`), which exit 3 at once; a
+  running minicode with no socket (older than the channel) gets "quit and
+  open it again", nothing launched. Exit codes 0, 1 command error, 2 usage, 3
+  no app.
 - Commands: `open path[:line[:col]]` (`--to`, `--note`, `--from`, `--keep`),
-  `window`, `browse` (in the pane; the browser has no tabs), `term` (`--cwd`,
-  `--title`, `--run` typed and entered visibly), `diff`, `split`, `state`
-  (`--pretty`), `selection`, `term-output`, `tour`. None moves the keyboard or
-  closes, replaces or reorders the user's tabs and terminals.
+  `window`, `browse` (in the pane; the browser has no tabs, so a page the
+  user loaded is never replaced: `BrowserView showsUserPage`, the history
+  items an agent's navigations committed), `term` (`--cwd`, `--title`,
+  `--run` typed and entered visibly), `diff` (`--base` never starting with
+  "-"), `split`, `state` (`--pretty`), `selection`, `term-output`, `tour`.
+  None closes, replaces or reorders the user's tabs and terminals. `open`,
+  `diff` and `tour` read and open only plain files (a FIFO blocks `open(2)`
+  for good), `diff` up to 16 MB a side, reading and aligning off the main
+  thread (`MCComparison prepare`, once).
+- **The keyboard**: the editor is one text view for every tab, so putting the
+  first responder back (`keepKeyboardDuring:`) is not enough: it then shows
+  the agent's file, and the user's next keystroke lands there. While the
+  window is key and the keyboard is in the editor's slot
+  (`userIsInDocument`), `openTabForAgent:preview:quiet:` and
+  `showComparison:preview:quiet:` add the tab without showing it, with a
+  status note and `"background": true` (the CLI says so on stderr); a note
+  waits with its tab (`MCNoteState.pending`) and is placed when it is shown.
+  The user's own steps (Option+], a click) always show.
 - **Notes** (`AgentNotes.mm`): a layout-manager highlight and a box over the
   text view, never in the file or its undo; upper third; closed by Escape, ×,
   or an edit touching its lines (undo does not bring it back); plain text up to
-  500 characters; not persisted. They go in one agent preview tab per window
-  (`agentPreview`, italic title), replaced by each such open and kept by an
-  edit or a double-click on its title. Tours step with Option+] and [ (keymap
-  commands enabled only during a tour) and show "2 of 3".
+  500 characters (cleaned by the handlers too, bidi controls dropped); not
+  persisted. They go in one agent preview tab per window (`agentPreview`,
+  italic title), replaced by each such open and kept by an edit or a
+  double-click on its title; comparisons have a preview tab of their own, so
+  the skill's open-then-diff keeps the note. A note moves the caret only in
+  the preview tab, and a clean tab the agent just rewrote takes the disk's
+  text before its note is placed (`notesCatchUpWithDisk`), or the reload a
+  moment later closed it. Tours step with Option+] and [ (keymap commands
+  enabled only during a tour) and show "2 of 3".
 - `skills/minicode/SKILL.md` (under 150 lines; `make install`): show work as
   notes, a diff and tests in a terminal; open code with a note when asked where
   something is; read `state` and `selection` for "this"; never rearrange the
