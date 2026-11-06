@@ -4,12 +4,14 @@
 #   scripts/release.sh --linux 1.2.1   a Linux-only release: the PPA alone
 #
 # The version given here is the one source of truth. The script:
-#   1. checks it is releasing a clean, tested main,
-#   2. stamps the version and checksum into Info.plist and packaging/minicode.rb,
-#      commits that, and pushes main,
+#   1. checks it is releasing a clean, tested main: the core tests here, and
+#      the GUI checks too unless CI has passed on this very commit,
+#   2. builds the signed Android APK for the version, before anything is
+#      stamped or committed, so a failed APK build leaves nothing behind,
 #   3. builds the zip and checks the built app reports that same version and
 #      runs on the macOS Info.plist promises (scripts/check-minos.sh),
-#   4. builds the signed Android APK for the same version,
+#   4. stamps the version and checksum into Info.plist and packaging/minicode.rb,
+#      commits that, and pushes main,
 #   5. publishes a GitHub Release here, tagged vVERSION, with the zip and the
 #      APK attached (Obtainium and people installing by hand take it from there),
 #   6. copies packaging/minicode.rb into the tap as the live cask,
@@ -136,24 +138,18 @@ fi
 echo "==> Running the core tests"
 make test
 
-echo "==> Stamping version $VERSION"
-"$BUDDY" -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
-"$BUDDY" -c "Set :CFBundleVersion $VERSION" "$PLIST"
-
-echo "==> Building release artifact"
-make dist-zip
-BUILT="$("$BUDDY" -c "Print :CFBundleShortVersionString" MiniCode.app/Contents/Info.plist)"
-if [ "$BUILT" != "$VERSION" ]; then
-    echo "error: the built app says $BUILT, expected $VERSION" >&2; exit 1
+# The GUI checks (tests/gui) take a few minutes and put no window on screen.
+# CI runs them on every push; when it has passed on this commit they are not
+# run again here.
+HEAD_SHA="$(git rev-parse HEAD)"
+CI="$(gh run list --repo "$APP_REPO" --workflow CI --commit "$HEAD_SHA" \
+          --json conclusion --jq '.[0].conclusion' 2>/dev/null || true)"
+if [ "$CI" = "success" ]; then
+    echo "==> CI passed on $(git rev-parse --short HEAD); not running the GUI checks again"
+else
+    echo "==> CI has not passed on $(git rev-parse --short HEAD) (${CI:-no run}); running the GUI checks"
+    make guitest
 fi
-scripts/check-minos.sh MiniCode.app
-SHA="$(shasum -a 256 MiniCode.zip | awk '{print $1}')"
-echo "    version $VERSION   sha256 $SHA"
-
-/usr/bin/sed -i '' "s/version \"[^\"]*\"/version \"$VERSION\"/" "$CASK"
-/usr/bin/sed -i '' "s/sha256 \"[^\"]*\"/sha256 \"$SHA\"/" "$CASK"
-git add "$PLIST" "$CASK"
-git diff --cached --quiet || git commit -q -m "Release $VERSION"
 
 if [ -z "${MINICODE_NO_APK:-}" ]; then
     echo "==> Building the Android APK"
@@ -173,6 +169,25 @@ if [ -z "${MINICODE_NO_APK:-}" ]; then
     )
     cp android/app/build/outputs/apk/release/app-release.apk "$APK"
 fi
+
+echo "==> Stamping version $VERSION"
+"$BUDDY" -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
+"$BUDDY" -c "Set :CFBundleVersion $VERSION" "$PLIST"
+
+echo "==> Building release artifact"
+make dist-zip
+BUILT="$("$BUDDY" -c "Print :CFBundleShortVersionString" MiniCode.app/Contents/Info.plist)"
+if [ "$BUILT" != "$VERSION" ]; then
+    echo "error: the built app says $BUILT, expected $VERSION" >&2; exit 1
+fi
+scripts/check-minos.sh MiniCode.app
+SHA="$(shasum -a 256 MiniCode.zip | awk '{print $1}')"
+echo "    version $VERSION   sha256 $SHA"
+
+/usr/bin/sed -i '' "s/version \"[^\"]*\"/version \"$VERSION\"/" "$CASK"
+/usr/bin/sed -i '' "s/sha256 \"[^\"]*\"/sha256 \"$SHA\"/" "$CASK"
+git add "$PLIST" "$CASK"
+git diff --cached --quiet || git commit -q -m "Release $VERSION"
 
 echo "==> Pushing main"
 git push -q origin main
