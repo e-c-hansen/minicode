@@ -3716,8 +3716,9 @@ void testSettings() {
     // documented value is the real default.
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
-    // format, python, keep-sorted, auto-save, ruler, terminal and develop keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 75);
+    // format, python, keep-sorted, auto-save, ruler, terminal, develop and
+    // agent keys (with markdown.mermaid and agent.ide-link).
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 77);
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -9627,6 +9628,7 @@ static void testMultiCaretOccurrences() {
 #include "commands_tests.inc"
 #include "procs_tests.inc"
 #include "attention_tests.inc"
+#include "ide_link_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9711,6 +9713,9 @@ int main() {
     testClaudeHooks();
     testNotifyCommandLine();
     testAttentionBoard();
+    testIdeLink();
+    testIdeLinkSettings();
+    testMermaidDiagram();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
