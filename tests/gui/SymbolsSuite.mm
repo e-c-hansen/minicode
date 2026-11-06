@@ -1,8 +1,9 @@
 // SymbolsSuite.mm — `make guitest SUITES=symbols`: Go to Symbol in File
 // (Shift+Cmd+O, the palette's "@"), Go to Symbol in Workspace (Cmd+T, "#")
 // and Go Back / Go Forward (Ctrl+-, Ctrl+Shift+-). The built-in outline is
-// checked everywhere; the language server parts run against basedpyright
-// when it is installed and are skipped (with a note) when it is not.
+// checked everywhere; the language server parts run against the scripted
+// server (build/fakelsp) everywhere, and against basedpyright as well when
+// it is installed.
 #import "Harness.h"
 #import "EditorController.h"
 #import "Navigation.h"
@@ -213,7 +214,7 @@ MC_GUI_SUITE(symbols) {
         Command(c, @selector(insertNewline:));
         GCHECK(Palette(c) == nil);
     });
-    MCGuiPause(0.2);
+    MCGuiWait(@"the jump recorded", 5, ^BOOL { return Nav(c).entries.count == 2; });
     MCGuiStep(@"at main, the keyboard in the editor, the jump recorded", ^{
         GCHECK(NSEqualRanges(tv.selectedRange, WordOnLine(tv.string, 80, @"main")));
         GCHECK(c.window.firstResponder == tv);
@@ -360,68 +361,91 @@ MC_GUI_SUITE(symbols) {
     MCGuiWait(@"the prompt again", 10, ^BOOL { return term.atPrompt && !term.busy; });
 
     // ------------------------------------------- with a language server
-    NSString *server = BasedPyright();
-    if (!server) {
-        MCGuiStep(@"basedpyright is not installed: the server checks are skipped", ^{
-            MCGuiNote(@"basedpyright-langserver not found; skipping the language server checks");
+    // The scripted server everywhere (so CI runs these), then basedpyright
+    // as well where it is installed.
+    auto pos = ^NSDictionary *(int l, int ch) { return @{@"line": @(l), @"character": @(ch)}; };
+    auto range = ^NSDictionary *(int l0, int c0, int l1, int c1) {
+        return @{@"start": pos(l0, c0), @"end": pos(l1, c1)};
+    };
+    auto sym = ^NSDictionary *(NSString *name, int kind, int l0, int l1, int col, NSArray *kids) {
+        return @{@"name": name, @"kind": @(kind), @"range": range(l0, 0, l1, 0),
+                 @"selectionRange": range(l0, col, l0, col + (int)name.length),
+                 @"children": kids ?: @[]};
+    };
+    char real[PATH_MAX];
+    NSString *rectReal = realpath(rect.fileSystemRepresentation, real) ? @(real) : rect;
+    NSString *fake = MCGuiFakeLsp(@"symbols", @{@"name": @"fakelsp", @"rules": @[
+        @{@"method": @"textDocument/documentSymbol", @"when": @{@"uriEndsWith": @"shapes.py"},
+          @"result": @[
+              sym(@"Shape", 5, 4, 11, 6, @[sym(@"area", 6, 5, 7, 8, nil), sym(@"describe", 6, 8, 10, 8, nil)]),
+              sym(@"Circle", 5, 12, 18, 6, @[sym(@"__init__", 6, 13, 15, 8, nil), sym(@"area", 6, 16, 18, 8, nil)]),
+              sym(@"main", 12, 79, 82, 4, nil)]},
+        @{@"method": @"workspace/symbol", @"when": @{@"paramsContain": @"Rect"},
+          @"result": @[@{@"name": @"Rectangle", @"kind": @5,
+                         @"location": @{@"uri": [NSString stringWithFormat:@"${uri:%@}", rectReal],
+                                        @"range": range(0, 6, 0, 15)}}]},
+        @{@"method": @"workspace/symbol", @"result": @[]}]}, nil, nil);
+    NSMutableArray<NSArray<NSString *> *> *servers = [NSMutableArray arrayWithObject:@[fake, @"fakelsp"]];
+    if (NSString *bp = BasedPyright())
+        [servers addObject:@[[bp stringByAppendingString:@" --stdio"], @"basedpyright"]];
+    else
+        MCGuiStep(@"basedpyright is not installed: only the scripted server", ^{
+            MCGuiNote(@"basedpyright-langserver not found; the checks run against fakelsp only");
         });
-        return;
+    for (NSArray<NSString *> *entry in servers) {
+        NSString *command = entry[0], *name = entry[1];
+        MCGuiStep([NSString stringWithFormat:@"%@ on", name], ^{
+            MCGuiSetSettings([NSString stringWithFormat:
+                @"lsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n", command]);
+            [c focusEditor:nil];
+            [c showFile:rect];
+            [c showFile:shapes];
+            tv.selectedRange = start;
+        });
+        MCGuiWait([NSString stringWithFormat:@"%@ runs", name], 60, ^BOOL {
+            LspSession *lsp = [c valueForKey:@"lsp"];
+            return lsp.hasServer && [lsp.statusText containsString:name] &&
+                   ![lsp.statusText containsString:@"starting"];
+        });
+        MCGuiStep(@"Shift+Cmd+O asks the server", ^{ GCHECK(ShiftCmdO(c)); });
+        MCGuiWait(@"its symbols", 30, ^BOOL {
+            return [[Palette(c) valueForKey:@"symbolSource"] isEqual:name] && Labels(c).count >= 7;
+        });
+        MCGuiStep(@"the server's symbols, the caret's selected", ^{
+            GCHECK_EQ_STR([Palette(c) valueForKey:@"symbolSource"], name);
+            NSArray *l = Labels(c);
+            MCGuiNote(@"%@'s symbols: %@", name, l);
+            GCHECK([l containsObject:@"Circle"] && [l containsObject:@"describe"] &&
+                   [l containsObject:@"main"]);
+            GCHECK_EQ_STR(Selected(c), @"__init__");
+            Command(c, @selector(cancelOperation:));
+        });
+        MCGuiStep(@"Cmd+T for Rect", ^{
+            [Nav(c) clear];
+            GCHECK(CmdT(c));
+            GCHECK_EQ_STR(MCCommandPaletteField(Palette(c)).stringValue, @"#");
+            Type(c, @"Rect");
+        });
+        MCGuiWait(@"Rectangle from the workspace", 30, ^BOOL {
+            return [Labels(c) containsObject:@"Rectangle"];
+        });
+        MCGuiStep(@"Return opens rect.py at it", ^{
+            MCGuiSnapshot(Palette(c), @"symbols-workspace");
+            NSInteger row = [Labels(c) indexOfObject:@"Rectangle"];
+            for (int k = 0; k < 50 && Palette(c) && MCCommandPaletteSelection(Palette(c)) != row; k++)
+                Command(c, @selector(moveDown:));
+            GCHECK(MCCommandPaletteSelection(Palette(c)) == row);
+            Command(c, @selector(insertNewline:));
+        });
+        MCGuiWait(@"rect.py on show", 5, ^BOOL {
+            return [[c valueForKey:@"currentPath"] isEqualToString:rect];
+        });
+        MCGuiStep(@"at Rectangle; Ctrl+- back to shapes.py", ^{
+            GCHECK([[tv.string substringWithRange:tv.selectedRange] containsString:@"Rectangle"]);
+            GCHECK(CtrlMinus(c));
+            GCHECK([[c valueForKey:@"currentPath"] isEqualToString:shapes]);
+            GCHECK(NSEqualRanges(tv.selectedRange, start));
+        });
     }
-    __block NSString *settings = NSProcessInfo.processInfo.environment[@"MINICODE_SETTINGS"];
-    MCGuiStep(@"basedpyright on", ^{
-        MCGuiWriteFile(settings, [NSString stringWithFormat:
-            @"lsp.enabled = true\nlsp.python = %@ --stdio\nlsp.python.also = off\n", server]);
-        [c focusEditor:nil];
-    });
-    MCGuiPause(1.0);
-    MCGuiStep(@"open shapes.py on it", ^{
-        [c showFile:rect];
-        [c showFile:shapes];
-        tv.selectedRange = start;
-    });
-    MCGuiWait(@"basedpyright runs", 60, ^BOOL {
-        LspSession *lsp = [c valueForKey:@"lsp"];
-        return lsp.hasServer && [lsp.statusText containsString:@"basedpyright"] &&
-               ![lsp.statusText containsString:@"starting"];
-    });
-    MCGuiStep(@"Shift+Cmd+O asks the server", ^{ GCHECK(ShiftCmdO(c)); });
-    MCGuiWait(@"its symbols", 30, ^BOOL { return Labels(c).count >= 7; });
-    MCGuiStep(@"the server's symbols, the caret's selected", ^{
-        GCHECK_EQ_STR([Palette(c) valueForKey:@"symbolSource"], @"basedpyright");
-        NSArray *l = Labels(c);
-        MCGuiNote(@"basedpyright's symbols: %@", l);
-        GCHECK([l containsObject:@"Circle"] && [l containsObject:@"describe"] &&
-               [l containsObject:@"main"]);
-        GCHECK_EQ_STR(Selected(c), @"__init__");
-        Command(c, @selector(cancelOperation:));
-    });
-    MCGuiStep(@"Cmd+T for Rect", ^{
-        [Nav(c) clear];
-        GCHECK(CmdT(c));
-        GCHECK_EQ_STR(MCCommandPaletteField(Palette(c)).stringValue, @"#");
-        Type(c, @"Rect");
-    });
-    MCGuiWait(@"Rectangle from the workspace", 30, ^BOOL {
-        return [Labels(c) containsObject:@"Rectangle"];
-    });
-    MCGuiStep(@"Return opens rect.py at it, and Ctrl+- comes back", ^{
-        MCGuiSnapshot(Palette(c), @"symbols-workspace");
-        NSInteger row = [Labels(c) indexOfObject:@"Rectangle"];
-        for (int k = 0; k < 50 && Palette(c) && MCCommandPaletteSelection(Palette(c)) != row; k++)
-            Command(c, @selector(moveDown:));
-        GCHECK(MCCommandPaletteSelection(Palette(c)) == row);
-        Command(c, @selector(insertNewline:));
-    });
-    MCGuiPause(0.3);
-    MCGuiStep(@"at Rectangle; back to shapes.py", ^{
-        GCHECK([[c valueForKey:@"currentPath"] isEqualToString:rect]);
-        GCHECK([[tv.string substringWithRange:tv.selectedRange] containsString:@"Rectangle"]);
-        GCHECK(CtrlMinus(c));
-        GCHECK([[c valueForKey:@"currentPath"] isEqualToString:shapes]);
-        GCHECK(NSEqualRanges(tv.selectedRange, start));
-    });
-    MCGuiStep(@"language servers off again", ^{
-        MCGuiWriteFile(settings, @"lsp.enabled = false\n");
-    });
-    MCGuiPause(0.5);
+    MCGuiStep(@"language servers off again", ^{ MCGuiSetSettings(@"lsp.enabled = false\n"); });
 }

@@ -359,16 +359,20 @@ MC_GUI_SUITE(folding) {
 
 }
 
-// Timings on 100,000 lines of Python: `make guitest SUITES=foldperf`.
+// Timings on 20,000 lines of Python: `make guitest SUITES=foldperf`, and
+// on 100,000 with MC_GUI_FULL_PERF=1 (half of a whole run's time went to
+// laying that file out, folded and not, for notes no check reads).
 MC_GUI_SUITE(foldperf) {
     __block EditorController *c = nil;
     __block CodeTextView *tv = nil;
     __block MCFolds *folds = nil;
     NSString *big = MCGuiProjectFile(@"big.py");
     __block std::chrono::steady_clock::time_point opened;
-    MCGuiStep(@"a 100,000-line file", ^{
+    const int defs = NSProcessInfo.processInfo.environment[@"MC_GUI_FULL_PERF"].length ? 25000 : 5000;
+    const int mid = defs * 2 + 1;   // the line of the middle def, from 1
+    MCGuiStep([NSString stringWithFormat:@"a %d-line file", defs * 4], ^{
         NSMutableString *b = [NSMutableString string];
-        for (int i = 0; i < 25000; i++)
+        for (int i = 0; i < defs; i++)
             [b appendFormat:@"def f%d(x):\n    if x:\n        return %d\n\n", i, i];
         MCGuiWriteFile(big, b);
         c = MCGuiController();
@@ -379,20 +383,20 @@ MC_GUI_SUITE(foldperf) {
         MCGuiNote(@"opened big.py in %.0f ms", Ms(opened));
         opened = std::chrono::steady_clock::now();
     });
-    MCGuiWait(@"its regions", 10, ^BOOL { return [folds lineStartsRegion:99996]; });
+    MCGuiWait(@"its regions", 10, ^BOOL { return [folds lineStartsRegion:4 * (defs - 1)]; });
     MCGuiStep(@"fold all, type, scroll, unfold all on it", ^{
         MCGuiNote(@"regions arrived %.0f ms after the file showed", Ms(opened));
         NSLayoutManager *lm = tv.layoutManager;
         auto t = std::chrono::steady_clock::now();
         GCHECK([folds foldAll]);
-        MCGuiNote(@"Fold All (50,000 folds): %.0f ms", Ms(t));
+        MCGuiNote(@"Fold All (%d folds): %.0f ms", defs * 2, Ms(t));
         t = std::chrono::steady_clock::now();
         [lm ensureLayoutForCharacterRange:NSMakeRange(0, tv.string.length)];
         MCGuiNote(@"laying the whole file out folded: %.0f ms", Ms(t));
         const CGFloat folded = NSHeight([lm usedRectForTextContainer:tv.textContainer]);
-        GCHECK(folded < 25000 * 2 * 20);
+        GCHECK(folded < defs * 2 * 20);
         // A keystroke on a line between folds, with the view there.
-        NSUInteger at = LineStart(tv.string, 50001) + 3;   // into "def f12500"
+        NSUInteger at = LineStart(tv.string, mid) + 3;   // into the middle def's name
         GCHECK(![folds rangeIsHidden:NSMakeRange(at, 1)]);
         tv.selectedRange = NSMakeRange(at, 0);
         [tv scrollRangeToVisible:tv.selectedRange];
@@ -403,7 +407,7 @@ MC_GUI_SUITE(foldperf) {
             const double typed = Ms(t);
             t = std::chrono::steady_clock::now();
             [tv displayIfNeeded];
-            MCGuiNote(@"a keystroke among 50,000 folds: %.2f ms, drawing %.2f ms", typed, Ms(t));
+            MCGuiNote(@"a keystroke among %d folds: %.2f ms, drawing %.2f ms", defs * 2, typed, Ms(t));
         }
         t = std::chrono::steady_clock::now();
         [tv scrollRangeToVisible:NSMakeRange(tv.string.length - 1, 0)];
@@ -418,7 +422,7 @@ MC_GUI_SUITE(foldperf) {
     });
     MCGuiStep(@"typing with one fold above, and with none", ^{
         GCHECK([folds toggleLine:4]);
-        NSUInteger at = LineStart(tv.string, 50001) + 3;
+        NSUInteger at = LineStart(tv.string, mid) + 3;
         tv.selectedRange = NSMakeRange(at, 0);
         [tv scrollRangeToVisible:tv.selectedRange];
         [tv displayIfNeeded];

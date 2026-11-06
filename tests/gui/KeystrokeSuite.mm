@@ -98,7 +98,18 @@ MC_GUI_SUITE(keystroke) {
         MCGuiNote(@"%lu keystrokes in a 100,000-line file: median %.2f ms, mean %.2f ms",
                   (unsigned long)times.size(), med, total / times.size());
         GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"ab cd "]);
-        (void)sampling;
+        // Bounds loose enough for a busy CI runner (about 2.5 ms a key on
+        // an M3), tight enough to catch a keystroke that relays the file
+        // out or re-highlights it whole (tens to hundreds of ms each).
+        std::vector<double> sorted = times;
+        std::sort(sorted.begin(), sorted.end());
+        const double p95 = sorted.empty() ? 0 : sorted[sorted.size() * 95 / 100];
+        if (!sampling) {
+            MCGuiCheck(med < 20, [NSString stringWithFormat:@"median keystroke under 20 ms (%.2f)", med],
+                       __FILE__, __LINE__);
+            MCGuiCheck(p95 < 60, [NSString stringWithFormat:@"95th percentile under 60 ms (%.2f)", p95],
+                       __FILE__, __LINE__);
+        }
     });
     MCGuiStep(@"the colors equal a full re-highlight", ^{
         NSArray *incremental = ColorRuns(tv.textStorage);
@@ -140,7 +151,10 @@ MC_GUI_SUITE(keystroke) {
         [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(l3.location, 100)];
         const double t0 = Ms();
         MCGuiUndoGroup(tv.undoManager, ^{ [ctv.multiCarets insertText:@"\""]; });
-        MCGuiNote(@"a quote at three carets: %.2f ms", Ms() - t0);
+        const double quote = Ms() - t0;
+        MCGuiNote(@"a quote at three carets: %.2f ms", quote);
+        MCGuiCheck(quote < 100, [NSString stringWithFormat:@"a quote at three carets under 100 ms (%.2f)",
+                                                           quote], __FILE__, __LINE__);
         GCHECK([[tv.string substringWithRange:NSMakeRange(l1.location, 7)] isEqualToString:@"\"return"]);
         NSArray *incremental = ColorRuns(tv.textStorage);
         [ctv.multiCarets clear];

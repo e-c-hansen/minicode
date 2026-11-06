@@ -310,12 +310,18 @@ MC_GUI_SUITE(terminal_exec) {
     TerminalAtPrompt(s);
     // exec zsh keeps the integration (an earlier fix): a prompt, not busy,
     // and the next command runs.
-    MCGuiStep(@"exec zsh", ^{ [s.term runCommand:@"exec zsh"]; });
-    MCGuiPause(1.5);
-    MCGuiStep(@"zsh again, not busy; a command", ^{
-        GCHECK(s.term.atPrompt && !s.term.busy && s.term.runningCommands.count == 0);
-        [s.term runCommand:@"echo after-exec-zsh"];
+    // Waited for, not paused for (1.5 s was not always enough on a busy
+    // machine); at least half a second, so the old prompt cannot count.
+    __block NSDate *execAt = nil;
+    MCGuiStep(@"exec zsh", ^{
+        [s.term runCommand:@"exec zsh"];
+        execAt = [NSDate date];
     });
+    MCGuiWait(@"zsh again, at a prompt, not busy", 15, ^BOOL {
+        return -execAt.timeIntervalSinceNow > 0.5 && s.term.atPrompt && !s.term.busy &&
+               s.term.runningCommands.count == 0;
+    });
+    MCGuiStep(@"a command", ^{ [s.term runCommand:@"echo after-exec-zsh"]; });
     MCGuiWait(@"it runs", 10, ^BOOL {
         return s.term.atPrompt && [[s.term recentText:3] containsString:@"\nafter-exec-zsh"];
     });
