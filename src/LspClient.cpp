@@ -48,6 +48,10 @@ void Framer::feed(const char* data, size_t n) {
     buf_.append(data, n);
 }
 
+namespace {
+const long long kMaxMessage = 1LL << 30;
+}
+
 bool Framer::next(std::string& body) {
     while (true) {
         size_t headerEnd = buf_.find("\r\n\r\n", pos_);
@@ -62,11 +66,15 @@ bool Framer::next(std::string& body) {
             size_t colon = h.find(':');
             if (colon != std::string::npos &&
                 lower(trim(h.substr(0, colon))) == "content-length") {
+                // Digits only, and at most 1 GiB: a longer number (std::stoll
+                // threw past 19 digits) is a broken header, skipped below.
                 std::string v = trim(h.substr(colon + 1));
-                if (!v.empty() && std::all_of(v.begin(), v.end(), [](char c) {
-                        return c >= '0' && c <= '9';
-                    }))
-                    length = std::stoll(v);
+                long long n = v.empty() ? -1 : 0;
+                for (char c : v) {
+                    if (c < '0' || c > '9' || n > kMaxMessage) { n = -1; break; }
+                    n = n * 10 + (c - '0');
+                }
+                length = n > kMaxMessage ? -1 : n;
             }
             line = eol + 2;
         }
@@ -117,6 +125,34 @@ Position positionForOffset(const std::u16string& text, size_t offset) {
     }
     p.character = (int)(offset - lineStart);
     return p;
+}
+
+PositionIndex::PositionIndex(const std::u16string& text) : text_(text) {
+    starts_.push_back(0);
+    for (size_t i = 0; i < text.size(); i++) {
+        char16_t c = text[i];
+        if (c != u'\n' && c != u'\r') continue;
+        ends_.push_back(i);
+        if (c == u'\r' && i + 1 < text.size() && text[i + 1] == u'\n') i++;
+        starts_.push_back(i + 1);
+    }
+    ends_.push_back(text.size());
+}
+
+size_t PositionIndex::offset(Position p) const {
+    size_t line = p.line < 0 ? 0 : (size_t)p.line;
+    if (line >= starts_.size()) return text_.size();
+    size_t ch = p.character < 0 ? 0 : (size_t)p.character;
+    return std::min(starts_[line] + ch, ends_[line]);
+}
+
+Position PositionIndex::position(size_t offset) const {
+    offset = std::min(offset, text_.size());
+    // The last line starting at or before the offset. Between \r and \n is
+    // not a line start, so it stays on the \r's line, as positionForOffset.
+    auto it = std::upper_bound(starts_.begin(), starts_.end(), offset);
+    size_t line = (size_t)(it - starts_.begin()) - 1;
+    return Position{(int)line, (int)(offset - starts_[line])};
 }
 
 std::u16string toUtf16(const std::string& s) {
@@ -471,6 +507,10 @@ std::vector<Diagnostic> parseDiagnostics(const Json& params, std::string* uri, i
         const Json& code = d["code"];
         if (code.isString()) diag.code = code.asString();
         else if (code.isNumber()) diag.code = std::to_string(code.asInt());
+        for (const Json& tag : d["tags"].elements()) {
+            if (tag.asInt() == 1) diag.unnecessary = true;
+            if (tag.asInt() == 2) diag.deprecated = true;
+        }
         diag.raw = std::make_shared<const Json>(d);
         out.push_back(diag);
     }
@@ -512,9 +552,10 @@ std::vector<DiagnosticSpan> diagnosticSpans(const std::u16string* base,
     const bool changed = base && *base != current;
     const size_t oldEnd = from.size() - tail;           // [head, oldEnd) changed
     const long delta = (long)current.size() - (long)from.size();
+    const PositionIndex index(from);
     for (size_t i = 0; i < diags.size(); i++) {
-        size_t a = offsetForPosition(from, diags[i].range.start);
-        size_t b = offsetForPosition(from, diags[i].range.end);
+        size_t a = index.offset(diags[i].range.start);
+        size_t b = index.offset(diags[i].range.end);
         if (b < a) std::swap(a, b);
         if (changed) {
             // Touching the changed part, at either end, counts: an error at
@@ -540,6 +581,7 @@ bool DiagnosticStore::publish(const std::string& uri, const std::string& server,
         for (Diagnostic& d : list)
             if (d.source.empty()) d.source = sourceName;
     std::vector<Set>& sets = files_[uri];
+    generations_[uri] = ++counter_;
     for (Set& set : sets)
         if (set.server == server) {
             set.list = std::move(list);
@@ -550,6 +592,11 @@ bool DiagnosticStore::publish(const std::string& uri, const std::string& server,
     return true;
 }
 
+uint64_t DiagnosticStore::generation(const std::string& uri) const {
+    auto it = generations_.find(uri);
+    return it == generations_.end() ? 0 : it->second;
+}
+
 bool DiagnosticStore::erase(const std::string& uri, const std::string& server) {
     auto it = files_.find(uri);
     if (it == files_.end()) return false;
@@ -558,6 +605,7 @@ bool DiagnosticStore::erase(const std::string& uri, const std::string& server) {
                           [&](const Set& x) { return x.server == server; });
     if (s == sets.end()) return false;
     sets.erase(s);
+    generations_[uri] = ++counter_;
     if (sets.empty()) files_.erase(it);
     return true;
 }
@@ -1326,7 +1374,18 @@ WorkspaceEdit parseWorkspaceEdit(const Json& j, const CanonicalUri& canonical) {
                 we.resourceOperations = true;
                 continue;
             }
-            add(c["textDocument"]["uri"].asString(), c["edits"]);
+            const std::string named = c["textDocument"]["uri"].asString();
+            add(named, c["edits"]);
+            const Json& v = c["textDocument"]["version"];
+            if (!named.empty() && v.isNumber()) {
+                FileEdit& f = we.files[at[canonical ? canonical(named) : named]];
+                // Two entries for one file at different versions: the edit
+                // cannot be consistent with any one text.
+                if (f.version >= 0 && f.version != (int)v.asInt())
+                    we.problem = "The server's edits to " + pathFromUri(f.uri) +
+                                 " are for different versions of it";
+                f.version = (int)v.asInt();
+            }
         }
     } else if (j["changes"].isObject()) {
         for (const auto& kv : j["changes"].items()) add(kv.first, kv.second);
@@ -1355,13 +1414,38 @@ WorkspaceEdit parseWorkspaceEdit(const Json& j, const CanonicalUri& canonical) {
     return we;
 }
 
+namespace {
+int versionIn(const DocVersions& v, const std::string& uri) {
+    auto it = v.find(uri);
+    if (it != v.end()) return it->second;
+    const std::string path = pathFromUri(uri);
+    if (!path.empty())
+        for (const auto& kv : v)
+            if (pathFromUri(kv.first) == path) return kv.second;
+    return -1;   // not open
+}
+}  // namespace
+
+std::string staleEditFile(const WorkspaceEdit& we, const DocVersions& asked,
+                          const DocVersions& now) {
+    for (const FileEdit& f : we.files) {
+        const int current = versionIn(now, f.uri);
+        bool stale = f.version >= 0 && f.version != current;
+        const int then = versionIn(asked, f.uri);
+        if (then >= 0 && then != current) stale = true;   // changed, or closed since
+        if (stale) return f.uri;
+    }
+    return "";
+}
+
 std::vector<OffsetEdit> offsetEdits(const std::u16string& text,
                                     const std::vector<TextEdit>& edits) {
     std::vector<OffsetEdit> out;
     out.reserve(edits.size());
+    const PositionIndex index(text);
     for (auto it = edits.rbegin(); it != edits.rend(); ++it) {
-        size_t a = offsetForPosition(text, it->range.start);
-        size_t b = offsetForPosition(text, it->range.end);
+        size_t a = index.offset(it->range.start);
+        size_t b = index.offset(it->range.end);
         if (b < a) b = a;
         out.push_back(OffsetEdit{a, b - a, toUtf16(it->newText)});
     }
@@ -1428,9 +1512,13 @@ std::vector<ReferenceFile> groupReferences(const std::vector<Location>& locs,
 }
 
 std::u16string lineOf(const std::u16string& text, int line) {
-    if (line < 0) return u"";
-    size_t start = offsetForPosition(text, Position{line, 0});
-    if (positionForOffset(text, start).line != line) return u"";
+    return lineOf(PositionIndex(text), line);
+}
+
+std::u16string lineOf(const PositionIndex& index, int line) {
+    if (line < 0 || (size_t)line >= index.lineCount()) return u"";
+    const std::u16string& text = index.text();
+    size_t start = index.offset(Position{line, 0});
     size_t end = start;
     while (end < text.size() && text[end] != u'\n' && text[end] != u'\r') end++;
     return text.substr(start, end - start);
@@ -1651,7 +1739,11 @@ void Client::initialize(const std::string& rootPath, int processId,
              {"dataSupport", true},
              {"resolveSupport", Json::object({{"properties", Json::array().push("edit")}})},
          })},
-        {"publishDiagnostics", Json::object({{"relatedInformation", false}})},
+        {"publishDiagnostics",
+         Json::object({{"relatedInformation", false},
+                       {"versionSupport", true},
+                       {"tagSupport",
+                        Json::object({{"valueSet", Json::array().push(1).push(2)}})}})},
         // Go to Symbol in File (Shift+Cmd+O) shows a tree's containers.
         {"documentSymbol", Json::object({{"hierarchicalDocumentSymbolSupport", true},
                                          {"symbolKind", symbolKinds}})},
@@ -1695,6 +1787,12 @@ void Client::initialize(const std::string& rootPath, int processId,
           true);
 }
 
+DocVersions Client::versions() const {
+    DocVersions out;
+    for (const auto& kv : docs_) out[kv.first] = kv.second.version;
+    return out;
+}
+
 int Client::version(const std::string& uri) const {
     auto it = docs_.find(uri);
     return it == docs_.end() ? 0 : it->second.version;
@@ -1733,7 +1831,7 @@ void Client::didOpen(const std::string& uri, const std::string& languageId,
     Doc& d = docs_[uri];
     d.languageId = languageId;
     d.text = text;
-    d.version = 1;
+    d.version = ++lastVersion_[uri];
     notify("textDocument/didOpen",
            Json::object({{"textDocument",
                           Json::object({{"uri", uri}, {"languageId", languageId},
@@ -1745,7 +1843,7 @@ void Client::didChange(const std::string& uri, const std::string& text) {
     if (it == docs_.end() || it->second.text == text) return;
     Doc& d = it->second;
     d.text = text;
-    d.version++;
+    d.version = ++lastVersion_[uri];
     notify("textDocument/didChange",
            Json::object({
                {"textDocument", Json::object({{"uri", uri}, {"version", d.version}})},

@@ -6744,6 +6744,16 @@ void testPythonEnvs() {
 
     // The automatic choice.
     CHECK(PythonEnvs::automatic(ctx) == R + "/sub/pkg/venv/bin/python");
+    CHECK(PythonEnvs::automatic(ctx, true) == R + "/sub/pkg/venv/bin/python");
+    // Without the user's consent the folder's own is left out: the active
+    // environment, else nothing.
+    {
+        PythonEnvs::Context noProject = ctx;
+        noProject.env.clear();
+        CHECK(PythonEnvs::automatic(noProject, false).empty());
+        noProject.env["VIRTUAL_ENV"] = H + "/.virtualenvs/tools";
+        CHECK(PythonEnvs::automatic(noProject, false) == H + "/.virtualenvs/tools/bin/python3");
+    }
     PythonEnvs::Context bare;
     bare.root = top.string() + "/nothing";
     bare.env["VIRTUAL_ENV"] = H + "/.virtualenvs/tools";
@@ -9522,6 +9532,7 @@ static void testMultiCaretOccurrences() {
 #include "backups_tests.inc"
 #include "agent_tests.inc"
 #include "lsp_also_tests.inc"
+#include "lsp_fixes_tests.inc"
 #include "find_tests.inc"
 #include "symbols_tests.inc"
 #include "gutter_tests.inc"
@@ -9589,6 +9600,7 @@ int main() {
     testBackups();
     testInlineAgent();
     testLspSecondServer();
+    testLspReviewFixes();
     testTextFind();
     testFolderReplace();
     testSymbols();

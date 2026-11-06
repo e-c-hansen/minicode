@@ -15,6 +15,7 @@
 // straight across.
 #pragma once
 #include "Json.h"
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -43,6 +44,9 @@ struct Diagnostic {
     Range range;
     Severity severity = Severity::Error;
     std::string message, source, code;
+    // DiagnosticTag 1 and 2: code that is never used (pyright's "x is not
+    // accessed"), drawn faded, and a deprecated name, struck through.
+    bool unnecessary = false, deprecated = false;
     // The diagnostic as the server sent it: textDocument/codeAction sends it
     // back in its context, and servers match their fixes by its fields.
     std::shared_ptr<const Json> raw;
@@ -61,6 +65,10 @@ struct TextEdit {
 struct FileEdit {
     std::string uri;
     std::vector<TextEdit> edits;   // sorted, none overlapping
+    // documentChanges' textDocument.version: the version of the document the
+    // edits were computed on, or -1 when the server gave none (`changes`, or
+    // a null version for a file it does not have open).
+    int version = -1;
 };
 struct WorkspaceEdit {
     std::vector<FileEdit> files;   // in the order the server first named them
@@ -72,6 +80,15 @@ struct WorkspaceEdit {
 // (a symlink resolved), so edits to one file named two ways are merged.
 using CanonicalUri = std::function<std::string(const std::string& uri)>;
 WorkspaceEdit parseWorkspaceEdit(const Json& edit, const CanonicalUri& canonical = nullptr);
+// The versions of the documents a client has open, by URI (Client::versions).
+using DocVersions = std::map<std::string, int>;
+// The first file of an edit whose text changed after the edit was computed,
+// or "" when none did: its documentChanges version is not the version open
+// now, or its version when the request went out (`asked`, a snapshot) is
+// not the one now. An edit computed on older text would land its offsets on
+// the wrong characters. `now` is looked up by URI, then by the file named.
+std::string staleEditFile(const WorkspaceEdit& we, const DocVersions& asked,
+                          const DocVersions& now);
 // a comes before b.
 bool positionBefore(Position a, Position b);
 // One file's edits as UTF-16 offsets into its text, last first, so applying
@@ -119,6 +136,9 @@ struct CodeAction {
     // Which of a file's servers offered it, as mergeCodeActions numbers
     // them (the caller's order); -1 when it came from one server alone.
     int origin = -1;
+    // The versions of the server's open documents when the actions were
+    // asked for, set by the caller: the edit is for those texts.
+    std::shared_ptr<const DocVersions> asked;
     bool hasEdit() const { return edit.isObject(); }
     bool hasCommand() const { return command.isObject() && command["command"].isString(); }
 };
@@ -224,6 +244,26 @@ private:
 // line past the end clamps to the end of the text.
 size_t offsetForPosition(const std::u16string& text, Position p);
 Position positionForOffset(const std::u16string& text, size_t offset);
+// The same answers for many positions in one text: the line starts are found
+// once (O(n)) and each conversion is a binary search, where the two functions
+// above scan from the start every time. Use it wherever a loop converts
+// (diagnostics, edits, references, Problems). It keeps a reference to the
+// text, which must outlive it and stay unchanged.
+class PositionIndex {
+public:
+    explicit PositionIndex(const std::u16string& text);
+    size_t offset(Position p) const;
+    Position position(size_t offset) const;
+    size_t lineCount() const { return starts_.size(); }
+    const std::u16string& text() const { return text_; }
+
+private:
+    const std::u16string& text_;
+    std::vector<size_t> starts_;   // where each line starts
+    std::vector<size_t> ends_;     // where each line's text ends (its break)
+};
+// lineOf (above) over an index already built, for a loop over references.
+std::u16string lineOf(const PositionIndex& index, int line);
 // The same, for UTF-8 text (what the tests and the server see).
 std::u16string toUtf16(const std::string& utf8);
 std::string toUtf8(const std::u16string& utf16);
@@ -353,7 +393,7 @@ public:
                  const std::string& sourceName = "");
     bool erase(const std::string& uri, const std::string& server);
     bool eraseServer(const std::string& server);
-    void clear() { files_.clear(); }
+    void clear() { files_.clear(); generations_.clear(); }
     bool empty() const { return files_.empty(); }
     bool has(const std::string& uri) const { return files_.count(uri) != 0; }
     // A file's sets, in the order their servers first published for it.
@@ -363,9 +403,15 @@ public:
     std::vector<std::string> uris() const;
     // Every server's diagnostics for a file, in one list.
     std::vector<Diagnostic> merged(const std::string& uri) const;
+    // Changes whenever a file's diagnostics do (a publish or an erase), and
+    // never comes back to an earlier value, even across clear(): what was
+    // worked out from them (Problems' rows) can be kept until it moves.
+    uint64_t generation(const std::string& uri) const;
 
 private:
     std::map<std::string, std::vector<Set>> files_;
+    std::map<std::string, uint64_t> generations_;
+    uint64_t counter_ = 0;
 };
 // diagnosticSpans over each of a file's sets, each against its own base,
 // as one list in order of where they start. `diag` points into the sets.
@@ -603,7 +649,8 @@ public:
                     const std::string& clientName = "MiniCode");
 
     // Full-document sync. didChange bumps the version and sends the whole
-    // text; it is a no-op for a document that is not open.
+    // text; it is a no-op for a document that is not open. Versions never go
+    // back for a URI, across a close and a reopen either.
     void didOpen(const std::string& uri, const std::string& languageId,
                  const std::string& text);
     void didChange(const std::string& uri, const std::string& text);
@@ -611,6 +658,8 @@ public:
     void didClose(const std::string& uri);
     bool isOpen(const std::string& uri) const { return docs_.count(uri) != 0; }
     int version(const std::string& uri) const;
+    // Every open document's version, to compare with later (staleEditFile).
+    DocVersions versions() const;
     const std::string* openText(const std::string& uri) const;
     // The text last sent for a document, found by its URI as given or, when
     // the server spells it another way, by the file it names. What the
@@ -721,6 +770,10 @@ private:
     std::vector<std::string> queue_;            // bodies waiting for Ready
     std::vector<int> queuedIds_;                // requests among them
     std::map<std::string, Doc> docs_;
+    // The last version sent for each URI, kept across didClose, so a
+    // reopened document goes on counting and a publish for the text before
+    // the close (v4, arriving after a reopen) is seen as stale.
+    std::map<std::string, int> lastVersion_;
     Json capabilities_;
     Json initOptions_, settings_;
     std::string serverName_;
