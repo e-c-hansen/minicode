@@ -10,6 +10,7 @@
 #import "FileViewers.h"
 #import "QuickLook.h"
 #import "CsvTable.h"
+#import "JsonOutlineView.h"
 #import <AVFoundation/AVFoundation.h>
 #import <ImageIO/ImageIO.h>
 #import <Quartz/Quartz.h>
@@ -237,6 +238,7 @@ void PressInTree(EditorController *c, unsigned short keyCode, NSString *chars) {
 }  // namespace
 
 static void CsvSteps(void);
+static void JsonSteps(void);
 
 MC_GUI_SUITE(previews) {
     QuietQuickLookPanel();
@@ -402,6 +404,7 @@ MC_GUI_SUITE(previews) {
         GCHECK(![MCQuickLookPanel shared].shown);
     });
     CsvSteps();
+    JsonSteps();
 }
 
 // ---------------------------------------------------------------- CSV
@@ -608,5 +611,139 @@ static void CsvSteps(void) {
         GCHECK([after.fileModificationDate isEqualToDate:mtime]);
         GCHECK(after.fileSize == big.size());
         [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    });
+}
+
+// ---------------------------------------------------------------- JSON
+namespace {
+
+NSString *const kJsonText =
+    @"{\n"
+    @"  \"name\": \"minicode\",\n"
+    @"  \"tags\": [\"editor\", \"mac\"],\n"
+    @"  \"nested\": {\"deep\": {\"k\": 1}}\n"
+    @"}\n";
+
+MCJsonOutlinePane *Outline(EditorController *c) { return Viewers(c).json; }
+
+NSArray<NSString *> *OutlineRows(MCJsonOutlinePane *p) {
+    NSMutableArray *rows = [NSMutableArray array];
+    for (NSInteger r = 0; r < p.outline.numberOfRows; r++) [rows addObject:[p rowText:r]];
+    return rows;
+}
+
+NSInteger RowStarting(MCJsonOutlinePane *p, NSString *prefix) {
+    for (NSInteger r = 0; r < p.outline.numberOfRows; r++)
+        if ([[p rowText:r] hasPrefix:prefix]) return r;
+    return -1;
+}
+
+}  // namespace
+
+static void JsonSteps(void) {
+    MCGuiStep(@"a JSON file opens as text with its outline beside it", ^{
+        MCGuiWriteFile(Fixture(@"data.json"), kJsonText);
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"data.json")]);
+        GCHECK_EQ_STR(ActiveKind(c), @"text");
+        GCHECK(EditorText(c).editable);
+        GCHECK(!EditorScroll(c).hidden);
+        MCJsonOutlinePane *p = Outline(c);
+        GCHECK(p != nil && !p.hidden);
+        // Side by side: the text ends where the outline starts.
+        GCHECK(fabs(NSMaxX(EditorScroll(c).frame) - NSMinX(p.frame)) < 0.5);
+        GCHECK(NSWidth(p.frame) >= 220);
+    });
+    MCGuiWait(@"the outline is read", 5, ^BOOL {
+        MCJsonOutlinePane *p = Outline(MCGuiController());
+        return !p.parsing && p.outline.numberOfRows > 1;
+    });
+    MCGuiStep(@"the outline shows the tree", ^{
+        MCJsonOutlinePane *p = Outline(MCGuiController());
+        NSArray *rows = OutlineRows(p);
+        GCHECK(rows.count == 4);
+        GCHECK_EQ_STR(rows.count ? rows[0] : nil, @"root {3}");
+        GCHECK_EQ_STR(rows.count > 1 ? rows[1] : nil, @"name \"minicode\"");
+        GCHECK_EQ_STR(rows.count > 2 ? rows[2] : nil, @"tags [2]");
+        GCHECK_EQ_STR(rows.count > 3 ? rows[3] : nil, @"nested {1}");
+        GCHECK_EQ_STR(p.statusText, @"8 values");
+        MCGuiSnapshot(MCGuiController().window.contentView, @"previews-json");
+    });
+    MCGuiStep(@"selecting a node selects its text, the keyboard staying in the outline", ^{
+        EditorController *c = MCGuiController();
+        MCJsonOutlinePane *p = Outline(c);
+        [c.window makeFirstResponder:p.outline];
+        [p selectRow:1];
+        NSTextView *tv = EditorText(c);
+        GCHECK_EQ_STR([tv.string substringWithRange:tv.selectedRange], @"\"name\": \"minicode\"");
+        GCHECK(c.window.firstResponder == p.outline);
+        [p selectRow:2];
+        GCHECK_EQ_STR([tv.string substringWithRange:tv.selectedRange],
+                      @"\"tags\": [\"editor\", \"mac\"]");
+    });
+    MCGuiStep(@"the caret in the text selects its node, opening what holds it", ^{
+        EditorController *c = MCGuiController();
+        MCJsonOutlinePane *p = Outline(c);
+        NSTextView *tv = EditorText(c);
+        tv.selectedRange = NSMakeRange([tv.string rangeOfString:@"\"k\""].location + 1, 0);
+        const NSInteger row = p.outline.selectedRow;
+        GCHECK_EQ_STR(row >= 0 ? [p rowText:row] : nil, @"k 1");
+        GCHECK(RowStarting(p, @"deep {1}") >= 0);
+        // The text's caret was left where it was put.
+        GCHECK(tv.selectedRange.length == 0);
+    });
+    MCGuiStep(@"text that stops being JSON keeps the last outline, and says where", ^{
+        EditorController *c = MCGuiController();
+        NSTextView *tv = EditorText(c);
+        const NSUInteger at = [tv.string rangeOfString:@"\"tags\":"].location + 6;
+        [tv insertText:@"" replacementRange:NSMakeRange(at, 1)];   // drop the colon
+    });
+    MCGuiWait(@"the error is shown", 5, ^BOOL {
+        return [Outline(MCGuiController()).statusText hasPrefix:@"Not valid JSON"];
+    });
+    MCGuiStep(@"the error's place", ^{
+        MCJsonOutlinePane *p = Outline(MCGuiController());
+        GCHECK_EQ_STR(p.statusText, @"Not valid JSON: Expected ':' at line 3, column 10");
+        GCHECK(RowStarting(p, @"deep {1}") >= 0);   // the last good outline
+    });
+    MCGuiStep(@"fixed and grown, the outline follows and keeps what was open", ^{
+        EditorController *c = MCGuiController();
+        NSTextView *tv = EditorText(c);
+        const NSUInteger at = [tv.string rangeOfString:@"\"tags\""].location + 6;
+        [tv insertText:@": " replacementRange:NSMakeRange(at, 1)];
+        const NSUInteger end = [tv.string rangeOfString:@"}}\n}"].location + 2;
+        [tv insertText:@",\n  \"added\": null" replacementRange:NSMakeRange(end, 0)];
+    });
+    MCGuiWait(@"the new outline", 5, ^BOOL {
+        return RowStarting(Outline(MCGuiController()), @"added null") >= 0;
+    });
+    MCGuiStep(@"what was open stays open", ^{
+        MCJsonOutlinePane *p = Outline(MCGuiController());
+        GCHECK_EQ_STR(p.statusText, @"9 values");
+        GCHECK(RowStarting(p, @"deep {1}") >= 0);
+        GCHECK(RowStarting(p, @"k 1") >= 0);
+    });
+    MCGuiStep(@"Shift+Cmd+V hides the outline and shows it again", ^{
+        EditorController *c = MCGuiController();
+        GCHECK(c.canTogglePreview);
+        [c togglePreview:nil];
+        GCHECK(Outline(c).hidden);
+        GCHECK(EditorText(c).editable);
+        const CGFloat full = NSWidth(EditorScroll(c).frame);
+        [c togglePreview:nil];
+        GCHECK(!Outline(c).hidden);
+        GCHECK(NSWidth(EditorScroll(c).frame) < full);
+    });
+    MCGuiStep(@"another tab lets the outline go, and coming back brings it", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"plain.txt")]);
+        GCHECK(Outline(c).hidden);
+        GCHECK(Outline(c).outline.numberOfRows == 0);
+        GCHECK([c showFile:Fixture(@"data.json")]);
+        GCHECK(!Outline(c).hidden);
+        GCHECK([c valueForKey:@"dirty"] != nil && [[c valueForKey:@"dirty"] boolValue]);
+    });
+    MCGuiWait(@"the outline is read again", 5, ^BOOL {
+        return RowStarting(Outline(MCGuiController()), @"added null") >= 0;
     });
 }

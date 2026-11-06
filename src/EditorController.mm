@@ -3816,8 +3816,9 @@ static NSString *MCGroupedCount(long long n) {
     // empty: a blank preview of a new file looks like nothing opened.
     BOOL blank = [content stringByTrimmingCharactersInSet:
                      NSCharacterSet.whitespaceAndNewlineCharacterSet].length == 0;
-    // A CSV opens as its table; the text is a Shift+Cmd+V away.
-    if (MCViewerKindOverText(viewer)) self.viewerKind = viewer;
+    // A CSV opens as its table, the text a Shift+Cmd+V away; a JSON file
+    // gets an outline beside its text.
+    if (MCViewerKindOverText(viewer) || MCViewerKindBesideText(viewer)) self.viewerKind = viewer;
     self.previewMode = (self.isMarkdown || self.isLatex || MCViewerKindOverText(viewer)) && !blank;
     self.savedText = content;
     self.dirty = NO;
@@ -5184,7 +5185,8 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 }
 
 - (BOOL)canTogglePreview {
-    return self.isMarkdown || self.isLatex || MCViewerKindOverText(self.viewerKind);
+    return self.isMarkdown || self.isLatex || MCViewerKindOverText(self.viewerKind) ||
+           MCViewerKindBesideText(self.viewerKind);
 }
 
 // Decide what to show for the current file/mode.
@@ -5215,6 +5217,11 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
         [self renderMarkdown:self.sourceText];
     } else {
         [self displaySourceEditable];
+        // The JSON outline, beside the text it follows.
+        if (MCViewerKindBesideText(self.viewerKind)) {
+            [self.viewers showBesideTextView:self.textView kind:self.viewerKind];
+            [self relayoutRightArea];
+        }
     }
 }
 
@@ -7104,6 +7111,11 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 - (void)togglePreview:(id)sender {
     if (!self.canTogglePreview) {
         NSBeep();
+        return;
+    }
+    if (MCViewerKindBesideText(self.viewerKind)) {   // the JSON outline: shown or not
+        self.viewers.besideTextShown = !self.viewers.besideTextShown;
+        [self relayoutRightArea];
         return;
     }
     [self revealEditor];

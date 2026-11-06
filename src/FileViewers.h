@@ -15,7 +15,7 @@
 //     viewer comes back through onTextEdited as the file's whole new text.
 #import <Cocoa/Cocoa.h>
 
-@class MCQuickLookSlot, MCCsvTableView;
+@class MCQuickLookSlot, MCCsvTableView, MCJsonOutlinePane;
 
 typedef NS_ENUM(NSInteger, MCViewerKind) {
     MCViewerNone = 0,      // the text view, as before
@@ -23,6 +23,7 @@ typedef NS_ENUM(NSInteger, MCViewerKind) {
     MCViewerCsv,           // over the text: a table, comma (or ; |) separated
     MCViewerTsv,           // over the text: a table, tab separated
     MCViewerCsvLarge,      // without text: a CSV or TSV too large to edit
+    MCViewerJson,          // beside the text: an outline of a JSON file
 };
 
 // Files over this many bytes open read-only in the table (MCViewerCsvLarge).
@@ -38,6 +39,9 @@ BOOL MCViewerKindWithoutText(MCViewerKind kind);
 // A viewer shown over the tab's text in preview mode, which Shift+Cmd+V
 // flips to the text and back.
 BOOL MCViewerKindOverText(MCViewerKind kind);
+// A viewer shown beside the editable text (the JSON outline), which
+// Shift+Cmd+V hides and shows again.
+BOOL MCViewerKindBesideText(MCViewerKind kind);
 
 @interface MCFileViewers : NSObject
 // Views are made on first use, as subviews of `container` below `sibling`.
@@ -45,6 +49,9 @@ BOOL MCViewerKindOverText(MCViewerKind kind);
 @property(nonatomic, readonly) MCViewerKind shownKind;
 @property(nonatomic, readonly) MCQuickLookSlot *quickLook;   // nil until used
 @property(nonatomic, readonly) MCCsvTableView *csv;          // nil until used
+@property(nonatomic, readonly) MCJsonOutlinePane *json;      // nil until used
+// Whether a viewer beside the text shows (Shift+Cmd+V), for the window.
+@property(nonatomic, assign) BOOL besideTextShown;
 
 // An edit made in a viewer over the text: the file's whole new text, and
 // a name for Undo.
@@ -57,6 +64,8 @@ BOOL MCViewerKindOverText(MCViewerKind kind);
 // A viewer over the tab's text; shown again with new text (an undo, a
 // reload) it keeps its place.
 - (void)showText:(NSString *)text kind:(MCViewerKind)kind path:(NSString *)path;
+// A viewer beside the editable text, following it.
+- (void)showBesideTextView:(NSTextView *)textView kind:(MCViewerKind)kind;
 // Nothing shown any more (another tab, another kind of file, the text).
 - (void)clear;
 // Lays the viewers out in the editor's slot and returns what is left of it

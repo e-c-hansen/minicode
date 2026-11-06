@@ -2,6 +2,7 @@
 #import "FileViewers.h"
 #import "QuickLook.h"
 #import "CsvTable.h"
+#import "JsonOutlineView.h"
 #include "FileSniff.h"
 #include <string>
 
@@ -29,6 +30,7 @@ MCViewerKind MCViewerKindForFile(NSString *path) {
     case FileSniff::Kind::QuickLook: return MCViewerQuickLook;
     case FileSniff::Kind::Csv: return large ? MCViewerCsvLarge : MCViewerCsv;
     case FileSniff::Kind::Tsv: return large ? MCViewerCsvLarge : MCViewerTsv;
+    case FileSniff::Kind::Json: return MCViewerJson;
     default: return MCViewerNone;
     }
 }
@@ -39,6 +41,10 @@ BOOL MCViewerKindWithoutText(MCViewerKind kind) {
 
 BOOL MCViewerKindOverText(MCViewerKind kind) {
     return kind == MCViewerCsv || kind == MCViewerTsv;
+}
+
+BOOL MCViewerKindBesideText(MCViewerKind kind) {
+    return kind == MCViewerJson;
 }
 
 static BOOL IsTsvPath(NSString *path) {
@@ -52,14 +58,29 @@ static BOOL IsTsvPath(NSString *path) {
     MCViewerKind _kind;
     MCQuickLookSlot *_quickLook;
     MCCsvTableView *_csv;
+    MCJsonOutlinePane *_json;
 }
 
 - (instancetype)initWithContainer:(NSView *)container below:(NSView *)sibling {
     if ((self = [super init])) {
         _container = container;
         _sibling = sibling;
+        _besideTextShown = YES;
     }
     return self;
+}
+
+- (MCJsonOutlinePane *)json { return _json; }
+
+- (void)showBesideTextView:(NSTextView *)textView kind:(MCViewerKind)kind {
+    if (kind != _kind) [self clear];
+    if (kind != MCViewerJson) return;
+    if (!_json) {
+        _json = [[MCJsonOutlinePane alloc] initWithFrame:NSZeroRect];
+        [self addView:_json];
+    }
+    [_json attachToTextView:textView];
+    _kind = kind;
 }
 
 - (MCViewerKind)shownKind { return _kind; }
@@ -122,6 +143,7 @@ static BOOL IsTsvPath(NSString *path) {
 - (void)clear {
     [_quickLook clear];
     if (_kind == MCViewerCsv || _kind == MCViewerTsv || _kind == MCViewerCsvLarge) [_csv clear];
+    if (_kind == MCViewerJson) [_json attachToTextView:nil];
     _kind = MCViewerNone;
 }
 
@@ -140,8 +162,19 @@ static BOOL IsTsvPath(NSString *path) {
         _csv.hidden = !on;
         covers = covers || on;
     }
+    NSRect text = rect;
+    if (_json) {
+        // At the right of the text, a third of the slot within reason, and
+        // only when the text keeps room to be read.
+        const BOOL on = shown && _kind == MCViewerJson && _besideTextShown &&
+                        NSWidth(rect) >= 480;
+        const CGFloat w = on ? round(MIN(MAX(NSWidth(rect) * 0.3, 220), 420)) : 0;
+        _json.frame = NSMakeRect(NSMaxX(rect) - w, NSMinY(rect), w, NSHeight(rect));
+        _json.hidden = !on;
+        text.size.width -= w;
+    }
     if (coversText) *coversText = covers;
-    return rect;
+    return text;
 }
 
 - (NSView *)focusView {
