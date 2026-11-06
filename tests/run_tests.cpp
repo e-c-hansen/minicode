@@ -2330,6 +2330,7 @@ struct Panel {
                 break;
             case TermEvent::PromptStart:  events += 'A'; break;
             case TermEvent::CommandStart: events += 'C'; break;
+            case TermEvent::Title:        events += 'T'; break;
             case TermEvent::CommandEnd:
                 events += 'D'; lastStatus = e.status; break;
             case TermEvent::Directory:
@@ -3025,16 +3026,26 @@ void testTerminalScreen() {
         s.feed("one\r\ntwo\r\nthree\r\nfour");
         s.resize(10, 2);                     // the cursor's line stays on screen
         CHECK(s.text() == "three\nfour" && s.cursorRow() == 1 && s.cursorCol() == 4);
-        s.resize(3, 3);                      // columns are cut, rows added below
-        CHECK(s.text() == "thr\nfou" && s.cursorCol() == 2 && s.rows() == 3);
-        s.resize(6, 3);
-        CHECK(s.cols() == 6 && s.rowText(0) == "thr");
+        // Narrower: the lines wrap again (the scrollback is off here, so the
+        // rows pushed up are gone), the cursor staying after "four".
+        s.resize(3, 3);
+        CHECK(s.text() == "ee\nfou\nr" && s.rows() == 3);
+        CHECK(s.cursorRow() == 2 && s.cursorCol() == 1);
+        CHECK(!s.lineWraps(0) && s.lineWraps(1) && !s.lineWraps(2));
+        s.resize(6, 3);                      // wider: joined again
+        CHECK(s.cols() == 6 && s.text() == "ee\nfour");
+        CHECK(s.cursorRow() == 1 && s.cursorCol() == 4);
         CHECK(s.scrollBottom() == 2);
-        // A wide character split by the new edge becomes a blank.
+        // A wide character that no longer fits goes whole to the next row.
         TerminalScreen w(4, 1);
         w.feed("a\xE4\xB8\xAD");
         w.resize(2, 1);
-        CHECK(w.rowText(0) == "a");
+        CHECK(w.rowText(0) == "\xE4\xB8\xAD" && w.cell(0, 0).width == 2);
+        // On the alternate screen it is cut: a blank.
+        TerminalScreen wa(4, 1);
+        wa.feed("\033[?1049ha\xE4\xB8\xAD");
+        wa.resize(2, 1);
+        CHECK(wa.rowText(0) == "a");
         // The alternate screen resizes too.
         TerminalScreen alt(10, 4);
         alt.feed("\033[\?1049h\033[4;1Hlast");
@@ -3134,21 +3145,26 @@ void testTerminalScreen() {
         top.feed("$ ");
         top.resize(10, 3);
         CHECK(top.historySize() == 0 && top.rowText(0) == "$");
-        // Lines keep their width: narrowing cuts what shows, widening the
-        // screen later does not bring cut text back on screen rows, but the
-        // scrollback still has its old width.
+        // Scrollback lines are reflowed too: narrowing wraps a long line
+        // over two rows, which copy as one line, and widening joins them.
+        // (A line exactly as wide as the screen, ended by CR LF, is a hard
+        // line: it never wrapped.)
         TerminalScreen w(8, 2);
         w.setScrollbackLimit(10);
         w.feed("abcdefgh\r\nx\r\ny");
-        CHECK(w.lineWidth(-1) == 8);
+        CHECK(w.lineWidth(-1) == 8 && !w.lineWraps(-1));
         w.resize(4, 2);
-        CHECK(w.lineText(-1) == "abcdefgh" && w.lineWidth(-1) == 8);
-        CHECK(w.textBetween(-1, 0, -1, 3) == "abcdefgh");   // to the edge: all of it
-        CHECK(w.textBetween(-1, 1, -1, 2) == "bc");
-        CHECK(w.rowText(0) == "x" && w.lineWidth(0) == 4);
-        // A line pulled back down is cut to the screen's width.
+        CHECK(w.historySize() == 2 && w.lineText(-2) == "abcd" && w.lineText(-1) == "efgh");
+        CHECK(w.lineWraps(-2) && !w.lineWraps(-1));
+        CHECK(w.textBetween(-2, 0, -1, 3) == "abcdefgh");
+        CHECK(w.textBetween(-2, 1, -1, 0) == "bcde");
+        CHECK(w.rowText(0) == "x" && w.rowText(1) == "y" && w.cursorRow() == 1);
+        // A row added comes back down from the scrollback.
         w.resize(4, 3);
-        CHECK(w.rowText(0) == "abcd" && w.historySize() == 0);
+        CHECK(w.rowText(0) == "efgh" && w.historySize() == 1 && w.cursorRow() == 2);
+        w.resize(8, 3);
+        CHECK(w.historySize() == 0 && w.text() == "abcdefgh\nx\ny");
+        CHECK(w.cursorRow() == 2 && w.cursorCol() == 1);
         // On the alternate screen the main screen behind it keeps its
         // cursor's line too (the one saved on entering), and gets its rows
         // back after; the alternate screen itself never touches the
@@ -3273,9 +3289,9 @@ void testTerminalScreen() {
         // Lines: -2 "Error one", -1 "ok", 0 "error two ERROR", 1 "fine", 2 "last error".
         auto m = s.find("error", false);
         CHECK(m.size() == 4);
-        CHECK(m.size() == 4 && m[0] == (TermMatch{-2, 0, 5}) &&
-              m[1] == (TermMatch{0, 0, 5}) && m[2] == (TermMatch{0, 10, 5}) &&
-              m[3] == (TermMatch{2, 5, 5}));
+        CHECK(m.size() == 4 && m[0] == (TermMatch{-2, 0, 5, -2, 0 + 5}) &&
+              m[1] == (TermMatch{0, 0, 5, 0, 0 + 5}) && m[2] == (TermMatch{0, 10, 5, 0, 10 + 5}) &&
+              m[3] == (TermMatch{2, 5, 5, 2, 5 + 5}));
         auto exact = s.find("error", true);
         CHECK(exact.size() == 2 && exact[0].line == 0 && exact[1].line == 2);
         CHECK(s.find("", false).empty() && s.find("nothing", false).empty());
@@ -3289,13 +3305,13 @@ void testTerminalScreen() {
         w.setScrollbackLimit(10);
         w.feed("x\xe4\xb8\xad\xe6\x96\x87y \xc3\x89T\xc3\x89\r\n");   // x中文y ÉTÉ
         auto wm = w.find("\xe4\xb8\xad\xe6\x96\x87y", false);
-        CHECK(wm.size() == 1 && wm[0] == (TermMatch{0, 1, 5}));
+        CHECK(wm.size() == 1 && wm[0] == (TermMatch{0, 1, 5, 0, 1 + 5}));
         auto em = w.find("\xc3\xa9t\xc3\xa9", false);            // été
-        CHECK(em.size() == 1 && em[0] == (TermMatch{0, 7, 3}));
+        CHECK(em.size() == 1 && em[0] == (TermMatch{0, 7, 3, 0, 7 + 3}));
         w.feed("cafe\xcc\x81 cafe\r\n");                         // café (e + U+0301), cafe
         auto cm = w.find("cafe", false);
         // "cafe" + a combining accent is not "cafe": only the plain one counts.
-        CHECK(cm.size() == 1 && cm[0] == (TermMatch{0, 5, 4}));
+        CHECK(cm.size() == 1 && cm[0] == (TermMatch{0, 5, 4, 0, 5 + 4}));
         // In the scrollback too, packed lines with wide characters included.
         w.feed("\r\n\r\n");
         auto hm = w.find("\xe4\xb8\xad\xe6\x96\x87y", false);
@@ -3307,7 +3323,7 @@ void testTerminalScreen() {
         // The alternate screen is searched alone: its own rows, no scrollback.
         s.feed("\033[?1049h\033[Hvim error");
         auto am = s.find("error", false);
-        CHECK(am.size() == 1 && am[0] == (TermMatch{0, 4, 5}));
+        CHECK(am.size() == 1 && am[0] == (TermMatch{0, 4, 5, 0, 4 + 5}));
         s.feed("\033[?1049l");
         CHECK(s.find("error", false).size() == 4);
         // A long scrollback stays quick enough to search as one types.
@@ -3353,7 +3369,7 @@ void testTerminalScreen() {
         // Other modes report their state, unknown ones 0, ANSI modes too.
         s.feed("\033[?2004h\033[?2004$p\033[?25$p\033[?1000$p\033[4$p\033[4h\033[4$p");
         CHECK(s.takeReplies() ==
-              "\033[?2004;1$y\033[?25;1$y\033[?1000;0$y\033[4;2$y\033[4;1$y");
+              "\033[?2004;1$y\033[?25;1$y\033[?1000;2$y\033[4;2$y\033[4;1$y");
         // DECRQM never reaches the screen as text or a mode change.
         CHECK(s.rowText(0).empty() && s.bracketedPaste());
     }
@@ -9463,6 +9479,7 @@ static void testMultiCaretOccurrences() {
 #include "lsp_also_tests.inc"
 #include "find_tests.inc"
 #include "gutter_tests.inc"
+#include "terminal_reflow_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9480,6 +9497,8 @@ int main() {
     testMarkdownEdit();
     testTerminalStream();
     testTerminalScreen();
+    testTerminalReflow();
+    testTerminalMouse();
     testSettings();
     testSettingsColorEditing();
     testLineComments();
