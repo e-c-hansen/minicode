@@ -372,6 +372,7 @@ void MCSetFolderToolsConsent(NSString *root, BOOL allow) {
     // Whether a folder configures Ruff, asked again after a file opens.
     NSMutableDictionary<NSString *, NSNumber *> *_ruffConfigured;
     NSString *_transient;     // a brief message ("No definition found")
+    BOOL _progressPending;    // a redraw for $/progress is queued
     // Every server's diagnostics, by canonical URI and server: for the
     // files open in tabs (with the text they were computed on, so they are
     // drawn on the text as it is now), and for files no tab has open (a
@@ -562,6 +563,11 @@ static NSHashTable<LspSession *> *AllSessions(void) {
     st.main = main;
     st.state = (Lsp::ServerState)(e ? e.state : MCLspStateIdle);
     st.name = Std(e.server.name ?: e.serverName ?: @"");
+    if (e.server)
+        if (const Lsp::Progress *p = e.server.client.progress()) {
+            st.progress = Lsp::progressText(*p);
+            st.progressBegun = p->begun;
+        }
     return st;
 }
 
@@ -914,6 +920,11 @@ static NSHashTable<LspSession *> *AllSessions(void) {
     c.onWatchersChanged = [weakSelf] {
         dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf updateFileWatcher]; });
     };
+    // $/progress: the status bar and the popover say what it is doing.
+    c.onProgress = [weakSelf, weakServer] {
+        MCLspServer *s = weakServer;
+        if (s && !s.stopping) [weakSelf progressChanged:s];
+    };
     c.onProtocolError = [weakServer](const std::string &problem) {
         NSLog(@"MiniCode: %@: %s", weakServer.name, problem.c_str());
     };
@@ -936,6 +947,20 @@ static NSHashTable<LspSession *> *AllSessions(void) {
     if (!e) return;
     e.state = MCLspStateRunning;
     [self changed];
+}
+
+// A server began, reported or ended work. Coalesced to one redraw a
+// run-loop turn, since a server indexing reports many times a second.
+- (void)progressChanged:(MCLspServer *)server {
+    if (![self entryOf:server] || _progressPending) return;
+    _progressPending = YES;
+    __weak LspSession *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        LspSession *me = weakSelf;
+        if (!me) return;
+        me->_progressPending = NO;
+        [me changed];
+    });
 }
 
 - (void)server:(MCLspServer *)server said:(NSString *)message {
@@ -1117,6 +1142,8 @@ static NSHashTable<LspSession *> *AllSessions(void) {
         info.program = e.server.program;
         info.command = e.command;
         info.pid = e.server.pid;
+        if (const Lsp::Progress *p = e.server.client.progress())
+            info.progress = NS(Lsp::progressText(*p));
     } else {
         // What would run: the first command that is installed.
         std::vector<std::string> commands = [self commandsForKey:k];

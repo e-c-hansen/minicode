@@ -1050,7 +1050,15 @@ view is disposed (on `unrealize`), or dispose loops forever.
   2, 4 s; the fourth crash in a row (three minutes up clears it) stays Crashed.
   The popover lives in a static (`gServersPopover`), so it holds sessions
   weakly (a strong capture kept a closed window's session alive).
-- **Processes** (`MCLspServer`): pipes, reads on a background queue, writes on
+  `$/progress` (`window.workDoneProgress`, `Client::progress`): the newest
+  work begun on a running server stands in for "no problems" in
+  `Lsp::statusLine` and is a line on the server's card; redraws coalesce to
+  one a run-loop turn.
+- **Processes** (`MCLspServer`): pipes; stdout is framed and parsed by an
+  `Lsp::Reader` on the server's own serial read queue and only the parsed
+  messages hop to the main thread (`Client::deliver`), where the Client
+  stays single-threaded, and are freed back on the read queue (a 6 MB
+  answer parsed on main stalled it 50 ms); writes on
   a serial queue with raw `write()` and `F_SETNOSIGPIPE`; stderr drained (a
   full pipe stalls clangd); `$MINICODE_LSP_LOG` logs all traffic. Window close:
   shutdown, exit, stdin closed, SIGTERM at 2 s, SIGKILL at 3; quit:
