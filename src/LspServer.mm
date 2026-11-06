@@ -2,6 +2,8 @@
 // running it (MCLspServer); see LspServer.h.
 #import "LspShared.h"
 #import "LspServer.h"
+#include <atomic>
+#include <memory>
 
 // ------------------------------------------------------ finding a server
 // Folders inside `dir`, newest version first (v22.17.0 before v18.20.4,
@@ -170,7 +172,16 @@ static NSMutableSet<MCLspServer *> *gServers;   // every running server
     std::unique_ptr<Lsp::Client> _client;
     NSFileHandle *_log;
     NSMutableData *_errTail;   // the end of what it wrote to stderr
+    // Bytes handed to the write queue and not yet written. A server that
+    // stops reading (hung, not crashed) blocks the queue's write(), and
+    // every didChange after that waited in memory for ever.
+    std::shared_ptr<std::atomic<size_t>> _queued;
+    NSString *_stopReason;     // why minicode ended it, for exitDescription
 }
+
+// More than this waiting for a server to read, and it is taken as hung.
+static size_t gMaxQueuedBytes = 64u << 20;
+void MCLspSetMaxQueuedBytes(size_t bytes) { gMaxQueuedBytes = bytes ? bytes : 64u << 20; }
 
 - (instancetype)initWithKey:(NSString *)key argv:(NSArray<NSString *> *)argv
                        root:(NSString *)root {
@@ -182,6 +193,7 @@ static NSMutableSet<MCLspServer *> *gServers;   // every running server
     _program = [argv.firstObject copy];
     _name = [ServerDisplayName(key, argv) copy];
     _errTail = [NSMutableData data];
+    _queued = std::make_shared<std::atomic<size_t>>(0);
     _task = [[NSTask alloc] init];
     _task.executableURL = [NSURL fileURLWithPath:argv.firstObject];
     _task.arguments = [argv subarrayWithRange:NSMakeRange(1, argv.count - 1)];
@@ -272,11 +284,20 @@ static NSMutableSet<MCLspServer *> *gServers;   // every running server
 }
 
 - (void)writeBytes:(const std::string &)bytes {
-    if (_inputClosed) return;
+    if (_inputClosed || _unresponsive) return;
     [self logLine:@"--> " bytes:bytes];
+    // Only while earlier messages still wait: one big message (a huge
+    // file's didChange) to a server that reads is no sign of a hang.
+    const size_t waiting = _queued->load();
+    if (waiting > 0 && waiting + bytes.size() > gMaxQueuedBytes) {
+        [self stopUnresponsive:waiting];
+        return;
+    }
     NSData *data = [NSData dataWithBytes:bytes.data() length:bytes.size()];
     int fd = _inputFd;
     NSFileHandle *keep = _input;   // keeps the descriptor open until written
+    std::shared_ptr<std::atomic<size_t>> queued = _queued;
+    *queued += data.length;
     dispatch_async(_writeQueue, ^{
         (void)keep;
         const char *p = (const char *)data.bytes;
@@ -285,13 +306,30 @@ static NSMutableSet<MCLspServer *> *gServers;   // every running server
             ssize_t n = write(fd, p, left);
             if (n < 0) {
                 if (errno == EINTR) continue;
-                return;   // EPIPE: the server is gone; its exit is handled elsewhere
+                break;   // EPIPE: the server is gone; its exit is handled elsewhere
             }
             p += n;
             left -= (size_t)n;
         }
+        *queued -= data.length;
     });
 }
+
+// The server has not read what it was sent for a long while: nothing more
+// is queued, and it is killed, so it goes through the usual exit (and the
+// automatic restart) with the reason in its exit description.
+- (void)stopUnresponsive:(size_t)waiting {
+    if (_unresponsive) return;
+    _unresponsive = YES;
+    _stopReason = [NSString stringWithFormat:
+        @"stopped reading what minicode sent (%@ waiting), so it was stopped",
+        [NSByteCountFormatter stringFromByteCount:(long long)waiting
+                                       countStyle:NSByteCountFormatterCountStyleFile]];
+    NSLog(@"MiniCode: %@ %@", _name, _stopReason);
+    if (_running && _pid > 0) kill(_pid, SIGKILL);
+}
+
+- (size_t)queuedBytes { return _queued->load(); }
 
 // EOF on the server's stdin, after anything already queued. Servers exit on
 // it, which is the backstop if they ignore `exit`.
@@ -337,6 +375,7 @@ static NSMutableSet<MCLspServer *> *gServers;   // every running server
                         ? [NSString stringWithFormat:@"killed by signal %d", status]
                         : [NSString stringWithFormat:@"exited with status %d", status];
     NSString *last = [self lastErrorLine];
+    if (_stopReason) how = _stopReason;
     _exitDescription = last ? [NSString stringWithFormat:@"%@: %@", how, last] : how;
     [self closeInput];
     [gServers removeObject:self];

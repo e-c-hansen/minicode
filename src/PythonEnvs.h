@@ -56,5 +56,10 @@ std::vector<Interpreter> find(const Context& ctx);
 // The automatic choice: the project's environment, else $VIRTUAL_ENV's,
 // else $CONDA_PREFIX's, else "" (the server's own default).
 std::string automatic(const Context& ctx);
+// The same with the project's own environment left out unless the user
+// allowed it (allowProject): an environment inside the open folder was made
+// by whoever made the folder (an agent's worktree, a clone), and a language
+// server runs its interpreter and the programs beside it.
+std::string automatic(const Context& ctx, bool allowProject);
 
 }  // namespace PythonEnvs

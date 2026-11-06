@@ -26,6 +26,10 @@
 // last line it wrote to stderr.
 @property(nonatomic, readonly, copy) NSString *exitDescription;
 @property(nonatomic, readonly) BOOL processRunning;   // NSTask's view, any thread
+// It stopped reading its input until too much waited (64 MB): nothing more
+// is sent, and it was killed.
+@property(nonatomic, readonly) BOOL unresponsive;
+@property(nonatomic, readonly) size_t queuedBytes;   // sent, not yet read
 @property(nonatomic, copy) void (^onExit)(MCLspServer *server);
 - (instancetype)initWithKey:(NSString *)key argv:(NSArray<NSString *> *)argv
                        root:(NSString *)root;
@@ -39,5 +43,8 @@
 NSArray<NSString *> *MCResolveCommand(const std::string &command,
                                       NSArray<NSString *> *first);
 std::vector<std::string> ArgvWords(NSArray<NSString *> *argv);
+// How much may wait for a server to read before it is taken as hung (tests;
+// 0 puts back the default, 64 MB).
+void MCLspSetMaxQueuedBytes(size_t bytes);
 // How a server is named in the status bar: pyright, not pyright-langserver.
 NSString *ServerDisplayName(NSString *key, NSArray<NSString *> *argv);

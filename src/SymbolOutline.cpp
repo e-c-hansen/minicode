@@ -751,13 +751,19 @@ std::vector<Symbol> clike(const std::u16string& text, Dialect dialect) {
         }
         // The header may run over several lines; the declaration is the
         // shortest tail of whole lines that reads as one (Swift, Go and Kotlin
-        // need no semicolon before it).
+        // need no semicolon before it). Only the last 20 lines are tried:
+        // each tail is copied and classified, so trying every one was
+        // quadratic in a header's lines (30,000 brace-free lines before one
+        // `{` took a minute), and no real declaration runs longer.
         Decl d;
         if (!header.empty()) {
+            const size_t kMaxHeaderLines = 20;
             std::vector<size_t> lineStarts;   // indices where a header line begins
             for (size_t i = 0; i < header.size(); i++)
                 if (i == 0 || header[i].line != header[i - 1].line) lineStarts.push_back(i);
-            for (size_t k = lineStarts.size(); k-- > 0;) {
+            const size_t lowest =
+                lineStarts.size() > kMaxHeaderLines ? lineStarts.size() - kMaxHeaderLines : 0;
+            for (size_t k = lineStarts.size(); k-- > lowest;) {
                 std::vector<Tok> tail(header.begin() + (long)lineStarts[k], header.end());
                 int b = 0;
                 bool ok = true;

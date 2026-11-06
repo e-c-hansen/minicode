@@ -82,6 +82,8 @@
         n.range = NSMakeRange((NSUInteger)a, (NSUInteger)(b - a));
         n.severity = m.severity;
         n.message = m.message;
+        n.unnecessary = m.unnecessary;
+        n.deprecated = m.deprecated;
         [kept addObject:n];
     }
     _diagnostics = kept;
@@ -179,6 +181,34 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
         if (NSMaxRange(r) < visible.location || r.location > NSMaxRange(visible)) continue;
         if ([_folds rangeIsHidden:r]) continue;   // folded away
         NSColor *color = SeverityColor(m.severity);
+        // As VS Code draws them: code never used is faded (pyright's "x is
+        // not accessed" hints), a deprecated name struck through, and a
+        // hint with neither gets a few dots under its start, never a
+        // squiggle like a warning's.
+        if (m.unnecessary || m.deprecated || m.severity == 4) {
+            NSColor *bg = [[AppSettings shared] background:Surface::Editor];
+            NSColor *ink = self.textColor ?: [NSColor textColor];
+            __block BOOL first = YES;
+            [self enumerateRectsForRange:r block:^(NSRect rect) {
+                if (!NSIntersectsRect(NSInsetRect(rect, 0, -3), dirty)) return;
+                if (m.unnecessary && rect.size.width > 0) {
+                    [[bg colorWithAlphaComponent:0.5 * bg.alphaComponent] set];
+                    NSRectFillUsingOperation(rect, NSCompositingOperationSourceOver);
+                }
+                if (m.deprecated && rect.size.width > 0) {
+                    NSRect line = NSMakeRect(rect.origin.x, round(NSMidY(rect)), rect.size.width, 1);
+                    [[ink colorWithAlphaComponent:0.8] set];
+                    NSRectFillUsingOperation(line, NSCompositingOperationSourceOver);
+                }
+                if (m.severity == 4 && !m.unnecessary && !m.deprecated && first) {
+                    [color set];
+                    for (int k = 0; k < 3; k++)
+                        NSRectFill(NSMakeRect(rect.origin.x + 1 + k * 3, NSMaxY(rect) - 2, 1.5, 1.5));
+                }
+                first = NO;
+            }];
+            if (m.severity == 4) continue;
+        }
         [self enumerateRectsForRange:r block:^(NSRect rect) {
             if (!NSIntersectsRect(NSInsetRect(rect, 0, -3), dirty)) return;
             CGFloat width = MAX(rect.size.width, 6);

@@ -119,6 +119,10 @@ std::string cargoEdition(const std::string& text);
 // Is the text a JSON object with this key at its top (package.json's
 // "prettier")?
 bool jsonHasKey(const std::string& text, const std::string& key);
+// Does a package.json name this package in dependencies or devDependencies?
+// Prettier needs no configuration file, so a project that installs it uses
+// it with its defaults.
+bool jsonHasDependency(const std::string& text, const std::string& name);
 // Does an .editorconfig have a section that applies to shell scripts
 // ([*], or a glob naming sh or bash)?
 bool editorconfigCoversShell(const std::string& text);

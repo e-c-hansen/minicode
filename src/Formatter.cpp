@@ -44,7 +44,7 @@ std::string join(const std::string& dir, const std::string& name) {
 
 // A project file that says a tool is configured: the file itself, or a
 // table/section in it.
-enum class Kind { Any, TomlTable, IniSection, EditorConfigShell, JsonKey };
+enum class Kind { Any, TomlTable, IniSection, EditorConfigShell, JsonKey, JsonDependency };
 struct Marker {
     const char* file;
     Kind kind;
@@ -134,7 +134,11 @@ const std::vector<Language>& table() {
                {"prettier.config.ts", Kind::Any, ""},
                {"prettier.config.cts", Kind::Any, ""},
                {"prettier.config.mts", Kind::Any, ""},
-               {"package.json", Kind::JsonKey, "prettier"}},
+               {"package.json", Kind::JsonKey, "prettier"},
+               // Prettier runs with its defaults when there is no file: a
+               // project that installs it formats with it.
+               {"package.json", Kind::JsonDependency, "prettier"},
+               {"node_modules/.bin/prettier", Kind::Any, ""}},
               false, MC_JS_EXTENSIONS},
              {"biome", "", "biome format --stdin-file-path={file}",
               {{"biome.json", Kind::Any, ""}, {"biome.jsonc", Kind::Any, ""}},
@@ -196,6 +200,7 @@ bool markerMatches(const Marker& m, const std::string& dir, const Fs& fs,
         case Kind::IniSection: return iniHasSection(text, m.section);
         case Kind::EditorConfigShell: return editorconfigCoversShell(text);
         case Kind::JsonKey: return jsonHasKey(text, m.section);
+        case Kind::JsonDependency: return jsonHasDependency(text, m.section);
         case Kind::Any: break;
     }
     return true;
@@ -401,6 +406,13 @@ bool fromNodeModules(const std::string& program) {
 bool jsonHasKey(const std::string& text, const std::string& key) {
     Json j;
     return Json::parse(text, j) && j.isObject() && j.has(key);
+}
+
+bool jsonHasDependency(const std::string& text, const std::string& name) {
+    Json j;
+    if (!Json::parse(text, j) || !j.isObject()) return false;
+    return (j["dependencies"].isObject() && j["dependencies"].has(name)) ||
+           (j["devDependencies"].isObject() && j["devDependencies"].has(name));
 }
 
 std::string programName(const std::string& program) {

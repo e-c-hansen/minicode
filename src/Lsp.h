@@ -19,6 +19,9 @@
 @property(nonatomic, assign) NSRange range;
 @property(nonatomic, assign) NSInteger severity;   // 1 error ... 4 hint
 @property(nonatomic, copy) NSString *message;
+// The diagnostic's tags: code never used, drawn faded (with no squiggle when
+// it is only a hint), and a deprecated name, struck through.
+@property(nonatomic, assign) BOOL unnecessary, deprecated;
 @end
 
 @class MCMultiCarets;
@@ -183,6 +186,9 @@ extern NSNotificationName const MCLspSessionDidChangeNotification;
 // Posted (object: the folder's path) when a folder's Python interpreter is
 // chosen, so every window on that folder follows.
 extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
+// The user answered for a folder's own Python environment; the object is the
+// folder's resolved path.
+extern NSNotificationName const MCPythonEnvironmentConsentDidChangeNotification;
 
 @interface LspSession : NSObject
 - (instancetype)initWithTextView:(CodeTextView *)textView root:(NSString *)root;
@@ -205,6 +211,9 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 // one whose text bufferText gives is kept open on its language's server
 // (when that server is running), so the server sees unsaved tabs too.
 @property(nonatomic, copy) NSArray<NSString *> *(^openPaths)(void);
+// The file the window's tab shows, also when it is no source to edit (a
+// preview, a picture, a PDF), so an edit across files comes back to it.
+@property(nonatomic, copy) NSString *(^shownTabPath)(void);
 // Close the tab of a file that an edit opened and then could not change.
 @property(nonatomic, copy) void (^closeFile)(NSString *path);
 // The diagnostics changed (published, a file closed, a server stopped):
@@ -219,6 +228,9 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 // disk): the servers' open documents follow.
 - (void)tabsChanged;
 - (void)documentSaved;
+// A tab's file was written (Save All, auto-save, a background tab): didSave
+// to every server that has the file open, with the text written.
+- (void)documentSavedAtPath:(NSString *)path text:(NSString *)text;
 // The folder changed: stop every server, they belong to the old root.
 - (void)setRoot:(NSString *)root;
 @property(nonatomic, readonly, copy) NSString *root;
@@ -325,11 +337,28 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 - (void)restartCurrentServer;
 
 // ---- the Python interpreter
-// What the Python server analyses with for the open file (nil: left to the
-// server), and where the choice came from.
+// The interpreter for the open file (nil: none found), and where the choice
+// came from: this folder's choice, python.interpreter, then the folder's own
+// environment (.venv), $VIRTUAL_ENV and $CONDA_PREFIX. For a run the user
+// starts (Run File).
 - (NSString *)pythonInterpreterWithSource:(NSString **)source;
-// The same, leaving this folder's own choice out: what "Automatic" means.
+// What the Python servers analyse with: the same, except that the folder's
+// own environment counts only once the user allowed it for this folder,
+// since a server runs it and the programs beside it (nil: left to the server).
+- (NSString *)serverPythonInterpreterWithSource:(NSString **)source;
+// The servers' choice leaving this folder's own choice out: what
+// "Automatic" means.
 - (NSString *)defaultPythonInterpreterWithSource:(NSString **)source;
+// The folder's own environment (".venv", as the folder names it) when the
+// open Python file would use it but the user has not been asked for this
+// folder yet; nil otherwise. Nothing runs from it until they say yes.
+@property(nonatomic, readonly, copy) NSString *folderEnvironmentAwaitingConsent;
+// The answer, remembered per folder; every window on the folder restarts
+// its Python servers with it.
+- (void)setFolderEnvironmentAllowed:(BOOL)allow;
+- (BOOL)folderEnvironmentAllowed;
+// "allow", "deny", or nil (not asked).
+- (NSString *)folderEnvironmentConsent;
 // This folder's own choice, or nil for none (the setting or automatic).
 - (NSString *)chosenPythonInterpreter;
 // Store a choice for this folder (nil: none) and apply it.

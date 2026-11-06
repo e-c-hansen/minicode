@@ -825,12 +825,9 @@ static const NSUInteger kMaxClosedTabs = 50;
     if (t == _activeTab) {
         [self.lsp documentSaved];
     } else {
-        // P5 (language servers) adds -[LspSession documentSavedAtPath:text:]
-        // for a tab saved in the background; until then nothing is sent.
-        SEL bg = NSSelectorFromString(@"documentSavedAtPath:text:");
-        if ([self.lsp respondsToSelector:bg])
-            ((void (*)(id, SEL, NSString *, NSString *))[self.lsp methodForSelector:bg])(
-                self.lsp, bg, t.currentPath, text);
+        // A tab saved in the background (Save All, auto-save, closing):
+        // didSave to every server that has the file open.
+        [self.lsp documentSavedAtPath:t.currentPath text:text];
     }
     [self updateTitle];
     return YES;

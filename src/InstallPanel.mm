@@ -343,6 +343,7 @@ const CGFloat kMCInstallBarHeight = 30;
     NSButton *_install, *_mute, *_close;
     NSView *_line;
     NSColor *_textColor;
+    NSString *_muteTitle;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -356,7 +357,8 @@ const CGFloat kMCInstallBarHeight = 30;
     _install.font = Small();
     _install.bezelStyle = NSBezelStyleRounded;
     _install.keyEquivalent = @"";
-    _mute = [NSButton buttonWithTitle:@"Don't Show Again" target:self action:@selector(mute:)];
+    _muteTitle = @"Don't Show Again";
+    _mute = [NSButton buttonWithTitle:_muteTitle target:self action:@selector(mute:)];
     _mute.controlSize = NSControlSizeSmall;
     _mute.font = Small();
     _mute.bordered = NO;
@@ -377,11 +379,36 @@ const CGFloat kMCInstallBarHeight = 30;
 
 - (void)setServerKey:(NSString *)key {
     _serverKey = [key copy];
+    _consentEnvironment = nil;
     NSString *language = NS(Lsp::serverDisplayName(Std(key)));
     _label.stringValue = [NSString stringWithFormat:
         @"No %@ language server is installed, so there are no completions or error checks.",
         language];
     _label.toolTip = _label.stringValue;
+    [self setButtons:@"Install…" mute:@"Don't Show Again"
+               close:@"Close (it stays closed until minicode starts again)"];
+}
+
+- (void)setConsentEnvironment:(NSString *)env {
+    _consentEnvironment = [env copy];
+    if (!env) return;
+    _label.stringValue = [NSString stringWithFormat:
+        @"This folder has its own Python environment, %@. The language servers run "
+         "programs from it only if you allow it.", env];
+    _label.toolTip = [NSString stringWithFormat:
+        @"Without it, completions and checks do not see the packages installed in %@. "
+         "The answer is kept for this folder; Select Python Interpreter changes it later.", env];
+    [self setButtons:@"Use It" mute:@"Don't Use It"
+               close:@"Ask again next time minicode starts"];
+}
+
+- (void)setButtons:(NSString *)install mute:(NSString *)mute close:(NSString *)closeTip {
+    _install.title = install;
+    _muteTitle = mute;
+    _close.toolTip = closeTip;
+    if (_textColor) [self setBackground:[NSColor colorWithCGColor:self.layer.backgroundColor]
+                                   text:_textColor];
+    self.needsLayout = YES;
     [self layout];
 }
 
@@ -391,7 +418,7 @@ const CGFloat kMCInstallBarHeight = 30;
     _label.textColor = text;
     NSDictionary *attrs = @{NSFontAttributeName: Small(),
                             NSForegroundColorAttributeName: [text colorWithAlphaComponent:0.7]};
-    _mute.attributedTitle = [[NSAttributedString alloc] initWithString:@"Don't Show Again"
+    _mute.attributedTitle = [[NSAttributedString alloc] initWithString:_muteTitle
                                                             attributes:attrs];
     _close.attributedTitle = [[NSAttributedString alloc] initWithString:@"×"
         attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:15],

@@ -181,6 +181,7 @@
         return t.sourceText;
     };
     self.lsp.showNote = ^(NSString *message) { [weakSelf showStatusNote:message]; };
+    self.lsp.shownTabPath = ^NSString *{ return weakSelf.currentPath; };
     // Every tab's file stays open on its server, with the tab's text.
     self.lsp.openPaths = ^NSArray<NSString *> *{
         EditorController *s = weakSelf;

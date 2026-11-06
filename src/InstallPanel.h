@@ -56,6 +56,10 @@ NSPopover *MCShowInstallPopover(MCInstallView *view, NSView *anchor, NSRect rect
 // missing: what is missing, Install…, Don't Show Again, and a close button.
 @interface MCInstallBar : NSView
 @property(nonatomic, copy) NSString *serverKey;   // sets the text
+// Asks instead whether the language servers may use the folder's own Python
+// environment (".venv"): the buttons read Use It and Don't Use It. Setting
+// serverKey goes back to the install text.
+@property(nonatomic, copy) NSString *consentEnvironment;
 @property(nonatomic, readonly, copy) NSString *text;
 @property(nonatomic, readonly) NSButton *installButton;
 @property(nonatomic, copy) void (^onInstall)(NSButton *sender);

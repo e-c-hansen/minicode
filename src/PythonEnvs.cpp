@@ -380,8 +380,10 @@ std::vector<Interpreter> find(const Context& ctx) {
     return c.out;
 }
 
-std::string automatic(const Context& ctx) {
-    std::string p = projectInterpreter(ctx.fileDir, ctx.root);
+std::string automatic(const Context& ctx) { return automatic(ctx, true); }
+
+std::string automatic(const Context& ctx, bool allowProject) {
+    std::string p = allowProject ? projectInterpreter(ctx.fileDir, ctx.root) : "";
     if (p.empty()) p = interpreterIn(envValue(ctx, "VIRTUAL_ENV"));
     if (p.empty()) p = interpreterIn(envValue(ctx, "CONDA_PREFIX"));
     return p;
