@@ -2,6 +2,7 @@
 #include "JsonOutline.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 
 namespace JsonOutline {
@@ -31,9 +32,11 @@ struct Parser {
     size_t pos = 0;
     size_t maxNodes;
     Outline &out;
+    bool jsonc;
     bool failed = false;
 
-    Parser(const std::string &text, size_t max, Outline &o) : s(text), maxNodes(max), out(o) {}
+    Parser(const std::string &text, size_t max, Outline &o, bool comments)
+        : s(text), maxNodes(max), out(o), jsonc(comments) {}
 
     bool fail(const char *msg) {
         if (!failed) {
@@ -44,10 +47,23 @@ struct Parser {
         return false;
     }
 
-    void ws() {
-        while (pos < s.size() &&
-               (s[pos] == ' ' || s[pos] == '\t' || s[pos] == '\n' || s[pos] == '\r'))
-            pos++;
+    // Whitespace, and with jsonc comments too. An unclosed /* fails.
+    bool ws() {
+        while (pos < s.size()) {
+            const char c = s[pos];
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                pos++;
+            } else if (jsonc && c == '/' && pos + 1 < s.size() && s[pos + 1] == '/') {
+                while (pos < s.size() && s[pos] != '\n' && s[pos] != '\r') pos++;
+            } else if (jsonc && c == '/' && pos + 1 < s.size() && s[pos + 1] == '*') {
+                const size_t close = s.find("*/", pos + 2);
+                if (close == std::string::npos) return fail("Unterminated comment");
+                pos = close + 2;
+            } else {
+                break;
+            }
+        }
+        return true;
     }
 
     int hex4(size_t at) const {
@@ -155,7 +171,7 @@ struct Parser {
 
     // One value at pos (whitespace skipped); its node's index in *made.
     bool value(long parent, int depth, size_t *made) {
-        ws();
+        if (!ws()) return false;
         if (pos >= s.size()) return fail("Unexpected end of text");
         if (depth > 512) return fail("Nested too deeply");
         if (out.nodes.size() >= maxNodes) {
@@ -172,17 +188,21 @@ struct Parser {
         if (c == '{') {
             out.nodes[me].kind = Kind::Object;
             pos++;
-            ws();
-            if (pos < s.size() && s[pos] == '}') {
+            if (!ws()) ok = false;
+            else if (pos < s.size() && s[pos] == '}') {
                 pos++;
             } else {
                 while (true) {
-                    ws();
+                    if (!ws()) { ok = false; break; }
+                    if (jsonc && pos < s.size() && s[pos] == '}' && !out.nodes[me].children.empty()) {
+                        pos++;   // a trailing comma
+                        break;
+                    }
                     if (pos >= s.size() || s[pos] != '"') { ok = fail("Expected a string key"); break; }
                     const size_t keyAt = pos;
                     std::string key;
                     if (!string(&key, SIZE_MAX, nullptr)) { ok = false; break; }
-                    ws();
+                    if (!ws()) { ok = false; break; }
                     if (pos >= s.size() || s[pos] != ':') { ok = fail("Expected ':'"); break; }
                     pos++;
                     size_t child = 0;
@@ -194,7 +214,7 @@ struct Parser {
                         out.nodes[me].children.push_back(child);
                     }
                     if (!good) { ok = false; break; }
-                    ws();
+                    if (!ws()) { ok = false; break; }
                     if (pos < s.size() && s[pos] == ',') { pos++; continue; }
                     if (pos < s.size() && s[pos] == '}') { pos++; break; }
                     ok = fail("Expected ',' or '}'");
@@ -204,12 +224,16 @@ struct Parser {
         } else if (c == '[') {
             out.nodes[me].kind = Kind::Array;
             pos++;
-            ws();
-            if (pos < s.size() && s[pos] == ']') {
+            if (!ws()) ok = false;
+            else if (pos < s.size() && s[pos] == ']') {
                 pos++;
             } else {
                 long index = 0;
                 while (true) {
+                    if (jsonc && index > 0) {
+                        if (!ws()) { ok = false; break; }
+                        if (pos < s.size() && s[pos] == ']') { pos++; break; }   // a trailing comma
+                    }
                     size_t child = 0;
                     const bool good = value((long)me, depth + 1, &child);
                     if (child < out.nodes.size() && child != me && out.nodes[child].parent == (long)me) {
@@ -217,7 +241,7 @@ struct Parser {
                         out.nodes[me].children.push_back(child);
                     }
                     if (!good) { ok = false; break; }
-                    ws();
+                    if (!ws()) { ok = false; break; }
                     if (pos < s.size() && s[pos] == ',') { pos++; continue; }
                     if (pos < s.size() && s[pos] == ']') { pos++; break; }
                     ok = fail("Expected ',' or ']'");
@@ -286,14 +310,14 @@ void fillUtf16(const std::string &s, Outline &o) {
 
 }  // namespace
 
-Outline parse(const std::string &text, size_t maxNodes) {
+Outline parse(const std::string &text, size_t maxNodes, bool jsonc) {
     Outline o;
-    Parser p(text, maxNodes, o);
+    Parser p(text, maxNodes, o, jsonc);
     size_t root = 0;
     bool ok = p.value(-1, 0, &root);
     if (ok) {
-        p.ws();
-        if (p.pos < text.size()) ok = p.fail("Unexpected text after the value");
+        ok = p.ws();
+        if (ok && p.pos < text.size()) ok = p.fail("Unexpected text after the value");
     }
     o.ok = ok;
     if (!ok) {
@@ -308,6 +332,27 @@ Outline parse(const std::string &text, size_t maxNodes) {
     }
     fillUtf16(text, o);
     return o;
+}
+
+bool allowsComments(const std::string &path) {
+    auto lower = [](std::string x) {
+        for (char &c : x) c = (char)std::tolower((unsigned char)c);
+        return x;
+    };
+    const std::string p = lower(path);
+    const size_t slash = p.rfind('/');
+    const std::string name = slash == std::string::npos ? p : p.substr(slash + 1);
+    const std::string dir = slash == std::string::npos ? "" : p.substr(0, slash);
+    const size_t dirSlash = dir.rfind('/');
+    const std::string parent = dirSlash == std::string::npos ? dir : dir.substr(dirSlash + 1);
+    auto ends = [](const std::string &x, const std::string &tail) {
+        return x.size() >= tail.size() && x.compare(x.size() - tail.size(), tail.size(), tail) == 0;
+    };
+    auto starts = [](const std::string &x, const std::string &head) { return x.rfind(head, 0) == 0; };
+    if (ends(name, ".jsonc") || ends(name, ".code-workspace")) return true;
+    if (!ends(name, ".json")) return false;
+    if (starts(name, "tsconfig") || starts(name, "jsconfig")) return true;
+    return parent == ".vscode" || parent == ".devcontainer";
 }
 
 long nodeAt16(const Outline &o, size_t offset16) {

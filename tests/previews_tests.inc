@@ -417,6 +417,46 @@ static void testJsonOutline() {
         JsonOutline::Outline cap = parse("[1,2,3,4,5]", 3);
         CHECK(!cap.ok && cap.truncated);
     }
+    GROUP("jsonoutline:jsonc");
+    {
+        const std::string text = "// tsconfig\n{\n  /* the target */ \"target\": \"es2022\", // why\n"
+                                 "  \"lib\": [\"dom\", \"es2022\",],\n}\n";
+        CHECK(!parse(text).ok);                      // strict JSON refuses it
+        JsonOutline::Outline o = parse(text, 2000000, true);
+        CHECK(o.ok);
+        CHECK(o.nodes.size() == 5);
+        const Node &root = o.nodes[0];
+        CHECK(root.children.size() == 2);
+        CHECK(o.nodes[root.children[0]].key == "target");
+        CHECK(o.nodes[root.children[1]].children.size() == 2);
+        // The node's range is the value's, comments around it left out.
+        const Node &target = o.nodes[root.children[0]];
+        CHECK(text.substr(target.memberStart, target.end - target.memberStart) ==
+              "\"target\": \"es2022\"");
+        CHECK(text.substr(root.start, 1) == "{");
+        // A comment's slashes inside a string are the string's.
+        JsonOutline::Outline url = parse("{\"u\": \"http://x/*y*/\"}", 2000000, true);
+        CHECK(url.ok && url.nodes.size() == 2 && url.nodes[1].preview == "http://x/*y*/");
+        // Still refused: an unclosed comment, a lone comma, two commas.
+        CHECK(!parse("{\"a\": 1 /* open", 2000000, true).ok);
+        CHECK(parse("{\"a\": 1 /* open", 2000000, true).error == "Unterminated comment");
+        CHECK(!parse("[,]", 2000000, true).ok);
+        CHECK(!parse("{,}", 2000000, true).ok);
+        CHECK(!parse("[1,,]", 2000000, true).ok);
+        CHECK(parse("[] // end", 2000000, true).ok);
+        // Which files: by name and folder.
+        using JsonOutline::allowsComments;
+        CHECK(allowsComments("/p/a.jsonc"));
+        CHECK(allowsComments("/p/tsconfig.json"));
+        CHECK(allowsComments("/p/tsconfig.base.json"));
+        CHECK(allowsComments("/p/jsconfig.json"));
+        CHECK(allowsComments("/p/.vscode/settings.json"));
+        CHECK(allowsComments("/p/.devcontainer/devcontainer.json"));
+        CHECK(allowsComments("/p/x.code-workspace"));
+        CHECK(!allowsComments("/p/package.json"));
+        CHECK(!allowsComments("/p/.vscode/notes.txt"));
+        CHECK(!allowsComments("/p/vscode/settings.json"));
+    }
 }
 
 static void testNotebook() {
@@ -513,6 +553,45 @@ static void testNotebook() {
         CHECK(d.cells[0].source == "## Old");
         CHECK(d.cells[1].source == "1+1" && d.cells[1].executionCount == 1);
         CHECK(d.cells[1].outputs.size() == 2 && d.cells[1].outputs[0].text == "2");
+    }
+    GROUP("notebook:svg-and-long-output");
+    {
+        // An SVG plot (stored as text) becomes a base64 data: picture.
+        const std::string svgNb = R"nb({"nbformat": 4, "cells": [{"cell_type": "code",
+            "source": "plot()", "outputs": [{"output_type": "display_data", "metadata": {},
+            "data": {"image/svg+xml": ["<svg xmlns=\"http://www.w3.org/2000/svg\">", "</svg>\n"],
+                     "text/plain": ["<Figure>"]}}]}]})nb";
+        Notebook::Document d;
+        CHECK(Notebook::parse(svgNb, d));
+        CHECK(d.cells.size() == 1 && d.cells[0].outputs.size() == 1);
+        const Notebook::Output &o = d.cells[0].outputs[0];
+        CHECK(o.kind == Notebook::Output::Kind::Image && o.mime == "image/svg+xml");
+        // base64 of '<svg xmlns="http://www.w3.org/2000/svg"></svg>\n'
+        CHECK(o.base64 == "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjwvc3ZnPgo=");
+        CHECK(Notebook::toMarkdown(d).find("![output](data:image/svg+xml;base64,PHN2Zy") !=
+              std::string::npos);
+        // A long output keeps its first and last lines.
+        std::string log;
+        for (int i = 0; i < 20000; i++) log += "epoch " + std::to_string(i) + "\n";
+        const std::string cut = Notebook::shortenOutput(log);
+        CHECK(cut.size() < log.size() / 5);
+        CHECK(cut.rfind("epoch 0\nepoch 1\n", 0) == 0);
+        CHECK(cut.find("epoch 999\n") != std::string::npos);
+        CHECK(cut.find("epoch 1000\n") == std::string::npos);
+        CHECK(cut.find("18000 lines of output left out here") != std::string::npos);
+        CHECK(cut.find("epoch 19000\n") != std::string::npos);
+        CHECK(cut.size() >= 12 && cut.substr(cut.size() - 12) == "epoch 19999\n");
+        CHECK(Notebook::shortenOutput("short\ntext\n") == "short\ntext\n");
+        // One enormous line is cut by bytes, never inside a character.
+        std::string wide;
+        for (int i = 0; i < 300000; i++) wide += "\xC3\xA9";
+        const std::string w = Notebook::shortenOutput(wide);
+        CHECK(w.size() < wide.size() / 2);
+        bool whole = true;
+        for (size_t i = 0; i + 1 < w.size(); i++)
+            if ((unsigned char)w[i] == 0xC3 && (unsigned char)w[i + 1] != 0xA9) whole = false;
+        CHECK(whole);
+        CHECK(w.find("Part of a long line of output left out here") != std::string::npos);
     }
     GROUP("md:fence-lang");
     {

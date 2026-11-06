@@ -30,6 +30,7 @@ static NSColor *Muted(void) {
     std::shared_ptr<Outline> _tree;
     uint64_t _generation;
     BOOL _parsing, _syncing;
+    BOOL _stale;   // the text changed since _tree was read: its offsets are off
     dispatch_queue_t _queue;
 }
 
@@ -104,6 +105,7 @@ static NSColor *Muted(void) {
 - (NSOutlineView *)outline { return _outline; }
 - (NSString *)statusText { return _status.stringValue; }
 - (BOOL)parsing { return _parsing; }
+- (BOOL)stale { return _stale; }
 
 // ------------------------------------------------------------ the text
 - (void)attachToTextView:(NSTextView *)textView {
@@ -118,6 +120,8 @@ static NSColor *Muted(void) {
     _tree.reset();
     _generation++;
     _parsing = NO;
+    _stale = NO;
+    _outline.alphaValue = 1;
     _status.stringValue = @"";
     [_outline reloadData];
     if (!textView) return;
@@ -130,6 +134,7 @@ static NSColor *Muted(void) {
 
 - (void)textChanged:(NSNotification *)n {
     if (!([(NSTextStorage *)n.object editedMask] & NSTextStorageEditedCharacters)) return;
+    _stale = YES;
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(parseNow) object:nil];
     [self performSelector:@selector(parseNow) withObject:nil afterDelay:0.3];
 }
@@ -140,10 +145,11 @@ static NSColor *Muted(void) {
     NSString *text = [tv.string copy];   // the storage's string is live
     const uint64_t gen = ++_generation;
     _parsing = YES;
+    const bool jsonc = _allowsComments;
     __weak MCJsonOutlinePane *weakSelf = self;
     dispatch_async(_queue, ^{
         const char *c = text.UTF8String;
-        auto tree = std::make_shared<Outline>(JsonOutline::parse(c ? c : ""));
+        auto tree = std::make_shared<Outline>(JsonOutline::parse(c ? c : "", 2000000, jsonc));
         dispatch_async(dispatch_get_main_queue(), ^{
             MCJsonOutlinePane *me = weakSelf;
             if (me) [me apply:tree generation:gen];
@@ -169,7 +175,13 @@ static NSColor *Muted(void) {
                                                          Str(tree->error), tree->errorLine,
                                                          tree->errorColumn];
         _status.textColor = [NSColor systemOrangeColor];
-        if (_tree && !_tree->nodes.empty()) return;   // the last good outline stays
+        if (_tree && !_tree->nodes.empty()) {
+            // The last good outline stays, dimmed: its places in the text
+            // are off by whatever changed since, so it selects nothing.
+            _stale = YES;
+            _outline.alphaValue = 0.5;
+            return;
+        }
     } else {
         _status.stringValue = [NSString stringWithFormat:@"%@ %@",
                                   [f stringFromNumber:@(tree->nodes.size())],
@@ -187,6 +199,8 @@ static NSColor *Muted(void) {
     }
     const BOOL first = !_tree;
     _tree = tree;
+    _stale = NO;
+    _outline.alphaValue = 1;
     _syncing = YES;
     [_outline reloadData];
     if (!_tree->nodes.empty()) {
@@ -300,7 +314,7 @@ static NSColor *Muted(void) {
 }
 
 - (void)outlineViewSelectionDidChange:(NSNotification *)n {
-    if (_syncing) return;
+    if (_syncing || _stale) return;
     const Node *node = [self node:[_outline itemAtRow:_outline.selectedRow]];
     NSTextView *tv = _textView;
     if (!node || !tv) return;
@@ -315,7 +329,7 @@ static NSColor *Muted(void) {
 // folders opened, the text left alone.
 - (void)caretMoved:(NSNotification *)n {
     NSTextView *tv = _textView;
-    if (_syncing || !_tree || !tv) return;
+    if (_syncing || _stale || !_tree || !tv) return;
     const long at = JsonOutline::nodeAt16(*_tree, tv.selectedRange.location);
     if (at < 0) return;
     _syncing = YES;
