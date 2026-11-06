@@ -93,11 +93,18 @@ static NSInteger gSecureGrids;
     std::string _findQuery;
     BOOL _findCase;
     BOOL _secureOn;                // EnableSecureEventInput called, not yet undone
+    // Moving between commands (moveToCommand:select:): the outlined
+    // command's prompt line, and where a Shift selection started, both as
+    // line numbers (kNoLine: none). The start is a boundary between lines:
+    // the selection takes whole lines from one boundary to the other.
+    long long _commandId;
+    long long _commandAnchorId;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
     if ((self = [super initWithFrame:frame])) {
         _linkId = _linkEndId = kNoLine;
+        _commandId = _commandAnchorId = kNoLine;
         _reportButton = -1;
         _optionAsMeta = YES;
         _foundIndex = -1;
@@ -215,7 +222,16 @@ static NSInteger gSecureGrids;
     [self setNeedsDisplay:YES];
 }
 
-- (void)scrollToBottom { [self setOffset:0]; }
+- (void)scrollToBottom {
+    [self forgetCommand];
+    [self setOffset:0];
+}
+
+// No command outlined any more (typing, a click, the bottom).
+- (void)forgetCommand {
+    if (_commandId != kNoLine) [self setNeedsDisplay:YES];
+    _commandId = _commandAnchorId = kNoLine;
+}
 
 - (void)screenChanged {
     // New lines went into the scrollback: a view scrolled back moves with
@@ -229,6 +245,10 @@ static NSInteger gSecureGrids;
         long long first = base - self.screen->historySize();
         if (MIN(_anchorId, _endId) < first) _hasSelection = NO;
     }
+    if (self.screen && _commandId != kNoLine &&
+        MIN(_commandId, _commandAnchorId == kNoLine ? _commandId : _commandAnchorId) <
+            base - self.screen->historySize())
+        [self forgetCommand];
     // What was under the pointer may have moved; look again, but only when
     // there is a link showing or Cmd is down, so ordinary output costs nothing.
     if (_linkId != kNoLine || (NSEvent.modifierFlags & NSEventModifierFlagCommand))
@@ -256,6 +276,7 @@ static NSInteger gSecureGrids;
 }
 
 - (void)contentCleared {
+    [self forgetCommand];
     _hasSelection = NO;
     _selecting = NO;
     _offset = 0;
@@ -393,6 +414,8 @@ static NSInteger gSecureGrids;
         {rel(_anchorId), _anchorCol}, {rel(_endId), _endCol},
         {rel(_unitStartId), _unitStartCol}, {rel(_unitEndId), _unitEndCol},
         {hasMatch ? rel(_found[_foundIndex].id) : 0, hasMatch ? _found[_foundIndex].col : 0},
+        {_commandId == kNoLine ? 0 : rel(_commandId), 0},
+        {_commandAnchorId == kNoLine ? 0 : rel(_commandAnchorId), 0},
     };
     s->resize(cols, rows, &keep);
     long long nb = s->historyBase();
@@ -410,8 +433,124 @@ static NSInteger gSecureGrids;
         _found[_foundIndex].id = nb + keep[5].line;
         _found[_foundIndex].col = keep[5].col;
     }
+    if (_commandId != kNoLine) _commandId = nb + keep[6].line;
+    if (_commandAnchorId != kNoLine) _commandAnchorId = nb + keep[7].line;
+    if ((_commandId != kNoLine && keep[6].line < first) ||
+        (_commandAnchorId != kNoLine && keep[7].line < first))
+        [self forgetCommand];
     if (_finding) [self refreshFind];
     [self setNeedsDisplay:YES];
+}
+
+// ---------------------------------------------------------------- commands
+- (int)currentCommandLine {
+    if (_commandId == kNoLine || !self.screen) return INT_MIN;
+    return (int)(_commandId - self.screen->historyBase());
+}
+
+// The bottom, as a boundary between lines: the prompt waiting for a command
+// (not part of any command's text), else below the cursor's line.
+- (int)bottomBoundary:(const std::vector<TermCommand> &)cmds {
+    TerminalScreen *s = self.screen;
+    if (!cmds.empty() && !cmds.back().ran) return cmds.back().promptLine;
+    return s->cursorRow() + 1;
+}
+
+- (void)moveToCommand:(int)direction select:(BOOL)select {
+    TerminalScreen *s = self.screen;
+    if (!s || s->altScreen()) return;
+    const long long base = s->historyBase();
+    const std::vector<TermCommand> cmds = s->commands();
+    const int bottom = [self bottomBoundary:cmds];
+    // A Shift selection goes on from where the last one left off only while
+    // it is still the one on show.
+    if (!select || !_hasSelection) _commandAnchorId = kNoLine;
+    if (select && _commandAnchorId == kNoLine)
+        _commandAnchorId = _commandId != kNoLine ? _commandId : base + bottom;
+    const int from = _commandId != kNoLine ? (int)(_commandId - base) : INT_MAX;
+    int target = direction < 0 ? s->previousCommandLine(from)
+                               : (from == INT_MAX ? INT_MIN : s->nextCommandLine(from));
+    if (target == INT_MIN && direction < 0) {
+        NSBeep();                           // no command above
+        return;
+    }
+    if (target == INT_MIN) {                // past the newest: the bottom
+        long long anchor = _commandAnchorId;
+        [self forgetCommand];
+        [self setOffset:0];
+        if (select && anchor != kNoLine) {
+            _commandAnchorId = anchor;
+            [self selectLinesFrom:(int)(anchor - base) to:bottom];
+        } else {
+            _hasSelection = NO;
+        }
+        [self setNeedsDisplay:YES];
+        return;
+    }
+    _commandId = base + target;
+    [self setOffset:-target];               // its prompt at the top, as far as there is room
+    if (select) [self selectLinesFrom:(int)(_commandAnchorId - base) to:target];
+    else _hasSelection = NO;
+    [self setNeedsDisplay:YES];
+}
+
+// Whole lines between two boundaries (a boundary is the start of a line).
+- (void)selectLinesFrom:(int)a to:(int)b {
+    TerminalScreen *s = self.screen;
+    int first = MIN(a, b), last = MAX(a, b) - 1;
+    if (last < first) { _hasSelection = NO; return; }
+    long long base = s->historyBase();
+    _anchorId = base + first;
+    _anchorCol = 0;
+    _endId = base + last;
+    _endCol = MAX(s->lineWidth(last), s->cols()) - 1;
+    _hasSelection = YES;
+    _selecting = NO;
+}
+
+// The outlined command's lines: from its prompt to the line before the
+// next prompt (or the bottom).
+- (void)commandRows:(const std::vector<TermCommand> &)cmds first:(int *)first last:(int *)last {
+    int line = self.currentCommandLine;
+    *first = line;
+    *last = line;
+    for (size_t i = 0; i < cmds.size(); i++) {
+        if (cmds[i].promptLine != line) continue;
+        int end = i + 1 < cmds.size() ? cmds[i + 1].promptLine : [self bottomBoundary:cmds];
+        *last = MAX(line, end - 1);
+        break;
+    }
+}
+
+// Beside the prompt of each command that failed, a red bar in the left
+// margin (VS Code's terminalCommandDecoration.errorBackground); the
+// outlined command (Cmd+Up and Cmd+Down) in a thin frame.
+- (void)drawCommandMarksFrom:(int)firstRow to:(int)lastRow {
+    TerminalScreen *s = self.screen;
+    if (!s || s->altScreen() || s->markCount() == 0) return;
+    const std::vector<TermCommand> cmds = s->commands();
+    const NSSize cs = [TerminalGridView cellSize];
+    const CGFloat pad = [TerminalGridView padding];
+    const int top = [self topLine];
+    [[NSColor colorWithSRGBRed:0xF1 / 255.0 green:0x4C / 255.0 blue:0x4C / 255.0 alpha:1] setFill];
+    for (const TermCommand &c : cmds) {
+        if (!c.ended || c.status == 0) continue;
+        int row = c.promptLine - top;
+        if (row < firstRow || row > lastRow) continue;
+        NSRectFill(NSMakeRect(1, pad + row * cs.height + 1, 2.5, cs.height - 2));
+    }
+    if (_commandId == kNoLine) return;
+    int first, last;
+    [self commandRows:cmds first:&first last:&last];
+    int r0 = MAX(first - top, 0), r1 = MIN(last - top, s->rows() - 1);
+    if (r1 < r0) return;
+    NSRect box = NSMakeRect(pad - 2, pad + r0 * cs.height,
+                            s->cols() * cs.width + 4, (r1 - r0 + 1) * cs.height);
+    [[[[AppSettings shared] text:Surface::Terminal] colorWithAlphaComponent:0.45] setStroke];
+    NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(box, 0.5, 0.5)
+                                                      xRadius:3 yRadius:3];
+    p.lineWidth = 1;
+    [p stroke];
 }
 
 // ---------------------------------------------------------------- find
@@ -732,6 +871,8 @@ static CellColors ColorsFor(const TermStyle &st) {
         }
     }
 
+    [self drawCommandMarksFrom:firstRow to:lastRow];
+
     // The Cmd-hovered link, underlined in the text color, on each row it
     // covers.
     if (_linkId != kNoLine) {
@@ -880,6 +1021,16 @@ static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e) {
         // in Terminal.app. Other Cmd keys the menu did not take beep.
         if (e.keyCode == kVK_Home) { [self setOffset:[self maxOffset]]; return; }
         if (e.keyCode == kVK_End) { [self scrollToBottom]; return; }
+        // Cmd+Up and Cmd+Down to the previous and next command, Shift to
+        // select (VS Code's scrollToPreviousCommand and selectToPreviousCommand).
+        // A full-screen program keeps its keys.
+        if (self.textInput && !s->altScreen() &&
+            (e.keyCode == kVK_UpArrow || e.keyCode == kVK_DownArrow) &&
+            !(f & (NSEventModifierFlagOption | NSEventModifierFlagControl))) {
+            [self moveToCommand:e.keyCode == kVK_UpArrow ? -1 : 1
+                         select:(f & NSEventModifierFlagShift) != 0];
+            return;
+        }
         // Cmd+Left, Cmd+Right and Cmd+Delete edit the line at the shell's
         // prompt (or a REPL's, Claude Code's), as in VS Code and iTerm:
         // its start, its end, and delete back to its start. A full-screen
@@ -1264,6 +1415,7 @@ static BOOL IsWordCell(const TermCell &cell) {
 }
 
 - (void)mouseDown:(NSEvent *)e {
+    [self forgetCommand];
     if (e.modifierFlags & NSEventModifierFlagCommand) {
         int line, endLine, c0, c1;
         NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];

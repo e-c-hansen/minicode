@@ -1492,7 +1492,8 @@ for full-screen programs. Both can be open at once.
   (`HistLine`: text in one string, a style run per change, a per-cell table
   only for lines with anything but one byte of width 1 per cell, offset << 2 |
   width, offsets under 1 GiB; 2 to 6 MB per 10,000 lines where cells took 30
-  to 59 MB). A cell keeps at most `kTermMaxCellBytes` (32) of character and
+  to 59 MB). A cell keeps at most `kTermMaxCellBytes` (64; a skin-toned
+  family emoji is 41) of character and
   marks, in both models: 4 MB of U+0301 made one cell every frame copied,
   and past 16 MiB on a line the old 24-bit offsets wrapped and find read out
   of bounds. `lineCell` returns by value;
@@ -1513,6 +1514,31 @@ for full-screen programs. Both can be open at once.
   `textBetween`, `find` (`TermMatch` end line and column), links, words and
   `recentText` read across wraps. The view resizes through
   `resizeScreenToCols:rows:`.
+- **Widths and clusters** (2026-11-06): `termCharWidth` is tables generated
+  from Unicode 16 (Mn, Me, Cf zero but U+00AD; Hangul medial and final jamo
+  and skin tones zero; East Asian W and F two) between markers in
+  TerminalStream.cpp by `tools/gen-term-width.py`, run by hand on the UCD
+  files (fetched into a scratch folder, not kept); never edit the ranges by
+  hand. The hand-written table gave 1,256 BMP combining marks a column, so
+  Hebrew, Arabic, Indic and Thai lines put the cursor where ZLE did not.
+  `termJoinsCluster`: a pictograph after an emoji ending in ZWJ, and a
+  flag's second regional indicator, join the cell before (both models);
+  VS16 after a pictograph, a ZWJ join or a flag widen a narrow cell to two
+  in place (not at the right edge, not in insert mode).
+- **Marks on the screen** (2026-11-06): `TerminalScreen` keeps OSC 133 A, C
+  and D (nonce-checked, `setMarkNonce`, as the stream) where they came, as
+  a line number from `historyBase` and a column in `marks_`, moved by
+  `scrollUp`/`scrollDown` (regions, IL/DL), dropped by ED 2, ED 3, RIS,
+  `clearAll`, `clearToCursorLine` and the scrollback limit, carried through
+  `resize` as reflow points (reflowMain looks only at each line's own
+  points: thousands of marks over 100,000 lines), and an A followed by
+  PROMPT_SP's wrap moves down to the prompt. `commands()`, `commandOutput`,
+  `previous/nextCommandLine`. The grid: Cmd+Up and Cmd+Down to the previous
+  or next command that ran (outlined, its prompt at the top), Shift to
+  select whole lines from where the first press started; a red bar beside a
+  failed command's prompt; Terminal > Copy Last Command Output. Fixed
+  `Terminal` rows in the registry, so the editor keeps Move Line and Copy
+  Line; the keys reach the grid's `keyDown:` (no menu item has them).
 - **Mouse and focus**: modes 9, 1000, 1002, 1003, encodings 1005, 1006, 1015,
   and focus (1004) are tracked, answered by DECRQM and encoded by `encodeMouse`
   and `encodeFocus`. The view's `reportsMouse:` gate: the program asked, the

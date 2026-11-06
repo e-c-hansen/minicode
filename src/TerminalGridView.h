@@ -72,6 +72,19 @@ typedef NS_ENUM(NSInteger, MCLineEdit) {
 // selection goes and the view returns to the bottom.
 - (void)contentCleared;
 
+// The commands the shell integration marked (TerminalScreen::commands), as
+// VS Code's terminal moves between them. Cmd+Up and Cmd+Down (on the main
+// screen) scroll to the previous or next command that ran, its prompt at
+// the top of the view, and outline it; past the newest the view returns to
+// the bottom. With Shift they select instead, from where the first press
+// started (the outlined command, or the bottom) to the command reached: the
+// command lines and their output, whole lines. A command that failed has a
+// red bar in the left margin beside its prompt.
+- (void)moveToCommand:(int)direction select:(BOOL)select;
+// The outlined command's prompt line, as TerminalScreen numbers lines;
+// INT_MIN when none (the view follows the bottom).
+@property(nonatomic, readonly) int currentCommandLine;
+
 // Command Left, Right and Delete on the main screen.
 @property(nonatomic, copy) void (^onLineEdit)(MCLineEdit edit);
 

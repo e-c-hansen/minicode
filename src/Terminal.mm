@@ -1173,6 +1173,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         return [self gridShowing] && item.tag >= NSTextFinderActionShowFindInterface &&
                item.tag <= NSTextFinderActionPreviousMatch;
     if (item.action == @selector(clearTerminal:)) return !_closed;
+    if (item.action == @selector(copyLastCommandOutput:)) return self.lastCommandOutput != nil;
     return [self respondsToSelector:item.action];
 }
 
@@ -1244,6 +1245,31 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         _screen.clearToCursorLine();
     }
     [self.grid contentCleared];
+}
+
+// What the newest command that finished printed, from the marks the screen
+// kept (grid mode; the line mode's screen keeps no scrollback). nil when
+// no command has finished.
+- (NSString *)lastCommandOutput {
+    if (_lineMode || _closed) return nil;
+    const std::vector<TermCommand> cmds = _screen.commands();
+    for (auto c = cmds.rbegin(); c != cmds.rend(); ++c) {
+        if (!c->ended) continue;
+        const std::string text = _screen.commandOutput(*c);
+        return [[NSString alloc] initWithBytes:text.data() length:text.size()
+                                      encoding:NSUTF8StringEncoding] ?: @"";
+    }
+    return nil;
+}
+
+// Terminal > Copy Last Command Output, as VS Code's (no key there either).
+- (void)copyLastCommandOutput:(id)sender {
+    (void)sender;
+    NSString *text = self.lastCommandOutput;
+    if (!text) { NSBeep(); return; }
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
+    [pb clearContents];
+    [pb setString:text forType:NSPasteboardTypeString];
 }
 
 // Cmd+Left, Cmd+Right, Cmd+Delete in the grid: ZLE's own widgets while it
@@ -2346,6 +2372,9 @@ static NSString *MCBrowserHelperPath(void) {
             _screen.setScrollbackLimit([AppSettings shared].settings.terminalScrollback());
         _screenMade = YES;
     }
+    // The screen keeps where this shell's marks came, for moving between
+    // commands; another program's marks are not believed there either.
+    _screen.setMarkNonce(nonce);
 
     // The terminal's modes, given to forkpty so the child starts with them:
     // the usual defaults plus IUTF8 (Backspace over a multi-byte character).

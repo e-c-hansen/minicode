@@ -519,6 +519,9 @@ const std::vector<Command>& all() {
          "nextWaitingTerminal:", 0, 0, nullptr},
         {"workbench.action.terminal.clear", "Clear Terminal", "Terminal", "cmd+k", T,
          "clearTerminal:", 0, 0, nullptr},
+        // VS Code has no key for it either.
+        {"workbench.action.terminal.copyLastCommandOutput", "Copy Last Command Output",
+         "Terminal", "", T, "copyLastCommandOutput:", 0, 0, nullptr},
         {"minicode.runFile", "Run File", "Terminal", "shift+cmd+enter", A, "runCurrentFile:", 0, 0,
          nullptr},
         // The Python extension's Shift+Return: the selection, or the line,
@@ -613,6 +616,16 @@ const std::vector<Command>& all() {
          nullptr, 0, Fixed, "the terminal"},
         {"workbench.action.terminal.scrollToBottom", "Scroll to the Bottom", "Terminal",
          "cmd+end", T, nullptr, 0, Fixed, "the terminal"},
+        // VS Code's keys, between the commands the shell integration marked;
+        // in the editor they stay Move Line and Copy Line.
+        {"workbench.action.terminal.scrollToPreviousCommand", "Scroll to the Previous Command",
+         "Terminal", "cmd+up", T, nullptr, 0, Fixed, "the terminal"},
+        {"workbench.action.terminal.scrollToNextCommand", "Scroll to the Next Command",
+         "Terminal", "cmd+down", T, nullptr, 0, Fixed, "the terminal"},
+        {"workbench.action.terminal.selectToPreviousCommand", "Select to the Previous Command",
+         "Terminal", "shift+cmd+up", T, nullptr, 0, Fixed, "the terminal"},
+        {"workbench.action.terminal.selectToNextCommand", "Select to the Next Command",
+         "Terminal", "shift+cmd+down", T, nullptr, 0, Fixed, "the terminal"},
         // At the shell's prompt (or a REPL's); a full-screen program gets them.
         {"minicode.terminal.lineStart", "Go to the Start of the Prompt's Line", "Terminal",
          "cmd+left", T, nullptr, 0, Fixed, "the terminal"},
