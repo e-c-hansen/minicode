@@ -138,6 +138,19 @@ NSColor *MCColor(const Rgba &c) {
     return YES;
 }
 
+- (BOOL)writeValue:(NSString *)value forKey:(NSString *)key {
+    if (!value.length || !key.length || ![self ensureFileExists]) return NO;
+    const std::string text = Settings::withValue(self.fileText.UTF8String ?: "", key.UTF8String,
+                                                 value.UTF8String);
+    NSString *body = [NSString stringWithUTF8String:text.c_str()];
+    if (!body || ![body writeToFile:_path atomically:YES encoding:NSUTF8StringEncoding
+                              error:nil])
+        return NO;
+    [self reload];
+    [self watch];
+    return YES;
+}
+
 - (NSColor *)background:(Surface)s { return MCColor(_settings.background(s)); }
 - (NSColor *)text:(Surface)s       { return MCColor(_settings.text(s)); }
 - (NSColor *)syntax:(TokenStyle)s  { return MCColor(_settings.syntax(s)); }

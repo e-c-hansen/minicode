@@ -32,6 +32,10 @@ static NSArray<NSString *> *MCLines(NSString *text) {
 }
 
 // ---------------------------------------------------------------- the model
+// Posted (object: the comparison) when its decision changes, so the view
+// showing it redraws its bar.
+static NSNotificationName const MCComparisonDecisionChanged = @"MCComparisonDecisionChanged";
+
 @interface MCComparison ()
 - (const std::vector<SideBySide::Row> &)rows;
 @end
@@ -66,6 +70,26 @@ static NSArray<NSString *> *MCLines(NSString *text) {
 - (NSUInteger)changedRows {
     [self prepare];
     return _changed;
+}
+- (void)decide:(BOOL)accepted {
+    if (!_decisionPrompt || _decision != 0) return;
+    _decision = accepted ? 1 : -1;
+    void (^done)(BOOL) = _onDecision;
+    _onDecision = nil;
+    [[NSNotificationCenter defaultCenter] postNotificationName:MCComparisonDecisionChanged
+                                                        object:self];
+    if (done) done(accepted);
+}
+- (void)endDecision:(NSString *)why {
+    if (!_decisionPrompt || _decision != 0) return;
+    _decision = 2;
+    _decisionNote = [why copy];
+    _onDecision = nil;
+    [[NSNotificationCenter defaultCenter] postNotificationName:MCComparisonDecisionChanged
+                                                        object:self];
+}
+- (void)tabClosed {
+    [self decide:NO];
 }
 @end
 
@@ -146,6 +170,9 @@ static const CGFloat kGutter = 52;
 @interface MCCompareView ()
 @property(nonatomic, strong) NSTextField *leftHeader, *rightHeader;
 @property(nonatomic, strong) NSView *divider;
+// The bar over the panes while a change waits for a decision.
+@property(nonatomic, strong) NSView *decisionBar;
+@property(nonatomic, strong) NSTextField *decisionLabel;
 @end
 
 @implementation MCCompareView {
@@ -216,6 +243,7 @@ static const CGFloat kGutter = 52;
         self.divider.wantsLayer = YES;
         self.divider.layer.backgroundColor = CHex(0x333333, 1).CGColor;
         [self addSubview:self.divider];
+        [self makeDecisionBar];
         [self applySettings];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applySettings)
                                                      name:MCSettingsDidChangeNotification
@@ -226,6 +254,70 @@ static const CGFloat kGutter = 52;
 
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)makeDecisionBar {
+    self.decisionBar = [[NSView alloc] initWithFrame:NSZeroRect];
+    self.decisionBar.wantsLayer = YES;
+    self.decisionLabel = [NSTextField labelWithString:@""];
+    self.decisionLabel.font = [NSFont systemFontOfSize:12 weight:NSFontWeightMedium];
+    self.decisionLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    _acceptButton = [NSButton buttonWithTitle:@"Accept" target:self action:@selector(acceptChange:)];
+    _rejectButton = [NSButton buttonWithTitle:@"Reject" target:self action:@selector(rejectChange:)];
+    for (NSButton *b in @[_acceptButton, _rejectButton]) {
+        b.bezelStyle = NSBezelStyleRounded;
+        b.controlSize = NSControlSizeSmall;
+        b.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+        [self.decisionBar addSubview:b];
+    }
+    _acceptButton.bezelColor = CHex(0x2E7D4F, 1);
+    [self.decisionBar addSubview:self.decisionLabel];
+    self.decisionBar.hidden = YES;
+    [self addSubview:self.decisionBar];
+}
+
+- (void)acceptChange:(id)sender { (void)sender; [self.comparison decide:YES]; }
+- (void)rejectChange:(id)sender { (void)sender; [self.comparison decide:NO]; }
+
+- (void)decisionChanged:(NSNotification *)note {
+    if (note.object == self.comparison) [self showDecision];
+}
+
+// The bar's words and buttons for the comparison's decision.
+- (void)showDecision {
+    MCComparison *c = self.comparison;
+    const BOOL wanted = c.decisionPrompt.length > 0;
+    const BOOL changed = self.decisionBar.hidden == wanted;
+    self.decisionBar.hidden = !wanted;
+    if (wanted) {
+        NSString *text = c.decisionPrompt;
+        if (c.decision == 1) text = @"Accepted: Claude Code writes the change.";
+        else if (c.decision == -1) text = @"Rejected.";
+        else if (c.decision == 2) text = c.decisionNote ?: @"No longer waiting for an answer.";
+        self.decisionLabel.stringValue = text;
+        self.decisionLabel.toolTip = text;
+        _acceptButton.hidden = _rejectButton.hidden = c.decision != 0;
+    }
+    if (changed) [self layoutPanes];
+    else [self layoutDecisionBar];
+}
+
+- (void)layoutDecisionBar {
+    const NSRect b = self.bounds;
+    const CGFloat h = self.decisionBar.hidden ? 0 : 34;
+    self.decisionBar.frame = NSMakeRect(0, 0, NSWidth(b), h);
+    if (!h) return;
+    [_acceptButton sizeToFit];
+    [_rejectButton sizeToFit];
+    CGFloat x = NSWidth(b) - 10;
+    for (NSButton *btn in @[_rejectButton, _acceptButton]) {
+        if (btn.hidden) continue;
+        const NSSize sz = btn.frame.size;
+        x -= sz.width;
+        btn.frame = NSMakeRect(x, floor((h - sz.height) / 2), sz.width, sz.height);
+        x -= 8;
+    }
+    self.decisionLabel.frame = NSMakeRect(12, floor((h - 16) / 2), MAX(0, x - 12), 16);
 }
 
 - (BOOL)isFlipped { return YES; }
@@ -240,14 +332,16 @@ static const CGFloat kGutter = 52;
 }
 
 - (void)layoutPanes {
+    [self layoutDecisionBar];
     const NSRect b = self.bounds;
+    const CGFloat top = NSHeight(self.decisionBar.frame);
     const CGFloat headerH = 24, half = floor(NSWidth(b) / 2);
-    self.leftHeader.frame = NSMakeRect(10, 4, MAX(0, half - 20), 16);
-    self.rightHeader.frame = NSMakeRect(half + 10, 4, MAX(0, NSWidth(b) - half - 20), 16);
-    _leftScroll.frame = NSMakeRect(0, headerH, half, MAX(0, NSHeight(b) - headerH));
-    _rightScroll.frame = NSMakeRect(half + 1, headerH, MAX(0, NSWidth(b) - half - 1),
-                                    MAX(0, NSHeight(b) - headerH));
-    self.divider.frame = NSMakeRect(half, 0, 1, NSHeight(b));
+    self.leftHeader.frame = NSMakeRect(10, top + 4, MAX(0, half - 20), 16);
+    self.rightHeader.frame = NSMakeRect(half + 10, top + 4, MAX(0, NSWidth(b) - half - 20), 16);
+    _leftScroll.frame = NSMakeRect(0, top + headerH, half, MAX(0, NSHeight(b) - top - headerH));
+    _rightScroll.frame = NSMakeRect(half + 1, top + headerH, MAX(0, NSWidth(b) - half - 1),
+                                    MAX(0, NSHeight(b) - top - headerH));
+    self.divider.frame = NSMakeRect(half, top, 1, MAX(0, NSHeight(b) - top));
     [self fitTextViews];
 }
 
@@ -270,6 +364,11 @@ static const CGFloat kGutter = 52;
     self.layer.backgroundColor = bg.CGColor;
     for (NSTextField *h in @[self.leftHeader, self.rightHeader])
         h.textColor = [text colorWithAlphaComponent:0.75];
+    // The decision bar: the sidebar's color, tinted with the accent.
+    self.decisionBar.layer.backgroundColor =
+        [[cfg background:Surface::Sidebar] blendedColorWithFraction:0.12
+                                                            ofColor:CHex(0x4EA1F7, 1)].CGColor;
+    self.decisionLabel.textColor = [cfg text:Surface::Sidebar];
     for (MCCompareTextView *tv in @[_left, _right]) {
         tv.numberColor = [text colorWithAlphaComponent:0.4];
         tv.textColor = text;
@@ -280,7 +379,15 @@ static const CGFloat kGutter = 52;
 }
 
 - (void)setComparison:(MCComparison *)comparison {
+    if (_comparison != comparison) {
+        NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+        if (_comparison) [nc removeObserver:self name:MCComparisonDecisionChanged object:_comparison];
+        if (comparison)
+            [nc addObserver:self selector:@selector(decisionChanged:)
+                       name:MCComparisonDecisionChanged object:comparison];
+    }
     _comparison = comparison;
+    [self showDecision];
     self.leftHeader.stringValue = comparison.leftLabel ?: @"";
     self.rightHeader.stringValue = comparison.rightLabel ?: @"";
     self.leftHeader.toolTip = comparison.leftLabel;

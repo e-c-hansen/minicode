@@ -12,6 +12,7 @@
 #import "PalettePanel.h"
 #import "BackupStore.h"
 #import "EditorFont.h"
+#import "IdeLinkServer.h"
 #import "ControlServer.h"
 #import "Keymap.h"
 #import "TerminalAttention.h"
@@ -1149,6 +1150,8 @@ static void BuildMenu(void) {
     [viewMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Toggle Processes"
                                                  action:@selector(toggleProcesses:)
                                           keyEquivalent:@""]];
+    // Claude Code's /ide for each window (agent.ide-link; IdeLinkServer.h).
+    [viewMenu addItem:MCIdeLinkMenuItem()];
 
     // Shift+Cmd+M as in VS Code: every problem the language servers report,
     // above the terminal.
