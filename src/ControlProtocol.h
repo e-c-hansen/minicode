@@ -150,6 +150,12 @@ bool isSubcommand(const std::string& word);
 // (state, selection, term-output, procs) do not: there would be nothing to read,
 // and an agent should not reopen an app the user has just quit.
 bool launchesApp(const std::string& cmd);
+// Whether `minicode open-url` (BROWSER in minicode's terminals) opens `url`
+// in minicode's browser pane: a local page (PageCheck::isLocalAddress, after
+// TermLinks::browserAddress turns 0.0.0.0 and [::] into localhost). Other
+// addresses go to the default browser, since sign-in pages (Google's among
+// them) refuse an embedded web view.
+bool opensInPane(const std::string& url);
 // Whether `ref` may be handed to git as a revision: not empty, and not
 // starting with "-" (which git would read as an option).
 bool isSafeRef(const std::string& ref);

@@ -8,6 +8,7 @@
 #import "ProcessMonitor.h"
 #import "Terminal.h"
 #import "TerminalAttention.h"
+#include "TermLinks.h"
 #include <fcntl.h>
 #include <objc/runtime.h>
 #include <sys/stat.h>
@@ -577,6 +578,37 @@ void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
         NSString *mark = [[MCTerminalAttention shared] markNameForTerminal:found];
         r.set("attention", mark ? J(mark) : Json());
         r.set("waiting", (int)[MCTerminalAttention shared].waitingCount);
+        respond(Result::success(r));
+    });
+
+    // `minicode open-url`, which BROWSER runs in minicode's terminals: a web
+    // address in the user's page of the browser pane, in the window of the
+    // terminal the program runs in (else the frontmost), without taking the
+    // keyboard. The client has already sent pages that are not local to the
+    // default browser; this takes any http, https or local file address.
+    d.on("open-url", [weakHost](const Request &req, Dispatcher::Respond respond) {
+        id<MCControlAppHost> host = weakHost;
+        const Json &a = req.args;
+        const std::string url = TermLinks::browserAddress(a["url"].asString());
+        TermLinks::Link link;
+        if (!TermLinks::hyperlink(url, "", link)) {
+            respond(Result::failure("open-url takes an http, https or file address, not " + url));
+            return;
+        }
+        EditorController *target = nil;
+        if (a.has("terminal")) {
+            const NSInteger want = (NSInteger)a["terminal"].asInt();
+            for (EditorController *c in [host controlControllers])
+                for (TerminalView *t in [c controlTerminals])
+                    if (t.terminalID == want) target = c;
+        }
+        std::string error;
+        if (!target) target = MCTarget(host, a, nil, error);
+        if (!target) { respond(Result::failure(error)); return; }
+        [target openWebAddressFromTerminal:@(url.c_str())];
+        Json r = MCWindowResult(target);
+        r.set("page", "yours");
+        r.set("url", url);
         respond(Result::success(r));
     });
 

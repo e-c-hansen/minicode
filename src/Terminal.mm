@@ -2089,6 +2089,30 @@ static BOOL MCIsOtherShell(pid_t pid) {
     if (_master >= 0) ioctl(_master, TIOCSWINSZ, &_winsize);
 }
 
+// What BROWSER names in every terminal (resources/minicode-browser.js, run
+// as a shell script or by node): it hands a web page a program opens to
+// `minicode open-url`, so a local page lands in this window's browser pane.
+// In the bundle's Resources, or beside the executable (build/, for the GUI
+// checks); nil when neither has it, or when its path holds a ':', which
+// Python's webbrowser would split BROWSER at.
+static NSString *MCBrowserHelperPath(void) {
+    static NSString *path;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSBundle *b = NSBundle.mainBundle;
+        NSString *exeDir = b.executablePath.stringByDeletingLastPathComponent;
+        for (NSString *dir in @[b.resourcePath ?: @"", exeDir ?: @""]) {
+            NSString *p = [dir stringByAppendingPathComponent:@"minicode-browser.js"];
+            if (dir.length && [p rangeOfString:@":"].location == NSNotFound &&
+                [NSFileManager.defaultManager isExecutableFileAtPath:p]) {
+                path = p;
+                break;
+            }
+        }
+    });
+    return path;
+}
+
 - (void)startShell {
     [self stopShell];
 
@@ -2105,6 +2129,7 @@ static BOOL MCIsOtherShell(pid_t pid) {
     std::vector<std::string> env;
     std::string userZdotdir;
     bool hadZdotdir = false, hasLocale = false;
+    NSString *browserHelper = MCBrowserHelperPath();
     for (char **e = environ; *e; e++) {
         std::string kv = *e;
         std::string key = kv.substr(0, kv.find('='));
@@ -2118,7 +2143,8 @@ static BOOL MCIsOtherShell(pid_t pid) {
             key == "COLORTERM" ||
             key == "COLUMNS" || key == "LINES" ||
             key == "MINICODE_USER_ZDOTDIR" || key == "MINICODE_NONCE" ||
-            key == "MINICODE_EXEC" || key == "MINICODE_TERMINAL_ID" || key == "MINICODE_PID")
+            key == "MINICODE_EXEC" || key == "MINICODE_TERMINAL_ID" || key == "MINICODE_PID" ||
+            (key == "BROWSER" && browserHelper))
             continue;
         if (key == "LANG" || key == "LC_ALL" || key == "LC_CTYPE")
             hasLocale = true;
@@ -2135,6 +2161,9 @@ static BOOL MCIsOtherShell(pid_t pid) {
     // above.
     env.push_back("MINICODE_TERMINAL_ID=" + std::to_string((long)_terminalID));
     env.push_back("MINICODE_PID=" + std::to_string((int)getpid()));
+    // Programs that open a web page (Claude Code on a clicked link, Python's
+    // webbrowser, vite --open) run $BROWSER; a .zshrc that sets its own wins.
+    if (browserHelper) env.push_back(std::string("BROWSER=") + browserHelper.fileSystemRepresentation);
     if (!hasLocale) env.push_back("LANG=en_US.UTF-8");  // apps get no LANG
     // A nonce per shell for the integration's marks (TerminalStream's
     // setMarkNonce): 128 random bits as hex.

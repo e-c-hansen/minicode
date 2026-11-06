@@ -1,7 +1,7 @@
 // terminal_links_tests.inc — the `hyperlinks:` groups of run_tests.cpp:
 // OSC 8 hyperlinks in TerminalScreen (ids on cells, the table, its limits),
-// what TermLinks makes of a hyperlink's address, and the 0.0.0.0 and [::]
-// rewrite.
+// what TermLinks makes of a hyperlink's address, the 0.0.0.0 and [::]
+// rewrite, and `minicode open-url` (what BROWSER runs in the terminals).
 
 namespace {
 
@@ -198,4 +198,46 @@ void testTerminalHyperlinks() {
         CHECK(browserAddress("localhost:8000") == "localhost:8000");
     }
 
+    GROUP("hyperlinks:open-url");
+    {
+        using namespace ControlChannel;
+        CHECK(opensInPane("http://localhost:5173/"));
+        CHECK(opensInPane("http://127.0.0.1:8000/x"));
+        CHECK(opensInPane("http://[::1]:8000/"));
+        CHECK(opensInPane("http://0.0.0.0:8000/"));
+        CHECK(opensInPane("http://[::]:8000/"));
+        CHECK(opensInPane("http://app.localhost:3000/"));
+        CHECK(opensInPane("file:///Users/me/report/index.html"));
+        CHECK(!opensInPane("https://example.com/"));
+        CHECK(!opensInPane("https://accounts.google.com/o/oauth2/auth?redirect_uri=http://localhost:8085/"));
+        CHECK(!opensInPane("http://localhost@example.com/"));
+        CHECK(!opensInPane("javascript:alert(1)"));
+        CHECK(!opensInPane(""));
+
+        auto parse = [](std::vector<std::string> argv) {
+            return parseCommandLine(argv, "/w", "/h", [](const std::string&) { return false; });
+        };
+        CliCommand c = parse({"open-url", "http://localhost:5173/"});
+        CHECK(c.error.empty() && c.cmd == "open-url");
+        CHECK(c.args["url"].asString() == "http://localhost:5173/");
+        CHECK(!c.args.has("terminal"));
+        // Vite runs BROWSER with its own command line first.
+        c = parse({"open-url", "--", "--open", "--port", "5173", "http://localhost:5173/"});
+        CHECK(c.error.empty() && c.args["url"].asString() == "http://localhost:5173/");
+        c = parse({"open-url", "--terminal", "7", "http://localhost/"});
+        CHECK(c.error.empty() && c.args["terminal"].asInt() == 7);
+        CHECK(!parse({"open-url"}).error.empty());
+        CHECK(!parse({"open-url", "--terminal", "x", "http://localhost/"}).error.empty());
+        CHECK(!launchesApp("open-url"));
+        CHECK(isSubcommand("open-url"));
+        CHECK(usageText("open-url").find("BROWSER") != std::string::npos);
+        const CommandSpec* spec = findCommand("open-url");
+        CHECK(spec != nullptr);
+        if (spec) {
+            std::string error;
+            CHECK(validateArgs(*spec, c.args, error));
+            Json bad = Json::object();
+            CHECK(!validateArgs(*spec, bad, error));
+        }
+    }
 }
