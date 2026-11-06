@@ -289,23 +289,30 @@ static void MCWritePNG(CGImageRef cg, NSString *path, BOOL cut,
          nil);
 }
 
-// The top `height` points of the first page of a PDF, as pixels at `scale`.
-// Drawn in sRGB; the colors come out as in a snapshot of the visible area.
+// The top `height` points of a PDF's pages stacked top to bottom, as pixels
+// at `scale`. WebKit ends a page at 14,400 points (PDF's largest page) and
+// goes on in the next, so a page taller than that comes as several. Drawn
+// in sRGB; the colors come out as in a snapshot of the visible area.
 static CGImageRef MCRasterizePDF(NSData *pdf, double visibleHeight, double scale, BOOL *cut)
     CF_RETURNS_RETAINED {
     CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)pdf);
     CGPDFDocumentRef doc = provider ? CGPDFDocumentCreateWithProvider(provider) : NULL;
     if (provider) CGDataProviderRelease(provider);
-    CGPDFPageRef page = doc && CGPDFDocumentGetNumberOfPages(doc) > 0 ? CGPDFDocumentGetPage(doc, 1) : NULL;
-    if (!page) {
+    const size_t pages = doc ? CGPDFDocumentGetNumberOfPages(doc) : 0;
+    if (!pages) {
         if (doc) CGPDFDocumentRelease(doc);
         return NULL;
     }
-    const CGRect box = CGPDFPageGetBoxRect(page, kCGPDFMediaBox);
-    PageCheck::SnapshotPlan plan = PageCheck::snapshotPlan(visibleHeight, box.size.height, scale, true);
+    double width = 0, total = 0;
+    for (size_t i = 1; i <= pages; i++) {
+        const CGRect box = CGPDFPageGetBoxRect(CGPDFDocumentGetPage(doc, i), kCGPDFMediaBox);
+        width = MAX(width, box.size.width);
+        total += box.size.height;
+    }
+    PageCheck::SnapshotPlan plan = PageCheck::snapshotPlan(visibleHeight, total, scale, true);
     *cut = plan.cut;
-    const double h = MIN(plan.height, box.size.height);
-    const size_t pw = (size_t)ceil(box.size.width * scale), ph = (size_t)ceil(h * scale);
+    const double h = MIN(plan.height, total);
+    const size_t pw = (size_t)ceil(width * scale), ph = (size_t)ceil(h * scale);
     CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     CGContextRef ctx = CGBitmapContextCreate(NULL, pw, ph, 8, 0, space,
                                              kCGImageAlphaPremultipliedLast);
@@ -315,9 +322,18 @@ static CGImageRef MCRasterizePDF(NSData *pdf, double visibleHeight, double scale
         CGContextSetRGBFillColor(ctx, 1, 1, 1, 1);
         CGContextFillRect(ctx, CGRectMake(0, 0, pw, ph));
         CGContextScaleCTM(ctx, scale, scale);
-        // PDF space starts at the bottom: lift the page so its top is ours.
-        CGContextTranslateCTM(ctx, -box.origin.x, h - box.size.height - box.origin.y);
-        CGContextDrawPDFPage(ctx, page);
+        // PDF space starts at the bottom: each page's top goes where the
+        // pages above it ended, measured down from the picture's top.
+        double top = 0;
+        for (size_t i = 1; i <= pages && top < h; i++) {
+            CGPDFPageRef page = CGPDFDocumentGetPage(doc, i);
+            const CGRect box = CGPDFPageGetBoxRect(page, kCGPDFMediaBox);
+            CGContextSaveGState(ctx);
+            CGContextTranslateCTM(ctx, -box.origin.x, h - top - box.size.height - box.origin.y);
+            CGContextDrawPDFPage(ctx, page);
+            CGContextRestoreGState(ctx);
+            top += box.size.height;
+        }
         image = CGBitmapContextCreateImage(ctx);
         CGContextRelease(ctx);
     }

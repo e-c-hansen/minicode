@@ -379,8 +379,13 @@ MC_GUI_SUITE(browserpages) {
         GCHECK(s == 0);
         NSSize px = PixelSize(full);
         WKWebView *web = [Pane(c) valueForKey:@"agentWeb"];
-        const double scale = px.width / web.bounds.size.width;
-        GCHECK(fabs(px.height / scale - 3400) < 2);
+        // The app draws at the window's scale (1 on CI's runners, 2 here).
+        const double scale = web.window.backingScaleFactor > 0 ? web.window.backingScaleFactor : 2;
+        GCHECK(fabs(px.height - 3400 * scale) <= scale);
+        // As wide as the page, which is the view less a scroll bar where
+        // the system shows them always (no trackpad, as on CI: 15 points).
+        GCHECK(px.width <= web.bounds.size.width * scale + 1 &&
+               px.width >= (web.bounds.size.width - 20) * scale);
         GCHECK(IsRed(PixelAt(full, 10, (NSInteger)px.height - 10)));      // the bottom block
         NSColor *middle = PixelAt(full, 10, (NSInteger)(1500 * scale));   // below the visible area
         GCHECK(middle && middle.greenComponent > 0.9 && middle.redComponent < 0.1);
@@ -397,8 +402,13 @@ MC_GUI_SUITE(browserpages) {
         GCHECK(s == 0);
         NSSize px = PixelSize(huge);
         WKWebView *web = [Pane(c) valueForKey:@"agentWeb"];
-        const double scale = px.width / web.bounds.size.width;
+        const double scale = web.window.backingScaleFactor > 0 ? web.window.backingScaleFactor : 2;
         GCHECK(px.height <= 16384 && px.height >= 16384 - scale);
+        // WebKit ends a PDF page at 14,400 points and goes on in a second:
+        // at 1x the picture reaches into it, and must be drawn there too.
+        NSColor *bottom = PixelAt(huge, 10, (NSInteger)px.height - 2);
+        GCHECK(bottom && bottom.blueComponent > 0.9 && bottom.redComponent < 0.1);
+        MCGuiNote(@"huge page: %.0f x %.0f px at %.0fx", px.width, px.height, scale);
         [fm removeItemAtPath:huge error:nil];
     });
 
