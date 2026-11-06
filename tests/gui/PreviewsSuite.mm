@@ -408,6 +408,69 @@ MC_GUI_SUITE(previews) {
         [[MCQuickLookPanel shared] close];
         GCHECK(![MCQuickLookPanel shared].shown);
     });
+    MCGuiStep(@"while open, the panel follows a click too", ^{
+        EditorController *c = MCGuiController();
+        NSOutlineView *tree = Tree(c);
+        GCHECK(SelectInTree(c, Fixture(@"paper.pdf")));
+        PressInTree(c, 49, @" ");
+        GCHECK([MCQuickLookPanel shared].shown);
+        GCHECK(SelectInTree(c, Fixture(@"picture.png")));   // reveal it, then click it
+        const NSInteger row = tree.selectedRow;
+        GCHECK(SelectInTree(c, Fixture(@"paper.pdf")));
+        const NSRect r = [tree rectOfRow:row];
+        const NSPoint at = [tree convertPoint:NSMakePoint(NSMidX(r), NSMidY(r)) toView:nil];
+        NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:at modifierFlags:0
+                                          timestamp:NSProcessInfo.processInfo.systemUptime
+                                       windowNumber:c.window.windowNumber context:nil
+                                        eventNumber:0 clickCount:1 pressure:1];
+        NSEvent *up = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:at modifierFlags:0
+                                        timestamp:NSProcessInfo.processInfo.systemUptime
+                                     windowNumber:c.window.windowNumber context:nil
+                                      eventNumber:0 clickCount:1 pressure:0];
+        [NSApp postEvent:up atStart:NO];
+        [tree mouseDown:down];
+        GCHECK(tree.selectedRow == row);
+        GCHECK([[MCQuickLookPanel shared].items.firstObject.path isEqualToString:Fixture(@"picture.png")]);
+        [[MCQuickLookPanel shared] close];
+    });
+    MCGuiStep(@"open for one window's tree, Space in another's shows its file", ^{
+        MCQuickLookPanel *ql = [MCQuickLookPanel shared];
+        NSObject *treeA = [NSObject new], *treeB = [NSObject new];
+        NSURL *a = [NSURL fileURLWithPath:Fixture(@"paper.pdf")];
+        NSURL *b = [NSURL fileURLWithPath:Fixture(@"picture.png")];
+        [ql toggleWithURLs:@[a] from:treeA];
+        GCHECK(ql.shown);
+        [ql toggleWithURLs:@[b] from:treeB];
+        GCHECK(ql.shown);
+        GCHECK([ql.items.firstObject isEqual:b]);
+        [ql toggleWithURLs:@[b] from:treeB];   // its own Space closes it
+        GCHECK(!ql.shown);
+        // Left with no view driving it (the keyboard went to the editor),
+        // the next Space in the tree shows the selection again.
+        QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
+        [ql toggleWithURLs:@[a] from:treeA];
+        [ql beginControl:panel];
+        [ql endControl:panel];
+        [ql toggleWithURLs:@[b] from:treeA];
+        GCHECK(ql.shown);
+        GCHECK([ql.items.firstObject isEqual:b]);
+        [ql toggleWithURLs:@[b] from:treeA];
+        GCHECK(!ql.shown);
+    });
+    MCGuiStep(@"a space in a name being typed to find a row is type-select's", ^{
+        EditorController *c = MCGuiController();
+        GCHECK(SelectInTree(c, Fixture(@"plain.txt")));
+        PressInTree(c, 35, @"p");
+        PressInTree(c, 49, @" ");
+        GCHECK(![MCQuickLookPanel shared].shown);
+    });
+    MCGuiPause(1.2);
+    MCGuiStep(@"and a while later Space is Quick Look again", ^{
+        EditorController *c = MCGuiController();
+        PressInTree(c, 49, @" ");
+        GCHECK([MCQuickLookPanel shared].shown);
+        [[MCQuickLookPanel shared] close];
+    });
     CsvSteps();
     JsonSteps();
     NotebookSteps();
