@@ -239,9 +239,22 @@ void matchLine(const Query::Impl& q, const std::wstring& line, std::vector<CpMat
     // std::regex_iterator, which steps past empty matches as JavaScript
     // does. (A search of our own from inside the line, with
     // match_prev_avail, let ^ match there in libc++.)
+    // Ignoring case, the regex runs over the line folded to lower case
+    // (one code point for one, so positions hold). libstdc++ tests a
+    // bracket range such as [а-я] through the locale's ctype, not the
+    // traits, and the C locale folds only ASCII; folded text puts the
+    // character itself in the lower-case range.
     using It = std::regex_iterator<Iter, wchar_t, FoldTraits>;
+    std::wstring foldedLine;
+    const std::wstring* subject = &line;
+    if (!q.opt.caseSensitive) {
+        foldedLine.resize(n);
+        for (std::size_t i = 0; i < n; ++i)
+            foldedLine[i] = static_cast<wchar_t>(foldCase(static_cast<char32_t>(line[i])));
+        subject = &foldedLine;
+    }
     try {
-        for (It it(line.cbegin(), line.cend(), *q.re), end; it != end && !full(); ++it) {
+        for (It it(subject->cbegin(), subject->cend(), *q.re), end; it != end && !full(); ++it) {
             const auto& mr = *it;
             const std::size_t s = static_cast<std::size_t>(mr.position(0));
             const std::size_t len = static_cast<std::size_t>(mr.length(0));
