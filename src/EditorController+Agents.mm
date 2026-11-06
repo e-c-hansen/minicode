@@ -454,31 +454,112 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 
 - (id)notesActiveTab { return _activeTab; }
 
-- (BOOL)openFileForAgent:(NSString *)path preview:(BOOL)preview {
-    if (!path.length) return NO;
+- (BOOL)notesTabIsPreview:(id)tab {
+    return [tab isKindOfClass:MCTab.class] && ((MCTab *)tab).agentPreview;
+}
+
+// The agent has just written the file whose tab is on show: a clean tab
+// takes the disk's text now, before a note is placed on it, rather than
+// from the file system's event a moment later, which would close the note.
+- (void)notesCatchUpWithDisk {
+    MCTab *t = _activeTab;
+    if (!t || !t.loaded || !t.currentPath || t.dirty || t.gone || self.showingMessage ||
+        !self.textView.editable || !self.fileModDate)
+        return;
+    NSDate *disk = [self diskModDateFor:t.currentPath];
+    if (disk && ![disk isEqualToDate:self.fileModDate]) [self reloadCleanTab:t];
+}
+
+// Whether the user is at work in the document on show: its window is key
+// and the keyboard is in the editor's slot (the text, a table, a preview,
+// the find bar), not in a terminal, the browser or one of the bars. An
+// agent's file opened then would take the text view, and the user's next
+// keystrokes, from them; it goes in a tab beside theirs instead.
+- (BOOL)userIsInDocument {
+    NSWindow *w = self.window;
+    if (!w.isKeyWindow) return NO;
+    NSResponder *fr = w.firstResponder;
+    if ([fr isKindOfClass:NSTextView.class] && ((NSTextView *)fr).isFieldEditor &&
+        [((NSTextView *)fr).delegate isKindOfClass:NSView.class])
+        fr = (NSView *)((NSTextView *)fr).delegate;
+    if (![fr isKindOfClass:NSView.class]) return NO;
+    NSView *v = (NSView *)fr;
+    if (![v isDescendantOf:self.rightArea]) return NO;
+    NSMutableArray<NSView *> *elsewhere = [NSMutableArray array];
+    if (self.terminalPanel) [elsewhere addObject:self.terminalPanel];
+    if (self.browser) [elsewhere addObject:self.browser];
+    if (_agent.bar) [elsewhere addObject:_agent.bar];
+    if (_change.bar) [elsewhere addObject:_change.bar];
+    for (NSView *other in elsewhere)
+        if ([v isDescendantOf:other]) return NO;
+    return YES;
+}
+
+// The window's preview tab of a kind (one for files with notes, one for
+// comparisons) that a new one replaces: not the tab on show while the user
+// is in it.
+- (MCTab *)agentPreviewTabForComparison:(BOOL)comparison besideUser:(BOOL)beside {
+    MCTab *found = nil;
+    for (MCTab *t in _tabs) {
+        if (!t.agentPreview || (t.comparison != nil) != comparison || t.page) continue;
+        if (beside && t == _activeTab) continue;
+        found = t;
+        break;
+    }
+    return found;
+}
+
+// A new agent tab goes where the old preview tab was, else beside the
+// active one; shown at once unless the user is typing (`beside`).
+- (void)putAgentTab:(MCTab *)tab replacing:(MCTab *)old beside:(BOOL)beside {
+    if (old) [_tabs insertObject:tab atIndex:[_tabs indexOfObject:old]];
+    else [self insertTab:tab];
+    if (!beside) [self activateTab:tab];
+    if (old) [self dropAgentPreviewTab:old];
+    if (beside) {
+        [self reloadTabStrip];
+        [self showStatusNote:[NSString stringWithFormat:
+            @"An agent opened %@ in a tab beside this one",
+            tab.comparison ? @"a diff" : tab.currentPath.lastPathComponent ?: @"a file"]];
+    }
+}
+
+- (id)openTabForAgent:(NSString *)path preview:(BOOL)preview quiet:(BOOL)quiet {
+    if (!path.length) return nil;
+    const BOOL beside = quiet && [self userIsInDocument];
+    __block MCTab *tab = nil;
     [self keepKeyboardDuring:^{
         MCTab *existing = [self tabForPath:path];
         if (existing) {
-            [self activateTab:existing];   // open already: shown where it is
+            tab = existing;   // open already: shown where it is
+            if (!beside) [self activateTab:existing];
             return;
         }
-        if (!preview) {
+        if (!preview && !beside) {
             [self openFileAtPath:path];
+            tab = [self tabForPath:path];
             return;
         }
-        // The window's one preview tab takes the file, in its place.
-        MCTab *old = nil;
-        for (MCTab *t in self->_tabs)
-            if (t.agentPreview) { old = t; break; }
-        MCTab *tab = [MCTab new];
-        tab.currentPath = path;
-        tab.agentPreview = YES;
-        if (old) [self->_tabs insertObject:tab atIndex:[self->_tabs indexOfObject:old]];
-        else [self insertTab:tab];
-        [self activateTab:tab];
-        if (old) [self dropAgentPreviewTab:old];
+        // The window's one preview tab takes the file, in its place, or a
+        // tab of its own (--keep) beside the user's.
+        MCTab *old = preview ? [self agentPreviewTabForComparison:NO besideUser:beside] : nil;
+        MCTab *t = [MCTab new];
+        t.currentPath = path;
+        t.agentPreview = preview;
+        [self putAgentTab:t replacing:old beside:beside];
+        tab = t;
     }];
-    return [self tabForPath:path] == _activeTab && _activeTab != nil;
+    if (!tab || ![_tabs containsObject:tab]) return nil;
+    return tab;
+}
+
+- (BOOL)openFileForAgent:(NSString *)path preview:(BOOL)preview {
+    MCTab *tab = [self openTabForAgent:path preview:preview quiet:NO];
+    return tab && tab == _activeTab;
+}
+
+- (BOOL)agentTabShown:(id)tab {
+    return tab && tab == _activeTab;
 }
 
 // The preview tab a newer one replaced: no question (it never has unsaved
@@ -505,25 +586,28 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 }
 
 - (void)showComparison:(MCComparison *)comparison preview:(BOOL)preview {
-    if (!comparison) return;
+    [self showComparison:comparison preview:preview quiet:NO];
+}
+
+// Comparisons have a preview tab of their own, so a diff shown after a
+// note (as the skill's example does) leaves the note's tab where it was.
+- (BOOL)showComparison:(MCComparison *)comparison preview:(BOOL)preview quiet:(BOOL)quiet {
+    if (!comparison) return NO;
+    const BOOL beside = quiet && [self userIsInDocument];
+    __block MCTab *tab = nil;
     [self keepKeyboardDuring:^{
-        [self revealEditor];
-        MCTab *old = nil;
-        if (preview)
-            for (MCTab *t in self->_tabs)
-                if (t.agentPreview) { old = t; break; }
-        MCTab *tab = [MCTab new];
+        if (!beside) [self revealEditor];
+        MCTab *old = preview ? [self agentPreviewTabForComparison:YES besideUser:beside] : nil;
+        tab = [MCTab new];
         tab.loaded = YES;
         tab.isDiff = YES;
         tab.comparison = comparison;
         tab.diffName = comparison.title;
         tab.agentPreview = preview;
-        if (old) [self->_tabs insertObject:tab atIndex:[self->_tabs indexOfObject:old]];
-        else [self insertTab:tab];
         [self compareViewMade];
-        [self activateTab:tab];
-        if (old) [self dropAgentPreviewTab:old];
+        [self putAgentTab:tab replacing:old beside:beside];
     }];
+    return tab == _activeTab;
 }
 
 // A page in the editor's slot (EditorPage.h), in a tab of its own; a page
@@ -596,10 +680,24 @@ static NSUInteger MCLineStart(NSString *text, int line) {
     return t;
 }
 
+- (BOOL)browseForAgent:(NSString *)url error:(NSString **)error {
+    // The browser has one page: one the user loaded stays (R1.8).
+    if (self.browser.showsUserPage) {
+        if (error)
+            *error = [NSString stringWithFormat:
+                @"the browser pane shows a page the user opened (%@), which an agent does not "
+                @"replace; ask them to show yours, or to close the pane",
+                self.browser.pageURL ?: @"a page"];
+        return NO;
+    }
+    [self browseForAgent:url];
+    return YES;
+}
+
 - (void)browseForAgent:(NSString *)url {
     [self keepKeyboardDuring:^{
-        if (!self.browser) [self makeBrowserWithHome:url];
-        else [self.browser navigateToString:url];
+        if (!self.browser) [self makeBrowserWithHome:@""];
+        [self.browser navigateForAgent:url];
         if (!self.browserVisible) {
             self.browserVisible = YES;
             [self showRightArea];
@@ -632,10 +730,18 @@ static NSUInteger MCLineStart(NSString *text, int line) {
     return out;
 }
 
+// Line and column of `index`, read a block at a time (characterAtIndex on
+// the editor's string costs a message per character).
 static NSDictionary *MCLineColumn(NSString *s, NSUInteger index) {
     NSUInteger line = 1, start = 0;
-    for (NSUInteger i = 0; i < index && i < s.length; i++)
-        if ([s characterAtIndex:i] == '\n') { line++; start = i + 1; }
+    index = MIN(index, s.length);
+    unichar buf[4096];
+    for (NSUInteger at = 0; at < index; at += 4096) {
+        const NSUInteger n = MIN((NSUInteger)4096, index - at);
+        [s getCharacters:buf range:NSMakeRange(at, n)];
+        for (NSUInteger i = 0; i < n; i++)
+            if (buf[i] == '\n') { line++; start = at + i + 1; }
+    }
     return @{@"line": @(line), @"column": @(index - start + 1)};
 }
 

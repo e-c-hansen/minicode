@@ -22,6 +22,10 @@
 @property(nonatomic, copy) NSString *path;
 // How many rows differ: changed, removed and added lines.
 @property(nonatomic, readonly) NSUInteger changedRows;
+// Lines the two texts up, once (changedRows and the view use the rows).
+// Costly for big texts, so a caller off the main thread does it there
+// before handing the comparison over; setting a text again undoes it.
+- (void)prepare;
 @end
 
 @interface MCCompareView : NSView

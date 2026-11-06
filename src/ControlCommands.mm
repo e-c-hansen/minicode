@@ -6,7 +6,9 @@
 #import "CompareView.h"
 #import "GitPanel.h"
 #import "Terminal.h"
+#include <fcntl.h>
 #include <objc/runtime.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 using ControlChannel::Dispatcher;
@@ -75,9 +77,20 @@ static BOOL MCIsDirectory(NSString *path) {
     return [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&dir] && dir;
 }
 
-static BOOL MCIsFile(NSString *path) {
-    BOOL dir = NO;
-    return [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&dir] && !dir;
+// A plain file, links followed: the only kind an agent's command reads or
+// opens. A FIFO would block open(2) for good, and /dev/zero never ends.
+static BOOL MCIsRegularFile(NSString *path) {
+    struct stat st;
+    return path.length && stat(path.fileSystemRepresentation, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+// The most of a file `diff` reads: the size the editor opens a tab for.
+static const off_t kMaxDiffBytes = 16 * 1024 * 1024;
+
+// Note text as shown, whoever sent it: the command line cleans it, but the
+// socket is open to any program of the user's.
+static NSString *MCNote(const Json &j) {
+    return [NSString stringWithUTF8String:ControlChannel::cleanNoteText(j.asString()).c_str()] ?: @"";
 }
 
 static NSString *MCResolved(NSString *path) { return path.stringByResolvingSymlinksInPath; }
@@ -214,13 +227,50 @@ static NSString *MCTextAtRef(NSString *path, NSString *ref, BOOL *missing, NSStr
     return text;
 }
 
+// A file's text for `diff`, off the main thread: a plain file of up to
+// 16 MB of UTF-8. Opened without blocking and checked again once open, so
+// a FIFO put in its place meanwhile cannot hang the read.
 static NSString *MCReadText(NSString *path, std::string &error) {
-    if (!MCIsFile(path)) {
-        error = std::string("no such file: ") + path.UTF8String;
+    const std::string name = path.UTF8String ?: "";
+    struct stat st;
+    if (stat(path.fileSystemRepresentation, &st) != 0) {
+        error = "no such file: " + name;
         return nil;
     }
-    NSString *text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
-    if (!text) error = std::string(path.lastPathComponent.UTF8String) + " is not UTF-8 text";
+    if (!S_ISREG(st.st_mode)) {
+        error = "not a plain file: " + name;
+        return nil;
+    }
+    int fd = open(path.fileSystemRepresentation, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0 || fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        if (fd >= 0) close(fd);
+        error = "could not read " + name;
+        return nil;
+    }
+    if (st.st_size > kMaxDiffBytes) {
+        close(fd);
+        error = std::string(path.lastPathComponent.UTF8String ?: "") + " is larger than 16 MB";
+        return nil;
+    }
+    NSMutableData *data = [NSMutableData dataWithLength:(NSUInteger)st.st_size + 1];
+    size_t got = 0;
+    for (;;) {
+        // One byte more than the limit says the file grew past it.
+        if (got >= (size_t)kMaxDiffBytes + 1) break;
+        if (got == data.length) data.length = MIN(data.length * 2, (NSUInteger)kMaxDiffBytes + 1);
+        ssize_t n = read(fd, (char *)data.mutableBytes + got, data.length - got);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        got += (size_t)n;
+    }
+    close(fd);
+    if (got > (size_t)kMaxDiffBytes) {
+        error = std::string(path.lastPathComponent.UTF8String ?: "") + " is larger than 16 MB";
+        return nil;
+    }
+    data.length = got;
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (!text) error = std::string(path.lastPathComponent.UTF8String ?: "") + " is not UTF-8 text";
     return text;
 }
 
@@ -276,11 +326,16 @@ void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
             respond(Result::failure("open needs a path"));
             return;
         }
-        // Everything is checked before anything opens.
+        // Everything is checked before anything opens: a folder, or a plain
+        // file (a FIFO or a device would hang the app as it opens).
         for (size_t i = 0; i < files.size(); i++) {
             NSString *p = NS(files[i]["path"]);
             if (![[NSFileManager defaultManager] fileExistsAtPath:p]) {
                 respond(Result::failure(std::string("no such file or folder: ") + p.UTF8String));
+                return;
+            }
+            if (!MCIsDirectory(p) && !MCIsRegularFile(p)) {
+                respond(Result::failure(std::string("not a plain file: ") + p.UTF8String));
                 return;
             }
         }
@@ -295,6 +350,7 @@ void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
         const BOOL preview = a.has("note") && !a["keep"].asBool();
         EditorController *last = nil;
         Json opened = Json::array();
+        bool besideUser = false;
         for (size_t i = 0; i < files.size(); i++) {
             NSString *path = MCResolved(NS(files[i]["path"]));
             if (MCIsDirectory(path)) {
@@ -315,23 +371,29 @@ void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
             if (!c) c = [host controlOpenWindowAtPath:path.stringByDeletingLastPathComponent];
             if (!spelled) spelled = path;
             last = c;
-            if (![c openFileForAgent:spelled preview:preview]) {
+            // Never into the user's keyboard: while they type in the
+            // editor, the file opens in a tab beside theirs.
+            id tab = [c openTabForAgent:spelled preview:preview quiet:YES];
+            if (!tab) {
                 respond(Result::failure(std::string("could not open ") + path.UTF8String));
                 return;
             }
+            if (![c agentTabShown:tab]) besideUser = true;
             const int line = (int)files[i]["line"].asInt(0), col = (int)files[i]["column"].asInt(0);
             if (hasNote && i + 1 == files.size()) {
-                [c.agentNotes showNote:NS(a["note"]) from:NS(a["from"])
+                [c.agentNotes showNote:MCNote(a["note"]) from:NS(a["from"])
                                   line:line > 0 ? line : 1 column:col
-                                toLine:(int)a["to_line"].asInt(0) toColumn:(int)a["to_column"].asInt(0)];
+                                toLine:(int)a["to_line"].asInt(0)
+                              toColumn:(int)a["to_column"].asInt(0) inTab:tab];
             } else if (line > 0) {
-                [c.agentNotes revealLine:line column:col];
+                [c.agentNotes revealLine:line column:col inTab:tab];
             }
             opened.push(J(spelled));
         }
         Json r = last ? MCWindowResult(last) : Json::object();
         r.set("opened", opened);
         if (preview) r.set("preview", true);
+        if (besideUser) r.set("background", true);
         respond(Result::success(r));
     });
 
@@ -361,7 +423,11 @@ void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
         std::string error;
         EditorController *c = MCTarget(weakHost, a, nil, error);
         if (!c) { respond(Result::failure(error)); return; }
-        [c browseForAgent:url];
+        NSString *refused = nil;
+        if (![c browseForAgent:url error:&refused]) {
+            respond(Result::failure(refused.UTF8String ?: "the browser shows the user's page"));
+            return;
+        }
         respond(Result::success(MCWindowResult(c)));
     });
 
@@ -397,57 +463,68 @@ void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
         const Json &a = req.args;
         NSString *path = MCResolved(NS(a["path"]));
         std::string error;
-        NSString *right = MCReadText(path, error);
-        if (!right) { respond(Result::failure(error)); return; }
+        if (a.has("base") && !ControlChannel::isSafeRef(a["base"].asString())) {
+            respond(Result::failure("--base needs a revision, not " + a["base"].asString()));
+            return;
+        }
         EditorController *fallback = [host controlControllerContaining:path spelled:nil];
         EditorController *c = MCTarget(host, a, fallback, error);
         if (!c) { respond(Result::failure(error)); return; }
         const BOOL preview = !a["keep"].asBool();
-        if (a.has("other")) {
-            NSString *other = MCResolved(NS(a["other"]));
-            NSString *otherText = MCReadText(other, error);
-            if (!otherText) { respond(Result::failure(error)); return; }
-            MCComparison *cmp = [MCComparison new];
-            cmp.leftText = right;
-            cmp.rightText = otherText;
-            cmp.leftLabel = MCShortPath(c, path);
-            cmp.rightLabel = MCShortPath(c, other);
-            cmp.path = other;
-            cmp.title = [NSString stringWithFormat:@"%@ ↔ %@", path.lastPathComponent,
-                         other.lastPathComponent];
-            [c showComparison:cmp preview:preview];
-            Json r = MCWindowResult(c);
-            r.set("changed", (int)cmp.changedRows);
-            respond(Result::success(r));
-            return;
-        }
-        // git runs off the main thread; the answer waits for it.
+        NSString *other = a.has("other") ? MCResolved(NS(a["other"])) : nil;
         NSString *ref = a.has("base") ? NS(a["base"]) : @"HEAD";
+        NSString *shortPath = MCShortPath(c, path);
+        NSString *shortOther = other ? MCShortPath(c, other) : nil;
+        // The files are read, git asked and the texts lined up off the main
+        // thread (a big file, or a git that is slow to answer, would hold it
+        // up); the answer waits for that.
         __weak EditorController *weakC = c;
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-            BOOL missing = NO;
-            NSString *gitError = nil;
-            NSString *left = MCTextAtRef(path, ref, &missing, &gitError);
+            std::string readError;
+            MCComparison *cmp = [MCComparison new];
+            NSString *right = MCReadText(path, readError);
+            NSString *failure = nil;
+            if (!right) {
+                failure = @(readError.c_str());
+            } else if (other) {
+                NSString *otherText = MCReadText(other, readError);
+                if (!otherText) {
+                    failure = @(readError.c_str());
+                } else {
+                    cmp.leftText = right;
+                    cmp.rightText = otherText;
+                    cmp.leftLabel = shortPath;
+                    cmp.rightLabel = shortOther;
+                    cmp.path = other;
+                    cmp.title = [NSString stringWithFormat:@"%@ ↔ %@", path.lastPathComponent,
+                                 other.lastPathComponent];
+                }
+            } else {
+                BOOL missing = NO;
+                NSString *gitError = nil;
+                NSString *left = MCTextAtRef(path, ref, &missing, &gitError);
+                if (!left && !missing) {
+                    failure = gitError ?: @"git failed";
+                } else {
+                    cmp.leftText = left ?: @"";
+                    cmp.rightText = right;
+                    cmp.leftLabel = missing ? [NSString stringWithFormat:@"%@: (not in %@)", ref, ref]
+                                            : [NSString stringWithFormat:@"%@: %@", ref, shortPath];
+                    cmp.rightLabel = [NSString stringWithFormat:@"%@ (working copy)", shortPath];
+                    cmp.path = path;
+                    cmp.title = [NSString stringWithFormat:@"%@ (%@ ↔ working copy)",
+                                 path.lastPathComponent, ref];
+                }
+            }
+            if (!failure) [cmp prepare];
             dispatch_async(dispatch_get_main_queue(), ^{
                 EditorController *win = weakC;
+                if (failure) { respond(Result::failure(failure.UTF8String ?: "failed")); return; }
                 if (!win) { respond(Result::failure("the window closed")); return; }
-                if (!left && !missing) {
-                    respond(Result::failure(gitError.UTF8String ?: "git failed"));
-                    return;
-                }
-                NSString *shortPath = MCShortPath(win, path);
-                MCComparison *cmp = [MCComparison new];
-                cmp.leftText = left ?: @"";
-                cmp.rightText = right;
-                cmp.leftLabel = missing ? [NSString stringWithFormat:@"%@: (not in %@)", ref, ref]
-                                        : [NSString stringWithFormat:@"%@: %@", ref, shortPath];
-                cmp.rightLabel = [NSString stringWithFormat:@"%@ (working copy)", shortPath];
-                cmp.path = path;
-                cmp.title = [NSString stringWithFormat:@"%@ (%@ ↔ working copy)",
-                             path.lastPathComponent, ref];
-                [win showComparison:cmp preview:preview];
+                const BOOL shown = [win showComparison:cmp preview:preview quiet:YES];
                 Json r = MCWindowResult(win);
                 r.set("changed", (int)cmp.changedRows);
+                if (!shown) r.set("background", true);
                 respond(Result::success(r));
             });
         });
@@ -504,7 +581,7 @@ void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
         NSMutableArray<MCTourStop *> *stops = [NSMutableArray array];
         for (size_t i = 0; i < list.size(); i++) {
             NSString *p = MCResolved(NS(list[i]["path"]));
-            if (!MCIsFile(p)) {
+            if (!MCIsRegularFile(p)) {
                 respond(Result::failure("stop " + std::to_string(i + 1) + ": no such file: " +
                                         p.UTF8String));
                 return;
@@ -514,7 +591,7 @@ void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
             s.line = (int)list[i]["line"].asInt(1);
             s.column = (int)list[i]["column"].asInt(0);
             s.toLine = (int)list[i]["to"].asInt(0);
-            s.note = NS(list[i]["note"]);
+            s.note = MCNote(list[i]["note"]);
             [stops addObject:s];
         }
         std::string error;
@@ -528,6 +605,7 @@ void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
         }
         Json r = MCWindowResult(c);
         r.set("stops", (int)stops.count);
+        if (!c.agentNotes.noteShown) r.set("background", true);   // beside the user's tab
         respond(Result::success(r));
     });
 }
