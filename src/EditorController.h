@@ -216,12 +216,27 @@
 // in the window's agent preview tab (replacing the file it showed) or a tab
 // of its own. YES when it is on show.
 - (BOOL)openFileForAgent:(NSString *)path preview:(BOOL)preview;
-// A side-by-side diff in the agent preview tab, or a tab of its own.
+// The same for an agent's command, returning the file's tab: with `quiet`,
+// while the user is typing in the editor (userIsInDocument), the tab opens
+// beside theirs without being shown, so their next keystroke still goes
+// into their own file. nil when it could not be opened.
+- (id)openTabForAgent:(NSString *)path preview:(BOOL)preview quiet:(BOOL)quiet;
+- (BOOL)agentTabShown:(id)tab;
+// The window is key and the keyboard is in the document on show.
+- (BOOL)userIsInDocument;
+// A side-by-side diff in the window's diff preview tab (its own, beside
+// the note preview tab), or a tab of its own.
 - (void)showComparison:(MCComparison *)comparison preview:(BOOL)preview;
+// The same, beside the user's tab while they type (`quiet`); YES when shown.
+- (BOOL)showComparison:(MCComparison *)comparison preview:(BOOL)preview quiet:(BOOL)quiet;
 // A new terminal starting in `dir`: a new tab, or beside the active terminal
 // (nil when there is no room to split).
 - (TerminalView *)newTerminalForAgentIn:(NSString *)dir beside:(BOOL)beside;
 - (void)browseForAgent:(NSString *)url;   // the browser pane, shown beside the editor
+// The same for `minicode browse`, refused (NO, *error says why) while the
+// pane shows a page the user loaded: the browser has one page, and an agent
+// never replaces the user's.
+- (BOOL)browseForAgent:(NSString *)url error:(NSString **)error;
 // For `minicode state`: each tab (path, title, kind, dirty, active, preview),
 // the editor's selection (path, text up to 64 KB, start and end line and
 // column; nil when no text file shows), the terminals, the browser's page.

@@ -3,6 +3,8 @@
 
 #include "RunFile.h"
 
+#include <cstring>
+
 namespace ChangeRequest {
 
 static std::string trim(const std::string &s) {
@@ -59,6 +61,28 @@ std::string cloneThenStartCommand(const std::string &version, const std::string 
 
 std::string resumeCommand(const std::string &command, const std::string &source) {
     return "cd " + RunFile::shellQuote(source) + " && " + trim(command) + " --continue";
+}
+
+bool promptFileIsStale(const std::string &name, double ageSeconds,
+                       const std::function<bool(int)> &alive) {
+    std::string rest;
+    for (const char *prefix : {"request-", "task-"})
+        if (name.compare(0, std::strlen(prefix), prefix) == 0) rest = name.substr(std::strlen(prefix));
+    const std::string ext = ".txt";
+    if (rest.size() <= ext.size() || rest.compare(rest.size() - ext.size(), ext.size(), ext) != 0)
+        return false;
+    rest.resize(rest.size() - ext.size());
+    const size_t dash = rest.find('-');
+    if (dash == 0 || dash == std::string::npos || dash + 1 >= rest.size()) return false;
+    long pid = 0;
+    for (size_t i = 0; i < rest.size(); i++) {
+        const char c = rest[i];
+        if (i == dash) continue;
+        if (c < '0' || c > '9') return false;
+        if (i < dash && pid < 100000000) pid = pid * 10 + (c - '0');
+    }
+    if (ageSeconds > 24 * 3600) return true;
+    return pid <= 0 || !alive((int)pid);
 }
 
 bool looksLikeSource(const std::string &dir,

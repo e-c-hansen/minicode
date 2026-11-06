@@ -95,6 +95,11 @@ NSString *MCChangeSourceFolder(NSString **problem);
 // ~/Library/Application Support/MiniCode/source
 NSString *MCChangeCloneFolder(void);
 
+// Removes the prompt files in `dir` (MiniCode-change, MiniCode-agent in the
+// temporary folder) that no one will read again: their writer has quit, or
+// they are a day old (ChangeRequest::promptFileIsStale).
+void MCRemoveStalePromptFiles(NSString *dir);
+
 // The restart: what to reopen, written as the app quits, read once by the
 // next launch (if it comes within two minutes).
 void MCSaveRestartRecord(NSDictionary *record);

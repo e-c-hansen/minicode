@@ -12,6 +12,12 @@
 // tour. Each tab keeps its note while another tab is shown; nothing is kept
 // across restarts. One MCAgentNotes per window (EditorController's
 // agentNotes).
+//
+// The user's keyboard is never moved into the agent's file: while they are
+// typing in the editor, an agent's file opens in a tab beside theirs
+// without being shown, and its note waits there, placed (and scrolled to)
+// when they switch to that tab. A note moves the caret only in the agent
+// preview tab, never in a tab of the user's.
 #import <Cocoa/Cocoa.h>
 
 // What the notes need of the window.
@@ -22,8 +28,18 @@
 // Something that stays the same object while the same tab is on show.
 - (id)notesActiveTab;
 // Opens a file the way `minicode open --note` does (the agent preview tab,
-// the keyboard where it was); YES when its text is on show.
-- (BOOL)openFileForAgent:(NSString *)path preview:(BOOL)preview;
+// the keyboard where it was) and returns its tab, as notesActiveTab names
+// tabs, whether on show or not: with `quiet`, while the user is typing in
+// the editor, it opens beside their tab without being shown. nil when it
+// could not be opened.
+- (id)openTabForAgent:(NSString *)path preview:(BOOL)preview quiet:(BOOL)quiet;
+// Whether a tab is the window's agent preview tab, where a note may put
+// the caret at its lines.
+- (BOOL)notesTabIsPreview:(id)tab;
+// Before a note is placed on the tab on show: a clean tab whose file was
+// changed on disk (by the agent, a moment ago) takes the disk's text now,
+// so the reload that would follow cannot close the note.
+- (void)notesCatchUpWithDisk;
 @end
 
 @interface MCTourStop : NSObject
@@ -42,11 +58,20 @@
 // alone. NO when no text is on show.
 - (BOOL)showNote:(NSString *)text from:(NSString *)from
             line:(int)line column:(int)column toLine:(int)toLine toColumn:(int)toColumn;
+// The same for `tab` (from openTabForAgent:): at once when it is on show,
+// else when it is next shown.
+- (BOOL)showNote:(NSString *)text from:(NSString *)from
+            line:(int)line column:(int)column toLine:(int)toLine toColumn:(int)toColumn
+           inTab:(id)tab;
 // The caret to line:column, that line scrolled to the upper third and
 // flashed, the keyboard left where it is. NO when no text is on show.
 - (BOOL)revealLine:(int)line column:(int)column;
+// The same for `tab`: at once when it is on show, else when it is next shown.
+- (BOOL)revealLine:(int)line column:(int)column inTab:(id)tab;
 
-// A tour replaces any earlier one; its first stop opens at once.
+// A tour replaces any earlier one; its first stop opens at once (beside
+// the user's tab, unshown, while they type: see above). Stepping is the
+// user's own doing, so a step always shows its stop.
 - (BOOL)startTour:(NSArray<MCTourStop *> *)stops from:(NSString *)from;
 - (BOOL)stepTour:(NSInteger)delta;   // +1 next, -1 previous; NO at either end
 @property(nonatomic, readonly) BOOL tourActive;

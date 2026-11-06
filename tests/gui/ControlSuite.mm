@@ -243,6 +243,10 @@ MC_GUI_SUITE(control) {
         [fm createDirectoryAtPath:empty withIntermediateDirectories:YES attributes:nil error:nil];
         MCGuiRunProcess(@[CLIPath(), @"browse", @"https://example.com"],
                         @{@"TMPDIR": empty, @"MINICODE_LAUNCHER_DRYRUN": @"1",
+                          // Only there: the command line also looks in the
+                          // user's own temporary folder, where a real
+                          // minicode may be listening.
+                          @"MINICODE_CONTROL_DIR": [empty stringByAppendingPathComponent:@"MiniCode"],
                           @"MINICODE_CLI_WAIT": @"0.4"},
                         ^(int s, NSString *out, NSString *err) {
             GCHECK(s == 3);
@@ -572,6 +576,10 @@ MC_GUI_SUITE(control) {
         [strip mouseDown:e];
         GCHECK([ActiveTab(c)[@"preview"] isEqual:@NO]);
         GCHECK(!strip.items[(NSUInteger)strip.activeIndex].preview);
+        // The click gave the editor the keyboard; the agent's next files
+        // would wait beside it (AgentCommandsSuite), so it goes back to
+        // the tree for the checks below.
+        [c.window makeFirstResponder:[c valueForKey:@"outline"]];
     });
     CLI(@"--keep opens an ordinary tab, note and all",
         @[@"open", @"src/a.py:2", @"--note", @"Kept", @"--keep"], ^(int s, NSString *, NSString *) {
