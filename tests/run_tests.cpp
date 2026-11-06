@@ -8725,6 +8725,82 @@ static void testLinuxBuildLists() {
         if (!fromMeson.count(f)) std::printf("  meson.build lacks %s.cpp\n", f.c_str());
     CHECK(fromMeson.size() >= 16);
     CHECK(fromMake == fromMeson);
+
+    // Android's CMakeLists names only the core files the app uses, so it
+    // cannot equal the others; but every file it names must exist, and
+    // every core file whose header those files (or the JNI glue) include,
+    // directly or through other headers, must be in it too, or the APK
+    // fails to link. CI does not build Android, so this is what catches a
+    // core file that starts using another.
+    std::ifstream ac("android/app/src/main/cpp/CMakeLists.txt");
+    if (!ac) {
+        std::printf("  (android/ not found here; its build list check skipped)\n");
+        return;
+    }
+    std::stringstream a;
+    a << ac.rdbuf();
+    const std::string cmake = a.str();
+    auto readFile = [](const std::string &path, std::string &out) {
+        std::ifstream f(path);
+        if (!f) return false;
+        std::stringstream ss;
+        ss << f.rdbuf();
+        out = ss.str();
+        return true;
+    };
+    auto exists = [](const std::string &path) {
+        struct stat st;
+        return stat(path.c_str(), &st) == 0;
+    };
+    std::set<std::string> core = coreFilesIn(cmake, "${CORE}/", ".cpp");
+    std::set<std::string> fromLinux = coreFilesIn(cmake, "${LINUX}/", ".cpp");
+    CHECK(core.size() >= 10);
+    // The sources to scan: the core files and the JNI glue beside the list.
+    std::vector<std::string> scan;
+    for (const std::string &f : core) {
+        bool ok = exists("src/" + f + ".cpp");
+        if (!ok) std::printf("  CMakeLists.txt names src/%s.cpp, which is not there\n", f.c_str());
+        CHECK(ok);
+        scan.push_back("src/" + f + ".cpp");
+        scan.push_back("src/" + f + ".h");
+    }
+    for (const std::string &f : fromLinux) {
+        bool ok = exists("linux/src/" + f + ".cpp");
+        if (!ok) std::printf("  CMakeLists.txt names linux/src/%s.cpp, which is not there\n", f.c_str());
+        CHECK(ok);
+        scan.push_back("linux/src/" + f + ".cpp");
+        scan.push_back("linux/src/" + f + ".h");
+    }
+    {
+        std::stringstream words(cmake);
+        std::string w;
+        while (words >> w) {
+            while (!w.empty() && (w.back() == ')' || w.back() == '(')) w.pop_back();
+            if (w.size() > 8 && w.find('/') == std::string::npos &&
+                w.compare(w.size() - 8, 8, "_jni.cpp") == 0)
+                scan.push_back("android/app/src/main/cpp/" + w);
+        }
+    }
+    CHECK(scan.size() > core.size() * 2);   // the JNI files were found
+    std::set<std::string> seen;
+    for (size_t i = 0; i < scan.size(); i++) {
+        std::string text;
+        if (!readFile(scan[i], text)) continue;
+        for (const std::string &inc : coreFilesIn(text, "#include \"", "\"")) {
+            size_t slash = inc.find_last_of('/');
+            std::string name = inc.substr(slash == std::string::npos ? 0 : slash + 1);
+            if (name.size() < 3 || name.compare(name.size() - 2, 2, ".h") != 0) continue;
+            name.resize(name.size() - 2);
+            if (!seen.insert(name).second) continue;
+            if (exists("src/" + name + ".h")) scan.push_back("src/" + name + ".h");
+            if (!exists("src/" + name + ".cpp")) continue;
+            bool listed = core.count(name) > 0;
+            if (!listed)
+                std::printf("  Android's CMakeLists.txt lacks ${CORE}/%s.cpp (%s includes it)\n",
+                            name.c_str(), scan[i].c_str());
+            CHECK(listed);
+        }
+    }
 }
 
 static void testChangeRequest() {
