@@ -466,7 +466,7 @@ void LatexPreview::compileNow() {
     GSubprocessLauncher* l = newLauncher(static_cast<GSubprocessFlags>(
         G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_MERGE));
     g_subprocess_launcher_set_cwd(l, dirName(path_).c_str());
-    proc_ = g_subprocess_launcher_spawn(l, &err, tool.c_str(), "--synctex", "--chatter",
+    proc_ = g_subprocess_launcher_spawn(l, &err, tool.c_str(), "--untrusted", "--synctex", "--chatter",
                                         "minimal", "--color", "never", "--outdir",
                                         out.c_str(), job->scratch.c_str(), nullptr);
     g_object_unref(l);

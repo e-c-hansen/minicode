@@ -111,7 +111,8 @@ goes here first, with tests; the GUI only displays it.
   `MarkdownParser` (CommonMark plus GitHub, math, `lines()`), `MarkdownEdit`
   (the block behind a preview click), `MarkdownTasks` (task lists), `MathTex`
   (the Markdown math batch), `MermaidDiagram` (```mermaid blocks for mmdc),
-  `LatexDoc` (editable ranges of LaTeX source),
+  `LatexDoc` (editable ranges of LaTeX source), `LatexScratch` (the
+  preview's output folders and sibling records),
   `SyncTex` (page point to source lines), `Json`, `IdeLink` (the Claude Code
   IDE link: WebSocket, MCP, lock file).
 - `Settings` (the settings file, themes, every resolved color), `Commands` (the
@@ -1196,7 +1197,9 @@ false`) a formula shows as its TeX in the code style.
   as a page of its box plus 1 pt; the log's `MC:BEGIN:k` and
   `MC:k:page:wd:ht:dp` give pages, boxes and errors; the output routine drops
   other pages. `check` refuses what could derail later formulas (unbalanced
-  braces, a stray `$`, `\input`, `\end{document}`, `\write`); `prepare`
+  braces, a stray `$`, `\input`, `\end{document}`, `\write`, `\stop`) and the
+  ways round those words (`\csname`, `\catcode`, `\scantokens`,
+  `\makeatletter`, `\ExplSyntaxOn`, any `^^`); `prepare`
   rewrites MathJax-only forms (`\mathbb{1}` to dsfont's `\mathds`, align and
   friends inline, `\tag`, Unicode symbols); the preamble and macros are in
   MathTex.cpp. **Bump `MathTex::kVersion`** when any of it changes: it is in
@@ -1256,11 +1259,20 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
   Support/MiniCode/bin` (0.17.0 is there; its cache,
   `~/Library/Caches/TectonicProject.Tectonic`, has text fonts but no math
   fonts), then PATH and Homebrew; missing, the panel offers the pinned
-  download.
+  download, checked against GitHub's published SHA-256 (`kTectonicSha256`,
+  as the Linux port's) before it is unpacked, and only its `tectonic` file
+  moved into place (`MINICODE_TECTONIC_DOWNLOAD` points the GUI check at a
+  file:// stand-in, held to the same hash).
 - **The buffer is typeset from a hidden sibling** `.<name>.minicode.tex` in the
   document's folder, so relative paths resolve and the user's file is never
-  written; deleted when tectonic exits; output in
-  `NSTemporaryDirectory()/MiniCode-latex`.
+  written; deleted when tectonic exits. Before it is written, a
+  `sibling.record` (pid, start time, size, SHA-256; `LatexScratch`) goes in the
+  output folder, so the first typeset of a launch removes a copy a crashed
+  process left, and only when it is still exactly those bytes. tectonic runs
+  `--untrusted`. Output in `NSTemporaryDirectory()/MiniCode-latex/<16 hex of
+  the resolved path's SHA-256>` (`MCLatexWorkFolder`; `$MINICODE_LATEX_WORK`
+  in the checks), so two paper.tex never share a PDF; the folder goes with the
+  last preview of it. `make guitest SUITES=latex` runs a stand-in tectonic.
 - Compiles are debounced (0.6 s) and generation-counted; a run has 5 minutes,
   then SIGTERM and SIGKILL, with a log line (a looping document spun a core and
   queued every later edit). Scroll and zoom are restored by page index and
