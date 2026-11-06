@@ -1,5 +1,6 @@
 // JsonOutlineView.mm — see JsonOutlineView.h.
 #import "JsonOutlineView.h"
+#import "EditorFont.h"
 #import "AppSettings.h"
 #import "Appearance.h"
 #include "JsonOutline.h"
@@ -250,7 +251,7 @@ static NSColor *Muted(void) {
 
 - (NSAttributedString *)textFor:(const Node &)n {
     AppSettings *cfg = [AppSettings shared];
-    NSFont *font = [NSFont monospacedSystemFontOfSize:11.5 weight:NSFontWeightRegular];
+    NSFont *font = MCMonoFont(11.5, NSFontWeightRegular);
     NSMutableAttributedString *s = [[NSMutableAttributedString alloc]
         initWithString:Str(JsonOutline::label(n))
             attributes:@{NSFontAttributeName: font,

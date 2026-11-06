@@ -3,6 +3,7 @@
 // LspServer.mm, the editor's text view in CodeTextView.mm, and the
 // completion list, hover and signature popups in LspPopups.mm.
 #import "LspShared.h"
+#import "EditorFont.h"
 #import "LspServer.h"
 #import "LspPopups.h"
 #import "TreeDetails.h"
@@ -57,9 +58,7 @@ static NSColor *DotGray(void) { return LHex(0x9CA3AF); }
 // read by the preview's own parser.
 static NSFont *DocFont(BOOL mono, BOOL bold, BOOL italic, CGFloat size) {
     size = round(size * MCEditorScale() * 2) / 2;   // follows the editor's zoom
-    NSFont *f = mono ? [NSFont monospacedSystemFontOfSize:size
-                                                   weight:bold ? NSFontWeightSemibold
-                                                               : NSFontWeightRegular]
+    NSFont *f = mono ? MCMonoFont(size, bold ? NSFontWeightSemibold : NSFontWeightRegular)
                      : (bold ? [NSFont boldSystemFontOfSize:size] : [NSFont systemFontOfSize:size]);
     if (italic) f = [[NSFontManager sharedFontManager] convertFont:f toHaveTrait:NSItalicFontMask];
     return f;
@@ -3282,7 +3281,7 @@ static NSString *ErrorText(const Json &error) {
 }
 
 static NSFont *PickerMono(void) {
-    return [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+    return MCMonoFont(12, NSFontWeightRegular);
 }
 
 - (void)referencesArrived:(const Json &)result error:(const Json &)error gen:(int)gen

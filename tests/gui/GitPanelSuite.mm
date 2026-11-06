@@ -6,7 +6,9 @@
 // with git's own words, and nothing but the index and the commit changed.
 #import "Harness.h"
 #import "EditorController.h"
+#import "EditorFont.h"
 #import "GitPanel.h"
+#include <objc/runtime.h>
 
 namespace {
 MCGitPanel *Git(EditorController *c) { return [c valueForKey:@"gitPanel"]; }
@@ -78,6 +80,30 @@ MC_GUI_SUITE(git_panel) {
     });
     MCGuiStep(@"and staged again", ^{ if (git) [Git(c) toggleStageAtRow:RowOf(c, @"W U c.txt")]; });
     MCGuiWait(@"c.txt staged again", 10, ^BOOL { return !git || RowOf(c, @"S A c.txt") != NSNotFound; });
+    MCGuiStep(@"the rows draw when AppKit has no monospaced font to give", ^{
+        if (!git) return;
+        // +[NSFont monospacedSystemFontOfSize:weight:] answers nil now and
+        // then while other threads make fonts; a status letter drawn with
+        // it threw inside drawRect: and ended the app (CI, 2026-11-06).
+        Method m = class_getClassMethod(NSFont.class, @selector(monospacedSystemFontOfSize:weight:));
+        IMP real = method_getImplementation(m);
+        method_setImplementation(m, imp_implementationWithBlock(^NSFont *(id, CGFloat, NSFontWeight) {
+            return (NSFont *)nil;
+        }));
+        NSFont *fallback = MCMonoFont(12, NSFontWeightSemibold);
+        NSView *panel = Git(c);
+        NSBitmapImageRep *rep = [panel bitmapImageRepForCachingDisplayInRect:panel.bounds];
+        BOOL drew = NO;
+        @try {
+            [panel cacheDisplayInRect:panel.bounds toBitmapImageRep:rep];
+            drew = YES;
+        } @catch (NSException *e) {
+            MCGuiNote(@"drawing threw: %@", e.reason);
+        }
+        method_setImplementation(m, real);
+        GCHECK(fallback != nil);
+        GCHECK(drew);
+    });
     MCGuiStep(@"a staged file's diff takes the editor's slot", ^{
         if (!git) return;
         [Git(c) showDiffAtRow:RowOf(c, @"S M a.txt")];

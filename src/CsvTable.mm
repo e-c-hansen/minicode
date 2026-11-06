@@ -1,5 +1,6 @@
 // CsvTable.mm — see CsvTable.h.
 #import "CsvTable.h"
+#import "EditorFont.h"
 #import "AppSettings.h"
 #import "Appearance.h"
 #include "Csv.h"
@@ -270,7 +271,7 @@ static NSString *ColumnName(NSUInteger i) {
 // Columns to match the document: a row number column, then one per field.
 - (void)rebuild {
     const NSUInteger want = _doc.columns() + 1;
-    NSFont *font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+    NSFont *font = MCMonoFont(12, NSFontWeightRegular);
     const CGFloat charW = [@"0" sizeWithAttributes:@{NSFontAttributeName: font}].width;
     while ((NSUInteger)_table.numberOfColumns > want)
         [_table removeTableColumn:_table.tableColumns.lastObject];
@@ -339,8 +340,8 @@ static NSString *ColumnName(NSUInteger i) {
     c.textColor = number ? [NSColor colorWithWhite:0.55 alpha:1] : [cfg text:Surface::Editor];
     // The first row is usually the header: bold, as a spreadsheet's.
     c.font = row == 0 && !number
-        ? [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightSemibold]
-        : [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+        ? MCMonoFont(12, NSFontWeightSemibold)
+        : MCMonoFont(12, NSFontWeightRegular);
 }
 
 // ------------------------------------------------------------ edits

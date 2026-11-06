@@ -1,5 +1,6 @@
 // CompareView.mm — see CompareView.h.
 #import "CompareView.h"
+#import "EditorFont.h"
 #import "AppSettings.h"
 #import "Appearance.h"
 #include "SideBySide.h"
@@ -419,7 +420,7 @@ static const CGFloat kGutter = 52;
     }
     AppSettings *cfg = [AppSettings shared];
     NSDictionary *attrs = @{
-        NSFontAttributeName: [NSFont monospacedSystemFontOfSize:12.5 weight:NSFontWeightRegular],
+        NSFontAttributeName: MCMonoFont(12.5, NSFontWeightRegular),
         NSForegroundColorAttributeName: [cfg text:Surface::Editor]};
     [_left.textStorage setAttributedString:[[NSAttributedString alloc] initWithString:left attributes:attrs]];
     [_right.textStorage setAttributedString:[[NSAttributedString alloc] initWithString:right attributes:attrs]];

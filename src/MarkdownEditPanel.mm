@@ -75,7 +75,7 @@
     scroll.borderType = NSBezelBorder;
     MCMarkdownEditText *editor = [[MCMarkdownEditText alloc]
         initWithFrame:NSMakeRect(0, 0, width - 24, editorHeight)];
-    editor.font = [NSFont monospacedSystemFontOfSize:MCZoomed(12) weight:NSFontWeightRegular];
+    editor.font = MCMonoFont(MCZoomed(12), NSFontWeightRegular);
     editor.string = text ?: @"";
     editor.richText = NO;
     editor.automaticQuoteSubstitutionEnabled = NO;

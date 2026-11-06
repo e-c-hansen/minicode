@@ -1,5 +1,6 @@
 // LspPicker.mm — Objective-C++. See LspPicker.h.
 #import "LspPicker.h"
+#import "EditorFont.h"
 
 static NSColor *PHex(unsigned int rgb) {
     return [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0
@@ -244,7 +245,7 @@ static const CGFloat kPickerRowHeight = 20;
     _content.layer.borderWidth = 1;
     _content.layer.borderColor = PHex(0x4EA1F7).CGColor;
     _field = [[NSTextField alloc] initWithFrame:NSMakeRect(8, 25, w - 16, 23)];
-    _field.font = [NSFont monospacedSystemFontOfSize:12.5 weight:NSFontWeightRegular];
+    _field.font = MCMonoFont(12.5, NSFontWeightRegular);
     _field.delegate = self;
     _field.usesSingleLineMode = YES;
     _field.cell.scrollable = YES;

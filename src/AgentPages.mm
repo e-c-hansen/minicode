@@ -1,5 +1,6 @@
 // AgentPages.mm — see AgentPages.h.
 #import "AgentPages.h"
+#import "EditorFont.h"
 #import "AgentModel.h"
 #import "AppSettings.h"
 #import "Appearance.h"
@@ -434,7 +435,7 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
 
 - (void)renderLastTest:(NSColor *)text {
     NSMutableAttributedString *s = [NSMutableAttributedString new];
-    NSFont *mono = [NSFont monospacedSystemFontOfSize:11.5 weight:NSFontWeightRegular];
+    NSFont *mono = MCMonoFont(11.5, NSFontWeightRegular);
     NSFont *body = [NSFont systemFontOfSize:12.5];
     auto add = [&](NSString *str, NSFont *f, NSColor *c) {
         [s appendAttributedString:[[NSAttributedString alloc]
@@ -474,7 +475,7 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
     NSMutableAttributedString *s = [NSMutableAttributedString new];
     NSFont *body = [NSFont systemFontOfSize:12.5];
     NSFont *bold = [NSFont systemFontOfSize:12.5 weight:NSFontWeightSemibold];
-    NSFont *mono = [NSFont monospacedSystemFontOfSize:11.5 weight:NSFontWeightRegular];
+    NSFont *mono = MCMonoFont(11.5, NSFontWeightRegular);
     NSFont *small = [NSFont systemFontOfSize:11];
     NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
     ps.headIndent = 28;
@@ -830,7 +831,7 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
                     : st == 'R' || st == 'C' ? PHex(0x73C991) : PHex(0xE2C08D);
     NSMutableAttributedString *s = [[NSMutableAttributedString alloc]
         initWithString:[NSString stringWithFormat:@"%@   ", [NSString stringWithCharacters:&st length:1]]
-            attributes:@{NSFontAttributeName: [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightSemibold],
+            attributes:@{NSFontAttributeName: MCMonoFont(12, NSFontWeightSemibold),
                          NSForegroundColorAttributeName: letter}];
     [s appendAttributedString:[[NSAttributedString alloc]
         initWithString:c.path

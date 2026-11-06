@@ -1,5 +1,6 @@
 // LspPanel.mm — Objective-C++. See LspPanel.h.
 #import "LspPanel.h"
+#import "EditorFont.h"
 #import "Lsp.h"
 #import "InstallPanel.h"
 
@@ -108,7 +109,7 @@ static NSTextField *Label(NSString *text, NSFont *font, NSColor *color, BOOL wra
     return f;
 }
 
-static NSFont *Mono(void) { return [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular]; }
+static NSFont *Mono(void) { return MCMonoFont(11, NSFontWeightRegular); }
 static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
 
 @interface MCServersController : NSViewController
@@ -472,8 +473,7 @@ static MCInterpreterPicker *gPicker;   // kept while its sheet is up
             attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
                          NSForegroundColorAttributeName: [NSColor secondaryLabelColor]}]];
     [s appendAttributedString:[[NSAttributedString alloc] initWithString:path
-        attributes:@{NSFontAttributeName: [NSFont monospacedSystemFontOfSize:10.5
-                                                                       weight:NSFontWeightRegular],
+        attributes:@{NSFontAttributeName: MCMonoFont(10.5, NSFontWeightRegular),
                      NSForegroundColorAttributeName: [NSColor secondaryLabelColor]}]];
     // Each line stays one line: a long path loses its middle, never wraps
     // at a slash onto a third line the row has no room for.

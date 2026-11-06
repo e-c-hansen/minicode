@@ -1,5 +1,6 @@
 // LspPopups.mm — Objective-C++. See LspPopups.h.
 #import "LspShared.h"
+#import "EditorFont.h"
 #import "LspPopups.h"
 
 // ------------------------------------------------------ MCCompletionPopup
@@ -116,8 +117,7 @@ static const NSInteger kMaxRows = 10;
         f.stringValue = @"";
         return f;
     }
-    NSFont *mono = [NSFont monospacedSystemFontOfSize:MCEditorFontSize() - 1
-                                               weight:NSFontWeightRegular];
+    NSFont *mono = MCMonoFont(MCEditorFontSize() - 1, NSFontWeightRegular);
     NSMutableAttributedString *s = [[NSMutableAttributedString alloc]
         initWithString:[@" " stringByAppendingString:_labels[(NSUInteger)row]]
             attributes:@{NSFontAttributeName: mono,

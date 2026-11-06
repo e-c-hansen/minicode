@@ -1,5 +1,6 @@
 // GitPanel.mm — Objective-C++. See GitPanel.h.
 #import "GitPanel.h"
+#import "EditorFont.h"
 #import "AppSettings.h"
 #import "Appearance.h"
 #import "Lsp.h"   // MCFindProgram, MCSearchDirs
@@ -629,8 +630,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     NSString *letter = [NSString stringWithCharacters:&ch length:1];
     [letter drawAtPoint:NSMakePoint(b.size.width - letterW, 3)
          withAttributes:@{
-             NSFontAttributeName: [NSFont monospacedSystemFontOfSize:12
-                                                              weight:NSFontWeightSemibold],
+             NSFontAttributeName: MCMonoFont(12, NSFontWeightSemibold),
              NSForegroundColorAttributeName: LetterColor(r.letter, r.unmerged),
          }];
 }

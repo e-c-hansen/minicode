@@ -1,5 +1,6 @@
 // EditorController+Format.mm — EditorController: Format Document.
 #import "EditorController+Private.h"
+#import "EditorFont.h"
 #import "EditorController+FormatIvars.h"
 
 @implementation EditorController (Format)
@@ -222,7 +223,7 @@
     }
 
     NSTextField *label = [NSTextField wrappingLabelWithString:message];
-    label.font = error ? [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular]
+    label.font = error ? MCMonoFont(11, NSFontWeightRegular)
                        : [NSFont systemFontOfSize:12];
     label.selectable = YES;
     const CGFloat maxWidth = 560;

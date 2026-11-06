@@ -189,8 +189,7 @@ static const CGFloat kStatusHeight = 26;
     self.logScroll.drawsBackground = YES;
     self.logView = [[NSTextView alloc] initWithFrame:self.bounds];
     self.logView.editable = NO;
-    self.logView.font = [NSFont monospacedSystemFontOfSize:12
-                                                    weight:NSFontWeightRegular];
+    self.logView.font = MCMonoFont(12, NSFontWeightRegular);
     self.logView.textContainerInset = NSMakeSize(12, 12);
     self.logScroll.documentView = self.logView;
     self.logScroll.hidden = YES;
@@ -739,8 +738,7 @@ const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &syn
     scroll.borderType = NSBezelBorder;
     MCEditText *editor = [[MCEditText alloc]
         initWithFrame:NSMakeRect(0, 0, 336, 74)];
-    editor.font = [NSFont monospacedSystemFontOfSize:MCZoomed(12)
-                                              weight:NSFontWeightRegular];
+    editor.font = MCMonoFont(MCZoomed(12), NSFontWeightRegular);
     editor.string = text ?: @"";
     editor.automaticQuoteSubstitutionEnabled = NO;
     editor.automaticDashSubstitutionEnabled = NO;

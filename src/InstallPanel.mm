@@ -1,5 +1,6 @@
 // InstallPanel.mm — Objective-C++. See InstallPanel.h.
 #import "InstallPanel.h"
+#import "EditorFont.h"
 #import "InstallHints.h"
 #import "Lsp.h"           // MCFindProgram
 #import "LspClient.h"     // Lsp::serverDisplayName
@@ -35,7 +36,7 @@ static std::function<bool(const std::string &)> Have() {
 }
 
 // ------------------------------------------------------------- pieces
-static NSFont *Mono(void) { return [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular]; }
+static NSFont *Mono(void) { return MCMonoFont(11, NSFontWeightRegular); }
 static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
 
 static NSTextField *Text(NSString *s, NSFont *font, NSColor *color, CGFloat width) {

@@ -1,5 +1,6 @@
 // EditorController+MarkdownRender.mm — EditorController: turning Markdown runs into attributed text: paragraphs, runs, tables.
 #import "EditorController+Private.h"
+#import "EditorFont.h"
 #import "EditorController+MarkdownIvars.h"
 
 // A task list item's box, drawn rather than the ☐ and ☑ characters, whose
@@ -179,8 +180,7 @@ static NSTextBlock *MCFullWidthBlock(void) {
 
     // Sizes at no zoom; Zoom In and Out scale the preview with the editor.
     NSFont *body = [NSFont systemFontOfSize:MCZoomed(15)];
-    NSFont *mono = [NSFont monospacedSystemFontOfSize:MCZoomed(13)
-                                               weight:NSFontWeightRegular];
+    NSFont *mono = MCMonoFont(MCZoomed(13), NSFontWeightRegular);
     AppSettings *cfg = [AppSettings shared];
     NSFont *font = body;
     NSColor *color = [cfg text:Surface::Editor];

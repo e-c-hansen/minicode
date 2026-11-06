@@ -1,5 +1,6 @@
 // EditorController+StatusBar.mm — EditorController: the status bar, its notes and "Saved ...", and the shortcut hints.
 #import "EditorController+Private.h"
+#import "EditorFont.h"
 
 @implementation EditorController (StatusBar)
 
@@ -114,7 +115,7 @@
 
     NSTextField *lbl = [NSTextField labelWithString:@""];
     lbl.frame = NSMakeRect(16, 14, pw - 32, ph - 28);
-    lbl.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+    lbl.font = MCMonoFont(12, NSFontWeightRegular);
     lbl.textColor = Hex(0xE0E0E0);
     lbl.backgroundColor = [NSColor clearColor];
     lbl.maximumNumberOfLines = 0;
@@ -181,8 +182,7 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     ];
     ps.lineSpacing = 3;
     NSDictionary *keyAttr = @{
-        NSFontAttributeName: [NSFont monospacedSystemFontOfSize:12
-                                                         weight:NSFontWeightMedium],
+        NSFontAttributeName: MCMonoFont(12, NSFontWeightMedium),
         NSForegroundColorAttributeName: Hex(0x4EA1F7),
         NSParagraphStyleAttributeName: ps,
     };

@@ -1,5 +1,6 @@
 // SqliteView.mm — see SqliteView.h.
 #import "SqliteView.h"
+#import "EditorFont.h"
 #import "AppSettings.h"
 #import "Appearance.h"
 #include <sqlite3.h>
@@ -203,7 +204,7 @@ static NSColor *Muted(void) {
         _schema = [[NSTextView alloc] initWithFrame:NSZeroRect];
         _schema.editable = NO;
         _schema.selectable = YES;
-        _schema.font = [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular];
+        _schema.font = MCMonoFont(11, NSFontWeightRegular);
         _schema.textContainerInset = NSMakeSize(6, 4);
         _schema.drawsBackground = NO;
         _schemaScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect];
@@ -216,7 +217,7 @@ static NSColor *Muted(void) {
 
         _query = [NSTextField textFieldWithString:@""];
         _query.placeholderString = @"SQL to run on the database, read-only (Return runs it)";
-        _query.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+        _query.font = MCMonoFont(12, NSFontWeightRegular);
         _query.target = self;
         _query.action = @selector(queryEntered:);
         _query.delegate = self;
@@ -561,7 +562,7 @@ static NSColor *Muted(void) {
 
 - (void)rebuildColumns {
     while (_grid.numberOfColumns) [_grid removeTableColumn:_grid.tableColumns.lastObject];
-    NSFont *font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+    NSFont *font = MCMonoFont(12, NSFontWeightRegular);
     const CGFloat charW = [@"0" sizeWithAttributes:@{NSFontAttributeName: font}].width;
     for (NSUInteger i = 0; i < _columns.count; i++) {
         NSTableColumn *col = [[NSTableColumn alloc]
@@ -610,7 +611,7 @@ static NSColor *Muted(void) {
     const BOOL null = [self isNullAtRow:(NSUInteger)row column:(NSUInteger)col.identifier.integerValue];
     c.textColor = null ? Muted() : [[AppSettings shared] text:Surface::Editor];
     // NULL in italics as well as muted, so the text "NULL" never passes for it.
-    NSFont *font = c.font ?: [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+    NSFont *font = c.font ?: MCMonoFont(12, NSFontWeightRegular);
     NSFontManager *fm = [NSFontManager sharedFontManager];
     c.font = null ? [fm convertFont:font toHaveTrait:NSItalicFontMask]
                   : [fm convertFont:font toNotHaveTrait:NSItalicFontMask];

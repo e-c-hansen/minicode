@@ -11,13 +11,21 @@ CGFloat MCEditorZoom(void) {
     return (CGFloat)[MCAppDefaults() doubleForKey:kZoomKey];
 }
 
+NSFont *MCMonoFont(CGFloat size, NSFontWeight weight) {
+    for (int i = 0; i < 3; i++) {
+        NSFont *f = [NSFont monospacedSystemFontOfSize:size weight:weight];
+        if (f) return f;
+    }
+    return [NSFont userFixedPitchFontOfSize:size] ?: [NSFont systemFontOfSize:size];
+}
+
 CGFloat MCEditorFontSize(void) {
     const CGFloat size = (CGFloat)[AppSettings shared].settings.editorFontSize() + MCEditorZoom();
     return MAX((CGFloat)Settings::kMinFontSize, MIN((CGFloat)Settings::kMaxFontSize, size));
 }
 
 NSFont *MCEditorFont(void) {
-    return [NSFont monospacedSystemFontOfSize:MCEditorFontSize() weight:NSFontWeightRegular];
+    return MCMonoFont(MCEditorFontSize(), NSFontWeightRegular);
 }
 
 CGFloat MCTerminalFontSize(void) {
@@ -35,8 +43,7 @@ NSFont *MCTerminalFont(BOOL bold, BOOL italic) {
     }
     const int i = (bold ? 1 : 0) | (italic ? 2 : 0);
     if (!fonts[i]) {
-        NSFont *f = [NSFont monospacedSystemFontOfSize:size
-                                                weight:bold ? NSFontWeightBold : NSFontWeightRegular];
+        NSFont *f = MCMonoFont(size, bold ? NSFontWeightBold : NSFontWeightRegular);
         if (italic) {
             NSFontDescriptor *d = [f.fontDescriptor fontDescriptorWithSymbolicTraits:
                 f.fontDescriptor.symbolicTraits | NSFontDescriptorTraitItalic];

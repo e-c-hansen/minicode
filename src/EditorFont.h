@@ -16,6 +16,14 @@
 // comes as MCSettingsDidChangeNotification instead.
 extern NSNotificationName const MCEditorZoomDidChangeNotification;
 
+// +[NSFont monospacedSystemFontOfSize:weight:], never nil. AppKit returns
+// nil now and then when another thread is making fonts at the same time
+// (about once in 100,000 calls with eight threads at it), and a nil font
+// in an attributes dictionary literal throws: inside a view's drawRect:
+// that ended the app (the git panel's status letters, 2026-11-06). Asked
+// again, then the user's fixed-pitch font, then the system font.
+NSFont *MCMonoFont(CGFloat size, NSFontWeight weight);
+
 CGFloat MCEditorFontSize(void);
 // The monospaced system font at that size.
 NSFont *MCEditorFont(void);
