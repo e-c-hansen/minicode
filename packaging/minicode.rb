@@ -14,6 +14,8 @@ cask "minicode" do
   desc "Native code editor with a terminal, browser, and Markdown and LaTeX previews"
   homepage "https://github.com/e-c-hansen/minicode"
 
+  # Built for Apple silicon only (the Makefile builds the host's architecture).
+  depends_on arch: :arm64
   # The app is built for macOS 11 (Info.plist's LSMinimumSystemVersion), which
   # is also the oldest macOS Homebrew knows, so brew style wants no version
   # here. A higher minimum is written `depends_on macos: :ventura` (13 and up);

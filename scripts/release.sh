@@ -14,6 +14,8 @@
 #      commits that, and pushes main,
 #   5. publishes a GitHub Release here, tagged vVERSION, with the zip and the
 #      APK attached (Obtainium and people installing by hand take it from there),
+#      its notes from MINICODE_RELEASE_NOTES (a Markdown file) or else the
+#      commit subjects since the last tag,
 #   6. copies packaging/minicode.rb into the tap as the live cask,
 #   7. uploads the Ubuntu source package to the Launchpad PPA through
 #      scripts/ppa.sh, when a signing key is configured (packaging/PPA.md),
@@ -196,6 +198,18 @@ git diff --cached --quiet || git commit -q -m "Release $VERSION"
 echo "==> Pushing main"
 git push -q origin main
 
+# What changed: MINICODE_RELEASE_NOTES names a Markdown file written for users;
+# without one, the commit subjects since the last tag stand in, never a
+# placeholder.
+if [ -n "${MINICODE_RELEASE_NOTES:-}" ]; then
+    CHANGES="$(cat "$MINICODE_RELEASE_NOTES")"
+else
+    PREV_TAG="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)"
+    CHANGES="### What changed
+
+$(git log --no-merges --format='- %s' ${PREV_TAG:+"$PREV_TAG"..}HEAD | grep -v '^- Release ')"
+fi
+
 echo "==> Publishing GitHub Release v$VERSION on $APP_REPO"
 gh release create "v$VERSION" MiniCode.zip ${APK:+"$APK"} \
     --repo "$APP_REPO" \
@@ -205,7 +219,7 @@ gh release create "v$VERSION" MiniCode.zip ${APK:+"$APK"} \
 
 **Android:** download ${APK:-the APK} on your phone and open it; Android asks once whether your browser may install apps. Termux setup and updates through Obtainium: [android/README.md](https://github.com/$APP_REPO/blob/main/android/README.md#install).
 
-Edit these notes on GitHub to say what changed."
+$CHANGES"
 
 echo "==> Writing the cask to $TAP_REPO"
 TMP="$(mktemp -d)"
