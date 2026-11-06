@@ -5,6 +5,7 @@
 #import "LspShared.h"
 #import "LspServer.h"
 #import "LspPopups.h"
+#import "TreeDetails.h"
 
 NSNotificationName const MCLspSessionDidChangeNotification = @"MCLspSessionDidChange";
 NSNotificationName const MCPythonInterpreterDidChangeNotification =
@@ -436,6 +437,8 @@ static NSHashTable<LspSession *> *AllSessions(void) {
                name:MCSettingsDidChangeNotification object:nil];
     [nc addObserver:self selector:@selector(interpreterChosen:)
                name:MCPythonInterpreterDidChangeNotification object:nil];
+    [nc addObserver:self selector:@selector(environmentConsentChanged:)
+               name:MCPythonEnvironmentConsentDidChangeNotification object:nil];
     [nc addObserver:self selector:@selector(windowResignedKey:)
                name:NSWindowDidResignKeyNotification object:nil];
     // A server installed meanwhile (in the terminal, or anywhere while the
@@ -735,7 +738,7 @@ static NSHashTable<LspSession *> *AllSessions(void) {
 - (NSArray<NSString *> *)firstDirsForKey:(NSString *)key {
     if (Lsp::languageOfKey(Std(key)) != "python") return nil;
     NSString *source = nil;
-    NSString *interp = [self pythonInterpreterWithSource:&source];
+    NSString *interp = [self serverPythonInterpreterWithSource:&source];
     return interp ? @[interp.stringByDeletingLastPathComponent] : nil;
 }
 
@@ -783,7 +786,7 @@ static NSHashTable<LspSession *> *AllSessions(void) {
     Lsp::Client &c = server.client;
     if ([e.key isEqualToString:@"python"]) {
         NSString *source = nil;
-        NSString *interp = [self pythonInterpreterWithSource:&source];
+        NSString *interp = [self serverPythonInterpreterWithSource:&source];
         Lsp::PythonServer kind = Lsp::pythonServerKind(ArgvWords(argv));
         e.pythonKind = kind;
         e.interpreter = interp;
@@ -1064,7 +1067,7 @@ static NSHashTable<LspSession *> *AllSessions(void) {
             info.interpreterSource = e.interpreterSource;
         } else {
             NSString *source = nil;
-            info.interpreter = [self pythonInterpreterWithSource:&source];
+            info.interpreter = [self serverPythonInterpreterWithSource:&source];
             info.interpreterSource = source;
         }
     }
@@ -1179,14 +1182,26 @@ static BOOL IsRunnable(NSString *path) {
 }
 
 - (NSString *)pythonInterpreterWithSource:(NSString **)source {
-    return [self pythonInterpreterWithSource:source folderChoice:YES];
+    return [self pythonInterpreterWithSource:source folderChoice:YES project:YES];
+}
+
+- (NSString *)serverPythonInterpreterWithSource:(NSString **)source {
+    return [self pythonInterpreterWithSource:source folderChoice:YES
+                                     project:[self folderEnvironmentAllowed]];
 }
 
 - (NSString *)defaultPythonInterpreterWithSource:(NSString **)source {
-    return [self pythonInterpreterWithSource:source folderChoice:NO];
+    return [self pythonInterpreterWithSource:source folderChoice:NO
+                                     project:[self folderEnvironmentAllowed]];
 }
 
-- (NSString *)pythonInterpreterWithSource:(NSString **)source folderChoice:(BOOL)useChoice {
+// `project`: whether an environment inside the folder may be the automatic
+// choice. A server runs the interpreter it is given (pyright asks it for
+// its search paths) and is looked for beside it, so for the servers that
+// needs the user's yes (folderEnvironmentAllowed); a run the user starts
+// (Run File) does not.
+- (NSString *)pythonInterpreterWithSource:(NSString **)source folderChoice:(BOOL)useChoice
+                                  project:(BOOL)allowProject {
     NSString *missing = nil;
     NSString *chosen = useChoice ? [self chosenPythonInterpreter].stringByExpandingTildeInPath
                                  : nil;
@@ -1200,10 +1215,83 @@ static BOOL IsRunnable(NSString *path) {
         if (IsRunnable(p)) { if (source) *source = @"settings"; return p; }
         if (!missing) missing = @"python.interpreter is missing";
     }
-    std::string automatic = PythonEnvs::automatic([self pythonContext]);
+    PythonEnvs::Context ctx = [self pythonContext];
+    std::string automatic = PythonEnvs::automatic(ctx, allowProject);
+    if (!allowProject && !missing) {
+        std::string project = PythonEnvs::projectInterpreter(ctx.fileDir, ctx.root);
+        if (!project.empty() && project != automatic)
+            missing = [[self folderEnvironmentConsent] isEqualToString:@"deny"]
+                          ? @"the folder's own environment is not used"
+                          : @"the folder's own environment waits for your answer";
+    }
     if (source) *source = missing ? [@"automatic; " stringByAppendingString:missing]
                                   : @"automatic";
     return automatic.empty() ? nil : NS(automatic);
+}
+
+// ---- the folder's own Python environment
+// "allow", "deny", or nil when the user has not been asked for this folder.
+- (NSString *)folderEnvironmentConsent {
+    NSDictionary *all = [MCAppDefaults() dictionaryForKey:kEnvConsentDefaultsKey];
+    id v = all[[self rootKey]];
+    return [v isKindOfClass:[NSString class]] ? v : nil;
+}
+
+- (BOOL)folderEnvironmentAllowed {
+    return [[self folderEnvironmentConsent] isEqualToString:@"allow"];
+}
+
+- (NSString *)folderEnvironmentAwaitingConsent {
+    const Settings &st = [AppSettings shared].settings;
+    if (![_langKey isEqualToString:@"python"] || !_path || !st.lspEnabled()) return nil;
+    if (st.lspOff("python") && st.lspOff(Lsp::alsoKey("python"))) return nil;
+    if ([self folderEnvironmentConsent]) return nil;
+    // A choice made for the folder, or in the settings, is the user's own.
+    NSString *chosen = [self chosenPythonInterpreter].stringByExpandingTildeInPath;
+    if (chosen && IsRunnable(chosen)) return nil;
+    if (!st.pythonInterpreter().empty() &&
+        IsRunnable(NS(st.pythonInterpreter()).stringByExpandingTildeInPath))
+        return nil;
+    PythonEnvs::Context ctx = [self pythonContext];
+    std::string project = PythonEnvs::projectInterpreter(ctx.fileDir, ctx.root);
+    // The same one active where minicode started ($VIRTUAL_ENV) is trusted.
+    if (project.empty() || PythonEnvs::automatic(ctx, false) == project) return nil;
+    // bin/python's environment folder, as the folder names it (".venv").
+    NSString *env = NS(project).stringByDeletingLastPathComponent.stringByDeletingLastPathComponent;
+    NSString *root = RealPath(_root);
+    if (root.length && [env hasPrefix:[root stringByAppendingString:@"/"]])
+        env = [env substringFromIndex:root.length + 1];
+    return env;
+}
+
+- (void)setFolderEnvironmentAllowed:(BOOL)allow {
+    NSUserDefaults *d = MCAppDefaults();
+    NSMutableDictionary *all = [[d dictionaryForKey:kEnvConsentDefaultsKey] mutableCopy]
+                                   ?: [NSMutableDictionary dictionary];
+    all[[self rootKey]] = allow ? @"allow" : @"deny";
+    [d setObject:all forKey:kEnvConsentDefaultsKey];
+    // Every window on this folder follows, this one included.
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:MCPythonEnvironmentConsentDidChangeNotification
+                      object:[self rootKey]];
+}
+
+// The answer changes which interpreter the Python servers get and where
+// they are looked for, so the running ones start again (a missing one may
+// be in the environment, so it is looked for again too).
+- (void)environmentConsentChanged:(NSNotification *)note {
+    if (![note.object isEqual:[self rootKey]]) return;
+    for (NSString *key in @[@"python", NS(Lsp::alsoKey("python"))]) {
+        MCLspEntry *e = _entries[key];
+        if (!e) continue;
+        if (e.server || e.state == MCLspStateNotInstalled) {
+            if (Lsp::isAlsoKey(Std(key))) e.alsoCommand = [self alsoCommandForKey:key];
+            [self restartServer:key];
+        }
+    }
+    if (![_alsoKey length] && [_langKey isEqualToString:@"python"])
+        [self lookAgainForMissingServer];
+    [self changed];
 }
 
 - (NSArray<MCPythonCandidate *> *)pythonCandidates {
@@ -1243,7 +1331,7 @@ static BOOL IsRunnable(NSString *path) {
 - (void)applyPythonInterpreterForSwitch:(BOOL)forSwitch {
     MCLspEntry *e = _entries[@"python"];
     NSString *source = nil;
-    NSString *interp = [self pythonInterpreterWithSource:&source];
+    NSString *interp = [self serverPythonInterpreterWithSource:&source];
     if (!e.server) { [self changed]; return; }
     if (interp == e.interpreter || [interp isEqualToString:e.interpreter] ||
         (forSwitch && !interp && e.interpreter)) {

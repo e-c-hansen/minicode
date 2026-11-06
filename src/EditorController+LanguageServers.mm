@@ -123,7 +123,71 @@
 // but missing. It is offered once per language per launch (across windows)
 // and never for a language whose bar said Don't Show Again; it stays over
 // that language's files in this window until closed or the server turns up.
+// Folders whose question about their own Python environment was put off
+// with × in this launch: it comes back when minicode starts again.
+static NSMutableSet<NSString *> *EnvironmentQuestionPutOff(void) {
+    static NSMutableSet<NSString *> *roots;
+    if (!roots) roots = [NSMutableSet set];
+    return roots;
+}
+
+// The folder's own Python environment to ask about now, or nil.
+- (NSString *)environmentToAsk {
+    NSString *env = self.lsp.folderEnvironmentAwaitingConsent;
+    if (!env || [EnvironmentQuestionPutOff() containsObject:self.lsp.root ?: @""]) return nil;
+    return env;
+}
+
+- (void)ensureInstallBar {
+    if (self.installBar) return;
+    MCInstallBar *bar = [[MCInstallBar alloc] initWithFrame:NSZeroRect];
+    __weak EditorController *weakSelf = self;
+    __weak MCInstallBar *weakBar = bar;
+    // The same bar asks about a folder's environment; its buttons then
+    // answer that.
+    bar.onInstall = ^(NSButton *sender) {
+        if (weakBar.consentEnvironment) [weakSelf.lsp setFolderEnvironmentAllowed:YES];
+        else [weakSelf showInstallHelpFrom:sender];
+    };
+    bar.onClose = ^{
+        EditorController *s = weakSelf;
+        if (weakBar.consentEnvironment) {
+            [EnvironmentQuestionPutOff() addObject:s.lsp.root ?: @""];
+            [s updateInstallBar];
+        } else {
+            [s closeInstallBarMuting:NO];
+        }
+    };
+    bar.onMute = ^{
+        if (weakBar.consentEnvironment) [weakSelf.lsp setFolderEnvironmentAllowed:NO];
+        else [weakSelf closeInstallBarMuting:YES];
+    };
+    self.installBar = bar;
+    [self applyInstallBarColors];
+    bar.hidden = YES;   // shown, and laid out, by the caller
+    [self.rightArea addSubview:bar];
+}
+
 - (void)updateInstallBar {
+    // The question about the folder's own Python environment comes first:
+    // until it is answered the servers run without it, and a server
+    // missing from PATH may be in it.
+    NSString *ask = [self environmentToAsk];
+    if (ask) {
+        [self ensureInstallBar];
+        if (![self.installBar.consentEnvironment isEqualToString:ask])
+            self.installBar.consentEnvironment = ask;
+        if (self.installBar.hidden) {
+            self.installBar.hidden = NO;
+            [self relayoutRightArea];
+        }
+        return;
+    }
+    if (self.installBar.consentEnvironment) {
+        self.installBar.consentEnvironment = nil;
+        self.installBar.hidden = YES;
+        [self relayoutRightArea];
+    }
     NSString *missing = self.lsp.missingServer;
     NSString *language = self.lsp.currentLanguage;
     // The open file's server was missing a moment ago and runs now.
@@ -141,17 +205,7 @@
         _installBarKey = [missing copy];   // a language not offered yet takes the bar
     }
     BOOL show = _installBarKey && [_installBarKey isEqualToString:missing];
-    if (show && !self.installBar) {
-        MCInstallBar *bar = [[MCInstallBar alloc] initWithFrame:NSZeroRect];
-        __weak EditorController *weakSelf = self;
-        bar.onInstall = ^(NSButton *sender) { [weakSelf showInstallHelpFrom:sender]; };
-        bar.onClose = ^{ [weakSelf closeInstallBarMuting:NO]; };
-        bar.onMute = ^{ [weakSelf closeInstallBarMuting:YES]; };
-        self.installBar = bar;
-        [self applyInstallBarColors];
-        bar.hidden = YES;   // shown, and laid out, just below
-        [self.rightArea addSubview:bar];
-    }
+    if (show) [self ensureInstallBar];
     if (show) self.installBar.serverKey = _installBarKey;
     if (self.installBar && self.installBar.hidden == show) {
         self.installBar.hidden = !show;
@@ -163,8 +217,10 @@
 - (NSRect)layoutInstallBarIn:(NSRect)slot editorShown:(BOOL)shown {
     MCInstallBar *bar = self.installBar;
     if (!bar) return slot;
-    BOOL show = shown && !bar.hidden && _installBarKey &&
-                [_installBarKey isEqualToString:self.lsp.missingServer];
+    BOOL show = shown && !bar.hidden &&
+                (bar.consentEnvironment
+                     ? [bar.consentEnvironment isEqualToString:[self environmentToAsk]]
+                     : _installBarKey && [_installBarKey isEqualToString:self.lsp.missingServer]);
     if (!show) {
         bar.frame = NSZeroRect;
         return slot;

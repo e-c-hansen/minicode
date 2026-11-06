@@ -186,6 +186,9 @@ extern NSNotificationName const MCLspSessionDidChangeNotification;
 // Posted (object: the folder's path) when a folder's Python interpreter is
 // chosen, so every window on that folder follows.
 extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
+// The user answered for a folder's own Python environment; the object is the
+// folder's resolved path.
+extern NSNotificationName const MCPythonEnvironmentConsentDidChangeNotification;
 
 @interface LspSession : NSObject
 - (instancetype)initWithTextView:(CodeTextView *)textView root:(NSString *)root;
@@ -334,11 +337,28 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 - (void)restartCurrentServer;
 
 // ---- the Python interpreter
-// What the Python server analyses with for the open file (nil: left to the
-// server), and where the choice came from.
+// The interpreter for the open file (nil: none found), and where the choice
+// came from: this folder's choice, python.interpreter, then the folder's own
+// environment (.venv), $VIRTUAL_ENV and $CONDA_PREFIX. For a run the user
+// starts (Run File).
 - (NSString *)pythonInterpreterWithSource:(NSString **)source;
-// The same, leaving this folder's own choice out: what "Automatic" means.
+// What the Python servers analyse with: the same, except that the folder's
+// own environment counts only once the user allowed it for this folder,
+// since a server runs it and the programs beside it (nil: left to the server).
+- (NSString *)serverPythonInterpreterWithSource:(NSString **)source;
+// The servers' choice leaving this folder's own choice out: what
+// "Automatic" means.
 - (NSString *)defaultPythonInterpreterWithSource:(NSString **)source;
+// The folder's own environment (".venv", as the folder names it) when the
+// open Python file would use it but the user has not been asked for this
+// folder yet; nil otherwise. Nothing runs from it until they say yes.
+@property(nonatomic, readonly, copy) NSString *folderEnvironmentAwaitingConsent;
+// The answer, remembered per folder; every window on the folder restarts
+// its Python servers with it.
+- (void)setFolderEnvironmentAllowed:(BOOL)allow;
+- (BOOL)folderEnvironmentAllowed;
+// "allow", "deny", or nil (not asked).
+- (NSString *)folderEnvironmentConsent;
 // This folder's own choice, or nil for none (the setting or automatic).
 - (NSString *)chosenPythonInterpreter;
 // Store a choice for this folder (nil: none) and apply it.
