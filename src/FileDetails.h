@@ -8,6 +8,8 @@
 //   - SizeCache and measure: a folder's total size, worked out on a
 //     background thread, kept per folder and thrown away along the path to
 //     the root when something below changes.
+//   - TreeRefresh: which folders the tree lists again for one batch of
+//     FSEvents, so a change lists only the folders it touched.
 //
 // The Mac's EditorController and TreeDetails.mm use it; nothing here touches
 // a GUI. measure() reads the disk with POSIX calls, so it runs on Linux too.
@@ -17,6 +19,7 @@
 #include <cstdint>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -172,3 +175,44 @@ bool measure(const std::string &path, SizeCache &cache, const Limits &limits,
              const std::atomic<bool> *cancel, Total *out);
 
 }  // namespace FolderSizes
+
+namespace TreeRefresh {
+
+// A folder FSEvents named: something in it changed (an entry was made,
+// removed, renamed, or written). With `subtree` (MustScanSubDirs, or events
+// the system dropped) anything below it may have changed too.
+struct Event {
+    std::string path;
+    bool subtree = false;
+};
+
+// A path as the disk spells it, in the tree's spelling: `realRoot` (the
+// root with symbolic links resolved, /private/tmp/x) at its front becomes
+// `root` (/tmp/x), and trailing slashes go. Other paths only lose their
+// trailing slashes.
+std::string treeSpelling(const std::string &path, const std::string &root,
+                         const std::string &realRoot);
+
+struct Plan {
+    // The root itself under a subtree event: rescan everything.
+    bool everything = false;
+    // Loaded folders to list again, sorted (so a folder comes before the
+    // folders inside it), each once.
+    std::vector<std::string> list;
+    // Entries whose own row needs a fresh stat (a folder's date changes
+    // when an entry in it does), named in a folder that is listed but not
+    // listed again here. Sorted, each once.
+    std::vector<std::string> restat;
+};
+
+// What one batch of events asks of a tree whose loaded folders (the root
+// among them) are `loaded`, all in the tree's spelling: each named folder
+// that is loaded is listed again, with every loaded folder below it for a
+// subtree event; a named folder whose parent is loaded has its row
+// restatted unless the parent is listed anyway. A subtree event at or above
+// the root is everything. Other events outside the root are left out, and
+// nothing deeper than the loaded folders is ever listed.
+Plan plan(const std::vector<Event> &events, const std::set<std::string> &loaded,
+          const std::string &root);
+
+}  // namespace TreeRefresh
