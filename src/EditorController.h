@@ -14,22 +14,12 @@
 @property(nonatomic, readonly, strong) NSWindow *window;
 @property(nonatomic, readonly, copy) NSString *rootPath;
 - (instancetype)initWithRootPath:(NSString *)path;
-- (void)revealPath:(NSString *)path andOpen:(BOOL)open;  // select in tree
-// Open a file handed in from outside (Finder, the Dock, the command line),
-// spelled from rootPath, in its tab (a new one unless it is open already).
-- (BOOL)showFile:(NSString *)path;
-- (void)openFolder:(id)sender;    // menu action
-// This window moves to `dir` (minicode -r), asking about unsaved tabs first;
-// NO when the user cancelled.
-- (BOOL)switchToFolder:(NSString *)dir;
 - (void)saveCurrentFile:(id)sender;   // Cmd+S
 - (void)togglePreview:(id)sender;     // Markdown: source <-> rendered
 - (void)exportPDF:(id)sender;         // Shift+Cmd+S LaTeX: save the typeset PDF
 @property(nonatomic, readonly) BOOL canExportPDF;
 - (void)undo:(id)sender;              // Cmd+Z; the text view handles its own
 - (void)redo:(id)sender;              // Shift+Cmd+Z
-- (void)toggleHiddenFiles:(id)sender; // Cmd+Shift+. show/hide dotfiles
-- (void)toggleTreeColumn:(id)sender;  // the tree's size, saved and created columns (tag)
 - (void)selectNextTab:(id)sender;     // Ctrl+Tab, Shift+Cmd+]
 - (void)selectPreviousTab:(id)sender; // Ctrl+Shift+Tab, Shift+Cmd+[
 - (void)selectTabNumber:(id)sender;   // Shift+Cmd+1..9, Ctrl+1..9 (tag = n; 9 = last)
@@ -44,16 +34,6 @@
 - (void)copyActiveFileRelativePath:(id)sender;
 - (void)revealActiveFileInFinder:(id)sender;
 - (void)revealActiveFileInTree:(id)sender;
-// The file tree's right click menu: the clicked or selected row, else the
-// open folder. The Sort By items' tags are TreeSort keys (sortTreeBy:) and
-// 1 or 0 for ascending (setTreeSortDirection:).
-- (void)revealInFinder:(id)sender;
-- (void)copyPath:(id)sender;
-- (void)copyRelativePath:(id)sender;
-- (void)sortTreeBy:(id)sender;
-- (void)setTreeSortDirection:(id)sender;
-- (void)toggleFoldersFirst:(id)sender;
-+ (NSMenu *)treeSortMenu;
 // Asks about every tab with unsaved changes (window close, quit). NO when
 // the user cancelled or a save failed.
 - (BOOL)confirmCloseAllTabs;
@@ -67,11 +47,6 @@
 - (NSArray<NSString *> *)runningTerminalCommands;
 // Writes this window's session (tabs, browser) now; quitting calls it.
 - (void)saveSession;
-- (void)newFile:(id)sender;
-- (void)newFolder:(id)sender;
-- (void)renameSelected:(id)sender;
-- (void)deleteSelected:(id)sender;
-- (void)refreshTree:(id)sender;
 - (void)openSettings:(id)sender;       // Cmd+, open the settings file
 - (void)openKeyboardShortcuts:(id)sender;   // keys.conf, written the first time
 // View > Adjust Settings > (part): the settings file at that part's keys. The
@@ -144,6 +119,39 @@
 // TODOs, a sheet or child window of it).
 - (BOOL)ownsWindow:(NSWindow *)window;
 - (void)showTodos:(id)sender;          // Shift+Cmd+D TODOs in the folder
+@end
+
+// EditorController+Tree.mm
+@interface EditorController (Tree)
+- (void)revealPath:(NSString *)path andOpen:(BOOL)open;  // select in tree
+// Open a file handed in from outside (Finder, the Dock, the command line),
+// spelled from rootPath, in its tab (a new one unless it is open already).
+- (BOOL)showFile:(NSString *)path;
+- (void)openFolder:(id)sender;    // menu action
+// This window moves to `dir` (minicode -r), asking about unsaved tabs first;
+// NO when the user cancelled.
+- (BOOL)switchToFolder:(NSString *)dir;
+- (void)toggleHiddenFiles:(id)sender; // Cmd+Shift+. show/hide dotfiles
+// The file tree's right click menu: the clicked or selected row, else the
+// open folder. The Sort By items' tags are TreeSort keys (sortTreeBy:) and
+// 1 or 0 for ascending (setTreeSortDirection:).
+- (void)revealInFinder:(id)sender;
+- (void)copyPath:(id)sender;
+- (void)copyRelativePath:(id)sender;
++ (NSMenu *)treeSortMenu;
+- (void)newFile:(id)sender;
+- (void)newFolder:(id)sender;
+- (void)renameSelected:(id)sender;
+- (void)deleteSelected:(id)sender;
+- (void)refreshTree:(id)sender;
+@end
+
+// EditorController+TreeDetails.mm
+@interface EditorController (TreeDetails)
+- (void)toggleTreeColumn:(id)sender;  // the tree's size, saved and created columns (tag)
+- (void)sortTreeBy:(id)sender;
+- (void)setTreeSortDirection:(id)sender;
+- (void)toggleFoldersFirst:(id)sender;
 @end
 
 // EditorController+Navigation.mm

@@ -310,67 +310,10 @@ static const NSInteger kWorktreeMenuTag = 7701;
 // Still in EditorController.mm.
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
                         change:(NSDictionary *)change context:(void *)context;
-- (NSMenu *)buildTreeContextMenu;
 - (void)showDiffNamed:(NSString *)name path:(NSString *)path data:(NSData *)diff;
 - (void)showCommitTitled:(NSString *)title data:(NSData *)show;
 - (void)showDiffTitled:(NSString *)name data:(NSData *)diff commit:(BOOL)commit;
 - (void)renderDiff;
-- (NSInteger)outlineView:(NSOutlineView *)ov numberOfChildrenOfItem:(id)item;
-- (id)outlineView:(NSOutlineView *)ov child:(NSInteger)i ofItem:(id)item;
-- (BOOL)outlineView:(NSOutlineView *)ov isItemExpandable:(id)item;
-- (NSView *)outlineView:(NSOutlineView *)ov
-     viewForTableColumn:(NSTableColumn *)col
-                   item:(id)item;
-- (id<NSPasteboardWriting>)outlineView:(NSOutlineView *)ov
-               pasteboardWriterForItem:(id)item;
-- (void)outlineView:(NSOutlineView *)ov draggingSession:(NSDraggingSession *)session
-   willBeginAtPoint:(NSPoint)pt forItems:(NSArray *)items;
-- (void)outlineView:(NSOutlineView *)ov draggingSession:(NSDraggingSession *)session
-       endedAtPoint:(NSPoint)pt operation:(NSDragOperation)op;
-- (NSArray<NSString *> *)droppedPaths:(id<NSDraggingInfo>)info local:(BOOL)local;
-- (NSDragOperation)outlineView:(NSOutlineView *)ov validateDrop:(id<NSDraggingInfo>)info
-                  proposedItem:(id)item proposedChildIndex:(NSInteger)index;
-- (BOOL)outlineView:(NSOutlineView *)ov acceptDrop:(id<NSDraggingInfo>)info
-               item:(id)item childIndex:(NSInteger)index;
-- (void)pathMovedFrom:(NSString *)src to:(NSString *)dst;
-- (void)handleRowClick:(NSInteger)row atPoint:(NSPoint)pt;
-- (void)activateRow:(NSInteger)row;
-- (void)startWatching:(NSString *)path;
-- (void)stopWatching;
-- (void)reloadTreeKeepingState:(BOOL)rescan;
-- (void)reExpand:(FileItem *)node usingSet:(NSSet<NSString *> *)expanded;
-- (void)setUpTreeDetails;
-- (void)rootChanged;
-- (NSArray<FileItem *> *)childrenOf:(FileItem *)node;
-- (NSString *)worktreesFolder;
-- (NSArray<FileItem *> *)withWorktreesNode:(NSArray<FileItem *> *)shown of:(FileItem *)node;
-- (BOOL)isWorktreeRow:(FileItem *)node;
-- (NSAttributedString *)worktreeTitleFor:(FileItem *)node color:(NSColor *)text
-                                    icon:(NSString **)icon tint:(NSColor **)tint
-                                     tip:(NSString **)tip;
-- (FileItem *)worktreeMenuItem;
-- (void)compareWorktreeWithMain:(id)sender;
-- (void)openWorktreeInNewWindow:(id)sender;
-- (void)menuNeedsUpdate:(NSMenu *)menu;
-- (void)outlineViewItemDidExpand:(NSNotification *)note;
-- (NSArray<FileItem *> *)orderOf:(NSArray<FileItem *> *)items;
-- (void)configureTreeCell:(MCTreeCell *)cell item:(FileItem *)node;
-- (void)refreshTreeCells;
-- (void)folderTotalsArrived:(NSSet<NSString *> *)paths;
-- (void)reorderNode:(FileItem *)node changed:(BOOL *)changed;
-- (void)folderChangedOnDisk:(NSString *)path subtree:(BOOL)subtree;
-- (void)setTreeSort:(TreeSort::Options)options;
-- (TreeSort::Options)treeSortOptions;
-- (void)treeDetailsChanged:(NSNotification *)note;
-- (void)updateDetailsTimer;
-- (NSString *)targetDirectory;
-- (FileItem *)clickedOrSelectedItem;
-- (NSString *)promptForName:(NSString *)title default:(NSString *)initial;
-- (void)renamePath:(NSString *)path;
-- (void)trashPath:(NSString *)path;
-- (void)revealPathInFinder:(NSString *)path;
-- (void)copyText:(NSString *)text;
-- (NSString *)pathFromRoot:(NSString *)path;
 - (NSMenu *)menuForTabAtIndex:(NSInteger)i;
 - (MCTab *)tabOfMenuItem:(id)sender;
 - (void)closeTabFromMenu:(id)sender;
@@ -386,7 +329,6 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (BOOL)validateActiveTabAction:(SEL)a enabled:(BOOL *)enabled;
 - (void)renameTabFile:(id)sender;
 - (void)trashTabFile:(id)sender;
-- (void)warn:(NSString *)msg;
 - (void)resetViewMode;
 + (BOOL)isImagePath:(NSString *)path;
 - (BOOL)showImageAtPath:(NSString *)path;
@@ -564,7 +506,6 @@ static const NSInteger kWorktreeMenuTag = 7701;
                        into:(NSMutableAttributedString *)out;
 - (void)setPlainMessage:(NSString *)msg;
 - (void)setStatus:(NSString *)path;
-- (void)changeRootTo:(NSString *)dir;
 @end
 
 // Each category's own methods. EditorController.h declares the ones the
@@ -647,6 +588,73 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (int)tabHoldOfPath:(NSString *)path disk:(NSString *__strong *)disk;
 - (MCOpenFileState)replaceStateOfPath:(NSString *)path;
 - (void)jumpToLine:(NSInteger)line;
+@end
+
+// EditorController+Tree.mm: the file tree: its data source, drag and drop, FSEvents, worktree rows, file operations, opening a folder.
+@interface EditorController (Tree)
+- (NSMenu *)buildTreeContextMenu;
+- (NSInteger)outlineView:(NSOutlineView *)ov numberOfChildrenOfItem:(id)item;
+- (id)outlineView:(NSOutlineView *)ov child:(NSInteger)i ofItem:(id)item;
+- (BOOL)outlineView:(NSOutlineView *)ov isItemExpandable:(id)item;
+- (NSView *)outlineView:(NSOutlineView *)ov
+     viewForTableColumn:(NSTableColumn *)col
+                   item:(id)item;
+- (id<NSPasteboardWriting>)outlineView:(NSOutlineView *)ov
+               pasteboardWriterForItem:(id)item;
+- (void)outlineView:(NSOutlineView *)ov draggingSession:(NSDraggingSession *)session
+   willBeginAtPoint:(NSPoint)pt forItems:(NSArray *)items;
+- (void)outlineView:(NSOutlineView *)ov draggingSession:(NSDraggingSession *)session
+       endedAtPoint:(NSPoint)pt operation:(NSDragOperation)op;
+- (NSArray<NSString *> *)droppedPaths:(id<NSDraggingInfo>)info local:(BOOL)local;
+- (NSDragOperation)outlineView:(NSOutlineView *)ov validateDrop:(id<NSDraggingInfo>)info
+                  proposedItem:(id)item proposedChildIndex:(NSInteger)index;
+- (BOOL)outlineView:(NSOutlineView *)ov acceptDrop:(id<NSDraggingInfo>)info
+               item:(id)item childIndex:(NSInteger)index;
+- (void)pathMovedFrom:(NSString *)src to:(NSString *)dst;
+- (void)handleRowClick:(NSInteger)row atPoint:(NSPoint)pt;
+- (void)activateRow:(NSInteger)row;
+- (void)startWatching:(NSString *)path;
+- (void)stopWatching;
+- (void)reloadTreeKeepingState:(BOOL)rescan;
+- (void)reExpand:(FileItem *)node usingSet:(NSSet<NSString *> *)expanded;
+- (NSString *)worktreesFolder;
+- (NSArray<FileItem *> *)withWorktreesNode:(NSArray<FileItem *> *)shown of:(FileItem *)node;
+- (BOOL)isWorktreeRow:(FileItem *)node;
+- (NSAttributedString *)worktreeTitleFor:(FileItem *)node color:(NSColor *)text
+                                    icon:(NSString **)icon tint:(NSColor **)tint
+                                     tip:(NSString **)tip;
+- (FileItem *)worktreeMenuItem;
+- (void)compareWorktreeWithMain:(id)sender;
+- (void)openWorktreeInNewWindow:(id)sender;
+- (void)menuNeedsUpdate:(NSMenu *)menu;
+- (void)outlineViewItemDidExpand:(NSNotification *)note;
+- (NSString *)targetDirectory;
+- (FileItem *)clickedOrSelectedItem;
+- (NSString *)promptForName:(NSString *)title default:(NSString *)initial;
+- (void)renamePath:(NSString *)path;
+- (void)trashPath:(NSString *)path;
+- (void)revealPathInFinder:(NSString *)path;
+- (void)copyText:(NSString *)text;
+- (NSString *)pathFromRoot:(NSString *)path;
+- (void)warn:(NSString *)msg;
+- (void)changeRootTo:(NSString *)dir;
+@end
+
+// EditorController+TreeDetails.mm: the tree's sizes, dates and order.
+@interface EditorController (TreeDetails)
+- (void)setUpTreeDetails;
+- (void)rootChanged;
+- (NSArray<FileItem *> *)childrenOf:(FileItem *)node;
+- (NSArray<FileItem *> *)orderOf:(NSArray<FileItem *> *)items;
+- (void)configureTreeCell:(MCTreeCell *)cell item:(FileItem *)node;
+- (void)refreshTreeCells;
+- (void)folderTotalsArrived:(NSSet<NSString *> *)paths;
+- (void)reorderNode:(FileItem *)node changed:(BOOL *)changed;
+- (void)folderChangedOnDisk:(NSString *)path subtree:(BOOL)subtree;
+- (void)setTreeSort:(TreeSort::Options)options;
+- (TreeSort::Options)treeSortOptions;
+- (void)treeDetailsChanged:(NSNotification *)note;
+- (void)updateDetailsTimer;
 @end
 
 // EditorController+Navigation.mm: Go to Line, Go Back and Forward, Go to Symbol.
