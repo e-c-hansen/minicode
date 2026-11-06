@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <string>
 
 namespace Notebook {
@@ -32,8 +33,34 @@ std::string trimTrailingNewlines(std::string s) {
     return s;
 }
 
+std::string base64(const std::string &bytes) {
+    static const char digits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((bytes.size() + 2) / 3 * 4);
+    size_t i = 0;
+    for (; i + 2 < bytes.size(); i += 3) {
+        const uint32_t v = (uint32_t)(unsigned char)bytes[i] << 16 |
+                           (uint32_t)(unsigned char)bytes[i + 1] << 8 | (unsigned char)bytes[i + 2];
+        out += digits[v >> 18];
+        out += digits[(v >> 12) & 63];
+        out += digits[(v >> 6) & 63];
+        out += digits[v & 63];
+    }
+    if (i < bytes.size()) {
+        const bool two = i + 1 < bytes.size();
+        const uint32_t v = (uint32_t)(unsigned char)bytes[i] << 16 |
+                           (two ? (uint32_t)(unsigned char)bytes[i + 1] << 8 : 0);
+        out += digits[v >> 18];
+        out += digits[(v >> 12) & 63];
+        out += two ? digits[(v >> 6) & 63] : '=';
+        out += '=';
+    }
+    return out;
+}
+
 // One output of a code cell, from its "data" bundle when it has one: a
-// picture first, then Markdown, then plain text, then HTML's text.
+// picture first (an SVG after the bitmaps), then Markdown, then plain
+// text, then HTML's text.
 bool readBundle(const Json &data, Output &o) {
     for (const char *mime : {"image/png", "image/jpeg", "image/gif"}) {
         if (data.has(mime)) {
@@ -42,6 +69,17 @@ bool readBundle(const Json &data, Output &o) {
             o.base64 = withoutWhitespace(joined(data[mime]));
             o.text = joined(data["text/plain"]);
             return !o.base64.empty();
+        }
+    }
+    // SVG is stored as its text (matplotlib's svg backend, many plots).
+    if (data.has("image/svg+xml")) {
+        const std::string svg = joined(data["image/svg+xml"]);
+        if (!svg.empty()) {
+            o.kind = Output::Kind::Image;
+            o.mime = "image/svg+xml";
+            o.base64 = base64(svg);
+            o.text = joined(data["text/plain"]);
+            return true;
         }
     }
     if (data.has("text/markdown")) {
@@ -209,6 +247,52 @@ std::string htmlToText(const std::string &html) {
     return trimTrailingNewlines(tidy);
 }
 
+std::string shortenOutput(const std::string &text) {
+    size_t lines = (size_t)std::count(text.begin(), text.end(), '\n');
+    if (!text.empty() && text.back() != '\n') lines++;
+    if (lines <= kOutputMaxLines && text.size() <= kOutputMaxBytes) return text;
+    auto boundary = [&](size_t at) {   // not inside a UTF-8 character
+        while (at > 0 && at < text.size() && ((unsigned char)text[at] & 0xC0) == 0x80) at--;
+        return at;
+    };
+    // The first lines, up to kOutputKeepLines of them or kOutputKeepBytes.
+    size_t head = 0, headLines = 0;
+    while (head < text.size() && headLines < kOutputKeepLines) {
+        const size_t nl = text.find('\n', head);
+        const size_t next = nl == std::string::npos ? text.size() : nl + 1;
+        if (next > kOutputKeepBytes) {
+            if (headLines == 0) head = boundary(kOutputKeepBytes);   // one very long line
+            break;
+        }
+        head = next;
+        headLines++;
+    }
+    // The last lines, the same way, never reaching back into the first.
+    size_t tail = text.size(), tailLines = 0;
+    while (tail > head && tailLines < kOutputKeepLines) {
+        const size_t nl = tail >= 2 ? text.rfind('\n', tail - 2) : std::string::npos;
+        size_t start = nl == std::string::npos ? 0 : nl + 1;
+        if (start < head) start = head;
+        if (text.size() - start > kOutputKeepBytes) {
+            if (tailLines == 0) tail = boundary(text.size() - kOutputKeepBytes);
+            break;
+        }
+        tail = start;
+        tailLines++;
+    }
+    if (tail <= head) return text;
+    const size_t gone = (size_t)std::count(text.begin() + (long)head, text.begin() + (long)tail, '\n');
+    std::string out = text.substr(0, head);
+    if (!out.empty() && out.back() != '\n') out += "\xE2\x80\xA6\n";   // …
+    const std::string what = gone == 0   ? std::string("Part of a long line")
+                             : gone == 1 ? std::string("1 line")
+                                         : std::to_string(gone) + " lines";
+    out += "\xE2\x80\xA6 " + what +
+           " of output left out here; Shift Command V shows the notebook's whole text \xE2\x80\xA6\n";
+    out += text.substr(tail);
+    return out;
+}
+
 std::string fenceFor(const std::string &text) {
     size_t longest = 0, run = 0;
     for (char c : text) {
@@ -287,7 +371,8 @@ std::string toMarkdown(const Document &doc) {
                     md += trimTrailingNewlines(o.text) + "\n\n";
                     break;
                 default:
-                    if (!trimTrailingNewlines(o.text).empty()) appendBlock(md, o.text, "");
+                    if (!trimTrailingNewlines(o.text).empty())
+                        appendBlock(md, shortenOutput(o.text), "");
                     break;
                 }
             }

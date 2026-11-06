@@ -315,14 +315,14 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     t.dirty = YES;
     t.fileModDate = e.diskExisted ? [NSDate dateWithTimeIntervalSince1970:e.diskMtime] : nil;
     t.fileID = e.diskInode;
-    NSDictionary *a = [[NSFileManager defaultManager] attributesOfItemAtPath:t.currentPath error:nil];
+    t.fileSize = -1;   // a backup does not say
+    MCDiskStamp *a = MCStampOfFile(t.currentPath);
     t.gone = e.diskExisted && !a;
     // Unchanged since: the disk's own date, exactly, so a save in the
     // background does not take a rounding for a change made outside.
-    if (e.diskExisted && a &&
-        fabs(a.fileModificationDate.timeIntervalSince1970 - e.diskMtime) < 0.001 &&
-        (!e.diskInode || [a[NSFileSystemFileNumber] unsignedLongLongValue] == e.diskInode))
-        t.fileModDate = a.fileModificationDate;
+    if (e.diskExisted && a && fabs(a.modDate.timeIntervalSince1970 - e.diskMtime) < 0.001 &&
+        (!e.diskInode || a.fileID == e.diskInode))
+        t.fileModDate = a.modDate;
     return YES;
 }
 
@@ -409,14 +409,18 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     NSMutableArray<NSString *> *changed = [NSMutableArray array];
     for (MCTab *t in [_tabs copy]) {
         if (![self tabTakesAutoSave:t]) continue;
-        NSDate *disk = [self diskModDateFor:t.currentPath];
+        // Text an input method is still composing is not written; the edit
+        // that ends the composition schedules the next auto-save.
+        if (t == _activeTab && self.textView.hasMarkedText) continue;
+        MCDiskStamp *disk = MCStampOfFile(t.currentPath);
         if (!disk && t.fileModDate) {   // deleted or moved: marked, not written again
             [self tabWentMissing:t];
             continue;
         }
         // Changed (or made) on disk since it was read: never written over
-        // unasked. Cmd+S asks.
-        if (t.fileModDate ? ![disk isEqualToDate:t.fileModDate] : disk != nil) {
+        // unasked. Cmd+S asks. The size and inode count as well as the date,
+        // which file systems with coarse times (SMB, exFAT) can leave alone.
+        if ([self tab:t changedOnDisk:disk]) {
             [changed addObject:t.currentPath.lastPathComponent ?: @"?"];
             continue;
         }
@@ -432,72 +436,168 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     const BOOL shown = t == _activeTab;
     NSString *text = shown && self.textView.editable && !t.showingMessage
                          ? [self.textView.string copy] : (t.sourceText ?: @"");
-    NSError *err = nil;
-    if (![text writeToFile:t.currentPath atomically:YES encoding:NSUTF8StringEncoding
-                     error:&err]) {
-        [self showStatusNote:[NSString stringWithFormat:@"Could not auto-save %@: %@",
-                              t.currentPath.lastPathComponent, err.localizedDescription]];
-        return NO;
-    }
+    if (![self writeText:text toTab:t interactive:NO]) return NO;
     t.sourceText = text;
-    t.savedText = text;
-    t.dirty = NO;
-    [self recordDiskStateOf:t];
-    if (shown) [self.lsp documentSaved];
-    [self updateTitle];
     return YES;
 }
 
+// A clean tab whose file is larger than this is not followed live: each
+// change would be read and diffed whole (a log a job appends to, several
+// times a second). It is read again when shown or when the window comes
+// forward, and the status bar says so once.
+static const unsigned long long kFollowLiveBytes = 8ull * 1024 * 1024;
+
 // A tab with nothing unsaved whose file changed on disk takes the new text
-// with no question. The tab on show keeps its caret and the line at the top
-// of the pane (the change goes in as the lines that differ, as Format
-// Document's does), and loses its undo steps, which were for the old text.
+// with no question, as one undoable step ("Reload from Disk"), so the steps
+// before it stay good and Cmd+Z brings the old text back. The tab on show
+// keeps its caret and the line at the top of the pane (the change goes in
+// as the lines that differ, as Format Document's does). Read here, on the
+// main thread: the window came forward or the tab was shown.
 - (void)reloadCleanTab:(MCTab *)t {
-    NSString *fresh = [NSString stringWithContentsOfFile:t.currentPath
-                                                encoding:NSUTF8StringEncoding error:nil];
-    if (!fresh) return;
+    [self takeDiskRead:MCReadDiskText(t.currentPath, ULLONG_MAX) intoCleanTab:t diff:nullptr];
+}
+
+// The same from FSEvents: read, compared and diffed on another thread,
+// then put in on the main thread if nothing changed meanwhile; a file over
+// kFollowLiveBytes is only noted.
+- (void)followCleanTabInBackground:(MCTab *)t {
+    const NSUInteger generation = ++t.diskReadGeneration;
+    NSString *path = t.currentPath, *saved = t.savedText ?: @"";
+    // The text a diff is made against: the text view's, when it shows the
+    // tab as editable text (equal to saved, the tab being clean).
+    const BOOL shownText = t == _activeTab && self.textView.editable && !t.showingMessage;
+    __weak EditorController *weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        MCDiskText *d = MCReadDiskText(path, kFollowLiveBytes);
+        std::shared_ptr<MCSourceDiff> diff;
+        if (d.text && shownText && ![d.text isEqualToString:saved]) {
+            diff = std::make_shared<MCSourceDiff>();
+            diff->from = U16(saved);
+            diff->to = U16(d.text);
+            diff->hunks = LineDiff::diff(diff->from, diff->to);
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            EditorController *s = weakSelf;
+            if (!s || s->_closing || t.diskReadGeneration != generation ||
+                ![t.currentPath isEqualToString:path] || t.dirty || !t.loaded ||
+                ![t.savedText ?: @"" isEqualToString:saved] || ![s->_tabs containsObject:t])
+                return;
+            if (d.tooLarge) {
+                if (!t.tooLargeToFollow)
+                    [s showStatusNote:[NSString stringWithFormat:
+                        @"%@ changed on disk. It is too large to follow live, so it is read "
+                         "again when shown or when the window comes forward.",
+                        path.lastPathComponent]];
+                t.tooLargeToFollow = YES;
+                return;
+            }
+            // The diff was made against the text view as it was; still so?
+            const BOOL stillShown = t == s->_activeTab && s.textView.editable && !t.showingMessage;
+            [s takeDiskRead:d intoCleanTab:t
+                       diff:diff && stillShown && [s.textView.string isEqualToString:saved]
+                                ? diff : nullptr];
+        });
+    });
+}
+
+- (void)takeDiskRead:(MCDiskText *)d intoCleanTab:(MCTab *)t
+                diff:(std::shared_ptr<MCSourceDiff>)diff {
+    NSString *fresh = d.text;
+    if (!fresh) return;   // gone, or not text now: the stamp stays, so it is looked at again
+    t.diskReadGeneration++;   // any read still out is older than this
+    t.bom = d.bom;
     if ([fresh isEqualToString:t.savedText ?: @""] && !t.gone) {   // touched, not changed
-        [self recordDiskStateOf:t];
-        return;
-    }
-    if (t != _activeTab || !self.textView.editable || t.showingMessage) {
-        [self takeDiskText:fresh forTab:t];
+        [self recordStamp:d.stamp ofTab:t];
         return;
     }
     t.savedText = fresh;   // so the edit below reads as clean
-    NSUndoManager *um = self.textView.undoManager;
-    [um disableUndoRegistration];
-    [self replaceSourceWithText:fresh actionName:@"Reload"];
-    [um enableUndoRegistration];
-    self.sourceText = self.textView.string;
-    t.dirty = NO;
     t.gone = NO;
+    t.folds = nil;
+    [t.latex forgetEdits];
+    if (t == _activeTab && self.textView.editable && !t.showingMessage) {
+        if (!diff || ![self replaceSourceWithDiff:diff actionName:@"Reload from Disk"])
+            [self replaceSourceWithText:fresh actionName:@"Reload from Disk"];
+        self.sourceText = self.textView.string;
+    } else {
+        // A tab in the background (or a preview): its text now, the old
+        // text a Cmd+Z away once it is shown.
+        NSString *old = t.sourceText ?: @"";
+        t.sourceText = fresh;
+        if (![old isEqualToString:fresh]) [self registerReloadUndoForTab:t text:old];
+        if (t == _activeTab) [self refreshDisplay];
+        else [self.lsp tabsChanged];   // the server gets the disk's text for it too
+    }
+    t.dirty = NO;
     t.pendingSort = nil;
-    [self recordDiskStateOf:t];
-    [self forgetHistoryOf:t];
+    [self recordStamp:d.stamp ofTab:t];
     [self updateTitle];
+}
+
+// Undoing a reload in a tab that was not on show as text: the old text
+// comes back, unsaved; redo takes the disk's again.
+- (void)registerReloadUndoForTab:(MCTab *)t text:(NSString *)old {
+    __weak MCTab *weakTab = t;
+    [t.undoManager registerUndoWithTarget:self handler:^(EditorController *s) {
+        MCTab *tab = weakTab;
+        if (tab) [s putBackText:old inTab:tab];
+    }];
+    [t.undoManager setActionName:@"Reload from Disk"];
+}
+
+- (void)putBackText:(NSString *)text inTab:(MCTab *)t {
+    NSString *now = t == _activeTab && self.textView.editable && !t.showingMessage
+                        ? [self.textView.string copy] : (t.sourceText ?: @"");
+    // Its redo (or undo again) is this same step the other way. The text
+    // view's own registration stays out of it: made during an undo, it
+    // redid onto the wrong range.
+    [self registerReloadUndoForTab:t text:now];
+    if (t == _activeTab && self.textView.editable && !t.showingMessage) {
+        NSUndoManager *um = self.textView.undoManager;
+        [um disableUndoRegistration];
+        [self replaceSourceWithText:text actionName:@"Reload from Disk"];
+        [um enableUndoRegistration];
+        self.sourceText = self.textView.string;
+        [self noteEdited];
+        return;
+    }
+    t.sourceText = text;
+    t.dirty = t.gone || ![text isEqualToString:t.savedText ?: @""];
+    if (t == _activeTab) [self refreshDisplay];
+    else [self.lsp tabsChanged];
+    [self updateTitle];
+    [self scheduleBackups];
+    [self scheduleAutoSave];
 }
 
 // Called when the window regains focus: reconcile with on-disk changes.
 - (void)checkExternalChange {
     if (!self.currentPath || !self.fileModDate) return;
-    NSDate *disk = [self diskModDateFor:self.currentPath];
+    MCTab *t = _activeTab;
+    MCDiskStamp *disk = MCStampOfFile(self.currentPath);
     if (!disk) {                             // moved or deleted
-        [self tabWentMissing:_activeTab];
+        [self tabWentMissing:t];
         return;
     }
-    if (_activeTab.gone) [self tabCameBack:_activeTab];
-    if ([disk isEqualToDate:self.fileModDate]) return;   // unchanged
+    if (t.gone) [self tabCameBack:t];
+    if (![self tab:t changedOnDisk:disk]) return;   // unchanged
 
-    self.fileModDate = disk;
-    if (self.isImage) { [self showImageAtPath:self.currentPath]; return; }
-    if (self.isPDF) { [self showPDFAtPath:self.currentPath]; return; }
-    if (self.isMedia) { [self showMediaAtPath:self.currentPath]; return; }
-    if (MCViewerKindWithoutText(self.viewerKind)) { [self showViewer:self.viewerKind]; return; }
-    if (!self.dirty) {                       // no local edits: reload quietly
-        [self reloadCleanTab:_activeTab];
+    // Pictures, PDFs, players and viewers show the file itself: shown again.
+    if (self.isImage || self.isPDF || self.isMedia || MCViewerKindWithoutText(self.viewerKind)) {
+        [self recordStamp:disk ofTab:t];
+        if (self.isImage) [self showImageAtPath:self.currentPath];
+        else if (self.isPDF) [self showPDFAtPath:self.currentPath];
+        else if (self.isMedia) [self showMediaAtPath:self.currentPath];
+        else [self showViewer:self.viewerKind];
         return;
     }
+    // The tab's date moves only once the new text is in: a read that fails
+    // (caught mid-character, or in another encoding now) leaves the change
+    // to be seen again, never the old text marked as the disk's.
+    if (!self.dirty) {                       // no local edits: reload quietly
+        [self reloadCleanTab:t];
+        return;
+    }
+    MCDiskText *fresh = MCReadDiskText(self.currentPath, ULLONG_MAX);
     NSAlert *a = [[NSAlert alloc] init];     // local edits AND disk changed
     a.messageText = [NSString stringWithFormat:
         @"“%@” changed on disk.", self.currentPath.lastPathComponent];
@@ -505,28 +605,33 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
                          "or reload the file from disk and lose them?";
     [a addButtonWithTitle:@"Keep Mine"];     // 1000
     [a addButtonWithTitle:@"Reload"];        // 1001
-    NSString *fresh = [NSString stringWithContentsOfFile:self.currentPath
-                                                encoding:NSUTF8StringEncoding
-                                                   error:nil];
     if ([a runModal] == NSAlertSecondButtonReturn) {
-        if (fresh) [self takeDiskText:fresh forTab:_activeTab];
-    } else if (fresh) {
-        // Kept: what counts as unchanged from now on is the file's new text.
-        self.savedText = fresh;
+        if (fresh.text) [self takeDiskText:fresh forTab:t];
+    } else {
+        // Kept: what counts as unchanged from now on is the file's new
+        // text, and the file as it is now is what a save is checked against.
+        if (fresh.text) {
+            self.savedText = fresh.text;
+            t.bom = fresh.bom;
+        }
+        [self recordStamp:fresh.stamp ?: disk ofTab:t];
         [self noteEdited];
     }
 }
 
 // Put the file's text from disk in a tab, as if it had just been opened:
-// clean, with nothing to undo. A background tab shows it when shown.
-- (void)takeDiskText:(NSString *)fresh forTab:(MCTab *)t {
-    if (!t) return;
-    t.sourceText = fresh;
-    t.savedText = fresh;
+// clean, with nothing to undo (the user chose to let their changes go). A
+// background tab shows it when shown.
+- (void)takeDiskText:(MCDiskText *)d forTab:(MCTab *)t {
+    if (!t || !d.text) return;
+    t.diskReadGeneration++;
+    t.sourceText = d.text;
+    t.savedText = d.text;
+    t.bom = d.bom;
     t.dirty = NO;
     t.gone = NO;
     t.pendingSort = nil;
-    [self recordDiskStateOf:t];
+    [self recordStamp:d.stamp ofTab:t];
     [self forgetHistoryOf:t];
     if (t == _activeTab) [self refreshDisplay];
     else [self.lsp tabsChanged];   // the server gets the disk's text for it too
@@ -570,9 +675,9 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     for (NSString *name in [fm contentsOfDirectoryAtPath:dir error:nil]) {
         NSString *p = [dir stringByAppendingPathComponent:name];
         NSDictionary *a = [fm attributesOfItemAtPath:p error:nil];
-        if (![a.fileType isEqualToString:NSFileTypeRegular]) continue;
+        if (![a.fileType isEqualToString:NSFileTypeRegular]) continue;   // not a link to it
         if ([a[NSFileSystemFileNumber] unsignedLongLongValue] != t.fileID) continue;
-        if (![a.fileModificationDate isEqualToDate:t.fileModDate]) continue;
+        if (![MCStampOfFile(p).modDate isEqualToDate:t.fileModDate]) continue;
         if ([self tabForPath:p]) return nil;   // already open in another tab
         return p;
     }
@@ -588,15 +693,24 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 - (void)checkTabsOnDisk {
     for (MCTab *t in [_tabs copy]) {
         if (!t.currentPath || !t.fileModDate) continue;
-        NSDate *disk = [self diskModDateFor:t.currentPath];
-        if (!disk) [self tabWentMissing:t];
-        else if (t.gone) {
-            if (t == _activeTab) [self checkExternalChange];
-            else [self tabCameBack:t];
-        } else if (!t.dirty && t.loaded && [self tabTakesBackup:t] &&
-                   ![disk isEqualToDate:t.fileModDate]) {
-            [self reloadCleanTab:t];
+        MCDiskStamp *disk = MCStampOfFile(t.currentPath);
+        if (!disk) {
+            [self tabWentMissing:t];
+            continue;
         }
+        // Deleted and made again (a branch switch, some formatters): back,
+        // and read in the same pass, so the tab never shows the old text as
+        // clean meanwhile.
+        if (t.gone) {
+            if (t == _activeTab) {
+                [self checkExternalChange];   // back, and read if clean
+                continue;
+            }
+            [self tabCameBack:t];
+        }
+        // Read and diffed off the main thread.
+        if (!t.dirty && t.loaded && [self tabTakesBackup:t] && [self tab:t changedOnDisk:disk])
+            [self followCleanTabInBackground:t];
     }
 }
 
@@ -614,16 +728,14 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 }
 
 - (void)reloadTabFromDisk:(MCTab *)t {
-    NSString *fresh = [NSString stringWithContentsOfFile:t.currentPath
-                                                encoding:NSUTF8StringEncoding error:nil];
-    if (fresh) [self takeDiskText:fresh forTab:t];
+    [self takeDiskText:MCReadDiskText(t.currentPath, ULLONG_MAX) forTab:t];
 }
 
 // The question mayWriteTab: asks, without acting on the answer.
 - (MCDiskDecision)diskDecisionForTab:(MCTab *)t {
     if (!t.fileModDate) return MCDiskWrite;   // never on disk as far as we know
-    NSDate *disk = [self diskModDateFor:t.currentPath];
-    if (disk && [disk isEqualToDate:t.fileModDate] && !t.gone) return MCDiskWrite;
+    MCDiskStamp *disk = MCStampOfFile(t.currentPath);
+    if (disk && ![self tab:t changedOnDisk:disk] && !t.gone) return MCDiskWrite;
     NSString *name = t.currentPath.lastPathComponent;
     NSAlert *a = [[NSAlert alloc] init];
     if (!disk) {
@@ -636,7 +748,7 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     }
     if (t.gone) {   // it came back: compare with what is there now
         [self tabCameBack:t];
-        if ([disk isEqualToDate:t.fileModDate]) return MCDiskWrite;
+        if (![self tab:t changedOnDisk:disk]) return MCDiskWrite;
     }
     a.messageText = [NSString stringWithFormat:@"“%@” changed on disk.", name];
     a.informativeText = @"It changed after it was opened here. Keep your version "

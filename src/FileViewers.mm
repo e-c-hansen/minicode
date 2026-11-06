@@ -5,6 +5,7 @@
 #import "JsonOutlineView.h"
 #import "SqliteView.h"
 #include "FileSniff.h"
+#include "JsonOutline.h"
 #include "Notebook.h"
 #include <string>
 
@@ -90,13 +91,14 @@ static BOOL IsTsvPath(NSString *path) {
 
 - (MCJsonOutlinePane *)json { return _json; }
 
-- (void)showBesideTextView:(NSTextView *)textView kind:(MCViewerKind)kind {
+- (void)showBesideTextView:(NSTextView *)textView kind:(MCViewerKind)kind path:(NSString *)path {
     if (kind != _kind) [self clear];
     if (kind != MCViewerJson) return;
     if (!_json) {
         _json = [[MCJsonOutlinePane alloc] initWithFrame:NSZeroRect];
         [self addView:_json];
     }
+    _json.allowsComments = path.length && JsonOutline::allowsComments(path.UTF8String ?: "");
     [_json attachToTextView:textView];
     _kind = kind;
 }
@@ -165,6 +167,10 @@ static BOOL IsTsvPath(NSString *path) {
         [[self makeCsv] showText:text path:path tsv:kind == MCViewerTsv];
         _kind = kind;
     }
+}
+
+- (void)commitEditing {
+    if (_kind == MCViewerCsv || _kind == MCViewerTsv) [_csv commitEditing];
 }
 
 - (void)clear {

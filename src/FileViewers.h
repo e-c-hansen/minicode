@@ -73,9 +73,12 @@ NSString *MCNotebookMarkdown(NSString *json);
 // reload) it keeps its place.
 - (void)showText:(NSString *)text kind:(MCViewerKind)kind path:(NSString *)path;
 // A viewer beside the editable text, following it.
-- (void)showBesideTextView:(NSTextView *)textView kind:(MCViewerKind)kind;
+- (void)showBesideTextView:(NSTextView *)textView kind:(MCViewerKind)kind path:(NSString *)path;
 // Nothing shown any more (another tab, another kind of file, the text).
 - (void)clear;
+// What is being typed into a viewer (a CSV cell) goes into its document
+// now, before the tab or the mode changes.
+- (void)commitEditing;
 // Lays the viewers out in the editor's slot and returns what is left of it
 // for the text view; *coversText is YES when a viewer takes all of it.
 - (NSRect)layoutInRect:(NSRect)rect editorShown:(BOOL)shown coversText:(BOOL *)coversText;
