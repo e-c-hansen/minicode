@@ -277,8 +277,25 @@ struct Language {
     std::string server;       // settings key: lsp.<server>
     std::string languageId;   // LSP languageId for didOpen
 };
-// Which server handles a file extension (lowercase, no dot). False if none.
+// Which server handles a file extension (lowercase, no dot): one of the five
+// main languages (cpp, python, go, rust, typescript). False if none. The
+// GTK port uses this one.
 bool languageForExtension(const std::string& ext, Language& out);
+// The same with the servers the Mac also knows (any language server by
+// extension): first the settings' own, `lsp.<name>.extensions` (`extra`,
+// server key -> extensions, Settings::lspExtensions), then the five, then
+// the optional built-in ones, which run only when installed: texlab for
+// LaTeX and BibTeX, marksman for Markdown, taplo for TOML and
+// bash-language-server for shell scripts. A server of the user's own sends
+// its key as the languageId; a built-in key given more extensions sends its
+// usual one.
+bool languageForExtension(const std::string& ext, Language& out,
+                          const std::map<std::string, std::vector<std::string>>& extra);
+// The optional built-in servers: started when one of their commands is
+// installed, and never offered for installing unasked (no bar over the
+// editor), unless the settings name a command for them.
+bool isOptionalServer(const std::string& server);
+const std::vector<std::string>& optionalServers();   // latex, markdown, toml, shell
 // The commands tried, in order, when the settings name none.
 std::vector<std::string> defaultCommands(const std::string& server);
 // The display name of a server key ("python" -> "Python").

@@ -563,10 +563,21 @@ static NSHashTable<LspSession *> *AllSessions(void) {
 - (NSString *)missingServer {
     if (!_langKey || !_path || ![AppSettings shared].settings.lspEnabled()) return nil;
     MCLspEntry *e = _entries[_langKey];
+    // A server of the user's own has no install commands: the status bar
+    // says it is not installed, and no bar offers to install it.
+    if (!Install::server(Std(_langKey))) return nil;
     return e.state == MCLspStateNotInstalled ? _langKey : nil;
 }
 
 - (void)lookAgainForMissingServer {
+    // An optional server installed since the file opened (brew install
+    // marksman in the terminal): the file gets it now.
+    Lsp::Language optional;
+    if (!_langKey && _path && [AppSettings shared].settings.lspEnabled() &&
+        [self language:optional forPath:_path installed:YES]) {
+        [self documentOpened:_path];
+        return;
+    }
     BOOL also = [self lookAgainForAlso];
     if (!self.missingServer && !also) return;
     [self attachDocument];   // ensureServer looks again for a missing one
@@ -643,10 +654,37 @@ static NSHashTable<LspSession *> *AllSessions(void) {
 - (NSString *)currentSettingsSignature {
     const Settings &st = [AppSettings shared].settings;
     NSMutableString *sig = [NSMutableString stringWithFormat:@"%d", st.lspEnabled()];
-    for (const std::string &k : Settings::lspServers())
+    std::vector<std::string> keys = Settings::lspServers();
+    for (const std::string &k : st.lspCustomServers()) keys.push_back(k);
+    for (const std::string &k : keys)
         [sig appendFormat:@"|%s|%s", st.lspCommand(k).c_str(),
                           st.lspCommand(Lsp::alsoKey(k)).c_str()];
+    for (const auto &e : st.lspExtensions()) {
+        [sig appendFormat:@"|%s:", e.first.c_str()];
+        for (const std::string &x : e.second) [sig appendFormat:@"%s,", x.c_str()];
+    }
     return sig;
+}
+
+// The server a file is for (Lsp::languageForExtension with the settings'
+// own servers and extensions). An optional built-in server (texlab,
+// marksman, taplo, bash-language-server) the settings name no command for
+// counts only when it runs already or one of its commands is installed
+// (with `installed`), so a Markdown file never brings a "not installed"
+// line or an install bar; turned off, it does not count at all.
+- (BOOL)language:(Lsp::Language &)lang forPath:(NSString *)path installed:(BOOL)installed {
+    const Settings &st = [AppSettings shared].settings;
+    if (!path || !Lsp::languageForExtension(Std(path.pathExtension.lowercaseString), lang,
+                                            st.lspExtensions()))
+        return NO;
+    if (!Lsp::isOptionalServer(lang.server)) return YES;
+    if (st.lspOff(lang.server)) return NO;
+    if (!installed || !st.lspCommand(lang.server).empty()) return YES;
+    if (_entries[NS(lang.server)].server) return YES;
+    NSArray *first = [self firstDirsForKey:NS(lang.server)];
+    for (const std::string &cmd : Lsp::defaultCommands(lang.server))
+        if (MCResolveCommand(cmd, first)) return YES;
+    return NO;
 }
 
 - (MCLspEntry *)entryForKey:(NSString *)key {
@@ -1009,7 +1047,10 @@ static NSHashTable<LspSession *> *AllSessions(void) {
 - (NSArray<MCLspServerInfo *> *)serverInfos {
     NSMutableArray<NSString *> *keys = [NSMutableArray array];
     if (_langKey) [keys addObject:_langKey];
-    for (const std::string &k : Settings::lspServers())
+    std::vector<std::string> known = Settings::lspServers();
+    for (const std::string &k : [AppSettings shared].settings.lspCustomServers())
+        known.push_back(k);
+    for (const std::string &k : known)
         if (![keys containsObject:NS(k)]) [keys addObject:NS(k)];
     NSMutableArray<MCLspServerInfo *> *out = [NSMutableArray array];
     for (NSString *key in keys) {
@@ -1412,7 +1453,7 @@ static BOOL IsRunnable(NSString *path) {
     Lsp::Language lang;
     // A project file may have been added or changed since (a ruff.toml).
     [_ruffConfigured removeAllObjects];
-    if (path && Lsp::languageForExtension(Std(path.pathExtension.lowercaseString), lang)) {
+    if (path && [self language:lang forPath:path installed:YES]) {
         _langKey = NS(lang.server);
         _languageId = NS(lang.languageId);
         NSString *alsoCommand = [self alsoCommandForLanguage:_langKey path:path configured:NULL];
@@ -1498,8 +1539,7 @@ static BOOL IsRunnable(NSString *path) {
         NSArray<NSString *> *paths = self.openPaths ? self.openPaths() : @[];
         for (NSString *path in paths) {
             Lsp::Language lang;
-            if (!Lsp::languageForExtension(Std(path.pathExtension.lowercaseString), lang))
-                continue;
+            if (![self language:lang forPath:path installed:NO]) continue;
             NSString *uri = NS(Lsp::uriFromPath(Std(RealPath(path))));
             if (texts[uri]) continue;    // the file on show, or a tab seen already
             NSString *text = self.bufferText ? self.bufferText(path) : nil;

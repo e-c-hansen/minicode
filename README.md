@@ -110,6 +110,15 @@ On the Mac a language can have a second server beside its main one. In a Python 
 
 The settings file can pick a different server or turn one off (lsp.python = pylsp, lsp.go = off, lsp.enabled = false), and give a language a second server or none (lsp.python.also = ruff server, lsp.python.also = off).
 
+On the Mac, a few more servers start whenever they are installed, and are never offered for installing unasked, since many people edit these files without wanting one: texlab for LaTeX and BibTeX, marksman for Markdown, taplo for TOML, and bash-language-server for shell scripts. The Language Servers popover lists them with their install commands. Any other server can be added in the settings file with a name of your own, its command, and the extensions of its files; the name is also the language it is told the files are in:
+
+```
+lsp.yaml = yaml-language-server --stdio
+lsp.yaml.extensions = yaml yml
+```
+
+lsp.python.extensions = pyw gives a built-in server more files the same way.
+
 ## Formatting
 
 Shift Option F formats the file with the formatter you have installed for its language, on macOS for now. If a project has its own configuration, such as a .clang-format, a [tool.pyink], [tool.black], or [tool.ruff] table in pyproject.toml, a .style.yapf, or a ruff.toml, that formatter runs with the project's style. Ruff's lint settings alone are enough, since a project that lints with Ruff nearly always formats with it too, unless the same folder also configures pyink, yapf, or Black. JavaScript and TypeScript projects set up for Prettier (a .prettierrc, a prettier.config.js, a "prettier" key in package.json, or Prettier among its dependencies, since it needs no configuration file) or Biome (a biome.json) are formatted with that. Otherwise minicode follows Google's style guides: clang-format with Google's style for C, C++, Objective-C, Java, JavaScript, TypeScript, Protocol Buffers, and C#; pyink at 80 columns for Python, or yapf's google style when pyink is not installed; gofmt for Go; rustfmt for Rust; and shfmt with two-space indents for shell scripts. Python formatters in the project's .venv or venv are used first, and Prettier or Biome in its node_modules.
@@ -132,6 +141,10 @@ The help shows the command to run, with a Copy button and a Run in Terminal butt
 | Go | gopls | `go install golang.org/x/tools/gopls@latest`, or `brew install gopls` |
 | Rust | rust-analyzer | `rustup component add rust-analyzer`, or `brew install rust-analyzer` |
 | JavaScript and TypeScript | typescript-language-server | `npm install -g typescript-language-server typescript`, or `brew install typescript-language-server` |
+| LaTeX and BibTeX, when installed | texlab | `brew install texlab` |
+| Markdown, when installed | marksman | `brew install marksman` |
+| TOML, when installed | taplo | `brew install taplo` |
+| Shell scripts, when installed | bash-language-server | `npm install -g bash-language-server`, or `brew install bash-language-server` |
 
 | Formatter | Formats | Install it with |
 |---|---|---|

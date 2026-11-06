@@ -293,7 +293,69 @@ bool languageForExtension(const std::string& extIn, Language& out) {
     return false;
 }
 
+namespace {
+
+// The optional built-in servers' files.
+struct OptionalRow { const char* ext; const char* server; const char* id; };
+const OptionalRow kOptionalRows[] = {
+    {"tex", "latex", "latex"},       {"ltx", "latex", "latex"},
+    {"latex", "latex", "latex"},     {"sty", "latex", "latex"},
+    {"cls", "latex", "latex"},       {"bib", "latex", "bibtex"},
+    {"md", "markdown", "markdown"},  {"markdown", "markdown", "markdown"},
+    {"toml", "toml", "toml"},
+    {"sh", "shell", "shellscript"},  {"bash", "shell", "shellscript"},
+};
+
+// The languageId a server's own files get, for an extension the settings
+// add to a built-in key.
+std::string usualLanguageId(const std::string& server) {
+    if (server == "shell") return "shellscript";
+    return server;
+}
+
+}  // namespace
+
+const std::vector<std::string>& optionalServers() {
+    static const std::vector<std::string> s = {"latex", "markdown", "toml", "shell"};
+    return s;
+}
+
+bool isOptionalServer(const std::string& server) {
+    for (const std::string& s : optionalServers())
+        if (s == server) return true;
+    return false;
+}
+
+bool languageForExtension(const std::string& extIn, Language& out,
+                          const std::map<std::string, std::vector<std::string>>& extra) {
+    const std::string ext = lower(extIn);
+    if (ext.empty()) return false;
+    for (const auto& [server, exts] : extra)
+        for (const std::string& e : exts)
+            if (e == ext) {
+                Language main;
+                out.server = server;
+                if (languageForExtension(ext, main) && main.server == server)
+                    out.languageId = main.languageId;
+                else
+                    out.languageId = usualLanguageId(server);
+                return true;
+            }
+    if (languageForExtension(ext, out)) return true;
+    for (const OptionalRow& r : kOptionalRows)
+        if (ext == r.ext) {
+            out.server = r.server;
+            out.languageId = r.id;
+            return true;
+        }
+    return false;
+}
+
 std::vector<std::string> defaultCommands(const std::string& server) {
+    if (server == "latex") return {"texlab"};
+    if (server == "markdown") return {"marksman server"};
+    if (server == "toml") return {"taplo lsp stdio"};
+    if (server == "shell") return {"bash-language-server start"};
     if (server == "cpp") return {"clangd"};
     if (server == "python")
         // basedpyright first: it is the one the install hints recommend
@@ -313,6 +375,10 @@ std::string serverDisplayName(const std::string& server) {
     if (server == "go") return "Go";
     if (server == "rust") return "Rust";
     if (server == "typescript") return "JavaScript/TypeScript";
+    if (server == "latex") return "LaTeX";
+    if (server == "markdown") return "Markdown";
+    if (server == "toml") return "TOML";
+    if (server == "shell") return "Shell";
     return server;
 }
 

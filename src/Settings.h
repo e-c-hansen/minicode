@@ -259,9 +259,10 @@ public:
 
     // Language servers. lsp.enabled turns the whole client on or off (on by
     // default). lsp.<server> names the command for one server key (cpp,
-    // python, go, rust, typescript): a whole command line, arguments and all,
-    // unlike every other value. "" when the file names none, so the built-in
-    // search applies.
+    // python, go, rust, typescript; latex, markdown, toml and shell, which
+    // run only when installed; or a name of the user's own): a whole command
+    // line, arguments and all, unlike every other value. "" when the file
+    // names none, so the built-in search applies.
     bool lspEnabled() const { return lspEnabled_; }
     std::string lspCommand(const std::string& server) const;
     // lsp.<server> = off (or none, false): leave that language alone.
@@ -269,7 +270,18 @@ public:
     // same way with "<server>.also" ("" for unset or auto: the built-in
     // rule, Lsp::defaultAlsoCommand).
     bool lspOff(const std::string& server) const;
+    // The built-in server keys, each documented with its default command.
     static const std::vector<std::string>& lspServers();
+    // lsp.<server>.extensions: the files a server handles, by extension
+    // (lowercase, no dot), for a server of the user's own (lsp.yaml =
+    // yaml-language-server --stdio with lsp.yaml.extensions = yaml yml), or
+    // more files for a built-in one. A name of the user's own needs both
+    // lines; the file says so on the line that has only one.
+    const std::map<std::string, std::vector<std::string>>& lspExtensions() const {
+        return lspExtensions_;
+    }
+    // Every server key the settings name besides the built-in ones, sorted.
+    std::vector<std::string> lspCustomServers() const;
     // python.interpreter: the Python the Python language server analyses
     // with, for folders that have not chosen their own (Select Python
     // Interpreter). A path, which may hold spaces; "" (or auto) lets
@@ -363,6 +375,7 @@ private:
     double terminalFontSize_ = 12;
     bool terminalOptionAsMeta_ = true;
     std::map<std::string, std::string> lspCommands_;
+    std::map<std::string, std::vector<std::string>> lspExtensions_;
     bool runInNewTerminal_ = false;
     std::map<std::string, std::string> runCommands_;
     std::map<std::string, std::string> formatCommands_;

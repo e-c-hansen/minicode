@@ -27,8 +27,9 @@ static void testLspSecondServer() {
         CHECK(!s.lspOff("python.also") && s.lspOff("cpp.also"));
         CHECK(s.lspCommand("go.also").empty() && !s.lspOff("go.also"));
         CHECK(s.lspCommand("python").empty() && !s.lspOff("python"));
+        // cobol is not built in: a server of one's own needs its extensions.
         CHECK(errs.size() == 1 && errs[0].line == 4 &&
-              errs[0].message.find("lsp.python.also") != std::string::npos);
+              errs[0].message.find("lsp.cobol.extensions") != std::string::npos);
         // auto after a command puts the built-in rule back.
         Settings t = parseSettings("lsp.python.also = ruff server\nlsp.python.also = auto\n");
         CHECK(t.lspCommand("python.also").empty());

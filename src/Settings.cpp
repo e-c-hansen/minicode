@@ -621,6 +621,7 @@ std::string Settings::missingSurfaceLines(const std::string& text, const std::st
 Settings Settings::parse(const std::string& text,
                          std::vector<SettingsError>* errors) {
     Settings st;
+    std::map<std::string, int> lspLines;   // lsp.* keys of a family, by line
     int lineNo = 0;
     size_t pos = 0;
     while (pos <= text.size()) {
@@ -643,6 +644,7 @@ Settings Settings::parse(const std::string& text,
         // How far the value runs: the key's row says, else its family (a
         // language server, run or formatter command is a whole command line).
         const KeyRule* rule = findKeyRule(key);
+        if (!rule && key.rfind("lsp.", 0) == 0) lspLines[key] = lineNo;
         const ValueKind kind =
             rule ? rule->value
                  : (key.rfind("lsp.", 0) == 0 || key.rfind("run.", 0) == 0 ||
@@ -682,6 +684,35 @@ Settings Settings::parse(const std::string& text,
         }
         std::string msg;
         if (!st.apply(key, value, msg)) fail(msg);
+    }
+    // A server of the user's own needs its command and its files; the line
+    // that has one without the other says so.
+    if (errors) {
+        for (const auto& [key, line] : lspLines) {
+            const bool exts = key.size() > 11 &&
+                              key.compare(key.size() - 11, 11, ".extensions") == 0;
+            std::string name = key.substr(4, key.size() - 4 - (exts ? 11 : 0));
+            // A line already refused (or an .also = auto) is not looked at again.
+            if (exts ? !st.lspExtensions_.count(name) : !st.lspCommands_.count(name)) continue;
+            if (name.size() > 5 && name.compare(name.size() - 5, 5, ".also") == 0)
+                name = name.substr(0, name.size() - 5);
+            bool builtIn = false;
+            for (const std::string& k : lspServers()) builtIn = builtIn || k == name;
+            if (builtIn) continue;
+            if (!exts && !st.lspExtensions_.count(name))
+                errors->push_back({line, "lsp." + name + " is not a built-in server (" +
+                                             "cpp, python, go, rust, typescript, latex, "
+                                             "markdown, toml, shell): a server of your own "
+                                             "also needs lsp." + name +
+                                             ".extensions, the files it is for"});
+            else if (exts && !st.lspCommands_.count(name))
+                errors->push_back({line, "lsp." + name + ".extensions has no server: add lsp." +
+                                             name + " = <the command that runs it>"});
+        }
+        std::stable_sort(errors->begin(), errors->end(),
+                         [](const SettingsError& a, const SettingsError& b) {
+                             return a.line < b.line;
+                         });
     }
     return st;
 }
@@ -917,21 +948,49 @@ bool Settings::apply(const std::string& key, const std::string& value,
     }
     if (key.rfind("lsp.", 0) == 0) {
         std::string server = key.substr(4);
+        // lsp.<server>.extensions: the files a server is for.
+        const bool exts = server.size() > 11 &&
+                          server.compare(server.size() - 11, 11, ".extensions") == 0;
+        if (exts) server = server.substr(0, server.size() - 11);
         // lsp.<server>.also: a second server beside the language's main one.
         // auto is the built-in rule, as if the line were not there.
-        const bool also = server.size() > 5 &&
+        const bool also = !exts && server.size() > 5 &&
                           server.compare(server.size() - 5, 5, ".also") == 0;
         const std::string language = also ? server.substr(0, server.size() - 5) : server;
-        for (const std::string& known : lspServers())
-            if (language == known) {
-                if (also && lower(value) == "auto") lspCommands_.erase(server);
-                else lspCommands_[server] = value;
-                return true;
+        bool ok = !language.empty();
+        for (char c : language)
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-' ||
+                  c == '+'))
+                ok = false;
+        if (!ok) {
+            error = "'" + key + "' is not lsp.<server>, lsp.<server>.also or "
+                    "lsp.<server>.extensions (a server's name is lowercase letters, digits, "
+                    "- and _)";
+            return false;
+        }
+        if (exts) {
+            std::vector<std::string> list;
+            std::string word;
+            for (size_t i = 0; i <= value.size(); i++) {
+                const char c = i < value.size() ? value[i] : ' ';
+                if (c == ' ' || c == '\t' || c == ',') {
+                    while (!word.empty() && word[0] == '.') word.erase(0, 1);
+                    if (!word.empty()) list.push_back(lower(word));
+                    word.clear();
+                } else {
+                    word += c;
+                }
             }
-        error = "unknown setting '" + key + "' (language servers are lsp.cpp, "
-                "lsp.python, lsp.go, lsp.rust and lsp.typescript, and a second one "
-                "beside each is lsp.python.also and so on)";
-        return false;
+            if (list.empty()) {
+                error = "missing extensions for " + key + " (such as yaml yml)";
+                return false;
+            }
+            lspExtensions_[language] = list;
+            return true;
+        }
+        if (also && lower(value) == "auto") lspCommands_.erase(server);
+        else lspCommands_[server] = value;
+        return true;
     }
 
     if (key.rfind("format.", 0) == 0) {
@@ -1075,9 +1134,23 @@ bool Settings::customTitlebar() const {
 }
 
 const std::vector<std::string>& Settings::lspServers() {
-    static const std::vector<std::string> servers = {"cpp", "python", "go", "rust",
-                                                     "typescript"};
+    static const std::vector<std::string> servers = {"cpp",  "python",   "go",   "rust", "typescript",
+                                                     "latex", "markdown", "toml", "shell"};
     return servers;
+}
+
+std::vector<std::string> Settings::lspCustomServers() const {
+    std::vector<std::string> out;
+    auto add = [&](std::string k) {
+        if (k.size() > 5 && k.compare(k.size() - 5, 5, ".also") == 0) k = k.substr(0, k.size() - 5);
+        for (const std::string& b : lspServers())
+            if (b == k) return;
+        if (std::find(out.begin(), out.end(), k) == out.end()) out.push_back(k);
+    };
+    for (const auto& c : lspCommands_) add(c.first);
+    for (const auto& e : lspExtensions_) add(e.first);
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 std::string Settings::lspCommand(const std::string& server) const {
@@ -1278,6 +1351,19 @@ const char* Settings::defaultFileText() {
 # lsp.go = gopls
 # lsp.rust = rust-analyzer
 # lsp.typescript = typescript-language-server --stdio
+# These run only when installed, and are never offered for installing
+# unasked (the README says how): texlab for LaTeX and BibTeX, marksman for
+# Markdown, taplo for TOML, and bash-language-server for shell scripts.
+# lsp.latex = texlab
+# lsp.markdown = marksman server
+# lsp.toml = taplo lsp stdio
+# lsp.shell = bash-language-server start
+# Any other server: give it a name of your own, its command, and the
+# extensions of the files it is for, as in
+#   lsp.yaml = yaml-language-server --stdio
+#   lsp.yaml.extensions = yaml yml
+# (the name is also the languageId it is told). lsp.<server>.extensions
+# also gives a built-in server more files (lsp.python.extensions = pyw).
 # A second server can run beside a language's main one, for its problems
 # and quick fixes: lsp.<language>.also, a command like the ones above, or
 # off. The main server still answers completion, hover, definitions,
