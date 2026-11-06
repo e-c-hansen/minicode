@@ -255,12 +255,20 @@ static void testFolderReplace() {
         FolderSearchOptions o;
         auto r = search(root.string(), "foo", nullptr, o);
         CHECK(r.matches.size() == 3);   // a row per line
+        // But the count is every match, the number Replace All gives (the
+        // status said "3 matches" while Replace All replaced 5).
+        CHECK(r.totalMatches == 5 && r.filesMatched == 2);
+        CHECK(r.matches.size() == 3 && r.matches[0].count + r.matches[1].count +
+                                               r.matches[2].count == 5);
+        CHECK(r.totalMatches == planReplace(root.string(), "foo", nullptr, o).matches);
         o.caseSensitive = true;
         CHECK(search(root.string(), "Foo", nullptr, o).matches.size() == 1);
         o.caseSensitive = false;
         o.wholeWord = true;
         r = search(root.string(), "food", nullptr, o);
         CHECK(r.matches.size() == 1 && r.matches[0].line == 2 && r.matches[0].column == 9);
+        CHECK(search(root.string(), "foo", nullptr, o).totalMatches ==
+              planReplace(root.string(), "foo", nullptr, o).matches);
         o.wholeWord = false;
         o.regex = true;
         r = search(root.string(), "fo+\\(", nullptr, o);

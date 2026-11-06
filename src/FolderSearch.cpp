@@ -94,6 +94,8 @@ struct Walker {
     bool todos = false;              // the TODO list, not a query
     const TextFind::Query* tq = nullptr;   // whole word or regex: TextFind matches
     FolderReplacePlan* plan = nullptr;     // counting for Replace in Folder
+    // Counts the matches on a line with a hit, as the plan counts them.
+    const TextFind::Query* counter = nullptr;
     // Replace in Folder: the files already counted, by device and inode, so
     // a file with two names is replaced once; and the real path of the
     // folder searched, to tell a file reached through a symlink to outside.
@@ -208,6 +210,9 @@ struct Walker {
                 m.byteLength = len;
                 m.column = static_cast<int>(countChars(line.substr(0, col))) + 1;
                 m.text = displayText(line, opt.maxLineChars);
+                if (counter)
+                    m.count = std::max<std::size_t>(1, TextFind::findAllInLine(line, *counter).size());
+                out.totalMatches += m.count;
                 out.matches.push_back(std::move(m));
                 if (full()) { out.truncated = true; break; }
             }
@@ -433,6 +438,10 @@ FolderSearchResult search(const std::string& root, const std::string& query,
     if (!fs::is_directory(root, ec)) return out;
     Walker w{q, cancel, options, out, {}};
     if (tq.usable()) w.tq = &tq;
+    // A row is a line; its count is every match on it, as Replace in
+    // Folder's plan counts them, so the two say the same number.
+    const TextFind::Query counter = tq.usable() ? tq : makeQuery(query, options);
+    if (counter.usable()) w.counter = &counter;
     const fs::path canon = fs::canonical(root, ec);
     if (!ec) w.visited.insert(canon.string());
     w.walk(root, "");
