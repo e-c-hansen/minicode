@@ -646,7 +646,10 @@ MC_GUI_SUITE(agents) {
         MCCompareView *cv = [c valueForKey:@"compareView"];
         GCHECK([cv.comparison.leftText hasPrefix:@"main line 1\n"]);
         GCHECK([cv.comparison.rightText hasPrefix:@"worktree line 1\n"]);
-        GCHECK([cv.comparison.leftLabel hasPrefix:@"main: src/Terminal.mm"]);
+        // Main where the branch left it (AgentCommandsSuite has a main that
+        // moved on since).
+        GCHECK([cv.comparison.leftLabel hasPrefix:@"main at the branch point ("] &&
+               [cv.comparison.leftLabel hasSuffix:@"): src/Terminal.mm"]);
         GCHECK([ActiveTab(c)[@"preview"] boolValue]);
     });
     MCGuiStep(@"Open in New Window opens the worktree as its own folder", ^{

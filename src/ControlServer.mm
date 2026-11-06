@@ -3,7 +3,9 @@
 #import "ControlCommands.h"
 #include "ControlProtocol.h"
 #include <cerrno>
+#include <climits>
 #include <fcntl.h>
+#include <memory>
 #include <signal.h>
 #include <string>
 #include <sys/socket.h>
@@ -29,65 +31,176 @@ void removeSocketAtExit() {
     if (gSocketPath[0]) unlink(gSocketPath);
 }
 
-// Writes the whole answer, giving up on a peer that stopped reading.
-void writeAll(int fd, const std::string &s) {
-    size_t off = 0;
-    while (off < s.size()) {
-        ssize_t n = write(fd, s.data() + off, s.size() - off);
+// One connection. Requests are taken one at a time: the next line is read
+// only once the answer to the last has been written, so a client cannot
+// queue unbounded work on the main thread by sending many lines at once,
+// and the kernel's buffer holds back a client that sends faster than
+// minicode answers. Writes never block the queue every connection shares:
+// the socket is non-blocking, an answer the peer is slow to take waits for
+// a write source, and a peer that takes nothing for kStallSeconds is
+// dropped.
+const double kStallSeconds = 10;
+
+struct Conn {
+    int fd = -1;
+    std::string in;              // read, not yet handled
+    std::string out;             // the answer being written
+    size_t outOff = 0;
+    dispatch_source_t reader = nullptr, writer = nullptr;
+    bool readerSuspended = false, writerSuspended = true;
+    bool busy = false;           // a request is with the main thread
+    bool eof = false;            // the peer sent all it will send
+    bool closed = false;
+    int sources = 0;             // cancel handlers still to run
+    uint64_t progress = 0;       // bumps on every byte written
+};
+
+void closeConn(const std::shared_ptr<Conn> &c);
+void pump(const std::shared_ptr<Conn> &c);
+
+void setReading(const std::shared_ptr<Conn> &c, bool on) {
+    if (c->closed || on == !c->readerSuspended) return;
+    c->readerSuspended = !on;
+    if (on) dispatch_resume(c->reader);
+    else dispatch_suspend(c->reader);
+}
+
+void setWaitingToWrite(const std::shared_ptr<Conn> &c, bool on) {
+    if (c->closed || on == !c->writerSuspended) return;
+    c->writerSuspended = !on;
+    if (on) dispatch_resume(c->writer);
+    else dispatch_suspend(c->writer);
+}
+
+// While an answer waits for the peer: a peer that takes none of it for
+// kStallSeconds is let go of; one that takes some is watched again.
+void watchForStall(const std::shared_ptr<Conn> &c, uint64_t seen) {
+    std::weak_ptr<Conn> weak = c;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kStallSeconds * NSEC_PER_SEC)),
+                   gQueue, ^{
+        auto s = weak.lock();
+        if (!s || s->closed || s->writerSuspended) return;
+        if (s->progress == seen) closeConn(s);
+        else watchForStall(s, s->progress);
+    });
+}
+
+// Writes what it can of the answer; true when all of it is out.
+bool flush(const std::shared_ptr<Conn> &c) {
+    while (c->outOff < c->out.size()) {
+        ssize_t n = write(c->fd, c->out.data() + c->outOff, c->out.size() - c->outOff);
+        if (n > 0) {
+            c->outOff += (size_t)n;
+            c->progress++;
+            continue;
+        }
         if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) return;
-        off += (size_t)n;
+        if (n < 0 && errno == EAGAIN) {
+            if (c->writerSuspended) {
+                setWaitingToWrite(c, true);
+                watchForStall(c, c->progress);
+            }
+            return false;
+        }
+        closeConn(c);   // the peer has gone
+        return false;
+    }
+    c->out.clear();
+    c->outOff = 0;
+    setWaitingToWrite(c, false);
+    return true;
+}
+
+// Hands the next request line to the main thread, when none is there.
+void pump(const std::shared_ptr<Conn> &c) {
+    while (!c->closed && !c->busy && c->out.empty()) {
+        size_t nl = c->in.find('\n');
+        if (nl == std::string::npos) {
+            if (c->in.size() > kMaxLine) {
+                c->out = ControlChannel::errorLine(Json(), "the request is too long");
+                c->eof = true;
+                c->in.clear();
+                if (!flush(c)) return;
+                closeConn(c);
+                return;
+            }
+            if (c->eof) { closeConn(c); return; }
+            setReading(c, true);
+            return;
+        }
+        std::string line = c->in.substr(0, nl);
+        c->in.erase(0, nl + 1);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.find_first_not_of(" \t") == std::string::npos) continue;
+        c->busy = true;
+        setReading(c, false);
+        std::weak_ptr<Conn> weak = c;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            gDispatcher->handle(line, [weak](const std::string &answer) {
+                std::string copy = answer;
+                dispatch_async(gQueue, ^{
+                    auto s = weak.lock();
+                    if (!s || s->closed) return;
+                    s->busy = false;
+                    s->out = copy;
+                    s->outOff = 0;
+                    if (flush(s)) pump(s);
+                });
+            });
+        });
+        return;
     }
 }
 
-// One connection: lines in, an answer for each, in order.
+void closeConn(const std::shared_ptr<Conn> &c) {
+    if (c->closed) return;
+    // Resumed first: a suspended source never runs its cancel handler.
+    setReading(c, true);
+    setWaitingToWrite(c, true);
+    c->closed = true;
+    dispatch_source_cancel(c->reader);
+    dispatch_source_cancel(c->writer);
+}
+
 void serve(int fd) {
-    struct Conn {
-        int fd;
-        std::string buffer;
-        dispatch_source_t source;
-        bool closed = false;
-    };
     auto conn = std::make_shared<Conn>();
     conn->fd = fd;
-    conn->source = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, (uintptr_t)fd, 0, gQueue);
-    dispatch_source_set_event_handler(conn->source, ^{
+    conn->sources = 2;
+    Conn *raw = conn.get();
+    auto cancelled = ^{
+        // The descriptor goes once neither source can touch it.
+        if (--raw->sources == 0) close(raw->fd);
+    };
+    conn->reader = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, (uintptr_t)fd, 0, gQueue);
+    conn->writer = dispatch_source_create(DISPATCH_SOURCE_TYPE_WRITE, (uintptr_t)fd, 0, gQueue);
+    std::weak_ptr<Conn> weak = conn;
+    dispatch_source_set_event_handler(conn->reader, ^{
+        auto c = weak.lock();
+        if (!c || c->closed) return;
         char buf[16384];
-        ssize_t n = read(conn->fd, buf, sizeof buf);
+        ssize_t n = read(c->fd, buf, sizeof buf);
+        if (n < 0 && (errno == EAGAIN || errno == EINTR)) return;
         if (n <= 0) {
-            if (n < 0 && (errno == EAGAIN || errno == EINTR)) return;
-            dispatch_source_cancel(conn->source);
-            return;
+            // The peer is done sending (or gone): what it sent is still
+            // answered, then the connection closes.
+            c->eof = true;
+            setReading(c, false);
+        } else {
+            c->in.append(buf, (size_t)n);
         }
-        conn->buffer.append(buf, (size_t)n);
-        size_t nl;
-        while ((nl = conn->buffer.find('\n')) != std::string::npos) {
-            std::string line = conn->buffer.substr(0, nl);
-            conn->buffer.erase(0, nl + 1);
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            if (line.find_first_not_of(" \t") == std::string::npos) continue;
-            // Handled on the main thread; the answer is written from here,
-            // so a slow reader never holds the main thread up.
-            dispatch_async(dispatch_get_main_queue(), ^{
-                gDispatcher->handle(line, [conn](const std::string &answer) {
-                    std::string copy = answer;
-                    dispatch_async(gQueue, ^{
-                        if (!conn->closed) writeAll(conn->fd, copy);
-                    });
-                });
-            });
-        }
-        if (conn->buffer.size() > kMaxLine) {
-            writeAll(conn->fd, ControlChannel::errorLine(Json(), "the request is too long"));
-            dispatch_source_cancel(conn->source);
-        }
+        pump(c);
     });
-    dispatch_source_set_cancel_handler(conn->source, ^{
-        // Answers still on their way are dropped once the peer has gone.
-        conn->closed = true;
-        close(conn->fd);
+    dispatch_source_set_event_handler(conn->writer, ^{
+        auto c = weak.lock();
+        if (!c || c->closed) return;
+        if (flush(c)) pump(c);
     });
-    dispatch_resume(conn->source);
+    // Each handler holds the connection until it has run, so the last one
+    // to run frees it.
+    dispatch_source_set_cancel_handler(conn->reader, ^{ (void)conn; cancelled(); });
+    dispatch_source_set_cancel_handler(conn->writer, ^{ (void)conn; cancelled(); });
+    conn->readerSuspended = false;
+    dispatch_resume(conn->reader);   // the writer starts suspended, until a write would block
 }
 
 void acceptConnections() {
@@ -102,11 +215,12 @@ void acceptConnections() {
             continue;
         }
         int flags = fcntl(fd, F_GETFL);
-        if (flags >= 0) fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+        if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
+            close(fd);
+            continue;
+        }
         int on = 1;
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on);
-        struct timeval tv = {5, 0};
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
         fcntl(fd, F_SETFD, FD_CLOEXEC);
         serve(fd);
     }
@@ -129,9 +243,35 @@ BOOL prepareFolder(NSString *folder) {
 // has it set to the user's own temporary folder), else the same folder from
 // the system; NSTemporaryDirectory() does not read TMPDIR.
 NSString *MCControlSocketFolder(void) {
+    const char *forced = getenv("MINICODE_CONTROL_DIR");
+    if (forced && *forced) return [NSString stringWithUTF8String:forced];
     const char *t = getenv("TMPDIR");
-    NSString *tmp = t && *t ? [NSString stringWithUTF8String:t] : NSTemporaryDirectory();
+    NSString *tmp = t && *t ? [NSString stringWithUTF8String:t] : nil;
+    if (!tmp) {
+        char buf[PATH_MAX];
+        size_t n = confstr(_CS_DARWIN_USER_TEMP_DIR, buf, sizeof buf);
+        tmp = n > 0 && n <= sizeof buf ? [NSString stringWithUTF8String:buf] : NSTemporaryDirectory();
+    }
     return [tmp stringByAppendingPathComponent:@"MiniCode"];
+}
+
+// Whether something listens on the socket at `path` (a live pid may be a
+// later process that reused a dead minicode's number).
+static BOOL MCSocketAnswers(NSString *path) {
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof addr);
+    addr.sun_family = AF_UNIX;
+    const char *fs = path.fileSystemRepresentation;
+    if (!fs || strlen(fs) >= sizeof addr.sun_path) return YES;   // can't tell: leave it
+    strlcpy(addr.sun_path, fs, sizeof addr.sun_path);
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return YES;
+    int on = 1;
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on);
+    const BOOL refused = connect(fd, (struct sockaddr *)&addr, sizeof addr) != 0 &&
+                         errno == ECONNREFUSED;
+    close(fd);
+    return !refused;
 }
 
 NSUInteger MCControlRemoveStaleSockets(NSString *folder) {
@@ -141,10 +281,18 @@ NSUInteger MCControlRemoveStaleSockets(NSString *folder) {
     for (NSString *name in names) {
         int pid = ControlChannel::pidFromSocketName(name.UTF8String ?: "");
         if (pid <= 0 || pid == getpid()) continue;
-        if (kill(pid, 0) == 0 || errno != ESRCH) continue;   // alive (or not ours to judge)
         NSString *path = [folder stringByAppendingPathComponent:name];
+        if (kill(pid, 0) == 0) {
+            // Alive, but perhaps a later process with a dead minicode's pid:
+            // then nothing listens.
+            if (MCSocketAnswers(path)) continue;
+        } else if (errno != ESRCH) {
+            continue;   // not ours to judge
+        }
         struct stat st;
-        if (lstat(path.fileSystemRepresentation, &st) != 0 || !S_ISSOCK(st.st_mode)) continue;
+        if (lstat(path.fileSystemRepresentation, &st) != 0 || !S_ISSOCK(st.st_mode) ||
+            st.st_uid != geteuid())
+            continue;
         if (unlink(path.fileSystemRepresentation) == 0) removed++;
     }
     return removed;

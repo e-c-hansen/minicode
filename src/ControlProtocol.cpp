@@ -323,6 +323,15 @@ std::string absolutePath(const std::string& path, const std::string& cwd,
     return out.empty() ? "/" : out;
 }
 
+bool isSafeRef(const std::string& ref) {
+    return !ref.empty() && ref[0] != '-' && ref.find('\0') == std::string::npos &&
+           ref.find('\n') == std::string::npos;
+}
+
+bool launchesApp(const std::string& cmd) {
+    return cmd != "state" && cmd != "selection" && cmd != "term-output" && cmd != "ping";
+}
+
 bool isSubcommand(const std::string& word) {
     static const char* words[] = {"open", "window", "browse", "term", "diff", "split",
                                   "state", "selection", "term-output", "tour", "help"};
@@ -362,8 +371,9 @@ const Help kHelp[] = {
      "minicode diff <path> [--base REF]\n"
      "minicode diff <a> <b>\n"
      "    Shows a side-by-side diff of a file against a git ref (HEAD by\n"
-     "    default), or of two files, in the agent preview tab (--keep for a\n"
-     "    tab of its own).\n"},
+     "    default), or of two files, in the window's diff preview tab (one tab\n"
+     "    that each diff replaces, beside the note's; --keep for a tab of its\n"
+     "    own). Each file may be up to 16 MB of text.\n"},
     {"split",
      "minicode split [--right|--below] <open|browse|term> ...\n"
      "    Runs the command into a new split: term --right splits the active\n"
@@ -398,8 +408,11 @@ const char* kCommon =
     "  --pid PID     the minicode process to talk to (default: the newest)\n"
     "Commands act in the frontmost window unless told otherwise, and never\n"
     "move the keyboard or close, replace or reorder tabs and terminals the\n"
-    "user has; they only add. When minicode is not running, it is started,\n"
-    "and the command waits up to 10 seconds for it.\n"
+    "user has; they only add. While the user is typing in the editor, a file\n"
+    "or diff opens in a tab beside theirs without being shown. `window` and\n"
+    "--folder can bring another window to the front. When minicode is not\n"
+    "running, it is started and the command waits up to 10 seconds for it;\n"
+    "state, selection and term-output exit with 3 instead.\n"
     "Exit codes: 0 done, 1 the command failed (why is on stderr), 2 a usage\n"
     "error, 3 no minicode to talk to.\n";
 
@@ -537,6 +550,7 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
         } else if (sub == "term" && takeValue(a, i, "run", v, c.error)) {
             c.args.set("run", v);
         } else if (sub == "diff" && takeValue(a, i, "base", v, c.error)) {
+            if (c.error.empty() && !isSafeRef(v)) c.error = "--base needs a revision, not " + v;
             c.args.set("base", v);
         } else if (sub == "term-output" && takeValue(a, i, "lines", v, c.error)) {
             int n = 0;
@@ -669,6 +683,31 @@ std::string cleanNoteText(const std::string& text) {
             i++;
             continue;
         }
+        // Line and paragraph separators and C1 controls read as spaces; the
+        // marks that turn text around (bidi embeddings, overrides, isolates)
+        // are dropped, so a note shows the text in the order it was given.
+        if (len == 3 && c == 0xE2 && (unsigned char)text[i + 1] == 0x80) {
+            const unsigned char d = (unsigned char)text[i + 2];
+            if (d == 0xA8 || d == 0xA9) {   // U+2028, U+2029
+                space = !chars.empty();
+                i += 3;
+                continue;
+            }
+            if (d == 0x8E || d == 0x8F || (d >= 0xAA && d <= 0xAE)) {   // U+200E-F, U+202A-E
+                i += 3;
+                continue;
+            }
+        }
+        if (len == 3 && c == 0xE2 && (unsigned char)text[i + 1] == 0x81 &&
+            (unsigned char)text[i + 2] >= 0xA6 && (unsigned char)text[i + 2] <= 0xA9) {
+            i += 3;   // U+2066-2069
+            continue;
+        }
+        if (len == 2 && c == 0xC2 && (unsigned char)text[i + 1] < 0xA0) {   // U+0080-009F
+            space = !chars.empty();
+            i += 2;
+            continue;
+        }
         if (space) chars.push_back(" ");
         space = false;
         chars.push_back(text.substr(i, len));
@@ -705,23 +744,31 @@ int pidFromSocketName(const std::string& name) {
 
 std::string socketName(int pid) { return std::to_string(pid) + ".sock"; }
 
+std::vector<int> rankSockets(const std::vector<SocketEntry>& found, int wantPid,
+                             const std::function<bool(int)>& alive) {
+    std::vector<SocketEntry> live;
+    for (const SocketEntry& e : found) {
+        if (e.pid <= 0 || (wantPid > 0 && e.pid != wantPid)) continue;
+        bool seen = false;
+        for (SocketEntry& l : live)
+            if (l.pid == e.pid) {
+                seen = true;
+                l.started = std::max(l.started, e.started);
+            }
+        if (!seen && alive(e.pid)) live.push_back(e);
+    }
+    std::stable_sort(live.begin(), live.end(), [](const SocketEntry& a, const SocketEntry& b) {
+        return a.started != b.started ? a.started > b.started : a.pid > b.pid;
+    });
+    std::vector<int> out;
+    for (const SocketEntry& e : live) out.push_back(e.pid);
+    return out;
+}
+
 int chooseSocket(const std::vector<SocketEntry>& found, int wantPid,
                  const std::function<bool(int)>& alive) {
-    if (wantPid > 0) {
-        for (const SocketEntry& e : found)
-            if (e.pid == wantPid && alive(e.pid)) return e.pid;
-        return 0;
-    }
-    int best = 0;
-    int64_t bestStarted = 0;
-    for (const SocketEntry& e : found) {
-        if (e.pid <= 0 || !alive(e.pid)) continue;
-        if (!best || e.started > bestStarted || (e.started == bestStarted && e.pid > best)) {
-            best = e.pid;
-            bestStarted = e.started;
-        }
-    }
-    return best;
+    std::vector<int> ranked = rankSockets(found, wantPid, alive);
+    return ranked.empty() ? 0 : ranked.front();
 }
 
 // --------------------------------------------------------------- pretty JSON

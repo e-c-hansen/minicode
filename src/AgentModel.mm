@@ -117,6 +117,10 @@ static void MCAgentFSCallback(ConstFSEventStreamRef stream, void *info, size_t n
     std::string _mainRef;                              // only on _queue
     std::map<std::string, WorktreeState> _states;      // by real path, only on _queue
     std::string _signature;                            // only on _queue
+    // The folder as the queue knows it: set on the queue, from copies made
+    // on the main thread, so a folder change during a refresh never frees
+    // a string the queue is reading.
+    NSString *_queueFolder, *_queueRealFolder;         // only on _queue
     NSString *_realFolder;
     FSEventStreamRef _stream;
     NSArray<NSString *> *_watched;
@@ -176,8 +180,13 @@ static void MCAgentFSCallback(ConstFSEventStreamRef stream, void *info, size_t n
     _scratchpads = @[];
     _mainBranch = nil;
     std::string real = U8(_realFolder);
+    NSString *folderCopy = [_folder copy], *realCopy = [_realFolder copy];
+    // Not / or the home folder: every session on the Mac is inside those.
+    const bool index = AgentView::indexesFolder(real, U8(RealPath(NSHomeDirectory())));
     dispatch_async(_queue, ^{
-        self->_index->setFolder(real);
+        self->_queueFolder = folderCopy;
+        self->_queueRealFolder = realCopy;
+        self->_index->setFolder(index ? real : std::string());
         self->_rawWorktrees.clear();
         self->_states.clear();
         self->_mainRef.clear();
@@ -274,7 +283,7 @@ static void MCAgentFSCallback(ConstFSEventStreamRef stream, void *info, size_t n
     NSMutableArray<MCAgentWork *> *top = [NSMutableArray array];
     NSMutableDictionary<NSString *, MCAgentWork *> *by = [NSMutableDictionary dictionary];
     std::string sig = missing ? "M" : "P";
-    const std::string real = U8(_realFolder), home = U8(NSHomeDirectory());
+    const std::string real = U8(_queueRealFolder), home = U8(NSHomeDirectory());
     for (const AgentIndex::Index::Row &r : rows) {
         const AgentIndex::Session &x = *r.session;
         MCAgentWork *s = [MCAgentWork new];
@@ -393,13 +402,13 @@ static void MCAgentFSCallback(ConstFSEventStreamRef stream, void *info, size_t n
 - (NSArray<MCAgentWorktree *> *)labelledWorktreesAt:(double)now {
     NSMutableArray<MCAgentWorktree *> *out = [NSMutableArray array];
     if (_rawWorktrees.empty()) return out;
-    std::string real = U8(_realFolder);
-    NSString *folder = self.folder ?: @"";
+    std::string real = U8(_queueRealFolder);
+    NSString *folder = _queueFolder ?: @"";
     for (const AgentIndex::Worktree &w :
          AgentIndex::worktreesUnder(_rawWorktrees, real, _index.get(), now)) {
         MCAgentWorktree *t = [MCAgentWorktree new];
         NSString *path = NS(w.path);
-        NSString *realFolder = _realFolder ?: @"";
+        NSString *realFolder = _queueRealFolder ?: @"";
         if (realFolder.length && [path hasPrefix:[realFolder stringByAppendingString:@"/"]])
             path = [folder stringByAppendingString:[path substringFromIndex:realFolder.length]];
         t.path = path;
@@ -595,10 +604,19 @@ static NSString *TextOf(NSData *data) {
     dispatch_async(_gitQueue, ^{
         NSString *oldPath = change.from ?: change.path;
         NSString *left = @"", *right = @"";
+        // The list is the worktree against where its branch left main, so
+        // the left pane is main there too: main's later work is not the
+        // agent's, and would show as the agent taking it out.
+        MCGitResult *mergeBase = MCGitRunSync(wt, @[@"merge-base", main, @"HEAD"]);
+        std::string baseOut = mergeBase.ok
+            ? std::string((const char *)mergeBase.output.bytes, mergeBase.output.length)
+            : std::string();
+        const AgentView::CompareBase base = AgentView::compareBase(U8(main), baseOut);
+        NSString *baseRef = NS(base.ref), *baseLabel = NS(base.label);
         BOOL onMain = change.status != 'A' && change.status != '?';
         if (onMain) {
             MCGitResult *show = MCGitRunSync(
-                wt, @[@"show", [NSString stringWithFormat:@"%@:%@", main, oldPath]]);
+                wt, @[@"show", [NSString stringWithFormat:@"%@:%@", baseRef, oldPath]]);
             if (show.ok) left = TextOf(show.output);
             else onMain = NO;
         }
@@ -611,13 +629,14 @@ static NSString *TextOf(NSData *data) {
                    label.length > 40 ? [[label substringToIndex:40] stringByAppendingString:@"…"]
                                      : label,
                    main];
-        c.leftLabel = onMain ? [NSString stringWithFormat:@"%@: %@", main, oldPath]
-                             : [NSString stringWithFormat:@"%@: (not there)", main];
+        c.leftLabel = onMain ? [NSString stringWithFormat:@"%@: %@", baseLabel, oldPath]
+                             : [NSString stringWithFormat:@"%@: (not there)", baseLabel];
         c.rightLabel = onDisk ? [NSString stringWithFormat:@"%@: %@", branch, change.path]
                               : [NSString stringWithFormat:@"%@: (deleted)", branch];
         c.leftText = left;
         c.rightText = right;
         c.path = onDisk ? file : nil;
+        [c prepare];   // lined up here, not on the main thread
         dispatch_async(dispatch_get_main_queue(), ^{ done(c); });
     });
 }

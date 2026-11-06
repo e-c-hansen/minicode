@@ -57,6 +57,24 @@ std::string worktreeBadge(int ahead, bool dirty);
 // ("main"), or its commit when it is detached; "" when there is none.
 std::string mainRef(const std::vector<AgentIndex::Worktree> &all);
 
+// What a worktree's changed file is compared with (R2.9): the main branch
+// as it was where the worktree's branch left it (the merge base), so main's
+// later work never shows as the agent deleting it. `mergeBase` is what
+// `merge-base` printed (whitespace ignored); when it is not a commit (no
+// common commit, or the command failed) the main branch's tip is used. The
+// label names it for the left pane: "main at the branch point (1a2b3c4)",
+// or "main".
+struct CompareBase {
+    std::string ref;     // what `show <ref>:<path>` takes
+    std::string label;
+};
+CompareBase compareBase(const std::string &mainRef, const std::string &mergeBase);
+
+// Whether a window's folder gets agent sessions indexed: never for the root
+// folder or the home folder, which would take in every session on the Mac
+// (every transcript read in full on the first refresh).
+bool indexesFolder(const std::string &folder, const std::string &home);
+
 // One changed file of a worktree against its main branch.
 struct Change {
     char status = 'M';      // M, A, D, R, C, T, U, or '?' for untracked

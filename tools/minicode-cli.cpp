@@ -2,13 +2,16 @@
 // launcher (scripts/minicode-launcher) hands it every subcommand (`minicode
 // open`, `state`, `term`, ...); it turns the command line into one request
 // (ControlProtocol.h), sends it over the newest running minicode's Unix
-// socket ($TMPDIR/MiniCode/<pid>.sock), prints the answer, and exits 0 (done),
-// 1 (the command failed), 2 (a usage error) or 3 (no minicode to talk to).
-// With no minicode running it starts one the way the launcher does, then
-// waits up to 10 seconds for its socket.
+// socket ($TMPDIR/MiniCode/<pid>.sock, or the same in the user's own
+// temporary folder), prints the answer, and exits 0 (done), 1 (the command
+// failed), 2 (a usage error) or 3 (no minicode to talk to). With no minicode
+// running it starts one the way the launcher does, then waits up to 10
+// seconds for its socket; reads (state, selection, term-output) exit 3 at
+// once instead.
 //
 // For tests: MINICODE_LAUNCHER_DRYRUN prints the launch command instead of
-// running it, and MINICODE_CLI_WAIT sets the wait in seconds.
+// running it, MINICODE_CLI_WAIT sets the wait in seconds, and
+// MINICODE_CONTROL_DIR names the one folder to look for sockets in.
 #include "ControlProtocol.h"
 #include <cerrno>
 #include <climits>
@@ -39,31 +42,66 @@ namespace {
 
 const int kExitOK = 0, kExitFailed = 1, kExitUsage = 2, kExitNoApp = 3;
 
-std::string tempDir() {
-    const char *t = getenv("TMPDIR");
-    std::string dir;
-    if (t && *t) {
-        dir = t;
-    } else {
-        char buf[PATH_MAX];
-        size_t n = confstr(_CS_DARWIN_USER_TEMP_DIR, buf, sizeof buf);
-        dir = n > 0 && n <= sizeof buf ? buf : "/tmp";
-    }
+std::string trimmed(std::string dir) {
     while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
     return dir;
 }
 
-std::string socketDir() { return tempDir() + "/MiniCode"; }
+// The folders a minicode's socket may be in, in the order looked at. The
+// app makes its socket in $TMPDIR/MiniCode, and Launch Services starts it
+// with TMPDIR set to the user's own temporary folder, which confstr gives
+// whatever the shell's TMPDIR says (a nix shell, a dotfile's TMPDIR=/tmp).
+// So that folder is always looked in, after the shell's TMPDIR when that
+// is another one. MINICODE_CONTROL_DIR names the one folder to use
+// instead (tests).
+std::vector<std::string> socketDirs() {
+    const char *forced = getenv("MINICODE_CONTROL_DIR");
+    if (forced && *forced) return {trimmed(forced)};
+    std::vector<std::string> out;
+    const char *t = getenv("TMPDIR");
+    if (t && *t) out.push_back(trimmed(t) + "/MiniCode");
+    char buf[PATH_MAX];
+    size_t n = confstr(_CS_DARWIN_USER_TEMP_DIR, buf, sizeof buf);
+    std::string user = n > 0 && n <= sizeof buf ? trimmed(buf) + "/MiniCode" : "";
+    if (!user.empty()) {
+        char a[PATH_MAX], b[PATH_MAX];
+        bool same = false;
+        for (const std::string &o : out)
+            same = same || o == user ||
+                   (realpath(o.c_str(), a) && realpath(user.c_str(), b) && strcmp(a, b) == 0);
+        if (!same) out.push_back(user);
+    }
+    if (out.empty()) out.push_back("/tmp/MiniCode");
+    return out;
+}
+
+// A folder the app made: a real folder (not a link) of this user's that
+// nobody else can enter. Another user's socket in a shared folder could
+// otherwise stand in for minicode.
+bool trustedFolder(const std::string &dir) {
+    struct stat st;
+    return lstat(dir.c_str(), &st) == 0 && S_ISDIR(st.st_mode) && st.st_uid == getuid() &&
+           (st.st_mode & 077) == 0;
+}
 
 bool alive(int pid) {
     // EPERM is someone else's process, which is not ours to talk to.
     return pid > 0 && kill(pid, 0) == 0;
 }
 
-int findSocket(int wantPid) {
+struct Candidate {
+    int pid;
+    std::string path;
+};
+
+// Every live minicode's socket, best first: `wantPid` alone when given.
+std::vector<Candidate> findSockets(int wantPid) {
     std::vector<SocketEntry> found;
-    std::string dir = socketDir();
-    if (DIR *d = opendir(dir.c_str())) {
+    std::vector<std::string> paths;
+    for (const std::string &dir : socketDirs()) {
+        if (!trustedFolder(dir)) continue;
+        DIR *d = opendir(dir.c_str());
+        if (!d) continue;
         while (struct dirent *e = readdir(d)) {
             int pid = pidFromSocketName(e->d_name);
             if (!pid) continue;
@@ -73,10 +111,15 @@ int findSocket(int wantPid) {
                 continue;
             found.push_back({pid, (int64_t)st.st_mtimespec.tv_sec * 1000000000LL +
                                       st.st_mtimespec.tv_nsec});
+            paths.push_back(path);
         }
         closedir(d);
     }
-    return chooseSocket(found, wantPid, alive);
+    std::vector<Candidate> out;
+    for (int pid : rankSockets(found, wantPid, alive))
+        for (size_t i = 0; i < found.size(); i++)
+            if (found[i].pid == pid) out.push_back({pid, paths[i]});   // each of its folders
+    return out;
 }
 
 // A minicode process of this user's that has no socket: one from before the
@@ -159,9 +202,13 @@ double now() {
 }
 
 // Sends one request and reads the one answer line. False with `error` set
-// when the socket could not be used.
-bool exchange(int pid, const std::string &request, std::string &answer, std::string &error) {
-    std::string path = socketDir() + "/" + socketName(pid);
+// when the socket could not be used; *refused when nothing listens on it (a
+// socket left by a minicode that died, its pid since reused).
+bool exchange(const Candidate &to, const std::string &request, std::string &answer,
+              std::string &error, bool *refused) {
+    const int pid = to.pid;
+    const std::string &path = to.path;
+    *refused = false;
     struct sockaddr_un addr;
     std::memset(&addr, 0, sizeof addr);
     addr.sun_family = AF_UNIX;
@@ -181,6 +228,7 @@ bool exchange(int pid, const std::string &request, std::string &answer, std::str
     struct timeval tv = {120, 0};
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
     if (connect(fd, (struct sockaddr *)&addr, sizeof addr) != 0) {
+        *refused = errno == ECONNREFUSED || errno == ENOENT;
         error = "could not connect to minicode (process " + std::to_string(pid) + "): " +
                 std::strerror(errno);
         close(fd);
@@ -262,8 +310,8 @@ int main(int argc, char **argv) {
         if (!validateArgs(*spec, c.args, error)) return usageError(error);
     }
 
-    int pid = findSocket(c.pid);
-    if (!pid) {
+    std::vector<Candidate> sockets = findSockets(c.pid);
+    if (sockets.empty()) {
         if (c.pid) {
             std::fprintf(stderr, "minicode: no minicode is running as process %d\n", c.pid);
             return kExitNoApp;
@@ -273,21 +321,38 @@ int main(int argc, char **argv) {
                                  "from before the command channel?); quit and open it again\n");
             return kExitNoApp;
         }
+        if (!launchesApp(c.cmd)) {
+            // Nothing to read from a minicode that is not there.
+            std::fprintf(stderr, "minicode: minicode is not running\n");
+            return kExitNoApp;
+        }
         if (!launchApp(c.launchFolder)) {
             std::fprintf(stderr, "minicode: minicode is not running and could not be started\n");
             return kExitNoApp;
         }
         const double until = now() + waitSeconds();
-        while (!(pid = findSocket(0)) && now() < until) usleep(100000);
-        if (!pid) {
+        while ((sockets = findSockets(0)).empty() && now() < until) usleep(100000);
+        if (sockets.empty()) {
             std::fprintf(stderr, "minicode: minicode did not start within %g seconds\n",
                          waitSeconds());
             return kExitNoApp;
         }
     }
 
+    // The newest first; one that refuses the connection is a leftover, and
+    // the next is tried.
     std::string answer;
-    if (!exchange(pid, requestLine(Json(1), c.cmd, c.args), answer, error)) {
+    bool sent = false;
+    const std::string request = requestLine(Json(1), c.cmd, c.args);
+    for (const Candidate &to : sockets) {
+        bool refused = false;
+        if (exchange(to, request, answer, error, &refused)) {
+            sent = true;
+            break;
+        }
+        if (!refused) break;
+    }
+    if (!sent) {
         std::fprintf(stderr, "minicode: %s\n", error.c_str());
         return kExitNoApp;
     }
@@ -301,6 +366,9 @@ int main(int argc, char **argv) {
         return kExitFailed;
     }
     const Json &result = reply["result"];
+    if (result["background"].asBool())
+        std::fprintf(stderr, "minicode: the user is typing in the editor, so this opened in a tab "
+                             "beside theirs; it shows when they switch to it\n");
     switch (c.output) {
     case Output::None: break;
     case Output::Id: std::printf("%s\n", result[c.outputField].dump().c_str()); break;

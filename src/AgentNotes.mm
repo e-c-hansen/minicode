@@ -18,6 +18,10 @@ static const unsigned kAccent = 0x4EA1F7;
 @interface MCNoteState : NSObject
 @property(nonatomic, copy) NSString *text, *from, *count;
 @property(nonatomic) NSRange range;
+// For a tab not on show yet: where the note goes, placed when it is shown;
+// `revealOnly` is a line to go to, with no note.
+@property(nonatomic) BOOL pending, revealOnly;
+@property(nonatomic) int line, column, toLine, toColumn;
 @end
 @implementation MCNoteState
 @end
@@ -398,27 +402,68 @@ static void MCScrollLine(NSTextView *tv, CGFloat lineTop, CGFloat above) {
 // ------------------------------------------------------------------- API
 - (BOOL)showNote:(NSString *)text from:(NSString *)from
             line:(int)line column:(int)column toLine:(int)toLine toColumn:(int)toColumn {
+    return [self showNote:text from:from line:line column:column toLine:toLine
+                 toColumn:toColumn inTab:nil];
+}
+
+- (BOOL)showNote:(NSString *)text from:(NSString *)from
+            line:(int)line column:(int)column toLine:(int)toLine toColumn:(int)toColumn
+           inTab:(id)tab {
     _tour = nil;   // a note of its own replaces a tour
     return [self putNote:text from:from count:nil line:line column:column
-                  toLine:toLine toColumn:toColumn];
+                  toLine:toLine toColumn:toColumn inTab:tab];
 }
 
 - (BOOL)putNote:(NSString *)text from:(NSString *)from count:(NSString *)count
-           line:(int)line column:(int)column toLine:(int)toLine toColumn:(int)toColumn {
+           line:(int)line column:(int)column toLine:(int)toLine toColumn:(int)toColumn
+          inTab:(id)target {
+    MCNoteState *note = [MCNoteState new];
+    note.text = text ?: @"";
+    note.from = from;
+    note.count = count;
+    note.line = line;
+    note.column = column;
+    note.toLine = toLine;
+    note.toColumn = toColumn;
+    if (target && target != [_host notesActiveTab]) {
+        // Not on show: the note waits with its tab.
+        note.pending = YES;
+        [_notes setObject:note forKey:target];
+        return YES;
+    }
+    // The text as it is on disk now, if the agent has just written it.
+    [_host notesCatchUpWithDisk];
     NSTextView *tv = [_host notesTextView];
     id tab = [_host notesActiveTab];
     if (!tv || !tab) return NO;
     [self observe:tv];
     [self hideShown];
-    MCNoteState *note = [MCNoteState new];
-    note.text = text ?: @"";
-    note.from = from;
-    note.count = count;
-    note.range = MCNoteRange(tv.string, line, column, toLine, toColumn);
     [_notes setObject:note forKey:tab];
-    tv.selectedRange = NSMakeRange(note.range.location, 0);
-    [self display:note scroll:YES];
+    [self place:note in:tv tab:tab];
     return YES;
+}
+
+// Puts a note on the text on show, from its lines and columns.
+- (void)place:(MCNoteState *)note in:(NSTextView *)tv tab:(id)tab {
+    note.pending = NO;
+    note.range = MCNoteRange(tv.string, note.line, note.column, note.toLine, note.toColumn);
+    // The caret goes to the note's lines in the agent's own preview tab;
+    // in a tab of the user's it stays where they left it.
+    if ([_host notesTabIsPreview:tab]) tv.selectedRange = NSMakeRange(note.range.location, 0);
+    [self display:note scroll:YES];
+}
+
+- (BOOL)revealLine:(int)line column:(int)column inTab:(id)target {
+    if (target && target != [_host notesActiveTab]) {
+        MCNoteState *note = [MCNoteState new];
+        note.pending = YES;
+        note.revealOnly = YES;
+        note.line = line;
+        note.column = column;
+        [_notes setObject:note forKey:target];
+        return YES;
+    }
+    return [self revealLine:line column:column];
 }
 
 - (BOOL)revealLine:(int)line column:(int)column {
@@ -464,28 +509,29 @@ static void MCScrollLine(NSTextView *tv, CGFloat lineTop, CGFloat above) {
     _tour = tour;
     _tourFrom = [from copy];
     _tourIndex = 0;
-    if ([self goToStop:0 of:tour]) return YES;
+    if ([self goToStop:0 of:tour quiet:YES]) return YES;
     if (_tour == tour) _tour = nil;
     return NO;
 }
 
-- (BOOL)goToStop:(NSInteger)i of:(NSArray<MCTourStop *> *)tour {
+- (BOOL)goToStop:(NSInteger)i of:(NSArray<MCTourStop *> *)tour quiet:(BOOL)quiet {
     MCTourStop *stop = tour[(NSUInteger)i];
     // Opening the stop swaps tabs, which keeps the tour (it is no edit).
-    if (![_host openFileForAgent:stop.path preview:YES]) return NO;
+    id tab = [_host openTabForAgent:stop.path preview:YES quiet:quiet];
+    if (!tab) return NO;
     _tour = tour;
     _tourIndex = i;
     NSString *count = [NSString stringWithFormat:@"%ld of %lu", (long)i + 1,
                        (unsigned long)tour.count];
     return [self putNote:stop.note from:_tourFrom count:count line:stop.line
-                  column:stop.column toLine:stop.toLine toColumn:0];
+                  column:stop.column toLine:stop.toLine toColumn:0 inTab:tab];
 }
 
 - (BOOL)stepTour:(NSInteger)delta {
     if (!_tour) return NO;
     NSInteger next = _tourIndex + delta;
     if (next < 0 || next >= (NSInteger)_tour.count) return NO;
-    return [self goToStop:next of:_tour];
+    return [self goToStop:next of:_tour quiet:NO];
 }
 
 // ---------------------------------------------------------------- hooks
@@ -498,7 +544,22 @@ static void MCScrollLine(NSTextView *tv, CGFloat lineTop, CGFloat above) {
     _suspended = NO;
     id tab = [_host notesActiveTab];
     MCNoteState *note = tab ? [_notes objectForKey:tab] : nil;
-    if (note && [_host notesTextView]) [self display:note scroll:NO];
+    if (!note) return;
+    NSTextView *tv = [_host notesTextView];
+    if (!tv) return;
+    if (!note.pending) {
+        [self display:note scroll:NO];
+        return;
+    }
+    // Opened by an agent while the user typed elsewhere: placed now, on the
+    // text as it is shown.
+    [self observe:tv];
+    if (note.revealOnly) {
+        [_notes removeObjectForKey:tab];
+        [self revealLine:note.line column:note.column];
+        return;
+    }
+    [self place:note in:tv tab:tab];
 }
 
 - (BOOL)handleCommand:(SEL)selector {
