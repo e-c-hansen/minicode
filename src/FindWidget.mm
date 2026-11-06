@@ -238,16 +238,48 @@ void MCFindDrawIcon(MCFindIcon icon, NSRect box, NSColor *color) {
         break;
     case MCFindIconReplace:
     case MCFindIconReplaceAll: {
-        // A small box, an arrow bending down to a filled box.
+        // As the codicons draw them: the new text at the top right, an arrow
+        // bending down from it, and the old text cut out of a filled box at
+        // the bottom left (two letters, and a wider box, for all).
         const BOOL all = icon == MCFindIconReplaceAll;
-        [p appendBezierPathWithRect:NSMakeRect(1.5, 1.5, 5, 5)];
-        if (all) [p appendBezierPathWithRect:NSMakeRect(1.5, 8.5, 5, 5)];
-        line(8.5, 4, 12, 4);
-        line(12, 4, 12, 7.5);
-        line(10.3, 5.9, 12, 7.6);
-        line(12, 7.6, 13.7, 5.9);
+        CGContextRef cg = NSGraphicsContext.currentContext.CGContext;
+        CGContextBeginTransparencyLayer(cg, NULL);
+        auto glyphs = [&](NSString *s, NSRect r, CGFloat size) {
+            NSRect u = flipped ? r : NSMakeRect(r.origin.x, 16 - NSMaxY(r), r.size.width, r.size.height);
+            [NSGraphicsContext saveGraphicsState];
+            if (!flipped) {
+                NSAffineTransform *f = [NSAffineTransform transform];
+                [f translateXBy:0 yBy:16];
+                [f scaleXBy:1 yBy:-1];
+                [f concat];
+            }
+            Text(s, u, size, NSFontWeightBold, color, flipped ? -0.5 : 0.5);
+            [NSGraphicsContext restoreGraphicsState];
+        };
+        glyphs(all ? @"ab" : @"b", NSMakeRect(all ? 8 : 9, 0, all ? 8 : 6, 7.5), 8);
+        const CGFloat ax = all ? 6.8 : 7.6, bx = all ? 3 : 4.2;
+        line(ax, 3.6, bx + 1, 3.6);
+        [p appendBezierPathWithArcFromPoint:NSMakePoint(bx, 3.6) toPoint:NSMakePoint(bx, 5)
+                                     radius:1];
+        line(bx, 4.6, bx, 7.6);
+        line(bx - 1.6, 6.1, bx, 7.7);
+        line(bx, 7.7, bx + 1.6, 6.1);
         Stroke(p, 1);
-        NSRectFill(NSMakeRect(9, 9.5, 5.5, 5));
+        const NSRect box = NSMakeRect(1, 9, all ? 10.5 : 7, 7);
+        [[NSBezierPath bezierPathWithRoundedRect:box xRadius:1.2 yRadius:1.2] fill];
+        CGContextSetBlendMode(cg, kCGBlendModeClear);
+        glyphs(all ? @"ac" : @"c", box, 8);
+        CGContextSetBlendMode(cg, kCGBlendModeNormal);
+        if (all) {   // the bracket down the right, round the box
+            NSBezierPath *q = [NSBezierPath bezierPath];
+            [q moveToPoint:NSMakePoint(5.5, 7.5)];
+            [q lineToPoint:NSMakePoint(11.5, 7.5)];
+            [q appendBezierPathWithArcFromPoint:NSMakePoint(13.5, 7.5)
+                                        toPoint:NSMakePoint(13.5, 9.5) radius:2];
+            [q lineToPoint:NSMakePoint(13.5, 14)];
+            Stroke(q, 1);
+        }
+        CGContextEndTransparencyLayer(cg);
         break;
     }
     case MCFindIconUp:

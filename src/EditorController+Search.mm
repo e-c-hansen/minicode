@@ -27,16 +27,31 @@
     [_editorFind toggleFindInSelection];
 }
 
-// Cmd+Shift+F : project-wide text search.
+// Cmd+Shift+F : project-wide text search. As in VS Code, text selected on
+// one line of the editor becomes the query.
 - (void)openSearch:(id)sender {
     [self makeSearchPanel];
+    [self seedSearchFromSelection];
     [self.searchPanel show];
 }
 
 // Option+Shift+Cmd+F: the same window, the keyboard in its replace field.
 - (void)openReplaceInFolder:(id)sender {
     [self makeSearchPanel];
+    [self seedSearchFromSelection];
     [self.searchPanel showReplace];
+}
+
+- (void)seedSearchFromSelection {
+    if (self.window.firstResponder != self.textView || self.editorScroll.hidden) return;
+    NSRange sel = self.textView.selectedRange;
+    NSString *text = self.textView.string;
+    if (sel.length == 0 || sel.length > 1000 || NSMaxRange(sel) > text.length) return;
+    NSString *s = [text substringWithRange:sel];
+    if ([s rangeOfCharacterFromSet:[NSCharacterSet newlineCharacterSet]].location != NSNotFound)
+        return;
+    if (self.searchPanel.regex) s = [NSRegularExpression escapedPatternForString:s];
+    [self.searchPanel seedQuery:s];
 }
 
 - (void)makeSearchPanel {

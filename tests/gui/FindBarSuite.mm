@@ -4,6 +4,10 @@
 // the caret, Return and Cmd+G step on, the three options narrow the
 // matches, Replace changes one and moves to the next, Replace All is one
 // undo step, and Esc closes the bar and gives the editor the keyboard.
+// Then VS Code's layout, frame by frame against findWidget.css, in its four
+// widths; Cmd+F seeding from the selection or the word at the caret; Find
+// in Selection and Preserve Case; the red of "No results"; and pictures in
+// a dark and a light theme ($MC_GUI_SNAPSHOTS).
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorFind.h"
@@ -160,9 +164,14 @@ MC_GUI_SUITE(find_bar) {
         NSScrollView *sv = Text(c).enclosingScrollView;
         NSRect editor = [sv convertRect:sv.bounds toView:bar.superview];
         MCGuiNote(@"editor %.0f wide; bar %@", NSWidth(editor), NSStringFromRect(bar.frame));
-        GCHECK(bar.widthMode == 0 && NSWidth(bar.frame) == 419 && NSHeight(bar.frame) == 33);
+        GCHECK(NSHeight(bar.frame) == 33);
         GCHECK(fabs(NSMaxY(editor) - 4 - NSMaxY(bar.frame)) < 0.5);   // 4 below the top
         GCHECK(NSMaxX(bar.frame) <= NSMaxX(editor) - 14 && NSMaxX(bar.frame) >= NSMaxX(editor) - 20);
+        // The parts, in an editor wide enough for the whole bar (other
+        // suites may have left this one narrower).
+        [Find(c) layoutInEditorRect:NSMakeRect(0, 0, 900, 600) visible:YES];
+        [bar layoutSubtreeIfNeeded];
+        GCHECK(bar.widthMode == 0 && NSWidth(bar.frame) == 419);
         // Chevron on the far left, the full height; the input from 27.
         GCHECK(NSMinX(bar.toggleReplaceButton.frame) == 1 &&
                NSHeight(bar.toggleReplaceButton.frame) == 31);
@@ -192,6 +201,7 @@ MC_GUI_SUITE(find_bar) {
         // Find in Selection is offered: there is a selection (the match).
         GCHECK(bar.selectionButton.enabled && !bar.selectionButton.on);
         MCGuiSnapshot(bar, @"find-bar-dark");
+        Find(c).onLayoutNeeded();
     });
     MCGuiStep(@"the replace row: its input as wide, Preserve Case inside, two icons", ^{
         GCHECK(MCGuiPerformMenuKey(c.window, 3, NSEventModifierFlagCommand | NSEventModifierFlagOption,
@@ -332,7 +342,8 @@ MC_GUI_SUITE(find_bar) {
         }
         Find(c).onLayoutNeeded();
         [bar layoutSubtreeIfNeeded];
-        GCHECK(bar.widthMode == 0 && NSWidth(bar.frame) == 419);
+        NSScrollView *sv = Text(c).enclosingScrollView;
+        GCHECK(bar.widthMode == (NSWidth(sv.frame) >= 419 + 28 ? 0 : bar.widthMode));
     });
 
     // ---- the light theme's colors

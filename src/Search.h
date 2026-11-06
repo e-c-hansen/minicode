@@ -1,10 +1,21 @@
 // Search.h — Find in Folder, Replace in Folder and the TODO list, one window
 // per kind per editor window. Objective-C++.
 //
-// The search is FolderSearch's (src/FolderSearch.h), with VS Code's three
-// options: Match Case, Whole Word and Regular Expression (the toggles beside
-// the query, or Option+Cmd+C / W / R while the window has the keyboard, as
-// the Find Options menu items reach it as the window's delegate).
+// The window is laid out as VS Code's search view (Search.mm has the
+// measurements): the query with Match Case, Whole Word and Regular
+// Expression inside it (or Option+Cmd+C / W / R while the window has the
+// keyboard, as the Find Options menu items reach it as the window's
+// delegate); the replace row under it, shown by the chevron down the left
+// edge, with Preserve Case inside (Option+Cmd+P) and Replace All beside it;
+// "files to include" and "files to exclude" behind the "..." button, read as
+// VS Code reads them (FolderSearch::PathFilter); and the results as a tree,
+// a row per file with its match count over a row per line with the match
+// highlighted (struck through and followed by its replacement while the
+// replace row shows). A row's buttons replace it or dismiss it. Find in
+// Folder on a folder inside the window's puts "./that/folder" in files to
+// include, as VS Code does; a folder outside it is searched instead.
+//
+// The search is FolderSearch's (src/FolderSearch.h).
 //
 // Replace in Folder (the replace field under the query): Replace All counts
 // every match first (FolderSearch::planReplace) and asks "Replace 42
@@ -50,14 +61,22 @@ typedef NS_ENUM(NSInteger, MCOpenFileState) {
 // The text a tab of this window holds for a path (MCOpenFileHere files).
 @property(nonatomic, copy) NSString *(^tabText)(NSString *path);
 
+// The query, from the editor's selection (Find in Folder with text
+// selected); searched at once.
+- (void)seedQuery:(NSString *)query;
+
 // For tests.
 @property(nonatomic, readonly) NSTextField *field;
 @property(nonatomic, readonly) NSTextField *replaceField;
+@property(nonatomic, readonly) NSTextField *includeField;
+@property(nonatomic, readonly) NSTextField *excludeField;
 @property(nonatomic, readonly) NSTextField *status;
-@property(nonatomic, readonly) NSTableView *table;
-@property(nonatomic) BOOL matchCase, wholeWord, regex;
+@property(nonatomic, readonly) NSTableView *table;   // an NSOutlineView: files, then their lines
+@property(nonatomic, readonly) BOOL replaceShown, detailsShown;
+@property(nonatomic) BOOL matchCase, wholeWord, regex, preserveCase;
 - (void)runSearch:(id)sender;
 - (void)replaceAll:(id)sender;
+// `row` indexes the results' lines (the `hits` key), not the tree's rows.
 - (void)replaceMatchAtRow:(NSInteger)row;
 - (void)replaceFileAtRow:(NSInteger)row;
 @property(nonatomic, readonly) BOOL busy;   // a search or a replace is running
