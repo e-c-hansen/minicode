@@ -9957,6 +9957,7 @@ static void testMultiCaretOccurrences() {
 #include "page_check_tests.inc"
 #include "terminal_links_tests.inc"
 #include "ide_link_tests.inc"
+#include "latex_safety_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10050,6 +10051,7 @@ int main() {
     testIdeLink();
     testIdeLinkSettings();
     testMermaidDiagram();
+    testLatexSafety();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
