@@ -651,6 +651,8 @@ private:
     BOOL _highlightingSettingsFile;        // give color values swatches
     NSColor *_styleColors[8];              // by TokenStyle, from the settings
     NSColor *_plainColor;
+    NSArray<NSDictionary *> *_styleAttributes;   // attributesForStyle:, for _styleAttributesBase
+    NSDictionary *_styleAttributesBase;
     NSDictionary *_sourceAttributes;       // font, paragraph style, plain color
     NSUInteger _formatGeneration;          // a format result for an older one is dropped
     NSPopover *_formatNote;                // what Format Document has to say
@@ -5768,6 +5770,10 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 - (void)restyleRange:(NSRange)range tokens:(const std::vector<Token> &)tokens
            inStorage:(NSTextStorage *)storage {
     if (range.length == 0) return;
+    if (_sourceAttributes && !_highlightingSettingsFile && range.length <= 65536) {
+        [self restyleChangedIn:range tokens:tokens inStorage:storage];
+        return;
+    }
     if (_sourceAttributes) {
         [storage setAttributes:_sourceAttributes range:range];
     } else {
@@ -5791,6 +5797,60 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
                         range:NSMakeRange(start, end - start)];
     }
     if (_highlightingSettingsFile) [self decorateColorsIn:storage range:range];
+}
+
+// The attributes a token of `style` gets: the source attributes with its
+// color (index 8 is plain text), made once per font and color scheme.
+- (NSDictionary *)attributesForStyle:(int)style {
+    if (_styleAttributesBase != _sourceAttributes) {
+        NSMutableArray *all = [NSMutableArray arrayWithCapacity:9];
+        for (int i = 0; i < 8; i++) {
+            NSMutableDictionary *d = [_sourceAttributes mutableCopy];
+            d[NSForegroundColorAttributeName] = _styleColors[i];
+            [all addObject:[d copy]];
+        }
+        [all addObject:_sourceAttributes];
+        _styleAttributes = all;
+        _styleAttributesBase = _sourceAttributes;
+    }
+    return _styleAttributes[(NSUInteger)style];
+}
+
+// restyleRange: for the few lines an edit touches: the same attributes, but
+// only pieces whose attributes differ are set. Setting the whole range
+// first merged its attribute runs and adding the colors split them again,
+// and each merge or split moved the storage's run array along by a
+// memmove of everything after it (440,000 runs in a 100,000-line file), a
+// good part of what was left of a keystroke there.
+- (void)restyleChangedIn:(NSRange)range tokens:(const std::vector<Token> &)tokens
+               inStorage:(NSTextStorage *)storage {
+    const NSUInteger limit = NSMaxRange(range);
+    auto paint = ^(NSUInteger start, NSUInteger end, int style) {
+        if (end <= start) return;
+        NSDictionary *want = [self attributesForStyle:style];
+        NSRange run;
+        NSDictionary *have = [storage attributesAtIndex:start effectiveRange:&run];
+        if (run.location <= start && NSMaxRange(run) >= end &&
+            (have == want || [have isEqualToDictionary:want]))
+            return;
+        [storage setAttributes:want range:NSMakeRange(start, end - start)];
+    };
+    NSUInteger at = range.location;
+    for (size_t i = 0; i < tokens.size();) {
+        size_t start = tokens[i].start, end = start + tokens[i].length;
+        TokenStyle st = tokens[i].style;
+        size_t j = i + 1;
+        while (j < tokens.size() && tokens[j].style == st && tokens[j].start == end) {
+            end = tokens[j].start + tokens[j].length;
+            ++j;
+        }
+        i = j;
+        if (start < at || end > limit || end <= start) continue;
+        paint(at, start, 8);
+        paint(start, end, (int)st & 7);
+        at = end;
+    }
+    paint(at, limit, 8);
 }
 
 // The storage's characters changed (typing, paste, undo, a Cmd+/ toggle, a
