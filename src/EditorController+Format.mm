@@ -60,6 +60,10 @@
         // on show (which saved this one as it left, if a save waited).
         if (!s || generation != s->_formatGeneration || !weakTab || weakTab != s->_activeTab)
             return;
+        if (r.needsConsent) {
+            [s askToRunFolderFormatter:r quiet:quiet then:then];
+            return;
+        }
         if (r.error) {
             if (!(quiet && r.unavailable))
                 [s showFormatNote:r.error error:YES install:r.installPrograms];
@@ -74,6 +78,41 @@
         }
         if (then) then();
     });
+}
+
+// The formatter to run is the folder's own (its .venv or node_modules), and
+// the user has not said whether the folder's own programs may run: ask, as
+// the language servers' bar does for its Python environment, and keep the
+// answer for the folder (one answer for both, MCSetFolderToolsConsent).
+// Allow or Don't Allow formats again under the answer; Cancel stores
+// nothing and formats nothing (a save that waited goes ahead).
+- (void)askToRunFolderFormatter:(MCFormatResult *)r quiet:(BOOL)quiet
+                           then:(void (^)(void))then {
+    NSAlert *a = [NSAlert new];
+    a.messageText = [NSString stringWithFormat:@"Run %@ from this folder's %@?", r.tool,
+                                               r.consentFolder];
+    a.informativeText =
+        @"Programs in the folder run with your rights, so minicode asks before running one. "
+         "The answer is kept for this folder, and also covers its Python environment for "
+         "the language servers.";
+    [a addButtonWithTitle:@"Allow"];
+    [a addButtonWithTitle:@"Don't Allow"];
+    [a addButtonWithTitle:@"Cancel"];
+    MCTab *tab = _activeTab;
+    NSString *root = self.rootPath;
+    __weak EditorController *weakSelf = self;
+    [a beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse answer) {
+        EditorController *s = weakSelf;
+        if (!s) return;
+        if (answer == NSAlertFirstButtonReturn || answer == NSAlertSecondButtonReturn) {
+            MCSetFolderToolsConsent(root, answer == NSAlertFirstButtonReturn);
+            if (tab && tab == s->_activeTab && [s canFormatSource]) {
+                [s formatSourceQuietly:quiet then:then];
+                return;
+            }
+        }
+        if (then) then();
+    }];
 }
 
 // What Cmd+S does before it writes: organize the imports

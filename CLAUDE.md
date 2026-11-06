@@ -913,6 +913,16 @@ container (PanelHost, laid out by hand in layoutContainer)
   the buffer alone with stderr's first 6 lines in a popover. Paths are planned
   resolved; a result for changed text is dropped; a selection passes `--lines`
   (clang-format, yapf) or `--line-ranges` (pyink, black).
+- **A formatter in the folder's own .venv or node_modules needs the user's
+  yes** (round 4, D9): the same per-folder answer as the servers'
+  (`MCFolderToolsConsent`/`MCSetFolderToolsConsent` in Lsp.h, over
+  `MCPythonEnvironmentConsent`), decided by `Formatter::chooseProgram`.
+  Unanswered, the result says `needsConsent` and the editor asks (Allow,
+  Don't Allow, Cancel, a sheet; Cmd+S too) and formats again. Deny looks
+  outside the folder, never at another formatter. A `format.<lang>` command
+  never asks while the tool exists outside the folder (the owner's
+  `format.python = ruff ...`); `$VIRTUAL_ENV`'s bin is trusted; a project copy
+  outside the window's folder is never used.
 - `format.on-save`: Cmd+S (non-nil sender) formats then saves; minicode's own
   saves and Save All never format. A Cmd+S is never lost (`_formatSaveTab`:
   leaving the tab saves it unformatted).
@@ -1071,7 +1081,8 @@ view is disposed (on `unrealize`), or dispose loops forever.
   .venv out until the folder's answer (`MCPythonEnvironmentConsent` in
   `MCAppDefaults()`) is "allow"; the install bar asks first (Use It, Don't Use
   It, × for this launch). Run File, which the user starts, still uses it
-  (`pythonInterpreterWithSource:`).
+  (`pythonInterpreterWithSource:`). Format Document shares the answer (see
+  "Formatting").
 - **Completion** opens after `.`/`->`/`::` and on a word's second letter; an
   `isIncomplete` list is asked again. `Lsp::completionKeyAccepts`: Tab takes;
   Return only when asked for (Ctrl+Space, Option+Esc), after a trigger

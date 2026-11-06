@@ -22,6 +22,12 @@
 @property(nonatomic, assign) BOOL ranged;
 // The file's language has no formatter, or its format.<lang> is off.
 @property(nonatomic, assign) BOOL unavailable;
+// Nothing ran: the formatter to use (`tool`) is the folder's own, in
+// `consentFolder` (".venv", "web/node_modules"), and the user has not said
+// yet whether the folder's own programs may run (MCFolderToolsConsent).
+// Ask, store the answer, and format again.
+@property(nonatomic, assign) BOOL needsConsent;
+@property(nonatomic, copy) NSString *consentFolder;
 @end
 
 // Format `text`, the current contents of the file at `path` (saved or not),
@@ -29,7 +35,10 @@
 // asks for those lines only, when the formatter can do that; 0, 0 for the
 // whole file. The completion runs on the main queue. The process gets the
 // text on stdin, runs in the file's folder so it finds the project's
-// configuration, and is stopped after `timeout` seconds.
+// configuration, and is stopped after `timeout` seconds. A formatter in the
+// project's own .venv or node_modules runs only once the folder's own
+// programs are allowed (Formatter::chooseProgram); before that the result
+// says needsConsent.
 void MCFormatText(NSString *text, NSString *path, NSString *root, NSInteger firstLine,
                   NSInteger lastLine, NSTimeInterval timeout,
                   void (^completion)(MCFormatResult *result));

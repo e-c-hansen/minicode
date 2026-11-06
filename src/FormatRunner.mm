@@ -20,33 +20,62 @@ static std::string Std(NSString *s) {
     return c ? c : "";
 }
 
-// A program named by a plan: a path as given, else the project's virtualenv
-// for Python tools or its node_modules/.bin for Prettier and Biome, else the
-// usual search (PATH, Homebrew, ~/.local/bin, ...,
-// never /usr/bin's xcrun shims).
-static NSString *FindFormatter(const std::string &program, const std::string &lang,
-                               NSString *path, NSString *root) {
+// Where a plan's program may be found. `local`: the project's own copy, in
+// its virtualenv for a Python tool or its node_modules/.bin for Prettier and
+// Biome (at the version the project pins), nil for none; `outside`: one the
+// user installed, from $VIRTUAL_ENV (activated where minicode started, so
+// trusted as the servers trust it) or the usual search (PATH, Homebrew,
+// ~/.local/bin, ..., never /usr/bin's xcrun shims). A path as given (from
+// the settings) is only ever `outside`. A project copy outside the window's
+// folder (a file opened from elsewhere) is never used: no folder's answer
+// covers it.
+struct MCFormatterLookup {
+    NSString *local = nil;
+    NSString *outside = nil;
+};
+
+static MCFormatterLookup FindFormatter(const std::string &program, const std::string &lang,
+                                       NSString *path, NSString *root) {
+    MCFormatterLookup found;
     NSString *name = NS(program);
-    if ([name containsString:@"/"]) return MCFindProgram(name);
-    if (lang == "python") {
-        NSString *venv = NSProcessInfo.processInfo.environment[@"VIRTUAL_ENV"] ?: @"";
-        NSFileManager *fm = [NSFileManager defaultManager];
-        for (const std::string &dir :
-             Formatter::venvBinDirs(Std(path), Std(root ?: @""), Std(venv))) {
-            NSString *p = [NS(dir) stringByAppendingPathComponent:name];
-            if ([fm isExecutableFileAtPath:p]) return p;
+    if ([name containsString:@"/"]) {
+        found.outside = MCFindProgram(name);
+        return found;
+    }
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *venv = NSProcessInfo.processInfo.environment[@"VIRTUAL_ENV"] ?: @"";
+    NSString *activated = venv.length
+        ? [venv.stringByResolvingSymlinksInPath stringByAppendingPathComponent:@"bin"] : nil;
+    std::vector<std::string> dirs;
+    if (lang == "python")
+        dirs = Formatter::venvBinDirs(Std(path), Std(root ?: @""), Std(venv));
+    if (Formatter::fromNodeModules(program))
+        for (const std::string &d : Formatter::nodeBinDirs(Std(path), Std(root ?: @"")))
+            dirs.push_back(d);
+    for (const std::string &dir : dirs) {
+        NSString *p = [NS(dir) stringByAppendingPathComponent:name];
+        if (![fm isExecutableFileAtPath:p]) continue;
+        BOOL trusted = activated && ([NS(dir) isEqualToString:activated] ||
+                                     [NS(dir).stringByResolvingSymlinksInPath
+                                         isEqualToString:activated]);
+        if (trusted) {
+            if (!found.outside) found.outside = p;
+        } else if (!found.local && Formatter::insideFolder(dir, Std(root ?: @""))) {
+            found.local = p;
         }
     }
-    // Prettier and Biome are usually the project's own, at the version its
-    // package.json pins.
-    if (Formatter::fromNodeModules(program)) {
-        NSFileManager *fm = [NSFileManager defaultManager];
-        for (const std::string &dir : Formatter::nodeBinDirs(Std(path), Std(root ?: @""))) {
-            NSString *p = [NS(dir) stringByAppendingPathComponent:name];
-            if ([fm isExecutableFileAtPath:p]) return p;
-        }
-    }
-    return MCFindProgram(name);
+    if (!found.outside) found.outside = MCFindProgram(name);
+    return found;
+}
+
+// The project folder a local tool comes from, as the window's folder names
+// it: ".venv" for .venv/bin/black, "web/node_modules" for
+// web/node_modules/.bin/prettier.
+static NSString *ToolFolderName(NSString *program, NSString *root) {
+    NSString *dir = program.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent;
+    NSString *prefix = [root stringByAppendingString:@"/"];
+    if (root.length && [dir hasPrefix:prefix]) dir = [dir substringFromIndex:prefix.length];
+    return dir;
 }
 
 // Run argv with `input` on stdin. Blocks; call it off the main thread.
@@ -151,6 +180,9 @@ void MCFormatText(NSString *text, NSString *path, NSString *root, NSInteger firs
     }
     const std::string setting = [AppSettings shared].settings.formatCommand(lang);
     NSString *display = NS(Formatter::displayName(lang));
+    // The folder's answer for its own programs, read here, before the work
+    // goes off the main thread.
+    NSString *consent = root.length ? MCFolderToolsConsent(root) : nil;
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSFileManager *fm = [NSFileManager defaultManager];
@@ -177,12 +209,39 @@ void MCFormatText(NSString *text, NSString *path, NSString *root, NSInteger firs
         }
 
         const Formatter::Candidate *chosen = nullptr;
-        NSString *program = nil;
+        NSString *program = nil, *kept = nil;   // kept: a folder copy not allowed
+        const std::string answer = Std(consent ?: @"");
         for (const Formatter::Candidate &c : plan.candidates) {
-            program = FindFormatter(c.program, lang, realPath, realRoot);
+            MCFormatterLookup found = FindFormatter(c.program, lang, realPath, realRoot);
+            Formatter::Source source = Formatter::chooseProgram(
+                plan.fromSettings, Std(found.local ?: @""), Std(found.outside ?: @""), answer);
+            if (source == Formatter::Source::Ask) {
+                // Nothing runs until the user answers for the folder; the
+                // editor asks and formats again (formatSourceQuietly:).
+                result.needsConsent = YES;
+                result.tool = NS(Formatter::programName(c.program));
+                result.consentFolder = ToolFolderName(found.local, realRoot);
+                finish();
+                return;
+            }
+            if (source == Formatter::Source::Local) program = found.local;
+            if (source == Formatter::Source::Outside) program = found.outside;
             if (program) { chosen = &c; break; }
+            if (found.local && !kept) kept = found.local;
         }
         NSString *configName = NS(plan.configFile).lastPathComponent;
+        if (!chosen && kept) {
+            // The folder has the tool, and the user said no to the folder's
+            // own programs.
+            NSString *tool = kept.lastPathComponent;
+            if (!plan.installHint.empty() || !plan.fromSettings) result.installPrograms = @[tool];
+            result.error = [NSString stringWithFormat:
+                @"%@ is installed only in this folder's %@, and this folder's own programs "
+                 "are not allowed to run. Install %@ yourself to use it here.",
+                tool, ToolFolderName(kept, realRoot), tool];
+            finish();
+            return;
+        }
         if (!chosen) {
             // How to install one is shown under the message (InstallPanel),
             // from the same table as plan.installHint.
