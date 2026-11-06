@@ -3717,7 +3717,7 @@ void testSettings() {
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
     // format, python, keep-sorted, auto-save, ruler, terminal and develop keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 75);
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 76);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -3771,6 +3771,7 @@ void testSettings() {
         CHECK(un.runTemplate(ext) == d.runTemplate(ext));
     CHECK(un.pythonInterpreter().empty() && d.pythonInterpreter().empty());
     CHECK(un.keepSortedOnSave() == d.keepSortedOnSave());
+    CHECK(un.organizeImportsOnSave() == d.organizeImportsOnSave() && !d.organizeImportsOnSave());
     CHECK(un.autoSave() == d.autoSave() && d.autoSave() == Settings::AutoSave::Off);
     CHECK(un.autoSaveDelay() == d.autoSaveDelay() && d.autoSaveDelay() == 1000);
     CHECK(un.rulers() == d.rulers() && un.rulerColor() == d.rulerColor());
@@ -4242,6 +4243,13 @@ void testSettings() {
     GROUP("settings:keep-sorted");
     std::vector<SettingsError> eks;
     CHECK(!parseSettings("").keepSortedOnSave());
+    CHECK(!parseSettings("").organizeImportsOnSave());
+    CHECK(parseSettings("editor.organize-imports-on-save = true\n").organizeImportsOnSave());
+    {
+        std::vector<SettingsError> eo;
+        Settings o = parseSettings("editor.organize-imports-on-save = explicit\n", &eo);
+        CHECK(!o.organizeImportsOnSave() && eo.size() == 1 && eo[0].line == 1);
+    }
     CHECK(parseSettings("editor.keep-sorted-on-save = true\n").keepSortedOnSave());
     CHECK(parseSettings("Editor.Keep-Sorted-On-Save = yes  # sort\n").keepSortedOnSave());
     CHECK(!parseSettings("editor.keep-sorted-on-save = off\n").keepSortedOnSave());

@@ -3495,6 +3495,48 @@ static NSFont *PickerMono(void) {
     }];
 }
 
+- (BOOL)organizeImportsBeforeSave:(void (^)(void))done {
+    if (!_uri || ![self serversFor:Lsp::Feature::CodeActions].count) return NO;
+    [self closeTransients];
+    [self flushChanges];
+    // Called once, whichever comes first: the edit, nothing to do, or the
+    // deadline (askCodeActions gives a silent server 3 s; a resolve or a
+    // command may take longer still).
+    __block BOOL called = NO;
+    void (^once)(void) = ^{
+        if (called) return;
+        called = YES;
+        done();
+    };
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC),
+                   dispatch_get_main_queue(), once);
+    std::u16string text = U16Of(_tv.string);
+    Lsp::Range range{{0, 0}, Lsp::positionForOffset(text, text.size())};
+    __weak LspSession *weakSelf = self;
+    [self askCodeActionsInRange:range only:{"source.organizeImports"}
+                           done:^(std::vector<Lsp::CodeAction> actions,
+                                  NSArray<MCLspServer *> *servers, NSString *error) {
+        LspSession *me = weakSelf;
+        int i = Lsp::pickOrganizeImports(actions);
+        if (!me || called || i < 0) {
+            if (me && error && !called) [me note:error];
+            once();
+            return;
+        }
+        Lsp::CodeAction action = actions[(size_t)i];
+        MCLspServer *server = action.origin >= 0 && (NSUInteger)action.origin < servers.count
+                                  ? servers[(NSUInteger)action.origin] : nil;
+        NSString *before = [me->_tv.string copy];
+        [me runCodeAction:action server:server then:^{
+            LspSession *s = weakSelf;
+            if (s && !called && ![s->_tv.string isEqualToString:before])
+                [s note:[NSString stringWithFormat:@"Organized imports (%@)", server.name]];
+            once();
+        }];
+    }];
+    return YES;
+}
+
 static NSString *ActionKindName(const std::string &kind) {
     if (kind.empty()) return @"";
     if (kind.compare(0, 8, "quickfix") == 0) return @"fix";

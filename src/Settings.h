@@ -201,6 +201,11 @@ public:
     // editor.keep-sorted-on-save: sort every keep-sorted block in a file
     // when it is saved (off by default).
     bool keepSortedOnSave() const { return keepSortedOnSave_; }
+    // editor.organize-imports-on-save: Cmd+S first runs the file's language
+    // servers' source.organizeImports action (Ruff's own where it runs), as
+    // VS Code's editor.codeActionsOnSave does, before format.on-save; off by
+    // default. Never on an auto-save.
+    bool organizeImportsOnSave() const { return organizeImportsOnSave_; }
     // editor.auto-save: off (the default), after-delay (each file with
     // unsaved changes is written once typing has paused for
     // editor.auto-save-delay milliseconds, 1000 by default, as VS Code's
@@ -336,6 +341,7 @@ private:
     bool webImages_ = true;
     bool math_ = true;
     bool keepSortedOnSave_ = false;
+    bool organizeImportsOnSave_ = false;
     AutoSave autoSave_ = AutoSave::Off;
     int autoSaveDelay_ = 1000;
     std::vector<int> rulers_ = {100};

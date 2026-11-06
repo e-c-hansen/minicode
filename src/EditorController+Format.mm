@@ -75,6 +75,33 @@
     });
 }
 
+// What Cmd+S does before it writes: organize the imports
+// (editor.organize-imports-on-save, through the language servers), then
+// format (format.on-save), each only when it is on and has something to run
+// it with. YES when one has started; the save then happens when the last is
+// done (finishFormatSave). _formatSaveTab marks the tab whose save waits, as
+// for the formatter alone: auto-save leaves it be, and leaving the tab saves
+// it at once (saveBeforeLeavingFormatSave).
+- (BOOL)organizeOrFormatBeforeSaving:(BOOL)organize {
+    const Settings &st = [AppSettings shared].settings;
+    if (organize && st.organizeImportsOnSave() && [self canFormatSource]) {
+        MCTab *tab = _activeTab;
+        __weak EditorController *weakSelf = self;
+        BOOL started = [self.lsp organizeImportsBeforeSave:^{
+            EditorController *s = weakSelf;
+            // Dropped meanwhile: the tab left the screen and was saved then.
+            if (!s || !tab || s->_formatSaveTab != tab || tab != s->_activeTab) return;
+            s->_formatSaveTab = nil;
+            if (![s organizeOrFormatBeforeSaving:NO]) [s saveCurrentFile:nil];
+        }];
+        if (started) {
+            _formatSaveTab = tab;
+            return YES;
+        }
+    }
+    return st.formatOnSave() && [self formatBeforeSaving];
+}
+
 // format.on-save: NO when this file has no formatter, so the save goes on.
 - (BOOL)formatBeforeSaving {
     if (![self canFormatSource] || Formatter::languageFor(Utf8String(self.currentPath)).empty())

@@ -303,6 +303,13 @@ extern NSNotificationName const MCPythonEnvironmentConsentDidChangeNotification;
 // Shift+Option+O: the servers' source.organizeImports action for the file,
 // applied at once as one undo step (Ruff's own when it runs).
 - (void)organizeImports;
+// editor.organize-imports-on-save: the same action, quietly, for Cmd+S.
+// NO (and `done` never called) when none of the file's servers offers code
+// actions, so the save goes on at once. Otherwise `done` is called once on
+// the main thread: after the edit has gone in, when there was nothing to
+// organize or the action failed (said in the status bar), or after 5
+// seconds without an answer, so a save is never lost to a silent server.
+- (BOOL)organizeImportsBeforeSave:(void (^)(void))done;
 // ---- the Problems list (Shift+Cmd+M) and F8 / Shift+F8
 // Every diagnostic the window's servers have published: for the files open
 // in its tabs, and for any other file a server reports on (as the server

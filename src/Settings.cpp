@@ -761,6 +761,8 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
         MC_KEY("markdown.math", Word, false, return boolValue(v, s.math_, e);),
         MC_KEY("editor.keep-sorted-on-save", Word, false,
                return boolValue(v, s.keepSortedOnSave_, e);),
+        MC_KEY("editor.organize-imports-on-save", Word, false,
+               return boolValue(v, s.organizeImportsOnSave_, e);),
         MC_KEY("editor.auto-save", Word, false,
                const std::string w = lower(v);
                if (w == "off" || w == "false" || w == "none") s.autoSave_ = AutoSave::Off;
@@ -1182,6 +1184,10 @@ const char* Settings::defaultFileText() {
 # Sort the lines between "keep-sorted start" and "keep-sorted end" comments
 # every time a file is saved, as Google's keep-sorted tool would.
 # editor.keep-sorted-on-save = false
+# Organize the imports each time Cmd+S saves a file (macOS), with the file's
+# language servers' Organize Imports (Shift+Option+O): Ruff's own for Python
+# where it runs. It happens before format.on-save, and never on an auto-save.
+# editor.organize-imports-on-save = false
 # Save files by themselves (macOS): after-delay writes a file once typing has
 # paused for editor.auto-save-delay milliseconds, focus-change when the
 # editor loses the keyboard (another pane, tab, window or app). A file
