@@ -124,6 +124,12 @@ struct CliCommand {
     int pid = 0;                // --pid: this process only
     std::string tourFile;       // tour: read by the caller, then tourStops()
     std::string launchFolder;   // where a launched minicode opens (R1.4)
+    // notify --from-hook: the arguments come from stdin and the environment
+    // (ClaudeHooks::notifyArgsFromHook), and nothing is ever reported.
+    bool fromHook = false;
+    // hooks --print or --install: "print" or "install", run by the command
+    // line itself (no minicode is asked).
+    std::string hooksAction;
     std::string error;          // a usage error (exit code 2)
 };
 

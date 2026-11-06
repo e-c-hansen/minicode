@@ -303,7 +303,13 @@ void Json::dumpTo(std::string& out) const {
             std::snprintf(buf, sizeof buf, "%lld", (long long)num_);
             out += buf;
         } else {
-            std::snprintf(buf, sizeof buf, "%.17g", num_);
+            // The shortest form that reads back as the same number, so 0.1
+            // stays 0.1 when a file (a Claude Code settings file) is
+            // rewritten, not 0.10000000000000001.
+            for (int digits = 15; digits <= 17; digits++) {
+                std::snprintf(buf, sizeof buf, "%.*g", digits, num_);
+                if (std::strtod(buf, nullptr) == num_) break;
+            }
             out += buf;
         }
         break;
