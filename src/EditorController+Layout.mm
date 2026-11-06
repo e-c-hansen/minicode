@@ -1,6 +1,7 @@
 // EditorController+Layout.mm — EditorController: window setup, layout and look, the splits and what fills the sidebar, the title.
 #import "EditorController+Private.h"
 #import "EditorController+LayoutIvars.h"
+#import "PageZoom.h"
 #import "ProcessesPanel.h"
 
 @implementation EditorController (Layout)
@@ -558,6 +559,7 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     if (self.pdfView) {
         self.pdfView.frame = editorRect;
         self.pdfView.hidden = !showPDF;
+        MCPDFUseOverlayScrollers(self.pdfView);
     }
     if (self.imageView) {
         self.imageView.frame = editorRect;

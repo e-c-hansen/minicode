@@ -36,3 +36,9 @@ void MCPageForgetPointer(void);
 void MCPDFZoom(PDFView *view, int dir);
 void MCPDFFitWidth(PDFView *view);
 void MCPDFFitPage(PDFView *view);
+// Overlay scroll bars in a PDF view. PDFKit's automatic scale fits a page
+// to the whole view and leaves out a scroll bar that takes room (a Mac
+// with no trackpad, or "Show scroll bars: Always"), so the page's right
+// edge went under it. Called again on every layout, since AppKit puts
+// back the system's style when that setting changes.
+void MCPDFUseOverlayScrollers(PDFView *view);

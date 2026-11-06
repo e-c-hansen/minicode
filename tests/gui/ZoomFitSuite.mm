@@ -137,6 +137,23 @@ BOOL FitsAcross(NSScrollView *sv) {
     return fits;
 }
 
+// A PDF's page fits across its pane: its edges are within what the clip
+// shows. PDFKit's automatic scale fits the page to the whole PDFView, so a
+// scroll bar that takes room (no trackpad, as on CI's runners; try it here
+// with MC_GUI_SCROLLBARS=always) used to hide its right edge.
+BOOL PageFitsAcross(PDFView *v, NSScrollView *sv) {
+    [sv tile];
+    PDFPage *page = v.currentPage ?: [v.document pageAtIndex:0];
+    if (!page) return NO;
+    const NSRect inView = [v convertRect:[page boundsForBox:v.displayBox] fromPage:page];
+    const NSRect inClip = [sv.contentView convertRect:inView fromView:v];
+    const NSRect clip = sv.contentView.bounds;
+    const BOOL fits = NSMinX(inClip) >= NSMinX(clip) - 0.5 && NSMaxX(inClip) <= NSMaxX(clip) + 0.5;
+    if (!fits)
+        MCGuiNote(@"the page %@ in a clip %@", NSStringFromRect(inClip), NSStringFromRect(clip));
+    return fits;
+}
+
 NSMenuItem *ItemFor(SEL action) {
     return [[NSMenuItem alloc] initWithTitle:@"" action:action keyEquivalent:@""];
 }
@@ -556,7 +573,7 @@ MC_GUI_SUITE(zoomfit) {
         GCHECK(c.isPDF && !c.pdfView.hidden && c.pdfView.autoScales);
         [c.pdfView layoutDocumentView];
         NSScrollView *sv = c.pdfView.documentView.enclosingScrollView;
-        GCHECK(sv && FitsAcross(sv));
+        GCHECK(sv && PageFitsAcross(c.pdfView, sv) && FitsAcross(sv));
     });
 
     // ---------------------------------------------------------- PDF zoom

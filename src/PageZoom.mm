@@ -105,7 +105,8 @@ static NSSize Room(PDFView *v) {
     room.width -= m.left + m.right;
     room.height -= m.top + m.bottom;
     // A vertical scroller that takes room (not an overlay one).
-    if ([NSScroller preferredScrollerStyle] == NSScrollerStyleLegacy)
+    NSScrollView *sv = v.documentView.enclosingScrollView;
+    if ((sv ? sv.scrollerStyle : [NSScroller preferredScrollerStyle]) == NSScrollerStyleLegacy)
         room.width -= [NSScroller scrollerWidthForControlSize:NSControlSizeRegular
                                                 scrollerStyle:NSScrollerStyleLegacy];
     return NSMakeSize(MAX(1, room.width), MAX(1, room.height));
@@ -139,4 +140,12 @@ void MCPDFFitPage(PDFView *v) {
     v.scaleFactor = MAX(v.minScaleFactor, MIN(v.maxScaleFactor,
                                               MIN(room.width / size.width, room.height / size.height)));
     [v goToPage:page];
+}
+
+void MCPDFUseOverlayScrollers(PDFView *v) {
+    NSScrollView *sv = v.documentView.enclosingScrollView;
+    if (sv && sv.scrollerStyle != NSScrollerStyleOverlay) {
+        sv.scrollerStyle = NSScrollerStyleOverlay;
+        if (v.autoScales) [v layoutDocumentView];
+    }
 }

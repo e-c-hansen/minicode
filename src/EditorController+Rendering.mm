@@ -1,5 +1,7 @@
 // EditorController+Rendering.mm — EditorController: what the editor's slot shows: a file's mode, pictures, PDFs, media, viewers, diffs, LaTeX.
 #import "EditorController+Private.h"
+#import "EditorFont.h"
+#import "PageZoom.h"
 
 @implementation EditorController (Rendering)
 
@@ -93,7 +95,7 @@ static void *kMediaItemContext = &kMediaItemContext;
         [self compareViewMade].comparison = _activeTab.comparison;
         return;
     }
-    NSFont *mono = [NSFont monospacedSystemFontOfSize:12.5 weight:NSFontWeightRegular];
+    NSFont *mono = MCMonoFont(12.5, NSFontWeightRegular);
     [self.diffView.textStorage setAttributedString:
         self.diffIsCommit ? MCGitCommitText(self.diffData, mono)
                           : MCGitDiffText(self.diffData, mono)];
@@ -211,6 +213,7 @@ static void *kMediaItemContext = &kMediaItemContext;
         point = was.point;
     }
     self.pdfView.document = doc;
+    MCPDFUseOverlayScrollers(self.pdfView);
     if (reload && pageIndex < doc.pageCount) {
         if (!autoScales) self.pdfView.scaleFactor = scale;
         [self.pdfView goToDestination:[[PDFDestination alloc]
