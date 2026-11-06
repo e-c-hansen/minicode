@@ -286,8 +286,11 @@ void MCLspSetMaxQueuedBytes(size_t bytes) { gMaxQueuedBytes = bytes ? bytes : 64
 - (void)writeBytes:(const std::string &)bytes {
     if (_inputClosed || _unresponsive) return;
     [self logLine:@"--> " bytes:bytes];
-    if (_queued->load() + bytes.size() > gMaxQueuedBytes) {
-        [self stopUnresponsive];
+    // Only while earlier messages still wait: one big message (a huge
+    // file's didChange) to a server that reads is no sign of a hang.
+    const size_t waiting = _queued->load();
+    if (waiting > 0 && waiting + bytes.size() > gMaxQueuedBytes) {
+        [self stopUnresponsive:waiting];
         return;
     }
     NSData *data = [NSData dataWithBytes:bytes.data() length:bytes.size()];
@@ -315,12 +318,12 @@ void MCLspSetMaxQueuedBytes(size_t bytes) { gMaxQueuedBytes = bytes ? bytes : 64
 // The server has not read what it was sent for a long while: nothing more
 // is queued, and it is killed, so it goes through the usual exit (and the
 // automatic restart) with the reason in its exit description.
-- (void)stopUnresponsive {
+- (void)stopUnresponsive:(size_t)waiting {
     if (_unresponsive) return;
     _unresponsive = YES;
     _stopReason = [NSString stringWithFormat:
         @"stopped reading what minicode sent (%@ waiting), so it was stopped",
-        [NSByteCountFormatter stringFromByteCount:(long long)_queued->load()
+        [NSByteCountFormatter stringFromByteCount:(long long)waiting
                                        countStyle:NSByteCountFormatterCountStyleFile]];
     NSLog(@"MiniCode: %@ %@", _name, _stopReason);
     if (_running && _pid > 0) kill(_pid, SIGKILL);
