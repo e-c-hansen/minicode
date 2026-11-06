@@ -5690,6 +5690,9 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     if (item.action == @selector(selectNextTab:) || item.action == @selector(selectPreviousTab:))
         return _tabs.count > 0;
     if (item.action == @selector(goToBracket:)) return [self bracketMatchingApplies];
+    // Off without a tour, so Option+] and Option+[ type their characters.
+    if (item.action == @selector(nextTourStop:) || item.action == @selector(previousTourStop:))
+        return self.tourActive;
     if (item.action == @selector(exportPDF:)) return self.canExportPDF;
     if (item.action == @selector(togglePlayback:)) return self.canTogglePlayback;
     if (item.action == @selector(toggleProblems:)) {

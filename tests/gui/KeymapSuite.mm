@@ -115,6 +115,16 @@ MC_GUI_SUITE(keymap) {
         GCHECK([[c valueForKey:@"terminalVisible"] boolValue] == !shown);
         MCGuiSendKeyToApp(c.window, 50, NSEventModifierFlagControl, @"`", @"`");
         GCHECK([[c valueForKey:@"terminalVisible"] boolValue] == shown);
+        // Without a tour Option+] is left to the editor, which types ‘.
+        [c.window makeFirstResponder:Text(c)];
+        NSEvent *optBracket = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                                          modifierFlags:NSEventModifierFlagOption timestamp:0
+                                           windowNumber:c.window.windowNumber context:nil
+                                             characters:@"‘" charactersIgnoringModifiers:@"]"
+                                              isARepeat:NO keyCode:30];
+        GCHECK(!c.tourActive);
+        GCHECK(MCKeymapEventIsBound(optBracket));
+        GCHECK(!MCKeymapHandleKeyDown(optBracket));
     });
 
     MCGuiStep(@"Keyboard Shortcuts writes keys.conf and opens it", ^{
