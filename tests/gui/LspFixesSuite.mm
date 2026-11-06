@@ -218,7 +218,8 @@ MC_GUI_SUITE(lsp_fixes) {
         GCHECK_EQ_STR(Text(c).string, @"def assist():\n    return 1\n\nassist()\n");
         GCHECK([Current(c) isEqualToString:a]);
         BOOL notesOpen = NO;
-        for (NSString *p in Lsp(c).openPaths()) if ([p hasSuffix:@"/notes.md"]) notesOpen = YES;
+        // This suite's notes.md (another suite may leave a notes.md of its own open).
+        for (NSString *p in Lsp(c).openPaths()) if ([Real(p) isEqualToString:Real(notes)]) notesOpen = YES;
         GCHECK(!notesOpen);
     });
 
