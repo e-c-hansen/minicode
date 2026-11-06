@@ -58,6 +58,21 @@ extern NSNotificationName const MCTerminalDidCloseNotification;
 // match under them is taken over other worktrees' copies.
 @property(nonatomic, copy) NSArray<NSString *> *(^sessionLinkRoots)(TerminalView *terminal);
 - (instancetype)initWithDirectory:(NSString *)dir;
+// With variables added to the shell's environment, kept for a shell started
+// again after an exit. MINICODE_VENV (an environment's folder) and
+// MINICODE_VENV_PROMPT (its name) make the shell integration activate that
+// Python environment at the first prompt (terminal.activate-venv), as its
+// bin/activate would, running nothing of the environment's.
+- (instancetype)initWithDirectory:(NSString *)dir
+                      environment:(NSDictionary<NSString *, NSString *> *)environment;
+// A program other than the shell holds the terminal (a REPL it started).
+@property(nonatomic, readonly) BOOL programHasTerminal;
+// That program asked for bracketed paste (Python 3.13's REPL does).
+@property(nonatomic, readonly) BOOL programTakesBracketedPaste;
+// Text for that program, as typed: line breaks become Return, other control
+// characters but tabs are left out; bracketed, it goes as one paste. NO,
+// sending nothing, while the shell itself has the terminal.
+- (BOOL)sendToProgram:(NSString *)text bracketed:(BOOL)bracketed;
 // The id `minicode state` reports for this terminal, fixed for its life and
 // never reused in this process. Its shell, and everything run from it, has
 // it as MINICODE_TERMINAL_ID, with MINICODE_PID (this process), so a Claude

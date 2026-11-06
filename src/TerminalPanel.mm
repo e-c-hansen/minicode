@@ -90,7 +90,13 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
 }
 
 - (instancetype)initWithDirectory:(NSString *)dir firstIn:(NSString *)first {
+    return [self initWithDirectory:dir firstIn:first environment:nil];
+}
+
+- (instancetype)initWithDirectory:(NSString *)dir firstIn:(NSString *)first
+                      environment:(NSDictionary<NSString *, NSString *> *(^)(NSString *))environment {
     if ((self = [super initWithFrame:NSMakeRect(0, 0, 400, 220)])) {
+        _environment = [environment copy];
         _dir = dir.length ? dir : NSHomeDirectory();
         _tabs = [NSMutableArray array];
         _tabActive = [NSMutableArray array];
@@ -165,7 +171,9 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
 // ------------------------------------------------------------ the terminals
 - (TerminalView *)makeTerminal { return [self makeTerminalIn:nil]; }
 - (TerminalView *)makeTerminalIn:(NSString *)dir {
-    TerminalView *t = [[TerminalView alloc] initWithDirectory:dir.length ? dir : _dir];
+    NSString *start = dir.length ? dir : _dir;
+    TerminalView *t = [[TerminalView alloc] initWithDirectory:start
+                                                  environment:_environment ? _environment(start) : nil];
     t.projectRoot = self.projectRoot;
     t.extraLinkRoots = self.extraLinkRoots;
     t.sessionLinkRoots = self.sessionLinkRoots;

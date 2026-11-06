@@ -3718,8 +3718,9 @@ void testSettings() {
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
     // format, python, keep-sorted, auto-save, ruler, terminal, develop, git,
-    // control and agent keys (with markdown.mermaid and agent.ide-link).
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 85);
+    // control and agent keys (with markdown.mermaid and agent.ide-link), and
+    // terminal.activate-venv and search.use-ignore-files.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 87);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4178,6 +4179,52 @@ void testSettings() {
               (base / "other" / "venv" / "bin" / "python").string());
         // No root at all: the file's folder only.
         CHECK(RunFile::findVirtualenvPython(deep, "").empty());
+        fs::remove_all(base);
+    }
+
+    GROUP("runfile:repl");
+    {
+        using V = std::vector<std::string>;
+        bool extra = true;
+        CHECK(RunFile::pythonReplLines("x = 1", false, &extra) == V{"x = 1"} && !extra);
+        // A block picked out of a function loses its common indentation.
+        CHECK(RunFile::pythonReplLines("    a = 1\n    b = 2\n", false, &extra) ==
+              (V{"a = 1", "b = 2"}));
+        // Blank lines would end the block at the prompt: dropped, unless
+        // the REPL takes bracketed paste; the indented last line needs one
+        // more Return.
+        CHECK(RunFile::pythonReplLines("def f():\n    a = 1\n\n    return a\n\n", false, &extra) ==
+              (V{"def f():", "    a = 1", "    return a"}));
+        CHECK(extra);
+        CHECK(RunFile::pythonReplLines("def f():\n    a = 1\n\n    return a\n", true, &extra) ==
+              (V{"def f():", "    a = 1", "", "    return a"}));
+        CHECK(RunFile::pythonReplLines("\n\n", false, &extra).empty() && !extra);
+        CHECK(RunFile::pythonReplLines("a\r\nb", false, nullptr) == (V{"a", "b"}));
+    }
+
+    GROUP("runfile:activation");
+    {
+        namespace fs = std::filesystem;
+        fs::path base = fs::temp_directory_path() /
+            ("minicode-activate-test-" + std::to_string(::getpid()));
+        fs::remove_all(base);
+        fs::create_directories(base / "proj" / ".venv" / "bin");
+        std::ofstream(base / "proj" / ".venv" / "bin" / "python") << "";
+        RunFile::Activation a;
+        const std::string py = (base / "proj" / ".venv" / "bin" / "python").string();
+        CHECK(!RunFile::activationFor(py, &a));   // no pyvenv.cfg: not a venv
+        std::ofstream(base / "proj" / ".venv" / "pyvenv.cfg") << "home = /usr/bin\n";
+        CHECK(RunFile::activationFor(py, &a) && a.prefix == (base / "proj" / ".venv").string() &&
+              a.prompt == ".venv");
+        // uv names it after the project; a name with shell or prompt
+        // syntax in it is cut to plain characters.
+        std::ofstream(base / "proj" / ".venv" / "pyvenv.cfg")
+            << "home = /usr/bin\nprompt = my-proj\n";
+        CHECK(RunFile::activationFor(py, &a) && a.prompt == "my-proj");
+        std::ofstream(base / "proj" / ".venv" / "pyvenv.cfg") << "prompt = '$(rm -rf ~)%n`x`'\n";
+        CHECK(RunFile::activationFor(py, &a) && a.prompt == "rm -rf nx");
+        CHECK(!RunFile::activationFor("/usr/bin/python3", &a));
+        CHECK(!RunFile::activationFor("python3", &a));
         fs::remove_all(base);
     }
 
@@ -7086,8 +7133,6 @@ void testFolderSearch() {
     writeFile(root / "nul.txt", std::string("hello\0there", 11));
     writeFile(root / "build.txt", "hello from a file named like a skipped folder\n");
     writeFile(root / "bom.txt", "\xEF\xBB\xBFhello bom\n");
-    writeFile(root / ".dotfile", "hello hidden\n");
-    writeFile(root / ".hidden" / "x.txt", "hello hidden dir\n");
     writeFile(root / ".git" / "config", "hello git\n");
     for (const char *d : {"node_modules", "build", "dist", "__pycache__", "venv",
                           "DerivedData"})
@@ -7127,8 +7172,6 @@ void testFolderSearch() {
     CHECK(hasHit(r, "bom.txt:1:2"));                     // the BOM is a character in line 1
     CHECK(hasHit(r, "exactly1mb.txt:1:1"));
     CHECK(hasHit(r, "long.txt:1:51"));
-    CHECK(!anyHitIn(r, ".dotfile"));
-    CHECK(!anyHitIn(r, ".hidden"));
     CHECK(!anyHitIn(r, ".git"));
     CHECK(!anyHitIn(r, "node_modules"));
     CHECK(!anyHitIn(r, "build/"));
@@ -8023,6 +8066,24 @@ std::string taskEdit(const std::string &marked, bool isNewline) {
     return out.insert(e.selStart, "{");
 }
 std::string taskToggled(const std::string &m) { return taskEdit(m, false); }
+// Toggle Bold or Italic on `marked`, written as taskEdit writes it.
+std::string wrapped(const std::string &marked, const char16_t *marker) {
+    std::u16string text;
+    size_t a = std::string::npos, b = std::string::npos;
+    for (char c : marked) {
+        if (c == '|') { a = b = text.size(); continue; }
+        if (c == '{') { a = text.size(); continue; }
+        if (c == '}') { b = text.size(); continue; }
+        text += (char16_t)(unsigned char)c;
+    }
+    MarkdownTasks::Edit e = MarkdownTasks::toggleWrap(text, a, b, marker);
+    if (!e.changed) return "unchanged";
+    text.replace(e.replaceStart, e.replaceLength, e.replacement);
+    std::string out = narrow(text);
+    if (e.selStart == e.selEnd) return out.insert(e.selStart, "|");
+    out.insert(e.selEnd, "}");
+    return out.insert(e.selStart, "{");
+}
 std::string taskReturn(const std::string &m) { return taskEdit(m, true); }
 
 void testMarkdownTasks() {
@@ -8080,6 +8141,25 @@ void testMarkdownTasks() {
         CHECK(e.changed && e.replaceStart == 3 && e.replacement == u"x");
         CHECK(e.selStart == t.size());
     }
+
+    GROUP("tasks:bold-italic");
+    CHECK(wrapped("a {word} b", u"**") == "a **{word}** b");
+    CHECK(wrapped("a **{word}** b", u"**") == "a {word} b");      // just outside
+    CHECK(wrapped("a {**word**} b", u"**") == "a {word} b");      // inside the selection
+    CHECK(wrapped("a wo|rd b", u"**") == "a **wo|rd** b");        // the word at the caret
+    CHECK(wrapped("a **wo|rd** b", u"**") == "a wo|rd b");
+    CHECK(wrapped("a | b", u"**") == "a **|** b");                // an empty pair
+    CHECK(wrapped("a **|** b", u"**") == "a | b");
+    CHECK(wrapped("x {word} y", u"*") == "x *{word}* y");
+    CHECK(wrapped("x *{word}* y", u"*") == "x {word} y");
+    CHECK(wrapped("x wo|rd y", u"*") == "x *wo|rd* y");
+    // Italic never takes a star from bold; three stars are both.
+    CHECK(wrapped("**{word}**", u"*") == "***{word}***");
+    CHECK(wrapped("***{word}***", u"*") == "**{word}**");
+    CHECK(wrapped("***{word}***", u"**") == "*{word}*");
+    CHECK(wrapped("*{word}*", u"**") == "***{word}***");
+    CHECK(wrapped("{two\nlines}", u"**") == "**{two\nlines}**");
+    CHECK(wrapped("caf\xC3|", u"*") != "unchanged");             // past ASCII counts as a word
 
     GROUP("tasks:return");
     CHECK(taskReturn("- [ ] a|") == "- [ ] a\n- [ ] |");
@@ -8182,20 +8262,24 @@ void testMarkdownTasks() {
     writeFile(root / "notes.md",
               "# TODO heading\n- [ ] task\n```\n- [ ] no\n```\n- [x] done\n<!-- FIXME: hidden -->\n");
     writeFile(root / "sub" / "b.py", "def f():\n    pass  # XXX slow\n");
-    writeFile(root / ".hidden.py", "# TODO: hidden file\n");
+    // A dot folder is listed, and what .gitignore names is not.
+    writeFile(root / ".github" / "ci.yml", "# TODO: in a dot folder\n");
+    writeFile(root / ".gitignore", "ignored.py\n");
+    writeFile(root / "ignored.py", "# TODO: ignored\n");
     writeFile(root / "node_modules" / "m.js", "// TODO: skipped\n");
     FolderSearchResult r = FolderSearch::findTodos(root.string());
-    CHECK(r.matches.size() == 4);
-    if (r.matches.size() == 4) {
+    CHECK(r.matches.size() == 5);
+    if (r.matches.size() == 5) {
         CHECK(r.matches[0].relativePath == "a.cpp" && r.matches[0].line == 2 &&
               r.matches[0].text == "// TODO: one" && r.matches[0].column == 4);
         CHECK(r.matches[1].relativePath == "notes.md" && r.matches[1].line == 2 &&
               r.matches[1].byteColumn == 2 && r.matches[1].byteLength == 3);
         CHECK(r.matches[2].relativePath == "notes.md" && r.matches[2].line == 7 &&
               r.matches[2].byteColumn == 5);
-        CHECK(r.matches[3].relativePath == "sub/b.py" && r.matches[3].line == 2);
+        CHECK(r.matches[3].relativePath == ".github/ci.yml" && r.matches[3].line == 1);
+        CHECK(r.matches[4].relativePath == "sub/b.py" && r.matches[4].line == 2);
     }
-    CHECK(r.filesMatched == 3);
+    CHECK(r.filesMatched == 4);
     std::atomic<bool> stop{true};
     CHECK(FolderSearch::findTodos(root.string(), &stop).cancelled);
     CHECK(FolderSearch::findTodos((root / "a.cpp").string()).matches.empty());
@@ -9663,16 +9747,27 @@ static void testCommandPalette() {
         bool truncated = true;
         std::vector<std::string> files = listFiles(root.string(), 100, nullptr, &truncated);
         CHECK(!truncated);
-        // Breadth first: the root's files, then src's, then deeper.
-        CHECK(files.size() == 4);
-        CHECK(files == (std::vector<std::string>{"a.py", "b.txt", "src/main.cpp", "src/deep/inner.h"}) ||
-              files == (std::vector<std::string>{"a.py", "b.txt", "loop/main.cpp", "loop/deep/inner.h"}));
+        // Breadth first: the root's files, then the next level's, then
+        // deeper. Dotfiles and dot folders are listed (not .git).
+        CHECK(files.size() == 6);
+        CHECK(files == (std::vector<std::string>{".hidden", "a.py", "b.txt", "loop/main.cpp",
+                                                 "docs/.secret/x.md", "loop/deep/inner.h"}) ||
+              files == (std::vector<std::string>{".hidden", "a.py", "b.txt", "src/main.cpp",
+                                                 "docs/.secret/x.md", "src/deep/inner.h"}));
         for (const std::string &f : files) {
             CHECK(f.find(".git") == std::string::npos && f.find("node_modules") == std::string::npos);
             CHECK(f.find("build/") == std::string::npos && f.find("venv/") == std::string::npos);
         }
         files = listFiles(root.string(), 3, nullptr, &truncated);
         CHECK(files.size() == 3 && truncated);
+        // A .gitignore leaves its files out, unless told to read none.
+        std::ofstream(root / ".gitignore") << "*.txt\ndocs/\n";
+        files = listFiles(root.string(), 100, nullptr, &truncated);
+        CHECK(std::find(files.begin(), files.end(), "b.txt") == files.end());
+        CHECK(std::find(files.begin(), files.end(), "docs/.secret/x.md") == files.end());
+        CHECK(std::find(files.begin(), files.end(), ".gitignore") != files.end());
+        files = listFiles(root.string(), 100, nullptr, &truncated, false);
+        CHECK(std::find(files.begin(), files.end(), "b.txt") != files.end());
         std::atomic<bool> stop(true);
         CHECK(listFiles(root.string(), 100, &stop, nullptr).empty());
         CHECK(listFiles((root / "missing").string()).empty());
@@ -9849,6 +9944,7 @@ static void testMultiCaretOccurrences() {
 #include "commands_tests.inc"
 #include "procs_tests.inc"
 #include "attention_tests.inc"
+#include "ignore_tests.inc"
 #include "page_check_tests.inc"
 #include "ide_link_tests.inc"
 
@@ -9913,6 +10009,7 @@ int main() {
     testLspSecondServer();
     testLspReviewFixes();
     testTextFind();
+    testIgnoreFiles();
     testFolderReplace();
     testSavingToDisk();
     testSymbols();
@@ -9934,6 +10031,7 @@ int main() {
     testCommandKeys();
     testCommandTable();
     testKeymapFile();
+    testCommandLanguages();
     testCommandsReadme();
     testClaudeHooks();
     testNotifyCommandLine();

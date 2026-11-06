@@ -956,6 +956,46 @@ Edit tab(const std::u16string& t, size_t a, size_t b, const std::string& filenam
     return replaceWith(a, b - a, std::move(rep), caret);
 }
 
+Edit indentLines(const std::u16string& t, size_t a, size_t b, const std::string& filename) {
+    return indentLines(t, a, b, filename, detect(t, filename));
+}
+
+Edit indentLines(const std::u16string& t, size_t a, size_t b, const std::string&,
+                 const Unit& u) {
+    order(t, a, b);
+    size_t first, last;
+    touchedLines(t, a, b, first, last);
+    bool allBlank = true;
+    for (size_t s = first;; s = nextLine(t, s)) {
+        if (!blankLine(t, s)) allBlank = false;
+        if (s == last) break;
+    }
+    const U unit = u.text();
+    const bool caret = a == b;
+    U out;
+    size_t shiftA = 0, shiftB = 0;
+    size_t s = first, end = contentEnd(t, last);
+    while (true) {
+        if (allBlank || !blankLine(t, s)) {
+            out += unit;
+            // A caret at the line's start moves with its text.
+            if (s < a || (caret && s == a)) shiftA += unit.size();
+            if (s < b || (caret && s == b)) shiftB += unit.size();
+        }
+        if (s == last) {
+            out += t.substr(s, end - s);
+            break;
+        }
+        size_t next = nextLine(t, s);
+        out += t.substr(s, next - s);
+        s = next;
+    }
+    Edit e = replaceWith(first, end - first, std::move(out), 0);
+    e.selStart = a + shiftA;
+    e.selEnd = b + shiftB;
+    return e;
+}
+
 Edit backtab(const std::u16string& t, size_t a, size_t b, const std::string& filename) {
     return backtab(t, a, b, filename, detect(t, filename));
 }

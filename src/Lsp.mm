@@ -1270,6 +1270,26 @@ static BOOL IsRunnable(NSString *path) {
     return automatic.empty() ? nil : NS(automatic);
 }
 
+- (NSString *)terminalPythonInterpreterInDirectory:(NSString *)dir waiting:(BOOL *)waiting {
+    if (waiting) *waiting = NO;
+    NSString *chosen = [self chosenPythonInterpreter].stringByExpandingTildeInPath;
+    if (chosen && IsRunnable(chosen)) return chosen;
+    std::string setting = [AppSettings shared].settings.pythonInterpreter();
+    if (!setting.empty()) {
+        NSString *p = NS(setting).stringByExpandingTildeInPath;
+        if (IsRunnable(p)) return p;
+    }
+    PythonEnvs::Context ctx = [self pythonContext];
+    if (dir.length) ctx.fileDir = Std(RealPath(dir));
+    const BOOL allowed = [self folderEnvironmentAllowed];
+    std::string automatic = PythonEnvs::automatic(ctx, allowed);
+    if (!allowed && waiting && ![self folderEnvironmentConsent]) {
+        std::string project = PythonEnvs::projectInterpreter(ctx.fileDir, ctx.root);
+        if (!project.empty() && project != automatic) *waiting = YES;
+    }
+    return automatic.empty() ? nil : NS(automatic);
+}
+
 // ---- the folder's own Python environment
 // "allow", "deny", or nil when the user has not been asked for this folder.
 - (NSString *)folderEnvironmentConsent {
