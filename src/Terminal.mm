@@ -1102,11 +1102,17 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 - (NSString *)recentText:(NSUInteger)maxLines {
     std::vector<std::string> lines;
     if (!_lineMode || _gridMode) {
-        // The grid, scrollback above it; blank rows at the bottom dropped.
+        // The grid, scrollback above it; blank rows at the bottom dropped,
+        // and rows the terminal wrapped joined into the lines they were.
         int last = _screen.rows() - 1;
         while (last >= 0 && _screen.lineText(last).empty()) last--;
-        for (int line = last; line >= -_screen.historySize() && lines.size() < maxLines; line--)
-            lines.push_back(_screen.lineText(line));
+        int first = -_screen.historySize();
+        for (int line = last; line >= first && lines.size() < maxLines; line--) {
+            int start = line;
+            while (start > first && _screen.lineWraps(start - 1)) start--;
+            lines.push_back(_screen.textBetween(start, 0, line, _screen.cols() - 1));
+            line = start;
+        }
         std::reverse(lines.begin(), lines.end());
     } else {
         NSArray<NSString *> *all = [self.output.string componentsSeparatedByString:@"\n"];
@@ -1218,7 +1224,13 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
 // A path in the command shows as its last part, so "/x/.venv/bin/python
 // /x/app/main.py" reads "python main.py".
+- (void)setFixedTitle:(NSString *)title {
+    _fixedTitle = title.length ? [title copy] : nil;
+    [self titleChanged];
+}
+
 - (NSString *)title {
+    if (_fixedTitle) return _fixedTitle;     // minicode term --title
     if (_programTitle.length) return _programTitle;
     if (_runningCommand.length) {
         NSMutableArray *words = [NSMutableArray array];

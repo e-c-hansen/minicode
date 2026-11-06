@@ -84,7 +84,7 @@ Typesetting is done by [tectonic](https://tectonic-typesetting.github.io/). If i
 
 With a language server installed, minicode gives you completion, errors as you type, hover and go to definition. It knows clangd (C, C++, Objective-C), basedpyright, pyright, pylsp or jedi-language-server (Python), gopls (Go), rust-analyzer (Rust) and typescript-language-server (JavaScript and TypeScript), and finds them on your PATH and in the usual Homebrew, npm (nvm, fnm and volta included), pipx, uv, Cargo and Go folders. minicode never installs one itself, but it tells you how when one is missing; see [Installing servers and formatters](#installing-servers-and-formatters).
 
-Problems get a red or yellow squiggle, and the status bar counts them, for the file on show and for every open file. On the Mac, Shift Command M, or a click on those counts, lists every problem the servers report, grouped by file with errors first, between the editor and the terminal; Return opens the one you pick, and Escape goes back to the editor. F8 and Shift F8 go to the next or previous problem in the file, with its message shown at the cursor. Files a server checks without your opening them are listed too. Completion opens as you type, after a dot, an arrow or a double colon and on the second letter of any word, and Control Space opens it anywhere. On the Mac, Tab takes the selected item, and Return takes it too when you opened the list yourself, when it opened after a dot, an arrow or a double colon, or once you have moved through it with the arrow keys; a list that opened by itself on an ordinary word leaves Return a new line, as in VS Code and Zed. Beside the list, the selected item's signature and documentation show, fetched as you move through it. Taking an item that needs an import, such as Path from pathlib in Python or a function from another header in C++, adds the import or the #include the server suggests too, in the same undo step. Typing an opening parenthesis or a comma shows the call's signature above the line, with the argument you are on in bold. F12 or Command click jumps to a definition. On the Mac, resting the pointer on a name for a moment shows its type and documentation, with any problem reported there, as VS Code does; the pointer can move into that box to scroll a long docstring, and moving away, typing or Escape closes it. Command I shows the same for the name at the cursor. Also on the Mac, F2 renames the name at the cursor everywhere the server finds it, unsaved changes in other tabs included, since every open tab's text is kept open on its server: files that were not open get a tab, and every changed file is left unsaved for you to look over, with one undo step per file. Shift F12 lists every reference to the name, grouped by file, and Return opens the one you pick. Command period lists the server's quick fixes for the line, such as adding a missing import or semicolon, and Shift Option O organizes the file's imports.
+Problems get a red or yellow squiggle, and the status bar counts them, for the file on show and for every open file. On the Mac, Shift Command M, or a click on those counts, lists every problem the servers report, grouped by file with errors first, between the editor and the terminal; Return opens the one you pick, and Escape goes back to the editor. F8 and Shift F8 go to the next or previous problem in the file, with its message shown at the cursor. Files a server checks without your opening them are listed too. Completion opens as you type, after a dot, an arrow or a double colon and on the second letter of any word, and Control Space opens it anywhere. On the Mac, Tab takes the selected item, and Return takes it too when you opened the list yourself, when it opened after a dot, an arrow or a double colon, or once you have moved through it with the arrow keys; a list that opened by itself on an ordinary word leaves Return a new line, as in VS Code and Zed. Beside the list, the selected item's signature and documentation show, fetched as you move through it. Taking an item that needs an import, such as Path from pathlib in Python or a function from another header in C++, adds the import or the #include the server suggests too, in the same undo step. Typing an opening parenthesis or a comma shows the call's signature above the line, with the argument you are on in bold. F12 or Command click jumps to a definition. On the Mac, resting the pointer on a name for a moment shows its type and documentation, with any problem reported there, as VS Code does; the pointer can move into that box to scroll a long docstring, and moving away, typing or Escape closes it. Command I shows the same for the name at the cursor. Also on the Mac, F2 renames the name at the cursor everywhere the server finds it, unsaved changes in other tabs included, since every open tab's text is kept open on its server: files that were not open get a tab, and every changed file is left unsaved for you to look over, with one undo step per file. Shift F12 lists every reference to the name, grouped by file, and Return opens the one you pick. Command period lists the server's quick fixes for the line, such as adding a missing import or semicolon, and Shift Option O organizes the file's imports. Shift Command O lists the file's functions, classes and other symbols in the command palette, the one at the cursor selected, and shows each in the editor as you move through the list; without a server it reads Markdown headings, LaTeX sections, Python and the C family's functions itself. Command T looks for a symbol across the folder in every server the window runs. Control minus goes back to where you were before a jump, and Control Shift minus forward again, as in VS Code.
 
 The status bar shows the open file's server with a colored dot: green when it is running, yellow while it starts, red when it failed or crashed, and gray when there is none. Click it, or choose Language Servers in the minicode menu, to see every language's server, the command and program it runs, its process id, and why it stopped, with buttons to restart, stop and start it, and the command that installs a missing one. A server that crashes is started again after one, two and then four seconds, and after a fourth crash it waits for you. Restart Language Server in the same menu restarts the open file's.
 
@@ -212,6 +212,29 @@ The demo folder has a Python file, C++, Markdown, a short LaTeX paper in demo/pa
 make run DIR=demo
 ```
 
+## Driving minicode from the command line, and agents
+
+The same minicode command drives the copy that is running, which is how a coding agent such as Claude Code can show its work in minicode rather than describe it in a chat. Each command acts in the window in front (or the one named with `--window` or `--folder`), never takes the keyboard, and only ever adds: no tab or terminal you have is closed, replaced or moved.
+
+```
+minicode open src/main.mm:100              # a file at a line, by the usual open rules
+minicode open src/Lsp.mm:3090 --to 3185 --note "Applies rename edits to every file"
+minicode diff src/Lsp.mm                   # side by side against HEAD; --base REF, or two files
+minicode term --run "make test"            # a new terminal, the command typed and run in plain sight
+minicode term-output 3 --lines 50          # what a terminal shows, scrollback included
+minicode browse http://localhost:8000      # the page in the browser pane beside the editor
+minicode window --folder ~/project         # the window on a folder, opened if none shows it
+minicode tour tour.json                    # a sequence of notes
+minicode state | jq .windows[0].tabs       # windows, tabs, selection, terminals, browser
+minicode selection                         # the selected text
+```
+
+A note is a line or two of plain text over a highlighted range, labelled with who wrote it (`--from`, Claude by default). It is never written into the file or its undo history, and it goes when you press Escape, click its ×, or edit inside its lines. Files opened with a note share one agent preview tab per window, its title in italics, which the next such open replaces, so an agent's output never piles up tabs; edit in it, or double-click its title, and it becomes an ordinary tab. A tour is a list of `{"path", "line", "to", "note"}` stops; Option+] and Option+[ step through it, and the note says where you are ("2 of 5"). `minicode help` describes every command, and they exit with 0 when done, 1 when the command failed, 2 for a usage error, and 3 when there is no minicode to talk to (one is started when none is running).
+
+Each running minicode listens on a socket in your own temporary folder that only your user account can open, and nothing in minicode runs a command or a script by itself: `term --run` types what it was given into a terminal you can see. A script that sets up a workspace (a server in a terminal, its page in the browser, the README open) is just these commands in a file you run yourself.
+
+The repository has a skill for Claude Code in skills/minicode that teaches it all of this: when reporting work, open the changed lines with a note, show the diff and run the tests in a terminal; when asked "where is X", open it rather than quote a path; read `state` and `selection` when you say "this". `make install` copies it to ~/.claude/skills/minicode.
+
 ## Linux
 
 The Linux version, in the linux folder, is built on GTK4 with a VTE terminal, a WebKitGTK browser and poppler for PDFs. It has everything described above, including the LaTeX preview and language servers, with Control where the Mac uses Command. What it lacks is tabs, so a window holds one file at a time, typeset math in the Markdown preview, which shows the TeX for now, and blur behind the window, which GNOME gives applications no way to ask for.
@@ -261,6 +284,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Ask the inline agent: change the file at the cursor, write a terminal command, or hand a task to Claude Code | Command I |  |  |
 | Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
 | Clear the terminal, its scrollback included | Command K |  |  |
+| Close an agent's note (`minicode open --note`) in the editor | Escape, or its × |  |  |
 | Close the active terminal | Control Shift W |  |  |
 | Close the application | Command Q | Ctrl Q |  |
 | Close the tab, the terminal the keyboard is in, or the browser panel when it has the keyboard | Command W |  |  |
@@ -285,14 +309,19 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Focus the file tree | Command 0 | Ctrl 0 |  |
 | Focus the terminal, opening it if it is hidden | Command 2 |  |  |
 | Format the file, or the selected lines where the formatter can | Shift Option F |  |  |
+| Go back to where you were before a jump (a definition, a symbol, a line, a problem, another tab), or forward again | Control minus, Control Shift minus |  |  |
 | Go to a line of the open file, by its number (42:7 for a column too) | Control G |  |  |
+| Go to a symbol anywhere in the folder, from the language servers running in the window | Command T |  |  |
+| Go to a symbol of the open file (its functions, classes and headings, or @: grouped by kind), from its language server or minicode's own outline | Shift Command O |  |  |
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G, or Ctrl G |
 | Go to tab 1 to 8, or the last tab | Control 1 to 9, or Shift Command 1 to 9 (macOS keeps Shift Command 3, 4 and 5 for screenshots) |  |  |
 | Go to the matching bracket, or to the closing bracket of the pair around the cursor | Shift Command backslash |  |  |
 | Go to the next or previous problem in the file, with its message at the cursor | F8, Shift F8 (F8 may need fn on a laptop) |  |  |
+| Go to the next or previous stop of an agent's tour (`minicode tour`) | Option ], Option [ |  |  |
 | Go to the start or end of the file (Shift selects to it) | Command Home, Command End (fn Command Left, Right on a laptop) |  |  |
 | Indent or outdent the selected lines | Tab, Shift Tab | Tab, Shift Tab | Tab, Shift Tab |
 | Jump to the previous file |  | Ctrl Tab |  |
+| Keep the agent preview tab as an ordinary tab | Double-click its title, or edit in it |  |  |
 | List every problem the language servers report, grouped by file | Shift Command M, or click the problem counts in the status bar |  |  |
 | List the TODO comments and open Markdown tasks in the folder | Shift Command D | Ctrl Shift L | W, or Ctrl Shift L |
 | Move the line, or the selected lines, down or up, at every cursor | Option Down, Option Up, or Command Down, Command Up |  |  |

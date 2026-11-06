@@ -28,8 +28,15 @@
 #include "CommandPalette.h"
 #include "Backups.h"
 #include "InlineAgent.h"
+#include "SymbolOutline.h"
+#include "NavHistory.h"
 #include "LineIndex.h"
 #include "BracketMatch.h"
+#include "ControlProtocol.h"
+#include "SideBySide.h"
+#include "AgentTranscript.h"
+#include "AgentIndex.h"
+#include "AgentEvidence.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -37,6 +44,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -9478,8 +9486,12 @@ static void testMultiCaretOccurrences() {
 #include "agent_tests.inc"
 #include "lsp_also_tests.inc"
 #include "find_tests.inc"
+#include "symbols_tests.inc"
 #include "gutter_tests.inc"
 #include "terminal_reflow_tests.inc"
+#include "control_tests.inc"
+#include "agent_index_tests.inc"
+#include "agent_evidence_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9538,8 +9550,14 @@ int main() {
     testLspSecondServer();
     testTextFind();
     testFolderReplace();
+    testSymbols();
     testLineIndex();
     testBrackets();
+    testControlProtocol();
+    testSideBySide();
+    testAgentTranscript();
+    testAgentIndex();
+    testAgentEvidence();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

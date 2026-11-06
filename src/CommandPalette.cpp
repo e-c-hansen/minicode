@@ -240,6 +240,21 @@ Parsed parse(const std::u16string& text) {
         p.query = trimmed(t.substr(1));
         return p;
     }
+    if (!t.empty() && t[0] == '@') {
+        p.mode = Mode::Symbols;
+        std::u16string rest = t.substr(1);
+        if (!rest.empty() && rest[0] == ':') {
+            p.byKind = true;
+            rest = rest.substr(1);
+        }
+        p.query = trimmed(rest);
+        return p;
+    }
+    if (!t.empty() && t[0] == '#') {
+        p.mode = Mode::WorkspaceSymbols;
+        p.query = trimmed(t.substr(1));
+        return p;
+    }
     if (!t.empty() && t[0] == ':') {
         p.mode = Mode::Line;
         p.query = trimmed(t.substr(1));
@@ -383,6 +398,60 @@ std::vector<Match> rankFiles(const std::vector<std::u16string>& paths,
     std::vector<Match> result;
     for (size_t i = 0; i < out.size() && i < limit; i++) result.push_back(std::move(out[i].m));
     return result;
+}
+
+std::vector<SymbolRow> symbolRows(const std::vector<Lsp::Symbol>& symbols,
+                                  const std::u16string& query, bool byKind, int caretSymbol,
+                                  int* preselect, size_t limit) {
+    std::vector<Entry> entries;
+    entries.reserve(symbols.size());
+    for (const Lsp::Symbol& sym : symbols) {
+        Entry e;
+        e.label = e.title = Lsp::toUtf16(sym.name);
+        entries.push_back(std::move(e));
+    }
+    std::vector<Match> ranked = rank(entries, query, {});
+    if (ranked.size() > limit) ranked.resize(limit);
+    std::vector<SymbolRow> rows;
+    auto symbolRow = [](Match m) {
+        SymbolRow r;
+        r.symbol = m.index;
+        r.match = std::move(m);
+        return r;
+    };
+    if (!byKind) {
+        for (Match& m : ranked) rows.push_back(symbolRow(std::move(m)));
+    } else {
+        std::vector<int> kinds;   // in the order their first symbol comes
+        for (const Match& m : ranked) {
+            int k = symbols[m.index].kind;
+            if (std::find(kinds.begin(), kinds.end(), k) == kinds.end()) kinds.push_back(k);
+        }
+        for (int k : kinds) {
+            size_t n = 0;
+            for (const Match& m : ranked) n += symbols[m.index].kind == k;
+            SymbolRow h;
+            h.heading = true;
+            h.text = Lsp::toUtf16(Lsp::symbolKindPlural(k) + " (" + std::to_string(n) + ")");
+            rows.push_back(std::move(h));
+            for (const Match& m : ranked)
+                if (symbols[m.index].kind == k) rows.push_back(symbolRow(m));
+        }
+    }
+    if (preselect) {
+        *preselect = -1;
+        const std::u16string q = trimmed(query);
+        for (size_t i = 0; i < rows.size(); i++) {
+            if (rows[i].heading) continue;
+            if (*preselect < 0) *preselect = int(i);
+            if (q.empty() && caretSymbol >= 0 && rows[i].symbol == size_t(caretSymbol)) {
+                *preselect = int(i);
+                break;
+            }
+            if (!q.empty() || caretSymbol < 0) break;
+        }
+    }
+    return rows;
 }
 
 }  // namespace CommandPalette

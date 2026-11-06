@@ -2,9 +2,10 @@
 // matching of what is typed against the menu's commands, their order, the
 // list of recently run commands, and a key equivalent drawn as glyphs.
 //
-// The same palette is Quick Open (Cmd+P: the folder's files) and Go to Line
-// (Ctrl+G, or ":" typed first); ">" typed first switches to commands, as in
-// VS Code (see Mode).
+// The same palette is Quick Open (Cmd+P: the folder's files), Go to Line
+// (Ctrl+G, or ":" typed first), Go to Symbol in File (Shift+Cmd+O, "@") and
+// Go to Symbol in Workspace (Cmd+T, "#"); ">" typed first switches to
+// commands, as in VS Code (see Mode).
 //
 // Pure C++ in UTF-16 code units like LineComments and MultiCaret, so matched
 // positions map straight onto NSRange. Which commands exist and whether they
@@ -12,6 +13,8 @@
 // menu); everything here works on their labels alone. The one piece of I/O
 // is listFiles, the walk Quick Open lists, run off the main thread.
 #pragma once
+#include "LspClient.h"   // Lsp::Symbol
+
 #include <atomic>
 #include <cstddef>
 #include <string>
@@ -76,13 +79,16 @@ std::u16string keyLabel(const std::u16string& key, unsigned mods);
 
 // ------------------------------------------------------------ the modes
 // What the field's text asks for: a leading ">" is a command, a leading ":"
-// a line of the file on show, anything else a file of the folder.
-enum class Mode { Files, Commands, Line };
+// a line of the file on show, "@" a symbol of that file ("@:" grouped by
+// kind), "#" a symbol of the whole workspace, anything else a file of the
+// folder.
+enum class Mode { Files, Commands, Line, Symbols, WorkspaceSymbols };
 struct Parsed {
     Mode mode = Mode::Files;
     std::u16string query;      // the text after the prefix, trimmed
     int line = 0, column = 0;  // Line mode: 0 when not typed (yet)
     bool lineValid = false;    // Line mode: digits, then ":digits" at most
+    bool byKind = false;       // Symbols mode: "@:", grouped by kind
 };
 Parsed parse(const std::u16string& text);
 
@@ -109,5 +115,25 @@ std::vector<Match> rankFiles(const std::vector<std::u16string>& paths,
                              const std::u16string& query,
                              const std::vector<std::u16string>& recent,
                              size_t limit = 500);
+
+// ------------------------------------------------------------ symbols
+// A row of Go to Symbol's list: a symbol, or (grouped by kind) a heading
+// naming a kind and how many of it are listed, "functions (3)".
+struct SymbolRow {
+    bool heading = false;
+    size_t symbol = 0;        // a symbol row's index into the symbols
+    std::u16string text;      // a heading's
+    Match match;              // a symbol row's; positions are in its name
+};
+// The symbols whose names match query, by rank()'s rules; an empty query
+// keeps them in their order (the file's). Grouped by kind, each kind gets
+// a heading, the kinds in the order their first symbol comes. *preselect
+// is the row to select first: with an empty query the row of the symbol
+// at the caret (caretSymbol, an index into the symbols, -1 for none),
+// otherwise, and when that symbol is not listed, the first symbol row; -1
+// when there is none. At most limit symbols are listed.
+std::vector<SymbolRow> symbolRows(const std::vector<Lsp::Symbol>& symbols,
+                                  const std::u16string& query, bool byKind, int caretSymbol,
+                                  int* preselect, size_t limit = 2000);
 
 }  // namespace CommandPalette

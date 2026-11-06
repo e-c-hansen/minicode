@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <set>
+#include <tuple>
 
 namespace Lsp {
 
@@ -342,6 +343,8 @@ bool offers(const Json& caps, Feature f) {
     case Feature::References: return provides(caps["referencesProvider"]);
     case Feature::Rename: return provides(caps["renameProvider"]);
     case Feature::CodeActions: return provides(caps["codeActionProvider"]);
+    case Feature::DocumentSymbols: return provides(caps["documentSymbolProvider"]);
+    case Feature::WorkspaceSymbols: return provides(caps["workspaceSymbolProvider"]);
     }
     return false;
 }
@@ -1109,6 +1112,166 @@ bool positionBefore(Position a, Position b) {
     return a.line < b.line || (a.line == b.line && a.character < b.character);
 }
 
+// ------------------------------------------------------------- symbols
+namespace {
+bool rangeHolds(const Range& r, Position p) {
+    return !positionBefore(p, r.start) && !positionBefore(r.end, p);
+}
+
+void addDocumentSymbol(const Json& j, const std::string& container, int depth,
+                       std::vector<Symbol>& out) {
+    if (!j.isObject() || !j["name"].isString()) return;
+    Symbol s;
+    s.name = j["name"].asString();
+    s.detail = j["detail"].asString();
+    s.container = container;
+    s.kind = (int)j["kind"].asInt();
+    s.depth = depth;
+    s.range = parseRange(j["range"]);
+    s.selectionRange = j.has("selectionRange") ? parseRange(j["selectionRange"]) : s.range;
+    out.push_back(s);
+    std::vector<const Json*> kids;
+    for (const Json& c : j["children"].elements()) kids.push_back(&c);
+    std::stable_sort(kids.begin(), kids.end(), [](const Json* a, const Json* b) {
+        return positionBefore(parsePosition((*a)["range"]["start"]),
+                              parsePosition((*b)["range"]["start"]));
+    });
+    const std::string name = s.name;
+    for (const Json* c : kids) addDocumentSymbol(*c, name, depth + 1, out);
+}
+
+// SymbolInformation, or a WorkspaceSymbol (whose location may have no range).
+bool symbolInformation(const Json& j, Symbol& s) {
+    if (!j.isObject() || !j["name"].isString()) return false;
+    s.name = j["name"].asString();
+    s.kind = (int)j["kind"].asInt();
+    s.container = j["containerName"].asString();
+    s.detail = j["detail"].asString();
+    const Json& loc = j["location"];
+    s.uri = loc["uri"].asString();
+    s.hasRange = loc["range"].isObject();
+    if (s.hasRange) s.range = parseRange(loc["range"]);
+    s.selectionRange = s.range;
+    return true;
+}
+}  // namespace
+
+std::vector<Symbol> parseDocumentSymbols(const Json& result) {
+    std::vector<Symbol> out;
+    if (!result.isArray()) return out;
+    bool tree = false;
+    for (const Json& j : result.elements())
+        if (j.isObject() && j.has("range") && !j.has("location")) tree = true;
+    if (tree) {
+        std::vector<const Json*> top;
+        for (const Json& j : result.elements()) top.push_back(&j);
+        std::stable_sort(top.begin(), top.end(), [](const Json* a, const Json* b) {
+            return positionBefore(parsePosition((*a)["range"]["start"]),
+                                  parsePosition((*b)["range"]["start"]));
+        });
+        for (const Json* j : top) addDocumentSymbol(*j, "", 0, out);
+        return out;
+    }
+    for (const Json& j : result.elements()) {
+        Symbol s;
+        if (!symbolInformation(j, s)) continue;
+        s.uri.clear();   // the file asked about
+        out.push_back(s);
+    }
+    std::stable_sort(out.begin(), out.end(), [](const Symbol& a, const Symbol& b) {
+        return positionBefore(a.range.start, b.range.start);
+    });
+    return out;
+}
+
+std::vector<Symbol> parseWorkspaceSymbols(const Json& result) {
+    std::vector<Symbol> out;
+    for (const Json& j : result.elements()) {
+        Symbol s;
+        if (symbolInformation(j, s) && !s.uri.empty()) out.push_back(s);
+    }
+    return out;
+}
+
+std::vector<Symbol> mergeSymbols(const std::vector<std::vector<Symbol>>& perServer,
+                                 const CanonicalUri& canonical) {
+    std::vector<Symbol> out;
+    std::set<std::tuple<std::string, std::string, int, int>> seen;
+    for (const std::vector<Symbol>& list : perServer)
+        for (const Symbol& s : list) {
+            const std::string uri = canonical && !s.uri.empty() ? canonical(s.uri) : s.uri;
+            auto key = std::make_tuple(s.name, uri, s.hasRange ? s.range.start.line : -1,
+                                       s.hasRange ? s.range.start.character : -1);
+            if (!seen.insert(key).second) continue;
+            out.push_back(s);
+        }
+    return out;
+}
+
+int symbolAt(const std::vector<Symbol>& symbols, Position p) {
+    int best = -1;
+    for (size_t i = 0; i < symbols.size(); i++) {
+        const Symbol& s = symbols[i];
+        if (!s.hasRange || !rangeHolds(s.range, p)) continue;
+        if (best < 0) { best = (int)i; continue; }
+        const Symbol& b = symbols[(size_t)best];
+        // The deeper one; at one depth (a flat list) the one inside the other,
+        // else the one starting last.
+        bool inside = rangeHolds(b.range, s.range.start) && rangeHolds(b.range, s.range.end);
+        if (s.depth > b.depth ||
+            (s.depth == b.depth && (inside || !positionBefore(s.range.start, b.range.start))))
+            best = (int)i;
+    }
+    return best;
+}
+
+namespace {
+struct KindInfo {
+    const char* name;
+    const char* plural;
+    const char16_t* glyph;
+    unsigned color;
+};
+// VS Code's symbol icon colors: purple for functions and methods, orange for
+// classes, enums, structs and events, blue for variables, fields and
+// interfaces, plain for the rest.
+const KindInfo kKinds[27] = {
+    {"symbol", "symbols", u"•", 0xC5C5C5},
+    {"file", "files", u"≣", 0xC5C5C5},
+    {"module", "modules", u"{}", 0xC5C5C5},
+    {"namespace", "namespaces", u"{}", 0xC5C5C5},
+    {"package", "packages", u"{}", 0xC5C5C5},
+    {"class", "classes", u"C", 0xEE9D28},
+    {"method", "methods", u"ƒ", 0xB180D7},
+    {"property", "properties", u"p", 0x75BEFF},
+    {"field", "fields", u"f", 0x75BEFF},
+    {"constructor", "constructors", u"ƒ", 0xB180D7},
+    {"enumeration", "enumerations", u"E", 0xEE9D28},
+    {"interface", "interfaces", u"I", 0x75BEFF},
+    {"function", "functions", u"ƒ", 0xB180D7},
+    {"variable", "variables", u"x", 0x75BEFF},
+    {"constant", "constants", u"π", 0xC5C5C5},
+    {"string", "strings", u"#", 0xC5C5C5},
+    {"number", "numbers", u"#", 0xC5C5C5},
+    {"boolean", "booleans", u"◐", 0xC5C5C5},
+    {"array", "arrays", u"[]", 0xC5C5C5},
+    {"object", "objects", u"{}", 0xC5C5C5},
+    {"key", "keys", u"k", 0xC5C5C5},
+    {"null", "nulls", u"∅", 0xC5C5C5},
+    {"enumeration member", "enumeration members", u"e", 0x75BEFF},
+    {"struct", "structs", u"S", 0xEE9D28},
+    {"event", "events", u"ϟ", 0xEE9D28},
+    {"operator", "operators", u"±", 0xC5C5C5},
+    {"type parameter", "type parameters", u"T", 0xC5C5C5},
+};
+const KindInfo& kindInfo(int kind) { return kKinds[kind >= 1 && kind <= 26 ? kind : 0]; }
+}  // namespace
+
+std::string symbolKindName(int kind) { return kindInfo(kind).name; }
+std::string symbolKindPlural(int kind) { return kindInfo(kind).plural; }
+std::u16string symbolKindGlyph(int kind) { return kindInfo(kind).glyph; }
+unsigned symbolKindColor(int kind) { return kindInfo(kind).color; }
+
 size_t WorkspaceEdit::editCount() const {
     size_t n = 0;
     for (const FileEdit& f : files) n += f.edits.size();
@@ -1434,6 +1597,9 @@ void Client::initialize(const std::string& rootPath, int processId,
         {"parameterInformation", Json::object({{"labelOffsetSupport", true}})},
         {"activeParameterSupport", true},
     });
+    Json kinds = Json::array();
+    for (int k = 1; k <= 26; k++) kinds.push(k);
+    Json symbolKinds = Json::object({{"valueSet", kinds}});
     Json textDocument = Json::object({
         {"synchronization", Json::object({{"didSave", true},
                                           {"dynamicRegistration", false}})},
@@ -1462,6 +1628,9 @@ void Client::initialize(const std::string& rootPath, int processId,
              {"resolveSupport", Json::object({{"properties", Json::array().push("edit")}})},
          })},
         {"publishDiagnostics", Json::object({{"relatedInformation", false}})},
+        // Go to Symbol in File (Shift+Cmd+O) shows a tree's containers.
+        {"documentSymbol", Json::object({{"hierarchicalDocumentSymbolSupport", true},
+                                         {"symbolKind", symbolKinds}})},
     });
     Json caps = Json::object({
         {"textDocument", textDocument},
@@ -1477,6 +1646,8 @@ void Client::initialize(const std::string& rootPath, int processId,
                                                    {"failureHandling", "abort"}})},
                                     {"executeCommand",
                                      Json::object({{"dynamicRegistration", false}})},
+                                    {"symbol", Json::object({{"dynamicRegistration", false},
+                                                             {"symbolKind", symbolKinds}})},
                                     {"didChangeConfiguration",
                                      Json::object({{"dynamicRegistration", false}})}})},
         {"general", Json::object({{"positionEncodings", Json::array().push("utf-16")}})},
@@ -1646,6 +1817,15 @@ int Client::codeActions(const std::string& uri, Range range, Json diagnostics,
 int Client::resolveCodeAction(const CodeAction& action, ResultHandler h) {
     if (!canResolveCodeAction() || !action.raw) return 0;
     return request("codeAction/resolve", *action.raw, std::move(h));
+}
+
+int Client::documentSymbols(const std::string& uri, ResultHandler h) {
+    return request("textDocument/documentSymbol",
+                   Json::object({{"textDocument", Json::object({{"uri", uri}})}}), std::move(h));
+}
+
+int Client::workspaceSymbols(const std::string& query, ResultHandler h) {
+    return request("workspace/symbol", Json::object({{"query", query}}), std::move(h));
 }
 
 int Client::executeCommand(const Json& command, ResultHandler h) {
