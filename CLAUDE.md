@@ -738,7 +738,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   yapf or black in the same folder win), `.clang-format`, rustfmt.toml, an
   `.editorconfig` shell section; for .js .mjs .cjs .jsx .ts .mts .cts .tsx,
   before clang-format, Prettier (`.prettierrc*`, `prettier.config.*`,
-  "prettier" in package.json; `prettier --stdin-filepath {file}`) or Biome
+  "prettier" in package.json, or Prettier as a dependency or in
+  node_modules/.bin, since it needs no config file;
+  `prettier --stdin-filepath {file}`) or Biome
   (biome.json[c]; `biome format --stdin-file-path={file}`), from
   `node_modules/.bin` first (`Formatter::nodeBinDirs`). That tool runs without
   style flags, and when it is missing the user is told to install it, since

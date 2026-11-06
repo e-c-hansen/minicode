@@ -8343,8 +8343,9 @@ void testFormatter() {
         Plan each = plan("cpp", "", "/w/a.js", "/w", fakeFs({{std::string("/w/") + name, ""}}));
         CHECK(each.candidates.size() == 1 && each.candidates[0].program == "prettier");
     }
-    // A "prettier" key in package.json counts; a package.json without one,
-    // or one that only names Prettier as a dependency, does not.
+    // A "prettier" key in package.json counts, and so does Prettier as a
+    // dependency (it needs no configuration file) or in node_modules/.bin;
+    // a package.json with neither does not.
     Plan pj = plan("cpp", "", "/w/a.mjs", "/w",
                    fakeFs({{"/w/package.json",
                             "{\"name\": \"x\", \"prettier\": {\"semi\": false}}"}}));
@@ -8352,7 +8353,22 @@ void testFormatter() {
           pj.configFile == "/w/package.json");
     Plan pd = plan("cpp", "", "/w/a.js", "/w",
                    fakeFs({{"/w/package.json", "{\"devDependencies\": {\"prettier\": \"^3\"}}"}}));
-    CHECK(pd.candidates.size() == 1 && pd.candidates[0].program == "clang-format");
+    CHECK(pd.candidates.size() == 1 && pd.candidates[0].program == "prettier" &&
+          pd.configFile == "/w/package.json");
+    Plan pdd = plan("cpp", "", "/w/a.js", "/w",
+                    fakeFs({{"/w/package.json", "{\"dependencies\": {\"prettier\": \"3\"}}"}}));
+    CHECK(pdd.candidates.size() == 1 && pdd.candidates[0].program == "prettier");
+    Plan pnm = plan("cpp", "", "/w/src/a.ts", "/w",
+                    fakeFs({{"/w/node_modules/.bin/prettier", ""}}));
+    CHECK(pnm.candidates.size() == 1 && pnm.candidates[0].program == "prettier");
+    Plan pother = plan("cpp", "", "/w/a.js", "/w",
+                       fakeFs({{"/w/package.json",
+                                "{\"devDependencies\": {\"prettier-plugin-x\": \"1\", "
+                                "\"eslint\": \"9\"}, \"scripts\": {\"prettier\": \"x\"}}"}}));
+    CHECK(pother.candidates.size() == 1 && pother.candidates[0].program == "clang-format");
+    CHECK(jsonHasDependency("{\"devDependencies\": {\"prettier\": \"^3\"}}", "prettier") &&
+          !jsonHasDependency("{\"prettier\": {}}", "prettier") &&
+          !jsonHasDependency("[", "prettier"));
     Plan pb = plan("cpp", "", "/w/a.js", "/w",
                    fakeFs({{"/w/package.json", "{\"prettier\": "}}));   // broken JSON
     CHECK(pb.candidates.size() == 1 && pb.candidates[0].program == "clang-format");
