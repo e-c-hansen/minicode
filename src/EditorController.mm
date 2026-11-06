@@ -95,6 +95,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     [self.lsp shutdown];   // never leave a server running for a closed window
     [_change stop];        // no build watched for a closed window
     [_agents stop];        // no transcripts watched for a closed window
+    [self stopWatching];   // no file events for a closed window (the stream holds an unretained self)
 }
 - (void)windowDidBecomeKey:(NSNotification *)note {
     [self checkExternalChange];
