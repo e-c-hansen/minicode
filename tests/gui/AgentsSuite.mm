@@ -508,12 +508,19 @@ MC_GUI_SUITE(agents) {
         GCHECK([c controlTerminals].count == before + 1);
         term = [c controlTerminals].lastObject;
     });
-    MCGuiWait(@"the command waits at the prompt", 20, ^BOOL {
+    // A new shell, typed into once its line editor is ready. In a whole run
+    // on a loaded machine 20 s was not always enough for a fresh zsh to come
+    // up (the suite passed alone); the wait is longer, and says what the
+    // terminal had when it still gives up.
+    MCGuiWait(@"the command waits at the prompt", 60, ^BOOL {
         return [[term recentText:20] containsString:@"echo agents-typed-$((6*7))"];
     });
     MCGuiPause(1.0);
     MCGuiStep(@"nothing ran, and the terminal is in the session's folder", ^{
         NSString *text = [term recentText:20];
+        if (![text containsString:@"echo agents-typed-$((6*7))"])
+            MCGuiNote(@"the new terminal: at a prompt %d, busy %d, waiting \"%@\", directory %@, text:\n%@",
+                      term.atPrompt, term.busy, term.pendingCommand ?: @"", term.directory, text);
         GCHECK(![text containsString:@"agents-typed-42"]);
         GCHECK(!term.busy);
         GCHECK_EQ_STR(Real(term.directory), gReal);
@@ -667,7 +674,7 @@ MC_GUI_SUITE(agents) {
     });
 
     // ------------------------------------------------------ terminal links
-    MCGuiWait(@"the terminal knows its folder", 20, ^BOOL {
+    MCGuiWait(@"the terminal knows its folder", 60, ^BOOL {
         return term.atPrompt && term.directory.length > 0;
     });
     MCGuiStep(@"a path in both the folder and the worktree offers both, newest first", ^{
