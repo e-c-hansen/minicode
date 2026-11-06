@@ -2,8 +2,8 @@
 
 minicode is a small native macOS code editor built from scratch, no Electron,
 no third-party dependencies. It links only Apple system frameworks (Cocoa,
-WebKit, CoreServices, Quartz for PDFKit and Quick Look, AVKit, AVFoundation and
-CoreMedia) plus the C++ standard library, the system zlib and the system
+WebKit, CoreServices, Quartz for PDFKit and Quick Look, AVKit, AVFoundation,
+CoreMedia, and Carbon for the terminal's secure keyboard entry) plus the C++ standard library, the system zlib and the system
 libsqlite3. The LaTeX preview and the Markdown math run tectonic, which the
 user installs or the app downloads on request; the language servers, formatters
 and Claude Code it talks to are the user's own.
@@ -1527,6 +1527,17 @@ for full-screen programs. Both can be open at once.
   paths and URLs). Typing goes through `interpretKeyEvents:`, so dead keys and
   input methods compose; marked text wraps onto the rows below
   (`drawMarkedTextAtRow:`), since dictation composes a whole sentence.
+- **Paste and passwords** (2026-11-06): `encodePaste` shows every ESC
+  inside the brackets as U+241B, as xterm.js does (stripping `ESC[201~`
+  once let "ESC[20" + mark + "1~" close up into a new mark). The grid's
+  `paste:` asks first per `TerminalScreen::checkPaste`
+  (`terminal.multiline-paste-warning`, VS Code's auto/always/never; a lone
+  CR counts as a break). Secure keyboard entry: TerminalView polls termios
+  (after output, and four times a second while a command runs) and sets
+  the grid's `hiddenInput` for ECHO off with ICANON on (ZLE and full-screen
+  programs turn ICANON off); the grid calls Enable/DisableSecureEventInput
+  in pairs (`_secureOn`) only while it has the keyboard. Carbon is linked
+  for it.
 - **Keys**: Ctrl with a letter, symbol or Space is claimed in the grid's
   `performKeyEquivalent:` (the window asks views before the menu), so
   Ctrl+Space reaches zsh; Ctrl+Tab, Ctrl+Return and Ctrl+digits stay the app's.

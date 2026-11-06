@@ -923,6 +923,14 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                return boolValue(v, s.terminalOptionAsMeta_, e);),
         MC_KEY("terminal.activate-venv", Word, false,
                return boolValue(v, s.terminalActivateVenv_, e);),
+        MC_KEY("terminal.multiline-paste-warning", Word, false,
+               const std::string w = lower(v);
+               if (w != "auto" && w != "always" && w != "never") {
+                   e = "'" + v + "' is not auto, always or never";
+                   return false;
+               }
+               s.terminalPasteWarning_ = w;
+               return true;),
         MC_KEY("search.use-ignore-files", Word, false,
                return boolValue(v, s.searchUseIgnoreFiles_, e);),
         MC_KEY("lsp.enabled", Word, false, return boolValue(v, s.lspEnabled_, e);),
@@ -1356,6 +1364,10 @@ const char* Settings::defaultFileText() {
 # folder's choice, python.interpreter, or the folder's own .venv once you
 # allow it for the language servers), when it is a virtual environment.
 # terminal.activate-venv = true
+# Pasting several lines asks first: auto when the program running has not
+# said it takes pasted lines as text (zsh's prompt does; cat and an older
+# REPL do not, and run each line as it arrives), always, or never.
+# terminal.multiline-paste-warning = auto
 
 # Find in Folder, Replace in Folder, TODOs and Go to File leave out what the
 # folder's .gitignore and .ignore files ignore. Dotfiles are always included.

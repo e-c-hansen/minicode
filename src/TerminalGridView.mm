@@ -32,7 +32,7 @@
 #import "AppSettings.h"
 #import "Appearance.h"
 #import "EditorFont.h"
-#import <Carbon/Carbon.h>   // kVK_* key codes (header only, nothing linked)
+#import <Carbon/Carbon.h>   // kVK_* key codes, EnableSecureEventInput
 #include <algorithm>
 #include <climits>
 #include <utility>
@@ -46,6 +46,8 @@ static const long long kNoLine = LLONG_MIN;
 static const NSTimeInterval kSyncLimit = 0.15;
 
 static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e);
+// Grid views with secure keyboard entry on (see updateSecureInput).
+static NSInteger gSecureGrids;
 
 @implementation TerminalGridView {
     BOOL _selecting, _hasSelection;
@@ -90,6 +92,7 @@ static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e);
     BOOL _finding, _findRefreshQueued;
     std::string _findQuery;
     BOOL _findCase;
+    BOOL _secureOn;                // EnableSecureEventInput called, not yet undone
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -148,6 +151,7 @@ static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e);
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
     [nc removeObserver:self name:NSWindowDidBecomeKeyNotification object:nil];
     [nc removeObserver:self name:NSWindowDidResignKeyNotification object:nil];
+    [self updateSecureInput];   // out of a window: off
     if (!self.window) return;
     [nc addObserver:self selector:@selector(reportFocus)
                name:NSWindowDidBecomeKeyNotification object:self.window];
@@ -160,6 +164,7 @@ static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e);
 }
 
 - (void)reportFocus {
+    [self updateSecureInput];
     TerminalScreen *s = self.screen;
     BOOL focused = [self hasKeyboard];
     if (!s || !s->focusEvents()) { _focusKnown = NO; return; }
@@ -301,6 +306,74 @@ static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e);
 - (void)dealloc {
     [NSObject cancelPreviousPerformRequestsWithTarget:self];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    if (_secureOn) {
+        DisableSecureEventInput();
+        gSecureGrids--;
+    }
+}
+
+// ---------------------------------------------------------------- secure input
+// Secure keyboard entry while the program asks for hidden input (a password)
+// and this view has the keyboard: other processes cannot read the keys
+// (event taps, keyloggers), as Terminal.app and iTerm2 do. The calls are
+// counted for the whole process, so each view keeps one flag and calls
+// Enable and Disable in pairs. Off the moment the view loses the keyboard:
+// another view, another window, another app, hidden, or gone.
+- (void)setHiddenInput:(BOOL)hiddenInput {
+    if (_hiddenInput == hiddenInput) return;
+    _hiddenInput = hiddenInput;
+    [self updateSecureInput];
+}
+
+- (BOOL)secureInputOn { return _secureOn; }
++ (NSInteger)secureInputViews { return gSecureGrids; }
+
+- (void)updateSecureInput {
+    const BOOL want = _hiddenInput && [self hasKeyboard];
+    if (want == _secureOn) return;
+    _secureOn = want;
+    if (want) {
+        EnableSecureEventInput();
+        gSecureGrids++;
+    } else {
+        DisableSecureEventInput();
+        gSecureGrids--;
+    }
+    [self setNeedsDisplay:YES];   // the lock in the corner
+}
+
+- (void)viewDidHide {
+    [super viewDidHide];
+    [self updateSecureInput];
+}
+
+- (void)viewDidUnhide {
+    [super viewDidUnhide];
+    [self updateSecureInput];
+}
+
+// The lock drawn in the top right corner while secure entry is on, in the
+// terminal's text color, faded.
+- (void)drawSecureInputLock {
+    static NSImage *symbol;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        symbol = [NSImage imageWithSystemSymbolName:@"lock.fill"
+                           accessibilityDescription:@"Secure keyboard entry"];
+    });
+    if (!symbol) return;
+    NSColor *color = [[[AppSettings shared] text:Surface::Terminal] colorWithAlphaComponent:0.6];
+    const NSSize sz = symbol.size;
+    const CGFloat h = 12, w = sz.height > 0 ? sz.width * h / sz.height : h;
+    const NSRect r = NSMakeRect(self.bounds.size.width - w - 10, 6, w, h);
+    NSImage *tinted = [NSImage imageWithSize:r.size flipped:NO drawingHandler:^BOOL(NSRect dst) {
+        [symbol drawInRect:dst];
+        [color set];
+        NSRectFillUsingOperation(dst, NSCompositingOperationSourceAtop);
+        return YES;
+    }];
+    [tinted drawInRect:r fromRect:NSZeroRect operation:NSCompositingOperationSourceOver
+              fraction:1 respectFlipped:YES hints:nil];
 }
 
 // A new size: the screen reflows, and the view's places (the top line of a
@@ -717,6 +790,7 @@ static CellColors ColorsFor(const TermStyle &st) {
         [[[[AppSettings shared] text:Surface::Terminal] colorWithAlphaComponent:0.35] setFill];
         [[NSBezierPath bezierPathWithRoundedRect:bar xRadius:2 yRadius:2] fill];
     }
+    if (_secureOn) [self drawSecureInputLock];
 }
 
 // ---------------------------------------------------------------- keys
@@ -1426,7 +1500,46 @@ static BOOL IsWordCell(const TermCell &cell) {
                      stringForType:NSPasteboardTypeString];
     const char *utf8 = str.UTF8String;
     if (!utf8 || !self.screen) return;
-    [self sendTyped:TerminalScreen::encodePaste(utf8, self.screen->bracketedPaste())];
+    const bool bracketed = self.screen->bracketedPaste();
+    TerminalScreen::PasteCheck check = TerminalScreen::checkPaste(
+        utf8, bracketed, [AppSettings shared].settings.terminalPasteWarning());
+    std::string text = check.text;
+    if (check.ask) {
+        switch ([self askBeforePasting:check]) {
+        case NSAlertFirstButtonReturn: break;
+        case NSAlertSecondButtonReturn: text = TerminalScreen::pasteAsOneLine(text); break;
+        default: return;
+        }
+        // The screen may have gone, or the program changed, while asking.
+        if (!self.screen) return;
+    }
+    [self sendTyped:TerminalScreen::encodePaste(text, self.screen->bracketedPaste())];
+}
+
+// VS Code's question (terminal.integrated.enableMultiLinePasteWarning):
+// Paste, Paste as One Line, or Cancel, with a preview of the first lines.
+// "Do not ask again" writes terminal.multiline-paste-warning = never.
+- (NSModalResponse)askBeforePasting:(const TerminalScreen::PasteCheck &)check {
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.alertStyle = NSAlertStyleWarning;
+    alert.messageText = [NSString stringWithFormat:@"Paste %d lines into the terminal?", check.lines];
+    NSString *preview = [[NSString alloc] initWithBytes:check.preview.data()
+                                                 length:check.preview.size()
+                                               encoding:NSUTF8StringEncoding] ?: @"";
+    NSString *why = self.screen && self.screen->bracketedPaste()
+        ? @""
+        : @"The program running here may run each line as it arrives.\n\n";
+    alert.informativeText = [NSString stringWithFormat:@"%@Preview:\n%@", why, preview];
+    [alert addButtonWithTitle:@"Paste"];
+    [alert addButtonWithTitle:@"Paste as One Line"];
+    [alert addButtonWithTitle:@"Cancel"];
+    alert.showsSuppressionButton = YES;
+    alert.suppressionButton.title = @"Do not ask again";
+    NSModalResponse r = [alert runModal];
+    if ((r == NSAlertFirstButtonReturn || r == NSAlertSecondButtonReturn) &&
+        alert.suppressionButton.state == NSControlStateValueOn)
+        [[AppSettings shared] writeValue:@"never" forKey:@"terminal.multiline-paste-warning"];
+    return r;
 }
 
 // Everything: the scrollback and the screen.

@@ -3468,7 +3468,10 @@ void testTerminalScreen() {
         CHECK(TerminalScreen::encodeChar(0xE9, 0) == "\xC3\xA9");
         CHECK(TerminalScreen::encodePaste("a\nb\r\nc", false) == "a\rb\rc");
         CHECK(TerminalScreen::encodePaste("x", true) == "\033[200~x\033[201~");
-        CHECK(TerminalScreen::encodePaste("x\033[201~y", true) == "\033[200~xy\033[201~");
+        // An ESC inside the brackets is shown, never sent (more in
+        // terminal_paste_tests.inc).
+        CHECK(TerminalScreen::encodePaste("x\033[201~y", true) ==
+              "\033[200~x\xE2\x90\x9B[201~y\033[201~");
     }
 }
 
@@ -3719,8 +3722,9 @@ void testSettings() {
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
     // format, python, keep-sorted, auto-save, ruler, word wrap, terminal,
     // develop, git, control and agent keys (with markdown.mermaid and
-    // agent.ide-link), and terminal.activate-venv and search.use-ignore-files.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 88);
+    // agent.ide-link), terminal.activate-venv, search.use-ignore-files and
+    // terminal.multiline-paste-warning.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 89);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -9957,6 +9961,7 @@ static void testMultiCaretOccurrences() {
 #include "page_check_tests.inc"
 #include "terminal_links_tests.inc"
 #include "ide_link_tests.inc"
+#include "terminal_paste_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9979,6 +9984,7 @@ int main() {
     testTerminalTrust();
     testTerminalFuzz();
     testTerminalHyperlinks();
+    testTerminalPaste();
     testSettings();
     testSettingsColorEditing();
     testLineComments();

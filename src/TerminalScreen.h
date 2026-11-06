@@ -238,8 +238,31 @@ public:
     // into control codes, Alt (Option as Meta) prefixes ESC.
     static std::string encodeChar(uint32_t cp, int mods);
     // Pasted text, wrapped in the bracketed-paste markers when the program
-    // asked for them. Newlines become carriage returns, as typed.
+    // asked for them. Newlines become carriage returns, as typed. Inside the
+    // markers every ESC is shown as U+241B (as xterm.js does), so a paste
+    // can neither end the bracket early (ESC [201~, however it is split or
+    // nested) nor send any other escape sequence.
     static std::string encodePaste(const std::string& text, bool bracketed);
+
+    // Whether a paste asks first: VS Code's
+    // terminal.integrated.enableMultiLinePasteWarning, as
+    // terminal.multiline-paste-warning ("auto", "always" or "never"; any
+    // other value is "auto"). Text without a line break never asks. "auto"
+    // does not ask when the program turned bracketed paste on (it takes
+    // the lines as text), and a command followed by one line break and
+    // nothing else is pasted without that break, so it does not run by
+    // itself. A lone CR counts as a line break here: the program gets it as
+    // Return.
+    struct PasteCheck {
+        bool ask = false;        // show the question before sending anything
+        std::string text;        // what to paste when not asking
+        int lines = 1;           // the lines the text holds
+        std::string preview;     // its first three lines, each cut at 30 characters
+    };
+    static PasteCheck checkPaste(const std::string& text, bool bracketed,
+                                 const std::string& mode);
+    // The text with its line breaks taken out (Paste as One Line).
+    static std::string pasteAsOneLine(const std::string& text);
 
 private:
     // A screen row: its cells, and whether it continues on the next row
