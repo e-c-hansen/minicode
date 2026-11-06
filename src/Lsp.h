@@ -136,6 +136,8 @@ typedef NS_ENUM(NSInteger, MCLspState) {
 @property(nonatomic, copy) NSString *program;      // its resolved path, or nil
 @property(nonatomic, assign) pid_t pid;            // 0 when not running
 @property(nonatomic, copy) NSString *message;      // why it failed or crashed, or nil
+// What a running server says it is doing ($/progress: "Indexing 40%"), or nil.
+@property(nonatomic, copy) NSString *progress;
 @property(nonatomic, copy) NSString *installHint;  // for a missing server
 // Python only: the interpreter the server analyses with (nil: the server's
 // own choice) and where that came from ("this folder", "settings",

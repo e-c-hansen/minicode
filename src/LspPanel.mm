@@ -229,6 +229,9 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
                               componentsJoinedByString:@" "]];
     }
     [card addArrangedSubview:Label(command, Mono(), muted, YES, YES)];
+    // What it says it is doing ($/progress), while it runs.
+    if (info.progress.length && info.state == MCLspStateRunning)
+        [card addArrangedSubview:Label(info.progress, Small(), PHex(0xC8C8C8), YES, YES)];
     if (info.state == MCLspStateNotInstalled) {
         NSView *rows = MCInstallCommandRows(info.key, kPanelWidth - 24, self.onRunInTerminal);
         if (rows) {
