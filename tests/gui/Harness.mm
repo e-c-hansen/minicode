@@ -191,12 +191,16 @@ static CGEventFlags CGFlags(NSEventModifierFlags f) {
     return g;
 }
 
-BOOL MCGuiPerformMenuKey(NSWindow *window, unsigned short keyCode, NSEventModifierFlags flags,
-                         NSString *chars, NSString *charsIgnoringModifiers) {
-    (void)charsIgnoringModifiers;
+// The key as the keyboard layout types it, as hardware sends it. A unicode
+// string set on the CGEvent (CGEventKeyboardSetUnicodeString) made the menu
+// refuse the event even when the characters read back the same ("=" for
+// Cmd+=, "o" for Shift+Cmd+O), so the string is set only when the layout
+// gives other characters than the ones asked for.
+static NSEvent *MenuKeyEvent(unsigned short keyCode, NSEventModifierFlags flags, NSString *chars,
+                             BOOL setString) {
     CGEventRef cg = CGEventCreateKeyboardEvent(NULL, keyCode, true);
     CGEventSetFlags(cg, CGFlags(flags));
-    if (chars.length) {
+    if (setString && chars.length) {
         unichar buf[8];
         NSUInteger n = MIN(chars.length, (NSUInteger)8);
         [chars getCharacters:buf range:NSMakeRange(0, n)];
@@ -204,6 +208,18 @@ BOOL MCGuiPerformMenuKey(NSWindow *window, unsigned short keyCode, NSEventModifi
     }
     NSEvent *e = [NSEvent eventWithCGEvent:cg];
     CFRelease(cg);
+    return e;
+}
+
+BOOL MCGuiPerformMenuKey(NSWindow *window, unsigned short keyCode, NSEventModifierFlags flags,
+                         NSString *chars, NSString *charsIgnoringModifiers) {
+    NSEvent *e = MenuKeyEvent(keyCode, flags, chars, NO);
+    const BOOL asked = (chars.length && ![e.characters isEqualToString:chars]) ||
+                       (charsIgnoringModifiers.length &&
+                        ![e.charactersIgnoringModifiers isEqualToString:charsIgnoringModifiers] &&
+                        ![e.charactersIgnoringModifiers.lowercaseString
+                            isEqualToString:charsIgnoringModifiers.lowercaseString]);
+    if (asked) e = MenuKeyEvent(keyCode, flags, chars.length ? chars : charsIgnoringModifiers, YES);
     if ([window performKeyEquivalent:e]) return YES;
     return [NSApp.mainMenu performKeyEquivalent:e];
 }
