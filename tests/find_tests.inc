@@ -444,6 +444,28 @@ static void testFolderReplace() {
         CHECK(!ec && writeFileAtomically(link.string(), "via link", &err));
         CHECK(fsys::is_symlink(link) && readTextFile(f.string(), 1 << 20, &back) &&
               back == "via link");
+        // A dangling link stays a link and the file it names is made, a
+        // relative link read against its own folder, through a second link.
+        fsys::create_directories(root / "dots", ec);
+        const fsys::path dangling = root / "dangling.conf", hop = root / "hop.conf";
+        fsys::create_symlink("dots/real.conf", hop, ec);
+        fsys::create_symlink("hop.conf", dangling, ec);
+        CHECK(!ec && writeFileAtomically(dangling.string(), "made", &err));
+        CHECK(fsys::is_symlink(dangling) && fsys::is_symlink(hop) &&
+              readTextFile((root / "dots" / "real.conf").string(), 1 << 20, &back) &&
+              back == "made");
+        // One naming a file in a folder that is not there writes nothing.
+        const fsys::path nowhere = root / "nowhere.conf";
+        fsys::create_symlink(root / "no" / "such.conf", nowhere, ec);
+        CHECK(!ec && !writeFileAtomically(nowhere.string(), "x", &err) && !err.empty() &&
+              fsys::is_symlink(nowhere));
+        // A loop is refused.
+        const fsys::path loopA = root / "loopA", loopB = root / "loopB";
+        fsys::create_symlink("loopB", loopA, ec);
+        fsys::create_symlink("loopA", loopB, ec);
+        CHECK(!ec && !writeFileAtomically(loopA.string(), "x", &err) && fsys::is_symlink(loopA));
+        for (const fsys::path &p : {dangling, hop, nowhere, loopA, loopB}) fsys::remove(p, ec);
+        fsys::remove_all(root / "dots", ec);
         // A hard link is written in place, so both names see it.
         const fsys::path hard = root / "hard.txt";
         fsys::create_hard_link(f, hard, ec);

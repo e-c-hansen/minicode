@@ -305,7 +305,8 @@ bool stripUtf8Bom(std::string* bytes);
 // permissions, owner, extended attributes, ACL and (on the Mac) creation
 // date, flushed to the disk itself (F_FULLFSYNC on the Mac), then renamed
 // over it, and the folder synced. A symlink is followed, so the link stays
-// a link. A file with other hard links, or one this user cannot give its
+// a link; a dangling one too, creating the file it names (in a folder that
+// must exist). A file with other hard links, or one this user cannot give its
 // owner back to, is written in place instead, so the other names keep
 // seeing it and its owner stays. False, with *error saying why, when
 // nothing was written. *written, when given, is the file's stamp as

@@ -335,17 +335,25 @@ SnapshotPlan snapshotPlan(double visibleHeight, double pageHeight, double scale,
     return p;
 }
 
-bool screenshotPath(const std::string& path, bool isFolder, std::string& error) {
+bool screenshotPath(const std::string& path, PathAt existing, bool overwrite, std::string& error) {
     if (path.empty() || path[0] != '/') {
         error = "the screenshot needs a path";
         return false;
     }
-    if (isFolder) {
+    if (existing == PathAt::Folder) {
         error = path + " is a folder: give a file name ending in .png";
         return false;
     }
     if (path.size() < 5 || lower(path.substr(path.size() - 4)) != ".png" || path.back() == '/') {
         error = "the screenshot is a PNG: give a path ending in .png";
+        return false;
+    }
+    if (existing == PathAt::Other) {
+        error = path + " is a symbolic link or not a plain file, so it was left alone";
+        return false;
+    }
+    if (existing == PathAt::File && !overwrite) {
+        error = path + " exists: give another name, or --overwrite to replace it";
         return false;
     }
     return true;

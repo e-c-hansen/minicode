@@ -3,6 +3,31 @@
 
 @implementation EditorController (Settings)
 
+// minicode's own rewrites of settings.conf (View > Theme, the IDE link)
+// ask every window first: a tab holding the file with unsaved changes
+// refuses them, as Replace in Folder leaves such files alone, and the
+// reason shows in the front window's status bar.
++ (void)load {
+    AppSettings.unsavedTextCheck = ^BOOL(NSString *path) {
+        for (NSWindow *w in NSApp.windows) {
+            id d = w.delegate;
+            if ([d isKindOfClass:[EditorController class]] && [(EditorController *)d tabForPath:path].dirty)
+                return YES;
+        }
+        return NO;
+    };
+    AppSettings.writeProblemHandler = ^(NSString *message) {
+        NSMutableArray<NSWindow *> *order = [NSMutableArray arrayWithArray:NSApp.orderedWindows];
+        if (NSApp.mainWindow) [order insertObject:NSApp.mainWindow atIndex:0];
+        if (NSApp.keyWindow) [order insertObject:NSApp.keyWindow atIndex:0];
+        for (NSWindow *w in order) {
+            if (![w.delegate isKindOfClass:[EditorController class]]) continue;
+            [(EditorController *)w.delegate showStatusNote:message];
+            return;
+        }
+    };
+}
+
 // Cmd+, : open the settings file in this window, creating it first.
 - (void)openSettings:(id)sender {
     AppSettings *cfg = [AppSettings shared];

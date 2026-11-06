@@ -476,7 +476,7 @@ MC_GUI_SUITE(zoomfit) {
             return;
         }
         [c.browser.userProbe snapshotTo:[shots stringByAppendingPathComponent:@"zoomfit-browser-fit.png"]
-                                   full:NO done:^(NSDictionary *, NSString *error) {
+                                   full:NO overwrite:YES done:^(NSDictionary *, NSString *error) {
             GCHECK(!error);
             done();
         }];

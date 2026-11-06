@@ -183,6 +183,57 @@ static void testClaudeHooks() {
         CHECK(merge(" \n\t").ok && merge(" \n\t").changed);
         CHECK(merge("{}").ok && merge("{}").changed);
     }
+
+    GROUP("hooks:symlink");
+    {
+        // `hooks --install` writes a settings.json that is a symlink (into a
+        // dotfiles folder) through the link: the link stays one.
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path dir = fs::temp_directory_path() /
+                             ("minicode-hooks-" + std::to_string((long)getpid()));
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir / "dotfiles", ec);
+        fs::create_directories(dir / "claude", ec);
+        auto read = [](const fs::path &p) {
+            std::ifstream in(p, std::ios::binary);
+            std::stringstream ss;
+            ss << in.rdbuf();
+            return ss.str();
+        };
+        const fs::path real = dir / "dotfiles" / "settings.json";
+        { std::ofstream(real) << "{}"; }
+        ::chmod(real.c_str(), 0640);
+        const fs::path link = dir / "claude" / "settings.json";
+        fs::create_symlink("../dotfiles/settings.json", link, ec);
+        std::string err;
+        CHECK(!ec && writeSettingsFile(link.string(), "{\"a\": 1}", 0600, err));
+        CHECK(fs::is_symlink(link) && read(real) == "{\"a\": 1}");
+        struct stat st;
+        CHECK(::stat(real.c_str(), &st) == 0 && (st.st_mode & 07777) == 0640);
+        int temporaries = 0;
+        for (const auto &e : fs::directory_iterator(dir / "dotfiles"))
+            if (e.path().filename().string().find(".minicode-") != std::string::npos) temporaries++;
+        CHECK(temporaries == 0);
+        // A dangling link: the file it names is made, with the mode asked.
+        const fs::path later = dir / "dotfiles" / "later.json", dangling = dir / "claude" / "later.json";
+        fs::create_symlink(later, dangling, ec);
+        CHECK(!ec && writeTarget(dangling.string()) == later.string());
+        CHECK(writeSettingsFile(dangling.string(), "{}", 0600, err));
+        CHECK(fs::is_symlink(dangling) && read(later) == "{}");
+        CHECK(::stat(later.c_str(), &st) == 0 && (st.st_mode & 07777) == 0600);
+        // A plain file is replaced; a loop and a folder are refused.
+        const fs::path plain = dir / "plain.json";
+        CHECK(writeTarget(plain.string()) == plain.string());
+        CHECK(writeSettingsFile(plain.string(), "x", 0600, err) && read(plain) == "x");
+        fs::create_symlink("loop2", dir / "loop1", ec);
+        fs::create_symlink("loop1", dir / "loop2", ec);
+        CHECK(writeTarget((dir / "loop1").string()).empty());
+        CHECK(!writeSettingsFile((dir / "loop1").string(), "x", 0600, err) && !err.empty());
+        CHECK(!writeSettingsFile((dir / "claude").string(), "x", 0600, err) &&
+              err.find("plain file") != std::string::npos);
+        fs::remove_all(dir, ec);
+    }
 }
 
 static void testNotifyCommandLine() {
