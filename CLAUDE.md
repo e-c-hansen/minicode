@@ -1,3843 +1,1840 @@
-# CLAUDE.md — working notes for MiniCode
+# CLAUDE.md — working notes for minicode
 
-MiniCode is a small native macOS code editor built from scratch, no Electron,
+minicode is a small native macOS code editor built from scratch, no Electron,
 no third-party dependencies. It links only Apple system frameworks (Cocoa,
-WebKit, CoreServices, Quartz for PDFKit, AVKit, AVFoundation and CoreMedia
-for video and audio) plus the C++ standard library and the
-system zlib. The LaTeX preview runs tectonic, an external binary the user
-installs or the app downloads on request, and the LSP client talks to
-language servers the user has installed in the same way. This file is the handoff
-for future sessions: architecture, workflow, and the hard-won gotchas.
+WebKit, CoreServices, Quartz for PDFKit and Quick Look, AVKit, AVFoundation and
+CoreMedia) plus the C++ standard library, the system zlib and the system
+libsqlite3. The LaTeX preview and the Markdown math run tectonic, which the
+user installs or the app downloads on request; the language servers, formatters
+and Claude Code it talks to are the user's own.
 
-There is also a GTK4 Linux port under `linux/` and an Android port under
-`android/`, both sharing the portable C++ core verbatim. They have their own
-handoff notes in `BUILD-LINUX.md`, `linux/README.md` and `android/README.md`;
-this file covers the macOS app except where it says otherwise.
+There is a GTK4 Linux port under `linux/` and an Android port under `android/`,
+both sharing the portable C++ core verbatim. Their handoff notes are
+`BUILD-LINUX.md`, `linux/HANDOFF.md`, `linux/README.md` and
+`android/README.md`; this file covers the macOS app except where it says
+otherwise. Almost everything added since 1.5.0 is Mac-only, with its logic in
+the core so the ports can follow (`ROADMAP.md`).
 
-## Build / test / run / release
+This file is architecture and the traps already paid for. What a commit
+checked, and its timings, is in its message (`git log`); each source file's
+opening comment says what it does in more detail than the lines below.
 
-- `make` — build `MiniCode.app`, signed with "MiniCode Local Signing" when
-  the login keychain has it, else ad hoc (a signature is required to run on
-  Apple Silicon). **Why the certificate** (2026-11-05): macOS keys what an
-  app was allowed (a protected folder, the microphone a terminal program
-  asks for) to its designated requirement, and an ad-hoc one is
-  `cdhash H"..."`, the exact binary, so every build, every restart into one
-  and every release asked again; the user saw it on every restart. Signed
-  with a certificate it is `identifier "com.minicode.editor" and
-  certificate leaf = H"..."`, the same from build to build. The certificate
-  is self-signed and untrusted, which neither codesign nor TCC minds
-  (checked in a scratch keychain: signing, `--verify --strict`, the binary
-  running). `scripts/make-signing-identity.sh` makes it once (openssl, then
-  `security import -T /usr/bin/codesign`, so codesign uses it with no
-  password prompt); the auto-mode classifier refused to run it for the
-  user, who runs it themselves. Releases built on that Mac are signed with
-  it too, so installs keep their answers across releases after the first.
-  Info.plist carries the usage descriptions (microphone, camera, Apple
-  events, Desktop, Documents, Downloads, removable and network volumes):
-  programs in the terminal count as minicode to macOS, and without
-  `NSMicrophoneUsageDescription` Claude Code's voice input was refused
-  without a prompt. Each source
-  file is its own object in `build/obj` with a `-MMD -MP` dependency file, so
-  touching one `.mm` rebuilds that file and relinks (2.5 s for Settings.cpp,
-  5 to 6 s for EditorController.mm, where everything took 78 s before, all
-  under load from other sessions), and a clean build takes 27 to 47 s on
-  the 8-core M3 instead of 126 s.
-  It runs one job per core by default: the Mac's GNU make 3.81 cannot tell a
-  makefile whether `-j` was given, so the top-level make adds `-j$(JOBS)`
-  itself (never with `clean` among the goals), and `make JOBS=1` builds one
-  file at a time. `build/obj/flags.txt` holds the compile command, so a new
-  compiler or new flags rebuild everything. `make test` does the same in
-  `build/test-obj` with the tests' own flags (no -O2, as before), and still
-  works with g++ on Linux.
-- `make test` — build and run the pure-C++ unit tests (`tests/run_tests.cpp`).
-  1403 checks over the tokenizer (including ~25,000 random edits comparing
-  incremental against full highlighting, and a timing line for a 100k-line
-  file), Markdown parser, terminal output stream and screen grid, settings
-  parser, comment toggling, the LaTeX and SyncTeX readers (including the preview's click-to-source
-  matching), JSON, the LSP
-  client, finding file references and URLs in terminal output, the
-  folder search (on a scratch tree in the temp directory), and the git
-  status and diff readers, the formatter planning and the line diff, and
-  the file tree's sort orders, ages and folder totals (`tree:*`, `sizes:*`)
-  (4,466 checks on 2026-11-05 with the themes and the inline agent; 4,238 earlier that day after merging the palette, editor keys, highlighting, build, language-server, grid-terminal and backups branches; 3,560 on 2026-11-04; 3,543 on 2026-11-01; 3,523 on 2026-10-31; 3,259 on 2026-10-20; 1,932 on 2026-09-29, with the Markdown
-  corpus in `tests/markdown/corpus.md` read from the repo root; the
-  corpus checks skip themselves where that file is not found).
-  Exits non-zero on failure. The Makefile uses clang++ on the Mac and make's
-  default (g++) elsewhere, so it runs on Linux too, and CI runs it there.
-- `make run [DIR=~/path]` — build and launch.
-- `make icon` — regenerate `resources/AppIcon.icns` from `tools/makeicon.m`.
-- `make demos [SCENES="tour latex"] [POSTERS=1]` — record the README's GIFs
-  into `docs/demos/` by playing scripted scenes in the real app (see "Demo
-  GIFs" below). Windows appear on screen for about 20 s per scene.
-- `make dist-zip` / `make dmg` — package for distribution.
-- `scripts/ppa.sh VERSION [N]` — builds the Ubuntu source package
-  (`debian/`, versions like `1.4.12-1~ppa1~resolute1`) in an ubuntu:26.04
-  container, signs it on the Mac with the gpg key named in
-  `~/.config/minicode/ppa-key-id`, and uploads it to
-  `ppa:echansen/minicode`. `--dry-run` and `--simulate` send nothing.
-  `release.sh` runs it last and skips it when no key is configured. The
-  one-time Launchpad setup is in `packaging/PPA.md`. Live since
-  2026-10-07 (account `echansen`, key 340F7652...1F40 in the Mac's gpg
-  with its passphrase in the Keychain); 1.4.12 was the first upload, built
-  for amd64 and published about 35 minutes after the upload. The ThinkPad
-  has its own key (AEE321CE...DB7F9335, made 2026-10-09) and no Docker, so
-  there ppa.sh runs the packaging tools directly (`packaging/PPA.md`, step 9).
-- `scripts/release.sh 1.2.0` — cut a release from a clean `main`: runs the
+## Build, test, run, release
+
+- `make` builds `MiniCode.app` (with `build/minicode-cli` copied into
+  `Contents/MacOS`), signed with "MiniCode Local Signing" when the login
+  keychain has it, else ad hoc (Apple Silicon needs a signature). **Why the
+  certificate** (2026-11-05): macOS keys what an app was allowed (a protected
+  folder, the microphone a terminal program asks for) to its designated
+  requirement, and an ad-hoc one is `cdhash H"..."`, the exact binary, so every
+  build, every restart into one and every release asked again. With the
+  certificate it is `identifier "com.minicode.editor" and certificate leaf =
+  H"..."`, the same from build to build. It is self-signed and untrusted, which
+  neither codesign nor TCC minds. `scripts/make-signing-identity.sh` makes it
+  once (openssl, then `security import -T /usr/bin/codesign`, so codesign uses
+  it with no prompt); the auto-mode classifier refused to run it for the user,
+  who runs it themselves. Releases built on that Mac are signed with it too
+  (1.5.6 was the first), so installs keep their answers across releases.
+  Info.plist carries the usage descriptions (microphone, camera, Apple events,
+  Desktop, Documents, Downloads, removable and network volumes): programs in
+  the terminal count as minicode to macOS, and without
+  `NSMicrophoneUsageDescription` Claude Code's voice input was refused without
+  a prompt.
+- Each source file is its own object in `build/obj` with a `-MMD -MP`
+  dependency file; `build/obj/flags.txt` holds the compile command, so new
+  flags rebuild everything. The Mac's GNU make 3.81 cannot tell a makefile
+  whether `-j` was given, so the top-level make adds `-j$(JOBS)` itself (one
+  job per core, never with `clean` among the goals); `make JOBS=1` builds
+  serially.
+- `make test` builds and runs the core's tests (`tests/run_tests.cpp` with the
+  `tests/*.inc` groups and the `*Tests.cpp` files) in `build/test-obj`, without
+  -O2, and exits non-zero on failure. Groups are named `area:case`. Counts grow
+  with every feature; do not quote them (8,490 at the end of 2026-11-05). Run
+  it from the repo root: corpus and README checks read files there and skip
+  themselves when missing. clang++ on the Mac, make's default (g++) elsewhere,
+  so CI runs it on Linux; `make test CXX=g++-16` reproduces CI's libstdc++ job
+  on the Mac. Checks that read the docs: `commands:readme` (every default key
+  is in the README's macOS column), `install:readme` (every install command is
+  in the README in backticks), `linux:build-lists` (linux/Makefile and
+  meson.build name the same core files), and the `settings:*` count of keys in
+  the default settings file.
+- `make guitest [SUITES="control agents"]`: the offscreen GUI checks in
+  `tests/gui` (see "Verification").
+- `make run [DIR=~/path]`, `make icon` (from `tools/makeicon.m`), `make demos
+  [SCENES="tour latex"] [POSTERS=1]`, `make membench`, `make install` (copies
+  `skills/minicode/SKILL.md` to `~/.claude/skills/minicode`), `make dist-zip`,
+  `make dmg`.
+- `scripts/release.sh 1.2.0` cuts a release from a clean `main`: runs the
   tests, stamps the version into `Info.plist` and `packaging/minicode.rb` and
   commits that, builds the zip and checks the built app reports the version,
-  publishes it on the Homebrew tap repo, bumps the cask's version + sha256,
-  then tags `v1.2.0` and pushes `main` with the tag. The version on the
-  command line is the only place a version is typed; never edit it by hand.
-  Then `brew update && brew upgrade --cask e-c-hansen/tap/minicode` so the
-  user's own copy has it; they run MiniCode from Homebrew and expect a
-  finished, user-visible Mac change to reach it.
-- `scripts/release.sh --linux 1.2.1` — a Linux-only release, which runs on
-  the ThinkPad too: tests, stamps `Info.plist` (the Linux build's version
-  comes from it), pushes `main` with the tag, and uploads to the PPA. No
-  GitHub Release, zip, APK or cask, so Homebrew and Obtainium stay on the
-  last full release. Ubuntu users get Linux changes only through a release
-  of one kind or the other.
+  publishes it on the Homebrew tap repo, bumps the cask's version and sha256,
+  then tags `v1.2.0` and pushes `main` with the tag, and runs the PPA upload
+  last (skipped when no key is configured). The version on the command line is
+  the only place a version is typed; never edit it by hand. Then `brew update
+  && brew upgrade --cask e-c-hansen/tap/minicode` so the user's own copy has
+  it; they run minicode from Homebrew and expect a finished, user-visible Mac
+  change to reach it.
+- `scripts/release.sh --linux 1.2.1`: a Linux-only release, which runs on the
+  ThinkPad too: tests, stamps `Info.plist` (the Linux version comes from it),
+  pushes `main` with the tag, uploads to the PPA. No GitHub Release, zip, APK
+  or cask, so Homebrew and Obtainium stay on the last full release. Ubuntu
+  users get Linux changes only through a release of one kind or the other.
+- `scripts/ppa.sh VERSION [N]` builds the Ubuntu source package (`debian/`,
+  versions like `1.4.12-1~ppa1~resolute1`) in an ubuntu:26.04 container, signs
+  it on the Mac with the gpg key named in `~/.config/minicode/ppa-key-id`, and
+  uploads it to `ppa:echansen/minicode` (`--dry-run` and `--simulate` send
+  nothing). Setup is in `packaging/PPA.md`. Account `echansen`, key
+  340F7652...1F40 in the Mac's gpg with its passphrase in the Keychain;
+  Launchpad builds amd64 about 35 minutes after an upload. The ThinkPad has its
+  own key (AEE321CE...DB7F9335) and no Docker, so there ppa.sh runs the
+  packaging tools directly (`packaging/PPA.md`, step 9). On the Mac it needs
+  Docker, which must not be started unattended (see "Verification").
 
 ## Layout of the code
 
-The parts that don't need a GUI are plain C++17 and are unit-tested in
-isolation. Keep them dependency-free.
+### The core (`src/*.cpp`, pure C++17, tested by `make test`)
 
-- `src/SyntaxHighlighter.{h,cpp}` — hand-rolled lexer, grammar chosen by file
-  extension (`families()`, about 200 of them): Python; C, C++,
-  Objective-C, Java, Go, Rust, Swift, Kotlin, C# and the other brace
-  languages (one C-like grammar); JavaScript, TypeScript and the JSON family,
-  JSON Lines included; '#'-comment files (shell, YAML, TOML, Ruby, Perl, R,
-  config and dotfiles); ';' (ini, Lisps, assembly); '--' (SQL, Lua,
-  Haskell); CSS; and TeX/LaTeX (`.tex`, `.ltx`, `.latex`, `.sty`, `.cls`,
-  `.bib`). Emits
-  `{start, length, style}` tokens. Lexes a line at a time from a `LexState`
-  (normal, block comment, triple string, backslash-continued string, TeX
-  math, TeX verbatim/comment/math environment); `IncrementalHighlighter<Ch>`
-  (char or char16_t) keeps line starts and end states and, after an edit,
-  re-lexes from the edited line until a line ends in the state it used to.
-  `tests/LegacyHighlighter.h` is the old whole-file lexer, frozen as the
-  oracle the tests compare against; it has no TeX, so for TeX the random
-  edits are checked against a full lex by the new highlighter instead
-  (`newGrammar` in the tests).
-  Python f-strings and t-strings (2026-11-04): the text is String, a
-  field's braces, `!r` and `:spec` Keyword (Dark+'s blue), and the
-  expression lexed as code, nested strings and f-strings included
-  (`lexStringAt`, `lexFBody`, `lexField`). A triple-quoted or continued
-  f-string carries `0x100` in its LexState quote; a field open at a line's
-  end is not carried. The frozen oracle never had them, so Python text
-  that may hold one (`mayHoldFString` in the tests) is checked against a
-  full lex instead; `syntax:python-fstrings` has the cases.
-  Literals (2026-11-05, after a review): JavaScript and TypeScript (not
-  the JSON family, `jsCode`) have their own line lexer, `lexJsLine`:
-  regex literals are String where an expression can start (line start,
-  after an operator, `( , = : [ ! & | ? { ; =>` and `return`, `typeof`,
-  `case` and the rest of `kJsBeforeRegex`), never after a name, number,
-  string, `) ] }` or `<` (so JSX's `{...p} />` and `</a>` stay out), and
-  only when they close on their line; template literals run over lines
-  with `${...}` fields lexed as code (`${` and `}` Keyword), nesting
-  through a stack ('T' per template, 1 + open braces per field) carried
-  as a `Template` state. Up to 2026-11-04 a backtick string ended with its
-  line. `lexLongString` adds strings that end at a fixed text: C++ raw
-  strings `R"d(...)d"` (u8R, uR, UR, LR; C++ extensions only), Rust
-  `r#"..."#` and plain `"..."` over lines, Rust lifetimes (`'a` Keyword,
-  no longer a string to the line's end), Go backtick strings, triple
-  quotes in Java, Swift, Dart, Groovy (escapes) and Kotlin, Scala (raw),
-  and C# `@"..."` and `"""..."""`. One open at a line's end carries as a
-  `RawString` state. Numbers take `1_000` (Python, JS, C family) and
-  `1'000'000` (C family but Rust; also Verilog's `4'b1010`). States that
-  need more than 16 bits (a 16-character delimiter, a template stack)
-  keep their text in one process-wide table (`stateTextId`, in the header's
-  LexState comment), so the same text has the same id in every
-  highlighter and equality stays two integer compares. The tests compare
-  against the oracle only where none of this can apply
-  (`mayHoldNewLiteral`; rs, go, cs, swift, kt and java are in `newGrammar`),
-  the random edits run rs, go, cs, swift and kt too, and the groups are `syntax:js-regex`,
-  `js-templates`, `cpp-raw`, `rust`, `go-raw`, `triple-quoted`,
-  `literal-misc`. Not done: Swift `#"..."#` and `\(...)` interpolation,
-  Kotlin, Scala, Dart and C# string templates (`"${a["k"]}"` still ends at
-  the inner quote), Groovy slashy strings, a field's block comment or
-  backslash-continued string over lines inside a JS template, and a
-  regex at the start of a line that continues a division from the line
-  above.
-  TeX has its own line lexer (`lexTexLine`) and uses only the existing
-  styles: commands are Keyword, preamble and definition commands
-  (`\usepackage`, `\newcommand`) Preprocessor, sectioning commands Function,
-  `\begin`/`\end` names Type, `%` comments Comment (not `\%`), math
-  (`$`, `$$`, `\(`, `\[` and the math environments) Number with the commands
-  inside still Keyword, and `\verb` and verbatim/listing bodies String. A
-  blank line ends any open math, as it does in TeX, so an unclosed `$`
-  recolors only its own paragraph. Tokens start and end only at ASCII
-  characters, which keeps UTF-8 and UTF-16 results identical.
-- `src/MarkdownParser.{h,cpp}` — Markdown -> flat list of styled runs, by
-  CommonMark's rules plus GitHub's tables, strikethrough, task lists,
-  alerts and bare web addresses; also `lines()`, how it read each source
-  line, which `MarkdownEdit` works from. See "Markdown" in the gotchas.
-- `src/Settings.{h,cpp}` — the settings file (`key = value`): parsing with
-  per-line errors, defaults, and the resolved color of every surface
-  (opacity applied, fallbacks from `window.*`). All color decisions live here
-  so they are unit-tested; the GUI only converts `Rgba` to NSColor.
-- `src/LatexDoc.{h,cpp}` — LaTeX source -> the byte ranges that hold editable
-  text (fields, prose runs, list items, math), plus the two edits the preview
-  can make (replace a span, add an `\item`). A structural reader, not a
-  typesetter: it reports only what it understands, and an edit replaces exactly
-  one byte range, so unknown macros can never be damaged.
-- `src/SyncTex.{h,cpp}` — reads the `.synctex` file TeX writes beside the PDF:
-  a point on a page -> candidate source lines, best first.
-- `src/Json.{h,cpp}` — small JSON value, strict parser, compact serializer.
-- `src/LspClient.{h,cpp}` — LSP client with no I/O: framing, handshake,
-  document sync, request/response matching, result parsing (completion
-  with resolve, signature help, references, prepareRename, code actions),
-  WorkspaceEdits flattened to sorted per-file edits, workspace/applyEdit,
-  workspace/configuration, UTF-16
-  position conversion, server choice by extension, and how each Python
-  server is told its interpreter. See "LSP" below.
-- `src/PythonEnvs.{h,cpp}` — finding Python interpreters (project venvs,
-  the active one, conda, pyenv, poetry, pipenv, uv, PATH) without running
-  any; the Linux port can use it as is.
-- `src/TerminalStream.{h,cpp}` — pty byte stream -> styled lines (SGR colors,
-  in-line cursor movement) + shell-integration events (OSC 133 marks, OSC 7
-  cwd). A line model, not a screen: handles sequences and UTF-8 split across
-  reads, and leaves alternate-screen text out of the log. Also home to the
-  shared pieces: `TermParser` (the DEC/ANSI state machine, with a Handler
-  interface), `applySgr`, `termCharWidth`.
-- `src/TerminalScreen.{h,cpp}` — the cell grid for full-screen programs
-  (xterm subset: CUP/CUU.., ED/EL/ECH, IL/DL/ICH/DCH, DECSTBM + IND/RI/SU/SD,
-  alt screen 47/1047/1049, DECSC/DECRC, pending wrap, tabs, wide chars, DEC
-  line drawing, DECCKM/keypad/bracketed paste, DSR/DA replies, resize), plus
-  key/paste encoding. Tests replay bytes recorded from vim and less. Also the
-  scrollback (`setScrollbackLimit`, `lineCell` with negative lines,
-  `historyBase`), off (0) unless the host sets a limit, so Android is
-  unchanged; see "The grid terminal".
-- `src/TermLinks.{h,cpp}` — what Cmd+click can open in a line of terminal
-  output: `path:line:col`, Python's `File "x", line N`, `file(line,col)`
-  from TypeScript and MSVC, and URLs with sentence punctuation trimmed.
-  Text only; each port checks the path exists before showing a link.
-- `src/FolderSearch.{h,cpp}` — Find in Folder's search: a folder, a query and
-  a cancel flag in, matches out (path, line, column in characters and in
-  bytes, cleaned line text). The Mac's `Search.mm` rules (two characters,
-  case-insensitive, dotfiles and `node_modules`/`build`/... skipped, 1 MB and
-  UTF-8 only, 2000 matches, ANSI stripped), plus symlink-loop and named-pipe
-  safety. Used by the GTK port; `Search.mm` still has its own copy of the
-  loop, and Android can use this one.
-- `src/GitStatus.{h,cpp}` — reads what git prints, runs nothing:
-  `git status --porcelain=v2 --branch -z` -> branch, upstream, ahead/behind,
-  detached and no-commit-yet states, and entries (path, rename source,
-  staged and unstaged letters, untracked, conflict); `git diff` -> every
-  line with a kind (file header, hunk header, context, added, removed, "\ No
-  newline") and its old/new line numbers, also grouped into files and hunks.
-  Combined diffs (`diff --cc`, a conflict) are understood. The Mac, the
-  GTK port and Android use it.
-- `src/GitGraph.{h,cpp}` — the commit graph, also reading only: `git log
-  -z --topo-order` records, `for-each-ref` refs (tags peeled, symrefs such
-  as origin/HEAD dropped) grouped into labels per commit, `rev-list
-  --left-right` into outgoing and incoming sets, `git show` into a header
-  and patch, relative dates, and `layoutGraph`, the lane assignment (see
-  "Git panel"). The GTK port's panel uses it too, and so does Android's,
-  which also compiles `linux/src/GitModel.cpp` (it has no GTK in it).
-- `src/MarkdownTasks.{h,cpp}` — task lists (`- [ ]`, `- [x]`): a box
-  ticked from the preview (one byte, `toggleBox`), the task key over a
-  selection and Return continuing a list (`toggle`, `newline`, in UTF-16
-  units like LineComments), done/total counts and a file's open tasks.
-  What is a task is decided by `MarkdownParser::lines`, so never one in
-  code. `FolderSearch::findTodos` is the TODO list built on it. See "Task
-  lists".
-- `src/EditorTabs.{h,cpp}`: the rules for the Mac's tabs (see "Tabs and
-  the landing state").
-- `src/Formatter.{h,cpp}`: Format Document's decisions, no I/O: language
-  by extension, the plan (settings command, else the project's configured
-  formatter, else Google-style defaults in order), config discovery through
-  an `Fs` of callbacks, venv folders, argv templating with `{file}` and
-  line ranges, and the error summary. See "Formatting".
-- `src/LineDiff.{h,cpp}`: a line diff (Myers, capped) in UTF-16 offsets and
-  `mapOffset`, which carries a caret or the top of the pane across it.
-- `src/InstallHints.{h,cpp}`: how to install every language server and
-  formatter MiniCode talks to (tool, what it gives, homepage, commands best
-  first with the installer each needs), and `suggest`, which picks the
-  first command this Mac can run. The one table behind the app's install
-  notes, `Formatter::Plan::installHint` and the README (see "Install hints").
-- `src/MathTex.{h,cpp}`: the TeX side of the Markdown preview's math,
-  doing no I/O: which formulas may share a batch, how one is rewritten for
-  LaTeX, the batch document (a page per formula) and reading tectonic's
-  log. Only the Mac uses it so far; see "Math in the Markdown preview".
-- `src/AutoIndent.{h,cpp}`: what Return, Tab, Shift+Tab and Backspace do
-  to indentation, and the dedent a typed closer or Python colon causes, by
-  the file's language, in UTF-16 units like LineComments. Each result is
-  one replacement. See "Indentation and sorting".
-- `src/ChangeRequest.{h,cpp}`: Request a Change's prompt, the commands
-  typed into the terminal to start and resume Claude Code, and how the
-  source folder and its fresh build are recognised (`change:*` tests).
-- `src/MultiCaret.{h,cpp}`: several carets (`multicaret:*` tests):
-  normalizing them, typing, Backspace and Delete (never across a line
-  break, so a column stays a column), the arrow moves, Paste one line per
-  caret, Copy. UTF-16 offsets. See "Several carets".
-- `src/KeepSorted.{h,cpp}`: Google's keep-sorted (`keep-sorted start` /
-  `keep-sorted end` blocks), ported from its Go code with its options, and
-  plain line sorting; the editors' commands in UTF-16. See "Indentation
-  and sorting".
-- `src/InlineAgent.{h,cpp}`: the inline agent's prompts and answers, no
-  I/O (`agent:*` tests in `tests/agent_tests.inc`): the edit prompt, the
-  SEARCH/REPLACE reply and applying it to a buffer, the terminal command
-  prompt and reading the command back, the task prompt. See "The inline
-  agent".
-- `src/CommandPalette.{h,cpp}`: the palette's matching and order (fuzzy,
-  tiers, recent first), its modes (`>`, `:`), key equivalents as glyphs,
-  and Quick Open's file walk and ranking (`palette:*` tests). See "The
-  palette".
+No dependencies and no I/O unless noted, so the ports can use it. New logic
+goes here first, with tests; the GUI only displays it.
 
-The GUI is Objective-C++ (`.mm`), the normal way to drive AppKit from C++.
+- `SyntaxHighlighter` (about 200 grammars, `IncrementalHighlighter`),
+  `MarkdownParser` (CommonMark plus GitHub, math, `lines()`), `MarkdownEdit`
+  (the block behind a preview click), `MarkdownTasks` (task lists), `MathTex`
+  (the Markdown math batch), `LatexDoc` (editable ranges of LaTeX source),
+  `SyncTex` (page point to source lines), `Json`.
+- `Settings` (the settings file, themes, every resolved color), `Commands` (the
+  command registry and keys.conf), `EditorTabs` (tab rules), `Backups` (backups
+  of unsaved tabs, with a POSIX `Fs`), `FileDetails` (tree sorts, ages, folder
+  totals), `RunFile` (Run File's quoting).
+- Editing: `LineDiff` (Myers, UTF-16, `mapOffset`), `LineComments`,
+  `AutoIndent` (with `ScanCache`), `KeepSorted`, `MultiCaret` (carets and line
+  commands), `LineIndex` (line starts, a gap buffer), `BracketMatch`,
+  `Folding`, `TextFind` (find and replace, UTF-16 and UTF-8), `Formatter`
+  (Format Document's plan), `InstallHints`.
+- Language servers: `LspClient` (protocol, results, WorkspaceEdits, diagnostics
+  with versions, completion edits, symbols, folding ranges, the second server's
+  routing and `DiagnosticStore`, the Problems rows), `PythonEnvs` (interpreters
+  found without running any).
+- Terminal: `TerminalStream` (bytes to lines and shell events; `TermParser`,
+  `applySgr`, `termCharWidth`), `TerminalScreen` (the grid, scrollback, reflow,
+  find, mouse encoding), `TermLinks`.
+- `FolderSearch` (Find and Replace in Folder, atomic writes, TODOs),
+  `GitStatus` (status, diffs, git time limits), `GitGraph` (log, refs, lanes).
+- `CommandPalette` (matching, modes, Quick Open, symbol rows), `SymbolOutline`
+  (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
+  `ChangeRequest`, `ControlProtocol` (the control channel and the command
+  line's parsing), `SideBySide` (diff rows).
+- Agent work: `AgentTranscript`, `AgentIndex`, `AgentEvidence`, `AgentView`.
+- Files: `FileSniff` (how a file is shown), `Csv`, `JsonOutline`, `Notebook`.
 
-- `src/main.mm` — `AppDelegate`, the menu bar, multi-window bookkeeping, and one
-  local key monitor (only for Ctrl+`).
-- `src/EditorController.{h,mm}` — the window: file tree, editor, data-safety,
-  Markdown rendering, find, scope of most features. This is the big file.
-- `src/LineComments.{h,cpp}` — Cmd+/: comment marker per file name, and the
-  toggle itself, in UTF-16 offsets so results map straight onto NSRange.
-- `src/AppSettings.{h,mm}` — singleton that loads
-  `~/.config/minicode/settings.conf` (or `$MINICODE_SETTINGS`), watches it,
-  and posts `MCSettingsDidChangeNotification`.
-- `src/Terminal.{h,mm}` — one terminal: zsh on a pty via forkpty. Grid mode
-  (the default, `terminal.mode`): the grid is the terminal and zsh runs its
-  own line editor. Line mode: a log view with a line input, swapped for the
-  grid while a program needs a screen. See "The grid terminal".
-- `src/TerminalPanel.{h,mm}` — the dock holding the terminals: tabs, panes
-  side by side in a tab, the active one. See "Several terminals".
-- `src/RunFile.{h,cpp}` (pure C++, tested) and `src/RunCommand.{h,mm}` —
-  Run File's quoting, templates and virtualenv search, and the command for
-  a file (`MCRunCommandForFile`, `MCPythonInterpreterFor`).
-- `src/TerminalGridView.{h,mm}` — draws a `TerminalScreen` and encodes keys
-  (via `TerminalScreen::encodeKey`/`encodeChar`) straight to the pty; in grid
-  mode also the scrollback view, selection, input methods and the right
-  click menu (`textInput`).
-- `src/Browser.{h,mm}` — WKWebView panel.
-- `src/TabStrip.{h,mm}` — the row of open files over the editor (draws and
-  reports clicks; EditorController owns the tabs).
-- `src/Latex.{h,mm}` — LaTeX preview: runs tectonic, shows the PDF with PDFKit,
-  and turns a double-click into a popover editing the source behind that text.
-  Also `MCTectonicPath` and `MCDownloadTectonic`, which the math uses too.
-- `src/MarkdownMath.{h,mm}`: the Markdown preview's math. Runs tectonic on
-  a page's formulas in the background, caches the pages, and draws them
-  as attachments on the text's baseline.
-- `src/Search.{h,mm}` — scoped, project-wide text search window.
-- `src/GitPanel.{h,mm}` — running git (`MCGitRunSync`), the Source Control
-  panel (`MCGitPanel`) and diff coloring (`MCGitDiffText`). See "Git panel".
-- `src/Lsp.{h,mm}` — language server processes, `CodeTextView` (the editor's
-  NSTextView subclass: squiggles, tooltips, Cmd+click), the completion popup,
-  and `LspSession`, one per window.
-- `src/Appearance.{h,mm}` — "Adjust Settings…" for context menus
-  (`MCAddAdjustSettingsItem`), the View submenu, `MCSurfaceTextField`, and
-  the opacity slider popover. See "Adjust Settings…" in the UI map.
-- `src/FormatRunner.{h,mm}` — runs the planned formatter (`MCFormatText`):
-  finds it, pipes the buffer through it off the main thread, times it out.
-- `src/LspPanel.{h,mm}` — the status bar's server item, the Language
-  Servers popover and the Select Python Interpreter sheet.
-- `src/LspPicker.{h,mm}` — `MCPickerPopup`, the list by the caret for
-  references and quick fixes, and `MCRenameBox`, Rename Symbol's field.
-  See "Rename, references and quick fixes" under LSP.
-- `src/FileDetails.{h,cpp}` (pure C++, tested) and `src/TreeDetails.{h,mm}`
-  — the file tree's sizes, dates and sort orders: `TreeSort` (the order of
-  one folder's entries), `Age` ("5 min", "Saved 14:32"), `FolderSizes`
-  (the totals cache and the POSIX walker); and on the Mac the formatting,
-  `MCFolderSizer` (the background queue), `MCTreeCell` (the row view) and
-  `MCShowContextMenuInWindow` (Shift+F10). See "Sizes, dates and sorting".
-- `src/ChangePanel.{h,mm}` — Request a Change (Shift+Cmd+K): the bar,
-  `MCChangeSession` (one per window), the restart record and the detached
-  relaunch. See "Request a Change".
-- `src/EditingCommands.{h,mm}` — AutoIndent and KeepSorted on an
-  NSTextView: the indentation keys, the electric dedent, F9 / Shift+F9 and
-  sorting before a save. EditorController only calls in from
-  `textView:doCommandBySelector:`, `shouldChangeTextInRange`,
-  `textDidChange:`, two menu actions and `saveCurrentFile:`.
-- `src/MultiCaretView.{h,mm}` — `MCMultiCarets`, the editor's several
-  carets: the column drag, Option+click, the key commands while two or
-  more are in play, and drawing them. `CodeTextView` owns one.
-- `src/AgentPanel.{h,mm}` — the inline agent (Cmd+I): `MCAgentBar`,
-  `MCAgentRun` (Claude Code in print mode, off the main thread) and
-  `MCAgentSession`, one per window. EditorController's `inlineAgent:`
-  builds an `MCAgentContext` for what has the keyboard.
-- `src/PalettePanel.{h,mm}` — the palette over a window (Shift+Cmd+P,
-  Cmd+P, Ctrl+G): the menu walk, the overlay, the list. See "The palette".
-- `src/Demo.{h,mm}` — demo scenes and the window recorder behind
-  `make demos`. Inert unless `MINICODE_DEMO` is set; two one-line hooks in
-  `main.mm`. `tools/makegif.m` turns the recorded frames into a GIF.
+### The Mac app (Objective-C++)
+
+- `main.mm`: `AppDelegate`, the menus, windows, the open handler, and the one
+  local key monitor (which asks `MCKeymapHandleKeyDown` first).
+- `EditorController.{h,mm}` and its categories (below); `EditorTab` (`MCTab`),
+  `EditorPanes` (`PanelHost`, `DragBar`, `PanelScrollView`), `FileTree`
+  (`FileItem`, `ClickOutline`, `gShowHidden`), `EditorPage.h`.
+- The editor: `SourceStorage` (`MCSourceStorage`), `CodeTextView.mm`, `Gutter`,
+  `FoldView`, `EditorFont`, `EditorFind`, `MultiCaretView`, `EditingCommands`
+  (AutoIndent and KeepSorted on an NSTextView), `MarkdownCode` (code colors in
+  previews).
+- Language servers: `Lsp.mm` (`LspSession`, one per window), `LspServer`
+  (processes), `LspPopups` (completion, hover, signature), `LspShared.h` (only
+  the Lsp files import it), `LspPanel` (status item, popover, interpreter
+  sheet), `LspPicker` (references and fixes list, rename box), `ProblemsPanel`,
+  `InstallPanel`.
+- `AppSettings`, `Appearance` (Adjust Settings, Theme menu, opacity popover),
+  `Keymap`.
+- Terminal: `Terminal` (`TerminalView`, `MCPty`, the shell integration),
+  `TerminalGridView`, `TerminalPanel`, `TerminalFindBar`, `RunCommand`.
+- Viewers: `Latex`, `MarkdownMath`, `MarkdownImage`, `MarkdownEditPanel`,
+  `FileViewers`, `QuickLook`, `CsvTable`, `JsonOutlineView`, `SqliteView`,
+  `CompareView`.
+- `Browser` (with `MCKeyboardWindow`), `TabStrip`, `Search` (Find in Folder and
+  TODOs window), `GitPanel`, `TreeDetails`, `FormatRunner`, `BackupStore`,
+  `PalettePanel`, `Navigation`.
+- Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
+  `ControlServer`, `ControlCommands`, `AgentNotes`, `AgentModel`,
+  `AgentsPanel`, `AgentPages`, `AgentWindow`.
+- `Demo` (`make demos`, inert unless `MINICODE_DEMO`), `Bench`
+  (`MINICODE_BENCH`).
+- Elsewhere: `tools/minicode-cli.cpp`, `scripts/minicode-launcher`,
+  `tools/makegif.m`, `tools/procmem.c`, `skills/minicode/SKILL.md`,
+  `tests/fixtures/claude`, `tests/gui`, `tests/latex`, `tests/markdown`,
+  `tests/keepsorted`.
+
+### EditorController and its categories
+
+`EditorController.mm` keeps init, dealloc, the window delegate,
+`validateMenuItem:`, undo and redo, and the forwarding accessors of the active
+tab. The rest is in `EditorController+<Concern>.mm`: Layout, StatusBar, Panels
+(terminal dock, browser, keyboard between panes), Search, Tree, TreeDetails,
+Tabs (tabs, closed tabs, saving), Persistence (sessions, backups, auto-save,
+files changed outside), Rendering (what the editor's slot shows), Highlighting,
+Settings, Format, EditorView (line numbers, brackets, zoom, comments, tasks,
+editing hooks), Navigation, LanguageServers, Agents (inline agent, Request a
+Change, control channel, agent work), Markdown and MarkdownRender. Rules, so it
+stays warning-free:
+
+- `EditorController+Private.h` holds the class extension (ivars in its ivar
+  block, private properties), each category's private methods in an `@interface
+  EditorController (Concern)`, and helpers several files share as `static
+  inline` (so a file that does not call one is not warned). Only
+  EditorController files import it. Shared non-window state is a global defined
+  in one file (`gShowHidden` in FileTree.mm), never a static in a header.
+- Methods the rest of the app calls go in `EditorController.h` in an
+  `@interface EditorController (Concern)` named for the implementing category:
+  a method the class declares but a category implements draws warnings. For the
+  same reason host protocols (MCChangeHost, MCAgentHost, MCAgentNotesHost,
+  MCAgentWorkHost, MCNavigatorHost) are adopted by their categories, not the
+  class extension.
+- A KVO context and its observer share a file (the player's, in +Rendering).
+- No new weight: a feature goes in its own files and classes, and
+  EditorController gains only hooks.
 
 ## UI map (read this before UI work)
 
-Window content view (`EditorController`, built in `init`):
-
 ```
 container (PanelHost, laid out by hand in layoutContainer)
-├── blurView (NSVisualEffectView)                 window.blur, whole window
-├── titlebarView + titleLabel                     drawn when customTitlebar
-├── NSSplitView (vertical, thin divider)          sidebar | right pane
-│   ├── treeScroll → ClickOutline (NSOutlineView)  file tree, bg #252526
-│   │   rows are MCTreeCell: icon, name, size and age (Shift+Cmd+I)
-│   │   (or gitPanel, MCGitPanel, swapped in by Ctrl+Shift+G)
-│   └── rightArea (PanelHost, laid out by hand in relayoutRightArea)
-│       ├── tabStrip (MCTabStrip)                  top of the editor's side, with tabs
-│       ├── emptyLabel                             editor's side, no file open
-│       ├── editorScroll → textView (NSTextView)   top left (editor's slot), bg #1E1E1E
-│       ├── latex, imageView, pdfView, playerView,
-│       │   diffScroll                             editor's slot, in its place
-│       ├── browser (BrowserView)                  top right, beside the editor
-│       ├── terminalPanel (MCTerminalPanel)        docked bottom, full width
-│       │   ├── strip (MCTabStrip) + buttons       tabs (the editor's strip), +, ◫
-│       │   └── TerminalView per terminal          bg #181818; a tab's side by side
-│       ├── browserDivider (DragBar, vertical)     editor | browser, kept on top
+├── blurView (NSVisualEffectView)                 window.blur
+├── titlebarView + titleLabel                     with a custom title bar
+├── NSSplitView (vertical)                        sidebar | right pane
+│   ├── treeScroll → ClickOutline                 file tree, MCTreeCell rows,
+│   │   a Worktrees node first; or MCGitPanel (Ctrl+Shift+G) or the
+│   │   Agents panel (Shift+Cmd+A) swapped in with replaceSubview:
+│   └── rightArea (PanelHost, relayoutRightArea)
+│       ├── changeBar (MCChangeBar)                Request a Change, top, over all
+│       ├── tabStrip (MCTabStrip)                  top of the editor's side
+│       ├── installBar (MCInstallBar)              under the strip
+│       ├── emptyLabel                             no file open
+│       ├── editorScroll → CodeTextView            over MCSourceStorage, with
+│       │   MCLineGutter (vertical ruler), the MCEditorFind bar at top
+│       │   right, agent notes and the MCAgentBar over the text
+│       ├── or in the editor's slot: LatexView, image, PDFView, AVPlayerView,
+│       │   diffScroll, CompareView, Quick Look, CSV table, SqliteView,
+│       │   an EditorPage (Evidence, a worktree's changes)
+│       ├── JSON outline                           right of the text
+│       ├── browser (BrowserView)                  right of the editor
+│       ├── problemsPanel (MCProblemsPanel)        above the terminal
+│       ├── terminalPanel (MCTerminalPanel)        bottom, full width: strip,
+│       │   +, ◫, TerminalViews side by side, MCTerminalFindBar
+│       ├── browserDivider (DragBar, vertical)
 │       └── termDivider (DragBar)                  kept topmost
-├── status bar (buildStatusBarInContainer)        bottom strip: savedLabel ("Saved
-│                                                 14:32", details on), settings errors,
-│                                                 language servers, the hints key
-└── hintsPanel (buildHintsPanelInContainer)       Shift+Cmd+H overlay
+├── status bar                                    Saved..., settings and keys
+│                                                 errors, problem counts, server
+│                                                 item, ↻ restart, hints key
+├── hintsPanel                                    Shift+Cmd+H
+└── MCPaletteOverlay                              while the palette is open
 ```
 
-- Panel backgrounds, panel text, syntax and Markdown colors come from
-  `Settings` (defaults are the VS Code Dark+ values in `Settings.cpp`). Each
-  view has an `applySettings` method that runs at startup and on
-  `MCSettingsDidChangeNotification`; it must recolor what is already on
-  screen (editor re-highlights, Markdown re-renders keeping scroll, terminal
-  output marked with `MCTerminalDefaultForeground` gets the new color). A new
-  setting goes in `Settings.cpp` (parser + default + the commented
-  `defaultFileText`, which a unit test checks key by key) and the view's
-  `applySettings`.
-- Not yet configurable, still inline hex helpers (`Hex`, `THex`, `SHex`):
-  accents (#4EA1F7), muted #9CA3AF, divider line #333333, hints overlay,
-  terminal panel messages, the Search window, and the ANSI palette in
-  `TermColor::rgb()`. `linux/src/Palette.h` mirrors the macOS defaults.
-- The window uses `NSWindowStyleMaskFullSizeContentView` always, so content
-  runs under the title bar. `layoutContainer` keeps the split view below it
-  using `contentLayoutRect` (empty before the window is shown, so
-  `titlebarHeight` falls back to frame math, or the split comes out 0px tall).
-  With a custom title bar (any `titlebar.*` key, or a non-opaque window) the
-  system title is hidden and `titleLabel` mirrors `window.title` via KVO.
-- Translucency: a translucent color must be painted once, and as a plain
-  layer color. The tree and editor use `PanelScrollView`, which draws no
-  scroll/clip background and sizes a layer-backed backdrop view in `tile`.
-  Two traps paid for here: a clip view's translucent `backgroundColor` still
-  renders opaque, and NSScrollView never resizes extra subviews (a backdrop
-  added with autoresizing stays 0x0). Property checks passed both times; only
-  a pixel capture caught it (see verification below).
-- Settings file in the editor: `applyHighlighting` gives each color value a
-  swatch (background = the color, `NSLinkAttributeName` = `minicode-color`).
-  `textView:clickedOnLink:` opens NSColorPanel; `colorPicked:` rewrites the
-  line with `Settings::setColor` (which uncomments it) and saves after
-  150 ms. `linkTextAttributes` is only a pointing-hand cursor so swatches
-  keep their colors. An opacity value (`*.opacity`, commented or not) is a
-  `minicode-opacity` link with a dotted accent underline; a click opens
-  `MCOpacityPopover` (a slider) and `opacityPicked:` rewrites the line with
-  `Settings::setOpacity` (uncommenting it, keeping a `%` form) the same way.
-- **Adjust Settings… (right click, Mac, 2026-10-20).** Every surface's context
-  menu ends with "Adjust Settings…", which opens the settings file at the
-  keys that color that surface. The map is `Settings::appearanceSurfaces()`
-  (ids `tree`, `git`, `editor`, `syntax`, `markdown`, `terminal`, `browser`,
-  `statusbar`, `titlebar`, `window`, plus placeholders `tabs` and
-  `terminal-tabs`): its own keys in file order, then the `window.*`
-  fallbacks; `settings:appearance-surfaces` checks every key is in
-  `defaultFileText`. `src/Appearance.{h,mm}` holds the shared pieces:
-  **a new view adds the item with one line**,
-  `MCAddAdjustSettingsItem(menu, @"surface", self)` at the end of its
-  `menuForEvent:` (or `willOpenMenu:withEvent:` for WKWebView), or
-  `view.menu = MCAdjustSettingsMenu(@"surface", view)` for a plain view;
-  `MCSurfaceTextField` does it for a text field's editing menu (an
-  NSTextField's delegate is never asked; the field editor asks the field
-  itself). The item finds the window's EditorController through the view
-  (`showSettingsForSurface:`), which calls `openSettings:` once (the place
-  to change when files open as tabs), selects the first key's value, centres
-  its line and tints all the key lines with layout-manager temporary
-  attributes that fade out after about 3 s (never over a swatch). View >
-  Adjust Settings lists the surfaces (`adjustAppearance:`, the id as
-  `representedObject`). The hints overlay has no keys (inline hex), so it
-  has no item. Verified offscreen (123 checks; see the commit message).
-  A settings file written before some of the surface's keys existed (the
-  user's was) has no line to show: `Settings::missingSurfaceLines` gives
-  their commented defaults from `defaultFileText`, each with the comment
-  just above it there, and `appendSettingsLines:title:` adds them at the end
-  under one "# Added by Adjust Settings: ..." line, as one undo step, saving
-  at once only if the file had no unsaved changes.
-- Layout is manual frames, not Auto Layout (see gotchas for why). Pane state
-  flags: `sidebarCollapsed`, `editorHidden`, `terminalVisible`,
-  `browserVisible`, plus NSSplitView's own collapse of `rightArea`.
-- **Editor, browser and terminal together** (2026-10-20). Up to 1.4.14 the
-  browser took the editor's slot. Now `relayoutRightArea` splits the top
-  into `editorRect` (left) and `browserRect` (right) when both show, and
-  every view that takes the editor's slot (LaTeX, image, PDF, player, diff)
-  is given `editorRect`. The browser's share is `browserFraction` (0.5 at
-  first, kept per window while hidden, like `terminalHeight`), clamped so
-  each side keeps `kMinSideWidth` (150); a top narrower than 300 splits
-  evenly. `browserDivider` is a `DragBar` with `vertical` set; dragging it
-  within 16 points of the left edge hides the editor, of the right edge the
-  browser, and dragging back out in the same drag shows it again
-  (`browserBarDraggedTo:`). Cmd+2 focuses the terminal and Cmd+3 the
-  browser's address bar, each opening its pane if hidden. URLs from the
-  terminal and Markdown links open the browser beside the editor. Checked
-  offscreen (62 checks: frames, bars, drags and snaps, the share across a
-  window resize, Shift+Cmd+E, the terminal bar to the top, an image and a
-  PDF in the editor's part, a link, Cmd+1/2/3 through the menu, including
-  from inside the web page, collapse when all three are hidden). The GTK
+- Colors come from `Settings` (defaults are VS Code Dark+'s). Each view has an
+  `applySettings`, run at startup and on `MCSettingsDidChangeNotification`,
+  that recolors what is on screen (editor re-highlights, Markdown re-renders
+  keeping scroll, terminal text marked `MCTerminalDefaultForeground` follows).
+  A new setting goes in `Settings.cpp` (parser, default, the commented
+  `defaultFileText`, which a test checks key by key) and the view's
+  `applySettings`. Still inline hex (`Hex`, `THex`, `SHex`): accents #4EA1F7,
+  muted #9CA3AF, dividers #333333, the hints overlay, terminal panel messages,
+  the Search window, the git panel, the developer amber #E8A33D, the ANSI
+  palette in `TermColor::rgb()`; `linux/src/Palette.h` mirrors the defaults.
+- The window always uses `NSWindowStyleMaskFullSizeContentView`;
+  `layoutContainer` keeps the split below the title bar with
+  `contentLayoutRect`, empty before the window is shown, so `titlebarHeight`
+  falls back to frame math (or the split is 0 px tall). With a custom title bar
+  (any `titlebar.*` key, or a non-opaque window) `titleLabel` mirrors
+  `window.title` via KVO.
+- **Translucency**: paint a translucent color once, as a plain layer color.
+  `PanelScrollView` draws no scroll or clip background and sizes a layer-backed
+  backdrop in `tile`. Traps: a clip view's translucent `backgroundColor`
+  renders opaque; NSScrollView never resizes extra subviews (an autoresizing
+  backdrop stays 0x0); the backdrop stops where the gutter starts, which paints
+  its own. Property checks passed every time; only pixels caught these.
+- **Manual frames**, not Auto Layout. Flags: `sidebarCollapsed`,
+  `editorHidden`, `terminalVisible`, `browserVisible`, plus NSSplitView's
+  collapse of `rightArea`. Position the sidebar divider only after the window
+  is on screen and laid out, or it collapses to zero. Cmd+B fought the
+  delegate's 160 px minimum; `sidebarCollapsed` lets it drop to 0. Dragging the
+  divider far right collapses the right pane (`canCollapseSubview:`, a 5 px
+  grab area either side, minimum 150). `relayoutRightArea` re-raises the drag
+  bars (the terminal's last) only when out of order, never during a drag,
+  counting the agent bar last. Bars take the cursor from a tracking area
+  (cursor rects lose to text views) and clear their hover light in
+  `viewDidHide`.
+- **Editor, browser and terminal**: the top splits into `editorRect` and
+  `browserRect` (`browserFraction`, `kMinSideWidth` 150 a side), and every view
+  in the editor's slot gets `editorRect`. A bar dragged within 16 points of an
+  edge hides that side; the smallest top is the tab strip plus 40 points
+  (`kMinTopSlotHeight`). Shift+Cmd+E or the terminal bar at the top sets
+  `editorHidden`; `collapseRightAreaIfEmpty`; opening a file, Cmd+1 and the
+  preview toggle call `revealEditor`. Cmd+1 focuses what the tab shows
+  (`focusActiveDocument`), never a text view hidden behind a viewer. The GTK
   port still puts the browser in the editor's place.
-- **The page never takes the keyboard by itself.** WebKit makes the web
-  view first responder whenever the page focuses a field (an autofocus box
-  on load, `focus()` from a script), even hidden: it took the keyboard from
-  the terminal after Cmd+2 and from the editor after Run File. The window is
-  an `MCKeyboardWindow` (Browser.h), whose `makeFirstResponder:` asks
-  `MCWebView mc_refusesKeyboard` before the current responder resigns
-  (refusing in `becomeFirstResponder` left the window itself first
-  responder). Allowed: a mouse down in the page as the current event, Tab
-  from the toolbar, or a page loaded from the toolbar (address bar, back,
-  forward, reload) while the keyboard is still in the toolbar; never while
-  hidden. `navigateToString:` (links from the terminal and Markdown) clears
-  the toolbar allowance. Tab and Shift+Tab in the address bar go into the
-  page through the field's delegate (`control:textView:doCommandBySelector:`
-  calling `selectKeyViewFollowingView:`) while the field editor still has
-  the keyboard, over a key view loop of bar, page and buttons; left to
-  NSTextField, the window was first responder by the time it moved on, the
-  page refused, and the keyboard stayed with the window (fixed 2026-10-20).
-- Return, Tab, Shift+Tab and Backspace follow `AutoIndent` on all three
-  ports (see "Indentation and sorting"): `textView:doCommandBySelector:` via
-  `MCIndentCommand` on the Mac, `onViewKey` taking the key on Linux unless
-  the completion list is open (`takesReturn`), and `CodeEditText` on
-  Android, for key events, for "\n" and "\t" committed by the keyboard,
-  for `deleteSurroundingText` and for the symbol row's Tab.
-- A new shortcut goes in three places: the menu in `main.mm` (plus a
-  forwarding method on `AppDelegate`), `hintsText` in EditorController (one
-  `appendHintsRow:` call), and the README shortcut table, which is
-  sorted by action and has a column per platform. The hints panel is an
-  attributed string on tab stops; never line it up with spaces, because the key
-  glyphs (⌘ ⇧ ⌃ ⌫ ⏎) differ in width even in a monospaced font.
-- Fonts: system font for Markdown/UI, `monospacedSystemFontOfSize:` 12-13 for
-  code and terminal.
-
-## LaTeX preview (read before touching it)
-
-Opening a `.tex`/`.ltx`/`.latex` file sets `isLatex` and opens in preview, the
-same way Markdown does; `LatexView` takes the editor's slot in
-`relayoutRightArea` (the text view hides, the split logic is unchanged).
-
-- **tectonic does the typesetting.** Found via `MINICODE_TECTONIC`, then
-  `~/Library/Application Support/MiniCode/bin`, then PATH and the Homebrew
-  directories (a Finder-launched app has a short PATH). If it is missing the
-  panel offers to download the pinned release into Application Support.
-- **The buffer is typeset from a hidden sibling** `.<name>.minicode.tex` in the
-  document's own folder, so relative `\input`/`\includegraphics` still resolve
-  and the user's file is never written. It is deleted when tectonic exits.
-  Output (PDF + `.synctex.gz`) goes to `NSTemporaryDirectory()/MiniCode-latex`.
-- **Compiles are debounced (0.6s) and generation-counted**; a result from a
-  stale run is dropped. A run has 5 minutes (2026-11-05), then SIGTERM and
-  SIGKILL 2 s later, and the log starts "tectonic did not finish within 5
-  minutes, so it was stopped." Before, a document that loops
-  (`\def\x{\x}\x`) spun a core for ever and every later edit queued behind
-  it; the limit is long for the sake of a first run's downloads on a slow
-  network. Checked offscreen with a tectonic that ignores SIGTERM. The scroll position and zoom are restored by page index
-  and point, since the `PDFDestination` belongs to the old document.
-- **Unknown commands are looked through, not skipped.** Real documents (and
-  custom classes like an Overleaf resume) wrap their text in `\normalfont{}`,
-  `\raisebox{}{}`, `\href{}{}` and the author's own macros; text the reader
-  cannot see is text the preview cannot edit, and the click then lands on the
-  wrong line. So `LatexDoc` skips only a list of known machinery commands
-  (`\label`, `\includegraphics`, `\setlength`, ...) and otherwise enters the
-  first braced argument that `looksLikeProse` accepts. That heuristic is what
-  keeps `{0.5em}`, `{l}`, `{sec:intro}`, `{GDM.png}` and URLs out, while
-  letting `{2014 - 2019}` (digits plus spaces) in. A URL only disqualifies a
-  group that is one unbroken token: the user's "italics block" bug was
-  `\it{Note: ... \href{https://...}{...}}`, skipped whole because the text
-  inside held `://`. A group that holds commands is always entered, since
-  what is inside gets judged one level down anyway.
-- **Letters spelled as commands stay in the run.** `\ss`, `\o`, `\LaTeX`,
-  `\c{c}` and `\'{e}` are part of a word, so they no longer end a span
-  (`kTextSymbols`, `kLetterAccents`), and `displayText` reads them as the
-  letters they print. `\\` ends a run like `&` does (the check for it used to
-  compare against two backslashes and never fired). `\url{...}` is a field,
-  since its argument is printed text.
-- **A click that matches nothing refuses.** `spanForClick` returns null rather
-  than the nearest span whenever there was a real word to match on, because
-  opening the wrong text for editing is worse than opening none. Only a
-  "word" with no letters or digits at all (a bullet, a logo) falls back to
-  the nearest span. Text TeX makes up is refused on purpose: section and page
-  numbers, and words that come from a `\newcommand` body.
-- **A single letter or digit is always refused**, before any matching, even
-  when the text around it agrees with the source. Page, section, list and
-  footnote numbers are single characters TeX made up, and they used to fall
-  through to the nearest span (a page number opened the paragraph above it,
-  a section number its heading). Context could tell most real ones apart,
-  but not with a guarantee, and the word beside the character opens the same
-  span anyway. The price, accepted by the user: a list item's number or
-  label, a one-letter word ("a", "I") and a one-letter math variable no
-  longer open anything; click a neighbouring word instead.
-  The exception is a single Han, kana or Hangul character: those scripts
-  have no spaces, so PDF word selection often returns one ideograph, and
-  refusing them made CJK documents uneditable from the page. Such a
-  character is taken only when the page text around it agrees with the
-  source; Greek and accented single letters stay refused.
-- **Click to source**, all of it in `MCLatexSpanAtPoint` (Latex.mm), which the
-  sweep harness calls too:
-  - **Lines: `SyncTexIndex::textHitsAtPoint`.** A line of text's box carries
-    the line its *paragraph* closed on, often several past the words. The
-    glue and kerns between words carry the line each word was read on, so the
-    record just right of the click comes first, then the one just left, then
-    the plain box hits. Glue sitting on a box's end edge closes the box (a
-    table cell) and may belong to the next row, so then left goes first.
-  - **Word: PDFKit's `selectionForWordAtPoint:`, plus 40 characters either
-    side** (`extendSelectionAtStart:`/`AtEnd:`). A word TeX hyphenated at a
-    line end is rejoined from that context (`MCJoinHyphenation`).
-  - **Match: `LatexDoc::matchKey`** on both sides: letters and digits,
-    lowercase, ligatures split (the PDF gives U+FB03 for "ffi"), accents
-    dropped (é, ß -> e, ss), other scripts kept. A key of three characters or
-    fewer must be a run of whole words in the span ("at" is not in "Math"),
-    except in math, which the PDF reads back as "x2" for `x^2`.
-  - **Choice: context.** Every nearby span holding the word is a candidate,
-    scored by how much of the page text around the click agrees with the
-    text around the word in the source (`lead`/`trail`, built from the
-    neighbouring spans so URLs and comments never get in). A later candidate
-    must beat the nearest by 4 characters, because the PDF's reading order is
-    not always the source's: a tabular reads back column by column.
-  - **Extras**: spans cover all their lines (`endLine`), not just the first;
-    `\title`/`\author`/`\date` are candidates at `\maketitle`; a word split by
-    a font change mid-word (`foo\emph{bar}baz`) matches a *join*, one span
-    over the whole chain, offered only when its range has balanced braces;
-    a footnote mark glued to a word ("footnote1", "1The") gets a second try
-    without the digits.
-- **Measure before changing the matcher.** `tests/latex/sweep.sh doc.tex [-v]`
-  typesets a document the way the app does and double-clicks every word of
-  every page (first, middle and last character) through
-  `MCLatexSpanAtPoint`, reporting found / refused / wrong, plus "not placed"
-  when a common word landed in a span that nothing confirms is the right
-  occurrence. Single characters are counted apart, with how many still
-  offered a span, which must be 0 (the Mac harness reports this but has not
-  been rebuilt since the change). `tests/latex/torture.tex` is the corpus
-  of constructs. On
-  2026-09-21 the torture document went from 76% found-and-placed to 98.7%
-  (the rest is generated text, correctly refused) and the user's resume
-  (four versions) from 87% to 100%, with zero wrong in both. Set
-  `TECTONIC_CACHE_DIR` to a scratch copy of the cache when running it. One
-  trap paid for: PDFKit's `characterBoundsAtIndex:` drifts away from
-  `page.string`'s indices as a page goes on; the bounds of a one-character
-  `selectionForRange:` do not.
-- **Edits are byte splices.** The popover holds the span's own LaTeX source
-  (not plain text), so no escaping is invented and nothing is re-serialized.
-  Edits arrive back at `EditorController` through `onSourceEdited`, mark the
-  buffer dirty, and are saved only by Cmd+S. Preview edits have their own undo
-  stack inside `LatexView` (source snapshots, capped at 50), reached through
-  `undo:`/`redo:` on the responder chain, with `EditorController` forwarding
-  when focus never got as far as the preview. The text view keeps its own undo
-  for typing; the two stacks are separate.
-- **Export PDF (Shift+Cmd+S)**: `exportPDF:` opens a save sheet, then
-  `LatexView pdfForPath:source:completion:` hands back the PDF bytes exactly
-  as tectonic wrote them (kept in `_pdfData` with the source they came from,
-  `_pdfSrc`). If that source is not the buffer's, it typesets now, skipping
-  the debounce, and answers when a run finishes with nothing queued; a
-  failed run answers with an error. Works from the source view too (the
-  LatexView is created hidden if needed). The menu item is `s` with an
-  explicit Cmd|Shift mask, like the other shifted shortcuts. **Testing trap**:
-  a synthetic `NSEvent keyEventWithType:` for Shift+Cmd+S with
-  `charactersIgnoringModifiers:@"s"` matches *Save* (Cmd+S) first and writes
-  the file, and with `@"S"` matches nothing. Neither is what a keyboard does.
-  `CGEventCreateKeyboardEvent` + `CGEventPostToPid(getpid(), ...)` goes
-  through the window server like real hardware, and it reached Export and
-  not Save.
-- **Packages missing from tectonic's bundle.** tectonic's bundle is an
-  older TeX Live than Overleaf's. The user's resume needed `twemojis`, which the
-  bundle lacks; the fix was to put `twemojis.sty` and `all-twemojis.pdf` in the
-  document's own folder (TeX looks there first). tectonic cannot generate a
-  `.sty` from a `.dtx`/`.ins` itself: its virtual filesystem throws away files
-  docstrip writes. A short script that keeps the `.dtx`'s code lines (not
-  starting with `%`, outside other guards) produced a working `.sty`.
-- **Spacing differs from Overleaf by design.** Overleaf defaults to pdfLaTeX,
-  tectonic is XeTeX; fonts and line breaking differ, and `\hfill`-built lines
-  show it most. The user was told to switch Overleaf to XeLaTeX to compare.
-- **The Linux port** (`linux/src/Latex.cpp`, over `PageWords.cpp` and
-  `LatexClick.cpp`) follows all of the above with poppler in place of PDFKit,
-  and differs on purpose in a few places, listed in `linux/HANDOFF.md` item 7:
-  the GtkTextBuffer keeps the source and preview edits are splices into it
-  (so undo is the buffer's), a click is traced only while the PDF is of the
-  buffer as it is, a click on no text refuses, and tectonic's download is the
-  static musl build checked against a pinned SHA-256.
-  `tests/latex/sweep-linux.sh` is its sweep: 0 wrong on torture.tex and
-  notes.tex, and none of their 54 single-character clicks offered a span.
-  It is the sweep that found page and section numbers falling through to the
-  nearest span, which led to refusing single characters.
-- Headless testing worked well here: drive `openEditorForPage:point:`,
-  `startAddItem:` and `commitEdit:` directly from a `MINICODE_LATEXTEST` block,
-  finding page points with `[PDFDocument findString:]`. Point
-  `MINICODE_TECTONIC` and `TECTONIC_CACHE_DIR` at scratch copies so the test
-  neither needs the network nor touches the user's cache.
-
-## Math in the Markdown preview
-
-Math written as GitHub and pandoc write it is typeset on the Mac by
-tectonic, the LaTeX preview's engine. Everywhere else (Linux, Android, and
-the Mac without tectonic or with `markdown.math = false`) a formula shows
-as its TeX in the code style. Built 2026-09-29 for the user's 580-line
-cheatsheet of 287 formulas, whose math the old parser mangled (`\{` shown
-as `{`, underscores pairing into italics).
-
-- **The parser** (`MarkdownParser.cpp`) reads math before any other
-  inline rule, so nothing inside it is escaped, emphasised or linked.
-  Inline `$...$` follows pandoc: the opening `$` is not followed by a
-  space, and the first `$` after it closes it, but only if it neither
-  follows a space nor comes before a digit; otherwise there is no math at
-  all, which keeps "$5 and $10" text. Inside math a backslash and the
-  character after it are skipped together (so `\$` never closes) and so is
-  a code span (a `$` in one neither opens nor closes). `$$...$$` inline is
-  display math; `\(...\)` is inline math. Display blocks: a line starting
-  with `$$` or `\[` and the line ending with `$$` or `\]` (the same one or
-  a later one, no blank line between; two formulas on one line make a
-  paragraph), which interrupts a paragraph as a fence does, and GitHub's
-  ```` ```math ```` fence. `\[...\]` counts only as such a block, because
-  inline it is how Markdown escapes brackets (`\[WIP\]`). `matchBrackets`
-  skips math as the inline pass does, so a `[` in a formula never pairs
-  with a `]` outside it. Memos keep a line full of openers with no closer
-  linear (60,000 in about 55 ms unoptimized).
-- **Runs.** `MdRun::math` is 1 (inline) or 2 (display) and `text` the TeX
-  between the delimiters (an inline formula's line breaks become spaces).
-  `code` is set too, which is all the Linux and Android previews needed to
-  show it verbatim. Display math inside a paragraph gets a line of its own:
-  "\n" runs end the text before it and start the text after it (not in a
-  heading or a table cell). A `$$` block is one `MdLine::Math` block, which
-  `MarkdownEdit::blockAt` opens whole, delimiters included
-  (`Block::Math`, "Formula" in the popovers). A ```` ```math ```` fence
-  stays a Code block and opens its lines, as other fences do. Android gets
-  flag bits 17 and 18 and `MD_BLOCK_MATH`; tests are `md:math-*`, and
-  `tests/markdown/math.md` holds every case (`md:math-corpus` counts it).
-- **The batch** (`MathTex`, tested in `mathtex:*`). One LaTeX document per
-  run. Each formula is set with `\setbox\mcbox\hbox{$...$}` (never a macro
-  argument, so TeX recovers from a stray `\par`), `\displaystyle` for
-  display math, and shipped by `\mcship` as a page exactly its box plus
-  1 pt on each side; per-page `\pdfpagewidth` works in XeTeX. The log gets
-  `MC:BEGIN:k` before each formula and `MC:k:page:wd:ht:dp` as it ships, so
-  `readLog` finds each formula's page, box and first `! ` error
-  ("Undefined control sequence" gets the culprit from the context line).
-  The output routine throws pages away, so an error's debris cannot add a
-  page. `check` refuses what could derail the formulas after it:
-  unbalanced braces, a `$` outside braces, `\input`, `\end{document}`,
-  `\write` and a few more. `prepare` rewrites what MathJax takes and LaTeX
-  does not: `\mathbb{1}` (amssymb has no blackboard digits and silently
-  draws a wrong glyph) and `\mathbbm` become dsfont's `\mathds`; align,
-  gather, equation, multline and the like become their inline forms;
-  `\tag{x}` in display becomes `\qquad\text{(x)}`; `\label`, `\nonumber`
-  and `\notag` go; Greek letters and common symbols typed as Unicode become
-  commands (in `\ensuremath` inside `\text`); blank lines go. The preamble
-  loads amsmath, amssymb, amsfonts, mathtools, bm, dsfont, mathrsfs, cancel
-  and xcolor, and provides `\R \N \Z \Q \C \argmax \argmin \abs \norm \lt
-  \gt \sgn \tr \diag \Bbb \bold`. **Bump `MathTex::kVersion`** when any of
-  this changes: it is in every cache key.
-- **The run** (`MarkdownMath.mm`). Requests (`MCMathTypeset`) collect for
-  50 ms and go to one background run on a serial queue; those made during
-  a run wait for the next, so edits in quick succession share runs.
-  tectonic gets `-Z continue-on-errors --untrusted --print --keep-logs
-  --reruns 0`: one pass is a quarter faster, and `--untrusted` keeps shell
-  escape off. A formula TeX complains about fails alone, the complaint its
-  tooltip, and its neighbours typeset. A page must be the size the log
-  gave its box, or that formula fails. A run with no PDF fails the formula
-  TeX was in and runs the rest again. A watchdog kills tectonic after 15 s
-  without output once TeX is in the formulas (`\def\x{\x}\x` loops for
-  ever without growing), and since `--print` streams TeX's output, the last
-  `MC:BEGIN` names the formula to fail; before the formulas it allows 60 s,
-  because tectonic prints a line per file it downloads. A run that reaches
-  no formula fails its formulas for 60 s (`transient`) and the page says
-  why in a line at its top; tectonic panics rather than printing `error:`
-  when a first run cannot reach its bundle, and `firstError` reads the
-  panic. Failures are kept in memory only: a missing font on a bad network
-  can look like a formula's own error.
-- **The cache.** tectonic's PDF is kept whole under
-  `~/Library/Caches/MiniCode/math` (`$MINICODE_MATH_CACHE` in tests) with a
-  `.idx` beside it (key, page, depth). A run's formulas share its fonts, so
-  the cheatsheet's 287 take 175 KB; a PDF per formula, drawn through
-  `CGPDFContext`, embedded the fonts again and took 7.5 MB. The key is a
-  SHA-256 of `kVersion`, display or inline, and the TeX. The size is not
-  in it, since the pages stay vector and are scaled as they are drawn. The
-  index is read at the first lookup, newer batches winning, and a batch
-  trimmed away makes its formulas typeset again. Past 50 MB the batches
-  used longest ago go, down to 40 MB; reading a batch from disk touches
-  its date, at most once a day.
-- **Drawing** (`MCMathAttachment` and its cell; the editor is TextKit 1).
-  The cell draws the PDF page as vectors, so Retina and any scale are
-  sharp, in a transparency layer filled with the text color in source-in
-  mode: TeX draws black, and the formula takes the body, heading, quote or
-  link color around it (a `\color` inside a formula is flattened to that
-  too). `cellBaselineOffset` puts the box's baseline on the text's. The
-  frame is stretched to the font's ascender and descender, because TextKit
-  1 sizes a line from its glyphs and a line holding only an attachment (a
-  table cell) otherwise put its baseline higher than its neighbours'. The
-  page's side margins are drawn past the frame, not in it, or every
-  formula stood apart from the comma after it. Trap for tests: an
-  attachment glyph's location is the bottom of its frame, not the
-  baseline. A 10 pt TeX em is drawn at 1.12 times the text's size, about
-  halfway between matching Computer Modern's capitals and its lowercase to
-  the system font's.
-- **Too wide.** A formula wider than a whole line is scaled down to fit
-  (the whole line's width, never what is left of it, or a formula near
-  the end of a line shrank instead of moving to the next). Scaling was
-  chosen over horizontal scrolling: a scroll view inside a line needs
-  TextKit 2's view providers, which the editor never asks for, and a
-  scaled formula stays whole and readable up to about twice too wide,
-  where a clipped one hides its end.
-- **Tables.** AppKit's automatic table layout knows nothing of an
-  attachment's width: it made the cheatsheet's columns equal and shrank
-  formulas in narrow ones to smudges. A width on some cells threw the rows
-  out of line, and a width on the table did nothing. So a table holding
-  typeset formulas gets its columns from `MCTableColumnWidths`, as a
-  browser lays out a table: each column's widest word or formula as its
-  least, all its text on one line as its most, the room shared out
-  between, set as percentages on every cell. Tables without typeset
-  formulas keep AppKit's layout.
-- **Never blocking.** The render takes what the cache has (memory, then
-  the index) and shows the rest as TeX, marked `kMarkdownMath` `@[key, n]`,
-  asking for it once the page is built. `MCMathTypesetNotification` names
-  the settled keys; if the page waits for any of them it renders again
-  50 ms later through `renderMarkdownKeepingPlace`, which counts a
-  formula's TeX turning into one attachment character as it counts a web
-  picture's alt text, and allows for the line at the top appearing or
-  going. A result for another page lands in the cache only. Display math
-  shown as TeX sits in a code block's box; typeset, it is centred with
-  4 points above and below.
-- **No tectonic.** The math shows as TeX and one muted line at the top of
-  the page says so, ending in a Download tectonic link. `MCDownloadTectonic`
-  (Latex.mm) is the LaTeX preview's download, now shared; a second caller
-  waits for the first. There is no prompt.
-- **Timings** (M3, offscreen). The cheatsheet (251 inline and 36 display
-  formulas) renders in about 60 ms with its TeX showing, and the typeset
-  formulas arrive 0.36 s later when tectonic's own cache is warm. Opened
-  again it renders with all 287 typeset from the disk cache, in about the
-  same 60 ms, with nothing left to wait for. With tectonic's cache empty
-  the first run downloads the LaTeX format, packages and fonts (42 MB) and
-  took 44 s. The user's first page did cost that once, on 2026-09-29, and
-  with nothing on screen but the TeX they took it for math that would never
-  be typeset. So while formulas are out with tectonic the page's top line
-  says "Typesetting N formulas…" (`mathNoteTypesetting:`), adding that the
-  first run downloads LaTeX files when tectonic's cache folder is empty or
-  missing (`TECTONIC_CACHE_DIR`, else `~/Library/Caches/TectonicProject.Tectonic`).
-  The line goes with the render that brings the formulas in, and
-  `renderMarkdownKeepingPlace` already allows for the line coming or going.
-- **Verified** (2026-09-29) with an offscreen harness like the git
-  panel's (all of src/ except main.mm, window ordering swizzled to no-ops,
-  activation Prohibited, formula and tectonic caches in the scratchpad):
-  the cheatsheet and `tests/markdown/math.md` rendered to PNGs in the dark
-  theme and looked at; every inline formula's baseline equal to its
-  line's text to 0.00 pt; no black pixel in 40 formulas (tinted); no
-  formula that fits a line shrunk; every typeset formula mapping to an
-  editable block and the 36 display blocks opening whole; the text at the
-  top of the pane staying put to the point at six places down the
-  cheatsheet while its math arrived and the page moved by up to 2,400
-  points; a double-click on a display formula opening its `$$` block and
-  Save leaving only that formula as TeX until it came back; a second page
-  opened while the first page's math ran getting one re-render, its own;
-  math.md's three bad formulas showing TeX's complaints as tooltips; a
-  looping formula failing alone after 16 s; math off; tectonic missing (a
-  scratch home through `CFFIXED_USER_HOME`), the note, and its link
-  downloading tectonic into the scratch home and typesetting the page; no
-  network (a dead proxy, an empty tectonic cache) giving the note with
-  tectonic's reason. Batch pages of a sample of formulas matched the
-  standalone PDFs that the cheatsheet's rebuild had checked against the
-  original page's MathJax. The GTK port built in the Docker container and
-  showed math.md as TeX; the Android debug build compiled.
-- **Needs the user's eyes**: the look on a real screen (the size against
-  the text, the centring, the measured tables), hovering a failed formula
-  for its tooltip, the Download tectonic link on a Mac without tectonic,
-  the first page with their own tectonic cache, and scrolling the
-  cheatsheet while its formulas arrive. Known gaps: copying a typeset
-  formula copies an attachment character, not its TeX, and `\color`
-  inside a formula is drawn in the text's color.
-
-## Task lists (all three ports, 2026-10-07)
-
-The user asked for TODO lists "with clean formatting and an interactive
-check box", done the way other editors do it. They are GitHub's Markdown
-task lists, so files stay portable.
-
-- **Preview.** `MdRun::task` (1 open, 2 checked) is set on a task item's
-  marker run and its own text runs. The Mac draws the box as an
-  `MCTaskBox` attachment (`MCTaskBoxCell`, accent fill and a tick when
-  checked) carrying `NSLinkAttributeName` `minicode-task:<line>`; a click
-  reaches `textView:clickedOnLink:` (not `clickedOnCell:`, which never
-  fired) and goes through `applyMarkdownSource:`, so a toggle is a preview
-  edit like any other: dirty, undoable, never saved by itself (the user
-  ruled out autosave). The second click of a double-click on a box is
-  swallowed in `editMarkdownAtCharacter:`. Checked text takes
-  `markdown.done` (#858585, a new key) and a strikethrough. Linux puts a
-  widget in a child anchor (`linux/HANDOFF.md` item 14); Android draws a
-  span in `MarkdownPreview.kt` (`android/README.md`, "Task lists and the
-  TODO list").
-- **Keys.** Toggle Task: Cmd+L / Ctrl+L / leader L (Markdown source only,
-  one undo step). TODOs: Shift+Cmd+D (Shift+Cmd+L until 2026-11-05, now Select All Occurrences) / Ctrl+Shift+L / leader W. Return in
-  a list item calls `MarkdownTasks::newline` before the keep-the-indent
-  code on every port. The title shows "3 of 7 done", refreshed 0.3 s after
-  typing stops.
-- **"[ ] item" with no dash is not a task** (GitHub, Obsidian and VS Code
-  agree), so it previews as one run-on paragraph with no boxes. The user's
-  own TODO.md was written that way and was why they saw no boxes on
-  2026-10-09, with 1.4.12 running fine. The task key used to give such a
-  line a second box (`- [ ] [ ] item`); it now adds only the dash and keeps
-  the box and its tick. The core's rule for what is a task is unchanged.
-- **TODOs window.** On the Mac and Linux it is the Find in Folder window
-  in a TODOs mode (the field filters the scan; it rescans on every show),
-  on Android `TodoPane.kt` in the file list's place. A tag counts only
-  after a comment opener or first on a line with a colon, as Todo Tree
-  does, so `int TODO = 1` and prose stay out; in Markdown only `<!--`
-  counts as an opener, since `#` is a heading.
-- **Verified**: 50-odd core checks (`tasks:*`); the Mac with an offscreen
-  harness that includes `main.mm` (48 checks: boxes, a click ticking the
-  source with the file untouched on disk, undo, the title count, Cmd+L
-  through the real menu, Return, the TODOs window and opening a row) and
-  pictures looked at; Linux in the Docker container with real clicks and
-  keys (it found and fixed a GTK crash: embedded widgets must come off
-  the view before a re-render); Android build only, no phone connected.
-  A synthetic Shift+Cmd+L (the TODOs key then) matched Cmd+L or nothing (the Export PDF trap
-  above), so the TODOs menu item was checked by its key and mask. Needs
-  a person: the look on a real screen everywhere, and every phone check
-  listed in `android/README.md`. Known: a numbered task (`1. [ ] x`)
-  shows its box but not its number in all previews.
-
-## Tabs and the landing state (Mac, 2026-10-20)
-
-- **One text view, many documents.** `MCTab` (top of EditorController.mm)
-  holds everything per document: path, text, `savedText`, mode flags,
-  `dirty`, its own `NSUndoManager` (handed out by `undoManagerForTextView:`),
-  its own `LatexView`, and where its view was. The controller's document
-  properties (`currentPath`, `dirty`, `isMarkdown`, `latex`, ...) are
-  forwarding accessors to `_activeTab` (`MC_TAB_PROPERTY`), so the old
-  single-document code still reads them, and with no tab they read nil/NO.
-  The image, PDF, player and diff views stay shared: `stashActiveTab`
-  remembers the place (top character and its offset, selection, PDF page,
-  player time) and lets them go (a playing sound stops), and
-  `showActiveTab` rebuilds the view from the tab. A tab restored from the
-  session is read only when first shown (`loaded`). Diffs and commits share
-  one tab that each new one replaces.
-- **Rules in C++**: `src/EditorTabs.{h,cpp}` (`tabs:*` tests): a new tab
-  goes right of the active one, Shift+Cmd/Ctrl+N with 9 as the last, wrap
-  on next/previous, the most recently used tab after closing the active
-  one, what of a remembered session can be reopened, and labels that add
-  folders when two files share a name. `src/TabStrip.{h,mm}` only draws and
-  reports clicks (× on release, middle click, a dot for unsaved changes,
-  scrolls when tabs pass their 80 pt minimum). Strip colors are the sidebar
-  and editor surfaces; no new settings keys.
-- **Dirty means "differs from disk"**: `noteEdited` compares the buffer with
-  `savedText` (length first), so typing and deleting, undoing, or reverting
-  a preview edit or a task box clears the dot and the prompt. `savedText` is
-  the text as read (NSString's UTF-8 read drops a BOM, and Save never wrote
-  one back, before tabs either; CRLF survives byte for byte), set again on
-  save and on reload; "Keep Mine" after a change on disk compares against
-  the new disk text.
-- **Keys**: Ctrl+Tab / Ctrl+Shift+Tab, Shift+Cmd+] / [ (hidden menu items
-  with `allowsKeyEquivalentWhenHidden`), Shift+Cmd+1..9 and Ctrl+1..9 (the
-  Go to Tab submenu). macOS takes Shift+Cmd+3, 4 and 5 for screenshots
-  before the app sees them, hence Ctrl+N too. Cmd+W (`closeFocused:`)
-  closes the tab, or hides the terminal or browser when it has the
-  keyboard; with no tab a fresh press closes the window and a held one
-  stops at the empty editor: a repeat of Cmd+W (`isARepeat`) is ignored for
-  every target, so one press closes one thing (a held Cmd+W used to close
-  three terminals, one running a command, then both tabs). The menu title follows
-  (validateMenuItem). Shift+Cmd+W is Close Window (it used to quit; Cmd+Q
-  quits). The old Previous File (Ctrl+Tab, `_recent`) is gone.
-- **Unsaved tabs are never dropped**: closing a dirty tab asks Save / Don't
-  Save / Cancel; closing the window, Open Folder and quitting
-  (`applicationShouldTerminate:`, new: quitting used to lose unsaved
-  changes silently) ask once for all ("Save changes to 3 files?"). Moving to
-  the Trash closes only clean tabs of what went; a renamed file or folder
-  moves its tabs (`pathMovedFrom:to:`). A background tab is checked against
-  the disk when it is shown again.
-- **The disk, after the tab was opened** (2026-10-20 fixes): a buffer
-  replaced from disk (a quiet reload, Reload, a fresh load) loses its undo
-  steps and the LaTeX preview's (`forgetHistoryOf:`); they were for the old
-  text, and Cmd+Z edited the new text at the old places, or threw. Every
-  save, Cmd+S and Save All alike, checks the file's date first
-  (`mayWriteTab:`): changed outside asks Keep Mine / Reload / Cancel, gone
-  asks before writing it again, and Cancel stops a Save All. Save All
-  (closing, quitting, Open Folder) asks every tab's question first
-  (`diskDecisionForTab:`), then applies Reloads and writes, so Cancel at
-  any of them writes and reloads nothing (it used to have written the tabs
-  before it). `saveTab:`
-  saves a background tab where it is, never by showing it (with
-  keep-sorted-on-save its sort waits in `pendingSort` and goes into the
-  buffer as an undoable edit when the tab is shown). A file moved or
-  deleted outside (FSEvents, `checkTabsOnDisk`, and on show/focus): a
-  rename within its folder is followed when a file there has the same
-  inode and modification date (`fileID`), otherwise the tab is `gone`:
-  "(deleted)" in its title and the window's, unsaved, and back to normal
-  if the file returns.
-- **Landing**: a window reopens the tabs its folder had (NSUserDefaults key
-  `MCTabSessions`, by the folder's resolved path, 50 folders kept, files
-  that are gone skipped), else shows a read-only empty editor with one muted
-  line. Sessions are off under `MINICODE_DEMO` and `MINICODE_BENCH`, and
-  `MINICODE_DEFAULTS_SUITE` points them at a scratch suite for tests. The
-  tab on show is read at launch, so one over 16 MB (the GTK port's limit)
-  or not a plain file waits for a click and the nearest other tab is shown;
-  opening such a file by hand is unchanged. Windows open on one folder
-  share its session: each save lists the saving window's files, then the
-  other windows' (so quitting with two windows reopens all their files in
-  one), and a window closing while another stays open leaves the session
-  to that one, so what is remembered is what was open when the folder's
-  last window went.
-- **Keys from Find in Folder and TODOs**: AppDelegate's `current` maps a
-  window an editor window made (`ownsWindow:`) to that editor, not to the
-  last window made, and the items that edit the file on show (Format
-  Document, Sort Lines, Run File, Toggle Comment, Toggle Task, completion,
-  F12, hover) are disabled while another window is key, so the key reaches
-  the field there (Shift+Option+F types Ï). Cmd+1 focuses what the tab
-  shows (`focusActiveDocument`), never the text view hidden behind a PDF,
-  the LaTeX preview or a diff.
-- **Touch points for merges**: `relayoutRightArea` has two lines (the strip
-  takes the top of the editor's side through `layoutTabStripIn:`; the
-  browser beside it keeps its whole height), `applySettings` one.
-- **Verified** with an offscreen harness (152 checks): main.mm included with
-  `main` renamed; `makeKeyAndOrderFront:`/`orderFront:` swizzled, and
-  `-[NSApplication keyWindow]`/`mainWindow` swizzled to return the test
-  window (an offscreen window never becomes key, so menu validation and
-  Cmd+W found no target); `performClose:` swizzled to ask the delegate and
-  close (it does nothing for a window never on screen); `NSAlert runModal`
-  answering from a queue; `trashItemAtURL:` removing instead. Traps: a
-  shifted key (Shift+Cmd+2, Shift+Cmd+], Ctrl+Shift+Tab) matches the menu
-  only as the NSEvent made by `eventWithCGEvent:` itself, never one rebuilt
-  from its characters; `NSApp.currentEvent` is not the event handed to
-  `performKeyEquivalent:` directly; a scroll restored right after
-  `setAttributedString:` stops where the layout ends unless a screen past
-  the target is laid out first. Needs the user's eyes: the strip's look,
-  hover, tooltips, scrolling with many tabs, a real middle click, and the
-  quit prompt. The GTK and Android ports have no tabs yet.
-
-## Sizes, dates and sorting in the tree (Mac, 2026-10-20)
-
-The user asked for sizes and a last-saved time on a hotkey, sorting by
-name, date or size from the right click, and the right click from the
-keyboard.
-
-- **Three columns, three switches (2026-10-31).** The user then asked for
-  last-saved and created times to toggle on their own, like sizes. The
-  single `MCTreeDetails` switch became `MCTreeColumns` (a bitmask in the
-  defaults; `MCTreeColumnSize`, `Saved`, `Created`, also the menu items'
-  tags, action `toggleTreeColumn:`): Shift+Cmd+I sizes, Option+Shift+Cmd+I
-  last saved (and the status bar's "Saved ..."), Control+Shift+Cmd+I
-  created (`st_birthtimespec`, `FileItem.created`). A copy with the old
-  switch on starts with sizes and saved on. Columns are size, saved,
-  created left to right; a narrow row drops the rightmost first; switching
-  one on widens a sidebar too narrow for them (`MCTreeCellWidthFor`, up
-  to 40% of the window). Sort By has Date Created (`TreeSort::Key::Created`,
-  "created" in the encoding, newest first). Trap: NSTableCellView moves its
-  textField to the cell's width (x 28) without a layout pass, so a long
-  name drew under the columns; `MCTreeCell` places its fields again in
-  `viewWillDraw`. Verified offscreen (the harness below, 2026-10-31): the
-  migration, the three keys as CGEvent keys, column texts ("Jan 2020" from
-  a file whose birth time was set by `touch -t`), right-to-left order,
-  narrow rows, the widening, the status bar, the sort and the tree menu,
-  and a capture looked at.
-
-- **Shift+Cmd+I** (View > Show Sizes and Dates, and in the tree's menu;
-  Cmd+I is the inline agent) shows each row's size and age right-aligned
-  and muted (sidebar text at 55%), in two fixed columns (`MCTreeCell`,
-  laid out by hand): the age goes first, then the size, when the name
-  would get under 72 points; with details on, the name truncates in the
-  middle. Sizes are NSByteCountFormatter's file style (logical bytes, "0
-  bytes" not "Zero KB"); ages "now", "5 min", "3 h", "yesterday", "12 Oct",
-  "May 2025"; the tooltip has the exact bytes, file count and full date.
-  App-wide, in the user defaults (`MCTreeDetails`), posted as
-  `MCTreeDetailsDidChangeNotification` so every window follows. With it on,
-  the status bar's left shows the tab's "Saved 5 min ago", "Saved 14:32" or
-  "Saved yesterday 14:32", "Unsaved changes" when dirty, "Not saved" for a
-  file gone from disk, and "Modified ..." for pictures, PDFs and media; a
-  30 s timer keeps the ages and that line current while details are on.
-- **Folder totals** (`FolderSizes::measure`, run by `MCFolderSizer` on one
-  utility queue, last asked first): every regular file below, hidden ones
-  included (as Finder and du count; the tree's dotfile hiding is about
-  showing, not counting), never through a symlink (a symlinked folder's
-  row shows "—"), never into another device; a hard-linked file counts once for each name.
-  Each subfolder's total is cached with its stamp (dev, inode, own mtime)
-  and reused, so a recount reads only the changed chain. FSEvents paths
-  (now read in the callback; `/private/tmp` mapped back to the tree's
-  `/tmp` spelling through realpath) invalidate the folder and every folder
-  above it (`MustScanSubDirs` takes the subtree too); a store is refused
-  if an invalidation came after the count began. Limits: 200,000 entries
-  or 2 s per count, then "≥ X" (a thin space after ≥). "…" until the first
-  total; later recounts show the last total meanwhile, so rows do not
-  flicker. Refresh (Cmd+R) recounts everything; FSEvents refreshes do not.
-- **Sort By** (tree menu): Name, Date Modified, Size; Ascending,
-  Descending; Folders First. Name ascending with folders first is exactly
-  the old order (caseInsensitiveCompare:, not localizedStandardCompare:,
-  so nothing moves for anyone who never sorts); the platform's name order
-  reaches the C++ as `nameRank`. A new key starts in its own direction
-  (dates newest, sizes largest first, as Finder); ties go by name. Folder
-  dates are their own mtime, as in Finder. **Size while totals are
-  pending**: while any folder in a list has no total, the folders stay in
-  name order ahead of the files, then the list re-sorts once
-  (`folderTotalsArrived:` reloads only when an order really changed,
-  keeping selection, expansion and scroll through
-  `reloadTreeKeepingState:`, which refreshTree uses too). Remembered per
-  folder (resolved path, `MCTreeSort`, only non-default orders, 100
-  folders), like the tab sessions, since a big folder sorted by size says
-  nothing about the next project. `FileItem` keeps `children` in name
-  order and `shown` in the window's order, recomputed when
-  `_sortGeneration` moves.
-- **The context menu by keyboard**: Shift+F10 (View > Show Context Menu),
-  a hidden Ctrl+Return (otherwise a text view's binding for a U+2028 line
-  separator, never wanted in code) and the PC Menu key (keyCode 0x6E, in
-  the key monitor). `MCShowContextMenuInWindow` takes the key window's
-  first responder, builds a right mouse down just inside the selected
-  row's bottom edge (so `clickedRow` is that row and the tree's commands
-  act on it) or at the caret, asks the view's `menuForEvent:` (restoring a
-  text view's selection, which a right click moves to the word) and pops
-  it with `popUpContextMenu:withEvent:forView:` on the next turn of the run
-  loop. Shift+F10 therefore no longer reaches programs in the terminal grid.
-- **Verified** (2026-10-20) with an offscreen harness including main.mm
-  (100 checks, a project of known sizes and dates with a 205,000-file
-  folder, a symlink loop and a link to a folder; scratch HOME and a fresh
-  defaults suite per run, since cfprefsd keeps a deleted plist's values):
-  a dump of every menu key equivalent (no clashes), Shift+Cmd+I as a
-  CGEvent key, sizes, ages, tooltips, totals arriving and "≥ 200 KB", a
-  file growing deep down, "Saved", "Unsaved changes" and "Saved just now",
-  every order and direction with its check marks, the order kept per
-  folder and a second window sorting the same, the order, selection and
-  expansion over a new file, a re-sort, a rename, the source control swap
-  and Refresh, the columns at five sidebar widths, Shift+F10, Ctrl+Return
-  and the Menu key in the tree and the editor (popUpContextMenu swizzled
-  to record), Copy Path from that menu, and a capture of the tree, looked
-  at. Needs the user's eyes: the look on a real screen, the real menu
-  opening and keyboard navigation in it, a PC Menu key, the half-minute
-  updates, and a huge real folder such as the home folder. Linux and
-  Android have none of it yet.
-
-## Request a Change (Mac, 2026-10-31, released in 1.5.3)
-
-The user asked for an in-app way to request changes to minicode and see
-them "materialize in realtime", in the window rather than a new one.
-Native code cannot be hot-reloaded, so the loop is: Claude Code in a
-terminal tab changes the source and runs `make`, and minicode restarts
-into the build, keeping its place.
-
-- **Shift+Cmd+K** (minicode menu, Request a Change to minicode…) shows
-  `MCChangeBar` across the top of the right pane (`layoutChangeBarIn:`,
-  carved off before everything else in `relayoutRightArea`, over editor
-  and browser), box focused; Esc closes and gives the keyboard back.
-  Developer mode looks it (2026-11-04, the user found the plain field
-  easy to take for any other): every mode has a 2 pt amber (#E8A33D,
-  inline hex) stripe on top, the sidebar color tinted 13% amber, and a
-  DEV pill; the prompt has a heading row (DEV, "Change minicode" in
-  amber, the source folder from `hintText`, ×) over the request box, an
-  NSTextView (TextKit 1, built by hand) in a scroll view with an amber
-  border that wraps and grows to 10 lines, then scrolls. The bar's height
-  is `heightForWidth:` (the text measured in a private layout manager at
-  the box's width), and `onResize` relays the pane out when a line comes
-  or goes. Return sends, Shift or Option+Return adds a line, Esc (which a
-  text view sends as `complete:`) closes, Tab moves to Send. Checked
-  offscreen (13 checks: growth, the cap, the keys with
-  `NSApp.currentEvent` swizzled, clearing, modes) and pictures looked at.
-  Return writes the prompt (`ChangeRequest::prompt`: the request, then a
-  paragraph asking for `make`, CLAUDE.md, and no commit, push, or release)
-  to `$TMPDIR/MiniCode-change/request-<pid>-<n>.txt` and types
-  `cd <source> && <develop.command> "$(cat <file>)"` into a new terminal
-  tab (or Claude's previous terminal if idle), focused so its questions
-  can be answered. The file keeps the typed line, the tab title and zsh's
-  history short; the whole prompt on the line flooded all three. While
-  Claude still runs, Shift+Cmd+K focuses its terminal instead.
-- **Source folder** (`MCChangeSourceFolder`): `develop.source` (an error
-  in the bar if it is not one), else the checkout this app bundle was
-  built in, else `MCChangeCloneFolder()`
-  (`~/Library/Application Support/MiniCode/source`) once cloned. With
-  none, the first request types `(git clone --branch v<version> <repo>
-  <dir> || git clone <repo> <dir>) && cd <dir> && claude ...` as one line
-  (`cloneThenStartCommand`), so the clone shows in the terminal; a full
-  clone, about 15 MB. No git (`MCFindProgram`, never the /usr/bin shim)
-  or something else at that path gives a note instead. "Source" means a
-  Makefile and `src/EditorController.mm`. The user's own settings name
-  `~/Code/public/minicode`.
-- **Watching the build**: a 2 s timer reads the mtime of
-  `<source>/MiniCode.app/Contents/_CodeSignature/CodeResources` (codesign
-  is the last step of `make app`); newer than at the request and unchanged
-  for one tick puts the bar in Rebuilt with Restart. × on it waits for the
-  next build. The timer stops when Claude's terminal closes.
-- **Restart** (`AppDelegate restartIntoApp:resumingIn:source:command:`,
-  protocol `MCRestarting`): sets `restartApp`/`restartRecord` and calls
-  `terminate:`. `applicationShouldTerminate` asks the usual questions,
-  titled "Restart minicode?" and leaving Claude's terminal out
-  (`runningTerminalCommandsExceptChange`); Cancel clears the restart.
-  Unsaved tabs are not asked about: their backups are written at once and
-  the new build brings them back (see "Backups and hot exit").
-  `applicationWillTerminate` writes `MCRestart` (windows' roots, which one
-  resumes, source, command, time) and `MCLaunchAfterExit` spawns a
-  detached `/bin/sh` (own session) that waits for our pid and runs `open
-  -n <source>/MiniCode.app`. The next launch takes the record if under two
-  minutes old (`reopenAfterRestart:`), opens each folder (tabs come back
-  from `MCTabSessions`), and in the resuming window runs
-  `<command> --continue` in a terminal, unfocused, with a note in the bar.
-  So after the first restart the user runs the repo's build, not
-  Homebrew's, until the next `brew upgrade`; launching it registers that
-  bundle with Launch Services (see the mc-dev note).
-- **Restart on demand** (2026-11-05, asked for as VS Code's restart):
-  minicode menu > Restart minicode and the status bar's ↻
-  (`restartButton`, far right, nil-targeted at `restartMinicode:`), no
-  key (Cmd+R is Refresh File Tree). AppDelegate `restartMinicode:` calls
-  the same `restartIntoApp:resumingIn:source:command:` with
-  `NSBundle.mainBundle.bundlePath` (beeps when that is not a .app, as in
-  a harness); a window whose Request a Change terminal still runs
-  (`changeSourceToResume`) is the one resumed, with `develop.command`,
-  so Claude's conversation goes on.
-- **The browser panel comes back** (2026-11-05; the user lost every page
-  on a restart): the folder's `MCTabSessions` entry has a `browser` key
-  (`browserSessionState`: `page` from `BrowserView savedState`, the
-  address plus `WKWebView.interactionState`, which is plain NSData of
-  about 2.6 KB holding the back and forward list and the scroll position,
-  macOS 12 and later, left out past 2 MB; `visible`; `fraction`). A new
-  window builds it in `restoreBrowserFromSession` right after
-  `restoreSession`, never on an Open Folder switch, and the page never
-  takes the keyboard. `applicationWillTerminate` saves every window's
-  session, since navigating saves nothing. Cookies and logins were
-  already kept (the default persistent website data store). Checked
-  offscreen (11 checks, a local http server: page 2 back with its back
-  item and scrollY 3000, hidden stays hidden, the ↻ and the menu item
-  reaching the delegate). Harness trap: clear the test defaults suite
-  before each run, or the last run's session opens a browser first.
-- **Verified** offscreen (71 checks with the tree's, 2026-10-31: all of
-  src/ with main.mm included as `minicode_main`, ordering, `keyWindow`,
-  activation, `setActivationPolicy:` and `terminate:` swizzled; scratch
-  HOME, ZDOTDIR, settings and defaults suite; a fake claude script that
-  records its arguments and touches CodeResources): the key, the bar's
-  frame over the editor, Esc, Return, the prompt reaching the program
-  through `$(cat)`, focus, the busy case, Rebuilt, the restart questions
-  and record, the record read once and ignored when old, and reopening
-  with `--continue`. Pictures of the bar were looked at. **Not run**: the
-  real relaunch through `open -n` (it would put a window on the user's
-  screen) and real Claude Code in the terminal. Needs the user: one real
-  request end to end.
-
-## Themes (2026-11-05)
-
-The user asked for themed colors chosen in the UI, "particularly
-considering the defaults with VS Code", cleanly in the settings file.
-
-- **One key.** `theme = <id>` picks one of `Settings::themes()` (Settings.cpp,
-  `kThemes`): VS Code's built-in dark-modern, dark-plus, monokai,
-  solarized-dark, tomorrow-night-blue, light-modern, light-plus,
-  quiet-light, solarized-light. A theme gives a value to every color the
-  file can set (surfaces, syntax, Markdown, the code block background, the
-  ruler, the terminal input line); any color the file sets wins, in either
-  order, as VS Code's colorCustomizations do. Unset is dark-plus, value for
-  value the old built-in look, so nothing moved for anyone; the commented
-  defaults in `defaultFileText` stay Dark+'s and say so. Opacity is
-  separate and still applies. The values were mapped by hand from the
-  themes' files onto minicode's fewer keys (keyword.control is
-  "preprocessor", for one); the user's eyes decide whether each reads right.
-- **The menu.** View > Theme (`MCThemeSubmenu`, Appearance.mm, its own
-  target with the check mark from `validateMenuItem:`), so the palette lists
-  "View > Theme > Monokai" too. Choosing writes the line through
-  `Settings::withTheme` (the active line, else the commented one
-  uncommented, else a new line after the file's opening comment; CRLF kept)
-  and `AppSettings writeTheme:`; the watcher's notification recolors every
-  window. When the file sets colors of its own (`colorOverrides`, the
-  user's does: black panels, #0d1117), an alert asks first: "Use the
-  Theme's Colors" comments those lines out (`# ` before them, so they come
-  back by uncommenting), "Keep My Colors" leaves them.
-- **Light themes.** `Settings::isDark()` (the editor background as drawn)
-  sets the window's NSAppearance (Aqua or DarkAqua) in `applySettings`, so
-  scroll bars, fields and menus follow; the popovers that force DarkAqua
-  (LSP lists, install notes) and the inline hex accents and dividers are
-  unchanged. The editor's `selectedTextAttributes` is now only a background,
-  because after a switch AppKit drew selected text in its own color and
-  dropped the syntax colors.
-- Linux gets the key for free (the GTK port reads `Settings`), with no menu
-  and its own inline colors (`linux/src/Palette.h`) left as they were.
-  Tests: `settings:themes`, `settings:with-theme`.
-
-## The inline agent (Mac, 2026-11-05)
-
-The user asked for VS Code's Cmd+I inline chat, callable "anywhere and
-everywhere". Cmd+I is Edit > Inline Agent…; Show Hover Info moved to
-Option+Cmd+I (VS Code's own is a Cmd+K chord). The agent is Claude Code
-(`agent.command`, default `claude`); nothing else is talked to.
-
-- **What has the keyboard decides** (`inlineAgent:` in EditorController):
-  the editor with a text file, or a Markdown preview (on the source, through
-  `applyMarkdownSource:`), is an **edit**; an idle terminal is a
-  **command**; anything else (tree, git panel, browser, a LaTeX preview, a
-  picture, a busy terminal, another window) is a **task**. Cmd+Return in
-  the bar hands any request over as a task, with the selection or the
-  terminal's last lines. The context carries blocks (current text, apply,
-  tint, type a command, area and anchor) so `AgentPanel.mm` knows nothing
-  of the window's views.
-- **Edits.** `MCAgentRun` runs `/bin/zsh -l -c 'exec <agent.command> -p
-  --tools Read,Grep,Glob --no-session-persistence --output-format text'` in
-  the folder, the prompt on stdin (written off the main thread; a big buffer
-  outgrows a pipe), PATH widened with `MCSearchDirs`, five minutes then
-  SIGTERM and SIGKILL, exit 127 read as "not installed". The prompt
-  (`InlineAgent::editPrompt`) holds the buffer as it is (or 800 lines around
-  the cursor past 120 KB), the cursor line or the selection, earlier
-  requests of the same bar, and asks for SEARCH/REPLACE blocks or a plain
-  answer. `applyEdits` finds each SEARCH as whole lines, then as text, then
-  ignoring trailing and then all surrounding whitespace, nearest the cursor
-  among several, all or nothing; so typing elsewhere while it thinks does
-  not get in the way. The result goes in through `replaceSourceWithText:`
-  (LineDiff hunks, one undo step, caret kept), the changed lines tinted
-  with a layout-manager temporary attribute. Return keeps, Esc puts back
-  the text from before the bar's first edit (only if the buffer is still
-  what the agent left). Measured: about 3 s an answer for a small file.
-- **Commands** are typed with `typeCommand:` and never run; a "#" answer
-  is shown as a note. **Tasks** write the prompt to
-  `$TMPDIR/MiniCode-agent/task-<pid>-<n>.txt` and run `cd <root> &&
-  <agent.command> "$(cat file)"` in a new terminal tab
-  (`changeTerminalRunning:focus:YES`), as Request a Change does.
-- **The bar** (`MCAgentBar`) is a view in the right pane, above everything
-  (the drag bars' order check in `relayoutRightArea` counts it last), under
-  the cursor's line or the selection (over it when there is no room),
-  following the editor's scrolling; at the bottom of the terminal; at the
-  top middle otherwise. A tab switch closes an edit bar, keeping its edit.
-- **Trap paid for**: `NSTextView string` is the live storage, so "the text
-  before the edit" must be a copy, or Discard puts back the edited text.
-  `firstRectForCharacterRange:` gave nothing usable in an offscreen window;
-  the anchor uses the layout manager's line fragments.
-- **Verified** (2026-11-05): 58 `agent:*` checks; prompts run by hand
-  against real Claude Code 2.1.318 (an edit, a question, a command); an
-  offscreen harness (main.mm as `minicode_main`, ordering, keyWindow,
-  mainWindow, activation and NSAlert swizzled, scratch settings, defaults
-  suite, backups and ZDOTDIR; agent.command a script that passes `-p` runs
-  to the real claude and records anything else), 78 checks: the menu keys
-  (no clashes), Cmd+I through the menu in the editor, the bar's place and
-  keyboard, Esc, a real edit (unsaved, tinted, disk untouched), Discard,
-  an edit on a selection and a follow-up in the same bar, Keep and undo, a
-  question answered with the file untouched, a real command typed at a
-  real zsh prompt and not run, a task from the tree reaching the terminal
-  with its note, the theme alert, the file rewritten, Light Modern's
-  colors and Aqua, the menu's check marks, Monokai through the menu item.
-  Pictures looked at. Harness trap: every edit made from one timer
-  callback shares one undo group, so one undo took back three edits there.
-- **Needs the user**: real keys (Cmd+I in the browser's page and in the
-  grid terminal running a program, where it becomes a task), the look of
-  the bar and the tint on a real screen, a large real file, and an
-  interactive task with their own Claude Code. Linux and Android have none
-  of it.
-
-## The palette: commands, Quick Open, Go to Line (Mac, 2026-11-04)
-
-The user asked for VS Code's command palette, with only the keys that
-clash with VS Code's for the same action moving; a review then asked for
-Quick Open, Go to Line and Cmd+J as well.
-
-- **Keys.** Shift+Cmd+P (View > Command Palette…) opens it with ">" in
-  the field, Cmd+P (Navigate > Go to File…) empty, on the folder's files,
-  Ctrl+G (Navigate > Go to Line…) with ":". The first character decides
-  (`CommandPalette::parse`), as in VS Code, so deleting the ">" lists
-  files and typing ":" asks for a line. Toggle Preview moved from
-  Shift+Cmd+P to Shift+Cmd+V (VS Code's Markdown preview key; the demo
-  scenes too). Cmd+J is a hidden second Toggle Terminal item (VS Code's
-  Toggle Panel). Ctrl+G is the menu's, except that the key monitor in
-  main.mm hands it to a TerminalGridView with the keyboard (nano, emacs
-  and less use it). Before adding them every menu key equivalent was
-  dumped: none of Cmd+P, Cmd+J, Ctrl+G or Shift+Cmd+V was taken, and no
-  two items share a key and modifiers.
-- **One view over the window** (`MCPaletteOverlay`, PalettePanel.mm), not
-  a window of its own, so the editor window stays key and validation and
-  the command see the same responder chain as the menu bar. It covers the
-  content view; a click outside the box lands on it and closes the
-  palette. Opening it remembers the first responder (a text field, not its
-  field editor, with the caret's range, since a field selects all its text
-  as it takes the keyboard back); Esc, a click outside or running
-  something puts the keyboard back first. The keyboard moving elsewhere (a
-  menu key such as Cmd+0) closes it.
-- **Commands** are read from `NSApp.mainMenu` each time it opens: every
-  submenu `update`d (validation against the key window's chain, which
-  also sets titles such as Close Terminal), then every enabled item that
-  is not a separator, hidden (the second keys of Next Tab, Cmd+J) or an
-  alternate, as "Menu > Item" ("minicode" for the app menu, whose item is
-  titled "NSMenuItem"), with its key equivalent as glyphs. New menu items,
-  such as the language server commands another branch adds, appear
-  without any change here. Return sends the item's action with
-  `[NSApp sendAction:to:from:]` and the item as sender (tags and
-  representedObject work: Find…, Adjust Settings > Editor), on the next
-  turn of the run loop. The last 20 run are in `MCCommandPaletteRecent`
-  (`MCAppDefaults()`).
-- **Matching** (`CommandPalette::rank`): a subsequence, case ignored and
-  spaces in the query skipped, aligned by a small DP that favours word
-  starts (after a space or punctuation, or camelCase) and runs. Tiers, best
-  first: the query starts the item's title (or label), every run of
-  matched characters begins a word, one run inside a word, scattered.
-  Within a tier recently run commands first, then the score, then menu
-  order; with nothing typed, recent ones then the menu's order.
-- **Quick Open** (`CommandPalette::listFiles` on a background queue, then
-  `rankFiles`): breadth first, Find in Folder's skips (dotfiles,
-  `FolderSearch::isSkippedDirectory`), symlinked folders once, 20,000
-  files at most; "Listing the folder's files…" until it arrives, and the
-  walk is cancelled when the palette closes. A query without "/" matches
-  the file name first (any name match beats a path-only one), with "/" the
-  path. Recently opened first: the window's tabs by last shown
-  (`recentTabPaths`), then files opened from Quick Open before
-  (`MCQuickOpenRecent`, 50); those rows say "recently opened". Return
-  opens through `revealPath:andOpen:YES`, as a click in the tree.
-- **Go to Line**: "42" or "42:7" (or "42,7") runs `goToLine:column:`
-  (now in EditorController.h, with `canGoToLine`); with an image, PDF,
-  player or diff on show the row says to open a file.
-- **Verified** offscreen (113 checks, 2026-11-05): a harness
-  that includes main.mm as `minicode_main`, swizzles window ordering,
-  `keyWindow`/`mainWindow` and activation, with scratch HOME, ZDOTDIR,
-  settings and defaults suite, and keys built with
-  `CGEventCreateKeyboardEvent` (menu keys through the window then the
-  menu, typing through `[window sendEvent:]`). Harness trap: `[NSApp run]`
-  calls `applicationWillFinishLaunching:` itself, which empties
-  `controllers`; calling it by hand first left a window the app no longer
-  knew, and the palette opened over another one. Let
-  `applicationDidFinishLaunching:` open the window from argv. Pictures
-  of the palette were looked at. Needs the user: the look on a real
-  screen (and the box's shadow, which `cacheDisplayInRect:` leaves out),
-  real typing and clicks, a large real folder in Quick Open, and Ctrl+G
-  reaching nano in the terminal (not checked: the monitor only sees events
-  that come through `[NSApp sendEvent:]`).
-## Backups and hot exit (Mac, 2026-11-05)
-
-The tab session kept only paths, so a crash or a kill lost every unsaved
-buffer. Now every dirty tab's text is on disk while it is edited, as in
-VS Code's backups, but quitting still asks (the user wants the question;
-there is no silent hot exit on quit).
-
-- **Files.** `src/Backups.{h,cpp}` (pure C++, `backups:*` tests in
-  `tests/backups_tests.inc`, included by run_tests.cpp): the format, the
-  `Fs` of callbacks with `posixFs()`, `Store`, and the decisions (`plan`,
-  `foldersToReopen`, `expired`, `compare`). `src/BackupStore.{h,mm}`
-  (`MCBackupStore`): the folder, a serial queue for writes and removals,
-  and which process holds a backup. EditorController's "backups and hot
-  exit" section decides what and when; main.mm has two hooks.
-- **Store.** `~/Library/Application Support/MiniCode/Backups`
-  (NSHomeDirectory, so `CFFIXED_USER_HOME` moves it) or
-  `$MINICODE_BACKUP_DIR`; off under `MINICODE_DEMO` and `MINICODE_BENCH`.
-  One `<uuid>.mcbackup` per tab: a header (path, window folder resolved,
-  the disk file's mtime and inode the buffer was based on, whether it
-  existed, utf-8, line endings, time, owner pid and start time, byte
-  count), a blank line, the text. Each file's header is its index entry;
-  there is no shared index, so two windows or two processes (`minicode -n`)
-  never race over one. Written to a temporary beside it (0600, fsync,
-  rename; the folder made 0700), so a reader sees the old or the new one.
-  Never in the project.
-- **When.** `scheduleBackups` runs from `noteEdited` (every keystroke and
-  preview edit) and `updateTitle` (every dirty change): a clean tab's
-  backup goes at once; a changed dirty buffer (`sourceText` compared by
-  pointer with `backedUpText`, so 4 µs a keystroke) is written 1 s after
-  typing stops, at most 5 s after the first unwritten change. The main
-  thread hands the immutable NSString to the queue, which converts and
-  writes; a write overtaken by a newer one for the same id is skipped.
-  Only text tabs with a path (`tabTakesBackup:`); a preview with no source
-  edit is not dirty, so it gets none. Closing a tab (after Save / Don't
-  Save) and `dropAllTabs` (Open Folder, after its question) remove them,
-  and so does `windowWillClose:` (asked already).
-- **Restore.** `restoreSession` asks `planForRoot:` for the folder's
-  backups that no running process holds (owner pid alive with the same
-  start time, or claimed by a window of this process): a session file with
-  a backup is kept even if gone from disk, and backups of files the session
-  lost are appended. `takeBackup:intoTab:` makes the tab dirty with the
-  backup's text and its base mtime and inode as `fileModDate`/`fileID`;
-  the disk is read when the tab is first shown (`loadActiveTab` calls
-  `showRestoredText:`): the backup becomes the buffer, the disk text stays
-  `savedText`, undo starts empty, and the status bar says "Restored unsaved
-  changes to x". Changed on disk since: the note says so and `fileModDate`
-  stays the backup's, so the next window focus or Cmd+S asks Keep Mine /
-  Reload. Gone: a gone tab holding the text, Cmd+S asks before writing it
-  again. The first write after a restore puts this process's pid in it.
-  At launch `reopenFoldersWithBackups` (main.mm, after the launch's own
-  windows) opens a window for each folder with backups nobody holds.
-  Several backups of one file: the newest wins, the rest go. Orphans older
-  than 30 days and temporaries older than a day go (`cleanUpOnce`).
-- **Quitting** asks as before. NSApplicationWillTerminateNotification
-  (`backupsAppWillTerminate:`) then removes every tab's backup, since what
-  is still unsaved was answered Don't Save. **A restart** from Request a
-  Change instead calls `keepUnsavedTabsForRestart` from
-  `confirmQuitRestarting:`: every dirty buffer is written synchronously and
-  that window is not asked about unsaved tabs, so they come back unsaved in
-  the new build; if a write fails it falls back to the question. A crash,
-  SIGKILL, power loss or force quit runs none of this and leaves them.
-- **Verified** (2026-11-05): 99 `backups:*` checks; an offscreen harness
-  (main.mm included as `minicode_main`, ordering, keyWindow, mainWindow,
-  activation and `applicationDidFinishLaunching:` swizzled, NSAlert from a
-  queue, scratch HOME, settings, defaults suite and backup folder) in four
-  processes, 91 checks: no backup within the debounce, one after it (0600,
-  pid, root, base date), rewritten on more typing, gone on save, on undo
-  back to the disk text and on Don't Save at a tab's close, none for an
-  untouched preview; the process then SIGKILLs itself, b.txt is changed and
-  c.txt deleted, and the next process restores the session's tabs plus an
-  orphan the session lost, the text dirty with empty undo, the notes, Keep
-  Mine asked once for b, c as "(deleted)" with Cmd+S asking first, the 5 MB
-  buffer, adoption under the new pid, a second window on the folder
-  taking nothing, the other folder reopened, and Quit with Don't Save
-  leaving no backup; a restart asked nothing and kept a.txt's, the next
-  process restored it, and Quit with Save removed it. Timings (M3): 4 µs
-  per keystroke for `scheduleBackups`, 0.2 ms on the main thread to hand a
-  5 MB buffer over, on disk 50 ms later with the main thread never held up
-  past 15 ms meanwhile. Needs the user: a real crash or force quit (Activity
-  Monitor) with unsaved tabs, the note and the Keep Mine question on a real
-  screen, and the extra windows a crash in another folder brings at launch.
-
-## Several carets, wrapping, and Cmd+Delete (Mac, 2026-10-31)
-
-The user could not Cmd+Shift+drag to add a prefix to several lines,
-Cmd+Delete in the editor trashed the tree's selected file, and typing a
-bracket or quote over a selection replaced it instead of wrapping it.
-
-- **Column**: Cmd+Shift+drag, Option+drag or Shift+Option+drag in the editor
-  (`MCMultiCarets mouseDown:`, first thing in `CodeTextView mouseDown:`;
-  this replaces NSTextView's own Option-drag rectangle) puts a caret or
-  selection on every line between the press and the pointer, from the
-  press's x to the pointer's, each found with
-  `characterIndexForInsertionAtPoint:` at that line's first fragment, so
-  tabs and wide characters line up as drawn. A short line gets a caret at
-  its end. Cmd+Shift (or Shift+Option) clicks work in pairs, as the user
-  asked after trying drags only: the first press puts the caret there and
-  remembers it as the column's anchor (character and x); the next, clicked
-  or dragged, makes the column from the anchor to it, and more presses move
-  the far end. The anchor holds while the carets and the text length are
-  what the last column press left (`_anchorCarets`); after typing or a
-  plain click the next press starts afresh. Option+click adds a caret, or
-  removes one; Option+drag is a fresh column from the press.
-- **Copy Line Down / Up**: Cmd+Shift+Down / Up and Shift+Option+Down / Up
-  (`MultiCaret::duplicateLines`, `multicaret:duplicate`): the whole lines
-  each caret touches copied below (the carets move to the copy) or above
-  (they stay on it), for one caret or several, one undo step. Caught in
-  `CodeTextView doCommandBySelector:` by selector *and* arrow key code,
-  from the event `keyDown:` records (`_keyEvent`, not `NSApp.currentEvent`,
-  which a direct `keyDown:` never sets), because Shift+Home and Shift+End
-  send the same selectors. So Cmd+Shift+Up / Down no longer select to the
-  top or end of the file (Shift+Home / End still do). Not menu items: a
-  menu key works in every pane and would take Cmd+Shift+Up from the find
-  field and the commit box.
-- **Move Line Down / Up** (2026-11-01, asked for by the user): Cmd+Down /
-  Up (`MultiCaret::moveLines`, `multicaret:move-lines`) swap the lines each
-  caret touches with the line below or above, selections and carets going
-  with them; carets on neighbouring lines move as one block, and nothing
-  moves when any block is already at the edge. Caught beside Copy Line, by
-  `moveToEndOfDocument:` / `moveToBeginningOfDocument:` plus the arrow key
-  code, only in an editable view. Going to the start or end of the file
-  moved to Cmd+Home / End (fn+Cmd+Left / Right on a laptop, Shift
-  selecting), caught by key code in `CodeTextView keyDown:`; plain Home and
-  End still only scroll, as in AppKit.
-- **Option+Up / Down** move lines too (2026-11-04, VS Code's Mac key; the
-  user found it did nothing without a selection), caught by key code in
-  `CodeTextView keyDown:` because AppKit sends two paragraph selectors for
-  each; Shift+Option still copies. Checked offscreen (7 checks).
-- **VS Code's multi-cursor keys and a ruler** (2026-11-05, asked for by
-  the user, VS Code's key even where a minicode binding had to move).
-  Edit menu items answered by `CodeTextView` through the responder chain
-  (`addNextOccurrence:`, `selectAllOccurrences:`, `addCursorAbove:`,
-  `addCursorBelow:`; `validateMenuItem:` enables them only while it is
-  editable, so a preview, Find in Folder or TODOs window leaves them
-  off). Cmd+D: an empty caret selects its word (`MultiCaret::wordAt`:
-  letters, digits, _ and anything past ASCII), then each press adds the
-  next occurrence after the selection the last press added, wrapping,
-  skipping places already selected, case-sensitive, whole-word only when
-  it began at an empty caret (VS Code's rule; `wholeWordAt` lets a match
-  that starts or ends in punctuation touch a word). `MCMultiCarets` keeps
-  that state (`_findLast`, `_findWholeWord`) only while the carets and the
-  text length are what the last press left. Shift+Cmd+L: every
-  occurrence of the selection, or whole-word of the word at the caret
-  (`MultiCaret::selectAllOccurrences`). Option+Cmd+Down / Up: per caret,
-  as VS Code does, a new one a visual line below / above at its goal x
-  (the x Up and Down keep in `_goalX`, so a column grown past a short
-  line comes back to its place; a selection goes down as a selection);
-  none at the first or last line. Nothing to select beeps. Tests:
-  `multicaret:word-at`, `occurrences`, `next-occurrence`,
-  `select-all-occurrences`. TODOs moved from Shift+Cmd+L to Shift+Cmd+D:
-  "to do", and VS Code's Shift+Cmd+D is its Run and Debug view, which
-  minicode has no counterpart for (its others were taken here or likely
-  wanted: Shift+Cmd+O symbols, Shift+Cmd+M problems, Shift+Cmd+T reopen).
-  Linux keeps Ctrl+Shift+L for TODOs. **The ruler**: `editor.ruler` (a
-  column, a comma list without spaces such as 80,120, or off; 100 by
-  default, the user's VS Code value) and `editor.ruler-color` (#5A5A5A,
-  Dark+'s editorRuler.foreground), `Settings::rulers()` and
-  `rulerColor()`, `settings:ruler`. `CodeTextView drawViewBackgroundInRect:`
-  draws a 1 pt line, backing-aligned, at text container origin + line
-  fragment padding + column times the width of "0" in the typing font
-  (the 13 pt monospaced system font), so the text draws over it; none
-  while the view is read-only (Markdown preview, messages; the LaTeX
-  preview is its own view). EditorController's `applySettings` sets
-  `rulerColumns` and `rulerColor`. Not in the Adjust Settings map, which
-  would have changed what `missingSurfaceLines` adds for old files.
-  **Verified** offscreen (58 checks; main.mm included as `minicode_main`,
-  ordering, `keyWindow`/`mainWindow` and activation swizzled, scratch
-  HOME, settings and defaults suite): a dump of every menu key equivalent
-  (no clashes; Cmd+D, Shift+Cmd+L, Shift+Cmd+D, Option+Cmd+Up/Down on
-  their actions), every key as a `CGEventCreateKeyboardEvent` event
-  through the window's and the main menu's `performKeyEquivalent:`, Cmd+D
-  four times skipping `counter` then beeping, typing at every caret,
-  undo, a hand selection matching `counter`, Shift+Cmd+L from a caret
-  and from a selection, Option+Cmd+Down twice past a short line and back
-  up, a plain Down after, the first and last lines, a selection going
-  down; the ruler at column 100 to the pixel (2155 px at 2x, expected
-  2155.2) in a capture of the window, off, 80,120 in red, none over a
-  Markdown preview, the items disabled there; Shift+Cmd+L no longer
-  opening TODOs and Shift+Cmd+D opening them; the hints rows. Harness
-  traps: an offscreen window is never key, so a plain key through
-  `keyDown:` does nothing (the input system ignores it) and typing went
-  in as `insertText:`; one Cmd+Z took back two letters typed at the
-  carets in separate run-loop passes (typing coalescing, or the harness).
-  Needs the user: real keys, the ruler's look on a real screen, and
-  Cmd+D's beep when nothing is left.
-- **A tab's right click** (2026-11-04): `MCTabStrip menuForTab` gives
-  EditorController's `menuForTabAtIndex:` (Close, Close Other Tabs, Close
-  Tabs to the Right, Close All Tabs; for a file Copy Path, Copy Relative
-  Path, Reveal in Finder, Reveal in File Tree, Rename…, Move to Trash),
-  each item carrying its `MCTab`, and the strip adds Adjust Settings….
-  The tree's rename and trash became `renamePath:` and `trashPath:` for
-  both, and the tree gained Copy Relative Path (`pathFromRoot:`, compared
-  with symlinks resolved).
-- **Terminal input line**: Ctrl+W deletes the word before the caret (back
-  to a space, as bash and zsh do) and Ctrl+U everything before it, in
-  `TerminalView control:textView:doCommandBySelector:` (the shell's line
-  editor is off, so the field stands in for it). The grid already sent
-  them to the program.
-- **State**: NSTextView keeps only one empty selection, so the carets live
-  in `MCMultiCarets` (MultiCaret's terms); the text view's selection holds
-  the non-empty ones (it highlights them) or the first caret, and the view
-  draws every caret itself after `drawRect:` (its own insertion point is
-  off while active, steady and dimmed without the keyboard). Any selection
-  or text change not made by the carets (a plain click, undo, a reload, a
-  tab switch, Find) ends them; so do Esc and any command they do not know
-  (it then runs at the first caret). Scroll commands pass through.
-- **Edits** go through `shouldChangeTextInRanges:replacementStrings:` and one
-  `beginEditing`/`endEditing` batch, each its own undo step, so the
-  highlighter sees one edit spanning them, and the language server sees no
-  single typed character (no completion list). The electric dedent is off
-  while active (EditorController's `shouldChangeTextInRange`). Return keeps
-  each line's indentation; Tab inserts the file's indent unit.
-- **Wrapping**: an opener (`( [ {`, `" ' \``, `MultiCaret::closerFor`)
-  typed while every caret has a selection, one or several, puts the pair
-  around each and keeps the text selected (`MultiCaret::surround`), so a
-  second opener wraps again. `MCMultiCarets insertText:` takes it first even
-  with one caret; never while an input method composes (a dead key's
-  marked text). One undo step. The electric dedent also skips edits the
-  carets make (`multiCarets.applying`).
-- **Cmd+Delete** is no longer Move to Trash's menu key (a menu key works in
-  every pane, so it trashed the tree's selection from the editor, after a
-  confirm). The tree takes it in `ClickOutline keyDown:`; elsewhere it is
-  the system's delete to the start of the line, at every caret.
-- **Verified** offscreen (18 checks, a `CodeTextView` in a window never
-  ordered front): a Cmd+Shift drag down column 0 giving four carets, typing
-  `// ` on all of them, Backspace, undo in one step, an Option drag over
-  `int` on three lines replaced by typing, End passing through, line end,
-  Cmd+Delete at every caret, Paste a line per caret, Up, Esc, Option+click,
-  a plain selection ending them, and the drawn carets looked at; then
-  (26 in all) wrapping through real key events: `(` over a word, `"` over
-  it again, undo, `(` with no selection typing as usual, a letter replacing
-  a selection, `[` over two selections; then (45 in all) a Cmd+Shift click
-  at one end and another at the other giving the column, a third moving
-  its far end, a wider one giving selections and typing over them, a fresh
-  start after typing, Cmd+Shift+Down/Up and Shift+Option+Down as key
-  events over a selection, a caret and two carets, undo, Shift+End still
-  selecting, and Ctrl+W twice and Ctrl+U in a real TerminalView's input
-  line through `sendEvent:`; then (55 in all) Cmd+Down / Up as key events moving
-  a line, stopping at the bottom, undo in one step, a selection over two
-  lines, two neighbouring carets, Cmd+End and Shift+Cmd+Home, and a
-  read-only view left alone. Needs the user: real clicks and drags, the
-  look, Cmd+Delete in the tree, and quotes on a layout with dead keys.
-
-## Formatting (Mac, 2026-10-20)
-
-Shift+Option+F (Edit > Format Document, `formatDocument:`) pipes the buffer
-through an external formatter; nothing is bundled.
-
-- **Which one.** `format.<python|cpp|go|rust|shell>` in the settings is a
-  whole command line like `lsp.*` (`{file}` is the path; `off` disables) and
-  runs exactly as written. Unset, the nearest folder (up to the open folder or
-  a `.git`) with a formatter's config decides: `[tool.pyink]`, `.style.yapf`,
-  `[yapf]` in setup.cfg, `[tool.black]`, ruff.toml, .ruff.toml or any
-  `[tool.ruff]` table (lint settings alone count since 2026-11-05: a project
-  that lints with Ruff almost always formats with it; a pyink, yapf or black
-  table in the same folder still wins, being checked first),
-  `.clang-format`, rustfmt.toml, an `.editorconfig` with a shell section. That
-  tool runs with no style flags, and if it is missing the user is told to
-  install it; another tool would restyle the project. With no config, the
-  Google defaults: `clang-format --style=file --fallback-style=Google`
-  (C-family incl. Java, JS/TS, proto, C#), pyink then yapf `--style=google`,
-  gofmt, rustfmt with Cargo.toml's edition, `shfmt -i 2 -ci -bn`. Python
-  defaults to Google's *published* guide (4 spaces, 80 columns, consistent
-  quotes: pyink `--line-length 80 --pyink-use-majority-quotes`), which yapf's
-  google style also follows; Google's internal 2-space is
-  `--pyink-indentation 2`. No LSP `textDocument/formatting` fallback: clangd
-  falls back to LLVM style and pylsp to autopep8, and the servers' own
-  formatters sit on the same search path anyway.
-- **Finding and running.** `MCFindProgram` (never /usr/bin's xcrun shims;
-  clang-format comes from the command line tools), with `.venv/bin` and
-  `venv/bin` from the file's folder up to the root first for Python. stdin
-  in, stdout out, cwd the file's folder, PATH widened, `PYTHONUTF8=1`, 10 s
-  then SIGTERM and SIGKILL. Non-zero exit, empty output for non-empty input,
-  or non-UTF-8 output leaves the buffer alone and shows the first 6 lines of
-  stderr in a popover by the caret (paths shortened to the file name).
-  Planning uses symlink-resolved path and root, since the tree can say /tmp
-  where a file says /private/tmp.
-- **Applying** (`replaceSourceWithText:actionName:`): `LineDiff` hunks,
-  applied last to first through shouldChangeText/didChangeText inside one
-  undo group, so the highlighter, the LSP and dirty see ordinary edits. The
-  caret and the character at the top of the pane are mapped by counting
-  non-whitespace characters within a hunk. Hunks with only blank lines
-  between them are joined: a blank line matches any other, and without that
-  the diff split "def h(x,y):" and "def h(x, y):" into different hunks and
-  the caret jumped. A result for text that changed meanwhile is dropped
-  (generation count plus string compare). A selection passes its lines to
-  clang-format (`--lines`), yapf (`--lines`) and pyink/black
-  (`--line-ranges`); others format the whole file. Undo selects what it
-  restored, so pressing the key right after an undo formats only that.
-- **The key.** No Command, so it is also a character (Ï on US). AppKit
-  offers a key without Command or Control to the menu only after the first
-  responder, and the editor takes it as typing: 1.5.0 and 1.5.1 typed Ï
-  (the "verified" check had sent the event to the menu directly). So the
-  local key monitor in main.mm offers it to the menu first when a
-  CodeTextView has the keyboard (F9 and Shift+F9 too), and hands it to the
-  first responder when that is another text input or a TerminalGridView, so
-  the terminal, commit box and find fields still type it. Test keys like
-  this through `[window sendEvent:]`, never the menu alone.
-- `format.on-save` (off): Cmd+S (a non-nil sender) formats, then saves in
-  the completion; saves MiniCode makes itself (nil sender) never wait, and
-  Save All formats nothing, so no tab is formatted unseen. A Cmd+S is never
-  lost (`_formatSaveTab`): leaving the tab (another tab, closing it or the
-  window) drops the formatter's result and saves the tab unformatted at
-  once, and Format Document pressed meanwhile takes over the save.
-- **Verified** (2026-10-20) with an offscreen harness that includes
-  `main.mm` (61 checks) against pyink 26.5.1 and yapf 0.43.0 in a scratch
-  venv and the command line tools' clang-format 21: the key event built
-  with `CGEventCreateKeyboardEvent` matching the menu (Option+F and
-  Cmd+Shift+F not), output equal to the tools run by hand, one undo, the
-  caret on the same token, the line at the top of the pane staying put, the
-  keyword color in a changed line, already formatted, a syntax error's
-  note, typing during a run, a project `.clang-format`, a selection,
-  missing shfmt, `off`, a preview refused, a settings command, the yapf
-  fallback from a venv, format on save, a 10 s timeout killing the
-  process, and the key typing Ï in another text view. Popover pictures
-  were looked at. Needs the user: the popover on a real screen and a real
-  Shift+Option+F from the keyboard.
-
-## Install hints (Mac, 2026-10-20)
-
-The user asked for the commands that get completions and formatting working
-to show in the app at the moment they are needed, and in the README.
-
-- **One table**: `Install::server(key)` / `Install::formatter(program)` in
-  `InstallHints.cpp`. Python is `uv tool install basedpyright` first (it
-  brings its own Node; Homebrew's node broke pyright on this Mac), then
-  `pipx install basedpyright`, `npm install -g pyright`, `pipx install
-  python-lsp-server`; formatters are uv first too (`uv tool install pyink`).
-  `suggest` takes the first way whose installer (uv, pipx, npm, brew, go,
-  rustup) `MCInstallerAvailable` finds; with none, the first way plus
-  `brew install uv` (shown as one line, `brew install uv && uv tool install
-  basedpyright`) or, without Homebrew, a link to the installer's page.
-  `$MINICODE_INSTALL_HAVE` (comma list) fakes which installers exist.
-  The `install:readme` test checks the README has every command in
-  backticks, so change both together.
-- **What the user sees** (`InstallPanel.mm`): opening a file whose server is
-  wanted but `NotInstalled` (`LspSession.missingServer`) puts an
-  `MCInstallBar` under the tab strip (`layoutInstallBarIn:`): "No Python
-  language server is installed...", Install…, Don't Show Again, ×. Offered
-  once per language per launch across windows (`MCInstallBarTakeOffer`); it
-  stays over that language's files in that window until ×, Don't Show Again
-  (`MCInstallHintsMuted` in `MCAppDefaults()`), the server turning up, or
-  another missing language taking the bar. The status item reads "Install a
-  Python language server…" and its click opens the same popover
-  (`MCInstallView`: what it gives, the command with Copy and Run in Terminal,
-  alternatives with Copy, a note, the homepage). The Language Servers card
-  of a missing server shows the same rows (`MCInstallCommandRows`), and
-  Format Document's note for a missing formatter is an `MCInstallView`
-  (`MCFormatResult.installPrograms`; the error text no longer carries the
-  hint).
-- **Run in Terminal** types the command into the active terminal's input
-  line (`TerminalView typeCommand:`, caret at the end, keyboard there) and
-  never runs it; the user presses Return. A busy terminal gets a new tab.
-  Copy uses `MCInstallPasteboard()` (`$MINICODE_PASTEBOARD` names a private
-  one for tests).
-- **Found without a restart**: `lookAgainForMissingServer` runs on the
-  window's `NSWindowDidBecomeKeyNotification` and on
-  `MCTerminalCommandDidFinishNotification` (posted at every OSC 133 D), and
-  starts the server; the bar goes and the status bar says "Found the Python
-  language server". Formatters are looked up on every run anyway.
-- **Verified** with an offscreen harness including `main.mm` (59 checks;
-  scratch HOME via `CFFIXED_USER_HOME`, ZDOTDIR, settings, a defaults suite
-  deleted before and after, a private pasteboard, PATH without a Python
-  server): the bar once, its layout, gone on a .md and back on a .py, none
-  in a second window but its status item opening the popover, Copy putting
-  the exact command on the private pasteboard with the general one's
-  changeCount unchanged, Run in Terminal leaving the command in the input
-  with nothing run, the no-uv and no-Homebrew variants, the servers card,
-  Format Document's note, × and Don't Show Again (read back from a fresh
-  NSUserDefaults), basedpyright linked into the scratch PATH by a real zsh
-  command being found and running in both windows, and a stand-in
-  rust-analyzer found on window focus. Pictures of the bar, the popovers
-  and the window were looked at. A harness trap: run the test from a timer,
-  not a main-queue block, or nothing the app dispatches to the main queue
-  (pty reads, formatter results) ever runs while it waits.
-- **Needs the user's eyes**: the bar and popovers on a real screen, a real
-  click on Copy and Run in Terminal, and an actual install. Linux and
-  Android do not have any of this yet; the GTK port could compile
-  `InstallHints.cpp` as it is (its `MCInstallerAvailable` would be a PATH
-  lookup, with apt, pipx and uv rows to add), and Android installs through
-  Termux's `pkg`, so it would want its own rows.
-
-## Indentation and sorting (2026-10-20)
-
-The user found Return in Python "rarely works the way it is supposed to"
-(it only copied the line's leading whitespace), and asked for keep-sorted.
-
-- **AutoIndent reads the code from the top of the file to the caret**
-  (`scan`): strings (Python prefixes, triple quotes, JS templates, Go raw
-  strings, Rust lifetimes are not strings), comments (`#` only at a word's
-  start in shell and YAML, no `//` in CSS or JSON, so `url(http://x)`
-  survives), and a stack of open brackets with the line each opened on.
-  Linear: Return at the end of an 80,000-line Python file takes about
-  60 ms unoptimized in the tests. Languages come from the extension
-  (`languageFor`): Python, CLike, Yaml, Generic (anything LineComments has
-  a marker for: brackets only) and Plain (old behaviour: keep the
-  indentation up to the caret, nothing trimmed).
-- **Python rules**, in order: inside a triple-quoted or one-line string,
-  keep the line's indentation; inside a bracket, a closer right after the
-  caret with the opener right before it opens the pair (`(|)`), a moved
-  closer goes to the opener line's indentation, text after the opener on
-  its line means align with it, else a hanging indent of one unit; with no
-  bracket open, a trailing backslash indents once (or keeps the line on a
-  continuation line), a block colon indents, return / pass / break /
-  continue / raise as the statement's first word dedent (only with nothing
-  moved down), else the indentation of the *statement's first line*.
-  CLike: one unit after a line ending in an opener, otherwise the line's
-  own indentation, or that of the line that opened a bracket this line
-  closes (`foo(a,\n    b);|`); in `/* */` a " * " continuation.
-- **Electric dedent** (`typed`): a closer alone on its line goes to its
-  opener line's indentation (for `(` and `[` only when the opener ended its
-  line, so lined-up arguments keep theirs); in Python the colon of else,
-  elif, except, finally or case moves the line to the nearest shallower
-  *statement start* if that is an if/elif/for/while/try/except (or case
-  for case). Statement starts come from the same scan, so continuation
-  lines, docstrings, blank and comment lines never count.
-- **Indent unit** (`detect`): tabs if more lines start with a tab, else the
-  most common step of 4, 2, 8 or 3 between a line and a deeper one, counted
-  only after a line ending in `:` or an opener in languages with blocks
-  (so `x = foo(a,` + 8 aligned spaces does not make the file 8-wide).
-  Defaults: 4 spaces, 2 in YAML, tabs in Go and Makefiles. Plain text gets
-  soft tabs only when the file itself has space indentation; `.tsv` never.
-  There is no settings key for it, on purpose: the file decides.
-- **KeepSorted is keep-sorted's Go code, step for step** (block.go,
-  line_group.go, options.go at v0.10): groups, sticky comments, block
-  balance, the trailing-comma trick, dedupe modes, numeric tokens, prefix
-  order, YAML flow lists, nesting (inner blocks first), and by_regex /
-  group_start_regex / group_end_regex through std::regex with a small RE2
-  translation (`(?i)`, `(?s)` default for by_regex, named groups, `${name}`
-  templates, literal braces). `\p`, `\Q` and the like mark the block
-  unsupported: it is left alone with a message, since sorting it any other
-  way would disagree with keep-sorted. A marker without its partner leaves
-  the whole file alone, as keep-sorted does. Deliberate difference: a
-  block whose groups would split a nested block (group=no) is left alone
-  and named; keep-sorted scatters the markers.
-- **Verified against the real tool.** Go is on this Mac (`/opt/homebrew/bin/go`):
-  keep-sorted built from a clone with `GOMODCACHE`/`GOCACHE` in the
-  scratchpad, then a fuzzer fed 55,000 random files (random options,
-  nesting, comments, quotes, CRLF) to both: no difference except the
-  deliberate one and keep-sorted's own bug (with an unmatched marker it
-  still rewrites lines, through a shared Go slice, while saying it fixed
-  nothing). Its 17 golden files are in `tests/keepsorted` (Apache 2.0,
-  LICENSE beside them) and all pass in `make test`, warnings included.
-  One quirk kept: an outermost block sorted down to nothing leaves one
-  empty line (keep-sorted writes every line with its newline).
-- **Commands**: F9 Sort Lines (selection over two or more lines: plain
-  sort by the text after leading spaces, stable, duplicates kept; else the
-  innermost block holding the caret), Shift+F9 every block. The caret
-  follows its own line (`Result::origin`). `editor.keep-sorted-on-save`
-  (Mac and Linux; Android has no settings file) sorts before writing,
-  without moving the view, background tabs in Save All too (not a tab
-  showing a preview, on show or not). Messages go to the status bar for
-  six seconds. Android: leader J and two
-  ⋮ menu items.
-- **Undo**: every edit is one replacement, its own step (Mac:
-  `breakUndoCoalescing` around it; Linux: one user action; Android: one
-  `Editable.replace`). The electric dedent happens in the same event as
-  the typed character, so on the Mac it shares that event's undo group.
-- **Verified**: 272 `indent:*` and 158 `keepsorted:*` checks; on the Mac an
-  offscreen harness (55 checks, `main.mm` included with
-  `-Dmain=minicode_main`, window ordering swizzled, activation Prohibited,
-  NSAlert answered Don't Save, scratch HOME and settings, lsp off) sending
-  real key events through `keyDown:` and the menu: Return, Tab, Shift+Tab,
-  Backspace, the else: dedent, `}`, Markdown lists, F9, Shift+F9, undo and
-  redo, saving with the setting on. Harness trap: with `groupsByEvent` off,
-  `saveCurrentFile:` outside a begin/end grouping throws once the sort
-  registers undo. Android: the debug build compiles. Linux: not built
-  (see the Docker trap below); the code mirrors continueList and
-  toggleComment.
-- **Docker trap (2026-10-20)**: `open -g -a Docker` on this Mac brought up
-  an administrator password prompt ("Docker Desktop requires privileged
-  access to configure privileged port mapping") and the daemon never came
-  up; killing the prompt made Docker show an error window. Do not start
-  Docker unattended; ask the user to start it first.
-- **Needs a person**: everything on a real screen (Mac, the ThinkPad, the
-  Titan 2), F9 on a laptop keyboard (fn), the Linux build itself, and on
-  Android whether Pastiera sends Backspace as a key or as
-  deleteSurroundingText.
-
-## LSP (read before touching it)
-
-The protocol lives in `LspClient.cpp`, pure C++ and tested against a scripted
-server in `run_tests.cpp`; `Lsp.mm` owns processes and UI on the Mac. The GTK
-port has its own `linux/src/Lsp.cpp` over the same core (item 6 of
-`linux/HANDOFF.md` has its design). One GTK trap worth knowing: a popover
-given to a `GtkTextView` with `gtk_widget_set_parent` must be unparented
-before the view is disposed (it is done on `unrealize`), or GtkTextView's
-dispose loops forever warning "is not a child of GtkTextView" and the window
-never closes.
-
-- **EditorController hooks are few on purpose**: `documentOpened:` (path, or
-  nil for messages, binary files and previews), `documentSaved`, `setRoot:`
-  (Open Folder), `shutdown` (windowWillClose), and `textView:doCommandBySelector:`
-  forwarding to `handleCommand:`. The session sees typing by observing
-  `NSTextStorageDidProcessEditingNotification` itself, and didChange is
-  debounced 0.3 s; every request flushes first. `Client::didChange` drops
-  unchanged text, so the storage replacement on file switch costs nothing.
-- **Queued until Ready**: didOpen and requests made during the handshake are
-  queued in the client and sent after `initialized`. Server-to-client requests
-  are always answered (configuration gets nulls, unknown methods get
-  -32601), because some servers wait for the reply.
-- **Server lookup**: PATH, then /opt/homebrew/bin, /usr/local/bin, ~/.cargo/bin,
-  ~/go/bin, ~/.local/bin, /usr/bin. `/usr/bin/clangd` is an xcrun shim that
-  pops the "install developer tools" dialog on a Mac without them, so it is
-  never run; `MCDeveloperTool` finds the real binary via
-  /var/db/xcode_select_link. The child gets that wider PATH too (servers spawn
-  node, go, cargo). `which gopls` said "not found" on this Mac while
-  ~/go/bin/gopls exists; the app's search does find it.
-- **Settings**: `lsp.enabled`, `lsp.<cpp|python|go|rust|typescript>`. The
-  command value is a whole command line (to a ` #` comment outside quotes,
-  as for `run.*` and `format.*`), unlike every other key; `off` disables one
-  language. A change restarts the servers.
-  `python.interpreter` (a path, spaces allowed; `auto` or empty = automatic)
-  only reconfigures the Python server. Python's defaults are pyright, then
-  basedpyright, pylsp, jedi-language-server.
-- **Server states** (2026-10-20): each window's `LspSession` keeps an
-  `MCLspEntry` per language (Idle, Starting, Running, NotInstalled, Off,
-  Stopped, Failed, Restarting, Crashed). The status bar item is
-  `MCLspStatusField` (LspPanel.mm): a colored dot plus text, clickable; it and
-  the app menu's Language Servers… open a popover (`MCServersController`)
-  listing every language with command, resolved program, PID, interpreter,
-  last error (stderr's last line is kept: stderr is now a drained pipe, not
-  /dev/null) and Restart/Stop/Start, plus the install commands for a missing
-  one (see "Install hints"; `Lsp::installHint` is gone). Nothing is ever installed. A server that exits on its own is
-  restarted after 1, 2, 4 s; the fourth crash in a row (three minutes of
-  running clears the count) leaves it Crashed until Start. NotInstalled is
-  looked for again whenever a file of that language opens. The settings
-  file shows "Language servers: N running" in the status bar, and its
-  default text points at the menu item. The popover outlives its window in
-  a static (`gServersPopover`), so what it keeps of the session is weak; a
-  strong capture kept a closed window's LspSession alive.
-- **Search folders** grew: an `~/.npmrc` prefix, ~/.npm-global, nvm and fnm
-  Node versions (newest first), volta, pnpm, bun, ~/Library/Python/*/bin
-  (pip --user), pyenv shims, MacPorts, and Homebrew's keg-only llvm after
-  /usr/bin. A server's own folder goes first on its child PATH, so an nvm
-  script's `#!/usr/bin/env node` gets nvm's node: on the user's Mac
-  Homebrew's node was broken (missing libllhttp) and came first otherwise.
-- **Completion** opens on its own after `.`/`->`/`::` and on the second
-  letter of any word (so `json.lo` typed fast still lists json's members);
-  an `isIncomplete` list is asked for again as the word grows. Keys
-  (`Lsp::completionKeyAccepts`, tested in `lsp:completion-keys`): Tab takes
-  the item; Return takes it only when the list was asked for (Ctrl+Space,
-  Option+Esc), came after a trigger character (or the first letter after
-  one), or the arrows moved through it, and is otherwise a new line through
-  the normal Return/AutoIndent path (it used to turn `name = nm` into
-  `EnvironmentError`); an item equal to the typed word is always a new line;
-  Shift+Tab never takes it, and Tab with nothing selected indents.
-  **Which item is selected** (fixed 2026-10-20): `filterCompletions` ranks
-  the word exactly as typed, then same-case prefixes, any-case prefixes and
-  subsequences, the server's sortText order inside each, and the list
-  selects its first row after every filter unless the arrows chose an item
-  still listed (matched by label and text, since an incomplete list asked
-  again renumbers). When the typed word equals some item exactly
-  (`exactCompletion`, case-sensitive), Return is a new line unless the
-  arrows chose another. Before, `os.path` + Return gave `os.PathLike` and
-  `os.pa` kept `POSIX_SPAWN_CLOSE` highlighted from the `os.p` list. The
-  Linux port gets the ranking but still keeps a highlighted label across
-  filters; it has no arrows-used flag yet. Both the list and the signature hint close when
-  the text view resigns first responder (`CodeTextView onFocusLost`), when
-  its window resigns key, and on a tab switch. The selected item's
-  detail and documentation (Markdown through `MarkdownParser`, code
-  monospaced) show in a second child panel beside the list, fetched with
-  `completionItem/resolve` 80 ms after the selection settles; items keep
-  their raw JSON (`shared_ptr`) and list index for that. Signature help
-  (`(` and `,`, from the server's trigger characters) is a small panel above
-  the caret line, the active parameter bold; it re-asks 0.15 s after edits
-  or caret moves and closes on null, Esc or focus loss. Trap paid for: the
-  list's `close` must `reloadData` after emptying its labels, or a later
-  layout pass asks for a vanished row (an NSRangeException inside window
-  layout, intermittent).
-- **Python interpreter**: `PythonEnvs` (pure C++, tested) finds them without
-  running any (versions from pyvenv.cfg, conda-meta, pyenv folder names or
-  the symlink target's name); /usr/bin/python3 is skipped (xcrun shim) and
-  the CLT's real python3 offered. Order: this folder's choice
-  (NSUserDefaults `MCPythonInterpreters`, keyed by the root's realpath,
-  posted to every window on that folder), then `python.interpreter`, then
-  automatic (the nearest .venv/venv/env from the file up to the root, then
-  $VIRTUAL_ENV, $CONDA_PREFIX), else the server's own. pyright/basedpyright
-  get it as `python.pythonPath` through workspace/configuration plus
-  didChangeConfiguration, sent only when the resolved interpreter differs
-  from the server's (switching between files of one environment sends
-  nothing; a file in no environment keeps the server's, which used to
-  restart pylsp on every switch to it; jedi still restarts on a real change); pylsp as `pylsp.plugins.jedi.environment` (sent
-  after `initialized` and on change); jedi-language-server through
-  `initializationOptions`, so it restarts. basedpyright gets
-  `typeCheckingMode = standard` unless the project configures it.
-- **Verified** (2026-10-20) with an offscreen harness (window ordering
-  swizzled, activation Prohibited, scratch settings, log, project and
-  venvs) against real pyright 1.1.414 (54 checks) and pylsp 1.15 (49):
-  completion typed fast and slow, docs following the selection, resolve,
-  signature help, interpreter switching changing pyright's diagnostics,
-  restart/stop/start, four SIGKILLs (backoff 1/2/4 s then Crashed),
-  `/usr/bin/false`, not installed, off. Pictures of the list, doc panel,
-  signature, status bar, popover and picker were looked at.
-- **Processes**: NSTask with pipes. stderr goes to /dev/null (clangd logs
-  every request there, a full pipe would stall it) or to `$MINICODE_LSP_LOG`,
-  which also logs all traffic (opened O_APPEND, several servers share it).
-  Writes run on a serial queue with raw `write()` and `F_SETNOSIGPIPE`, so a
-  dead server gives EPIPE, not SIGPIPE. Window close: shutdown, exit on the
-  reply, stdin closed; SIGTERM after 2 s, SIGKILL after 3. App quit
-  (`applicationWillTerminate` → `MCLspTerminateAllServers`): shutdown + exit
-  at once, wait up to 0.5 s, then signals. If MiniCode crashes, stdin EOF
-  makes servers exit.
-- **Diagnostics are drawn, not attributed.** `CodeTextView` draws
-  squiggles after `super drawRect:` from `enumerateTextSegmentsInRange:`
-  under TextKit 2 or the layout manager's rects under TextKit 1, only for
-  the viewport. In practice it is TextKit 1: AppKit builds any NSTextView
-  subclass that overrides `drawRect:` with a TextKit 1 layout manager
-  (checked on 2026-09-25; a plain NSTextView gets TextKit 2, a subclass
-  whose only override is `drawRect:` gets TextKit 1, and no switch
-  notification is posted). Notes elsewhere that assume TextKit 2 predate
-  this finding.
-  Marks are NSRanges that follow edits until the server republishes, and they
-  survive re-highlighting because they are not storage attributes. Their
-  messages show in the hover box (below); the per-mark tooltips are gone.
-- **Completion**: auto-triggers on `.`, `->`, `::` (if the server lists the
-  trigger char), manual on Ctrl+Space or Option+Esc (`complete:`). The list
-  filters client-side as you type (ranked as in "Which item is selected"),
-  closes when the caret leaves the word. Accept replaces from the textEdit's
-  start (or the word start) to the caret. snippetSupport is off, so clangd
-  inserts `lengthSquared` without parentheses; its labels carry a leading
-  space or bullet, stripped in `parseCompletion`.
-- **Hover** (Mac, 2026-10-21): the pointer resting 0.4 s on a non-blank
-  character of the editor (`CodeTextView onMouseHover`, from a tracking
-  area active in the key window; `characterIndexUnderPoint:` checks the
-  character's own box, so past a line's end is nothing) asks
-  `textDocument/hover` and shows `MCHoverPopup`, a non-key child panel above
-  the line (below without room), sized to its text up to 520 x 320, drawn
-  from `Lsp::parseHoverDoc` through `MCDocText` (Markdown, code monospaced).
-  The client now asks for Markdown first (`contentFormat`); pyright and
-  basedpyright sent plain text before, since plaintext came first.
-  Diagnostics under the pointer come first in the box in their severity's
-  color, and replace the old tooltips (gone). Kept while the pointer is on
-  the range the server named (or the word) or inside the box; leaving
-  either closes it after 0.3 s; typing, a caret move, a scroll, Esc,
-  focus or key loss and a document switch close it at once. Not in a
-  read-only view (previews) or while the completion list shows.
-  Option+Cmd+I (Cmd+I until 1.5.5; it is now the inline agent) shows the
-  same box at the caret, closed by the caret moving, not the
-  pointer. Linux and Android still flatten hover to text (`parseHover`,
-  which now also drops Markdown rules). Verified offscreen against
-  basedpyright (26 checks, window ordering and `addChildWindow:` swizzled)
-  and the box's picture looked at; a real pointer needs the user.
-- **Definition**: a reply is dropped unless the generation, the document and
-  the selection are what they were when asked (`detachDocument` bumps the
-  completion, definition and hover generations, so A, B and back to A drops
-  it). The target is mapped back into the tree root's spelling of
-  the path (clangd answers with /private/tmp/... for a /tmp root) before
-  `revealPath:andOpen:`; outside the root it goes to `openFileAtPath:`.
-- **Tested headless** with a temporary `MINICODE_LSPTEST` block (31 checks,
-  removed): real clangd on a scratch project, diagnostics range and message,
-  status text, squiggle pixels via `cacheDisplayInRect:`, mark shifting,
-  auto and Ctrl+Space completion with filtering, Return/Esc, hover, F12 and
-  Cmd+click across files, markdown and missing-server cases, per-window
-  shutdown, and no server process left after quit. Point
-  `MINICODE_SETTINGS` at a scratch file and `MINICODE_LSP_LOG` at a scratch
-  log when doing this again. Other sessions (and the user's own MiniCode)
-  may have clangd running: kill only PIDs the test started.
-- **Rename, references and quick fixes** (Mac, 2026-11-05). VS Code's keys:
-  F2 Rename Symbol, Shift+F12 Find All References, Cmd+. Quick Fix (Edit
-  and Navigate menus, the hints overlay, the README table).
-  - **Core** (`LspClient`, `lsp:rename*`, `lsp:references*`,
-    `lsp:codeaction*`): the requests, the capabilities (rename with
-    prepareSupport, references, codeAction literals with resolve and
-    isPreferred, workspaceEdit with documentChanges and no resource
-    operations, applyEdit, executeCommand), `parseWorkspaceEdit` (changes
-    and documentChanges, merged per file, sorted, exact duplicates dropped,
-    overlaps and file operations refused whole), `offsetEdits` (UTF-16,
-    last first), `groupReferences`, `parseCodeActions` (preferred first,
-    disabled left out), `diagnosticsInRange` (the diagnostics as the server
-    sent them, `Diagnostic::raw`, since servers match fixes on them), and
-    `onApplyEdit`, whose reply may come later and is sent once.
-  - **One way edits go in** (`applyWorkspaceEdit:actionName:failure:`
-    in Lsp.mm), for rename, a fix's edit and the server's
-    workspace/applyEdit: every file is read first (the editor for the file
-    on show, `bufferText` for another tab, else the disk), and a tab with
-    unsaved changes is edited only if each range holds the same text as on
-    disk, since the server has only the file on show open; then each file
-    is made the active tab with `openFile` (a file not open gets a tab) and
-    its edits go through shouldChangeText/replace/didChangeText inside one
-    undo group in that tab's undo manager, so highlighting, the dirty dot
-    and didChange follow; then back to the file it started from. Nothing is
-    saved. `_applyingEdit` keeps the typing heuristics (completion,
-    signature help) and the rename box's closing out of it.
-  - **Rename**: prepareRename when the server has it (null or an error is
-    "This can't be renamed", which is what a keyword gets), else the word
-    at the caret; `MCRenameBox` under the name, a key-capable child panel
-    (an NSPopover never shows for a window that is not on screen, so the
-    offscreen harness could not reach it); Return renames, Esc or losing
-    the keyboard cancels. The answer applies only to the text the name was
-    read from. "Renamed N occurrences in M files" goes to `showStatusNote:`
-    through `showNote`.
-  - **References and quick fixes** share `MCPickerPopup`, a child panel
-    that never takes the keyboard (like the completion list): Up, Down,
-    Page Up and Down, Return and Esc come through `handleCommand:`, and
-    typing, a caret move, focus loss or a document switch close it.
-    References are grouped by file (the file asked from first), headings
-    skipped by the keys, each row the line number and the line with the
-    match highlighted, the reference at the caret selected; Return or a
-    click opens one through `revealLocation:` (go to definition's path,
-    now shared). Quick fixes send the diagnostics touching the caret or
-    selection, or with none there the caret line's (clang reports a
-    missing ';' at the next token), and say "No quick fixes" when the list
-    is empty. A chosen action is resolved first when it came without its
-    edit, its edit applied, then its command run; edits the server sends
-    while the command runs are undone under the action's title.
-  - **Keys**: F2 and Shift+F12 are function keys, so the key monitor in
-    main.mm gives them to the menu first while the editor has the
-    keyboard (as F9). F2 in the tree is `ClickOutline keyDown:` (Rename…),
-    and `renameSymbol:` sends a tree's F2 that reached the menu to the
-    same place. Cmd+. is the key bindings' cancelOperation: everywhere, so
-    the monitor gives it to the menu only in an editable editor; elsewhere
-    it goes to the window's key equivalents and then the first
-    responder's keyDown:, which is where it went before (checked: a text
-    field's delegate still gets cancelOperation:). Shift+Cmd+. stays Show
-    Hidden Files.
-  - **Two traps.** The server was initialized with the tree's spelling of
-    the folder (/tmp/x) while didOpen used the resolved one
-    (/private/tmp/x), and basedpyright then took them for two files and
-    found every reference twice; `initialize` now gets the resolved folder,
-    and `CanonicalURI` merges spellings in references and edits anyway. In
-    a test, everything run from one timer callback lands in one undo group
-    by event (`groupingLevel` stays 1), so an undo there undoes every edit
-    since; end the groups by hand around a step.
-  - **Verified** with an offscreen harness (74 checks; main.mm included
-    as `minicode_main`, window ordering and `orderWindow:relativeTo:`
-    swizzled, keyWindow/mainWindow the test window, activation
-    Prohibited, NSAlert answered, scratch HOME, settings, defaults suite
-    and LSP log, the folder spelled through /tmp) against basedpyright
-    1.40.2 and the command line tools' clangd: F2 sent through
-    `[NSApp sendEvent:]` (monitor, menu), the field showing the name, a new
-    name typed and Return, "Renamed 4 occurrences in 2 files", util.py
-    opened as a tab and edited unsaved, both files untouched on disk, back
-    on main.py, undo per file (and redo), a keyword refused, Esc in the
-    field; Shift+F12 the same way, the rows and headings, the caret's
-    reference selected, arrows skipping headings and wrapping, Return
-    opening util.py at the definition, Esc; Cmd+. on an undefined `Path`
-    giving basedpyright's "from pathlib import Path" (applied, undone),
-    "No quick fixes", clangd's "insert ';'" from the start of the next
-    line applied with Return, clangd's rename, its "Extract subexpression
-    to variable" tweak arriving as workspace/applyEdit (answered
-    applied: true) and undone in one step; F2 in the tree renaming a file
-    by key and by the menu; every menu key claimed once; Cmd+. in a plain
-    text field reaching its delegate as cancelOperation:. Pictures of the
-    list, the fixes and the rename box were looked at. Needs the user: the
-    rename box and the lists on a real screen (focus going to the box and
-    back, a click elsewhere cancelling), real F2 and Shift+F12 from the
-    keyboard (fn on a laptop), Cmd+. in the terminal and the find bar, and
-    a rename across many files. The GTK and Android ports have none of it.
-
-## Current state (handoff, 2026-09-29)
-
-- **1.5.6** (2026-11-05): themes (`theme =`, View > Theme), the inline
-  agent (Cmd+I; hover moved to Option+Cmd+I), Restart minicode and the
-  status bar's ↻, the browser panel kept across restarts and relaunches,
-  dictation wrapping in the grid terminal, usage descriptions in
-  Info.plist, and the first release signed with "MiniCode Local Signing"
-  (the user made it with `scripts/make-signing-identity.sh`), so grants
-  now survive builds and releases. Released without the PPA upload
-  (Docker not running): `scripts/ppa.sh 1.5.6` uploads it later; the
-  `theme` key is what Ubuntu users would get. Homebrew copy upgraded.
-
-- **1.5.5** (2026-11-05): the command palette, Quick Open and Go to
-  Line; rename, references and quick fixes; the grid terminal with zsh's
-  line editor (the default); Cmd+D, Shift+Cmd+L and adding cursors, with
-  TODOs moved to Shift+Cmd+D; the ruler; JS, C++ raw and other string
-  literals; backups of unsaved tabs; per-file builds; git and tectonic
-  time limits; Ruff from lint config. Released without the PPA upload
-  (Docker not running): `scripts/ppa.sh 1.5.5` uploads it later.
-  Homebrew copy upgraded. Needs the user, most of all: the grid terminal
-  with their own .zshrc, prompt theme, autosuggestions and fzf.
-
-- **1.5.4** (2026-11-04): several carets, Copy and Move Line (Option or
-  Cmd+Up/Down), wrapping a selection, a tab's right-click menu, Python
-  f-string fields, Ctrl+W/U in the terminal input, `minicode -h/-v/-r/-n`
-  with paths going to the running app, and the developer-mode Request a
-  Change bar. Released without the PPA upload (Docker not running):
-  `scripts/ppa.sh 1.5.4` uploads it later; the f-string highlighting is
-  the one change Ubuntu users would see. Homebrew copy upgraded. Needs the
-  user: a real right click on a tab, `minicode -r` against the running
-  app, the f-string colors and the bar on a real screen.
-
-- **1.5.3** (2026-10-31): the tree's size, last-saved and created columns
-  on their own keys, and Request a Change (Shift+Cmd+K). Released without
-  the PPA upload (Docker was not running; Mac-only changes):
-  `scripts/ppa.sh 1.5.3` uploads it later. The real relaunch into a build
-  and real Claude Code in the bar's terminal still need the user.
-
-- **Indentation and sorting** (2026-10-20, on a branch, not merged or
-  released): language-aware Return, Tab, Shift+Tab and Backspace, the
-  electric dedent, F9 / Shift+F9 keep-sorted, and
-  `editor.keep-sorted-on-save`, on all three ports; see "Indentation and
-  sorting". 2,637 core checks pass. Mac checked offscreen, Android built,
-  Linux not built.
-
-- **Task lists** (2026-10-07): clickable boxes, the task key, lists
-  continuing on Return, the done count and a TODOs window on all three
-  ports; see "Task lists". In 1.4.12. Checked on the Titan 2 on
-  2026-10-07 with injected taps and keys: boxes, a tap ticking (file
-  unchanged on disk), text taps not toggling, Ctrl+Z, double tap still
-  editing, Ctrl+L, Enter after a task, a number and a quote, Enter ending
-  an empty item, the count, and the TODO pane opening a row after asking
-  about unsaved changes. The leader key (L, W) still needs a person.
-
-- **Released: 1.4.11** (2026-10-01): drag and drop in the file tree on
-  all three ports (Mac checked offscreen, Linux with real drags in Docker,
-  Android build-only: the phone checks are in android/README.md), and empty
-  Markdown and LaTeX files opening in the source.
-- **1.4.10** (2026-10-01): about 200 more extensions
-  highlighted (JSON Lines among them) and Return keeping the line's indent,
-  on all three ports; built and unit-tested, not tried in a running app.
-- **1.4.9** (2026-09-29), with the Mac zip and the signed APK;
-  the user's Mac runs it from Homebrew. 1.4.6 the git panel on all three
-  platforms; 1.4.7 video and audio (Mac, Linux), Pastiera fixes and a held
-  Ctrl on Android; 1.4.8 Android video and audio and a real Ctrl reaching
-  the Android shell; 1.4.9 the Markdown parser rewrite (GitHub's rules),
-  math typeset by tectonic in the Mac preview (TeX shown verbatim on Linux
-  and Android), web pictures in the Mac and Linux previews, and opening
-  files from Finder (document types, `application:openURLs:`). 2,066 core
-  checks pass. Waiting on the user: Finder's Open With, double-click and a
-  Dock drop on 1.4.9; the Linux work on the ThinkPad.
-- **Android web pictures** are on branch `worktree-agent-a19381a828540a39b`
-  (worktree under `.claude/worktrees/`), not merged: on the phone a PNG and
-  GIF arrived and failures kept their alt text, but a badge link, the
-  scroll staying put and the ⋮ "Web images in Markdown" toggle making no
-  requests are still unchecked, and `/sdcard/mc-test/web-test` needs
-  deleting. Needs a new wireless debugging port (the phone is now at
-  192.168.1.211; restart the adb server if connect says "No route").
-- **Local build alias**: `mc-dev` (in the user's `~/Code/dotfiles/shell/aliases.sh`)
-  runs the repo's `MiniCode.app`; launching it registers that copy with
-  Launch Services, so Finder may offer two MiniCodes. `lsregister -u` it.
-- **Earlier: 1.4.5** (2026-09-26), on GitHub Releases and the Homebrew tap,
-  with the Mac zip and the signed Android APK; the user's own Mac runs it
-  from Homebrew. The user expects a finished Mac change to be pushed,
-  released and upgraded on their Mac (see Build / release). What each
-  release added: 1.4.1 Linux parity, review fixes, the TeX grammar, images
-  in the Markdown preview; 1.4.2 GIFs that play (the editor is TextKit 1,
-  see LSP); 1.4.3 real Markdown tables and an editor as wide as its pane;
-  1.4.4 working Markdown links, Shift+Cmd+P keeping its place, the user's
-  README rewrite; 1.4.5 editing Markdown from the preview (double-click a
-  block). After 1.4.5, on `main` and pushed but not released: the Linux
-  preview brought level with the Mac (links, pictures, tables, place
-  keeping, double-click editing), Linux-only, so no release was cut.
-  1,755 core checks pass; Mac and Linux builds are warning-free; CI builds
-  and tests macOS and Linux.
-- **Git panel (Mac), merged 2026-09-26, not yet released**: Control+Shift+G
-  swaps the tree for Source Control (see "Git panel" below). Built by a
-  subagent and checked only in offscreen windows, so the user tries it
-  before a release. Still unseen: refresh after a commit in the terminal
-  and on window focus, the selection and focus look, the Commit button,
-  and a long git error (cut to 6 lines, full text in the tooltip).
-  The user asked for VS Code's lineage view after trying it, so a commit
-  graph was added under the change lists (2026-09-26, on a branch, also
-  offscreen-only): lanes, labels, pushed or not, All branches, Show more,
-  and a commit's diff on Return. Unseen on screen: hover tooltips, the
-  selection colors over the push/pull tints, the checkbox, and a real
-  repository with many branches in All branches mode.
-- **Git panel (Linux), 2026-09-26, on a branch, not merged**: the same
-  panel and graph in the GTK port (`linux/src/GitPanel`, `GitModel`; see
-  "Git panel" below and `linux/HANDOFF.md` item 10). Checked in the Docker
-  container with real X keys and clicks; the ThinkPad has not seen it.
-  Find Previous moved from Ctrl+Shift+G to Shift+F3 there.
-- **Git panel (Android), 2026-09-26, on a branch, not merged**: the same
-  panel and graph in the file list's place (leader V, Ctrl+Shift+G on a USB
-  keyboard), git run in Termux through one long-lived bash loop, over the
-  core and `linux/src/GitModel` through `git_jni.cpp`. Checked on the Titan
-  2 with injected keys and taps against scratch repositories in
-  `/sdcard/mc-test/gitpanel-test` (deleted afterwards); see
-  `android/README.md`, "Source control". Needs a person: the leader key
-  itself (403) and real typing in the message box, which injection cannot
-  show. The same branch fixed Back on Android 16, which left the app from
-  any pane (`onBackPressed` is never called for an app targeting API 36).
-- **Markdown parser rewrite** (2026-09-29, on a branch, not merged): the
-  core now follows CommonMark and GitHub (see "The Markdown parser" in the
-  gotchas), the Mac draws quote bars, code boxes, heading and horizontal
-  rules and hanging list indents, and Linux and Android pick up
-  strikethrough and the even block spacing. Checked with the unit tests
-  (g++ in the Docker container too), offscreen renders on the Mac, the
-  GTK port in the container, and an Android debug build; not yet seen by
-  the user on a real screen, and no release cut.
-- **Math in the Markdown preview** (2026-09-29, merged, not released):
-  `$...$`, `$$...$$` and ```` ```math ```` read by the core on every port
-  and typeset by tectonic on the Mac, shown as TeX elsewhere; see the
-  section of that name. Checked offscreen on the user's cheatsheet and
-  `tests/markdown/math.md`. The user has seen it typeset on their Mac, after
-  a first run that waited 44 s for tectonic's downloads with no sign of
-  progress, which led to the "Typesetting N formulas…" line. No release
-  cut. 2,066 core checks pass.
-- **Markdown preview** (Mac, Linux and Android): links, pictures with
-  GIFs playing, real tables, Shift+Cmd+P / Ctrl+Shift+P / leader P keeping
-  the place, and double-click (double-tap) editing of a block. Details under
-  "Markdown" in the gotchas below. Android's arrived 2026-09-26 on a branch,
-  not merged, checked on the Titan 2 with injected taps and keys; still
-  needs a person: the Titan's own Enter and Shift+Enter in the edit box,
-  and the leader key (403) for U and R.
-- **Android key rows clear of the rounded corners** (same branch): the user
-  saw the first and last keys of the symbol row clipped by the Titan 2's
-  curved corners; both key rows are lifted 4 dp and padded from
-  `WindowInsets.getRoundedCorner` (`CurvedEdges` in `EditorKeys.kt`).
-  Looked right in screenshots; the physical curve needs the user's eyes.
-- **macOS**: terminal links (Cmd+click `file:line` and URLs, log and grid) are
-  in 1.4.0; the user has not yet clicked them in the grid (Claude Code, vim).
-  A language server that fails `initialize` now says "failed to start"
-  instead of "starting…" forever (unseen on screen). All eight demo GIFs
-  were re-recorded on 2026-09-23, and `latex.gif` again on 2026-09-25 so its
-  source view shows the TeX colouring.
-- **Android** (1.4.0 APK): editor, terminal with a key row (Esc, Tab, sticky
-  Ctrl, Up/Down history, symbols), terminal links, the Markdown preview
-  (links, tables, pictures, double-tap editing), images, PDFs,
-  browser, and through Termux the language servers and the LaTeX preview
-  with double-tap editing. Projects must live in phone storage, opened with
-  leader O → Phone storage. Missing: project search, comment toggling,
-  PDF pages past the first outside the LaTeX preview, image zoom, terminal
-  scrollback. The release key and its backup are described under
-  Distribution.
-- **Android terminal in Termux, and a list that follows the disk**
-  (2026-09-26, on a branch, not merged): the user found `touch` in the
-  terminal did not show in the file list, and python missing from the
-  terminal. The terminal is now Termux's bash on a real pty when Termux is
-  set up (⋮ Shell to choose), the file list is watched with FileObserver,
-  and the open file reloads or warns when changed on disk. See
-  `android/README.md`, "Termux's bash in the terminal" and "The file list
-  follows the disk". Checked on the Titan 2 with injected keys; needs the
-  user: typing on the real keyboard in bash, vim (not installed in their
-  Termux), and the on-screen keyboard resizing the pane (Kika shows only its
-  strip for the terminal, so the resize was tested with `wm size`).
-- **Android video and audio** (2026-09-28, on a branch, not merged): mp4,
-  m4v, mov, 3gp, webm and mkv, and mp3, wav, m4a, aac, flac, ogg and opus
-  open in the editor's slot (`PlayerPane.kt`, MediaPlayer on a
-  TextureView with its own bar), paused on the first frame, with size and
-  length in the title. Space in the player or Ctrl+Shift+Space plays and
-  pauses, Left and Right skip 5 s, a tap shows the bar. Released whenever
-  the pane is hidden or the app leaves, and after 4 s paused (see the trap
-  below); reloads on a change on disk keeping its place and play state.
-  Checked on the Titan 2 with injected keys and taps and `dumpsys
-  media.player` / `dumpsys audio`; see `android/README.md`, "Video and
-  audio". Needs the user: real sound, a real keypress on the Titan (the
-  leader and Space from its own keyboard), and a USB keyboard's
-  Ctrl+Shift+Space where Android may switch keyboard layouts with it.
-- **Android web pictures in the Markdown preview** (2026-09-28, on a
-  branch, not merged): `https://` pictures fetched with
-  HttpsURLConnection, alt text until they arrive, the place kept, a 32 MB
-  memory cache, a 20 MB and 64 megapixel cap, SVG left as alt text, and
-  ⋮ Web images in Markdown to turn it off. Checked on the Titan 2
-  (2026-09-29, release build, `adb shell setprop log.tag.MiniCodeWeb
-  DEBUG`): a PNG and a GIF arriving and the GIF playing, one request per
-  address, no request again on the arrivals' re-render, a 404, an SVG, a
-  100 MB file and plain http keeping their alt text (http never asked).
-  The phone left the network before the rest: a linked picture opening
-  its link, the text staying put when pictures land above a scrolled page
-  (`scroll.md` with `?scrolltest=1` addresses, so nothing is cached), the
-  toggle off making no request, and an edit from the preview making none.
-  Its test page is still in `/sdcard/mc-test/web-test`; delete it after.
-- **Linux**: all nine items of `linux/HANDOFF.md` are done (the user's work,
-  2026-09-24), and a three-part review on 2026-09-25 was fixed the same day:
-  huge and special files refused before reading, renames followed in every
-  window, in-place saves for hard links and foreign owners, PDF pages
-  rendered on a worker thread with a placeholder for pages that fail, a
-  per-preview LaTeX sibling cleaned up through a folder handle, the Find in
-  Folder picker made safe after its window closes, stale language servers
-  ignored. Verified in the Docker container; still needs the ThinkPad: the
-  folder picker after closing its window, F2 rename in the tree, renames
-  across two windows under GNOME, and the PDF placeholder at 2x.
-- **Reddit**: drafts for five subreddits are a Claude Doc, "MiniCode Reddit
-  drafts" (https://claude.ai/code/artifact/06496ec8-70b7-443d-af5c-9c53f3996ffe),
-  not in the repo. The user is posting from a new account.
-- The user's phone is a Unihertz Titan 2 (Android 16, 576 by 640 dp, hardware
-  keyboard, Termux and F-Droid installed). Wireless debugging changes port on
-  every reconnect, so ask for the new one rather than guessing. Test files are
-  in `/sdcard/mc-test`.
-- Still needs the user's eyes on the Mac: the terminal grid, LSP squiggles,
-  completion and hover, the LaTeX popover's placement, and whether
-  Ctrl+Space reaches the app with several input sources.
-- tectonic 0.17.0 lives at
-  `~/Library/Application Support/MiniCode/bin/tectonic` with its cache in
-  `~/Library/Caches/TectonicProject.Tectonic` (about 44 MB; text fonts but no
-  Computer Modern math fonts, so math needs the network).
-- `tests/latex/sweep.sh` double-clicks every word of a typeset document
-  through the real click path: 100% on the user's resume, 98.7% on
-  `tests/latex/torture.tex` (1,081 found, 14 refused, 0 wrong of 1,095).
-- **Opening from Finder and the Dock** (2026-09-29, on a branch, not
-  merged): see the section of that name below. Checked offscreen only;
-  after a release the user should try Open With on a .md, a double-click
-  once MiniCode is chosen in Get Info, and a drop on the Dock icon.
-
-## Several terminals and Run File (Mac, 2026-10-20)
-
-- **The dock is an `MCTerminalPanel`** (`terminalPanel`); `terminal` is now a
-  read-only getter for its active `TerminalView`, so older code and the demo
-  scenes' KVC (`atPrompt`, `gridMode`, `output`) still reach a terminal. It
-  is made by `makeTerminalPanel` with one terminal and dropped by
-  `terminalPanelEmptied` when its last terminal closes (the dock hides and
-  the editor, browser or tree gets the keyboard).
-- **Tabs and panes**: the editor's own `MCTabStrip` on top (sidebar color,
-  the active tab in the terminal's color so it runs into it), with
-  `MCTerminalStripButtons` (+ and ◫) beside it; the shown tab's terminals
-  below in equal widths
-  with 1px #333333 lines between, no drag bar. Hidden tabs keep the same
-  frames (so their programs keep their size) and keep running. The active
-  terminal follows the keyboard (KVO on the window's `firstResponder`, and
-  checked again whenever asked); in a split tab a 2px accent line runs
-  along its bottom. Titles: the running command with paths cut to their
-  last part, else the folder's name (`TerminalView title`).
-- **Keys**: Ctrl+Shift+` new tab (caught by the key monitor in `main.mm` by
-  keyCode 50, since Shift makes it ~; the menu item only shows it), Cmd+\
-  split, Option+Cmd+] and [ next and previous across panes then tabs,
-  Ctrl+Shift+W close the active one. All in a new Terminal menu.
-  Cmd+W (`closeFocused:`) in a terminal calls `closeFocusedTerminal`, which
-  closes that terminal (its tab, or its pane of a split; the dock goes with
-  the last) and returns NO when the keyboard is elsewhere.
-- **The smallest top** while dragging the terminal bar is the editor's tab
-  strip plus 40 points (`kMinTopSlotHeight`), or the strip ate it all.
-- **Closing** is `TerminalView close`: the flags monitor goes, then
-  `stopShell` (SIGHUP to zsh, the read source cancelled, which closes the
-  pty and reaps the shell); `_closed` stops a restart. A terminal whose
-  `runningCommands` is not empty asks first: a command per OSC 133 C with
-  no prompt since, or any foreground process group other than the shell's
-  (`tcgetpgrp` on the master, named by `proc_name`); a `runCommand:` line
-  still waiting for the first prompt ("... (waiting to start)"); and
-  background jobs (2026-10-20: `sleep 100 &` used to die unasked), found as
-  every process whose controlling tty is the pty (`KERN_PROC_TTY`; macOS
-  answers nothing for `KERN_PROC_SESSION`) in a process group other than
-  the shell's and the foreground one, one per group, named from
-  `KERN_PROCARGS2` ("sleep 100 (in the background)", or "(stopped)"). A
-  job disowned with `&!` counts too; nothing outside zsh can tell. A shell
-  still starting with nothing queued closes unasked, and a queued command
-  dropped by closing its terminal is named in the status bar (panel
-  `onNote`). The question: "Close the terminal?"
-  Close / Cancel, from Cmd+W, Ctrl+Shift+W and the tab's × (`closeTerminal:`
-  and `closeTab:` return NO when kept). Closing the window asks once for
-  every running command ("Close the window?") before the unsaved tabs, and
-  quitting once for all windows ("Quit MiniCode?"). Idle shells close
-  unasked. `windowWillClose:` calls `closeAll` and drops the panel, and the
-  panel watches its window's `firstResponder` through a weak reference
-  (removed in `viewWillMoveToWindow:`): it used to hold the window strongly,
-  so a closed window, its controller's views and every shell in it lived
-  until quit.
-- **Pane sizes**: any pane with room for two cells gets its true pty size
-  (a pane of a five-way split, 91 pt wide, gets 10 columns); only a hidden
-  dock (height 0), a collapsed pane or one not laid out yet keeps the last
-  size. It used to keep the old size below 100 pt wide or 60 pt tall (and
-  never went under 20 columns), so lines ran off narrow panes. A split is
-  refused (beep, status note) when each pane of the tab would be under 20
-  columns (`kMinSplitColumns`); a window made narrower afterwards narrows
-  the panes as they are, each pty following down to 2 columns, rather than
-  hiding panes or overflowing the dock.
-- **Run File** (`runCurrentFile:`, Shift+Cmd+Return): the template comes
-  from `Settings::runTemplate(ext)` (run.<extension>, then run.<language>
-  via `runLanguage`, then the defaults python, sh, go, js, rb; `off`
-  removes one), filled by `RunFile::expand`, each value quoted by
-  `shellQuote`, or, where the template already quotes the placeholder
-  (`python3 "{file}"`), escaped for those quotes (`quoteInside`).
-  `{python}` is the LSP session's
-  `pythonInterpreterWithSource:` (the folder's choice, python.interpreter,
-  then automatic), so a run and the completions see the same packages;
-  `MCPythonInterpreterFor` (.venv, venv, env with an executable bin/python
-  from the file's folder up to the root, else `python3`) is the fallback. A
-  dirty file is saved first. The command goes through `TerminalView
-  runCommand:`, which fills the input line and enters it (keeping a draft),
-  so it shows with the ❯ header and reaches zsh's history and the panel's
-  Up history; while the shell is still starting it waits for the first
-  prompt. `busy` (a command in flight per OSC 133, or one waiting) never
-  gets typed into: the file runs in a new tab and the status bar's left
-  side says so for 6 s (`showStatusNote:`). `run.terminal = new` always
-  opens a tab. The keyboard stays where it was, as in VS Code. The git
-  commit box's Cmd+Return now ignores Shift+Cmd+Return.
-- **Verified** offscreen (96 checks, real zsh with scratch HOME and
-  ZDOTDIR): tabs, a split's frames and focus, next and previous through
-  the menu, a hidden tab's command finishing with its output kept, OSC 7
-  and titles, a link in a split pane, less taking the grid in one pane
-  only, a settings change recoloring every terminal and the strip (pixels
-  equal across strip, log and input, opaque and at 0.6), closing by
-  Cmd+W in a split pane and in the last terminal, by Ctrl+Shift+W (shells gone, checked with
-  `kill(pid, 0)`), Ctrl+Shift+` through the real key monitor, Run File
-  through the menu (the active tab saved first, the venv's python, focus kept, the
-  command in `fc -l`, a busy terminal, run.terminal = new, a template with
-  a quoted path holding a space and a quote, no command for .txt, a shell
-  script). Needs a person: the strip's look, clicking its tabs, × and
-  buttons, and a real Python run.
-
-## The grid terminal (Mac, 2026-11-05, on a branch, not merged)
-
-A reviewer called ZLE being off the biggest gap: no Tab completion, Ctrl+R,
-autosuggestions, fzf bindings or the user's prompt. The user chose a setting,
-`terminal.mode = grid | line`, grid by default; line mode stays, unchanged,
-for one release as a fallback. A change applies to terminals opened after
-it (`_lineMode` is read once in `initWithDirectory:`); both kinds can be open
-at once.
-
-- **Shell**: `zsh -l -i` (no `+Z`), `ZDOTDIR` at
-  `NSTemporaryDirectory()/MiniCode-zsh-grid/.zshenv` (`kZshGridIntegration`;
-  line mode keeps `MiniCode-zsh`). It hands ZDOTDIR back as before and, at
-  the first precmd (so after .zshrc and last in line), installs hooks that
-  only print: precmd `133;D;status` (only when preexec ran), OSC 7 and
-  `133;A`; a `zle-line-init` hook through `add-zle-hook-widget` prints
-  `133;B` (ZLE is reading; without the widget, B follows A); preexec prints
-  `633;E;<command line, control characters blanked>` then `133;C`. PS1, PS2,
-  RPS1, PROMPT_SP and the tty modes are never touched. HIST_IGNORE_SPACE is
-  set, as in line mode, so the ` cd` of `setDirectory:` stays out of history.
-- **Events**: `TerminalStream` still reads every byte, for its events only
-  (its lines are dropped): `InputStart` (new, 133;B) sets `_zleReady`, and
-  `CommandStart` carries the 633;E text in `text`, which becomes
-  `_runningCommand` (titles, `runningCommands`, the close questions). `busy`,
-  `atPrompt` and `MCTerminalCommandDidFinishNotification` work as in line
-  mode. `gridMode` now means "a program has the alternate screen" in grid
-  mode; `lineMode` says which kind a terminal is.
-- **Typing for the user** (`typeLine:run:`): a private key, `ESC [9999~`,
-  bound in emacs, viins and vicmd to `__minicode_push` (`zle push-input`,
-  then out of vicmd), comes first, so a half-typed line goes onto ZLE's
-  buffer stack and returns at the next prompt. `runCommand:` adds the line
-  and Return; `typeCommand:` pastes it in brackets when ZLE asked for
-  bracketed paste (a newline is then text), else flattens newlines, and
-  never presses Return. Both wait for `_zleReady` (B), not A: bytes sent
-  between precmd and ZLE starting are echoed by the tty in canonical mode
-  and show as `^[[9999~` junk. A shell still starting queues them
-  (`_pendingCommand`, `_pendingTyped`).
-- **Scrollback** (`TerminalScreen`): lines leaving the top on a line feed at
-  the bottom, main screen only and only when the scroll region starts at row
-  0 (as xterm saves them); RI, IL/DL and SU/SD never save. `ED 3` clears it
-  (as xterm; it used to erase the screen too) and `ED 2` keeps it; RIS keeps
-  it. Rows keep their width, trailing default blanks dropped (a cell is about
-  50 bytes; 10,000 full 111-column lines would be some 60 MB). Resize: rows
-  taken away go into it, rows added come back down from it (Terminal.app's
-  way), the main screen behind an alternate one keeps its saved cursor's
-  line. No reflow: a narrowed screen cuts its rows and widening does not
-  bring the text back (chosen for now; the README says so).
-  `terminal.scrollback` (10000, 0 to 100000) sets the limit, live.
-- **The view** (`TerminalGridView`, `textInput` on): rows drawn from
-  `lineCell(topLine + r)`; the scroll offset, the selection and the hovered
-  link are held as line numbers counted from `historyBase()`, so a view
-  scrolled back stays on its text while output arrives, and so does a
-  selection. Wheel and trackpad (3 lines a notch), Shift+PageUp/PageDown,
-  Cmd+Home/End; typing, pasting and a command the app types snap back; a
-  slim bar on the right shows the place. On the alternate screen the wheel
-  still sends arrows. Double click selects a word (anything but blanks,
-  brackets, quotes and `|;,`, so paths and URLs), triple click a line, a
-  drag past an edge scrolls, Cmd+A takes the scrollback too. Right click:
-  Copy, Paste, Select All, Clear Scrollback, Adjust Settings.
-- **Keys**: Ctrl with a letter, symbol or Space is claimed in the grid's
-  `performKeyEquivalent:` while it has the keyboard, because the window asks
-  views before the menu: Ctrl+Space (the editor's Complete) reaches zsh's
-  set-mark. Ctrl+Tab, Ctrl+Return, Ctrl+digits and Ctrl with Shift or Cmd stay
-  the app's; the key monitor's Ctrl+` and Ctrl+Shift+` run before all of it.
-  Option is Meta (`terminal.option-as-meta`, true); false sends Option keys
-  through the input system. Option+Left/Right send ESC b / ESC f on the main
-  screen (zsh binds those, as Terminal.app sends them). Shift+Return is ESC
-  CR in `encodeKey` (both modes: VS Code's Claude Code setup sends it, and
-  zsh inserts a line break with it). Typing goes through
-  `interpretKeyEvents:` (NSTextInputClient), so dead keys and input methods
-  compose, the marked text drawn at the cursor, a character to a cell and
-  wrapping onto the rows below (`drawMarkedTextAtRow:`, 2026-11-05): macOS
-  dictation keeps a whole sentence composing while the user speaks, and
-  drawn as one line it ran off the right edge.
-- **Output flow** (both modes, 2026-11-05): the reader on the I/O queue
-  counts bytes handed to the main thread (`MCPtyReader`); past 1 MB it
-  suspends its source, so the pty buffer fills and the writer blocks, and the
-  main thread resumes it under 256 KB. The main thread parses the backlog in
-  16 KB pieces for about 12 ms per run-loop turn (`drainBacklog`, scheduled in
-  the common modes), so events and drawing go between. The source is resumed
-  before a cancel (a suspended source never finishes cancelling), and a
-  shell's last output is parsed before the "[shell exited]" note.
-  `cat` of 50 MB (colored lines), offscreen, -O2: grid mode 5.3 s with the
-  main thread blocked up to 1,370 ms and +115 MB before, 4.3 s, 34 ms and
-  +75 MB after (the full scrollback is most of that); line mode 171 s,
-  1,161 ms and +70 MB before, 27 s, 59 ms and +23 MB after.
-- **Line mode's log is capped** at `terminal.scrollback` lines, at least
-  1000 (`trimLog`, in steps of a tenth): it grew without end before, with
-  every frame a progress bar or Ink drew.
-- **Verified** offscreen (2026-11-05) with a harness that includes main.mm
-  (window ordering, `isKeyWindow`, `keyWindow`/`mainWindow`, activation,
-  `NSAlert runModal` and `+[NSPasteboard generalPasteboard]` swizzled; scratch
-  HOME, CFFIXED_USER_HOME, ZDOTDIR with its own .zshrc and history, TMPDIR,
-  settings and defaults suite; keys built with `CGEventCreateKeyboardEvent`
-  and routed window, menu, then `sendEvent:`; 100-odd checks): the custom
-  prompt, ech+Tab and file completion, Ctrl+R finding a history line, Ctrl+W
-  and Ctrl+U, Option+B, Shift+Return joining two lines, busy, title and
-  running commands for `sleep 2`, the finished notification, `seq 1 300`
-  into the scrollback, the wheel, a view staying on its text while output
-  arrived, Shift+PageUp, Cmd+Home, a drag selection in the scrollback copied
-  to a private pasteboard, double and triple click, Select All, a bracketed
-  paste left unrun, typeCommand left unrun with the user's draft back
-  afterwards, runCommand with a draft, Run File on a .py, less and vim taking
-  the alternate screen and giving it back, a resize (`tput cols` and
-  `lines`), setDirectory, the Ctrl keys claimed before the menu, a burst of
-  output with the main thread never blocked over 250 ms, closing with a
-  running command (Cancel, then Close, the shell gone), a line-mode terminal
-  beside grid ones and its capped log, and typeCommand and runCommand
-  waiting for a shell still starting with no `^[` junk. Pictures of the grid
-  were looked at. Traps: an `NSEvent keyEventWithType:` posted through
-  `NSApp` reached the key monitor but never the offscreen window's first
-  responder, and its Ctrl+W matched the Ctrl+Shift+W menu item; CGEvent
-  keys sent to the window behave. "ech" + Tab stops at "echo" (echotc and
-  echoti). A command the app types snaps a scrolled-back view to the
-  bottom, so test "stays on its text" with output from a command already
-  running. Another agent shares the scratchpad: keep harness files in a
-  folder of your own name.
-- **Needs the user**: everything on a real screen and keyboard (their own
-  .zshrc, prompt theme, autosuggestions and fzf; the look of the selection,
-  the scroll bar and the cursor; trackpad momentum), an input method and a
-  dead key, Option as Meta on a non-US layout, Claude Code's Shift+Return,
-  and the demo GIFs, which `tools/demo-settings.conf` keeps in line mode.
-  Not done: mouse reporting to programs (vim's `set mouse=a`, htop clicks),
-  reflow on resize, joining soft-wrapped lines when copying, OSC 0/2
-  titles, and Linux (VTE is a real terminal already) and Android (its own
-  grid) are unchanged.
-
-## Opening from Finder and the Dock (Mac)
-
-Up to 1.4.8 the app declared no document types and its delegate had no open
-handler, so Finder did not offer it, and a forced Open With went to
-NSDocumentController, which answered "MiniCode cannot open files in the
-“Markdown” format".
-
-- **Info.plist** declares `CFBundleDocumentTypes`, every entry
-  `LSHandlerRank` Alternate and no `NSDocumentClass`. By UTI: text and
-  source (`public.text`, `public.plain-text`, `public.source-code` and the
-  usual subtypes), Markdown (`net.daringfireball.markdown`, a CoreTypes UTI,
-  also imported for older systems), the exact image, video and audio UTIs
-  MiniCode shows (not `public.image` or `public.movie`, which would offer it
-  for formats it cannot show), PDF, and `public.folder`. By extension, for
-  what has only a dynamic UTI: TeX, Go, Rust, TOML, conf, ini, tsx and a few
-  more, plus `.ts`, which macOS types as an MPEG-2 video. No `public.data`
-  catch-all; VS Code has none either (65 extension-based types plus
-  `public.folder`), so extensionless files and dotfiles go through the
-  Other item under Open With. Where no other app claims a type (.conf and .bib on this Mac),
-  MiniCode becomes the double-click app even at Alternate.
-- **One handler.** Open With, a double-click and a Dock drop all arrive as
-  one odoc Apple Event, which AppKit hands to `application:openURLs:` in
-  `main.mm`. Folders are taken first: a window already rooted there comes
-  forward, else a new one opens. Then each file goes to the window with the
-  innermost root holding it, else to the window in front (or a folder just
-  opened with it; a new window on its folder only when none is open), and
-  several files share that window (the last is shown). Paths are compared with
-  symlinks resolved, then respelled from the window's own root so
-  `revealPath:` can walk the tree. `EditorController showFile:` opens even a
-  dotfile the tree hides, and the command line uses it too.
-  `applicationShouldOpenUntitledFile:` returns NO.
-- **Launch order.** Launch Services delivers the open between
-  willFinishLaunching and didFinishLaunching (with `IsDefaultLaunch` NO),
-  so setup lives in `applicationWillFinishLaunching:`, and didFinishLaunching
-  opens no window of its own when one exists and argv is empty. A Finder
-  launch has / as its cwd, so that window would have been rooted at /.
-- **argv.** AppKit treats paths on the command line as documents to open
-  (through `application:openFiles:`, before didFinishLaunching) unless
-  `NSTreatUnknownArgumentsAsOpen` is NO, which `main()` registers. The
-  launcher and `make run` keep going through the argv code alone.
-- **Verifying.** Never `lsregister` or `open` a build in the repo or a
-  worktree: Finder then offers that copy too. The repo's MiniCode.app and
-  several worktree copies were found registered on 2026-09-29, probably from
-  running their binaries; `lsregister -u <path>` removes one. The offscreen
-  harness compiled the app's own `main.mm` with `-Dmain=minicode_main`,
-  swizzled window ordering, activation, alerts and NSDocumentController, and
-  sent opens as odoc events through `NSAppleEventManager
-  dispatchRawAppleEvent:`, so AppKit's routing ran for real (61 checks; with
-  `openURLs:` hidden it reproduced the user's alert word for word). The
-  claims were checked by registering a copy of the bundle under another
-  name and bundle id, outside /private/tmp (Launch Services leaves apps
-  there out of Open With), asking `LSCopyApplicationURLsForURL`, then
-  unregistering and deleting it. Homebrew runs `lsregister` only when it
-  reopens apps it quit during an upgrade; macOS registers a new bundle in
-  /Applications itself, and a launch refreshes a stale record.
-
-## Images
-
-Opening an image file (png, jpg, jpeg, gif, tif/tiff, bmp, heic/heif, webp,
-ico, icns) shows it in the editor's slot instead of the "Cannot display"
-message. SVG and PDF are deliberately not in the list: SVG is source people
-edit, and a PDF would show only its first page.
-
-- `openFileAtPath:` calls `resetViewMode` first (clears
-  `isMarkdown`/`isLatex`/`isImage`/`previewMode`/`sourceText`/`dirty`, makes
-  the text view read-only), then routes by extension *before* trying to read
-  the file as text. Opening another folder and trashing the open file call it
-  too; before, both left a stale PDF preview over the welcome text.
-- `showImageAtPath:` adds an `NSImageView` to `rightArea` lazily;
-  `relayoutRightArea` gives it `topRect` and hides `editorScroll`, the same
-  way the LaTeX view takes the slot. `NSImageScaleProportionallyDown`, so
-  small images are never blown up; `animates` plays GIFs. The background is
-  the editor surface color, re-applied in `applySettings`.
-- The image's `size` is set to its pixel size, because `NSImage.size` is in
-  points and a 144 dpi screenshot would otherwise draw at half size. The
-  pixel size is shown in the title bar.
-- Nothing is saved: `setPlainMessage:@""` empties the hidden text view and
-  sets `showingMessage`, and `saveCurrentFile:` also returns while `isImage`.
-  `checkExternalChange` reloads the image when the file changes on disk.
-- An image that fails to decode falls through to the text path and gets the
-  usual "Cannot display" message.
-- Verified with a temporary `MINICODE_IMGTEST` block (16 checks): tex, then
-  png, then bin, then txt, view visibility, image and title sizes including a
-  2x-dpi PNG, Cmd+S leaving the PNG bytes unchanged, a pixel read from a
-  `screencapture -l` of a large image, and the text file coming back editable.
-- **PDFs** (`showPDFAtPath:`) take the slot the same way, in a `PDFView`
-  (autoscaled, single page continuous, editor background), with the page
-  count in the title bar. `isPDF` is cleared by `resetViewMode`, blocks
-  `saveCurrentFile:`, and `checkExternalChange` reloads it keeping the page,
-  point and (if the user zoomed) scale. Verified with a temporary
-  `MINICODE_PDFTEST` block (10 checks, including a pixel read and a reload
-  on disk change). That test found that `refreshDisplay` only relaid out when
-  a LatexView existed, so in a window that never opened a .tex, going from
-  an image or PDF to a text file left the image on screen; it now always
-  relays out. The user asked that test windows not pop up while they work:
-  ask before running one, and don't activate the app from a test.
-- Not yet: zoom and scrolling for large images. Linux has images and PDFs
-  since September 2026 (`linux/src/MediaView.cpp`, `linux/src/PdfView.cpp`;
-  see `linux/HANDOFF.md`, item 4).
-- **Video and audio** (Mac, 2026-09-28; Linux has its own in
-  `linux/HANDOFF.md` item 11, Android in `android/README.md`, "Video and
-  audio"): `+isMediaPath:` (mp4, m4v,
-  mov, 3gp, avi; mp3, wav, m4a, aac, aif/aiff, flac, ogg, opus) routes to
-  `showMediaAtPath:`, which puts an AVKit `AVPlayerView` (inline controls,
-  full screen button, editor background) in the slot the same way, paused
-  on the first frame. `isMedia` is cleared by `resetViewMode` through
-  `stopMedia`, which pauses the player and sets it to nil, so the sound
-  stops when another file, a diff, the welcome text or another folder takes
-  the slot; `windowWillClose:` and `dealloc` call it too. Saving returns
-  while `isMedia`. `checkExternalChange` swaps in a new `AVPlayerItem`,
-  seeks back to the old time and plays again if it was playing. The title
-  shows the pixel size (`presentationSize`, which has the rotation
-  applied, so a portrait phone clip says 1080 × 1920) and the duration
-  (m:ss or h:mm:ss); audio shows only the duration. Both arrive once the
-  item is ready, through KVO on status, presentationSize and duration.
-  Shift+Cmd+Space (View > Play/Pause) plays or pauses from any pane and
-  starts again from the top at the end; Cmd+1 focuses the player, whose own
-  Space, arrows and J K L then work. Traps: `.ts` and `.mts` are TypeScript
-  here, not MPEG transport streams, so they are not in the list. AVFoundation
-  plays an MJPEG avi but not an MPEG-4 Part 2 (Xvid) one; `asset.playable`
-  is checked first, and a file that fails there, or fails later as an item,
-  gets a message instead of a player. WebM, mkv, ogv, wmv and flv are not
-  playable, so they are left to "Cannot display". Cmd+Return was not used,
-  because the commit box in the git panel takes it. A disabled Play/Pause
-  item still swallows Shift+Cmd+Space, which nothing else uses.
-  Verified (58 checks) with a scratch program that `#include`s `main.mm`
-  with `main` renamed, so the real menu and AppDelegate are used, and
-  ordering front swizzled away with the activation policy Prohibited:
-  routing of every extension above against ffmpeg-made clips, the view in
-  the slot and below the terminal bar, no autoplay, titles (640 × 360 0:05,
-  a rotated mov as 360 × 640, a 1:02:05 m4a), the background color, Cmd+S
-  leaving the bytes and mtime alone, Shift+Cmd+Space as a CGEvent-built key
-  event playing and pausing, no menu item matching Cmd+Return, Cmd+1
-  focusing the player, reload keeping the time paused and playing, opening
-  a text file pausing and releasing the player, webm and random bytes
-  getting "Cannot display", `.ts` opening as text, and closing the window
-  pausing it. Unseen: what the player looks like on screen, sound actually
-  coming out, full screen, the controls' keyboard use, and a real keypress
-  (a CGEvent posted to a window that is never on screen goes nowhere).
-  Size: the binary grew by about 20 KB. Playing a 1080p clip offscreen
-  added about 5.5 MB to the process's footprint, a lower bound since the
-  picture was never composited.
-
-## Git panel
-
-Mac, Linux and Android. What follows is the Mac's; the GTK port
-(`linux/src/GitPanel.{h,cpp}` over `linux/src/GitModel.{h,cpp}`, the latter
-plain C++ and tested) follows the same rules, commands, wording, colors and
-keys, with Ctrl+Return to commit, and its differences are in
-`linux/HANDOFF.md` item 10: a `GtkStack` in the sidebar in place of
-`replaceSubview:`, `GSubprocess` on a one-thread `GThreadPool` in place of
-the serial queue, list views of cairo-drawn rows, and refreshes from the
-file tree's monitors plus the panel's own on the top level, `.git` and its
-`refs/heads` and `refs/tags` (GIO has no recursive monitor, so a change in
-a folder the tree never opened waits for focus or a save). Find Previous
-there is Shift+F3, since Ctrl+Shift+G is the panel, and while the terminal
-has the keyboard Ctrl+Shift+G is the shell's. `G_MESSAGES_DEBUG=minicode-git`
-logs every refresh, row and action.
-
-Android has it too (`GitPanel.kt` over `git_jni.cpp`, which exposes the
-core and `linux/src/GitModel`): the same commands and wording, in the file
-list's place on leader V, with git run in Termux, so only projects in
-shared storage. Its differences (a bash loop in Termux in place of a
-process per command, `-c safe.directory` on every command, Up and Down in
-place of Tab, + and − buttons for touch, and a diff view with a row per
-line) are in `android/README.md`, "Source control".
-`adb shell setprop log.tag.MiniCodeGit DEBUG` logs every command, refresh,
-row and timing.
-
-Ctrl+Shift+G (`toggleSourceControl:`, View menu) swaps the file tree for
-`MCGitPanel` with `NSSplitView replaceSubview:with:`, same frame, so the
-sidebar keeps its width; a collapsed sidebar (Cmd+B) is opened for it. The
-tree comes back on the next toggle. Shift+Cmd+G was taken (Find Previous);
-Ctrl+Shift+G is VS Code's key and was free in the menus.
-
-- **What runs.** Only status, diff, add, restore --staged and commit -m,
-  plus rm --cached --force before the first commit (restore --staged needs
-  a HEAD and fails with "could not resolve HEAD"; with --cached, --force
-  only lets it drop an index entry that differs from the file, the file is
-  never touched). Never a shell string: `MCGitRunSync` is a posix_spawn of
-  an argument array, cwd = the repository's top level (from `rev-parse
-  --show-toplevel` in the window's folder, so a subfolder works and paths
-  from status are used as they are). Every path goes after `--`, and add,
-  restore and rm get `--literal-pathspecs`, so a file called `sp*ecial.txt`
-  never stages `spXecial.txt` too. Status is `--porcelain=v2 --branch -z
-  --untracked-files=all`; diffs are `-c core.quotePath=false diff --no-color
-  --no-ext-diff --src-prefix=a/ --dst-prefix=b/` (a user's diff.noprefix or
-  external diff tool would otherwise change the output), `--cached -M` with
-  both paths for a staged rename, and `--no-index -- /dev/null path` for an
-  untracked file (exit status 1 there means "differs", not failure).
-- **Finding git**: `MCFindProgram(@"git")`, the LSP lookup (now exported from
-  Lsp.mm), so /usr/bin/git, an xcrun shim that pops the install dialog on a
-  Mac without the tools, is never run; on this Mac it finds
-  /Library/Developer/CommandLineTools/usr/bin/git. No git: one plain line.
-- **Environment**: `GIT_OPTIONAL_LOCKS=0`, because a plain status refreshes
-  and rewrites .git/index, the open folder is watched by FSEvents, and the
-  panel refreshes on FSEvents: that would loop. Checked: the index's mtime
-  does not move across a refresh. Also `GIT_TERMINAL_PROMPT=0`,
-  `GIT_EDITOR=true`, stdin /dev/null, the wide PATH for hooks. stdout and
-  stderr are drained at once (each on its own queue), so a chatty stderr
-  cannot fill its pipe and stall git.
-- **Time limits** (2026-11-05): `MCGitTimeoutFor` gives 30 s to the
-  commands that only read (status, diff, log, show, rev-parse,
-  for-each-ref, rev-list), 2 minutes to add, restore and rm (clean filters
-  such as Git LFS run on add, and git waits on another process's
-  index.lock), and 10 minutes to commit, whose hooks may run a test suite
-  and whose signing may wait on a passphrase dialog. Before, a git hung on
-  a network filesystem, a lock or a credential helper held the panel's
-  queue for ever. git is spawned (posix_spawn rather than NSTask, for this)
-  as the leader of its own process group, so at the limit the whole group
-  gets SIGTERM, then SIGKILL 2 s later, hooks, filters and credential
-  helpers included. The result has `timedOut` set and status -1, and the
-  panel shows "git did not answer within 30 seconds: git status
-  --porcelain=v2 --branch -z --untracked-files=all" (the command on one
-  line, cut at 160 characters, since a commit message can be long). A git
-  that exits but leaves something holding its pipes gets "git exited, but
-  something it started kept its output open". git is reaped on a thread of
-  its own, so one stuck in the kernel (a dead NFS server) ties up only that
-  thread. A timed-out for-each-ref skips the log after it. Checked with an
-  offscreen harness and a fake git first on PATH (30 checks: the limits by
-  command, real git through the wrapper, 2 MB of stdout with 1 MB of
-  stderr, a hang, a child holding the pipes, a git ignoring SIGTERM, one
-  that exits leaving a child, every process gone after each, and the panel
-  itself showing the 30 s message after 30.2 s and recovering on the next
-  refresh).
-- **Threads**: one serial queue per panel, so an add and the status after it
-  run in order; results come back on the main queue and are dropped if the
-  folder changed (`root` compared) or, for diffs, a newer diff was asked for
-  (generation count). `refresh` is coalesced over 50 ms and does nothing
-  while the panel is not in a window. It is called when the panel is shown,
-  after every action, on `windowDidBecomeKey`, and from the tree's FSEvents
-  callback while the panel is visible.
-- **Errors**: git's stderr, blank lines dropped, under the Commit button
-  (max 6 lines, the whole text in the tooltip). If stderr is empty the last
-  line of stdout is used: a commit with nothing staged prints a whole status
-  on stdout and exits 1, ending with "no changes added to commit". A status
-  error stays until a status succeeds; an action's error until the next
-  action. A successful commit shows git's "[main 1a2b3c4] Subject" muted.
-  Outside a repository (stderr says "not a git repository") the list area
-  says "This folder is not in a git repository." and the message box and
-  button are hidden; a clean tree says "No changes."
-- **The list** is an NSTableView of hand-drawn rows (`MCGitCell`): headings
-  "Staged changes N" and "Changes N" (not selectable), then name, muted
-  folder (and "from old" for a rename) and the letter at the right: status
-  X in Staged, Y in Changes, U untracked, C conflict (a copy in Staged is
-  also C; the tooltip says which). A file changed after staging (MM) is in
-  both lists. Keys in `MCGitTable keyDown:`: Up/Down skip headings, Return
-  shows the diff, Space stages or unstages, Tab goes to the message box.
-  A click shows the diff from `mouseDown:`, like the tree. After a refresh
-  the selection stays on the same file, or at the same index in the list it
-  left, so Space can be pressed down a list. Letter colors are inline hex
-  (VS Code's git decoration colors), not settings.
-- **The message box** (`MCCommitTextView`) commits on Cmd+Return (keyDown
-  and performKeyEquivalent, keyCode 36/76), Tab returns to the list, and
-  draws its own placeholder. The message is kept when a commit fails.
-- **The diff** takes the editor's slot like an image or PDF: `showDiffNamed:`
-  asks about unsaved changes first, then sets `currentPath = nil` (nothing
-  to save or reload), `resetViewMode`, `isDiff`, and fills a read-only
-  NSTextView in its own `PanelScrollView` (`diffScroll`), which
-  `relayoutRightArea` shows in `topRect`. Title "name (diff) — MiniCode".
-  Opening any file clears it through `resetViewMode`. `MCGitDiffText` colors
-  with `classifyDiff`: added #73C991, removed #F14C4C, hunk headers and
-  "\ No newline" muted, file headers muted bold, context the editor's text
-  color; it re-renders on a settings change. Diffs past 4 MB are cut.
-- **Verified** (2026-09-26) by a scratch program built from all of src/
-  except main.mm with `makeKeyAndOrderFront:`/`orderFront:` swizzled to
-  no-ops and the activation policy Prohibited, so no window reached the
-  screen (111 checks, against scratch repos in /private/tmp, identity given
-  through GIT_AUTHOR_*/GIT_COMMITTER_* environment variables, never the
-  global config): rows for every kind of change, arrow keys skipping
-  headings, Space staging a modification, a deletion and a glob-named file,
-  unstaging a rename (both halves), Return and click diffs (staged,
-  untracked, combined), colors read back from the attributed string, empty
-  message, nothing staged and missing identity (GIT_CONFIG_GLOBAL=/dev/null
-  plus user.useConfigOnly) showing git's text, Cmd+Return committing a
-  multi-line message, not-a-repository, an empty repository (stage, then
-  unstage an AM file with the file left intact), a conflict (C, then staged
-  as resolved), ahead count against a clone's upstream, detached HEAD, a
-  subfolder of a repository, the index untouched by a refresh, and the menu
-  item matched by a Ctrl+Shift+G event made with `CGEventCreateKeyboardEvent`
-  (and Shift+Cmd+G still reaching Find Previous). In an offscreen
-  EditorController: the swap and width, the diff taking the slot, the title,
-  Cmd+S writing nothing, opening the file returning to editing, Cmd+0
-  focusing the panel, the hints rows, and the collapsed-sidebar case. A
-  `cacheDisplayInRect:` picture of the window was looked at. Not seen in the
-  real app: FSEvents and window-key refreshes, focus and selection colors,
-  and the Commit button's look.
-- **The graph** sits under the change lists: they take what their rows
-  need, up to half the space left, and the graph (an `MCGitTable` of
-  hand-drawn `MCGitGraphCell` rows) takes the rest and scrolls. Its heading
-  has the All branches checkbox and one line on what is pushed ("↑ 2 to
-  push, ↓ 1 to pull, against origin/main", "Up to date with ...", no
-  upstream, upstream gone, detached HEAD). It is hidden outside a
-  repository and before the first commit.
-  - **Commands**: `for-each-ref` (refs/heads, refs/remotes, refs/tags),
-    `-c log.showSignature=false log -z --topo-order --max-count=N HEAD
-    @{upstream} --` (with `--branches --remotes` for All branches; no
-    `@{upstream}` when there is none, it is gone, or HEAD is detached), and
-    `rev-list --left-right HEAD...@{upstream} --` only when status reports
-    ahead or behind. A commit is `-c core.quotePath=false show --no-color
-    --no-ext-diff --src-prefix=a/ --dst-prefix=b/ -M
-    --diff-merges=first-parent --stat --patch`: git's default for a merge is
-    a combined diff that is usually empty, so a merge shows what it brought
-    in against its first parent, and says so.
-  - **Cost**: the status is applied first, then the graph is built in a
-    second step on the same serial queue, so a slow `log --topo-order` never
-    holds up the change lists. The graph is keyed on HEAD, branch, upstream,
-    limit, the checkbox and the whole for-each-ref output; a refresh with
-    the same key (most of them: saving a file triggers FSEvents) runs only
-    for-each-ref and keeps the old graph object. A generation count drops
-    stale results. "Show more" raises the limit by 200 and reloads the
-    whole window (topo order has to be computed from the top anyway), with
-    the selection landing on the first new row.
-  - **Lanes** (`Git::layoutGraph`, tested in run_tests.cpp): each lane
-    waits for a hash. A commit takes the leftmost lane waiting for it; the
-    other waiting lanes end in its dot (In edges). No lane waiting means a
-    branch tip, added at the right with a new color. The first parent
-    continues the commit's lane even when another lane already waits for
-    it (they meet at the parent's row), a further parent joins a lane
-    already waiting for it or takes the first free lane to the right, with
-    a new color. Free lanes are then closed up, so lanes to the right bend
-    left in the same row (Pass edges with from != to). A row is drawn in
-    two halves around the dot; In and Out curves meet the dot sideways,
-    Pass curves are S-shapes. Lane width is 12 points, narrower when a
-    graph's widest row would take more than 40% of the panel. 100,000
-    commits lay out in about 200 ms unoptimized; only the loaded window is
-    ever laid out.
-  - **Drawing**: filled dot; a merge has a hole; outgoing and incoming
-    commits are hollow with a blue or green row tint and an arrow at the
-    right; HEAD has a ring. Labels are pills: the current branch (or a
-    detached "HEAD", orange) filled, other branches blue outlines, remotes
-    purple, tags amber with "tag". Lane colors are the accent blue then VS
-    Code's graph colors, inline hex like the rest of the panel.
-  - **Keys**: Down from the last file enters the graph, Up from its first
-    row goes back; Tab goes changes, graph, message, changes, Shift+Tab the
-    other way (`onBackTab`, `onPastEnd` on `MCGitTable`). With no changes,
-    `focusList` (Cmd+0, opening the panel) lands in the graph. Return or a
-    click shows the commit; on the last row it loads more.
-  - **The commit view** reuses the diff slot: `showCommitTitled:data:` sets
-    `diffIsCommit`, the title is "<short hash> <subject>" without
-    "(diff)", and `MCGitCommitText` draws hash, parents, author, a
-    different committer, date with relative time, the message (subject
-    bold), then the stat and diff through `MCGitDiffText`.
-  - **Verified** (2026-09-26) with a scratch program like the one above
-    (swizzled ordering, activation Prohibited, 64 checks) on scratch repos
-    in /private/tmp: a clone 2 ahead and 1 behind with a merged feature
-    branch, an annotated tag, a remote branch and a local-only branch; an
-    octopus merge with a detached HEAD; 3,119 commits made with
-    fast-import. Checked: rows, lanes, labels and current marks, out/in
-    marks against rev-list, the summary lines, All branches adding the
-    local branch, an unchanged refresh running no log, arrow and Tab focus
-    moves through real key events, Return and a click showing a merge (with
-    its first-parent diff and stat) and a root commit, the window title,
-    Show more (200 then 400 rows, first batch in 133 ms, the next in 51 ms),
-    the index and refs untouched, and, through a logging git wrapper put
-    first on PATH, that only rev-parse, status, for-each-ref, log, rev-list
-    and show ran. PNGs of the panel and the window were looked at.
-- **Tool guard trap**: in a worktree-isolated agent session, shell commands
-  that run git outside the worktree in compound or unusual forms are refused
-  (even a filename containing "git"). Plain `cd scratch && git ...` lines
-  work; the test program runs git itself through NSTask. Anything longer
-  (loops, pipes, a perl or python edit of a file whose text says gitPanel)
-  goes into a script in the scratchpad run as `bash script.sh`, and source
-  edits go through the Edit tool.
-
-## Demo GIFs (`make demos`)
-
-`scripts/demos.sh` builds a scratch world under `/private/tmp/minicode-demo`
-(a copy of `demo/` made into a 5-commit git repo with fixed dates, so hashes
-are stable; a scratch HOME/ZDOTDIR; `tools/demo-settings.conf` as
-`MINICODE_SETTINGS`; a copy of the tectonic cache; a tiny `.vimrc` in the
-scratch home for the vim scene), launches the raw binary
-with `MINICODE_DEMO=<scene>` under `env -i`, polls and kills after 2 min,
-then runs `build/makegif`. It only ever kills its own pid (the user often has
-MiniCode open) and deletes the scratch folder on exit. The scene list comes
-from `MINICODE_DEMO=list`. `DEMO_KEEP_FRAMES=<dir>` keeps the raw frames and
-the app's log for debugging (also when the scene fails); look at frames
-with the Read tool. Scenes: tour, terminal, settings, latex, lsp, vim, files, links.
-
-- **A scene** is a function in `src/Demo.mm` calling builder methods
-  (`clickFile:`, `type:`, `key:caption:`, `clickAt:`, `doubleClickAt:`,
-  `scrollEditorTo:`, `waitFor:timeout:recorded:`, `run:`, `pause:`,
-  `hidePointer`, `poster`) plus a row in `kScenes`. Steps are queued and
-  played in order; points are resolved lazily when the step runs.
-  `key:` also knows `f12`, `left`/`right`/`up`/`down`, `space`, `esc` and
-  `return`; function and arrow keys get the function-key character and the
-  flags a real keyboard sends. `pointForText:` goes through
-  `firstRectForCharacterRange:`, never `tv.layoutManager`, which would
-  switch the editor to TextKit 1 for the rest of the run.
-- **Input is real events.** Clicks and keys are `NSEvent`s posted with
-  `postEvent:`, so they go through the tree's `mouseDown:`, the text input
-  system (US key codes, shift for capitals/symbols), the Ctrl+` key monitor
-  and the menus' key equivalents. The pointer and key captions are drawn by
-  an overlay view in the window (`hitTest:` returns nil); window captures
-  show neither the real cursor nor keys.
-- **The user's own input is swallowed** while a scene plays (a local monitor
-  passes only events whose timestamp, in whole microseconds, the demo
-  posted). Found the hard way: the window comes to the front, and a stray
-  "p" the user typed elsewhere landed in the welcome text, made it dirty,
-  and the next file click hit the "Save changes?" alert. AppKit keeps posted
-  timestamps only to about a nanosecond, so match on rounded microseconds.
-- **Capture** is `screencapture -x -o -l<wid>` about every 100 ms from a
-  background thread, with per-frame times in `manifest.txt`. A child window
-  (NSPopover) is included in the main window's capture, which then grows to
-  take it in (1920x1206 instead of 1920x1200 when the popover pokes 3 pt
-  above the window); the manifest records `child` rects and makegif crops
-  the window back out. Other windows in front (NSColorPanel) are captured
-  separately in parallel and composited (`over`). `waitFor:...recorded:NO`
-  pauses the recorder so a long wait (zsh starting, tectonic) is cut from
-  the GIF.
-- **makegif** writes the GIF itself: ImageIO's GIF writer stores every frame
-  whole, and with alpha it uses disposal 2 (restore to background), so
-  frame-diff transparency does not work through it. makegif uses one
-  median-cut palette for the whole animation (sqrt-count weighting so text
-  anti-aliasing gets colors), merges identical frames, stores only the
-  changed rectangle with unchanged pixels transparent (disposal 1), and LZW
-  encodes. The six GIFs total about 1.6 MB at 960 px wide.
-- **Paths in frames.** `NSHomeDirectory()` ignores `$HOME`, so the terminal
-  prompt shows the real cwd; that is why the project lives under /tmp, not
-  a fake home. `stringByResolvingSymlinksInPath` turns `/private/tmp/...`
-  into `/tmp/...`, so the tree root is `/tmp/minicode-demo/demo`.
-- **The display must be awake.** With the screen asleep (it was, after the
-  Mac idled), `screencapture` returns black full-screen images and
-  `-l<wid>` fails with "could not create image from window", which the
-  recorder reports as a Screen Recording permission problem.
-  `caffeinate -u -d -t 200 &` wakes the display and keeps it on for a run.
-- **lsp scene**: clangd on `demo/vec` (main.cpp + vec.h). There is no
-  compile_commands.json, so clangd writes no index into the project
-  (checked: nothing appears in the scratch copy or the scratch home). It
-  saves with Cmd+S before F12, or leaving the dirty file raises the "Save
-  changes?" alert and the scene hangs until the 2-minute kill. It stops with
-  a message if the status says no server was found.
-- **vim scene**: sets `terminalHeight` via KVC before opening the panel (as
-  if the bar had been dragged), and waits on the terminal's `gridMode` and
-  `atPrompt` ivars (KVC reads them directly). Never press Esc in the
-  *editor* in a scene: NSTextView maps it to `complete:`, which opens the
-  LSP completion list.
-- The LaTeX scene is skipped (exit 3) when tectonic is missing. Keep
-  `demo/paper/notes.tex` free of math: the cache has no math fonts, and
-  tectonic would go to the network.
-
-- Eight scenes as of 2026-09-23: tour, terminal, settings, latex, lsp, vim,
-  files, links. `links` Command+clicks a `grep -Hn` result and a URL; the
-  hover underline follows the real Command key and mouse, which a recording
-  cannot press, so the scene adds the underline itself before clicking. `files` opens `demo/images/icon.png` (the app icon at 256 px, made
-  with `sips` from `resources/AppIcon.icns`) and `demo/paper/notes.pdf` (the
-  demo's own notes.tex typeset by tectonic; rebuild it with tectonic if that
-  file changes). All seven were re-recorded that day so the tree and git log
-  match the current demo folder. To look at frames without re-recording, read
-  the GIF with ImageIO and composite frames in order (frames after the first
-  store only the changed region).
-
-## Android (`android/`, read `android/README.md` first)
-
-A Kotlin app around the same C++ core, developed against a real phone over
-adb (no emulator). `android/README.md` has the build, the device workflow and
-the file map; what belongs here is what it cost to learn:
-
-- **The core is portable.** All 1,079 checks in `tests/run_tests.cpp` compile
-  with the NDK and pass on the phone unchanged, at Mac-like speeds (100k-line
-  full lex 29 ms, one keystroke 0.13 ms). Highlighting, Markdown and the
-  terminal screen are that same code; only the GUI is new.
-- **Phone keyboards do not have the keys a desktop has.** On a Unihertz
-  Titan 2: no Ctrl, Esc or Tab; Alt is the symbol layer (Alt+S types "4");
-  Android claims Sym with some letters before an app sees them (Sym+H opens
-  the microphone, Sym+B reaches the app). One unclaimed key is left, so it
-  is a leader: press, then a letter. `adb logcat -s MiniCodeKeys` prints
-  every key the app sees and is the way to work this out on a new device.
-- **A letter does not arrive as a key event while a text field has focus.**
-  The keyboard reaches the field through the input method, so shortcut
-  letters are caught in `CodeEditText.commitText`. Moving focus away and
-  hiding the keyboard does not change it. In the file list and the terminal
-  the same letters do arrive as key events, so both paths run one table.
-- **Pastiera, and any keyboard that "helps", needs the password variation.**
-  Pastiera (a physical-keyboard IME) keeps auto-capitals, double space to
-  period and autocorrect on in every field but password, URI, email and
-  filter ones, so `CodeEditText.codeInputType` always reports
-  TYPE_TEXT_VARIATION_VISIBLE_PASSWORD. A held Ctrl reaches
-  `dispatchKeyEvent` (from Pastiera through `sendKeyEvent`) and maps to the
-  leader's letter in `ctrlAction`, except the text field's C V X A Z Y, the
-  shell's C D E I, and anything but S B O H without Shift while the
-  terminal has focus. `android/README.md`, "Pastiera" and "A held Ctrl".
-  A letter with Ctrl held has no `unicodeChar` (Android's key map has no
-  Ctrl layer), so until 2026-09-28 the terminal dropped a real Ctrl U or
-  Ctrl R; `TerminalView.handleKey` now takes the character without Ctrl.
-  `adb shell input keycombination KEYCODE_CTRL_LEFT KEYCODE_U` does carry
-  the Ctrl meta state, so this much can be tested without a person.
-- **A terminal must refuse composition.** `TerminalView` declares
-  `TYPE_NULL`; while it accepted text, the keyboard re-sent the word it was
-  composing on every keystroke and "ls demo" reached the shell as
-  "sso dlemodlemo".
-- **The Titan's spare key repeats in bursts** (a hundred key-downs per
-  press), so presses are separated by the key's release, not by a timer.
-- **`TermKey` ordinals are load-bearing.** `Pty.kt` mirrors the enum in
-  `src/TerminalScreen.h`; when Enter was numbered as Escape, nothing ran and
-  the symptom looked like a dead Enter key.
-- **What a development machine cannot test:** any shortcut needing a
-  modifier (an injected key carries no Sym), keycodes above ~288 (the spare
-  key is 403, hence Menu and Function as leaders too), and `sendevent`,
-  which SELinux refuses. Those need a person at the phone; say so rather
-  than claiming a shortcut works.
-- **The terminal's bash runs in Termux on a pty MiniCode brings**
-  (`TermuxShell.kt`, `cpp/termux_pty.c`): Termux's RUN_COMMAND gives a
-  socket, not a terminal, and Termux has no pty tool by default, so a small
-  C helper is built as an executable named `libminicode_pty.so` (AGP packs
-  an executable with a lib*.so name), read out of the APK, sent over the
-  token socket into `$TMPDIR/minicode-pty-<hash>` with `head -c`, and run
-  from there. Termux can run its own files; nothing can run another app's.
-  Input is framed (`d` data, `w` window size), output raw. The rc file
-  sends OSC 7 and OSC 133;D, which `TerminalScreen` now records.
-- **One FileObserver per path.** Android keeps one inotify watch per path,
-  so a second observer on a folder replaces the first one's mask; the file
-  list stopped seeing deletions once a file in it was opened. Share one.
-- **`wm size` recreated the activity** (and so killed the shell and any
-  unsaved buffer) until `smallestScreenSize|screenLayout` joined
-  `configChanges`. The phone has a `wm size` override of 1076x1200 of its
-  own: never `wm size reset`, set it back to that.
-- **`adb shell` in a `while read` loop eats the loop's input**; use
-  `adb shell -n`. Typing into the terminal through `input text` is reliable
-  (no scrambling there, since it takes keys, not text).
-- **Language servers run in Termux** (`Termux.kt`, `LspSession.kt`,
-  `lsp_jni.cpp`): RUN_COMMAND starts bash, which dials a one-shot
-  127.0.0.1 listener with /dev/tcp, sends a token, and execs the server on
-  the socket. Listen on 127.0.0.1 by name: `getLoopbackAddress()` is ::1
-  on Android and bash's connect is refused. Only files in shared storage
-  get a server, since Termux cannot see anything else.
-- **Git runs in Termux too, but through one bash loop per panel**, not a
-  RUN_COMMAND per command (`GitRunner.kt`): requests are NUL-separated
-  fields that bash reads with `read -r -d ''` into an array, so no path or
-  commit message is ever shell text. Termux's user owns nothing in shared
-  storage, so every command carries `-c safe.directory=<top level>`; the
-  first one retries with the path from git's "dubious ownership" message.
-  Never write a safe.directory into any config.
-- **There is no editor without a file** (2026-09-26, after the user could
-  not tell which page they were on and typed into an empty editor whose text
-  was silently dropped). With no folder the window is a start screen
-  (`StartScreen.kt`); `showList(false)` with no file or diff shows the list
-  side instead; the title bar's second line says where every pane is. The
-  start screen can be seen without losing the user's folder with
-  `am start -S -n org.minicode.editor/.MainActivity --ez start true`.
-- **No app can force the on-screen keyboard up** while a hardware keyboard
-  is attached: with Android's "Use on-screen keyboard" switch off, the
-  keyboard app answers showSoftInput (even SHOW_FORCED) with a thin strip,
-  which the window insets still call a visible IME. The keyboard button
-  (leader Y) opens the input method picker, where that switch is, and the
-  editor has a symbol row (`EditorKeys.kt`). `adb shell settings get/put
-  secure show_ime_with_hard_keyboard` reads and sets the switch; put it back
-  as the user had it (0 on the Titan 2) after a test.
-- **Back on Android 16** reaches an app that targets API 36 only through
-  the OnBackPressedDispatcher; the old `onBackPressed` override was never
-  called, and Back left the app from every pane.
-- **A focusable ViewGroup gets a grey veil** when it has focus and no
-  focused look of its own (Android's default focus highlight). The git
-  panel holds the keyboard itself, so it sets
-  `defaultFocusHighlightEnabled = false`. The title bar's ⋮ and ↑ are not
-  focusable any more: ⋮ took the keyboard when panes were swapped, and the
-  next Space opened the menu.
-- **A TextView is no place for a long diff**: 500 KB took seconds to lay
-  out with the window frozen. `DiffView` is a RecyclerView with a row per
-  line.
-- **Web pictures in the Markdown preview** (`WebImages.kt`, 2026-09-28;
-  `android/README.md`, "Pictures from the web"). Android does not read
-  `settings.conf`, so `markdown.web-images` is the `webImages` preference,
-  toggled from the ⋮ menu. What to know before changing it:
-  - An arrival re-renders the whole page (a picture that shows is its own
-    view, while its alt text sat inside a paragraph's TextView), so the
-    place is kept by *run index*, which is the same from one render of a
-    source to the next: the run at the top of the pane and how far below
-    the top it starts, restored after layout. Source lines were too coarse
-    (one line can be a whole paragraph). Measure a text piece from its
-    first character that is not a newline, because a piece that starts a
-    view loses its leading newlines and one right after a new picture now
-    starts a view.
-  - `show()` of the same source again (the toggle) keeps the place the same
-    way; an edit changes the runs, so it still keeps the plain scroll
-    position.
-  - The "placed at" scroll (`entryScroll`) moves by the same amount as the
-    scroll, or a reader who never scrolled would count as having scrolled
-    when a picture lands above, and leader P would open the source at the
-    preview's top instead of at the caret.
-  - Arrivals wait while a finger is down or the page scrolled in the last
-    0.3 s. A fling and `smoothScrollTo` (a `#heading` link) keep running on
-    the ScrollView's own scroller in the old page's coordinates and would
-    overwrite the restored scroll.
-  - `showList(false)` makes the preview visible again without rendering,
-    so an arrival while it is hidden is remembered and rendered when it is
-    shown (`onVisibilityChanged`, after the `ready` guard). New fields go
-    above `init`, with the others, for the same constructor reason.
-  - The bytes that arrived are handed to the next render directly, not
-    looked up in the LruCache, and decoded pictures are kept across renders.
-    Otherwise a page whose pictures add up to more than the 32 MB cache
-    evicts one while another arrives, re-renders, asks again, and loops.
-  - A release build trusts only the system's certificate authorities, and a
-    debug build cannot go over the release one without an uninstall (which
-    clears the app's data), so a test server on the Mac with a self-signed
-    certificate is out without shipping a weaker network security config.
-    Test against public https addresses instead (the repository's own
-    `docs/demos/*.gif` on raw.githubusercontent.com, a missing file there
-    for a 404, shields.io for SVG, a large file on proof.ovh.net for the
-    cap) and read `adb shell setprop log.tag.MiniCodeWeb DEBUG` output.
-- **A paused MediaPlayer moves by itself.** The Titan 2 hands a file's
-  sound to the audio hardware ("offload", `offloading(1)` in `dumpsys
-  media.player`), even beside video and for a 30 s clip. NuPlayer shuts
-  offload down after 10 s paused and restarts it with a seek to the key
-  frame before the place: the paused picture changed to that frame, and
-  play resumed up to 8 s early (x264's default key frames are 8.3 s
-  apart). No app can turn offload off for MediaPlayer, so `PlayerPane`
-  releases a player 4 s after it pauses, keeping its place (the
-  TextureView keeps showing the last frame), and opens a new one on play
-  or a seek. Found only by reading positions back after a long pause; a
-  short pause, and a 5 s clip (too short to offload), both looked fine.
-- **Not MediaController**: it is a window of its own, focusable, so while
-  it shows it would take the keyboard, and the leader key and the first
-  Back would go to it (from its source; not tried). `PlayerPane` draws its
-  own bar. A seek before the first `start()`
-  draws that frame (NuPlayer's preview), which is how a file opens on its
-  first frame, paused.
-- **`adb shell input text` shuffles letters** in the phone's text fields
-  ("Second" arrived as "Scond" and "Scceond"), in the editor as much as the
-  commit box. It is the injection racing the keyboard app; real typing
-  needs a person to check.
-- **Toolchain:** Gradle 8.14.3 via the wrapper (9.7 drops an API the Android
-  plugin uses) and JDK 21 (Gradle 8 refuses 27). The SDK and NDK are about
-  3.6 GB, installed with `sdkmanager`, no Android Studio.
-
-## Memory benchmark (`make membench`)
-
-`scripts/membench.sh` runs one workload on MiniCode and on VS Code + Chrome +
-Preview and sums the physical footprint (`tools/procmem.c`, via
-`proc_pid_rusage`) of every process each side owns. Result on 2026-09-21
-(M3, 16 GB): MiniCode 320 MB, the others 1,283 MB; in the README's Memory
-section. Traps paid for while building it:
-
-- Ownership is parent pid OR *responsible* pid. WebKit's helpers are started
-  by launchd, so only the responsible pid ties them to MiniCode, and an app
-  launched from a shell makes the *terminal* responsible. So MiniCode is
-  launched with `open -n -g` (LaunchServices, background) and `--env`.
-- `stringByResolvingSymlinksInPath` turns /private/tmp into /tmp, so the
-  window root and a bench path spelled /private/tmp/... did not match and
-  revealPath opened nothing. `src/Bench.mm` resolves its paths the same way.
-- VS Code's "run task on folder open" was skipped on some launches. A tiny
-  extension loaded with `--extensionDevelopmentPath` opens the terminal and
-  types the tectonic command instead, deterministically.
-- MiniCode's workload uses two windows (code + terminal + browser, and the
-  LaTeX preview), matching VS Code beside Preview. `MINICODE_BENCH` also skips
-  `activateIgnoringOtherApps` so the MiniCode half never takes focus.
-- Always check each side's breakdown before quoting a number: the first run
-  "measured" MiniCode at 55 MB because clangd and WebKit were missing.
-
-## Verification reality (important)
-
-How much of the GUI you can actually check depends on which port you are
-working on, and on whether the session is running on a machine with a display.
-Check first; do not assume either answer.
-
-**The macOS app, in a session on the user's Mac: more than it looks.** The
-app really launches (a window appears on the user's screen, so keep runs short
-and never leave strays). Synthetic key and mouse events sent from inside the
-app work, and so does capturing the app's own window as pixels. What stays
-out of reach is judging the look: a pixel value can be read, but whether it
-looks right is the user's call. A session on a machine without a display (CI,
-the Linux box) gets none of this, only a compile.
-
-
-- Test the pure-C++ core with `make test`.
-- For GUI logic, add a temporary `getenv("MINICODE_*TEST")` block in `main.mm`
-  that drives the code path and NSLogs PASS/FAIL, run the binary headless in
-  the background with a poll-and-kill loop (there is no `timeout` on macOS),
-  then remove the block. Techniques that proved reliable:
-  - Read state via KVC (`[controller valueForKey:@"rightArea"]`).
-  - Key shortcuts: build an `NSEvent keyEventWithType:` and send it through
-    `[window performKeyEquivalent:]` then `[NSApp.mainMenu performKeyEquivalent:]`.
-  - Mouse drags on views with their own tracking loop (NSSplitView): post
-    LeftMouseDragged/LeftMouseUp with `[NSApp postEvent:atStart:NO]`, then call
-    `mouseDown:`. For simple views (DragBar) call mouseDown/Dragged/Up directly.
-  - Use `hitTest:` at pixel offsets to measure real grab areas.
-  - Terminal tests must set `HOME` and `ZDOTDIR` to scratch dirs, or test
-    commands land in the user's real `~/.zsh_history`.
-- Pixels: `/usr/sbin/screencapture -x -o -l<windowNumber> out.png` run from
-  inside the app captures the window with its alpha channel, and
-  `NSBitmapImageRep colorAtX:y:` reads it (y from the top, scale for Retina).
-  This is the only way to verify transparency; view properties can look right
-  while nothing is drawn. `CGWindowListCreateImage` is gone in the macOS 15 SDK.
-- Undo in tests: everything run from one callback lands in one undo group
-  (`groupingLevel` stays 1). Wrap each simulated key press in
-  begin/endUndoGrouping with `groupsByEvent` off. Programmatic edits call
-  `breakUndoCoalescing` so each Cmd+/ is its own step for real users.
-- Cleaning up temp test blocks: remove them by exact text, not by searching
-  for a marker comment that also appears on the `getenv` line.
-- When a check fails, print the actual output before changing code: most
-  failures in this session were wrong checks, not wrong code.
-- Otherwise confirm the app builds clean and launches without crashing, and
-  tell the user which behavior needs their eyes. Do not claim GUI behavior is
-  verified when it was only compiled.
-
-**The GTK port from the Mac: a Docker container.** Docker Desktop is installed
-on the Mac (start it with `open -a Docker`). `linux/dev/gtk-dev.sh` builds the
-image (`linux/dev/Dockerfile`: ubuntu:26.04, the CI packages, Xvfb, xcompmgr,
-xdotool, ImageMagick), starts a container with the repo mounted, and builds and
-tests the port; `/tools/launch.sh` inside it runs the app. `linux/dev/README.md`
-has the workflow. The details behind it:
-
-- Mount the repo (`-v ~/Code/public/minicode:/work`) and build into a container-local
-  directory (`meson setup /build`), not `linux/build`.
-- `Xvfb :99 -screen 0 1280x800x24` plus `xcompmgr` gives a composited display,
-  so translucency works. Launch with `GDK_BACKEND=x11 GTK_A11Y=none` under
-  `dbus-run-session`, a scratch `HOME`/`XDG_CONFIG_HOME`, and
-  `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` (WebKit's bubblewrap sandbox
-  cannot start in a container and aborts the whole app). `GTK_CSD=1` draws
-  GTK's own title bar, since there is no window manager.
-- Drive it with `xdotool key ctrl+shift+t`, `xdotool mousemove X Y click 1`,
-  and drags as `mousedown`, a few `mousemove`s, `mouseup`. Capture with
-  `import -window root` and read pixels with
-  `convert img -format '%[pixel:p{X,Y}]' info:`. The compositor's backdrop is
-  gray 128, so a see-through panel's alpha can be computed from the blend.
-- `docker cp` screenshots out and look at them. Stray dotted glyph debris in
-  root captures is xcompmgr damage, not the app: it vanishes after a resize
-  and never appears in `import -window <id>`.
-- In helper scripts use `pkill -x minicode`, never `pkill -f` with a path: it
-  matches the `docker exec bash -c` command line and kills the script.
-- Disk on the Mac is tight (it had 730 MB free); the image is about 1.8 GB.
-
-**The GTK port on the user's Ubuntu machine: a live session.** As of August
-2026 the primary Linux box is Ubuntu 26.04 on a ThinkPad T480, GNOME on
-Wayland, and a session there has `$WAYLAND_DISPLAY` set and can really launch
-the app. Confirm with `echo $WAYLAND_DISPLAY` before relying on this. When it
-holds, these give real runtime evidence rather than compile-only evidence:
-
-- `meson test -C build` for the shared core.
-- Launch detached (`setsid gtk-launch org.minicode.Editor &`, or run the binary
-  directly) and check with `pgrep -a minicode` that it is still alive a few
-  seconds later. This is not free: a window really does appear on the user's
-  screen, so say what you are doing and do not leave strays running.
-- `busctl --user list | grep minicode` shows the GApplication registered its id
-  on the session bus.
-- `systemctl --user list-units --type=scope | grep minicode` is the useful one.
-  A launch through the desktop entry lands in
-  `app-gnome-org.minicode.Editor-*.scope`, and that scope name is precisely how
-  GNOME Shell ties the window back to its launcher, so seeing it proves the
-  dock association works. A nested `vte-spawn-*.scope` proves the VTE terminal
-  panel actually came up.
-- `journalctl --user --since "-15 min" | grep -i minicode` catches a process
-  that started and then died.
-- Do not bother with `org.gnome.Shell.Introspect.GetWindows`; it answers
-  `AccessDenied` for callers that are not whitelisted.
-- Real clicks and keys: a private rootful Xwayland (`Xwayland :87 -geometry
-  1300x850`, one window on the user's desktop) with the app inside it on
-  `GDK_BACKEND=x11`, driven by XTest through Python `ctypes`, and `xwd -root`
-  for captures. `linux/HANDOFF.md` ("How to work on it") has the details.
-  Prefer it to hooks that call code paths: in September 2026 three bugs the
-  user hit by hand (no visible tree selection, Find in Folder not scrolling
-  to the match, Down from the search field) had all passed such hooks.
-
-## Gotchas already paid for (don't rediscover these)
-
-- **Drag and drop in the file tree** (2026-10-01): rows move into folders
-  (`outlineView:validateDrop:` retargets every drop onto a folder: a file
-  row means its folder, empty space the root; a folder into itself, its
-  descendant or where it already is is refused), files from Finder are
-  copied in, rows dragged out are copies. A name already in the folder is
-  refused with a message shown after the drop, never during it, since
-  Finder's side of the drag waits on a modal. `pathMovedFrom:to:` makes
-  the open file, the recent list, the LaTeX preview's path and a Markdown
-  preview's relative pictures follow. `ClickOutline mouseDown:` now runs
-  the native tracking first and treats the press as a click only if no
-  drag began (`dragBegan`, set in `draggingSession:willBeginAtPoint:`), so
-  a file opens on release. Checked with an offscreen harness (33 checks,
-  calling the data source with a fake NSDraggingInfo, and a real press and
-  queued release for the click); the drag gesture itself, its highlight and
-  folders springing open need a real mouse.
-- **Empty Markdown and LaTeX files open in the source** on all three
-  ports, since a blank preview of a new file looked like nothing opened.
-- **Single-click open in the file tree**: `NSOutlineView` selection
-  notifications / target-action did not fire reliably. `ClickOutline` overrides
-  `mouseDown:` to compute the row from the click point and open directly.
-- **Sidebar collapsed to zero width** on launch: the split divider must be
-  positioned AFTER the window is on screen and laid out. The editor / terminal /
-  browser are laid out by hand in a `PanelHost` view, not nested split views —
-  that was far more predictable.
-- **The editor was wider than its pane** from the first commit until
-  2026-09-25: `horizontallyResizable` was on, so the text view kept the
-  window-wide frame it was created with and wrapped lines past the right
-  edge. It is off now, and `PanelScrollView tile` sets a wrapping text
-  view's width to the visible width.
-- **Terminal resize bar**: the `DragBar` is a 12px grab area drawing a 1px
-  line, and `relayoutRightArea` re-raises it to the top of `rightArea`
-  (after the browser's vertical bar, so the terminal's wins where they
-  meet), but only when they are out of order, never during a drag.
-  Otherwise a panel added later (the browser) covers half of it. Its cursor
-  comes from a tracking area, because cursor rects lose to the overlapping
-  text views. A bar hidden mid-drag (snapped to an edge) clears its hover
-  light in `viewDidHide`.
-- **The terminal's input line draws no background** (2026-10-20). It used
-  to fill its NSTextField with a fixed #232323 (`terminalInputBackground`,
-  now gone) on the #181818 panel: a lighter strip starting after the ❯ and
-  stopping short of the edges, which the user saw as untidy with default
-  settings. It ignored `terminal.background`, and on a see-through panel
-  it composited its own alpha over the panel's (0.6 became 0.84 under the
-  field). Now `drawsBackground` is off and the panel's layer shows
-  through, and the ❯ shares the field's row so it sits on the text's
-  baseline. Checked by rendering the panel's layer (`renderInContext:`),
-  which gave the exact colors; `cacheDisplayInRect:` gave the same verdict
-  but shifted every value (#181818 read as #1E1E1E).
-- **Cmd+B collapse** fought the split delegate's 160px min; a `sidebarCollapsed`
-  flag lets the minimum drop to 0.
-- **Hiding panes**: two separate mechanisms. (1) Dragging the sidebar divider
-  far right collapses the whole right pane via NSSplitView
-  (`canCollapseSubview:` YES for `rightArea`; `effectiveRect:` widens the 1px
-  divider's grab area to 5px each side; min pane width 150 so the drag doesn't
-  visibly stall). (2) Shift+Cmd+E, or dragging the terminal bar to the top,
-  sets `editorHidden`: only the file editor goes, and `relayoutRightArea`
-  gives its width to the browser if open, else the height to the terminal
-  (bar pinned at the top edge so it can be dragged back down). The terminal
-  bar at the top hides the browser too. If that leaves the pane empty, `collapseRightAreaIfEmpty`
-  collapses it. Opening a file, Cmd+1 and the preview toggle call
-  `revealEditor`; showing the terminal/browser calls `showRightArea`. Headless,
-  a real split-view drag can be tested by posting LeftMouseDragged/Up events
-  with `postEvent:` and then calling the split view's `mouseDown:` (its
-  tracking loop dequeues them).
-- **Custom hotkeys**: prefer real MENU items with key equivalents. They work in
-  every pane (like Cmd+C) and for shift-variants that share a letter (Cmd+G vs
-  Cmd+Shift+G both work). A local key monitor was flaky; it now handles only
-  Ctrl+` (which is awkward as a clean menu item alongside Shift+Cmd+T).
-- **Window tabbing**: `setAllowsAutomaticWindowTabbing:NO`, otherwise macOS
-  merges windows into tabs and Cmd+W closes the whole group.
-- **Two app instances**: launching the `.app` twice just activates the existing
-  one. The CLI launcher (`scripts/minicode-launcher`, installed as
-  `Contents/Resources/minicode`; `minicode -h`) hands its paths to the
-  running app with `open -b com.minicode.editor` (any copy, such as a build
-  Request a Change restarted into), else `open -a` its own bundle, so they
-  arrive through `application:openURLs:`; there a file no window's folder
-  holds becomes a tab of the window in front (2026-11-04; it used to get a
-  new window), which is how `minicode x` in a window's terminal lands in
-  that window. These are VS Code's `code` rules (the user remembered a
-  flag being needed; `code` needs none for files). `-r` (`--reuse-window`)
-  puts everything in the window in front, a folder through
-  `switchToFolder:` (Open Folder's questions, then `changeRootTo:`), files
-  even when another window's folder holds them. Launch Services passes
-  only paths, so `-r` writes a request file, "minicode-open-1", "reuse",
-  the paths, NUL-ended, to `$TMPDIR/MiniCode-open/*.minicode-open` and
-  opens that; `MCTakeOpenRequest` reads (and deletes) only files in that
-  folder of the app's own `NSTemporaryDirectory()`. `-n` runs the raw
-  binary detached, a separate process, as every launch did before.
-  Checked offscreen (main.mm included, 16 checks with the tab menu's). "Running" is `ps -axo comm=` ending in
-  `/MiniCode`: pgrep found nothing from Claude Code's shell.
-  `MINICODE_LAUNCHER_DRYRUN=1` prints the command instead of running it.
-- **Terminal** (line mode; grid mode is in "The grid terminal"):
-  `zsh -l -i +Z` (interactive, line editor off) on a pty from
-  `forkpty`. `ZDOTDIR` points at a generated `.zshenv` (in
-  `NSTemporaryDirectory()/MiniCode-zsh`) that hands `ZDOTDIR` straight back to
-  the user, loads their files, and on the first `precmd` installs hooks that
-  emit OSC 133 A/C/D + OSC 7 and blank `PS1`. Installing at first precmd is
-  what keeps the hook last, after .zshrc. Echo is off while zsh reads a
-  command (precmd `stty -echo`) and on while it runs (preexec), so the pty's
-  ECHO flag, read from the master with `tcgetattr`, tells us when a program
-  wants hidden input. Everything the child needs is built before `fork`: only
-  async-signal-safe calls between fork and exec. `PROMPT_SP` prints before
-  precmd, so it is unset in .zshenv. `TERM=xterm-256color` so tools emit
-  color. Pagers are no longer forced to `cat` (the grid runs them). The last line of
-  the output view is "live": the stream re-sends it whole on every change and
-  the view replaces text from `_liveStart`. Panel-written lines (headers,
-  exit statuses) must go through `ensureNewline`, which ends the live line and
-  calls `breakLine()` on the stream, or the next update overwrites them. When testing headless, give the shell a scratch
-  `HOME` and `ZDOTDIR`: `/etc/zshrc` sets `HISTFILE` from them, and test
-  commands otherwise land in the user's real `~/.zsh_history`.
-- **Terminal links (Cmd+click)**: `TermLinks` finds candidates in a line;
-  `TerminalView linkInLine:atByte:` resolves a file against the shell's cwd
-  (from OSC 7), then `projectRoot`, keeping only paths that exist (cached,
-  emptied on every output chunk and cwd change), resolved with
-  `stringByResolvingSymlinksInPath` so /private/tmp matches a /tmp root.
-  The log view maps a click through `characterIndexForPoint:` (checked
-  against that character's own rect, since it answers with the nearest
-  character past a line's end) and UTF-16 -> the line's UTF-8 bytes; the
-  grid builds each row's UTF-8 with a byte -> cell map (wide characters'
-  right halves add no bytes). The hover underline in the log is a real
-  storage attribute, restored afterwards, because TextKit 2 ignores
-  underline rendering attributes; output arriving clears it first, since
-  the live line is replaced whole. Cmd pressed or released without moving
-  is caught by a local flagsChanged monitor (flagsChanged: only reaches the
-  first responder, usually the input line). EditorController
-  `openTerminalLink:` opens URLs in the browser panel, folders in the tree,
-  and files at `goToLine:column:` (switching a preview to source first). A
-  path wrapped across two rows of the grid is not found. The GTK port
-  (Ctrl+click, `linux/src/Terminal.cpp`, `linux/HANDOFF.md` item 9) reads
-  VTE's logical lines, so a wrapped path is found there. Its trap: VTE's
-  scroll adjustment and its text calls number rows differently once `clear`
-  has dropped the scrollback (`Terminal::topRow`).
-- **Terminal grid mode** (line mode's full-screen grid, `feat/terminal-screen`;
-  not the grid terminal of `terminal.mode = grid`): every pty chunk goes to
-  BOTH `TerminalStream` (log) and `TerminalScreen` (grid), so either is
-  current when shown and no mid-chunk handoff is needed. `updateMode` shows
-  the grid while `_screen.altScreen()`, or while `_stickyGrid`: a 0.1 s timer
-  (running only between OSC 133 C and A) reads termios from the master, and a
-  command that stays out of ICANON for two polls without the alt screen
-  (git's `less -FRX`, python REPL, ssh) keeps the grid until its command
-  ends. The two-poll debounce is what stops `less -F` on short output from
-  flashing the grid. The pty size comes from the panel bounds and the grid's
-  cell metrics in both modes (the log's `lineFragmentPadding` is 0 so its
-  wrap column matches), so switching modes never sends SIGWINCH. Tiny or
-  collapsed bounds keep the old size, or the screen would be cut to 20x5.
-  Screen replies (`\e[6n` -> CPR) are written back after each chunk; vim
-  sends two DSRs at startup. `TerminalScreen` must stay copyable: an earlier
-  version kept a `Grid*` into itself and every copy drew the original's grid.
-- **Synthetic key events in tests**: Shift+Cmd+H only matches the menu with
-  `charactersIgnoringModifiers:@"h"` (lowercase). An arrow key event needs
-  `characters` = the function-key character (U+F701 etc.); an empty string
-  makes `-[NSMenu performKeyEquivalent:]` throw and abort the app. Drive
-  keys with `[NSApp sendEvent:]` from a background thread via dispatch_sync
-  to main; that exercises the real menu-then-first-responder routing.
-- **Images in the Markdown preview** (`src/MarkdownImage.{h,mm}`): the
-  parser gives `![alt](src)` its own run (`image`, `src`; a badge's
-  `[![alt](src)](url)` also sets `link`), and the Mac inserts an
-  `MCMarkdownImage` attachment. Its cell (`MCAnimatedImageCell`) sizes the
-  picture to the line's width and, for a GIF, draws the current frame and
-  advances it on a timer that runs only while the picture is on screen.
-  Local files are relative to the Markdown file; on the Mac, https pictures
-  are fetched (next item). Traps: 1.4.1 shipped with a TextKit 2 view
-  provider, which the TextKit 1 editor never asks for, so GIFs were still;
-  and setting `attachmentCell` in the attachment's init reads back nil, so
-  the cell is returned from an `attachmentCell` override. Linux draws them with its
-  own `MdPicture`, Android with an ImageView over `ImageDecoder` (an
-  `AnimatedImageDrawable` for a GIF).
-- **Web pictures on Linux** (`linux/src/WebImages.cpp` over libsoup 3,
-  rules in `WebImageRules.cpp`, 2026-09-29) follow the same rules, and
-  place each arrival in the buffer in place of its alt text rather than
-  re-rendering; `linux/HANDOFF.md` item 12. Android's re-render the page
-  and keep the place by run (Android section below); they are on a branch,
-  checked on the phone for arrivals and failures, with scrolling, the
-  toggle and badge links still to try.
-- **Web pictures in the Mac preview** (`MCWebImageLoader` in
-  `MarkdownImage.mm`, 2026-09-28). An `https://` source is fetched in the
-  background by one NSURLSession for the whole app: ephemeral, no cookie
-  storage, credentials or URL cache, 15 s without a byte or 30 s in all ends
-  it, `User-Agent: MiniCode/<version>`. Plain `http://` is never fetched,
-  and a redirect is followed only to another https address. A
-  `data:image/...;base64,` source decodes on the spot, no network.
-  `markdown.web-images = false` (`Settings::webImages()`) makes
-  `markdownRun:` leave the web alone, cached pictures included; a settings
-  change re-renders the preview as before.
-  - **Never blocks the render.** `MCMarkdownWebImage` answers from the cache
-    or starts a fetch and says it is pending. The alt text stands in, tagged
-    `kMarkdownWebImage`, and the address goes into `_awaitedWebImages`, a
-    set each render starts afresh. `MCMarkdownWebImageNotification` (main
-    thread, success or failure) for an awaited address queues one re-render
-    0.1 s later, so pictures finishing together share it. Opening another
-    file empties the set, closing the window drops it, and the re-render
-    checks the path, so a late picture for a file no longer shown renders
-    nothing. Failures keep the alt text, with no alert.
-  - **The place is kept** (`renderMarkdownKeepingPlace`). A picture turns
-    its alt text (many characters) into one attachment character, so the
-    character at the top of the pane is found again by subtracting what
-    arrived above it, then put back at the same distance from the top. A
-    page at the very top stays at the top. `applySettings` still keeps only
-    the scroll origin.
-  - **Limits.** 20 MB: a larger Content-Length is refused at the response,
-    and bytes are counted as they come for a server that sends none (or
-    lies). NSImage must decode the bytes, and 50 megapixels is the most,
-    since a few kilobytes of PNG can claim a size that takes gigabytes to
-    draw. The cache is an NSCache of the bytes (64 MB of cost), keyed by the
-    address as written. It holds bytes, not NSImages, because every render
-    needs its own picture: the animated cell sets the frame to draw on the
-    image it holds. A failure is remembered for 30 s, so re-renders do not
-    ask again. Nothing is written to disk.
-  - **SVG works.** NSImage draws SVG itself on current macOS
-    (`_NSSVGImageRep`), so shields.io badges show at their own size in
-    points. An `<image href>` inside an SVG is never fetched; CoreSVG draws
-    a small red crossed box in its place.
-  - A linked badge's attachment carries `NSLinkAttributeName`, and a click
-    on it reaches `textView:clickedOnLink:` like linked text.
-  - **Verified** (2026-09-28, 64 checks) by a scratch program built from
-    all of src/ except main.mm, with window ordering swizzled to no-ops and
-    activation Prohibited, against a python server on 127.0.0.1 serving
-    https with a self-signed certificate. Only the test trusts it: it adds
-    `URLSession:didReceiveChallenge:completionHandler:` to
-    `MCWebImageLoader` with `class_addMethod` before the first fetch; the
-    app has no challenge handler. `-Wl,-sectcreate,__TEXT,__info_plist,
-    Info.plist` gives the unbundled binary a version for the User-Agent.
-    Checked: the render returning in 5 ms with the alt text; a png and an
-    animated GIF arriving at 120x80 and 64x48, the GIF in the local GIF's
-    cell with its 3 frames and its timer starting when drawn; one re-render
-    for pictures arriving together (and for five delayed ones); the text on
-    show staying put to the point when a 300-point picture arrived above
-    it, nothing moving when it arrived below, and a page at the top staying
-    there; 404, garbage, a refused port and a 15 s timeout keeping the alt
-    text; 30 MB with and without a length cancelled (the server saw 128 KB
-    and 20 MB go out); http, and a redirect to http, never requested;
-    the SVG badge drawn and its link followed on a click; no cookie sent
-    back after a Set-Cookie; a re-render, a preview toggle and a reopen
-    fetching nothing again, nor the 404; the setting off making no request
-    and on again fetching; a picture for a file since closed, or a closed
-    window, rendering nothing. Pixel captures of the preview were looked
-    at. Needs the user's eyes: pictures popping in on a real README while
-    scrolling, a web GIF playing (an offscreen window counts as occluded,
-    so frames never advance there), and real hosts such as GitHub and
-    shields.io, which the test never contacted.
-- **The Markdown parser** was rewritten on 2026-09-29, after the user's
-  own notes rendered wrongly in many places. What was wrong, and what to
-  keep in mind:
-  - **Two passes.** `analyze()` reads lines into blocks (paragraphs, ATX
-    and setext headings, fenced and indented code, quotes with GitHub's
-    `> [!NOTE]` alerts, lists nested by their parent's text column, rules,
-    tables, front matter shown as code) and classifies every line
-    (`MdLine`: kind, and a block number shared by lines edited together).
-    Link reference definitions and HTML comments are `Hidden`. The inline
-    pass then reads each block's text, all its lines at once, so emphasis
-    can span a line break.
-  - **Emphasis follows CommonMark's delimiter rules** (left and right
-    flanking, the rule of three, openers-bottom). The old parser italicized
-    from any `_` or `*` to the next one, so `max_len`, `load_config` and
-    `2 * 3 * 4` came out italic with the characters eaten. Now underscores
-    inside a word never emphasise; stars do, as on GitHub (`5*6*7` puts
-    the 6 in italics, and `__init__.py` bolds "init" there too).
-  - Also new: backslash escapes, entities (named and numeric), code spans
-    of any backtick count, link titles, parentheses in a destination,
-    styled link text, reference links, `<autolinks>` and bare
-    `https://`/`www.` addresses, `~~strike~~` (`MdRun::strike`), hard
-    breaks (two spaces, a backslash, `<br>`: `hardBreak`), task boxes,
-    lazy continuation lines in list items and quotes, and a little inline
-    HTML: `<b>`, `<i>`, `<s>`, `<code>`/`<kbd>`, `<a href>`, `<img>`,
-    `<h1>`..`<h6>` on a line of its own. Other tags and comments are
-    dropped, their text kept.
-  - **Space between blocks is a run.** Every block ends with its own
-    `"\n"`, and between two blocks comes exactly one more `"\n"` with
-    `gap` set, however many blank lines the source has; tight list items
-    get none. The old parser turned blank lines into `"\n"` runs one for
-    one, and ended a paragraph with a space, so paragraphs ran together
-    while every heading had a whole empty line under it and every table
-    two. Ports that draw `"\n"` as text get one even empty line; the Mac
-    draws a gap 12 points high and Linux as an 8 point line (`md_gap`).
-  - **Markers**: a list item's first run has `marker` set and reads
-    `"  • "` as before (◦ at the second level, ▪ below, the number as
-    written, ☐ or ☑ for a task). The Mac trims it and places it on tab
-    stops for a hanging indent; Linux and Android still show it as text.
-  - **`MarkdownEdit` no longer classifies lines itself**: it asks
-    `MarkdownParser::lines`, so a new block rule cannot make the preview
-    and a double-click disagree. A list item's block now takes its
-    continuation lines, a setext heading its text lines, a quote the whole
-    quote, and an indented block or front matter is Code.
-  - **Speed**: brackets are matched once per block with a stack, and link
-    and image nesting stops at 8, so pathological input stays linear
-    (30,000 `[` in 30 ms unoptimized). The cheatsheet repeated 100 times
-    (1.3 MB) parses in 18 ms at -O2 against the old parser's 16; dense
-    generated markup is about twice as slow (8 MB in 127 ms against 60).
-  - **Tests**: `md:*` groups in `run_tests.cpp` cover each rule, and
-    `tests/markdown/corpus.md` holds every construct for eyes and for
-    `md:corpus` (no line unstamped, no markup left as text, every run
-    editable, its own `#links` landing on its headings).
-  - **Math** (`$...$`, `$$...$$`, ```` ```math ````) is read before any
-    other inline rule, and typeset on the Mac: see "Math in the Markdown
-    preview". Of the options weighed before it was built, (3) was taken:
-    every formula of a page typeset by tectonic in one background run. The
-    others were showing the TeX as code (now the fallback everywhere),
-    turning simple TeX into Unicode (useless for fractions and matrices), a
-    TeX math layout engine of our own (the most work), and MathJax or KaTeX
-    in a web view (a dependency). Markdown exported from a page that
-    MathJax rendered can lose its math entirely (empty table cells, gaps in
-    sentences), which no viewer can show. Such a page's MathJax SVG keeps
-    `data-mml-node` and `data-c` (the MathML element tree and each glyph's
-    code point) but no TeX, so the formulas could be rebuilt as MathML from
-    it, not copied as TeX.
-- **The Mac's Markdown paragraphs** (`renderMarkdown:`,
-  `markdownParagraphFor:quote:code:`, `markdownRun:style:inCell:`): a
-  paragraph's style comes from its first run and is given to every run in
-  it. Quotes and code blocks are `NSTextBlock`s: one block object is
-  carried across the paragraphs (and inner gaps) of one quote or code
-  block, so the bar down a quote's left side and a code block's box are
-  drawn once around all of them. h1 and h2 have a rule under them and a
-  horizontal rule is a full-width block with a bottom border, both text
-  blocks too. List text sits at 24 points a level with the marker right
-  aligned on a tab just before it, so wrapped lines and numbers of any
-  width line up. A hard break is U+2028 there, so it stays inside the
-  paragraph and its indent. Checked offscreen (window ordering swizzled,
-  activation Prohibited, `cacheDisplayInRect:` of the text view) on the
-  corpus and the user's notes; the look on a real screen still wants the
-  user's eyes.
-- **Markdown**: headings get `paragraphSpacingBefore`. Tables: the
-  parser lays them out as aligned monospace (no port shows that any more)
-  and also tags every run with its table, row, column and alignment
-  (`tableId`/`tableRow`/`tableCol`, -1 for padding and rules). The Mac skips
-  the padding and builds an `NSTextTable` from the cells
-  (`appendMarkdownTable:`), so wide tables wrap inside their columns.
-  Every run also carries its source `line`, stored on the rendered text as
-  `kMarkdownSourceLine`: Shift+Cmd+V (Shift+Cmd+P until 1.5.4) uses it to open the preview at the
-  caret, and to open the source at a preview the user scrolled (otherwise
-  the source comes back with its old selection and caret height). Links are
-  real `NSLinkAttributeName`s, resolved in `openMarkdownLink:`: `#heading`
-  by GitHub's anchor spelling, web addresses in the browser panel, other
-  paths relative to the file through `openTerminalLink:` (`#L12` works).
-- **Editing Markdown from the preview** (`src/MarkdownEdit.{h,cpp}`, pure
-  C++ and tested; `src/MarkdownEditPanel.mm`; `editMarkdownAtCharacter:`):
-  a double-click on the read-only preview (`CodeTextView
-  onPreviewDoubleClick`) reads `kMarkdownSourceLine`, plus
-  `kMarkdownTableCell` (row, column) in a table, and `MarkdownEdit::blockAt`
-  finds the block from the parser's own reading of the lines
-  (`MarkdownParser::lines`): heading text, list item text with its
-  continuation lines, whole paragraph or quote, code between the fences,
-  or one table cell (newlines and bare pipes are escaped on the way
-  back). The popover works like the LaTeX one (Return saves, Shift+Return
-  types a newline, Add item on a list item). `applyMarkdownSource:` splices,
-  marks the buffer dirty, registers undo with the window's undo manager and
-  re-renders at the same scroll. An edit is dropped if the buffer changed
-  while the popover was open.
-- **The Linux preview does the same** (2026-09-26): `linux/src/Markdown.cpp`
-  returns a `Markdown::Page` (spans of rendered text with their source line
-  and link, heading anchors via `MarkdownParser::anchor`, and the embedded
-  widgets). Tables are a `GtkGrid` of wrapping labels and pictures an
-  `MdPicture` (its own small widget, since GtkPicture always asks for the
-  image's full size and a text view grants it), both in child anchors and
-  sized by `Markdown::fit` from the pane's width. A label's natural width is
-  pinned by `max_width_chars = 1` plus a width request, so it wraps. The
-  editor (`Editor.cpp`) handles clicks, the popover, snapshot undo (Ctrl+Z
-  in the preview; the buffer holds rendered text) and the toggle position.
-  Two traps: act on a link from an idle, because the text view moves the
-  caret after the click and undid a scroll to `#section`; and
-  `gtk_text_view_get_iter_at_location` returns the *nearest* character, so a
-  click can land a pixel left of the character's box (reject only a point
-  past a line's end). Checked in the Docker container: links, anchors,
-  GIFs playing, tables wrapping, list and cell edits, undo and redo, and the
-  three toggle cases. Table cells are inline-parsed and padded by *display*
-  width (code points, CJK/emoji = 2), never UTF-8 byte length, or any
-  non-ASCII cell knocks the columns out of line.
-- **Android's preview does the same** (2026-09-26, `MarkdownPreview.kt`,
-  `MarkdownEditDialog.kt`; `android/README.md`, "The Markdown preview"):
-  `minicode_jni.cpp` now passes every run's line, link, picture source and
-  table fields, plus `MarkdownParser::anchor` and `MarkdownEdit` (block
-  ranges converted from UTF-8 bytes to UTF-16 units). The page is a column
-  of views: styled TextViews between embeds, a table as a grid of wrapping
-  TextViews, a picture as an ImageView. An edit reaches the buffer as the
-  smallest splice of the editor's Editable, so the highlighter, the
-  language server and the dirty mark see ordinary typing; preview undo is
-  snapshots, on leader U and R. Traps: the preview text must not be
-  selectable, or a double tap selects a word instead of editing; View's
-  constructor reports visibility before a Kotlin subclass's fields exist,
-  so `onVisibilityChanged` must guard; an anchor asked for right after a
-  render (a link from another file) must wait for layout; and re-rendering
-  after an edit must not reset the "placed at" scroll, or a scroll made
-  before the edit stops counting for place keeping. Web pictures
-  (`WebImages.kt`, 2026-09-28) are fetched there too, behind ⋮ Web images
-  in Markdown; its traps are in the Android section below.
-- **Search**: scoped to a folder (default = open folder or selected folder),
-  min 2 chars, generation bumped up front + per-file cancellation, ANSI stripped
-  from result lines. On Linux the tree's `GtkSingleSelection` must have
-  autoselect off, or its first row counts as selected from launch and the
-  search is scoped to whatever folder sorts first.
-- **Highlighting is incremental** (macOS, Android, where `Highlighter.kt`
-  does the same over a native mirror of the text, and Linux, where
-  `Editor.cpp` keeps a UTF-8 mirror and retags large ranges in idle slices;
-  `linux/HANDOFF.md` item 3). Opening a file runs `applyHighlighting` (full pass, also used by
-  `recolorEditor` on a settings change). After that the text storage delegate
-  `textStorage:willProcessEditing:` feeds every character edit to
-  `IncrementalHighlighter` and records the lines to recolor; `textDidChange:`
-  (or a `performSelector:afterDelay:0` for storage edits without
-  `didChangeText`) calls `flushHighlighting`, which lexes those lines from the
-  stored states and repaints just them, swatches included. Two traps: (1)
-  never change attributes inside `willProcessEditing`: it widens the edited
-  range and NSTextView moves the caret to its end, so typed characters land
-  on the next line. (2) Reset a range with one `setAttributes:` of the source
-  attributes, never `addAttribute:` of the plain color: over a range with many
-  attribute runs that took 3.4 s for 50k lines, `setAttributes:` takes ~1 ms.
-  `_liveHighlight` must be off whenever the storage holds something that is
-  not source (Markdown preview, messages); set it off before every
-  `setAttributedString:`. Measured on a 50k-line file: ~0.35 ms of
-  highlighting per keystroke (the rest of NSTextView's ~2.5 ms is its own),
-  15 ms to type `/*` at line 100, ~60 ms for the worst recolor.
-- **Color picks overwritten by the text color**: an NSTextView with
-  `usesFontPanel` (the default) calls `updateFontPanel` when its selection
-  moves, which sets the shared NSColorPanel to the color under the caret,
-  and the panel forwards that as an action to its target, `colorPicked:`.
-  So after every pick (which moves the caret) the line was rewritten with
-  #D4D4D4, the editor's text color. Found by the settings demo scene, from
-  the stack trace of `colorPicked:`. The editor now sets
-  `usesFontPanel = NO` (MiniCode has no use for the Font panel).
-- **Crash on window close**: `NSWindow` defaults to `releasedWhenClosed = YES`,
-  a legacy manual release. With ARC also owning the window through a `strong`
-  property, closing double-frees it ("MiniCode quit unexpectedly"). Set
-  `window.releasedWhenClosed = NO` so ARC is the sole owner.
-- **Linux: accelerators take keys from the terminal.** GTK runs application
-  accelerators in the window's capture phase, before the focused widget, so
-  a plain Ctrl shortcut never reached bash or vim in the VTE panel, and a
-  key controller on the terminal cannot get in first. `main.cpp` unbinds the
-  plain Ctrl ones while the terminal has the focus (`updateShellKeys`). The
-  Mac is spared by using Command.
-- **Linux: the file tree.** The stylesheet's transparent row background
-  also wiped out the theme's selection color (an application stylesheet
-  outranks the theme whatever the selectors), so a clicked row showed
-  nothing; `ThemeCss.cpp` now colors `:selected`, `:hover` and
-  `:focus-visible` itself. One click acts, as on the Mac, through a
-  `GtkGestureClick` on the list view with the rows not activatable, so a
-  double-click cannot act twice (`FileTree.cpp`); not
-  `gtk_list_view_set_single_click_activate`, which selects rows on hover.
-  Showing or hiding dotfiles closed every open folder when a dotfile sorted
-  into the root; `setShowHidden` reopens them.
-- **Linux: scrolling to a line of a new file.** GtkTextView animates
-  towards a position computed from estimated heights of lines not laid out
-  yet, and ends in the wrong place (a match on line 250 left 166 to 208 on
-  screen). `Editor::settleOnCaret` scrolls again once the view stops with
-  the caret off screen. Check the visible rect in tests, not just the caret.
-- **Linux: shifted punctuation accelerators.** `<Ctrl><Shift>period` never
-  matches in GTK 4; bind the character (`<Ctrl>greater`), and exempt it in
-  `shellOwns`. Ctrl+Shift+. exists for Toshy users, whose Ctrl+H is taken.
-- **Linux: GTK criticals on a mid-scroll switch.** Unmapping a
-  GtkScrolledWindow while its adjustment animates (GtkTextView scrolls to
-  the caret with one) ends the animation twice on GTK 4.22 and logs two
-  criticals. `linux/src/ScrollSettle.h` ends it from the child's unmap first.
-
-## Distribution
-
-- Source repo: `e-c-hansen/minicode` (PUBLIC). The release zip is published on
-  this repo's own Releases, attached to the `vX.Y.Z` tag it was built from.
-- Homebrew tap: `e-c-hansen/homebrew-tap` (PUBLIC), which holds nothing but
-  `Casks/minicode.rb`. That file is *written* by `scripts/release.sh` from
-  `packaging/minicode.rb`, which is the only copy anyone edits; the tap exists
-  because `brew install --cask e-c-hansen/tap/minicode` needs a repo called
-  `homebrew-<something>`, and nothing more.
-- The cask clears the quarantine flag in `postflight_steps` (Homebrew 7
-  deprecated the `postflight` block; `{{appdir}}` is the template token in step
-  arguments), so the unsigned app opens cleanly. After editing the cask, check
-  it with `brew style` from a tap checkout
-  (`/opt/homebrew/Library/Taps/e-c-hansen/homebrew-tap`).
-- Not notarized (that needs the paid Apple Developer Program). The full sign +
-  notarize flow is scripted in `scripts/sign-and-notarize.sh` for when/if paid.
-- The Android APK is attached to the same GitHub Release, signed with the
-  release key at `~/.config/minicode/release.keystore` (password in the
-  Keychain, service `minicode-android-keystore`). Every update must carry that
-  signature, so the key must never be regenerated; the user keeps a backup.
-  Users install by hand or through Obtainium; it is not on the Play Store.
-- Ubuntu PPA `ppa:echansen/minicode` (Launchpad builds the binaries
-  from the signed source package). Once it is live, a Linux change reaches
-  Ubuntu users only through a release, so the "Linux-only changes need no
-  release" rule above no longer holds for them. A lost signing key can be
-  replaced on Launchpad, unlike the Android key. Traps: macOS `tar` adds
-  `._*` files that `dpkg-source` rejects (use `git archive`); `tar` fails
-  with ENOSYS under Docker Desktop's amd64 emulation, so the amd64 .deb
-  was never built locally; gpg-agent cannot be forwarded into Docker
-  Desktop, hence signing on the host.
-- Homebrew is the only way MiniCode updates: the app has no updater, so the
-  cask must NOT declare `auto_updates`, or a plain `brew upgrade` would skip it.
+- **The page never takes the keyboard by itself.** WebKit makes the web view
+  first responder whenever the page focuses a field, even hidden. The window is
+  an `MCKeyboardWindow`, whose `makeFirstResponder:` asks `MCWebView
+  mc_refusesKeyboard` before the current responder resigns (refusing in
+  `becomeFirstResponder` left the window first responder). Allowed: a mouse
+  down in the page, Tab from the toolbar, a page loaded from the toolbar while
+  the keyboard is there; never while hidden. `navigateToString:` clears the
+  toolbar allowance. Tab in the address bar goes into the page through the
+  field's delegate while the field editor still has the keyboard.
+- Window tabbing is off (`setAllowsAutomaticWindowTabbing:NO`, or Cmd+W closes
+  a merged group); `window.releasedWhenClosed = NO` (or ARC and the legacy
+  release double-free it on close).
 
 ## Conventions
 
-- No third-party dependencies, ever. New capabilities use system frameworks
-  (e.g. planned media rendering uses NSImageView + AVKit, not VLC).
-- End commit messages with the Co-Authored-By trailer.
-- README / user-facing prose: plain human voice, real sentences, commas, no
-  emoji, no LLM-ish phrasing. The user cares about this.
+- **Keys**: a feature minicode shares with VS Code takes VS Code's Mac key.
+  minicode's own Shift+Command keys never move (Shift+Cmd+K Request a Change,
+  Shift+Cmd+T Toggle Terminal, Shift+Cmd+D TODOs, Shift+Cmd+E, Shift+Cmd+B,
+  Shift+Cmd+H, ...); only a Command-only key yields when VS Code binds it to
+  something else (Cmd+N New File, Cmd+L Select Line, Cmd+I the inline agent).
+  Dump every menu key equivalent before adding one; no key is bound twice (the
+  `keymap` suite and `commands:*` check it).
+- **A new shortcut**: a row in `src/Commands.cpp` (id in VS Code's spelling
+  where VS Code has the command, else `minicode.*`; title, menu, default keys,
+  where it applies, selector, tag); the menu item in `main.mm` (and a
+  forwarding method on AppDelegate if needed); a hints row (`appendHintsRow:`
+  with `[self hk:@"id"]`, which reads the registry); a README table row, sorted
+  by action, a column per platform. The hints panel is an attributed string on
+  tab stops; never align it with spaces (⌘ ⇧ ⌃ ⌫ ⏎ differ in width). Prefer
+  menu items with key equivalents to the key monitor: they work in every pane
+  and for shifted variants.
+- No third-party dependencies, ever; new capabilities use system frameworks.
+- README and user-facing prose: plain sentences, Oxford commas, no emoji, no
+  LLM-ish phrasing; the name is "minicode", lowercase, in prose. No labels the
+  user did not choose.
+- Commits in the repo's style (the area, then why and what was checked), ending
+  with the Co-Authored-By trailer.
+- A finished user-visible Mac change is pushed, released and upgraded on the
+  user's Mac. Ask before anything that puts a window on their screen.
+
+## Settings, themes and Adjust Settings
+
+- `AppSettings` loads `~/.config/minicode/settings.conf` (or
+  `$MINICODE_SETTINGS`), watches it, and posts the change notification. The
+  command values of `lsp.*`, `format.*` and `run.*` are whole command lines up
+  to a ` #` comment outside quotes, unlike other keys.
+- **Swatches**: in the settings file each color value is a swatch
+  (`NSLinkAttributeName` `minicode-color`); a click opens NSColorPanel and
+  `colorPicked:` rewrites the line with `Settings::setColor` (uncommenting it),
+  saving after 150 ms. An opacity value is a `minicode-opacity` link opening
+  `MCOpacityPopover` (`Settings::setOpacity`, keeping a `%` form).
+  `linkTextAttributes` is only a pointing-hand cursor. Trap: an NSTextView with
+  `usesFontPanel` sets the shared NSColorPanel to the color under the caret
+  when the selection moves, and the panel forwarded that to `colorPicked:`, so
+  every pick became the text color; the editor sets `usesFontPanel = NO`.
+- **Adjust Settings…** ends every surface's context menu and opens the file at
+  that surface's keys (`Settings::appearanceSurfaces()`: `tree`, `git`,
+  `editor`, `syntax`, `markdown`, `terminal`, `browser`, `statusbar`,
+  `titlebar`, `window`, placeholders `tabs` and `terminal-tabs`; own keys, then
+  the `window.*` fallbacks). A new view adds it with
+  `MCAddAdjustSettingsItem(menu, @"surface", self)` at the end of
+  `menuForEvent:` (`willOpenMenu:withEvent:` for WKWebView) or `view.menu =
+  MCAdjustSettingsMenu(...)`; `MCSurfaceTextField` does it for a field's
+  editing menu (the field editor asks the field, never its delegate). The keys'
+  lines are tinted with temporary attributes for about 3 s. A file older than
+  some keys gets their commented defaults (`Settings::missingSurfaceLines`)
+  appended under one "# Added by Adjust Settings" line, one undo step, saved at
+  once only if it had no unsaved changes. The ruler is left out of the map on
+  purpose (old files would get new lines).
+- **Themes**: `theme = <id>` (`kThemes`: dark-modern, dark-plus, monokai,
+  solarized-dark, tomorrow-night-blue, light-modern, light-plus, quiet-light,
+  solarized-light, mapped by hand from VS Code's files) gives every color; any
+  color the file sets wins. Unset is dark-plus, value for value the old look;
+  `defaultFileText` keeps Dark+'s values. Opacity is separate. View > Theme
+  (`MCThemeSubmenu`) writes the line through `Settings::withTheme` (CRLF kept)
+  and, when the file sets colors of its own (`colorOverrides`), offers to
+  comment them out. `Settings::isDark()` sets the window's NSAppearance;
+  popovers that force DarkAqua and inline hex are unchanged.
+  `selectedTextAttributes` is only a background, since after a switch AppKit
+  drew selected text in its own color.
+
+## Keys: the registry, keys.conf and the key monitor
+
+- `src/Commands.cpp` has every command (about 160) in menu order: id, title,
+  menu, default keys (`shift+cmd+p` notation), where it applies (`Any`,
+  `Editor`, `Terminal`, `Tree`), selector and tag, flags (`Global`: the key
+  monitor runs it before any view, the grid included; `Fixed`: a view's own
+  keys, listed and protected but not changeable yet). `resolve()` applies
+  `keys.conf` (`~/.config/minicode/keys.conf` or `$MINICODE_KEYS`): `key = id`
+  adds, `key = -` takes the key from every command, `key = -id` from one; a key
+  given to a command leaves any that had it where both apply; two lines giving
+  one key to two commands in one place are a conflict and the later is refused
+  with its line number.
+- `Keymap.mm` reads and watches the file and puts the keys on the menu items
+  found by action and tag (the first on the item, others on hidden items beside
+  it, `allowsKeyEquivalentWhenHidden`). Errors join the settings errors in the
+  status bar; the hints, the palette and minicode > Keyboard Shortcuts… (which
+  writes the file, every command commented out, the first time) follow it.
+- The key monitor asks `MCKeymapHandleKeyDown` first, which runs a command
+  (validated as its menu item would be) when it is Global (Ctrl+` and
+  Ctrl+Shift+`, the Menu key, Cmd+keypad 0, Option+] and [ during a tour); when
+  the key has neither Command nor Control (Shift+Option+F and O, F2, F8, F9,
+  Shift+F12) and the editor has the keyboard, since AppKit gives such a key to
+  the text view as typing before the menu (in another field or the grid it
+  types); when two commands share a key in different places; and for keys a
+  menu cannot show (keypad digits, the Menu key, Ctrl+Shift with punctuation).
+  A plain Control key goes to the terminal grid while it has the keyboard
+  (Ctrl+G for nano) unless Global. Plain typing skips the keymap at once. Cmd+.
+  is the key bindings' `cancelOperation:` everywhere, so only an editable
+  editor sends it to the menu. Validation decides: a command that cannot act
+  lets the key go (Option+] types ‘ with no tour).
+- **Trap (1.5.0 and 1.5.1)**: Shift+Option+F typed Ï, because the "verified"
+  check had sent the event to the menu directly. Test such keys through
+  `[window sendEvent:]` or `MCGuiSendKeyToApp`, never the menu alone.
+
+## Tabs, sessions and the disk (Mac)
+
+- **One text view, many documents.** `MCTab` holds a document's path, text,
+  `savedText`, mode flags, `dirty`, its own `NSUndoManager` (from
+  `undoManagerForTextView:`), its own `LatexView`, folds, viewer kind,
+  `agentPreview`, `comparison` and where its view was. The controller's
+  document properties are forwarding accessors to `_activeTab`
+  (`MC_TAB_PROPERTY`), nil/NO with no tab. Shared viewers are let go by
+  `stashActiveTab` (a playing sound stops) and rebuilt by `showActiveTab`. A
+  session's tab is read when first shown (`loaded`). Diffs and commits share
+  one tab.
+- `EditorTabs` rules: a new tab right of the active one, the most recently used
+  after closing the active one, wrap on next and previous, labels that add
+  folders when names clash. `TabStrip` only draws and reports clicks. A tab's
+  right click (`menuForTabAtIndex:`) has the close commands, copy paths,
+  reveal, rename and trash; the File menu repeats them for the active tab so
+  the palette finds them.
+- **Dirty means "differs from disk"**: `noteEdited` compares with `savedText`
+  (length first), so undoing back clears the dot. `savedText` is the text as
+  read (NSString drops a BOM, never written back; CRLF survives).
+- **Keys**: Ctrl+Tab / Ctrl+Shift+Tab, Shift+Cmd+] / [, Shift+Cmd+1..9 and
+  Ctrl+1..9 (macOS takes Shift+Cmd+3, 4, 5). Cmd+W (`closeFocused:`) closes the
+  tab, or the terminal, browser or Problems list with the keyboard; a repeat
+  (`isARepeat`) is ignored, so a held Cmd+W closes one thing. Shift+Cmd+W
+  closes the window. Cmd+N New File (with no window, opens one), Option+Cmd+N
+  New Window. Reopen Closed Tab (Option+Shift+Cmd+T): the newest of the
+  window's last 50 (`_closedTabs`, with place, selection, scroll, mode),
+  skipping files gone.
+- **Unsaved tabs are never dropped**: a dirty tab asks Save / Don't Save /
+  Cancel; window close, Open Folder and quit ask once for all. Trash closes
+  only clean tabs of what went; `pathMovedFrom:to:` moves tabs.
+- **The disk**: a buffer replaced from disk loses its undo steps
+  (`forgetHistoryOf:`). Every save checks the date first (`mayWriteTab:`:
+  changed outside asks Keep Mine / Reload / Cancel; gone asks before writing).
+  Save All asks every question first (`diskDecisionForTab:`), then writes.
+  `saveTab:` saves a background tab in place (a keep-sorted sort waits in
+  `pendingSort`). Moved or deleted outside (FSEvents, `checkTabsOnDisk`, show
+  and focus): a same-folder rename is followed by inode and date (`fileID`),
+  else the tab is `gone` ("(deleted)") until the file returns. **A clean tab
+  follows the disk** (`reloadCleanTab:`): the tab on show takes the new text
+  through `replaceSourceWithText:` with undo off, keeping caret and top line.
+- **Sessions**: `MCTabSessions` (NSUserDefaults, by resolved folder, 50
+  folders) reopens a folder's tabs and its browser page, else a read-only empty
+  editor. Off under `MINICODE_DEMO` and `MINICODE_BENCH`;
+  `MINICODE_DEFAULTS_SUITE` points it at a scratch suite. A tab over 16 MB or
+  not a plain file waits for a click. Windows on one folder share it: each save
+  lists the saving window's files then the others'. Agent preview tabs are left
+  out.
+- AppDelegate's `current` maps a window an editor made (`ownsWindow:`, Find in
+  Folder and TODOs) to that editor; items that edit the file on show are
+  disabled while another window is key, so keys reach that window's field.
+- GTK and Android have no tabs.
+
+## Backups, hot exit and auto-save (Mac)
+
+- Every dirty tab's text is on disk while edited, as VS Code's backups;
+  quitting still asks (the user wants the question). `Backups.{h,cpp}` (format,
+  `Store` over an `Fs`, `plan`, `foldersToReopen`, `expired`, `compare`),
+  `BackupStore.mm` (folder, write queue, which process holds a backup),
+  +Persistence (what and when). Store: `~/Library/Application
+  Support/MiniCode/Backups` (NSHomeDirectory, so `CFFIXED_USER_HOME` moves it)
+  or `$MINICODE_BACKUP_DIR`; never in the project. One `<uuid>.mcbackup` per
+  tab whose header is its own index entry, so processes never race. Written to
+  a temporary (0600), flushed with `fcntl(F_FULLFSYNC)` (plain `fsync` leaves
+  data in the drive's cache; fsync where a volume refuses, and on Linux),
+  renamed, and the folder synced too.
+- `scheduleBackups` (from `noteEdited` and `updateTitle`): a clean tab's backup
+  goes at once; a changed dirty buffer (`sourceText` compared by pointer with
+  `backedUpText`) is written 1 s after typing stops, at most 5 s after the
+  first unwritten change, the immutable NSString converted on the queue. Only
+  text tabs with a path.
+- Restore: `planForRoot:` takes the folder's backups no live process holds (pid
+  and start time); `takeBackup:intoTab:` makes the tab dirty with the backup's
+  base date and inode, and on first show (`showRestoredText:`) the backup is
+  the buffer, the disk text `savedText`, undo empty, with a note ("Restored
+  unsaved changes to x", and if the disk changed since).
+  `reopenFoldersWithBackups` opens a window per folder with unheld backups. The
+  newest of several wins; orphans over 30 days and temporaries over a day go
+  (`cleanUpOnce`).
+- Quit asks as before, then `backupsAppWillTerminate:` removes them. A restart
+  from Request a Change calls `keepUnsavedTabsForRestart` (dirty buffers
+  written synchronously and not asked about; a failed write falls back to the
+  question). A crash, SIGKILL or power loss leaves them.
+- **Auto-save**: `editor.auto-save` = off (default), `after-delay`
+  (`editor.auto-save-delay`, 1000 ms) or `focus-change` (the editor loses the
+  keyboard, the window resigns key, another tab shows). `scheduleAutoSave` sits
+  beside `scheduleBackups`. A plain write: no formatter, no keep-sorted, never
+  a dialog from a timer (`writeTabForAutoSave:` checks the disk by hand; a file
+  changed outside is skipped and named, so Cmd+S asks). Skipped: gone and
+  unloaded tabs, a tab whose Cmd+S waits for its formatter, a tab with an
+  inline-agent edit awaiting Keep or Discard (`MCAgentSession editPending`).
+  Trap: the focus-change save and the delay's debounce shared a selector and
+  `updateTitle` cancelled the save after a tab switch; nothing may cancel
+  `autoSaveNow`.
+
+## The editor's text view (Mac)
+
+- **The editor is TextKit 1.** AppKit gives any NSTextView subclass that
+  overrides `drawRect:` a TextKit 1 layout manager, with no notification. Never
+  ask a TextKit 2 view for its layout manager (it switches over).
+- **Storage**: `MCSourceStorage` is an NSTextStorage over a plain
+  NSMutableAttributedString that fixes attributes eagerly (only the edited
+  paragraph) and skips the glyph-info fix unless glyph info is in the range.
+  AppKit's storage re-fixed a 65,536-character block around the caret twice a
+  keystroke and walked every run for glyph info: about 11 ms a keystroke in a
+  highlighted 100,000-line file, now about 0.5 ms (opening such a file costs
+  more, about 220 ms). EditorController builds the TextKit 1 stack itself and
+  makes the view with `initWithFrame:textContainer:`. **Never
+  `replaceTextStorage:` after the view exists**: CodeTextView, the carets and
+  the folds subscribe to the storage at init and heard nothing on a new one.
+- **Contiguous layout stays on**: everything that reads positions relies on
+  exactness. Never call `numberOfGlyphs` on the editor; lay out only up to the
+  character needed. `textDidChange:`'s copy into `sourceText` shares characters
+  (about a microsecond) and the backups rely on a new object per change;
+  measured, leave it.
+- **Programmatic edits** (`replaceSourceWithText:actionName:` for Format
+  Document, the inline agent, a clean tab following the disk, a pending sort;
+  the same shape in the workspace edit applier and Replace All): ranges go in
+  with one `shouldChangeTextInRanges` (one undo step), then each as its own
+  storage edit, last first, then one `didChangeText`, so layout runs once and
+  the highlighter, squiggles and server follow each edit. Never wrap them in
+  `beginEditing`/`endEditing`: the storage then reports one edit from first to
+  last and every squiggle between is stretched over it. The caret and top
+  character are mapped by counting non-whitespace characters within a hunk;
+  hunks with only blank lines between are joined. Small edits (Cmd+/, F9) call
+  `breakUndoCoalescing`, so each is its own undo step.
+- `CodeTextView` hooks: `onFocusLost`, `onMouseHover`, `onPreviewDoubleClick`,
+  `onFindAction`/`validateFindAction`, `drawBehindText`. The ruler
+  (`editor.ruler`: a column, a list such as 80,120, or off, 100 by default;
+  `editor.ruler-color`) is a 1 pt backing-aligned line at container origin +
+  padding + column times the width of "0", drawn in
+  `drawViewBackgroundInRect:`, none while read-only.
+- **Line numbers** (`MCLineGutter`): a vertical NSRulerView; each logical line
+  numbered on its first fragment, the carets' lines in the active color, a dot
+  for errors and warnings, the fold lane (`kFoldLane`). Only fragments on
+  screen are visited and numbers come from a `LineIndex` fed by storage edits.
+  Width by digit count (three at least); click, drag and Shift+click select
+  lines; shown only while editable. Settings: `editor.line-numbers` (on, off,
+  relative), `editor.gutter-background`, `editor.line-number-color`,
+  `editor.line-number-active-color`. Traps: NSScrollView lays a ruler out as a
+  content inset of a clip view that still spans the width, so `PanelScrollView
+  tile` subtracts the insets; never change `ruleThickness` inside a storage
+  edit (tile asked for text that was gone and threw), so it changes on the next
+  run-loop turn.
+- **Brackets**: the bracket by the caret (the one before first) and its partner
+  get boxes in `editor.bracket-match`; strings and comments skipped by the
+  highlighter's tokens within 20,000 units; nothing lexed unless a bracket
+  touches the caret. Go to Bracket is Shift+Cmd+\.
+- **Zoom** (EditorFont.mm): Cmd+=, Shift+Cmd+=, Cmd+-, Option+Cmd+0, Cmd+keypad
+  0; Cmd+0 stays Focus File Tree. `MCEditorFont()` is `editor.font-size` (13)
+  plus `MCEditorZoom` (user defaults, every window, never in the settings
+  file); `MCZoomScale` is (13 + zoom) / 13 for the Markdown preview
+  (re-rendered keeping its place) and the edit popovers; the terminal adds the
+  zoom to `terminal.font-size` (`MCEditorZoomDidChangeNotification`).
+- `_liveHighlight` must be off whenever the storage holds something that is not
+  source (previews, messages); set it before every `setAttributedString:`.
+
+## Highlighting
+
+- `SyntaxHighlighter` lexes a line at a time from a `LexState`;
+  `IncrementalHighlighter<Ch>` keeps line starts and end states and re-lexes
+  from an edit until a line ends in its old state. States over 16 bits (a
+  raw-string delimiter, a template stack) keep their text in a process-wide
+  table (`stateTextId`), so equality stays two integer compares. Tokens start
+  and end at ASCII characters, so UTF-8 and UTF-16 agree.
+- Grammars worth knowing: Python f- and t-strings (fields lexed as code; a
+  triple-quoted or continued f-string carries `0x100` in its quote; a field
+  open at a line's end is not carried); `lexJsLine` for JS and TS (regex
+  literals only where an expression can start, `kJsBeforeRegex`, never after a
+  name, number, string, `) ] }` or `<`, closed on their line; template literals
+  across lines through a stack); `lexLongString` (C++ raw strings, Rust raw
+  strings, Go backticks, triple quotes in Java, Swift, Dart, Groovy, Kotlin and
+  Scala, C# verbatim and raw); Rust lifetimes are not strings; `lexTexLine` (a
+  blank line ends open math, so an unclosed `$` colors only its paragraph). Not
+  done: Swift `#"..."#` and `\(...)`, Kotlin/Scala/Dart/C# templates, Groovy
+  slashy strings, a block comment across lines inside a JS template field, a
+  regex at line start continuing a division.
+- Tests: `tests/LegacyHighlighter.h` is the frozen old lexer, an oracle under
+  random edits; where it cannot apply (`newGrammar`, `mayHoldFString`,
+  `mayHoldNewLiteral`) the edits compare against a full lex.
+- The Mac (+Highlighting): `applyHighlighting` is the full pass (and
+  `recolorEditor` on settings); `textStorage:willProcessEditing:` feeds edits
+  to the highlighter and records lines; `textDidChange:` (or a zero-delay
+  perform when there is no `didChangeText`) calls `flushHighlighting`. Up to
+  64K characters, `restyleChangedIn:` sets attributes only on pieces whose run
+  differs (each merge or split memmoves the run array). Traps: never change
+  attributes inside `willProcessEditing` (it widens the edit and the caret
+  jumps to its end); reset a range with one `setAttributes:`, never
+  `addAttribute:` over many runs (3.4 s for 50k lines against 1 ms).
+- Linux retags in idle slices over a UTF-8 mirror; Android's `Highlighter.kt`
+  uses the core over a native mirror.
+
+## Folding (Mac)
+
+- `Fold::compute` finds regions as whole lines: brackets for the C-like
+  languages and .bib (the closer's line stays in view when only closers precede
+  it, so `} else {` reads as in VS Code; brackets in strings and comments do
+  not count), indentation for Python, YAML and the rest (trailing blanks
+  excluded; lines starting inside an earlier string or comment neither open nor
+  close), headings, fences and display math in Markdown, sections and
+  environments in LaTeX, block comments, docstrings, comment runs, and
+  `#region`/`#endregion` in the usual spellings. `sanitize` nests any list (the
+  server's ranges too). `Fold::Collapsed` keeps closed folds as UTF-16 spans,
+  so they follow edits; an edit touching what one hides opens it.
+- `MCFolds` (FoldView.mm) is the layout manager's delegate: hidden characters
+  get null glyphs except the break ending the first line, which becomes a blank
+  as wide as the placeholder the view draws. The text never changes, so the
+  gutter, undo, the highlighter, copy (copies what is hidden) and carets see it
+  whole; arrows step over null glyphs; squiggles under folds are not drawn.
+  Backspace after or Delete before a placeholder opens the fold; Return after
+  it makes a line below. A selection landing inside a fold opens it
+  (`setSelectedRanges:`), which is how Find, Go to Line, definition, F8 and
+  Select All Occurrences reveal their target. Folds are per tab and forgotten
+  on a reload from disk.
+- Regions recompute off the main thread 0.3 s after typing (generation
+  counted); `textDocument/foldingRange` is asked at 0.6 s and wins for its
+  text. Chevrons show while the pointer is over the gutter.
+- Keys: VS Code's Option+Cmd+[ ] are minicode's terminal switching and its
+  other fold keys are Cmd+K chords, which minicode has none of, so View >
+  Folding is Control+Command plus the chord's second key ([ ] L 0 J / and 1 to
+  7). Control+[ types ESC: test these as real key codes.
+- Trap: one region at a time was quadratic (6 s and 18 s for Fold All and
+  Unfold All of 50,000); they go in as one sorted merge and one invalidation
+  (`collapseAll`).
+
+## Several carets and line commands (Mac)
+
+- NSTextView keeps one empty selection, so carets live in `MCMultiCarets`
+  (UTF-16); the view's selection holds the non-empty ones or the first caret,
+  and the view draws every caret after `drawRect:`. Any change not made by the
+  carets (a click, undo, reload, tab switch, Find), Esc, or an unknown command
+  (run at the first caret) ends them; scrolling passes. Edits go through
+  `shouldChangeTextInRanges:replacementStrings:` as one undo step; the server
+  sees no single typed character (no completion); the electric dedent is off
+  while they apply (`multiCarets.applying`); typing never crosses a line break,
+  so a column stays a column.
+- Column: Cmd+Shift-, Option- or Shift+Option-drag (`MCMultiCarets mouseDown:`,
+  first in `CodeTextView mouseDown:`), each line's caret from
+  `characterIndexForInsertionAtPoint:` at its first fragment; Cmd+Shift clicks
+  pair up, the anchor holding while carets and length are as the last press
+  left them (`_anchorCarets`); Option+click adds or removes a caret.
+- Cmd+D (word at an empty caret by `MultiCaret::wordAt`, then the next
+  occurrence after the last added, wrapping, case-sensitive, whole-word only
+  when begun at an empty caret), Shift+Cmd+L, Option+Cmd+Down/Up (a caret a
+  visual line away at `_goalX`). Shift+Cmd+Up/Down and Shift+Option+Up/Down
+  copy lines; Cmd+Up/Down and Option+Up/Down move lines (neighbouring carets as
+  one block; nothing moves at an edge); Cmd+Home/End go to the file's ends.
+  They are caught in CodeTextView by selector and arrow key code from the event
+  `keyDown:` recorded (`_keyEvent`; `NSApp.currentEvent` is unset for a direct
+  `keyDown:`), because Shift+Home and Shift+End send the same selectors;
+  Option+arrows by key code in `keyDown:`. Not menu items, which would take
+  keys from the find field and commit box. Cmd+Delete deletes to the line's
+  start (the tree takes it as Move to Trash in its own `keyDown:`; as a menu
+  key it trashed the tree's selection from the editor).
+- Up and Down with many carets walk the layout manager a line at a time (goal x
+  by binary search over glyph starts; `glyphIndexForPoint:` was most of the
+  time); before, carets on lines not laid out got empty rects and merged.
+  Drawing places only carets among the visible characters (placing all laid out
+  the file: seconds a frame for 50,000).
+- An opener (`( [ { " ' \``) typed while every caret has a selection wraps each
+  and keeps it selected (`MultiCaret::surround`), never while an input method
+  composes.
+- Line commands: Cmd+L (`expandLineSelection`), Ctrl+Shift+K (`deleteLines`),
+  Cmd+C and Cmd+X with nothing selected take whole lines (`lineCopy`) and mark
+  the item `org.minicode.editor.line-copy`; pasting such an item with nothing
+  selected goes above the caret's line (`pasteLinesAbove`). Only while
+  editable; `copy:` and `cut:` validate with an empty selection there.
+
+## Indentation and sorting (all three ports)
+
+- `AutoIndent::scan` reads from the top to the caret: strings (Python prefixes
+  and triple quotes, JS templates, Go raw strings; Rust lifetimes are not
+  strings), comments (`#` only at a word start in shell and YAML; no `//` in
+  CSS or JSON), and open brackets with their lines. Languages: Python, CLike,
+  Yaml, Generic (brackets only), Plain (keep the indentation). `ScanCache`
+  keeps the scanner's state at line starts about 4,096 characters apart (a
+  state depends only on what precedes it) and `detect`'s answer; the Mac keeps
+  one per text storage, fed from `NSTextStorageDidProcessEditing`, and every
+  edit must be reported.
+- Python Return, in order: in a string keep the indentation; in a bracket,
+  `(|)` opens the pair, a moved closer takes the opener line's indentation,
+  text after the opener aligns with it, else a hanging indent; otherwise a
+  trailing backslash indents once, a block colon indents,
+  return/pass/break/continue/raise dedent (only with nothing moved down), else
+  the statement's first line's indentation. CLike: one unit after an opener,
+  else the line's own or the bracket opener line's; " * " in `/*`.
+- Electric dedent (`typed`): a closer alone on its line takes its opener's
+  indentation (for `(` and `[` only when the opener ended its line); in Python
+  the colon of else, elif, except, finally or case moves the line to the
+  nearest shallower statement start of the right kind.
+- Indent unit (`detect`): tabs if more lines start with one, else the commonest
+  step of 4, 2, 8 or 3 after a block opener; defaults 4, 2 in YAML, tabs in Go
+  and Makefiles; `.tsv` never soft tabs. No settings key: the file decides.
+- `KeepSorted` is keep-sorted's Go code (v0.10) step for step, including the
+  regex options through std::regex with a small RE2 translation (`\p`, `\Q` and
+  the like leave a block alone with a message); a marker without its partner
+  leaves the file alone; a block whose groups would split a nested block is
+  left alone (keep-sorted scatters the markers). Fuzzed against the real tool;
+  its golden files are `tests/keepsorted` (Apache 2.0). An outermost block
+  sorted to nothing leaves one empty line, as keep-sorted does.
+- F9 sorts a selection of two or more lines (stable, by text after leading
+  spaces) or the innermost block; Shift+F9 every block;
+  `editor.keep-sorted-on-save` (not a tab showing a preview). Each edit is one
+  replacement and undo step (Mac: `breakUndoCoalescing`).
+- Ports call in from their key paths: the Mac's `textView:doCommandBySelector:`
+  through `MCIndentCommand`, Linux `onViewKey` unless completion is open,
+  Android `CodeEditText` (keys, committed "\n" and "\t",
+  `deleteSurroundingText`, the symbol row's Tab).
+
+## Find and replace (Mac)
+
+- `TextFind` matches a line at a time: plain text with FolderSearch's
+  one-to-one folding, or std::regex (ECMAScript) over UTF-32 code points. Whole
+  word is VS Code's edge check; replacements take `$1`..`$99`, `$&`, `$0`,
+  `$$`, `\n`, `\t`, `\\` for a regex. Traps: libc++ lets `^` match mid-line
+  with `match_prev_avail`, so lines are walked with `std::regex_iterator`;
+  libstdc++ tests bracket ranges through the C locale's ctype, so `[а-я]`
+  ignoring case missed Ж on CI's Linux job, and a case-insensitive regex now
+  runs over the line folded to lower case, one code point for one.
+- `MCEditorFind` replaced NSTextFinder (`usesFindBar = NO`): a box at the
+  editor's top right with "3 of 17", the toggles, and a replace row
+  (Option+Cmd+F). It searches as you type on a serial queue (cancelled between
+  lines, applied `whenCurrent:`) and draws through `drawBehindText`. Cmd+G /
+  Shift+Cmd+G, Return / Shift+Return; Option+Cmd+C, W, R; Return in the replace
+  field replaces and moves on; Shift+Cmd+1 replaces only while the bar has the
+  keyboard (Go to Tab 1 elsewhere); Option+Cmd+Return replaces all as one
+  programmatic edit; Esc; Cmd+E. A preview finds but does not replace. Menu
+  items still send `performTextFinderAction:` with NSTextFinderAction tags, so
+  the terminal and diff view answer their own.
+- Find in Folder uses `FolderSearch::search` (two characters, one for an
+  untrimmed regex; dotfiles and `node_modules`/`build`/... skipped; 1 MB and
+  UTF-8 only; 2000 matches; ANSI stripped; symlink loops and named pipes safe;
+  generation-counted and cancelled per file). Replace in Folder
+  (Option+Shift+Cmd+F) counts and asks; a file in a clean tab here is edited in
+  the tab through the rename applier (`applyEditsToPaths:`); a file with
+  unsaved text in any window is left alone and named; others go through
+  `FolderSearch::writeFileAtomically` (mode kept, synced, renamed; symlinks
+  followed; hard links written in place). `replaceOneAt` maps a result's byte
+  column to a tab's UTF-16.
+
+## Formatting (Mac)
+
+- Shift+Option+F pipes the buffer through an external formatter.
+  `format.<python|cpp|go|rust|shell>` (`{file}`, `off`) runs as written. Else
+  the nearest folder's config (up to the open folder or a `.git`) decides:
+  `[tool.pyink]`, `.style.yapf`, `[yapf]` in setup.cfg, `[tool.black]`,
+  ruff.toml, .ruff.toml or any `[tool.ruff]` (lint settings count, but pyink,
+  yapf or black in the same folder win), `.clang-format`, rustfmt.toml, an
+  `.editorconfig` shell section; for .js .mjs .cjs .jsx .ts .mts .cts .tsx,
+  before clang-format, Prettier (`.prettierrc*`, `prettier.config.*`,
+  "prettier" in package.json; `prettier --stdin-filepath {file}`) or Biome
+  (biome.json[c]; `biome format --stdin-file-path={file}`), from
+  `node_modules/.bin` first (`Formatter::nodeBinDirs`). That tool runs without
+  style flags, and when it is missing the user is told to install it, since
+  another would restyle the project. Without config, Google's defaults:
+  `clang-format --style=file --fallback-style=Google`, pyink (`--line-length 80
+  --pyink-use-majority-quotes`, Google's published 4-space guide) then yapf
+  `--style=google`, gofmt, rustfmt with Cargo.toml's edition, `shfmt -i 2 -ci
+  -bn`. No LSP formatting fallback (clangd and pylsp format in other styles).
+- `MCFormatText`: `MCFindProgram` (never xcrun shims), venv bins first for
+  Python; stdin to stdout in the file's folder, wide PATH, `PYTHONUTF8=1`, 10 s
+  then SIGTERM and SIGKILL. A non-zero exit, empty output or non-UTF-8 leaves
+  the buffer alone with stderr's first 6 lines in a popover. Paths are planned
+  resolved; a result for changed text is dropped; a selection passes `--lines`
+  (clang-format, yapf) or `--line-ranges` (pyink, black).
+- `format.on-save`: Cmd+S (non-nil sender) formats then saves; minicode's own
+  saves and Save All never format. A Cmd+S is never lost (`_formatSaveTab`:
+  leaving the tab saves it unformatted).
+
+## Install hints (Mac)
+
+- One table, `Install::server` / `Install::formatter` (Python's first way is
+  `uv tool install basedpyright`, which brings its own Node; Homebrew's node
+  broke pyright here). `suggest` picks the first way whose installer
+  `MCInstallerAvailable` finds, else adds `brew install uv` or a link;
+  `$MINICODE_INSTALL_HAVE` fakes installers. `install:readme` ties it to the
+  README.
+- `MCInstallBar` under the strip when a wanted server is `NotInstalled`, once
+  per language per launch (`MCInstallBarTakeOffer`), until ×, Don't Show Again
+  (`MCInstallHintsMuted`), or the server appearing. `MCInstallView` (command,
+  Copy, Run in Terminal, alternatives) is in the status item's popover, the
+  servers card and Format Document's note. Run in Terminal only types
+  (`typeCommand:`). Copy uses `MCInstallPasteboard()` (`$MINICODE_PASTEBOARD`).
+  `lookAgainForMissingServer` runs on window key and
+  `MCTerminalCommandDidFinishNotification`, so no restart is needed.
+
+## The palette, symbols and Go Back (Mac)
+
+- Shift+Cmd+P opens it with ">", Cmd+P empty (Quick Open), Ctrl+G with ":",
+  Shift+Cmd+O with "@" ("@:" groups by kind), Cmd+T with "#"; the first
+  character decides (`CommandPalette::parse`). Ctrl+G goes to the terminal grid
+  while it has the keyboard.
+- `MCPaletteOverlay` is a view over the window, not a window, so the editor
+  window stays key and validation sees the menu bar's responder chain. It
+  remembers the first responder (a field, not its field editor, with its
+  selection) and puts the keyboard back on Esc, a click outside, or running
+  something; the keyboard moving elsewhere closes it.
+- Commands are read from `NSApp.mainMenu` on each open (submenus `update`d;
+  enabled, visible, non-alternate items as "Menu > Item", with the first key in
+  effect). Return sends the action with `[NSApp sendAction:to:from:]`, the item
+  as sender, on the next run-loop turn. Context-menu-only commands are not
+  found; the File and View menus repeat them. `CommandPalette::rank`: a
+  subsequence aligned by a small DP favouring word starts and runs, in tiers,
+  then recent (`MCCommandPaletteRecent`), score, menu order.
+- Quick Open: `listFiles` breadth first on a background queue (Find in Folder's
+  skips, symlinked folders once, 20,000 files, cancelled on close); the name
+  matches before the path; recent tabs and `MCQuickOpenRecent` first. Go to
+  Line takes "42", "42:7" or "42,7".
+- Symbols: `textDocument/documentSymbol` from the main server (`Lsp::Symbol`, a
+  tree flattened parent first; `symbolAt` selects the caret's), else
+  `SymbolOutline` (Markdown headings, LaTeX sections, Python def and class, the
+  C family's functions and types). Moving through the list shows each symbol
+  without taking the keyboard; Esc puts selection and scroll back.
+  `workspace/symbol` goes to every running server that offers it, older
+  requests cancelled, answers merged.
+- Go Back and Forward (Ctrl+-, Ctrl+Shift+-): `MCNavigator` over `NavHistory`
+  (places within ten lines are one entry; a new jump drops what lay ahead; 50
+  entries; entries follow renames and leave with deleted files). Recorded: tab
+  switches (`tabWillSwitch`/`tabDidSwitch`), every LSP jump
+  (`LspSession.aroundJump`), Go to Line, terminal links, search and TODO
+  results, symbols, and a caret moving over ten lines without the text changing
+  (length-changing selections ignored). In the grid terminal Ctrl+- belongs to
+  the program.
+
+## LSP (read before touching it)
+
+The protocol is `LspClient.cpp`, tested against a scripted server; on the Mac
+`Lsp.mm` (`LspSession`), `LspServer.mm`, `LspPopups.mm` and `CodeTextView.mm`
+own processes and UI; the GTK port has `linux/src/Lsp.cpp` over the same core.
+GTK trap: a popover parented to a `GtkTextView` must be unparented before the
+view is disposed (on `unrealize`), or dispose loops forever.
+
+- **Hooks are few**: `documentOpened:` (nil for messages, binaries and
+  previews), `documentSaved`, `setRoot:`, `shutdown`, `openPaths` and
+  `bufferText` (every tab's text), `tabsChanged`, and
+  `textView:doCommandBySelector:` to `handleCommand:`. The session observes the
+  storage itself; didChange is debounced 0.3 s, every request flushes first,
+  and unchanged text is dropped.
+- **Every tab's file stays open** on its server (`syncOpenDocuments`: on show,
+  server start, before rename and references, on `tabsChanged`); only a running
+  server takes background tabs, so a tab never starts one. With only the file
+  on show open, rename missed unsaved uses elsewhere and the server read
+  edited-but-unsaved files from disk.
+- Requests during the handshake are queued; server-to-client requests are
+  always answered (nulls for configuration, -32601 for unknown methods).
+- **Lookup** (`MCFindProgram`): PATH plus Homebrew, Cargo, Go, ~/.local/bin,
+  npm's prefixes, nvm and fnm (newest first), volta, pnpm, bun, pip --user,
+  pyenv, MacPorts, /usr/bin and keg-only llvm, since a Finder-launched app has
+  a short PATH. `/usr/bin/clangd` and `/usr/bin/git` are xcrun shims that pop
+  the install dialog: never run them; `MCDeveloperTool` finds the real binary
+  through /var/db/xcode_select_link. The child's PATH puts the server's own
+  folder first (an nvm script's `#!/usr/bin/env node` then gets nvm's node;
+  Homebrew's node was broken here).
+- **Settings**: `lsp.enabled`, `lsp.<cpp|python|go|rust|typescript>` (a command
+  line or `off`), `lsp.<lang>.also` (auto, off, a command),
+  `python.interpreter`. Python tries basedpyright, pyright, pylsp,
+  jedi-language-server; basedpyright gets `typeCheckingMode = standard` unless
+  the project sets it. A change restarts the servers.
+- **States** (`MCLspEntry` per language and second server) show in
+  `MCLspStatusField` and the Language Servers popover. Exits restart after 1,
+  2, 4 s; the fourth crash in a row (three minutes up clears it) stays Crashed.
+  The popover lives in a static (`gServersPopover`), so it holds sessions
+  weakly (a strong capture kept a closed window's session alive).
+- **Processes** (`MCLspServer`): pipes, reads on a background queue, writes on
+  a serial queue with raw `write()` and `F_SETNOSIGPIPE`; stderr drained (a
+  full pipe stalls clangd); `$MINICODE_LSP_LOG` logs all traffic. Window close:
+  shutdown, exit, stdin closed, SIGTERM at 2 s, SIGKILL at 3; quit:
+  `MCLspTerminateAllServers` with 0.5 s; a crash closes stdin, which ends them.
+  `LspSession dealloc` cancels performs scheduled on itself (it crashed 50 ms
+  after a window closed).
+- **The second server**: `Lsp::defaultAlsoCommand` runs `ruff server` for
+  Python in a project configuring Ruff anywhere up to the root or `.git`
+  (`Formatter::configFile`), when ruff is found (the project's .venv first). It
+  is its own entry ("python.also"). `_servers` per file, main first; `_docs`
+  keyed by `DocKey`. `Lsp::routeRequest` sends one-server requests (completion,
+  hover, signature, definition, references, rename) to the main server, also
+  while it starts, else one that offers it. Diagnostics per server in
+  `Lsp::DiagnosticStore`, tagged "(Ruff F401)"; code actions merged
+  (`Lsp::mergeCodeActions`, 3 s); Organize Imports (Shift+Option+O) prefers a
+  tool's `source.organizeImports.<tool>` (`pickOrganizeImports`); basedpyright
+  offers none. Traps: Ruff's diagnostic source is "Ruff", its server name
+  "ruff"; editing ruff.toml needs a restart (no dynamic registration).
+- **Python interpreter**: the folder's choice (`MCPythonInterpreters`),
+  `python.interpreter`, the nearest .venv/venv/env, `$VIRTUAL_ENV`,
+  `$CONDA_PREFIX`, else the server's own (/usr/bin/python3 skipped). Sent only
+  when it differs: `python.pythonPath` by workspace/configuration for the
+  pyrights, `pylsp.plugins.jedi.environment`, jedi's `initializationOptions` (a
+  restart).
+- **Completion** opens after `.`/`->`/`::` and on a word's second letter; an
+  `isIncomplete` list is asked again. `Lsp::completionKeyAccepts`: Tab takes;
+  Return only when asked for (Ctrl+Space, Option+Esc), after a trigger
+  character, or once the arrows moved, else a new line; an item equal to the
+  typed word is a new line; Shift+Tab never takes. `filterCompletions` ranks
+  exact, same-case prefix, any-case prefix, subsequence (sortText within) and
+  reselects the first row unless the arrows chose an item still listed. Docs
+  show beside the list after `completionItem/resolve` (80 ms). Snippets off.
+  **Accepting** inserts the word and `additionalTextEdits` (imports,
+  `#include`) as one multi-range replacement (`Lsp::completionEdits`),
+  resolving first when a server sends them only then, for at most 0.4 s on the
+  main run loop (`kResolveBeforeAccept`; keys pressed meanwhile arrive after).
+  Signature help (`(`, `,`) sits above the line. Both close on focus loss, key
+  loss and tab switch. Trap: the list's `close` must `reloadData` after
+  emptying its labels, or layout asks for a vanished row.
+- **Diagnostics are drawn, not attributed**: squiggles after `super drawRect:`
+  for the viewport, from marks (NSRanges that follow edits). Kept per open file
+  with the text they were computed on; `diagnosticSpans` places them on the
+  text as it is now, leaving out ones about text typed over. Publishes for a
+  version older than one since sent are dropped; `Client::textFor` gives a
+  publish's text. Files no tab has open are kept apart (`_otherDiags`) for
+  Problems.
+- **Problems** (Shift+Cmd+M, `MCProblemsPanel`, above the terminal):
+  `problemRows` (files with errors first, then severity, line, column),
+  `countProblems`, `problemCountsText`, `problemOneLine`, `stepProblem` (F8 and
+  Shift+F8, wrapping, through several at one place, the message in the hover
+  box). Hints are left out (pyright sends one per unused name).
+  `onProblemsChanged` is debounced 50 ms; `problemsLabel` toggles it; Cmd+W and
+  Esc work in it.
+- **Hover**: 0.4 s on a non-blank character (`characterIndexUnderPoint:` checks
+  the character's own box) shows `MCHoverPopup`, a non-key child panel,
+  diagnostics first, Markdown asked for first (the pyrights sent plain text
+  otherwise). Option+Cmd+I shows it at the caret.
+- **Definition**: dropped unless generation, document and selection are as
+  asked (`detachDocument` bumps them). Targets are respelled in the root's
+  form. Trap: `stringByResolvingSymlinksInPath` turns /private/tmp into /tmp;
+  use realpath for URIs. `initialize` gets the resolved folder (basedpyright
+  found every reference twice across /tmp and /private/tmp) and `CanonicalURI`
+  merges spellings.
+- **Rename, references, quick fixes** (F2, Shift+F12, Cmd+.): prepareRename
+  when offered ("This can't be renamed"); `MCRenameBox` is a key-capable child
+  panel (an NSPopover never shows for a window not on screen); references and
+  fixes share `MCPickerPopup`, which never takes the keyboard (keys through
+  `handleCommand:`). Fixes send the diagnostics touching the caret, else the
+  caret line's; an action without its edit is resolved, its edit applied, then
+  its command run (edits the server sends meanwhile are undone under its
+  title). Core: `parseWorkspaceEdit` (changes and documentChanges merged;
+  overlaps and file operations refused whole), `offsetEdits`,
+  `groupReferences`, `parseCodeActions`, `diagnosticsInRange` (as sent,
+  `Diagnostic::raw`), `onApplyEdit`.
+- **The workspace edit applier** (`applyWorkspaceEdit:actionName:failure:`,
+  `applyEditsToPaths:`) changes every file or none: read and check each
+  (editor, `bufferText`, or disk; positions checked against what the server was
+  sent, `Client::textFor`; a dirty tab only if each range holds the disk's
+  text), open each and check it shows as that text, then edit each as one
+  multi-range replacement (one undo step per file). A refusal after edits puts
+  them back with `undoNestedGroup` (a key press's own group left alone) and
+  closes tabs it opened (`closeFile`). Nothing is saved. `_applyingEdit` keeps
+  completion, signature help and the rename box out.
+
+## Markdown
+
+- **Parser** (rewritten 2026-09-29 to CommonMark and GitHub's rules, after the
+  old one italicized `max_len` and `2 * 3 * 4`): `analyze()` reads lines into
+  blocks and classifies each (`MdLine`); the inline pass reads a whole block,
+  so emphasis spans lines, with the delimiter rules (underscores inside a word
+  never emphasise; stars do, as on GitHub). Only a few HTML tags mean anything;
+  others are dropped, their text kept. Between blocks comes exactly one `"\n"`
+  run with `gap` set, however many blank lines. Brackets are matched once per
+  block with a stack and nesting stops at 8, so bad input stays linear.
+  `MarkdownEdit` asks `MarkdownParser::lines` rather than classifying itself,
+  so the preview and a double-click agree. Tests: `md:*`,
+  `tests/markdown/corpus.md`.
+- **The Mac's page** (+MarkdownRender): a paragraph's style comes from its
+  first run; quotes and code blocks are `NSTextBlock`s, one object carried
+  across a block's paragraphs so its bar or box is drawn once; h1, h2 and rules
+  are bordered text blocks; list text at 24 points a level with the marker
+  right-aligned on a tab; a hard break is U+2028; gaps are 12 points. Fenced
+  code naming a language (`MdRun::lang`,
+  `MarkdownParser::extensionForLanguage`) is colored by `MarkdownCode.mm` after
+  the page is built. Tables: runs carry table, row, column and alignment, and
+  the Mac builds an `NSTextTable` (`appendMarkdownTable:`); a table holding
+  typeset formulas gets `MCTableColumnWidths` (AppKit's table layout ignores
+  attachment widths). Cells are padded by display width, never bytes.
+- Every run carries its source `line` (`kMarkdownSourceLine`): Shift+Cmd+V
+  opens the preview at the caret and the source where a scrolled preview is.
+  Links (`openMarkdownLink:`): `#heading` by GitHub's anchor
+  (`MCMarkdownAnchor`), web addresses in the browser, paths relative to the
+  file through `openTerminalLink:` (`#L12` works).
+- **Editing from the preview**: a double-click (`onPreviewDoubleClick`) reads
+  the line (and `kMarkdownTableCell`), `MarkdownEdit::blockAt` finds the block
+  (heading text, list item with continuations, paragraph or quote, code between
+  fences, a table cell with newlines and pipes escaped back, a `$$` block
+  whole); `applyMarkdownSource:` splices, marks dirty, registers undo,
+  re-renders at the same scroll, and drops an edit if the buffer changed
+  meanwhile.
+- **Pictures**: `MCMarkdownImage` attachments with `MCAnimatedImageCell` (sized
+  to the line; a GIF's timer runs only while on screen). Traps: the TextKit 1
+  editor never asks for a TextKit 2 view provider (1.4.1 shipped still GIFs);
+  `attachmentCell` set in init reads back nil, so it is an override. **Web
+  pictures** (`MCWebImageLoader`): https only (redirects too), one ephemeral
+  NSURLSession (no cookies, credentials or cache; 15 s idle, 30 s total;
+  `User-Agent: MiniCode/<version>`), `data:image/` decoded in place,
+  `markdown.web-images = false` off. The render never waits: alt text stands in
+  (`kMarkdownWebImage`), the address joins `_awaitedWebImages`, and the
+  notification queues one re-render 0.1 s later through
+  `renderMarkdownKeepingPlace` (the top character kept by subtracting what
+  arrived above). Limits: 20 MB, 50 megapixels; an NSCache of bytes, not images
+  (the animated cell sets frames on its own image); failures remembered 30 s;
+  nothing on disk. NSImage draws SVG; an SVG's `<image href>` is never fetched.
+- **Task lists** (all ports): `MdRun::task`; the Mac's box is an `MCTaskBox`
+  with `NSLinkAttributeName` `minicode-task:<line>` (`clickedOnCell:` never
+  fired), applied as a preview edit, never saved by itself (the user ruled out
+  autosaving preview edits); a double-click's second click on a box is
+  swallowed. Done text takes `markdown.done`. Toggle Task is Option+Cmd+L
+  (Ctrl+L, leader L); TODOs Shift+Cmd+D (Ctrl+Shift+L, leader W). "[ ] item"
+  without a dash is not a task (GitHub, Obsidian, VS Code agree), and the task
+  key adds only the dash. The TODOs window is Find in Folder's in a mode; a tag
+  counts after a comment opener or first on a line with a colon, and in
+  Markdown only after `<!--`. Known: a numbered task shows its box but not its
+  number.
+- Empty Markdown and LaTeX files open in the source on every port.
+
+## Math in the Markdown preview (Mac)
+
+Typeset by tectonic; elsewhere (Linux, Android, no tectonic, `markdown.math =
+false`) a formula shows as its TeX in the code style.
+
+- **Parser**: read before other inline rules. Inline `$...$` as pandoc (opener
+  not before a space; closer not after a space nor before a digit, so "$5 and
+  $10" stays text); a backslash pair and a code span are skipped inside.
+  `$$...$$` inline is display, `\(...\)` inline. Display blocks run from a line
+  starting `$$` or `\[` to one ending `$$` or `\]` without a blank line,
+  interrupting a paragraph; plus ```` ```math ````. `\[...\]` counts only as a
+  block (inline it is an escaped bracket). Memos keep unclosed openers linear.
+  `tests/markdown/math.md` has every case.
+- **The batch** (`MathTex`): each formula in `\setbox\mcbox\hbox{$...$}` (never
+  a macro argument, so TeX recovers from a stray `\par`), shipped by `\mcship`
+  as a page of its box plus 1 pt; the log's `MC:BEGIN:k` and
+  `MC:k:page:wd:ht:dp` give pages, boxes and errors; the output routine drops
+  other pages. `check` refuses what could derail later formulas (unbalanced
+  braces, a stray `$`, `\input`, `\end{document}`, `\write`); `prepare`
+  rewrites MathJax-only forms (`\mathbb{1}` to dsfont's `\mathds`, align and
+  friends inline, `\tag`, Unicode symbols); the preamble and macros are in
+  MathTex.cpp. **Bump `MathTex::kVersion`** when any of it changes: it is in
+  every cache key.
+- **The run** (`MarkdownMath.mm`): requests gather 50 ms into one run on a
+  serial queue; `-Z continue-on-errors --untrusted --print --keep-logs --reruns
+  0` (`--untrusted` keeps shell escape off). A bad formula fails alone with
+  TeX's complaint as its tooltip; a page must be the size the log gave; a run
+  with no PDF fails the formula TeX was in and reruns the rest. A watchdog
+  kills tectonic after 15 s without output once in the formulas (the last
+  `MC:BEGIN` names the culprit), 60 s before (downloads). A run reaching no
+  formula fails them for 60 s with the reason at the page's top (`firstError`
+  reads tectonic's panic when the bundle is out of reach). Failures stay in
+  memory.
+- **Cache**: whole PDFs under `~/Library/Caches/MiniCode/math`
+  (`$MINICODE_MATH_CACHE`) with a `.idx`; formulas of a run share fonts (a PDF
+  each was far bigger). Key: SHA-256 of `kVersion`, display or inline, and the
+  TeX (pages stay vector, so no size). Past 50 MB, down to 40 MB.
+- **Drawing** (`MCMathAttachment`): vectors filled with the text color in
+  source-in mode, so a formula takes the color around it; the frame stretched
+  to the font's ascender and descender (an attachment-only line sat high) with
+  margins drawn past it; a formula wider than a line scaled to the whole line's
+  width, not what is left of it. Trap: an attachment glyph's location is the
+  bottom of its frame, not the baseline.
+- **Never blocking**: the cache's formulas show at once, the rest as TeX
+  (`kMarkdownMath`), re-rendered on `MCMathTypesetNotification` keeping the
+  place. While formulas are out the top line says "Typesetting N formulas…",
+  and that a first run downloads LaTeX files when tectonic's cache is empty (a
+  first run once sat 44 s with only TeX showing). Without tectonic, a muted
+  line with a Download tectonic link (`MCDownloadTectonic`, shared with the
+  LaTeX preview).
+- Known gaps: copying a typeset formula copies an attachment character;
+  `\color` inside is drawn in the text's color.
+
+## LaTeX preview (read before touching it)
+
+- **tectonic**: `MINICODE_TECTONIC`, then `~/Library/Application
+  Support/MiniCode/bin` (0.17.0 is there; its cache,
+  `~/Library/Caches/TectonicProject.Tectonic`, has text fonts but no math
+  fonts), then PATH and Homebrew; missing, the panel offers the pinned
+  download.
+- **The buffer is typeset from a hidden sibling** `.<name>.minicode.tex` in the
+  document's folder, so relative paths resolve and the user's file is never
+  written; deleted when tectonic exits; output in
+  `NSTemporaryDirectory()/MiniCode-latex`.
+- Compiles are debounced (0.6 s) and generation-counted; a run has 5 minutes,
+  then SIGTERM and SIGKILL, with a log line (a looping document spun a core and
+  queued every later edit). Scroll and zoom are restored by page index and
+  point.
+- **Unknown commands are looked through, not skipped**: `LatexDoc` skips only
+  known machinery (`\label`, `\includegraphics`, `\setlength`, ...) and enters
+  the first braced argument `looksLikeProse` accepts (not `{0.5em}`, `{l}`,
+  `{sec:intro}`, `{GDM.png}` or URLs; yes `{2014 - 2019}`). A URL disqualifies
+  only a group that is one unbroken token; a group holding commands is always
+  entered. Letters spelled as commands (`\ss`, `\o`, `\LaTeX`, `\c{c}`,
+  `\'{e}`) stay in the run (`kTextSymbols`, `kLetterAccents`) and `displayText`
+  reads them; `\\` ends a run like `&`; `\url{...}` is a field.
+- **A click that matches nothing refuses** (null rather than the nearest span
+  whenever there was a real word); text TeX makes up is refused. **A single
+  letter or digit is always refused** (page, section, list and footnote numbers
+  fell through to the nearest span), accepted by the user at the cost of
+  one-letter words, except a Han, kana or Hangul character whose surroundings
+  agree with the source.
+- **Click to source** (`MCLatexSpanAtPoint`, which the sweep calls): lines from
+  `SyncTexIndex::textHitsAtPoint` (a box carries the line its paragraph closed
+  on, glue and kerns each word's line: right of the click first, then left,
+  then boxes; glue on a box's end edge goes left first); the word from
+  `selectionForWordAtPoint:` plus 40 characters each side, rejoining
+  hyphenation (`MCJoinHyphenation`); `LatexDoc::matchKey` on both sides
+  (letters and digits, lowercase, ligatures split, accents dropped; three
+  characters or fewer must be whole words, except in math); choice by context,
+  a later candidate beating the nearest only by 4 characters (a tabular reads
+  back by column). Spans cover all their lines; `\title`/`\author`/`\date`
+  count at `\maketitle`; a word split by a font change matches a join with
+  balanced braces; a footnote mark glued to a word is retried without digits.
+- **Measure before changing the matcher**: `tests/latex/sweep.sh doc.tex [-v]`
+  double-clicks every word of every page and reports found, refused, wrong and
+  not placed (scratch `TECTONIC_CACHE_DIR`). The bar is 0 wrong; the user's
+  resume is at 100% and `tests/latex/torture.tex` at 98.7% (the rest rightly
+  refused). Trap: `characterBoundsAtIndex:` drifts from `page.string`'s indices
+  down a page; a one-character `selectionForRange:`'s bounds do not.
+- **Edits are byte splices** of the span's own LaTeX (nothing escaped or
+  re-serialized), marked dirty, saved only by Cmd+S, undone through
+  `LatexView`'s own snapshot stack (50) via `undo:`/`redo:`.
+- **Export PDF** (Shift+Cmd+S): `pdfForPath:source:completion:` hands back
+  tectonic's bytes (`_pdfData`, `_pdfSrc`), typesetting first if they are not
+  the buffer's. Trap: a synthetic `NSEvent` for Shift+Cmd+S with "s" matched
+  Save and wrote the file, with "S" nothing; `CGEventCreateKeyboardEvent`
+  behaves like hardware.
+- tectonic's bundle is older than Overleaf's: a missing package (`twemojis`)
+  goes in the document's folder, and since tectonic discards docstrip's output,
+  a script keeping a `.dtx`'s code lines made the `.sty`. Spacing differs from
+  Overleaf by design (XeTeX; compare with Overleaf set to XeLaTeX).
+- Headless: drive `openEditorForPage:point:`, `startAddItem:`, `commitEdit:`
+  with points from `[PDFDocument findString:]`, on scratch `MINICODE_TECTONIC`
+  and `TECTONIC_CACHE_DIR`.
+- Linux (`Latex.cpp`, `PageWords.cpp`, `LatexClick.cpp`, poppler) differs on
+  purpose (`linux/HANDOFF.md` item 7); `tests/latex/sweep-linux.sh` found the
+  single-character problem.
+
+## Viewers in the editor's slot (Mac)
+
+- `openFileAtPath:` calls `resetViewMode` (mode flags cleared, text view
+  read-only) and routes by kind before reading text; `refreshDisplay` always
+  relays out (it once left an image on screen). Viewers save nothing
+  (`setPlainMessage:@""`, `saveCurrentFile:` returns); `checkExternalChange`
+  reloads keeping the place.
+- `FileSniff::classify` (first 8 KB and name): a NUL byte means binary, never
+  text; SQLite's header means a database; Office, iWork, OpenDocument, ePub,
+  archives and fonts go to Quick Look, and so does a file that is not UTF-8;
+  .csv, .tsv, .json and .ipynb get viewers. `MCFileViewers` per window; a tab's
+  `viewerKind` is without text (Quick Look, big CSV, SQLite), over text (the
+  CSV table, whose edits go through `setViewerText:actionName:reshow:` so
+  dirty, undo, backups and saving work as for text) or beside text (the JSON
+  outline, `besideTextShown`). Shift+Cmd+V flips them (`canTogglePreview`).
+- **Images** (not SVG, which is source): `NSImageView`, scaled down never up,
+  `animates`, size set to pixels (a 144 dpi screenshot drew at half size); one
+  that fails to decode falls through to the text path's "Cannot display".
+  **PDFs**: `PDFView`, reload keeping page, point and scale.
+- **Video and audio** (`+isMediaPath:`): `AVPlayerView`, paused on the first
+  frame; `stopMedia` (from `resetViewMode`, window close, dealloc) drops the
+  player so sound stops; size (rotation applied) and length arrive by KVO;
+  Shift+Cmd+Space plays from any pane (Cmd+Return is the commit box's). `.ts`
+  and `.mts` are TypeScript; `asset.playable` is checked first; WebM, mkv, ogv,
+  wmv and flv get "Cannot display".
+- **Quick Look**: `MCQuickLookSlot` (`QLPreviewView`) in a tab;
+  `MCQuickLookPanel` for Space in the tree, where `ClickOutline` is the panel's
+  controller and keeps the keyboard.
+- **CSV and TSV** (`Csv`, `CsvTable.mm`): rows keep their bytes and endings,
+  fields their bytes and quoting, so an unedited file round-trips and one cell
+  edit changes one line; BOM and a missing final newline kept; delimiter
+  guessed. Over 50 MB read-only, 100,000 rows from disk.
+- **JSON outline**: beside the text; a node selects its text with the keyboard
+  kept in the outline, the caret selects its node; re-parsed 0.3 s after
+  typing, the last good outline kept under an error line.
+- **Notebooks** (`Notebook`): nbformat 4 (and 3's cells) to Markdown, rendered
+  read-only (`showsRenderedMarkdown`); outputs as plain blocks, pictures as
+  data: images, HTML as text. Nothing runs.
+- **SQLite** (`SqliteView.mm`): `SQLITE_OPEN_READONLY` with a `mode=ro` URI,
+  query_only and the defensive flag; a writing statement
+  (`sqlite3_stmt_readonly`) refused before it runs; only the first statement; a
+  progress handler stops a query at 5 s; one background queue; 1,000 rows.
+- **Diffs and pages**: git diffs and commits in `diffScroll`; the side-by-side
+  diff is `CompareView` (`showComparison:preview:`, `MCComparison`, panes
+  scrolling together); an `EditorPage` (`showPage:`) is a read-only view in a
+  tab, reused by key (Evidence, a worktree's changes).
+
+## The terminal
+
+`terminal.mode` (read once per terminal in `initWithDirectory:`): **grid**, the
+default since 1.5.5, runs zsh's own line editor in a real terminal grid;
+**line**, kept as a fallback, is a log with a line input and a grid swapped in
+for full-screen programs. Both can be open at once.
+
+- **The pty** (`MCPty` in Terminal.mm) owns the master and does every read,
+  write and teardown on the terminal's serial I/O queue. The master is
+  non-blocking; bytes it will not take wait in a buffer while a write source
+  waits for room; `sendBytes:` only hands a copy over (a blocking write on the
+  main thread froze the app on a paste of over about 1 KB into a busy program,
+  and with flow control could deadlock). Teardown on the queue cancels both
+  sources, resumes a suspended one (a source cancelled while suspended never
+  finishes cancelling), drops unwritten bytes; then the main thread lets go of
+  `_master` before it is closed, and the shell is reaped by polling `waitpid`,
+  SIGKILL 2 s after the hang-up. The child is prepared before `fork` (only
+  async-signal-safe calls after). Traps: paste only once the tty is raw; check
+  reaping with `kill(pid, 0) == ESRCH`, not `waitpid`.
+- **Output flow**: past 1 MB handed to the main thread the reader
+  (`MCPtyReader`) suspends its source (the program blocks) until under 256 KB;
+  the main thread parses in 16 KB pieces for about 12 ms a run-loop turn
+  (`drainBacklog`, common modes; 36 ms when a turn ends mid-frame of
+  synchronized output). A shell's last output is parsed before "[shell
+  exited]".
+- **Grid mode's shell**: `zsh -l -i`, `ZDOTDIR` at
+  `NSTemporaryDirectory()/MiniCode-zsh-grid/.zshenv`, which hands ZDOTDIR back
+  and at the first precmd (after .zshrc, so last in line) installs hooks that
+  only print: precmd `133;D;status` (if preexec ran), OSC 7, `133;A`; a
+  `zle-line-init` hook (`add-zle-hook-widget`) `133;B`; preexec
+  `633;E;<command, control characters blanked>` then `133;C`. PS1, PS2, RPS1,
+  PROMPT_SP and tty modes are untouched; HIST_IGNORE_SPACE keeps
+  `setDirectory:`'s ` cd` out of history; `TERM=xterm-256color`.
+- **exec**: preexec looks for `exec` as a command word (first, or after `; &&
+  || & |`) and for that command exports ZDOTDIR as the integration folder (the
+  user's in `MINICODE_USER_ZDOTDIR`) with `MINICODE_EXEC=1`, so an exec'd zsh
+  loads the integration and reports the exec finished (133;D;0); the next
+  precmd restores both if the exec failed. Line mode also `unsetopt ZLE` there.
+  Exec into another shell (bash, sh, dash, fish, ksh, tcsh, csh, nu, elvish,
+  xonsh, pwsh, by `proc_name`, polled twice a second while a command runs) sets
+  `_integrated` NO: not busy, title cleared, the finished notification posted,
+  waiting input typed, and from then busy only while another program holds the
+  foreground. A later zsh mark (`_integrationFile`) turns it back on. `exec
+  claude` still counts as running.
+- **Events** (`TerminalStream` reads every byte for them): 133;B sets
+  `_zleReady`; `CommandStart` carries 633;E's text as `_runningCommand`
+  (titles, `runningCommands`, close questions); OSC 0/2 `Title` names the tab
+  only between 133;C and the next prompt (an empty title, the prompt or exit
+  restore the rule; `minicode term --title` wins). `busy`, `atPrompt`,
+  `gridMode` (a program has the alternate screen), `lineMode` and
+  `MCTerminalCommandDidFinishNotification` work in both modes.
+- **Typing for the user** (`typeLine:run:`): first a private key, `ESC [9999~`,
+  bound in emacs, viins and vicmd to `zle push-input` (`__minicode_push`), so a
+  half-typed line returns at the next prompt; `runCommand:` adds Return;
+  `typeCommand:` pastes in brackets when ZLE asked, never pressing Return. Both
+  wait for `_zleReady` (B), not A: bytes sent between precmd and ZLE start echo
+  as `^[[9999~`. A starting shell queues them (`_pendingCommand`,
+  `_pendingTyped`). Private keys sent only while ZLE reads: `ESC[9998~`
+  beginning-of-line, 9997 end-of-line, 9996 backward-kill-line, 9995
+  clear-screen (Cmd+Left, Cmd+Right, Cmd+Delete, Cmd+K); elsewhere on the main
+  screen Cmd+arrows and Cmd+Delete send Ctrl+A, Ctrl+E, Ctrl+U (zsh's emacs
+  Ctrl+U kills the whole line and vi mode lacks Ctrl+A/E, hence the private
+  keys); full-screen programs keep their keys.
+- **Scrollback** (`TerminalScreen`): lines leaving the top on a line feed at
+  the bottom, main screen, scroll region at row 0 (as xterm); RI, IL/DL, SU/SD
+  never save; `ED 3` clears it, `ED 2` and RIS keep it. Stored packed
+  (`HistLine`: text in one string, a style run per change, a per-cell table
+  only for lines with anything but one byte of width 1 per cell; 2 to 6 MB per
+  10,000 lines where cells took 30 to 59 MB). `lineCell` returns by value;
+  `historyBytes()`. `terminal.scrollback` (10000, up to 100000) sets it live; 0
+  unless the host sets it, so Android has none.
+- **Reflow**: a row's `wrap` byte (0 end, 1 wrapped, 2 wrapped with a wide
+  character's blank) is kept in the scrollback. `resize(cols, rows, &keep)`
+  reflows main screen and scrollback (`reflowMain`): wrapped rows rejoin and
+  wrap again, wide characters move whole, the cursor and saved cursor stay on
+  their characters, places in `keep` (the view's top line, a selection, a find
+  match) follow their text, blank rows below the text go first, lines come back
+  down when there is room, and `historyBase() - historySize()` is unchanged.
+  The alternate screen is cut. Lines are moved, not copied (10,000 in about 1
+  ms). Erasing ends wraps as xterm.js does; the wrap of zsh's PROMPT_SP after
+  unfinished output (`promptSp_`, seen through the 133;A after it) is not soft.
+  `textBetween`, `find` (`TermMatch` end line and column), links, words and
+  `recentText` read across wraps. The view resizes through
+  `resizeScreenToCols:rows:`.
+- **Mouse and focus**: modes 9, 1000, 1002, 1003, encodings 1005, 1006, 1015,
+  and focus (1004) are tracked, answered by DECRQM and encoded by `encodeMouse`
+  and `encodeFocus`. The view's `reportsMouse:` gate: the program asked, the
+  view is at offset 0, no Shift (selection) or Cmd (links). The prompt's return
+  or the shell's exit turns off modes a program left on, so a click never types
+  into the prompt.
+- **Find, clear, synchronized output**: `TerminalScreen::find` (scrollback then
+  screen, ASCII/Latin-1/Greek/Cyrillic folding, packed lines in place, 10,000
+  cap); `MCTerminalFindBar` (Cmd+F with a grid focused; matches by line number;
+  re-search 0.2 s after output; the bar takes Cmd+F and Cmd+G in
+  `performKeyEquivalent:`, since its field editor would answer them). Cmd+K
+  (`clearTerminal:`): at zsh's prompt `clearAll` and ZLE's clear-screen (a
+  multi-line prompt comes back whole); while a program runs
+  `clearToCursorLine`, nothing sent; line mode empties the log. Mode 2026: no
+  drawing while a frame is open, a draw at its end or after 150 ms, the mode
+  ignored after a frame that never ended; the decision is deferred with a
+  zero-delay perform, because a redraw requested after one piece cannot be
+  withdrawn once the layer has it (`setNeedsDisplay:NO` did not). DECRQM
+  answers 1 set, 2 reset, 0 unknown.
+- **The view** (`TerminalGridView`): scroll offset, selection and hovered link
+  are line numbers from `historyBase()`, so they stay on their text while
+  output arrives; typing, pasting and app-typed commands snap back; on the
+  alternate screen the wheel sends arrows unless the program takes the mouse. A
+  double click's word is anything but blanks, brackets, quotes and `|;,` (so
+  paths and URLs). Typing goes through `interpretKeyEvents:`, so dead keys and
+  input methods compose; marked text wraps onto the rows below
+  (`drawMarkedTextAtRow:`), since dictation composes a whole sentence.
+- **Keys**: Ctrl with a letter, symbol or Space is claimed in the grid's
+  `performKeyEquivalent:` (the window asks views before the menu), so
+  Ctrl+Space reaches zsh; Ctrl+Tab, Ctrl+Return and Ctrl+digits stay the app's.
+  Ctrl with Shift or Option goes to the app only when the menu item with that
+  key can act against the grid's responder chain (`MCMenuItemForKey`, with and
+  without Shift's effect), else to the program (Ctrl+Shift+K while Delete Line
+  cannot act; Ctrl+Shift+Tab with one tab as ESC [ Z). Option is Meta
+  (`terminal.option-as-meta`); Option+Left/Right send ESC b / ESC f.
+  Shift+Return is ESC CR (Claude Code's new line). Shift+F10 is the context
+  menu, not the program's.
+- **Font**: `terminal.font-size` (12) plus the zoom; the grid remeasures its
+  cell, the input line and log re-font (keeping weight and slant), the panel
+  relays out and the pty gets the rows and columns that fit.
+- **Line mode**: `zsh -l -i +Z`, `ZDOTDIR` at
+  `NSTemporaryDirectory()/MiniCode-zsh` (hooks emit 133 A/C/D and OSC 7, blank
+  `PS1`, `PROMPT_SP` unset); echo is off while zsh reads, so the master's ECHO
+  flag shows hidden input. The last log line is "live" (replaced from
+  `_liveStart`), so panel-written lines go through `ensureNewline`
+  (`breakLine()`) or the next update overwrites them. Each chunk feeds both
+  `TerminalStream` and `TerminalScreen`; the grid shows while `altScreen()` or
+  `_stickyGrid` (out of ICANON for two 0.1 s polls, which stops `less -F`
+  flashing it). Both modes size the pty from the grid's cell metrics, so
+  switching sends no SIGWINCH. `TerminalScreen` must stay copyable (a `Grid*`
+  into itself once made copies draw the original). The log is capped
+  (`trimLog`); the input line draws no background (a fixed #232323 ignored the
+  theme and doubled alpha).
+- **Several terminals** (`MCTerminalPanel`; `terminal` is a getter for the
+  active one, so older code and demo KVC work): tabs on the editor's
+  `MCTabStrip`, panes side by side; hidden tabs keep their frames and run; the
+  active terminal follows the keyboard through KVO on `firstResponder` with a
+  weak window reference removed in `viewWillMoveToWindow:` (a strong one kept
+  closed windows and their shells alive). Ctrl+Shift+` new tab (keyCode 50:
+  Shift makes it ~), Cmd+\ split (refused under 20 columns a pane,
+  `kMinSplitColumns`), Option+Cmd+] and [, Ctrl+Shift+W. Every pane with room
+  for two cells gets its true pty size.
+- **Closing** (`TerminalView close`, `stopShell`, `_closed`): a terminal with
+  `runningCommands` asks: a command since 133;C, a foreground process group
+  other than the shell's (`tcgetpgrp`, `proc_name`), a `runCommand:` still
+  waiting, and background jobs (processes with the pty as controlling tty,
+  `KERN_PROC_TTY`, in other groups, named from `KERN_PROCARGS2`;
+  `KERN_PROC_SESSION` answers nothing on macOS). `&!` jobs count too. Window
+  close and quit ask once for all; idle shells close unasked.
+- **Run File** (Shift+Cmd+Return): `Settings::runTemplate` filled by
+  `RunFile::expand` (`shellQuote`, or `quoteInside` when the template quotes
+  the placeholder); `{python}` is the LSP session's interpreter. It saves
+  first, goes through `runCommand:` (so into history), never types into a busy
+  terminal (a new tab instead), and leaves the keyboard alone.
+- **Links** (Cmd+click; `TermLinks`): resolved against the shell's cwd (OSC 7),
+  the window folder, its worktrees and the sessions' scratchpads
+  (`AgentIndex::resolveTarget`): one match opens, several get a picker, none
+  names the roots tried; paths resolved so /private/tmp matches a /tmp root.
+  The log checks `characterIndexForPoint:` against the character's own rect (it
+  answers past a line's end); a flagsChanged monitor catches Cmd pressed
+  without moving. Not done: OSC 8 hyperlinks.
+- Testing: a scratch `HOME` and `ZDOTDIR`, or commands land in the user's
+  `~/.zsh_history`; an app-typed command snaps a scrolled view, so test "stays
+  on its text" with output from a command already running.
+
+## Git panel (all three ports)
+
+Ctrl+Shift+G swaps the tree for `MCGitPanel` (`replaceSubview:with:`, same
+frame). The GTK port (`linux/src/GitPanel`, `GitModel`) and Android
+(`GitPanel.kt`, `git_jni.cpp`, git in Termux through one bash loop) follow its
+rules and wording (`linux/HANDOFF.md` item 10; `android/README.md`, "Source
+control"). Logging: `G_MESSAGES_DEBUG=minicode-git` on Linux, `adb shell
+setprop log.tag.MiniCodeGit DEBUG` on Android.
+
+- **What runs**: status, diff, add, restore --staged, commit -m, rm --cached
+  --force before the first commit, and for the graph for-each-ref, log,
+  rev-list, show, rev-parse. Never a shell string: `MCGitRunSync`
+  `posix_spawn`s an argument vector in the top level. Paths after `--`; add,
+  restore and rm get `--literal-pathspecs` (`sp*ecial.txt` never stages
+  `spXecial.txt`). Status `--porcelain=v2 --branch -z --untracked-files=all`;
+  diffs `-c core.quotePath=false diff --no-color --no-ext-diff --src-prefix=a/
+  --dst-prefix=b/` (a user's noprefix or diff tool would change the output),
+  `--cached -M` for a staged rename, `--no-index -- /dev/null path` for
+  untracked (status 1 means differs). `MCFindProgram(@"git")`, never
+  /usr/bin/git's shim.
+- **Environment**: `GIT_OPTIONAL_LOCKS=0` (a plain status rewrites .git/index,
+  FSEvents fire, the panel refreshes: a loop), `GIT_TERMINAL_PROMPT=0`,
+  `GIT_EDITOR=true`, stdin /dev/null, the wide PATH; stdout and stderr drained
+  at once on their own queues.
+- **Time limits** (`Git::timeoutFor`, one table for the Mac and GTK): 30 s for
+  reads, 2 minutes for add, restore and rm (filters, index.lock), 10 for commit
+  (hooks, signing). git leads its own process group, which gets SIGTERM at the
+  limit and SIGKILL 2 s later; the panel shows "git did not answer within 30
+  seconds: <command on one line, 160 characters at most>" (`timeoutMessage`),
+  or `heldOutputMessage` when git exited but something it started holds its
+  pipes. git is reaped on its own thread; a timed-out for-each-ref skips the
+  log. GTK: `runGitWithin` kills `-pid`, waiting with GSubprocess async calls
+  on the git thread's own main context; that thread stays single on purpose (an
+  add and its status must not pass).
+- **Threads**: a serial queue per panel; results dropped if the root changed or
+  a newer diff was asked. `refresh` coalesces 50 ms, only while in a window (on
+  show, after actions, on window key, on the tree's FSEvents).
+- **Errors**: git's stderr under Commit (6 lines, all in the tooltip); empty
+  stderr uses stdout's last line (a commit with nothing staged explains itself
+  there). Keys live in `MCGitTable keyDown:` and the message box
+  (`MCCommitTextView`, Cmd+Return by keyCode 36/76); the diff takes the
+  editor's slot (`showDiffNamed:`, `MCGitDiffText`), cut past 4 MB.
+- **The graph**: `for-each-ref`; `-c log.showSignature=false log -z
+  --topo-order --max-count=N HEAD @{upstream} --` (`--branches --remotes` for
+  All branches; no `@{upstream}` when there is none, it is gone or HEAD is
+  detached); `rev-list --left-right HEAD...@{upstream}` only when ahead or
+  behind; a commit's `show ... -M --diff-merges=first-parent --stat --patch` (a
+  merge's combined diff is usually empty). The status applies first, the graph
+  after on the same queue, keyed on HEAD, branch, upstream, limit, checkbox and
+  the for-each-ref output, so most refreshes run for-each-ref only. Show more
+  adds 200. Lanes (`Git::layoutGraph`): a commit takes the leftmost lane
+  waiting for it and ends the others waiting there; none waiting is a new tip
+  at the right; the first parent continues the lane, others join a waiting lane
+  or the first free one; free lanes close up, bending left in the same row. 12
+  pt lanes, narrower past 40% of the panel.
+- **Tool guard trap**: in a worktree-isolated agent session, git commands in
+  compound or unusual forms are refused (even a filename containing "git"); use
+  plain `cd x && git ...` lines or a script file.
+
+## The file tree (Mac)
+
+- `ClickOutline mouseDown:` runs the native tracking first and opens the file
+  on release only if no drag began (`dragBegan`); NSOutlineView's selection
+  notifications did not fire reliably. Drag and drop moves rows into folders
+  (`validateDrop:` retargets onto a folder; into itself, a descendant or where
+  it is refused), copies files from Finder in and rows out; a clash is reported
+  after the drop (Finder waits on a modal during it). `pathMovedFrom:to:` moves
+  tabs, the LaTeX path and a preview's relative pictures. F2 renames,
+  Cmd+Delete trashes (`ClickOutline keyDown:`), Space previews with Quick Look.
+- **The Worktrees node** (first, shown with or without hidden files, not again
+  inside .claude): each worktree named for its agent with its ahead count and
+  changes (git off the main thread); right click Compare with Main (each
+  changed file side by side with main's) and Open in New Window.
+- **Columns** (`MCTreeColumns` bitmask, `toggleTreeColumn:`): size, saved and
+  created (`st_birthtimespec`) on their own keys, the rightmost dropped first
+  on a narrow row; switching one on widens a narrow sidebar
+  (`MCTreeCellWidthFor`, up to 40%). Trap: NSTableCellView moves its textField
+  to the cell's width without a layout pass, so `MCTreeCell` places its fields
+  again in `viewWillDraw`.
+- **Folder totals** (`FolderSizes::measure`, `MCFolderSizer`, last asked
+  first): every regular file below, hidden ones included (as Finder and du
+  count), never through a symlink or into another device; subfolders cached by
+  stamp (dev, inode, own mtime); FSEvents paths (`/private/tmp` mapped back to
+  `/tmp` through realpath) invalidate a folder and its parents, and a store is
+  refused if an invalidation came after the count began. 200,000 entries or 2
+  s, then "≥ X".
+- **Sort By**: name ascending with folders first is exactly the old order
+  (`caseInsensitiveCompare:`, so nothing moves for anyone who never sorts); a
+  new key starts in its own direction (dates newest, sizes largest). While a
+  folder lacks a total, folders stay in name order, then the list re-sorts once
+  (`folderTotalsArrived:`, through `reloadTreeKeepingState:`). Remembered per
+  folder (`MCTreeSort`). `FileItem` keeps `children` in name order and `shown`
+  in the window's.
+- **The context menu by keyboard**: Shift+F10, a hidden Ctrl+Return (otherwise
+  a text view's U+2028) and the PC Menu key (keyCode 0x6E).
+  `MCShowContextMenuInWindow` builds a right mouse down just inside the
+  selected row's bottom edge (so `clickedRow` is that row) or at the caret,
+  asks `menuForEvent:` (restoring a text view's selection, which a right click
+  moves), and pops it with `popUpContextMenu:withEvent:forView:` on the next
+  run-loop turn.
+
+## The inline agent, Request a Change and restarting (Mac)
+
+- **The inline agent** (Cmd+I, `AgentPanel.mm`; hover is Option+Cmd+I). What
+  has the keyboard decides: a text file in the editor or a Markdown preview (on
+  the source) is an edit; an idle terminal a command; anything else (tree, git
+  panel, browser, LaTeX preview, picture, busy terminal, another window) a
+  task. Cmd+Return in the bar makes any request a task. `MCAgentContext`
+  carries blocks, so the bar knows nothing of the views. `MCAgentRun` runs
+  `/bin/zsh -l -c 'exec <agent.command> -p --tools Read,Grep,Glob
+  --no-session-persistence --output-format text'` in the folder, the prompt on
+  stdin (written off the main thread: a big buffer outgrows a pipe), five
+  minutes at most, exit 127 as not installed. The prompt
+  (`InlineAgent::editPrompt`) asks for SEARCH/REPLACE blocks or an answer;
+  `applyEdits` matches each SEARCH ever more loosely about whitespace, nearest
+  the cursor, all or nothing, so typing elsewhere meanwhile does no harm. The
+  edit goes in through `replaceSourceWithText:`, tinted; Return keeps; Esc
+  restores the text from before the bar's first edit if the buffer is as the
+  agent left it. Commands are typed, never run. Tasks write the prompt to
+  `$TMPDIR/MiniCode-agent/` and run `cd <root> && <agent.command> "$(cat
+  file)"` in a new terminal tab. Traps: `NSTextView string` is the live
+  storage, so "the text before" must be a copy; the bar's place uses line
+  fragments up to the caret only (the first Cmd+I once laid out the whole file:
+  1.7 s); `firstRectForCharacterRange:` gave nothing usable offscreen.
+- **Request a Change** (Shift+Cmd+K, `ChangePanel.mm`, an `MCChangeSession` per
+  window): `MCChangeBar` across the top of the right pane, laid out first
+  (`layoutChangeBarIn:`), styled as developer mode (an amber stripe, the
+  sidebar tinted 13% amber, a DEV pill, the source folder) so it is not taken
+  for an ordinary field; its box wraps and grows to 10 lines
+  (`heightForWidth:`). Return sends, Shift or Option+Return adds a line, Esc
+  (`complete:`) closes. The prompt (`ChangeRequest::prompt`: the request, then
+  asking for `make`, CLAUDE.md, and no commit, push or release) goes to
+  `$TMPDIR/MiniCode-change/request-<pid>-<n>.txt`, and `cd <source> &&
+  <develop.command> "$(cat <file>)"` is typed into a new terminal tab (or
+  Claude's previous idle one), focused; the whole prompt on the line had
+  flooded it, the tab title and zsh's history. Source folder
+  (`MCChangeSourceFolder`): `develop.source`, else the checkout the bundle was
+  built in, else `MCChangeCloneFolder()` (`~/Library/Application
+  Support/MiniCode/source`), cloned on first use by one typed line (`(git clone
+  --branch v<version> <repo> <dir> || git clone <repo> <dir>) && cd <dir> &&
+  claude ...`). "Source" means a Makefile and `src/EditorController.mm`. A 2 s
+  timer watches `<source>/MiniCode.app/Contents/_CodeSignature/CodeResources`
+  (codesign is `make app`'s last step) and offers Restart once it is newer and
+  stable.
+- **Restart** (`AppDelegate restartIntoApp:resumingIn:source:command:`,
+  `MCRestarting`): the quit questions titled "Restart minicode?", leaving
+  Claude's terminal out; unsaved tabs come back from backups;
+  `applicationWillTerminate` writes `MCRestart` and `MCLaunchAfterExit` spawns
+  a detached `/bin/sh` that waits for our pid and runs `open -n
+  <source>/MiniCode.app`; the new process takes a record under two minutes old
+  (`reopenAfterRestart:`) and runs `<command> --continue` in the resuming
+  window. After a restart the user runs the repo's build until the next `brew
+  upgrade`. Restart minicode (minicode menu, the status bar's ↻,
+  `restartMinicode:`; no key, Cmd+R is Refresh) uses
+  `NSBundle.mainBundle.bundlePath` (beeps when not a .app).
+- **The browser comes back**: the session entry's `browser` key (address plus
+  `WKWebView.interactionState`, about 2.6 KB with history and scroll, macOS
+  12+, left out past 2 MB; visibility; fraction), restored in
+  `restoreBrowserFromSession` for a new window, never on Open Folder;
+  `applicationWillTerminate` saves every window's session. Cookies persist in
+  the default data store.
+- `mc-dev` (the user's `~/Code/dotfiles/shell/aliases.sh`) runs the repo's
+  build; launching a build registers it with Launch Services, so Finder may
+  offer two minicodes (`lsregister -u` it).
+
+## The control channel, notes and tours (Mac)
+
+- Each minicode listens on `$TMPDIR/MiniCode/<pid>.sock` (0600 in a 0700
+  folder; another uid refused by `getpeereid`; removed on exit; stale sockets
+  of dead pids removed at startup). Use `getenv("TMPDIR")`:
+  `NSTemporaryDirectory()` ignores it. One JSON object per line, checked
+  against `ControlProtocol`'s table of commands and arguments (unknown or
+  wrongly typed is an error answer, never a crash), handled on the main thread
+  within 100 ms (`ControlServer.mm`, `ControlCommands.mm`).
+- `tools/minicode-cli.cpp` builds `Contents/MacOS/minicode-cli`, which the
+  launcher execs for subcommands: newest live socket (or `--pid`), starting
+  minicode and waiting 10 s when none runs; a running minicode with no socket
+  (older than the channel) gets "quit and open it again", nothing launched.
+  Exit codes 0, 1 command error, 2 usage, 3 no app.
+- Commands: `open path[:line[:col]]` (`--to`, `--note`, `--from`, `--keep`),
+  `window`, `browse` (in the pane; the browser has no tabs), `term` (`--cwd`,
+  `--title`, `--run` typed and entered visibly), `diff`, `split`, `state`
+  (`--pretty`), `selection`, `term-output`, `tour`. None moves the keyboard or
+  closes, replaces or reorders the user's tabs and terminals.
+- **Notes** (`AgentNotes.mm`): a layout-manager highlight and a box over the
+  text view, never in the file or its undo; upper third; closed by Escape, ×,
+  or an edit touching its lines (undo does not bring it back); plain text up to
+  500 characters; not persisted. They go in one agent preview tab per window
+  (`agentPreview`, italic title), replaced by each such open and kept by an
+  edit or a double-click on its title. Tours step with Option+] and [ (keymap
+  commands enabled only during a tour) and show "2 of 3".
+- `skills/minicode/SKILL.md` (under 150 lines; `make install`): show work as
+  notes, a diff and tests in a terminal; open code with a note when asked where
+  something is; read `state` and `selection` for "this"; never rearrange the
+  user's tabs, `--run` long or destructive commands, or write workspace scripts
+  unasked; plain paths on exit 3.
+- Ground rules for this and the agent workspace: nothing runs because a folder
+  or file was opened; Claude Code's data is read, never written, moved or
+  deleted; nothing leaves the Mac.
+
+## The agent workspace (Mac)
+
+- **Core**: `AgentTranscript` reads Claude Code's JSONL behind a `Format`
+  interface (a second agent would be a second Format), skimming lines for type,
+  timestamp, ids, cwd, gitBranch, version, text and each tool call's file_path,
+  command and description; outputs are byte ranges read later by `readOutput`
+  from two 64 KB windows. Bad lines are counted and skipped, unknown fields
+  ignored, Claude Code's request copies left out; only user and assistant lines
+  count. `Tail` reads whole lines from the last offset, holding back a line
+  being written, and restarts on a replaced or shrunk file. `AgentIndex` finds
+  sessions whose cwd is the folder or inside it, from the files' own cwd (the
+  first decides), never from the lossy encoded folder names; a file whose first
+  cwd is elsewhere is read for 64 KB once. Not thread-safe: copy rows out.
+  `AgentEvidence`: every Bash call, test commands recognised anywhere in a
+  chain past env, time, timeout and assignments (pytest forms, make test and
+  check, ctest, npm/pnpm/yarn test, cargo test, go test), their summaries read
+  from the tail, no verdicts. Paths: `~/.claude/projects`
+  (`$MINICODE_CLAUDE_PROJECTS`), the `/private/tmp/claude-<uid>` scratchpads
+  (`$MINICODE_CLAUDE_TMP`). Fixtures: `tests/fixtures/claude`.
+- **Mac**: `MCAgentModel` keeps the index on one serial queue and git on
+  another, copies rows to the main thread, follows FSEvents on transcripts and
+  scratchpads, and empties (saying so) if the transcripts folder goes.
+  `MCAgentWindow` is made lazily. The Agents panel (Shift+Cmd+A) swaps in like
+  the git panel: sessions newest first, subagents nested, files in the folder,
+  the worktree and outside (gone ones struck through). The Evidence view
+  (`MCEvidencePage`, an `EditorPage`): the final message beside the last test
+  command's result, then every command with the first and last 20 lines of
+  output read lazily (Show all up to 1 MB); Open in Terminal types a command at
+  the session's folder.
+
+## Opening from Finder, the Dock and the command line (Mac)
+
+- **Info.plist** `CFBundleDocumentTypes`, all Alternate with no
+  `NSDocumentClass`: text and source UTIs, Markdown
+  (`net.daringfireball.markdown`, also imported), the exact image, video and
+  audio UTIs shown (not `public.image` or `public.movie`), PDF,
+  `public.folder`, Office, iWork, OpenDocument and SQLite, and by extension
+  TeX, Go, Rust, TOML, conf, ini, tsx and `.ts` (macOS types it as MPEG-2
+  video). No `public.data` (VS Code has none either). Where nothing else claims
+  a type (.conf, .bib) minicode is the double-click app anyway.
+- Open With, double-click and Dock drops arrive as odoc events at
+  `application:openURLs:`: folders first (a window on it, else a new one), then
+  each file to the window with the innermost root holding it, else the window
+  in front (a new window only with none open); paths compared resolved and
+  respelled from the window's root; `showFile:` opens hidden dotfiles too.
+  `applicationShouldOpenUntitledFile:` returns NO.
+- Launch Services delivers the open between will- and didFinishLaunching, so
+  setup is in `applicationWillFinishLaunching:`, and didFinishLaunching opens
+  no window of its own when one exists and argv is empty (a Finder launch has /
+  as cwd). `main()` registers `NSTreatUnknownArgumentsAsOpen` NO, so argv goes
+  through the argv code only.
+- The launcher (`scripts/minicode-launcher`, `Contents/Resources/minicode`):
+  paths go to a running app with `open -b com.minicode.editor`, else `open -a`
+  its own bundle (VS Code's `code` rules); `-r` writes a request file to
+  `$TMPDIR/MiniCode-open/*.minicode-open` (read by `MCTakeOpenRequest` only
+  from the app's own temporary folder); `-n` runs the binary detached;
+  "running" is `ps -axo comm=` ending in `/MiniCode` (pgrep found nothing from
+  Claude Code's shell); `MINICODE_LAUNCHER_DRYRUN=1` prints the command.
+- **Never `lsregister` or `open` a build in the repo or a worktree**: Finder
+  then offers that copy too. Check claims with a renamed copy registered
+  outside /private/tmp (Launch Services ignores apps there), asked with
+  `LSCopyApplicationURLsForURL`, then unregistered; send odoc events offscreen
+  through `NSAppleEventManager dispatchRawAppleEvent:`.
+
+## Demo GIFs (`make demos`)
+
+`scripts/demos.sh` builds `/private/tmp/minicode-demo` (a 5-commit copy of
+`demo/` with fixed dates, scratch HOME and ZDOTDIR, `tools/demo-settings.conf`
+with the terminal in line mode, a copy of the tectonic cache, a `.vimrc`), runs
+the raw binary with `MINICODE_DEMO=<scene>` under `env -i`, kills only its own
+pid after 2 min, and runs `build/makegif`. `MINICODE_DEMO=list` lists scenes;
+`DEMO_KEEP_FRAMES=<dir>` keeps frames and the log.
+
+- A scene is a function in `src/Demo.mm` of queued builder steps (`clickFile:`,
+  `type:`, `key:caption:`, `waitFor:timeout:recorded:`, ...), points resolved
+  lazily (`pointForText:` through `firstRectForCharacterRange:`). Input is real
+  posted `NSEvent`s; the pointer and key captions are an overlay view. The
+  user's own input is swallowed meanwhile (only events whose timestamp, in
+  whole microseconds, the demo posted pass), since a stray key once dirtied a
+  file and hung the scene on "Save changes?".
+- Capture is `screencapture -x -o -l<wid>` every 100 ms; a popover grows the
+  capture and the manifest's `child` rects let makegif crop; windows in front
+  are captured apart and composited. makegif writes the GIF itself (ImageIO
+  stores frames whole, with disposal 2 for alpha): one median-cut palette,
+  merged frames, changed rectangles with transparency, LZW.
+- `NSHomeDirectory()` ignores `$HOME`, so the project lives under /tmp. The
+  display must be awake (`caffeinate -u -d -t 200 &`) or captures are black and
+  `-l` fails like a permission error. The lsp scene saves before F12; never
+  press Esc in the editor in a scene (`complete:`); keep `demo/paper/notes.tex`
+  free of math (the cache has no math fonts); the LaTeX scene exits 3 without
+  tectonic; `links` draws the hover underline itself.
+
+## Memory benchmark (`make membench`)
+
+`scripts/membench.sh` runs one workload on minicode and on VS Code + Chrome +
+Preview and sums each side's physical footprint (`tools/procmem.c`,
+`proc_pid_rusage`; 320 MB against 1,283 MB on 2026-09-21, in the README). A
+process belongs to a side by parent or responsible pid (WebKit's helpers are
+launchd's children); a shell-launched app makes the terminal responsible, so
+minicode starts with `open -n -g --env`. `src/Bench.mm` resolves paths like the
+tree; a tiny VS Code extension types the command; `MINICODE_BENCH` skips
+activation. Check each side's breakdown before quoting a number (a first run
+"measured" 55 MB with clangd and WebKit missing).
+
+## Verification reality (important)
+
+How much of the GUI you can check depends on the port and on whether the
+session has a display. Check first.
+
+- **Core**: `make test`, and `make test CXX=g++-16` for libstdc++.
+- **The Mac, committed checks**: `make guitest [SUITES=...]` builds
+  `build/guitest` (the whole app with main.mm's `main` renamed `minicode_main`,
+  plus `tests/gui/*.mm`) and runs it offscreen; the macOS CI job runs it. The
+  harness (`tests/gui/Harness.{h,mm}`) re-execs into a scratch world under
+  `/tmp/mcgui-*` (HOME and CFFIXED_USER_HOME, ZDOTDIR with an empty .zshrc, a
+  short TMPDIR for socket paths, settings with language servers off, a defaults
+  suite, backups, a private pasteboard, git without global config), swizzles
+  window ordering, activation (policy Prohibited), child windows, NSAlert
+  (`MCGuiAnswerAlerts`), the pasteboard and `openURL:`, reports the test window
+  as key and main, and plays suites (`MC_GUI_SUITE`, `MCGuiStep`, `MCGuiWait`,
+  `MCGuiAsync`, `MCGuiPause`, `GCHECK`) from the run loop; it fails if any
+  window reaches the screen. `MC_GUI_SNAPSHOTS=dir` saves pictures to look at,
+  `MC_GUI_KEEP=1` keeps the scratch folder, `MC_GUI_SAMPLE=file` samples the
+  keystroke suite. Suites: control, agents, folding, foldperf, keymap,
+  keystroke, previews, symbols, terminal_reflow, and in LooseEndsSuite.mm
+  terminal_exec, terminal_keys, terminal_zoom, agent_autosave, multicaret_rows.
+  Checks needing a language server (basedpyright in symbols) run only when it
+  is installed. **New user-visible behaviour gets a committed check here.**
+- **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the
+  window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events
+  through the window then the main menu (`MCGuiPerformMenuKey`, built from the
+  key code; setting the unicode string made the menu refuse a matching key);
+  tree keys through `[window sendEvent:]`; a shifted key matches the menu only
+  as the NSEvent `eventWithCGEvent:` makes, never one rebuilt from characters;
+  everything in one step is one undo group (wrap edits in `MCGuiUndoGroup`,
+  close a group a step opens); give a suite its own window and close it
+  (`MCGuiSetKeyWindow(nil)`); cd terminal suites into `MCGuiProject()`;
+  `MCGuiPause` is timed from when it is reached; never browse non-file URLs.
+  Language servers are off in the harness; a check that needs one points
+  `MINICODE_LSP_LOG` at a scratch log and kills only the PIDs it started (the
+  user's own minicode and other sessions run clangd too). Older traps: an arrow
+  key event needs the function-key character (U+F701...) as `characters`, and
+  an empty string makes `-[NSMenu performKeyEquivalent:]` throw; Shift+Cmd+H
+  matches only with `charactersIgnoringModifiers` "h"; with `groupsByEvent`
+  off, `saveCurrentFile:` outside a grouping throws once a sort registers undo;
+  an offscreen window is never key, so a plain key through `keyDown:` does
+  nothing (type with `insertText:`); an `NSEvent keyEventWithType:` posted
+  through NSApp reaches the monitor but not an offscreen first responder;
+  `NSApp.currentEvent` is not the event given to `performKeyEquivalent:`; a
+  scroll restored right after `setAttributedString:` stops where layout ends
+  unless a screen past it is laid out; an NSPopover never shows for a window
+  not on screen; wait from a timer, not a main-queue block, or the app's
+  dispatches never run; `[NSApp run]` calls `applicationWillFinishLaunching:`
+  itself; NSZombieEnabled names a message sent to a freed object. Keep harness
+  files in a scratchpad folder of your own name.
+- **Ad hoc**: a temporary `getenv("MINICODE_*TEST")` block run headless with a
+  poll-and-kill loop (no `timeout` on macOS), removed by exact text. Read state
+  by KVC; drag NSSplitView by posting drag and up events, then calling
+  `mouseDown:`; `hitTest:` measures grab areas.
+- **Pixels**: `/usr/sbin/screencapture -x -o -l<windowNumber>` from inside the
+  app, read with `NSBitmapImageRep colorAtX:y:` (y from the top, Retina scale);
+  `renderInContext:` on a layer gives exact colors where `cacheDisplayInRect:`
+  shifts them. The only way to verify translucency. `CGWindowListCreateImage`
+  is gone in the macOS 15 SDK.
+- When a check fails, print the actual value first: most failures were wrong
+  checks. Never call GUI behaviour verified when it was only compiled; say what
+  needs the user (the look, real keys and mouse, trackpad, sound). Never
+  activate the app from a test; ask before anything that shows a window.
+- **GTK from the Mac: Docker.** `linux/dev/gtk-dev.sh` builds the image
+  (ubuntu:26.04, CI packages, Xvfb, xcompmgr, xdotool, ImageMagick) and a
+  container with the repo mounted; `linux/dev/README.md` has the workflow.
+  Build into `/build` inside; `Xvfb :99` plus `xcompmgr`; launch with
+  `GDK_BACKEND=x11 GTK_A11Y=none` under `dbus-run-session`, a scratch HOME, and
+  `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` (bubblewrap cannot start there).
+  Drive with `xdotool`, capture with `import -window root` (dotted debris is
+  xcompmgr's). `pkill -x minicode`, never `pkill -f` with a path (it kills the
+  `docker exec`). The image is about 1.8 GB on a tight disk. **Docker trap**:
+  `open -g -a Docker` raised an administrator password prompt and the daemon
+  never started; never start Docker unattended.
+- **GTK on the ThinkPad** (Ubuntu 26.04, GNOME on Wayland; check
+  `$WAYLAND_DISPLAY`): `meson test -C build`; `setsid gtk-launch
+  org.minicode.Editor &` then `pgrep -a minicode` (a real window: say so, leave
+  none behind); `systemctl --user list-units --type=scope | grep minicode`
+  (`app-gnome-org.minicode.Editor-*.scope` proves the dock association, a
+  nested `vte-spawn-*.scope` the terminal); `journalctl --user --since "-15
+  min"`. Real input: a private rootful Xwayland driven by XTest
+  (`linux/HANDOFF.md`, "How to work on it"); prefer it to hooks, which passed
+  three bugs the user then hit by hand.
+
+## The Linux port
+
+`linux/HANDOFF.md` (items 1 to 14) and `BUILD-LINUX.md` (build, and what is
+unverified). It shares the highlighter, Markdown, tasks, settings, comments,
+AutoIndent, KeepSorted, FolderSearch, TextFind, LatexDoc, SyncTex, Json,
+LspClient, TermLinks, GitStatus and GitGraph; VTE is its terminal. The core
+lists in `linux/meson.build` and `linux/Makefile` must agree
+(`linux:build-lists`; CI builds only with Meson). Its traps are in HANDOFF.md:
+accelerators taking keys from VTE (`updateShellKeys`), the selection color
+(`ThemeCss.cpp`), one click and autoselect in the tree, `settleOnCaret`,
+`<Ctrl>greater`, `ScrollSettle.h`, links acted on from an idle, embedded
+widgets off the view before a re-render, `Terminal::topRow`.
+
+## The Android port
+
+`android/README.md` is its handoff. The phone is a Unihertz Titan 2 (Android
+16, 576 by 640 dp, hardware keyboard, Termux and F-Droid); wireless debugging
+changes port on every reconnect, so ask for it (restart the adb server if
+connect says "No route"); test files are in `/sdcard/mc-test`. Gradle 8.14.3
+via the wrapper, JDK 21, SDK and NDK from `sdkmanager`. Traps paid for:
+
+- The core compiles with the NDK and its tests pass on the phone. `TermKey`
+  ordinals in `Pty.kt` mirror `src/TerminalScreen.h` (Enter numbered as Escape
+  looked like a dead key). The terminal uses `TerminalScreen` with scrollback
+  off; its `resize` now reflows wrapped lines there too.
+- No Ctrl, Esc or Tab on the phone; Alt is the symbol layer; Android claims Sym
+  with some letters; a spare key (403 on the Titan, Menu elsewhere) is the
+  leader and repeats in bursts, so presses split on release. `adb logcat -s
+  MiniCodeKeys` shows keys. Injection cannot send Sym, keycodes above ~288 or
+  `sendevent`; `adb shell input keycombination KEYCODE_CTRL_LEFT KEYCODE_U`
+  does carry Ctrl. `adb shell input text` shuffles letters in fields.
+- Letters reach a focused field through the input method
+  (`CodeEditText.commitText`), not key events; Pastiera needs the
+  visible-password variation; a letter with Ctrl has no `unicodeChar`; the
+  terminal declares `TYPE_NULL` (composition re-sent words).
+- Termux: bash on a pty from a helper built as `libminicode_pty.so`, sent over
+  the token socket and run from Termux's `$TMPDIR`; servers and git there too
+  (listen on 127.0.0.1 by name: `getLoopbackAddress()` is ::1; git through one
+  bash loop with NUL-separated fields and `-c safe.directory`, never written to
+  a config); only shared storage.
+- One FileObserver per path; `wm size` recreated the activity until
+  `smallestScreenSize|screenLayout` joined `configChanges` (the phone's
+  override is 1076x1200, never `wm size reset`); `adb shell` in a `while read`
+  loop eats its input (`-n`); no app can force the on-screen keyboard up beside
+  a hardware one (`show_ime_with_hard_keyboard`, put back as it was); Back on
+  Android 16 for API 36 only through `OnBackPressedDispatcher`; a focusable
+  ViewGroup gets a grey veil (`defaultFocusHighlightEnabled = false`); a long
+  diff needs a RecyclerView; preview text must not be selectable; View's
+  constructor reports visibility before a Kotlin subclass's fields exist.
+- A paused MediaPlayer moves by itself (offload restarts with a seek after 10
+  s), so `PlayerPane` releases it 4 s after pausing; MediaController is a
+  focusable window, so the pane draws its own bar. Web pictures re-render
+  keeping the place by run index, with arrived bytes passed straight to the
+  next render (an LruCache loop otherwise); release builds trust only system
+  CAs, so test against public https addresses.
+
+## Distribution
+
+- `e-c-hansen/minicode` (public); each `vX.Y.Z` GitHub Release carries the zip
+  and the signed APK.
+- `e-c-hansen/homebrew-tap` holds only `Casks/minicode.rb`, written by
+  `release.sh` from `packaging/minicode.rb` (the only copy anyone edits). The
+  cask clears the quarantine flag in `postflight_steps` (Homebrew 7 deprecated
+  `postflight`; `{{appdir}}` is the token); check edits with `brew style` in
+  `/opt/homebrew/Library/Taps/e-c-hansen/homebrew-tap`. Homebrew is the only
+  updater, so the cask must not declare `auto_updates` (a plain `brew upgrade`
+  would skip it). Homebrew runs `lsregister` only when it reopens apps it quit;
+  macOS registers a new bundle in /Applications itself.
+- Not notarized (that needs the paid Apple Developer Program);
+  `scripts/sign-and-notarize.sh` is ready.
+- The APK is signed with `~/.config/minicode/release.keystore` (password in the
+  Keychain, `minicode-android-keystore`); every update must carry that
+  signature, so never regenerate it (the user keeps a backup). Installed by
+  hand or through Obtainium.
+- Ubuntu PPA `ppa:echansen/minicode` (a lost key can be replaced on Launchpad).
+  Traps: macOS `tar` adds `._*` files `dpkg-source` rejects (`git archive`);
+  `tar` fails with ENOSYS under Docker Desktop's amd64 emulation; gpg-agent
+  cannot be forwarded into Docker Desktop, so signing is on the host.
+
+## Current state (2026-11-05)
+
+- **Released: 1.5.6** (themes, the inline agent, Restart minicode, the browser
+  kept across restarts, the first release signed with "MiniCode Local
+  Signing"); the user's Homebrew copy is on it. 1.5.4 to 1.5.6 went out without
+  the PPA upload (Docker was not running): `scripts/ppa.sh 1.5.6` once Docker
+  is up.
+- **Merged since, not released** (`git log f3e6886..`, Mac unless noted): the
+  second review's bug fixes (git time limits and the Makefile on Linux too),
+  auto-save, the line commands and moved keys, Problems, Ruff beside
+  basedpyright, find and replace, line numbers, brackets, zoom, folding,
+  symbols and Go Back, the terminal's find, Cmd+K, synchronized output, reflow,
+  mouse and titles, the control channel with notes and tours, the agent
+  workspace, the new viewers, keys.conf, MCSourceStorage, the EditorController
+  and Lsp splits, and `make guitest` in CI.
+- **Needs the user's eyes**: all of the above on a real screen with real keys
+  and mouse (the gutter and folds, the find bar, Problems, the Agents panel and
+  Evidence, the viewers, notes and tours, the palette's symbols, trackpad
+  momentum in the terminal); the grid terminal with their own .zshrc, prompt,
+  autosuggestions and fzf, Claude Code's Shift+Return, vim with the mouse; real
+  F2, F8, F9, Shift+F12 (fn on a laptop), the Control+Command folding keys,
+  Shift+Option+O; a real crash or force quit with unsaved tabs; a real Request
+  a Change end to end and its relaunch; Finder's Open With, double-click and
+  Dock drops; `minicode -r` against the running app; the LaTeX popover's
+  placement; Ctrl+Space with several input sources. **Linux**: none of today's
+  work ran on Linux beyond CI; the ThinkPad still owes the folder picker after
+  closing its window, F2 rename in the tree, renames across two windows under
+  GNOME, the PDF placeholder at 2x and the git panel. **Android**: the leader
+  key and real typing in the commit and edit boxes (Enter and Shift+Enter), the
+  key rows against the curved corners, bash and vim on the real keyboard, the
+  on-screen keyboard resizing the pane, real sound and keys in the player, and
+  for web pictures a badge link, the scroll staying put and the toggle making
+  no requests (then delete `/sdcard/mc-test/web-test`).
+- The Reddit drafts are a Claude Doc, "MiniCode Reddit drafts"
+  (https://claude.ai/code/artifact/06496ec8-70b7-443d-af5c-9c53f3996ffe).
 
 ## What's next
 
-See `ROADMAP.md`. Waiting on the user: trying the Mac git panel before a
-release, the Linux one on the ThinkPad, and the Android one on the phone
-(the leader key and real typing), and the Android Markdown preview and key
-rows on the phone. Candidates, none started: a hanging indent for list
-items in the Linux and Android previews (the Mac has one; see "The Mac's
-Markdown paragraphs"), quote bars and code boxes there too, and math in
-the Markdown preview (`$...$`, options in the 2026-09-29 notes under
-"The Markdown parser"); Android project
-search and comment toggling;
-Android on F-Droid; the other throng features discussed (terminals that
-survive closing the app, switching between projects); notarization once the
-user has a paid Apple Developer account (`scripts/sign-and-notarize.sh`).
+See `ROADMAP.md`.
+
