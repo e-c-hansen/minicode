@@ -30,6 +30,7 @@
 #import "Navigation.h"
 #import "Gutter.h"
 #import "EditorFont.h"
+#import "SourceStorage.h"
 #import "AgentNotes.h"
 #import "CompareView.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
@@ -819,6 +820,9 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
     textScroll.automaticallyAdjustsContentInsets = NO;
 
     self.textView = [[CodeTextView alloc] initWithFrame:frame];
+    // A storage that fixes attributes as edits happen, not in 64K blocks
+    // around every keystroke (SourceStorage.h).
+    [self.textView.layoutManager replaceTextStorage:[MCSourceStorage new]];
     self.textView.editable = YES;
     self.textView.delegate = self;
     self.textView.textStorage.delegate = self;   // incremental highlighting
@@ -7094,11 +7098,12 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 }
 
 - (void)textDidChange:(NSNotification *)note {
-    // A copy of the storage's string, but not of its characters: the
-    // storage's NSBigMutableString shares them with the copy, and the copy
-    // takes about a microsecond in a 3 MB file, as does the next edit with
-    // it held (measured). backedUpText's pointer compare relies on a new
-    // object per change.
+    // A copy of the storage's string. With AppKit's storage (an
+    // NSBigMutableString) it shared the characters and took about a
+    // microsecond; MCSourceStorage keeps a CFString, so it is a copy of the
+    // characters, 0.13 ms for a 2.4 MB file (measured), still a small part
+    // of a keystroke. backedUpText's pointer compare relies on a new object
+    // per change.
     self.sourceText = self.textView.string;
     [self noteEdited];
     // The title's task count follows typing, a moment after it stops.
