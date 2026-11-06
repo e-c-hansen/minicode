@@ -259,6 +259,29 @@ static void testPageCheck() {
         }
     }
 
+    GROUP("page:launcher");
+    {
+        // The bash launcher hands only the subcommands it lists to the
+        // client; one missing there is taken for a file to open.
+        std::ifstream f("scripts/minicode-launcher");
+        if (!f) {
+            std::printf("  (scripts/minicode-launcher not found here; launcher check skipped)\n");
+        } else {
+            std::string line, cases;
+            while (std::getline(f, line))
+                if (line.find("open|window|") != std::string::npos) cases = "|" + line;
+            CHECK(!cases.empty());
+            for (const ControlChannel::CommandSpec &cs : ControlChannel::commands())
+                if (cs.name != "ping") {
+                    const bool listed = cases.find(" " + cs.name + "|") != std::string::npos ||
+                                        cases.find("|" + cs.name + "|") != std::string::npos ||
+                                        cases.find("|" + cs.name + ")") != std::string::npos;
+                    if (!listed) std::printf("  the launcher does not hand %s to the client\n", cs.name.c_str());
+                    CHECK(listed);
+                }
+        }
+    }
+
     GROUP("page:settings");
     {
         std::vector<SettingsError> errors;
