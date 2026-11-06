@@ -342,6 +342,7 @@ bool offers(const Json& caps, Feature f) {
     case Feature::References: return provides(caps["referencesProvider"]);
     case Feature::Rename: return provides(caps["renameProvider"]);
     case Feature::CodeActions: return provides(caps["codeActionProvider"]);
+    case Feature::FoldingRange: return provides(caps["foldingRangeProvider"]);
     }
     return false;
 }
@@ -1084,6 +1085,24 @@ HoverDoc parseHoverDoc(const Json& result) {
     return doc;
 }
 
+std::vector<FoldingRange> parseFoldingRanges(const Json& result) {
+    std::vector<FoldingRange> out;
+    if (!result.isArray()) return out;
+    for (size_t i = 0; i < result.size(); i++) {
+        const Json& r = result[i];
+        if (!r["startLine"].isNumber() || !r["endLine"].isNumber()) continue;
+        const double s = r["startLine"].asNumber(), e = r["endLine"].asNumber();
+        if (s < 0 || e <= s || s > 1e9 || e > 1e9 || s != (double)(long)s || e != (double)(long)e)
+            continue;
+        FoldingRange f;
+        f.startLine = (int)s;
+        f.endLine = (int)e;
+        if (r["kind"].isString()) f.kind = r["kind"].asString();
+        out.push_back(f);
+    }
+    return out;
+}
+
 std::vector<Location> parseLocations(const Json& result) {
     std::vector<Location> out;
     auto one = [&](const Json& j) {
@@ -1446,6 +1465,11 @@ void Client::initialize(const std::string& rootPath, int processId,
                                  Json::array().push("markdown").push("plaintext")}})},
         {"definition", Json::object({{"linkSupport", true}})},
         {"references", Json::object({{"dynamicRegistration", false}})},
+        // Whole lines only: the editor folds lines, never part of one.
+        {"foldingRange", Json::object({{"lineFoldingOnly", true},
+                                       {"foldingRangeKind", Json::object({{"valueSet",
+                                            Json::array().push("comment").push("imports")
+                                                .push("region")}})}})},
         {"rename", Json::object({{"prepareSupport", true},
                                  {"prepareSupportDefaultBehavior", 1},
                                  {"honorsChangeAnnotations", false}})},
@@ -1612,6 +1636,11 @@ int Client::references(const std::string& uri, Position p, bool includeDeclarati
     Json params = docPosition(uri, p);
     params.set("context", Json::object({{"includeDeclaration", includeDeclaration}}));
     return request("textDocument/references", params, std::move(h));
+}
+
+int Client::foldingRanges(const std::string& uri, ResultHandler h) {
+    return request("textDocument/foldingRange",
+                   Json::object({{"textDocument", Json::object({{"uri", uri}})}}), std::move(h));
 }
 
 int Client::prepareRename(const std::string& uri, Position p, ResultHandler h) {

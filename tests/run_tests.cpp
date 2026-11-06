@@ -30,6 +30,7 @@
 #include "InlineAgent.h"
 #include "LineIndex.h"
 #include "BracketMatch.h"
+#include "Folding.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -9463,6 +9464,7 @@ static void testMultiCaretOccurrences() {
 #include "lsp_also_tests.inc"
 #include "find_tests.inc"
 #include "gutter_tests.inc"
+#include "fold_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9521,6 +9523,7 @@ int main() {
     testFolderReplace();
     testLineIndex();
     testBrackets();
+    testFolding();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
