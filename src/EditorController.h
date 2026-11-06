@@ -15,8 +15,6 @@
 @property(nonatomic, readonly, copy) NSString *rootPath;
 - (instancetype)initWithRootPath:(NSString *)path;
 - (void)togglePreview:(id)sender;     // Markdown: source <-> rendered
-- (void)exportPDF:(id)sender;         // Shift+Cmd+S LaTeX: save the typeset PDF
-@property(nonatomic, readonly) BOOL canExportPDF;
 - (void)undo:(id)sender;              // Cmd+Z; the text view handles its own
 - (void)redo:(id)sender;              // Shift+Cmd+Z
 // Commands still running in this window's terminals (empty when every shell
@@ -47,8 +45,6 @@
 - (void)showLanguageServers:(id)sender;     // the servers popover (status bar click)
 - (void)restartLanguageServer:(id)sender;   // the open file's server
 - (void)selectPythonInterpreter:(id)sender; // the Python server's interpreter
-- (void)togglePlayback:(id)sender;     // Shift+Cmd+Space play or pause video/audio
-@property(nonatomic, readonly) BOOL canTogglePlayback;
 @end
 
 // EditorController+Layout.mm
@@ -160,6 +156,14 @@
 - (BOOL)keepUnsavedTabsForRestart;
 // Writes this window's session (tabs, browser) now; quitting calls it.
 - (void)saveSession;
+@end
+
+// EditorController+Rendering.mm
+@interface EditorController (Rendering)
+- (void)exportPDF:(id)sender;         // Shift+Cmd+S LaTeX: save the typeset PDF
+@property(nonatomic, readonly) BOOL canExportPDF;
+- (void)togglePlayback:(id)sender;     // Shift+Cmd+Space play or pause video/audio
+@property(nonatomic, readonly) BOOL canTogglePlayback;
 @end
 
 // EditorController+Navigation.mm

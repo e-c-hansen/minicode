@@ -308,52 +308,9 @@ static const NSInteger kWorktreeMenuTag = 7701;
 @property(nonatomic, strong) NSTextField *savedLabel; // "Saved 14:32", with details on
 
 // Still in EditorController.mm.
-- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
-                        change:(NSDictionary *)change context:(void *)context;
-- (void)showDiffNamed:(NSString *)name path:(NSString *)path data:(NSData *)diff;
-- (void)showCommitTitled:(NSString *)title data:(NSData *)show;
-- (void)showDiffTitled:(NSString *)name data:(NSData *)diff commit:(BOOL)commit;
-- (void)renderDiff;
-- (void)resetViewMode;
-+ (BOOL)isImagePath:(NSString *)path;
-- (BOOL)showImageAtPath:(NSString *)path;
-- (BOOL)showPDFAtPath:(NSString *)path;
-+ (BOOL)isMediaPath:(NSString *)path;
-- (void)observeMediaItem:(AVPlayerItem *)item;
-- (void)stopMedia;
-- (void)mediaItemChanged:(AVPlayerItem *)item;
-- (BOOL)showMediaAtPath:(NSString *)path;
-- (MCFileViewers *)viewers;
-- (void)viewerEditedText:(NSString *)text actionName:(NSString *)name;
-- (void)setViewerText:(NSString *)text actionName:(NSString *)name reshow:(BOOL)reshow;
-- (BOOL)showViewer:(MCViewerKind)kind;
-- (void)openFileAtPath:(NSString *)path;
-- (void)loadActiveTab;
-- (NSDate *)diskModDateFor:(NSString *)path;
-- (void)recordDiskStateOf:(MCTab *)t;
-- (void)recordModDate;
-- (void)forgetHistoryOf:(MCTab *)t;
-- (void)reselectCurrentFileInTree;
 - (BOOL)showsRenderedMarkdown;
 - (NSString *)markdownToRender;
-- (void)refreshDisplay;
-- (void)showLatexPreview;
-- (BOOL)latexIsShowing;
-- (void)latexDidEditSource:(NSString *)newSource;
 - (void)noteEdited;
-- (void)displaySourceEditable;
-- (void)applyHighlighting;
-- (void)restyleRange:(NSRange)range tokens:(const std::vector<Token> &)tokens
-           inStorage:(NSTextStorage *)storage;
-- (NSDictionary *)attributesForStyle:(int)style;
-- (void)restyleChangedIn:(NSRange)range tokens:(const std::vector<Token> &)tokens
-               inStorage:(NSTextStorage *)storage;
-- (void)textStorage:(NSTextStorage *)storage
-    willProcessEditing:(NSTextStorageEditActions)actions
-                 range:(NSRange)edited
-        changeInLength:(NSInteger)delta;
-- (void)flushHighlightingLater;
-- (void)flushHighlighting;
 - (BOOL)isSettingsFile;
 - (void)decorateColorsIn:(NSTextStorage *)storage range:(NSRange)range;
 - (BOOL)textView:(NSTextView *)tv clickedOnLink:(id)link atIndex:(NSUInteger)i;
@@ -433,8 +390,6 @@ static const NSInteger kWorktreeMenuTag = 7701;
                        from:(size_t)first
                          to:(size_t)end
                        into:(NSMutableAttributedString *)out;
-- (void)setPlainMessage:(NSString *)msg;
-- (void)setStatus:(NSString *)path;
 @end
 
 // Each category's own methods. EditorController.h declares the ones the
@@ -663,6 +618,59 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (BOOL)mayWriteTab:(MCTab *)t;
 - (void)reloadTabFromDisk:(MCTab *)t;
 - (MCDiskDecision)diskDecisionForTab:(MCTab *)t;
+@end
+
+// EditorController+Rendering.mm: what the editor's slot shows: a file's mode, pictures, PDFs, media, viewers, diffs, LaTeX.
+@interface EditorController (Rendering)
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
+                        change:(NSDictionary *)change context:(void *)context;
+- (void)showDiffNamed:(NSString *)name path:(NSString *)path data:(NSData *)diff;
+- (void)showCommitTitled:(NSString *)title data:(NSData *)show;
+- (void)showDiffTitled:(NSString *)name data:(NSData *)diff commit:(BOOL)commit;
+- (void)renderDiff;
+- (void)resetViewMode;
++ (BOOL)isImagePath:(NSString *)path;
+- (BOOL)showImageAtPath:(NSString *)path;
+- (BOOL)showPDFAtPath:(NSString *)path;
++ (BOOL)isMediaPath:(NSString *)path;
+- (void)observeMediaItem:(AVPlayerItem *)item;
+- (void)stopMedia;
+- (void)mediaItemChanged:(AVPlayerItem *)item;
+- (BOOL)showMediaAtPath:(NSString *)path;
+- (MCFileViewers *)viewers;
+- (void)viewerEditedText:(NSString *)text actionName:(NSString *)name;
+- (void)setViewerText:(NSString *)text actionName:(NSString *)name reshow:(BOOL)reshow;
+- (BOOL)showViewer:(MCViewerKind)kind;
+- (void)openFileAtPath:(NSString *)path;
+- (void)loadActiveTab;
+- (NSDate *)diskModDateFor:(NSString *)path;
+- (void)recordDiskStateOf:(MCTab *)t;
+- (void)recordModDate;
+- (void)forgetHistoryOf:(MCTab *)t;
+- (void)reselectCurrentFileInTree;
+- (void)refreshDisplay;
+- (void)showLatexPreview;
+- (BOOL)latexIsShowing;
+- (void)latexDidEditSource:(NSString *)newSource;
+- (void)setPlainMessage:(NSString *)msg;
+- (void)setStatus:(NSString *)path;
+@end
+
+// EditorController+Highlighting.mm: the source's syntax colors, kept up as it is edited.
+@interface EditorController (Highlighting)
+- (void)displaySourceEditable;
+- (void)applyHighlighting;
+- (void)restyleRange:(NSRange)range tokens:(const std::vector<Token> &)tokens
+           inStorage:(NSTextStorage *)storage;
+- (NSDictionary *)attributesForStyle:(int)style;
+- (void)restyleChangedIn:(NSRange)range tokens:(const std::vector<Token> &)tokens
+               inStorage:(NSTextStorage *)storage;
+- (void)textStorage:(NSTextStorage *)storage
+    willProcessEditing:(NSTextStorageEditActions)actions
+                 range:(NSRange)edited
+        changeInLength:(NSInteger)delta;
+- (void)flushHighlightingLater;
+- (void)flushHighlighting;
 @end
 
 // EditorController+Navigation.mm: Go to Line, Go Back and Forward, Go to Symbol.
