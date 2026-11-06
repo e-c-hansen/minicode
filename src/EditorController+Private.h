@@ -147,25 +147,6 @@ static inline CGFloat MCMathScaleFor(CGFloat fontSize) {
     return fontSize * kEmToText / kTenPointsInPdf;
 }
 
-// GitHub's anchor for a heading: lowercase, punctuation dropped (letters of
-// any script, digits, hyphens and underscores stay), spaces as hyphens.
-static inline NSString *MCMarkdownAnchor(NSString *title) {
-    NSString *t = [title stringByTrimmingCharactersInSet:
-                            NSCharacterSet.whitespaceAndNewlineCharacterSet].lowercaseString;
-    NSMutableString *slug = [NSMutableString string];
-    [t enumerateSubstringsInRange:NSMakeRange(0, t.length)
-                          options:NSStringEnumerationByComposedCharacterSequences
-                       usingBlock:^(NSString *ch, NSRange r, NSRange er, BOOL *stop) {
-        (void)r; (void)er; (void)stop;
-        unichar c = [ch characterAtIndex:0];
-        if (c == ' ') [slug appendString:@"-"];
-        else if (c == '-' || c == '_' ||
-                 [NSCharacterSet.alphanumericCharacterSet characterIsMember:c])
-            [slug appendString:ch];
-    }];
-    return slug;
-}
-
 typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCancel };
 
 // The tree menu's items for a worktree (shown only on one).

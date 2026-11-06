@@ -360,7 +360,10 @@
                 for (size_t k = i; k < runs.size() && runs[k].heading > 0 &&
                                    runs[k].line == r.line; k++)
                     title += runs[k].text;
-                NSString *slug = MCMarkdownAnchor([NSString stringWithUTF8String:title.c_str()]);
+                // The core's anchor, so links land where they do on Linux and Android.
+                const std::string anchor = MarkdownParser::anchor(title);
+                NSString *slug = [[NSString alloc] initWithBytes:anchor.data() length:anchor.size()
+                                                        encoding:NSUTF8StringEncoding] ?: @"";
                 // GitHub numbers repeats: intro, intro-1, intro-2.
                 NSString *key = slug;
                 for (int n = 1; anchors[key]; n++)

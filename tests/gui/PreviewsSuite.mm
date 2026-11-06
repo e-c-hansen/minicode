@@ -866,6 +866,14 @@ static void JsonSteps(void) {
         MCJsonOutlinePane *p = Outline(MCGuiController());
         GCHECK_EQ_STR(p.statusText, @"Not valid JSON: Expected ':' at line 3, column 10");
         GCHECK(RowStarting(p, @"deep {1}") >= 0);   // the last good outline
+        // Its places in the text are out of date: it is dimmed, and a click
+        // in it selects nothing (the next keystroke would replace it).
+        GCHECK(p.stale);
+        GCHECK(p.outline.alphaValue < 1);
+        NSTextView *tv = EditorText(MCGuiController());
+        tv.selectedRange = NSMakeRange(0, 0);
+        [p selectRow:RowStarting(p, @"nested {1}")];
+        GCHECK(tv.selectedRange.location == 0 && tv.selectedRange.length == 0);
     });
     MCGuiStep(@"fixed and grown, the outline follows and keeps what was open", ^{
         EditorController *c = MCGuiController();
@@ -881,6 +889,7 @@ static void JsonSteps(void) {
     MCGuiStep(@"what was open stays open", ^{
         MCJsonOutlinePane *p = Outline(MCGuiController());
         GCHECK_EQ_STR(p.statusText, @"9 values");
+        GCHECK(!p.stale && p.outline.alphaValue == 1);
         GCHECK(RowStarting(p, @"deep {1}") >= 0);
         GCHECK(RowStarting(p, @"k 1") >= 0);
     });
@@ -906,6 +915,31 @@ static void JsonSteps(void) {
     });
     MCGuiWait(@"the outline is read again", 5, ^BOOL {
         return RowStarting(Outline(MCGuiController()), @"added null") >= 0;
+    });
+    MCGuiStep(@"a .jsonc file, comments and trailing commas, has its outline", ^{
+        MCGuiWriteFile(Fixture(@"config.jsonc"),
+                       @"// settings\n{\n  /* how wide */ \"editor.ruler\": 100,\n"
+                       @"  \"files\": [\"a\", \"b\",],  // trailing\n}\n");
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"config.jsonc")]);
+        GCHECK(Outline(c).allowsComments);
+    });
+    MCGuiWait(@"the .jsonc outline", 5, ^BOOL {
+        MCJsonOutlinePane *p = Outline(MCGuiController());
+        return !p.parsing && p.outline.numberOfRows > 1;
+    });
+    MCGuiStep(@"read as JSON with comments", ^{
+        MCJsonOutlinePane *p = Outline(MCGuiController());
+        GCHECK_EQ_STR(p.statusText, @"5 values");
+        GCHECK(RowStarting(p, @"editor.ruler 100") >= 0);
+        GCHECK(RowStarting(p, @"files [2]") >= 0);
+        // A plain .json file is still strict.
+        MCGuiWriteFile(Fixture(@"strict.json"), @"{\"a\": 1, // no\n}\n");
+        GCHECK([MCGuiController() showFile:Fixture(@"strict.json")]);
+        GCHECK(!Outline(MCGuiController()).allowsComments);
+    });
+    MCGuiWait(@"the strict file's verdict", 5, ^BOOL {
+        return [Outline(MCGuiController()).statusText hasPrefix:@"Not valid JSON"];
     });
 }
 
@@ -1032,6 +1066,17 @@ static void NotebookSteps(void) {
         // A block with no language stays plain.
         const NSUInteger plain = [tv.string rangeOfString:@"import plain"].location;
         GCHECK(!SameColor(ColorOf(tv, @"import", plain), [cfg syntax:TokenStyle::Keyword]));
+    });
+    MCGuiStep(@"headings get the core's anchors, as on Linux and Android", ^{
+        MCGuiWriteFile(Fixture(@"anchors.md"), @"# Résumé & Notes\n\ntext\n\n## Résumé & Notes\n\n"
+                                               @"## Plan: v2 (draft)\n");
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"anchors.md")]);
+        NSDictionary *anchors = [c valueForKey:@"markdownAnchors"];
+        GCHECK(anchors[@"résumé--notes"] != nil);
+        GCHECK(anchors[@"résumé--notes-1"] != nil);   // a repeat is numbered
+        GCHECK(anchors[@"plan-v2-draft"] != nil);
+        GCHECK(anchors.count == 3);
     });
 }
 
