@@ -229,6 +229,25 @@ MC_GUI_SUITE(terminal_keys) {
         else GCHECK(!took && s.sent.length == 0);
         MCGuiNote(@"Go Forward %@: Ctrl+Shift+- sent %lu bytes", forward.enabled ? @"enabled" : @"disabled",
                   (unsigned long)s.sent.length);
+        // Ctrl+Shift+Tab: Previous Tab, which cannot act while the grid has
+        // the keyboard with one tab, goes to the program as a back-tab.
+        cg = CGEventCreateKeyboardEvent(NULL, 48, true);
+        CGEventSetFlags(cg, (CGEventFlags)(kCGEventFlagMaskControl | kCGEventFlagMaskShift));
+        e = [NSEvent eventWithCGEvent:cg];
+        CFRelease(cg);
+        NSMenuItem *previous = nil;
+        for (NSMenuItem *top in NSApp.mainMenu.itemArray)
+            for (NSMenuItem *i in top.submenu.itemArray)
+                if ([i.keyEquivalent isEqualToString:@"\t"] &&
+                    (i.keyEquivalentModifierMask & NSEventModifierFlagShift))
+                    previous = i;
+        [previous.menu update];
+        s.sent.length = 0;
+        const BOOL tabTook = [s.c.window performKeyEquivalent:e];
+        NSString *sent = [[NSString alloc] initWithData:s.sent encoding:NSUTF8StringEncoding];
+        if (previous && !previous.enabled) GCHECK(tabTook && [sent isEqualToString:@"\x1b[Z"]);
+        MCGuiNote(@"Previous Tab %@: Ctrl+Shift+Tab sent %lu bytes",
+                  previous.enabled ? @"enabled" : @"disabled", (unsigned long)s.sent.length);
         // Every Ctrl+Shift item of the menu, and whether it acts here.
         NSMutableArray *items = [NSMutableArray array];
         NSMutableArray *stack = [NSMutableArray arrayWithObject:NSApp.mainMenu];
