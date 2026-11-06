@@ -407,7 +407,19 @@ container (PanelHost, laid out by hand in layoutContainer)
   the palette finds them.
 - **Dirty means "differs from disk"**: `noteEdited` compares with `savedText`
   (length first), so undoing back clears the dot. `savedText` is the text as
-  read (NSString drops a BOM, never written back; CRLF survives).
+  read (CRLF survives); a UTF-8 BOM is kept apart in `MCTab bom` and written
+  back.
+- **One writer**: Cmd+S, `saveTab:` and auto-save all go through
+  `writeText:toTab:interactive:` over `FolderSearch::writeFileAtomically`
+  (a symlink stays a link, hard links and files owned by someone else are
+  written in place, xattrs, ACL and creation date kept, F_FULLFSYNC), which
+  refuses a tab without text of its own (`tabHasTextToWrite:`: SQLite, Quick
+  Look, a large CSV) and sends didSave. `writeToFile:atomically:` replaced a
+  link with a plain file. What a tab knows of its file is a stat with
+  symlinks followed (`MCDiskStamp`: date, inode, size; `tab:changedOnDisk:`
+  compares all three), taken before the read (`MCReadDiskText`, over
+  `FolderSearch::readFileStable`), so a file still being written never reads
+  as clean; `attributesOfItemAtPath:` did not follow links.
 - **Keys**: Ctrl+Tab / Ctrl+Shift+Tab, Shift+Cmd+] / [, Shift+Cmd+1..9 and
   Ctrl+1..9 (macOS takes Shift+Cmd+3, 4, 5). Cmd+W (`closeFocused:`) closes the
   tab, or the terminal, browser or Problems list with the keyboard; a repeat
@@ -419,16 +431,23 @@ container (PanelHost, laid out by hand in layoutContainer)
 - **Unsaved tabs are never dropped**: a dirty tab asks Save / Don't Save /
   Cancel; window close, Open Folder and quit ask once for all. Trash closes
   only clean tabs of what went; `pathMovedFrom:to:` moves tabs.
-- **The disk**: a buffer replaced from disk loses its undo steps
-  (`forgetHistoryOf:`). Every save checks the date first (`mayWriteTab:`:
+- **The disk**: a buffer replaced from disk by choice (Reload) loses its undo
+  steps (`forgetHistoryOf:`). Every save checks the stamp first (`mayWriteTab:`:
   changed outside asks Keep Mine / Reload / Cancel; gone asks before writing).
   Save All asks every question first (`diskDecisionForTab:`), then writes.
   `saveTab:` saves a background tab in place (a keep-sorted sort waits in
   `pendingSort`). Moved or deleted outside (FSEvents, `checkTabsOnDisk`, show
   and focus): a same-folder rename is followed by inode and date (`fileID`),
-  else the tab is `gone` ("(deleted)") until the file returns. **A clean tab
-  follows the disk** (`reloadCleanTab:`): the tab on show takes the new text
-  through `replaceSourceWithText:` with undo off, keeping caret and top line.
+  else the tab is `gone` ("(deleted)") until the file returns, and is read in
+  the same pass when it does. **A clean tab follows the disk**: from FSEvents
+  (`followCleanTabInBackground:`) the file is read and diffed off the main
+  thread, generation-counted, and a file over 8 MB is only noted and read on
+  show or focus; on show or focus (`reloadCleanTab:`) on the main thread. The
+  new text goes in as one undo step, "Reload from Disk", keeping caret, top
+  line and the steps before it (`replaceSourceWithText:`, or for a tab not on
+  show as text an undo action of its own, `registerReloadUndoForTab:`; an
+  NSTextView registration made during an undo redid onto the wrong range).
+  A read that fails moves no date.
 - **Sessions**: `MCTabSessions` (NSUserDefaults, by resolved folder, 50
   folders) reopens a folder's tabs and its browser page, else a read-only empty
   editor. Off under `MINICODE_DEMO` and `MINICODE_BENCH`;
@@ -478,7 +497,10 @@ container (PanelHost, laid out by hand in layoutContainer)
   a dialog from a timer (`writeTabForAutoSave:` checks the disk by hand; a file
   changed outside is skipped and named, so Cmd+S asks). Skipped: gone and
   unloaded tabs, a tab whose Cmd+S waits for its formatter, a tab with an
-  inline-agent edit awaiting Keep or Discard (`MCAgentSession editPending`).
+  inline-agent edit awaiting Keep or Discard (`MCAgentSession editPending`),
+  and the tab on show while an input method composes (`hasMarkedText`). The
+  close and quit questions run `autoSaveNow` first, so auto-save's writes are
+  not asked about. A restored backup opens in its viewer (a CSV's table).
   Trap: the focus-change save and the delay's debounce shared a selector and
   `updateTitle` cancelled the save after a tab switch; nothing may cancel
   `autoSaveNow`.
@@ -725,7 +747,11 @@ container (PanelHost, laid out by hand in layoutContainer)
   the tab through the rename applier (`applyEditsToPaths:`); a file with
   unsaved text in any window is left alone and named; others go through
   `FolderSearch::writeFileAtomically` (mode kept, synced, renamed; symlinks
-  followed; hard links written in place). `replaceOneAt` maps a result's byte
+  followed; hard links written in place). A file under two names (a symlink,
+  a hard link, a symlinked folder) is counted and replaced once, by device and
+  inode, and one reached through a link to outside the folder is named in the
+  question (`FolderReplaceFile::outside`). Replace Match replaces only while
+  the row's line still reads as searched. `replaceOneAt` maps a result's byte
   column to a tab's UTF-16.
 
 ## Formatting (Mac)
