@@ -25,7 +25,9 @@ jobs:
 
       # The app driven offscreen (tests/gui/Harness.h): no window ever
       # reaches the screen, and the run has its own home, settings and
-      # temporary folder.
+      # temporary folder. The language server checks talk to a scripted
+      # server (tests/fakelsp) that make guitest builds, so none of them
+      # needs a real server installed on the runner.
       - name: Run the GUI checks
         run: make guitest
 
@@ -75,3 +77,26 @@ jobs:
       - name: Makefile fallback tests
         working-directory: linux
         run: make test
+
+  android:
+    name: Android debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Gradle 8 runs on JDK 17 to 21 (it refuses newer ones). The runner
+      # has the Android SDK, with its licenses accepted, so the Android
+      # Gradle plugin fetches the NDK it wants if that one is missing.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      # The debug build is signed with a debug key Gradle makes on the spot;
+      # the release key never leaves the release Mac, so CI builds this one.
+      # It compiles the shared core from ../src through the NDK, which the
+      # other jobs never do.
+      - name: Build the debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug
