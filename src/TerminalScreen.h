@@ -9,8 +9,16 @@
 // cursor keys, keypad mode, bracketed paste). Replies the program asks for
 // (cursor position, device attributes) are queued for the host to write back.
 //
-// It also encodes keys into the bytes a program expects, so the GUI layer only
-// maps its key events onto TermKey.
+// It also encodes keys and mouse events into the bytes a program expects, so
+// the GUI layer only maps its events onto TermKey and TermMouse.
+//
+// Soft wraps: a row that ended because the text ran past the right edge
+// (auto-wrap) is marked as continuing on the next row, and a line of the
+// scrollback keeps the mark. A width change rejoins such rows and wraps
+// them again at the new width (reflow), on the main screen and in the
+// scrollback, as iTerm2, Terminal.app and VS Code do; the alternate screen
+// is cut or padded, since the program there draws it again. Copying,
+// find and the host's link lookup read a wrapped line as one.
 #pragma once
 #include "TerminalStream.h"
 #include <cstdint>
@@ -25,16 +33,31 @@ struct TermCell {
     uint8_t width = 1;      // 1, 2 (left half of a wide character), 0 (right half)
 };
 
-// A place the find bar found its text: `width` cells from `col` of `line`,
-// a line as TerminalScreen::lineCell numbers them (negative: the scrollback).
+// A place the find bar found its text: from `col` of `line` to `endCol`
+// (exclusive) of `endLine`, lines as TerminalScreen::lineCell numbers them
+// (negative: the scrollback). endLine is past line when the text runs over
+// a soft wrap; `width` is the cells it covers in all.
 struct TermMatch {
     int line = 0;
     int col = 0;
     int width = 0;
+    int endLine = 0;
+    int endCol = 0;
     bool operator==(const TermMatch& o) const {
-        return line == o.line && col == o.col && width == o.width;
+        return line == o.line && col == o.col && width == o.width &&
+               endLine == o.endLine && endCol == o.endCol;
     }
 };
+
+// A place in the scrollback and screen (lines as lineCell numbers them),
+// which resize() carries along with its text when it reflows.
+struct TermPos {
+    int line = 0;
+    int col = 0;
+};
+
+// Mouse events a program can ask for (DECSET 9, 1000, 1002, 1003).
+enum class TermMouse { Press, Release, Motion, WheelUp, WheelDown };
 
 enum class TermKey {
     Up, Down, Right, Left, Home, End, PageUp, PageDown, Insert, Delete,
@@ -52,13 +75,20 @@ public:
     void feed(const char* data, size_t length);
     void feed(const std::string& s) { feed(s.data(), s.size()); }
 
-    // Change the size. Columns are cut or padded (no reflow); when rows are
-    // removed, lines scroll off the top as needed to keep the cursor's line
-    // (into the scrollback, on the main screen). When rows are added to the
-    // main screen and the scrollback has lines, they come back down from it,
-    // as in Terminal.app, so making a pane smaller and larger again loses
-    // nothing; otherwise blank rows are added below.
-    void resize(int cols, int rows);
+    // Change the size. The main screen and the scrollback are reflowed:
+    // rows joined by soft wraps become one line again and are wrapped at
+    // the new width (a wide character that no longer fits at the end of a
+    // row moves to the next), and the cursor and the saved cursor stay on
+    // their characters. When rows are removed, or reflowed lines take more
+    // rows, lines go up into the scrollback to keep the cursor and the text
+    // on screen; blank rows below them are cut first. When rows are added,
+    // or lines take fewer, lines come back down from the scrollback, as in
+    // Terminal.app, so making a pane smaller and larger again loses
+    // nothing. The alternate screen is cut or padded, not reflowed.
+    // `keep`, if given, holds places (a view's top line, a selection) that
+    // are moved with their text; one whose line left the scrollback ends up
+    // above -historySize().
+    void resize(int cols, int rows, std::vector<TermPos>* keep = nullptr);
 
     int cols() const { return cols_; }
     int rows() const { return rows_; }
@@ -86,6 +116,13 @@ public:
     int lineWidth(int line) const;
     // A line as UTF-8, trailing blanks dropped (rowText for screen rows).
     std::string lineText(int line) const;
+    // The line ran past the right edge and continues on the next one (a
+    // soft wrap). The last screen row may say so while the cursor waits to
+    // write there.
+    bool lineWraps(int line) const;
+    // Cells of a wrapped line that belong to its text: all but a blank
+    // left at the end by a wide character that went to the next line.
+    int lineTextWidth(int line) const;
     void clearHistory() { history_.clear(); }
     // Bytes the scrollback takes (its lines' own storage, as allocated),
     // and what the same cells would take as TermCells, for the tests.
@@ -95,8 +132,9 @@ public:
     // Every place `query` appears, in reading order: the scrollback first
     // (on the main screen; the alternate screen has none), then the screen.
     // Case is ignored unless `matchCase` (ASCII, Latin-1, Greek and Cyrillic
-    // letters). A match never runs from one line into the next, even where
-    // a program's long line wrapped. At most `limit` are returned.
+    // letters). A match runs over a soft wrap (a long line the terminal
+    // wrapped) but never from one line into the next. At most `limit` are
+    // returned.
     std::vector<TermMatch> find(const std::string& query, bool matchCase,
                                 size_t limit = 10000) const;
 
@@ -114,8 +152,9 @@ public:
     // Every row, joined with "\n", trailing blank rows dropped.
     std::string text() const;
     // The text between two cells, inclusive and in reading order, as a
-    // selection copies it: each row's trailing blanks dropped. Rows are
-    // lines as lineCell numbers them, so negative ones are the scrollback.
+    // selection copies it: each row's trailing blanks dropped, and no line
+    // break where a row wrapped onto the next. Rows are lines as lineCell
+    // numbers them, so negative ones are the scrollback.
     // A selection that reaches the right edge of a scrollback line wider
     // than the screen takes the whole line.
     std::string textBetween(int row0, int col0, int row1, int col1) const;
@@ -146,6 +185,26 @@ public:
     const std::string& directory() const { return directory_; }
     int commandsEnded() const { return commandsEnded_; }
 
+    // Mouse reporting: what the program asked for. mouseTracking() is 0
+    // (none), 9 (X10: presses only), 1000 (presses and releases), 1002 (and
+    // motion with a button down) or 1003 (all motion); mouseEncoding() is 0
+    // (xterm's bytes), 1005 (UTF-8), 1006 (SGR) or 1015 (urxvt).
+    int mouseTracking() const { return mouseTracking_; }
+    int mouseEncoding() const { return mouseEncoding_; }
+    // DECSET 1004: the program wants to hear when the terminal gains and
+    // loses the keyboard (encodeFocus).
+    bool focusEvents() const { return focusEvents_; }
+    // Turn mouse reporting and focus events off, as when the shell's prompt
+    // comes back after a program that never turned them off.
+    void resetMouseModes();
+    // The bytes for a mouse event at a cell (0-based), or "" when the
+    // program did not ask for it. `button` is 0 left, 1 middle, 2 right
+    // (Press, Release, and Motion with a button down; -1 for motion with
+    // none); mods is a TermMod mask (xterm sends Shift, Alt as Meta and
+    // Ctrl). A release in xterm's and urxvt's bytes cannot say which button.
+    std::string encodeMouse(TermMouse kind, int button, int col, int row, int mods) const;
+    static std::string encodeFocus(bool focused) { return focused ? "\x1b[I" : "\x1b[O"; }
+
     // Bytes the program asked the terminal to send back (DSR, DA). The host
     // writes them to the pty; taking them clears the queue.
     std::string takeReplies();
@@ -162,7 +221,13 @@ public:
     static std::string encodePaste(const std::string& text, bool bracketed);
 
 private:
-    using Row = std::vector<TermCell>;
+    // A screen row: its cells, and whether it continues on the next row
+    // (0 no; 1 it wrapped; 2 it wrapped and its last cell is a blank left
+    // by a wide character that did not fit).
+    struct Row : std::vector<TermCell> {
+        using std::vector<TermCell>::vector;
+        uint8_t wrap = 0;
+    };
     using Grid = std::vector<Row>;
     // A scrollback line, packed: a TermCell is about 48 bytes, and a
     // terminal keeps thousands of lines. The cells' text is one string;
@@ -178,10 +243,19 @@ private:
         std::vector<uint32_t> cells;
         std::vector<StyleRun> runs;   // by col, the first at 0
         int width = 0;                // cells in the line
+        uint8_t wrap = 0;             // as Row::wrap; a wrapped line keeps
+                                      // its trailing blanks
     };
     static HistLine pack(const Row& row, size_t width);
     static Row unpack(const HistLine& line);
     static TermCell histCell(const HistLine& line, int col);
+    static HistLine packRow(const Row& row);   // trailing blanks dropped unless wrapped
+    // Reflow helpers on packed lines.
+    static size_t cellStart(const HistLine& h, int col);
+    static void appendCells(HistLine& dst, const HistLine& src, int from, int to);
+    static void simplify(HistLine& h);
+    struct Point { int abs; int col; bool pending; bool cursor; bool dropped; };
+    void reflowMain(int cols, int rows, std::vector<Point>& points);
     struct Saved {
         int x = 0, y = 0;
         TermStyle style;
@@ -209,6 +283,12 @@ private:
     bool cursorVisible_ = true, appCursor_ = false, appKeypad_ = false;
     bool bracketedPaste_ = false;
     bool syncOutput_ = false;
+    int mouseTracking_ = 0, mouseEncoding_ = 0;
+    bool focusEvents_ = false;
+    // An OSC 133;A (prompt start) came and no carriage return since: an
+    // auto-wrap now is zsh's PROMPT_SP moving the prompt below unfinished
+    // output, and the output's row does not continue onto the prompt's.
+    bool promptSp_ = false;
     int syncEnds_ = 0;
     int g0_ = 0, g1_ = 0, gl_ = 0;    // charsets: 0 ASCII, 1 DEC line drawing
     std::string lastChar_;            // for REP
@@ -239,6 +319,7 @@ private:
     void moveTo(int x, int y);        // absolute; clamps, clears pending wrap
     void clearWide(int y, int x);     // blank the other half of a wide char
     void eraseCells(int y, int from, int to);   // [from, to)
+    void unwrapAbove(int y);          // the row above y no longer continues
     void switchScreen(bool alt, bool saveCursor, bool clearAlt);
     void saveCursor();
     void restoreCursor();

@@ -636,11 +636,16 @@ static BOOL MCWindowTabAction(SEL a) {
         ctx.goToLine = ^(NSInteger line, NSInteger column) {
             [weak goToLine:(int)line column:(int)column];
         };
+    [c addSymbolsToPaletteContext:ctx];
     MCShowPalette(c.window, text, ctx);
 }
 - (void)showCommandPalette:(id)sender { (void)sender; [self showPaletteWithText:@">"]; }
 - (void)quickOpen:(id)sender          { (void)sender; [self showPaletteWithText:@""]; }
 - (void)goToLinePrompt:(id)sender     { (void)sender; [self showPaletteWithText:@":"]; }
+- (void)goToSymbolInFile:(id)sender   { (void)sender; [self showPaletteWithText:@"@"]; }
+- (void)goToSymbolInWorkspace:(id)sender { (void)sender; [self showPaletteWithText:@"#"]; }
+- (void)navigateBack:(id)sender       { [[self current] navigateBack:sender]; }
+- (void)navigateForward:(id)sender    { [[self current] navigateForward:sender]; }
 // App-wide, so it works from any window.
 - (void)toggleTreeColumn:(id)sender { MCToggleTreeColumn((MCTreeColumns)[sender tag]); }
 - (void)showContextMenu:(id)sender {
@@ -1132,6 +1137,42 @@ static void BuildMenu(void) {
     zoomReset.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     [viewMenu addItem:zoomReset];
 
+    // Folding (FoldView.h). VS Code's Option+Cmd+[ and ] are minicode's
+    // previous and next terminal, and its other folding keys are Cmd+K
+    // chords, which minicode has none of; so Control+Command with the
+    // chord's second key: [ fold, ] unfold, L toggle, 0 fold all, J unfold
+    // all, / fold comments, 1 to 7 a level. Answered by the editor's text
+    // view while it has the keyboard.
+    NSMenuItem *foldingItem = [[NSMenuItem alloc] initWithTitle:@"Folding" action:nil
+                                                  keyEquivalent:@""];
+    NSMenu *foldingMenu = [[NSMenu alloc] initWithTitle:@"Folding"];
+    const NSEventModifierFlags ctrlCmd = NSEventModifierFlagControl | NSEventModifierFlagCommand;
+    NSMenuItem *(^addFold)(NSString *, SEL, NSString *) =
+        ^NSMenuItem *(NSString *title, SEL action, NSString *key) {
+            NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:title action:action
+                                                 keyEquivalent:key];
+            it.keyEquivalentModifierMask = key.length ? ctrlCmd : 0;
+            [foldingMenu addItem:it];
+            return it;
+        };
+    addFold(@"Fold", @selector(foldRegion:), @"[");
+    addFold(@"Unfold", @selector(unfoldRegion:), @"]");
+    addFold(@"Toggle Fold", @selector(toggleFold:), @"l");
+    addFold(@"Fold Recursively", @selector(foldRecursively:), @"");
+    addFold(@"Unfold Recursively", @selector(unfoldRecursively:), @"");
+    [foldingMenu addItem:[NSMenuItem separatorItem]];
+    addFold(@"Fold All", @selector(foldAll:), @"0");
+    addFold(@"Unfold All", @selector(unfoldAll:), @"j");
+    addFold(@"Fold All Comments", @selector(foldAllComments:), @"/");
+    for (NSInteger level = 1; level <= 7; level++) {
+        NSMenuItem *it = addFold([NSString stringWithFormat:@"Fold Level %ld", (long)level],
+                                 @selector(foldLevel:),
+                                 [NSString stringWithFormat:@"%ld", (long)level]);
+        it.tag = level;
+    }
+    foldingItem.submenu = foldingMenu;
+    [viewMenu addItem:foldingItem];
+
     [viewMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *sidebar =
@@ -1336,6 +1377,29 @@ static void BuildMenu(void) {
                                              keyEquivalent:@"g"];
     goLine.keyEquivalentModifierMask = NSEventModifierFlagControl;
     [navMenu addItem:goLine];
+    // VS Code's keys: Shift+Cmd+O the file's symbols ("@" in the palette),
+    // Cmd+T the workspace's ("#"), from the language servers or, for the
+    // file, the built-in outline.
+    NSMenuItem *fileSymbol = [[NSMenuItem alloc] initWithTitle:@"Go to Symbol in File…"
+                                                        action:@selector(goToSymbolInFile:)
+                                                 keyEquivalent:@"o"];
+    fileSymbol.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [navMenu addItem:fileSymbol];
+    [navMenu addItemWithTitle:@"Go to Symbol in Workspace…"
+                       action:@selector(goToSymbolInWorkspace:)
+                keyEquivalent:@"t"];
+    // Ctrl+- and Ctrl+Shift+-, VS Code's Mac keys. A program on the
+    // terminal's grid gets Ctrl+- instead (TerminalGridView claims Ctrl).
+    NSMenuItem *back = [[NSMenuItem alloc] initWithTitle:@"Go Back"
+                                                  action:@selector(navigateBack:)
+                                           keyEquivalent:@"-"];
+    back.keyEquivalentModifierMask = NSEventModifierFlagControl;
+    [navMenu addItem:back];
+    NSMenuItem *forward = [[NSMenuItem alloc] initWithTitle:@"Go Forward"
+                                                     action:@selector(navigateForward:)
+                                              keyEquivalent:@"-"];
+    forward.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagShift;
+    [navMenu addItem:forward];
     // VS Code's Go to Bracket. Shift+Cmd+\ (Cmd+\ splits the terminal).
     NSMenuItem *goBracket = [[NSMenuItem alloc] initWithTitle:@"Go to Bracket"
                                                        action:@selector(goToBracket:)

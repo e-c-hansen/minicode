@@ -75,7 +75,8 @@ extern NSNotificationName const MCTerminalCommandDidFinishNotification;
 @property(nonatomic, readonly, copy) NSString *runningCommand;
 // A runCommand: line still waiting for the shell's prompt, or nil.
 @property(nonatomic, readonly, copy) NSString *pendingCommand;
-// What a tab shows: the command running, else the folder's name.
+// What a tab shows: the running program's own title (OSC 0 or 2), else
+// the command running, else the folder's name.
 @property(nonatomic, readonly, copy) NSString *title;
 // A title given from outside (`minicode term --title`), shown in place of
 // the one above; nil for none.

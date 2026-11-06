@@ -7,12 +7,14 @@
 #import "AppSettings.h"
 #import "Terminal.h"   // MCTerminalCommandDidFinishNotification
 #import "MultiCaretView.h"
+#import "FoldView.h"
 #import "LspPicker.h"
 #include "Formatter.h"
 #include "InstallHints.h"
 #include "LspClient.h"
 #include "MarkdownParser.h"
 #include "PythonEnvs.h"
+#include "SymbolOutline.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -515,15 +517,18 @@ NSUInteger MCLspRunningServerCount(void) { return gServers.count; }
 @implementation CodeTextView {
     NSTrackingArea *_hoverArea;
     MCMultiCarets *_multi;
+    MCFolds *_folds;
     NSEvent *_keyEvent;   // the key being interpreted, during keyDown:
 }
 
 - (MCMultiCarets *)multiCarets { return _multi; }
+- (MCFolds *)folds { return _folds; }
 - (BOOL)multiCaretActive { return _multi.active; }
 
 - (instancetype)initWithFrame:(NSRect)frame {
     if ((self = [super initWithFrame:frame])) {
         _multi = [[MCMultiCarets alloc] initWithTextView:self];
+        _folds = [[MCFolds alloc] initWithTextView:self];
         [[NSNotificationCenter defaultCenter]
             addObserver:self selector:@selector(storageEdited:)
                    name:NSTextStorageDidProcessEditingNotification
@@ -668,6 +673,8 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
 
 - (void)drawRect:(NSRect)dirty {
     [super drawRect:dirty];
+    if (_folds.hasFolds && self.editable)
+        [_folds drawPlaceholdersInRect:dirty color:_bracketMatchColor ?: [NSColor grayColor]];
     [_multi drawInRect:dirty];
     if (_diagnostics.count == 0) return;
     NSRange visible = [self visibleCharacterRange];
@@ -680,6 +687,7 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
     for (MCDiagnosticMark *m in ordered) {
         NSRange r = m.range;
         if (NSMaxRange(r) < visible.location || r.location > NSMaxRange(visible)) continue;
+        if ([_folds rangeIsHidden:r]) continue;   // folded away
         NSColor *color = SeverityColor(m.severity);
         [self enumerateRectsForRange:r block:^(NSRect rect) {
             if (!NSIntersectsRect(NSInsetRect(rect, 0, -3), dirty)) return;
@@ -794,6 +802,13 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
 }
 
 - (void)doCommandBySelector:(SEL)selector {
+    // Backspace just after a fold's placeholder, or Delete just before it,
+    // opens the fold rather than deleting text nobody can see.
+    if (_folds.hasFolds && self.editable && !_multi.active && self.selectedRange.length == 0) {
+        const NSUInteger at = self.selectedRange.location;
+        if (selector == @selector(deleteBackward:) && [_folds openFoldEndingAt:at]) return;
+        if (selector == @selector(deleteForward:) && [_folds openFoldStartingAt:at]) return;
+    }
     // Cmd+Shift+Up/Down (select to the top or end of the file in AppKit) and
     // Shift+Option+Up/Down (select by paragraph) copy the lines instead, as
     // in VS Code. Only from the arrow keys: Shift+Home and Shift+End send the
@@ -860,8 +875,37 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
     [_multi deleteLines];
 }
 
+// ---- folding (View > Folding)
+- (void)foldCommand:(BOOL (^)(MCFolds *f))command {
+    if (!self.editable || !command(_folds)) NSBeep();
+}
+- (IBAction)foldRegion:(id)sender { [self foldCommand:^BOOL(MCFolds *f) { return [f foldAtCarets]; }]; }
+- (IBAction)unfoldRegion:(id)sender { [self foldCommand:^BOOL(MCFolds *f) { return [f unfoldAtCarets]; }]; }
+- (IBAction)toggleFold:(id)sender { [self foldCommand:^BOOL(MCFolds *f) { return [f toggleAtCarets]; }]; }
+- (IBAction)foldRecursively:(id)sender {
+    [self foldCommand:^BOOL(MCFolds *f) { return [f foldRecursivelyAtCarets]; }];
+}
+- (IBAction)unfoldRecursively:(id)sender {
+    [self foldCommand:^BOOL(MCFolds *f) { return [f unfoldRecursivelyAtCarets]; }];
+}
+- (IBAction)foldAll:(id)sender { [self foldCommand:^BOOL(MCFolds *f) { return [f foldAll]; }]; }
+- (IBAction)unfoldAll:(id)sender { [self foldCommand:^BOOL(MCFolds *f) { return [f unfoldAll]; }]; }
+- (IBAction)foldLevel:(id)sender {
+    const NSInteger level = [sender respondsToSelector:@selector(tag)] ? [sender tag] : 1;
+    [self foldCommand:^BOOL(MCFolds *f) { return [f foldLevel:level]; }];
+}
+- (IBAction)foldAllComments:(id)sender {
+    [self foldCommand:^BOOL(MCFolds *f) { return [f foldAllComments]; }];
+}
+
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     SEL a = item.action;
+    if (a == @selector(foldRegion:) || a == @selector(unfoldRegion:) ||
+        a == @selector(toggleFold:) || a == @selector(foldRecursively:) ||
+        a == @selector(unfoldRecursively:) || a == @selector(foldAll:) ||
+        a == @selector(unfoldAll:) || a == @selector(foldLevel:) ||
+        a == @selector(foldAllComments:))
+        return self.editable;
     if (a == @selector(addNextOccurrence:) || a == @selector(selectAllOccurrences:) ||
         a == @selector(addCursorAbove:) || a == @selector(addCursorBelow:) ||
         a == @selector(expandLineSelection:) || a == @selector(deleteLine:))
@@ -959,6 +1003,9 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
                  affinity:(NSSelectionAffinity)affinity
            stillSelecting:(BOOL)still {
     if (_multi.active && !_multi.applying) [_multi clear];
+    // A selection that lands inside a fold (Find, Go to Line, a definition,
+    // F8) opens it, so what was gone to is seen.
+    if (_folds.hasFolds && !still) [_folds revealRanges:ranges];
     [super setSelectedRanges:ranges affinity:affinity stillSelecting:still];
 }
 
@@ -973,6 +1020,7 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
 }
 
 - (void)mouseDown:(NSEvent *)event {
+    if (self.editable && [_folds mouseDown:event]) return;   // a fold's placeholder
     if ([_multi mouseDown:event]) return;
     NSEventModifierFlags mods = event.modifierFlags &
         NSEventModifierFlagDeviceIndependentFlagsMask;
@@ -1616,6 +1664,83 @@ static NSString *DocKey(NSString *uri, MCLspServer *server) {
     return [NSString stringWithFormat:@"%@ %@", server.serverId, uri];
 }
 
+@implementation MCSymbolItem
+@end
+
+// Where each line of a text starts (LSP's lines: \n, \r\n and \r end
+// one), for turning many positions into offsets in one pass.
+static std::vector<NSUInteger> LineStarts(NSString *text) {
+    std::vector<NSUInteger> starts{0};
+    const NSUInteger n = text.length;
+    std::vector<unichar> buf(n);
+    if (n) [text getCharacters:buf.data() range:NSMakeRange(0, n)];
+    for (NSUInteger i = 0; i < n; i++) {
+        if (buf[i] == '\r') {
+            if (i + 1 < n && buf[i + 1] == '\n') i++;
+            starts.push_back(i + 1);
+        } else if (buf[i] == '\n') {
+            starts.push_back(i + 1);
+        }
+    }
+    return starts;
+}
+
+static NSUInteger OffsetAt(const std::vector<NSUInteger> &starts, NSString *text,
+                           Lsp::Position p) {
+    if (p.line < 0) return 0;
+    if ((size_t)p.line >= starts.size()) return text.length;
+    NSUInteger a = starts[(size_t)p.line];
+    NSUInteger b = (size_t)p.line + 1 < starts.size() ? starts[(size_t)p.line + 1] : text.length;
+    while (b > a && ([text characterAtIndex:b - 1] == '\n' || [text characterAtIndex:b - 1] == '\r'))
+        b--;
+    return MIN(a + (NSUInteger)MAX(0, p.character), b);
+}
+
+static MCSymbolItem *MCSymbolItemFrom(const Lsp::Symbol &s) {
+    MCSymbolItem *it = [MCSymbolItem new];
+    it.name = NS(s.name);
+    it.detail = s.detail.empty() ? nil : NS(s.detail);
+    it.container = s.container.empty() ? nil : NS(s.container);
+    it.kind = s.kind;
+    it.depth = s.depth;
+    it.line = s.selectionRange.start.line;
+    it.character = s.selectionRange.start.character;
+    it.endLine = s.selectionRange.end.line;
+    it.endCharacter = s.selectionRange.end.character;
+    it.range = NSMakeRange(NSNotFound, 0);
+    return it;
+}
+
+// Symbols of `text` as items with their ranges in it, and the one at the caret.
+static NSArray<MCSymbolItem *> *MCSymbolItemsFrom(const std::vector<Lsp::Symbol> &syms,
+                                                  NSString *text, NSUInteger caret,
+                                                  NSInteger *caretIndex) {
+    const std::vector<NSUInteger> starts = LineStarts(text);
+    NSMutableArray<MCSymbolItem *> *items = [NSMutableArray array];
+    for (const Lsp::Symbol &s : syms) {
+        MCSymbolItem *it = MCSymbolItemFrom(s);
+        NSUInteger a = OffsetAt(starts, text, s.selectionRange.start);
+        NSUInteger b = OffsetAt(starts, text, s.selectionRange.end);
+        it.range = NSMakeRange(a, b >= a ? b - a : 0);
+        [items addObject:it];
+    }
+    if (caretIndex) {
+        caret = MIN(caret, text.length);
+        auto at = std::upper_bound(starts.begin(), starts.end(), caret);
+        const int line = (int)(at - starts.begin()) - 1;
+        *caretIndex = Lsp::symbolAt(syms, Lsp::Position{line, (int)(caret - starts[(size_t)line])});
+    }
+    return items;
+}
+
+NSArray<MCSymbolItem *> *MCOutlineSymbols(NSString *path, NSString *text, NSUInteger caret,
+                                          NSInteger *caretIndex) {
+    if (caretIndex) *caretIndex = -1;
+    if (!path.length || !text) return @[];
+    std::vector<Lsp::Symbol> syms = Outline::outline(Std(path.lastPathComponent), U16Of(text));
+    return MCSymbolItemsFrom(syms, text, caret, caretIndex);
+}
+
 @implementation MCProblem
 @end
 
@@ -1687,6 +1812,10 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     NSString *_renameText;                    // the text when the field opened
     BOOL _applyingEdit;                       // a WorkspaceEdit is going into the text
     NSString *_commandTitle;                  // the quick fix whose command is running
+
+    // Go to Symbol: answers for an older request are dropped.
+    int _symbolGen, _workspaceGen;
+    NSMutableArray<NSArray *> *_workspaceRequests;   // [server, request id] still out
 }
 
 - (instancetype)initWithTextView:(CodeTextView *)textView root:(NSString *)root {
@@ -1697,6 +1826,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     _docs = [NSMutableDictionary dictionary];
     _servers = @[];
     _ruffConfigured = [NSMutableDictionary dictionary];
+    _workspaceRequests = [NSMutableArray array];
     _settingsSignature = [self currentSettingsSignature];
     _pythonSetting = NS([AppSettings shared].settings.pythonInterpreter());
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
@@ -2601,6 +2731,7 @@ static BOOL IsRunnable(NSString *path) {
         }
         BOOL wasRunning = _entries[_langKey].server != nil;
         [self attachDocument];
+        [self scheduleFoldingRanges:0.1];
         // In automatic mode another file may sit in another environment.
         // Only a real change reaches the server (same environment: nothing).
         if (wasRunning && [_langKey isEqualToString:@"python"])
@@ -2613,6 +2744,38 @@ static BOOL IsRunnable(NSString *path) {
 
 - (void)tabsChanged {
     [self syncOpenDocuments];
+}
+
+// ---- folding ranges: the server's, when it offers them, take the place of
+// the editor's own (FoldView.h) for as long as the text stays as it was.
+- (void)scheduleFoldingRanges:(NSTimeInterval)delay {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(requestFoldingRanges)
+                                               object:nil];
+    [self performSelector:@selector(requestFoldingRanges) withObject:nil afterDelay:delay];
+}
+
+- (void)requestFoldingRanges {
+    if (!_uri || !_tv.editable) return;
+    MCLspServer *server = [self serverFor:Lsp::Feature::FoldingRange];
+    if (!server) return;
+    [self flushChanges];
+    MCFolds *folds = _tv.folds;
+    const uint64_t gen = folds.generation;
+    NSString *uri = _uri;
+    __weak LspSession *weakSelf = self;
+    server.client.foldingRanges(Std(uri), [weakSelf, uri, gen](const Json &r, const Json &e) {
+        LspSession *me = weakSelf;
+        if (!me || !e.isNull() || ![uri isEqualToString:me->_uri]) return;
+        NSMutableArray<NSValue *> *ranges = [NSMutableArray array];
+        NSMutableArray<NSString *> *kinds = [NSMutableArray array];
+        for (const Lsp::FoldingRange &f : Lsp::parseFoldingRanges(r)) {
+            [ranges addObject:[NSValue valueWithRange:NSMakeRange((NSUInteger)f.startLine,
+                                                                  (NSUInteger)(f.endLine - f.startLine))]];
+            [kinds addObject:NS(f.kind)];
+        }
+        [me->_tv.folds setServerRanges:ranges kinds:kinds generation:gen];
+    });
 }
 
 // Every tab's file stays open on its language's server, with the tab's text,
@@ -2729,6 +2892,7 @@ static BOOL IsRunnable(NSString *path) {
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushChanges)
                                                object:nil];
     [self performSelector:@selector(flushChanges) withObject:nil afterDelay:0.3];
+    [self scheduleFoldingRanges:0.6];
     // A rename or a fix going in is not typing: no completion or signature.
     if (_applyingEdit) return;
 
@@ -3486,8 +3650,19 @@ static const NSTimeInterval kResolveBeforeAccept = 0.4;
     return target;
 }
 
-// Open a location's file (go to definition, a reference) and select its range.
+// Open a location's file (go to definition, a reference) and select its
+// range, inside aroundJump when the window has one (for Go Back).
 - (void)revealLocation:(const Lsp::Location &)loc {
+    if (self.aroundJump) {
+        Lsp::Location copy = loc;
+        __weak LspSession *weakSelf = self;
+        self.aroundJump(^{ [weakSelf revealLocationNow:copy]; });
+        return;
+    }
+    [self revealLocationNow:loc];
+}
+
+- (void)revealLocationNow:(const Lsp::Location &)loc {
     if (![self uri:loc.uri isSameFileAs:_uri]) {
         NSString *path = [self treePathForURI:loc.uri];
         if (!path.length || !self.openFile || !self.openFile(path)) return;
@@ -4093,6 +4268,117 @@ static NSString *ErrorText(const Json &error) {
 }
 
 // ---- references
+// ---- Go to Symbol
+- (void)documentSymbolsWithCompletion:(void (^)(NSArray<MCSymbolItem *> *, NSInteger,
+                                                NSString *))done {
+    if (!done) return;
+    if (!_path || !_tv.editable) {
+        done(nil, -1, nil);
+        return;
+    }
+    MCLspServer *server = [self serverFor:Lsp::Feature::DocumentSymbols];
+    NSString *path = _path;
+    if (!server || !_uri) {
+        NSInteger caret = -1;
+        NSArray *items = MCOutlineSymbols(path, _tv.string, _tv.selectedRange.location, &caret);
+        done(items, caret, @"outline");
+        return;
+    }
+    [self flushChanges];
+    int gen = ++_symbolGen;
+    NSString *uri = _uri, *name = server.name;
+    __weak LspSession *weakSelf = self;
+    server.client.documentSymbols(Std(uri), [weakSelf, gen, uri, path, name, done](
+                                                const Json &r, const Json &e) {
+        LspSession *s = weakSelf;
+        if (!s || gen != s->_symbolGen || ![uri isEqualToString:s->_uri]) return;
+        NSString *text = s->_tv.string;
+        NSUInteger caret = s->_tv.selectedRange.location;
+        NSInteger caretIndex = -1;
+        if (!e.isNull()) {   // the server refused: the outline stands in
+            NSArray *items = MCOutlineSymbols(path, text, caret, &caretIndex);
+            done(items, caretIndex, @"outline");
+            return;
+        }
+        std::vector<Lsp::Symbol> syms = Lsp::parseDocumentSymbols(r);
+        done(MCSymbolItemsFrom(syms, text, caret, &caretIndex), caretIndex, name);
+    });
+}
+
+- (void)cancelWorkspaceSymbols {
+    _workspaceGen++;
+    for (NSArray *pair in _workspaceRequests) {
+        MCLspServer *server = pair[0];
+        if (server.running) server.client.cancel([pair[1] intValue]);
+    }
+    [_workspaceRequests removeAllObjects];
+}
+
+- (void)workspaceSymbols:(NSString *)query
+              completion:(void (^)(NSArray<MCSymbolItem *> *, BOOL, NSString *))done {
+    if (!done) return;
+    [self cancelWorkspaceSymbols];
+    NSMutableArray<MCLspServer *> *servers = [NSMutableArray array];
+    // Each running server once, in a steady order (the open file's first).
+    NSMutableArray<MCLspEntry *> *entries = [NSMutableArray array];
+    for (NSString *key in [_entries.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        MCLspEntry *e = _entries[key];
+        if ([_servers containsObject:e.server]) [entries insertObject:e atIndex:0];
+        else [entries addObject:e];
+    }
+    for (MCLspEntry *e in entries) {
+        MCLspServer *server = e.server;
+        if (!server.running || server.client.state() != Lsp::Client::State::Ready) continue;
+        if (!server.client.offers(Lsp::Feature::WorkspaceSymbols)) continue;
+        if (![servers containsObject:server]) [servers addObject:server];
+    }
+    if (!servers.count) {
+        done(@[], YES, _entries.count ? @"No running language server searches the workspace"
+                                      : @"No language server is running in this window");
+        return;
+    }
+    [self flushChanges];
+    [self syncOpenDocuments];
+    const int gen = ++_workspaceGen;
+    auto answers = std::make_shared<std::vector<std::vector<Lsp::Symbol>>>(servers.count);
+    auto pending = std::make_shared<size_t>(servers.count);
+    __weak LspSession *weakSelf = self;
+    for (NSUInteger i = 0; i < servers.count; i++) {
+        MCLspServer *server = servers[i];
+        int rid = server.client.workspaceSymbols(Std(query), [weakSelf, gen, answers, pending, i,
+                                                              done](const Json &r, const Json &e) {
+            LspSession *s = weakSelf;
+            if (!s || gen != s->_workspaceGen) return;
+            if (e.isNull()) (*answers)[i] = Lsp::parseWorkspaceSymbols(r);
+            if (*pending > 0) (*pending)--;
+            std::vector<Lsp::Symbol> merged = Lsp::mergeSymbols(*answers, CanonicalURI);
+            NSMutableArray<MCSymbolItem *> *items = [NSMutableArray array];
+            for (const Lsp::Symbol &sym : merged) {
+                MCSymbolItem *it = MCSymbolItemFrom(sym);
+                it.path = [s treePathForURI:sym.uri];
+                if (it.path.length) [items addObject:it];
+            }
+            done(items, *pending == 0, nil);
+        });
+        [_workspaceRequests addObject:@[server, @(rid)]];
+    }
+}
+
+- (void)revealSymbol:(MCSymbolItem *)item {
+    if (!item) return;
+    Lsp::Location loc;
+    if (item.path.length) {
+        loc.uri = Lsp::uriFromPath(Std(RealPath(item.path)));
+    } else if (_uri) {
+        loc.uri = Std(_uri);
+    } else {
+        return;
+    }
+    loc.range.start = Lsp::Position{(int)item.line, (int)item.character};
+    loc.range.end = Lsp::Position{(int)item.endLine, (int)item.endCharacter};
+    [self revealLocation:loc];
+}
+
 - (void)findReferences {
     MCLspServer *server = [self serverFor:Lsp::Feature::References
                                   missing:@"find references"];
