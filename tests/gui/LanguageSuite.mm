@@ -438,9 +438,13 @@ MC_GUI_SUITE(language) {
     }
 
     // ------------------------------------------ the folder's own .venv
-    NSString *venvBin = MCGuiProjectFile(@".venv/bin");
+    // In the window's own folder: an earlier suite may have left a newer
+    // window on another folder, and the environment is looked for there.
+    __block NSString *venvBin = nil;
     NSString *marker = [MCGuiScratch() stringByAppendingPathComponent:@"venv-server-ran"];
     MCGuiStep(@"a .venv whose bin holds the only Python server", ^{
+        venvBin = [c.rootPath stringByAppendingPathComponent:@".venv/bin"];
+        MCGuiNote(@"the window's folder: %@", c.rootPath);
         NSString *pyExe = [venvBin stringByAppendingPathComponent:@"python"];
         NSString *srv = [venvBin stringByAppendingPathComponent:@"mc-venv-server"];
         MCGuiWriteFile(pyExe, @"#!/bin/sh\nexit 0\n");
@@ -537,7 +541,8 @@ MC_GUI_SUITE(language) {
     });
     MCGuiStep(@"tidy up: servers off, no .venv", ^{
         MCGuiWriteFile(settings, @"lsp.enabled = false\n");
-        [[NSFileManager defaultManager] removeItemAtPath:MCGuiProjectFile(@".venv") error:nil];
+        [[NSFileManager defaultManager]
+            removeItemAtPath:venvBin.stringByDeletingLastPathComponent error:nil];
     });
     MCGuiPause(1.0);
 
