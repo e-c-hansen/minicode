@@ -241,11 +241,14 @@ minicode window --folder ~/project         # the window on a folder, opened if n
 minicode tour tour.json                    # a sequence of notes
 minicode state | jq .windows[0].tabs       # windows, tabs, selection, terminals, browser
 minicode selection                         # the selected text
+minicode procs                             # what the window's terminals left running, with ports
 ```
 
 A note is a line or two of plain text over a highlighted range, labelled with who wrote it (`--from`, Claude by default). It is never written into the file or its undo history, and it goes when you press Escape, click its ×, or edit inside its lines. Files opened with a note share one agent preview tab per window, its title in italics, which the next such open replaces, so an agent's output never piles up tabs; edit in it, or double-click its title, and it becomes an ordinary tab. A tour is a list of `{"path", "line", "to", "note"}` stops; Option+] and Option+[ step through it, and the note says where you are ("2 of 5"). `minicode help` describes every command, and they exit with 0 when done, 1 when the command failed, 2 for a usage error, and 3 when there is no minicode to talk to (one is started when none is running).
 
 Each running minicode listens on a socket in your own temporary folder that only your user account can open, and nothing in minicode runs a command or a script by itself: `term --run` types what it was given into a terminal you can see. A script that sets up a workspace (a server in a terminal, its page in the browser, the README open) is just these commands in a file you run yourself.
+
+With several Claude Code sessions in terminal tabs, minicode can show which one wants you. Run `minicode hooks --install` once and Claude Code's hooks tell minicode what each session is doing: a tab whose session asks for permission (or has been idle at its prompt) gets an orange dot, with Claude's message as the tab's tooltip, and one that has finished gets a green dot. Typing in the terminal, or the session going on, takes the dot away. The Dock icon counts the waiting terminals in every window, and Control Command W goes to the next one. The command backs up ~/.claude/settings.json first and only adds to it, so your own hooks stay as they were, and running it twice changes nothing; `minicode hooks --print` shows what it adds. Every minicode terminal has `MINICODE_TERMINAL_ID` and `MINICODE_PID` set, which is how the hook (`minicode notify --from-hook`) finds its tab, and outside minicode the hook does nothing and exits quietly. minicode never installs the hooks by itself.
 
 The repository has a skill for Claude Code in skills/minicode that teaches it all of this: when reporting work, open the changed lines with a note, show the diff and run the tests in a terminal; when asked "where is X", open it rather than quote a path; read `state` and `selection` when you say "this". The app carries it too: `minicode install-skill` copies it to ~/.claude/skills/minicode (run it again after an upgrade), and `make install` does the same from a checkout.
 
@@ -260,6 +263,12 @@ Return or a click on a session shows its evidence in a tab of its own: the sessi
 The worktrees under .claude/worktrees appear as one Worktrees node at the top of the file tree, whether hidden files are shown or not, each named after the task its agent was given, with how many commits it is ahead of the main branch and whether it has changes not yet committed. Right-click one for Compare with Main, which lists the files it changed (committed, uncommitted, and new) and shows each beside the main branch's version, or Open in New Window.
 
 Command clicking a path in the terminal also looks in those places: the terminal's own folder first, then the window's folder, the worktrees under it, and the scratchpads of the sessions found for it. When a path is in more than one of them, such as a file an agent changed in its worktree, a small list offers each copy with its full path and when it was modified, newest first. When it is in none, the status bar says so and lists where it looked.
+
+## What is still running
+
+Agents leave dev servers, watchers, headless browsers and language servers running, along with local ports nobody remembers opening. View > Toggle Processes swaps the file tree for a list of them, for the window's folder: a group for each terminal with what was started from it, then orphans, which outlived the terminal that started them, then programs started elsewhere (in Terminal.app, say) whose working folder is in this one. Each process shows its memory, its CPU use, and the TCP ports it listens on, with the processes it started folded under it, and the heading gives the total ("1.8 GB in 14 processes"). Right-click a process to stop it (SIGTERM, then SIGKILL three seconds later, after asking unless it is an orphan), open one of its ports in the browser pane, or show the terminal it came from. Nothing is ever stopped otherwise.
+
+minicode looks at the process table every two seconds while the list is on show, and every ten otherwise. A process that detaches from its terminal between two looks can be missed. `minicode procs` prints the same list, or JSON with `--json`, so an agent can check what it left behind; the skill tells agents to stop only what they started, with `kill`.
 
 ## Linux
 
@@ -362,10 +371,11 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Keep the agent preview tab as an ordinary tab | Double-click its title, or edit in it |  |  |
 | List every problem the language servers report, grouped by file | Shift Command M, or click the problem counts in the status bar |  |  |
 | List the TODO comments and open Markdown tasks in the folder | Shift Command D | Ctrl Shift L | W, or Ctrl Shift L |
+| Move a word left or right at the terminal's prompt | Option Left, Option Right |  |  |
 | Move the line, or the selected lines, down or up, at every cursor | Option Down, Option Up, or Command Down, Command Up |  |  |
 | Move the selected file to the Trash | Command Delete or Command Forward Delete, in the file tree | Delete, in the file tree |  |
 | Move to the next or previous terminal, across split panes and tabs | Option Command ], Option Command [ |  |  |
-| Move a word left or right at the terminal's prompt | Option Left, Option Right |  |  |
+| Move to the next terminal waiting for you, in any window (a Claude Code session asking for permission, with `minicode hooks --install` run) | Control Command W |  |  |
 | Move to the start or end of the line at the terminal's prompt, or delete back to its start | Command Left, Command Right, Command Delete |  |  |
 | New file | Command N | Ctrl Alt N | New file in the ⋮ menu |
 | New folder | Shift Command N | Ctrl Shift N |  |

@@ -57,6 +57,7 @@
 #include "TerminalScreen.h"
 #include "TermLinks.h"
 #include "AgentIndex.h"
+#include "AttentionBoard.h"
 
 #include <util.h>
 #include <termios.h>
@@ -410,6 +411,8 @@ static NSString *IntegrationDirectory(BOOL grid) {
     return dir;
 }
 
+NSNotificationName const MCTerminalUserDidTypeNotification = @"MCTerminalUserDidTypeNotification";
+NSNotificationName const MCTerminalDidCloseNotification = @"MCTerminalDidCloseNotification";
 NSNotificationName const MCTerminalCommandDidFinishNotification =
     @"MCTerminalCommandDidFinish";
 
@@ -798,6 +801,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     // time (Claude Code's spinner) every hover looked on disk again.
     NSMutableDictionary<NSString *, id> *_linkCache;
     NSArray<NSString *> *_linkRoots;   // extraLinkRoots, as last asked
+    NSArray<NSString *> *_sessionRoots;   // sessionLinkRoots, likewise
     CFTimeInterval _linkRootsTime;
     id _flagsMonitor;            // Cmd down/up re-evaluates the link under the pointer
 }
@@ -814,6 +818,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
 - (instancetype)initWithDirectory:(NSString *)dir {
     if ((self = [super initWithFrame:NSMakeRect(0, 0, 400, 220)])) {
+        static NSInteger lastID;
+        _terminalID = ++lastID;   // before the shell starts: it is in its environment
         _cwd = dir.length ? dir : NSHomeDirectory();
         _history = [NSMutableArray array];
         _historyIdx = 0;
@@ -927,6 +933,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         if (s.onOpenLink) s.onOpenLink(link);
     };
     self.grid.onLineEdit = ^(MCLineEdit edit) { [weakSelf lineEdit:edit]; };
+    self.grid.onTyped = ^{ [weakSelf userTyped]; };
     self.grid.onFindChanged = ^{ [weakSelf updateFindCount]; };
     [self addSubview:self.grid];
     if (!_lineMode) {
@@ -1353,6 +1360,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
 - (NSString *)runningCommand { return self.runningCommands.firstObject; }
 
+- (pid_t)shellPid { return _shellPid; }
+
 // The shell's jobs that are not in the foreground: every process whose
 // controlling terminal is this pty, in a process group other than the
 // shell's and the foreground one, so "sleep 100 &" counts, one entry per
@@ -1687,6 +1696,9 @@ static BOOL MCIsOtherShell(pid_t pid) {
 }
 
 - (void)close {
+    if (!_closed)
+        [[NSNotificationCenter defaultCenter] postNotificationName:MCTerminalDidCloseNotification
+                                                            object:self];
     _closed = YES;
     _pendingCommand = nil;
     _pendingTyped = nil;
@@ -1753,10 +1765,22 @@ static BOOL MCIsOtherShell(pid_t pid) {
            ((NSTextView *)fr).delegate == (id)field;
 }
 
+// The user typed in this terminal (the grid's keys and pastes, the input
+// line's edits and keys): whoever marked its tab hears of it.
+- (void)userTyped {
+    [[NSNotificationCenter defaultCenter] postNotificationName:MCTerminalUserDidTypeNotification
+                                                        object:self];
+}
+
+- (void)controlTextDidChange:(NSNotification *)note {
+    [self userTyped];
+}
+
 // Up/Down arrow -> command history. Control keys -> the pty.
 - (BOOL)control:(NSControl *)control textView:(NSTextView *)tv
     doCommandBySelector:(SEL)sel {
     NSEvent *ev = NSApp.currentEvent;
+    if (ev.type == NSEventTypeKeyDown) [self userTyped];
     NSEventModifierFlags mods = ev.modifierFlags &
         NSEventModifierFlagDeviceIndependentFlagsMask;
     if (ev.type == NSEventTypeKeyDown &&
@@ -1896,10 +1920,15 @@ static BOOL MCIsOtherShell(pid_t pid) {
     roots.cwd = _cwd.UTF8String ?: "";
     roots.folder = self.projectRoot.UTF8String ?: "";
     // The worktrees (which list a folder) at most every two seconds.
+    BOOL fresh = NO;
     if (self.extraLinkRoots && (!_linkRoots || now - _linkRootsTime > 2.0)) {
         _linkRoots = [self.extraLinkRoots() copy];
         _linkRootsTime = now;
+        fresh = YES;
     }
+    if (self.sessionLinkRoots && (!_sessionRoots || now - _linkRootsTime > 2.0 || fresh))
+        _sessionRoots = [self.sessionLinkRoots(self) copy];
+    for (NSString *r in _sessionRoots) roots.worktrees.push_back(r.UTF8String ?: "");
     for (NSString *r in _linkRoots) roots.worktrees.push_back(r.UTF8String ?: "");
     roots.home = NSHomeDirectory().UTF8String ?: "";
     AgentIndex::Resolution res =
@@ -1911,9 +1940,20 @@ static BOOL MCIsOtherShell(pid_t pid) {
     bool inCwd = false;
     for (const AgentIndex::Match &m : res.matches)
         if (!cwd.empty() && m.root == cwd) inCwd = true;
+    // Else the copy under the session's own scratchpad or worktree, when
+    // there is one: the agent in this terminal printed the path.
+    std::vector<bool> keep(res.matches.size(), true);
+    if (!inCwd && _sessionRoots.count) {
+        std::vector<std::string> paths, own;
+        for (const AgentIndex::Match &m : res.matches) paths.push_back(m.path);
+        for (NSString *r in _sessionRoots) own.push_back(r.UTF8String ?: "");
+        keep = Attention::preferSessionMatches(paths, own);
+    }
     NSMutableArray<MCTermLinkMatch *> *matches = [NSMutableArray array];
     NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    size_t matchIndex = 0;
     for (const AgentIndex::Match &m : res.matches) {
+        if (!keep[matchIndex++]) continue;
         if (inCwd && m.root != cwd) continue;
         // Spelled the way the window spells its root (/tmp, not the
         // /private/tmp the shell reports), so a file inside the folder is
@@ -2078,7 +2118,7 @@ static BOOL MCIsOtherShell(pid_t pid) {
             key == "COLORTERM" ||
             key == "COLUMNS" || key == "LINES" ||
             key == "MINICODE_USER_ZDOTDIR" || key == "MINICODE_NONCE" ||
-            key == "MINICODE_EXEC")
+            key == "MINICODE_EXEC" || key == "MINICODE_TERMINAL_ID" || key == "MINICODE_PID")
             continue;
         if (key == "LANG" || key == "LC_ALL" || key == "LC_CTYPE")
             hasLocale = true;
@@ -2090,6 +2130,11 @@ static BOOL MCIsOtherShell(pid_t pid) {
     env.push_back("TERM=xterm-256color");
     env.push_back("COLORTERM=truecolor");
     env.push_back("TERM_PROGRAM=MiniCode");
+    // Which terminal this is, for `minicode notify --from-hook` (R7.1);
+    // inherited ones (minicode started from a minicode terminal) are dropped
+    // above.
+    env.push_back("MINICODE_TERMINAL_ID=" + std::to_string((long)_terminalID));
+    env.push_back("MINICODE_PID=" + std::to_string((int)getpid()));
     if (!hasLocale) env.push_back("LANG=en_US.UTF-8");  // apps get no LANG
     // A nonce per shell for the integration's marks (TerminalStream's
     // setMarkNonce): 128 random bits as hex.

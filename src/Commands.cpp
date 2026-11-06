@@ -373,6 +373,8 @@ const std::vector<Command>& all() {
          "toggleSourceControl:", 0, 0, nullptr},
         {"minicode.toggleAgents", "Toggle Agents", "View", "shift+cmd+a", A, "toggleAgents:", 0,
          0, nullptr},
+        {"minicode.toggleProcesses", "Toggle Processes", "View", "", A, "toggleProcesses:", 0, 0,
+         nullptr},
         {"workbench.actions.view.problems", "Problems", "View", "shift+cmd+m", A,
          "toggleProblems:", 0, 0, nullptr},
         {"minicode.toggleEditor", "Toggle Editor", "View", "shift+cmd+e", A, "toggleEditor:", 0,
@@ -406,6 +408,9 @@ const std::vector<Command>& all() {
          A, "previousTerminal:", 0, 0, nullptr},
         {"workbench.action.terminal.kill", "Close Terminal", "Terminal", "ctrl+shift+w", A,
          "closeTerminal:", 0, 0, nullptr},
+        // VS Code has no such command; the key is free in both.
+        {"minicode.terminal.nextWaiting", "Next Waiting Terminal", "Terminal", "ctrl+cmd+w", A,
+         "nextWaitingTerminal:", 0, 0, nullptr},
         {"workbench.action.terminal.clear", "Clear Terminal", "Terminal", "cmd+k", T,
          "clearTerminal:", 0, 0, nullptr},
         {"minicode.runFile", "Run File", "Terminal", "shift+cmd+enter", A, "runCurrentFile:", 0, 0,

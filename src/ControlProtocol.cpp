@@ -64,6 +64,16 @@ std::vector<CommandSpec> makeCommands() {
     }
     c.push_back({"term-output", "The last lines a terminal shows, scrollback included",
                  {arg("terminal", ArgType::Int, true), arg("lines", ArgType::Int)}});
+    c.push_back({"notify", "Mark a terminal as waiting for the user, done, or neither",
+                 {arg("terminal", ArgType::Int, true), arg("state", ArgType::String, true),
+                  arg("message", ArgType::String), arg("event", ArgType::String),
+                  arg("session_id", ArgType::String), arg("transcript_path", ArgType::String),
+                  arg("cwd", ArgType::String)}});
+    {
+        CommandSpec s{"procs", "What the window's terminals started and what runs in its folder", {}};
+        addTarget(s.args);
+        c.push_back(s);
+    }
     {
         CommandSpec s{"tour", "A sequence of notes, stepped through with Option+] and Option+[",
                       {arg("stops", ArgType::Objects, true,
@@ -329,13 +339,15 @@ bool isSafeRef(const std::string& ref) {
 }
 
 bool launchesApp(const std::string& cmd) {
-    return cmd != "state" && cmd != "selection" && cmd != "term-output" && cmd != "ping";
+    return cmd != "state" && cmd != "selection" && cmd != "term-output" && cmd != "ping" &&
+           cmd != "procs" && cmd != "notify";
 }
 
 const std::vector<std::string>& subcommands() {
     static const std::vector<std::string> words = {"open", "window", "browse", "term",
                                                    "diff", "split", "state", "selection",
-                                                   "term-output", "tour", "help"};
+                                                   "term-output", "tour", "procs", "notify",
+                                                   "hooks", "help"};
     return words;
 }
 
@@ -397,6 +409,14 @@ const Help kHelp[] = {
      "minicode term-output <id> [--lines N]\n"
      "    Prints the last N lines (200 by default) of a terminal's screen and\n"
      "    scrollback, as plain text.\n"},
+    {"procs",
+     "minicode procs [--folder DIR] [--json]\n"
+     "    Lists what the window's terminals started (their children, and what\n"
+     "    those left running after their terminal closed: \"orphans\") and what\n"
+     "    other programs run in its folder (\"not started here\"), with each\n"
+     "    process's id, memory, CPU, listening TCP ports and command line.\n"
+     "    --json prints it as JSON. Nothing is stopped: stop only a process\n"
+     "    you started, with kill <pid>.\n"},
     {"tour",
      "minicode tour <file.json>\n"
      "    A tour of notes: the file holds a list of {\"path\", \"line\", \"to\",\n"
@@ -404,6 +424,24 @@ const Help kHelp[] = {
      "    The first stop opens in the agent preview tab; Option+] and\n"
      "    Option+[ go to the next and previous stop. A tour replaces the\n"
      "    window's earlier one.\n"},
+    {"notify",
+     "minicode notify --from-hook\n"
+     "minicode notify --terminal ID --state waiting|done|clear [--message TEXT]\n"
+     "    Marks a minicode terminal's tab: an orange dot while it waits for\n"
+     "    you (TEXT as its tooltip), a green one when it is done; clear\n"
+     "    takes the mark away, as typing in the terminal does. --from-hook\n"
+     "    reads a Claude Code hook's JSON on stdin and finds the terminal\n"
+     "    from MINICODE_TERMINAL_ID and MINICODE_PID, which every minicode\n"
+     "    terminal has. With no minicode, or outside one, it does nothing and\n"
+     "    exits 0, so a hook never fails because of it.\n"},
+    {"hooks",
+     "minicode hooks --print\n"
+     "minicode hooks --install\n"
+     "    Prints the Claude Code hooks that run `minicode notify --from-hook`,\n"
+     "    or adds them to ~/.claude/settings.json ($CLAUDE_CONFIG_DIR's when\n"
+     "    set): the file is backed up first, nothing in it is removed or\n"
+     "    moved, and running it again changes nothing. Only this command\n"
+     "    writes there; minicode never installs hooks by itself.\n"},
 };
 
 const char* kCommon =
@@ -417,7 +455,7 @@ const char* kCommon =
     "or diff opens in a tab beside theirs without being shown. `window` and\n"
     "--folder can bring another window to the front. When minicode is not\n"
     "running, it is started and the command waits up to 10 seconds for it;\n"
-    "state, selection and term-output exit with 3 instead.\n"
+    "state, selection, term-output and procs exit with 3 instead.\n"
     "Exit codes: 0 done, 1 the command failed (why is on stderr), 2 a usage\n"
     "error, 3 no minicode to talk to.\n";
 
@@ -508,6 +546,7 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
     c.cmd = sub;
     const CommandSpec* spec = findCommand(sub);
     auto accepts = [&](const char* name) {
+        if (!spec) return false;   // hooks: the command line's own
         for (const ArgSpec& s : spec->args)
             if (s.name == name) return true;
         return false;
@@ -562,8 +601,27 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
             if (c.error.empty() && (!parsePositiveInt(v, n) || n <= 0))
                 c.error = "--lines needs a number";
             c.args.set("lines", n);
+        } else if (sub == "notify" && w == "--from-hook") {
+            c.fromHook = true;
+        } else if (sub == "notify" && takeValue(a, i, "terminal", v, c.error)) {
+            int id = 0;
+            if (c.error.empty() && (!parsePositiveInt(v, id) || id <= 0))
+                c.error = "--terminal needs a terminal id";
+            c.args.set("terminal", id);
+        } else if (sub == "notify" && takeValue(a, i, "state", v, c.error)) {
+            if (c.error.empty() && v != "waiting" && v != "done" && v != "clear")
+                c.error = "--state is waiting, done or clear, not " + v;
+            c.args.set("state", v);
+        } else if (sub == "notify" && takeValue(a, i, "message", v, c.error)) {
+            c.args.set("message", cleanNoteText(v));
+        } else if (sub == "hooks" && (w == "--print" || w == "--install")) {
+            if (!c.hooksAction.empty() && c.hooksAction != w.substr(2))
+                c.error = "hooks takes --print or --install, not both";
+            c.hooksAction = w.substr(2);
         } else if (sub == "state" && w == "--pretty") {
             c.pretty = true;
+        } else if (sub == "procs" && w == "--json") {
+            c.args.set("json", true);   // taken out again below: the app never sees it
         } else if (startsWith(w, "-") && w.size() > 1) {
             c.error = "unknown option " + w + " for " + sub;
         } else {
@@ -625,6 +683,18 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
         c.args.set("terminal", id);
         c.output = Output::Text;
         c.outputField = "text";
+    } else if (sub == "notify" && positional.empty()) {
+        if (c.fromHook && (c.args.has("terminal") || c.args.has("state") || c.args.has("message"))) {
+            c.error = "--from-hook reads the terminal and the state from the hook";
+            return c;
+        }
+        if (!c.fromHook && (!c.args.has("terminal") || !c.args.has("state"))) {
+            c.error = "notify needs --from-hook, or --terminal and --state";
+            return c;
+        }
+    } else if (sub == "hooks" && positional.empty()) {
+        if (c.hooksAction.empty()) { c.error = "hooks needs --print or --install"; return c; }
+        c.cmd.clear();   // nothing to send
     } else if (sub == "tour") {
         if (positional.size() != 1) { c.error = "tour needs a file"; return c; }
         c.tourFile = absolutePath(positional[0], cwd, home);
@@ -636,6 +706,13 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
     if (sub == "window") { c.output = Output::Id; c.outputField = "window"; }
     if (sub == "term") { c.output = Output::Id; c.outputField = "terminal"; }
     if (sub == "state") c.output = Output::Json;
+    if (sub == "procs") {
+        c.output = c.args["json"].asBool() ? Output::Json : Output::Procs;
+        Json args = Json::object();
+        for (const auto& kv : c.args.items())
+            if (kv.first != "json") args.set(kv.first, kv.second);
+        c.args = args;
+    }
     if (sub == "selection") { c.output = Output::Text; c.outputField = "text"; }
     return c;
 }

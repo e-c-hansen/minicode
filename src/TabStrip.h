@@ -6,12 +6,21 @@
 // How tall the strip is, in points.
 extern const CGFloat kMCTabStripHeight;
 
+// A dot before a tab's title: a terminal waiting for the user (orange) or
+// done (green), from `minicode notify` (TerminalAttention.h).
+typedef NS_ENUM(NSInteger, MCTabAttention) {
+    MCTabAttentionNone = 0,
+    MCTabAttentionWaiting,
+    MCTabAttentionDone,
+};
+
 // What one tab shows.
 @interface MCTabStripItem : NSObject
 @property(nonatomic, copy) NSString *title;
 @property(nonatomic, copy) NSString *toolTip;   // the whole path
 @property(nonatomic, assign) BOOL dirty;        // a dot in place of the close button
 @property(nonatomic, assign) BOOL preview;      // the agent preview tab: an italic title
+@property(nonatomic, assign) MCTabAttention attention;
 @end
 
 @interface MCTabStrip : NSView
@@ -35,4 +44,9 @@ extern const CGFloat kMCTabStripHeight;
 // (flipped). Empty when the tab is scrolled out of sight.
 - (NSRect)rectForTab:(NSInteger)index;
 - (NSRect)closeRectForTab:(NSInteger)index;
+// Where a tab's attention dot is drawn; empty when it has none or is out of sight.
+- (NSRect)attentionRectForTab:(NSInteger)index;
+// The dots' colors.
++ (NSColor *)waitingColor;
++ (NSColor *)doneColor;
 @end

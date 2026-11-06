@@ -4,6 +4,7 @@
 #import "AppSettings.h"
 #import "Appearance.h"
 #import "TreeDetails.h"
+#import "TerminalAttention.h"
 
 #include "AgentView.h"
 #include "Settings.h"
@@ -479,6 +480,12 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
     if ([item isKindOfClass:MCAgentWork.class]) {
         MCAgentWork *s = item;
         [self item:@"Show Evidence" in:m run:^{ [weakSelf activateRow:row]; }];
+        // The terminal its session runs in, as its hooks told us (R7.4).
+        TerminalView *term = [[MCTerminalAttention shared] terminalForSession:s.sessionId
+                                                                   transcript:s.transcript];
+        __weak TerminalView *weakTerm = term;
+        if (term)
+            [self item:@"Show Terminal" in:m run:^{ MCRevealTerminal(weakTerm); }];
         if (s.worktreePath.length && [NSFileManager.defaultManager fileExistsAtPath:s.worktreePath])
             [self item:@"Open Worktree in New Window" in:m run:^{
                 MCAgentsPanel *p = weakSelf;

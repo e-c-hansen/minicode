@@ -6,13 +6,16 @@
 // temporary folder), prints the answer, and exits 0 (done), 1 (the command
 // failed), 2 (a usage error) or 3 (no minicode to talk to). With no minicode
 // running it starts one the way the launcher does, then waits up to 10
-// seconds for its socket; reads (state, selection, term-output) exit 3 at
+// seconds for its socket; reads (state, selection, term-output, procs) exit 3 at
 // once instead.
 //
 // For tests: MINICODE_LAUNCHER_DRYRUN prints the launch command instead of
 // running it, MINICODE_CLI_WAIT sets the wait in seconds, and
 // MINICODE_CONTROL_DIR names the one folder to look for sockets in.
+#include "ClaudeHooks.h"
 #include "ControlProtocol.h"
+#include "ProcessTable.h"
+#include <algorithm>
 #include <cerrno>
 #include <climits>
 #include <cstdio>
@@ -205,7 +208,7 @@ double now() {
 // when the socket could not be used; *refused when nothing listens on it (a
 // socket left by a minicode that died, its pid since reused).
 bool exchange(const Candidate &to, const std::string &request, std::string &answer,
-              std::string &error, bool *refused) {
+              std::string &error, bool *refused, int timeoutSeconds) {
     const int pid = to.pid;
     const std::string &path = to.path;
     *refused = false;
@@ -225,8 +228,9 @@ bool exchange(const Candidate &to, const std::string &request, std::string &answ
     int on = 1;
     setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on);
     // A diff waits for git; nothing else takes more than a moment.
-    struct timeval tv = {120, 0};
+    struct timeval tv = {timeoutSeconds, 0};
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
     if (connect(fd, (struct sockaddr *)&addr, sizeof addr) != 0) {
         *refused = errno == ECONNREFUSED || errno == ENOENT;
         error = "could not connect to minicode (process " + std::to_string(pid) + "): " +
@@ -264,6 +268,148 @@ bool exchange(const Candidate &to, const std::string &request, std::string &answ
     return true;
 }
 
+// All of stdin, up to `limit` bytes (a hook's JSON is small; the rest is
+// read and dropped, so the writer never sees a broken pipe).
+std::string readStdin(size_t limit) {
+    std::string out;
+    if (isatty(STDIN_FILENO)) return out;
+    char buf[65536];
+    for (;;) {
+        ssize_t n = read(STDIN_FILENO, buf, sizeof buf);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        if (out.size() < limit) out.append(buf, std::min((size_t)n, limit - out.size()));
+    }
+    return out;
+}
+
+// Claude Code's settings file: $CLAUDE_CONFIG_DIR/settings.json when that is
+// set (Claude Code reads its settings from there then), else
+// ~/.claude/settings.json.
+std::string claudeSettingsPath() {
+    const char *dir = getenv("CLAUDE_CONFIG_DIR");
+    if (dir && *dir) return trimmed(dir) + "/settings.json";
+    const char *home = getenv("HOME");
+    return std::string(home && *home ? home : "/") + "/.claude/settings.json";
+}
+
+bool readFile(const std::string &path, std::string &text, bool &exists, std::string &error) {
+    text.clear();
+    exists = false;
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) {
+        if (errno == ENOENT) return true;
+        error = path + ": " + std::strerror(errno);
+        return false;
+    }
+    if (!S_ISREG(st.st_mode)) {
+        error = path + " is not a plain file";
+        return false;
+    }
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        error = path + ": " + std::strerror(errno);
+        return false;
+    }
+    std::stringstream ss;
+    ss << in.rdbuf();
+    text = ss.str();
+    exists = true;
+    return true;
+}
+
+// Writes `text` beside `path` and renames it over, so a reader sees the old
+// file or the new one, never half of one. Keeps the old file's mode.
+bool writeFileAtomically(const std::string &path, const std::string &text, mode_t mode,
+                         std::string &error) {
+    std::string tmp = path + ".minicode-XXXXXX";
+    std::vector<char> name(tmp.begin(), tmp.end());
+    name.push_back('\0');
+    int fd = mkstemp(name.data());
+    if (fd < 0) {
+        error = path + ": " + std::strerror(errno);
+        return false;
+    }
+    fchmod(fd, mode);
+    size_t off = 0;
+    bool ok = true;
+    while (off < text.size()) {
+        ssize_t n = write(fd, text.data() + off, text.size() - off);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) { ok = false; break; }
+        off += (size_t)n;
+    }
+    ok = ok && fsync(fd) == 0;
+    ok = close(fd) == 0 && ok;
+    if (!ok || rename(name.data(), path.c_str()) != 0) {
+        error = path + ": " + std::strerror(errno);
+        unlink(name.data());
+        return false;
+    }
+    return true;
+}
+
+// `minicode hooks --print` and `--install` (R7.5).
+int runHooks(const std::string &action) {
+    if (action == "print") {
+        std::printf("%s\n", prettyJson(ClaudeHooks::configuration()).c_str());
+        return kExitOK;
+    }
+    const std::string path = claudeSettingsPath();
+    std::string text, error;
+    bool exists = false;
+    if (!readFile(path, text, exists, error)) {
+        std::fprintf(stderr, "minicode: %s\n", error.c_str());
+        return kExitFailed;
+    }
+    ClaudeHooks::MergeResult r = ClaudeHooks::merge(text);
+    if (!r.ok) {
+        std::fprintf(stderr, "minicode: %s was left alone: %s\n", path.c_str(), r.error.c_str());
+        return kExitFailed;
+    }
+    if (!r.changed) {
+        std::printf("The hooks are already in %s; nothing changed.\n", path.c_str());
+        return kExitOK;
+    }
+    mode_t mode = 0600;
+    if (exists) {
+        struct stat st;
+        if (stat(path.c_str(), &st) == 0) mode = st.st_mode & 07777;
+        // A backup of the file as it was, named for the time, never over
+        // an earlier one.
+        char stamp[32];
+        time_t t = time(nullptr);
+        struct tm tm;
+        localtime_r(&t, &tm);
+        strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tm);
+        std::string backup = path + ".minicode-backup-" + stamp;
+        for (int n = 2; access(backup.c_str(), F_OK) == 0; n++)
+            backup = path + ".minicode-backup-" + stamp + "-" + std::to_string(n);
+        if (!writeFileAtomically(backup, text, mode, error)) {
+            std::fprintf(stderr, "minicode: could not back up %s, so it was left alone: %s\n",
+                         path.c_str(), error.c_str());
+            return kExitFailed;
+        }
+        std::printf("Backed up %s to %s\n", path.c_str(), backup.c_str());
+    } else {
+        std::string dir = path.substr(0, path.rfind('/'));
+        if (!dir.empty()) mkdir(dir.c_str(), 0700);
+    }
+    if (!writeFileAtomically(path, r.text, mode, error)) {
+        std::fprintf(stderr, "minicode: %s\n", error.c_str());
+        return kExitFailed;
+    }
+    std::string added;
+    for (size_t i = 0; i < r.added.size(); i++)
+        added += (i ? (i + 1 == r.added.size() ? ", and " : ", ") : "") + r.added[i];
+    if (r.added.size() == 2) added = r.added[0] + " and " + r.added[1];
+    std::printf("Added `%s` to the %s hooks in %s.\n"
+                "Claude Code sessions started from now on in minicode's terminals mark "
+                "their tabs.\n",
+                ClaudeHooks::kCommand, added.c_str(), path.c_str());
+    return kExitOK;
+}
+
 int usageError(const std::string &message) {
     std::fprintf(stderr, "minicode: %s\nTry 'minicode help'.\n", message.c_str());
     return kExitUsage;
@@ -287,7 +433,32 @@ int main(int argc, char **argv) {
         std::fputs(text.c_str(), stdout);
         return kExitOK;
     }
-    if (!c.error.empty()) return usageError(c.error);
+    if (!c.error.empty()) {
+        // A hook never fails noisily, whatever it was given.
+        if (!args.empty() && args[0] == "notify" &&
+            std::find(args.begin(), args.end(), "--from-hook") != args.end()) {
+            readStdin(1 << 20);
+            return kExitOK;
+        }
+        return usageError(c.error);
+    }
+    if (!c.hooksAction.empty()) return runHooks(c.hooksAction);
+
+    // notify: never launches minicode and never complains that there is
+    // none; with --from-hook nothing at all is ever reported (R7.2).
+    const bool notify = c.cmd == "notify";
+    const bool quiet = c.fromHook;
+    if (notify && c.fromHook) {
+        int pid = 0;
+        Json hookArgs;
+        if (!ClaudeHooks::notifyArgsFromHook(readStdin(1 << 20), getenv("MINICODE_TERMINAL_ID"),
+                                             getenv("MINICODE_PID"), hookArgs, pid))
+            return kExitOK;
+        c.args = hookArgs;
+        if (!c.pid) c.pid = pid;
+    } else if (notify && !c.pid) {
+        c.pid = ClaudeHooks::parsePositive(getenv("MINICODE_PID"));
+    }
 
     if (!c.tourFile.empty()) {
         std::ifstream in(c.tourFile);
@@ -311,6 +482,7 @@ int main(int argc, char **argv) {
     }
 
     std::vector<Candidate> sockets = findSockets(c.pid);
+    if (sockets.empty() && notify) return kExitOK;
     if (sockets.empty()) {
         if (c.pid) {
             std::fprintf(stderr, "minicode: no minicode is running as process %d\n", c.pid);
@@ -346,17 +518,19 @@ int main(int argc, char **argv) {
     const std::string request = requestLine(Json(1), c.cmd, c.args);
     for (const Candidate &to : sockets) {
         bool refused = false;
-        if (exchange(to, request, answer, error, &refused)) {
+        if (exchange(to, request, answer, error, &refused, notify ? 5 : 120)) {
             sent = true;
             break;
         }
         if (!refused) break;
     }
     if (!sent) {
+        if (notify) return kExitOK;
         std::fprintf(stderr, "minicode: %s\n", error.c_str());
         return kExitNoApp;
     }
     Json reply;
+    if (quiet) return kExitOK;
     if (!Json::parse(answer, reply, &error) || !reply.isObject()) {
         std::fprintf(stderr, "minicode: an answer that is not JSON: %s\n", answer.c_str());
         return kExitFailed;
@@ -375,6 +549,11 @@ int main(int argc, char **argv) {
     case Output::Json:
         std::printf("%s\n", c.pretty ? prettyJson(result).c_str() : result.dump().c_str());
         break;
+    case Output::Procs: {
+        const std::string text = Procs::formatTable(result);
+        std::fwrite(text.data(), 1, text.size(), stdout);
+        break;
+    }
     case Output::Text: {
         const std::string &text = result[c.outputField].asString();
         std::fwrite(text.data(), 1, text.size(), stdout);

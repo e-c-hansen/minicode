@@ -14,6 +14,7 @@
 #import "EditorFont.h"
 #import "ControlServer.h"
 #import "Keymap.h"
+#import "TerminalAttention.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, MCRestarting, MCControlAppHost>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
@@ -543,11 +544,13 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)nextTerminal:(id)sender    { [[self current] nextTerminal:sender]; }
 - (void)previousTerminal:(id)sender { [[self current] previousTerminal:sender]; }
 - (void)closeTerminal:(id)sender   { [[self current] closeTerminal:sender]; }
+- (void)nextWaitingTerminal:(id)sender { MCJumpToNextWaitingTerminal(); }
 - (void)runCurrentFile:(id)sender  { [[self current] runCurrentFile:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
 - (void)toggleSidebar:(id)sender   { [[self current] toggleSidebar:sender]; }
 - (void)toggleSourceControl:(id)sender { [[self current] toggleSourceControl:sender]; }
 - (void)toggleAgents:(id)sender    { [[self current] toggleAgents:sender]; }
+- (void)toggleProcesses:(id)sender { [[self current] toggleProcesses:sender]; }
 - (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
 - (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
 - (void)requestChange:(id)sender   { [[self current] requestChange:sender]; }
@@ -1140,6 +1143,13 @@ static void BuildMenu(void) {
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:agents];
 
+    // What this window's terminals started and what runs in its folder, in
+    // the sidebar's place (ProcessesPanel.h). No key by default: keys.conf
+    // can give it one (minicode.toggleProcesses).
+    [viewMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Toggle Processes"
+                                                 action:@selector(toggleProcesses:)
+                                          keyEquivalent:@""]];
+
     // Shift+Cmd+M as in VS Code: every problem the language servers report,
     // above the terminal.
     NSMenuItem *problems =
@@ -1286,6 +1296,15 @@ static void BuildMenu(void) {
     closeTerm.keyEquivalentModifierMask =
         NSEventModifierFlagControl | NSEventModifierFlagShift;
     [termMenu addItem:closeTerm];
+    // A terminal whose Claude Code waits for an answer (TerminalAttention.h),
+    // in any window.
+    NSMenuItem *nextWaiting =
+        [[NSMenuItem alloc] initWithTitle:@"Next Waiting Terminal"
+                                   action:@selector(nextWaitingTerminal:)
+                            keyEquivalent:@"w"];
+    nextWaiting.keyEquivalentModifierMask =
+        NSEventModifierFlagControl | NSEventModifierFlagCommand;
+    [termMenu addItem:nextWaiting];
     // Cmd+K as in Terminal.app and VS Code. Answered by the terminal with
     // the keyboard (TerminalView clearTerminal:), so elsewhere it is off.
     [termMenu addItemWithTitle:@"Clear Terminal"

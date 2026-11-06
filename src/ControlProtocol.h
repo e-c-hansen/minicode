@@ -111,7 +111,8 @@ PathSpec splitPathSpec(const std::string& spec,
 std::string absolutePath(const std::string& path, const std::string& cwd,
                          const std::string& home);
 
-enum class Output { None, Id, Json, Text };
+// Procs: `minicode procs` as a table (Procs::formatTable).
+enum class Output { None, Id, Json, Text, Procs };
 
 struct CliCommand {
     bool help = false;          // `minicode help`, or -h after a subcommand
@@ -124,6 +125,12 @@ struct CliCommand {
     int pid = 0;                // --pid: this process only
     std::string tourFile;       // tour: read by the caller, then tourStops()
     std::string launchFolder;   // where a launched minicode opens (R1.4)
+    // notify --from-hook: the arguments come from stdin and the environment
+    // (ClaudeHooks::notifyArgsFromHook), and nothing is ever reported.
+    bool fromHook = false;
+    // hooks --print or --install: "print" or "install", run by the command
+    // line itself (no minicode is asked).
+    std::string hooksAction;
     std::string error;          // a usage error (exit code 2)
 };
 
@@ -138,7 +145,7 @@ CliCommand parseCommandLine(const std::vector<std::string>& argv, const std::str
 const std::vector<std::string>& subcommands();
 bool isSubcommand(const std::string& word);
 // Whether the command line starts minicode when none is running. Reads
-// (state, selection, term-output) do not: there would be nothing to read,
+// (state, selection, term-output, procs) do not: there would be nothing to read,
 // and an agent should not reopen an app the user has just quit.
 bool launchesApp(const std::string& cmd);
 // Whether `ref` may be handed to git as a revision: not empty, and not

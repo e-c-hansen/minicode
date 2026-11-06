@@ -29,6 +29,12 @@
 - (void)toggleEditor:(id)sender;      // Shift+Cmd+E hide/restore the file editor
 @end
 
+// EditorController+Processes.mm
+@interface EditorController (Processes)
+// The Processes panel in the sidebar's place, as Agents is (ProcessesPanel.h).
+- (void)toggleProcesses:(id)sender;
+@end
+
 // EditorController+StatusBar.mm
 @interface EditorController (StatusBar)
 - (void)toggleHints:(id)sender;       // Shift+Cmd+H shortcut-hints overlay
@@ -42,6 +48,10 @@
 - (void)nextTerminal:(id)sender;      // Option+Cmd+] across panes and tabs
 - (void)previousTerminal:(id)sender;  // Option+Cmd+[
 - (void)closeTerminal:(id)sender;     // Ctrl+Shift+W the active terminal
+// Shows the dock if hidden, then `terminal`'s tab, with the keyboard in it
+// (Next Waiting Terminal, the Agents panel's Show Terminal). NO when it is
+// not one of this window's.
+- (BOOL)revealTerminal:(TerminalView *)terminal;
 // Closes the terminal the keyboard is in (asking first when a command runs
 // in it) and returns YES; NO when the keyboard is not in a terminal (for a
 // Cmd+W that closes what has focus).

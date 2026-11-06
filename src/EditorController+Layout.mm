@@ -1,6 +1,7 @@
 // EditorController+Layout.mm — EditorController: window setup, layout and look, the splits and what fills the sidebar, the title.
 #import "EditorController+Private.h"
 #import "EditorController+LayoutIvars.h"
+#import "ProcessesPanel.h"
 
 @implementation EditorController (Layout)
 
@@ -761,6 +762,7 @@ static const CGFloat kDividerGrabSlop = 5;
     if (from != to) [self.splitView replaceSubview:from with:to];
     self.gitPanelVisible = !self.gitPanelVisible;
     self.agentsVisible = NO;
+    self.processesVisible = NO;
     if (self.sidebarCollapsed || from.frame.size.width < 1) {
         self.sidebarCollapsed = NO;
         [self.splitView setPosition:260 ofDividerAtIndex:0];
@@ -774,8 +776,10 @@ static const CGFloat kDividerGrabSlop = 5;
     if (self.hintsVisible) [self updateHints];
 }
 
-// What the sidebar's place holds now: the tree, Source Control or Agents.
+// What the sidebar's place holds now: the tree, Source Control, Agents or
+// Processes.
 - (NSView *)sidebarViewOnShow {
+    if (NSView *procs = (NSView *)[self processesPanelOnShow]) return procs;
     return self.agentsVisible ? _agents.panel : self.gitPanelVisible ? self.gitPanel : self.sidebarScroll;
 }
 
@@ -789,6 +793,7 @@ static const CGFloat kDividerGrabSlop = 5;
     if (from != to) [self.splitView replaceSubview:from with:to];
     self.agentsVisible = !self.agentsVisible;
     self.gitPanelVisible = NO;
+    self.processesVisible = NO;
     if (self.sidebarCollapsed || from.frame.size.width < 1) {
         self.sidebarCollapsed = NO;
         [self.splitView setPosition:260 ofDividerAtIndex:0];

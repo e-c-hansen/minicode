@@ -9756,6 +9756,8 @@ static void testMultiCaretOccurrences() {
 #include "fold_tests.inc"
 #include "previews_tests.inc"
 #include "commands_tests.inc"
+#include "procs_tests.inc"
+#include "attention_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9824,6 +9826,7 @@ int main() {
     testLineIndex();
     testBrackets();
     testControlProtocol();
+    testProcs();
     testSideBySide();
     testAgentTranscript();
     testAgentIndex();
@@ -9838,6 +9841,9 @@ int main() {
     testCommandTable();
     testKeymapFile();
     testCommandsReadme();
+    testClaudeHooks();
+    testNotifyCommandLine();
+    testAttentionBoard();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

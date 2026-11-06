@@ -1,5 +1,6 @@
 // EditorController+Panels.mm — EditorController: the terminal dock and the browser, and moving the keyboard between panes.
 #import "EditorController+Private.h"
+#import "ProcessesPanel.h"
 
 @implementation EditorController (Panels)
 
@@ -14,6 +15,10 @@
     self.terminalPanel.extraLinkRoots = ^NSArray<NSString *> *{
         EditorController *s = weakSelf;
         return s ? [s->_agents linkRoots] : @[];
+    };
+    self.terminalPanel.sessionLinkRoots = ^NSArray<NSString *> *(TerminalView *t) {
+        EditorController *s = weakSelf;
+        return s ? [s->_agents linkRootsForTerminal:t] : @[];
     };
     self.terminalPanel.onOpenLink = ^(MCTermLink *link) {
         [weakSelf openTerminalLink:link];
@@ -89,6 +94,14 @@
     if (!self.terminalPanel) { [self newTerminal:nil]; return; }
     [self showTerminalPanel];
     [self.terminalPanel moveActive:-1];
+}
+
+- (BOOL)revealTerminal:(TerminalView *)terminal {
+    if (!terminal || ![self.terminalPanel.terminals containsObject:terminal]) return NO;
+    [self showTerminalPanel];
+    [self.terminalPanel selectTerminal:terminal];
+    [terminal focusInput];
+    return YES;
 }
 
 // Closes the terminal the keyboard is in. NO (and nothing closed) when the
@@ -242,6 +255,7 @@
     // The sidebar holds the Source Control panel instead: focus its list.
     if (self.gitPanelVisible) { [self.gitPanel focusList]; return; }
     if (self.agentsVisible) { [_agents.panel focusList]; return; }
+    if (MCProcessesPanel *procs = [self processesPanelOnShow]) { [procs focusList]; return; }
     if (self.outline.selectedRow < 0 && self.outline.numberOfRows > 0)
         [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:0]
                   byExtendingSelection:NO];

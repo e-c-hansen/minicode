@@ -5,7 +5,9 @@
 #import "AgentNotes.h"
 #import "CompareView.h"
 #import "GitPanel.h"
+#import "ProcessMonitor.h"
 #import "Terminal.h"
+#import "TerminalAttention.h"
 #include <fcntl.h>
 #include <objc/runtime.h>
 #include <sys/stat.h>
@@ -16,7 +18,7 @@ using ControlChannel::Request;
 using ControlChannel::Result;
 
 // ------------------------------------------------------------------ ids
-static char kWindowIDKey, kTerminalIDKey;
+static char kWindowIDKey;
 
 static NSInteger MCAssignID(id object, const void *key, NSInteger *counter) {
     if (!object) return 0;
@@ -33,10 +35,9 @@ NSInteger MCControlWindowID(EditorController *controller) {
     return MCAssignID(controller, &kWindowIDKey, &counter);
 }
 
-NSInteger MCControlTerminalID(TerminalView *terminal) {
-    static NSInteger counter;
-    return MCAssignID(terminal, &kTerminalIDKey, &counter);
-}
+// The terminal's own, given when it was made: its shell has it in its
+// environment (MINICODE_TERMINAL_ID) from the start.
+NSInteger MCControlTerminalID(TerminalView *terminal) { return terminal.terminalID; }
 
 // ---------------------------------------------------------------- helpers
 static NSString *NS(const Json &j) {
@@ -158,6 +159,15 @@ static Json MCTerminalState(TerminalView *t) {
     NSString *cmd = t.runningCommand;
     o.set("command", cmd.length ? J(cmd) : Json());
     o.set("busy", (bool)t.busy);
+    // Its tab's mark from `minicode notify` (feature 7): "waiting", "done",
+    // or null; and the Claude Code session last seen in it.
+    MCTerminalAttention *att = [MCTerminalAttention shared];
+    NSString *mark = [att markNameForTerminal:t];
+    o.set("attention", mark ? J(mark) : Json());
+    NSString *msg = [att messageForTerminal:t];
+    o.set("message", msg.length ? J(msg) : Json());
+    NSString *sid = [att sessionIdForTerminal:t];
+    o.set("session", sid.length ? J(sid) : Json());
     return o;
 }
 
@@ -277,6 +287,7 @@ static NSString *MCReadText(NSString *path, std::string &error) {
 // ------------------------------------------------------------- commands
 void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
     __weak id<MCControlAppHost> weakHost = hostIn;
+    MCProcessesRegisterCommand(d, hostIn);   // procs (ProcessMonitor.mm)
 
     d.on("ping", [](const Request &, Dispatcher::Respond respond) {
         Json r = Json::object();
@@ -571,6 +582,33 @@ void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
                     return;
                 }
         respond(Result::failure("there is no terminal " + std::to_string(want)));
+    });
+
+    // `minicode notify`: a Claude Code hook (or another tool) marks a
+    // terminal's tab as waiting or done, or clears it (feature 7).
+    d.on("notify", [weakHost](const Request &req, Dispatcher::Respond respond) {
+        id<MCControlAppHost> host = weakHost;
+        const Json &a = req.args;
+        const NSInteger want = (NSInteger)a["terminal"].asInt();
+        TerminalView *found = nil;
+        for (EditorController *c in [host controlControllers])
+            for (TerminalView *t in [c controlTerminals])
+                if (t.terminalID == want) found = t;
+        if (!found) {
+            respond(Result::failure("there is no terminal " + std::to_string(want)));
+            return;
+        }
+        NSString *error = nil;
+        if (![[MCTerminalAttention shared] applyNotify:a toTerminal:found error:&error]) {
+            respond(Result::failure(error.UTF8String ?: "failed"));
+            return;
+        }
+        Json r = Json::object();
+        r.set("terminal", (int)want);
+        NSString *mark = [[MCTerminalAttention shared] markNameForTerminal:found];
+        r.set("attention", mark ? J(mark) : Json());
+        r.set("waiting", (int)[MCTerminalAttention shared].waitingCount);
+        respond(Result::success(r));
     });
 
     d.on("tour", [weakHost](const Request &req, Dispatcher::Respond respond) {
