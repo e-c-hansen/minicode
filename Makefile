@@ -137,7 +137,16 @@ $(OBJDIR)/%.cpp.o: src/%.cpp $(OBJDIR)/flags.txt
 SIGN_IDENTITY ?= $(shell security find-certificate -c "MiniCode Local Signing" >/dev/null 2>&1 && echo "MiniCode Local Signing")
 
 # Assemble a minimal .app bundle so Cocoa treats it as a real GUI app.
-app: $(BIN) $(CLI)
+# Only when something in it changed: the bundle's code signature is the
+# target, so a `make` with nothing to do leaves the app, its signature and
+# their dates alone (Request a Change takes a newer CodeResources for a
+# fresh build).
+APP_STAMP := $(BUNDLE)/Contents/_CodeSignature/CodeResources
+APP_FILES := $(BIN) $(CLI) Info.plist resources/AppIcon.icns scripts/minicode-launcher
+
+app: $(APP_STAMP)
+
+$(APP_STAMP): $(APP_FILES)
 	@rm -rf $(BUNDLE)
 	@mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources
 	@cp $(BIN) $(BUNDLE)/Contents/MacOS/$(APP)

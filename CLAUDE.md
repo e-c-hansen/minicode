@@ -1582,8 +1582,9 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   --branch v<version> <repo> <dir> || git clone <repo> <dir>) && cd <dir> &&
   claude ...`). "Source" means a Makefile and `src/EditorController.mm`. A 2 s
   timer watches `<source>/MiniCode.app/Contents/_CodeSignature/CodeResources`
-  (codesign is `make app`'s last step) and offers Restart once it is newer and
-  stable. Prompt files whose writer has quit, or a day old, are removed as
+  (codesign is `make app`'s last step, and that file is its target, so a
+  `make` with nothing to do leaves it alone) and offers Restart once it is
+  newer and stable. Prompt files whose writer has quit, or a day old, are removed as
   the next is written (`MCRemoveStalePromptFiles`, the inline agent's too).
 - **Restart** (`AppDelegate restartIntoApp:resumingIn:source:command:`,
   `MCRestarting`): the quit questions titled "Restart minicode?", leaving
