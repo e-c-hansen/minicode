@@ -48,7 +48,7 @@ to talk to), give plain paths in the reply instead and do not retry.
 | `minicode term [--cwd D] [--title T] [--run CMD]` | A new terminal tab; `--run` types CMD and presses Return, visibly | terminal id |
 | `minicode term-output <id> [--lines N]` | The terminal's last N lines (200), scrollback included | text |
 | `minicode browse <url> [--wait]` | The page in the browser pane's agent page, beside the user's; `--wait` returns once loaded (15 s at most) | `--wait`: JSON url, status, title |
-| `minicode page --url \| --text \| --console [--since N] \| --screenshot OUT.png [--full] \| --reload [--wait]` | Reads the agent page (`--yours`: the user's); text, console and screenshots of local pages only | JSON, text, JSON lines, path |
+| `minicode page --url \| --text \| --console [--since N] \| --screenshot OUT.png [--full] [--overwrite] \| --reload [--wait]` | Reads the agent page (`--yours`: the user's); text, console and screenshots of local pages only | JSON, text, JSON lines, path |
 | `minicode split [--right\|--below] term ...` | `term --right` splits the active terminal | |
 | `minicode window [--folder D] [--new]` | Brings forward, or opens, the window on a folder | window id |
 | `minicode state [--pretty]` | JSON: windows, folders, tabs, selection, terminals, browser, note, tour | JSON |
@@ -75,7 +75,7 @@ For a page on this Mac (a dev server, a file), use `browse --wait` and
 pages (localhost, 127.0.0.1, ::1, *.localhost, file://) can be read; others
 fail naming `control.page-any-origin`, the user's to set. Nothing runs your
 JavaScript or clicks. `--yours` only when the user means the page they see;
-screenshots go in the session's scratchpad, never in the project.
+screenshots go in the scratchpad, never the project (`--overwrite` to reuse a name).
 
 ```sh
 minicode browse localhost:5173 --wait   # {"url":...,"status":200,"title":...}
