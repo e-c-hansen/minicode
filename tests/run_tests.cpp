@@ -3717,10 +3717,10 @@ void testSettings() {
     // documented value is the real default.
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
-    // format, python, keep-sorted, auto-save, ruler, terminal, develop and
+    // format, python, keep-sorted, auto-save, ruler, terminal, develop, git,
     // control and agent keys (with markdown.mermaid and agent.ide-link), and
     // terminal.activate-venv and search.use-ignore-files.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 80);
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 87);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -3774,6 +3774,9 @@ void testSettings() {
         CHECK(un.runTemplate(ext) == d.runTemplate(ext));
     CHECK(un.pythonInterpreter().empty() && d.pythonInterpreter().empty());
     CHECK(un.keepSortedOnSave() == d.keepSortedOnSave());
+    CHECK(un.organizeImportsOnSave() == d.organizeImportsOnSave() && !d.organizeImportsOnSave());
+    CHECK(un.gitAutoFetch() == d.gitAutoFetch() && !d.gitAutoFetch());
+    CHECK(un.gitAutoFetchPeriod() == d.gitAutoFetchPeriod() && d.gitAutoFetchPeriod() == 180);
     CHECK(un.autoSave() == d.autoSave() && d.autoSave() == Settings::AutoSave::Off);
     CHECK(un.autoSaveDelay() == d.autoSaveDelay() && d.autoSaveDelay() == 1000);
     CHECK(un.rulers() == d.rulers() && un.rulerColor() == d.rulerColor());
@@ -4291,6 +4294,21 @@ void testSettings() {
     GROUP("settings:keep-sorted");
     std::vector<SettingsError> eks;
     CHECK(!parseSettings("").keepSortedOnSave());
+    CHECK(!parseSettings("").organizeImportsOnSave());
+    {
+        std::vector<SettingsError> eg;
+        Settings g = parseSettings("git.autofetch = true\ngit.autofetch-period = 600\n"
+                                   "git.autofetch-period = 60\ngit.autofetch = sometimes\n", &eg);
+        CHECK(g.gitAutoFetch() && g.gitAutoFetchPeriod() == 600);
+        CHECK(eg.size() == 2 && eg[0].line == 3 && eg[1].line == 4);
+        CHECK(eg.size() == 2 && eg[0].message.find("from 180 to 86400") != std::string::npos);
+    }
+    CHECK(parseSettings("editor.organize-imports-on-save = true\n").organizeImportsOnSave());
+    {
+        std::vector<SettingsError> eo;
+        Settings o = parseSettings("editor.organize-imports-on-save = explicit\n", &eo);
+        CHECK(!o.organizeImportsOnSave() && eo.size() == 1 && eo[0].line == 1);
+    }
     CHECK(parseSettings("editor.keep-sorted-on-save = true\n").keepSortedOnSave());
     CHECK(parseSettings("Editor.Keep-Sorted-On-Save = yes  # sort\n").keepSortedOnSave());
     CHECK(!parseSettings("editor.keep-sorted-on-save = off\n").keepSortedOnSave());
@@ -5443,6 +5461,71 @@ void testLspServers() {
         Lsp::languageForExtension(ext, l);
         CHECK(std::find(Settings::lspServers().begin(), Settings::lspServers().end(),
                         l.server) != Settings::lspServers().end());
+    }
+
+    GROUP("lsp:servers-by-extension");
+    {
+        // The Mac's mapping: the optional built-in servers too.
+        const std::map<std::string, std::vector<std::string>> none;
+        CHECK(Lsp::languageForExtension("tex", l, none) && l.server == "latex" &&
+              l.languageId == "latex");
+        CHECK(Lsp::languageForExtension("bib", l, none) && l.server == "latex" &&
+              l.languageId == "bibtex");
+        CHECK(Lsp::languageForExtension("MD", l, none) && l.server == "markdown" &&
+              l.languageId == "markdown");
+        CHECK(Lsp::languageForExtension("toml", l, none) && l.server == "toml");
+        CHECK(Lsp::languageForExtension("sh", l, none) && l.server == "shell" &&
+              l.languageId == "shellscript");
+        CHECK(Lsp::languageForExtension("py", l, none) && l.server == "python");
+        CHECK(!Lsp::languageForExtension("yaml", l, none) && !Lsp::languageForExtension("", l, none));
+        for (const std::string &s : Lsp::optionalServers()) {
+            CHECK(Lsp::isOptionalServer(s) && !Lsp::defaultCommands(s).empty());
+            CHECK(std::find(Settings::lspServers().begin(), Settings::lspServers().end(), s) !=
+                  Settings::lspServers().end());
+            CHECK(Lsp::serverDisplayName(s) != s);
+        }
+        CHECK(!Lsp::isOptionalServer("python") && !Lsp::isOptionalServer("yaml"));
+        CHECK(Lsp::defaultCommands("markdown") == std::vector<std::string>{"marksman server"});
+        // The settings' own: a new server, more files for a built-in one, and
+        // a built-in extension taken over.
+        std::vector<SettingsError> e;
+        Settings st = parseSettings("lsp.yaml = yaml-language-server --stdio\n"
+                                    "lsp.yaml.extensions = yaml, .YML  # both\n"
+                                    "lsp.python.extensions = pyw sage\n"
+                                    "lsp.mytex = my-tex-server\n"
+                                    "lsp.mytex.extensions = tex\n", &e);
+        CHECK(e.empty());
+        CHECK(st.lspCommand("yaml") == "yaml-language-server --stdio");
+        CHECK((st.lspExtensions().at("yaml") == std::vector<std::string>{"yaml", "yml"}));
+        CHECK((st.lspCustomServers() == std::vector<std::string>{"mytex", "yaml"}));
+        CHECK(Lsp::languageForExtension("yml", l, st.lspExtensions()) && l.server == "yaml" &&
+              l.languageId == "yaml");
+        CHECK(Lsp::languageForExtension("sage", l, st.lspExtensions()) && l.server == "python" &&
+              l.languageId == "python");
+        CHECK(Lsp::languageForExtension("py", l, st.lspExtensions()) && l.server == "python");
+        CHECK(Lsp::languageForExtension("tex", l, st.lspExtensions()) && l.server == "mytex" &&
+              l.languageId == "mytex");
+        CHECK(Lsp::languageForExtension("bib", l, st.lspExtensions()) && l.server == "latex");
+        // One line without the other, on the line that has it; a bad name.
+        std::vector<SettingsError> e2;
+        Settings bad = parseSettings("lsp.lua = lua-language-server\n"
+                                     "lsp.zig.extensions = zig\n"
+                                     "lsp.Bad Name = x\n"
+                                     "lsp.json.extensions =  ,\n"
+                                     "lsp.pyhton = pylsp\n", &e2);
+        CHECK(e2.size() == 5);
+        if (e2.size() == 5) {
+            CHECK(e2[0].line == 1 && e2[0].message.find("lsp.lua.extensions") != std::string::npos);
+            CHECK(e2[1].line == 2 && e2[1].message.find("add lsp.zig = ") != std::string::npos);
+            CHECK(e2[2].line == 3);
+            CHECK(e2[3].line == 4 && e2[3].message.find("missing extensions") != std::string::npos);
+            CHECK(e2[4].line == 5 && e2[4].message.find("not a built-in server") != std::string::npos);
+        }
+        CHECK(bad.lspCommand("lua") == "lua-language-server");
+        // The built-in ones need no extensions line.
+        std::vector<SettingsError> e3;
+        parseSettings("lsp.markdown = marksman server\nlsp.toml = off\n", &e3);
+        CHECK(e3.empty());
     }
 
     GROUP("lsp:split-command");
@@ -7365,6 +7448,12 @@ static void testGitStatus() {
     CHECK(timeoutFor(V{"--literal-pathspecs", "restore", "--staged", "--", "a"}) == 120);
     CHECK(timeoutFor(V{"--literal-pathspecs", "rm", "--cached", "--force", "--", "a"}) == 120);
     CHECK(timeoutFor(V{"commit", "-m", "x"}) == 600);
+    CHECK(timeoutFor(V{"push"}) == 600 && timeoutFor(V{"push", "--set-upstream", "o", "b"}) == 600);
+    CHECK(timeoutFor(V{"pull"}) == 300 && timeoutFor(V{"fetch", "origin"}) == 120);
+    CHECK(talksToRemote(V{"fetch", "origin"}) && talksToRemote(V{"pull"}) &&
+          talksToRemote(V{"push"}) && talksToRemote(V{"-c", "x=y", "ls-remote"}));
+    CHECK(!talksToRemote(V{"status"}) && !talksToRemote(V{"remote"}) &&
+          !talksToRemote(V{"-c", "push", "status"}));
     // A -c value that reads like a subcommand is skipped.
     CHECK(timeoutFor(V{"-c", "commit", "status"}) == 30);
     CHECK(durationText(30) == "30 seconds");

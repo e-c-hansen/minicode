@@ -210,6 +210,11 @@ public:
     // editor.keep-sorted-on-save: sort every keep-sorted block in a file
     // when it is saved (off by default).
     bool keepSortedOnSave() const { return keepSortedOnSave_; }
+    // editor.organize-imports-on-save: Cmd+S first runs the file's language
+    // servers' source.organizeImports action (Ruff's own where it runs), as
+    // VS Code's editor.codeActionsOnSave does, before format.on-save; off by
+    // default. Never on an auto-save.
+    bool organizeImportsOnSave() const { return organizeImportsOnSave_; }
     // editor.auto-save: off (the default), after-delay (each file with
     // unsaved changes is written once typing has paused for
     // editor.auto-save-delay milliseconds, 1000 by default, as VS Code's
@@ -275,9 +280,10 @@ public:
 
     // Language servers. lsp.enabled turns the whole client on or off (on by
     // default). lsp.<server> names the command for one server key (cpp,
-    // python, go, rust, typescript): a whole command line, arguments and all,
-    // unlike every other value. "" when the file names none, so the built-in
-    // search applies.
+    // python, go, rust, typescript; latex, markdown, toml and shell, which
+    // run only when installed; or a name of the user's own): a whole command
+    // line, arguments and all, unlike every other value. "" when the file
+    // names none, so the built-in search applies.
     bool lspEnabled() const { return lspEnabled_; }
     std::string lspCommand(const std::string& server) const;
     // lsp.<server> = off (or none, false): leave that language alone.
@@ -285,7 +291,18 @@ public:
     // same way with "<server>.also" ("" for unset or auto: the built-in
     // rule, Lsp::defaultAlsoCommand).
     bool lspOff(const std::string& server) const;
+    // The built-in server keys, each documented with its default command.
     static const std::vector<std::string>& lspServers();
+    // lsp.<server>.extensions: the files a server handles, by extension
+    // (lowercase, no dot), for a server of the user's own (lsp.yaml =
+    // yaml-language-server --stdio with lsp.yaml.extensions = yaml yml), or
+    // more files for a built-in one. A name of the user's own needs both
+    // lines; the file says so on the line that has only one.
+    const std::map<std::string, std::vector<std::string>>& lspExtensions() const {
+        return lspExtensions_;
+    }
+    // Every server key the settings name besides the built-in ones, sorted.
+    std::vector<std::string> lspCustomServers() const;
     // python.interpreter: the Python the Python language server analyses
     // with, for folders that have not chosen their own (Select Python
     // Interpreter). A path, which may hold spaces; "" (or auto) lets
@@ -340,6 +357,12 @@ public:
     // only local ones (off by default; PageCheck.h).
     bool pageAnyOrigin() const { return pageAnyOrigin_; }
     static const std::vector<std::string>& formatLanguages();
+    // git.autofetch: fetch the folder's repository in the background, as
+    // VS Code's git.autofetch (off by default); git.autofetch-period, the
+    // seconds between fetches (180, VS Code's default and the least, to
+    // 86400). See GitUi::autoFetchDue.
+    bool gitAutoFetch() const { return gitAutoFetch_; }
+    int gitAutoFetchPeriod() const { return gitAutoFetchPeriod_; }
 
     // Every key with one value of its own, from the key table (Settings.cpp),
     // in table order: "window.opacity", "theme", "editor.ruler", ... The
@@ -367,6 +390,9 @@ private:
     bool mermaid_ = true;
     bool ideLink_ = false;
     bool keepSortedOnSave_ = false;
+    bool organizeImportsOnSave_ = false;
+    bool gitAutoFetch_ = false;
+    int gitAutoFetchPeriod_ = 180;
     AutoSave autoSave_ = AutoSave::Off;
     int autoSaveDelay_ = 1000;
     std::vector<int> rulers_ = {100};
@@ -382,6 +408,7 @@ private:
     bool terminalActivateVenv_ = true;
     bool searchUseIgnoreFiles_ = true;
     std::map<std::string, std::string> lspCommands_;
+    std::map<std::string, std::vector<std::string>> lspExtensions_;
     bool runInNewTerminal_ = false;
     std::map<std::string, std::string> runCommands_;
     std::map<std::string, std::string> formatCommands_;

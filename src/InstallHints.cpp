@@ -43,6 +43,30 @@ const std::vector<std::pair<std::string, Tool>>& servers() {
           "https://github.com/typescript-language-server/typescript-language-server",
           {{"npm install -g typescript-language-server typescript", "npm"},
            {"brew install typescript-language-server", "brew"}}}},
+        // The optional ones (Lsp::optionalServers): run when installed, and
+        // offered only from the Language Servers popover.
+        {"latex",
+         {"texlab",
+          "texlab completes LaTeX commands, labels and citations, and goes to a "
+          "\\ref's label or a \\cite's BibTeX entry.",
+          "https://github.com/latex-lsp/texlab", {{"brew install texlab", "brew"}}}},
+        {"markdown",
+         {"marksman",
+          "marksman completes and checks links between Markdown files and to their "
+          "headings, and renames a heading everywhere it is linked.",
+          "https://github.com/artempyanykh/marksman", {{"brew install marksman", "brew"}}}},
+        {"toml",
+         {"taplo",
+          "taplo checks TOML files and completes pyproject.toml and Cargo.toml from "
+          "their schemas.",
+          "https://taplo.tamasfe.dev", {{"brew install taplo", "brew"}}}},
+        {"shell",
+         {"bash-language-server",
+          "bash-language-server completes shell scripts, documents commands on hover, "
+          "and shows shellcheck's warnings when shellcheck is installed.",
+          "https://github.com/bash-lsp/bash-language-server",
+          {{"npm install -g bash-language-server", "npm"},
+           {"brew install bash-language-server", "brew"}}}},
     };
     return t;
 }

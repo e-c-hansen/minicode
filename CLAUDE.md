@@ -860,6 +860,12 @@ container (PanelHost, laid out by hand in layoutContainer)
 - `format.on-save`: Cmd+S (non-nil sender) formats then saves; minicode's own
   saves and Save All never format. A Cmd+S is never lost (`_formatSaveTab`:
   leaving the tab saves it unformatted).
+- `editor.organize-imports-on-save` (2026-11-06): before the formatter, Cmd+S
+  runs `LspSession organizeImportsBeforeSave:` (the servers'
+  `source.organizeImports`, Ruff's first, the all-or-nothing workspace edit),
+  through `organizeOrFormatBeforeSaving:` with the same `_formatSaveTab`
+  marker; its `done` comes once, after the edit, nothing, a failure, or 3 s
+  (askCodeActions' limit; 5 at most). Never on auto-save (nil sender).
 
 ## Install hints (Mac)
 
@@ -948,7 +954,16 @@ view is disposed (on `unrealize`), or dispose loops forever.
   Homebrew's node was broken here).
 - **Settings**: `lsp.enabled`, `lsp.<cpp|python|go|rust|typescript>` (a command
   line or `off`), `lsp.<lang>.also` (auto, off, a command),
-  `python.interpreter`. Python tries basedpyright, pyright, pylsp,
+  `python.interpreter`. Any server by extension (Mac, 2026-11-06):
+  `lsp.<name>` plus `lsp.<name>.extensions` (`Settings::lspExtensions`, the
+  name is the languageId; one without the other is an error on its line), and
+  the optional built-ins latex (texlab), markdown (marksman), toml (taplo) and
+  shell (bash-language-server), which count for a file only when installed or
+  named (`LspSession language:forPath:installed:`), so no status line or
+  install bar for them; `lookAgainForMissingServer` picks one up when it
+  appears. The Mac maps with the three-argument `Lsp::languageForExtension`;
+  the GTK port keeps the five. A user's own server never gets an install bar
+  (`missingServer` wants `Install::server`). Python tries basedpyright, pyright, pylsp,
   jedi-language-server; basedpyright gets `typeCheckingMode = standard` unless
   the project sets it. A change restarts the servers.
 - **States** (`MCLspEntry` per language and second server) show in
@@ -1567,7 +1582,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 
 - **What runs**: status, diff, add, restore --staged, commit -m, rm --cached
   --force before the first commit, and for the graph for-each-ref, log,
-  rev-list, show, rev-parse. Never a shell string: `MCGitRunSync`
+  rev-list, show, rev-parse; `remote` with each status; on the Mac fetch, pull
+  and push (below). Never a shell string: `MCGitRunSync`
   `posix_spawn`s an argument vector in the top level. Paths after `--`; add,
   restore and rm get `--literal-pathspecs` (`sp*ecial.txt` never stages
   `spXecial.txt`). Status `--porcelain=v2 --branch -z --untracked-files=all`;
@@ -1590,6 +1606,22 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   log. GTK: `runGitWithin` kills `-pid`, waiting with GSubprocess async calls
   on the git thread's own main context; that thread stays single on purpose (an
   add and its status must not pass).
+- **Push, pull, autofetch** (Mac, 2026-11-06; plans in `GitUi::syncPlan`,
+  tested in `git-ui:sync`): plain `pull` and `push` (the user's pull.rebase and
+  push.default apply), `push --set-upstream <origin or the only remote>
+  <branch>` without an upstream, `fetch <the upstream's remote>`; never forced,
+  no confirmation (owner's git.confirmSync off). Limits: fetch 2 min, pull 5,
+  push 10. `Git::talksToRemote` commands are spawned with `POSIX_SPAWN_SETSID`
+  (instead of SETPGROUP; the group is the same), so ssh has no terminal to ask
+  on and fails at once; `networkFailureText` adds what to set up. Each
+  operation reads a fresh snapshot first, so the commands (`git.fetch` ...,
+  View > Source Control) work with the panel hidden. `git.autofetch` /
+  `git.autofetch-period` (`GitUi::autoFetchDue`): a 30 s timer in the panel,
+  which is now made with the window (`ensureGitPanel`, EditorController+Git.mm;
+  `stop` in windowWillClose:), fetches while the window is key, at most every
+  180 s, per top level (process-wide map, main thread), never without a
+  remote, backing off to an hour after failures. `autoFetchTickAt:` takes the
+  time, so the GUI suite (`git_sync`) runs the waits without waiting.
 - **Threads**: a serial queue per panel; results dropped if the root changed or
   a newer diff was asked. `refresh` coalesces 50 ms, only while in a window (on
   show, after actions, on window key, on the tree's FSEvents).

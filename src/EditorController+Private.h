@@ -628,6 +628,7 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (BOOL)canFormatSource;
 - (void)formatSourceQuietly:(BOOL)quiet then:(void (^)(void))then;
 - (BOOL)formatBeforeSaving;
+- (BOOL)organizeOrFormatBeforeSaving:(BOOL)organize;
 - (void)finishFormatSave;
 - (void)saveBeforeLeavingFormatSave;
 - (BOOL)replaceSourceWithText:(NSString *)text actionName:(NSString *)name;

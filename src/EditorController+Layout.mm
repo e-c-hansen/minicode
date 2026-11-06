@@ -259,6 +259,7 @@
     [self.outline sizeLastColumnToFit];
 
     [self startWatching:_root.path];   // live tree updates
+    [self ensureGitPanel];             // autofetch, before the panel is shown
     [self restoreSession];             // the files open here last time
     [self restoreBrowserFromSession];  // and the browser, where it was
     [[NSNotificationCenter defaultCenter] addObserver:self
@@ -746,16 +747,7 @@ static const CGFloat kDividerGrabSlop = 5;
 // split view, and gives it back when toggled again. The sidebar's width is
 // kept, and a collapsed sidebar opens for it.
 - (void)toggleSourceControl:(id)sender {
-    if (!self.gitPanel) {
-        self.gitPanel = [[MCGitPanel alloc] initWithRoot:_root.path];
-        __weak EditorController *weakSelf = self;
-        self.gitPanel.onShowDiff = ^(NSString *name, NSString *path, NSData *diff) {
-            [weakSelf showDiffNamed:name path:path data:diff];
-        };
-        self.gitPanel.onShowCommit = ^(NSString *title, NSData *show) {
-            [weakSelf showCommitTitled:title data:show];
-        };
-    }
+    [self ensureGitPanel];
     NSView *from = [self sidebarViewOnShow];
     NSView *to = self.gitPanelVisible ? self.sidebarScroll : self.gitPanel;
     to.frame = from.frame;

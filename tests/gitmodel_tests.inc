@@ -201,6 +201,133 @@ static void testGitModel() {
     CHECK(summaryText(t) == "HEAD is detached, so there is no upstream to compare with.");
     CHECK(compareWithUpstream(s) && !compareWithUpstream(t));
 
+    GROUP("git-ui:sync");
+    {
+        CHECK((parseRemotes("origin\nupstream\n\n-x\nweird name\n") ==
+               std::vector<std::string>{"origin", "upstream"}));
+        CHECK(remoteArgs() == std::vector<std::string>{"remote"});
+        Snapshot u;
+        u.inRepository = true;
+        u.branch = "main";
+        u.headOid = h40;
+        u.upstream = "origin/main";
+        u.hasAheadBehind = true;
+        u.ahead = 2;
+        u.behind = 1;
+        u.remotes = {"fork", "origin"};
+        CHECK(upstreamRemote(u) == "origin" && publishRemote(u) == "origin");
+        SyncPlan sync = syncPlan(SyncOp::Sync, u);
+        CHECK(sync.refusal.empty() && sync.fetches);
+        CHECK((sync.steps == std::vector<std::vector<std::string>>{{"pull"}, {"push"}}));
+        CHECK(sync.busyText == "Syncing with origin/main\xe2\x80\xa6");
+        CHECK(syncPlan(SyncOp::Pull, u).steps == std::vector<std::vector<std::string>>{{"pull"}});
+        SyncPlan push = syncPlan(SyncOp::Push, u);
+        CHECK(push.steps == std::vector<std::vector<std::string>>{{"push"}} && !push.fetches);
+        CHECK(push.doneText == "Pushed to origin/main.");
+        // Never forced, whatever the plan.
+        for (SyncOp op : {SyncOp::Fetch, SyncOp::Pull, SyncOp::Push, SyncOp::Sync})
+            for (const auto& step : syncPlan(op, u).steps)
+                CHECK(!hasArg(step, "--force") && !hasArg(step, "-f") &&
+                      !hasArg(step, "--force-with-lease"));
+        CHECK((syncPlan(SyncOp::Fetch, u).steps ==
+               std::vector<std::vector<std::string>>{{"fetch", "origin"}}));
+        // The upstream on a remote whose name holds a slash: the longest fits.
+        Snapshot sl = u;
+        sl.remotes = {"team", "team/eu"};
+        sl.upstream = "team/eu/main";
+        CHECK(upstreamRemote(sl) == "team/eu");
+        CHECK(syncButtonTitle(u) == "Sync Changes  \xe2\x86\x93 1  \xe2\x86\x91 2");
+        CHECK(syncButtonToolTip(u) == "Pull 1 commit, then push 2 commits from and to origin/main");
+        Snapshot ahead = u;
+        ahead.behind = 0;
+        CHECK(syncButtonTitle(ahead) == "Sync Changes  \xe2\x86\x91 2");
+        CHECK(syncButtonToolTip(ahead) == "Push 2 commits to origin/main");
+        ahead.ahead = 0;
+        CHECK(syncButtonTitle(ahead).empty());   // up to date
+        // No upstream: published to origin (or the only remote).
+        Snapshot nu = u;
+        nu.upstream.clear();
+        nu.hasAheadBehind = false;
+        nu.remotes = {"origin", "fork"};
+        CHECK(syncButtonTitle(nu) == "Publish Branch");
+        CHECK((syncPlan(SyncOp::Push, nu).steps ==
+               std::vector<std::vector<std::string>>{{"push", "--set-upstream", "origin", "main"}}));
+        CHECK(syncPlan(SyncOp::Sync, nu).doneText == "Published main to origin.");
+        CHECK(syncPlan(SyncOp::Pull, nu).refusal == "main has no upstream branch to pull from.");
+        CHECK((syncPlan(SyncOp::Fetch, nu).steps ==
+               std::vector<std::vector<std::string>>{{"fetch", "origin"}}));
+        nu.remotes = {"fork"};
+        CHECK(publishRemote(nu) == "fork" && syncButtonTitle(nu) == "Publish Branch");
+        CHECK((syncPlan(SyncOp::Fetch, nu).steps ==
+               std::vector<std::vector<std::string>>{{"fetch", "fork"}}));
+        nu.remotes = {"fork", "work"};
+        CHECK(publishRemote(nu).empty() && syncButtonTitle(nu).empty());
+        CHECK(syncPlan(SyncOp::Push, nu).steps.empty() &&
+              syncPlan(SyncOp::Push, nu).refusal.find("git push -u <remote> main") !=
+                  std::string::npos);
+        nu.remotes.clear();
+        CHECK(syncButtonTitle(nu).empty());
+        CHECK(syncPlan(SyncOp::Push, nu).refusal == "This repository has no remote to push to.");
+        CHECK(syncPlan(SyncOp::Fetch, nu).refusal ==
+              "This repository has no remote to fetch from.");
+        // Detached, gone, no commit yet, not a repository.
+        Snapshot d = u;
+        d.detached = true;
+        d.branch.clear();
+        CHECK(syncButtonTitle(d).empty() && syncPlan(SyncOp::Push, d).steps.empty());
+        CHECK(syncPlan(SyncOp::Fetch, d).steps ==
+              (std::vector<std::vector<std::string>>{{"fetch", "origin"}}));
+        Snapshot gone = u;
+        gone.hasAheadBehind = false;
+        CHECK(syncButtonTitle(gone).empty());
+        CHECK(syncPlan(SyncOp::Sync, gone).refusal.find("is gone") != std::string::npos);
+        Snapshot init = u;
+        init.initial = true;
+        CHECK(syncButtonTitle(init).empty() && syncPlan(SyncOp::Pull, init).steps.empty());
+        CHECK(syncPlan(SyncOp::Sync, Snapshot()).refusal ==
+              "This folder is not in a git repository.");
+        // What a credential failure says.
+        std::string https = networkFailureText(
+            128, "", "fatal: could not read Username for 'https://github.com': terminal prompts disabled\n");
+        CHECK(https.find("terminal prompts disabled\nminicode never asks for a password") !=
+              std::string::npos);
+        std::string ssh = networkFailureText(
+            128, "", "git@github.com: Permission denied (publickey).\nfatal: Could not read from "
+                     "remote repository.\n");
+        CHECK(ssh.find("ssh-add --apple-use-keychain") != std::string::npos);
+        CHECK(networkFailureText(1, "", "! [rejected] main -> main (fetch first)\n") ==
+              "! [rejected] main -> main (fetch first)");
+    }
+
+    GROUP("git-ui:autofetch");
+    {
+        CHECK(autoFetchWait(180, 0) == 180);
+        CHECK(autoFetchWait(10, 0) == 180);      // never more often than 3 minutes
+        CHECK(autoFetchWait(600, 0) == 600);
+        CHECK(autoFetchWait(180, 1) == 360 && autoFetchWait(180, 2) == 720);
+        CHECK(autoFetchWait(180, 5) == 3600 && autoFetchWait(180, 40) == 3600);
+        CHECK(autoFetchWait(7200, 3) == 7200);
+        Snapshot r;
+        r.inRepository = true;
+        r.remotes = {"origin"};
+        AutoFetchState st;
+        CHECK(autoFetchDue(true, true, r, false, st, 1000, 180));      // never fetched
+        CHECK(!autoFetchDue(false, true, r, false, st, 1000, 180));    // off
+        CHECK(!autoFetchDue(true, false, r, false, st, 1000, 180));    // window in the background
+        CHECK(!autoFetchDue(true, true, r, true, st, 1000, 180));      // something runs
+        Snapshot none = r;
+        none.remotes.clear();
+        CHECK(!autoFetchDue(true, true, none, false, st, 1000, 180));  // no remote
+        CHECK(!autoFetchDue(true, true, Snapshot(), false, st, 1000, 180));
+        st.lastStart = 1000;
+        CHECK(!autoFetchDue(true, true, r, false, st, 1179, 180));
+        CHECK(autoFetchDue(true, true, r, false, st, 1180, 180));
+        CHECK(!autoFetchDue(true, true, r, false, st, 1100, 10));      // clamped to 180
+        st.failures = 2;
+        CHECK(!autoFetchDue(true, true, r, false, st, 1700, 180));
+        CHECK(autoFetchDue(true, true, r, false, st, 1720, 180));
+    }
+
     GROUP("git-ui:failure-text");
     CHECK(failureText(1, "", "\nAborting commit due to empty commit message.\n\n") ==
           "Aborting commit due to empty commit message.");

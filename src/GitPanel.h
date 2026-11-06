@@ -6,7 +6,9 @@
 // Only commands that cannot lose work are ever run: status, diff, add,
 // restore --staged (rm --cached before the first commit, which also touches
 // only the index), and commit -m; for the graph, log, for-each-ref, rev-list
-// and show, which only read. Always argument arrays, never a shell.
+// and show, which only read; and fetch, pull and push, never forced
+// (GitUi::syncPlan), with no terminal and no password prompt. Always
+// argument arrays, never a shell.
 #import <Cocoa/Cocoa.h>
 
 // --------------------------------------------------------------- running git
@@ -91,4 +93,26 @@ NSAttributedString *MCGitCommitText(NSData *show, NSFont *font);
 - (void)showCommitAtRow:(NSInteger)row;
 - (void)showMore;                             // the next 200 commits
 - (void)focusGraph;
+
+// Fetch, Pull, Push and Sync (pull, then push), from the button under
+// Commit ("Sync Changes ↓ 1 ↑ 2", "Publish Branch"), the panel's menu and
+// the commands. Each reads the status first, so it works while the panel is
+// hidden; what happened shows under the Commit button.
+- (void)fetch;
+- (void)pull;
+- (void)push;
+- (void)sync;
+@property(nonatomic, readonly) BOOL syncing;
+@property(nonatomic, readonly, copy) NSString *syncButtonTitle;   // "" when hidden
+@property(nonatomic, readonly, copy) NSString *lastSync;   // "push ok", "fetch failed", "pull refused"
+@property(nonatomic, copy) void (^onSynced)(void);         // after each
+
+// git.autofetch (Settings.h, GitUi::autoFetchDue): a timer looks every 30
+// seconds, from the panel's creation (the window's, not its first showing)
+// until stop. isActive says whether the window has the keyboard (by
+// default, whether the panel's window is key).
+@property(nonatomic, copy) BOOL (^isActive)(void);
+@property(nonatomic, readonly) NSInteger autoFetches;   // background fetches run
+- (BOOL)autoFetchTickAt:(NSTimeInterval)now;            // YES when one started
+- (void)stop;                                           // the window closes
 @end

@@ -838,10 +838,11 @@ static const NSUInteger kMaxClosedTabs = 50;
     // A message (welcome, binary file) is not the file's contents, nor is a
     // viewer's empty text view.
     if (![self tabHasTextToWrite:_activeTab]) return;
-    // format.on-save: Cmd+S (a sender) formats first and saves when the
-    // formatter is done; saves asked for by MiniCode itself (nil) never wait.
-    if (sender && [AppSettings shared].settings.formatOnSave() && [self formatBeforeSaving])
-        return;
+    // editor.organize-imports-on-save, then format.on-save: Cmd+S (a sender)
+    // has the imports organized and the file formatted first, and saves when
+    // they are done; saves asked for by MiniCode itself (nil, auto-save
+    // among them) never wait.
+    if (sender && [self organizeOrFormatBeforeSaving:YES]) return;
     // Never over a change made outside, or a file deleted outside, unasked.
     if (![self mayWriteTab:_activeTab]) return;
     // In markdown preview mode the text view holds rendered text, not source;

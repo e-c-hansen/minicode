@@ -49,6 +49,8 @@ struct Snapshot {
     std::string upstream;     // empty when there is none
     bool hasAheadBehind = false;
     int ahead = 0, behind = 0;
+    // `git remote`, for pushing, pulling and fetching (remoteArgs).
+    std::vector<std::string> remotes;
 };
 
 // Fill the status part of a snapshot: branch line, headings and file rows
@@ -112,6 +114,71 @@ std::vector<std::string> stageArgs(const Row& r, bool initial);
 std::vector<std::string> diffArgs(const Row& r);
 std::vector<std::string> showArgs(const std::string& hash);
 std::vector<std::string> commitArgs(const std::string& message);
+
+// ------------------------------------------------ pushing and pulling
+// The panel's Fetch, Pull, Push and Sync (pull, then push), as VS Code's
+// git.fetch, git.pull, git.push and git.sync do them, without asking first
+// (the owner's git.confirmSync is off). Plain `git pull` and `git push`,
+// so the user's pull.rebase, push.default and remotes' push URLs apply as
+// they do in a terminal. A branch with no upstream is published instead:
+// `push --set-upstream` to origin, or to the only remote. Nothing is ever
+// forced. The commands run with GIT_TERMINAL_PROMPT=0 and no terminal
+// (Git::talksToRemote), so a missing credential fails, and is shown
+// (networkFailureText), rather than waiting for a password.
+enum class SyncOp { Fetch, Pull, Push, Sync };
+
+std::vector<std::string> remoteArgs();   // `git remote`
+// Its output, one name a line; names that would read as options are left out.
+std::vector<std::string> parseRemotes(const std::string& out);
+
+struct SyncPlan {
+    // The commands, in order; the first that fails stops the rest.
+    std::vector<std::vector<std::string>> steps;
+    std::string refusal;     // why nothing can run, when steps is empty
+    std::string busyText;    // "Pulling from origin/main…", while it runs
+    std::string doneText;    // "Pulled from origin/main.", when all went well
+    bool fetches = false;    // it fetches (Fetch, Pull, Sync): autofetch may wait
+};
+SyncPlan syncPlan(SyncOp op, const Snapshot& s);
+
+// The remote a push without an upstream goes to: origin when there is one,
+// else the only remote; "" when there is none or no way to choose.
+std::string publishRemote(const Snapshot& s);
+// The remote the upstream is on ("origin" for origin/main, the longest
+// remote name that fits); "" without an upstream or on a detached HEAD.
+std::string upstreamRemote(const Snapshot& s);
+
+// The button under Commit: "Sync Changes ↓ 1 ↑ 2" when the branch is behind
+// or ahead of its upstream, "Publish Branch" when it has none and there is
+// a remote to publish to, "" when there is nothing to do (no upstream and
+// no remote, a detached HEAD, no commit yet, up to date).
+std::string syncButtonTitle(const Snapshot& s);
+std::string syncButtonToolTip(const Snapshot& s);
+
+// A failed push, pull or fetch, as failureText says it, with a line on
+// what to do when git wanted a password, a token or an ssh key it could
+// not ask for.
+std::string networkFailureText(int status, const std::string& out, const std::string& err);
+
+// ------------------------------------------------------------ autofetch
+// git.autofetch, as VS Code's: the folder's repository is fetched in the
+// background while its window has the keyboard, never more often than every
+// git.autofetch-period seconds (180, VS Code's default, at least), and not
+// at all without a remote. A failure (offline, a credential) doubles the
+// wait each time, up to an hour, so a repository that cannot be fetched is
+// not asked every three minutes; a fetch that works resets it.
+constexpr int kAutoFetchMinPeriod = 180;
+constexpr int kAutoFetchMaxBackoff = 3600;
+struct AutoFetchState {
+    double lastStart = -1;   // when the last fetch began (any fetch), seconds; -1 never
+    int failures = 0;        // autofetches that failed in a row
+};
+// Seconds to wait after the last fetch before the next.
+double autoFetchWait(int period, int failures);
+// Whether to fetch now: autofetch is on, the window has the keyboard, the
+// folder is a repository with a remote, nothing runs, and the wait is over.
+bool autoFetchDue(bool enabled, bool windowActive, const Snapshot& s, bool busy,
+                  const AutoFetchState& st, double now, int period);
 
 // The environment every git gets on top of the app's own.
 struct EnvVar { const char* name; const char* value; };

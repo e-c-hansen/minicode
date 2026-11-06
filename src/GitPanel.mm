@@ -150,9 +150,18 @@ MCGitResult *MCGitRunSyncWithTimeout(NSString *dir, NSArray<NSString *> *args,
     sigdelset(&all, SIGSTOP);
     posix_spawnattr_setsigmask(&attr, &none);
     posix_spawnattr_setsigdefault(&attr, &all);
-    posix_spawnattr_setpgroup(&attr, 0);   // a group of its own, led by git
-    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK |
-                                        POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_CLOEXEC_DEFAULT);
+    // A group of its own, led by git. A command that talks to a remote gets
+    // a session of its own too (its group is then the same), so it has no
+    // controlling terminal: ssh cannot ask for a passphrase or a host key on
+    // the terminal minicode was started from, and fails at once instead.
+    short flags = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_CLOEXEC_DEFAULT;
+    if (Git::talksToRemote(MCGitStdArgs(args))) {
+        flags |= POSIX_SPAWN_SETSID;
+    } else {
+        posix_spawnattr_setpgroup(&attr, 0);
+        flags |= POSIX_SPAWN_SETPGROUP;
+    }
+    posix_spawnattr_setflags(&attr, flags);
     pid_t pid = 0;
     const int rc = posix_spawn(&pid, argv[0], &fa, &attr, argv.data(), envp.data());
     posix_spawn_file_actions_destroy(&fa);
@@ -769,6 +778,17 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     MCGitGraph *_graph;
     NSInteger _graphLimit;
     NSUInteger _graphGeneration;
+    // Pushing and pulling, under the Commit button: "Sync Changes ↓ 1 ↑ 2"
+    // or "Publish Branch" (GitUi::syncButtonTitle), and what runs.
+    NSButton *_syncButton;
+    MCGitSnapshot *_shown;            // the last status applied
+    BOOL _syncing;                    // a fetch, pull, push or sync asked for runs
+    // Autofetch (git.autofetch): a timer looks every 30 s whether a fetch
+    // is due (GitUi::autoFetchDue).
+    NSTimer *_autoTimer;
+    BOOL _autoFetching;               // a background fetch runs (no button, no words)
+    NSString *_autoKey;               // the repository's top level, once known
+    NSTimeInterval _autoNow;          // the tick that started the autofetch running
 }
 
 - (instancetype)initWithRoot:(NSString *)root {
@@ -780,9 +800,23 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
         self.wantsLayer = YES;
         [self build];
         [self applySettings];
+        __weak MCGitPanel *weakSelf = self;
+        _autoTimer = [NSTimer scheduledTimerWithTimeInterval:30 repeats:YES
+                                                       block:^(NSTimer *t) {
+            (void)t;
+            [weakSelf autoFetchTickAt:NSDate.timeIntervalSinceReferenceDate];
+        }];
+        _autoTimer.tolerance = 5;
     }
     return self;
 }
+
+- (void)stop {
+    [_autoTimer invalidate];
+    _autoTimer = nil;
+}
+
+- (void)dealloc { [_autoTimer invalidate]; }
 
 - (BOOL)isFlipped { return YES; }
 
@@ -824,6 +858,12 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _commitButton.bezelStyle = NSBezelStyleRounded;
     _commitButton.controlSize = NSControlSizeRegular;
     [self addSubview:_commitButton];
+
+    _syncButton = [NSButton buttonWithTitle:@"" target:self action:@selector(syncFromButton:)];
+    _syncButton.bezelStyle = NSBezelStyleRounded;
+    _syncButton.controlSize = NSControlSizeRegular;
+    _syncButton.hidden = YES;
+    [self addSubview:_syncButton];
 
     _errorLabel = [NSTextField wrappingLabelWithString:@""];
     _errorLabel.font = [NSFont systemFontOfSize:11];
@@ -931,8 +971,33 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 // A right click on the headings, the button or the panel's edges.
 - (NSMenu *)menuForEvent:(NSEvent *)event {
     (void)event;
-    return MCAdjustSettingsMenu(@"git", self);
+    NSMenu *menu = MCAdjustSettingsMenu(@"git", self);
+    if (!_inRepository) return menu;
+    // VS Code's ... menu: Pull, Push, Fetch, and Sync.
+    NSArray *items = @[@[@"Pull", @((int)GitUi::SyncOp::Pull)],
+                       @[@"Push", @((int)GitUi::SyncOp::Push)],
+                       @[@"Fetch", @((int)GitUi::SyncOp::Fetch)],
+                       @[@"Sync", @((int)GitUi::SyncOp::Sync)]];
+    NSInteger at = 0;
+    for (NSArray *pair in items) {
+        NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:pair[0]
+                                                    action:@selector(syncFromMenu:)
+                                             keyEquivalent:@""];
+        it.target = self;
+        it.tag = [pair[1] integerValue];
+        [menu insertItem:it atIndex:at++];
+    }
+    [menu insertItem:[NSMenuItem separatorItem] atIndex:at];
+    return menu;
 }
+
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(syncFromMenu:)) return !_syncing;
+    return YES;
+}
+
+- (void)syncFromMenu:(NSMenuItem *)item { [self runSync:(GitUi::SyncOp)item.tag]; }
+- (void)syncFromButton:(id)sender { (void)sender; [self runSync:GitUi::SyncOp::Sync]; }
 
 - (void)applySettings {
     AppSettings *cfg = [AppSettings shared];
@@ -976,6 +1041,10 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
         _messageScroll.frame = NSMakeRect(pad, y, inner, 60);
         y += 66;
         _commitButton.frame = NSMakeRect(pad - 4, y, inner + 8, 28);
+        y += 32;
+    }
+    if (!_syncButton.hidden) {
+        _syncButton.frame = NSMakeRect(pad - 4, y, inner + 8, 28);
         y += 32;
     }
     if (!_errorLabel.hidden) {
@@ -1024,12 +1093,20 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _inRepository = NO;
     _graph = nil;
     _graphLimit = kGraphBatch;
+    _shown = nil;
+    _autoKey = nil;
     [self showGraph:NO];
+    [self updateSyncButton];
     [_table reloadData];
     [_graphTable reloadData];
     [self setError:nil info:NO];
     [self refresh];
 }
+
+- (void)fetch { [self runSync:GitUi::SyncOp::Fetch]; }
+- (void)pull { [self runSync:GitUi::SyncOp::Pull]; }
+- (void)push { [self runSync:GitUi::SyncOp::Push]; }
+- (void)sync { [self runSync:GitUi::SyncOp::Sync]; }
 
 - (void)viewDidMoveToWindow {
     [super viewDidMoveToWindow];
@@ -1249,6 +1326,9 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
         return s;
     }
     GitUi::applyStatus(m, Git::parseStatus(Bytes(st.output)));
+    // The remotes, for Publish Branch and for what Fetch and autofetch use.
+    MCGitResult *remotes = MCGitRunSync(s.topLevel, NSArgs(GitUi::remoteArgs()));
+    if (remotes.ok) m.remotes = GitUi::parseRemotes(Bytes(remotes.output));
     NSMutableArray<MCGitRow *> *rows = [NSMutableArray arrayWithCapacity:m.rows.size()];
     for (const GitUi::Row &r : m.rows) [rows addObject:[[MCGitRow alloc] initWithModel:r]];
     s.rows = rows;
@@ -1284,6 +1364,9 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _graphSummary = graph ? [self summaryFor:s] : nil;
     _summaryLabel.stringValue = _graphSummary ?: @"";
     _summaryLabel.toolTip = _graphSummary;
+    _shown = s;
+    if (s.topLevel) _autoKey = s.topLevel;
+    [self updateSyncButton];
     if (!graph && _graph) {
         _graph = nil;
         [_graphTable reloadData];
@@ -1353,6 +1436,165 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
         // "[main 1a2b3c4] Message"
         [self setError:NSFromBytes(GitUi::firstLine(Bytes(r.output))) info:YES];
     }];
+}
+
+// ------------------------------------------------- pushing and pulling
+// Each repository's autofetch state, by its top level, shared by the
+// windows on it so two of them do not fetch twice. Main thread only.
+static std::unordered_map<std::string, GitUi::AutoFetchState> &MCAutoFetchStates() {
+    static std::unordered_map<std::string, GitUi::AutoFetchState> states;
+    return states;
+}
+
+static const char *MCSyncOpName(GitUi::SyncOp op) {
+    switch (op) {
+    case GitUi::SyncOp::Fetch: return "fetch";
+    case GitUi::SyncOp::Pull: return "pull";
+    case GitUi::SyncOp::Push: return "push";
+    case GitUi::SyncOp::Sync: return "sync";
+    }
+    return "";
+}
+
+- (void)updateSyncButton {
+    NSString *title = _shown ? NSFromBytes(GitUi::syncButtonTitle(_shown->model)) : @"";
+    BOOL show = _inRepository && !_messageScroll.hidden && (title.length > 0 || _syncing);
+    if (!_syncing) {
+        _syncButton.title = title;
+        _syncButton.toolTip = title.length ? NSFromBytes(GitUi::syncButtonToolTip(_shown->model))
+                                           : nil;
+    }
+    _syncButton.enabled = !_syncing;
+    if (_syncButton.hidden == show) {
+        _syncButton.hidden = !show;
+        [self layoutPanel];
+    }
+}
+
+- (BOOL)syncing { return _syncing || _autoFetching; }
+- (NSString *)syncButtonTitle { return _syncButton.hidden ? @"" : _syncButton.title; }
+
+// Fetch, Pull, Push or Sync, from the panel's button and menu, and the
+// commands (git.fetch and so on). The plan is made from a status read
+// just now, so the counts and the upstream are current even when the panel
+// has not been shown; nothing is asked first (VS Code's git.confirmSync
+// off). One at a time; a second while one runs beeps.
+- (void)runSync:(GitUi::SyncOp)op {
+    [self runSync:op quietly:NO];
+}
+
+- (void)runSync:(GitUi::SyncOp)op quietly:(BOOL)quiet {
+    NSString *root = self.root;
+    if (!root) return;
+    // One asked for at a time; one asked for while a background fetch runs
+    // waits behind it on the queue.
+    if (quiet ? (_syncing || _autoFetching) : _syncing) {
+        if (!quiet) NSBeep();
+        return;
+    }
+    if (quiet) _autoFetching = YES;
+    else _syncing = YES;
+    [self updateSyncButton];
+    dispatch_async(_queue, ^{
+        MCGitSnapshot *snap = [MCGitPanel snapshotAt:root];
+        GitUi::SyncPlan plan = GitUi::syncPlan(op, snap->model);
+        if (quiet && (!snap.inRepository || snap->model.remotes.empty())) plan = GitUi::SyncPlan();
+        NSString *top = snap.topLevel;
+        if (plan.steps.empty()) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self finishSync:op plan:plan result:nil top:top root:root quietly:quiet];
+            });
+            return;
+        }
+        if (!quiet) {
+            NSString *busy = NSFromBytes(plan.busyText);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (![root isEqualToString:self.root]) return;
+                self->_syncButton.title = busy;
+                [self setError:busy info:YES];
+            });
+        }
+        MCGitResult *last = nil;
+        for (const std::vector<std::string> &step : plan.steps) {
+            last = MCGitRunSync(snap.topLevel, NSArgs(step));
+            if (!last.ok) break;
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self finishSync:op plan:plan result:last top:top root:root quietly:quiet];
+        });
+    });
+}
+
+- (void)finishSync:(GitUi::SyncOp)op plan:(const GitUi::SyncPlan &)plan
+            result:(MCGitResult *)r top:(NSString *)top root:(NSString *)root
+           quietly:(BOOL)quiet {
+    if (quiet) _autoFetching = NO;
+    else _syncing = NO;
+    if (top) _autoKey = top;
+    const BOOL ran = r != nil;
+    const BOOL ok = ran && r.ok;
+    // Any fetch counts for autofetch's wait; an autofetch that found no
+    // remote too (it was keyed by the folder until the top level was known).
+    if (top && (quiet || (ran && plan.fetches))) {
+        GitUi::AutoFetchState &st = MCAutoFetchStates()[top.UTF8String ?: ""];
+        st.lastStart = quiet ? _autoNow : NSDate.timeIntervalSinceReferenceDate;
+        if (ran && ok) st.failures = 0;
+        else if (ran && quiet) st.failures++;
+    }
+    if (ran && quiet) _autoFetches++;
+    _lastSync = [NSString stringWithFormat:@"%s %s", MCSyncOpName(op),
+                                           !ran ? "refused" : ok ? "ok" : "failed"];
+    if (![root isEqualToString:self.root]) {
+        [self updateSyncButton];
+        return;
+    }
+    NSString *text = nil;
+    BOOL info = YES;
+    if (!ran) {
+        text = quiet ? nil : NSFromBytes(plan.refusal);
+        info = NO;
+        if (!quiet) NSBeep();
+    } else if (!ok) {
+        text = NSFromBytes(GitUi::networkFailureText(r.status, Bytes(r.output),
+                                                     (r.errorText ?: @"").UTF8String ?: ""));
+        if (r.timedOut) text = r.errorText;
+        if (quiet) text = [@"Autofetch: " stringByAppendingString:text];
+        info = NO;
+    } else if (!quiet) {
+        text = NSFromBytes(plan.doneText);
+    }
+    if (text || !quiet) [self setError:text info:info];
+    // A background fetch that works again takes its old failure away.
+    else if (ok && [self.errorLine hasPrefix:@"Autofetch: "]) [self setError:nil info:NO];
+    [self updateSyncButton];
+    if (self.onSynced) self.onSynced();
+    // The counts, the graph and the lists as they are now.
+    if (ran && self.window) [self runRefresh];
+}
+
+// git.autofetch: called every 30 s by the panel's timer (and by tests with
+// a time of their own). YES when a fetch was started.
+- (BOOL)autoFetchTickAt:(NSTimeInterval)now {
+    const Settings &cfg = [AppSettings shared].settings;
+    if (!cfg.gitAutoFetch() || !self.root || _syncing || _autoFetching) return NO;
+    BOOL active = self.isActive ? self.isActive() : self.window.isKeyWindow;
+    if (!active) return NO;
+    // By what is known so far: the repository's top level once a status
+    // has said it, else the folder. The fetch itself reads the remotes
+    // again and fetches nothing without one.
+    std::string key = (_autoKey ?: self.root).UTF8String ?: "";
+    GitUi::AutoFetchState &st = MCAutoFetchStates()[key];
+    GitUi::Snapshot probe;
+    probe.inRepository = true;
+    probe.remotes = {"?"};
+    if (!GitUi::autoFetchDue(true, true, probe, false, st, now, cfg.gitAutoFetchPeriod()))
+        return NO;
+    // A folder with no repository or no remote is looked at again only
+    // when the wait is over.
+    st.lastStart = now;
+    _autoNow = now;
+    [self runSync:GitUi::SyncOp::Fetch quietly:YES];
+    return YES;
 }
 
 - (void)showDiffAtRow:(NSInteger)row {

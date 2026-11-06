@@ -108,10 +108,17 @@ std::string unquotePath(const std::string& s);
 std::string subcommand(const std::vector<std::string>& args);
 
 // Seconds a command may take: 600 for commit (its hooks may run a test
-// suite, its signing may wait on a passphrase), 120 for add, restore and rm
-// (clean filters such as Git LFS, another process's index.lock), 30 for
-// everything else, which only reads.
+// suite, its signing may wait on a passphrase) and push (its pre-push hook
+// may too, and a slow network), 300 for pull, 120 for fetch, and for add,
+// restore and rm (clean filters such as Git LFS, another process's
+// index.lock), 30 for everything else, which only reads.
 double timeoutFor(const std::vector<std::string>& args);
+
+// Does the command talk to a remote (fetch, pull, push, ls-remote)? The
+// ports start those in a session of their own, with no terminal, so ssh
+// cannot ask for a passphrase on one either: with GIT_TERMINAL_PROMPT=0 as
+// well, a missing credential fails at once instead of waiting.
+bool talksToRemote(const std::vector<std::string>& args);
 
 // "30 seconds", "2 minutes", "1 second", "0.5 seconds".
 std::string durationText(double seconds);
