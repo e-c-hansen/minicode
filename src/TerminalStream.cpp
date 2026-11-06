@@ -10,7 +10,6 @@
 namespace {
 
 const size_t kMaxOsc = 8192;   // a runaway OSC is abandoned past this size
-const size_t kMaxCsi = 64;     // longer CSI parameter lists are ignored
 const char kReplacement[] = "\xEF\xBF\xBD";   // U+FFFD
 
 int hexValue(char c) {
@@ -231,7 +230,12 @@ void TermParser::feed(const char* data, size_t length, Handler& h) {
             break;
 
         case State::Escape:
-            if (c == '[') { state_ = State::Csi; seq_.clear(); csiOverflow_ = false; }
+            if (c == '[') {
+                state_ = State::Csi;
+                seq_.clear();
+                csiOverflow_ = false;
+                csiParams_ = 1;
+            }
             else if (c == ']') { state_ = State::Osc; osc_.clear(); }
             else if (c == 'P' || c == 'X' || c == '^' || c == '_')
                 state_ = State::String;           // DCS, SOS, PM, APC
@@ -240,6 +244,7 @@ void TermParser::feed(const char* data, size_t length, Handler& h) {
                 state_ = State::EscapeIntermediate;
             }
             else if (c == 0x1B) state_ = State::Escape;
+            else if (c == 0x18 || c == 0x1A) state_ = State::Ground;  // CAN, SUB
             else if (c < 0x20) h.control(c);      // executed, still in ESC
             else { state_ = State::Ground; h.esc("", c); }   // e.g. ESC 7
             break;
@@ -258,7 +263,8 @@ void TermParser::feed(const char* data, size_t length, Handler& h) {
             }
             else if (c == 0x1B) state_ = State::Escape;
             else if (c >= 0x20 && c <= 0x3F) {
-                if (seq_.size() < kMaxCsi) seq_ += (char)c;
+                if (c == ';' || c == ':') csiParams_++;
+                if (seq_.size() < kMaxCsiBytes && csiParams_ <= kMaxCsiParams) seq_ += (char)c;
                 else csiOverflow_ = true;
             }
             else if (c == 0x18 || c == 0x1A) state_ = State::Ground;  // CAN, SUB
@@ -268,6 +274,7 @@ void TermParser::feed(const char* data, size_t length, Handler& h) {
         case State::Osc:                          // ESC ] body (BEL | ESC \)
             if (c == 0x07) { state_ = State::Ground; h.osc(osc_); osc_.clear(); }
             else if (c == 0x1B) state_ = State::OscEscape;
+            else if (c == 0x18 || c == 0x1A) { osc_.clear(); state_ = State::Ground; }
             else if (osc_.size() < kMaxOsc) osc_ += (char)c;
             else { osc_.clear(); state_ = State::String; }  // give up on it
             break;
@@ -281,13 +288,22 @@ void TermParser::feed(const char* data, size_t length, Handler& h) {
             }
             break;
 
-        case State::String:                       // skip until BEL or ESC \ .
-            if (c == 0x07) state_ = State::Ground;
+        // DCS, SOS, PM and APC bodies (and an OSC given up on): skipped
+        // until ST, BEL, or CAN/SUB, which abort them. An ESC not followed
+        // by a backslash ends the string and starts a new sequence, as in
+        // the vt100.net machine: a binary file's stray "ESC P" used to eat
+        // every later byte up to a BEL, a prompt's 133;D mark with them.
+        case State::String:
+            if (c == 0x07 || c == 0x18 || c == 0x1A) state_ = State::Ground;
             else if (c == 0x1B) state_ = State::StringEscape;
             break;
 
         case State::StringEscape:
-            state_ = (c == '\\') ? State::Ground : State::String;
+            if (c == '\\') state_ = State::Ground;
+            else {
+                state_ = State::Escape;
+                continue;                         // reprocess this byte
+            }
             break;
         }
         i++;
@@ -300,7 +316,7 @@ struct TerminalStream::Sink : TermParser::Handler {
     std::vector<TermEvent>& out;
     Sink(TerminalStream& s, std::vector<TermEvent>& out) : s(s), out(out) {}
     void print(uint32_t cp, const std::string& utf8) override {
-        if (s.alt_) return;
+        if (s.alt_ || s.eventsOnly_) return;
         s.printCodepoint(cp, utf8);
         if (s.line_.size() >= kMaxLineCells) s.newline(out);
     }
@@ -322,8 +338,11 @@ void TerminalStream::moveTo(size_t col) {
 
 void TerminalStream::printCodepoint(uint32_t cp, const std::string& utf8) {
     if (termCharWidth(cp) == 0 && col_ > 0 && col_ - 1 < line_.size()) {
-        line_[col_ - 1].ch += utf8;   // attach to the character before
-        dirty_ = true;
+        std::string& ch = line_[col_ - 1].ch;   // attach to the character before
+        if (ch.size() + utf8.size() <= kTermMaxCellBytes) {
+            ch += utf8;
+            dirty_ = true;
+        }
         return;
     }
     Cell cell{utf8, style_};
@@ -359,7 +378,7 @@ void TerminalStream::newline(std::vector<TermEvent>& out) {
 }
 
 void TerminalStream::control(unsigned char c, std::vector<TermEvent>& out) {
-    if (alt_) return;                 // the grid shows the alternate screen
+    if (alt_ || eventsOnly_) return;  // the grid shows the alternate screen
     if (c == '\n') newline(out);
     else if (c == '\r') col_ = 0;
     else if (c == '\b') { if (col_ > 0) col_--; }
@@ -434,7 +453,19 @@ void TerminalStream::finishCsi(const std::string& csi, unsigned char final) {
     }
 }
 
-void TerminalStream::finishOsc(const std::string& s, std::vector<TermEvent>& out) {
+void TerminalStream::finishOsc(const std::string& body, std::vector<TermEvent>& out) {
+    // A mark without the nonce is someone else's (setMarkNonce): dropped.
+    bool mark = body.rfind("133;", 0) == 0 || body.rfind("633;", 0) == 0 ||
+                body.rfind("7;", 0) == 0;
+    std::string stripped;
+    if (mark && !nonce_.empty()) {
+        std::string suffix = ";mc=" + nonce_;
+        if (body.size() < suffix.size() ||
+            body.compare(body.size() - suffix.size(), suffix.size(), suffix) != 0)
+            return;
+        stripped = body.substr(0, body.size() - suffix.size());
+    }
+    const std::string& s = mark && !nonce_.empty() ? stripped : body;
     if (s.rfind("133;", 0) == 0 && s.size() >= 5) {
         TermEvent e;
         switch (s[4]) {
@@ -458,21 +489,10 @@ void TerminalStream::finishOsc(const std::string& s, std::vector<TermEvent>& out
         commandLine_ = s.substr(6, 4096);
     } else if (s.rfind("0;", 0) == 0 || s.rfind("2;", 0) == 0) {
         // A window title (OSC 0 sets the icon's name too; OSC 1 alone is
-        // not a title). Control characters dropped, at most 256 bytes, cut
-        // at a character's start.
+        // not a title), cleaned for a tab label.
         TermEvent e;
         e.kind = TermEvent::Title;
-        for (size_t i = 2; i < s.size(); i++) {
-            unsigned char c = (unsigned char)s[i];
-            if (c < 0x20 || c == 0x7F) continue;
-            if (e.text.size() >= 256 && (c & 0xC0) != 0x80) break;
-            e.text += (char)c;
-        }
-        while (e.text.size() > 256) {           // a character cut in two
-            size_t cut = e.text.size() - 1;
-            while (cut > 0 && ((unsigned char)e.text[cut] & 0xC0) == 0x80) cut--;
-            e.text.resize(cut);
-        }
+        e.text = termCleanTitle(s.substr(2));
         flushLine(out);
         out.push_back(e);
     } else {
@@ -484,6 +504,37 @@ void TerminalStream::finishOsc(const std::string& s, std::vector<TermEvent>& out
             out.push_back(e);
         }
     }
+}
+
+std::string termCleanTitle(const std::string& s, size_t maxBytes) {
+    std::string out;
+    size_t i = 0;
+    while (i < s.size()) {
+        unsigned char c = (unsigned char)s[i];
+        int need = c < 0x80 ? 1 : (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3
+                 : (c >> 3) == 30 ? 4 : 0;
+        bool ok = need > 0 && i + need <= s.size();
+        uint32_t cp = need == 1 ? c : need == 2 ? (c & 0x1F)
+                    : need == 3 ? (c & 0x0F) : (c & 0x07);
+        for (int k = 1; ok && k < need; k++) {
+            unsigned char d = (unsigned char)s[i + k];
+            if ((d & 0xC0) != 0x80) ok = false;
+            else cp = cp << 6 | (d & 0x3F);
+        }
+        if (!ok) { i++; continue; }             // not UTF-8: dropped
+        bool drop = cp < 0x20 || (cp >= 0x7F && cp <= 0x9F) ||   // C0, DEL, C1
+                    cp == 0x061C || cp == 0x00AD ||               // ALM, soft hyphen
+                    (cp >= 0x200B && cp <= 0x200F) ||             // ZW space..RLM
+                    (cp >= 0x202A && cp <= 0x202E) ||             // embeddings, overrides
+                    (cp >= 0x2060 && cp <= 0x206F) ||             // isolates and the rest
+                    cp == 0xFEFF;
+        if (!drop) {
+            if (out.size() + need > maxBytes) break;
+            out.append(s, i, need);
+        }
+        i += need;
+    }
+    return out;
 }
 
 std::string termOsc7Path(const std::string& s) {

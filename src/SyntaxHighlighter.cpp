@@ -1532,13 +1532,23 @@ IncrementalHighlighter<Ch>::edit(const TextSource<Ch>& src, size_t pos,
     // Shift the untouched lines below, then splice the edited ones in.
     for (auto it = keep; it != starts_.end(); ++it) *it = *it - oldLen + newLen;
     size_t gi = (size_t)(firstGone - starts_.begin());
-    starts_.erase(starts_.begin() + gi, starts_.begin() + gi + removed);
-    starts_.insert(starts_.begin() + gi, added.begin(), added.end());
+    if (added.size() < removed)
+        starts_.erase(starts_.begin() + gi, starts_.begin() + gi + (removed - added.size()));
+    else if (added.size() > removed)
+        starts_.insert(starts_.begin() + gi, added.size() - removed, 0);
+    std::copy(added.begin(), added.end(), starts_.begin() + gi);
 
-    std::vector<LexState> fresh(added.size() + 1, LexState{LexState::Unknown, 0});
-    fresh.back() = tailState;
-    states_.erase(states_.begin() + a, states_.begin() + a + removed + 1);
-    states_.insert(states_.begin() + a, fresh.begin(), fresh.end());
+    // States [a, a + removed] become added.size() + 1 fresh ones, the last
+    // the old tail's. In place where the counts allow: typing on one line
+    // (none removed, none added) moved the whole table twice per edit, which
+    // an edit at each of thousands of carets paid thousands of times.
+    const size_t oldCount = removed + 1, newCount = added.size() + 1;
+    if (newCount < oldCount)
+        states_.erase(states_.begin() + a, states_.begin() + a + (oldCount - newCount));
+    else if (newCount > oldCount)
+        states_.insert(states_.begin() + a, newCount - oldCount, LexState{LexState::Unknown, 0});
+    for (size_t k = 0; k + 1 < newCount; ++k) states_[a + k] = LexState{LexState::Unknown, 0};
+    states_[a + newCount - 1] = tailState;
     length_ = total;
 
     Range r;

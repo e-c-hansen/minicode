@@ -55,7 +55,7 @@
     [storage beginEditing];
     [self restyleRange:NSMakeRange(0, storage.length) tokens:tokens inStorage:storage];
     [storage endEditing];
-    _pendingStart = _pendingEnd = NSNotFound;   // all of it is fresh now
+    _pending.clear();   // all of it is fresh now
     _liveHighlight = YES;
 }
 
@@ -179,23 +179,31 @@
         range = [storage.string lineRangeForRange:edited];
     }
 
-    // Carry an earlier, still pending range across this edit, then add this
-    // edit's own.
-    if (_pendingStart != NSNotFound) {
-        NSUInteger editEnd = edited.location + oldLen;
-        if (_pendingStart >= editEnd) {
-            _pendingStart = _pendingStart + newLen - oldLen;
-            _pendingEnd = _pendingEnd + newLen - oldLen;
-        } else if (_pendingEnd > edited.location) {
-            _pendingStart = MIN(_pendingStart, edited.location);
-            _pendingEnd = MAX(_pendingEnd, editEnd) + newLen - oldLen;
+    // Carry the ranges still pending across this edit, then add this edit's
+    // own. Those after the edit keep their distances from the end; those
+    // before it (at the back) move by the change in length, and those it
+    // touches join this edit's range. A multi-range edit comes last range
+    // first (CodeTextView replaceRanges:), so each edit finds nothing at the
+    // back but what it touches: a few ranges looked at per edit, not all.
+    const NSUInteger total = storage.length, oldTotal = total - (NSUInteger)delta;
+    const NSUInteger editEnd = edited.location + oldLen;
+    NSUInteger a = range.location, b = NSMaxRange(range);
+    std::vector<std::pair<NSUInteger, NSUInteger>> before;
+    while (!_pending.empty()) {
+        const NSUInteger s0 = oldTotal - _pending.back().first;
+        const NSUInteger e0 = oldTotal - _pending.back().second;
+        if (s0 > editEnd) break;
+        _pending.pop_back();
+        if (e0 < edited.location) {
+            before.push_back({s0, e0});
+        } else {
+            a = MIN(a, MIN(s0, edited.location));
+            b = MAX(b, e0 >= editEnd ? e0 + newLen - oldLen : edited.location + newLen);
         }
-        _pendingStart = MIN(_pendingStart, range.location);
-        _pendingEnd = MAX(_pendingEnd, NSMaxRange(range));
-    } else {
-        _pendingStart = range.location;
-        _pendingEnd = NSMaxRange(range);
     }
+    _pending.push_back({total - a, total - b});
+    for (auto it = before.rbegin(); it != before.rend(); ++it)
+        _pending.push_back({total - it->first, total - it->second});
     // textDidChange: flushes right after the edit; this catches a change
     // made without didChangeText.
     if (!_flushScheduled) {
@@ -211,26 +219,43 @@
 
 // Recolor the lines edits have touched since the last flush.
 - (void)flushHighlighting {
-    if (_pendingStart == NSNotFound) return;
+    if (_pending.empty()) return;
     NSTextStorage *storage = self.textView.textStorage;
-    NSUInteger start = MIN(_pendingStart, storage.length);
-    NSUInteger end = MIN(MAX(_pendingEnd, start), storage.length);
-    _pendingStart = _pendingEnd = NSNotFound;
-    if (!_liveHighlight) return;
-    std::vector<Token> tokens;
-    NSRange range;
-    if (_hl) {
-        size_t first = _hl->lineOf(start);
-        size_t last = _hl->lineOf(end > start ? end - 1 : start);
-        _hl->lineTokens(NSStringSource(storage.string), first, last + 1, tokens);
-        size_t to = last + 1 < _hl->lineCount() ? _hl->lineStart(last + 1) : _hl->length();
-        range = NSMakeRange(_hl->lineStart(first), to - _hl->lineStart(first));
-    } else {
-        range = [storage.string lineRangeForRange:NSMakeRange(start, end - start)];
+    const NSUInteger total = storage.length;
+    // Ascending, with ranges that touch joined.
+    std::vector<std::pair<NSUInteger, NSUInteger>> spans;
+    for (auto it = _pending.rbegin(); it != _pending.rend(); ++it) {
+        const NSUInteger s = total - MIN(it->first, total), e = total - MIN(it->second, total);
+        if (!spans.empty() && s <= spans.back().second)
+            spans.back().second = MAX(spans.back().second, MAX(e, s));
+        else
+            spans.push_back({s, MAX(e, s)});
     }
-    [storage beginEditing];
-    [self restyleRange:range tokens:tokens inStorage:storage];
-    [storage endEditing];
+    _pending.clear();
+    if (!_liveHighlight) return;
+    // Each span its own attribute edit: one around them all would invalidate
+    // the layout from the first to the last.
+    NSUInteger done = 0;   // where the last span's lines ended
+    for (const auto &span : spans) {
+        NSUInteger start = MAX(span.first, done), end = MAX(span.second, start);
+        if (start >= total && done > 0) break;
+        std::vector<Token> tokens;
+        NSRange range;
+        if (_hl) {
+            size_t first = _hl->lineOf(start);
+            size_t last = _hl->lineOf(end > start ? end - 1 : start);
+            _hl->lineTokens(NSStringSource(storage.string), first, last + 1, tokens);
+            size_t to = last + 1 < _hl->lineCount() ? _hl->lineStart(last + 1) : _hl->length();
+            range = NSMakeRange(_hl->lineStart(first), to - _hl->lineStart(first));
+        } else {
+            range = [storage.string lineRangeForRange:NSMakeRange(start, end - start)];
+        }
+        if (NSMaxRange(range) <= done && done > 0) continue;   // these lines are done
+        [storage beginEditing];
+        [self restyleRange:range tokens:tokens inStorage:storage];
+        [storage endEditing];
+        done = NSMaxRange(range);
+    }
 }
 
 @end

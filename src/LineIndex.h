@@ -10,9 +10,10 @@
 // line of the file, and moving to another line converts only the starts in
 // between.
 //
-// A line ends after '\n' (so "\r\n" is one break), as the highlighter and
-// the language servers count lines. A text ending in '\n' has an empty last
-// line, which the gutter numbers too.
+// A line ends after '\n', after a '\r' not followed by '\n' (an old Mac
+// file's breaks), and after U+2029, so "\r\n" is one break: the lines
+// TextFind and FolderSearch number, and NSTextView draws. A text ending in
+// a break has an empty last line, which the gutter numbers too.
 #pragma once
 #include <cstddef>
 #include <vector>
@@ -25,8 +26,16 @@ public:
     void reset(const char16_t* text, size_t length);
 
     // The units [pos, pos + oldLen) were replaced by `newLen` units, which are
-    // `inserted` (the new text of that range, newLen units long).
-    void edit(size_t pos, size_t oldLen, const char16_t* inserted, size_t newLen);
+    // `inserted` (the new text of that range, newLen units long). `before`
+    // and `after` are the units on either side of it in the new text (0 at
+    // either end), which decide whether a '\r' there still ends a line.
+    void edit(size_t pos, size_t oldLen, const char16_t* inserted, size_t newLen,
+              char16_t before, char16_t after);
+
+    // Whether the unit at i ends a line, given the unit after it (0 at the end).
+    static bool breaksAfter(char16_t c, char16_t next) {
+        return c == u'\n' || c == 0x2029 || (c == u'\r' && next != u'\n');
+    }
 
     // The 0-based line holding offset pos (the last line for pos >= length).
     size_t lineOf(size_t pos) const;
@@ -34,7 +43,7 @@ public:
     size_t lineStart(size_t line) const {
         return line < gap_ ? starts_[line] : length_ - starts_[line];
     }
-    // The end of a line, its '\n' included (the text's length for the last).
+    // The end of a line, its break included (the text's length for the last).
     size_t lineEnd(size_t line) const {
         return line + 1 < starts_.size() ? lineStart(line + 1) : length_;
     }
@@ -51,4 +60,5 @@ private:
 
     void moveGap(size_t to);
     size_t firstAfter(size_t pos) const;   // the first line starting after pos
+    size_t firstAt(size_t pos) const;      // the first line starting at or after pos
 };

@@ -19,10 +19,10 @@
 // Replace…, Find Next, Use Selection for Find, Find Options), and Esc
 // closes the bar when nothing else (a completion list) wanted it.
 //
-// Edits go through the text view in one shouldChangeTextInRanges and one
-// didChangeText, last range first, as Format Document's do, so the
-// highlighter, the language server, the dirty mark and undo (one step per
-// Replace All) follow as for typing.
+// Edits go through CodeTextView's replaceRanges:withStrings:actionName:,
+// as Format Document's and several carets' do: each match its own storage
+// edit, so the highlighter, the folds, the language server, the dirty mark
+// and undo (one step per Replace All) follow as for typing.
 #import <Cocoa/Cocoa.h>
 
 @class CodeTextView;

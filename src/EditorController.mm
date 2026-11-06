@@ -13,7 +13,6 @@
         _browserFraction = 0.5;
         _tabs = [NSMutableArray array];
         _noTabUndo = [NSUndoManager new];
-        _pendingStart = _pendingEnd = NSNotFound;
         [self setUpTreeDetails];
         _agents = [[MCAgentWindow alloc] initWithHost:self];
     }

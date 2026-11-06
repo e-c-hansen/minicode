@@ -53,7 +53,8 @@ extern NSNotificationName const MCTerminalCommandDidFinishNotification;
 - (void)focusInput;                     // the input line, or the grid when shown
 - (BOOL)hasFocus;                       // the keyboard is somewhere in this terminal
 
-// zsh is waiting for a command (from the shell integration's marks).
+// zsh is waiting for a command (from the shell integration's marks, which
+// count only with this shell's nonce).
 @property(nonatomic, readonly) BOOL atPrompt;
 // A full-screen program has the screen (vim, less). In line mode, that is
 // when the grid shows in place of the log.
@@ -61,8 +62,9 @@ extern NSNotificationName const MCTerminalCommandDidFinishNotification;
 // This terminal opened in line mode (terminal.mode = line): the log and an
 // input line. Otherwise it is a grid terminal, with zsh's own line editor.
 @property(nonatomic, readonly) BOOL lineMode;
-// A command is running, or one is waiting to be typed: not a terminal to
-// type another command into. A shell still starting is not busy.
+// A command is running (per the marks, or a program other than the shell
+// holds the terminal's foreground), or one is waiting to be typed: not a
+// terminal to type another command into. A shell still starting is not busy.
 @property(nonatomic, readonly) BOOL busy;
 // What closing this terminal would end or drop, for the question asked
 // first: the command in the foreground ("npm run dev", "vim": per the shell
@@ -85,7 +87,8 @@ extern NSNotificationName const MCTerminalCommandDidFinishNotification;
 @property(nonatomic, copy) void (^onTitleChange)(void);
 // Types a command as if it were entered in the input line, so it shows and
 // goes into the shell's history like any other. Waits for the prompt when the
-// shell is still starting (or restarts a shell that exited).
+// shell is still starting (or restarts a shell that exited), and whenever
+// the shell does not hold the terminal's foreground.
 - (void)runCommand:(NSString *)line;
 // Puts a command in the input line (grid mode: at zsh's prompt, once it
 // shows) and gives it the keyboard, for the user to read and press Return

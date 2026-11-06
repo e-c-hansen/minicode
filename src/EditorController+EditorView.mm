@@ -280,6 +280,18 @@
     return YES;
 }
 
+// Several ranges at once (CodeTextView replaceRanges:): answered here, since
+// with only the method above NSTextView builds one string from the first
+// range to the last to ask it, every time (a sixth of a keystroke at 10,000
+// carets). Several carets never move a line.
+- (BOOL)textView:(NSTextView *)tv shouldChangeTextInRanges:(NSArray<NSValue *> *)ranges
+    replacementStrings:(NSArray<NSString *> *)strings {
+    if (ranges.count == 1)
+        return [self textView:tv shouldChangeTextInRange:ranges[0].rangeValue
+            replacementString:strings.firstObject];
+    return YES;
+}
+
 // F9: sort the selected lines, or the keep-sorted block around the caret.
 - (void)sortLines:(id)sender {
     if (self.window.firstResponder != self.textView) {

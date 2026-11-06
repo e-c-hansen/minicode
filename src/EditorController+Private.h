@@ -208,7 +208,10 @@ static const NSInteger kWorktreeMenuTag = 7701;
     BOOL _mathOn;                          // this render typesets math
     NSString *_mathRunProblem;             // why a whole run failed, this render
     NSString *_tectonicProblem;            // why the last download failed
-    NSUInteger _pendingStart, _pendingEnd; // edited, not yet recolored (NSNotFound: none)
+    // Edited, not yet recolored: [start, end) as distances from the end of
+    // the text (an edit before a range leaves them alone), by start
+    // descending, so the edits of a multi-range edit (last first) append.
+    std::vector<std::pair<NSUInteger, NSUInteger>> _pending;
     BOOL _flushScheduled;
     BOOL _highlightingSettingsFile;        // give color values swatches
     NSColor *_styleColors[8];              // by TokenStyle, from the settings

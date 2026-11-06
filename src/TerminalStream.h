@@ -64,6 +64,20 @@ std::string termOsc7Path(const std::string& body);
 // Apply an SGR parameter string (the body of "CSI ... m") to a style.
 void applySgr(TermStyle& style, const std::string& params);
 
+// The most bytes a cell keeps: its character plus combining marks. Marks
+// past it are dropped, as xterm keeps only a few, since a program printing
+// megabytes of U+0301 after one letter otherwise grew a single cell that
+// every frame copied and laid out (and, past 16 MiB in one line, overflowed
+// the scrollback's packed offsets). 32 bytes holds a flag's tag sequence,
+// a skin-toned emoji with its joiner, and any real script's marks.
+constexpr size_t kTermMaxCellBytes = 32;
+
+// A window title as a program sent it (UTF-8), made safe to show in a tab:
+// C0 and C1 controls, DEL, and the bidirectional and zero-width format
+// characters dropped (U+202E would reorder the label), at most `maxBytes`,
+// cut at a character's start.
+std::string termCleanTitle(const std::string& text, size_t maxBytes = 256);
+
 // The DEC/ANSI escape-sequence parser (the state machine Paul Williams
 // documented on vt100.net), trimmed to what MiniCode needs. It decodes UTF-8,
 // recognizes every sequence so none leaks into the text, and hands each piece
@@ -87,6 +101,14 @@ public:
 
     void feed(const char* data, size_t length, Handler& h);
 
+    // Limits on a CSI sequence: at most kMaxCsiParams parameters and
+    // sub-parameters (xterm keeps 30), and kMaxCsiBytes in all. Past either
+    // the sequence is read to its end and dropped. A count, not a byte
+    // limit, decides, so a long truecolor SGR (foreground, background and
+    // underline color in the colon form) still applies.
+    static constexpr size_t kMaxCsiParams = 32;
+    static constexpr size_t kMaxCsiBytes = 512;
+
     // Split CSI parameters on ';'. Each parameter keeps its ':' sub-parameters.
     // Empty values are -1 (meaning "default"). Other bytes are skipped.
     static std::vector<std::vector<int>> params(const std::string& s);
@@ -98,6 +120,7 @@ private:
     std::string osc_;            // body of the OSC sequence being read
     std::string seq_;            // CSI parameters, or ESC intermediates
     bool csiOverflow_ = false;
+    size_t csiParams_ = 0;       // separators in seq_ so far, plus one
     std::string utf8_;           // bytes of a UTF-8 character in progress
     int utf8Need_ = 0;           // total bytes that character needs
 
@@ -149,6 +172,20 @@ public:
     // is kept out of the log.
     bool altScreen() const { return alt_; }
 
+    // The shell integration's marks (OSC 133, OSC 633;E and OSC 7) count
+    // only when they end in ";mc=<nonce>", once a nonce is set: any program
+    // can print a mark (a remote shell with iTerm2's integration, a server
+    // logging a request path, cat of a file), and the host types commands
+    // into the terminal on the strength of them. The host makes a nonce per
+    // shell and hands it to the integration, which never exports it. Marks
+    // without it are dropped whole. Empty (the default): every mark counts.
+    void setMarkNonce(const std::string& nonce) { nonce_ = nonce; }
+
+    // Events only: no Line events and no line kept, for a host that shows
+    // the grid (TerminalScreen) and wants only where the shell is. Grid mode
+    // threw away a third of the parse time building lines here.
+    void setEventsOnly(bool on) { eventsOnly_ = on; if (on) breakLine(); }
+
     // Longest a line may grow before it is ended automatically, so one huge
     // unbroken line doesn't get re-rendered on every chunk.
     static constexpr size_t kMaxLineCells = 8192;
@@ -167,6 +204,8 @@ private:
     bool dirty_ = false;         // the live line changed since last emitted
     bool alt_ = false;           // on the alternate screen
     std::string commandLine_;    // from OSC 633;E, for the next CommandStart
+    std::string nonce_;          // marks must carry it (setMarkNonce)
+    bool eventsOnly_ = false;
 
     void printCodepoint(uint32_t cp, const std::string& utf8);
     void newline(std::vector<TermEvent>& out);

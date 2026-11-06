@@ -279,6 +279,95 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
     [super scrollWheel:event];
 }
 
+// ---- several replacements as one edit (Lsp.h)
+//
+// Each replacement is its own storage edit, last first, so every watcher of
+// the storage (the highlighter, the folds, the squiggles, the gutter, the
+// language server, Go Back's places) sees small edits, as for typing. One
+// beginEditing around them reported a single edit from the first range to
+// the last: folds between them opened, squiggles stretched over the span,
+// and the highlighter relexed and restyled all of it (4.5 s for a quote
+// typed at two carets 99,800 lines apart in a 100,000-line file).
+//
+// The undo step is this view's own, not NSTextView's: putting back many
+// ranges NSTextView's way inserts each old text as an attributed string,
+// which splits the storage's attribute runs one at a time (undoing a letter
+// typed over 20,000 selections ran for minutes). Ours puts the old text back
+// as plain strings, through this method, and selects it again.
+- (BOOL)replaceRanges:(NSArray<NSValue *> *)ranges
+          withStrings:(NSArray<NSString *> *)strings
+           actionName:(NSString *)name {
+    const NSUInteger count = ranges.count;
+    if (count == 0 || count != strings.count) return NO;
+    NSTextStorage *ts = self.textStorage;
+    NSString *text = ts.string;
+    NSMutableArray<NSString *> *olds = [NSMutableArray arrayWithCapacity:count];
+    NSMutableArray<NSValue *> *after = [NSMutableArray arrayWithCapacity:count];
+    NSUInteger end = 0;
+    NSInteger shift = 0;
+    for (NSUInteger i = 0; i < count; i++) {
+        const NSRange r = ranges[i].rangeValue;
+        if (r.location < end || NSMaxRange(r) > text.length) return NO;   // not ascending and apart
+        end = NSMaxRange(r);
+        [olds addObject:[text substringWithRange:r]];
+        [after addObject:[NSValue valueWithRange:NSMakeRange((NSUInteger)((NSInteger)r.location + shift),
+                                                             strings[i].length)]];
+        shift += (NSInteger)strings[i].length - (NSInteger)r.length;
+    }
+    NSUndoManager *um = self.undoManager;
+    const BOOL allows = self.allowsUndo, undo = allows && um && um.isUndoRegistrationEnabled;
+    [self breakUndoCoalescing];
+    if (undo) [um beginUndoGrouping];
+    self.allowsUndo = NO;   // keeps what is on the stack; registers nothing for this change
+    const BOOL ok = [self shouldChangeTextInRanges:ranges replacementStrings:strings];
+    self.allowsUndo = allows;
+    if (ok) {
+        // NSTextView moves every selected range after each storage edit:
+        // with the selections of 10,000 carets that was most of the time.
+        // The callers set the selection afterwards.
+        if (self.selectedRanges.count > 1)
+            [super setSelectedRanges:@[ [NSValue valueWithRange:NSMakeRange(ranges[0].rangeValue.location, 0)] ]
+                            affinity:NSSelectionAffinityDownstream
+                      stillSelecting:NO];
+        // Plain strings take the attributes before them; an empty text has
+        // none to give, so the typing attributes then.
+        NSDictionary *attrs = ts.length == 0 ? self.typingAttributes : nil;
+        for (NSInteger k = (NSInteger)count - 1; k >= 0; k--) {
+            const NSRange r = ranges[(NSUInteger)k].rangeValue;
+            if (attrs)
+                [ts replaceCharactersInRange:r
+                        withAttributedString:[[NSAttributedString alloc]
+                                                 initWithString:strings[(NSUInteger)k]
+                                                     attributes:attrs]];
+            else
+                [ts replaceCharactersInRange:r withString:strings[(NSUInteger)k]];
+        }
+        [self didChangeText];
+        if (undo) {
+            const NSUInteger length = ts.length;
+            NSString *undoName = [name copy];
+            NSArray<NSValue *> *before = [ranges copy];
+            [um registerUndoWithTarget:self handler:^(CodeTextView *tv) {
+                if (tv.textStorage.length != length) return;   // never expected: undo runs in order
+                if (![tv replaceRanges:after withStrings:olds actionName:undoName]) return;
+                // The old text selected again, as NSTextView's undo does.
+                NSMutableArray<NSValue *> *sel = [NSMutableArray array];
+                for (NSValue *v in before)
+                    if (v.rangeValue.length) [sel addObject:v];
+                if (!sel.count) [sel addObject:before.firstObject];
+                [tv setSelectedRanges:sel affinity:NSSelectionAffinityDownstream stillSelecting:NO];
+                [tv scrollRangeToVisible:sel.firstObject.rangeValue];
+            }];
+        }
+    }
+    if (undo) {
+        if (name) [um setActionName:name];
+        [um endUndoGrouping];
+    }
+    [self breakUndoCoalescing];
+    return ok;
+}
+
 // ---- several carets: everything that types, moves or sets the selection
 // goes to MCMultiCarets first while it has two or more.
 - (void)insertText:(id)string replacementRange:(NSRange)replacementRange {

@@ -2,6 +2,7 @@
 #include "TextFind.h"
 
 #include <algorithm>
+#include <chrono>
 #include <regex>
 
 static_assert(sizeof(wchar_t) == 4, "TextFind runs std::wregex on UTF-32 code points");
@@ -49,7 +50,15 @@ struct FoldTraits : std::regex_traits<wchar_t> {
     }
 };
 using Regex = std::basic_regex<wchar_t, FoldTraits>;
-using Iter = std::wstring::const_iterator;
+
+// A line longer than this (code points) is searched one start position at
+// a time, so a regex that backtracks over it can be stopped between them:
+// after kRegexLineSeconds plus kRegexSecondsPerChar for each character
+// (an ordinary regex takes well under that), or when the caller's cancel
+// flag goes up. Shorter lines are searched in one call each.
+constexpr std::size_t kSteppedLine = 2000;
+constexpr double kRegexLineSeconds = 1.0;
+constexpr double kRegexSecondsPerChar = 0.5e-6;
 
 constexpr std::size_t npos = std::string::npos;
 
@@ -207,8 +216,10 @@ bool wholeWordAt(const std::wstring& l, std::size_t s, std::size_t len) {
 }
 
 // Every match of `q` in one line of code points, at most `limit` (0 = all).
+// A regex on a line longer than kSteppedLine gives up after about a second,
+// or as soon as `cancel` is raised, keeping what it found.
 void matchLine(const Query::Impl& q, const std::wstring& line, std::vector<CpMatch>& out,
-               std::size_t limit) {
+               std::size_t limit, const std::atomic<bool>* cancel = nullptr) {
     const std::size_t n = line.size();
     auto full = [&] { return limit && out.size() >= limit; };
     if (!q.re) {
@@ -236,15 +247,21 @@ void matchLine(const Query::Impl& q, const std::wstring& line, std::vector<CpMat
         }
         return;
     }
-    // std::regex_iterator, which steps past empty matches as JavaScript
-    // does. (A search of our own from inside the line, with
-    // match_prev_avail, let ^ match there in libc++.)
+    // Matches one after another, stepping past an empty match as
+    // std::regex_iterator and JavaScript do: the next search starts where a
+    // match ended, and after an empty one first asks for a non-empty match
+    // there, then searches from one further on. Over pointers, not string
+    // iterators: libc++ copies the rest of the line for every search through
+    // any other iterator type, which made a line with many matches
+    // quadratic. A search from inside the line has the character before it
+    // (\b sees it) and is not at the line's start (^ does not match there).
     // Ignoring case, the regex runs over the line folded to lower case
     // (one code point for one, so positions hold). libstdc++ tests a
     // bracket range such as [а-я] through the locale's ctype, not the
     // traits, and the C locale folds only ASCII; folded text puts the
     // character itself in the lower-case range.
-    using It = std::regex_iterator<Iter, wchar_t, FoldTraits>;
+    namespace rc = std::regex_constants;
+    using Results = std::match_results<const wchar_t*>;
     std::wstring foldedLine;
     const std::wstring* subject = &line;
     if (!q.opt.caseSensitive) {
@@ -253,17 +270,69 @@ void matchLine(const Query::Impl& q, const std::wstring& line, std::vector<CpMat
             foldedLine[i] = static_cast<wchar_t>(foldCase(static_cast<char32_t>(line[i])));
         subject = &foldedLine;
     }
+    const wchar_t* const b = subject->data();
+    const wchar_t* const e = b + n;
+    const bool stepped = n > kSteppedLine;
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                              std::chrono::duration<double>(kRegexLineSeconds +
+                                                            kRegexSecondsPerChar * (double)n));
+    bool stop = false;
+    // From inside the line: match_prev_avail (\b looks at the character
+    // before), and ^ must not match. libstdc++ takes that from
+    // match_prev_avail itself (or match_not_bol); libc++ ignores
+    // match_not_bol beside it and lets ^ match at the start of any search,
+    // except one flagged with its own __no_update_pos, which is how its
+    // regex_iterator searches on from a match.
+    auto flagsAt = [](std::size_t p) {
+        if (p == 0) return rc::match_default;
+#ifdef _LIBCPP_VERSION
+        return rc::match_prev_avail | rc::match_not_bol | rc::__no_update_pos;
+#else
+        return rc::match_prev_avail | rc::match_not_bol;
+#endif
+    };
+    // The first match starting at or after `from` (not an empty one at
+    // `from` when notNull), into m.
+    auto next = [&](std::size_t from, bool notNull, Results& m) -> bool {
+        if (!stepped) {
+            if (notNull) {
+                if (std::regex_search(b + from, e, m, *q.re,
+                                      flagsAt(from) | rc::match_not_null | rc::match_continuous))
+                    return true;
+                if (from >= n) return false;
+                ++from;
+            }
+            return std::regex_search(b + from, e, m, *q.re, flagsAt(from));
+        }
+        for (std::size_t p = from; p <= n; ++p) {
+            // Before every attempt: one can itself cost a pass over the line.
+            if ((cancel && cancel->load(std::memory_order_relaxed)) ||
+                std::chrono::steady_clock::now() > deadline) {
+                stop = true;
+                return false;
+            }
+            auto f = flagsAt(p) | rc::match_continuous;
+            if (p == from && notNull) f |= rc::match_not_null;
+            if (std::regex_search(b + p, e, m, *q.re, f)) return true;
+        }
+        return false;
+    };
     try {
-        for (It it(subject->cbegin(), subject->cend(), *q.re), end; it != end && !full(); ++it) {
-            const auto& mr = *it;
-            const std::size_t s = static_cast<std::size_t>(mr.position(0));
-            const std::size_t len = static_cast<std::size_t>(mr.length(0));
+        Results mr;
+        std::size_t from = 0;
+        bool notNull = false;
+        while (from <= n && !full() && !stop && next(from, notNull, mr)) {
+            const std::size_t s = static_cast<std::size_t>(mr[0].first - b);
+            const std::size_t len = static_cast<std::size_t>(mr[0].second - mr[0].first);
+            from = s + len;
+            notNull = len == 0;
             if (q.opt.wholeWord && !wholeWordAt(line, s, len)) continue;
             CpMatch cm{s, len, {}};
             for (std::size_t k = 0; k < mr.size(); ++k) {
                 if (mr[k].matched)
-                    cm.groups.push_back({static_cast<std::size_t>(mr.position(k)),
-                                         static_cast<std::size_t>(mr.length(k))});
+                    cm.groups.push_back({static_cast<std::size_t>(mr[k].first - b),
+                                         static_cast<std::size_t>(mr[k].second - mr[k].first)});
                 else
                     cm.groups.push_back({npos, 0});
             }
@@ -354,8 +423,12 @@ std::vector<Match> findAll(const std::u16string& text, const Query& query, std::
         const std::size_t end = lineEnd(text, pos, &next);
         decode16(text.data() + pos, end - pos, l);
         cms.clear();
-        matchLine(*q, l.cps, cms, limit ? limit - out.size() : 0);
+        matchLine(*q, l.cps, cms, limit ? limit - out.size() : 0, cancel);
         toUnits(cms, l, pos, out);
+        if (cancel && l.cps.size() > kSteppedLine && cancel->load(std::memory_order_relaxed)) {
+            if (cancelled) *cancelled = true;
+            break;
+        }
         if (limit && out.size() >= limit) {
             if (truncated) *truncated = true;
             break;

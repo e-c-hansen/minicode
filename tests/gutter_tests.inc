@@ -19,7 +19,9 @@ LineIndex indexOf(const std::u16string &t) {
 void editBoth(std::u16string &t, LineIndex &ix, size_t pos, size_t oldLen,
               const std::u16string &ins) {
     t.replace(pos, oldLen, ins);
-    ix.edit(pos, oldLen, ins.data(), ins.size());
+    const size_t end = pos + ins.size();
+    ix.edit(pos, oldLen, ins.data(), ins.size(), pos > 0 ? t[pos - 1] : 0,
+            end < t.size() ? t[end] : 0);
 }
 
 }  // namespace
@@ -41,6 +43,48 @@ static void testLineIndex() {
         CHECK(indexOf(u"x\n").lineCount() == 2);
         // CRLF is one break, after the \n.
         CHECK(startsOf(indexOf(u"a\r\nb\r\n")) == (std::vector<size_t>{0, 3, 6}));
+        // A '\r' alone (an old Mac file) and U+2029 end lines too, as they
+        // do for NSTextView and TextFind.
+        CHECK(startsOf(indexOf(u"a\rb\rc")) == (std::vector<size_t>{0, 2, 4}));
+        CHECK(startsOf(indexOf(u"a\r")) == (std::vector<size_t>{0, 2}));
+        CHECK(startsOf(indexOf(u"a\u2029b")) == (std::vector<size_t>{0, 2}));
+        CHECK(startsOf(indexOf(u"a\r\r\nb")) == (std::vector<size_t>{0, 2, 4}));
+    }
+
+    GROUP("lineindex:cr-edits");
+    {
+        // A '\n' typed after a '\r' joins them into one break, and deleting
+        // it splits them again; so does text typed or deleted between them.
+        std::u16string t = u"a\rb\rc";
+        LineIndex ix = indexOf(t);
+        editBoth(t, ix, 2, 0, u"\n");                     // a\r\nb\rc
+        CHECK(startsOf(ix) == (std::vector<size_t>{0, 3, 5}));
+        editBoth(t, ix, 2, 1, u"");                       // a\rb\rc again
+        CHECK(startsOf(ix) == (std::vector<size_t>{0, 2, 4}));
+        editBoth(t, ix, 2, 0, u"x");                      // a\rxb\rc
+        CHECK(startsOf(ix) == startsOf(indexOf(t)));
+        t = u"a\rx\nb";
+        ix = indexOf(t);
+        editBoth(t, ix, 2, 1, u"");                       // a\r\nb: one break
+        CHECK(startsOf(ix) == (std::vector<size_t>{0, 3}));
+        editBoth(t, ix, 1, 0, u"\r");                     // a\r\r\nb
+        CHECK(startsOf(ix) == startsOf(indexOf(t)));
+        // Random edits heavy in \r and \n against a full index.
+        std::mt19937 rng(11);
+        const char16_t alphabet[] = u"a\r\n\r\n\u2029b";
+        int mismatches = 0;
+        t = u"x\ry\r\nz";
+        ix = indexOf(t);
+        for (int i = 0; i < 20000; i++) {
+            size_t pos = t.empty() ? 0 : rng() % (t.size() + 1);
+            size_t del = pos < t.size() ? rng() % std::min<size_t>(t.size() - pos + 1, 4) : 0;
+            std::u16string ins;
+            for (size_t n = rng() % 4; n > 0; n--) ins += alphabet[rng() % 7];
+            if (t.size() > 300) del = std::min<size_t>(t.size() - pos, 30);
+            editBoth(t, ix, pos, del, ins);
+            if (startsOf(ix) != startsOf(indexOf(t)) || ix.length() != t.size()) mismatches++;
+        }
+        CHECK(mismatches == 0);
     }
 
     GROUP("lineindex:edits");
@@ -85,8 +129,8 @@ static void testLineIndex() {
         const int reps = 200;
         for (int i = 0; i < reps; i++) {
             const char16_t c = u'\n';
-            ix.edit(50, 0, &c, 1);
-            ix.edit(50, 1, nullptr, 0);
+            ix.edit(50, 0, &c, 1, big[49], big[50]);
+            ix.edit(50, 1, nullptr, 0, big[49], big[50]);
         }
         double us = std::chrono::duration<double, std::micro>(
                         std::chrono::steady_clock::now() - t0).count() / (2 * reps);

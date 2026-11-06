@@ -36,6 +36,17 @@ const uint32_t kDecGraphics[32] = {
 
 int clampInt(int v, int lo, int hi) { return std::max(lo, std::min(v, hi)); }
 
+// A packed scrollback cell (HistLine::cells): its offset into the line's
+// text above two bits of width. Offsets reach 1 GiB, and nothing is packed
+// past kMaxLineBytes (pack and appendCells stop short of it), so a line
+// joined from many rows in a reflow can never wrap the offset around. With
+// eight bits of width, 16 MiB of combining marks on one line used to wrap
+// it, and find read far outside the text.
+const size_t kMaxLineBytes = (size_t(1) << 30) - 1;
+inline uint32_t packCell(size_t offset, int width) { return (uint32_t)offset << 2 | (uint32_t)width; }
+inline size_t cellOffset(uint32_t c) { return c >> 2; }
+inline int cellWidth(uint32_t c) { return (int)(c & 3); }
+
 // The code points of a cell's text (or a query), appended to `out`. Bytes
 // that are not UTF-8 come out as U+FFFD, one each.
 void utf8Decode(const char* p, size_t n, std::vector<uint32_t>& out) {
@@ -82,12 +93,13 @@ struct TerminalScreen::Sink : TermParser::Handler {
 };
 
 TerminalScreen::TerminalScreen(int cols, int rows)
-    : cols_(std::max(cols, 1)), rows_(std::max(rows, 1)) {
+    : cols_(std::max(cols, 2)), rows_(std::max(rows, 1)) {
     fullReset();
 }
 
 void TerminalScreen::fullReset() {
     if (syncOutput_) syncEnds_++;
+    below_.clear();
     main_.assign(rows_, Row(cols_, TermCell()));
     alt_.assign(rows_, Row(cols_, TermCell()));
     onAlt_ = false;
@@ -252,9 +264,9 @@ std::vector<TermMatch> TerminalScreen::find(const std::string& query, bool match
                 widthOf.resize(at + n, 1);
             } else {
                 for (int c = 0; c < n; c++) {
-                    size_t from = hl.cells[c] >> 8;
-                    size_t to = c + 1 < hl.width ? hl.cells[c + 1] >> 8 : hl.text.size();
-                    int w = (int)(hl.cells[c] & 0xFF);
+                    size_t from = cellOffset(hl.cells[c]);
+                    size_t to = c + 1 < hl.width ? cellOffset(hl.cells[c + 1]) : hl.text.size();
+                    int w = cellWidth(hl.cells[c]);
                     if (w == 0 || to == from) continue;   // the right half of a wide one
                     addCell(hl.text.data() + from, to - from, line, c, w);
                 }
@@ -276,6 +288,7 @@ std::vector<TermMatch> TerminalScreen::find(const std::string& query, bool match
 // ------------------------------------------------------------------ clear
 void TerminalScreen::clearAll() {
     history_.clear();
+    below_.clear();
     if (onAlt_) return;
     for (Row& row : main_) { row.assign(cols_, TermCell()); row.wrap = 0; }
     x_ = y_ = 0;
@@ -284,6 +297,7 @@ void TerminalScreen::clearAll() {
 
 void TerminalScreen::clearToCursorLine() {
     history_.clear();
+    below_.clear();
     if (onAlt_ || y_ == 0) return;
     int up = y_;
     main_.erase(main_.begin(), main_.begin() + up);
@@ -295,19 +309,20 @@ void TerminalScreen::clearToCursorLine() {
 // ------------------------------------------------------------- scrollback
 TerminalScreen::HistLine TerminalScreen::pack(const Row& row, size_t width) {
     HistLine h;
-    h.width = (int)width;
     bool simple = true;
     size_t bytes = 0;
     for (size_t c = 0; c < width; c++) {
         const TermCell& cell = row[c];
-        bytes += cell.ch.size();
+        if (bytes + cell.ch.size() > kMaxLineBytes) { width = c; break; }   // never, with
+        bytes += cell.ch.size();                       // kTermMaxCellBytes a cell
         if (cell.ch.size() != 1 || cell.width != 1) simple = false;
     }
+    h.width = (int)width;
     h.text.reserve(bytes);
     if (!simple) h.cells.reserve(width);
     for (size_t c = 0; c < width; c++) {
         const TermCell& cell = row[c];
-        if (!simple) h.cells.push_back((uint32_t)h.text.size() << 8 | cell.width);
+        if (!simple) h.cells.push_back(packCell(h.text.size(), cell.width));
         h.text += cell.ch;
         if (h.runs.empty() || h.runs.back().style != cell.style)
             h.runs.push_back({(uint32_t)c, cell.style});
@@ -337,10 +352,10 @@ TermCell TerminalScreen::histCell(const HistLine& h, int col) {
     if (h.cells.empty()) {
         cell.ch.assign(1, h.text[col]);
     } else {
-        size_t from = h.cells[col] >> 8;
-        size_t to = col + 1 < h.width ? h.cells[col + 1] >> 8 : h.text.size();
+        size_t from = cellOffset(h.cells[col]);
+        size_t to = col + 1 < h.width ? cellOffset(h.cells[col + 1]) : h.text.size();
         cell.ch.assign(h.text, from, to - from);
-        cell.width = (uint8_t)(h.cells[col] & 0xFF);
+        cell.width = (uint8_t)cellWidth(h.cells[col]);
     }
     // The last run starting at or before col.
     auto it = std::upper_bound(h.runs.begin(), h.runs.end(), (uint32_t)col,
@@ -436,7 +451,9 @@ void TerminalScreen::pushHistory(const Row& row) {
 
 // ----------------------------------------------------------------- resize
 void TerminalScreen::resize(int cols, int rows, std::vector<TermPos>* keep) {
-    cols = std::max(cols, 1);
+    // Two columns at least: a wide character needs two cells, and at one
+    // column print wrote past the row.
+    cols = std::max(cols, 2);
     rows = std::max(rows, 1);
     if (cols == cols_ && rows == rows_) return;
 
@@ -499,7 +516,7 @@ void TerminalScreen::resize(int cols, int rows, std::vector<TermPos>* keep) {
 // --------------------------------------------------------------- reflow
 size_t TerminalScreen::cellStart(const HistLine& h, int col) {
     if (col >= h.width) return h.text.size();
-    return h.cells.empty() ? (size_t)col : h.cells[col] >> 8;
+    return h.cells.empty() ? (size_t)col : cellOffset(h.cells[col]);
 }
 
 // Cells [from, to) of `s` added to the end of `d`, packed the same way.
@@ -508,14 +525,18 @@ void TerminalScreen::appendCells(HistLine& d, const HistLine& s, int from, int t
     to = std::min(to, s.width);
     if (from >= to) return;
     size_t b0 = cellStart(s, from), b1 = cellStart(s, to);
+    // Never past kMaxLineBytes: the cells that would go beyond are left
+    // off (a line of a gigabyte, joined in a reflow).
+    while (to > from && d.text.size() + (b1 - b0) > kMaxLineBytes) b1 = cellStart(s, --to);
+    if (from >= to) return;
     bool simple = s.cells.empty();
     if (!simple || !d.cells.empty()) {
         if (d.cells.empty())          // d was a byte a cell; say so cell by cell
-            for (int c = 0; c < d.width; c++) d.cells.push_back((uint32_t)c << 8 | 1);
+            for (int c = 0; c < d.width; c++) d.cells.push_back(packCell((size_t)c, 1));
         size_t base = d.text.size();
         for (int c = from; c < to; c++) {
-            uint32_t at = (uint32_t)(base + cellStart(s, c) - b0);
-            d.cells.push_back(at << 8 | (simple ? 1 : (s.cells[c] & 0xFF)));
+            size_t at = base + cellStart(s, c) - b0;
+            d.cells.push_back(packCell(at, simple ? 1 : cellWidth(s.cells[c])));
         }
     }
     d.text.append(s.text, b0, b1 - b0);
@@ -536,7 +557,7 @@ void TerminalScreen::simplify(HistLine& h) {
     if (!h.cells.empty() && h.text.size() == (size_t)h.width) {
         bool ones = true;
         for (uint32_t c : h.cells)
-            if ((c & 0xFF) != 1) { ones = false; break; }
+            if (cellWidth(c) != 1) { ones = false; break; }
         if (ones) h.cells.clear();
     }
     h.text.shrink_to_fit();
@@ -558,8 +579,8 @@ void TerminalScreen::reflowMain(int cols, int rows, std::vector<Point>& points) 
     long long firstId = historyBase_ - hist;
     // The last screen row in use: text, a wrap, or a cursor on it. Rows
     // below it are blank and are not carried.
-    int lastUsed = 0;
-    for (int r = oldRows - 1; r > 0; r--) {
+    int lastUsed = below_.empty() ? 0 : oldRows - 1;
+    for (int r = oldRows - 1; r > lastUsed; r--) {
         const Row& row = main_[r];
         bool used = row.wrap != 0;
         for (const TermCell& c : row)
@@ -575,6 +596,8 @@ void TerminalScreen::reflowMain(int cols, int rows, std::vector<Point>& points) 
     for (HistLine& h : history_) src.push_back(std::move(h));
     history_.clear();
     for (int r = 0; r <= lastUsed; r++) src.push_back(packRow(main_[r]));
+    for (HistLine& h : below_) src.push_back(std::move(h));
+    below_.clear();
     int srcCount = (int)src.size();
     // The top of the screen, as a point too.
     points.push_back({hist, 0, false, false, false});
@@ -651,9 +674,11 @@ void TerminalScreen::reflowMain(int cols, int rows, std::vector<Point>& points) 
             blankCell.text = " ";
             blankCell.width = 1;
             blankCell.runs.push_back({0, TermStyle()});
+            int before = line.width;
             appendCells(line, blankCell, 0, 1);
+            if (line.width == before) break;    // the line is as long as it can be
         }
-        n = needed;
+        n = std::min(needed, line.width);
         // Wrap at the new width: a wide character that would be cut in two
         // goes whole to the next row, leaving a blank.
         rowStart.clear();
@@ -669,7 +694,7 @@ void TerminalScreen::reflowMain(int cols, int rows, std::vector<Point>& points) 
                 a = n;
             } else {
                 int b = a + cols;
-                bool wide = !line.cells.empty() && (line.cells[b - 1] & 0xFF) == 2;
+                bool wide = !line.cells.empty() && cellWidth(line.cells[b - 1]) == 2;
                 if (wide && b - 1 > a) {
                     appendCells(row, line, a, b - 1);
                     HistLine pad;
@@ -734,10 +759,23 @@ void TerminalScreen::reflowMain(int cols, int rows, std::vector<Point>& points) 
     int trailing = std::min(oldTrailing, rows - 1);
     newTop = std::min(newTop, newLast - (rows - 1 - trailing));
     newTop = std::max(newTop, newLast - rows + 1);
-    // The cursor stays on screen above all: text below it that no longer
-    // fits (colored blanks a program left) is cut, as before reflow.
+    // The cursor stays on screen above all: lines below it that no longer
+    // fit (a completion list under the prompt) are set aside in below_, and
+    // come back when the screen grows again.
     newTop = std::min(newTop, points[onAlt_ ? 0 : 1].abs);
     newTop = std::max(newTop, 0);
+    int keepBelow = newLast;
+    while (keepBelow >= newTop + rows) {         // trailing blank lines: not kept
+        const HistLine& h = dst[keepBelow];
+        bool blankLine = h.wrap == 0;
+        for (int c = 0; blankLine && c < h.width; c++) {
+            TermCell cell = histCell(h, c);
+            if (cell.ch != " " || cell.width != 1 || cell.style != TermStyle()) blankLine = false;
+        }
+        if (!blankLine) break;
+        keepBelow--;
+    }
+    for (int r = newTop + rows; r <= keepBelow; r++) below_.push_back(std::move(dst[r]));
 
     // Above it: the scrollback, oldest lines dropped past the limit.
     int from = std::max(0, newTop - std::max(historyLimit_, 0));
@@ -852,6 +890,7 @@ void TerminalScreen::moveTo(int x, int y) {
 void TerminalScreen::scrollUp(int n, bool save) {
     n = std::min(n, bottom_ - top_ + 1);
     if (n <= 0) return;
+    if (!onAlt_) below_.clear();      // what was set aside no longer lines up
     Grid& g = grid();
     if (save && !onAlt_ && top_ == 0)
         for (int r = 0; r < n; r++) pushHistory(g[r]);
@@ -862,6 +901,7 @@ void TerminalScreen::scrollUp(int n, bool save) {
 void TerminalScreen::scrollDown(int n) {
     n = std::min(n, bottom_ - top_ + 1);
     if (n <= 0) return;
+    if (!onAlt_) below_.clear();      // what was set aside no longer lines up
     Grid& g = grid();
     std::rotate(g.begin() + top_, g.begin() + bottom_ + 1 - n, g.begin() + bottom_ + 1);
     for (int r = top_; r < top_ + n; r++) { g[r].assign(cols_, blank()); g[r].wrap = 0; }
@@ -890,7 +930,8 @@ void TerminalScreen::print(uint32_t cp, const std::string& utf8In) {
         // Combining mark: joins the character before the cursor.
         int x = wrapPending_ ? x_ : x_ - 1;
         if (x >= 0 && g[y_][x].width == 0 && x > 0) x--;
-        if (x >= 0) g[y_][x].ch += utf8;
+        if (x >= 0 && g[y_][x].ch.size() + utf8.size() <= kTermMaxCellBytes)
+            g[y_][x].ch += utf8;
         return;
     }
     if (wrapPending_ && autowrap_) {
@@ -914,7 +955,12 @@ void TerminalScreen::print(uint32_t cp, const std::string& utf8In) {
     }
     Row& row = g[y_];
     if (insertMode_) {
-        clearWide(y_, x_);
+        // The shift moves a wide character whole when the cursor is on its
+        // left half. On its right half the character is split, so both
+        // halves go: clearWide alone blanked only the left one, and the
+        // right half moved on as an orphan (and with the cursor on a left
+        // half it blanked the right one, orphaning the left).
+        if (row[x_].width == 0) eraseCells(y_, x_, x_ + 1);
         row.insert(row.begin() + x_, w, blank());
         row.resize(cols_);
         if (row[cols_ - 1].width == 2) row[cols_ - 1] = blank();
@@ -1039,7 +1085,7 @@ void TerminalScreen::esc(const std::string& inter, unsigned char f) {
 
 void TerminalScreen::osc(const std::string& body) {
     if (body.rfind("0;", 0) == 0 || body.rfind("2;", 0) == 0) {
-        title_ = body.substr(2);
+        title_ = termCleanTitle(body.substr(2), 1024);
     } else if (body.rfind("133;D", 0) == 0) {
         commandsEnded_++;
     } else if (body.rfind("133;A", 0) == 0) {
@@ -1136,6 +1182,15 @@ void TerminalScreen::csi(const std::string& csi, unsigned char f) {
                 autowrap_ = cursorVisible_ = true;
                 appCursor_ = appKeypad_ = false;
                 top_ = 0; bottom_ = rows_ - 1;
+                wrapPending_ = false;
+                // As xterm: the character sets back to ASCII and the saved
+                // cursor home. And synchronized output ends, since a host
+                // sends this after a program died mid-frame (a curses
+                // program killed in DEC graphics left q drawn as a line,
+                // and the host kept waiting on the frame).
+                g0_ = g1_ = gl_ = 0;
+                (onAlt_ ? savedAlt_ : savedMain_) = Saved();
+                if (syncOutput_) { syncOutput_ = false; syncEnds_++; }
             }
             return;
         }
@@ -1152,7 +1207,7 @@ void TerminalScreen::csi(const std::string& csi, unsigned char f) {
 
     switch (f) {
     case '@': {                                  // ICH
-        clearWide(y_, x_);
+        if (grid()[y_][x_].width == 0) eraseCells(y_, x_, x_ + 1);   // as IRM above
         Row& row = grid()[y_];
         n = std::min(n, cols_ - x_);
         row.insert(row.begin() + x_, n, blank());
@@ -1208,6 +1263,7 @@ void TerminalScreen::csi(const std::string& csi, unsigned char f) {
     }
     case 'J':                                    // ED
         wrapPending_ = false;
+        if (!onAlt_) below_.clear();
         // Soft wraps go with what is erased (as in xterm.js): rows erased
         // whole wrap no more, nor does the row above one erased from its
         // first column.

@@ -793,9 +793,8 @@ static const CGFloat kRowH = 30;
     });
 }
 
-// The edits (ascending) in one undo step, through the text view, as Format
-// Document and rename make theirs. The caret keeps its place in the text
-// around it.
+// The edits (ascending) in one undo step, through the text view's
+// replaceRanges: (Lsp.h). The caret keeps its place in the text around it.
 - (BOOL)applyEdits:(const std::vector<TextFind::Edit16> &)edits actionName:(NSString *)name {
     CodeTextView *tv = _tv;
     if (!tv || edits.empty()) return NO;
@@ -806,18 +805,8 @@ static const CGFloat kRowH = 30;
         [strings addObject:FNS(e.text)];
     }
     NSRange sel = tv.selectedRange;
-    NSUndoManager *um = tv.undoManager;
-    [tv breakUndoCoalescing];
-    [um beginUndoGrouping];
-    const BOOL ok = [tv shouldChangeTextInRanges:ranges replacementStrings:strings];
+    const BOOL ok = [tv replaceRanges:ranges withStrings:strings actionName:name];
     if (ok) {
-        NSTextStorage *ts = tv.textStorage;
-        [ts beginEditing];
-        for (NSInteger k = (NSInteger)ranges.count - 1; k >= 0; k--)   // last first
-            [ts replaceCharactersInRange:ranges[(NSUInteger)k].rangeValue
-                              withString:strings[(NSUInteger)k]];
-        [ts endEditing];
-        [tv didChangeText];
         NSUInteger at = sel.location;
         for (auto e = edits.rbegin(); e != edits.rend(); ++e) {
             const NSUInteger end = e->start + e->length;
@@ -826,9 +815,6 @@ static const CGFloat kRowH = 30;
         }
         if (at <= tv.string.length) [tv setSelectedRange:NSMakeRange(at, 0)];
     }
-    [um setActionName:name];
-    [um endUndoGrouping];
-    [tv breakUndoCoalescing];
     if (!ok) NSBeep();
     return ok;
 }

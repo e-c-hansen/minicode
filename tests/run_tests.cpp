@@ -2601,7 +2601,7 @@ void testTerminalStream() {
         // ESC inside an OSC starts a new sequence.
         CHECK(run("\x1b]0;title\x1b]133;A\x07").events == "A");
         // An overlong CSI is ignored whole, not half-applied.
-        std::string longCsi = "\x1b[" + std::string(200, '1') + "mz";
+        std::string longCsi = "\x1b[" + std::string(600, '1') + "mz";
         Panel lc = run(longCsi);
         CHECK(lc.text() == "z" && *styleOf(lc, "z") == TermStyle());
         // Other control characters are dropped.
@@ -9617,6 +9617,7 @@ static void testMultiCaretOccurrences() {
 #include "symbols_tests.inc"
 #include "gutter_tests.inc"
 #include "terminal_reflow_tests.inc"
+#include "terminal_fuzz.inc"
 #include "control_tests.inc"
 #include "agent_index_tests.inc"
 #include "agent_evidence_tests.inc"
@@ -9643,6 +9644,8 @@ int main() {
     testTerminalScreen();
     testTerminalReflow();
     testTerminalMouse();
+    testTerminalTrust();
+    testTerminalFuzz();
     testSettings();
     testSettingsColorEditing();
     testLineComments();
