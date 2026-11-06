@@ -63,13 +63,16 @@ Key KeyForEvent(NSEvent *e) {
             k.name = c.name;
             return k;
         }
-    NSString *chars = nil;
-    @try {
-        chars = [e charactersByApplyingModifiers:0];
-    } @catch (NSException *) {
-        chars = nil;
+    // Without Shift the character ignoring modifiers is the key's own; with
+    // it, ask the layout for the unshifted one (Shift+[ gives {).
+    NSString *chars = e.charactersIgnoringModifiers;
+    if (k.mods & Commands::Shift) {
+        @try {
+            NSString *plain = [e charactersByApplyingModifiers:0];
+            if (plain.length == 1) chars = plain;
+        } @catch (NSException *) {
+        }
     }
-    if (chars.length != 1) chars = e.charactersIgnoringModifiers;
     unichar ch = chars.length == 1 ? [chars characterAtIndex:0] : 0;
     if (ch >= 'A' && ch <= 'Z') ch = ch - 'A' + 'a';
     if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') ||
@@ -433,7 +436,21 @@ BOOL MCKeymapEventIsBound(NSEvent *e) {
     return NO;
 }
 
+// Typing: no Command, Control or Option, and not a function key or the
+// Menu key. No command has such a key (keys.conf refuses them), so most
+// key presses end here.
+static BOOL MCJustTyping(NSEvent *e) {
+    if (e.modifierFlags & (NSEventModifierFlagCommand | NSEventModifierFlagControl |
+                           NSEventModifierFlagOption))
+        return NO;
+    const unsigned short code = e.keyCode;
+    for (const NamedCode &c : kCodes)
+        if (code == c.code) return !(c.name[0] == 'f' || code == 0x6E);
+    return YES;
+}
+
 BOOL MCKeymapHandleKeyDown(NSEvent *e) {
+    if (MCJustTyping(e)) return NO;
     Key k = KeyForEvent(e);
     if (k.empty()) return NO;
     const Commands::Keymap &map = [[MCKeymap shared] map];
