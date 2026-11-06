@@ -9857,6 +9857,7 @@ static void testMultiCaretOccurrences() {
 #include "attention_tests.inc"
 #include "ignore_tests.inc"
 #include "page_check_tests.inc"
+#include "terminal_links_tests.inc"
 #include "ide_link_tests.inc"
 
 int main() {
@@ -9879,6 +9880,7 @@ int main() {
     testTerminalMouse();
     testTerminalTrust();
     testTerminalFuzz();
+    testTerminalHyperlinks();
     testSettings();
     testSettingsColorEditing();
     testLineComments();

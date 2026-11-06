@@ -107,7 +107,8 @@ $(BIN): $(APP_OBJ) $(OBJDIR)/variant.txt
 # hands it every subcommand. Only the protocol and JSON from the core.
 CLI     := build/minicode-cli
 CLI_OBJ := $(OBJDIR)/tools/minicode-cli.cpp.o $(OBJDIR)/ControlProtocol.cpp.o $(OBJDIR)/Json.cpp.o \
-           $(OBJDIR)/ProcessTable.cpp.o $(OBJDIR)/ClaudeHooks.cpp.o
+           $(OBJDIR)/ProcessTable.cpp.o $(OBJDIR)/ClaudeHooks.cpp.o \
+           $(OBJDIR)/PageCheck.cpp.o $(OBJDIR)/TermLinks.cpp.o
 
 $(OBJDIR)/tools/%.cpp.o: tools/%.cpp $(OBJDIR)/flags.txt
 	@mkdir -p $(@D)
@@ -115,6 +116,16 @@ $(OBJDIR)/tools/%.cpp.o: tools/%.cpp $(OBJDIR)/flags.txt
 
 $(CLI): $(CLI_OBJ)
 	$(CXX) $(CXXFLAGS) $(CLI_OBJ) -o $@
+
+# What BROWSER names in minicode's terminals (Terminal.mm): a script that
+# is shell and JavaScript at once, beside the client (in the bundle it is
+# in Resources, the client in MacOS; the GUI checks use build/'s copy).
+BROWSER_HELPER := build/minicode-browser.js
+
+$(BROWSER_HELPER): resources/minicode-browser.js
+	@mkdir -p $(@D)
+	@cp $< $@
+	@chmod +x $@
 
 # After a `make clean` in the same run the folders and flags.txt are gone.
 $(OBJDIR)/flags.txt:
@@ -145,7 +156,7 @@ SIGN_IDENTITY ?= $(shell security find-certificate -c "MiniCode Local Signing" >
 # fresh build).
 APP_STAMP := $(BUNDLE)/Contents/_CodeSignature/CodeResources
 APP_FILES := $(BIN) $(CLI) Info.plist resources/AppIcon.icns scripts/minicode-launcher \
-             skills/minicode/SKILL.md
+             skills/minicode/SKILL.md resources/minicode-browser.js
 
 app: $(APP_STAMP)
 
@@ -158,6 +169,8 @@ $(APP_STAMP): $(APP_FILES)
 	@cp resources/AppIcon.icns $(BUNDLE)/Contents/Resources/AppIcon.icns
 	@cp scripts/minicode-launcher $(BUNDLE)/Contents/Resources/minicode
 	@chmod +x $(BUNDLE)/Contents/Resources/minicode
+	@cp resources/minicode-browser.js $(BUNDLE)/Contents/Resources/minicode-browser.js
+	@chmod +x $(BUNDLE)/Contents/Resources/minicode-browser.js
 	@# The Claude Code skill, for `minicode install-skill` (a Homebrew copy
 	@# has no checkout to `make install` from).
 	@mkdir -p $(BUNDLE)/Contents/Resources/skills/minicode
@@ -241,7 +254,7 @@ $(FAKELSP): $(FAKELSP_OBJ)
 
 fakelsp: $(FAKELSP)
 
-guitest: build/guitest $(CLI) $(FAKELSP)
+guitest: build/guitest $(CLI) $(FAKELSP) $(BROWSER_HELPER)
 	@./build/guitest $(SUITES)
 
 # The agent skill (skills/minicode) for Claude Code, in ~/.claude/skills,

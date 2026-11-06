@@ -197,8 +197,7 @@
 
 - (void)openTerminalLinkNow:(MCTermLink *)link {
     if (link.isURL) {
-        if (!self.browserVisible) [self toggleBrowser:nil];
-        [self.browser navigateToString:link.target];
+        [self openWebAddressFromTerminal:link.target];
         return;
     }
     // The terminal spells paths the way the shell does; put one inside the

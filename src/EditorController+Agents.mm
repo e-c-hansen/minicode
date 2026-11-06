@@ -1,6 +1,7 @@
 // EditorController+Agents.mm — EditorController: the inline agent, Request a Change, the control channel and agent work.
 #import "EditorController+Private.h"
 #import "EditorController+AgentsIvars.h"
+#include "TermLinks.h"
 
 @implementation EditorController (Agents)
 
@@ -699,6 +700,17 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 }
 
 - (BrowserView *)browserPane { return self.browser; }
+
+- (void)openWebAddressFromTerminal:(NSString *)url {
+    const char *u = url.UTF8String;
+    NSString *address = u ? @(TermLinks::browserAddress(u).c_str()) : nil;
+    if (!address.length) return;
+    // The pane is made with no home page (nothing loads from off the Mac
+    // first) and shown as for an agent's page; the address goes to the
+    // user's page, which navigateToString: shows.
+    [self agentBrowserPane];
+    [self keepKeyboardDuring:^{ [self.browser navigateToString:address]; }];
+}
 
 - (NSArray<NSDictionary *> *)controlTabs {
     NSMutableArray<NSDictionary *> *out = [NSMutableArray array];
