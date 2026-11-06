@@ -5,6 +5,7 @@
 //   make guitest SUITES=terminal_keys     Ctrl+Shift keys of disabled items
 //                                         reaching the program
 //   make guitest SUITES=terminal_exec     exec bash, sh and zsh
+//   make guitest SUITES=agent_autosave    auto-save waiting for Keep
 #import "Harness.h"
 #import "AgentPanel.h"
 #import "EditorController.h"
@@ -339,6 +340,68 @@ MC_GUI_SUITE(terminal_exec) {
     MCGuiStep(@"and a command there", ^{ [s.term runCommand:@"echo zsh-at-last"]; });
     MCGuiWait(@"it runs", 10, ^BOOL {
         return s.term.atPrompt && [[s.term recentText:3] containsString:@"\nzsh-at-last"];
+    });
+}
+
+// ------------------------------------------ the inline agent and auto-save
+MC_GUI_SUITE(agent_autosave) {
+    MCLooseState *s = [MCLooseState new];
+    NSString *file = MCGuiProjectFile(@"agent-save.txt");
+    NSString *script = [MCGuiScratch() stringByAppendingPathComponent:@"fake-claude.sh"];
+    NSString *(^disk)(void) = ^NSString *(void) {
+        return [NSString stringWithContentsOfFile:file encoding:NSUTF8StringEncoding error:nil];
+    };
+    MCGuiStep(@"auto-save after 200 ms, and an agent that capitalizes alpha", ^{
+        MCGuiWriteFile(script, @"#!/bin/sh\ncat >/dev/null\nprintf '<<<<<<< SEARCH\\nalpha\\n"
+                               @"=======\\nALPHA\\n>>>>>>> REPLACE\\n'\n");
+        chmod(script.fileSystemRepresentation, 0755);
+        SetSettings([NSString stringWithFormat:@"lsp.enabled = false\neditor.auto-save = after-delay\n"
+                                               @"editor.auto-save-delay = 200\nagent.command = %@\n",
+                                               script]);
+        MCGuiWriteFile(file, @"alpha\nbeta\n");
+        s.c = MCGuiController();
+        [s.c focusEditor:nil];
+        GCHECK([s.c showFile:file]);
+        Text(s.c).selectedRange = NSMakeRange(0, 0);
+        [s.c inlineAgent:nil];
+        MCAgentSession *agent = [s.c valueForKey:@"agentSession"];
+        GCHECK(agent.shown);
+        [agent send:@"capitalize alpha"];
+    });
+    MCGuiWait(@"the agent's edit", 20, ^BOOL {
+        MCAgentSession *agent = [s.c valueForKey:@"agentSession"];
+        return agent.editPending;
+    });
+    MCGuiPause(0.8);
+    MCGuiStep(@"edited, unsaved, while Keep waits", ^{
+        GCHECK([Text(s.c).string hasPrefix:@"ALPHA\n"]);
+        GCHECK_EQ_STR(disk(), @"alpha\nbeta\n");
+        [(MCAgentSession *)[s.c valueForKey:@"agentSession"] keep];
+    });
+    MCGuiWait(@"Keep: auto-saved", 3, ^BOOL { return [disk() isEqualToString:@"ALPHA\nbeta\n"]; });
+    // Discard: the edit never reaches the disk, and the tab is clean again.
+    MCGuiStep(@"again, then Discard", ^{
+        MCGuiWriteFile(script, @"#!/bin/sh\ncat >/dev/null\nprintf '<<<<<<< SEARCH\\nbeta\\n"
+                               @"=======\\nBETA\\n>>>>>>> REPLACE\\n'\n");
+        [s.c focusEditor:nil];
+        [s.c inlineAgent:nil];
+        [(MCAgentSession *)[s.c valueForKey:@"agentSession"] send:@"capitalize beta"];
+    });
+    MCGuiWait(@"the second edit", 20, ^BOOL {
+        return ((MCAgentSession *)[s.c valueForKey:@"agentSession"]).editPending;
+    });
+    MCGuiPause(0.8);
+    MCGuiStep(@"unsaved; Discard", ^{
+        GCHECK([Text(s.c).string isEqualToString:@"ALPHA\nBETA\n"]);
+        GCHECK_EQ_STR(disk(), @"ALPHA\nbeta\n");
+        [(MCAgentSession *)[s.c valueForKey:@"agentSession"] discard];
+        GCHECK([Text(s.c).string isEqualToString:@"ALPHA\nbeta\n"]);
+    });
+    MCGuiPause(0.6);
+    MCGuiStep(@"the disk never had BETA", ^{
+        GCHECK_EQ_STR(disk(), @"ALPHA\nbeta\n");
+        GCHECK(![[s.c valueForKey:@"dirty"] boolValue]);
+        SetSettings(@"lsp.enabled = false\n");
     });
 }
 

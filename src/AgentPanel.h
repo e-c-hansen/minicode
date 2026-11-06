@@ -112,6 +112,10 @@ typedef NS_ENUM(NSInteger, MCAgentBarMode) {
 @property(nonatomic, readonly) MCAgentBar *bar;
 @property(nonatomic, readonly) BOOL shown;
 @property(nonatomic, readonly) MCAgentContext *context;
+// An edit the agent made waits for Keep or Discard (the bar is open on it).
+// Auto-save leaves the tab alone meanwhile, so nothing reaches the disk
+// before the user has chosen.
+@property(nonatomic, readonly) BOOL editPending;
 // Cmd+I: the bar for `context`, or the open one focused when it is for the
 // same place. Anything else open is closed first (its edit kept).
 - (void)beginWithContext:(MCAgentContext *)context;

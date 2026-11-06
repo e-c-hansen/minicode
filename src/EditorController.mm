@@ -4766,9 +4766,11 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     return [AppSettings shared].settings.autoSave();
 }
 
+// Not a tab with an inline agent edit waiting for Keep or Discard (the
+// agent edits only the tab on show): it is written once the bar closes.
 - (BOOL)tabTakesAutoSave:(MCTab *)t {
     return t.dirty && t.loaded && !t.gone && [self tabTakesBackup:t] &&
-           t != _formatSaveTab;
+           t != _formatSaveTab && !(t == _activeTab && _agent.editPending);
 }
 
 // After every edit and every change of a dirty flag, beside scheduleBackups.
@@ -6579,7 +6581,16 @@ static NSColor *ContrastColor(const Rgba &c) {
     return _agent;
 }
 - (NSView *)agentBarHost { return self.rightArea; }
-- (void)agentBarDidChange { [self relayoutRightArea]; }
+- (void)agentBarDidChange {
+    [self relayoutRightArea];
+    // Keep or Discard (or closing the bar) ends a pending edit: auto-save
+    // goes on: after the delay, or for focus-change now (the keyboard was
+    // in the bar, away from the editor).
+    if (!_agent.editPending) {
+        [self scheduleAutoSave];
+        [self autoSaveOnFocusChange];
+    }
+}
 - (void)agentRunInTerminal:(NSString *)command {
     [self changeTerminalRunning:command focus:YES];
 }
