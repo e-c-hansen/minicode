@@ -43,6 +43,7 @@
 #include "Csv.h"
 #include "JsonOutline.h"
 #include "Notebook.h"
+#include "Commands.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -9501,6 +9502,7 @@ static void testMultiCaretOccurrences() {
 #include "agent_view_tests.inc"
 #include "fold_tests.inc"
 #include "previews_tests.inc"
+#include "commands_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9573,6 +9575,10 @@ int main() {
     testCsv();
     testJsonOutline();
     testNotebook();
+    testCommandKeys();
+    testCommandTable();
+    testKeymapFile();
+    testCommandsReadme();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

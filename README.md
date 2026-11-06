@@ -316,7 +316,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Comment or uncomment the selected lines | Command / | Ctrl / |  |
 | Complete the word at the cursor, with a language server | Control Space, or Option Escape | Ctrl Space | N, or Ctrl N |
 | Copy or cut the line the cursor is on when nothing is selected, and paste such a line above the cursor's line | Command C, Command X, then Command V |  |  |
-| Copy the line, or the selected lines, below or above | Shift Command Down, Shift Command Up (or Shift Option Down, Up) |  |  |
+| Copy the line, or the selected lines, below or above | Shift Command Down, Shift Command Up (or Shift Option Down, Shift Option Up) |  |  |
 | Delete the line, or every line the selection touches, at every cursor | Control Shift K |  |  |
 | Delete to the start of the line, at every cursor | Command Delete |  |  |
 | Delete the word before the cursor in the terminal's input line, or everything before it | Control W, Control U |  |  |
@@ -332,7 +332,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Focus the editor, or the player when a video or audio file is open | Command 1 | Ctrl 1 |  |
 | Focus the file tree | Command 0 | Ctrl 0 |  |
 | Focus the terminal, opening it if it is hidden | Command 2 |  |  |
-| Fold every region, or every one at a level, or unfold them all | Control Command 0, Control Command 1 to 7, Control Command J |  |  |
+| Fold every region, every one at a level, or every comment, or unfold them all | Control Command 0, Control Command 1 to 7, Control Command /, Control Command J |  |  |
 | Fold the region the cursor is in, or the next one out with each press; unfold the fold on the cursor's line | Control Command [, Control Command ] (Option Command [ and ] are the terminals); or click the arrow beside the line number, or the ⋯ after a folded line |  |  |
 | Format the file, or the selected lines where the formatter can | Shift Option F |  |  |
 | Go back to where you were before a jump (a definition, a symbol, a line, a problem, another tab), or forward again | Control minus, Control Shift minus |  |  |
@@ -344,7 +344,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Go to the matching bracket, or to the closing bracket of the pair around the cursor | Shift Command backslash |  |  |
 | Go to the next or previous problem in the file, with its message at the cursor | F8, Shift F8 (F8 may need fn on a laptop) |  |  |
 | Go to the next or previous stop of an agent's tour (`minicode tour`) | Option ], Option [ |  |  |
-| Go to the start or end of the file (Shift selects to it) | Command Home, Command End (fn Command Left, Right on a laptop) |  |  |
+| Go to the start or end of the file, or select to it | Command Home, Command End, Shift Command Home, Shift Command End (fn Command Left, Right on a laptop) |  |  |
 | Indent or outdent the selected lines | Tab, Shift Tab | Tab, Shift Tab | Tab, Shift Tab |
 | Jump to the previous file |  | Ctrl Tab |  |
 | Keep the agent preview tab as an ordinary tab | Double-click its title, or edit in it |  |  |
@@ -381,6 +381,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Save | Command S | Ctrl S | S, or Ctrl S |
 | See the language servers, restart one, or choose the Python interpreter | Click the server in the status bar, or the minicode menu |  |  |
 | Select a line, or every line dragged over, by its number | Click or drag in the line numbers, Shift click to extend |  |  |
+| Select all the text | Command A |  |  |
 | Select every place the selected text, or the word at the cursor, occurs | Shift Command L |  |  |
 | Select the cursor's line, and the next line with each press after | Command L |  |  |
 | Show or hide dotfiles | Shift Command . | Ctrl H, or Ctrl Shift . |  |

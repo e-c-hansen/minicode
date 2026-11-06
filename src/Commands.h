@@ -1,0 +1,134 @@
+// Commands.h — the command registry and the user's keymap file.
+//
+// Every command minicode has a key for (and most it has none for) is one row
+// of a table here: a stable ID, in VS Code's spelling where VS Code has the
+// command (workbench.action.showCommands, editor.action.formatDocument, ...)
+// and minicode.* where it does not, its title and menu, its default keys in
+// minicode's key notation, where it applies (the editor, the terminal, the
+// file tree, or anywhere), and the selector its menu item sends.
+//
+// The keymap file, ~/.config/minicode/keys.conf (or $MINICODE_KEYS), adds to
+// and takes from the defaults, one line at a time, as VS Code's
+// keybindings.json does:
+//
+//   ctrl+alt+cmd+k = editor.action.deleteLines   another key for a command
+//   ctrl+shift+k = -                              the key, from every command
+//   cmd+k = -workbench.action.terminal.clear      the key, from that command
+//
+// A key given to a command is taken from any other command that had it by
+// default where the two would both apply (a key of the terminal's is kept
+// beside an editor-only command's). Two lines giving one key to two
+// commands that both apply in one place are a conflict: the later line is
+// refused, with its line number, as the settings file's errors are.
+//
+// Key notation: modifiers ctrl, alt (or opt, option), shift, cmd joined by
+// "+" before the key, written in that order (Apple's ⌃⌥⇧⌘): "shift+cmd+p",
+// "ctrl+`", "shift+f12", "alt+shift+f". Keys are letters, digits, the
+// unshifted punctuation `-=[]\;',./, f1 to f20, up, down, left, right, home,
+// end, pageup, pagedown, enter (Return), tab, space, escape, backspace,
+// delete (forward), numpad0 to numpad9 and contextmenu (a PC keyboard's Menu
+// key). Pure C++, no I/O; src/Keymap.mm puts the result on the menus.
+#pragma once
+#include <map>
+#include <string>
+#include <vector>
+
+namespace Commands {
+
+// Where a command applies, for conflicts and for a key two commands share.
+enum class When { Any, Editor, Terminal, Tree };
+const char* whenName(When w);   // "any", "editor", "terminal", "the file tree"
+// Can one key press be meant for both? Any meets everything.
+bool overlaps(When a, When b);
+
+enum Mod : unsigned { Ctrl = 1, Alt = 2, Shift = 4, Cmd = 8 };
+
+struct Key {
+    unsigned mods = 0;
+    std::string name;   // "p", "`", "f12", "enter", "numpad0", ...
+    bool empty() const { return name.empty(); }
+    bool operator==(const Key& o) const { return mods == o.mods && name == o.name; }
+    bool operator!=(const Key& o) const { return !(*this == o); }
+};
+
+// "shift+cmd+p" -> Key. Case and spaces around "+" are ignored, and so are
+// the modifiers' other names (command, control, option, opt) and keys'
+// (return, esc, ...). On failure returns false and says why.
+bool parseKey(const std::string& text, Key* out, std::string* error = nullptr);
+// The notation, modifiers in order: "ctrl+alt+shift+cmd+k".
+std::string format(const Key& k);
+// As a Mac menu draws it: "⌃⌥⇧⌘K", "⇧F12", "⌃Space", "⌘⏎".
+std::string glyphs(const Key& k);
+// A function key (f1 to f20) or the Menu key: these type nothing.
+bool isFunctionKey(const Key& k);
+// Does pressing it type or move in a text field, so that it cannot be a
+// command's key on its own? Keys without Command, Control or Option, other
+// than function keys.
+bool typesText(const Key& k);
+
+// Command flags.
+enum Flag : unsigned {
+    // The key monitor runs it from anywhere in the window, before any view:
+    // the terminal's grid, which claims most Control keys, included.
+    Global = 1,
+    // Its keys are a view's own (the editor's text view, the terminal):
+    // listed for reference and protected from other commands, but keys.conf
+    // cannot change them yet.
+    Fixed = 2,
+};
+
+struct Command {
+    const char* id;
+    const char* title;     // the menu item's title, "Command Palette…"
+    const char* menu;      // "View", "Edit > Find Options"
+    const char* keys;      // default keys, space separated; "" for none
+    When when;
+    const char* selector;  // the menu item's action, "showCommandPalette:"; null for none
+    int tag;               // the item's tag when the action is shared
+    unsigned flags;
+    const char* note;      // Fixed: who handles the keys; else why there is no menu item
+};
+
+// Every command, in menu order.
+const std::vector<Command>& all();
+const Command* find(const std::string& id);
+const Command* findBySelector(const std::string& selector, int tag);
+std::vector<Key> defaultKeys(const Command& c);
+
+struct Error {
+    int line = 0;   // 1-based; 0 for the whole file
+    std::string message;
+};
+
+// The keys in effect: every command's, in order (the first is the one a
+// menu shows; a user's keys come before the defaults).
+class Keymap {
+public:
+    const std::vector<Key>& keysOf(const std::string& id) const;
+    // The commands a key runs, in table order (several only where they
+    // apply in different places).
+    std::vector<const Command*> commandsFor(const Key& k) const;
+    // Of commandsFor(k), the one for what has the keyboard: one for that
+    // place, else one that applies anywhere; null for none.
+    const Command* commandFor(const Key& k, When where) const;
+    // Pairs of commands sharing a key where both apply: "cmd+k: Clear
+    // Terminal and Delete Line". The defaults have none (a test says so).
+    std::vector<std::string> conflicts() const;
+
+    std::map<std::string, std::vector<Key>> keys;   // by command id
+private:
+    friend Keymap defaults();
+    friend Keymap resolve(const std::string&, std::vector<Error>*);
+    void index();
+    std::map<std::string, std::vector<const Command*>> byKey_;   // format(key) -> commands
+};
+
+Keymap defaults();
+// The defaults with the keymap file's lines applied; problems in errors.
+Keymap resolve(const std::string& fileText, std::vector<Error>* errors);
+
+// What Keyboard Shortcuts writes when there is no file yet: how the file
+// works, then every command and its default keys, commented out.
+std::string defaultFileText();
+
+}  // namespace Commands

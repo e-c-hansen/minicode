@@ -35,7 +35,8 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/AgentTranscript.cpp src/AgentIndex.cpp src/AgentEvidence.cpp src/AgentView.cpp \
             src/SymbolOutline.cpp src/NavHistory.cpp \
             src/Folding.cpp \
-            src/FileSniff.cpp src/Csv.cpp src/JsonOutline.cpp src/Notebook.cpp
+            src/FileSniff.cpp src/Csv.cpp src/JsonOutline.cpp src/Notebook.cpp \
+            src/Commands.cpp
 
 # Each source file compiles to its own object in build/obj (build/test-obj for
 # the tests), with a dependency file listing the headers it read, so touching
