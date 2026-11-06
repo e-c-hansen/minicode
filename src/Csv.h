@@ -11,7 +11,8 @@
 // cell edit changes one line. An edited field keeps its quoting (quoted
 // stays quoted), and gains quotes only when its new text needs them; new
 // fields follow the file (quoted when every field in it is). A UTF-8 byte
-// order mark is kept and not shown.
+// order mark is kept and not shown. A touched row left with one empty
+// field is written as "", since a blank line is a row most readers skip.
 //
 // Rows and columns count from 0. Rows may be ragged: cell() past a row's
 // last field is "", and setting it adds the fields in between.
@@ -93,6 +94,7 @@ private:
 
     Field newField(const std::string &value, bool quote);
     static bool blank(const Row &row);
+    bool emptyField(const Field &f) const;
 };
 
 }  // namespace Csv

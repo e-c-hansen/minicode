@@ -178,6 +178,10 @@ static NSString *ColumnName(NSUInteger i) {
 - (void)showText:(NSString *)text path:(NSString *)path tsv:(BOOL)tsv {
     const BOOL same = [path isEqualToString:_path] && _editable;
     if (same && text == _lastText) return;   // our own edit coming back
+    // NSTableView would commit an open cell editor during reloadData into
+    // the new document, at the old row and column: another file's cell, or
+    // whatever record a reload from disk put there.
+    [self dropEditing];
     const NSPoint scroll = _scroll.contentView.bounds.origin;
     const NSInteger selected = _table.selectedRow;
     const std::string bytes = Std(text ?: @"");
@@ -200,6 +204,7 @@ static NSString *ColumnName(NSUInteger i) {
 }
 
 - (BOOL)showLargeFile:(NSString *)path tsv:(BOOL)tsv maxRows:(NSUInteger)maxRows {
+    [self dropEditing];
     NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:path];
     if (!fh) return NO;
     NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
@@ -221,11 +226,23 @@ static NSString *ColumnName(NSUInteger i) {
 }
 
 - (void)clear {
+    [self dropEditing];   // before the document goes, never after
     _doc = Csv::Document();
     _path = nil;
     _lastText = nil;
-    [_table abortEditing];
     [self rebuild];
+}
+
+- (void)dropEditing {
+    if (_table.editedRow >= 0 || _table.currentEditor) [_table abortEditing];
+}
+
+- (void)commitEditing {
+    if (_table.editedRow < 0 && !_table.currentEditor) return;
+    // Ending the field editor's turn as first responder commits it through
+    // tableView:setObjectValue:..., into this document.
+    NSWindow *w = _table.window;
+    if (!w || ![w makeFirstResponder:_table]) [_table abortEditing];
 }
 
 - (void)updateInfo {

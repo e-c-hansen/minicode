@@ -407,7 +407,19 @@ container (PanelHost, laid out by hand in layoutContainer)
   the palette finds them.
 - **Dirty means "differs from disk"**: `noteEdited` compares with `savedText`
   (length first), so undoing back clears the dot. `savedText` is the text as
-  read (NSString drops a BOM, never written back; CRLF survives).
+  read (CRLF survives); a UTF-8 BOM is kept apart in `MCTab bom` and written
+  back.
+- **One writer**: Cmd+S, `saveTab:` and auto-save all go through
+  `writeText:toTab:interactive:` over `FolderSearch::writeFileAtomically`
+  (a symlink stays a link, hard links and files owned by someone else are
+  written in place, xattrs, ACL and creation date kept, F_FULLFSYNC), which
+  refuses a tab without text of its own (`tabHasTextToWrite:`: SQLite, Quick
+  Look, a large CSV) and sends didSave. `writeToFile:atomically:` replaced a
+  link with a plain file. What a tab knows of its file is a stat with
+  symlinks followed (`MCDiskStamp`: date, inode, size; `tab:changedOnDisk:`
+  compares all three), taken before the read (`MCReadDiskText`, over
+  `FolderSearch::readFileStable`), so a file still being written never reads
+  as clean; `attributesOfItemAtPath:` did not follow links.
 - **Keys**: Ctrl+Tab / Ctrl+Shift+Tab, Shift+Cmd+] / [, Shift+Cmd+1..9 and
   Ctrl+1..9 (macOS takes Shift+Cmd+3, 4, 5). Cmd+W (`closeFocused:`) closes the
   tab, or the terminal, browser or Problems list with the keyboard; a repeat
@@ -419,16 +431,23 @@ container (PanelHost, laid out by hand in layoutContainer)
 - **Unsaved tabs are never dropped**: a dirty tab asks Save / Don't Save /
   Cancel; window close, Open Folder and quit ask once for all. Trash closes
   only clean tabs of what went; `pathMovedFrom:to:` moves tabs.
-- **The disk**: a buffer replaced from disk loses its undo steps
-  (`forgetHistoryOf:`). Every save checks the date first (`mayWriteTab:`:
+- **The disk**: a buffer replaced from disk by choice (Reload) loses its undo
+  steps (`forgetHistoryOf:`). Every save checks the stamp first (`mayWriteTab:`:
   changed outside asks Keep Mine / Reload / Cancel; gone asks before writing).
   Save All asks every question first (`diskDecisionForTab:`), then writes.
   `saveTab:` saves a background tab in place (a keep-sorted sort waits in
   `pendingSort`). Moved or deleted outside (FSEvents, `checkTabsOnDisk`, show
   and focus): a same-folder rename is followed by inode and date (`fileID`),
-  else the tab is `gone` ("(deleted)") until the file returns. **A clean tab
-  follows the disk** (`reloadCleanTab:`): the tab on show takes the new text
-  through `replaceSourceWithText:` with undo off, keeping caret and top line.
+  else the tab is `gone` ("(deleted)") until the file returns, and is read in
+  the same pass when it does. **A clean tab follows the disk**: from FSEvents
+  (`followCleanTabInBackground:`) the file is read and diffed off the main
+  thread, generation-counted, and a file over 8 MB is only noted and read on
+  show or focus; on show or focus (`reloadCleanTab:`) on the main thread. The
+  new text goes in as one undo step, "Reload from Disk", keeping caret, top
+  line and the steps before it (`replaceSourceWithText:`, or for a tab not on
+  show as text an undo action of its own, `registerReloadUndoForTab:`; an
+  NSTextView registration made during an undo redid onto the wrong range).
+  A read that fails moves no date.
 - **Sessions**: `MCTabSessions` (NSUserDefaults, by resolved folder, 50
   folders) reopens a folder's tabs and its browser page, else a read-only empty
   editor. Off under `MINICODE_DEMO` and `MINICODE_BENCH`;
@@ -478,7 +497,10 @@ container (PanelHost, laid out by hand in layoutContainer)
   a dialog from a timer (`writeTabForAutoSave:` checks the disk by hand; a file
   changed outside is skipped and named, so Cmd+S asks). Skipped: gone and
   unloaded tabs, a tab whose Cmd+S waits for its formatter, a tab with an
-  inline-agent edit awaiting Keep or Discard (`MCAgentSession editPending`).
+  inline-agent edit awaiting Keep or Discard (`MCAgentSession editPending`),
+  and the tab on show while an input method composes (`hasMarkedText`). The
+  close and quit questions run `autoSaveNow` first, so auto-save's writes are
+  not asked about. A restored backup opens in its viewer (a CSV's table).
   Trap: the focus-change save and the delay's debounce shared a selector and
   `updateTitle` cancelled the save after a tab switch; nothing may cancel
   `autoSaveNow`.
@@ -725,7 +747,11 @@ container (PanelHost, laid out by hand in layoutContainer)
   the tab through the rename applier (`applyEditsToPaths:`); a file with
   unsaved text in any window is left alone and named; others go through
   `FolderSearch::writeFileAtomically` (mode kept, synced, renamed; symlinks
-  followed; hard links written in place). `replaceOneAt` maps a result's byte
+  followed; hard links written in place). A file under two names (a symlink,
+  a hard link, a symlinked folder) is counted and replaced once, by device and
+  inode, and one reached through a link to outside the folder is named in the
+  question (`FolderReplaceFile::outside`). Replace Match replaces only while
+  the row's line still reads as searched. `replaceOneAt` maps a result's byte
   column to a tab's UTF-16.
 
 ## Formatting (Mac)
@@ -977,7 +1003,7 @@ view is disposed (on `unrealize`), or dispose loops forever.
 - Every run carries its source `line` (`kMarkdownSourceLine`): Shift+Cmd+V
   opens the preview at the caret and the source where a scrolled preview is.
   Links (`openMarkdownLink:`): `#heading` by GitHub's anchor
-  (`MCMarkdownAnchor`), web addresses in the browser, paths relative to the
+  (`MarkdownParser::anchor`, as on Linux and Android), web addresses in the browser, paths relative to the
   file through `openTerminalLink:` (`#L12` works).
 - **Editing from the preview**: a double-click (`onPreviewDoubleClick`) reads
   the line (and `kMarkdownTableCell`), `MarkdownEdit::blockAt` finds the block
@@ -1159,21 +1185,41 @@ false`) a formula shows as its TeX in the code style.
   wmv and flv get "Cannot display".
 - **Quick Look**: `MCQuickLookSlot` (`QLPreviewView`) in a tab;
   `MCQuickLookPanel` for Space in the tree, where `ClickOutline` is the panel's
-  controller and keeps the keyboard.
+  controller and keeps the keyboard. It follows arrows and clicks; Space closes
+  it only for the tree that drives it (another window's tree, or one whose
+  control ended, gets its selection shown); a space within a second of a
+  typed letter is type-select's.
 - **CSV and TSV** (`Csv`, `CsvTable.mm`): rows keep their bytes and endings,
   fields their bytes and quoting, so an unedited file round-trips and one cell
-  edit changes one line; BOM and a missing final newline kept; delimiter
-  guessed. Over 50 MB read-only, 100,000 rows from disk.
+  edit changes one line; BOM and a missing final newline kept; a touched row
+  of one empty field is written `""`; delimiter guessed (it must split most
+  lines as it splits the first). Over 50 MB read-only, 100,000 rows from
+  disk. **One table view serves every CSV tab**: a cell being typed into is
+  committed in `stashActiveTab` and the toggle (`commitEditing`), and
+  dropped before `showText:` replaces the document, or NSTableView commits
+  it into the next file at the old row. Undo steps keep only the changed
+  splice (`registerViewerUndoFrom:`); going back from the text to the table
+  turns its NSTextView typing steps (target: the text storage) into one
+  "Typing" step from `MCTab.textSessionStart`, since the table empties the
+  text view they were recorded against.
 - **JSON outline**: beside the text; a node selects its text with the keyboard
   kept in the outline, the caret selects its node; re-parsed 0.3 s after
-  typing, the last good outline kept under an error line.
+  typing, the last good outline kept under an error line, dimmed and
+  selecting nothing (`stale`: its offsets are off). `.jsonc`, tsconfig*.json,
+  `.vscode/*.json` and the like allow comments (`JsonOutline::allowsComments`).
 - **Notebooks** (`Notebook`): nbformat 4 (and 3's cells) to Markdown, rendered
   read-only (`showsRenderedMarkdown`); outputs as plain blocks, pictures as
-  data: images, HTML as text. Nothing runs.
+  data: images (SVG too, base64'd), HTML as text, an output past 5,000 lines
+  or 512 KB cut to its first and last 1,000 (`shortenOutput`). Nothing runs.
 - **SQLite** (`SqliteView.mm`): `SQLITE_OPEN_READONLY` with a `mode=ro` URI,
   query_only and the defensive flag; a writing statement
-  (`sqlite3_stmt_readonly`) refused before it runs; only the first statement; a
-  progress handler stops a query at 5 s; one background queue; 1,000 rows.
+  (`sqlite3_stmt_readonly`) refused before it runs, and an authorizer refuses
+  BEGIN, SAVEPOINT, ATTACH and setting pragmas (a BEGIN held a lock other
+  writers waited on); only the first statement; a progress handler stops a
+  query at 5 s; one background queue, opening included; 1,000 rows. A WAL
+  file with no `-wal` beside it opens with `immutable=1` (read-only cannot
+  make the WAL files); a failure is shown in the tab. A reopen keeps the
+  table or query on show. NULL is `NSNull` in the rows (`isNullAtRow:`).
 - **Diffs and pages**: git diffs and commits in `diffScroll`; the side-by-side
   diff is `CompareView` (`showComparison:preview:`, `MCComparison`, panes
   scrolling together); an `EditorPage` (`showPage:`) is a read-only view in a

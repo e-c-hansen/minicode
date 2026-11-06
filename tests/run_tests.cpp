@@ -65,6 +65,10 @@
 #include <sys/stat.h>   // mkfifo, for the folder search test
 #include <unistd.h>     // getpid, for scratch folder names
 #endif
+#ifdef __APPLE__
+#include <sys/time.h>    // utimes, for the atomic write's creation date
+#include <sys/xattr.h>   // setxattr, for the atomic write's extended attributes
+#endif
 
 // --------------------------------------------------------------- tiny harness
 static int g_pass = 0, g_fail = 0;
@@ -9603,6 +9607,7 @@ int main() {
     testLspReviewFixes();
     testTextFind();
     testFolderReplace();
+    testSavingToDisk();
     testSymbols();
     testLineIndex();
     testBrackets();

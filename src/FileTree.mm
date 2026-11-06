@@ -81,7 +81,9 @@ BOOL gShowHidden = NO;
 }
 @end
 
-@implementation ClickOutline
+@implementation ClickOutline {
+    NSTimeInterval _typedAt;   // the last letter typed to the tree, for type-select
+}
 - (void)mouseDown:(NSEvent *)event {
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
     NSInteger row = [self rowAtPoint:p];
@@ -90,6 +92,8 @@ BOOL gShowHidden = NO;
     // A press that became a drag opens nothing; any other is a click.
     self.dragBegan = NO;
     [super mouseDown:event];
+    // An open Quick Look panel follows a click as it follows the arrows.
+    if (!self.dragBegan) [[MCQuickLookPanel shared] followURLs:[self selectedFileURLs]];
     if (row >= 0 && !self.dragBegan && self.onRowClick) self.onRowClick(row, p);
 }
 - (void)keyDown:(NSEvent *)event {
@@ -112,8 +116,16 @@ BOOL gShowHidden = NO;
         return;
     }
     // Space toggles Quick Look on the selection, as in Finder; Esc closes it.
+    // A space in the middle of a name typed to find a row ("my file") is
+    // type-select's, as it is in Finder.
     if (mods == 0 && event.keyCode == 49 /* kVK_Space */) {
-        [[MCQuickLookPanel shared] toggleWithURLs:[self selectedFileURLs]];
+        const NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
+        if (_typedAt > 0 && now - _typedAt < 1.0) {
+            _typedAt = now;
+            [super keyDown:event];
+            return;
+        }
+        [[MCQuickLookPanel shared] toggleWithURLs:[self selectedFileURLs] from:self];
         return;
     }
     if (mods == 0 && event.keyCode == 53 /* kVK_Escape */ && [MCQuickLookPanel shared].shown) {
@@ -128,6 +140,12 @@ BOOL gShowHidden = NO;
             self.onActivate(self.selectedRow);
             return;
         }
+    }
+    if (mods == 0 && chars.length == 1) {
+        const unichar c = [chars characterAtIndex:0];
+        if (c > ' ' && c != 0x7F && !(c >= 0xF700 && c <= 0xF8FF))
+            _typedAt = NSDate.timeIntervalSinceReferenceDate;
+        else _typedAt = 0;
     }
     [super keyDown:event];   // arrows, left/right expand-collapse stay native
     [[MCQuickLookPanel shared] followURLs:[self selectedFileURLs]];   // when open

@@ -27,8 +27,11 @@
 // Open (as minicode asked for it, not whether the window server shows it).
 @property(nonatomic, readonly) BOOL shown;
 @property(nonatomic, readonly, copy) NSArray<NSURL *> *items;
-// Space: open on `urls` (when there are any), or close when open.
-- (void)toggleWithURLs:(NSArray<NSURL *> *)urls;
+// Space in `owner` (a tree): open on `urls` (when there are any), or close
+// when open for that owner. Open for another window's tree, or left with
+// no view driving it (the keyboard went to the editor), it shows `urls`
+// for this owner instead of closing.
+- (void)toggleWithURLs:(NSArray<NSURL *> *)urls from:(id)owner;
 // The selection moved while the panel is open: it follows.
 - (void)followURLs:(NSArray<NSURL *> *)urls;
 - (void)close;

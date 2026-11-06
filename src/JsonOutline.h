@@ -1,7 +1,8 @@
 // JsonOutline.h — pure C++. A JSON document as a tree of nodes that know
 // where they are in the text, for an outline beside the editor: selecting a
-// node selects its text. Strict JSON (RFC 8259); on an error the nodes read
-// so far are kept and the error's place is given.
+// node selects its text. Strict JSON (RFC 8259), or JSON with comments
+// when asked; on an error the nodes read so far are kept and the error's
+// place is given.
 //
 // Every node has its byte range in the UTF-8 text and the same range in
 // UTF-16 units (what NSString and NSTextView count). A member of an object
@@ -41,7 +42,15 @@ struct Outline {
     bool truncated = false;     // stopped at maxNodes
 };
 
-Outline parse(const std::string &text, size_t maxNodes = 2000000);
+// With `jsonc`, comments (// and /* */) and a trailing comma before a
+// closing bracket are allowed, as in a .jsonc file, tsconfig.json or VS
+// Code's settings.
+Outline parse(const std::string &text, size_t maxNodes = 2000000, bool jsonc = false);
+
+// Whether a file is JSON with comments, by its path: .jsonc and
+// .code-workspace files, tsconfig*.json and jsconfig*.json, and the .json
+// files in a .vscode or .devcontainer folder.
+bool allowsComments(const std::string &path);
 
 // The deepest node whose value (or member, key included) holds the UTF-16
 // offset, or -1.
