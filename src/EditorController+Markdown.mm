@@ -2,6 +2,9 @@
 #import "EditorController+Private.h"
 #import "EditorController+MarkdownIvars.h"
 #import "TextKit2.h"
+#import "MarkdownMermaid.h"
+#include "MermaidDiagram.h"
+#import <objc/runtime.h>
 
 @implementation EditorController (Markdown)
 
@@ -323,9 +326,29 @@
     return YES;
 }
 
+// The window's Mermaid diagrams (MarkdownMermaid.h), made on first use.
+static char kMarkdownMermaidKey;
+- (MCMarkdownMermaid *)markdownMermaid {
+    MCMarkdownMermaid *m = objc_getAssociatedObject(self, &kMarkdownMermaidKey);
+    if (!m) {
+        m = [MCMarkdownMermaid new];
+        __weak EditorController *weakSelf = self;
+        m.onArrived = ^{
+            EditorController *s = weakSelf;
+            if (s && [s showsRenderedMarkdown]) [s renderMarkdownKeepingPlace];
+        };
+        objc_setAssociatedObject(self, &kMarkdownMermaidKey, m, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    return m;
+}
+
 - (void)renderMarkdown:(NSString *)content {
     std::string md = content.UTF8String ? content.UTF8String : "";
     std::vector<MdRun> runs = MarkdownParser::parse(md);
+    MCMarkdownMermaid *mermaid = [self markdownMermaid];   // ```mermaid blocks
+    [mermaid beginPageDark:[AppSettings shared].settings.isDark()];
+    NSString *mermaidComplaint = nil, *mermaidKey = nil;  // of the block being shown as code
+    size_t mermaidEnd = 0;
     _awaitedWebImages = [NSMutableSet set];   // markdownRun: fills it
     _webImageMarks = 0;
     _awaitedMath = [NSMutableSet set];        // and these
@@ -354,6 +377,25 @@
             quoteBlock = codeBox = nil;
             continue;
         }
+        if (lineStart && i >= mermaidEnd) {
+            // A diagram mmdc has drawn takes its block's place; until then,
+            // and when it cannot be drawn, the block shows as code.
+            size_t end = i;
+            NSAttributedString *pic = [mermaid pictureForRuns:runs at:i end:&end
+                                                      lineKey:kMarkdownSourceLine
+                                                    complaint:&mermaidComplaint key:&mermaidKey];
+            if (pic) {
+                [out appendAttributedString:pic];
+                i = end;
+                quoteBlock = codeBox = nil;
+                continue;
+            }
+            if (mermaidComplaint || mermaidKey) {
+                mermaidEnd = i;
+                while (mermaidEnd < runs.size() && MermaidDiagram::isMermaidRun(runs[mermaidEnd]))
+                    mermaidEnd++;
+            }
+        }
         if (lineStart) {
             if (r.heading > 0) {
                 // A heading's text may be several runs (bold, code, links).
@@ -374,6 +416,13 @@
             para = [self markdownParagraphFor:r quote:&quoteBlock code:&codeBox];
         }
         NSAttributedString *piece = [self markdownRun:r style:para inCell:NO];
+        if (piece.length && i < mermaidEnd && (mermaidComplaint || mermaidKey)) {
+            NSMutableAttributedString *m = [piece mutableCopy];
+            const NSRange all = NSMakeRange(0, m.length);
+            if (mermaidComplaint) [m addAttribute:NSToolTipAttributeName value:mermaidComplaint range:all];
+            if (mermaidKey) [m addAttribute:MCMarkdownMermaidAttribute value:mermaidKey range:all];
+            piece = m;
+        }
         if (piece.length) {
             if (r.codeBlock) [codeColors noteRun:NSMakeRange(out.length, piece.length) language:r.lang];
             [out appendAttributedString:piece];
@@ -405,6 +454,7 @@
     // again when they are back (markdownMathArrived:).
     if (_mathWanted.count) MCMathTypeset(_mathWanted);
     _mathWanted = nil;
+    [mermaid endPage];   // and diagrams to mmdc
 }
 
 // ------------------------------------------------------ math in the preview
@@ -614,6 +664,13 @@ static BOOL MCTectonicCacheIsEmpty(void) {
                 (void)stop;
                 if (mark && MCMarkdownWebImageIsReady(mark.firstObject))
                     [changes addObject:@[@(range.location), @(range.length), @1]];
+            }];
+            [st enumerateAttribute:MCMarkdownMermaidAttribute inRange:before options:0
+                        usingBlock:^(NSString *key, NSRange range, BOOL *stop) {
+                (void)stop;
+                // A diagram's code turns into one picture and its line break.
+                if (key && MCMermaidIsReady(key))
+                    [changes addObject:@[@(range.location), @(range.length), @2]];
             }];
             if ([self typesetsMath])
                 [st enumerateAttribute:kMarkdownMath inRange:before options:0

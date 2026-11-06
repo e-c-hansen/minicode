@@ -634,6 +634,7 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 }
 
 - (void)closePageOf:(MCTab *)t {
+    [t.comparison tabClosed];   // a change still waiting for Accept is rejected
     if (!t.page) return;
     [t.page.pageView removeFromSuperview];
     if ([t.page respondsToSelector:@selector(pageClosed)]) [t.page pageClosed];
@@ -771,6 +772,26 @@ static NSDictionary *MCLineColumn(NSString *s, NSUInteger index) {
              @"visible": @(self.browserVisible),
              @"page": self.browser.agentPageShown ? @"agent" : @"yours"};
 }
+
+// ---- the Claude Code IDE link's hooks (IdeLinkServer.mm)
+- (NSString *)agentBufferOfShownFile:(NSString *)path {
+    if (!_activeTab.currentPath || self.previewMode || self.showingMessage || !path) return nil;
+    if (![_activeTab.currentPath.stringByResolvingSymlinksInPath
+            isEqualToString:path.stringByResolvingSymlinksInPath])
+        return nil;
+    return [self.textView.string copy];
+}
+
+- (NSUInteger)closeComparisonTabsMatching:(BOOL (^)(MCComparison *comparison))match {
+    NSUInteger n = 0;
+    for (MCTab *t in [_tabs copy])
+        if (t.comparison && match(t.comparison) && [self closeTab:t prompt:NO]) n++;
+    return n;
+}
+
+- (NSArray *)agentProblems { return [self.lsp problemRows] ?: @[]; }
+- (void)showAgentStatusNote:(NSString *)note { [self showStatusNote:note]; }
+- (BOOL)isEditorTextView:(id)view { return view && view == self.textView; }
 
 // Option+] and Option+[ (the key monitor, while a tour is on).
 - (void)nextTourStop:(id)sender {

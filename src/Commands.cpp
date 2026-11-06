@@ -406,6 +406,8 @@ const std::vector<Command>& all() {
          0, nullptr},
         {"minicode.toggleProcesses", "Toggle Processes", "View", "", A, "toggleProcesses:", 0, 0,
          nullptr},
+        {"minicode.toggleIdeLink", "Claude Code IDE Link", "View", "", A, "toggleIdeLink:", 0,
+         0, nullptr},
         {"workbench.actions.view.problems", "Problems", "View", "shift+cmd+m", A,
          "toggleProblems:", 0, 0, nullptr},
         {"minicode.toggleEditor", "Toggle Editor", "View", "shift+cmd+e", A, "toggleEditor:", 0,

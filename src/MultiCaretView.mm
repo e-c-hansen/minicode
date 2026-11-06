@@ -33,12 +33,15 @@ bool IsColumnPress(NSEvent *e) {
            m == (NSEventModifierFlagOption | NSEventModifierFlagShift);
 }
 
-// Cmd+Shift and Shift+Option presses extend a column from where the last one
-// began; Option alone adds a caret or drags a fresh column.
-bool IsExtendPress(NSEvent *e) {
-    NSEventModifierFlags m = e.modifierFlags & kModMask;
-    return m == (NSEventModifierFlagCommand | NSEventModifierFlagShift) ||
-           m == (NSEventModifierFlagOption | NSEventModifierFlagShift);
+// Cmd+Shift presses come in pairs: the first puts the caret there, the next
+// makes the column from it. Shift+Option presses are VS Code's box
+// selection: the column from the caret (or from where the last column
+// began) to the press. Option alone adds a caret or drags a fresh column.
+bool IsPairPress(NSEvent *e) {
+    return (e.modifierFlags & kModMask) == (NSEventModifierFlagCommand | NSEventModifierFlagShift);
+}
+bool IsBoxPress(NSEvent *e) {
+    return (e.modifierFlags & kModMask) == (NSEventModifierFlagOption | NSEventModifierFlagShift);
 }
 
 // Select All Occurrences, Add Next Occurrence and Add Cursor stop at this
@@ -65,6 +68,10 @@ NSString *LimitNote() {
     NSUInteger _anchorIndex, _anchorLength;
     CGFloat _anchorX;
     std::vector<Caret> _anchorCarets;
+    // The character the last press landed on, to tell a double-click from
+    // a quick click somewhere else (see mouseDown:).
+    BOOL _hasLastPress;
+    NSUInteger _lastPressIndex;
     // What the last Cmd+D or Shift+Cmd+L left: the selection it added (the
     // next press searches on from it), whether it matches whole words, and
     // the carets and text length then, to tell whether it still holds.
@@ -204,50 +211,23 @@ NSString *LimitNote() {
     _anchorCarets = [self currentCarets];
 }
 
-- (BOOL)mouseDown:(NSEvent *)event {
+// Follows the pointer until the button comes up, putting the column from
+// (anchor, anchorX) to the pointer. With `slop` the pointer must first move
+// 3 points from the press; YES when it was dragged.
+- (BOOL)trackColumnFrom:(NSUInteger)anchor x:(CGFloat)anchorX
+                  press:(NSPoint)p0
+                   slop:(BOOL)slop
+                   mask:(NSEventMask)mask
+                     up:(NSEventType)upType {
     NSTextView *tv = _tv;
-    if (!tv.editable || !IsColumnPress(event) || event.clickCount > 1) return NO;
-    if (tv.window.firstResponder != tv) [tv.window makeFirstResponder:tv];
-    const NSPoint p0 = [tv convertPoint:event.locationInWindow fromView:nil];
-    const NSUInteger a0 = [self indexAtPoint:p0];
-    _goalX.clear();
-
-    // Cmd+Shift (or Shift+Option): the first press puts the caret there; the
-    // next, clicked or dragged, makes the column from that place to this
-    // one, and further ones move its far end.
-    if (IsExtendPress(event)) {
-        const BOOL extending = _hasAnchor && _anchorLength == tv.string.length &&
-                               [self currentCarets] == _anchorCarets;
-        const NSUInteger anchor = extending ? _anchorIndex : a0;
-        const CGFloat anchorX = extending ? _anchorX : p0.x;
-        [self setCarets:[self columnFrom:anchor x:anchorX to:a0 x:p0.x]];
-        NSUInteger lastA1 = a0;
-        CGFloat lastX1 = p0.x;
-        for (;;) {
-            NSEvent *e = [tv.window nextEventMatchingMask:NSEventMaskLeftMouseDragged |
-                                                          NSEventMaskLeftMouseUp];
-            if (!e || e.type == NSEventTypeLeftMouseUp) break;
-            [tv autoscroll:e];
-            const NSPoint q = [tv convertPoint:e.locationInWindow fromView:nil];
-            const NSUInteger a1 = [self indexAtPoint:q];
-            if (a1 == lastA1 && q.x == lastX1) continue;
-            lastA1 = a1;
-            lastX1 = q.x;
-            [self setCarets:[self columnFrom:anchor x:anchorX to:a1 x:q.x]];
-        }
-        [self rememberAnchor:anchor x:anchorX];
-        return YES;
-    }
-
     BOOL dragged = NO;
     NSUInteger lastA1 = NSNotFound;
     CGFloat lastX1 = -1;
     for (;;) {
-        NSEvent *e = [tv.window nextEventMatchingMask:NSEventMaskLeftMouseDragged |
-                                                      NSEventMaskLeftMouseUp];
-        if (!e || e.type == NSEventTypeLeftMouseUp) break;
+        NSEvent *e = [tv.window nextEventMatchingMask:mask];
+        if (!e || e.type == upType) break;
         const NSPoint p1 = [tv convertPoint:e.locationInWindow fromView:nil];
-        if (!dragged && fabs(p1.x - p0.x) < 3 && fabs(p1.y - p0.y) < 3) continue;
+        if (slop && !dragged && fabs(p1.x - p0.x) < 3 && fabs(p1.y - p0.y) < 3) continue;
         dragged = YES;
         [tv autoscroll:e];
         const NSPoint q = [tv convertPoint:e.locationInWindow fromView:nil];
@@ -255,9 +235,59 @@ NSString *LimitNote() {
         if (a1 == lastA1 && q.x == lastX1) continue;
         lastA1 = a1;
         lastX1 = q.x;
-        [self setCarets:[self columnFrom:a0 x:p0.x to:a1 x:q.x]];
+        [self setCarets:[self columnFrom:anchor x:anchorX to:a1 x:q.x]];
     }
-    if (dragged) {
+    return dragged;
+}
+
+- (BOOL)mouseDown:(NSEvent *)event {
+    NSTextView *tv = _tv;
+    if (!tv.editable) return NO;
+    const NSPoint p0 = [tv convertPoint:event.locationInWindow fromView:nil];
+    const NSUInteger a0 = [self indexAtPoint:p0];
+    // The window server counts clicks by time alone: a press within the
+    // double-click interval of the last one has a clickCount of 2 wherever
+    // it lands, so a quick Cmd+Shift click a few lines down came as a
+    // double-click and went to NSTextView, which extended the selection.
+    // Only a press on the character the last one landed on is a
+    // double-click here, as in VS Code (MouseDownState.trySetCount).
+    const BOOL repeat = event.clickCount > 1 && _hasLastPress && a0 == _lastPressIndex;
+    _hasLastPress = YES;
+    _lastPressIndex = a0;
+    if (!IsColumnPress(event) || repeat) return NO;
+    if (tv.window.firstResponder != tv) [tv.window makeFirstResponder:tv];
+    _goalX.clear();
+
+    // Cmd+Shift: the first press puts the caret there; the next, clicked or
+    // dragged, makes the column from that place to this one, and further
+    // ones move its far end. Shift+Option, as in VS Code: the column from
+    // the caret (its selection's start) to the press, or from where the
+    // last column began while that column still holds.
+    if (IsPairPress(event) || IsBoxPress(event)) {
+        const BOOL extending = _hasAnchor && _anchorLength == tv.string.length &&
+                               [self currentCarets] == _anchorCarets;
+        NSUInteger anchor = a0;
+        CGFloat anchorX = p0.x;
+        if (extending) {
+            anchor = _anchorIndex;
+            anchorX = _anchorX;
+        } else if (IsBoxPress(event)) {
+            anchor = MIN((NSUInteger)[self currentCarets].front().anchor, tv.string.length);
+            anchorX = NSMinX([self caretRectAt:anchor]);
+        }
+        [self setCarets:[self columnFrom:anchor x:anchorX to:a0 x:p0.x]];
+        [self trackColumnFrom:anchor x:anchorX press:p0 slop:NO
+                         mask:NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp
+                           up:NSEventTypeLeftMouseUp];
+        [self rememberAnchor:anchor x:anchorX];
+        return YES;
+    }
+
+    // Option: a drag is a fresh column from the press (this replaces
+    // NSTextView's own Option-drag rectangle).
+    if ([self trackColumnFrom:a0 x:p0.x press:p0 slop:YES
+                         mask:NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp
+                           up:NSEventTypeLeftMouseUp]) {
         [self rememberAnchor:a0 x:p0.x];   // Cmd+Shift+click can stretch it
         return YES;
     }
@@ -275,6 +305,23 @@ NSString *LimitNote() {
     }
     carets.push_back({a0, a0});
     [self setCarets:carets];
+    return YES;
+}
+
+- (BOOL)otherMouseDown:(NSEvent *)event {
+    NSTextView *tv = _tv;
+    if (!tv.editable || event.buttonNumber != 2 || (event.modifierFlags & kModMask)) return NO;
+    if (tv.window.firstResponder != tv) [tv.window makeFirstResponder:tv];
+    const NSPoint p0 = [tv convertPoint:event.locationInWindow fromView:nil];
+    const NSUInteger a0 = [self indexAtPoint:p0];
+    _goalX.clear();
+    _hasLastPress = YES;
+    _lastPressIndex = a0;
+    [self setCarets:{{a0, a0}}];
+    [self trackColumnFrom:a0 x:p0.x press:p0 slop:NO
+                     mask:NSEventMaskOtherMouseDragged | NSEventMaskOtherMouseUp
+                       up:NSEventTypeOtherMouseUp];
+    [self rememberAnchor:a0 x:p0.x];
     return YES;
 }
 

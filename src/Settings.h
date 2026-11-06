@@ -133,6 +133,11 @@ public:
     // commented out too, so the theme shows whole; nothing else changes.
     static std::string withTheme(const std::string& text, const std::string& id,
                                  bool commentColors);
+    // The settings text with `key = value` in it: the line that sets the key
+    // changed (a comment after its value kept), else its commented-out line
+    // uncommented, else a new line at the end. Nothing else changes.
+    static std::string withValue(const std::string& text, const std::string& key,
+                                 const std::string& value);
     // How many lines of the text set a color (uncommented), which a theme's
     // color would give way to.
     static int colorOverrides(const std::string& text);
@@ -197,6 +202,10 @@ public:
     // markdown.math: whether the Markdown preview typesets math (on by
     // default, where tectonic is found). Off, formulas show as their TeX.
     bool math() const { return math_; }
+    // markdown.mermaid: whether the Markdown preview draws ```mermaid
+    // blocks (on by default, where mermaid-cli's mmdc is found). Off, they
+    // show as their source.
+    bool mermaid() const { return mermaid_; }
 
     // editor.keep-sorted-on-save: sort every keep-sorted block in a file
     // when it is saved (off by default).
@@ -313,6 +322,10 @@ public:
     std::string agentCommand() const {
         return agentCommand_.empty() ? "claude" : agentCommand_;
     }
+    // agent.ide-link: whether each window offers Claude Code the IDE link
+    // (`/ide`: the selection, diagnostics, files opened and diffs offered
+    // in the window). Off by default.
+    bool ideLink() const { return ideLink_; }
     // control.page-any-origin: whether agents may read the text, console
     // and pictures of any page in the browser pane (`minicode page`), not
     // only local ones (off by default; PageCheck.h).
@@ -342,6 +355,8 @@ private:
     bool lspEnabled_ = true;
     bool webImages_ = true;
     bool math_ = true;
+    bool mermaid_ = true;
+    bool ideLink_ = false;
     bool keepSortedOnSave_ = false;
     AutoSave autoSave_ = AutoSave::Off;
     int autoSaveDelay_ = 1000;

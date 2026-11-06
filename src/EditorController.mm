@@ -13,6 +13,7 @@
 #import "EditorController+TabsIvars.h"
 #import "EditorController+TreeIvars.h"
 #import "EditorController+TreeDetailsIvars.h"
+#import "IdeLinkServer.h"
 
 @implementation EditorController
 
@@ -27,6 +28,7 @@
         _noTabUndo = [NSUndoManager new];
         [self setUpTreeDetails];
         _agents = [[MCAgentWindow alloc] initWithHost:self];
+        MCIdeLinkWindowOpened(self);   // the Claude Code IDE link, while agent.ide-link is on
     }
     return self;
 }
