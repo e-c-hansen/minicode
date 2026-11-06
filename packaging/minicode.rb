@@ -11,7 +11,7 @@ cask "minicode" do
 
   url "https://github.com/e-c-hansen/minicode/releases/download/v#{version}/MiniCode.zip"
   name "MiniCode"
-  desc "Tiny native code editor, no Electron, no dependencies"
+  desc "Native code editor with a terminal, browser, and Markdown and LaTeX previews"
   homepage "https://github.com/e-c-hansen/minicode"
 
   # The app is built for macOS 11 (Info.plist's LSMinimumSystemVersion), which
@@ -23,9 +23,10 @@ cask "minicode" do
   app "MiniCode.app"
   binary "#{appdir}/MiniCode.app/Contents/Resources/minicode" # `minicode` on PATH
 
-  # Ad-hoc signed but not notarized (free, no Apple Developer account). Homebrew
-  # quarantines downloads by default, so clear the flag after install to avoid a
-  # Gatekeeper warning on first launch.
+  # Signed with a self-signed certificate (ad hoc where none is set up) but not
+  # notarized, which needs a paid Apple Developer account. Homebrew quarantines
+  # downloads by default, so clear the flag after install to avoid a Gatekeeper
+  # warning on first launch.
   postflight_steps do
     run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{appdir}}/MiniCode.app"]
   end
