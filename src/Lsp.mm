@@ -1741,6 +1741,11 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [self shutdown];
+    // shutdown reports the problems gone (problemsChanged), which schedules
+    // reportProblems on self; a retain taken while deallocating keeps
+    // nothing alive, and the perform then fired on a freed session, crashing
+    // the app about 50 ms after a window closed.
+    [NSObject cancelPreviousPerformRequestsWithTarget:self];
 }
 
 // ---- status
