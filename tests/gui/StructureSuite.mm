@@ -119,6 +119,27 @@ MC_GUI_SUITE(structure) {
         GCHECK([MCKeymap shared].errors.count == 0);
     });
 
+    MCGuiStep(@"a file made since the tree listed its folder opens at once", ^{
+        // Before FSEvents (0.3 s of coalescing) can refresh the tree, as a
+        // Problems row or Quick Open would open it.
+        NSString *real = dir.stringByResolvingSymlinksInPath;
+        NSString *fresh = [real stringByAppendingPathComponent:@"fresh.txt"];
+        NSString *deep = [real stringByAppendingPathComponent:@"newdir/deep.txt"];
+        NSString *hidden = [real stringByAppendingPathComponent:@".hidden.txt"];
+        MCGuiWriteFile(fresh, @"fresh\n");
+        MCGuiWriteFile(deep, @"deep\n");
+        MCGuiWriteFile(hidden, @"hidden\n");
+        [c revealPath:fresh andOpen:YES];
+        GCHECK_EQ_STR([c valueForKey:@"currentPath"], fresh);
+        [c revealPath:deep andOpen:YES];
+        GCHECK_EQ_STR([c valueForKey:@"currentPath"], deep);
+        NSOutlineView *tree = [c valueForKey:@"outline"];
+        GCHECK(tree.selectedRow >= 0 &&
+               [[[tree itemAtRow:tree.selectedRow] valueForKey:@"path"] isEqualToString:deep]);
+        [c revealPath:hidden andOpen:YES];
+        GCHECK_EQ_STR([c valueForKey:@"currentPath"], hidden);
+    });
+
     MCGuiStep(@"closing it stops the stream, while the controller still lives", ^{
         [c.window close];
         GCHECK(FsStream(c) == NULL);
