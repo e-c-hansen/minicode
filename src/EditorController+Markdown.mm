@@ -174,6 +174,19 @@
 
 // ---------------------------------------------- editing from the preview
 
+// An edit from the preview that cannot go in, because the file changed
+// while it was being typed (a reload from disk, an agent's edit, Cmd+Z):
+// the text goes to the clipboard and the status bar says so, rather than
+// the edit vanishing.
+static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
+    if (!text.length) return;
+    NSPasteboard *pb = NSPasteboard.generalPasteboard;
+    [pb clearContents];
+    [pb setString:text forType:NSPasteboardTypeString];
+    [me showStatusNote:@"The file changed while you were editing, so your edit was not "
+                       @"applied; your text is on the clipboard."];
+}
+
 // A double-click on rendered Markdown opens the block behind it (a
 // paragraph, heading, list item, quote, code block or table cell) in a
 // popover holding its Markdown; saving splices just those bytes back into
@@ -221,7 +234,11 @@
     if (block.kind == MarkdownEdit::Block::ListItem) {
         addItem = ^(NSString *newText) {
             EditorController *me = weakSelf;
-            if (!me || ![me.sourceText isEqualToString:before]) return;
+            if (!me) return;
+            if (![me.sourceText isEqualToString:before]) {
+                MCKeepLostMarkdownEdit(me, newText);
+                return;
+            }
             std::string edited = MarkdownEdit::addItem(src, block, Utf8String(newText));
             [me applyMarkdownSource:[NSString stringWithUTF8String:edited.c_str()]];
         };
@@ -229,7 +246,11 @@
     [self.markdownEditPanel showText:text title:title inView:self.textView rect:anchor
         commit:^(NSString *newText) {
             EditorController *me = weakSelf;
-            if (!me || ![me.sourceText isEqualToString:before]) return;   // file changed meanwhile
+            if (!me) return;
+            if (![me.sourceText isEqualToString:before]) {   // the file changed meanwhile
+                if (![newText isEqualToString:text]) MCKeepLostMarkdownEdit(me, newText);
+                return;
+            }
             std::string edited = MarkdownEdit::replace(src, block, Utf8String(newText));
             if (edited != src) [me applyMarkdownSource:[NSString stringWithUTF8String:edited.c_str()]];
         }
