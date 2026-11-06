@@ -1,5 +1,6 @@
 // EditorController+Agents.mm — EditorController: the inline agent, Request a Change, the control channel and agent work.
 #import "EditorController+Private.h"
+#import "EditorController+AgentsIvars.h"
 
 @implementation EditorController (Agents)
 

@@ -192,6 +192,19 @@ stays warning-free:
   inline` (so a file that does not call one is not warned). Only
   EditorController files import it. Shared non-window state is a global defined
   in one file (`gShowHidden` in FileTree.mm), never a static in a header.
+- **Ivars (2026-11-06): the shared block is closed to one category's state.**
+  It holds only variables two or more category files use; one used by a
+  single category goes in that category's own class extension,
+  `src/EditorController+<Concern>Ivars.h` (`@interface EditorController ()
+  { ... }`, importing `+Private.h`), imported by that category's `.mm` and by
+  `EditorController.mm`, whose `@implementation` must see a class extension
+  for its ivars to exist (miss it and the link fails on `OBJC_IVAR_$_...`).
+  Make the header when the category has none yet. Better still, a feature in
+  files of its own keeps its state in its own object, reached through one
+  property or ivar (`MCEditorFind`, `MCFolds`, `MCAgentSession`). The
+  `structure:ivars` core test fails on a shared variable fewer than two
+  categories use, an ivar header `EditorController.mm` does not import, or a
+  category using another's ivars.
 - Methods the rest of the app calls go in `EditorController.h` in an
   `@interface EditorController (Concern)` named for the implementing category:
   a method the class declares but a category implements draws warnings. For the

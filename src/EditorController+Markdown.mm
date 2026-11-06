@@ -1,5 +1,6 @@
 // EditorController+Markdown.mm — EditorController: the Markdown preview: switching to it, editing from it, links, math and web pictures arriving.
 #import "EditorController+Private.h"
+#import "EditorController+MarkdownIvars.h"
 #import "TextKit2.h"
 
 @implementation EditorController (Markdown)

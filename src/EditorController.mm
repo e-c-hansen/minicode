@@ -1,6 +1,18 @@
 // EditorController.mm — Objective-C++. Bridges the pure-C++ core (syntax
 // highlighter, markdown parser) to AppKit views.
 #import "EditorController+Private.h"
+// Every category's own instance variables, laid out here.
+#import "EditorController+AgentsIvars.h"
+#import "EditorController+EditorViewIvars.h"
+#import "EditorController+FormatIvars.h"
+#import "EditorController+HighlightingIvars.h"
+#import "EditorController+LanguageServersIvars.h"
+#import "EditorController+LayoutIvars.h"
+#import "EditorController+MarkdownIvars.h"
+#import "EditorController+PersistenceIvars.h"
+#import "EditorController+TabsIvars.h"
+#import "EditorController+TreeIvars.h"
+#import "EditorController+TreeDetailsIvars.h"
 
 @implementation EditorController
 

@@ -1,5 +1,6 @@
 // EditorController+Tree.mm — EditorController: the file tree: its data source, drag and drop, FSEvents, worktree rows, file operations, opening a folder.
 #import "EditorController+Private.h"
+#import "EditorController+TreeIvars.h"
 
 @implementation EditorController (Tree)
 

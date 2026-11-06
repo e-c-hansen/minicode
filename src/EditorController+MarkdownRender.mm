@@ -1,5 +1,6 @@
 // EditorController+MarkdownRender.mm — EditorController: turning Markdown runs into attributed text: paragraphs, runs, tables.
 #import "EditorController+Private.h"
+#import "EditorController+MarkdownIvars.h"
 
 // A task list item's box, drawn rather than the ☐ and ☑ characters, whose
 // look depends on the font. Checked, it is filled with the link color and

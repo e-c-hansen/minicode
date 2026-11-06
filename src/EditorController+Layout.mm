@@ -1,5 +1,6 @@
 // EditorController+Layout.mm — EditorController: window setup, layout and look, the splits and what fills the sidebar, the title.
 #import "EditorController+Private.h"
+#import "EditorController+LayoutIvars.h"
 
 @implementation EditorController (Layout)
 

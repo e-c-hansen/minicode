@@ -165,6 +165,15 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
 static const NSInteger kWorktreeMenuTag = 7701;
 
 // ---------------------------------------------------------------------------
+// The instance variables more than one category uses. A variable only one
+// category uses goes in that category's own class extension instead,
+// EditorController+<Category>Ivars.h, imported by EditorController.mm (where
+// the ivars are laid out: a class extension's ivars exist only if the
+// class's @implementation sees it) and by that category's file, so the
+// other files neither see it nor rebuild when it changes. New features in
+// files of their own keep their state in their own objects (MCEditorFind,
+// MCFolds, MCNavigator, MCAgentSession), as the controller's pieces should.
+// The `structure:ivars` core test holds this block to that rule.
 @interface EditorController () <NSTextStorageDelegate> {
     FileItem *_root;
     // The open files, in the order the strip shows them, and the one shown.
@@ -172,18 +181,12 @@ static const NSInteger kWorktreeMenuTag = 7701;
     MCTab *_activeTab;
     // The viewers of FileViewers.h, made on first use (-viewers).
     MCFileViewers *_viewers;
-    uint64_t _tabStamp;                    // counts activations, for MCTab.lastActive
-    NSUndoManager *_noTabUndo;             // the text view's while no tab is open
-    FSEventStreamRef _fsStream;            // watches the open folder for changes
     // Syntax highlighting of the editable source. While _liveHighlight is on,
     // every change to the text storage is re-highlighted as it happens, from
     // the storage delegate; _hl (null for a language without a grammar)
     // tracks line states so only the changed lines are re-lexed.
     std::unique_ptr<IncrementalHighlighter<char16_t>> _hl;
     BOOL _liveHighlight;
-    BOOL _bracketMatchQueued;   // updateBracketMatch waits for the next turn
-    // Rendered Markdown's headings, by GitHub's anchor spelling, for #links.
-    NSDictionary<NSString *, NSNumber *> *_markdownAnchors;
     // Where the source view was when a preview took over, so coming back
     // lands there again: the selection, and how far below the top of the
     // pane the caret sat. _previewEntryScroll tells whether the preview was
@@ -195,58 +198,18 @@ static const NSInteger kWorktreeMenuTag = 7701;
     // Web pictures the rendered page is waiting for, by address; renderMarkdown
     // starts a new set, and nil (after the window closes) waits for none.
     NSMutableSet<NSString *> *_awaitedWebImages;
-    NSUInteger _webImageMarks;             // numbers kMarkdownWebImage runs
-    BOOL _webImageRenderQueued;
-    // The same for formulas being typeset, by MCMathKey; renderMarkdown
-    // collects the ones to ask for in _mathWanted.
+    // The same for formulas being typeset, by MCMathKey.
     NSMutableSet<NSString *> *_awaitedMath;
-    // The tree's rows being dragged, while a drag from the tree is on.
-    NSArray<NSString *> *_draggedPaths;
-    NSMutableArray<NSArray *> *_mathWanted;
-    NSUInteger _mathMarks;
-    BOOL _mathRenderQueued;
-    BOOL _mathOn;                          // this render typesets math
-    NSString *_mathRunProblem;             // why a whole run failed, this render
-    NSString *_tectonicProblem;            // why the last download failed
-    // Edited, not yet recolored: [start, end) as distances from the end of
-    // the text (an edit before a range leaves them alone), by start
-    // descending, so the edits of a multi-range edit (last first) append.
-    std::vector<std::pair<NSUInteger, NSUInteger>> _pending;
-    BOOL _flushScheduled;
-    BOOL _highlightingSettingsFile;        // give color values swatches
-    NSColor *_styleColors[8];              // by TokenStyle, from the settings
-    NSColor *_plainColor;
-    NSArray<NSDictionary *> *_styleAttributes;   // attributesForStyle:, for _styleAttributesBase
-    NSDictionary *_styleAttributesBase;
     NSDictionary *_sourceAttributes;       // font, paragraph style, plain color
-    NSUInteger _formatGeneration;          // a format result for an older one is dropped
-    NSPopover *_formatNote;                // what Format Document has to say
     // The tab whose Cmd+S (format.on-save) waits for the formatter. A save
     // is never lost: leaving the tab saves it at once, and Format Document
     // started meanwhile saves when it is done.
     __weak MCTab *_formatSaveTab;
     BOOL _closing;                         // windowWillClose: has run
     NSSet<MCTab *> *_approvedWrites;       // Save All: disk questions already answered
-    NSMutableArray<NSDictionary *> *_closedTabs;   // Reopen Closed Tab's stack, newest last
-    // The tree's sizes, dates and order (see TreeDetails.h). Each folder's
-    // order on show is worked out again when _sortGeneration moves on.
-    MCFolderSizer *_sizer;
-    TreeSort::Options _treeSort;
-    NSUInteger _sortGeneration;
-    NSString *_realRoot;                   // the root as FSEvents spells it
-    NSTimer *_detailsTimer;                // ages and "Saved ..." each half minute
-    MCTreeColumns _shownColumns;           // the tree's columns, as last laid out
-    // The bar over the editor when the open file's language server is
-    // missing: the language it was offered for (nil once closed), shown
-    // while a file of that language is on show and the server still missing.
-    NSString *_installBarKey;
-    NSPopover *_installPopover;
-    NSString *_missingBefore;              // the open file's missing server, last time
-    MCChangeSession *_change;              // Request a Change (Shift+Cmd+K), made on first use
+    MCFolderSizer *_sizer;                 // the tree's folder totals (TreeDetails.h)
     MCAgentSession *_agent;                // the inline agent (Cmd+I), made on first use
-    MCSourceStorage *_sourceStorage;       // the editor's text storage (the view does not own it)
     MCEditorFind *_editorFind;             // the editor's find and replace bar (EditorFind.h)
-    NSDate *_backupFirstPending;           // the oldest buffer change not yet backed up
     MCAgentNotes *_notes;                  // notes and tours over the editor, made on first use
     MCAgentWindow *_agents;                // the Agents panel, worktrees, evidence (AgentWindow.h)
     FileItem *_worktreesItem;              // the tree's Worktrees node, while there is one

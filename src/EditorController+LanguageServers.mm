@@ -1,5 +1,6 @@
 // EditorController+LanguageServers.mm — EditorController: the language servers' commands, problems, and installing a server.
 #import "EditorController+Private.h"
+#import "EditorController+LanguageServersIvars.h"
 
 @implementation EditorController (LanguageServers)
 
