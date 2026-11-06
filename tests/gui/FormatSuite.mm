@@ -7,6 +7,8 @@
 // saved.
 #import "Harness.h"
 #import "EditorController.h"
+#import "EditorController+Private.h"   // closeTab:prompt:
+#import "EditorTab.h"
 #import "Lsp.h"
 #import "TreeDetails.h"   // MCAppDefaults
 #include <sys/stat.h>
@@ -238,6 +240,8 @@ MC_GUI_SUITE(format_consent) {
             [MCAppDefaults() setObject:consentBefore forKey:@"MCPythonEnvironmentConsent"];
         else
             forget();
+        // The tab goes before its file, so later suites see no deleted tab.
+        GCHECK([c closeTab:[c valueForKey:@"activeTab"] prompt:NO]);
         [fm removeItemAtPath:dir error:nil];
         MCGuiSetSettings(@"lsp.enabled = false\n");
     });
