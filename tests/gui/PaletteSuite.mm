@@ -41,6 +41,10 @@ MC_GUI_SUITE(palette) {
     MCGuiStep(@"Shift+Cmd+P: the menu's commands with \">\"", ^{
         MCGuiWriteFile(deep, @"# Target\n");
         c = MCGuiController();
+        // Quick Open opens through the tree, which may not have listed the
+        // new folder yet on a busy machine (FSEvents brings it a moment
+        // later); a file in it would then not open. Seen in a whole run.
+        [c refreshTree:nil];
         [c focusEditor:nil];
         GCHECK([c showFile:MCGuiProjectFile(@"README.md")]);
         [c.window makeFirstResponder:Text(c)];
