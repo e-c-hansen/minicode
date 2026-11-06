@@ -799,6 +799,8 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
             NSString *failure = nil;
             NSString *label = NS(p["label"].asString());
             NSInteger n = [me applyWorkspaceEdit:Lsp::parseWorkspaceEdit(p["edit"], CanonicalURI)
+                                          server:s
+                                           asked:nullptr
                                       actionName:label.length ? label
                                                  : me->_commandTitle ?: @"Edit"
                                          failure:&failure];
@@ -2554,12 +2556,35 @@ static NSString *ErrorText(const Json &error) {
 - (NSInteger)applyWorkspaceEdit:(const Lsp::WorkspaceEdit &)we
                      actionName:(NSString *)name
                         failure:(NSString **)failure {
+    return [self applyWorkspaceEdit:we server:nil asked:nullptr actionName:name failure:failure];
+}
+
+// `server` is the one that computed the edit, and `asked` the versions of
+// its open documents when the request went out: a file whose text changed
+// since (reloaded from disk while the server worked, say) is refused, as is
+// one whose documentChanges version is not the version open now, since the
+// edit's positions are for the older text.
+- (NSInteger)applyWorkspaceEdit:(const Lsp::WorkspaceEdit &)we
+                         server:(MCLspServer *)server
+                          asked:(const Lsp::DocVersions *)asked
+                     actionName:(NSString *)name
+                        failure:(NSString **)failure {
     __autoreleasing NSString *dummy = nil;
     if (!failure) failure = &dummy;
     *failure = nil;
     if (!we.problem.empty()) { *failure = NS(we.problem); return -1; }
     if (we.files.empty()) return 0;
     if (!self.openFile) { *failure = @"No window to edit in"; return -1; }
+    if (server) {
+        std::string stale = Lsp::staleEditFile(we, asked ? *asked : Lsp::DocVersions(),
+                                               server.client.versions());
+        if (!stale.empty()) {
+            *failure = [NSString stringWithFormat:
+                @"%@ changed while the language server worked on it; try again",
+                NS(Lsp::pathFromUri(stale)).lastPathComponent];
+            return -1;
+        }
+    }
 
     // 1. Read and check every file.
     NSMutableArray<NSString *> *paths = [NSMutableArray array], *texts = [NSMutableArray array];
@@ -2820,20 +2845,24 @@ static NSString *ErrorText(const Json &error) {
     __weak LspSession *weakSelf = self;
     NSString *uri = _uri;
     Lsp::Position pos = Lsp::positionForOffset(U16Of(_tv.string), _renameRange.location);
-    server.client.rename(Std(uri), pos, Std(name), [weakSelf, gen, uri, server](const Json &r,
-                                                                            const Json &e) {
-        (void)server;
+    // What every open file's text was when asked, to refuse a reply for a
+    // file that changed meanwhile (applyWorkspaceEdit:server:asked:).
+    auto asked = std::make_shared<const Lsp::DocVersions>(server.client.versions());
+    server.client.rename(Std(uri), pos, Std(name), [weakSelf, gen, uri, server,
+                                                    asked](const Json &r, const Json &e) {
         Json result = r, error = e;
         // Applied once the reply has been read: applying switches tabs,
         // which talks to the server.
         dispatch_async(dispatch_get_main_queue(), ^{
-            [weakSelf renameArrived:result error:error gen:gen uri:uri];
+            [weakSelf renameArrived:result error:error gen:gen uri:uri server:server
+                              asked:asked];
         });
     });
 }
 
 - (void)renameArrived:(const Json &)result error:(const Json &)error gen:(int)gen
-                  uri:(NSString *)uri {
+                  uri:(NSString *)uri server:(MCLspServer *)server
+                asked:(std::shared_ptr<const Lsp::DocVersions>)asked {
     // Only onto the text the name was read from.
     if (gen != _renameGen || ![uri isEqualToString:_uri] ||
         ![_tv.string isEqualToString:_renameText])
@@ -2846,7 +2875,8 @@ static NSString *ErrorText(const Json &error) {
         return;
     }
     NSString *failure = nil;
-    NSInteger files = [self applyWorkspaceEdit:we actionName:@"Rename" failure:&failure];
+    NSInteger files = [self applyWorkspaceEdit:we server:server asked:asked.get()
+                                    actionName:@"Rename" failure:&failure];
     if (files < 0) { NSBeep(); [self note:failure]; return; }
     size_t n = we.editCount();
     [self note:[NSString stringWithFormat:@"Renamed %zu occurrence%@ in %ld file%@", n,
@@ -3147,7 +3177,12 @@ static NSFont *PickerMono(void) {
     int gen = ++_actionGen;
     NSString *uri = _uri;
     NSRange sel = _tv.selectedRange;
+    const NSUInteger edits = _edits;
     _askedSelection = sel;
+    // Each server's open documents' versions as asked: the actions' edits
+    // are for those texts (performCodeAction refuses newer ones).
+    auto versions = std::make_shared<std::vector<Lsp::DocVersions>>();
+    for (MCLspServer *server in servers) versions->push_back(server.client.versions());
     struct Pending {
         std::vector<std::vector<Lsp::CodeAction>> lists;
         size_t waiting = 0;
@@ -3162,10 +3197,15 @@ static NSFont *PickerMono(void) {
         LspSession *me = weakSelf;
         if (!me || pending->finished) return;
         pending->finished = true;
+        // The text changed (a reload keeps the caret, so the selection alone
+        // did not tell): the actions are for the text before.
         if (gen != me->_actionGen || ![uri isEqualToString:me->_uri] ||
-            !NSEqualRanges(me->_tv.selectedRange, sel))
+            !NSEqualRanges(me->_tv.selectedRange, sel) || me->_edits != edits)
             return;
         std::vector<Lsp::CodeAction> merged = Lsp::mergeCodeActions(pending->lists);
+        for (Lsp::CodeAction &a : merged)
+            if (a.origin >= 0 && (size_t)a.origin < versions->size())
+                a.asked = std::make_shared<const Lsp::DocVersions>((*versions)[(size_t)a.origin]);
         done(merged, servers, merged.empty() && !pending->error.empty()
                                   ? NS(pending->error) : nil);
     };
@@ -3325,6 +3365,8 @@ static NSString *ActionKindName(const std::string &kind) {
     if (action.hasEdit()) {
         NSString *failure = nil;
         NSInteger n = [self applyWorkspaceEdit:Lsp::parseWorkspaceEdit(action.edit, CanonicalURI)
+                                        server:server
+                                         asked:action.asked.get()
                                     actionName:NS(action.title)
                                        failure:&failure];
         if (n < 0) { NSBeep(); [self note:failure]; return; }
