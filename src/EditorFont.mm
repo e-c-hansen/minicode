@@ -49,6 +49,10 @@ NSFont *MCTerminalFont(BOOL bold, BOOL italic) {
 
 CGFloat MCEditorScale(void) { return MCEditorFontSize() / 13.0; }
 
+CGFloat MCZoomScale(void) { return MAX((CGFloat)0.5, (13 + MCEditorZoom()) / 13.0); }
+
+CGFloat MCZoomed(CGFloat points) { return round(points * MCZoomScale() * 2) / 2; }
+
 BOOL MCEditorZoomBy(CGFloat points) {
     const CGFloat base = (CGFloat)[AppSettings shared].settings.editorFontSize();
     const CGFloat old = MCEditorZoom();

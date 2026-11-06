@@ -6128,6 +6128,9 @@ static NSColor *ContrastColor(const Rgba &c) {
     const BOOL changed = showing && ![_sourceAttributes[NSFontAttributeName] isEqual:font];
     if (!changed) {
         [self setEditorFont:font];
+        // A rendered Markdown page follows the zoom too, keeping its place.
+        if (self.isMarkdown && self.previewMode && !self.textView.editable)
+            [self renderMarkdownKeepingPlace];
         return;
     }
     NSTextView *tv = self.textView;
@@ -7562,7 +7565,7 @@ static NSString *MCFormatDuration(double seconds) {
     NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
     ps.paragraphSpacing = 10;
     NSDictionary *muted = @{
-        NSFontAttributeName: [NSFont systemFontOfSize:12],
+        NSFontAttributeName: [NSFont systemFontOfSize:MCZoomed(12)],
         NSForegroundColorAttributeName: Hex(0x9CA3AF),
         NSParagraphStyleAttributeName: ps,
         kMarkdownMathNote: @YES,
@@ -7821,8 +7824,9 @@ static NSString *MCMarkdownAnchor(NSString *title) {
     return slug;
 }
 
-// The preview's vertical rhythm, in points: the empty line between two
-// blocks (the parser's `gap` runs), and the indent of each list level.
+// The preview's vertical rhythm, in points at no zoom: the empty line
+// between two blocks (the parser's `gap` runs), and the indent of each list
+// level.
 static const CGFloat kMarkdownGap = 12;
 static const CGFloat kMarkdownListStep = 24;
 
@@ -7893,7 +7897,7 @@ static NSTextBlock *MCFullWidthBlock(void) {
         *code = nil;
     }
     if (r.gap) {
-        ps.minimumLineHeight = ps.maximumLineHeight = kMarkdownGap;
+        ps.minimumLineHeight = ps.maximumLineHeight = MCZoomed(kMarkdownGap);
         ps.lineSpacing = 0;
     } else if (r.heading > 0) {
         ps.paragraphSpacingBefore = r.heading <= 2 ? 10.0 : 4.0;
@@ -7919,9 +7923,10 @@ static NSTextBlock *MCFullWidthBlock(void) {
     if (r.listDepth > 0) {
         // The text of every line sits at the level's indent; a marker is
         // right-aligned just before it, so numbers of any width line up.
-        const CGFloat text = r.listDepth * kMarkdownListStep;
+        const CGFloat step = MCZoomed(kMarkdownListStep);
+        const CGFloat text = r.listDepth * step;
         ps.headIndent = text;
-        ps.firstLineHeadIndent = r.marker ? text - kMarkdownListStep : text;
+        ps.firstLineHeadIndent = r.marker ? text - step : text;
         ps.tabStops = @[
             [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentRight
                                             location:text - 7 options:@{}],
@@ -7943,8 +7948,9 @@ static NSTextBlock *MCFullWidthBlock(void) {
     NSString *s = [NSString stringWithUTF8String:r.text.c_str()];
     if (!s) return nil;
 
-    NSFont *body = [NSFont systemFontOfSize:15];
-    NSFont *mono = [NSFont monospacedSystemFontOfSize:13
+    // Sizes at no zoom; Zoom In and Out scale the preview with the editor.
+    NSFont *body = [NSFont systemFontOfSize:MCZoomed(15)];
+    NSFont *mono = [NSFont monospacedSystemFontOfSize:MCZoomed(13)
                                                weight:NSFontWeightRegular];
     AppSettings *cfg = [AppSettings shared];
     NSFont *font = body;
@@ -7953,7 +7959,7 @@ static NSTextBlock *MCFullWidthBlock(void) {
 
     if (r.heading > 0) {
         CGFloat sizes[7] = {0, 26, 22, 19, 17, 15, 14};
-        font = [NSFont boldSystemFontOfSize:sizes[r.heading]];
+        font = [NSFont boldSystemFontOfSize:MCZoomed(sizes[r.heading])];
         color = [cfg markdown:MarkdownColor::Heading];
     }
     // Display math on a line of its own, shown as TeX, sits in a code box.
@@ -8035,7 +8041,7 @@ static NSTextBlock *MCFullWidthBlock(void) {
             NSFont *around = body;
             if (r.heading > 0) {
                 const CGFloat sizes[7] = {0, 26, 22, 19, 17, 15, 14};
-                around = [NSFont boldSystemFontOfSize:sizes[r.heading]];
+                around = [NSFont boldSystemFontOfSize:MCZoomed(sizes[r.heading])];
                 ink = [cfg markdown:MarkdownColor::Heading];
             }
             if (r.table && r.bold) ink = [cfg markdown:MarkdownColor::Heading];
@@ -8191,7 +8197,7 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
     if (cols <= 0 || rows <= 0) return;
 
     AppSettings *cfg = [AppSettings shared];
-    NSDictionary *plain = @{NSFontAttributeName: [NSFont systemFontOfSize:15],
+    NSDictionary *plain = @{NSFontAttributeName: [NSFont systemFontOfSize:MCZoomed(15)],
                             NSForegroundColorAttributeName: [cfg text:Surface::Editor]};
     if (out.length && ![out.string hasSuffix:@"\n"])
         [out appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"

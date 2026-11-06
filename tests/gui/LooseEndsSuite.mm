@@ -1,6 +1,6 @@
 // LooseEndsSuite.mm — smaller checks gathered in one file:
 //   make guitest SUITES=terminal_zoom     terminal.font-size, and the zoom
-//                                         scaling terminals
+//                                         scaling terminals and the preview
 #import "Harness.h"
 #import "AgentPanel.h"
 #import "EditorController.h"
@@ -70,6 +70,7 @@ namespace {
 // ------------------------------------------------------------ the zoom
 MC_GUI_SUITE(terminal_zoom) {
     MCLooseState *s = [MCLooseState new];
+    NSString *md = MCGuiProjectFile(@"zoom.md");
     TerminalAtPrompt(s);
     MCGuiStep(@"at 12 points with no zoom", ^{
         MCEditorZoomBy(0);
@@ -103,10 +104,38 @@ MC_GUI_SUITE(terminal_zoom) {
         return s.term.atPrompt && [[s.term recentText:4] containsString:
             [NSString stringWithFormat:@"cols=%d", Cols(s.term)]];
     });
-    MCGuiStep(@"Option+Cmd+0 resets the terminal", ^{
+    // The Markdown preview follows the zoom.
+    MCGuiStep(@"a Markdown page", ^{
+        MCGuiWriteFile(md, @"# Title\n\nBody text here.\n\n- an item\n");
+        [s.c focusEditor:nil];
+        GCHECK([s.c showFile:md]);
+    });
+    MCGuiStep(@"its text is 15 points scaled by the zoom", ^{
+        NSTextView *tv = Text(s.c);
+        NSRange r = [tv.string rangeOfString:@"Body text"];
+        GCHECK(r.location != NSNotFound);
+        if (r.location == NSNotFound) return;
+        NSFont *f = [tv.textStorage attribute:NSFontAttributeName atIndex:r.location
+                               effectiveRange:NULL];
+        GCHECK(f.pointSize == MCZoomed(15) && f.pointSize > 15);
+        NSFont *h = [tv.textStorage attribute:NSFontAttributeName
+                                      atIndex:[tv.string rangeOfString:@"Title"].location
+                               effectiveRange:NULL];
+        GCHECK(h.pointSize == MCZoomed(26));
+        MCGuiNote(@"zoom 2: body %.1f pt, h1 %.1f pt", f.pointSize, h.pointSize);
+    });
+    MCGuiStep(@"Option+Cmd+0 resets the editor, the page and the terminal", ^{
         GCHECK(MCGuiPerformMenuKey(s.c.window, 29, NSEventModifierFlagCommand | NSEventModifierFlagOption,
                                    nil, nil));
         GCHECK(MCEditorZoom() == 0);
+        NSTextView *tv = Text(s.c);
+        NSRange r = [tv.string rangeOfString:@"Body text"];
+        GCHECK(r.location != NSNotFound);
+        if (r.location != NSNotFound) {
+            NSFont *f = [tv.textStorage attribute:NSFontAttributeName atIndex:r.location
+                                   effectiveRange:NULL];
+            GCHECK(f.pointSize == 15);
+        }
         GCHECK([TerminalGridView cellFont].pointSize == 12);
         GCHECK(Cols(s.term) == s.cols);
     });

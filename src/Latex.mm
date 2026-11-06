@@ -10,6 +10,7 @@
 //   * An edit replaces exactly that range. The document is never regenerated
 //     from a model, so nothing the parser missed can be damaged.
 #import "Latex.h"
+#import "EditorFont.h"
 #import "AppSettings.h"
 #import <Quartz/Quartz.h>
 #include "LatexDoc.h"
@@ -732,7 +733,7 @@ const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &syn
     scroll.borderType = NSBezelBorder;
     MCEditText *editor = [[MCEditText alloc]
         initWithFrame:NSMakeRect(0, 0, 336, 74)];
-    editor.font = [NSFont monospacedSystemFontOfSize:12
+    editor.font = [NSFont monospacedSystemFontOfSize:MCZoomed(12)
                                               weight:NSFontWeightRegular];
     editor.string = text ?: @"";
     editor.automaticQuoteSubstitutionEnabled = NO;

@@ -1,5 +1,6 @@
 // MarkdownEditPanel.mm — see MarkdownEditPanel.h.
 #import "MarkdownEditPanel.h"
+#import "EditorFont.h"
 
 // Return commits, Shift+Return types a newline, Escape cancels.
 @interface MCMarkdownEditText : NSTextView
@@ -74,7 +75,7 @@
     scroll.borderType = NSBezelBorder;
     MCMarkdownEditText *editor = [[MCMarkdownEditText alloc]
         initWithFrame:NSMakeRect(0, 0, width - 24, editorHeight)];
-    editor.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+    editor.font = [NSFont monospacedSystemFontOfSize:MCZoomed(12) weight:NSFontWeightRegular];
     editor.string = text ?: @"";
     editor.richText = NO;
     editor.automaticQuoteSubstitutionEnabled = NO;
