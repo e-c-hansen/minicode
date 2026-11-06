@@ -393,6 +393,15 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)makeBrowserWithHome:(NSString *)home;
 @end
 
+// EditorController+EditCommands.mm: Indent and Outdent Lines, Insert Line
+// Below and Above, Toggle Bold and Italic, Shift+Return to a Python REPL,
+// Save As, Save All, and what a new terminal's environment gets.
+@interface EditorController (EditCommandsPrivate) <MCKeymapLanguage>
+- (BOOL)isEditCommand:(SEL)action;
+- (BOOL)validateEditCommand:(NSMenuItem *)item;
+- (NSDictionary<NSString *, NSString *> *)terminalEnvironmentForDirectory:(NSString *)dir;
+@end
+
 // EditorController+Search.mm: find and replace, Find in Folder and TODOs.
 @interface EditorController (Search)
 - (void)performTextFinderAction:(id)sender;

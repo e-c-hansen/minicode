@@ -35,6 +35,12 @@
 - (TerminalView *)addTabInDirectory:(NSString *)dir;
 // A panel whose first terminal starts in `first` rather than `dir`.
 - (instancetype)initWithDirectory:(NSString *)dir firstIn:(NSString *)first;
+// The same, asking `environment` for each new terminal's added variables
+// (terminal.activate-venv), the first one's included; it gets the folder
+// the terminal starts in.
+- (instancetype)initWithDirectory:(NSString *)dir firstIn:(NSString *)first
+                      environment:(NSDictionary<NSString *, NSString *> *(^)(NSString *dir))environment;
+@property(nonatomic, copy) NSDictionary<NSString *, NSString *> *(^environment)(NSString *dir);
 // A new terminal beside the active one; nil (a beep and a status note) when
 // each pane would be narrower than 20 columns.
 - (TerminalView *)splitActive;

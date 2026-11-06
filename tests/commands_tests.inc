@@ -89,6 +89,8 @@ static void testCommandTable() {
         CHECK(c.title && *c.title && c.menu && *c.menu);
         // Fixed commands name who handles them, and have no selector.
         if (c.flags & Fixed) CHECK(c.note && !c.selector);
+        // A language scope is the editor's.
+        if (c.language) CHECK(c.when == When::Editor && *c.language);
         // Every default key parses, and none (but a fixed one's) types text.
         std::string word, list = c.keys;
         size_t n = 0;
@@ -104,7 +106,8 @@ static void testCommandTable() {
             if (ok && format(k) != word)
                 std::printf("  %s: write %s as %s\n", c.id, word.c_str(), format(k).c_str());
             CHECK(!ok || format(k) == word);
-            if (!(c.flags & Fixed)) CHECK(!typesText(k));
+            // A language command may have one (Shift+Return in Python).
+            if (!(c.flags & Fixed) && !c.language) CHECK(!typesText(k));
             n++;
             word.clear();
         }
@@ -206,6 +209,79 @@ static void testCommandTable() {
         m = resolve("alt+left = workbench.action.terminal.clear\n", &errs);
         CHECK(errs.size() == 1);
     }
+}
+
+static void testCommandLanguages() {
+    using namespace Commands;
+    GROUP("commands:language");
+    CHECK(languageOfPath("/a/README.md") == "markdown");
+    CHECK(languageOfPath("notes.MarkDown") == "markdown");
+    CHECK(languageOfPath("/a/b/run.py") == "python" && languageOfPath("x.pyi") == "python");
+    CHECK(languageOfPath("/a/.py").empty() && languageOfPath("/a/main.cpp").empty());
+    CHECK(languageOfPath("").empty() && languageOfPath("Makefile").empty());
+    CHECK(placeName(*find("python.execSelectionInTerminal")) == "the editor, in Python files");
+    CHECK(placeName(*find("workbench.action.terminal.clear")) == "the terminal");
+
+    Keymap d = defaults();
+    const Command *task = find("minicode.markdown.toggleTask");
+    CHECK(d.commandFor(K("alt+c"), When::Editor, "markdown") == task);
+    CHECK(d.commandFor(K("alt+c"), When::Editor) == nullptr);   // types its character
+    CHECK(d.commandFor(K("alt+c"), When::Editor, "python") == nullptr);
+    CHECK(d.commandFor(K("alt+c"), When::Terminal, "markdown") == nullptr);
+    CHECK(d.commandFor(K("alt+cmd+l"), When::Editor, "markdown") == task);
+    CHECK(d.commandFor(K("shift+enter"), When::Editor, "python") ==
+          find("python.execSelectionInTerminal"));
+    CHECK(d.commandFor(K("shift+enter"), When::Editor, "markdown") == nullptr);
+    // Cmd+B is the sidebar everywhere, Markdown included; Cmd+I the agent.
+    CHECK(d.commandFor(K("cmd+b"), When::Editor, "markdown") ==
+          find("workbench.action.toggleSidebarVisibility"));
+    CHECK(d.commandFor(K("cmd+i"), When::Editor, "markdown") == find("inlineChat.start"));
+    CHECK(d.keysOf("markdown.extension.editing.toggleBold").empty());
+    CHECK(d.keysOf("markdown.extension.editing.toggleItalic").empty());
+    // The new keys of the daily-work commands.
+    CHECK(HasKey(d, "workbench.action.showCommands", "f1"));
+    CHECK(HasKey(d, "editor.action.indentLines", "cmd+]"));
+    CHECK(HasKey(d, "editor.action.outdentLines", "cmd+["));
+    CHECK(HasKey(d, "editor.action.insertLineAfter", "cmd+enter"));
+    CHECK(HasKey(d, "workbench.action.closeOtherEditors", "alt+cmd+t"));
+    CHECK(HasKey(d, "workbench.action.nextEditor", "alt+cmd+right"));
+    CHECK(HasKey(d, "workbench.action.previousEditor", "alt+cmd+left"));
+    CHECK(HasKey(d, "workbench.action.files.saveAll", "alt+cmd+s"));
+    CHECK(HasKey(d, "workbench.action.openRecent", "ctrl+r"));
+    CHECK(d.keysOf("workbench.action.files.saveAs").empty());   // Shift+Cmd+S is Export PDF
+
+    // keys.conf: a key given to a language command shadows the other
+    // command there, and stays the other's elsewhere.
+    std::vector<Error> errs;
+    Keymap m = resolve("cmd+b = markdown.extension.editing.toggleBold\n", &errs);
+    CHECK(errs.empty());
+    CHECK(m.commandFor(K("cmd+b"), When::Editor, "markdown") ==
+          find("markdown.extension.editing.toggleBold"));
+    CHECK(m.commandFor(K("cmd+b"), When::Editor, "python") ==
+          find("workbench.action.toggleSidebarVisibility"));
+    CHECK(m.commandFor(K("cmd+b"), When::Tree) == find("workbench.action.toggleSidebarVisibility"));
+    CHECK(m.conflicts().empty());
+    // Given to a command for every file afterwards, the key leaves it.
+    m = resolve("cmd+b = markdown.extension.editing.toggleBold\n"
+                "cmd+b = workbench.action.toggleSidebarVisibility\n", &errs);
+    CHECK(errs.empty());
+    CHECK(m.commandFor(K("cmd+b"), When::Editor, "markdown") ==
+          find("workbench.action.toggleSidebarVisibility"));
+    // Two commands of one language on one key are refused.
+    errs.clear();
+    m = resolve("ctrl+alt+b = markdown.extension.editing.toggleBold\n"
+                "ctrl+alt+b = markdown.extension.editing.toggleItalic\n", &errs);
+    CHECK(errs.size() == 1 && errs[0].line == 2);
+    if (!errs.empty())
+        CHECK(errs[0].message.find("in the editor, in Markdown files") != std::string::npos);
+    // A typing key only for a language command.
+    errs.clear();
+    resolve("shift+enter = editor.action.formatDocument\n", &errs);
+    CHECK(errs.size() == 1);
+    errs.clear();
+    m = resolve("alt+c = -minicode.markdown.toggleTask\n", &errs);
+    CHECK(errs.empty() && m.commandFor(K("alt+c"), When::Editor, "markdown") == nullptr);
+    CHECK(defaultFileText().find("in the editor, in Python files") != std::string::npos);
 }
 
 static void testKeymapFile() {

@@ -263,6 +263,18 @@ public:
     double terminalFontSize() const { return terminalFontSize_; }
     int terminalScrollback() const { return terminalScrollback_; }
     bool terminalOptionAsMeta() const { return terminalOptionAsMeta_; }
+    // terminal.activate-venv: a new terminal starts with the folder's Python
+    // environment active, as VS Code's shellStartup activation does: its
+    // bin first on PATH, VIRTUAL_ENV set, its name before the prompt and a
+    // deactivate function (true by default). Nothing of the environment's
+    // is run to do it; the folder's own .venv waits for the same yes the
+    // language servers wait for.
+    bool terminalActivateVenv() const { return terminalActivateVenv_; }
+
+    // search.use-ignore-files: Find in Folder, Replace in Folder, the TODO
+    // list and Quick Open leave out what the folder's .gitignore and .ignore
+    // files ignore (true by default, VS Code's search.useIgnoreFiles).
+    bool searchUseIgnoreFiles() const { return searchUseIgnoreFiles_; }
 
     // Language servers. lsp.enabled turns the whole client on or off (on by
     // default). lsp.<server> names the command for one server key (cpp,
@@ -371,6 +383,8 @@ private:
     int terminalScrollback_ = 10000;
     double terminalFontSize_ = 12;
     bool terminalOptionAsMeta_ = true;
+    bool terminalActivateVenv_ = true;
+    bool searchUseIgnoreFiles_ = true;
     std::map<std::string, std::string> lspCommands_;
     bool runInNewTerminal_ = false;
     std::map<std::string, std::string> runCommands_;

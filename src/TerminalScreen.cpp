@@ -3,6 +3,8 @@
 // background, cursor movement clamped by the scroll region).
 #include "TerminalScreen.h"
 #include <algorithm>
+#include <cctype>
+#include <cstring>
 
 namespace {
 
@@ -106,6 +108,7 @@ void TerminalScreen::fullReset() {
     x_ = y_ = 0;
     wrapPending_ = false;
     style_ = TermStyle();
+    link_ = 0;          // the table stays: the scrollback's cells use it
     top_ = 0;
     bottom_ = rows_ - 1;
     savedMain_ = savedAlt_ = Saved();
@@ -970,12 +973,13 @@ void TerminalScreen::print(uint32_t cp, const std::string& utf8In) {
     TermCell c;
     c.ch = utf8;
     c.style = style_;
+    c.style.link = link_;
     c.width = (uint8_t)w;
     row[x_] = c;
     if (w == 2) {
         TermCell right;
         right.ch = "";
-        right.style = style_;
+        right.style = c.style;
         right.width = 0;
         row[x_ + 1] = right;
     }
@@ -1084,7 +1088,9 @@ void TerminalScreen::esc(const std::string& inter, unsigned char f) {
 }
 
 void TerminalScreen::osc(const std::string& body) {
-    if (body.rfind("0;", 0) == 0 || body.rfind("2;", 0) == 0) {
+    if (body.rfind("8;", 0) == 0) {
+        hyperlink(body);
+    } else if (body.rfind("0;", 0) == 0 || body.rfind("2;", 0) == 0) {
         title_ = termCleanTitle(body.substr(2), 1024);
     } else if (body.rfind("133;D", 0) == 0) {
         commandsEnded_++;
@@ -1093,6 +1099,96 @@ void TerminalScreen::osc(const std::string& body) {
     } else {
         std::string path = termOsc7Path(body);
         if (!path.empty()) directory_ = path;
+    }
+}
+
+// ---------------------------------------------------------- hyperlinks
+namespace {
+
+bool startsWithNoCase(const std::string& s, const char* prefix) {
+    size_t n = std::strlen(prefix);
+    if (s.size() < n) return false;
+    for (size_t i = 0; i < n; i++)
+        if (std::tolower((unsigned char)s[i]) != prefix[i]) return false;
+    return true;
+}
+
+// An address a link may have: http, https or file, nothing after the
+// scheme's slashes missing, no spaces or control characters.
+bool linkableURI(const std::string& uri) {
+    if (uri.size() > TerminalScreen::kMaxLinkBytes) return false;
+    size_t rest = startsWithNoCase(uri, "https://") ? 8
+                : startsWithNoCase(uri, "http://") || startsWithNoCase(uri, "file://") ? 7 : 0;
+    if (rest == 0 || rest >= uri.size()) return false;
+    for (unsigned char ch : uri)
+        if (ch <= 0x20 || ch == 0x7F) return false;
+    return true;
+}
+
+}  // namespace
+
+const std::string& TerminalScreen::linkURI(uint32_t id) const {
+    static const std::string none;
+    return id >= 1 && id <= links_.size() ? links_[id - 1] : none;
+}
+
+void TerminalScreen::hyperlink(const std::string& body) {
+    // "8;params;URI": params are key=value pairs split by ':', of which
+    // only id= means anything (text with the same id and address is one
+    // link, even when printed in pieces).
+    size_t semi = body.find(';', 2);
+    if (semi == std::string::npos) { link_ = 0; return; }
+    std::string uri = body.substr(semi + 1);
+    if (uri.empty() || !linkableURI(uri)) { link_ = 0; return; }
+    std::string id;
+    const std::string params = body.substr(2, semi - 2);
+    for (size_t i = 0; i <= params.size();) {
+        size_t j = params.find(':', i);
+        if (j == std::string::npos) j = params.size();
+        if (params.compare(i, 3, "id=") == 0) id = params.substr(i + 3, std::min<size_t>(j - i - 3, 256));
+        i = j + 1;
+    }
+    link_ = internLink(id + '\x1f' + uri, uri);
+}
+
+uint32_t TerminalScreen::internLink(const std::string& key, const std::string& uri) {
+    auto it = linkIds_.find(key);
+    if (it != linkIds_.end()) return it->second;
+    if (freeLinks_.empty() && links_.size() >= kMaxLinks) collectLinks();
+    uint32_t id;
+    if (!freeLinks_.empty()) {
+        id = freeLinks_.back();
+        freeLinks_.pop_back();
+        links_[id - 1] = uri;
+        linkKeys_[id - 1] = key;
+    } else if (links_.size() < kMaxLinks) {
+        links_.push_back(uri);
+        linkKeys_.push_back(key);
+        id = (uint32_t)links_.size();
+    } else {
+        return 0;   // every id is still on screen or in the scrollback
+    }
+    linkIds_[key] = id;
+    return id;
+}
+
+void TerminalScreen::collectLinks() {
+    std::vector<bool> used(links_.size() + 1, false);
+    auto mark = [&](uint32_t id) { if (id && id < used.size()) used[id] = true; };
+    for (const Grid* g : {&main_, &alt_})
+        for (const Row& row : *g)
+            for (const TermCell& c : row) mark(c.style.link);
+    for (const HistLine& h : history_)
+        for (const StyleRun& r : h.runs) mark(r.style.link);
+    for (const HistLine& h : below_)
+        for (const StyleRun& r : h.runs) mark(r.style.link);
+    mark(link_);
+    for (uint32_t id = 1; id <= links_.size(); id++) {
+        if (used[id] || links_[id - 1].empty()) continue;
+        linkIds_.erase(linkKeys_[id - 1]);
+        links_[id - 1].clear();
+        linkKeys_[id - 1].clear();
+        freeLinks_.push_back(id);
     }
 }
 

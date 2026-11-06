@@ -285,7 +285,8 @@ Parsed parse(const std::u16string& text) {
 }
 
 std::vector<std::string> listFiles(const std::string& root, size_t maxFiles,
-                                   const std::atomic<bool>* cancel, bool* truncated) {
+                                   const std::atomic<bool>* cancel, bool* truncated,
+                                   bool useIgnoreFiles) {
     namespace fs = std::filesystem;
     std::vector<std::string> out;
     if (truncated) *truncated = false;
@@ -293,21 +294,27 @@ std::vector<std::string> listFiles(const std::string& root, size_t maxFiles,
     const fs::path canonRoot = fs::canonical(root, ec);
     if (ec) return out;
     std::set<std::string> seen = {canonRoot.string()};
-    std::deque<std::pair<std::string, std::string>> queue;   // (full path, relative)
-    queue.push_back({root, ""});
+    struct Dir {
+        std::string full, rel;
+        FolderSearch::Ignore::Rules rules;
+    };
+    std::deque<Dir> queue;
+    queue.push_back({root, "",
+                     useIgnoreFiles ? FolderSearch::Ignore::Rules::atTop(root)
+                                    : FolderSearch::Ignore::Rules()});
     while (!queue.empty()) {
         if (cancel && cancel->load()) return out;
-        const std::pair<std::string, std::string> here = queue.front();
+        const Dir here = queue.front();
         queue.pop_front();
-        const std::string& dir = here.first;
-        const std::string& rel = here.second;
+        const std::string& dir = here.full;
+        const std::string& rel = here.rel;
         std::vector<std::string> names;
         fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
         if (ec) continue;
         for (fs::directory_iterator end; it != end; it.increment(ec)) {
             if (ec) break;
             std::string name = it->path().filename().string();
-            if (name.empty() || name[0] == '.') continue;   // hidden
+            if (name.empty() || FolderSearch::isSkippedFile(name)) continue;
             names.push_back(std::move(name));
         }
         std::sort(names.begin(), names.end());
@@ -318,7 +325,9 @@ std::vector<std::string> listFiles(const std::string& root, size_t maxFiles,
             const std::string childRel = rel.empty() ? name : rel + "/" + name;
             const fs::file_status st = fs::status(full, ec);   // follows symlinks
             if (ec) continue;   // broken symlink, vanished, unreadable
-            if (fs::is_directory(st)) {
+            const bool isDir = fs::is_directory(st);
+            if (!here.rules.empty() && here.rules.ignored(childRel, isDir)) continue;
+            if (isDir) {
                 if (!FolderSearch::isSkippedDirectory(name)) subdirs.push_back({full, childRel});
                 continue;
             }
@@ -333,7 +342,8 @@ std::vector<std::string> listFiles(const std::string& root, size_t maxFiles,
             const fs::path canon = fs::canonical(sd.first, ec);
             if (ec) continue;
             if (!seen.insert(canon.string()).second) continue;   // a loop, or seen already
-            queue.push_back(sd);
+            queue.push_back({sd.first, sd.second,
+                             useIgnoreFiles ? here.rules.enter(sd.first, sd.second) : here.rules});
         }
     }
     return out;

@@ -888,6 +888,10 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                return fontSizeValue(v, s.terminalFontSize_, e);),
         MC_KEY("terminal.option-as-meta", Word, false,
                return boolValue(v, s.terminalOptionAsMeta_, e);),
+        MC_KEY("terminal.activate-venv", Word, false,
+               return boolValue(v, s.terminalActivateVenv_, e);),
+        MC_KEY("search.use-ignore-files", Word, false,
+               return boolValue(v, s.searchUseIgnoreFiles_, e);),
         MC_KEY("lsp.enabled", Word, false, return boolValue(v, s.lspEnabled_, e);),
         MC_KEY("python.interpreter", Path, false,
                s.pythonInterpreter_ = lower(v) == "auto" ? "" : v;
@@ -1259,6 +1263,15 @@ const char* Settings::defaultFileText() {
 # Option+F move by words). false lets Option type what your keyboard layout
 # puts on it, such as @ and { on many European layouts.
 # terminal.option-as-meta = true
+# A new terminal starts with the folder's Python environment active, as
+# after source .venv/bin/activate: the interpreter Run File uses (the
+# folder's choice, python.interpreter, or the folder's own .venv once you
+# allow it for the language servers), when it is a virtual environment.
+# terminal.activate-venv = true
+
+# Find in Folder, Replace in Folder, TODOs and Go to File leave out what the
+# folder's .gitignore and .ignore files ignore. Dotfiles are always included.
+# search.use-ignore-files = true
 
 # The browser's toolbar. Web pages draw their own background.
 # browser.background = #2A2A2A

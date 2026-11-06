@@ -32,6 +32,38 @@ bool appliesIn(When w, When where) {
     return w == When::NotPage && where != When::Page;
 }
 
+std::string languageOfPath(const std::string& path) {
+    const size_t slash = path.rfind('/');
+    const std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+    const size_t dot = name.rfind('.');
+    if (dot == std::string::npos || dot == 0) return "";
+    std::string ext = name.substr(dot + 1);
+    for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+    if (ext == "md" || ext == "markdown" || ext == "mdown" || ext == "mkd" || ext == "mkdn")
+        return "markdown";
+    if (ext == "py" || ext == "pyi" || ext == "pyw") return "python";
+    return "";
+}
+
+std::string languageName(const std::string& language) {
+    if (language == "markdown") return "Markdown files";
+    if (language == "python") return "Python files";
+    return language + " files";
+}
+
+std::string placeName(const Command& c) {
+    if (c.language) return std::string("the editor, in ") + languageName(c.language);
+    return whenName(c.when);
+}
+
+namespace {
+// Two commands' language scopes: the same (or both none).
+bool sameLanguage(const Command& a, const Command& b) {
+    if (!a.language || !b.language) return !a.language && !b.language;
+    return std::strcmp(a.language, b.language) == 0;
+}
+}  // namespace
+
 // ------------------------------------------------------------------ keys
 namespace {
 
@@ -231,6 +263,15 @@ const std::vector<Command>& all() {
          0, 0, nullptr},
         {"workbench.action.files.save", "Save", "File", "cmd+s", A, "saveCurrentFile:", 0, 0,
          nullptr},
+        // VS Code's Save As key, Shift+Cmd+S, is Export PDF here.
+        {"workbench.action.files.saveAs", "Save As…", "File", "", A, "saveFileAs:", 0, 0,
+         nullptr},
+        {"workbench.action.files.saveAll", "Save All", "File", "alt+cmd+s", A, "saveAllFiles:", 0,
+         0, nullptr},
+        // The recent folders, in the palette (File > Open Recent lists them).
+        // In the terminal's grid Ctrl+R stays the shell's history search.
+        {"workbench.action.openRecent", "Open Recent…", "File", "ctrl+r", A, "openRecent:", 0, 0,
+         nullptr},
         {"minicode.latex.exportPDF", "Export PDF…", "File", "shift+cmd+s", A, "exportPDF:", 0, 0,
          nullptr},
         {"explorer.newFolder", "New Folder…", "File", "shift+cmd+n", A, "newFolder:", 0, 0,
@@ -261,7 +302,7 @@ const std::vector<Command>& all() {
          0, nullptr},
         {"workbench.action.reopenClosedEditor", "Reopen Closed Tab", "File", "alt+shift+cmd+t", A,
          "reopenClosedTab:", 0, 0, nullptr},
-        {"workbench.action.closeOtherEditors", "Close Other Tabs", "File", "", A,
+        {"workbench.action.closeOtherEditors", "Close Other Tabs", "File", "alt+cmd+t", A,
          "closeOtherTabs:", 0, 0, nullptr},
         {"workbench.action.closeEditorsToTheRight", "Close Tabs to the Right", "File", "", A,
          "closeTabsToTheRight:", 0, 0, nullptr},
@@ -290,11 +331,28 @@ const std::vector<Command>& all() {
          nullptr},
         {"editor.action.deleteLines", "Delete Line", "Edit", "ctrl+shift+k", E, "deleteLine:", 0,
          0, nullptr},
+        {"editor.action.indentLines", "Indent Lines", "Edit", "cmd+]", E, "indentLines:", 0, 0,
+         nullptr},
+        {"editor.action.outdentLines", "Outdent Lines", "Edit", "cmd+[", E, "outdentLines:", 0, 0,
+         nullptr},
+        {"editor.action.insertLineAfter", "Insert Line Below", "Edit", "cmd+enter", E,
+         "insertLineBelow:", 0, 0, nullptr},
+        // VS Code's Shift+Cmd+Return is Run File here.
+        {"editor.action.insertLineBefore", "Insert Line Above", "Edit", "", E, "insertLineAbove:",
+         0, 0, nullptr},
         {"inlineChat.start", "Inline Agent…", "Edit", "cmd+i", A, "inlineAgent:", 0, 0, nullptr},
         {"editor.action.commentLine", "Toggle Comment", "Edit", "cmd+/", E, "toggleComment:", 0,
          0, nullptr},
-        {"minicode.markdown.toggleTask", "Toggle Task", "Edit", "alt+cmd+l", E, "toggleTask:", 0,
-         0, nullptr},
+        // Option+C is markdown-all-in-one's key (in Markdown only, so it
+        // types its character everywhere else).
+        {"minicode.markdown.toggleTask", "Toggle Task", "Edit", "alt+cmd+l alt+c", E,
+         "toggleTask:", 0, 0, nullptr, "markdown"},
+        // markdown-all-in-one's Cmd+B and Cmd+I are the sidebar and the
+        // inline agent here, as in VS Code itself, so no key by default.
+        {"markdown.extension.editing.toggleBold", "Toggle Bold", "Edit", "", E, "toggleBold:", 0,
+         0, nullptr, "markdown"},
+        {"markdown.extension.editing.toggleItalic", "Toggle Italic", "Edit", "", E,
+         "toggleItalic:", 0, 0, nullptr, "markdown"},
         {"editor.action.formatDocument", "Format Document", "Edit", "alt+shift+f", E,
          "formatDocument:", 0, 0, nullptr},
         {"minicode.sortLines", "Sort Lines", "Edit", "f9", E, "sortLines:", 0, 0, nullptr},
@@ -339,7 +397,7 @@ const std::vector<Command>& all() {
          nullptr},
 
         // ---- View
-        {"workbench.action.showCommands", "Command Palette…", "View", "shift+cmd+p", A,
+        {"workbench.action.showCommands", "Command Palette…", "View", "shift+cmd+p f1", A,
          "showCommandPalette:", 0, 0, nullptr},
         {"markdown.showPreview", "Toggle Preview", "View", "shift+cmd+v", A, "togglePreview:", 0,
          0, nullptr},
@@ -452,6 +510,10 @@ const std::vector<Command>& all() {
          "clearTerminal:", 0, 0, nullptr},
         {"minicode.runFile", "Run File", "Terminal", "shift+cmd+enter", A, "runCurrentFile:", 0, 0,
          nullptr},
+        // The Python extension's Shift+Return: the selection, or the line,
+        // to a Python REPL in a terminal tab of its own.
+        {"python.execSelectionInTerminal", "Run Selection or Line in Python REPL", "Terminal",
+         "shift+enter", E, "runSelectionInTerminal:", 0, 0, nullptr, "python"},
 
         // ---- Navigate
         {"workbench.action.quickOpen", "Go to File…", "Navigate", "cmd+p", A, "quickOpen:", 0, 0,
@@ -477,10 +539,10 @@ const std::vector<Command>& all() {
          "focusTerminal:", 0, 0, nullptr},
         {"minicode.focusBrowser", "Focus Browser", "Navigate", "cmd+3", A, "focusBrowser:", 0, 0,
          nullptr},
-        {"workbench.action.nextEditor", "Next Tab", "Navigate", "ctrl+tab shift+cmd+]", A,
-         "selectNextTab:", 0, 0, nullptr},
+        {"workbench.action.nextEditor", "Next Tab", "Navigate",
+         "ctrl+tab shift+cmd+] alt+cmd+right", A, "selectNextTab:", 0, 0, nullptr},
         {"workbench.action.previousEditor", "Previous Tab", "Navigate",
-         "ctrl+shift+tab shift+cmd+[", A, "selectPreviousTab:", 0, 0, nullptr},
+         "ctrl+shift+tab shift+cmd+[ alt+cmd+left", A, "selectPreviousTab:", 0, 0, nullptr},
         {"workbench.action.openEditorAtIndex1", "Tab 1", "Navigate > Go to Tab",
          "shift+cmd+1 ctrl+1", A, "selectTabNumber:", 1, 0, nullptr},
         {"workbench.action.openEditorAtIndex2", "Tab 2", "Navigate > Go to Tab",
@@ -607,13 +669,17 @@ std::vector<const Command*> Keymap::commandsFor(const Key& k) const {
     return it == byKey_.end() ? std::vector<const Command*>() : it->second;
 }
 
-const Command* Keymap::commandFor(const Key& k, When where) const {
-    const Command* any = nullptr;
+const Command* Keymap::commandFor(const Key& k, When where, const std::string& language) const {
+    const Command *any = nullptr, *place = nullptr;
     for (const Command* c : commandsFor(k)) {
-        if (c->when == where && where != When::Any && where != When::NotPage) return c;
+        if (c->language) {
+            if (where != When::Any && c->when == where && language == c->language) return c;
+            continue;
+        }
+        if (c->when == where && where != When::Any && where != When::NotPage && !place) place = c;
         if (!any && appliesIn(c->when, where)) any = c;
     }
-    return any;
+    return place ? place : any;
 }
 
 std::vector<std::string> Keymap::conflicts() const {
@@ -621,7 +687,7 @@ std::vector<std::string> Keymap::conflicts() const {
     for (const auto& [key, cmds] : byKey_)
         for (size_t i = 0; i < cmds.size(); i++)
             for (size_t j = i + 1; j < cmds.size(); j++)
-                if (overlaps(cmds[i]->when, cmds[j]->when))
+                if (overlaps(cmds[i]->when, cmds[j]->when) && sameLanguage(*cmds[i], *cmds[j]))
                     out.push_back(key + ": " + cmds[i]->title + " and " + cmds[j]->title);
     return out;
 }
@@ -697,7 +763,7 @@ Keymap resolve(const std::string& text, std::vector<Error>* errors) {
                 std::vector<Key>& v = m.keys[c.id];
                 if (!hasKey(v, k)) continue;
                 if (c.flags & Fixed) {
-                    err(lineNo, ks + " is " + c.title + " in " + whenName(c.when) + ", which " +
+                    err(lineNo, ks + " is " + c.title + " in " + placeName(c) + ", which " +
                                     c.note + " handles; keys.conf cannot take it away yet");
                     continue;
                 }
@@ -732,7 +798,7 @@ Keymap resolve(const std::string& text, std::vector<Error>* errors) {
                     g.end());
             continue;
         }
-        if (typesText(k)) {
+        if (typesText(k) && !cmd->language) {
             err(lineNo, ks + " types or moves in a text field; give it cmd, ctrl or alt "
                              "(only f1 to f20 work alone)");
             continue;
@@ -740,14 +806,17 @@ Keymap resolve(const std::string& text, std::vector<Error>* errors) {
         bool refused = false, again = false;
         for (const Given& g : given[ks]) {
             if (g.cmd == cmd) { again = true; break; }
-            if (overlaps(g.cmd->when, cmd->when)) {
-                When in = cmd->when == When::Any ? g.cmd->when : cmd->when;
-                if (in == When::NotPage) in = g.cmd->when == When::NotPage ? cmd->when : g.cmd->when;
+            if (overlaps(g.cmd->when, cmd->when) && sameLanguage(*g.cmd, *cmd)) {
+                // The narrower of the two: Any, then NotPage, then a place.
+                const bool wider = cmd->when == When::Any ||
+                                   (cmd->when == When::NotPage && g.cmd->when != When::Any);
+                const Command& narrower = wider ? *g.cmd : *cmd;
+                const bool everywhere =
+                    narrower.when == When::Any || narrower.when == When::NotPage;
                 err(lineNo, ks + " is already " + describe(*g.cmd) + ", from line " +
                                 std::to_string(g.line) + "; a key can run only one command" +
-                                (in == When::Any || in == When::NotPage
-                                     ? std::string()
-                                     : std::string(" in ") + whenName(in)));
+                                (everywhere ? std::string()
+                                            : std::string(" in ") + placeName(narrower)));
                 refused = true;
                 break;
             }
@@ -756,7 +825,7 @@ Keymap resolve(const std::string& text, std::vector<Error>* errors) {
         for (const Command& c : all()) {
             if (&c == cmd || !(c.flags & Fixed) || !overlaps(c.when, cmd->when)) continue;
             if (hasKey(m.keys[c.id], k)) {
-                err(lineNo, ks + " is " + c.title + " in " + whenName(c.when) + ", which " +
+                err(lineNo, ks + " is " + c.title + " in " + placeName(c) + ", which " +
                                 c.note + " handles; keys.conf cannot change that yet");
                 refused = true;
                 break;
@@ -765,8 +834,12 @@ Keymap resolve(const std::string& text, std::vector<Error>* errors) {
         if (refused) continue;
         // The key leaves the other commands that had it where this one
         // applies too (by default: an earlier line would have been refused).
+        // A command for one language takes it only from that language's
+        // others: elsewhere the key stays what it was.
         for (const Command& c : all())
-            if (&c != cmd && overlaps(c.when, cmd->when)) removeKey(m.keys[c.id], k);
+            if (&c != cmd && overlaps(c.when, cmd->when) &&
+                (!cmd->language || sameLanguage(c, *cmd)))
+                removeKey(m.keys[c.id], k);
         removeKey(mine, k);
         size_t& n = userKeys[cmd->id];
         mine.insert(mine.begin() + (long)std::min(n, mine.size()), k);
@@ -797,9 +870,10 @@ std::string defaultFileText() {
         "# backspace, delete, numpad0 to numpad9, or contextmenu (the Menu key).\n"
         "# A key given here is taken from any other command that had it by default,\n"
         "# unless one works only in the editor and the other only in the terminal\n"
-        "# (or the file tree, or a web page or a PDF). Two lines giving one key to\n"
-        "# two commands are an error, shown in the status bar. The menus follow\n"
-        "# this file as it is saved.\n"
+        "# (or the file tree, or a web page or a PDF), or one works only in files\n"
+        "# of one language (Markdown, Python), where it goes first. Two lines giving\n"
+        "# one key to two commands are an error, shown in the status bar. The menus\n"
+        "# follow this file as it is saved.\n"
         "#\n"
         "# Every command, with its keys by default, follows. Uncomment a line and\n"
         "# change its key to add one.\n";
@@ -815,7 +889,7 @@ std::string defaultFileText() {
         }
         std::string where = c.when == When::Any       ? ""
                             : c.when == When::NotPage ? ", but not in a web page or a PDF"
-                                                      : std::string(", in ") + whenName(c.when);
+                                                      : std::string(", in ") + placeName(c);
         std::string comment = std::string(c.menu) + " > " + c.title + where;
         std::vector<Key> keys = defaultKeys(c);
         if (keys.empty()) {
@@ -836,7 +910,7 @@ std::string defaultFileText() {
         std::string l = "#   ";
         for (const Key& k : defaultKeys(c)) l += format(k) + " ";
         if (l.size() < 40) l.append(40 - l.size(), ' ');
-        s += l + c.title + ", in " + whenName(c.when) + "\n";
+        s += l + c.title + ", in " + placeName(c) + "\n";
     }
     return s;
 }

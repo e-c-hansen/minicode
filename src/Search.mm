@@ -4,6 +4,7 @@
 // that file at the matching line. The searching is FolderSearch's, off the
 // main thread, a newer search cancelling the one before.
 #import "Search.h"
+#import "AppSettings.h"
 #include "FolderSearch.h"
 #include "TextFind.h"
 #include <atomic>
@@ -323,6 +324,10 @@ static NSString *SFromU16(const std::u16string &u) {
     o.caseSensitive = self.matchCase;
     o.wholeWord = self.wholeWord;
     o.regex = self.regex;
+    // search.use-ignore-files: the folder's .gitignore files, from the
+    // window's folder down, even when the scope is a folder inside it.
+    o.useIgnoreFiles = [AppSettings shared].settings.searchUseIgnoreFiles();
+    if (_root.length) o.ignoreTop = _root.fileSystemRepresentation;
     return o;
 }
 
@@ -488,9 +493,10 @@ static NSString *SFromU16(const std::u16string &u) {
     self.status.stringValue = @"Looking for TODOs…";
     NSUInteger gen = _searchGeneration;
     const std::string root = _scope.fileSystemRepresentation;
+    const FolderSearchOptions todoOptions = [self options];
     __weak SearchPanel *weakSelf = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        FolderSearchResult r = FolderSearch::findTodos(root, cancel.get());
+        FolderSearchResult r = FolderSearch::findTodos(root, cancel.get(), todoOptions);
         NSMutableArray<SearchHit *> *found = [NSMutableArray array];
         for (const FolderSearchMatch &m : r.matches) {
             SearchHit *h = [SearchHit new];

@@ -31,9 +31,20 @@
 //     kept off its menu item as a tree command's are.
 // A plain Control key with a letter or symbol goes to the terminal's grid
 // while it has the keyboard (Ctrl+G for nano), unless its command is Global.
+// A command scoped to one language (Toggle Task's Option+C in Markdown,
+// Shift+Return in Python) runs from here too, while the editor has the
+// keyboard and the window's delegate says its file is of that language;
+// anywhere else the key does what it did.
 #import <Cocoa/Cocoa.h>
 
 extern NSNotificationName const MCKeymapDidChangeNotification;
+
+// What a window's delegate answers for language-scoped commands: the
+// language of the file its editor shows ("markdown", "python",
+// Commands::languageOfPath), or nil.
+@protocol MCKeymapLanguage
+- (NSString *)keymapLanguage;
+@end
 
 @interface MCKeymap : NSObject
 + (instancetype)shared;

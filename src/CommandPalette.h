@@ -95,14 +95,16 @@ Parsed parse(const std::u16string& text);
 // ------------------------------------------------------------ Quick Open
 // The files below root that Quick Open lists, as '/'-separated paths
 // relative to it, by Find in Folder's rules (FolderSearch.h) for what is
-// skipped: names starting with '.', and node_modules, build, venv and the
-// other folders isSkippedDirectory names. Symlinked folders are followed
-// once each. Nearer files come first (breadth first, each folder's files in
-// byte order), at most maxFiles; *truncated says it stopped at the cap. A
-// raised cancel stops it early.
+// skipped: .git, node_modules, build, venv and the other folders
+// isSkippedDirectory names, .DS_Store, and with useIgnoreFiles what the
+// folder's .gitignore and .ignore files ignore (as VS Code's Quick Open
+// leaves it out). Dotfiles are listed (.github/workflows/ci.yml, .env).
+// Symlinked folders are followed once each. Nearer files come first
+// (breadth first, each folder's files in byte order), at most maxFiles;
+// *truncated says it stopped at the cap. A raised cancel stops it early.
 std::vector<std::string> listFiles(const std::string& root, size_t maxFiles = 20000,
                                    const std::atomic<bool>* cancel = nullptr,
-                                   bool* truncated = nullptr);
+                                   bool* truncated = nullptr, bool useIgnoreFiles = true);
 
 // The files that match query, best first. A query without '/' is matched
 // against the file name first (any such match beats one that needs the

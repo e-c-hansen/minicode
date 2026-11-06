@@ -195,6 +195,66 @@ std::vector<OpenTask> openTasks(const std::string& source) {
     return out;
 }
 
+Edit toggleWrap(const std::u16string& t, size_t a, size_t b, const std::u16string& m) {
+    Edit e;
+    if (m.empty() || a > t.size() || b > t.size()) return e;
+    if (a > b) std::swap(a, b);
+    const char16_t c = m[0];
+    const size_t k = m.size();
+    // Is the marker there, given how many of its character run together?
+    auto present = [&](size_t run) { return k == 1 ? run % 2 == 1 : run >= k; };
+    auto runBack = [&](size_t pos, size_t floor) {
+        size_t n = 0;
+        while (pos > floor + n && t[pos - n - 1] == c) n++;
+        return n;
+    };
+    auto runForward = [&](size_t pos, size_t ceil) {
+        size_t n = 0;
+        while (pos + n < ceil && t[pos + n] == c) n++;
+        return n;
+    };
+    // The edit over [lo, hi): new text, and the selection after it.
+    auto make = [&](size_t lo, size_t hi, std::u16string rep, size_t s0, size_t s1) {
+        e.changed = true;
+        e.replaceStart = lo;
+        e.replaceLength = hi - lo;
+        e.replacement = std::move(rep);
+        e.selStart = s0;
+        e.selEnd = s1;
+        return e;
+    };
+    auto unwrapAround = [&](size_t x, size_t y, size_t s0, size_t s1) {
+        // Remove k before x and k after y.
+        return make(x - k, y + k, t.substr(x, y - x), s0, s1);
+    };
+    auto wrap = [&](size_t x, size_t y, size_t s0, size_t s1) {
+        return make(x, y, m + t.substr(x, y - x) + m, s0, s1);
+    };
+    if (a < b) {
+        const size_t in0 = runForward(a, b), in1 = runBack(b, a);
+        if (b - a >= 2 * k && in0 < b - a && present(in0) && present(in1))
+            return make(a, b, t.substr(a + k, b - a - 2 * k), a, b - 2 * k);
+        if (present(runBack(a, 0)) && present(runForward(b, t.size())))
+            return unwrapAround(a, b, a - k, b - k);
+        return wrap(a, b, a + k, b + k);
+    }
+    // An empty pair around the caret.
+    if (runBack(a, 0) == k && runForward(a, t.size()) == k) return unwrapAround(a, a, a - k, a - k);
+    auto wordChar = [](char16_t ch) {
+        return ch == u'_' || (ch >= u'0' && ch <= u'9') || (ch >= u'a' && ch <= u'z') ||
+               (ch >= u'A' && ch <= u'Z') || ch >= 0x80;
+    };
+    size_t ws = a, we = a;
+    while (ws > 0 && wordChar(t[ws - 1])) ws--;
+    while (we < t.size() && wordChar(t[we])) we++;
+    if (ws < we) {
+        if (present(runBack(ws, 0)) && present(runForward(we, t.size())))
+            return unwrapAround(ws, we, a - k, a - k);
+        return wrap(ws, we, a + k, a + k);
+    }
+    return make(a, a, m + m, a + k, a + k);
+}
+
 Edit toggle(const std::u16string& text, size_t selStart, size_t selEnd) {
     Edit e;
     if (selStart > selEnd) std::swap(selStart, selEnd);

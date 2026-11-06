@@ -1,6 +1,7 @@
 // EditorController+TreeDetails.mm — EditorController: the tree's sizes, dates and order.
 #import "EditorController+Private.h"
 #import "EditorController+TreeDetailsIvars.h"
+#import "RecentFolders.h"
 
 @implementation EditorController (TreeDetails)
 
@@ -26,6 +27,7 @@
     char real[PATH_MAX];
     _realRoot = _root.path && realpath(_root.path.fileSystemRepresentation, real)
                     ? @(real) : _root.path;
+    MCNoteRecentFolder(_root.path);   // File > Open Recent, Ctrl+R
 }
 
 // A folder's entries in the order on show, worked out once per change of

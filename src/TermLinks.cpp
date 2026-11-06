@@ -164,6 +164,82 @@ std::vector<Link> find(const std::string& s) {
     return out;
 }
 
+namespace {
+
+std::string lower(std::string s) {
+    for (char& c : s) c = (char)std::tolower(static_cast<unsigned char>(c));
+    return s;
+}
+
+bool startsNoCase(const std::string& s, const std::string& prefix) {
+    return s.size() >= prefix.size() && lower(s.substr(0, prefix.size())) == prefix;
+}
+
+std::string withoutLocal(std::string host) {
+    host = lower(host);
+    if (host.size() > 6 && host.compare(host.size() - 6, 6, ".local") == 0)
+        host.resize(host.size() - 6);
+    return host;
+}
+
+int hexValue(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+}  // namespace
+
+bool hyperlink(const std::string& uri, const std::string& localHost, Link& out) {
+    out = Link{Link::Url, 0, 0, "", 0, 0};
+    if (startsNoCase(uri, "http://") || startsNoCase(uri, "https://")) {
+        if (uri.find("://") + 3 >= uri.size()) return false;
+        out.target = uri;
+        return true;
+    }
+    if (!startsNoCase(uri, "file://")) return false;
+    const size_t slash = uri.find('/', 7);
+    if (slash == std::string::npos) return false;
+    const std::string host = uri.substr(7, slash - 7);
+    if (!host.empty() && lower(host) != "localhost" &&
+        (localHost.empty() || withoutLocal(host) != withoutLocal(localHost)))
+        return false;
+    // The path ends at a query or fragment; %XX is decoded, and a %00 or a
+    // bad escape makes it no path at all.
+    std::string raw = uri.substr(slash);
+    raw = raw.substr(0, raw.find_first_of("?#"));
+    std::string path;
+    for (size_t i = 0; i < raw.size(); i++) {
+        if (raw[i] != '%') { path += raw[i]; continue; }
+        if (i + 2 >= raw.size()) return false;
+        const int hi = hexValue(raw[i + 1]), lo = hexValue(raw[i + 2]);
+        if (hi < 0 || lo < 0 || (hi == 0 && lo == 0)) return false;
+        path += (char)(hi * 16 + lo);
+        i += 2;
+    }
+    out.kind = Link::File;
+    out.target = path;
+    return true;
+}
+
+std::string browserAddress(const std::string& url) {
+    size_t scheme = url.find("://");
+    if (scheme == std::string::npos ||
+        !(startsNoCase(url, "http://") || startsNoCase(url, "https://")))
+        return url;
+    const size_t host = scheme + 3;
+    for (const char* any : {"0.0.0.0", "[::]"}) {
+        const size_t n = std::string(any).size();
+        if (url.compare(host, n, any) != 0) continue;
+        const size_t after = host + n;
+        if (after == url.size() || url[after] == ':' || url[after] == '/' ||
+            url[after] == '?' || url[after] == '#')
+            return url.substr(0, host) + "localhost" + url.substr(after);
+    }
+    return url;
+}
+
 const Link* at(const std::vector<Link>& links, size_t offset) {
     for (const Link& l : links)
         if (offset >= l.start && offset < l.start + l.length) return &l;

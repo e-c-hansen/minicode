@@ -96,7 +96,25 @@ struct Command {
     int tag;               // the item's tag when the action is shared
     unsigned flags;
     const char* note;      // Fixed: who handles the keys; else why there is no menu item
+    // A language scope: the command applies only in the editor (when must
+    // be Editor) while it shows a file of this language ("markdown",
+    // "python", as languageOfPath names them). Such a command's key may be
+    // another command's elsewhere: it shadows the other there, and is no
+    // conflict (Option+C toggles a task in Markdown and types ç anywhere
+    // else). Its keys are put on its menu item only when no other command
+    // has them and they hold Command or Control; the key monitor runs the
+    // rest. A typing key (Shift+Return) is allowed for these alone.
+    const char* language = nullptr;
 };
+
+// The language scope of a file, by its extension: "markdown" (.md,
+// .markdown, .mdown, .mkd, .mkdn), "python" (.py, .pyi, .pyw), else "".
+std::string languageOfPath(const std::string& path);
+// "Markdown files", "Python files", for messages.
+std::string languageName(const std::string& language);
+// Where a command applies, as messages say it: "the editor, in Python
+// files", "the terminal", "anywhere".
+std::string placeName(const Command& c);
 
 // Every command, in menu order.
 const std::vector<Command>& all();
@@ -118,9 +136,11 @@ public:
     // apply in different places).
     std::vector<const Command*> commandsFor(const Key& k) const;
     // Of commandsFor(k), the one for what has the keyboard: one for that
-    // place, else one that applies there too (Any, or NotPage outside a
-    // page); null for none.
-    const Command* commandFor(const Key& k, When where) const;
+    // place and the language of the file on show (the editor only), else
+    // one for that place, else one that applies there too (Any, or NotPage
+    // outside a page); null for none.
+    const Command* commandFor(const Key& k, When where,
+                              const std::string& language = std::string()) const;
     // Pairs of commands sharing a key where both apply: "cmd+k: Clear
     // Terminal and Delete Line". The defaults have none (a test says so).
     std::vector<std::string> conflicts() const;
