@@ -98,7 +98,7 @@ You can also edit from the page. Double click some text (a heading, a sentence, 
 
 ![Editing a list entry by double clicking it in the typeset page](docs/demos/latex.gif)
 
-Typesetting is done by [tectonic](https://tectonic-typesetting.github.io/). If it is not installed, the preview offers to download it (about 22 MB), or you can run brew install tectonic. The first document downloads the packages it needs, and after that it works offline.
+Typesetting is done by [tectonic](https://tectonic-typesetting.github.io/). If it is not installed, the preview offers to download it (about 22 MB), checked against the checksum the tectonic project publishes for that release, or you can run brew install tectonic. tectonic runs with shell escape off, so a document cannot run programs. The first document downloads the packages it needs, and after that it works offline.
 
 ## Language servers
 
