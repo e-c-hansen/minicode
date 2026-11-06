@@ -350,18 +350,61 @@ static void *kMediaItemContext = &kMediaItemContext;
 
 - (void)setViewerText:(NSString *)text actionName:(NSString *)name reshow:(BOOL)reshow {
     NSString *old = self.sourceText ?: @"";
-    if (!text || [text isEqualToString:old]) return;
-    NSUndoManager *undo = _activeTab.undoManager;
-    __weak EditorController *weakSelf = self;
-    [undo registerUndoWithTarget:self handler:^(EditorController *target) {
-        (void)target;
-        [weakSelf setViewerText:old actionName:name reshow:YES];
-    }];
-    [undo setActionName:name];
+    if (!text || ![self registerViewerUndoFrom:old to:text actionName:name]) return;
     self.sourceText = text;
     [self noteEdited];
     [self updateTitle];
     if (reshow) [self refreshDisplay];   // an undo: the viewer (or the text) shows it
+}
+
+// The two texts differ only between a common start and a common end:
+// the range in each that differs. Linear, with no copies of either.
+static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
+    const CFIndex na = (CFIndex)a.length, nb = (CFIndex)b.length;
+    CFStringInlineBuffer ba, bb;
+    CFStringInitInlineBuffer((__bridge CFStringRef)a, &ba, CFRangeMake(0, na));
+    CFStringInitInlineBuffer((__bridge CFStringRef)b, &bb, CFRangeMake(0, nb));
+    CFIndex lead = 0;
+    while (lead < na && lead < nb &&
+           CFStringGetCharacterFromInlineBuffer(&ba, lead) == CFStringGetCharacterFromInlineBuffer(&bb, lead))
+        lead++;
+    CFIndex trail = 0;
+    while (trail < na - lead && trail < nb - lead &&
+           CFStringGetCharacterFromInlineBuffer(&ba, na - 1 - trail) ==
+               CFStringGetCharacterFromInlineBuffer(&bb, nb - 1 - trail))
+        trail++;
+    // Never split a surrogate pair at either edge.
+    while (lead > 0 && CFStringIsSurrogateLowCharacter(CFStringGetCharacterFromInlineBuffer(&ba, lead)))
+        lead--;
+    while (trail > 0 &&
+           CFStringIsSurrogateHighCharacter(CFStringGetCharacterFromInlineBuffer(&ba, na - trail - 1)))
+        trail--;
+    *inA = NSMakeRange((NSUInteger)lead, (NSUInteger)(na - lead - trail));
+    *inB = NSMakeRange((NSUInteger)lead, (NSUInteger)(nb - lead - trail));
+}
+
+// An undo step from `now` back to `old` on the tab's undo manager, NO when
+// they are the same text. The step keeps only the part of `old` that
+// differs (a cell edit in a 40 MB CSV keeps a few bytes, not 40 MB), and
+// puts it back into the tab's text, which is `now` when it is taken.
+- (BOOL)registerViewerUndoFrom:(NSString *)old to:(NSString *)now actionName:(NSString *)name {
+    NSRange inOld, inNow;
+    MCTextSplice(old, now, &inOld, &inNow);
+    if (inOld.length == 0 && inNow.length == 0) return NO;
+    NSString *piece = [old substringWithRange:inOld];
+    const NSUInteger expected = now.length;
+    NSUndoManager *undo = _activeTab.undoManager;
+    __weak EditorController *weakSelf = self;
+    [undo registerUndoWithTarget:self handler:^(EditorController *target) {
+        (void)target;
+        EditorController *me = weakSelf;
+        NSString *cur = me.sourceText ?: @"";
+        if (!me || cur.length != expected) { NSBeep(); return; }   // not the text it was made for
+        [me setViewerText:[cur stringByReplacingCharactersInRange:inNow withString:piece]
+               actionName:name reshow:YES];
+    }];
+    [undo setActionName:name];
+    return YES;
 }
 
 // Show the active tab's file in a viewer that holds no text (Quick Look,
@@ -440,16 +483,18 @@ static void *kMediaItemContext = &kMediaItemContext;
         return;
     }
     // Binary by its content (or a document only Quick Look shows) is never
-    // opened as text; a backup, being text, still is.
-    const MCViewerKind viewer = restored ? MCViewerNone : MCViewerKindForFile(path);
+    // opened as text; a backup, being text, still is, and in the viewer its
+    // kind of file has over its text (a CSV's table, a JSON outline).
+    MCViewerKind viewer = MCViewerKindForFile(path);
+    if (restored && MCViewerKindWithoutText(viewer)) viewer = MCViewerNone;
     if (MCViewerKindWithoutText(viewer) && [self showViewer:viewer]) {
         [self recordModDate];
         return;
     }
-    NSError *err = nil;
-    NSString *content = [NSString stringWithContentsOfFile:path
-                                                  encoding:NSUTF8StringEncoding
-                                                     error:&err];
+    // Stat'ed before it is read, so a file still being written when it is
+    // read never counts as matching the disk (FolderSearch::readFileStable).
+    MCDiskText *disk = MCReadDiskText(path, ULLONG_MAX);
+    NSString *content = disk.text;
     // The file is gone, or no longer reads as text: the backup is all there is.
     if (!content && restored) content = @"";
     // Not UTF-8: Quick Look shows what it can (text in another encoding,
@@ -492,7 +537,8 @@ static void *kMediaItemContext = &kMediaItemContext;
                         MCViewerKindRendersMarkdown(viewer)) && !blank;
     self.savedText = content;
     self.dirty = NO;
-    [self recordModDate];
+    _activeTab.bom = disk.bom;
+    [self recordStamp:disk.stamp ofTab:_activeTab];
     if (restored) [self showRestoredText:restored base:restoredBase inode:restoredInode];
     [self refreshDisplay];
     // Previews show rendered text, which no language server should see.
@@ -500,29 +546,43 @@ static void *kMediaItemContext = &kMediaItemContext;
     [self updateTitle];
 }
 
-// The on-disk modification time of the current file, or nil.
+// The on-disk modification time of a file (a symlink's target's), or nil.
 - (NSDate *)diskModDateFor:(NSString *)path {
-    if (!path) return nil;
-    NSDictionary *attrs = [[NSFileManager defaultManager]
-        attributesOfItemAtPath:path error:nil];
-    return attrs.fileModificationDate;
+    return MCStampOfFile(path).modDate;
 }
-// What the tab knows of its file on disk: when it was last changed, and its
-// inode, so a rename made outside can be followed.
+// What the tab knows of its file on disk: when it was last changed, its
+// inode, so a rename made outside can be followed, and its size. Symlinks
+// are followed (attributesOfItemAtPath: did not, so a tab on a link never
+// saw its file change).
 - (void)recordDiskStateOf:(MCTab *)t {
-    NSDictionary *attrs = t.currentPath
-        ? [[NSFileManager defaultManager] attributesOfItemAtPath:t.currentPath error:nil] : nil;
-    t.fileModDate = attrs.fileModificationDate;
-    t.fileID = [attrs[NSFileSystemFileNumber] unsignedLongLongValue];
+    [self recordStamp:MCStampOfFile(t.currentPath) ofTab:t];
+}
+- (void)recordStamp:(MCDiskStamp *)s ofTab:(MCTab *)t {
+    if (!t) return;
+    t.fileModDate = s.modDate;
+    t.fileID = s.fileID;
+    t.fileSize = s ? (int64_t)s.size : -1;
+    t.tooLargeToFollow = NO;
     if (t == _activeTab) [self updateSavedStatus];
 }
 - (void)recordModDate { [self recordDiskStateOf:_activeTab]; }
+
+// Whether the file is not as the tab last saw it: another date, inode or
+// size, or gone. Unknowns (no inode, no size, from a backup) are not
+// compared.
+- (BOOL)tab:(MCTab *)t changedOnDisk:(MCDiskStamp *)s {
+    if (!s || !t.fileModDate) return s != nil || t.fileModDate != nil;
+    if (![s.modDate isEqualToDate:t.fileModDate]) return YES;
+    if (t.fileID && s.fileID != t.fileID) return YES;
+    return t.fileSize >= 0 && (int64_t)s.size != t.fileSize;
+}
 
 // The tab's text was replaced from disk. Its undo steps were made for the
 // old text, and taken now they would edit the new text at the old places
 // (or throw past its end), so they go, and so do the LaTeX preview's.
 - (void)forgetHistoryOf:(MCTab *)t {
     [t.undoManager removeAllActions];
+    t.textSessionStart = nil;
     t.folds = nil;
     [t.latex forgetEdits];
 }
@@ -566,9 +626,13 @@ static void *kMediaItemContext = &kMediaItemContext;
         [self renderMarkdown:[self markdownToRender]];
     } else {
         [self displaySourceEditable];
+        // A CSV's text on show: where its typing started (togglePreview:).
+        if (MCViewerKindOverText(self.viewerKind) && !_activeTab.textSessionStart)
+            _activeTab.textSessionStart = self.sourceText ?: @"";
         // The JSON outline, beside the text it follows.
         if (MCViewerKindBesideText(self.viewerKind)) {
-            [self.viewers showBesideTextView:self.textView kind:self.viewerKind];
+            [self.viewers showBesideTextView:self.textView kind:self.viewerKind
+                                          path:self.currentPath];
             [self relayoutRightArea];
         }
     }

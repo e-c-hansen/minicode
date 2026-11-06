@@ -39,9 +39,12 @@ struct Block {
         const char *utf8 = code.UTF8String;
         if (!utf8) continue;
         const std::string text = utf8;
-        // Token offsets are bytes; walk them to UTF-16 in step.
+        // Token offsets are bytes; walk them to UTF-16 in step. Tokens come
+        // in order, but one that went back would start the walk again
+        // rather than be colored at the wrong place.
         size_t byte = 0, unit = 0;
         auto toUnits = [&](size_t target) {
+            if (target < byte) byte = unit = 0;
             while (byte < target && byte < text.size()) {
                 const unsigned char c = (unsigned char)text[byte];
                 if ((c & 0xC0) != 0x80) unit += c >= 0xF0 ? 2 : 1;

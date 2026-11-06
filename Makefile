@@ -21,7 +21,11 @@ endif
 # warning (scripts/check-minos.sh checks the built binaries).
 ifeq ($(shell uname -s),Darwin)
   MACOS_MIN := $(shell sed -n '/<key>LSMinimumSystemVersion</{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' Info.plist)
-  MINFLAGS  := -mmacosx-version-min=$(MACOS_MIN) -Werror=unguarded-availability-new
+  MINFLAGS  := -mmacosx-version-min=$(MACOS_MIN)
+  # clang only: GCC (make test CXX=g++-16, as CI's Linux job) has no such flag.
+  ifneq ($(findstring clang,$(shell $(CXX) --version 2>/dev/null | head -1)),)
+    MINFLAGS += -Werror=unguarded-availability-new
+  endif
 endif
 CXXFLAGS := -std=c++17 -fobjc-arc -Wall -Wextra -O2 -Isrc $(MINFLAGS)
 LDFLAGS  := -framework Cocoa -framework WebKit -framework CoreServices \

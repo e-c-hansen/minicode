@@ -17,11 +17,17 @@
 @property(nonatomic, copy) NSUndoManager * (^undoManagerProvider)(void);
 
 // The tab's text. `tsv` picks tabs; otherwise the delimiter is guessed.
-// Shown again with the same file, the scroll and selection stay.
+// Shown again with the same file, the scroll and selection stay. A cell
+// still being typed into is dropped first (the rows under it are about to
+// change), as it is by showLargeFile: and clear; whoever changes what the
+// table shows on purpose (another tab, the text) calls commitEditing first.
 - (void)showText:(NSString *)text path:(NSString *)path tsv:(BOOL)tsv;
 // A large file, read-only: the first `maxRows` rows read from disk.
 - (BOOL)showLargeFile:(NSString *)path tsv:(BOOL)tsv maxRows:(NSUInteger)maxRows;
 - (void)clear;
+// A cell being typed into is put into the document now, as a click
+// elsewhere would, so it lands in the file it was typed in.
+- (void)commitEditing;
 
 @property(nonatomic, readonly) BOOL editable;
 @property(nonatomic, readonly) NSUInteger rowCount, columnCount;

@@ -54,6 +54,8 @@
     BOOL _shown;
     NSArray<NSURL *> *_items;
     QLPreviewPanel *_controlled;   // while we are its controller
+    __weak id _owner;              // the tree whose Space opened it
+    BOOL _lostControl;             // open, and no view drives it any more
 }
 
 + (instancetype)shared {
@@ -66,11 +68,17 @@
 - (BOOL)shown { return _shown; }
 - (NSArray<NSURL *> *)items { return _items ?: @[]; }
 
-- (void)toggleWithURLs:(NSArray<NSURL *> *)urls {
-    if (_shown) { [self close]; return; }
-    if (urls.count == 0) { NSBeep(); return; }
+- (void)toggleWithURLs:(NSArray<NSURL *> *)urls from:(id)owner {
+    if (_shown && owner == _owner && !_lostControl) { [self close]; return; }
+    if (urls.count == 0) {
+        if (_shown) [self close];
+        else NSBeep();
+        return;
+    }
     _items = [urls copy];
     _shown = YES;
+    _owner = owner;
+    _lostControl = NO;
     QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
     [[NSNotificationCenter defaultCenter] removeObserver:self
                                                     name:NSWindowWillCloseNotification
@@ -100,18 +108,23 @@
 - (void)close {
     if (!_shown) return;
     _shown = NO;
+    _owner = nil;
+    _lostControl = NO;
     if ([QLPreviewPanel sharedPreviewPanelExists])
         [[QLPreviewPanel sharedPreviewPanel] orderOut:nil];
 }
 
 - (void)panelWillClose:(NSNotification *)note {
     _shown = NO;   // closed by its own button, or by Esc while it was key
+    _owner = nil;
+    _lostControl = NO;
 }
 
 - (BOOL)acceptsControl { return _shown; }
 
 - (void)beginControl:(QLPreviewPanel *)panel {
     _controlled = panel;
+    _lostControl = NO;
     panel.dataSource = self;
     panel.delegate = self;
     [panel reloadData];
@@ -119,6 +132,7 @@
 
 - (void)endControl:(QLPreviewPanel *)panel {
     if (_controlled == panel) _controlled = nil;
+    if (_shown) _lostControl = YES;   // the next Space shows the selection again
     if (panel.dataSource == self) panel.dataSource = nil;
     if (panel.delegate == self) panel.delegate = nil;
 }
