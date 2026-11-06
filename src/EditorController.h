@@ -14,39 +14,14 @@
 @property(nonatomic, readonly, strong) NSWindow *window;
 @property(nonatomic, readonly, copy) NSString *rootPath;
 - (instancetype)initWithRootPath:(NSString *)path;
-- (void)saveCurrentFile:(id)sender;   // Cmd+S
 - (void)togglePreview:(id)sender;     // Markdown: source <-> rendered
 - (void)exportPDF:(id)sender;         // Shift+Cmd+S LaTeX: save the typeset PDF
 @property(nonatomic, readonly) BOOL canExportPDF;
 - (void)undo:(id)sender;              // Cmd+Z; the text view handles its own
 - (void)redo:(id)sender;              // Shift+Cmd+Z
-- (void)selectNextTab:(id)sender;     // Ctrl+Tab, Shift+Cmd+]
-- (void)selectPreviousTab:(id)sender; // Ctrl+Shift+Tab, Shift+Cmd+[
-- (void)selectTabNumber:(id)sender;   // Shift+Cmd+1..9, Ctrl+1..9 (tag = n; 9 = last)
-- (void)closeFocused:(id)sender;      // Cmd+W the tab, or the focused terminal/browser
-- (void)reopenClosedTab:(id)sender;   // Option+Shift+Cmd+T the last tab closed here
-// A tab's right click menu, for the tab on show, in the File menu (so the
-// command palette finds them too).
-- (void)closeOtherTabs:(id)sender;
-- (void)closeTabsToTheRight:(id)sender;
-- (void)closeAllTabs:(id)sender;
-- (void)copyActiveFilePath:(id)sender;
-- (void)copyActiveFileRelativePath:(id)sender;
-- (void)revealActiveFileInFinder:(id)sender;
-- (void)revealActiveFileInTree:(id)sender;
-// Asks about every tab with unsaved changes (window close, quit). NO when
-// the user cancelled or a save failed.
-- (BOOL)confirmCloseAllTabs;
-// Request a Change's restart: every unsaved tab's backup written now, for
-// the new build to bring back, so they need no question. NO when that could
-// not be done (backups off, or a write failed), and the question is asked.
-- (BOOL)keepUnsavedTabsForRestart;
-@property(nonatomic, readonly) BOOL hasUnsavedChanges;
 // Commands still running in this window's terminals (empty when every shell
 // is idle), for the question asked before quitting.
 - (NSArray<NSString *> *)runningTerminalCommands;
-// Writes this window's session (tabs, browser) now; quitting calls it.
-- (void)saveSession;
 - (void)openSettings:(id)sender;       // Cmd+, open the settings file
 - (void)openKeyboardShortcuts:(id)sender;   // keys.conf, written the first time
 // View > Adjust Settings > (part): the settings file at that part's keys. The
@@ -74,7 +49,6 @@
 - (void)selectPythonInterpreter:(id)sender; // the Python server's interpreter
 - (void)togglePlayback:(id)sender;     // Shift+Cmd+Space play or pause video/audio
 @property(nonatomic, readonly) BOOL canTogglePlayback;
-- (NSArray<NSString *> *)recentTabPaths;
 @end
 
 // EditorController+Layout.mm
@@ -152,6 +126,40 @@
 - (void)sortTreeBy:(id)sender;
 - (void)setTreeSortDirection:(id)sender;
 - (void)toggleFoldersFirst:(id)sender;
+@end
+
+// EditorController+Tabs.mm
+@interface EditorController (Tabs)
+- (void)saveCurrentFile:(id)sender;   // Cmd+S
+- (void)selectNextTab:(id)sender;     // Ctrl+Tab, Shift+Cmd+]
+- (void)selectPreviousTab:(id)sender; // Ctrl+Shift+Tab, Shift+Cmd+[
+- (void)selectTabNumber:(id)sender;   // Shift+Cmd+1..9, Ctrl+1..9 (tag = n; 9 = last)
+- (void)closeFocused:(id)sender;      // Cmd+W the tab, or the focused terminal/browser
+- (void)reopenClosedTab:(id)sender;   // Option+Shift+Cmd+T the last tab closed here
+// A tab's right click menu, for the tab on show, in the File menu (so the
+// command palette finds them too).
+- (void)closeOtherTabs:(id)sender;
+- (void)closeTabsToTheRight:(id)sender;
+- (void)closeAllTabs:(id)sender;
+- (void)copyActiveFilePath:(id)sender;
+- (void)copyActiveFileRelativePath:(id)sender;
+- (void)revealActiveFileInFinder:(id)sender;
+- (void)revealActiveFileInTree:(id)sender;
+// Asks about every tab with unsaved changes (window close, quit). NO when
+// the user cancelled or a save failed.
+- (BOOL)confirmCloseAllTabs;
+@property(nonatomic, readonly) BOOL hasUnsavedChanges;
+- (NSArray<NSString *> *)recentTabPaths;
+@end
+
+// EditorController+Persistence.mm
+@interface EditorController (Persistence)
+// Request a Change's restart: every unsaved tab's backup written now, for
+// the new build to bring back, so they need no question. NO when that could
+// not be done (backups off, or a write failed), and the question is asked.
+- (BOOL)keepUnsavedTabsForRestart;
+// Writes this window's session (tabs, browser) now; quitting calls it.
+- (void)saveSession;
 @end
 
 // EditorController+Navigation.mm
