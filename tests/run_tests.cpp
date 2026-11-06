@@ -3717,9 +3717,9 @@ void testSettings() {
     // documented value is the real default.
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
-    // format, python, keep-sorted, auto-save, ruler, terminal, develop and
-    // control keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 76);
+    // format, python, keep-sorted, auto-save, ruler, word wrap, terminal,
+    // develop and control keys.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 77);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -3969,6 +3969,15 @@ void testSettings() {
         Settings ln = parseSettings("editor.line-numbers = interval\n", &le);
         CHECK(le.size() == 1 && ln.lineNumbers() == Settings::LineNumbers::On &&
               le[0].message.find("on, off or relative") != std::string::npos);
+        // Word wrap: on by default; on, off, true or false.
+        CHECK(parseSettings("").wordWrap());
+        CHECK(!parseSettings("editor.word-wrap = off\n").wordWrap());
+        CHECK(!parseSettings("editor.word-wrap = False\n").wordWrap());
+        CHECK(parseSettings("editor.word-wrap = ON  # long lines\n").wordWrap());
+        std::vector<SettingsError> we;
+        Settings ww = parseSettings("editor.word-wrap = bounded\n", &we);
+        CHECK(we.size() == 1 && ww.wordWrap() &&
+              we[0].message.find("on or off") != std::string::npos);
         // The font size: points, decimals allowed, 6 to 72.
         CHECK(parseSettings("editor.font-size = 15\n").editorFontSize() == 15);
         CHECK(parseSettings("editor.font-size = 12.5\n").editorFontSize() == 12.5);
