@@ -667,6 +667,17 @@ MC_GUI_SUITE(agents) {
     MCGuiWait(@"the terminal knows its folder", 20, ^BOOL {
         return term.atPrompt && term.directory.length > 0;
     });
+    MCGuiStep(@"a path under the shell's own folder opens that copy, whatever the worktrees hold", ^{
+        MCTermLink *link = [term linkInLine:"error at src/Terminal.mm:1454 here" atByte:12];
+        GCHECK(link.matches.count == 1);
+        if (link.matches.count == 1)
+            GCHECK_EQ_STR(Real(link.matches[0].path),
+                          ([gReal stringByAppendingPathComponent:@"src/Terminal.mm"]));
+    });
+    MCGuiStep(@"the shell elsewhere", ^{ [term runCommand:@"cd /"]; });
+    MCGuiWait(@"it is there", 10, ^BOOL {
+        return term.atPrompt && [term.directory isEqualToString:@"/"];
+    });
     MCGuiStep(@"a path in both the folder and the worktree offers both, newest first", ^{
         std::string line = "error at src/Terminal.mm:1454 here";
         MCTermLink *link = [term linkInLine:line atByte:12];
@@ -712,6 +723,7 @@ MC_GUI_SUITE(agents) {
         GCHECK([a.lastNote containsString:@"/scratchpad"]);
         MCTermLink *word = [term linkInLine:"see nothere.py" atByte:6];
         GCHECK(word == nil);   // a bare name found nowhere is no link
+        [term runCommand:[NSString stringWithFormat:@"cd '%@'", gProj]];
     });
 
     // ------------------------------------------- the transcripts folder goes
