@@ -1462,7 +1462,33 @@ for full-screen programs. Both can be open at once.
   names the roots tried; paths resolved so /private/tmp matches a /tmp root.
   The log checks `characterIndexForPoint:` against the character's own rect (it
   answers past a line's end); a flagsChanged monitor catches Cmd pressed
-  without moving. Not done: OSC 8 hyperlinks.
+  without moving. A URL goes to `openWebAddressFromTerminal:` (the user's
+  page, pane shown quietly with no home page, keyboard kept; 0.0.0.0 and [::]
+  become localhost, `TermLinks::browserAddress`).
+- **OSC 8** (grid only; the line-mode log ignores them): `TerminalScreen`
+  keeps a table of addresses (http, https, file; 2 KB; no spaces or controls)
+  and puts the id in `TermStyle::link` of each printed cell, so links survive
+  the scrollback and reflow; the open link is kept apart from SGR. 4096 ids at
+  most; when full, ids no cell (screen, scrollback, `below_`) uses are freed,
+  else a new link prints plain. TermStyle's six flags are bit-fields so the
+  id keeps it at 16 bytes (a StyleRun per style change in the scrollback; the
+  scrollback-memory check caught 24). Cmd+click on a cell with an id opens its
+  address (file:// only on this host and when the file exists, through
+  `TermLinks::hyperlink`), the span is the cells with that id in the wrapped
+  line, and the address is the view's tooltip while Cmd hovers.
+- **BROWSER** (2026-11-06): every shell gets `BROWSER=<bundle>/Contents/
+  Resources/minicode-browser.js` (`resources/`; build/'s copy for the GUI
+  checks), a file that is sh and JavaScript at once: Claude Code (on a clicked
+  link, with mouse reporting on) and Python's webbrowser exec it with the
+  address; Vite and CRA run a BROWSER ending in .js with node, their own
+  arguments first (with any other value Vite would run `open -a <value>`).
+  Both hand the last argument to `minicode-cli open-url`, which sends pages
+  that are not local (`ControlChannel::opensInPane`: sign-in pages refuse an
+  embedded web view) and every page when `MINICODE_PID`'s minicode does not
+  answer to `/usr/bin/open` (`MINICODE_OPEN_FALLBACK` in tests, a recorder),
+  and never launches minicode. The `open-url` command loads the user's page in
+  the window of `MINICODE_TERMINAL_ID`. The npm `open` package and `open`
+  itself ignore BROWSER.
 - Testing: a scratch `HOME` and `ZDOTDIR`, or commands land in the user's
   `~/.zsh_history`; an app-typed command snaps a scrolled view, so test "stays
   on its text" with output from a command already running.
@@ -1674,7 +1700,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 - Commands: `open path[:line[:col]]` (`--to`, `--note`, `--from`, `--keep`),
   `window`, `browse` (into the pane's agent page; see below), `page`,
   `term` (`--cwd`, `--title`,
-  `--run` typed and entered visibly), `diff` (`--base` never starting with
+  `--run` typed and entered visibly), `open-url` (BROWSER's; see "The
+  terminal"), `diff` (`--base` never starting with
   "-"), `split`, `state` (`--pretty`), `selection`, `term-output`, `tour`, `procs`
   (`--json`; see "Processes and ports").
   None closes, replaces or reorders the user's tabs and terminals. `open`,
@@ -1917,7 +1944,8 @@ session has a display. Check first.
   keystroke suite (`MC_GUI_FULL_PERF=1` runs foldperf on 100,000 lines, not
   20,000). Suites: control, agents, backups, find_bar, folding, foldperf,
   format, git_panel, keymap, keystroke, lsp_fixes, palette, paste, previews,
-  problems, processes, replace_in_folder, run_file, symbols, terminal_reflow, and in
+  problems, processes, replace_in_folder, run_file, symbols, terminal_links,
+  terminal_reflow, and in
   LooseEndsSuite.mm terminal_exec, terminal_keys, terminal_zoom,
   agent_autosave, multicaret_rows. **Language server checks use the scripted
   server** `build/fakelsp` (`tests/fakelsp/fakelsp.cpp`, built by `make
