@@ -1123,15 +1123,31 @@ view is disposed (on `unrealize`), or dispose loops forever.
   blocks and classifies each (`MdLine`); the inline pass reads a whole block,
   so emphasis spans lines, with the delimiter rules (underscores inside a word
   never emphasise; stars do, as on GitHub). Only a few HTML tags mean anything;
-  others are dropped, their text kept. Between blocks comes exactly one `"\n"`
+  others are dropped, their text kept. CommonMark's HTML blocks (2026-11-06,
+  `htmlBlockStart`) are read by `Inline::parseHtml`, tags and entities only
+  (a block-level tag breaks the line; a `<h2>` line inside stays a heading;
+  `<script>`, `<style>`, `<?`, `<!X` hidden; `<pre>` as code), `MdLine::Html`
+  and `MarkdownEdit::Block::Html` (appended to both enums; Linux's and
+  Android's title lists follow). GFM footnotes: definitions are `Block`s with
+  `note`, left out of the page and emitted after it (a rule, then a numbered
+  list, `MdRun::footnotes`) in the order `Notes::refer` numbers them;
+  references are runs with `footnote`; `MdRun::anchor` names what `#fn-N` and
+  `#fnref-N` land on (the Mac and Linux record them; Android does not yet).
+  Quotes carry `quoteDepth` and, inside a list item, `quoteIndent`; a quote
+  keeps its own list stack (`quoteList`), and a fence in an item its depth.
+  Between blocks comes exactly one `"\n"`
   run with `gap` set, however many blank lines. Brackets are matched once per
   block with a stack and nesting stops at 8, so bad input stays linear.
   `MarkdownEdit` asks `MarkdownParser::lines` rather than classifying itself,
-  so the preview and a double-click agree. Tests: `md:*`,
-  `tests/markdown/corpus.md`.
+  so the preview and a double-click agree. Tests: `md:*` (GFM's in
+  `tests/markdown_gfm_tests.inc`), `tests/markdown/corpus.md`, and the
+  `markdown_preview` GUI suite.
 - **The Mac's page** (+MarkdownRender): a paragraph's style comes from its
   first run; quotes and code blocks are `NSTextBlock`s, one object carried
-  across a block's paragraphs so its bar or box is drawn once; h1, h2 and rules
+  across a block's paragraphs so its bar or box is drawn once (a quote one
+  block a level, nested); in a list item the bar or box sits in a plain
+  indent block of its own, kept on it as an associated object, since a
+  margin on the box itself still had its background drawn under it; h1, h2 and rules
   are bordered text blocks; list text at 24 points a level with the marker
   right-aligned on a tab; a hard break is U+2028; gaps are 12 points. Fenced
   code naming a language (`MdRun::lang`,
@@ -1150,8 +1166,9 @@ view is disposed (on `unrealize`), or dispose loops forever.
   (heading text, list item with continuations, paragraph or quote, code between
   fences, a table cell with newlines and pipes escaped back, a `$$` block
   whole); `applyMarkdownSource:` splices, marks dirty, registers undo,
-  re-renders at the same scroll, and drops an edit if the buffer changed
-  meanwhile.
+  re-renders at the same scroll. An edit made while the buffer changed
+  underneath is not applied: its text goes to the clipboard with a status
+  note (`MCKeepLostMarkdownEdit`).
 - **Pictures**: `MCMarkdownImage` attachments with `MCAnimatedImageCell` (sized
   to the line; a GIF's timer runs only while on screen). Traps: the TextKit 1
   editor never asks for a TextKit 2 view provider (1.4.1 shipped still GIFs);
