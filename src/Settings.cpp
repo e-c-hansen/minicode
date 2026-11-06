@@ -862,6 +862,15 @@ bool Settings::apply(const std::string& key, const std::string& value,
         terminalScrollback_ = (int)lines;
         return true;
     }
+    if (key == "terminal.font-size") {
+        double size;
+        if (!parseDecimal(value, size) || size < kMinFontSize || size > kMaxFontSize) {
+            error = "'" + value + "' is not a font size in points from 6 to 72";
+            return false;
+        }
+        terminalFontSize_ = size;
+        return true;
+    }
     if (key == "terminal.option-as-meta") {
         if (!parseBool(value, terminalOptionAsMeta_)) {
             error = "'" + value + "' is not true or false";
@@ -1211,6 +1220,9 @@ const char* Settings::defaultFileText() {
 # terminal.mode = grid
 # Lines a terminal keeps above its screen, for scrolling back (0 for none).
 # terminal.scrollback = 10000
+# The terminal's font size in points. The editor's zoom (Cmd+= and Cmd+-)
+# scales it too (macOS).
+# terminal.font-size = 12
 # Option sends ESC before the key, for the shell's Alt bindings (Option+B and
 # Option+F move by words). false lets Option type what your keyboard layout
 # puts on it, such as @ and { on many European layouts.

@@ -35,6 +35,7 @@
 #import "Gutter.h"
 #import "FoldView.h"
 #import "EditorFont.h"
+#import "SourceStorage.h"
 #import "AgentNotes.h"
 #import "CompareView.h"
 #import "FileViewers.h"
@@ -651,6 +652,8 @@ private:
     BOOL _highlightingSettingsFile;        // give color values swatches
     NSColor *_styleColors[8];              // by TokenStyle, from the settings
     NSColor *_plainColor;
+    NSArray<NSDictionary *> *_styleAttributes;   // attributesForStyle:, for _styleAttributesBase
+    NSDictionary *_styleAttributesBase;
     NSDictionary *_sourceAttributes;       // font, paragraph style, plain color
     NSUInteger _formatGeneration;          // a format result for an older one is dropped
     NSPopover *_formatNote;                // what Format Document has to say
@@ -677,6 +680,7 @@ private:
     NSString *_missingBefore;              // the open file's missing server, last time
     MCChangeSession *_change;              // Request a Change (Shift+Cmd+K), made on first use
     MCAgentSession *_agent;                // the inline agent (Cmd+I), made on first use
+    MCSourceStorage *_sourceStorage;       // the editor's text storage (the view does not own it)
     MCEditorFind *_editorFind;             // the editor's find and replace bar (EditorFind.h)
     NSDate *_backupFirstPending;           // the oldest buffer change not yet backed up
     MCAgentNotes *_notes;                  // notes and tours over the editor, made on first use
@@ -876,7 +880,17 @@ static const NSInteger kWorktreeMenuTag = 7701;
     textScroll.autohidesScrollers = YES;
     textScroll.automaticallyAdjustsContentInsets = NO;
 
-    self.textView = [[CodeTextView alloc] initWithFrame:frame];
+    // TextKit 1, over a storage that fixes attributes as edits happen, not
+    // in 64K blocks around every keystroke (SourceStorage.h). Built here
+    // so the view and what it makes at init (carets, folds) watch that
+    // storage; the controller keeps it, since a layout manager does not.
+    _sourceStorage = [MCSourceStorage new];
+    NSLayoutManager *layout = [NSLayoutManager new];
+    [_sourceStorage addLayoutManager:layout];
+    NSTextContainer *textBox =
+        [[NSTextContainer alloc] initWithSize:NSMakeSize(NSWidth(frame), CGFLOAT_MAX)];
+    [layout addTextContainer:textBox];
+    self.textView = [[CodeTextView alloc] initWithFrame:frame textContainer:textBox];
     self.textView.editable = YES;
     self.textView.delegate = self;
     self.textView.textStorage.delegate = self;   // incremental highlighting
@@ -5195,9 +5209,11 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     return [AppSettings shared].settings.autoSave();
 }
 
+// Not a tab with an inline agent edit waiting for Keep or Discard (the
+// agent edits only the tab on show): it is written once the bar closes.
 - (BOOL)tabTakesAutoSave:(MCTab *)t {
     return t.dirty && t.loaded && !t.gone && [self tabTakesBackup:t] &&
-           t != _formatSaveTab;
+           t != _formatSaveTab && !(t == _activeTab && _agent.editPending);
 }
 
 // After every edit and every change of a dirty flag, beside scheduleBackups.
@@ -5816,6 +5832,10 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 - (void)restyleRange:(NSRange)range tokens:(const std::vector<Token> &)tokens
            inStorage:(NSTextStorage *)storage {
     if (range.length == 0) return;
+    if (_sourceAttributes && !_highlightingSettingsFile && range.length <= 65536) {
+        [self restyleChangedIn:range tokens:tokens inStorage:storage];
+        return;
+    }
     if (_sourceAttributes) {
         [storage setAttributes:_sourceAttributes range:range];
     } else {
@@ -5839,6 +5859,60 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
                         range:NSMakeRange(start, end - start)];
     }
     if (_highlightingSettingsFile) [self decorateColorsIn:storage range:range];
+}
+
+// The attributes a token of `style` gets: the source attributes with its
+// color (index 8 is plain text), made once per font and color scheme.
+- (NSDictionary *)attributesForStyle:(int)style {
+    if (_styleAttributesBase != _sourceAttributes) {
+        NSMutableArray *all = [NSMutableArray arrayWithCapacity:9];
+        for (int i = 0; i < 8; i++) {
+            NSMutableDictionary *d = [_sourceAttributes mutableCopy];
+            d[NSForegroundColorAttributeName] = _styleColors[i];
+            [all addObject:[d copy]];
+        }
+        [all addObject:_sourceAttributes];
+        _styleAttributes = all;
+        _styleAttributesBase = _sourceAttributes;
+    }
+    return _styleAttributes[(NSUInteger)style];
+}
+
+// restyleRange: for the few lines an edit touches: the same attributes, but
+// only pieces whose attributes differ are set. Setting the whole range
+// first merged its attribute runs and adding the colors split them again,
+// and each merge or split moved the storage's run array along by a
+// memmove of everything after it (440,000 runs in a 100,000-line file), a
+// good part of what was left of a keystroke there.
+- (void)restyleChangedIn:(NSRange)range tokens:(const std::vector<Token> &)tokens
+               inStorage:(NSTextStorage *)storage {
+    const NSUInteger limit = NSMaxRange(range);
+    auto paint = ^(NSUInteger start, NSUInteger end, int style) {
+        if (end <= start) return;
+        NSDictionary *want = [self attributesForStyle:style];
+        NSRange run;
+        NSDictionary *have = [storage attributesAtIndex:start effectiveRange:&run];
+        if (run.location <= start && NSMaxRange(run) >= end &&
+            (have == want || [have isEqualToDictionary:want]))
+            return;
+        [storage setAttributes:want range:NSMakeRange(start, end - start)];
+    };
+    NSUInteger at = range.location;
+    for (size_t i = 0; i < tokens.size();) {
+        size_t start = tokens[i].start, end = start + tokens[i].length;
+        TokenStyle st = tokens[i].style;
+        size_t j = i + 1;
+        while (j < tokens.size() && tokens[j].style == st && tokens[j].start == end) {
+            end = tokens[j].start + tokens[j].length;
+            ++j;
+        }
+        i = j;
+        if (start < at || end > limit || end <= start) continue;
+        paint(at, start, 8);
+        paint(start, end, (int)st & 7);
+        at = end;
+    }
+    paint(at, limit, 8);
 }
 
 // The storage's characters changed (typing, paste, undo, a Cmd+/ toggle, a
@@ -6599,6 +6673,9 @@ static NSColor *ContrastColor(const Rgba &c) {
     const BOOL changed = showing && ![_sourceAttributes[NSFontAttributeName] isEqual:font];
     if (!changed) {
         [self setEditorFont:font];
+        // A rendered Markdown page follows the zoom too, keeping its place.
+        if (self.isMarkdown && self.previewMode && !self.textView.editable)
+            [self renderMarkdownKeepingPlace];
         return;
     }
     NSTextView *tv = self.textView;
@@ -7047,7 +7124,16 @@ static NSColor *ContrastColor(const Rgba &c) {
     return _agent;
 }
 - (NSView *)agentBarHost { return self.rightArea; }
-- (void)agentBarDidChange { [self relayoutRightArea]; }
+- (void)agentBarDidChange {
+    [self relayoutRightArea];
+    // Keep or Discard (or closing the bar) ends a pending edit: auto-save
+    // goes on: after the delay, or for focus-change now (the keyboard was
+    // in the bar, away from the editor).
+    if (!_agent.editPending) {
+        [self scheduleAutoSave];
+        [self autoSaveOnFocusChange];
+    }
+}
 - (void)agentRunInTerminal:(NSString *)command {
     [self changeTerminalRunning:command focus:YES];
 }
@@ -7551,11 +7637,12 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 }
 
 - (void)textDidChange:(NSNotification *)note {
-    // A copy of the storage's string, but not of its characters: the
-    // storage's NSBigMutableString shares them with the copy, and the copy
-    // takes about a microsecond in a 3 MB file, as does the next edit with
-    // it held (measured). backedUpText's pointer compare relies on a new
-    // object per change.
+    // A copy of the storage's string. With AppKit's storage (an
+    // NSBigMutableString) it shared the characters and took about a
+    // microsecond; MCSourceStorage keeps a CFString, so it is a copy of the
+    // characters, 0.13 ms for a 2.4 MB file (measured), still a small part
+    // of a keystroke. backedUpText's pointer compare relies on a new object
+    // per change.
     self.sourceText = self.textView.string;
     [self noteEdited];
     // The title's task count follows typing, a moment after it stops.
@@ -8044,7 +8131,7 @@ static NSString *MCFormatDuration(double seconds) {
     NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
     ps.paragraphSpacing = 10;
     NSDictionary *muted = @{
-        NSFontAttributeName: [NSFont systemFontOfSize:12],
+        NSFontAttributeName: [NSFont systemFontOfSize:MCZoomed(12)],
         NSForegroundColorAttributeName: Hex(0x9CA3AF),
         NSParagraphStyleAttributeName: ps,
         kMarkdownMathNote: @YES,
@@ -8303,8 +8390,9 @@ static NSString *MCMarkdownAnchor(NSString *title) {
     return slug;
 }
 
-// The preview's vertical rhythm, in points: the empty line between two
-// blocks (the parser's `gap` runs), and the indent of each list level.
+// The preview's vertical rhythm, in points at no zoom: the empty line
+// between two blocks (the parser's `gap` runs), and the indent of each list
+// level.
 static const CGFloat kMarkdownGap = 12;
 static const CGFloat kMarkdownListStep = 24;
 
@@ -8375,7 +8463,7 @@ static NSTextBlock *MCFullWidthBlock(void) {
         *code = nil;
     }
     if (r.gap) {
-        ps.minimumLineHeight = ps.maximumLineHeight = kMarkdownGap;
+        ps.minimumLineHeight = ps.maximumLineHeight = MCZoomed(kMarkdownGap);
         ps.lineSpacing = 0;
     } else if (r.heading > 0) {
         ps.paragraphSpacingBefore = r.heading <= 2 ? 10.0 : 4.0;
@@ -8401,9 +8489,10 @@ static NSTextBlock *MCFullWidthBlock(void) {
     if (r.listDepth > 0) {
         // The text of every line sits at the level's indent; a marker is
         // right-aligned just before it, so numbers of any width line up.
-        const CGFloat text = r.listDepth * kMarkdownListStep;
+        const CGFloat step = MCZoomed(kMarkdownListStep);
+        const CGFloat text = r.listDepth * step;
         ps.headIndent = text;
-        ps.firstLineHeadIndent = r.marker ? text - kMarkdownListStep : text;
+        ps.firstLineHeadIndent = r.marker ? text - step : text;
         ps.tabStops = @[
             [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentRight
                                             location:text - 7 options:@{}],
@@ -8425,8 +8514,9 @@ static NSTextBlock *MCFullWidthBlock(void) {
     NSString *s = [NSString stringWithUTF8String:r.text.c_str()];
     if (!s) return nil;
 
-    NSFont *body = [NSFont systemFontOfSize:15];
-    NSFont *mono = [NSFont monospacedSystemFontOfSize:13
+    // Sizes at no zoom; Zoom In and Out scale the preview with the editor.
+    NSFont *body = [NSFont systemFontOfSize:MCZoomed(15)];
+    NSFont *mono = [NSFont monospacedSystemFontOfSize:MCZoomed(13)
                                                weight:NSFontWeightRegular];
     AppSettings *cfg = [AppSettings shared];
     NSFont *font = body;
@@ -8435,7 +8525,7 @@ static NSTextBlock *MCFullWidthBlock(void) {
 
     if (r.heading > 0) {
         CGFloat sizes[7] = {0, 26, 22, 19, 17, 15, 14};
-        font = [NSFont boldSystemFontOfSize:sizes[r.heading]];
+        font = [NSFont boldSystemFontOfSize:MCZoomed(sizes[r.heading])];
         color = [cfg markdown:MarkdownColor::Heading];
     }
     // Display math on a line of its own, shown as TeX, sits in a code box.
@@ -8517,7 +8607,7 @@ static NSTextBlock *MCFullWidthBlock(void) {
             NSFont *around = body;
             if (r.heading > 0) {
                 const CGFloat sizes[7] = {0, 26, 22, 19, 17, 15, 14};
-                around = [NSFont boldSystemFontOfSize:sizes[r.heading]];
+                around = [NSFont boldSystemFontOfSize:MCZoomed(sizes[r.heading])];
                 ink = [cfg markdown:MarkdownColor::Heading];
             }
             if (r.table && r.bold) ink = [cfg markdown:MarkdownColor::Heading];
@@ -8673,7 +8763,7 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
     if (cols <= 0 || rows <= 0) return;
 
     AppSettings *cfg = [AppSettings shared];
-    NSDictionary *plain = @{NSFontAttributeName: [NSFont systemFontOfSize:15],
+    NSDictionary *plain = @{NSFontAttributeName: [NSFont systemFontOfSize:MCZoomed(15)],
                             NSForegroundColorAttributeName: [cfg text:Surface::Editor]};
     if (out.length && ![out.string hasSuffix:@"\n"])
         [out appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"

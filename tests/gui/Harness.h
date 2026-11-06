@@ -100,7 +100,10 @@ void MCGuiSnapshot(NSView *view, NSString *name);
 
 // ---- input
 // A key event made the way the hardware's are (CGEvent), offered to the
-// window's key equivalents, then the main menu; YES when one took it.
+// window's key equivalents, then the main menu; YES when one took it. The
+// characters may be nil (the US layout's for the key code); given, they
+// are checked against what the layout types and set on the event only when
+// they differ.
 BOOL MCGuiPerformMenuKey(NSWindow *window, unsigned short keyCode, NSEventModifierFlags flags,
                          NSString *chars, NSString *charsIgnoringModifiers);
 // A key event for the window, through [NSApp sendEvent:] (local key monitors

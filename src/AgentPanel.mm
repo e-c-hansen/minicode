@@ -891,6 +891,8 @@ static size_t MCAgentBytes(NSString *text, NSUInteger utf16) {
     [host agentRunInTerminal:NS(command)];
 }
 
+- (BOOL)editPending { return _shown && _original != nil; }
+
 - (void)keep {
     [self finish:YES];
 }

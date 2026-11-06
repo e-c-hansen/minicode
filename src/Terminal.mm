@@ -47,6 +47,7 @@
 #import "TerminalGridView.h"
 #import "TerminalFindBar.h"
 #import "Appearance.h"
+#import "EditorFont.h"
 #include "TerminalStream.h"
 #include "TerminalScreen.h"
 #include "TermLinks.h"
@@ -652,8 +653,12 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     pid_t _shellPid;             // 0 when no shell
     int _generation;             // bumps per shell, so stale output is ignored
     NSDate *_shellStarted;
-    BOOL _integrated;            // the shell integration file was written
+    BOOL _integrated;            // the shell sends the integration's marks: the
+                                 // file was written and the shell is still zsh
+    BOOL _integrationFile;       // the shell integration file was written
+    NSTimer *_shellWatch;        // while a command runs: is the shell still zsh?
     struct winsize _winsize;
+    CGFloat _fontSize;           // the font size the views were last given
 
     BOOL _atPrompt;              // zsh is waiting for a command
     BOOL _commandStarted;        // saw 133;C for the command in flight
@@ -708,6 +713,9 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         [[NSNotificationCenter defaultCenter]
             addObserver:self selector:@selector(applySettings)
                    name:MCSettingsDidChangeNotification object:nil];
+        [[NSNotificationCenter defaultCenter]
+            addObserver:self selector:@selector(applyFontSize)
+                   name:MCEditorZoomDidChangeNotification object:nil];
         if (_lineMode)
             [self appendLine:@"MiniCode terminal — zsh on a pty. Ctrl+C interrupts, "
                               "`clear` resets the panel."
@@ -720,7 +728,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
 - (NSTextField *)makeInputField:(Class)cls {
     NSTextField *f = [[cls alloc] init];
-    f.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+    f.font = MCTerminalFont(NO, NO);
     f.bezeled = NO;
     f.focusRingType = NSFocusRingTypeNone;
     f.bordered = NO;
@@ -769,8 +777,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
     // Prompt label + input field (and a secure twin for hidden input).
     self.prompt = [NSTextField labelWithString:@"❯"];
-    self.prompt.font = [NSFont monospacedSystemFontOfSize:12
-                                                   weight:NSFontWeightBold];
+    self.prompt.font = MCTerminalFont(YES, NO);
     self.prompt.textColor = THex(0x4EC9B0);
     self.prompt.backgroundColor = [NSColor clearColor];
     [self addSubview:self.prompt];
@@ -851,7 +858,38 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         self.grid.optionAsMeta = cfg.settings.terminalOptionAsMeta();
     }
     [self.findBar applySettings];
+    [self applyFontSize];
     [self.grid screenChanged];
+}
+
+// terminal.font-size plus the editor's zoom. On a change the input line,
+// the prompt and the log take the new size (each run keeps its weight and
+// slant), the panel is laid out again, and the pty gets the rows and
+// columns the new cell fits, which rewraps the grid's lines.
+- (void)applyFontSize {
+    const CGFloat size = MCTerminalFontSize();
+    if (size == _fontSize) return;
+    const BOOL first = _fontSize == 0;
+    _fontSize = size;
+    for (NSTextField *f in @[self.input, self.secureInput]) f.font = MCTerminalFont(NO, NO);
+    self.prompt.font = MCTerminalFont(YES, NO);
+    if (!first) {
+        NSTextStorage *ts = self.output.textStorage;
+        [ts beginEditing];
+        [ts enumerateAttribute:NSFontAttributeName inRange:NSMakeRange(0, ts.length)
+                       options:0 usingBlock:^(NSFont *font, NSRange r, BOOL *stop) {
+            (void)stop;
+            NSFontDescriptorSymbolicTraits t = font.fontDescriptor.symbolicTraits;
+            [ts addAttribute:NSFontAttributeName
+                       value:MCTerminalFont((t & NSFontDescriptorTraitBold) != 0,
+                                            (t & NSFontDescriptorTraitItalic) != 0)
+                       range:r];
+        }];
+        [ts endEditing];
+    }
+    [self layoutChildren];
+    [self.grid screenChanged];
+    self.grid.needsDisplay = YES;
 }
 
 // Manual layout — reliable regardless of how the host sizes us.
@@ -862,11 +900,13 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
 - (void)layoutChildren {
     CGFloat W = self.bounds.size.width, H = self.bounds.size.height;
-    const CGFloat inH = 26, promptW = 20;
+    // 18 and 26 points at the default 12-point font, growing with it.
+    const CGFloat fieldH = ceil([TerminalGridView cellSize].height) + 3;
+    const CGFloat inH = fieldH + 8, promptW = ceil(20 * MAX(_fontSize, 12) / 12);
     self.outScroll.frame = NSMakeRect(0, inH, W, MAX(0, H - inH));
     // The prompt and the field share a row, so the glyph sits on the text's
     // baseline (same font size, same unbezeled cell).
-    NSRect field = NSMakeRect(6 + promptW, 4, MAX(0, W - promptW - 12), 18);
+    NSRect field = NSMakeRect(6 + promptW, 4, MAX(0, W - promptW - 12), fieldH);
     self.prompt.frame = NSMakeRect(6, field.origin.y, promptW, field.size.height);
     self.input.frame = field;
     self.secureInput.frame = field;
@@ -1321,6 +1361,78 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     [self sendBytes:out.data() length:out.size()];
 }
 
+// `exec bash` (or fish, sh, ...) replaces zsh with a shell that sends none
+// of the integration's marks, and the tab stayed busy for good, waiting for
+// a prompt that never came. While a command runs, the shell's process is
+// looked at twice a second; once it is another shell, this terminal works
+// as one without the integration: busy only while a program other than the
+// shell holds the foreground (foregroundCommand), commands typed at once.
+// A zsh exec'd from there loads the integration again (the exported
+// ZDOTDIR), and its first prompt mark turns it back on.
+static BOOL MCIsOtherShell(pid_t pid) {
+    char name[2 * MAXCOMLEN + 1] = {0};
+    if (proc_name(pid, name, sizeof name) <= 0) return NO;
+    NSString *n = [@(name) lowercaseString];
+    if ([n hasPrefix:@"-"]) n = [n substringFromIndex:1];
+    static NSSet<NSString *> *shells;
+    if (!shells)
+        shells = [NSSet setWithArray:@[@"bash", @"sh", @"dash", @"fish", @"ksh", @"mksh",
+                                       @"oksh", @"tcsh", @"csh", @"nu", @"elvish", @"xonsh",
+                                       @"pwsh", @"yash", @"ion", @"oil", @"osh"]];
+    return [shells containsObject:n];
+}
+
+- (void)watchShell {
+    if (_shellWatch || !_integrated || _shellPid <= 0) return;
+    __weak TerminalView *weakSelf = self;
+    _shellWatch = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES
+                                                    block:^(NSTimer *t) {
+        TerminalView *s = weakSelf;
+        if (!s) { [t invalidate]; return; }
+        [s checkShell];
+    }];
+}
+
+- (void)checkShell {
+    if (!_integrated || _atPrompt || _shellPid <= 0) {
+        [_shellWatch invalidate];
+        _shellWatch = nil;
+        return;
+    }
+    if (!MCIsOtherShell(_shellPid)) return;
+    [_shellWatch invalidate];
+    _shellWatch = nil;
+    _integrated = NO;
+    _commandStarted = NO;
+    _zleReady = NO;
+    _atPrompt = NO;
+    _runningCommand = nil;
+    _programTitle = nil;
+    [self stopRawWatch];
+    _stickyGrid = NO;
+    [self titleChanged];
+    [self postCommandFinished];
+    // What waited for a prompt goes in now.
+    NSString *line = _pendingCommand, *typed = _pendingTyped;
+    _pendingCommand = nil;
+    _pendingTyped = nil;
+    if (_lineMode) {
+        [self updateMode];
+        if (line) [self submitCommand:line];
+    } else if (line) {
+        [self typeLine:line run:YES];
+    } else if (typed) {
+        [self typeLine:typed run:NO];
+    }
+}
+
+// A prompt mark after the marks stopped: a zsh with the integration is the
+// shell again (exec zsh from bash).
+- (void)integrationReturned {
+    if (_integrated || !_integrationFile) return;
+    _integrated = YES;
+}
+
 - (void)postCommandFinished {
     [[NSNotificationCenter defaultCenter]
         postNotificationName:MCTerminalCommandDidFinishNotification object:self];
@@ -1330,7 +1442,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     if (!_lineMode) {
         if (_closed || !line.length || _screen.altScreen() || self.busy) return NO;
         if (_shellPid <= 0) [self startShell];
-        if (_zleReady) [self typeLine:line run:NO];
+        if (_zleReady || !_integrated) [self typeLine:line run:NO];
         else _pendingTyped = line;   // typed when ZLE starts reading
         [self.window makeFirstResponder:self.grid];
         return YES;
@@ -1660,6 +1772,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
 - (void)stopShell {
     _generation++;                     // ignore anything still in flight
+    [_shellWatch invalidate];
+    _shellWatch = nil;
     [self stopRawWatch];
     MCPty *pty = _pty;                 // closes the fd and reaps the shell
     if (pty) dispatch_async(_ioQueue, ^{ [pty shutdown]; });
@@ -1707,6 +1821,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
     NSString *zdot = IntegrationDirectory(!_lineMode);
     _integrated = zdot != nil;
+    _integrationFile = _integrated;
     if (!_integrated)
         [self note:@"Could not write the shell integration file; "
                     "commands still run, but without exit status or "
@@ -1962,12 +2077,14 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
             _commandStarted = NO;
             _stickyGrid = NO;
             [self stopRawWatch];
+            [self integrationReturned];
             [self promptReturned];
             if (_runningCommand) { _runningCommand = nil; [self titleChanged]; }
             break;
         case TermEvent::CommandStart:
             _commandStarted = YES;
             [self startRawWatch];
+            [self watchShell];
             break;
         case TermEvent::CommandEnd:
             // After this chunk, once the view is up to date.
@@ -2021,6 +2138,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
             _seenPrompt = YES;
             _commandStarted = NO;
             _zleReady = NO;
+            [self integrationReturned];
             [self promptReturned];
             if (_runningCommand) { _runningCommand = nil; [self titleChanged]; }
             break;
@@ -2040,6 +2158,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
                      [NSCharacterSet whitespaceAndNewlineCharacterSet]];
             _runningCommand = typed.length ? typed : @"";
             [self titleChanged];
+            [self watchShell];
             break;
         }
         case TermEvent::CommandEnd:
@@ -2086,22 +2205,6 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 }
 
 // ---------------------------------------------------------------- styling
-static NSFont *TermFont(BOOL bold, BOOL italic) {
-    static NSFont *fonts[4];
-    int i = (bold ? 1 : 0) | (italic ? 2 : 0);
-    if (!fonts[i]) {
-        NSFont *f = [NSFont monospacedSystemFontOfSize:12
-            weight:bold ? NSFontWeightBold : NSFontWeightRegular];
-        if (italic) {
-            NSFontDescriptor *d = [f.fontDescriptor fontDescriptorWithSymbolicTraits:
-                f.fontDescriptor.symbolicTraits | NSFontDescriptorTraitItalic];
-            f = [NSFont fontWithDescriptor:d size:12] ?: f;
-        }
-        fonts[i] = f;
-    }
-    return fonts[i];
-}
-
 - (NSDictionary *)attributesForStyle:(const TermStyle &)st {
     const Settings &cfg = [AppSettings shared].settings;
     bool defaultFg = st.fg.kind == TermColor::Default;
@@ -2113,7 +2216,7 @@ static NSFont *TermFont(BOOL bold, BOOL italic) {
     if (st.inverse) { std::swap(fg, bg); hasBg = true; defaultFg = false; }
 
     NSMutableDictionary *a = [NSMutableDictionary dictionary];
-    a[NSFontAttributeName] = TermFont(st.bold, st.italic);
+    a[NSFontAttributeName] = MCTerminalFont(st.bold, st.italic);
     NSColor *fgColor = MCColor(fg);
     if (st.dim) fgColor = [fgColor colorWithAlphaComponent:fg.a * 0.6];
     a[NSForegroundColorAttributeName] = fgColor;
@@ -2188,7 +2291,7 @@ static NSFont *TermFont(BOOL bold, BOOL italic) {
 - (void)appendLine:(NSString *)line color:(NSColor *)color {
     [self ensureNewline];
     NSDictionary *attrs = @{
-        NSFontAttributeName: TermFont(NO, NO),
+        NSFontAttributeName: MCTerminalFont(NO, NO),
         NSForegroundColorAttributeName: color,
     };
     NSTextStorage *ts = self.output.textStorage;

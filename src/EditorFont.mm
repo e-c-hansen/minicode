@@ -20,7 +20,38 @@ NSFont *MCEditorFont(void) {
     return [NSFont monospacedSystemFontOfSize:MCEditorFontSize() weight:NSFontWeightRegular];
 }
 
+CGFloat MCTerminalFontSize(void) {
+    const CGFloat size = (CGFloat)[AppSettings shared].settings.terminalFontSize() + MCEditorZoom();
+    return MAX((CGFloat)Settings::kMinFontSize, MIN((CGFloat)Settings::kMaxFontSize, size));
+}
+
+NSFont *MCTerminalFont(BOOL bold, BOOL italic) {
+    static CGFloat cachedSize;
+    static NSFont *fonts[4];
+    const CGFloat size = MCTerminalFontSize();
+    if (size != cachedSize) {
+        for (NSFont *__strong &f : fonts) f = nil;
+        cachedSize = size;
+    }
+    const int i = (bold ? 1 : 0) | (italic ? 2 : 0);
+    if (!fonts[i]) {
+        NSFont *f = [NSFont monospacedSystemFontOfSize:size
+                                                weight:bold ? NSFontWeightBold : NSFontWeightRegular];
+        if (italic) {
+            NSFontDescriptor *d = [f.fontDescriptor fontDescriptorWithSymbolicTraits:
+                f.fontDescriptor.symbolicTraits | NSFontDescriptorTraitItalic];
+            f = [NSFont fontWithDescriptor:d size:size] ?: f;
+        }
+        fonts[i] = f;
+    }
+    return fonts[i];
+}
+
 CGFloat MCEditorScale(void) { return MCEditorFontSize() / 13.0; }
+
+CGFloat MCZoomScale(void) { return MAX((CGFloat)0.5, (13 + MCEditorZoom()) / 13.0); }
+
+CGFloat MCZoomed(CGFloat points) { return round(points * MCZoomScale() * 2) / 2; }
 
 BOOL MCEditorZoomBy(CGFloat points) {
     const CGFloat base = (CGFloat)[AppSettings shared].settings.editorFontSize();

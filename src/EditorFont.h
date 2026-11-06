@@ -7,7 +7,9 @@
 // writing the settings file. What follows the size: the editor's text, the
 // line numbers, the ruler's column, the completion list and the hover,
 // signature and documentation boxes (scaled from their sizes at 13 points).
-// The Markdown preview and the terminal keep their own sizes.
+// The terminal's size is terminal.font-size (12) plus the same zoom, as VS
+// Code's zoom scales the whole window, and the Markdown preview's sizes
+// are scaled by the zoom (MCZoomScale) as well.
 #import <Cocoa/Cocoa.h>
 
 // Posted (object nil) when the zoom changes; a change of editor.font-size
@@ -19,8 +21,19 @@ CGFloat MCEditorFontSize(void);
 NSFont *MCEditorFont(void);
 // The size over 13 points, for things drawn beside the text.
 CGFloat MCEditorScale(void);
+// The zoom alone as a factor ((13 + zoom) / 13, 1 when not zoomed), for
+// what has sizes of its own and follows the zoom: the Markdown preview and
+// the preview popovers' text.
+CGFloat MCZoomScale(void);
+// `points` times MCZoomScale, to the half point.
+CGFloat MCZoomed(CGFloat points);
 // Points added to editor.font-size (0 when not zoomed).
 CGFloat MCEditorZoom(void);
+// terminal.font-size plus the zoom, within the same limits.
+CGFloat MCTerminalFontSize(void);
+// The terminal's monospaced font at that size, regular, bold, italic or
+// both; kept per size, so asking is cheap.
+NSFont *MCTerminalFont(BOOL bold, BOOL italic);
 // Zoom in or out by `points` (0 resets), kept within 6 to 72 points in all.
 // NO, and nothing changes, at a limit.
 BOOL MCEditorZoomBy(CGFloat points);

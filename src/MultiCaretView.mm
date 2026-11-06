@@ -141,6 +141,7 @@ bool IsExtendPress(NSEvent *e) {
     std::vector<Caret> v;
     for (NSValue *r in ranges) v.push_back({r.rangeValue.location, NSMaxRange(r.rangeValue)});
     if (v.empty()) return;
+    _goalX.clear();
     [self setCarets:v];
 }
 
@@ -346,8 +347,136 @@ bool IsExtendPress(NSEvent *e) {
     return out;
 }
 
+// The x of a caret at character i, in the view's coordinates, and the
+// glyphs of its line fragment, from TextKit 1's layout manager (which lays
+// out what it needs, on screen or not). The end of a text ending in a line
+// break is the extra line fragment, given an empty glyph range at the end.
+static CGFloat MCCaretX(NSLayoutManager *lm, NSTextContainer *tc, NSPoint origin,
+                        NSUInteger i, NSUInteger n, NSRange *lineGlyphs, NSRect *lineRect) {
+    const NSUInteger glyphs = lm.numberOfGlyphs;
+    if (i >= n && (glyphs == 0 || !NSIsEmptyRect(lm.extraLineFragmentRect))) {
+        const NSRect r = lm.extraLineFragmentRect;
+        *lineGlyphs = NSMakeRange(glyphs, 0);
+        *lineRect = r;
+        return origin.x + NSMinX(r) + tc.lineFragmentPadding;
+    }
+    if (i >= n) {   // after the last character, on its line
+        const NSUInteger last = glyphs - 1;
+        *lineRect = [lm lineFragmentRectForGlyphAtIndex:last effectiveRange:lineGlyphs];
+        const NSRect box = [lm boundingRectForGlyphRange:NSMakeRange(last, 1) inTextContainer:tc];
+        return origin.x + NSMaxX(box);
+    }
+    const NSUInteger g = [lm glyphIndexForCharacterAtIndex:i];
+    *lineRect = [lm lineFragmentRectForGlyphAtIndex:g effectiveRange:lineGlyphs];
+    return origin.x + NSMinX(*lineRect) + [lm locationForGlyphAtIndex:g].x;
+}
+
+// The caret index on the line fragment holding glyphs `line` (rect `rect`)
+// nearest x (view coordinates), never past the line's own end.
+static NSUInteger MCIndexOnLine(NSLayoutManager *lm, NSTextContainer *tc, NSPoint origin,
+                                NSString *text, NSRange line, NSRect rect, CGFloat x) {
+    const NSUInteger n = text.length;
+    if (line.length == 0) return n;   // the extra line fragment
+    // The glyph starts on the line are in order (left to right), so a
+    // binary search finds the nearest to x; glyphIndexForPoint: took nine
+    // tenths of the time.
+    const CGFloat tx = x - origin.x - NSMinX(rect);
+    NSUInteger lo = line.location, hi = NSMaxRange(line);   // first start past tx in [lo, hi]
+    while (lo < hi) {
+        const NSUInteger mid = lo + (hi - lo) / 2;
+        if ([lm locationForGlyphAtIndex:mid].x <= tx) lo = mid + 1;
+        else hi = mid;
+    }
+    NSUInteger g = lo;   // the first glyph starting right of tx, or the line's end
+    const NSRange chars = [lm characterRangeForGlyphRange:line actualGlyphRange:NULL];
+    NSUInteger ch;
+    if (g > line.location) {
+        const CGFloat left = [lm locationForGlyphAtIndex:g - 1].x;
+        // Past every glyph's start: the right candidate is the end of the
+        // last glyph (what follows it on the last line of the text).
+        const CGFloat right = g < NSMaxRange(line)
+            ? [lm locationForGlyphAtIndex:g].x
+            : NSMaxX([lm boundingRectForGlyphRange:NSMakeRange(g - 1, 1) inTextContainer:tc]) -
+                  NSMinX(rect);
+        if (tx - left <= right - tx) ch = [lm characterIndexForGlyphAtIndex:g - 1];
+        else if (g < NSMaxRange(line)) ch = [lm characterIndexForGlyphAtIndex:g];
+        else ch = NSMaxRange(chars);
+    } else {
+        ch = [lm characterIndexForGlyphAtIndex:g];
+    }
+    NSUInteger end = NSMaxRange(chars);
+    if (end > chars.location && end <= n) {
+        const unichar last = [text characterAtIndex:end - 1];
+        // A caret goes before the line's break, or before the last character
+        // of a fragment that wraps onto the next.
+        if (last == '\n' || last == '\r' || last == 0x2028 || end < n) end--;
+    }
+    return MAX(chars.location, MIN(ch, end));
+}
+
+// The carets moved one line up or down, keeping their x. Through the
+// layout manager, line by line: firstRectForCharacterRange:, used before,
+// cost about 65 µs a caret (3.3 s for 50,000) and gave nothing for lines
+// not laid out yet, which sent those carets to the top and merged them.
+// Now about 2 µs a caret once the text is laid out (105 ms for 50,000).
+- (BOOL)moveVerticallyByLayout:(int)dir extend:(BOOL)extend {
+    NSTextView *tv = _tv;
+    if (tv.textLayoutManager || !tv.layoutManager || !tv.textContainer) return NO;
+    NSLayoutManager *lm = tv.layoutManager;
+    NSTextContainer *tc = tv.textContainer;
+    NSString *text = tv.string;
+    const NSUInteger n = text.length;
+    const NSPoint origin = tv.textContainerOrigin;
+    [lm ensureLayoutForTextContainer:tc];
+    const NSUInteger glyphs = lm.numberOfGlyphs;
+    const BOOL keepGoals = _goalX.size() == _carets.size();
+    std::vector<Caret> out;
+    std::vector<CGFloat> goals;
+    out.reserve(_carets.size());
+    goals.reserve(_carets.size());
+    for (size_t i = 0; i < _carets.size(); i++) {
+        const Caret &c = _carets[i];
+        NSRange line;
+        NSRect rect;
+        const CGFloat x = MCCaretX(lm, tc, origin, c.head, n, &line, &rect);
+        const CGFloat goal = keepGoals ? _goalX[i] : x;
+        NSUInteger p;
+        if (dir > 0) {
+            const NSUInteger next = NSMaxRange(line);
+            // From the last line: the end (the empty line after a final
+            // line break, or the end of the last line).
+            if (line.length == 0 || next >= glyphs) p = n;
+            else {
+                NSRange below;
+                const NSRect r = [lm lineFragmentRectForGlyphAtIndex:next effectiveRange:&below];
+                p = MCIndexOnLine(lm, tc, origin, text, below, r, goal);
+            }
+        } else {
+            if (line.length == 0 && glyphs > 0) {   // from the extra line to the last line
+                NSRange above;
+                const NSRect r = [lm lineFragmentRectForGlyphAtIndex:glyphs - 1 effectiveRange:&above];
+                p = MCIndexOnLine(lm, tc, origin, text, above, r, goal);
+            } else if (line.location == 0) {
+                p = 0;
+            } else {
+                NSRange above;
+                const NSRect r = [lm lineFragmentRectForGlyphAtIndex:line.location - 1
+                                                      effectiveRange:&above];
+                p = MCIndexOnLine(lm, tc, origin, text, above, r, goal);
+            }
+        }
+        out.push_back(extend ? Caret{c.anchor, p} : Caret{p, p});
+        goals.push_back(goal);
+    }
+    const std::vector<Caret> norm = MultiCaret::normalize(out, n);
+    [self setCarets:out];
+    _goalX = norm.size() == goals.size() ? goals : std::vector<CGFloat>();
+    return YES;
+}
+
 // The carets moved one line up or down, keeping their x.
 - (void)moveVertically:(int)dir extend:(BOOL)extend {
+    if ([self moveVerticallyByLayout:dir extend:extend]) return;
     NSTextView *tv = _tv;
     const NSUInteger n = tv.string.length;
     if (_goalX.size() != _carets.size()) {
