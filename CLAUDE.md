@@ -271,8 +271,10 @@ container (PanelHost, laid out by hand in layoutContainer)
   the commented `defaultFileText` (`settings:key-table` fails on a row it
   lacks) and the view's `applySettings`. Per-language blocks are not done. Still inline hex (`Hex`, `THex`, `SHex`): accents #4EA1F7,
   muted #9CA3AF, dividers #333333, the hints overlay, terminal panel messages,
-  the Search window, the git panel, the developer amber #E8A33D, the ANSI
+  the git panel, the developer amber #E8A33D, the ANSI
   palette in `TermColor::rgb()`; `linux/src/Palette.h` mirrors the defaults.
+  The find bar and Find in Folder take a palette per theme
+  (`FindWidget.mm`, `PaletteFor`), not keys of their own.
 - The window always uses `NSWindowStyleMaskFullSizeContentView`;
   `layoutContainer` keeps the split below the title bar with
   `contentLayoutRect`, empty before the window is shown, so `titlebarHeight`
@@ -1826,7 +1828,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   shell's TMPDIR differs from the app's), only in folders that are the
   user's, real and 0700, moving on to the next when one refuses the
   connection; starting minicode and waiting 10 s when none runs, except for
-  reads (`state`, `selection`, `term-output`, `procs`), which exit 3 at once; a
+  reads (`state`, `selection`, `term-output`, `procs`, `page`), which exit 3
+  at once, and `notify` and `open-url` (`ControlProtocol::launchesApp`); a
   running minicode with no socket (older than the channel) gets "quit and
   open it again", nothing launched. Exit codes 0, 1 command error, 2 usage, 3
   no app.
@@ -2290,34 +2293,45 @@ core file its files include. Traps paid for:
   `tar` fails with ENOSYS under Docker Desktop's amd64 emulation; gpg-agent
   cannot be forwarded into Docker Desktop, so signing is on the host.
 
-## Current state (2026-11-05)
+## Current state (2026-11-06)
 
-- **Released: 1.5.6** (themes, the inline agent, Restart minicode, the browser
-  kept across restarts, the first release signed with "MiniCode Local
-  Signing"); the user's Homebrew copy is on it. 1.5.4 to 1.5.6 went out without
-  the PPA upload (Docker was not running): `scripts/ppa.sh 1.5.6` once Docker
-  is up.
-- **Merged since, not released** (`git log f3e6886..`, Mac unless noted): the
-  second review's bug fixes (git time limits and the Makefile on Linux too),
-  auto-save, the line commands and moved keys, Problems, Ruff beside
-  basedpyright, find and replace, line numbers, brackets, zoom, folding,
-  symbols and Go Back, the terminal's find, Cmd+K, synchronized output, reflow,
-  mouse and titles, the control channel with notes and tours, the agent
-  workspace, the new viewers, keys.conf, MCSourceStorage, the EditorController
-  and Lsp splits, and `make guitest` in CI.
-- **Needs the user's eyes**: all of the above on a real screen with real keys
-  and mouse (the gutter and folds, the find bar, Problems, the Agents panel and
-  Evidence, the viewers, notes and tours, the palette's symbols, trackpad
-  momentum in the terminal); the grid terminal with their own .zshrc, prompt,
-  autosuggestions and fzf, Claude Code's Shift+Return, vim with the mouse; real
-  F2, F8, F9, Shift+F12 (fn on a laptop), the Control+Command folding keys,
-  Shift+Option+O; a real crash or force quit with unsaved tabs; a real Request
-  a Change end to end and its relaunch; Finder's Open With, double-click and
-  Dock drops; `minicode -r` against the running app; the LaTeX popover's
-  placement; Ctrl+Space with several input sources. **Linux**: none of today's
-  work ran on Linux beyond CI; the ThinkPad still owes the folder picker after
-  closing its window, F2 rename in the tree, renames across two windows under
-  GNOME, the PDF placeholder at 2x and the git panel. **Android**: the leader
+- **Released: 1.5.8**, and the user's Homebrew copy is on it. 1.5.7 shipped
+  what had merged since 1.5.6 (auto-save, Problems, find and replace, line
+  numbers, folding, symbols and Go Back, the terminal's find, reflow and
+  mouse, the control channel with notes and tours, the agent workspace, the
+  new viewers, keys.conf, the third review's fixes); 1.5.8 added the skill
+  in the bundle, `minicode hooks` and `notify` with the waiting terminals,
+  Processes and ports, agent pages (`browse`, `page`), Fetch, Pull, Push and
+  autofetch, organize imports on save, the Claude Code IDE link, Mermaid,
+  any server by extension, the daily-work commands, the folder's venv in new
+  terminals, BROWSER and OSC 8 links, page zoom, Maximize Pane, word wrap,
+  and the find bar and Find in Folder laid out as VS Code's.
+- The GitHub release notes of 1.5.7 and 1.5.8 hold only release.sh's
+  placeholder line, not what changed.
+- **PPA**: Launchpad's newest is 1.4.14 (2026-10-09); no 1.5 release was
+  uploaded (ppa.sh needs Docker on the Mac). `scripts/ppa.sh <version>` once
+  Docker is up, or on the ThinkPad.
+- The release is built on Apple silicon with no `-arch` flag, so it is arm64
+  only. The README says so; the cask does not declare
+  `depends_on arch: :arm64`.
+- **Needs the user's eyes** on a real screen with real keys and mouse: the
+  gutter and folds, the find bar and Find in Folder, Problems, the Agents
+  panel and Evidence, the viewers, notes and tours, the palette's symbols,
+  trackpad momentum in the terminal; the grid terminal with their own
+  .zshrc, prompt, autosuggestions and fzf, Claude Code's Shift+Return, vim
+  with the mouse; real F2, F8, F9, Shift+F12 (fn on a laptop), the
+  Control+Command folding keys, Shift+Option+O; a real crash or force quit
+  with unsaved tabs; a real Request a Change end to end and its relaunch;
+  Finder's Open With, double-click and Dock drops; `minicode -r` against the
+  running app; the LaTeX popover's placement; Ctrl+Space with several input
+  sources. From 1.5.8: the IDE link against a real Claude Code session; the
+  waiting dots once the user has run `minicode hooks --install`; push, pull
+  and autofetch against a real remote (ssh keys, a credential helper);
+  Mermaid with a real mmdc; BROWSER with Claude Code's links and `vite
+  --open`; page zoom and Zoom to Fit on a trackpad. **Linux**: none of the
+  1.5 work ran on Linux beyond CI; the ThinkPad still owes the folder picker
+  after closing its window, F2 rename in the tree, renames across two windows
+  under GNOME, the PDF placeholder at 2x and the git panel. **Android**: the leader
   key and real typing in the commit and edit boxes (Enter and Shift+Enter), the
   key rows against the curved corners, bash and vim on the real keyboard, the
   on-screen keyboard resizing the pane, real sound and keys in the player, and

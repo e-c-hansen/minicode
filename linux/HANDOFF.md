@@ -18,8 +18,13 @@ Read these first:
 
 ## Where it stands
 
-Items 1 to 11 below are done (September 2026), so the port now has what the
-Mac has, apart from what the list at the end of item 8 leaves out. It builds
+Items 1 to 11 below are done (September 2026), so the port has what the Mac
+had then, apart from what the list at the end of item 8 leaves out. Almost
+everything the Mac gained from 1.5.0 on (tabs, the command palette, folding,
+several cursors, rename and the other language server commands, formatting,
+the viewers, the agent features and the command line control) is not here
+yet; `../ROADMAP.md`, "Linux parity", lists it with the core files that
+already hold its logic. It builds
 without warnings at `warning_level=2` (CI: Ubuntu, GTK 4, VTE, WebKitGTK,
 poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
 - data safety: "Save changes?" before anything replaces edits, failed saves
@@ -57,7 +62,7 @@ poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
 It shares from `../src` `SyntaxHighlighter`, `MarkdownParser`, `MarkdownEdit`,
 `MarkdownTasks`, `Settings`, `LineComments`, `AutoIndent`, `KeepSorted`,
 `FolderSearch`, `TextFind`, `LatexDoc`, `SyncTex`, `Json`, `LspClient`,
-`TermLinks`, `GitStatus` and `GitGraph`. `meson.build`'s `core_sources` and
+`TermLinks`, `GitStatus`, `GitGraph` and `GitModel`. `meson.build`'s `core_sources` and
 the plain Makefile's `CORE` must name the same files: CI builds only with
 Meson, so the Makefile once fell three files behind and could not link, and
 `make test`'s `linux:build-lists` check now compares the two.

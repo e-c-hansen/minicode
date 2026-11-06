@@ -57,8 +57,8 @@ to talk to), give plain paths in the reply instead and do not retry.
 
 Add `--window ID` or `--folder DIR` to act in a given window (default: the
 frontmost). Exit codes: 0 done, 1 the command failed (stderr says why), 2
-usage error, 3 no minicode (`state`, `selection`, `term-output` and `procs`
-never start one). `minicode help <command>` has the details.
+usage error, 3 no minicode (`state`, `selection`, `term-output`, `procs` and
+`page` never start one). `minicode help <command>` has the details.
 
 ## Cleaning up after yourself
 
