@@ -70,6 +70,11 @@ struct FolderSearchOptions {
     // one character, not two.
     bool          wholeWord = false;
     bool          regex = false;
+    bool          preserveCase = false;         // Replace in Folder's AB toggle
+    // VS Code's "files to include" and "files to exclude": comma-separated
+    // globs (see PathFilter). Empty includes everything, excludes nothing.
+    std::string   include;
+    std::string   exclude;
 };
 
 struct FolderSearchResult {
@@ -248,5 +253,38 @@ bool findTodoInLine(const std::string& line, bool markdown, std::size_t* byteCol
 
 // .md, .markdown, .mdown, .mkd or .mkdn, in any case.
 bool isMarkdownPath(const std::string& path);
+
+// ------------------------------------------- files to include / exclude
+// A glob matched against a path relative to the searched folder, '/'
+// separated: * is any run of characters but '/', ? one of them, ** as a
+// whole segment any number of segments (none included), [abc], [a-z] and
+// [!abc] (or [^abc]) one character of a set, {a,b} either alternative
+// (nested braces too). Case counts, as in ripgrep's globs.
+bool globMatch(const std::string& pattern, const std::string& path);
+
+// The patterns of a comma-separated list, commas inside {} and [] kept,
+// each trimmed, empty ones dropped.
+std::vector<std::string> splitGlobList(const std::string& text);
+
+// What VS Code's search view makes of the include and exclude boxes
+// (queryBuilder.ts, parseSearchPaths):
+// - "./src", "../x", "/abs/path" and "~/path" are search paths: that file or
+//   folder, and everything under it, anchored at the searched folder (an
+//   absolute one outside it matches nothing; "./" alone matches everything).
+// - Anything else matches at any depth, as itself or as a folder holding
+//   the path: "foo/bar" is **/foo/bar and **/foo/bar/**; ".js" is *.js.
+class PathFilter {
+public:
+    PathFilter() = default;
+    PathFilter(const std::string& text, const std::string& root);
+    bool empty() const { return globs_.empty(); }
+    // Whether a path relative to the root (a file, or a folder) matches.
+    bool matches(const std::string& relativePath) const;
+    // The globs it expanded to, for tests.
+    const std::vector<std::string>& globs() const { return globs_; }
+
+private:
+    std::vector<std::string> globs_;
+};
 
 }  // namespace FolderSearch
