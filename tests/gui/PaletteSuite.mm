@@ -96,6 +96,9 @@ MC_GUI_SUITE(palette) {
     MCGuiStep(@"\"qot\" finds the file by its name's word starts; Return opens it", ^{
         Type(c, @"qot");
         GCHECK([Selected(c) containsString:@"quick-open-target.md"]);
+        if (![Selected(c) containsString:@"quick-open-target.md"])
+            MCGuiNote(@"for qot: %@ of %lu", [Labels(c) subarrayWithRange:NSMakeRange(0, MIN(5u, Labels(c).count))],
+                      (unsigned long)Labels(c).count);
         Command(c, @selector(insertNewline:));
     });
     MCGuiWait(@"opened", 5, ^BOOL { return [[c valueForKey:@"currentPath"] hasSuffix:@"quick-open-target.md"]; });

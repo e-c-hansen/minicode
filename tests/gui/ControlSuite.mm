@@ -742,6 +742,13 @@ MC_GUI_SUITE(control) {
             done();
         });
     });
+    // The suites after this one work in the project's window, which is the
+    // newest again once the other folder's goes.
+    MCGuiStep(@"the other folder's window closes", ^{
+        for (EditorController *e in [MCGuiControllers() copy])
+            if (e != c && [e.rootPath.lastPathComponent isEqualToString:@"other"]) [e.window close];
+        GCHECK(MCGuiControllers().count == 1 && MCGuiController() == c);
+    });
 
     // ------------------------------------------------------- the socket goes
     MCGuiStep(@"stopping removes the socket; starting again puts it back", ^{
