@@ -601,6 +601,8 @@ MC_GUI_SUITE(idelink) {
         // Other IDEs' lock files are still there.
         GCHECK([[NSFileManager defaultManager] fileExistsAtPath:[ideDir stringByAppendingPathComponent:@"22222.lock"]]);
         MCGuiSetSettings(settingsBefore);
+        // Its tabs go: a later suite's fake language server finds files by name (a.py).
+        [MCGuiController() closeAllTabs:nil];
     });
 }
 
@@ -734,5 +736,8 @@ MC_GUI_SUITE(mermaid) {
             unsetenv("MINICODE_MMDC");
         });
     }
-    MCGuiStep(@"done with the stand-in", ^{ unsetenv("MINICODE_MERMAID_CACHE"); });
+    MCGuiStep(@"done with the stand-in", ^{
+        unsetenv("MINICODE_MERMAID_CACHE");
+        [MCGuiController() closeAllTabs:nil];
+    });
 }
