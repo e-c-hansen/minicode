@@ -212,6 +212,29 @@ The demo folder has a Python file, C++, Markdown, a short LaTeX paper in demo/pa
 make run DIR=demo
 ```
 
+## Driving minicode from the command line, and agents
+
+The same minicode command drives the copy that is running, which is how a coding agent such as Claude Code can show its work in minicode rather than describe it in a chat. Each command acts in the window in front (or the one named with `--window` or `--folder`), never takes the keyboard, and only ever adds: no tab or terminal you have is closed, replaced or moved.
+
+```
+minicode open src/main.mm:100              # a file at a line, by the usual open rules
+minicode open src/Lsp.mm:3090 --to 3185 --note "Applies rename edits to every file"
+minicode diff src/Lsp.mm                   # side by side against HEAD; --base REF, or two files
+minicode term --run "make test"            # a new terminal, the command typed and run in plain sight
+minicode term-output 3 --lines 50          # what a terminal shows, scrollback included
+minicode browse http://localhost:8000      # the page in the browser pane beside the editor
+minicode window --folder ~/project         # the window on a folder, opened if none shows it
+minicode tour tour.json                    # a sequence of notes
+minicode state | jq .windows[0].tabs       # windows, tabs, selection, terminals, browser
+minicode selection                         # the selected text
+```
+
+A note is a line or two of plain text over a highlighted range, labelled with who wrote it (`--from`, Claude by default). It is never written into the file or its undo history, and it goes when you press Escape, click its ×, or edit inside its lines. Files opened with a note share one agent preview tab per window, its title in italics, which the next such open replaces, so an agent's output never piles up tabs; edit in it, or double-click its title, and it becomes an ordinary tab. A tour is a list of `{"path", "line", "to", "note"}` stops; Option+] and Option+[ step through it, and the note says where you are ("2 of 5"). `minicode help` describes every command, and they exit with 0 when done, 1 when the command failed, 2 for a usage error, and 3 when there is no minicode to talk to (one is started when none is running).
+
+Each running minicode listens on a socket in your own temporary folder that only your user account can open, and nothing in minicode runs a command or a script by itself: `term --run` types what it was given into a terminal you can see. A script that sets up a workspace (a server in a terminal, its page in the browser, the README open) is just these commands in a file you run yourself.
+
+The repository has a skill for Claude Code in skills/minicode that teaches it all of this: when reporting work, open the changed lines with a note, show the diff and run the tests in a terminal; when asked "where is X", open it rather than quote a path; read `state` and `selection` when you say "this". `make install` copies it to ~/.claude/skills/minicode.
+
 ## Linux
 
 The Linux version, in the linux folder, is built on GTK4 with a VTE terminal, a WebKitGTK browser and poppler for PDFs. It has everything described above, including the LaTeX preview and language servers, with Control where the Mac uses Command. What it lacks is tabs, so a window holds one file at a time, typeset math in the Markdown preview, which shows the TeX for now, and blur behind the window, which GNOME gives applications no way to ask for.
@@ -261,6 +284,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Ask the inline agent: change the file at the cursor, write a terminal command, or hand a task to Claude Code | Command I |  |  |
 | Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
 | Clear the terminal, its scrollback included | Command K |  |  |
+| Close an agent's note (`minicode open --note`) in the editor | Escape, or its × |  |  |
 | Close the active terminal | Control Shift W |  |  |
 | Close the application | Command Q | Ctrl Q |  |
 | Close the tab, the terminal the keyboard is in, or the browser panel when it has the keyboard | Command W |  |  |
@@ -290,9 +314,11 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Go to tab 1 to 8, or the last tab | Control 1 to 9, or Shift Command 1 to 9 (macOS keeps Shift Command 3, 4 and 5 for screenshots) |  |  |
 | Go to the matching bracket, or to the closing bracket of the pair around the cursor | Shift Command backslash |  |  |
 | Go to the next or previous problem in the file, with its message at the cursor | F8, Shift F8 (F8 may need fn on a laptop) |  |  |
+| Go to the next or previous stop of an agent's tour (`minicode tour`) | Option ], Option [ |  |  |
 | Go to the start or end of the file (Shift selects to it) | Command Home, Command End (fn Command Left, Right on a laptop) |  |  |
 | Indent or outdent the selected lines | Tab, Shift Tab | Tab, Shift Tab | Tab, Shift Tab |
 | Jump to the previous file |  | Ctrl Tab |  |
+| Keep the agent preview tab as an ordinary tab | Double-click its title, or edit in it |  |  |
 | List every problem the language servers report, grouped by file | Shift Command M, or click the problem counts in the status bar |  |  |
 | List the TODO comments and open Markdown tasks in the folder | Shift Command D | Ctrl Shift L | W, or Ctrl Shift L |
 | Move the line, or the selected lines, down or up, at every cursor | Option Down, Option Up, or Command Down, Command Up |  |  |

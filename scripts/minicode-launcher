@@ -31,7 +31,14 @@ Options:
 
 Opening from Finder (Open With, or a drop on the Dock icon) follows the same
 rules as a file named here.
+
+Subcommands drive the running minicode instead, without bringing it to the
+front (a word below is always a subcommand; write ./open for a file of that
+name). `minicode help <command>` says more about one.
+
 EOF
+  if [ -x "$cli" ]; then "$cli" help
+  else echo "(This copy has no control channel.)"; fi
 }
 
 # Resolve this script's real location, following the Homebrew symlink.
@@ -45,6 +52,18 @@ dir="$(cd -P "$(dirname "$src")" && pwd)"
 # The launcher lives in Contents/Resources, the binary in Contents/MacOS.
 bundle="$(cd -P "$dir/../.." && pwd)"
 binary="$bundle/Contents/MacOS/MiniCode"
+# The control channel's client: `minicode open`, `state`, `term` and the
+# other subcommands talk to the running minicode through it.
+cli="$bundle/Contents/MacOS/minicode-cli"
+
+case "$1" in
+  open|window|browse|term|diff|split|state|selection|term-output|tour|help)
+    if [ ! -x "$cli" ]; then
+      echo "minicode: this copy has no control channel ($cli is missing)" >&2
+      exit 3
+    fi
+    exec "$cli" "$@" ;;
+esac
 
 new_window=0
 reuse=0

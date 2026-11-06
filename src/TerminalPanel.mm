@@ -85,6 +85,10 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
 }
 
 - (instancetype)initWithDirectory:(NSString *)dir {
+    return [self initWithDirectory:dir firstIn:nil];
+}
+
+- (instancetype)initWithDirectory:(NSString *)dir firstIn:(NSString *)first {
     if ((self = [super initWithFrame:NSMakeRect(0, 0, 400, 220)])) {
         _dir = dir.length ? dir : NSHomeDirectory();
         _tabs = [NSMutableArray array];
@@ -113,7 +117,7 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
         [[NSNotificationCenter defaultCenter]
             addObserver:self selector:@selector(applySettings)
                    name:MCSettingsDidChangeNotification object:nil];
-        [self addTab];
+        [self addTabInDirectory:first];
     }
     return self;
 }
@@ -153,8 +157,9 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
 }
 
 // ------------------------------------------------------------ the terminals
-- (TerminalView *)makeTerminal {
-    TerminalView *t = [[TerminalView alloc] initWithDirectory:_dir];
+- (TerminalView *)makeTerminal { return [self makeTerminalIn:nil]; }
+- (TerminalView *)makeTerminalIn:(NSString *)dir {
+    TerminalView *t = [[TerminalView alloc] initWithDirectory:dir.length ? dir : _dir];
     t.projectRoot = self.projectRoot;
     __weak MCTerminalPanel *weakSelf = self;
     t.onOpenLink = ^(MCTermLink *link) {
@@ -211,8 +216,9 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
     [self.activeTerminal focusInput];
 }
 
-- (TerminalView *)addTab {
-    TerminalView *t = [self makeTerminal];
+- (TerminalView *)addTab { return [self addTabInDirectory:nil]; }
+- (TerminalView *)addTabInDirectory:(NSString *)dir {
+    TerminalView *t = [self makeTerminalIn:dir];
     [_tabs addObject:[NSMutableArray arrayWithObject:t]];
     [_tabActive addObject:t];
     [self selectTab:_tabs.count - 1];
@@ -236,8 +242,9 @@ static const int kMinSplitColumns = 20;
     return cols >= kMinSplitColumns;
 }
 
-- (TerminalView *)splitActive {
-    if (_selected < 0) return [self addTab];
+- (TerminalView *)splitActive { return [self splitActiveInDirectory:nil]; }
+- (TerminalView *)splitActiveInDirectory:(NSString *)dir {
+    if (_selected < 0) return [self addTabInDirectory:dir];
     NSMutableArray<TerminalView *> *tab = _tabs[_selected];
     if (![self roomForPanes:tab.count + 1]) {
         NSBeep();
@@ -247,7 +254,7 @@ static const int kMinSplitColumns = 20;
                                                     kMinSplitColumns]);
         return nil;
     }
-    TerminalView *t = [self makeTerminal];
+    TerminalView *t = [self makeTerminalIn:dir];
     NSUInteger at = [tab indexOfObject:self.activeTerminal];
     [tab insertObject:t atIndex:at == NSNotFound ? tab.count : at + 1];
     _tabActive[_selected] = t;

@@ -30,7 +30,10 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/PythonEnvs.cpp \
             src/AutoIndent.cpp src/KeepSorted.cpp src/FileDetails.cpp \
             src/ChangeRequest.cpp src/MultiCaret.cpp src/CommandPalette.cpp src/Backups.cpp \
-            src/InlineAgent.cpp src/LineIndex.cpp src/BracketMatch.cpp src/Folding.cpp
+            src/InlineAgent.cpp src/LineIndex.cpp src/BracketMatch.cpp \
+            src/ControlProtocol.cpp src/SideBySide.cpp \
+            src/AgentTranscript.cpp src/AgentIndex.cpp src/AgentEvidence.cpp \
+            src/Folding.cpp
 
 # Each source file compiles to its own object in build/obj (build/test-obj for
 # the tests), with a dependency file listing the headers it read, so touching
@@ -64,12 +67,24 @@ ifneq ($(if $(MAKECMDGOALS),$(filter-out clean,$(MAKECMDGOALS)),all),)
           printf '%s\n' '$(TESTCMD)' > $(TESTDIR)/flags.txt)
 endif
 
-.PHONY: all app run test dmg dist-zip clean demos membench icon
+.PHONY: all app run test guitest install dmg dist-zip clean demos membench icon
 
 all: app
 
 $(BIN): $(OBJ)
 	$(CXX) $(CXXFLAGS) $(OBJ) $(LDFLAGS) -o $(BIN)
+
+# The control channel's client (`minicode open`, `state`, ...): the launcher
+# hands it every subcommand. Only the protocol and JSON from the core.
+CLI     := build/minicode-cli
+CLI_OBJ := $(OBJDIR)/tools/minicode-cli.cpp.o $(OBJDIR)/ControlProtocol.cpp.o $(OBJDIR)/Json.cpp.o
+
+$(OBJDIR)/tools/%.cpp.o: tools/%.cpp $(OBJDIR)/flags.txt
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
+
+$(CLI): $(CLI_OBJ)
+	$(CXX) $(CXXFLAGS) $(CLI_OBJ) -o $@
 
 # After a `make clean` in the same run the folders and flags.txt are gone.
 $(OBJDIR)/flags.txt:
@@ -87,7 +102,7 @@ $(OBJDIR)/%.cpp.o: src/%.cpp $(OBJDIR)/flags.txt
 SIGN_IDENTITY ?= $(shell security find-certificate -c "MiniCode Local Signing" >/dev/null 2>&1 && echo "MiniCode Local Signing")
 
 # Assemble a minimal .app bundle so Cocoa treats it as a real GUI app.
-app: $(BIN)
+app: $(BIN) $(CLI)
 	@rm -rf $(BUNDLE)
 	@mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources
 	@cp $(BIN) $(BUNDLE)/Contents/MacOS/$(APP)
@@ -96,6 +111,7 @@ app: $(BIN)
 	@cp resources/AppIcon.icns $(BUNDLE)/Contents/Resources/AppIcon.icns
 	@cp scripts/minicode-launcher $(BUNDLE)/Contents/Resources/minicode
 	@chmod +x $(BUNDLE)/Contents/Resources/minicode
+	@cp $(CLI) $(BUNDLE)/Contents/MacOS/minicode-cli
 	@# Signed with "MiniCode Local Signing" when the login keychain has it
 	@# (scripts/make-signing-identity.sh makes it, once), so macOS keeps
 	@# what the app was allowed (folders, the microphone) from one build to
@@ -103,9 +119,13 @@ app: $(BIN)
 	@# had to ask again. Ad-hoc otherwise, or if that signing fails. A
 	@# signature is required to run on Apple Silicon; neither kind removes
 	@# the Gatekeeper download warning, which only notarization does.
-	@if [ -n "$(SIGN_IDENTITY)" ] && codesign --force --sign "$(SIGN_IDENTITY)" $(BUNDLE) 2>/dev/null; then \
+	@# The client in Contents/MacOS is signed first, as nested code must be.
+	@if [ -n "$(SIGN_IDENTITY)" ] && \
+	    codesign --force --sign "$(SIGN_IDENTITY)" $(BUNDLE)/Contents/MacOS/minicode-cli 2>/dev/null && \
+	    codesign --force --sign "$(SIGN_IDENTITY)" $(BUNDLE) 2>/dev/null; then \
 	    echo "Signed with $(SIGN_IDENTITY)"; \
 	else \
+	    codesign --force --sign - $(BUNDLE)/Contents/MacOS/minicode-cli 2>/dev/null || true; \
 	    codesign --force --sign - $(BUNDLE) 2>/dev/null || true; \
 	    echo "Signed ad hoc (scripts/make-signing-identity.sh keeps permissions across builds)"; \
 	fi
@@ -133,6 +153,36 @@ $(TESTDIR)/run_tests.cpp.o: tests/run_tests.cpp $(TESTDIR)/flags.txt
 $(TESTDIR)/%.cpp.o: src/%.cpp $(TESTDIR)/flags.txt
 	@mkdir -p $(@D)
 	$(CXX) $(TESTFLAGS) -MMD -MP -c $< -o $@
+
+# GUI checks (tests/gui, see tests/gui/README.md): the whole app, main.mm
+# included as minicode_main, driven offscreen by a harness that never puts
+# a window on screen or activates the app. `make guitest SUITES=control`
+# runs one suite.
+GUIDIR  := build/gui-obj
+GUI_SRC := $(wildcard tests/gui/*.mm)
+GUI_OBJ := $(patsubst tests/gui/%,$(GUIDIR)/%.o,$(GUI_SRC)) $(GUIDIR)/main.mm.o \
+           $(filter-out $(OBJDIR)/main.mm.o,$(OBJ))
+
+$(GUIDIR)/main.mm.o: src/main.mm $(OBJDIR)/flags.txt
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Dmain=minicode_main -MMD -MP -c $< -o $@
+
+$(GUIDIR)/%.mm.o: tests/gui/%.mm $(OBJDIR)/flags.txt
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Itests/gui -MMD -MP -c $< -o $@
+
+build/guitest: $(GUI_OBJ)
+	$(CXX) $(CXXFLAGS) $(GUI_OBJ) $(LDFLAGS) -o $@
+
+guitest: build/guitest $(CLI)
+	@./build/guitest $(SUITES)
+
+# The agent skill (skills/minicode) for Claude Code, in ~/.claude/skills.
+SKILL_DIR ?= $(HOME)/.claude/skills/minicode
+install:
+	@mkdir -p "$(SKILL_DIR)"
+	@cp skills/minicode/SKILL.md "$(SKILL_DIR)/SKILL.md"
+	@echo "Installed the minicode skill in $(SKILL_DIR)"
 
 # Regenerate the app icon (resources/AppIcon.icns) from tools/makeicon.m.
 icon:
@@ -184,4 +234,4 @@ build/procmem: tools/procmem.c
 membench: app build/procmem
 	./scripts/membench.sh
 
--include $(OBJ:.o=.d) $(TEST_OBJ:.o=.d)
+-include $(OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(CLI_OBJ:.o=.d) $(GUI_OBJ:.o=.d)

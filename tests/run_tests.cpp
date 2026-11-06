@@ -30,6 +30,11 @@
 #include "InlineAgent.h"
 #include "LineIndex.h"
 #include "BracketMatch.h"
+#include "ControlProtocol.h"
+#include "SideBySide.h"
+#include "AgentTranscript.h"
+#include "AgentIndex.h"
+#include "AgentEvidence.h"
 #include "Folding.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
@@ -9464,6 +9469,9 @@ static void testMultiCaretOccurrences() {
 #include "lsp_also_tests.inc"
 #include "find_tests.inc"
 #include "gutter_tests.inc"
+#include "control_tests.inc"
+#include "agent_index_tests.inc"
+#include "agent_evidence_tests.inc"
 #include "fold_tests.inc"
 
 int main() {
@@ -9523,6 +9531,11 @@ int main() {
     testFolderReplace();
     testLineIndex();
     testBrackets();
+    testControlProtocol();
+    testSideBySide();
+    testAgentTranscript();
+    testAgentIndex();
+    testAgentEvidence();
     testFolding();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

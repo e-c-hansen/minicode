@@ -11,6 +11,7 @@ extern const CGFloat kMCTabStripHeight;
 @property(nonatomic, copy) NSString *title;
 @property(nonatomic, copy) NSString *toolTip;   // the whole path
 @property(nonatomic, assign) BOOL dirty;        // a dot in place of the close button
+@property(nonatomic, assign) BOOL preview;      // the agent preview tab: an italic title
 @end
 
 @interface MCTabStrip : NSView
@@ -19,6 +20,8 @@ extern const CGFloat kMCTabStripHeight;
 // A click on a tab, and a click on its close button or a middle click on it.
 @property(nonatomic, copy) void (^onSelect)(NSInteger index);
 @property(nonatomic, copy) void (^onClose)(NSInteger index);
+// A double-click on a tab's title (keeps the agent preview tab).
+@property(nonatomic, copy) void (^onDoubleClick)(NSInteger index);
 // A right click on a tab: its own menu (Adjust Settings… is added after it).
 // Without one, or off the tabs, the strip's menu is only Adjust Settings….
 @property(nonatomic, copy) NSMenu *(^menuForTab)(NSInteger index);
