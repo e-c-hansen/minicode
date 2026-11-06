@@ -387,6 +387,13 @@ container (PanelHost, laid out by hand in layoutContainer)
   popovers that force DarkAqua and inline hex are unchanged.
   `selectedTextAttributes` is only a background, since after a switch AppKit
   drew selected text in its own color.
+- **minicode's own writes** to settings.conf and keys.conf (a theme, the IDE
+  link toggle, the first file of either) go through `MCWriteConfigFile`
+  (AppSettings.h, over `FolderSearch::writeFileAtomically`), never
+  `writeToFile:atomically:`, which replaced a symlinked dotfile with a plain
+  file. A theme or the IDE link is refused while a tab holds the file with
+  unsaved changes (`AppSettings.unsavedTextCheck`, set in
+  EditorController+Settings.mm's `+load`), the reason in the status bar.
 
 ## Keys: the registry, keys.conf and the key monitor
 
@@ -462,7 +469,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   back.
 - **One writer**: Cmd+S, `saveTab:` and auto-save all go through
   `writeText:toTab:interactive:` over `FolderSearch::writeFileAtomically`
-  (a symlink stays a link, hard links and files owned by someone else are
+  (a symlink stays a link, a dangling one too, creating the file it names;
+  hard links and files owned by someone else are
   written in place, xattrs, ACL and creation date kept, F_FULLFSYNC), which
   refuses a tab without text of its own (`tabHasTextToWrite:`: SQLite, Quick
   Look, a large CSV) and sends didSave. `writeToFile:atomically:` replaced a
@@ -1881,7 +1889,9 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   never a search or another scheme. `page --url/--text/--console/
   --screenshot/--reload`, `--yours` for the user's page; text, console and
   screenshots only for local pages unless `control.page-any-origin`, checked
-  again when the read comes back. Status from
+  again when the read comes back. A screenshot never replaces a file unless
+  `--overwrite` is given, and never goes through a symlink (O_EXCL, or an
+  atomic rename with `--overwrite`). Status from
   `decidePolicyForNavigationResponse` (which answers as WebKit does without
   it: allow what it can show). The agent page's configuration installs, at
   document start, a listener in an isolated `WKContentWorld` (uncaught
@@ -1981,7 +1991,8 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   is made, not on first use, because its shell gets it as
   `MINICODE_TERMINAL_ID`, with `MINICODE_PID` (inherited ones are dropped).
   `minicode hooks --install` (run by the user only; backs up, merges, a second
-  run changes nothing) adds `minicode notify --from-hook` to Claude Code's
+  run changes nothing; a symlinked settings.json stays a link,
+  `ClaudeHooks::writeSettingsFile`) adds `minicode notify --from-hook` to Claude Code's
   Notification, Stop, UserPromptSubmit and PostToolUse hooks; notify never
   starts minicode and with --from-hook prints nothing and exits 0 whatever
   happens. Core: `ClaudeHooks` (hook JSON, the settings merge) and
