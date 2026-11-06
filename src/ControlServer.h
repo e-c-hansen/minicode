@@ -7,7 +7,10 @@
 //
 // Requests are read off the main thread and handled on it, one JSON line in,
 // one out (ControlProtocol.h for the protocol, ControlCommands.mm for what
-// each command does).
+// each command does). A connection has one request at a time with the main
+// thread: the next line is read once the last answer is written, so lines
+// sent all at once queue in the socket, not on the main thread. Writes never
+// block, and a peer that takes no part of its answer for 10 s is dropped.
 #import <Cocoa/Cocoa.h>
 #include <sys/types.h>
 
@@ -34,9 +37,13 @@ void MCControlServerStart(id<MCControlAppHost> host);
 void MCControlServerStop(void);
 // The socket's path, or nil when not listening.
 NSString *MCControlSocketPath(void);
-// The folder the sockets live in: $TMPDIR/MiniCode.
+// The folder the sockets live in: $TMPDIR/MiniCode (Launch Services sets
+// TMPDIR to the user's own temporary folder, which the command line always
+// looks in too), else that folder from confstr; $MINICODE_CONTROL_DIR in
+// tests.
 NSString *MCControlSocketFolder(void);
-// Removes sockets in `folder` whose process is gone; returns how many.
+// Removes sockets in `folder` whose process is gone, or whose pid now
+// belongs to a process that does not listen on it; returns how many.
 NSUInteger MCControlRemoveStaleSockets(NSString *folder);
 
 // One request line handled in this process, as if it came over the socket

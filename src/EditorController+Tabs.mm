@@ -314,6 +314,7 @@
     [self saveBeforeLeavingFormatSave];   // Cmd+S is never lost to a tab switch
     NSTextView *tv = self.textView;
     [self.markdownEditPanel close];
+    [_viewers commitEditing];   // a CSV cell typed into lands in this tab's file
     // A color pick saves the settings file a moment later (colorPicked:);
     // that save belongs to this tab, so it happens now, not in the next one.
     [NSObject cancelPreviousPerformRequestsWithTarget:self
@@ -587,6 +588,10 @@ static const NSUInteger kMaxClosedTabs = 50;
 // YES when the tab may go: no unsaved changes, or the user saved them or
 // let them go.
 - (BOOL)confirmCloseTab:(MCTab *)t {
+    // With auto-save on, what it would write once the tab goes is written
+    // first, so it is not asked about (focus-change's save, scheduled for
+    // the next turn of the run loop, would come after the question).
+    if (t.dirty) [self autoSaveNow];
     if (!t.dirty) return YES;
     NSAlert *a = [[NSAlert alloc] init];
     a.messageText = [NSString stringWithFormat:@"Save changes to “%@”?",
@@ -604,6 +609,7 @@ static const NSUInteger kMaxClosedTabs = 50;
 // one question for every tab with unsaved changes.
 - (BOOL)confirmCloseAllTabs {
     [self saveBeforeLeavingFormatSave];   // a Cmd+S still waiting for its formatter
+    [self autoSaveNow];   // auto-save's writes first, so only what it skips is asked about
     NSMutableArray<MCTab *> *dirty = [NSMutableArray array];
     for (MCTab *t in _tabs) if (t.dirty) [dirty addObject:t];
     if (dirty.count == 0) return YES;
@@ -658,26 +664,15 @@ static const NSUInteger kMaxClosedTabs = 50;
         [self saveCurrentFile:nil];
         return !self.dirty;
     }
-    if (!t.dirty || !t.currentPath) return YES;
-    if (t.isImage || t.isPDF || t.isMedia || t.isDiff || t.showingMessage) return YES;
+    if (!t.dirty || ![self tabHasTextToWrite:t]) return YES;
     if (![self mayWriteTab:t]) return !t.dirty;   // Reload leaves nothing to save
     NSString *text = t.sourceText ?: @"";
     NSString *sortProblem = nil;
     const BOOL preview = (t.isMarkdown || t.isLatex) && t.previewMode;
     if (!preview && [AppSettings shared].settings.keepSortedOnSave())
         text = MCKeepSortedText(text, &sortProblem) ?: text;
-    NSError *err = nil;
-    if (![text writeToFile:t.currentPath atomically:YES
-                  encoding:NSUTF8StringEncoding error:&err]) {
-        [[NSAlert alertWithError:err] runModal];
-        return NO;
-    }
+    if (![self writeText:text toTab:t interactive:YES]) return NO;
     if (![text isEqualToString:t.sourceText ?: @""]) t.pendingSort = text;
-    t.savedText = text;
-    t.gone = NO;
-    t.dirty = NO;
-    [self recordDiskStateOf:t];
-    [self updateTitle];
     if (sortProblem)
         [self flashStatus:[NSString stringWithFormat:@"%@: %@",
                            t.currentPath.lastPathComponent, sortProblem]];
@@ -782,10 +777,69 @@ static const NSUInteger kMaxClosedTabs = 50;
     else [self.window makeFirstResponder:self.outline];
 }
 
+// Whether the tab holds text that is its file's: not a message (welcome,
+// a binary file), a picture, a PDF, a player, a diff, or a viewer that
+// shows the file without its text (SQLite, Quick Look, a large CSV), whose
+// empty text view must never be written over the file.
+- (BOOL)tabHasTextToWrite:(MCTab *)t {
+    return t.currentPath && !t.showingMessage && !t.isImage && !t.isPDF && !t.isMedia &&
+           !t.isDiff && !MCViewerKindWithoutText(t.viewerKind);
+}
+
+// The one writer: Cmd+S, a background tab's save (Save All, closing), and
+// auto-save all write a tab's text here. The write goes through
+// FolderSearch::writeFileAtomically, so a symlink stays a link (its file
+// is written), a hard-linked file is written in place, and the mode,
+// owner, extended attributes and creation date stay; the tab's byte order
+// mark goes back in front. On success the tab is clean and in step with
+// the file as written (its stamp taken from the write itself), and its
+// language servers hear of the save. `interactive` says a failure in an
+// alert, else in the status bar (auto-save never asks anything).
+- (BOOL)writeText:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive {
+    if (!t || !text || ![self tabHasTextToWrite:t]) return NO;
+    NSString *name = t.currentPath.lastPathComponent;
+    NSData *utf8 = [text dataUsingEncoding:NSUTF8StringEncoding];
+    std::string bytes = t.bom ? "\xEF\xBB\xBF" : "";
+    if (utf8) bytes.append((const char *)utf8.bytes, utf8.length);
+    std::string error = utf8 ? "" : "the text holds a character UTF-8 cannot store";
+    FolderSearch::FileStamp written;
+    if (!utf8 || !FolderSearch::writeFileAtomically(t.currentPath.fileSystemRepresentation, bytes,
+                                                    &error, &written)) {
+        NSString *why = [NSString stringWithUTF8String:error.c_str()] ?: @"";
+        if (interactive) {
+            NSAlert *a = [NSAlert new];
+            a.messageText = [NSString stringWithFormat:@"“%@” could not be saved.", name];
+            a.informativeText = [NSString stringWithFormat:@"%@: %@.", t.currentPath, why];
+            [a runModal];
+        } else {
+            [self showStatusNote:[NSString stringWithFormat:@"Could not auto-save %@: %@",
+                                  name, why]];
+        }
+        return NO;
+    }
+    t.savedText = text;
+    t.gone = NO;
+    t.dirty = NO;
+    // So our own save never looks like a change made outside.
+    [self recordStamp:MCDiskStampFromFileStamp(written) ofTab:t];
+    if (t == _activeTab) {
+        [self.lsp documentSaved];
+    } else {
+        // P5 (language servers) adds -[LspSession documentSavedAtPath:text:]
+        // for a tab saved in the background; until then nothing is sent.
+        SEL bg = NSSelectorFromString(@"documentSavedAtPath:text:");
+        if ([self.lsp respondsToSelector:bg])
+            ((void (*)(id, SEL, NSString *, NSString *))[self.lsp methodForSelector:bg])(
+                self.lsp, bg, t.currentPath, text);
+    }
+    [self updateTitle];
+    return YES;
+}
+
 - (void)saveCurrentFile:(id)sender {
-    // A message (welcome, binary file) is not the file's contents.
-    if (!self.currentPath || self.showingMessage || self.isImage || self.isPDF ||
-        self.isMedia) return;
+    // A message (welcome, binary file) is not the file's contents, nor is a
+    // viewer's empty text view.
+    if (![self tabHasTextToWrite:_activeTab]) return;
     // format.on-save: Cmd+S (a sender) formats first and saves when the
     // formatter is done; saves asked for by MiniCode itself (nil) never wait.
     if (sender && [AppSettings shared].settings.formatOnSave() && [self formatBeforeSaving])
@@ -798,23 +852,11 @@ static const NSUInteger kMaxClosedTabs = 50;
     NSString *sortProblem = nil;
     if (self.textView.editable && [AppSettings shared].settings.keepSortedOnSave())
         sortProblem = MCKeepSortedBeforeSave(self.textView);
-    NSString *text = self.textView.editable ? self.textView.string
+    NSString *text = self.textView.editable ? [self.textView.string copy]
                                             : (self.sourceText ?: @"");
-    NSError *err = nil;
-    BOOL ok = [text writeToFile:self.currentPath atomically:YES
-                       encoding:NSUTF8StringEncoding error:&err];
-    if (ok) {
+    if ([self writeText:text toTab:_activeTab interactive:YES]) {
         self.sourceText = text;
-        self.savedText = text;
-        _activeTab.gone = NO;
-        self.dirty = NO;
-        [self recordModDate];   // so our own save doesn't look like an external change
-        [self.lsp documentSaved];
-        [self updateTitle];
         [self flashStatus:sortProblem];
-    } else {
-        NSAlert *a = [NSAlert alertWithError:err];
-        [a runModal];
     }
 }
 

@@ -15,6 +15,12 @@
 - (void)focusURLBar;
 // Loads an address, or searches for words that are not one.
 - (void)navigateToString:(NSString *)raw;
+// The same for an agent (`minicode browse`): the page counts as the
+// agent's, not the user's, through its redirects.
+- (void)navigateForAgent:(NSString *)raw;
+// Whether the page on show is one the user loaded (the address bar, a link,
+// back or forward, a restored session), which an agent must not replace.
+@property(nonatomic, readonly) BOOL showsUserPage;
 // What the panel shows, to bring back after a restart or a relaunch: the
 // address, and WebKit's own record of the back and forward list and the
 // scroll position (macOS 12 and later). restoreState: takes it back, and

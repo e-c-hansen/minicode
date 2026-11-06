@@ -407,7 +407,19 @@ container (PanelHost, laid out by hand in layoutContainer)
   the palette finds them.
 - **Dirty means "differs from disk"**: `noteEdited` compares with `savedText`
   (length first), so undoing back clears the dot. `savedText` is the text as
-  read (NSString drops a BOM, never written back; CRLF survives).
+  read (CRLF survives); a UTF-8 BOM is kept apart in `MCTab bom` and written
+  back.
+- **One writer**: Cmd+S, `saveTab:` and auto-save all go through
+  `writeText:toTab:interactive:` over `FolderSearch::writeFileAtomically`
+  (a symlink stays a link, hard links and files owned by someone else are
+  written in place, xattrs, ACL and creation date kept, F_FULLFSYNC), which
+  refuses a tab without text of its own (`tabHasTextToWrite:`: SQLite, Quick
+  Look, a large CSV) and sends didSave. `writeToFile:atomically:` replaced a
+  link with a plain file. What a tab knows of its file is a stat with
+  symlinks followed (`MCDiskStamp`: date, inode, size; `tab:changedOnDisk:`
+  compares all three), taken before the read (`MCReadDiskText`, over
+  `FolderSearch::readFileStable`), so a file still being written never reads
+  as clean; `attributesOfItemAtPath:` did not follow links.
 - **Keys**: Ctrl+Tab / Ctrl+Shift+Tab, Shift+Cmd+] / [, Shift+Cmd+1..9 and
   Ctrl+1..9 (macOS takes Shift+Cmd+3, 4, 5). Cmd+W (`closeFocused:`) closes the
   tab, or the terminal, browser or Problems list with the keyboard; a repeat
@@ -419,16 +431,23 @@ container (PanelHost, laid out by hand in layoutContainer)
 - **Unsaved tabs are never dropped**: a dirty tab asks Save / Don't Save /
   Cancel; window close, Open Folder and quit ask once for all. Trash closes
   only clean tabs of what went; `pathMovedFrom:to:` moves tabs.
-- **The disk**: a buffer replaced from disk loses its undo steps
-  (`forgetHistoryOf:`). Every save checks the date first (`mayWriteTab:`:
+- **The disk**: a buffer replaced from disk by choice (Reload) loses its undo
+  steps (`forgetHistoryOf:`). Every save checks the stamp first (`mayWriteTab:`:
   changed outside asks Keep Mine / Reload / Cancel; gone asks before writing).
   Save All asks every question first (`diskDecisionForTab:`), then writes.
   `saveTab:` saves a background tab in place (a keep-sorted sort waits in
   `pendingSort`). Moved or deleted outside (FSEvents, `checkTabsOnDisk`, show
   and focus): a same-folder rename is followed by inode and date (`fileID`),
-  else the tab is `gone` ("(deleted)") until the file returns. **A clean tab
-  follows the disk** (`reloadCleanTab:`): the tab on show takes the new text
-  through `replaceSourceWithText:` with undo off, keeping caret and top line.
+  else the tab is `gone` ("(deleted)") until the file returns, and is read in
+  the same pass when it does. **A clean tab follows the disk**: from FSEvents
+  (`followCleanTabInBackground:`) the file is read and diffed off the main
+  thread, generation-counted, and a file over 8 MB is only noted and read on
+  show or focus; on show or focus (`reloadCleanTab:`) on the main thread. The
+  new text goes in as one undo step, "Reload from Disk", keeping caret, top
+  line and the steps before it (`replaceSourceWithText:`, or for a tab not on
+  show as text an undo action of its own, `registerReloadUndoForTab:`; an
+  NSTextView registration made during an undo redid onto the wrong range).
+  A read that fails moves no date.
 - **Sessions**: `MCTabSessions` (NSUserDefaults, by resolved folder, 50
   folders) reopens a folder's tabs and its browser page, else a read-only empty
   editor. Off under `MINICODE_DEMO` and `MINICODE_BENCH`;
@@ -478,7 +497,10 @@ container (PanelHost, laid out by hand in layoutContainer)
   a dialog from a timer (`writeTabForAutoSave:` checks the disk by hand; a file
   changed outside is skipped and named, so Cmd+S asks). Skipped: gone and
   unloaded tabs, a tab whose Cmd+S waits for its formatter, a tab with an
-  inline-agent edit awaiting Keep or Discard (`MCAgentSession editPending`).
+  inline-agent edit awaiting Keep or Discard (`MCAgentSession editPending`),
+  and the tab on show while an input method composes (`hasMarkedText`). The
+  close and quit questions run `autoSaveNow` first, so auto-save's writes are
+  not asked about. A restored backup opens in its viewer (a CSV's table).
   Trap: the focus-change save and the delay's debounce shared a selector and
   `updateTitle` cancelled the save after a tab switch; nothing may cancel
   `autoSaveNow`.
@@ -740,7 +762,11 @@ container (PanelHost, laid out by hand in layoutContainer)
   the tab through the rename applier (`applyEditsToPaths:`); a file with
   unsaved text in any window is left alone and named; others go through
   `FolderSearch::writeFileAtomically` (mode kept, synced, renamed; symlinks
-  followed; hard links written in place). `replaceOneAt` maps a result's byte
+  followed; hard links written in place). A file under two names (a symlink,
+  a hard link, a symlinked folder) is counted and replaced once, by device and
+  inode, and one reached through a link to outside the folder is named in the
+  question (`FolderReplaceFile::outside`). Replace Match replaces only while
+  the row's line still reads as searched. `replaceOneAt` maps a result's byte
   column to a tab's UTF-16.
 
 ## Formatting (Mac)
@@ -978,7 +1004,7 @@ view is disposed (on `unrealize`), or dispose loops forever.
 - Every run carries its source `line` (`kMarkdownSourceLine`): Shift+Cmd+V
   opens the preview at the caret and the source where a scrolled preview is.
   Links (`openMarkdownLink:`): `#heading` by GitHub's anchor
-  (`MCMarkdownAnchor`), web addresses in the browser, paths relative to the
+  (`MarkdownParser::anchor`, as on Linux and Android), web addresses in the browser, paths relative to the
   file through `openTerminalLink:` (`#L12` works).
 - **Editing from the preview**: a double-click (`onPreviewDoubleClick`) reads
   the line (and `kMarkdownTableCell`), `MarkdownEdit::blockAt` finds the block
@@ -1160,21 +1186,41 @@ false`) a formula shows as its TeX in the code style.
   wmv and flv get "Cannot display".
 - **Quick Look**: `MCQuickLookSlot` (`QLPreviewView`) in a tab;
   `MCQuickLookPanel` for Space in the tree, where `ClickOutline` is the panel's
-  controller and keeps the keyboard.
+  controller and keeps the keyboard. It follows arrows and clicks; Space closes
+  it only for the tree that drives it (another window's tree, or one whose
+  control ended, gets its selection shown); a space within a second of a
+  typed letter is type-select's.
 - **CSV and TSV** (`Csv`, `CsvTable.mm`): rows keep their bytes and endings,
   fields their bytes and quoting, so an unedited file round-trips and one cell
-  edit changes one line; BOM and a missing final newline kept; delimiter
-  guessed. Over 50 MB read-only, 100,000 rows from disk.
+  edit changes one line; BOM and a missing final newline kept; a touched row
+  of one empty field is written `""`; delimiter guessed (it must split most
+  lines as it splits the first). Over 50 MB read-only, 100,000 rows from
+  disk. **One table view serves every CSV tab**: a cell being typed into is
+  committed in `stashActiveTab` and the toggle (`commitEditing`), and
+  dropped before `showText:` replaces the document, or NSTableView commits
+  it into the next file at the old row. Undo steps keep only the changed
+  splice (`registerViewerUndoFrom:`); going back from the text to the table
+  turns its NSTextView typing steps (target: the text storage) into one
+  "Typing" step from `MCTab.textSessionStart`, since the table empties the
+  text view they were recorded against.
 - **JSON outline**: beside the text; a node selects its text with the keyboard
   kept in the outline, the caret selects its node; re-parsed 0.3 s after
-  typing, the last good outline kept under an error line.
+  typing, the last good outline kept under an error line, dimmed and
+  selecting nothing (`stale`: its offsets are off). `.jsonc`, tsconfig*.json,
+  `.vscode/*.json` and the like allow comments (`JsonOutline::allowsComments`).
 - **Notebooks** (`Notebook`): nbformat 4 (and 3's cells) to Markdown, rendered
   read-only (`showsRenderedMarkdown`); outputs as plain blocks, pictures as
-  data: images, HTML as text. Nothing runs.
+  data: images (SVG too, base64'd), HTML as text, an output past 5,000 lines
+  or 512 KB cut to its first and last 1,000 (`shortenOutput`). Nothing runs.
 - **SQLite** (`SqliteView.mm`): `SQLITE_OPEN_READONLY` with a `mode=ro` URI,
   query_only and the defensive flag; a writing statement
-  (`sqlite3_stmt_readonly`) refused before it runs; only the first statement; a
-  progress handler stops a query at 5 s; one background queue; 1,000 rows.
+  (`sqlite3_stmt_readonly`) refused before it runs, and an authorizer refuses
+  BEGIN, SAVEPOINT, ATTACH and setting pragmas (a BEGIN held a lock other
+  writers waited on); only the first statement; a progress handler stops a
+  query at 5 s; one background queue, opening included; 1,000 rows. A WAL
+  file with no `-wal` beside it opens with `immutable=1` (read-only cannot
+  make the WAL files); a failure is shown in the tab. A reopen keeps the
+  table or query on show. NULL is `NSNull` in the rows (`isNullAtRow:`).
 - **Diffs and pages**: git diffs and commits in `diffScroll`; the side-by-side
   diff is `CompareView` (`showComparison:preview:`, `MCComparison`, panes
   scrolling together); an `EditorPage` (`showPage:`) is a read-only view in a
@@ -1421,7 +1467,10 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 - **The Worktrees node** (first, shown with or without hidden files, not again
   inside .claude): each worktree named for its agent with its ahead count and
   changes (git off the main thread); right click Compare with Main (each
-  changed file side by side with main's) and Open in New Window.
+  changed file side by side with main at the merge base, so main's later work
+  never shows as the agent deleting it; `AgentView::compareBase`) and Open in
+  New Window. A window on `/` or the home folder indexes no sessions
+  (`AgentView::indexesFolder`): every transcript on the Mac is inside them.
 - **Columns** (`MCTreeColumns` bitmask, `toggleTreeColumn:`): size, saved and
   created (`st_birthtimespec`) on their own keys, the rightmost dropped first
   on a narrow row; switching one on widens a narrow sidebar
@@ -1492,15 +1541,17 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   claude ...`). "Source" means a Makefile and `src/EditorController.mm`. A 2 s
   timer watches `<source>/MiniCode.app/Contents/_CodeSignature/CodeResources`
   (codesign is `make app`'s last step) and offers Restart once it is newer and
-  stable.
+  stable. Prompt files whose writer has quit, or a day old, are removed as
+  the next is written (`MCRemoveStalePromptFiles`, the inline agent's too).
 - **Restart** (`AppDelegate restartIntoApp:resumingIn:source:command:`,
   `MCRestarting`): the quit questions titled "Restart minicode?", leaving
   Claude's terminal out; unsaved tabs come back from backups;
   `applicationWillTerminate` writes `MCRestart` and `MCLaunchAfterExit` spawns
   a detached `/bin/sh` that waits for our pid and runs `open -n
   <source>/MiniCode.app`; the new process takes a record under two minutes old
-  (`reopenAfterRestart:`) and runs `<command> --continue` in the resuming
-  window. After a restart the user runs the repo's build until the next `brew
+  (`reopenAfterRestart:`) and runs `develop.command --continue` in the
+  resuming window (never the record's command, and only in a folder that
+  looks like the source). After a restart the user runs the repo's build until the next `brew
   upgrade`. Restart minicode (minicode menu, the status bar's ↻,
   `restartMinicode:`; no key, Cmd+R is Refresh) uses
   `NSBundle.mainBundle.bundlePath` (beeps when not a .app).
@@ -1517,29 +1568,59 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 ## The control channel, notes and tours (Mac)
 
 - Each minicode listens on `$TMPDIR/MiniCode/<pid>.sock` (0600 in a 0700
-  folder; another uid refused by `getpeereid`; removed on exit; stale sockets
-  of dead pids removed at startup). Use `getenv("TMPDIR")`:
-  `NSTemporaryDirectory()` ignores it. One JSON object per line, checked
-  against `ControlProtocol`'s table of commands and arguments (unknown or
-  wrongly typed is an error answer, never a crash), handled on the main thread
-  within 100 ms (`ControlServer.mm`, `ControlCommands.mm`).
+  folder; another uid refused by `getpeereid`; removed on exit; at startup
+  sockets of dead pids, and of live pids where nothing listens, are removed).
+  Use `getenv("TMPDIR")`: `NSTemporaryDirectory()` ignores it; without it,
+  `confstr(_CS_DARWIN_USER_TEMP_DIR)`. `MINICODE_CONTROL_DIR` overrides both
+  sides (tests). One JSON object per line, checked against
+  `ControlProtocol`'s table of commands and arguments (unknown or wrongly
+  typed is an error answer, never a crash), handled on the main thread within
+  100 ms (`ControlServer.mm`, `ControlCommands.mm`). A connection has one
+  request at a time with the main thread (the next line is read once the
+  answer is out), writes are non-blocking with a write source, and a peer
+  that takes nothing for 10 s is dropped, so one client can neither queue
+  unbounded main-thread work nor hold up the others.
 - `tools/minicode-cli.cpp` builds `Contents/MacOS/minicode-cli`, which the
-  launcher execs for subcommands: newest live socket (or `--pid`), starting
-  minicode and waiting 10 s when none runs; a running minicode with no socket
-  (older than the channel) gets "quit and open it again", nothing launched.
-  Exit codes 0, 1 command error, 2 usage, 3 no app.
+  launcher execs for subcommands: newest live socket (or `--pid`) in the
+  shell's `$TMPDIR/MiniCode` and the user's own temporary folder's (a nix
+  shell's TMPDIR differs from the app's), only in folders that are the
+  user's, real and 0700, moving on to the next when one refuses the
+  connection; starting minicode and waiting 10 s when none runs, except for
+  reads (`state`, `selection`, `term-output`), which exit 3 at once; a
+  running minicode with no socket (older than the channel) gets "quit and
+  open it again", nothing launched. Exit codes 0, 1 command error, 2 usage, 3
+  no app.
 - Commands: `open path[:line[:col]]` (`--to`, `--note`, `--from`, `--keep`),
-  `window`, `browse` (in the pane; the browser has no tabs), `term` (`--cwd`,
-  `--title`, `--run` typed and entered visibly), `diff`, `split`, `state`
-  (`--pretty`), `selection`, `term-output`, `tour`. None moves the keyboard or
-  closes, replaces or reorders the user's tabs and terminals.
+  `window`, `browse` (in the pane; the browser has no tabs, so a page the
+  user loaded is never replaced: `BrowserView showsUserPage`, the history
+  items an agent's navigations committed), `term` (`--cwd`, `--title`,
+  `--run` typed and entered visibly), `diff` (`--base` never starting with
+  "-"), `split`, `state` (`--pretty`), `selection`, `term-output`, `tour`.
+  None closes, replaces or reorders the user's tabs and terminals. `open`,
+  `diff` and `tour` read and open only plain files (a FIFO blocks `open(2)`
+  for good), `diff` up to 16 MB a side, reading and aligning off the main
+  thread (`MCComparison prepare`, once).
+- **The keyboard**: the editor is one text view for every tab, so putting the
+  first responder back (`keepKeyboardDuring:`) is not enough: it then shows
+  the agent's file, and the user's next keystroke lands there. While the
+  window is key and the keyboard is in the editor's slot
+  (`userIsInDocument`), `openTabForAgent:preview:quiet:` and
+  `showComparison:preview:quiet:` add the tab without showing it, with a
+  status note and `"background": true` (the CLI says so on stderr); a note
+  waits with its tab (`MCNoteState.pending`) and is placed when it is shown.
+  The user's own steps (Option+], a click) always show.
 - **Notes** (`AgentNotes.mm`): a layout-manager highlight and a box over the
   text view, never in the file or its undo; upper third; closed by Escape, ×,
   or an edit touching its lines (undo does not bring it back); plain text up to
-  500 characters; not persisted. They go in one agent preview tab per window
-  (`agentPreview`, italic title), replaced by each such open and kept by an
-  edit or a double-click on its title. Tours step with Option+] and [ (keymap
-  commands enabled only during a tour) and show "2 of 3".
+  500 characters (cleaned by the handlers too, bidi controls dropped); not
+  persisted. They go in one agent preview tab per window (`agentPreview`,
+  italic title), replaced by each such open and kept by an edit or a
+  double-click on its title; comparisons have a preview tab of their own, so
+  the skill's open-then-diff keeps the note. A note moves the caret only in
+  the preview tab, and a clean tab the agent just rewrote takes the disk's
+  text before its note is placed (`notesCatchUpWithDisk`), or the reload a
+  moment later closed it. Tours step with Option+] and [ (keymap commands
+  enabled only during a tour) and show "2 of 3".
 - `skills/minicode/SKILL.md` (under 150 lines; `make install`): show work as
   notes, a diff and tests in a terminal; open code with a note when asked where
   something is; read `state` and `selection` for "this"; never rearrange the

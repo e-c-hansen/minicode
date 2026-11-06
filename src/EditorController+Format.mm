@@ -116,10 +116,20 @@
 // layout of the lines between the first hunk and the last, which a
 // contiguous layout has to redo).
 - (BOOL)replaceSourceWithText:(NSString *)text actionName:(NSString *)name {
+    auto d = std::make_shared<MCSourceDiff>();
+    d->from = U16(self.textView.string);
+    d->to = U16(text);
+    d->hunks = LineDiff::diff(d->from, d->to);
+    return [self replaceSourceWithDiff:d actionName:name];
+}
+
+// The same with the diff made already (off the main thread, by a clean tab
+// following its file). `diff->from` must be the text view's text.
+- (BOOL)replaceSourceWithDiff:(std::shared_ptr<MCSourceDiff>)diff actionName:(NSString *)name {
     CodeTextView *tv = self.textView;
-    const std::u16string a = U16(tv.string), b = U16(text);
-    std::vector<LineDiff::Hunk> hunks = LineDiff::diff(a, b);
-    if (hunks.empty()) return NO;
+    const std::u16string &a = diff->from, &b = diff->to;
+    const std::vector<LineDiff::Hunk> &hunks = diff->hunks;
+    if (hunks.empty() || a.size() != tv.string.length) return NO;
 
     // Where the view is: the character at the top of the pane, and how far
     // above or below the top its line sits.

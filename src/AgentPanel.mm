@@ -1,6 +1,7 @@
 // AgentPanel.mm — see AgentPanel.h.
 #import "AgentPanel.h"
 #import "AppSettings.h"
+#import "ChangePanel.h"   // MCRemoveStalePromptFiles
 #import "Lsp.h"   // MCSearchDirs
 #include "ChangeRequest.h"
 #include "InlineAgent.h"
@@ -877,6 +878,7 @@ static size_t MCAgentBytes(NSString *text, NSUInteger utf16) {
     [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES
                                                attributes:@{NSFilePosixPermissions: @0700}
                                                     error:nil];
+    MCRemoveStalePromptFiles(dir);
     NSString *file = [dir stringByAppendingPathComponent:
         [NSString stringWithFormat:@"task-%d-%lu.txt", getpid(), (unsigned long)++_taskCount]];
     if (![NS(prompt) writeToFile:file atomically:YES encoding:NSUTF8StringEncoding error:nil]) {

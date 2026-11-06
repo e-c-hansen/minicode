@@ -67,6 +67,18 @@
 #import "EditorPanes.h"
 #import "FileTree.h"
 #import "EditorTab.h"
+#include "FolderSearch.h"   // the one writer's atomic write
+
+// The stamp FolderSearch::writeFileAtomically gives for what it wrote.
+MCDiskStamp *MCDiskStampFromFileStamp(const FolderSearch::FileStamp &s);
+
+// A line diff of the source made ahead of time (off the main thread, for a
+// clean tab following its file): the text it was made from, the new text,
+// and the hunks between them (replaceSourceWithDiff:).
+struct MCSourceDiff {
+    std::u16string from, to;
+    std::vector<LineDiff::Hunk> hunks;
+};
 
 // ---------------------------------------------------------------------------
 // Dark theme colors (VS Code "Dark+" inspired).
@@ -145,25 +157,6 @@ static inline CGFloat MCMathScaleFor(CGFloat fontSize) {
     static const CGFloat kEmToText = 1.12;             // math em / text size
     static const CGFloat kTenPointsInPdf = 10 * 72.0 / 72.27;
     return fontSize * kEmToText / kTenPointsInPdf;
-}
-
-// GitHub's anchor for a heading: lowercase, punctuation dropped (letters of
-// any script, digits, hyphens and underscores stay), spaces as hyphens.
-static inline NSString *MCMarkdownAnchor(NSString *title) {
-    NSString *t = [title stringByTrimmingCharactersInSet:
-                            NSCharacterSet.whitespaceAndNewlineCharacterSet].lowercaseString;
-    NSMutableString *slug = [NSMutableString string];
-    [t enumerateSubstringsInRange:NSMakeRange(0, t.length)
-                          options:NSStringEnumerationByComposedCharacterSequences
-                       usingBlock:^(NSString *ch, NSRange r, NSRange er, BOOL *stop) {
-        (void)r; (void)er; (void)stop;
-        unichar c = [ch characterAtIndex:0];
-        if (c == ' ') [slug appendString:@"-"];
-        else if (c == '-' || c == '_' ||
-                 [NSCharacterSet.alphanumericCharacterSet characterIsMember:c])
-            [slug appendString:ch];
-    }];
-    return slug;
 }
 
 typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCancel };
@@ -528,6 +521,8 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (void)stepTab:(int)delta;
 - (BOOL)confirmCloseTab:(MCTab *)t;
 - (BOOL)saveTab:(MCTab *)t;
+- (BOOL)tabHasTextToWrite:(MCTab *)t;
+- (BOOL)writeText:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive;
 - (BOOL)closeTab:(MCTab *)t prompt:(BOOL)prompt;
 - (void)dropAllTabs;
 - (int)focusedCloseTarget;
@@ -559,8 +554,13 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (void)autoSaveNow;
 - (BOOL)writeTabForAutoSave:(MCTab *)t;
 - (void)reloadCleanTab:(MCTab *)t;
+- (void)followCleanTabInBackground:(MCTab *)t;
+- (void)takeDiskRead:(MCDiskText *)d intoCleanTab:(MCTab *)t
+                diff:(std::shared_ptr<MCSourceDiff>)diff;
+- (void)registerReloadUndoForTab:(MCTab *)t text:(NSString *)old;
+- (void)putBackText:(NSString *)text inTab:(MCTab *)t;
 - (void)checkExternalChange;
-- (void)takeDiskText:(NSString *)fresh forTab:(MCTab *)t;
+- (void)takeDiskText:(MCDiskText *)d forTab:(MCTab *)t;
 - (void)tabWentMissing:(MCTab *)t;
 - (void)tabCameBack:(MCTab *)t;
 - (NSString *)renamedFileFor:(MCTab *)t;
@@ -590,11 +590,14 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (MCFileViewers *)viewers;
 - (void)viewerEditedText:(NSString *)text actionName:(NSString *)name;
 - (void)setViewerText:(NSString *)text actionName:(NSString *)name reshow:(BOOL)reshow;
+- (BOOL)registerViewerUndoFrom:(NSString *)old to:(NSString *)now actionName:(NSString *)name;
 - (BOOL)showViewer:(MCViewerKind)kind;
 - (void)openFileAtPath:(NSString *)path;
 - (void)loadActiveTab;
 - (NSDate *)diskModDateFor:(NSString *)path;
 - (void)recordDiskStateOf:(MCTab *)t;
+- (void)recordStamp:(MCDiskStamp *)s ofTab:(MCTab *)t;
+- (BOOL)tab:(MCTab *)t changedOnDisk:(MCDiskStamp *)s;
 - (void)recordModDate;
 - (void)forgetHistoryOf:(MCTab *)t;
 - (void)reselectCurrentFileInTree;
@@ -648,6 +651,7 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (void)finishFormatSave;
 - (void)saveBeforeLeavingFormatSave;
 - (BOOL)replaceSourceWithText:(NSString *)text actionName:(NSString *)name;
+- (BOOL)replaceSourceWithDiff:(std::shared_ptr<MCSourceDiff>)diff actionName:(NSString *)name;
 - (void)showFormatNote:(NSString *)message error:(BOOL)error;
 - (void)showFormatNote:(NSString *)message error:(BOOL)error
                install:(NSArray<NSString *> *)install;
@@ -728,6 +732,7 @@ static const NSInteger kWorktreeMenuTag = 7701;
 
 // EditorController+Markdown.mm: the Markdown preview: switching to it, editing from it, links, math and web pictures arriving.
 @interface EditorController (Markdown)
+- (void)endTextSessionOfTab:(MCTab *)t;
 - (BOOL)showsRenderedMarkdown;
 - (NSString *)markdownToRender;
 - (NSRect)textRectForCharacter:(NSUInteger)i;

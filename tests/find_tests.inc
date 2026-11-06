@@ -341,3 +341,139 @@ static void testFolderReplace() {
 #endif
     fsys::remove_all(root, ec);
 }
+
+// Saving and the disk (Replace in Folder over files with two names, the
+// stable read, the BOM, what an atomic write keeps): `save:*`,
+// `find:names` and `find:replace-match-line`.
+static void testSavingToDisk() {
+    using namespace FolderSearch;
+#ifndef _WIN32
+    const fsys::path root = fsys::temp_directory_path() /
+                            ("minicode-save-test-" + std::to_string(::getpid()));
+    const fsys::path outside = fsys::temp_directory_path() /
+                               ("minicode-save-outside-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fsys::remove_all(root, ec);
+    fsys::remove_all(outside, ec);
+    writeFile(root / "a.py", "log.info('x')\n");
+    writeFile(outside / "far.py", "log = 1\n");
+    fsys::create_symlink(root / "a.py", root / "link.py", ec);
+    fsys::create_directories(root / "sub", ec);
+    fsys::create_hard_link(root / "a.py", root / "sub" / "hard.py", ec);
+    fsys::create_directory_symlink(outside, root / "ext", ec);
+
+    GROUP("find:names");
+    {
+        // a.py, link.py and sub/hard.py are one file: counted once, under
+        // the first name met; ext/far.py is outside the folder, and says so.
+        FolderReplacePlan p = planReplace(root.string(), "log", nullptr, {});
+        CHECK(p.files.size() == 2 && p.matches == 2);
+        CHECK(p.files.size() == 2 && p.files[0].relativePath == "a.py" && !p.files[0].outside);
+        CHECK(p.files.size() == 2 && p.files[1].relativePath == "ext/far.py" &&
+              p.files[1].outside);
+        // Search still lists every name.
+        CHECK(search(root.string(), "log", nullptr, {}).matches.size() == 4);
+    }
+
+    GROUP("find:replace-match-line");
+    {
+        std::string line;
+        CHECK(lineAt("a\r\nb\rc\xE2\x80\xA9" "d\n", 4, &line) && line == "d");
+        CHECK(lineAt("a\r\nb\rc", 2, &line) && line == "b");
+        CHECK(!lineAt("a\n", 2, &line) && !lineAt("", 1, &line));
+        // The row's line as searched: "foo = foo" at line 2, column 6.
+        const std::string text = displayText("foo = foo");
+        std::string out;
+        CHECK(replaceMatchInText("x\nfoo = foo\n", "foo", "X", {}, 2, 6, &out, &text) &&
+              out == "x\nfoo = X\n");
+        // A line added above: line 2 is now another line with a foo at
+        // column 6, which is not the row's match.
+        CHECK(!replaceMatchInText("y\nbar = foo\nfoo = foo\n", "foo", "X", {}, 2, 6, &out, &text));
+        // Without the text, the old behaviour.
+        CHECK(replaceMatchInText("y\nbar = foo\n", "foo", "X", {}, 2, 6, &out) &&
+              out == "y\nbar = X\n");
+    }
+
+    GROUP("save:stamp");
+    {
+        const fsys::path f = root / "s.txt";
+        writeFile(f, "one");
+        FileStamp a = stampOf(f.string());
+        CHECK(a.exists && a.regular && a.size == 3 && a.inode != 0);
+        CHECK(stampOf(f.string()) == a);
+        fsys::create_symlink(f, root / "s-link.txt", ec);
+        CHECK(stampOf((root / "s-link.txt").string()) == a);   // the file, not the link
+        CHECK(!stampOf((root / "none").string()).exists);
+        CHECK(stampOf(root.string()).exists && !stampOf(root.string()).regular);
+        // An atomic write's stamp is the file's as it stands afterwards.
+        FileStamp w;
+        std::string err;
+        CHECK(writeFileAtomically(f.string(), "three", &err, &w));
+        CHECK(w.exists && w.size == 5 && w == stampOf(f.string()) && w.inode != a.inode);
+        // In place (a hard link) keeps the inode.
+        fsys::create_hard_link(f, root / "s-hard.txt", ec);
+        const FileStamp before = stampOf(f.string());
+        CHECK(writeFileAtomically(f.string(), "fourfour", &err, &w));
+        CHECK(w.inode == before.inode && w.size == 8 && w == stampOf(f.string()));
+    }
+
+    GROUP("save:read-stable");
+    {
+        const fsys::path f = root / "r.txt";
+        writeFile(f, std::string("\xEF\xBB\xBF") + "a,b\n1,2\n");
+        std::string bytes;
+        FileStamp st;
+        CHECK(readFileStable(f.string(), 1 << 20, &bytes, &st) == ReadStatus::Ok);
+        CHECK(st == stampOf(f.string()) && bytes.size() == 11);
+        CHECK(stripUtf8Bom(&bytes) && bytes == "a,b\n1,2\n");
+        CHECK(!stripUtf8Bom(&bytes) && bytes == "a,b\n1,2\n");
+        std::string two = "\xEF\xBB";
+        CHECK(!stripUtf8Bom(&two) && two.size() == 2);
+        CHECK(readFileStable((root / "none").string(), 1 << 20, &bytes, &st) ==
+                  ReadStatus::Missing && !st.exists);
+        CHECK(readFileStable(root.string(), 1 << 20, &bytes, &st) == ReadStatus::NotRegular);
+        CHECK(readFileStable(f.string(), 4, &bytes, &st) == ReadStatus::TooLarge);
+        // Larger than the first buffer, read whole.
+        const std::string big(300000, 'x');
+        writeFile(f, big);
+        CHECK(readFileStable(f.string(), 1 << 20, &bytes, nullptr) == ReadStatus::Ok &&
+              bytes == big);
+        CHECK(readFileStable(f.string(), UINTMAX_MAX, &bytes, nullptr) == ReadStatus::Ok &&
+              bytes == big);
+        writeFile(f, "");
+        CHECK(readFileStable(f.string(), 1 << 20, &bytes, &st) == ReadStatus::Ok &&
+              bytes.empty() && st.size == 0);
+    }
+
+#ifdef __APPLE__
+    GROUP("save:write-metadata");
+    {
+        // An extended attribute (a Finder tag, say) and the creation date
+        // stay, though the file is a new one (another inode).
+        const fsys::path f = root / "m.txt";
+        writeFile(f, "old");
+        const char tag[] = "minicode-test";
+        CHECK(::setxattr(f.c_str(), "com.minicode.test", tag, sizeof tag, 0, 0) == 0);
+        struct stat st0;
+        ::stat(f.c_str(), &st0);
+        // A modification date before the creation date moves the creation
+        // date back too (as `touch -t` does): 2001, so a new file would show.
+        struct timeval old[2] = {{1000000000, 0}, {1000000000, 0}};
+        CHECK(::utimes(f.c_str(), old) == 0);
+        std::string err;
+        CHECK(writeFileAtomically(f.string(), "new", &err));
+        char back[64] = {};
+        CHECK(::getxattr(f.c_str(), "com.minicode.test", back, sizeof back, 0, 0) ==
+                  (ssize_t)sizeof tag && std::string(back) == tag);
+        struct stat st1;
+        ::stat(f.c_str(), &st1);
+        CHECK(st1.st_ino != st0.st_ino);
+        CHECK(st1.st_birthtimespec.tv_sec == 1000000000);
+        std::string text;
+        CHECK(readTextFile(f.string(), 1 << 20, &text) && text == "new");
+    }
+#endif
+    fsys::remove_all(root, ec);
+    fsys::remove_all(outside, ec);
+#endif
+}

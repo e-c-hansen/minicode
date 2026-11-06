@@ -408,6 +408,69 @@ MC_GUI_SUITE(previews) {
         [[MCQuickLookPanel shared] close];
         GCHECK(![MCQuickLookPanel shared].shown);
     });
+    MCGuiStep(@"while open, the panel follows a click too", ^{
+        EditorController *c = MCGuiController();
+        NSOutlineView *tree = Tree(c);
+        GCHECK(SelectInTree(c, Fixture(@"paper.pdf")));
+        PressInTree(c, 49, @" ");
+        GCHECK([MCQuickLookPanel shared].shown);
+        GCHECK(SelectInTree(c, Fixture(@"picture.png")));   // reveal it, then click it
+        const NSInteger row = tree.selectedRow;
+        GCHECK(SelectInTree(c, Fixture(@"paper.pdf")));
+        const NSRect r = [tree rectOfRow:row];
+        const NSPoint at = [tree convertPoint:NSMakePoint(NSMidX(r), NSMidY(r)) toView:nil];
+        NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:at modifierFlags:0
+                                          timestamp:NSProcessInfo.processInfo.systemUptime
+                                       windowNumber:c.window.windowNumber context:nil
+                                        eventNumber:0 clickCount:1 pressure:1];
+        NSEvent *up = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:at modifierFlags:0
+                                        timestamp:NSProcessInfo.processInfo.systemUptime
+                                     windowNumber:c.window.windowNumber context:nil
+                                      eventNumber:0 clickCount:1 pressure:0];
+        [NSApp postEvent:up atStart:NO];
+        [tree mouseDown:down];
+        GCHECK(tree.selectedRow == row);
+        GCHECK([[MCQuickLookPanel shared].items.firstObject.path isEqualToString:Fixture(@"picture.png")]);
+        [[MCQuickLookPanel shared] close];
+    });
+    MCGuiStep(@"open for one window's tree, Space in another's shows its file", ^{
+        MCQuickLookPanel *ql = [MCQuickLookPanel shared];
+        NSObject *treeA = [NSObject new], *treeB = [NSObject new];
+        NSURL *a = [NSURL fileURLWithPath:Fixture(@"paper.pdf")];
+        NSURL *b = [NSURL fileURLWithPath:Fixture(@"picture.png")];
+        [ql toggleWithURLs:@[a] from:treeA];
+        GCHECK(ql.shown);
+        [ql toggleWithURLs:@[b] from:treeB];
+        GCHECK(ql.shown);
+        GCHECK([ql.items.firstObject isEqual:b]);
+        [ql toggleWithURLs:@[b] from:treeB];   // its own Space closes it
+        GCHECK(!ql.shown);
+        // Left with no view driving it (the keyboard went to the editor),
+        // the next Space in the tree shows the selection again.
+        QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
+        [ql toggleWithURLs:@[a] from:treeA];
+        [ql beginControl:panel];
+        [ql endControl:panel];
+        [ql toggleWithURLs:@[b] from:treeA];
+        GCHECK(ql.shown);
+        GCHECK([ql.items.firstObject isEqual:b]);
+        [ql toggleWithURLs:@[b] from:treeA];
+        GCHECK(!ql.shown);
+    });
+    MCGuiStep(@"a space in a name being typed to find a row is type-select's", ^{
+        EditorController *c = MCGuiController();
+        GCHECK(SelectInTree(c, Fixture(@"plain.txt")));
+        PressInTree(c, 35, @"p");
+        PressInTree(c, 49, @" ");
+        GCHECK(![MCQuickLookPanel shared].shown);
+    });
+    MCGuiPause(1.2);
+    MCGuiStep(@"and a while later Space is Quick Look again", ^{
+        EditorController *c = MCGuiController();
+        PressInTree(c, 49, @" ");
+        GCHECK([MCQuickLookPanel shared].shown);
+        [[MCQuickLookPanel shared] close];
+    });
     CsvSteps();
     JsonSteps();
     NotebookSteps();
@@ -590,6 +653,97 @@ static void CsvSteps(void) {
         [c saveCurrentFile:nil];
         GCHECK([Text(Fixture(@"people.csv")) hasPrefix:@"key,name,notes\n"]);
     });
+    MCGuiStep(@"a cell being typed into lands in its own file when the tab changes", ^{
+        EditorController *c = MCGuiController();
+        MCCsvTableView *t = Csv(c);
+        GCHECK(!Dirty(c));
+        GCHECK_EQ_STR([t cellAtRow:2 column:1], @"Doe");
+        [c.window makeFirstResponder:t.table];
+        [t.table editColumn:2 row:2 withEvent:nil select:YES];   // # A B: B is "name"
+        GCHECK(t.table.currentEditor != nil);
+        t.table.currentEditor.string = @"TYPED";
+        NSData *crlfBefore = Bytes(Fixture(@"crlf.csv"));
+        OwnUndoGroup([c valueForKeyPath:@"textView.undoManager"], ^{
+            GCHECK([c showFile:Fixture(@"crlf.csv")]);   // a tab switch, as Ctrl+Tab makes
+        });
+        // The other CSV is as it was: not edited, not dirty, not written.
+        GCHECK_EQ_STR(ActiveName(c), @"crlf.csv");
+        GCHECK_EQ_STR([Csv(c) cellAtRow:1 column:0], @"x; y");
+        GCHECK_EQ_STR([Csv(c) cellAtRow:1 column:1], @"3");
+        GCHECK(!Dirty(c));
+        GCHECK([Bytes(Fixture(@"crlf.csv")) isEqualToData:crlfBefore]);
+        // The value went into people.csv, where it was typed.
+        GCHECK([c showFile:Fixture(@"people.csv")]);
+        GCHECK_EQ_STR([Csv(c) cellAtRow:2 column:1], @"TYPED");
+        GCHECK(Dirty(c));
+        [c saveCurrentFile:nil];
+    });
+    MCGuiStep(@"a cell being typed into when the file changes on disk is dropped, not misplaced", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"crlf.csv")]);
+        MCCsvTableView *t = Csv(c);
+        [c.window makeFirstResponder:t.table];
+        [t.table editColumn:2 row:1 withEvent:nil select:YES];
+        GCHECK(t.table.currentEditor != nil);
+        t.table.currentEditor.string = @"TYPED";
+        // A script sorts the rows: another record now sits on row 1.
+        NSString *path = Fixture(@"crlf.csv");
+        MCGuiWriteFile(path, @"a;b\r\nnew;row\r\n\"x; y\";3\r\n");
+        [[NSFileManager defaultManager] setAttributes:@{NSFileModificationDate:
+                                                            [NSDate dateWithTimeIntervalSinceNow:5]}
+                                         ofItemAtPath:path error:nil];
+        [c performSelector:@selector(checkExternalChange)];
+        GCHECK(t.table.currentEditor == nil);
+        GCHECK_EQ_STR([t cellAtRow:1 column:1], @"row");
+        GCHECK_EQ_STR([t cellAtRow:2 column:1], @"3");
+        GCHECK(!Dirty(c));
+        GCHECK_EQ_STR(Text(path), @"a;b\r\nnew;row\r\n\"x; y\";3\r\n");
+    });
+    MCGuiStep(@"typing in a CSV's text, then Cmd+Z back in the table undoes the typing", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"people.csv")]);
+        NSUndoManager *u = [c valueForKeyPath:@"textView.undoManager"];
+        OwnUndoGroup(u, ^{ [c togglePreview:nil]; });
+        NSTextView *tv = EditorText(c);
+        GCHECK(tv.editable);
+        OwnUndoGroup(u, ^{ [tv insertText:@"Z" replacementRange:NSMakeRange(0, 0)]; });
+        OwnUndoGroup(u, ^{ [tv insertText:@"Y" replacementRange:NSMakeRange(1, 0)]; });
+        OwnUndoGroup(u, ^{ [c togglePreview:nil]; });
+        MCCsvTableView *t = Csv(c);
+        GCHECK(!t.hidden);
+        GCHECK_EQ_STR([t cellAtRow:0 column:0], @"ZYkey");
+        GCHECK(Dirty(c));
+        // One step for what was typed, taken in the table: the text comes
+        // back, not an exception in the hidden, empty text view.
+        GCHECK(u.canUndo);
+        GCHECK_EQ_STR(u.undoActionName, @"Typing");
+        [(id)t.table undo:nil];
+        GCHECK_EQ_STR([t cellAtRow:0 column:0], @"key");
+        GCHECK([[c valueForKey:@"sourceText"] hasPrefix:@"key,name,notes\n"]);
+        GCHECK(!Dirty(c));
+        [(id)t.table redo:nil];
+        GCHECK_EQ_STR([t cellAtRow:0 column:0], @"ZYkey");
+        [(id)t.table undo:nil];
+        GCHECK(!Dirty(c));
+    });
+    MCGuiStep(@"undo keeps only what changed, and never splits a character", ^{
+        EditorController *c = MCGuiController();
+        MCCsvTableView *t = Csv(c);
+        NSUndoManager *u = [c valueForKeyPath:@"textView.undoManager"];
+        OwnUndoGroup(u, ^{ GCHECK([t setCell:@"\U0001F600" row:2 column:2]); });
+        OwnUndoGroup(u, ^{ GCHECK([t setCell:@"\U0001F601" row:2 column:2]); });
+        [(id)t.table undo:nil];
+        GCHECK_EQ_STR([t cellAtRow:2 column:2], @"\U0001F600");
+        [(id)t.table undo:nil];
+        GCHECK_EQ_STR([t cellAtRow:2 column:2], @"edited");
+        GCHECK(!Dirty(c));
+        [(id)t.table redo:nil];
+        [(id)t.table redo:nil];
+        GCHECK_EQ_STR([t cellAtRow:2 column:2], @"\U0001F601");
+        [(id)t.table undo:nil];
+        [(id)t.table undo:nil];
+        GCHECK(!Dirty(c));
+    });
     MCGuiStep(@"a CSV over 50 MB opens read-only with its first 100,000 rows", ^{
         EditorController *c = MCGuiController();
         std::string big = "n,name,value\n";
@@ -712,6 +866,14 @@ static void JsonSteps(void) {
         MCJsonOutlinePane *p = Outline(MCGuiController());
         GCHECK_EQ_STR(p.statusText, @"Not valid JSON: Expected ':' at line 3, column 10");
         GCHECK(RowStarting(p, @"deep {1}") >= 0);   // the last good outline
+        // Its places in the text are out of date: it is dimmed, and a click
+        // in it selects nothing (the next keystroke would replace it).
+        GCHECK(p.stale);
+        GCHECK(p.outline.alphaValue < 1);
+        NSTextView *tv = EditorText(MCGuiController());
+        tv.selectedRange = NSMakeRange(0, 0);
+        [p selectRow:RowStarting(p, @"nested {1}")];
+        GCHECK(tv.selectedRange.location == 0 && tv.selectedRange.length == 0);
     });
     MCGuiStep(@"fixed and grown, the outline follows and keeps what was open", ^{
         EditorController *c = MCGuiController();
@@ -727,6 +889,7 @@ static void JsonSteps(void) {
     MCGuiStep(@"what was open stays open", ^{
         MCJsonOutlinePane *p = Outline(MCGuiController());
         GCHECK_EQ_STR(p.statusText, @"9 values");
+        GCHECK(!p.stale && p.outline.alphaValue == 1);
         GCHECK(RowStarting(p, @"deep {1}") >= 0);
         GCHECK(RowStarting(p, @"k 1") >= 0);
     });
@@ -752,6 +915,31 @@ static void JsonSteps(void) {
     });
     MCGuiWait(@"the outline is read again", 5, ^BOOL {
         return RowStarting(Outline(MCGuiController()), @"added null") >= 0;
+    });
+    MCGuiStep(@"a .jsonc file, comments and trailing commas, has its outline", ^{
+        MCGuiWriteFile(Fixture(@"config.jsonc"),
+                       @"// settings\n{\n  /* how wide */ \"editor.ruler\": 100,\n"
+                       @"  \"files\": [\"a\", \"b\",],  // trailing\n}\n");
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"config.jsonc")]);
+        GCHECK(Outline(c).allowsComments);
+    });
+    MCGuiWait(@"the .jsonc outline", 5, ^BOOL {
+        MCJsonOutlinePane *p = Outline(MCGuiController());
+        return !p.parsing && p.outline.numberOfRows > 1;
+    });
+    MCGuiStep(@"read as JSON with comments", ^{
+        MCJsonOutlinePane *p = Outline(MCGuiController());
+        GCHECK_EQ_STR(p.statusText, @"5 values");
+        GCHECK(RowStarting(p, @"editor.ruler 100") >= 0);
+        GCHECK(RowStarting(p, @"files [2]") >= 0);
+        // A plain .json file is still strict.
+        MCGuiWriteFile(Fixture(@"strict.json"), @"{\"a\": 1, // no\n}\n");
+        GCHECK([MCGuiController() showFile:Fixture(@"strict.json")]);
+        GCHECK(!Outline(MCGuiController()).allowsComments);
+    });
+    MCGuiWait(@"the strict file's verdict", 5, ^BOOL {
+        return [Outline(MCGuiController()).statusText hasPrefix:@"Not valid JSON"];
     });
 }
 
@@ -879,6 +1067,17 @@ static void NotebookSteps(void) {
         const NSUInteger plain = [tv.string rangeOfString:@"import plain"].location;
         GCHECK(!SameColor(ColorOf(tv, @"import", plain), [cfg syntax:TokenStyle::Keyword]));
     });
+    MCGuiStep(@"headings get the core's anchors, as on Linux and Android", ^{
+        MCGuiWriteFile(Fixture(@"anchors.md"), @"# Résumé & Notes\n\ntext\n\n## Résumé & Notes\n\n"
+                                               @"## Plan: v2 (draft)\n");
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"anchors.md")]);
+        NSDictionary *anchors = [c valueForKey:@"markdownAnchors"];
+        GCHECK(anchors[@"résumé--notes"] != nil);
+        GCHECK(anchors[@"résumé--notes-1"] != nil);   // a repeat is numbered
+        GCHECK(anchors[@"plan-v2-draft"] != nil);
+        GCHECK(anchors.count == 3);
+    });
 }
 
 // ---------------------------------------------------------------- SQLite
@@ -896,6 +1095,7 @@ BOOL MakeDatabase(NSString *path) {
         "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1500) "
         "INSERT INTO people (id, name, age) SELECT i, 'person ' || i, i % 90 FROM n;"
         "UPDATE people SET name = NULL WHERE id = 2;"
+        "UPDATE people SET name = 'NULL' WHERE id = 3;"
         "UPDATE people SET photo = x'00010203' WHERE id = 1;",
         nullptr, nullptr, nullptr) == SQLITE_OK;
     sqlite3_close(db);
@@ -933,18 +1133,22 @@ static void SqliteSteps(void) {
         [dbBytes writeToFile:Fixture(@"unnamed.bin") atomically:YES];
         GCHECK(dbBytes.length > 0);
     });
-    MCGuiStep(@"a .db opens read-only with its tables and views", ^{
+    MCGuiStep(@"a .db opens read-only, in the background", ^{
         EditorController *c = MCGuiController();
         GCHECK([c showFile:Fixture(@"shop.db")]);
         GCHECK_EQ_STR(ActiveKind(c), @"sqlite");
         MCSqliteView *s = Sqlite(c);
         GCHECK(s != nil && !s.hidden);
         GCHECK(EditorScroll(c).hidden);
-        GCHECK([s.objectNames isEqualToArray:(@[@"people", @"adults"])]);
-        GCHECK([s.schemaText hasPrefix:@"CREATE TABLE people"]);
         GCHECK(!c.canTogglePreview);
+        GCHECK(s.busy);   // opening is not done on the main thread
     });
     WaitForQuery(@"the first table's rows");
+    MCGuiStep(@"its tables and views", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.objectNames isEqualToArray:(@[@"people", @"adults"])]);
+        GCHECK([s.schemaText hasPrefix:@"CREATE TABLE people"]);
+    });
     MCGuiStep(@"the first 1,000 rows of the table", ^{
         MCSqliteView *s = Sqlite(MCGuiController());
         GCHECK(s.rows.count == MCSqliteMaxRows);
@@ -953,6 +1157,10 @@ static void SqliteSteps(void) {
         GCHECK(s.rowsTable.numberOfRows == 1000 && s.rowsTable.numberOfColumns == 4);
         GCHECK_EQ_STR(s.rows.count > 1 ? s.rows[1][1] : nil, @"NULL");
         GCHECK_EQ_STR(s.rows.count ? s.rows[0][3] : nil, @"<4 bytes>");
+        // SQL NULL and the text "NULL" are told apart.
+        GCHECK([s isNullAtRow:1 column:1]);
+        GCHECK_EQ_STR(s.rows.count > 2 ? s.rows[2][1] : nil, @"NULL");
+        GCHECK(![s isNullAtRow:2 column:1]);
         MCGuiSnapshot(MCGuiController().window.contentView, @"previews-sqlite");
     });
     MCGuiStep(@"a query typed in the box runs", ^{
@@ -995,6 +1203,46 @@ static void SqliteSteps(void) {
     MCGuiStep(@"SQLite's own complaint for a mistake", ^{
         MCSqliteView *s = Sqlite(MCGuiController());
         GCHECK([s.statusText containsString:@"syntax error"]);
+        [s runQuery:@"BEGIN"];
+    });
+    // What changes no bytes but would reach past the viewer is refused too:
+    // a BEGIN would hold a lock that other writers of the file wait on.
+    WaitForQuery(@"a BEGIN");
+    MCGuiStep(@"a BEGIN is refused", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.statusText hasPrefix:@"Not run: the database is open read-only"]);
+        [s runQuery:@"SAVEPOINT here"];
+    });
+    WaitForQuery(@"a SAVEPOINT");
+    MCGuiStep(@"so is a SAVEPOINT", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.statusText hasPrefix:@"Not run"]);
+        [s runQuery:@"ATTACH ':memory:' AS other"];
+    });
+    WaitForQuery(@"an ATTACH");
+    MCGuiStep(@"so is an ATTACH", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.statusText hasPrefix:@"Not run"]);
+        [s runQuery:@"PRAGMA query_only = OFF"];
+    });
+    WaitForQuery(@"a pragma that sets something");
+    MCGuiStep(@"so is a pragma that sets something", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.statusText hasPrefix:@"Not run"]);
+        [s runQuery:@"PRAGMA table_info(people)"];
+    });
+    WaitForQuery(@"a pragma that reads");
+    MCGuiStep(@"a pragma that only reads runs", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK(s.rows.count == 4);
+        GCHECK_EQ_STR(s.rows.count > 1 ? s.rows[1][1] : nil, @"name");
+        // Another connection can still take the write lock: nothing is held.
+        sqlite3 *db = nullptr;
+        GCHECK(sqlite3_open(Fixture(@"shop.db").fileSystemRepresentation, &db) == SQLITE_OK);
+        sqlite3_busy_timeout(db, 0);
+        GCHECK(sqlite3_exec(db, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_exec(db, "ROLLBACK", nullptr, nullptr, nullptr);
+        sqlite3_close(db);
         [s.objectsTable selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO];
     });
     WaitForQuery(@"the view");
@@ -1008,18 +1256,117 @@ static void SqliteSteps(void) {
         EditorController *c = MCGuiController();
         GCHECK([c showFile:Fixture(@"unnamed.bin")]);
         GCHECK_EQ_STR(ActiveKind(c), @"sqlite");
+        // Another database: the query box is not the last one's.
+        GCHECK_EQ_STR(Sqlite(c).queryField.stringValue, @"");
         [c saveCurrentFile:nil];
+    });
+    WaitForQuery(@"the other database");
+    MCGuiStep(@"back to the first database", ^{
+        EditorController *c = MCGuiController();
         GCHECK([c showFile:Fixture(@"shop.db")]);   // back: the database again
         GCHECK_EQ_STR(ActiveKind(c), @"sqlite");
-        GCHECK([Sqlite(c).objectNames containsObject:@"people"]);
         [c saveCurrentFile:nil];
     });
     WaitForQuery(@"the table again");
+    MCGuiStep(@"it comes back to the view on show, and the query typed", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.objectNames containsObject:@"people"]);
+        GCHECK(s.objectsTable.selectedRow == 1);
+        GCHECK([s.schemaText hasPrefix:@"CREATE VIEW adults"]);
+        GCHECK([s.columns isEqualToArray:(@[@"name", @"age"])]);
+        GCHECK_EQ_STR(s.queryField.stringValue, @"SELECT count(*) AS n, max(age) FROM people");
+    });
     MCGuiStep(@"the database file is byte for byte as made", ^{
         GCHECK([[NSData dataWithContentsOfFile:Fixture(@"shop.db")] isEqualToData:dbBytes]);
         GCHECK([[NSData dataWithContentsOfFile:Fixture(@"unnamed.bin")] isEqualToData:dbBytes]);
         NSFileManager *fm = [NSFileManager defaultManager];
         GCHECK(![fm fileExistsAtPath:Fixture(@"shop.db-journal")]);
         GCHECK(![fm fileExistsAtPath:Fixture(@"shop.db-wal")]);
+    });
+
+    // ---- a database that changes on disk
+    MCGuiStep(@"a database another program writes", ^{
+        GCHECK(MakeDatabase(Fixture(@"live.db")));
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"live.db")]);
+    });
+    WaitForQuery(@"the live database");
+    MCGuiStep(@"a query on it", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        s.queryField.stringValue = @"SELECT count(*) AS n FROM people";
+        [s.queryField sendAction:s.queryField.action to:s.queryField.target];
+    });
+    WaitForQuery(@"the live count");
+    MCGuiStep(@"the program adds a row; the tab reads the file again", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK_EQ_STR(s.rows.count ? s.rows[0][0] : nil, @"1500");
+        NSString *path = Fixture(@"live.db");
+        sqlite3 *db = nullptr;
+        GCHECK(sqlite3_open(path.fileSystemRepresentation, &db) == SQLITE_OK);
+        GCHECK(sqlite3_exec(db, "INSERT INTO people (id, name, age) VALUES (2000, 'new', 30)",
+                            nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+        [[NSFileManager defaultManager] setAttributes:@{NSFileModificationDate:
+                                                            [NSDate dateWithTimeIntervalSinceNow:5]}
+                                         ofItemAtPath:path error:nil];
+        [MCGuiController() performSelector:@selector(checkExternalChange)];
+    });
+    WaitForQuery(@"the count again");
+    MCGuiStep(@"the query on show is run again on the new file", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK_EQ_STR(s.rows.count ? s.rows[0][0] : nil, @"1501");
+        GCHECK_EQ_STR(s.queryField.stringValue, @"SELECT count(*) AS n FROM people");
+        GCHECK_EQ_STR(s.columns.firstObject, @"n");
+    });
+
+    // ---- WAL, and a file SQLite cannot open
+    __block NSData *walBytes = nil;
+    MCGuiStep(@"a WAL database whose writer has closed", ^{
+        NSString *path = Fixture(@"wal.db");
+        NSFileManager *fm = [NSFileManager defaultManager];
+        for (NSString *x in @[@"", @"-wal", @"-shm"])
+            [fm removeItemAtPath:[path stringByAppendingString:x] error:nil];
+        sqlite3 *db = nullptr;
+        GCHECK(sqlite3_open(path.fileSystemRepresentation, &db) == SQLITE_OK);
+        int keep = 0;   // the last connection removes -wal and -shm, as most builds do
+        sqlite3_file_control(db, "main", SQLITE_FCNTL_PERSIST_WAL, &keep);
+        GCHECK(sqlite3_exec(db, "PRAGMA journal_mode = WAL; CREATE TABLE notes (t TEXT);"
+                                "INSERT INTO notes VALUES ('kept in WAL mode');",
+                            nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+        // Should this SQLite keep them anyway, the close checkpointed: they go.
+        [fm removeItemAtPath:[path stringByAppendingString:@"-wal"] error:nil];
+        [fm removeItemAtPath:[path stringByAppendingString:@"-shm"] error:nil];
+        walBytes = [NSData dataWithContentsOfFile:path];
+        const unsigned char *b = (const unsigned char *)walBytes.bytes;
+        GCHECK(walBytes.length > 20 && b[18] == 2 && b[19] == 2);
+        GCHECK([MCGuiController() showFile:path]);
+        GCHECK_EQ_STR(ActiveKind(MCGuiController()), @"sqlite");
+    });
+    WaitForQuery(@"the WAL database");
+    MCGuiStep(@"it opens, read-only, and leaves no file beside it", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.objectNames isEqualToArray:@[@"notes"]]);
+        GCHECK_EQ_STR(s.rows.count ? s.rows[0][0] : nil, @"kept in WAL mode");
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *path = Fixture(@"wal.db");
+        GCHECK(![fm fileExistsAtPath:[path stringByAppendingString:@"-wal"]]);
+        GCHECK(![fm fileExistsAtPath:[path stringByAppendingString:@"-shm"]]);
+        GCHECK([[NSData dataWithContentsOfFile:path] isEqualToData:walBytes]);
+    });
+    MCGuiStep(@"a file with a SQLite header that is not a database", ^{
+        std::string bytes("SQLite format 3\0", 16);
+        bytes += std::string(200, 'x');
+        WriteBytes(Fixture(@"broken.db"), bytes.data(), bytes.size());
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"broken.db")]);
+        GCHECK_EQ_STR(ActiveKind(c), @"sqlite");
+    });
+    WaitForQuery(@"the broken database");
+    MCGuiStep(@"says why in the tab", ^{
+        EditorController *c = MCGuiController();
+        GCHECK_EQ_STR(ActiveKind(c), @"sqlite");
+        GCHECK([Sqlite(c).statusText hasPrefix:@"This database cannot be opened: "]);
+        GCHECK(!Sqlite(c).hidden);
     });
 }

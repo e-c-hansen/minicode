@@ -8,6 +8,7 @@
 #include "TextFind.h"
 #include <atomic>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -579,9 +580,11 @@ static NSString *SFromU16(const std::u16string &u) {
         FolderReplacePlan plan = FolderSearch::planReplace(root, q, nullptr, o);
         NSMutableArray<NSString *> *paths = [NSMutableArray array];
         NSMutableArray<NSNumber *> *counts = [NSMutableArray array];
+        NSMutableSet<NSString *> *outside = [NSMutableSet set];
         for (const FolderReplaceFile &f : plan.files) {
             [paths addObject:SNS(f.path)];
             [counts addObject:@(f.matches)];
+            if (f.outside) [outside addObject:SNS(f.path)];
         }
         NSString *error = plan.error.empty() ? nil : SNS(plan.error);
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -590,6 +593,7 @@ static NSString *SFromU16(const std::u16string &u) {
             // Files whose tabs hold changes the disk lacks are left out of
             // the count, and named.
             NSMutableArray<NSString *> *todo = [NSMutableArray array], *held = [NSMutableArray array];
+            NSMutableArray<NSString *> *away = [NSMutableArray array];
             size_t matches = 0;
             for (NSUInteger i = 0; i < paths.count; i++) {
                 if (s.openState && s.openState(paths[i]) == MCOpenFileConflict) {
@@ -598,6 +602,9 @@ static NSString *SFromU16(const std::u16string &u) {
                 }
                 [todo addObject:paths[i]];
                 matches += counts[i].unsignedLongValue;
+                if ([outside containsObject:paths[i]])
+                    [away addObject:[paths[i] substringFromIndex:MIN(paths[i].length,
+                                                                     s->_scope.length + 1)]];
             }
             if (error || todo.count == 0) {
                 s->_replacing = NO;
@@ -616,6 +623,10 @@ static NSString *SFromU16(const std::u16string &u) {
             NSMutableString *info = [NSMutableString stringWithFormat:
                 @"Each becomes “%@”. Files open in a tab are changed there, unsaved, and can be "
                  "undone there; the others are written to disk.", with];
+            if (away.count)
+                [info appendFormat:@" Through symbolic links, these are files outside the folder, "
+                                    "and they are changed too: %@.",
+                                   [away componentsJoinedByString:@", "]];
             if (held.count)
                 [info appendFormat:@" Left alone, since their tabs have unsaved changes: %@.",
                                    [held componentsJoinedByString:@", "]];
@@ -661,7 +672,13 @@ static NSString *SFromU16(const std::u16string &u) {
     NSMutableArray<NSArray<NSValue *> *> *tabRanges = [NSMutableArray array];
     NSMutableArray<NSArray<NSString *> *> *tabStrings = [NSMutableArray array];
     size_t tabMatches = 0;
+    // A row's match: only while its line still reads as it did.
+    const std::string expected = hit ? SStd(hit.text) : std::string();
+    // One file under two names (a symlink, a hard link) is replaced once.
+    std::set<std::pair<uint64_t, uint64_t>> seen;
     for (NSString *path in paths) {
+        const FolderSearch::FileStamp st = FolderSearch::stampOf(path.fileSystemRepresentation);
+        if (st.exists && !seen.insert({st.device, st.inode}).second) continue;
         MCOpenFileState state = self.openState ? self.openState(path) : MCOpenFileNone;
         if (state == MCOpenFileConflict) {
             [skipped addObject:path.lastPathComponent];
@@ -676,7 +693,10 @@ static NSString *SFromU16(const std::u16string &u) {
         std::vector<TextFind::Edit16> edits;
         if (hit) {
             TextFind::Edit16 e;
-            if (TextFind::replaceOneAt(u, query, with16, (int)hit.line, hit.byteColumn, &e))
+            std::string now;
+            if (FolderSearch::lineAt(SStd(text), (int)hit.line, &now) &&
+                FolderSearch::displayText(now, o.maxLineChars) == expected &&
+                TextFind::replaceOneAt(u, query, with16, (int)hit.line, hit.byteColumn, &e))
                 edits.push_back(e);
         } else {
             edits = TextFind::replaceAll(u, query, with16);
@@ -723,7 +743,8 @@ static NSString *SFromU16(const std::u16string &u) {
             }
             size_t n = 0;
             if (one) {
-                if (FolderSearch::replaceMatchInText(content, q, with8, o, line, byteColumn, &out))
+                if (FolderSearch::replaceMatchInText(content, q, with8, o, line, byteColumn, &out,
+                                                     &expected))
                     n = 1;
             } else {
                 out = FolderSearch::replaceInText(content, q, with8, o, &n);

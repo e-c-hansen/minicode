@@ -185,6 +185,15 @@ static void testControlProtocol() {
         c = parse({"diff", "a.txt", "b.txt"});
         CHECK(c.args["other"].asString() == "/w/b.txt");
         CHECK(!parse({"diff", "a.txt", "b.txt", "--base", "x"}).error.empty());
+        // A revision that would read as an option is refused.
+        CHECK(!parse({"diff", "a.txt", "--base", "--output=/tmp/x"}).error.empty());
+        CHECK(!parse({"diff", "a.txt", "--base=-p"}).error.empty());
+        CHECK(isSafeRef("main~2") && isSafeRef("HEAD") && !isSafeRef("") && !isSafeRef("-x") &&
+              !isSafeRef(std::string("a\nb")));
+        // Reads never start minicode; everything else does.
+        CHECK(!launchesApp("state") && !launchesApp("selection") && !launchesApp("term-output"));
+        CHECK(launchesApp("open") && launchesApp("browse") && launchesApp("term") &&
+              launchesApp("diff") && launchesApp("tour") && launchesApp("window"));
         CHECK(!parse({"diff"}).error.empty());
         c = parse({"split", "--right", "term", "--run", "ls"});
         CHECK(c.error.empty() && c.cmd == "term" && c.args["split"].asString() == "right");
@@ -261,6 +270,13 @@ static void testControlProtocol() {
         std::string wide;
         for (int i = 0; i < 500; i++) wide += "\xC3\xA9";
         CHECK(cleanNoteText(wide) == wide);
+        // Separators read as spaces; bidi controls, which would show the
+        // text in another order, are dropped; so are C1 controls.
+        CHECK(cleanNoteText("one\xE2\x80\xA8two\xE2\x80\xA9three") == "one two three");
+        CHECK(cleanNoteText("a\xE2\x80\xAE" "evil\xE2\x80\xAC" "b") == "aevilb");
+        CHECK(cleanNoteText("\xE2\x81\xA6x\xE2\x81\xA9\xE2\x80\x8Fy\xE2\x80\x8E") == "xy");
+        CHECK(cleanNoteText("a\xC2\x85" "b") == "a b");
+        CHECK(cleanNoteText("\xC2\xA0nbsp \xE2\x80\x94 dash") == "\xC2\xA0nbsp \xE2\x80\x94 dash");
         CHECK(clipUtf8("ab\xC3\xA9", 3) == "ab");
         CHECK(clipUtf8("abc", 10) == "abc");
     }
@@ -279,6 +295,26 @@ static void testControlProtocol() {
         CHECK(chooseSocket(found, 20, isAlive) == 0);
         CHECK(chooseSocket(found, 77, isAlive) == 0);
         CHECK(chooseSocket({}, 0, isAlive) == 0);
+        // Every live one, newest first, each pid once.
+        std::vector<SocketEntry> two = {{10, 100}, {20, 300}, {30, 200}, {10, 400}};
+        CHECK((rankSockets(two, 0, isAlive) == std::vector<int>{10, 30}));
+        CHECK((rankSockets(two, 30, isAlive) == std::vector<int>{30}));
+        CHECK(rankSockets(two, 20, isAlive).empty());
+    }
+
+    GROUP("change:prompt-files");
+    {
+        using ChangeRequest::promptFileIsStale;
+        auto only42 = [](int pid) { return pid == 42; };
+        CHECK(!promptFileIsStale("request-42-3.txt", 60, only42));       // its writer runs
+        CHECK(promptFileIsStale("request-41-3.txt", 60, only42));        // its writer has gone
+        CHECK(promptFileIsStale("task-42-1.txt", 2 * 24 * 3600, only42));   // a day old
+        CHECK(!promptFileIsStale("task-42-1.txt", 10, only42));
+        CHECK(!promptFileIsStale("notes.txt", 1e9, only42));             // not one of ours
+        CHECK(!promptFileIsStale("request-x-1.txt", 1e9, only42) &&
+              !promptFileIsStale("request-42.txt", 1e9, only42) &&
+              !promptFileIsStale("task-42-1.md", 1e9, only42) &&
+              !promptFileIsStale("request--1.txt", 1e9, only42));
     }
 
     GROUP("control:pretty");

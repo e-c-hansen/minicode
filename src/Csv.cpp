@@ -118,6 +118,9 @@ char detectDelimiter(const std::string &text) {
         long agree = 0;
         for (size_t r = 0; r < d.rows(); r++)
             if (d.fieldsInRow(r) == first) agree++;
+        // Most lines must split the way the first does: a one-column file
+        // whose first line holds a ';' or '|' is not separated by it.
+        if (agree * 2 <= (long)d.rows()) continue;
         const long score = agree * 1000 + (long)first;
         if (score > bestScore) { bestScore = score; best = c; }
     }
@@ -173,6 +176,10 @@ Document::Field Document::newField(const std::string &value, bool quote) {
 }
 
 bool Document::blank(const Row &row) { return !row.dirty && row.len == 0; }
+
+bool Document::emptyField(const Field &f) const {
+    return f.value >= 0 ? values_[(size_t)f.value].empty() : f.len == 0;
+}
 
 bool Document::setCell(size_t r, size_t c, const std::string &value) {
     if (r >= rows_.size()) return false;
@@ -262,6 +269,10 @@ std::string Document::serialize() const {
     for (const Row &row : rows_) {
         if (!row.dirty) {
             out.append(text_, row.start, row.len);
+        } else if (row.fields.size() == 1 && emptyField(row.fields[0])) {
+            // A row of one empty field, written as nothing, would be a
+            // blank line, which most readers skip.
+            out += "\"\"";
         } else {
             for (size_t i = 0; i < row.fields.size(); i++) {
                 if (i) out += delim_;
