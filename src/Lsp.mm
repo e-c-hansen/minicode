@@ -311,12 +311,31 @@ NSArray<MCSymbolItem *> *MCOutlineSymbols(NSString *path, NSString *text, NSUInt
 @implementation MCProblem
 @end
 
+// One file's rows of the Problems list, kept until its diagnostics change
+// (the store's generation) or the text they were placed in does, so a
+// publish for one file rebuilds that file's rows and not every file's.
+@interface MCProblemFile : NSObject {
+@public
+    std::vector<Lsp::Problem> problems;
+    uint64_t generation;
+}
+@property(nonatomic, copy) NSString *path;   // the tree's spelling, nil when none
+@property(nonatomic, copy) NSString *text;   // what they were placed in; nil: as published
+@end
+@implementation MCProblemFile
+@end
+
 // A server that crashes is started again after 1, 2, then 4 seconds; the
 // fourth crash in a row leaves it stopped, so a server that cannot start
 // never spins. Three minutes of running clears the count.
 static const NSInteger kMaxAutomaticRestarts = 3;
 static const NSTimeInterval kCrashForgiven = 180;
 static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
+// Per folder (resolved path): "allow" or "deny" for the folder's own Python
+// environment, which a language server would run. Not there: not asked yet.
+static NSString *const kEnvConsentDefaultsKey = @"MCPythonEnvironmentConsent";
+NSNotificationName const MCPythonEnvironmentConsentDidChangeNotification =
+    @"MCPythonEnvironmentConsentDidChange";
 
 @implementation LspSession {
     __weak CodeTextView *_tv;
@@ -338,6 +357,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     // drawn on the text as it is now), and for files no tab has open (a
     // server checking the whole folder), listed in Problems only.
     Lsp::DiagnosticStore _store;
+    NSMutableDictionary<NSString *, MCProblemFile *> *_problemFiles;   // by canonical URI
     // F8: the mark the last step went to, in the marks it was one of.
     NSArray<MCDiagnosticMark *> *_stepMarks;
     long _stepIndex;
@@ -394,6 +414,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     _servers = @[];
     _ruffConfigured = [NSMutableDictionary dictionary];
     _workspaceRequests = [NSMutableArray array];
+    _problemFiles = [NSMutableDictionary dictionary];
     _settingsSignature = [self currentSettingsSignature];
     _pythonSetting = NS([AppSettings shared].settings.pythonInterpreter());
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
@@ -464,11 +485,13 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     } else if (_langKey && e) {
         std::vector<Lsp::ServerStatus> servers = {[self statusOfKey:_langKey main:YES]};
         if (_alsoKey) servers.push_back([self statusOfKey:_alsoKey main:NO]);
+        // The marks drawn, which leave out diagnostics about text typed
+        // over since they came, so the count says what the squiggles say.
         int errors = 0, warnings = 0;
         if (_uri)
-            for (const Lsp::Diagnostic &d : _store.merged(Std(_uri))) {
-                if (d.severity == Lsp::Severity::Error) errors++;
-                else if (d.severity == Lsp::Severity::Warning) warnings++;
+            for (MCDiagnosticMark *m in _tv.diagnostics) {
+                if (m.severity == (NSInteger)Lsp::Severity::Error) errors++;
+                else if (m.severity == (NSInteger)Lsp::Severity::Warning) warnings++;
             }
         Lsp::StatusLine line = Lsp::statusLine(Std(language), servers, errors, warnings);
         s = NS(line.text);
@@ -1622,8 +1645,44 @@ static BOOL IsRunnable(NSString *path) {
 // one for every name not used yet, which would drown the rest.
 - (std::vector<Lsp::Problem>)collectProblems {
     std::vector<Lsp::Problem> out;
-    auto add = [&](NSString *path, const Lsp::Diagnostic &d, Lsp::Position a,
-                   Lsp::Position b) {
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    for (const std::string &key : _store.uris()) {
+        NSString *uri = NS(key);
+        [seen addObject:uri];
+        BOOL onShow = _uri && [self uri:key isSameFileAs:_uri];
+        // Listed under the tree's spelling of the path, as the files no tab
+        // has are, so they sort together; the tab's own spelling finds its text.
+        NSString *tabPath = onShow ? _path : [self tabPathForURI:uri];
+        NSString *text = onShow ? _tv.string
+                       : tabPath && self.bufferText ? self.bufferText(tabPath) : nil;
+        MCProblemFile *file = _problemFiles[uri];
+        const uint64_t gen = _store.generation(key);
+        BOOL fresh = file && file->generation == gen &&
+                     (text ? [file.text isEqualToString:text] : file.text == nil);
+        if (!fresh) {
+            if (!file) {
+                file = [MCProblemFile new];
+                file.path = [self treePathForURI:key];   // two realpaths, once per file
+                _problemFiles[uri] = file;
+            }
+            file->generation = gen;
+            file.text = text;   // copied: the text view's string is its live storage
+            file->problems = [self problemsOfURI:key path:file.path text:text];
+        }
+        out.insert(out.end(), file->problems.begin(), file->problems.end());
+    }
+    for (NSString *uri in _problemFiles.allKeys)
+        if (![seen containsObject:uri]) [_problemFiles removeObjectForKey:uri];
+    return out;
+}
+
+// One file's problems: placed in the text as it is now for a file open in a
+// tab (`text`), as the server said for the others.
+- (std::vector<Lsp::Problem>)problemsOfURI:(const std::string &)key path:(NSString *)path
+                                      text:(NSString *)text {
+    std::vector<Lsp::Problem> out;
+    if (!path.length) return out;
+    auto add = [&](const Lsp::Diagnostic &d, Lsp::Position a, Lsp::Position b) {
         if (d.severity == Lsp::Severity::Hint) return;
         Lsp::Problem p;
         p.path = Std(path);
@@ -1637,27 +1696,16 @@ static BOOL IsRunnable(NSString *path) {
         p.code = d.code;
         out.push_back(p);
     };
-    for (const std::string &key : _store.uris()) {
-        NSString *uri = NS(key);
-        BOOL onShow = _uri && [self uri:key isSameFileAs:_uri];
-        // Listed under the tree's spelling of the path, as the files no tab
-        // has are, so they sort together; the tab's own spelling finds its text.
-        NSString *tabPath = onShow ? _path : [self tabPathForURI:uri];
-        NSString *path = [self treePathForURI:key];
-        if (!path.length) continue;
-        NSString *text = onShow ? _tv.string
-                       : tabPath && self.bufferText ? self.bufferText(tabPath) : nil;
-        std::vector<const Lsp::DiagnosticStore::Set *> sets = _store.forUri(key);
-        if (!text) {   // a file no tab has: as the server said
-            for (const Lsp::DiagnosticStore::Set *set : sets)
-                for (const Lsp::Diagnostic &d : set->list) add(path, d, d.range.start, d.range.end);
-            continue;
-        }
-        std::u16string now = U16Of(text);
-        for (const Lsp::MergedSpan &sp : Lsp::mergedDiagnosticSpans(sets, now))
-            add(path, *sp.diag, Lsp::positionForOffset(now, sp.start),
-                Lsp::positionForOffset(now, sp.end));
+    std::vector<const Lsp::DiagnosticStore::Set *> sets = _store.forUri(key);
+    if (!text) {   // a file no tab has: as the server said
+        for (const Lsp::DiagnosticStore::Set *set : sets)
+            for (const Lsp::Diagnostic &d : set->list) add(d, d.range.start, d.range.end);
+        return out;
     }
+    const std::u16string now = U16Of(text);
+    const Lsp::PositionIndex index(now);
+    for (const Lsp::MergedSpan &sp : Lsp::mergedDiagnosticSpans(sets, now))
+        add(*sp.diag, index.position(sp.start), index.position(sp.end));
     return out;
 }
 
@@ -1689,17 +1737,11 @@ static BOOL IsRunnable(NSString *path) {
     return rows;
 }
 
+// What the list shows, counted: diagnostics about text typed over since
+// they came are not counted, as they are not listed (the per-file rows are
+// kept, so this costs a compare of each open file's text).
 - (Lsp::ProblemCounts)problemCounts {
-    std::vector<Lsp::Problem> problems;
-    for (const std::string &key : _store.uris())
-        for (const Lsp::Diagnostic &d : _store.merged(key)) {
-            if (d.severity == Lsp::Severity::Hint) continue;
-            Lsp::Problem p;
-            p.path = key;
-            p.severity = d.severity;
-            problems.push_back(p);
-        }
-    return Lsp::countProblems(problems);
+    return Lsp::countProblems([self collectProblems]);
 }
 
 - (NSString *)problemCountsText { return NS(Lsp::problemCountsText([self problemCounts])); }
