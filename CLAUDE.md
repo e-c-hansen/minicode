@@ -384,8 +384,14 @@ container (PanelHost, laid out by hand in layoutContainer)
   Shift+F12) and the editor has the keyboard, since AppKit gives such a key to
   the text view as typing before the menu (in another field or the grid it
   types); when two commands share a key in different places; and for keys a
-  menu cannot show (keypad digits, the Menu key, Ctrl+Shift with punctuation).
-  A plain Control key goes to the terminal grid while it has the keyboard
+  menu cannot show (keypad digits, the Menu key, Ctrl+Shift with punctuation);
+  and for a `Tree` command (renameFile on F2, moveFileToTrash on Cmd+Delete)
+  while the tree has the keyboard. A `Tree` command's keys are never put on
+  its menu item, since a menu key acts from every pane (Cmd+Delete once
+  trashed the tree's selection from the editor); no view hard-codes them.
+  The grid's prompt line edits (Cmd+Left/Right/Delete, Option+Left/Right) and
+  the tree's Space and Esc (Quick Look) are `Fixed` rows: typing keys, or
+  keys the view sends on to the shell. A plain Control key goes to the terminal grid while it has the keyboard
   (Ctrl+G for nano) unless Global. Plain typing skips the keymap at once. Cmd+.
   is the key bindings' `cancelOperation:` everywhere, so only an editable
   editor sends it to the menu. Validation decides: a command that cannot act
@@ -1507,7 +1513,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   it is refused), copies files from Finder in and rows out; a clash is reported
   after the drop (Finder waits on a modal during it). `pathMovedFrom:to:` moves
   tabs, the LaTeX path and a preview's relative pictures. F2 renames,
-  Cmd+Delete trashes (`ClickOutline keyDown:`), Space previews with Quick Look.
+  Cmd+Delete trashes (the registry's `Tree` commands, run by the key monitor),
+  Space previews with Quick Look.
 - **The Worktrees node** (first, shown with or without hidden files, not again
   inside .claude): each worktree named for its agent with its ahead count and
   changes (git off the main thread); right click Compare with Main (each

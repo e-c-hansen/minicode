@@ -48,12 +48,6 @@
     self.outline.onActivate = ^(NSInteger row) {
         [weakSelf activateRow:row];
     };
-    self.outline.onTrash = ^{
-        [weakSelf deleteSelected:nil];
-    };
-    self.outline.onRename = ^{
-        [weakSelf renameSelected:nil];
-    };
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"file"];
     col.editable = NO;
     col.minWidth = 80;

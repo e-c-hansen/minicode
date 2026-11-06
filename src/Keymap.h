@@ -21,7 +21,10 @@
 //     one key to an editor command and a terminal command): what has the
 //     keyboard decides;
 //   - it is a key a menu cannot show or match (keypad digits, the Menu key,
-//     Ctrl+Shift with punctuation).
+//     Ctrl+Shift with punctuation);
+//   - the command is the file tree's (F2 renames, Cmd+Delete trashes) and
+//     the tree has the keyboard. A tree command's keys are never put on its
+//     menu item, since a menu key works in every pane.
 // A plain Control key with a letter or symbol goes to the terminal's grid
 // while it has the keyboard (Ctrl+G for nano), unless its command is Global.
 #import <Cocoa/Cocoa.h>

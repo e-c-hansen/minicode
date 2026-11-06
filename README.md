@@ -363,8 +363,9 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | List every problem the language servers report, grouped by file | Shift Command M, or click the problem counts in the status bar |  |  |
 | List the TODO comments and open Markdown tasks in the folder | Shift Command D | Ctrl Shift L | W, or Ctrl Shift L |
 | Move the line, or the selected lines, down or up, at every cursor | Option Down, Option Up, or Command Down, Command Up |  |  |
-| Move the selected file to the Trash | Command Delete, in the file tree | Delete, in the file tree |  |
+| Move the selected file to the Trash | Command Delete or Command Forward Delete, in the file tree | Delete, in the file tree |  |
 | Move to the next or previous terminal, across split panes and tabs | Option Command ], Option Command [ |  |  |
+| Move a word left or right at the terminal's prompt | Option Left, Option Right |  |  |
 | Move to the start or end of the line at the terminal's prompt, or delete back to its start | Command Left, Command Right, Command Delete |  |  |
 | New file | Command N | Ctrl Alt N | New file in the ⋮ menu |
 | New folder | Shift Command N | Ctrl Shift N |  |

@@ -338,10 +338,11 @@ static void MCSetKey(NSMenuItem *it, const Key *k) {
             NSArray<NSMenuItem *> *group = items[cid];
             for (NSUInteger i = 0; i < group.count; i++) {
                 Key built = KeyForItem(group[i]);
-                // The default keys a menu can show, in order.
+                // The default keys a menu can show, in order (none of a
+                // tree command's, which run only from the tree).
                 std::vector<Key> shown;
                 for (const Key &k : defaults)
-                    if (EquivalentFor(k)) shown.push_back(k);
+                    if (EquivalentFor(k) && c->when != Commands::When::Tree) shown.push_back(k);
                 Key want = i < shown.size() ? shown[i] : Key();
                 if (built != want)
                     [problems addObject:[NSString stringWithFormat:
@@ -356,8 +357,11 @@ static void MCSetKey(NSMenuItem *it, const Key *k) {
     for (NSString *cid in items) {
         NSMutableArray<NSMenuItem *> *group = items[cid];
         std::vector<Key> keys;
-        for (const Key &k : _map.keysOf(cid.UTF8String))
-            if (EquivalentFor(k)) keys.push_back(k);
+        const Commands::Command *cmd = Commands::find(cid.UTF8String);
+        // A menu key works in every pane, so a tree command's stays off it.
+        if (!cmd || cmd->when != Commands::When::Tree)
+            for (const Key &k : _map.keysOf(cid.UTF8String))
+                if (EquivalentFor(k)) keys.push_back(k);
         NSMenuItem *primary = group.firstObject;
         for (NSMenuItem *it in group)
             if (!it.isHidden) {
@@ -464,6 +468,9 @@ BOOL MCKeymapHandleKeyDown(NSEvent *e) {
     if (c && (c->flags & Commands::Fixed)) c = nullptr;
     const BOOL cmd = (k.mods & Commands::Cmd) != 0, ctrl = (k.mods & Commands::Ctrl) != 0;
     if (c && (c->flags & Commands::Global)) return MCPerform(c);
+    // The file tree's commands (F2, Cmd+Delete) have no menu key, so they
+    // run from here while the tree has the keyboard, or not at all.
+    if (c && c->when == Commands::When::Tree) return MCPerform(c);
     // A Control key whose command does not apply in the terminal is the
     // program's there (Ctrl+Shift+K, the editor's Delete Line, for one).
     if (!c && ctrl && !cmd && [fr isKindOfClass:[TerminalGridView class]]) {
