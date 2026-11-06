@@ -13,18 +13,28 @@
 #import "EditorFont.h"
 #import "AppSettings.h"
 #import <Quartz/Quartz.h>
+#import <CommonCrypto/CommonDigest.h>
 #include "LatexDoc.h"
+#include "LatexScratch.h"
 #include "SyncTex.h"
+#include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <zlib.h>
 #include <string>
 
 // tectonic is pinned so the download is reproducible; any tectonic already on
-// the machine is preferred over ours.
+// the machine is preferred over ours. The checksums are the ones GitHub
+// publishes for the release's assets (as the Linux port's), checked against
+// a download of each; an archive that does not match is never unpacked.
 static NSString *const kTectonicVersion = @"0.17.0";
 #if defined(__aarch64__)
 static NSString *const kTectonicArch = @"aarch64-apple-darwin";
+static NSString *const kTectonicSha256 =
+    @"a3f1cac7c5678f01661a92212f58480ae3b0634115d880dbc59e2953ded45667";
 #else
 static NSString *const kTectonicArch = @"x86_64-apple-darwin";
+static NSString *const kTectonicSha256 =
+    @"7c90ef5b6ddb1eb1937e4337add5237b79338e4b9676459fa91187d24d6cdf80";
 #endif
 
 
@@ -83,6 +93,128 @@ static NSString *NsStr(const std::string &s) {
                                              length:s.size()
                                            encoding:NSUTF8StringEncoding];
     return out ?: @"";
+}
+
+static NSString *HexDigest(const unsigned char *digest) {
+    NSMutableString *hex = [NSMutableString stringWithCapacity:2 * CC_SHA256_DIGEST_LENGTH];
+    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) [hex appendFormat:@"%02x", digest[i]];
+    return hex;
+}
+
+static NSString *Sha256Hex(const void *bytes, size_t length) {
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(bytes, (CC_LONG)length, digest);
+    return HexDigest(digest);
+}
+
+// A file's SHA-256 and size, read in pieces (the tectonic archive is 21 MB);
+// nil when it cannot be read. A symlink is not followed.
+static NSString *FileSha256Hex(NSString *path, unsigned long long *sizeOut) {
+    int fd = open(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) return nil;
+    CC_SHA256_CTX ctx;
+    CC_SHA256_Init(&ctx);
+    unsigned long long total = 0;
+    char buf[64 * 1024];
+    ssize_t got;
+    while ((got = read(fd, buf, sizeof buf)) > 0) {
+        CC_SHA256_Update(&ctx, buf, (CC_LONG)got);
+        total += (unsigned long long)got;
+    }
+    close(fd);
+    if (got < 0) return nil;
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256_Final(digest, &ctx);
+    if (sizeOut) *sizeOut = total;
+    return HexDigest(digest);
+}
+
+// When a process started (Unix seconds), or 0 when there is no such process
+// (as BackupStore.mm's, which keys backups the same way).
+static double ProcessStart(pid_t pid) {
+    struct kinfo_proc info;
+    size_t size = sizeof info;
+    int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, pid};
+    if (sysctl(mib, 4, &info, &size, NULL, 0) != 0 || size == 0) return 0;
+    const struct timeval tv = info.kp_proc.p_starttime;
+    return (double)tv.tv_sec + tv.tv_usec / 1e6;
+}
+
+// ------------------------------------------------------- the output folders
+
+// Every preview's output goes in a folder of its own under this one:
+// MiniCode-latex in the user's temporary folder ($MINICODE_LATEX_WORK in
+// the GUI checks, since NSTemporaryDirectory() ignores TMPDIR).
+static NSString *const kSiblingRecordName = @"sibling.record";
+
+NSString *MCLatexWorkRoot(void) {
+    NSString *override = NSProcessInfo.processInfo.environment[@"MINICODE_LATEX_WORK"];
+    if (override.length) return override;
+    return [NSTemporaryDirectory() stringByAppendingPathComponent:@"MiniCode-latex"];
+}
+
+NSString *MCLatexWorkFolder(NSString *texPath) {
+    std::string hash;
+    if (texPath.length) {
+        char resolved[PATH_MAX];
+        NSString *path = realpath(texPath.fileSystemRepresentation, resolved)
+            ? @(resolved) : texPath.stringByStandardizingPath;
+        hash = Utf8(Sha256Hex(path.UTF8String, strlen(path.UTF8String)));
+    }
+    return [MCLatexWorkRoot() stringByAppendingPathComponent:
+        NsStr(LatexScratch::folderName(hash))];
+}
+
+// The folders the live previews of this process use, counted, so one closing
+// never removes a folder another preview of the same file still has.
+static NSCountedSet<NSString *> *gLatexFoldersInUse;
+
+// What to do with one sibling record: a crash's copy is removed, a record
+// whose writer is gone is dropped (with its folder, when no preview here
+// uses it). Returns whether a sibling was removed. Any thread.
+static BOOL SweepSiblingRecord(NSString *recordPath, BOOL removeFolderWhenGone) {
+    NSData *data = [NSData dataWithContentsOfFile:recordPath];
+    if (!data) return NO;
+    LatexScratch::Record r;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (!LatexScratch::parse(std::string((const char *)data.bytes, data.length), &r)) {
+        [fm removeItemAtPath:recordPath error:nil];
+        return NO;
+    }
+    const double start = ProcessStart((pid_t)r.pid);
+    const bool alive = r.pid > 0 && start > 0 && fabs(start - r.start) < 1.0;
+    NSString *sibling = NsStr(r.sibling);
+    unsigned long long size = 0;
+    NSString *sha = alive ? nil : FileSha256Hex(sibling, &size);
+    const LatexScratch::Action act =
+        LatexScratch::decide(r, alive, sha != nil, size, Utf8(sha ?: @""));
+    if (act == LatexScratch::Action::Keep) return NO;
+    BOOL removed = NO;
+    if (act == LatexScratch::Action::RemoveSibling)
+        removed = [fm removeItemAtPath:sibling error:nil];
+    [fm removeItemAtPath:recordPath error:nil];
+    if (removeFolderWhenGone) {
+        NSString *folder = recordPath.stringByDeletingLastPathComponent;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            if ([gLatexFoldersInUse countForObject:folder] == 0)
+                [fm removeItemAtPath:folder error:nil];
+        });
+    }
+    return removed;
+}
+
+void MCLatexRemoveStaleSiblings(void (^done)(NSUInteger removed)) {
+    NSString *root = MCLatexWorkRoot();
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSUInteger removed = 0;
+        NSFileManager *fm = [NSFileManager defaultManager];
+        for (NSString *name in [fm contentsOfDirectoryAtPath:root error:nil] ?: @[]) {
+            NSString *record = [[root stringByAppendingPathComponent:name]
+                stringByAppendingPathComponent:kSiblingRecordName];
+            if (SweepSiblingRecord(record, YES)) removed++;
+        }
+        if (done) dispatch_async(dispatch_get_main_queue(), ^{ done(removed); });
+    });
 }
 
 // ------------------------------------------------------------ the PDF view
@@ -158,6 +290,7 @@ static NSString *NsStr(const std::string &s) {
     NSData *_pdfData;            // the PDF on screen, as tectonic wrote it
     std::string _pdfSrc;         // the source that PDF was typeset from
     NSMutableArray *_pdfWaiters; // pdfForPath: calls waiting on a typeset
+    NSString *_folder;           // the output folder this view counts as using
 }
 
 // Enough history for a working session without holding a whole file's worth of
@@ -226,6 +359,7 @@ static const CGFloat kStatusHeight = 26;
 
 - (void)dealloc {
     [_task terminate];
+    [self letGoOfFolder];
 }
 
 - (void)setFrameSize:(NSSize)newSize {
@@ -332,14 +466,31 @@ static const CGFloat kStatusHeight = 26;
 
 // -------------------------------------------------------------- compiling
 
+// This document's output folder, made if need be (0700, as the temporary
+// folder it is in), and counted as in use while this view has it.
 - (NSString *)workDir {
-    NSString *dir = [NSTemporaryDirectory()
-        stringByAppendingPathComponent:@"MiniCode-latex"];
+    NSString *dir = MCLatexWorkFolder(self.texPath);
+    if (![dir isEqualToString:_folder]) {
+        [self letGoOfFolder];
+        if (!gLatexFoldersInUse) gLatexFoldersInUse = [NSCountedSet set];
+        [gLatexFoldersInUse addObject:dir];
+        _folder = [dir copy];
+    }
     [[NSFileManager defaultManager] createDirectoryAtPath:dir
                               withIntermediateDirectories:YES
-                                               attributes:nil
+                                               attributes:@{NSFilePosixPermissions: @0700}
                                                     error:nil];
     return dir;
+}
+
+// The output folder goes with the last view using it, unless a typeset is
+// still writing there (then the end of that typeset removes it).
+- (void)letGoOfFolder {
+    if (!_folder) return;
+    [gLatexFoldersInUse removeObject:_folder];
+    if ([gLatexFoldersInUse countForObject:_folder] == 0 && !self.compiling)
+        [[NSFileManager defaultManager] removeItemAtPath:_folder error:nil];
+    _folder = nil;
 }
 
 // The hidden sibling we actually hand to tectonic, so relative paths in the
@@ -347,10 +498,28 @@ static const CGFloat kStatusHeight = 26;
 - (NSString *)scratchTexPath {
     NSString *dir = self.texPath.stringByDeletingLastPathComponent;
     NSString *base = self.texPath.lastPathComponent.stringByDeletingPathExtension;
-    if (!dir.length || !base.length) return [[self workDir]
+    if (!dir.length || !base.length) return [MCLatexWorkFolder(self.texPath)
         stringByAppendingPathComponent:@"untitled.minicode.tex"];
     return [dir stringByAppendingPathComponent:
         [NSString stringWithFormat:@".%@.minicode.tex", base]];
+}
+
+// Before the sibling is written, what it will hold and who wrote it, so a
+// crash during the typeset leaves something the next launch can clean up
+// (MCLatexRemoveStaleSiblings). A copy an earlier, crashed process left for
+// this document is dealt with first.
+- (void)recordSibling:(NSString *)sibling bytes:(NSData *)bytes inFolder:(NSString *)folder {
+    NSString *record = [folder stringByAppendingPathComponent:kSiblingRecordName];
+    SweepSiblingRecord(record, NO);
+    LatexScratch::Record r;
+    r.sibling = Utf8(sibling);
+    r.pid = getpid();
+    r.start = ProcessStart(getpid());
+    r.size = bytes.length;
+    r.sha256 = Utf8(Sha256Hex(bytes.bytes, bytes.length));
+    const std::string text = LatexScratch::format(r);
+    [[NSData dataWithBytes:text.data() length:text.size()] writeToFile:record
+                                                              atomically:YES];
 }
 
 - (void)compileNow {
@@ -361,12 +530,19 @@ static const CGFloat kStatusHeight = 26;
     if (!tool) { [self showTectonicMissing]; return; }
     if (self.compiling) { self.compileQueued = YES; return; }
 
+    static dispatch_once_t sweepOnce;
+    dispatch_once(&sweepOnce, ^{ MCLatexRemoveStaleSiblings(nil); });
+
     NSString *scratch = [self scratchTexPath];
     NSString *outDir = [self workDir];
     NSString *stem = scratch.lastPathComponent.stringByDeletingPathExtension;
+    NSString *record = [outDir stringByAppendingPathComponent:kSiblingRecordName];
     NSError *err = nil;
-    if (![NsStr(_src) writeToFile:scratch atomically:YES
-                         encoding:NSUTF8StringEncoding error:&err]) {
+    // The buffer's own bytes, which the record's hash is of.
+    NSData *bytes = [NSData dataWithBytes:_src.data() length:_src.size()];
+    [self recordSibling:scratch bytes:bytes inFolder:outDir];
+    if (![bytes writeToFile:scratch options:NSDataWritingAtomic error:&err]) {
+        [[NSFileManager defaultManager] removeItemAtPath:record error:nil];
         [self showFailure:[NSString stringWithFormat:@"Cannot write the preview "
                            @"copy next to your file:\n%@", err.localizedDescription]];
         [self answerPdfWaiters:@"The preview copy could not be written next to "
@@ -382,8 +558,10 @@ static const CGFloat kStatusHeight = 26;
 
     NSTask *task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:tool];
-    task.arguments = @[@"--synctex", @"--chatter", @"minimal", @"--color", @"never",
-                       @"--outdir", outDir, scratch];
+    // --untrusted keeps shell escape off whatever the document asks for, as
+    // for the Markdown preview's math.
+    task.arguments = @[@"--synctex", @"--untrusted", @"--chatter", @"minimal",
+                       @"--color", @"never", @"--outdir", outDir, scratch];
     NSString *cwd = self.texPath.stringByDeletingLastPathComponent;
     if (cwd.length) task.currentDirectoryURL = [NSURL fileURLWithPath:cwd];
     NSPipe *pipe = [NSPipe pipe];
@@ -435,9 +613,14 @@ static const CGFloat kStatusHeight = 26;
         PDFDocument *doc = pdfData ? [[PDFDocument alloc] initWithData:pdfData] : nil;
         std::string sync = (status == 0) ? ReadGzip(syncPath) : std::string();
         [[NSFileManager defaultManager] removeItemAtPath:scratch error:nil];
+        [[NSFileManager defaultManager] removeItemAtPath:record error:nil];
 
         dispatch_async(dispatch_get_main_queue(), ^{
             LatexView *me = weakSelf;
+            // The view went away while this ran: its folder goes now, unless
+            // another preview of the file has it.
+            if (!me && [gLatexFoldersInUse countForObject:outDir] == 0)
+                [[NSFileManager defaultManager] removeItemAtPath:outDir error:nil];
             if (!me || gen != me.generation) return;
             me.compiling = NO;
             me.task = nil;
@@ -843,6 +1026,50 @@ BOOL MCTectonicDownloading(void) {
     return gTectonicWaiters != nil;
 }
 
+// Puts the pinned archive at `archive` in place: checked against its
+// published SHA-256 first, unpacked into a folder of its own beside the
+// destination, and only its one `tectonic` file, a plain file, moved into
+// place. Returns why it failed, or nil. Any thread.
+static NSString *InstallTectonicArchive(NSString *archive, NSString *dest) {
+    NSString *sha = FileSha256Hex(archive, nullptr);
+    if (!sha) return @"The download could not be read.";
+    if (![sha isEqualToString:kTectonicSha256])
+        return [NSString stringWithFormat:@"The download did not match tectonic %@'s "
+                                          @"published checksum, so it was not installed.",
+                                          kTectonicVersion];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    [fm createDirectoryAtPath:dest withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *tmpl = [dest stringByAppendingPathComponent:@".tectonic-install-XXXXXX"];
+    char buf[PATH_MAX];
+    strlcpy(buf, tmpl.fileSystemRepresentation, sizeof buf);
+    if (!mkdtemp(buf)) return @"The download could not be unpacked.";
+    NSString *staging = @(buf);
+    NSString *problem = nil;
+    NSTask *untar = [[NSTask alloc] init];
+    untar.executableURL = [NSURL fileURLWithPath:@"/usr/bin/tar"];
+    untar.arguments = @[@"-xzf", archive, @"-C", staging, @"tectonic"];
+    untar.standardOutput = [NSFileHandle fileHandleWithNullDevice];
+    untar.standardError = [NSFileHandle fileHandleWithNullDevice];
+    NSError *tarErr = nil;
+    if ([untar launchAndReturnError:&tarErr]) [untar waitUntilExit];
+    else problem = tarErr.localizedDescription;
+    NSString *unpacked = [staging stringByAppendingPathComponent:@"tectonic"];
+    struct stat st;
+    if (!problem && (untar.terminationStatus != 0 ||
+                     lstat(unpacked.fileSystemRepresentation, &st) != 0 || !S_ISREG(st.st_mode)))
+        problem = @"The download did not contain tectonic.";
+    if (!problem) {
+        chmod(unpacked.fileSystemRepresentation, 0755);
+        if (rename(unpacked.fileSystemRepresentation,
+                   MCManagedTectonic().fileSystemRepresentation) != 0)
+            problem = @(strerror(errno));
+    }
+    [fm removeItemAtPath:staging error:nil];
+    if (!problem && ![fm isExecutableFileAtPath:MCManagedTectonic()])
+        problem = @"The download did not contain tectonic.";
+    return problem;
+}
+
 void MCDownloadTectonic(void (^done)(NSString *problem)) {
     if (gTectonicWaiters) {   // one is under way: wait for it
         [gTectonicWaiters addObject:[done copy]];
@@ -853,6 +1080,10 @@ void MCDownloadTectonic(void (^done)(NSString *problem)) {
     NSString *urlText = [NSString stringWithFormat:
         @"https://github.com/tectonic-typesetting/tectonic/releases/download/"
         @"tectonic%%40%@/%@", kTectonicVersion, file];
+    // The GUI checks fetch a file:// stand-in, which is held to the same
+    // checksum.
+    NSString *override = NSProcessInfo.processInfo.environment[@"MINICODE_TECTONIC_DOWNLOAD"];
+    if (override.length) urlText = override;
     NSURL *url = [NSURL URLWithString:urlText];
     if (!url) {
         done(@"The download address is not valid.");
@@ -863,7 +1094,6 @@ void MCDownloadTectonic(void (^done)(NSString *problem)) {
         downloadTaskWithURL:url
           completionHandler:^(NSURL *tmp, NSURLResponse *response, NSError *error) {
         NSString *problem = error.localizedDescription;
-        NSString *dest = [MCSupportDir() stringByAppendingPathComponent:@"bin"];
         if (!problem) {
             NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
             if ([http isKindOfClass:[NSHTTPURLResponse class]] &&
@@ -871,32 +1101,11 @@ void MCDownloadTectonic(void (^done)(NSString *problem)) {
                 problem = [NSString stringWithFormat:@"The download failed (HTTP %ld).",
                            (long)http.statusCode];
         }
-        if (!problem) {
-            NSFileManager *fm = [NSFileManager defaultManager];
-            [fm createDirectoryAtPath:dest withIntermediateDirectories:YES
-                           attributes:nil error:nil];
-            NSString *archive = [dest stringByAppendingPathComponent:file];
-            [fm removeItemAtPath:archive error:nil];
-            NSError *moveErr = nil;
-            if (![fm moveItemAtURL:tmp toURL:[NSURL fileURLWithPath:archive]
-                             error:&moveErr]) {
-                problem = moveErr.localizedDescription;
-            } else {
-                NSTask *untar = [[NSTask alloc] init];
-                untar.executableURL = [NSURL fileURLWithPath:@"/usr/bin/tar"];
-                untar.arguments = @[@"-xzf", archive, @"-C", dest];
-                NSError *tarErr = nil;
-                if ([untar launchAndReturnError:&tarErr]) [untar waitUntilExit];
-                else problem = tarErr.localizedDescription;
-                [fm removeItemAtPath:archive error:nil];
-                if (!problem) {
-                    [fm setAttributes:@{NSFilePosixPermissions: @(0755)}
-                         ofItemAtPath:MCManagedTectonic() error:nil];
-                    if (![fm isExecutableFileAtPath:MCManagedTectonic()])
-                        problem = @"The download did not contain tectonic.";
-                }
-            }
-        }
+        if (!problem && !tmp.path) problem = @"The download did not arrive.";
+        // The session removes `tmp` when this returns, so it is read here.
+        if (!problem)
+            problem = InstallTectonicArchive(tmp.path,
+                [MCSupportDir() stringByAppendingPathComponent:@"bin"]);
         dispatch_async(dispatch_get_main_queue(), ^{
             NSArray<void (^)(NSString *)> *waiters = gTectonicWaiters;
             gTectonicWaiters = nil;

@@ -19,7 +19,7 @@
 
 namespace MathTex {
 
-const int kVersion = 1;
+const int kVersion = 2;
 
 namespace {
 
@@ -206,16 +206,27 @@ std::string spellUnicode(const std::string& s) {
 }
 
 // Control words a formula has no business with, which could end the batch
-// early or write outside a page.
+// early, write outside a page, or read a file. The last two lines are the ways
+// round the first: \csname, \scantokens and a changed \catcode build a
+// control word from letters the check never sees as one (\csname input
+// \endcsname), \makeatletter and \ExplSyntaxOn make @, _ and : letters, so
+// \@@input and \file_input:n become words, and \everyeof rides along with
+// \scantokens. \stop ends the run.
 const char* const kRefused[] = {
     "\\input", "\\include", "\\endinput", "\\documentclass", "\\usepackage",
     "\\shipout", "\\output", "\\openout", "\\write", "\\immediate", "\\end{document}",
     "\\begin{document}", "\\newpage", "\\clearpage",
+    "\\csname", "\\catcode", "\\scantokens", "\\everyeof", "\\makeatletter",
+    "\\ExplSyntaxOn", "\\openin", "\\read", "\\readline", "\\stop",
 };
 
 }  // namespace
 
 std::string check(const std::string& tex) {
+    // ^^ followed by two hex digits is any character to TeX, read before
+    // anything else, so ^^5c is a backslash and \^^69nput is \input. In a
+    // formula it is otherwise only a double superscript, which is an error.
+    if (tex.find("^^") != std::string::npos) return "^^ is not allowed in a formula";
     int depth = 0;
     for (size_t i = 0; i < tex.size(); i++) {
         const char c = tex[i];
