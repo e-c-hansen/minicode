@@ -13,6 +13,7 @@
 #include "LspClient.h"
 #include "MarkdownParser.h"
 #include "PythonEnvs.h"
+#include "SymbolOutline.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -1616,6 +1617,83 @@ static NSString *DocKey(NSString *uri, MCLspServer *server) {
     return [NSString stringWithFormat:@"%@ %@", server.serverId, uri];
 }
 
+@implementation MCSymbolItem
+@end
+
+// Where each line of a text starts (LSP's lines: \n, \r\n and \r end
+// one), for turning many positions into offsets in one pass.
+static std::vector<NSUInteger> LineStarts(NSString *text) {
+    std::vector<NSUInteger> starts{0};
+    const NSUInteger n = text.length;
+    std::vector<unichar> buf(n);
+    if (n) [text getCharacters:buf.data() range:NSMakeRange(0, n)];
+    for (NSUInteger i = 0; i < n; i++) {
+        if (buf[i] == '\r') {
+            if (i + 1 < n && buf[i + 1] == '\n') i++;
+            starts.push_back(i + 1);
+        } else if (buf[i] == '\n') {
+            starts.push_back(i + 1);
+        }
+    }
+    return starts;
+}
+
+static NSUInteger OffsetAt(const std::vector<NSUInteger> &starts, NSString *text,
+                           Lsp::Position p) {
+    if (p.line < 0) return 0;
+    if ((size_t)p.line >= starts.size()) return text.length;
+    NSUInteger a = starts[(size_t)p.line];
+    NSUInteger b = (size_t)p.line + 1 < starts.size() ? starts[(size_t)p.line + 1] : text.length;
+    while (b > a && ([text characterAtIndex:b - 1] == '\n' || [text characterAtIndex:b - 1] == '\r'))
+        b--;
+    return MIN(a + (NSUInteger)MAX(0, p.character), b);
+}
+
+static MCSymbolItem *MCSymbolItemFrom(const Lsp::Symbol &s) {
+    MCSymbolItem *it = [MCSymbolItem new];
+    it.name = NS(s.name);
+    it.detail = s.detail.empty() ? nil : NS(s.detail);
+    it.container = s.container.empty() ? nil : NS(s.container);
+    it.kind = s.kind;
+    it.depth = s.depth;
+    it.line = s.selectionRange.start.line;
+    it.character = s.selectionRange.start.character;
+    it.endLine = s.selectionRange.end.line;
+    it.endCharacter = s.selectionRange.end.character;
+    it.range = NSMakeRange(NSNotFound, 0);
+    return it;
+}
+
+// Symbols of `text` as items with their ranges in it, and the one at the caret.
+static NSArray<MCSymbolItem *> *MCSymbolItemsFrom(const std::vector<Lsp::Symbol> &syms,
+                                                  NSString *text, NSUInteger caret,
+                                                  NSInteger *caretIndex) {
+    const std::vector<NSUInteger> starts = LineStarts(text);
+    NSMutableArray<MCSymbolItem *> *items = [NSMutableArray array];
+    for (const Lsp::Symbol &s : syms) {
+        MCSymbolItem *it = MCSymbolItemFrom(s);
+        NSUInteger a = OffsetAt(starts, text, s.selectionRange.start);
+        NSUInteger b = OffsetAt(starts, text, s.selectionRange.end);
+        it.range = NSMakeRange(a, b >= a ? b - a : 0);
+        [items addObject:it];
+    }
+    if (caretIndex) {
+        caret = MIN(caret, text.length);
+        auto at = std::upper_bound(starts.begin(), starts.end(), caret);
+        const int line = (int)(at - starts.begin()) - 1;
+        *caretIndex = Lsp::symbolAt(syms, Lsp::Position{line, (int)(caret - starts[(size_t)line])});
+    }
+    return items;
+}
+
+NSArray<MCSymbolItem *> *MCOutlineSymbols(NSString *path, NSString *text, NSUInteger caret,
+                                          NSInteger *caretIndex) {
+    if (caretIndex) *caretIndex = -1;
+    if (!path.length || !text) return @[];
+    std::vector<Lsp::Symbol> syms = Outline::outline(Std(path.lastPathComponent), U16Of(text));
+    return MCSymbolItemsFrom(syms, text, caret, caretIndex);
+}
+
 @implementation MCProblem
 @end
 
@@ -1687,6 +1765,10 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     NSString *_renameText;                    // the text when the field opened
     BOOL _applyingEdit;                       // a WorkspaceEdit is going into the text
     NSString *_commandTitle;                  // the quick fix whose command is running
+
+    // Go to Symbol: answers for an older request are dropped.
+    int _symbolGen, _workspaceGen;
+    NSMutableArray<NSArray *> *_workspaceRequests;   // [server, request id] still out
 }
 
 - (instancetype)initWithTextView:(CodeTextView *)textView root:(NSString *)root {
@@ -1697,6 +1779,7 @@ static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
     _docs = [NSMutableDictionary dictionary];
     _servers = @[];
     _ruffConfigured = [NSMutableDictionary dictionary];
+    _workspaceRequests = [NSMutableArray array];
     _settingsSignature = [self currentSettingsSignature];
     _pythonSetting = NS([AppSettings shared].settings.pythonInterpreter());
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
@@ -3481,8 +3564,19 @@ static const NSTimeInterval kResolveBeforeAccept = 0.4;
     return target;
 }
 
-// Open a location's file (go to definition, a reference) and select its range.
+// Open a location's file (go to definition, a reference) and select its
+// range, inside aroundJump when the window has one (for Go Back).
 - (void)revealLocation:(const Lsp::Location &)loc {
+    if (self.aroundJump) {
+        Lsp::Location copy = loc;
+        __weak LspSession *weakSelf = self;
+        self.aroundJump(^{ [weakSelf revealLocationNow:copy]; });
+        return;
+    }
+    [self revealLocationNow:loc];
+}
+
+- (void)revealLocationNow:(const Lsp::Location &)loc {
     if (![self uri:loc.uri isSameFileAs:_uri]) {
         NSString *path = [self treePathForURI:loc.uri];
         if (!path.length || !self.openFile || !self.openFile(path)) return;
@@ -4088,6 +4182,117 @@ static NSString *ErrorText(const Json &error) {
 }
 
 // ---- references
+// ---- Go to Symbol
+- (void)documentSymbolsWithCompletion:(void (^)(NSArray<MCSymbolItem *> *, NSInteger,
+                                                NSString *))done {
+    if (!done) return;
+    if (!_path || !_tv.editable) {
+        done(nil, -1, nil);
+        return;
+    }
+    MCLspServer *server = [self serverFor:Lsp::Feature::DocumentSymbols];
+    NSString *path = _path;
+    if (!server || !_uri) {
+        NSInteger caret = -1;
+        NSArray *items = MCOutlineSymbols(path, _tv.string, _tv.selectedRange.location, &caret);
+        done(items, caret, @"outline");
+        return;
+    }
+    [self flushChanges];
+    int gen = ++_symbolGen;
+    NSString *uri = _uri, *name = server.name;
+    __weak LspSession *weakSelf = self;
+    server.client.documentSymbols(Std(uri), [weakSelf, gen, uri, path, name, done](
+                                                const Json &r, const Json &e) {
+        LspSession *s = weakSelf;
+        if (!s || gen != s->_symbolGen || ![uri isEqualToString:s->_uri]) return;
+        NSString *text = s->_tv.string;
+        NSUInteger caret = s->_tv.selectedRange.location;
+        NSInteger caretIndex = -1;
+        if (!e.isNull()) {   // the server refused: the outline stands in
+            NSArray *items = MCOutlineSymbols(path, text, caret, &caretIndex);
+            done(items, caretIndex, @"outline");
+            return;
+        }
+        std::vector<Lsp::Symbol> syms = Lsp::parseDocumentSymbols(r);
+        done(MCSymbolItemsFrom(syms, text, caret, &caretIndex), caretIndex, name);
+    });
+}
+
+- (void)cancelWorkspaceSymbols {
+    _workspaceGen++;
+    for (NSArray *pair in _workspaceRequests) {
+        MCLspServer *server = pair[0];
+        if (server.running) server.client.cancel([pair[1] intValue]);
+    }
+    [_workspaceRequests removeAllObjects];
+}
+
+- (void)workspaceSymbols:(NSString *)query
+              completion:(void (^)(NSArray<MCSymbolItem *> *, BOOL, NSString *))done {
+    if (!done) return;
+    [self cancelWorkspaceSymbols];
+    NSMutableArray<MCLspServer *> *servers = [NSMutableArray array];
+    // Each running server once, in a steady order (the open file's first).
+    NSMutableArray<MCLspEntry *> *entries = [NSMutableArray array];
+    for (NSString *key in [_entries.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        MCLspEntry *e = _entries[key];
+        if ([_servers containsObject:e.server]) [entries insertObject:e atIndex:0];
+        else [entries addObject:e];
+    }
+    for (MCLspEntry *e in entries) {
+        MCLspServer *server = e.server;
+        if (!server.running || server.client.state() != Lsp::Client::State::Ready) continue;
+        if (!server.client.offers(Lsp::Feature::WorkspaceSymbols)) continue;
+        if (![servers containsObject:server]) [servers addObject:server];
+    }
+    if (!servers.count) {
+        done(@[], YES, _entries.count ? @"No running language server searches the workspace"
+                                      : @"No language server is running in this window");
+        return;
+    }
+    [self flushChanges];
+    [self syncOpenDocuments];
+    const int gen = ++_workspaceGen;
+    auto answers = std::make_shared<std::vector<std::vector<Lsp::Symbol>>>(servers.count);
+    auto pending = std::make_shared<size_t>(servers.count);
+    __weak LspSession *weakSelf = self;
+    for (NSUInteger i = 0; i < servers.count; i++) {
+        MCLspServer *server = servers[i];
+        int rid = server.client.workspaceSymbols(Std(query), [weakSelf, gen, answers, pending, i,
+                                                              done](const Json &r, const Json &e) {
+            LspSession *s = weakSelf;
+            if (!s || gen != s->_workspaceGen) return;
+            if (e.isNull()) (*answers)[i] = Lsp::parseWorkspaceSymbols(r);
+            if (*pending > 0) (*pending)--;
+            std::vector<Lsp::Symbol> merged = Lsp::mergeSymbols(*answers, CanonicalURI);
+            NSMutableArray<MCSymbolItem *> *items = [NSMutableArray array];
+            for (const Lsp::Symbol &sym : merged) {
+                MCSymbolItem *it = MCSymbolItemFrom(sym);
+                it.path = [s treePathForURI:sym.uri];
+                if (it.path.length) [items addObject:it];
+            }
+            done(items, *pending == 0, nil);
+        });
+        [_workspaceRequests addObject:@[server, @(rid)]];
+    }
+}
+
+- (void)revealSymbol:(MCSymbolItem *)item {
+    if (!item) return;
+    Lsp::Location loc;
+    if (item.path.length) {
+        loc.uri = Lsp::uriFromPath(Std(RealPath(item.path)));
+    } else if (_uri) {
+        loc.uri = Std(_uri);
+    } else {
+        return;
+    }
+    loc.range.start = Lsp::Position{(int)item.line, (int)item.character};
+    loc.range.end = Lsp::Position{(int)item.endLine, (int)item.endCharacter};
+    [self revealLocation:loc];
+}
+
 - (void)findReferences {
     MCLspServer *server = [self serverFor:Lsp::Feature::References
                                   missing:@"find references"];

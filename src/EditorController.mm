@@ -26,6 +26,8 @@
 #import "AgentPanel.h"
 #import "EditorFind.h"
 #import "ProblemsPanel.h"
+#import "PalettePanel.h"
+#import "Navigation.h"
 #import "Gutter.h"
 #import "EditorFont.h"
 #import "AgentNotes.h"
@@ -553,7 +555,7 @@ private:
 
 // ---------------------------------------------------------------------------
 @interface EditorController () <NSTextStorageDelegate, MCChangeHost, MCAgentHost,
-                                 MCAgentNotesHost> {
+                                MCAgentNotesHost, MCNavigatorHost> {
     FileItem *_root;
     // The open files, in the order the strip shows them, and the one shown.
     NSMutableArray<MCTab *> *_tabs;
@@ -689,6 +691,7 @@ private:
 @property(nonatomic, assign) NSUInteger opacityLineStart;   // line the opacity slider edits
 @property(nonatomic, assign) NSUInteger keyFlashGeneration;  // Adjust Settings' tint
 @property(nonatomic, strong) LspSession *lsp;         // language servers
+@property(nonatomic, strong) MCNavigator *navigator;  // Go Back and Go Forward
 @property(nonatomic, strong) MCLspStatusField *lspLabel;   // their status; click for more
 // Every problem the servers report, across the bottom above the terminal
 // (Shift+Cmd+M), and their counts in the status bar (click to toggle it).
@@ -860,6 +863,13 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
 
     // Language servers: completion, go to definition, error underlines.
     self.lsp = [[LspSession alloc] initWithTextView:self.textView root:_root.path];
+    // Jumps (definition, references, symbols, lines) are remembered for Ctrl+-.
+    self.navigator = [[MCNavigator alloc] initWithTextView:self.textView host:self];
+    self.lsp.aroundJump = ^(dispatch_block_t jump) {
+        EditorController *s = weakSelf;
+        if (s) [s.navigator jump:jump];
+        else jump();
+    };
     self.textView.onPreviewDoubleClick = ^BOOL(NSUInteger index, NSPoint point) {
         return [weakSelf editMarkdownAtCharacter:index point:point];
     };
@@ -1498,6 +1508,10 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⌘P" label2:@"Go to file" state:nil];
     [self appendHintsRow:s key:@"⌃G" label:@"Go to line"
                     key2:@"⇧⌘\\" label2:@"Go to bracket" state:nil];
+    [self appendHintsRow:s key:@"⇧⌘O" label:@"Go to symbol"
+                    key2:@"⌘T" label2:@"Symbol in workspace" state:nil];
+    [self appendHintsRow:s key:@"⌃- ⌃⇧-" label:@"Back, forward"
+                    key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:@"⌘0" label:@"Focus tree"
                     key2:@"⌘1" label2:@"Focus editor" state:nil];
     [self appendHintsRow:s key:@"⌘2" label:@"Focus terminal"
@@ -1970,6 +1984,10 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
 // file opens in the editor at the line and column the reference named; a
 // folder is shown in the tree.
 - (void)openTerminalLink:(MCTermLink *)link {
+    [self.navigator jump:^{ [self openTerminalLinkNow:link]; }];
+}
+
+- (void)openTerminalLinkNow:(MCTermLink *)link {
     if (link.isURL) {
         if (!self.browserVisible) [self toggleBrowser:nil];
         [self.browser navigateToString:link.target];
@@ -2009,6 +2027,10 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
 // characters, and 0 means the start of the line), showing the source first
 // if a preview is up.
 - (void)goToLine:(int)line column:(int)column {
+    [self.navigator jump:^{ [self moveToLine:line column:column]; }];
+}
+
+- (void)moveToLine:(int)line column:(int)column {
     if (self.previewMode && self.canTogglePreview) [self togglePreview:nil];
     NSString *text = self.textView.string;
     NSUInteger index = 0;
@@ -2319,8 +2341,10 @@ static const CGFloat kDividerGrabSlop = 5;
             initWithRoot:_root.path
              openHandler:^(NSString *path, NSInteger line) {
                 EditorController *s = weakSelf;
-                [s openFileAtPath:path];
-                [s jumpToLine:line];
+                [s.navigator jump:^{
+                    [s openFileAtPath:path];
+                    [s jumpToLine:line];
+                }];
                 [s.window makeKeyAndOrderFront:nil];
             }];
         // Replace in Folder edits open tabs through their buffers, as
@@ -2552,6 +2576,7 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
 // Every open tab follows a file or folder that moved; the one on show also
 // tells the language server and the previews.
 - (void)pathMovedFrom:(NSString *)src to:(NSString *)dst {
+    [self.navigator pathMovedFrom:src to:dst];
     NSString *(^follow)(NSString *) = ^NSString *(NSString *p) {
         if ([p isEqualToString:src]) return dst;
         NSString *prefix = [src stringByAppendingString:@"/"];
@@ -3133,6 +3158,7 @@ static NSString *MCGroupedCount(long long n) {
                                        resultingItemURL:nil error:&err]) {
         [self warn:err.localizedDescription]; return;
     }
+    [self.navigator pathRemoved:path];
     // Tabs of what went away close, a folder's too, unless they hold unsaved
     // changes: those stay open, and saving writes the file again.
     NSString *prefix = [path stringByAppendingString:@"/"];
@@ -3891,6 +3917,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     [self revealEditor];
     tab.lastActive = ++_tabStamp;
     if (tab == _activeTab) { [self reloadTabStrip]; return; }
+    [self.navigator tabWillSwitch];   // Go Back returns to the tab left
     [_notes activeTabWillChange];
     [self stashActiveTab];
     if (_activeTab) [self autoSaveOnFocusChange];   // the tab that leaves (focus-change)
@@ -3904,6 +3931,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     [self reselectCurrentFileInTree];
     [self reloadTabStrip];
     [self saveSession];
+    [self.navigator tabDidSwitch];
     [_notes activeTabDidChange];
 }
 
@@ -5163,6 +5191,8 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     BOOL enabled = NO;
+    if (item.action == @selector(navigateBack:)) return [self.navigator canGoBack];
+    if (item.action == @selector(navigateForward:)) return [self.navigator canGoForward];
     if ([self validateActiveTabAction:item.action enabled:&enabled]) return enabled;
     if (item.action == @selector(sortTreeBy:)) {
         item.state = item.tag == (NSInteger)_treeSort.key ? NSControlStateValueOn
@@ -6311,6 +6341,146 @@ static NSColor *ContrastColor(const Rgba &c) {
 - (void)findReferences:(id)sender {
     if ([self lspActionAllowed]) [self.lsp findReferences];
 }
+
+// ---------------------------------------------- Go Back, Go to Symbol
+// Ctrl+- and Ctrl+Shift+-, VS Code's Mac keys (Navigation.h). The grid
+// terminal keeps Ctrl+- for its program (it claims Ctrl keys first).
+- (void)navigateBack:(id)sender {
+    (void)sender;
+    [self.navigator goBack];
+}
+- (void)navigateForward:(id)sender {
+    (void)sender;
+    [self.navigator goForward];
+}
+
+// MCNavigatorHost: the file on show, and whether the editor holds its text.
+- (NSString *)navigationPath:(BOOL *)hasText {
+    if (hasText)
+        *hasText = self.canGoToLine && !self.previewMode && self.textView.editable;
+    return _activeTab ? self.currentPath : nil;
+}
+
+- (BOOL)showNavigationPlace:(MCPlace *)place {
+    NSString *path = place.path;
+    if (!path.length) return NO;
+    if (![path isEqualToString:self.currentPath]) {
+        MCTab *tab = [self tabForPath:path];
+        if (tab) [self activateTab:tab];
+        else if ([[NSFileManager defaultManager] fileExistsAtPath:path]) [self showFile:path];
+        if (![self.currentPath isEqualToString:path]) return NO;
+    }
+    [self revealEditor];
+    NSTextView *tv = self.textView;
+    if (place.hasText && self.canGoToLine && !self.previewMode && tv.editable) {
+        const NSUInteger n = tv.string.length;
+        NSRange r = place.selection;
+        if (r.location > n) r = NSMakeRange(n, 0);
+        if (NSMaxRange(r) > n) r.length = n - r.location;
+        [self.window makeFirstResponder:tv];
+        [tv setSelectedRange:r];
+        [self revealSymbolRange:r];
+    } else {
+        [self focusActiveDocument];
+    }
+    return YES;
+}
+
+// A symbol's range in view: left where it is when it already shows, else a
+// third of the way down the pane, as VS Code centres it.
+- (void)revealSymbolRange:(NSRange)r {
+    NSTextView *tv = self.textView;
+    NSRect rect = [self textRectForCharacter:r.location];
+    if (NSIsEmptyRect(rect)) {
+        [tv scrollRangeToVisible:r];
+        return;
+    }
+    if (!NSContainsRect(tv.visibleRect, rect))
+        [self scrollEditorToY:NSMinY(rect) - NSHeight(tv.visibleRect) / 3];
+}
+
+- (void)addSymbolsToPaletteContext:(MCPaletteContext *)ctx {
+    __weak EditorController *weakSelf = self;
+    // "#" asks every language server running in the window.
+    ctx.workspaceSymbols = ^(NSString *query,
+                             void (^done)(NSArray<MCSymbolItem *> *, BOOL, NSString *)) {
+        [weakSelf.lsp workspaceSymbols:query completion:done];
+    };
+    ctx.cancelWorkspaceSymbols = ^{ [weakSelf.lsp cancelWorkspaceSymbols]; };
+    ctx.openWorkspaceSymbol = ^(MCSymbolItem *item) { [weakSelf.lsp revealSymbol:item]; };
+
+    if (!self.canGoToLine || self.showingMessage) return;
+    NSString *path = self.currentPath;
+    NSTextView *tv = self.textView;
+    // Where the editor is now, for Esc and for Go Back after a symbol.
+    const NSRange selection = tv.selectedRange;
+    const NSPoint scroll = self.editorScroll.contentView.bounds.origin;
+    MCPlace *from = [self.navigator currentPlace];
+    void (^restore)(void) = ^{
+        EditorController *s = weakSelf;
+        if (!s || ![s.currentPath isEqualToString:path]) return;
+        [s.navigator beQuiet:^{
+            NSTextView *t = s.textView;
+            if (t.editable && NSMaxRange(selection) <= t.string.length)
+                t.selectedRange = selection;
+            [s scrollEditorToY:scroll.y];
+        }];
+    };
+    if (self.previewMode) {
+        // A rendered Markdown page: its headings, from the source, and the
+        // page scrolled to each.
+        if (!self.isMarkdown) return;
+        NSString *source = self.sourceText ?: @"";
+        ctx.documentSymbols = ^(void (^done)(NSArray<MCSymbolItem *> *, NSInteger, NSString *)) {
+            done(MCOutlineSymbols(path, source, 0, NULL), -1, @"outline");
+        };
+        void (^show)(MCSymbolItem *) = ^(MCSymbolItem *item) {
+            EditorController *s = weakSelf;
+            if (!s || ![s.currentPath isEqualToString:path] || !s.previewMode) return;
+            NSUInteger at = [s markdownCharacterForSourceLine:item.line];
+            NSRect r = [s textRectForCharacter:at];
+            if (!NSIsEmptyRect(r)) [s scrollEditorToY:NSMinY(r) - 8];
+        };
+        ctx.previewSymbol = show;
+        ctx.goToSymbol = ^(MCSymbolItem *item) {
+            show(item);
+            [weakSelf focusActiveDocument];
+        };
+        ctx.endPreview = restore;
+        return;
+    }
+    ctx.documentSymbols = ^(void (^done)(NSArray<MCSymbolItem *> *, NSInteger, NSString *)) {
+        EditorController *s = weakSelf;
+        if (!s || ![s.currentPath isEqualToString:path]) { done(nil, -1, nil); return; }
+        [s.lsp documentSymbolsWithCompletion:done];
+    };
+    ctx.previewSymbol = ^(MCSymbolItem *item) {
+        EditorController *s = weakSelf;
+        if (!s || ![s.currentPath isEqualToString:path] || item.range.location == NSNotFound)
+            return;
+        NSTextView *t = s.textView;
+        if (NSMaxRange(item.range) > t.string.length) return;
+        [s.navigator beQuiet:^{
+            t.selectedRange = item.range;
+            [s revealSymbolRange:item.range];
+        }];
+    };
+    ctx.goToSymbol = ^(MCSymbolItem *item) {
+        EditorController *s = weakSelf;
+        if (!s || ![s.currentPath isEqualToString:path] || item.range.location == NSNotFound)
+            return;
+        NSTextView *t = s.textView;
+        if (NSMaxRange(item.range) > t.string.length) return;
+        [s.navigator jumpFrom:from body:^{
+            [s.window makeFirstResponder:t];
+            t.selectedRange = item.range;
+            [s revealSymbolRange:item.range];
+            [t showFindIndicatorForRange:item.range];
+        }];
+    };
+    ctx.endPreview = restore;
+}
+
 - (void)showQuickFixes:(id)sender {
     if ([self lspActionAllowed]) [self.lsp showQuickFixes];
 }
@@ -8151,6 +8321,7 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
 - (void)changeRootTo:(NSString *)dir {
     [self saveSession];       // the old folder's tabs, for when it is back
     [self dropAllTabs];       // no stale preview or image over the new folder
+    [self.navigator clear];   // places in the old folder
     _root = [FileItem new];
     _root.path = dir; _root.isDir = YES;
     [self rootChanged];

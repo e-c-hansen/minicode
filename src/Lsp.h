@@ -141,6 +141,28 @@ typedef NS_ENUM(NSInteger, MCLspState) {
 @property(nonatomic, assign) NSInteger errors, warnings, others;   // a heading's
 @end
 
+// One symbol for Go to Symbol (the palette's "@" and "#"): from a language
+// server, or from the built-in outline (SymbolOutline.h).
+@interface MCSymbolItem : NSObject
+@property(nonatomic, copy) NSString *name;
+@property(nonatomic, copy) NSString *detail;      // the server's, often a signature
+@property(nonatomic, copy) NSString *container;   // the enclosing symbol's name, or nil
+@property(nonatomic, assign) NSInteger kind;      // LSP's SymbolKind, 0 unknown
+@property(nonatomic, assign) NSInteger depth;     // levels below the top
+// The file, as the tree spells it; nil for the file the symbols were asked of.
+@property(nonatomic, copy) NSString *path;
+// Its name, 0-based line and UTF-16 column (the whole symbol for a
+// workspace symbol's), and, for the file the symbols were asked of, the
+// same as a range of its text (NSNotFound otherwise).
+@property(nonatomic, assign) NSInteger line, character, endLine, endCharacter;
+@property(nonatomic, assign) NSRange range;
+@end
+
+// The built-in outline of a file's text (SymbolOutline.h) as items, with
+// the index of the innermost one holding character `caret` (-1 for none).
+NSArray<MCSymbolItem *> *MCOutlineSymbols(NSString *path, NSString *text, NSUInteger caret,
+                                          NSInteger *caretIndex);
+
 // Posted (object: the session) whenever a server's state, the open file's
 // language or the Python interpreter changes.
 extern NSNotificationName const MCLspSessionDidChangeNotification;
@@ -208,6 +230,30 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
                        strings:(NSArray<NSArray<NSString *> *> *)strings
                     actionName:(NSString *)name
                        failure:(NSString **)failure;
+// ---- Go to Symbol (Shift+Cmd+O, Cmd+T)
+// The file on show's symbols, from its server when one answers
+// textDocument/documentSymbol, else from the built-in outline; `source`
+// names where they came from ("clangd", "outline"), and caretIndex is the
+// innermost symbol at the caret, or -1. Called once, on the main thread;
+// with nil items when there is no file to list.
+- (void)documentSymbolsWithCompletion:(void (^)(NSArray<MCSymbolItem *> *items,
+                                                NSInteger caretIndex,
+                                                NSString *source))done;
+// workspace/symbol for `query` from every running server of the window
+// that answers it, merged; done is called as each answers (complete NO)
+// and once more when the last has (complete YES), with a note when there
+// is nothing to ask. A newer query, or cancelWorkspaceSymbols, drops the
+// answers still out.
+- (void)workspaceSymbols:(NSString *)query
+              completion:(void (^)(NSArray<MCSymbolItem *> *items, BOOL complete,
+                                   NSString *note))done;
+- (void)cancelWorkspaceSymbols;
+// Open a workspace symbol's file and select it, as a reference opens.
+- (void)revealSymbol:(MCSymbolItem *)item;
+// Every jump the session makes (definition, a reference, a problem, a
+// symbol) runs inside this, so the window's Go Back can record it.
+@property(nonatomic, copy) void (^aroundJump)(dispatch_block_t jump);
+
 // Shift+F12: every reference to the name at the caret, grouped by file, in
 // a list by the caret; Return or a click opens one.
 - (void)findReferences;
