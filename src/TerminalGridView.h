@@ -54,6 +54,10 @@ typedef NS_ENUM(NSInteger, MCLineEdit) {
 // The program is in the middle of a synchronized frame and the view is
 // holding its last picture (for tests).
 @property(nonatomic, readonly) BOOL waitingForFrame;
+// Resize the screen (which reflows it), keeping a scrolled-back view, the
+// selection and the current find match on their text. Call screenChanged
+// after.
+- (void)resizeScreenToCols:(int)cols rows:(int)rows;
 // The screen and scrollback were cleared under the view (Cmd+K): the
 // selection goes and the view returns to the bottom.
 - (void)contentCleared;
