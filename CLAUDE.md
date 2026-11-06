@@ -66,13 +66,17 @@ opening comment says what it does in more detail than the lines below.
 - `make guitest [SUITES="control agents"]`: the offscreen GUI checks in
   `tests/gui` (see "Verification").
 - `make run [DIR=~/path]`, `make icon` (from `tools/makeicon.m`), `make demos
-  [SCENES="tour latex"] [POSTERS=1]`, `make membench`, `make install` (copies
-  `skills/minicode/SKILL.md` to `~/.claude/skills/minicode`), `make dist-zip`,
+  [SCENES="tour latex"] [POSTERS=1]`, `make membench`, `make install` (runs `minicode
+  install-skill` from the checkout: `skills/minicode/SKILL.md` to
+  `~/.claude/skills/minicode`; the bundle carries the skill in
+  `Contents/Resources/skills`, so a Homebrew copy can install it too), `make dist-zip`,
   `make dmg`.
 - `scripts/release.sh 1.2.0` cuts a release from a clean `main`: runs the
   core tests, and `make guitest` unless CI passed on that very commit, builds
   the signed APK before anything is stamped, stamps the version into `Info.plist` and `packaging/minicode.rb` and
-  commits that, builds the zip and checks the built app reports the version,
+  commits that, builds the zip as a release (`make dist-zip RELEASE=1`: no
+  `Demo.mm` or `Bench.mm`, main.mm gets their stubs, checked with `nm`) and
+  checks the built app reports the version,
   publishes it on the Homebrew tap repo, bumps the cask's version and sha256,
   then tags `v1.2.0` and pushes `main` with the tag, and runs the PPA upload
   last (skipped when no key is configured). The version on the command line is
@@ -125,7 +129,8 @@ goes here first, with tests; the GUI only displays it.
   `applySgr`, `termCharWidth`), `TerminalScreen` (the grid, scrollback, reflow,
   find, mouse encoding), `TermLinks`.
 - `FolderSearch` (Find and Replace in Folder, atomic writes, TODOs),
-  `GitStatus` (status, diffs, git time limits), `GitGraph` (log, refs, lanes).
+  `GitStatus` (status, diffs, git time limits), `GitGraph` (log, refs, lanes),
+  `GitModel` (what every port's Source Control panel shows and runs).
 - `CommandPalette` (matching, modes, Quick Open, symbol rows), `SymbolOutline`
   (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
@@ -192,6 +197,19 @@ stays warning-free:
   inline` (so a file that does not call one is not warned). Only
   EditorController files import it. Shared non-window state is a global defined
   in one file (`gShowHidden` in FileTree.mm), never a static in a header.
+- **Ivars (2026-11-06): the shared block is closed to one category's state.**
+  It holds only variables two or more category files use; one used by a
+  single category goes in that category's own class extension,
+  `src/EditorController+<Concern>Ivars.h` (`@interface EditorController ()
+  { ... }`, importing `+Private.h`), imported by that category's `.mm` and by
+  `EditorController.mm`, whose `@implementation` must see a class extension
+  for its ivars to exist (miss it and the link fails on `OBJC_IVAR_$_...`).
+  Make the header when the category has none yet. Better still, a feature in
+  files of its own keeps its state in its own object, reached through one
+  property or ivar (`MCEditorFind`, `MCFolds`, `MCAgentSession`). The
+  `structure:ivars` core test fails on a shared variable fewer than two
+  categories use, an ivar header `EditorController.mm` does not import, or a
+  category using another's ivars.
 - Methods the rest of the app calls go in `EditorController.h` in an
   `@interface EditorController (Concern)` named for the implementing category:
   a method the class declares but a category implements draws warnings. For the
@@ -242,9 +260,12 @@ container (PanelHost, laid out by hand in layoutContainer)
   `applySettings`, run at startup and on `MCSettingsDidChangeNotification`,
   that recolors what is on screen (editor re-highlights, Markdown re-renders
   keeping scroll, terminal text marked `MCTerminalDefaultForeground` follows).
-  A new setting goes in `Settings.cpp` (parser, default, the commented
-  `defaultFileText`, which a test checks key by key) and the view's
-  `applySettings`. Still inline hex (`Hex`, `THex`, `SHex`): accents #4EA1F7,
+  A new setting goes in `Settings.cpp` (a row of `keyTable()`, `MC_KEY(key,
+  Word | CommandLine | Path, isColor, body)`, which says how far its value
+  runs on the line and applies it; only a family matched by prefix, such as
+  `lsp.*` or a surface's `.background`, is code in `apply()`), its default,
+  the commented `defaultFileText` (`settings:key-table` fails on a row it
+  lacks) and the view's `applySettings`. Per-language blocks are not done. Still inline hex (`Hex`, `THex`, `SHex`): accents #4EA1F7,
   muted #9CA3AF, dividers #333333, the hints overlay, terminal panel messages,
   the Search window, the git panel, the developer amber #E8A33D, the ANSI
   palette in `TermColor::rgb()`; `linux/src/Palette.h` mirrors the defaults.
@@ -385,8 +406,14 @@ container (PanelHost, laid out by hand in layoutContainer)
   Shift+F12) and the editor has the keyboard, since AppKit gives such a key to
   the text view as typing before the menu (in another field or the grid it
   types); when two commands share a key in different places; and for keys a
-  menu cannot show (keypad digits, the Menu key, Ctrl+Shift with punctuation).
-  A plain Control key goes to the terminal grid while it has the keyboard
+  menu cannot show (keypad digits, the Menu key, Ctrl+Shift with punctuation);
+  and for a `Tree` command (renameFile on F2, moveFileToTrash on Cmd+Delete)
+  while the tree has the keyboard. A `Tree` command's keys are never put on
+  its menu item, since a menu key acts from every pane (Cmd+Delete once
+  trashed the tree's selection from the editor); no view hard-codes them.
+  The grid's prompt line edits (Cmd+Left/Right/Delete, Option+Left/Right) and
+  the tree's Space and Esc (Quick Look) are `Fixed` rows: typing keys, or
+  keys the view sends on to the shell. A plain Control key goes to the terminal grid while it has the keyboard
   (Ctrl+G for nano) unless Global. Plain typing skips the keymap at once. Cmd+.
   is the key bindings' `cancelOperation:` everywhere, so only an editable
   editor sends it to the menu. Validation decides: a command that cannot act
@@ -1443,9 +1470,16 @@ for full-screen programs. Both can be open at once.
 ## Git panel (all three ports)
 
 Ctrl+Shift+G swaps the tree for `MCGitPanel` (`replaceSubview:with:`, same
-frame). The GTK port (`linux/src/GitPanel`, `GitModel`) and Android
-(`GitPanel.kt`, `git_jni.cpp`, git in Termux through one bash loop) follow its
-rules and wording (`linux/HANDOFF.md` item 10; `android/README.md`, "Source
+frame). All three panels draw from the core's `src/GitModel.{h,cpp}`
+(`GitUi`: rows, the selection after a refresh, every argument vector, the
+summary line, failure text, the graph's build, key, colors and tooltips, and
+diff and commit text as styled runs in characters, which `MCGitStyledText`
+maps to UTF-16; tested in `tests/gitmodel_tests.inc`, `git-ui:*`). It was
+the GTK port's until 2026-11-06, when the Mac's `GitPanel.mm` still had its
+own copy of every rule. The Mac passes its own date format (`DateFormat`,
+the user's locale). A rule or wording changes there, once. The GTK port
+(`linux/src/GitPanel`) and Android (`GitPanel.kt`, `git_jni.cpp`, git in
+Termux through one bash loop) follow the same rules and wording (`linux/HANDOFF.md` item 10; `android/README.md`, "Source
 control"). Logging: `G_MESSAGES_DEBUG=minicode-git` on Linux, `adb shell
 setprop log.tag.MiniCodeGit DEBUG` on Android.
 
@@ -1508,7 +1542,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   it is refused), copies files from Finder in and rows out; a clash is reported
   after the drop (Finder waits on a modal during it). `pathMovedFrom:to:` moves
   tabs, the LaTeX path and a preview's relative pictures. F2 renames,
-  Cmd+Delete trashes (`ClickOutline keyDown:`), Space previews with Quick Look.
+  Cmd+Delete trashes (the registry's `Tree` commands, run by the key monitor),
+  Space previews with Quick Look.
 - **The Worktrees node** (first, shown with or without hidden files, not again
   inside .claude): each worktree named for its agent with its ahead count and
   changes (git off the main thread); right click Compare with Main (each
@@ -1585,8 +1620,9 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   --branch v<version> <repo> <dir> || git clone <repo> <dir>) && cd <dir> &&
   claude ...`). "Source" means a Makefile and `src/EditorController.mm`. A 2 s
   timer watches `<source>/MiniCode.app/Contents/_CodeSignature/CodeResources`
-  (codesign is `make app`'s last step) and offers Restart once it is newer and
-  stable. Prompt files whose writer has quit, or a day old, are removed as
+  (codesign is `make app`'s last step, and that file is its target, so a
+  `make` with nothing to do leaves it alone) and offers Restart once it is
+  newer and stable. Prompt files whose writer has quit, or a day old, are removed as
   the next is written (`MCRemoveStalePromptFiles`, the inline agent's too).
 - **Restart** (`AppDelegate restartIntoApp:resumingIn:source:command:`,
   `MCRestarting`): the quit questions titled "Restart minicode?", leaving
@@ -1666,7 +1702,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   text before its note is placed (`notesCatchUpWithDisk`), or the reload a
   moment later closed it. Tours step with Option+] and [ (keymap commands
   enabled only during a tour) and show "2 of 3".
-- `skills/minicode/SKILL.md` (under 150 lines; `make install`): show work as
+- `skills/minicode/SKILL.md` (under 150 lines; `minicode install-skill` or
+  `make install`): show work as
   notes, a diff and tests in a terminal; open code with a note when asked where
   something is; read `state` and `selection` for "this"; never rearrange the
   user's tabs, `--run` long or destructive commands, or write workspace scripts
@@ -1730,6 +1767,24 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   command's result, then every command with the first and last 20 lines of
   output read lazily (Show all up to 1 MB); Open in Terminal types a command at
   the session's folder.
+- **Waiting for you** (spec feature 7, 2026-11-06): a terminal's id
+  (`TerminalView terminalID`, what `minicode state` reports) is given when it
+  is made, not on first use, because its shell gets it as
+  `MINICODE_TERMINAL_ID`, with `MINICODE_PID` (inherited ones are dropped).
+  `minicode hooks --install` (run by the user only; backs up, merges, a second
+  run changes nothing) adds `minicode notify --from-hook` to Claude Code's
+  Notification, Stop, UserPromptSubmit and PostToolUse hooks; notify never
+  starts minicode and with --from-hook prints nothing and exits 0 whatever
+  happens. Core: `ClaudeHooks` (hook JSON, the settings merge) and
+  `AttentionBoard` (marks, sessions); Mac: `MCTerminalAttention` draws it
+  (the tab's dot and tooltip, the Dock badge, Ctrl+Cmd+W, Show Terminal in
+  the Agents panel, the session's scratchpad and worktrees first for a
+  clicked path). Typing (the grid's `onTyped`, the input line's edits) and
+  closing reach it as Terminal.h notifications. `make guitest
+  SUITES=attention`. Trap: once a Control+Command key reaches the main menu,
+  AppKit redraws its own Emoji & Symbols and Start Dictation items in their
+  Globe-key form beside hidden twins with the same key; a menu key clash
+  check must skip them (ControlSuite does).
 
 ## Processes and ports (Mac)
 
@@ -1940,7 +1995,7 @@ session has a display. Check first.
 `linux/HANDOFF.md` (items 1 to 14) and `BUILD-LINUX.md` (build, and what is
 unverified). It shares the highlighter, Markdown, tasks, settings, comments,
 AutoIndent, KeepSorted, FolderSearch, TextFind, LatexDoc, SyncTex, Json,
-LspClient, TermLinks, GitStatus and GitGraph; VTE is its terminal. The core
+LspClient, TermLinks, GitStatus, GitGraph and GitModel; VTE is its terminal. The core
 lists in `linux/meson.build` and `linux/Makefile` must agree
 (`linux:build-lists`; CI builds only with Meson). Its traps are in HANDOFF.md:
 accelerators taking keys from VTE (`updateShellKeys`), the selection color

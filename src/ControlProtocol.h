@@ -127,6 +127,12 @@ struct CliCommand {
     int pid = 0;                // --pid: this process only
     std::string tourFile;       // tour: read by the caller, then tourStops()
     std::string launchFolder;   // where a launched minicode opens (R1.4)
+    // notify --from-hook: the arguments come from stdin and the environment
+    // (ClaudeHooks::notifyArgsFromHook), and nothing is ever reported.
+    bool fromHook = false;
+    // hooks --print or --install: "print" or "install", run by the command
+    // line itself (no minicode is asked).
+    std::string hooksAction;
     std::string error;          // a usage error (exit code 2)
 };
 
@@ -135,7 +141,10 @@ struct CliCommand {
 CliCommand parseCommandLine(const std::vector<std::string>& argv, const std::string& cwd,
                             const std::string& home,
                             const std::function<bool(const std::string&)>& exists);
-// Whether `word` is one of the subcommands (the launcher passes those on).
+// The subcommands, which scripts/minicode-launcher passes on to the client
+// (its own list; control:launcher-words checks the two agree), and whether
+// `word` is one of them.
+const std::vector<std::string>& subcommands();
 bool isSubcommand(const std::string& word);
 // Whether the command line starts minicode when none is running. Reads
 // (state, selection, term-output, procs) do not: there would be nothing to read,

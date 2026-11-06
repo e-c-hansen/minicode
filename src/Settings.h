@@ -316,6 +316,12 @@ public:
     bool pageAnyOrigin() const { return pageAnyOrigin_; }
     static const std::vector<std::string>& formatLanguages();
 
+    // Every key with one value of its own, from the key table (Settings.cpp),
+    // in table order: "window.opacity", "theme", "editor.ruler", ... The
+    // families matched by prefix (surfaces' .background, .text and
+    // .opacity, syntax.*, markdown.*, lsp.*, run.*, format.*) are not in it.
+    static std::vector<std::string> tableKeys();
+
 private:
     const Theme* theme_ = findTheme("dark-plus");
     struct SurfaceSettings {
@@ -359,4 +365,22 @@ private:
 
     bool apply(const std::string& key, const std::string& value,
                std::string& error);
+
+    // The key table: one row per key with one value of its own, saying how
+    // its value is read from the line and how it is applied. A new setting
+    // of that kind is a row here (plus its default in defaultFileText, which
+    // settings:key-table checks), not another branch in apply().
+    enum class ValueKind {
+        Word,          // one word; anything after it must be a comment
+        CommandLine,   // to the end of the line or a " #" outside quotes
+        Path,          // to the end of the line or a " #"; may be empty
+    };
+    struct KeyRule {
+        const char* key;
+        ValueKind value;
+        bool color;    // its value is a color (isColorKey, the swatches)
+        bool (*apply)(Settings& s, const std::string& value, std::string& error);
+    };
+    static const std::vector<KeyRule>& keyTable();
+    static const KeyRule* findKeyRule(const std::string& key);
 };

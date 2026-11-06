@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-make app
+make app RELEASE=1   # no demo scenes or benchmark (Makefile, RELEASE)
 
 APP="MiniCode.app"
 DMG="MiniCode.dmg"

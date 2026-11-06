@@ -1,5 +1,6 @@
 // EditorController+Layout.mm — EditorController: window setup, layout and look, the splits and what fills the sidebar, the title.
 #import "EditorController+Private.h"
+#import "EditorController+LayoutIvars.h"
 #import "ProcessesPanel.h"
 
 @implementation EditorController (Layout)
@@ -48,12 +49,6 @@
     };
     self.outline.onActivate = ^(NSInteger row) {
         [weakSelf activateRow:row];
-    };
-    self.outline.onTrash = ^{
-        [weakSelf deleteSelected:nil];
-    };
-    self.outline.onRename = ^{
-        [weakSelf renameSelected:nil];
     };
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"file"];
     col.editable = NO;

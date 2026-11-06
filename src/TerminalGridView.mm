@@ -715,6 +715,13 @@ static CellColors ColorsFor(const TermStyle &st) {
 }
 
 // ---------------------------------------------------------------- keys
+// Keys and pastes: what the user typed, which onTyped hears of first.
+- (void)sendTyped:(const std::string &)bytes {
+    if (bytes.empty()) return;
+    if (self.onTyped) self.onTyped();
+    [self send:bytes];
+}
+
 - (void)send:(const std::string &)bytes {
     if (bytes.empty() || !self.onInput) return;
     [self scrollToBottom];   // typing and pasting go back to the live screen
@@ -836,7 +843,7 @@ static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e) {
     // in Terminal.app (zsh binds ESC b and ESC f, not xterm's Alt+arrows).
     if (self.textInput && mods == TermModAlt && !s->altScreen() &&
         (e.keyCode == kVK_LeftArrow || e.keyCode == kVK_RightArrow)) {
-        [self send:e.keyCode == kVK_LeftArrow ? "\x1b" "b" : "\x1b" "f"];
+        [self sendTyped:e.keyCode == kVK_LeftArrow ? "\x1b" "b" : "\x1b" "f"];
         return;
     }
 
@@ -857,7 +864,7 @@ static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e) {
     int keyMods = self.optionAsMeta ? mods : (mods & ~TermModAlt);
     for (const auto &k : keys) {
         if (k.code == e.keyCode) {
-            [self send:TerminalScreen::encodeKey(k.key, keyMods, s->appCursorKeys(),
+            [self sendTyped:TerminalScreen::encodeKey(k.key, keyMods, s->appCursorKeys(),
                                                  s->appKeypad())];
             return;
         }
@@ -882,7 +889,7 @@ static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e) {
             out += TerminalScreen::encodeChar(cp, charMods);
             i = NSMaxRange(r);
         }
-        [self send:out];
+        [self sendTyped:out];
         return;
     }
 
@@ -895,7 +902,7 @@ static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e) {
     unichar first = [chars characterAtIndex:0];
     if (first >= 0xF700 && first <= 0xF8FF) return;      // unmapped function key
     const char *utf8 = chars.UTF8String;
-    if (utf8) [self send:utf8];
+    if (utf8) [self sendTyped:utf8];
 }
 
 // ------------------------------------------------------- NSTextInputClient
@@ -908,7 +915,7 @@ static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e) {
     _marked = nil;
     if (hadMarked) [self setNeedsDisplay:YES];
     const char *utf8 = str.UTF8String;
-    if (utf8 && *utf8) [self send:utf8];
+    if (utf8 && *utf8) [self sendTyped:utf8];
 }
 
 - (void)setMarkedText:(id)string selectedRange:(NSRange)sel
@@ -1360,7 +1367,7 @@ static BOOL IsWordCell(const TermCell &cell) {
                      stringForType:NSPasteboardTypeString];
     const char *utf8 = str.UTF8String;
     if (!utf8 || !self.screen) return;
-    [self send:TerminalScreen::encodePaste(utf8, self.screen->bracketedPaste())];
+    [self sendTyped:TerminalScreen::encodePaste(utf8, self.screen->bracketedPaste())];
 }
 
 // Everything: the scrollback and the screen.

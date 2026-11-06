@@ -1,5 +1,6 @@
 // EditorController+TreeDetails.mm — EditorController: the tree's sizes, dates and order.
 #import "EditorController+Private.h"
+#import "EditorController+TreeDetailsIvars.h"
 
 @implementation EditorController (TreeDetails)
 

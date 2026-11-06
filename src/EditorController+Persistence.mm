@@ -1,5 +1,6 @@
 // EditorController+Persistence.mm — EditorController: the tabs between runs, backups and hot exit, auto-save, files changed, moved or deleted outside.
 #import "EditorController+Private.h"
+#import "EditorController+PersistenceIvars.h"
 
 @implementation EditorController (Persistence)
 

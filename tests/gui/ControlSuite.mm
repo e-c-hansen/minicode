@@ -95,6 +95,12 @@ static void CollectKeys(NSMenu *menu, NSMutableDictionary<NSString *, NSMutableA
     for (NSMenuItem *item in menu.itemArray) {
         if (item.submenu) CollectKeys(item.submenu, out);
         if (!item.keyEquivalent.length || item.isAlternate) continue;
+        // AppKit's own Edit items: once a Control+Command key has reached the
+        // menu it shows them in their Globe-key form (fn E), beside a hidden
+        // twin with the same key. Not minicode's keys to clash.
+        if (item.action == @selector(orderFrontCharacterPalette:) ||
+            item.action == @selector(startDictation:))
+            continue;
         NSEventModifierFlags m = item.keyEquivalentModifierMask &
             (NSEventModifierFlagCommand | NSEventModifierFlagShift | NSEventModifierFlagOption |
              NSEventModifierFlagControl);

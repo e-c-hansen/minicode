@@ -20,6 +20,9 @@ typedef NS_ENUM(NSInteger, MCLineEdit) {
 @property(nonatomic, assign) TerminalScreen *screen;
 // Bytes for the pty: keys, pastes, scroll-wheel arrows.
 @property(nonatomic, copy) void (^onInput)(NSData *bytes);
+// The user typed or pasted something (not a focus or mouse report, nor the
+// wheel's arrows on the alternate screen), just before it goes to onInput.
+@property(nonatomic, copy) void (^onTyped)(void);
 // Cmd+click links. `linkAt` resolves the link at a byte of a row's text (nil
 // when there is none or its file does not exist); `openLink` opens one.
 @property(nonatomic, copy) id (^linkAt)(const std::string &line, size_t byte);

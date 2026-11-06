@@ -21,6 +21,7 @@
 @property(nonatomic, copy) void (^onNote)(NSString *note);
 @property(nonatomic, copy) NSString *projectRoot;     // passed to every terminal
 @property(nonatomic, copy) NSArray<NSString *> *(^extraLinkRoots)(void);   // likewise
+@property(nonatomic, copy) NSArray<NSString *> *(^sessionLinkRoots)(TerminalView *);   // likewise
 
 @property(nonatomic, readonly) TerminalView *activeTerminal;
 @property(nonatomic, readonly) NSArray<TerminalView *> *terminals;   // tab by tab
@@ -39,6 +40,8 @@
 - (TerminalView *)splitActive;
 - (TerminalView *)splitActiveInDirectory:(NSString *)dir;
 - (void)selectTab:(NSUInteger)tab;
+// Shows the tab `terminal` is in and makes it that tab's active pane.
+- (void)selectTerminal:(TerminalView *)terminal;
 // Next (+1) or previous (-1) terminal: through the shown tab's panes, then on
 // to the next tab, wrapping around.
 - (void)moveActive:(NSInteger)delta;

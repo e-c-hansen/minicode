@@ -97,24 +97,12 @@ BOOL gShowHidden = NO;
     if (row >= 0 && !self.dragBegan && self.onRowClick) self.onRowClick(row, p);
 }
 - (void)keyDown:(NSEvent *)event {
-    // Cmd+Delete trashes the selected file only while the tree has the
-    // keyboard, as in Finder. It used to be the menu item's key, so it
-    // trashed the tree's selection from the editor too, where Cmd+Delete
-    // means delete to the start of the line.
+    // F2 (rename) and Cmd+Delete (Move to Trash) are the registry's tree
+    // commands (renameFile, moveFileToTrash in Commands.cpp), which the key
+    // monitor runs before the tree sees the key, so keys.conf can move them.
     NSEventModifierFlags mods = event.modifierFlags &
         (NSEventModifierFlagCommand | NSEventModifierFlagShift |
          NSEventModifierFlagOption | NSEventModifierFlagControl);
-    if (mods == NSEventModifierFlagCommand && (event.keyCode == 51 || event.keyCode == 117) &&
-        self.onTrash) {
-        self.onTrash();
-        return;
-    }
-    // F2 renames the selected file, as in VS Code; in the editor it is
-    // Rename Symbol (the menu item, which also sends a tree's F2 here).
-    if (mods == 0 && event.keyCode == 120 /* kVK_F2 */ && self.onRename) {
-        self.onRename();
-        return;
-    }
     // Space toggles Quick Look on the selection, as in Finder; Esc closes it.
     // A space in the middle of a name typed to find a row ("my file") is
     // type-select's, as it is in Finder.

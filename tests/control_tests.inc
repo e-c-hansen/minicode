@@ -233,6 +233,39 @@ static void testControlProtocol() {
         CHECK(usageText("nope").empty());
     }
 
+    GROUP("control:launcher-words");
+    {
+        // The launcher (bash, so it cannot ask the core) hands the words of
+        // one case pattern to minicode-cli; they must be exactly the core's
+        // subcommands, or a new subcommand opens a file of that name instead.
+        std::ifstream lf("scripts/minicode-launcher");
+        if (!lf) {
+            std::printf("  (scripts/ not found here; launcher check skipped)\n");
+        } else {
+            std::stringstream ls;
+            ls << lf.rdbuf();
+            std::string text = ls.str();
+            size_t a = text.find("\n  open|");
+            size_t b = a == std::string::npos ? a : text.find(")", a);
+            CHECK(a != std::string::npos && b != std::string::npos);
+            if (a != std::string::npos && b != std::string::npos) {
+                std::set<std::string> fromLauncher;
+                std::string pattern = text.substr(a + 3, b - a - 3), w;
+                std::stringstream ws(pattern);
+                while (std::getline(ws, w, '|')) fromLauncher.insert(w);
+                std::set<std::string> fromCore(subcommands().begin(), subcommands().end());
+                for (const std::string &x : fromLauncher)
+                    if (!fromCore.count(x)) std::printf("  the launcher passes on %s\n", x.c_str());
+                for (const std::string &x : fromCore)
+                    if (!fromLauncher.count(x)) std::printf("  the launcher lacks %s\n", x.c_str());
+                CHECK(fromLauncher == fromCore);
+                // Its own word, install-skill, is not the client's.
+                CHECK(text.find("\n  install-skill)") != std::string::npos);
+                CHECK(!isSubcommand("install-skill"));
+            }
+        }
+    }
+
     GROUP("control:tour-file");
     {
         Json stops;

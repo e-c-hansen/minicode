@@ -1,7 +1,9 @@
 // Bench.h — the MiniCode side of scripts/membench.sh.
 //
-// Compiled into every build but inert: nothing runs unless MINICODE_BENCH is
-// set. It puts the window into the benchmark's workload the way a person
+// Compiled into development builds but inert: nothing runs unless
+// MINICODE_BENCH is set. A release build (`make RELEASE=1`) leaves Bench.mm
+// out and main.mm gets the stubs below. It puts the window into the
+// benchmark's workload the way a person
 // would leave it: a C++ file open (so its language server starts), a LaTeX
 // file typeset in the preview, the terminal open, and a page in the browser.
 // Then it prints "minicode bench: ready" to stderr and leaves the app running
@@ -10,7 +12,12 @@
 
 @class EditorController;
 
+#ifdef MC_RELEASE
+static inline void MCBenchStart(EditorController *controller) { (void)controller; }
+static inline BOOL MCBenchActive(void) { return NO; }
+#else
 // MINICODE_BENCH_CPP, MINICODE_BENCH_TEX: files to open (absolute paths).
 // MINICODE_BENCH_URL: the page for the browser panel.
 void MCBenchStart(EditorController *controller);
 BOOL MCBenchActive(void);
+#endif

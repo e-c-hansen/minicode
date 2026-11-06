@@ -1,5 +1,6 @@
 // EditorController+EditorView.mm — EditorController: the editor: line numbers, brackets, zoom, comments, tasks and the editing hooks.
 #import "EditorController+Private.h"
+#import "EditorController+EditorViewIvars.h"
 
 @implementation EditorController (EditorView)
 

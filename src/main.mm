@@ -14,6 +14,7 @@
 #import "EditorFont.h"
 #import "ControlServer.h"
 #import "Keymap.h"
+#import "TerminalAttention.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, MCRestarting, MCControlAppHost>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
@@ -543,6 +544,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)nextTerminal:(id)sender    { [[self current] nextTerminal:sender]; }
 - (void)previousTerminal:(id)sender { [[self current] previousTerminal:sender]; }
 - (void)closeTerminal:(id)sender   { [[self current] closeTerminal:sender]; }
+- (void)nextWaitingTerminal:(id)sender { MCJumpToNextWaitingTerminal(); }
 - (void)runCurrentFile:(id)sender  { [[self current] runCurrentFile:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
 - (void)toggleSidebar:(id)sender   { [[self current] toggleSidebar:sender]; }
@@ -1294,6 +1296,15 @@ static void BuildMenu(void) {
     closeTerm.keyEquivalentModifierMask =
         NSEventModifierFlagControl | NSEventModifierFlagShift;
     [termMenu addItem:closeTerm];
+    // A terminal whose Claude Code waits for an answer (TerminalAttention.h),
+    // in any window.
+    NSMenuItem *nextWaiting =
+        [[NSMenuItem alloc] initWithTitle:@"Next Waiting Terminal"
+                                   action:@selector(nextWaitingTerminal:)
+                            keyEquivalent:@"w"];
+    nextWaiting.keyEquivalentModifierMask =
+        NSEventModifierFlagControl | NSEventModifierFlagCommand;
+    [termMenu addItem:nextWaiting];
     // Cmd+K as in Terminal.app and VS Code. Answered by the terminal with
     // the keyboard (TerminalView clearTerminal:), so elsewhere it is off.
     [termMenu addItemWithTitle:@"Clear Terminal"

@@ -19,6 +19,8 @@ static NSColor *TabHex(unsigned int rgb, CGFloat alpha) {
 // A tab is its title between padding, then the close button.
 static const CGFloat kPadLeft = 12, kPadRight = 6, kCloseSize = 16, kTitleGap = 6;
 static const CGFloat kMinTab = 80, kMaxTab = 240;
+// An attention dot before the title, and the gap after it.
+static const CGFloat kDotSize = 8, kDotGap = 6;
 
 @implementation MCTabStrip {
     std::vector<CGFloat> _x, _w;   // each tab's left edge and width, before scrolling
@@ -71,6 +73,7 @@ static const CGFloat kMinTab = 80, kMaxTab = 240;
     CGFloat total = 0;
     for (NSUInteger i = 0; i < n; i++) {
         CGFloat text = ceil([_items[i].title ?: @"" sizeWithAttributes:attrs].width);
+        if (_items[i].attention != MCTabAttentionNone) text += kDotSize + kDotGap;
         _w[i] = MIN(kMaxTab, MAX(kMinTab, kPadLeft + text + kTitleGap + kCloseSize + kPadRight));
         total += _w[i];
     }
@@ -106,6 +109,19 @@ static const CGFloat kMinTab = 80, kMaxTab = 240;
     return NSMakeRect(NSMaxX(t) - kPadRight - kCloseSize,
                       floor(NSMidY(t) - kCloseSize / 2), kCloseSize, kCloseSize);
 }
+
+- (NSRect)attentionRectForTab:(NSInteger)i {
+    if (i < 0 || i >= (NSInteger)_items.count || _items[(NSUInteger)i].attention == MCTabAttentionNone)
+        return NSZeroRect;
+    NSRect t = [self rectForTab:i];
+    if (NSIsEmptyRect(t)) return NSZeroRect;
+    return NSMakeRect(NSMinX(t) + kPadLeft, floor(NSMidY(t) - kDotSize / 2), kDotSize, kDotSize);
+}
+
+// Orange like the developer bar's amber, green like the git panel's added
+// lines: both read on the dark and the light themes.
++ (NSColor *)waitingColor { return TabHex(0xF0A030, 1); }
++ (NSColor *)doneColor { return TabHex(0x4CC38A, 1); }
 
 - (NSInteger)tabAtPoint:(NSPoint)p {
     for (NSInteger i = 0; i < (NSInteger)_x.size(); i++)
@@ -150,9 +166,16 @@ static const CGFloat kMinTab = 80, kMaxTab = 240;
                                 NSParagraphStyleAttributeName: ps};
         NSRect close = [self closeRectForTab:i];
         const CGFloat lineH = 16;
-        NSRect title = NSMakeRect(NSMinX(r) + kPadLeft, floor(NSMidY(r) - lineH / 2),
-                                  MAX(0, NSMinX(close) - kTitleGap - NSMinX(r) - kPadLeft),
-                                  lineH);
+        CGFloat left = NSMinX(r) + kPadLeft;
+        NSRect dot = [self attentionRectForTab:i];
+        if (!NSIsEmptyRect(dot)) {
+            [(item.attention == MCTabAttentionWaiting ? MCTabStrip.waitingColor
+                                                       : MCTabStrip.doneColor) set];
+            [[NSBezierPath bezierPathWithOvalInRect:dot] fill];
+            left = NSMaxX(dot) + kDotGap;
+        }
+        NSRect title = NSMakeRect(left, floor(NSMidY(r) - lineH / 2),
+                                  MAX(0, NSMinX(close) - kTitleGap - left), lineH);
         [item.title ?: @"" drawInRect:title withAttributes:attrs];
 
         // The close button: a dot while the file has unsaved changes, which

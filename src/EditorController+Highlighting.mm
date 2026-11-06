@@ -1,5 +1,6 @@
 // EditorController+Highlighting.mm — EditorController: the source's syntax colors, kept up as it is edited.
 #import "EditorController+Private.h"
+#import "EditorController+HighlightingIvars.h"
 
 @implementation EditorController (Highlighting)
 

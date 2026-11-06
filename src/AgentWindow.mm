@@ -8,6 +8,7 @@
 #import "LspPicker.h"
 #import "Terminal.h"
 #import "TreeDetails.h"
+#import "TerminalAttention.h"
 
 #include "AgentView.h"
 
@@ -170,6 +171,40 @@ static NSString *WNS(const std::string &s) {
 // ------------------------------------------------------------- terminal links
 - (NSArray<NSString *> *)linkRoots {
     return [self.model worktreeRoots];
+}
+
+- (NSArray<NSString *> *)linkRootsForTerminal:(TerminalView *)terminal {
+    MCTerminalAttention *att = [MCTerminalAttention shared];
+    NSString *sid = [att sessionIdForTerminal:terminal];
+    NSString *transcript = [att transcriptForTerminal:terminal];
+    NSString *cwd = [att sessionCwdForTerminal:terminal];
+    if (!sid.length && !transcript.length) return @[];
+    NSMutableArray<NSString *> *out = [NSMutableArray array];
+    void (^add)(NSString *) = ^(NSString *p) {
+        if (p.length && ![out containsObject:p]) [out addObject:p];
+    };
+    MCAgentModel *model = self.started ? self.model : nil;
+    MCAgentWork *work = [model sessionForTranscript:transcript];
+    if (!work && sid.length)
+        for (MCAgentWork *w in model.sessions)
+            if ([w.sessionId isEqualToString:sid]) work = w;
+    add(work.scratchpad);
+    add(work.worktreePath);
+    for (MCAgentWork *sub in work.subagents) add(sub.worktreePath);
+    // Not indexed (yet): its scratchpad is <tmp root>/<folder>/<session>/scratchpad.
+    if (!work.scratchpad.length && sid.length) {
+        NSString *tmp = model.tmpRoot ?: [MCAgentModel defaultTmpRoot];
+        for (NSString *dir in [NSFileManager.defaultManager contentsOfDirectoryAtPath:tmp error:nil]) {
+            NSString *p = [[tmp stringByAppendingPathComponent:dir]
+                stringByAppendingPathComponent:[sid stringByAppendingPathComponent:@"scratchpad"]];
+            BOOL isDir = NO;
+            if ([NSFileManager.defaultManager fileExistsAtPath:p isDirectory:&isDir] && isDir) add(p);
+        }
+    }
+    // A session started inside a worktree, say, has that as its own folder.
+    NSString *root = _host.rootPath.stringByResolvingSymlinksInPath;
+    if (cwd.length && ![cwd.stringByResolvingSymlinksInPath isEqualToString:root]) add(cwd);
+    return out;
 }
 
 - (BOOL)handleLink:(MCTermLink *)link open:(void (^)(MCTermLink *))open {

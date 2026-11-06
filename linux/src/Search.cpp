@@ -322,10 +322,12 @@ void SearchPanel::finish(Job* job) {
     hits_ = std::move(job->result.matches);
     showRows();
 
-    const std::size_t n = hits_.size(), files = job->result.filesMatched;
+    // Every match (a row is a line, which may hold several).
+    const std::size_t n = job->result.totalMatches, files = job->result.filesMatched;
     std::string status = std::to_string(n) + (n == 1 ? " match in " : " matches in ") +
                          std::to_string(files) + (files == 1 ? " file" : " files");
-    if (job->result.truncated) status += " (stopped at the first " + std::to_string(n) + ")";
+    if (job->result.truncated)
+        status += " (stopped at the first " + std::to_string(hits_.size()) + " lines)";
     setStatus(status);
 }
 

@@ -1,6 +1,18 @@
 // EditorController.mm — Objective-C++. Bridges the pure-C++ core (syntax
 // highlighter, markdown parser) to AppKit views.
 #import "EditorController+Private.h"
+// Every category's own instance variables, laid out here.
+#import "EditorController+AgentsIvars.h"
+#import "EditorController+EditorViewIvars.h"
+#import "EditorController+FormatIvars.h"
+#import "EditorController+HighlightingIvars.h"
+#import "EditorController+LanguageServersIvars.h"
+#import "EditorController+LayoutIvars.h"
+#import "EditorController+MarkdownIvars.h"
+#import "EditorController+PersistenceIvars.h"
+#import "EditorController+TabsIvars.h"
+#import "EditorController+TreeIvars.h"
+#import "EditorController+TreeDetailsIvars.h"
 
 @implementation EditorController
 
@@ -95,6 +107,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     [self.lsp shutdown];   // never leave a server running for a closed window
     [_change stop];        // no build watched for a closed window
     [_agents stop];        // no transcripts watched for a closed window
+    [self stopWatching];   // no file events for a closed window (the stream holds an unretained self)
 }
 - (void)windowDidBecomeKey:(NSNotification *)note {
     [self checkExternalChange];
