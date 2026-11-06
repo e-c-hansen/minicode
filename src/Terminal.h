@@ -37,6 +37,11 @@
 // terminal finishes, per the shell integration's marks. Something it
 // installed may now be found (LspSession looks again for a missing server).
 extern NSNotificationName const MCTerminalCommandDidFinishNotification;
+// Posted (object: the TerminalView) when the user types or pastes into a
+// terminal (keys, not the app's own runCommand:), and when one closes for
+// good. A "waiting" or "done" mark on its tab goes (TerminalAttention.h).
+extern NSNotificationName const MCTerminalUserDidTypeNotification;
+extern NSNotificationName const MCTerminalDidCloseNotification;
 
 @interface TerminalView : NSView
 // Cmd+click on a link in the output. The window opens files and URLs.
@@ -48,7 +53,16 @@ extern NSNotificationName const MCTerminalCommandDidFinishNotification;
 // window's, in order: the worktrees under the folder, then the indexed agent
 // sessions' scratchpads (AgentModel's worktreeRoots).
 @property(nonatomic, copy) NSArray<NSString *> *(^extraLinkRoots)(void);
+// The roots of the agent session running in this terminal (its scratchpad
+// and worktrees, R7.4): looked in before the other extra roots, and a
+// match under them is taken over other worktrees' copies.
+@property(nonatomic, copy) NSArray<NSString *> *(^sessionLinkRoots)(TerminalView *terminal);
 - (instancetype)initWithDirectory:(NSString *)dir;
+// The id `minicode state` reports for this terminal, fixed for its life and
+// never reused in this process. Its shell, and everything run from it, has
+// it as MINICODE_TERMINAL_ID, with MINICODE_PID (this process), so a Claude
+// Code hook can say which terminal it ran in (`minicode notify --from-hook`).
+@property(nonatomic, readonly) NSInteger terminalID;
 - (void)setDirectory:(NSString *)dir;   // sync cwd when the open folder changes
 - (void)focusInput;                     // the input line, or the grid when shown
 - (BOOL)hasFocus;                       // the keyboard is somewhere in this terminal

@@ -401,6 +401,9 @@ const std::vector<Command>& all() {
          A, "previousTerminal:", 0, 0, nullptr},
         {"workbench.action.terminal.kill", "Close Terminal", "Terminal", "ctrl+shift+w", A,
          "closeTerminal:", 0, 0, nullptr},
+        // VS Code has no such command; the key is free in both.
+        {"minicode.terminal.nextWaiting", "Next Waiting Terminal", "Terminal", "ctrl+cmd+w", A,
+         "nextWaitingTerminal:", 0, 0, nullptr},
         {"workbench.action.terminal.clear", "Clear Terminal", "Terminal", "cmd+k", T,
          "clearTerminal:", 0, 0, nullptr},
         {"minicode.runFile", "Run File", "Terminal", "shift+cmd+enter", A, "runCurrentFile:", 0, 0,

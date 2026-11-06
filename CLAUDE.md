@@ -1699,6 +1699,24 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   command's result, then every command with the first and last 20 lines of
   output read lazily (Show all up to 1 MB); Open in Terminal types a command at
   the session's folder.
+- **Waiting for you** (spec feature 7, 2026-11-06): a terminal's id
+  (`TerminalView terminalID`, what `minicode state` reports) is given when it
+  is made, not on first use, because its shell gets it as
+  `MINICODE_TERMINAL_ID`, with `MINICODE_PID` (inherited ones are dropped).
+  `minicode hooks --install` (run by the user only; backs up, merges, a second
+  run changes nothing) adds `minicode notify --from-hook` to Claude Code's
+  Notification, Stop, UserPromptSubmit and PostToolUse hooks; notify never
+  starts minicode and with --from-hook prints nothing and exits 0 whatever
+  happens. Core: `ClaudeHooks` (hook JSON, the settings merge) and
+  `AttentionBoard` (marks, sessions); Mac: `MCTerminalAttention` draws it
+  (the tab's dot and tooltip, the Dock badge, Ctrl+Cmd+W, Show Terminal in
+  the Agents panel, the session's scratchpad and worktrees first for a
+  clicked path). Typing (the grid's `onTyped`, the input line's edits) and
+  closing reach it as Terminal.h notifications. `make guitest
+  SUITES=attention`. Trap: once a Control+Command key reaches the main menu,
+  AppKit redraws its own Emoji & Symbols and Start Dictation items in their
+  Globe-key form beside hidden twins with the same key; a menu key clash
+  check must skip them (ControlSuite does).
 
 ## Opening from Finder, the Dock and the command line (Mac)
 

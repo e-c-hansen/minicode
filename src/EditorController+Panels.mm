@@ -15,6 +15,10 @@
         EditorController *s = weakSelf;
         return s ? [s->_agents linkRoots] : @[];
     };
+    self.terminalPanel.sessionLinkRoots = ^NSArray<NSString *> *(TerminalView *t) {
+        EditorController *s = weakSelf;
+        return s ? [s->_agents linkRootsForTerminal:t] : @[];
+    };
     self.terminalPanel.onOpenLink = ^(MCTermLink *link) {
         [weakSelf openTerminalLink:link];
     };
@@ -89,6 +93,14 @@
     if (!self.terminalPanel) { [self newTerminal:nil]; return; }
     [self showTerminalPanel];
     [self.terminalPanel moveActive:-1];
+}
+
+- (BOOL)revealTerminal:(TerminalView *)terminal {
+    if (!terminal || ![self.terminalPanel.terminals containsObject:terminal]) return NO;
+    [self showTerminalPanel];
+    [self.terminalPanel selectTerminal:terminal];
+    [terminal focusInput];
+    return YES;
 }
 
 // Closes the terminal the keyboard is in. NO (and nothing closed) when the

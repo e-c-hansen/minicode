@@ -247,6 +247,8 @@ A note is a line or two of plain text over a highlighted range, labelled with wh
 
 Each running minicode listens on a socket in your own temporary folder that only your user account can open, and nothing in minicode runs a command or a script by itself: `term --run` types what it was given into a terminal you can see. A script that sets up a workspace (a server in a terminal, its page in the browser, the README open) is just these commands in a file you run yourself.
 
+With several Claude Code sessions in terminal tabs, minicode can show which one wants you. Run `minicode hooks --install` once and Claude Code's hooks tell minicode what each session is doing: a tab whose session asks for permission (or has been idle at its prompt) gets an orange dot, with Claude's message as the tab's tooltip, and one that has finished gets a green dot. Typing in the terminal, or the session going on, takes the dot away. The Dock icon counts the waiting terminals in every window, and Control Command W goes to the next one. The command backs up ~/.claude/settings.json first and only adds to it, so your own hooks stay as they were, and running it twice changes nothing; `minicode hooks --print` shows what it adds. Every minicode terminal has `MINICODE_TERMINAL_ID` and `MINICODE_PID` set, which is how the hook (`minicode notify --from-hook`) finds its tab, and outside minicode the hook does nothing and exits quietly. minicode never installs the hooks by itself.
+
 The repository has a skill for Claude Code in skills/minicode that teaches it all of this: when reporting work, open the changed lines with a note, show the diff and run the tests in a terminal; when asked "where is X", open it rather than quote a path; read `state` and `selection` when you say "this". `make install` copies it to ~/.claude/skills/minicode.
 
 ## Seeing what agents did
@@ -365,6 +367,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Move the line, or the selected lines, down or up, at every cursor | Option Down, Option Up, or Command Down, Command Up |  |  |
 | Move the selected file to the Trash | Command Delete, in the file tree | Delete, in the file tree |  |
 | Move to the next or previous terminal, across split panes and tabs | Option Command ], Option Command [ |  |  |
+| Move to the next terminal waiting for you, in any window (a Claude Code session asking for permission, with `minicode hooks --install` run) | Control Command W |  |  |
 | Move to the start or end of the line at the terminal's prompt, or delete back to its start | Command Left, Command Right, Command Delete |  |  |
 | New file | Command N | Ctrl Alt N | New file in the ⋮ menu |
 | New folder | Shift Command N | Ctrl Shift N |  |

@@ -65,7 +65,7 @@ static void testClaudeHooks() {
         CHECK(!notifyArgsFromHook(R"({"hook_event_name":"PreToolUse"})", "3", "4242", a, pid));
         // A message is cleaned as a note is: one line, at most 500 characters.
         std::string longMsg(900, 'x');
-        CHECK(notifyArgsFromHook(R"({"hook_event_name":"Notification","message":"Allow\n‮Bash?)" +
+        CHECK(notifyArgsFromHook(R"({"hook_event_name":"Notification","message":"Allow\n\u202eBash?)" +
                                      longMsg + "\"}",
                                  "12", "7", a, pid));
         const std::string m = a["message"].asString();

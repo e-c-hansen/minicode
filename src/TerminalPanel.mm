@@ -2,6 +2,7 @@
 #import "TerminalPanel.h"
 #import "AppSettings.h"
 #import "TabStrip.h"
+#import "TerminalAttention.h"
 #import "TerminalGridView.h"
 
 @class MCTerminalStripButtons;
@@ -117,6 +118,10 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
         [[NSNotificationCenter defaultCenter]
             addObserver:self selector:@selector(applySettings)
                    name:MCSettingsDidChangeNotification object:nil];
+        // A terminal marked waiting or done (`minicode notify`): its tab's dot.
+        [[NSNotificationCenter defaultCenter]
+            addObserver:self selector:@selector(reloadStrip)
+                   name:MCTerminalAttentionDidChangeNotification object:nil];
         [self addTabInDirectory:first];
     }
     return self;
@@ -149,6 +154,7 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
         MCTabStripItem *item = [MCTabStripItem new];
         item.title = titles[i];
         item.toolTip = [self tabToolTip:i];
+        item.attention = [self tabAttention:i];
         [items addObject:item];
     }
     self.strip.items = items;
@@ -162,6 +168,7 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
     TerminalView *t = [[TerminalView alloc] initWithDirectory:dir.length ? dir : _dir];
     t.projectRoot = self.projectRoot;
     t.extraLinkRoots = self.extraLinkRoots;
+    t.sessionLinkRoots = self.sessionLinkRoots;
     __weak MCTerminalPanel *weakSelf = self;
     t.onOpenLink = ^(MCTermLink *link) {
         MCTerminalPanel *s = weakSelf;
@@ -191,6 +198,11 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
 - (void)setExtraLinkRoots:(NSArray<NSString *> *(^)(void))roots {
     _extraLinkRoots = [roots copy];
     for (TerminalView *t in self.terminals) t.extraLinkRoots = _extraLinkRoots;
+}
+
+- (void)setSessionLinkRoots:(NSArray<NSString *> *(^)(TerminalView *))roots {
+    _sessionLinkRoots = [roots copy];
+    for (TerminalView *t in self.terminals) t.sessionLinkRoots = _sessionLinkRoots;
 }
 
 - (void)setDirectory:(NSString *)dir {
@@ -275,6 +287,16 @@ static const int kMinSplitColumns = 20;
     _selected = (NSInteger)tab;
     [self layoutPanes];
     if (hadFocus) [self focusActive];
+}
+
+- (void)selectTerminal:(TerminalView *)terminal {
+    for (NSUInteger tab = 0; tab < _tabs.count; tab++) {
+        if (![_tabs[tab] containsObject:terminal]) continue;
+        _tabActive[tab] = terminal;
+        _selected = (NSInteger)tab;
+        [self layoutPanes];
+        return;
+    }
 }
 
 - (void)moveActive:(NSInteger)delta {
@@ -469,9 +491,32 @@ BOOL MCConfirmClosingRunning(NSArray<NSString *> *commands, NSString *question,
     return titles;
 }
 
+// The tab's mark: waiting when any of its panes waits, else done when any
+// is done.
+- (MCTabAttention)tabAttention:(NSUInteger)tab {
+    if (tab >= _tabs.count) return MCTabAttentionNone;
+    MCTerminalAttention *att = [MCTerminalAttention shared];
+    MCTabAttention mark = MCTabAttentionNone;
+    for (TerminalView *t in _tabs[tab]) {
+        MCAttentionMark m = [att markForTerminal:t];
+        if (m == MCAttentionWaiting) return MCTabAttentionWaiting;
+        if (m == MCAttentionDone) mark = MCTabAttentionDone;
+    }
+    return mark;
+}
+
+// A waiting terminal's message comes first, so the tooltip says what it
+// waits for ("Claude needs your permission to use Bash").
 - (NSString *)tabToolTip:(NSUInteger)tab {
     if (tab >= _tabs.count) return nil;
     NSMutableArray *lines = [NSMutableArray array];
+    MCTerminalAttention *att = [MCTerminalAttention shared];
+    for (TerminalView *t in _tabs[tab]) {
+        NSString *m = [att markForTerminal:t] == MCAttentionWaiting ? [att messageForTerminal:t] : nil;
+        if (m.length) [lines addObject:m];
+        else if ([att markForTerminal:t] == MCAttentionWaiting) [lines addObject:@"Waiting for you"];
+        else if ([att markForTerminal:t] == MCAttentionDone) [lines addObject:@"Done"];
+    }
     for (TerminalView *t in _tabs[tab])
         [lines addObject:[NSString stringWithFormat:@"%@ (%@)", t.title,
                           [t.directory stringByAbbreviatingWithTildeInPath]]];

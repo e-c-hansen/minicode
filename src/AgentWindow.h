@@ -48,6 +48,11 @@
 // ---- terminal links
 // Roots after the shell's and the window's folder (TerminalView extraLinkRoots).
 - (NSArray<NSString *> *)linkRoots;
+// Where the session running in a terminal worked (R7.4): its scratchpad, its
+// worktree and its subagents' worktrees, and its own folder when that is not
+// the window's. Looked in first for a path that terminal printed. Empty for
+// a terminal no session was seen in.
+- (NSArray<NSString *> *)linkRootsForTerminal:(TerminalView *)terminal;
 // A file link with no match or several: the note, or the picker (whose
 // choice is handed to `open`). NO for a link to open as it is.
 - (BOOL)handleLink:(MCTermLink *)link open:(void (^)(MCTermLink *chosen))open;
