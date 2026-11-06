@@ -1,170 +1,137 @@
 # Roadmap
 
-A running list of things not yet built, roughly ordered by value. Nothing here
-is required for the current version to stand on its own; this is where it could
-go next.
+What is not built yet, roughly ordered by value. Nothing here is needed for
+the current version to stand on its own. Last rewritten 2026-11-05, after the
+second review's list was worked through.
 
-## LaTeX (done, with room to grow)
+## Not planned
 
-Shipped: tectonic typesets the buffer, PDFKit shows it, and double-clicking
-text on the page edits the source behind it, including adding list entries.
-The GTK port has the same since September 2026 (poppler for the pages,
-`linux/src/Latex.cpp`), with its own sweep, `tests/latex/sweep-linux.sh`.
-The source view is colored on every port, since the shared highlighter
-learned TeX (`.tex`, `.sty`, `.cls` and `.bib` too), math and verbatim
-environments included.
-What is left, roughly in order of value:
+- **A debugger.** Decided against (2026-11-05).
+- **Windows.** Not planned unless that is decided; the core is portable C++,
+  but there is no Windows front end of any kind.
 
-- Add a table row the way a list entry is added now (the column count and the
-  `&` separators are already in reach of `LatexDoc`).
+## For daily work on the Mac
+
+- **Claude Code's IDE link** (M to L). Claude Code connects to VS Code and
+  JetBrains through an extension that tells it the open file and selection
+  and shows its proposed edits as diffs in the editor. minicode has the
+  pieces (the control channel, the side-by-side diff, notes on the code) but
+  does not speak that protocol, so a Claude Code session in its terminal
+  does not know what the user is looking at unless the skill's `minicode
+  state` and `minicode selection` are used.
+- **One text storage per tab** (M). The window has one text view and swaps
+  each tab's text into it, so a switch relexes and relays out the file.
+- **Non-contiguous layout** (M). Contiguous layout is left on because
+  everything that reads positions relies on it; turning it off for large
+  files needs trying on a real screen first.
+- **The command registry's fixed keys.** The keys the editor and terminal
+  handle themselves (moving lines with Option Up and Down, the terminal's
+  Ctrl keys) are listed in keys.conf but cannot be changed yet.
+- **Running notebook cells.** Notebooks are rendered read-only from their
+  saved outputs; there is no kernel.
+- **Line mode in the terminal.** Kept for a release as a fallback after the
+  grid terminal became the default in 1.5.5; decide whether to drop it. Its
+  log still ignores multi-line progress bars that redraw with cursor-up.
+
+## Editor and language servers
+
+- Incremental sync (send the edit, not the whole file) for large files.
+- Snippet completions (placeholders you tab through); completion asks for
+  plain text, so a method completes without its parentheses.
+- Highlighting: Swift's `#"..."#` and `\(...)`, string templates in Kotlin,
+  Scala, Dart and C#, Groovy's slashy strings, a block comment across lines
+  inside a JavaScript template field, and a regex at the start of a line
+  that continues a division. The worst case of incremental highlighting
+  (typing `/*` at the top of a huge file) could color the visible part
+  first and the rest in idle time, as the GTK port already does.
+- Broader, more correct highlighting would mean tree-sitter, the one place a
+  dependency might be weighed.
+- Terminal: OSC 8 hyperlinks that programs print themselves (`ls
+  --hyperlink`, GCC's diagnostic URLs), on both desktop ports. Other shells
+  (bash, fish) run without the shell integration's marks.
+- Settings: the terminal's ANSI palette as keys; the Search window and the
+  hints overlay still use fixed colors.
+
+## LaTeX
+
+- Add a table row the way a list entry is added now (the column count and
+  the `&` separators are already in reach of `LatexDoc`).
 - Click the page to move the cursor to that line in the source view.
 - Error markers in the source view from tectonic's log, instead of a log pane.
 - Text a macro prints (`\newcommand{\company}{Initech}`) is refused when
   clicked, because it is not where it appears. Offering the macro's
   definition instead would make it editable, with a note that every use
-  changes. Section, page and list numbers stay refused; TeX makes those up,
-  and every single letter or digit is refused for that reason.
+  changes. Section, page and list numbers stay refused.
 - Tables read back from the PDF column by column, so a click in a table
-  leans on SyncTeX's line alone. Using the cell's `&` position in the row
-  would pin it down exactly.
+  leans on SyncTeX's line alone; the cell's `&` position in the row would pin
+  it down.
 
-## Math in Markdown (done on the Mac)
+## Math in Markdown
 
-Since September 2026 the core reads `$...$`, `$$...$$` and ```` ```math ````
-blocks on every port, and the Mac typesets a page's formulas with tectonic
-in one background run, a page per formula, cached on disk (see "Math in the
-Markdown preview" in CLAUDE.md). Linux and Android show the TeX in the code
-style. Next, roughly in order of value:
+The Mac typesets a page's formulas with tectonic; Linux and Android show the
+TeX.
 
-- **Linux**: the same design. `src/MathTex` (the batch document, the checks
-  and rewriting, reading the log) is shared and tested; the port needs the
-  run (a `GSubprocess` on a worker, as the LaTeX preview runs tectonic), a
-  cache like the Mac's, and poppler to draw the pages, tinted with cairo's
-  IN operator, as `GtkTextView` child anchors or paintables on the baseline.
+- **Linux**: the same design. `src/MathTex` is shared and tested; the port
+  needs the run (a `GSubprocess` on a worker, as its LaTeX preview runs
+  tectonic), a cache like the Mac's, and poppler to draw the pages, tinted
+  with cairo's IN operator, as child anchors or paintables on the baseline.
 - **Android**: tectonic in Termux, as the LaTeX preview already runs it, with
-  the same batch, log and cache; `PdfRenderer` draws the pages as bitmaps at
-  the screen's density, tinted with a `PorterDuff` SRC_IN filter, as
-  `ReplacementSpan`s aligned on the baseline.
+  `PdfRenderer` drawing the pages tinted with a `PorterDuff` SRC_IN filter,
+  as `ReplacementSpan`s on the baseline.
 - Copying a typeset formula should copy its TeX, not an attachment.
 - `\color` inside a formula is drawn in the text's color, since the page is
-  tinted whole; keeping colored ink would take typesetting in the text
-  color instead.
+  tinted whole.
 
-## Media rendering (images, PDFs, video and audio done on the Mac)
+## Media
 
-Images open in the editor pane on macOS: an `NSImageView`, scaled to fit and
-never enlarged, with the pixel size in the title bar. Video and audio play
-there too since September 2026, in AVKit's `AVPlayerView` (see "Video and
-audio" in CLAUDE.md). Still to do:
+- Zoom and scroll for large images, and a checkerboard behind transparency,
+  on the Mac. Linux zooms PDFs and the LaTeX preview but not images.
 
-- Zoom and scroll for large images, and a checkerboard behind transparency.
-- Linux has images (a `GtkPicture`) and PDFs (poppler-glib) since September
-  2026. Its PDF viewer and LaTeX preview zoom (25% to 400%, keys, Ctrl+wheel
-  and pinch; `linux/HANDOFF.md` item 4); images there still do not.
-- ~~Video and audio on the Mac~~ (done, 2026-09-28): mp4, m4v, mov, 3gp and
-  avi, and mp3, wav, m4a, aac, aiff, flac, ogg and opus. WebM, Matroska, Ogg
-  video, WMV and FLV are left out because AVFoundation cannot play them.
-- Video and audio on Linux (GStreamer through GTK's `GtkVideo` is the obvious
-  route) and Android (the platform's `MediaPlayer` in a `VideoView`).
+## Linux parity
 
-## LSP client (done, with room to grow)
+The GTK port (`linux/HANDOFF.md`) has the editor, tree, terminal (VTE),
+browser, Markdown and LaTeX previews, language servers, source control and
+media. Almost everything the Mac gained from 1.5.0 on is still missing, its
+logic already in the shared core where it could be:
 
-Shipped on macOS: completion, go to definition (F12 and Cmd+click), hover info,
-and diagnostics drawn as squiggles, from servers the user already has (clangd,
-pyright or pylsp, gopls, rust-analyzer, typescript-language-server). What is
-left, roughly in order of value:
+- tabs and the landing state (`EditorTabs`), backups (`Backups`), auto-save;
+- the command palette and Quick Open (`CommandPalette`), Go to Symbol
+  (`SymbolOutline`) and Go Back (`NavHistory`);
+- line numbers (`LineIndex`), bracket matching (`BracketMatch`), folding
+  (`Folding`), several carets and the line commands (`MultiCaret`), zoom;
+- find and replace with options and Replace in Folder (`TextFind` and
+  `FolderSearch` are already built into the port);
+- rename, references, quick fixes, the Problems list, the second server and
+  Organize Imports (all in `LspClient`), completion's additional edits, and
+  the install hints (`InstallHints`);
+- Format Document (`Formatter`), themes from a menu, Adjust Settings;
+- the inline agent, Request a Change, the control channel, the Agents
+  panel and Evidence (`InlineAgent`, `ChangeRequest`, `ControlProtocol`, the
+  Agent* core);
+- the viewers for CSV, JSON, notebooks and SQLite (`FileSniff`, `Csv`,
+  `JsonOutline`, `Notebook`);
+- typeset math (above). Blur is not possible on GNOME: GTK 4 has no API for
+  it and Mutter offers no Wayland blur protocol; KDE Plasma has its own,
+  untried.
 
-- Incremental sync (send the edit, not the whole file) for large files.
-- Find references, rename, and format document; all are one request each
-  on top of what exists.
-- Snippet completions (placeholders you tab through); v1 asks for plain text,
-  so a method completes without its parentheses.
-- Completion that opens while typing an identifier, not only after `.`, `->`
-  and `::` or Ctrl+Space.
-- A problems list for the whole folder, and a way back after go to definition.
-- The Linux port has it too (September 2026, `linux/src/Lsp.cpp`: GSubprocess,
-  tags for the squiggles, a GtkPopover for the list). Checked against clangd
-  at run time; how it looks and the real key presses still need a person.
+Real key presses and a person's eyes on the Linux-only pieces are listed in
+`BUILD-LINUX.md` under "Not verified".
 
-## Editor niceties
+## Android parity
 
-- Incremental re-highlighting is done: the lexer keeps a state per line and an
-  edit re-lexes only the lines it can have changed. What is left is the worst
-  case, where one edit changes the color of everything below it (typing `/*`
-  at the top of a huge file). That lexes the rest of the file in a few
-  milliseconds, but recoloring hundreds of thousands of lines of text storage
-  can take tens of milliseconds; coloring only the visible part first and the
-  rest in idle time would hide it.
-- The Linux port is incremental too (September 2026), fed from GtkTextBuffer's
-  insert and delete signals in UTF-8. It already colors the visible lines
-  first and the rest in idle time, because GTK's tags cost more than the
-  Mac's attributes.
-- Line numbers, auto-indent, bracket matching.
-- Broader, more correct syntax highlighting (the scalable answer is tree-sitter,
-  which would be the one place to weigh a dependency).
+The Kotlin app (`android/README.md`) has the file list, editor, Markdown
+preview, images, PDFs, video and audio, source control, a browser, and a
+terminal on Termux's bash, with language servers and the LaTeX preview in
+Termux. Still to do:
 
-## Terminal
+- project search, comment toggling, PDFs past the first page, zoom for
+  large images, and scrollback in the terminal (the shared screen keeps
+  scrollback, which the port leaves off);
+- the same Mac features as for Linux, where they make sense on a phone;
+- F-Droid.
 
-A real shell on a pty. Ordinary output is a colored log with a line input;
-full-screen programs (vim, less, man, htop, git's pager, REPLs, ssh) get a
-cell grid (`TerminalScreen`, drawn by `TerminalGridView`) with keys sent
-straight to the pty, and pagers are no longer forced to `cat`. What remains:
+## Distribution
 
-- Mouse reporting (modes 1000/1002/1006), so clicks and drags reach vim,
-  htop and tmux. Today the grid keeps the mouse for its own selection.
-- Scrollback while the grid shows. In the alternate screen the wheel sends
-  arrow keys (like xterm's alternateScroll); in the raw-mode fallback (git's
-  `less -X`, a REPL) lines scrolled off the top are only in the log.
-- Multi-line progress bars in the log view: they redraw with cursor-up, which
-  the log ignores. Rendering the last screenful of the grid under the log
-  would fix it.
-- Keys at the log prompt (Tab completion, Ctrl+R) still go through the line
-  input; the grid only takes over for programs that ask for raw input.
-- Input methods (dead keys, CJK input) in the grid: it reads `characters`
-  from the key event rather than going through NSTextInputClient.
-- Word/line selection by double/triple click, clickable links (OSC 8),
-  bash/fish integration.
-
-## Android port
-
-The newest port (`android/`), a Kotlin app around the same C++ core, with the
-file list (which follows the disk), editor, Markdown preview, images, PDFs,
-source control, a browser, and a terminal that is Termux's bash on a real
-pty when Termux is set up (the phone's `/system/bin/sh` otherwise).
-Language servers and the LaTeX preview run in Termux too. What is left:
-
-- Project search, comment toggling, PDFs past the first page, zoom for large
-  images, terminal scrollback.
-
-## Linux port parity
-
-The GTK port has caught up (September 2026, `linux/HANDOFF.md` items 1 to 8):
-data safety, the file tree actions, incremental highlighting, images and
-PDFs, Find in Folder, language servers, the LaTeX preview, several windows,
-Previous File, Find Next and Previous, reload on external change, a live
-color picker, and Ctrl+click links in the terminal. PDFs and the LaTeX
-preview also zoom there, from the keyboard, the wheel and a pinch; the Mac
-has no zoom keys. What is left:
-
-- **Blur.** Not possible on GNOME: GTK 4 has no API for it, and Mutter 50.1
-  offers no Wayland blur protocol (neither KDE's nor
-  `ext-background-effect-v1`). KDE Plasma has its own, so a Plasma-only blur
-  looks possible through GDK's Wayland surface; not tried. `window.blur` is
-  ignored on Linux.
-- **Terminal links, the rest.** Ctrl+click works (the shared `TermLinks`
-  over VTE's text). Still to do on both ports: OSC 8 hyperlinks that
-  programs print themselves (`ls --hyperlink`, GCC's diagnostic URLs).
-- **Terminal.** VTE rather than the shared `TerminalStream`, which is fine;
-  VTE is a real emulator. While it has the keyboard it gets the plain Ctrl
-  keys, and the app keeps the Ctrl+Shift ones and the pane keys.
-- Real key presses and a person's eyes on the Linux-only pieces:
-  `BUILD-LINUX.md` lists them under "Not verified".
-
-## Smaller polish
-
-- Settings: the file (colors, opacity, blur) exists; font size, tab width and
-  the terminal's ANSI palette are natural next keys. The Search window and the
-  hints overlay don't follow it yet.
-- Search panel: live regex, and find-and-replace across files.
-- A `make release` is already scripted; a GitHub Action to run it on a tag would
-  fully automate cutting versions.
+- **Notarization**, once the user has a paid Apple Developer account;
+  `scripts/sign-and-notarize.sh` is ready.
+- A GitHub Action that runs `scripts/release.sh` on a tag.
