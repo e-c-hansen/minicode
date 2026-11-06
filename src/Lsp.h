@@ -219,6 +219,9 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 // disk): the servers' open documents follow.
 - (void)tabsChanged;
 - (void)documentSaved;
+// A tab's file was written (Save All, auto-save, a background tab): didSave
+// to every server that has the file open, with the text written.
+- (void)documentSavedAtPath:(NSString *)path text:(NSString *)text;
 // The folder changed: stop every server, they belong to the old root.
 - (void)setRoot:(NSString *)root;
 @property(nonatomic, readonly, copy) NSString *root;

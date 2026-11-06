@@ -1425,6 +1425,24 @@ static BOOL IsRunnable(NSString *path) {
     for (MCLspServer *server in _servers) server.client.didSave(Std(_uri), text);
 }
 
+// A file written from any tab, on show or not (Save All, auto-save, closing):
+// every server that has it open gets didSave with the text written, so
+// save-triggered checks (rust-analyzer's cargo check, gopls) run. A file no
+// server has open sends nothing.
+- (void)documentSavedAtPath:(NSString *)path text:(NSString *)text {
+    if (!path || !text) return;
+    NSString *uri = NS(Lsp::uriFromPath(Std(RealPath(path))));
+    if (_uri && [uri isEqualToString:_uri]) {
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushChanges)
+                                                   object:nil];
+    }
+    std::string utf8 = Std(text);
+    for (MCLspDoc *d in _docs.allValues) {
+        if (![d.uri isEqualToString:uri] || d.server.stopping) continue;
+        d.server.client.didSave(Std(d.uri), utf8);
+    }
+}
+
 - (void)setRoot:(NSString *)root {
     [self closeDocument];
     [self stopAllServers];
