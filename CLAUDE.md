@@ -110,8 +110,10 @@ goes here first, with tests; the GUI only displays it.
 - `SyntaxHighlighter` (about 200 grammars, `IncrementalHighlighter`),
   `MarkdownParser` (CommonMark plus GitHub, math, `lines()`), `MarkdownEdit`
   (the block behind a preview click), `MarkdownTasks` (task lists), `MathTex`
-  (the Markdown math batch), `LatexDoc` (editable ranges of LaTeX source),
-  `SyncTex` (page point to source lines), `Json`.
+  (the Markdown math batch), `MermaidDiagram` (```mermaid blocks for mmdc),
+  `LatexDoc` (editable ranges of LaTeX source),
+  `SyncTex` (page point to source lines), `Json`, `IdeLink` (the Claude Code
+  IDE link: WebSocket, MCP, lock file).
 - `Settings` (the settings file, themes, every resolved color), `Commands` (the
   command registry and keys.conf), `EditorTabs` (tab rules), `Backups` (backups
   of unsaved tabs, with a POSIX `Fs`), `FileDetails` (tree sorts, ages, folder
@@ -160,14 +162,15 @@ goes here first, with tests; the GUI only displays it.
   `Keymap`.
 - Terminal: `Terminal` (`TerminalView`, `MCPty`, the shell integration),
   `TerminalGridView`, `TerminalPanel`, `TerminalFindBar`, `RunCommand`.
-- Viewers: `Latex`, `MarkdownMath`, `MarkdownImage`, `MarkdownEditPanel`,
+- Viewers: `Latex`, `MarkdownMath`, `MarkdownMermaid`, `MarkdownImage`, `MarkdownEditPanel`,
   `FileViewers`, `QuickLook`, `CsvTable`, `JsonOutlineView`, `SqliteView`,
   `CompareView`.
 - `Browser` (with `MCKeyboardWindow`), `TabStrip`, `Search` (Find in Folder and
   TODOs window), `GitPanel`, `TreeDetails`, `FormatRunner`, `BackupStore`,
   `PalettePanel`, `Navigation`.
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
-  `ControlServer`, `ControlCommands`, `AgentNotes`, `AgentModel`,
+  `ControlServer`, `ControlCommands`, `IdeLinkServer` (Claude Code's /ide),
+  `AgentNotes`, `AgentModel`,
   `AgentsPanel`, `AgentPages`, `AgentWindow`, `ProcessMonitor` (libproc,
   `minicode procs`), `ProcessesPanel`.
 - `Demo` (`make demos`, inert unless `MINICODE_DEMO`), `Bench`
@@ -1167,6 +1170,25 @@ false`) a formula shows as its TeX in the code style.
 - Known gaps: copying a typeset formula copies an attachment character;
   `\color` inside is drawn in the text's color.
 
+### Mermaid in the preview (Mac)
+
+```mermaid blocks go to the user's mermaid-cli (`mmdc`, MCFindProgram, or
+`$MINICODE_MMDC`), one run at a time off the main thread, each its own
+process group with 90 s (a run starts a headless browser, about 2.5 s):
+a transparent PNG at scale 2 in the preview's theme (dark or default),
+kept in memory and `~/Library/Caches/MiniCode/mermaid` (`$MINICODE_MERMAID_CACHE`;
+50 MB). Chosen over a renderer of our own (flowchart and sequence alone are
+a layout engine) and over mermaid.js (third-party code). PNG, not PDF or
+SVG: mmdc 12 makes PDFs fit by default and refuses the older `--pdfFit`,
+draws PDF backgrounds white, and its SVG labels are HTML in foreignObject,
+which NSImage leaves out. Until it arrives, and without mmdc or with
+`markdown.mermaid = false`, the block is code (a failure's complaint, from
+`MermaidDiagram::errorSummary`, its tooltip); the code carries
+`MCMarkdownMermaidAttribute` so `renderMarkdownKeepingPlace` keeps the
+place. Core: `MermaidDiagram.{h,cpp}` (`mermaid:*`); Mac: `MarkdownMermaid.mm`,
+a hook in `renderMarkdown:`. `make guitest SUITES=mermaid` uses a stand-in
+mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
+
 ## LaTeX preview (read before touching it)
 
 - **tectonic**: `MINICODE_TECTONIC`, then `~/Library/Application
@@ -1780,6 +1802,52 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 - Ground rules for this and the agent workspace: nothing runs because a folder
   or file was opened; Claude Code's data is read, never written, moved or
   deleted; nothing leaves the Mac.
+
+## The Claude Code IDE link (Mac, agent.ide-link)
+
+Claude Code's `/ide` answered per window, as VS Code's extension does. Off by
+default; View > Claude Code IDE Link (`MCIdeLinkMenuItem`, its own target)
+writes `agent.ide-link` through `Settings::withValue`. Core `IdeLink.{h,cpp}`
+(`ide:*` tests): SHA-1, base64, the upgrade handshake, RFC 6455 frames, MCP
+over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
+`IdeLinkServer.mm`: sockets on the main queue, the lock file, the tools.
+
+- **The protocol, as read** from Claude Code 2.1.319 (the bun binary's
+  embedded JS: search it for "Failed to read IDE lockfile", "ws-ide",
+  "callIdeRpc", "openDiff") and the VS Code extension 2.1.318
+  (`~/.vscode/extensions/anthropic.claude-code-*/extension.js`: "Fre(",
+  "Wnt(", the tool handlers): `$CLAUDE_CONFIG_DIR/ide` or `~/.claude/ide`,
+  `<port>.lock` 0600 holding pid, workspaceFolders, ideName, transport "ws",
+  runningInWindows, authToken. Claude Code connects to `ws://127.0.0.1:port`
+  with subprotocol "mcp" and `X-Claude-Code-Ide-Authorization`, sends
+  `ide_connected {pid}`, listens for `selection_changed {text, filePath,
+  fileUrl, selection}` (0-based lines, UTF-16 characters), calls `openDiff
+  {old_file_path, new_file_path, new_file_contents, tab_name}` and expects
+  `[FILE_SAVED, text]` or `[DIFF_REJECTED, tab]` (it writes the file itself),
+  then `close_tab`; `getDiagnostics {uri?}` before and after edits (it
+  compares the answer's uri with the one it sent, so answer under that
+  spelling). It shows the model only getDiagnostics and executeCode. It uses
+  openDiff only when its global `diffTool` is "auto". It auto-connects when
+  CLAUDE_CODE_SSE_PORT is the port (minicode's terminals get it,
+  `MCIdeLinkTerminalEnvironment`), else /ide lists lock files whose folders
+  hold its cwd (unresolved, so the lock lists the folder as spelled and
+  resolved); it skips the pid check outside VS Code and JetBrains terminals,
+  and deletes lock files of dead pids itself.
+- **Rules kept**: 127.0.0.1 only, a 48-hex-digit secret per window, Host must
+  be loopback, nothing said before the token; writes nothing under ~/.claude
+  but its own lock file (temp file and rename, removed on window close,
+  setting off and atexit); removes at start only lock files with ideName
+  minicode, another pid, that pid gone. openFile goes through
+  `openTabForAgent:preview:quiet:` (beside the user while they type) and
+  highlights startText..endText with an empty note; openDiff is a
+  comparison tab (`showComparison:preview:NO quiet:YES`) with a decision bar
+  (`MCComparison decisionPrompt/onDecision`, CompareView); closing the tab
+  rejects (`closePageOf:` calls `tabClosed`); close_tab and closeAllDiffTabs
+  close only comparisons the link offered. Not offered: saveDocument,
+  executeCode. A client that goes leaves its diff saying so.
+- Checked by `make guitest SUITES=idelink` (a WebSocket client on a thread;
+  `MC_GUI_NODE=/opt/homebrew/bin/node` adds node's own client) and the
+  `ide:*` groups. Not run against a real Claude Code session.
 
 ## The agent workspace (Mac)
 

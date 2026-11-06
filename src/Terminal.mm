@@ -53,6 +53,7 @@
 #import "TerminalFindBar.h"
 #import "Appearance.h"
 #import "EditorFont.h"
+#import "IdeLinkServer.h"
 #include "TerminalStream.h"
 #include "TerminalScreen.h"
 #include "TermLinks.h"
@@ -2135,6 +2136,16 @@ static BOOL MCIsOtherShell(pid_t pid) {
     // above.
     env.push_back("MINICODE_TERMINAL_ID=" + std::to_string((long)_terminalID));
     env.push_back("MINICODE_PID=" + std::to_string((int)getpid()));
+    // The Claude Code IDE link of the window this shell's folder is in
+    // (IdeLinkServer.h): Claude Code started here joins it by itself.
+    for (NSString *kv in MCIdeLinkTerminalEnvironment(_cwd)) {
+        const std::string pair = kv.UTF8String;
+        const std::string key = pair.substr(0, pair.find('='));
+        env.erase(std::remove_if(env.begin(), env.end(), [&](const std::string &e) {
+                      return e.compare(0, key.size() + 1, key + "=") == 0;
+                  }), env.end());
+        env.push_back(pair);
+    }
     if (!hasLocale) env.push_back("LANG=en_US.UTF-8");  // apps get no LANG
     // A nonce per shell for the integration's marks (TerminalStream's
     // setMarkNonce): 128 random bits as hex.

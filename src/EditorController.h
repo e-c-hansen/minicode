@@ -265,6 +265,18 @@
 - (NSDictionary *)controlSelection;
 - (NSArray<TerminalView *> *)controlTerminals;
 - (NSDictionary *)controlBrowser;
+// ---- the Claude Code IDE link (IdeLinkServer.h)
+// The text of `path` when it is the document on show as source (its
+// buffer, unsaved changes included), else nil.
+- (NSString *)agentBufferOfShownFile:(NSString *)path;
+// Closes the tabs showing a comparison `match` accepts, unasked (a
+// comparison has nothing to save); returns how many.
+- (NSUInteger)closeComparisonTabsMatching:(BOOL (^)(MCComparison *comparison))match;
+// Every problem the window's language servers report (Lsp.h, MCProblem).
+- (NSArray *)agentProblems;
+- (void)showAgentStatusNote:(NSString *)note;   // the status bar's left, for six seconds
+// Whether `view` is the editor's text view.
+- (BOOL)isEditorTextView:(id)view;
 - (void)nextTourStop:(id)sender;       // Option+]
 - (void)previousTourStop:(id)sender;   // Option+[
 @property(nonatomic, readonly) BOOL tourActive;
