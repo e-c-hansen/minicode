@@ -216,10 +216,11 @@ static void testCsv() {
         CHECK(e.serialize() == "a,b\nc,d\n,");
         e.deleteRow(2);
         CHECK(e.serialize() == "a,b\nc,d");
-        // New rows take the file's line ending.
+        // New rows take the file's line ending (and in one column are "",
+        // not a blank line).
         Document crlf = Document::parse("a\r\nb\r\n", ',');
         crlf.insertRow(1);
-        CHECK(crlf.serialize() == "a\r\n\r\nb\r\n");
+        CHECK(crlf.serialize() == "a\r\n\"\"\r\nb\r\n");
         // Quote-everything files get quoted new fields.
         Document all = Document::parse("\"a\",\"b\"\n\"c\",\"d\"\n", ',');
         all.insertColumn(2);
@@ -235,6 +236,29 @@ static void testCsv() {
         back.setCell(0, 1, "z");
         back.setCell(0, 1, "y");
         CHECK(back.serialize() == "x,\"y\"\n");
+    }
+    GROUP("csv:empty-row");
+    {
+        // A one-column file with a cell emptied: "" keeps the row a row,
+        // where a blank line is skipped by most readers and, after a lone
+        // CR, would join it into a CRLF.
+        Document ids = Document::parse("id\n17\n18\n", ',');
+        CHECK(ids.setCell(1, 0, ""));
+        CHECK(ids.serialize() == "id\n\"\"\n18\n");
+        Document back = Document::parse(ids.serialize(), ',');
+        CHECK(back.rows() == 3 && back.cell(1, 0) == "" && back.cell(2, 0) == "18");
+        Document cr = Document::parse("a\rb\rc", ',');
+        cr.setCell(2, 0, "");
+        CHECK(cr.serialize() == "a\rb\r\"\"");
+        CHECK(Document::parse(cr.serialize(), ',').rows() == 3);
+        // A column deleted down to one empty field is "" too.
+        Document two = Document::parse("x,y\n,1\n", ',');
+        two.deleteColumn(1);
+        CHECK(two.serialize() == "x\n\"\"\n");
+        // Rows nobody touched stay as they were, blank lines included.
+        Document blank = Document::parse("a\n\nb\n", ',');
+        blank.setCell(2, 0, "c");
+        CHECK(blank.serialize() == "a\n\nc\n");
     }
     GROUP("csv:limits");
     {
@@ -263,6 +287,12 @@ static void testCsv() {
         // European decimals: semicolons split consistently.
         CHECK(Csv::detectDelimiter("x;y\n1,5;2,25\n3,0;4\n") == ';');
         CHECK(Csv::detectDelimiter("single\ncolumn\n") == ',');
+        // One column whose first line happens to hold a ';' or '|': the
+        // lines below do not split that way, so it is not the separator.
+        CHECK(Csv::detectDelimiter("note; first\nplain\nmore\nrows\n") == ',');
+        CHECK(Csv::detectDelimiter("a|b\nc\nd\n") == ',');
+        // A ragged line or two still leaves the separator found.
+        CHECK(Csv::detectDelimiter("a;b;c\n1;2;3\n4;5\n6;7;8\n") == ';');
         CHECK(Csv::detectDelimiter("") == ',');
     }
     GROUP("csv:random-edits");
