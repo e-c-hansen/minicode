@@ -84,11 +84,16 @@ void MCGuiAsync(NSString *name, NSTimeInterval timeout, void (^block)(MCGuiDone)
 }
 
 void MCGuiPause(NSTimeInterval seconds) {
-    NSDate *until = [NSDate dateWithTimeIntervalSinceNow:seconds];
+    // Timed from when the pause is reached, not from when the suite queued
+    // it (every pause used to end at once in a suite running longer).
+    __block NSDate *until = nil;
     MCGuiItem *i = [MCGuiItem new];
     i.kind = MCGuiKindWait;
     i.name = [NSString stringWithFormat:@"a pause of %.1f s", seconds];
-    i.until = ^BOOL { return [until timeIntervalSinceNow] <= 0; };
+    i.until = ^BOOL {
+        if (!until) until = [NSDate dateWithTimeIntervalSinceNow:seconds];
+        return [until timeIntervalSinceNow] <= 0;
+    };
     i.timeout = seconds + 5;
     Enqueue(i);
 }
