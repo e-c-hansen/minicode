@@ -318,6 +318,12 @@ const std::vector<Command>& all() {
          "toggleFindWholeWord:", 0, 0, nullptr},
         {"toggleFindRegex", "Use Regular Expression", "Edit > Find Options", "alt+cmd+r", A,
          "toggleFindRegex:", 0, 0, nullptr},
+        {"togglePreserveCase", "Preserve Case", "Edit > Find Options", "alt+cmd+p", A,
+         "toggleFindPreserveCase:", 0, 0, nullptr},
+        // VS Code's alt+cmd+l is Toggle Task's here; the find bar takes it
+        // while it has the keyboard (EditorFind.h).
+        {"toggleFindInSelection", "Find in Selection", "Edit > Find Options", "", A,
+         "toggleFindInSelection:", 0, 0, nullptr},
         {"workbench.action.findInFiles", "Find in Folder…", "Edit", "shift+cmd+f", A,
          "openSearch:", 0, 0, nullptr},
         {"workbench.action.replaceInFiles", "Replace in Folder…", "Edit", "alt+shift+cmd+f", A,

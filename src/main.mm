@@ -986,14 +986,20 @@ static void BuildMenu(void) {
     // The editor's find bar and Find in Folder each answer these for
     // themselves (EditorController and SearchPanel, as window delegates).
     NSMenu *findOptions = [[NSMenu alloc] initWithTitle:@"Find Options"];
-    NSString *const optionTitles[] = {@"Match Case", @"Match Whole Word", @"Use Regular Expression"};
-    NSString *const optionKeys[] = {@"c", @"w", @"r"};
+    // Find in Selection has no key here: VS Code's Option+Cmd+L is Toggle
+    // Task's, so the find bar takes it only while one of its fields has the
+    // keyboard.
+    NSString *const optionTitles[] = {@"Match Case", @"Match Whole Word", @"Use Regular Expression",
+                                      @"Preserve Case", @"Find in Selection"};
+    NSString *const optionKeys[] = {@"c", @"w", @"r", @"p", @""};
     SEL const optionActions[] = {@selector(toggleFindMatchCase:), @selector(toggleFindWholeWord:),
-                                 @selector(toggleFindRegex:)};
-    for (int i = 0; i < 3; i++) {
+                                 @selector(toggleFindRegex:), @selector(toggleFindPreserveCase:),
+                                 @selector(toggleFindInSelection:)};
+    for (int i = 0; i < 5; i++) {
         NSMenuItem *it = [findOptions addItemWithTitle:optionTitles[i] action:optionActions[i]
                                          keyEquivalent:optionKeys[i]];
-        it.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+        if (optionKeys[i].length)
+            it.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     }
     NSMenuItem *findOptionsItem = [[NSMenuItem alloc] initWithTitle:@"Find Options"
                                                               action:nil keyEquivalent:@""];

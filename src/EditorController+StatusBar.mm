@@ -263,6 +263,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:[self hk:@"toggleFindRegex"] label2:@"Regular expression" state:nil];
     [self appendHintsRow:s key:@"⇧⌘1" label:@"Replace (in the find bar)"
                     key2:[self hk:@"editor.action.replaceAll"] label2:@"Replace all" state:nil];
+    [self appendHintsRow:s key:@"⌥⌘L" label:@"Find in selection (in the bar)"
+                    key2:[self hk:@"togglePreserveCase"] label2:@"Preserve case" state:nil];
     [self appendHintsRow:s key:@"⇧⌘drag" label:@"Column, or two clicks"
                     key2:@"⌥click" label2:@"Add a cursor" state:nil];
     [self appendHintsRow:s key:[self hkAll:@"editor.action.moveLinesDownAction"] label:@"Move line down"

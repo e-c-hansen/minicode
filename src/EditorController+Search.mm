@@ -18,6 +18,14 @@
 - (void)toggleFindMatchCase:(id)sender { [_editorFind toggleMatchCase]; }
 - (void)toggleFindWholeWord:(id)sender { [_editorFind toggleWholeWord]; }
 - (void)toggleFindRegex:(id)sender { [_editorFind toggleRegex]; }
+- (void)toggleFindPreserveCase:(id)sender { [_editorFind togglePreserveCase]; }
+- (void)toggleFindInSelection:(id)sender {
+    if (self.editorScroll.hidden) {
+        NSBeep();
+        return;
+    }
+    [_editorFind toggleFindInSelection];
+}
 
 // Cmd+Shift+F : project-wide text search.
 - (void)openSearch:(id)sender {
