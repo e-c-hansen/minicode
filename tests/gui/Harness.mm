@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <vector>
 
+#import "AppSettings.h"
 #import "ControlServer.h"
 
 int minicode_main(int argc, const char *argv[]);   // src/main.mm, renamed
@@ -162,6 +163,62 @@ void MCGuiWriteFile(NSString *path, NSString *text) {
     [[NSFileManager defaultManager] createDirectoryAtPath:path.stringByDeletingLastPathComponent
                               withIntermediateDirectories:YES attributes:nil error:nil];
     [text writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
+
+void MCGuiSetSettings(NSString *text) {
+    MCGuiWriteFile(Env(@"MINICODE_SETTINGS"), text);
+    [[AppSettings shared] reload];
+}
+
+static NSString *FakeLspDir(void) { return [MCGuiScratch() stringByAppendingPathComponent:@"fakelsp"]; }
+
+NSString *MCGuiFakeLsp(NSString *name, id script, NSString *program, NSString *words) {
+    NSString *dir = FakeLspDir();
+    NSFileManager *fm = [NSFileManager defaultManager];
+    [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *scriptPath = [dir stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"json"]];
+    NSString *logPath = [dir stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"log"]];
+    NSError *error = nil;
+    NSData *json = [NSJSONSerialization dataWithJSONObject:script options:0 error:&error];
+    if (!json) MCGuiCheck(NO, [NSString stringWithFormat:@"the %@ script is JSON: %@", name, error],
+                          __FILE__, __LINE__);
+    // Written beside and renamed, so the server never reads half a script.
+    NSString *tmp = [scriptPath stringByAppendingString:@".tmp"];
+    [json writeToFile:tmp atomically:NO];
+    rename(tmp.fileSystemRepresentation, scriptPath.fileSystemRepresentation);
+    NSString *exe = [MCGuiBuildDir() stringByAppendingPathComponent:@"fakelsp"];
+    if (![fm isExecutableFileAtPath:exe])
+        MCGuiCheck(NO, @"build/fakelsp is built (make fakelsp)", __FILE__, __LINE__);
+    if (program.length) {
+        NSString *bin = [dir stringByAppendingPathComponent:[@"bin-" stringByAppendingString:name]];
+        [fm createDirectoryAtPath:bin withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *link = [bin stringByAppendingPathComponent:program];
+        [fm removeItemAtPath:link error:nil];
+        [fm createSymbolicLinkAtPath:link withDestinationPath:exe error:nil];
+        exe = link;
+    }
+    return [NSString stringWithFormat:@"%@%@%@ --script %@ --log %@", exe, words.length ? @" " : @"",
+                                      words ?: @"", scriptPath, logPath];
+}
+
+NSArray<NSDictionary *> *MCGuiFakeLspReceived(NSString *name, NSString *method) {
+    NSString *log = [FakeLspDir() stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"log"]];
+    NSString *text = [NSString stringWithContentsOfFile:log encoding:NSUTF8StringEncoding error:nil];
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *line in [text componentsSeparatedByString:@"\n"]) {
+        if (!line.length) continue;
+        id m = [NSJSONSerialization JSONObjectWithData:[line dataUsingEncoding:NSUTF8StringEncoding]
+                                               options:0 error:nil];
+        if (![m isKindOfClass:NSDictionary.class]) continue;
+        if (method && ![m[@"method"] isEqual:method]) continue;
+        [out addObject:m];
+    }
+    return out;
+}
+
+void MCGuiFakeLspClearLog(NSString *name) {
+    NSString *log = [FakeLspDir() stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"log"]];
+    truncate(log.fileSystemRepresentation, 0);
 }
 
 void MCGuiSnapshot(NSView *view, NSString *name) {

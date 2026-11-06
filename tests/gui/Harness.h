@@ -98,6 +98,24 @@ void MCGuiWriteFile(NSString *path, NSString *text);
 // <name>.png into $MC_GUI_SNAPSHOTS when that is set, for looking at.
 void MCGuiSnapshot(NSView *view, NSString *name);
 
+// Writes the settings file (MINICODE_SETTINGS) and has the app read it now.
+void MCGuiSetSettings(NSString *text);
+
+// ---- a scripted language server (build/fakelsp; tests/fakelsp/fakelsp.cpp
+// describes the script). Each name has its own script and log under
+// <scratch>/fakelsp. MCGuiFakeLsp writes the script (a JSON-able tree) and
+// returns the command line to put in the settings (lsp.python = ...);
+// `program`, when given, is the name the server runs under (a link to
+// fakelsp named "ruff", so the app takes it for Ruff), and `words` are
+// added to the command line. Writing a name's script again changes what
+// the running server does from its next message on.
+NSString *MCGuiFakeLsp(NSString *name, id script, NSString *program, NSString *words);
+// Every message the server named `name` received, in order, parsed; with a
+// method, only those.
+NSArray<NSDictionary *> *MCGuiFakeLspReceived(NSString *name, NSString *method);
+// Empties a server's log.
+void MCGuiFakeLspClearLog(NSString *name);
+
 // ---- input
 // A key event made the way the hardware's are (CGEvent), offered to the
 // window's key equivalents, then the main menu; YES when one took it. The

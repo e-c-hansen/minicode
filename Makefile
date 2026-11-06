@@ -79,7 +79,7 @@ ifneq ($(if $(MAKECMDGOALS),$(filter-out clean,$(MAKECMDGOALS)),all),)
           printf '%s\n' '$(TESTCMD)' > $(TESTDIR)/flags.txt)
 endif
 
-.PHONY: all app run test guitest install dmg dist-zip clean demos membench icon
+.PHONY: all app run test guitest fakelsp install dmg dist-zip clean demos membench icon
 
 all: app
 
@@ -186,7 +186,23 @@ $(GUIDIR)/%.mm.o: tests/gui/%.mm $(OBJDIR)/flags.txt
 build/guitest: $(GUI_OBJ)
 	$(CXX) $(CXXFLAGS) $(GUI_OBJ) $(LDFLAGS) -o $@
 
-guitest: build/guitest $(CLI)
+# A scripted language server (tests/fakelsp/fakelsp.cpp) for the GUI checks
+# of language server features, so they run where no real server is
+# installed (the CI runner). Plain C++ from the core's JSON and framing, built
+# with the tests' flags, so it builds on Linux too.
+FAKELSP     := build/fakelsp
+FAKELSP_OBJ := $(TESTDIR)/fakelsp/fakelsp.cpp.o $(TESTDIR)/Json.cpp.o $(TESTDIR)/LspClient.cpp.o
+
+$(TESTDIR)/fakelsp/%.cpp.o: tests/fakelsp/%.cpp $(TESTDIR)/flags.txt
+	@mkdir -p $(@D)
+	$(CXX) $(TESTFLAGS) -MMD -MP -c $< -o $@
+
+$(FAKELSP): $(FAKELSP_OBJ)
+	$(CXX) $(TESTFLAGS) $(FAKELSP_OBJ) -o $@
+
+fakelsp: $(FAKELSP)
+
+guitest: build/guitest $(CLI) $(FAKELSP)
 	@./build/guitest $(SUITES)
 
 # The agent skill (skills/minicode) for Claude Code, in ~/.claude/skills.
@@ -246,4 +262,4 @@ build/procmem: tools/procmem.c
 membench: app build/procmem
 	./scripts/membench.sh
 
--include $(OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(CLI_OBJ:.o=.d) $(GUI_OBJ:.o=.d)
+-include $(OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(CLI_OBJ:.o=.d) $(GUI_OBJ:.o=.d) $(FAKELSP_OBJ:.o=.d)
