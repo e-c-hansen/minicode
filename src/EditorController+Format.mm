@@ -36,14 +36,18 @@
     if (sel.length > 0) {
         NSUInteger end = NSMaxRange(sel);
         if ([original characterAtIndex:end - 1] == '\n' && end - 1 > sel.location) end--;
-        auto lineOf = ^NSInteger(NSUInteger index) {
-            NSInteger line = 1;
-            for (NSUInteger i = 0; i < index; i++)
-                if ([original characterAtIndex:i] == '\n') line++;
-            return line;
-        };
-        first = lineOf(sel.location);
-        last = lineOf(end);
+        // 1-based lines as the formatters count them ('\n'), in one pass up
+        // to the selection's end through an inline buffer (a message per
+        // character from the start cost tens of ms near the end of 5 MB).
+        CFStringInlineBuffer buf;
+        CFStringInitInlineBuffer((__bridge CFStringRef)original, &buf, CFRangeMake(0, (CFIndex)end));
+        NSInteger line = 1;
+        for (NSUInteger i = 0; i < end; i++) {
+            if (i == sel.location) first = line;
+            if (CFStringGetCharacterFromInlineBuffer(&buf, (CFIndex)i) == '\n') line++;
+        }
+        if (first == 0) first = line;   // the selection starts at its end (never expected)
+        last = line;
     }
     NSUInteger generation = ++_formatGeneration;
     __weak EditorController *weakSelf = self;
@@ -103,8 +107,8 @@
 // ordinary edit and the caret and the scroll position stay with their text.
 // NO when the text is the same.
 //
-// The hunks go in with one shouldChangeTextInRanges (one undo step) and one
-// didChangeText. Each hunk is still its own storage edit, so the
+// The hunks go in through CodeTextView's replaceRanges: (one undo step, one
+// didChangeText). Each hunk is still its own storage edit, so the
 // highlighter, the squiggles and the language server follow each one as
 // they follow typing. Each hunk used to get a didChangeText too, and
 // NSTextView lays out from the edit onwards in every one: 298 hunks spread
@@ -136,21 +140,7 @@
         [ranges addObject:[NSValue valueWithRange:NSMakeRange(h.oldStart, h.oldLength)]];
         [strings addObject:FromU16(b.substr(h.newStart, h.newLength))];
     }
-    NSUndoManager *um = tv.undoManager;
-    [tv breakUndoCoalescing];
-    [um beginUndoGrouping];
-    const BOOL ok = [tv shouldChangeTextInRanges:ranges replacementStrings:strings];
-    if (ok) {
-        NSTextStorage *storage = tv.textStorage;
-        for (NSInteger i = (NSInteger)ranges.count - 1; i >= 0; i--)   // last first
-            [storage replaceCharactersInRange:ranges[(NSUInteger)i].rangeValue
-                                   withString:strings[(NSUInteger)i]];
-        [tv didChangeText];
-    }
-    [um setActionName:name];
-    [um endUndoGrouping];
-    [tv breakUndoCoalescing];
-    if (!ok) return NO;
+    if (![tv replaceRanges:ranges withStrings:strings actionName:name]) return NO;
 
     size_t start = LineDiff::mapOffset(a, b, hunks, sel.location);
     size_t end = sel.length ? LineDiff::mapOffset(a, b, hunks, NSMaxRange(sel)) : start;
