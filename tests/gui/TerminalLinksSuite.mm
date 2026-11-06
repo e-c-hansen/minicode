@@ -1,6 +1,6 @@
 // TerminalLinksSuite.mm — `make guitest SUITES=terminal_links`: web pages
 // opened from a terminal land in minicode's browser pane, the user's page.
-// A local server (python3 -m http.server on 127.0.0.1) prints its address,
+// A local server (tests/gui/serve.py: http.server on 127.0.0.1) prints its address,
 // and a Cmd+click on it loads it there, the keyboard staying in the
 // terminal; 0.0.0.0 is read as localhost; an OSC 8 hyperlink printed by
 // printf opens its own address on Cmd+click (a file one in the editor),
@@ -48,6 +48,12 @@ int FreePort() {
         port = ntohs(a.sin_port);
     close(fd);
     return port;
+}
+
+// http.server, less its reverse DNS lookup (see serve.py).
+NSString *Serve(void) {
+    return [[MCGuiBuildDir() stringByDeletingLastPathComponent]
+        stringByAppendingPathComponent:@"tests/gui/serve.py"];
 }
 
 NSString *Local(NSString *path) {
@@ -206,7 +212,7 @@ MC_GUI_SUITE(terminal_links) {
     MCGuiStep(@"BROWSER names the helper; the server starts", ^{
         [term runCommand:[NSString stringWithFormat:
             @"cd '%@'; echo \"browser=$BROWSER\"; "
-            @"python3 -m http.server --bind 127.0.0.1 --directory site %d 2>/dev/null &", gDir, gPort]];
+            @"python3 '%@' %d site 2>/dev/null &", gDir, Serve(), gPort]];
     });
     MCGuiWait(@"the server says where it is", 20, ^BOOL {
         return [[term recentText:20] containsString:[NSString stringWithFormat:@"(%@)", Local(@"/")]];

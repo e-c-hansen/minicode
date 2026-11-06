@@ -74,7 +74,10 @@ BOOL Alive(int pid) { return pid > 0 && (kill(pid, 0) == 0 || errno == EPERM); }
 // A command that serves `port` on 127.0.0.1 until it is stopped, quiet.
 NSString *ServeCommand(MCProcsState *s, int port) {
     if ([s.server.lastPathComponent hasPrefix:@"python"])
-        return [NSString stringWithFormat:@"'%@' -m http.server %d --bind 127.0.0.1", s.server, port];
+        // http.server, less its reverse DNS lookup (see serve.py).
+        return [NSString stringWithFormat:@"'%@' '%@' %d", s.server,
+                [[MCGuiBuildDir() stringByDeletingLastPathComponent]
+                    stringByAppendingPathComponent:@"tests/gui/serve.py"], port];
     return [NSString stringWithFormat:@"/usr/bin/nc -lk 127.0.0.1 %d", port];
 }
 
