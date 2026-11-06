@@ -2163,6 +2163,18 @@ session has a display. Check first.
   dispatches never run; `[NSApp run]` calls `applicationWillFinishLaunching:`
   itself; NSZombieEnabled names a message sent to a freed object. Keep harness
   files in a scratchpad folder of your own name.
+- **CI's macOS runner differs** (2026-11-06): its windows are at 1x, its
+  scroll bars always take room (no trackpad), and a reverse DNS lookup of
+  127.0.0.1 can stall. `MC_GUI_SCROLLBARS=always` gives the scroll bars here;
+  compute pixel checks from `backingScaleFactor`, never from a picture's
+  width; local servers in checks are `tests/gui/serve.py` (http.server
+  without the getfqdn it makes between bind and listen, which kept the port
+  closed and the banner unprinted past the waits). An exception AppKit cannot
+  recover from (one in `drawRect:`) prints `FATAL exception in [suite] (step:
+  ...)` with its reason and stack before the crash. Use `MCMonoFont`, never
+  `+[NSFont monospacedSystemFontOfSize:weight:]` directly: it returns nil now
+  and then while other threads make fonts, and a nil in an attributes
+  literal threw inside the git panel's row drawing.
 - **Ad hoc**: a temporary `getenv("MINICODE_*TEST")` block run headless with a
   poll-and-kill loop (no `timeout` on macOS), removed by exact text. Read state
   by KVC; drag NSSplitView by posting drag and up events, then calling
