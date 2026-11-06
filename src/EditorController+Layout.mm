@@ -368,6 +368,7 @@
     self.textView.rulerColor = MCColor(st.rulerColor());
     [self applyGutterSettings];   // and the font, which recolorEditor sets in the text
     [self recolorEditor];
+    [self applyWordWrap];         // editor.word-wrap
 
     self.statusBar.layer.backgroundColor = [cfg background:Surface::Statusbar].CGColor;
     self.statusLabel.textColor = [cfg text:Surface::Statusbar];
@@ -458,11 +459,27 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     BOOL showTerm = self.terminalVisible && self.terminalPanel != nil;
     BOOL showBrowser = self.browserVisible && self.browser != nil;
     BOOL showEditor = !self.editorHidden;
+    BOOL showProblems = self.problemsVisible && self.problemsPanel != nil;
+    // Maximize Pane: that pane alone, while it is open at all.
+    if (_maximizedPane != MCPaneNone) {
+        const BOOL open = _maximizedPane == MCPaneEditor    ? showEditor
+                        : _maximizedPane == MCPaneBrowser   ? showBrowser
+                        : _maximizedPane == MCPaneTerminal  ? showTerm
+                                                            : NO;
+        if (!open) {
+            _maximizedPane = MCPaneNone;
+        } else {
+            showEditor = _maximizedPane == MCPaneEditor;
+            showBrowser = _maximizedPane == MCPaneBrowser;
+            showTerm = _maximizedPane == MCPaneTerminal;
+            showProblems = NO;
+        }
+    }
+    [self applyWordWrap];
     BOOL topShown = showBrowser || showEditor;
 
     // The Problems list sits between the top and the terminal, at a fixed
     // share of the height; alone at the bottom it takes it all.
-    BOOL showProblems = self.problemsVisible && self.problemsPanel != nil;
     CGFloat probH = 0;
     if (showProblems)
         probH = (topShown || showTerm)
@@ -573,7 +590,8 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
         CGFloat barY = topShown ? termH - kDragBarHeight / 2
                                 : Hrest - kDragBarHeight;
         self.termDivider.frame = NSMakeRect(0, barY, W, kDragBarHeight);
-        self.termDivider.hidden = !showTerm;
+        // A maximized terminal has no bar to drag back down.
+        self.termDivider.hidden = !showTerm || _maximizedPane != MCPaneNone;
     }
     // Views added later (the browser, a PDF view) would otherwise sit on top
     // of the bars and swallow the clicks meant for them. The terminal's bar
@@ -698,11 +716,58 @@ static const CGFloat kDividerGrabSlop = 5;
     if (self.hintsVisible) [self updateHints];
 }
 
+// Ctrl+Cmd+M: the pane with the keyboard (the editor, the browser or the
+// terminal) takes the whole right area, the others hidden as they are;
+// again, and everything is back where it was. The sidebar stays (Cmd+B).
+- (MCPane)maximizedPane { return _maximizedPane; }
+
+- (MCPane)paneWithKeyboard {
+    NSResponder *fr = self.window.firstResponder;
+    if ([fr isKindOfClass:NSTextView.class] && [(NSTextView *)fr isFieldEditor] &&
+        [[(NSTextView *)fr delegate] isKindOfClass:NSView.class])
+        fr = (NSView *)[(NSTextView *)fr delegate];
+    NSView *v = [fr isKindOfClass:NSView.class] ? (NSView *)fr : nil;
+    if (v && self.browser && [v isDescendantOf:self.browser]) return MCPaneBrowser;
+    if (v && self.terminalPanel && [v isDescendantOf:self.terminalPanel]) return MCPaneTerminal;
+    return MCPaneNone;
+}
+
+- (void)toggleMaximizedPane:(id)sender {
+    (void)sender;
+    if (_maximizedPane != MCPaneNone) {
+        _maximizedPane = MCPaneNone;
+    } else {
+        MCPane pane = [self paneWithKeyboard];
+        // Elsewhere (the editor, the tree, a panel in the sidebar): the
+        // editor if it shows, else whichever pane does.
+        if (pane == MCPaneNone)
+            pane = !self.editorHidden ? MCPaneEditor
+                 : self.browserVisible && self.browser ? MCPaneBrowser
+                 : self.terminalVisible && self.terminalPanel ? MCPaneTerminal
+                                                              : MCPaneNone;
+        if (pane == MCPaneNone) {
+            NSBeep();
+            return;
+        }
+        _maximizedPane = pane;
+        [self showRightArea];
+    }
+    [self relayoutRightArea];
+    if (self.hintsVisible) [self updateHints];
+}
+
+- (BOOL)leaveMaximizedPaneFor:(MCPane)pane {
+    if (_maximizedPane == MCPaneNone || _maximizedPane == pane) return NO;
+    _maximizedPane = MCPaneNone;
+    [self relayoutRightArea];
+    return YES;
+}
+
 // Show the file editor again: unhide it and uncollapse the right pane. Called
 // by anything that puts a file in front of the user, so opening a file never
 // appears to do nothing.
 - (void)revealEditor {
-    BOOL wasHidden = self.editorHidden;
+    BOOL wasHidden = [self leaveMaximizedPaneFor:MCPaneEditor] || self.editorHidden;
     self.editorHidden = NO;
     [self showRightArea];
     if (wasHidden) [self relayoutRightArea];

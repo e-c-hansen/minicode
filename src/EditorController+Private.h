@@ -314,6 +314,13 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (void)keymapChanged:(NSNotification *)note;
 - (void)recolorEditor;
 - (void)relayoutRightArea;
+// Maximize Pane (Ctrl+Cmd+M): one of the right area's panes takes all of
+// it until toggled again. Showing or focusing another pane ends it
+// (leaveMaximizedPaneFor:, which answers whether it did).
+typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MCPaneTerminal };
+- (MCPane)maximizedPane;
+- (void)toggleMaximizedPane:(id)sender;
+- (BOOL)leaveMaximizedPaneFor:(MCPane)pane;
 - (void)terminalBarDraggedTo:(CGFloat)y;
 - (void)browserBarDraggedTo:(CGFloat)x;
 - (BOOL)rightAreaCollapsed;
@@ -340,6 +347,16 @@ static const NSInteger kWorktreeMenuTag = 7701;
 @property(nonatomic, assign) BOOL processesVisible;   // the panel in the sidebar's place
 - (MCProcessesPanel *)processesPanel;                 // made on first use
 - (MCProcessesPanel *)processesPanelOnShow;           // nil unless shown
+@end
+
+// EditorController+ZoomFit.mm: Page Zoom for the browser and PDFs, and word wrap.
+@interface EditorController (ZoomFit)
+// What Cmd+= zooms in a page: a BrowserView or a PDFView, or nil.
+- (NSView *)pageZoomTarget;
+// Word wrap in the editor (editor.word-wrap, View > Word Wrap): applied to
+// the text view, always wrapping a preview, which is not editable.
+- (void)applyWordWrap;
+- (BOOL)validateZoomFitItem:(NSMenuItem *)item enabled:(BOOL *)enabled;
 @end
 
 // EditorController+StatusBar.mm: the status bar, its notes and "Saved ...", and the shortcut hints.

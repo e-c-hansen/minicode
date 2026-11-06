@@ -62,6 +62,14 @@ static void testCommandKeys() {
     CHECK(!typesText(K("ctrl+g")) && !typesText(K("shift+f12")));
     CHECK(overlaps(When::Any, When::Editor) && overlaps(When::Terminal, When::Terminal));
     CHECK(!overlaps(When::Editor, When::Terminal) && !overlaps(When::Tree, When::Editor));
+    // A page against everything but a page.
+    CHECK(!overlaps(When::Page, When::NotPage) && !overlaps(When::NotPage, When::Page));
+    CHECK(overlaps(When::NotPage, When::Editor) && overlaps(When::Tree, When::NotPage));
+    CHECK(overlaps(When::NotPage, When::NotPage) && overlaps(When::Any, When::Page));
+    CHECK(!overlaps(When::Page, When::Editor));
+    CHECK(appliesIn(When::NotPage, When::Editor) && appliesIn(When::NotPage, When::Any));
+    CHECK(!appliesIn(When::NotPage, When::Page) && appliesIn(When::Any, When::Page));
+    CHECK(appliesIn(When::Page, When::Page) && !appliesIn(When::Page, When::Editor));
 }
 
 static void testCommandTable() {
@@ -144,6 +152,45 @@ static void testCommandTable() {
           find("minicode.terminal.deleteToLineStart"));
     CHECK(d.commandFor(K("alt+left"), When::Terminal) == find("minicode.terminal.wordLeft"));
     CHECK(d.commandFor(K("space"), When::Tree) == find("minicode.tree.quickLook"));
+    // Cmd+=, Cmd+- and Cmd+0 zoom a web page or a PDF in one, as in Safari,
+    // and are the editor's zoom and Focus File Tree everywhere else.
+    CHECK(d.commandFor(K("cmd+="), When::Page) == find("minicode.page.zoomIn"));
+    CHECK(d.commandFor(K("shift+cmd+="), When::Page) == find("minicode.page.zoomIn"));
+    CHECK(d.commandFor(K("cmd+-"), When::Page) == find("minicode.page.zoomOut"));
+    CHECK(d.commandFor(K("cmd+0"), When::Page) == find("minicode.page.actualSize"));
+    for (When w : {When::Editor, When::Terminal, When::Tree, When::Any}) {
+        CHECK(d.commandFor(K("cmd+="), w) == find("editor.action.fontZoomIn"));
+        CHECK(d.commandFor(K("cmd+-"), w) == find("editor.action.fontZoomOut"));
+        CHECK(d.commandFor(K("cmd+0"), w) == find("workbench.action.focusSideBar"));
+    }
+    // Commands for anywhere still run in a page.
+    CHECK(d.commandFor(K("cmd+b"), When::Page) ==
+          find("workbench.action.toggleSidebarVisibility"));
+    CHECK(d.commandFor(K("alt+cmd+0"), When::Page) == find("editor.action.fontZoomReset"));
+    CHECK(d.commandFor(K("alt+z"), When::Editor) == find("editor.action.toggleWordWrap"));
+    CHECK(d.commandFor(K("alt+z"), When::Terminal) == nullptr);
+    CHECK(d.commandFor(K("ctrl+cmd+m"), When::Page) == find("minicode.toggleMaximizedPane"));
+    {
+        // A key for anywhere takes it from both sides; one for the editor
+        // only from the editor's zoom, so a page still zooms on Cmd+=.
+        std::vector<Error> errs;
+        Keymap m = resolve("cmd+= = workbench.action.showCommands\n", &errs);
+        CHECK(errs.empty() && m.commandsFor(K("cmd+=")).size() == 1);
+        m = resolve("cmd+0 = editor.action.toggleWordWrap\n", &errs);
+        CHECK(errs.empty());
+        CHECK(m.commandFor(K("cmd+0"), When::Editor) == find("editor.action.toggleWordWrap"));
+        CHECK(m.commandFor(K("cmd+0"), When::Page) == find("minicode.page.actualSize"));
+        CHECK(m.commandFor(K("cmd+0"), When::Tree) == nullptr);
+        // Two lines giving one key to a page's command and the editor's
+        // zoom are no conflict; to the editor's zoom and a tree command are.
+        m = resolve("ctrl+alt+cmd+z = minicode.page.zoomIn\n"
+                    "ctrl+alt+cmd+z = editor.action.fontZoomIn\n", &errs);
+        CHECK(errs.empty());
+        m = resolve("ctrl+alt+cmd+z = renameFile\nctrl+alt+cmd+z = editor.action.fontZoomIn\n",
+                    &errs);
+        CHECK(errs.size() == 1 && errs[0].line == 2 &&
+              errs[0].message.find("in the file tree") != std::string::npos);
+    }
     {
         std::vector<Error> errs;
         Keymap m = resolve("f2 = -renameFile\nctrl+alt+cmd+r = renameFile\n", &errs);

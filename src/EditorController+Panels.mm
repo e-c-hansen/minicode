@@ -169,6 +169,11 @@
 
 - (void)toggleTerminal:(id)sender {
     [self makeTerminalPanel];
+    // Hidden only by another pane's Maximize Pane: shown, not closed.
+    if ([self leaveMaximizedPaneFor:MCPaneTerminal] && self.terminalVisible) {
+        [self.terminal focusInput];
+        return;
+    }
     self.terminalVisible = !self.terminalVisible;
     if (self.terminalVisible) [self showRightArea];
     [self relayoutRightArea];
@@ -242,6 +247,10 @@
 
 - (void)toggleBrowser:(id)sender {
     [self makeBrowserWithHome:@"https://duckduckgo.com"];
+    if ([self leaveMaximizedPaneFor:MCPaneBrowser] && self.browserVisible) {
+        [self.browser focusURLBar];
+        return;
+    }
     self.browserVisible = !self.browserVisible;
     if (self.browserVisible) [self showRightArea];
     [self relayoutRightArea];
@@ -271,12 +280,14 @@
 // Cmd+2: the terminal's input (or its grid), opening the terminal if needed.
 - (void)focusTerminal:(id)sender {
     if (!(self.terminalVisible && self.terminal)) { [self toggleTerminal:nil]; return; }
+    [self leaveMaximizedPaneFor:MCPaneTerminal];
     [self showRightArea];
     [self.terminal focusInput];
 }
 // Cmd+3: the browser's address bar, opening the browser if needed.
 - (void)focusBrowser:(id)sender {
     if (!(self.browserVisible && self.browser)) { [self toggleBrowser:nil]; return; }
+    [self leaveMaximizedPaneFor:MCPaneBrowser];
     [self showRightArea];
     [self.browser focusURLBar];
 }

@@ -132,6 +132,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     if (item.action == @selector(navigateBack:)) return [self.navigator canGoBack];
     if (item.action == @selector(navigateForward:)) return [self.navigator canGoForward];
     if ([self validateActiveTabAction:item.action enabled:&enabled]) return enabled;
+    if ([self validateZoomFitItem:item enabled:&enabled]) return enabled;
     if (item.action == @selector(sortTreeBy:)) {
         item.state = item.tag == (NSInteger)_treeSort.key ? NSControlStateValueOn
                                                           : NSControlStateValueOff;

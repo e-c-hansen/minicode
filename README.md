@@ -64,6 +64,8 @@ Shift Command Return runs the open file in the terminal. It saves the file, then
 
 Paths and URLs in the output are links. Command click src/main.cpp:42:7 from a compiler, or a file Claude Code mentions, and it opens at that line; a URL opens in the browser panel, which Shift Command B toggles. On the Mac the browser sits to the right of the editor rather than in its place, with a bar between them you can drag, and the terminal stays across the bottom under both. Any of the three can be hidden on its own (Shift Command E for the editor), and the others take its space. Command 1, 2 and 3 move the keyboard to the editor, the terminal and the browser.
 
+Side by side, everything still fits. Long lines in the editor wrap at the pane's edge, so there is no scrolling sideways; Option Z turns wrapping off and on, and editor.word-wrap = off keeps it off. In the browser, a PDF or the LaTeX preview, Command equals, Command minus and Command 0 zoom the page as Safari does, while it has the keyboard or right after you scroll or click in it, and the editor's zoom everywhere else. The browser keeps each site's zoom, shows the new percentage in its toolbar for a moment, and View > Page Zoom > Zoom to Fit Width shrinks a page that is too wide until all of it shows; Zoom to Fit Page shows a whole PDF page at once. A video's full screen button fills the screen. When one pane needs all the room, Control Command M gives the editor, the browser or the terminal, whichever has the keyboard, the whole right side, and pressing it again puts the others back. Command B hides the sidebar and shows it again.
+
 ![Command clicking a grep result to open it at its line, then a URL that opens in the browser panel](docs/demos/links.gif)
 
 Control Shift G swaps the file tree for a small source control panel, on the Mac, on Linux and on Android (there the leader key and then V, in the file list's place). It shows the branch, how far it is ahead of or behind its upstream, and the changed files in two lists, staged and not yet staged, each with a one letter status. Arrow keys move through the files, Return shows the selected file's diff in the main pane, Space stages or unstages it, and Command Return (Ctrl Enter on Linux) in the message box commits. On the phone a tap on a file shows its diff, the plus or minus beside it stages or unstages it, and the Commit button, or the leader key and then Enter, commits; git runs in Termux there, so the project has to be in the phone's shared storage. Git does the work underneath, and when it refuses something, such as a commit with nothing staged, its own message appears in the panel.
@@ -322,7 +324,7 @@ ctrl+shift+k = -
 cmd+k = -workbench.action.terminal.clear
 ```
 
-The menus, the command palette and the shortcut hints follow the file as soon as it is saved. A key given to a command is taken from whatever had it before, unless one of the two works only in the editor and the other only in the terminal. Two lines giving one key to two commands are a mistake, and the status bar says so, as it does for the settings file. The few keys the editor and the terminal handle themselves, such as moving lines with Option Up and Down, are listed at the end of the file and cannot be changed yet.
+The menus, the command palette and the shortcut hints follow the file as soon as it is saved. A key given to a command is taken from whatever had it before, unless one of the two works only in the editor and the other only in the terminal, or one only in a web page or a PDF and the other everywhere else. Two lines giving one key to two commands are a mistake, and the status bar says so, as it does for the settings file. The few keys the editor and the terminal handle themselves, such as moving lines with Option Up and Down, are listed at the end of the file and cannot be changed yet.
 
 | Action | macOS | Linux | Android |
 | --- | --- | --- | --- |
@@ -354,7 +356,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Find next, find previous | Command G, Shift Command G | Ctrl G or F3, Shift F3 |  |
 | Focus the browser's address bar, opening the browser if it is hidden | Command 3 |  |  |
 | Focus the editor, or the player when a video or audio file is open | Command 1 | Ctrl 1 |  |
-| Focus the file tree | Command 0 | Ctrl 0 |  |
+| Focus the file tree (outside the browser and PDFs, where it is Actual Size) | Command 0 | Ctrl 0 |  |
 | Focus the terminal, opening it if it is hidden | Command 2 |  |  |
 | Fold every region, every one at a level, or every comment, or unfold them all | Control Command 0, Control Command 1 to 7, Control Command /, Control Command J |  |  |
 | Fold the region the cursor is in, or the next one out with each press; unfold the fold on the cursor's line | Control Command [, Control Command ] (Option Command [ and ] are the terminals); or click the arrow beside the line number, or the ⋯ after a folded line |  |  |
@@ -427,14 +429,18 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Toggle the browser | Shift Command B | Ctrl Shift B | B, or Ctrl Shift B |
 | Toggle the editor, giving its space to the terminal and browser | Shift Command E | Ctrl Shift E |  |
 | Toggle the file list or sidebar | Command B | Ctrl B | F, or Ctrl B or Ctrl F |
+| Toggle the pane with the keyboard (the editor, the browser or the terminal) filling the whole of the right side | Control Command M |  |  |
 | Toggle the preview of a Markdown or LaTeX file, the table of a CSV file, the outline of a JSON file, or a rendered notebook (the last three on the Mac) | Shift Command V | Ctrl Shift P | P, or Ctrl P |
 | Toggle the shortcut hints | Shift Command H | Ctrl Shift H | H, or Ctrl H |
 | Toggle the source control panel in place of the file tree | Control Shift G | Ctrl Shift G | V, or Ctrl Shift G |
 | Toggle the terminal | Shift Command T, Command J, or Control backtick | Ctrl Shift T, or Ctrl backtick | T, or Ctrl T |
+| Toggle word wrap in the editor, so long lines wrap at the pane's edge or run past it (editor.word-wrap sets it for good) | Option Z |  |  |
 | Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z | U, R, or Ctrl Z, Ctrl Shift Z (Ctrl U, Ctrl R also work) |
 | Use the selected text as what to find | Command E |  |  |
 | Wrap the selected text in brackets or quotes, at every cursor | Type ( [ { " ' or a backtick with text selected |  |  |
 | Zoom a PDF or the LaTeX preview in or out |  | Ctrl plus (or Ctrl equals), Ctrl minus, Ctrl with the scroll wheel, or a pinch on the touchpad |  |
+| Zoom the browser's page, a PDF or the LaTeX preview in or out, or back to actual size, while it has the keyboard or you last scrolled or clicked in it | Command equals (or Command plus), Command minus, Command 0 |  |  |
+| Zoom the browser's page or a PDF to the width of the pane, or a PDF's page to fit the pane | View > Page Zoom > Zoom to Fit Width, Zoom to Fit Page |  |  |
 | Zoom the editor's text, the terminal and the Markdown preview in or out, or back to their sizes in the settings | Command equals (or Command plus), Command minus, Option Command 0 (or Command with keypad 0) |  |  |
 | Zoom a PDF or the LaTeX preview back to the width of the pane |  | Ctrl Alt 0 |  |
 

@@ -36,10 +36,19 @@
 namespace Commands {
 
 // Where a command applies, for conflicts and for a key two commands share.
-enum class When { Any, Editor, Terminal, Tree };
-const char* whenName(When w);   // "any", "editor", "terminal", "the file tree"
-// Can one key press be meant for both? Any meets everything.
+// Page is a web page in the browser pane (or its toolbar) or a PDF (the
+// LaTeX preview's too); NotPage is everywhere else, so Cmd+= can zoom a page
+// there and the editor's text anywhere else.
+enum class When { Any, Editor, Terminal, Tree, Page, NotPage };
+// "anywhere", "the editor", "the terminal", "the file tree", "a web page or
+// a PDF", "anywhere but a web page or a PDF"
+const char* whenName(When w);
+// Can one key press be meant for both? Any meets everything, NotPage
+// everything but Page.
 bool overlaps(When a, When b);
+// Does a command for `w` apply where `where` has the keyboard? Any does
+// everywhere, NotPage everywhere but in a page.
+bool appliesIn(When w, When where);
 
 enum Mod : unsigned { Ctrl = 1, Alt = 2, Shift = 4, Cmd = 8 };
 
@@ -109,7 +118,8 @@ public:
     // apply in different places).
     std::vector<const Command*> commandsFor(const Key& k) const;
     // Of commandsFor(k), the one for what has the keyboard: one for that
-    // place, else one that applies anywhere; null for none.
+    // place, else one that applies there too (Any, or NotPage outside a
+    // page); null for none.
     const Command* commandFor(const Key& k, When where) const;
     // Pairs of commands sharing a key where both apply: "cmd+k: Clear
     // Terminal and Delete Line". The defaults have none (a test says so).

@@ -613,6 +613,31 @@ container (PanelHost, laid out by hand in layoutContainer)
   file); `MCZoomScale` is (13 + zoom) / 13 for the Markdown preview
   (re-rendered keeping its place) and the edit popovers; the terminal adds the
   zoom to `terminal.font-size` (`MCEditorZoomDidChangeNotification`).
+  In a page (the browser pane, its toolbar, a PDFView, the LaTeX preview)
+  Cmd+=, Cmd+- and Cmd+0 are Page Zoom instead (2026-11-06,
+  `EditorController+ZoomFit.mm`, `PageZoom.{h,mm}`): the registry's
+  `When::Page` against `When::NotPage` (the editor's zoom and Focus File
+  Tree), which do not overlap; a page command's keys stay off its menu item
+  like a tree command's, and the key monitor runs them while a page has the
+  keyboard, or after a scroll or click landed in one with no key since
+  (`MCPagePointedAt`). Safari's steps; the user's page keeps a zoom per site
+  (`MCBrowserZoom` in the defaults); Zoom to Fit Width reads clientWidth and
+  scrollWidth in the isolated world at 100% first. Element full screen is on.
+- **Word wrap**: `editor.word-wrap` (on), turned over for the session by
+  Option+Z (`MCEditorWordWrap`, EditorFont.mm); `applyWordWrap` runs from
+  relayoutRightArea, applySettings and showing source text; a read-only view
+  (a preview) always wraps. Not wrapping, the text view is horizontally
+  resizable and `PanelScrollView tile` keeps it at least the pane's width.
+  The compare view never wraps (its rows stay level), and a CSV table scrolls.
+- **Maximize Pane** (Ctrl+Cmd+M; VS Code's is a Cmd+K chord): `_maximizedPane`
+  in relayoutRightArea shows only that pane; showing or focusing another
+  (`leaveMaximizedPaneFor:`) ends it.
+- **An action AppKit answers itself never reaches the controller.** Cmd+B was
+  `toggleSidebar:`, which NSSplitView and NSWindow implement on current
+  macOS; the split view is in every pane's responder chain, so Cmd+B did
+  nothing anywhere (the owner's report, 1.5.6). It is
+  `toggleSidebarVisibility:` now, and the zoomfit suite checks every
+  registry selector against AppKit's views and windows.
 - `_liveHighlight` must be off whenever the storage holds something that is not
   source (previews, messages); set it before every `setAttributedString:`.
 

@@ -38,6 +38,13 @@ NSFont *MCTerminalFont(BOOL bold, BOOL italic);
 // NO, and nothing changes, at a limit.
 BOOL MCEditorZoomBy(CGFloat points);
 
+// Word wrap in the editor: editor.word-wrap (on by default), unless View >
+// Word Wrap (Option+Z) turned it over since, for every window, until the
+// setting itself changes or minicode quits, as VS Code's toggle does.
+extern NSNotificationName const MCEditorWrapDidChangeNotification;
+BOOL MCEditorWordWrap(void);
+void MCEditorToggleWordWrap(void);
+
 // The menu items' actions, answered by the application itself at the end of
 // the responder chain, so they work whatever has the keyboard.
 @interface NSApplication (MCEditorZoom)

@@ -3,6 +3,8 @@
 #import "AppSettings.h"
 #import "Appearance.h"
 #import "BrowserPages.h"
+#import "PageZoom.h"
+#import "TreeDetails.h"   // MCAppDefaults
 #import <WebKit/WebKit.h>
 
 // The page's own context menu (Back, Reload, Inspect...) ends with Adjust
@@ -89,6 +91,8 @@
 @property(nonatomic, strong) NSButton    *reload;
 @property(nonatomic, strong) NSSegmentedControl *switcher;   // Yours | Agent
 @property(nonatomic, strong) NSButton    *closeAgent;
+@property(nonatomic, strong) NSTextField *zoomLabel;
+@property(nonatomic) NSUInteger zoomLabelGeneration;
 @end
 
 @implementation BrowserView
@@ -189,6 +193,9 @@ static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
 }
 
 - (MCWebView *)makeWebViewWith:(WKWebViewConfiguration *)cfg {
+    // A video's full screen button (and any element's requestFullscreen)
+    // fills the screen, as in Safari.
+    if (@available(macOS 12.3, *)) cfg.preferences.elementFullscreenEnabled = YES;
     MCWebView *web = [[MCWebView alloc] initWithFrame:self.bounds configuration:cfg];
     web.chrome = self;
     web.navigationDelegate = self;
@@ -230,6 +237,21 @@ static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
     self.urlBar.action = @selector(urlEntered:);
     [self addSubview:self.urlBar];
 
+    // The zoom, over the address bar's right end for a moment after it
+    // changes.
+    NSTextField *zoom = [NSTextField labelWithString:@""];
+    zoom.font = [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightMedium];
+    zoom.alignment = NSTextAlignmentCenter;
+    zoom.drawsBackground = YES;
+    zoom.backgroundColor = [NSColor controlAccentColor];
+    zoom.textColor = NSColor.whiteColor;
+    zoom.wantsLayer = YES;
+    zoom.layer.cornerRadius = 4;
+    zoom.layer.masksToBounds = YES;
+    zoom.hidden = YES;
+    self.zoomLabel = zoom;
+    [self addSubview:zoom];
+
     self.web = [self makeWebViewWith:[[WKWebViewConfiguration alloc] init]];
     self.userProbe = [[MCPageProbe alloc] initRecordingConsole:NO];
     self.userProbe.webView = self.web;
@@ -268,6 +290,7 @@ static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
         self.closeAgent.frame = NSMakeRect(x, by, 28, 26); x += 28 + pad;
     }
     self.urlBar.frame  = NSMakeRect(x, by, MAX(0, W - x - pad), 24);
+    self.zoomLabel.frame = NSMakeRect(MAX(x, NSMaxX(self.urlBar.frame) - 50), by + 4, 46, 16);
     const NSRect page = NSMakeRect(0, 0, W, MAX(0, H - barH));
     self.web.frame = page;
     self.agentWeb.frame = page;   // hidden pages keep their size
@@ -454,7 +477,91 @@ static const NSUInteger kMaxBrowserState = 2 * 1024 * 1024;
 
 - (void)webView:(WKWebView *)wv didCommitNavigation:(WKNavigation *)nav {
     [[self probeFor:wv] noteCommit:nav];
+    // The user's page takes the zoom its site was left at.
+    if (wv == self.web) {
+        const CGFloat z = [self rememberedZoomFor:wv.URL];
+        if (fabs(wv.pageZoom - z) > 0.001) wv.pageZoom = z;
+    }
     if (wv == self.shownWeb) [self updateToolbar];
+}
+
+// ------------------------------------------------------------------ zoom
+static NSString *const kZoomKey = @"MCBrowserZoom";   // site -> zoom
+static const NSUInteger kMaxZoomSites = 200;
+
+// A site, for the zoom it keeps: the host, or one entry for local files.
+static NSString *MCZoomSite(NSURL *u) {
+    if (!u) return nil;
+    if (u.isFileURL) return @"file:";
+    return u.host.length ? u.host.lowercaseString : nil;
+}
+
+- (CGFloat)rememberedZoomFor:(NSURL *)url {
+    NSString *site = MCZoomSite(url);
+    id z = site ? [MCAppDefaults() dictionaryForKey:kZoomKey][site] : nil;
+    const double v = [z isKindOfClass:NSNumber.class] ? [z doubleValue] : 1.0;
+    return v >= kMCZoomFitMin && v <= 3.0 ? v : 1.0;
+}
+
+- (void)rememberZoomOf:(MCWebView *)wv {
+    if (wv != self.web) return;   // the agent page's is its own
+    NSString *site = MCZoomSite(wv.URL);
+    if (!site) return;
+    NSMutableDictionary *all = [[MCAppDefaults() dictionaryForKey:kZoomKey] mutableCopy]
+                               ?: [NSMutableDictionary dictionary];
+    if (fabs(wv.pageZoom - 1.0) < 0.001) [all removeObjectForKey:site];
+    else all[site] = @(wv.pageZoom);
+    while (all.count > kMaxZoomSites) [all removeObjectForKey:all.allKeys.firstObject];
+    [MCAppDefaults() setObject:all forKey:kZoomKey];
+}
+
+- (CGFloat)pageZoom { return self.shownWeb.pageZoom; }
+
+- (void)setZoom:(CGFloat)zoom of:(MCWebView *)wv {
+    wv.pageZoom = zoom;
+    [self rememberZoomOf:wv];
+    [self flashZoom];
+}
+
+- (void)flashZoom {
+    self.zoomLabel.stringValue =
+        [NSString stringWithFormat:@"%.0f%%", round(self.shownWeb.pageZoom * 100)];
+    self.zoomLabel.hidden = NO;
+    const NSUInteger gen = ++self.zoomLabelGeneration;
+    __weak BrowserView *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        BrowserView *s = weakSelf;
+        if (s && s.zoomLabelGeneration == gen) s.zoomLabel.hidden = YES;
+    });
+}
+
+- (void)zoomStep:(int)dir {
+    MCWebView *wv = self.shownWeb;
+    const CGFloat z = MCZoomStep(wv.pageZoom, dir);
+    if (dir != 0 && fabs(z - wv.pageZoom) < 0.001) NSBeep();   // at an end
+    [self setZoom:z of:wv];
+}
+
+// The page at actual size first, since a page laid out for a narrower
+// view (zoomed in) or a wider one (zoomed out) measures differently; then
+// as small as it takes for what is widest to show.
+- (void)zoomToFitWidth {
+    MCWebView *wv = self.shownWeb;
+    MCPageProbe *probe = [self probeFor:wv];
+    wv.pageZoom = 1.0;
+    __weak BrowserView *weakSelf = self;
+    __weak MCWebView *weakWeb = wv;
+    [probe readWidths:^(double shown, double content, NSString *error) {
+        BrowserView *s = weakSelf;
+        MCWebView *w = weakWeb;
+        if (!s || !w) return;
+        CGFloat z = 1.0;
+        // Rounded down, so a fraction of a pixel never leaves a scroll bar.
+        if (!error && shown > 0 && content > shown)
+            z = MAX(kMCZoomFitMin, floor(shown / content * 1000) / 1000);
+        [s setZoom:z of:w];
+    }];
 }
 
 - (void)webView:(WKWebView *)wv didFinishNavigation:(WKNavigation *)nav {

@@ -48,6 +48,10 @@
 - (void)waitFor:(WKNavigation *)navigation
            done:(void (^)(NSString *error, BOOL timedOut))done;
 
+// How wide the page shows (the document's clientWidth) and how wide its
+// content is (the widest scrollWidth of the document and its body), in CSS
+// pixels at the page's zoom, read in the isolated world: Zoom to Fit Width.
+- (void)readWidths:(void (^)(double shown, double content, NSString *error))done;
 // document.body.innerText, up to 1 MB, read in the isolated world.
 - (void)readText:(void (^)(NSString *text, BOOL cut, NSString *error))done;
 // A PNG of the visible area, or of the page from its top with `full` (up

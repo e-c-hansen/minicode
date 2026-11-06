@@ -13,12 +13,24 @@ const char* whenName(When w) {
         case When::Editor: return "the editor";
         case When::Terminal: return "the terminal";
         case When::Tree: return "the file tree";
+        case When::Page: return "a web page or a PDF";
+        case When::NotPage: return "anywhere but a web page or a PDF";
         case When::Any: break;
     }
     return "anywhere";
 }
 
-bool overlaps(When a, When b) { return a == When::Any || b == When::Any || a == b; }
+bool overlaps(When a, When b) {
+    if (a == When::Any || b == When::Any || a == b) return true;
+    if (a == When::NotPage) return b != When::Page;
+    if (b == When::NotPage) return a != When::Page;
+    return false;
+}
+
+bool appliesIn(When w, When where) {
+    if (w == When::Any || w == where) return true;
+    return w == When::NotPage && where != When::Page;
+}
 
 // ------------------------------------------------------------------ keys
 namespace {
@@ -186,7 +198,8 @@ enum {
 // MCTreeColumns (TreeDetails.h).
 enum { kColumnSize = 1, kColumnSaved = 2, kColumnCreated = 4 };
 
-const When A = When::Any, E = When::Editor, T = When::Terminal, R = When::Tree;
+const When A = When::Any, E = When::Editor, T = When::Terminal, R = When::Tree,
+           P = When::Page, NP = When::NotPage;
 
 const std::vector<Command>& all() {
     static const std::vector<Command> table = {
@@ -332,12 +345,30 @@ const std::vector<Command>& all() {
          0, nullptr},
         {"minicode.toggleShortcutHints", "Toggle Shortcut Hints", "View", "shift+cmd+h", A,
          "toggleHints:", 0, 0, nullptr},
-        {"editor.action.fontZoomIn", "Zoom In", "View", "cmd+= shift+cmd+=", A, "editorZoomIn:",
+        // In a web page or a PDF, Cmd+= and Cmd+- zoom that instead (Page
+        // Zoom below).
+        {"editor.action.fontZoomIn", "Zoom In", "View", "cmd+= shift+cmd+=", NP, "editorZoomIn:",
          0, 0, nullptr},
-        {"editor.action.fontZoomOut", "Zoom Out", "View", "cmd+-", A, "editorZoomOut:", 0, 0,
+        {"editor.action.fontZoomOut", "Zoom Out", "View", "cmd+-", NP, "editorZoomOut:", 0, 0,
          nullptr},
         {"editor.action.fontZoomReset", "Reset Zoom", "View", "alt+cmd+0 cmd+numpad0", A,
          "editorZoomReset:", 0, Global, nullptr},
+        // The browser's page or a PDF, while it has the keyboard (or the
+        // pointer was last there, scrolling or clicking): Safari's keys. As
+        // with the tree's, the keys are not put on the menu items, which
+        // would run them from every pane; the key monitor runs them.
+        {"minicode.page.zoomIn", "Zoom In", "View > Page Zoom", "cmd+= shift+cmd+=", P,
+         "zoomPageIn:", 0, 0, nullptr},
+        {"minicode.page.zoomOut", "Zoom Out", "View > Page Zoom", "cmd+-", P, "zoomPageOut:", 0, 0,
+         nullptr},
+        {"minicode.page.actualSize", "Actual Size", "View > Page Zoom", "cmd+0", P,
+         "zoomPageToActualSize:", 0, 0, nullptr},
+        {"minicode.page.fitWidth", "Zoom to Fit Width", "View > Page Zoom", "", P,
+         "zoomPageToFitWidth:", 0, 0, nullptr},
+        {"minicode.page.fitPage", "Zoom to Fit Page", "View > Page Zoom", "", P, "zoomPageToFit:",
+         0, 0, nullptr},
+        {"editor.action.toggleWordWrap", "Word Wrap", "View", "alt+z", E, "toggleWordWrap:", 0, 0,
+         nullptr},
         {"editor.fold", "Fold", "View > Folding", "ctrl+cmd+[", E, "foldRegion:", 0, 0, nullptr},
         {"editor.unfold", "Unfold", "View > Folding", "ctrl+cmd+]", E, "unfoldRegion:", 0, 0,
          nullptr},
@@ -379,6 +410,10 @@ const std::vector<Command>& all() {
          "toggleProblems:", 0, 0, nullptr},
         {"minicode.toggleEditor", "Toggle Editor", "View", "shift+cmd+e", A, "toggleEditor:", 0,
          0, nullptr},
+        // VS Code's Toggle Maximize Editor Group is a Cmd+K chord, which
+        // minicode has none of.
+        {"minicode.toggleMaximizedPane", "Maximize Pane", "View", "ctrl+cmd+m", A,
+         "toggleMaximizedPane:", 0, 0, nullptr},
         {"minicode.toggleHiddenFiles", "Show Hidden Files", "View", "shift+cmd+.", A,
          "toggleHiddenFiles:", 0, 0, nullptr},
         {"minicode.tree.toggleSizes", "Show Sizes", "View", "shift+cmd+i", A, "toggleTreeColumn:",
@@ -431,7 +466,8 @@ const std::vector<Command>& all() {
          "navigateForward:", 0, 0, nullptr},
         {"editor.action.jumpToBracket", "Go to Bracket", "Navigate", "shift+cmd+\\", E,
          "goToBracket:", 0, 0, nullptr},
-        {"workbench.action.focusSideBar", "Focus File Tree", "Navigate", "cmd+0", A, "focusTree:",
+        // In a web page or a PDF Cmd+0 is Actual Size, as in Safari.
+        {"workbench.action.focusSideBar", "Focus File Tree", "Navigate", "cmd+0", NP, "focusTree:",
          0, 0, nullptr},
         {"workbench.action.focusFirstEditorGroup", "Focus Editor", "Navigate", "cmd+1", A,
          "focusEditor:", 0, 0, nullptr},
@@ -572,8 +608,8 @@ std::vector<const Command*> Keymap::commandsFor(const Key& k) const {
 const Command* Keymap::commandFor(const Key& k, When where) const {
     const Command* any = nullptr;
     for (const Command* c : commandsFor(k)) {
-        if (c->when == where && where != When::Any) return c;
-        if (c->when == When::Any && !any) any = c;
+        if (c->when == where && where != When::Any && where != When::NotPage) return c;
+        if (!any && appliesIn(c->when, where)) any = c;
     }
     return any;
 }
@@ -703,10 +739,13 @@ Keymap resolve(const std::string& text, std::vector<Error>* errors) {
         for (const Given& g : given[ks]) {
             if (g.cmd == cmd) { again = true; break; }
             if (overlaps(g.cmd->when, cmd->when)) {
-                const When in = cmd->when == When::Any ? g.cmd->when : cmd->when;
+                When in = cmd->when == When::Any ? g.cmd->when : cmd->when;
+                if (in == When::NotPage) in = g.cmd->when == When::NotPage ? cmd->when : g.cmd->when;
                 err(lineNo, ks + " is already " + describe(*g.cmd) + ", from line " +
                                 std::to_string(g.line) + "; a key can run only one command" +
-                                (in == When::Any ? std::string() : std::string(" in ") + whenName(in)));
+                                (in == When::Any || in == When::NotPage
+                                     ? std::string()
+                                     : std::string(" in ") + whenName(in)));
                 refused = true;
                 break;
             }
@@ -756,9 +795,9 @@ std::string defaultFileText() {
         "# backspace, delete, numpad0 to numpad9, or contextmenu (the Menu key).\n"
         "# A key given here is taken from any other command that had it by default,\n"
         "# unless one works only in the editor and the other only in the terminal\n"
-        "# (or the file tree). Two lines giving one key to two commands are an\n"
-        "# error, shown in the status bar. The menus follow this file as it is\n"
-        "# saved.\n"
+        "# (or the file tree, or a web page or a PDF). Two lines giving one key to\n"
+        "# two commands are an error, shown in the status bar. The menus follow\n"
+        "# this file as it is saved.\n"
         "#\n"
         "# Every command, with its keys by default, follows. Uncomment a line and\n"
         "# change its key to add one.\n";
@@ -772,7 +811,9 @@ std::string defaultFileText() {
             menu = top;
             s += "\n# ---- " + menu + "\n";
         }
-        std::string where = c.when == When::Any ? "" : std::string(", in ") + whenName(c.when);
+        std::string where = c.when == When::Any       ? ""
+                            : c.when == When::NotPage ? ", but not in a web page or a PDF"
+                                                      : std::string(", in ") + whenName(c.when);
         std::string comment = std::string(c.menu) + " > " + c.title + where;
         std::vector<Key> keys = defaultKeys(c);
         if (keys.empty()) {

@@ -67,6 +67,26 @@ BOOL MCEditorZoomBy(CGFloat points) {
     return YES;
 }
 
+NSNotificationName const MCEditorWrapDidChangeNotification = @"MCEditorWrapDidChange";
+
+static int gWrapOverride = -1;   // the toggle's choice, -1 for the setting's
+static int gWrapSetting = -1;    // the setting when the toggle was used
+
+BOOL MCEditorWordWrap(void) {
+    const int setting = [AppSettings shared].settings.wordWrap() ? 1 : 0;
+    // The setting changed since the toggle: the setting's new value wins.
+    if (gWrapOverride >= 0 && setting != gWrapSetting) gWrapOverride = -1;
+    return gWrapOverride >= 0 ? gWrapOverride == 1 : setting == 1;
+}
+
+void MCEditorToggleWordWrap(void) {
+    const BOOL now = MCEditorWordWrap();
+    gWrapSetting = [AppSettings shared].settings.wordWrap() ? 1 : 0;
+    gWrapOverride = now ? 0 : 1;
+    [[NSNotificationCenter defaultCenter] postNotificationName:MCEditorWrapDidChangeNotification
+                                                        object:nil];
+}
+
 @implementation NSApplication (MCEditorZoom)
 - (IBAction)editorZoomIn:(id)sender {
     (void)sender;

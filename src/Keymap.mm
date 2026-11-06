@@ -3,6 +3,7 @@
 #import "Lsp.h"                // CodeTextView
 #import "Terminal.h"           // TerminalView
 #import "TerminalGridView.h"
+#import "PageZoom.h"
 #include "Commands.h"
 #include <fcntl.h>
 #include <unistd.h>
@@ -157,7 +158,16 @@ Commands::When WhereIs(NSResponder *fr) {
             return Commands::When::Terminal;
         if (outline && [v isKindOfClass:outline]) return Commands::When::Tree;
     }
+    // A web page in the browser pane (or its toolbar), or a PDF.
+    if (MCPageViewForResponder(fr)) return Commands::When::Page;
     return Commands::When::Any;
+}
+
+// Keys that run only where they apply, from the key monitor, and never sit
+// on a menu item (which would run them from every pane): the file tree's
+// and a page's.
+bool KeysOffMenu(const Commands::Command *c) {
+    return c && (c->when == Commands::When::Tree || c->when == Commands::When::Page);
 }
 
 }  // namespace
@@ -342,7 +352,7 @@ static void MCSetKey(NSMenuItem *it, const Key *k) {
                 // tree command's, which run only from the tree).
                 std::vector<Key> shown;
                 for (const Key &k : defaults)
-                    if (EquivalentFor(k) && c->when != Commands::When::Tree) shown.push_back(k);
+                    if (EquivalentFor(k) && !KeysOffMenu(c)) shown.push_back(k);
                 Key want = i < shown.size() ? shown[i] : Key();
                 if (built != want)
                     [problems addObject:[NSString stringWithFormat:
@@ -358,8 +368,9 @@ static void MCSetKey(NSMenuItem *it, const Key *k) {
         NSMutableArray<NSMenuItem *> *group = items[cid];
         std::vector<Key> keys;
         const Commands::Command *cmd = Commands::find(cid.UTF8String);
-        // A menu key works in every pane, so a tree command's stays off it.
-        if (!cmd || cmd->when != Commands::When::Tree)
+        // A menu key works in every pane, so a tree or page command's stays
+        // off it.
+        if (!KeysOffMenu(cmd))
             for (const Key &k : _map.keysOf(cid.UTF8String))
                 if (EquivalentFor(k)) keys.push_back(k);
         NSMenuItem *primary = group.firstObject;
@@ -409,6 +420,7 @@ static void MCSetKey(NSMenuItem *it, const Key *k) {
 void MCKeymapInstall(void) {
     MCKeymap *k = [MCKeymap shared];
     [k applyToMenu:NSApp.mainMenu];
+    MCPageWatchPointer();   // a scroll or click in a page makes Cmd+= its
 }
 
 // ------------------------------------------------------------ running
@@ -454,23 +466,37 @@ static BOOL MCJustTyping(NSEvent *e) {
 }
 
 BOOL MCKeymapHandleKeyDown(NSEvent *e) {
-    if (MCJustTyping(e)) return NO;
+    if (MCJustTyping(e)) {
+        MCPageForgetPointer();
+        return NO;
+    }
     Key k = KeyForEvent(e);
     if (k.empty()) return NO;
     const Commands::Keymap &map = [[MCKeymap shared] map];
     std::vector<const Commands::Command *> all;
     for (const Commands::Command *c : map.commandsFor(k))
         if (!(c->flags & Commands::Fixed)) all.push_back(c);
-    if (all.empty()) return NO;
+    if (all.empty()) {
+        MCPageForgetPointer();
+        return NO;
+    }
     NSResponder *fr = e.window.firstResponder;
     const Commands::When where = WhereIs(fr);
     const Commands::Command *c = map.commandFor(k, where);
     if (c && (c->flags & Commands::Fixed)) c = nullptr;
+    // A page the pointer was last in (a scroll or a click, no key since)
+    // takes its own keys, Cmd+= and the rest, from wherever the keyboard is.
+    if (where != Commands::When::Page && MCPagePointedAt(e.window)) {
+        const Commands::Command *pc = map.commandFor(k, Commands::When::Page);
+        if (pc && pc->when == Commands::When::Page && !(pc->flags & Commands::Fixed)) c = pc;
+    }
+    if (!c || c->when != Commands::When::Page) MCPageForgetPointer();
     const BOOL cmd = (k.mods & Commands::Cmd) != 0, ctrl = (k.mods & Commands::Ctrl) != 0;
     if (c && (c->flags & Commands::Global)) return MCPerform(c);
-    // The file tree's commands (F2, Cmd+Delete) have no menu key, so they
-    // run from here while the tree has the keyboard, or not at all.
-    if (c && c->when == Commands::When::Tree) return MCPerform(c);
+    // The file tree's commands (F2, Cmd+Delete) and a page's (Cmd+= in the
+    // browser) have no menu key, so they run from here while the tree or
+    // the page has the keyboard, or not at all.
+    if (KeysOffMenu(c)) return MCPerform(c);
     // A Control key whose command does not apply in the terminal is the
     // program's there (Ctrl+Shift+K, the editor's Delete Line, for one).
     if (!c && ctrl && !cmd && [fr isKindOfClass:[TerminalGridView class]]) {

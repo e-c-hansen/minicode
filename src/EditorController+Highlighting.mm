@@ -22,6 +22,7 @@
     [self.textView.textStorage setAttributedString:attr];
     self.textView.typingAttributes = base;      // typed text stays monospaced
     self.textView.editable = YES;
+    [self applyWordWrap];   // a preview always wraps; the source as the setting says
     // Regions by the file's name; an untitled buffer by its extension.
     self.textView.folds.fileName = self.currentPath ?:
         [@"untitled." stringByAppendingString:self.currentExt ?: @"txt"];

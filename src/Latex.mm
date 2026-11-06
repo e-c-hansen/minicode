@@ -461,6 +461,9 @@ static const CGFloat kStatusHeight = 26;
     PDFDestination *was = self.pdf.currentDestination;
     NSUInteger pageIndex = was ? [self.pdf.document indexForPage:was.page] : 0;
     CGFloat scale = self.pdf.scaleFactor;
+    // Fit to the width (the default, and Zoom to Fit Width) stays so: a
+    // scale set by hand would stop following the pane's width.
+    BOOL autoScales = self.pdf.autoScales;
     BOOL hadDoc = self.pdf.document != nil;
 
     self.pdf.document = doc;
@@ -468,8 +471,9 @@ static const CGFloat kStatusHeight = 26;
         PDFPage *page = [doc pageAtIndex:pageIndex];
         PDFDestination *dest = [[PDFDestination alloc] initWithPage:page
                                                             atPoint:was.point];
+        if (autoScales) self.pdf.autoScales = YES;
+        else self.pdf.scaleFactor = scale;
         [self.pdf goToDestination:dest];
-        self.pdf.scaleFactor = scale;
     }
     self.logScroll.hidden = YES;
     self.pdf.hidden = NO;
@@ -901,3 +905,7 @@ void MCDownloadTectonic(void (^done)(NSString *problem)) {
     }];
     [task resume];
 }
+
+@implementation LatexView (PageZoom)
+- (PDFView *)latexPDFView { return self.pdf; }
+@end
