@@ -129,7 +129,8 @@ goes here first, with tests; the GUI only displays it.
 - `CommandPalette` (matching, modes, Quick Open, symbol rows), `SymbolOutline`
   (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
-  line's parsing), `SideBySide` (diff rows).
+  line's parsing), `SideBySide` (diff rows), `PageCheck` (agents checking
+  pages: addresses, the origin limit, the console record).
 - Agent work: `AgentTranscript`, `AgentIndex`, `AgentEvidence`, `AgentView`.
 - Files: `FileSniff` (how a file is shown), `Csv`, `JsonOutline`, `Notebook`.
 
@@ -1631,9 +1632,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   open it again", nothing launched. Exit codes 0, 1 command error, 2 usage, 3
   no app.
 - Commands: `open path[:line[:col]]` (`--to`, `--note`, `--from`, `--keep`),
-  `window`, `browse` (in the pane; the browser has no tabs, so a page the
-  user loaded is never replaced: `BrowserView showsUserPage`, the history
-  items an agent's navigations committed), `term` (`--cwd`, `--title`,
+  `window`, `browse` (into the pane's agent page; see below), `page`,
+  `term` (`--cwd`, `--title`,
   `--run` typed and entered visibly), `diff` (`--base` never starting with
   "-"), `split`, `state` (`--pretty`), `selection`, `term-output`, `tour`.
   None closes, replaces or reorders the user's tabs and terminals. `open`,
@@ -1666,6 +1666,32 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   something is; read `state` and `selection` for "this"; never rearrange the
   user's tabs, `--run` long or destructive commands, or write workspace scripts
   unasked; plain paths on exit 3.
+- **Agents check pages** (spec feature 6, 2026-11-06; `PageCheck`,
+  `BrowserPages.mm`, `ControlPageCommands.mm`): `browse` loads into a second
+  web view in `BrowserView`, the agent page, with a Yours | Agent switcher
+  and an x that closes it (the user's page as it was); an address typed in
+  the bar or a link from elsewhere goes to the user's page. The pane shows
+  the agent page unless the keyboard is in the pane (`"pane_busy"`).
+  `browse` takes only http, https, file, about:blank, host:port and paths,
+  never a search or another scheme. `page --url/--text/--console/
+  --screenshot/--reload`, `--yours` for the user's page; text, console and
+  screenshots only for local pages unless `control.page-any-origin`, checked
+  again when the read comes back. Status from
+  `decidePolicyForNavigationResponse` (which answers as WebKit does without
+  it: allow what it can show). The agent page's configuration installs, at
+  document start, a listener in an isolated `WKContentWorld` (uncaught
+  errors, rejections, and the only message handler) and a page-world
+  wrapper of console.* that relays each call as a DOM event: an isolated
+  world cannot see the page's console object, so there is no other public
+  way; relayed lines can only be console calls (`fromPage`). Traps: a
+  snapshot paints only the visible area, so `--full` rasterizes
+  `createPDFWithConfiguration:` (sRGB; WebKit's #FF0000 reads back as about
+  (1, 0.15, 0) in both kinds of picture); `WKWebView.title` can still be
+  empty at didFinish, so `--wait` reads `document.title`; a GUI check's
+  command line is built when queued, so start a test server before
+  queueing steps. `BrowserPagesSuite` serves pages from a server inside the
+  test process (127.0.0.1 and ::1); 20 checks grow minicode plus the agent
+  page's WebKit process by about 0 MB (the page process itself is 25-35 MB).
 - Ground rules for this and the agent workspace: nothing runs because a folder
   or file was opened; Claude Code's data is read, never written, moved or
   deleted; nothing leaves the Mac.

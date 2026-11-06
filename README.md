@@ -236,7 +236,8 @@ minicode open src/Lsp.mm:3090 --to 3185 --note "Applies rename edits to every fi
 minicode diff src/Lsp.mm                   # side by side against HEAD; --base REF, or two files
 minicode term --run "make test"            # a new terminal, the command typed and run in plain sight
 minicode term-output 3 --lines 50          # what a terminal shows, scrollback included
-minicode browse http://localhost:8000      # the page in the browser pane beside the editor
+minicode browse localhost:5173 --wait      # the agent page in the browser pane; prints the status
+minicode page --text                       # that page's text; --console, --screenshot out.png, --url
 minicode window --folder ~/project         # the window on a folder, opened if none shows it
 minicode tour tour.json                    # a sequence of notes
 minicode state | jq .windows[0].tabs       # windows, tabs, selection, terminals, browser
@@ -246,6 +247,8 @@ minicode selection                         # the selected text
 A note is a line or two of plain text over a highlighted range, labelled with who wrote it (`--from`, Claude by default). It is never written into the file or its undo history, and it goes when you press Escape, click its ×, or edit inside its lines. Files opened with a note share one agent preview tab per window, its title in italics, which the next such open replaces, so an agent's output never piles up tabs; edit in it, or double-click its title, and it becomes an ordinary tab. A tour is a list of `{"path", "line", "to", "note"}` stops; Option+] and Option+[ step through it, and the note says where you are ("2 of 5"). `minicode help` describes every command, and they exit with 0 when done, 1 when the command failed, 2 for a usage error, and 3 when there is no minicode to talk to (one is started when none is running).
 
 Each running minicode listens on a socket in your own temporary folder that only your user account can open, and nothing in minicode runs a command or a script by itself: `term --run` types what it was given into a terminal you can see. A script that sets up a workspace (a server in a terminal, its page in the browser, the README open) is just these commands in a file you run yourself.
+
+Pages an agent opens go in an agent page of the browser pane, beside yours, with a switcher between Yours and Agent; closing it brings back your page as it was. An agent can read that page's text, its console messages and uncaught errors, and pictures of it, but only for pages on your own Mac (localhost, 127.0.0.1, ::1, *.localhost and file addresses) unless the settings file has `control.page-any-origin = true`, and no command runs JavaScript an agent sends. `--yours` reads your own page the same way, so an agent can look at what you are looking at without reaching sites you are logged in to.
 
 The repository has a skill for Claude Code in skills/minicode that teaches it all of this: when reporting work, open the changed lines with a note, show the diff and run the tests in a terminal; when asked "where is X", open it rather than quote a path; read `state` and `selection` when you say "this". `make install` copies it to ~/.claude/skills/minicode.
 
