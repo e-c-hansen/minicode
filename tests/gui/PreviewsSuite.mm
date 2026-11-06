@@ -987,6 +987,7 @@ BOOL MakeDatabase(NSString *path) {
         "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1500) "
         "INSERT INTO people (id, name, age) SELECT i, 'person ' || i, i % 90 FROM n;"
         "UPDATE people SET name = NULL WHERE id = 2;"
+        "UPDATE people SET name = 'NULL' WHERE id = 3;"
         "UPDATE people SET photo = x'00010203' WHERE id = 1;",
         nullptr, nullptr, nullptr) == SQLITE_OK;
     sqlite3_close(db);
@@ -1024,18 +1025,22 @@ static void SqliteSteps(void) {
         [dbBytes writeToFile:Fixture(@"unnamed.bin") atomically:YES];
         GCHECK(dbBytes.length > 0);
     });
-    MCGuiStep(@"a .db opens read-only with its tables and views", ^{
+    MCGuiStep(@"a .db opens read-only, in the background", ^{
         EditorController *c = MCGuiController();
         GCHECK([c showFile:Fixture(@"shop.db")]);
         GCHECK_EQ_STR(ActiveKind(c), @"sqlite");
         MCSqliteView *s = Sqlite(c);
         GCHECK(s != nil && !s.hidden);
         GCHECK(EditorScroll(c).hidden);
-        GCHECK([s.objectNames isEqualToArray:(@[@"people", @"adults"])]);
-        GCHECK([s.schemaText hasPrefix:@"CREATE TABLE people"]);
         GCHECK(!c.canTogglePreview);
+        GCHECK(s.busy);   // opening is not done on the main thread
     });
     WaitForQuery(@"the first table's rows");
+    MCGuiStep(@"its tables and views", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.objectNames isEqualToArray:(@[@"people", @"adults"])]);
+        GCHECK([s.schemaText hasPrefix:@"CREATE TABLE people"]);
+    });
     MCGuiStep(@"the first 1,000 rows of the table", ^{
         MCSqliteView *s = Sqlite(MCGuiController());
         GCHECK(s.rows.count == MCSqliteMaxRows);
@@ -1044,6 +1049,10 @@ static void SqliteSteps(void) {
         GCHECK(s.rowsTable.numberOfRows == 1000 && s.rowsTable.numberOfColumns == 4);
         GCHECK_EQ_STR(s.rows.count > 1 ? s.rows[1][1] : nil, @"NULL");
         GCHECK_EQ_STR(s.rows.count ? s.rows[0][3] : nil, @"<4 bytes>");
+        // SQL NULL and the text "NULL" are told apart.
+        GCHECK([s isNullAtRow:1 column:1]);
+        GCHECK_EQ_STR(s.rows.count > 2 ? s.rows[2][1] : nil, @"NULL");
+        GCHECK(![s isNullAtRow:2 column:1]);
         MCGuiSnapshot(MCGuiController().window.contentView, @"previews-sqlite");
     });
     MCGuiStep(@"a query typed in the box runs", ^{
@@ -1086,6 +1095,46 @@ static void SqliteSteps(void) {
     MCGuiStep(@"SQLite's own complaint for a mistake", ^{
         MCSqliteView *s = Sqlite(MCGuiController());
         GCHECK([s.statusText containsString:@"syntax error"]);
+        [s runQuery:@"BEGIN"];
+    });
+    // What changes no bytes but would reach past the viewer is refused too:
+    // a BEGIN would hold a lock that other writers of the file wait on.
+    WaitForQuery(@"a BEGIN");
+    MCGuiStep(@"a BEGIN is refused", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.statusText hasPrefix:@"Not run: the database is open read-only"]);
+        [s runQuery:@"SAVEPOINT here"];
+    });
+    WaitForQuery(@"a SAVEPOINT");
+    MCGuiStep(@"so is a SAVEPOINT", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.statusText hasPrefix:@"Not run"]);
+        [s runQuery:@"ATTACH ':memory:' AS other"];
+    });
+    WaitForQuery(@"an ATTACH");
+    MCGuiStep(@"so is an ATTACH", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.statusText hasPrefix:@"Not run"]);
+        [s runQuery:@"PRAGMA query_only = OFF"];
+    });
+    WaitForQuery(@"a pragma that sets something");
+    MCGuiStep(@"so is a pragma that sets something", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.statusText hasPrefix:@"Not run"]);
+        [s runQuery:@"PRAGMA table_info(people)"];
+    });
+    WaitForQuery(@"a pragma that reads");
+    MCGuiStep(@"a pragma that only reads runs", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK(s.rows.count == 4);
+        GCHECK_EQ_STR(s.rows.count > 1 ? s.rows[1][1] : nil, @"name");
+        // Another connection can still take the write lock: nothing is held.
+        sqlite3 *db = nullptr;
+        GCHECK(sqlite3_open(Fixture(@"shop.db").fileSystemRepresentation, &db) == SQLITE_OK);
+        sqlite3_busy_timeout(db, 0);
+        GCHECK(sqlite3_exec(db, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_exec(db, "ROLLBACK", nullptr, nullptr, nullptr);
+        sqlite3_close(db);
         [s.objectsTable selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO];
     });
     WaitForQuery(@"the view");
@@ -1099,18 +1148,117 @@ static void SqliteSteps(void) {
         EditorController *c = MCGuiController();
         GCHECK([c showFile:Fixture(@"unnamed.bin")]);
         GCHECK_EQ_STR(ActiveKind(c), @"sqlite");
+        // Another database: the query box is not the last one's.
+        GCHECK_EQ_STR(Sqlite(c).queryField.stringValue, @"");
         [c saveCurrentFile:nil];
+    });
+    WaitForQuery(@"the other database");
+    MCGuiStep(@"back to the first database", ^{
+        EditorController *c = MCGuiController();
         GCHECK([c showFile:Fixture(@"shop.db")]);   // back: the database again
         GCHECK_EQ_STR(ActiveKind(c), @"sqlite");
-        GCHECK([Sqlite(c).objectNames containsObject:@"people"]);
         [c saveCurrentFile:nil];
     });
     WaitForQuery(@"the table again");
+    MCGuiStep(@"it comes back to the view on show, and the query typed", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.objectNames containsObject:@"people"]);
+        GCHECK(s.objectsTable.selectedRow == 1);
+        GCHECK([s.schemaText hasPrefix:@"CREATE VIEW adults"]);
+        GCHECK([s.columns isEqualToArray:(@[@"name", @"age"])]);
+        GCHECK_EQ_STR(s.queryField.stringValue, @"SELECT count(*) AS n, max(age) FROM people");
+    });
     MCGuiStep(@"the database file is byte for byte as made", ^{
         GCHECK([[NSData dataWithContentsOfFile:Fixture(@"shop.db")] isEqualToData:dbBytes]);
         GCHECK([[NSData dataWithContentsOfFile:Fixture(@"unnamed.bin")] isEqualToData:dbBytes]);
         NSFileManager *fm = [NSFileManager defaultManager];
         GCHECK(![fm fileExistsAtPath:Fixture(@"shop.db-journal")]);
         GCHECK(![fm fileExistsAtPath:Fixture(@"shop.db-wal")]);
+    });
+
+    // ---- a database that changes on disk
+    MCGuiStep(@"a database another program writes", ^{
+        GCHECK(MakeDatabase(Fixture(@"live.db")));
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"live.db")]);
+    });
+    WaitForQuery(@"the live database");
+    MCGuiStep(@"a query on it", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        s.queryField.stringValue = @"SELECT count(*) AS n FROM people";
+        [s.queryField sendAction:s.queryField.action to:s.queryField.target];
+    });
+    WaitForQuery(@"the live count");
+    MCGuiStep(@"the program adds a row; the tab reads the file again", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK_EQ_STR(s.rows.count ? s.rows[0][0] : nil, @"1500");
+        NSString *path = Fixture(@"live.db");
+        sqlite3 *db = nullptr;
+        GCHECK(sqlite3_open(path.fileSystemRepresentation, &db) == SQLITE_OK);
+        GCHECK(sqlite3_exec(db, "INSERT INTO people (id, name, age) VALUES (2000, 'new', 30)",
+                            nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+        [[NSFileManager defaultManager] setAttributes:@{NSFileModificationDate:
+                                                            [NSDate dateWithTimeIntervalSinceNow:5]}
+                                         ofItemAtPath:path error:nil];
+        [MCGuiController() performSelector:@selector(checkExternalChange)];
+    });
+    WaitForQuery(@"the count again");
+    MCGuiStep(@"the query on show is run again on the new file", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK_EQ_STR(s.rows.count ? s.rows[0][0] : nil, @"1501");
+        GCHECK_EQ_STR(s.queryField.stringValue, @"SELECT count(*) AS n FROM people");
+        GCHECK_EQ_STR(s.columns.firstObject, @"n");
+    });
+
+    // ---- WAL, and a file SQLite cannot open
+    __block NSData *walBytes = nil;
+    MCGuiStep(@"a WAL database whose writer has closed", ^{
+        NSString *path = Fixture(@"wal.db");
+        NSFileManager *fm = [NSFileManager defaultManager];
+        for (NSString *x in @[@"", @"-wal", @"-shm"])
+            [fm removeItemAtPath:[path stringByAppendingString:x] error:nil];
+        sqlite3 *db = nullptr;
+        GCHECK(sqlite3_open(path.fileSystemRepresentation, &db) == SQLITE_OK);
+        int keep = 0;   // the last connection removes -wal and -shm, as most builds do
+        sqlite3_file_control(db, "main", SQLITE_FCNTL_PERSIST_WAL, &keep);
+        GCHECK(sqlite3_exec(db, "PRAGMA journal_mode = WAL; CREATE TABLE notes (t TEXT);"
+                                "INSERT INTO notes VALUES ('kept in WAL mode');",
+                            nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+        // Should this SQLite keep them anyway, the close checkpointed: they go.
+        [fm removeItemAtPath:[path stringByAppendingString:@"-wal"] error:nil];
+        [fm removeItemAtPath:[path stringByAppendingString:@"-shm"] error:nil];
+        walBytes = [NSData dataWithContentsOfFile:path];
+        const unsigned char *b = (const unsigned char *)walBytes.bytes;
+        GCHECK(walBytes.length > 20 && b[18] == 2 && b[19] == 2);
+        GCHECK([MCGuiController() showFile:path]);
+        GCHECK_EQ_STR(ActiveKind(MCGuiController()), @"sqlite");
+    });
+    WaitForQuery(@"the WAL database");
+    MCGuiStep(@"it opens, read-only, and leaves no file beside it", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.objectNames isEqualToArray:@[@"notes"]]);
+        GCHECK_EQ_STR(s.rows.count ? s.rows[0][0] : nil, @"kept in WAL mode");
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *path = Fixture(@"wal.db");
+        GCHECK(![fm fileExistsAtPath:[path stringByAppendingString:@"-wal"]]);
+        GCHECK(![fm fileExistsAtPath:[path stringByAppendingString:@"-shm"]]);
+        GCHECK([[NSData dataWithContentsOfFile:path] isEqualToData:walBytes]);
+    });
+    MCGuiStep(@"a file with a SQLite header that is not a database", ^{
+        std::string bytes("SQLite format 3\0", 16);
+        bytes += std::string(200, 'x');
+        WriteBytes(Fixture(@"broken.db"), bytes.data(), bytes.size());
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"broken.db")]);
+        GCHECK_EQ_STR(ActiveKind(c), @"sqlite");
+    });
+    WaitForQuery(@"the broken database");
+    MCGuiStep(@"says why in the tab", ^{
+        EditorController *c = MCGuiController();
+        GCHECK_EQ_STR(ActiveKind(c), @"sqlite");
+        GCHECK([Sqlite(c).statusText hasPrefix:@"This database cannot be opened: "]);
+        GCHECK(!Sqlite(c).hidden);
     });
 }
