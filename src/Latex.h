@@ -47,6 +47,18 @@ void MCDownloadTectonic(void (^done)(NSString *problem));
 // Whether a download is under way.
 BOOL MCTectonicDownloading(void);
 
+// Where previews typeset: each document gets a folder of its own under
+// MCLatexWorkRoot() (MiniCode-latex in the temporary folder, or
+// $MINICODE_LATEX_WORK), named for its resolved path, so two files of one
+// name never share a PDF. The folder goes when the last preview of it does.
+NSString *MCLatexWorkRoot(void);
+NSString *MCLatexWorkFolder(NSString *texPath);
+// Removes the hidden siblings that previews of crashed processes left next to
+// their documents (only a file with the preview copy's name and exactly the
+// bytes recorded), and their records. Runs off the main thread at the first
+// typeset of a launch; `done` (main thread) gets how many it removed.
+void MCLatexRemoveStaleSiblings(void (^done)(NSUInteger removed));
+
 #ifdef __cplusplus
 #import <Quartz/Quartz.h>
 #include <vector>

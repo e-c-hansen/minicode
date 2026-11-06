@@ -6,6 +6,7 @@
 #include "MarkdownEdit.h"
 #include "MarkdownTasks.h"
 #include "MathTex.h"
+#include "LatexScratch.h"
 #include "TerminalStream.h"
 #include "TerminalScreen.h"
 #include "Settings.h"
