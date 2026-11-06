@@ -7,7 +7,8 @@
 #   1. checks it is releasing a clean, tested main,
 #   2. stamps the version and checksum into Info.plist and packaging/minicode.rb,
 #      commits that, and pushes main,
-#   3. builds the zip and checks the built app reports that same version,
+#   3. builds the zip and checks the built app reports that same version and
+#      runs on the macOS Info.plist promises (scripts/check-minos.sh),
 #   4. builds the signed Android APK for the same version,
 #   5. publishes a GitHub Release here, tagged vVERSION, with the zip and the
 #      APK attached (Obtainium and people installing by hand take it from there),
@@ -145,6 +146,7 @@ BUILT="$("$BUDDY" -c "Print :CFBundleShortVersionString" MiniCode.app/Contents/I
 if [ "$BUILT" != "$VERSION" ]; then
     echo "error: the built app says $BUILT, expected $VERSION" >&2; exit 1
 fi
+scripts/check-minos.sh MiniCode.app
 SHA="$(shasum -a 256 MiniCode.zip | awk '{print $1}')"
 echo "    version $VERSION   sha256 $SHA"
 

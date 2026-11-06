@@ -18,6 +18,11 @@ jobs:
       - name: Build the app
         run: make app
 
+      # Every binary built for Info.plist's LSMinimumSystemVersion, and the
+      # cask saying the same.
+      - name: Check the deployment target
+        run: scripts/check-minos.sh
+
       # The app driven offscreen (tests/gui/Harness.h): no window ever
       # reaches the screen, and the run has its own home, settings and
       # temporary folder.

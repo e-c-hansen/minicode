@@ -40,6 +40,10 @@ opening comment says what it does in more detail than the lines below.
   the terminal count as minicode to macOS, and without
   `NSMicrophoneUsageDescription` Claude Code's voice input was refused without
   a prompt.
+- Built for macOS 11 and up: `-mmacosx-version-min` comes from Info.plist's
+  LSMinimumSystemVersion, a newer API without an `@available` check is a
+  compile error, and `scripts/check-minos.sh` (CI, release.sh) checks the
+  binaries' minos and the cask's `depends_on`.
 - Each source file is its own object in `build/obj` with a `-MMD -MP`
   dependency file; `build/obj/flags.txt` holds the compile command, so new
   flags rebuild everything. The Mac's GNU make 3.81 cannot tell a makefile

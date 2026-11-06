@@ -14,6 +14,10 @@ cask "minicode" do
   desc "Tiny native code editor, no Electron, no dependencies"
   homepage "https://github.com/e-c-hansen/minicode"
 
+  # The app is built for macOS 11 (Info.plist's LSMinimumSystemVersion), which
+  # is also the oldest macOS Homebrew knows, so brew style wants no version
+  # here. A higher minimum is written `depends_on macos: :ventura` (13 and up);
+  # scripts/check-minos.sh checks this line against Info.plist.
   depends_on :macos
 
   app "MiniCode.app"
