@@ -19,6 +19,9 @@
 @property(nonatomic, assign) NSRange range;
 @property(nonatomic, assign) NSInteger severity;   // 1 error ... 4 hint
 @property(nonatomic, copy) NSString *message;
+// The diagnostic's tags: code never used, drawn faded (with no squiggle when
+// it is only a hint), and a deprecated name, struck through.
+@property(nonatomic, assign) BOOL unnecessary, deprecated;
 @end
 
 @class MCMultiCarets;

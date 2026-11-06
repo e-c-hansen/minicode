@@ -1818,6 +1818,8 @@ static BOOL IsRunnable(NSString *path) {
         MCDiagnosticMark *m = [MCDiagnosticMark new];
         m.range = NSMakeRange(a, b - a);
         m.severity = (NSInteger)d.severity;
+        m.unnecessary = d.unnecessary;
+        m.deprecated = d.deprecated;
         NSString *kind = d.severity == Lsp::Severity::Error ? @"Error"
                        : d.severity == Lsp::Severity::Warning ? @"Warning"
                        : d.severity == Lsp::Severity::Information ? @"Info" : @"Hint";
