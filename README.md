@@ -235,6 +235,18 @@ Each running minicode listens on a socket in your own temporary folder that only
 
 The repository has a skill for Claude Code in skills/minicode that teaches it all of this: when reporting work, open the changed lines with a note, show the diff and run the tests in a terminal; when asked "where is X", open it rather than quote a path; read `state` and `selection` when you say "this". `make install` copies it to ~/.claude/skills/minicode.
 
+## Seeing what agents did
+
+When Claude Code works in a folder, much of what it does never shows in the folder itself: subagents work in worktrees under .claude/worktrees, notes and reports go to scratchpads in /tmp, and the paths it mentions may be in any of them. On the Mac, minicode reads Claude Code's transcripts in ~/.claude/projects to show where that work is. It only reads them; nothing of Claude Code's is ever written, moved, or deleted, and nothing leaves your Mac.
+
+Shift Command A swaps the file tree for the agents panel, the way Control Shift G swaps in source control. Each session that worked in the folder or below it gets a row, newest first, with its subagents under it: what it was asked to do, whether it is still running, the branch it worked on, how long ago it was last active, and how many files it wrote and commands it ran. Opening a row lists the files it wrote or edited, in three groups: in the folder, in its worktree, and outside the folder. A file that has since gone is struck through, and any other opens with a click or Return. The panel keeps up as sessions write, within a second or two.
+
+Return or a click on a session shows its evidence in a tab of its own: the session's last message at the top, beside the result of the last test command it ran and the test runner's own summary ("2 failed, 10 passed"), then every shell command in order, with the description the agent gave, the command, whether it reported an error, a mark on the ones that ran tests, and the first and last 20 lines of what it printed. Show all brings in the rest, read from the transcript only when asked, so a run that printed megabytes opens as quickly as any other. minicode reports what was run and printed and draws no conclusions; whether that matches the last message is for you to judge. Open in Terminal types a command into a new terminal in the session's folder and leaves it for you to run.
+
+The worktrees under .claude/worktrees appear as one Worktrees node at the top of the file tree, whether hidden files are shown or not, each named after the task its agent was given, with how many commits it is ahead of the main branch and whether it has changes not yet committed. Right-click one for Compare with Main, which lists the files it changed (committed, uncommitted, and new) and shows each beside the main branch's version, or Open in New Window.
+
+Command clicking a path in the terminal also looks in those places: the terminal's own folder first, then the window's folder, the worktrees under it, and the scratchpads of the sessions found for it. When a path is in more than one of them, such as a file an agent changed in its worktree, a small list offers each copy with its full path and when it was modified, newest first. When it is in none, the status bar says so and lists where it looked.
+
 ## Linux
 
 The Linux version, in the linux folder, is built on GTK4 with a VTE terminal, a WebKitGTK browser and poppler for PDFs. It has everything described above, including the LaTeX preview and language servers, with Control where the Mac uses Command. What it lacks is tabs, so a window holds one file at a time, typeset math in the Markdown preview, which shows the TeX for now, and blur behind the window, which GNOME gives applications no way to ask for.
@@ -365,6 +377,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Sort the selected lines, or the keep-sorted block around the cursor | F9 (F9 may need fn on a laptop) | F9 | J, or Ctrl J |
 | Take the selected completion | Tab; Return too after Control Space, after a dot, or once the arrow keys have moved through the list |  |  |
 | Tick or clear a Markdown task, or make the selected lines tasks | Option Command L, or click its box in the preview | Ctrl L, or click its box in the preview | L, or Ctrl L, or tap its box in the preview |
+| Toggle the agents panel in place of the file tree | Shift Command A |  |  |
 | Toggle the browser | Shift Command B | Ctrl Shift B | B, or Ctrl Shift B |
 | Toggle the editor, giving its space to the terminal and browser | Shift Command E | Ctrl Shift E |  |
 | Toggle the file list or sidebar | Command B | Ctrl B | F, or Ctrl B or Ctrl F |
