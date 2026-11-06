@@ -80,10 +80,15 @@ struct FolderSearchResult {
 
 // Replace in Folder's count before it asks: every match in every file the
 // search would read (no limit on matches), by file.
+// A file reached under two names (a symlink, a symlinked folder, a hard
+// link) is counted, and replaced, once: under the first name the walk meets.
 struct FolderReplaceFile {
     std::string path;
     std::string relativePath;
     std::size_t matches = 0;
+    // The file itself is outside the folder searched, reached through a
+    // symlink: Replace in Folder names it before writing there.
+    bool outside = false;
 };
 struct FolderReplacePlan {
     std::vector<FolderReplaceFile> files;   // only files with matches, in search order
@@ -158,23 +163,68 @@ std::string replaceInText(const std::string& content, const std::string& query,
                           std::size_t* count = nullptr);
 
 // Only the match a result row stands for: the one starting at byteColumn of
-// 1-based `line`. False when it is no longer there.
+// 1-based `line`. False when it is no longer there. With `expectedText`
+// (the row's text, FolderSearchMatch::text) the line must also still read
+// as it did when searched, so a file changed since cannot have another
+// occurrence replaced in its place.
 bool replaceMatchInText(const std::string& content, const std::string& query,
                         const std::string& replacement, const FolderSearchOptions& options,
-                        int line, std::size_t byteColumn, std::string* out);
+                        int line, std::size_t byteColumn, std::string* out,
+                        const std::string* expectedText = nullptr);
+
+// Line `line` (1-based) of `content`, its line break left off, with lines
+// ending as search() ends them. False past the last line.
+bool lineAt(const std::string& content, int line, std::string* out);
 
 // Read a file as search() does: a regular file (after symlinks) of at most
 // maxFileSize bytes holding valid UTF-8. False otherwise.
 bool readTextFile(const std::string& path, std::uintmax_t maxFileSize, std::string* out);
 
+// What stat() says of a file (symlinks followed): enough to tell whether it
+// changed since it was last read or written.
+struct FileStamp {
+    bool exists = false;     // something is there
+    bool regular = false;    // a regular file
+    std::int64_t mtimeSec = 0;
+    long mtimeNsec = 0;
+    std::uint64_t device = 0;
+    std::uint64_t inode = 0;
+    std::uint64_t size = 0;
+    bool operator==(const FileStamp& o) const {
+        return exists == o.exists && regular == o.regular && mtimeSec == o.mtimeSec &&
+               mtimeNsec == o.mtimeNsec && device == o.device && inode == o.inode &&
+               size == o.size;
+    }
+    bool operator!=(const FileStamp& o) const { return !(*this == o); }
+};
+FileStamp stampOf(const std::string& path);
+
+enum class ReadStatus { Ok, Missing, NotRegular, TooLarge, Unreadable };
+
+// Read a file's bytes as they are (no UTF-8 check), and the stamp of the
+// file the bytes came from, taken *before* reading: a writer that finishes
+// while the file is read then shows as a change on the next look, never as
+// the text read. The file is stat'ed again after the read, and read again
+// (up to three times) when the two differ.
+ReadStatus readFileStable(const std::string& path, std::uintmax_t maxFileSize,
+                          std::string* out, FileStamp* stamp);
+
+// A UTF-8 byte order mark at the start of `bytes`: removed, and true.
+bool stripUtf8Bom(std::string* bytes);
+
 // Write `content` to `path` so a reader sees the old file or the new one,
 // never half of each: a temporary in the same folder, given the file's
-// permissions (and owner, where allowed), synced, then renamed over it. A
-// symlink is followed, so the link stays a link; a file with other hard
-// links is written in place instead, so they all keep seeing it. False,
-// with *error saying why, when nothing was written.
+// permissions, owner, extended attributes, ACL and (on the Mac) creation
+// date, flushed to the disk itself (F_FULLFSYNC on the Mac), then renamed
+// over it, and the folder synced. A symlink is followed, so the link stays
+// a link. A file with other hard links, or one this user cannot give its
+// owner back to, is written in place instead, so the other names keep
+// seeing it and its owner stays. False, with *error saying why, when
+// nothing was written. *written, when given, is the file's stamp as
+// written (taken from the open file, so a writer coming right after is
+// never mistaken for this one).
 bool writeFileAtomically(const std::string& path, const std::string& content,
-                         std::string* error = nullptr);
+                         std::string* error = nullptr, FileStamp* written = nullptr);
 
 // The TODO list. Instead of a query, every line holding a TODO, FIXME,
 // HACK, XXX or BUG tag (uppercase, a whole word) after a comment opener
