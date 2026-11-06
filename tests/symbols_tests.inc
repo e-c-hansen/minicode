@@ -660,4 +660,55 @@ static void testSymbols() {
         q.removeIf([](const std::string &) { return true; });
         CHECK(q.entries().empty() && q.index() == 0 && !q.canGoBack(at("x", 0)));
     }
+
+    GROUP("nav:edits");
+    {
+        // Places follow edits to their file: after typing above a place it
+        // moves with its text, and its line is counted again on request.
+        auto at = [](const char *path, int line, size_t loc, size_t len = 0) {
+            Nav::Place p;
+            p.path = path;
+            p.line = line;
+            p.location = loc;
+            p.length = len;
+            return p;
+        };
+        Nav::History h;
+        h.jump(at("a", 2, 20), at("a", 50, 500, 4));
+        h.jump(at("a", 50, 500, 4), at("b", 30, 300));
+        CHECK(h.entries().size() == 3);
+        h.edited("a", 100, 0, 11);   // a line of ten characters typed at offset 100
+        CHECK(h.entries()[0].location == 20 && !h.entries()[0].lineStale);
+        CHECK(h.entries()[1].location == 511 && h.entries()[1].length == 4 &&
+              h.entries()[1].lineStale);
+        CHECK(h.entries()[2].location == 300 && !h.entries()[2].lineStale);   // another file
+        CHECK(h.hasStaleLines("a") && !h.hasStaleLines("b"));
+        std::vector<size_t> asked;
+        h.fixLines("a", [&](const std::vector<size_t> &offs) {
+            asked = offs;
+            std::vector<int> out;
+            for (size_t o : offs) out.push_back((int)(o / 10));
+            return out;
+        });
+        CHECK(asked == (std::vector<size_t>{511}));
+        CHECK(h.entries()[1].line == 51 && !h.hasStaleLines("a"));
+        // An edit over a place puts it where the new text is; one over part
+        // of a selection keeps the rest.
+        h.edited("a", 505, 10, 2);   // [505, 515) became two units
+        CHECK(h.entries()[1].location == 507 && h.entries()[1].length == 0);
+        h.edited("a", 0, 30, 0);     // the first place's text deleted
+        CHECK(h.entries()[0].location == 0 && h.entries()[1].location == 477);
+        Nav::Place sel = at("c", 0, 10, 10);
+        Nav::History g;
+        g.jump(sel, at("d", 0, 0));
+        g.edited("c", 15, 10, 1);    // the selection's end deleted
+        CHECK(g.entries()[0].location == 10 && g.entries()[0].length == 6);
+        // A place without text (a picture) never moves.
+        Nav::Place pic = at("e", 0, 0);
+        pic.hasText = false;
+        Nav::History p;
+        p.jump(pic, at("f", 0, 0));
+        p.edited("e", 0, 0, 5);
+        CHECK(p.entries()[0].location == 0);
+    }
 }

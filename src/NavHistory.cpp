@@ -1,6 +1,8 @@
 // NavHistory.cpp — see NavHistory.h.
 #include "NavHistory.h"
 
+#include <algorithm>
+
 namespace Nav {
 
 bool near(const Place& a, const Place& b) {
@@ -68,6 +70,47 @@ bool History::forward(const Place& here, Place* out) {
     cur_++;
     if (out) *out = list_[cur_];
     return true;
+}
+
+void History::edited(const std::string& path, size_t pos, size_t oldLen, size_t newLen) {
+    const size_t end = pos + oldLen;
+    auto map = [&](size_t x) -> size_t {
+        if (x <= pos) return x;
+        if (x >= end) return x - oldLen + newLen;
+        return pos + std::min(x - pos, newLen);
+    };
+    for (Place& p : list_) {
+        if (!p.hasText || p.path != path) continue;
+        const size_t a = map(p.location), b = map(p.location + p.length);
+        if (p.location > pos) p.lineStale = true;
+        p.location = a;
+        p.length = b > a ? b - a : 0;
+    }
+}
+
+bool History::hasStaleLines(const std::string& path) const {
+    for (const Place& p : list_)
+        if (p.lineStale && p.path == path) return true;
+    return false;
+}
+
+void History::fixLines(const std::string& path,
+                       const std::function<std::vector<int>(const std::vector<size_t>&)>& lines) {
+    std::vector<size_t> offsets;
+    for (const Place& p : list_)
+        if (p.lineStale && p.path == path) offsets.push_back(p.location);
+    if (offsets.empty()) return;
+    std::sort(offsets.begin(), offsets.end());
+    offsets.erase(std::unique(offsets.begin(), offsets.end()), offsets.end());
+    const std::vector<int> got = lines(offsets);
+    if (got.size() != offsets.size()) return;
+    for (Place& p : list_) {
+        if (!p.lineStale || p.path != path) continue;
+        const size_t k = (size_t)(std::lower_bound(offsets.begin(), offsets.end(), p.location) -
+                                  offsets.begin());
+        p.line = got[k];
+        p.lineStale = false;
+    }
 }
 
 void History::moved(const std::string& from, const std::string& to) {
