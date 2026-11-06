@@ -255,9 +255,12 @@ container (PanelHost, laid out by hand in layoutContainer)
   `applySettings`, run at startup and on `MCSettingsDidChangeNotification`,
   that recolors what is on screen (editor re-highlights, Markdown re-renders
   keeping scroll, terminal text marked `MCTerminalDefaultForeground` follows).
-  A new setting goes in `Settings.cpp` (parser, default, the commented
-  `defaultFileText`, which a test checks key by key) and the view's
-  `applySettings`. Still inline hex (`Hex`, `THex`, `SHex`): accents #4EA1F7,
+  A new setting goes in `Settings.cpp` (a row of `keyTable()`, `MC_KEY(key,
+  Word | CommandLine | Path, isColor, body)`, which says how far its value
+  runs on the line and applies it; only a family matched by prefix, such as
+  `lsp.*` or a surface's `.background`, is code in `apply()`), its default,
+  the commented `defaultFileText` (`settings:key-table` fails on a row it
+  lacks) and the view's `applySettings`. Per-language blocks are not done. Still inline hex (`Hex`, `THex`, `SHex`): accents #4EA1F7,
   muted #9CA3AF, dividers #333333, the hints overlay, terminal panel messages,
   the Search window, the git panel, the developer amber #E8A33D, the ANSI
   palette in `TermColor::rgb()`; `linux/src/Palette.h` mirrors the defaults.

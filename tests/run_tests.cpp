@@ -3718,6 +3718,33 @@ void testSettings() {
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
     // format, python, keep-sorted, auto-save, ruler, terminal and develop keys.
     CHECK(std::count(keys.begin(), keys.end(), '\n') == 75);
+    {
+        GROUP("settings:key-table");
+        // Every key of the table is documented in the default file (a new
+        // row needs its commented default there), and is a key once.
+        std::vector<std::string> table = Settings::tableKeys();
+        CHECK(table.size() >= 29);
+        std::set<std::string> seen;
+        for (const std::string &k : table) {
+            CHECK(seen.insert(k).second);
+            const bool documented = ("\n" + keys).find("\n" + k + " =") != std::string::npos;
+            if (!documented) std::printf("  defaultFileText lacks %s\n", k.c_str());
+            CHECK(documented);
+        }
+        CHECK(Settings::isColorKey("editor.bracket-match") && Settings::isColorKey("window.text"));
+        CHECK(!Settings::isColorKey("window.opacity") && !Settings::isColorKey("theme"));
+        CHECK(Settings::isColorKey("editor.background") && Settings::isColorKey("syntax.keyword"));
+        // A path keeps its spaces; a command line its quotes; a word refuses more.
+        std::vector<SettingsError> ek;
+        Settings p = parseSettings("python.interpreter = /a b/python3  # mine\n"
+                                   "agent.command = claude --x \"a # b\" # note\n"
+                                   "develop.source = auto\n", &ek);
+        CHECK(ek.empty() && p.pythonInterpreter() == "/a b/python3");
+        CHECK(p.agentCommand() == "claude --x \"a # b\"" && p.developSource().empty());
+        parseSettings("terminal.mode = grid line\n", &ek);
+        CHECK(ek.size() == 1 && ek[0].message.find("unexpected text") != std::string::npos);
+        GROUP("settings:default-file");
+    }
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
