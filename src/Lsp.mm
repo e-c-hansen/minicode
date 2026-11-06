@@ -2582,6 +2582,26 @@ static NSString *ErrorText(const Json &error) {
     return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
 }
 
+// Another window with a tab on the file whose text the disk does not have
+// (unsaved changes): an edit here would be lost there, or lose them on its
+// Keep Mine. Replace in Folder asks the same of every window.
+- (BOOL)otherWindowHasChangesTo:(NSString *)path {
+    NSString *disk = nil;
+    BOOL read = NO;
+    for (LspSession *other in AllSessions().allObjects) {
+        if (other == self || !other.bufferText) continue;
+        NSString *buffer = other.bufferText(path);
+        if (!buffer) continue;
+        if (!read) {
+            disk = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding
+                                                error:nil];
+            read = YES;
+        }
+        if (!disk || ![buffer isEqualToString:disk]) return YES;
+    }
+    return NO;
+}
+
 - (BOOL)showsPath:(NSString *)path {
     return _path && [RealPath(path) isEqualToString:RealPath(_path)];
 }
@@ -2665,6 +2685,12 @@ static NSString *ErrorText(const Json &error) {
             *failure = [NSString stringWithFormat:@"Could not read %@", path.lastPathComponent];
             return -1;
         }
+        if ([self otherWindowHasChangesTo:path]) {
+            *failure = [NSString stringWithFormat:
+                @"%@ has unsaved changes in another window; save them there and try again",
+                path.lastPathComponent];
+            return -1;
+        }
         // The server's positions are in the text it has: a tab's text as
         // last sent, or the disk's for a file no tab has open. Text that
         // differs from that (typed since, or a tab the server was never
@@ -2692,7 +2718,9 @@ static NSString *ErrorText(const Json &error) {
         [texts addObject:text];
     }
 
-    NSString *home = _path;
+    // The tab to come back to: the file on show, or what the tab shows
+    // when it is no source to edit (a preview, a picture, a PDF).
+    NSString *home = _path ?: (self.shownTabPath ? self.shownTabPath() : nil);
     NSMutableArray<NSString *> *opened = [NSMutableArray array];   // tabs this edit made
     NSMutableArray<NSNumber *> *applied = [NSMutableArray array];
     NSInteger changed = 0;
@@ -2763,11 +2791,20 @@ static NSString *ErrorText(const Json &error) {
             NSUInteger i = n.unsignedIntegerValue;
             if (![self showsPath:paths[i]] && !self.openFile(paths[i])) continue;
             // Exactly the group this edit made, even inside the event's own
-            // group, which is still open while this runs.
+            // group, which is still open while this runs. Showing the tab
+            // may have put an edit of its own on top (a keep-sorted sort
+            // waiting for it), so undo goes on, a step or two, until the
+            // text is what it was.
             NSUndoManager *um = _tv.undoManager;
-            if (um.canUndo) [um undoNestedGroup];
-            if (![_tv.string isEqualToString:texts[i]])
+            for (int k = 0; k < 3 && um.canUndo && ![_tv.string isEqualToString:texts[i]]; k++)
+                [um undoNestedGroup];
+            if (![_tv.string isEqualToString:texts[i]]) {
                 NSLog(@"MiniCode: could not put %@ back after a failed edit", paths[i]);
+                why = [NSString stringWithFormat:@"%@; %@ was changed and could not be put "
+                                                  "back, so check it before saving",
+                                                 why ?: @"The edit could not be made",
+                                                 paths[i].lastPathComponent];
+            }
         }
         changed = 0;
     }

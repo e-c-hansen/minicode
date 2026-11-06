@@ -208,6 +208,9 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 // one whose text bufferText gives is kept open on its language's server
 // (when that server is running), so the server sees unsaved tabs too.
 @property(nonatomic, copy) NSArray<NSString *> *(^openPaths)(void);
+// The file the window's tab shows, also when it is no source to edit (a
+// preview, a picture, a PDF), so an edit across files comes back to it.
+@property(nonatomic, copy) NSString *(^shownTabPath)(void);
 // Close the tab of a file that an edit opened and then could not change.
 @property(nonatomic, copy) void (^closeFile)(NSString *path);
 // The diagnostics changed (published, a file closed, a server stopped):
