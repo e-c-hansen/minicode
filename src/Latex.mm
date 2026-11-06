@@ -250,6 +250,8 @@ static const CGFloat kStatusHeight = 26;
         NSMakeRect(labelX, 5, MAX(0, b.size.width - labelX - 112), 16);
 }
 
+- (PDFView *)latexPDFView { return self.pdf; }
+
 - (void)applySettings {
     AppSettings *cfg = [AppSettings shared];
     NSColor *bg = [cfg background:Surface::Editor];
@@ -905,7 +907,3 @@ void MCDownloadTectonic(void (^done)(NSString *problem)) {
     }];
     [task resume];
 }
-
-@implementation LatexView (PageZoom)
-- (PDFView *)latexPDFView { return self.pdf; }
-@end
