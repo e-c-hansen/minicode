@@ -517,18 +517,15 @@ MC_GUI_SUITE(multicaret_rows) {
                                  (unsigned long)at(0, 1), (unsigned long)at(1, 1),
                                  (unsigned long)at(2, 1), (unsigned long)at(3, 1)]));
         [tv.multiCarets clear];
-        // A text ending in a line break: Down from the last line reaches
-        // the empty line after it, and Up comes back to the column.
-        MCGuiWriteFile(small, @"abcdef\nabcdef\n");
     });
-    MCGuiPause(0.3);
+    // A text ending in a line break: Down from the last line reaches the
+    // empty line after it, and Up comes back to the column.
     MCGuiStep(@"the empty line after a final line break", ^{
-        [c showFile:small];
+        NSString *ending = MCGuiProjectFile(@"rows-ending.txt");
+        MCGuiWriteFile(ending, @"abcdef\nabcdef\n");
+        GCHECK([c showFile:ending]);
         tv = (CodeTextView *)Text(c);
-        if (![tv.string isEqualToString:@"abcdef\nabcdef\n"]) {
-            MCGuiNote(@"rows.txt not reloaded yet: %@", tv.string);
-            return;
-        }
+        GCHECK_EQ_STR(tv.string, @"abcdef\nabcdef\n");
         [tv.multiCarets setCaretRanges:@[[NSValue valueWithRange:NSMakeRange(3, 0)],
                                          [NSValue valueWithRange:NSMakeRange(10, 0)]]];
         [tv.multiCarets doCommand:@selector(moveDown:)];
