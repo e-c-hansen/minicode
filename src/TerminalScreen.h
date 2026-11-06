@@ -57,6 +57,18 @@ struct TermPos {
     int col = 0;
 };
 
+// A command the shell integration marked (OSC 133): where its prompt began
+// (A), where its output began (C, once it ran), and where it ended (D,
+// with the exit status). Lines as TerminalScreen::lineCell numbers them.
+struct TermCommand {
+    int promptLine = 0, promptCol = 0;
+    bool ran = false;                 // a C came: the command was run
+    int outputLine = 0, outputCol = 0;
+    bool ended = false;               // a D came after the C
+    int endLine = 0, endCol = 0;
+    int status = 0;
+};
+
 // Mouse events a program can ask for (DECSET 9, 1000, 1002, 1003).
 enum class TermMouse { Press, Release, Motion, WheelUp, WheelDown };
 
@@ -128,7 +140,7 @@ public:
     // Cells of a wrapped line that belong to its text: all but a blank
     // left at the end by a wide character that went to the next line.
     int lineTextWidth(int line) const;
-    void clearHistory() { history_.clear(); }
+    void clearHistory();
     // Bytes the scrollback takes (its lines' own storage, as allocated),
     // and what the same cells would take as TermCells, for the tests.
     size_t historyBytes() const;
@@ -189,6 +201,27 @@ public:
     // describe the shell rather than the screen.
     const std::string& directory() const { return directory_; }
     int commandsEnded() const { return commandsEnded_; }
+
+    // The shell integration's marks count only with this nonce, as
+    // TerminalStream::setMarkNonce says (empty: every mark counts).
+    void setMarkNonce(const std::string& nonce) { nonce_ = nonce; }
+    // Where the marks came: OSC 133 A, C and D on the main screen are kept
+    // at the cursor's place, and stay on their text as it scrolls into the
+    // scrollback, reflows, or is cleared (a mark on a line that goes, goes
+    // with it). A prompt mark followed by zsh's PROMPT_SP wrap moves down
+    // with the prompt. Commands in reading order, oldest first; the last
+    // may still be at its prompt (not ran) or running (not ended).
+    std::vector<TermCommand> commands() const;
+    // What a command printed: from its output mark to its end mark (the
+    // cursor while it runs), as textBetween copies it, without the line
+    // break before the next prompt. Empty for a command that never ran.
+    std::string commandOutput(const TermCommand& command) const;
+    // The prompt line of the nearest command that ran above `line`, or below
+    // it; INT_MIN when there is none.
+    int previousCommandLine(int line) const;
+    int nextCommandLine(int line) const;
+    // Marks kept (for tests).
+    size_t markCount() const { return marks_.size(); }
 
     // OSC 8 hyperlinks: "ESC ] 8 ; params ; URI ST" opens a link and
     // "ESC ] 8 ; ; ST" closes it; the text printed in between carries the
@@ -343,6 +376,26 @@ private:
     std::string title_;
     std::string directory_;
     int commandsEnded_ = 0;
+    // Shell integration marks, in reading order: `id` is the line's number
+    // counted from the first line ever (historyBase_ + line), which stays
+    // the same as the line scrolls up; `kind` is 'A', 'C' or 'D'.
+    struct Mark {
+        long long id;
+        int col;
+        char kind;
+        int status;
+        long long seq;               // the order they came in
+    };
+    std::deque<Mark> marks_;
+    long long markSeq_ = 0;
+    long long promptSeq_ = -1;       // the last prompt mark (promptMovedDown)
+    void insertMark(const Mark& m);
+    std::string nonce_;
+    void addMark(char kind, int status);
+    void dropMarks(long long fromId, long long toId);   // [from, to)
+    void shiftMarks(long long fromId, long long toId, long long by);
+    void pruneMarks();               // those above the scrollback
+    void promptMovedDown();          // PROMPT_SP wrapped: the prompt mark follows
     // OSC 8: the open link (0 none), and the table behind the ids (id - 1
     // indexes links_; linkKeys_ the key linkIds_ has it under; ids whose
     // links went, to give out again).
