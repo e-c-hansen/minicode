@@ -1,5 +1,6 @@
 // EditorController+Tabs.mm — EditorController: tabs, closed tabs, a tab's menu, saving.
 #import "EditorController+Private.h"
+#import "TextKit2.h"
 
 @implementation EditorController (Tabs)
 
@@ -454,7 +455,7 @@
         const NSRect r = [self textRectForCharacter:MIN(t.topCharacter, n - 1)];
         // Laid out a screen past it too, or the scroll stops where the
         // layout does, with that character at the bottom of the pane.
-        if (!tv.textLayoutManager && !NSIsEmptyRect(r))
+        if (!MCUsesTextKit2(tv) && !NSIsEmptyRect(r))
             [tv.layoutManager ensureLayoutForBoundingRect:
                 NSMakeRect(0, 0, CGFLOAT_MAX,
                            NSMaxY(r) + 2 * NSHeight(self.editorScroll.contentView.bounds))

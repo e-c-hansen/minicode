@@ -14,7 +14,16 @@ ifeq ($(origin CXX),default)
     CXX := clang++
   endif
 endif
-CXXFLAGS := -std=c++17 -fobjc-arc -Wall -Wextra -O2 -Isrc
+# The oldest macOS the build runs on, read from Info.plist's
+# LSMinimumSystemVersion so the two cannot differ. Without it clang targets
+# the macOS doing the build, and the binary refuses to launch on anything
+# older. A newer API used without an @available check is an error, not a
+# warning (scripts/check-minos.sh checks the built binaries).
+ifeq ($(shell uname -s),Darwin)
+  MACOS_MIN := $(shell sed -n '/<key>LSMinimumSystemVersion</{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' Info.plist)
+  MINFLAGS  := -mmacosx-version-min=$(MACOS_MIN) -Werror=unguarded-availability-new
+endif
+CXXFLAGS := -std=c++17 -fobjc-arc -Wall -Wextra -O2 -Isrc $(MINFLAGS)
 LDFLAGS  := -framework Cocoa -framework WebKit -framework CoreServices \
             -framework Quartz -framework AVKit -framework AVFoundation \
             -framework CoreMedia -lz -lsqlite3
@@ -45,7 +54,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
 OBJDIR   := build/obj
 OBJ      := $(patsubst src/%,$(OBJDIR)/%.o,$(SRC))
 TESTDIR  := build/test-obj
-TESTFLAGS := -std=c++17 -Wall -Wextra -Isrc -pthread
+TESTFLAGS := -std=c++17 -Wall -Wextra -Isrc -pthread $(MINFLAGS)
 TEST_OBJ := $(TESTDIR)/run_tests.cpp.o $(patsubst src/%,$(TESTDIR)/%.o,$(CORE_SRC))
 
 # Parallel by default, one job per core: GNU make 3.81 (the Mac's) cannot tell

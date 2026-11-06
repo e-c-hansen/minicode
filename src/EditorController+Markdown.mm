@@ -1,5 +1,6 @@
 // EditorController+Markdown.mm — EditorController: the Markdown preview: switching to it, editing from it, links, math and web pictures arriving.
 #import "EditorController+Private.h"
+#import "TextKit2.h"
 
 @implementation EditorController (Markdown)
 
@@ -88,7 +89,7 @@
 - (NSRect)textRectForCharacter:(NSUInteger)i {
     NSTextView *tv = self.textView;
     const NSUInteger n = tv.string.length;
-    if (tv.textLayoutManager || n == 0) return NSZeroRect;
+    if (MCUsesTextKit2(tv) || n == 0) return NSZeroRect;
     NSLayoutManager *lm = tv.layoutManager;
     if (i >= n) i = n - 1;
     [lm ensureLayoutForCharacterRange:NSMakeRange(0, i + 1)];
@@ -625,7 +626,7 @@ static BOOL MCTectonicCacheIsEmpty(void) {
         else anchor = 0;
     }
     if (anchor != NSNotFound && st.length > 0) {
-        if (!tv.textLayoutManager)   // TextKit 1, as the editor is: the full height
+        if (!MCUsesTextKit2(tv))   // TextKit 1, as the editor is: the full height
             [tv.layoutManager ensureLayoutForTextContainer:tv.textContainer];
         const NSRect r = [self textRectForCharacter:MIN(anchor, st.length - 1)];
         [self scrollEditorToY:NSIsEmptyRect(r) ? origin.y : NSMinY(r) - offset];

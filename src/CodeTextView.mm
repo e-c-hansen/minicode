@@ -99,16 +99,18 @@
 
 // The characters on screen, so drawing never forces layout of a whole file.
 - (NSRange)visibleCharacterRange {
-    NSTextLayoutManager *tlm = self.textLayoutManager;
-    if (tlm) {
-        NSTextRange *vr = tlm.textViewportLayoutController.viewportRange;
-        if (!vr) return NSMakeRange(0, self.string.length);
-        NSTextContentManager *cm = tlm.textContentManager;
-        NSInteger a = [cm offsetFromLocation:cm.documentRange.location toLocation:vr.location];
-        NSInteger b = [cm offsetFromLocation:cm.documentRange.location
-                                  toLocation:vr.endLocation];
-        if (a < 0 || b < a) return NSMakeRange(0, self.string.length);
-        return NSMakeRange((NSUInteger)a, (NSUInteger)(b - a));
+    if (@available(macOS 12.0, *)) {
+        NSTextLayoutManager *tlm = self.textLayoutManager;
+        if (tlm) {
+            NSTextRange *vr = tlm.textViewportLayoutController.viewportRange;
+            if (!vr) return NSMakeRange(0, self.string.length);
+            NSTextContentManager *cm = tlm.textContentManager;
+            NSInteger a = [cm offsetFromLocation:cm.documentRange.location toLocation:vr.location];
+            NSInteger b = [cm offsetFromLocation:cm.documentRange.location
+                                      toLocation:vr.endLocation];
+            if (a < 0 || b < a) return NSMakeRange(0, self.string.length);
+            return NSMakeRange((NSUInteger)a, (NSUInteger)(b - a));
+        }
     }
     NSLayoutManager *lm = self.layoutManager;
     NSRange glyphs = [lm glyphRangeForBoundingRect:self.visibleRect
@@ -122,27 +124,29 @@
 // ever switches the view over.
 - (void)enumerateRectsForRange:(NSRange)r block:(void (^)(NSRect rect))block {
     NSPoint origin = self.textContainerOrigin;
-    NSTextLayoutManager *tlm = self.textLayoutManager;
-    if (tlm) {
-        NSTextContentManager *cm = tlm.textContentManager;
-        id<NSTextLocation> start = [cm locationFromLocation:cm.documentRange.location
-                                                 withOffset:(NSInteger)r.location];
-        id<NSTextLocation> end = start ? [cm locationFromLocation:start
-                                                       withOffset:(NSInteger)r.length]
-                                       : nil;
-        if (!start || !end) return;
-        NSTextRange *tr = [[NSTextRange alloc] initWithLocation:start endLocation:end];
-        if (!tr) return;
-        [tlm enumerateTextSegmentsInRange:tr
-                                     type:NSTextLayoutManagerSegmentTypeStandard
-                                  options:NSTextLayoutManagerSegmentOptionsRangeNotRequired
-                               usingBlock:^BOOL(NSTextRange *sr, CGRect frame,
-                                                CGFloat baseline, NSTextContainer *c) {
-            (void)sr; (void)baseline; (void)c;
-            block(NSOffsetRect(frame, origin.x, origin.y));
-            return YES;
-        }];
-        return;
+    if (@available(macOS 12.0, *)) {
+        NSTextLayoutManager *tlm = self.textLayoutManager;
+        if (tlm) {
+            NSTextContentManager *cm = tlm.textContentManager;
+            id<NSTextLocation> start = [cm locationFromLocation:cm.documentRange.location
+                                                     withOffset:(NSInteger)r.location];
+            id<NSTextLocation> end = start ? [cm locationFromLocation:start
+                                                           withOffset:(NSInteger)r.length]
+                                           : nil;
+            if (!start || !end) return;
+            NSTextRange *tr = [[NSTextRange alloc] initWithLocation:start endLocation:end];
+            if (!tr) return;
+            [tlm enumerateTextSegmentsInRange:tr
+                                         type:NSTextLayoutManagerSegmentTypeStandard
+                                      options:NSTextLayoutManagerSegmentOptionsRangeNotRequired
+                                   usingBlock:^BOOL(NSTextRange *sr, CGRect frame,
+                                                    CGFloat baseline, NSTextContainer *c) {
+                (void)sr; (void)baseline; (void)c;
+                block(NSOffsetRect(frame, origin.x, origin.y));
+                return YES;
+            }];
+            return;
+        }
     }
     NSLayoutManager *lm = self.layoutManager;
     NSRange gr = [lm glyphRangeForCharacterRange:r actualCharacterRange:NULL];

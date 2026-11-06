@@ -1,6 +1,7 @@
 // MultiCaretView.mm — see MultiCaretView.h.
 #import "MultiCaretView.h"
 #import "EditorFont.h"
+#import "TextKit2.h"
 #include "AutoIndent.h"
 #include "MultiCaret.h"
 #include <string>
@@ -421,7 +422,7 @@ static NSUInteger MCIndexOnLine(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
 // Now about 2 µs a caret once the text is laid out (105 ms for 50,000).
 - (BOOL)moveVerticallyByLayout:(int)dir extend:(BOOL)extend {
     NSTextView *tv = _tv;
-    if (tv.textLayoutManager || !tv.layoutManager || !tv.textContainer) return NO;
+    if (MCUsesTextKit2(tv) || !tv.layoutManager || !tv.textContainer) return NO;
     NSLayoutManager *lm = tv.layoutManager;
     NSTextContainer *tc = tv.textContainer;
     NSString *text = tv.string;
@@ -841,7 +842,7 @@ static NSPasteboardType const kLineCopyType = @"org.minicode.editor.line-copy";
     // frame. The editor is TextKit 1 (see Lsp.mm); never ask a TextKit 2
     // view for its layout manager, which would switch it over.
     NSUInteger lo = 0, hi = NSUIntegerMax;
-    if (!tv.textLayoutManager && tv.layoutManager && tv.textContainer) {
+    if (!MCUsesTextKit2(tv) && tv.layoutManager && tv.textContainer) {
         const NSPoint o = tv.textContainerOrigin;
         NSRect area = NSOffsetRect(NSInsetRect(visible, 0, -4), -o.x, -o.y);
         NSLayoutManager *lm = tv.layoutManager;
