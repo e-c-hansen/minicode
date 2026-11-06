@@ -15,7 +15,7 @@
 //     viewer comes back through onTextEdited as the file's whole new text.
 #import <Cocoa/Cocoa.h>
 
-@class MCQuickLookSlot, MCCsvTableView, MCJsonOutlinePane;
+@class MCQuickLookSlot, MCCsvTableView, MCJsonOutlinePane, MCSqliteView;
 
 typedef NS_ENUM(NSInteger, MCViewerKind) {
     MCViewerNone = 0,      // the text view, as before
@@ -25,6 +25,7 @@ typedef NS_ENUM(NSInteger, MCViewerKind) {
     MCViewerCsvLarge,      // without text: a CSV or TSV too large to edit
     MCViewerJson,          // beside the text: an outline of a JSON file
     MCViewerNotebook,      // over the text: a Jupyter notebook, rendered
+    MCViewerSqlite,        // without text: a SQLite database, read-only
 };
 
 // Files over this many bytes open read-only in the table (MCViewerCsvLarge).
@@ -56,6 +57,7 @@ NSString *MCNotebookMarkdown(NSString *json);
 @property(nonatomic, readonly) MCQuickLookSlot *quickLook;   // nil until used
 @property(nonatomic, readonly) MCCsvTableView *csv;          // nil until used
 @property(nonatomic, readonly) MCJsonOutlinePane *json;      // nil until used
+@property(nonatomic, readonly) MCSqliteView *sqlite;         // nil until used
 // Whether a viewer beside the text shows (Shift+Cmd+V), for the window.
 @property(nonatomic, assign) BOOL besideTextShown;
 

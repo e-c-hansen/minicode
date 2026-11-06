@@ -12,6 +12,8 @@
 #import "CsvTable.h"
 #import "JsonOutlineView.h"
 #import "AppSettings.h"
+#import "SqliteView.h"
+#include <sqlite3.h>
 #import <AVFoundation/AVFoundation.h>
 #import <ImageIO/ImageIO.h>
 #import <Quartz/Quartz.h>
@@ -241,6 +243,7 @@ void PressInTree(EditorController *c, unsigned short keyCode, NSString *chars) {
 static void CsvSteps(void);
 static void JsonSteps(void);
 static void NotebookSteps(void);
+static void SqliteSteps(void);
 
 MC_GUI_SUITE(previews) {
     QuietQuickLookPanel();
@@ -408,6 +411,7 @@ MC_GUI_SUITE(previews) {
     CsvSteps();
     JsonSteps();
     NotebookSteps();
+    SqliteSteps();
 }
 
 // ---------------------------------------------------------------- CSV
@@ -874,5 +878,148 @@ static void NotebookSteps(void) {
         // A block with no language stays plain.
         const NSUInteger plain = [tv.string rangeOfString:@"import plain"].location;
         GCHECK(!SameColor(ColorOf(tv, @"import", plain), [cfg syntax:TokenStyle::Keyword]));
+    });
+}
+
+// ---------------------------------------------------------------- SQLite
+namespace {
+
+MCSqliteView *Sqlite(EditorController *c) { return Viewers(c).sqlite; }
+
+BOOL MakeDatabase(NSString *path) {
+    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    sqlite3 *db = nullptr;
+    if (sqlite3_open(path.fileSystemRepresentation, &db) != SQLITE_OK) return NO;
+    BOOL ok = sqlite3_exec(db,
+        "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT, age INTEGER, photo BLOB);"
+        "CREATE VIEW adults AS SELECT name, age FROM people WHERE age >= 18;"
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1500) "
+        "INSERT INTO people (id, name, age) SELECT i, 'person ' || i, i % 90 FROM n;"
+        "UPDATE people SET name = NULL WHERE id = 2;"
+        "UPDATE people SET photo = x'00010203' WHERE id = 1;",
+        nullptr, nullptr, nullptr) == SQLITE_OK;
+    sqlite3_close(db);
+    return ok;
+}
+
+long CountPeople(NSString *path) {
+    sqlite3 *db = nullptr;
+    long n = -1;
+    if (sqlite3_open_v2(path.fileSystemRepresentation, &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK) {
+        sqlite3_stmt *st = nullptr;
+        if (sqlite3_prepare_v2(db, "SELECT count(*) FROM people", -1, &st, nullptr) == SQLITE_OK &&
+            sqlite3_step(st) == SQLITE_ROW)
+            n = (long)sqlite3_column_int64(st, 0);
+        sqlite3_finalize(st);
+    }
+    sqlite3_close(db);
+    return n;
+}
+
+void WaitForQuery(NSString *what) {
+    MCGuiWait(what, 10, ^BOOL {
+        MCSqliteView *s = Sqlite(MCGuiController());
+        return s && !s.busy;
+    });
+}
+
+}  // namespace
+
+static void SqliteSteps(void) {
+    __block NSData *dbBytes = nil;
+    MCGuiStep(@"a database is made", ^{
+        GCHECK(MakeDatabase(Fixture(@"shop.db")));
+        dbBytes = [NSData dataWithContentsOfFile:Fixture(@"shop.db")];
+        [dbBytes writeToFile:Fixture(@"unnamed.bin") atomically:YES];
+        GCHECK(dbBytes.length > 0);
+    });
+    MCGuiStep(@"a .db opens read-only with its tables and views", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"shop.db")]);
+        GCHECK_EQ_STR(ActiveKind(c), @"sqlite");
+        MCSqliteView *s = Sqlite(c);
+        GCHECK(s != nil && !s.hidden);
+        GCHECK(EditorScroll(c).hidden);
+        GCHECK([s.objectNames isEqualToArray:(@[@"people", @"adults"])]);
+        GCHECK([s.schemaText hasPrefix:@"CREATE TABLE people"]);
+        GCHECK(!c.canTogglePreview);
+    });
+    WaitForQuery(@"the first table's rows");
+    MCGuiStep(@"the first 1,000 rows of the table", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK(s.rows.count == MCSqliteMaxRows);
+        GCHECK([s.columns isEqualToArray:(@[@"id", @"name", @"age", @"photo"])]);
+        GCHECK_EQ_STR(s.statusText, @"The first 1,000 rows");
+        GCHECK(s.rowsTable.numberOfRows == 1000 && s.rowsTable.numberOfColumns == 4);
+        GCHECK_EQ_STR(s.rows.count > 1 ? s.rows[1][1] : nil, @"NULL");
+        GCHECK_EQ_STR(s.rows.count ? s.rows[0][3] : nil, @"<4 bytes>");
+        MCGuiSnapshot(MCGuiController().window.contentView, @"previews-sqlite");
+    });
+    MCGuiStep(@"a query typed in the box runs", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        s.queryField.stringValue = @"SELECT count(*) AS n, max(age) FROM people";
+        [s.queryField sendAction:s.queryField.action to:s.queryField.target];
+    });
+    WaitForQuery(@"the count");
+    MCGuiStep(@"its answer", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK(s.rows.count == 1);
+        GCHECK_EQ_STR(s.rows.count ? s.rows[0][0] : nil, @"1500");
+        GCHECK_EQ_STR(s.columns.firstObject, @"n");
+        GCHECK([s.statusText hasPrefix:@"1 row, "]);
+        [s runQuery:@"DELETE FROM people"];
+    });
+    WaitForQuery(@"a delete");
+    MCGuiStep(@"a statement that writes is refused, and the file is unchanged", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.statusText hasPrefix:@"Not run: the database is open read-only"]);
+        GCHECK(CountPeople(Fixture(@"shop.db")) == 1500);
+        [s runQuery:@"CREATE TABLE sneaky (x)"];
+    });
+    WaitForQuery(@"a create");
+    MCGuiStep(@"so is a CREATE", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.statusText hasPrefix:@"Not run"]);
+        s.timeLimit = 0.3;
+        [s runQuery:@"WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) "
+                    @"SELECT count(*) FROM c"];
+    });
+    WaitForQuery(@"a query that never ends");
+    MCGuiStep(@"a query past its time limit is stopped", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK_EQ_STR(s.statusText, @"Stopped: the query ran longer than 0.3 seconds.");
+        s.timeLimit = 5;
+        [s runQuery:@"SELEC nonsense"];
+    });
+    WaitForQuery(@"a syntax error");
+    MCGuiStep(@"SQLite's own complaint for a mistake", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.statusText containsString:@"syntax error"]);
+        [s.objectsTable selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO];
+    });
+    WaitForQuery(@"the view");
+    MCGuiStep(@"a click on the view shows it", ^{
+        MCSqliteView *s = Sqlite(MCGuiController());
+        GCHECK([s.schemaText hasPrefix:@"CREATE VIEW adults"]);
+        GCHECK([s.columns isEqualToArray:(@[@"name", @"age"])]);
+        GCHECK(s.rows.count == MCSqliteMaxRows);
+    });
+    MCGuiStep(@"found by its header whatever its name, and Cmd+S writes nothing", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"unnamed.bin")]);
+        GCHECK_EQ_STR(ActiveKind(c), @"sqlite");
+        [c saveCurrentFile:nil];
+        GCHECK([c showFile:Fixture(@"shop.db")]);   // back: the database again
+        GCHECK_EQ_STR(ActiveKind(c), @"sqlite");
+        GCHECK([Sqlite(c).objectNames containsObject:@"people"]);
+        [c saveCurrentFile:nil];
+    });
+    WaitForQuery(@"the table again");
+    MCGuiStep(@"the database file is byte for byte as made", ^{
+        GCHECK([[NSData dataWithContentsOfFile:Fixture(@"shop.db")] isEqualToData:dbBytes]);
+        GCHECK([[NSData dataWithContentsOfFile:Fixture(@"unnamed.bin")] isEqualToData:dbBytes]);
+        NSFileManager *fm = [NSFileManager defaultManager];
+        GCHECK(![fm fileExistsAtPath:Fixture(@"shop.db-journal")]);
+        GCHECK(![fm fileExistsAtPath:Fixture(@"shop.db-wal")]);
     });
 }

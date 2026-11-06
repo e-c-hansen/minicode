@@ -3,6 +3,7 @@
 #import "QuickLook.h"
 #import "CsvTable.h"
 #import "JsonOutlineView.h"
+#import "SqliteView.h"
 #include "FileSniff.h"
 #include "Notebook.h"
 #include <string>
@@ -33,12 +34,13 @@ MCViewerKind MCViewerKindForFile(NSString *path) {
     case FileSniff::Kind::Tsv: return large ? MCViewerCsvLarge : MCViewerTsv;
     case FileSniff::Kind::Json: return MCViewerJson;
     case FileSniff::Kind::Notebook: return MCViewerNotebook;
+    case FileSniff::Kind::Sqlite: return MCViewerSqlite;
     default: return MCViewerNone;
     }
 }
 
 BOOL MCViewerKindWithoutText(MCViewerKind kind) {
-    return kind == MCViewerQuickLook || kind == MCViewerCsvLarge;
+    return kind == MCViewerQuickLook || kind == MCViewerCsvLarge || kind == MCViewerSqlite;
 }
 
 BOOL MCViewerKindOverText(MCViewerKind kind) {
@@ -72,7 +74,10 @@ static BOOL IsTsvPath(NSString *path) {
     MCQuickLookSlot *_quickLook;
     MCCsvTableView *_csv;
     MCJsonOutlinePane *_json;
+    MCSqliteView *_sqlite;
 }
+
+- (MCSqliteView *)sqlite { return _sqlite; }
 
 - (instancetype)initWithContainer:(NSView *)container below:(NSView *)sibling {
     if ((self = [super init])) {
@@ -136,6 +141,15 @@ static BOOL IsTsvPath(NSString *path) {
         _kind = kind;
         return YES;
     }
+    if (kind == MCViewerSqlite) {
+        if (!_sqlite) {
+            _sqlite = [[MCSqliteView alloc] initWithFrame:NSZeroRect];
+            [self addView:_sqlite];
+        }
+        if (![_sqlite showDatabase:path]) return NO;
+        _kind = kind;
+        return YES;
+    }
     if (kind == MCViewerCsvLarge) {
         if (![[self makeCsv] showLargeFile:path tsv:IsTsvPath(path) maxRows:MCCsvLargeRows])
             return NO;
@@ -157,6 +171,7 @@ static BOOL IsTsvPath(NSString *path) {
     [_quickLook clear];
     if (_kind == MCViewerCsv || _kind == MCViewerTsv || _kind == MCViewerCsvLarge) [_csv clear];
     if (_kind == MCViewerJson) [_json attachToTextView:nil];
+    if (_kind == MCViewerSqlite) [_sqlite close];
     _kind = MCViewerNone;
 }
 
@@ -173,6 +188,12 @@ static BOOL IsTsvPath(NSString *path) {
                                   _kind == MCViewerCsvLarge);
         _csv.frame = rect;
         _csv.hidden = !on;
+        covers = covers || on;
+    }
+    if (_sqlite) {
+        const BOOL on = shown && _kind == MCViewerSqlite;
+        _sqlite.frame = rect;
+        _sqlite.hidden = !on;
         covers = covers || on;
     }
     NSRect text = rect;
@@ -196,6 +217,7 @@ static BOOL IsTsvPath(NSString *path) {
     case MCViewerCsv:
     case MCViewerTsv:
     case MCViewerCsvLarge: return _csv.table;
+    case MCViewerSqlite: return _sqlite.objectsTable;
     default: return nil;
     }
 }

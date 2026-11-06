@@ -124,6 +124,21 @@
 			</array>
 		</dict>
 		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>sqlite</string>
+				<string>sqlite3</string>
+				<string>db3</string>
+				<string>db</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>SQLite database</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+		</dict>
+		<dict>
 			<key>CFBundleTypeName</key>
 			<string>Document (Quick Look)</string>
 			<key>CFBundleTypeRole</key>

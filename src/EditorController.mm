@@ -8501,7 +8501,8 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
                        : t.viewerKind == MCViewerQuickLook ? @"quicklook"
                        : t.viewerKind == MCViewerCsv || t.viewerKind == MCViewerTsv ||
                          t.viewerKind == MCViewerCsvLarge ? @"table"
-                       : t.viewerKind == MCViewerNotebook ? @"notebook" : @"text";
+                       : t.viewerKind == MCViewerNotebook ? @"notebook"
+                       : t.viewerKind == MCViewerSqlite ? @"sqlite" : @"text";
         NSString *path = t.currentPath ?: t.comparison.path;
         NSString *title = t.comparison ? t.comparison.title
                         : t.isDiff ? t.diffName : t.currentPath.lastPathComponent;

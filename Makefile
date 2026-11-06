@@ -17,7 +17,7 @@ endif
 CXXFLAGS := -std=c++17 -fobjc-arc -Wall -Wextra -O2 -Isrc
 LDFLAGS  := -framework Cocoa -framework WebKit -framework CoreServices \
             -framework Quartz -framework AVKit -framework AVFoundation \
-            -framework CoreMedia -lz
+            -framework CoreMedia -lz -lsqlite3
 
 # The pure-C++ core, testable on its own (no frameworks, no Objective-C).
 CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.cpp \
