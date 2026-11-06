@@ -947,6 +947,32 @@ void syncFolder(const std::string& dir) {
     ::close(d);
 }
 
+// Where a write to `path` lands: the file at the end of any chain of
+// symlinks at it, even one that does not exist yet (a dangling link, such
+// as a settings file kept in a dotfiles folder not filled in yet), so the
+// link stays a link. A relative link is read against its own folder. `path`
+// itself when it is no link; "" for a loop.
+std::string linkTarget(const std::string& path) {
+    char resolved[PATH_MAX];
+    if (::realpath(path.c_str(), resolved)) return resolved;
+    std::string p = path;
+    for (int hops = 0; hops < 40; ++hops) {
+        struct stat st;
+        if (::lstat(p.c_str(), &st) != 0 || !S_ISLNK(st.st_mode)) return p;
+        char buf[PATH_MAX];
+        const ssize_t n = ::readlink(p.c_str(), buf, sizeof buf - 1);
+        if (n <= 0) return p;
+        std::string next(buf, static_cast<std::size_t>(n));
+        if (next[0] != '/') {
+            const std::size_t slash = p.rfind('/');
+            next = (slash == std::string::npos ? std::string() : p.substr(0, slash + 1)) + next;
+        }
+        p = next;
+    }
+    errno = ELOOP;
+    return std::string();
+}
+
 bool writeInPlace(const std::string& target, const std::string& content, std::string* error,
                   FileStamp* written) {
     const int fd = ::open(target.c_str(), O_WRONLY | O_TRUNC | O_CLOEXEC);
@@ -1048,9 +1074,10 @@ bool stripUtf8Bom(std::string* bytes) {
 
 bool writeFileAtomically(const std::string& path, const std::string& content,
                          std::string* error, FileStamp* written) {
-    // The file a symlink names, so the link stays a link.
-    char resolved[PATH_MAX];
-    const std::string target = ::realpath(path.c_str(), resolved) ? std::string(resolved) : path;
+    // The file a symlink names, so the link stays a link (a dangling one
+    // too: renamed over, it would become a plain file).
+    const std::string target = linkTarget(path);
+    if (target.empty()) return fail(error, "could not follow the link");
     struct stat st;
     const bool exists = ::stat(target.c_str(), &st) == 0;
     if (exists && !S_ISREG(st.st_mode)) {

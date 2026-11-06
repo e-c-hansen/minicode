@@ -75,4 +75,20 @@ MergeResult merge(const std::string &settingsText);
 // command?
 bool runsOurCommand(const Json &entry);
 
+// ------------------------------------------------------- writing the file
+// The file a write to `path` lands in: the end of any chain of symlinks at
+// it, even a file not there yet (a dangling link, as a dotfiles checkout
+// leaves before its first run), a relative link read against its own
+// folder; `path` when it is no link, "" for a loop.
+std::string writeTarget(const std::string &path);
+
+// Writes `text` to the settings file at `path` so a reader sees the old
+// file or the new one, never half of each: a temporary in the folder of
+// the file `path` names (writeTarget: a settings.json that is a symlink
+// into a dotfiles folder stays a link, and the dotfiles copy changes),
+// given that file's mode (`newMode` for a new file), flushed, then renamed
+// over it. False, with `error` saying why, when nothing was written.
+bool writeSettingsFile(const std::string &path, const std::string &text, unsigned newMode,
+                       std::string &error);
+
 }  // namespace ClaudeHooks

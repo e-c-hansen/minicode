@@ -126,8 +126,8 @@ goes here first, with tests; the GUI only displays it.
   (Format Document's plan), `InstallHints`.
 - Language servers: `LspClient` (protocol, results, WorkspaceEdits, diagnostics
   with versions, completion edits, symbols, folding ranges, the second server's
-  routing and `DiagnosticStore`, the Problems rows), `PythonEnvs` (interpreters
-  found without running any).
+  routing and `DiagnosticStore`, the Problems rows, watched files' globs and
+  registrations), `PythonEnvs` (interpreters found without running any).
 - Terminal: `TerminalStream` (bytes to lines and shell events; `TermParser`,
   `applySgr`, `termCharWidth`), `TerminalScreen` (the grid, scrollback, reflow,
   find, mouse encoding), `TermLinks`.
@@ -158,8 +158,8 @@ goes here first, with tests; the GUI only displays it.
 - Language servers: `Lsp.mm` (`LspSession`, one per window), `LspServer`
   (processes), `LspPopups` (completion, hover, signature), `LspShared.h` (only
   the Lsp files import it), `LspPanel` (status item, popover, interpreter
-  sheet), `LspPicker` (references and fixes list, rename box), `ProblemsPanel`,
-  `InstallPanel`.
+  sheet), `LspPicker` (references and fixes list, rename box), `LspWatcher`
+  (files changed on disk, for the servers), `ProblemsPanel`, `InstallPanel`.
 - `AppSettings`, `Appearance` (Adjust Settings, Theme menu, opacity popover),
   `Keymap`.
 - Terminal: `Terminal` (`TerminalView`, `MCPty`, the shell integration),
@@ -388,6 +388,13 @@ container (PanelHost, laid out by hand in layoutContainer)
   popovers that force DarkAqua and inline hex are unchanged.
   `selectedTextAttributes` is only a background, since after a switch AppKit
   drew selected text in its own color.
+- **minicode's own writes** to settings.conf and keys.conf (a theme, the IDE
+  link toggle, the first file of either) go through `MCWriteConfigFile`
+  (AppSettings.h, over `FolderSearch::writeFileAtomically`), never
+  `writeToFile:atomically:`, which replaced a symlinked dotfile with a plain
+  file. A theme or the IDE link is refused while a tab holds the file with
+  unsaved changes (`AppSettings.unsavedTextCheck`, set in
+  EditorController+Settings.mm's `+load`), the reason in the status bar.
 
 ## Keys: the registry, keys.conf and the key monitor
 
@@ -463,7 +470,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   back.
 - **One writer**: Cmd+S, `saveTab:` and auto-save all go through
   `writeText:toTab:interactive:` over `FolderSearch::writeFileAtomically`
-  (a symlink stays a link, hard links and files owned by someone else are
+  (a symlink stays a link, a dangling one too, creating the file it names;
+  hard links and files owned by someone else are
   written in place, xattrs, ACL and creation date kept, F_FULLFSYNC), which
   refuses a tab without text of its own (`tabHasTextToWrite:`: SQLite, Quick
   Look, a large CSV) and sends didSave. `writeToFile:atomically:` replaced a
@@ -905,6 +913,16 @@ container (PanelHost, laid out by hand in layoutContainer)
   the buffer alone with stderr's first 6 lines in a popover. Paths are planned
   resolved; a result for changed text is dropped; a selection passes `--lines`
   (clang-format, yapf) or `--line-ranges` (pyink, black).
+- **A formatter in the folder's own .venv or node_modules needs the user's
+  yes** (round 4, D9): the same per-folder answer as the servers'
+  (`MCFolderToolsConsent`/`MCSetFolderToolsConsent` in Lsp.h, over
+  `MCPythonEnvironmentConsent`), decided by `Formatter::chooseProgram`.
+  Unanswered, the result says `needsConsent` and the editor asks (Allow,
+  Don't Allow, Cancel, a sheet; Cmd+S too) and formats again. Deny looks
+  outside the folder, never at another formatter. A `format.<lang>` command
+  never asks while the tool exists outside the folder (the owner's
+  `format.python = ruff ...`); `$VIRTUAL_ENV`'s bin is trusted; a project copy
+  outside the window's folder is never used.
 - `format.on-save`: Cmd+S (non-nil sender) formats then saves; minicode's own
   saves and Save All never format. A Cmd+S is never lost (`_formatSaveTab`:
   leaving the tab saves it unformatted).
@@ -992,6 +1010,19 @@ view is disposed (on `unrealize`), or dispose loops forever.
   edited-but-unsaved files from disk.
 - Requests during the handshake are queued; server-to-client requests are
   always answered (nulls for configuration, -32601 for unknown methods).
+- **Watched files** (2026-11-06): `client/registerCapability` for
+  `workspace/didChangeWatchedFiles` is kept (others are answered null and
+  ignored), and `MCLspWatcher`, made with the first registration, sends
+  what the servers' globs want (`Lsp::globMatch`, RelativePatterns below
+  their base): its own FSEvents stream with file events on the folder and
+  the patterns' folders outside it (basedpyright registers `**` and its
+  site-packages, Ruff its config files), files open in tabs included,
+  `.git`, `.hg/store` and node_modules' packages left out. The capability
+  is offered only by an owner that sends (`setFileWatching`, the Mac): told
+  the client watches, rust-analyzer stops watching itself, so the GTK port
+  does not offer it. Trap: FSEvents keeps a file's created flag on its
+  later events, so a path already reported is Changed whatever the flags
+  say (`Lsp::FileEventClassifier`).
 - **Lookup** (`MCFindProgram`): PATH plus Homebrew, Cargo, Go, ~/.local/bin,
   npm's prefixes, nvm and fnm (newest first), volta, pnpm, bun, pip --user,
   pyenv, MacPorts, /usr/bin and keg-only llvm, since a Finder-launched app has
@@ -1037,7 +1068,8 @@ view is disposed (on `unrealize`), or dispose loops forever.
   (`Lsp::mergeCodeActions`, 3 s); Organize Imports (Shift+Option+O) prefers a
   tool's `source.organizeImports.<tool>` (`pickOrganizeImports`); basedpyright
   offers none. Traps: Ruff's diagnostic source is "Ruff", its server name
-  "ruff"; editing ruff.toml needs a restart (no dynamic registration).
+  "ruff". Editing ruff.toml reaches Ruff through watched files, with no
+  restart (`lsp_watch` checks it where Ruff is installed).
 - **Python interpreter**: the folder's choice (`MCPythonInterpreters`),
   `python.interpreter`, the nearest .venv/venv/env, `$VIRTUAL_ENV`,
   `$CONDA_PREFIX`, else the server's own (/usr/bin/python3 skipped). Sent only
@@ -1049,7 +1081,8 @@ view is disposed (on `unrealize`), or dispose loops forever.
   .venv out until the folder's answer (`MCPythonEnvironmentConsent` in
   `MCAppDefaults()`) is "allow"; the install bar asks first (Use It, Don't Use
   It, × for this launch). Run File, which the user starts, still uses it
-  (`pythonInterpreterWithSource:`).
+  (`pythonInterpreterWithSource:`). Format Document shares the answer (see
+  "Formatting").
 - **Completion** opens after `.`/`->`/`::` and on a word's second letter; an
   `isIncomplete` list is asked again. `Lsp::completionKeyAccepts`: Tab takes;
   Return only when asked for (Ctrl+Space, Option+Esc), after a trigger
@@ -1922,7 +1955,9 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   never a search or another scheme. `page --url/--text/--console/
   --screenshot/--reload`, `--yours` for the user's page; text, console and
   screenshots only for local pages unless `control.page-any-origin`, checked
-  again when the read comes back. Status from
+  again when the read comes back. A screenshot never replaces a file unless
+  `--overwrite` is given, and never goes through a symlink (O_EXCL, or an
+  atomic rename with `--overwrite`). Status from
   `decidePolicyForNavigationResponse` (which answers as WebKit does without
   it: allow what it can show). The agent page's configuration installs, at
   document start, a listener in an isolated `WKContentWorld` (uncaught
@@ -2022,7 +2057,8 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   is made, not on first use, because its shell gets it as
   `MINICODE_TERMINAL_ID`, with `MINICODE_PID` (inherited ones are dropped).
   `minicode hooks --install` (run by the user only; backs up, merges, a second
-  run changes nothing) adds `minicode notify --from-hook` to Claude Code's
+  run changes nothing; a symlinked settings.json stays a link,
+  `ClaudeHooks::writeSettingsFile`) adds `minicode notify --from-hook` to Claude Code's
   Notification, Stop, UserPromptSubmit and PostToolUse hooks; notify never
   starts minicode and with --from-hook prints nothing and exits 0 whatever
   happens. Core: `ClaudeHooks` (hook JSON, the settings merge) and

@@ -33,6 +33,22 @@ extern NSNotificationName const MCSettingsDidChangeNotification;
 // Writes `key = value` into the file (Settings::withValue) and applies it
 // at once.
 - (BOOL)writeValue:(NSString *)value forKey:(NSString *)key;
+// writeTheme: and writeValue:forKey: are refused while a tab holds the
+// file with unsaved changes, since the tab and the disk would then part
+// ways; the reason goes to writeProblemHandler. Both are set once by the
+// editor windows (EditorController+Settings.mm): `unsavedTextCheck` says
+// whether any window has a tab of `path` with unsaved changes, and
+// `writeProblemHandler` shows a message (the status bar).
+@property(class, nonatomic, copy) BOOL (^unsavedTextCheck)(NSString *path);
+@property(class, nonatomic, copy) void (^writeProblemHandler)(NSString *message);
 @end
+
+// Writes `text` to a file minicode keeps for the user (settings.conf,
+// keys.conf) through FolderSearch::writeFileAtomically: a symlink, a
+// dangling one too, stays a link and the file it names changes; a hard
+// link is written in place; mode and extended attributes are kept. With
+// `checkTabs`, refused while AppSettings.unsavedTextCheck says a tab holds
+// the file with unsaved changes. NO with *why set when nothing was written.
+BOOL MCWriteConfigFile(NSString *path, NSString *text, BOOL checkTabs, NSString **why);
 
 NSColor *MCColor(const Rgba &c);

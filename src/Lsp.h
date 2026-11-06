@@ -201,6 +201,13 @@ extern NSNotificationName const MCPythonInterpreterDidChangeNotification;
 // The user answered for a folder's own Python environment; the object is the
 // folder's resolved path.
 extern NSNotificationName const MCPythonEnvironmentConsentDidChangeNotification;
+// The same answer, for anything that runs a folder's own tools (a formatter
+// in its .venv or node_modules, as well as the servers): "allow", "deny", or
+// nil when the user has not been asked for this folder. Keyed by the
+// folder's resolved path. The setter posts the notification above, so the
+// Python servers of every window on the folder follow.
+NSString *MCFolderToolsConsent(NSString *root);
+void MCSetFolderToolsConsent(NSString *root, BOOL allow);
 
 @interface LspSession : NSObject
 - (instancetype)initWithTextView:(CodeTextView *)textView root:(NSString *)root;
@@ -417,6 +424,11 @@ extern NSNotificationName const MCPythonEnvironmentConsentDidChangeNotification;
 @property(nonatomic, readonly) NSView *renameView;
 // The last note sent to showNote.
 @property(nonatomic, readonly) NSString *lastNote;
+// The folders watched for the servers' workspace/didChangeWatchedFiles
+// (none until a server registers a watcher), and the batches of changes
+// handed to the servers so far.
+@property(nonatomic, readonly) NSArray<NSString *> *watchedFolders;
+@property(nonatomic, readonly) NSUInteger watchedBatches;
 @end
 
 // Where tools are looked for: PATH, then the package managers' directories

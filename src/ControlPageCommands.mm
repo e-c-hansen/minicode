@@ -197,13 +197,19 @@ void MCControlRegisterPageCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
         }
         // screenshot
         NSString *path = NS(a["path"]);
-        BOOL isDir = NO;
-        const BOOL there = [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir];
-        if (!PageCheck::screenshotPath(U(path), there && isDir, error)) {
+        const BOOL overwrite = a["overwrite"].asBool();
+        struct stat st;
+        PageCheck::PathAt at = PageCheck::PathAt::Nothing;
+        if (path.length && lstat(path.fileSystemRepresentation, &st) == 0)
+            at = S_ISDIR(st.st_mode)   ? PageCheck::PathAt::Folder
+                 : S_ISREG(st.st_mode) ? PageCheck::PathAt::File
+                                       : PageCheck::PathAt::Other;
+        if (!PageCheck::screenshotPath(U(path), at, overwrite, error)) {
             respond(Result::failure(error));
             return;
         }
-        [probe snapshotTo:path full:a["full"].asBool() done:^(NSDictionary *info, NSString *snapError) {
+        [probe snapshotTo:path full:a["full"].asBool() overwrite:overwrite
+                     done:^(NSDictionary *info, NSString *snapError) {
             std::string why;
             if (snapError) { respond(Result::failure("no screenshot: " + U(snapError))); return; }
             if (!stillAllowed(why)) {

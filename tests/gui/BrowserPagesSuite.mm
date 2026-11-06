@@ -253,6 +253,10 @@ MC_GUI_SUITE(browserpages) {
         MCGuiWriteFile(mine, @"<html><head><title>Mine</title></head><body>The user's own page</body></html>");
         MCGuiWriteFile([gDir stringByAppendingPathComponent:@"notes.txt"], @"notes\n");
         [fm createDirectoryAtPath:shots withIntermediateDirectories:YES attributes:nil error:nil];
+        // A link a screenshot must never be written through (D25).
+        MCGuiWriteFile([shots stringByAppendingPathComponent:@"aimed-at.txt"], @"keep me");
+        [fm createSymbolicLinkAtPath:[shots stringByAppendingPathComponent:@"linked.png"]
+                 withDestinationPath:@"aimed-at.txt" error:nil];
         GCHECK(serving);
         MCGuiNote(@"pages served on port %d", gPort);
         [(id<MCControlAppHost>)NSApp.delegate controlOpenWindowAtPath:gDir];
@@ -364,6 +368,25 @@ MC_GUI_SUITE(browserpages) {
         GCHECK(px.width > 0 && px.height > 0);
         // As tall as the page on show, at the window's scale.
         GCHECK(fabs(px.height / px.width - web.bounds.size.height / web.bounds.size.width) < 0.02);
+    });
+    CLI(@"a second screenshot to the same path is refused", @[@"page", @"--screenshot", shot],
+        ^(int s, NSString *, NSString *err) {
+        GCHECK(s == 1 && [err containsString:@"--overwrite"] && PixelSize(shot).width > 0);
+    });
+    CLI(@"and taken with --overwrite", @[@"page", @"--screenshot", shot, @"--overwrite"],
+        ^(int s, NSString *, NSString *err) {
+        if (s != 0) MCGuiNote(@"overwrite: %@", err);
+        GCHECK(s == 0 && PixelSize(shot).width > 0);
+    });
+    NSString *linked = [shots stringByAppendingPathComponent:@"linked.png"];
+    NSString *aimed = [shots stringByAppendingPathComponent:@"aimed-at.txt"];
+    CLI(@"never through a symlink, even with --overwrite", @[@"page", @"--screenshot", linked, @"--overwrite"],
+        ^(int s, NSString *, NSString *err) {
+        GCHECK(s == 1 && [err containsString:@"symbolic link"]);
+        NSString *text = [NSString stringWithContentsOfFile:aimed encoding:NSUTF8StringEncoding error:nil];
+        GCHECK([text isEqualToString:@"keep me"]);
+        NSDictionary *at = [fm attributesOfItemAtPath:linked error:nil];
+        GCHECK([at.fileType isEqualToString:NSFileTypeSymbolicLink]);
     });
     CLI(@"a screenshot is a PNG", @[@"page", @"--screenshot", [shots stringByAppendingPathComponent:@"a.jpg"]],
         ^(int s, NSString *, NSString *err) {

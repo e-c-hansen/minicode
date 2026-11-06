@@ -90,6 +90,24 @@ std::vector<std::string> nodeBinDirs(const std::string& path, const std::string&
 // Is this a formatter a project installs in node_modules ("prettier", "biome")?
 bool fromNodeModules(const std::string& program);
 
+// Is `path` inside the folder `root` (or the folder itself)? Both spelled
+// the same way (resolved by the caller); "/" holds everything, "" nothing.
+bool insideFolder(const std::string& path, const std::string& root);
+
+// Where a formatter's program comes from. A copy in the project's own
+// folders (venvBinDirs, nodeBinDirs) is a program the folder supplies, which
+// runs with the user's rights, so it runs only once the user allows the
+// folder's own tools (the per-folder answer the Python language servers ask
+// for). `local`: that copy ("" for none; never $VIRTUAL_ENV's, which the
+// user activated); `outside`: the one found on PATH and the usual folders
+// ("" for none); `consent`: "allow", "deny", or "" when not asked yet.
+// A command from the settings file is the user's own choice of tool, so it
+// asks only when the folder holds the only copy; otherwise it runs the copy
+// outside the folder until the folder is allowed.
+enum class Source { Local, Outside, Ask, None };
+Source chooseProgram(bool fromSettings, const std::string& local, const std::string& outside,
+                     const std::string& consent);
+
 // A command line -> argv. Words are split like lsp.* commands (quotes group,
 // backslash escapes), and {file} is replaced inside each word afterwards, so
 // a path with spaces or quotes stays one argument and never needs quoting.

@@ -177,12 +177,29 @@ static void testPageCheck() {
         p = snapshotPlan(0, 0, 0, true);
         CHECK(p.height == 1);
         std::string err;
-        CHECK(screenshotPath("/tmp/s/shot.png", false, err));
-        CHECK(screenshotPath("/tmp/s/SHOT.PNG", false, err));
-        CHECK(!screenshotPath("/tmp/s/shot.jpg", false, err) && err.find(".png") != std::string::npos);
-        CHECK(!screenshotPath("/tmp/s/.zshrc", false, err));
-        CHECK(!screenshotPath("rel.png", false, err));
-        CHECK(!screenshotPath("/tmp/dir.png", true, err) && err.find("folder") != std::string::npos);
+        CHECK(screenshotPath("/tmp/s/shot.png", PathAt::Nothing, false, err));
+        CHECK(screenshotPath("/tmp/s/SHOT.PNG", PathAt::Nothing, false, err));
+        CHECK(!screenshotPath("/tmp/s/shot.jpg", PathAt::Nothing, false, err) &&
+              err.find(".png") != std::string::npos);
+        CHECK(!screenshotPath("/tmp/s/.zshrc", PathAt::File, true, err));
+        CHECK(!screenshotPath("rel.png", PathAt::Nothing, false, err));
+        CHECK(!screenshotPath("/tmp/dir.png", PathAt::Folder, true, err) &&
+              err.find("folder") != std::string::npos);
+    }
+
+    GROUP("page:screenshot-path");
+    {
+        // A file already there is replaced only when asked; a symlink or a
+        // special file never (a picture written through a link would land
+        // wherever it points).
+        std::string err;
+        CHECK(!screenshotPath("/tmp/s/shot.png", PathAt::File, false, err) &&
+              err.find("--overwrite") != std::string::npos);
+        CHECK(screenshotPath("/tmp/s/shot.png", PathAt::File, true, err));
+        CHECK(screenshotPath("/tmp/s/shot.png", PathAt::Nothing, true, err));
+        CHECK(!screenshotPath("/tmp/s/shot.png", PathAt::Other, false, err) &&
+              err.find("symbolic link") != std::string::npos);
+        CHECK(!screenshotPath("/tmp/s/shot.png", PathAt::Other, true, err));
     }
 
     GROUP("page:command-line");
@@ -215,7 +232,12 @@ static void testPageCheck() {
               c.args["path"].asString() == "/w/shots/a.png" && c.args["full"].asBool() &&
               c.output == Output::Line && c.outputField == "path");
         c = parse({"page", "--screenshot=~/s.png"});
-        CHECK(c.args["path"].asString() == "/Users/me/s.png");
+        CHECK(c.args["path"].asString() == "/Users/me/s.png" && !c.args.has("overwrite"));
+        c = parse({"page", "--screenshot", "a.png", "--overwrite"});
+        CHECK(c.error.empty() && c.args["overwrite"].asBool() &&
+              validateArgs(*findCommand("page"), c.args, err));
+        CHECK(!parse({"page", "--text", "--overwrite"}).error.empty());
+        CHECK(usageText("page").find("--overwrite") != std::string::npos);
         c = parse({"page", "--reload", "--wait"});
         CHECK(c.error.empty() && c.args["wait"].asBool() && c.output == Output::Json);
         CHECK(parse({"page", "--reload"}).output == Output::None);
