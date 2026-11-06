@@ -227,40 +227,59 @@ static void testFolding() {
         // A second fold on the same first line replaces the first.
         CHECK(c.add({30, 45}) && c.size() == 3 && c.all()[2].end == 45);
         CHECK(c.remove(30) && !c.remove(30) && c.size() == 2);
+        {
+            Fold::Collapsed m;
+            m.add({10, 20});
+            m.add({50, 60});
+            CHECK(m.addAll({{70, 80}, {10, 20}, {50, 65}, {5, 5}, {30, 40}, {30, 45}}) == 3);
+            CHECK(m.size() == 4 && m.all()[0] == (Fold::Span{10, 20}) &&
+                  m.all()[1] == (Fold::Span{30, 40}) && m.all()[2] == (Fold::Span{50, 65}) &&
+                  m.all()[3] == (Fold::Span{70, 80}));
+        }
 
         // Edits before a fold move it; at its start without a line break too.
         std::vector<Fold::Span> opened;
-        c.edit(0, 0, 3, false, &opened);
+        c.edit(0, 0, u"xxx", 3, u'a', &opened);
         CHECK(opened.empty() && c.all()[0] == (Fold::Span{13, 23}));
-        c.edit(13, 0, 2, false, &opened);              // typing at the end of its first line
+        c.edit(13, 0, u"xx", 2, u'a', &opened);              // typing at the end of its first line
         CHECK(opened.empty() && c.all()[0] == (Fold::Span{15, 25}));
-        c.edit(10, 5, 0, false, &opened);              // deleting up to its start
+        c.edit(10, 5, u"", 0, u'a', &opened);              // deleting up to its start
         CHECK(opened.empty() && c.all()[0] == (Fold::Span{10, 20}) &&
               c.all()[1] == (Fold::Span{12, 15}));
         // After it: nothing moves.
-        c.edit(21, 4, 1, true, &opened);
+        c.edit(21, 4, u"\n", 1, u'a', &opened);
         CHECK(opened.empty() && c.size() == 2);
         // Inside the inner fold: it opens, and the outer one with it.
-        c.edit(13, 0, 1, false, &opened);
+        c.edit(13, 0, u"x", 1, u'a', &opened);
         CHECK(c.empty() && opened.size() == 2 && opened[0].start == 10 && opened[0].end == 21);
 
         Fold::Collapsed d;
         d.add({10, 20});
-        d.edit(10, 0, 1, true, &opened);               // Return at the end of its first line
+        d.edit(10, 0, u"\n", 1, u'a', &opened);               // Return at the end of its first line
         CHECK(d.empty());
         d.add({10, 20});
-        d.edit(20, 0, 1, false);                       // typing after the placeholder
+        d.edit(20, 0, u"x", 1, u'a');                       // typing after the placeholder
         CHECK(d.empty());
         d.add({10, 20});
-        d.edit(20, 1, 0, false);                       // deleting the line break after it
+        d.edit(20, 1, u"", 0, u'a');                       // deleting the line break after it
         CHECK(d.empty());
         d.add({10, 20});
-        d.edit(5, 5, 2, true);                         // a pasted line break at its start
+        d.edit(20, 0, u"\n    ", 5, u'a');                  // Return after the placeholder
+        CHECK(d.size() == 1 && d.all()[0] == (Fold::Span{10, 20}));
+        d.edit(20, 5, u"", 0, u'\n');                      // and undoing it
+        CHECK(d.size() == 1 && d.all()[0] == (Fold::Span{10, 20}));
+        d.edit(20, 1, u"", 0, 0);                          // the last line break of the text
+        CHECK(d.size() == 1);
+        d.edit(3, 0, u"\n", 1, u'a');                        // a new line above it
+        CHECK(d.size() == 1 && d.all()[0] == (Fold::Span{11, 21}));
+        d.clear();
+        d.add({10, 20});
+        d.edit(5, 5, u"\nx", 2, u'a');                         // a pasted line break at its start
         CHECK(d.empty());
         d.add({10, 20});
-        d.edit(5, 5, 2, false);                        // replacing text before it
+        d.edit(5, 5, u"xx", 2, u'a');                        // replacing text before it
         CHECK(d.size() == 1 && d.all()[0] == (Fold::Span{7, 17}));
-        d.edit(0, 100, 0, false);                      // the whole text replaced
+        d.edit(0, 100, u"", 0, u'a');                      // the whole text replaced
         CHECK(d.empty());
     }
 

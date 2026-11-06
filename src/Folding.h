@@ -103,19 +103,25 @@ public:
     void clear() { folds_.clear(); }
     // Adds a fold; false when it is empty or already there.
     bool add(Span s);
+    // Adds many at once (Fold All on a long file), in O(n log n); returns
+    // how many were new. A span replaces a fold starting where it starts.
+    size_t addAll(const std::vector<Span>& spans);
     // Removes a fold that starts at `start`; false when there is none.
     bool remove(size_t start);
     bool contains(Span s) const;
 
-    // The units [pos, pos + oldLen) were replaced by newLen units. A fold
-    // the edit does not touch moves with the text; one it touches opens
-    // (is removed), and its span before the edit, shifted into the new
-    // text's offsets where it can be, is appended to *opened. Touching is
-    // replacing any hidden unit, inserting strictly inside the hidden part or
-    // at its end (the hidden last line), or inserting a line break where it
-    // starts (at the end of its first line).
-    void edit(size_t pos, size_t oldLen, size_t newLen, bool insertsLineBreak,
-              std::vector<Span>* opened = nullptr);
+    // The units [pos, pos + oldLen) were replaced by the newLen units of
+    // `inserted`, and `following` is the unit after them in the new text (0
+    // at its end). A fold the edit does not touch moves with the text; one
+    // it touches opens (is removed), and where it was, in the new text's
+    // offsets, is appended to *opened. Touching is replacing any hidden
+    // unit, inserting strictly inside the hidden part, putting a line break
+    // where it starts (at the end of its first line), or an edit at its end
+    // that leaves anything but a line break there (typing after the
+    // placeholder, or joining the next line onto the hidden one; Return
+    // there makes a line below the fold, and undoing that leaves it closed).
+    void edit(size_t pos, size_t oldLen, const char16_t* inserted, size_t newLen,
+              char16_t following, std::vector<Span>* opened = nullptr);
 
     // The folds inside no other fold: what the view shows as placeholders.
     // Their spans together are everything hidden.

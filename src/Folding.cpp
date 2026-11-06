@@ -571,6 +571,28 @@ bool Collapsed::add(Span s) {
     return true;
 }
 
+size_t Collapsed::addAll(const std::vector<Span>& spans) {
+    std::vector<Span> in;
+    in.reserve(spans.size());
+    for (const Span& s : spans)
+        if (s.end > s.start) in.push_back(s);
+    // The new ones first among equal starts, so they win over the old.
+    std::stable_sort(in.begin(), in.end(),
+                     [](const Span& a, const Span& b) { return a.start < b.start; });
+    std::vector<Span> merged;
+    merged.reserve(folds_.size() + in.size());
+    size_t added = 0, i = 0, j = 0;
+    while (i < in.size() || j < folds_.size()) {
+        const bool takeNew = j >= folds_.size() || (i < in.size() && in[i].start <= folds_[j].start);
+        const Span s = takeNew ? in[i++] : folds_[j++];
+        if (!merged.empty() && merged.back().start == s.start) continue;   // one per start
+        if (takeNew && !std::binary_search(folds_.begin(), folds_.end(), s, before)) added++;
+        merged.push_back(s);
+    }
+    folds_.swap(merged);
+    return added;
+}
+
 bool Collapsed::remove(size_t start) {
     for (auto it = folds_.begin(); it != folds_.end(); ++it)
         if (it->start == start) { folds_.erase(it); return true; }
@@ -581,19 +603,26 @@ bool Collapsed::contains(Span s) const {
     return std::find(folds_.begin(), folds_.end(), s) != folds_.end();
 }
 
-void Collapsed::edit(size_t pos, size_t oldLen, size_t newLen, bool insertsLineBreak,
-                     std::vector<Span>* opened) {
+void Collapsed::edit(size_t pos, size_t oldLen, const char16_t* inserted, size_t newLen,
+                     char16_t following, std::vector<Span>* opened) {
     const size_t end = pos + oldLen;
+    bool insertsLineBreak = false;
+    for (size_t i = 0; i < newLen && !insertsLineBreak; i++)
+        insertsLineBreak = inserted[i] == u'\n' || inserted[i] == u'\r';
+    // What stands at pos once the edit is made: still the end of a line?
+    const char16_t at = newLen > 0 ? inserted[0] : following;
+    const bool endsLine = at == 0 || at == u'\n' || at == u'\r';
     const long delta = (long)newLen - (long)oldLen;
     std::vector<Span> kept;
     kept.reserve(folds_.size());
     for (Span f : folds_) {
         bool touches;
         if (oldLen > 0)
-            touches = (pos < f.end && end > f.start) || pos == f.end ||
+            touches = (pos < f.end && end > f.start) || (pos == f.end && !endsLine) ||
                       (end == f.start && insertsLineBreak);
         else
-            touches = (pos > f.start && pos <= f.end) || (pos == f.start && insertsLineBreak);
+            touches = (pos > f.start && pos < f.end) || (pos == f.end && !endsLine) ||
+                      (pos == f.start && insertsLineBreak);
         if (touches) {
             if (opened) {
                 // Where it was, in the new text's offsets: the edit's own

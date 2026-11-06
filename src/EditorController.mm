@@ -27,6 +27,7 @@
 #import "EditorFind.h"
 #import "ProblemsPanel.h"
 #import "Gutter.h"
+#import "FoldView.h"
 #import "EditorFont.h"
 #import "AgentNotes.h"
 #import "CompareView.h"
@@ -530,6 +531,9 @@ private:
 @property(nonatomic, assign) CGFloat sourceCaretOffset;
 @property(nonatomic, assign) BOOL haveSourcePosition;
 @property(nonatomic, assign) NSPoint previewEntryScroll;
+// Its closed folds (FoldView.h), as UTF-16 spans of the source, while
+// another tab is shown; forgotten when the text is read again from disk.
+@property(nonatomic, copy)   NSArray<NSValue *> *folds;
 // Its backup (BackupStore): the id, the text and path last written (so an
 // unchanged buffer is not written again), whether one is on disk, and
 // whether the buffer came back from one and waits to be shown over the
@@ -1480,6 +1484,12 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⇧⇥" label2:@"Outdent lines" state:nil];
     [self appendHintsRow:s key:@"⌘= ⌘-" label:@"Zoom in, out"
                     key2:@"⌥⌘0" label2:@"Reset zoom" state:nil];
+    [self appendHintsRow:s key:@"⌃⌘[" label:@"Fold"
+                    key2:@"⌃⌘]" label2:@"Unfold" state:nil];
+    [self appendHintsRow:s key:@"⌃⌘0" label:@"Fold all"
+                    key2:@"⌃⌘J" label2:@"Unfold all" state:nil];
+    [self appendHintsRow:s key:@"⌃⌘L" label:@"Toggle fold"
+                    key2:@"⌃⌘1…7" label2:@"Fold level 1 to 7" state:nil];
 
     [self appendHintsHeading:@"Files" to:s];
     [self appendHintsRow:s key:@"⌥⌘N" label:@"New window"
@@ -3738,6 +3748,7 @@ static NSString *MCGroupedCount(long long n) {
 // (or throw past its end), so they go, and so do the LaTeX preview's.
 - (void)forgetHistoryOf:(MCTab *)t {
     [t.undoManager removeAllActions];
+    t.folds = nil;
     [t.latex forgetEdits];
 }
 
@@ -3926,6 +3937,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     [tv breakUndoCoalescing];   // typing in the next tab is a new undo step
     [self flushHighlighting];
     if (tv.editable && !t.showingMessage) t.sourceText = tv.string;
+    if (tv.editable && !t.showingMessage) t.folds = [self.textView.folds snapshot];
     t.selection = tv.selectedRange;
     t.topCharacter = 0;
     t.topOffset = 0;
@@ -4042,6 +4054,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     if ((t.isLatex && t.previewMode) || !t.haveView) return;
     NSTextView *tv = self.textView;
     const NSUInteger n = tv.string.length;
+    if (t.folds.count && tv.editable) [self.textView.folds restore:t.folds];
     NSRange sel = t.selection;
     if (sel.location > n) sel = NSMakeRange(n, 0);
     if (NSMaxRange(sel) > n) sel.length = n - sel.location;
@@ -5269,6 +5282,9 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     [self.textView.textStorage setAttributedString:attr];
     self.textView.typingAttributes = base;      // typed text stays monospaced
     self.textView.editable = YES;
+    // Regions by the file's name; an untitled buffer by its extension.
+    self.textView.folds.fileName = self.currentPath ?:
+        [@"untitled." stringByAppendingString:self.currentExt ?: @"txt"];
     [self applyHighlighting];
     [self.textView scrollToBeginningOfDocument:nil];
 }
