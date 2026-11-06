@@ -2065,10 +2065,9 @@ static const NSTimeInterval kResolveBeforeAccept = 0.4;
         // (typescript-language-server sends auto-imports only then), and
         // the status bar says so rather than leave a missing import unseen.
         server.client.cancel(rid);
-        if (self.showNote)
-            self.showNote([NSString stringWithFormat:
-                @"%@ went in without waiting for the language server, which may have "
-                 "added an import with it", NS(item.label)]);
+        [self note:[NSString stringWithFormat:
+            @"%@ went in without waiting for the language server, which may have "
+             "added an import with it", NS(item.label)]];
         return [_servers containsObject:server] && [_uri isEqualToString:uri] &&
                _edits == edits;
     }
