@@ -206,7 +206,7 @@
 
     static NSString *const titles[] = {@"", @"Paragraph", @"Heading", @"List item",
                                        @"Quote", @"Code block", @"Table cell", @"Table row",
-                                       @"Formula"};
+                                       @"Formula", @"HTML"};
     NSString *title = [titles[block.kind] stringByAppendingString:
         @" (Markdown; Return saves, Shift+Return for a new line)"];
     NSString *text = [NSString stringWithUTF8String:
@@ -363,7 +363,8 @@ static char kMarkdownMermaidKey;
     // that paragraph style; a quote's or a code block's paragraphs share one
     // text block, which draws the bar or the box around all of them.
     NSParagraphStyle *para = nil;
-    NSTextBlock *quoteBlock = nil, *codeBox = nil;
+    NSMutableArray<NSTextBlock *> *quoteBlocks = [NSMutableArray array];   // one a level
+    NSTextBlock *codeBox = nil;
     BOOL lineStart = YES;
     MCMarkdownCodeBlocks *codeColors = [MCMarkdownCodeBlocks new];   // ```python and the like
     for (size_t i = 0; i < runs.size();) {
@@ -374,7 +375,8 @@ static char kMarkdownMermaidKey;
             [self appendMarkdownTable:runs from:i to:end into:out];
             i = end;
             lineStart = YES;
-            quoteBlock = codeBox = nil;
+            [quoteBlocks removeAllObjects];
+            codeBox = nil;
             continue;
         }
         if (lineStart && i >= mermaidEnd) {
@@ -387,7 +389,8 @@ static char kMarkdownMermaidKey;
             if (pic) {
                 [out appendAttributedString:pic];
                 i = end;
-                quoteBlock = codeBox = nil;
+                [quoteBlocks removeAllObjects];
+            codeBox = nil;
                 continue;
             }
             if (mermaidComplaint || mermaidKey) {
@@ -413,7 +416,11 @@ static char kMarkdownMermaidKey;
                     key = [NSString stringWithFormat:@"%@-%d", slug, n];
                 if (key.length) anchors[key] = @(out.length);
             }
-            para = [self markdownParagraphFor:r quote:&quoteBlock code:&codeBox];
+            para = [self markdownParagraphFor:r quotes:quoteBlocks code:&codeBox];
+        }
+        if (!r.anchor.empty()) {   // a footnote, or a reference to one, that links land on
+            NSString *key = [NSString stringWithUTF8String:r.anchor.c_str()];
+            if (key.length && !anchors[key]) anchors[key] = @(out.length);
         }
         NSAttributedString *piece = [self markdownRun:r style:para inCell:NO];
         if (piece.length && i < mermaidEnd && (mermaidComplaint || mermaidKey)) {
