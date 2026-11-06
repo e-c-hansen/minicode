@@ -30,6 +30,8 @@
 #import "EditorFont.h"
 #import "AgentNotes.h"
 #import "CompareView.h"
+#import "FileViewers.h"
+#import "QuickLook.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #import <AVKit/AVKit.h>                 // video and audio in the editor's slot
 #import <AVFoundation/AVFoundation.h>
@@ -338,6 +340,15 @@ static BOOL gShowHidden = NO;
         self.onRename();
         return;
     }
+    // Space toggles Quick Look on the selection, as in Finder; Esc closes it.
+    if (mods == 0 && event.keyCode == 49 /* kVK_Space */) {
+        [[MCQuickLookPanel shared] toggleWithURLs:[self selectedFileURLs]];
+        return;
+    }
+    if (mods == 0 && event.keyCode == 53 /* kVK_Escape */ && [MCQuickLookPanel shared].shown) {
+        [[MCQuickLookPanel shared] close];
+        return;
+    }
     NSString *chars = event.charactersIgnoringModifiers;
     if (chars.length == 1) {
         unichar c = [chars characterAtIndex:0];
@@ -348,6 +359,28 @@ static BOOL gShowHidden = NO;
         }
     }
     [super keyDown:event];   // arrows, left/right expand-collapse stay native
+    [[MCQuickLookPanel shared] followURLs:[self selectedFileURLs]];   // when open
+}
+
+- (NSArray<NSURL *> *)selectedFileURLs {
+    NSMutableArray<NSURL *> *urls = [NSMutableArray array];
+    [self.selectedRowIndexes enumerateIndexesUsingBlock:^(NSUInteger row, BOOL *) {
+        FileItem *item = [self itemAtRow:(NSInteger)row];
+        if ([item isKindOfClass:FileItem.class] && item.path)
+            [urls addObject:[NSURL fileURLWithPath:item.path]];
+    }];
+    return urls;
+}
+
+// The Quick Look panel asks the responder chain who drives it (QuickLook.h).
+- (BOOL)acceptsPreviewPanelControl:(QLPreviewPanel *)panel {
+    return [[MCQuickLookPanel shared] acceptsControl];
+}
+- (void)beginPreviewPanelControl:(QLPreviewPanel *)panel {
+    [[MCQuickLookPanel shared] beginControl:panel];
+}
+- (void)endPreviewPanelControl:(QLPreviewPanel *)panel {
+    [[MCQuickLookPanel shared] endControl:panel];
 }
 @end
 
@@ -499,6 +532,8 @@ private:
 @property(nonatomic, copy)   NSString *pendingSort;
 @property(nonatomic, strong) LatexView *latex;        // its own, so its undo and page stay
 @property(nonatomic, assign) BOOL isImage, isPDF, isMedia;
+// A viewer of FileViewers.h (Quick Look and the like), or MCViewerNone.
+@property(nonatomic, assign) MCViewerKind viewerKind;
 @property(nonatomic, assign) NSSize imagePixels, mediaPixels;
 @property(nonatomic, assign) double mediaSeconds;
 @property(nonatomic, assign) BOOL showingMessage;
@@ -558,6 +593,8 @@ private:
     // The open files, in the order the strip shows them, and the one shown.
     NSMutableArray<MCTab *> *_tabs;
     MCTab *_activeTab;
+    // The viewers of FileViewers.h, made on first use (-viewers).
+    MCFileViewers *_viewers;
     uint64_t _tabStamp;                    // counts activations, for MCTab.lastActive
     NSUndoManager *_noTabUndo;             // the text view's while no tab is open
     FSEventStreamRef _fsStream;            // watches the open folder for changes
@@ -664,6 +701,7 @@ private:
 @property(nonatomic, assign) BOOL isPDF;
 @property(nonatomic, strong) AVPlayerView *playerView; // editor's slot, video and audio
 @property(nonatomic, assign) BOOL isMedia;
+@property(nonatomic, assign) MCViewerKind viewerKind;   // FileViewers.h
 @property(nonatomic, strong) AVPlayerItem *mediaItem;  // observed for size and duration
 @property(nonatomic, assign) NSSize mediaPixels;       // zero for audio
 @property(nonatomic, assign) double mediaSeconds;      // < 0 until known
@@ -1487,7 +1525,7 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     [self appendHintsRow:s key:@"⌘⌫" label:@"Trash (in the tree)"
                     key2:@"⌘R" label2:@"Refresh tree" state:nil];
     [self appendHintsRow:s key:@"F2" label:@"Rename (in the tree)"
-                    key2:nil label2:nil state:nil];
+                    key2:@"Space" label2:@"Quick Look (in the tree)" state:nil];
     [self appendHintsRow:s key:@"⇧⌘." label:@"Show hidden files"
                     key2:@"⇧⌘I" label2:@"Sizes" state:nil];
     [self appendHintsRow:s key:@"⌥⇧⌘I" label:@"When last saved"
@@ -1672,10 +1710,16 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     BOOL showCompare = showEditor && self.compareView != nil && self.isDiff &&
                        _activeTab.comparison != nil;
     BOOL showDiff = showEditor && self.diffScroll != nil && self.isDiff && !showCompare;
-    self.editorScroll.frame = editorRect;
+    // Quick Look and the other viewers (FileViewers.h): the whole slot, or
+    // a part of it beside the text.
+    BOOL showViewer = NO;
+    NSRect textRect = _viewers ? [_viewers layoutInRect:editorRect editorShown:showEditor
+                                             coversText:&showViewer]
+                               : editorRect;
+    self.editorScroll.frame = textRect;
     self.editorScroll.hidden = !showEditor || showLatex || showImage || showPDF ||
-                               showMedia || showDiff || showCompare;
-    [_editorFind layoutInEditorRect:editorRect visible:!self.editorScroll.hidden];
+                               showMedia || showDiff || showCompare || showViewer;
+    [_editorFind layoutInEditorRect:textRect visible:!self.editorScroll.hidden];
     if (self.diffScroll) {
         self.diffScroll.frame = editorRect;
         self.diffScroll.hidden = !showDiff;
@@ -3006,7 +3050,8 @@ static NSString *MCGroupedCount(long long n) {
         else {
             text = MCSavedPhrase(disk, [NSDate date]);
             // Pictures, PDFs and media are never saved from here.
-            if ((t.isImage || t.isPDF || t.isMedia) && [text hasPrefix:@"Saved"])
+            if ((t.isImage || t.isPDF || t.isMedia || MCViewerKindWithoutText(t.viewerKind)) &&
+                [text hasPrefix:@"Saved"])
                 text = [@"Modified" stringByAppendingString:[text substringFromIndex:5]];
         }
         if (disk) tip = [@"On disk since " stringByAppendingString:MCFullDate(disk)];
@@ -3408,6 +3453,8 @@ static NSString *MCGroupedCount(long long n) {
     self.imageView.image = nil;
     self.pdfView.document = nil;
     [self stopMedia];   // the sound must stop when anything else is shown
+    self.viewerKind = MCViewerNone;
+    [_viewers clear];
     self.isDiff = NO;
     self.diffName = nil;
     self.diffData = nil;
@@ -3613,6 +3660,26 @@ static NSString *MCGroupedCount(long long n) {
     return YES;
 }
 
+- (MCFileViewers *)viewers {
+    if (!_viewers)
+        _viewers = [[MCFileViewers alloc] initWithContainer:self.rightArea below:self.termDivider];
+    return _viewers;
+}
+
+// Show the active tab's file in a viewer that holds no text (Quick Look,
+// say): nothing in the text view to save, as for an image. NO when the
+// viewer cannot show it.
+- (BOOL)showViewer:(MCViewerKind)kind {
+    if (![self.viewers showWithoutText:kind path:self.currentPath]) return NO;
+    self.viewerKind = kind;
+    self.currentExt = self.currentPath.pathExtension.lowercaseString;
+    [self setPlainMessage:@""];
+    [self relayoutRightArea];
+    [self.lsp documentOpened:nil];
+    [self updateTitle];
+    return YES;
+}
+
 - (BOOL)canTogglePlayback { return self.isMedia && self.playerView.player != nil; }
 
 // Shift+Cmd+Space: play or pause whatever the player holds, from any pane.
@@ -3674,12 +3741,26 @@ static NSString *MCGroupedCount(long long n) {
         [self recordModDate];
         return;
     }
+    // Binary by its content (or a document only Quick Look shows) is never
+    // opened as text; a backup, being text, still is.
+    const MCViewerKind viewer = restored ? MCViewerNone : MCViewerKindForFile(path);
+    if (MCViewerKindWithoutText(viewer) && [self showViewer:viewer]) {
+        [self recordModDate];
+        return;
+    }
     NSError *err = nil;
     NSString *content = [NSString stringWithContentsOfFile:path
                                                   encoding:NSUTF8StringEncoding
                                                      error:&err];
     // The file is gone, or no longer reads as text: the backup is all there is.
     if (!content && restored) content = @"";
+    // Not UTF-8: Quick Look shows what it can (text in another encoding,
+    // or the file's icon).
+    if (!content && [[NSFileManager defaultManager] fileExistsAtPath:path] &&
+        [self showViewer:MCViewerQuickLook]) {
+        [self recordModDate];
+        return;
+    }
     if (!content) {
         // resetViewMode above cleared the previous file's mode, so no stale
         // preview stays on screen and the text view is read-only, which keeps
@@ -3772,6 +3853,7 @@ MC_TAB_PROPERTY(BOOL, isImage, setIsImage)
 MC_TAB_PROPERTY(NSSize, imagePixels, setImagePixels)
 MC_TAB_PROPERTY(BOOL, isPDF, setIsPDF)
 MC_TAB_PROPERTY(BOOL, isMedia, setIsMedia)
+MC_TAB_PROPERTY(MCViewerKind, viewerKind, setViewerKind)
 MC_TAB_PROPERTY(NSSize, mediaPixels, setMediaPixels)
 MC_TAB_PROPERTY(double, mediaSeconds, setMediaSeconds)
 MC_TAB_PROPERTY(BOOL, showingMessage, setShowingMessage)
@@ -3956,6 +4038,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     if (t.isMedia && self.playerView.player)
         t.mediaTime = CMTimeGetSeconds(self.playerView.player.currentTime);
     // The shared views let go; the tab's own flags stay as they are.
+    [_viewers clear];
     self.imageView.image = nil;
     self.pdfView.document = nil;
     [self.playerView.player pause];
@@ -3978,6 +4061,10 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     _haveSourcePosition = t.haveSourcePosition;
     _previewEntryScroll = t.previewEntryScroll;
     self.textView.editable = NO;
+    if (MCViewerKindWithoutText(t.viewerKind)) {
+        if (![self showViewer:t.viewerKind]) [self loadActiveTab];
+        return;
+    }
     if (t.isImage) {
         if (![self showImageAtPath:path]) [self loadActiveTab];
         return;
@@ -4145,6 +4232,8 @@ static const NSUInteger kMaxClosedTabs = 50;
         [self.window makeFirstResponder:self.compareView.leftView];
     else if (self.isDiff && self.diffView) [self.window makeFirstResponder:self.diffView];
     else if (self.isImage) [self.window makeFirstResponder:nil];   // nothing in it takes keys
+    else if (self.viewerKind != MCViewerNone && _viewers.focusView)
+        [self.window makeFirstResponder:_viewers.focusView];
     else [self.window makeFirstResponder:self.textView];
 }
 
@@ -4859,6 +4948,7 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     if (self.isImage) { [self showImageAtPath:self.currentPath]; return; }
     if (self.isPDF) { [self showPDFAtPath:self.currentPath]; return; }
     if (self.isMedia) { [self showMediaAtPath:self.currentPath]; return; }
+    if (MCViewerKindWithoutText(self.viewerKind)) { [self showViewer:self.viewerKind]; return; }
     if (!self.dirty) {                       // no local edits: reload quietly
         [self reloadCleanTab:_activeTab];
         return;
@@ -8326,7 +8416,8 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
     NSMutableArray<NSDictionary *> *out = [NSMutableArray array];
     for (MCTab *t in _tabs) {
         NSString *kind = t.comparison ? @"diff" : t.isDiff ? (t.diffIsCommit ? @"commit" : @"git-diff")
-                       : t.isImage ? @"image" : t.isPDF ? @"pdf" : t.isMedia ? @"media" : @"text";
+                       : t.isImage ? @"image" : t.isPDF ? @"pdf" : t.isMedia ? @"media"
+                       : t.viewerKind == MCViewerQuickLook ? @"quicklook" : @"text";
         NSString *path = t.currentPath ?: t.comparison.path;
         NSString *title = t.comparison ? t.comparison.title
                         : t.isDiff ? t.diffName : t.currentPath.lastPathComponent;

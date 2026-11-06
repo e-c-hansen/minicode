@@ -124,6 +124,30 @@
 		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
+			<string>Document (Quick Look)</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.openxmlformats.wordprocessingml.document</string>
+				<string>org.openxmlformats.spreadsheetml.sheet</string>
+				<string>org.openxmlformats.presentationml.presentation</string>
+				<string>com.microsoft.word.doc</string>
+				<string>com.microsoft.excel.xls</string>
+				<string>com.microsoft.powerpoint.ppt</string>
+				<string>com.apple.iwork.pages.sffpages</string>
+				<string>com.apple.iwork.numbers.sffnumbers</string>
+				<string>com.apple.iwork.keynote.sffkey</string>
+				<string>org.oasis-open.opendocument.text</string>
+				<string>org.oasis-open.opendocument.spreadsheet</string>
+				<string>org.oasis-open.opendocument.presentation</string>
+				<string>org.idpf.epub-container</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
 			<string>Video</string>
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>

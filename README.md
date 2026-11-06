@@ -26,6 +26,8 @@ Source files are highlighted by extension: Python, the C family, JavaScript, Typ
 
 ![Opening a PNG and then a PDF from the file tree](docs/demos/files.gif)
 
+On the Mac, a file minicode has no viewer of its own for, such as a Word, Excel, PowerPoint, Pages, Numbers or Keynote document, opens in a tab as a Quick Look preview, the one Finder shows, and so does any binary file: minicode looks at the first few kilobytes, and a file with a zero byte in them is never opened as text, whatever its name says. Space on a file in the tree opens the Quick Look panel on it, as in Finder, and Space again or Escape closes it; while it is open, the arrow keys move it through the files.
+
 Return indents the way the language expects. In Python a line ending in a colon starts an indented block, the line after return, pass, break, continue, or raise goes back a level, and a new line inside an open bracket lines up with whatever follows the bracket, or is indented one level when the bracket ends its line. The line after a call spread over several lines goes back to where the call started, not to its last argument. In C, JavaScript, Go, Rust, and the other brace languages, Return after an opening brace indents, and in YAML so does Return after a key that ends in a colon. Return between a pair of brackets, as in `foo()`, puts the closing bracket on a line of its own. Typing the colon of else, elif, except, or finally moves the line back under its if or try, and a closing brace typed on an empty line moves back under the line that opened it. How far to indent comes from the file, whether tabs or two or four spaces: Tab inserts that much, Backspace in leading spaces removes that much, and Tab and Shift Tab on a selection indent and outdent its lines.
 
 F9 sorts the selected lines. Lines between a `keep-sorted start` and a `keep-sorted end` comment, as used by Google's [keep-sorted](https://github.com/google/keep-sorted), are sorted the way that tool sorts them, its options included: F9 with the cursor inside such a block sorts it, Shift F9 sorts every block in the file, and editor.keep-sorted-on-save = true in the settings sorts them all whenever the file is saved. A start without an end leaves the file alone and the status bar says which line it is on.
@@ -339,6 +341,7 @@ A blank cell means that port does not have the action yet. On Android, a letter 
 | Organize the file's imports, with a language server (Ruff's, when it runs) | Shift Option O |  |  |
 | Page through the terminal's scrollback, or jump to its top or bottom | Shift Page Up, Shift Page Down, Command Home, Command End |  |  |
 | Play or pause a video or audio file | Shift Command Space | Ctrl Shift Space | Space in the player, or Ctrl Shift Space |
+| Preview the selected file in the tree with Quick Look, as in Finder, and close the preview | Space, then Space or Escape |  |  |
 | Refresh the file tree | Command R |  |  |
 | Rename the name at the cursor wherever it is used, with a language server | F2 |  |  |
 | Rename the selected file or folder | F2, in the file tree | F2, in the file tree |  |
