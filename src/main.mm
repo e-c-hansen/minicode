@@ -13,6 +13,7 @@
 #import "BackupStore.h"
 #import "EditorFont.h"
 #import "ControlServer.h"
+#import "Keymap.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, MCRestarting, MCControlAppHost>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
@@ -50,10 +51,12 @@ static BOOL MCIsCommandPeriod(NSEvent *e) {
                name:NSWindowWillCloseNotification
              object:nil];
 
-    // Ctrl+` (toggle terminal) is the one shortcut that isn't a clean menu key
-    // equivalent, so a local key monitor handles it regardless of focus. The
-    // monitor object is retained so it stays installed. Everything else is a
-    // normal menu shortcut, which works in every pane (like Cmd+C does).
+    // Keys that would not reach their menu item by themselves, or not first:
+    // which ones and why are in Keymap.h (Ctrl+` and Ctrl+Shift+` for the
+    // terminal, Shift+Option+F and the F keys in the editor, a tour's
+    // Option+] and Option+[, Cmd+keypad 0, the Menu key, Ctrl+G for a
+    // program on the terminal's grid). They follow keys.conf like the menus.
+    // Everything else is a normal menu key, which works in every pane.
     self.keyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
                                           handler:^NSEvent *(NSEvent *e) {
         // Cmd+. is Quick Fix in the editor and cancel everywhere else (a
@@ -62,7 +65,7 @@ static BOOL MCIsCommandPeriod(NSEvent *e) {
         // the key: the window's own key equivalents (a sheet's Cancel),
         // then the first responder, whose key bindings make Cmd+. the
         // cancelOperation: that Esc also sends.
-        if (MCIsCommandPeriod(e) && e.window && !NSApp.modalWindow) {
+        if (MCIsCommandPeriod(e) && e.window && !NSApp.modalWindow && MCKeymapEventIsBound(e)) {
             NSResponder *fr = e.window.firstResponder;
             if ([self controllerForWindow:e.window] && [fr isKindOfClass:[CodeTextView class]] &&
                 ((NSTextView *)fr).editable) {
@@ -72,79 +75,8 @@ static BOOL MCIsCommandPeriod(NSEvent *e) {
             if (![e.window performKeyEquivalent:e]) [fr keyDown:e];
             return nil;
         }
-        EditorController *c = [self controllerForWindow:e.window];
-        if (!c) return e;
-        NSEventModifierFlags m = e.modifierFlags;
-        BOOL cmd = (m & NSEventModifierFlagCommand) != 0;
-        BOOL ctrl = (m & NSEventModifierFlagControl) != 0;
-        BOOL opt = (m & NSEventModifierFlagOption) != 0;
-        NSString *ch = e.charactersIgnoringModifiers.lowercaseString;
-        BOOL shift = (m & NSEventModifierFlagShift) != 0;
-        // Ctrl+Shift+` (a new terminal) by the key's position, since Shift
-        // turns its character into ~ on most layouts.
-        if (ctrl && shift && !cmd && !opt &&
-            (e.keyCode == 50 || [ch isEqualToString:@"~"])) {
-            [c newTerminal:nil];
-            return nil;
-        }
-        if (ctrl && !cmd && !opt && [ch isEqualToString:@"`"]) {
-            [c toggleTerminal:nil];
-            return nil;   // consume
-        }
-        // The Menu (Application) key of a PC keyboard opens the context
-        // menu of what has the keyboard, as Shift+F10 does.
-        if (e.keyCode == 0x6E /* kVK_ContextualMenu */ && !cmd && !ctrl && !opt) {
-            MCShowContextMenuInWindow(e.window);
-            return nil;
-        }
-        // Shift+Option+F is Format Document only in the editor. Anywhere
-        // else that takes typing (the terminal, the commit message, a find
-        // field) it types its character, as it did before the menu had it.
-        // In the editor the menu gets it first: AppKit offers a key without
-        // Command or Control to the menu only after the first responder,
-        // and the text view takes it as typing (Ï). F9 and Shift+F9 too.
-        // Ctrl+G is Go to Line, except in a program on the terminal's grid
-        // (nano, emacs and less use it), which gets it as typed.
-        if (ctrl && !cmd && !opt && !shift && [ch isEqualToString:@"g"] &&
-            [e.window.firstResponder isKindOfClass:NSClassFromString(@"TerminalGridView")]) {
-            [e.window.firstResponder keyDown:e];
-            return nil;
-        }
-        // Option+] and Option+[ step through an agent's tour, only while one
-        // is on in this window; otherwise they type their characters.
-        if (opt && !cmd && !ctrl && !shift && c.tourActive &&
-            (e.keyCode == 30 || e.keyCode == 33)) {
-            if (e.keyCode == 30) [c nextTourStop:nil];
-            else [c previousTourStop:nil];
-            return nil;
-        }
-        // Cmd+keypad 0, VS Code's Reset Zoom; the menu would read it as
-        // Cmd+0, Focus File Tree.
-        if (e.keyCode == 82 /* kVK_ANSI_Keypad0 */ && cmd && !ctrl && !opt && !shift) {
-            [NSApp editorZoomReset:nil];
-            return nil;
-        }
-        // Shift+Option+O (Organize Imports) the same way.
-        BOOL formatKey = opt && shift && !cmd && !ctrl &&
-                         ([ch isEqualToString:@"f"] || [ch isEqualToString:@"o"]);
-        BOOL sortKey = e.keyCode == 101 /* kVK_F9 */ && !cmd && !ctrl && !opt;
-        // F2 and Shift+F12 likewise (Rename Symbol, Find All References),
-        // and F8 and Shift+F8 (Next and Previous Problem).
-        BOOL lspKey = (e.keyCode == 120 /* kVK_F2 */ && !cmd && !ctrl && !opt && !shift) ||
-                      (e.keyCode == 111 /* kVK_F12 */ && shift && !cmd && !ctrl && !opt) ||
-                      (e.keyCode == 100 /* kVK_F8 */ && !cmd && !ctrl && !opt);
-        if (formatKey || sortKey || lspKey) {
-            NSResponder *fr = e.window.firstResponder;
-            if ([fr isKindOfClass:[CodeTextView class]]) {
-                if ([NSApp.mainMenu performKeyEquivalent:e]) return nil;
-            } else if (formatKey &&
-                       ([fr conformsToProtocol:@protocol(NSTextInputClient)] ||
-                        [fr isKindOfClass:NSClassFromString(@"TerminalGridView")])) {
-                [fr keyDown:e];
-                return nil;
-            }
-        }
-        return e;
+        if (![self controllerForWindow:e.window]) return e;
+        return MCKeymapHandleKeyDown(e) ? nil : e;
     }];
 
     // The control channel (`minicode open`, `state`, ...; ControlServer.h).
@@ -695,6 +627,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)deleteSelected:(id)sender  { [[self current] deleteSelected:sender]; }
 - (void)refreshTree:(id)sender     { [[self current] refreshTree:sender]; }
 - (void)openSettings:(id)sender    { [[self current] openSettings:sender]; }
+- (void)openKeyboardShortcuts:(id)sender { [[self current] openKeyboardShortcuts:sender]; }
 - (void)adjustAppearance:(id)sender { [[self current] adjustAppearance:sender]; }
 - (void)toggleComment:(id)sender   { [[self current] toggleComment:sender]; }
 - (void)formatDocument:(id)sender  { [[self current] formatDocument:sender]; }
@@ -755,6 +688,12 @@ static void BuildMenu(void) {
     [appMenu addItemWithTitle:@"Settings…"
                        action:@selector(openSettings:)
                 keyEquivalent:@","];
+    // keys.conf (Keymap.h), written with every command when there is none.
+    // VS Code's key is a Cmd+K chord, and minicode has no chords; the
+    // palette finds it.
+    [appMenu addItemWithTitle:@"Keyboard Shortcuts…"
+                       action:@selector(openKeyboardShortcuts:)
+                keyEquivalent:@""];
     // Beside Settings, since the settings file is where servers are named;
     // the status bar's server item opens the same popover.
     [appMenu addItemWithTitle:@"Language Servers…"
@@ -1527,6 +1466,7 @@ int main(int argc, const char *argv[]) {
         AppDelegate *delegate = [[AppDelegate alloc] init];
         app.delegate = delegate;
         BuildMenu();
+        MCKeymapInstall();   // the keys in effect, from keys.conf (Keymap.h)
         [app run];
     }
     return 0;

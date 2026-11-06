@@ -677,9 +677,10 @@ Keymap resolve(const std::string& text, std::vector<Error>* errors) {
         for (const Given& g : given[ks]) {
             if (g.cmd == cmd) { again = true; break; }
             if (overlaps(g.cmd->when, cmd->when)) {
+                const When in = cmd->when == When::Any ? g.cmd->when : cmd->when;
                 err(lineNo, ks + " is already " + describe(*g.cmd) + ", from line " +
-                                std::to_string(g.line) + "; a key can run only one command in " +
-                                whenName(cmd->when == When::Any ? g.cmd->when : cmd->when));
+                                std::to_string(g.line) + "; a key can run only one command" +
+                                (in == When::Any ? std::string() : std::string(" in ") + whenName(in)));
                 refused = true;
                 break;
             }

@@ -110,6 +110,7 @@
 - (void)deleteSelected:(id)sender;
 - (void)refreshTree:(id)sender;
 - (void)openSettings:(id)sender;       // Cmd+, open the settings file
+- (void)openKeyboardShortcuts:(id)sender;   // keys.conf, written the first time
 // View > Adjust Settings > (part): the settings file at that part's keys. The
 // sender's representedObject is a surface id (Settings::appearanceSurfaces).
 - (void)adjustAppearance:(id)sender;

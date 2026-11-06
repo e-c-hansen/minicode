@@ -62,5 +62,6 @@ void MCShowPalette(NSWindow *window, NSString *text, MCPaletteContext *context);
 NSView *MCCommandPaletteIn(NSWindow *window);
 NSTextField *MCCommandPaletteField(NSView *palette);
 NSArray<NSString *> *MCCommandPaletteLabels(NSView *palette);
+NSArray<NSString *> *MCCommandPaletteKeys(NSView *palette);   // each row's keys, as drawn
 NSInteger MCCommandPaletteSelection(NSView *palette);
 BOOL MCCommandPaletteFilesListed(NSView *palette);

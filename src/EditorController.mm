@@ -40,6 +40,7 @@
 #import "FileViewers.h"
 #import "QuickLook.h"
 #import "MarkdownCode.h"
+#import "Keymap.h"
 #import <CoreServices/CoreServices.h>   // FSEvents, for live file-tree updates
 #import <AVKit/AVKit.h>                 // video and audio in the editor's slot
 #import <AVFoundation/AVFoundation.h>
@@ -1009,6 +1010,9 @@ static const NSInteger kWorktreeMenuTag = 7701;
         addObserver:self selector:@selector(applySettings)
                name:MCSettingsDidChangeNotification object:nil];
     [[NSNotificationCenter defaultCenter]
+        addObserver:self selector:@selector(keymapChanged:)
+               name:MCKeymapDidChangeNotification object:nil];
+    [[NSNotificationCenter defaultCenter]
         addObserver:self selector:@selector(editorZoomChanged:)
                name:MCEditorZoomDidChangeNotification object:nil];
     [[NSNotificationCenter defaultCenter]
@@ -1189,17 +1193,35 @@ static void *kMediaItemContext = &kMediaItemContext;
     [self layoutContainer];
 }
 
+// Problems in settings.conf, then in keys.conf (Keymap.h), on the left of
+// the status bar: the first, with a count of the rest; all in the tooltip.
 - (void)showSettingsErrors {
     AppSettings *cfg = [AppSettings shared];
-    NSArray<NSString *> *errors = cfg.errors;
+    MCKeymap *keys = [MCKeymap shared];
+    NSMutableArray<NSString *> *errors = [NSMutableArray array];
+    for (NSString *e in cfg.errors) [errors addObject:[@"Settings " stringByAppendingString:e]];
+    for (NSString *e in keys.errors) [errors addObject:[@"Keys " stringByAppendingString:e]];
     self.settingsLabel.stringValue = errors.count == 0 ? @"" :
-        [NSString stringWithFormat:@"Settings %@%@", errors.firstObject,
+        [NSString stringWithFormat:@"%@%@", errors.firstObject,
             errors.count > 1
                 ? [NSString stringWithFormat:@" (and %lu more)",
                    (unsigned long)errors.count - 1] : @""];
-    self.settingsLabel.toolTip = errors.count
-        ? [NSString stringWithFormat:@"%@\n\n%@", cfg.path,
-           [errors componentsJoinedByString:@"\n"]] : nil;
+    NSMutableArray<NSString *> *tip = [NSMutableArray array];
+    if (cfg.errors.count)
+        [tip addObject:[NSString stringWithFormat:@"%@\n%@", cfg.path,
+                        [cfg.errors componentsJoinedByString:@"\n"]]];
+    if (keys.errors.count)
+        [tip addObject:[NSString stringWithFormat:@"%@\n%@", keys.path,
+                        [keys.errors componentsJoinedByString:@"\n"]]];
+    self.settingsLabel.toolTip = tip.count ? [tip componentsJoinedByString:@"\n\n"] : nil;
+}
+
+// keys.conf changed: the menus have their new keys already; the status bar
+// and the shortcut hints follow.
+- (void)keymapChanged:(NSNotification *)note {
+    (void)note;
+    [self showSettingsErrors];
+    if (!self.hintsPanel.hidden) [self updateHints];
 }
 
 // Redraw the open document in the current colors, keeping the scroll
@@ -1228,6 +1250,19 @@ static void *kMediaItemContext = &kMediaItemContext;
         return;
     }
     [self openFileAtPath:cfg.path];
+    [self focusEditor:nil];
+}
+
+// keys.conf, as Settings… opens settings.conf; the first time it is written
+// with every command and its keys, commented out (Commands::defaultFileText).
+- (void)openKeyboardShortcuts:(id)sender {
+    (void)sender;
+    MCKeymap *keys = [MCKeymap shared];
+    if (![keys ensureFileExists]) {
+        [self warn:[NSString stringWithFormat:@"Could not create %@.", keys.path]];
+        return;
+    }
+    [self openFileAtPath:keys.path];
     [self focusEditor:nil];
 }
 
@@ -1498,6 +1533,30 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     add(@"\n", labelAttr);
 }
 
+// A command's first key as the hints show it (from keys.conf and the
+// registry, Keymap.h); "—" when keys.conf took every key away.
+- (NSString *)hk:(NSString *)commandId {
+    NSString *k = MCKeymapGlyphs(commandId);
+    return k.length ? k : @"—";
+}
+
+// Every key of a command, "⌥↓ ⌘↓"; the one at index, "" when there is none;
+// and a pane's title with its other keys, "Terminal  (also ⌘J, ⌃`)".
+- (NSString *)hkAll:(NSString *)commandId {
+    NSArray<NSString *> *all = MCKeymapAllGlyphs(commandId);
+    return all.count ? [all componentsJoinedByString:@" "] : @"—";
+}
+- (NSString *)hk:(NSString *)commandId at:(NSUInteger)index {
+    NSArray<NSString *> *all = MCKeymapAllGlyphs(commandId);
+    return index < all.count ? all[index] : @"";
+}
+- (NSString *)hkAlso:(NSString *)commandId title:(NSString *)title {
+    NSArray<NSString *> *all = MCKeymapAllGlyphs(commandId);
+    if (all.count < 2) return title;
+    NSArray *rest = [all subarrayWithRange:NSMakeRange(1, all.count - 1)];
+    return [NSString stringWithFormat:@"%@  (also %@)", title, [rest componentsJoinedByString:@", "]];
+}
+
 // Context-aware shortcut list.
 - (NSAttributedString *)hintsText {
     NSMutableAttributedString *s = [NSMutableAttributedString new];
@@ -1506,127 +1565,127 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     };
 
     [self appendHintsHeading:@"Editing" to:s];
-    [self appendHintsRow:s key:@"⌘N" label:@"New file"
-                    key2:@"⌘O" label2:@"Open folder" state:nil];
-    [self appendHintsRow:s key:@"⌘S" label:@"Save"
-                    key2:@"⌘F" label2:@"Find in file" state:nil];
-    [self appendHintsRow:s key:@"⌘Z" label:@"Undo"
-                    key2:@"⇧⌘Z" label2:@"Redo" state:nil];
-    [self appendHintsRow:s key:@"⌘C ⌘X" label:@"Copy, cut (the line if none)"
-                    key2:@"⌘A" label2:@"Select all" state:nil];
-    [self appendHintsRow:s key:@"⌘L" label:@"Select line"
-                    key2:@"⌃⇧K" label2:@"Delete line" state:nil];
-    [self appendHintsRow:s key:@"⌘/" label:@"Toggle comment"
-                    key2:@"⇧⌘F" label2:@"Find in folder" state:nil];
-    [self appendHintsRow:s key:@"⌥⌘F" label:@"Replace in file"
-                    key2:@"⌥⇧⌘F" label2:@"Replace in folder" state:nil];
-    [self appendHintsRow:s key:@"⌘G ⇧⌘G" label:@"Next, previous match"
-                    key2:@"⌘E" label2:@"Use selection for find" state:nil];
-    [self appendHintsRow:s key:@"⌥⌘C ⌥⌘W" label:@"Match case, whole word"
-                    key2:@"⌥⌘R" label2:@"Regular expression" state:nil];
+    [self appendHintsRow:s key:[self hk:@"explorer.newFile"] label:@"New file"
+                    key2:[self hk:@"workbench.action.files.openFolder"] label2:@"Open folder" state:nil];
+    [self appendHintsRow:s key:[self hk:@"workbench.action.files.save"] label:@"Save"
+                    key2:[self hk:@"actions.find"] label2:@"Find in file" state:nil];
+    [self appendHintsRow:s key:[self hk:@"undo"] label:@"Undo"
+                    key2:[self hk:@"redo"] label2:@"Redo" state:nil];
+    [self appendHintsRow:s key:[NSString stringWithFormat:@"%@ %@", [self hk:@"editor.action.clipboardCopyAction"], [self hk:@"editor.action.clipboardCutAction"]] label:@"Copy, cut (the line if none)"
+                    key2:[self hk:@"editor.action.selectAll"] label2:@"Select all" state:nil];
+    [self appendHintsRow:s key:[self hk:@"expandLineSelection"] label:@"Select line"
+                    key2:[self hk:@"editor.action.deleteLines"] label2:@"Delete line" state:nil];
+    [self appendHintsRow:s key:[self hk:@"editor.action.commentLine"] label:@"Toggle comment"
+                    key2:[self hk:@"workbench.action.findInFiles"] label2:@"Find in folder" state:nil];
+    [self appendHintsRow:s key:[self hk:@"editor.action.startFindReplaceAction"] label:@"Replace in file"
+                    key2:[self hk:@"workbench.action.replaceInFiles"] label2:@"Replace in folder" state:nil];
+    [self appendHintsRow:s key:[NSString stringWithFormat:@"%@ %@", [self hk:@"editor.action.nextMatchFindAction"], [self hk:@"editor.action.previousMatchFindAction"]] label:@"Next, previous match"
+                    key2:[self hk:@"actions.findWithSelection"] label2:@"Use selection for find" state:nil];
+    [self appendHintsRow:s key:[NSString stringWithFormat:@"%@ %@", [self hk:@"toggleFindCaseSensitive"], [self hk:@"toggleFindWholeWord"]] label:@"Match case, whole word"
+                    key2:[self hk:@"toggleFindRegex"] label2:@"Regular expression" state:nil];
     [self appendHintsRow:s key:@"⇧⌘1" label:@"Replace (in the find bar)"
-                    key2:@"⌥⌘⏎" label2:@"Replace all" state:nil];
+                    key2:[self hk:@"editor.action.replaceAll"] label2:@"Replace all" state:nil];
     [self appendHintsRow:s key:@"⇧⌘drag" label:@"Column, or two clicks"
                     key2:@"⌥click" label2:@"Add a cursor" state:nil];
-    [self appendHintsRow:s key:@"⌥↓ ⌘↓" label:@"Move line down"
-                    key2:@"⌥↑ ⌘↑" label2:@"Move line up" state:nil];
-    [self appendHintsRow:s key:@"⇧⌘↓" label:@"Copy line down"
-                    key2:@"⇧⌘↑" label2:@"Copy line up" state:nil];
-    [self appendHintsRow:s key:@"⌥⌘↓" label:@"Add cursor below"
-                    key2:@"⌥⌘↑" label2:@"Add cursor above" state:nil];
-    [self appendHintsRow:s key:@"⌘D" label:@"Add next occurrence"
-                    key2:@"⇧⌘L" label2:@"Select all occurrences" state:nil];
-    [self appendHintsRow:s key:@"⌥⌘L" label:@"Toggle task (Markdown)"
-                    key2:@"⇧⌘D" label2:@"TODOs in folder" state:nil];
-    [self appendHintsRow:s key:@"⌘," label:@"Settings"
-                    key2:@"⌃Space" label2:@"Complete" state:nil];
-    [self appendHintsRow:s key:@"⌘I" label:@"Inline agent"
-                    key2:@"⌥⌘I" label2:@"Hover info" state:nil];
-    [self appendHintsRow:s key:@"F12" label:@"Go to definition"
+    [self appendHintsRow:s key:[self hkAll:@"editor.action.moveLinesDownAction"] label:@"Move line down"
+                    key2:[self hkAll:@"editor.action.moveLinesUpAction"] label2:@"Move line up" state:nil];
+    [self appendHintsRow:s key:[self hk:@"editor.action.copyLinesDownAction"] label:@"Copy line down"
+                    key2:[self hk:@"editor.action.copyLinesUpAction"] label2:@"Copy line up" state:nil];
+    [self appendHintsRow:s key:[self hk:@"editor.action.insertCursorBelow"] label:@"Add cursor below"
+                    key2:[self hk:@"editor.action.insertCursorAbove"] label2:@"Add cursor above" state:nil];
+    [self appendHintsRow:s key:[self hk:@"editor.action.addSelectionToNextFindMatch"] label:@"Add next occurrence"
+                    key2:[self hk:@"editor.action.selectHighlights"] label2:@"Select all occurrences" state:nil];
+    [self appendHintsRow:s key:[self hk:@"minicode.markdown.toggleTask"] label:@"Toggle task (Markdown)"
+                    key2:[self hk:@"minicode.showTodos"] label2:@"TODOs in folder" state:nil];
+    [self appendHintsRow:s key:[self hk:@"workbench.action.openSettings"] label:@"Settings"
+                    key2:[self hk:@"editor.action.triggerSuggest"] label2:@"Complete" state:nil];
+    [self appendHintsRow:s key:[self hk:@"inlineChat.start"] label:@"Inline agent"
+                    key2:[self hk:@"editor.action.showHover"] label2:@"Hover info" state:nil];
+    [self appendHintsRow:s key:[self hk:@"editor.action.revealDefinition"] label:@"Go to definition"
                     key2:nil label2:nil state:nil];
-    [self appendHintsRow:s key:@"⇧F12" label:@"Find references"
-                    key2:@"F2" label2:@"Rename symbol" state:nil];
-    [self appendHintsRow:s key:@"F8" label:@"Next problem"
-                    key2:@"⇧F8" label2:@"Previous problem" state:nil];
-    [self appendHintsRow:s key:@"⌘." label:@"Quick fixes"
-                    key2:@"⌥⇧O" label2:@"Organize imports" state:nil];
-    [self appendHintsRow:s key:@"⌥⇧F" label:@"Format document"
+    [self appendHintsRow:s key:[self hk:@"editor.action.goToReferences"] label:@"Find references"
+                    key2:[self hk:@"editor.action.rename"] label2:@"Rename symbol" state:nil];
+    [self appendHintsRow:s key:[self hk:@"editor.action.marker.next"] label:@"Next problem"
+                    key2:[self hk:@"editor.action.marker.prev"] label2:@"Previous problem" state:nil];
+    [self appendHintsRow:s key:[self hk:@"editor.action.quickFix"] label:@"Quick fixes"
+                    key2:[self hk:@"editor.action.organizeImports"] label2:@"Organize imports" state:nil];
+    [self appendHintsRow:s key:[self hk:@"editor.action.formatDocument"] label:@"Format document"
                     key2:@"⇥" label2:@"Take completion" state:nil];
-    [self appendHintsRow:s key:@"F9" label:@"Sort lines"
-                    key2:@"⇧F9" label2:@"Sort keep-sorted blocks" state:nil];
+    [self appendHintsRow:s key:[self hk:@"minicode.sortLines"] label:@"Sort lines"
+                    key2:[self hk:@"minicode.sortKeepSortedBlocks"] label2:@"Sort keep-sorted blocks" state:nil];
     [self appendHintsRow:s key:@"⇥" label:@"Indent lines"
                     key2:@"⇧⇥" label2:@"Outdent lines" state:nil];
-    [self appendHintsRow:s key:@"⌘= ⌘-" label:@"Zoom in, out"
-                    key2:@"⌥⌘0" label2:@"Reset zoom" state:nil];
-    [self appendHintsRow:s key:@"⌃⌘[" label:@"Fold"
-                    key2:@"⌃⌘]" label2:@"Unfold" state:nil];
-    [self appendHintsRow:s key:@"⌃⌘0" label:@"Fold all"
-                    key2:@"⌃⌘J" label2:@"Unfold all" state:nil];
-    [self appendHintsRow:s key:@"⌃⌘L" label:@"Toggle fold"
+    [self appendHintsRow:s key:[NSString stringWithFormat:@"%@ %@", [self hk:@"editor.action.fontZoomIn"], [self hk:@"editor.action.fontZoomOut"]] label:@"Zoom in, out"
+                    key2:[self hk:@"editor.action.fontZoomReset"] label2:@"Reset zoom" state:nil];
+    [self appendHintsRow:s key:[self hk:@"editor.fold"] label:@"Fold"
+                    key2:[self hk:@"editor.unfold"] label2:@"Unfold" state:nil];
+    [self appendHintsRow:s key:[self hk:@"editor.foldAll"] label:@"Fold all"
+                    key2:[self hk:@"editor.unfoldAll"] label2:@"Unfold all" state:nil];
+    [self appendHintsRow:s key:[self hk:@"editor.toggleFold"] label:@"Toggle fold"
                     key2:@"⌃⌘1…7" label2:@"Fold level 1 to 7" state:nil];
 
     [self appendHintsHeading:@"Files" to:s];
-    [self appendHintsRow:s key:@"⌥⌘N" label:@"New window"
-                    key2:@"⇧⌘N" label2:@"New folder" state:nil];
+    [self appendHintsRow:s key:[self hk:@"workbench.action.newWindow"] label:@"New window"
+                    key2:[self hk:@"explorer.newFolder"] label2:@"New folder" state:nil];
     [self appendHintsRow:s key:@"⌘⌫" label:@"Trash (in the tree)"
-                    key2:@"⌘R" label2:@"Refresh tree" state:nil];
-    [self appendHintsRow:s key:@"F2" label:@"Rename (in the tree)"
+                    key2:[self hk:@"workbench.files.action.refreshFilesExplorer"] label2:@"Refresh tree" state:nil];
+    [self appendHintsRow:s key:[self hk:@"editor.action.rename"] label:@"Rename (in the tree)"
                     key2:@"Space" label2:@"Quick Look (in the tree)" state:nil];
-    [self appendHintsRow:s key:@"⇧⌘." label:@"Show hidden files"
-                    key2:@"⇧⌘I" label2:@"Sizes" state:nil];
-    [self appendHintsRow:s key:@"⌥⇧⌘I" label:@"When last saved"
-                    key2:@"⌃⇧⌘I" label2:@"When created" state:nil];
+    [self appendHintsRow:s key:[self hk:@"minicode.toggleHiddenFiles"] label:@"Show hidden files"
+                    key2:[self hk:@"minicode.tree.toggleSizes"] label2:@"Sizes" state:nil];
+    [self appendHintsRow:s key:[self hk:@"minicode.tree.toggleSaved"] label:@"When last saved"
+                    key2:[self hk:@"minicode.tree.toggleCreated"] label2:@"When created" state:nil];
 
     [self appendHintsHeading:@"Navigation" to:s];
-    [self appendHintsRow:s key:@"⇧⌘P" label:@"Command palette"
-                    key2:@"⌘P" label2:@"Go to file" state:nil];
-    [self appendHintsRow:s key:@"⌃G" label:@"Go to line"
-                    key2:@"⇧⌘\\" label2:@"Go to bracket" state:nil];
-    [self appendHintsRow:s key:@"⇧⌘O" label:@"Go to symbol"
-                    key2:@"⌘T" label2:@"Symbol in workspace" state:nil];
-    [self appendHintsRow:s key:@"⌃- ⌃⇧-" label:@"Back, forward"
+    [self appendHintsRow:s key:[self hk:@"workbench.action.showCommands"] label:@"Command palette"
+                    key2:[self hk:@"workbench.action.quickOpen"] label2:@"Go to file" state:nil];
+    [self appendHintsRow:s key:[self hk:@"workbench.action.gotoLine"] label:@"Go to line"
+                    key2:[self hk:@"editor.action.jumpToBracket"] label2:@"Go to bracket" state:nil];
+    [self appendHintsRow:s key:[self hk:@"workbench.action.gotoSymbol"] label:@"Go to symbol"
+                    key2:[self hk:@"workbench.action.showAllSymbols"] label2:@"Symbol in workspace" state:nil];
+    [self appendHintsRow:s key:[NSString stringWithFormat:@"%@ %@", [self hk:@"workbench.action.navigateBack"], [self hk:@"workbench.action.navigateForward"]] label:@"Back, forward"
                     key2:nil label2:nil state:nil];
-    [self appendHintsRow:s key:@"⌘0" label:@"Focus tree"
-                    key2:@"⌘1" label2:@"Focus editor" state:nil];
-    [self appendHintsRow:s key:@"⌘2" label:@"Focus terminal"
-                    key2:@"⌘3" label2:@"Focus browser" state:nil];
-    [self appendHintsRow:s key:@"⇧⌘⏎" label:@"Run the file in the terminal"
-                    key2:@"⇧⌘K" label2:@"Request a change to minicode" state:nil];
+    [self appendHintsRow:s key:[self hk:@"workbench.action.focusSideBar"] label:@"Focus tree"
+                    key2:[self hk:@"workbench.action.focusFirstEditorGroup"] label2:@"Focus editor" state:nil];
+    [self appendHintsRow:s key:[self hk:@"workbench.action.terminal.focus"] label:@"Focus terminal"
+                    key2:[self hk:@"minicode.focusBrowser"] label2:@"Focus browser" state:nil];
+    [self appendHintsRow:s key:[self hk:@"minicode.runFile"] label:@"Run the file in the terminal"
+                    key2:[self hk:@"minicode.requestChange"] label2:@"Request a change to minicode" state:nil];
     [self appendHintsRow:s key:@"↑ ↓" label:@"Browse tree"
                     key2:@"⏎" label2:@"Open file" state:nil];
-    [self appendHintsRow:s key:@"⌘B" label:@"Toggle sidebar"
-                    key2:@"⇧F10" label2:@"Context menu" state:nil];
+    [self appendHintsRow:s key:[self hk:@"workbench.action.toggleSidebarVisibility"] label:@"Toggle sidebar"
+                    key2:[self hk:@"editor.action.showContextMenu"] label2:@"Context menu" state:nil];
 
     [self appendHintsHeading:@"Tabs" to:s];
-    [self appendHintsRow:s key:@"⌃⇥" label:@"Next tab"
-                    key2:@"⌃⇧⇥" label2:@"Previous tab" state:nil];
-    [self appendHintsRow:s key:@"⇧⌘]" label:@"Next tab"
-                    key2:@"⇧⌘[" label2:@"Previous tab" state:nil];
+    [self appendHintsRow:s key:[self hk:@"workbench.action.nextEditor"] label:@"Next tab"
+                    key2:[self hk:@"workbench.action.previousEditor"] label2:@"Previous tab" state:nil];
+    [self appendHintsRow:s key:[self hk:@"workbench.action.nextEditor" at:1] label:@"Next tab"
+                    key2:[self hk:@"workbench.action.previousEditor" at:1] label2:@"Previous tab" state:nil];
     [self appendHintsRow:s key:@"⌃1…9" label:@"Tab 1 to 9 (also ⇧⌘1…9; 9 is the last)"
                     key2:nil label2:nil state:nil];
-    [self appendHintsRow:s key:@"⌘W" label:@"Close tab, or the focused panel"
+    [self appendHintsRow:s key:[self hk:@"workbench.action.closeActiveEditor"] label:@"Close tab, or the focused panel"
                     key2:nil label2:nil state:nil];
-    [self appendHintsRow:s key:@"⌥⇧⌘T" label:@"Reopen closed tab"
+    [self appendHintsRow:s key:[self hk:@"workbench.action.reopenClosedEditor"] label:@"Reopen closed tab"
                     key2:nil label2:nil state:nil];
-    [self appendHintsRow:s key:@"⇧⌘W" label:@"Close window"
-                    key2:@"⌘Q" label2:@"Quit" state:nil];
+    [self appendHintsRow:s key:[self hk:@"workbench.action.closeWindow"] label:@"Close window"
+                    key2:[self hk:@"workbench.action.quit"] label2:@"Quit" state:nil];
 
     [self appendHintsHeading:@"Panes" to:s];
-    [self appendHintsRow:s key:@"⇧⌘E" label:@"Editor"
+    [self appendHintsRow:s key:[self hk:@"minicode.toggleEditor"] label:@"Editor"
                     key2:nil label2:nil state:openOr(!self.editorHidden)];
-    [self appendHintsRow:s key:@"⇧⌘T" label:@"Terminal  (also ⌘J, ⌃`)"
+    [self appendHintsRow:s key:@"⇧⌘T" label:[self hkAlso:@"workbench.action.terminal.toggleTerminal" title:@"Terminal"]
                     key2:nil label2:nil state:openOr(self.terminalVisible)];
     if (self.terminalVisible) {
-        [self appendHintsRow:s key:@"⌃⇧`" label:@"New terminal"
-                        key2:@"⌘\\" label2:@"Split terminal" state:nil];
-        [self appendHintsRow:s key:@"⌥⌘]" label:@"Next terminal"
-                        key2:@"⌥⌘[" label2:@"Previous" state:nil];
-        [self appendHintsRow:s key:@"⌃⇧W" label:@"Close terminal"
+        [self appendHintsRow:s key:[self hk:@"workbench.action.terminal.new"] label:@"New terminal"
+                        key2:[self hk:@"workbench.action.terminal.split"] label2:@"Split terminal" state:nil];
+        [self appendHintsRow:s key:[self hk:@"workbench.action.terminal.focusNext"] label:@"Next terminal"
+                        key2:[self hk:@"workbench.action.terminal.focusPrevious"] label2:@"Previous" state:nil];
+        [self appendHintsRow:s key:[self hk:@"workbench.action.terminal.kill"] label:@"Close terminal"
                         key2:nil label2:nil state:nil];
         [self appendHintsRow:s key:@"⌘ click" label:@"Open a file:line or URL in the terminal"
                         key2:nil label2:nil state:nil];
-        [self appendHintsRow:s key:@"⌘F" label:@"Find in the terminal"
-                        key2:@"⌘K" label2:@"Clear the terminal" state:nil];
+        [self appendHintsRow:s key:[self hk:@"actions.find"] label:@"Find in the terminal"
+                        key2:[self hk:@"workbench.action.terminal.clear"] label2:@"Clear the terminal" state:nil];
         if (!self.terminal.lineMode) {
             [self appendHintsRow:s key:@"⇧⇞" label:@"Scroll back"
                             key2:@"⌘↖" label2:@"Top of the scrollback" state:nil];
@@ -1634,13 +1693,13 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                             key2:@"⌘⌫" label2:@"Delete to its start" state:nil];
         }
     }
-    [self appendHintsRow:s key:@"⇧⌘B" label:@"Browser"
+    [self appendHintsRow:s key:[self hk:@"minicode.toggleBrowser"] label:@"Browser"
                     key2:nil label2:nil state:openOr(self.browserVisible)];
-    [self appendHintsRow:s key:@"⌃⇧G" label:@"Source control"
+    [self appendHintsRow:s key:[self hk:@"workbench.view.scm"] label:@"Source control"
                     key2:nil label2:nil state:openOr(self.gitPanelVisible)];
-    [self appendHintsRow:s key:@"⇧⌘A" label:@"Agents"
+    [self appendHintsRow:s key:[self hk:@"minicode.toggleAgents"] label:@"Agents"
                     key2:nil label2:nil state:openOr(self.agentsVisible)];
-    [self appendHintsRow:s key:@"⇧⌘M" label:@"Problems"
+    [self appendHintsRow:s key:[self hk:@"workbench.actions.view.problems"] label:@"Problems"
                     key2:nil label2:nil state:openOr(self.problemsVisible)];
     if (self.problemsVisible) {
         [self appendHintsRow:s key:@"⏎" label:@"Go to the problem"
@@ -1657,29 +1716,29 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                         key2:@"⌘⏎" label2:@"Commit (in the message)" state:nil];
     }
     if (self.isMarkdown) {
-        [self appendHintsRow:s key:@"⇧⌘V" label:@"Markdown preview"
+        [self appendHintsRow:s key:[self hk:@"markdown.showPreview"] label:@"Markdown preview"
                         key2:nil label2:nil
                        state:self.previewMode ? @"rendered" : @"source"];
     } else if (self.isLatex) {
-        [self appendHintsRow:s key:@"⇧⌘V" label:@"LaTeX preview"
+        [self appendHintsRow:s key:[self hk:@"markdown.showPreview"] label:@"LaTeX preview"
                         key2:nil label2:nil
                        state:self.previewMode ? @"typeset" : @"source"];
-        [self appendHintsRow:s key:@"⇧⌘S" label:@"Export PDF"
+        [self appendHintsRow:s key:[self hk:@"minicode.latex.exportPDF"] label:@"Export PDF"
                         key2:nil label2:nil state:nil];
     }
     if (self.isMedia) {
-        [self appendHintsRow:s key:@"⇧⌘Space" label:@"Play or pause"
-                        key2:@"⌘1" label2:@"Focus the player" state:nil];
+        [self appendHintsRow:s key:[self hk:@"minicode.togglePlayback"] label:@"Play or pause"
+                        key2:[self hk:@"workbench.action.focusFirstEditorGroup"] label2:@"Focus the player" state:nil];
     }
     if (_notes.tourActive) {
-        [self appendHintsRow:s key:@"⌥]" label:@"Next stop of the tour"
-                        key2:@"⌥[" label2:@"Previous stop" state:nil];
+        [self appendHintsRow:s key:[self hk:@"minicode.tour.next"] label:@"Next stop of the tour"
+                        key2:[self hk:@"minicode.tour.previous"] label2:@"Previous stop" state:nil];
     }
 
     // A short gap, not a whole empty heading, before the way out.
     [s appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"
         attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:6]}]];
-    [self appendHintsRow:s key:@"⇧⌘H" label:@"Hide these hints"
+    [self appendHintsRow:s key:[self hk:@"minicode.toggleShortcutHints"] label:@"Hide these hints"
                     key2:nil label2:nil state:nil];
     // No trailing newline, or the panel sizes itself one empty line too tall.
     if ([s.string hasSuffix:@"\n"])

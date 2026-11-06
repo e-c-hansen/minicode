@@ -8,6 +8,7 @@
 #import "PalettePanel.h"
 #import "AppSettings.h"
 #import "TreeDetails.h"   // MCAppDefaults
+#import "Keymap.h"
 #include "CommandPalette.h"
 
 #include <atomic>
@@ -89,8 +90,28 @@ static void PCollect(NSMenu *menu, NSString *path, NSMutableArray<MCPaletteComma
         c.item = it;
         c.title = it.title;
         c.label = [NSString stringWithFormat:@"%@ > %@", path, it.title];
-        c.keys = PNS(CommandPalette::keyLabel(PU16(it.keyEquivalent),
-                                              PMods(it.keyEquivalentModifierMask)));
+        // The command's first key in effect (keys.conf), which may be one
+        // no menu can show (Cmd+keypad 0); the item's own for the rest.
+        c.keys = MCKeymapGlyphsForMenuItem(it)
+                     ?: PNS(CommandPalette::keyLabel(PU16(it.keyEquivalent),
+                                                     PMods(it.keyEquivalentModifierMask)));
+        [out addObject:c];
+    }
+}
+
+// The registry's commands that no menu item runs (Keymap.h), when the
+// responder chain has someone to take them now.
+static void PCollectUnmenued(NSMutableArray<MCPaletteCommand *> *out) {
+    for (NSMenuItem *it in MCKeymapCommandsWithoutMenuItems()) {
+        id target = [NSApp targetForAction:it.action to:nil from:it];
+        if (!target) continue;
+        if ([target respondsToSelector:@selector(validateMenuItem:)] && ![target validateMenuItem:it])
+            continue;
+        MCPaletteCommand *c = [MCPaletteCommand new];
+        c.item = it;
+        c.title = it.title;
+        c.label = [NSString stringWithFormat:@"%@ > %@", it.representedObject, it.title];
+        c.keys = MCKeymapGlyphsForMenuItem(it) ?: @"";
         [out addObject:c];
     }
 }
@@ -774,6 +795,12 @@ static NSString *POneLine(NSString *s) {
     return a;
 }
 
+- (NSArray<NSString *> *)keyLabels {
+    NSMutableArray *a = [NSMutableArray array];
+    for (MCPaletteItem *it in self.items) [a addObject:it.keys ?: @""];
+    return a;
+}
+
 - (void)select:(NSInteger)row {
     const NSInteger n = (NSInteger)self.items.count;
     if (n == 0) return;
@@ -943,6 +970,7 @@ void MCShowPalette(NSWindow *window, NSString *text, MCPaletteContext *context) 
     // Read before the keyboard moves, so validation sees what had it.
     NSMutableArray<MCPaletteCommand *> *commands = [NSMutableArray array];
     PCollect(NSApp.mainMenu, nil, commands);
+    PCollectUnmenued(commands);
 
     MCPaletteOverlay *p = [[MCPaletteOverlay alloc] initWithFrame:content.bounds
                                                          commands:commands
@@ -970,6 +998,11 @@ NSTextField *MCCommandPaletteField(NSView *palette) {
 
 NSArray<NSString *> *MCCommandPaletteLabels(NSView *palette) {
     return [palette isKindOfClass:MCPaletteOverlay.class] ? [(MCPaletteOverlay *)palette labels]
+                                                          : @[];
+}
+
+NSArray<NSString *> *MCCommandPaletteKeys(NSView *palette) {
+    return [palette isKindOfClass:MCPaletteOverlay.class] ? [(MCPaletteOverlay *)palette keyLabels]
                                                           : @[];
 }
 
