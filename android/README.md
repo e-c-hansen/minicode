@@ -894,8 +894,9 @@ Mac's: `lsp_jni.cpp` exposes `src/LspClient.cpp` with no I/O, and
   server per language per project, started the first time a file of that
   language opens, and a new project stops the old one's servers.
 - **Which server.** The core's defaults, the first one installed: clangd for
-  C and C++, pyright or pylsp for Python, gopls, rust-analyzer,
-  typescript-language-server. If none is, the bar says what to install.
+  C and C++, basedpyright, pyright or pylsp for Python (in that order), gopls,
+  rust-analyzer, typescript-language-server. If none is, the bar says what to
+  install.
 - **Diagnostics** are `DiagnosticSpan` markers in the text (so they follow
   edits until the server publishes again), and `CodeEditText` draws the
   squiggles after its text, the way the Mac editor does. They never touch the
@@ -994,16 +995,16 @@ so Back went straight out of the app from any pane until it moved to an
 
 ## Running the core's own tests on the phone
 
-The 1,079 checks in `../tests/run_tests.cpp` are plain C++ and pass on the
+The checks in `../tests/run_tests.cpp` are plain C++ and passed on the
 device unchanged, at speeds close to an M3 Mac (a full lex of 100,000 lines in
-29 ms, a keystroke in 0.13 ms).
+29 ms, a keystroke in 0.13 ms), when they were 1,079. They have grown since,
+and every `src/*.cpp` is now part of the core they test (the top-level
+Makefile's `CORE_SRC`), so the command builds them all. The run at 1,079 is
+the last one recorded on the phone.
 
     NDK=$ANDROID_HOME/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin
     $NDK/aarch64-linux-android35-clang++ -std=c++17 -O2 -Isrc -static-libstdc++ \
-        tests/run_tests.cpp src/SyntaxHighlighter.cpp src/MarkdownParser.cpp \
-        src/TerminalStream.cpp src/TerminalScreen.cpp src/Settings.cpp \
-        src/LineComments.cpp src/LatexDoc.cpp src/SyncTex.cpp src/Json.cpp \
-        src/LspClient.cpp -o /tmp/run_tests_android
+        tests/run_tests.cpp src/*.cpp -o /tmp/run_tests_android
     adb push /tmp/run_tests_android /data/local/tmp/mc/run_tests
     adb push demo src scripts tests /data/local/tmp/mc/
     adb shell "cd /data/local/tmp/mc && ./run_tests"
@@ -1026,7 +1027,16 @@ Run it from the repository root; the tests read a few files from `demo/`,
   aborts the app when `NewStringUTF` is given a 4-byte sequence. Use these
   helpers for any user text.
 - `app/src/main/cpp/terminal_jni.cpp`: the pty (or the socket to a Termux
-  shell), and the shared TerminalScreen reading it.
+  shell), and the shared TerminalScreen reading it. Since November 2026 the
+  screen marks rows that wrapped, and `resize(cols, rows)` reflows them to
+  the new width (it used to cut or pad them), so a long line comes back
+  whole when the pane widens; the cursor stays on its character. The screen
+  also keeps track of mouse and focus modes, answers DECRQM, tracks
+  synchronized output (mode 2026), and can search (`find`) and clear
+  (`clearAll`, `clearToCursorLine`), none of which this port uses yet.
+  Scrollback stays off here (no `setScrollbackLimit`), so nothing is kept
+  above the screen. `cell(row, col)` still returns a reference; `lineCell`
+  now returns a cell by value, since scrollback lines are stored packed.
 - `app/src/main/java/org/minicode/editor/MainActivity.kt` — the panes, the
   leader, the menu, the title bar, recent folders.
 - `StartScreen.kt` — what shows while no folder is open.

@@ -54,9 +54,13 @@ poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
 - pane hiding and divider drags, the shortcut hints panel, and opening a
   file or folder named on the command line.
 
-It shares from `../src` `SyntaxHighlighter`, `MarkdownParser`, `MarkdownTasks`, `Settings`,
-`LineComments`, `FolderSearch`, `Json`, `LspClient`, `LatexDoc`, `SyncTex`,
-`TermLinks`, `GitStatus` and `GitGraph`.
+It shares from `../src` `SyntaxHighlighter`, `MarkdownParser`, `MarkdownEdit`,
+`MarkdownTasks`, `Settings`, `LineComments`, `AutoIndent`, `KeepSorted`,
+`FolderSearch`, `TextFind`, `LatexDoc`, `SyncTex`, `Json`, `LspClient`,
+`TermLinks`, `GitStatus` and `GitGraph`. `meson.build`'s `core_sources` and
+the plain Makefile's `CORE` must name the same files: CI builds only with
+Meson, so the Makefile once fell three files behind and could not link, and
+`make test`'s `linux:build-lists` check now compares the two.
 The rest of the core (`TerminalScreen`) is portable and tested, and has not
 been added to `meson.build`, since VTE does that job here.
 
@@ -353,7 +357,12 @@ Mac: `src/Search.mm`. The search is now `../src/FolderSearch.{h,cpp}`, a pure
 C++17 function (a folder, a query, an `std::atomic<bool>` cancel flag, and
 matches out with the line, the column in characters and in bytes, and the
 cleaned display text) with the Mac's rules, tested in the core suite. Android
-can call it through JNI as it is.
+can call it through JNI as it is. Since November 2026 it also takes whole
+word and regex options and plans Replace in Folder, matching through
+`../src/TextFind.cpp` (which is why that file is in both build lists); the
+call this port makes is unchanged and still searches plain text, ignoring
+case. The Mac's find bar options and Replace in Folder would build on the
+same functions here.
 
 The GTK side is `src/Search.{h,cpp}`: a separate window like the Mac's, with
 a folder field and Choose button, a `GtkSearchEntry` (0.35 s typing pause, as
@@ -465,6 +474,16 @@ Mac's behaviour; what differs is how.
   window never closed (24 million warnings in 90 s). The popovers are now
   unparented on the view's `unrealize`, which comes before dispose, and
   built again on next use.
+
+Core changes that reach this port as they are (November 2026): with
+`lsp.python` unset, basedpyright is tried before pyright; diagnostics a
+server published for a version older than one since sent are dropped in
+`Client`, before `onDiagnostics`; completion items now carry
+`additionalTextEdits` (an auto-import, an `#include`), which the Mac applies
+with the word through `Lsp::completionEdits` and this port does not apply
+yet. Everything else the Mac's client gained (rename, references, code
+actions, symbols, folding ranges, a second server per language, the
+Problems rows) is in `LspClient` for this port to use.
 
 Verified at run time on the ThinkPad with a temporary test hook, 32 checks
 against real clangd 21 (see `../BUILD-LINUX.md`), then the hook was removed.
