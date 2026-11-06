@@ -311,25 +311,10 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
                         change:(NSDictionary *)change context:(void *)context;
 - (NSMenu *)buildTreeContextMenu;
-- (void)makeTerminalPanel;
-- (void)makeTerminalPanelFirstIn:(NSString *)first;
-- (void)terminalPanelEmptied;
-- (void)showTerminalPanel;
-- (void)openTerminalLink:(MCTermLink *)link;
-- (void)openTerminalLinkNow:(MCTermLink *)link;
-- (void)makeBrowserWithHome:(NSString *)home;
 - (void)showDiffNamed:(NSString *)name path:(NSString *)path data:(NSData *)diff;
 - (void)showCommitTitled:(NSString *)title data:(NSData *)show;
 - (void)showDiffTitled:(NSString *)name data:(NSData *)diff commit:(BOOL)commit;
 - (void)renderDiff;
-- (void)performTextFinderAction:(id)sender;
-- (void)toggleFindMatchCase:(id)sender;
-- (void)toggleFindWholeWord:(id)sender;
-- (void)toggleFindRegex:(id)sender;
-- (void)makeSearchPanel;
-- (int)tabHoldOfPath:(NSString *)path disk:(NSString *__strong *)disk;
-- (MCOpenFileState)replaceStateOfPath:(NSString *)path;
-- (void)jumpToLine:(NSInteger)line;
 - (NSInteger)outlineView:(NSOutlineView *)ov numberOfChildrenOfItem:(id)item;
 - (id)outlineView:(NSOutlineView *)ov child:(NSInteger)i ofItem:(id)item;
 - (BOOL)outlineView:(NSOutlineView *)ov isItemExpandable:(id)item;
@@ -639,6 +624,29 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (void)layoutStatusLabels;
 - (void)flashStatus:(NSString *)message;
 - (void)endFlash;
+@end
+
+// EditorController+Panels.mm: the terminal dock and the browser, and moving the keyboard between panes.
+@interface EditorController (Panels)
+- (void)makeTerminalPanel;
+- (void)makeTerminalPanelFirstIn:(NSString *)first;
+- (void)terminalPanelEmptied;
+- (void)showTerminalPanel;
+- (void)openTerminalLink:(MCTermLink *)link;
+- (void)openTerminalLinkNow:(MCTermLink *)link;
+- (void)makeBrowserWithHome:(NSString *)home;
+@end
+
+// EditorController+Search.mm: find and replace, Find in Folder and TODOs.
+@interface EditorController (Search)
+- (void)performTextFinderAction:(id)sender;
+- (void)toggleFindMatchCase:(id)sender;
+- (void)toggleFindWholeWord:(id)sender;
+- (void)toggleFindRegex:(id)sender;
+- (void)makeSearchPanel;
+- (int)tabHoldOfPath:(NSString *)path disk:(NSString *__strong *)disk;
+- (MCOpenFileState)replaceStateOfPath:(NSString *)path;
+- (void)jumpToLine:(NSInteger)line;
 @end
 
 // EditorController+Navigation.mm: Go to Line, Go Back and Forward, Go to Symbol.

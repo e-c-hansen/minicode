@@ -28,29 +28,8 @@
 @property(nonatomic, readonly) BOOL canExportPDF;
 - (void)undo:(id)sender;              // Cmd+Z; the text view handles its own
 - (void)redo:(id)sender;              // Shift+Cmd+Z
-- (void)toggleTerminal:(id)sender;    // Ctrl+` bottom terminal dock
-- (void)newTerminal:(id)sender;       // Ctrl+Shift+` a terminal in a new tab
-- (void)splitTerminal:(id)sender;     // Cmd+\ a terminal beside the active one
-- (void)nextTerminal:(id)sender;      // Option+Cmd+] across panes and tabs
-- (void)previousTerminal:(id)sender;  // Option+Cmd+[
-- (void)closeTerminal:(id)sender;     // Ctrl+Shift+W the active terminal
-// Closes the terminal the keyboard is in (asking first when a command runs
-// in it) and returns YES; NO when the keyboard is not in a terminal (for a
-// Cmd+W that closes what has focus).
-- (BOOL)closeFocusedTerminal;
-- (void)runCurrentFile:(id)sender;    // Shift+Cmd+Return run the file in a terminal
-- (void)toggleBrowser:(id)sender;     // Shift+Cmd+B embedded browser
 - (void)toggleHiddenFiles:(id)sender; // Cmd+Shift+. show/hide dotfiles
 - (void)toggleTreeColumn:(id)sender;  // the tree's size, saved and created columns (tag)
-- (void)openSearch:(id)sender;        // Cmd+Shift+F project-wide search
-- (void)openReplaceInFolder:(id)sender;   // Option+Shift+Cmd+F, the same with replace
-// The editor window itself, or a window it made for itself (Find in Folder,
-// TODOs, a sheet or child window of it).
-- (BOOL)ownsWindow:(NSWindow *)window;
-- (void)focusTree:(id)sender;         // Cmd+0 move keyboard focus to file tree
-- (void)focusEditor:(id)sender;       // Cmd+1 move keyboard focus to editor
-- (void)focusTerminal:(id)sender;     // Cmd+2 the terminal, opening it if hidden
-- (void)focusBrowser:(id)sender;      // Cmd+3 the browser's address bar, likewise
 - (void)selectNextTab:(id)sender;     // Ctrl+Tab, Shift+Cmd+]
 - (void)selectPreviousTab:(id)sender; // Ctrl+Shift+Tab, Shift+Cmd+[
 - (void)selectTabNumber:(id)sender;   // Shift+Cmd+1..9, Ctrl+1..9 (tag = n; 9 = last)
@@ -104,7 +83,6 @@
 - (void)toggleTask:(id)sender;         // Option+Cmd+L Markdown task on the lines
 - (void)sortLines:(id)sender;          // F9 sort lines, or the keep-sorted block
 - (void)fixKeepSorted:(id)sender;      // Shift+F9 sort every keep-sorted block
-- (void)showTodos:(id)sender;          // Shift+Cmd+D TODOs in the folder
 - (void)triggerCompletion:(id)sender;  // Ctrl+Space language server completion
 - (void)goToDefinition:(id)sender;     // F12 (and Cmd+click)
 - (void)showHoverInfo:(id)sender;      // Option+Cmd+I type and docs at the cursor
@@ -136,6 +114,36 @@
 // EditorController+StatusBar.mm
 @interface EditorController (StatusBar)
 - (void)toggleHints:(id)sender;       // Shift+Cmd+H shortcut-hints overlay
+@end
+
+// EditorController+Panels.mm
+@interface EditorController (Panels)
+- (void)toggleTerminal:(id)sender;    // Ctrl+` bottom terminal dock
+- (void)newTerminal:(id)sender;       // Ctrl+Shift+` a terminal in a new tab
+- (void)splitTerminal:(id)sender;     // Cmd+\ a terminal beside the active one
+- (void)nextTerminal:(id)sender;      // Option+Cmd+] across panes and tabs
+- (void)previousTerminal:(id)sender;  // Option+Cmd+[
+- (void)closeTerminal:(id)sender;     // Ctrl+Shift+W the active terminal
+// Closes the terminal the keyboard is in (asking first when a command runs
+// in it) and returns YES; NO when the keyboard is not in a terminal (for a
+// Cmd+W that closes what has focus).
+- (BOOL)closeFocusedTerminal;
+- (void)runCurrentFile:(id)sender;    // Shift+Cmd+Return run the file in a terminal
+- (void)toggleBrowser:(id)sender;     // Shift+Cmd+B embedded browser
+- (void)focusTree:(id)sender;         // Cmd+0 move keyboard focus to file tree
+- (void)focusEditor:(id)sender;       // Cmd+1 move keyboard focus to editor
+- (void)focusTerminal:(id)sender;     // Cmd+2 the terminal, opening it if hidden
+- (void)focusBrowser:(id)sender;      // Cmd+3 the browser's address bar, likewise
+@end
+
+// EditorController+Search.mm
+@interface EditorController (Search)
+- (void)openSearch:(id)sender;        // Cmd+Shift+F project-wide search
+- (void)openReplaceInFolder:(id)sender;   // Option+Shift+Cmd+F, the same with replace
+// The editor window itself, or a window it made for itself (Find in Folder,
+// TODOs, a sheet or child window of it).
+- (BOOL)ownsWindow:(NSWindow *)window;
+- (void)showTodos:(id)sender;          // Shift+Cmd+D TODOs in the folder
 @end
 
 // EditorController+Navigation.mm
