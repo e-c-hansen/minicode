@@ -10,29 +10,14 @@
                                         NSWindowDelegate,
                                         NSMenuItemValidation,
                                         NSMenuDelegate>
-@property(nonatomic, readonly) BOOL canTogglePreview;
 @property(nonatomic, readonly, strong) NSWindow *window;
 @property(nonatomic, readonly, copy) NSString *rootPath;
 - (instancetype)initWithRootPath:(NSString *)path;
-- (void)togglePreview:(id)sender;     // Markdown: source <-> rendered
 - (void)undo:(id)sender;              // Cmd+Z; the text view handles its own
 - (void)redo:(id)sender;              // Shift+Cmd+Z
 // Commands still running in this window's terminals (empty when every shell
 // is idle), for the question asked before quitting.
 - (NSArray<NSString *> *)runningTerminalCommands;
-- (void)triggerCompletion:(id)sender;  // Ctrl+Space language server completion
-- (void)goToDefinition:(id)sender;     // F12 (and Cmd+click)
-- (void)showHoverInfo:(id)sender;      // Option+Cmd+I type and docs at the cursor
-- (void)renameSymbol:(id)sender;       // F2: the name at the cursor, or the tree's file
-- (void)findReferences:(id)sender;     // Shift+F12
-- (void)showQuickFixes:(id)sender;     // Cmd+.
-- (void)organizeImports:(id)sender;    // Shift+Option+O
-- (void)nextProblem:(id)sender;        // F8: the next problem in the file
-- (void)previousProblem:(id)sender;    // Shift+F8
-- (void)toggleProblems:(id)sender;     // Shift+Cmd+M every problem, above the terminal
-- (void)showLanguageServers:(id)sender;     // the servers popover (status bar click)
-- (void)restartLanguageServer:(id)sender;   // the open file's server
-- (void)selectPythonInterpreter:(id)sender; // the Python server's interpreter
 @end
 
 // EditorController+Layout.mm
@@ -193,6 +178,23 @@
 - (void)navigateForward:(id)sender;    // Ctrl+Shift+-
 @end
 
+// EditorController+LanguageServers.mm
+@interface EditorController (LanguageServers)
+- (void)triggerCompletion:(id)sender;  // Ctrl+Space language server completion
+- (void)goToDefinition:(id)sender;     // F12 (and Cmd+click)
+- (void)showHoverInfo:(id)sender;      // Option+Cmd+I type and docs at the cursor
+- (void)renameSymbol:(id)sender;       // F2: the name at the cursor, or the tree's file
+- (void)findReferences:(id)sender;     // Shift+F12
+- (void)showQuickFixes:(id)sender;     // Cmd+.
+- (void)organizeImports:(id)sender;    // Shift+Option+O
+- (void)nextProblem:(id)sender;        // F8: the next problem in the file
+- (void)previousProblem:(id)sender;    // Shift+F8
+- (void)toggleProblems:(id)sender;     // Shift+Cmd+M every problem, above the terminal
+- (void)showLanguageServers:(id)sender;     // the servers popover (status bar click)
+- (void)restartLanguageServer:(id)sender;   // the open file's server
+- (void)selectPythonInterpreter:(id)sender; // the Python server's interpreter
+@end
+
 // EditorController+Agents.mm
 @interface EditorController (Agents)
 // runningTerminalCommands, leaving out Claude's terminal from Request a
@@ -230,4 +232,10 @@
 - (void)nextTourStop:(id)sender;       // Option+]
 - (void)previousTourStop:(id)sender;   // Option+[
 @property(nonatomic, readonly) BOOL tourActive;
+@end
+
+// EditorController+Markdown.mm
+@interface EditorController (Markdown)
+@property(nonatomic, readonly) BOOL canTogglePreview;
+- (void)togglePreview:(id)sender;     // Markdown: source <-> rendered
 @end

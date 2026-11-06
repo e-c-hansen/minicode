@@ -135,6 +135,37 @@ private:
     NSString *s_;
 };
 
+// Shared by more than one of the files below.
+// Screen points per PDF point of a formula set beside text of `fontSize`.
+// TeX sets the formulas at 10 pt. Computer Modern's lowercase letters are
+// smaller for their size than the system font's and its capitals about the
+// same, so its em is made a little larger than the text's: halfway, near
+// enough, between matching the capitals and matching the lowercase.
+static inline CGFloat MCMathScaleFor(CGFloat fontSize) {
+    static const CGFloat kEmToText = 1.12;             // math em / text size
+    static const CGFloat kTenPointsInPdf = 10 * 72.0 / 72.27;
+    return fontSize * kEmToText / kTenPointsInPdf;
+}
+
+// GitHub's anchor for a heading: lowercase, punctuation dropped (letters of
+// any script, digits, hyphens and underscores stay), spaces as hyphens.
+static inline NSString *MCMarkdownAnchor(NSString *title) {
+    NSString *t = [title stringByTrimmingCharactersInSet:
+                            NSCharacterSet.whitespaceAndNewlineCharacterSet].lowercaseString;
+    NSMutableString *slug = [NSMutableString string];
+    [t enumerateSubstringsInRange:NSMakeRange(0, t.length)
+                          options:NSStringEnumerationByComposedCharacterSequences
+                       usingBlock:^(NSString *ch, NSRange r, NSRange er, BOOL *stop) {
+        (void)r; (void)er; (void)stop;
+        unichar c = [ch characterAtIndex:0];
+        if (c == ' ') [slug appendString:@"-"];
+        else if (c == '-' || c == '_' ||
+                 [NSCharacterSet.alphanumericCharacterSet characterIsMember:c])
+            [slug appendString:ch];
+    }];
+    return slug;
+}
+
 typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCancel };
 
 // The tree menu's items for a worktree (shown only on one).
@@ -306,54 +337,6 @@ static const NSInteger kWorktreeMenuTag = 7701;
 @property(nonatomic, strong) MCTabStrip *tabStrip;   // the open files, over the editor
 @property(nonatomic, strong) NSTextField *emptyLabel; // the editor's slot with no file open
 @property(nonatomic, strong) NSTextField *savedLabel; // "Saved 14:32", with details on
-
-// Still in EditorController.mm.
-- (BOOL)showsRenderedMarkdown;
-- (NSString *)markdownToRender;
-- (BOOL)lspActionAllowed;
-- (void)updateProblems;
-- (void)updateProblemCounts;
-- (void)updateInstallBar;
-- (NSRect)layoutInstallBarIn:(NSRect)slot editorShown:(BOOL)shown;
-- (void)applyInstallBarColors;
-- (void)closeInstallBarMuting:(BOOL)mute;
-- (void)showInstallHelpFrom:(NSView *)anchor;
-- (void)typeCommandInTerminal:(NSString *)command;
-- (NSRect)textRectForCharacter:(NSUInteger)i;
-- (void)scrollEditorToY:(CGFloat)y;
-- (NSInteger)lineOfCharacter:(NSUInteger)i inString:(NSString *)s;
-- (NSUInteger)characterAtStartOfLine:(NSInteger)line inString:(NSString *)s;
-- (NSUInteger)markdownCharacterForSourceLine:(NSInteger)line;
-- (NSInteger)markdownSourceLineNear:(NSUInteger)i;
-- (BOOL)editMarkdownAtCharacter:(NSUInteger)index point:(NSPoint)point;
-- (void)applyMarkdownSource:(NSString *)source;
-- (void)openMarkdownLink:(NSString *)href;
-- (BOOL)scrollToMarkdownAnchor:(NSString *)anchor;
-- (void)renderMarkdown:(NSString *)content;
-- (BOOL)typesetsMath;
-- (BOOL)mathNoteWanted;
-- (NSAttributedString *)mathNoteText:(NSString *)text link:(NSString *)link;
-- (NSAttributedString *)mathNoteForProblem:(NSString *)problem;
-- (NSAttributedString *)mathNoteTypesetting:(NSUInteger)count;
-- (NSAttributedString *)mathNote;
-- (void)downloadTectonicForMath;
-- (NSUInteger)mathNoteLength;
-- (MCMathFormula *)typesetFormulaFor:(const MdRun &)r;
-- (void)markdownMathArrived:(NSNotification *)note;
-- (void)showArrivedMathForPath:(NSString *)path;
-- (void)markdownWebImageArrived:(NSNotification *)note;
-- (void)showArrivedWebImagesForPath:(NSString *)path;
-- (void)renderMarkdownKeepingPlace;
-- (NSParagraphStyle *)markdownParagraphFor:(const MdRun &)r
-                                     quote:(NSTextBlock * __strong *)quote
-                                      code:(NSTextBlock * __strong *)code;
-- (NSAttributedString *)markdownRun:(const MdRun &)r
-                              style:(NSParagraphStyle *)ps
-                             inCell:(BOOL)inCell;
-- (void)appendMarkdownTable:(const std::vector<MdRun> &)runs
-                       from:(size_t)first
-                         to:(size_t)end
-                       into:(NSMutableAttributedString *)out;
 @end
 
 // Each category's own methods. EditorController.h declares the ones the
@@ -693,6 +676,19 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (void)revealSymbolRange:(NSRange)r;
 @end
 
+// EditorController+LanguageServers.mm: the language servers' commands, problems, and installing a server.
+@interface EditorController (LanguageServers)
+- (BOOL)lspActionAllowed;
+- (void)updateProblems;
+- (void)updateProblemCounts;
+- (void)updateInstallBar;
+- (NSRect)layoutInstallBarIn:(NSRect)slot editorShown:(BOOL)shown;
+- (void)applyInstallBarColors;
+- (void)closeInstallBarMuting:(BOOL)mute;
+- (void)showInstallHelpFrom:(NSView *)anchor;
+- (void)typeCommandInTerminal:(NSString *)command;
+@end
+
 // EditorController+Agents.mm: the inline agent, Request a Change, the control channel and agent work.
 @interface EditorController (Agents) <MCChangeHost, MCAgentHost,
                                       MCAgentNotesHost, MCAgentWorkHost>
@@ -725,6 +721,51 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (BOOL)agentWorktreesOnShow;
 - (void)agentFolderChangedOnDisk:(NSString *)path;
 - (MCCompareView *)compareViewMade;
+@end
+
+// EditorController+Markdown.mm: the Markdown preview: switching to it, editing from it, links, math and web pictures arriving.
+@interface EditorController (Markdown)
+- (BOOL)showsRenderedMarkdown;
+- (NSString *)markdownToRender;
+- (NSRect)textRectForCharacter:(NSUInteger)i;
+- (void)scrollEditorToY:(CGFloat)y;
+- (NSInteger)lineOfCharacter:(NSUInteger)i inString:(NSString *)s;
+- (NSUInteger)characterAtStartOfLine:(NSInteger)line inString:(NSString *)s;
+- (NSUInteger)markdownCharacterForSourceLine:(NSInteger)line;
+- (NSInteger)markdownSourceLineNear:(NSUInteger)i;
+- (BOOL)editMarkdownAtCharacter:(NSUInteger)index point:(NSPoint)point;
+- (void)applyMarkdownSource:(NSString *)source;
+- (void)openMarkdownLink:(NSString *)href;
+- (BOOL)scrollToMarkdownAnchor:(NSString *)anchor;
+- (void)renderMarkdown:(NSString *)content;
+- (BOOL)typesetsMath;
+- (BOOL)mathNoteWanted;
+- (NSAttributedString *)mathNoteText:(NSString *)text link:(NSString *)link;
+- (NSAttributedString *)mathNoteForProblem:(NSString *)problem;
+- (NSAttributedString *)mathNoteTypesetting:(NSUInteger)count;
+- (NSAttributedString *)mathNote;
+- (void)downloadTectonicForMath;
+- (NSUInteger)mathNoteLength;
+- (MCMathFormula *)typesetFormulaFor:(const MdRun &)r;
+- (void)markdownMathArrived:(NSNotification *)note;
+- (void)showArrivedMathForPath:(NSString *)path;
+- (void)markdownWebImageArrived:(NSNotification *)note;
+- (void)showArrivedWebImagesForPath:(NSString *)path;
+- (void)renderMarkdownKeepingPlace;
+@end
+
+// EditorController+MarkdownRender.mm: turning Markdown runs into attributed text: paragraphs, runs, tables.
+@interface EditorController (MarkdownRender)
+- (NSParagraphStyle *)markdownParagraphFor:(const MdRun &)r
+                                     quote:(NSTextBlock * __strong *)quote
+                                      code:(NSTextBlock * __strong *)code;
+- (NSAttributedString *)markdownRun:(const MdRun &)r
+                              style:(NSParagraphStyle *)ps
+                             inCell:(BOOL)inCell;
+- (void)appendMarkdownTable:(const std::vector<MdRun> &)runs
+                       from:(size_t)first
+                         to:(size_t)end
+                       into:(NSMutableAttributedString *)out;
 @end
 
 #pragma clang diagnostic pop
