@@ -649,7 +649,10 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     pid_t _shellPid;             // 0 when no shell
     int _generation;             // bumps per shell, so stale output is ignored
     NSDate *_shellStarted;
-    BOOL _integrated;            // the shell integration file was written
+    BOOL _integrated;            // the shell sends the integration's marks: the
+                                 // file was written and the shell is still zsh
+    BOOL _integrationFile;       // the shell integration file was written
+    NSTimer *_shellWatch;        // while a command runs: is the shell still zsh?
     struct winsize _winsize;
     CGFloat _fontSize;           // the font size the views were last given
 
@@ -1354,6 +1357,78 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     [self sendBytes:out.data() length:out.size()];
 }
 
+// `exec bash` (or fish, sh, ...) replaces zsh with a shell that sends none
+// of the integration's marks, and the tab stayed busy for good, waiting for
+// a prompt that never came. While a command runs, the shell's process is
+// looked at twice a second; once it is another shell, this terminal works
+// as one without the integration: busy only while a program other than the
+// shell holds the foreground (foregroundCommand), commands typed at once.
+// A zsh exec'd from there loads the integration again (the exported
+// ZDOTDIR), and its first prompt mark turns it back on.
+static BOOL MCIsOtherShell(pid_t pid) {
+    char name[2 * MAXCOMLEN + 1] = {0};
+    if (proc_name(pid, name, sizeof name) <= 0) return NO;
+    NSString *n = [@(name) lowercaseString];
+    if ([n hasPrefix:@"-"]) n = [n substringFromIndex:1];
+    static NSSet<NSString *> *shells;
+    if (!shells)
+        shells = [NSSet setWithArray:@[@"bash", @"sh", @"dash", @"fish", @"ksh", @"mksh",
+                                       @"oksh", @"tcsh", @"csh", @"nu", @"elvish", @"xonsh",
+                                       @"pwsh", @"yash", @"ion", @"oil", @"osh"]];
+    return [shells containsObject:n];
+}
+
+- (void)watchShell {
+    if (_shellWatch || !_integrated || _shellPid <= 0) return;
+    __weak TerminalView *weakSelf = self;
+    _shellWatch = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES
+                                                    block:^(NSTimer *t) {
+        TerminalView *s = weakSelf;
+        if (!s) { [t invalidate]; return; }
+        [s checkShell];
+    }];
+}
+
+- (void)checkShell {
+    if (!_integrated || _atPrompt || _shellPid <= 0) {
+        [_shellWatch invalidate];
+        _shellWatch = nil;
+        return;
+    }
+    if (!MCIsOtherShell(_shellPid)) return;
+    [_shellWatch invalidate];
+    _shellWatch = nil;
+    _integrated = NO;
+    _commandStarted = NO;
+    _zleReady = NO;
+    _atPrompt = NO;
+    _runningCommand = nil;
+    _programTitle = nil;
+    [self stopRawWatch];
+    _stickyGrid = NO;
+    [self titleChanged];
+    [self postCommandFinished];
+    // What waited for a prompt goes in now.
+    NSString *line = _pendingCommand, *typed = _pendingTyped;
+    _pendingCommand = nil;
+    _pendingTyped = nil;
+    if (_lineMode) {
+        [self updateMode];
+        if (line) [self submitCommand:line];
+    } else if (line) {
+        [self typeLine:line run:YES];
+    } else if (typed) {
+        [self typeLine:typed run:NO];
+    }
+}
+
+// A prompt mark after the marks stopped: a zsh with the integration is the
+// shell again (exec zsh from bash).
+- (void)integrationReturned {
+    if (_integrated || !_integrationFile) return;
+    _integrated = YES;
+}
+
 - (void)postCommandFinished {
     [[NSNotificationCenter defaultCenter]
         postNotificationName:MCTerminalCommandDidFinishNotification object:self];
@@ -1363,7 +1438,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     if (!_lineMode) {
         if (_closed || !line.length || _screen.altScreen() || self.busy) return NO;
         if (_shellPid <= 0) [self startShell];
-        if (_zleReady) [self typeLine:line run:NO];
+        if (_zleReady || !_integrated) [self typeLine:line run:NO];
         else _pendingTyped = line;   // typed when ZLE starts reading
         [self.window makeFirstResponder:self.grid];
         return YES;
@@ -1676,6 +1751,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
 - (void)stopShell {
     _generation++;                     // ignore anything still in flight
+    [_shellWatch invalidate];
+    _shellWatch = nil;
     [self stopRawWatch];
     MCPty *pty = _pty;                 // closes the fd and reaps the shell
     if (pty) dispatch_async(_ioQueue, ^{ [pty shutdown]; });
@@ -1723,6 +1800,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
     NSString *zdot = IntegrationDirectory(!_lineMode);
     _integrated = zdot != nil;
+    _integrationFile = _integrated;
     if (!_integrated)
         [self note:@"Could not write the shell integration file; "
                     "commands still run, but without exit status or "
@@ -1978,12 +2056,14 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
             _commandStarted = NO;
             _stickyGrid = NO;
             [self stopRawWatch];
+            [self integrationReturned];
             [self promptReturned];
             if (_runningCommand) { _runningCommand = nil; [self titleChanged]; }
             break;
         case TermEvent::CommandStart:
             _commandStarted = YES;
             [self startRawWatch];
+            [self watchShell];
             break;
         case TermEvent::CommandEnd:
             // After this chunk, once the view is up to date.
@@ -2037,6 +2117,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
             _seenPrompt = YES;
             _commandStarted = NO;
             _zleReady = NO;
+            [self integrationReturned];
             [self promptReturned];
             if (_runningCommand) { _runningCommand = nil; [self titleChanged]; }
             break;
@@ -2056,6 +2137,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
                      [NSCharacterSet whitespaceAndNewlineCharacterSet]];
             _runningCommand = typed.length ? typed : @"";
             [self titleChanged];
+            [self watchShell];
             break;
         }
         case TermEvent::CommandEnd:

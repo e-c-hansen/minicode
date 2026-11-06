@@ -3,6 +3,7 @@
 //                                         scaling terminals and the preview
 //   make guitest SUITES=terminal_keys     Ctrl+Shift keys of disabled items
 //                                         reaching the program
+//   make guitest SUITES=terminal_exec     exec bash, sh and zsh
 #import "Harness.h"
 #import "AgentPanel.h"
 #import "EditorController.h"
@@ -280,4 +281,62 @@ MC_GUI_SUITE(terminal_keys) {
         Grid(s.term).onInput([NSData dataWithBytes:&etx length:1]);
     });
     MCGuiWait(@"the prompt", 10, ^BOOL { return s.term.atPrompt && !s.term.busy; });
+}
+
+// ------------------------------------------------------ exec into a shell
+MC_GUI_SUITE(terminal_exec) {
+    MCLooseState *s = [MCLooseState new];
+    TerminalAtPrompt(s);
+    // exec zsh keeps the integration (an earlier fix): a prompt, not busy,
+    // and the next command runs.
+    MCGuiStep(@"exec zsh", ^{ [s.term runCommand:@"exec zsh"]; });
+    MCGuiPause(1.5);
+    MCGuiStep(@"zsh again, not busy; a command", ^{
+        GCHECK(s.term.atPrompt && !s.term.busy && s.term.runningCommands.count == 0);
+        [s.term runCommand:@"echo after-exec-zsh"];
+    });
+    MCGuiWait(@"it runs", 10, ^BOOL {
+        return s.term.atPrompt && [[s.term recentText:3] containsString:@"\nafter-exec-zsh"];
+    });
+    // exec bash: no marks from here on. Busy only while a program holds
+    // the foreground.
+    MCGuiStep(@"exec bash", ^{ [s.term runCommand:@"exec /bin/bash --norc --noprofile"]; });
+    MCGuiWait(@"bash's prompt", 10, ^BOOL { return [[s.term recentText:2] containsString:@"bash-"]; });
+    MCGuiPause(1.0);
+    MCGuiStep(@"the tab is not busy, and not titled exec", ^{
+        GCHECK(!s.term.busy);
+        GCHECK(s.term.runningCommands.count == 0);
+        GCHECK(![s.term.title containsString:@"exec"]);
+        MCGuiNote(@"title in bash: %@", s.term.title);
+        [s.term runCommand:@"echo in-bash-$BASH_VERSINFO"];
+    });
+    MCGuiWait(@"a command typed in bash runs", 10, ^BOOL {
+        return [[s.term recentText:4] containsString:@"\nin-bash-3"];
+    });
+    MCGuiStep(@"sleep 2 in bash", ^{ [s.term runCommand:@"sleep 2"]; });
+    MCGuiWait(@"sleep holds the terminal", 5, ^BOOL {
+        return s.term.runningCommands.count > 0 && [s.term.runningCommand containsString:@"sleep"];
+    });
+    MCGuiWait(@"and lets it go", 10, ^BOOL { return s.term.runningCommands.count == 0; });
+    // exec zsh from bash: zsh loads the integration, and its marks count again.
+    MCGuiStep(@"exec zsh from bash", ^{ [s.term runCommand:@"exec zsh"]; });
+    MCGuiWait(@"zsh's integration again: at a prompt", 15, ^BOOL {
+        return s.term.atPrompt && !s.term.busy;
+    });
+    MCGuiStep(@"sleep 1 in zsh", ^{ [s.term runCommand:@"sleep 1"]; });
+    MCGuiWait(@"busy by the marks", 5, ^BOOL { return s.term.busy; });
+    MCGuiWait(@"and done", 10, ^BOOL { return s.term.atPrompt && !s.term.busy; });
+    // exec sh, the same.
+    MCGuiStep(@"exec sh", ^{ [s.term runCommand:@"exec /bin/sh"]; });
+    MCGuiWait(@"sh's prompt", 10, ^BOOL { return [[s.term recentText:2] containsString:@"sh-"]; });
+    MCGuiPause(1.0);
+    MCGuiStep(@"not busy in sh", ^{
+        GCHECK(!s.term.busy && s.term.runningCommands.count == 0);
+        [s.term runCommand:@"exec zsh"];
+    });
+    MCGuiWait(@"back at zsh's prompt", 15, ^BOOL { return s.term.atPrompt && !s.term.busy; });
+    MCGuiStep(@"and a command there", ^{ [s.term runCommand:@"echo zsh-at-last"]; });
+    MCGuiWait(@"it runs", 10, ^BOOL {
+        return s.term.atPrompt && [[s.term recentText:3] containsString:@"\nzsh-at-last"];
+    });
 }
