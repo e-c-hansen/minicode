@@ -55,9 +55,11 @@
 // document.body.innerText, up to 1 MB, read in the isolated world.
 - (void)readText:(void (^)(NSString *text, BOOL cut, NSString *error))done;
 // A PNG of the visible area, or of the page from its top with `full` (up
-// to 16,384 pixels tall), written to `path`. `info` has the picture's
-// width and height in pixels and whether it was cut.
-- (void)snapshotTo:(NSString *)path full:(BOOL)full
+// to 16,384 pixels tall), written to `path`: a new file, or with
+// `overwrite` one replacing a plain file there; never through a symlink.
+// `info` has the picture's width and height in pixels and whether it was
+// cut.
+- (void)snapshotTo:(NSString *)path full:(BOOL)full overwrite:(BOOL)overwrite
               done:(void (^)(NSDictionary *info, NSString *error))done;
 // Lets go of the message handler (the agent page closing).
 - (void)detach;

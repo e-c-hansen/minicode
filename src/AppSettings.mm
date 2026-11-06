@@ -1,5 +1,6 @@
 // AppSettings.mm — see AppSettings.h.
 #import "AppSettings.h"
+#include "FolderSearch.h"
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -9,6 +10,27 @@ NSNotificationName const MCSettingsDidChangeNotification =
 NSColor *MCColor(const Rgba &c) {
     return [NSColor colorWithSRGBRed:c.r / 255.0 green:c.g / 255.0
                                 blue:c.b / 255.0 alpha:c.a];
+}
+
+static BOOL (^gUnsavedTextCheck)(NSString *);
+static void (^gWriteProblemHandler)(NSString *);
+
+BOOL MCWriteConfigFile(NSString *path, NSString *text, BOOL checkTabs, NSString **why) {
+    NSString *name = path.lastPathComponent;
+    if (checkTabs && gUnsavedTextCheck && gUnsavedTextCheck(path)) {
+        if (why) *why = [NSString stringWithFormat:
+            @"%@ was not changed: a tab holds it with unsaved changes. Save or close that tab, "
+            @"then try again.", name];
+        return NO;
+    }
+    const char *utf8 = text.UTF8String;
+    std::string error;
+    if (!utf8 || !FolderSearch::writeFileAtomically(path.fileSystemRepresentation, utf8, &error)) {
+        if (why) *why = [NSString stringWithFormat:@"Could not write %@: %s.", name,
+                                                   utf8 ? error.c_str() : "not text"];
+        return NO;
+    }
+    return YES;
 }
 
 @implementation AppSettings {
@@ -38,6 +60,13 @@ NSColor *MCColor(const Rgba &c) {
 }
 
 - (const Settings &)settings { return _settings; }
+
++ (BOOL (^)(NSString *))unsavedTextCheck { return gUnsavedTextCheck; }
++ (void)setUnsavedTextCheck:(BOOL (^)(NSString *))check { gUnsavedTextCheck = [check copy]; }
++ (void (^)(NSString *))writeProblemHandler { return gWriteProblemHandler; }
++ (void)setWriteProblemHandler:(void (^)(NSString *))handler {
+    gWriteProblemHandler = [handler copy];
+}
 
 // Returns YES if the file's contents differ from what was applied.
 - (BOOL)load {
@@ -112,10 +141,27 @@ NSColor *MCColor(const Rgba &c) {
     [fm createDirectoryAtPath:_path.stringByDeletingLastPathComponent
   withIntermediateDirectories:YES attributes:nil error:nil];
     NSString *body = [NSString stringWithUTF8String:Settings::defaultFileText()];
-    BOOL ok = [body writeToFile:_path atomically:YES
-                       encoding:NSUTF8StringEncoding error:nil];
+    NSString *why = nil;
+    BOOL ok = MCWriteConfigFile(_path, body, NO, &why);
     if (ok) { [self reload]; [self watch]; }
+    else NSLog(@"minicode: %@", why);
     return ok;
+}
+
+// The file rewritten by minicode itself (a theme, the IDE link), refused
+// while a tab holds it with unsaved changes. Applied at once, rather than
+// when the watch notices the rename.
+- (BOOL)rewriteFileWith:(NSString *)body {
+    NSString *why = nil;
+    if (!body) why = [NSString stringWithFormat:@"Could not write %@.", _path.lastPathComponent];
+    if (why || !MCWriteConfigFile(_path, body, YES, &why)) {
+        NSLog(@"minicode: %@", why);
+        if (gWriteProblemHandler) gWriteProblemHandler(why);
+        return NO;
+    }
+    [self reload];
+    [self watch];
+    return YES;
 }
 
 - (NSString *)fileText {
@@ -128,27 +174,14 @@ NSColor *MCColor(const Rgba &c) {
     if (![self ensureFileExists]) return NO;
     const std::string text = Settings::withTheme(self.fileText.UTF8String ?: "",
                                                  themeId.UTF8String, commentColors);
-    NSString *body = [NSString stringWithUTF8String:text.c_str()];
-    if (!body || ![body writeToFile:_path atomically:YES encoding:NSUTF8StringEncoding
-                              error:nil])
-        return NO;
-    // Now, rather than when the watch notices the rename.
-    [self reload];
-    [self watch];
-    return YES;
+    return [self rewriteFileWith:[NSString stringWithUTF8String:text.c_str()]];
 }
 
 - (BOOL)writeValue:(NSString *)value forKey:(NSString *)key {
     if (!value.length || !key.length || ![self ensureFileExists]) return NO;
     const std::string text = Settings::withValue(self.fileText.UTF8String ?: "", key.UTF8String,
                                                  value.UTF8String);
-    NSString *body = [NSString stringWithUTF8String:text.c_str()];
-    if (!body || ![body writeToFile:_path atomically:YES encoding:NSUTF8StringEncoding
-                              error:nil])
-        return NO;
-    [self reload];
-    [self watch];
-    return YES;
+    return [self rewriteFileWith:[NSString stringWithUTF8String:text.c_str()]];
 }
 
 - (NSColor *)background:(Surface)s { return MCColor(_settings.background(s)); }

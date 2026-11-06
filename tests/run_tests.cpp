@@ -9963,6 +9963,7 @@ static void testMultiCaretOccurrences() {
 #include "page_check_tests.inc"
 #include "terminal_links_tests.inc"
 #include "ide_link_tests.inc"
+#include "format_consent_tests.inc"
 #include "terminal_paste_tests.inc"
 #include "terminal_marks_tests.inc"
 #include "latex_safety_tests.inc"
@@ -10015,6 +10016,7 @@ int main() {
     testGitModel();
     testEditorTabs();
     testFormatter();
+    testFormatConsent();
     testInstallHints();
     testLinuxBuildLists();
     testEditorControllerIvars();
