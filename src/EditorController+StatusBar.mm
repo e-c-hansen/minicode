@@ -379,6 +379,13 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                             key2:@"⌘↖" label2:@"Top of the scrollback" state:nil];
             [self appendHintsRow:s key:@"⌘← ⌘→" label:@"Start, end of the line"
                             key2:@"⌘⌫" label2:@"Delete to its start" state:nil];
+            [self appendHintsRow:s
+                             key:[NSString stringWithFormat:@"%@ %@",
+                                  [self hk:@"workbench.action.terminal.scrollToPreviousCommand"],
+                                  [self hk:@"workbench.action.terminal.scrollToNextCommand"]]
+                           label:@"Previous, next command"
+                            key2:[self hk:@"workbench.action.terminal.selectToPreviousCommand"]
+                          label2:@"Select it" state:nil];
         }
     }
     [self appendHintsRow:s key:[self hk:@"minicode.toggleBrowser"] label:@"Browser"

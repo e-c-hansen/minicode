@@ -50,6 +50,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <climits>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -9979,6 +9980,7 @@ static void testMultiCaretOccurrences() {
 #include "ide_link_tests.inc"
 #include "format_consent_tests.inc"
 #include "terminal_paste_tests.inc"
+#include "terminal_marks_tests.inc"
 #include "latex_safety_tests.inc"
 #include "markdown_gfm_tests.inc"
 #include "lsp_watch_tests.inc"
@@ -10006,6 +10008,7 @@ int main() {
     testTerminalFuzz();
     testTerminalHyperlinks();
     testTerminalPaste();
+    testTerminalMarks();
     testSettings();
     testSettingsColorEditing();
     testLineComments();

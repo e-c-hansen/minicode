@@ -39,6 +39,16 @@ std::string screenProblem(const TerminalScreen &s) {
             if (cell.ch.size() > kTermMaxCellBytes) return "a long scrollback cell";
         }
     }
+    // The shell integration's marks stay on lines that exist.
+    auto onALine = [&](int line) { return line >= -s.historySize() && line < s.rows(); };
+    int lastPrompt = INT_MIN;
+    for (const TermCommand &c : s.commands()) {
+        if (!onALine(c.promptLine) || (c.ran && !onALine(c.outputLine)) ||
+            (c.ended && !onALine(c.endLine)))
+            return "a mark off the lines, prompt at " + std::to_string(c.promptLine);
+        if (c.promptLine < lastPrompt) return "marks out of order";   // they are found by halving
+        lastPrompt = c.promptLine;
+    }
     return "";
 }
 
@@ -59,7 +69,12 @@ void testTerminalFuzz() {
             "\x1b[!p", "\x1b" "c", "\x1b[3Z", "\x1b[2I", "\x1b(0q\x1b(B", "\x1b[?1048h",
             "\x1b[?1048l", "\x1b#8", "\x1bP", "\x1b\\", "\x18", "\x1a", "\x1b]2;t",
             "\x07", "\x1b[38:2::1:2:3;48;2;4;5;6;58:2::7:8:9;4:3;1m", "\x1b[?2026h",
-            "\x1b[?2026l", "\x1b_apc", "\xC3", "\xA9"};
+            "\x1b[?2026l", "\x1b_apc", "\xC3", "\xA9",
+            // Emoji sequences: a joiner, a person, a flag's letters, VS16 and a
+            // heart, a skin tone; and the shell integration's other marks.
+            "\xE2\x80\x8D", "\xF0\x9F\x91\xA9", "\xF0\x9F\x87\xAF", "\xF0\x9F\x87\xB5",
+            "\xEF\xB8\x8F", "\xE2\x9D\xA4", "\xF0\x9F\x8F\xBD", "\x1b]133;C\x07",
+            "\x1b]133;D;1\x07"};
         const int kPieces = (int)(sizeof pieces / sizeof *pieces);
         int problems = 0, rounds = 0;
         std::string first;

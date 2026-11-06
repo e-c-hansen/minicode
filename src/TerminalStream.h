@@ -62,9 +62,34 @@ struct TermRun {
     TermStyle style;
 };
 
-// Columns a code point takes on a terminal: 0 for combining marks and other
-// zero-width characters, 2 for East Asian wide characters and most emoji.
+// Columns a code point takes on a terminal, from Unicode's data (the tables
+// in TerminalStream.cpp are written by tools/gen-term-width.py): 0 for
+// combining and enclosing marks, format characters (the zero width joiner,
+// the bidi controls), the Hangul medial and final jamo, and the emoji skin
+// tone modifiers; 2 for East Asian wide and fullwidth characters and the
+// emoji shown wide; 1 for the rest. As wcwidth counts, so the cursor stays
+// where zsh's line editor thinks it is.
 int termCharWidth(uint32_t cp);
+// Extended_Pictographic: an emoji, or a symbol that may show as one. After a
+// zero width joiner such a character joins the emoji before it (a family,
+// a profession) instead of taking cells of its own.
+bool termIsPictographic(uint32_t cp);
+inline bool termIsRegionalIndicator(uint32_t cp) { return cp >= 0x1F1E6 && cp <= 0x1F1FF; }
+// The first code point of a cell's UTF-8 (0 for none), and its length.
+uint32_t termFirstCodepoint(const std::string& utf8, size_t* length = nullptr);
+// Whether `cp`, which takes columns of its own, belongs to the character
+// already in `cell` instead (grapheme clusters, as terminals that follow
+// Unicode draw them): the second regional indicator of a flag, or a
+// pictograph after an emoji that ended in a zero width joiner. Combining
+// marks (width 0) always join; this is the rest.
+bool termJoinsCluster(const std::string& cell, uint32_t cp);
+
+// The shell integration's marks (OSC 133, OSC 633 and OSC 7 bodies) count
+// only when they end in ";mc=<nonce>", once a nonce is set (see
+// TerminalStream::setMarkNonce). False for a mark without it, which is
+// someone else's and dropped; otherwise true, with the body less the suffix
+// in `body` (other OSC bodies pass unchanged).
+bool termMarkAccepted(std::string& body, const std::string& nonce);
 
 // The directory an OSC 7 body names ("7;file://host/path", or a bare
 // "7;/path"), percent-decoded; empty when the body is not a usable OSC 7.
@@ -77,9 +102,10 @@ void applySgr(TermStyle& style, const std::string& params);
 // past it are dropped, as xterm keeps only a few, since a program printing
 // megabytes of U+0301 after one letter otherwise grew a single cell that
 // every frame copied and laid out (and, past 16 MiB in one line, overflowed
-// the scrollback's packed offsets). 32 bytes holds a flag's tag sequence,
-// a skin-toned emoji with its joiner, and any real script's marks.
-constexpr size_t kTermMaxCellBytes = 32;
+// the scrollback's packed offsets). 64 bytes hold a flag's tag sequence,
+// the skin-toned family emoji (four people, four modifiers and three
+// joiners, 41 bytes), and any real script's marks.
+constexpr size_t kTermMaxCellBytes = 64;
 
 // A window title as a program sent it (UTF-8), made safe to show in a tab:
 // C0 and C1 controls, DEL, and the bidirectional and zero-width format

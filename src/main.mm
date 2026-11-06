@@ -1443,6 +1443,11 @@ static void BuildMenu(void) {
     [termMenu addItemWithTitle:@"Clear Terminal"
                         action:@selector(clearTerminal:)
                  keyEquivalent:@"k"];
+    // What the last command printed, from the shell integration's marks
+    // (TerminalView copyLastCommandOutput:); no key, as in VS Code.
+    [termMenu addItemWithTitle:@"Copy Last Command Output"
+                        action:@selector(copyLastCommandOutput:)
+                 keyEquivalent:@""];
     [termMenu addItem:[NSMenuItem separatorItem]];
     // Not Cmd+Return, which commits in the git panel's message box.
     NSMenuItem *runFile =
