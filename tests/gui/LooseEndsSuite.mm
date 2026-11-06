@@ -1,6 +1,8 @@
 // LooseEndsSuite.mm — smaller checks gathered in one file:
 //   make guitest SUITES=terminal_zoom     terminal.font-size, and the zoom
 //                                         scaling terminals and the preview
+//   make guitest SUITES=terminal_keys     Ctrl+Shift keys of disabled items
+//                                         reaching the program
 #import "Harness.h"
 #import "AgentPanel.h"
 #import "EditorController.h"
@@ -187,4 +189,95 @@ MC_GUI_SUITE(terminal_zoom) {
         GCHECK(!s.term.lineMode);
         GCHECK(Cols(s.term) == s.cols);
     });
+}
+
+// ----------------------------------------------- Ctrl+Shift keys in the grid
+MC_GUI_SUITE(terminal_keys) {
+    MCLooseState *s = [MCLooseState new];
+    TerminalAtPrompt(s);
+    MCGuiStep(@"cat -v reads the keys", ^{ [s.term runCommand:@"cat -v"]; });
+    MCGuiWait(@"cat runs", 10, ^BOOL { return s.term.busy; });
+    MCGuiPause(0.3);
+    MCGuiStep(@"Ctrl+Shift+K reaches cat, not Delete Line", ^{
+        GCHECK(s.c.window.firstResponder == Grid(s.term));
+        s.sent.length = 0;
+        // The window's key equivalents first (the grid's), as AppKit offers them.
+        CGEventRef cg = CGEventCreateKeyboardEvent(NULL, 40, true);
+        CGEventSetFlags(cg, (CGEventFlags)(kCGEventFlagMaskControl | kCGEventFlagMaskShift));
+        NSEvent *e = [NSEvent eventWithCGEvent:cg];
+        CFRelease(cg);
+        GCHECK([s.c.window performKeyEquivalent:e]);
+        GCHECK(s.sent.length == 1 && ((const char *)s.sent.bytes)[0] == 0x0B);
+        // Ctrl+Shift+- reads "_": matched to Go Forward's "-" all the same,
+        // and the program's while that item cannot act.
+        cg = CGEventCreateKeyboardEvent(NULL, 27, true);
+        CGEventSetFlags(cg, (CGEventFlags)(kCGEventFlagMaskControl | kCGEventFlagMaskShift));
+        e = [NSEvent eventWithCGEvent:cg];
+        CFRelease(cg);
+        NSMenuItem *forward = nil;
+        for (NSMenuItem *top in NSApp.mainMenu.itemArray)
+            for (NSMenuItem *i in top.submenu.itemArray)
+                if (i.action == NSSelectorFromString(@"navigateForward:")) forward = i;
+        GCHECK(forward != nil);
+        [forward.menu update];
+        s.sent.length = 0;
+        const BOOL took = [s.c.window performKeyEquivalent:e];
+        if (!forward.enabled) GCHECK(took && s.sent.length == 1 && ((const char *)s.sent.bytes)[0] == 0x1F);
+        else GCHECK(!took && s.sent.length == 0);
+        MCGuiNote(@"Go Forward %@: Ctrl+Shift+- sent %lu bytes", forward.enabled ? @"enabled" : @"disabled",
+                  (unsigned long)s.sent.length);
+        // Every Ctrl+Shift item of the menu, and whether it acts here.
+        NSMutableArray *items = [NSMutableArray array];
+        NSMutableArray *stack = [NSMutableArray arrayWithObject:NSApp.mainMenu];
+        while (stack.count) {
+            NSMenu *m = stack.lastObject;
+            [stack removeLastObject];
+            [m update];
+            for (NSMenuItem *i in m.itemArray) {
+                if (i.submenu) { [stack addObject:i.submenu]; continue; }
+                NSEventModifierFlags f = i.keyEquivalentModifierMask;
+                if ((f & NSEventModifierFlagControl) && !(f & NSEventModifierFlagCommand) &&
+                    i.keyEquivalent.length)
+                    [items addObject:[NSString stringWithFormat:@"%@ (%@%@%@)%@", i.title,
+                        f & NSEventModifierFlagShift ? @"Shift+" : @"",
+                        f & NSEventModifierFlagOption ? @"Option+" : @"", i.keyEquivalent,
+                        i.enabled ? @"" : @" disabled"]];
+            }
+        }
+        MCGuiNote(@"Ctrl items with the grid's keyboard: %@", [items componentsJoinedByString:@", "]);
+    });
+    MCGuiWait(@"cat echoes ^K", 5, ^BOOL { return [[s.term recentText:3] containsString:@"^K"]; });
+    MCGuiStep(@"Ctrl+Shift+W, an enabled item, is still the app's (no byte sent)", ^{
+        // Close Terminal is enabled here, so it acts: checked by the menu's
+        // own validation rather than run, which would close the terminal.
+        CGEventRef cg = CGEventCreateKeyboardEvent(NULL, 13, true);
+        CGEventSetFlags(cg, (CGEventFlags)(kCGEventFlagMaskControl | kCGEventFlagMaskShift));
+        NSEvent *e = [NSEvent eventWithCGEvent:cg];
+        CFRelease(cg);
+        NSMenuItem *close = nil;
+        NSMutableArray *stack = [NSMutableArray arrayWithObject:NSApp.mainMenu];
+        while (stack.count && !close) {
+            NSMenu *m = stack.lastObject;
+            [stack removeLastObject];
+            for (NSMenuItem *i in m.itemArray) {
+                if (i.submenu) [stack addObject:i.submenu];
+                else if ([i.keyEquivalent isEqualToString:@"w"] &&
+                         i.keyEquivalentModifierMask ==
+                             (NSEventModifierFlagControl | NSEventModifierFlagShift))
+                    close = i;
+            }
+        }
+        GCHECK(close != nil);
+        [close.menu update];
+        GCHECK(close.enabled);
+        s.sent.length = 0;
+        // The grid lets it go to the menu: offered to the grid alone, it is refused.
+        GCHECK(![Grid(s.term) performKeyEquivalent:e]);
+        GCHECK(s.sent.length == 0);
+    });
+    MCGuiStep(@"Ctrl+C ends cat", ^{
+        const char etx = 0x03;
+        Grid(s.term).onInput([NSData dataWithBytes:&etx length:1]);
+    });
+    MCGuiWait(@"the prompt", 10, ^BOOL { return s.term.atPrompt && !s.term.busy; });
 }

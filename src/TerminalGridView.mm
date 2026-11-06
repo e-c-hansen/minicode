@@ -43,6 +43,8 @@ static const long long kNoLine = LLONG_MIN;
 // Synchronized output: the longest a frame may keep the view from drawing.
 static const NSTimeInterval kSyncLimit = 0.15;
 
+static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e);
+
 @implementation TerminalGridView {
     BOOL _selecting, _hasSelection;
     long long _anchorId, _endId;   // selection ends, as line numbers
@@ -737,7 +739,50 @@ static CellColors ColorsFor(const TermStyle &st) {
             return YES;
         }
     }
+    // Ctrl with Shift or Option is the app's when a menu item that can act
+    // has it, and the program's otherwise: a disabled item still takes its
+    // key, so the editor's Delete Line (Ctrl+Shift+K) swallowed it here.
+    if (self.textInput && self.window.firstResponder == self &&
+        (f & NSEventModifierFlagControl) && !(f & NSEventModifierFlagCommand) &&
+        (f & (NSEventModifierFlagShift | NSEventModifierFlagOption))) {
+        NSMenuItem *item = MCMenuItemForKey(NSApp.mainMenu, e);
+        if (item) {
+            [item.menu update];   // validation against the grid's responder chain
+            if (!item.enabled) {
+                [self keyDown:e];
+                return YES;
+            }
+        }
+    }
     return [super performKeyEquivalent:e];
+}
+
+// The menu item, enabled or not, whose key equivalent is this key event's
+// (Command, Control, Option and Shift compared; nil when none).
+static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e) {
+    const NSEventModifierFlags mods = NSEventModifierFlagCommand | NSEventModifierFlagControl |
+                                      NSEventModifierFlagOption | NSEventModifierFlagShift;
+    const NSEventModifierFlags flags = e.modifierFlags & mods;
+    NSString *key = e.charactersIgnoringModifiers.lowercaseString;
+    // The key without Shift too: Ctrl+Shift+- reads "_", its item says "-".
+    NSString *plain = e.type == NSEventTypeKeyDown
+        ? [e charactersByApplyingModifiers:0].lowercaseString : nil;
+    if (!key.length && !plain.length) return nil;
+    for (NSMenuItem *item in menu.itemArray) {
+        if (item.submenu) {
+            NSMenuItem *found = MCMenuItemForKey(item.submenu, e);
+            if (found) return found;
+            continue;
+        }
+        NSString *ke = item.keyEquivalent;
+        if (!ke.length || item.isAlternate) continue;
+        NSEventModifierFlags m = item.keyEquivalentModifierMask & mods;
+        // "K" in a key equivalent means Shift+K.
+        if (![ke.lowercaseString isEqualToString:ke]) m |= NSEventModifierFlagShift;
+        NSString *k = ke.lowercaseString;
+        if (m == flags && ([k isEqualToString:key] || [k isEqualToString:plain])) return item;
+    }
+    return nil;
 }
 
 - (void)keyDown:(NSEvent *)e {
