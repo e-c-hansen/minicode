@@ -47,6 +47,7 @@
 #import "TerminalGridView.h"
 #import "TerminalFindBar.h"
 #import "Appearance.h"
+#import "EditorFont.h"
 #include "TerminalStream.h"
 #include "TerminalScreen.h"
 #include "TermLinks.h"
@@ -650,6 +651,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     NSDate *_shellStarted;
     BOOL _integrated;            // the shell integration file was written
     struct winsize _winsize;
+    CGFloat _fontSize;           // the font size the views were last given
 
     BOOL _atPrompt;              // zsh is waiting for a command
     BOOL _commandStarted;        // saw 133;C for the command in flight
@@ -704,6 +706,9 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         [[NSNotificationCenter defaultCenter]
             addObserver:self selector:@selector(applySettings)
                    name:MCSettingsDidChangeNotification object:nil];
+        [[NSNotificationCenter defaultCenter]
+            addObserver:self selector:@selector(applyFontSize)
+                   name:MCEditorZoomDidChangeNotification object:nil];
         if (_lineMode)
             [self appendLine:@"MiniCode terminal — zsh on a pty. Ctrl+C interrupts, "
                               "`clear` resets the panel."
@@ -716,7 +721,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
 - (NSTextField *)makeInputField:(Class)cls {
     NSTextField *f = [[cls alloc] init];
-    f.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+    f.font = MCTerminalFont(NO, NO);
     f.bezeled = NO;
     f.focusRingType = NSFocusRingTypeNone;
     f.bordered = NO;
@@ -765,8 +770,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
     // Prompt label + input field (and a secure twin for hidden input).
     self.prompt = [NSTextField labelWithString:@"❯"];
-    self.prompt.font = [NSFont monospacedSystemFontOfSize:12
-                                                   weight:NSFontWeightBold];
+    self.prompt.font = MCTerminalFont(YES, NO);
     self.prompt.textColor = THex(0x4EC9B0);
     self.prompt.backgroundColor = [NSColor clearColor];
     [self addSubview:self.prompt];
@@ -847,7 +851,38 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         self.grid.optionAsMeta = cfg.settings.terminalOptionAsMeta();
     }
     [self.findBar applySettings];
+    [self applyFontSize];
     [self.grid screenChanged];
+}
+
+// terminal.font-size plus the editor's zoom. On a change the input line,
+// the prompt and the log take the new size (each run keeps its weight and
+// slant), the panel is laid out again, and the pty gets the rows and
+// columns the new cell fits, which rewraps the grid's lines.
+- (void)applyFontSize {
+    const CGFloat size = MCTerminalFontSize();
+    if (size == _fontSize) return;
+    const BOOL first = _fontSize == 0;
+    _fontSize = size;
+    for (NSTextField *f in @[self.input, self.secureInput]) f.font = MCTerminalFont(NO, NO);
+    self.prompt.font = MCTerminalFont(YES, NO);
+    if (!first) {
+        NSTextStorage *ts = self.output.textStorage;
+        [ts beginEditing];
+        [ts enumerateAttribute:NSFontAttributeName inRange:NSMakeRange(0, ts.length)
+                       options:0 usingBlock:^(NSFont *font, NSRange r, BOOL *stop) {
+            (void)stop;
+            NSFontDescriptorSymbolicTraits t = font.fontDescriptor.symbolicTraits;
+            [ts addAttribute:NSFontAttributeName
+                       value:MCTerminalFont((t & NSFontDescriptorTraitBold) != 0,
+                                            (t & NSFontDescriptorTraitItalic) != 0)
+                       range:r];
+        }];
+        [ts endEditing];
+    }
+    [self layoutChildren];
+    [self.grid screenChanged];
+    self.grid.needsDisplay = YES;
 }
 
 // Manual layout — reliable regardless of how the host sizes us.
@@ -858,11 +893,13 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
 - (void)layoutChildren {
     CGFloat W = self.bounds.size.width, H = self.bounds.size.height;
-    const CGFloat inH = 26, promptW = 20;
+    // 18 and 26 points at the default 12-point font, growing with it.
+    const CGFloat fieldH = ceil([TerminalGridView cellSize].height) + 3;
+    const CGFloat inH = fieldH + 8, promptW = ceil(20 * MAX(_fontSize, 12) / 12);
     self.outScroll.frame = NSMakeRect(0, inH, W, MAX(0, H - inH));
     // The prompt and the field share a row, so the glyph sits on the text's
     // baseline (same font size, same unbezeled cell).
-    NSRect field = NSMakeRect(6 + promptW, 4, MAX(0, W - promptW - 12), 18);
+    NSRect field = NSMakeRect(6 + promptW, 4, MAX(0, W - promptW - 12), fieldH);
     self.prompt.frame = NSMakeRect(6, field.origin.y, promptW, field.size.height);
     self.input.frame = field;
     self.secureInput.frame = field;
@@ -2065,22 +2102,6 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 }
 
 // ---------------------------------------------------------------- styling
-static NSFont *TermFont(BOOL bold, BOOL italic) {
-    static NSFont *fonts[4];
-    int i = (bold ? 1 : 0) | (italic ? 2 : 0);
-    if (!fonts[i]) {
-        NSFont *f = [NSFont monospacedSystemFontOfSize:12
-            weight:bold ? NSFontWeightBold : NSFontWeightRegular];
-        if (italic) {
-            NSFontDescriptor *d = [f.fontDescriptor fontDescriptorWithSymbolicTraits:
-                f.fontDescriptor.symbolicTraits | NSFontDescriptorTraitItalic];
-            f = [NSFont fontWithDescriptor:d size:12] ?: f;
-        }
-        fonts[i] = f;
-    }
-    return fonts[i];
-}
-
 - (NSDictionary *)attributesForStyle:(const TermStyle &)st {
     const Settings &cfg = [AppSettings shared].settings;
     bool defaultFg = st.fg.kind == TermColor::Default;
@@ -2092,7 +2113,7 @@ static NSFont *TermFont(BOOL bold, BOOL italic) {
     if (st.inverse) { std::swap(fg, bg); hasBg = true; defaultFg = false; }
 
     NSMutableDictionary *a = [NSMutableDictionary dictionary];
-    a[NSFontAttributeName] = TermFont(st.bold, st.italic);
+    a[NSFontAttributeName] = MCTerminalFont(st.bold, st.italic);
     NSColor *fgColor = MCColor(fg);
     if (st.dim) fgColor = [fgColor colorWithAlphaComponent:fg.a * 0.6];
     a[NSForegroundColorAttributeName] = fgColor;
@@ -2167,7 +2188,7 @@ static NSFont *TermFont(BOOL bold, BOOL italic) {
 - (void)appendLine:(NSString *)line color:(NSColor *)color {
     [self ensureNewline];
     NSDictionary *attrs = @{
-        NSFontAttributeName: TermFont(NO, NO),
+        NSFontAttributeName: MCTerminalFont(NO, NO),
         NSForegroundColorAttributeName: color,
     };
     NSTextStorage *ts = self.output.textStorage;

@@ -3706,7 +3706,7 @@ void testSettings() {
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
     // format, python, keep-sorted, auto-save, ruler, terminal and develop keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 74);
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 75);
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -3737,6 +3737,7 @@ void testSettings() {
     CHECK(un.autoSaveDelay() == d.autoSaveDelay() && d.autoSaveDelay() == 1000);
     CHECK(un.rulers() == d.rulers() && un.rulerColor() == d.rulerColor());
     CHECK(un.editorFontSize() == d.editorFontSize() && d.editorFontSize() == 13);
+    CHECK(un.terminalFontSize() == d.terminalFontSize() && d.terminalFontSize() == 12);
     CHECK(un.lineNumbers() == d.lineNumbers() &&
           d.lineNumbers() == Settings::LineNumbers::On);
     CHECK(un.gutterBackground() == d.gutterBackground());
@@ -3941,6 +3942,19 @@ void testSettings() {
             CHECK(fe.size() == 1 && fs.editorFontSize() == 13);
         }
         CHECK(std::string(Settings::defaultFileText()).find("# editor.font-size = 13\n") !=
+              std::string::npos);
+        // The terminal's font size, by the same rules.
+        CHECK(parseSettings("terminal.font-size = 14\n").terminalFontSize() == 14);
+        CHECK(parseSettings("terminal.font-size = 11.5\n").terminalFontSize() == 11.5);
+        CHECK(parseSettings("terminal.font-size = 72\n").terminalFontSize() == 72);
+        for (const char *bad : {"terminal.font-size = 5\n", "terminal.font-size = 80\n",
+                                "terminal.font-size = small\n"}) {
+            std::vector<SettingsError> fe;
+            Settings fs = parseSettings(bad, &fe);
+            CHECK(fe.size() == 1 && fs.terminalFontSize() == 12 &&
+                  fs.editorFontSize() == 13);
+        }
+        CHECK(std::string(Settings::defaultFileText()).find("# terminal.font-size = 12\n") !=
               std::string::npos);
         // The editor's Adjust Settings marks the gutter's keys too.
         const AppearanceSurface *ed = Settings::appearanceSurface("editor");

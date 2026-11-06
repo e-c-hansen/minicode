@@ -245,8 +245,10 @@ public:
     // terminal.option-as-meta: Option sends ESC before the key, for the
     // shell's Meta bindings (true by default); false lets Option type the
     // characters the keyboard layout puts on it (@ { | on many European
-    // layouts) and dead keys.
+    // layouts) and dead keys. terminal.font-size: the terminal's font in
+    // points (12 by default, 6 to 72); the editor's zoom adds to it too.
     bool terminalLineMode() const { return terminalLineMode_; }
+    double terminalFontSize() const { return terminalFontSize_; }
     int terminalScrollback() const { return terminalScrollback_; }
     bool terminalOptionAsMeta() const { return terminalOptionAsMeta_; }
 
@@ -338,6 +340,7 @@ private:
         bracketMatchColor_;
     bool terminalLineMode_ = false;
     int terminalScrollback_ = 10000;
+    double terminalFontSize_ = 12;
     bool terminalOptionAsMeta_ = true;
     std::map<std::string, std::string> lspCommands_;
     bool runInNewTerminal_ = false;

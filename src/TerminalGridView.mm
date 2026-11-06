@@ -31,6 +31,7 @@
 #import "Terminal.h"
 #import "AppSettings.h"
 #import "Appearance.h"
+#import "EditorFont.h"
 #import <Carbon/Carbon.h>   // kVK_* key codes (header only, nothing linked)
 #include <algorithm>
 #include <climits>
@@ -94,35 +95,23 @@ static const NSTimeInterval kSyncLimit = 0.15;
     return self;
 }
 
-+ (NSFont *)cellFont {
-    static NSFont *font;
-    if (!font) font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
-    return font;
-}
+// The fonts and the cell follow terminal.font-size and the editor's zoom
+// (MCTerminalFont keeps the fonts per size); the cell is measured again
+// whenever the size has changed.
++ (NSFont *)cellFont { return MCTerminalFont(NO, NO); }
 
-+ (NSFont *)fontBold:(BOOL)bold italic:(BOOL)italic {
-    static NSFont *fonts[4];
-    int i = (bold ? 1 : 0) | (italic ? 2 : 0);
-    if (!fonts[i]) {
-        NSFont *f = [NSFont monospacedSystemFontOfSize:12
-            weight:bold ? NSFontWeightBold : NSFontWeightRegular];
-        if (italic) {
-            NSFontDescriptor *d = [f.fontDescriptor fontDescriptorWithSymbolicTraits:
-                f.fontDescriptor.symbolicTraits | NSFontDescriptorTraitItalic];
-            f = [NSFont fontWithDescriptor:d size:12] ?: f;
-        }
-        fonts[i] = f;
-    }
-    return fonts[i];
-}
++ (NSFont *)fontBold:(BOOL)bold italic:(BOOL)italic { return MCTerminalFont(bold, italic); }
 
 + (NSSize)cellSize {
     static NSSize size;
-    if (size.width == 0) {
+    static CGFloat measuredAt;
+    const CGFloat pt = MCTerminalFontSize();
+    if (size.width == 0 || measuredAt != pt) {
         NSFont *f = [self cellFont];
         CGFloat w = [@"M" sizeWithAttributes:@{NSFontAttributeName: f}].width;
         CGFloat h = [[[NSLayoutManager alloc] init] defaultLineHeightForFont:f];
         size = NSMakeSize(w, ceil(h));
+        measuredAt = pt;
     }
     return size;
 }
