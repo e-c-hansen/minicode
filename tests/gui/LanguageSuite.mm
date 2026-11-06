@@ -617,4 +617,14 @@ MC_GUI_SUITE(language) {
         MCGuiWriteFile(settings, @"lsp.enabled = false\n");
     });
     MCGuiPause(0.5);
+    // The suite's edits were never saved: their tabs go without asking, so
+    // the suites after it start with no unsaved tab of this one's (a dirty
+    // tab made later suites' Close All and quit questions ask about it).
+    MCGuiStep(@"the suite's unsaved tabs close", ^{
+        for (MCTab *t in [(NSArray *)[c valueForKey:@"tabs"] copy])
+            if (t.dirty) [c closeTab:t prompt:NO];
+        BOOL anyDirty = NO;
+        for (MCTab *t in [c valueForKey:@"tabs"]) anyDirty |= t.dirty;
+        GCHECK(!anyDirty);
+    });
 }

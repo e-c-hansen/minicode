@@ -39,7 +39,5 @@ extern BOOL gShowHidden;
 @interface ClickOutline : NSOutlineView
 @property(nonatomic, copy) void (^onRowClick)(NSInteger row, NSPoint pointInView);
 @property(nonatomic, copy) void (^onActivate)(NSInteger row);   // Return / Enter
-@property(nonatomic, copy) void (^onTrash)(void);   // Cmd+Delete, here only
-@property(nonatomic, copy) void (^onRename)(void);  // F2, here only
 @property(nonatomic, assign) BOOL dragBegan;   // set when a row is dragged
 @end

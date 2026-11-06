@@ -1,5 +1,6 @@
 // EditorController+Format.mm — EditorController: Format Document.
 #import "EditorController+Private.h"
+#import "EditorController+FormatIvars.h"
 
 @implementation EditorController (Format)
 

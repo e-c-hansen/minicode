@@ -111,8 +111,10 @@ PathSpec splitPathSpec(const std::string& spec,
 std::string absolutePath(const std::string& path, const std::string& cwd,
                          const std::string& home);
 
-// Procs: `minicode procs` as a table (Procs::formatTable).
-enum class Output { None, Id, Json, Text, Procs };
+// Procs: `minicode procs` as a table (Procs::formatTable). Line: a string
+// result field and a line break; JsonLines: each element of a list field
+// as one line of JSON.
+enum class Output { None, Id, Json, Text, Procs, Line, JsonLines };
 
 struct CliCommand {
     bool help = false;          // `minicode help`, or -h after a subcommand
@@ -139,7 +141,10 @@ struct CliCommand {
 CliCommand parseCommandLine(const std::vector<std::string>& argv, const std::string& cwd,
                             const std::string& home,
                             const std::function<bool(const std::string&)>& exists);
-// Whether `word` is one of the subcommands (the launcher passes those on).
+// The subcommands, which scripts/minicode-launcher passes on to the client
+// (its own list; control:launcher-words checks the two agree), and whether
+// `word` is one of them.
+const std::vector<std::string>& subcommands();
 bool isSubcommand(const std::string& word);
 // Whether the command line starts minicode when none is running. Reads
 // (state, selection, term-output, procs) do not: there would be nothing to read,

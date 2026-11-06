@@ -1,5 +1,6 @@
 // EditorController+Tabs.mm — EditorController: tabs, closed tabs, a tab's menu, saving.
 #import "EditorController+Private.h"
+#import "EditorController+TabsIvars.h"
 #import "TextKit2.h"
 
 @implementation EditorController (Tabs)

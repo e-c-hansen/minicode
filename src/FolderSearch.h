@@ -55,6 +55,9 @@ struct FolderSearchMatch {
                                  // line; GtkTextBuffer's "line index"
     std::size_t byteLength = 0;  // bytes the match covers in the raw line
     std::string text;          // the line for display: cleaned, trimmed, capped
+    // Matches on the line, counted as Replace in Folder counts them (a row
+    // is a line, so "a = a" is one row and two matches). 1 for a TODO.
+    std::size_t count = 1;
 };
 
 struct FolderSearchOptions {
@@ -73,6 +76,7 @@ struct FolderSearchResult {
     std::vector<FolderSearchMatch> matches;
     std::size_t filesSearched = 0;   // text files actually scanned
     std::size_t filesMatched  = 0;   // files with at least one match
+    std::size_t totalMatches  = 0;   // the matches' counts added up: what the status says
     bool truncated = false;          // stopped at maxMatches
     bool cancelled = false;          // the cancel flag was raised mid-search
     std::string error;               // the regex did not compile: why

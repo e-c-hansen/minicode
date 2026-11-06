@@ -33,6 +33,7 @@
 #include "LineIndex.h"
 #include "BracketMatch.h"
 #include "ControlProtocol.h"
+#include "PageCheck.h"
 #include "SideBySide.h"
 #include "AgentTranscript.h"
 #include "AgentIndex.h"
@@ -3717,8 +3718,35 @@ void testSettings() {
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
     // format, python, keep-sorted, auto-save, ruler, terminal, develop and
-    // agent keys (with markdown.mermaid and agent.ide-link).
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 77);
+    // control and agent keys (with markdown.mermaid and agent.ide-link).
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 78);
+    {
+        GROUP("settings:key-table");
+        // Every key of the table is documented in the default file (a new
+        // row needs its commented default there), and is a key once.
+        std::vector<std::string> table = Settings::tableKeys();
+        CHECK(table.size() >= 29);
+        std::set<std::string> seen;
+        for (const std::string &k : table) {
+            CHECK(seen.insert(k).second);
+            const bool documented = ("\n" + keys).find("\n" + k + " =") != std::string::npos;
+            if (!documented) std::printf("  defaultFileText lacks %s\n", k.c_str());
+            CHECK(documented);
+        }
+        CHECK(Settings::isColorKey("editor.bracket-match") && Settings::isColorKey("window.text"));
+        CHECK(!Settings::isColorKey("window.opacity") && !Settings::isColorKey("theme"));
+        CHECK(Settings::isColorKey("editor.background") && Settings::isColorKey("syntax.keyword"));
+        // A path keeps its spaces; a command line its quotes; a word refuses more.
+        std::vector<SettingsError> ek;
+        Settings p = parseSettings("python.interpreter = /a b/python3  # mine\n"
+                                   "agent.command = claude --x \"a # b\" # note\n"
+                                   "develop.source = auto\n", &ek);
+        CHECK(ek.empty() && p.pythonInterpreter() == "/a b/python3");
+        CHECK(p.agentCommand() == "claude --x \"a # b\"" && p.developSource().empty());
+        parseSettings("terminal.mode = grid line\n", &ek);
+        CHECK(ek.size() == 1 && ek[0].message.find("unexpected text") != std::string::npos);
+        GROUP("settings:default-file");
+    }
     std::vector<SettingsError> e4;
     Settings un = parseSettings(keys, &e4);
     CHECK(e4.empty());
@@ -8724,6 +8752,109 @@ static std::set<std::string> coreFilesIn(const std::string &text, const std::str
     return out;
 }
 
+// The instance variables a class extension block declares: the name before
+// each ";" (a C array's size dropped), comments skipped.
+static std::vector<std::string> ivarNamesIn(const std::string &block) {
+    std::vector<std::string> out;
+    std::istringstream lines(block);
+    std::string line;
+    auto ident = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
+    while (std::getline(lines, line)) {
+        size_t cm = line.find("//");
+        if (cm != std::string::npos) line.erase(cm);
+        size_t semi = line.find(';');
+        if (semi == std::string::npos) continue;
+        size_t e = semi;
+        if (e > 0 && line[e - 1] == ']') e = line.rfind('[', e);
+        if (e == std::string::npos) continue;
+        size_t b = e;
+        while (b > 0 && ident(line[b - 1])) b--;
+        if (b < e && line[b] == '_') out.push_back(line.substr(b, e - b));
+    }
+    return out;
+}
+
+// Whether `name` appears in `text` as a whole identifier.
+static bool mentionsIdent(const std::string &text, const std::string &name) {
+    auto ident = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
+    for (size_t at = text.find(name); at != std::string::npos; at = text.find(name, at + 1)) {
+        bool before = at > 0 && ident(text[at - 1]);
+        bool after = at + name.size() < text.size() && ident(text[at + name.size()]);
+        if (!before && !after) return true;
+    }
+    return false;
+}
+
+static void testEditorControllerIvars() {
+    GROUP("structure:ivars");
+    // EditorController's shared class extension (EditorController+Private.h)
+    // holds only the state more than one category uses; a variable of one
+    // category's goes in its own EditorController+<Category>Ivars.h, which
+    // EditorController.mm imports so the ivars are laid out. Every category
+    // sees the shared block, and every one rebuilds when it changes.
+    namespace fs = std::filesystem;
+    std::ifstream ph("src/EditorController+Private.h");
+    if (!ph) {
+        std::printf("  (src/ not found here; ivar checks skipped)\n");
+        return;
+    }
+    std::stringstream ps;
+    ps << ph.rdbuf();
+    const std::string priv = ps.str();
+    size_t a = priv.find("@interface EditorController () <NSTextStorageDelegate> {");
+    size_t b = a == std::string::npos ? a : priv.find("\n}\n", a);
+    CHECK(a != std::string::npos && b != std::string::npos);
+    if (a == std::string::npos || b == std::string::npos) return;
+    std::vector<std::string> shared = ivarNamesIn(priv.substr(a, b - a));
+    CHECK(shared.size() >= 10);
+
+    std::map<std::string, std::string> categories;   // file name -> text
+    std::vector<std::string> ivarHeaders;
+    std::string core;
+    for (const auto &e : fs::directory_iterator("src")) {
+        const std::string name = e.path().filename().string();
+        std::ifstream f(e.path());
+        std::stringstream s;
+        s << f.rdbuf();
+        if (name == "EditorController.mm") core = s.str();
+        else if (name.rfind("EditorController+", 0) == 0 && e.path().extension() == ".mm")
+            categories[name] = s.str();
+        else if (name.rfind("EditorController+", 0) == 0 && name.size() > 7 &&
+                 name.compare(name.size() - 7, 7, "Ivars.h") == 0)
+            ivarHeaders.push_back(name);
+    }
+    CHECK(categories.size() >= 10);
+    for (const std::string &v : shared) {
+        int users = 0;
+        for (const auto &[file, text] : categories) users += mentionsIdent(text, v);
+        if (users < 2)
+            std::printf("  %s is in the shared ivar block but %s; move it to that category's "
+                        "EditorController+<Category>Ivars.h\n",
+                        v.c_str(), users ? "only one category uses it" : "no category uses it");
+        CHECK(users >= 2);
+    }
+    CHECK(ivarHeaders.size() >= 5);
+    for (const std::string &h : ivarHeaders) {
+        const std::string imp = "#import \"" + h + "\"";
+        bool laidOut = core.find(imp) != std::string::npos;
+        if (!laidOut) std::printf("  EditorController.mm does not import %s\n", h.c_str());
+        CHECK(laidOut);
+        // No category the header is not imported by uses its variables (the
+        // compiler says so too), and the shared block repeats none of them.
+        std::ifstream f("src/" + h);
+        std::stringstream s;
+        s << f.rdbuf();
+        for (const std::string &v : ivarNamesIn(s.str())) {
+            CHECK(std::find(shared.begin(), shared.end(), v) == shared.end());
+            for (const auto &[file, text] : categories)
+                if (text.find(imp) == std::string::npos && mentionsIdent(text, v)) {
+                    std::printf("  %s uses %s from %s\n", file.c_str(), v.c_str(), h.c_str());
+                    CHECK(false);
+                }
+        }
+    }
+}
+
 static void testLinuxBuildLists() {
     GROUP("linux:build-lists");
     // CI builds the GTK port with Meson only, so the plain Makefile's list of
@@ -9620,6 +9751,7 @@ static void testMultiCaretOccurrences() {
 #include "terminal_reflow_tests.inc"
 #include "terminal_fuzz.inc"
 #include "control_tests.inc"
+#include "gitmodel_tests.inc"
 #include "agent_index_tests.inc"
 #include "agent_evidence_tests.inc"
 #include "agent_view_tests.inc"
@@ -9628,6 +9760,7 @@ static void testMultiCaretOccurrences() {
 #include "commands_tests.inc"
 #include "procs_tests.inc"
 #include "attention_tests.inc"
+#include "page_check_tests.inc"
 #include "ide_link_tests.inc"
 
 int main() {
@@ -9672,10 +9805,12 @@ int main() {
     testGitStatus();
     testGitDiff();
     testGitGraph();
+    testGitModel();
     testEditorTabs();
     testFormatter();
     testInstallHints();
     testLinuxBuildLists();
+    testEditorControllerIvars();
     testLineDiff();
     testAutoIndent();
     testKeepSorted();
@@ -9696,6 +9831,7 @@ int main() {
     testBrackets();
     testControlProtocol();
     testProcs();
+    testPageCheck();
     testSideBySide();
     testAgentTranscript();
     testAgentIndex();

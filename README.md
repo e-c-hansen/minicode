@@ -236,7 +236,8 @@ minicode open src/Lsp.mm:3090 --to 3185 --note "Applies rename edits to every fi
 minicode diff src/Lsp.mm                   # side by side against HEAD; --base REF, or two files
 minicode term --run "make test"            # a new terminal, the command typed and run in plain sight
 minicode term-output 3 --lines 50          # what a terminal shows, scrollback included
-minicode browse http://localhost:8000      # the page in the browser pane beside the editor
+minicode browse localhost:5173 --wait      # the agent page in the browser pane; prints the status
+minicode page --text                       # that page's text; --console, --screenshot out.png, --url
 minicode window --folder ~/project         # the window on a folder, opened if none shows it
 minicode tour tour.json                    # a sequence of notes
 minicode state | jq .windows[0].tabs       # windows, tabs, selection, terminals, browser
@@ -248,11 +249,13 @@ A note is a line or two of plain text over a highlighted range, labelled with wh
 
 Each running minicode listens on a socket in your own temporary folder that only your user account can open, and nothing in minicode runs a command or a script by itself: `term --run` types what it was given into a terminal you can see. A script that sets up a workspace (a server in a terminal, its page in the browser, the README open) is just these commands in a file you run yourself.
 
+Pages an agent opens go in an agent page of the browser pane, beside yours, with a switcher between Yours and Agent; closing it brings back your page as it was. An agent can read that page's text, its console messages and uncaught errors, and pictures of it, but only for pages on your own Mac (localhost, 127.0.0.1, ::1, *.localhost and file addresses) unless the settings file has `control.page-any-origin = true`, and no command runs JavaScript an agent sends. `--yours` reads your own page the same way, so an agent can look at what you are looking at without reaching sites you are logged in to.
+
 With several Claude Code sessions in terminal tabs, minicode can show which one wants you. Run `minicode hooks --install` once and Claude Code's hooks tell minicode what each session is doing: a tab whose session asks for permission (or has been idle at its prompt) gets an orange dot, with Claude's message as the tab's tooltip, and one that has finished gets a green dot. Typing in the terminal, or the session going on, takes the dot away. The Dock icon counts the waiting terminals in every window, and Control Command W goes to the next one. The command backs up ~/.claude/settings.json first and only adds to it, so your own hooks stay as they were, and running it twice changes nothing; `minicode hooks --print` shows what it adds. Every minicode terminal has `MINICODE_TERMINAL_ID` and `MINICODE_PID` set, which is how the hook (`minicode notify --from-hook`) finds its tab, and outside minicode the hook does nothing and exits quietly. minicode never installs the hooks by itself.
 
 On the Mac, minicode can also answer Claude Code's /ide, the link VS Code and JetBrains offer it. Turn on View > Claude Code IDE Link (agent.ide-link = on in the settings), and Claude Code started in a window's folder lists that window under /ide, while one started in the window's own terminals joins it by itself. Claude then sees the file and the text you have selected, and the problems your language servers report, without being asked; files it opens come up in a tab beside yours, never under your typing; and when it wants to edit a file, the change can show as a side-by-side diff with Accept and Reject over it (when Diff tool in Claude Code's /config is auto), while its own prompt waits in the terminal as usual. Claude Code writes the file itself once you accept. Each window listens on 127.0.0.1 only and admits nothing without the secret it writes, readable by you alone, to ~/.claude/ide/<port>.lock; that file goes when the window closes or the link is turned off, and it is the only thing minicode writes for the link. It is off until you turn it on.
 
-The repository has a skill for Claude Code in skills/minicode that teaches it all of this: when reporting work, open the changed lines with a note, show the diff and run the tests in a terminal; when asked "where is X", open it rather than quote a path; read `state` and `selection` when you say "this". `make install` copies it to ~/.claude/skills/minicode.
+The repository has a skill for Claude Code in skills/minicode that teaches it all of this: when reporting work, open the changed lines with a note, show the diff and run the tests in a terminal; when asked "where is X", open it rather than quote a path; read `state` and `selection` when you say "this". The app carries it too: `minicode install-skill` copies it to ~/.claude/skills/minicode (run it again after an upgrade), and `make install` does the same from a checkout.
 
 ## Seeing what agents did
 
@@ -326,7 +329,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Action | macOS | Linux | Android |
 | --- | --- | --- | --- |
 | Add a cursor on the line below or above each cursor, at the same column | Option Command Down, Option Command Up |  |  |
-| Add a cursor, or take one away, to type in several places at once | Option click, or Shift Command click |  |  |
+| Add a cursor, or take one away, to type in several places at once | Option click |  |  |
 | Add the next place the selected text occurs to the selection, or select the word at the cursor | Command D |  |  |
 | Ask the inline agent: change the file at the cursor, write a terminal command, or hand a task to Claude Code | Command I |  |  |
 | Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
@@ -343,7 +346,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Delete the line, or every line the selection touches, at every cursor | Control Shift K |  |  |
 | Delete to the start of the line, at every cursor | Command Delete |  |  |
 | Delete the word before the cursor in the terminal's input line, or everything before it | Control W, Control U |  |  |
-| Edit a column: a cursor on every line between two points, so typing adds the same text to each | Shift Command click at one end and Shift Command click (or drag) to the other, or Option drag; Escape goes back to one cursor |  |  |
+| Edit a column: a cursor on every line between two points, so typing adds the same text to each | Shift Command click at one end and Shift Command click (or drag) to the other; Shift Option click (or drag) for a column from the cursor, as in VS Code; Option drag, or a middle-button drag; Escape goes back to one cursor |  |  |
 | Export the typeset PDF of a LaTeX file | Shift Command S | Ctrl Shift S |  |
 | Find across the whole folder | Shift Command F | Ctrl Shift F |  |
 | Find every reference to the name at the cursor, with a language server | Shift F12 |  |  |
@@ -373,8 +376,9 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Keep the agent preview tab as an ordinary tab | Double-click its title, or edit in it |  |  |
 | List every problem the language servers report, grouped by file | Shift Command M, or click the problem counts in the status bar |  |  |
 | List the TODO comments and open Markdown tasks in the folder | Shift Command D | Ctrl Shift L | W, or Ctrl Shift L |
+| Move a word left or right at the terminal's prompt | Option Left, Option Right |  |  |
 | Move the line, or the selected lines, down or up, at every cursor | Option Down, Option Up, or Command Down, Command Up |  |  |
-| Move the selected file to the Trash | Command Delete, in the file tree | Delete, in the file tree |  |
+| Move the selected file to the Trash | Command Delete or Command Forward Delete, in the file tree | Delete, in the file tree |  |
 | Move to the next or previous terminal, across split panes and tabs | Option Command ], Option Command [ |  |  |
 | Move to the next terminal waiting for you, in any window (a Claude Code session asking for permission, with `minicode hooks --install` run) | Control Command W |  |  |
 | Move to the start or end of the line at the terminal's prompt, or delete back to its start | Command Left, Command Right, Command Delete |  |  |

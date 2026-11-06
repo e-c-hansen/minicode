@@ -38,7 +38,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/Settings.cpp src/RunFile.cpp src/LineComments.cpp \
             src/LatexDoc.cpp src/SyncTex.cpp src/Json.cpp src/LspClient.cpp \
             src/TermLinks.cpp src/FolderSearch.cpp src/TextFind.cpp src/MarkdownEdit.cpp src/MarkdownTasks.cpp \
-            src/GitStatus.cpp src/GitGraph.cpp src/MathTex.cpp src/EditorTabs.cpp \
+            src/GitStatus.cpp src/GitGraph.cpp src/GitModel.cpp src/MathTex.cpp src/EditorTabs.cpp \
             src/Formatter.cpp src/InstallHints.cpp src/LineDiff.cpp \
             src/PythonEnvs.cpp \
             src/AutoIndent.cpp src/KeepSorted.cpp src/FileDetails.cpp \
@@ -50,7 +50,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/Folding.cpp \
             src/FileSniff.cpp src/Csv.cpp src/JsonOutline.cpp src/Notebook.cpp \
             src/Commands.cpp src/ProcessTable.cpp src/ClaudeHooks.cpp src/AttentionBoard.cpp \
-            src/IdeLink.cpp src/MermaidDiagram.cpp
+            src/PageCheck.cpp src/IdeLink.cpp src/MermaidDiagram.cpp
 
 # Each source file compiles to its own object in build/obj (build/test-obj for
 # the tests), with a dependency file listing the headers it read, so touching
@@ -58,6 +58,16 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
 # flags rebuilds everything (build/obj/flags.txt keeps the last command).
 OBJDIR   := build/obj
 OBJ      := $(patsubst src/%,$(OBJDIR)/%.o,$(SRC))
+
+# A release build (`make dist-zip RELEASE=1`, as scripts/release.sh runs it)
+# leaves out the demo scenes and the memory benchmark (src/Demo.mm,
+# src/Bench.mm), which only `make demos` and `make membench` use; main.mm is
+# compiled with MC_RELEASE and gets their stubs from Demo.h and Bench.h. Only
+# main.mm and the link differ, so switching costs one file and a relink
+# (build/obj/variant.txt says which was built last).
+RELEASE_ONLY_OUT := $(OBJDIR)/Demo.mm.o $(OBJDIR)/Bench.mm.o
+APP_OBJ  := $(if $(RELEASE),$(filter-out $(RELEASE_ONLY_OUT),$(OBJ)),$(OBJ))
+VARIANT  := $(if $(RELEASE),release,development)
 TESTDIR  := build/test-obj
 TESTFLAGS := -std=c++17 -Wall -Wextra -Isrc -pthread $(MINFLAGS)
 TEST_OBJ := $(TESTDIR)/run_tests.cpp.o $(patsubst src/%,$(TESTDIR)/%.o,$(CORE_SRC))
@@ -82,14 +92,16 @@ ifneq ($(if $(MAKECMDGOALS),$(filter-out clean,$(MAKECMDGOALS)),all),)
           printf '%s\n' '$(APPCMD)' > $(OBJDIR)/flags.txt)
   $(shell mkdir -p $(TESTDIR) && printf '%s\n' '$(TESTCMD)' | cmp -s - $(TESTDIR)/flags.txt || \
           printf '%s\n' '$(TESTCMD)' > $(TESTDIR)/flags.txt)
+  $(shell printf '%s\n' '$(VARIANT)' | cmp -s - $(OBJDIR)/variant.txt || \
+          printf '%s\n' '$(VARIANT)' > $(OBJDIR)/variant.txt)
 endif
 
 .PHONY: all app run test guitest fakelsp install dmg dist-zip clean demos membench icon
 
 all: app
 
-$(BIN): $(OBJ)
-	$(CXX) $(CXXFLAGS) $(OBJ) $(LDFLAGS) -o $(BIN)
+$(BIN): $(APP_OBJ) $(OBJDIR)/variant.txt
+	$(CXX) $(CXXFLAGS) $(APP_OBJ) $(LDFLAGS) -o $(BIN)
 
 # The control channel's client (`minicode open`, `state`, ...): the launcher
 # hands it every subcommand. Only the protocol and JSON from the core.
@@ -108,6 +120,13 @@ $(CLI): $(CLI_OBJ)
 $(OBJDIR)/flags.txt:
 	@mkdir -p $(@D) && printf '%s\n' '$(APPCMD)' > $@
 
+$(OBJDIR)/variant.txt:
+	@mkdir -p $(@D) && printf '%s\n' '$(VARIANT)' > $@
+
+$(OBJDIR)/main.mm.o: src/main.mm $(OBJDIR)/flags.txt $(OBJDIR)/variant.txt
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS)$(if $(RELEASE), -DMC_RELEASE) -MMD -MP -c $< -o $@
+
 $(OBJDIR)/%.mm.o: src/%.mm $(OBJDIR)/flags.txt
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
@@ -120,7 +139,17 @@ $(OBJDIR)/%.cpp.o: src/%.cpp $(OBJDIR)/flags.txt
 SIGN_IDENTITY ?= $(shell security find-certificate -c "MiniCode Local Signing" >/dev/null 2>&1 && echo "MiniCode Local Signing")
 
 # Assemble a minimal .app bundle so Cocoa treats it as a real GUI app.
-app: $(BIN) $(CLI)
+# Only when something in it changed: the bundle's code signature is the
+# target, so a `make` with nothing to do leaves the app, its signature and
+# their dates alone (Request a Change takes a newer CodeResources for a
+# fresh build).
+APP_STAMP := $(BUNDLE)/Contents/_CodeSignature/CodeResources
+APP_FILES := $(BIN) $(CLI) Info.plist resources/AppIcon.icns scripts/minicode-launcher \
+             skills/minicode/SKILL.md
+
+app: $(APP_STAMP)
+
+$(APP_STAMP): $(APP_FILES)
 	@rm -rf $(BUNDLE)
 	@mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources
 	@cp $(BIN) $(BUNDLE)/Contents/MacOS/$(APP)
@@ -129,6 +158,10 @@ app: $(BIN) $(CLI)
 	@cp resources/AppIcon.icns $(BUNDLE)/Contents/Resources/AppIcon.icns
 	@cp scripts/minicode-launcher $(BUNDLE)/Contents/Resources/minicode
 	@chmod +x $(BUNDLE)/Contents/Resources/minicode
+	@# The Claude Code skill, for `minicode install-skill` (a Homebrew copy
+	@# has no checkout to `make install` from).
+	@mkdir -p $(BUNDLE)/Contents/Resources/skills/minicode
+	@cp skills/minicode/SKILL.md $(BUNDLE)/Contents/Resources/skills/minicode/SKILL.md
 	@cp $(CLI) $(BUNDLE)/Contents/MacOS/minicode-cli
 	@# Signed with "MiniCode Local Signing" when the login keychain has it
 	@# (scripts/make-signing-identity.sh makes it, once), so macOS keeps
@@ -211,12 +244,10 @@ fakelsp: $(FAKELSP)
 guitest: build/guitest $(CLI) $(FAKELSP)
 	@./build/guitest $(SUITES)
 
-# The agent skill (skills/minicode) for Claude Code, in ~/.claude/skills.
-SKILL_DIR ?= $(HOME)/.claude/skills/minicode
+# The agent skill (skills/minicode) for Claude Code, in ~/.claude/skills,
+# the same as `minicode install-skill` does from the app's bundle.
 install:
-	@mkdir -p "$(SKILL_DIR)"
-	@cp skills/minicode/SKILL.md "$(SKILL_DIR)/SKILL.md"
-	@echo "Installed the minicode skill in $(SKILL_DIR)"
+	@bash scripts/minicode-launcher install-skill
 
 # Regenerate the app icon (resources/AppIcon.icns) from tools/makeicon.m.
 icon:
@@ -245,12 +276,13 @@ build/makegif: tools/makegif.m
 demos: app build/makegif
 	POSTERS=$(POSTERS) ./scripts/demos.sh $(SCENES)
 
-# Package the app into a distributable (unsigned) disk image. The script runs
-# `make app` too, which finds the binary up to date.
-dmg: app
+# Package the app into a distributable (unsigned) disk image. The script
+# builds it as a release (`make app RELEASE=1`).
+dmg:
 	./scripts/make-dmg.sh
 
-# Zip the app for a GitHub Release (preserves the bundle correctly).
+# Zip the app for a GitHub Release (preserves the bundle correctly);
+# scripts/release.sh runs `make dist-zip RELEASE=1`.
 dist-zip: app
 	@ditto -c -k --sequesterRsrc --keepParent $(BUNDLE) $(APP).zip
 	@echo "Created $(APP).zip"

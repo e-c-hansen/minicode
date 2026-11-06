@@ -5,7 +5,8 @@
 // have a preview tab of their own; notes never move the caret in a tab of
 // the user's and survive the reload of a file the agent just wrote; only
 // plain files are read, up to 16 MB; the browser keeps a page the user
-// loaded; the socket takes one request at a time and never blocks on a
+// loaded (the agent's go in a page of their own, BrowserPagesSuite.mm);
+// the socket takes one request at a time and never blocks on a
 // slow reader; the command line skips untrusted folders and refused
 // sockets, and reads never launch the app; Compare with Main shows main at
 // the branch point; old prompt files go; a restart record cannot choose
@@ -18,6 +19,7 @@
 #import "AgentModel.h"
 #import "AgentNotes.h"
 #import "Browser.h"
+#import "BrowserPages.h"
 #import "ChangePanel.h"
 #import "CompareView.h"
 #import "ControlCommands.h"
@@ -424,21 +426,26 @@ MC_GUI_SUITE(agentcommands) {
     MCGuiWait(@"page three loads", 20, ^BOOL { return [[c controlBrowser][@"title"] isEqualToString:@"Page three"]; });
     MCGuiStep(@"the user goes to page one", ^{
         BrowserView *b = [c valueForKey:@"browser"];
-        GCHECK(!b.showsUserPage);
-        [b navigateToString:page1];
+        GCHECK(!b.showsUserPage && b.agentPageShown);
+        [b navigateToString:page1];   // a link from elsewhere: the user's page, shown
+        GCHECK(!b.agentPageShown);
     });
     MCGuiWait(@"page one loads", 20, ^BOOL { return [[c controlBrowser][@"title"] isEqualToString:@"Page one"]; });
-    MCGuiAsync(@"and the agent may not take it from them", 30, ^(MCGuiDone done) {
-        MCGuiRunProcess(@[CLIPath(), @"browse", page2, @"--window", gWid, @"--pid", pid], nil,
-                        ^(int s, NSString *, NSString *err) {
-            GCHECK(s == 1 && [err containsString:@"the user opened"]);
+    MCGuiAsync(@"the agent's next page goes in its own page, beside the user's", 30, ^(MCGuiDone done) {
+        MCGuiRunProcess(@[CLIPath(), @"browse", page2, @"--window", gWid, @"--pid", pid, @"--wait"], nil,
+                        ^(int s, NSString *out, NSString *) {
+            GCHECK(s == 0 && [out containsString:@"\"title\":\"Page two\""]);
             done();
         });
     });
-    MCGuiPause(0.5);
-    MCGuiStep(@"page one is still on show", ^{
+    MCGuiStep(@"page one is still the user's page", ^{
+        BrowserView *b = [c valueForKey:@"browser"];
+        GCHECK(b.agentPageShown);
+        GCHECK_EQ_STR(b.userProbe.title, @"Page one");
+        GCHECK_EQ_STR(b.agentProbe.title, @"Page two");
+        [b closeAgentPage];
+        GCHECK(b.showsUserPage && !b.hasAgentPage);
         GCHECK([[c controlBrowser][@"title"] isEqualToString:@"Page one"]);
-        GCHECK(((BrowserView *)[c valueForKey:@"browser"]).showsUserPage);
     });
 
     // ------------------------------------------------- the command line

@@ -207,13 +207,10 @@ const Theme* Settings::findTheme(const std::string& id) {
 }
 
 bool Settings::isColorKey(const std::string& key) {
+    if (const KeyRule* r = findKeyRule(key)) return r->color;
     size_t dot = key.find('.');
     if (dot == std::string::npos) return false;
     const std::string group = key.substr(0, dot), field = key.substr(dot + 1);
-    if (key == "editor.ruler-color" || key == "window.text" ||
-        key == "editor.gutter-background" || key == "editor.line-number-color" ||
-        key == "editor.line-number-active-color" || key == "editor.bracket-match")
-        return true;
     for (const char* name : kSurfaceNames)
         if (group == name) return field == "background" || field == "text";
     if (group == "syntax")
@@ -677,29 +674,26 @@ Settings Settings::parse(const std::string& text,
         std::string rest = trim(line.substr(eq + 1));
         if (key.empty()) { fail("missing key before '='"); continue; }
 
-        // A path may hold spaces, so it runs to the end of the line or to a
-        // " #" comment. Empty, or auto, is the automatic choice.
-        if (key == "python.interpreter") {
+        // How far the value runs: the key's row says, else its family (a
+        // language server, run or formatter command is a whole command line).
+        const KeyRule* rule = findKeyRule(key);
+        const ValueKind kind =
+            rule ? rule->value
+                 : (key.rfind("lsp.", 0) == 0 || key.rfind("run.", 0) == 0 ||
+                    key.rfind("format.", 0) == 0)
+                       ? ValueKind::CommandLine
+                       : ValueKind::Word;
+        if (kind == ValueKind::Path) {
+            // A path may hold spaces, so it runs to the end of the line or to
+            // a " #" comment. Empty, or auto, is the automatic choice.
             size_t hash = rest.find(" #");
             std::string path = trim(hash == std::string::npos ? rest : rest.substr(0, hash));
             if (!path.empty() && path[0] == '#') path.clear();
-            st.pythonInterpreter_ = lower(path) == "auto" ? "" : path;
+            std::string msg;
+            if (!st.apply(key, path, msg)) fail(msg);
             continue;
         }
-        if (key == "develop.source") {
-            size_t hash = rest.find(" #");
-            std::string path = trim(hash == std::string::npos ? rest : rest.substr(0, hash));
-            if (!path.empty() && path[0] == '#') path.clear();
-            st.developSource_ = lower(path) == "auto" ? "" : path;
-            continue;
-        }
-        // A language server, run or formatter command is a whole command
-        // line, so it runs to the end of the line or to a " #" comment
-        // outside quotes.
-        if ((key.rfind("lsp.", 0) == 0 && key != "lsp.enabled") ||
-            (key.rfind("run.", 0) == 0 && key != "run.terminal") ||
-            (key.rfind("format.", 0) == 0 && key != "format.on-save") ||
-            key == "develop.command" || key == "agent.command") {
+        if (kind == ValueKind::CommandLine) {
             std::string command = trim(rest.substr(0, commandLineEnd(rest)));
             if (command.empty() || command[0] == '#') {
                 fail("missing value for " + key);
@@ -726,8 +720,203 @@ Settings Settings::parse(const std::string& text,
     return st;
 }
 
+namespace {
+
+bool boolValue(const std::string& value, bool& out, std::string& error) {
+    if (parseBool(value, out)) return true;
+    error = "'" + value + "' is not true or false";
+    return false;
+}
+bool colorValue(const std::string& value, std::optional<Rgba>& out, std::string& error) {
+    Rgba color;
+    if (!Settings::parseColor(value, color)) { error = colorError(value); return false; }
+    out = color;
+    return true;
+}
+bool opacityValue(const std::string& value, std::optional<double>& out, std::string& error) {
+    double number = 1;
+    if (!Settings::parseOpacity(value, number)) {
+        error = "'" + value + "' is not an opacity (use 0 to 1, or a percentage like 80%)";
+        return false;
+    }
+    out = number;
+    return true;
+}
+bool fontSizeValue(const std::string& value, double& out, std::string& error) {
+    double size;
+    if (!parseDecimal(value, size) || size < Settings::kMinFontSize ||
+        size > Settings::kMaxFontSize) {
+        error = "'" + value + "' is not a font size in points from 6 to 72";
+        return false;
+    }
+    out = size;
+    return true;
+}
+// A whole number of at most `digits` digits from lo to hi.
+bool countValue(const std::string& value, size_t digits, long lo, long hi, long& out) {
+    bool ok = !value.empty() && value.size() <= digits;
+    for (char c : value) ok = ok && c >= '0' && c <= '9';
+    out = ok ? std::atol(value.c_str()) : -1;
+    return ok && out >= lo && out <= hi;
+}
+
+}  // namespace
+
+// One row per key with a value of its own. The lambdas are in a member
+// function, so they reach the private fields.
+#define MC_KEY(name, kind, color, ...)                                          \
+    KeyRule {                                                                  \
+        name, ValueKind::kind, color,                                          \
+            [](Settings& s, const std::string& v, std::string& e) -> bool {    \
+                (void)s; (void)v; (void)e;                                     \
+                __VA_ARGS__                                                    \
+            }                                                                  \
+    }
+const std::vector<Settings::KeyRule>& Settings::keyTable() {
+    static const std::vector<KeyRule> table = {
+        MC_KEY("window.opacity", Word, false, return opacityValue(v, s.windowOpacity_, e);),
+        MC_KEY("window.text", Word, true, return colorValue(v, s.windowText_, e);),
+        MC_KEY("window.blur", Word, false, return boolValue(v, s.blur_, e);),
+        MC_KEY("window.material", Word, false,
+               const std::string m = lower(v);
+               for (const char* name : kMaterials)
+                   if (m == name) { s.material_ = m; return true; }
+               e = "unknown material '" + v + "'";
+               return false;),
+        MC_KEY("theme", Word, false,
+               if (const Theme* t = findTheme(v)) { s.theme_ = t; return true; }
+               e = "unknown theme '" + v + "' (use ";
+               for (size_t i = 0; i < themes().size(); i++)
+                   e += std::string(i ? (i + 1 == themes().size() ? " or " : ", ") : "") +
+                        themes()[i].id;
+               e += ")";
+               return false;),
+        MC_KEY("markdown.web-images", Word, false, return boolValue(v, s.webImages_, e);),
+        MC_KEY("markdown.math", Word, false, return boolValue(v, s.math_, e);),
+        MC_KEY("markdown.mermaid", Word, false, return boolValue(v, s.mermaid_, e);),
+        MC_KEY("editor.keep-sorted-on-save", Word, false,
+               return boolValue(v, s.keepSortedOnSave_, e);),
+        MC_KEY("editor.auto-save", Word, false,
+               const std::string w = lower(v);
+               if (w == "off" || w == "false" || w == "none") s.autoSave_ = AutoSave::Off;
+               else if (w == "after-delay") s.autoSave_ = AutoSave::AfterDelay;
+               else if (w == "focus-change") s.autoSave_ = AutoSave::FocusChange;
+               else {
+                   e = "'" + v + "' is not off, after-delay or focus-change";
+                   return false;
+               }
+               return true;),
+        MC_KEY("editor.auto-save-delay", Word, false,
+               long ms;
+               if (!countValue(v, 7, 100, 600000, ms)) {
+                   e = "'" + v + "' is not a delay in milliseconds from 100 to 600000";
+                   return false;
+               }
+               s.autoSaveDelay_ = (int)ms;
+               return true;),
+        MC_KEY("editor.ruler", Word, false,
+               // A column, a list of them without spaces (80,120), or off.
+               const std::string w = lower(v);
+               std::vector<int> cols;
+               if (w != "off" && w != "none" && w != "false") {
+                   size_t i = 0;
+                   while (i <= w.size()) {
+                       size_t comma = w.find(',', i);
+                       if (comma == std::string::npos) comma = w.size();
+                       long col;
+                       if (!countValue(w.substr(i, comma - i), 4, 1, 1000, col)) {
+                           e = "'" + v + "' is not a column (use a number such as 100, "
+                               "a list such as 80,120, or off)";
+                           return false;
+                       }
+                       cols.push_back((int)col);
+                       i = comma + 1;
+                   }
+                   std::sort(cols.begin(), cols.end());
+                   cols.erase(std::unique(cols.begin(), cols.end()), cols.end());
+               }
+               s.rulers_ = cols;
+               return true;),
+        MC_KEY("editor.ruler-color", Word, true, return colorValue(v, s.rulerColor_, e);),
+        MC_KEY("editor.font-size", Word, false, return fontSizeValue(v, s.editorFontSize_, e);),
+        MC_KEY("editor.line-numbers", Word, false,
+               const std::string w = lower(v);
+               if (w == "on" || w == "true") s.lineNumbers_ = LineNumbers::On;
+               else if (w == "off" || w == "false" || w == "none") s.lineNumbers_ = LineNumbers::Off;
+               else if (w == "relative") s.lineNumbers_ = LineNumbers::Relative;
+               else {
+                   e = "'" + v + "' is not on, off or relative";
+                   return false;
+               }
+               return true;),
+        MC_KEY("editor.gutter-background", Word, true,
+               return colorValue(v, s.gutterBackground_, e);),
+        MC_KEY("editor.line-number-color", Word, true,
+               return colorValue(v, s.lineNumberColor_, e);),
+        MC_KEY("editor.line-number-active-color", Word, true,
+               return colorValue(v, s.lineNumberActiveColor_, e);),
+        MC_KEY("editor.bracket-match", Word, true,
+               return colorValue(v, s.bracketMatchColor_, e);),
+        MC_KEY("terminal.mode", Word, false,
+               const std::string w = lower(v);
+               if (w != "grid" && w != "line") {
+                   e = "'" + v + "' is not grid or line";
+                   return false;
+               }
+               s.terminalLineMode_ = w == "line";
+               return true;),
+        MC_KEY("terminal.scrollback", Word, false,
+               long lines;
+               if (!countValue(v, 9, 0, 100000, lines)) {
+                   e = "'" + v + "' is not a number of lines from 0 to 100000";
+                   return false;
+               }
+               s.terminalScrollback_ = (int)lines;
+               return true;),
+        MC_KEY("terminal.font-size", Word, false,
+               return fontSizeValue(v, s.terminalFontSize_, e);),
+        MC_KEY("terminal.option-as-meta", Word, false,
+               return boolValue(v, s.terminalOptionAsMeta_, e);),
+        MC_KEY("lsp.enabled", Word, false, return boolValue(v, s.lspEnabled_, e);),
+        MC_KEY("python.interpreter", Path, false,
+               s.pythonInterpreter_ = lower(v) == "auto" ? "" : v;
+               return true;),
+        MC_KEY("run.terminal", Word, false,
+               const std::string w = lower(v);
+               if (w != "current" && w != "new") {
+                   e = "'" + v + "' is not current or new";
+                   return false;
+               }
+               s.runInNewTerminal_ = w == "new";
+               return true;),
+        MC_KEY("format.on-save", Word, false, return boolValue(v, s.formatOnSave_, e);),
+        MC_KEY("develop.command", CommandLine, false, s.developCommand_ = v; return true;),
+        MC_KEY("develop.source", Path, false,
+               s.developSource_ = lower(v) == "auto" ? "" : v;
+               return true;),
+        MC_KEY("agent.command", CommandLine, false, s.agentCommand_ = v; return true;),
+        MC_KEY("control.page-any-origin", Word, false, return boolValue(v, s.pageAnyOrigin_, e);),
+        MC_KEY("agent.ide-link", Word, false, return boolValue(v, s.ideLink_, e);),
+    };
+    return table;
+}
+#undef MC_KEY
+
+const Settings::KeyRule* Settings::findKeyRule(const std::string& key) {
+    for (const KeyRule& r : keyTable())
+        if (key == r.key) return &r;
+    return nullptr;
+}
+
+std::vector<std::string> Settings::tableKeys() {
+    std::vector<std::string> out;
+    for (const KeyRule& r : keyTable()) out.push_back(r.key);
+    return out;
+}
+
 bool Settings::apply(const std::string& key, const std::string& value,
                      std::string& error) {
+    if (const KeyRule* r = findKeyRule(key)) return r->apply(*this, value, error);
     Rgba color;
     double number = 1;
     auto opacityValue = [&]() {
@@ -737,211 +926,7 @@ bool Settings::apply(const std::string& key, const std::string& value,
         return false;
     };
 
-    if (key == "window.opacity") {
-        if (!opacityValue()) return false;
-        windowOpacity_ = number;
-        return true;
-    }
-    if (key == "window.text") {
-        if (!parseColor(value, color)) { error = colorError(value); return false; }
-        windowText_ = color;
-        return true;
-    }
-    if (key == "window.blur") {
-        if (!parseBool(value, blur_)) {
-            error = "'" + value + "' is not true or false";
-            return false;
-        }
-        return true;
-    }
-    if (key == "window.material") {
-        std::string m = lower(value);
-        for (const char* name : kMaterials)
-            if (m == name) { material_ = m; return true; }
-        error = "unknown material '" + value + "'";
-        return false;
-    }
-
-    if (key == "theme") {
-        if (const Theme* t = findTheme(value)) { theme_ = t; return true; }
-        error = "unknown theme '" + value + "' (use ";
-        for (size_t i = 0; i < themes().size(); i++)
-            error += std::string(i ? (i + 1 == themes().size() ? " or " : ", ") : "") +
-                     themes()[i].id;
-        error += ")";
-        return false;
-    }
-    if (key == "markdown.web-images") {
-        if (!parseBool(value, webImages_)) {
-            error = "'" + value + "' is not true or false";
-            return false;
-        }
-        return true;
-    }
-    if (key == "markdown.math") {
-        if (!parseBool(value, math_)) {
-            error = "'" + value + "' is not true or false";
-            return false;
-        }
-        return true;
-    }
-    if (key == "markdown.mermaid") {
-        if (!parseBool(value, mermaid_)) {
-            error = "'" + value + "' is not true or false";
-            return false;
-        }
-        return true;
-    }
-    if (key == "agent.ide-link") {
-        if (!parseBool(value, ideLink_)) {
-            error = "'" + value + "' is not on or off";
-            return false;
-        }
-        return true;
-    }
-    if (key == "editor.keep-sorted-on-save") {
-        if (!parseBool(value, keepSortedOnSave_)) {
-            error = "'" + value + "' is not true or false";
-            return false;
-        }
-        return true;
-    }
-    if (key == "editor.auto-save") {
-        std::string v = lower(value);
-        if (v == "off" || v == "false" || v == "none") autoSave_ = AutoSave::Off;
-        else if (v == "after-delay") autoSave_ = AutoSave::AfterDelay;
-        else if (v == "focus-change") autoSave_ = AutoSave::FocusChange;
-        else {
-            error = "'" + value + "' is not off, after-delay or focus-change";
-            return false;
-        }
-        return true;
-    }
-    if (key == "editor.auto-save-delay") {
-        bool digits = !value.empty() && value.size() <= 7;
-        for (char c : value) digits = digits && c >= '0' && c <= '9';
-        long ms = digits ? std::atol(value.c_str()) : -1;
-        if (ms < 100 || ms > 600000) {
-            error = "'" + value + "' is not a delay in milliseconds from 100 to 600000";
-            return false;
-        }
-        autoSaveDelay_ = (int)ms;
-        return true;
-    }
-    if (key == "editor.ruler") {
-        // A column, a list of them without spaces (80,120), or off.
-        std::string v = lower(value);
-        std::vector<int> cols;
-        if (v != "off" && v != "none" && v != "false") {
-            size_t i = 0;
-            while (i <= v.size()) {
-                size_t comma = v.find(',', i);
-                if (comma == std::string::npos) comma = v.size();
-                const std::string part = v.substr(i, comma - i);
-                bool digits = !part.empty() && part.size() <= 4;
-                for (char c : part)
-                    if (c < '0' || c > '9') digits = false;
-                const int col = digits ? std::stoi(part) : 0;
-                if (col < 1 || col > 1000) {
-                    error = "'" + value + "' is not a column (use a number such as 100, "
-                            "a list such as 80,120, or off)";
-                    return false;
-                }
-                cols.push_back(col);
-                i = comma + 1;
-            }
-            std::sort(cols.begin(), cols.end());
-            cols.erase(std::unique(cols.begin(), cols.end()), cols.end());
-        }
-        rulers_ = cols;
-        return true;
-    }
-    if (key == "editor.ruler-color") {
-        if (!parseColor(value, color)) { error = colorError(value); return false; }
-        rulerColor_ = color;
-        return true;
-    }
-    if (key == "editor.font-size") {
-        double size;
-        if (!parseDecimal(value, size) || size < kMinFontSize || size > kMaxFontSize) {
-            error = "'" + value + "' is not a font size in points from 6 to 72";
-            return false;
-        }
-        editorFontSize_ = size;
-        return true;
-    }
-    if (key == "editor.line-numbers") {
-        std::string v = lower(value);
-        if (v == "on" || v == "true") lineNumbers_ = LineNumbers::On;
-        else if (v == "off" || v == "false" || v == "none") lineNumbers_ = LineNumbers::Off;
-        else if (v == "relative") lineNumbers_ = LineNumbers::Relative;
-        else {
-            error = "'" + value + "' is not on, off or relative";
-            return false;
-        }
-        return true;
-    }
-    if (key == "editor.gutter-background" || key == "editor.line-number-color" ||
-        key == "editor.line-number-active-color" || key == "editor.bracket-match") {
-        if (!parseColor(value, color)) { error = colorError(value); return false; }
-        (key == "editor.gutter-background"     ? gutterBackground_
-         : key == "editor.line-number-color"   ? lineNumberColor_
-         : key == "editor.bracket-match"       ? bracketMatchColor_
-                                               : lineNumberActiveColor_) = color;
-        return true;
-    }
-    if (key == "terminal.mode") {
-        std::string v = lower(value);
-        if (v != "grid" && v != "line") {
-            error = "'" + value + "' is not grid or line";
-            return false;
-        }
-        terminalLineMode_ = v == "line";
-        return true;
-    }
-    if (key == "terminal.scrollback") {
-        bool digits = !value.empty() && value.size() <= 9;
-        for (char c : value) digits = digits && c >= '0' && c <= '9';
-        long lines = digits ? std::atol(value.c_str()) : -1;
-        if (lines < 0 || lines > 100000) {
-            error = "'" + value + "' is not a number of lines from 0 to 100000";
-            return false;
-        }
-        terminalScrollback_ = (int)lines;
-        return true;
-    }
-    if (key == "terminal.font-size") {
-        double size;
-        if (!parseDecimal(value, size) || size < kMinFontSize || size > kMaxFontSize) {
-            error = "'" + value + "' is not a font size in points from 6 to 72";
-            return false;
-        }
-        terminalFontSize_ = size;
-        return true;
-    }
-    if (key == "terminal.option-as-meta") {
-        if (!parseBool(value, terminalOptionAsMeta_)) {
-            error = "'" + value + "' is not true or false";
-            return false;
-        }
-        return true;
-    }
-    if (key == "lsp.enabled") {
-        if (!parseBool(value, lspEnabled_)) {
-            error = "'" + value + "' is not true or false";
-            return false;
-        }
-        return true;
-    }
-    if (key == "run.terminal") {
-        std::string v = lower(value);
-        if (v != "current" && v != "new") {
-            error = "'" + value + "' is not current or new";
-            return false;
-        }
-        runInNewTerminal_ = v == "new";
-        return true;
-    }
+    // The families, by prefix.
     if (key.rfind("run.", 0) == 0) {
         std::string language = key.substr(4);
         bool ok = !language.empty();
@@ -975,22 +960,6 @@ bool Settings::apply(const std::string& key, const std::string& value,
         return false;
     }
 
-    if (key == "develop.command") {
-        developCommand_ = value;
-        return true;
-    }
-    if (key == "agent.command") {
-        agentCommand_ = value;
-        return true;
-    }
-
-    if (key == "format.on-save") {
-        if (!parseBool(value, formatOnSave_)) {
-            error = "'" + value + "' is not true or false";
-            return false;
-        }
-        return true;
-    }
     if (key.rfind("format.", 0) == 0) {
         std::string lang = key.substr(7);
         for (const std::string& known : formatLanguages())
@@ -1388,6 +1357,14 @@ const char* Settings::defaultFileText() {
 # folder. Select Python Interpreter... in the MiniCode menu chooses one for
 # the open folder alone, which wins over this.
 # python.interpreter = auto
+
+# Agents can check pages in the browser pane (minicode browse and minicode
+# page, macOS only for now): they load into a page of their own beside
+# yours, and read its text, its console and pictures of it. Those reads work
+# only for local pages (localhost, 127.0.0.1, ::1, *.localhost and file://),
+# so an agent never reads a site you are logged in to. Set this to true to
+# let them read any page.
+# control.page-any-origin = false
 
 # Request a Change to minicode (Shift+Cmd+K, macOS only for now) hands what
 # you describe to Claude Code, in a terminal tab opened in minicode's own

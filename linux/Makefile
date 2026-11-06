@@ -27,7 +27,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/AutoIndent.cpp ../src/KeepSorted.cpp ../src/FolderSearch.cpp ../src/TextFind.cpp \
         ../src/LatexDoc.cpp ../src/SyncTex.cpp \
         ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp \
-        ../src/GitStatus.cpp ../src/GitGraph.cpp
+        ../src/GitStatus.cpp ../src/GitGraph.cpp ../src/GitModel.cpp
 
 # GUI sources. Terminal.cpp / Browser.cpp / PdfView.cpp and the LaTeX preview's
 # LatexClick.cpp / Latex.cpp are always listed but compile to nothing unless
@@ -36,7 +36,7 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Markdown.cpp \
        src/Terminal.cpp src/Browser.cpp src/AppSettings.cpp src/ThemeCss.cpp \
        src/Search.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \
        src/LatexClick.cpp src/Latex.cpp src/Lsp.cpp src/TermLinkPath.cpp \
-       src/GitModel.cpp src/GitPanel.cpp src/WebImageRules.cpp src/WebImages.cpp
+       src/GitPanel.cpp src/WebImageRules.cpp src/WebImages.cpp
 
 SRCS := $(GUI) $(CORE)
 
@@ -92,7 +92,7 @@ test:
 	    ../src/SyntaxHighlighter.cpp ../src/Settings.cpp ../src/LineComments.cpp \
 	    src/PageWords.cpp ../src/LatexDoc.cpp ../src/SyncTex.cpp \
 	    ../src/TermLinks.cpp src/TermLinkPath.cpp \
-	    ../src/GitStatus.cpp ../src/GitGraph.cpp src/GitModel.cpp \
+	    ../src/GitStatus.cpp ../src/GitGraph.cpp ../src/GitModel.cpp \
 	    src/WebImageRules.cpp \
 	    -o $(TEST_BIN)
 	@$(TEST_BIN)

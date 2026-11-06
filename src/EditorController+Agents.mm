@@ -1,5 +1,6 @@
 // EditorController+Agents.mm — EditorController: the inline agent, Request a Change, the control channel and agent work.
 #import "EditorController+Private.h"
+#import "EditorController+AgentsIvars.h"
 
 @implementation EditorController (Agents)
 
@@ -681,24 +682,12 @@ static NSUInteger MCLineStart(NSString *text, int line) {
     return t;
 }
 
-- (BOOL)browseForAgent:(NSString *)url error:(NSString **)error {
-    // The browser has one page: one the user loaded stays (R1.8).
-    if (self.browser.showsUserPage) {
-        if (error)
-            *error = [NSString stringWithFormat:
-                @"the browser pane shows a page the user opened (%@), which an agent does not "
-                @"replace; ask them to show yours, or to close the pane",
-                self.browser.pageURL ?: @"a page"];
-        return NO;
-    }
-    [self browseForAgent:url];
-    return YES;
-}
-
-- (void)browseForAgent:(NSString *)url {
+// The browser pane for an agent's page (`minicode browse`,
+// BrowserPages.h): made if there is none, and shown beside the editor
+// without taking the keyboard. The pages are the BrowserView's.
+- (BrowserView *)agentBrowserPane {
     [self keepKeyboardDuring:^{
         if (!self.browser) [self makeBrowserWithHome:@""];
-        [self.browser navigateForAgent:url];
         if (!self.browserVisible) {
             self.browserVisible = YES;
             [self showRightArea];
@@ -706,7 +695,10 @@ static NSUInteger MCLineStart(NSString *text, int line) {
             if (self.hintsVisible) [self updateHints];
         }
     }];
+    return self.browser;
 }
+
+- (BrowserView *)browserPane { return self.browser; }
 
 - (NSArray<NSDictionary *> *)controlTabs {
     NSMutableArray<NSDictionary *> *out = [NSMutableArray array];
@@ -777,7 +769,8 @@ static NSDictionary *MCLineColumn(NSString *s, NSUInteger index) {
 - (NSDictionary *)controlBrowser {
     if (!self.browser) return nil;
     return @{@"url": self.browser.pageURL ?: @"", @"title": self.browser.pageTitle ?: @"",
-             @"visible": @(self.browserVisible)};
+             @"visible": @(self.browserVisible),
+             @"page": self.browser.agentPageShown ? @"agent" : @"yours"};
 }
 
 // ---- the Claude Code IDE link's hooks (IdeLinkServer.mm)

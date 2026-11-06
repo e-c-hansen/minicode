@@ -448,6 +448,7 @@ static NSString *SFromU16(const std::u16string &u) {
         }
         NSString *error = r.error.empty() ? nil : SNS(r.error);
         const BOOL truncated = r.truncated;
+        const unsigned long total = (unsigned long)r.totalMatches;
         dispatch_async(dispatch_get_main_queue(), ^{
             SearchPanel *s = weakSelf;
             if (!s || s->_searchGeneration != gen) return;   // superseded
@@ -458,8 +459,9 @@ static NSString *SFromU16(const std::u16string &u) {
                 [s setStatus:error error:YES];
                 return;
             }
+            // Every match, as Replace All counts them, not the rows (lines).
             NSString *counts = [NSString stringWithFormat:@"%lu %@ in %lu %@%@",
-                (unsigned long)found.count, found.count == 1 ? @"match" : @"matches",
+                total, total == 1 ? @"match" : @"matches",
                 (unsigned long)files.count, files.count == 1 ? @"file" : @"files",
                 truncated ? @" (stopped at 2000)" : @""];
             if (note) {

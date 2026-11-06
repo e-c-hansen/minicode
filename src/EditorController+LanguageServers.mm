@@ -1,5 +1,6 @@
 // EditorController+LanguageServers.mm — EditorController: the language servers' commands, problems, and installing a server.
 #import "EditorController+Private.h"
+#import "EditorController+LanguageServersIvars.h"
 
 @implementation EditorController (LanguageServers)
 
@@ -20,13 +21,9 @@
     if ([self lspActionAllowed]) [self.lsp showHoverInfo];
 }
 // F2 is VS Code's key for both: the symbol in the editor, the selected file
-// in the tree. The tree takes F2 itself (ClickOutline keyDown:), and a menu
-// key that reaches here from the tree goes the same way.
+// in the tree, where it is the registry's renameFile (Commands.cpp), which
+// the key monitor runs; so a keys.conf that moves one leaves the other.
 - (void)renameSymbol:(id)sender {
-    if (self.window.firstResponder == self.outline) {
-        [self renameSelected:sender];
-        return;
-    }
     if ([self lspActionAllowed]) [self.lsp renameSymbol];
 }
 - (void)findReferences:(id)sender {

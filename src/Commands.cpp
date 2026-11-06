@@ -186,7 +186,7 @@ enum {
 // MCTreeColumns (TreeDetails.h).
 enum { kColumnSize = 1, kColumnSaved = 2, kColumnCreated = 4 };
 
-const When A = When::Any, E = When::Editor, T = When::Terminal;
+const When A = When::Any, E = When::Editor, T = When::Terminal, R = When::Tree;
 
 const std::vector<Command>& all() {
     static const std::vector<Command> table = {
@@ -222,8 +222,13 @@ const std::vector<Command>& all() {
          nullptr},
         {"explorer.newFolder", "New Folder…", "File", "shift+cmd+n", A, "newFolder:", 0, 0,
          nullptr},
-        {"renameFile", "Rename…", "File", "", A, "renameSelected:", 0, 0, nullptr},
-        {"moveFileToTrash", "Move to Trash", "File", "", A, "deleteSelected:", 0, 0, nullptr},
+        // Keys only while the tree has the keyboard, as in Finder and VS Code:
+        // a tree command's key is never put on its menu item, which would run
+        // it from the editor too (Cmd+Delete trashed the tree's selection
+        // from the editor once). The key monitor runs them (Keymap.mm).
+        {"renameFile", "Rename…", "File", "f2", R, "renameSelected:", 0, 0, nullptr},
+        {"moveFileToTrash", "Move to Trash", "File", "cmd+backspace cmd+delete", R,
+         "deleteSelected:", 0, 0, nullptr},
         {"revealFileInOS", "Reveal in Finder", "File", "", A, "revealInFinder:", 0, 0, nullptr},
         {"copyFilePath", "Copy Path", "File", "", A, "copyPath:", 0, 0, nullptr},
         {"copyRelativeFilePath", "Copy Relative Path", "File", "", A, "copyRelativePath:", 0, 0,
@@ -286,8 +291,8 @@ const std::vector<Command>& all() {
          "triggerCompletion:", 0, 0, nullptr},
         {"editor.action.showHover", "Show Hover Info", "Edit", "alt+cmd+i", E, "showHoverInfo:",
          0, 0, nullptr},
-        // F2 renames the file in the tree too, so it applies anywhere.
-        {"editor.action.rename", "Rename Symbol…", "Edit", "f2", A, "renameSymbol:", 0, 0,
+        // F2 is renameFile's in the tree (VS Code's key for both).
+        {"editor.action.rename", "Rename Symbol…", "Edit", "f2", E, "renameSymbol:", 0, 0,
          nullptr},
         {"editor.action.quickFix", "Quick Fix…", "Edit", "cmd+.", E, "showQuickFixes:", 0, 0,
          nullptr},
@@ -499,6 +504,22 @@ const std::vector<Command>& all() {
          nullptr, 0, Fixed, "the terminal"},
         {"workbench.action.terminal.scrollToBottom", "Scroll to the Bottom", "Terminal",
          "cmd+end", T, nullptr, 0, Fixed, "the terminal"},
+        // At the shell's prompt (or a REPL's); a full-screen program gets them.
+        {"minicode.terminal.lineStart", "Go to the Start of the Prompt's Line", "Terminal",
+         "cmd+left", T, nullptr, 0, Fixed, "the terminal"},
+        {"minicode.terminal.lineEnd", "Go to the End of the Prompt's Line", "Terminal",
+         "cmd+right", T, nullptr, 0, Fixed, "the terminal"},
+        {"minicode.terminal.deleteToLineStart", "Delete to the Start of the Prompt's Line",
+         "Terminal", "cmd+backspace", T, nullptr, 0, Fixed, "the terminal"},
+        {"minicode.terminal.wordLeft", "Move a Word Left at the Prompt", "Terminal", "alt+left",
+         T, nullptr, 0, Fixed, "the terminal"},
+        {"minicode.terminal.wordRight", "Move a Word Right at the Prompt", "Terminal",
+         "alt+right", T, nullptr, 0, Fixed, "the terminal"},
+        // Finder's keys, typing keys, so never a command's of keys.conf.
+        {"minicode.tree.quickLook", "Quick Look", "File Tree", "space", R, nullptr, 0, Fixed,
+         "the file tree"},
+        {"minicode.tree.closeQuickLook", "Close Quick Look", "File Tree", "escape", R, nullptr, 0,
+         Fixed, "the file tree"},
     };
     return table;
 }

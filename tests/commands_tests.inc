@@ -134,6 +134,31 @@ static void testCommandTable() {
     CHECK(HasKey(d, "editor.action.deleteLines", "ctrl+shift+k"));
     CHECK(HasKey(d, "editor.action.formatDocument", "alt+shift+f"));
     CHECK(HasKey(d, "editor.action.rename", "f2"));
+    // The tree's own keys are rows too (they were hard-coded in FileTree.mm
+    // and TerminalGridView.mm, out of keys.conf's sight).
+    CHECK(d.commandFor(K("f2"), When::Tree) == find("renameFile"));
+    CHECK(d.commandFor(K("f2"), When::Editor) == find("editor.action.rename"));
+    CHECK(d.commandFor(K("cmd+backspace"), When::Tree) == find("moveFileToTrash"));
+    CHECK(d.commandFor(K("cmd+backspace"), When::Editor) == find("deleteAllLeft"));
+    CHECK(d.commandFor(K("cmd+backspace"), When::Terminal) ==
+          find("minicode.terminal.deleteToLineStart"));
+    CHECK(d.commandFor(K("alt+left"), When::Terminal) == find("minicode.terminal.wordLeft"));
+    CHECK(d.commandFor(K("space"), When::Tree) == find("minicode.tree.quickLook"));
+    {
+        std::vector<Error> errs;
+        Keymap m = resolve("f2 = -renameFile\nctrl+alt+cmd+r = renameFile\n", &errs);
+        CHECK(errs.empty());
+        CHECK(m.commandFor(K("f2"), When::Tree) == nullptr);
+        CHECK(m.commandFor(K("f2"), When::Editor) == find("editor.action.rename"));
+        CHECK(m.commandFor(K("ctrl+alt+cmd+r"), When::Tree) == find("renameFile"));
+        // Moving Rename Symbol leaves the tree's F2 alone.
+        m = resolve("f2 = -editor.action.rename\n", &errs);
+        CHECK(errs.empty() && m.commandFor(K("f2"), When::Tree) == find("renameFile"));
+        // The grid's line edits and Quick Look's Space are handled by their
+        // views, so keys.conf cannot give their keys to another command there.
+        m = resolve("alt+left = workbench.action.terminal.clear\n", &errs);
+        CHECK(errs.size() == 1);
+    }
 }
 
 static void testKeymapFile() {
@@ -329,6 +354,7 @@ static std::vector<Commands::Key> ReadmeKeys(const std::string &cell) {
         if (named.count(t)) name = named.at(t);
         else if (t == "plus") { name = "="; extra = Shift; }
         else if (t == "keypad" && i + 1 < words.size()) name = "numpad" + words[++i];
+        else if (t == "Forward" && i + 1 < words.size() && words[i + 1] == "Delete") { name = "delete"; i++; }
         else if (t == "Page" && i + 1 < words.size()) name = "page" + std::string(words[++i] == "Up" ? "up" : "down");
         else if (t.size() >= 2 && t[0] == 'F' && std::isdigit((unsigned char)t[1])) name = "f" + t.substr(1);
         else if (t.size() == 1 && !std::isspace((unsigned char)t[0])) name = std::string(1, (char)std::tolower((unsigned char)t[0]));

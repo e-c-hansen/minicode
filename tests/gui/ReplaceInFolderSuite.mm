@@ -50,6 +50,10 @@ MC_GUI_SUITE(replace_in_folder) {
     MCGuiWait(@"the results", 10, ^BOOL { return !Panel(c).busy && Hits(c).count >= 4; });
     MCGuiStep(@"Replace All asks first", ^{
         MCGuiNote(@"%lu results: %@", (unsigned long)Hits(c).count, Panel(c).status.stringValue);
+        // Every match, as Replace All counts them, though one.txt's two and
+        // four.txt's two are a row each (it said "4 matches in 4 files").
+        GCHECK(Hits(c).count == 4);
+        GCHECK_EQ_STR(Panel(c).status.stringValue, @"6 matches in 4 files");
         MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
         [Panel(c) replaceAll:nil];
     });

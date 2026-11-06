@@ -1,5 +1,6 @@
 // EditorController+Tree.mm — EditorController: the file tree: its data source, drag and drop, FSEvents, worktree rows, file operations, opening a folder.
 #import "EditorController+Private.h"
+#import "EditorController+TreeIvars.h"
 
 @implementation EditorController (Tree)
 
@@ -644,6 +645,16 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         FileItem *next = nil;
         for (FileItem *c in node.children)
             if ([c.path isEqual:acc]) { next = c; break; }
+        // Made since the tree listed this folder (by an agent, the terminal,
+        // a language server): list the folder again rather than wait for
+        // FSEvents. A Problems row or a Quick Open file opened nothing until
+        // the tree refreshed.
+        if (!next && node.loaded && [[NSFileManager defaultManager] fileExistsAtPath:acc]) {
+            [node refresh];
+            [self.outline reloadItem:node == _root ? nil : node reloadChildren:YES];
+            for (FileItem *c in node.children)
+                if ([c.path isEqual:acc]) { next = c; break; }
+        }
         if (!next) break;
         if (next.isDir && i < parts.count - 1) [self.outline expandItem:next];
         node = next;
@@ -654,7 +665,14 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
                   byExtendingSelection:NO];
         [self.outline scrollRowToVisible:row];
     }
-    if (open && !node.isDir) [self openFileAtPath:node.path];
+    if (open && !node.isDir) {
+        [self openFileAtPath:node.path];
+    } else if (open && ![node.path isEqualToString:path]) {
+        // Not in the tree (a dotfile it hides): a file is opened anyway.
+        BOOL isDir = NO;
+        if ([[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && !isDir)
+            [self openFileAtPath:path];
+    }
 }
 
 // revealPath: opens only what the tree lists, and the tree leaves dotfiles

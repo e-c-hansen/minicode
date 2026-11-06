@@ -1,12 +1,11 @@
-// GitModel.h — pure C++, no GTK. What the Linux Source Control panel shows,
-// worked out from what git printed: the rows of the two change lists, the
-// line about what is pushed, the argument vectors for every command it runs,
-// where the selection goes after a refresh, the tooltips, and the diff and
-// commit text with a style per run. The GTK half (GitPanel.cpp) runs git and
-// draws; everything here is tested in tests/run_tests.cpp.
-//
-// The rules are the Mac's (src/GitPanel.mm and "Git panel" in CLAUDE.md),
-// and the wording is the same.
+// GitModel.h — pure C++, part of the portable core. What every port's
+// Source Control panel shows, worked out from what git printed: the rows of
+// the two change lists, the line about what is pushed, the argument vectors
+// for every command it runs, where the selection goes after a refresh, the
+// tooltips, the commit graph, and the diff and commit text with a style per
+// run. The panels run git and draw: the Mac's src/GitPanel.mm, the GTK
+// port's linux/src/GitPanel.cpp and Android's git_jni.cpp. Tested in
+// tests/gitmodel_tests.inc (`git-ui:*`). See "Git panel" in CLAUDE.md.
 #pragma once
 
 #include "GitGraph.h"
@@ -159,16 +158,21 @@ unsigned laneColor(int i);
 // A ref pill's color: HEAD orange, remote purple, tag amber, branch blue.
 unsigned pillColor(Git::RefKind k);
 
+// How a port writes a commit's date: dateText below by default; the Mac
+// passes its own, in the user's locale.
+using DateFormat = std::string (*)(long long t);
+std::string dateText(long long t);
+
 // "a1b2c3d  Ann, 3 days ago (Sep 23, 2026 at 14:02)\nSubject", then "Not
 // pushed yet..." or "Not pulled yet..." and the labels; the "Show more" row
 // gets "Load the next 200 commits".
-std::string graphToolTip(const Graph& g, size_t row, long long now);
+std::string graphToolTip(const Graph& g, size_t row, long long now,
+                         DateFormat date = dateText);
 
 // For tests and the debug log: "a1b2c3d lane=0 head out Subject [*main,v1]".
 std::vector<std::string> graphDescriptions(const Graph& g);
 
-// "Sep 23, 2026 at 14:02", in local time.
-std::string dateText(long long t);
+// dateText: "Sep 23, 2026 at 14:02", in local time (declared above).
 
 // -------------------------------------------------------- styled text
 enum class Style { Plain, Added, Removed, Muted, FileHeader, Hash, Bold };
@@ -199,7 +203,7 @@ void appendDiff(StyledText& out, const std::string& bytes);
 // `git show` output (showArgs): hash, parents, author, a different
 // committer, date with relative time, the message with its subject bold,
 // then the stat and diff. Falls back to diffText if it does not parse.
-StyledText commitText(const std::string& show, long long now);
+StyledText commitText(const std::string& show, long long now, DateFormat date = dateText);
 
 // "a1b2c3d Subject": the title of a commit view.
 std::string commitTitle(const Git::Commit& c);

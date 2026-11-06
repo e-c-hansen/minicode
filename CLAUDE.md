@@ -66,13 +66,17 @@ opening comment says what it does in more detail than the lines below.
 - `make guitest [SUITES="control agents"]`: the offscreen GUI checks in
   `tests/gui` (see "Verification").
 - `make run [DIR=~/path]`, `make icon` (from `tools/makeicon.m`), `make demos
-  [SCENES="tour latex"] [POSTERS=1]`, `make membench`, `make install` (copies
-  `skills/minicode/SKILL.md` to `~/.claude/skills/minicode`), `make dist-zip`,
+  [SCENES="tour latex"] [POSTERS=1]`, `make membench`, `make install` (runs `minicode
+  install-skill` from the checkout: `skills/minicode/SKILL.md` to
+  `~/.claude/skills/minicode`; the bundle carries the skill in
+  `Contents/Resources/skills`, so a Homebrew copy can install it too), `make dist-zip`,
   `make dmg`.
 - `scripts/release.sh 1.2.0` cuts a release from a clean `main`: runs the
   core tests, and `make guitest` unless CI passed on that very commit, builds
   the signed APK before anything is stamped, stamps the version into `Info.plist` and `packaging/minicode.rb` and
-  commits that, builds the zip and checks the built app reports the version,
+  commits that, builds the zip as a release (`make dist-zip RELEASE=1`: no
+  `Demo.mm` or `Bench.mm`, main.mm gets their stubs, checked with `nm`) and
+  checks the built app reports the version,
   publishes it on the Homebrew tap repo, bumps the cask's version and sha256,
   then tags `v1.2.0` and pushes `main` with the tag, and runs the PPA upload
   last (skipped when no key is configured). The version on the command line is
@@ -127,11 +131,13 @@ goes here first, with tests; the GUI only displays it.
   `applySgr`, `termCharWidth`), `TerminalScreen` (the grid, scrollback, reflow,
   find, mouse encoding), `TermLinks`.
 - `FolderSearch` (Find and Replace in Folder, atomic writes, TODOs),
-  `GitStatus` (status, diffs, git time limits), `GitGraph` (log, refs, lanes).
+  `GitStatus` (status, diffs, git time limits), `GitGraph` (log, refs, lanes),
+  `GitModel` (what every port's Source Control panel shows and runs).
 - `CommandPalette` (matching, modes, Quick Open, symbol rows), `SymbolOutline`
   (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
-  line's parsing), `SideBySide` (diff rows).
+  line's parsing), `SideBySide` (diff rows), `PageCheck` (agents checking
+  pages: addresses, the origin limit, the console record).
 - Agent work: `AgentTranscript`, `AgentIndex`, `AgentEvidence`, `AgentView`;
   `ProcessTable` (processes and ports per folder: tracking, groups, Stop's plan).
 - Files: `FileSniff` (how a file is shown), `Csv`, `JsonOutline`, `Notebook`.
@@ -194,6 +200,19 @@ stays warning-free:
   inline` (so a file that does not call one is not warned). Only
   EditorController files import it. Shared non-window state is a global defined
   in one file (`gShowHidden` in FileTree.mm), never a static in a header.
+- **Ivars (2026-11-06): the shared block is closed to one category's state.**
+  It holds only variables two or more category files use; one used by a
+  single category goes in that category's own class extension,
+  `src/EditorController+<Concern>Ivars.h` (`@interface EditorController ()
+  { ... }`, importing `+Private.h`), imported by that category's `.mm` and by
+  `EditorController.mm`, whose `@implementation` must see a class extension
+  for its ivars to exist (miss it and the link fails on `OBJC_IVAR_$_...`).
+  Make the header when the category has none yet. Better still, a feature in
+  files of its own keeps its state in its own object, reached through one
+  property or ivar (`MCEditorFind`, `MCFolds`, `MCAgentSession`). The
+  `structure:ivars` core test fails on a shared variable fewer than two
+  categories use, an ivar header `EditorController.mm` does not import, or a
+  category using another's ivars.
 - Methods the rest of the app calls go in `EditorController.h` in an
   `@interface EditorController (Concern)` named for the implementing category:
   a method the class declares but a category implements draws warnings. For the
@@ -244,9 +263,12 @@ container (PanelHost, laid out by hand in layoutContainer)
   `applySettings`, run at startup and on `MCSettingsDidChangeNotification`,
   that recolors what is on screen (editor re-highlights, Markdown re-renders
   keeping scroll, terminal text marked `MCTerminalDefaultForeground` follows).
-  A new setting goes in `Settings.cpp` (parser, default, the commented
-  `defaultFileText`, which a test checks key by key) and the view's
-  `applySettings`. Still inline hex (`Hex`, `THex`, `SHex`): accents #4EA1F7,
+  A new setting goes in `Settings.cpp` (a row of `keyTable()`, `MC_KEY(key,
+  Word | CommandLine | Path, isColor, body)`, which says how far its value
+  runs on the line and applies it; only a family matched by prefix, such as
+  `lsp.*` or a surface's `.background`, is code in `apply()`), its default,
+  the commented `defaultFileText` (`settings:key-table` fails on a row it
+  lacks) and the view's `applySettings`. Per-language blocks are not done. Still inline hex (`Hex`, `THex`, `SHex`): accents #4EA1F7,
   muted #9CA3AF, dividers #333333, the hints overlay, terminal panel messages,
   the Search window, the git panel, the developer amber #E8A33D, the ANSI
   palette in `TermColor::rgb()`; `linux/src/Palette.h` mirrors the defaults.
@@ -387,8 +409,14 @@ container (PanelHost, laid out by hand in layoutContainer)
   Shift+F12) and the editor has the keyboard, since AppKit gives such a key to
   the text view as typing before the menu (in another field or the grid it
   types); when two commands share a key in different places; and for keys a
-  menu cannot show (keypad digits, the Menu key, Ctrl+Shift with punctuation).
-  A plain Control key goes to the terminal grid while it has the keyboard
+  menu cannot show (keypad digits, the Menu key, Ctrl+Shift with punctuation);
+  and for a `Tree` command (renameFile on F2, moveFileToTrash on Cmd+Delete)
+  while the tree has the keyboard. A `Tree` command's keys are never put on
+  its menu item, since a menu key acts from every pane (Cmd+Delete once
+  trashed the tree's selection from the editor); no view hard-codes them.
+  The grid's prompt line edits (Cmd+Left/Right/Delete, Option+Left/Right) and
+  the tree's Space and Esc (Quick Look) are `Fixed` rows: typing keys, or
+  keys the view sends on to the shell. A plain Control key goes to the terminal grid while it has the keyboard
   (Ctrl+G for nano) unless Global. Plain typing skips the keymap at once. Cmd+.
   is the key bindings' `cancelOperation:` everywhere, so only an editable
   editor sends it to the menu. Validation decides: a command that cannot act
@@ -670,11 +698,22 @@ container (PanelHost, laid out by hand in layoutContainer)
   sees no single typed character (no completion); the electric dedent is off
   while they apply (`multiCarets.applying`); typing never crosses a line break,
   so a column stays a column.
-- Column: Cmd+Shift-, Option- or Shift+Option-drag (`MCMultiCarets mouseDown:`,
-  first in `CodeTextView mouseDown:`), each line's caret from
+- Column: Cmd+Shift-, Option- or middle-button drag (`MCMultiCarets mouseDown:`
+  and `otherMouseDown:`, first in CodeTextView's), each line's caret from
   `characterIndexForInsertionAtPoint:` at its first fragment; Cmd+Shift clicks
-  pair up, the anchor holding while carets and length are as the last press
-  left them (`_anchorCarets`); Option+click adds or removes a caret.
+  pair up (the owner's binding), the anchor holding while carets and length
+  are as the last press left them (`_anchorCarets`); Shift+Option click or
+  drag is VS Code's box from the caret's selection start (or the live
+  anchor) to the pointer; Option+click adds or removes a caret. VS Code's
+  own Cmd+Shift click is a Shift click. **Trap (2026-11-06)**: the window
+  server counts clicks by time alone (HIDClickSpace is (0,0)), so a second
+  click within 0.5 s is clickCount 2 wherever it lands; the old `clickCount
+  > 1` bail sent the owner's quick second Cmd+Shift click to NSTextView. A
+  press counts as a double-click only on the character the last press hit
+  (VS Code's `trySetCount` does the same). Offscreen, neither `[window
+  sendEvent:]` nor CGEventPostToPid delivers a mouse-down to the view;
+  `MultiCaretClickSuite` hit-tests and calls the view with CGEvent-made
+  events carrying the real click counts.
 - Cmd+D (word at an empty caret by `MultiCaret::wordAt`, then the next
   occurrence after the last added, wrapping, case-sensitive, whole-word only
   when begun at an empty caret), Shift+Cmd+L, Option+Cmd+Down/Up (a caret a
@@ -1464,9 +1503,16 @@ for full-screen programs. Both can be open at once.
 ## Git panel (all three ports)
 
 Ctrl+Shift+G swaps the tree for `MCGitPanel` (`replaceSubview:with:`, same
-frame). The GTK port (`linux/src/GitPanel`, `GitModel`) and Android
-(`GitPanel.kt`, `git_jni.cpp`, git in Termux through one bash loop) follow its
-rules and wording (`linux/HANDOFF.md` item 10; `android/README.md`, "Source
+frame). All three panels draw from the core's `src/GitModel.{h,cpp}`
+(`GitUi`: rows, the selection after a refresh, every argument vector, the
+summary line, failure text, the graph's build, key, colors and tooltips, and
+diff and commit text as styled runs in characters, which `MCGitStyledText`
+maps to UTF-16; tested in `tests/gitmodel_tests.inc`, `git-ui:*`). It was
+the GTK port's until 2026-11-06, when the Mac's `GitPanel.mm` still had its
+own copy of every rule. The Mac passes its own date format (`DateFormat`,
+the user's locale). A rule or wording changes there, once. The GTK port
+(`linux/src/GitPanel`) and Android (`GitPanel.kt`, `git_jni.cpp`, git in
+Termux through one bash loop) follow the same rules and wording (`linux/HANDOFF.md` item 10; `android/README.md`, "Source
 control"). Logging: `G_MESSAGES_DEBUG=minicode-git` on Linux, `adb shell
 setprop log.tag.MiniCodeGit DEBUG` on Android.
 
@@ -1529,7 +1575,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   it is refused), copies files from Finder in and rows out; a clash is reported
   after the drop (Finder waits on a modal during it). `pathMovedFrom:to:` moves
   tabs, the LaTeX path and a preview's relative pictures. F2 renames,
-  Cmd+Delete trashes (`ClickOutline keyDown:`), Space previews with Quick Look.
+  Cmd+Delete trashes (the registry's `Tree` commands, run by the key monitor),
+  Space previews with Quick Look.
 - **The Worktrees node** (first, shown with or without hidden files, not again
   inside .claude): each worktree named for its agent with its ahead count and
   changes (git off the main thread); right click Compare with Main (each
@@ -1606,8 +1653,9 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   --branch v<version> <repo> <dir> || git clone <repo> <dir>) && cd <dir> &&
   claude ...`). "Source" means a Makefile and `src/EditorController.mm`. A 2 s
   timer watches `<source>/MiniCode.app/Contents/_CodeSignature/CodeResources`
-  (codesign is `make app`'s last step) and offers Restart once it is newer and
-  stable. Prompt files whose writer has quit, or a day old, are removed as
+  (codesign is `make app`'s last step, and that file is its target, so a
+  `make` with nothing to do leaves it alone) and offers Restart once it is
+  newer and stable. Prompt files whose writer has quit, or a day old, are removed as
   the next is written (`MCRemoveStalePromptFiles`, the inline agent's too).
 - **Restart** (`AppDelegate restartIntoApp:resumingIn:source:command:`,
   `MCRestarting`): the quit questions titled "Restart minicode?", leaving
@@ -1657,9 +1705,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   open it again", nothing launched. Exit codes 0, 1 command error, 2 usage, 3
   no app.
 - Commands: `open path[:line[:col]]` (`--to`, `--note`, `--from`, `--keep`),
-  `window`, `browse` (in the pane; the browser has no tabs, so a page the
-  user loaded is never replaced: `BrowserView showsUserPage`, the history
-  items an agent's navigations committed), `term` (`--cwd`, `--title`,
+  `window`, `browse` (into the pane's agent page; see below), `page`,
+  `term` (`--cwd`, `--title`,
   `--run` typed and entered visibly), `diff` (`--base` never starting with
   "-"), `split`, `state` (`--pretty`), `selection`, `term-output`, `tour`, `procs`
   (`--json`; see "Processes and ports").
@@ -1688,11 +1735,38 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   text before its note is placed (`notesCatchUpWithDisk`), or the reload a
   moment later closed it. Tours step with Option+] and [ (keymap commands
   enabled only during a tour) and show "2 of 3".
-- `skills/minicode/SKILL.md` (under 150 lines; `make install`): show work as
+- `skills/minicode/SKILL.md` (under 150 lines; `minicode install-skill` or
+  `make install`): show work as
   notes, a diff and tests in a terminal; open code with a note when asked where
   something is; read `state` and `selection` for "this"; never rearrange the
   user's tabs, `--run` long or destructive commands, or write workspace scripts
   unasked; plain paths on exit 3.
+- **Agents check pages** (spec feature 6, 2026-11-06; `PageCheck`,
+  `BrowserPages.mm`, `ControlPageCommands.mm`): `browse` loads into a second
+  web view in `BrowserView`, the agent page, with a Yours | Agent switcher
+  and an x that closes it (the user's page as it was); an address typed in
+  the bar or a link from elsewhere goes to the user's page. The pane shows
+  the agent page unless the keyboard is in the pane (`"pane_busy"`).
+  `browse` takes only http, https, file, about:blank, host:port and paths,
+  never a search or another scheme. `page --url/--text/--console/
+  --screenshot/--reload`, `--yours` for the user's page; text, console and
+  screenshots only for local pages unless `control.page-any-origin`, checked
+  again when the read comes back. Status from
+  `decidePolicyForNavigationResponse` (which answers as WebKit does without
+  it: allow what it can show). The agent page's configuration installs, at
+  document start, a listener in an isolated `WKContentWorld` (uncaught
+  errors, rejections, and the only message handler) and a page-world
+  wrapper of console.* that relays each call as a DOM event: an isolated
+  world cannot see the page's console object, so there is no other public
+  way; relayed lines can only be console calls (`fromPage`). Traps: a
+  snapshot paints only the visible area, so `--full` rasterizes
+  `createPDFWithConfiguration:` (sRGB; WebKit's #FF0000 reads back as about
+  (1, 0.15, 0) in both kinds of picture); `WKWebView.title` can still be
+  empty at didFinish, so `--wait` reads `document.title`; a GUI check's
+  command line is built when queued, so start a test server before
+  queueing steps. `BrowserPagesSuite` serves pages from a server inside the
+  test process (127.0.0.1 and ::1); 20 checks grow minicode plus the agent
+  page's WebKit process by about 0 MB (the page process itself is 25-35 MB).
 - Ground rules for this and the agent workspace: nothing runs because a folder
   or file was opened; Claude Code's data is read, never written, moved or
   deleted; nothing leaves the Mac.
@@ -2000,7 +2074,7 @@ session has a display. Check first.
 `linux/HANDOFF.md` (items 1 to 14) and `BUILD-LINUX.md` (build, and what is
 unverified). It shares the highlighter, Markdown, tasks, settings, comments,
 AutoIndent, KeepSorted, FolderSearch, TextFind, LatexDoc, SyncTex, Json,
-LspClient, TermLinks, GitStatus and GitGraph; VTE is its terminal. The core
+LspClient, TermLinks, GitStatus, GitGraph and GitModel; VTE is its terminal. The core
 lists in `linux/meson.build` and `linux/Makefile` must agree
 (`linux:build-lists`; CI builds only with Meson). Its traps are in HANDOFF.md:
 accelerators taking keys from VTE (`updateShellKeys`), the selection color
