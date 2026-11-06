@@ -522,7 +522,34 @@ static void ReplaceClass(Class c, SEL sel, id block) {
     if (m) method_setImplementation(m, imp_implementationWithBlock(block));
 }
 
+// An exception AppKit cannot recover from (one thrown in drawRect: or a
+// layout pass) ends the process through +[NSApplication _crashOnException:]
+// with only "Trace/BPT trap" to show for it. Say which exception, in which
+// suite and step, and where it was thrown, before letting it crash.
+static void ReportFatalException(NSException *e) {
+    std::fprintf(stdout, "\nFATAL exception in [%s] (step: %s): %s: %s\n%s\n",
+                 gSuite.UTF8String ?: "?", gStep.UTF8String ?: "?",
+                 e.name.UTF8String ?: "?", e.reason.UTF8String ?: "",
+                 [e.callStackSymbols componentsJoinedByString:@"\n"].UTF8String ?: "");
+    std::fflush(stdout);
+}
+
+static void InstallExceptionReporting(void) {
+    NSSetUncaughtExceptionHandler([](NSException *e) { ReportFatalException(e); });
+    Class meta = object_getClass(NSApplication.class);
+    SEL sel = NSSelectorFromString(@"_crashOnException:");
+    Method m = class_getInstanceMethod(meta, sel);
+    if (!m) return;
+    typedef void (*Crash)(id, SEL, NSException *);
+    Crash original = (Crash)method_getImplementation(m);
+    method_setImplementation(m, imp_implementationWithBlock(^(id cls, NSException *e) {
+        ReportFatalException(e);
+        original(cls, sel, e);
+    }));
+}
+
 static void InstallSwizzles(void) {
+    InstallExceptionReporting();
     Class W = NSWindow.class;
     Replace(W, @selector(makeKeyAndOrderFront:), ^(id, id) {});
     Replace(W, @selector(orderFront:), ^(id, id) {});
@@ -644,6 +671,11 @@ int main(int argc, const char *argv[]) {
             return 2;
         }
         InstallSwizzles();
+        // MC_GUI_SCROLLBARS=always: scroll bars that always take room, as
+        // on a Mac without a trackpad and on CI's runners.
+        if ([Env(@"MC_GUI_SCROLLBARS") isEqualToString:@"always"])
+            [[NSUserDefaults standardUserDefaults]
+                setVolatileDomain:@{@"AppleShowScrollBars": @"Always"} forName:NSArgumentDomain];
         // The checks start once the app has opened its window, and the whole
         // run has ten minutes.
         [[NSNotificationCenter defaultCenter]
