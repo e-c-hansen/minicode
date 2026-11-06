@@ -17,6 +17,12 @@ struct MdRun {
     // lowercased ("python" for ```python), on its runs; "" otherwise.
     std::string lang;
     bool quote     = false;  // inside a block quote
+    // How many quotes deep (1 in a quote, 2 in a quote inside a quote...),
+    // where `quote` is set; 0 elsewhere.
+    int  quoteDepth = 0;
+    // For a quote inside a list item: the list levels it sits in, so its bar
+    // starts at that level's indent. listDepth counts these levels too.
+    int  quoteIndent = 0;
     bool rule      = false;  // horizontal rule (--- )
     bool table     = false;  // part of a table, laid out as padded monospace
     // Where a table run sits, for a GUI that draws real tables: tables are
@@ -59,6 +65,20 @@ struct MdRun {
     // line of its own: "\n" runs end the text before it and start the text
     // after it (not in a heading or a table cell, which stay one line).
     int  math      = 0;
+    // Footnotes, as GitHub shows them. A reference ("[^note]", when a
+    // "[^note]: text" defines it) is a run of its own: `text` is the
+    // footnote's number, `footnote` that number, and it links to "#fn-N".
+    // The footnotes follow the page's last block, after a rule, as a
+    // numbered list whose runs have `footnotes` set, in the order they are
+    // first referred to; each ends with a "↩" link back to "#fnref-N" (and
+    // "↩²", "↩³" to later references). A port that knows neither shows the
+    // number as text and the footnotes as a list.
+    int  footnote  = 0;
+    bool footnotes = false;
+    // What a "#id" link lands on: "fn-N" on a footnote's number in the
+    // list, "fnref-N" on its first reference and "fnref-N-2", ... on the
+    // ones after.
+    std::string anchor;
 };
 
 // How the parser read one line of the source. MarkdownEdit works from this,
@@ -71,9 +91,11 @@ struct MdLine {
         Quote,            // a line starting with >
         ListItem,         // the line holding a list item's marker
         Text,             // a paragraph line, or a lazy continuation line
-        Hidden,           // a link reference definition or an HTML comment
-        Math              // a line of a $$ (or \[) display math block,
+        Hidden,           // a link reference definition, an HTML comment, or
+                          // HTML that shows nothing (<script>, <style>, <?...?>)
+        Math,             // a line of a $$ (or \[) display math block,
                           // its delimiters included
+        Html              // a line of an HTML block, taken as HTML, not Markdown
     };
     Kind kind = Blank;
     // Lines that are edited together share a number: a paragraph, a list

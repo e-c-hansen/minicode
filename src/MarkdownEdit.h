@@ -8,7 +8,7 @@
 namespace MarkdownEdit {
 
 struct Block {
-    enum Kind { None, Paragraph, Heading, ListItem, Quote, Code, TableCell, TableRow, Math };
+    enum Kind { None, Paragraph, Heading, ListItem, Quote, Code, TableCell, TableRow, Math, Html };
     Kind kind = None;
     size_t start = 0, end = 0;   // the editable bytes of the source
     int firstLine = -1, lastLine = -1;
@@ -30,6 +30,8 @@ struct Block {
 //   math       a $$ (or \[) display formula on lines of its own, all of
 //              it, the delimiters included
 //   table cell the cell's text, trimmed
+//   html       an HTML block's lines, as written (a heading written as a
+//              line of HTML in one is a heading of its own)
 // Blank lines, rules, fences, a table's separator row, a setext underline,
 // link reference definitions and HTML comments give None.
 Block blockAt(const std::string& source, int line, int column = -1);

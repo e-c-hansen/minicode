@@ -553,6 +553,9 @@ Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
             endHeading();
         }
         if (r.heading > 0) heading += r.text;
+        // A footnote, or a reference to one, that "#fn-1" links land on.
+        if (!r.anchor.empty() && !page.anchors.count(r.anchor))
+            page.anchors[r.anchor] = gtk_text_buffer_get_char_count(buffer);
 
         if (r.tableId > 0) {
             size_t end = i;

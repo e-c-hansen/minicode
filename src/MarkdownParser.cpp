@@ -4,16 +4,21 @@
 // Two passes. The block pass reads the source a line at a time into blocks
 // (paragraphs, ATX and setext headings, fenced and indented code, block
 // quotes with GitHub's alerts, nested lists with task boxes, rules, GitHub
-// tables, front matter) and classifies every line; MarkdownEdit uses that
+// tables, front matter, CommonMark's HTML blocks, GitHub's footnote
+// definitions) and classifies every line; MarkdownEdit uses that
 // classification, so what the preview shows and what a double-click edits
-// agree. Link reference definitions and HTML comments are hidden.
+// agree. Link reference definitions and HTML comments are hidden. Quotes
+// nest, inside list items too, and code in a list item keeps its indent.
+// Footnotes are numbered as they are first referred to and listed after
+// the last block.
 //
 // The inline pass turns a block's text into runs: emphasis by CommonMark's
 // delimiter rules (so snake_case and 2 * 3 stay as written), ~~strike~~,
 // code spans of any backtick count, backslash escapes, entities, inline and
 // reference links and images, <autolinks> and bare web addresses, hard
-// breaks, and a little inline HTML (<br>, <img>, <b>, <a href>, <kbd>...;
-// other tags and comments are dropped, their text kept).
+// breaks, a little inline HTML (<br>, <img>, <b>, <a href>, <kbd>...;
+// other tags and comments are dropped, their text kept), and footnote
+// references. An HTML block's text is read as HTML: tags and entities only.
 //
 // Math is read before any other inline rule, as GitHub and pandoc read it:
 // $...$ (the opening $ not followed by a space, the closing one neither
@@ -264,6 +269,35 @@ std::string normalizeLabel(const std::string& label) {
 
 using Refs = std::map<std::string, std::string>;
 
+// The footnotes of a document: which labels a "[^label]: ..." defines, and
+// the numbers references give them, in the order they are first met.
+struct Notes {
+    std::map<std::string, int> defined;   // normalized label -> its definition
+    std::map<std::string, int> numbers;   // normalized label -> its number
+    std::vector<std::string> order;       // labels by number, from 1
+    std::vector<int> uses;                // references so far, by number - 1
+
+    // A reference to `label`: its number and which reference this is (1 for
+    // the first), or a number of 0 when nothing defines it.
+    std::pair<int, int> refer(const std::string& label) {
+        const std::string key = normalizeLabel(label);
+        if (!defined.count(key)) return {0, 0};
+        auto it = numbers.find(key);
+        if (it == numbers.end()) {
+            it = numbers.emplace(key, (int)order.size() + 1).first;
+            order.push_back(key);
+            uses.push_back(0);
+        }
+        return {it->second, ++uses[(size_t)it->second - 1]};
+    }
+};
+
+// What the inline pass looks things up in.
+struct Context {
+    const Refs& refs;
+    Notes* notes;
+};
+
 // ------------------------------------------------------------ inline HTML
 
 struct Tag {
@@ -379,10 +413,28 @@ size_t readAutolink(const std::string& s, size_t i, size_t to, std::string* url,
     return k + 1;
 }
 
+// CommonMark's block-level tag names: one starting a line starts an HTML
+// block (its sixth kind), and inside HTML each starts a new line.
+bool isBlockTag(const std::string& name) {
+    static const char* const kNames[] = {
+        "address", "article", "aside", "base", "basefont", "blockquote", "body", "caption",
+        "center", "col", "colgroup", "dd", "details", "dialog", "dir", "div", "dl", "dt",
+        "fieldset", "figcaption", "figure", "footer", "form", "frame", "frameset", "h1", "h2",
+        "h3", "h4", "h5", "h6", "head", "header", "hr", "html", "iframe", "legend", "li",
+        "link", "main", "menu", "menuitem", "nav", "noframes", "ol", "optgroup", "option", "p",
+        "param", "search", "section", "summary", "table", "tbody", "td", "tfoot", "th",
+        "thead", "title", "tr", "track", "ul",
+    };
+    if (name.empty()) return false;
+    for (const char* n : kNames)
+        if (name == n) return true;
+    return false;
+}
+
 // ------------------------------------------------------------ inline pass
 
 struct Piece {
-    enum Kind { Text, Delim, Code, Image, Soft, Hard, TagOpen, TagClose, Math };
+    enum Kind { Text, Delim, Code, Image, Soft, Hard, TagOpen, TagClose, Math, Note };
     Kind kind = Text;
     std::string text;       // what shows (a delimiter's remaining characters)
     size_t at = 0;          // where it starts in the block's text
@@ -397,6 +449,8 @@ struct Piece {
     int count = 0, orig = 0;
     bool canOpen = false, canClose = false;
     int tag = 0;            // TagOpen/TagClose: 1 bold, 2 italic, 3 strike, 4 code, 5 link
+    int note = 0;           // Note: the footnote's number (`url` its link, `anchor` its id)
+    std::string anchor;
 };
 
 // A character the inline pass looks at twice: everything else is copied
@@ -463,7 +517,8 @@ void processEmphasis(std::vector<Piece>& p) {
 
 class Inline {
 public:
-    Inline(const std::string& s, const Refs& refs) : s_(s), refs_(refs) { matchBrackets(); }
+    Inline(const std::string& s, const Context& ctx)
+        : s_(s), refs_(ctx.refs), notes_(ctx.notes) { matchBrackets(); }
 
     // Pieces of s[from, to). Inside a link's text no further links are made.
     void parse(size_t from, size_t to, bool inLink, std::vector<Piece>& out) {
@@ -596,6 +651,15 @@ public:
                 i += n;
                 continue;
             }
+            if (c == '[' && !inLink && i + 1 < to && s_[i + 1] == '^') {
+                Piece note;
+                if (size_t next = footnote(i, to, note)) {
+                    flush();
+                    out.push_back(std::move(note));
+                    i = next;
+                    continue;
+                }
+            }
             if ((c == '[' || (c == '!' && i + 1 < to && s_[i + 1] == '[')) && !inLink) {
                 const bool image = c == '!';
                 std::vector<Piece> made;
@@ -666,9 +730,95 @@ public:
         flush();
     }
 
+    // Pieces of an HTML block's text, s[from, to): HTML, not Markdown, so
+    // only tags and entities mean anything. The tags parse() knows style
+    // what they enclose (<b>, <a href>, <img>, <br>...), a block-level tag
+    // (<p>, <div>, <li>, <h2>...) breaks the line, and white space runs
+    // collapse to one space, as a browser shows them.
+    void parseHtml(size_t from, size_t to, std::vector<Piece>& out) {
+        std::string pending;
+        size_t pendingAt = from;
+        bool space = false;   // white space since the last text
+        bool shown = false;   // text or a picture since the last line break
+        auto flush = [&] {
+            if (pending.empty()) return;
+            Piece t;
+            t.text = pending;
+            t.at = pendingAt;
+            out.push_back(std::move(t));
+            pending.clear();
+            shown = true;
+        };
+        // Whether text shows on the line so far, which a space may follow.
+        auto textBefore = [&] { return shown || !pending.empty(); };
+        auto lineBreak = [&](size_t at) {
+            space = false;
+            flush();
+            if (!shown) return;
+            Piece h;
+            h.kind = Piece::Hard;
+            h.at = at;
+            out.push_back(std::move(h));
+            shown = false;
+        };
+        for (size_t i = from; i < to;) {
+            const char c = s_[i];
+            if (c == '<') {
+                Tag tag;
+                if (size_t next = readHtml(s_, i, to, &tag)) {
+                    if (isBlockTag(tag.name)) {
+                        lineBreak(i);
+                    } else if (space) {
+                        // The space before a tag stays outside it; at the
+                        // start of a line there is none.
+                        if (textBefore()) {
+                            if (pending.empty()) pendingAt = i;
+                            pending += ' ';
+                        }
+                        space = false;
+                    }
+                    flush();
+                    const size_t before = out.size();
+                    html(tag, i, out);
+                    if (out.size() > before && out.back().kind == Piece::Hard) {   // <br>
+                        space = false;
+                        shown = false;
+                    } else if (out.size() > before && out.back().kind == Piece::Image) {
+                        shown = true;
+                    }
+                    i = next;
+                    continue;
+                }
+            }
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                space = true;
+                i++;
+                continue;
+            }
+            if (space && textBefore()) {
+                if (pending.empty()) pendingAt = i;
+                pending += ' ';
+            }
+            space = false;
+            if (pending.empty()) pendingAt = i;
+            std::string text;
+            if (c == '&') {
+                if (size_t next = readEntity(s_, i, to, text)) {
+                    pending += text;
+                    i = next;
+                    continue;
+                }
+            }
+            pending += c;
+            i++;
+        }
+        flush();
+    }
+
 private:
     const std::string& s_;
     const Refs& refs_;
+    Notes* notes_;
     std::vector<std::pair<size_t, size_t>> close_;   // '[' and its ']', by '['
     int depth_ = 0;                    // links and images being read, nested
 
@@ -941,6 +1091,29 @@ private:
         return end;
     }
 
+    // A footnote reference at `open` ("[^label]") to a label a definition
+    // has: the piece and the index past it, or 0. "[^label](...)" is left
+    // to be a link.
+    size_t footnote(size_t open, size_t to, Piece& note) {
+        if (!notes_ || notes_->defined.empty()) return 0;
+        const size_t close = closeBracket(open, to);
+        if (close == std::string::npos || close == open + 2 || close - open > 1000) return 0;
+        size_t k = open + 2;
+        while (k < close && s_[k] != '[' && !std::isspace((unsigned char)s_[k])) k++;
+        if (k != close) return 0;
+        if (k + 1 < to && s_[k + 1] == '(') return 0;
+        const std::pair<int, int> ref = notes_->refer(s_.substr(open + 2, k - open - 2));
+        if (ref.first == 0) return 0;
+        note.kind = Piece::Note;
+        note.at = open;
+        note.note = ref.first;
+        note.text = std::to_string(ref.first);
+        note.url = "#fn-" + note.text;
+        note.anchor = "fnref-" + note.text;
+        if (ref.second > 1) note.anchor += "-" + std::to_string(ref.second);
+        return k + 1;
+    }
+
     // A web address written out ("https://...", "www..."), GitHub's
     // extended autolink: the index past it, or 0.
     size_t bareLink(size_t i, size_t to, size_t from) {
@@ -1004,7 +1177,9 @@ private:
         }
         int style = 0;
         const std::string& n = tag.name;
-        if (n == "b" || n == "strong") style = 1;
+        if (n == "b" || n == "strong" || n == "summary" ||
+            (n.size() == 2 && n[0] == 'h' && n[1] >= '1' && n[1] <= '6'))
+            style = 1;
         else if (n == "i" || n == "em") style = 2;
         else if (n == "s" || n == "del" || n == "strike") style = 3;
         else if (n == "code" || n == "kbd" || n == "tt" || n == "samp") style = 4;
@@ -1026,9 +1201,9 @@ private:
 // The runs for a block's text: `lines` holds each source line's content
 // (indentation and markers already taken off) and its line number. Soft
 // line breaks become a space run of their own, so every other run comes
-// from one source line.
+// from one source line. `html` reads the text as an HTML block's.
 void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdRun& base,
-                const Refs& refs, std::vector<MdRun>& out) {
+                const Context& ctx, std::vector<MdRun>& out, bool html = false) {
     if (lines.empty()) return;
     std::string text;
     std::vector<size_t> starts;
@@ -1052,8 +1227,12 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
     };
 
     std::vector<Piece> pieces;
-    Inline(text, refs).parse(0, text.size(), false, pieces);
-    processEmphasis(pieces);
+    if (html) {
+        Inline(text, ctx).parseHtml(0, text.size(), pieces);
+    } else {
+        Inline(text, ctx).parse(0, text.size(), false, pieces);
+        processEmphasis(pieces);
+    }
 
     // HTML tags style what lies between them.
     int tb = 0, ti = 0, ts = 0, tc = 0;
@@ -1086,7 +1265,7 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
     // Line breaks at either end of the text show nothing.
     auto shows = [](const Piece& p) {
         return p.kind == Piece::Image || p.kind == Piece::Code || p.kind == Piece::Math ||
-               (p.kind == Piece::Text && !p.text.empty());
+               p.kind == Piece::Note || (p.kind == Piece::Text && !p.text.empty());
     };
     size_t first = 0, last = pieces.size();
     while (first < last && !shows(pieces[first])) first++;
@@ -1152,6 +1331,14 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
             r.image = true;
             r.text = p.text;
             r.src = p.src;
+            canMerge = false;
+            break;
+        case Piece::Note:
+            r.footnote = p.note;
+            r.link = true;
+            r.url = p.url;
+            r.anchor = p.anchor;
+            r.text = p.text;
             canMerge = false;
             break;
         case Piece::Soft:
@@ -1260,7 +1447,7 @@ size_t displayWidth(const std::string& s) {
 // markup characters that don't display don't throw the columns off. Every
 // run carries the table's first source line.
 void emitTable(const std::vector<std::vector<std::string>>& rows,
-               const std::vector<Align>& aligns, int id, int line, const Refs& refs,
+               const std::vector<Align>& aligns, int id, int line, const Context& ctx,
                std::vector<MdRun>& out) {
     size_t cols = aligns.size();
 
@@ -1277,7 +1464,7 @@ void emitTable(const std::vector<std::vector<std::string>>& rows,
             base.tableCols = (int)cols;
             base.tableAlign = (int)aligns[c];
             if (c < rows[ri].size())
-                inlineRuns({{rows[ri][c], line}}, base, refs, cells[ri][c]);
+                inlineRuns({{rows[ri][c], line}}, base, ctx, cells[ri][c]);
             size_t w = 0;
             for (MdRun& r : cells[ri][c]) {
                 r.line = line;
@@ -1321,7 +1508,7 @@ void emitTable(const std::vector<std::vector<std::string>>& rows,
 // ------------------------------------------------------------ block pass
 
 struct Block {
-    enum Kind { Para, Heading, Item, Code, Rule, Table, Math };
+    enum Kind { Para, Heading, Item, Code, Rule, Table, Math, Html };
     Kind kind = Para;
     bool math = false;           // a ```math fence: display math, not code
     std::string lang;            // a fence's language, from its info string
@@ -1337,6 +1524,10 @@ struct Block {
     bool quote = false;
     int quoteGroup = -1;         // which block quote
     int quoteDepth = 0;          // how many > deep
+    int quoteIndent = 0;         // the list levels a quote sits in
+    bool quoteText = false;      // an item whose text is quoted ("- > text")
+    bool pre = false;            // an HTML block shown as preformatted (<pre>)
+    int note = -1;               // part of this footnote definition (Doc::notes)
     bool title = false;          // an alert's title: bold
     bool blankBefore = false;    // a blank line separates it from the block before
     std::vector<std::pair<std::string, int>> text;   // content lines
@@ -1349,6 +1540,10 @@ struct Doc {
     std::vector<MdLine> lines;
     std::vector<Block> blocks;
     Refs refs;
+    // Footnote definitions in source order (a block's `note` indexes this),
+    // and which of them each label names (the first wins).
+    std::vector<std::string> notes;
+    std::map<std::string, int> noteFor;
 };
 
 bool isRule(const std::string& s) {
@@ -1557,6 +1752,102 @@ bool parseLinkDef(const std::string& body, std::string& label, std::string& dest
     return true;
 }
 
+// "[^label]: text" starting a line, GitHub's footnote definition: the label
+// as it is looked up, and where the text starts in `body`.
+bool parseFootnoteDef(const std::string& body, std::string& label, size_t& textStart) {
+    if (body.size() < 5 || body[0] != '[' || body[1] != '^') return false;
+    size_t k = 2;
+    while (k < body.size() && k < 1000 && body[k] != ']') {
+        if (std::isspace((unsigned char)body[k])) return false;
+        k++;
+    }
+    if (k == 2 || k + 1 >= body.size() || body[k] != ']' || body[k + 1] != ':') return false;
+    label = normalizeLabel(body.substr(2, k - 2));
+    textStart = k + 2;
+    while (textStart < body.size() && (body[textStart] == ' ' || body[textStart] == '\t'))
+        textStart++;
+    return true;
+}
+
+// The kind of HTML block a line starts, by CommonMark's seven conditions,
+// or 0: 1 <script>, <pre>, <style> or <textarea> (`pre` set for the last
+// two), 2 a comment, 3 <?...?>, 4 a declaration such as <!DOCTYPE html>,
+// 5 CDATA, 6 a block-level tag (<div>, <p>, <details>...), 7 any other
+// whole tag alone on its line, which cannot interrupt a paragraph.
+int htmlBlockStart(const std::string& body, bool paragraphOpen, bool* pre) {
+    *pre = false;
+    if (body.size() < 2 || body[0] != '<') return 0;
+    for (const char* t : {"script", "pre", "style", "textarea"}) {
+        const size_t n = std::strlen(t);
+        if (!startsWithNoCase(body, 1, t)) continue;
+        if (body.size() == n + 1 || body[n + 1] == ' ' || body[n + 1] == '\t' ||
+            body[n + 1] == '>') {
+            *pre = t[0] == 'p' || t[0] == 't';
+            return 1;
+        }
+    }
+    if (body.compare(0, 4, "<!--") == 0) return 2;
+    if (body[1] == '?') return 3;
+    if (body.compare(0, 9, "<![CDATA[") == 0) return 5;
+    if (body[1] == '!' && body.size() > 2 && std::isalpha((unsigned char)body[2])) return 4;
+    const size_t k = body[1] == '/' ? 2 : 1;
+    size_t e = k;
+    while (e < body.size() && (std::isalnum((unsigned char)body[e]) || body[e] == '-')) e++;
+    if (e > k && std::isalpha((unsigned char)body[k]) &&
+        isBlockTag(lowerAscii(body.substr(k, e - k))) &&
+        (e == body.size() || body[e] == ' ' || body[e] == '\t' || body[e] == '>' ||
+         body.compare(e, 2, "/>") == 0))
+        return 6;
+    if (paragraphOpen) return 0;
+    Tag tag;
+    const size_t next = readHtml(body, 0, body.size(), &tag);
+    if (!next || tag.name.empty() || tag.name == "script" || tag.name == "style" ||
+        tag.name == "pre" || tag.name == "textarea")
+        return 0;
+    return trim(body.substr(next)).empty() ? 7 : 0;
+}
+
+// Whether an HTML block of `kind` 1 to 5 ends on this line (past `from`,
+// the opener on its first line).
+bool htmlBlockEnds(int kind, const std::string& line, size_t from) {
+    const size_t npos = std::string::npos;
+    switch (kind) {
+    case 1: {
+        const std::string low = lowerAscii(line);
+        return low.find("</script>") != npos || low.find("</pre>") != npos ||
+               low.find("</style>") != npos || low.find("</textarea>") != npos;
+    }
+    case 2: return line.find("-->", from) != npos;
+    case 3: return line.find("?>", from) != npos;
+    case 4: return line.find('>', from) != npos;
+    case 5: return line.find("]]>", from) != npos;
+    }
+    return false;
+}
+
+// An HTML line's text, its tags left out and entities read, for <pre>.
+std::string htmlText(const std::string& line) {
+    std::string out;
+    for (size_t i = 0; i < line.size();) {
+        if (line[i] == '<') {
+            if (size_t next = readHtml(line, i, line.size(), nullptr)) {
+                i = next;
+                continue;
+            }
+        }
+        std::string ent;
+        if (line[i] == '&') {
+            if (size_t next = readEntity(line, i, line.size(), ent)) {
+                out += ent;
+                i = next;
+                continue;
+            }
+        }
+        out += line[i++];
+    }
+    return out;
+}
+
 // "> [!NOTE]": the alert's title, or "".
 std::string alertTitle(const std::string& content) {
     const std::string t = lowerAscii(trim(content));
@@ -1611,6 +1902,9 @@ Doc analyze(const std::string& md) {
     std::vector<size_t> codeBlanks;
     int quoteGroup = -1, quoteEdit = -1;
     bool quoteFirst = false;
+    int quoteOuter = 0;            // the list levels the quote being read sits in
+    std::vector<Level> quoteList;  // its list items, by indentation past the "> "
+    int noteBlock = -1;            // the footnote definition later paragraphs may join
 
     auto newBlock = [&](Block::Kind kind, int line) -> Block& {
         Block b;
@@ -1619,6 +1913,7 @@ Doc analyze(const std::string& md) {
         b.blankBefore = blank;
         d.blocks.push_back(std::move(b));
         blank = false;
+        noteBlock = -1;
         return d.blocks.back();
     };
     auto settleList = [&](size_t indent) {
@@ -1722,6 +2017,24 @@ Doc analyze(const std::string& md) {
             codeBlanks.clear();
         }
 
+        // A footnote's later paragraphs: indented four spaces, after a
+        // blank line.
+        if (noteBlock >= 0 && open < 0) {
+            if (cols >= 4) {
+                const int note = noteBlock;
+                Block& nb = newBlock(Block::Para, (int)i);
+                nb.edit = editIds++;
+                nb.note = note;
+                nb.text.push_back({body, (int)i});
+                L.kind = MdLine::Text;
+                L.block = nb.edit;
+                open = (int)d.blocks.size() - 1;
+                noteBlock = note;
+                continue;
+            }
+            noteBlock = -1;
+        }
+
         // Indented code: four spaces, with no paragraph to continue and no
         // list item the line could belong to.
         if (cols >= 4 && open < 0 && list.empty()) {
@@ -1771,6 +2084,7 @@ Doc analyze(const std::string& md) {
             settleList(cols);
             Block& f = newBlock(Block::Code, (int)i);
             f.edit = editIds++;
+            f.depth = (int)list.size();   // a list item's code sits at its indent
             f.math = info == "math";
             f.lang = info;
             fenceBlock = (int)d.blocks.size() - 1;
@@ -1818,6 +2132,71 @@ Doc analyze(const std::string& md) {
                 open = -1;
                 continue;
             }
+        }
+        // An HTML block: HTML, not Markdown, to its end (a blank line, or
+        // the line closing a <script>, <pre>, <style> or <textarea>, ?>, >
+        // or ]]>). What would show nothing on GitHub is hidden; a <pre> is
+        // preformatted. A line that is a heading in HTML (<h2>...</h2>)
+        // stays a heading, inside a block too.
+        bool pre = false;
+        const int html = shallow && body[0] == '<' && !parseHtmlHeading(body, level, a, b)
+                             ? htmlBlockStart(body, open >= 0, &pre)
+                             : 0;
+        if (html != 0 && html != 2) {
+            open = -1;
+            quoteGroup = -1;
+            settleList(cols);
+            const bool shown = html >= 6 || pre;
+            const size_t opener = html == 3 ? 2 : html == 5 ? 9 : html == 4 ? 2 : 0;
+            int filling = -1;   // the Html block taking lines
+            size_t j = i;
+            for (; j < n; j++) {
+                const std::string& line = raw[j];
+                MdLine& H = d.lines[j];
+                size_t q = 0;
+                while (q < line.size() && (line[q] == ' ' || line[q] == '\t')) q++;
+                if (html >= 6 && q == line.size()) break;   // the blank line ending it
+                const bool ends = html <= 5 && (j == i ? htmlBlockEnds(html, body, opener)
+                                                       : htmlBlockEnds(html, line, 0));
+                if (!shown) {
+                    H.kind = MdLine::Hidden;
+                    if (ends) { j++; break; }
+                    continue;
+                }
+                const std::string text = line.substr(q);
+                int hl = 0;
+                size_t ha = 0, hb = 0;
+                if (!pre && parseHtmlHeading(text, hl, ha, hb)) {
+                    Block& h = newBlock(Block::Heading, (int)j);
+                    h.level = hl;
+                    h.edit = editIds++;
+                    h.text.push_back({text.substr(ha, hb - ha), (int)j});
+                    H.kind = MdLine::Heading;
+                    H.block = h.edit;
+                    H.start = H.lineStart + q + ha;
+                    H.end = H.lineStart + q + hb;
+                    filling = -1;
+                    continue;
+                }
+                if (filling < 0) {
+                    Block& hb2 = newBlock(Block::Html, (int)j);
+                    hb2.edit = editIds++;
+                    hb2.pre = pre;
+                    hb2.depth = (int)list.size();
+                    hb2.listish = !list.empty();
+                    filling = (int)d.blocks.size() - 1;
+                }
+                Block& hblock = d.blocks[(size_t)filling];
+                hblock.text.push_back({pre ? line : text, (int)j});
+                hblock.last = (int)j;
+                H.kind = MdLine::Html;
+                H.block = hblock.edit;
+                H.start = H.lineStart + q;
+                H.end = H.lineEnd;
+                if (ends) { j++; break; }
+            }
+            i = j - 1;
+            continue;
         }
         if (shallow && (parseAtx(body, level, a, b) || parseHtmlHeading(body, level, a, b))) {
             open = -1;
@@ -1881,8 +2260,12 @@ Doc analyze(const std::string& md) {
                 quoteGroup = ++quoteGroups;
                 quoteEdit = editIds++;
                 quoteFirst = true;
+                quoteOuter = (int)list.size();   // a quote inside a list item
+                quoteList.clear();
             }
-            size_t p = 0;
+            // The > markers, and how far into the outer quote's text a
+            // nested > stands: it may sit inside a list item of that quote.
+            size_t p = 0, nestAt = 0;
             int depth = 0;
             while (p < body.size() && body[p] == '>') {
                 p++;
@@ -1890,7 +2273,10 @@ Doc analyze(const std::string& md) {
                 if (p < body.size() && (body[p] == ' ' || body[p] == '\t')) p++;
                 size_t q = p;
                 while (q < body.size() && body[q] == ' ') q++;
-                if (q < body.size() && body[q] == '>') p = q;
+                if (q < body.size() && body[q] == '>') {
+                    if (depth == 1) nestAt = q - p;
+                    p = q;
+                }
             }
             const std::string content = body.substr(p);
             size_t inner = 0;
@@ -1906,11 +2292,19 @@ Doc analyze(const std::string& md) {
                 open = -1;
                 continue;
             }
+            // The outer quote's items a new block on this line belongs to:
+            // those whose text starts no further in than it does.
+            const size_t at = depth == 1 ? inner : nestAt;
+            auto settleQuoteList = [&] {
+                while (!quoteList.empty() && at < quoteList.back().content) quoteList.pop_back();
+            };
             auto quoted = [&](Block::Kind kind) -> Block& {
                 Block& qb = newBlock(kind, (int)i);
                 qb.quote = true;
                 qb.quoteGroup = quoteGroup;
                 qb.quoteDepth = depth;
+                qb.quoteIndent = quoteOuter;
+                qb.depth = quoteOuter + (int)quoteList.size();
                 qb.edit = quoteEdit;
                 return qb;
             };
@@ -1922,6 +2316,7 @@ Doc analyze(const std::string& md) {
                 qb.text.push_back({title, (int)i});
                 open = -1;
             } else if (parseAtx(ct, level, a, b)) {
+                settleQuoteList();
                 Block& qb = quoted(Block::Heading);
                 qb.level = level;
                 qb.text.push_back({ct.substr(a, b - a), (int)i});
@@ -1930,11 +2325,20 @@ Doc analyze(const std::string& md) {
                        !(open >= 0 && d.blocks[(size_t)open].kind == Block::Para &&
                          !d.blocks[(size_t)open].listish &&
                          (m.empty || (m.ordered && m.number != 1)))) {
+                settleQuoteList();
+                int itemDepth;
+                if (depth == 1) {
+                    quoteList.push_back(
+                        {inner, inner + (m.empty ? m.written.size() + 1 : m.textStart)});
+                    itemDepth = quoteOuter + (int)quoteList.size();
+                } else {
+                    itemDepth = quoteOuter + (int)quoteList.size() + 1 + (int)(inner / 2);
+                }
                 Block& qb = quoted(Block::Item);
                 qb.listish = true;
-                qb.depth = 1 + (int)(inner / 2);
+                qb.depth = itemDepth;
                 qb.ordered = m.ordered;
-                qb.marker = markerText(m, qb.depth);
+                qb.marker = markerText(m, itemDepth - quoteOuter);
                 qb.task = m.task ? (m.checked ? 2 : 1) : 0;
                 std::string text = ct.substr(std::min(m.textStart, ct.size()));
                 if (m.task) text = text.size() > 3 ? text.substr(4) : "";
@@ -1942,11 +2346,13 @@ Doc analyze(const std::string& md) {
                 open = (int)d.blocks.size() - 1;
             } else if (open >= 0 && d.blocks[(size_t)open].quote &&
                        d.blocks[(size_t)open].quoteGroup == quoteGroup &&
-                       d.blocks[(size_t)open].quoteDepth == depth) {
+                       d.blocks[(size_t)open].quoteDepth >= depth) {
+                // The text above goes on (a nested quote's lazily).
                 Block& ob = d.blocks[(size_t)open];
                 ob.text.push_back({ct, (int)i});
                 ob.last = (int)i;
             } else {
+                settleQuoteList();
                 Block& qb = quoted(Block::Para);
                 qb.text.push_back({ct, (int)i});
                 open = (int)d.blocks.size() - 1;
@@ -1973,6 +2379,11 @@ Doc analyze(const std::string& md) {
                 it.task = m.task ? (m.checked ? 2 : 1) : 0;
                 std::string text = body.substr(std::min(m.textStart, body.size()));
                 if (m.task) text = text.size() > 3 ? text.substr(4) : "";
+                if (!m.task && !text.empty() && text[0] == '>') {   // "- > quoted"
+                    const size_t q = text.size() > 1 && (text[1] == ' ' || text[1] == '\t') ? 2 : 1;
+                    text = text.substr(q);
+                    it.quoteText = true;
+                }
                 if (!text.empty()) it.text.push_back({text, (int)i});
                 L.kind = MdLine::ListItem;
                 L.block = it.edit;
@@ -1981,7 +2392,27 @@ Doc analyze(const std::string& md) {
                 continue;
             }
         }
+        // A footnote's definition, which may interrupt a paragraph. Its
+        // text shows with the footnotes at the end, if anything refers to it.
         std::string label, dest;
+        size_t noteText = 0;
+        if (shallow && parseFootnoteDef(body, label, noteText)) {
+            quoteGroup = -1;
+            settleList(cols);
+            const int id = (int)d.notes.size();
+            d.notes.push_back(label);
+            d.noteFor.emplace(label, id);   // the first definition wins
+            Block& nb = newBlock(Block::Para, (int)i);
+            nb.edit = editIds++;
+            nb.note = id;
+            if (noteText < body.size()) nb.text.push_back({body.substr(noteText), (int)i});
+            L.kind = MdLine::Text;
+            L.block = nb.edit;
+            L.start = L.lineStart + pos + noteText;
+            open = (int)d.blocks.size() - 1;
+            noteBlock = id;
+            continue;
+        }
         if (shallow && open < 0 && parseLinkDef(body, label, dest)) {
             d.refs.emplace(normalizeLabel(label), dest);   // the first definition wins
             L.kind = MdLine::Hidden;
@@ -2016,10 +2447,14 @@ Doc analyze(const std::string& md) {
 }
 
 // Appends the runs of one block, without the space around it.
-void emitBlock(const Block& b, const Refs& refs, int& tables, std::vector<MdRun>& out) {
+void emitBlock(const Block& b, const Context& ctx, int& tables, std::vector<MdRun>& out) {
     const size_t start = out.size();
     MdRun base;
     base.quote = b.quote;
+    if (b.quote) {
+        base.quoteDepth = std::max(1, b.quoteDepth);
+        base.quoteIndent = b.quoteIndent;
+    }
     base.listDepth = b.depth;
     base.ordered = b.ordered;
     MdRun end = base;
@@ -2028,16 +2463,18 @@ void emitBlock(const Block& b, const Refs& refs, int& tables, std::vector<MdRun>
     switch (b.kind) {
     case Block::Para:
         if (b.title) base.bold = true;
-        inlineRuns(b.text, base, refs, out);
+        inlineRuns(b.text, base, ctx, out);
         if (out.size() > start) out.push_back(std::move(end));
         break;
     case Block::Heading: {
         base.heading = b.level;
-        inlineRuns(b.text, base, refs, out);
+        inlineRuns(b.text, base, ctx, out);
         for (size_t k = start; k < out.size(); k++)
             out[k].line = b.first;   // one heading, one line to go to
         MdRun e;
         e.quote = b.quote;
+        e.quoteDepth = base.quoteDepth;
+        e.quoteIndent = base.quoteIndent;
         e.text = "\n";
         e.line = b.first;
         if (out.size() > start) out.push_back(std::move(e));
@@ -2050,10 +2487,38 @@ void emitBlock(const Block& b, const Refs& refs, int& tables, std::vector<MdRun>
         m.text = std::string((size_t)b.depth * 2, ' ') + b.marker + " ";
         m.line = b.first;
         out.push_back(std::move(m));
-        inlineRuns(b.text, base, refs, out);
+        if (b.quoteText) {   // "- > quoted": the item's text in the quote's style
+            MdRun quoted = base;
+            quoted.quote = true;
+            quoted.quoteDepth = 1;
+            quoted.quoteIndent = b.depth;
+            inlineRuns(b.text, quoted, ctx, out);
+        } else {
+            inlineRuns(b.text, base, ctx, out);
+        }
         out.push_back(std::move(end));
         break;
     }
+    case Block::Html:
+        if (b.pre) {
+            // Preformatted: each line as written, its tags left out, and
+            // the lines that held nothing but a tag gone at either end.
+            std::vector<std::pair<std::string, int>> lines;
+            for (const auto& line : b.text) lines.push_back({htmlText(line.first), line.second});
+            while (!lines.empty() && trim(lines.front().first).empty()) lines.erase(lines.begin());
+            while (!lines.empty() && trim(lines.back().first).empty()) lines.pop_back();
+            for (const auto& line : lines) {
+                MdRun r = base;
+                r.code = r.codeBlock = true;
+                r.text = line.first + "\n";
+                r.line = line.second;
+                out.push_back(std::move(r));
+            }
+            break;
+        }
+        inlineRuns(b.text, base, ctx, out, true);
+        if (out.size() > start) out.push_back(std::move(end));
+        break;
     case Block::Math: {
         MdRun r = base;
         r.math = 2;
@@ -2090,6 +2555,7 @@ void emitBlock(const Block& b, const Refs& refs, int& tables, std::vector<MdRun>
             r.code = r.codeBlock = true;
             r.lang = b.lang;
             r.quote = b.quote;
+            r.listDepth = b.depth;   // in a list item, at its indent
             r.text = line.first + "\n";
             r.line = line.second;
             out.push_back(std::move(r));
@@ -2104,7 +2570,7 @@ void emitBlock(const Block& b, const Refs& refs, int& tables, std::vector<MdRun>
         break;
     }
     case Block::Table:
-        emitTable(b.rows, b.aligns, ++tables, b.first, refs, out);
+        emitTable(b.rows, b.aligns, ++tables, b.first, ctx, out);
         break;
     }
 }
@@ -2120,33 +2586,113 @@ bool visible(const std::vector<MdRun>& runs, size_t from) {
     return false;
 }
 
+// "↩", then for a later reference its number in superscript ("↩²").
+std::string backLink(int use) {
+    static const char* const kSup[10] = {"\xE2\x81\xB0", "\xC2\xB9", "\xC2\xB2", "\xC2\xB3",
+                                         "\xE2\x81\xB4", "\xE2\x81\xB5", "\xE2\x81\xB6",
+                                         "\xE2\x81\xB7", "\xE2\x81\xB8", "\xE2\x81\xB9"};
+    std::string s = "\xE2\x86\xA9";   // ↩
+    if (use > 1)
+        for (char c : std::to_string(use)) s += kSup[c - '0'];
+    return s;
+}
+
 } // namespace
 
 std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
     const Doc d = analyze(markdown);
+    Notes notes;
+    notes.defined = d.noteFor;
+    const Context ctx{d.refs, &notes};
     std::vector<MdRun> out;
     int tables = 0;
-    const Block* prev = nullptr;
-    for (const Block& b : d.blocks) {
+    // The block shown last, for the space before the next.
+    struct Prev {
+        bool listish = false, quote = false;
+        int quoteGroup = -1, quoteDepth = 0, quoteIndent = 0, last = 0;
+    } prev;
+    bool any = false;
+    auto emit = [&](const Block& b) {
         const size_t mark = out.size();
-        // The items of a list sit together unless a blank line parts them.
-        if (prev && !(prev->listish && b.listish && !b.blankBefore)) {
+        // The items of a list sit together unless a blank line parts them,
+        // or one is in a quote the other is not in.
+        const bool together = prev.listish && b.listish && !b.blankBefore &&
+                              prev.quote == b.quote &&
+                              (!b.quote || prev.quoteGroup == b.quoteGroup);
+        if (any && !together) {
             MdRun g;
             g.text = "\n";
             g.gap = true;
-            g.line = std::min(prev->last + 1, b.first);
-            g.quote = prev->quote && b.quote && prev->quoteGroup == b.quoteGroup;
+            g.line = std::min(prev.last + 1, b.first);
+            g.quote = prev.quote && b.quote && prev.quoteGroup == b.quoteGroup;
+            if (g.quote) {
+                g.quoteDepth = std::max(1, std::min(prev.quoteDepth, b.quoteDepth));
+                g.quoteIndent = b.quoteIndent;
+            }
             out.push_back(std::move(g));
         }
         const size_t begin = out.size();
         int t = tables;
-        emitBlock(b, d.refs, t, out);
+        emitBlock(b, ctx, t, out);
         if (!visible(out, begin)) {   // a block that shows nothing takes no space
             out.resize(mark);
-            continue;
+            return false;
         }
         tables = t;
-        prev = &b;
+        prev = {b.listish, b.quote, b.quoteGroup, b.quoteDepth, b.quoteIndent, b.last};
+        any = true;
+        return true;
+    };
+    for (const Block& b : d.blocks)
+        if (b.note < 0) emit(b);   // footnotes come at the end
+    if (notes.order.empty()) return out;
+
+    // The footnotes, numbered as they were first referred to (a footnote
+    // may refer to another, which joins the end of the list), after a rule.
+    std::vector<std::vector<size_t>> parts(d.notes.size());
+    for (size_t k = 0; k < d.blocks.size(); k++)
+        if (d.blocks[k].note >= 0) parts[(size_t)d.blocks[k].note].push_back(k);
+    Block rule;
+    rule.kind = Block::Rule;
+    rule.first = rule.last = d.blocks[parts[(size_t)notes.defined.at(notes.order[0])][0]].first;
+    emit(rule);
+    for (size_t k = 0; k < notes.order.size(); k++) {
+        const std::string number = std::to_string(k + 1);
+        size_t closing = std::string::npos;   // the "\n" ending its last part
+        bool first = true;
+        for (size_t at : parts[(size_t)notes.defined.at(notes.order[k])]) {
+            Block b = d.blocks[at];
+            b.listish = true;
+            b.depth = 1;
+            b.blankBefore = !first;
+            if (first) {
+                b.kind = Block::Item;
+                b.ordered = true;
+                b.marker = number + ".";
+            }
+            const size_t begin = out.size();
+            if (!emit(b)) continue;
+            for (size_t r = begin; r < out.size(); r++) {
+                out[r].footnotes = true;
+                if (first && out[r].marker) out[r].anchor = "fn-" + number;
+            }
+            first = false;
+            closing = out.size() - 1;
+        }
+        if (closing == std::string::npos) continue;
+        // Back to each reference: " ↩", " ↩²", ...
+        std::vector<MdRun> back;
+        for (int use = 1; use <= notes.uses[k]; use++) {
+            MdRun space = out[closing];
+            space.text = " ";
+            MdRun link = out[closing];
+            link.text = backLink(use);
+            link.link = true;
+            link.url = "#fnref-" + number + (use > 1 ? "-" + std::to_string(use) : "");
+            back.push_back(std::move(space));
+            back.push_back(std::move(link));
+        }
+        out.insert(out.begin() + (std::ptrdiff_t)closing, back.begin(), back.end());
     }
     return out;
 }
