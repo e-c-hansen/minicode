@@ -154,13 +154,14 @@ if [[ -o interactive ]]; then
           if [[ -n ${ZDOTDIR+x} ]]; then export MINICODE_USER_ZDOTDIR=$ZDOTDIR
           else unset MINICODE_USER_ZDOTDIR; fi
           export ZDOTDIR=$__minicode_zdotdir MINICODE_EXEC=1
-          # The nonce only for a shell, so a zsh started from it can mark
-          # again; another program (exec claude) would keep it in its
-          # environment for all it runs.
+          # The nonce only for a zsh, which reads it here and takes it out of
+          # its environment. Any other program (exec bash, exec claude)
+          # would keep it in its environment for everything it runs, and
+          # any of those could print marks the terminal believes; a zsh
+          # started from such a shell later does not mark.
           local j=$(( i + 1 ))
           while [[ $w[j] == -* ]]; do (( j++ )); done
-          [[ ${${w[j]:t}#-} == (zsh|bash|sh|dash|ksh|mksh|fish|tcsh|csh|yash) ]] &&
-            export MINICODE_NONCE=$__minicode_nonce
+          [[ ${${w[j]:t}#-} == zsh ]] && export MINICODE_NONCE=$__minicode_nonce
           __minicode_execed=1
           return 0
         fi
@@ -319,13 +320,14 @@ if [[ -o interactive ]]; then
           if [[ -n ${ZDOTDIR+x} ]]; then export MINICODE_USER_ZDOTDIR=$ZDOTDIR
           else unset MINICODE_USER_ZDOTDIR; fi
           export ZDOTDIR=$__minicode_zdotdir MINICODE_EXEC=1
-          # The nonce only for a shell, so a zsh started from it can mark
-          # again; another program (exec claude) would keep it in its
-          # environment for all it runs.
+          # The nonce only for a zsh, which reads it here and takes it out of
+          # its environment. Any other program (exec bash, exec claude)
+          # would keep it in its environment for everything it runs, and
+          # any of those could print marks the terminal believes; a zsh
+          # started from such a shell later does not mark.
           local j=$(( i + 1 ))
           while [[ $w[j] == -* ]]; do (( j++ )); done
-          [[ ${${w[j]:t}#-} == (zsh|bash|sh|dash|ksh|mksh|fish|tcsh|csh|yash) ]] &&
-            export MINICODE_NONCE=$__minicode_nonce
+          [[ ${${w[j]:t}#-} == zsh ]] && export MINICODE_NONCE=$__minicode_nonce
           __minicode_execed=1
           return 0
         fi

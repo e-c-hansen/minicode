@@ -1439,16 +1439,17 @@ for full-screen programs. Both can be open at once.
   || & |`, `then`, `do`, `else`, `{`, `!`, and past `builtin`, `command`,
   `noglob`) and for that command exports ZDOTDIR as the integration folder (the
   user's in `MINICODE_USER_ZDOTDIR`) with `MINICODE_EXEC=1`, and the nonce
-  when the program is a shell (a bash keeps it in its environment, so a zsh
-  started from it marks again; `exec claude` gets none), so an exec'd zsh
+  only when the program is zsh (2026-11-06: a bash, or `exec claude`, kept it
+  in its environment for everything it ran, any of which could forge marks;
+  so a zsh exec'd from that bash no longer marks), so an exec'd zsh
   loads the integration and reports the exec finished (133;D;0); the next
   precmd restores both if the exec failed. Line mode also `unsetopt ZLE` there.
   Exec into another shell (bash, sh, dash, fish, ksh, tcsh, csh, nu, elvish,
   xonsh, pwsh, by `proc_name`, polled twice a second while a command runs) sets
   `_integrated` NO: not busy, title cleared, the finished notification posted,
   waiting input typed, and from then busy only while another program holds the
-  foreground. A later zsh mark (`_integrationFile`) turns it back on. `exec
-  claude` still counts as running.
+  foreground. A later zsh mark (`_integrationFile`) with the nonce turns it
+  back on. `exec claude` still counts as running.
 - **Events** (`TerminalStream` reads every byte for them): 133;B sets
   `_zleReady`; `CommandStart` carries 633;E's text as `_runningCommand`
   (titles, `runningCommands`, close questions); OSC 0/2 `Title` names the tab

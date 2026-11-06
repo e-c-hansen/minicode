@@ -14,6 +14,7 @@
 #import "MultiCaretView.h"
 #import "Terminal.h"
 #import "TerminalGridView.h"
+#import "TerminalPanel.h"
 #import "AppSettings.h"
 #include <sys/stat.h>
 
@@ -185,7 +186,7 @@ MC_GUI_SUITE(terminal_zoom) {
     });
     MCGuiStep(@"back to the defaults", ^{
         MCEditorZoomBy(0);
-        [[s.c valueForKey:@"terminalPanel"] closeTerminal:s.term];
+        [(MCTerminalPanel *)[s.c valueForKey:@"terminalPanel"] closeTerminal:s.term];
         SetSettings(@"lsp.enabled = false\n");
         GCHECK(MCTerminalFontSize() == 12);
         s.term = [s.c valueForKey:@"terminal"];
@@ -307,6 +308,9 @@ MC_GUI_SUITE(terminal_keys) {
 // ------------------------------------------------------ exec into a shell
 MC_GUI_SUITE(terminal_exec) {
     MCLooseState *s = [MCLooseState new];
+    // A terminal of its own, closed at the end: it ends in a shell without
+    // the integration, which other suites must not be handed.
+    MCGuiStep(@"a new terminal", ^{ [MCGuiController() newTerminal:nil]; });
     TerminalAtPrompt(s);
     // exec zsh keeps the integration (an earlier fix): a prompt, not busy,
     // and the next command runs.
@@ -345,26 +349,41 @@ MC_GUI_SUITE(terminal_exec) {
         return s.term.runningCommands.count > 0 && [s.term.runningCommand containsString:@"sleep"];
     });
     MCGuiWait(@"and lets it go", 10, ^BOOL { return s.term.runningCommands.count == 0; });
-    // exec zsh from bash: zsh loads the integration, and its marks count again.
+    // The nonce went to the exec'd zsh only: bash, and what bash runs,
+    // never see it (any of them could print marks the tab believed).
+    MCGuiStep(@"bash has no nonce", ^{
+        [s.term runCommand:@"echo nonce-count-$(env | grep -c MINICODE_NONCE)"];
+    });
+    MCGuiWait(@"none", 10, ^BOOL {
+        return [[s.term recentText:4] containsString:@"\nnonce-count-0"];
+    });
+    // exec zsh from bash: zsh loads the integration but has no nonce, so
+    // its marks are not believed; the tab goes on as a shell without them.
     MCGuiStep(@"exec zsh from bash", ^{ [s.term runCommand:@"exec zsh"]; });
-    MCGuiWait(@"zsh's integration again: at a prompt", 15, ^BOOL {
-        return s.term.atPrompt && !s.term.busy;
+    MCGuiPause(1.0);
+    MCGuiStep(@"a command in that zsh", ^{
+        GCHECK(!s.term.busy);
+        [s.term runCommand:@"echo zsh-from-bash-$ZSH_VERSION"];
+    });
+    MCGuiWait(@"it runs", 10, ^BOOL {
+        return [[s.term recentText:4] containsString:@"\nzsh-from-bash-5"];
     });
     MCGuiStep(@"sleep 1 in zsh", ^{ [s.term runCommand:@"sleep 1"]; });
-    MCGuiWait(@"busy by the marks", 5, ^BOOL { return s.term.busy; });
-    MCGuiWait(@"and done", 10, ^BOOL { return s.term.atPrompt && !s.term.busy; });
+    MCGuiWait(@"busy by the foreground", 5, ^BOOL { return s.term.busy; });
+    MCGuiWait(@"and done", 10, ^BOOL { return !s.term.busy; });
     // exec sh, the same.
     MCGuiStep(@"exec sh", ^{ [s.term runCommand:@"exec /bin/sh"]; });
     MCGuiWait(@"sh's prompt", 10, ^BOOL { return [[s.term recentText:2] containsString:@"sh-"]; });
     MCGuiPause(1.0);
     MCGuiStep(@"not busy in sh", ^{
         GCHECK(!s.term.busy && s.term.runningCommands.count == 0);
-        [s.term runCommand:@"exec zsh"];
+        [s.term runCommand:@"echo sh-at-last"];
     });
-    MCGuiWait(@"back at zsh's prompt", 15, ^BOOL { return s.term.atPrompt && !s.term.busy; });
-    MCGuiStep(@"and a command there", ^{ [s.term runCommand:@"echo zsh-at-last"]; });
-    MCGuiWait(@"it runs", 10, ^BOOL {
-        return s.term.atPrompt && [[s.term recentText:3] containsString:@"\nzsh-at-last"];
+    MCGuiWait(@"and a command there", 10, ^BOOL {
+        return [[s.term recentText:3] containsString:@"\nsh-at-last"];
+    });
+    MCGuiStep(@"its terminal closes", ^{
+        GCHECK([(MCTerminalPanel *)[s.c valueForKey:@"terminalPanel"] closeTerminal:s.term]);
     });
 }
 
