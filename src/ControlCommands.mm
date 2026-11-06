@@ -5,6 +5,7 @@
 #import "AgentNotes.h"
 #import "CompareView.h"
 #import "GitPanel.h"
+#import "ProcessMonitor.h"
 #import "Terminal.h"
 #include <fcntl.h>
 #include <objc/runtime.h>
@@ -280,6 +281,7 @@ static NSString *MCReadText(NSString *path, std::string &error) {
 // ------------------------------------------------------------- commands
 void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
     __weak id<MCControlAppHost> weakHost = hostIn;
+    MCProcessesRegisterCommand(d, hostIn);   // procs (ProcessMonitor.mm)
 
     d.on("ping", [](const Request &, Dispatcher::Respond respond) {
         Json r = Json::object();

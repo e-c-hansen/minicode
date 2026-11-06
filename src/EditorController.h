@@ -29,6 +29,12 @@
 - (void)toggleEditor:(id)sender;      // Shift+Cmd+E hide/restore the file editor
 @end
 
+// EditorController+Processes.mm
+@interface EditorController (Processes)
+// The Processes panel in the sidebar's place, as Agents is (ProcessesPanel.h).
+- (void)toggleProcesses:(id)sender;
+@end
+
 // EditorController+StatusBar.mm
 @interface EditorController (StatusBar)
 - (void)toggleHints:(id)sender;       // Shift+Cmd+H shortcut-hints overlay

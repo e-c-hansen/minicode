@@ -1,5 +1,6 @@
 // EditorController+Panels.mm — EditorController: the terminal dock and the browser, and moving the keyboard between panes.
 #import "EditorController+Private.h"
+#import "ProcessesPanel.h"
 
 @implementation EditorController (Panels)
 
@@ -242,6 +243,7 @@
     // The sidebar holds the Source Control panel instead: focus its list.
     if (self.gitPanelVisible) { [self.gitPanel focusList]; return; }
     if (self.agentsVisible) { [_agents.panel focusList]; return; }
+    if (MCProcessesPanel *procs = [self processesPanelOnShow]) { [procs focusList]; return; }
     if (self.outline.selectedRow < 0 && self.outline.numberOfRows > 0)
         [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:0]
                   byExtendingSelection:NO];

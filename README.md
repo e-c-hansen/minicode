@@ -242,6 +242,7 @@ minicode window --folder ~/project         # the window on a folder, opened if n
 minicode tour tour.json                    # a sequence of notes
 minicode state | jq .windows[0].tabs       # windows, tabs, selection, terminals, browser
 minicode selection                         # the selected text
+minicode procs                             # what the window's terminals left running, with ports
 ```
 
 A note is a line or two of plain text over a highlighted range, labelled with who wrote it (`--from`, Claude by default). It is never written into the file or its undo history, and it goes when you press Escape, click its ×, or edit inside its lines. Files opened with a note share one agent preview tab per window, its title in italics, which the next such open replaces, so an agent's output never piles up tabs; edit in it, or double-click its title, and it becomes an ordinary tab. A tour is a list of `{"path", "line", "to", "note"}` stops; Option+] and Option+[ step through it, and the note says where you are ("2 of 5"). `minicode help` describes every command, and they exit with 0 when done, 1 when the command failed, 2 for a usage error, and 3 when there is no minicode to talk to (one is started when none is running).
@@ -263,6 +264,12 @@ Return or a click on a session shows its evidence in a tab of its own: the sessi
 The worktrees under .claude/worktrees appear as one Worktrees node at the top of the file tree, whether hidden files are shown or not, each named after the task its agent was given, with how many commits it is ahead of the main branch and whether it has changes not yet committed. Right-click one for Compare with Main, which lists the files it changed (committed, uncommitted, and new) and shows each beside the main branch's version, or Open in New Window.
 
 Command clicking a path in the terminal also looks in those places: the terminal's own folder first, then the window's folder, the worktrees under it, and the scratchpads of the sessions found for it. When a path is in more than one of them, such as a file an agent changed in its worktree, a small list offers each copy with its full path and when it was modified, newest first. When it is in none, the status bar says so and lists where it looked.
+
+## What is still running
+
+Agents leave dev servers, watchers, headless browsers and language servers running, along with local ports nobody remembers opening. View > Toggle Processes swaps the file tree for a list of them, for the window's folder: a group for each terminal with what was started from it, then orphans, which outlived the terminal that started them, then programs started elsewhere (in Terminal.app, say) whose working folder is in this one. Each process shows its memory, its CPU use, and the TCP ports it listens on, with the processes it started folded under it, and the heading gives the total ("1.8 GB in 14 processes"). Right-click a process to stop it (SIGTERM, then SIGKILL three seconds later, after asking unless it is an orphan), open one of its ports in the browser pane, or show the terminal it came from. Nothing is ever stopped otherwise.
+
+minicode looks at the process table every two seconds while the list is on show, and every ten otherwise. A process that detaches from its terminal between two looks can be missed. `minicode procs` prints the same list, or JSON with `--json`, so an agent can check what it left behind; the skill tells agents to stop only what they started, with `kill`.
 
 ## Linux
 

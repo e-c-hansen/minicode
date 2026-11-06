@@ -371,6 +371,14 @@ static const NSInteger kWorktreeMenuTag = 7701;
 - (void)updateTitle;
 @end
 
+// EditorController+Processes.mm: the Processes panel's hooks.
+@class MCProcessesPanel;
+@interface EditorController (Processes)
+@property(nonatomic, assign) BOOL processesVisible;   // the panel in the sidebar's place
+- (MCProcessesPanel *)processesPanel;                 // made on first use
+- (MCProcessesPanel *)processesPanelOnShow;           // nil unless shown
+@end
+
 // EditorController+StatusBar.mm: the status bar, its notes and "Saved ...", and the shortcut hints.
 @interface EditorController (StatusBar)
 - (void)buildStatusBarInContainer:(NSView *)container height:(CGFloat)barH;

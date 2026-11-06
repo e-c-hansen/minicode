@@ -73,6 +73,9 @@ extern NSNotificationName const MCTerminalCommandDidFinishNotification;
 // background jobs ("sleep 100 (in the background)", or "(stopped)"). Empty
 // when the shell is idle with no jobs, or still starting with nothing queued.
 @property(nonatomic, readonly, copy) NSArray<NSString *> *runningCommands;
+// The shell's process id, 0 while there is none (the Processes panel
+// tracks what descends from it).
+@property(nonatomic, readonly) pid_t shellPid;
 // The first of them, or nil.
 @property(nonatomic, readonly, copy) NSString *runningCommand;
 // A runCommand: line still waiting for the shell's prompt, or nil.

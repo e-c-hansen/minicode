@@ -57,7 +57,7 @@ binary="$bundle/Contents/MacOS/MiniCode"
 cli="$bundle/Contents/MacOS/minicode-cli"
 
 case "$1" in
-  open|window|browse|term|diff|split|state|selection|term-output|tour|help)
+  open|window|browse|term|diff|split|state|selection|term-output|tour|procs|help)
     if [ ! -x "$cli" ]; then
       echo "minicode: this copy has no control channel ($cli is missing)" >&2
       exit 3
