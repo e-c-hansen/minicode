@@ -242,6 +242,11 @@ public:
     // editor.word-wrap: long lines wrap at the pane's edge (on, the
     // default), or run on past it with a horizontal scroll bar (off).
     bool wordWrap() const { return wordWrap_; }
+    // editor.large-file-optimizations: a file over LargeFile's thresholds
+    // (VS Code's: 20 MB or 300,000 lines) opens without highlighting,
+    // folding, bracket matching, a language server or word wrap (on, the
+    // default, as VS Code's editor.largeFileOptimizations).
+    bool largeFileOptimizations() const { return largeFileOptimizations_; }
     // The gutter's background: editor.gutter-background, else the editor's
     // own; editor.opacity applies to either.
     Rgba gutterBackground() const;
@@ -407,6 +412,7 @@ private:
     double editorFontSize_ = 13;
     LineNumbers lineNumbers_ = LineNumbers::On;
     bool wordWrap_ = true;
+    bool largeFileOptimizations_ = true;
     std::optional<Rgba> gutterBackground_, lineNumberColor_, lineNumberActiveColor_,
         bracketMatchColor_;
     bool terminalLineMode_ = false;

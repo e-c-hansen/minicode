@@ -893,6 +893,17 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                }
                s.wordWrap_ = on;
                return true;),
+        MC_KEY("editor.large-file-optimizations", Word, false,
+               const std::string w = lower(v);
+               bool on = true;
+               if (w == "on") on = true;
+               else if (w == "off") on = false;
+               else if (!parseBool(w, on)) {
+                   e = "'" + v + "' is not on or off";
+                   return false;
+               }
+               s.largeFileOptimizations_ = on;
+               return true;),
         MC_KEY("editor.gutter-background", Word, true,
                return colorValue(v, s.gutterBackground_, e);),
         MC_KEY("editor.line-number-color", Word, true,
@@ -1320,6 +1331,12 @@ const char* Settings::defaultFileText() {
 # horizontal scroll bar (off). View > Word Wrap, Option+Z, turns it over
 # for the session (macOS).
 # editor.word-wrap = on
+# A file over 20 MB or 300,000 lines opens in large-file mode, as in VS Code:
+# no syntax colors, folding, bracket boxes or language server, and no word
+# wrap; the status bar says so, and a click there turns them on for that
+# tab (macOS). Off, every file gets them. Lines over 20,000 characters are
+# never colored, in any file.
+# editor.large-file-optimizations = on
 # The gutter behind the numbers, which is the editor's background unless set
 # here. The caret's line has its number in the active color.
 # editor.gutter-background = #1E1E1E
