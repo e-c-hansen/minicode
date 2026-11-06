@@ -84,6 +84,7 @@ object Core {
     const val MD_BLOCK_TABLE_CELL = 6
     const val MD_BLOCK_TABLE_ROW = 7
     const val MD_BLOCK_MATH = 8
+    const val MD_BLOCK_HTML = 9
 
     /** The bits markdownFlags packs, matching MdRun in the core. */
     const val MD_HEADING = 0x7

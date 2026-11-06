@@ -2,6 +2,7 @@
 #import "EditorController+Private.h"
 #import "EditorFont.h"
 #import "EditorController+MarkdownIvars.h"
+#import <objc/runtime.h>
 
 // A task list item's box, drawn rather than the ☐ and ☑ characters, whose
 // look depends on the font. Checked, it is filled with the link color and
@@ -67,13 +68,31 @@ static NSTextBlock *MCFullWidthBlock(void) {
     return b;
 }
 
+// A list item's indent for the quote's bar or the code block's box inside
+// it: a text block of its own, with no background or border, around theirs
+// (a margin on the box itself still had the box's background drawn under
+// it). The box keeps it, so every paragraph of the box gets the same one.
+static char kMCIndentKey;
+static void MCIndentBlock(NSTextBlock *inner, CGFloat points) {
+    NSTextBlock *b = MCFullWidthBlock();
+    [b setWidth:points type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
+           edge:NSRectEdgeMinX];
+    objc_setAssociatedObject(inner, &kMCIndentKey, b, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+static void MCAddBlock(NSMutableArray<NSTextBlock *> *blocks, NSTextBlock *b) {
+    if (NSTextBlock *indent = objc_getAssociatedObject(b, &kMCIndentKey)) [blocks addObject:indent];
+    [blocks addObject:b];
+}
+
 // The paragraph style for a paragraph of rendered Markdown, from its first
-// run. A block quote draws a bar down its left side and a code block a box;
-// `quote` and `code` carry that text block from one paragraph to the next,
-// so the paragraphs of one quote or code block (and a quote's inner gaps)
-// share it and it is drawn once around them all.
+// run. A block quote draws a bar down its left side, one inside the other
+// for a quote in a quote, and a code block a box; `quotes` (one a level)
+// and `code` carry those text blocks from one paragraph to the next, so the
+// paragraphs of one quote or code block (and a quote's inner gaps) share
+// them and each is drawn once around them all. A quote or a code block in
+// a list item starts at the item's indent.
 - (NSParagraphStyle *)markdownParagraphFor:(const MdRun &)r
-                                     quote:(NSTextBlock * __strong *)quote
+                                    quotes:(NSMutableArray<NSTextBlock *> *)quotes
                                       code:(NSTextBlock * __strong *)code {
     // Display math on a line of its own: centred when it is typeset, in a
     // code block's box while it shows as TeX.
@@ -81,7 +100,7 @@ static NSTextBlock *MCFullWidthBlock(void) {
         MdRun box = r;
         box.math = 0;
         box.codeBlock = true;
-        return [self markdownParagraphFor:box quote:quote code:code];
+        return [self markdownParagraphFor:box quotes:quotes code:code];
     }
     AppSettings *cfg = [AppSettings shared];
     NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
@@ -93,23 +112,27 @@ static NSTextBlock *MCFullWidthBlock(void) {
         ps.paragraphSpacing = 4;
     }
     NSMutableArray<NSTextBlock *> *blocks = [NSMutableArray array];
-    if (r.quote) {
-        if (!*quote) {
-            NSTextBlock *b = MCFullWidthBlock();
-            [b setWidth:3 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockBorder
-                   edge:NSRectEdgeMinX];
-            [b setBorderColor:Hex(0x4B5563) forEdge:NSRectEdgeMinX];
-            [b setWidth:13 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
-                   edge:NSRectEdgeMinX];
-            *quote = b;
-        }
-        [blocks addObject:*quote];
-    } else {
-        *quote = nil;
+    const CGFloat step = MCZoomed(kMarkdownListStep);
+    // The list levels outside the quote (for its bar) and inside it.
+    const NSInteger outside = r.quote ? r.quoteIndent : 0;
+    const NSInteger levels = MAX(0, r.listDepth - outside);
+    const NSUInteger depth = r.quote ? (NSUInteger)MAX(1, r.quoteDepth) : 0;
+    while (quotes.count > depth) [quotes removeLastObject];
+    while (quotes.count < depth) {
+        NSTextBlock *b = MCFullWidthBlock();
+        [b setWidth:3 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockBorder
+               edge:NSRectEdgeMinX];
+        [b setBorderColor:Hex(0x4B5563) forEdge:NSRectEdgeMinX];
+        [b setWidth:13 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
+               edge:NSRectEdgeMinX];
+        if (quotes.count == 0 && outside > 0) MCIndentBlock(b, outside * step);
+        [quotes addObject:b];
     }
+    for (NSTextBlock *b in quotes) MCAddBlock(blocks, b);
     if (r.codeBlock) {
         if (!*code) {
             NSTextBlock *b = MCFullWidthBlock();
+            if (levels > 0) MCIndentBlock(b, levels * step);   // at a list item's indent
             b.backgroundColor = MCColor(cfg.settings.markdownCodeBackground());
             [b setWidth:12 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
                    edge:NSRectEdgeMinX];
@@ -121,7 +144,7 @@ static NSTextBlock *MCFullWidthBlock(void) {
                    edge:NSRectEdgeMaxY];
             *code = b;
         }
-        [blocks addObject:*code];
+        MCAddBlock(blocks, *code);
         ps.lineSpacing = 2.0;
     } else {
         *code = nil;
@@ -150,11 +173,10 @@ static NSTextBlock *MCFullWidthBlock(void) {
         ps.minimumLineHeight = ps.maximumLineHeight = 4;
         ps.lineSpacing = 0;
     }
-    if (r.listDepth > 0) {
+    if (levels > 0 && !r.codeBlock) {
         // The text of every line sits at the level's indent; a marker is
         // right-aligned just before it, so numbers of any width line up.
-        const CGFloat step = MCZoomed(kMarkdownListStep);
-        const CGFloat text = r.listDepth * step;
+        const CGFloat text = levels * step;
         ps.headIndent = text;
         ps.firstLineHeadIndent = r.marker ? text - step : text;
         ps.tabStops = @[
@@ -191,6 +213,14 @@ static NSTextBlock *MCFullWidthBlock(void) {
         font = [NSFont boldSystemFontOfSize:MCZoomed(sizes[r.heading])];
         color = [cfg markdown:MarkdownColor::Heading];
     }
+    if (r.footnotes) {   // the footnotes at the page's end: smaller, muted
+        font = [NSFont systemFontOfSize:MCZoomed(13)];
+        color = [cfg markdown:MarkdownColor::Quote];
+    }
+    if (r.footnote > 0) {   // a reference to one: a raised number
+        font = [NSFont systemFontOfSize:MCZoomed(r.footnotes ? 9 : 11)];
+        a[NSBaselineOffsetAttributeName] = @(MCZoomed(r.footnotes ? 4 : 6));
+    }
     // Display math on a line of its own, shown as TeX, sits in a code box.
     const BOOL boxedMath = r.math == 2 && r.heading == 0 && !r.table;
     if (r.codeBlock || r.code) {
@@ -220,6 +250,9 @@ static NSTextBlock *MCFullWidthBlock(void) {
         a[NSStrikethroughStyleAttributeName] = @(NSUnderlineStyleSingle);
     if (r.link) { color = [cfg markdown:MarkdownColor::Link]; a[NSUnderlineStyleAttributeName] =
         @(NSUnderlineStyleSingle); }
+    // A footnote's number and its way back are links without the line.
+    if (r.footnote > 0 || (r.footnotes && r.url.rfind("#fnref-", 0) == 0))
+        [a removeObjectForKey:NSUnderlineStyleAttributeName];
     // A link's target as written; textView:clickedOnLink: resolves it.
     NSString *href = r.link && !r.url.empty()
                          ? [NSString stringWithUTF8String:r.url.c_str()] : nil;

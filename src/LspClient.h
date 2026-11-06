@@ -19,6 +19,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -619,6 +620,61 @@ bool completionKeyAccepts(CompletionOrigin origin, bool navigated, CompletionKey
 // Null when it is not there.
 Json configurationSection(const Json& settings, const std::string& section);
 
+// ------------------------------------------------------- watched files
+// workspace/didChangeWatchedFiles: a server registers watchers through
+// client/registerCapability (basedpyright "**" and its library folders,
+// Ruff its config files), and the client tells it of files created,
+// changed and deleted on disk, which it would otherwise only see when a
+// tab opens them (an agent's edits, a branch switch, a pip install).
+
+// The LSP's glob: `*` any characters within a path segment, `?` one, `**`
+// any number of whole segments (none included), `{a,b}` alternatives
+// (nested too), `[a-z]` and `[!a-z]` one character of a set. Everything
+// else stands for itself; matching is case-sensitive and whole.
+bool globMatch(const std::string& pattern, const std::string& path);
+
+enum class FileChangeType { Created = 1, Changed = 2, Deleted = 3 };
+struct FileChange {
+    std::string path;   // absolute, spelled as the folder the server was given
+    FileChangeType type = FileChangeType::Changed;
+};
+// One registered watcher. `base` is a RelativePattern's folder (a path; the
+// pattern is matched against the path below it), empty for a plain glob.
+// `kind` is WatchKind's bits: 1 created, 2 changed, 4 deleted.
+struct FileWatcher {
+    std::string pattern, base;
+    int kind = 7;
+};
+// The watchers of a registration's registerOptions ({watchers: [...]}); a
+// watcher whose pattern is neither a string nor a RelativePattern with a
+// file URI (or workspace folder) for its base is left out.
+std::vector<FileWatcher> parseFileWatchers(const Json& registerOptions);
+// Whether a watcher wants a change. A plain glob is matched against the
+// absolute path (so "**/*.py" works), and one with no "/" against the file's
+// name alone; one that is not absolute is matched below `root` too.
+bool watcherMatches(const FileWatcher& w, const std::string& root, const FileChange& change);
+// What one file-system event means once the path has been looked at: gone
+// is Deleted; there, it is Created when the event says it was created or
+// renamed into place, else Changed. FSEvents keeps a file's "created" flag
+// on its later events for a while (a write half a second after creating
+// it still says created), so a path already reported as there is Changed
+// whatever the flags say; the classifier remembers which those are (up to
+// 200,000 paths, then it starts again).
+class FileEventClassifier {
+public:
+    FileChangeType classify(const std::string& path, bool exists, bool createdOrRenamed);
+private:
+    std::set<std::string> present_;
+};
+// Several events for one path in one batch become one, as VS Code's
+// coalescer does: created then deleted is nothing, deleted then created is
+// Changed, created then changed stays Created, otherwise the later wins.
+// Paths keep the order they first appeared in.
+std::vector<FileChange> coalesceFileChanges(const std::vector<FileChange>& changes);
+// Paths never reported, as VS Code's files.watcherExclude: inside .git,
+// .hg/store, and node_modules' packages (node_modules/x/**).
+bool watchExcluded(const std::string& path);
+
 // ------------------------------------------------------- Python servers
 // Each Python server is told which interpreter to use in its own way:
 // pyright and basedpyright read python.pythonPath through
@@ -772,6 +828,22 @@ public:
     using ApplyEditReply = std::function<void(bool applied, const std::string& failureReason)>;
     std::function<void(const Json& params, ApplyEditReply reply)> onApplyEdit;
 
+    // Watched files. With file watching on (set before initialize, by an
+    // owner that will call didChangeWatchedFiles), `initialize` offers
+    // dynamic registration of workspace/didChangeWatchedFiles; off (the
+    // default) a server watches for itself if it can. Registrations are
+    // kept by id until unregistered; onWatchersChanged runs after either.
+    void setFileWatching(bool on) { fileWatching_ = on; }
+    bool watchesFiles() const { return !watchers_.empty(); }
+    std::vector<FileWatcher> fileWatchers() const;
+    // The folders of the RelativePatterns registered (a server's library
+    // folders may lie outside the root), each once.
+    std::vector<std::string> watchedBases() const;
+    std::function<void()> onWatchersChanged;
+    // Sends the changes some watcher wants, in one notification, and says
+    // how many it sent. Nothing before Ready or without registrations.
+    size_t didChangeWatchedFiles(const std::vector<FileChange>& changes);
+
     size_t pendingRequests() const { return handlers_.size(); }
     size_t queuedMessages() const { return queue_.size(); }
 
@@ -793,8 +865,10 @@ private:
     std::map<std::string, int> lastVersion_;
     Json capabilities_;
     Json initOptions_, settings_;
+    bool fileWatching_ = false;
     std::string serverName_;
     std::string rootPath_;
+    std::map<std::string, std::vector<FileWatcher>> watchers_;   // by registration id
     size_t staleDiagnostics_ = 0;
     const Doc* findDoc(const std::string& uri) const;
     std::function<void()> shutdownDone_;

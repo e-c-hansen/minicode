@@ -4,6 +4,8 @@
 #include "TerminalScreen.h"
 #include <algorithm>
 #include <cctype>
+#include <climits>
+#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -102,6 +104,7 @@ TerminalScreen::TerminalScreen(int cols, int rows)
 void TerminalScreen::fullReset() {
     if (syncOutput_) syncEnds_++;
     below_.clear();
+    dropMarks(historyBase_, LLONG_MAX);   // the screen is erased; the scrollback stays
     main_.assign(rows_, Row(cols_, TermCell()));
     alt_.assign(rows_, Row(cols_, TermCell()));
     onAlt_ = false;
@@ -289,20 +292,28 @@ std::vector<TermMatch> TerminalScreen::find(const std::string& query, bool match
 }
 
 // ------------------------------------------------------------------ clear
-void TerminalScreen::clearAll() {
+void TerminalScreen::clearHistory() {
     history_.clear();
+    dropMarks(LLONG_MIN, historyBase_);
+}
+
+void TerminalScreen::clearAll() {
+    clearHistory();
     below_.clear();
     if (onAlt_) return;
+    marks_.clear();
     for (Row& row : main_) { row.assign(cols_, TermCell()); row.wrap = 0; }
     x_ = y_ = 0;
     wrapPending_ = false;
 }
 
 void TerminalScreen::clearToCursorLine() {
-    history_.clear();
+    clearHistory();
     below_.clear();
     if (onAlt_ || y_ == 0) return;
     int up = y_;
+    dropMarks(historyBase_, historyBase_ + up);
+    shiftMarks(historyBase_ + up, LLONG_MAX, -up);
     main_.erase(main_.begin(), main_.begin() + up);
     for (int i = 0; i < up; i++) main_.push_back(Row(cols_, TermCell()));
     y_ = 0;
@@ -443,13 +454,16 @@ size_t TerminalScreen::historyCellBytes() const {
 void TerminalScreen::setScrollbackLimit(int lines) {
     historyLimit_ = std::max(0, lines);
     while ((int)history_.size() > historyLimit_) history_.pop_front();
+    pruneMarks();
 }
 
 void TerminalScreen::pushHistory(const Row& row) {
     historyBase_++;
-    if (historyLimit_ <= 0) return;
-    history_.push_back(packRow(row));
-    while ((int)history_.size() > historyLimit_) history_.pop_front();
+    if (historyLimit_ > 0) {
+        history_.push_back(packRow(row));
+        while ((int)history_.size() > historyLimit_) history_.pop_front();
+    }
+    pruneMarks();
 }
 
 // ----------------------------------------------------------------- resize
@@ -471,7 +485,32 @@ void TerminalScreen::resize(int cols, int rows, std::vector<TermPos>* keep) {
     if (keep)
         for (const TermPos& p : *keep)
             points.push_back({hist + p.line, p.col, false, false, hist + p.line < 0});
+    // The shell integration's marks go with their text too.
+    size_t firstMark = points.size();
+    for (const Mark& m : marks_) {
+        long long line = m.id - historyBase_;
+        bool gone = hist + line < 0;
+        points.push_back({gone ? 0 : (int)(hist + line), m.col, false, false, gone});
+    }
     reflowMain(cols, rows, points);
+    {
+        std::deque<Mark> moved;
+        int histNow = historySize();
+        for (size_t i = 0; i < marks_.size(); i++) {
+            const Point& p = points[firstMark + i];
+            // Gone above the scrollback, or below the screen (with lines
+            // set aside, which come back only if nothing scrolls first).
+            if (p.dropped || p.abs < -histNow || p.abs >= rows) continue;
+            Mark m = marks_[i];
+            m.id = historyBase_ + p.abs;
+            m.col = p.col;
+            moved.push_back(m);
+        }
+        std::stable_sort(moved.begin(), moved.end(), [](const Mark& a, const Mark& b) {
+            return a.id < b.id || (a.id == b.id && a.col < b.col);
+        });
+        marks_.swap(moved);
+    }
     // reflowMain left each point's abs as a line number on the new screen.
     savedMain_.y = points[0].abs;
     savedMain_.x = points[0].col;
@@ -609,6 +648,15 @@ void TerminalScreen::reflowMain(int cols, int rows, std::vector<Point>& points) 
     auto onLine = [&](size_t k, int i, int j) {
         return !mapped[k] && !points[k].dropped && points[k].abs >= i && points[k].abs <= j;
     };
+    // The points by line, so each line looks only at its own: there may be
+    // thousands (the shell integration's marks) over as many lines.
+    std::vector<size_t> order;
+    order.reserve(points.size());
+    for (size_t k = 0; k < points.size(); k++)
+        if (!points[k].dropped) order.push_back(k);
+    std::stable_sort(order.begin(), order.end(),
+                     [&](size_t a, size_t b) { return points[a].abs < points[b].abs; });
+    size_t nextPoint = 0;
     std::vector<HistLine> dst;
     dst.reserve(src.size() + src.size() / 4);
     std::vector<int> segStart;      // a line's rows' offsets, old and new
@@ -616,20 +664,26 @@ void TerminalScreen::reflowMain(int cols, int rows, std::vector<Point>& points) 
     for (int i = 0; i < srcCount; ) {
         int j = i;
         while (j + 1 < srcCount && src[j].wrap) j++;
+        // This line's points: order[from, to).
+        while (nextPoint < order.size() && points[order[nextPoint]].abs < i) nextPoint++;
+        size_t from = nextPoint, to = from;
+        while (to < order.size() && points[order[to]].abs <= j) to++;
+        nextPoint = to;
         // Rows that need nothing: every wrapped row exactly as wide as the
         // new width, the last no wider, and no cursor beyond the edge.
         bool same = src[j].width <= cols;
         for (int k = i; k < j && same; k++)
             if (src[k].width != cols) same = false;
-        for (size_t k = 0; k < points.size() && same; k++) {
+        for (size_t q = from; q < to && same; q++) {
+            size_t k = order[q];
             if (!points[k].cursor || !onLine(k, i, j)) continue;
             int off = points[k].col + (points[k].pending ? 1 : 0);
             if (off > cols || (off == cols && !points[k].pending)) same = false;
         }
         if (same) {
             int base = (int)dst.size();
-            for (size_t k = 0; k < points.size(); k++)
-                if (onLine(k, i, j)) {
+            for (size_t q = from; q < to; q++)
+                if (size_t k = order[q]; onLine(k, i, j)) {
                     points[k].abs = base + (points[k].abs - i);
                     points[k].col = std::min(points[k].col, cols - 1);
                     // Waiting to wrap only at the last column; on a wider
@@ -669,8 +723,8 @@ void TerminalScreen::reflowMain(int cols, int rows, std::vector<Point>& points) 
             return segStart[p.abs - i] + p.col + (p.pending ? 1 : 0);
         };
         int needed = n;
-        for (size_t k = 0; k < points.size(); k++)
-            if (points[k].cursor && onLine(k, i, j))
+        for (size_t q = from; q < to; q++)
+            if (size_t k = order[q]; points[k].cursor && onLine(k, i, j))
                 needed = std::max(needed, offsetOf(points[k]));
         while (line.width < needed) {           // blanks out to a cursor
             HistLine blankCell;
@@ -722,7 +776,8 @@ void TerminalScreen::reflowMain(int cols, int rows, std::vector<Point>& points) 
         } while (a < n);
         // Each point to the row holding its offset.
         int last = (int)rowStart.size() - 1;
-        for (size_t k = 0; k < points.size(); k++) {
+        for (size_t q = from; q < to; q++) {
+            size_t k = order[q];
             if (!onLine(k, i, j)) continue;
             Point& p = points[k];
             int off = std::min(offsetOf(p), n);
@@ -894,6 +949,18 @@ void TerminalScreen::scrollUp(int n, bool save) {
     n = std::min(n, bottom_ - top_ + 1);
     if (n <= 0) return;
     if (!onAlt_) below_.clear();      // what was set aside no longer lines up
+    if (!onAlt_) {
+        // Marks stay on their rows: the region's go up with them (into the
+        // scrollback when saved, where their numbers stay the same), and
+        // rows below the region keep theirs as the numbering moves on.
+        long long base = historyBase_;
+        if (save && top_ == 0) {
+            shiftMarks(base + bottom_ + 1, LLONG_MAX, n);
+        } else {
+            dropMarks(base + top_, base + top_ + n);
+            shiftMarks(base + top_ + n, base + bottom_ + 1, -n);
+        }
+    }
     Grid& g = grid();
     if (save && !onAlt_ && top_ == 0)
         for (int r = 0; r < n; r++) pushHistory(g[r]);
@@ -905,6 +972,11 @@ void TerminalScreen::scrollDown(int n) {
     n = std::min(n, bottom_ - top_ + 1);
     if (n <= 0) return;
     if (!onAlt_) below_.clear();      // what was set aside no longer lines up
+    if (!onAlt_) {
+        long long base = historyBase_;
+        dropMarks(base + bottom_ + 1 - n, base + bottom_ + 1);
+        shiftMarks(base + top_, base + bottom_ + 1 - n, n);
+    }
     Grid& g = grid();
     std::rotate(g.begin() + top_, g.begin() + bottom_ + 1 - n, g.begin() + bottom_ + 1);
     for (int r = top_; r < top_ + n; r++) { g[r].assign(cols_, blank()); g[r].wrap = 0; }
@@ -929,28 +1001,57 @@ void TerminalScreen::print(uint32_t cp, const std::string& utf8In) {
     }
     int w = termCharWidth(cp);
     Grid& g = grid();
-    if (w == 0) {
-        // Combining mark: joins the character before the cursor.
-        int x = wrapPending_ ? x_ : x_ - 1;
-        if (x >= 0 && g[y_][x].width == 0 && x > 0) x--;
-        if (x >= 0 && g[y_][x].ch.size() + utf8.size() <= kTermMaxCellBytes)
-            g[y_][x].ch += utf8;
+    // The character before the cursor, which a combining mark joins, and so
+    // do the parts of an emoji sequence: a pictograph after a zero width
+    // joiner (a family takes one wide cell, not four) and a flag's second
+    // regional indicator.
+    int x = wrapPending_ ? x_ : x_ - 1;
+    if (x >= 0 && g[y_][x].width == 0 && x > 0) x--;
+    if (x >= 0 && (w == 0 || termJoinsCluster(g[y_][x].ch, cp))) {
+        TermCell& before = g[y_][x];
+        if (before.ch.size() + utf8.size() > kTermMaxCellBytes) return;
+        before.ch += utf8;
+        // An emoji drawn as one is two columns wide: a flag, a joined
+        // sequence, or a symbol that VS16 asks to show as an emoji (❤️).
+        bool widen = before.width == 1 &&
+                     (w != 0 || (cp == 0xFE0F && termIsPictographic(termFirstCodepoint(before.ch))));
+        // Only in place: with the cursor just after it, and room for the
+        // right half (at the right edge the character stays narrow).
+        if (widen && !wrapPending_ && x == x_ - 1 && x_ < cols_ && !insertMode_) {
+            if (g[y_][x_].width == 2 && x_ + 1 < cols_) g[y_][x_ + 1] = blank();
+            before.width = 2;
+            TermCell right;
+            right.ch = "";
+            right.style = before.style;
+            right.width = 0;
+            g[y_][x_] = right;
+            x_++;
+            if (x_ >= cols_) {
+                x_ = cols_ - 1;
+                wrapPending_ = autowrap_;
+            }
+        }
         return;
     }
+    if (w == 0) return;                      // nothing before it to join
     if (wrapPending_ && autowrap_) {
         g[y_].wrap = promptSp_ ? 0 : 1;      // the row continues on the next
+        bool prompt = promptSp_;
         promptSp_ = false;
         x_ = 0;
         lineFeed();
+        if (prompt) promptMovedDown();
     }
     wrapPending_ = false;
     if (w == 2 && x_ == cols_ - 1) {
         if (autowrap_) {                     // doesn't fit: wrap it whole
             eraseCells(y_, x_, x_ + 1);
             g[y_].wrap = promptSp_ ? 0 : 2;
+            bool prompt = promptSp_;
             promptSp_ = false;
             x_ = 0;
             lineFeed();
+            if (prompt) promptMovedDown();
         } else {
             w = 1;                           // no room and no wrap: truncate
             utf8 = " ";
@@ -1087,19 +1188,174 @@ void TerminalScreen::esc(const std::string& inter, unsigned char f) {
     }
 }
 
-void TerminalScreen::osc(const std::string& body) {
+void TerminalScreen::osc(const std::string& raw) {
+    std::string body = raw;
+    if (!termMarkAccepted(body, nonce_)) return;   // someone else's mark
     if (body.rfind("8;", 0) == 0) {
         hyperlink(body);
     } else if (body.rfind("0;", 0) == 0 || body.rfind("2;", 0) == 0) {
         title_ = termCleanTitle(body.substr(2), 1024);
     } else if (body.rfind("133;D", 0) == 0) {
         commandsEnded_++;
+        addMark('D', body.size() > 6 && body[5] == ';' ? std::atoi(body.c_str() + 6) : 0);
     } else if (body.rfind("133;A", 0) == 0) {
         promptSp_ = true;
+        addMark('A', 0);
+    } else if (body.rfind("133;C", 0) == 0) {
+        addMark('C', 0);
     } else {
         std::string path = termOsc7Path(body);
         if (!path.empty()) directory_ = path;
     }
+}
+
+// ----------------------------------------------------------------- marks
+namespace {
+
+// Marks kept at most: a few per command, and a command takes a line at
+// least, so this many outlast any scrollback; a program printing marks in
+// a loop (with no nonce set) cannot grow the list past it.
+const size_t kMaxMarks = 3 * 100000 + 300;
+
+}  // namespace
+
+void TerminalScreen::addMark(char kind, int status) {
+    if (onAlt_) return;   // a full-screen program's screen is not the shell's
+    Mark m{historyBase_ + y_, x_ + (wrapPending_ ? 1 : 0), kind, status, markSeq_++};
+    if (kind == 'A') promptSeq_ = m.seq;
+    insertMark(m);
+}
+
+void TerminalScreen::insertMark(const Mark& m) {
+    // In reading order; after any already at the same place (a D and the
+    // next prompt's A come together).
+    auto at = std::upper_bound(marks_.begin(), marks_.end(), m, [](const Mark& a, const Mark& b) {
+        return a.id < b.id || (a.id == b.id && a.col < b.col);
+    });
+    if (at != marks_.begin()) {
+        const Mark& before = *(at - 1);
+        if (before.id == m.id && before.col == m.col && before.kind == m.kind &&
+            before.status == m.status)
+            return;           // the same mark again
+    }
+    marks_.insert(at, m);
+    while (marks_.size() > kMaxMarks) marks_.pop_front();
+}
+
+// The marks are in order, so a range of lines is found by halving: a line
+// feed at the bottom asks for the rows below the screen (none) every time.
+namespace {
+template <class Marks>
+auto firstAtOrAfter(Marks& marks, long long id) {
+    return std::lower_bound(marks.begin(), marks.end(), id,
+                            [](const auto& m, long long v) { return m.id < v; });
+}
+}  // namespace
+
+void TerminalScreen::dropMarks(long long fromId, long long toId) {
+    if (fromId >= toId || marks_.empty()) return;
+    auto lo = firstAtOrAfter(marks_, fromId), hi = firstAtOrAfter(marks_, toId);
+    if (lo != hi) marks_.erase(lo, hi);
+}
+
+void TerminalScreen::shiftMarks(long long fromId, long long toId, long long by) {
+    if (fromId >= toId || by == 0 || marks_.empty()) return;
+    auto hi = firstAtOrAfter(marks_, toId);
+    for (auto it = firstAtOrAfter(marks_, fromId); it != hi; ++it) it->id += by;
+}
+
+void TerminalScreen::pruneMarks() {
+    long long first = historyBase_ - historySize();
+    while (!marks_.empty() && marks_.front().id < first) marks_.pop_front();
+}
+
+void TerminalScreen::promptMovedDown() {
+    // zsh's PROMPT_SP: after output that did not end its line, the prompt
+    // mark came where that output stopped, and the prompt itself is drawn
+    // after the wrap that follows. The mark goes with it.
+    // The newest prompt mark, wherever it is in the list (the cursor may
+    // have been above other marks when it came): taken out and put back
+    // in its new place, so the list stays in order.
+    for (auto it = marks_.end(); it != marks_.begin();) {
+        --it;
+        if (it->seq != promptSeq_) continue;
+        Mark m = *it;
+        marks_.erase(it);
+        m.id = historyBase_ + y_;
+        m.col = 0;
+        insertMark(m);
+        return;
+    }
+}
+
+std::vector<TermCommand> TerminalScreen::commands() const {
+    std::vector<TermCommand> out;
+    long long first = historyBase_ - historySize();
+    for (const Mark& m : marks_) {
+        if (m.id < first) continue;
+        int line = (int)(m.id - historyBase_);
+        if (m.kind == 'A') {
+            TermCommand c;
+            c.promptLine = line;
+            c.promptCol = m.col;
+            out.push_back(c);
+        } else if (m.kind == 'C') {
+            if (out.empty() || out.back().ran) continue;
+            out.back().ran = true;
+            out.back().outputLine = line;
+            out.back().outputCol = m.col;
+        } else if (m.kind == 'D') {
+            if (out.empty() || !out.back().ran || out.back().ended) continue;
+            out.back().ended = true;
+            out.back().endLine = line;
+            out.back().endCol = m.col;
+            out.back().status = m.status;
+        }
+    }
+    return out;
+}
+
+std::string TerminalScreen::commandOutput(const TermCommand& c) const {
+    if (!c.ran) return std::string();
+    int line0 = c.outputLine, col0 = c.outputCol;
+    // A mark left at the end of the command's own line (the output starts
+    // on the next): from the next line.
+    if (col0 > 0 && !lineWraps(line0)) {
+        bool rest = false;
+        for (int col = col0; col < lineWidth(line0) && !rest; col++)
+            if (lineCell(line0, col).ch != " ") rest = true;
+        if (!rest) { line0++; col0 = 0; }
+    }
+    int line1 = c.ended ? c.endLine : y_;
+    int col1 = c.ended ? c.endCol : x_ + (wrapPending_ ? 1 : 0);
+    // The last cell before the end: the end of the line above when the end
+    // is at a line's start.
+    if (col1 > 0) {
+        col1--;
+    } else {
+        line1--;
+        col1 = std::max(0, lineWidth(line1) - 1);
+    }
+    if (line1 < line0 || (line1 == line0 && col1 < col0)) return std::string();
+    int first = -historySize();
+    if (line0 < first) { line0 = first; col0 = 0; }
+    std::string text = textBetween(line0, col0, line1, col1);
+    while (!text.empty() && text.back() == '\n') text.pop_back();
+    return text;
+}
+
+int TerminalScreen::previousCommandLine(int line) const {
+    int found = INT_MIN;
+    for (const TermCommand& c : commands())
+        if (c.ran && c.promptLine < line) found = std::max(found, c.promptLine);
+    return found;
+}
+
+int TerminalScreen::nextCommandLine(int line) const {
+    int found = INT_MAX;
+    for (const TermCommand& c : commands())
+        if (c.ran && c.promptLine > line) found = std::min(found, c.promptLine);
+    return found == INT_MAX ? INT_MIN : found;
 }
 
 // ---------------------------------------------------------- hyperlinks
@@ -1376,8 +1632,9 @@ void TerminalScreen::csi(const std::string& csi, unsigned char f) {
         } else if (raw == 2) {
             unwrapAbove(0);
             for (int r = 0; r < rows_; r++) { eraseCells(r, 0, cols_); grid()[r].wrap = 0; }
+            if (!onAlt_) dropMarks(historyBase_, LLONG_MAX);
         } else if (raw == 3) {
-            history_.clear();                    // xterm: erase saved lines
+            clearHistory();                      // xterm: erase saved lines
         }
         break;
     case 'K':                                    // EL

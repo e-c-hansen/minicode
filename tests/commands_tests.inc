@@ -362,24 +362,30 @@ static void testKeymapFile() {
                 "k = minicode.toggleBrowser\n"                // 5: types a letter
                 "shift+up = minicode.toggleBrowser\n"         // 6: moves the caret
                 "alt+down = minicode.toggleBrowser\n"         // 7: the editor's own
-                "cmd+up = -\n"                                // 8: likewise
+                "cmd+up = -\n"                                // 8: likewise, twice
+                                                              // (the terminal's too)
                 "f5 = editor.action.moveLinesDownAction\n"    // 9: cannot be remapped
                 "f5 = minicode.toggleBrowser\n",              // fine
                 &errs);
     std::vector<int> lines;
     for (const Error &e : errs) lines.push_back(e.line);
-    CHECK((lines == std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 9}));
-    CHECK(errs.size() == 9 && errs[3].message.find("minicode.nothing") != std::string::npos);
-    CHECK(errs.size() == 9 && errs[6].message.find("Move Line Down") != std::string::npos);
+    CHECK((lines == std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 8, 9}));
+    CHECK(errs.size() == 10 && errs[3].message.find("minicode.nothing") != std::string::npos);
+    CHECK(errs.size() == 10 && errs[6].message.find("Move Line Down") != std::string::npos);
+    CHECK(errs.size() == 10 && errs[8].message.find("Previous Command") != std::string::npos);
     CHECK(HasKey(m, "minicode.toggleBrowser", "f5"));
     CHECK(!HasKey(m, "minicode.toggleBrowser", "alt+down"));
     CHECK(HasKey(m, "editor.action.moveLinesUpAction", "cmd+up"));
     CHECK(HasKey(m, "editor.action.moveLinesDownAction", "alt+down"));
     // A key the editor keeps for itself can still go to a terminal command.
     errs.clear();
-    m = resolve("cmd+up = workbench.action.terminal.clear\n", &errs);
+    m = resolve("alt+up = workbench.action.terminal.clear\n", &errs);
     CHECK(errs.empty());
-    CHECK(m.commandFor(K("cmd+up"), When::Terminal) == find("workbench.action.terminal.clear"));
+    CHECK(m.commandFor(K("alt+up"), When::Terminal) == find("workbench.action.terminal.clear"));
+    // The terminal's own Cmd+Up stays its own.
+    errs.clear();
+    m = resolve("cmd+up = workbench.action.terminal.clear\n", &errs);
+    CHECK(errs.size() == 1 && errs[0].message.find("Previous Command") != std::string::npos);
 
     // "=" as the key, CRLF and a key with spaces round it.
     errs.clear();

@@ -765,7 +765,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 // EditorController+MarkdownRender.mm: turning Markdown runs into attributed text: paragraphs, runs, tables.
 @interface EditorController (MarkdownRender)
 - (NSParagraphStyle *)markdownParagraphFor:(const MdRun &)r
-                                     quote:(NSTextBlock * __strong *)quote
+                                    quotes:(NSMutableArray<NSTextBlock *> *)quotes
                                       code:(NSTextBlock * __strong *)code;
 - (NSAttributedString *)markdownRun:(const MdRun &)r
                               style:(NSParagraphStyle *)ps

@@ -50,6 +50,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <climits>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -2272,6 +2273,9 @@ void testMarkdownCorpus() {
         titleLine = r.heading > 0 ? r.line : -1;
         title = r.heading > 0 ? r.text : "";
     }
+    // Footnotes and their references are landing places too.
+    for (const MdRun &r : runs)
+        if (!r.anchor.empty()) anchors.insert(r.anchor);
     bool linked = true;
     int local = 0;
     for (const MdRun &r : runs) {
@@ -2283,6 +2287,18 @@ void testMarkdownCorpus() {
         }
     }
     CHECK(linked && local >= 5);
+    // Its footnotes: three references to two notes, listed at the end, and
+    // one to nothing, which stays as written.
+    CHECK(mdCount(runs, [](const MdRun &r) { return r.footnote > 0; }) == 3);
+    CHECK(mdCount(runs, [](const MdRun &r) { return r.footnotes && r.marker; }) == 2);
+    CHECK(runs.back().footnotes);
+    CHECK(mdAny(runs, [](const MdRun &r) {
+        return r.text.find("[^missing]") != std::string::npos;
+    }));
+    // Its HTML block's text is not Markdown.
+    CHECK(mdAny(runs, [](const MdRun &r) {
+        return !r.italic && r.text.find("*Not emphasis*") != std::string::npos;
+    }));
     // Its math section.
     CHECK(mdCount(runs, [](const MdRun &r) { return r.math == 1; }) == 3);
     CHECK(mdCount(runs, [](const MdRun &r) { return r.math == 2; }) == 3);
@@ -9964,7 +9980,10 @@ static void testMultiCaretOccurrences() {
 #include "ide_link_tests.inc"
 #include "format_consent_tests.inc"
 #include "terminal_paste_tests.inc"
+#include "terminal_marks_tests.inc"
 #include "latex_safety_tests.inc"
+#include "markdown_gfm_tests.inc"
+#include "lsp_watch_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9980,6 +9999,7 @@ int main() {
     testMarkdownLines();
     testMarkdownCorpus();
     testMarkdownEdit();
+    testMarkdownGfm();
     testTerminalStream();
     testTerminalScreen();
     testTerminalReflow();
@@ -9988,6 +10008,7 @@ int main() {
     testTerminalFuzz();
     testTerminalHyperlinks();
     testTerminalPaste();
+    testTerminalMarks();
     testSettings();
     testSettingsColorEditing();
     testLineComments();
@@ -10061,6 +10082,7 @@ int main() {
     testIdeLinkSettings();
     testMermaidDiagram();
     testLatexSafety();
+    testLspWatchedFiles();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

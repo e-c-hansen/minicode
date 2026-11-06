@@ -174,6 +174,19 @@
 
 // ---------------------------------------------- editing from the preview
 
+// An edit from the preview that cannot go in, because the file changed
+// while it was being typed (a reload from disk, an agent's edit, Cmd+Z):
+// the text goes to the clipboard and the status bar says so, rather than
+// the edit vanishing.
+static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
+    if (!text.length) return;
+    NSPasteboard *pb = NSPasteboard.generalPasteboard;
+    [pb clearContents];
+    [pb setString:text forType:NSPasteboardTypeString];
+    [me showStatusNote:@"The file changed while you were editing, so your edit was not "
+                       @"applied; your text is on the clipboard."];
+}
+
 // A double-click on rendered Markdown opens the block behind it (a
 // paragraph, heading, list item, quote, code block or table cell) in a
 // popover holding its Markdown; saving splices just those bytes back into
@@ -206,7 +219,7 @@
 
     static NSString *const titles[] = {@"", @"Paragraph", @"Heading", @"List item",
                                        @"Quote", @"Code block", @"Table cell", @"Table row",
-                                       @"Formula"};
+                                       @"Formula", @"HTML"};
     NSString *title = [titles[block.kind] stringByAppendingString:
         @" (Markdown; Return saves, Shift+Return for a new line)"];
     NSString *text = [NSString stringWithUTF8String:
@@ -221,7 +234,11 @@
     if (block.kind == MarkdownEdit::Block::ListItem) {
         addItem = ^(NSString *newText) {
             EditorController *me = weakSelf;
-            if (!me || ![me.sourceText isEqualToString:before]) return;
+            if (!me) return;
+            if (![me.sourceText isEqualToString:before]) {
+                MCKeepLostMarkdownEdit(me, newText);
+                return;
+            }
             std::string edited = MarkdownEdit::addItem(src, block, Utf8String(newText));
             [me applyMarkdownSource:[NSString stringWithUTF8String:edited.c_str()]];
         };
@@ -229,7 +246,11 @@
     [self.markdownEditPanel showText:text title:title inView:self.textView rect:anchor
         commit:^(NSString *newText) {
             EditorController *me = weakSelf;
-            if (!me || ![me.sourceText isEqualToString:before]) return;   // file changed meanwhile
+            if (!me) return;
+            if (![me.sourceText isEqualToString:before]) {   // the file changed meanwhile
+                if (![newText isEqualToString:text]) MCKeepLostMarkdownEdit(me, newText);
+                return;
+            }
             std::string edited = MarkdownEdit::replace(src, block, Utf8String(newText));
             if (edited != src) [me applyMarkdownSource:[NSString stringWithUTF8String:edited.c_str()]];
         }
@@ -363,7 +384,8 @@ static char kMarkdownMermaidKey;
     // that paragraph style; a quote's or a code block's paragraphs share one
     // text block, which draws the bar or the box around all of them.
     NSParagraphStyle *para = nil;
-    NSTextBlock *quoteBlock = nil, *codeBox = nil;
+    NSMutableArray<NSTextBlock *> *quoteBlocks = [NSMutableArray array];   // one a level
+    NSTextBlock *codeBox = nil;
     BOOL lineStart = YES;
     MCMarkdownCodeBlocks *codeColors = [MCMarkdownCodeBlocks new];   // ```python and the like
     for (size_t i = 0; i < runs.size();) {
@@ -374,7 +396,8 @@ static char kMarkdownMermaidKey;
             [self appendMarkdownTable:runs from:i to:end into:out];
             i = end;
             lineStart = YES;
-            quoteBlock = codeBox = nil;
+            [quoteBlocks removeAllObjects];
+            codeBox = nil;
             continue;
         }
         if (lineStart && i >= mermaidEnd) {
@@ -387,7 +410,8 @@ static char kMarkdownMermaidKey;
             if (pic) {
                 [out appendAttributedString:pic];
                 i = end;
-                quoteBlock = codeBox = nil;
+                [quoteBlocks removeAllObjects];
+            codeBox = nil;
                 continue;
             }
             if (mermaidComplaint || mermaidKey) {
@@ -413,7 +437,11 @@ static char kMarkdownMermaidKey;
                     key = [NSString stringWithFormat:@"%@-%d", slug, n];
                 if (key.length) anchors[key] = @(out.length);
             }
-            para = [self markdownParagraphFor:r quote:&quoteBlock code:&codeBox];
+            para = [self markdownParagraphFor:r quotes:quoteBlocks code:&codeBox];
+        }
+        if (!r.anchor.empty()) {   // a footnote, or a reference to one, that links land on
+            NSString *key = [NSString stringWithUTF8String:r.anchor.c_str()];
+            if (key.length && !anchors[key]) anchors[key] = @(out.length);
         }
         NSAttributedString *piece = [self markdownRun:r style:para inCell:NO];
         if (piece.length && i < mermaidEnd && (mermaidComplaint || mermaidKey)) {

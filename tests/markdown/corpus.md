@@ -136,6 +136,13 @@ Lazy continuation joins the paragraph above.
 > - a list
 > - inside a quote
 
+> - an item in a quote
+>   > with a quote inside the item
+
+1. A numbered step
+
+   > A quote inside the step, its bar at the step's indent.
+
 > [!NOTE]
 > An alert, as GitHub writes them.
 
@@ -216,6 +223,27 @@ a <a href="https://example.com/html">link by tag</a>, and an inline
 </p>
 
 <h3 align="center">A heading written in HTML</h3>
+
+<div>
+*Not emphasis*: inside an HTML block the text is HTML, not Markdown.
+</div>
+
+<details>
+<summary>A summary, in bold</summary>
+
+Markdown again, after a blank line.
+
+</details>
+
+## Footnotes
+
+A claim that needs a source[^source], another[^2], and the first again[^source].
+A reference nothing defines stays as written[^missing].
+
+[^source]: The source, with a [link](#footnotes) back to this section.
+[^2]: A second note.
+
+    Its second paragraph, indented four spaces.
 
 ## Math
 

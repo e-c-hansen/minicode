@@ -1018,6 +1018,250 @@ Json configurationSection(const Json& settings, const std::string& section) {
     return *at;
 }
 
+// ------------------------------------------------------- watched files
+namespace {
+
+// The pattern with each {a,b} group spelled out, nested groups too. An
+// unclosed brace stands for itself; the list stops growing at 1,024.
+void expandBraces(const std::string& p, std::vector<std::string>& out) {
+    if (out.size() >= 1024) return;
+    size_t open = std::string::npos;
+    int depth = 0;
+    bool inClass = false;
+    for (size_t i = 0; i < p.size(); i++) {
+        char c = p[i];
+        if (inClass) {
+            if (c == ']') inClass = false;
+        } else if (c == '[') {
+            inClass = p.find(']', i + 1) != std::string::npos;
+        } else if (c == '{') {
+            if (depth++ == 0) open = i;
+        } else if (c == '}' && depth > 0) {
+            if (--depth == 0) {
+                std::string head = p.substr(0, open), tail = p.substr(i + 1);
+                std::string body = p.substr(open + 1, i - open - 1);
+                std::vector<std::string> alts;
+                int d = 0;
+                size_t start = 0;
+                for (size_t k = 0; k < body.size(); k++) {
+                    if (body[k] == '{') d++;
+                    else if (body[k] == '}') d--;
+                    else if (body[k] == ',' && d == 0) {
+                        alts.push_back(body.substr(start, k - start));
+                        start = k + 1;
+                    }
+                }
+                alts.push_back(body.substr(start));
+                for (const std::string& a : alts) expandBraces(head + a + tail, out);
+                return;
+            }
+        }
+    }
+    out.push_back(p);
+}
+
+// One character of a [...] set at p[pi] ('[' itself); `end` gets the index
+// after the ']'. False when the set is not closed (then '[' is literal).
+bool classAt(const std::string& p, size_t pi, char c, bool& matched, size_t& end) {
+    size_t i = pi + 1;
+    bool negate = i < p.size() && (p[i] == '!' || p[i] == '^');
+    if (negate) i++;
+    size_t first = i;
+    bool hit = false;
+    while (i < p.size() && (p[i] != ']' || i == first)) {
+        unsigned char lo = (unsigned char)p[i];
+        if (i + 2 < p.size() && p[i + 1] == '-' && p[i + 2] != ']') {
+            unsigned char hi = (unsigned char)p[i + 2];
+            if ((unsigned char)c >= lo && (unsigned char)c <= hi) hit = true;
+            i += 3;
+        } else {
+            if ((unsigned char)c == lo) hit = true;
+            i++;
+        }
+    }
+    if (i >= p.size()) return false;
+    end = i + 1;
+    matched = hit != negate;
+    return true;
+}
+
+struct GlobMatcher {
+    const std::string& p;
+    const std::string& s;
+    std::vector<signed char> memo;   // -1 unknown, else the answer
+    GlobMatcher(const std::string& pat, const std::string& str)
+        : p(pat), s(str), memo((pat.size() + 1) * (str.size() + 1), -1) {}
+
+    bool at(size_t pi, size_t si) {
+        signed char& m = memo[pi * (s.size() + 1) + si];
+        if (m < 0) m = compute(pi, si) ? 1 : 0;
+        return m == 1;
+    }
+
+    bool compute(size_t pi, size_t si) {
+        const size_t P = p.size(), S = s.size();
+        if (pi == P) return si == S;
+        char c = p[pi];
+        if (c == '*') {
+            bool globstar = pi + 1 < P && p[pi + 1] == '*' && (pi == 0 || p[pi - 1] == '/') &&
+                            (pi + 2 == P || p[pi + 2] == '/');
+            if (globstar) {
+                if (pi + 2 == P) return true;   // the rest, whatever it is
+                // "**/": no segment, or one more and stay here.
+                if (at(pi + 3, si)) return true;
+                size_t slash = s.find('/', si);
+                return slash != std::string::npos && at(pi, slash + 1);
+            }
+            size_t next = pi + 1;
+            while (next < P && p[next] == '*') next++;   // "a**b" is "a*b"
+            for (size_t k = si; k <= S; k++) {
+                if (at(next, k)) return true;
+                if (k < S && s[k] == '/') break;
+            }
+            return false;
+        }
+        if (si == S) {
+            // "a/**" also matches "a" itself.
+            return p.compare(pi, std::string::npos, "/**") == 0;
+        }
+        if (c == '?') return s[si] != '/' && at(pi + 1, si + 1);
+        if (c == '[') {
+            bool matched = false;
+            size_t end = 0;
+            if (classAt(p, pi, s[si], matched, end))
+                return s[si] != '/' && matched && at(end, si + 1);
+        }
+        return s[si] == c && at(pi + 1, si + 1);
+    }
+};
+
+std::string withoutLeadingSlash(const std::string& s) {
+    return !s.empty() && s[0] == '/' ? s.substr(1) : s;
+}
+
+// The path below `base`, or "" when it is not below it.
+std::string below(const std::string& path, const std::string& base) {
+    std::string b = base;
+    while (b.size() > 1 && b.back() == '/') b.pop_back();
+    if (b == "/") return withoutLeadingSlash(path);
+    if (path.size() <= b.size() + 1 || path.compare(0, b.size(), b) != 0 || path[b.size()] != '/')
+        return "";
+    return path.substr(b.size() + 1);
+}
+
+}  // namespace
+
+bool globMatch(const std::string& pattern, const std::string& path) {
+    std::vector<std::string> alts;
+    expandBraces(pattern, alts);
+    for (const std::string& a : alts) {
+        GlobMatcher m(a, path);
+        if (m.at(0, 0)) return true;
+    }
+    return false;
+}
+
+std::vector<FileWatcher> parseFileWatchers(const Json& registerOptions) {
+    std::vector<FileWatcher> out;
+    for (const Json& w : registerOptions["watchers"].elements()) {
+        FileWatcher fw;
+        const Json& g = w["globPattern"];
+        if (g.isString()) {
+            fw.pattern = g.asString();
+        } else if (g.isObject() && g["pattern"].isString()) {
+            fw.pattern = g["pattern"].asString();
+            // baseUri is a URI or a WorkspaceFolder ({uri, name}).
+            const Json& b = g["baseUri"];
+            fw.base = pathFromUri(b.isString() ? b.asString() : b["uri"].asString());
+            if (fw.base.empty()) continue;
+        } else {
+            continue;
+        }
+        if (fw.pattern.empty()) continue;
+        if (w["kind"].isNumber()) fw.kind = (int)w["kind"].asInt() & 7;
+        out.push_back(fw);
+    }
+    return out;
+}
+
+bool watcherMatches(const FileWatcher& w, const std::string& root, const FileChange& change) {
+    int bit = change.type == FileChangeType::Created ? 1
+              : change.type == FileChangeType::Changed ? 2 : 4;
+    if (!(w.kind & bit)) return false;
+    const std::string& path = change.path;
+    if (!w.base.empty()) {
+        std::string rel = below(path, w.base);
+        return !rel.empty() && globMatch(w.pattern, rel);
+    }
+    if (w.pattern[0] == '/') return globMatch(withoutLeadingSlash(w.pattern), withoutLeadingSlash(path));
+    if (w.pattern.find('/') == std::string::npos) {
+        size_t slash = path.rfind('/');
+        return globMatch(w.pattern, slash == std::string::npos ? path : path.substr(slash + 1));
+    }
+    if (globMatch(w.pattern, withoutLeadingSlash(path))) return true;
+    std::string rel = root.empty() ? "" : below(path, root);
+    return !rel.empty() && globMatch(w.pattern, rel);
+}
+
+FileChangeType FileEventClassifier::classify(const std::string& path, bool exists,
+                                             bool createdOrRenamed) {
+    if (!exists) {
+        present_.erase(path);
+        return FileChangeType::Deleted;
+    }
+    if (present_.size() >= 200000) present_.clear();
+    bool known = !present_.insert(path).second;
+    return createdOrRenamed && !known ? FileChangeType::Created : FileChangeType::Changed;
+}
+
+std::vector<FileChange> coalesceFileChanges(const std::vector<FileChange>& changes) {
+    std::vector<FileChange> out;
+    std::map<std::string, size_t> where;   // path -> index in out
+    std::vector<bool> dropped;
+    for (const FileChange& c : changes) {
+        auto it = where.find(c.path);
+        if (it == where.end() || dropped[it->second]) {
+            where[c.path] = out.size();
+            out.push_back(c);
+            dropped.push_back(false);
+            continue;
+        }
+        FileChange& was = out[it->second];
+        if (was.type == FileChangeType::Created && c.type == FileChangeType::Deleted)
+            dropped[it->second] = true;
+        else if (was.type == FileChangeType::Deleted && c.type == FileChangeType::Created)
+            was.type = FileChangeType::Changed;
+        else if (was.type == FileChangeType::Created && c.type == FileChangeType::Changed)
+            ;   // still new to the server
+        else
+            was.type = c.type;
+    }
+    std::vector<FileChange> kept;
+    for (size_t i = 0; i < out.size(); i++)
+        if (!dropped[i]) kept.push_back(out[i]);
+    return kept;
+}
+
+bool watchExcluded(const std::string& path) {
+    auto has = [&](const std::string& part) {
+        // "/part/" anywhere, or the path ending in "/part" for a folder.
+        size_t at = path.find("/" + part + "/");
+        if (at != std::string::npos) return true;
+        return path.size() >= part.size() + 1 &&
+               path.compare(path.size() - part.size() - 1, std::string::npos, "/" + part) == 0;
+    };
+    if (has(".git") || has(".hg/store")) return true;
+    // node_modules/<package>/anything: the package folders themselves are
+    // reported (an install adding one), not what is inside them.
+    for (size_t at = path.find("/node_modules/"); at != std::string::npos;
+         at = path.find("/node_modules/", at + 1)) {
+        size_t pkg = at + 14;
+        size_t slash = path.find('/', pkg);
+        if (slash != std::string::npos && slash + 1 < path.size()) return true;
+    }
+    return false;
+}
+
 // ------------------------------------------------------- Python servers
 PythonServer pythonServerKind(const std::vector<std::string>& argv) {
     for (const std::string& word : argv) {
@@ -1814,24 +2058,31 @@ void Client::initialize(const std::string& rootPath, int processId,
         {"documentSymbol", Json::object({{"hierarchicalDocumentSymbolSupport", true},
                                          {"symbolKind", symbolKinds}})},
     });
+    Json workspace = Json::object({{"workspaceFolders", true},
+                                  {"configuration", true},
+                                  {"applyEdit", true},
+                                  // Text edits only: an edit that would
+                                  // create, rename or delete a file is
+                                  // refused whole.
+                                  {"workspaceEdit",
+                                   Json::object({{"documentChanges", true},
+                                                 {"resourceOperations", Json::array()},
+                                                 {"failureHandling", "abort"}})},
+                                  {"executeCommand",
+                                   Json::object({{"dynamicRegistration", false}})},
+                                  {"symbol", Json::object({{"dynamicRegistration", false},
+                                                           {"symbolKind", symbolKinds}})},
+                                  {"didChangeConfiguration",
+                                   Json::object({{"dynamicRegistration", false}})}});
+    // Files changed on disk, for the watchers a server registers, only
+    // from an owner that sends them: a server told the client watches
+    // stops watching for itself (rust-analyzer does).
+    if (fileWatching_)
+        workspace.set("didChangeWatchedFiles", Json::object({{"dynamicRegistration", true},
+                                                             {"relativePatternSupport", true}}));
     Json caps = Json::object({
         {"textDocument", textDocument},
-        {"workspace", Json::object({{"workspaceFolders", true},
-                                    {"configuration", true},
-                                    {"applyEdit", true},
-                                    // Text edits only: an edit that would
-                                    // create, rename or delete a file is
-                                    // refused whole.
-                                    {"workspaceEdit",
-                                     Json::object({{"documentChanges", true},
-                                                   {"resourceOperations", Json::array()},
-                                                   {"failureHandling", "abort"}})},
-                                    {"executeCommand",
-                                     Json::object({{"dynamicRegistration", false}})},
-                                    {"symbol", Json::object({{"dynamicRegistration", false},
-                                                             {"symbolKind", symbolKinds}})},
-                                    {"didChangeConfiguration",
-                                     Json::object({{"dynamicRegistration", false}})}})},
+        {"workspace", workspace},
         {"general", Json::object({{"positionEncodings", Json::array().push("utf-16")}})},
     });
     Json params = Json::object({
@@ -2231,6 +2482,37 @@ void Client::handleMessage(const Json& msg) {
     if (h) h(result, error);
 }
 
+std::vector<FileWatcher> Client::fileWatchers() const {
+    std::vector<FileWatcher> out;
+    for (const auto& kv : watchers_) out.insert(out.end(), kv.second.begin(), kv.second.end());
+    return out;
+}
+
+std::vector<std::string> Client::watchedBases() const {
+    std::vector<std::string> out;
+    for (const FileWatcher& w : fileWatchers())
+        if (!w.base.empty() && std::find(out.begin(), out.end(), w.base) == out.end())
+            out.push_back(w.base);
+    return out;
+}
+
+size_t Client::didChangeWatchedFiles(const std::vector<FileChange>& changes) {
+    if (state_ != State::Ready || watchers_.empty()) return 0;
+    const std::vector<FileWatcher> all = fileWatchers();
+    Json list = Json::array();
+    size_t n = 0;
+    for (const FileChange& c : changes) {
+        bool wanted = false;
+        for (const FileWatcher& w : all)
+            if (watcherMatches(w, rootPath_, c)) { wanted = true; break; }
+        if (!wanted) continue;
+        list.push(Json::object({{"uri", uriFromPath(c.path)}, {"type", (int)c.type}}));
+        n++;
+    }
+    if (n) notify("workspace/didChangeWatchedFiles", Json::object({{"changes", list}}));
+    return n;
+}
+
 void Client::handleServerRequest(const Json& msg) {
     const std::string& method = msg["method"].asString();
     const Json& id = msg["id"];
@@ -2260,9 +2542,28 @@ void Client::handleServerRequest(const Json& msg) {
     } else if (method == "workspace/workspaceFolders") {
         std::string uri = uriFromPath(rootPath_);
         respond(id, Json::array().push(Json::object({{"uri", uri}, {"name", rootPath_}})));
+    } else if (method == "client/registerCapability" ||
+               method == "client/unregisterCapability") {
+        // Only watched files are registered; anything else is acknowledged
+        // and ignored, as before (the server then works without it).
+        bool changed = false;
+        if (method == "client/registerCapability") {
+            for (const Json& r : msg["params"]["registrations"].elements()) {
+                if (r["method"].asString() != "workspace/didChangeWatchedFiles") continue;
+                watchers_[r["id"].asString()] = parseFileWatchers(r["registerOptions"]);
+                changed = true;
+            }
+        } else {
+            // The specification spells it "unregisterations".
+            const Json& p = msg["params"];
+            const Json& list = p.has("unregisterations") ? p["unregisterations"]
+                                                         : p["unregistrations"];
+            for (const Json& r : list.elements())
+                if (watchers_.erase(r["id"].asString())) changed = true;
+        }
+        respond(id, Json());
+        if (changed && onWatchersChanged) onWatchersChanged();
     } else if (method == "window/workDoneProgress/create" ||
-               method == "client/registerCapability" ||
-               method == "client/unregisterCapability" ||
                method == "window/showMessageRequest" ||
                method == "workspace/diagnostic/refresh" ||
                method == "workspace/semanticTokens/refresh" ||

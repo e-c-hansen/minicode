@@ -126,8 +126,8 @@ goes here first, with tests; the GUI only displays it.
   (Format Document's plan), `InstallHints`.
 - Language servers: `LspClient` (protocol, results, WorkspaceEdits, diagnostics
   with versions, completion edits, symbols, folding ranges, the second server's
-  routing and `DiagnosticStore`, the Problems rows), `PythonEnvs` (interpreters
-  found without running any).
+  routing and `DiagnosticStore`, the Problems rows, watched files' globs and
+  registrations), `PythonEnvs` (interpreters found without running any).
 - Terminal: `TerminalStream` (bytes to lines and shell events; `TermParser`,
   `applySgr`, `termCharWidth`), `TerminalScreen` (the grid, scrollback, reflow,
   find, mouse encoding), `TermLinks`.
@@ -158,8 +158,8 @@ goes here first, with tests; the GUI only displays it.
 - Language servers: `Lsp.mm` (`LspSession`, one per window), `LspServer`
   (processes), `LspPopups` (completion, hover, signature), `LspShared.h` (only
   the Lsp files import it), `LspPanel` (status item, popover, interpreter
-  sheet), `LspPicker` (references and fixes list, rename box), `ProblemsPanel`,
-  `InstallPanel`.
+  sheet), `LspPicker` (references and fixes list, rename box), `LspWatcher`
+  (files changed on disk, for the servers), `ProblemsPanel`, `InstallPanel`.
 - `AppSettings`, `Appearance` (Adjust Settings, Theme menu, opacity popover),
   `Keymap`.
 - Terminal: `Terminal` (`TerminalView`, `MCPty`, the shell integration),
@@ -1010,6 +1010,19 @@ view is disposed (on `unrealize`), or dispose loops forever.
   edited-but-unsaved files from disk.
 - Requests during the handshake are queued; server-to-client requests are
   always answered (nulls for configuration, -32601 for unknown methods).
+- **Watched files** (2026-11-06): `client/registerCapability` for
+  `workspace/didChangeWatchedFiles` is kept (others are answered null and
+  ignored), and `MCLspWatcher`, made with the first registration, sends
+  what the servers' globs want (`Lsp::globMatch`, RelativePatterns below
+  their base): its own FSEvents stream with file events on the folder and
+  the patterns' folders outside it (basedpyright registers `**` and its
+  site-packages, Ruff its config files), files open in tabs included,
+  `.git`, `.hg/store` and node_modules' packages left out. The capability
+  is offered only by an owner that sends (`setFileWatching`, the Mac): told
+  the client watches, rust-analyzer stops watching itself, so the GTK port
+  does not offer it. Trap: FSEvents keeps a file's created flag on its
+  later events, so a path already reported is Changed whatever the flags
+  say (`Lsp::FileEventClassifier`).
 - **Lookup** (`MCFindProgram`): PATH plus Homebrew, Cargo, Go, ~/.local/bin,
   npm's prefixes, nvm and fnm (newest first), volta, pnpm, bun, pip --user,
   pyenv, MacPorts, /usr/bin and keg-only llvm, since a Finder-launched app has
@@ -1055,7 +1068,8 @@ view is disposed (on `unrealize`), or dispose loops forever.
   (`Lsp::mergeCodeActions`, 3 s); Organize Imports (Shift+Option+O) prefers a
   tool's `source.organizeImports.<tool>` (`pickOrganizeImports`); basedpyright
   offers none. Traps: Ruff's diagnostic source is "Ruff", its server name
-  "ruff"; editing ruff.toml needs a restart (no dynamic registration).
+  "ruff". Editing ruff.toml reaches Ruff through watched files, with no
+  restart (`lsp_watch` checks it where Ruff is installed).
 - **Python interpreter**: the folder's choice (`MCPythonInterpreters`),
   `python.interpreter`, the nearest .venv/venv/env, `$VIRTUAL_ENV`,
   `$CONDA_PREFIX`, else the server's own (/usr/bin/python3 skipped). Sent only
@@ -1142,15 +1156,31 @@ view is disposed (on `unrealize`), or dispose loops forever.
   blocks and classifies each (`MdLine`); the inline pass reads a whole block,
   so emphasis spans lines, with the delimiter rules (underscores inside a word
   never emphasise; stars do, as on GitHub). Only a few HTML tags mean anything;
-  others are dropped, their text kept. Between blocks comes exactly one `"\n"`
+  others are dropped, their text kept. CommonMark's HTML blocks (2026-11-06,
+  `htmlBlockStart`) are read by `Inline::parseHtml`, tags and entities only
+  (a block-level tag breaks the line; a `<h2>` line inside stays a heading;
+  `<script>`, `<style>`, `<?`, `<!X` hidden; `<pre>` as code), `MdLine::Html`
+  and `MarkdownEdit::Block::Html` (appended to both enums; Linux's and
+  Android's title lists follow). GFM footnotes: definitions are `Block`s with
+  `note`, left out of the page and emitted after it (a rule, then a numbered
+  list, `MdRun::footnotes`) in the order `Notes::refer` numbers them;
+  references are runs with `footnote`; `MdRun::anchor` names what `#fn-N` and
+  `#fnref-N` land on (the Mac and Linux record them; Android does not yet).
+  Quotes carry `quoteDepth` and, inside a list item, `quoteIndent`; a quote
+  keeps its own list stack (`quoteList`), and a fence in an item its depth.
+  Between blocks comes exactly one `"\n"`
   run with `gap` set, however many blank lines. Brackets are matched once per
   block with a stack and nesting stops at 8, so bad input stays linear.
   `MarkdownEdit` asks `MarkdownParser::lines` rather than classifying itself,
-  so the preview and a double-click agree. Tests: `md:*`,
-  `tests/markdown/corpus.md`.
+  so the preview and a double-click agree. Tests: `md:*` (GFM's in
+  `tests/markdown_gfm_tests.inc`), `tests/markdown/corpus.md`, and the
+  `markdown_preview` GUI suite.
 - **The Mac's page** (+MarkdownRender): a paragraph's style comes from its
   first run; quotes and code blocks are `NSTextBlock`s, one object carried
-  across a block's paragraphs so its bar or box is drawn once; h1, h2 and rules
+  across a block's paragraphs so its bar or box is drawn once (a quote one
+  block a level, nested); in a list item the bar or box sits in a plain
+  indent block of its own, kept on it as an associated object, since a
+  margin on the box itself still had its background drawn under it; h1, h2 and rules
   are bordered text blocks; list text at 24 points a level with the marker
   right-aligned on a tab; a hard break is U+2028; gaps are 12 points. Fenced
   code naming a language (`MdRun::lang`,
@@ -1169,8 +1199,9 @@ view is disposed (on `unrealize`), or dispose loops forever.
   (heading text, list item with continuations, paragraph or quote, code between
   fences, a table cell with newlines and pipes escaped back, a `$$` block
   whole); `applyMarkdownSource:` splices, marks dirty, registers undo,
-  re-renders at the same scroll, and drops an edit if the buffer changed
-  meanwhile.
+  re-renders at the same scroll. An edit made while the buffer changed
+  underneath is not applied: its text goes to the clipboard with a status
+  note (`MCKeepLostMarkdownEdit`).
 - **Pictures**: `MCMarkdownImage` attachments with `MCAnimatedImageCell` (sized
   to the line; a GIF's timer runs only while on screen). Traps: the TextKit 1
   editor never asks for a TextKit 2 view provider (1.4.1 shipped still GIFs);
@@ -1511,7 +1542,8 @@ for full-screen programs. Both can be open at once.
   (`HistLine`: text in one string, a style run per change, a per-cell table
   only for lines with anything but one byte of width 1 per cell, offset << 2 |
   width, offsets under 1 GiB; 2 to 6 MB per 10,000 lines where cells took 30
-  to 59 MB). A cell keeps at most `kTermMaxCellBytes` (32) of character and
+  to 59 MB). A cell keeps at most `kTermMaxCellBytes` (64; a skin-toned
+  family emoji is 41) of character and
   marks, in both models: 4 MB of U+0301 made one cell every frame copied,
   and past 16 MiB on a line the old 24-bit offsets wrapped and find read out
   of bounds. `lineCell` returns by value;
@@ -1532,6 +1564,31 @@ for full-screen programs. Both can be open at once.
   `textBetween`, `find` (`TermMatch` end line and column), links, words and
   `recentText` read across wraps. The view resizes through
   `resizeScreenToCols:rows:`.
+- **Widths and clusters** (2026-11-06): `termCharWidth` is tables generated
+  from Unicode 16 (Mn, Me, Cf zero but U+00AD; Hangul medial and final jamo
+  and skin tones zero; East Asian W and F two) between markers in
+  TerminalStream.cpp by `tools/gen-term-width.py`, run by hand on the UCD
+  files (fetched into a scratch folder, not kept); never edit the ranges by
+  hand. The hand-written table gave 1,256 BMP combining marks a column, so
+  Hebrew, Arabic, Indic and Thai lines put the cursor where ZLE did not.
+  `termJoinsCluster`: a pictograph after an emoji ending in ZWJ, and a
+  flag's second regional indicator, join the cell before (both models);
+  VS16 after a pictograph, a ZWJ join or a flag widen a narrow cell to two
+  in place (not at the right edge, not in insert mode).
+- **Marks on the screen** (2026-11-06): `TerminalScreen` keeps OSC 133 A, C
+  and D (nonce-checked, `setMarkNonce`, as the stream) where they came, as
+  a line number from `historyBase` and a column in `marks_`, moved by
+  `scrollUp`/`scrollDown` (regions, IL/DL), dropped by ED 2, ED 3, RIS,
+  `clearAll`, `clearToCursorLine` and the scrollback limit, carried through
+  `resize` as reflow points (reflowMain looks only at each line's own
+  points: thousands of marks over 100,000 lines), and an A followed by
+  PROMPT_SP's wrap moves down to the prompt. `commands()`, `commandOutput`,
+  `previous/nextCommandLine`. The grid: Cmd+Up and Cmd+Down to the previous
+  or next command that ran (outlined, its prompt at the top), Shift to
+  select whole lines from where the first press started; a red bar beside a
+  failed command's prompt; Terminal > Copy Last Command Output. Fixed
+  `Terminal` rows in the registry, so the editor keeps Move Line and Copy
+  Line; the keys reach the grid's `keyDown:` (no menu item has them).
 - **Mouse and focus**: modes 9, 1000, 1002, 1003, encodings 1005, 1006, 1015,
   and focus (1004) are tracked, answered by DECRQM and encoded by `encodeMouse`
   and `encodeFocus`. The view's `reportsMouse:` gate: the program asked, the
