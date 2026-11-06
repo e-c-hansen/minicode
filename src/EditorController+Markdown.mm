@@ -35,6 +35,8 @@
     [self revealEditor];
     NSTextView *tv = self.textView;
     const BOOL toPreview = !self.previewMode;
+    const BOOL overText = MCViewerKindOverText(self.viewerKind);   // a CSV table
+    if (overText) [_viewers commitEditing];   // a cell being typed into is kept
     NSInteger sourceLine = -1;       // the caret's line, for the preview to show
     NSInteger previewLine = -1;      // the line at the top of a scrolled preview
     if (toPreview) {
@@ -50,6 +52,7 @@
         previewLine = [self markdownSourceLineNear:top];
     }
     if (tv.editable) self.sourceText = tv.string;  // keep edits
+    if (overText && toPreview) [self endTextSessionOfTab:_activeTab];
     self.previewMode = toPreview;
     [self refreshDisplay];
     [self updateTitle];
@@ -79,6 +82,20 @@
     if (!self.previewMode) [self.window makeFirstResponder:tv];
     else if (MCViewerKindOverText(self.viewerKind) && _viewers.focusView)
         [self.window makeFirstResponder:_viewers.focusView];
+}
+
+// Back from a CSV's text to its table. The table empties the text view,
+// so NSTextView's typing steps on the tab's undo stack would undo into
+// nothing (or throw) there: they go, and what they did becomes one step
+// from the text as it was put on show, which the table can undo.
+- (void)endTextSessionOfTab:(MCTab *)t {
+    NSUndoManager *undo = t.undoManager;
+    [undo removeAllActionsWithTarget:self.textView.textStorage];
+    NSString *start = t.textSessionStart;
+    t.textSessionStart = nil;
+    NSString *now = t.sourceText ?: @"";
+    if (start && ![start isEqualToString:now])
+        [self registerViewerUndoFrom:start to:now actionName:@"Typing"];
 }
 
 // Where character `i` of the editor is drawn, in the text view's coordinates;
@@ -343,7 +360,10 @@
                 for (size_t k = i; k < runs.size() && runs[k].heading > 0 &&
                                    runs[k].line == r.line; k++)
                     title += runs[k].text;
-                NSString *slug = MCMarkdownAnchor([NSString stringWithUTF8String:title.c_str()]);
+                // The core's anchor, so links land where they do on Linux and Android.
+                const std::string anchor = MarkdownParser::anchor(title);
+                NSString *slug = [[NSString alloc] initWithBytes:anchor.data() length:anchor.size()
+                                                        encoding:NSUTF8StringEncoding] ?: @"";
                 // GitHub numbers repeats: intro, intro-1, intro-2.
                 NSString *key = slug;
                 for (int n = 1; anchors[key]; n++)

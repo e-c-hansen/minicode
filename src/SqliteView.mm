@@ -19,6 +19,121 @@ int StopAtDeadline(void *ctx) {
     }
     return 0;
 }
+
+// sqlite3_stmt_readonly lets through what changes no bytes but still
+// reaches past the viewer: BEGIN (a read transaction then holds a lock
+// other writers wait on, and the rows on show freeze), SAVEPOINT, ATTACH
+// and DETACH, and pragmas that set something (query_only = OFF). Those are
+// refused here; pragmas that only read, with or without a table name, run.
+int Authorize(void *, int action, const char *a, const char *b, const char *, const char *) {
+    switch (action) {
+    case SQLITE_TRANSACTION:
+    case SQLITE_SAVEPOINT:
+    case SQLITE_ATTACH:
+    case SQLITE_DETACH:
+        return SQLITE_DENY;
+    case SQLITE_PRAGMA: {
+        if (!b) return SQLITE_OK;   // asks for a setting
+        static const char *const reads[] = {
+            "table_info", "table_xinfo", "index_list", "index_info", "index_xinfo",
+            "foreign_key_list", "foreign_key_check", "integrity_check", "quick_check",
+            "table_list"};
+        for (const char *r : reads)
+            if (a && sqlite3_stricmp(a, r) == 0) return SQLITE_OK;
+        return SQLITE_DENY;
+    }
+    default:
+        return SQLITE_OK;
+    }
+}
+
+// The database's header says WAL (bytes 18 and 19 are 2).
+bool IsWalFile(NSString *path) {
+    NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:path];
+    NSData *head = [fh readDataUpToLength:20 error:nil];
+    [fh closeFile];
+    if (head.length < 20) return false;
+    const unsigned char *b = (const unsigned char *)head.bytes;
+    return b[18] == 2 && b[19] == 2;
+}
+
+struct Opened {
+    sqlite3 *db = nullptr;
+    NSString *problem = nil;
+    NSArray<NSString *> *names = nil;
+    NSDictionary<NSString *, NSString *> *sql = nil, *types = nil;
+};
+
+// One read-only open with `query` in the URI, and the list of tables and
+// views; on the database's queue. A failure leaves db null and says why;
+// *cantOpen when SQLite could not open the file at all.
+Opened OpenWith(NSString *path, NSString *query, bool *cantOpen) {
+    Opened o;
+    *cantOpen = false;
+    NSURLComponents *uri = [NSURLComponents componentsWithURL:[NSURL fileURLWithPath:path]
+                                      resolvingAgainstBaseURL:NO];
+    uri.query = query;
+    sqlite3 *db = nullptr;
+    if (sqlite3_open_v2(uri.string.UTF8String, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI,
+                        nullptr) != SQLITE_OK) {
+        *cantOpen = !db || sqlite3_errcode(db) == SQLITE_CANTOPEN;
+        o.problem = db ? @(sqlite3_errmsg(db)) : @"cannot open";
+        sqlite3_close_v2(db);
+        return o;
+    }
+    sqlite3_exec(db, "PRAGMA query_only = ON", nullptr, nullptr, nullptr);
+    sqlite3_db_config(db, SQLITE_DBCONFIG_DEFENSIVE, 1, nullptr);
+    sqlite3_set_authorizer(db, Authorize, nullptr);
+    NSMutableArray *n = [NSMutableArray array];
+    NSMutableDictionary *s = [NSMutableDictionary dictionary], *t = [NSMutableDictionary dictionary];
+    sqlite3_stmt *st = nullptr;
+    const char *list = "SELECT name, type, sql FROM sqlite_master "
+                       "WHERE type IN ('table', 'view') ORDER BY type = 'view', name";
+    int rc = sqlite3_prepare_v2(db, list, -1, &st, nullptr);
+    if (rc == SQLITE_OK) {
+        while ((rc = sqlite3_step(st)) == SQLITE_ROW) {
+            const char *name = (const char *)sqlite3_column_text(st, 0);
+            const char *type = (const char *)sqlite3_column_text(st, 1);
+            const char *text = (const char *)sqlite3_column_text(st, 2);
+            if (!name) continue;
+            NSString *key = @(name);
+            [n addObject:key];
+            t[key] = type ? @(type) : @"table";
+            s[key] = text ? @(text) : @"";
+        }
+        if (rc == SQLITE_DONE) rc = SQLITE_OK;
+    }
+    if (rc != SQLITE_OK) {
+        *cantOpen = (sqlite3_extended_errcode(db) & 0xFF) == SQLITE_CANTOPEN;
+        o.problem = @(sqlite3_errmsg(db));   // not a database after all, or no -wal to make
+    }
+    sqlite3_finalize(st);
+    if (o.problem) {
+        sqlite3_close_v2(db);
+        return o;
+    }
+    o.db = db;
+    o.names = n;
+    o.sql = s;
+    o.types = t;
+    return o;
+}
+
+// Opens the database read-only. A WAL database whose last writer closed
+// has no -wal or -shm beside it, and a read-only connection cannot make
+// them, so it would not open; with no -wal file there is nothing outside
+// the main file to miss, and it is opened as immutable instead.
+Opened OpenDatabase(NSString *path) {
+    bool cantOpen = false;
+    Opened o = OpenWith(path, @"mode=ro", &cantOpen);
+    if (!o.db && cantOpen && IsWalFile(path) &&
+        ![[NSFileManager defaultManager] fileExistsAtPath:[path stringByAppendingString:@"-wal"]]) {
+        bool again = false;
+        Opened i = OpenWith(path, @"mode=ro&immutable=1", &again);
+        if (i.db) return i;
+    }
+    return o;
+}
 }  // namespace
 
 static NSString *Quoted(NSString *name) {
@@ -40,14 +155,19 @@ static NSColor *Muted(void) {
     NSArray<NSString *> *_names;
     NSDictionary<NSString *, NSString *> *_sql, *_types;
     NSArray<NSString *> *_columns;
-    NSArray<NSArray<NSString *> *> *_rows;
+    NSArray<NSArray *> *_rows;              // NSNull for SQL NULL
     NSTableView *_objects, *_grid;
     NSScrollView *_objectsScroll, *_gridScroll, *_schemaScroll;
     NSTextView *_schema;
     NSTextField *_query, *_status;
     NSButton *_run;
     uint64_t _generation;
-    BOOL _busy;
+    BOOL _busy, _restoring;
+    NSString *_object;        // the table or view on show, nil after a query
+    NSString *_ranQuery;      // the query on show, nil for a table
+    // Per database, what was on show, so a reopen (the file changed on
+    // disk, or the tab shown again) comes back to it.
+    NSMutableDictionary<NSString *, NSDictionary *> *_remembered;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -180,7 +300,18 @@ static NSColor *Muted(void) {
 - (NSArray<NSString *> *)objectNames { return _names ?: @[]; }
 - (NSString *)schemaText { return _schema.string; }
 - (NSArray<NSString *> *)columns { return _columns ?: @[]; }
-- (NSArray<NSArray<NSString *> *> *)rows { return _rows ?: @[]; }
+- (NSArray<NSArray<NSString *> *> *)rows {
+    NSMutableArray *out = [NSMutableArray arrayWithCapacity:_rows.count];
+    for (NSArray *r in _rows) {
+        NSMutableArray *row = [NSMutableArray arrayWithCapacity:r.count];
+        for (id v in r) [row addObject:v == NSNull.null ? @"NULL" : v];
+        [out addObject:row];
+    }
+    return out;
+}
+- (BOOL)isNullAtRow:(NSUInteger)row column:(NSUInteger)column {
+    return row < _rows.count && column < _rows[row].count && _rows[row][column] == (id)NSNull.null;
+}
 - (NSString *)statusText { return _status.stringValue; }
 - (BOOL)busy { return _busy; }
 - (NSTextField *)queryField { return _query; }
@@ -190,79 +321,91 @@ static NSColor *Muted(void) {
 // ------------------------------------------------------------ opening
 - (BOOL)showDatabase:(NSString *)path {
     [self close];   // the same file again (changed on disk) is read afresh
-    __block sqlite3 *db = nullptr;
-    __block NSString *problem = nil;
-    __block NSArray *names = nil;
-    __block NSDictionary *sql = nil, *types = nil;
-    // mode=ro in the URI and the read-only flag: SQLite will not write the
-    // file, and will not create it either.
-    NSURLComponents *uri = [NSURLComponents componentsWithURL:[NSURL fileURLWithPath:path]
-                                      resolvingAgainstBaseURL:NO];
-    uri.query = @"mode=ro";
-    NSString *spec = uri.string;
-    dispatch_sync(_queue, ^{
-        if (sqlite3_open_v2(spec.UTF8String, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nullptr) !=
-            SQLITE_OK) {
-            problem = db ? @(sqlite3_errmsg(db)) : @"cannot open";
-            sqlite3_close_v2(db);
-            db = nullptr;
-            return;
-        }
-        sqlite3_exec(db, "PRAGMA query_only = ON", nullptr, nullptr, nullptr);
-        sqlite3_db_config(db, SQLITE_DBCONFIG_DEFENSIVE, 1, nullptr);
-        NSMutableArray *n = [NSMutableArray array];
-        NSMutableDictionary *s = [NSMutableDictionary dictionary], *t = [NSMutableDictionary dictionary];
-        sqlite3_stmt *st = nullptr;
-        const char *list = "SELECT name, type, sql FROM sqlite_master "
-                           "WHERE type IN ('table', 'view') ORDER BY type = 'view', name";
-        if (sqlite3_prepare_v2(db, list, -1, &st, nullptr) == SQLITE_OK) {
-            while (sqlite3_step(st) == SQLITE_ROW) {
-                const char *name = (const char *)sqlite3_column_text(st, 0);
-                const char *type = (const char *)sqlite3_column_text(st, 1);
-                const char *text = (const char *)sqlite3_column_text(st, 2);
-                if (!name) continue;
-                NSString *key = @(name);
-                [n addObject:key];
-                t[key] = type ? @(type) : @"table";
-                s[key] = text ? @(text) : @"";
-            }
-        } else {
-            problem = @(sqlite3_errmsg(db));   // not a database after all
-        }
-        sqlite3_finalize(st);
-        if (problem) {
-            sqlite3_close_v2(db);
-            db = nullptr;
-            return;
-        }
-        names = n;
-        sql = s;
-        types = t;
-    });
-    if (!db) {
-        _status.stringValue = problem ?: @"";
-        return NO;
-    }
-    _db = db;
     _path = [path copy];
-    _names = names;
-    _sql = sql;
-    _types = types;
-    [_objects reloadData];
-    _status.stringValue = names.count
-        ? [NSString stringWithFormat:@"%lu %@, read-only", (unsigned long)names.count,
-                                     names.count == 1 ? @"table" : @"tables and views"]
-        : @"No tables, read-only";
-    if (names.count) {
-        [_objects selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
-        [self showObject:names.firstObject];
-    }
+    NSDictionary *place = _remembered[path];
+    _query.stringValue = place[@"query"] ?: @"";   // another database's query is not this one's
+    const uint64_t gen = ++_generation;
+    _busy = YES;
+    _status.stringValue = @"Opening…";
+    _status.textColor = Muted();
+    // Opened on the queue, never on the main thread: a database on a slow
+    // volume, or a query still giving way on the queue, holds up nothing.
+    __weak MCSqliteView *weakSelf = self;
+    NSString *file = [path copy];
+    dispatch_queue_t queue = _queue;
+    dispatch_async(queue, ^{
+        Opened o = OpenDatabase(file);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            MCSqliteView *me = weakSelf;
+            if (!me || gen != me->_generation) {
+                sqlite3 *db = o.db;
+                if (db) dispatch_async(queue, ^{ sqlite3_close_v2(db); });
+                return;
+            }
+            [me opened:o place:place];
+        });
+    });
     return YES;
 }
 
+// The open's result, on the main thread. A database SQLite cannot open is
+// said so in the tab, rather than left to Quick Look's blank icon.
+- (void)opened:(const Opened &)o place:(NSDictionary *)place {
+    _busy = NO;
+    if (!o.db) {
+        _status.stringValue = [NSString stringWithFormat:@"This database cannot be opened: %@",
+                                                         o.problem ?: @"unknown error"];
+        _status.textColor = [NSColor systemOrangeColor];
+        return;
+    }
+    _db = o.db;
+    _names = o.names;
+    _sql = o.sql;
+    _types = o.types;
+    [_objects reloadData];
+    _status.stringValue = _names.count
+        ? [NSString stringWithFormat:@"%lu %@, read-only", (unsigned long)_names.count,
+                                     _names.count == 1 ? @"table" : @"tables and views"]
+        : @"No tables, read-only";
+    // Back to what was on show, if it is still there; else the first table.
+    NSString *object = place[@"object"];
+    NSUInteger row = object ? [_names indexOfObject:object] : NSNotFound;
+    if (row == NSNotFound && _names.count) row = 0;
+    NSString *ran = place[@"ran"];
+    if (row != NSNotFound) {
+        _restoring = YES;   // the selection change below shows nothing by itself
+        [_objects selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+        _restoring = NO;
+        [_objects scrollRowToVisible:(NSInteger)row];
+        if (ran) {
+            _schema.string = _sql[_names[row]] ?: @"";
+            _object = _names[row];
+        } else {
+            [self showObject:_names[row]];
+        }
+    }
+    if (ran) [self runQuery:ran];
+}
+
+// What is on show, kept for when this database is opened again.
+- (void)rememberPlace {
+    if (!_path) return;
+    if (!_remembered) _remembered = [NSMutableDictionary dictionary];
+    if (_remembered.count >= 50 && !_remembered[_path]) [_remembered removeAllObjects];
+    NSMutableDictionary *p = [NSMutableDictionary dictionary];
+    if (_object) p[@"object"] = _object;
+    if (_ranQuery) p[@"ran"] = _ranQuery;
+    if (_query.stringValue.length) p[@"query"] = _query.stringValue;
+    _remembered[_path] = p;
+}
+
 - (void)close {
+    // Still opening (no _db yet): what was asked to come back stays asked.
+    if (_db) [self rememberPlace];
     _generation++;
     _busy = NO;
+    _object = nil;
+    _ranQuery = nil;
     sqlite3 *db = _db;
     _db = nullptr;
     if (db) {
@@ -283,6 +426,8 @@ static NSColor *Muted(void) {
 - (void)showObject:(NSString *)name {
     if (!name || !_sql[name]) return;
     _schema.string = _sql[name];
+    _object = name;
+    _ranQuery = nil;
     [self run:[NSString stringWithFormat:@"SELECT * FROM %@", Quoted(name)] fromList:YES];
 }
 
@@ -293,6 +438,7 @@ static NSColor *Muted(void) {
 }
 
 - (void)runQuery:(NSString *)sql {
+    _ranQuery = [sql copy];
     [self run:sql fromList:NO];
 }
 
@@ -321,8 +467,11 @@ static NSColor *Muted(void) {
     sqlite3_stmt *st = nullptr;
     const char *tail = nullptr;
     if (sqlite3_prepare_v2(db, sql.UTF8String, -1, &st, &tail) != SQLITE_OK || !st) {
-        NSString *why = st ? @(sqlite3_errmsg(db)) : (sqlite3_errcode(db) == SQLITE_OK
-                                                        ? @"nothing to run" : @(sqlite3_errmsg(db)));
+        NSString *why = sqlite3_errcode(db) == SQLITE_AUTH
+            ? @"Not run: the database is open read-only, and this statement would start a "
+              @"transaction, attach a database, or change a setting."
+            : st ? @(sqlite3_errmsg(db))
+                 : (sqlite3_errcode(db) == SQLITE_OK ? @"nothing to run" : @(sqlite3_errmsg(db)));
         sqlite3_finalize(st);
         return @{@"error": why};
     }
@@ -343,15 +492,15 @@ static NSColor *Muted(void) {
         const char *name = sqlite3_column_name(st, i);
         [columns addObject:name ? @(name) : @""];
     }
-    NSMutableArray<NSArray<NSString *> *> *rows = [NSMutableArray array];
+    NSMutableArray<NSArray *> *rows = [NSMutableArray array];
     BOOL truncated = NO;
     int rc;
     while ((rc = sqlite3_step(st)) == SQLITE_ROW) {
         if (rows.count == MCSqliteMaxRows) { truncated = YES; break; }
-        NSMutableArray<NSString *> *row = [NSMutableArray arrayWithCapacity:(NSUInteger)n];
+        NSMutableArray *row = [NSMutableArray arrayWithCapacity:(NSUInteger)n];
         for (int i = 0; i < n; i++) {
             switch (sqlite3_column_type(st, i)) {
-            case SQLITE_NULL: [row addObject:@"NULL"]; break;
+            case SQLITE_NULL: [row addObject:NSNull.null]; break;   // not the text "NULL"
             case SQLITE_BLOB:
                 [row addObject:[NSString stringWithFormat:@"<%d bytes>", sqlite3_column_bytes(st, i)]];
                 break;
@@ -372,6 +521,14 @@ static NSColor *Muted(void) {
                              : @(sqlite3_errmsg(db));
     sqlite3_progress_handler(db, 0, nullptr, nullptr);
     sqlite3_finalize(st);
+    // Nothing the authorizer lets through opens a transaction, but should
+    // one be open, it is ended: a read transaction left open locks out
+    // other writers and freezes what the viewer shows.
+    if (!sqlite3_get_autocommit(db)) {
+        sqlite3_set_authorizer(db, nullptr, nullptr);
+        sqlite3_exec(db, "ROLLBACK", nullptr, nullptr, nullptr);
+        sqlite3_set_authorizer(db, Authorize, nullptr);
+    }
     NSMutableDictionary *out = [@{@"columns": columns, @"rows": rows, @"truncated": @(truncated),
                                   @"seconds": @(CFAbsoluteTimeGetCurrent() - start),
                                   @"more": @(more)} mutableCopy];
@@ -417,8 +574,10 @@ static NSColor *Muted(void) {
         col.dataCell = cell;
         col.editable = NO;
         NSUInteger widest = MAX(_columns[i].length, (NSUInteger)3);
-        for (NSUInteger r = 0; r < MIN(_rows.count, (NSUInteger)200); r++)
-            widest = MAX(widest, _rows[r][i].length);
+        for (NSUInteger r = 0; r < MIN(_rows.count, (NSUInteger)200); r++) {
+            id v = _rows[r][i];
+            widest = MAX(widest, v == NSNull.null ? (NSUInteger)4 : [v length]);
+        }
         col.width = MIN(MAX(charW * widest + 14, 48), 360);
         [_grid addTableColumn:col];
     }
@@ -435,9 +594,10 @@ static NSColor *Muted(void) {
         NSString *name = _names[(NSUInteger)row];
         return [_types[name] isEqualToString:@"view"] ? [name stringByAppendingString:@"  (view)"] : name;
     }
-    NSArray<NSString *> *r = _rows[(NSUInteger)row];
+    NSArray *r = _rows[(NSUInteger)row];
     const NSUInteger i = (NSUInteger)col.identifier.integerValue;
-    return i < r.count ? r[i] : @"";
+    if (i >= r.count) return @"";
+    return r[i] == NSNull.null ? @"NULL" : r[i];
 }
 
 - (void)tableView:(NSTableView *)tv willDisplayCell:(id)cell forTableColumn:(NSTableColumn *)col
@@ -447,14 +607,17 @@ static NSColor *Muted(void) {
         c.textColor = [[AppSettings shared] text:Surface::Editor];
         return;
     }
-    NSArray<NSString *> *r = _rows[(NSUInteger)row];
-    const NSUInteger i = (NSUInteger)col.identifier.integerValue;
-    const BOOL null = i < r.count && [r[i] isEqualToString:@"NULL"];
+    const BOOL null = [self isNullAtRow:(NSUInteger)row column:(NSUInteger)col.identifier.integerValue];
     c.textColor = null ? Muted() : [[AppSettings shared] text:Surface::Editor];
+    // NULL in italics as well as muted, so the text "NULL" never passes for it.
+    NSFont *font = c.font ?: [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+    NSFontManager *fm = [NSFontManager sharedFontManager];
+    c.font = null ? [fm convertFont:font toHaveTrait:NSItalicFontMask]
+                  : [fm convertFont:font toNotHaveTrait:NSItalicFontMask];
 }
 
 - (void)tableViewSelectionDidChange:(NSNotification *)n {
-    if (n.object != _objects) return;
+    if (n.object != _objects || _restoring) return;
     const NSInteger row = _objects.selectedRow;
     if (row >= 0 && row < (NSInteger)_names.count) [self showObject:_names[(NSUInteger)row]];
 }

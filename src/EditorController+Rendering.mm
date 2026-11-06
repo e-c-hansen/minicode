@@ -350,18 +350,61 @@ static void *kMediaItemContext = &kMediaItemContext;
 
 - (void)setViewerText:(NSString *)text actionName:(NSString *)name reshow:(BOOL)reshow {
     NSString *old = self.sourceText ?: @"";
-    if (!text || [text isEqualToString:old]) return;
-    NSUndoManager *undo = _activeTab.undoManager;
-    __weak EditorController *weakSelf = self;
-    [undo registerUndoWithTarget:self handler:^(EditorController *target) {
-        (void)target;
-        [weakSelf setViewerText:old actionName:name reshow:YES];
-    }];
-    [undo setActionName:name];
+    if (!text || ![self registerViewerUndoFrom:old to:text actionName:name]) return;
     self.sourceText = text;
     [self noteEdited];
     [self updateTitle];
     if (reshow) [self refreshDisplay];   // an undo: the viewer (or the text) shows it
+}
+
+// The two texts differ only between a common start and a common end:
+// the range in each that differs. Linear, with no copies of either.
+static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
+    const CFIndex na = (CFIndex)a.length, nb = (CFIndex)b.length;
+    CFStringInlineBuffer ba, bb;
+    CFStringInitInlineBuffer((__bridge CFStringRef)a, &ba, CFRangeMake(0, na));
+    CFStringInitInlineBuffer((__bridge CFStringRef)b, &bb, CFRangeMake(0, nb));
+    CFIndex lead = 0;
+    while (lead < na && lead < nb &&
+           CFStringGetCharacterFromInlineBuffer(&ba, lead) == CFStringGetCharacterFromInlineBuffer(&bb, lead))
+        lead++;
+    CFIndex trail = 0;
+    while (trail < na - lead && trail < nb - lead &&
+           CFStringGetCharacterFromInlineBuffer(&ba, na - 1 - trail) ==
+               CFStringGetCharacterFromInlineBuffer(&bb, nb - 1 - trail))
+        trail++;
+    // Never split a surrogate pair at either edge.
+    while (lead > 0 && CFStringIsSurrogateLowCharacter(CFStringGetCharacterFromInlineBuffer(&ba, lead)))
+        lead--;
+    while (trail > 0 &&
+           CFStringIsSurrogateHighCharacter(CFStringGetCharacterFromInlineBuffer(&ba, na - trail - 1)))
+        trail--;
+    *inA = NSMakeRange((NSUInteger)lead, (NSUInteger)(na - lead - trail));
+    *inB = NSMakeRange((NSUInteger)lead, (NSUInteger)(nb - lead - trail));
+}
+
+// An undo step from `now` back to `old` on the tab's undo manager, NO when
+// they are the same text. The step keeps only the part of `old` that
+// differs (a cell edit in a 40 MB CSV keeps a few bytes, not 40 MB), and
+// puts it back into the tab's text, which is `now` when it is taken.
+- (BOOL)registerViewerUndoFrom:(NSString *)old to:(NSString *)now actionName:(NSString *)name {
+    NSRange inOld, inNow;
+    MCTextSplice(old, now, &inOld, &inNow);
+    if (inOld.length == 0 && inNow.length == 0) return NO;
+    NSString *piece = [old substringWithRange:inOld];
+    const NSUInteger expected = now.length;
+    NSUndoManager *undo = _activeTab.undoManager;
+    __weak EditorController *weakSelf = self;
+    [undo registerUndoWithTarget:self handler:^(EditorController *target) {
+        (void)target;
+        EditorController *me = weakSelf;
+        NSString *cur = me.sourceText ?: @"";
+        if (!me || cur.length != expected) { NSBeep(); return; }   // not the text it was made for
+        [me setViewerText:[cur stringByReplacingCharactersInRange:inNow withString:piece]
+               actionName:name reshow:YES];
+    }];
+    [undo setActionName:name];
+    return YES;
 }
 
 // Show the active tab's file in a viewer that holds no text (Quick Look,
@@ -539,6 +582,7 @@ static void *kMediaItemContext = &kMediaItemContext;
 // (or throw past its end), so they go, and so do the LaTeX preview's.
 - (void)forgetHistoryOf:(MCTab *)t {
     [t.undoManager removeAllActions];
+    t.textSessionStart = nil;
     t.folds = nil;
     [t.latex forgetEdits];
 }
@@ -582,9 +626,13 @@ static void *kMediaItemContext = &kMediaItemContext;
         [self renderMarkdown:[self markdownToRender]];
     } else {
         [self displaySourceEditable];
+        // A CSV's text on show: where its typing started (togglePreview:).
+        if (MCViewerKindOverText(self.viewerKind) && !_activeTab.textSessionStart)
+            _activeTab.textSessionStart = self.sourceText ?: @"";
         // The JSON outline, beside the text it follows.
         if (MCViewerKindBesideText(self.viewerKind)) {
-            [self.viewers showBesideTextView:self.textView kind:self.viewerKind];
+            [self.viewers showBesideTextView:self.textView kind:self.viewerKind
+                                          path:self.currentPath];
             [self relayoutRightArea];
         }
     }
