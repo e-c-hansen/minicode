@@ -54,7 +54,8 @@ std::vector<CommandSpec> makeCommands() {
         CommandSpec s{"page", "Reload or read the agent page (or with yours, the user's)",
                       {arg("action", ArgType::String, true), arg("wait", ArgType::Bool),
                        arg("yours", ArgType::Bool), arg("path", ArgType::String),
-                       arg("full", ArgType::Bool), arg("since", ArgType::Int)}};
+                       arg("full", ArgType::Bool), arg("overwrite", ArgType::Bool),
+                       arg("since", ArgType::Int)}};
         addTarget(s.args);
         c.push_back(s);
     }
@@ -418,17 +419,18 @@ const Help kHelp[] = {
      "    minicode. With several arguments the last is the address.\n"},
     {"page",
      "minicode page --url | --text | --console [--since SEQ] | --reload [--wait]\n"
-     "              | --screenshot OUT.png [--full]   [--yours]\n"
+     "              | --screenshot OUT.png [--full] [--overwrite]   [--yours]\n"
      "    Reads the agent page: --url prints JSON (url, status, title,\n"
      "    loading); --text its visible text (up to 1 MB); --console the\n"
      "    console messages and uncaught errors since it loaded, a JSON object\n"
      "    a line (seq, level, text, source, line, column), only those after\n"
      "    SEQ with --since; --screenshot writes a PNG of the visible area, or\n"
      "    of the whole page up to 16,384 pixels tall with --full, and prints\n"
-     "    its path; --reload loads it again (--wait as for browse). --yours\n"
-     "    reads the user's own page instead (not its console). Text, console\n"
-     "    and screenshots work only for local pages (localhost, 127.0.0.1,\n"
-     "    ::1, *.localhost, file://) unless the settings file has\n"
+     "    its path (over a file already there only with --overwrite, never\n"
+     "    through a symlink); --reload loads it again (--wait as for browse).\n"
+     "    --yours reads the user's own page instead (not its console). Text,\n"
+     "    console and screenshots work only for local pages (localhost,\n"
+     "    127.0.0.1, ::1, *.localhost, file://) unless the settings file has\n"
      "    control.page-any-origin = true. No command runs JavaScript of yours.\n"},
     {"term",
      "minicode term [--cwd DIR] [--title TITLE] [--run COMMAND]\n"
@@ -665,6 +667,8 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
             c.args.set("path", absolutePath(v, cwd, home));
         } else if (sub == "page" && w == "--full") {
             c.args.set("full", true);
+        } else if (sub == "page" && w == "--overwrite") {
+            c.args.set("overwrite", true);
         } else if (sub == "page" && w == "--yours") {
             c.args.set("yours", true);
         } else if (sub == "page" && takeValue(a, i, "since", v, c.error)) {
@@ -792,6 +796,10 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
         }
         if (c.args.has("full") && action != "screenshot") {
             c.error = "--full goes with --screenshot";
+            return c;
+        }
+        if (c.args.has("overwrite") && action != "screenshot") {
+            c.error = "--overwrite goes with --screenshot";
             return c;
         }
         if (c.args.has("since") && action != "console") {

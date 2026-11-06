@@ -115,8 +115,14 @@ struct SnapshotPlan {
 };
 SnapshotPlan snapshotPlan(double visibleHeight, double pageHeight, double scale, bool full);
 
-// Where a screenshot may be written: an absolute path ending in .png
-// (any case) that is not an existing folder. False with `error` set.
-bool screenshotPath(const std::string& path, bool isFolder, std::string& error);
+// What is at a screenshot's path already (lstat: a symlink is Other).
+enum class PathAt { Nothing, File, Folder, Other };
+
+// Where a screenshot may be written: an absolute path ending in .png (any
+// case) with nothing there, or, with `overwrite` (page --overwrite), a
+// plain file there. Never a folder, and never a symlink or other special
+// file, which a picture would replace or be written through. False with
+// `error` set.
+bool screenshotPath(const std::string& path, PathAt existing, bool overwrite, std::string& error);
 
 }  // namespace PageCheck

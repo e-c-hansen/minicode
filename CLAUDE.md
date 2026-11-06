@@ -2,8 +2,8 @@
 
 minicode is a small native macOS code editor built from scratch, no Electron,
 no third-party dependencies. It links only Apple system frameworks (Cocoa,
-WebKit, CoreServices, Quartz for PDFKit and Quick Look, AVKit, AVFoundation and
-CoreMedia) plus the C++ standard library, the system zlib and the system
+WebKit, CoreServices, Quartz for PDFKit and Quick Look, AVKit, AVFoundation,
+CoreMedia, and Carbon for the terminal's secure keyboard entry) plus the C++ standard library, the system zlib and the system
 libsqlite3. The LaTeX preview and the Markdown math run tectonic, which the
 user installs or the app downloads on request; the language servers, formatters
 and Claude Code it talks to are the user's own.
@@ -388,6 +388,13 @@ container (PanelHost, laid out by hand in layoutContainer)
   popovers that force DarkAqua and inline hex are unchanged.
   `selectedTextAttributes` is only a background, since after a switch AppKit
   drew selected text in its own color.
+- **minicode's own writes** to settings.conf and keys.conf (a theme, the IDE
+  link toggle, the first file of either) go through `MCWriteConfigFile`
+  (AppSettings.h, over `FolderSearch::writeFileAtomically`), never
+  `writeToFile:atomically:`, which replaced a symlinked dotfile with a plain
+  file. A theme or the IDE link is refused while a tab holds the file with
+  unsaved changes (`AppSettings.unsavedTextCheck`, set in
+  EditorController+Settings.mm's `+load`), the reason in the status bar.
 
 ## Keys: the registry, keys.conf and the key monitor
 
@@ -463,7 +470,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   back.
 - **One writer**: Cmd+S, `saveTab:` and auto-save all go through
   `writeText:toTab:interactive:` over `FolderSearch::writeFileAtomically`
-  (a symlink stays a link, hard links and files owned by someone else are
+  (a symlink stays a link, a dangling one too, creating the file it names;
+  hard links and files owned by someone else are
   written in place, xattrs, ACL and creation date kept, F_FULLFSYNC), which
   refuses a tab without text of its own (`tabHasTextToWrite:`: SQLite, Quick
   Look, a large CSV) and sends didSave. `writeToFile:atomically:` replaced a
@@ -1462,16 +1470,17 @@ for full-screen programs. Both can be open at once.
   || & |`, `then`, `do`, `else`, `{`, `!`, and past `builtin`, `command`,
   `noglob`) and for that command exports ZDOTDIR as the integration folder (the
   user's in `MINICODE_USER_ZDOTDIR`) with `MINICODE_EXEC=1`, and the nonce
-  when the program is a shell (a bash keeps it in its environment, so a zsh
-  started from it marks again; `exec claude` gets none), so an exec'd zsh
+  only when the program is zsh (2026-11-06: a bash, or `exec claude`, kept it
+  in its environment for everything it ran, any of which could forge marks;
+  so a zsh exec'd from that bash no longer marks), so an exec'd zsh
   loads the integration and reports the exec finished (133;D;0); the next
   precmd restores both if the exec failed. Line mode also `unsetopt ZLE` there.
   Exec into another shell (bash, sh, dash, fish, ksh, tcsh, csh, nu, elvish,
   xonsh, pwsh, by `proc_name`, polled twice a second while a command runs) sets
   `_integrated` NO: not busy, title cleared, the finished notification posted,
   waiting input typed, and from then busy only while another program holds the
-  foreground. A later zsh mark (`_integrationFile`) turns it back on. `exec
-  claude` still counts as running.
+  foreground. A later zsh mark (`_integrationFile`) with the nonce turns it
+  back on. `exec claude` still counts as running.
 - **Events** (`TerminalStream` reads every byte for them): 133;B sets
   `_zleReady`; `CommandStart` carries 633;E's text as `_runningCommand`
   (titles, `runningCommands`, close questions); OSC 0/2 `Title` names the tab
@@ -1550,6 +1559,17 @@ for full-screen programs. Both can be open at once.
   paths and URLs). Typing goes through `interpretKeyEvents:`, so dead keys and
   input methods compose; marked text wraps onto the rows below
   (`drawMarkedTextAtRow:`), since dictation composes a whole sentence.
+- **Paste and passwords** (2026-11-06): `encodePaste` shows every ESC
+  inside the brackets as U+241B, as xterm.js does (stripping `ESC[201~`
+  once let "ESC[20" + mark + "1~" close up into a new mark). The grid's
+  `paste:` asks first per `TerminalScreen::checkPaste`
+  (`terminal.multiline-paste-warning`, VS Code's auto/always/never; a lone
+  CR counts as a break). Secure keyboard entry: TerminalView polls termios
+  (after output, and four times a second while a command runs) and sets
+  the grid's `hiddenInput` for ECHO off with ICANON on (ZLE and full-screen
+  programs turn ICANON off); the grid calls Enable/DisableSecureEventInput
+  in pairs (`_secureOn`) only while it has the keyboard. Carbon is linked
+  for it.
 - **Keys**: Ctrl with a letter, symbol or Space is claimed in the grid's
   `performKeyEquivalent:` (the window asks views before the menu), so
   Ctrl+Space reaches zsh; Ctrl+Tab, Ctrl+Return and Ctrl+digits stay the app's.
@@ -1904,7 +1924,9 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   never a search or another scheme. `page --url/--text/--console/
   --screenshot/--reload`, `--yours` for the user's page; text, console and
   screenshots only for local pages unless `control.page-any-origin`, checked
-  again when the read comes back. Status from
+  again when the read comes back. A screenshot never replaces a file unless
+  `--overwrite` is given, and never goes through a symlink (O_EXCL, or an
+  atomic rename with `--overwrite`). Status from
   `decidePolicyForNavigationResponse` (which answers as WebKit does without
   it: allow what it can show). The agent page's configuration installs, at
   document start, a listener in an isolated `WKContentWorld` (uncaught
@@ -2004,7 +2026,8 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   is made, not on first use, because its shell gets it as
   `MINICODE_TERMINAL_ID`, with `MINICODE_PID` (inherited ones are dropped).
   `minicode hooks --install` (run by the user only; backs up, merges, a second
-  run changes nothing) adds `minicode notify --from-hook` to Claude Code's
+  run changes nothing; a symlinked settings.json stays a link,
+  `ClaudeHooks::writeSettingsFile`) adds `minicode notify --from-hook` to Claude Code's
   Notification, Stop, UserPromptSubmit and PostToolUse hooks; notify never
   starts minicode and with --from-hook prints nothing and exits 0 whatever
   happens. Core: `ClaudeHooks` (hook JSON, the settings merge) and

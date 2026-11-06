@@ -1545,12 +1545,96 @@ std::string TerminalScreen::encodePaste(const std::string& text, bool bracketed)
         body += text[i] == '\n' ? '\r' : text[i];
     }
     if (!bracketed) return body;
-    // A paste must not be able to end the bracket early.
+    // A paste must not be able to end the bracket early. Taking out the end
+    // mark once was not enough: "ESC[20" + "ESC[201~" + "1~" closed up into
+    // a new one. With no ESC left inside, no mark can form however the text
+    // is split, and nothing else in it can be an escape sequence either.
     std::string safe;
-    const std::string endMark = "\x1b[201~";
-    for (size_t i = 0; i < body.size(); i++) {
-        if (body.compare(i, endMark.size(), endMark) == 0) { i += endMark.size() - 1; continue; }
-        safe += body[i];
+    safe.reserve(body.size() + 12);
+    safe += "\x1b[200~";
+    for (char c : body) {
+        if (c == '\x1b') safe += "\xE2\x90\x9B";   // U+241B SYMBOL FOR ESCAPE
+        else safe += c;
     }
-    return "\x1b[200~" + safe + endMark;
+    safe += "\x1b[201~";
+    return safe;
+}
+
+namespace {
+
+// The paste's lines: split at "\r\n", "\n" and a lone "\r".
+std::vector<std::string> pasteLines(const std::string& text) {
+    std::vector<std::string> lines(1);
+    for (size_t i = 0; i < text.size(); i++) {
+        const char c = text[i];
+        if (c == '\r' || c == '\n') {
+            if (c == '\r' && i + 1 < text.size() && text[i + 1] == '\n') i++;
+            lines.emplace_back();
+        } else {
+            lines.back() += c;
+        }
+    }
+    return lines;
+}
+
+bool blankText(const std::string& s) {
+    for (char c : s)
+        if (c != ' ' && c != '\t' && c != '\f' && c != '\v') return false;
+    return true;
+}
+
+// The first `n` characters (code points) of UTF-8 text, and whether it was
+// longer.
+std::string firstChars(const std::string& s, size_t n, bool& cut) {
+    size_t chars = 0, i = 0;
+    while (i < s.size()) {
+        if (((unsigned char)s[i] & 0xC0) != 0x80) {
+            if (chars == n) break;
+            chars++;
+        }
+        i++;
+    }
+    cut = i < s.size();
+    return s.substr(0, i);
+}
+
+}  // namespace
+
+TerminalScreen::PasteCheck TerminalScreen::checkPaste(const std::string& text, bool bracketed,
+                                                      const std::string& mode) {
+    PasteCheck out;
+    out.text = text;
+    const std::vector<std::string> lines = pasteLines(text);
+    out.lines = (int)lines.size();
+    if (lines.size() == 1 || mode == "never") return out;
+    if (mode != "always") {
+        if (bracketed) return out;
+        // A command copied with its line break: pasted without it, so it
+        // waits for Return (VS Code's clipboard-hijacking guard).
+        if (lines.size() == 2 && blankText(lines[1])) {
+            out.text = lines[0];
+            out.lines = 1;
+            return out;
+        }
+    }
+    out.ask = true;
+    for (size_t i = 0; i < lines.size() && i < 3; i++) {
+        bool cut = false;
+        // Control characters would draw oddly in the question.
+        std::string line;
+        for (char c : firstChars(lines[i], 30, cut))
+            line += ((unsigned char)c < 0x20 || c == 0x7F) ? ' ' : c;
+        if (i) out.preview += '\n';
+        out.preview += line;
+        if (cut) out.preview += "\xE2\x80\xA6";   // …
+    }
+    if (lines.size() > 3) out.preview += "\n\xE2\x80\xA6";
+    return out;
+}
+
+std::string TerminalScreen::pasteAsOneLine(const std::string& text) {
+    std::string out;
+    for (char c : text)
+        if (c != '\r' && c != '\n') out += c;
+    return out;
 }

@@ -36,6 +36,13 @@ typedef NS_ENUM(NSInteger, MCLineEdit) {
 // mode with terminal.option-as-meta = false) Option types what the layout
 // puts on the key.
 @property(nonatomic) BOOL optionAsMeta;
+// The program reads hidden input (a password: the tty has echo off in
+// canonical mode); the host looks. While set and the view has the keyboard,
+// secure keyboard entry is on (EnableSecureEventInput) and a lock shows in
+// the corner.
+@property(nonatomic) BOOL hiddenInput;
+@property(nonatomic, readonly) BOOL secureInputOn;
++ (NSInteger)secureInputViews;   // grids with it on now, in this process
 // Lines the view is scrolled back from the live screen (0: following the
 // output). Set to 0 by typing and pasting.
 @property(nonatomic, readonly) int scrollOffset;

@@ -319,37 +319,6 @@ bool readFile(const std::string &path, std::string &text, bool &exists, std::str
     return true;
 }
 
-// Writes `text` beside `path` and renames it over, so a reader sees the old
-// file or the new one, never half of one. Keeps the old file's mode.
-bool writeFileAtomically(const std::string &path, const std::string &text, mode_t mode,
-                         std::string &error) {
-    std::string tmp = path + ".minicode-XXXXXX";
-    std::vector<char> name(tmp.begin(), tmp.end());
-    name.push_back('\0');
-    int fd = mkstemp(name.data());
-    if (fd < 0) {
-        error = path + ": " + std::strerror(errno);
-        return false;
-    }
-    fchmod(fd, mode);
-    size_t off = 0;
-    bool ok = true;
-    while (off < text.size()) {
-        ssize_t n = write(fd, text.data() + off, text.size() - off);
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) { ok = false; break; }
-        off += (size_t)n;
-    }
-    ok = ok && fsync(fd) == 0;
-    ok = close(fd) == 0 && ok;
-    if (!ok || rename(name.data(), path.c_str()) != 0) {
-        error = path + ": " + std::strerror(errno);
-        unlink(name.data());
-        return false;
-    }
-    return true;
-}
-
 // `minicode hooks --print` and `--install` (R7.5).
 int runHooks(const std::string &action) {
     if (action == "print") {
@@ -386,7 +355,7 @@ int runHooks(const std::string &action) {
         std::string backup = path + ".minicode-backup-" + stamp;
         for (int n = 2; access(backup.c_str(), F_OK) == 0; n++)
             backup = path + ".minicode-backup-" + stamp + "-" + std::to_string(n);
-        if (!writeFileAtomically(backup, text, mode, error)) {
+        if (!ClaudeHooks::writeSettingsFile(backup, text, mode, error)) {
             std::fprintf(stderr, "minicode: could not back up %s, so it was left alone: %s\n",
                          path.c_str(), error.c_str());
             return kExitFailed;
@@ -396,7 +365,7 @@ int runHooks(const std::string &action) {
         std::string dir = path.substr(0, path.rfind('/'));
         if (!dir.empty()) mkdir(dir.c_str(), 0700);
     }
-    if (!writeFileAtomically(path, r.text, mode, error)) {
+    if (!ClaudeHooks::writeSettingsFile(path, r.text, mode, error)) {
         std::fprintf(stderr, "minicode: %s\n", error.c_str());
         return kExitFailed;
     }

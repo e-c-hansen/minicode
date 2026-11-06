@@ -275,6 +275,10 @@ public:
     // is run to do it; the folder's own .venv waits for the same yes the
     // language servers wait for.
     bool terminalActivateVenv() const { return terminalActivateVenv_; }
+    // terminal.multiline-paste-warning: auto (the default), always or
+    // never; when a paste of several lines asks first
+    // (TerminalScreen::checkPaste, VS Code's enableMultiLinePasteWarning).
+    const std::string& terminalPasteWarning() const { return terminalPasteWarning_; }
 
     // search.use-ignore-files: Find in Folder, Replace in Folder, the TODO
     // list and Quick Open leave out what the folder's .gitignore and .ignore
@@ -410,6 +414,7 @@ private:
     double terminalFontSize_ = 12;
     bool terminalOptionAsMeta_ = true;
     bool terminalActivateVenv_ = true;
+    std::string terminalPasteWarning_ = "auto";
     bool searchUseIgnoreFiles_ = true;
     std::map<std::string, std::string> lspCommands_;
     std::map<std::string, std::vector<std::string>> lspExtensions_;

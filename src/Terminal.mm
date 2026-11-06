@@ -154,13 +154,14 @@ if [[ -o interactive ]]; then
           if [[ -n ${ZDOTDIR+x} ]]; then export MINICODE_USER_ZDOTDIR=$ZDOTDIR
           else unset MINICODE_USER_ZDOTDIR; fi
           export ZDOTDIR=$__minicode_zdotdir MINICODE_EXEC=1
-          # The nonce only for a shell, so a zsh started from it can mark
-          # again; another program (exec claude) would keep it in its
-          # environment for all it runs.
+          # The nonce only for a zsh, which reads it here and takes it out of
+          # its environment. Any other program (exec bash, exec claude)
+          # would keep it in its environment for everything it runs, and
+          # any of those could print marks the terminal believes; a zsh
+          # started from such a shell later does not mark.
           local j=$(( i + 1 ))
           while [[ $w[j] == -* ]]; do (( j++ )); done
-          [[ ${${w[j]:t}#-} == (zsh|bash|sh|dash|ksh|mksh|fish|tcsh|csh|yash) ]] &&
-            export MINICODE_NONCE=$__minicode_nonce
+          [[ ${${w[j]:t}#-} == zsh ]] && export MINICODE_NONCE=$__minicode_nonce
           __minicode_execed=1
           return 0
         fi
@@ -319,13 +320,14 @@ if [[ -o interactive ]]; then
           if [[ -n ${ZDOTDIR+x} ]]; then export MINICODE_USER_ZDOTDIR=$ZDOTDIR
           else unset MINICODE_USER_ZDOTDIR; fi
           export ZDOTDIR=$__minicode_zdotdir MINICODE_EXEC=1
-          # The nonce only for a shell, so a zsh started from it can mark
-          # again; another program (exec claude) would keep it in its
-          # environment for all it runs.
+          # The nonce only for a zsh, which reads it here and takes it out of
+          # its environment. Any other program (exec bash, exec claude)
+          # would keep it in its environment for everything it runs, and
+          # any of those could print marks the terminal believes; a zsh
+          # started from such a shell later does not mark.
           local j=$(( i + 1 ))
           while [[ $w[j] == -* ]]; do (( j++ )); done
-          [[ ${${w[j]:t}#-} == (zsh|bash|sh|dash|ksh|mksh|fish|tcsh|csh|yash) ]] &&
-            export MINICODE_NONCE=$__minicode_nonce
+          [[ ${${w[j]:t}#-} == zsh ]] && export MINICODE_NONCE=$__minicode_nonce
           __minicode_execed=1
           return 0
         fi
@@ -868,6 +870,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     BOOL _stickyGrid;            // this command went raw: grid until it ends
     int _rawTicks;               // consecutive polls that found raw mode
     NSTimer *_rawTimer;          // polls termios while a command runs
+    NSTimer *_hiddenTimer;       // the grid: polls for a password prompt
 
     // Cmd+click links: a path as written -> [matches, roots tried, when].
     // An entry is good for a second (a quarter for "not found"), so a file
@@ -1938,6 +1941,7 @@ static BOOL MCIsOtherShell(pid_t pid) {
 
 // Show the secure field while a running program has echo turned off.
 - (void)updateSecureInput {
+    [self updateGridHiddenInput];
     if (_gridMode) return;       // the grid takes keys itself
     BOOL hidden = NO;
     if (_master >= 0 && _commandStarted && !_atPrompt) {
@@ -1955,9 +1959,39 @@ static BOOL MCIsOtherShell(pid_t pid) {
     if (hadFocus) [self.window makeFirstResponder:to];
 }
 
+// The grid's secure keyboard entry (TerminalGridView hiddenInput): on while
+// the program reads a line with echo off, as sudo, ssh, read -s and getpass
+// do (ECHO off, ICANON on; zsh's line editor and full-screen programs turn
+// ICANON off too, and are not hiding anything). Looked at after output and,
+// while a command runs, four times a second, since a prompt can be printed
+// before echo goes off and echo comes back without output after it.
+- (void)updateGridHiddenInput {
+    BOOL hidden = NO, running = NO;
+    if (_gridMode && _master >= 0 && _shellPid > 0) {
+        running = _integrated ? (_commandStarted && !_atPrompt) : YES;
+        struct termios t;
+        if (tcgetattr(_master, &t) == 0)
+            hidden = (t.c_lflag & ECHO) == 0 && (t.c_lflag & ICANON) != 0;
+    }
+    if (self.grid.hiddenInput != hidden) self.grid.hiddenInput = hidden;
+    if ((running || hidden) && !_hiddenTimer) {
+        __weak TerminalView *weakSelf = self;
+        _hiddenTimer = [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES
+                                                         block:^(NSTimer *t) {
+            (void)t;
+            [weakSelf updateGridHiddenInput];
+        }];
+        _hiddenTimer.tolerance = 0.05;
+    } else if (!running && !hidden && _hiddenTimer) {
+        [_hiddenTimer invalidate];
+        _hiddenTimer = nil;
+    }
+}
+
 // ------------------------------------------------------------ the pty shell
 - (void)dealloc {
     if (_flagsMonitor) [NSEvent removeMonitor:_flagsMonitor];
+    [_hiddenTimer invalidate];
     [self stopShell];
 }
 
@@ -2138,6 +2172,7 @@ static BOOL MCIsOtherShell(pid_t pid) {
     if (_shellPid > 0) kill(_shellPid, SIGHUP);
     _shellPid = 0;
     _master = -1;
+    [self updateGridHiddenInput];   // no shell, nothing hidden
 }
 
 // Rows and columns of grid cells that fit the panel, pushed to the pty so
@@ -2642,6 +2677,7 @@ static NSString *MCBrowserHelperPath(void) {
         }
     }
     [self.grid screenChanged];
+    [self updateGridHiddenInput];
     // What waited for the prompt goes in once ZLE reads input, unless a
     // program has the screen or the terminal.
     if (_pendingCommand || _pendingTyped) [self flushPendingInput];

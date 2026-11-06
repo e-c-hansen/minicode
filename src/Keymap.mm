@@ -1,5 +1,6 @@
 // Keymap.mm — see Keymap.h.
 #import "Keymap.h"
+#import "AppSettings.h"        // MCWriteConfigFile
 #import "Lsp.h"                // CodeTextView
 #import "Terminal.h"           // TerminalView
 #import "TerminalGridView.h"
@@ -300,11 +301,13 @@ bool MenuShows(const Commands::Command *c, const Key &k, const Commands::Keymap 
     if ([fm fileExistsAtPath:_path]) return YES;
     [fm createDirectoryAtPath:_path.stringByDeletingLastPathComponent
   withIntermediateDirectories:YES attributes:nil error:nil];
-    BOOL ok = [NS(Commands::defaultFileText()) writeToFile:_path atomically:YES
-                                                  encoding:NSUTF8StringEncoding error:nil];
+    NSString *why = nil;
+    BOOL ok = MCWriteConfigFile(_path, NS(Commands::defaultFileText()), NO, &why);
     if (ok) {
         [self reload];
         [self watch];
+    } else {
+        NSLog(@"minicode: %@", why);
     }
     return ok;
 }

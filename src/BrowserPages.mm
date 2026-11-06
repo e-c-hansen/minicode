@@ -1,5 +1,9 @@
 // BrowserPages.mm — see BrowserPages.h.
 #import "BrowserPages.h"
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace {
 
@@ -273,16 +277,48 @@ NSString *IsolatedListener(NSString *eventName) {
     }];
 }
 
-// Writes a PNG of `cg`; the answer `done` gets.
-static void MCWritePNG(CGImageRef cg, NSString *path, BOOL cut,
+// Writes `png` to `path` as a new file: O_EXCL, so a file or a symlink
+// that appeared since the path was checked is never replaced or written
+// through. NO with *why.
+static BOOL MCWriteNewFile(NSData *png, NSString *path, NSString **why) {
+    const int fd = open(path.fileSystemRepresentation,
+                        O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);
+    if (fd < 0) {
+        *why = errno == EEXIST ? @"something is there now" : @(strerror(errno));
+        return NO;
+    }
+    const uint8_t *p = (const uint8_t *)png.bytes;
+    size_t left = png.length;
+    BOOL ok = YES;
+    while (left > 0) {
+        const ssize_t n = write(fd, p, left);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) { ok = NO; break; }
+        p += n;
+        left -= (size_t)n;
+    }
+    if (!ok) *why = @(strerror(errno));
+    if (close(fd) != 0 && ok) { ok = NO; *why = @(strerror(errno)); }
+    if (!ok) unlink(path.fileSystemRepresentation);
+    return ok;
+}
+
+// Writes a PNG of `cg`; the answer `done` gets. Over a file already there
+// only with `overwrite`, and then by renaming a new file over it, so a
+// symlink put there meanwhile is replaced, never written through.
+static void MCWritePNG(CGImageRef cg, NSString *path, BOOL cut, BOOL overwrite,
                        void (^done)(NSDictionary *, NSString *)) {
     if (!cg) { done(nil, @"WebKit took no picture"); return; }
     NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithCGImage:cg];
     NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
     NSError *writeError = nil;
-    if (!png || ![png writeToFile:path options:NSDataWritingAtomic error:&writeError]) {
+    NSString *why = nil;
+    const BOOL written = png && (overwrite ? [png writeToFile:path options:NSDataWritingAtomic
+                                                         error:&writeError]
+                                           : MCWriteNewFile(png, path, &why));
+    if (!written) {
         done(nil, [NSString stringWithFormat:@"could not write %@: %@", path,
-                   writeError.localizedDescription ?: @"no PNG"]);
+                   why ?: writeError.localizedDescription ?: @"no PNG"]);
         return;
     }
     done(@{@"path": path, @"width": @(rep.pixelsWide), @"height": @(rep.pixelsHigh), @"cut": @(cut)},
@@ -341,7 +377,7 @@ static CGImageRef MCRasterizePDF(NSData *pdf, double visibleHeight, double scale
     return image;
 }
 
-- (void)snapshotTo:(NSString *)path full:(BOOL)full
+- (void)snapshotTo:(NSString *)path full:(BOOL)full overwrite:(BOOL)overwrite
               done:(void (^)(NSDictionary *, NSString *))done {
     WKWebView *web = self.webView;
     if (!web) { done(nil, @"there is no page"); return; }
@@ -358,7 +394,8 @@ static CGImageRef MCRasterizePDF(NSData *pdf, double visibleHeight, double scale
         cfg.rect = bounds;
         [web takeSnapshotWithConfiguration:cfg completionHandler:^(NSImage *image, NSError *error) {
             if (!image) { done(nil, error.localizedDescription ?: @"WebKit took no picture"); return; }
-            MCWritePNG([image CGImageForProposedRect:NULL context:nil hints:nil], path, NO, done);
+            MCWritePNG([image CGImageForProposedRect:NULL context:nil hints:nil], path, NO, overwrite,
+                       done);
         }];
         return;
     }
@@ -371,7 +408,7 @@ static CGImageRef MCRasterizePDF(NSData *pdf, double visibleHeight, double scale
             BOOL cut = NO;
             CGImageRef image = MCRasterizePDF(pdf, bounds.size.height, scale, &cut);
             dispatch_async(dispatch_get_main_queue(), ^{
-                MCWritePNG(image, path, cut, done);
+                MCWritePNG(image, path, cut, overwrite, done);
                 if (image) CGImageRelease(image);
             });
         });
