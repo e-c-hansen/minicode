@@ -164,6 +164,21 @@
 - (void)formatDocument:(id)sender;     // Shift+Option+F run the file's formatter
 @end
 
+// EditorController+EditCommands.mm
+@interface EditorController (EditCommands)
+- (void)indentLines:(id)sender;         // Cmd+] the lines in one level
+- (void)outdentLines:(id)sender;        // Cmd+[ and out
+- (void)insertLineBelow:(id)sender;     // Cmd+Return
+- (void)insertLineAbove:(id)sender;
+- (void)toggleBold:(id)sender;          // Markdown ** around the selection or word
+- (void)toggleItalic:(id)sender;        // Markdown *
+- (void)runSelectionInTerminal:(id)sender;   // Shift+Return in Python: to a REPL
+- (void)saveFileAs:(id)sender;
+- (BOOL)saveActiveTabAs:(NSString *)path;    // Save As without the panel
+- (void)saveAllFiles:(id)sender;        // Option+Cmd+S
+- (NSString *)keymapLanguage;           // "markdown", "python" or nil (Keymap.h)
+@end
+
 // EditorController+EditorView.mm
 @interface EditorController (EditorView)
 - (void)toggleComment:(id)sender;      // Cmd+/ comment or uncomment lines
@@ -247,6 +262,12 @@
 // is. Agents load into its agent page (Browser.h), never the user's.
 - (BrowserView *)agentBrowserPane;
 - (BrowserView *)browserPane;
+// A web address from a terminal (a Cmd+click on a link, or a program
+// through BROWSER and `minicode open-url`): the user's page loads it, the
+// pane shows beside the editor if it was hidden, and the keyboard stays
+// where it was. 0.0.0.0 and [::] are read as localhost
+// (TermLinks::browserAddress).
+- (void)openWebAddressFromTerminal:(NSString *)url;
 // For `minicode state`: each tab (path, title, kind, dirty, active, preview),
 // the editor's selection (path, text up to 64 KB, start and end line and
 // column; nil when no text file shows), the terminals, the browser's page.
@@ -254,6 +275,18 @@
 - (NSDictionary *)controlSelection;
 - (NSArray<TerminalView *> *)controlTerminals;
 - (NSDictionary *)controlBrowser;
+// ---- the Claude Code IDE link (IdeLinkServer.h)
+// The text of `path` when it is the document on show as source (its
+// buffer, unsaved changes included), else nil.
+- (NSString *)agentBufferOfShownFile:(NSString *)path;
+// Closes the tabs showing a comparison `match` accepts, unasked (a
+// comparison has nothing to save); returns how many.
+- (NSUInteger)closeComparisonTabsMatching:(BOOL (^)(MCComparison *comparison))match;
+// Every problem the window's language servers report (Lsp.h, MCProblem).
+- (NSArray *)agentProblems;
+- (void)showAgentStatusNote:(NSString *)note;   // the status bar's left, for six seconds
+// Whether `view` is the editor's text view.
+- (BOOL)isEditorTextView:(id)view;
 - (void)nextTourStop:(id)sender;       // Option+]
 - (void)previousTourStop:(id)sender;   // Option+[
 @property(nonatomic, readonly) BOOL tourActive;

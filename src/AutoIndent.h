@@ -116,6 +116,14 @@ Edit tab(const std::u16string& text, size_t selStart, size_t selEnd,
 Edit tab(const std::u16string& text, size_t selStart, size_t selEnd,
          const std::string& filename, const Unit& unit);
 
+// Cmd+] (VS Code's Indent Line): indent the lines the selection or the caret
+// touches one level, a caret's own line too, in any file (blank lines only
+// when they are all there is). Cmd+[ is backtab.
+Edit indentLines(const std::u16string& text, size_t selStart, size_t selEnd,
+                 const std::string& filename);
+Edit indentLines(const std::u16string& text, size_t selStart, size_t selEnd,
+                 const std::string& filename, const Unit& unit);
+
 // Shift+Tab: outdent the lines the selection (or the caret) touches by one
 // level.
 Edit backtab(const std::u16string& text, size_t selStart, size_t selEnd,

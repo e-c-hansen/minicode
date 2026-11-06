@@ -27,4 +27,18 @@ std::vector<Link> find(const std::string& line);
 // The link covering byte `offset` of `line`, if any.
 const Link* at(const std::vector<Link>& links, size_t offset);
 
+// What an OSC 8 hyperlink's address opens (TerminalScreen keeps the
+// address): an http or https address is a Url with the address as its
+// target; a file address on this computer (no host, "localhost", or
+// `localHost`, the name gethostname gives, compared without case and with
+// or without ".local") is a File with the path percent-decoded. Anything
+// else, a file on another host included, gives false.
+bool hyperlink(const std::string& uri, const std::string& localHost, Link& out);
+
+// The address to load for a web address from the terminal. A server that
+// listens on every interface prints 0.0.0.0 or [::] (Python's http.server
+// does), which a browser will not load, so those become localhost, as VS
+// Code does; anything else is returned as it is.
+std::string browserAddress(const std::string& url);
+
 }  // namespace TermLinks

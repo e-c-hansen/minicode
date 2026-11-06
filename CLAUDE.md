@@ -110,8 +110,10 @@ goes here first, with tests; the GUI only displays it.
 - `SyntaxHighlighter` (about 200 grammars, `IncrementalHighlighter`),
   `MarkdownParser` (CommonMark plus GitHub, math, `lines()`), `MarkdownEdit`
   (the block behind a preview click), `MarkdownTasks` (task lists), `MathTex`
-  (the Markdown math batch), `LatexDoc` (editable ranges of LaTeX source),
-  `SyncTex` (page point to source lines), `Json`.
+  (the Markdown math batch), `MermaidDiagram` (```mermaid blocks for mmdc),
+  `LatexDoc` (editable ranges of LaTeX source),
+  `SyncTex` (page point to source lines), `Json`, `IdeLink` (the Claude Code
+  IDE link: WebSocket, MCP, lock file).
 - `Settings` (the settings file, themes, every resolved color), `Commands` (the
   command registry and keys.conf), `EditorTabs` (tab rules), `Backups` (backups
   of unsaved tabs, with a POSIX `Fs`), `FileDetails` (tree sorts, ages, folder
@@ -161,14 +163,15 @@ goes here first, with tests; the GUI only displays it.
   `Keymap`.
 - Terminal: `Terminal` (`TerminalView`, `MCPty`, the shell integration),
   `TerminalGridView`, `TerminalPanel`, `TerminalFindBar`, `RunCommand`.
-- Viewers: `Latex`, `MarkdownMath`, `MarkdownImage`, `MarkdownEditPanel`,
+- Viewers: `Latex`, `MarkdownMath`, `MarkdownMermaid`, `MarkdownImage`, `MarkdownEditPanel`,
   `FileViewers`, `QuickLook`, `CsvTable`, `JsonOutlineView`, `SqliteView`,
   `CompareView`.
 - `Browser` (with `MCKeyboardWindow`), `TabStrip`, `Search` (Find in Folder and
   TODOs window), `GitPanel`, `TreeDetails`, `FormatRunner`, `BackupStore`,
   `PalettePanel`, `Navigation`.
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
-  `ControlServer`, `ControlCommands`, `AgentNotes`, `AgentModel`,
+  `ControlServer`, `ControlCommands`, `IdeLinkServer` (Claude Code's /ide),
+  `AgentNotes`, `AgentModel`,
   `AgentsPanel`, `AgentPages`, `AgentWindow`, `ProcessMonitor` (libproc,
   `minicode procs`), `ProcessesPanel`.
 - `Demo` (`make demos`, inert unless `MINICODE_DEMO`), `Bench`
@@ -394,7 +397,16 @@ container (PanelHost, laid out by hand in layoutContainer)
   adds, `key = -` takes the key from every command, `key = -id` from one; a key
   given to a command leaves any that had it where both apply; two lines giving
   one key to two commands in one place are a conflict and the later is refused
-  with its line number.
+  with its line number. A command may also have a language (`language`,
+  "markdown" or "python", by `Commands::languageOfPath`; its `when` is then
+  `Editor`): it applies only in the editor on such a file, shadows a key
+  another command has elsewhere without a conflict (Option+C toggles a task in
+  Markdown and types ç anywhere else), may have a typing key (Shift+Return in
+  Python), and its keys go on its menu item only when no other command has
+  them and they hold Command or Control. The window's delegate says the
+  language (`MCKeymapLanguage`). Cmd+B stays the sidebar and Cmd+I the inline
+  agent in Markdown (the owner's call, 2026-11-06): Toggle Bold and Italic
+  have no key.
 - `Keymap.mm` reads and watches the file and puts the keys on the menu items
   found by action and tag (the first on the item, others on hidden items beside
   it, `allowsKeyEquivalentWhenHidden`). Errors join the settings errors in the
@@ -418,7 +430,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   (Ctrl+G for nano) unless Global. Plain typing skips the keymap at once. Cmd+.
   is the key bindings' `cancelOperation:` everywhere, so only an editable
   editor sends it to the menu. Validation decides: a command that cannot act
-  lets the key go (Option+] types ‘ with no tour).
+  lets the key go (Option+] types ‘ with no tour). A language command runs
+  from here too, first, where it applies; a typing key is looked up only
+  while the editor has the keyboard.
 - **Trap (1.5.0 and 1.5.1)**: Shift+Option+F typed Ï, because the "verified"
   check had sent the event to the menu directly. Test such keys through
   `[window sendEvent:]` or `MCGuiSendKeyToApp`, never the menu alone.
@@ -696,11 +710,22 @@ container (PanelHost, laid out by hand in layoutContainer)
   sees no single typed character (no completion); the electric dedent is off
   while they apply (`multiCarets.applying`); typing never crosses a line break,
   so a column stays a column.
-- Column: Cmd+Shift-, Option- or Shift+Option-drag (`MCMultiCarets mouseDown:`,
-  first in `CodeTextView mouseDown:`), each line's caret from
+- Column: Cmd+Shift-, Option- or middle-button drag (`MCMultiCarets mouseDown:`
+  and `otherMouseDown:`, first in CodeTextView's), each line's caret from
   `characterIndexForInsertionAtPoint:` at its first fragment; Cmd+Shift clicks
-  pair up, the anchor holding while carets and length are as the last press
-  left them (`_anchorCarets`); Option+click adds or removes a caret.
+  pair up (the owner's binding), the anchor holding while carets and length
+  are as the last press left them (`_anchorCarets`); Shift+Option click or
+  drag is VS Code's box from the caret's selection start (or the live
+  anchor) to the pointer; Option+click adds or removes a caret. VS Code's
+  own Cmd+Shift click is a Shift click. **Trap (2026-11-06)**: the window
+  server counts clicks by time alone (HIDClickSpace is (0,0)), so a second
+  click within 0.5 s is clickCount 2 wherever it lands; the old `clickCount
+  > 1` bail sent the owner's quick second Cmd+Shift click to NSTextView. A
+  press counts as a double-click only on the character the last press hit
+  (VS Code's `trySetCount` does the same). Offscreen, neither `[window
+  sendEvent:]` nor CGEventPostToPid delivers a mouse-down to the view;
+  `MultiCaretClickSuite` hit-tests and calls the view with CGEvent-made
+  events carrying the real click counts.
 - Cmd+D (word at an empty caret by `MultiCaret::wordAt`, then the next
   occurrence after the last added, wrapping, case-sensitive, whole-word only
   when begun at an empty caret), Shift+Cmd+L, Option+Cmd+Down/Up (a caret a
@@ -809,7 +834,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   stays the flat list of lines that tests and `replaceMatchAtRow:` index.
   Find in Folder on a subfolder puts `./sub` in files to include.
 - Find in Folder uses `FolderSearch::search` (two characters, one for an
-  untrimmed regex; dotfiles and `node_modules`/`build`/... skipped; 1 MB and
+  untrimmed regex; `.git`, `node_modules`, `build`, the venvs and caches and
+  what the folder's `.gitignore`/`.ignore` files ignore (from the window's
+  folder down, `search.use-ignore-files`) skipped, dotfiles searched; 1 MB and
   UTF-8 only; 2000 matches; ANSI stripped; symlink loops and named pipes safe;
   generation-counted and cancelled per file). Replace in Folder
   (Option+Shift+Cmd+F) counts and asks; a file in a clean tab here is edited in
@@ -890,7 +917,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   subsequence aligned by a small DP favouring word starts and runs, in tiers,
   then recent (`MCCommandPaletteRecent`), score, menu order.
 - Quick Open: `listFiles` breadth first on a background queue (Find in Folder's
-  skips, symlinked folders once, 20,000 files, cancelled on close); the name
+  skips and ignore files, dotfiles listed, symlinked folders once, 20,000
+  files, cancelled on close); the name
   matches before the path; recent tabs and `MCQuickOpenRecent` first. Go to
   Line takes "42", "42:7" or "42,7".
 - Symbols: `textDocument/documentSymbol` from the main server (`Lsp::Symbol`, a
@@ -1161,6 +1189,25 @@ false`) a formula shows as its TeX in the code style.
 - Known gaps: copying a typeset formula copies an attachment character;
   `\color` inside is drawn in the text's color.
 
+### Mermaid in the preview (Mac)
+
+```mermaid blocks go to the user's mermaid-cli (`mmdc`, MCFindProgram, or
+`$MINICODE_MMDC`), one run at a time off the main thread, each its own
+process group with 90 s (a run starts a headless browser, about 2.5 s):
+a transparent PNG at scale 2 in the preview's theme (dark or default),
+kept in memory and `~/Library/Caches/MiniCode/mermaid` (`$MINICODE_MERMAID_CACHE`;
+50 MB). Chosen over a renderer of our own (flowchart and sequence alone are
+a layout engine) and over mermaid.js (third-party code). PNG, not PDF or
+SVG: mmdc 12 makes PDFs fit by default and refuses the older `--pdfFit`,
+draws PDF backgrounds white, and its SVG labels are HTML in foreignObject,
+which NSImage leaves out. Until it arrives, and without mmdc or with
+`markdown.mermaid = false`, the block is code (a failure's complaint, from
+`MermaidDiagram::errorSummary`, its tooltip); the code carries
+`MCMarkdownMermaidAttribute` so `renderMarkdownKeepingPlace` keeps the
+place. Core: `MermaidDiagram.{h,cpp}` (`mermaid:*`); Mac: `MarkdownMermaid.mm`,
+a hook in `renderMarkdown:`. `make guitest SUITES=mermaid` uses a stand-in
+mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
+
 ## LaTeX preview (read before touching it)
 
 - **tectonic**: `MINICODE_TECTONIC`, then `~/Library/Application
@@ -1327,6 +1374,15 @@ for full-screen programs. Both can be open at once.
   `633;E;<command, control characters blanked>` then `133;C`. PS1, PS2, RPS1,
   PROMPT_SP and tty modes are untouched; HIST_IGNORE_SPACE keeps
   `setDirectory:`'s ` cd` out of history; `TERM=xterm-256color`.
+  `terminal.activate-venv` (both modes, 2026-11-06): the panel asks the
+  window for each new terminal's environment, and `MINICODE_VENV` (with
+  `MINICODE_VENV_PROMPT`) makes the first precmd do what bin/activate does,
+  VIRTUAL_ENV, the bin first on PATH (after .zshrc and path_helper), PYTHONHOME
+  unset, the name before PS1, a deactivate; nothing of the environment's is
+  sourced or run. The interpreter is Run File's choice from the terminal's
+  folder, but the folder's own .venv only once allowed by the P5 consent
+  (`terminalPythonInterpreterInDirectory:waiting:`), since a prompt that runs
+  git would otherwise run a planted .venv/bin/git unasked.
   Every mark ends in `;mc=<nonce>` (`__minicode_mark`): 128 random bits per
   shell in `MINICODE_NONCE`, which the .zshenv reads and unsets, and
   `TerminalStream::setMarkNonce` drops marks without it (2026-11-06; any
@@ -1482,7 +1538,33 @@ for full-screen programs. Both can be open at once.
   names the roots tried; paths resolved so /private/tmp matches a /tmp root.
   The log checks `characterIndexForPoint:` against the character's own rect (it
   answers past a line's end); a flagsChanged monitor catches Cmd pressed
-  without moving. Not done: OSC 8 hyperlinks.
+  without moving. A URL goes to `openWebAddressFromTerminal:` (the user's
+  page, pane shown quietly with no home page, keyboard kept; 0.0.0.0 and [::]
+  become localhost, `TermLinks::browserAddress`).
+- **OSC 8** (grid only; the line-mode log ignores them): `TerminalScreen`
+  keeps a table of addresses (http, https, file; 2 KB; no spaces or controls)
+  and puts the id in `TermStyle::link` of each printed cell, so links survive
+  the scrollback and reflow; the open link is kept apart from SGR. 4096 ids at
+  most; when full, ids no cell (screen, scrollback, `below_`) uses are freed,
+  else a new link prints plain. TermStyle's six flags are bit-fields so the
+  id keeps it at 16 bytes (a StyleRun per style change in the scrollback; the
+  scrollback-memory check caught 24). Cmd+click on a cell with an id opens its
+  address (file:// only on this host and when the file exists, through
+  `TermLinks::hyperlink`), the span is the cells with that id in the wrapped
+  line, and the address is the view's tooltip while Cmd hovers.
+- **BROWSER** (2026-11-06): every shell gets `BROWSER=<bundle>/Contents/
+  Resources/minicode-browser.js` (`resources/`; build/'s copy for the GUI
+  checks), a file that is sh and JavaScript at once: Claude Code (on a clicked
+  link, with mouse reporting on) and Python's webbrowser exec it with the
+  address; Vite and CRA run a BROWSER ending in .js with node, their own
+  arguments first (with any other value Vite would run `open -a <value>`).
+  Both hand the last argument to `minicode-cli open-url`, which sends pages
+  that are not local (`ControlChannel::opensInPane`: sign-in pages refuse an
+  embedded web view) and every page when `MINICODE_PID`'s minicode does not
+  answer to `/usr/bin/open` (`MINICODE_OPEN_FALLBACK` in tests, a recorder),
+  and never launches minicode. The `open-url` command loads the user's page in
+  the window of `MINICODE_TERMINAL_ID`. The npm `open` package and `open`
+  itself ignore BROWSER.
 - Testing: a scratch `HOME` and `ZDOTDIR`, or commands land in the user's
   `~/.zsh_history`; an app-typed command snaps a scrolled view, so test "stays
   on its text" with output from a command already running.
@@ -1694,7 +1776,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 - Commands: `open path[:line[:col]]` (`--to`, `--note`, `--from`, `--keep`),
   `window`, `browse` (into the pane's agent page; see below), `page`,
   `term` (`--cwd`, `--title`,
-  `--run` typed and entered visibly), `diff` (`--base` never starting with
+  `--run` typed and entered visibly), `open-url` (BROWSER's; see "The
+  terminal"), `diff` (`--base` never starting with
   "-"), `split`, `state` (`--pretty`), `selection`, `term-output`, `tour`, `procs`
   (`--json`; see "Processes and ports").
   None closes, replaces or reorders the user's tabs and terminals. `open`,
@@ -1757,6 +1840,52 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 - Ground rules for this and the agent workspace: nothing runs because a folder
   or file was opened; Claude Code's data is read, never written, moved or
   deleted; nothing leaves the Mac.
+
+## The Claude Code IDE link (Mac, agent.ide-link)
+
+Claude Code's `/ide` answered per window, as VS Code's extension does. Off by
+default; View > Claude Code IDE Link (`MCIdeLinkMenuItem`, its own target)
+writes `agent.ide-link` through `Settings::withValue`. Core `IdeLink.{h,cpp}`
+(`ide:*` tests): SHA-1, base64, the upgrade handshake, RFC 6455 frames, MCP
+over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
+`IdeLinkServer.mm`: sockets on the main queue, the lock file, the tools.
+
+- **The protocol, as read** from Claude Code 2.1.319 (the bun binary's
+  embedded JS: search it for "Failed to read IDE lockfile", "ws-ide",
+  "callIdeRpc", "openDiff") and the VS Code extension 2.1.318
+  (`~/.vscode/extensions/anthropic.claude-code-*/extension.js`: "Fre(",
+  "Wnt(", the tool handlers): `$CLAUDE_CONFIG_DIR/ide` or `~/.claude/ide`,
+  `<port>.lock` 0600 holding pid, workspaceFolders, ideName, transport "ws",
+  runningInWindows, authToken. Claude Code connects to `ws://127.0.0.1:port`
+  with subprotocol "mcp" and `X-Claude-Code-Ide-Authorization`, sends
+  `ide_connected {pid}`, listens for `selection_changed {text, filePath,
+  fileUrl, selection}` (0-based lines, UTF-16 characters), calls `openDiff
+  {old_file_path, new_file_path, new_file_contents, tab_name}` and expects
+  `[FILE_SAVED, text]` or `[DIFF_REJECTED, tab]` (it writes the file itself),
+  then `close_tab`; `getDiagnostics {uri?}` before and after edits (it
+  compares the answer's uri with the one it sent, so answer under that
+  spelling). It shows the model only getDiagnostics and executeCode. It uses
+  openDiff only when its global `diffTool` is "auto". It auto-connects when
+  CLAUDE_CODE_SSE_PORT is the port (minicode's terminals get it,
+  `MCIdeLinkTerminalEnvironment`), else /ide lists lock files whose folders
+  hold its cwd (unresolved, so the lock lists the folder as spelled and
+  resolved); it skips the pid check outside VS Code and JetBrains terminals,
+  and deletes lock files of dead pids itself.
+- **Rules kept**: 127.0.0.1 only, a 48-hex-digit secret per window, Host must
+  be loopback, nothing said before the token; writes nothing under ~/.claude
+  but its own lock file (temp file and rename, removed on window close,
+  setting off and atexit); removes at start only lock files with ideName
+  minicode, another pid, that pid gone. openFile goes through
+  `openTabForAgent:preview:quiet:` (beside the user while they type) and
+  highlights startText..endText with an empty note; openDiff is a
+  comparison tab (`showComparison:preview:NO quiet:YES`) with a decision bar
+  (`MCComparison decisionPrompt/onDecision`, CompareView); closing the tab
+  rejects (`closePageOf:` calls `tabClosed`); close_tab and closeAllDiffTabs
+  close only comparisons the link offered. Not offered: saveDocument,
+  executeCode. A client that goes leaves its diff saying so.
+- Checked by `make guitest SUITES=idelink` (a WebSocket client on a thread;
+  `MC_GUI_NODE=/opt/homebrew/bin/node` adds node's own client) and the
+  `ide:*` groups. Not run against a real Claude Code session.
 
 ## The agent workspace (Mac)
 
@@ -1937,7 +2066,8 @@ session has a display. Check first.
   keystroke suite (`MC_GUI_FULL_PERF=1` runs foldperf on 100,000 lines, not
   20,000). Suites: control, agents, backups, find_bar, folding, foldperf,
   format, git_panel, keymap, keystroke, lsp_fixes, palette, paste, previews,
-  problems, processes, replace_in_folder, run_file, symbols, terminal_reflow, and in
+  problems, processes, replace_in_folder, run_file, symbols, terminal_links,
+  terminal_reflow, and in
   LooseEndsSuite.mm terminal_exec, terminal_keys, terminal_zoom,
   agent_autosave, multicaret_rows. **Language server checks use the scripted
   server** `build/fakelsp` (`tests/fakelsp/fakelsp.cpp`, built by `make

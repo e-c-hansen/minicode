@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <deque>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct TermCell {
@@ -189,6 +190,22 @@ public:
     const std::string& directory() const { return directory_; }
     int commandsEnded() const { return commandsEnded_; }
 
+    // OSC 8 hyperlinks: "ESC ] 8 ; params ; URI ST" opens a link and
+    // "ESC ] 8 ; ; ST" closes it; the text printed in between carries the
+    // link's id in its style (TermStyle::link), into the scrollback and
+    // through a reflow. Only http, https and file addresses are kept, up to
+    // kMaxLinkBytes, with no spaces or control characters; anything else
+    // prints as plain text. Links with the same address (and the same id=
+    // parameter, when given) share an id. At most kMaxLinks are known at
+    // once: when the table is full, ids no cell uses any more are given out
+    // again, and with none free a new link prints as plain text.
+    static constexpr size_t kMaxLinkBytes = 2048;
+    static constexpr size_t kMaxLinks = 4096;
+    // The address of a link id, "" for 0 or an id not in use.
+    const std::string& linkURI(uint32_t id) const;
+    // Links in use (for tests).
+    size_t linkCount() const { return linkIds_.size(); }
+
     // Mouse reporting: what the program asked for. mouseTracking() is 0
     // (none), 9 (X10: presses only), 1000 (presses and releases), 1002 (and
     // motion with a button down) or 1003 (all motion); mouseEncoding() is 0
@@ -303,6 +320,16 @@ private:
     std::string title_;
     std::string directory_;
     int commandsEnded_ = 0;
+    // OSC 8: the open link (0 none), and the table behind the ids (id - 1
+    // indexes links_; linkKeys_ the key linkIds_ has it under; ids whose
+    // links went, to give out again).
+    uint32_t link_ = 0;
+    std::vector<std::string> links_, linkKeys_;
+    std::unordered_map<std::string, uint32_t> linkIds_;
+    std::vector<uint32_t> freeLinks_;
+    void hyperlink(const std::string& body);    // an OSC 8 body
+    uint32_t internLink(const std::string& key, const std::string& uri);
+    void collectLinks();                        // frees ids no cell uses
 
     TermCell blank() const;          // an erased cell in the current colors
     void resetTabs();

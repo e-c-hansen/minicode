@@ -284,7 +284,8 @@ static void testFolderReplace() {
     writeFile(root / "src" / "b.py", "x = foo(1)\n");
     writeFile(root / "src" / "c.md", "nothing here\n");
     writeFile(root / "node_modules" / "d.js", "foo\n");   // skipped, as by search
-    writeFile(root / ".hidden", "foo\n");
+    writeFile(root / ".gitignore", "ignored.txt\n");      // left out, as by search
+    writeFile(root / "ignored.txt", "foo\n");
 
     GROUP("find:folder-options");
     {

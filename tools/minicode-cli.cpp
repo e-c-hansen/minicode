@@ -411,6 +411,23 @@ int runHooks(const std::string &action) {
     return kExitOK;
 }
 
+// open-url's way out: the address goes to the default browser through
+// /usr/bin/open ($MINICODE_OPEN_FALLBACK in the GUI checks, which record
+// instead of opening anything).
+int openInDefaultBrowser(const std::string &url) {
+    if (url.empty() || url[0] == '-') {
+        std::fprintf(stderr, "minicode: not an address: %s\n", url.c_str());
+        return kExitUsage;
+    }
+    const char *fallback = getenv("MINICODE_OPEN_FALLBACK");
+    const std::string program = fallback && *fallback ? fallback : "/usr/bin/open";
+    std::vector<char *> argv = {const_cast<char *>(program.c_str()), const_cast<char *>(url.c_str()),
+                                nullptr};
+    execv(program.c_str(), argv.data());
+    std::fprintf(stderr, "minicode: could not run %s: %s\n", program.c_str(), std::strerror(errno));
+    return kExitFailed;
+}
+
 int usageError(const std::string &message) {
     std::fprintf(stderr, "minicode: %s\nTry 'minicode help'.\n", message.c_str());
     return kExitUsage;
@@ -461,6 +478,19 @@ int main(int argc, char **argv) {
         c.pid = ClaudeHooks::parsePositive(getenv("MINICODE_PID"));
     }
 
+    // open-url, which BROWSER runs in minicode's terminals: a page that is
+    // not local goes to the default browser, and so does any page when the
+    // minicode the terminal belongs to does not take it. It never starts
+    // minicode, and prints nothing when the page opened.
+    const bool openUrl = c.cmd == "open-url";
+    const std::string url = openUrl ? c.args["url"].asString() : "";
+    if (openUrl) {
+        if (!opensInPane(url)) return openInDefaultBrowser(url);
+        if (!c.pid) c.pid = ClaudeHooks::parsePositive(getenv("MINICODE_PID"));
+        const int terminal = ClaudeHooks::parsePositive(getenv("MINICODE_TERMINAL_ID"));
+        if (!c.args.has("terminal") && terminal > 0) c.args.set("terminal", terminal);
+    }
+
     if (!c.tourFile.empty()) {
         std::ifstream in(c.tourFile);
         if (!in) {
@@ -484,6 +514,7 @@ int main(int argc, char **argv) {
 
     std::vector<Candidate> sockets = findSockets(c.pid);
     if (sockets.empty() && notify) return kExitOK;
+    if (sockets.empty() && openUrl) return openInDefaultBrowser(url);
     if (sockets.empty()) {
         if (c.pid) {
             std::fprintf(stderr, "minicode: no minicode is running as process %d\n", c.pid);
@@ -519,7 +550,7 @@ int main(int argc, char **argv) {
     const std::string request = requestLine(Json(1), c.cmd, c.args);
     for (const Candidate &to : sockets) {
         bool refused = false;
-        if (exchange(to, request, answer, error, &refused, notify ? 5 : 120)) {
+        if (exchange(to, request, answer, error, &refused, notify ? 5 : openUrl ? 10 : 120)) {
             sent = true;
             break;
         }
@@ -527,6 +558,7 @@ int main(int argc, char **argv) {
     }
     if (!sent) {
         if (notify) return kExitOK;
+        if (openUrl) return openInDefaultBrowser(url);
         std::fprintf(stderr, "minicode: %s\n", error.c_str());
         return kExitNoApp;
     }
@@ -538,6 +570,7 @@ int main(int argc, char **argv) {
     }
     if (!reply["ok"].asBool()) {
         std::fprintf(stderr, "minicode: %s\n", reply["error"].asString("failed").c_str());
+        if (openUrl) return openInDefaultBrowser(url);
         return kExitFailed;
     }
     const Json &result = reply["result"];

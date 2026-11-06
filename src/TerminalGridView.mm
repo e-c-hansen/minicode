@@ -38,6 +38,8 @@
 #include <utility>
 #include <vector>
 #include "TerminalStream.h"   // termCharWidth
+#include "TermLinks.h"
+#include <unistd.h>          // gethostname
 
 static const long long kNoLine = LLONG_MIN;
 // Synchronized output: the longest a frame may keep the view from drawing.
@@ -61,6 +63,9 @@ static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e);
     MCTermLink *_link;
     long long _linkId, _linkEndId;
     int _linkCol0, _linkCol1;
+    // The address of the OSC 8 hyperlink linkAtPoint: last found (nil for a
+    // link read from the text), shown as the tooltip while Cmd hovers it.
+    NSString *_hyperlinkAddress;
     // Mouse reporting: the button held down and reported (-1 none), and the
     // cell last reported, so motion is sent once per cell.
     int _reportButton;
@@ -998,6 +1003,29 @@ struct CellAt { int line, col; };
     return text;
 }
 
+// What an OSC 8 hyperlink's address opens (TermLinks::hyperlink): a web
+// address, or a file or folder on this Mac that exists; nil otherwise.
+static MCTermLink *MCHyperlinkFor(const std::string &uri) {
+    char host[256] = "";
+    gethostname(host, sizeof host - 1);
+    TermLinks::Link l;
+    if (!TermLinks::hyperlink(uri, host, l)) return nil;
+    NSString *target = [[NSString alloc] initWithBytes:l.target.data() length:l.target.size()
+                                              encoding:NSUTF8StringEncoding];
+    if (!target.length) return nil;
+    MCTermLink *link = [MCTermLink new];
+    if (l.kind == TermLinks::Link::Url) {
+        link.isURL = YES;
+        link.target = target;
+        return link;
+    }
+    BOOL dir = NO;
+    if (![NSFileManager.defaultManager fileExistsAtPath:target isDirectory:&dir]) return nil;
+    link.target = target.stringByStandardizingPath;
+    link.isDirectory = dir;
+    return link;
+}
+
 // The link at a point, with the line and cell it starts at and the line and
 // cell after its end, or nil. Points outside the grid find nothing
 // (cellAtPoint: would clamp them onto the edge cells).
@@ -1014,6 +1042,34 @@ struct CellAt { int line, col; };
     if (s->lineCell(line, c).width == 0 && c > 0) c--;   // right half of a wide character
     int first, last;
     [self logicalLineAt:line first:&first last:&last];
+    _hyperlinkAddress = nil;
+    // An OSC 8 hyperlink comes first: it spans the cells around the point
+    // that carry its id, within the soft-wrapped line, whatever they say.
+    if (uint32_t id = s->lineCell(line, c).style.link) {
+        MCTermLink *link = MCHyperlinkFor(s->linkURI(id));
+        if (!link) return nil;
+        std::vector<CellAt> cells;
+        size_t at = 0;
+        for (int l = first; l <= last; l++) {
+            int width = l < last ? s->lineTextWidth(l) : s->cols();
+            for (int col = 0; col < width; col++) {
+                if (s->lineCell(l, col).width == 0) continue;
+                if (l == line && col == c) at = cells.size();
+                cells.push_back(CellAt{l, col});
+            }
+        }
+        if (cells.empty()) return nil;
+        auto idAt = [&](size_t i) { return s->lineCell(cells[i].line, cells[i].col).style.link; };
+        size_t a = at, z = at;
+        while (a > 0 && idAt(a - 1) == id) a--;
+        while (z + 1 < cells.size() && idAt(z + 1) == id) z++;
+        *lineOut = cells[a].line;
+        *col0 = cells[a].col;
+        *endLineOut = cells[z].line;
+        *col1 = cells[z].col + (s->lineCell(cells[z].line, cells[z].col).width == 2 ? 2 : 1);
+        _hyperlinkAddress = @(s->linkURI(id).c_str());
+        return link;
+    }
     std::vector<CellAt> cellOfByte;
     std::string text = [self textOfLines:first to:last cells:&cellOfByte];
     size_t byte = 0;
@@ -1048,6 +1104,9 @@ struct CellAt { int line, col; };
     BOOL changed = lineId != _linkId || endId != _linkEndId || c0 != _linkCol0 || c1 != _linkCol1;
     _link = link;
     _linkId = lineId; _linkEndId = endId; _linkCol0 = c0; _linkCol1 = c1;
+    // A hyperlink's text may say anything: its address shows as the tooltip.
+    NSString *tip = link ? _hyperlinkAddress : nil;
+    if (tip != self.toolTip && ![tip isEqualToString:self.toolTip]) self.toolTip = tip;
     if (link) [[NSCursor pointingHandCursor] set];
     else if (changed) [[NSCursor arrowCursor] set];
     if (changed) [self setNeedsDisplay:YES];

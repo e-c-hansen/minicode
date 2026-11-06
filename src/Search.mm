@@ -585,6 +585,10 @@ static NSString *SFromU16(const std::u16string &u) {
     o.preserveCase = self.preserveCase;
     o.include = SStd(_includeInput.field.stringValue);
     o.exclude = SStd(_excludeInput.field.stringValue);
+    // search.use-ignore-files: the folder's .gitignore files, from the
+    // window's folder down, even when the scope is a folder inside it.
+    o.useIgnoreFiles = [AppSettings shared].settings.searchUseIgnoreFiles();
+    if (_root.length) o.ignoreTop = _root.fileSystemRepresentation;
     return o;
 }
 

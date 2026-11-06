@@ -31,3 +31,14 @@ NSString *MCKeepSortedBeforeSave(NSTextView *tv);
 // background): the sorted text, or nil when nothing changed. *problem, if
 // given, gets the message when some block was left alone.
 NSString *MCKeepSortedText(NSString *text, NSString **problem);
+
+// Cmd+] and Cmd+[ (VS Code's Indent Line and Outdent Line): the lines the
+// selection or the caret touches, one level in or out by the file's unit.
+// NO (and a beep) when nothing could change.
+BOOL MCIndentLines(NSTextView *tv, NSString *path, BOOL outdent);
+// Cmd+Return and Insert Line Above: a new line below (or above) the caret's
+// line, wherever the caret is in it, indented as Return would indent it.
+BOOL MCInsertLine(NSTextView *tv, NSString *path, BOOL above, BOOL markdown);
+// Toggle Bold ("**") and Toggle Italic ("*") in Markdown
+// (MarkdownTasks::toggleWrap).
+BOOL MCToggleMarkdownWrap(NSTextView *tv, NSString *marker, NSString *action);

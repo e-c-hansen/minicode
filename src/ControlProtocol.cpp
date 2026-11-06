@@ -1,5 +1,7 @@
 // ControlProtocol.cpp — see ControlProtocol.h.
 #include "ControlProtocol.h"
+#include "PageCheck.h"
+#include "TermLinks.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -43,6 +45,10 @@ std::vector<CommandSpec> makeCommands() {
         addTarget(s.args);
         c.push_back(s);
     }
+    // What BROWSER runs in minicode's terminals (open-url): the user's own
+    // page, in the window of the terminal the program runs in.
+    c.push_back({"open-url", "Open a web address in the user's page of the browser pane",
+                 {arg("url", ArgType::String, true), arg("terminal", ArgType::Int)}});
     {
         // One of reload, text, screenshot, console or url (PageCheck.h).
         CommandSpec s{"page", "Reload or read the agent page (or with yours, the user's)",
@@ -343,6 +349,10 @@ std::string absolutePath(const std::string& path, const std::string& cwd,
     return out.empty() ? "/" : out;
 }
 
+bool opensInPane(const std::string& url) {
+    return PageCheck::isLocalAddress(TermLinks::browserAddress(url));
+}
+
 bool isSafeRef(const std::string& ref) {
     return !ref.empty() && ref[0] != '-' && ref.find('\0') == std::string::npos &&
            ref.find('\n') == std::string::npos;
@@ -351,14 +361,14 @@ bool isSafeRef(const std::string& ref) {
 bool launchesApp(const std::string& cmd) {
     return cmd != "state" && cmd != "selection" && cmd != "term-output" && cmd != "ping" &&
            cmd != "procs" && cmd != "notify" &&
-           cmd != "page";
+           cmd != "page" && cmd != "open-url";
 }
 
 const std::vector<std::string>& subcommands() {
     static const std::vector<std::string> words = {"open", "window", "browse", "term",
                                                    "diff", "split", "state", "selection",
                                                    "term-output", "tour", "procs", "notify",
-                                                   "hooks", "page", "help"};
+                                                   "hooks", "page", "open-url", "help"};
     return words;
 }
 
@@ -396,6 +406,16 @@ const Help kHelp[] = {
      "    and file addresses, host:port (as http) and paths of files; it never\n"
      "    searches. With --wait it returns when the page has loaded, or after\n"
      "    15 seconds, and prints JSON: url, status (HTTP), title, loading.\n"},
+    {"open-url",
+     "minicode open-url <url>\n"
+     "    What BROWSER names in minicode's terminals, so a program that opens a\n"
+     "    web page (Claude Code when a link is clicked, Python's webbrowser,\n"
+     "    vite --open) opens it here: a local page (localhost, 127.0.0.1, ::1,\n"
+     "    *.localhost, 0.0.0.0, a file) loads in the browser pane of the\n"
+     "    terminal's window, the user's page, without taking the keyboard;\n"
+     "    any other address, or any address when minicode does not answer,\n"
+     "    goes to the default browser through /usr/bin/open. Never starts\n"
+     "    minicode. With several arguments the last is the address.\n"},
     {"page",
      "minicode page --url | --text | --console [--since SEQ] | --reload [--wait]\n"
      "              | --screenshot OUT.png [--full]   [--yours]\n"
@@ -668,6 +688,11 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
             if (!c.hooksAction.empty() && c.hooksAction != w.substr(2))
                 c.error = "hooks takes --print or --install, not both";
             c.hooksAction = w.substr(2);
+        } else if (sub == "open-url" && takeValue(a, i, "terminal", v, c.error)) {
+            int id = 0;
+            if (c.error.empty() && (!parsePositiveInt(v, id) || id <= 0))
+                c.error = "--terminal needs a terminal id";
+            c.args.set("terminal", id);
         } else if (sub == "state" && w == "--pretty") {
             c.pretty = true;
         } else if (sub == "procs" && w == "--json") {
@@ -719,6 +744,11 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
             url = absolutePath(url, cwd, home);
         c.args.set("url", url);
         if (c.args["wait"].asBool()) c.output = Output::Json;
+    } else if (sub == "open-url") {
+        // A program may put its own arguments first (Vite passes its
+        // command line, then the address).
+        if (positional.empty()) { c.error = "open-url needs an address"; return c; }
+        c.args.set("url", positional.back());
     } else if (sub == "diff") {
         if (positional.empty() || positional.size() > 2) {
             c.error = "diff needs a path, or two";

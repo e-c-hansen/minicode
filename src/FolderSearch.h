@@ -12,10 +12,16 @@
 //   character and covers ASCII, Latin-1, Latin Extended-A, Greek and
 //   Cyrillic. NSString's full Unicode folding also equates canonically
 //   equivalent sequences and "ß" with "ss"; this does not.
-// - Entries whose name starts with '.' are skipped (files and folders), and so
-//   are folders named node_modules, build, .build, DerivedData, dist, .venv,
-//   venv and __pycache__. The scope folder itself is always searched, even if
-//   its own name is on that list.
+// - Dotfiles and dot folders are searched (.github, .env, .claude), as VS
+//   Code searches them, except for the folders isSkippedDirectory names
+//   (.git, .svn, .hg, node_modules, build, .build, DerivedData, dist, .venv,
+//   venv, __pycache__ and the tools' cache folders) and .DS_Store. The scope
+//   folder itself is always searched, even if its own name is on that list.
+// - With useIgnoreFiles (the default, search.use-ignore-files), what the
+//   folder's .gitignore and .ignore files ignore is left out too, as VS Code
+//   and ripgrep leave it out: every such file from the window's folder
+//   (ignoreTop) down, and .git/info/exclude at its top. See Ignore below.
+//   (Until 2026-11-06 every dotfile was skipped and no ignore file read.)
 // - Files over 1 MB are skipped, and so is any file that is not valid UTF-8,
 //   which is how binaries fall out (the Mac drops them the same way, when
 //   NSString refuses to decode them).
@@ -40,6 +46,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -75,6 +82,12 @@ struct FolderSearchOptions {
     // globs (see PathFilter). Empty includes everything, excludes nothing.
     std::string   include;
     std::string   exclude;
+    // Leave out what .gitignore and .ignore files ignore (Ignore below).
+    bool          useIgnoreFiles = true;
+    // The folder whose ignore files apply, from its top: the window's
+    // folder, when the scope searched is a folder inside it. "" (or a
+    // folder the scope is not inside) means the scope itself.
+    std::string   ignoreTop;
 };
 
 struct FolderSearchResult {
@@ -117,8 +130,74 @@ std::string normalizeQuery(const std::string& query);
 // True when normalizeQuery(query) has at least kMinQueryChars characters.
 bool isSearchable(const std::string& query);
 
-// Directory names never descended into (besides every name starting with '.').
+// Directory names never descended into: version control's own folders,
+// dependencies, build output, virtual environments and the tools' caches.
 bool isSkippedDirectory(const std::string& name);
+// File names never listed or searched (.DS_Store).
+bool isSkippedFile(const std::string& name);
+
+// .gitignore and .ignore, as git reads them (gitignore(5)): blank lines and
+// "#" comments skipped, trailing spaces dropped unless escaped, "!" to
+// include again, a trailing "/" for folders only, a "/" anywhere else
+// anchoring the pattern to the file's folder (otherwise it matches a name
+// at any depth below), and git's wildmatch for "*", "?", "[...]" and "**".
+// A deeper file's rules win over a shallower one's, .ignore over .gitignore
+// in one folder (as ripgrep has it), and the last matching rule in a file
+// decides. A folder that is ignored is not entered, so, as in git, nothing
+// below it can be included again. Matching folds case on the Mac, where git
+// sets core.ignorecase for its case-insensitive file systems.
+namespace Ignore {
+
+struct Rule {
+    std::string pattern;   // without "!", the trailing "/" and a leading "/"
+    bool negate = false;
+    bool dirOnly = false;
+    bool anchored = false;   // matched against the path from the file's folder
+};
+std::vector<Rule> parse(const std::string& text);
+
+// git's wildmatch with WM_PATHNAME: "*" and "?" never match "/", and "**"
+// as a whole path component matches any number of folders. caseFold: ASCII
+// letters match either case.
+bool wildmatch(const std::string& pattern, const std::string& text, bool caseFold = false);
+
+// Whether to fold case by default: true on the Mac.
+bool defaultCaseFold();
+
+// The rules in effect in one folder of a walk: its own ignore files and its
+// parents'. Copying is cheap (they are shared), so a breadth-first walk can
+// keep one per queued folder.
+class Rules {
+public:
+    Rules() = default;   // nothing is ignored
+    // At the walk's top: .git/info/exclude when the top holds .git, then its
+    // own .gitignore and .ignore.
+    static Rules atTop(const std::string& top, bool caseFold = defaultCaseFold());
+    // The rules for a subfolder: these plus its own files. relDir is its
+    // path from the top, '/' separated, no trailing '/'.
+    Rules enter(const std::string& dirPath, const std::string& relDir) const;
+    // The same with the files' text given ("" for one that is not there),
+    // for tests and for callers that read them themselves.
+    Rules with(const std::string& relDir, const std::string& gitignore,
+               const std::string& ignore) const;
+    // Is the entry at relPath (from the top) ignored?
+    bool ignored(const std::string& relPath, bool isDir) const;
+    bool empty() const { return !head_; }
+    void setCaseFold(bool fold) { fold_ = fold; }
+
+private:
+    struct Node;
+    std::shared_ptr<const Node> head_;
+    bool fold_ = false;
+};
+
+// The rules at `scope` for a walk of it when `top`'s ignore files apply
+// (top "", or a folder scope is not inside: scope's own). *scopeRel is the
+// scope's path from the top ("" when they are one).
+Rules rulesFor(const std::string& top, const std::string& scope, std::string* scopeRel,
+               bool caseFold = defaultCaseFold());
+
+}  // namespace Ignore
 
 // Strict UTF-8 validation: no overlong forms, surrogates or values past
 // U+10FFFF.

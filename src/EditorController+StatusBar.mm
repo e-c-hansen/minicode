@@ -293,8 +293,10 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:@"⇥" label2:@"Take completion" state:nil];
     [self appendHintsRow:s key:[self hk:@"minicode.sortLines"] label:@"Sort lines"
                     key2:[self hk:@"minicode.sortKeepSortedBlocks"] label2:@"Sort keep-sorted blocks" state:nil];
-    [self appendHintsRow:s key:@"⇥" label:@"Indent lines"
-                    key2:@"⇧⇥" label2:@"Outdent lines" state:nil];
+    [self appendHintsRow:s key:[self hk:@"editor.action.indentLines"] label:@"Indent lines (or ⇥)"
+                    key2:[self hk:@"editor.action.outdentLines"] label2:@"Outdent lines (or ⇧⇥)" state:nil];
+    [self appendHintsRow:s key:[self hk:@"editor.action.insertLineAfter"] label:@"Insert line below"
+                    key2:[self hk:@"python.execSelectionInTerminal"] label2:@"Line to Python REPL" state:nil];
     [self appendHintsRow:s key:[NSString stringWithFormat:@"%@ %@", [self hk:@"editor.action.fontZoomIn"], [self hk:@"editor.action.fontZoomOut"]] label:@"Zoom in, out"
                     key2:[self hk:@"editor.action.fontZoomReset"] label2:@"Reset zoom" state:nil];
     [self appendHintsRow:s key:[self hk:@"editor.fold"] label:@"Fold"
@@ -315,6 +317,10 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:[self hk:@"minicode.tree.toggleSizes"] label2:@"Sizes" state:nil];
     [self appendHintsRow:s key:[self hk:@"minicode.tree.toggleSaved"] label:@"When last saved"
                     key2:[self hk:@"minicode.tree.toggleCreated"] label2:@"When created" state:nil];
+    [self appendHintsRow:s key:[self hk:@"workbench.action.files.saveAll"] label:@"Save all"
+                    key2:[self hk:@"workbench.action.openRecent"] label2:@"Open recent folder" state:nil];
+    [self appendHintsRow:s key:[self hk:@"workbench.action.closeOtherEditors"] label:@"Close other tabs"
+                    key2:nil label2:nil state:nil];
 
     [self appendHintsHeading:@"Navigation" to:s];
     [self appendHintsRow:s key:[self hk:@"workbench.action.showCommands"] label:@"Command palette"

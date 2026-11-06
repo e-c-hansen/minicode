@@ -133,6 +133,11 @@ public:
     // commented out too, so the theme shows whole; nothing else changes.
     static std::string withTheme(const std::string& text, const std::string& id,
                                  bool commentColors);
+    // The settings text with `key = value` in it: the line that sets the key
+    // changed (a comment after its value kept), else its commented-out line
+    // uncommented, else a new line at the end. Nothing else changes.
+    static std::string withValue(const std::string& text, const std::string& key,
+                                 const std::string& value);
     // How many lines of the text set a color (uncommented), which a theme's
     // color would give way to.
     static int colorOverrides(const std::string& text);
@@ -197,6 +202,10 @@ public:
     // markdown.math: whether the Markdown preview typesets math (on by
     // default, where tectonic is found). Off, formulas show as their TeX.
     bool math() const { return math_; }
+    // markdown.mermaid: whether the Markdown preview draws ```mermaid
+    // blocks (on by default, where mermaid-cli's mmdc is found). Off, they
+    // show as their source.
+    bool mermaid() const { return mermaid_; }
 
     // editor.keep-sorted-on-save: sort every keep-sorted block in a file
     // when it is saved (off by default).
@@ -251,6 +260,18 @@ public:
     double terminalFontSize() const { return terminalFontSize_; }
     int terminalScrollback() const { return terminalScrollback_; }
     bool terminalOptionAsMeta() const { return terminalOptionAsMeta_; }
+    // terminal.activate-venv: a new terminal starts with the folder's Python
+    // environment active, as VS Code's shellStartup activation does: its
+    // bin first on PATH, VIRTUAL_ENV set, its name before the prompt and a
+    // deactivate function (true by default). Nothing of the environment's
+    // is run to do it; the folder's own .venv waits for the same yes the
+    // language servers wait for.
+    bool terminalActivateVenv() const { return terminalActivateVenv_; }
+
+    // search.use-ignore-files: Find in Folder, Replace in Folder, the TODO
+    // list and Quick Open leave out what the folder's .gitignore and .ignore
+    // files ignore (true by default, VS Code's search.useIgnoreFiles).
+    bool searchUseIgnoreFiles() const { return searchUseIgnoreFiles_; }
 
     // Language servers. lsp.enabled turns the whole client on or off (on by
     // default). lsp.<server> names the command for one server key (cpp,
@@ -310,6 +331,10 @@ public:
     std::string agentCommand() const {
         return agentCommand_.empty() ? "claude" : agentCommand_;
     }
+    // agent.ide-link: whether each window offers Claude Code the IDE link
+    // (`/ide`: the selection, diagnostics, files opened and diffs offered
+    // in the window). Off by default.
+    bool ideLink() const { return ideLink_; }
     // control.page-any-origin: whether agents may read the text, console
     // and pictures of any page in the browser pane (`minicode page`), not
     // only local ones (off by default; PageCheck.h).
@@ -339,6 +364,8 @@ private:
     bool lspEnabled_ = true;
     bool webImages_ = true;
     bool math_ = true;
+    bool mermaid_ = true;
+    bool ideLink_ = false;
     bool keepSortedOnSave_ = false;
     AutoSave autoSave_ = AutoSave::Off;
     int autoSaveDelay_ = 1000;
@@ -352,6 +379,8 @@ private:
     int terminalScrollback_ = 10000;
     double terminalFontSize_ = 12;
     bool terminalOptionAsMeta_ = true;
+    bool terminalActivateVenv_ = true;
+    bool searchUseIgnoreFiles_ = true;
     std::map<std::string, std::string> lspCommands_;
     bool runInNewTerminal_ = false;
     std::map<std::string, std::string> runCommands_;

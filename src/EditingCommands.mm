@@ -253,3 +253,54 @@ NSString *MCKeepSortedText(NSString *text, NSString **problem) {
     out.replace(e.replaceStart, e.replaceLength, e.replacement);
     return FromU16(out);
 }
+
+BOOL MCIndentLines(NSTextView *tv, NSString *path, BOOL outdent) {
+    if (!tv.editable || tv.hasMarkedText) { NSBeep(); return NO; }
+    const std::string name = FileName(path);
+    const NSRange sel = tv.selectedRange;
+    const std::u16string text = U16(tv.string);
+    const AutoIndent::Unit unit = AutoIndent::detect(text, name, CacheFor(tv));
+    AutoIndent::Edit e =
+        outdent ? AutoIndent::backtab(text, sel.location, NSMaxRange(sel), name, unit)
+                : AutoIndent::indentLines(text, sel.location, NSMaxRange(sel), name, unit);
+    if (!e.changed) { NSBeep(); return NO; }
+    Apply(tv, e.replaceStart, e.replaceLength, e.replacement, e.selStart, e.selEnd,
+          outdent ? @"Outdent" : @"Indent");
+    return YES;
+}
+
+BOOL MCInsertLine(NSTextView *tv, NSString *path, BOOL above, BOOL markdown) {
+    if (!tv.editable || tv.hasMarkedText) { NSBeep(); return NO; }
+    NSString *s = tv.string;
+    const NSRange line = [s lineRangeForRange:NSMakeRange(tv.selectedRange.location, 0)];
+    if (above) {
+        // A line above: the new line takes this one's indentation.
+        NSUInteger i = line.location;
+        while (i < NSMaxRange(line) && ([s characterAtIndex:i] == ' ' || [s characterAtIndex:i] == '\t'))
+            i++;
+        NSString *indent = [s substringWithRange:NSMakeRange(line.location, i - line.location)];
+        NSString *insert = [indent stringByAppendingString:@"\n"];
+        const size_t at = line.location;
+        Apply(tv, at, 0, U16(insert), at + indent.length, at + indent.length, @"Insert Line Above");
+        return YES;
+    }
+    // Below: Return at the end of the line, so the language's indentation
+    // (and a Markdown list's next item) follows.
+    NSUInteger end = NSMaxRange(line);
+    if (end > line.location && [s characterAtIndex:end - 1] == '\n') end--;
+    if (end > line.location && [s characterAtIndex:end - 1] == '\r') end--;
+    [tv setSelectedRange:NSMakeRange(end, 0)];
+    if (!MCIndentCommand(tv, @selector(insertNewline:), path, markdown))
+        Apply(tv, end, 0, u"\n", end + 1, end + 1, @"Insert Line Below");
+    return YES;
+}
+
+BOOL MCToggleMarkdownWrap(NSTextView *tv, NSString *marker, NSString *action) {
+    if (!tv.editable || tv.hasMarkedText) { NSBeep(); return NO; }
+    const NSRange sel = tv.selectedRange;
+    MarkdownTasks::Edit e =
+        MarkdownTasks::toggleWrap(U16(tv.string), sel.location, NSMaxRange(sel), U16(marker));
+    if (!e.changed) { NSBeep(); return NO; }
+    Apply(tv, e.replaceStart, e.replaceLength, e.replacement, e.selStart, e.selEnd, action);
+    return YES;
+}

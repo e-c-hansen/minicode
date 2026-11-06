@@ -64,6 +64,16 @@ struct Edit {
 // too, unless only one blank line is touched, which becomes "- [ ] ".
 Edit toggle(const std::u16string& text, size_t selStart, size_t selEnd);
 
+// Toggle Bold ("**") and Toggle Italic ("*"), as markdown-all-in-one's
+// toggleBold and toggleItalic: a selection wrapped in the marker, inside it
+// or just outside it, loses it, else gets it (still selected); with no
+// selection, the word at the caret is wrapped or unwrapped the same way, an
+// empty pair around the caret ("**|**") goes, and elsewhere an empty pair
+// is typed with the caret inside. For "*", a run of two stars is bold, not
+// italic (three is both), so italic never takes a star from "**bold**".
+Edit toggleWrap(const std::u16string& text, size_t selStart, size_t selEnd,
+                const std::u16string& marker);
+
 // Return in a list item, with the caret after its marker (and box): a new
 // item starts on the next line with the same indentation, quote markers and
 // marker ("- [ ] " after a task, whether or not it was checked; "4. " after

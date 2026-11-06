@@ -18,11 +18,11 @@ The macOS app links only against frameworks that ship with the system. The Linux
 
 Open a folder and you get a file tree on the left and the file you click in the main pane. Each file you open gets a tab above the editor, keeping its own unsaved changes, undo history, and place, and a dot on the tab means it has changes to save. Typing something and deleting it again leaves nothing to save. Command W closes the tab, or the terminal or browser when it has the keyboard, and Shift Command W closes the window. On the Mac, Command N starts a new file, Option Command N opens a new window, and Option Shift Command T reopens the tab you closed last, where it was. The next time you open the folder, its tabs come back. On the Mac, unsaved changes are also copied to a backup a second after you stop typing, so if minicode crashes, is force quit, or the Mac loses power, the next window on that folder brings them back as unsaved tabs, with the file on disk untouched and a note if it changed in the meantime. Quitting still asks whether to save, and Don't Save throws the backups away. The tree follows changes made elsewhere, in the terminal, in git or in another program, and right clicking an item offers new file, new folder, rename, move to trash, reveal in Finder, and copy path or the path from the folder. On the Mac, right clicking a tab offers the same for its file, plus showing it in the tree and closing the tab, the others, the ones to its right, or all of them.
 
-On the Mac, Shift Command P opens a command palette, as in VS Code: type a few letters of any command in the menus and press Return to run it, with the ones you ran last at the top. Command P opens the same box on the folder's files instead, matched by name with the files you opened lately first, and Control G asks for a line of the open file (42, or 42:7 for a column). Typing > at the start of the box switches to commands, and a colon to a line number.
+On the Mac, Shift Command P opens a command palette, as in VS Code: type a few letters of any command in the menus and press Return to run it, with the ones you ran last at the top. Command P opens the same box on the folder's files instead, matched by name with the files you opened lately first, and Control G asks for a line of the open file (42, or 42:7 for a column). Typing > at the start of the box switches to commands, and a colon to a line number. Command P and Find in Folder include dotfiles such as .github/workflows/ci.yml and .env, and leave out what the folder's .gitignore and .ignore files ignore, as VS Code does; search.use-ignore-files = false in the settings searches everything. Control R lists the folders you opened before, as File > Open Recent does.
 
 On the Mac the file tree can show up to three columns at the right of each row, each switched on and off by its own key: Shift Command I for sizes, Option Shift Command I for when each file was last saved, and Control Shift Command I for when it was created. They use Finder's units ("4 KB", "2 min", "yesterday", "12 Oct"), with the exact figures in the row's tooltip, and when the row gets narrow the rightmost column goes first. A folder's size is the total of everything inside it, hidden files included, as Finder and du count it; it is added up in the background, shows "…" until it is known, and is counted again when something inside changes. A very large folder stops being counted after a couple of seconds and shows "≥" before what it reached. While the last-saved column shows, the status bar also says when the open file was last saved. Sort By in the tree's right click menu orders the tree by name, date modified, size, or date created, ascending or descending, with folders first or mixed in with the files. Dates and sizes start newest and largest first, as in Finder, and each folder remembers its own order. Shift F10 or Control Return opens the right click menu of whatever has the keyboard, at the selected row or the cursor, so all of this works without the mouse.
 
-Source files are highlighted by extension: Python, the C family, JavaScript, TypeScript, JSON, shell, LaTeX and a few others. Markdown renders as formatted text, with working links, tables and images, and Shift Command V flips to the source. Pictures with an https address, such as the badges at the top of a README, are downloaded in the background and kept in memory only; markdown.web-images = false in the settings turns that off. Math written as on GitHub, $x^2$ inline and $$ or a math code block for a display, is typeset by tectonic (the LaTeX preview's engine, below) in the background and kept in a cache, so a page opened again shows its formulas at once; markdown.math = false shows them as their TeX instead. You can also edit the rendered page: double click a paragraph, heading, list item or table cell, and a small editor opens holding its Markdown. Images and PDFs open in the same pane, and reload when the file changes on disk. On the Mac so do video and audio files, such as mp4, mov, mp3, wav and flac, in the system's own player; nothing plays until you press Shift Command Space or the play button.
+Source files are highlighted by extension: Python, the C family, JavaScript, TypeScript, JSON, shell, LaTeX and a few others. Markdown renders as formatted text, with working links, tables and images, and Shift Command V flips to the source. Pictures with an https address, such as the badges at the top of a README, are downloaded in the background and kept in memory only; markdown.web-images = false in the settings turns that off. Math written as on GitHub, $x^2$ inline and $$ or a math code block for a display, is typeset by tectonic (the LaTeX preview's engine, below) in the background and kept in a cache, so a page opened again shows its formulas at once; markdown.math = false shows them as their TeX instead. On the Mac, a mermaid code block (a flowchart, a sequence diagram, any kind Mermaid draws) shows as its diagram when mermaid-cli is installed (npm install -g @mermaid-js/mermaid-cli): minicode hands each diagram to its mmdc command in the background, as it hands math to tectonic, and keeps the pictures in a cache. Without mmdc, and with markdown.mermaid = false, the block shows as its source, and a diagram mmdc cannot read shows as its source with mmdc's complaint as its tooltip. You can also edit the rendered page: double click a paragraph, heading, list item or table cell, and a small editor opens holding its Markdown. Images and PDFs open in the same pane, and reload when the file changes on disk. On the Mac so do video and audio files, such as mp4, mov, mp3, wav and flac, in the system's own player; nothing plays until you press Shift Command Space or the play button.
 
 ![Opening a PNG and then a PDF from the file tree](docs/demos/files.gif)
 
@@ -58,11 +58,13 @@ Control backtick opens a terminal at the bottom. It runs one persistent zsh with
 
 On the Mac you can have several terminals, each its own shell. Control Shift backtick opens another in a new tab, Command backslash splits the one you are in so two sit side by side, and Option Command ] and [ move between them. Tabs you are not looking at keep running. Each tab is titled with the command running in it or the folder it is in, and Control Shift W, or the × on its tab, closes a terminal; closing the last one hides the panel. A terminal with something still running in it, a server, vim, or Claude Code, asks before it closes, and so do closing the window and quitting. Holding Command W down closes one thing, not everything in turn.
 
-Shift Command Return runs the open file in the terminal. It saves the file, then types the command into the terminal on show as if you had typed it, so it stays in the shell's history and Up brings it back. A Python file runs with the python in the project's .venv, venv or env folder when there is one, and python3 otherwise; shell scripts, Go, JavaScript and Ruby have commands too, and run.<language> in the settings changes them or adds others. If that terminal is busy with something else, the file runs in a new one instead, and run.terminal = new gives every run a terminal of its own.
+Shift Command Return runs the open file in the terminal. It saves the file, then types the command into the terminal on show as if you had typed it, so it stays in the shell's history and Up brings it back. A Python file runs with the python in the project's .venv, venv or env folder when there is one, and python3 otherwise; shell scripts, Go, JavaScript and Ruby have commands too, and run.<language> in the settings changes them or adds others. If that terminal is busy with something else, the file runs in a new one instead, and run.terminal = new gives every run a terminal of its own. In a Python file, Shift Return sends the selected lines, or the line the cursor is on, to a Python REPL in a terminal tab of its own, and moves on to the next line.
+
+A new terminal starts with the folder's Python virtual environment active, as VS Code's shell startup activation does: the same interpreter Run File uses, with its bin folder first on PATH, VIRTUAL_ENV set, its name before the prompt, and deactivate to leave it. Nothing in the environment runs to do this. The folder's own .venv is activated only once you have allowed it for the language servers (the bar over a Python file asks), since programs placed in it would otherwise come first on the terminal's PATH. terminal.activate-venv = false turns it off.
 
 ![Writing a short list in vim inside the terminal panel, then paging through git log](docs/demos/vim.gif)
 
-Paths and URLs in the output are links. Command click src/main.cpp:42:7 from a compiler, or a file Claude Code mentions, and it opens at that line; a URL opens in the browser panel, which Shift Command B toggles. On the Mac the browser sits to the right of the editor rather than in its place, with a bar between them you can drag, and the terminal stays across the bottom under both. Any of the three can be hidden on its own (Shift Command E for the editor), and the others take its space. Command 1, 2 and 3 move the keyboard to the editor, the terminal and the browser.
+Paths and URLs in the output are links. Command click src/main.cpp:42:7 from a compiler, or a file Claude Code mentions, and it opens at that line; a URL opens in the browser panel, which Shift Command B toggles, and the keyboard stays in the terminal. An address on 0.0.0.0 or [::], which servers listening everywhere print (Python's http.server among them), opens as localhost. On the Mac, links whose text is not their address, which Claude Code, `ls --hyperlink`, and gcc print (OSC 8 hyperlinks), open the same way, and while Command is held the pointer shows the address. Programs that open a page themselves, such as Claude Code when you click a link in it, Python's webbrowser module, and `vite --open`, find minicode in the BROWSER variable every minicode terminal on the Mac has: a local page (localhost, 127.0.0.1, ::1, a file) opens in the browser panel of that terminal's window, and any other page, a sign-in page for instance, in your default browser, as it does when minicode is not running. A BROWSER set in your .zshrc takes its place. Tools that call the `open` command, or the npm open package, without looking at BROWSER still use the default browser. On the Mac the browser sits to the right of the editor rather than in its place, with a bar between them you can drag, and the terminal stays across the bottom under both. Any of the three can be hidden on its own (Shift Command E for the editor), and the others take its space. Command 1, 2 and 3 move the keyboard to the editor, the terminal and the browser.
 
 ![Command clicking a grep result to open it at its line, then a URL that opens in the browser panel](docs/demos/links.gif)
 
@@ -253,6 +255,8 @@ Pages an agent opens go in an agent page of the browser pane, beside yours, with
 
 With several Claude Code sessions in terminal tabs, minicode can show which one wants you. Run `minicode hooks --install` once and Claude Code's hooks tell minicode what each session is doing: a tab whose session asks for permission (or has been idle at its prompt) gets an orange dot, with Claude's message as the tab's tooltip, and one that has finished gets a green dot. Typing in the terminal, or the session going on, takes the dot away. The Dock icon counts the waiting terminals in every window, and Control Command W goes to the next one. The command backs up ~/.claude/settings.json first and only adds to it, so your own hooks stay as they were, and running it twice changes nothing; `minicode hooks --print` shows what it adds. Every minicode terminal has `MINICODE_TERMINAL_ID` and `MINICODE_PID` set, which is how the hook (`minicode notify --from-hook`) finds its tab, and outside minicode the hook does nothing and exits quietly. minicode never installs the hooks by itself.
 
+On the Mac, minicode can also answer Claude Code's /ide, the link VS Code and JetBrains offer it. Turn on View > Claude Code IDE Link (agent.ide-link = on in the settings), and Claude Code started in a window's folder lists that window under /ide, while one started in the window's own terminals joins it by itself. Claude then sees the file and the text you have selected, and the problems your language servers report, without being asked; files it opens come up in a tab beside yours, never under your typing; and when it wants to edit a file, the change can show as a side-by-side diff with Accept and Reject over it (when Diff tool in Claude Code's /config is auto), while its own prompt waits in the terminal as usual. Claude Code writes the file itself once you accept. Each window listens on 127.0.0.1 only and admits nothing without the secret it writes, readable by you alone, to ~/.claude/ide/<port>.lock; that file goes when the window closes or the link is turned off, and it is the only thing minicode writes for the link. It is off until you turn it on.
+
 The repository has a skill for Claude Code in skills/minicode that teaches it all of this: when reporting work, open the changed lines with a note, show the diff and run the tests in a terminal; when asked "where is X", open it rather than quote a path; read `state` and `selection` when you say "this". The app carries it too: `minicode install-skill` copies it to ~/.claude/skills/minicode (run it again after an upgrade), and `make install` does the same from a checkout.
 
 ## Seeing what agents did
@@ -327,12 +331,13 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Action | macOS | Linux | Android |
 | --- | --- | --- | --- |
 | Add a cursor on the line below or above each cursor, at the same column | Option Command Down, Option Command Up |  |  |
-| Add a cursor, or take one away, to type in several places at once | Option click, or Shift Command click |  |  |
+| Add a cursor, or take one away, to type in several places at once | Option click |  |  |
 | Add the next place the selected text occurs to the selection, or select the word at the cursor | Command D |  |  |
 | Ask the inline agent: change the file at the cursor, write a terminal command, or hand a task to Claude Code | Command I |  |  |
 | Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
 | Clear the terminal, its scrollback included | Command K |  |  |
 | Close an agent's note (`minicode open --note`) in the editor | Escape, or its × |  |  |
+| Close every tab but the one on show | Option Command T |  |  |
 | Close the active terminal | Control Shift W |  |  |
 | Close the application | Command Q | Ctrl Q |  |
 | Close the tab, the terminal the keyboard is in, or the browser panel when it has the keyboard | Command W |  |  |
@@ -344,7 +349,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Delete the line, or every line the selection touches, at every cursor | Control Shift K |  |  |
 | Delete to the start of the line, at every cursor | Command Delete |  |  |
 | Delete the word before the cursor in the terminal's input line, or everything before it | Control W, Control U |  |  |
-| Edit a column: a cursor on every line between two points, so typing adds the same text to each | Shift Command click at one end and Shift Command click (or drag) to the other, or Option drag; Escape goes back to one cursor |  |  |
+| Edit a column: a cursor on every line between two points, so typing adds the same text to each | Shift Command click at one end and Shift Command click (or drag) to the other; Shift Option click (or drag) for a column from the cursor, as in VS Code; Option drag, or a middle-button drag; Escape goes back to one cursor |  |  |
 | Export the typeset PDF of a LaTeX file | Shift Command S | Ctrl Shift S |  |
 | Find across the whole folder | Shift Command F | Ctrl Shift F |  |
 | Find every reference to the name at the cursor, with a language server | Shift F12 |  |  |
@@ -370,12 +375,14 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Go to the next or previous problem in the file, with its message at the cursor | F8, Shift F8 (F8 may need fn on a laptop) |  |  |
 | Go to the next or previous stop of an agent's tour (`minicode tour`) | Option ], Option [ |  |  |
 | Go to the start or end of the file, or select to it | Command Home, Command End, Shift Command Home, Shift Command End (fn Command Left, Right on a laptop) |  |  |
-| Indent or outdent the selected lines | Tab, Shift Tab | Tab, Shift Tab | Tab, Shift Tab |
+| Indent or outdent the selected lines, or the cursor's line | Tab, Shift Tab (the selected lines); Command ], Command [ | Tab, Shift Tab | Tab, Shift Tab |
+| Insert a line below the cursor's line, wherever the cursor is in it | Command Return (Insert Line Above is in the Edit menu) |  |  |
 | Jump to the previous file |  | Ctrl Tab |  |
 | Keep each match's case when replacing, in the find bar or Replace in Folder | Option Command P |  |  |
 | Keep the agent preview tab as an ordinary tab | Double-click its title, or edit in it |  |  |
 | List every problem the language servers report, grouped by file | Shift Command M, or click the problem counts in the status bar |  |  |
 | List the TODO comments and open Markdown tasks in the folder | Shift Command D | Ctrl Shift L | W, or Ctrl Shift L |
+| Make the selection, or the word at the cursor, bold or italic in Markdown, or plain again | Toggle Bold, Toggle Italic in the Edit menu (no key by default: Command B is the sidebar and Command I the inline agent, as in VS Code; keys.conf can give them one) |  |  |
 | Move a word left or right at the terminal's prompt | Option Left, Option Right |  |  |
 | Move the line, or the selected lines, down or up, at every cursor | Option Down, Option Up, or Command Down, Command Up |  |  |
 | Move the selected file to the Trash | Command Delete or Command Forward Delete, in the file tree | Delete, in the file tree |  |
@@ -385,12 +392,13 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | New file | Command N | Ctrl Alt N | New file in the ⋮ menu |
 | New folder | Shift Command N | Ctrl Shift N |  |
 | New window | Option Command N | Ctrl N |  |
-| Next tab, previous tab | Control Tab, Control Shift Tab, or Shift Command ], Shift Command [ |  |  |
+| Next tab, previous tab | Control Tab, Control Shift Tab, or Shift Command ], Shift Command [, or Option Command Right, Option Command Left |  |  |
 | Open a file of the folder by typing part of its name, recently opened files first | Command P |  |  |
 | Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it | Ctrl click it | Tap it |
 | Open a folder | Command O | Ctrl O | O, or Ctrl O |
+| Open a folder opened before, in this window | Control R (File > Open Recent lists them too) |  |  |
 | Open a new terminal in a new tab | Control Shift backtick |  |  |
-| Open the command palette, to find any menu command by name and run it | Shift Command P |  |  |
+| Open the command palette, to find any menu command by name and run it | Shift Command P, or F1 |  |  |
 | Open the right click menu of what has the keyboard, at the selected row or the cursor | Shift F10, or Control Return, or the Menu key of a PC keyboard |  |  |
 | Open the settings file | Command comma | Ctrl comma |  |
 | Organize the file's imports, with a language server (Ruff's, when it runs) | Shift Option O |  |  |
@@ -406,7 +414,10 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Request a change to minicode itself, made by Claude Code in a terminal | Shift Command K |  |  |
 | Restart minicode, keeping its windows, tabs, unsaved changes and browser pages | The ↻ in the status bar, or Restart minicode in the minicode menu |  |  |
 | Run the open file in the terminal | Shift Command Return |  |  |
+| Run the selected lines, or the cursor's line, in a Python REPL in a terminal tab of its own | Shift Return, in a Python file |  |  |
 | Save | Command S | Ctrl S | S, or Ctrl S |
+| Save every tab with unsaved changes | Option Command S |  |  |
+| Save the file under another name, the tab then showing the new file | Save As in the File menu (Shift Command S is Export PDF) |  |  |
 | See the language servers, restart one, or choose the Python interpreter | Click the server in the status bar, or the minicode menu |  |  |
 | Select a line, or every line dragged over, by its number | Click or drag in the line numbers, Shift click to extend |  |  |
 | Select all the text | Command A |  |  |
@@ -423,7 +434,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Sort every keep-sorted block in the file | Shift F9 | Shift F9 | Sort keep-sorted blocks in the ⋮ menu |
 | Sort the selected lines, or the keep-sorted block around the cursor | F9 (F9 may need fn on a laptop) | F9 | J, or Ctrl J |
 | Take the selected completion | Tab; Return too after Control Space, after a dot, or once the arrow keys have moved through the list |  |  |
-| Tick or clear a Markdown task, or make the selected lines tasks | Option Command L, or click its box in the preview | Ctrl L, or click its box in the preview | L, or Ctrl L, or tap its box in the preview |
+| Tick or clear a Markdown task, or make the selected lines tasks | Option Command L, or Option C, or click its box in the preview | Ctrl L, or click its box in the preview | L, or Ctrl L, or tap its box in the preview |
 | Toggle the agents panel in place of the file tree | Shift Command A |  |  |
 | Toggle the fold on the cursor's line | Control Command L |  |  |
 | Toggle the browser | Shift Command B | Ctrl Shift B | B, or Ctrl Shift B |
