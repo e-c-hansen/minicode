@@ -782,11 +782,11 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     // or "Publish Branch" (GitUi::syncButtonTitle), and what runs.
     NSButton *_syncButton;
     MCGitSnapshot *_shown;            // the last status applied
-    BOOL _syncing;                    // a fetch, pull, push or sync runs
+    BOOL _syncing;                    // a fetch, pull, push or sync asked for runs
     // Autofetch (git.autofetch): a timer looks every 30 s whether a fetch
     // is due (GitUi::autoFetchDue).
     NSTimer *_autoTimer;
-    BOOL _autoFetching;
+    BOOL _autoFetching;               // a background fetch runs (no button, no words)
     NSString *_autoKey;               // the repository's top level, once known
     NSTimeInterval _autoNow;          // the tick that started the autofetch running
 }
@@ -1471,7 +1471,7 @@ static const char *MCSyncOpName(GitUi::SyncOp op) {
     }
 }
 
-- (BOOL)syncing { return _syncing; }
+- (BOOL)syncing { return _syncing || _autoFetching; }
 - (NSString *)syncButtonTitle { return _syncButton.hidden ? @"" : _syncButton.title; }
 
 // Fetch, Pull, Push or Sync, from the panel's button and menu, and the
@@ -1486,12 +1486,14 @@ static const char *MCSyncOpName(GitUi::SyncOp op) {
 - (void)runSync:(GitUi::SyncOp)op quietly:(BOOL)quiet {
     NSString *root = self.root;
     if (!root) return;
-    if (_syncing) {
+    // One asked for at a time; one asked for while a background fetch runs
+    // waits behind it on the queue.
+    if (quiet ? (_syncing || _autoFetching) : _syncing) {
         if (!quiet) NSBeep();
         return;
     }
-    _syncing = YES;
     if (quiet) _autoFetching = YES;
+    else _syncing = YES;
     [self updateSyncButton];
     dispatch_async(_queue, ^{
         MCGitSnapshot *snap = [MCGitPanel snapshotAt:root];
@@ -1526,8 +1528,8 @@ static const char *MCSyncOpName(GitUi::SyncOp op) {
 - (void)finishSync:(GitUi::SyncOp)op plan:(const GitUi::SyncPlan &)plan
             result:(MCGitResult *)r top:(NSString *)top root:(NSString *)root
            quietly:(BOOL)quiet {
-    _syncing = NO;
     if (quiet) _autoFetching = NO;
+    else _syncing = NO;
     if (top) _autoKey = top;
     const BOOL ran = r != nil;
     const BOOL ok = ran && r.ok;
@@ -1562,6 +1564,8 @@ static const char *MCSyncOpName(GitUi::SyncOp op) {
         text = NSFromBytes(plan.doneText);
     }
     if (text || !quiet) [self setError:text info:info];
+    // A background fetch that works again takes its old failure away.
+    else if (ok && [self.errorLine hasPrefix:@"Autofetch: "]) [self setError:nil info:NO];
     [self updateSyncButton];
     if (self.onSynced) self.onSynced();
     // The counts, the graph and the lists as they are now.
@@ -1572,7 +1576,7 @@ static const char *MCSyncOpName(GitUi::SyncOp op) {
 // a time of their own). YES when a fetch was started.
 - (BOOL)autoFetchTickAt:(NSTimeInterval)now {
     const Settings &cfg = [AppSettings shared].settings;
-    if (!cfg.gitAutoFetch() || !self.root || _syncing) return NO;
+    if (!cfg.gitAutoFetch() || !self.root || _syncing || _autoFetching) return NO;
     BOOL active = self.isActive ? self.isActive() : self.window.isKeyWindow;
     if (!active) return NO;
     // By what is known so far: the repository's top level once a status
