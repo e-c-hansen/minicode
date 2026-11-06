@@ -373,7 +373,7 @@ MC_GUI_SUITE(processes) {
         [s.panel revealOriginOfRow:row];
         MCTerminalPanel *tp = [s.c valueForKey:@"terminalPanel"];
         GCHECK(tp.activeTerminal == s.termB);
-        GCHECK(tp.selectedTab == TabOf(tp, s.termB));
+        GCHECK(tp.selectedTab == (NSInteger)TabOf(tp, s.termB));
     });
     MCGuiStep(@"Stop asks first, and Cancel keeps it", ^{
         s.alerts = MCGuiAlertsShown().count;

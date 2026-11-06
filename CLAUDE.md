@@ -110,8 +110,10 @@ goes here first, with tests; the GUI only displays it.
 - `SyntaxHighlighter` (about 200 grammars, `IncrementalHighlighter`),
   `MarkdownParser` (CommonMark plus GitHub, math, `lines()`), `MarkdownEdit`
   (the block behind a preview click), `MarkdownTasks` (task lists), `MathTex`
-  (the Markdown math batch), `LatexDoc` (editable ranges of LaTeX source),
-  `SyncTex` (page point to source lines), `Json`.
+  (the Markdown math batch), `MermaidDiagram` (```mermaid blocks for mmdc),
+  `LatexDoc` (editable ranges of LaTeX source),
+  `SyncTex` (page point to source lines), `Json`, `IdeLink` (the Claude Code
+  IDE link: WebSocket, MCP, lock file).
 - `Settings` (the settings file, themes, every resolved color), `Commands` (the
   command registry and keys.conf), `EditorTabs` (tab rules), `Backups` (backups
   of unsaved tabs, with a POSIX `Fs`), `FileDetails` (tree sorts, ages, folder
@@ -134,7 +136,8 @@ goes here first, with tests; the GUI only displays it.
 - `CommandPalette` (matching, modes, Quick Open, symbol rows), `SymbolOutline`
   (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
-  line's parsing), `SideBySide` (diff rows).
+  line's parsing), `SideBySide` (diff rows), `PageCheck` (agents checking
+  pages: addresses, the origin limit, the console record).
 - Agent work: `AgentTranscript`, `AgentIndex`, `AgentEvidence`, `AgentView`;
   `ProcessTable` (processes and ports per folder: tracking, groups, Stop's plan).
 - Files: `FileSniff` (how a file is shown), `Csv`, `JsonOutline`, `Notebook`.
@@ -159,14 +162,15 @@ goes here first, with tests; the GUI only displays it.
   `Keymap`.
 - Terminal: `Terminal` (`TerminalView`, `MCPty`, the shell integration),
   `TerminalGridView`, `TerminalPanel`, `TerminalFindBar`, `RunCommand`.
-- Viewers: `Latex`, `MarkdownMath`, `MarkdownImage`, `MarkdownEditPanel`,
+- Viewers: `Latex`, `MarkdownMath`, `MarkdownMermaid`, `MarkdownImage`, `MarkdownEditPanel`,
   `FileViewers`, `QuickLook`, `CsvTable`, `JsonOutlineView`, `SqliteView`,
   `CompareView`.
 - `Browser` (with `MCKeyboardWindow`), `TabStrip`, `Search` (Find in Folder and
   TODOs window), `GitPanel`, `TreeDetails`, `FormatRunner`, `BackupStore`,
   `PalettePanel`, `Navigation`.
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
-  `ControlServer`, `ControlCommands`, `AgentNotes`, `AgentModel`,
+  `ControlServer`, `ControlCommands`, `IdeLinkServer` (Claude Code's /ide),
+  `AgentNotes`, `AgentModel`,
   `AgentsPanel`, `AgentPages`, `AgentWindow`, `ProcessMonitor` (libproc,
   `minicode procs`), `ProcessesPanel`.
 - `Demo` (`make demos`, inert unless `MINICODE_DEMO`), `Bench`
@@ -705,11 +709,22 @@ container (PanelHost, laid out by hand in layoutContainer)
   sees no single typed character (no completion); the electric dedent is off
   while they apply (`multiCarets.applying`); typing never crosses a line break,
   so a column stays a column.
-- Column: Cmd+Shift-, Option- or Shift+Option-drag (`MCMultiCarets mouseDown:`,
-  first in `CodeTextView mouseDown:`), each line's caret from
+- Column: Cmd+Shift-, Option- or middle-button drag (`MCMultiCarets mouseDown:`
+  and `otherMouseDown:`, first in CodeTextView's), each line's caret from
   `characterIndexForInsertionAtPoint:` at its first fragment; Cmd+Shift clicks
-  pair up, the anchor holding while carets and length are as the last press
-  left them (`_anchorCarets`); Option+click adds or removes a caret.
+  pair up (the owner's binding), the anchor holding while carets and length
+  are as the last press left them (`_anchorCarets`); Shift+Option click or
+  drag is VS Code's box from the caret's selection start (or the live
+  anchor) to the pointer; Option+click adds or removes a caret. VS Code's
+  own Cmd+Shift click is a Shift click. **Trap (2026-11-06)**: the window
+  server counts clicks by time alone (HIDClickSpace is (0,0)), so a second
+  click within 0.5 s is clickCount 2 wherever it lands; the old `clickCount
+  > 1` bail sent the owner's quick second Cmd+Shift click to NSTextView. A
+  press counts as a double-click only on the character the last press hit
+  (VS Code's `trySetCount` does the same). Offscreen, neither `[window
+  sendEvent:]` nor CGEventPostToPid delivers a mouse-down to the view;
+  `MultiCaretClickSuite` hit-tests and calls the view with CGEvent-made
+  events carrying the real click counts.
 - Cmd+D (word at an empty caret by `MultiCaret::wordAt`, then the next
   occurrence after the last added, wrapping, case-sensitive, whole-word only
   when begun at an empty caret), Shift+Cmd+L, Option+Cmd+Down/Up (a caret a
@@ -1153,6 +1168,25 @@ false`) a formula shows as its TeX in the code style.
   LaTeX preview).
 - Known gaps: copying a typeset formula copies an attachment character;
   `\color` inside is drawn in the text's color.
+
+### Mermaid in the preview (Mac)
+
+```mermaid blocks go to the user's mermaid-cli (`mmdc`, MCFindProgram, or
+`$MINICODE_MMDC`), one run at a time off the main thread, each its own
+process group with 90 s (a run starts a headless browser, about 2.5 s):
+a transparent PNG at scale 2 in the preview's theme (dark or default),
+kept in memory and `~/Library/Caches/MiniCode/mermaid` (`$MINICODE_MERMAID_CACHE`;
+50 MB). Chosen over a renderer of our own (flowchart and sequence alone are
+a layout engine) and over mermaid.js (third-party code). PNG, not PDF or
+SVG: mmdc 12 makes PDFs fit by default and refuses the older `--pdfFit`,
+draws PDF backgrounds white, and its SVG labels are HTML in foreignObject,
+which NSImage leaves out. Until it arrives, and without mmdc or with
+`markdown.mermaid = false`, the block is code (a failure's complaint, from
+`MermaidDiagram::errorSummary`, its tooltip); the code carries
+`MCMarkdownMermaidAttribute` so `renderMarkdownKeepingPlace` keeps the
+place. Core: `MermaidDiagram.{h,cpp}` (`mermaid:*`); Mac: `MarkdownMermaid.mm`,
+a hook in `renderMarkdown:`. `make guitest SUITES=mermaid` uses a stand-in
+mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
 
 ## LaTeX preview (read before touching it)
 
@@ -1694,9 +1728,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   open it again", nothing launched. Exit codes 0, 1 command error, 2 usage, 3
   no app.
 - Commands: `open path[:line[:col]]` (`--to`, `--note`, `--from`, `--keep`),
-  `window`, `browse` (in the pane; the browser has no tabs, so a page the
-  user loaded is never replaced: `BrowserView showsUserPage`, the history
-  items an agent's navigations committed), `term` (`--cwd`, `--title`,
+  `window`, `browse` (into the pane's agent page; see below), `page`,
+  `term` (`--cwd`, `--title`,
   `--run` typed and entered visibly), `diff` (`--base` never starting with
   "-"), `split`, `state` (`--pretty`), `selection`, `term-output`, `tour`, `procs`
   (`--json`; see "Processes and ports").
@@ -1731,9 +1764,81 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   something is; read `state` and `selection` for "this"; never rearrange the
   user's tabs, `--run` long or destructive commands, or write workspace scripts
   unasked; plain paths on exit 3.
+- **Agents check pages** (spec feature 6, 2026-11-06; `PageCheck`,
+  `BrowserPages.mm`, `ControlPageCommands.mm`): `browse` loads into a second
+  web view in `BrowserView`, the agent page, with a Yours | Agent switcher
+  and an x that closes it (the user's page as it was); an address typed in
+  the bar or a link from elsewhere goes to the user's page. The pane shows
+  the agent page unless the keyboard is in the pane (`"pane_busy"`).
+  `browse` takes only http, https, file, about:blank, host:port and paths,
+  never a search or another scheme. `page --url/--text/--console/
+  --screenshot/--reload`, `--yours` for the user's page; text, console and
+  screenshots only for local pages unless `control.page-any-origin`, checked
+  again when the read comes back. Status from
+  `decidePolicyForNavigationResponse` (which answers as WebKit does without
+  it: allow what it can show). The agent page's configuration installs, at
+  document start, a listener in an isolated `WKContentWorld` (uncaught
+  errors, rejections, and the only message handler) and a page-world
+  wrapper of console.* that relays each call as a DOM event: an isolated
+  world cannot see the page's console object, so there is no other public
+  way; relayed lines can only be console calls (`fromPage`). Traps: a
+  snapshot paints only the visible area, so `--full` rasterizes
+  `createPDFWithConfiguration:` (sRGB; WebKit's #FF0000 reads back as about
+  (1, 0.15, 0) in both kinds of picture); `WKWebView.title` can still be
+  empty at didFinish, so `--wait` reads `document.title`; a GUI check's
+  command line is built when queued, so start a test server before
+  queueing steps. `BrowserPagesSuite` serves pages from a server inside the
+  test process (127.0.0.1 and ::1); 20 checks grow minicode plus the agent
+  page's WebKit process by about 0 MB (the page process itself is 25-35 MB).
 - Ground rules for this and the agent workspace: nothing runs because a folder
   or file was opened; Claude Code's data is read, never written, moved or
   deleted; nothing leaves the Mac.
+
+## The Claude Code IDE link (Mac, agent.ide-link)
+
+Claude Code's `/ide` answered per window, as VS Code's extension does. Off by
+default; View > Claude Code IDE Link (`MCIdeLinkMenuItem`, its own target)
+writes `agent.ide-link` through `Settings::withValue`. Core `IdeLink.{h,cpp}`
+(`ide:*` tests): SHA-1, base64, the upgrade handshake, RFC 6455 frames, MCP
+over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
+`IdeLinkServer.mm`: sockets on the main queue, the lock file, the tools.
+
+- **The protocol, as read** from Claude Code 2.1.319 (the bun binary's
+  embedded JS: search it for "Failed to read IDE lockfile", "ws-ide",
+  "callIdeRpc", "openDiff") and the VS Code extension 2.1.318
+  (`~/.vscode/extensions/anthropic.claude-code-*/extension.js`: "Fre(",
+  "Wnt(", the tool handlers): `$CLAUDE_CONFIG_DIR/ide` or `~/.claude/ide`,
+  `<port>.lock` 0600 holding pid, workspaceFolders, ideName, transport "ws",
+  runningInWindows, authToken. Claude Code connects to `ws://127.0.0.1:port`
+  with subprotocol "mcp" and `X-Claude-Code-Ide-Authorization`, sends
+  `ide_connected {pid}`, listens for `selection_changed {text, filePath,
+  fileUrl, selection}` (0-based lines, UTF-16 characters), calls `openDiff
+  {old_file_path, new_file_path, new_file_contents, tab_name}` and expects
+  `[FILE_SAVED, text]` or `[DIFF_REJECTED, tab]` (it writes the file itself),
+  then `close_tab`; `getDiagnostics {uri?}` before and after edits (it
+  compares the answer's uri with the one it sent, so answer under that
+  spelling). It shows the model only getDiagnostics and executeCode. It uses
+  openDiff only when its global `diffTool` is "auto". It auto-connects when
+  CLAUDE_CODE_SSE_PORT is the port (minicode's terminals get it,
+  `MCIdeLinkTerminalEnvironment`), else /ide lists lock files whose folders
+  hold its cwd (unresolved, so the lock lists the folder as spelled and
+  resolved); it skips the pid check outside VS Code and JetBrains terminals,
+  and deletes lock files of dead pids itself.
+- **Rules kept**: 127.0.0.1 only, a 48-hex-digit secret per window, Host must
+  be loopback, nothing said before the token; writes nothing under ~/.claude
+  but its own lock file (temp file and rename, removed on window close,
+  setting off and atexit); removes at start only lock files with ideName
+  minicode, another pid, that pid gone. openFile goes through
+  `openTabForAgent:preview:quiet:` (beside the user while they type) and
+  highlights startText..endText with an empty note; openDiff is a
+  comparison tab (`showComparison:preview:NO quiet:YES`) with a decision bar
+  (`MCComparison decisionPrompt/onDecision`, CompareView); closing the tab
+  rejects (`closePageOf:` calls `tabClosed`); close_tab and closeAllDiffTabs
+  close only comparisons the link offered. Not offered: saveDocument,
+  executeCode. A client that goes leaves its diff saying so.
+- Checked by `make guitest SUITES=idelink` (a WebSocket client on a thread;
+  `MC_GUI_NODE=/opt/homebrew/bin/node` adds node's own client) and the
+  `ide:*` groups. Not run against a real Claude Code session.
 
 ## The agent workspace (Mac)
 

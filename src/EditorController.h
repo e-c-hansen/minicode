@@ -1,7 +1,7 @@
 // EditorController.h — Cocoa window: file tree (left) + editor/preview (right).
 #import <Cocoa/Cocoa.h>
 
-@class MCAgentNotes, MCComparison, MCPaletteContext, TerminalView;
+@class BrowserView, MCAgentNotes, MCComparison, MCPaletteContext, TerminalView;
 
 @interface EditorController : NSObject <NSOutlineViewDataSource,
                                         NSOutlineViewDelegate,
@@ -257,11 +257,11 @@
 // A new terminal starting in `dir`: a new tab, or beside the active terminal
 // (nil when there is no room to split).
 - (TerminalView *)newTerminalForAgentIn:(NSString *)dir beside:(BOOL)beside;
-- (void)browseForAgent:(NSString *)url;   // the browser pane, shown beside the editor
-// The same for `minicode browse`, refused (NO, *error says why) while the
-// pane shows a page the user loaded: the browser has one page, and an agent
-// never replaces the user's.
-- (BOOL)browseForAgent:(NSString *)url error:(NSString **)error;
+// The browser pane for `minicode browse` and `page`, made and shown beside
+// the editor if need be, the keyboard left where it was; or nil-able as it
+// is. Agents load into its agent page (Browser.h), never the user's.
+- (BrowserView *)agentBrowserPane;
+- (BrowserView *)browserPane;
 // For `minicode state`: each tab (path, title, kind, dirty, active, preview),
 // the editor's selection (path, text up to 64 KB, start and end line and
 // column; nil when no text file shows), the terminals, the browser's page.
@@ -269,6 +269,18 @@
 - (NSDictionary *)controlSelection;
 - (NSArray<TerminalView *> *)controlTerminals;
 - (NSDictionary *)controlBrowser;
+// ---- the Claude Code IDE link (IdeLinkServer.h)
+// The text of `path` when it is the document on show as source (its
+// buffer, unsaved changes included), else nil.
+- (NSString *)agentBufferOfShownFile:(NSString *)path;
+// Closes the tabs showing a comparison `match` accepts, unasked (a
+// comparison has nothing to save); returns how many.
+- (NSUInteger)closeComparisonTabsMatching:(BOOL (^)(MCComparison *comparison))match;
+// Every problem the window's language servers report (Lsp.h, MCProblem).
+- (NSArray *)agentProblems;
+- (void)showAgentStatusNote:(NSString *)note;   // the status bar's left, for six seconds
+// Whether `view` is the editor's text view.
+- (BOOL)isEditorTextView:(id)view;
 - (void)nextTourStop:(id)sender;       // Option+]
 - (void)previousTourStop:(id)sender;   // Option+[
 @property(nonatomic, readonly) BOOL tourActive;

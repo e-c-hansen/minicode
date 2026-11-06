@@ -33,6 +33,7 @@
 #include "LineIndex.h"
 #include "BracketMatch.h"
 #include "ControlProtocol.h"
+#include "PageCheck.h"
 #include "SideBySide.h"
 #include "AgentTranscript.h"
 #include "AgentIndex.h"
@@ -3716,8 +3717,10 @@ void testSettings() {
     // documented value is the real default.
     std::string keys = uncommentKeys(Settings::defaultFileText());
     // Window, panel, syntax, markdown (colors, web images, math), lsp, run,
-    // format, python, keep-sorted, auto-save, ruler, terminal and develop keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 77);   // + activate-venv, search
+    // format, python, keep-sorted, auto-save, ruler, terminal, develop and
+    // control and agent keys (with markdown.mermaid and agent.ide-link), and
+    // terminal.activate-venv and search.use-ignore-files.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 80);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -9853,6 +9856,8 @@ static void testMultiCaretOccurrences() {
 #include "procs_tests.inc"
 #include "attention_tests.inc"
 #include "ignore_tests.inc"
+#include "page_check_tests.inc"
+#include "ide_link_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -9923,6 +9928,7 @@ int main() {
     testBrackets();
     testControlProtocol();
     testProcs();
+    testPageCheck();
     testSideBySide();
     testAgentTranscript();
     testAgentIndex();
@@ -9941,6 +9947,9 @@ int main() {
     testClaudeHooks();
     testNotifyCommandLine();
     testAttentionBoard();
+    testIdeLink();
+    testIdeLinkSettings();
+    testMermaidDiagram();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

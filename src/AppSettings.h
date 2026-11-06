@@ -30,6 +30,9 @@ extern NSNotificationName const MCSettingsDidChangeNotification;
 // Writes `theme = <themeId>` into the file (Settings::withTheme), commenting
 // out the file's own colors with `commentColors`, and applies it at once.
 - (BOOL)writeTheme:(NSString *)themeId commentColors:(BOOL)commentColors;
+// Writes `key = value` into the file (Settings::withValue) and applies it
+// at once.
+- (BOOL)writeValue:(NSString *)value forKey:(NSString *)key;
 @end
 
 NSColor *MCColor(const Rgba &c);

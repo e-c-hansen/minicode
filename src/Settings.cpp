@@ -274,6 +274,40 @@ int Settings::colorOverrides(const std::string& text) {
     return n;
 }
 
+std::string Settings::withValue(const std::string& text, const std::string& key,
+                                const std::string& value) {
+    std::vector<std::string> lines = splitLines(text);
+    int active = -1, commented = -1;
+    for (size_t i = 0; i < lines.size(); i++) {
+        if (activeKey(lines[i]) == key) active = (int)i;
+        else if (commented < 0 && commentedKey(lines[i]) == key) commented = (int)i;
+    }
+    const int at = active >= 0 ? active : commented;
+    if (at < 0) {
+        std::string out = text;
+        if (!out.empty() && out.back() != '\n') out += "\n";
+        return out + key + " = " + value + "\n";
+    }
+    const std::string& old = lines[at];
+    const std::string eol = !old.empty() && old.back() == '\r' ? "\r" : "";
+    size_t indent = 0;
+    while (indent < old.size() && (old[indent] == ' ' || old[indent] == '\t')) indent++;
+    std::string tail;
+    if (active >= 0) {
+        size_t eq = old.find('=');
+        size_t hash = old.find(" #", eq);
+        if (hash != std::string::npos) {
+            while (hash > eq + 1 && (old[hash - 1] == ' ' || old[hash - 1] == '\t')) hash--;
+            tail = old.substr(hash);
+            if (!tail.empty() && tail.back() == '\r') tail.pop_back();
+        }
+    }
+    lines[at] = old.substr(0, indent) + key + " = " + value + tail + eol;
+    std::string out;
+    for (size_t i = 0; i < lines.size(); i++) out += lines[i] + (i + 1 < lines.size() ? "\n" : "");
+    return out;
+}
+
 std::string Settings::withTheme(const std::string& text, const std::string& id,
                                 bool commentColors) {
     if (text.empty()) return "theme = " + id + "\n";
@@ -759,6 +793,7 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                return false;),
         MC_KEY("markdown.web-images", Word, false, return boolValue(v, s.webImages_, e);),
         MC_KEY("markdown.math", Word, false, return boolValue(v, s.math_, e);),
+        MC_KEY("markdown.mermaid", Word, false, return boolValue(v, s.mermaid_, e);),
         MC_KEY("editor.keep-sorted-on-save", Word, false,
                return boolValue(v, s.keepSortedOnSave_, e);),
         MC_KEY("editor.auto-save", Word, false,
@@ -864,6 +899,8 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                s.developSource_ = lower(v) == "auto" ? "" : v;
                return true;),
         MC_KEY("agent.command", CommandLine, false, s.agentCommand_ = v; return true;),
+        MC_KEY("control.page-any-origin", Word, false, return boolValue(v, s.pageAnyOrigin_, e);),
+        MC_KEY("agent.ide-link", Word, false, return boolValue(v, s.ideLink_, e);),
     };
     return table;
 }
@@ -1255,6 +1292,10 @@ const char* Settings::defaultFileText() {
 # engine the LaTeX preview uses (macOS only for now). Turn this off to show
 # formulas as their TeX instead.
 # markdown.math = true
+# ```mermaid blocks are drawn as diagrams with mermaid-cli's mmdc when it is
+# installed (npm install -g @mermaid-js/mermaid-cli; macOS only for now),
+# else shown as their source. Turn this off to always show the source.
+# markdown.mermaid = true
 
 # Language servers, for completion, go to definition and error underlines
 # (macOS only for now). MiniCode only talks to them, so install the ones you
@@ -1330,6 +1371,14 @@ const char* Settings::defaultFileText() {
 # the open folder alone, which wins over this.
 # python.interpreter = auto
 
+# Agents can check pages in the browser pane (minicode browse and minicode
+# page, macOS only for now): they load into a page of their own beside
+# yours, and read its text, its console and pictures of it. Those reads work
+# only for local pages (localhost, 127.0.0.1, ::1, *.localhost and file://),
+# so an agent never reads a site you are logged in to. Set this to true to
+# let them read any page.
+# control.page-any-origin = false
+
 # Request a Change to minicode (Shift+Cmd+K, macOS only for now) hands what
 # you describe to Claude Code, in a terminal tab opened in minicode's own
 # source folder, and offers to restart into the new build once Claude has
@@ -1350,5 +1399,16 @@ const char* Settings::defaultFileText() {
 # the command it runs (add flags such as --model here); the answers in the
 # bar run it in print mode, allowed to read the project but not to change it.
 # agent.command = claude
+
+# The Claude Code IDE link: Claude Code's /ide command, which VS Code and
+# JetBrains answer, answered by each minicode window (macOS only for now).
+# On, Claude Code started in a window's folder, or in one of its terminals
+# (which it then joins by itself), sees the file and the selection you have
+# in the editor and the language servers' problems, opens files in a tab
+# beside yours, and can offer an edit as a diff you accept or reject. Each
+# window listens on 127.0.0.1 only, with a secret it writes for Claude Code
+# to read in ~/.claude/ide, and removes when it closes. View > Claude Code
+# IDE Link turns it on and off too.
+# agent.ide-link = off
 )CONF";
 }

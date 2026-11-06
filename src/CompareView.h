@@ -22,6 +22,22 @@
 @property(nonatomic, copy) NSString *path;
 // How many rows differ: changed, removed and added lines.
 @property(nonatomic, readonly) NSUInteger changedRows;
+// A change offered for the user's decision (the Claude Code IDE link's
+// openDiff, IdeLinkServer.mm): the view shows `decisionPrompt` in a bar over
+// the panes with Accept and Reject, and `onDecision` is called once, with
+// YES or NO. Closing the tab first is a rejection (tabClosed).
+@property(nonatomic, copy) NSString *decisionPrompt;
+@property(nonatomic, copy) void (^onDecision)(BOOL accepted);
+// Pending (0), accepted (1), rejected (-1), or no longer wanted (2: the
+// agent stopped waiting, endDecision:).
+@property(nonatomic, readonly) NSInteger decision;
+- (void)decide:(BOOL)accepted;
+// The agent no longer waits for an answer: the bar says `why` and offers
+// nothing, and onDecision is not called.
+- (void)endDecision:(NSString *)why;
+@property(nonatomic, readonly, copy) NSString *decisionNote;
+// The tab showing the comparison closed (EditorController's closePageOf:).
+- (void)tabClosed;
 // Lines the two texts up, once (changedRows and the view use the rows).
 // Costly for big texts, so a caller off the main thread does it there
 // before handing the comparison over; setting a text again undoes it.
@@ -34,6 +50,9 @@
 - (void)applySettings;
 // Where the panes are scrolled, to keep and give back across tab switches.
 @property(nonatomic) NSPoint scrollOrigin;
+// The decision bar's buttons (hidden when there is nothing to decide), for
+// tests.
+@property(nonatomic, readonly) NSButton *acceptButton, *rejectButton;
 // The panes, for focus and tests.
 @property(nonatomic, readonly) NSTextView *leftView, *rightView;
 @property(nonatomic, readonly) NSScrollView *leftScroll, *rightScroll;
