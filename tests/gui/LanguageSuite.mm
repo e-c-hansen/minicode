@@ -21,7 +21,9 @@
 #import "LspServer.h"
 #import "FoldView.h"
 #include "LspClient.h"
+#include <pwd.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 namespace {
 
@@ -89,6 +91,18 @@ double Ink(NSView *view, NSRect rect) {
             n++;
         }
     return n ? sum / n : 0;
+}
+
+NSString *BasedPyright() {
+    NSMutableArray *dirs = [[NSProcessInfo.processInfo.environment[@"PATH"]
+        componentsSeparatedByString:@":"] mutableCopy];
+    struct passwd *pw = getpwuid(getuid());   // HOME is the scratch one here
+    if (pw) [dirs addObject:[@(pw->pw_dir) stringByAppendingPathComponent:@".local/bin"]];
+    for (NSString *d in dirs) {
+        NSString *p = [d stringByAppendingPathComponent:@"basedpyright-langserver"];
+        if ([[NSFileManager defaultManager] isExecutableFileAtPath:p]) return p;
+    }
+    return nil;
 }
 
 NSRect RectOf(CodeTextView *tv, NSRange r) {
@@ -526,4 +540,76 @@ MC_GUI_SUITE(language) {
         [[NSFileManager defaultManager] removeItemAtPath:MCGuiProjectFile(@".venv") error:nil];
     });
     MCGuiPause(1.0);
+
+    // ----------------------- the review's own case, with basedpyright
+    NSString *based = BasedPyright();
+    if (!based) {
+        MCGuiStep(@"basedpyright is not installed: its auto-import check is skipped", ^{
+            MCGuiNote(@"basedpyright-langserver not found; skipping the auto-import check");
+        });
+        return;
+    }
+    NSString *mod = MCGuiProjectFile(@"lang/mod.py");
+    NSString *const kMod =
+        @"import os\n"                     // 0
+        @"\n"                              // 1
+        @"\n"                              // 2
+        @"def first(a):\n"                 // 3
+        @"    b = a + 1\n"                 // 4
+        @"    return os.path.join(b)\n"    // 5
+        @"\n"                              // 6
+        @"\n"                              // 7
+        @"def second():\n"                 // 8
+        @"    p = Pat\n";                  // 9
+    MCGuiStep(@"basedpyright on, mod.py open, first() folded", ^{
+        MCGuiWriteFile(mod, kMod);
+        MCGuiWriteFile(settings, [NSString stringWithFormat:
+            @"lsp.enabled = true\nlsp.python = %@ --stdio\nlsp.python.also = off\n", based]);
+    });
+    MCGuiPause(1.0);
+    MCGuiStep(@"open it", ^{ GCHECK([c showFile:mod]); });
+    MCGuiWait(@"basedpyright runs", 60, ^BOOL {
+        LspSession *lsp = Session(c);
+        return lsp.hasServer && [lsp.statusText containsString:@"basedpyright"] &&
+               ![lsp.statusText containsString:@"starting"];
+    });
+    MCGuiStep(@"fold first(), ask for completions at Pat", ^{
+        GCHECK([tv.folds toggleLine:3]);
+        GCHECK([tv.folds lineStartsFold:3]);
+        [c.window makeFirstResponder:tv];
+        tv.selectedRange = NSMakeRange(NSMaxRange([tv.string rangeOfString:@"p = Pat"]), 0);
+        [Session(c) triggerCompletion];
+    });
+    MCGuiWait(@"Path is offered", 30, ^BOOL {
+        return [Session(c).completionLabels containsObject:@"Path"];
+    });
+    MCGuiStep(@"accepting Path adds its import at the top, and first() stays folded", ^{
+        LspSession *lsp = Session(c);
+        NSArray *labels = lsp.completionLabels;
+        NSUInteger row = [labels indexOfObject:@"Path"];
+        for (NSUInteger k = 0; k < 60 && ![lsp.completionSelectedLabel isEqualToString:@"Path"]; k++)
+            [lsp handleCommand:@selector(moveDown:)];
+        GCHECK_EQ_STR(lsp.completionSelectedLabel, @"Path");
+        (void)row;
+        MCGuiUndoGroup(tv.undoManager, ^{ [lsp handleCommand:@selector(insertTab:)]; });
+    });
+    MCGuiWait(@"the word is in", 5, ^BOOL { return [tv.string containsString:@"p = Path\n"]; });
+    MCGuiStep(@"the import went in above, the fold held", ^{
+        MCGuiNote(@"after accepting: %@", [tv.string substringToIndex:MIN(tv.string.length, 60u)]);
+        BOOL imported = [tv.string containsString:@"from pathlib import Path"];
+        GCHECK(imported);
+        NSUInteger firstLine = 0;
+        NSArray *lines = [tv.string componentsSeparatedByString:@"\n"];
+        for (NSUInteger i = 0; i < lines.count; i++)
+            if ([lines[i] hasPrefix:@"def first"]) firstLine = i;
+        GCHECK(firstLine > 3);
+        GCHECK([tv.folds lineStartsFold:firstLine]);
+        [tv.folds unfoldAll];
+        [tv.undoManager undo];
+        GCHECK_EQ_STR(tv.string, kMod);
+    });
+    MCGuiStep(@"language servers off again", ^{
+        MCGuiWriteFile(settings, @"lsp.enabled = false\n");
+    });
+    MCGuiPause(0.5);
 }
