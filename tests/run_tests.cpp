@@ -6,6 +6,7 @@
 #include "MarkdownEdit.h"
 #include "MarkdownTasks.h"
 #include "MathTex.h"
+#include "LatexScratch.h"
 #include "TerminalStream.h"
 #include "TerminalScreen.h"
 #include "Settings.h"
@@ -9958,6 +9959,7 @@ static void testMultiCaretOccurrences() {
 #include "terminal_links_tests.inc"
 #include "ide_link_tests.inc"
 #include "format_consent_tests.inc"
+#include "latex_safety_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10052,6 +10054,7 @@ int main() {
     testIdeLink();
     testIdeLinkSettings();
     testMermaidDiagram();
+    testLatexSafety();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
