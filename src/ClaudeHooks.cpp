@@ -1,6 +1,14 @@
 // ClaudeHooks.cpp — see ClaudeHooks.h.
 #include "ClaudeHooks.h"
 #include "ControlProtocol.h"
+#include <cerrno>
+#include <climits>
+#include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <vector>
 
 namespace ClaudeHooks {
 
@@ -196,6 +204,69 @@ MergeResult merge(const std::string &text) {
     if (!placed) out.set("hooks", hooks);
     r.text = ControlChannel::prettyJson(out) + "\n";
     return r;
+}
+
+std::string writeTarget(const std::string &path) {
+    char resolved[PATH_MAX];
+    if (realpath(path.c_str(), resolved)) return resolved;
+    std::string p = path;
+    for (int hops = 0; hops < 40; hops++) {
+        struct stat st;
+        if (lstat(p.c_str(), &st) != 0 || !S_ISLNK(st.st_mode)) return p;
+        char buf[PATH_MAX];
+        const ssize_t n = readlink(p.c_str(), buf, sizeof buf - 1);
+        if (n <= 0) return p;
+        std::string next(buf, (size_t)n);
+        if (next[0] != '/') {
+            const size_t slash = p.rfind('/');
+            next = (slash == std::string::npos ? std::string() : p.substr(0, slash + 1)) + next;
+        }
+        p = next;
+    }
+    return std::string();
+}
+
+bool writeSettingsFile(const std::string &path, const std::string &text, unsigned newMode,
+                       std::string &error) {
+    const std::string target = writeTarget(path);
+    if (target.empty()) {
+        error = path + ": the symbolic link loops";
+        return false;
+    }
+    mode_t mode = (mode_t)(newMode & 07777);
+    struct stat st;
+    if (stat(target.c_str(), &st) == 0) {
+        if (!S_ISREG(st.st_mode)) {
+            error = path + " is not a plain file";
+            return false;
+        }
+        mode = st.st_mode & 07777;
+    }
+    std::string tmp = target + ".minicode-XXXXXX";
+    std::vector<char> name(tmp.begin(), tmp.end());
+    name.push_back('\0');
+    const int fd = mkstemp(name.data());
+    if (fd < 0) {
+        error = target + ": " + std::strerror(errno);
+        return false;
+    }
+    fchmod(fd, mode);
+    size_t off = 0;
+    bool ok = true;
+    while (off < text.size()) {
+        const ssize_t n = write(fd, text.data() + off, text.size() - off);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) { ok = false; break; }
+        off += (size_t)n;
+    }
+    ok = ok && fsync(fd) == 0;
+    ok = close(fd) == 0 && ok;
+    if (!ok || rename(name.data(), target.c_str()) != 0) {
+        error = target + ": " + std::strerror(errno);
+        unlink(name.data());
+        return false;
+    }
+    return true;
 }
 
 }  // namespace ClaudeHooks
