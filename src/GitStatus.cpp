@@ -256,11 +256,130 @@ Status parseStatus(const std::string& out) {
             if (!e.path.empty()) st.entries.push_back(e);
             break;
         }
+        case '!': {   // only with --ignored
+            std::string path = rec.substr(2);
+            if (!path.empty()) st.ignored.push_back(path);
+            break;
+        }
         default:
-            break;   // '!' (ignored) and anything newer
+            break;   // anything newer
         }
     }
     return st;
+}
+
+// ------------------------------------------------------- the tree's colors
+std::vector<std::string> decorationArgs() {
+    return {"status", "--porcelain=v2", "-z", "--ignored=matching", "--untracked-files=normal"};
+}
+
+const char* decorationName(Decoration d) {
+    switch (d) {
+    case Decoration::None: return "";
+    case Decoration::Ignored: return "ignored";
+    case Decoration::Untracked: return "untracked";
+    case Decoration::Added: return "added";
+    case Decoration::Deleted: return "deleted";
+    case Decoration::Modified: return "modified";
+    case Decoration::Conflict: return "conflict";
+    }
+    return "";
+}
+
+Decoration decorationOf(const Entry& e) {
+    if (e.unmerged) return Decoration::Conflict;
+    if (e.untracked) return Decoration::Untracked;
+    const char x = e.staged, y = e.unstaged;
+    if (x == 'D' || y == 'D') return Decoration::Deleted;
+    if (x == 'A' || x == 'R' || x == 'C' || y == 'A') return Decoration::Added;
+    if (x == 'M' || y == 'M' || x == 'T' || y == 'T') return Decoration::Modified;
+    return Decoration::None;
+}
+
+namespace {
+std::string noTrailingSlash(std::string p) {
+    while (!p.empty() && p.back() == '/') p.pop_back();
+    return p;
+}
+}  // namespace
+
+Decorations Decorations::fromStatus(const Status& st) {
+    Decorations d;
+    // A path named twice keeps the later record, as VS Code's explorer
+    // does: `git rm --cached` leaves a deletion in the index and the file
+    // untracked, and it shows as untracked.
+    for (const Entry& e : st.entries) {
+        const Decoration k = decorationOf(e);
+        if (k == Decoration::None) continue;
+        if (e.untracked && !e.path.empty() && e.path.back() == '/')
+            d.untrackedDirs_.insert(noTrailingSlash(e.path));
+        else
+            d.files_[e.path] = k;
+    }
+    for (const std::string& p : st.ignored) {
+        if (!p.empty() && p.back() == '/') d.ignoredDirs_.insert(noTrailingSlash(p));
+        else d.files_[p] = Decoration::Ignored;
+    }
+    // Folders show their strongest child, as VS Code's explorer does,
+    // except that deletions and ignored files do not color their folders.
+    auto rollUp = [&d](const std::string& path, Decoration k) {
+        if (k == Decoration::Deleted || k == Decoration::Ignored || k == Decoration::None) return;
+        for (size_t slash = path.rfind('/'); slash != std::string::npos && slash > 0;
+             slash = path.rfind('/', slash - 1)) {
+            Decoration& f = d.folders_[path.substr(0, slash)];
+            if (f < k) f = k;
+        }
+    };
+    for (const auto& [path, k] : d.files_) rollUp(path, k);
+    for (const std::string& dir : d.untrackedDirs_) rollUp(dir, Decoration::Untracked);
+    return d;
+}
+
+Decoration Decorations::underFolder(const std::string& rel, bool self) const {
+    if (ignoredDirs_.empty() && untrackedDirs_.empty()) return Decoration::None;
+    std::string p = rel;
+    if (!self) {
+        const size_t slash = p.rfind('/');
+        if (slash == std::string::npos) return Decoration::None;
+        p.resize(slash);
+    }
+    // The nearest folder git named wins: an ignored file inside an
+    // untracked folder is ignored.
+    while (!p.empty()) {
+        if (ignoredDirs_.count(p)) return Decoration::Ignored;
+        if (untrackedDirs_.count(p)) return Decoration::Untracked;
+        const size_t slash = p.rfind('/');
+        if (slash == std::string::npos) break;
+        p.resize(slash);
+    }
+    return Decoration::None;
+}
+
+Decoration Decorations::file(const std::string& rel) const {
+    auto it = files_.find(rel);
+    if (it != files_.end()) return it->second;
+    return underFolder(rel, false);
+}
+
+Decoration Decorations::folder(const std::string& rel) const {
+    if (rel.empty()) return Decoration::None;
+    auto it = files_.find(rel);   // a submodule is an entry of its own
+    if (it != files_.end()) return it->second;
+    const Decoration under = underFolder(rel, true);
+    if (under != Decoration::None) return under;
+    auto f = folders_.find(rel);
+    return f != folders_.end() ? f->second : Decoration::None;
+}
+
+bool Decorations::ignored(const std::string& rel) const {
+    auto it = files_.find(rel);
+    if (it != files_.end()) return it->second == Decoration::Ignored;
+    return underFolder(rel, true) == Decoration::Ignored;
+}
+
+bool Decorations::operator==(const Decorations& o) const {
+    return files_ == o.files_ && untrackedDirs_ == o.untrackedDirs_ &&
+           ignoredDirs_ == o.ignoredDirs_;
 }
 
 bool isStaged(const Entry& e) {

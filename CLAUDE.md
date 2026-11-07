@@ -1050,7 +1050,15 @@ view is disposed (on `unrealize`), or dispose loops forever.
   2, 4 s; the fourth crash in a row (three minutes up clears it) stays Crashed.
   The popover lives in a static (`gServersPopover`), so it holds sessions
   weakly (a strong capture kept a closed window's session alive).
-- **Processes** (`MCLspServer`): pipes, reads on a background queue, writes on
+  `$/progress` (`window.workDoneProgress`, `Client::progress`): the newest
+  work begun on a running server stands in for "no problems" in
+  `Lsp::statusLine` and is a line on the server's card; redraws coalesce to
+  one a run-loop turn.
+- **Processes** (`MCLspServer`): pipes; stdout is framed and parsed by an
+  `Lsp::Reader` on the server's own serial read queue and only the parsed
+  messages hop to the main thread (`Client::deliver`), where the Client
+  stays single-threaded, and are freed back on the read queue (a 6 MB
+  answer parsed on main stalled it 50 ms); writes on
   a serial queue with raw `write()` and `F_SETNOSIGPIPE`; stderr drained (a
   full pipe stalls clangd); `$MINICODE_LSP_LOG` logs all traffic. Window close:
   shutdown, exit, stdin closed, SIGTERM at 2 s, SIGKILL at 3; quit:
@@ -1820,6 +1828,25 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   tabs, the LaTeX path and a preview's relative pictures. F2 renames,
   Cmd+Delete trashes (the registry's `Tree` commands, run by the key monitor),
   Space previews with Quick Look.
+- **FSEvents refresh what changed** (2026-11-06): the stream names folders,
+  and `TreeRefresh::plan` (FileDetails) turns a batch into the loaded
+  folders to list again (a subtree event: those below too; at or above the
+  root: a full rescan) and rows to restat (a folder's date); `MCTreeList`
+  reads them on the tree's queue, one batch at a time, generation-counted
+  (a full rescan or new root drops it), and `applyTreeListings:` reloads
+  only folders whose rows on show changed, keeping expansion, selection and
+  scroll. Refresh (Cmd+R), file operations and the hidden-files switch stay
+  full rescans. `reloadItem:reloadChildren:` on a collapsed folder, or one
+  under a collapsed folder, does show the new children when opened (the
+  `tree` suite checks it). Expansion still lists synchronously.
+- **Git colors** (`MCTreeGitColors`, TreeGitColors.mm): one `git status
+  --porcelain=v2 -z --ignored=matching` per look (`Git::Decorations`:
+  last record wins per path, folders take the strongest child, deletions
+  and ignored files never propagate, as VS Code's), 0.5 s after events,
+  skipped for events inside ignored folders and .git/objects and logs; a
+  folder outside git reruns rev-parse only when its own top folder changes.
+  Worktree rows are never colored. `tree.git-*` keys, VS Code's dark or
+  light defaults by `Theme::dark`.
 - **The Worktrees node** (first, shown with or without hidden files, not again
   inside .claude): each worktree named for its agent with its ahead count and
   changes (git off the main thread); right click Compare with Main (each
@@ -2245,7 +2272,7 @@ session has a display. Check first.
   20,000). Suites: control, agents, backups, find_bar, folding, foldperf,
   format, git_panel, keymap, keystroke, lsp_fixes, palette, paste, previews,
   problems, processes, replace_in_folder, run_file, symbols, terminal_links,
-  terminal_reflow, and in
+  terminal_reflow, tree, and in
   LooseEndsSuite.mm terminal_exec, terminal_keys, terminal_zoom,
   agent_autosave, multicaret_rows. **Language server checks use the scripted
   server** `build/fakelsp` (`tests/fakelsp/fakelsp.cpp`, built by `make

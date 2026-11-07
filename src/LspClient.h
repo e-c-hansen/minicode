@@ -239,6 +239,39 @@ private:
     size_t pos_ = 0;
 };
 
+// A server's output read into messages: the framing, then the JSON. One
+// per server, used by one thread at a time; the Mac runs it on the
+// server's read queue, so a large answer (5,000 completions) is parsed
+// there, and hands each message to the Client on the main thread.
+struct Incoming {
+    Json message;
+    std::string error;   // not empty: a body that was not JSON
+};
+class Reader {
+public:
+    void feed(const char* data, size_t n) { framer_.feed(data, n); }
+    void feed(const std::string& s) { feed(s.data(), s.size()); }
+    // The next complete message, parsed, if one has arrived.
+    bool next(Incoming& out);
+    size_t buffered() const { return framer_.buffered(); }
+
+private:
+    Framer framer_;
+};
+
+// Work a server reports with $/progress (indexing, analysing): what it
+// said at `begin` and since. A `report` keeps the message or percentage it
+// leaves out; percentage is -1 when the server gave none.
+struct Progress {
+    std::string token;   // the token as compact JSON (a string or a number)
+    std::string title, message;
+    int percentage = -1;
+    uint64_t begun = 0;  // increases across every server, so the newest wins
+};
+// "Indexing: 3/10 files 30%", cut to about 60 characters (whole UTF-8
+// characters), or "working…" when the server said nothing.
+std::string progressText(const Progress& p);
+
 // ------------------------------------------------------ text and positions
 // UTF-16 offset <-> LSP position. Lines end at \n, \r\n or \r, as the spec
 // says. A character past the end of its line clamps to the line's end, and a
@@ -354,6 +387,10 @@ struct ServerStatus {
     std::string name;        // "basedpyright", or "" when none was found
     ServerState state = ServerState::Idle;
     bool main = false;
+    // Its newest work in progress (progressText), "" when none, and when
+    // that began (Progress::begun).
+    std::string progress = std::string();
+    uint64_t progressBegun = 0;
 };
 enum class StatusDot { None, Gray, Green, Yellow, Red };
 struct StatusLine {
@@ -366,7 +403,10 @@ struct StatusLine {
 // "...: no problems"), at the place of the first; each other server says
 // its own state ("ruff failed to start"), joined by " · ". A main server
 // that is missing reads "Install a Python language server…" (the click
-// shows how); a second server that is off or idle says nothing. The dot is
+// shows how); a second server that is off or idle says nothing. While a
+// running server reports progress, the newest begun stands where "no
+// problems" would ("basedpyright: Indexing 40%", any counts after a
+// comma). The dot is
 // red when any has failed or crashed, else yellow while one starts, else
 // green when one runs, else gray.
 StatusLine statusLine(const std::string& language, const std::vector<ServerStatus>& servers,
@@ -787,9 +827,18 @@ public:
     // `exit` right away, for when there is no time to wait (app quitting).
     void exitNow();
 
-    // Bytes from the server's stdout.
+    // Bytes from the server's stdout: framed, parsed, and handled.
     void receive(const char* data, size_t n);
     void receive(const std::string& s) { receive(s.data(), s.size()); }
+    // One message a Reader made elsewhere (another thread): handled as
+    // receive() would have. Nothing is done once the client has Exited.
+    void deliver(const Incoming& in);
+
+    // $/progress: the newest work begun and not yet ended, or null; every
+    // begin, report and end runs onProgress.
+    const Progress* progress() const;
+    size_t progressCount() const { return progress_.size(); }
+    std::function<void()> onProgress;
 
     // Server capabilities, valid once Ready.
     const Json& capabilities() const { return capabilities_; }
@@ -852,7 +901,8 @@ private:
 
     Sender send_;
     State state_ = State::Idle;
-    Framer framer_;
+    Reader reader_;
+    std::map<std::string, Progress> progress_;   // by token
     int nextId_ = 1;
     int initializeId_ = 0, shutdownId_ = 0;
     std::map<int, ResultHandler> handlers_;
@@ -877,6 +927,7 @@ private:
     void notify(const std::string& method, Json params);
     void handleMessage(const Json& msg);
     void handleServerRequest(const Json& msg);
+    void handleProgress(const Json& params);
     void respond(const Json& id, Json result);
 };
 
