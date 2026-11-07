@@ -442,7 +442,16 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)startWatching:(NSString *)path;
 - (void)stopWatching;
 - (void)reloadTreeKeepingState:(BOOL)rescan;
+- (void)treeFoldersChangedOnDisk:(NSArray<NSString *> *)paths subtree:(NSArray<NSNumber *> *)subtree;
+- (void)listChangedTreeFolders;
+- (NSMutableDictionary<NSString *, FileItem *> *)loadedTreeFolders;
+- (void)applyTreeListings:(NSDictionary<NSString *, NSArray<MCTreeEntry *> *> *)listings
+                    stats:(NSDictionary<NSString *, MCTreeEntry *> *)stats
+               reshowRoot:(BOOL)reshowRoot;
+- (void)collectExpanded:(FileItem *)node into:(NSMutableSet<NSString *> *)expanded;
 - (void)reExpand:(FileItem *)node usingSet:(NSSet<NSString *> *)expanded;
+- (NSColor *)gitColorOf:(FileItem *)node tip:(NSString **)tip;
+- (NSUInteger)treeGitRuns;
 - (NSString *)worktreesFolder;
 - (NSArray<FileItem *> *)withWorktreesNode:(NSArray<FileItem *> *)shown of:(FileItem *)node;
 - (BOOL)isWorktreeRow:(FileItem *)node;
@@ -477,6 +486,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)folderTotalsArrived:(NSSet<NSString *> *)paths;
 - (void)reorderNode:(FileItem *)node changed:(BOOL *)changed;
 - (void)folderChangedOnDisk:(NSString *)path subtree:(BOOL)subtree;
+- (NSString *)treeSpellingOf:(NSString *)diskPath;
 - (void)setTreeSort:(TreeSort::Options)options;
 - (TreeSort::Options)treeSortOptions;
 - (void)treeDetailsChanged:(NSNotification *)note;

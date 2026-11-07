@@ -43,6 +43,11 @@ constexpr int kSurfaceCount = 6;
 enum class MarkdownColor { Heading, Link, Code, Quote, Done };
 constexpr int kMarkdownColorCount = 5;
 
+// The file tree's names colored by git status (tree.git-modified and the
+// rest), in this order.
+enum class TreeGitColor { Modified, Added, Untracked, Deleted, Ignored, Conflict };
+constexpr int kTreeGitColorCount = 6;
+
 // A color value on one line of the settings file, in UTF-16 offsets.
 struct ColorSpan {
     size_t start, length;
@@ -252,6 +257,12 @@ public:
     // editor.bracket-match: the box drawn around the bracket beside the
     // caret and its partner (filled with the same color, faintly).
     Rgba bracketMatchColor() const;
+    // tree.git-modified, tree.git-added, tree.git-untracked,
+    // tree.git-deleted, tree.git-ignored and tree.git-conflict: a tree
+    // row's name in a git folder, by its status (Git::Decoration). Unset,
+    // VS Code's gitDecoration.* colors, its dark ones in a dark theme and
+    // its light ones in a light theme (no built-in theme sets its own).
+    Rgba treeGitColor(TreeGitColor c) const;
 
     // The terminal. terminal.mode: grid (the default) makes each new
     // terminal a real one, the cell grid with zsh's own line editor, prompt
@@ -409,6 +420,7 @@ private:
     bool wordWrap_ = true;
     std::optional<Rgba> gutterBackground_, lineNumberColor_, lineNumberActiveColor_,
         bracketMatchColor_;
+    std::optional<Rgba> treeGit_[kTreeGitColorCount];
     bool terminalLineMode_ = false;
     int terminalScrollback_ = 10000;
     double terminalFontSize_ = 12;

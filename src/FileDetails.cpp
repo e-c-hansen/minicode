@@ -334,3 +334,64 @@ bool measure(const std::string &path, SizeCache &cache, const Limits &limits,
 }
 
 }  // namespace FolderSizes
+
+namespace TreeRefresh {
+
+namespace {
+std::string withoutTrailingSlashes(std::string p) {
+    while (p.size() > 1 && p.back() == '/') p.pop_back();
+    return p;
+}
+// Whether `path` is `dir` or inside it.
+bool within(const std::string &path, const std::string &dir) {
+    if (path == dir) return true;
+    if (dir == "/") return !path.empty() && path[0] == '/';
+    return path.size() > dir.size() && path.compare(0, dir.size(), dir) == 0 &&
+           path[dir.size()] == '/';
+}
+std::string parentOf(const std::string &path) {
+    const size_t slash = path.rfind('/');
+    if (slash == std::string::npos) return "";
+    return slash == 0 ? "/" : path.substr(0, slash);
+}
+}  // namespace
+
+std::string treeSpelling(const std::string &path, const std::string &root,
+                         const std::string &realRoot) {
+    std::string p = withoutTrailingSlashes(path);
+    const std::string real = withoutTrailingSlashes(realRoot);
+    const std::string tree = withoutTrailingSlashes(root);
+    if (real.empty() || tree.empty() || real == tree || !within(p, real)) return p;
+    return tree + p.substr(real.size());
+}
+
+Plan plan(const std::vector<Event> &events, const std::set<std::string> &loaded,
+          const std::string &rootPath) {
+    Plan out;
+    const std::string root = withoutTrailingSlashes(rootPath);
+    std::set<std::string> list, restat;
+    for (const Event &e : events) {
+        const std::string p = withoutTrailingSlashes(e.path);
+        if (p.empty()) continue;
+        // Events dropped or a root moved: a folder above the root, with
+        // everything below it to look at.
+        if (e.subtree && within(root, p)) {
+            out.everything = true;
+            return out;
+        }
+        if (!within(p, root)) continue;
+        if (e.subtree) {
+            for (auto it = loaded.lower_bound(p); it != loaded.end() && it->compare(0, p.size(), p) == 0; ++it)
+                if (within(*it, p)) list.insert(*it);
+        } else if (loaded.count(p)) {
+            list.insert(p);
+        }
+        if (p != root && loaded.count(parentOf(p))) restat.insert(p);
+    }
+    for (const std::string &r : restat)
+        if (!list.count(parentOf(r))) out.restat.push_back(r);
+    out.list.assign(list.begin(), list.end());
+    return out;
+}
+
+}  // namespace TreeRefresh

@@ -89,7 +89,10 @@ static NSString *MCGroupedCount(long long n) {
     AppSettings *cfg = [AppSettings shared];
     NSColor *text = [cfg text:Surface::Sidebar];
     cell.textField.stringValue = node.name ?: @"";
-    cell.textField.textColor = text;
+    // In a git folder the name takes its status's color (tree.git-*).
+    NSString *gitTip = nil;
+    NSColor *gitColor = [self gitColorOf:node tip:&gitTip];
+    cell.textField.textColor = gitColor ?: text;
     cell.textField.font = [NSFont systemFontOfSize:12.5];
     NSString *sym = node.isDir ? @"folder.fill" : @"doc.text";
     NSColor *tint = node.isDir ? Hex(0xC09553) : Hex(0x8A99A8);
@@ -108,7 +111,7 @@ static NSString *MCGroupedCount(long long n) {
     const MCTreeColumns columns = MCTreeColumnsShown();
     if (!columns) {
         [cell setSize:nil saved:nil created:nil color:nil];
-        cell.toolTip = nil;
+        cell.toolTip = gitTip ? [NSString stringWithFormat:@"%@\n%@", node.name ?: @"", gitTip] : nil;
         return;
     }
     NSDate *now = [NSDate date];
@@ -151,6 +154,7 @@ static NSString *MCGroupedCount(long long n) {
     if (modified) [tip addObject:[@"Modified " stringByAppendingString:MCFullDate(modified)]];
     if (created) [tip addObject:[@"Created " stringByAppendingString:MCFullDate(created)]];
     if (sizeTip) [tip addObject:sizeTip];
+    if (gitTip) [tip addObject:gitTip];
     cell.toolTip = [tip componentsJoinedByString:@"\n"];
 }
 
@@ -193,15 +197,13 @@ static NSString *MCGroupedCount(long long n) {
 // FSEvents named a folder (as the disk spells it, /private/tmp for /tmp)
 // in which something changed: its total and those above it are stale.
 - (void)folderChangedOnDisk:(NSString *)path subtree:(BOOL)subtree {
-    while (path.length > 1 && [path hasSuffix:@"/"]) path = [path substringToIndex:path.length - 1];
-    NSString *root = _root.path;
-    if (_realRoot && root && ![_realRoot isEqualToString:root]) {
-        if ([path isEqualToString:_realRoot])
-            path = root;
-        else if ([path hasPrefix:[_realRoot stringByAppendingString:@"/"]])
-            path = [root stringByAppendingString:[path substringFromIndex:_realRoot.length]];
-    }
-    [_sizer invalidate:path subtree:subtree];
+    [_sizer invalidate:[self treeSpellingOf:path] subtree:subtree];
+}
+
+// A path as FSEvents spells it (/private/tmp/x) as the tree does (/tmp/x).
+- (NSString *)treeSpellingOf:(NSString *)diskPath {
+    return @(TreeRefresh::treeSpelling(Utf8String(diskPath), Utf8String(_root.path),
+                                       Utf8String(_realRoot)).c_str()) ?: diskPath;
 }
 
 - (void)setTreeSort:(TreeSort::Options)options {
