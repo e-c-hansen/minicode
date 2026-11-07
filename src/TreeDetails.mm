@@ -12,8 +12,12 @@ static NSString *const kTreeSortKey = @"MCTreeSort";
 static const NSUInteger kMaxTreeSorts = 100;
 
 NSUserDefaults *MCAppDefaults(void) {
-    NSString *suite = NSProcessInfo.processInfo.environment[@"MINICODE_DEFAULTS_SUITE"];
-    if (!suite.length) return [NSUserDefaults standardUserDefaults];
+    // getenv, not NSProcessInfo's environment, which builds the whole
+    // dictionary on every call: this runs for every terminal and editor font
+    // lookup (the zoom), and was most of a terminal frame's drawing time.
+    const char *env = getenv("MINICODE_DEFAULTS_SUITE");
+    if (!env || !*env) return [NSUserDefaults standardUserDefaults];
+    NSString *suite = @(env);
     static NSUserDefaults *scratch;
     static NSString *scratchName;
     if (![scratchName isEqualToString:suite]) {
