@@ -945,6 +945,8 @@ std::size_t groupCount(const Program& program) { return program.groups; }
 
 std::size_t programSize(const Program& program) { return program.code.size(); }
 
+const std::u32string& requiredText(const Program& program) { return program.required; }
+
 Result search(const Program& program, const char32_t* s, std::size_t n, std::size_t from,
               const SearchOptions& options, std::vector<std::size_t>& caps,
               const std::atomic<bool>* cancel) {
