@@ -10026,6 +10026,7 @@ static void testMultiCaretOccurrences() {
 #include "terminal_draw_tests.inc"
 #include "tree_tests.inc"
 #include "lsp_threading_tests.inc"
+#include "multiedit_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10130,6 +10131,7 @@ int main() {
     testLspWatchedFiles();
     testTreeRefresh();
     testLspThreading();
+    testMultiEdit();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

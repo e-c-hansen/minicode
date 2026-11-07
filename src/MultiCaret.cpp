@@ -5,6 +5,36 @@
 
 namespace MultiCaret {
 
+std::u16string Text::substr(size_t pos, size_t n) const {
+    if (pos > size_) pos = size_;
+    n = std::min(n, size_ - pos);
+    if (data_) return std::u16string(data_ + pos, n);
+    std::u16string out(n, u'\0');
+    if (n >= kBlock) {   // long pieces straight from the reader
+        read_(pos, n, &out[0]);
+        read_count_ += n;
+    } else {
+        for (size_t i = 0; i < n; i++) out[i] = (*this)[pos + i];
+    }
+    return out;
+}
+
+void Text::fetch(size_t block) const {
+    auto it = blocks_.find(block);
+    if (it == blocks_.end()) {
+        const size_t start = block << kBlockBits;
+        const size_t n = start < size_ ? std::min(kBlock, size_ - start) : 0;
+        // Full size whatever the text's end, so reading past it (which no
+        // caller does) stays inside the block.
+        std::u16string b(kBlock, u'\0');
+        if (n) read_(start, n, &b[0]);
+        read_count_ += n;
+        it = blocks_.emplace(block, std::move(b)).first;
+    }
+    lastBlock_ = block;
+    last_ = it->second.data();
+}
+
 namespace {
 
 bool isBreak(char16_t c) { return c == u'\n' || c == u'\r'; }
@@ -21,31 +51,31 @@ int charClass(char16_t c) {
     return 2;
 }
 
-size_t lineStart(const std::u16string& t, size_t p) {
+size_t lineStart(const Text& t, size_t p) {
     while (p > 0 && !isBreak(t[p - 1])) p--;
     return p;
 }
 
-size_t lineEnd(const std::u16string& t, size_t p) {
+size_t lineEnd(const Text& t, size_t p) {
     while (p < t.size() && !isBreak(t[p])) p++;
     return p;
 }
 
-size_t stepLeft(const std::u16string& t, size_t p) {
+size_t stepLeft(const Text& t, size_t p) {
     if (p == 0) return 0;
     if (p >= 2 && t[p - 2] == u'\r' && t[p - 1] == u'\n') return p - 2;
     if (p >= 2 && isLow(t[p - 1]) && isHigh(t[p - 2])) return p - 2;
     return p - 1;
 }
 
-size_t stepRight(const std::u16string& t, size_t p) {
+size_t stepRight(const Text& t, size_t p) {
     if (p >= t.size()) return t.size();
     if (p + 1 < t.size() && t[p] == u'\r' && t[p + 1] == u'\n') return p + 2;
     if (p + 1 < t.size() && isHigh(t[p]) && isLow(t[p + 1])) return p + 2;
     return p + 1;
 }
 
-size_t wordLeft(const std::u16string& t, size_t p) {
+size_t wordLeft(const Text& t, size_t p) {
     if (p == 0) return 0;
     if (isBreak(t[p - 1])) return stepLeft(t, p);
     while (p > 0 && isBlank(t[p - 1])) p--;
@@ -55,7 +85,7 @@ size_t wordLeft(const std::u16string& t, size_t p) {
     return p;
 }
 
-size_t wordRight(const std::u16string& t, size_t p) {
+size_t wordRight(const Text& t, size_t p) {
     const size_t n = t.size();
     if (p >= n) return n;
     if (isBreak(t[p])) return stepRight(t, p);
@@ -131,7 +161,7 @@ Edit insert(const std::vector<Caret>& carets, const std::vector<std::u16string>&
     return build(carets, std::move(changes), length);
 }
 
-Edit backspace(const std::u16string& text, const std::vector<Caret>& carets) {
+Edit backspace(const Text& text, const std::vector<Caret>& carets) {
     std::vector<Change> changes;
     for (const Caret& c : carets) {
         if (!c.empty()) {
@@ -149,7 +179,7 @@ Edit backspace(const std::u16string& text, const std::vector<Caret>& carets) {
     return build(carets, std::move(changes), text.size());
 }
 
-Edit deleteForward(const std::u16string& text, const std::vector<Caret>& carets) {
+Edit deleteForward(const Text& text, const std::vector<Caret>& carets) {
     std::vector<Change> changes;
     for (const Caret& c : carets) {
         if (!c.empty()) {
@@ -166,7 +196,7 @@ Edit deleteForward(const std::u16string& text, const std::vector<Caret>& carets)
     return build(carets, std::move(changes), text.size());
 }
 
-std::vector<Caret> move(const std::u16string& text, const std::vector<Caret>& carets, Move m,
+std::vector<Caret> move(const Text& text, const std::vector<Caret>& carets, Move m,
                         bool extend) {
     std::vector<Caret> out;
     out.reserve(carets.size());
@@ -215,7 +245,7 @@ std::vector<std::u16string> pieces(const std::u16string& clip, size_t carets) {
     return {clip};
 }
 
-std::u16string copy(const std::u16string& text, const std::vector<Caret>& carets) {
+std::u16string copy(const Text& text, const std::vector<Caret>& carets) {
     std::u16string out;
     bool first = true;
     for (const Caret& c : carets) {
@@ -271,7 +301,7 @@ struct Block {
     std::vector<Caret> carets;
 };
 
-std::vector<Block> lineBlocks(const std::u16string& text, const std::vector<Caret>& carets,
+std::vector<Block> lineBlocks(const Text& text, const std::vector<Caret>& carets,
                               bool adjacent) {
     std::vector<Block> blocks;
     for (const Caret& c : normalize(carets, text.size())) {
@@ -295,7 +325,7 @@ std::vector<Block> lineBlocks(const std::u16string& text, const std::vector<Care
 
 }  // namespace
 
-Edit duplicateLines(const std::u16string& text, const std::vector<Caret>& carets, bool down) {
+Edit duplicateLines(const Text& text, const std::vector<Caret>& carets, bool down) {
     const std::vector<Block> blocks = lineBlocks(text, carets, false);
     Edit out;
     long long shift = 0;
@@ -315,7 +345,7 @@ Edit duplicateLines(const std::u16string& text, const std::vector<Caret>& carets
     return out;
 }
 
-Edit moveLines(const std::u16string& text, const std::vector<Caret>& carets, bool down) {
+Edit moveLines(const Text& text, const std::vector<Caret>& carets, bool down) {
     const std::vector<Block> blocks = lineBlocks(text, carets, true);
     Edit out;
     // Nothing moves when a block is already at the edge it would move past.
@@ -346,7 +376,7 @@ Edit moveLines(const std::u16string& text, const std::vector<Caret>& carets, boo
     return out;
 }
 
-std::vector<Caret> expandLineSelection(const std::u16string& text,
+std::vector<Caret> expandLineSelection(const Text& text,
                                        const std::vector<Caret>& carets) {
     std::vector<Caret> out;
     for (const Caret& c : normalize(carets, text.size())) {
@@ -365,7 +395,7 @@ std::vector<Caret> expandLineSelection(const std::u16string& text,
     return normalize(out, text.size());
 }
 
-Edit deleteLines(const std::u16string& text, const std::vector<Caret>& carets) {
+Edit deleteLines(const Text& text, const std::vector<Caret>& carets) {
     Edit out;
     const size_t n = text.size();
     long long shift = 0;
@@ -394,7 +424,7 @@ Edit deleteLines(const std::u16string& text, const std::vector<Caret>& carets) {
     return out;
 }
 
-std::u16string lineCopy(const std::u16string& text, const std::vector<Caret>& carets) {
+std::u16string lineCopy(const Text& text, const std::vector<Caret>& carets) {
     std::u16string out;
     for (const Block& b : lineBlocks(text, carets, false)) {
         out += text.substr(b.start, b.end - b.start);
@@ -404,7 +434,7 @@ std::u16string lineCopy(const std::u16string& text, const std::vector<Caret>& ca
     return out;
 }
 
-Edit pasteLinesAbove(const std::u16string& text, const std::vector<Caret>& carets,
+Edit pasteLinesAbove(const Text& text, const std::vector<Caret>& carets,
                      const std::u16string& clip) {
     Edit out;
     const std::vector<Caret> sorted = normalize(carets, text.size());

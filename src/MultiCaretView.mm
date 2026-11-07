@@ -19,6 +19,16 @@ std::u16string U16(NSString *s) {
     return u;
 }
 
+// The view's text for the line and caret commands, read in blocks near the
+// carets rather than copied whole (a 100,000-line file is 5 MB a key
+// press). `s` is the storage's live string: use the result before the text
+// changes.
+MultiCaret::Text TextOf(NSString *s) {
+    return MultiCaret::Text(s.length, [s](size_t start, size_t length, char16_t *out) {
+        [s getCharacters:(unichar *)out range:NSMakeRange(start, length)];
+    });
+}
+
 NSString *NSFrom(const std::u16string &u) {
     return [NSString stringWithCharacters:(const unichar *)u.data() length:u.size()];
 }
@@ -381,7 +391,7 @@ NSString *LimitNote() {
 
 // Each caret's line's leading blanks, for Return.
 - (std::vector<std::u16string>)newlinesKeepingIndent {
-    const std::u16string t = U16(_tv.string);
+    const MultiCaret::Text t = TextOf(_tv.string);
     std::vector<std::u16string> out;
     for (const Caret &c : _carets) {
         size_t s = c.lo();
@@ -581,13 +591,13 @@ static NSUInteger MCIndexAcross(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
 
 - (void)move:(MultiCaret::Move)m extend:(BOOL)extend {
     _goalX.clear();
-    [self setCarets:MultiCaret::move(U16(_tv.string), _carets, m, extend)];
+    [self setCarets:MultiCaret::move(TextOf(_tv.string), _carets, m, extend)];
 }
 
 // Empty carets stretched by a move, then everything selected deleted.
 - (void)deleteBy:(MultiCaret::Move)m {
     _goalX.clear();
-    const std::u16string t = U16(_tv.string);
+    const MultiCaret::Text t = TextOf(_tv.string);
     std::vector<Caret> stretched;
     for (const Caret &c : _carets) {
         if (!c.empty()) {
@@ -636,12 +646,12 @@ static NSUInteger MCIndexAcross(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
     if (sel == @selector(deleteBackward:) ||
         sel == @selector(deleteBackwardByDecomposingPreviousCharacter:)) {
         _goalX.clear();
-        [self applyEdit:MultiCaret::backspace(U16(_tv.string), _carets) action:@"Typing"];
+        [self applyEdit:MultiCaret::backspace(TextOf(_tv.string), _carets) action:@"Typing"];
         return YES;
     }
     if (sel == @selector(deleteForward:)) {
         _goalX.clear();
-        [self applyEdit:MultiCaret::deleteForward(U16(_tv.string), _carets) action:@"Typing"];
+        [self applyEdit:MultiCaret::deleteForward(TextOf(_tv.string), _carets) action:@"Typing"];
         return YES;
     }
     if (sel == @selector(deleteWordBackward:)) { [self deleteBy:Move::WordLeft]; return YES; }
@@ -702,7 +712,7 @@ static NSUInteger MCIndexAcross(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
 - (void)duplicateLinesDown:(BOOL)down {
     NSTextView *tv = _tv;
     _goalX.clear();
-    [self applyEdit:MultiCaret::duplicateLines(U16(tv.string), [self currentCarets], down)
+    [self applyEdit:MultiCaret::duplicateLines(TextOf(tv.string), [self currentCarets], down)
              action:down ? @"Copy Line Down" : @"Copy Line Up"];
     if (!self.active) [tv scrollRangeToVisible:tv.selectedRange];
 }
@@ -710,7 +720,7 @@ static NSUInteger MCIndexAcross(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
 - (void)moveLinesDown:(BOOL)down {
     NSTextView *tv = _tv;
     _goalX.clear();
-    [self applyEdit:MultiCaret::moveLines(U16(tv.string), [self currentCarets], down)
+    [self applyEdit:MultiCaret::moveLines(TextOf(tv.string), [self currentCarets], down)
              action:down ? @"Move Line Down" : @"Move Line Up"];
     if (!self.active) [tv scrollRangeToVisible:tv.selectedRange];
 }
@@ -868,7 +878,7 @@ static NSUInteger MCIndexAcross(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
 - (void)expandLineSelection {
     NSTextView *tv = _tv;
     _goalX.clear();
-    [self setCarets:MultiCaret::expandLineSelection(U16(tv.string), [self currentCarets])];
+    [self setCarets:MultiCaret::expandLineSelection(TextOf(tv.string), [self currentCarets])];
     // setCarets: puts a single selection back in the text view, forwards.
     if (!self.active) [tv scrollRangeToVisible:tv.selectedRange];
 }
@@ -876,7 +886,7 @@ static NSUInteger MCIndexAcross(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
 - (void)deleteLines {
     NSTextView *tv = _tv;
     _goalX.clear();
-    [self applyEdit:MultiCaret::deleteLines(U16(tv.string), [self currentCarets])
+    [self applyEdit:MultiCaret::deleteLines(TextOf(tv.string), [self currentCarets])
              action:@"Delete Line"];
     if (!self.active) [tv scrollRangeToVisible:tv.selectedRange];
 }
@@ -895,7 +905,7 @@ static NSPasteboardType const kLineCopyType = @"org.minicode.editor.line-copy";
 }
 
 - (void)copyLines {
-    const std::u16string s = MultiCaret::lineCopy(U16(_tv.string), [self currentCarets]);
+    const std::u16string s = MultiCaret::lineCopy(TextOf(_tv.string), [self currentCarets]);
     NSPasteboard *pb = [NSPasteboard generalPasteboard];
     [pb clearContents];
     [pb setString:NSFrom(s) forType:NSPasteboardTypeString];
@@ -908,7 +918,7 @@ static NSPasteboardType const kLineCopyType = @"org.minicode.editor.line-copy";
         return YES;
     }
     if (!self.active) return NO;
-    const std::u16string s = MultiCaret::copy(U16(_tv.string), _carets);
+    const std::u16string s = MultiCaret::copy(TextOf(_tv.string), _carets);
     if (s.empty()) return YES;   // nothing selected: leave the clipboard alone
     NSPasteboard *pb = [NSPasteboard generalPasteboard];
     [pb clearContents];
@@ -920,7 +930,7 @@ static NSPasteboardType const kLineCopyType = @"org.minicode.editor.line-copy";
     if (_tv.editable && [self nothingSelected]) {
         [self copyLines];
         _goalX.clear();
-        [self applyEdit:MultiCaret::deleteLines(U16(_tv.string), [self currentCarets])
+        [self applyEdit:MultiCaret::deleteLines(TextOf(_tv.string), [self currentCarets])
                  action:@"Cut"];
         return YES;
     }
@@ -938,7 +948,7 @@ static NSPasteboardType const kLineCopyType = @"org.minicode.editor.line-copy";
     NSString *lines = [pb stringForType:kLineCopyType];
     if (_tv.editable && clip.length && [lines isEqualToString:clip] && [self nothingSelected]) {
         _goalX.clear();
-        [self applyEdit:MultiCaret::pasteLinesAbove(U16(_tv.string), [self currentCarets],
+        [self applyEdit:MultiCaret::pasteLinesAbove(TextOf(_tv.string), [self currentCarets],
                                                     U16(clip))
                  action:@"Paste"];
         if (!self.active) [_tv scrollRangeToVisible:_tv.selectedRange];

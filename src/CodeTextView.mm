@@ -1,6 +1,7 @@
 // CodeTextView.mm — Objective-C++. The editor's text view (see Lsp.h):
 // squiggles, hover, several carets, folds, the ruler and bracket boxes.
 #import "LspShared.h"
+#include <os/log.h>
 
 // -------------------------------------------------------- CodeTextView
 @implementation MCDiagnosticMark
@@ -289,6 +290,60 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
     [super scrollWheel:event];
 }
 
+// From this many ranges on, replaceRanges drops the glyphs over them first.
+static const NSUInteger kDropGlyphsAtEdits = 64;
+
+static os_log_t MCEditLog() {
+    static os_log_t log = os_log_create("com.minicode.editor", "edit");
+    return log;
+}
+
+// The ranges from index `from` on, moved by `delta`.
+static NSArray<NSValue *> *MCShifted(NSArray<NSValue *> *ranges, NSUInteger from, NSInteger delta) {
+    if (!delta) return ranges;
+    NSMutableArray<NSValue *> *out = [NSMutableArray arrayWithCapacity:ranges.count];
+    for (NSUInteger i = 0; i < ranges.count; i++) {
+        NSRange r = ranges[i].rangeValue;
+        if (i >= from) r.location = (NSUInteger)((NSInteger)r.location + delta);
+        [out addObject:[NSValue valueWithRange:r]];
+    }
+    return out;
+}
+
+// Where the pieces an edit inserted (`inserted`, at `after` in a text of
+// `length` characters) are in `text` now: at `after` while the text is
+// that long; otherwise those from some index `from` on moved by the length
+// difference, as one change made between piece from - 1 and piece from
+// (or before the first, or after the last) leaves them. NO when no such
+// placement holds every piece as it was inserted.
+static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArray<NSValue *> *after,
+                            NSUInteger length, NSUInteger *from, NSInteger *delta) {
+    const NSUInteger count = after.count;
+    const NSInteger d = (NSInteger)text.length - (NSInteger)length;
+    BOOL (^holds)(NSUInteger, NSInteger) = ^BOOL(NSUInteger i, NSInteger by) {
+        NSRange r = after[i].rangeValue;
+        const NSInteger at = (NSInteger)r.location + by;
+        if (at < 0 || (NSUInteger)at + r.length > text.length) return NO;
+        r.location = (NSUInteger)at;
+        return [text compare:inserted[i] options:NSLiteralSearch range:r] == NSOrderedSame;
+    };
+    NSUInteger j = 0;
+    while (j < count && holds(j, 0)) j++;
+    *from = count;
+    *delta = 0;
+    if (d == 0) return j == count;
+    if (j == count) return YES;   // changed after the last piece
+    // A change of d characters between piece j - 1 and piece j: room for a
+    // deletion there, and every later piece moved by d.
+    const NSUInteger gapStart = j ? NSMaxRange(after[j - 1].rangeValue) : 0;
+    if (d < 0 && after[j].rangeValue.location - gapStart < (NSUInteger)-d) return NO;
+    for (NSUInteger i = j; i < count; i++)
+        if (!holds(i, d)) return NO;
+    *from = j;
+    *delta = d;
+    return YES;
+}
+
 // ---- several replacements as one edit (Lsp.h)
 //
 // Each replacement is its own storage edit, last first, so every watcher of
@@ -342,6 +397,23 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
         // Plain strings take the attributes before them; an empty text has
         // none to give, so the typing attributes then.
         NSDictionary *attrs = ts.length == 0 ? self.typingAttributes : nil;
+        // Many edits: drop the glyphs from the first range to the last once,
+        // first. Each storage edit otherwise replaces its glyphs in the
+        // layout manager's glyph tree, which costs in proportion to the
+        // glyphs already made, and the highlighter's restyles after it pay
+        // again: Replace All of 20,000 matches in a 100,000-line file laid
+        // out to its end took 3 to 8 s, nearly all of it there. Layout
+        // between the first edit and the last is lost after several edits
+        // either way (TextKit 1 keeps one soft-invalidated span), so only
+        // the glyphs are given up, and they are made again on demand.
+        if (count >= kDropGlyphsAtEdits) {
+            const NSUInteger from = ranges[0].rangeValue.location;
+            const NSUInteger to = NSMaxRange(ranges[count - 1].rangeValue);
+            if (to > from)
+                [self.layoutManager invalidateGlyphsForCharacterRange:NSMakeRange(from, to - from)
+                                                       changeInLength:0
+                                                 actualCharacterRange:NULL];
+        }
         for (NSInteger k = (NSInteger)count - 1; k >= 0; k--) {
             const NSRange r = ranges[(NSUInteger)k].rangeValue;
             if (attrs)
@@ -357,14 +429,39 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
             const NSUInteger length = ts.length;
             NSString *undoName = [name copy];
             NSArray<NSValue *> *before = [ranges copy];
+            NSArray<NSString *> *inserted = [strings copy];
             [um registerUndoWithTarget:self handler:^(CodeTextView *tv) {
-                if (tv.textStorage.length != length) return;   // never expected: undo runs in order
-                if (![tv replaceRanges:after withStrings:olds actionName:undoName]) return;
+                // Undo runs in order, so the text is as this edit left it,
+                // unless something changed it outside the undo history.
+                // Then the pieces are looked for where that change moved
+                // them, and old text is never put back over anything but
+                // what this edit inserted. Nothing found: said in the log
+                // and with a beep, not silently.
+                NSUInteger from = 0;
+                NSInteger delta = 0;
+                if (!MCPlaceInserted(tv.textStorage.string, inserted, after, length, &from, &delta)) {
+                    os_log_error(MCEditLog(),
+                                 "undo of \"%{public}@\" (%lu ranges) not done: the text has %lu "
+                                 "characters, not the %lu it left, and no longer holds what it inserted",
+                                 undoName, (unsigned long)after.count,
+                                 (unsigned long)tv.textStorage.length, (unsigned long)length);
+                    NSBeep();
+                    return;
+                }
+                if (delta)
+                    os_log(MCEditLog(),
+                           "undo of \"%{public}@\": the text changed outside the undo history by "
+                           "%ld characters before range %lu; undone where its pieces are now",
+                           undoName, (long)delta, (unsigned long)from);
+                if (![tv replaceRanges:MCShifted(after, from, delta) withStrings:olds
+                            actionName:undoName])
+                    return;
                 // The old text selected again, as NSTextView's undo does.
+                NSArray<NSValue *> *was = MCShifted(before, from, delta);
                 NSMutableArray<NSValue *> *sel = [NSMutableArray array];
-                for (NSValue *v in before)
+                for (NSValue *v in was)
                     if (v.rangeValue.length) [sel addObject:v];
-                if (!sel.count) [sel addObject:before.firstObject];
+                if (!sel.count) [sel addObject:was.firstObject];
                 [tv setSelectedRanges:sel affinity:NSSelectionAffinityDownstream stillSelecting:NO];
                 [tv scrollRangeToVisible:sel.firstObject.rangeValue];
             }];

@@ -127,7 +127,9 @@ goes here first, with tests; the GUI only displays it.
   command registry and keys.conf), `EditorTabs` (tab rules), `Backups` (backups
   of unsaved tabs, with a POSIX `Fs`), `FileDetails` (tree sorts, ages, folder
   totals), `RunFile` (Run File's quoting).
-- Editing: `LineDiff` (Myers, UTF-16, `mapOffset`), `LineComments`,
+- Editing: `LineDiff` (Myers, split at lines unique on both sides past
+  1,000 edits, so a large reformat keeps a hunk per changed run; UTF-16,
+  `mapOffset`), `LineComments`,
   `AutoIndent` (with `ScanCache`), `KeepSorted`, `MultiCaret` (carets and line
   commands), `LineIndex` (line starts, a gap buffer), `BracketMatch`,
   `Folding`, `TextFind` (find and replace, UTF-16 and UTF-8), `Formatter`
@@ -610,7 +612,18 @@ container (PanelHost, laid out by hand in layoutContainer)
   around shouldChangeTextInRanges), putting the old text back as plain
   strings through the same method: NSTextView's inserts each as an
   attributed string, splitting the attribute runs one at a time, and
-  undoing a letter typed at 20,000 selections ran for minutes. The
+  undoing a letter typed at 20,000 selections ran for minutes. Its handler
+  checks that each range still holds what was inserted (allowing one
+  change made outside the undo history to have moved them) and otherwise
+  beeps and logs (`os_log`, subsystem com.minicode.editor), never putting
+  old text over something else; it gave up silently on any length change.
+  From 64 ranges on, the glyphs from the first range to the last are
+  invalidated once before the edits (2026-11-07): each storage edit
+  otherwise replaced its glyphs in the layout manager's glyph tree at a cost
+  growing with the glyphs made, and Replace All of 20,000 matches in a
+  100,000-line file laid out to its end took 3 to 8 s (0.6 to 1.2 s now).
+  Nothing is lost by it: TextKit 1 keeps one soft-invalidated span, so the
+  layout between the first edit and the last is redone anyway. The
   highlighter keeps its pending ranges apart (`_pending`, distances from the
   end) and restyles each in its own attribute edit. Select All Occurrences,
   Cmd+D and Add Cursor stop at 10,000 carets (VS Code's limit); typing at
@@ -800,7 +813,10 @@ container (PanelHost, laid out by hand in layoutContainer)
   `replaceRanges:withStrings:actionName:` as one undo step; the server
   sees no single typed character (no completion); the electric dedent is off
   while they apply (`multiCarets.applying`); typing never crosses a line break,
-  so a column stays a column.
+  so a column stays a column. The arrows, Backspace, Delete, Return, Copy
+  and Cut, and the line commands read the text through a
+  `MultiCaret::Text` over the storage (`TextOf`, blocks of 1,024 read near
+  the carets), not a copy of the whole buffer per key.
 - Column: Cmd+Shift-, Option- or middle-button drag (`MCMultiCarets mouseDown:`
   and `otherMouseDown:`, first in CodeTextView's), each line's caret from
   `characterIndexForInsertionAtPoint:` at its first fragment; Cmd+Shift clicks
