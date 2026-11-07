@@ -261,6 +261,8 @@ container (PanelHost, laid out by hand in layoutContainer)
 │       │   diffScroll, CompareView, Quick Look, CSV table, SqliteView,
 │       │   an EditorPage (Evidence, a worktree's changes)
 │       ├── JSON outline                           right of the text
+│       ├── MCMarkdownSidePreview                  a Markdown page right of
+│       │   its source (Ctrl+Cmd+V), a vertical DragBar between
 │       ├── browser (BrowserView)                  right of the editor
 │       ├── problemsPanel (MCProblemsPanel)        above the terminal
 │       ├── terminalPanel (MCTerminalPanel)        bottom, full width: strip,
@@ -1323,6 +1325,19 @@ view is disposed (on `unrealize`), or dispose loops forever.
   Links (`openMarkdownLink:`): `#heading` by GitHub's anchor
   (`MarkdownParser::anchor`, as on Linux and Android), web addresses in the browser, paths relative to the
   file through `openTerminalLink:` (`#L12` works).
+- **The preview to the side** (Ctrl+Cmd+V, `markdown.showPreviewToSide`, a
+  `markdown` language command; 2026-11-07): `MarkdownSidePreview.{h,mm}` is
+  the window's pane (its own read-only TextKit 1 view, the bar, its share,
+  the 0.3 s re-render timer); `MCTab sidePreview` says whether a tab wants
+  it (in the session as `sidePreview` paths). The page comes from
+  `markdownPageFor:width:anchors:` (the full preview's builder, laid out for
+  the given width) and `finishMarkdownPage`, and re-renders through
+  `keepPlaceIn:scroll:whileRendering:`, both shared with the full preview.
+  The pane steps aside while its tab shows the full preview, so the two
+  pages never show at once and share the per-render state (`_awaitedMath`,
+  `_awaitedWebImages`, the Mermaid page); arrivals go through
+  `renderShownMarkdownKeepingPlace`. Layout: `layoutSidePreviewIn:textShown:`
+  splits the text's rect in `relayoutRightArea`.
 - **Editing from the preview**: a double-click (`onPreviewDoubleClick`) reads
   the line (and `kMarkdownTableCell`), `MarkdownEdit::blockAt` finds the block
   (heading text, list item with continuations, paragraph or quote, code between
