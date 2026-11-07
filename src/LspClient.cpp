@@ -1,6 +1,7 @@
 // LspClient.cpp — see LspClient.h.
 #include "LspClient.h"
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <set>
 #include <tuple>
@@ -89,6 +90,36 @@ bool Framer::next(std::string& body) {
         pos_ = bodyStart + (size_t)length;
         return true;
     }
+}
+
+bool Reader::next(Incoming& out) {
+    std::string body;
+    if (!framer_.next(body)) return false;
+    out.message = Json();
+    out.error.clear();
+    if (!Json::parse(body, out.message, &out.error)) {
+        out.message = Json();
+        if (out.error.empty()) out.error = "not JSON";
+    }
+    return true;
+}
+
+// ------------------------------------------------------------- progress
+std::string progressText(const Progress& p) {
+    std::string s = p.title;
+    if (!p.message.empty()) s += (s.empty() ? "" : ": ") + p.message;
+    if (p.percentage >= 0) s += (s.empty() ? "" : " ") + std::to_string(p.percentage) + "%";
+    if (s.empty()) return "working\xE2\x80\xA6";
+    // Line breaks and tabs would break the status bar's one line.
+    for (char& c : s)
+        if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+    const size_t kMax = 60;
+    if (s.size() > kMax) {
+        size_t cut = kMax;
+        while (cut > 0 && ((unsigned char)s[cut] & 0xC0) == 0x80) cut--;
+        s = s.substr(0, cut) + "\xE2\x80\xA6";
+    }
+    return s;
 }
 
 // ------------------------------------------------------ text and positions
@@ -481,6 +512,8 @@ StatusLine statusLine(const std::string& language, const std::vector<ServerStatu
     std::vector<std::string> parts;
     std::vector<std::string> running;
     long runningAt = -1;
+    std::string progress;
+    uint64_t progressBegun = 0;
     bool red = false, yellow = false, green = false, mainOff = false;
     for (const ServerStatus& s : servers) {
         const std::string name = s.name.empty() ? language : s.name;
@@ -492,6 +525,10 @@ StatusLine statusLine(const std::string& language, const std::vector<ServerStatu
                 parts.push_back("");   // filled in below
             }
             running.push_back(name);
+            if (!s.progress.empty() && (progress.empty() || s.progressBegun > progressBegun)) {
+                progress = s.progress;
+                progressBegun = s.progressBegun;
+            }
             green = true;
             continue;
         case ServerState::Starting:
@@ -531,7 +568,9 @@ StatusLine statusLine(const std::string& language, const std::vector<ServerStatu
         std::string counts;
         if (errors) counts = plural(errors, "error");
         if (warnings) counts += (counts.empty() ? "" : ", ") + plural(warnings, "warning");
-        parts[(size_t)runningAt] = names + ": " + (counts.empty() ? "no problems" : counts);
+        std::string what = counts.empty() ? "no problems" : counts;
+        if (!progress.empty()) what = progress + (counts.empty() ? "" : ", " + counts);
+        parts[(size_t)runningAt] = names + ": " + what;
     } else if (mainOff && parts.empty()) {
         // Off says so only when nothing else runs for the language.
         parts.push_back(language + " language server off");
@@ -2083,6 +2122,8 @@ void Client::initialize(const std::string& rootPath, int processId,
     Json caps = Json::object({
         {"textDocument", textDocument},
         {"workspace", workspace},
+        // $/progress, shown in the status bar while a server indexes.
+        {"window", Json::object({{"workDoneProgress", true}})},
         {"general", Json::object({{"positionEncodings", Json::array().push("utf-16")}})},
     });
     Json params = Json::object({
@@ -2388,18 +2429,57 @@ std::vector<std::string> Client::signatureRetriggers() const {
 }
 
 void Client::receive(const char* data, size_t n) {
-    framer_.feed(data, n);
-    std::string body;
-    while (framer_.next(body)) {
-        Json msg;
-        std::string err;
-        if (!Json::parse(body, msg, &err)) {
-            if (onProtocolError) onProtocolError("unreadable message: " + err);
-            continue;
-        }
-        handleMessage(msg);
-        if (state_ == State::Exited) return;
+    reader_.feed(data, n);
+    Incoming in;
+    while (state_ != State::Exited && reader_.next(in)) deliver(in);
+}
+
+void Client::deliver(const Incoming& in) {
+    if (state_ == State::Exited) return;
+    if (!in.error.empty()) {
+        if (onProtocolError) onProtocolError("unreadable message: " + in.error);
+        return;
     }
+    handleMessage(in.message);
+}
+
+const Progress* Client::progress() const {
+    const Progress* best = nullptr;
+    for (const auto& kv : progress_)
+        if (!best || kv.second.begun > best->begun) best = &kv.second;
+    return best;
+}
+
+void Client::handleProgress(const Json& params) {
+    static std::atomic<uint64_t> begun{0};
+    const Json& value = params["value"];
+    const std::string& kind = value["kind"].asString();
+    if (!params.has("token") || kind.empty()) return;   // a partial result, not ours
+    const std::string token = params["token"].dump();
+    auto percentage = [&](int keep) {
+        if (!value["percentage"].isNumber()) return keep;
+        double v = value["percentage"].asNumber();
+        return v < 0 ? 0 : v > 100 ? 100 : (int)v;
+    };
+    if (kind == "begin") {
+        Progress& p = progress_[token];
+        p = Progress();
+        p.token = token;
+        p.title = value["title"].asString();
+        p.message = value["message"].asString();
+        p.percentage = percentage(-1);
+        p.begun = ++begun;
+    } else if (kind == "report") {
+        auto it = progress_.find(token);
+        if (it == progress_.end()) return;   // never begun: nothing to update
+        if (value["message"].isString()) it->second.message = value["message"].asString();
+        it->second.percentage = percentage(it->second.percentage);
+    } else if (kind == "end") {
+        if (!progress_.erase(token)) return;
+    } else {
+        return;
+    }
+    if (onProgress) onProgress();
 }
 
 void Client::handleMessage(const Json& msg) {
@@ -2428,8 +2508,10 @@ void Client::handleMessage(const Json& msg) {
         } else if (method == "window/showMessage") {
             if (onShowMessage)
                 onShowMessage((int)params["type"].asInt(), params["message"].asString());
+        } else if (method == "$/progress") {
+            handleProgress(params);
         }
-        return;   // logMessage, progress, telemetry: nothing to do
+        return;   // logMessage, telemetry: nothing to do
     }
 
     if (!hasId || !msg["id"].isNumber()) return;

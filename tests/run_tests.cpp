@@ -3740,8 +3740,8 @@ void testSettings() {
     // format, python, keep-sorted, auto-save, ruler, word wrap, terminal,
     // develop, git, control and agent keys (with markdown.mermaid and
     // agent.ide-link), terminal.activate-venv, search.use-ignore-files and
-    // terminal.multiline-paste-warning.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 89);
+    // terminal.multiline-paste-warning, and the tree's six git colors.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 95);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -9985,6 +9985,8 @@ static void testMultiCaretOccurrences() {
 #include "latex_safety_tests.inc"
 #include "markdown_gfm_tests.inc"
 #include "lsp_watch_tests.inc"
+#include "tree_tests.inc"
+#include "lsp_threading_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10085,6 +10087,8 @@ int main() {
     testMermaidDiagram();
     testLatexSafety();
     testLspWatchedFiles();
+    testTreeRefresh();
+    testLspThreading();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
