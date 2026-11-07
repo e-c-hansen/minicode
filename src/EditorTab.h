@@ -120,6 +120,10 @@ MCDiskText *MCReadDiskText(NSString *path, unsigned long long maxBytes);
 @property(nonatomic, assign) CGFloat sourceCaretOffset;
 @property(nonatomic, assign) BOOL haveSourcePosition;
 @property(nonatomic, assign) NSPoint previewEntryScroll;
+// A Markdown tab's page beside its source (Open Preview to the Side, kept
+// in the session), and where it was scrolled while another tab showed.
+@property(nonatomic, assign) BOOL sidePreview;
+@property(nonatomic, assign) CGFloat sidePreviewY;
 // Its closed folds (FoldView.h), as UTF-16 spans of the source, while
 // another tab is shown; forgotten when the text is read again from disk.
 @property(nonatomic, copy)   NSArray<NSValue *> *folds;

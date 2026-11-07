@@ -314,4 +314,9 @@
 @interface EditorController (Markdown)
 @property(nonatomic, readonly) BOOL canTogglePreview;
 - (void)togglePreview:(id)sender;     // Markdown: source <-> rendered
+// Control+Command+V: the Markdown tab's page beside its source, or not.
+@property(nonatomic, readonly) BOOL canToggleSidePreview;
+- (void)toggleSidePreview:(id)sender;
+// The page beside the source is on show for the tab on show.
+- (BOOL)sidePreviewShowing;
 @end

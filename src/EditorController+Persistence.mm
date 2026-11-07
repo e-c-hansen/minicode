@@ -45,11 +45,13 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
         else if (shown != _activeTab && t.currentPath && t.lastActive > shown.lastActive)
             shown = t;
     NSMutableArray<NSString *> *files = [NSMutableArray array];
+    NSMutableArray<NSString *> *besides = [NSMutableArray array];   // with the page to the side
     NSInteger active = 0;
     for (MCTab *t in _tabs) {
         if (!t.currentPath) continue;   // a diff is not reopened
         if (t == shown) active = (NSInteger)files.count;
         [files addObject:t.currentPath];
+        if (t.sidePreview) [besides addObject:t.currentPath];
     }
     NSString *key = [self sessionKey];
     // Windows open on the same folder share its session: this window's
@@ -84,6 +86,7 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
                                         @"used": @([NSDate date].timeIntervalSince1970)}
                                       mutableCopy];
         if (browser) entry[@"browser"] = browser;
+        if (besides.count) entry[@"sidePreview"] = besides;
         all[key] = entry;
         while (all.count > kMaxTabSessions) {
             NSString *oldest = nil;
@@ -134,10 +137,13 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
     if (![self sessionsEnabled]) return;
     NSDictionary *s = [[self sessionDefaults] dictionaryForKey:kTabSessionsKey][[self sessionKey]];
     EditorTabs::Session saved;
+    NSSet *besides = nil;   // the files whose page was beside their source
     if ([s isKindOfClass:NSDictionary.class]) {
         for (id f in s[@"files"])
             if ([f isKindOfClass:NSString.class]) saved.files.push_back(Utf8String(f));
         saved.active = [s[@"active"] intValue];
+        if ([s[@"sidePreview"] isKindOfClass:NSArray.class])
+            besides = [NSSet setWithArray:s[@"sidePreview"]];
     }
     // Unsaved buffers kept from a crash, a force quit or a restart: a file of
     // the session with a backup comes back even if it is gone from disk, and
@@ -165,6 +171,7 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
     for (const std::string &f : r.files) {
         MCTab *t = [MCTab new];
         t.currentPath = [NSString stringWithUTF8String:f.c_str()];
+        t.sidePreview = [besides containsObject:t.currentPath];
         auto b = backupFor.find(f);
         if (b != backupFor.end() && ![self takeBackup:@(b->second.c_str()) intoTab:t] &&
             ![fm fileExistsAtPath:t.currentPath])

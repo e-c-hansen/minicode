@@ -343,6 +343,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 
 // EditorController+Processes.mm: the Processes panel's hooks.
 @class MCProcessesPanel;
+@class MCMarkdownSidePreview;
 @interface EditorController (Processes)
 @property(nonatomic, assign) BOOL processesVisible;   // the panel in the sidebar's place
 - (MCProcessesPanel *)processesPanel;                 // made on first use
@@ -783,6 +784,29 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)markdownWebImageArrived:(NSNotification *)note;
 - (void)showArrivedWebImagesForPath:(NSString *)path;
 - (void)renderMarkdownKeepingPlace;
+- (void)finishMarkdownPage;
+- (NSMutableAttributedString *)markdownPageFor:(NSString *)content
+                                         width:(CGFloat)width
+                                       anchors:(NSDictionary **)anchorsOut;
+- (void)keepPlaceIn:(NSTextView *)tv scroll:(NSScrollView *)scroll
+     whileRendering:(void (^)(void))render;
+- (BOOL)showsMarkdownPage;
+- (void)renderShownMarkdownKeepingPlace;
+// The preview to the side (the pane is MarkdownSidePreview.h's).
+- (BOOL)sidePreviewWanted;
+- (MCMarkdownSidePreview *)sidePreview;
+- (NSView *)sidePreviewDivider;
+- (NSRect)layoutSidePreviewIn:(NSRect)rect textShown:(BOOL)textShown;
+- (void)dropSidePreviewPage;
+- (void)refreshSidePreview;
+- (void)sidePreviewTabWillLeave:(MCTab *)t;
+- (void)renderSidePreview;
+- (void)renderSidePreviewKeepingPlace;
+- (void)sidePreviewSourceChanged;
+- (void)sidePreviewApplySettings;
+- (void)closeSidePreview;
+- (void)sidePreviewBarDraggedTo:(CGFloat)x;
+- (BOOL)sidePreviewClickedLink:(id)link;
 @end
 
 // EditorController+MarkdownRender.mm: turning Markdown runs into attributed text: paragraphs, runs, tables.

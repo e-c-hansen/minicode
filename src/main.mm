@@ -470,7 +470,7 @@ static BOOL MCEditorOnlyAction(SEL a) {
            a == @selector(toggleBold:) || a == @selector(toggleItalic:) ||
            a == @selector(runSelectionInTerminal:) ||
            a == @selector(nextProblem:) || a == @selector(previousProblem:) ||
-           a == @selector(goToBracket:);
+           a == @selector(goToBracket:) || a == @selector(toggleSidePreview:);
 }
 // The File menu's tab commands and the tree's Sort By items, which the
 // window decides (enabled, checked), forwarded when another window is key.
@@ -542,6 +542,7 @@ static BOOL MCWindowTabAction(SEL a) {
 }
 - (void)clearRecentFolders:(id)sender { (void)sender; MCClearRecentFolders(); }
 - (void)togglePreview:(id)sender   { [[self current] togglePreview:sender]; }
+- (void)toggleSidePreview:(id)sender { [[self current] toggleSidePreview:sender]; }
 - (void)exportPDF:(id)sender       { [[self current] exportPDF:sender]; }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (MCEditorOnlyAction(item.action)) return [self keyWindowIsEditor];
@@ -1137,6 +1138,15 @@ static void BuildMenu(void) {
     toggle.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:toggle];
+    // Control+Command+V, for VS Code's Cmd+K V chord: the page beside the
+    // source of a Markdown file, which keeps the keyboard.
+    NSMenuItem *side =
+        [[NSMenuItem alloc] initWithTitle:@"Open Preview to the Side"
+                                   action:@selector(toggleSidePreview:)
+                            keyEquivalent:@"v"];
+    side.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagControl;
+    [viewMenu addItem:side];
 
     NSMenuItem *hints =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Shortcut Hints"

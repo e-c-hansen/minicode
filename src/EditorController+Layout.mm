@@ -372,6 +372,7 @@
     self.textView.rulerColor = MCColor(st.rulerColor());
     [self applyGutterSettings];   // and the font, which recolorEditor sets in the text
     [self recolorEditor];
+    [self sidePreviewApplySettings];   // the page beside the source, in the new colors
     [self applyWordWrap];         // editor.word-wrap
 
     self.statusBar.layer.backgroundColor = [cfg background:Surface::Statusbar].CGColor;
@@ -546,9 +547,12 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     NSRect textRect = _viewers ? [_viewers layoutInRect:editorRect editorShown:showEditor
                                              coversText:&showViewer]
                                : editorRect;
+    const BOOL showText = showEditor && !showLatex && !showImage && !showPDF && !showMedia &&
+                          !showDiff && !showCompare && !showPage && !showViewer;
+    // A Markdown tab's page beside its source (Control+Command+V).
+    textRect = [self layoutSidePreviewIn:textRect textShown:showText];
     self.editorScroll.frame = textRect;
-    self.editorScroll.hidden = !showEditor || showLatex || showImage || showPDF ||
-                               showMedia || showDiff || showCompare || showPage || showViewer;
+    self.editorScroll.hidden = !showText;
     [_editorFind layoutInEditorRect:textRect visible:!self.editorScroll.hidden];
     if (self.diffScroll) {
         self.diffScroll.frame = editorRect;
@@ -603,6 +607,7 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     // goes last, so it wins where the two meet. Only moved when out of
     // order: moving a bar in the middle of its own drag is asking for trouble.
     NSMutableArray<NSView *> *bars = [NSMutableArray array];
+    if (NSView *side = [self sidePreviewDivider]) [bars addObject:side];
     if (self.browserDivider) [bars addObject:self.browserDivider];
     if (self.termDivider) [bars addObject:self.termDivider];
     // The find bar floats over the editor, and the inline agent's bar over

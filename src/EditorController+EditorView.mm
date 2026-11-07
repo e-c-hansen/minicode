@@ -122,6 +122,8 @@
 // takes the new size at once, keeping the line at the top of the pane.
 - (void)editorZoomChanged:(NSNotification *)note {
     (void)note;
+    // The page beside a Markdown source follows the zoom, keeping its place.
+    if ([self sidePreviewShowing]) [self renderSidePreviewKeepingPlace];
     NSFont *font = MCEditorFont();
     const BOOL showing = _liveHighlight && self.textView.editable;
     const BOOL changed = showing && ![_sourceAttributes[NSFontAttributeName] isEqual:font];
@@ -344,6 +346,7 @@
                                                  selector:@selector(updateTitle)
                                                    object:nil];
         [self performSelector:@selector(updateTitle) withObject:nil afterDelay:0.3];
+        [self sidePreviewSourceChanged];   // the page beside it, once typing pauses
     }
     [self flushHighlighting];   // recolor the lines this change touched
     MCIndentDidChange(self.textView, self.currentPath);
