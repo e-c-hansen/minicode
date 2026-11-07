@@ -997,6 +997,180 @@ CompletionEdits completionEdits(const std::u16string& text, size_t start, size_t
     return out;
 }
 
+bool lateAdditionalEdits(const std::u16string& now, const std::vector<TextEdit>& additional,
+                         size_t limit, std::vector<OffsetEdit>& out) {
+    out.clear();
+    limit = std::min(limit, now.size());
+    const PositionIndex index(now);
+    std::vector<OffsetEdit> edits;
+    for (const TextEdit& e : additional) {
+        size_t a = index.offset(e.range.start), b = index.offset(e.range.end);
+        if (b < a) std::swap(a, b);
+        // A position on the line `limit` is on, past it, may be a column
+        // that line had before; past the limit nothing is known.
+        if (b > limit) return false;
+        edits.push_back(OffsetEdit{a, b - a, toUtf16(e.newText)});
+    }
+    std::stable_sort(edits.begin(), edits.end(),
+                     [](const OffsetEdit& x, const OffsetEdit& y) { return x.start < y.start; });
+    for (size_t i = 1; i < edits.size(); i++)
+        if (edits[i].start < edits[i - 1].start + edits[i - 1].length) return false;
+    out = std::move(edits);
+    return true;
+}
+
+// ------------------------------------------------------ incremental sync
+void ChangeTracker::edit(size_t start, size_t removed, size_t inserted) {
+    if (overflowed_) return;
+    const size_t end = start + removed;
+    // The regions this edit touches or overlaps, in the text now: [i, j).
+    size_t i = 0;
+    while (i < regions_.size() && regions_[i].newEnd < start) i++;
+    size_t j = i;
+    while (j < regions_.size() && regions_[j].newStart <= end) j++;
+    Region m;
+    if (i == j) {
+        // Untouched text: where it was in the text as sent follows from
+        // the region before it (the text between them is unchanged).
+        const size_t oldAt = i == 0 ? start : regions_[i - 1].oldEnd + (start - regions_[i - 1].newEnd);
+        m = Region{oldAt, oldAt + removed, start, start + inserted};
+    } else {
+        const Region& first = regions_[i];
+        const Region& last = regions_[j - 1];
+        const size_t newStart = std::min(start, first.newStart);
+        const size_t newEnd = std::max(end, last.newEnd);
+        m.newStart = newStart;
+        m.oldStart = first.oldStart - (first.newStart - newStart);
+        m.oldEnd = last.oldEnd + (newEnd - last.newEnd);
+        m.newEnd = newEnd - removed + inserted;
+    }
+    const long delta = (long)inserted - (long)removed;
+    for (size_t k = j; k < regions_.size(); k++) {
+        regions_[k].newStart = (size_t)((long)regions_[k].newStart + delta);
+        regions_[k].newEnd = (size_t)((long)regions_[k].newEnd + delta);
+    }
+    regions_.erase(regions_.begin() + (long)i, regions_.begin() + (long)j);
+    regions_.insert(regions_.begin() + (long)i, m);
+    if (regions_.size() > kMaxRegions) {
+        regions_.clear();
+        overflowed_ = true;
+    }
+}
+
+namespace {
+// Walks UTF-8 text in UTF-16 units, keeping the byte offset and the LSP
+// position (lines end at \n, \r\n or \r, as PositionIndex counts them).
+struct Utf8Walk {
+    const std::string& s;
+    size_t byte = 0, unit = 0, lineStart = 0;
+    int line = 0;
+    explicit Utf8Walk(const std::string& text) : s(text) {}
+    // On to `target` units; false past the end, inside a character, or
+    // between \r and \n.
+    bool to(size_t target) {
+        while (unit < target) {
+            if (byte >= s.size()) return false;
+            const unsigned char c = (unsigned char)s[byte];
+            if (c == '\n') {
+                byte++, unit++, line++, lineStart = unit;
+                continue;
+            }
+            if (c == '\r') {
+                if (byte + 1 < s.size() && s[byte + 1] == '\n') {
+                    if (unit + 1 == target) return false;
+                    byte += 2, unit += 2;
+                } else {
+                    byte++, unit++;
+                }
+                line++, lineStart = unit;
+                continue;
+            }
+            size_t n = c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3
+                     : (c & 0xF8) == 0xF0 ? 4 : 1;
+            const size_t units = n == 4 ? 2 : 1;
+            if (unit + units > target) return false;
+            if (byte + n > s.size()) n = s.size() - byte;
+            byte += n, unit += units;
+        }
+        return true;
+    }
+    Position position() const { return Position{line, (int)(unit - lineStart)}; }
+    // Between \r and \n: the next unit is a \n after a \r already passed.
+    bool betweenCrLf() const {
+        return byte > 0 && byte < s.size() && s[byte - 1] == '\r' && s[byte] == '\n';
+    }
+};
+}  // namespace
+
+bool rangedChanges(const std::string& before, const std::string& after,
+                   const std::vector<ChangeTracker::Region>& regions,
+                   std::vector<ContentChange>& out) {
+    out.clear();
+    if (regions.empty()) return before == after;
+    struct Placed { Range range; size_t oldA, oldB, newA, newB; };
+    std::vector<Placed> placed;
+    placed.reserve(regions.size());
+    Utf8Walk old(before);
+    size_t oldEndByte = 0, newEndByte = 0;   // where the last region ended, in bytes
+    size_t lastOldEnd = 0, lastNewEnd = 0;   // ...and in units
+    for (size_t k = 0; k < regions.size(); k++) {
+        const ChangeTracker::Region& r = regions[k];
+        if (r.oldEnd < r.oldStart || r.newEnd < r.newStart) return false;
+        if (k > 0 && (r.oldStart < lastOldEnd || r.newStart < lastNewEnd)) return false;
+        // The text between regions is the same in both, so it is as long.
+        if (r.oldStart - lastOldEnd != r.newStart - lastNewEnd) return false;
+        if (!old.to(r.oldStart)) return false;
+        Placed p;
+        p.range.start = old.position();
+        p.oldA = old.byte;
+        // The gap's bytes, at the same distance on in the new text.
+        p.newA = newEndByte + (old.byte - oldEndByte);
+        if (p.newA > after.size()) return false;
+        if (before.compare(oldEndByte, old.byte - oldEndByte, after, newEndByte,
+                           old.byte - oldEndByte) != 0)
+            return false;
+        if (!old.to(r.oldEnd) || old.betweenCrLf()) return false;
+        p.range.end = old.position();
+        p.oldB = old.byte;
+        Utf8Walk now(after);
+        now.byte = p.newA;
+        now.unit = 0;
+        if (!now.to(r.newEnd - r.newStart)) return false;
+        p.newB = now.byte;
+        placed.push_back(p);
+        oldEndByte = p.oldB, newEndByte = p.newB;
+        lastOldEnd = r.oldEnd, lastNewEnd = r.newEnd;
+    }
+    // The text after the last region.
+    if (before.size() - oldEndByte != after.size() - newEndByte) return false;
+    if (before.compare(oldEndByte, std::string::npos, after, newEndByte, std::string::npos) != 0)
+        return false;
+    // A boundary of the new text between \r and \n would make a server
+    // that splits lines on its own read a line break that is not there.
+    for (const Placed& p : placed) {
+        if (p.newA > 0 && p.newA < after.size() && after[p.newA - 1] == '\r' && after[p.newA] == '\n')
+            return false;
+        if (p.newB > 0 && p.newB < after.size() && after[p.newB - 1] == '\r' && after[p.newB] == '\n')
+            return false;
+    }
+    out.reserve(placed.size());
+    for (size_t k = placed.size(); k-- > 0;)
+        out.push_back(ContentChange{placed[k].range,
+                                    after.substr(placed[k].newA, placed[k].newB - placed[k].newA)});
+    return true;
+}
+
+std::u16string applyContentChanges(const std::u16string& text,
+                                   const std::vector<ContentChange>& changes) {
+    std::u16string out = text;
+    for (const ContentChange& c : changes) {
+        size_t a = offsetForPosition(out, c.range.start), b = offsetForPosition(out, c.range.end);
+        if (b < a) std::swap(a, b);
+        out.replace(a, b - a, toUtf16(c.text));
+    }
+    return out;
+}
+
 SignatureHelp parseSignatureHelp(const Json& result) {
     SignatureHelp help;
     if (!result.isObject()) return help;
@@ -2202,10 +2376,52 @@ void Client::didChange(const std::string& uri, const std::string& text) {
     Doc& d = it->second;
     d.text = text;
     d.version = ++lastVersion_[uri];
+    fullSent_++;
     notify("textDocument/didChange",
            Json::object({
                {"textDocument", Json::object({{"uri", uri}, {"version", d.version}})},
                {"contentChanges", Json::array().push(Json::object({{"text", text}}))},
+           }));
+}
+
+int Client::syncKind() const {
+    const Json& sync = capabilities_["textDocumentSync"];
+    if (sync.isNumber()) return (int)sync.asInt();
+    if (sync.isObject() && sync["change"].isNumber()) return (int)sync["change"].asInt();
+    return 1;
+}
+
+void Client::didChange(const std::string& uri, const std::string& text,
+                       const ChangeTracker& changes) {
+    auto it = docs_.find(uri);
+    if (it == docs_.end() || it->second.text == text) return;
+    std::vector<ContentChange> ranged;
+    if (syncKind() != 2 || changes.overflowed() || changes.regions().empty() ||
+        !rangedChanges(it->second.text, text, changes.regions(), ranged)) {
+        didChange(uri, text);
+        return;
+    }
+    // Each entry costs its range besides its text: when they come to the
+    // whole text's size, the whole text is as good and simpler to apply.
+    size_t bytes = 0;
+    for (const ContentChange& c : ranged) bytes += c.text.size() + 96;
+    if (bytes >= text.size()) {
+        didChange(uri, text);
+        return;
+    }
+    Doc& d = it->second;
+    d.text = text;
+    d.version = ++lastVersion_[uri];
+    rangedSent_++;
+    Json list = Json::array();
+    for (ContentChange& c : ranged)
+        list.push(Json::object({{"range", Json::object({{"start", positionJson(c.range.start)},
+                                                         {"end", positionJson(c.range.end)}})},
+                                {"text", std::move(c.text)}}));
+    notify("textDocument/didChange",
+           Json::object({
+               {"textDocument", Json::object({{"uri", uri}, {"version", d.version}})},
+               {"contentChanges", std::move(list)},
            }));
 }
 
@@ -2225,6 +2441,13 @@ void Client::didClose(const std::string& uri) {
 }
 
 int Client::request(const std::string& method, Json params, ResultHandler handler) {
+    TakingHandler h;
+    if (handler)
+        h = [handler = std::move(handler)](Json& result, const Json& error) { handler(result, error); };
+    return requestTaking(method, std::move(params), std::move(h));
+}
+
+int Client::requestTaking(const std::string& method, Json params, TakingHandler handler) {
     if (state_ == State::ShuttingDown || state_ == State::Exited) return 0;
     int id = nextId_++;
     handlers_[id] = std::move(handler);
@@ -2241,13 +2464,13 @@ Json docPosition(const std::string& uri, Position p) {
 }
 }  // namespace
 
-int Client::completion(const std::string& uri, Position p, ResultHandler h,
+int Client::completion(const std::string& uri, Position p, TakingHandler h,
                        const std::string& triggerCharacter) {
     Json params = docPosition(uri, p);
     Json context = Json::object({{"triggerKind", triggerCharacter.empty() ? 1 : 2}});
     if (!triggerCharacter.empty()) context.set("triggerCharacter", triggerCharacter);
     params.set("context", context);
-    return request("textDocument/completion", params, std::move(h));
+    return requestTaking("textDocument/completion", params, std::move(h));
 }
 
 int Client::hover(const std::string& uri, Position p, ResultHandler h) {
@@ -2434,7 +2657,7 @@ void Client::receive(const char* data, size_t n) {
     while (state_ != State::Exited && reader_.next(in)) deliver(in);
 }
 
-void Client::deliver(const Incoming& in) {
+void Client::deliver(Incoming& in) {
     if (state_ == State::Exited) return;
     if (!in.error.empty()) {
         if (onProtocolError) onProtocolError("unreadable message: " + in.error);
@@ -2482,7 +2705,7 @@ void Client::handleProgress(const Json& params) {
     if (onProgress) onProgress();
 }
 
-void Client::handleMessage(const Json& msg) {
+void Client::handleMessage(Json& msg) {
     if (!msg.isObject()) return;
     bool hasMethod = msg["method"].isString();
     bool hasId = msg.has("id") && !msg["id"].isNull();
@@ -2516,7 +2739,9 @@ void Client::handleMessage(const Json& msg) {
 
     if (!hasId || !msg["id"].isNumber()) return;
     int id = (int)msg["id"].asInt();
-    const Json& result = msg["result"];
+    Json none;
+    Json* resultMember = msg.member("result");
+    Json& result = resultMember ? *resultMember : none;
     const Json& error = msg["error"];
 
     if (id == initializeId_ && state_ == State::Initializing) {
@@ -2559,7 +2784,7 @@ void Client::handleMessage(const Json& msg) {
 
     auto it = handlers_.find(id);
     if (it == handlers_.end()) return;   // cancelled, or never ours
-    ResultHandler h = std::move(it->second);
+    TakingHandler h = std::move(it->second);
     handlers_.erase(it);
     if (h) h(result, error);
 }

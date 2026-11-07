@@ -1085,7 +1085,14 @@ view is disposed (on `unrealize`), or dispose loops forever.
   `bufferText` (every tab's text), `tabsChanged`, and
   `textView:doCommandBySelector:` to `handleCommand:`. The session observes the
   storage itself; didChange is debounced 0.3 s, every request flushes first,
-  and unchanged text is dropped.
+  and unchanged text is dropped. A server with `textDocumentSync.change` 2
+  gets ranges: `Lsp::ChangeTracker` (`_changes`) merges the storage's edits
+  (`editedRange`, `changeInLength`) into regions of the text as sent, and
+  `Lsp::rangedChanges` turns them into contentChanges, last region first,
+  only after checking the text outside them is the same in both; anything
+  that does not check out (an edit it missed, a boundary inside a character
+  or between \r and \n, over 256 regions, or ranges as big as the text)
+  sends the whole text, so the server's copy is always right.
 - **Every tab's file stays open** on its server (`syncOpenDocuments`: on show,
   server start, before rename and references, on `tabsChanged`); only a running
   server takes background tabs, so a tab never starts one. With only the file
@@ -1183,9 +1190,17 @@ view is disposed (on `unrealize`), or dispose loops forever.
   reselects the first row unless the arrows chose an item still listed. Docs
   show beside the list after `completionItem/resolve` (80 ms). Snippets off.
   **Accepting** inserts the word and `additionalTextEdits` (imports,
-  `#include`) as one multi-range replacement (`Lsp::completionEdits`),
-  resolving first when a server sends them only then, for at most 0.4 s on the
-  main run loop (`kResolveBeforeAccept`; keys pressed meanwhile arrive after).
+  `#include`) as one multi-range replacement (`Lsp::completionEdits`), its
+  undo step an `MCAcceptUndo` of its own. When the server sends the edits
+  only from `completionItem/resolve`, the word goes in at once and the edits
+  when the answer comes (`kResolveAfterAccept`, 1 s, then a note), placed by
+  `Lsp::lateAdditionalEdits` only before everything edited since: in the
+  same undo step when nothing changed meanwhile, else a step of their own
+  (VS Code's rule). Never a nested run loop: the old 0.4 s wait ran the main
+  queue inside the key handler. A big list is parsed and first filtered on
+  `CompletionQueue()` (the handler takes the result, `Client::TakingHandler`)
+  and freed there; the list's panels are built ahead (`prepareStep`, a piece
+  per run-loop turn after a server is ready) and the docs show a turn later.
   Signature help (`(`, `,`) sits above the line. Both close on focus loss, key
   loss and tab switch. Trap: the list's `close` must `reloadData` after
   emptying its labels, or layout asks for a vanished row.
