@@ -557,7 +557,8 @@ static BOOL MCWindowTabAction(SEL a) {
         return [self current].canTogglePlayback;
     if (item.action == @selector(nextTourStop:) || item.action == @selector(previousTourStop:))
         return [self current].tourActive;
-    if (item.action == @selector(toggleProblems:)) {
+    if (item.action == @selector(toggleProblems:) || item.action == @selector(gitClean:) ||
+        item.action == @selector(gitUndoDiscard:)) {
         EditorController *c = [self current];
         return c ? [c validateMenuItem:item] : NO;
     }
@@ -595,6 +596,11 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)gitPull:(id)sender  { [[self current] gitPull:sender]; }
 - (void)gitPush:(id)sender  { [[self current] gitPush:sender]; }
 - (void)gitSync:(id)sender  { [[self current] gitSync:sender]; }
+- (void)gitStageAll:(id)sender    { [[self current] gitStageAll:sender]; }
+- (void)gitUnstageAll:(id)sender  { [[self current] gitUnstageAll:sender]; }
+- (void)gitClean:(id)sender       { [[self current] gitClean:sender]; }
+- (void)gitUndoDiscard:(id)sender { [[self current] gitUndoDiscard:sender]; }
+- (void)gitCheckout:(id)sender    { [[self current] gitCheckout:sender]; }
 - (void)toggleAgents:(id)sender    { [[self current] toggleAgents:sender]; }
 - (void)toggleProcesses:(id)sender { [[self current] toggleProcesses:sender]; }
 - (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
@@ -1245,8 +1251,9 @@ static void BuildMenu(void) {
     git.keyEquivalentModifierMask =
         NSEventModifierFlagControl | NSEventModifierFlagShift;
     [viewMenu addItem:git];
-    // Pushing and pulling (git.fetch, git.pull, git.push, git.sync), with
-    // no keys, as in VS Code; the panel's button and menu run them too.
+    // Pushing and pulling (git.fetch, git.pull, git.push, git.sync), staging
+    // everything, discarding and switching branches, with no keys, as in VS
+    // Code; the panel's button and menus run them too.
     NSMenuItem *gitItem = [[NSMenuItem alloc] initWithTitle:@"Source Control" action:nil
                                               keyEquivalent:@""];
     NSMenu *gitMenu = [[NSMenu alloc] initWithTitle:@"Source Control"];
@@ -1254,6 +1261,17 @@ static void BuildMenu(void) {
     [gitMenu addItemWithTitle:@"Pull" action:@selector(gitPull:) keyEquivalent:@""];
     [gitMenu addItemWithTitle:@"Push" action:@selector(gitPush:) keyEquivalent:@""];
     [gitMenu addItemWithTitle:@"Sync" action:@selector(gitSync:) keyEquivalent:@""];
+    [gitMenu addItem:[NSMenuItem separatorItem]];
+    [gitMenu addItemWithTitle:@"Stage All Changes" action:@selector(gitStageAll:)
+                keyEquivalent:@""];
+    [gitMenu addItemWithTitle:@"Unstage All Changes" action:@selector(gitUnstageAll:)
+                keyEquivalent:@""];
+    [gitMenu addItemWithTitle:@"Discard Changes…" action:@selector(gitClean:) keyEquivalent:@""];
+    [gitMenu addItemWithTitle:@"Undo Discard" action:@selector(gitUndoDiscard:)
+                keyEquivalent:@""];
+    [gitMenu addItem:[NSMenuItem separatorItem]];
+    [gitMenu addItemWithTitle:@"Switch Branch…" action:@selector(gitCheckout:) keyEquivalent:@""];
+
     gitItem.submenu = gitMenu;
     [viewMenu addItem:gitItem];
 
