@@ -883,6 +883,22 @@ is tested in the core's `tests/gitmodel_tests.inc`.
 Checked in the Docker container with real X input; `../BUILD-LINUX.md` has
 what was covered and what still needs the ThinkPad.
 
+**Not followed yet (2026-11-07): Stage All, Discard, the file menu and the
+branch picker.** The Mac's panel gained them (round 4, W19); the rules are
+all in the core for this port to use: `GitUi::stageAllPlan` and
+`unstageAllPlan` (Stage All asks first when a file has a conflict),
+`discardPlan` (always asks; the file goes to the trash first, then `restore
+--worktree` from the index; refused for staged rows, conflicts and `git add
+-N`), `changesRowFor` (Discard from a menu acts on the open file),
+`branchListArgs`, `branchItems`, `switchArgs`, `createBranchLabel`,
+`newBranchName`, `branchNameProblem` and their texts, tested in
+`git-ui:stage-all`, `git-ui:discard` and `git-ui:switch`. GTK would use
+`g_file_trash` (which may fail on volumes without a trash: then refuse, as
+the Mac does), a `GtkPopoverMenu` on a row's right click, and a filtered
+list for the branches (there is no palette here). The Mac's Undo Discard
+moves the trashed copy back; keep that, since a discard without it is the
+one panel action that loses work.
+
 ### 11. Video and audio (done, September 2026)
 
 Mac: AVKit, done in parallel by another session. GTK: a third kind in
