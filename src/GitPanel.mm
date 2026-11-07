@@ -79,15 +79,28 @@ static void MCGitDrain(int fd, NSMutableData *into) {
     close(fd);
 }
 
+static MCGitResult *MCGitRun(NSString *dir, NSArray<NSString *> *args, NSTimeInterval timeout,
+                             NSData *input);
+
 MCGitResult *MCGitRunSync(NSString *dir, NSArray<NSString *> *args) {
-    return MCGitRunSyncWithTimeout(dir, args, MCGitTimeoutFor(args));
+    return MCGitRun(dir, args, MCGitTimeoutFor(args), nil);
+}
+
+MCGitResult *MCGitRunSyncWithTimeout(NSString *dir, NSArray<NSString *> *args,
+                                     NSTimeInterval timeout) {
+    return MCGitRun(dir, args, timeout, nil);
+}
+
+MCGitResult *MCGitRunSyncWithInput(NSString *dir, NSArray<NSString *> *args, NSData *input) {
+    return MCGitRun(dir, args, MCGitTimeoutFor(args), input ?: [NSData data]);
 }
 
 // posix_spawn rather than NSTask, for the one thing NSTask cannot do: start
 // git in a process group of its own, so a timeout stops the hooks, filters
-// and credential helpers it started along with it.
-MCGitResult *MCGitRunSyncWithTimeout(NSString *dir, NSArray<NSString *> *args,
-                                     NSTimeInterval timeout) {
+// and credential helpers it started along with it. stdin is /dev/null, or
+// with `input` a pipe that a thread of its own fills and closes.
+static MCGitResult *MCGitRun(NSString *dir, NSArray<NSString *> *args, NSTimeInterval timeout,
+                             NSData *input) {
     MCGitResult *r = [MCGitResult new];
     r.status = -1;
     r.output = [NSData data];
@@ -128,12 +141,21 @@ MCGitResult *MCGitRunSyncWithTimeout(NSString *dir, NSArray<NSString *> *args,
         r.errorText = @"Git could not be started (no pipe).";
         return r;
     }
-    for (int fd : {outFds[0], outFds[1], errFds[0], errFds[1]})
-        fcntl(fd, F_SETFD, FD_CLOEXEC);
+    int inFds[2] = {-1, -1};
+    if (input && pipe(inFds) != 0) {
+        for (int fd : {outFds[0], outFds[1], errFds[0], errFds[1]}) close(fd);
+        r.errorText = @"Git could not be started (no pipe).";
+        return r;
+    }
+    for (int fd : {outFds[0], outFds[1], errFds[0], errFds[1], inFds[0], inFds[1]})
+        if (fd >= 0) fcntl(fd, F_SETFD, FD_CLOEXEC);
+    // A git that stops reading early must not kill minicode with SIGPIPE.
+    if (inFds[1] >= 0) fcntl(inFds[1], F_SETNOSIGPIPE, 1);
 
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
-    posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
+    if (inFds[0] >= 0) posix_spawn_file_actions_adddup2(&fa, inFds[0], 0);
+    else posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
     posix_spawn_file_actions_adddup2(&fa, outFds[1], 1);
     posix_spawn_file_actions_adddup2(&fa, errFds[1], 2);
     // The _np name is deprecated in macOS 26 for posix_spawn_file_actions_addchdir,
@@ -169,12 +191,31 @@ MCGitResult *MCGitRunSyncWithTimeout(NSString *dir, NSArray<NSString *> *args,
     posix_spawnattr_destroy(&attr);
     close(outFds[1]);
     close(errFds[1]);
+    if (inFds[0] >= 0) close(inFds[0]);
     if (rc != 0) {
         close(outFds[0]);
         close(errFds[0]);
+        if (inFds[1] >= 0) close(inFds[1]);
         r.errorText = [NSString stringWithFormat:@"Git could not be started: %s.",
                                                  strerror(rc)];
         return r;
+    }
+    if (inFds[1] >= 0) {
+        // Written off this thread, so a patch bigger than the pipe holds
+        // cannot stall git's output, which is read below.
+        const int fd = inFds[1];
+        NSData *bytes = input;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            const char *p = (const char *)bytes.bytes;
+            size_t left = bytes.length;
+            while (left > 0) {
+                ssize_t n = write(fd, p, left);
+                if (n > 0) { p += n; left -= (size_t)n; }
+                else if (n < 0 && errno == EINTR) continue;
+                else break;
+            }
+            close(fd);
+        });
     }
 
     // Both pipes are drained at once, or a chatty stderr could fill its pipe
@@ -313,6 +354,41 @@ static NSAttributedString *MCGitStyledText(const GitUi::StyledText &t, NSFont *f
 NSAttributedString *MCGitDiffText(NSData *diff, NSFont *font) {
     return MCGitStyledText(GitUi::diffText(Bytes(diff)), font);
 }
+
+// Character offsets of valid UTF-8 (ascending) as UTF-16 offsets.
+static std::vector<NSUInteger> MCGitUnitOffsets(const std::string &text,
+                                                const std::vector<size_t> &chars) {
+    std::vector<NSUInteger> out;
+    size_t byte = 0, ch = 0;
+    NSUInteger unit = 0;
+    for (size_t target : chars) {
+        while (ch < target && byte < text.size()) {
+            const unsigned char c = (unsigned char)text[byte];
+            const size_t n = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+            byte += n;
+            unit += n == 4 ? 2 : 1;
+            ch++;
+        }
+        out.push_back(unit);
+    }
+    return out;
+}
+
+// The line `index` is on: the newlines before it.
+static NSUInteger MCGitLineOf(NSString *s, NSUInteger index) {
+    index = MIN(index, s.length);
+    NSUInteger lines = 0;
+    unichar buf[4096];
+    for (NSUInteger at = 0; at < index;) {
+        const NSUInteger n = MIN((NSUInteger)4096, index - at);
+        [s getCharacters:buf range:NSMakeRange(at, n)];
+        for (NSUInteger k = 0; k < n; k++) if (buf[k] == '\n') lines++;
+        at += n;
+    }
+    return lines;
+}
+
+static NSString *const kMCHunkLink = @"minicode-hunk:";
 
 NSAttributedString *MCGitCommitText(NSData *show, NSFont *font) {
     return MCGitStyledText(GitUi::commitText(Bytes(show), MCGitNow(), MCGitDate), font);
@@ -772,7 +848,20 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 @end
 
 // ------------------------------------------------------------------- panel
-@interface MCGitPanel () <NSTableViewDataSource, NSTableViewDelegate>
+@interface MCGitPanel () <NSTableViewDataSource, NSTableViewDelegate, NSTextViewDelegate>
+@end
+
+// The diff the panel showed last, for its hunk actions: the row it is of,
+// the top level it ran in, and the bytes git printed, which the
+// controller's diff tab holds as the same object.
+@interface MCGitShownDiff : NSObject {
+@public
+    GitUi::Row row;
+}
+@property(nonatomic, copy) NSString *top, *name, *path;
+@property(nonatomic, strong) NSData *data;
+@end
+@implementation MCGitShownDiff
 @end
 
 // One Discard Changes that can be undone: where the file is, and where the
@@ -825,6 +914,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     NSTimeInterval _autoNow;          // the tick that started the autofetch running
     // Discards that Undo Discard can put back, the last one last.
     NSMutableArray<MCGitDiscard *> *_discards;
+    MCGitShownDiff *_shownDiff;       // the last diff given to onShowDiff
 }
 
 - (instancetype)initWithRoot:(NSString *)root {
@@ -2025,25 +2115,231 @@ static const char *MCSyncOpName(GitUi::SyncOp op) {
 - (void)showDiffAtRow:(NSInteger)row {
     MCGitRow *r = [self fileRow:row];
     if (!r || !_topLevel) return;
+    [self showDiffOf:r->model in:_topLevel];
+}
+
+// The row's diff, run in `dir` (its top level); also after a hunk action,
+// for the same file in the same list, so the diff shows what is left.
+- (void)showDiffOf:(const GitUi::Row &)model in:(NSString *)dir {
     // Exit status 1 means "differs" for an untracked file's --no-index diff.
-    NSArray *args = NSArgs(GitUi::diffArgs(r->model));
+    NSArray *args = NSArgs(GitUi::diffArgs(model));
     NSUInteger gen = ++_diffGeneration;
-    NSString *dir = _topLevel, *root = self.root;
-    NSString *path = [dir stringByAppendingPathComponent:r.path];
-    NSString *name = r.path.lastPathComponent;
-    BOOL untracked = r.untracked;
+    NSString *root = self.root;
+    NSString *rel = NSFromBytes(model.path);
+    NSString *path = [dir stringByAppendingPathComponent:rel];
+    NSString *name = rel.lastPathComponent;
+    const GitUi::Row copy = model;
     dispatch_async(_queue, ^{
         MCGitResult *res = MCGitRunSync(dir, args);
         dispatch_async(dispatch_get_main_queue(), ^{
             if (gen != self->_diffGeneration || ![root isEqualToString:self.root]) return;
-            if (!(res.ok || (untracked && res.status == 1))) {
+            if (!(res.ok || (copy.untracked && res.status == 1))) {
                 [self setError:MCGitFailureText(res)
                           info:NO];
                 return;
             }
+            MCGitShownDiff *d = [MCGitShownDiff new];
+            d->row = copy;
+            d.top = dir;
+            d.name = name;
+            d.path = path;
+            d.data = res.output;
+            self->_shownDiff = d;
             if (self.onShowDiff) self.onShowDiff(name, path, res.output);
         });
     });
+}
+
+// ------------------------------------------------- hunks and lines (W26)
+// The diff on show with Stage Hunk, Unstage Hunk and Discard Hunk links on
+// each hunk's header line (GitUi::diffTextWithActions); nil for any diff
+// but the one this panel showed last.
+- (NSAttributedString *)diffTextFor:(NSData *)diff font:(NSFont *)font {
+    MCGitShownDiff *d = _shownDiff;
+    if (!d || d.data != diff) return nil;
+    std::vector<GitUi::DiffAction> actions;
+    const GitUi::StyledText t =
+        GitUi::diffTextWithActions(Bytes(diff), GitUi::diffSideOf(d->row), actions);
+    NSMutableAttributedString *out = [MCGitStyledText(t, font) mutableCopy];
+    std::vector<size_t> marks;
+    for (const GitUi::DiffAction &a : actions) {
+        marks.push_back(a.start);
+        marks.push_back(a.start + a.length);
+    }
+    const std::vector<NSUInteger> units = MCGitUnitOffsets(t.text, marks);
+    NSColor *accent = GHex(0x4EA1F7);
+    for (size_t k = 0; k < actions.size(); ++k) {
+        const NSUInteger from = units[2 * k], to = units[2 * k + 1];
+        if (to > out.length || to <= from) continue;
+        NSString *link = [NSString stringWithFormat:@"%@%d:%zu", kMCHunkLink,
+                                                    (int)actions[k].op, actions[k].line];
+        [out addAttributes:@{NSLinkAttributeName: link,
+                             NSForegroundColorAttributeName: accent,
+                             NSToolTipAttributeName: [self hunkToolTip:actions[k].op]}
+                     range:NSMakeRange(from, to - from)];
+    }
+    return out;
+}
+
+- (NSString *)hunkToolTip:(GitUi::HunkOp)op {
+    switch (op) {
+    case GitUi::HunkOp::Stage: return @"Stage this hunk; the rest of the file stays as it is.";
+    case GitUi::HunkOp::Unstage: return @"Take this hunk out of what is staged.";
+    case GitUi::HunkOp::Discard:
+        return @"Put this hunk back as git has it; asks first, and Undo Discard brings it back.";
+    }
+    return @"";
+}
+
+- (id<NSTextViewDelegate>)diffDelegate { return self; }
+
+- (BOOL)textView:(NSTextView *)tv clickedOnLink:(id)link atIndex:(NSUInteger)charIndex {
+    (void)tv;
+    (void)charIndex;
+    NSString *s = [link isKindOfClass:[NSURL class]] ? [(NSURL *)link absoluteString] : link;
+    if (![s isKindOfClass:[NSString class]] || ![s hasPrefix:kMCHunkLink]) return NO;
+    NSArray<NSString *> *parts =
+        [[s substringFromIndex:kMCHunkLink.length] componentsSeparatedByString:@":"];
+    if (parts.count != 2) return YES;
+    const NSUInteger line = (NSUInteger)parts[1].longLongValue;
+    [self runHunkOp:parts[0].integerValue fromLine:line toLine:line lines:NO];
+    return YES;
+}
+
+// The diff view's right click (or Shift+F10 at the caret): the hunk
+// actions for the hunk clicked, and for the changed lines selected, above
+// the text view's own items.
+- (NSMenu *)textView:(NSTextView *)tv menu:(NSMenu *)menu forEvent:(NSEvent *)event
+             atIndex:(NSUInteger)charIndex {
+    (void)event;
+    MCGitShownDiff *d = _shownDiff;
+    const std::vector<GitUi::HunkOp> ops = d ? GitUi::hunkOps(GitUi::diffSideOf(d->row))
+                                             : std::vector<GitUi::HunkOp>();
+    if (ops.empty()) return menu;
+    NSString *str = tv.string;
+    const std::vector<GitUi::DiffHunk> hunks = GitUi::diffHunks(Bytes(d.data));
+    const NSUInteger clicked = MCGitLineOf(str, charIndex);
+    const NSRange sel = tv.selectedRange;
+    const NSUInteger first = MCGitLineOf(str, sel.location);
+    const NSUInteger last = sel.length ? MCGitLineOf(str, NSMaxRange(sel) - 1) : first;
+    BOOL linesChosen = NO;
+    for (const GitUi::DiffHunk &h : hunks)
+        for (NSUInteger l = MAX(first, h.firstLine);
+             sel.length && !linesChosen && l <= last && l < h.firstLine + h.lineCount; l++)
+            if (h.changes(l)) linesChosen = YES;
+    const BOOL inHunk = GitUi::hunkAt(hunks, clicked) >= 0;
+    if (!inHunk && !linesChosen) return menu;
+    NSMenu *out = menu ?: [[NSMenu alloc] initWithTitle:@""];
+    NSInteger at = 0;
+    auto add = [&](GitUi::HunkOp op, BOOL lines) {
+        NSString *title = NSFromBytes(GitUi::hunkOpTitle(op, lines));
+        if (op == GitUi::HunkOp::Discard) title = [title stringByAppendingString:@"…"];
+        NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:title
+                                                    action:@selector(hunkMenuItem:)
+                                             keyEquivalent:@""];
+        it.target = self;
+        it.representedObject = @[@((int)op), @(lines ? first : clicked), @(lines ? last : clicked),
+                                 @(lines)];
+        [out insertItem:it atIndex:at++];
+    };
+    for (GitUi::HunkOp op : ops) {
+        if (inHunk) add(op, NO);
+        if (linesChosen) add(op, YES);
+    }
+    if (out.numberOfItems > at) [out insertItem:[NSMenuItem separatorItem] atIndex:at];
+    return out;
+}
+
+- (void)hunkMenuItem:(NSMenuItem *)item {
+    NSArray<NSNumber *> *a = item.representedObject;
+    if (a.count != 4) return;
+    [self runHunkOp:a[0].integerValue fromLine:a[1].unsignedIntegerValue
+             toLine:a[2].unsignedIntegerValue lines:a[3].boolValue];
+}
+
+- (void)runHunkOp:(NSInteger)opValue fromLine:(NSUInteger)first toLine:(NSUInteger)last
+            lines:(BOOL)lines {
+    MCGitShownDiff *d = _shownDiff;
+    if (!d) { NSBeep(); [self actionDone]; return; }
+    const GitUi::HunkOp op = (GitUi::HunkOp)opValue;
+    const GitUi::HunkPlan plan = GitUi::hunkPlan(Bytes(d.data), GitUi::diffSideOf(d->row), op,
+                                                 first, last, lines);
+    if (!plan.refusal.empty()) {
+        [self say:NSFromBytes(plan.refusal) info:NO];
+        NSBeep();
+        [self actionDone];
+        return;
+    }
+    const GitUi::HunkPlan copy = plan;
+    void (^go)(void) = ^{ [self runHunkPlan:copy discard:op == GitUi::HunkOp::Discard of:d]; };
+    if (plan.question.empty()) go();
+    else [self ask:plan then:go];
+}
+
+// git apply with the patch on stdin. Discard first puts a copy of the file
+// as it is in the Trash (as Discard Changes does), so Undo Discard can put
+// it back; if git refuses, the copy is taken out again.
+- (void)runHunkPlan:(const GitUi::HunkPlan &)plan discard:(BOOL)discard
+                 of:(MCGitShownDiff *)d {
+    NSString *root = self.root;
+    const GitUi::HunkPlan p = plan;
+    dispatch_async(_queue, ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *rel = NSFromBytes(p.path);
+        NSString *path = [d.top stringByAppendingPathComponent:rel];
+        NSURL *trashed = nil;
+        NSString *failure = nil;
+        if (discard) trashed = [MCGitPanel trashCopyOf:path failure:&failure];
+        if (!failure) {
+            NSData *patch = [NSData dataWithBytes:p.patch.data() length:p.patch.size()];
+            MCGitResult *r = MCGitRunSyncWithInput(d.top, NSArgs(p.args), patch);
+            if (!r.ok) {
+                failure = NSFromBytes(GitUi::hunkFailureText(
+                    r.status, Bytes(r.output), (r.errorText ?: @"").UTF8String ?: "", p.path));
+                if (trashed) [fm removeItemAtURL:trashed error:nil];
+                trashed = nil;
+            }
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!failure && trashed) {
+                MCGitDiscard *u = [MCGitDiscard new];
+                u.path = path;
+                u.rel = rel;
+                u.trashed = trashed;
+                if (!self->_discards) self->_discards = [NSMutableArray array];
+                [self->_discards addObject:u];
+                if (self->_discards.count > 20) [self->_discards removeObjectAtIndex:0];
+            }
+            if ([root isEqualToString:self.root]) {
+                [self say:failure ?: NSFromBytes(p.doneText) info:failure == nil];
+                [self runRefresh];
+                [self showDiffOf:d->row in:d.top];
+            }
+            [self actionDone];
+        });
+    });
+}
+
+// A copy of the file in the Trash, by way of a folder of our own, so the
+// Trash names it as the file is named. nil, with `failure`, if it failed.
++ (NSURL *)trashCopyOf:(NSString *)path failure:(NSString **)failure {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:
+        [@"MiniCode-git-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+    NSString *copy = [dir stringByAppendingPathComponent:path.lastPathComponent];
+    NSError *error = nil;
+    NSURL *into = nil;
+    if (![fm createDirectoryAtPath:dir withIntermediateDirectories:YES
+                        attributes:@{NSFilePosixPermissions: @0700} error:&error] ||
+        ![fm copyItemAtPath:path toPath:copy error:&error] ||
+        ![fm trashItemAtURL:[NSURL fileURLWithPath:copy] resultingItemURL:&into error:&error]) {
+        *failure = [NSString stringWithFormat:
+            @"%@ could not be copied to the Trash (%@), so nothing was discarded.",
+            path.lastPathComponent, error.localizedDescription ?: @"no reason given"];
+        into = nil;
+    }
+    [fm removeItemAtPath:dir error:nil];
+    return into;
 }
 
 // A commit's header, message and diff (against its first parent for a

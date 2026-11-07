@@ -899,6 +899,16 @@ list for the branches (there is no palette here). The Mac's Undo Discard
 moves the trashed copy back; keep that, since a discard without it is the
 one panel action that loses work.
 
+**Not followed yet (2026-11-07): hunks and lines.** The Mac's diff stages,
+unstages and discards a hunk, or the changed lines selected (round 4, W26).
+The core does the work: `GitUi::diffTextWithActions` (the action words on
+each hunk header line, with their character offsets, for GtkTextTag links),
+`diffHunks` and `hunkAt` (lines are the diff text's lines), `hunkPlan` (the
+patch, the `apply` arguments and the texts; Discard asks) and
+`hunkFailureText`, tested in `git-ui:hunk-patch` and `git-ui:line-patch`.
+The patch goes to git's stdin, so `runGitWithin` needs an input; keep a
+copy of the file in the trash before a discard, as the Mac does.
+
 ### 11. Video and audio (done, September 2026)
 
 Mac: AVKit, done in parallel by another session. GTK: a third kind in

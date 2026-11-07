@@ -10,8 +10,11 @@
 // (GitUi::syncPlan), with no terminal and no password prompt; switch, which
 // git refuses when it would overwrite a change; and for Discard Changes,
 // restore --worktree, asked first and only after the file as it was has
-// gone to the Trash (GitUi::discardPlan), so it can be put back. Always
-// argument arrays, never a shell.
+// gone to the Trash (GitUi::discardPlan), so it can be put back; and for
+// the hunks of a diff, `apply` of a patch made from that diff, to the index
+// (stage, unstage) or reversed to the work tree (discard, asked first and
+// with a copy of the file in the Trash). Always argument arrays, never a
+// shell.
 #import <Cocoa/Cocoa.h>
 
 // --------------------------------------------------------------- running git
@@ -47,6 +50,8 @@ MCGitResult *MCGitRunSync(NSString *dir, NSArray<NSString *> *args);
 MCGitResult *MCGitRunSyncWithTimeout(NSString *dir, NSArray<NSString *> *args,
                                      NSTimeInterval timeout);
 NSTimeInterval MCGitTimeoutFor(NSArray<NSString *> *args);
+// The same with `input` on git's stdin (a patch for `git apply -`).
+MCGitResult *MCGitRunSyncWithInput(NSString *dir, NSArray<NSString *> *args, NSData *input);
 
 // A diff as colored text: added lines green, removed red, hunk and file
 // headers muted. `font` is the monospaced font to use.
@@ -127,6 +132,19 @@ NSAttributedString *MCGitCommitText(NSData *show, NSFont *font);
 - (void)switchToBranchAtIndex:(NSInteger)index of:(MCGitBranches *)branches;
 - (void)createBranchNamed:(NSString *)typed of:(MCGitBranches *)branches;
 @property(nonatomic, copy) void (^onActionDone)(void);   // after each of these, for tests
+
+// Hunks and lines of the diff on show (GitUi::hunkPlan). The diff this
+// panel showed last, as text with Stage Hunk and Discard Hunk (Unstage
+// Hunk in a staged diff) links on each hunk's header line; nil for any
+// other diff. The diff view's delegate runs the links and puts the hunk's
+// actions, and those of the changed lines selected, in its menu. Each runs
+// `git apply` on a patch of just those lines, then shows the diff again;
+// a discard asks first and is undone by Undo Discard. Lines are the diff
+// text's lines, counted from 0.
+- (NSAttributedString *)diffTextFor:(NSData *)diff font:(NSFont *)font;
+@property(nonatomic, readonly) id<NSTextViewDelegate> diffDelegate;
+- (void)runHunkOp:(NSInteger)op fromLine:(NSUInteger)first toLine:(NSUInteger)last
+            lines:(BOOL)lines;   // op: GitUi::HunkOp's order (stage, unstage, discard)
 
 // The commit graph under the change lists.
 @property(nonatomic, readonly) NSTableView *graphList;
