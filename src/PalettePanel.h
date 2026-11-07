@@ -16,8 +16,26 @@
 #import <Cocoa/Cocoa.h>
 #import "Lsp.h"   // MCSymbolItem
 
+// A list of the caller's own in place of the modes above, as VS Code's quick
+// picks (the branch picker): typing filters the rows by the same fuzzy
+// rules, the whole text being the query; Return or a click runs `choose`
+// with the row's index, after the palette has closed. `typedRow` may make a
+// last row from what is typed ("Create branch “x”"), nil or "" for none,
+// which runs `chooseTyped` with the text.
+@interface MCPalettePick : NSObject
+@property(nonatomic, copy) NSString *placeholder;
+@property(nonatomic, copy) NSArray<NSString *> *labels;    // matched and shown
+@property(nonatomic, copy) NSArray<NSString *> *details;   // muted, at the right
+@property(nonatomic, copy) void (^choose)(NSInteger index);
+@property(nonatomic, copy) NSString *(^typedRow)(NSString *text);
+@property(nonatomic, copy) void (^chooseTyped)(NSString *text);
+@property(nonatomic, copy) NSString *emptyText;   // when nothing matches
+@end
+
 // What the window offers the palette beyond the menu.
 @interface MCPaletteContext : NSObject
+// A pick list instead of the modes (see MCPalettePick); nil for the palette.
+@property(nonatomic, strong) MCPalettePick *pick;
 // The folder Quick Open lists, nil for none. Paths are joined to it as
 // spelled, so they match the tree's.
 @property(nonatomic, copy) NSString *root;
@@ -51,7 +69,9 @@
 
 // Open the palette over window with text in its field (@">", @":", @"@",
 // @"#" or @""),
-// or, if it is open there already, give it that text and the keyboard.
+// or, if it is open there already, give it that text and the keyboard. A
+// pick list (context.pick) always opens afresh, closing an open palette, and
+// any other call closes an open pick list first.
 // Commands are read from NSApp.mainMenu now, validated for the window's
 // current first responder; the folder's files are listed in the background.
 void MCShowPalette(NSWindow *window, NSString *text, MCPaletteContext *context);
