@@ -93,10 +93,13 @@
     const CGFloat right = W - 150;
     CGFloat lw = MIN(340, ceil(self.lspLabel.attributedStringValue.size.width) + 6);
     self.lspLabel.frame = NSMakeRect(right - lw, 3, lw, 16);
+    CGFloat left = right - lw;
     if (!self.problemsLabel.hidden) {
         CGFloat pw = MIN(220, ceil(self.problemsLabel.attributedStringValue.size.width) + 6);
         self.problemsLabel.frame = NSMakeRect(right - lw - 16 - pw, 3, pw, 16);
+        left = right - lw - 16 - pw;
     }
+    [self layoutLargeFileNoteEndingAt:left - 16];
 }
 
 - (void)buildHintsPanelInContainer:(NSView *)container {

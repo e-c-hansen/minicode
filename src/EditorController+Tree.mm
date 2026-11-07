@@ -211,7 +211,7 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
         return;
     }
     NSString *moved = self.currentPath;
-    [self.lsp documentOpened:self.previewMode ? nil : moved];
+    [self.lsp documentOpened:self.previewMode ? nil : [self languageServerPath:moved]];
     // Relative \input and pictures now resolve from the new folder.
     if (self.isLatex && self.latex) [self.latex setPath:moved source:self.sourceText ?: @""];
     if (self.isMarkdown && self.previewMode) [self recolorEditor];

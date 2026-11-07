@@ -545,8 +545,32 @@ std::string readFile(const char *path) {
     return ss.str();
 }
 
+// Whether a line ends just after text[i]: '\n', a '\r' not before '\n', or
+// U+2029 (one UTF-16 unit, three UTF-8 bytes), as the highlighter and
+// LineIndex count lines.
+bool breaksAfter(const std::string &t, size_t i) {
+    const unsigned char c = (unsigned char)t[i];
+    if (c == '\n') return true;
+    if (c == '\r') return i + 1 >= t.size() || t[i + 1] != '\n';
+    return c == 0xA9 && i >= 2 && (unsigned char)t[i - 1] == 0x80 &&
+           (unsigned char)t[i - 2] == 0xE2;
+}
+bool breaksAfter(const std::u16string &t, size_t i) {
+    const char16_t c = t[i];
+    if (c == u'\n' || c == 0x2029) return true;
+    return c == u'\r' && (i + 1 >= t.size() || t[i + 1] != u'\n');
+}
+// Whether a text has a line break the frozen lexer, which split at '\n'
+// only, read differently: a lone '\r' or U+2029.
+template <class Ch>
+bool hasOtherBreak(const std::basic_string<Ch> &t) {
+    for (size_t i = 0; i < t.size(); ++i)
+        if (breaksAfter(t, i) && t[i] != Ch('\n')) return true;
+    return false;
+}
+
 // Cut tokens at line boundaries, the way IncrementalHighlighter reports them:
-// a piece ends just after a '\n' it covers.
+// a piece ends just after a line break it covers.
 template <class Ch>
 std::vector<Token> splitAtLines(const std::vector<Token> &toks,
                                 const std::basic_string<Ch> &text) {
@@ -554,8 +578,9 @@ std::vector<Token> splitAtLines(const std::vector<Token> &toks,
     for (const Token &t : toks) {
         size_t s = t.start, e = t.start + t.length;
         while (s < e) {
-            size_t nl = text.find(Ch('\n'), s);
-            size_t cut = (nl == std::basic_string<Ch>::npos || nl + 1 > e) ? e : nl + 1;
+            size_t cut = s;
+            while (cut < e && !breaksAfter(text, cut)) cut++;
+            cut = cut < e ? cut + 1 : e;
             out.push_back({s, cut - s, t.style});
             s = cut;
         }
@@ -681,7 +706,8 @@ bool mayHoldFString(const std::string &text, const std::string &ext) {
     return false;
 }
 std::vector<Token> fullLex(const std::string &text, const std::string &ext) {
-    return newGrammar(ext) || mayHoldFString(text, ext) || mayHoldNewLiteral(text, ext)
+    return newGrammar(ext) || mayHoldFString(text, ext) || mayHoldNewLiteral(text, ext) ||
+                   hasOtherBreak(text)
                ? SyntaxHighlighter::highlight(text, ext)
                : legacy::highlight(text, ext);
 }
@@ -727,6 +753,9 @@ const char *const kFragments[] = {
     "/a/g", "= /[/*]/", "/\\/*$/", "return /x/", ") / 2 /", "`a${", "${x}", "${",
     "}`", "`${`", "R\"(", ")\"", "R\"d(", ")d\"", "u8R\"x(\"", "r#\"", "\"#",
     "'a", "'x'", "'\\n'", "1'000", "1_000", "@\"", "\"\"\"\n", "\\\"",
+    // Line breaks other than '\n' (2026-11-06): a lone '\r', which a '\n'
+    // typed after it joins, and U+2029.
+    "\r", "\r\r", "x\ry", "\xE2\x80\xA9", "/*\r", "\"\"\"\r",
 };
 
 template <class Ch>
@@ -907,6 +936,11 @@ void testIncrementalHighlight() {
     samples.push_back({"conf", "# settings\nwindow.background = #1E1E1E\n"
                                "key = \"quoted # not comment\"\n"});
     samples.push_back({"empty", ""});
+    // Old Mac breaks, and every kind of break in one file.
+    samples.push_back({"cr", "def f():\r    '''doc\r    more'''\r    s = \"\"\"a\r\"\"\"\r"
+                             "/* c\r */ x = 'a\\\rb' # note\r\r"});
+    samples.push_back({"mixed", "int a; // one\r\nint b; /* two\rthree */\n"
+                                "s = \"q\" \xE2\x80\xA9 t = `u\r${v}`\r\n\r"});
     // The literals of 2026-11-04, every kind in one text (read as each
     // language in turn, so each grammar sees the others' as noise).
     samples.push_back({"literals",
@@ -939,6 +973,7 @@ void testIncrementalHighlight() {
     for (const Sample &s : samples)
         for (const char *e : exts)
             if (!mayHoldFString(s.text, e) && !mayHoldNewLiteral(s.text, e) &&
+                !hasOtherBreak(s.text) &&
                 SyntaxHighlighter::highlight(s.text, e) != legacy::highlight(s.text, e)) {
                 std::printf("    %s as %s differs from the old lexer\n", s.name.c_str(), e);
                 same = false;
@@ -954,6 +989,7 @@ void testIncrementalHighlight() {
                 t += kFragments[rng() % (sizeof(kFragments) / sizeof(kFragments[0]))];
             for (const char *e : exts)
                 soup = soup && (mayHoldFString(t, e) || mayHoldNewLiteral(t, e) ||
+                                hasOtherBreak(t) ||
                                 SyntaxHighlighter::highlight(t, e) == legacy::highlight(t, e));
         }
         CHECK(soup);
@@ -3740,8 +3776,9 @@ void testSettings() {
     // format, python, keep-sorted, auto-save, ruler, word wrap, terminal,
     // develop, git, control and agent keys (with markdown.mermaid and
     // agent.ide-link), terminal.activate-venv, search.use-ignore-files and
-    // terminal.multiline-paste-warning, and the tree's six git colors.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 95);
+    // terminal.multiline-paste-warning, the tree's six git colors and
+    // editor.large-file-optimizations.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 96);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -9986,15 +10023,18 @@ static void testMultiCaretOccurrences() {
 #include "latex_safety_tests.inc"
 #include "markdown_gfm_tests.inc"
 #include "lsp_watch_tests.inc"
+#include "large_file_tests.inc"
 #include "terminal_draw_tests.inc"
 #include "tree_tests.inc"
 #include "lsp_threading_tests.inc"
+#include "multiedit_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
     testSyntax();
     testSyntaxLiterals();
     testIncrementalHighlight();
+    testLargeFiles();
     testTermLinks();
     benchIncrementalHighlight();
     testMarkdown();
@@ -10093,6 +10133,7 @@ int main() {
     testLspWatchedFiles();
     testTreeRefresh();
     testLspThreading();
+    testMultiEdit();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

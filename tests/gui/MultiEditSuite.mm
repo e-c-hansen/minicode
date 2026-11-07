@@ -12,6 +12,7 @@
 #import "Lsp.h"
 #import "MultiCaretView.h"
 #include "TextFind.h"
+#include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <string>
 #include <vector>
@@ -27,6 +28,28 @@ double Ms() {
     static mach_timebase_info_data_t tb;
     if (!tb.denom) mach_timebase_info(&tb);
     return (double)mach_absolute_time() * tb.numer / tb.denom / 1e6;
+}
+
+// The main thread's CPU time, in ms: what the bounds check, since wall time
+// on a loaded machine (other builds running) varied threefold run to run.
+double CpuMs() {
+    thread_basic_info_data_t info;
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    const mach_port_t self = mach_thread_self();
+    const kern_return_t kr = thread_info(self, THREAD_BASIC_INFO, (thread_info_t)&info, &count);
+    mach_port_deallocate(mach_task_self(), self);
+    if (kr != KERN_SUCCESS) return Ms();
+    return (info.user_time.seconds + info.system_time.seconds) * 1e3 +
+           (info.user_time.microseconds + info.system_time.microseconds) / 1e3;
+}
+
+// Times `work`: wall and main-thread CPU, printed; returns the CPU time.
+double Timed(NSString *what, void (^work)(void)) {
+    const double w0 = Ms(), c0 = CpuMs();
+    work();
+    const double cpu = CpuMs() - c0, wall = Ms() - w0;
+    MCGuiNote(@"%@: %.1f ms (%.1f ms CPU)", what, wall, cpu);
+    return cpu;
 }
 
 CodeTextView *Editor(EditorController *c) { return [c valueForKey:@"textView"]; }
@@ -152,6 +175,83 @@ MC_GUI_SUITE(multiedit) {
         GCHECK(ColorsAsFullPass(c, tv));
         [tv.undoManager undo];
         GCHECK_EQ_STR(tv.string, pyText);
+        [folds unfoldAll];
+    });
+
+    // An undo step whose text was changed outside the undo history (a
+    // storage edit nobody registered) still undoes, at its pieces' new
+    // places, when one change moved them; when the pieces are gone it
+    // leaves the text alone (with a beep and a line in the log). It used to
+    // give up silently whenever the length differed.
+    // What changes: `length` characters from `offset` past where `at` is in
+    // the edited text ("" for its start, "$" its end, "*" all of it).
+    struct Outside { NSString *name, *at; NSUInteger offset, length; NSString *with, *expect; };
+    const std::vector<Outside> outsides = {
+        {@"before the first piece", @"", 0, 0, @"# top\n", [@"# top\n" stringByAppendingString:pyText]},
+        {@"between the pieces", @"def", 2, 0, @"X",
+         [pyText stringByReplacingOccurrencesOfString:@"def" withString:@"deXf"]},
+        {@"deleted between the pieces", @"    return 2\n", 0, 13, @"",
+         [pyText stringByReplacingOccurrencesOfString:@"    return 2\n" withString:@""]},
+        {@"after the last piece", @"$", 0, 0, @"tail\n", [pyText stringByAppendingString:@"tail\n"]},
+        {@"the pieces themselves gone", @"*", 0, 0, @"something else", @"something else"},
+    };
+    for (const Outside &each : outsides) {
+        const Outside o = each;   // the block keeps a copy; the vector is gone when steps run
+        MCGuiStep([@"undo after the text changed outside the undo history: " stringByAppendingString:o.name], ^{
+            GCHECK([c showFile:py]);
+            GCHECK_EQ_STR(tv.string, pyText);
+            NSString *s = tv.string;
+            const NSUInteger first = [s rangeOfString:@"name"].location;
+            const NSUInteger last = [s rangeOfString:@"print(name)"].location + 6;
+            [tv.multiCarets setCaretRanges:@[At(first), At(last)]];
+            MCGuiUndoGroup(tv.undoManager, ^{ [tv.multiCarets insertText:@"zz"]; });
+            [tv.multiCarets clear];
+            NSString *now = tv.string;
+            NSRange r = NSMakeRange(0, now.length);
+            if ([o.at isEqualToString:@"$"]) r = NSMakeRange(now.length, 0);
+            else if (![o.at isEqualToString:@"*"])
+                r = NSMakeRange((o.at.length ? [now rangeOfString:o.at].location : 0) + o.offset, o.length);
+            GCHECK([[now substringWithRange:NSMakeRange(0, 6)] isEqualToString:@"zzname"]);
+            [tv.textStorage replaceCharactersInRange:r withString:o.with];   // registers no undo
+            [tv.undoManager undo];
+            GCHECK_EQ_STR(tv.string, o.expect);
+            // Back to the file's text, outside the history again.
+            [tv.textStorage replaceCharactersInRange:NSMakeRange(0, tv.string.length) withString:pyText];
+            [tv.undoManager removeAllActions];
+        });
+    }
+
+    // Many replacements (64 and more drop the glyphs over them first) around
+    // a closed fold: it stays closed, and its text is laid out hidden again.
+    NSString *manyFile = MCGuiProjectFile(@"multiedit-many.py");
+    MCGuiStep(@"a file with a fold among many matches", ^{
+        NSMutableString *t = [NSMutableString string];
+        for (int i = 0; i < 40; i++) [t appendFormat:@"name_%d = %d\n", i, i];
+        [t appendString:@"def f(x):\n    return name\n"];
+        for (int i = 40; i < 80; i++) [t appendFormat:@"name_%d = %d\n", i, i];
+        MCGuiWriteFile(manyFile, t);
+        GCHECK([c showFile:manyFile]);
+    });
+    MCGuiWait(@"regions for multiedit-many.py", 5, ^BOOL { return [folds lineStartsRegion:40]; });
+    MCGuiStep(@"Replace All of 80 matches around a fold keeps it closed and hidden", ^{
+        GCHECK([folds toggleLine:40]);
+        NSString *s = tv.string;
+        [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, s.length)];
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        std::vector<TextFind::Edit16> edits = ReplaceAllEdits(s, @"name_", @"title_");
+        GCHECK(edits.size() == 80);
+        MCGuiUndoGroup(tv.undoManager, ^{ GCHECK([find applyEdits:edits actionName:@"Replace All"]); });
+        GCHECK([tv.string rangeOfString:@"name_"].location == NSNotFound);
+        GCHECK([folds lineStartsFold:40]);
+        const NSRange body = [tv.string rangeOfString:@"return name"];
+        GCHECK([folds rangeIsHidden:body]);
+        NSLayoutManager *lm = tv.layoutManager;
+        [lm ensureLayoutForCharacterRange:NSMakeRange(0, tv.string.length)];
+        const NSUInteger g = [lm glyphIndexForCharacterAtIndex:body.location + 2];
+        GCHECK([lm propertyForGlyphAtIndex:g] == NSGlyphPropertyNull);
+        GCHECK(ColorsAsFullPass(c, tv));
+        [tv.undoManager undo];
+        GCHECK_EQ_STR(tv.string, s);
         [folds unfoldAll];
     });
 
@@ -344,18 +444,88 @@ MC_GUI_SUITE(multiedit) {
         [tv.multiCarets clear];
     });
 
+    __block double replaceCpu = 0;
     MCGuiStep(@"Replace All of 20,000 matches", ^{
         MCEditorFind *find = [c valueForKey:@"editorFind"];
         std::vector<TextFind::Edit16> edits = ReplaceAllEdits(tv.string, @"None", @"Nada");
         GCHECK(edits.size() == 20000);
-        const double t0 = Ms();
-        MCGuiUndoGroup(tv.undoManager, ^{ GCHECK([find applyEdits:edits actionName:@"Replace All"]); });
-        MCGuiNote(@"Replace All of %zu matches: %.1f ms", edits.size(), Ms() - t0);
+        replaceCpu = Timed(@"Replace All of 20000 matches", ^{
+            MCGuiUndoGroup(tv.undoManager, ^{ GCHECK([find applyEdits:edits actionName:@"Replace All"]); });
+        });
         GCHECK([tv.string rangeOfString:@"None"].location == NSNotFound);
         GCHECK(ColorsAsFullPass(c, tv));
-        const double t1 = Ms();
-        [tv.undoManager undo];
-        MCGuiNote(@"undoing it: %.1f ms", Ms() - t1);
+        Timed(@"undoing it", ^{ [tv.undoManager undo]; });
         GCHECK([tv.string rangeOfString:@"Nada"].location == NSNotFound);
+    });
+
+    // The case the assessment met (8.1 s): the file laid out to its end, as
+    // after scrolling there or once background layout finishes. Each
+    // storage edit replaced its glyphs in the layout manager's glyph tree,
+    // at a cost growing with the glyphs made, and the highlighter's restyles
+    // paid again (3 to 8 s); replaceRanges now drops the glyphs over the
+    // ranges first, so laid out costs about what not laid out does.
+    MCGuiStep(@"Replace All of 20,000 matches in a file laid out to its end", ^{
+        NSString *s = [tv.string copy];
+        Timed(@"laying it out to its end", ^{
+            [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, s.length)];
+        });
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        std::vector<TextFind::Edit16> edits = ReplaceAllEdits(s, @"None", @"Nada");
+        GCHECK(edits.size() == 20000);
+        const double cpu = Timed(@"Replace All of 20000 matches, laid out", ^{
+            MCGuiUndoGroup(tv.undoManager, ^{ GCHECK([find applyEdits:edits actionName:@"Replace All"]); });
+        });
+        GCHECK(cpu < 4000);
+        GCHECK(cpu < 2.5 * replaceCpu + 300);
+        GCHECK([tv.string rangeOfString:@"None"].location == NSNotFound);
+        GCHECK(ColorsAsFullPass(c, tv));
+        Timed(@"undoing it", ^{ [tv.undoManager undo]; });
+        GCHECK_EQ_STR(tv.string, s);
+    });
+
+    MCGuiStep(@"typing over 10,000 selections in a file laid out to its end", ^{
+        NSString *s = [tv.string copy];
+        [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, s.length)];
+        const NSUInteger first = [s rangeOfString:@"None"].location;
+        tv.selectedRange = NSMakeRange(first, 4);
+        [tv selectAllOccurrences:nil];
+        GCHECK(tv.multiCarets.caretRanges.count == 10000);
+        const double cpu = Timed(@"typing a letter over 10000 selections, laid out", ^{
+            MCGuiUndoGroup(tv.undoManager, ^{ [tv.multiCarets insertText:@"X"]; });
+        });
+        GCHECK(cpu < 5000);
+        GCHECK([[tv.string substringWithRange:NSMakeRange(first - 2, 4)] isEqualToString:@", X]"]);
+        [tv.multiCarets clear];
+        Timed(@"undoing it", ^{ [tv.undoManager undo]; });
+        GCHECK_EQ_STR(tv.string, s);
+    });
+
+    // Backspace, the arrows and Move Line read the text near the carets
+    // (they copied the whole buffer, 5 MB here, for every key).
+    MCGuiStep(@"Backspace, Right and Move Line Down at two carets 99,800 lines apart", ^{
+        NSString *s = [tv.string copy];
+        const NSUInteger a = [s rangeOfString:@"return x + 20 *"].location;
+        const NSUInteger b = [s rangeOfString:@"return x + 19980 *"].location;
+        [tv.multiCarets setCaretRanges:@[At(a), At(b)]];
+        double t0 = Ms();
+        GCHECK([tv.multiCarets doCommand:@selector(moveRight:)]);
+        MCGuiNote(@"Right at two carets: %.2f ms", Ms() - t0);
+        GCHECK(tv.multiCarets.caretRanges.count == 2 &&
+               tv.multiCarets.caretRanges[1].rangeValue.location == b + 1);
+        t0 = Ms();
+        MCGuiUndoGroup(tv.undoManager, ^{ GCHECK([tv.multiCarets doCommand:@selector(deleteBackward:)]); });
+        MCGuiNote(@"Backspace at two carets: %.2f ms", Ms() - t0);
+        GCHECK([[tv.string substringWithRange:NSMakeRange(a, 6)] isEqualToString:@"eturn "]);
+        [tv.undoManager undo];
+        GCHECK_EQ_STR(tv.string, s);
+        [tv.multiCarets setCaretRanges:@[At(a), At(b)]];
+        t0 = Ms();
+        MCGuiUndoGroup(tv.undoManager, ^{ [tv.multiCarets moveLinesDown:YES]; });
+        MCGuiNote(@"Move Line Down at two carets: %.2f ms", Ms() - t0);
+        // "    return x + 20 * y" swapped with the blank line below it.
+        GCHECK([[tv.string substringWithRange:NSMakeRange(a - 4, 18)] isEqualToString:@"\n    return x + 20"]);
+        [tv.multiCarets clear];
+        [tv.undoManager undo];
+        GCHECK_EQ_STR(tv.string, s);
     });
 }

@@ -2,8 +2,10 @@
 // Tokenizes source text into styled ranges. The GUI layer maps
 // TokenStyle values onto concrete colors/fonts.
 //
-// The lexer works a line at a time: every line starts in the state the line
-// above ended in (inside a block comment, a triple-quoted string, ...), and
+// The lexer works a line at a time (a line ends after '\n', a '\r' not
+// before '\n', or U+2029, as LineIndex counts): every line starts in the
+// state the line above ended in (inside a block comment, a triple-quoted
+// string, ...), and
 // what it does to a line depends only on that state and the line's own text.
 // That is what makes IncrementalHighlighter possible: after an edit, only the
 // edited lines are lexed again, plus the lines below them until one ends in
@@ -14,6 +16,12 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+// Lines longer than this many code units, their break not counted, are not
+// lexed at all, as VS Code's editor.maxTokenizationLineLength (20,000): the
+// line keeps the plain color and ends in the state it started in, so a
+// keystroke in a 5 MB minified line costs the lexer nothing.
+constexpr size_t kMaxTokenizationLineLength = 20000;
 
 enum class TokenStyle {
     Plain,
@@ -118,7 +126,7 @@ struct SyntaxGrammar;   // one language's rules, private to SyntaxHighlighter.cp
 // Keeps each line's start offset and end state, and after an edit re-lexes
 // only what the edit can have changed. Every line's tokens are exactly the
 // tokens a full lex gives, cut at line boundaries: a token spanning lines
-// comes out as one piece per line, each piece including its line's '\n'.
+// comes out as one piece per line, each piece including its line's break.
 template <class Ch>
 class IncrementalHighlighter {
 public:

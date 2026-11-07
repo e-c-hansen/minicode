@@ -27,10 +27,16 @@ struct Hunk {
 // The changed runs, in order, none overlapping or touching, and never two
 // with only blank lines between them (those are joined). Empty when the
 // texts are equal. Uses Myers' algorithm on lines after trimming the common
-// head and tail; when the texts differ in more than `maxEdits` lines, the
-// whole middle becomes one hunk (still correct, just coarser).
+// head and tail. When that would take more than 1,000 edits (a large
+// reformat), the lines found exactly once on each side split the texts
+// into pieces, as in patience diff, and each piece is diffed the same way,
+// so a reformat of thousands of lines still gives one hunk per changed run.
+// A piece that cannot be split, or is reached after `budgetSeconds`, is
+// one hunk; when the texts differ in more than `maxEdits` lines (a line
+// replaced is two: 40,000 is 20,000 lines reformatted), the whole
+// middle is one hunk (still correct, just coarser).
 std::vector<Hunk> diff(const std::u16string& a, const std::u16string& b,
-                       size_t maxEdits = 1000);
+                       size_t maxEdits = 40000, double budgetSeconds = 0.25);
 
 // Apply hunks to `a` (tests; the editor applies them one by one).
 std::u16string apply(const std::u16string& a, const std::u16string& b,

@@ -175,6 +175,7 @@
         EditorController *s = weakSelf;
         MCTab *t = [s tabForPath:p];
         if (!t || !t.loaded || t.showingMessage) return nil;
+        if (![s languageServerMayRead:t]) return nil;   // large-file mode
         if (t == s->_activeTab && s.textView.editable) return s.textView.string;
         return t.sourceText;
     };
@@ -890,6 +891,7 @@ static NSString *MCFormatDuration(double seconds) {
 }
 
 - (void)updateTitle {
+    [self updateLargeFileNote];
     // With no file open, the folder's name.
     NSString *name = self.currentPath.lastPathComponent ?: _root.path.lastPathComponent;
     if (!name.length) name = @"MiniCode";
