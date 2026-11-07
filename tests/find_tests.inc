@@ -130,15 +130,17 @@ static void testTextFind() {
         const double manyMs = std::chrono::duration<double, std::milli>(
                                   std::chrono::steady_clock::now() - t0).count();
         CHECK(manyMs < 1000);
-        // A regex that backtracks over a long line gives up on it after
-        // about a second (it ran for more than eight before), and the next
-        // line is still searched.
+        // A regex left to std::regex (a backreference) that backtracks over
+        // a long line gives up on it after about a second (it ran for more
+        // than eight before), and the next line is still searched.
         const std::u16string as(50000, u'a');
         t0 = std::chrono::steady_clock::now();
-        const auto slow = findAll(as + u"\naz", q16(u"a(.*)z", false, false, true));
+        const Query backref = q16(u"(a)(.*)\\1z", false, false, true);
+        const auto slow = findAll(as + u"\naaz", backref);
         const double slowS = std::chrono::duration<double>(
                                  std::chrono::steady_clock::now() - t0).count();
-        CHECK(spans(slow) == (V{"50001+2"}));
+        CHECK(!backref.linear() && !backref.tooSlow());
+        CHECK(spans(slow) == (V{"50001+3"}));
         CHECK(slowS < 4);
         // A cancel stops it within the line.
         std::atomic<bool> cancel(false);
@@ -148,8 +150,7 @@ static void testTextFind() {
             cancel = true;
         });
         t0 = std::chrono::steady_clock::now();
-        findAll(as + u"\n" + as + u"\n" + as, q16(u"a(.*)z", false, false, true), 0, nullptr,
-                &cancel, &cancelled);
+        findAll(as + u"\n" + as + u"\n" + as, backref, 0, nullptr, &cancel, &cancelled);
         const double cancelS = std::chrono::duration<double>(
                                    std::chrono::steady_clock::now() - t0).count();
         raiser.join();

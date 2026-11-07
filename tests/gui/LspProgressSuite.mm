@@ -12,8 +12,11 @@
 // framed and parsed on the server's read queue, they leave the main thread
 // alone (3 to 12 ms gaps on a loaded Mac, the same as idle; parsed on the
 // main thread they stalled it 50 ms). A completion list of 5,000 items is
-// timed the same way, end to end, and noted (what is left is turning it
-// into rows and showing the list: 10 to 17 ms, against 20 to 40 before).
+// timed the same way, end to end, and noted: its items are parsed and
+// first filtered off the main thread too, and the list's windows are
+// built ahead, so what is left is the rows on show (8 to 11 ms on a loaded
+// Mac, against 25 to 45 with the parse, the panels' building and the
+// documentation's layout all in one pause).
 // An edit makes the server end its work, and the status item goes back to
 // its counts.
 #import "Harness.h"
@@ -181,11 +184,10 @@ MC_GUI_SUITE(lsp_progress) {
         MCGuiNote(@"5,000 completions shown: longest main-thread gap %.1f ms over %lu fires",
                   meter.longest * 1000, (unsigned long)meter.fires);
         GCHECK([Session(c).completionLabels containsObject:@"name_0042_of_a_module"]);
-        // Turning the items into rows and showing the list is what is left
-        // on the main thread (about 3 ms and 5 ms here, against 20 ms or
-        // more with the JSON parsed there too). Printed, not bounded: CI's
-        // runner took 70 ms for the rows and the first showing, which this
-        // package did not change; the parse bound above is the gate.
+        // Showing the rows is what is left on the main thread. Printed, not
+        // bounded: CI's runner took 70 ms for the rows and the first
+        // showing before they were moved and built ahead, and has not been
+        // measured since; the parse bound above is the gate.
         [Session(c) handleCommand:@selector(cancelOperation:)];
     });
     MCGuiWait(@"the list closes", 5, ^BOOL { return !Session(c).completionVisible; });

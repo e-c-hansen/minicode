@@ -132,9 +132,9 @@ goes here first, with tests; the GUI only displays it.
   `mapOffset`), `LineComments`,
   `AutoIndent` (with `ScanCache`), `KeepSorted`, `MultiCaret` (carets and line
   commands), `LineIndex` (line starts, a gap buffer), `BracketMatch`,
-  `Folding`, `TextFind` (find and replace, UTF-16 and UTF-8), `Formatter`
-  (Format Document's plan), `InstallHints`, `LargeFile.h` (VS Code's
-  large-file thresholds, header only).
+  `Folding`, `TextFind` (find and replace, UTF-16 and UTF-8), `Regex` (its
+  linear-time engine), `Formatter` (Format Document's plan), `InstallHints`,
+  `LargeFile.h` (VS Code's large-file thresholds, header only).
 - Language servers: `LspClient` (protocol, results, WorkspaceEdits, diagnostics
   with versions, completion edits, symbols, folding ranges, the second server's
   routing and `DiagnosticStore`, the Problems rows, watched files' globs and
@@ -906,15 +906,27 @@ container (PanelHost, laid out by hand in layoutContainer)
 ## Find and replace (Mac)
 
 - `TextFind` matches a line at a time: plain text with FolderSearch's
-  one-to-one folding, or std::regex (ECMAScript) over UTF-32 code points. Whole
-  word is VS Code's edge check; replacements take `$1`..`$99`, `$&`, `$0`,
-  `$$`, `\n`, `\t`, `\\` for a regex. Traps: libc++ lets `^` match mid-line
-  with `match_prev_avail`, so lines are walked with `std::regex_iterator`;
-  libstdc++ tests bracket ranges through the C locale's ctype, so `[а-я]`
-  ignoring case missed Ж on CI's Linux job, and a case-insensitive regex now
-  runs over the line folded to lower case, one code point for one. Preserve
-  case is VS Code's buildReplaceStringWithCasePreserved, for replacements
-  with no groups.
+  one-to-one folding, or a regex (ECMAScript, std::regex deciding what is
+  valid) over UTF-32 code points. Whole word is VS Code's edge check;
+  replacements take `$1`..`$99`, `$&`, `$0`, `$$`, `\n`, `\t`, `\\` for a
+  regex. **Regexes run on `Regex.{h,cpp}`** (2026-11-07), a Pike VM whose
+  time is linear in the line, with JavaScript's matches (checked against
+  node on a million random cases, and against std::regex in `regex:oracle`);
+  a pattern it refuses (backreferences, lookaround, `[[:alpha:]]`, a lone
+  `]`) goes to std::regex on a worker thread of the query's, left behind
+  after 2 s (`Query::tooSlow`, `FolderSearchResult::tooSlow`). Traps:
+  libc++ and libstdc++ each break JavaScript's repetition rules in places
+  (groups unset per repetition, empty repetitions not counting), libc++
+  finds no `\b` at a line's end once a search starts past 0, and libc++
+  throws error_complexity (a silent "no match") on short exponential
+  patterns rather than hanging, while libstdc++ hangs; std::regex's own
+  traps: libc++ lets `^` match mid-line with `match_prev_avail` (hence
+  `__no_update_pos`); libstdc++ tests bracket ranges through the C locale's
+  ctype, so `[а-я]` ignoring case missed Ж on CI's Linux job, and a
+  case-insensitive regex runs over the line folded to lower case, one code
+  point for one (the linear engine folds the same way). Preserve case is VS
+  Code's buildReplaceStringWithCasePreserved, for replacements with no
+  groups.
 - `MCEditorFind` replaced NSTextFinder (`usesFindBar = NO`). Since 2026-11-06
   it is laid out from VS Code's findWidget.ts and CSS, measure for measure
   (the owner asked for VS Code's look; the toggles had sat far from the
@@ -1075,7 +1087,14 @@ view is disposed (on `unrealize`), or dispose loops forever.
   `bufferText` (every tab's text), `tabsChanged`, and
   `textView:doCommandBySelector:` to `handleCommand:`. The session observes the
   storage itself; didChange is debounced 0.3 s, every request flushes first,
-  and unchanged text is dropped.
+  and unchanged text is dropped. A server with `textDocumentSync.change` 2
+  gets ranges: `Lsp::ChangeTracker` (`_changes`) merges the storage's edits
+  (`editedRange`, `changeInLength`) into regions of the text as sent, and
+  `Lsp::rangedChanges` turns them into contentChanges, last region first,
+  only after checking the text outside them is the same in both; anything
+  that does not check out (an edit it missed, a boundary inside a character
+  or between \r and \n, over 256 regions, or ranges as big as the text)
+  sends the whole text, so the server's copy is always right.
 - **Every tab's file stays open** on its server (`syncOpenDocuments`: on show,
   server start, before rename and references, on `tabsChanged`); only a running
   server takes background tabs, so a tab never starts one. With only the file
@@ -1173,9 +1192,17 @@ view is disposed (on `unrealize`), or dispose loops forever.
   reselects the first row unless the arrows chose an item still listed. Docs
   show beside the list after `completionItem/resolve` (80 ms). Snippets off.
   **Accepting** inserts the word and `additionalTextEdits` (imports,
-  `#include`) as one multi-range replacement (`Lsp::completionEdits`),
-  resolving first when a server sends them only then, for at most 0.4 s on the
-  main run loop (`kResolveBeforeAccept`; keys pressed meanwhile arrive after).
+  `#include`) as one multi-range replacement (`Lsp::completionEdits`), its
+  undo step an `MCAcceptUndo` of its own. When the server sends the edits
+  only from `completionItem/resolve`, the word goes in at once and the edits
+  when the answer comes (`kResolveAfterAccept`, 1 s, then a note), placed by
+  `Lsp::lateAdditionalEdits` only before everything edited since: in the
+  same undo step when nothing changed meanwhile, else a step of their own
+  (VS Code's rule). Never a nested run loop: the old 0.4 s wait ran the main
+  queue inside the key handler. A big list is parsed and first filtered on
+  `CompletionQueue()` (the handler takes the result, `Client::TakingHandler`)
+  and freed there; the list's panels are built ahead (`prepareStep`, a piece
+  per run-loop turn after a server is ready) and the docs show a turn later.
   Signature help (`(`, `,`) sits above the line. Both close on focus loss, key
   loss and tab switch. Trap: the list's `close` must `reloadData` after
   emptying its labels, or layout asks for a vanished row.

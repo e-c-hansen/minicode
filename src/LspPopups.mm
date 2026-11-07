@@ -99,6 +99,33 @@ static const NSInteger kMaxRows = 10;
     [_docPanel.contentView addSubview:_docScroll];
 }
 
+- (void)prepareStep {
+    if (_prepared) return;
+    if (!_panel) { [self build]; return; }
+    if (!_docPanel) { [self buildDoc]; return; }
+    // A first layout and drawing of a row and of some documentation, off
+    // screen, so the fonts and the views' first passes are done.
+    if (!_visible) {
+        _labels = @[ @"prepare" ];
+        _details = @[ @"" ];
+        [_table reloadData];
+        [_panel.contentView layoutSubtreeIfNeeded];
+        [_panel display];
+        _labels = @[];
+        _details = @[];
+        [_table reloadData];
+    }
+    if (!_docVisible) {
+        [_docView.textStorage setAttributedString:[[NSAttributedString alloc]
+            initWithString:@"prepare"
+                attributes:@{NSFontAttributeName: MCMonoFont(MCEditorFontSize() - 1,
+                                                              NSFontWeightRegular)}]];
+        [_docView.layoutManager ensureLayoutForTextContainer:_docView.textContainer];
+        [_docPanel display];
+    }
+    _prepared = YES;
+}
+
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tv {
     (void)tv;
     return (NSInteger)_labels.count;

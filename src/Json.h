@@ -51,6 +51,8 @@ public:
     const Json& operator[](const std::string& key) const;
     const Json& operator[](const char* key) const { return (*this)[std::string(key)]; }
     bool has(const std::string& key) const;
+    // The member itself, to change or move from, or null when missing.
+    Json* member(const std::string& key);
     Json& set(const std::string& key, Json value);   // makes this an object
     const std::vector<std::pair<std::string, Json>>& items() const { return obj_; }
 

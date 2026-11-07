@@ -120,6 +120,7 @@ struct Walker {
 
     bool stop() {
         if (cancelled(cancel)) { out.cancelled = true; return true; }
+        if (tq && tq->tooSlow()) { out.tooSlow = true; return true; }
         if (full()) { out.truncated = true; return true; }
         return false;
     }

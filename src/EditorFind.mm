@@ -938,6 +938,13 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
     }
     const size_t n = _matches.size();
     [_bar setNavigable:n > 0];
+    if (n == 0 && _query.tooSlow()) {   // std::regex's two seconds ran out (TextFind.h)
+        [_bar showCount:@"Too slow" error:YES
+                    tip:@"This pattern took too long. One with a backreference or a lookahead "
+                        @"runs on a slower engine, which stops after two seconds."];
+        _bar.findInput.toolTip = _bar.countLabel.toolTip;
+        return;
+    }
     if (n == 0) {
         // VS Code's .no-results: the count in errorForeground; and the query
         // outlined in red, as the owner asked.

@@ -599,6 +599,10 @@ MC_GUI_SUITE(language) {
         MCGuiUndoGroup(tv.undoManager, ^{ [lsp handleCommand:@selector(insertTab:)]; });
     });
     MCGuiWait(@"the word is in", 5, ^BOOL { return [tv.string containsString:@"p = Path\n"]; });
+    // The import comes with resolve's answer, which may follow the word.
+    MCGuiWait(@"and its import", 5, ^BOOL {
+        return [tv.string containsString:@"from pathlib import Path"];
+    });
     MCGuiStep(@"the import went in above, the fold held", ^{
         MCGuiNote(@"after accepting: %@", [tv.string substringToIndex:MIN(tv.string.length, 60u)]);
         BOOL imported = [tv.string containsString:@"from pathlib import Path"];
