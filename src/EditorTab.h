@@ -66,6 +66,10 @@ MCDiskText *MCReadDiskText(NSString *path, unsigned long long maxBytes);
 // The file changed on disk while too large to follow live: said once, and
 // read again when the tab is shown or the window comes forward.
 @property(nonatomic, assign) BOOL tooLargeToFollow;
+// Over the large-file thresholds when it was read (LargeFile.h: 20 MB or
+// 300,000 lines), and whether the user turned its features on anyway from
+// the status bar (EditorController+LargeFile.mm).
+@property(nonatomic, assign) BOOL largeFile, largeFileFeatures;
 // The file is no longer at its path (deleted, or moved where it could not
 // be followed): the tab says "(deleted)", counts as unsaved, and Cmd+S asks
 // before writing it again.

@@ -8,10 +8,51 @@
 // everything here works on the text alone.
 #pragma once
 #include <cstddef>
+#include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace MultiCaret {
+
+// The text the line and caret commands read: a string, or a reader that
+// fetches it in blocks where it is looked at. The commands look only near
+// the carets, so the Mac's editor hands them a reader over its storage
+// instead of copying the whole buffer for every arrow key, Backspace or
+// Move Line. A Text over a string must not outlive the string; one over a
+// reader must not outlive the text it reads, nor be used once that changes.
+class Text {
+public:
+    // Fills out[0, length) with the characters from start.
+    using Reader = std::function<void(size_t start, size_t length, char16_t* out)>;
+
+    Text(const std::u16string& s) : data_(s.data()), size_(s.size()) {}
+    Text(const char16_t* s) : data_(s), size_(std::char_traits<char16_t>::length(s)) {}
+    Text(size_t length, Reader read) : size_(length), read_(std::move(read)) {}
+
+    size_t size() const { return size_; }
+    char16_t operator[](size_t i) const {
+        if (data_) return data_[i];
+        if ((i >> kBlockBits) != lastBlock_) fetch(i >> kBlockBits);
+        return last_[i & (kBlock - 1)];
+    }
+    std::u16string substr(size_t pos, size_t n) const;
+    // Characters a reader has fetched so far (the tests check it stays near
+    // the carets).
+    size_t charactersRead() const { return read_count_; }
+
+private:
+    static constexpr size_t kBlockBits = 10, kBlock = size_t(1) << kBlockBits;
+    void fetch(size_t block) const;
+
+    const char16_t* data_ = nullptr;
+    size_t size_ = 0;
+    Reader read_;
+    mutable std::unordered_map<size_t, std::u16string> blocks_;
+    mutable size_t lastBlock_ = size_t(-1);
+    mutable const char16_t* last_ = nullptr;
+    mutable size_t read_count_ = 0;
+};
 
 // A caret, or a selection when anchor != head. head is where the caret is
 // drawn and where the arrow keys move it from.
@@ -48,10 +89,10 @@ Edit insert(const std::vector<Caret>& carets, const std::vector<std::u16string>&
 // Backspace: a selection goes; a caret deletes the character before it (a
 // surrogate pair whole), but never across the start of its line, so a
 // column of carets at the left edge stays a column.
-Edit backspace(const std::u16string& text, const std::vector<Caret>& carets);
+Edit backspace(const Text& text, const std::vector<Caret>& carets);
 
 // Forward delete, the same way, never across the end of the line.
-Edit deleteForward(const std::u16string& text, const std::vector<Caret>& carets);
+Edit deleteForward(const Text& text, const std::vector<Caret>& carets);
 
 enum class Move { Left, Right, WordLeft, WordRight, LineStart, LineEnd };
 
@@ -60,7 +101,7 @@ enum class Move { Left, Right, WordLeft, WordRight, LineStart, LineEnd };
 // first non-blank character, or to column 0 from there (as Home does in
 // most code editors). Moves never cross a line break, except Left at a
 // line's start and Right at its end.
-std::vector<Caret> move(const std::u16string& text, const std::vector<Caret>& carets, Move m,
+std::vector<Caret> move(const Text& text, const std::vector<Caret>& carets, Move m,
                         bool extend);
 
 // What Paste puts at each caret: when the clipboard holds exactly as many
@@ -70,7 +111,7 @@ std::vector<std::u16string> pieces(const std::u16string& clip, size_t carets);
 
 // What Copy takes: the selections in order, joined with newlines. Empty
 // when every caret is empty.
-std::u16string copy(const std::u16string& text, const std::vector<Caret>& carets);
+std::u16string copy(const Text& text, const std::vector<Caret>& carets);
 
 // The character that closes `c` when it is typed over a selection: ( [ {
 // and the quotes " ' `. 0 for anything else.
@@ -87,14 +128,14 @@ Edit surround(const std::vector<Caret>& carets, char16_t opener);
 // below or above themselves, and the carets go with the copy below, or stay
 // on the copy above. Carets sharing a line make one block. Line breaks
 // copy the file's own ("\r\n" where the block ends in one).
-Edit duplicateLines(const std::u16string& text, const std::vector<Caret>& carets, bool down);
+Edit duplicateLines(const Text& text, const std::vector<Caret>& carets, bool down);
 
 // Move Line Down / Up: the whole lines each caret touches swap with the
 // line below (or above), carets and selections going with them. Carets on
 // neighbouring lines move as one block. Nothing moves if any block is
 // already at the end (or start) of the text. Every change keeps its
 // length, so the carets of one block never shift another's.
-Edit moveLines(const std::u16string& text, const std::vector<Caret>& carets, bool down);
+Edit moveLines(const Text& text, const std::vector<Caret>& carets, bool down);
 
 // ---- whole lines (Cmd+L, Ctrl+Shift+K, and Copy, Cut and Paste with
 // nothing selected, as in VS Code)
@@ -104,7 +145,7 @@ Edit moveLines(const std::u16string& text, const std::vector<Caret>& carets, boo
 // start (the head). A selection already ending at the start of a line (as
 // the last press left it) takes the next line too, so pressing again goes
 // on down. Selections that come to overlap merge.
-std::vector<Caret> expandLineSelection(const std::u16string& text,
+std::vector<Caret> expandLineSelection(const Text& text,
                                        const std::vector<Caret>& carets);
 
 // Delete Line (Ctrl+Shift+K): the whole lines each caret touches go, with
@@ -112,18 +153,18 @@ std::vector<Caret> expandLineSelection(const std::u16string& text,
 // the column it had (or that line's end); lines at the end of the text take
 // the break before them instead, and the caret goes to the line above.
 // Carets on the same or neighbouring lines make one block, with one caret.
-Edit deleteLines(const std::u16string& text, const std::vector<Caret>& carets);
+Edit deleteLines(const Text& text, const std::vector<Caret>& carets);
 
 // What Copy and Cut take when nothing is selected: the lines the carets are
 // on, each once, in order, each with its line break ("\n" added after a
 // last line that has none).
-std::u16string lineCopy(const std::u16string& text, const std::vector<Caret>& carets);
+std::u16string lineCopy(const Text& text, const std::vector<Caret>& carets);
 
 // Paste of such a copy with nothing selected: the text goes in at the start
 // of each caret's line, so above it, and the carets stay on their
 // characters. When the copy has one line per line holding a caret, each of
 // those lines gets one, in order; otherwise each gets all of it.
-Edit pasteLinesAbove(const std::u16string& text, const std::vector<Caret>& carets,
+Edit pasteLinesAbove(const Text& text, const std::vector<Caret>& carets,
                      const std::u16string& clip);
 
 // ---- the selected text, found again (Cmd+D, Shift+Cmd+L, as in VS Code)

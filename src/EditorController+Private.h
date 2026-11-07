@@ -635,6 +635,19 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)flushHighlighting;
 @end
 
+// EditorController+LargeFile.mm: large-file mode (LargeFile.h), its status
+// bar note, and the question before opening a file over 50 MB.
+@interface EditorController (LargeFile)
+- (void)noteLargeFileText:(NSString *)text;     // the tab on show, as read
+- (BOOL)largeFileFeaturesOff;                   // its colors, folds, wrap and server are off
+- (NSString *)languageServerPath:(NSString *)path;   // nil to keep it from the servers
+- (BOOL)languageServerMayRead:(MCTab *)tab;
+- (BOOL)confirmOpeningLargeFile:(NSString *)path;
+- (void)updateLargeFileNote;
+- (CGFloat)layoutLargeFileNoteEndingAt:(CGFloat)right;
+- (void)turnOnLargeFileFeatures:(id)sender;
+@end
+
 // EditorController+Settings.mm: the settings file: color swatches, opacity, Adjust Settings.
 @interface EditorController (Settings)
 - (BOOL)isSettingsFile;

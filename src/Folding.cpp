@@ -243,6 +243,14 @@ void byBrackets(const Lines& L, const std::vector<Token>& tokens, std::vector<Ra
     size_t tk = 0;   // the next token that may hold the position
     size_t line = 0;
     for (size_t i = 0; i < L.n; i++) {
+        // A line too long to lex (kMaxTokenizationLineLength) has no tokens
+        // to tell its code from its strings, so its brackets do not count:
+        // a quoted brace in a minified line would open a region to the end.
+        if (i == L.start(line) && L.end(line) - i > kMaxTokenizationLineLength + 2) {
+            i = L.end(line) - 1;
+            if (endsLine(L.t, L.n, i)) line++;
+            continue;
+        }
         const char16_t c = L.t[i];
         if (endsLine(L.t, L.n, i)) { line++; continue; }
         if (c != u'(' && c != u'[' && c != u'{' && c != u')' && c != u']' && c != u'}') continue;

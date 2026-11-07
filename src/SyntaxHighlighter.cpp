@@ -1,8 +1,9 @@
 // SyntaxHighlighter.cpp — hand-rolled lexer. Pure C++ standard library only.
 //
 // The lexer runs one line at a time (lexLine). A line is its text up to and
-// including its '\n'; the last line has none. Nothing in a line's lexing looks
-// past its own '\n', so a line's tokens depend only on its text and the state
+// including its break ('\n', a lone '\r' or U+2029, see endsLineAfter); the
+// last line has none. Nothing in a line's lexing looks past its own break,
+// so a line's tokens depend only on its text and the state
 // the line above ended in. SyntaxHighlighter::highlight lexes every line and
 // joins the pieces of tokens that cross lines; IncrementalHighlighter keeps
 // the per-line states and re-lexes only what an edit can have changed.
@@ -213,6 +214,45 @@ template <class Ch> inline bool isDigit(Ch c) { unsigned u = code(c); return u <
 template <class Ch> inline bool isAlnum(Ch c) { unsigned u = code(c); return u < 128 && std::isalnum((int)u); }
 template <class Ch> inline bool isIdentStart(Ch c) { return isAlpha(c) || c == Ch('_'); }
 template <class Ch> inline bool isIdentChar(Ch c)  { return isAlnum(c) || c == Ch('_'); }
+
+// ---- line breaks
+// A line ends after '\n', after a '\r' not followed by '\n' (an old Mac
+// file's breaks), and after U+2029 (in UTF-8 its three bytes, E2 80 A9), as
+// LineIndex, TextFind and NSTextView count lines; "\r\n" is one break. The
+// lexers are written for '\n', so lexAnyLine shows them that instead.
+//
+// How many units before a line's start decide whether it is one: a break
+// is at most this long.
+template <class Ch> constexpr size_t breakReach() { return sizeof(Ch) == 1 ? 3 : 1; }
+
+// Whether a line ends just after s[i], where s holds n units and i + 1 == n
+// is the end of the text.
+template <class Ch> inline bool endsLineAfter(const Ch* s, size_t n, size_t i) {
+    const unsigned c = code(s[i]);
+    if (c == '\n') return true;
+    if (c == '\r') return i + 1 >= n || s[i + 1] != Ch('\n');
+    if (sizeof(Ch) == 1)
+        return c == 0xA9 && i >= 2 && code(s[i - 1]) == 0x80 && code(s[i - 2]) == 0xE2;
+    return c == 0x2029;
+}
+
+// The break a line s[0, n) ends with: its length in units (2 for "\r\n"),
+// and whether it is one the lexers do not know ('\r' or U+2029). The last
+// line has none.
+template <class Ch> inline size_t breakAtEnd(const Ch* s, size_t n, bool* foreign) {
+    *foreign = false;
+    if (!n) return 0;
+    const unsigned c = code(s[n - 1]);
+    if (c == '\n') return n >= 2 && s[n - 2] == Ch('\r') ? 2 : 1;
+    *foreign = true;
+    if (c == '\r') return 1;
+    if (sizeof(Ch) == 1 && c == 0xA9 && n >= 3 && code(s[n - 2]) == 0x80 &&
+        code(s[n - 3]) == 0xE2)
+        return 3;
+    if (sizeof(Ch) == 2 && c == 0x2029) return 1;
+    *foreign = false;
+    return 0;
+}
 
 template <class Ch>
 bool matchesAt(const Ch* s, size_t n, size_t i, const std::string& tok) {
@@ -1382,6 +1422,33 @@ LexState lexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
     return LexState{};
 }
 
+// lexLine for any line of a text: s[0, n) is the line with its break, which
+// may be changed while it is read (the caller owns it; it is put back).
+// A '\r' or U+2029 break is read as '\n', and U+2029's other two UTF-8
+// bytes go to the token ending there, so the lexers see the line end they
+// were written for and tokens still cover the whole line. A line longer than
+// kMaxTokenizationLineLength (its break not counted) is not lexed: no tokens,
+// and it ends in the state it started in, as VS Code does past
+// editor.maxTokenizationLineLength.
+template <class Ch>
+LexState lexAnyLine(const SyntaxGrammar& d, Ch* s, size_t n, LexState in, size_t base,
+                    std::vector<Token>& out, std::string& word) {
+    bool foreign;
+    const size_t br = breakAtEnd(s, n, &foreign);
+    if (n - br > kMaxTokenizationLineLength) return in;
+    if (!foreign) return lexLine(d, (const Ch*)s, n, in, base, out, word);
+    const size_t at = n - br;          // where the break starts
+    const Ch was = s[at];
+    s[at] = Ch('\n');
+    const size_t before = out.size();
+    LexState st = lexLine(d, (const Ch*)s, at + 1, in, base, out, word);
+    s[at] = was;
+    if (br > 1)
+        for (size_t k = before; k < out.size(); ++k)
+            if (out[k].start + out[k].length == base + at + 1) out[k].length += br - 1;
+    return st;
+}
+
 } // namespace
 
 bool SyntaxHighlighter::supports(const std::string& ext) {
@@ -1392,16 +1459,19 @@ std::vector<Token> SyntaxHighlighter::highlight(const std::string& text,
                                                 const std::string& ext) {
     std::vector<Token> out;
     SyntaxGrammar d = makeGrammar(ext);
-    std::string word;
+    std::string word, line;
     LexState st;
     size_t ls = 0;
     const size_t n = text.size();
+    const char* t = text.data();
     while (true) {
-        size_t nl = text.find('\n', ls);
-        size_t le = nl == std::string::npos ? n : nl + 1;
+        size_t le = ls;
+        while (le < n && !endsLineAfter(t, n, le)) le++;
+        if (le < n) le++;
         size_t before = out.size();
         LexState in = st;
-        st = lexLine(d, text.data() + ls, le - ls, in, ls, out, word);
+        line.assign(t + ls, le - ls);   // lexAnyLine may write to its line
+        st = lexAnyLine(d, &line[0], line.size(), in, ls, out, word);
         // A line that starts inside a token continues the previous line's
         // last piece: join them, so a multi-line comment is one token. (In
         // TeX math the line may start with a command instead, not joined.)
@@ -1437,7 +1507,7 @@ void IncrementalHighlighter<Ch>::reset(const TextSource<Ch>& src,
     if (length_) src.read(0, length_, text.data());
     starts_.assign(1, 0);
     for (size_t i = 0; i < length_; ++i)
-        if (text[i] == Ch('\n')) starts_.push_back(i + 1);
+        if (endsLineAfter(text.data(), length_, i)) starts_.push_back(i + 1);
     states_.assign(starts_.size(), LexState{});
 
     std::vector<Token> scratch;
@@ -1446,7 +1516,7 @@ void IncrementalHighlighter<Ch>::reset(const TextSource<Ch>& src,
     LexState st;
     for (size_t k = 0; k < starts_.size(); ++k) {
         size_t a = starts_[k];
-        st = lexLine(*def_, text.data() + a, lineEnd(k) - a, st, a, sink, word);
+        st = lexAnyLine(*def_, text.data() + a, lineEnd(k) - a, st, a, sink, word);
         states_[k] = st;
         if (!out) scratch.clear();
     }
@@ -1460,9 +1530,13 @@ size_t IncrementalHighlighter<Ch>::relex(const TextSource<Ch>& src, size_t first
     size_t k = first;
     for (; k < starts_.size(); ++k) {
         size_t a = starts_[k], len = lineEnd(k) - a;
-        buf_.resize(len);
-        if (len) src.read(a, len, buf_.data());
-        st = lexLine(*def_, buf_.data(), len, st, a, out, word);
+        // A line too long to lex is not even read (lexAnyLine would give
+        // back the state it started in).
+        if (len <= kMaxTokenizationLineLength + breakReach<Ch>()) {
+            buf_.resize(len);
+            if (len) src.read(a, len, buf_.data());
+            st = lexAnyLine(*def_, buf_.data(), len, st, a, out, word);
+        }
         bool same = st == states_[k];
         states_[k] = st;
         // Past the edit, a line that ends the way it used to leaves every
@@ -1480,10 +1554,11 @@ void IncrementalHighlighter<Ch>::lineTokens(const TextSource<Ch>& src, size_t fi
     end = std::min(end, starts_.size());
     for (size_t k = first; k < end; ++k) {
         size_t a = starts_[k], len = lineEnd(k) - a;
+        if (len > kMaxTokenizationLineLength + breakReach<Ch>()) continue;   // never lexed
         buf_.resize(len);
         if (len) src.read(a, len, buf_.data());
-        lexLine(*def_, buf_.data(), len, k == 0 ? LexState{} : states_[k - 1], a, out,
-                word);
+        lexAnyLine(*def_, buf_.data(), len, k == 0 ? LexState{} : states_[k - 1], a, out,
+                   word);
     }
     if (buf_.capacity() > 1 << 16) std::vector<Ch>().swap(buf_);
 }
@@ -1510,23 +1585,37 @@ IncrementalHighlighter<Ch>::edit(const TextSource<Ch>& src, size_t pos,
         return r;
     }
 
-    // Line a holds the edit's start. Lines whose start lies in
-    // (pos, pos + oldLen] lost the '\n' before them and are gone.
-    auto firstGone = std::upper_bound(starts_.begin(), starts_.end(), pos);
-    auto keep = std::upper_bound(firstGone, starts_.end(), pos + oldLen);
+    // Whether a line starts at s depends on the units [s - reach, s] (a
+    // '\r' ends a line only when no '\n' follows it; U+2029 is three bytes
+    // in UTF-8). So the starts an edit can change are those in
+    // [pos, pos + oldLen + reach - 1] before it, which go, and those in
+    // [pos, pos + newLen + reach - 1] after it, found again (line 0 always
+    // starts at 0). Line a, the one before the first that goes, holds the
+    // edit's start.
+    const size_t reach = breakReach<Ch>();
+    const size_t from = std::max<size_t>(pos, 1);
+    auto firstGone = std::lower_bound(starts_.begin(), starts_.end(), from);
+    auto keep = std::upper_bound(firstGone, starts_.end(), pos + oldLen + reach - 1);
     const size_t a = (size_t)(firstGone - starts_.begin()) - 1;
     const size_t removed = (size_t)(keep - firstGone);
     // The last edited line ends where the last touched old line ended, so it
     // is compared against that line's old end state.
     const LexState tailState = states_[a + removed];
 
-    // Line starts inside the inserted text.
+    // Line starts in the new text's window.
     std::vector<size_t> added;
-    if (newLen) {
-        std::vector<Ch> ins(newLen);
-        src.read(pos, newLen, ins.data());
-        for (size_t j = 0; j < newLen; ++j)
-            if (ins[j] == Ch('\n')) added.push_back(pos + j + 1);
+    {
+        const size_t last = std::min(pos + newLen + reach - 1, total);   // the last start that may change
+        if (from <= last) {
+            const size_t lo = from > reach ? from - reach : 0;
+            const size_t hi = std::min(total, last + 1);
+            // The unit after each one looked at is in the window, so the
+            // window's end is taken for the text's only where it is.
+            std::vector<Ch> win(hi - lo);
+            if (hi > lo) src.read(lo, hi - lo, win.data());
+            for (size_t st = from; st <= last; ++st)
+                if (endsLineAfter(win.data(), win.size(), st - 1 - lo)) added.push_back(st);
+        }
     }
 
     // Shift the untouched lines below, then splice the edited ones in.
