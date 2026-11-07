@@ -175,11 +175,13 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     if (item.action == @selector(nextTourStop:) || item.action == @selector(previousTourStop:))
         return self.tourActive;
     if (item.action == @selector(exportPDF:)) return self.canExportPDF;
+    if (item.action == @selector(showLineInPDF:)) return self.canShowLineInPDF;
     if (item.action == @selector(toggleSidePreview:)) {
         item.state = [self sidePreviewShowing] ? NSControlStateValueOn : NSControlStateValueOff;
         return self.canToggleSidePreview;
     }
     if (item.action == @selector(togglePlayback:)) return self.canTogglePlayback;
+    if (item.action == @selector(forgetFolderToolsAnswer:)) return self.canForgetFolderToolsAnswer;
     if (item.action == @selector(toggleProblems:)) {
         item.state = self.problemsVisible ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;

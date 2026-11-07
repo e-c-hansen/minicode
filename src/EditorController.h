@@ -163,6 +163,8 @@
 @interface EditorController (Rendering)
 - (void)exportPDF:(id)sender;         // Shift+Cmd+S LaTeX: save the typeset PDF
 @property(nonatomic, readonly) BOOL canExportPDF;
+- (void)showLineInPDF:(id)sender;     // Option+Cmd+J LaTeX: the caret's line on the page
+@property(nonatomic, readonly) BOOL canShowLineInPDF;
 - (void)togglePlayback:(id)sender;     // Shift+Cmd+Space play or pause video/audio
 @property(nonatomic, readonly) BOOL canTogglePlayback;
 @end
@@ -236,6 +238,10 @@
 - (void)showLanguageServers:(id)sender;     // the servers popover (status bar click)
 - (void)restartLanguageServer:(id)sender;   // the open file's server
 - (void)selectPythonInterpreter:(id)sender; // the Python server's interpreter
+// Ask Again About This Folder's Tools: forget the folder's answer about
+// running its own .venv and node_modules programs; enabled while it has one.
+- (void)forgetFolderToolsAnswer:(id)sender;
+@property(nonatomic, readonly) BOOL canForgetFolderToolsAnswer;
 @end
 
 // EditorController+Agents.mm

@@ -120,8 +120,9 @@ goes here first, with tests; the GUI only displays it.
   (the block behind a preview click), `MarkdownTasks` (task lists), `MathTex`
   (the Markdown math batch), `MermaidDiagram` (```mermaid blocks for mmdc),
   `LatexDoc` (editable ranges of LaTeX source), `LatexScratch` (the
-  preview's output folders and sibling records),
-  `SyncTex` (page point to source lines), `Json`, `IdeLink` (the Claude Code
+  preview's output folders and sibling records), `LatexLog` (tectonic's
+  problems with their files and lines),
+  `SyncTex` (page point to source lines, and line to boxes), `Json`, `IdeLink` (the Claude Code
   IDE link: WebSocket, MCP, lock file).
 - `Settings` (the settings file, themes, every resolved color), `Commands` (the
   command registry and keys.conf), `EditorTabs` (tab rules), `Backups` (backups
@@ -167,7 +168,12 @@ goes here first, with tests; the GUI only displays it.
   Find in Folder's colors, icon buttons and inputs), `MultiCaretView`, `EditingCommands`
   (AutoIndent and KeepSorted on an NSTextView), `MarkdownCode` (code colors in
   previews).
-- Language servers: `Lsp.mm` (`LspSession`, one per window), `LspServer`
+- Language servers: `Lsp.mm` (`LspSession`, one per window, split into
+  categories as EditorController is: `Lsp+Servers`, `Lsp+Python`, `Lsp+Sync`
+  (documents and watched files), `Lsp+Diagnostics`, `Lsp+Completion`,
+  `Lsp+Navigation` (definition, hover, symbols), `Lsp+Actions` (rename,
+  references, code actions), `Lsp+WorkspaceEdit`; `Lsp+Private.h` and the
+  `Lsp+<Concern>Ivars.h` follow the rules below), `LspServer`
   (processes), `LspPopups` (completion, hover, signature), `LspShared.h` (only
   the Lsp files import it), `LspPanel` (status item, popover, interpreter
   sheet), `LspPicker` (references and fixes list, rename box), `LspWatcher`
@@ -227,7 +233,11 @@ stays warning-free:
   property or ivar (`MCEditorFind`, `MCFolds`, `MCAgentSession`). The
   `structure:ivars` core test fails on a shared variable fewer than two
   categories use, an ivar header `EditorController.mm` does not import, or a
-  category using another's ivars.
+  category using another's ivars. LspSession is split the same way
+  (2026-11-07: `Lsp+Private.h`, `Lsp+<Concern>Ivars.h`, `Lsp.mm` laying them
+  out) and the same test checks it; a category reaches another's state
+  through a method declared in `Lsp+Private.h` (detachDocument asks each
+  category to forget its requests), never its ivars.
 - Methods the rest of the app calls go in `EditorController.h` in an
   `@interface EditorController (Concern)` named for the implementing category:
   a method the class declares but a category implements draws warnings. For the
@@ -606,8 +616,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   actionName:` (Lsp.h): `replaceSourceWithText:actionName:` (Format
   Document, the inline agent, a clean tab following the disk, a pending
   sort), several carets (`MCMultiCarets applyEdit:`) and Replace All; the
-  workspace edit applier and completion's extra edits (Lsp.mm) have the same
-  shape. One `shouldChangeTextInRanges`, each range its own storage edit,
+  workspace edit applier and completion's extra edits (Lsp+WorkspaceEdit.mm,
+  Lsp+Completion.mm) have the same shape. One `shouldChangeTextInRanges`, each range its own storage edit,
   last first, one `didChangeText`, so layout runs once and the highlighter,
   folds, squiggles, gutter, Go Back and server follow each edit. Never wrap
   them in `beginEditing`/`endEditing`: the storage then reports one edit from
@@ -1113,8 +1123,9 @@ container (PanelHost, laid out by hand in layoutContainer)
 ## LSP (read before touching it)
 
 The protocol is `LspClient.cpp`, tested against a scripted server; on the Mac
-`Lsp.mm` (`LspSession`), `LspServer.mm`, `LspPopups.mm` and `CodeTextView.mm`
-own processes and UI; the GTK port has `linux/src/Lsp.cpp` over the same core.
+`Lsp.mm` and its `Lsp+<Concern>.mm` categories (`LspSession`; "Layout of the
+code" lists them), `LspServer.mm`, `LspPopups.mm` and `CodeTextView.mm` own
+processes and UI; the GTK port has `linux/src/Lsp.cpp` over the same core.
 GTK trap: a popover parented to a `GtkTextView` must be unparented before the
 view is disposed (on `unrealize`), or dispose loops forever.
 
@@ -1218,7 +1229,10 @@ view is disposed (on `unrealize`), or dispose loops forever.
   `MCAppDefaults()`) is "allow"; the install bar asks first (Use It, Don't Use
   It, × for this launch). Run File, which the user starts, still uses it
   (`pythonInterpreterWithSource:`). Format Document shares the answer (see
-  "Formatting").
+  "Formatting"). minicode > Ask Again About This Folder's Tools (and Ask
+  Again in the Language Servers popover, which sends the same action) takes
+  it back (`MCForgetFolderToolsConsent`) and clears a × put-off, so the bar
+  asks at once (`make guitest SUITES=tools_consent`).
 - **Completion** opens after `.`/`->`/`::` and on a word's second letter; an
   `isIncomplete` list is asked again. `Lsp::completionKeyAccepts`: Tab takes;
   Return only when asked for (Ctrl+Space, Option+Esc), after a trigger
@@ -1537,6 +1551,21 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
   the buffer's. Trap: a synthetic `NSEvent` for Shift+Cmd+S with "s" matched
   Save and wrote the file, with "S" nothing; `CGEventCreateKeyboardEvent`
   behaves like hardware.
+- **Forward search** (Option+Cmd+J, `showLineInPDF:`, LaTeX Workshop's
+  `latex-workshop.synctex`): `SyncTexIndex::boxesForLine` lights the lines of
+  text holding the glue, kerns and void boxes the caret's line set (never a
+  line box's own record, which names the line its paragraph ended on), on
+  the first page it reached, else the nearest line below or above within
+  40; square annotations for 1.5 s. It waits for a typeset when the PDF is
+  not the buffer's (`_forwardLine`, run from `showDocument:`).
+- **Problems on lines**: `LatexLog` reads tectonic's `error: file:line:
+  message` summary (TeX's `! ...` blocks with `l.N` and the open-file
+  parentheses only when no summary placed anything); the sibling's name is
+  the document, an `\input` name is found as TeX finds it. The failure panel
+  lists them above the log, each place a `minicode-latex-problem:<n>` link
+  (`onOpenProblem`, goToLine); while the source shows and is still the text
+  that failed, they are `CodeTextView buildMarks`, gutter dots that follow
+  edits and that no language server's publish replaces.
 - tectonic's bundle is older than Overleaf's: a missing package (`twemojis`)
   goes in the document's folder, and since tectonic discards docstrip's output,
   a script keeping a `.dtx`'s code lines made the `.sty`. Spacing differs from
@@ -2088,15 +2117,29 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   task. Cmd+Return in the bar makes any request a task. `MCAgentContext`
   carries blocks, so the bar knows nothing of the views. `MCAgentRun` runs
   `/bin/zsh -l -c 'exec <agent.command> -p --tools Read,Grep,Glob
-  --no-session-persistence --output-format text'` in the folder, the prompt on
-  stdin (written off the main thread: a big buffer outgrows a pipe), five
-  minutes at most, exit 127 as not installed. The prompt
+  --no-session-persistence --output-format stream-json --verbose
+  --include-partial-messages'` in the folder, the prompt on stdin (written off
+  the main thread: a big buffer outgrows a pipe), five minutes at most, exit
+  127 as not installed. stdout is read as it comes into `InlineAgent::Stream`
+  on a serial queue of its own (text deltas, tool calls, the result line; no
+  JSON at all means plain text, as the GUI suites' stand-ins print), and a
+  `preview` of it reaches the bar at most every 80 ms. The prompt
   (`InlineAgent::editPrompt`) asks for SEARCH/REPLACE blocks or an answer;
-  `applyEdits` matches each SEARCH ever more loosely about whitespace, nearest
-  the cursor, all or nothing, so typing elsewhere meanwhile does no harm. The
-  edit goes in through `replaceSourceWithText:`, tinted; Return keeps; Esc
-  restores the text from before the bar's first edit if the buffer is as the
-  agent left it. Commands are typed, never run. Tasks write the prompt to
+  `applyEdits` matches each SEARCH ever more loosely about whitespace, all or
+  nothing, so typing elsewhere meanwhile does no harm; a SEARCH found in
+  several places is taken only where exactly one touches the selection (a
+  caret: holds it), else refused (D22, 2026-11-07), and after a match that
+  ignored indentation the REPLACE lines are re-indented to the file's. **The
+  edit is pending, not made**: the session keeps every request's blocks
+  (`_rounds`) and what they make of the buffer (`pendingText`), the bar shows
+  `InlineAgent::pendingDiff` (SideBySide's rows and word changes), the lines
+  it replaces are tinted red; Return (Keep) applies the rounds again to the
+  buffer as it is then and puts the result in through `replaceSourceWithText:`
+  as one undo step; Esc drops it, nothing to restore. A bar closed from
+  elsewhere with an edit waiting says in the status bar that it was not made.
+  Commands are typed, never run. `make guitest SUITES=agent_panel` streams
+  `tests/fixtures/claude/stream` (written to the SDK's message shapes, not
+  recorded) through a stand-in script; never run the real Claude Code there. Tasks write the prompt to
   `$TMPDIR/MiniCode-agent/` and run `cd <root> && <agent.command> "$(cat
   file)"` in a new terminal tab. Traps: `NSTextView string` is the live
   storage, so "the text before" must be a copy; the bar's place uses line
@@ -2304,7 +2347,8 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   cwd is elsewhere is read for 64 KB once. Not thread-safe: copy rows out.
   `AgentEvidence`: every Bash call, test commands recognised anywhere in a
   chain past env, time, timeout and assignments (pytest forms, make test and
-  check, ctest, npm/pnpm/yarn test, cargo test, go test), their summaries read
+  check, ctest, npm/pnpm/yarn test, cargo test, go test, python -m unittest,
+  tox, nox, jest and vitest, through npx, uvx and the like), their summaries read
   from the tail, no verdicts. Paths: `~/.claude/projects`
   (`$MINICODE_CLAUDE_PROJECTS`), the `/private/tmp/claude-<uid>` scratchpads
   (`$MINICODE_CLAUDE_TMP`). Fixtures: `tests/fixtures/claude`.

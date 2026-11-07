@@ -398,7 +398,8 @@ const CGFloat kMCInstallBarHeight = 30;
          "programs from it only if you allow it.", env];
     _label.toolTip = [NSString stringWithFormat:
         @"Without it, completions and checks do not see the packages installed in %@. "
-         "The answer is kept for this folder; Select Python Interpreter changes it later.", env];
+         "The answer is kept for this folder; Ask Again About This Folder's Tools in the "
+         "minicode menu takes it back.", env];
     [self setButtons:@"Use It" mute:@"Don't Use It"
                close:@"Ask again next time minicode starts"];
 }

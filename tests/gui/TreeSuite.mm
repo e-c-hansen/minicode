@@ -63,12 +63,15 @@ BOOL RowColored(EditorController *c, NSString *path, NSColor *color) {
     return cell && SameColor(cell.textField.textColor, color);
 }
 
-// The listings of folders inside `repo` since `from` (an index into
-// MCTreeListedFolders, which keeps the last 500).
+// The listings of folders inside `repo` since `from`, a value of
+// MCTreeListingCount (which only grows). MCTreeListedFolders keeps only the
+// last 500, so an index into it stopped moving once earlier suites had
+// filled it, and a full run saw nothing listed.
 NSArray<NSString *> *ListedSince(NSUInteger from, NSString *repo) {
     NSArray<NSString *> *all = MCTreeListedFolders();
+    const NSUInteger fresh = MCTreeListingCount() - from;
     NSMutableArray<NSString *> *mine = [NSMutableArray array];
-    for (NSUInteger i = MIN(from, all.count); i < all.count; i++)
+    for (NSUInteger i = all.count > fresh ? all.count - fresh : 0; i < all.count; i++)
         if ([all[i] isEqualToString:repo] || [all[i] hasPrefix:[repo stringByAppendingString:@"/"]])
             [mine addObject:all[i]];
     return mine;
@@ -202,7 +205,7 @@ MC_GUI_SUITE(tree) {
     MCGuiStep(@"select b.txt; make src/c.txt on disk", ^{
         [c.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)RowOf(c, file(@"src/b.txt"))]
                byExtendingSelection:NO];
-        mark = MCTreeListedFolders().count;
+        mark = MCTreeListingCount();
         MCGuiWriteFile(file(@"src/c.txt"), @"charlie\n");
     });
     MCGuiWait(@"c.txt shows", 10, ^BOOL { return RowOf(c, file(@"src/c.txt")) >= 0; });
@@ -215,14 +218,14 @@ MC_GUI_SUITE(tree) {
         GCHECK([c.outline isItemExpanded:ItemAt(c, docs)]);
         FileItem *sel = c.outline.selectedRow >= 0 ? [c.outline itemAtRow:c.outline.selectedRow] : nil;
         GCHECK_EQ_STR(sel.path, file(@"src/b.txt"));
-        mark = MCTreeListedFolders().count;
+        mark = MCTreeListingCount();
         [[NSFileManager defaultManager] removeItemAtPath:file(@"src/c.txt") error:nil];
     });
     MCGuiWait(@"c.txt goes", 10, ^BOOL { return RowOf(c, file(@"src/c.txt")) < 0; });
     MCGuiStep(@"again only src", ^{
         NSArray<NSString *> *listed = ListedSince(mark, repo);
         GCHECK([[NSSet setWithArray:listed] isEqualToSet:[NSSet setWithObject:src]]);
-        mark = MCTreeListedFolders().count;
+        mark = MCTreeListingCount();
         // A file at the top: the root is listed, and src stays open.
         MCGuiWriteFile(file(@"top.txt"), @"t\n");
     });
@@ -234,7 +237,7 @@ MC_GUI_SUITE(tree) {
         FileItem *sel = c.outline.selectedRow >= 0 ? [c.outline itemAtRow:c.outline.selectedRow] : nil;
         GCHECK_EQ_STR(sel.path, file(@"src/b.txt"));
         // A file deep in a folder never opened lists nothing at all.
-        mark = MCTreeListedFolders().count;
+        mark = MCTreeListingCount();
         MCGuiWriteFile(file(@"build/obj/x/y.o"), @"y\n");
     });
     MCGuiPause(1.0);   // before a negative check: nothing is to be listed
@@ -388,7 +391,7 @@ MC_GUI_SUITE(tree) {
     // --- a burst of changes costs a few listings of the one folder
     MCGuiPause(1.0);   // the drops' own changes arrive first
     MCGuiStep(@"200 files written in src at once", ^{
-        mark = MCTreeListedFolders().count;
+        mark = MCTreeListingCount();
         for (int i = 0; i < 200; i++)
             MCGuiWriteFile(file([NSString stringWithFormat:@"src/burst/f%03d.txt", i]), @"x\n");
     });
