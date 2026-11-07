@@ -24,9 +24,20 @@ static void *kMediaItemContext = &kMediaItemContext;
 
 // A file's diff in the editor's slot, read-only and colored, the way an
 // image or a PDF takes it. Opening any file puts the editor back.
+// The same file's diff again (after a hunk is staged or discarded) keeps
+// its place, so the next hunk is where the eye already is.
 - (void)showDiffNamed:(NSString *)name path:(NSString *)path data:(NSData *)diff {
     (void)path;
+    const BOOL again = self.isDiff && !self.diffIsCommit && !_activeTab.comparison &&
+                       !_activeTab.page && [self.diffName isEqualToString:name];
+    const NSPoint place = self.diffScroll.contentView.bounds.origin;
     [self showDiffTitled:name data:diff commit:NO];
+    if (!again || place.y <= 0) return;
+    NSRect want = self.diffScroll.contentView.bounds;
+    want.origin = place;
+    [self.diffView.layoutManager ensureLayoutForBoundingRect:NSInsetRect(want, 0, -want.size.height)
+                                             inTextContainer:self.diffView.textContainer];
+    [self.diffView scrollPoint:place];
 }
 
 // A commit from the graph, the same way: its header and message, then its
@@ -69,6 +80,8 @@ static void *kMediaItemContext = &kMediaItemContext;
         tv.horizontallyResizable = NO;   // long lines wrap, as in the editor
         tv.autoresizingMask = NSViewWidthSizable;
         tv.textContainer.widthTracksTextView = YES;
+        // The hunk actions are links that keep their own color.
+        tv.linkTextAttributes = @{NSCursorAttributeName: [NSCursor pointingHandCursor]};
         scroll.documentView = tv;
         [self.rightArea addSubview:scroll positioned:NSWindowBelow
                         relativeTo:self.termDivider];
@@ -96,9 +109,14 @@ static void *kMediaItemContext = &kMediaItemContext;
         return;
     }
     NSFont *mono = MCMonoFont(12.5, NSFontWeightRegular);
+    // The panel's own diff comes with its hunk actions, which the panel runs
+    // as the view's delegate.
+    NSAttributedString *withActions =
+        self.diffIsCommit ? nil : [self.gitPanel diffTextFor:self.diffData font:mono];
+    self.diffView.delegate = withActions ? self.gitPanel.diffDelegate : nil;
     [self.diffView.textStorage setAttributedString:
-        self.diffIsCommit ? MCGitCommitText(self.diffData, mono)
-                          : MCGitDiffText(self.diffData, mono)];
+        withActions ?: self.diffIsCommit ? MCGitCommitText(self.diffData, mono)
+                                         : MCGitDiffText(self.diffData, mono)];
 }
 
 // ------------------------------------------------------------ file rendering

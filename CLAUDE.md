@@ -1957,8 +1957,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 - **What runs**: status, diff, add, restore --staged, commit -m, rm --cached
   --force before the first commit, and for the graph for-each-ref, log,
   rev-list, show, rev-parse; `remote` with each status; on the Mac fetch, pull
-  and push (below), Stage All (`add -A -- .`), Unstage All, `switch` and
-  Discard's `restore --worktree` (below). Never a shell string: `MCGitRunSync`
+  and push (below), Stage All (`add -A -- .`), Unstage All, `switch`,
+  Discard's `restore --worktree` and the hunks' `apply` (below). Never a shell string: `MCGitRunSync`
   `posix_spawn`s an argument vector in the top level. Paths after `--`; add,
   restore and rm get `--literal-pathspecs` (`sp*ecial.txt` never stages
   `spXecial.txt`). Status `--porcelain=v2 --branch -z --untracked-files=all`;
@@ -2018,6 +2018,22 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   one is switched to with `switch -c <name> --track <remote>/<name>`. Tests
   swap `trashItemAtURL:` for a scratch folder, since the real Trash may be
   the user's own whatever HOME says.
+- **Hunks and lines** (Mac, 2026-11-07; `GitUi::buildPatch`, `hunkPlan`,
+  `diffTextWithActions`, tested in `git-ui:hunk-patch`, `line-patch`; GUI
+  `git_hunks`). The panel's diff shows Stage Hunk and Discard Hunk (Unstage
+  Hunk in a staged diff) as links after each hunk header, on the same line,
+  so line i of the text stays line i of git's output (the menu maps a
+  selection to lines by counting newlines). The panel is the diff view's
+  delegate (links, and the hunk's and selected lines' items in its menu)
+  and styles only the diff it showed last (`_shownDiff`, by NSData
+  identity); commits get no delegate. The patch goes to `git apply
+  [--cached] [--reverse] --whitespace=nowarn -` on stdin
+  (`MCGitRunSyncWithInput`), built from the diff text with the applied-to
+  side's numbers kept and the other's recomputed; a stale diff fails in git
+  and is said so (`hunkFailureText`), then shown again. Discard Hunk asks,
+  and first puts a copy of the file in the Trash (by way of a temporary
+  folder, so the Trash names it as the file), which Undo Discard puts back.
+  New, deleted, binary and conflicted files are staged whole.
 - **Threads**: a serial queue per panel; results dropped if the root changed or
   a newer diff was asked. `refresh` coalesces 50 ms, only while in a window (on
   show, after actions, on window key, on the tree's FSEvents).

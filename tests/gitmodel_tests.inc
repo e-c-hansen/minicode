@@ -623,4 +623,192 @@ static void testGitModel() {
         CHECK(switchedText("x", false) == "Switched to x." &&
               switchedText("x", true) == "Created x and switched to it.");
     }
+
+    GROUP("git-ui:hunk-patch");
+    {
+        const std::string hdr = "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n";
+        // Lines: 0 diff, 1 index, 2 ---, 3 +++, 4 @@, 5 a, 6 -b, 7 +B, 8 c,
+        // 9 d, 10 @@, 11 j, 12 k, 13 +k2, 14 +k3, 15 l.
+        const std::string two =
+            "diff --git a/f.txt b/f.txt\nindex 1111111..2222222 100644\n--- a/f.txt\n"
+            "+++ b/f.txt\n@@ -1,4 +1,4 @@\n a\n-b\n+B\n c\n d\n@@ -10,3 +10,5 @@ fn\n"
+            " j\n k\n+k2\n+k3\n l\n";
+        std::vector<DiffHunk> hs = diffHunks(two);
+        CHECK(hs.size() == 2 && hs[0].firstLine == 4 && hs[0].lineCount == 6 &&
+              hs[1].firstLine == 10 && hs[1].lineCount == 6 && hs[1].hunk == 1 &&
+              hs[0].file == 0 && hs[0].kinds == "@ -+  ");
+        CHECK(hunkAt(hs, 4) == 0 && hunkAt(hs, 9) == 0 && hunkAt(hs, 15) == 1 &&
+              hunkAt(hs, 3) == -1 && hunkAt(hs, 16) == -1);
+        CHECK(hs[1].changes(13) && !hs[1].changes(12) && !hs[1].changes(10));
+
+        // The second hunk alone, staged: the index's numbers stand.
+        std::string why;
+        CHECK(buildPatch(two, HunkOp::Stage, 10, 15, &why) ==
+              hdr + "@@ -10,3 +10,5 @@\n j\n k\n+k2\n+k3\n l\n");
+        CHECK(why.empty());
+        // Both hunks in one patch.
+        CHECK(buildPatch(two, HunkOp::Stage, 0, 15, nullptr) ==
+              hdr + "@@ -1,4 +1,4 @@\n a\n-b\n+B\n c\n d\n"
+                    "@@ -10,3 +10,5 @@\n j\n k\n+k2\n+k3\n l\n");
+        // The plans: one hunk from any of its lines, and what each runs.
+        HunkPlan st = hunkPlan(two, DiffSide::Changes, HunkOp::Stage, 12, 12, false);
+        CHECK(st.refusal.empty() && st.path == "f.txt" && st.question.empty() &&
+              st.patch == hdr + "@@ -10,3 +10,5 @@\n j\n k\n+k2\n+k3\n l\n");
+        CHECK(st.args == std::vector<std::string>({"apply", "--cached", "--whitespace=nowarn", "-"}));
+        CHECK(st.doneText == "Staged a hunk of f.txt.");
+        HunkPlan un = hunkPlan(two, DiffSide::Staged, HunkOp::Unstage, 4, 4, false);
+        CHECK(un.args == std::vector<std::string>({"apply", "--cached", "--reverse",
+                                                   "--whitespace=nowarn", "-"}));
+        CHECK(un.patch == hdr + "@@ -1,4 +1,4 @@\n a\n-b\n+B\n c\n d\n");
+        HunkPlan dis = hunkPlan(two, DiffSide::Changes, HunkOp::Discard, 6, 6, false);
+        CHECK(dis.args == std::vector<std::string>({"apply", "--reverse", "--whitespace=nowarn", "-"}));
+        CHECK(dis.question == "Discard this hunk of f.txt?" && dis.button == "Discard Hunk" &&
+              dis.detail.find("Undo Discard") != std::string::npos);
+        // Wrong side, outside any hunk.
+        CHECK(!hunkPlan(two, DiffSide::Staged, HunkOp::Stage, 6, 6, false).refusal.empty());
+        CHECK(hunkPlan(two, DiffSide::Changes, HunkOp::Unstage, 6, 6, false).args.empty());
+        CHECK(!hunkPlan(two, DiffSide::Untracked, HunkOp::Stage, 6, 6, false).refusal.empty());
+        CHECK(hunkPlan(two, DiffSide::Changes, HunkOp::Stage, 1, 1, false).refusal ==
+              "Put the caret in a hunk first.");
+        CHECK(hunkOps(DiffSide::Changes) == std::vector<HunkOp>({HunkOp::Stage, HunkOp::Discard}));
+        CHECK(hunkOps(DiffSide::Staged) == std::vector<HunkOp>({HunkOp::Unstage}));
+        CHECK(hunkOps(DiffSide::Untracked).empty());
+        CHECK(hunkOpTitle(HunkOp::Unstage, false) == "Unstage Hunk" &&
+              hunkOpTitle(HunkOp::Discard, true) == "Discard Selected Lines");
+        Row wr; wr.path = "f.txt";
+        Row sr = wr; sr.staged = true;
+        Row ur = wr; ur.untracked = true;
+        CHECK(diffSideOf(wr) == DiffSide::Changes && diffSideOf(sr) == DiffSide::Staged &&
+              diffSideOf(ur) == DiffSide::Untracked);
+
+        // A hunk header with its counts left out (one line), at the start.
+        const std::string one = "diff --git a/o b/o\n--- a/o\n+++ b/o\n@@ -1 +1,2 @@\n a\n+b\n";
+        CHECK(buildPatch(one, HunkOp::Stage, 3, 5, nullptr) ==
+              "diff --git a/o b/o\n--- a/o\n+++ b/o\n@@ -1,1 +1,2 @@\n a\n+b\n");
+
+        // A staged rename: unstaging a hunk changes the file under its new name.
+        const std::string ren =
+            "diff --git a/old.txt b/new.txt\nsimilarity index 80%\nrename from old.txt\n"
+            "rename to new.txt\nindex 1111111..2222222 100644\n--- a/old.txt\n+++ b/new.txt\n"
+            "@@ -1,3 +1,3 @@\n x\n-y\n+Y\n z\n";
+        HunkPlan rp = hunkPlan(ren, DiffSide::Staged, HunkOp::Unstage, 9, 9, false);
+        CHECK(rp.path == "new.txt" &&
+              rp.patch == "diff --git a/new.txt b/new.txt\n--- a/new.txt\n+++ b/new.txt\n"
+                          "@@ -1,3 +1,3 @@\n x\n-y\n+Y\n z\n");
+
+        // The end of a file with no newline: the marker follows its line.
+        const std::string nonl =
+            "diff --git a/n.txt b/n.txt\n--- a/n.txt\n+++ b/n.txt\n@@ -1,2 +1,3 @@\n a\n-b\n"
+            "\\ No newline at end of file\n+b\n+c\n\\ No newline at end of file\n";
+        CHECK(buildPatch(nonl, HunkOp::Stage, 3, 9, nullptr) ==
+              "diff --git a/n.txt b/n.txt\n--- a/n.txt\n+++ b/n.txt\n@@ -1,2 +1,3 @@\n a\n-b\n"
+              "\\ No newline at end of file\n+b\n+c\n\\ No newline at end of file\n");
+
+        // Files that are staged or unstaged whole, and a conflict.
+        const std::string added = "diff --git a/n b/n\nnew file mode 100644\nindex 0000000..1111111\n"
+                                  "--- /dev/null\n+++ b/n\n@@ -0,0 +1,2 @@\n+a\n+b\n";
+        CHECK(hunkPlan(added, DiffSide::Staged, HunkOp::Unstage, 5, 5, false).refusal ==
+              "n is a new file: stage or unstage it whole.");
+        const std::string gone = "diff --git a/g b/g\ndeleted file mode 100644\nindex 1111111..0000000\n"
+                                 "--- a/g\n+++ /dev/null\n@@ -1 +0,0 @@\n-a\n";
+        CHECK(hunkPlan(gone, DiffSide::Changes, HunkOp::Stage, 5, 5, false).refusal.find("deleted") !=
+              std::string::npos);
+        const std::string cc = "diff --cc c.txt\nindex 1111111,2222222..0000000\n--- a/c.txt\n"
+                               "+++ b/c.txt\n@@@ -1,1 -1,1 +1,5 @@@\n++<<<<<<< HEAD\n + a\n"
+                               "++=======\n+ b\n++>>>>>>> x\n";
+        CHECK(hunkPlan(cc, DiffSide::Changes, HunkOp::Stage, 4, 4, false).refusal.find("conflict") !=
+              std::string::npos);
+        CHECK(hunkPlan("Binary files a/p.png and b/p.png differ\n", DiffSide::Changes,
+                       HunkOp::Stage, 0, 0, false).refusal == "Put the caret in a hunk first.");
+        // A path git quotes is quoted again in the patch.
+        const std::string q = "diff --git \"a/a\\\"b.txt\" \"b/a\\\"b.txt\"\n--- \"a/a\\\"b.txt\"\n"
+                              "+++ \"b/a\\\"b.txt\"\n@@ -1 +1 @@\n-x\n+y\n";
+        HunkPlan qp = hunkPlan(q, DiffSide::Changes, HunkOp::Stage, 3, 3, false);
+        const std::string qWant = "diff --git \"a/a\\\"b.txt\" \"b/a\\\"b.txt\"\n--- \"a/a\\\"b.txt\"\n";
+        CHECK(qp.path == "a\"b.txt" && qp.patch.compare(0, qWant.size(), qWant) == 0);
+
+        CHECK(hunkFailureText(1, "", "error: patch failed: f.txt:1\nerror: f.txt: patch does not apply",
+                              "src/f.txt") ==
+              "f.txt changed since this diff was shown, so nothing was done. "
+              "The diff now shows it as it is.");
+        CHECK(hunkFailureText(128, "", "fatal: not a git repository", "f.txt") ==
+              "fatal: not a git repository");
+
+        // The actions on the hunk headers, and the text keeps one line per diff line.
+        std::vector<DiffAction> acts;
+        StyledText t = diffTextWithActions(two, DiffSide::Changes, acts);
+        CHECK(acts.size() == 4 && acts[0].line == 4 && acts[0].op == HunkOp::Stage &&
+              acts[1].op == HunkOp::Discard && acts[2].line == 10);
+        const std::vector<std::string> cs = gitUiChars(t.text);
+        auto words = [&](const DiffAction& a) {
+            std::string s;
+            for (size_t k = a.start; k < a.start + a.length && k < cs.size(); ++k) s += cs[k];
+            return s;
+        };
+        CHECK(words(acts[0]) == "Stage Hunk" && words(acts[3]) == "Discard Hunk");
+        CHECK(std::count(t.text.begin(), t.text.end(), '\n') == 16);
+        CHECK(t.text.find("@@ -10,3 +10,5 @@ fn    Stage Hunk \xC2\xB7 Discard Hunk\n") !=
+              std::string::npos);
+        CHECK(diffTextWithActions(two, DiffSide::Staged, acts).text.find("Unstage Hunk") !=
+                  std::string::npos && acts.size() == 2 && acts[1].op == HunkOp::Unstage);
+        CHECK(diffTextWithActions(two, DiffSide::Untracked, acts).text == diffText(two).text &&
+              acts.empty());
+        diffTextWithActions(added, DiffSide::Staged, acts);
+        CHECK(acts.empty());
+        CHECK(diffTextWithActions("", DiffSide::Changes, acts).text == "No differences to show.");
+    }
+
+    GROUP("git-ui:line-patch");
+    {
+        const std::string hdr = "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n";
+        const std::string two =
+            "diff --git a/f.txt b/f.txt\nindex 1111111..2222222 100644\n--- a/f.txt\n"
+            "+++ b/f.txt\n@@ -1,4 +1,4 @@\n a\n-b\n+B\n c\n d\n@@ -10,3 +10,5 @@ fn\n"
+            " j\n k\n+k2\n+k3\n l\n";
+        std::string why;
+        // Staging one added line: the other is left out.
+        CHECK(buildPatch(two, HunkOp::Stage, 13, 13, &why) ==
+              hdr + "@@ -10,3 +10,4 @@\n j\n k\n+k2\n l\n");
+        // One removed line: its replacement is left out, so the line goes.
+        CHECK(buildPatch(two, HunkOp::Stage, 6, 6, nullptr) == hdr + "@@ -1,4 +1,3 @@\n a\n-b\n c\n d\n");
+        // Across two hunks: a removed line not chosen stays as context, and
+        // the second hunk's new start moves by the line the first adds.
+        CHECK(buildPatch(two, HunkOp::Stage, 7, 13, nullptr) ==
+              hdr + "@@ -1,4 +1,5 @@\n a\n b\n+B\n c\n d\n@@ -10,3 +11,4 @@\n j\n k\n+k2\n l\n");
+        // Reversed (unstage, discard): an added line not chosen stays as
+        // context and a removed one is left out; the + side keeps its numbers.
+        CHECK(buildPatch(two, HunkOp::Unstage, 13, 13, nullptr) ==
+              hdr + "@@ -10,4 +10,5 @@\n j\n k\n+k2\n k3\n l\n");
+        CHECK(buildPatch(two, HunkOp::Discard, 6, 6, nullptr) ==
+              hdr + "@@ -1,5 +1,4 @@\n a\n-b\n B\n c\n d\n");
+        CHECK(buildPatch(two, HunkOp::Discard, 7, 13, nullptr) ==
+              hdr + "@@ -1,3 +1,4 @@\n a\n+B\n c\n d\n@@ -9,4 +10,5 @@\n j\n k\n+k2\n k3\n l\n");
+        // Context only, or nothing: refused.
+        CHECK(buildPatch(two, HunkOp::Stage, 11, 12, &why).empty() &&
+              why == "Choose lines that changed (the + and - lines) first.");
+        HunkPlan lp = hunkPlan(two, DiffSide::Changes, HunkOp::Stage, 14, 13, true);
+        CHECK(lp.patch == hdr + "@@ -10,3 +10,5 @@\n j\n k\n+k2\n+k3\n l\n" &&
+              lp.doneText == "Staged the selected lines of f.txt.");
+        HunkPlan ld = hunkPlan(two, DiffSide::Changes, HunkOp::Discard, 13, 13, true);
+        CHECK(ld.question == "Discard the selected lines of f.txt?" && ld.button == "Discard Lines");
+
+        // No newline at the end: lines that would leave the marker in the
+        // middle are refused; the newline added on its own is fine.
+        const std::string nonl =
+            "diff --git a/n.txt b/n.txt\n--- a/n.txt\n+++ b/n.txt\n@@ -1,2 +1,3 @@\n a\n-b\n"
+            "\\ No newline at end of file\n+b\n+c\n\\ No newline at end of file\n";
+        CHECK(buildPatch(nonl, HunkOp::Stage, 8, 8, &why).empty() &&
+              why.find("no newline") != std::string::npos);
+        CHECK(buildPatch(nonl, HunkOp::Stage, 5, 7, nullptr) ==
+              "diff --git a/n.txt b/n.txt\n--- a/n.txt\n+++ b/n.txt\n@@ -1,2 +1,2 @@\n a\n-b\n"
+              "\\ No newline at end of file\n+b\n");
+        // A line whose text is empty in the diff (its space lost) is context.
+        const std::string blank = "diff --git a/e b/e\n--- a/e\n+++ b/e\n@@ -1,3 +1,3 @@\n x\n\n-y\n+z\n";
+        CHECK(buildPatch(blank, HunkOp::Stage, 6, 6, nullptr) ==
+              "diff --git a/e b/e\n--- a/e\n+++ b/e\n@@ -1,3 +1,2 @@\n x\n \n-y\n");
+        // CRLF lines keep their carriage returns.
+        const std::string crlf = "diff --git a/w b/w\n--- a/w\n+++ b/w\n@@ -1,2 +1,2 @@\n a\r\n-b\r\n+c\r\n";
+        CHECK(buildPatch(crlf, HunkOp::Stage, 3, 6, nullptr) ==
+              "diff --git a/w b/w\n--- a/w\n+++ b/w\n@@ -1,2 +1,2 @@\n a\r\n-b\r\n+c\r\n");
+    }
 }
