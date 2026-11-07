@@ -111,6 +111,32 @@ public:
     int rows() const { return rows_; }
     const TermCell& cell(int row, int col) const { return grid()[row][col]; }
 
+    // What changed since the last takeDirty, so a host redraws only that.
+    // `rows` has an entry per screen row, 1 for a row whose cells may have
+    // changed (written, erased, inserted into, scrolled); a row is marked
+    // when touched, even if it ends up as it was. `all` means everything:
+    // a resize, a switch between the screens, a reset, a clear, or the
+    // scrollback changing other than by lines going into it. `scrolled` is
+    // how many lines went into the scrollback (historyBase() moved by as
+    // much, and a view scrolled back moves with them). `marks`: the shell
+    // integration's marks changed (a mark came, went, or moved), so
+    // whatever is drawn from them may have to move. The cursor is not
+    // counted: it is a host's to compare.
+    struct Dirty {
+        bool all = false;
+        std::vector<uint8_t> rows;
+        long long scrolled = 0;
+        bool marks = false;
+        bool any() const;
+    };
+    Dirty takeDirty();
+    // The screen row's cells as stored, by reference (no copy).
+    const std::vector<TermCell>& row(int r) const { return grid()[r]; }
+    // A line's cells (lines as lineCell numbers them): a screen row by
+    // reference, a scrollback line unpacked into `scratch` (its own width),
+    // an empty vector outside the lines. A cell past the end is a blank.
+    const std::vector<TermCell>& lineCells(int line, std::vector<TermCell>& scratch) const;
+
     // Scrollback: lines that scrolled off the top of the main screen (a line
     // feed at the bottom with the scroll region starting at the top row, as
     // xterm saves them), oldest first, up to a limit; the alternate screen
@@ -390,6 +416,17 @@ private:
     long long markSeq_ = 0;
     long long promptSeq_ = -1;       // the last prompt mark (promptMovedDown)
     void insertMark(const Mark& m);
+    long long marksVersion_ = 0;     // counts changes to marks_ (takeDirty)
+    long long marksTaken_ = 0;
+    // Dirty rows (takeDirty): one entry per screen row.
+    std::vector<uint8_t> dirtyRows_;
+    bool dirtyAll_ = true;
+    long long dirtyBase_ = 0;        // historyBase_ at the last take
+    void touch(int y) {
+        if (y >= 0 && y < (int)dirtyRows_.size()) dirtyRows_[y] = 1;
+    }
+    void touchRows(int from, int to);   // [from, to]
+    void touchAll() { dirtyAll_ = true; }
     std::string nonce_;
     void addMark(char kind, int status);
     void dropMarks(long long fromId, long long toId);   // [from, to)

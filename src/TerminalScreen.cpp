@@ -105,6 +105,8 @@ void TerminalScreen::fullReset() {
     if (syncOutput_) syncEnds_++;
     below_.clear();
     dropMarks(historyBase_, LLONG_MAX);   // the screen is erased; the scrollback stays
+    dirtyRows_.assign(rows_, 0);
+    touchAll();
     main_.assign(rows_, Row(cols_, TermCell()));
     alt_.assign(rows_, Row(cols_, TermCell()));
     onAlt_ = false;
@@ -293,6 +295,7 @@ std::vector<TermMatch> TerminalScreen::find(const std::string& query, bool match
 
 // ------------------------------------------------------------------ clear
 void TerminalScreen::clearHistory() {
+    if (!history_.empty()) touchAll();
     history_.clear();
     dropMarks(LLONG_MIN, historyBase_);
 }
@@ -301,6 +304,8 @@ void TerminalScreen::clearAll() {
     clearHistory();
     below_.clear();
     if (onAlt_) return;
+    touchAll();
+    if (!marks_.empty()) marksVersion_++;
     marks_.clear();
     for (Row& row : main_) { row.assign(cols_, TermCell()); row.wrap = 0; }
     x_ = y_ = 0;
@@ -311,6 +316,7 @@ void TerminalScreen::clearToCursorLine() {
     clearHistory();
     below_.clear();
     if (onAlt_ || y_ == 0) return;
+    touchAll();
     int up = y_;
     dropMarks(historyBase_, historyBase_ + up);
     shiftMarks(historyBase_ + up, LLONG_MAX, -up);
@@ -453,6 +459,7 @@ size_t TerminalScreen::historyCellBytes() const {
 
 void TerminalScreen::setScrollbackLimit(int lines) {
     historyLimit_ = std::max(0, lines);
+    if ((int)history_.size() > historyLimit_) touchAll();
     while ((int)history_.size() > historyLimit_) history_.pop_front();
     pruneMarks();
 }
@@ -553,6 +560,51 @@ void TerminalScreen::resize(int cols, int rows, std::vector<TermPos>* keep) {
         s->x = clampInt(s->x, 0, cols_ - 1);
         s->y = clampInt(s->y, 0, rows_ - 1);
     }
+    dirtyRows_.assign(rows_, 0);
+    touchAll();
+    marksVersion_++;
+}
+
+// ------------------------------------------------------------ dirty rows
+bool TerminalScreen::Dirty::any() const {
+    if (all || scrolled || marks) return true;
+    for (uint8_t r : rows)
+        if (r) return true;
+    return false;
+}
+
+void TerminalScreen::touchRows(int from, int to) {
+    from = std::max(from, 0);
+    to = std::min(to, (int)dirtyRows_.size() - 1);
+    for (int y = from; y <= to; y++) dirtyRows_[y] = 1;
+}
+
+TerminalScreen::Dirty TerminalScreen::takeDirty() {
+    Dirty d;
+    d.all = dirtyAll_;
+    d.rows.swap(dirtyRows_);
+    d.rows.resize(rows_, 0);
+    if (d.all) d.rows.assign(rows_, 1);
+    d.scrolled = historyBase_ - dirtyBase_;
+    d.marks = marksVersion_ != marksTaken_;
+    dirtyRows_.assign(rows_, 0);
+    dirtyAll_ = false;
+    dirtyBase_ = historyBase_;
+    marksTaken_ = marksVersion_;
+    return d;
+}
+
+const std::vector<TermCell>& TerminalScreen::lineCells(int line,
+                                                       std::vector<TermCell>& scratch) const {
+    if (line >= 0 && line < rows_) return grid()[line];
+    scratch.clear();
+    int i = historySize() + line;
+    if (line < 0 && i >= 0) {
+        const HistLine& h = history_[i];
+        scratch.reserve(h.width);
+        for (int c = 0; c < h.width; c++) scratch.push_back(histCell(h, c));
+    }
+    return scratch;
 }
 
 // --------------------------------------------------------------- reflow
@@ -918,6 +970,7 @@ std::string TerminalScreen::encodeMouse(TermMouse kind, int button, int col, int
 void TerminalScreen::clearWide(int y, int x) {
     Row& row = grid()[y];
     if (x < 0 || x >= cols_) return;
+    if (row[x].width != 1) touch(y);
     if (row[x].width == 0 && x > 0) row[x - 1] = blank();
     if (row[x].width == 2 && x + 1 < cols_) row[x + 1] = blank();
 }
@@ -926,6 +979,7 @@ void TerminalScreen::eraseCells(int y, int from, int to) {
     from = clampInt(from, 0, cols_);
     to = clampInt(to, 0, cols_);
     if (from >= to) return;
+    touch(y);
     clearWide(y, from);
     clearWide(y, to - 1);
     Row& row = grid()[y];
@@ -961,6 +1015,7 @@ void TerminalScreen::scrollUp(int n, bool save) {
             shiftMarks(base + top_ + n, base + bottom_ + 1, -n);
         }
     }
+    touchRows(top_, bottom_);
     Grid& g = grid();
     if (save && !onAlt_ && top_ == 0)
         for (int r = 0; r < n; r++) pushHistory(g[r]);
@@ -977,6 +1032,7 @@ void TerminalScreen::scrollDown(int n) {
         dropMarks(base + bottom_ + 1 - n, base + bottom_ + 1);
         shiftMarks(base + top_, base + bottom_ + 1 - n, n);
     }
+    touchRows(top_, bottom_);
     Grid& g = grid();
     std::rotate(g.begin() + top_, g.begin() + bottom_ + 1 - n, g.begin() + bottom_ + 1);
     for (int r = top_; r < top_ + n; r++) { g[r].assign(cols_, blank()); g[r].wrap = 0; }
@@ -1010,6 +1066,7 @@ void TerminalScreen::print(uint32_t cp, const std::string& utf8In) {
     if (x >= 0 && (w == 0 || termJoinsCluster(g[y_][x].ch, cp))) {
         TermCell& before = g[y_][x];
         if (before.ch.size() + utf8.size() > kTermMaxCellBytes) return;
+        touch(y_);
         before.ch += utf8;
         // An emoji drawn as one is two columns wide: a flag, a joined
         // sequence, or a symbol that VS16 asks to show as an emoji (❤️).
@@ -1058,6 +1115,7 @@ void TerminalScreen::print(uint32_t cp, const std::string& utf8In) {
         }
     }
     Row& row = g[y_];
+    touch(y_);
     if (insertMode_) {
         // The shift moves a wide character whole when the cursor is on its
         // left half. On its right half the character is split, so both
@@ -1141,6 +1199,7 @@ void TerminalScreen::restoreCursor() {
 
 void TerminalScreen::switchScreen(bool alt, bool save, bool clearAlt) {
     if (alt == altScreen()) return;
+    touchAll();
     if (alt) {
         if (save) saveCursor();              // saved into the main slot
         onAlt_ = true;
@@ -1180,6 +1239,7 @@ void TerminalScreen::esc(const std::string& inter, unsigned char f) {
         return;
     }
     if (inter == "#" && f == '8') {              // DECALN: fill with E
+        touchAll();
         for (Row& r : grid()) {
             for (TermCell& c : r) { c = TermCell(); c.ch = "E"; }
             r.wrap = 0;
@@ -1239,6 +1299,7 @@ void TerminalScreen::insertMark(const Mark& m) {
             return;           // the same mark again
     }
     marks_.insert(at, m);
+    marksVersion_++;
     while (marks_.size() > kMaxMarks) marks_.pop_front();
 }
 
@@ -1255,18 +1316,26 @@ auto firstAtOrAfter(Marks& marks, long long id) {
 void TerminalScreen::dropMarks(long long fromId, long long toId) {
     if (fromId >= toId || marks_.empty()) return;
     auto lo = firstAtOrAfter(marks_, fromId), hi = firstAtOrAfter(marks_, toId);
-    if (lo != hi) marks_.erase(lo, hi);
+    if (lo != hi) {
+        marks_.erase(lo, hi);
+        marksVersion_++;
+    }
 }
 
 void TerminalScreen::shiftMarks(long long fromId, long long toId, long long by) {
     if (fromId >= toId || by == 0 || marks_.empty()) return;
     auto hi = firstAtOrAfter(marks_, toId);
-    for (auto it = firstAtOrAfter(marks_, fromId); it != hi; ++it) it->id += by;
+    auto lo = firstAtOrAfter(marks_, fromId);
+    if (lo != hi) marksVersion_++;
+    for (auto it = lo; it != hi; ++it) it->id += by;
 }
 
 void TerminalScreen::pruneMarks() {
     long long first = historyBase_ - historySize();
-    while (!marks_.empty() && marks_.front().id < first) marks_.pop_front();
+    while (!marks_.empty() && marks_.front().id < first) {
+        marks_.pop_front();
+        marksVersion_++;
+    }
 }
 
 void TerminalScreen::promptMovedDown() {
@@ -1559,6 +1628,7 @@ void TerminalScreen::csi(const std::string& csi, unsigned char f) {
 
     switch (f) {
     case '@': {                                  // ICH
+        touch(y_);
         if (grid()[y_][x_].width == 0) eraseCells(y_, x_, x_ + 1);   // as IRM above
         Row& row = grid()[y_];
         n = std::min(n, cols_ - x_);
@@ -1664,6 +1734,7 @@ void TerminalScreen::csi(const std::string& csi, unsigned char f) {
         break;
     }
     case 'P': {                                  // DCH
+        touch(y_);
         clearWide(y_, x_);
         Row& row = grid()[y_];
         n = std::min(n, cols_ - x_);

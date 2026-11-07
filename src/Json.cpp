@@ -116,9 +116,18 @@ struct Parser {
                     if (i + 1 < s.size() && s[i] == '\\' && s[i + 1] == 'u') {
                         i += 2;
                         if (!hex4(lo)) return false;
-                        if (lo >= 0xDC00 && lo <= 0xDFFF)
+                        if (lo >= 0xDC00 && lo <= 0xDFFF) {
                             cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-                        else { appendUtf8(out, 0xFFFD); cp = lo; }
+                        } else {
+                            // Not the low half: the high one stands alone,
+                            // and the escape after it is read again on its
+                            // own (it may start a pair). Taken as it was, a
+                            // second high half went out as a surrogate
+                            // encoded in UTF-8, which is not UTF-8 at all
+                            // (an NSString made from it is nil).
+                            cp = 0xFFFD;
+                            i -= 6;
+                        }
                     } else {
                         cp = 0xFFFD;
                     }
