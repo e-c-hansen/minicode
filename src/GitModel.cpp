@@ -2,7 +2,9 @@
 #include "GitModel.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <ctime>
+#include <string>
 
 namespace GitUi {
 
@@ -363,6 +365,321 @@ int changesRowFor(const std::vector<Row>& rows, const std::string& path) {
     for (size_t i = 0; i < rows.size(); ++i)
         if (!rows[i].header && !rows[i].staged && rows[i].path == path) return (int)i;
     return -1;
+}
+
+// ------------------------------------------------- hunks and lines of a diff
+DiffSide diffSideOf(const Row& r) {
+    if (r.untracked) return DiffSide::Untracked;
+    return r.staged ? DiffSide::Staged : DiffSide::Changes;
+}
+
+std::vector<HunkOp> hunkOps(DiffSide side) {
+    switch (side) {
+    case DiffSide::Changes: return {HunkOp::Stage, HunkOp::Discard};
+    case DiffSide::Staged: return {HunkOp::Unstage};
+    case DiffSide::Untracked: return {};
+    }
+    return {};
+}
+
+std::string hunkOpTitle(HunkOp op, bool lines) {
+    const char* verb = op == HunkOp::Stage ? "Stage" : op == HunkOp::Unstage ? "Unstage" : "Discard";
+    return std::string(verb) + (lines ? " Selected Lines" : " Hunk");
+}
+
+std::vector<std::string> applyArgs(HunkOp op) {
+    std::vector<std::string> a = {"apply"};
+    if (op != HunkOp::Discard) a.push_back("--cached");
+    if (op != HunkOp::Stage) a.push_back("--reverse");
+    a.push_back("--whitespace=nowarn");
+    a.push_back("-");
+    return a;
+}
+
+bool DiffHunk::changes(size_t line) const {
+    if (line <= firstLine || line >= firstLine + lineCount || line - firstLine >= kinds.size())
+        return false;
+    const char c = kinds[line - firstLine];
+    return c == '+' || c == '-';
+}
+
+namespace {
+bool startsWith(const std::string& s, const char* p) {
+    return s.compare(0, std::char_traits<char>::length(p), p) == 0;
+}
+
+// A hunk's lines by kind, one character each: '@' the header, ' ' context,
+// '+', '-', '\\' a "\ No newline" line.
+char kindChar(Git::LineKind k) {
+    switch (k) {
+    case Git::LineKind::HunkHeader: return '@';
+    case Git::LineKind::Context: return ' ';
+    case Git::LineKind::Added: return '+';
+    case Git::LineKind::Removed: return '-';
+    case Git::LineKind::NoNewline: return '\\';
+    default: return 0;
+    }
+}
+
+struct HunkWalk {
+    std::vector<Git::DiffLine> lines;
+    std::vector<DiffHunk> hunks;
+};
+
+HunkWalk walkHunks(const std::string& diff) {
+    HunkWalk w;
+    w.lines = Git::classifyDiff(diff);
+    size_t file = 0, inFile = 0;
+    bool anyFile = false;
+    for (size_t i = 0; i < w.lines.size(); ++i) {
+        const Git::DiffLine& l = w.lines[i];
+        if (l.kind == Git::LineKind::FileHeader && startsWith(l.text, "diff ")) {
+            if (anyFile) ++file;
+            anyFile = true;
+            inFile = 0;
+            continue;
+        }
+        const char k = kindChar(l.kind);
+        if (k == '@' && anyFile) {
+            DiffHunk h;
+            h.file = file;
+            h.hunk = inFile++;
+            h.firstLine = i;
+            h.lineCount = 1;
+            h.kinds = "@";
+            w.hunks.push_back(h);
+            continue;
+        }
+        if (k && k != '@' && !w.hunks.empty() && w.hunks.back().file == file &&
+            i == w.hunks.back().firstLine + w.hunks.back().lineCount) {
+            w.hunks.back().lineCount++;
+            w.hunks.back().kinds += k;
+        }
+    }
+    return w;
+}
+
+// A path in a patch header, quoted as git quotes it when it must be.
+std::string patchPath(const char* prefix, const std::string& p) {
+    bool quote = false;
+    for (unsigned char c : p)
+        if (c == '"' || c == '\\' || c < 0x20 || c == 0x7f) quote = true;
+    if (!quote) return prefix + p;
+    std::string out = std::string("\"") + prefix;
+    for (unsigned char c : p) {
+        switch (c) {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\t': out += "\\t"; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        default:
+            if (c < 0x20 || c == 0x7f) {
+                char buf[8];
+                std::snprintf(buf, sizeof buf, "\\%03o", c);
+                out += buf;
+            } else {
+                out += (char)c;
+            }
+        }
+    }
+    return out + "\"";
+}
+
+// Whether a file's hunks can be staged apart: a two-sided git diff of a
+// text file that exists on both sides.
+std::string hunkRefusal(const Git::FileDiff& f) {
+    const std::string name = fileName(f.newPath.empty() ? f.oldPath : f.newPath);
+    if (f.header.empty() || !startsWith(f.header[0].text, "diff --git "))
+        return name + " has a conflict: resolve it in the file, then stage it whole.";
+    if (f.binary) return name + " is a binary file: stage or discard it whole.";
+    if (f.isNew) return name + " is a new file: stage or unstage it whole.";
+    if (f.isDeleted) return name + " was deleted: stage or unstage the deletion whole.";
+    return "";
+}
+
+struct Built {
+    std::string patch, path, refusal;
+};
+
+Built build(const std::string& diff, HunkOp op, size_t first, size_t last) {
+    Built b;
+    const HunkWalk w = walkHunks(diff);
+    const std::vector<Git::FileDiff> files = Git::parseDiff(diff);
+    const bool reverse = op != HunkOp::Stage;
+    // The hunks with a changed line in first..last, of the first file that has one.
+    std::vector<size_t> touched;
+    for (size_t k = 0; k < w.hunks.size(); ++k) {
+        const DiffHunk& h = w.hunks[k];
+        if (!touched.empty() && h.file != w.hunks[touched[0]].file) break;
+        for (size_t j = 1; j < h.lineCount; ++j) {
+            const size_t li = h.firstLine + j;
+            if (li >= first && li <= last && h.changes(li)) {
+                touched.push_back(k);
+                break;
+            }
+        }
+    }
+    if (touched.empty()) {
+        b.refusal = "Choose lines that changed (the + and - lines) first.";
+        return b;
+    }
+    const size_t fi = w.hunks[touched[0]].file;
+    if (fi >= files.size()) { b.refusal = "This diff could not be read."; return b; }
+    const Git::FileDiff& f = files[fi];
+    b.refusal = hunkRefusal(f);
+    if (!b.refusal.empty()) return b;
+    // Reversed, the patch is applied to what the + side holds (the index for
+    // Unstage, the work tree for Discard), so it names the new path: a
+    // renamed file's hunk changes the file under its new name.
+    b.path = reverse ? f.newPath : f.oldPath;
+    std::string out = "diff --git " + patchPath("a/", b.path) + " " + patchPath("b/", b.path) +
+                      "\n--- " + patchPath("a/", b.path) + "\n+++ " + patchPath("b/", b.path) +
+                      "\n";
+    long delta = 0;
+    bool any = false;
+    for (size_t k : touched) {
+        const DiffHunk& h = w.hunks[k];
+        if (h.hunk >= f.hunks.size()) continue;
+        const Git::Hunk& gh = f.hunks[h.hunk];
+        struct Line { char kind; std::string text; std::string marker; };
+        std::vector<Line> body;
+        bool dropped = false;   // the line before a "\" line was left out
+        for (size_t j = 1; j < h.lineCount; ++j) {
+            const size_t li = h.firstLine + j;
+            const Git::DiffLine& d = w.lines[li];
+            const char c = h.kinds[j];
+            if (c == '\\') {
+                if (!dropped && !body.empty()) body.back().marker = d.text;
+                continue;
+            }
+            const bool chosen = li >= first && li <= last;
+            const std::string text = d.text.empty() ? "" : d.text.substr(1);
+            char kind = c;
+            // Forward, the - side is what the index holds: a - line not
+            // chosen stays as context and a + line not chosen is left out.
+            // Reversed, the + side is what is there, the other way round.
+            if (c == '-' && !chosen) kind = reverse ? 0 : ' ';
+            if (c == '+' && !chosen) kind = reverse ? ' ' : 0;
+            dropped = kind == 0;
+            if (!dropped) body.push_back({kind, text, ""});
+        }
+        int oldN = 0, newN = 0;
+        bool changed = false, oldEnd = false, newEnd = false, bad = false;
+        for (const Line& l : body) {
+            if (l.kind != '+') { if (oldEnd) bad = true; ++oldN; }
+            if (l.kind != '-') { if (newEnd) bad = true; ++newN; }
+            if (l.kind != ' ') changed = true;
+            if (!l.marker.empty()) {
+                if (l.kind != '+') oldEnd = true;
+                if (l.kind != '-') newEnd = true;
+            }
+        }
+        if (!changed) continue;
+        if (bad) {
+            b.refusal = "These lines are at the end of " + fileName(b.path) +
+                        ", which has no newline there, and cannot change apart from "
+                        "the rest: choose the whole hunk.";
+            return b;
+        }
+        // The side the patch is applied to keeps its numbers; the other
+        // side's start moves by what the hunks before it in this patch add.
+        int oldStart, newStart;
+        if (!reverse) {
+            const long before = gh.oldCount == 0 ? gh.oldStart : gh.oldStart - 1;
+            oldStart = gh.oldStart;
+            newStart = (int)(before + delta + (newN ? 1 : 0));
+            delta += newN - oldN;
+        } else {
+            const long before = gh.newCount == 0 ? gh.newStart : gh.newStart - 1;
+            newStart = gh.newStart;
+            oldStart = (int)(before + delta + (oldN ? 1 : 0));
+            delta += oldN - newN;
+        }
+        out += "@@ -" + std::to_string(oldStart) + "," + std::to_string(oldN) + " +" +
+               std::to_string(newStart) + "," + std::to_string(newN) + " @@\n";
+        for (const Line& l : body) {
+            out += l.kind;
+            out += l.text + "\n";
+            if (!l.marker.empty()) out += l.marker + "\n";
+        }
+        any = true;
+    }
+    if (!any) {
+        b.refusal = "Choose lines that changed (the + and - lines) first.";
+        return b;
+    }
+    b.patch = out;
+    return b;
+}
+}  // namespace
+
+std::vector<DiffHunk> diffHunks(const std::string& diff) { return walkHunks(diff).hunks; }
+
+int hunkAt(const std::vector<DiffHunk>& hunks, size_t line) {
+    for (size_t k = 0; k < hunks.size(); ++k)
+        if (line >= hunks[k].firstLine && line < hunks[k].firstLine + hunks[k].lineCount)
+            return (int)k;
+    return -1;
+}
+
+std::string buildPatch(const std::string& diff, HunkOp op, size_t first, size_t last,
+                       std::string* refusal) {
+    Built b = build(diff, op, first, last);
+    if (refusal) *refusal = b.refusal;
+    return b.patch;
+}
+
+HunkPlan hunkPlan(const std::string& diff, DiffSide side, HunkOp op, size_t first, size_t last,
+                  bool lines) {
+    HunkPlan p;
+    const std::vector<HunkOp> ops = hunkOps(side);
+    if (std::find(ops.begin(), ops.end(), op) == ops.end()) {
+        p.refusal = side == DiffSide::Untracked
+            ? "This file is not tracked yet: stage it whole."
+            : side == DiffSide::Staged ? "These changes are staged: unstage them first."
+                                       : "These changes are not staged.";
+        return p;
+    }
+    if (!lines) {
+        const std::vector<DiffHunk> hs = diffHunks(diff);
+        const int at = hunkAt(hs, first);
+        if (at < 0) { p.refusal = "Put the caret in a hunk first."; return p; }
+        first = hs[(size_t)at].firstLine;
+        last = first + hs[(size_t)at].lineCount - 1;
+    }
+    if (last < first) std::swap(first, last);
+    Built b = build(diff, op, first, last);
+    if (b.patch.empty()) { p.refusal = b.refusal; return p; }
+    p.patch = b.patch;
+    p.path = b.path;
+    p.args = applyArgs(op);
+    const std::string name = fileName(b.path);
+    const std::string what = lines ? "the selected lines of " + name : "a hunk of " + name;
+    switch (op) {
+    case HunkOp::Stage: p.doneText = "Staged " + what + "."; break;
+    case HunkOp::Unstage: p.doneText = "Unstaged " + what + "."; break;
+    case HunkOp::Discard:
+        p.question = lines ? "Discard the selected lines of " + name + "?"
+                           : "Discard this hunk of " + name + "?";
+        p.detail = std::string(lines ? "They go" : "Its lines go") +
+                   " back to the version git has (staged, or else in the last commit). "
+                   "The file as it is now goes to the Trash first: Undo Discard in this "
+                   "panel's menu brings it back.";
+        p.button = lines ? "Discard Lines" : "Discard Hunk";
+        p.doneText = "Discarded " + what + "; the file as it was is in the Trash.";
+        break;
+    }
+    return p;
+}
+
+std::string hunkFailureText(int status, const std::string& out, const std::string& err,
+                            const std::string& path) {
+    if (err.find("patch does not apply") != std::string::npos ||
+        err.find("patch failed") != std::string::npos)
+        return fileName(path) + " changed since this diff was shown, so nothing was done. "
+               "The diff now shows it as it is.";
+    return failureText(status, out, err);
 }
 
 // ------------------------------------------------------ the branch picker
@@ -804,7 +1121,12 @@ void StyledText::add(const std::string& s, Style style) {
     chars += len;
 }
 
-void appendDiff(StyledText& out, const std::string& input) {
+namespace {
+// The diff's lines, styled; the hunk headers named in `actionsAt` (by line)
+// get those actions' words after them, recorded in `actions`.
+void appendDiffImpl(StyledText& out, const std::string& input,
+                    const std::unordered_map<size_t, std::vector<HunkOp>>* actionsAt,
+                    std::vector<DiffAction>* actions) {
     if (input.empty()) {
         out.add("No differences to show.", Style::Muted);
         return;
@@ -816,7 +1138,9 @@ void appendDiff(StyledText& out, const std::string& input) {
         bytes.resize(nl == std::string::npos ? kMaxDiffBytes : nl + 1);
         cut = true;
     }
-    for (const Git::DiffLine& l : Git::classifyDiff(bytes)) {
+    const std::vector<Git::DiffLine> lines = Git::classifyDiff(bytes);
+    for (size_t i = 0; i < lines.size(); ++i) {
+        const Git::DiffLine& l = lines[i];
         Style st = Style::Plain;
         switch (l.kind) {
         case Git::LineKind::Added: st = Style::Added; break;
@@ -827,9 +1151,48 @@ void appendDiff(StyledText& out, const std::string& input) {
         case Git::LineKind::Other: st = Style::Muted; break;
         case Git::LineKind::Context: st = Style::Plain; break;
         }
-        out.add(validUtf8(l.text) + "\n", st);
+        const std::vector<HunkOp>* ops = nullptr;
+        if (actionsAt) {
+            auto at = actionsAt->find(i);
+            if (at != actionsAt->end()) ops = &at->second;
+        }
+        if (!ops) {
+            out.add(validUtf8(l.text) + "\n", st);
+            continue;
+        }
+        out.add(validUtf8(l.text), st);
+        out.add("    ", Style::Plain);
+        for (size_t k = 0; k < ops->size(); ++k) {
+            if (k) out.add(" \xC2\xB7 ", Style::Muted);
+            const std::string label = hunkOpTitle((*ops)[k], false);
+            actions->push_back({out.chars, utf8Length(label), (*ops)[k], i});
+            out.add(label, Style::Plain);
+        }
+        out.add("\n", Style::Plain);
     }
     if (cut) out.add("\n(The diff is longer than 4 MB; the rest is not shown.)\n", Style::Muted);
+}
+}  // namespace
+
+void appendDiff(StyledText& out, const std::string& input) {
+    appendDiffImpl(out, input, nullptr, nullptr);
+}
+
+StyledText diffTextWithActions(const std::string& bytes, DiffSide side,
+                               std::vector<DiffAction>& actions) {
+    actions.clear();
+    StyledText out;
+    const std::vector<HunkOp> ops = hunkOps(side);
+    std::unordered_map<size_t, std::vector<HunkOp>> at;
+    if (!ops.empty()) {
+        const std::vector<Git::FileDiff> files = Git::parseDiff(bytes);
+        for (const DiffHunk& h : diffHunks(bytes))
+            if (h.file < files.size() && hunkRefusal(files[h.file]).empty() &&
+                h.kinds.find_first_of("+-") != std::string::npos)
+                at[h.firstLine] = ops;
+    }
+    appendDiffImpl(out, bytes, &at, &actions);
+    return out;
 }
 
 StyledText diffText(const std::string& bytes) {
