@@ -235,8 +235,11 @@ std::shared_ptr<Worker> startWorker() {
     pthread_attr_t attr;
     if (pthread_attr_init(&attr) != 0) return nullptr;
     // libstdc++'s std::regex recurses per character; a secondary thread's
-    // default stack (512 KB on macOS) is small for a long line.
-    pthread_attr_setstacksize(&attr, 16u << 20);
+    // default stack (512 KB on macOS) is small for a long line. 256 MB is
+    // only reserved, not used, and holds a long line's recursion even under
+    // AddressSanitizer, whose frames are several times larger (16 MB
+    // overflowed in CI's sanitizer job on find:regex-long-lines).
+    pthread_attr_setstacksize(&attr, size_t(256) << 20);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
     auto* hold = new std::shared_ptr<Worker>(w);
     pthread_t thread;
@@ -384,6 +387,13 @@ Query Query::makeBacktracking(const std::u16string& pattern, const Options& opti
 }
 
 bool Query::linear() const { return impl_ && impl_->vm; }
+
+std::u32string requiredText(const Query& query) {
+    const Query::Impl* q = query.impl();
+    if (!q) return std::u32string();
+    if (!q->opt.regex) return q->needle;
+    return q->vm ? Regex::requiredText(*q->vm) : std::u32string();
+}
 
 bool Query::tooSlow() const { return impl_ && impl_->slow && impl_->slow->tooSlow.load(); }
 

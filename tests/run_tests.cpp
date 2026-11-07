@@ -10053,6 +10053,7 @@ static void testMultiCaretOccurrences() {
 #include "tree_tests.inc"
 #include "lsp_threading_tests.inc"
 #include "multiedit_tests.inc"
+#include "folder_search_tests.inc"
 #include "auto_close_tests.inc"
 #include "side_by_side_tests.inc"
 
@@ -10162,6 +10163,7 @@ int main() {
     testTreeRefresh();
     testLspThreading();
     testMultiEdit();
+    testFolderSearchParallel();
     testAutoClose();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

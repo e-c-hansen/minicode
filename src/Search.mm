@@ -30,6 +30,36 @@ static NSString *SFromU16(const std::u16string &u) {
     return [NSString stringWithCharacters:(const unichar *)u.data() length:u.size()];
 }
 
+// The most lines a search shows, as VS Code's (search.maxResults).
+static const std::size_t kMaxResults = 20000;
+
+static NSString *MCGrouped(unsigned long n) {
+    return [NSNumberFormatter localizedStringFromNumber:@(n)
+                                            numberStyle:NSNumberFormatterDecimalStyle];
+}
+
+// The line under the results naming the files a search left out ("12
+// files skipped: 3 larger than 1 MB, 9 not UTF-8"), the files themselves
+// in its tooltip. Nil when none were.
+static NSString *MCSkippedNote(const FolderSearchResult &r, NSString **tooltip) {
+    const unsigned long large = r.skippedTooLarge, other = r.skippedNotUtf8;
+    if (!large && !other) return nil;
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    const unsigned long mb = (unsigned long)(FolderSearchOptions().maxFileSize / (1024 * 1024));
+    if (large) [parts addObject:[NSString stringWithFormat:@"%@ larger than %lu MB", MCGrouped(large), mb]];
+    if (other) [parts addObject:[NSString stringWithFormat:@"%@ not UTF-8", MCGrouped(other)]];
+    NSMutableString *tip = [NSMutableString string];
+    for (const FolderSearchSkip &k : r.skipped)
+        [tip appendFormat:@"%@%@ (%@)", tip.length ? @"\n" : @"", SNS(k.relativePath),
+                          k.tooLarge ? @"larger than the limit" : @"not UTF-8"];
+    if (large + other > r.skipped.size())
+        [tip appendFormat:@"\nand %@ more", MCGrouped(large + other - r.skipped.size())];
+    *tooltip = tip;
+    return [NSString stringWithFormat:@"%@ %@ skipped: %@", MCGrouped(large + other),
+                                      large + other == 1 ? @"file" : @"files",
+                                      [parts componentsJoinedByString:@", "]];
+}
+
 // One match: file path, 1-based line number, the line's text, and where the
 // match starts in the raw line (bytes), for replacing just it.
 @interface SearchHit : NSObject
@@ -226,6 +256,7 @@ static NSString *SFromU16(const std::u16string &u) {
     MCFindButton *_toggleReplace, *_replaceAll, *_more;
     NSTextField *_includeLabel, *_excludeLabel;
     NSScrollView *_scroll;
+    NSTextField *_skippedNote;      // the files a search left out, under the results
     BOOL _replaceShown, _detailsShown;
     BOOL _replacing;
     NSString *_afterNote;           // what a replace did, shown with the next results
@@ -368,6 +399,12 @@ static NSString *SFromU16(const std::u16string &u) {
     self.status.lineBreakMode = NSLineBreakByTruncatingTail;
     [_content addSubview:self.status];
 
+    _skippedNote = [NSTextField labelWithString:@""];
+    _skippedNote.font = [NSFont systemFontOfSize:12];
+    _skippedNote.lineBreakMode = NSLineBreakByTruncatingTail;
+    _skippedNote.hidden = YES;
+    [_content addSubview:_skippedNote];
+
     _scroll = [[NSScrollView alloc] initWithFrame:NSZeroRect];
     _scroll.hasVerticalScroller = YES;
     _scroll.borderType = NSNoBorder;
@@ -472,7 +509,10 @@ static NSString *SFromU16(const std::u16string &u) {
     // .message: padding 0 22 8.
     self.status.frame = NSMakeRect(22, y, W - 44, 16);
     y += 16 + 8;
-    _scroll.frame = NSMakeRect(0, y, W, MAX(0, H - y));
+    // The skipped files' line, under the results.
+    const CGFloat note = _skippedNote.hidden ? 0 : 16 + 8;
+    _skippedNote.frame = NSMakeRect(22, MAX(y, H - 16 - 4), W - 44, 16);
+    _scroll.frame = NSMakeRect(0, y, W, MAX(0, H - y - note));
 }
 
 - (void)setReplaceShown:(BOOL)shown {
@@ -589,6 +629,7 @@ static NSString *SFromU16(const std::u16string &u) {
     // window's folder down, even when the scope is a folder inside it.
     o.useIgnoreFiles = [AppSettings shared].settings.searchUseIgnoreFiles();
     if (_root.length) o.ignoreTop = _root.fileSystemRepresentation;
+    o.maxMatches = kMaxResults;
     return o;
 }
 
@@ -669,6 +710,19 @@ static NSString *SFromU16(const std::u16string &u) {
 }
 - (void)showStatusColor {
     self.status.textColor = self.status.tag ? _style.errorForeground : _style.muted;
+    _skippedNote.textColor = _style.muted;
+}
+
+- (NSTextField *)skippedNote { return _skippedNote; }
+
+- (void)setSkippedNote:(NSString *)text tooltip:(NSString *)tooltip {
+    const BOOL hidden = text.length == 0;
+    _skippedNote.stringValue = text ?: @"";
+    _skippedNote.toolTip = tooltip;
+    if (_skippedNote.hidden != hidden) {
+        _skippedNote.hidden = hidden;
+        _content.needsLayout = YES;
+    }
 }
 
 // --------------------------------------------------------- the results tree
@@ -862,6 +916,7 @@ static NSString *SFromU16(const std::u16string &u) {
     NSString *query = self.field.stringValue;
     const FolderSearchOptions options = [self options];
     [self setResults:@[]];
+    [self setSkippedNote:nil tooltip:nil];
     if (!FolderSearch::isSearchable(SStd(query), options)) {
         NSString *trimmed = [query stringByTrimmingCharactersInSet:
                              [NSCharacterSet whitespaceCharacterSet]];
@@ -892,22 +947,38 @@ static NSString *SFromU16(const std::u16string &u) {
             [files addObject:h.path];
         }
         NSString *error = r.error.empty() ? nil : SNS(r.error);
-        const BOOL truncated = r.truncated;
+        const BOOL truncated = r.truncated, tooSlow = r.tooSlow;
         const unsigned long total = (unsigned long)r.totalMatches;
+        NSString *skipTip = nil;
+        NSString *skipped = MCSkippedNote(r, &skipTip);
         dispatch_async(dispatch_get_main_queue(), ^{
             SearchPanel *s = weakSelf;
             if (!s || s->_searchGeneration != gen) return;   // superseded
             s->_cancel = nullptr;
             [s setResults:found];
+            [s setSkippedNote:skipped tooltip:skipTip];
             if (error) {
                 [s setStatus:error error:YES];
                 return;
             }
+            // A pattern std::regex took too long over: what came before it.
+            NSString *slow = @"This pattern takes too long; the search stopped";
+            if (tooSlow && !found.count) {
+                [s setStatus:slow error:YES];
+                return;
+            }
             // Every match, as Replace All counts them, not the rows (lines).
-            NSString *counts = [NSString stringWithFormat:@"%lu %@ in %lu %@%@",
-                total, total == 1 ? @"match" : @"matches",
-                (unsigned long)files.count, files.count == 1 ? @"file" : @"files",
-                truncated ? @" (stopped at 2000)" : @""];
+            NSString *counts = [NSString stringWithFormat:@"%@ %@ in %@ %@%@",
+                MCGrouped(total), total == 1 ? @"match" : @"matches",
+                MCGrouped(files.count), files.count == 1 ? @"file" : @"files",
+                tooSlow ? [@". " stringByAppendingString:slow]
+                : truncated ? [NSString stringWithFormat:@". Stopped at %@ results",
+                                                         MCGrouped(kMaxResults)]
+                            : @""];
+            if (tooSlow) {
+                [s setStatus:counts error:YES];
+                return;
+            }
             if (note) {
                 [s setStatus:[NSString stringWithFormat:@"%@. Now %@", note,
                                   found.count ? counts : @"no matches"]
@@ -953,6 +1024,7 @@ static NSString *SFromU16(const std::u16string &u) {
     _cancel = cancel;
     _allTodos = @[];
     [self setResults:@[]];
+    [self setSkippedNote:nil tooltip:nil];
     [self setStatus:@"Looking for TODOs…" error:NO];
     NSUInteger gen = _searchGeneration;
     const std::string root = _scope.fileSystemRepresentation;
@@ -971,15 +1043,19 @@ static NSString *SFromU16(const std::u16string &u) {
             [found addObject:h];
         }
         const BOOL truncated = r.truncated;
+        NSString *skipTip = nil;
+        NSString *skipped = MCSkippedNote(r, &skipTip);
         dispatch_async(dispatch_get_main_queue(), ^{
             SearchPanel *s = weakSelf;
             if (!s || s->_searchGeneration != gen) return;   // superseded
             s->_cancel = nullptr;
             s->_allTodos = found;
             [s filterTodos];
+            [s setSkippedNote:skipped tooltip:skipTip];
             if (truncated)
                 s.status.stringValue = [s.status.stringValue
-                    stringByAppendingString:@" (stopped at 2000)"];
+                    stringByAppendingString:[NSString stringWithFormat:@". Stopped at %@ results",
+                                                                       MCGrouped(kMaxResults)]];
         });
     });
 }

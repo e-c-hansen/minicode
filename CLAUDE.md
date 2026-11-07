@@ -988,8 +988,21 @@ container (PanelHost, laid out by hand in layoutContainer)
   untrimmed regex; `.git`, `node_modules`, `build`, the venvs and caches and
   what the folder's `.gitignore`/`.ignore` files ignore (from the window's
   folder down, `search.use-ignore-files`) skipped, dotfiles searched; 1 MB and
-  UTF-8 only; 2000 matches; ANSI stripped; symlink loops and named pipes safe;
-  generation-counted and cancelled per file). Replace in Folder
+  UTF-8 only, the files left out counted and named (`skipped`, shown under
+  the results) unless a NUL in their first 8 KB marks them binary; 2000
+  lines by default, 20,000 on the Mac; ANSI stripped; symlink loops and
+  named pipes safe; generation-counted and cancelled per file). Since
+  2026-11-07 the walk is parallel: folders are listed and files read and
+  matched on up to 8 threads (the calling one too), earliest in the serial
+  walk's order first (a priority queue keyed by each entry's place), and the
+  calling thread merges in that order, so results, the limit and counts are
+  the serial walk's (`search:parallel-order` compares them on 1, 2 and 8
+  threads). A folder reached through a symlink is listed only when the
+  merge reaches it, so a loop is never followed. Lines are matched only
+  where the file holds the query, or the literal a linear regex requires
+  (`TextFind::requiredText`), found in the whole buffer first. About
+  ripgrep's time on a 7,600-file tree (180 to 220 ms against 165 to 215 for
+  "return"; 250 to 300 against 200 to 220 for a regex). Replace in Folder
   (Option+Shift+Cmd+F) counts and asks; a file in a clean tab here is edited in
   the tab through the rename applier (`applyEditsToPaths:`); a file with
   unsaved text in any window is left alone and named; others go through
