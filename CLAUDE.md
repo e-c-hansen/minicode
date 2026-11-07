@@ -123,7 +123,8 @@ goes here first, with tests; the GUI only displays it.
   `AutoIndent` (with `ScanCache`), `KeepSorted`, `MultiCaret` (carets and line
   commands), `LineIndex` (line starts, a gap buffer), `BracketMatch`,
   `Folding`, `TextFind` (find and replace, UTF-16 and UTF-8), `Formatter`
-  (Format Document's plan), `InstallHints`.
+  (Format Document's plan), `InstallHints`, `LargeFile.h` (VS Code's
+  large-file thresholds, header only).
 - Language servers: `LspClient` (protocol, results, WorkspaceEdits, diagnostics
   with versions, completion edits, symbols, folding ranges, the second server's
   routing and `DiagnosticStore`, the Problems rows, watched files' globs and
@@ -193,7 +194,8 @@ files changed outside), Rendering (what the editor's slot shows), Highlighting,
 Settings, Format, EditorView (line numbers, brackets, zoom, comments, tasks,
 editing hooks), Navigation, LanguageServers, Agents (inline agent, Request a
 Change, control channel, agent work), Processes (the Processes panel's
-hooks, its state in associated objects), Markdown and MarkdownRender. Rules, so it
+hooks, its state in associated objects), LargeFile (large-file mode, its
+status bar note, the 50 MB question), Markdown and MarkdownRender. Rules, so it
 stays warning-free:
 
 - `EditorController+Private.h` holds the class extension (ivars in its ivar
@@ -666,6 +668,22 @@ container (PanelHost, laid out by hand in layoutContainer)
   registry selector against AppKit's views and windows.
 - `_liveHighlight` must be off whenever the storage holds something that is not
   source (previews, messages); set it before every `setAttributedString:`.
+- **Large-file mode** (2026-11-06, +LargeFile, `LargeFile.h`): VS Code's
+  thresholds, a text over 20 MB (UTF-16 units) or 300,000 lines, with
+  `editor.large-file-optimizations` on, read when the tab loads (`MCTab
+  largeFile`): no highlighter, no fold regions (`folds.fileName` nil), no
+  bracket boxes, and no language server (`languageServerPath:` for
+  `documentOpened:`, nil from `bufferText`; never past VS Code's 50 MB sync
+  limit either). The status bar's "Large file: features off" turns them on
+  for the tab (`largeFileFeatures`). A file over 50 MB opened by hand
+  (`openFileAtPath:`, a new tab only) asks Open Anyway or Cancel. Measured:
+  25 MB opens in about 0.4 s (3.5 s with the mode off) and types at about
+  2 ms a key; 60 MB in 1.3 s. **Trap: word wrap stays as set**, unlike VS
+  Code: a TextKit view that does not wrap lays out all of its text in
+  `sizeToFit` to learn its width (5.5 s for 25 MB, nine tenths of it there).
+  Known: a keystroke in a 5,000,000-character line costs about 0.35 s, all
+  of it TextKit typesetting the paragraph again; the highlighter reads 3
+  units of it.
 
 ## Highlighting
 
@@ -675,6 +693,15 @@ container (PanelHost, laid out by hand in layoutContainer)
   raw-string delimiter, a template stack) keep their text in a process-wide
   table (`stateTextId`), so equality stays two integer compares. Tokens start
   and end at ASCII characters, so UTF-8 and UTF-16 agree.
+- Lines end after '\n', a '\r' not before '\n', and U+2029 (three bytes in
+  UTF-8), as `LineIndex` counts (`endsLineAfter`); `lexAnyLine` shows the
+  lexers a '\n' in a foreign break's place, so they still test for '\n'
+  only. Whether a line starts at s depends on units [s - reach, s]
+  (`breakReach`: 1 in UTF-16, 3 in UTF-8), so `edit` drops and finds again
+  the starts in that window on both sides of an edit. A line over
+  `kMaxTokenizationLineLength` (20,000 units, VS Code's
+  editor.maxTokenizationLineLength) is never lexed or even read: no tokens,
+  the state carries over; bracket folding skips its brackets.
 - Grammars worth knowing: Python f- and t-strings (fields lexed as code; a
   triple-quoted or continued f-string carries `0x100` in its quote; a field
   open at a line's end is not carried); `lexJsLine` for JS and TS (regex
@@ -689,13 +716,16 @@ container (PanelHost, laid out by hand in layoutContainer)
   regex at line start continuing a division.
 - Tests: `tests/LegacyHighlighter.h` is the frozen old lexer, an oracle under
   random edits; where it cannot apply (`newGrammar`, `mayHoldFString`,
-  `mayHoldNewLiteral`) the edits compare against a full lex.
+  `mayHoldNewLiteral`, `hasOtherBreak`: it split at '\n' only) the edits
+  compare against a full lex.
 - The Mac (+Highlighting): `applyHighlighting` is the full pass (and
   `recolorEditor` on settings); `textStorage:willProcessEditing:` feeds edits
   to the highlighter and records lines; `textDidChange:` (or a zero-delay
   perform when there is no `didChangeText`) calls `flushHighlighting`. Up to
-  64K characters, `restyleChangedIn:` sets attributes only on pieces whose run
-  differs (each merge or split memmoves the run array). Traps: never change
+  64K characters, and at any length without tokens, `restyleChangedIn:` sets
+  attributes only on pieces whose run differs (each merge or split memmoves
+  the run array; setting a 5 MB line's attributes again made TextKit lay it
+  out again). Traps: never change
   attributes inside `willProcessEditing` (it widens the edit and the caret
   jumps to its end); reset a range with one `setAttributes:`, never
   `addAttribute:` over many runs (3.4 s for 50k lines against 1 ms).
@@ -2230,7 +2260,8 @@ session has a display. Check first.
   20,000). Suites: control, agents, backups, find_bar, folding, foldperf,
   format, git_panel, keymap, keystroke, lsp_fixes, palette, paste, previews,
   problems, processes, replace_in_folder, run_file, symbols, terminal_links,
-  terminal_reflow, and in
+  terminal_reflow, large_file (`MC_GUI_SAMPLE=<folder>` samples its open
+  and typing steps), and in
   LooseEndsSuite.mm terminal_exec, terminal_keys, terminal_zoom,
   agent_autosave, multicaret_rows. **Language server checks use the scripted
   server** `build/fakelsp` (`tests/fakelsp/fakelsp.cpp`, built by `make

@@ -23,8 +23,9 @@
     self.textView.typingAttributes = base;      // typed text stays monospaced
     self.textView.editable = YES;
     [self applyWordWrap];   // a preview always wraps; the source as the setting says
-    // Regions by the file's name; an untitled buffer by its extension.
-    self.textView.folds.fileName = self.currentPath ?:
+    // Regions by the file's name; an untitled buffer by its extension. None
+    // in large-file mode (EditorController+LargeFile.mm).
+    self.textView.folds.fileName = [self largeFileFeaturesOff] ? nil : self.currentPath ?:
         [@"untitled." stringByAppendingString:self.currentExt ?: @"txt"];
     [self applyHighlighting];
     [self.textView scrollToBeginningOfDocument:nil];
@@ -48,7 +49,9 @@
     }
 
     std::vector<Token> tokens;
-    if (SyntaxHighlighter::supports(cext)) {
+    // Large-file mode: plain text, though edits are still followed (the
+    // lines an edit touches are painted plain, which costs nothing).
+    if (SyntaxHighlighter::supports(cext) && ![self largeFileFeaturesOff]) {
         _hl.reset(new IncrementalHighlighter<char16_t>(cext));
         _hl->reset(NSStringSource(storage.string), &tokens);
     } else {
@@ -72,7 +75,11 @@
 - (void)restyleRange:(NSRange)range tokens:(const std::vector<Token> &)tokens
            inStorage:(NSTextStorage *)storage {
     if (range.length == 0) return;
-    if (_sourceAttributes && !_highlightingSettingsFile && range.length <= 65536) {
+    // Without tokens (plain text, a line too long to lex) only what differs
+    // is set, however long the range: setting a 5 MB line's attributes
+    // again on each keystroke made TextKit lay it out again.
+    if (_sourceAttributes && !_highlightingSettingsFile &&
+        (range.length <= 65536 || tokens.empty())) {
         [self restyleChangedIn:range tokens:tokens inStorage:storage];
         return;
     }
@@ -131,7 +138,8 @@
         if (end <= start) return;
         NSDictionary *want = [self attributesForStyle:style];
         NSRange run;
-        NSDictionary *have = [storage attributesAtIndex:start effectiveRange:&run];
+        NSDictionary *have = [storage attributesAtIndex:start longestEffectiveRange:&run
+                                                inRange:NSMakeRange(start, end - start)];
         if (run.location <= start && NSMaxRange(run) >= end &&
             (have == want || [have isEqualToDictionary:want]))
             return;

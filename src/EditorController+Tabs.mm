@@ -438,7 +438,7 @@
             [self refreshDisplay];
         }
     }
-    [self.lsp documentOpened:self.previewMode ? nil : path];
+    [self.lsp documentOpened:self.previewMode ? nil : [self languageServerPath:path]];
     [self updateTitle];
 }
 
@@ -514,7 +514,7 @@ static const NSUInteger kMaxClosedTabs = 50;
             if (self.textView.editable) self.sourceText = self.textView.string;
             self.previewMode = preview;
             [self refreshDisplay];
-            [self.lsp documentOpened:preview ? nil : path];
+            [self.lsp documentOpened:preview ? nil : [self languageServerPath:path]];
             [self updateTitle];
         }
         if (c[@"selection"]) {

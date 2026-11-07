@@ -5,17 +5,23 @@
 //   - A text over 20 MB (20 * 1024 * 1024 UTF-16 units, as VS Code counts a
 //     JavaScript string) or over 300,000 lines opens in large-file mode
 //     (editor.large-file-optimizations, on by default, as VS Code's
-//     editor.largeFileOptimizations): no syntax colors, folding, bracket
-//     boxes or word wrap, which VS Code also turns off there ("tokenization,
-//     wrapping, folding, codelens, word highlighting and sticky scroll"),
-//     and no language server.
+//     editor.largeFileOptimizations): no syntax colors, folding or bracket
+//     boxes, which VS Code also turns off there ("tokenization, wrapping,
+//     folding, codelens, word highlighting and sticky scroll"), and no
+//     language server (VS Code still syncs up to 50 MB, but its
+//     servers get incremental changes; here each didChange is the whole
+//     text). Word wrap is the one feature left as set: VS Code turns it off
+//     for its own view's sake, while a TextKit view that does not wrap must
+//     lay out all of the text to know its width (a 25 MB file took 5.5 s to
+//     open that way, nine tenths of it in sizeToFit; 0.4 s wrapped).
 //   - Past 50 MB no language server gets the document even with the mode
 //     turned off: VS Code's _MODEL_SYNC_LIMIT, past which extensions never
 //     see a model.
 //   - Opening a file over 50 MB by hand asks first (Open Anyway, Cancel).
 //     VS Code asks only past 1 GB locally (workbench.editorLargeFileConfirmation),
-//     but its piece tree is not a TextKit 1 view laid out contiguously: here
-//     a 50 MB file costs a few seconds to read and lay out.
+//     but its piece tree is not one NSString in a TextKit view: here a
+//     60 MB file takes 1.3 s to read and show even in large-file mode, and
+//     the memory grows with it.
 //   - Lines over 20,000 units are never lexed (kMaxTokenizationLineLength in
 //     SyntaxHighlighter.h, VS Code's editor.maxTokenizationLineLength).
 #pragma once

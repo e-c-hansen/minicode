@@ -8,6 +8,7 @@
 #import "EditorController+FormatIvars.h"
 #import "EditorController+HighlightingIvars.h"
 #import "EditorController+LanguageServersIvars.h"
+#import "EditorController+LargeFileIvars.h"
 #import "EditorController+LayoutIvars.h"
 #import "EditorController+MarkdownIvars.h"
 #import "EditorController+PersistenceIvars.h"

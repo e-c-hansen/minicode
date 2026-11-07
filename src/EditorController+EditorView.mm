@@ -194,7 +194,8 @@
 
 - (BOOL)bracketMatchingApplies {
     CodeTextView *tv = self.textView;
-    return _liveHighlight && tv.editable && !tv.multiCaretActive && !self.showingMessage;
+    return _liveHighlight && tv.editable && !tv.multiCaretActive && !self.showingMessage &&
+           ![self largeFileFeaturesOff];
 }
 
 - (void)textViewDidChangeSelection:(NSNotification *)note {

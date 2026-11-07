@@ -1332,10 +1332,10 @@ const char* Settings::defaultFileText() {
 # for the session (macOS).
 # editor.word-wrap = on
 # A file over 20 MB or 300,000 lines opens in large-file mode, as in VS Code:
-# no syntax colors, folding, bracket boxes or language server, and no word
-# wrap; the status bar says so, and a click there turns them on for that
-# tab (macOS). Off, every file gets them. Lines over 20,000 characters are
-# never colored, in any file.
+# no syntax colors, folding, bracket boxes or language server. The status
+# bar says so, and a click there turns them on for that tab (macOS). Off,
+# every file gets them. Lines over 20,000 characters are never colored, in
+# any file.
 # editor.large-file-optimizations = on
 # The gutter behind the numbers, which is the editor's background unless set
 # here. The caret's line has its number in the active color.

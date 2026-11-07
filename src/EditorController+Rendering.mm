@@ -447,6 +447,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     if ([path isEqualToString:self.currentPath]) return;  // avoid double-render
     MCTab *tab = [self tabForPath:path];
     if (!tab) {
+        if (![self confirmOpeningLargeFile:path]) return;   // over 50 MB: asked first
         tab = [MCTab new];
         tab.currentPath = path;
         [self insertTab:tab];
@@ -543,9 +544,11 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     _activeTab.bom = disk.bom;
     [self recordStamp:disk.stamp ofTab:_activeTab];
     if (restored) [self showRestoredText:restored base:restoredBase inode:restoredInode];
+    [self noteLargeFileText:self.sourceText];   // large-file mode, before it shows
     [self refreshDisplay];
-    // Previews show rendered text, which no language server should see.
-    [self.lsp documentOpened:self.previewMode ? nil : path];
+    // Previews show rendered text, which no language server should see, nor
+    // does a file in large-file mode.
+    [self.lsp documentOpened:self.previewMode ? nil : [self languageServerPath:path]];
     [self updateTitle];
 }
 

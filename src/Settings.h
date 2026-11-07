@@ -244,8 +244,8 @@ public:
     bool wordWrap() const { return wordWrap_; }
     // editor.large-file-optimizations: a file over LargeFile's thresholds
     // (VS Code's: 20 MB or 300,000 lines) opens without highlighting,
-    // folding, bracket matching, a language server or word wrap (on, the
-    // default, as VS Code's editor.largeFileOptimizations).
+    // folding, bracket matching or a language server (on, the default, as
+    // VS Code's editor.largeFileOptimizations).
     bool largeFileOptimizations() const { return largeFileOptimizations_; }
     // The gutter's background: editor.gutter-background, else the editor's
     // own; editor.opacity applies to either.
