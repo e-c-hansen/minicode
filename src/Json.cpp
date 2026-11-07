@@ -242,6 +242,13 @@ const Json& Json::operator[](const std::string& key) const {
     return kNull;
 }
 
+Json* Json::member(const std::string& key) {
+    if (!isObject()) return nullptr;
+    for (auto& p : obj_)
+        if (p.first == key) return &p.second;
+    return nullptr;
+}
+
 bool Json::has(const std::string& key) const {
     if (!isObject()) return false;
     for (const auto& p : obj_)
