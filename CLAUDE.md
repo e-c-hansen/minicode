@@ -66,7 +66,7 @@ opening comment says what it does in more detail than the lines below.
 - `make test-asan` runs the same tests under ASan and UBSan in
   `build/test-asan` (UB stops the run); CI's `sanitizers` job runs it with
   g++ and leak detection. The `fuzz:*` groups (`tests/parser_fuzz.inc` for
-  Json, the LSP framing, the IDE link, Markdown and settings;
+  Json, the LSP framing and Reader, the IDE link, Markdown and settings;
   `tests/terminal_fuzz.inc`) are seeded and short; `MC_FUZZ_SCALE=40
   ./build/test-asan/run_tests` runs forty times the rounds. A parser change
   that breaks a fuzzer's property is a bug in the parser until shown

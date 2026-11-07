@@ -1,6 +1,6 @@
 // parser_fuzz.inc — the `fuzz:*` groups for the parsers that read what other
 // programs send or what the user writes: Json::parse, the language servers'
-// framing (Lsp::Framer), the IDE link's handshake, WebSocket frames and MCP
+// framing (Lsp::Framer) and its Reader, the IDE link's handshake, WebSocket frames and MCP
 // requests, MarkdownParser, and the settings file. Included by
 // run_tests.cpp.
 //
@@ -349,6 +349,158 @@ void testFuzzLspFrames() {
         CHECK(f.next(body) && body == "ok" && f.buffered() == 0);
     }
     std::printf("  fuzz:lsp-frames: %d sessions in %.0f ms\n", sessions, fuzzMs(started));
+}
+
+// One message a server might send, as a body: answers to the client's
+// requests (ids 1 to 8, some never asked), the notifications and requests
+// the client handles, with params of any shape, and bodies that are not
+// JSON at all.
+std::string fuzzServerBody(FuzzRng &r) {
+    static const char *const notes[] = {
+        "window/logMessage", "window/showMessage", "textDocument/publishDiagnostics",
+        "$/progress", "$/logTrace", "telemetry/event", "x/unknown"};
+    static const char *const asks[] = {
+        "workspace/configuration", "window/workDoneProgress/create", "client/registerCapability",
+        "client/unregisterCapability", "workspace/applyEdit", "workspace/workspaceFolders",
+        "window/showMessageRequest", "x/unknown"};
+    Json m = Json::object();
+    m.set("jsonrpc", "2.0");
+    switch (r.below(6)) {
+    case 0:
+        return fuzzText(r, 40, true);
+    case 1: case 2:
+        m.set("id", Json((int64_t)(1 + r.below(8))));
+        if (r.chance(4)) {
+            Json e = Json::object();
+            e.set("code", Json((int64_t)-32603));
+            e.set("message", fuzzText(r, 10, true));
+            m.set("error", e);
+        } else {
+            m.set("result", fuzzJsonValue(r, 1));
+        }
+        break;
+    case 3: {
+        m.set("method", r.pick(notes));
+        Json p = fuzzJsonValue(r, 2);
+        if (r.chance(2)) {
+            p = Json::object();
+            p.set("type", Json((int64_t)r.below(5)));
+            p.set("message", fuzzText(r, 20, true));
+            p.set("uri", "file:///w/a.py");
+            p.set("diagnostics", fuzzJsonValue(r, 3));
+            p.set("token", r.chance(2) ? Json("t") : Json((int64_t)r.below(3)));
+            Json v = Json::object();
+            static const char *const kinds[] = {"begin", "report", "end", "other"};
+            v.set("kind", r.pick(kinds));
+            v.set("title", fuzzText(r, 10, true));
+            v.set("percentage", fuzzJsonValue(r, 4));
+            p.set("value", v);
+        }
+        m.set("params", p);
+        break;
+    }
+    default:
+        m.set("id", r.chance(2) ? Json((int64_t)r.below(1000)) : Json(fuzzText(r, 6, false)));
+        m.set("method", r.pick(asks));
+        m.set("params", fuzzJsonValue(r, 2));
+        break;
+    }
+    std::string body = m.dump();
+    if (r.chance(10)) body = fuzzMutate(r, body, "{}[]\":,0123456789");
+    return body;
+}
+
+void testFuzzLspReader() {
+    auto started = std::chrono::steady_clock::now();
+    GROUP("fuzz:lsp-reader");
+    FuzzRng r(29);
+    // A Reader hands out what the Framer and Json::parse make of each body,
+    // in order, whatever the pieces: the same value or the same failure.
+    int differ = 0, sessions = 0;
+    for (int round = 0; round < 1200 * kFuzzScale; round++, sessions++) {
+        std::vector<std::string> bodies;
+        std::string stream;
+        size_t n = 1 + r.below(8);
+        for (size_t i = 0; i < n; i++) {
+            std::string body = r.chance(3) ? fuzzServerBody(r) : fuzzJsonValue(r, 0).dump();
+            stream += fuzzLspHeader(r, body.size()) + body;
+            bodies.push_back(body);
+        }
+        Lsp::Reader reader;
+        std::vector<Lsp::Incoming> got;
+        for (const std::string &piece : fuzzChunks(r, stream, 48)) {
+            reader.feed(piece);
+            Lsp::Incoming in;
+            while (reader.next(in)) got.push_back(in);
+        }
+        if (got.size() != bodies.size() || reader.buffered() != 0) { differ++; continue; }
+        for (size_t i = 0; i < bodies.size(); i++) {
+            Json want;
+            bool ok = Json::parse(bodies[i], want);
+            if (ok != got[i].error.empty()) differ++;
+            else if (ok && want.dump() != got[i].message.dump()) differ++;
+            else if (!ok && got[i].message.dump() != Json().dump()) differ++;
+        }
+    }
+    CHECK(differ == 0);
+
+    // A client fed by receive() and one fed by deliver() of a Reader's
+    // messages answer the same random traffic alike: the same bytes sent
+    // back, the same handlers run with the same results, the same
+    // protocol errors and progress. Under the sanitizers this is also
+    // every handler meeting params of the wrong shape.
+    int mismatched = 0;
+    size_t handled = 0, sentBytes = 0;
+    for (int round = 0; round < 300 * kFuzzScale; round++, sessions++) {
+        std::string sent[2];
+        std::vector<std::string> events[2];
+        std::unique_ptr<Lsp::Client> c[2];
+        for (int k = 0; k < 2; k++) {
+            std::string &out = sent[k];
+            std::vector<std::string> &ev = events[k];
+            c[k].reset(new Lsp::Client([&out](const std::string &x) { out += x; }));
+            Lsp::Client *self = c[k].get();
+            c[k]->onProtocolError = [&ev](const std::string &e) { ev.push_back("error " + e); };
+            c[k]->onShowMessage = [&ev](int t, const std::string &m) {
+                ev.push_back("show " + std::to_string(t) + " " + m);
+            };
+            c[k]->onDiagnostics = [&ev](const std::string &uri, const std::vector<Lsp::Diagnostic> &d) {
+                ev.push_back("diags " + uri + " " + std::to_string(d.size()));
+            };
+            c[k]->onApplyEdit = [&ev](const Json &, Lsp::Client::ApplyEditReply reply) {
+                ev.push_back("edit");
+                reply(false, "no");
+            };
+            c[k]->onProgress = [&ev, self] {
+                ev.push_back("progress " + std::to_string(self->progressCount()));
+            };
+            c[k]->initialize("/w", 1);
+            for (int q = 0; q < 6; q++)
+                c[k]->request("x/y", Json::object(), [&ev, q](const Json &res, const Json &err) {
+                    ev.push_back("answer " + std::to_string(q) + " " + res.dump() + " " + err.dump());
+                });
+        }
+        std::string stream = Lsp::Framer::frame(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"capabilities\":{},\"serverInfo\":{\"name\":\"s\"}}}");
+        size_t n = 1 + r.below(12);
+        for (size_t i = 0; i < n; i++) stream += Lsp::Framer::frame(fuzzServerBody(r));
+        Lsp::Reader reader;
+        for (const std::string &piece : fuzzChunks(r, stream, 64)) {
+            c[0]->receive(piece);
+            reader.feed(piece);
+            Lsp::Incoming in;
+            while (reader.next(in)) c[1]->deliver(in);
+        }
+        if (sent[0] != sent[1] || events[0] != events[1] || c[0]->state() != c[1]->state() ||
+            c[0]->progressCount() != c[1]->progressCount())
+            mismatched++;
+        handled += events[0].size();
+        sentBytes += sent[0].size();
+    }
+    CHECK(mismatched == 0);
+    CHECK(handled > 300 && sentBytes > 100000);
+    std::printf("  fuzz:lsp-reader: %d sessions in %.0f ms (%zu handler calls, %zu bytes answered)\n",
+                sessions, fuzzMs(started), handled, sentBytes);
 }
 
 std::string fuzzIdeRequest(const std::string &token) {
@@ -747,6 +899,7 @@ void testFuzzSettings() {
 void testParserFuzz() {
     testFuzzJson();
     testFuzzLspFrames();
+    testFuzzLspReader();
     testFuzzIdeLink();
     testFuzzMarkdown();
     testFuzzSettings();
