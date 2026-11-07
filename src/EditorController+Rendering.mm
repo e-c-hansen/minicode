@@ -634,6 +634,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     } else {
         [self displaySourceEditable];
         [self showLatexProblemMarks];
+        [self refreshSidePreview];   // a Markdown tab's page beside it, if it wants one
         // A CSV's text on show: where its typing started (togglePreview:).
         if (MCViewerKindOverText(self.viewerKind) && !_activeTab.textSessionStart)
             _activeTab.textSessionStart = self.sourceText ?: @"";

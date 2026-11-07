@@ -315,6 +315,7 @@
     [self saveBeforeLeavingFormatSave];   // Cmd+S is never lost to a tab switch
     NSTextView *tv = self.textView;
     [self.markdownEditPanel close];
+    [self sidePreviewTabWillLeave:t];   // the page beside the source: where it was
     [_viewers commitEditing];   // a CSV cell typed into lands in this tab's file
     // A color pick saves the settings file a moment later (colorPicked:);
     // that save belongs to this tab, so it happens now, not in the next one.
@@ -479,7 +480,8 @@ static const NSUInteger kMaxClosedTabs = 50;
     if (!t.currentPath || t.isDiff) return;
     if (!_closedTabs) _closedTabs = [NSMutableArray array];
     NSMutableDictionary *c = [@{@"path": t.currentPath, @"index": @(index),
-                                @"preview": @(t.previewMode)} mutableCopy];
+                                @"preview": @(t.previewMode),
+                                @"sidePreview": @(t.sidePreview)} mutableCopy];
     if (t.haveView) {
         c[@"selection"] = [NSValue valueWithRange:t.selection];
         c[@"top"] = @(t.topCharacter);
@@ -506,6 +508,7 @@ static const NSUInteger kMaxClosedTabs = 50;
         if (![fm fileExistsAtPath:path isDirectory:&dir] || dir) continue;
         MCTab *t = [MCTab new];
         t.currentPath = path;
+        t.sidePreview = [c[@"sidePreview"] boolValue];
         [_tabs insertObject:t atIndex:MIN([c[@"index"] unsignedIntegerValue], _tabs.count)];
         [self activateTab:t];   // reads the file
         if (_activeTab != t) return;
