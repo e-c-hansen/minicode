@@ -7,6 +7,8 @@
 // and hands the bytes over, so this parses text and is tested on its own.
 #pragma once
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace Git {
@@ -34,12 +36,59 @@ struct Status {
     bool hasAheadBehind = false;
     int ahead = 0, behind = 0;
     std::vector<Entry> entries;   // in git's order
+    // Ignored paths (`!` records, only asked for with --ignored), a folder
+    // with its trailing '/'.
+    std::vector<std::string> ignored;
 };
 
 // Parses `git status --porcelain=v2 --branch -z` output (NUL-terminated
 // records). Records it does not know are skipped, so a newer git that adds
-// some cannot break it. Ignored files (`!`) are left out.
+// some cannot break it. Ignored paths (`!`) go to `ignored`, apart from the
+// entries.
 Status parseStatus(const std::string& out);
+
+// ------------------------------------------------------- the tree's colors
+// What the file tree colors a row by, as VS Code's explorer decorations:
+// weakest first, so a folder takes the strongest of what is inside it.
+enum class Decoration { None, Ignored, Untracked, Added, Deleted, Modified, Conflict };
+
+// "modified", "untracked", ...; "" for None.
+const char* decorationName(Decoration d);
+
+// The arguments of the one status the tree runs per refresh: an untracked
+// folder as one entry and an ignored folder as one (--ignored=matching), so
+// a node_modules costs a line, not a walk.
+std::vector<std::string> decorationArgs();
+
+// One entry's color: a conflict; untracked; a deletion in the index or the
+// work tree; added (in the index, renamed, copied or intent to add);
+// modified (or its type changed); else none.
+Decoration decorationOf(const Entry& e);
+
+// Every path's color from one status (paths relative to the top level, no
+// trailing slash, "" being the top level itself).
+class Decorations {
+public:
+    static Decorations fromStatus(const Status& st);
+    // A file's color; a file inside an untracked or ignored folder has it too.
+    Decoration file(const std::string& rel) const;
+    // A folder's: its own when git names it (untracked, ignored, a
+    // submodule), else the strongest of the changes inside it, deletions and
+    // ignored files left out (VS Code does not propagate those either).
+    Decoration folder(const std::string& rel) const;
+    // Whether `rel` is ignored or inside an ignored folder: a change there
+    // needs no new status.
+    bool ignored(const std::string& rel) const;
+    bool empty() const { return files_.empty() && untrackedDirs_.empty() && ignoredDirs_.empty(); }
+    bool operator==(const Decorations& o) const;
+    bool operator!=(const Decorations& o) const { return !(*this == o); }
+
+private:
+    Decoration underFolder(const std::string& rel, bool self) const;
+    std::unordered_map<std::string, Decoration> files_;
+    std::unordered_map<std::string, Decoration> folders_;
+    std::unordered_set<std::string> untrackedDirs_, ignoredDirs_;
+};
 
 // Whether an entry belongs in the "Staged" list, the "Changes" list, or
 // both (a file changed again after it was staged).

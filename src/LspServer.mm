@@ -170,6 +170,12 @@ static NSMutableSet<MCLspServer *> *gServers;   // every running server
     BOOL _inputClosed;
     dispatch_queue_t _writeQueue;
     std::unique_ptr<Lsp::Client> _client;
+    // The server's stdout is framed and parsed here, on a queue of its own,
+    // and only the messages go to the main thread, where the client lives:
+    // a 5,000-item completion list is megabytes of JSON, which parsed on
+    // the main thread stalled typing for tens of milliseconds.
+    dispatch_queue_t _readQueue;
+    std::shared_ptr<Lsp::Reader> _reader;   // used only on _readQueue
     NSFileHandle *_log;
     NSMutableData *_errTail;   // the end of what it wrote to stderr
     // Bytes handed to the write queue and not yet written. A server that
@@ -229,10 +235,31 @@ void MCLspSetMaxQueuedBytes(size_t bytes) { gMaxQueuedBytes = bytes ? bytes : 64
     }
 
     __weak MCLspServer *weakSelf = self;
+    _readQueue = dispatch_queue_create("minicode.lsp.read", DISPATCH_QUEUE_SERIAL);
+    _reader = std::make_shared<Lsp::Reader>();
+    dispatch_queue_t readQueue = _readQueue;
+    std::shared_ptr<Lsp::Reader> reader = _reader;
+    const BOOL logging = _log != nil;
     fromServer.fileHandleForReading.readabilityHandler = ^(NSFileHandle *h) {
         NSData *data = h.availableData;
         if (data.length == 0) { h.readabilityHandler = nil; return; }
-        dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf received:data]; });
+        dispatch_async(readQueue, ^{
+            reader->feed((const char *)data.bytes, data.length);
+            auto batch = std::make_shared<std::vector<Lsp::Incoming>>();
+            Lsp::Incoming in;
+            while (reader->next(in)) batch->push_back(std::move(in));
+            // Part of a message: nothing for the main thread yet, unless
+            // the bytes are logged, which happens there, in order.
+            if (batch->empty() && !logging) return;
+            NSData *raw = logging ? data : nil;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [weakSelf received:*batch raw:raw];
+                // The messages are freed off the main thread too: a large
+                // tree of Json takes a while to free.
+                auto done = std::make_shared<std::vector<Lsp::Incoming>>(std::move(*batch));
+                dispatch_async(readQueue, ^{ (void)done; });
+            });
+        });
     };
     errors.fileHandleForReading.readabilityHandler = ^(NSFileHandle *h) {
         NSData *data = h.availableData;
@@ -340,9 +367,14 @@ void MCLspSetMaxQueuedBytes(size_t bytes) { gMaxQueuedBytes = bytes ? bytes : 64
     dispatch_async(_writeQueue, ^{ [h closeFile]; });
 }
 
-- (void)received:(NSData *)data {
-    if (_log) [self logLine:@"<-- " bytes:std::string((const char *)data.bytes, data.length)];
-    _client->receive((const char *)data.bytes, data.length);
+// Messages the read queue parsed, in the order the server wrote them.
+- (void)received:(const std::vector<Lsp::Incoming> &)messages raw:(NSData *)raw {
+    if (_log && raw)
+        [self logLine:@"<-- " bytes:std::string((const char *)raw.bytes, raw.length)];
+    for (const Lsp::Incoming &in : messages) {
+        if (_client->state() == Lsp::Client::State::Exited) break;
+        _client->deliver(in);
+    }
 }
 
 - (void)stderrArrived:(NSData *)data {

@@ -532,6 +532,8 @@ const std::vector<AppearanceSurface>& Settings::appearanceSurfaces() {
     static const std::vector<AppearanceSurface> surfaces = {
         {"tree", "File Tree",
          {"sidebar.background", "sidebar.opacity", "sidebar.text",
+          "tree.git-modified", "tree.git-added", "tree.git-untracked",
+          "tree.git-deleted", "tree.git-ignored", "tree.git-conflict",
           "window.opacity", "window.text"}, false},
         {"git", "Source Control",
          {"sidebar.background", "sidebar.opacity", "sidebar.text",
@@ -912,6 +914,12 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                return colorValue(v, s.lineNumberActiveColor_, e);),
         MC_KEY("editor.bracket-match", Word, true,
                return colorValue(v, s.bracketMatchColor_, e);),
+        MC_KEY("tree.git-modified", Word, true, return colorValue(v, s.treeGit_[0], e);),
+        MC_KEY("tree.git-added", Word, true, return colorValue(v, s.treeGit_[1], e);),
+        MC_KEY("tree.git-untracked", Word, true, return colorValue(v, s.treeGit_[2], e);),
+        MC_KEY("tree.git-deleted", Word, true, return colorValue(v, s.treeGit_[3], e);),
+        MC_KEY("tree.git-ignored", Word, true, return colorValue(v, s.treeGit_[4], e);),
+        MC_KEY("tree.git-conflict", Word, true, return colorValue(v, s.treeGit_[5], e);),
         MC_KEY("terminal.mode", Word, false,
                const std::string w = lower(v);
                if (w != "grid" && w != "line") {
@@ -1178,6 +1186,18 @@ Rgba Settings::bracketMatchColor() const {
     return bracketMatchColor_ ? *bracketMatchColor_ : Rgba::hex(theme_->bracketMatch);
 }
 
+Rgba Settings::treeGitColor(TreeGitColor c) const {
+    const int i = (int)c;
+    if (i < 0 || i >= kTreeGitColorCount) return text(Surface::Sidebar);
+    if (treeGit_[i]) return *treeGit_[i];
+    // extensions/git/package.json's gitDecoration.*ResourceForeground.
+    static const uint32_t dark[kTreeGitColorCount] = {0xE2C08D, 0x81B88B, 0x73C991,
+                                                      0xC74E39, 0x8C8C8C, 0xE4676B};
+    static const uint32_t light[kTreeGitColorCount] = {0x895503, 0x587C0C, 0x007100,
+                                                       0xAD0707, 0x8E8E90, 0xAD0707};
+    return Rgba::hex(theme_->dark ? dark[i] : light[i]);
+}
+
 Rgba Settings::terminalInputText() const {
     return textIsSet(Surface::Terminal) ? text(Surface::Terminal)
                                         : Rgba::hex(theme_->terminalInput);
@@ -1312,6 +1332,15 @@ const char* Settings::defaultFileText() {
 # sidebar.background = #252526
 # sidebar.opacity = 1
 # sidebar.text = #CCCCCC
+# In a git folder, names take the color of their status, as in VS Code's
+# explorer: a folder takes the strongest of what is in it. Unset, these
+# follow the theme (VS Code's own colors, darker in a light theme).
+# tree.git-modified = #E2C08D
+# tree.git-added = #81B88B
+# tree.git-untracked = #73C991
+# tree.git-deleted = #C74E39
+# tree.git-ignored = #8C8C8C
+# tree.git-conflict = #E4676B
 
 # The file editor and Markdown preview.
 # editor.background = #1E1E1E

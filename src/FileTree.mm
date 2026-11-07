@@ -1,69 +1,111 @@
 // FileTree.mm — see FileTree.h.
 #import "FileTree.h"
 #import "QuickLook.h"
+#include <atomic>
+#include <mutex>
 #include <sys/stat.h>
 
 BOOL gShowHidden = NO;
 
+@implementation MCTreeEntry
+@end
+
+MCTreeEntry *MCTreeStat(NSString *path) {
+    MCTreeEntry *e = [MCTreeEntry new];
+    e.path = path;
+    struct stat lst, st;
+    const char *p = path.fileSystemRepresentation;
+    const BOOL haveL = p && lstat(p, &lst) == 0;
+    const BOOL have = p && stat(p, &st) == 0;
+    e.isLink = haveL && S_ISLNK(lst.st_mode);
+    e.isDir = have && S_ISDIR(st.st_mode);
+    const struct stat &use = have ? st : lst;
+    e.size = have && S_ISREG(st.st_mode) ? (long long)st.st_size : -1;
+    e.modified = (have || haveL)
+        ? (double)use.st_mtimespec.tv_sec + use.st_mtimespec.tv_nsec / 1e9 : 0;
+    e.created = (have || haveL)
+        ? (double)use.st_birthtimespec.tv_sec + use.st_birthtimespec.tv_nsec / 1e9 : 0;
+    return e;
+}
+
+namespace {
+std::mutex gListedMutex;
+std::atomic<NSUInteger> gListings{0};
+NSMutableArray<NSString *> *gListed;   // under gListedMutex
+}  // namespace
+
+NSUInteger MCTreeListingCount(void) { return gListings.load(); }
+NSArray<NSString *> *MCTreeListedFolders(void) {
+    std::lock_guard<std::mutex> lock(gListedMutex);
+    return gListed ? [gListed copy] : @[];
+}
+
+NSArray<MCTreeEntry *> *MCTreeList(NSString *path, BOOL showHidden) {
+    gListings++;
+    {
+        std::lock_guard<std::mutex> lock(gListedMutex);
+        if (!gListed) gListed = [NSMutableArray array];
+        [gListed addObject:path ?: @""];
+        if (gListed.count > 500) [gListed removeObjectsInRange:NSMakeRange(0, gListed.count - 500)];
+    }
+    NSArray<NSString *> *names = path ? [[NSFileManager defaultManager]
+        contentsOfDirectoryAtPath:path error:nil] : nil;
+    if (!names) return nil;
+    names = [names sortedArrayUsingComparator:^(NSString *a, NSString *b) {
+        return [a caseInsensitiveCompare:b];
+    }];
+    NSMutableArray<MCTreeEntry *> *dirs = [NSMutableArray array];
+    NSMutableArray<MCTreeEntry *> *files = [NSMutableArray array];
+    for (NSString *name in names) {
+        if (!showHidden && [name hasPrefix:@"."]) continue;   // hide dotfiles
+        MCTreeEntry *e = MCTreeStat([path stringByAppendingPathComponent:name]);
+        [(e.isDir ? dirs : files) addObject:e];                // dirs first
+    }
+    [dirs addObjectsFromArray:files];
+    return dirs;
+}
+
 @implementation FileItem
 - (NSString *)name { return self.path.lastPathComponent; }
 
-// The entry's kind, size and date. A symbolic link shows what it points to
-// (a link to a folder is a folder, as before); one that points nowhere is a
-// file of unknown size.
 - (void)readStat {
-    struct stat lst, st;
-    const char *p = self.path.fileSystemRepresentation;
-    const BOOL haveL = lstat(p, &lst) == 0;
-    const BOOL have = stat(p, &st) == 0;
-    self.isLink = haveL && S_ISLNK(lst.st_mode);
-    self.isDir = have && S_ISDIR(st.st_mode);
-    const struct stat &use = have ? st : lst;
-    self.size = have && S_ISREG(st.st_mode) ? (long long)st.st_size : -1;
-    self.modified = (have || haveL)
-        ? (double)use.st_mtimespec.tv_sec + use.st_mtimespec.tv_nsec / 1e9 : 0;
-    self.created = (have || haveL)
-        ? (double)use.st_birthtimespec.tv_sec + use.st_birthtimespec.tv_nsec / 1e9 : 0;
+    MCTreeEntry *e = MCTreeStat(self.path);
+    self.isDir = e.isDir;
+    [self takeStat:e];
 }
 
-// The folder's entries in name order, folders first: the order the tree
-// has always had, and the base every other order starts from.
-- (NSMutableArray<FileItem *> *)listReusing:(NSDictionary<NSString *, FileItem *> *)existing {
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *entries = [[fm contentsOfDirectoryAtPath:self.path error:nil]
-        sortedArrayUsingComparator:^(NSString *a, NSString *b) {
-            return [a caseInsensitiveCompare:b];
-        }];
-    NSMutableArray *dirs = [NSMutableArray array];
-    NSMutableArray *files = [NSMutableArray array];
+- (void)takeStat:(MCTreeEntry *)e {
+    self.isLink = e.isLink;
+    self.size = e.size;
+    self.modified = e.modified;
+    self.created = e.created;
+}
+
+- (void)adoptListing:(NSArray<MCTreeEntry *> *)entries {
+    NSMutableDictionary<NSString *, FileItem *> *existing = [NSMutableDictionary dictionary];
+    for (FileItem *c in self.children) existing[c.path] = c;
+    NSMutableArray<FileItem *> *children = [NSMutableArray arrayWithCapacity:entries.count];
     long long rank = 0;
-    for (NSString *entry in entries) {
-        if (!gShowHidden && [entry hasPrefix:@"."]) continue;   // hide dotfiles
-        NSString *full = [self.path stringByAppendingPathComponent:entry];
-        FileItem *item = [FileItem new];
-        item.path = full;
-        [item readStat];
-        FileItem *old = existing[full];
-        if (old && old.isDir == item.isDir) {   // the same node, so expansion stays
-            old.isLink = item.isLink;
-            old.size = item.size;
-            old.modified = item.modified;
-            old.created = item.created;
-            item = old;
+    for (MCTreeEntry *e in entries) {
+        FileItem *item = existing[e.path];
+        if (!item || item.isDir != e.isDir) {   // else the same node, so expansion stays
+            item = [FileItem new];
+            item.path = e.path;
+            item.isDir = e.isDir;
         }
+        [item takeStat:e];
+        item.parent = self;
         item.nameRank = rank++;
-        [(item.isDir ? dirs : files) addObject:item];          // dirs first
+        [children addObject:item];
     }
-    NSMutableArray<FileItem *> *children = [NSMutableArray arrayWithArray:dirs];
-    [children addObjectsFromArray:files];
-    return children;
+    self.children = children;
+    self.loaded = YES;
+    self.shown = nil;
 }
 
 - (void)loadChildren {
     if (self.loaded || !self.isDir) return;
-    self.loaded = YES;
-    self.children = [self listReusing:@{}];
-    self.shown = nil;
+    [self adoptListing:MCTreeList(self.path, gShowHidden) ?: @[]];
 }
 
 // Re-scan this directory, reusing existing child objects for paths that still
@@ -71,11 +113,7 @@ BOOL gShowHidden = NO;
 // any subdirectory that was already loaded.
 - (void)refresh {
     if (!self.isDir || !self.loaded) return;
-    NSMutableDictionary<NSString *, FileItem *> *existing =
-        [NSMutableDictionary dictionary];
-    for (FileItem *c in self.children) existing[c.path] = c;
-    self.children = [self listReusing:existing];
-    self.shown = nil;
+    [self adoptListing:MCTreeList(self.path, gShowHidden) ?: @[]];
     for (FileItem *c in self.children)           // recurse into open subdirs
         if (c.isDir && c.loaded) [c refresh];
 }

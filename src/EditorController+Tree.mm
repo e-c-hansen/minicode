@@ -252,6 +252,10 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
 }
 
 // ------------------------------------------------ live file-tree (FSEvents)
+// The stream names folders (no file events): a folder in which an entry was
+// made, removed, renamed or written. Only the loaded folders among them are
+// listed again, off the main thread (treeFoldersChangedOnDisk:), and the
+// rows' git colors look again after half a second.
 static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
                        void *paths, const FSEventStreamEventFlags flags[],
                        const FSEventStreamEventId ids[]) {
@@ -259,13 +263,19 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     EditorController *self = (__bridge EditorController *)info;
     // Folder totals under the folders that changed are counted again.
     char **changed = (char **)paths;
+    NSMutableArray<NSString *> *disk = [NSMutableArray arrayWithCapacity:n];
+    NSMutableArray<NSNumber *> *subtree = [NSMutableArray arrayWithCapacity:n];
     for (size_t i = 0; i < n; i++) {
-        [self folderChangedOnDisk:@(changed[i])
-                          subtree:(flags[i] & (kFSEventStreamEventFlagMustScanSubDirs |
-                                               kFSEventStreamEventFlagRootChanged)) != 0];
-        [self agentFolderChangedOnDisk:@(changed[i])];   // a worktree made or committed to
+        NSString *path = @(changed[i]);
+        if (!path) continue;
+        const BOOL below = (flags[i] & (kFSEventStreamEventFlagMustScanSubDirs |
+                                        kFSEventStreamEventFlagRootChanged)) != 0;
+        [self folderChangedOnDisk:path subtree:below];
+        [self agentFolderChangedOnDisk:path];   // a worktree made or committed to
+        [disk addObject:path];
+        [subtree addObject:@(below)];
     }
-    [self refreshTree:nil];
+    [self treeFoldersChangedOnDisk:disk subtree:subtree];
     if (self.gitPanelVisible) [self.gitPanel refresh];   // a commit or edit made elsewhere
     [self checkTabsOnDisk];   // a tab's file moved or deleted in the terminal
 }
@@ -273,6 +283,12 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 - (void)startWatching:(NSString *)path {
     [self stopWatching];
     if (!path) return;
+    if (!_gitColors) {
+        _gitColors = [MCTreeGitColors new];
+        __weak EditorController *weakSelf = self;
+        _gitColors.onChange = ^{ [weakSelf refreshTreeCells]; };
+    }
+    [_gitColors setRoot:path];
     FSEventStreamContext ctx = {0, (__bridge void *)self, NULL, NULL, NULL};
     CFStringRef cfPath = (__bridge CFStringRef)path;
     CFArrayRef paths = CFArrayCreate(NULL, (const void **)&cfPath, 1, NULL);
@@ -287,6 +303,9 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 }
 
 - (void)stopWatching {
+    [_gitColors setRoot:nil];   // nothing more runs for this folder
+    [_treePending removeAllObjects];
+    _treeGeneration++;          // and listings under way are dropped
     if (!_fsStream) return;
     FSEventStreamStop(_fsStream);
     FSEventStreamInvalidate(_fsStream);
@@ -295,11 +314,206 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 }
 
 // Re-scan the tree, keeping expanded folders and the selection where possible.
-// Refresh from the menu also counts every folder total again.
+// Refresh from the menu also counts every folder total again, and looks at
+// git again.
 - (void)refreshTree:(id)sender {
-    if (sender) [_sizer reset];
+    if (sender) {
+        [_sizer reset];
+        [_gitColors changedOnDisk:@[_root.path ?: @""]];
+    }
     [self reloadTreeKeepingState:YES];
 }
+
+// FSEvents named these folders (as the disk spells them; `subtree` when
+// everything below one may have changed). They wait for the listing under
+// way, if any, then go in one batch.
+- (void)treeFoldersChangedOnDisk:(NSArray<NSString *> *)paths subtree:(NSArray<NSNumber *> *)subtree {
+    if (!_root.path || !paths.count) return;
+    [_gitColors changedOnDisk:paths];
+    if (!_treePending) _treePending = [NSMutableDictionary dictionary];
+    for (NSUInteger i = 0; i < paths.count; i++) {
+        NSString *p = [self treeSpellingOf:paths[i]];
+        const BOOL below = i < subtree.count && subtree[i].boolValue;
+        _treePending[p] = @(below || _treePending[p].boolValue);
+    }
+    [self listChangedTreeFolders];
+}
+
+// Every folder the tree has listed, by path: the root, the Worktrees node,
+// and the loaded folders below them.
+- (NSMutableDictionary<NSString *, FileItem *> *)loadedTreeFolders {
+    NSMutableDictionary<NSString *, FileItem *> *folders = [NSMutableDictionary dictionary];
+    NSMutableArray<FileItem *> *stack = [NSMutableArray array];
+    if (_root) [stack addObject:_root];
+    if (_worktreesItem) [stack addObject:_worktreesItem];
+    while (stack.count) {
+        FileItem *node = stack.lastObject;
+        [stack removeLastObject];
+        if (!node.isDir || !node.loaded || !node.path) continue;
+        folders[node.path] = node;
+        for (FileItem *c in node.children)
+            if (c.isDir && c.loaded) [stack addObject:c];
+    }
+    return folders;
+}
+
+// The batch waiting: which loaded folders to list again and which rows to
+// stat (TreeRefresh::plan), read on a queue of the tree's own, then taken
+// in on the main thread. One batch at a time; what arrives meanwhile is the
+// next.
+- (void)listChangedTreeFolders {
+    if (_treeListing || !_treePending.count || !_root.path) return;
+    NSMutableDictionary<NSString *, FileItem *> *folders = [self loadedTreeFolders];
+    std::set<std::string> loaded;
+    for (NSString *p in folders) loaded.insert(Utf8String(p));
+    std::vector<TreeRefresh::Event> events;
+    for (NSString *p in _treePending) events.push_back({Utf8String(p), _treePending[p].boolValue});
+    // The Worktrees node shows what .claude/worktrees holds: a change there
+    // (or a .claude made) shows or hides it.
+    NSString *wt = [self worktreesFolder];
+    const BOOL reshowRoot = wt && (_treePending[wt] || _treePending[wt.stringByDeletingLastPathComponent]);
+    [_treePending removeAllObjects];
+    const TreeRefresh::Plan plan = TreeRefresh::plan(events, loaded, Utf8String(_root.path));
+    if (plan.everything) {
+        [self reloadTreeKeepingState:YES];
+        return;
+    }
+    NSMutableArray<NSString *> *list = [NSMutableArray array], *restat = [NSMutableArray array];
+    for (const std::string &p : plan.list) [list addObject:@(p.c_str())];
+    for (const std::string &p : plan.restat) [restat addObject:@(p.c_str())];
+    if (!list.count && !restat.count && !reshowRoot) return;
+    if (!_treeListQueue)
+        _treeListQueue = dispatch_queue_create("minicode.tree-list",
+                                               dispatch_queue_attr_make_with_qos_class(
+                                                   DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0));
+    _treeListing = YES;
+    const NSUInteger gen = _treeGeneration;
+    const BOOL hidden = gShowHidden;
+    __weak EditorController *weakSelf = self;
+    dispatch_async(_treeListQueue, ^{
+        NSMutableDictionary<NSString *, NSArray<MCTreeEntry *> *> *listings = [NSMutableDictionary dictionary];
+        NSMutableDictionary<NSString *, MCTreeEntry *> *stats = [NSMutableDictionary dictionary];
+        for (NSString *p in list) {
+            NSArray<MCTreeEntry *> *entries = MCTreeList(p, hidden);
+            if (entries) listings[p] = entries;   // gone: its parent's listing drops it
+        }
+        for (NSString *p in restat) stats[p] = MCTreeStat(p);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            EditorController *s = weakSelf;
+            if (!s) return;
+            s->_treeListing = NO;
+            if (gen == s->_treeGeneration && hidden == gShowHidden)
+                [s applyTreeListings:listings stats:stats reshowRoot:reshowRoot];
+            [s listChangedTreeFolders];
+        });
+    });
+}
+
+// Takes the listings in: each folder's children change in place, and only
+// a folder whose rows on show changed (one came, went or moved) is reloaded
+// in the outline, keeping the expanded folders, the selection and the
+// scroll position; the rest just show new sizes, dates and colors.
+- (void)applyTreeListings:(NSDictionary<NSString *, NSArray<MCTreeEntry *> *> *)listings
+                    stats:(NSDictionary<NSString *, MCTreeEntry *> *)stats
+               reshowRoot:(BOOL)reshowRoot {
+    NSMutableDictionary<NSString *, FileItem *> *folders = [self loadedTreeFolders];
+    NSMapTable<FileItem *, NSArray<FileItem *> *> *before = [NSMapTable strongToStrongObjectsMapTable];
+    NSMutableArray<FileItem *> *touched = [NSMutableArray array];
+    auto touch = ^(FileItem *f) {
+        if (!f || [before objectForKey:f]) return;
+        [before setObject:f.shown ?: @[] forKey:f];
+        [touched addObject:f];
+    };
+    for (NSString *p in [listings.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        FileItem *f = folders[p];
+        if (!f) continue;
+        touch(f);
+        [f adoptListing:listings[p]];
+    }
+    const TreeSort::Key key = [self treeSortOptions].key;
+    const BOOL byDate = key == TreeSort::Key::Modified || key == TreeSort::Key::Created;
+    for (NSString *p in stats) {
+        FileItem *parent = folders[p.stringByDeletingLastPathComponent];
+        FileItem *item = nil;
+        for (FileItem *c in parent.children)
+            if ([c.path isEqualToString:p]) { item = c; break; }
+        // A change of kind shows when its folder is listed (FSEvents names
+        // the folder too).
+        if (!item || item.isDir != stats[p].isDir) continue;
+        [item takeStat:stats[p]];
+        if (byDate) touch(parent);
+    }
+    if (reshowRoot) touch(_root);
+
+    // A folder its parent's new listing dropped is not in the tree any more.
+    NSDictionary<NSString *, FileItem *> *still = [self loadedTreeFolders];
+    NSMutableArray<FileItem *> *reload = [NSMutableArray array];
+    for (FileItem *f in touched) {
+        if (still[f.path] != f) continue;
+        NSArray<FileItem *> *was = [before objectForKey:f];
+        f.shown = nil;   // its order on show, worked out again
+        NSArray<FileItem *> *now = [self childrenOf:f];
+        if (![was isEqualToArray:now]) [reload addObject:f];
+    }
+    if (reload.count) {
+        FileItem *selected = self.outline.selectedRow >= 0
+            ? [self.outline itemAtRow:self.outline.selectedRow] : nil;
+        NSMutableSet<NSString *> *expanded = [NSMutableSet set];
+        for (FileItem *f in reload) [self collectExpanded:f into:expanded];
+        NSClipView *clip = self.sidebarScroll.contentView;
+        const NSPoint origin = clip.bounds.origin;
+        [reload sortUsingComparator:^NSComparisonResult(FileItem *a, FileItem *b) {
+            return [a.path compare:b.path];   // a folder before those inside it
+        }];
+        for (FileItem *f in reload) {
+            [self.outline reloadItem:f == _root ? nil : f reloadChildren:YES];
+            [self reExpand:f usingSet:expanded];
+            if (f == _root && _worktreesItem && [expanded containsObject:_worktreesItem.path]) {
+                [self.outline expandItem:_worktreesItem];
+                [self reExpand:_worktreesItem usingSet:expanded];
+            }
+        }
+        const NSInteger row = selected ? [self.outline rowForItem:selected] : -1;
+        if (row >= 0 && row != self.outline.selectedRow)
+            [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row]
+                      byExtendingSelection:NO];
+        if (clip) {
+            NSRect want = clip.bounds;
+            want.origin = origin;
+            [clip scrollToPoint:[clip constrainBoundsRect:want].origin];
+            [self.sidebarScroll reflectScrolledClipView:clip];
+        }
+    }
+    [self refreshTreeCells];   // the rows on show: new sizes, dates and colors
+}
+
+// The paths of the expanded folders at or below `node` (the Worktrees node
+// too, below the root).
+- (void)collectExpanded:(FileItem *)node into:(NSMutableSet<NSString *> *)expanded {
+    if (node != _root && [self.outline isItemExpanded:node]) [expanded addObject:node.path];
+    if (node == _root && _worktreesItem) [self collectExpanded:_worktreesItem into:expanded];
+    for (FileItem *c in node.children)
+        if (c.isDir && c.loaded) [self collectExpanded:c into:expanded];
+}
+
+// A row's git color and its tooltip line ("Modified"), nil for none.
+- (NSColor *)gitColorOf:(FileItem *)node tip:(NSString **)tip {
+    const Git::Decoration d = [_gitColors decorationForPath:node.path isDir:node.isDir];
+    if (d == Git::Decoration::None) return nil;
+    static const TreeGitColor colors[] = {
+        TreeGitColor::Modified,   // None, never asked
+        TreeGitColor::Ignored, TreeGitColor::Untracked, TreeGitColor::Added,
+        TreeGitColor::Deleted, TreeGitColor::Modified, TreeGitColor::Conflict,
+    };
+    if (tip) {
+        NSString *name = @(Git::decorationName(d));
+        *tip = [NSString stringWithFormat:@"%@%@ (git)",
+                [name substringToIndex:1].uppercaseString, [name substringFromIndex:1]];
+    }
+    return MCColor([[AppSettings shared] settings].treeGitColor(colors[(int)d]));
+}
+
+- (NSUInteger)treeGitRuns { return _gitColors.runs; }   // tests
 
 // Rebuild the rows, from the disk when `rescan`, else only in a new order,
 // keeping the expanded folders, the selected row and the scroll position.
@@ -316,8 +530,11 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     NSClipView *clip = self.sidebarScroll.contentView;
     const NSPoint origin = clip.bounds.origin;
 
-    if (rescan) [_root refresh];
-    if (rescan) [_worktreesItem refresh];
+    if (rescan) {
+        _treeGeneration++;   // listings under way are older than this
+        [_root refresh];
+        [_worktreesItem refresh];
+    }
     [self.outline reloadData];
     [self reExpand:_root usingSet:expanded];
     if (_worktreesItem && [expanded containsObject:_worktreesItem.path]) {
@@ -713,6 +930,8 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 }
 
 - (void)changeRootTo:(NSString *)dir {
+    _treeGeneration++;        // the old folder's listings under way are dropped
+    [_treePending removeAllObjects];
     [self saveSession];       // the old folder's tabs, for when it is back
     [self dropAllTabs];       // no stale preview or image over the new folder
     [self.navigator clear];   // places in the old folder
