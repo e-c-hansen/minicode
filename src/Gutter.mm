@@ -223,7 +223,9 @@ static const NSUInteger kMinDigits = 3;
     // Errors and warnings on the lines in view, the worst first.
     const NSRange chars = [lm characterRangeForGlyphRange:glyphs actualGlyphRange:NULL];
     std::map<size_t, NSInteger> marks;
-    for (MCDiagnosticMark *m in tv.diagnostics) {
+    NSArray<MCDiagnosticMark *> *all = tv.diagnostics;
+    if (tv.buildMarks.count) all = [all ?: @[] arrayByAddingObjectsFromArray:tv.buildMarks];
+    for (MCDiagnosticMark *m in all) {
         if (m.severity > 2) continue;
         const NSUInteger at = m.range.location;
         if (at + 1 < chars.location || at > NSMaxRange(chars) + 1) continue;

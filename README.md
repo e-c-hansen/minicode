@@ -102,6 +102,8 @@ Open a .tex file and minicode typesets it and shows the PDF where the editor sit
 
 You can also edit from the page. Double click some text (a heading, a sentence, a table cell, a list entry, an equation) and a small editor opens holding the LaTeX behind it. Change it, press Return, and only those bytes of your document are replaced, so macros and packages minicode does not understand are left alone. Inside a list it also offers to add an entry. If minicode cannot tell which piece of source a word came from, it opens nothing rather than the wrong text. Nothing is written to disk until you press Command S, and Shift Command S exports the PDF.
 
+Option Command J goes the other way: from the line the cursor is on to the page, where what that line typeset lights up for a moment. When a document does not typeset, the preview shows tectonic's log with the problems it found listed above it; clicking a problem's line number opens the source there, and while the source is on show the gutter marks that line with a red dot.
+
 ![Editing a list entry by double clicking it in the typeset page](docs/demos/latex.gif)
 
 Typesetting is done by [tectonic](https://tectonic-typesetting.github.io/). If it is not installed, the preview offers to download it (about 22 MB), checked against the checksum the tectonic project publishes for that release, or you can run brew install tectonic. tectonic runs with shell escape off, so a document cannot run programs. The first document downloads the packages it needs, and after that it works offline.
@@ -459,6 +461,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Show or hide the sizes of files and folders in the file tree | Shift Command I |  |  |
 | Show or hide when each file in the file tree was created | Control Shift Command I |  |  |
 | Show or hide when each file in the file tree was last saved, and when the open file was saved | Option Shift Command I |  |  |
+| Show the cursor's line of a LaTeX file on the typeset page | Option Command J |  |  |
 | Show the language server's quick fixes for the cursor or the selection | Command period |  |  |
 | Show the type and documentation under the cursor | Option Command I | Ctrl I | K, or Ctrl K |
 | Split the terminal, with a new one beside it | Command backslash |  |  |

@@ -120,8 +120,9 @@ goes here first, with tests; the GUI only displays it.
   (the block behind a preview click), `MarkdownTasks` (task lists), `MathTex`
   (the Markdown math batch), `MermaidDiagram` (```mermaid blocks for mmdc),
   `LatexDoc` (editable ranges of LaTeX source), `LatexScratch` (the
-  preview's output folders and sibling records),
-  `SyncTex` (page point to source lines), `Json`, `IdeLink` (the Claude Code
+  preview's output folders and sibling records), `LatexLog` (tectonic's
+  problems with their files and lines),
+  `SyncTex` (page point to source lines, and line to boxes), `Json`, `IdeLink` (the Claude Code
   IDE link: WebSocket, MCP, lock file).
 - `Settings` (the settings file, themes, every resolved color), `Commands` (the
   command registry and keys.conf), `EditorTabs` (tab rules), `Backups` (backups
@@ -1537,6 +1538,21 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
   the buffer's. Trap: a synthetic `NSEvent` for Shift+Cmd+S with "s" matched
   Save and wrote the file, with "S" nothing; `CGEventCreateKeyboardEvent`
   behaves like hardware.
+- **Forward search** (Option+Cmd+J, `showLineInPDF:`, LaTeX Workshop's
+  `latex-workshop.synctex`): `SyncTexIndex::boxesForLine` lights the lines of
+  text holding the glue, kerns and void boxes the caret's line set (never a
+  line box's own record, which names the line its paragraph ended on), on
+  the first page it reached, else the nearest line below or above within
+  40; square annotations for 1.5 s. It waits for a typeset when the PDF is
+  not the buffer's (`_forwardLine`, run from `showDocument:`).
+- **Problems on lines**: `LatexLog` reads tectonic's `error: file:line:
+  message` summary (TeX's `! ...` blocks with `l.N` and the open-file
+  parentheses only when no summary placed anything); the sibling's name is
+  the document, an `\input` name is found as TeX finds it. The failure panel
+  lists them above the log, each place a `minicode-latex-problem:<n>` link
+  (`onOpenProblem`, goToLine); while the source shows and is still the text
+  that failed, they are `CodeTextView buildMarks`, gutter dots that follow
+  edits and that no language server's publish replaces.
 - tectonic's bundle is older than Overleaf's: a missing package (`twemojis`)
   goes in the document's folder, and since tectonic discards docstrip's output,
   a script keeping a `.dtx`'s code lines made the `.sty`. Spacing differs from

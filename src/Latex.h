@@ -8,8 +8,32 @@
 #import <Cocoa/Cocoa.h>
 #import <Quartz/Quartz.h>
 
+// A problem tectonic reported, placed in a file of the user's (LatexLog.h).
+@interface MCLatexProblem : NSObject
+@property(nonatomic, copy) NSString *path;         // nil when it names no file found
+@property(nonatomic, assign) NSInteger line;       // 1-based; 0 when it gives none
+@property(nonatomic, assign) NSInteger severity;   // 1 error, 2 warning
+@property(nonatomic, copy) NSString *message;
+@end
+
 @interface LatexView : NSView <NSMenuItemValidation>
 - (instancetype)initWithPath:(NSString *)texPath source:(NSString *)source;
+
+// The problems the last typeset reported, in order (none once one works).
+// The failure panel lists them above tectonic's log, each with a place a
+// link that calls onOpenProblem; onProblemsChanged runs when they change.
+@property(nonatomic, readonly) NSArray<MCLatexProblem *> *problems;
+@property(nonatomic, copy) void (^onOpenProblem)(NSString *path, NSInteger line);
+@property(nonatomic, copy) void (^onProblemsChanged)(void);
+// The problems on lines of `path`, while `source` is still the text that
+// failed to typeset (after an edit the lines may name other text); for
+// the gutter's dots.
+- (NSArray<MCLatexProblem *> *)problemsForPath:(NSString *)path source:(NSString *)source;
+
+// Forward search: scroll the page to what line `line` (1-based) of the
+// document put there and light it up for a moment. Waits for the typeset
+// under way, or the one an edit scheduled, so the page matches the text.
+- (void)revealSourceLine:(NSInteger)line;
 
 // Called when an edit in the preview changed the document.
 @property(nonatomic, copy) void (^onSourceEdited)(NSString *newSource);

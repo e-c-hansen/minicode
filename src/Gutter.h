@@ -4,7 +4,8 @@
 //
 // Each logical line is numbered on its first line fragment (a wrapped
 // line's continuations stay blank), the carets' lines in the active color;
-// lines with an error or a warning from the language server have a dot in
+// lines with an error or a warning from the language server (or from the
+// LaTeX preview's last typeset, CodeTextView's buildMarks) have a dot in
 // the severity's color at the left. Only the fragments on screen are
 // visited, and line numbers come from a LineIndex kept up to date from the
 // text storage's edits, so neither drawing nor typing counts lines through

@@ -9,6 +9,15 @@
 // tectonic download whose bytes do not match the pinned checksum is
 // refused with nothing installed. MC_GUI_TECTONIC_ARCHIVE=<the real
 // tectonic-0.17.0 archive> adds the install itself.
+//
+// Forward search and problems on lines, with a stand-in that writes a
+// two-page PDF and SyncTeX for it, or fails as tectonic does: Option+Cmd+J
+// from line 5 shows page 2 with the line lit up, then not; from the
+// preamble, page 1; a failed typeset lists its problem on the user's file,
+// the failure panel's link opens the source at the line, the gutter dot
+// follows an edit above it, and another tab, or the edited text later, has
+// none. MC_GUI_REAL_TECTONIC=<a tectonic> (TECTONIC_CACHE_DIR at a scratch
+// cache) adds both on real typesets.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
@@ -33,8 +42,8 @@ BOOL Exists(NSString *path) { return [[NSFileManager defaultManager] fileExistsA
 MCTab *Active(EditorController *c) { return [c valueForKey:@"activeTab"]; }
 
 // A one-page PDF whose text is `word`, as PDFKit reads text back.
-void WriteTextPDF(NSString *path, NSString *word) {
-    NSTextView *tv = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 300, 80)];
+void WriteTextPDF(NSString *path, NSString *word, CGFloat height = 80) {
+    NSTextView *tv = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 300, height)];
     tv.string = word;
     tv.font = [NSFont systemFontOfSize:24];
     [[tv dataWithPDFInsideRect:tv.bounds] writeToFile:path atomically:YES];
@@ -195,6 +204,254 @@ MC_GUI_SUITE(latex) {
         tabA = nil;
     });
     MCGuiWait(@"until it closes too", 10, ^BOOL { return !Exists(MCLatexWorkFolder(a)); });
+
+    // ---- forward search and problems on lines (W22), with a second
+    // stand-in: a document holding FORWARD typesets to two pages with a
+    // SyncTeX file for them, one holding BROKEN fails as tectonic does.
+    __block MCTab *tabF = nil, *tabE = nil;
+    NSString *fwd = Project(@"latex-c/fwd.tex");
+    NSString *broken = Project(@"latex-c/broken.tex");
+    MCGuiStep(@"a stand-in that writes SyncTeX, and one that fails", ^{
+        NSString *dir = Scratch(@"latex");
+        NSString *p1 = [dir stringByAppendingPathComponent:@"p1.pdf"];
+        NSString *p2 = [dir stringByAppendingPathComponent:@"p2.pdf"];
+        // Pages taller than the pane, so the one on show is the one in view.
+        WriteTextPDF(p1, @"PAGEONE", 1200);
+        WriteTextPDF(p2, @"PAGETWO", 1200);
+        PDFDocument *two = [[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:p1]];
+        PDFDocument *second = [[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:p2]];
+        [two insertPage:[second pageAtIndex:0] atIndex:1];
+        GCHECK([two writeToFile:[dir stringByAppendingPathComponent:@"two.pdf"]]);
+        // Line 3 on page 1; lines 5 and 6 one line of text on page 2, whose
+        // box carries line 6. Boxes 10 pt in, baselines 40 pt down, 200 by
+        // 12 pt.
+        NSString *script =
+            @"#!/bin/sh\n"
+            @"out=''; prev=''; input=''\n"
+            @"for a in \"$@\"; do [ \"$prev\" = --outdir ] && out=\"$a\"; prev=\"$a\"; input=\"$a\"; done\n"
+            @"dir=$(dirname \"$0\"); stem=$(basename \"$input\" .tex)\n"
+            @"if grep -q BROKEN \"$input\"; then\n"
+            @"  echo \"error: $(basename \"$input\"):4: Undefined control sequence\"\n"
+            @"  echo 'error: something bad happened inside XeTeX; its output follows:'\n"
+            @"  echo '====='; echo \"($(basename \"$input\")\"; echo '! Undefined control sequence.'\n"
+            @"  printf '%s\\n' 'l.4 \\foo' '====='\n"
+            @"  echo 'error: the XeTeX engine had an unrecoverable error'\n"
+            @"  exit 1\n"
+            @"fi\n"
+            @"cp \"$dir/two.pdf\" \"$out/$stem.pdf\"\n"
+            @"printf 'SyncTeX Version:1\\nInput:1:%s\\nOutput:pdf\\nMagnification:1000\\nUnit:1\\n"
+            @"X Offset:0\\nY Offset:0\\nContent:\\n{1\\n(1,4:655360,2621440:13107200,655360,131072\\n"
+            @"g1,3:3000000,2621440\\n)\\n}1\\n{2\\n(1,6:655360,2621440:13107200,655360,131072\\n"
+            @"g1,5:3000000,2621440\\ng1,6:9000000,2621440\\n)\\n}2\\n' \"$input\" | gzip > \"$out/$stem.synctex.gz\"\n";
+        NSString *tool = Scratch(@"latex/tectonic2");
+        MCGuiWriteFile(tool, script);
+        chmod(tool.fileSystemRepresentation, 0755);
+        setenv("MINICODE_TECTONIC", tool.UTF8String, 1);
+        MCGuiWriteFile(fwd, @"\\documentclass{article}\n\\begin{document}\nFORWARD on page one\n"
+                            @"\\newpage\nPage two,\nin one line.\n\\end{document}\n");
+        MCGuiWriteFile(broken, @"\\documentclass{article}\n\\begin{document}\nBROKEN here\n"
+                               @"\\foo{} and more\n\\end{document}\n");
+    });
+    MCGuiStep(@"the two-page document opens", ^{
+        GCHECK([MCGuiController() showFile:fwd]);
+        tabF = Active(MCGuiController());
+        GCHECK(tabF.isLatex && tabF.latex != nil);
+    });
+    MCGuiWait(@"and typesets", 20, ^BOOL {
+        return [tabF.latex latexPDFView].document.pageCount == 2;
+    });
+    MCGuiStep(@"to the source, the caret on line 5", ^{
+        EditorController *c = MCGuiController();
+        [c goToLine:5 column:0];
+        GCHECK(!c.previewMode);
+        GCHECK([c.textView.string lineRangeForRange:c.textView.selectedRange].location ==
+               [c.textView.string rangeOfString:@"Page two"].location);
+    });
+    MCGuiStep(@"Option+Cmd+J", ^{
+        EditorController *c = MCGuiController();
+        GCHECK(MCGuiPerformMenuKey(c.window, 38 /* J */,
+                                   NSEventModifierFlagOption | NSEventModifierFlagCommand, nil, nil));
+    });
+    MCGuiWait(@"shows page 2 with the line lit up", 10, ^BOOL {
+        PDFView *pdf = [tabF.latex latexPDFView];
+        return MCGuiController().previewMode && pdf.document &&
+               [pdf.document indexForPage:pdf.currentPage] == 1 &&
+               [pdf.document pageAtIndex:1].annotations.count == 1;
+    });
+    MCGuiStep(@"the light covers the line of text", ^{
+        PDFView *pdf = [tabF.latex latexPDFView];
+        MCGuiNote(@"preview %d, page %lu, annotations %lu, status: %@", MCGuiController().previewMode,
+                  (unsigned long)[pdf.document indexForPage:pdf.currentPage],
+                  (unsigned long)[pdf.document pageAtIndex:1].annotations.count,
+                  [tabF.latex valueForKeyPath:@"statusLabel.stringValue"]);
+        PDFPage *page = [[tabF.latex latexPDFView].document pageAtIndex:1];
+        PDFAnnotation *a = page.annotations.firstObject;
+        const NSRect media = [page boundsForBox:kPDFDisplayBoxMediaBox];
+        // x 10 pt, top 30 pt down (40 less the 10 pt height), 12 pt tall.
+        GCHECK(fabs(NSMinX(a.bounds) - 8.5) < 0.1);
+        GCHECK(fabs(NSMaxY(a.bounds) - (media.size.height - 30 + 1.5)) < 0.1);
+        GCHECK(fabs(NSHeight(a.bounds) - 15) < 0.1);
+        GCHECK([page annotations].count == 1 &&
+               [[tabF.latex latexPDFView].document pageAtIndex:0].annotations.count == 0);
+        if (a) MCGuiNote(@"lit up %@ on a page of %@", NSStringFromRect(a.bounds),
+                         NSStringFromRect(media));
+    });
+    MCGuiWait(@"for a moment", 5, ^BOOL {
+        return [[tabF.latex latexPDFView].document pageAtIndex:1].annotations.count == 0;
+    });
+    MCGuiStep(@"from the preamble, from the preview itself", ^{
+        EditorController *c = MCGuiController();
+        [c goToLine:1 column:0];
+        GCHECK(!c.previewMode);
+        [c togglePreview:nil];
+        GCHECK(c.previewMode);
+        [c showLineInPDF:nil];
+    });
+    MCGuiWait(@"page 1, the first line that typeset something", 10, ^BOOL {
+        PDFView *pdf = [tabF.latex latexPDFView];
+        return [pdf.document indexForPage:pdf.currentPage] == 0 &&
+               [pdf.document pageAtIndex:0].annotations.count == 1;
+    });
+
+    MCGuiStep(@"a document that does not typeset", ^{
+        GCHECK([MCGuiController() showFile:broken]);
+        tabE = Active(MCGuiController());
+        GCHECK(tabE.isLatex && tabE.latex != nil && tabE != tabF);
+    });
+    MCGuiWait(@"lists its problem", 20, ^BOOL { return tabE.latex.problems.count == 1; });
+    MCGuiStep(@"placed on the user's file, linked from the failure panel", ^{
+        MCLatexProblem *p = tabE.latex.problems.firstObject;
+        GCHECK_EQ_STR(p.path, broken);
+        GCHECK(p.line == 4);
+        GCHECK_EQ_STR(p.message, @"Undefined control sequence");
+        GCHECK(p.severity == 1);
+        GCHECK([tabE.latex latexPDFView].isHidden);
+        NSTextView *log = nil;
+        for (NSView *v in tabE.latex.subviews)
+            if ([v isKindOfClass:[NSScrollView class]] && !v.isHidden)
+                log = (NSTextView *)((NSScrollView *)v).documentView;
+        GCHECK([log isKindOfClass:[NSTextView class]]);
+        GCHECK([log.string hasPrefix:@"Line 4: Undefined control sequence\n"]);
+        GCHECK([log.string containsString:@"l.4 \\foo"]);   // the log follows
+        NSRange linked = NSMakeRange(NSNotFound, 0);
+        id link = [log.textStorage attribute:NSLinkAttributeName atIndex:0
+                               effectiveRange:&linked];
+        GCHECK(link != nil && linked.location == 0 && linked.length == 6);   // "Line 4"
+        // A click on it, as NSTextView reports one.
+        GCHECK([log.delegate textView:log clickedOnLink:link atIndex:1]);
+    });
+    MCGuiStep(@"opens the source at that line, dotted in the gutter", ^{
+        EditorController *c = MCGuiController();
+        GCHECK(Active(c) == tabE && !c.previewMode && c.textView.editable);
+        NSString *text = c.textView.string;
+        const NSUInteger line4 = [text rangeOfString:@"\\foo"].location;
+        GCHECK(c.textView.selectedRange.location == line4);
+        GCHECK(c.textView.buildMarks.count == 1);
+        MCDiagnosticMark *m = c.textView.buildMarks.firstObject;
+        GCHECK(m.range.location == line4 && m.severity == 1);
+        GCHECK(c.textView.diagnostics.count == 0);   // not the language server's
+        // A line typed above moves the dot down with its text.
+        MCGuiUndoGroup(c.textView.undoManager, ^{
+            [c.textView setSelectedRange:NSMakeRange(0, 0)];
+            [c.textView insertText:@"% a comment\n" replacementRange:NSMakeRange(0, 0)];
+        });
+        GCHECK(c.textView.buildMarks.count == 1 &&
+               c.textView.buildMarks.firstObject.range.location ==
+                   [c.textView.string rangeOfString:@"\\foo"].location);
+    });
+    MCGuiStep(@"another tab's source has no dots, and coming back to edited text has none", ^{
+        EditorController *c = MCGuiController();
+        [c showFile:fwd];
+        GCHECK(Active(c) == tabF);
+        if (c.previewMode) [c togglePreview:nil];
+        GCHECK(c.textView.buildMarks.count == 0);
+        [c showFile:broken];
+        GCHECK(Active(c) == tabE);
+        if (c.previewMode) [c togglePreview:nil];
+        GCHECK(c.textView.buildMarks.count == 0);   // the text is not what failed
+    });
+    MCGuiStep(@"close them", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c closeTab:tabE prompt:NO]);
+        GCHECK([c closeTab:tabF prompt:NO]);
+        tabE = tabF = nil;
+    });
+
+    // MC_GUI_REAL_TECTONIC=<a tectonic> (with TECTONIC_CACHE_DIR at a scratch
+    // cache) runs both on a real typeset: tests/latex/forward.tex's line 8
+    // lights up "Page two text." on page 2, and an \input file's error is a
+    // row naming that file, which opens it at the line.
+    NSString *realTool = NSProcessInfo.processInfo.environment[@"MC_GUI_REAL_TECTONIC"];
+    if (realTool.length) {
+        __block MCTab *tabR = nil;
+        NSString *real = Project(@"latex-real/forward.tex");
+        NSString *main = Project(@"latex-real/main.tex");
+        MCGuiStep(@"real tectonic: the forward search fixture", ^{
+            setenv("MINICODE_TECTONIC", realTool.UTF8String, 1);
+            GCHECK_EQ_STR(MCTectonicPath(), realTool);
+            NSString *src = [NSString stringWithContentsOfFile:
+                [MCGuiBuildDir().stringByDeletingLastPathComponent
+                    stringByAppendingPathComponent:@"tests/latex/forward.tex"]
+                encoding:NSUTF8StringEncoding error:nil];
+            GCHECK(src.length > 0);
+            MCGuiWriteFile(real, src ?: @"");
+            MCGuiWriteFile(Project(@"latex-real/child.tex"), @"Child line one.\n\\badcommand\n");
+            MCGuiWriteFile(main, @"\\documentclass{article}\n\\begin{document}\nIntro.\n"
+                                 @"\\input{child}\n\\end{document}\n");
+            GCHECK([MCGuiController() showFile:real]);
+            tabR = Active(MCGuiController());
+        });
+        MCGuiWait(@"typesets two pages", 120, ^BOOL {
+            return [tabR.latex latexPDFView].document.pageCount == 2;
+        });
+        MCGuiStep(@"line 8 is on page 2", ^{
+            EditorController *c = MCGuiController();
+            if ([tabR.latex latexPDFView].document.pageCount != 2)
+                MCGuiNote(@"status: %@\nlog: %@", [tabR.latex valueForKeyPath:@"statusLabel.stringValue"],
+                          [tabR.latex valueForKeyPath:@"logView.string"]);
+            [c goToLine:8 column:0];
+            [c showLineInPDF:nil];
+            PDFView *pdf = [tabR.latex latexPDFView];
+            GCHECK([pdf.document indexForPage:pdf.currentPage] == 1);
+            PDFPage *page = [pdf.document pageAtIndex:1];
+            GCHECK(page.annotations.count == 1);
+            PDFAnnotation *a = page.annotations.firstObject;
+            NSString *lit = [page selectionForRect:a.bounds].string;
+            GCHECK([lit containsString:@"Page two text"]);
+            MCGuiNote(@"line 8 lit up %@, holding \"%@\"", NSStringFromRect(a.bounds), lit);
+            [c goToLine:5 column:0];
+            [c showLineInPDF:nil];
+            page = [pdf.document pageAtIndex:0];
+            a = page.annotations.firstObject;
+            lit = [page selectionForRect:a.bounds].string;
+            GCHECK([lit containsString:@"Second paragraph"] && ![lit containsString:@"First"]);
+            MCGuiNote(@"line 5 lit up \"%@\"", lit);
+        });
+        MCGuiStep(@"real tectonic: an error in an \\input file", ^{
+            GCHECK([MCGuiController() closeTab:tabR prompt:NO]);
+            GCHECK([MCGuiController() showFile:main]);
+            tabR = Active(MCGuiController());
+        });
+        MCGuiWait(@"is a problem", 120, ^BOOL { return tabR.latex.problems.count > 0; });
+        MCGuiStep(@"naming the child at its line, and opening it there", ^{
+            MCLatexProblem *p = tabR.latex.problems.firstObject;
+            GCHECK_EQ_STR(p.path, Project(@"latex-real/child.tex"));
+            GCHECK(p.line == 2);
+            GCHECK_EQ_STR(p.message, @"Undefined control sequence");
+            tabR.latex.onOpenProblem(p.path, p.line);
+            EditorController *c = MCGuiController();
+            GCHECK_EQ_STR(c.currentPath, Project(@"latex-real/child.tex"));
+            GCHECK(!c.previewMode);
+            GCHECK(c.textView.selectedRange.location ==
+                   [c.textView.string rangeOfString:@"\\badcommand"].location);
+        });
+        MCGuiStep(@"close the real ones", ^{
+            EditorController *c = MCGuiController();
+            [c closeTab:Active(c) prompt:NO];
+            [c closeTab:tabR prompt:NO];
+            tabR = nil;
+        });
+    }
 
     // The download. The managed copy goes in Application Support under the
     // scratch home; never run it anywhere else.

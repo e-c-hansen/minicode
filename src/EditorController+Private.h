@@ -613,6 +613,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)reselectCurrentFileInTree;
 - (void)refreshDisplay;
 - (void)showLatexPreview;
+- (void)makeLatexPreview;
+- (void)openLatexProblemAt:(NSString *)path line:(NSInteger)line;
+- (void)showLatexProblemMarks;
 - (BOOL)latexIsShowing;
 - (void)latexDidEditSource:(NSString *)newSource;
 - (void)setPlainMessage:(NSString *)msg;
