@@ -131,7 +131,7 @@ goes here first, with tests; the GUI only displays it.
   1,000 edits, so a large reformat keeps a hunk per changed run; UTF-16,
   `mapOffset`), `LineComments`,
   `AutoIndent` (with `ScanCache`), `KeepSorted`, `MultiCaret` (carets and line
-  commands), `LineIndex` (line starts, a gap buffer), `BracketMatch`,
+  commands), `AutoClose` (auto-closing pairs), `LineIndex` (line starts, a gap buffer), `BracketMatch`,
   `Folding`, `TextFind` (find and replace, UTF-16 and UTF-8), `Formatter`
   (Format Document's plan), `InstallHints`, `LargeFile.h` (VS Code's
   large-file thresholds, header only).
@@ -851,9 +851,29 @@ container (PanelHost, laid out by hand in layoutContainer)
   time); before, carets on lines not laid out got empty rects and merged.
   Drawing places only carets among the visible characters (placing all laid out
   the file: seconds a frame for 50,000).
-- An opener (`( [ { " ' \``) typed while every caret has a selection wraps each
-  and keeps it selected (`MultiCaret::surround`), never while an input method
-  composes.
+- **Auto-closing pairs** (2026-11-07, `editor.auto-close`, on): VS Code's
+  rules at its defaults (autoClosingBrackets/Quotes/Comments
+  "languageDefined", autoClosingOvertype and autoClosingDelete "auto",
+  autoSurround "languageDefined"), in the core (`AutoClose`, each language's
+  pairs from VS Code's language-configuration.json; Python's """ closing on
+  its third quote and LaTeX's brackets-only are the two departures). Every
+  single typed character, at one caret or several, goes to `MCMultiCarets
+  insertText:replacementRange:` first, which asks `MCAutoClose`
+  (EditingCommands.mm; the controller is its `MCAutoCloseHost`) for an
+  overtype, a close or a surround; never while marked text composes or for
+  a replacement range (the accent menu). Backspace asks it in `doCommand:`
+  before the multi-caret check. A close is two changes at one place (the
+  typed character, then its closer), so applied last first the typed
+  character is the last single-character storage edit and the language
+  server still takes "(" as signature help's trigger; an overtype only
+  moves the carets (no undo step). The `Tracker` follows storage edits
+  (`NSTextStorageDidProcessEditing`) and drops a keystroke's closers once a
+  caret leaves its pair or the pair spans lines (checked on every selection
+  change and `setCarets:`). Surround (an opener over every caret's
+  selection) uses the language's surrounding pairs, not only `( [ { " '
+  \``; none in JSON or Makefiles, `* _ ~ $ <` in Markdown. GUI trap: a
+  simulated key press that changes nothing, wrapped in `MCGuiUndoGroup`,
+  leaves an empty undo group on top that a real key press never opens.
 - Line commands: Cmd+L (`expandLineSelection`), Ctrl+Shift+K (`deleteLines`),
   Cmd+C and Cmd+X with nothing selected take whole lines (`lineCopy`) and mark
   the item `org.minicode.editor.line-copy`; pasting such an item with nothing

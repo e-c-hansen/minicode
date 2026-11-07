@@ -1,8 +1,45 @@
 // EditingCommands.h — Objective-C++. The editor's indentation keys and line
 // sorting on an NSTextView, over the pure-C++ AutoIndent and KeepSorted
 // cores. EditorController calls these from a few hooks; everything they do
-// is one replacement in the text view, so each is one undo step.
+// is one replacement in the text view, so each is one undo step. And the
+// state behind auto-closing pairs (MCAutoClose, over AutoClose).
 #import <Cocoa/Cocoa.h>
+#include "AutoClose.h"
+#include <memory>
+#include <vector>
+
+// What auto-closing needs to know of what the editor shows.
+@protocol MCAutoCloseHost <NSObject>
+// The file on show, whose language's pairs apply (nil: plain text).
+- (NSString *)autoClosePath;
+// editor.auto-close, and the editor showing source (not a message).
+- (BOOL)autoCloseOn;
+// Strings and comments in the text, from the highlighter (a Context that
+// knows nothing without one).
+- (std::unique_ptr<AutoClose::Context>)autoCloseContext;
+@end
+
+// Auto-closing pairs for one text view: the closers it inserted
+// (AutoClose::Tracker), which follow every change to the view's storage and
+// are let go when the carets leave their pairs. MCMultiCarets asks it on
+// every typed character and Backspace, for one caret or several, and
+// applies what it answers as one undo step.
+@interface MCAutoClose : NSObject
+- (instancetype)initWithTextView:(NSTextView *)tv;
+@property(nonatomic, weak) id<MCAutoCloseHost> host;
+// Typing ch at the carets (normalized): what to do instead of typing it
+// (kind None: type as usual).
+- (AutoClose::Typed)type:(unichar)ch carets:(const std::vector<MultiCaret::Caret> &)carets;
+// The closers a Close put in, once its edit is in the text.
+- (void)remember:(const std::vector<AutoClose::Tracker::Closed> &)closed;
+// Backspace between an empty pair this inserted, at every caret: the edit
+// deleting both characters, or an empty one.
+- (MultiCaret::Edit)deletePairAt:(const std::vector<MultiCaret::Caret> &)carets;
+// The carets now (after any move or edit): pairs they left are let go.
+- (void)caretsAre:(const std::vector<MultiCaret::Caret> &)carets;
+// How many keystrokes' closers are still remembered (for tests).
+@property(nonatomic, readonly) NSUInteger rememberedActions;
+@end
 
 // Return, Tab, Shift+Tab and Backspace (insertNewline:, insertTab:,
 // insertBacktab:, deleteBackward:) by the rules for `path`'s language, with

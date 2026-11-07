@@ -1,5 +1,6 @@
 // MultiCaretView.mm — see MultiCaretView.h.
 #import "MultiCaretView.h"
+#import "EditingCommands.h"
 #import "EditorFont.h"
 #import "Lsp.h"
 #import "TextKit2.h"
@@ -90,11 +91,32 @@ NSString *LimitNote() {
     BOOL _findWholeWord;
     std::vector<Caret> _findCarets;
     NSUInteger _findLength;
+    MCAutoClose *_autoClose;
 }
 
 - (instancetype)initWithTextView:(NSTextView *)tv {
-    if ((self = [super init])) _tv = tv;
+    if ((self = [super init])) {
+        _tv = tv;
+        _autoClose = [[MCAutoClose alloc] initWithTextView:tv];
+        // A caret the view moves itself (a click, an arrow, typing at one
+        // caret) lets go of the auto-closed pairs it left.
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(selectionChanged:)
+                                                     name:NSTextViewDidChangeSelectionNotification
+                                                   object:tv];
+    }
     return self;
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (MCAutoClose *)autoClose { return _autoClose; }
+
+- (void)selectionChanged:(NSNotification *)note {
+    (void)note;
+    if (!_applying) [_autoClose caretsAre:[self currentCarets]];
 }
 
 - (BOOL)active { return _carets.size() > 1; }
@@ -148,6 +170,7 @@ NSString *LimitNote() {
         [tv setSelectedRanges:sel affinity:NSSelectionAffinityDownstream stillSelecting:NO];
     }
     _applying = NO;
+    [_autoClose caretsAre:carets];
     tv.needsDisplay = YES;
 }
 
@@ -363,23 +386,28 @@ NSString *LimitNote() {
 }
 
 - (BOOL)insertText:(id)text {
+    return [self insertText:text replacementRange:NSMakeRange(NSNotFound, 0)];
+}
+
+- (BOOL)insertText:(id)text replacementRange:(NSRange)replacement {
     NSString *s = [text isKindOfClass:[NSAttributedString class]] ? [text string] : text;
     if (![s isKindOfClass:[NSString class]]) return NO;
-    // An opening bracket or quote typed over the selection (or over every
-    // caret's selection) wraps it in the pair, as most code editors do.
-    // Not while an input method composes: its text replaces the marked
-    // range, which is a selection only to it.
+    // One character typed at one caret or several: the auto-closing rules
+    // first (AutoClose: type over a closer they put there, close a bracket
+    // or quote, or wrap every selection in the pair). Not while an input
+    // method composes (its text replaces the marked range, which is a
+    // selection only to it), nor for text replacing a range of its own (the
+    // accent menu's).
     NSTextView *tv = _tv;
-    if (s.length == 1 && MultiCaret::closerFor([s characterAtIndex:0]) && tv.editable &&
-        !tv.hasMarkedText) {
-        const std::vector<Caret> carets = self.active ? _carets : [self caretsFromSelection];
-        bool all = !carets.empty();
-        for (const Caret &c : carets)
-            if (c.empty()) all = false;
-        if (all) {
+    if (s.length == 1 && tv.editable && !tv.hasMarkedText && replacement.location == NSNotFound) {
+        const std::vector<Caret> carets =
+            MultiCaret::normalize([self currentCarets], tv.string.length);
+        const AutoClose::Typed t = [_autoClose type:[s characterAtIndex:0] carets:carets];
+        if (t.kind != AutoClose::Typed::Kind::None) {
             _goalX.clear();
-            [self applyEdit:MultiCaret::surround(carets, [s characterAtIndex:0])
-                     action:@"Typing"];
+            [self applyEdit:t.edit action:@"Typing"];
+            if (t.kind == AutoClose::Typed::Kind::Close) [_autoClose remember:t.closed];
+            if (!self.active) [tv scrollRangeToVisible:tv.selectedRange];
             return YES;
         }
     }
@@ -618,6 +646,18 @@ static NSUInteger MCIndexAcross(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
 }
 
 - (BOOL)doCommand:(SEL)sel {
+    // Backspace between an empty pair auto-closing put in deletes both, at
+    // one caret or several.
+    if (sel == @selector(deleteBackward:) && _tv.editable && !_tv.hasMarkedText) {
+        const MultiCaret::Edit e = [_autoClose
+            deletePairAt:MultiCaret::normalize([self currentCarets], _tv.string.length)];
+        if (!e.changes.empty()) {
+            _goalX.clear();
+            [self applyEdit:e action:@"Typing"];
+            if (!self.active) [_tv scrollRangeToVisible:_tv.selectedRange];
+            return YES;
+        }
+    }
     if (!self.active) return NO;
     using MultiCaret::Move;
     NSString *name = NSStringFromSelector(sel);
