@@ -71,6 +71,9 @@ typedef NS_ENUM(NSInteger, MCOpenFileState) {
 @property(nonatomic, readonly) NSTextField *includeField;
 @property(nonatomic, readonly) NSTextField *excludeField;
 @property(nonatomic, readonly) NSTextField *status;
+// Under the results: the files the search left out (larger than 1 MB, or
+// not UTF-8), named in its tooltip. Hidden when there were none.
+@property(nonatomic, readonly) NSTextField *skippedNote;
 @property(nonatomic, readonly) NSTableView *table;   // an NSOutlineView: files, then their lines
 @property(nonatomic, readonly) BOOL replaceShown, detailsShown;
 @property(nonatomic) BOOL matchCase, wholeWord, regex, preserveCase;
