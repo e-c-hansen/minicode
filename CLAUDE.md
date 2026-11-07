@@ -1213,7 +1213,10 @@ view is disposed (on `unrealize`), or dispose loops forever.
   `MCAppDefaults()`) is "allow"; the install bar asks first (Use It, Don't Use
   It, × for this launch). Run File, which the user starts, still uses it
   (`pythonInterpreterWithSource:`). Format Document shares the answer (see
-  "Formatting").
+  "Formatting"). minicode > Ask Again About This Folder's Tools (and Ask
+  Again in the Language Servers popover, which sends the same action) takes
+  it back (`MCForgetFolderToolsConsent`) and clears a × put-off, so the bar
+  asks at once (`make guitest SUITES=tools_consent`).
 - **Completion** opens after `.`/`->`/`::` and on a word's second letter; an
   `isIncomplete` list is asked again. `Lsp::completionKeyAccepts`: Tab takes;
   Return only when asked for (Ctrl+Space, Option+Esc), after a trigger

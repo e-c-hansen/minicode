@@ -210,6 +210,10 @@ extern NSNotificationName const MCPythonEnvironmentConsentDidChangeNotification;
 // Python servers of every window on the folder follow.
 NSString *MCFolderToolsConsent(NSString *root);
 void MCSetFolderToolsConsent(NSString *root, BOOL allow);
+// Ask Again About This Folder's Tools: the answer is forgotten (posting the
+// same notification), so the servers stop using the folder's environment
+// and the next use asks again.
+void MCForgetFolderToolsConsent(NSString *root);
 
 // One window's language servers and what the editor shows of them. The
 // class is split by concern, as EditorController is: each `@interface

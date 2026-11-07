@@ -236,6 +236,10 @@
 - (void)showLanguageServers:(id)sender;     // the servers popover (status bar click)
 - (void)restartLanguageServer:(id)sender;   // the open file's server
 - (void)selectPythonInterpreter:(id)sender; // the Python server's interpreter
+// Ask Again About This Folder's Tools: forget the folder's answer about
+// running its own .venv and node_modules programs; enabled while it has one.
+- (void)forgetFolderToolsAnswer:(id)sender;
+@property(nonatomic, readonly) BOOL canForgetFolderToolsAnswer;
 @end
 
 // EditorController+Agents.mm

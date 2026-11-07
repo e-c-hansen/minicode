@@ -176,6 +176,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
         return self.tourActive;
     if (item.action == @selector(exportPDF:)) return self.canExportPDF;
     if (item.action == @selector(togglePlayback:)) return self.canTogglePlayback;
+    if (item.action == @selector(forgetFolderToolsAnswer:)) return self.canForgetFolderToolsAnswer;
     if (item.action == @selector(toggleProblems:)) {
         item.state = self.problemsVisible ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;

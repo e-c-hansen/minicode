@@ -21,16 +21,26 @@ NSString *MCFolderToolsConsent(NSString *root) {
     return [v isKindOfClass:[NSString class]] ? v : nil;
 }
 
-void MCSetFolderToolsConsent(NSString *root, BOOL allow) {
+// Store the folder's answer (nil forgets it), and tell every window.
+static void StoreFolderToolsConsent(NSString *root, NSString *answer) {
     NSString *key = RealPath(root) ?: @"";
     NSUserDefaults *d = MCAppDefaults();
     NSMutableDictionary *all = [[d dictionaryForKey:kEnvConsentDefaultsKey] mutableCopy]
                                    ?: [NSMutableDictionary dictionary];
-    all[key] = allow ? @"allow" : @"deny";
+    if (answer) all[key] = answer;
+    else [all removeObjectForKey:key];
     [d setObject:all forKey:kEnvConsentDefaultsKey];
     // Every window on this folder follows, its formatters and servers alike.
     [[NSNotificationCenter defaultCenter]
         postNotificationName:MCPythonEnvironmentConsentDidChangeNotification object:key];
+}
+
+void MCSetFolderToolsConsent(NSString *root, BOOL allow) {
+    StoreFolderToolsConsent(root, allow ? @"allow" : @"deny");
+}
+
+void MCForgetFolderToolsConsent(NSString *root) {
+    StoreFolderToolsConsent(root, nil);
 }
 
 

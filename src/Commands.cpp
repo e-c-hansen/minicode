@@ -248,6 +248,8 @@ const std::vector<Command>& all() {
          "restartLanguageServer:", 0, 0, nullptr},
         {"python.setInterpreter", "Select Python Interpreter…", "minicode", "", A,
          "selectPythonInterpreter:", 0, 0, nullptr},
+        {"minicode.forgetFolderToolsAnswer", "Ask Again About This Folder's Tools", "minicode",
+         "", A, "forgetFolderToolsAnswer:", 0, 0, nullptr},
         {"minicode.requestChange", "Request a Change to minicode…", "minicode", "shift+cmd+k", A,
          "requestChange:", 0, 0, nullptr},
         {"minicode.restart", "Restart minicode", "minicode", "", A, "restartMinicode:", 0, 0,

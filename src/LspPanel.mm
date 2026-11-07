@@ -289,6 +289,32 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
         }
         [stack addArrangedSubview:[self cardFor:infos[i]]];
     }
+    // The folder's answer about its own programs (a .venv's servers, a
+    // formatter in node_modules), with a way to take it back.
+    NSString *answer = session.root.length ? MCFolderToolsConsent(session.root) : nil;
+    if (answer) {
+        NSBox *rule = [NSBox new];
+        rule.boxType = NSBoxSeparator;
+        [stack addArrangedSubview:rule];
+        [rule.widthAnchor constraintEqualToConstant:kPanelWidth - 24].active = YES;
+        NSString *text = [answer isEqualToString:@"allow"]
+            ? @"Programs in this folder's own .venv and node_modules may run: you allowed them."
+            : @"Programs in this folder's own .venv and node_modules do not run: you said not to.";
+        NSTextField *l = Label(text, Small(), PHex(0xC8C8C8), YES, NO);
+        l.preferredMaxLayoutWidth = kPanelWidth - 120;
+        NSView *gap = [NSView new];
+        [gap setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
+        NSButton *again = [self button:@"Ask Again" action:@selector(forgetToolsAnswer:)
+                                   key:@"tools"];
+        again.toolTip = @"Forget the answer: the servers stop using the folder's environment, "
+                        @"and minicode asks the next time one of its programs would run.";
+        NSStackView *line = [NSStackView stackViewWithViews:@[l, gap, again]];
+        line.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+        line.distribution = NSStackViewDistributionFill;
+        line.spacing = 6;
+        [line.widthAnchor constraintEqualToConstant:kPanelWidth - 24].active = YES;
+        [stack addArrangedSubview:line];
+    }
     NSTextField *note = Label(@"Commands come from the lsp lines in the settings file "
                               @"(lsp.python.also for a second Python server), and "
                               @"python.interpreter sets the default Python. MiniCode never "
@@ -323,6 +349,11 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
 }
 - (void)openSettings:(id)sender {
     [NSApp sendAction:@selector(openSettings:) to:nil from:sender];
+}
+// The window's own command (Ask Again About This Folder's Tools), so the
+// install bar's question comes back as it does from the menu.
+- (void)forgetToolsAnswer:(id)sender {
+    [NSApp sendAction:@selector(forgetFolderToolsAnswer:) to:nil from:sender];
 }
 @end
 
