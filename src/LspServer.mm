@@ -368,10 +368,10 @@ void MCLspSetMaxQueuedBytes(size_t bytes) { gMaxQueuedBytes = bytes ? bytes : 64
 }
 
 // Messages the read queue parsed, in the order the server wrote them.
-- (void)received:(const std::vector<Lsp::Incoming> &)messages raw:(NSData *)raw {
+- (void)received:(std::vector<Lsp::Incoming> &)messages raw:(NSData *)raw {
     if (_log && raw)
         [self logLine:@"<-- " bytes:std::string((const char *)raw.bytes, raw.length)];
-    for (const Lsp::Incoming &in : messages) {
+    for (Lsp::Incoming &in : messages) {
         if (_client->state() == Lsp::Client::State::Exited) break;
         _client->deliver(in);
     }

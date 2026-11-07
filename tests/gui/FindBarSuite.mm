@@ -12,6 +12,7 @@
 #import "EditorController.h"
 #import "EditorFind.h"
 #import "FindWidget.h"
+#include "TextFind.h"
 
 namespace {
 NSTextView *Text(EditorController *c) { return [c valueForKey:@"textView"]; }
@@ -319,6 +320,32 @@ MC_GUI_SUITE(find_bar) {
         GCHECK(!Find(c).findInSelection);
         [Find(c) togglePreserveCase];
         GCHECK(!Find(c).preserveCase);
+    });
+
+    // ---- a pattern left to std::regex that runs past its time
+    MCGuiStep(@"a backreference over a 20,000-letter line", ^{
+        TextFind::setSlowPatternSeconds(0.05);
+        [Find(c) performFindAction:NSTextFinderActionShowFindInterface];
+        NSString *as = [@"" stringByPaddingToLength:20000 withString:@"a" startingAtIndex:0];
+        MCGuiUndoGroup(Text(c).undoManager, ^{
+            [Text(c) insertText:as replacementRange:NSMakeRange(0, 0)];
+        });
+        if (!Find(c).regex) [Find(c) toggleRegex];
+        SetField(Find(c).bar.findField, @"(a)(.*)\\1z");
+    });
+    MCGuiWait(@"\"Too slow\"", 5, ^BOOL {
+        return Find(c).resultsCurrent &&
+               [Find(c).bar.countLabel.stringValue isEqualToString:@"Too slow"];
+    });
+    MCGuiStep(@"nothing found, the reason in the tooltip; the text back as it was", ^{
+        GCHECK(Find(c).matchRanges.count == 0);
+        GCHECK([Find(c).bar.countLabel.toolTip containsString:@"two seconds"]);
+        TextFind::setSlowPatternSeconds(2.0);
+        [Find(c) toggleRegex];
+        SetField(Find(c).bar.findField, @"alpha");
+        [Text(c).undoManager undo];
+        GCHECK_EQ_STR(Text(c).string, original);
+        [Find(c) close];
     });
 
     // ---- VS Code's narrow editor: reduced, narrow, collapsed

@@ -137,7 +137,7 @@ static void testLspThreading() {
                 take.swap(handoff);
                 done = finished;
             }
-            for (const auto &in : take) client.deliver(in);
+            for (auto &in : take) client.deliver(in);
             if (done) {
                 std::lock_guard<std::mutex> lock(m);
                 if (handoff.empty()) break;

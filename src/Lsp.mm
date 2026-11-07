@@ -228,6 +228,90 @@ static NSString *StateText(MCLspState state) {
 @implementation MCLspDoc
 @end
 
+// The undo step of an accepted completion. Its edits go in with undo
+// registration off and are put back by this step's own handler, last
+// first, so an import the server sends after the word went in (the
+// resolve answer arriving later) joins the same step while nothing else
+// has changed: one Cmd+Z takes away the word and its import.
+@interface MCAcceptUndo : NSObject
+@property(nonatomic) NSRange selection;   // before the accept
+@property(nonatomic) BOOL undone;
+- (void)addStepAfter:(NSArray<NSValue *> *)after olds:(NSArray<NSString *> *)olds;
+- (void)undoIn:(CodeTextView *)tv;
+@end
+@implementation MCAcceptUndo {
+    NSMutableArray<NSArray<NSValue *> *> *_after;
+    NSMutableArray<NSArray<NSString *> *> *_olds;
+}
+- (instancetype)init {
+    if ((self = [super init])) {
+        _after = [NSMutableArray array];
+        _olds = [NSMutableArray array];
+    }
+    return self;
+}
+- (void)addStepAfter:(NSArray<NSValue *> *)after olds:(NSArray<NSString *> *)olds {
+    [_after addObject:after];
+    [_olds addObject:olds];
+}
+// Each step's old text back through replaceRanges:, which registers the
+// redo (performed in the opposite order, so the word comes back first).
+- (void)undoIn:(CodeTextView *)tv {
+    _undone = YES;
+    for (NSInteger i = (NSInteger)_after.count - 1; i >= 0; i--)
+        [tv replaceRanges:_after[(NSUInteger)i] withStrings:_olds[(NSUInteger)i]
+               actionName:@"Completion"];
+    if (NSMaxRange(_selection) <= tv.string.length) {
+        tv.selectedRange = _selection;
+        [tv scrollRangeToVisible:_selection];
+    }
+}
+@end
+
+// A completion accepted before its server's completionItem/resolve
+// answered, waiting (kResolveAfterAccept at most) for the additional
+// edits that answer may bring.
+@interface MCPendingAccept : NSObject
+@property(nonatomic) int requestId;
+@property(nonatomic, strong) MCLspServer *server;
+@property(nonatomic, copy) NSString *uri;
+@property(nonatomic, copy) NSString *label;
+@property(nonatomic) NSUInteger edits;    // the session's edit count once the word was in
+// Everything before it is as it was when the item was accepted: the
+// word's start, or the start of an earlier edit made since.
+@property(nonatomic) NSUInteger limit;
+@property(nonatomic, strong) MCAcceptUndo *undo;
+@end
+@implementation MCPendingAccept
+@end
+
+// A completion list parsed off the main thread, with its first filtering
+// for the word as typed when it was asked for.
+struct MCParsedCompletion {
+    std::vector<Lsp::CompletionItem> items, shown;
+    bool incomplete = false;
+    std::string prefix;
+};
+
+// The most rows the list shows.
+static const size_t kMaxShownCompletions = 200;
+
+// Parsing a big list, and freeing one, off the main thread.
+static dispatch_queue_t CompletionQueue(void) {
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        queue = dispatch_queue_create("minicode.lsp.completion", DISPATCH_QUEUE_SERIAL);
+    });
+    return queue;
+}
+static void FreeOffMain(std::vector<Lsp::CompletionItem> &items) {
+    if (items.empty()) return;
+    auto gone = std::make_shared<std::vector<Lsp::CompletionItem>>(std::move(items));
+    items.clear();
+    dispatch_async(CompletionQueue(), ^{ (void)gone; });
+}
+
 static NSString *DocKey(NSString *uri, MCLspServer *server) {
     return [NSString stringWithFormat:@"%@ %@", server.serverId, uri];
 }
@@ -384,9 +468,13 @@ void MCSetFolderToolsConsent(NSString *root, BOOL allow) {
     long _stepIndex;
     NSMutableDictionary<NSString *, MCLspDoc *> *_docs;   // by DocKey
     NSUInteger _edits;        // counts edits to the text on show
+    // The edits to the text on show since it was last sent, for servers
+    // that take ranged changes (incremental didChange).
+    Lsp::ChangeTracker _changes;
     NSString *_settingsSignature, *_pythonSetting;
 
     MCCompletionPopup *_popup;
+    NSMutableArray<MCPendingAccept *> *_pendingAccepts;
     std::vector<Lsp::CompletionItem> _items, _shown;
     NSUInteger _anchor;       // where the word being completed starts
     BOOL _completing;         // a request is out or the list is showing
@@ -452,6 +540,7 @@ static NSHashTable<LspSession *> *AllSessions(void) {
     _servers = @[];
     _ruffConfigured = [NSMutableDictionary dictionary];
     _workspaceRequests = [NSMutableArray array];
+    _pendingAccepts = [NSMutableArray array];
     _problemFiles = [NSMutableDictionary dictionary];
     _settingsSignature = [self currentSettingsSignature];
     _pythonSetting = NS([AppSettings shared].settings.pythonInterpreter());
@@ -947,6 +1036,8 @@ static NSHashTable<LspSession *> *AllSessions(void) {
     if (!e) return;
     e.state = MCLspStateRunning;
     [self changed];
+    if (!_popup.prepared && server.client.capabilities().has("completionProvider"))
+        [self performSelector:@selector(prepareCompletionPopup) withObject:nil afterDelay:0.5];
 }
 
 // A server began, reported or ended work. Coalesced to one redraw a
@@ -1490,6 +1581,8 @@ static BOOL IsRunnable(NSString *path) {
     _servers = @[];
     _completionServer = nil;
     _uri = nil;
+    _changes.reset();
+    [self dropPendingAccepts];
     _tv.diagnostics = @[];
 }
 
@@ -1596,6 +1689,9 @@ static BOOL IsRunnable(NSString *path) {
 // Files whose tabs have gone are closed. Cheap when nothing changed: an
 // unchanged text sends nothing (Client::didChange compares).
 - (void)syncOpenDocuments {
+    // The file on show's edits go first, as ranges where the server takes
+    // them; its didOpen below then has nothing left to send.
+    [self flushChanges];
     NSMutableDictionary<NSString *, MCLspDoc *> *wanted = [NSMutableDictionary dictionary];
     NSMutableDictionary<NSString *, NSString *> *texts = [NSMutableDictionary dictionary];
     NSMutableDictionary<NSString *, NSString *> *languageIds = [NSMutableDictionary dictionary];
@@ -1660,8 +1756,9 @@ static BOOL IsRunnable(NSString *path) {
 
 - (void)documentSaved {
     if (!_servers.count || !_uri) return;
-    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushChanges)
-                                               object:nil];
+    // What changed goes as a didChange of its own (ranges where the server
+    // takes them), so didSave's own sync finds nothing to send.
+    [self flushChanges];
     std::string text = Std(_tv.string);
     for (MCLspServer *server in _servers) server.client.didSave(Std(_uri), text);
 }
@@ -1771,14 +1868,17 @@ static BOOL IsRunnable(NSString *path) {
     [self stopAllServers];
 }
 
-// Full-document sync, a moment after typing pauses. Anything that asks the
-// server about the text flushes first.
+// didChange, a moment after typing pauses: the edits since the text was
+// last sent, as ranges, for servers that take them (and when they come to
+// less than the text), else the whole text. Anything that asks the server
+// about the text flushes first.
 - (void)flushChanges {
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushChanges)
                                                object:nil];
-    if (!_servers.count || !_uri) return;
+    if (!_servers.count || !_uri) { _changes.reset(); return; }
     std::string text = Std(_tv.string);
-    for (MCLspServer *server in _servers) server.client.didChange(Std(_uri), text);
+    for (MCLspServer *server in _servers) server.client.didChange(Std(_uri), text, _changes);
+    _changes.reset();
 }
 
 - (void)storageEdited:(NSNotification *)note {
@@ -1786,6 +1886,16 @@ static BOOL IsRunnable(NSString *path) {
     // Typing closes hover info and the lists; recoloring alone does not.
     if (ts.editedMask & NSTextStorageEditedCharacters) {
         _edits++;
+        // editedRange is the edit's text now; changeInLength says how much
+        // it replaced (several edits in one processEditing come as their
+        // union, which is one edit as far as the text outside it goes).
+        const NSRange er = ts.editedRange;
+        const NSInteger removed = (NSInteger)er.length - ts.changeInLength;
+        if (er.location != NSNotFound && removed >= 0)
+            _changes.edit(er.location, (size_t)removed, er.length);
+        else
+            _changes.invalidate();
+        [self noteEditForPendingAccepts:er.location];
         [self closeHover];
         [self closePicker];
     }
@@ -2167,21 +2277,40 @@ static BOOL IsRunnable(NSString *path) {
     NSString *uri = _uri;
     Lsp::Position pos = Lsp::positionForOffset(U16Of(s), cursor);
     _completionServer = server;
+    const std::string prefix = Std([s substringWithRange:NSMakeRange(anchor, cursor - anchor)]);
+    // The answer is parsed and first filtered off the main thread (5,000
+    // items took about 10 ms there), and freed there too.
     server.client.completion(Std(uri), pos,
-        [weakSelf, gen, uri](const Json &result, const Json &error) {
+        [weakSelf, gen, uri, prefix](Json &result, const Json &error) {
             (void)error;
-            [weakSelf completionArrived:result gen:gen uri:uri];
+            auto owned = std::make_shared<Json>(std::move(result));
+            dispatch_async(CompletionQueue(), ^{
+                auto parsed = std::make_shared<MCParsedCompletion>();
+                parsed->items = Lsp::parseCompletion(*owned, &parsed->incomplete);
+                parsed->prefix = prefix;
+                parsed->shown = Lsp::filterCompletions(parsed->items, prefix);
+                if (parsed->shown.size() > kMaxShownCompletions)
+                    parsed->shown.resize(kMaxShownCompletions);
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    LspSession *me = weakSelf;
+                    if (me) [me completionParsed:parsed gen:gen uri:uri];
+                    FreeOffMain(parsed->items);
+                    FreeOffMain(parsed->shown);
+                });
+            });
         }, trigger ? Std(trigger) : "");
 }
 
-- (void)completionArrived:(const Json &)result gen:(int)gen uri:(NSString *)uri {
+- (void)completionParsed:(const std::shared_ptr<MCParsedCompletion> &)parsed gen:(int)gen
+                     uri:(NSString *)uri {
     if (gen != _completionGen || ![uri isEqualToString:_uri] || !_completing) return;
-    bool incomplete = false;
-    _items = Lsp::parseCompletion(result, &incomplete);
-    _incomplete = incomplete;
+    FreeOffMain(_items);
+    _items = std::move(parsed->items);
+    parsed->items.clear();
+    _incomplete = parsed->incomplete;
     _haveItems = YES;
     if (_items.empty()) { [self closeCompletion]; return; }
-    [self refilterCompletion];
+    [self refilterCompletionWith:parsed.get()];
 }
 
 - (NSString *)typedPrefix {
@@ -2190,7 +2319,11 @@ static BOOL IsRunnable(NSString *path) {
     return [_tv.string substringWithRange:NSMakeRange(_anchor, cursor - _anchor)];
 }
 
-- (void)refilterCompletion {
+- (void)refilterCompletion { [self refilterCompletionWith:nullptr]; }
+
+// `parsed`, when given, holds the list's first filtering, for the word as
+// it was when the list was asked for.
+- (void)refilterCompletionWith:(MCParsedCompletion *)parsed {
     if (!_completing) return;
     NSString *s = _tv.string;
     NSUInteger cursor = [self cursor];
@@ -2211,22 +2344,28 @@ static BOOL IsRunnable(NSString *path) {
         prevLabel = _shown[(size_t)prevRow].label;
         prevText = _shown[(size_t)prevRow].textToInsert();
     }
-    _shown = Lsp::filterCompletions(_items, Std(prefix));
+    FreeOffMain(_shown);
+    if (parsed && parsed->prefix == Std(prefix)) {
+        _shown = std::move(parsed->shown);
+        parsed->shown.clear();
+    } else {
+        _shown = Lsp::filterCompletions(_items, Std(prefix));
+    }
     // Nothing to offer, or only exactly what is already typed.
     if (_shown.empty() ||
         (_shown.size() == 1 && _shown[0].textToInsert() == Std(prefix))) {
         [self closeCompletion];
         return;
     }
-    if (!_popup) {
-        _popup = [MCCompletionPopup new];
-        __weak LspSession *weakSelf = self;
-        _popup.onAccept = ^(NSInteger row) { [weakSelf acceptCompletion:row]; };
-        _popup.onSelectionChanged = ^{ [weakSelf completionSelectionMoved]; };
-    }
+    MCCompletionPopup *popup = [self completionPopup];
     NSMutableArray *labels = [NSMutableArray array], *details = [NSMutableArray array];
-    size_t limit = std::min<size_t>(_shown.size(), 200);
-    _shown.resize(limit);
+    size_t limit = std::min<size_t>(_shown.size(), kMaxShownCompletions);
+    if (_shown.size() > limit) {
+        std::vector<Lsp::CompletionItem> rest(std::make_move_iterator(_shown.begin() + (long)limit),
+                                              std::make_move_iterator(_shown.end()));
+        _shown.resize(limit);
+        FreeOffMain(rest);
+    }
     // The best match (filterCompletions puts it first), unless the arrows
     // chose an item that is still listed. A stale highlight from a wider
     // list used to stay ("os.pa" kept POSIX_SPAWN_CLOSE from "os.p").
@@ -2244,8 +2383,30 @@ static BOOL IsRunnable(NSString *path) {
         [details addObject:NS(_shown[i].detail)];
     }
     NSRect caret = [_tv firstRectForCharacterRange:NSMakeRange(_anchor, 0) actualRange:NULL];
-    [_popup showLabels:labels details:details select:select atScreenRect:caret
-                parent:_tv.window];
+    [popup showLabels:labels details:details select:select atScreenRect:caret
+               parent:_tv.window];
+}
+
+// The list's windows, made on first use.
+- (MCCompletionPopup *)completionPopup {
+    if (!_popup) {
+        _popup = [MCCompletionPopup new];
+        __weak LspSession *weakSelf = self;
+        _popup.onAccept = ^(NSInteger row) { [weakSelf acceptCompletion:row]; };
+        _popup.onSelectionChanged = ^{ [weakSelf completionSelectionMoved]; };
+    }
+    return _popup;
+}
+
+// Made ahead, a piece per turn of the run loop while nothing else is
+// going on, once a server that completes is running: building the list's
+// windows and laying out its first rows and documentation took 10 to 15
+// ms on the first showing.
+- (void)prepareCompletionPopup {
+    if (_completing || ![self serverFor:Lsp::Feature::Completion]) return;
+    [[self completionPopup] prepareStep];
+    if (!_popup.prepared)
+        [self performSelector:@selector(prepareCompletionPopup) withObject:nil afterDelay:0.05];
 }
 
 // The selection in the list moved (or the list was rebuilt): show the
@@ -2254,6 +2415,16 @@ static BOOL IsRunnable(NSString *path) {
 - (void)completionSelectionMoved {
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(resolveSelected)
                                                object:nil];
+    // On the next turn of the run loop: the list shows first, and its
+    // documentation's layout is not added to the same pause.
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(showSelectedCompletionDoc)
+                                               object:nil];
+    [self performSelector:@selector(showSelectedCompletionDoc) withObject:nil afterDelay:0];
+}
+
+- (void)showSelectedCompletionDoc {
+    if (!_completing || !_popup.visible) return;
     NSInteger row = _popup.selectedRow;
     if (row < 0 || (size_t)row >= _shown.size()) { [_popup showDoc:nil]; return; }
     const Lsp::CompletionItem &item = _shown[(size_t)row];
@@ -2302,6 +2473,9 @@ static BOOL IsRunnable(NSString *path) {
 - (void)closeCompletion {
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(resolveSelected)
                                                object:nil];
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(showSelectedCompletionDoc)
+                                               object:nil];
     if (_resolveId && _resolveServer) _resolveServer.client.cancel(_resolveId);
     _resolveId = 0;
     _resolveServer = nil;
@@ -2309,60 +2483,28 @@ static BOOL IsRunnable(NSString *path) {
     _haveItems = NO;
     _incomplete = NO;
     _navigated = NO;
-    _items.clear();
-    _shown.clear();
+    FreeOffMain(_items);
+    FreeOffMain(_shown);
     [_popup close];
 }
 
-// How long accepting an item waits for completionItem/resolve to bring its
-// additional edits (an auto-import). Keys pressed meanwhile wait in the
-// event queue and arrive after the completion, in order.
-static const NSTimeInterval kResolveBeforeAccept = 0.4;
-
-// completionItem/resolve for an item about to be accepted, waited for here,
-// at most kResolveBeforeAccept. YES when the item may still be accepted: the
-// server, the file and its text are as they were (the wait runs the main
-// queue, so a server's workspace/applyEdit could have got in).
-- (BOOL)resolveBeforeAccepting:(Lsp::CompletionItem &)item {
-    MCLspServer *server = _completionServer;
-    if (!server || !Lsp::completionWantsResolve(item, server.client.canResolveCompletion()))
-        return YES;
-    struct Answer { bool done = false; Json result; };
-    auto answer = std::make_shared<Answer>();
-    int rid = server.client.resolveCompletion(item, [answer](const Json &r, const Json &e) {
-        answer->done = true;
-        if (e.isNull()) answer->result = r;
-    });
-    if (!rid) return YES;
-    NSString *uri = _uri;
-    const NSUInteger edits = _edits;
-    NSDate *until = [NSDate dateWithTimeIntervalSinceNow:kResolveBeforeAccept];
-    while (!answer->done && until.timeIntervalSinceNow > 0)
-        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:until];
-    if (!answer->done) {
-        // Too slow: the word goes in without what resolve would have added
-        // (typescript-language-server sends auto-imports only then), and
-        // the status bar says so rather than leave a missing import unseen.
-        server.client.cancel(rid);
-        [self note:[NSString stringWithFormat:
-            @"%@ went in without waiting for the language server, which may have "
-             "added an import with it", NS(item.label)]];
-        return [_servers containsObject:server] && [_uri isEqualToString:uri] &&
-               _edits == edits;
-    }
-    Lsp::applyResolved(item, answer->result);
-    return [_servers containsObject:server] && [_uri isEqualToString:uri] && _edits == edits;
-}
+// How long an accepted item's additional edits (an auto-import) may take
+// to come from completionItem/resolve, after the word went in.
+static const NSTimeInterval kResolveAfterAccept = 1.0;
 
 - (void)acceptCompletion:(NSInteger)row {
     if (row < 0 || (size_t)row >= _shown.size()) { [self closeCompletion]; return; }
     Lsp::CompletionItem item = _shown[(size_t)row];
+    MCLspServer *server = _completionServer;
     NSUInteger cursor = [self cursor];
     NSUInteger start = _anchor;
     [self closeCompletion];
     // Answers for the list still on their way must not bring it back.
     _completionGen++;
-    if (![self resolveBeforeAccepting:item]) return;
+    // An item whose additional edits come only from resolve
+    // (typescript-language-server's auto-imports) goes in now, and the
+    // edits follow when the answer comes: nothing waits for the server.
+    const BOOL later = server && Lsp::completionWantsResolve(item, server.client.canResolveCompletion());
     std::u16string text = U16Of(_tv.string);
     if (item.hasEdit) {
         // The edit's range was computed on the text as it was when asked;
@@ -2383,20 +2525,168 @@ static const NSTimeInterval kResolveBeforeAccept = 0.4;
         [strings addObject:[NSString stringWithCharacters:(const unichar *)e.text.data()
                                                    length:e.text.size()]];
     }
-    [_tv breakUndoCoalescing];
-    if (![_tv shouldChangeTextInRanges:ranges replacementStrings:strings]) return;
-    // Each edit its own storage edit, last first, with one didChangeText,
-    // as applyWorkspaceEdit does: inside one beginEditing the storage
-    // reported a single edited range from the import to the word, which
-    // opened every fold between them and stretched the squiggles over it.
-    NSTextStorage *ts = _tv.textStorage;
-    for (NSInteger i = (NSInteger)ranges.count - 1; i >= 0; i--)
-        [ts replaceCharactersInRange:ranges[(NSUInteger)i].rangeValue
-                          withString:strings[(NSUInteger)i]];
-    [_tv didChangeText];
-    [_tv breakUndoCoalescing];
+    MCAcceptUndo *undo = [MCAcceptUndo new];
+    undo.selection = _tv.selectedRange;
+    if (![self applyAcceptEdits:ranges strings:strings into:undo]) return;
+    NSUndoManager *um = _tv.undoManager;
+    if (um && um.isUndoRegistrationEnabled && _tv.allowsUndo) {
+        [_tv breakUndoCoalescing];
+        [um beginUndoGrouping];
+        [um registerUndoWithTarget:_tv handler:^(CodeTextView *tv) { [undo undoIn:tv]; }];
+        [um setActionName:@"Completion"];
+        [um endUndoGrouping];
+    }
     if (ce.caret <= _tv.string.length) [_tv setSelectedRange:NSMakeRange(ce.caret, 0)];
     [_tv scrollRangeToVisible:_tv.selectedRange];
+    if (later) [self resolveAfterAccepting:item server:server undo:undo limit:start];
+}
+
+// Replacements (ascending and apart) made through replaceRanges: with
+// undo registration off, their old text kept in `undo` to put back. NO
+// when the view refused them.
+- (BOOL)applyAcceptEdits:(NSArray<NSValue *> *)ranges strings:(NSArray<NSString *> *)strings
+                    into:(MCAcceptUndo *)undo {
+    NSString *text = _tv.string;
+    NSMutableArray<NSValue *> *after = [NSMutableArray array];
+    NSMutableArray<NSString *> *olds = [NSMutableArray array];
+    NSInteger shift = 0;
+    for (NSUInteger i = 0; i < ranges.count; i++) {
+        const NSRange r = ranges[i].rangeValue;
+        if (NSMaxRange(r) > text.length) return NO;
+        [olds addObject:[text substringWithRange:r]];
+        [after addObject:[NSValue valueWithRange:NSMakeRange((NSUInteger)((NSInteger)r.location + shift),
+                                                             strings[i].length)]];
+        shift += (NSInteger)strings[i].length - (NSInteger)r.length;
+    }
+    NSUndoManager *um = _tv.undoManager;
+    const BOOL registering = um && um.isUndoRegistrationEnabled;
+    if (registering) [um disableUndoRegistration];
+    const BOOL ok = [_tv replaceRanges:ranges withStrings:strings actionName:nil];
+    if (registering) [um enableUndoRegistration];
+    if (ok) [undo addStepAfter:after olds:olds];
+    return ok;
+}
+
+- (void)resolveAfterAccepting:(const Lsp::CompletionItem &)item server:(MCLspServer *)server
+                         undo:(MCAcceptUndo *)undo limit:(NSUInteger)limit {
+    MCPendingAccept *p = [MCPendingAccept new];
+    p.server = server;
+    p.uri = _uri;
+    p.label = NS(item.label);
+    p.edits = _edits;
+    p.limit = limit;
+    p.undo = undo;
+    __weak LspSession *weakSelf = self;
+    __weak MCPendingAccept *weakPending = p;
+    Lsp::CompletionItem copy = item;
+    const int rid = server.client.resolveCompletion(item,
+        [weakSelf, weakPending, copy](const Json &result, const Json &error) {
+            Lsp::CompletionItem resolved = copy;
+            Lsp::applyResolved(resolved, error.isNull() ? result : Json());
+            [weakSelf pendingAccept:weakPending resolved:resolved];
+        });
+    if (!rid) return;
+    p.requestId = rid;
+    [_pendingAccepts addObject:p];
+    [self performSelector:@selector(pendingAcceptTimedOut:) withObject:p
+               afterDelay:kResolveAfterAccept];
+}
+
+// Every edit since an accept moves its limit back to the edit's start:
+// the text before that is still as it was.
+- (void)noteEditForPendingAccepts:(NSUInteger)location {
+    for (MCPendingAccept *p in _pendingAccepts)
+        if (location < p.limit) p.limit = location;
+}
+
+- (void)finishPendingAccept:(MCPendingAccept *)p {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(pendingAcceptTimedOut:)
+                                               object:p];
+    [_pendingAccepts removeObject:p];
+}
+
+- (void)dropPendingAccepts {
+    for (MCPendingAccept *p in [_pendingAccepts copy]) {
+        if (p.requestId && !p.server.stopping) p.server.client.cancel(p.requestId);
+        [self finishPendingAccept:p];
+    }
+}
+
+- (void)pendingAcceptTimedOut:(MCPendingAccept *)p {
+    if (![_pendingAccepts containsObject:p]) return;
+    if (p.requestId && !p.server.stopping) p.server.client.cancel(p.requestId);
+    [self finishPendingAccept:p];
+    // The server may have had an import to add with it (its answer would
+    // have said): the status bar says so rather than leave it unseen.
+    [self note:[NSString stringWithFormat:
+        @"%@ went in without what the language server may have added with it (an import): "
+         "it did not answer within a second", p.label]];
+}
+
+- (void)pendingAccept:(MCPendingAccept *)p resolved:(const Lsp::CompletionItem &)item {
+    if (!p || ![_pendingAccepts containsObject:p]) return;
+    [self finishPendingAccept:p];
+    // Taken back before the answer came: its import is not wanted either.
+    if (item.additionalEdits.empty() || p.undo.undone) return;
+    if (![_servers containsObject:p.server] || ![_uri isEqualToString:p.uri]) return;
+    std::vector<Lsp::OffsetEdit> edits;
+    if (!Lsp::lateAdditionalEdits(U16Of(_tv.string), item.additionalEdits, p.limit, edits)) {
+        [self note:[NSString stringWithFormat:
+            @"The language server's addition for %@ (an import) was left out: the text it "
+             "would change was edited before it answered", p.label]];
+        return;
+    }
+    if (edits.empty()) return;
+    NSMutableArray<NSValue *> *ranges = [NSMutableArray array];
+    NSMutableArray<NSString *> *strings = [NSMutableArray array];
+    NSInteger shift = 0;
+    for (const Lsp::OffsetEdit &e : edits) {
+        [ranges addObject:[NSValue valueWithRange:NSMakeRange(e.start, e.length)]];
+        [strings addObject:[NSString stringWithCharacters:(const unichar *)e.text.data()
+                                                   length:e.text.size()]];
+        shift += (NSInteger)e.text.size() - (NSInteger)e.length;
+    }
+    // The caret, a list being typed and the view's top line stay on their
+    // text (all of it after the edits), as VS Code keeps the caret's line
+    // where it was on screen.
+    const NSUInteger limit = p.limit;
+    auto moved = [&](NSUInteger at) {
+        return at >= limit ? (NSUInteger)((NSInteger)at + shift) : at;
+    };
+    const NSRange sel = _tv.selectedRange;
+    NSLayoutManager *lm = _tv.layoutManager;
+    const NSRect visible = _tv.enclosingScrollView.contentView.bounds;
+    const NSPoint origin = _tv.textContainerOrigin;
+    NSUInteger top = NSNotFound;
+    CGFloat topOffset = 0;
+    if (lm && _tv.textContainer && _tv.string.length) {
+        const NSPoint at = NSMakePoint(NSMinX(visible) - origin.x, NSMinY(visible) - origin.y);
+        const NSUInteger glyph = [lm glyphIndexForPoint:at inTextContainer:_tv.textContainer];
+        top = [lm characterIndexForGlyphAtIndex:glyph];
+        const NSRect line = [lm lineFragmentRectForGlyphAtIndex:glyph effectiveRange:NULL];
+        topOffset = NSMinY(visible) - (NSMinY(line) + origin.y);
+    }
+    _applyingEdit = YES;
+    BOOL ok;
+    if (_edits == p.edits && !p.undo.undone) {
+        // Nothing has changed since the word went in: the same undo step.
+        ok = [self applyAcceptEdits:ranges strings:strings into:p.undo];
+    } else {
+        // Typing came between: a step of its own, so each undoes in turn.
+        ok = [_tv replaceRanges:ranges withStrings:strings actionName:@"Completion"];
+    }
+    _applyingEdit = NO;
+    if (!ok) return;
+    if (_completing && _anchor >= limit) _anchor = moved(_anchor);
+    const NSUInteger length = _tv.string.length;
+    const NSRange now = NSMakeRange(moved(sel.location), sel.length);
+    if (NSMaxRange(now) <= length) _tv.selectedRange = now;
+    if (lm && top != NSNotFound && top >= limit && moved(top) < length) {
+        const NSUInteger glyph = [lm glyphIndexForCharacterAtIndex:moved(top)];
+        const NSRect line = [lm lineFragmentRectForGlyphAtIndex:glyph effectiveRange:NULL];
+        [_tv scrollPoint:NSMakePoint(NSMinX(visible), NSMinY(line) + origin.y + topOffset)];
+    }
+    if (_completing) [self refilterCompletion];
 }
 
 - (BOOL)handleCommand:(SEL)sel {

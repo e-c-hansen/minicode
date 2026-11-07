@@ -12,12 +12,19 @@
 //   start and end of a line.
 // - Plain text: case-insensitive by default, with FolderSearch's one-to-one
 //   folding (ASCII, Latin-1, Latin Extended-A, Greek, Cyrillic).
-// - Regular expressions are std::regex's ECMAScript grammar (JavaScript's,
-//   which is what VS Code's find uses), run on UTF-32 code points, so . is
-//   one character and a character class can hold any letter. Case-insensitive
-//   matching folds with the same table as plain text. \w, \b and \d are
-//   ASCII only, as in JavaScript. An empty match is a match (^ finds every
-//   line's start), and the next search starts a character on.
+// - Regular expressions are the ECMAScript grammar (JavaScript's, which is
+//   what VS Code's find uses), run on UTF-32 code points, so . is one
+//   character and a character class can hold any letter. std::regex decides
+//   what is valid. Case-insensitive matching folds with the same table as
+//   plain text. \w, \b and \d are ASCII only, as in JavaScript. An empty
+//   match is a match (^ finds every line's start), and the next search
+//   starts a character on.
+// - Most patterns run on Regex.h's engine, whose time is linear in the line
+//   whatever the pattern, with JavaScript's matches. The few it refuses
+//   (backreferences, lookaround, C++'s [[:alpha:]] and the like) run through
+//   std::regex on a thread of the query's own; a search that takes over 2 s
+//   there is left behind to finish by itself, finds nothing, and so does
+//   every later search with that query (Query::tooSlow says so).
 // - Whole word, as VS Code checks it: a match's first character must not
 //   have a word character before it, unless that first character is not a
 //   word character itself; the same at its end. Word characters are ASCII
@@ -33,15 +40,12 @@
 //   all capitals, all small, a capital first or a small first; and part by
 //   part when both hold the same number of "-" (or "_") separated parts.
 //
-// A known limit of std::regex: it backtracks, so a pattern such as (a|b)*c
-// against a very long line takes time quadratic in the line's length. The
-// front ends search off the main thread and poll a cancel flag between
-// lines. A line over 2,000 characters is searched by a regex one start
-// position at a time, so the flag is also polled within it, and after a
-// second or so on such a line the search gives up on the rest of it (a minified
-// file kept the find queue busy for many seconds). A single attempt that
-// backtracks exponentially, as (a+)+b can on a short line, cannot be
-// stopped: std::regex has no step limit.
+// The front ends search off the main thread and poll a cancel flag between
+// lines; the linear engine polls it within a long line too. std::regex
+// backtracks, so for the patterns left to it a line over 2,000 characters
+// is searched one start position at a time, polling the flag, and given up
+// after a second or so (a minified file kept the find queue busy for many
+// seconds).
 #pragma once
 
 #include <atomic>
@@ -84,8 +88,16 @@ public:
     static Query make(const std::string& pattern, const Options& options);
     static Query make(const std::u16string& pattern, const Options& options);
 
+    // The same through std::regex alone (for tests, as the oracle).
+    static Query makeBacktracking(const std::u16string& pattern, const Options& options);
+
     // False for an empty pattern or a regex that does not compile.
     bool usable() const { return impl_ != nullptr; }
+    // A regex the linear engine runs (Regex.h), not std::regex.
+    bool linear() const;
+    // A search through std::regex took too long and was left behind: it,
+    // and every later search with this query, found nothing.
+    bool tooSlow() const;
     // Why a regex did not compile ("Invalid regular expression: ..."), else "".
     const std::string& error() const { return error_; }
     const Options& options() const { return options_; }
@@ -100,7 +112,12 @@ private:
 };
 
 // Case folding used for case-insensitive matching (one character to one).
+// It changes nothing at or past U+0500 (Regex.cpp relies on that).
 char32_t foldCase(char32_t c);
+
+// How long a search through std::regex may take before it is left behind
+// (2 s; tests shorten it).
+void setSlowPatternSeconds(double seconds);
 
 // A word character for whole-word matching.
 bool isWordChar(char32_t c);

@@ -545,6 +545,59 @@ struct CompletionEdits {
 CompletionEdits completionEdits(const std::u16string& text, size_t start, size_t end,
                                 const std::u16string& insert,
                                 const std::vector<TextEdit>& additional);
+// An item's additional edits arriving after its word went in (the resolve
+// answer comes later than the accept): their positions are in the text as
+// it was when the item was accepted, and they hold in `now` only where
+// nothing has changed since, which is everything before `limit` (the
+// word's start, or an earlier edit made since). Ascending and apart, in
+// `now`'s offsets, ready for one multi-range replacement; false (and
+// nothing in `out`) when one reaches past `limit` or two overlap.
+bool lateAdditionalEdits(const std::u16string& now, const std::vector<TextEdit>& additional,
+                         size_t limit, std::vector<OffsetEdit>& out);
+
+// ------------------------------------------------------ incremental sync
+// What changed in a document since it was last sent, kept from the edits
+// the editor's storage reports, each as `removed` UTF-16 units at `start`
+// replaced by `inserted` units, in the text as it was just before it.
+// The edits are merged into regions: disjoint, ascending, each a range of
+// the text as sent and the range of the text now that replaced it. Past
+// kMaxRegions regions it gives up (overflowed), and the next send is the
+// whole text.
+class ChangeTracker {
+public:
+    struct Region { size_t oldStart = 0, oldEnd = 0, newStart = 0, newEnd = 0; };
+    static constexpr size_t kMaxRegions = 256;
+    void edit(size_t start, size_t removed, size_t inserted);
+    void reset() { regions_.clear(); overflowed_ = false; }
+    // An edit that could not be placed: the next send is the whole text.
+    void invalidate() { regions_.clear(); overflowed_ = true; }
+    bool overflowed() const { return overflowed_; }
+    bool empty() const { return regions_.empty() && !overflowed_; }
+    const std::vector<Region>& regions() const { return regions_; }
+
+private:
+    std::vector<Region> regions_;
+    bool overflowed_ = false;
+};
+// One entry of didChange's contentChanges: `range` in the document as the
+// server has it after the entries before this one, replaced by `text`.
+struct ContentChange {
+    Range range;
+    std::string text;   // UTF-8
+};
+// The ranged changes that turn `before` into `after` (both UTF-8), one per
+// region, the last region first (so each range holds after the ones
+// before it are applied). False when the regions do not account for every
+// difference (the text outside them is not the same in both, a region
+// ends past the text, or a boundary falls inside a character or between
+// \r and \n): then only the whole text will do. Whatever the regions say,
+// changes that come back true rebuild `after` exactly from `before`.
+bool rangedChanges(const std::string& before, const std::string& after,
+                   const std::vector<ChangeTracker::Region>& regions,
+                   std::vector<ContentChange>& out);
+// Applies didChange's entries in order, as a server does (for tests).
+std::u16string applyContentChanges(const std::u16string& text,
+                                   const std::vector<ContentChange>& changes);
 // MarkupContent ({kind, value}) or a plain string. False for anything else.
 bool parseMarkup(const Json& j, std::string& text, bool& isMarkdown);
 SignatureHelp parseSignatureHelp(const Json& result);
@@ -741,6 +794,10 @@ public:
 
     using Sender = std::function<void(const std::string& framed)>;
     using ResultHandler = std::function<void(const Json& result, const Json& error)>;
+    // A handler that may move the result away (to parse it on another
+    // thread, and free it there): it is the client's own copy, which
+    // nothing reads after the handler returns.
+    using TakingHandler = std::function<void(Json& result, const Json& error)>;
 
     explicit Client(Sender send) : send_(std::move(send)) {}
 
@@ -761,12 +818,24 @@ public:
     void initialize(const std::string& rootPath, int processId,
                     const std::string& clientName = "MiniCode");
 
-    // Full-document sync. didChange bumps the version and sends the whole
-    // text; it is a no-op for a document that is not open. Versions never go
+    // Document sync. didChange bumps the version and sends the whole text
+    // (or, in the overload below, the ranges that changed); it is a no-op
+    // for a document that is not open. Versions never go
     // back for a URI, across a close and a reopen either.
     void didOpen(const std::string& uri, const std::string& languageId,
                  const std::string& text);
     void didChange(const std::string& uri, const std::string& text);
+    // The same, sending only what changed when the server takes ranged
+    // changes (textDocumentSync change 2) and `changes` (the editor's
+    // edits since the text was last sent) account for every difference
+    // and are smaller than the text; else the whole text.
+    void didChange(const std::string& uri, const std::string& text,
+                   const ChangeTracker& changes);
+    // textDocumentSync's change kind: 0 none, 1 full, 2 incremental.
+    int syncKind() const;
+    // How many didChange notifications went out with ranges, and whole.
+    size_t rangedChangesSent() const { return rangedSent_; }
+    size_t fullChangesSent() const { return fullSent_; }
     void didSave(const std::string& uri, const std::string& text);
     void didClose(const std::string& uri);
     bool isOpen(const std::string& uri) const { return docs_.count(uri) != 0; }
@@ -783,7 +852,9 @@ public:
     // Requests. The handler runs when the response arrives (with a null
     // result and the error object on failure). Returns the request id.
     int request(const std::string& method, Json params, ResultHandler handler);
-    int completion(const std::string& uri, Position p, ResultHandler h,
+    int requestTaking(const std::string& method, Json params, TakingHandler handler);
+    // The handler may take the result: a big list is parsed elsewhere.
+    int completion(const std::string& uri, Position p, TakingHandler h,
                    const std::string& triggerCharacter = "");
     int hover(const std::string& uri, Position p, ResultHandler h);
     // completionItem/resolve for an item from parseCompletion. 0 (and no
@@ -832,7 +903,7 @@ public:
     void receive(const std::string& s) { receive(s.data(), s.size()); }
     // One message a Reader made elsewhere (another thread): handled as
     // receive() would have. Nothing is done once the client has Exited.
-    void deliver(const Incoming& in);
+    void deliver(Incoming& in);
 
     // $/progress: the newest work begun and not yet ended, or null; every
     // begin, report and end runs onProgress.
@@ -905,7 +976,7 @@ private:
     std::map<std::string, Progress> progress_;   // by token
     int nextId_ = 1;
     int initializeId_ = 0, shutdownId_ = 0;
-    std::map<int, ResultHandler> handlers_;
+    std::map<int, TakingHandler> handlers_;
     std::vector<std::string> queue_;            // bodies waiting for Ready
     std::vector<int> queuedIds_;                // requests among them
     std::map<std::string, Doc> docs_;
@@ -920,12 +991,13 @@ private:
     std::string rootPath_;
     std::map<std::string, std::vector<FileWatcher>> watchers_;   // by registration id
     size_t staleDiagnostics_ = 0;
+    size_t rangedSent_ = 0, fullSent_ = 0;
     const Doc* findDoc(const std::string& uri) const;
     std::function<void()> shutdownDone_;
 
     void write(const Json& msg, bool beforeReadyOk = false);
     void notify(const std::string& method, Json params);
-    void handleMessage(const Json& msg);
+    void handleMessage(Json& msg);
     void handleServerRequest(const Json& msg);
     void handleProgress(const Json& params);
     void respond(const Json& id, Json result);
