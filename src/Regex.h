@@ -58,6 +58,11 @@ std::size_t groupCount(const Program& program);
 // The number of steps the program has (for tests).
 std::size_t programSize(const Program& program);
 
+// The longest run of characters the compiler found that every match holds,
+// folded when the program ignores case; "" when there is none (a*, \d+).
+// Find in Folder looks for it in a file before matching any line.
+const std::u32string& requiredText(const Program& program);
+
 enum class Result { Found, NotFound, Stopped };
 
 struct SearchOptions {

@@ -4,18 +4,24 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <condition_variable>
 #include <iterator>
 #include <memory>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
+#include <queue>
 #include <set>
 #include <system_error>
+#include <thread>
 
 #include <cerrno>
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -88,120 +94,319 @@ bool cancelled(const std::atomic<bool>* cancel) {
     return cancel && cancel->load(std::memory_order_relaxed);
 }
 
-struct Walker {
+// ------------------------------------------------------------ the needle
+// Text a line must hold to match, looked for in a whole file at once
+// (Horspool's search, on bytes, ASCII letters folded when `fold`).
+struct Needle {
+    std::string bytes;    // lower case when fold
+    bool fold = false;
+    bool never = false;   // holds a line break, so no line can hold it
+    unsigned char skip[256] = {};
+
+    bool empty() const { return bytes.empty(); }
+
+    void prepare() {
+        const std::size_t m = bytes.size();
+        if (fold)
+            for (char& c : bytes) c = static_cast<char>(asciiLower(static_cast<unsigned char>(c)));
+        const unsigned char cap = static_cast<unsigned char>(std::min<std::size_t>(m, 255));
+        for (unsigned char& k : skip) k = cap;
+        for (std::size_t k = 0; k + 1 < m; ++k)
+            skip[static_cast<unsigned char>(bytes[k])] =
+                static_cast<unsigned char>(std::min<std::size_t>(m - 1 - k, cap));
+    }
+
+    unsigned char at(const char* s, std::size_t i) const {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        return fold ? asciiLower(c) : c;
+    }
+
+    // The first occurrence in s[from, n), or npos.
+    std::size_t find(const char* s, std::size_t n, std::size_t from) const {
+        const std::size_t m = bytes.size();
+        if (m == 0 || from > n || n - from < m) return std::string::npos;
+        const unsigned char* b = reinterpret_cast<const unsigned char*>(bytes.data());
+        if (m == 1 && !fold) {
+            const void* p = std::memchr(s + from, b[0], n - from);
+            return p ? static_cast<std::size_t>(static_cast<const char*>(p) - s) : std::string::npos;
+        }
+        const unsigned char last = b[m - 1];
+        if (!fold) {
+            // The first byte by memchr, then the rest: quick when that byte
+            // is rare, which a query's first letter usually is per line.
+            for (std::size_t i = from; i + m <= n;) {
+                const void* p = std::memchr(s + i, b[0], n - m + 1 - i);
+                if (!p) return std::string::npos;
+                i = static_cast<std::size_t>(static_cast<const char*>(p) - s);
+                if (static_cast<unsigned char>(s[i + m - 1]) == last &&
+                    std::memcmp(s + i + 1, b + 1, m - 1) == 0)
+                    return i;
+                ++i;
+            }
+            return std::string::npos;
+        }
+        for (std::size_t i = from; i + m <= n;) {
+            const unsigned char c = at(s, i + m - 1);
+            if (c == last) {
+                std::size_t k = 0;
+                while (k + 1 < m && at(s, i + k) == b[k]) ++k;
+                if (k + 1 == m) return i;
+            }
+            i += skip[c];
+        }
+        return std::string::npos;
+    }
+};
+
+// The needle for text every match holds (TextFind::requiredText, or the
+// query): its UTF-8 when matching case; ignoring case, its longest run of
+// ASCII characters, which only ASCII characters fold to.
+Needle makeNeedle(const std::u32string& text, bool caseSensitive) {
+    Needle nd;
+    for (char32_t c : text)
+        if (c == '\n' || c == '\r' || c == 0x2029) {
+            nd.never = true;
+            return nd;
+        }
+    if (caseSensitive) {
+        for (char32_t c : text) {
+            if (c < 0x80) nd.bytes += static_cast<char>(c);
+            else if (c < 0x800) {
+                nd.bytes += static_cast<char>(0xC0 | (c >> 6));
+                nd.bytes += static_cast<char>(0x80 | (c & 0x3F));
+            } else if (c < 0x10000) {
+                nd.bytes += static_cast<char>(0xE0 | (c >> 12));
+                nd.bytes += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+                nd.bytes += static_cast<char>(0x80 | (c & 0x3F));
+            } else {
+                nd.bytes += static_cast<char>(0xF0 | (c >> 18));
+                nd.bytes += static_cast<char>(0x80 | ((c >> 12) & 0x3F));
+                nd.bytes += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+                nd.bytes += static_cast<char>(0x80 | (c & 0x3F));
+            }
+        }
+    } else {
+        std::string run;
+        for (char32_t c : text) {
+            if (c < 0x80) {
+                run += static_cast<char>(c);
+                if (run.size() > nd.bytes.size()) nd.bytes = run;
+            } else {
+                run.clear();
+            }
+        }
+        nd.fold = true;
+    }
+    nd.prepare();
+    return nd;
+}
+
+std::u32string decodeAll(const std::string& s) {
+    std::u32string out;
+    for (std::size_t i = 0, len; i < s.size(); i += len) out.push_back(decodeAt(s, i, &len));
+    return out;
+}
+
+// Where the line starting at `pos` ends (its break left off) and the next
+// begins: lines end at \n, \r\n, \r and U+2029.
+void lineEndAt(const char* s, std::size_t n, std::size_t pos, std::size_t* end,
+               std::size_t* next) {
+    std::size_t e = pos;
+    for (; e < n; ++e) {
+        const char c = s[e];
+        if (c == '\n') { *end = e; *next = e + 1; return; }
+        if (c == '\r') {
+            *end = e;
+            *next = (e + 1 < n && s[e + 1] == '\n') ? e + 2 : e + 1;
+            return;
+        }
+        if (c == '\xE2' && e + 2 < n && s[e + 1] == '\x80' && s[e + 2] == '\xA9') {
+            *end = e;
+            *next = e + 3;
+            return;
+        }
+    }
+    *end = *next = n;
+}
+
+// Calls f(lineNo, start, end, hit) for every line holding the needle, hit
+// being where (or every line, with hit npos, when there is no needle),
+// until f returns false. False when halt() said to stop; it is asked every
+// 4096 lines.
+template <class Halt, class F>
+bool eachLine(const std::string& content, const Needle* nd, Halt halt, F f) {
+    const char* s = content.data();
+    const std::size_t n = content.size();
+    std::size_t pos = 0;
+    int lineNo = 1;
+    while (pos < n) {
+        std::size_t hit = std::string::npos;
+        if (nd) {
+            hit = nd->find(s, n, pos);
+            if (hit == std::string::npos) return true;
+        }
+        for (;;) {
+            std::size_t end, next;
+            lineEndAt(s, n, pos, &end, &next);
+            if ((lineNo & 4095) == 0 && halt()) return false;
+            if (!nd || hit < next) {
+                if (!f(lineNo, pos, end, hit)) return true;
+                pos = next;
+                ++lineNo;
+                break;
+            }
+            pos = next;
+            ++lineNo;
+        }
+    }
+    return true;
+}
+
+// ------------------------------------------------------------- one file
+enum class FileKind { Silent, Searched, TooLarge, NotUtf8 };
+
+struct Job {
+    std::string path, rel;
+};
+
+// What reading and matching one file found, merged in the walk's order.
+struct Outcome {
+    FileKind kind = FileKind::Silent;
+    std::vector<FolderSearchMatch> rows;
+    std::size_t planCount = 0;   // Replace in Folder's count
+    bool outside = false;        // reached through a symlink to outside the root
+    std::uint64_t dev = 0, ino = 0;
+    bool cancelled = false;      // the cancel flag went up while reading it
+    std::string path, rel;
+};
+
+// A NUL byte among the first 8 KB: a binary file (FileSniff's rule).
+bool looksBinary(const char* s, std::size_t n) {
+    return std::memchr(s, 0, std::min<std::size_t>(n, 8192)) != nullptr;
+}
+
+// Read a file for searching: only a regular file (after symlinks), opened
+// without blocking so a pipe swapped in cannot hold the search.
+FileKind readForSearch(const std::string& path, std::uintmax_t maxSize, std::string* out,
+                       std::uint64_t* dev, std::uint64_t* ino) {
+    const int fd = ::open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) return FileKind::Silent;
+    struct stat st;
+    if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        ::close(fd);
+        return FileKind::Silent;
+    }
+    *dev = static_cast<std::uint64_t>(st.st_dev);
+    *ino = static_cast<std::uint64_t>(st.st_ino);
+    // At most one byte past the limit, in case it grew since.
+    const std::uintmax_t size = static_cast<std::uintmax_t>(st.st_size);
+    std::size_t want = static_cast<std::size_t>(std::min<std::uintmax_t>(size, maxSize) + 1);
+    if (size > maxSize) want = 8192;   // only enough to tell text from binary
+    out->resize(want);
+    std::size_t got = 0;
+    while (got < want) {
+        const ssize_t r = ::read(fd, &(*out)[got], want - got);
+        if (r < 0 && errno == EINTR) continue;
+        if (r <= 0) break;
+        got += static_cast<std::size_t>(r);
+    }
+    ::close(fd);
+    out->resize(got);
+    if (size > maxSize || got > maxSize)
+        return looksBinary(out->data(), out->size()) ? FileKind::Silent : FileKind::TooLarge;
+    if (!isValidUtf8(*out))
+        return looksBinary(out->data(), out->size()) ? FileKind::Silent : FileKind::NotUtf8;
+    return FileKind::Searched;
+}
+
+// Everything the threads share, read only while a search runs.
+struct Matcher {
     const std::string& query;
-    const std::atomic<bool>* cancel;
     const FolderSearchOptions& opt;
-    FolderSearchResult& out;
-    std::set<std::string> visited;   // canonical folders already walked
-    bool todos = false;              // the TODO list, not a query
+    const std::atomic<bool>* cancel;
+    const std::atomic<bool>* halt = nullptr;   // the walk said to stop
+    bool todos = false;                    // the TODO list, not a query
     const TextFind::Query* tq = nullptr;   // whole word or regex: TextFind matches
-    FolderReplacePlan* plan = nullptr;     // counting for Replace in Folder
-    // Counts the matches on a line with a hit, as the plan counts them.
-    const TextFind::Query* counter = nullptr;
-    // Replace in Folder: the files already counted, by device and inode, so
-    // a file with two names is replaced once; and the real path of the
-    // folder searched, to tell a file reached through a symlink to outside.
-    std::set<std::pair<std::uint64_t, std::uint64_t>> files = {};
-    std::string rootCanon = {};
-    // Files to include and exclude (the options' boxes).
-    PathFilter include = {}, exclude = {};
+    const TextFind::Query* counter = nullptr;   // counts a row's matches
+    bool plan = false;                     // counting for Replace in Folder
+    std::string rootCanon;                 // the root's real path, for `outside`
+    Needle needle;                         // what a matching line holds
+    bool useNeedle = false;
+    bool exact = false;                    // finding the needle is the match
 
-    void setFilters(const std::string& root) {
-        include = PathFilter(opt.include, root);
-        exclude = PathFilter(opt.exclude, root);
-    }
-    bool wanted(const std::string& rel) const {
-        if (!exclude.empty() && exclude.matches(rel)) return false;
-        return include.empty() || include.matches(rel);
+    Matcher(const std::string& q, const FolderSearchOptions& o, const std::atomic<bool>* c)
+        : query(q), opt(o), cancel(c) {}
+
+    bool stopping() const {
+        return cancelled(cancel) || halt->load(std::memory_order_relaxed) ||
+               (tq && tq->tooSlow());
     }
 
-    bool full() const { return !plan && out.matches.size() >= opt.maxMatches; }
-
-    bool stop() {
-        if (cancelled(cancel)) { out.cancelled = true; return true; }
-        if (tq && tq->tooSlow()) { out.tooSlow = true; return true; }
-        if (full()) { out.truncated = true; return true; }
-        return false;
-    }
-
-    void searchFile(const std::string& path, const std::string& rel,
-                    std::uintmax_t size) {
-        std::ifstream in(path, std::ios::binary);
-        if (!in) return;
+    void run(const Job& job, Outcome& o) const {
+        o.path = job.path;
+        o.rel = job.rel;
+        if (stopping()) return;
         std::string content;
-        // Read at most one byte past the limit, in case it grew since stat.
-        content.resize(static_cast<std::size_t>(size) + 1);
-        in.read(&content[0], static_cast<std::streamsize>(content.size()));
-        content.resize(static_cast<std::size_t>(in.gcount()));
-        if (content.size() > opt.maxFileSize) return;
-        if (!isValidUtf8(content)) return;   // binary, or another encoding
-        ++out.filesSearched;
+        o.kind = readForSearch(job.path, opt.maxFileSize, &content, &o.dev, &o.ino);
+        if (o.kind != FileKind::Searched) return;
+        if (useNeedle && needle.never) return;   // no line can match
+        const Needle* nd = useNeedle ? &needle : nullptr;
+        auto halted = [this, &o] {
+            if (cancelled(cancel)) o.cancelled = true;
+            return stopping();
+        };
+        if (plan) countAll(content, nd, halted, o);
+        else rows(content, nd, halted, o);
+    }
 
-        if (plan) {   // Replace in Folder's count: every match
-            std::size_t count = 0;
+    // Replace in Folder's count: every match.
+    template <class Halt>
+    void countAll(const std::string& content, const Needle* nd, Halt halted, Outcome& o) const {
+        std::size_t count = 0;
+        if (nd) {   // only lines holding the needle can hold a match
+            eachLine(content, nd, halted, [&](int, std::size_t start, std::size_t end, std::size_t) {
+                count += TextFind::findAllInLine(content.substr(start, end - start), *tq).size();
+                return true;
+            });
+        } else {
+            // Every line, the empty one after a last line break too, as
+            // replaceInText sees them (^ matches there).
             std::size_t pos = 0, lines = 0;
             const std::size_t n = content.size();
             while (pos <= n) {
-                if ((++lines & 4095) == 0 && cancelled(cancel)) { out.cancelled = true; break; }
-                std::size_t end = pos;
-                while (end < n && content[end] != '\n' && content[end] != '\r' &&
-                       !(content[end] == '\xE2' && end + 2 < n && content[end + 1] == '\x80' &&
-                         content[end + 2] == '\xA9'))
-                    ++end;
+                if ((++lines & 4095) == 0 && halted()) break;
+                std::size_t end, next;
+                lineEndAt(content.data(), n, pos, &end, &next);
                 count += TextFind::findAllInLine(content.substr(pos, end - pos), *tq).size();
                 if (end >= n) break;
-                pos = end + (content[end] == '\xE2' ? 3
-                             : (content[end] == '\r' && end + 1 < n && content[end + 1] == '\n') ? 2
-                                                                                                 : 1);
+                pos = next;
             }
-            if (count) {
-                FolderReplaceFile f{path, rel, count, false};
-                char resolved[PATH_MAX];
-                if (::realpath(path.c_str(), resolved) && !rootCanon.empty()) {
-                    const std::string real = resolved;
-                    f.outside = !(real.size() > rootCanon.size() &&
-                                  real.compare(0, rootCanon.size(), rootCanon) == 0 &&
-                                  (rootCanon.back() == '/' || real[rootCanon.size()] == '/'));
-                }
-                plan->files.push_back(std::move(f));
-                plan->matches += count;
-            }
-            return;
         }
+        o.planCount = count;
+        if (count && !rootCanon.empty()) {
+            char resolved[PATH_MAX];
+            if (::realpath(o.path.c_str(), resolved)) {
+                const std::string real = resolved;
+                o.outside = !(real.size() > rootCanon.size() &&
+                              real.compare(0, rootCanon.size(), rootCanon) == 0 &&
+                              (rootCanon.back() == '/' || real[rootCanon.size()] == '/'));
+            }
+        }
+    }
 
-        const std::size_t before = out.matches.size();
+    // A row per matching line (a TODO's line, for the TODO list).
+    template <class Halt>
+    void rows(const std::string& content, const Needle* nd, Halt halted, Outcome& o) const {
         // For the TODO list, a Markdown file's open tasks, by line.
-        const bool markdown = todos && isMarkdownPath(path);
+        const bool markdown = todos && isMarkdownPath(o.path);
         std::vector<MarkdownTasks::OpenTask> tasks;
         if (markdown) tasks = MarkdownTasks::openTasks(content);
         std::size_t nextTask = 0;
-        int lineNo = 0;
-        std::size_t pos = 0;
-        const std::size_t n = content.size();
-        while (pos < n) {
-            // Find the end of this line and the start of the next.
-            std::size_t end = pos, next = n;
-            for (; end < n; ++end) {
-                const char c = content[end];
-                if (c == '\n') { next = end + 1; break; }
-                if (c == '\r') {
-                    next = (end + 1 < n && content[end + 1] == '\n') ? end + 2 : end + 1;
-                    break;
-                }
-                if (c == '\xE2' && end + 2 < n && content[end + 1] == '\x80' &&
-                    content[end + 2] == '\xA9') {   // U+2029 paragraph separator
-                    next = end + 3;
-                    break;
-                }
-            }
-            ++lineNo;
-            if ((lineNo & 4095) == 0 && cancelled(cancel)) {
-                out.cancelled = true;
-                break;
-            }
-            const std::string line = content.substr(pos, end - pos);
-            std::size_t col = 0, len = 0;
+        const std::size_t m = needle.bytes.size();
+        eachLine(content, nd, halted, [&](int lineNo, std::size_t start, std::size_t end,
+                                          std::size_t at) {
+            const std::string line = content.substr(start, end - start);
+            std::size_t col = 0, len = 0, count = 1;
             bool hit;
             if (todos) {
                 while (nextTask < tasks.size() && tasks[nextTask].line < lineNo - 1) nextTask++;
@@ -211,100 +416,339 @@ struct Walker {
                     len = 3;
                     hit = col + len <= line.size();
                 }
+            } else if (exact) {
+                // Plain text found by the needle: here, and as often as it
+                // occurs on the line without overlapping.
+                hit = true;
+                col = at - start;
+                len = m;
+                count = 0;
+                for (std::size_t p = col; p != std::string::npos && p + m <= line.size();
+                     p = needle.find(line.data(), line.size(), p + m))
+                    ++count;
             } else if (tq) {
                 hit = TextFind::findInLine(line, *tq, &col, &len);
             } else {
                 hit = findInLine(line, query, opt.caseSensitive, &col, &len);
             }
-            if (hit) {
-                FolderSearchMatch m;
-                m.path = path;
-                m.relativePath = rel;
-                m.line = lineNo;
-                m.byteColumn = col;
-                m.byteLength = len;
-                m.column = static_cast<int>(countChars(line.substr(0, col))) + 1;
-                m.text = displayText(line, opt.maxLineChars);
-                if (counter)
-                    m.count = std::max<std::size_t>(1, TextFind::findAllInLine(line, *counter).size());
-                out.totalMatches += m.count;
-                out.matches.push_back(std::move(m));
-                if (full()) { out.truncated = true; break; }
-            }
-            pos = next;
-        }
-        if (out.matches.size() > before) ++out.filesMatched;
+            if (!hit) return true;
+            if (!todos && !exact && counter)
+                count = std::max<std::size_t>(1, TextFind::findAllInLine(line, *counter).size());
+            FolderSearchMatch r;
+            r.path = o.path;
+            r.relativePath = o.rel;
+            r.line = lineNo;
+            r.byteColumn = col;
+            r.byteLength = len;
+            r.column = static_cast<int>(countChars(line.substr(0, col))) + 1;
+            r.text = displayText(line, opt.maxLineChars);
+            r.count = count;
+            o.rows.push_back(std::move(r));
+            // No file gives more rows than the whole search may hold.
+            return o.rows.size() < opt.maxMatches;
+        });
     }
+};
 
+// ------------------------------------------------------------- the walk
+// The serial walk's order: a folder's files by name, then each subfolder's
+// whole walk, by name. Folders are listed and files read and matched on a
+// few threads, earliest in that order first, and the calling thread takes
+// the outcomes in that order, so what a search finds is the serial walk's,
+// limit and counts included.
+
+struct Node;
+
+// A file of the walk.
+struct FileSlot {
+    std::string path, rel;
+    std::unique_ptr<Outcome> outcome;   // set when done
+};
+
+// A folder of the walk. Its parent lists it and gives it its place; the
+// fields below `listed` are written by whoever lists it, before `listed`
+// is set under the walk's lock, and read only after.
+struct Node {
+    std::string path, rel;
+    Ignore::Rules parentRules;   // in effect in its parent (the root: its own)
+    const Node* parent = nullptr;
+    std::vector<std::uint32_t> key;   // its place in the walk's order
+    // Reached through a symlink (or a type the listing could not tell):
+    // listed only once the merge reaches it, so a loop is never followed.
+    bool deferred = false;
+    bool listed = false;
+    bool opened = false;
+    std::uint64_t dev = 0, ino = 0;
+    std::vector<FileSlot> files;
+    std::vector<std::unique_ptr<Node>> dirs;
+};
+
+struct Task {
+    std::vector<std::uint32_t> key;
+    Node* dir = nullptr;     // list this folder
+    FileSlot* file = nullptr;   // or search this file
+};
+struct LaterTask {   // the priority queue's order: the earliest place first
+    bool operator()(const Task& a, const Task& b) const { return b.key < a.key; }
+};
+
+struct Walker {
+    const FolderSearchOptions& opt;
+    const std::atomic<bool>* cancel;
+    FolderSearchResult& out;
+    Matcher& matcher;
+    FolderReplacePlan* plan = nullptr;     // counting for Replace in Folder
+    std::atomic<bool> halt{false};
+    // Folders already walked, by device and inode, so each real folder is
+    // walked once, under the first name the walk meets.
+    std::set<std::pair<std::uint64_t, std::uint64_t>> visited = {};
+    // Replace in Folder: the files already counted, by device and inode, so
+    // a file with two names is replaced once.
+    std::set<std::pair<std::uint64_t, std::uint64_t>> files = {};
+    // Files to include and exclude (the options' boxes).
+    PathFilter include = {}, exclude = {};
     // The ignore files' view: the scope's path from their top, and whether
     // they are read at all.
     std::string ignorePrefix = {};
     bool useIgnore = false;
 
+    std::mutex mu;
+    std::condition_variable work, progress;
+    std::priority_queue<Task, std::vector<Task>, LaterTask> tasks;
+    bool closed = false;
+    std::vector<std::thread> threads;
+
+    Walker(const FolderSearchOptions& o, const std::atomic<bool>* c, FolderSearchResult& r,
+           Matcher& m)
+        : opt(o), cancel(c), out(r), matcher(m) {
+        matcher.halt = &halt;
+    }
+
+    bool full() const { return !plan && out.matches.size() >= opt.maxMatches; }
+
     std::string ignorePath(const std::string& rel) const {
         return ignorePrefix.empty() ? rel : ignorePrefix + "/" + rel;
     }
 
-    // Start at root, with the ignore files the options name.
-    void start(const std::string& root) {
-        Ignore::Rules rules;
-        useIgnore = opt.useIgnoreFiles;
-        if (useIgnore) rules = Ignore::rulesFor(opt.ignoreTop, root, &ignorePrefix);
-        walk(root, "", rules);
-    }
-
-    void walk(const std::string& dir, const std::string& rel, const Ignore::Rules& rules) {
-        std::error_code ec;
-        std::vector<std::string> names;
-        fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
-        if (ec) return;
-        for (fs::directory_iterator end; it != end; it.increment(ec)) {
-            if (ec) break;
-            std::string name = it->path().filename().string();
-            if (name.empty() || isSkippedFile(name)) continue;
-            names.push_back(std::move(name));
-            if (cancelled(cancel)) { out.cancelled = true; return; }
+    // ---- listing a folder (any thread)
+    void list(Node& n) {
+        DIR* d = ::opendir(n.path.c_str());
+        struct Entry {
+            std::string name;
+            unsigned char type;
+        };
+        std::vector<Entry> entries;
+        bool hasGitignore = false, hasIgnore = false, loop = false;
+        if (d) {
+            struct stat dst;
+            if (::fstat(dirfd(d), &dst) == 0) {
+                n.opened = true;
+                n.dev = static_cast<std::uint64_t>(dst.st_dev);
+                n.ino = static_cast<std::uint64_t>(dst.st_ino);
+                for (const Node* p = n.parent; p; p = p->parent)
+                    if (p->dev == n.dev && p->ino == n.ino) loop = true;   // the merge skips it
+            }
+            while (n.opened && !loop && !matcher.stopping()) {
+                struct dirent* e = ::readdir(d);
+                if (!e) break;
+                const char* nm = e->d_name;
+                if (nm[0] == '.' && (nm[1] == 0 || (nm[1] == '.' && nm[2] == 0))) continue;
+                std::string name = nm;
+                if (name == ".gitignore") hasGitignore = true;
+                else if (name == ".ignore") hasIgnore = true;
+                if (isSkippedFile(name)) continue;
+                entries.push_back({std::move(name), e->d_type});
+            }
+            ::closedir(d);
         }
-        std::sort(names.begin(), names.end());
-
-        std::vector<std::string> subdirs;
-        for (const std::string& name : names) {
-            if (stop()) return;
-            const std::string full = joinPath(dir, name);
-            const std::string childRel = rel.empty() ? name : rel + "/" + name;
-            // status() follows symlinks, as the Mac's fileExistsAtPath does.
-            const fs::file_status st = fs::status(full, ec);
-            if (ec) continue;   // broken symlink, vanished, unreadable
-            const bool isDir = fs::is_directory(st);
+        std::sort(entries.begin(), entries.end(),
+                  [](const Entry& a, const Entry& b) { return a.name < b.name; });
+        // The folder's own ignore files (the root's came with its rules).
+        const Ignore::Rules rules =
+            (!n.parent || !useIgnore)
+                ? n.parentRules
+                : n.parentRules.enter(n.path, ignorePath(n.rel), hasGitignore, hasIgnore);
+        for (const Entry& e : entries) {
+            const std::string full = joinPath(n.path, e.name);
+            const std::string childRel = n.rel.empty() ? e.name : n.rel + "/" + e.name;
+            // What it is, symlinks followed (as the Mac's fileExistsAtPath).
+            bool isDir = e.type == DT_DIR, isFile = e.type == DT_REG;
+            if (e.type == DT_LNK || e.type == DT_UNKNOWN) {
+                struct stat st;
+                if (::stat(full.c_str(), &st) != 0) continue;   // broken, vanished
+                isDir = S_ISDIR(st.st_mode);
+                isFile = S_ISREG(st.st_mode);
+            }
             if (useIgnore && !rules.empty() && rules.ignored(ignorePath(childRel), isDir))
                 continue;
             if (isDir) {
-                if (!isSkippedDirectory(name) && !(!exclude.empty() && exclude.matches(childRel)))
-                    subdirs.push_back(name);
+                if (isSkippedDirectory(e.name) || (!exclude.empty() && exclude.matches(childRel)))
+                    continue;
+                auto child = std::make_unique<Node>();
+                child->path = full;
+                child->rel = childRel;
+                child->parentRules = rules;
+                child->parent = &n;
+                child->deferred = e.type != DT_DIR;
+                n.dirs.push_back(std::move(child));
                 continue;
             }
-            if (!fs::is_regular_file(st)) continue;   // pipes, sockets, devices
-            if (!wanted(childRel)) continue;
-            const std::uintmax_t size = fs::file_size(full, ec);
-            if (ec || size > opt.maxFileSize) continue;
-            if (plan) {   // one file under two names is replaced once
-                struct stat fst;
-                if (::stat(full.c_str(), &fst) != 0) continue;
-                if (!files.insert({static_cast<std::uint64_t>(fst.st_dev),
-                                   static_cast<std::uint64_t>(fst.st_ino)}).second)
-                    continue;
+            if (!isFile) continue;   // pipes, sockets, devices
+            if (!exclude.empty() && exclude.matches(childRel)) continue;
+            if (!include.empty() && !include.matches(childRel)) continue;
+            n.files.push_back({full, childRel, nullptr});
+        }
+        // Places: the files first, then the folders.
+        std::lock_guard<std::mutex> lock(mu);
+        const std::uint32_t nf = static_cast<std::uint32_t>(n.files.size());
+        for (std::uint32_t i = 0; i < nf; ++i) {
+            Task t;
+            t.key = n.key;
+            t.key.push_back(i);
+            t.file = &n.files[i];
+            tasks.push(std::move(t));
+        }
+        for (std::uint32_t i = 0; i < n.dirs.size(); ++i) {
+            Node& c = *n.dirs[i];
+            c.key = n.key;
+            c.key.push_back(nf + i);
+            if (!c.deferred) tasks.push({c.key, &c, nullptr});
+        }
+        n.listed = true;
+        if (n.files.size() + n.dirs.size() > 1) work.notify_all();
+        else work.notify_one();
+        progress.notify_all();
+    }
+
+    void run(const Task& t) {
+        if (t.dir) {
+            list(*t.dir);
+            return;
+        }
+        auto o = std::make_unique<Outcome>();
+        matcher.run({t.file->path, t.file->rel}, *o);
+        std::lock_guard<std::mutex> lock(mu);
+        t.file->outcome = std::move(o);
+        progress.notify_all();
+    }
+
+    void worker() {
+        for (;;) {
+            Task t;
+            {
+                std::unique_lock<std::mutex> lock(mu);
+                work.wait(lock, [this] { return closed || !tasks.empty(); });
+                if (closed) return;
+                t = tasks.top();
+                tasks.pop();
             }
-            searchFile(full, childRel, size);
+            run(t);
         }
-        for (const std::string& name : subdirs) {
-            if (stop()) return;
-            const std::string full = joinPath(dir, name);
-            const fs::path canon = fs::canonical(full, ec);
-            if (ec) continue;
-            if (!visited.insert(canon.string()).second) continue;   // loop / seen
-            const std::string childRel = rel.empty() ? name : rel + "/" + name;
-            walk(full, childRel, useIgnore ? rules.enter(full, ignorePath(childRel)) : rules);
+    }
+
+    // Until ready() holds (asked under the lock), running what is next in
+    // the walk's order meanwhile. False when the search is stopping.
+    template <class Ready>
+    bool await(Ready ready) {
+        std::unique_lock<std::mutex> lock(mu);
+        for (;;) {
+            if (ready()) return true;
+            if (matcher.stopping()) return false;
+            if (!tasks.empty()) {
+                Task t = tasks.top();
+                tasks.pop();
+                lock.unlock();
+                run(t);
+                lock.lock();
+                continue;
+            }
+            progress.wait_for(lock, std::chrono::milliseconds(20));
         }
+    }
+
+    // ---- the merge (the calling thread), in the walk's order
+    // One file's outcome. False once the search is over.
+    bool take(Outcome& o) {
+        if (o.cancelled) { out.cancelled = true; return false; }
+        if (o.kind == FileKind::TooLarge || o.kind == FileKind::NotUtf8) {
+            const bool large = o.kind == FileKind::TooLarge;
+            ++(large ? out.skippedTooLarge : out.skippedNotUtf8);
+            if (out.skipped.size() < kMaxSkipsListed) out.skipped.push_back({o.rel, large});
+            return true;
+        }
+        if (o.kind != FileKind::Searched) return true;
+        if (plan) {   // one file under two names is replaced once
+            if (!files.insert({o.dev, o.ino}).second) return true;
+            ++out.filesSearched;
+            if (o.planCount) {
+                plan->files.push_back({o.path, o.rel, o.planCount, o.outside});
+                plan->matches += o.planCount;
+            }
+            return true;
+        }
+        ++out.filesSearched;
+        std::size_t added = 0;
+        for (FolderSearchMatch& m : o.rows) {
+            out.totalMatches += m.count;
+            out.matches.push_back(std::move(m));
+            ++added;
+            if (full()) { out.truncated = true; break; }
+        }
+        if (added) ++out.filesMatched;
+        return !out.truncated;
+    }
+
+    // A folder's walk. False once the search is over.
+    bool visit(Node& n) {
+        if (n.deferred) {   // listed now that the walk has come to it
+            std::lock_guard<std::mutex> lock(mu);
+            tasks.push({n.key, &n, nullptr});
+            n.deferred = false;
+            work.notify_one();
+        }
+        if (!await([&n] { return n.listed; })) return false;
+        if (!n.opened || !visited.insert({n.dev, n.ino}).second)
+            return true;   // unreadable, a loop, or a folder seen under another name
+        for (FileSlot& f : n.files) {
+            if (!await([&f] { return f.outcome != nullptr; })) return false;
+            const bool more = take(*f.outcome);
+            f.outcome.reset();
+            if (!more) return false;
+            if (matcher.tq && matcher.tq->tooSlow()) return false;
+        }
+        for (const std::unique_ptr<Node>& c : n.dirs)
+            if (!visit(*c)) return false;
+        return true;
+    }
+
+    // Search `root`, with the ignore files the options name.
+    void start(const std::string& root) {
+        include = PathFilter(opt.include, root);
+        exclude = PathFilter(opt.exclude, root);
+        Node top;
+        top.path = root;
+        useIgnore = opt.useIgnoreFiles;
+        if (useIgnore) top.parentRules = Ignore::rulesFor(opt.ignoreTop, root, &ignorePrefix);
+        tasks.push({top.key, &top, nullptr});
+        // The calling thread works too, whenever it waits.
+        const unsigned n = opt.threads ? opt.threads : defaultThreads();
+        for (unsigned i = 1; i < n; ++i) {
+            try {
+                threads.emplace_back([this] { worker(); });
+            } catch (...) {   // no more threads to be had: fewer will do
+                break;
+            }
+        }
+        visit(top);
+        if (cancelled(cancel)) out.cancelled = true;
+        if (matcher.tq && matcher.tq->tooSlow()) out.tooSlow = true;
+        halt = true;   // whatever is still running ends at once
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            closed = true;
+        }
+        work.notify_all();
+        for (std::thread& t : threads) t.join();
     }
 };
 
@@ -570,6 +1014,13 @@ Rules Rules::enter(const std::string& dirPath, const std::string& relDir) const 
                 readSmall(joinPath(dirPath, ".ignore")));
 }
 
+Rules Rules::enter(const std::string& dirPath, const std::string& relDir, bool hasGitignore,
+                   bool hasIgnore) const {
+    if (!hasGitignore && !hasIgnore) return *this;
+    return with(relDir, hasGitignore ? readSmall(joinPath(dirPath, ".gitignore")) : std::string(),
+                hasIgnore ? readSmall(joinPath(dirPath, ".ignore")) : std::string());
+}
+
 Rules Rules::atTop(const std::string& top, bool caseFold) {
     Rules r;
     r.fold_ = caseFold;
@@ -644,6 +1095,14 @@ bool isValidUtf8(const std::string& s) {
     const std::size_t n = s.size();
     std::size_t i = 0;
     while (i < n) {
+        // Eight ASCII bytes at a time, which is most of any source file.
+        while (i + 8 <= n) {
+            std::uint64_t w;
+            std::memcpy(&w, s.data() + i, 8);
+            if (w & 0x8080808080808080ULL) break;
+            i += 8;
+        }
+        if (i >= n) break;
         const unsigned char c = static_cast<unsigned char>(s[i]);
         if (c < 0x80) { ++i; continue; }
         std::size_t len;
@@ -757,6 +1216,14 @@ bool findInLine(const std::string& line, const std::string& query,
     return false;
 }
 
+unsigned defaultThreads() {
+    // Every core, efficiency cores too: on an M3 (four of each) eight
+    // threads searched a 7,600-file tree in 140 to 160 ms against 185 to
+    // 210 ms with four, as much of the time is opening files.
+    const unsigned n = std::thread::hardware_concurrency();
+    return std::max(1u, std::min(n ? n : 1u, 8u));
+}
+
 FolderSearchResult search(const std::string& root, const std::string& query,
                           const std::atomic<bool>* cancel,
                           const FolderSearchOptions& options) {
@@ -773,15 +1240,23 @@ FolderSearchResult search(const std::string& root, const std::string& query,
     }
     std::error_code ec;
     if (!fs::is_directory(root, ec)) return out;
-    Walker w{q, cancel, options, out, {}};
-    if (tq.usable()) w.tq = &tq;
     // A row is a line; its count is every match on it, as Replace in
     // Folder's plan counts them, so the two say the same number.
     const TextFind::Query counter = tq.usable() ? tq : makeQuery(query, options);
-    if (counter.usable()) w.counter = &counter;
-    const fs::path canon = fs::canonical(root, ec);
-    if (!ec) w.visited.insert(canon.string());
-    w.setFilters(root);
+    Matcher m(q, options, cancel);
+    if (counter.usable()) m.counter = &counter;
+    if (tq.usable()) {
+        m.tq = &tq;
+        m.needle = makeNeedle(TextFind::requiredText(tq), options.caseSensitive);
+        m.useNeedle = m.needle.never || !m.needle.empty();
+    } else {
+        m.needle = makeNeedle(decodeAll(q), options.caseSensitive);
+        m.useNeedle = m.needle.never || !m.needle.empty();
+        // Plain text matching case, or in ASCII (which only ASCII folds
+        // to): the needle is the query.
+        m.exact = m.useNeedle && !m.needle.never && (options.caseSensitive || isAscii(q));
+    }
+    Walker w(options, cancel, out, m);
     w.start(root);
     return out;
 }
@@ -814,15 +1289,15 @@ FolderReplacePlan planReplace(const std::string& root, const std::string& query,
     if (!fs::is_directory(root, ec)) return plan;
     FolderSearchResult out;
     const std::string none;
-    Walker w{none, cancel, options, out, {}};
-    w.tq = &tq;
-    w.plan = &plan;
+    Matcher m(none, options, cancel);
+    m.tq = &tq;
+    m.plan = true;
+    m.needle = makeNeedle(TextFind::requiredText(tq), options.caseSensitive);
+    m.useNeedle = m.needle.never || !m.needle.empty();
     const fs::path canon = fs::canonical(root, ec);
-    if (!ec) {
-        w.visited.insert(canon.string());
-        w.rootCanon = canon.string();
-    }
-    w.setFilters(root);
+    if (!ec) m.rootCanon = canon.string();
+    Walker w(options, cancel, out, m);
+    w.plan = &plan;
     w.start(root);
     plan.cancelled = out.cancelled;
     return plan;
@@ -1217,10 +1692,9 @@ FolderSearchResult findTodos(const std::string& root, const std::atomic<bool>* c
     std::error_code ec;
     if (options.maxMatches == 0 || !fs::is_directory(root, ec)) return out;
     const std::string none;
-    Walker w{none, cancel, options, out, {}, true};
-    const fs::path canon = fs::canonical(root, ec);
-    if (!ec) w.visited.insert(canon.string());
-    w.setFilters(root);
+    Matcher m(none, options, cancel);
+    m.todos = true;
+    Walker w(options, cancel, out, m);
     w.start(root);
     return out;
 }

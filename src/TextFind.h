@@ -111,6 +111,14 @@ private:
     Options options_;
 };
 
+// Characters every match of `query` holds, one after another, folded as
+// foldCase folds them unless the query matches case: the plain text itself
+// (whole word too), or the literal run a regex on the linear engine
+// requires. "" when there is none: a regex left to std::regex, or one such
+// as a* or \d+. Find in Folder looks for them in a file first and matches
+// only the lines that hold them.
+std::u32string requiredText(const Query& query);
+
 // Case folding used for case-insensitive matching (one character to one).
 // It changes nothing at or past U+0500 (Regex.cpp relies on that).
 char32_t foldCase(char32_t c);

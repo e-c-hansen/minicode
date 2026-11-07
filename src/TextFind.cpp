@@ -385,6 +385,13 @@ Query Query::makeBacktracking(const std::u16string& pattern, const Options& opti
 
 bool Query::linear() const { return impl_ && impl_->vm; }
 
+std::u32string requiredText(const Query& query) {
+    const Query::Impl* q = query.impl();
+    if (!q) return std::u32string();
+    if (!q->opt.regex) return q->needle;
+    return q->vm ? Regex::requiredText(*q->vm) : std::u32string();
+}
+
 bool Query::tooSlow() const { return impl_ && impl_->slow && impl_->slow->tooSlow.load(); }
 
 void setSlowPatternSeconds(double seconds) { gSlowSeconds = seconds; }
