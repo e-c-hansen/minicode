@@ -546,6 +546,10 @@ BOOL MCKeymapHandleKeyDown(NSEvent *e) {
     if (all.size() > 1) return c ? MCPerform(c) : NO;
     if (!cmd && !ctrl) {
         if ([fr isKindOfClass:[CodeTextView class]]) return c ? MCPerform(c) : NO;
+        // A function key whose command something in the responder chain
+        // takes (F7 in the compare view's panes, plain text views that
+        // would only beep at it); otherwise it goes on as before.
+        if (Commands::isFunctionKey(k) && c && MCPerform(c)) return YES;
         if (!Commands::isFunctionKey(k) &&
             ([fr conformsToProtocol:@protocol(NSTextInputClient)] ||
              [fr isKindOfClass:[TerminalGridView class]])) {

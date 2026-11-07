@@ -16,6 +16,8 @@
 // The text logic is MultiCaret (pure C++, tested); this is the glue.
 #import <Cocoa/Cocoa.h>
 
+@class MCAutoClose;
+
 @interface MCMultiCarets : NSObject
 - (instancetype)initWithTextView:(NSTextView *)tv;
 // Two or more carets are in play.
@@ -28,9 +30,14 @@
 - (BOOL)mouseDown:(NSEvent *)event;
 // A middle-button press (no modifiers): a column from it, as in VS Code.
 - (BOOL)otherMouseDown:(NSEvent *)event;
-// Typing and key commands while active; YES when handled.
+// Typing and key commands while active; YES when handled. A character
+// typed at one caret or several, and Backspace, go through the
+// auto-closing rules first (MCAutoClose), active or not.
 - (BOOL)insertText:(id)text;
+- (BOOL)insertText:(id)text replacementRange:(NSRange)replacement;
 - (BOOL)doCommand:(SEL)selector;
+// Auto-closing pairs in this view (its host says what the editor shows).
+@property(nonatomic, readonly) MCAutoClose *autoClose;
 // Copy Line Down / Up (Cmd+Shift+Down / Up, Shift+Option+Down / Up), for
 // one caret or several.
 - (void)duplicateLinesDown:(BOOL)down;

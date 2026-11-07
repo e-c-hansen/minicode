@@ -304,3 +304,97 @@ BOOL MCToggleMarkdownWrap(NSTextView *tv, NSString *marker, NSString *action) {
     Apply(tv, e.replaceStart, e.replaceLength, e.replacement, e.selStart, e.selEnd, action);
     return YES;
 }
+
+// ---- auto-closing pairs
+
+@implementation MCAutoClose {
+    __weak NSTextView *_tv;
+    __weak NSTextStorage *_observed;
+    AutoClose::Tracker _tracker;
+}
+
+- (instancetype)initWithTextView:(NSTextView *)tv {
+    if ((self = [super init])) {
+        _tv = tv;
+        [self observeStorage];
+    }
+    return self;
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+// The view's storage, watched for every change to its characters (the
+// view may be made before its storage is in place).
+- (void)observeStorage {
+    NSTextStorage *storage = _tv.textStorage;
+    if (!storage || storage == _observed) return;
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    if (_observed)
+        [nc removeObserver:self name:NSTextStorageDidProcessEditingNotification object:_observed];
+    _observed = storage;
+    _tracker.clear();
+    [nc addObserver:self
+           selector:@selector(storageEdited:)
+               name:NSTextStorageDidProcessEditingNotification
+             object:storage];
+}
+
+- (void)storageEdited:(NSNotification *)note {
+    NSTextStorage *storage = note.object;
+    if (!(storage.editedMask & NSTextStorageEditedCharacters) || _tracker.empty()) return;
+    const NSRange r = storage.editedRange;
+    const NSInteger delta = storage.changeInLength;
+    const NSInteger oldLength = (NSInteger)r.length - delta;
+    if (oldLength < 0) {
+        _tracker.clear();
+        return;
+    }
+    _tracker.edited(r.location, (size_t)oldLength, r.length);
+}
+
+- (const AutoClose::Language &)language {
+    NSString *path = _host.autoClosePath;
+    return AutoClose::languageFor(path.fileSystemRepresentation ?: "");
+}
+
+// The view's text read in blocks where the rules look (near the carets).
+static MultiCaret::Text MCAutoCloseText(NSString *s) {
+    return MultiCaret::Text(s.length, [s](size_t start, size_t length, char16_t *out) {
+        [s getCharacters:(unichar *)out range:NSMakeRange(start, length)];
+    });
+}
+
+- (AutoClose::Typed)type:(unichar)ch carets:(const std::vector<MultiCaret::Caret> &)carets {
+    [self observeStorage];
+    id<MCAutoCloseHost> host = _host;
+    std::unique_ptr<AutoClose::Context> context =
+        host ? [host autoCloseContext] : std::make_unique<AutoClose::Context>();
+    if (!context) context = std::make_unique<AutoClose::Context>();
+    return AutoClose::type(MCAutoCloseText(_tv.string), carets, ch, [self language], *context,
+                           _tracker, host ? host.autoCloseOn : YES);
+}
+
+- (void)remember:(const std::vector<AutoClose::Tracker::Closed> &)closed {
+    [self observeStorage];
+    _tracker.add(closed);
+}
+
+- (MultiCaret::Edit)deletePairAt:(const std::vector<MultiCaret::Caret> &)carets {
+    [self observeStorage];
+    id<MCAutoCloseHost> host = _host;
+    if (_tracker.empty() || (host && !host.autoCloseOn)) return MultiCaret::Edit();
+    return AutoClose::deletePair(MCAutoCloseText(_tv.string), carets, [self language], _tracker);
+}
+
+- (void)caretsAre:(const std::vector<MultiCaret::Caret> &)carets {
+    if (_tracker.empty()) return;
+    _tracker.validate(MCAutoCloseText(_tv.string), carets);
+}
+
+- (NSUInteger)rememberedActions {
+    return _tracker.actions();
+}
+
+@end

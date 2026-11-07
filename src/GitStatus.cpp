@@ -21,7 +21,9 @@ double timeoutFor(const std::vector<std::string>& args) {
     if (cmd == "commit" || cmd == "push") return 600;
     if (cmd == "pull") return 300;
     if (cmd == "fetch") return 120;
-    if (cmd == "add" || cmd == "restore" || cmd == "rm") return 120;
+    // switch writes the work tree: smudge filters (Git LFS) and a
+    // post-checkout hook run, as on add and restore.
+    if (cmd == "add" || cmd == "restore" || cmd == "rm" || cmd == "switch") return 120;
     return 30;
 }
 

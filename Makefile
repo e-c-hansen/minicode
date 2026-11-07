@@ -43,7 +43,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/Formatter.cpp src/InstallHints.cpp src/LineDiff.cpp \
             src/PythonEnvs.cpp \
             src/AutoIndent.cpp src/KeepSorted.cpp src/FileDetails.cpp \
-            src/ChangeRequest.cpp src/MultiCaret.cpp src/CommandPalette.cpp src/Backups.cpp \
+            src/ChangeRequest.cpp src/MultiCaret.cpp src/AutoClose.cpp src/CommandPalette.cpp src/Backups.cpp \
             src/InlineAgent.cpp src/LineIndex.cpp src/BracketMatch.cpp \
             src/ControlProtocol.cpp src/SideBySide.cpp \
             src/AgentTranscript.cpp src/AgentIndex.cpp src/AgentEvidence.cpp src/AgentView.cpp \

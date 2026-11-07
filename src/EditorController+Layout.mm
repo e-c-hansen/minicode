@@ -151,6 +151,7 @@
     };
     self.textView.onBlur = ^{ [weakSelf autoSaveOnFocusChange]; };
     self.textView.multiCarets.onNote = ^(NSString *note) { [weakSelf showStatusNote:note]; };
+    self.textView.multiCarets.autoClose.host = self;
     self.lsp.onStatus =^(NSString *text, NSColor *dot) {
         [weakSelf.lspLabel setStatus:text dot:dot];
         [weakSelf updateInstallBar];

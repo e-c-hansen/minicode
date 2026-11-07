@@ -270,9 +270,14 @@ char16_t closerFor(char16_t c) {
 }
 
 Edit surround(const std::vector<Caret>& carets, char16_t opener) {
-    Edit e;
     const char16_t closer = closerFor(opener);
-    if (!closer) return e;
+    if (!closer) return Edit();
+    return surround(carets, opener, closer);
+}
+
+Edit surround(const std::vector<Caret>& carets, char16_t opener, char16_t closer) {
+    Edit e;
+    const size_t added = closer ? 2 : 1;
     long long shift = 0;
     for (const Caret& c : carets) {
         if (c.empty()) {
@@ -281,11 +286,11 @@ Edit surround(const std::vector<Caret>& carets, char16_t opener) {
             continue;
         }
         e.changes.push_back({c.lo(), 0, std::u16string(1, opener)});
-        e.changes.push_back({c.hi(), 0, std::u16string(1, closer)});
+        if (closer) e.changes.push_back({c.hi(), 0, std::u16string(1, closer)});
         const size_t lo = (size_t)((long long)c.lo() + shift) + 1;
         const size_t hi = (size_t)((long long)c.hi() + shift) + 1;
         e.carets.push_back(c.head < c.anchor ? Caret{hi, lo} : Caret{lo, hi});
-        shift += 2;
+        shift += (long long)added;
     }
     return e;
 }

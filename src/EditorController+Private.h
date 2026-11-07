@@ -681,7 +681,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 @end
 
 // EditorController+EditorView.mm: the editor: line numbers, brackets, zoom, comments, tasks and the editing hooks.
-@interface EditorController (EditorView)
+@interface EditorController (EditorView) <MCAutoCloseHost>
 - (void)noteEdited;
 - (void)toggleTaskOnSourceLine:(int)line;
 - (void)applyGutterSettings;

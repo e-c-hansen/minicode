@@ -530,6 +530,50 @@ MC_GUI_SUITE(idelink) {
         });
     });
 
+    // Per hunk: each change between the panes has its own Accept and Reject;
+    // once both are decided the answer is the file made of the accepted one.
+    OnClient(@"accept one of two hunks, reject the other: the answer holds only the first", 30,
+             ^(void (^finish)(void)) {
+        [client sendText:Call(20, @"openDiff", @{@"old_file_path": MCGuiProjectFile(@"ide/a.py"),
+                                                  @"new_file_path": MCGuiProjectFile(@"ide/a.py"),
+                                                  @"new_file_contents": @"def alpha():\n    return 10\n\ndef beta():\n    return 20\n",
+                                                  @"tab_name": @"diff hunks"})];
+        [client answerTo:999 timeout:1.0 notes:notes];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            GCHECK(ShowTab(MCGuiController(), @"diff hunks"));
+            MCCompareView *v = CompareViewOf(MCGuiController());
+            GCHECK(v.comparison.hunkCount == 2);
+            const NSRect accept0 = [v rectForHunk:0 accept:YES];
+            const NSRect reject1 = [v rectForHunk:1 accept:NO];
+            GCHECK(!NSIsEmptyRect(accept0) && !NSIsEmptyRect(reject1));
+            MCGuiSnapshot(MCGuiController().window.contentView, @"idelink-hunks");
+            GCHECK([v pressHunkButtonAtPoint:NSMakePoint(NSMidX(accept0), NSMidY(accept0))]);
+            GCHECK([v.comparison decisionOfHunk:0] == 1 && v.comparison.decision == 0);
+            GCHECK_EQ_STR(v.acceptButton.title, @"Accept the Rest");
+            // A press on the decided hunk's mark makes it undecided again.
+            GCHECK([v pressHunkButtonAtPoint:NSMakePoint(NSMidX(accept0), NSMidY(accept0))]);
+            GCHECK([v.comparison decisionOfHunk:0] == 0 && !v.comparison.hunksDecided);
+            GCHECK([v pressHunkButtonAtPoint:NSMakePoint(NSMidX(accept0), NSMidY(accept0))]);
+            GCHECK([v pressHunkButtonAtPoint:NSMakePoint(NSMidX(reject1), NSMidY(reject1))]);
+            GCHECK(v.comparison.decision == 1);
+            dispatch_async(ClientQueue(), ^{
+                NSDictionary *answer = [client answerTo:20 timeout:5 notes:notes];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    NSArray *t = Texts(answer);
+                    GCHECK(t.count == 2 && [t[0] isEqualToString:@"FILE_SAVED"] &&
+                           [t[1] isEqualToString:@"def alpha():\n    return 10\n\ndef beta():\n    return 2\n"]);
+                    if (t.count == 2) MCGuiNote(@"answered %@", t[1]);
+                    GCHECK([[NSString stringWithContentsOfFile:MCGuiProjectFile(@"ide/a.py")
+                                                      encoding:NSUTF8StringEncoding error:nil]
+                               containsString:@"return 1\n"]);
+                    MCCompareView *after = CompareViewOf(MCGuiController());
+                    GCHECK(after.acceptButton.hidden && NSIsEmptyRect([after rectForHunk:0 accept:YES]));
+                });
+                finish();
+            });
+        });
+    });
+
     OnClient(@"a diff left waiting when Claude Code goes says so", 20, ^(void (^finish)(void)) {
         [client sendText:Call(16, @"openDiff", @{@"new_file_path": MCGuiProjectFile(@"ide/b.py"),
                                                   @"new_file_contents": @"x = 3\n", @"tab_name": @"diff four"})];

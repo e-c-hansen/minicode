@@ -29,8 +29,9 @@
 - (void)toggleEditor:(id)sender;      // Shift+Cmd+E hide/restore the file editor
 @end
 
-// EditorController+Git.mm: pushing and pulling, on the Source Control
-// panel's object whether it shows or not (MCGitPanel).
+// EditorController+Git.mm: pushing and pulling, staging everything,
+// discarding and the branch picker, on the Source Control panel's object
+// whether it shows or not (MCGitPanel).
 @class MCGitPanel;
 @interface EditorController (Git)
 - (MCGitPanel *)ensureGitPanel;   // made with the window, for autofetch
@@ -38,6 +39,12 @@
 - (void)gitPull:(id)sender;
 - (void)gitPush:(id)sender;
 - (void)gitSync:(id)sender;       // pull, then push
+- (void)gitStageAll:(id)sender;
+- (void)gitUnstageAll:(id)sender;
+- (void)gitClean:(id)sender;      // Discard Changes: the panel's row, else the file on show
+- (void)gitUndoDiscard:(id)sender;
+- (void)gitCheckout:(id)sender;   // the branch picker, in the palette
+- (BOOL)validateGitItem:(NSMenuItem *)item enabled:(BOOL *)enabled;
 @end
 
 // EditorController+Processes.mm

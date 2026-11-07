@@ -182,6 +182,23 @@
     return spans;
 }
 
+// ------------------------------------------------- auto-closing pairs (host)
+// MCAutoClose asks these on each typed character and Backspace.
+- (NSString *)autoClosePath {
+    return self.currentPath;
+}
+
+- (BOOL)autoCloseOn {
+    return [AppSettings shared].settings.autoClose() && _liveHighlight && !self.showingMessage;
+}
+
+- (std::unique_ptr<AutoClose::Context>)autoCloseContext {
+    NSTextStorage *storage = self.textView.textStorage;
+    if (!_hl || _hl->length() != storage.length) return std::make_unique<AutoClose::Context>();
+    return std::make_unique<AutoClose::HighlighterContext>(
+        *_hl, std::make_unique<NSStringSource>(storage.string));
+}
+
 // Bracket matching runs on a window of the text around the caret: what the
 // search may reach, and no more.
 - (NSRange)bracketWindowAround:(NSUInteger)caret {

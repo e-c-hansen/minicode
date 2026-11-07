@@ -920,8 +920,13 @@ static NSString *MCDiffBaseText(NSString *path, BOOL *exists, std::string &error
             NSString *answer = right;
             cmp.decisionPrompt = [NSString stringWithFormat:@"Claude Code wants to %@ %@.",
                                   exists ? @"change" : @"create", newPath.lastPathComponent];
+            // Accepted is the text made of the hunks the user accepted (all
+            // of Claude's when the whole change was), which Claude Code
+            // writes as it is.
+            __weak MCComparison *weakCmp = cmp;
             cmp.onDecision = ^(BOOL accepted) {
-                respond(accepted ? IdeLink::diffAccepted(Utf8String(answer))
+                NSString *text = weakCmp.acceptedText ?: answer;
+                respond(accepted ? IdeLink::diffAccepted(Utf8String(text))
                                  : IdeLink::diffRejected(Utf8String(tabName)));
                 [weakSelf prunePending];
             };

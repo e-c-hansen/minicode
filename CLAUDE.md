@@ -131,10 +131,11 @@ goes here first, with tests; the GUI only displays it.
   1,000 edits, so a large reformat keeps a hunk per changed run; UTF-16,
   `mapOffset`), `LineComments`,
   `AutoIndent` (with `ScanCache`), `KeepSorted`, `MultiCaret` (carets and line
-  commands), `LineIndex` (line starts, a gap buffer), `BracketMatch`,
-  `Folding`, `TextFind` (find and replace, UTF-16 and UTF-8), `Regex` (its
-  linear-time engine), `Formatter` (Format Document's plan), `InstallHints`,
-  `LargeFile.h` (VS Code's large-file thresholds, header only).
+  commands), `AutoClose` (auto-closing pairs), `LineIndex` (line starts, a gap
+  buffer), `BracketMatch`, `Folding`, `TextFind` (find and replace, UTF-16 and
+  UTF-8), `Regex` (its linear-time engine), `Formatter` (Format Document's
+  plan), `InstallHints`, `LargeFile.h` (VS Code's large-file thresholds,
+  header only).
 - Language servers: `LspClient` (protocol, results, WorkspaceEdits, diagnostics
   with versions, completion edits, symbols, folding ranges, the second server's
   routing and `DiagnosticStore`, the Problems rows, watched files' globs and
@@ -443,7 +444,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   types); when two commands share a key in different places; and for keys a
   menu cannot show (keypad digits, the Menu key, Ctrl+Shift with punctuation);
   and for a `Tree` command (renameFile on F2, moveFileToTrash on Cmd+Delete)
-  while the tree has the keyboard. A `Tree` command's keys are never put on
+  while the tree has the keyboard; and for a function key whose `Any`
+  command something in the responder chain takes (F7 in the compare view's
+  panes, plain text views that would beep at it). A `Tree` command's keys are never put on
   its menu item, since a menu key acts from every pane (Cmd+Delete once
   trashed the tree's selection from the editor); no view hard-codes them.
   The grid's prompt line edits (Cmd+Left/Right/Delete, Option+Left/Right) and
@@ -851,9 +854,29 @@ container (PanelHost, laid out by hand in layoutContainer)
   time); before, carets on lines not laid out got empty rects and merged.
   Drawing places only carets among the visible characters (placing all laid out
   the file: seconds a frame for 50,000).
-- An opener (`( [ { " ' \``) typed while every caret has a selection wraps each
-  and keeps it selected (`MultiCaret::surround`), never while an input method
-  composes.
+- **Auto-closing pairs** (2026-11-07, `editor.auto-close`, on): VS Code's
+  rules at its defaults (autoClosingBrackets/Quotes/Comments
+  "languageDefined", autoClosingOvertype and autoClosingDelete "auto",
+  autoSurround "languageDefined"), in the core (`AutoClose`, each language's
+  pairs from VS Code's language-configuration.json; Python's """ closing on
+  its third quote and LaTeX's brackets-only are the two departures). Every
+  single typed character, at one caret or several, goes to `MCMultiCarets
+  insertText:replacementRange:` first, which asks `MCAutoClose`
+  (EditingCommands.mm; the controller is its `MCAutoCloseHost`) for an
+  overtype, a close or a surround; never while marked text composes or for
+  a replacement range (the accent menu). Backspace asks it in `doCommand:`
+  before the multi-caret check. A close is two changes at one place (the
+  typed character, then its closer), so applied last first the typed
+  character is the last single-character storage edit and the language
+  server still takes "(" as signature help's trigger; an overtype only
+  moves the carets (no undo step). The `Tracker` follows storage edits
+  (`NSTextStorageDidProcessEditing`) and drops a keystroke's closers once a
+  caret leaves its pair or the pair spans lines (checked on every selection
+  change and `setCarets:`). Surround (an opener over every caret's
+  selection) uses the language's surrounding pairs, not only `( [ { " '
+  \``; none in JSON or Makefiles, `* _ ~ $ <` in Markdown. GUI trap: a
+  simulated key press that changes nothing, wrapped in `MCGuiUndoGroup`,
+  leaves an empty undo group on top that a real key press never opens.
 - Line commands: Cmd+L (`expandLineSelection`), Ctrl+Shift+K (`deleteLines`),
   Cmd+C and Cmd+X with nothing selected take whole lines (`lineCopy`) and mark
   the item `org.minicode.editor.line-copy`; pasting such an item with nothing
@@ -1563,6 +1586,19 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
   diff is `CompareView` (`showComparison:preview:`, `MCComparison`, panes
   scrolling together); an `EditorPage` (`showPage:`) is a read-only view in a
   tab, reused by key (Evidence, a worktree's changes).
+- **The compare view** (2026-11-07, W16): `MCComparison prepare` (off the
+  main thread where callers can) works out each pane's text, syntax spans
+  (by `fileName` or `path`, plain past 2 MB a side) and changed words
+  (`SideBySide::wordChanges`, budgeted) in the core; F7 and Shift+F7 step
+  through `SideBySide::hunks` (VS Code's accessibleDiffViewer ids), the
+  compare view answering them. A comparison with a decision gets a ✓ and ✕
+  per hunk in a gutter between the panes (`rectForHunk:accept:`,
+  `pressHunkButtonAtPoint:`, for tests); `acceptedText` is
+  `SideBySide::assemble` of the accepted hunks (the right text when all).
+  Trap: laying both panes out to size them took 1.5 s on the main thread
+  for 50,000 lines a side; every row has one fixed height (a paragraph
+  style), so sizes and row rects are arithmetic and layout is
+  non-contiguous. Keep anything that would lay out the whole text out.
 
 ## The terminal
 
@@ -1864,7 +1900,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 - **What runs**: status, diff, add, restore --staged, commit -m, rm --cached
   --force before the first commit, and for the graph for-each-ref, log,
   rev-list, show, rev-parse; `remote` with each status; on the Mac fetch, pull
-  and push (below). Never a shell string: `MCGitRunSync`
+  and push (below), Stage All (`add -A -- .`), Unstage All, `switch` and
+  Discard's `restore --worktree` (below). Never a shell string: `MCGitRunSync`
   `posix_spawn`s an argument vector in the top level. Paths after `--`; add,
   restore and rm get `--literal-pathspecs` (`sp*ecial.txt` never stages
   `spXecial.txt`). Status `--porcelain=v2 --branch -z --untracked-files=all`;
@@ -1878,7 +1915,9 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   `GIT_EDITOR=true`, stdin /dev/null, the wide PATH; stdout and stderr drained
   at once on their own queues.
 - **Time limits** (`Git::timeoutFor`, one table for the Mac and GTK): 30 s for
-  reads, 2 minutes for add, restore and rm (filters, index.lock), 10 for commit
+  reads, 2 minutes for add, restore, rm and switch (filters, hooks,
+  index.lock), 10 for commit
+
   (hooks, signing). git leads its own process group, which gets SIGTERM at the
   limit and SIGKILL 2 s later; the panel shows "git did not answer within 30
   seconds: <command on one line, 160 characters at most>" (`timeoutMessage`),
@@ -1903,6 +1942,25 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   180 s, per top level (process-wide map, main thread), never without a
   remote, backing off to an hour after failures. `autoFetchTickAt:` takes the
   time, so the GUI suite (`git_sync`) runs the waits without waiting.
+- **Stage All, Discard, the file menu, the branch picker** (Mac, 2026-11-07;
+  `GitUi::stageAllPlan`, `unstageAllPlan`, `discardPlan`, `branchItems`,
+  `switchArgs`, tested in `git-ui:stage-all`, `discard`, `switch`; GUI
+  `git_actions`). Like sync, each reads a fresh status, so View > Source
+  Control works with the panel hidden (messages then also go to the status
+  bar, `onNote`). **Discard always asks and is undoable**: the file goes to
+  the Trash first (`trashItemAtURL:`; a failure discards nothing), then
+  `restore --worktree` from the index, which is what the Changes row's diff
+  is against (not `--source=HEAD`, which would also throw away staged work);
+  a failed restore moves the copy back. Undo Discard (the panel's menu, the
+  menu bar) trashes what is there now and moves the copy back, last 20.
+  Refused: staged rows (as VS Code, unstage first), conflicts, `add -N`
+  files. git.clean from the menu bar acts on the panel's selected row only
+  while its list has the keyboard, else on the file on show. The picker is
+  the palette with an `MCPalettePick` (a caller's list, PalettePanel.h);
+  remote branches whose name a local branch has are left out, and a remote
+  one is switched to with `switch -c <name> --track <remote>/<name>`. Tests
+  swap `trashItemAtURL:` for a scratch folder, since the real Trash may be
+  the user's own whatever HOME says.
 - **Threads**: a serial queue per panel; results dropped if the root changed or
   a newer diff was asked. `refresh` coalesces 50 ms, only while in a window (on
   show, after actions, on window key, on the tree's FSEvents).
@@ -2194,7 +2252,8 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   `openTabForAgent:preview:quiet:` (beside the user while they type) and
   highlights startText..endText with an empty note; openDiff is a
   comparison tab (`showComparison:preview:NO quiet:YES`) with a decision bar
-  (`MCComparison decisionPrompt/onDecision`, CompareView); closing the tab
+  (`MCComparison decisionPrompt/onDecision`, CompareView) and Accept and
+  Reject per hunk, FILE_SAVED carrying `acceptedText`; closing the tab
   rejects (`closePageOf:` calls `tabClosed`); close_tab and closeAllDiffTabs
   close only comparisons the link offered. Not offered: saveDocument,
   executeCode. A client that goes leaves its diff saying so.
@@ -2382,8 +2441,8 @@ session has a display. Check first.
   `MC_GUI_KEEP=1` keeps the scratch folder, `MC_GUI_SAMPLE=file` samples the
   keystroke suite (`MC_GUI_FULL_PERF=1` runs foldperf on 100,000 lines, not
   20,000). Suites: control, agents, backups, find_bar, folding, foldperf,
-  format, git_panel, keymap, keystroke, lsp_fixes, palette, paste, previews,
-  problems, processes, replace_in_folder, run_file, symbols, terminal_links,
+  format, git_actions, git_panel, keymap, keystroke, lsp_fixes, palette,
+  paste, previews, problems, processes, replace_in_folder, run_file, symbols, terminal_links,
   terminal_reflow, tree, large_file (`MC_GUI_SAMPLE=<folder>` samples its
   open and typing steps), and in
   LooseEndsSuite.mm terminal_exec, terminal_keys, terminal_zoom,

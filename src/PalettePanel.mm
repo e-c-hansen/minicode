@@ -43,6 +43,8 @@ static NSString *PNS(const std::u16string &s) {
 
 @implementation MCPaletteContext
 @end
+@implementation MCPalettePick
+@end
 
 // ------------------------------------------------------------ the commands
 @interface MCPaletteCommand : NSObject
@@ -286,7 +288,8 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
     f.usesSingleLineMode = YES;
     f.cell.scrollable = YES;
     f.placeholderAttributedString = [[NSAttributedString alloc]
-        initWithString:@"Search files by name (> commands, : a line, @ a symbol, # in the workspace)"
+        initWithString:context.pick.placeholder ?:
+                           @"Search files by name (> commands, : a line, @ a symbol, # in the workspace)"
             attributes:@{NSForegroundColorAttributeName: self.mutedColor,
                          NSFontAttributeName: f.font}];
     f.delegate = self;
@@ -334,7 +337,7 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
 // they arrive (or never, if the palette closed first, which stops the walk).
 - (void)listFiles {
     NSString *root = self.context.root;
-    if (!root.length) {
+    if (!root.length || self.context.pick) {
         self.files = @[];
         return;
     }
@@ -421,11 +424,14 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
 // ------------------------------------------------------------- the items
 - (void)refilter {
     using namespace CommandPalette;
-    const Parsed p = parse(PU16(self.field.stringValue ?: @""));
+    Parsed p = parse(PU16(self.field.stringValue ?: @""));
+    if (self.context.pick) p.mode = Mode::Files;   // a pick list has no prefixes
     NSMutableArray<MCPaletteItem *> *items = [NSMutableArray array];
     NSString *empty = @"";
     __weak MCPaletteOverlay *weakSelf = self;
-    if (p.mode == Mode::Commands) {
+    if (self.context.pick) {
+        empty = [self pickItems:items];
+    } else if (p.mode == Mode::Commands) {
         std::vector<std::string> recent;
         for (NSString *s in PStrings(kPaletteRecentKey)) recent.push_back(s.UTF8String);
         for (const Match &m : rank(_entries, p.query, recent)) {
@@ -546,6 +552,54 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
     if (p.mode == Mode::Symbols && !p.query.empty() && self.selected >= 0 &&
         self.items[(NSUInteger)self.selected].preview)
         self.items[(NSUInteger)self.selected].preview();
+}
+
+// ------------------------------------------------------------- pick lists
+// The caller's rows that match what is typed, best first, then the row made
+// from the typed text, if any. Returns what to say when there are none.
+- (NSString *)pickItems:(NSMutableArray<MCPaletteItem *> *)items {
+    MCPalettePick *pick = self.context.pick;
+    NSString *text = self.field.stringValue ?: @"";
+    std::vector<CommandPalette::Entry> entries;
+    for (NSString *label in pick.labels) {
+        CommandPalette::Entry e;
+        e.label = e.title = PU16(label);
+        e.id = label.UTF8String ?: "";
+        entries.push_back(e);
+    }
+    std::u16string query = PU16([text stringByTrimmingCharactersInSet:
+                                          NSCharacterSet.whitespaceCharacterSet]);
+    __weak MCPaletteOverlay *weakSelf = self;
+    for (const CommandPalette::Match &m : CommandPalette::rank(entries, query, {})) {
+        const NSInteger index = (NSInteger)m.index;
+        MCPaletteItem *it = [MCPaletteItem new];
+        it.label = pick.labels[(NSUInteger)index];
+        it.text = [self attributed:it.label title:it.label match:m];
+        if ((NSUInteger)index < pick.details.count) it.keys = pick.details[(NSUInteger)index];
+        void (^choose)(NSInteger) = pick.choose;
+        it.run = ^{
+            [weakSelf closeRestoringFocus:YES];
+            if (choose) dispatch_async(dispatch_get_main_queue(), ^{ choose(index); });
+        };
+        [items addObject:it];
+    }
+    NSString *typed = pick.typedRow ? pick.typedRow(text) : nil;
+    if (typed.length) {
+        MCPaletteItem *it = [MCPaletteItem new];
+        it.label = typed;
+        it.text = [[NSAttributedString alloc]
+            initWithString:[@"+ " stringByAppendingString:typed]
+                attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:13],
+                             NSForegroundColorAttributeName: self.textColor}];
+        void (^chooseTyped)(NSString *) = pick.chooseTyped;
+        NSString *given = [text copy];
+        it.run = ^{
+            [weakSelf closeRestoringFocus:YES];
+            if (chooseTyped) dispatch_async(dispatch_get_main_queue(), ^{ chooseTyped(given); });
+        };
+        [items addObject:it];
+    }
+    return pick.emptyText ?: @"Nothing matches";
 }
 
 // ------------------------------------------------------------- symbols
@@ -963,6 +1017,11 @@ void MCShowPalette(NSWindow *window, NSString *text, MCPaletteContext *context) 
     NSView *content = window.contentView;
     if (!content) return;
     MCPaletteOverlay *open = (MCPaletteOverlay *)MCCommandPaletteIn(window);
+    // A pick list is its own palette: one never takes over the other.
+    if (open && (open.context.pick || context.pick)) {
+        [open closeRestoringFocus:YES];
+        open = nil;
+    }
     if (open) {
         [window makeFirstResponder:open.field];
         [open takeText:text];

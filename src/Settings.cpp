@@ -895,6 +895,17 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                }
                s.wordWrap_ = on;
                return true;),
+        MC_KEY("editor.auto-close", Word, false,
+               const std::string w = lower(v);
+               bool on = true;
+               if (w == "on") on = true;
+               else if (w == "off") on = false;
+               else if (!parseBool(w, on)) {
+                   e = "'" + v + "' is not on or off";
+                   return false;
+               }
+               s.autoClose_ = on;
+               return true;),
         MC_KEY("editor.large-file-optimizations", Word, false,
                const std::string w = lower(v);
                bool on = true;
@@ -1360,6 +1371,13 @@ const char* Settings::defaultFileText() {
 # horizontal scroll bar (off). View > Word Wrap, Option+Z, turns it over
 # for the session (macOS).
 # editor.word-wrap = on
+# Brackets and quotes close as you type them, as in VS Code (macOS): ( gives
+# (), typing the ) it put there steps over it, and Backspace between the two
+# deletes both. Quotes close only outside strings and comments and not
+# after a letter, so "don't" types as it is, and not at all in Markdown,
+# LaTeX, and plain text. Typing a bracket or quote over a selection wraps it
+# either way.
+# editor.auto-close = on
 # A file over 20 MB or 300,000 lines opens in large-file mode, as in VS Code:
 # no syntax colors, folding, bracket boxes or language server. The status
 # bar says so, and a click there turns them on for that tab (macOS). Off,

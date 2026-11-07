@@ -478,7 +478,7 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
 // ---- several carets: everything that types, moves or sets the selection
 // goes to MCMultiCarets first while it has two or more.
 - (void)insertText:(id)string replacementRange:(NSRange)replacementRange {
-    if ([_multi insertText:string]) return;
+    if ([_multi insertText:string replacementRange:replacementRange]) return;
     [super insertText:string replacementRange:replacementRange];
 }
 

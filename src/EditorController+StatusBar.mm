@@ -438,6 +438,10 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
         [self appendHintsRow:s key:[self hk:@"minicode.togglePlayback"] label:@"Play or pause"
                         key2:[self hk:@"workbench.action.focusFirstEditorGroup"] label2:@"Focus the player" state:nil];
     }
+    if (self.isDiff && _activeTab.comparison) {
+        [self appendHintsRow:s key:[self hk:@"editor.action.accessibleDiffViewer.next"] label:@"Next difference"
+                        key2:[self hk:@"editor.action.accessibleDiffViewer.prev"] label2:@"Previous difference" state:nil];
+    }
     if (_notes.tourActive) {
         [self appendHintsRow:s key:[self hk:@"minicode.tour.next"] label:@"Next stop of the tour"
                         key2:[self hk:@"minicode.tour.previous"] label2:@"Previous stop" state:nil];
