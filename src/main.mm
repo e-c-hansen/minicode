@@ -470,7 +470,7 @@ static BOOL MCEditorOnlyAction(SEL a) {
            a == @selector(toggleBold:) || a == @selector(toggleItalic:) ||
            a == @selector(runSelectionInTerminal:) ||
            a == @selector(nextProblem:) || a == @selector(previousProblem:) ||
-           a == @selector(goToBracket:);
+           a == @selector(goToBracket:) || a == @selector(toggleSidePreview:);
 }
 // The File menu's tab commands and the tree's Sort By items, which the
 // window decides (enabled, checked), forwarded when another window is key.
@@ -542,6 +542,7 @@ static BOOL MCWindowTabAction(SEL a) {
 }
 - (void)clearRecentFolders:(id)sender { (void)sender; MCClearRecentFolders(); }
 - (void)togglePreview:(id)sender   { [[self current] togglePreview:sender]; }
+- (void)toggleSidePreview:(id)sender { [[self current] toggleSidePreview:sender]; }
 - (void)exportPDF:(id)sender       { [[self current] exportPDF:sender]; }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (MCEditorOnlyAction(item.action)) return [self keyWindowIsEditor];
@@ -553,6 +554,8 @@ static BOOL MCWindowTabAction(SEL a) {
     if (item.action == @selector(showContextMenu:))
         return (NSApp.keyWindow ?: NSApp.mainWindow) != nil;
     if (item.action == @selector(exportPDF:)) return [self current].canExportPDF;
+    if (item.action == @selector(forgetFolderToolsAnswer:))
+        return [self current].canForgetFolderToolsAnswer;
     if (item.action == @selector(togglePlayback:))
         return [self current].canTogglePlayback;
     if (item.action == @selector(nextTourStop:) || item.action == @selector(previousTourStop:))
@@ -725,6 +728,9 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)selectPythonInterpreter:(id)sender {
     [[self current] selectPythonInterpreter:sender];
 }
+- (void)forgetFolderToolsAnswer:(id)sender {
+    [[self current] forgetFolderToolsAnswer:sender];
+}
 
 @end
 
@@ -759,6 +765,11 @@ static void BuildMenu(void) {
                 keyEquivalent:@""];
     [appMenu addItemWithTitle:@"Select Python Interpreter…"
                        action:@selector(selectPythonInterpreter:)
+                keyEquivalent:@""];
+    // The folder's answer about running its own .venv and node_modules
+    // programs (the install bar's, Format Document's), taken back.
+    [appMenu addItemWithTitle:@"Ask Again About This Folder's Tools"
+                       action:@selector(forgetFolderToolsAnswer:)
                 keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
     // Hands a change to Claude Code in a terminal of minicode's own source
@@ -1137,6 +1148,15 @@ static void BuildMenu(void) {
     toggle.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:toggle];
+    // Control+Command+V, for VS Code's Cmd+K V chord: the page beside the
+    // source of a Markdown file, which keeps the keyboard.
+    NSMenuItem *side =
+        [[NSMenuItem alloc] initWithTitle:@"Open Preview to the Side"
+                                   action:@selector(toggleSidePreview:)
+                            keyEquivalent:@"v"];
+    side.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagControl;
+    [viewMenu addItem:side];
 
     NSMenuItem *hints =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Shortcut Hints"

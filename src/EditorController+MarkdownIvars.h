@@ -6,6 +6,8 @@
 #pragma once
 #import "EditorController+Private.h"
 
+@class MCMarkdownSidePreview;
+
 @interface EditorController () {
     // Rendered Markdown's headings, by GitHub's anchor spelling, for #links.
     NSDictionary<NSString *, NSNumber *> *_markdownAnchors;
@@ -19,5 +21,12 @@
     BOOL _mathOn;                          // this render typesets math
     NSString *_mathRunProblem;             // why a whole run failed, this render
     NSString *_tectonicProblem;            // why the last download failed
+    // The width the page being built is laid out in: the editor's, or the
+    // side preview's (tables with formulas are sized to it).
+    CGFloat _markdownPageWidth;
+    // Open Preview to the Side's pane (MarkdownSidePreview.h), made on
+    // first use; the tabs say whether they want it.
+    MCMarkdownSidePreview *_sidePreview;
+    __weak MCTab *_sidePreviewTab;         // whose page it holds, nil for none
 }
 @end
