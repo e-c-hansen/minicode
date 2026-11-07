@@ -2,11 +2,13 @@
 #import "AgentPanel.h"
 #import "AppSettings.h"
 #import "ChangePanel.h"   // MCRemoveStalePromptFiles
+#import "EditorFont.h"    // MCMonoFont
 #import "Lsp.h"   // MCSearchDirs
 #include "ChangeRequest.h"
 #include "InlineAgent.h"
 #include "LineDiff.h"
 
+#include <errno.h>
 #include <signal.h>
 #include <unistd.h>
 
@@ -28,7 +30,11 @@ static const CGFloat kHeadH = 18;
 static const CGFloat kFootH = 22;
 static const CGFloat kMaxBoxLines = 6;
 static const CGFloat kMaxMessageH = 220;
+static const CGFloat kMaxDiffH = 320;          // the pending edit's diff
 static const NSTimeInterval kRunLimit = 300;   // five minutes, then it is stopped
+// The text as it arrives is shown at most this often (and read off the main
+// thread), so a long reply's thousands of pieces cost the main thread little.
+static const NSTimeInterval kProgressEvery = 0.08;
 
 @implementation MCAgentContext
 @end
@@ -36,24 +42,63 @@ static const NSTimeInterval kRunLimit = 300;   // five minutes, then it is stopp
 // ------------------------------------------------------------ running Claude
 @implementation MCAgentRun {
     NSTask *_task;
-    BOOL _cancelled;
+    BOOL _cancelled, _finished;
     void (^_completion)(NSString *, NSString *);
+    void (^_progress)(NSString *, NSString *);
+    // The reply as it arrives, touched only on _streamQueue.
+    dispatch_queue_t _streamQueue;
+    InlineAgent::Stream _stream;
+    BOOL _dirty, _snapshotScheduled;
 }
 
 + (instancetype)runPrompt:(NSString *)prompt inFolder:(NSString *)folder
                completion:(void (^)(NSString *, NSString *))completion {
+    return [self runPrompt:prompt inFolder:folder progress:nil completion:completion];
+}
+
++ (instancetype)runPrompt:(NSString *)prompt inFolder:(NSString *)folder
+                 progress:(void (^)(NSString *, NSString *))progress
+               completion:(void (^)(NSString *, NSString *))completion {
     MCAgentRun *r = [MCAgentRun new];
     r->_completion = [completion copy];
+    r->_progress = [progress copy];
+    r->_streamQueue = dispatch_queue_create("minicode.agent.stream", DISPATCH_QUEUE_SERIAL);
     [r startWithPrompt:prompt folder:folder];
     return r;
 }
 
 - (void)finishOutput:(NSString *)output error:(NSString *)error {
     dispatch_async(dispatch_get_main_queue(), ^{
+        self->_finished = YES;
         if (self->_cancelled || !self->_completion) return;
         void (^done)(NSString *, NSString *) = self->_completion;
         self->_completion = nil;
+        self->_progress = nil;
         done(output, error);
+    });
+}
+
+// On _streamQueue: bytes from Claude.
+- (void)feed:(std::string)bytes {
+    if (_stream.feed(bytes)) [self streamChanged];
+}
+
+// On _streamQueue: what the bar shows is taken now and then, not per piece.
+- (void)streamChanged {
+    _dirty = YES;
+    if (_snapshotScheduled || !_progress) return;
+    _snapshotScheduled = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kProgressEvery * NSEC_PER_SEC)),
+                   _streamQueue, ^{
+        self->_snapshotScheduled = NO;
+        if (!self->_dirty) return;
+        self->_dirty = NO;
+        NSString *text = NS(InlineAgent::preview(self->_stream.text()));
+        NSString *activity = NS(self->_stream.activity());
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (self->_cancelled || self->_finished || !self->_progress) return;
+            self->_progress(text, activity);
+        });
     });
 }
 
@@ -84,7 +129,7 @@ static const NSTimeInterval kRunLimit = 300;   // five minutes, then it is stopp
     _task = task;
 
     dispatch_group_t group = dispatch_group_create();
-    __block NSData *outData = nil, *errData = nil;
+    __block NSData *errData = nil;
     __block int status = -1;
     __block BOOL timedOut = NO;
     dispatch_group_enter(group);   // the process
@@ -99,7 +144,23 @@ static const NSTimeInterval kRunLimit = 300;   // five minutes, then it is stopp
         return;
     }
     dispatch_queue_t q = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
-    dispatch_group_async(group, q, ^{ outData = [out.fileHandleForReading readDataToEndOfFile]; });
+    // The reply is read as it comes, a piece at a time, and handed to the
+    // stream's queue; the group waits until the stream has read it all.
+    const int outFD = out.fileHandleForReading.fileDescriptor;
+    dispatch_queue_t sq = _streamQueue;
+    dispatch_group_async(group, q, ^{
+        char buf[16384];
+        for (;;) {
+            const ssize_t n = read(outFD, buf, sizeof buf);
+            if (n < 0 && errno == EINTR) continue;
+            if (n <= 0) break;
+            std::string piece(buf, (size_t)n);
+            dispatch_async(sq, ^{ [self feed:piece]; });
+        }
+        dispatch_sync(sq, ^{
+            if (self->_stream.finish()) [self streamChanged];
+        });
+    });
     dispatch_group_async(group, q, ^{ errData = [err.fileHandleForReading readDataToEndOfFile]; });
     // The prompt may be larger than a pipe holds, so it is written off the
     // main thread while Claude reads it.
@@ -126,8 +187,15 @@ static const NSTimeInterval kRunLimit = 300;   // five minutes, then it is stopp
         });
     });
     dispatch_group_notify(group, q, ^{
-        NSString *o = [[NSString alloc] initWithData:outData ?: [NSData data]
-                                            encoding:NSUTF8StringEncoding] ?: @"";
+        __block std::string reply, why, raw;
+        __block bool sawJson = false, failed = false;
+        dispatch_sync(sq, ^{
+            reply = self->_stream.reply();
+            why = self->_stream.error();
+            sawJson = self->_stream.sawJson();
+            failed = self->_stream.failed();
+        });
+        NSString *o = NS(reply);
         NSString *e = [[NSString alloc] initWithData:errData ?: [NSData data]
                                             encoding:NSUTF8StringEncoding] ?: @"";
         if (timedOut) {
@@ -141,15 +209,18 @@ static const NSTimeInterval kRunLimit = 300;   // five minutes, then it is stopp
                 @"or name the command in the settings file's agent.command.", NS(command)]];
             return;
         }
-        if (status != 0) {
-            NSString *why = [e stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-            if (!why.length)
-                why = [o stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-            NSArray<NSString *> *lines = [why componentsSeparatedByString:@"\n"];
+        if (status != 0 || failed) {
+            NSString *reason = [e stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            // Claude Code's own account of it, from the stream, before what
+            // the shell printed; never the stream's JSON itself.
+            if (sawJson && !why.empty()) reason = NS(why);
+            if (!reason.length && !sawJson)
+                reason = [o stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            NSArray<NSString *> *lines = [reason componentsSeparatedByString:@"\n"];
             if (lines.count > 6)
-                why = [[lines subarrayWithRange:NSMakeRange(lines.count - 6, 6)]
-                          componentsJoinedByString:@"\n"];
-            [self finishOutput:nil error:why.length ? why
+                reason = [[lines subarrayWithRange:NSMakeRange(lines.count - 6, 6)]
+                             componentsJoinedByString:@"\n"];
+            [self finishOutput:nil error:reason.length ? reason
                 : [NSString stringWithFormat:@"Claude Code stopped with status %d.", status]];
             return;
         }
@@ -160,6 +231,7 @@ static const NSTimeInterval kRunLimit = 300;   // five minutes, then it is stopp
 - (void)cancel {
     _cancelled = YES;
     _completion = nil;
+    _progress = nil;
     NSTask *t = _task;
     if (t.running) {
         [t terminate];
@@ -341,6 +413,13 @@ static NSTextView *MCAgentMakeTextView(NSRect frame, Class cls) {
 
 - (void)setMessage:(NSString *)message {
     _message = [message copy];
+    _attributedMessage = nil;
+    [self applyMessage];
+}
+
+- (void)setAttributedMessage:(NSAttributedString *)attributedMessage {
+    _attributedMessage = [attributedMessage copy];
+    _message = [attributedMessage.string copy];
     [self applyMessage];
 }
 
@@ -354,7 +433,8 @@ static NSTextView *MCAgentMakeTextView(NSRect frame, Class cls) {
     NSDictionary *a = @{NSFontAttributeName: [NSFont systemFontOfSize:12],
                         NSForegroundColorAttributeName: color};
     [_messageView.textStorage setAttributedString:
-        [[NSAttributedString alloc] initWithString:_message ?: @"" attributes:a]];
+        _attributedMessage ?: [[NSAttributedString alloc] initWithString:_message ?: @""
+                                                              attributes:a]];
     _messageScroll.hidden = !_message.length;
     self.needsLayout = YES;
 }
@@ -382,9 +462,9 @@ static NSTextView *MCAgentMakeTextView(NSRect frame, Class cls) {
         break;
     case MCAgentBarReview:
         _primary.title = @"Keep";
-        _primary.toolTip = @"Keep the change (Return)";
+        _primary.toolTip = @"Make the change in the file (Return)";
         _secondary.title = @"Discard";
-        _secondary.toolTip = @"Put the text back as it was (Esc)";
+        _secondary.toolTip = @"Leave the file as it is (Esc)";
         _text.placeholder = @"Ask for more, or press Return to keep the change";
         _keysLabel.stringValue = @"Return keeps · Esc discards · ⌘Return hands it to Claude Code";
         break;
@@ -460,7 +540,8 @@ static CGFloat MCAgentTextHeight(NSAttributedString *text, NSFont *font, CGFloat
 
 - (CGFloat)messageHeightForWidth:(CGFloat)width {
     if (!_message.length) return 0;
-    return MIN(MCAgentTextHeight(_messageView.textStorage, nil, width - 16, 2) + 2, kMaxMessageH);
+    return MIN(MCAgentTextHeight(_messageView.textStorage, nil, width - 16, 2) + 2,
+               _attributedMessage ? kMaxDiffH : kMaxMessageH);
 }
 
 - (CGFloat)heightForWidth:(CGFloat)W {
@@ -596,9 +677,16 @@ static CGFloat MCAgentTextHeight(NSAttributedString *text, NSFont *font, CGFloat
     NSTimer *_tick;
     NSDate *_started;
     NSMutableArray<NSString *> *_earlier;
-    NSString *_original;   // the text before this bar's first edit
-    NSString *_applied;    // the text after its last
+    // The edit waiting for Keep: every request's blocks, applied in order
+    // to the buffer as it is when Keep is pressed (they find their places
+    // by their text, so typing elsewhere meanwhile does no harm), and what
+    // they made of the buffer the last time (_base to _pending).
+    std::vector<std::vector<InlineAgent::Edit>> _rounds;
+    NSString *_base;
+    NSString *_pending;
     NSString *_asked;      // the request on its way
+    NSString *_streamed;   // the reply so far, as InlineAgent::preview shows it
+    NSString *_activity;   // what Claude is doing, "" while it writes
     id _scrollObserver;
     NSUInteger _taskCount;
 }
@@ -654,7 +742,7 @@ static CGFloat MCAgentTextHeight(NSAttributedString *text, NSFont *font, CGFloat
     if (_shown) [self finish:NO];
     _ctx = context;
     [_earlier removeAllObjects];
-    _original = _applied = nil;
+    [self forgetPending];
     MCAgentBar *bar = self.bar;
     NSView *parent = [host agentBarHost];
     if (bar.superview != parent) [parent addSubview:bar positioned:NSWindowAbove relativeTo:nil];
@@ -711,12 +799,122 @@ static CGFloat MCAgentTextHeight(NSAttributedString *text, NSFont *font, CGFloat
     [self showWorking];
 }
 
+// The status line (what Claude is doing, how long it has taken) and under
+// it the reply as it arrives.
 - (void)showWorking {
     const int secs = (int)(-[_started timeIntervalSinceNow]);
     NSString *what = _ctx.target == MCAgentTargetCommand ? @"Writing a command" : @"Asking Claude Code";
-    _bar.message = secs < 1 ? [what stringByAppendingString:@"…"]
-                            : [NSString stringWithFormat:@"%@… %d s", what, secs];
+    if (_activity.length) what = _activity;
+    else if (_streamed.length) what = @"Claude Code is answering";
+    NSString *status = secs < 1 ? [what stringByAppendingString:@"…"]
+                                : [NSString stringWithFormat:@"%@… %d s", what, secs];
+    _bar.message = _streamed.length ? [NSString stringWithFormat:@"%@\n\n%@", status, _streamed]
+                                    : status;
     _bar.messageIsError = NO;
+    [self layout];
+}
+
+- (void)forgetPending {
+    _rounds.clear();
+    _base = _pending = nil;
+}
+
+// Every request's blocks, in order, applied to `text` (the selection moving
+// with them). NO, with the reason, when one no longer applies.
+static BOOL MCAgentApplyRounds(const std::vector<std::vector<InlineAgent::Edit>> &rounds,
+                               std::string &text, size_t &selStart, size_t &selEnd,
+                               NSString **error) {
+    for (size_t i = 0; i < rounds.size(); i++) {
+        InlineAgent::Applied a = InlineAgent::applyEdits(text, rounds[i], selStart, selEnd);
+        if (!a.ok) {
+            if (error)
+                *error = i + 1 < rounds.size()
+                    ? @"The file changed where the agent's earlier edit goes, so it no longer "
+                      @"applies; Esc discards it."
+                    : NS(a.error);
+            return NO;
+        }
+        text = a.text;
+        selStart = a.selStart;
+        selEnd = a.selEnd;
+    }
+    return YES;
+}
+
+// The pending edit's diff for the bar: a line saying what it is, then the
+// changed lines, old ones red and new ones green, the words that changed in
+// a stronger tint, a line or so around them, in the editor's kind of font.
+- (NSAttributedString *)diffFrom:(NSString *)before to:(NSString *)after note:(NSString *)note
+                           error:(BOOL)error {
+    AppSettings *cfg = [AppSettings shared];
+    NSColor *text = [cfg text:Surface::Sidebar] ?: NSColor.textColor;
+    NSColor *muted = [text colorWithAlphaComponent:0.55];
+    NSColor *red = AHex(kErrorRed), *green = AHex(0x73C991);
+    NSFont *mono = MCMonoFont(11, NSFontWeightRegular);
+    NSMutableAttributedString *out = [NSMutableAttributedString new];
+    const std::u16string a = [self u16:before], b = [self u16:after];
+    if (!note.length) {
+        const size_t n = InlineAgent::changedLines(a, b);
+        note = [NSString stringWithFormat:@"The agent's change, %zu line%@, not made yet:", n,
+                                          n == 1 ? @"" : @"s"];
+    }
+    [out appendAttributedString:[[NSAttributedString alloc]
+        initWithString:[note stringByAppendingString:@"\n"]
+            attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12],
+                         NSForegroundColorAttributeName: error ? red : text}]];
+    for (const InlineAgent::DiffLine &d : InlineAgent::pendingDiff(a, b)) {
+        NSString *body = [NSString stringWithCharacters:(const unichar *)d.text.data()
+                                                 length:d.text.size()];
+        NSString *line = nil;
+        NSColor *fg = text, *bg = nil, *strong = nil;
+        switch (d.kind) {
+        case InlineAgent::DiffLine::Gap:
+            line = d.more ? [NSString stringWithFormat:@"      \u22EF %zu more line%@", d.more,
+                                                       d.more == 1 ? @"" : @"s"]
+                          : @"      \u22EF";
+            fg = muted;
+            break;
+        case InlineAgent::DiffLine::Context:
+            line = [NSString stringWithFormat:@"%4d   %@", d.newLine, body];
+            fg = muted;
+            break;
+        case InlineAgent::DiffLine::Removed:
+            line = [NSString stringWithFormat:@"%4d - %@", d.oldLine, body];
+            bg = [red colorWithAlphaComponent:0.18];
+            strong = [red colorWithAlphaComponent:0.45];
+            break;
+        case InlineAgent::DiffLine::Added:
+            line = [NSString stringWithFormat:@"%4d + %@", d.newLine, body];
+            bg = [green colorWithAlphaComponent:0.18];
+            strong = [green colorWithAlphaComponent:0.45];
+            break;
+        }
+        NSMutableDictionary *attrs = [@{NSFontAttributeName: mono,
+                                        NSForegroundColorAttributeName: fg} mutableCopy];
+        if (bg) attrs[NSBackgroundColorAttributeName] = bg;
+        NSMutableAttributedString *l = [[NSMutableAttributedString alloc]
+            initWithString:[line stringByAppendingString:@"\n"] attributes:attrs];
+        // The body starts after the number and the sign.
+        const NSUInteger at = line.length - body.length;
+        for (const auto &w : d.words)
+            if (d.kind != InlineAgent::DiffLine::Gap && w.first + w.second <= body.length)
+                [l addAttribute:NSBackgroundColorAttributeName value:strong
+                          range:NSMakeRange(at + w.first, w.second)];
+        [out appendAttributedString:l];
+    }
+    // No line break after the last line.
+    if (out.length && [out.string hasSuffix:@"\n"])
+        [out deleteCharactersInRange:NSMakeRange(out.length - 1, 1)];
+    return out;
+}
+
+// The bar on the pending edit: its diff under `note` (or the line saying
+// what it is), Keep and Discard.
+- (void)showPendingWithNote:(NSString *)note error:(BOOL)error {
+    NSString *now = _ctx.currentText ? _ctx.currentText() : nil;
+    _bar.mode = MCAgentBarReview;
+    _bar.messageIsError = NO;
+    _bar.attributedMessage = [self diffFrom:now ?: _base to:_pending note:note error:error];
     [self layout];
 }
 
@@ -745,6 +943,13 @@ static size_t MCAgentBytes(NSString *text, NSUInteger utf16) {
         r.text = Std(text);
         r.selStart = MCAgentBytes(text, sel.location);
         r.selEnd = MCAgentBytes(text, NSMaxRange(sel));
+        // With an edit waiting, Claude is shown the file as it would be:
+        // the next request builds on it.
+        NSString *why = nil;
+        if (!_rounds.empty() && !MCAgentApplyRounds(_rounds, r.text, r.selStart, r.selEnd, &why)) {
+            [self showPendingWithNote:why error:YES];
+            return;
+        }
         for (NSString *e in _earlier) r.earlier.push_back(Std(e));
         prompt = NS(InlineAgent::editPrompt(r));
     } else {
@@ -756,16 +961,27 @@ static size_t MCAgentBytes(NSString *text, NSUInteger utf16) {
         prompt = NS(InlineAgent::commandPrompt(r));
     }
     _asked = typed;
+    _streamed = _activity = nil;
     _bar.mode = MCAgentBarWorking;
     [self startTicking];
     __weak MCAgentSession *weakSelf = self;
-    _run = [MCAgentRun runPrompt:prompt inFolder:_ctx.root completion:^(NSString *out, NSString *err) {
-        [weakSelf finishedWithOutput:out error:err];
-    }];
+    _run = [MCAgentRun runPrompt:prompt inFolder:_ctx.root
+        progress:^(NSString *text, NSString *activity) {
+            MCAgentSession *s = weakSelf;
+            if (!s || !s->_run || !s->_shown) return;
+            s->_streamed = text;
+            s->_activity = activity;
+            [s showWorking];
+        }
+        completion:^(NSString *out, NSString *err) { [weakSelf finishedWithOutput:out error:err]; }];
 }
 
 - (void)showAnswer:(NSString *)text error:(BOOL)error {
-    _bar.mode = _original ? MCAgentBarReview : MCAgentBarAnswer;
+    if (_pending) {
+        [self showPendingWithNote:text error:error];
+        return;
+    }
+    _bar.mode = MCAgentBarAnswer;
     _bar.message = text;
     _bar.messageIsError = error;
     [self layout];
@@ -810,33 +1026,31 @@ static size_t MCAgentBytes(NSString *text, NSUInteger utf16) {
     NSString *now = [_ctx.currentText ? _ctx.currentText() : nil copy];
     if (!now) { [self close]; return; }
     const NSRange sel = _ctx.currentSelection ? _ctx.currentSelection() : _ctx.selection;
-    InlineAgent::Applied a = InlineAgent::applyEdits(Std(now), reply.edits,
-                                                     MCAgentBytes(now, sel.location));
-    if (!a.ok) { [self showAnswer:NS(a.error) error:YES]; return; }
-    NSString *next = NS(a.text);
-    if ([next isEqualToString:now]) {
-        [self showAnswer:@"Claude's edit leaves the file as it is." error:NO];
-        [_bar clearRequest];
+    // This request's blocks after the earlier ones, all on the buffer as it
+    // is now. Nothing reaches the buffer until Keep.
+    std::vector<std::vector<InlineAgent::Edit>> rounds = _rounds;
+    rounds.push_back(reply.edits);
+    std::string next = Std(now);
+    size_t selStart = MCAgentBytes(now, sel.location), selEnd = MCAgentBytes(now, NSMaxRange(sel));
+    NSString *why = nil;
+    if (!MCAgentApplyRounds(rounds, next, selStart, selEnd, &why)) {
+        [self showAnswer:why error:YES];
         return;
     }
-    const std::u16string before = [self u16:now], after = [self u16:next];
-    size_t changed = 0;
-    for (const LineDiff::Hunk &h : LineDiff::diff(before, after))
-        changed += MAX(h.oldLines, h.newLines);
-    NSString *firstOriginal = _original ?: now;
-    if (!_ctx.applyText || !_ctx.applyText(next, @"Inline Agent")) {
-        [self showAnswer:@"The file could not be changed here." error:YES];
-        return;
-    }
-    _original = firstOriginal;
-    _applied = [_ctx.currentText ? _ctx.currentText() : next copy];
-    [_earlier addObject:_asked ?: @""];
-    if (_ctx.tint) _ctx.tint(_original);
     [_bar clearRequest];
-    _bar.mode = MCAgentBarReview;
-    _bar.message = [NSString stringWithFormat:@"Changed %zu line%@.", changed, changed == 1 ? @"" : @"s"];
-    _bar.messageIsError = NO;
-    [self layout];
+    NSString *proposed = NS(next);
+    if ([proposed isEqualToString:now]) {
+        [self forgetPending];
+        if (_ctx.tint) _ctx.tint(nil);
+        [self showAnswer:@"Claude's edit leaves the file as it is." error:NO];
+        return;
+    }
+    [_earlier addObject:_asked ?: @""];
+    _rounds = rounds;
+    _base = now;
+    _pending = proposed;
+    if (_ctx.tint) _ctx.tint(_pending);
+    [self showPendingWithNote:nil error:NO];
 }
 
 - (std::u16string)u16:(NSString *)s {
@@ -851,6 +1065,7 @@ static size_t MCAgentBytes(NSString *text, NSUInteger utf16) {
     _run = nil;
     [_tick invalidate];
     _tick = nil;
+    _streamed = _activity = nil;
     [self showAnswer:@"Stopped." error:NO];
     // The request comes back, to change and ask again.
     if (_asked.length && !_bar.textView.string.length) {
@@ -893,22 +1108,38 @@ static size_t MCAgentBytes(NSString *text, NSUInteger utf16) {
     [host agentRunInTerminal:NS(command)];
 }
 
-- (BOOL)editPending { return _shown && _original != nil; }
+- (BOOL)editPending { return _shown && _pending != nil; }
 
+- (NSString *)pendingText { return _shown ? _pending : nil; }
+
+// Keep: the edit goes into the buffer as one undo step, made again on the
+// buffer as it is now if it changed since.
 - (void)keep {
+    if (_pending && _ctx.currentText && _ctx.applyText) {
+        NSString *now = _ctx.currentText();
+        if (!now) { [self finish:YES]; return; }
+        NSString *next = _pending;
+        if (![now isEqualToString:_base]) {
+            const NSRange sel = _ctx.currentSelection ? _ctx.currentSelection() : _ctx.selection;
+            std::string text = Std(now);
+            size_t selStart = MCAgentBytes(now, sel.location), selEnd = MCAgentBytes(now, NSMaxRange(sel));
+            NSString *why = nil;
+            if (!MCAgentApplyRounds(_rounds, text, selStart, selEnd, &why)) {
+                [self showPendingWithNote:why error:YES];
+                return;
+            }
+            next = NS(text);
+        }
+        if (![next isEqualToString:now] && !_ctx.applyText(next, @"Inline Agent")) {
+            [self showPendingWithNote:@"The file could not be changed here." error:YES];
+            return;
+        }
+    }
     [self finish:YES];
 }
 
+// Discard: the file was never changed, so there is nothing to put back.
 - (void)discard {
-    if (_original && _ctx.currentText && _ctx.applyText) {
-        NSString *now = _ctx.currentText();
-        if (now && [now isEqualToString:_applied]) {
-            _ctx.applyText(_original, @"Discard Agent Edit");
-        } else if (now) {
-            [_host showStatusNote:@"The file changed after the agent's edit, so it was left; "
-                                  @"Cmd+Z takes it back"];
-        }
-    }
     [self finish:YES];
 }
 
@@ -930,6 +1161,11 @@ static size_t MCAgentBytes(NSString *text, NSUInteger utf16) {
 // the bar has put it somewhere already.
 - (void)finish:(BOOL)restoreFocus keepFocus:(BOOL)keepFocus {
     if (!_shown) return;
+    // Closed from elsewhere (another tab shown, Cmd+I somewhere else, the
+    // request handed to a terminal) with an edit waiting: it is not made,
+    // and the status bar says so.
+    if (_pending && (!restoreFocus || keepFocus))
+        [_host showStatusNote:@"The agent's edit was not made: its bar closed before Keep"];
     [_run cancel];
     _run = nil;
     [_tick invalidate];
@@ -947,7 +1183,8 @@ static size_t MCAgentBytes(NSString *text, NSUInteger utf16) {
     _bar.hidden = YES;
     NSResponder *back = _ctx.returnFocus;
     _ctx = nil;
-    _original = _applied = nil;
+    [self forgetPending];
+    _streamed = _activity = nil;
     [host agentBarDidChange];
     if (restoreFocus && !keepFocus && barHadKeyboard) {
         if ([back isKindOfClass:[NSView class]] && [(NSView *)back window] == w &&

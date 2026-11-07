@@ -89,18 +89,20 @@ static NSUInteger MCLineStart(NSString *text, int line) {
     return NSOffsetRect(r, o.x, o.y);
 }
 
-- (void)agentTintAgainst:(NSString *)original {
+// The lines the inline agent's pending edit would replace, tinted red (the
+// bar shows what comes in their place); nil clears the tint.
+- (void)agentTintAgainst:(NSString *)proposed {
     CodeTextView *tv = self.textView;
     NSLayoutManager *lm = tv.layoutManager;
     const NSRange all = NSMakeRange(0, tv.string.length);
     [lm removeTemporaryAttribute:NSBackgroundColorAttributeName forCharacterRange:all];
-    if (!original || !tv.editable) return;
-    NSColor *tint = [[NSColor colorWithSRGBRed:0x73 / 255.0 green:0xC9 / 255.0 blue:0x91 / 255.0
+    if (!proposed || !tv.editable) return;
+    NSColor *tint = [[NSColor colorWithSRGBRed:0xF1 / 255.0 green:0x4C / 255.0 blue:0x4C / 255.0
                                          alpha:1] colorWithAlphaComponent:0.2];
-    for (const LineDiff::Hunk &h : LineDiff::diff(U16(original), U16(tv.string)))
-        if (h.newLength > 0 && h.newStart + h.newLength <= all.length)
+    for (const LineDiff::Hunk &h : LineDiff::diff(U16(tv.string), U16(proposed)))
+        if (h.oldLength > 0 && h.oldStart + h.oldLength <= all.length)
             [lm addTemporaryAttribute:NSBackgroundColorAttributeName value:tint
-                    forCharacterRange:NSMakeRange(h.newStart, h.newLength)];
+                    forCharacterRange:NSMakeRange(h.oldStart, h.oldLength)];
 }
 
 - (void)inlineAgent:(id)sender {
@@ -200,7 +202,7 @@ static NSUInteger MCLineStart(NSString *text, int line) {
         } else {
             ctx.selection = tv.selectedRange;
             ctx.currentSelection = ^NSRange { return weakSelf.textView.selectedRange; };
-            ctx.tint = ^(NSString *original) { [weakSelf agentTintAgainst:original]; };
+            ctx.tint = ^(NSString *proposed) { [weakSelf agentTintAgainst:proposed]; };
             NSString *lines = ctx.selectionText
                 ? (ctx.firstLine == ctx.lastLine
                        ? [NSString stringWithFormat:@"line %d", ctx.firstLine]

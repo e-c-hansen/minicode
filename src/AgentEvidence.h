@@ -31,20 +31,22 @@ namespace AgentEvidence {
 using AgentTranscript::Fs;
 using AgentTranscript::Span;
 
-enum class TestTool { None, Pytest, Make, Ctest, Npm, Cargo, Go };
+enum class TestTool { None, Pytest, Make, Ctest, Npm, Cargo, Go, Unittest, Tox, Nox, Jest, Vitest };
 const char *testToolName(TestTool t);   // "pytest", "make", ... ("" for None)
 
 // The test runner a shell command runs, if any: pytest (also python -m
 // pytest, uv run pytest, poetry run pytest), make test / make check (also
 // with -C dir, -jN or VAR=x), ctest, npm/pnpm/yarn test and npm run test,
-// cargo test, go test. Any part of a pipeline or && chain counts
+// cargo test, go test, python -m unittest, tox, nox, jest and vitest (also
+// through npx, bunx, uvx, pipx run, yarn, pnpm exec and the like). Any part of a pipeline or && chain counts
 // (`cd x && make test 2>&1 | tail`), and env, time, timeout and the like in
 // front are looked through.
 TestTool testCommand(const std::string &command);
 
 struct Summary {
     bool found = false;
-    std::string format;     // "pytest", "ctest", "cargo", "go", "count"
+    std::string format;     // "pytest", "ctest", "cargo", "go", "count", "unittest",
+                            // "jest", "vitest", "tox", "nox"
     int passed = 0;
     int failed = 0;
     int errors = 0;
@@ -59,6 +61,15 @@ struct Summary {
 //   go      "ok  \tpkg\t0.1s" and "FAIL\tpkg\t0.2s" lines (counted as packages; only with
 //           hint Go)
 //   count   "4466 passed, 0 failed" (minicode's own `make test`)
+//   unittest "Ran 12 tests in 0.004s" and the verdict after it, "OK (skipped=1)"
+//           or "FAILED (failures=2, errors=1)"; `line` is both, joined by "; "
+//   jest    "Tests:       1 failed, 2 skipped, 10 passed, 13 total"
+//   vitest  "Tests  1 failed | 10 passed | 1 skipped (12)" (not "Test Files")
+//   tox     "  py311: OK (1.2 seconds)", "  py312: FAIL code 1 (...)" (tox 4) and
+//           "  py311: commands succeeded", "ERROR:   py312: commands failed" (tox 3),
+//           counted as environments; only with hint Tox, else what ran inside
+//   nox     "nox > Session tests-3.12 was successful in 2 seconds.", "... failed.",
+//           "... skipped: ...", counted as sessions; only with hint Nox
 // ANSI color codes are ignored. `hint` is what testCommand said.
 Summary parseSummary(const std::vector<std::string> &lines, TestTool hint = TestTool::None);
 Summary parseSummary(const std::string &text, TestTool hint = TestTool::None);

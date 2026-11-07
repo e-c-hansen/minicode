@@ -8,13 +8,17 @@
 //   holds the request, the buffer as it is (unsaved changes too) and the
 //   cursor or selection; Claude answers with SEARCH/REPLACE blocks, which
 //   are applied to the buffer by their text, so edits elsewhere in the file
-//   while it thought do not get in the way. A question gets a plain answer.
+//   while it thought do not get in the way. The result is shown as a
+//   pending diff (pendingDiff) and reaches the buffer only on Keep. A
+//   question gets a plain answer.
 // - A terminal: a shell command, typed at the prompt and never run.
 // - Anything else, or Cmd+Return from either of the above: a task, handed
 //   to Claude Code in a terminal tab with a note of where it was asked from.
 //
 // Text is UTF-8 and offsets are bytes.
 #pragma once
+
+#include "Json.h"
 
 #include <cstddef>
 #include <string>
@@ -24,8 +28,52 @@ namespace InlineAgent {
 
 // The flags added to agent.command for an answer in the bar: print mode, the
 // prompt read from stdin, tools that read the project but change nothing,
-// and no session kept on disk.
+// no session kept on disk, and the answer as a stream of JSON lines with the
+// text as it is written (Stream reads it).
 extern const char* const kPrintFlags;
+
+// Claude Code's `--output-format stream-json --verbose
+// --include-partial-messages`, read as it arrives: one JSON object a line,
+// "system" first, then for each turn "stream_event" lines (message_start,
+// content_block_start, content_block_delta with text_delta pieces, ...),
+// the whole "assistant" message, a "user" line with tool results, and last
+// a "result" line with the final text. Lines that are not JSON are left
+// out; when no line is (an agent.command that prints plain text, or the
+// test's stand-ins), the output itself is the reply. Not thread-safe.
+class Stream {
+public:
+    // Bytes as they arrive, cut anywhere. True when text() or activity()
+    // changed.
+    bool feed(const std::string& bytes);
+    // The output ended: reads a last line that had no "\n".
+    bool finish();
+    // The reply being written: the text of the turn under way (a turn that
+    // goes on to use a tool is replaced by the next one).
+    const std::string& text() const { return text_; }
+    // What Claude is doing while no text arrives: "Reading a.cpp",
+    // "Searching for parseReply", "" otherwise.
+    const std::string& activity() const { return activity_; }
+    bool sawJson() const { return sawJson_; }
+    bool done() const { return done_; }          // the result line came
+    bool failed() const { return failed_; }      // ...and says is_error
+    // The answer: the result line's text, else the last turn's text, else
+    // (no JSON at all) the output as it came.
+    std::string reply() const;
+    // For failed(), or a run that ended without a result: why, in a line.
+    std::string error() const;
+
+private:
+    void line(const std::string& l);
+    std::string pending_, raw_, text_, activity_, lastText_, result_, subtype_, messageId_;
+    bool sawJson_ = false, done_ = false, failed_ = false, partial_ = false, changed_ = false;
+};
+
+// What the bar shows while a reply is written (Stream::text so far): text
+// outside edit blocks as it is, and for each edit block "Edit 1:" (with
+// "in place of 3 lines" once its SEARCH part is over) and the REPLACE part's
+// lines as they come; an unfinished marker line at the end is left out.
+// Only the last `maxLines` lines, the newest.
+std::string preview(const std::string& partial, size_t maxLines = 12);
 
 struct EditRequest {
     std::string request;               // what the user typed
@@ -53,13 +101,45 @@ struct Applied {
     bool ok = false;
     std::string text;    // the new buffer
     std::string error;   // why not, when !ok
+    size_t selStart = 0, selEnd = 0;   // the selection, moved with the edits
 };
 // Applies every edit in order, each to the result of the last, or none:
 // a SEARCH part is found as whole lines first, then as text anywhere, then
-// as lines ignoring trailing and then all surrounding whitespace; among
-// several matches the one nearest `near` (the cursor) wins. An empty SEARCH
-// inserts at `near`. Line endings follow the buffer's ("\r\n" stays).
-Applied applyEdits(const std::string& text, const std::vector<Edit>& edits, size_t near);
+// as lines ignoring trailing and then all surrounding whitespace. A SEARCH
+// part found in several places is taken only where exactly one of them
+// touches the selection [selStart, selEnd) (for a caret, holds it); else
+// nothing is changed and the error says how many places it matched. After
+// a match that ignored indentation (or text found after a line's
+// indentation, the REPLACE part running over several lines), the REPLACE
+// lines are moved by the
+// difference between the file's indentation and the SEARCH part's (tabs
+// for spaces too, when the file indents with tabs). An empty SEARCH inserts
+// at selStart. Line endings follow the buffer's ("\r\n" stays).
+Applied applyEdits(const std::string& text, const std::vector<Edit>& edits, size_t selStart,
+                   size_t selEnd);
+inline Applied applyEdits(const std::string& text, const std::vector<Edit>& edits, size_t caret) {
+    return applyEdits(text, edits, caret, caret);
+}
+
+// The pending edit as the bar shows it: the changed runs of `before` ->
+// `after` (UTF-16, as NSString) with `context` equal lines around each,
+// unified: a run's old lines, then its new ones, a Gap between runs that
+// are apart. Words that changed inside a changed pair of lines are marked
+// (SideBySide::wordChanges). Lines are split at "\n", a "\r" before it
+// left out. Past `maxLines` lines the rest is one Gap whose `more` says how
+// many lines it hides.
+struct DiffLine {
+    enum Kind { Context, Removed, Added, Gap } kind = Context;
+    int oldLine = 0, newLine = 0;   // 1-based, 0 for the side it is not on
+    std::u16string text;
+    std::vector<std::pair<size_t, size_t>> words;   // (start, length) in text
+    size_t more = 0;                                // Gap: lines left out
+};
+std::vector<DiffLine> pendingDiff(const std::u16string& before, const std::u16string& after,
+                                  size_t context = 1, size_t maxLines = 400);
+// How many lines the change touches: per run, the larger of its old and new
+// line counts.
+size_t changedLines(const std::u16string& before, const std::u16string& after);
 
 struct CommandRequest {
     std::string request;

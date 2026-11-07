@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 
 namespace AgentEvidence {
 
@@ -18,6 +19,11 @@ const char *testToolName(TestTool t) {
     case TestTool::Npm: return "npm";
     case TestTool::Cargo: return "cargo";
     case TestTool::Go: return "go";
+    case TestTool::Unittest: return "unittest";
+    case TestTool::Tox: return "tox";
+    case TestTool::Nox: return "nox";
+    case TestTool::Jest: return "jest";
+    case TestTool::Vitest: return "vitest";
     }
     return "";
 }
@@ -131,14 +137,32 @@ TestTool match(const Tokens &t, size_t i, int depth) {
     if (i >= t.size() || depth > 3) return TestTool::None;
     const std::string w = base(t[i]);
     if (w == "pytest" || w == "py.test") return TestTool::Pytest;
+    if (w == "tox") return TestTool::Tox;
+    if (w == "nox") return TestTool::Nox;
+    if (w == "jest") return TestTool::Jest;
+    if (w == "vitest") return TestTool::Vitest;
     if (w.compare(0, 6, "python") == 0) {
         for (size_t j = i + 1; j + 1 < t.size(); j++) {
-            if (t[j] == "-m") return t[j + 1] == "pytest" ? TestTool::Pytest : TestTool::None;
+            if (t[j] == "-m") {
+                const std::string &m = t[j + 1];
+                if (m == "pytest") return TestTool::Pytest;
+                if (m == "unittest") return TestTool::Unittest;
+                if (m == "tox") return TestTool::Tox;
+                if (m == "nox") return TestTool::Nox;
+                return TestTool::None;
+            }
             if (t[j][0] != '-') break;
         }
         return TestTool::None;
     }
-    if (w == "uv" || w == "poetry" || w == "pdm" || w == "pipenv" || w == "hatch" || w == "rye") {
+    // A runner fetched or found by a package tool: `uvx tox`, `npx jest`,
+    // `pnpm exec vitest`, `pipx run nox`, `bunx vitest`.
+    if (w == "uvx" || w == "npx" || w == "bunx" || w == "pnpx") {
+        size_t r = nextWord(t, i + 1);
+        return r < t.size() ? match(t, r, depth + 1) : TestTool::None;
+    }
+    if (w == "uv" || w == "poetry" || w == "pdm" || w == "pipenv" || w == "hatch" || w == "rye" ||
+        w == "pipx") {
         size_t r = nextWord(t, i + 1);
         if (r >= t.size() || t[r] != "run") return TestTool::None;
         for (size_t j = r + 1; j < t.size(); j++) {
@@ -170,6 +194,12 @@ TestTool match(const Tokens &t, size_t i, int depth) {
         size_t a = nextWord(t, i + 1);
         if (a >= t.size()) return TestTool::None;
         if (t[a] == "test" || t[a] == "t" || t[a] == "tests") return TestTool::Npm;
+        // `yarn jest`, `pnpm vitest run`, `pnpm exec jest`, `npm exec vitest`.
+        if (t[a] == "jest" || t[a] == "vitest") return match(t, a, depth + 1);
+        if (t[a] == "exec" || t[a] == "dlx" || t[a] == "x") {
+            size_t s = nextWord(t, a + 1);
+            return s < t.size() ? match(t, s, depth + 1) : TestTool::None;
+        }
         if (t[a] == "run" || t[a] == "run-script") {
             size_t s = nextWord(t, a + 1);
             if (s < t.size() && t[s].compare(0, 4, "test") == 0) return TestTool::Npm;
@@ -353,6 +383,138 @@ bool cargoLine(const std::string &raw, Summary *sum) {
     return any;
 }
 
+// jest's "Tests:       1 failed, 2 skipped, 10 passed, 13 total" and
+// vitest's "Tests  1 failed | 10 passed | 1 skipped (12)". Not "Test Suites:"
+// or "Test Files": those count files.
+bool jestLine(const std::string &raw, Summary *sum) {
+    std::string t = trim(raw);
+    const bool jest = t.compare(0, 6, "Tests:") == 0;
+    const bool vitest = !jest && t.compare(0, 6, "Tests ") == 0;
+    if (!jest && !vitest) return false;
+    std::string rest = trim(t.substr(6));
+    if (vitest) {
+        // The total in parentheses at the end.
+        size_t paren = rest.rfind(" (");
+        if (paren == std::string::npos || rest.back() != ')') return false;
+        rest = trim(rest.substr(0, paren));
+    }
+    std::vector<std::pair<long, std::string>> v;
+    if (!items(rest, vitest ? '|' : ',', &v)) return false;
+    Summary s;
+    for (auto &p : v) {
+        const std::string &w = p.second;
+        if (w == "passed") s.passed += (int)p.first;
+        else if (w == "failed") s.failed += (int)p.first;
+        else if (w == "skipped" || w == "todo" || w == "pending") s.skipped += (int)p.first;
+        else if (w == "total" || w == "expected fail") ;
+        else return false;
+    }
+    s.found = true;
+    s.format = jest ? "jest" : "vitest";
+    s.line = t;
+    *sum = s;
+    return true;
+}
+
+// "Ran 12 tests in 0.004s" (also "Ran 1 test in"), then, after a blank line,
+// "OK", "OK (skipped=1, expected failures=1)", "FAILED (failures=2, errors=1)"
+// or "NO TESTS RAN". Passed is what ran less everything named.
+bool unittestAt(const std::vector<std::string> &lines, size_t k, Summary *sum) {
+    std::string ran = trim(lines[k]);
+    if (ran.compare(0, 4, "Ran ") != 0) return false;
+    char *end = nullptr;
+    long n = std::strtol(ran.c_str() + 4, &end, 10);
+    if (end == ran.c_str() + 4) return false;
+    std::string after(end);
+    if (after.compare(0, 10, " tests in ") != 0 && after.compare(0, 9, " test in ") != 0)
+        return false;
+    size_t j = k + 1;
+    while (j < lines.size() && trim(lines[j]).empty()) j++;
+    if (j >= lines.size()) return false;
+    std::string verdict = trim(lines[j]);
+    Summary s;
+    std::string counts;
+    if (verdict == "OK" || verdict == "NO TESTS RAN") {
+    } else if (verdict.compare(0, 4, "OK (") == 0 && verdict.back() == ')') {
+        counts = verdict.substr(4, verdict.size() - 5);
+    } else if (verdict.compare(0, 8, "FAILED (") == 0 && verdict.back() == ')') {
+        counts = verdict.substr(8, verdict.size() - 9);
+    } else {
+        return false;
+    }
+    long named = 0;
+    size_t i = 0;
+    while (i < counts.size()) {
+        size_t e = counts.find(',', i);
+        if (e == std::string::npos) e = counts.size();
+        std::string part = trim(counts.substr(i, e - i));
+        i = e + 1;
+        size_t eq = part.find('=');
+        if (eq == std::string::npos) return false;
+        std::string key = trim(part.substr(0, eq));
+        long v = std::strtol(part.c_str() + eq + 1, nullptr, 10);
+        if (key == "failures") s.failed += (int)v;
+        else if (key == "errors") s.errors += (int)v;
+        else if (key == "skipped") s.skipped += (int)v;
+        else if (key != "expected failures" && key != "unexpected successes") return false;
+        named += v;
+    }
+    s.passed = (int)std::max(0L, n - named);
+    s.found = true;
+    s.format = "unittest";
+    s.line = ran + "; " + verdict;
+    *sum = s;
+    return true;
+}
+
+// tox's line for each environment it ran, tox 4's and tox 3's.
+bool toxCount(const std::vector<std::string> &lines, Summary *sum) {
+    Summary g;
+    for (const std::string &l0 : lines) {
+        std::string l = trim(l0);
+        if (l.compare(0, 6, "ERROR:") == 0) l = trim(l.substr(6));
+        size_t colon = l.find(": ");
+        if (colon == std::string::npos || colon == 0 || l.find(' ') < colon) continue;
+        std::string rest = l.substr(colon + 2);
+        if (rest.compare(0, 4, "OK (") == 0 || rest == "commands succeeded") {
+            g.passed++;
+            g.line = l;
+        } else if (rest.compare(0, 5, "FAIL ") == 0 || rest == "commands failed") {
+            g.failed++;
+            g.line = l;
+        } else if (rest.compare(0, 6, "SKIP (") == 0 || rest == "skipped tests") {
+            g.skipped++;
+        }
+    }
+    if (g.passed + g.failed == 0) return false;
+    g.found = true;
+    g.format = "tox";
+    *sum = g;
+    return true;
+}
+
+// nox's "nox > Session NAME was successful in 2 seconds.", "... failed.",
+// "... skipped: why".
+bool noxCount(const std::vector<std::string> &lines, Summary *sum) {
+    Summary g;
+    auto endsWith = [](const std::string &l, const char *tail) {
+        const size_t n = std::strlen(tail);
+        return l.size() >= n && l.compare(l.size() - n, n, tail) == 0;
+    };
+    for (const std::string &l0 : lines) {
+        std::string l = trim(l0);
+        if (l.compare(0, 14, "nox > Session ") != 0) continue;
+        if (l.find(" was successful") != std::string::npos) g.passed++, g.line = l;
+        else if (endsWith(l, " failed.") || endsWith(l, " failed")) g.failed++, g.line = l;
+        else if (l.find(" skipped") != std::string::npos) g.skipped++;
+    }
+    if (g.passed + g.failed == 0) return false;
+    g.found = true;
+    g.format = "nox";
+    *sum = g;
+    return true;
+}
+
 }  // namespace
 
 Summary parseSummary(const std::vector<std::string> &input, TestTool hint) {
@@ -382,8 +544,11 @@ Summary parseSummary(const std::vector<std::string> &input, TestTool hint) {
             return g;
         }
     }
+    if (hint == TestTool::Tox && toxCount(lines, &s)) return s;
+    if (hint == TestTool::Nox && noxCount(lines, &s)) return s;
     for (size_t k = lines.size(); k-- > 0;) {
-        if (pytestLine(lines[k], &s) || ctestLine(lines[k], &s) || countLine(lines[k], &s))
+        if (pytestLine(lines[k], &s) || ctestLine(lines[k], &s) || countLine(lines[k], &s) ||
+            jestLine(lines[k], &s) || unittestAt(lines, k, &s))
             return s;
     }
     return Summary();

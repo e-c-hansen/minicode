@@ -2104,15 +2104,29 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   task. Cmd+Return in the bar makes any request a task. `MCAgentContext`
   carries blocks, so the bar knows nothing of the views. `MCAgentRun` runs
   `/bin/zsh -l -c 'exec <agent.command> -p --tools Read,Grep,Glob
-  --no-session-persistence --output-format text'` in the folder, the prompt on
-  stdin (written off the main thread: a big buffer outgrows a pipe), five
-  minutes at most, exit 127 as not installed. The prompt
+  --no-session-persistence --output-format stream-json --verbose
+  --include-partial-messages'` in the folder, the prompt on stdin (written off
+  the main thread: a big buffer outgrows a pipe), five minutes at most, exit
+  127 as not installed. stdout is read as it comes into `InlineAgent::Stream`
+  on a serial queue of its own (text deltas, tool calls, the result line; no
+  JSON at all means plain text, as the GUI suites' stand-ins print), and a
+  `preview` of it reaches the bar at most every 80 ms. The prompt
   (`InlineAgent::editPrompt`) asks for SEARCH/REPLACE blocks or an answer;
-  `applyEdits` matches each SEARCH ever more loosely about whitespace, nearest
-  the cursor, all or nothing, so typing elsewhere meanwhile does no harm. The
-  edit goes in through `replaceSourceWithText:`, tinted; Return keeps; Esc
-  restores the text from before the bar's first edit if the buffer is as the
-  agent left it. Commands are typed, never run. Tasks write the prompt to
+  `applyEdits` matches each SEARCH ever more loosely about whitespace, all or
+  nothing, so typing elsewhere meanwhile does no harm; a SEARCH found in
+  several places is taken only where exactly one touches the selection (a
+  caret: holds it), else refused (D22, 2026-11-07), and after a match that
+  ignored indentation the REPLACE lines are re-indented to the file's. **The
+  edit is pending, not made**: the session keeps every request's blocks
+  (`_rounds`) and what they make of the buffer (`pendingText`), the bar shows
+  `InlineAgent::pendingDiff` (SideBySide's rows and word changes), the lines
+  it replaces are tinted red; Return (Keep) applies the rounds again to the
+  buffer as it is then and puts the result in through `replaceSourceWithText:`
+  as one undo step; Esc drops it, nothing to restore. A bar closed from
+  elsewhere with an edit waiting says in the status bar that it was not made.
+  Commands are typed, never run. `make guitest SUITES=agent_panel` streams
+  `tests/fixtures/claude/stream` (written to the SDK's message shapes, not
+  recorded) through a stand-in script; never run the real Claude Code there. Tasks write the prompt to
   `$TMPDIR/MiniCode-agent/` and run `cd <root> && <agent.command> "$(cat
   file)"` in a new terminal tab. Traps: `NSTextView string` is the live
   storage, so "the text before" must be a copy; the bar's place uses line
@@ -2320,7 +2334,8 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   cwd is elsewhere is read for 64 KB once. Not thread-safe: copy rows out.
   `AgentEvidence`: every Bash call, test commands recognised anywhere in a
   chain past env, time, timeout and assignments (pytest forms, make test and
-  check, ctest, npm/pnpm/yarn test, cargo test, go test), their summaries read
+  check, ctest, npm/pnpm/yarn test, cargo test, go test, python -m unittest,
+  tox, nox, jest and vitest, through npx, uvx and the like), their summaries read
   from the tail, no verdicts. Paths: `~/.claude/projects`
   (`$MINICODE_CLAUDE_PROJECTS`), the `/private/tmp/claude-<uid>` scratchpads
   (`$MINICODE_CLAUDE_TMP`). Fixtures: `tests/fixtures/claude`.
