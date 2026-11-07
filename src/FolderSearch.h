@@ -97,6 +97,9 @@ struct FolderSearchResult {
     std::size_t totalMatches  = 0;   // the matches' counts added up: what the status says
     bool truncated = false;          // stopped at maxMatches
     bool cancelled = false;          // the cancel flag was raised mid-search
+    // A regex left to std::regex took too long on a line, and the search
+    // stopped there (TextFind::Query::tooSlow).
+    bool tooSlow = false;
     std::string error;               // the regex did not compile: why
 };
 

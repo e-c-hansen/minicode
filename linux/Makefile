@@ -25,7 +25,7 @@ BIN      := $(BUILD)/minicode
 CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEdit.cpp \
         ../src/MarkdownTasks.cpp ../src/Settings.cpp ../src/LineComments.cpp \
         ../src/AutoIndent.cpp ../src/KeepSorted.cpp ../src/FolderSearch.cpp ../src/TextFind.cpp \
-        ../src/LatexDoc.cpp ../src/SyncTex.cpp \
+        ../src/Regex.cpp ../src/LatexDoc.cpp ../src/SyncTex.cpp \
         ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp \
         ../src/GitStatus.cpp ../src/GitGraph.cpp ../src/GitModel.cpp
 

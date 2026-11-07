@@ -132,9 +132,9 @@ goes here first, with tests; the GUI only displays it.
   `mapOffset`), `LineComments`,
   `AutoIndent` (with `ScanCache`), `KeepSorted`, `MultiCaret` (carets and line
   commands), `LineIndex` (line starts, a gap buffer), `BracketMatch`,
-  `Folding`, `TextFind` (find and replace, UTF-16 and UTF-8), `Formatter`
-  (Format Document's plan), `InstallHints`, `LargeFile.h` (VS Code's
-  large-file thresholds, header only).
+  `Folding`, `TextFind` (find and replace, UTF-16 and UTF-8), `Regex` (its
+  linear-time engine), `Formatter` (Format Document's plan), `InstallHints`,
+  `LargeFile.h` (VS Code's large-file thresholds, header only).
 - Language servers: `LspClient` (protocol, results, WorkspaceEdits, diagnostics
   with versions, completion edits, symbols, folding ranges, the second server's
   routing and `DiagnosticStore`, the Problems rows, watched files' globs and
@@ -904,15 +904,27 @@ container (PanelHost, laid out by hand in layoutContainer)
 ## Find and replace (Mac)
 
 - `TextFind` matches a line at a time: plain text with FolderSearch's
-  one-to-one folding, or std::regex (ECMAScript) over UTF-32 code points. Whole
-  word is VS Code's edge check; replacements take `$1`..`$99`, `$&`, `$0`,
-  `$$`, `\n`, `\t`, `\\` for a regex. Traps: libc++ lets `^` match mid-line
-  with `match_prev_avail`, so lines are walked with `std::regex_iterator`;
-  libstdc++ tests bracket ranges through the C locale's ctype, so `[а-я]`
-  ignoring case missed Ж on CI's Linux job, and a case-insensitive regex now
-  runs over the line folded to lower case, one code point for one. Preserve
-  case is VS Code's buildReplaceStringWithCasePreserved, for replacements
-  with no groups.
+  one-to-one folding, or a regex (ECMAScript, std::regex deciding what is
+  valid) over UTF-32 code points. Whole word is VS Code's edge check;
+  replacements take `$1`..`$99`, `$&`, `$0`, `$$`, `\n`, `\t`, `\\` for a
+  regex. **Regexes run on `Regex.{h,cpp}`** (2026-11-07), a Pike VM whose
+  time is linear in the line, with JavaScript's matches (checked against
+  node on a million random cases, and against std::regex in `regex:oracle`);
+  a pattern it refuses (backreferences, lookaround, `[[:alpha:]]`, a lone
+  `]`) goes to std::regex on a worker thread of the query's, left behind
+  after 2 s (`Query::tooSlow`, `FolderSearchResult::tooSlow`). Traps:
+  libc++ and libstdc++ each break JavaScript's repetition rules in places
+  (groups unset per repetition, empty repetitions not counting), libc++
+  finds no `\b` at a line's end once a search starts past 0, and libc++
+  throws error_complexity (a silent "no match") on short exponential
+  patterns rather than hanging, while libstdc++ hangs; std::regex's own
+  traps: libc++ lets `^` match mid-line with `match_prev_avail` (hence
+  `__no_update_pos`); libstdc++ tests bracket ranges through the C locale's
+  ctype, so `[а-я]` ignoring case missed Ж on CI's Linux job, and a
+  case-insensitive regex runs over the line folded to lower case, one code
+  point for one (the linear engine folds the same way). Preserve case is VS
+  Code's buildReplaceStringWithCasePreserved, for replacements with no
+  groups.
 - `MCEditorFind` replaced NSTextFinder (`usesFindBar = NO`). Since 2026-11-06
   it is laid out from VS Code's findWidget.ts and CSS, measure for measure
   (the owner asked for VS Code's look; the toggles had sat far from the
