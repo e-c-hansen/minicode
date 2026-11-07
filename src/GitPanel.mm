@@ -647,6 +647,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 @property(nonatomic, copy) void (^onBackTab)(void);            // Shift+Tab; else onTab
 @property(nonatomic, copy) void (^onPastEnd)(NSInteger step);  // an arrow off either end
 @property(nonatomic, copy) BOOL (^selectable)(NSInteger row);
+@property(nonatomic, copy) NSMenu *(^menuForRow)(NSInteger row);   // a row's right click
 - (BOOL)moveBy:(NSInteger)step;   // to the next file row up or down; NO if none
 @end
 @implementation MCGitTable
@@ -656,9 +657,17 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     [super mouseDown:event];
     if (row >= 0 && self.onClick && event.clickCount == 1) self.onClick(row);
 }
+// A file row's menu (Open File, Stage, Discard, ...) above Adjust Settings,
+// the row selected as in VS Code; elsewhere only Adjust Settings.
 - (NSMenu *)menuForEvent:(NSEvent *)event {
-    (void)event;
-    return MCAdjustSettingsMenu(@"git", self);
+    NSInteger row = event ? [self rowAtPoint:[self convertPoint:event.locationInWindow
+                                                       fromView:nil]]
+                          : self.selectedRow;
+    NSMenu *menu = row >= 0 && self.menuForRow ? self.menuForRow(row) : nil;
+    if (!menu) return MCAdjustSettingsMenu(@"git", self);
+    [self selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+    MCAddAdjustSettingsItem(menu, @"git", self);
+    return menu;
 }
 - (BOOL)moveBy:(NSInteger)step {
     NSInteger n = self.numberOfRows, r = self.selectedRow;
@@ -746,8 +755,33 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 }
 @end
 
+// ------------------------------------------------------- the branch picker
+@interface MCGitBranches () {
+@public
+    std::vector<GitUi::BranchItem> items;
+    GitUi::Snapshot snap;   // the status they were read with (branch, remotes)
+}
+@property(nonatomic, copy) NSString *top;
+@property(nonatomic, readwrite, copy) NSArray<NSString *> *labels, *details;
+@end
+@implementation MCGitBranches
+- (NSString *)createLabelFor:(NSString *)typed {
+    const std::string label = GitUi::createBranchLabel(typed.UTF8String ?: "", items, snap);
+    return label.empty() ? nil : NSFromBytes(label);
+}
+@end
+
 // ------------------------------------------------------------------- panel
 @interface MCGitPanel () <NSTableViewDataSource, NSTableViewDelegate>
+@end
+
+// One Discard Changes that can be undone: where the file is, and where the
+// Trash put the copy (nil for a deleted file brought back).
+@interface MCGitDiscard : NSObject
+@property(nonatomic, copy) NSString *path, *rel;
+@property(nonatomic, strong) NSURL *trashed;
+@end
+@implementation MCGitDiscard
 @end
 
 @implementation MCGitPanel {
@@ -789,6 +823,8 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     BOOL _autoFetching;               // a background fetch runs (no button, no words)
     NSString *_autoKey;               // the repository's top level, once known
     NSTimeInterval _autoNow;          // the tick that started the autofetch running
+    // Discards that Undo Discard can put back, the last one last.
+    NSMutableArray<MCGitDiscard *> *_discards;
 }
 
 - (instancetype)initWithRoot:(NSString *)root {
@@ -825,6 +861,12 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _branchLabel = [NSTextField labelWithString:@""];
     _branchLabel.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
     _branchLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    // A click on the branch opens the branch picker, as VS Code's status
+    // bar item does.
+    [_branchLabel addGestureRecognizer:[[NSClickGestureRecognizer alloc]
+                                           initWithTarget:self
+                                                   action:@selector(branchClicked:)]];
+    _branchLabel.toolTip = @"Switch Branch…";
     [self addSubview:_branchLabel];
 
     _messageScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 200, 60)];
@@ -896,6 +938,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _table.onBackTab = ^{ [weakSelf focusMessage]; };
     _table.onPastEnd = ^(NSInteger step) { if (step > 0) [weakSelf focusGraph]; };
     _table.selectable = ^BOOL(NSInteger row) { return [weakSelf rowIsFile:row]; };
+    _table.menuForRow = ^NSMenu *(NSInteger row) { return [weakSelf menuForRow:row]; };
     _listScroll.documentView = _table;
     [self addSubview:_listScroll];
 
@@ -987,13 +1030,46 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
         it.tag = [pair[1] integerValue];
         [menu insertItem:it atIndex:at++];
     }
+    [menu insertItem:[NSMenuItem separatorItem] atIndex:at++];
+    // Then the changes as a whole, and the branch.
+    NSArray *more = @[@[@"Stage All Changes", NSStringFromSelector(@selector(stageAllFromMenu:))],
+                      @[@"Unstage All Changes", NSStringFromSelector(@selector(unstageAllFromMenu:))],
+                      @[[self undoDiscardTitle] ?: @"Undo Discard",
+                        NSStringFromSelector(@selector(undoDiscardFromMenu:))],
+                      @[@"Switch Branch…", NSStringFromSelector(@selector(branchClicked:))]];
+    for (NSArray *pair in more) {
+        NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:pair[0]
+                                                    action:NSSelectorFromString(pair[1])
+                                             keyEquivalent:@""];
+        it.target = self;
+        [menu insertItem:it atIndex:at++];
+    }
     [menu insertItem:[NSMenuItem separatorItem] atIndex:at];
     return menu;
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (item.action == @selector(syncFromMenu:)) return !_syncing;
+    if (item.action == @selector(undoDiscardFromMenu:)) return _discards.count > 0;
+    if (item.action == @selector(menuOpenFile:)) {
+        MCGitRow *r = [self fileRow:item.tag];
+        return r && _topLevel &&
+               [[NSFileManager defaultManager]
+                   fileExistsAtPath:[_topLevel stringByAppendingPathComponent:r.path]];
+    }
+    if (item.action == @selector(menuDiscard:)) {
+        MCGitRow *r = [self fileRow:item.tag];
+        return r && GitUi::discardPlan(r->model).refusal.empty();
+    }
     return YES;
+}
+
+- (void)stageAllFromMenu:(id)sender { (void)sender; [self stageAll]; }
+- (void)unstageAllFromMenu:(id)sender { (void)sender; [self unstageAll]; }
+- (void)undoDiscardFromMenu:(id)sender { (void)sender; [self undoDiscard]; }
+- (void)branchClicked:(id)sender {
+    (void)sender;
+    if (self.onChooseBranch) self.onChooseBranch();
 }
 
 - (void)syncFromMenu:(NSMenuItem *)item { [self runSync:(GitUi::SyncOp)item.tag]; }
@@ -1404,14 +1480,20 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 // Run one git command that changes the index or makes a commit, then
 // refresh. `done` gets the result on the main thread first.
 - (void)runAction:(NSArray<NSString *> *)args done:(void (^)(MCGitResult *))done {
-    NSString *dir = _topLevel, *root = self.root;
+    [self runAction:args in:_topLevel done:done];
+}
+
+- (void)runAction:(NSArray<NSString *> *)args in:(NSString *)dir
+             done:(void (^)(MCGitResult *))done {
+    NSString *root = self.root;
     if (!dir) return;
+
     dispatch_async(_queue, ^{
         MCGitResult *r = MCGitRunSync(dir, args);
         dispatch_async(dispatch_get_main_queue(), ^{
             if (![root isEqualToString:self.root]) return;
             if (r.ok) [self setError:nil info:NO];
-            else [self setError:MCGitFailureText(r) info:NO];
+            else [self say:MCGitFailureText(r) info:NO];
             if (done) done(r);
             [self runRefresh];
         });
@@ -1438,7 +1520,350 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     }];
 }
 
+// -------------------------------------- Stage All, Unstage All, Discard
+// The line under the Commit button, and while the panel is hidden (an
+// action from the menu bar) a note in the status bar too.
+- (void)say:(NSString *)text info:(BOOL)info {
+    [self setError:text info:info];
+    if (text.length && !self.window && self.onNote) self.onNote(text);
+}
+
+// An alert over the panel's window (or the window it belongs to while
+// hidden); `go` runs when the first button is chosen.
+- (void)ask:(const GitUi::ActionPlan &)plan then:(void (^)(void))go {
+    NSAlert *a = [NSAlert new];
+    a.alertStyle = NSAlertStyleWarning;
+    a.messageText = NSFromBytes(plan.question);
+    a.informativeText = NSFromBytes(plan.detail);
+    NSButton *yes = [a addButtonWithTitle:NSFromBytes(plan.button)];
+    [a addButtonWithTitle:@"Cancel"];
+    if (@available(macOS 11.0, *)) yes.hasDestructiveAction = YES;
+    NSWindow *w = self.window ?: self.hostWindow;
+    if (w) {
+        [a beginSheetModalForWindow:w completionHandler:^(NSModalResponse r) {
+            if (r == NSAlertFirstButtonReturn) go();
+        }];
+    } else if ([a runModal] == NSAlertFirstButtonReturn) {
+        go();
+    }
+}
+
+- (void)actionDone {
+    if (self.onActionDone) self.onActionDone();
+}
+
+// Stage All and Unstage All: planned from a status read now, so the counts
+// are current and the panel need not be shown.
+- (void)stageAll { [self runAllStaging:YES]; }
+- (void)unstageAll { [self runAllStaging:NO]; }
+
+- (void)runAllStaging:(BOOL)stage {
+    NSString *root = self.root;
+    if (!root) return;
+    dispatch_async(_queue, ^{
+        MCGitSnapshot *snap = [MCGitPanel snapshotAt:root];
+        GitUi::ActionPlan plan = stage ? GitUi::stageAllPlan(snap->model)
+                                       : GitUi::unstageAllPlan(snap->model);
+        NSString *top = snap.topLevel;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (![root isEqualToString:self.root]) return;
+            if (plan.args.empty()) {
+                NSString *why = snap.inRepository ? NSFromBytes(plan.refusal)
+                                                  : snap.notice ?: snap.errorText;
+                [self say:why info:NO];
+                NSBeep();
+                [self actionDone];
+                return;
+            }
+            NSArray *args = NSArgs(plan.args);
+            NSString *done = NSFromBytes(plan.doneText);
+            void (^go)(void) = ^{
+                [self runAction:args in:top done:^(MCGitResult *r) {
+                    if (r.ok) [self say:done info:YES];
+                    [self actionDone];
+                }];
+            };
+            if (plan.question.empty()) go();
+            else [self ask:plan then:go];
+        });
+    });
+}
+
+- (NSInteger)selectedFileRow {
+    return [self rowIsFile:_table.selectedRow] ? _table.selectedRow : -1;
+}
+
+- (void)discardAtRow:(NSInteger)row {
+    MCGitRow *r = [self fileRow:row];
+    if (!r || !_topLevel) { NSBeep(); return; }
+    [self discardRow:r->model top:_topLevel];
+}
+
+// Discard Changes from the menu bar: the file on show, if it has changes
+// in the Changes list, by a status read now.
+- (void)discardPath:(NSString *)path {
+    NSString *root = self.root;
+    if (!root || !path.length) { NSBeep(); return; }
+    dispatch_async(_queue, ^{
+        MCGitSnapshot *snap = [MCGitPanel snapshotAt:root];
+        std::string rel;
+        if (snap.inRepository) {
+            // git names the top level with links resolved (/private/tmp);
+            // the file may be gone, so its folder is resolved instead.
+            char dirBuf[PATH_MAX], topBuf[PATH_MAX];
+            NSString *dir = path.stringByDeletingLastPathComponent;
+            if (realpath(dir.fileSystemRepresentation, dirBuf) &&
+                realpath(snap.topLevel.fileSystemRepresentation, topBuf)) {
+                std::string full = std::string(dirBuf) + "/" +
+                                   (path.lastPathComponent.UTF8String ?: "");
+                std::string top = topBuf;
+                if (full.compare(0, top.size() + 1, top + "/") == 0)
+                    rel = full.substr(top.size() + 1);
+            }
+        }
+        const int at = rel.empty() ? -1 : GitUi::changesRowFor(snap->model.rows, rel);
+        GitUi::Row row;
+        if (at >= 0) row = snap->model.rows[(size_t)at];
+        NSString *top = snap.topLevel;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (![root isEqualToString:self.root]) return;
+            if (at < 0) {
+                NSString *why = !snap.inRepository ? (snap.notice ?: snap.errorText)
+                    : [NSString stringWithFormat:@"%@ has no changes to discard.",
+                                                 path.lastPathComponent];
+                [self say:why info:NO];
+                NSBeep();
+                [self actionDone];
+                return;
+            }
+            [self discardRow:row top:top];
+        });
+    });
+}
+
+- (void)discardRow:(const GitUi::Row &)row top:(NSString *)top {
+    const GitUi::DiscardPlan plan = GitUi::discardPlan(row);
+    if (!plan.refusal.empty()) {
+        [self say:NSFromBytes(plan.refusal) info:NO];
+        NSBeep();
+        [self actionDone];
+        return;
+    }
+    const GitUi::DiscardPlan copy = plan;
+    NSString *rel = NSFromBytes(row.path);
+    [self ask:plan then:^{ [self runDiscard:copy rel:rel top:top]; }];
+}
+
+// The file as it is goes to the Trash first, then git restores it; if git
+// fails, the Trash's copy comes back, so a refusal leaves the file alone.
+- (void)runDiscard:(const GitUi::DiscardPlan &)plan rel:(NSString *)rel top:(NSString *)top {
+    NSString *root = self.root;
+    const GitUi::DiscardPlan p = plan;
+    dispatch_async(_queue, ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *path = [top stringByAppendingPathComponent:rel];
+        NSURL *trashed = nil;
+        NSString *failure = nil;
+        if (p.trashFirst) {
+            NSError *error = nil;
+            NSURL *into = nil;
+            if ([fm trashItemAtURL:[NSURL fileURLWithPath:path] resultingItemURL:&into
+                             error:&error])
+                trashed = into;
+            else
+                failure = [NSString stringWithFormat:
+                    @"%@ could not be moved to the Trash (%@), so nothing was discarded.",
+                    rel.lastPathComponent, error.localizedDescription ?: @"no reason given"];
+        }
+        if (!failure && !p.args.empty()) {
+            MCGitResult *r = MCGitRunSync(top, NSArgs(p.args));
+            if (!r.ok) {
+                failure = MCGitFailureText(r);
+                if (trashed) [fm moveItemAtURL:trashed toURL:[NSURL fileURLWithPath:path] error:nil];
+                trashed = nil;
+            }
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!failure) {
+                MCGitDiscard *d = [MCGitDiscard new];
+                d.path = path;
+                d.rel = rel;
+                d.trashed = trashed;
+                if (!self->_discards) self->_discards = [NSMutableArray array];
+                [self->_discards addObject:d];
+                if (self->_discards.count > 20) [self->_discards removeObjectAtIndex:0];
+            }
+            if ([root isEqualToString:self.root]) {
+                [self say:failure ?: NSFromBytes(p.doneText) info:failure == nil];
+                [self runRefresh];
+            }
+            [self actionDone];
+        });
+    });
+}
+
+- (NSString *)undoDiscardTitle {
+    MCGitDiscard *d = _discards.lastObject;
+    return d ? NSFromBytes(GitUi::undoDiscardTitle(d.rel.UTF8String ?: "")) : nil;
+}
+
+// Undo Discard: what is at the path now (git's version, or edits since)
+// goes to the Trash, and the discarded copy comes back from it.
+- (void)undoDiscard {
+    MCGitDiscard *d = _discards.lastObject;
+    if (!d) { NSBeep(); return; }
+    [_discards removeLastObject];
+    NSString *root = self.root;
+    dispatch_async(_queue, ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *failure = nil;
+        NSString *name = d.rel.lastPathComponent;
+        if (d.trashed && ![fm attributesOfItemAtPath:d.trashed.path error:nil])
+            failure = [NSString stringWithFormat:
+                @"The discarded copy of %@ is no longer in the Trash.", name];
+        NSURL *at = [NSURL fileURLWithPath:d.path];
+        NSError *error = nil;
+        if (!failure && [fm attributesOfItemAtPath:d.path error:nil] &&
+            ![fm trashItemAtURL:at resultingItemURL:nil error:&error])
+            failure = [NSString stringWithFormat:@"%@ could not be moved to the Trash (%@).",
+                                                 name, error.localizedDescription];
+        if (!failure && d.trashed) {
+            [fm createDirectoryAtPath:d.path.stringByDeletingLastPathComponent
+                withIntermediateDirectories:YES attributes:nil error:nil];
+            if (![fm moveItemAtURL:d.trashed toURL:at error:&error])
+                failure = [NSString stringWithFormat:@"%@ could not be put back (%@).", name,
+                                                     error.localizedDescription];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if ([root isEqualToString:self.root]) {
+                [self say:failure ?: NSFromBytes(GitUi::undoneDiscardText(d.rel.UTF8String ?: ""))
+                     info:failure == nil];
+                [self runRefresh];
+            }
+            [self actionDone];
+        });
+    });
+}
+
+// ------------------------------------------------------ a file row's menu
+- (NSMenu *)menuForRow:(NSInteger)row {
+    MCGitRow *r = [self fileRow:row];
+    if (!r) return nil;
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
+    auto add = [&](NSString *title, SEL action) {
+        NSMenuItem *it = [menu addItemWithTitle:title action:action keyEquivalent:@""];
+        it.target = self;
+        it.tag = row;
+        return it;
+    };
+    add(@"Open File", @selector(menuOpenFile:));
+    add(@"Open Changes", @selector(menuOpenChanges:));
+    add(r.staged ? @"Unstage Changes" : @"Stage Changes", @selector(menuToggleStage:));
+    if (!r.staged) {
+        NSMenuItem *it = add(r.untracked ? @"Discard (Move to Trash)…" : @"Discard Changes…",
+                             @selector(menuDiscard:));
+        const std::string why = GitUi::discardPlan(r->model).refusal;
+        if (!why.empty()) it.toolTip = NSFromBytes(why);
+    }
+    [menu addItem:[NSMenuItem separatorItem]];
+    add(@"Reveal in File Tree", @selector(menuReveal:));
+    return menu;
+}
+
+- (NSString *)pathOfRow:(NSInteger)row {
+    MCGitRow *r = [self fileRow:row];
+    return r && _topLevel ? [_topLevel stringByAppendingPathComponent:r.path] : nil;
+}
+- (void)menuOpenFile:(NSMenuItem *)item {
+    NSString *path = [self pathOfRow:item.tag];
+    if (path && self.onOpenFile) self.onOpenFile(path);
+}
+- (void)menuOpenChanges:(NSMenuItem *)item { [self showDiffAtRow:item.tag]; }
+- (void)menuToggleStage:(NSMenuItem *)item { [self toggleStageAtRow:item.tag]; }
+- (void)menuDiscard:(NSMenuItem *)item { [self discardAtRow:item.tag]; }
+- (void)menuReveal:(NSMenuItem *)item {
+    NSString *path = [self pathOfRow:item.tag];
+    if (path && self.onRevealFile) self.onRevealFile(path);
+}
+
+// ------------------------------------------------------ the branch picker
+- (void)listBranches:(void (^)(MCGitBranches *))done {
+    NSString *root = self.root;
+    if (!root) { if (done) done(nil); return; }
+    dispatch_async(_queue, ^{
+        MCGitSnapshot *snap = [MCGitPanel snapshotAt:root];
+        MCGitBranches *list = nil;
+        NSString *failure = nil;
+        if (!snap.inRepository) {
+            failure = snap.notice ?: snap.errorText;
+        } else {
+            MCGitResult *refs = MCGitRunSync(snap.topLevel, NSArgs(GitUi::branchListArgs()));
+            if (!refs.ok) {
+                failure = MCGitFailureText(refs);
+            } else {
+                list = [MCGitBranches new];
+                list.top = snap.topLevel;
+                list->snap = snap->model;
+                list->items = GitUi::branchItems(Bytes(refs.output), snap->model);
+                NSMutableArray *labels = [NSMutableArray array], *details = [NSMutableArray array];
+                for (const GitUi::BranchItem &b : list->items) {
+                    [labels addObject:NSFromBytes(b.name) ?: @""];
+                    [details addObject:NSFromBytes(b.detail) ?: @""];
+                }
+                list.labels = labels;
+                list.details = details;
+            }
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (![root isEqualToString:self.root]) return;
+            if (failure) {
+                [self say:failure info:NO];
+                NSBeep();
+            }
+            if (done) done(list);
+        });
+    });
+}
+
+// A refused switch (local changes git would overwrite) says what git said.
+- (void)switchToBranchAtIndex:(NSInteger)index of:(MCGitBranches *)list {
+    if (!list || index < 0 || index >= (NSInteger)list->items.size()) return;
+    const GitUi::BranchItem &b = list->items[(size_t)index];
+    const std::vector<std::string> args = GitUi::switchArgs(b, list->snap);
+    if (args.empty()) {
+        [self say:[NSString stringWithFormat:@"Already on %@.", NSFromBytes(b.name)] info:YES];
+        [self actionDone];
+        return;
+    }
+    NSString *text = NSFromBytes(b.remote ? GitUi::switchedText(GitUi::localNameFor(b.name,
+                                                                                    list->snap),
+                                                                true)
+                                          : GitUi::switchedText(b.name, false));
+    [self runAction:NSArgs(args) in:list.top done:^(MCGitResult *r) {
+        if (r.ok) [self say:text info:YES];
+        [self actionDone];
+    }];
+}
+
+- (void)createBranchNamed:(NSString *)typed of:(MCGitBranches *)list {
+    if (!list) return;
+    const std::string name = GitUi::newBranchName(typed.UTF8String ?: "");
+    const std::string problem = GitUi::branchNameProblem(name);
+    if (!problem.empty()) {
+        [self say:NSFromBytes(problem) info:NO];
+        NSBeep();
+        [self actionDone];
+        return;
+    }
+    NSString *text = NSFromBytes(GitUi::switchedText(name, true));
+    [self runAction:NSArgs(GitUi::createBranchArgs(name)) in:list.top done:^(MCGitResult *r) {
+        if (r.ok) [self say:text info:YES];
+        [self actionDone];
+    }];
+}
+
 // ------------------------------------------------- pushing and pulling
+
 // Each repository's autofetch state, by its top level, shared by the
 // windows on it so two of them do not fetch twice. Main thread only.
 static std::unordered_map<std::string, GitUi::AutoFetchState> &MCAutoFetchStates() {

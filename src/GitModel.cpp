@@ -258,6 +258,223 @@ std::vector<std::string> commitArgs(const std::string& message) {
     return {"commit", "-m", message};
 }
 
+// ----------------------------------------- Stage All, Unstage All, Discard
+namespace {
+std::string fileName(const std::string& path) {
+    size_t slash = path.rfind('/');
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+std::string plural(size_t n, const char* one, const char* many) {
+    return std::to_string(n) + " " + (n == 1 ? one : many);
+}
+}  // namespace
+
+ActionPlan stageAllPlan(const Snapshot& s) {
+    ActionPlan p;
+    if (!s.inRepository) { p.refusal = "This folder is not in a git repository."; return p; }
+    size_t changes = 0, conflicts = 0;
+    for (const Row& r : s.rows) {
+        if (r.header || r.staged) continue;
+        changes++;
+        if (r.unmerged) conflicts++;
+    }
+    if (!changes) { p.refusal = "There are no changes to stage."; return p; }
+    p.args = {"--literal-pathspecs", "add", "-A", "--", "."};
+    if (conflicts) {
+        p.question = "Stage " + plural(conflicts, "file that still has", "files that still have") +
+                     " conflicts?";
+        p.detail = "Staging a file marks its conflict resolved. Check that no conflict "
+                   "markers are left in " + std::string(conflicts == 1 ? "it" : "them") + " first.";
+        p.button = "Stage All";
+    }
+    p.doneText = "Staged " + plural(changes, "file.", "files.");
+    return p;
+}
+
+ActionPlan unstageAllPlan(const Snapshot& s) {
+    ActionPlan p;
+    if (!s.inRepository) { p.refusal = "This folder is not in a git repository."; return p; }
+    size_t staged = 0;
+    for (const Row& r : s.rows)
+        if (!r.header && r.staged) staged++;
+    if (!staged) { p.refusal = "Nothing is staged."; return p; }
+    if (s.initial)
+        p.args = {"--literal-pathspecs", "rm", "--cached", "-r", "--force", "-q", "--", "."};
+    else
+        p.args = {"--literal-pathspecs", "restore", "--staged", "--", "."};
+    p.doneText = "Unstaged " + plural(staged, "file.", "files.");
+    return p;
+}
+
+DiscardPlan discardPlan(const Row& r) {
+    DiscardPlan p;
+    if (r.header || r.path.empty()) { p.refusal = "Choose a file to discard."; return p; }
+    const std::string name = fileName(r.path);
+    if (r.staged) {
+        p.refusal = name + " is staged: unstage it first, then discard its changes.";
+        return p;
+    }
+    if (r.unmerged) {
+        p.refusal = name + " has a conflict: resolve it, or take one side in the terminal "
+                    "(git checkout --ours or --theirs), rather than discard it.";
+        return p;
+    }
+    const std::string undo = "Undo Discard in this panel's menu, or Put Back in the Trash, "
+                             "brings it back.";
+    if (r.untracked) {
+        p.trashFirst = true;
+        p.question = "Move " + name + " to the Trash?";
+        p.detail = name + " is not tracked by git, so discarding it removes the file. " + undo;
+        p.button = "Move to Trash";
+        p.doneText = "Moved " + name + " to the Trash.";
+        return p;
+    }
+    if (r.letter == 'A') {   // intent to add: the index holds an empty file
+        p.refusal = name + " was added with git add -N: unstage it first.";
+        return p;
+    }
+    p.args = {"--literal-pathspecs", "restore", "--worktree", "--", r.path};
+    if (r.letter == 'D') {
+        p.question = "Restore " + name + "?";
+        p.detail = name + " was deleted. Discarding that brings it back as git has it "
+                   "(staged, or else in the last commit). Undo Discard deletes it again.";
+        p.button = "Restore";
+        p.doneText = "Restored " + name + ".";
+        return p;
+    }
+    p.trashFirst = true;
+    p.question = "Discard the changes to " + name + "?";
+    p.detail = name + " goes back to the version git has for it (staged, or else in the "
+               "last commit). The changed copy goes to the Trash: " + undo;
+    p.button = "Discard Changes";
+    p.doneText = "Discarded the changes to " + name + "; the changed copy is in the Trash.";
+    return p;
+}
+
+std::string undoDiscardTitle(const std::string& path) {
+    return "Undo Discard of " + fileName(path);
+}
+
+std::string undoneDiscardText(const std::string& path) {
+    return "Put " + fileName(path) + " back as it was before the discard.";
+}
+
+int changesRowFor(const std::vector<Row>& rows, const std::string& path) {
+    for (size_t i = 0; i < rows.size(); ++i)
+        if (!rows[i].header && !rows[i].staged && rows[i].path == path) return (int)i;
+    return -1;
+}
+
+// ------------------------------------------------------ the branch picker
+std::vector<std::string> branchListArgs() {
+    return {"for-each-ref", "--sort=-committerdate", std::string("--format=") + Git::refFormat(),
+            "refs/heads", "refs/remotes"};
+}
+
+std::string localNameFor(const std::string& remoteBranch, const Snapshot& s) {
+    size_t best = 0;
+    for (const std::string& r : s.remotes)
+        if (remoteBranch.size() > r.size() + 1 && remoteBranch.compare(0, r.size(), r) == 0 &&
+            remoteBranch[r.size()] == '/' && r.size() + 1 > best)
+            best = r.size() + 1;
+    if (!best) {
+        size_t slash = remoteBranch.find('/');
+        best = slash == std::string::npos ? 0 : slash + 1;
+    }
+    return remoteBranch.substr(best);
+}
+
+std::vector<BranchItem> branchItems(const std::string& refsOut, const Snapshot& s) {
+    std::vector<BranchItem> locals, remotes;
+    std::vector<Git::Ref> refs = Git::parseRefs(refsOut);
+    std::vector<std::string> localNames;
+    for (const Git::Ref& r : refs)
+        if (r.kind == Git::RefKind::Branch) localNames.push_back(r.name);
+    for (const Git::Ref& r : refs) {
+        // A name git would read as an option never reaches its command line.
+        if (r.name.empty() || r.name[0] == '-') continue;
+        BranchItem b;
+        b.name = r.name;
+        const std::string hash = Git::shortHash(r.target);
+        if (r.kind == Git::RefKind::Branch) {
+            b.current = !s.detached && r.name == s.branch;
+            b.detail = b.current ? "current · " + hash : hash;
+            if (b.current) locals.insert(locals.begin(), b);
+            else locals.push_back(b);
+        } else if (r.kind == Git::RefKind::Remote) {
+            const std::string local = localNameFor(r.name, s);
+            if (local.empty() || local == "HEAD" ||
+                std::find(localNames.begin(), localNames.end(), local) != localNames.end())
+                continue;
+            b.remote = true;
+            b.detail = "remote · " + hash;
+            remotes.push_back(b);
+        }
+    }
+    locals.insert(locals.end(), remotes.begin(), remotes.end());
+    return locals;
+}
+
+std::vector<std::string> switchArgs(const BranchItem& b, const Snapshot& s) {
+    if (b.current) return {};
+    if (b.remote) return {"switch", "-c", localNameFor(b.name, s), "--track", b.name};
+    return {"switch", b.name};
+}
+
+std::string newBranchName(const std::string& typed) {
+    std::string t = trim(typed);
+    for (char& c : t)
+        if (c == ' ' || c == '\t') c = '-';
+    return t;
+}
+
+std::string branchNameProblem(const std::string& name) {
+    if (name.empty()) return "Type a name for the new branch.";
+    const std::string q = "“" + name + "”";
+    if (name[0] == '-') return q + " cannot start with a dash.";
+    if (name == "@" || name == "HEAD") return q + " is a name git keeps for itself.";
+    for (unsigned char c : name)
+        if (c < 0x20 || c == 0x7F || c == ' ' || c == '~' || c == '^' || c == ':' || c == '?' ||
+            c == '*' || c == '[' || c == '\\')
+            return q + " has a character git does not allow in a branch name "
+                       "(spaces, ~ ^ : ? * [ or \\).";
+    if (name.find("..") != std::string::npos || name.find("@{") != std::string::npos ||
+        name.find("//") != std::string::npos)
+        return q + " cannot hold \"..\", \"@{\" or \"//\".";
+    if (name[0] == '/' || name.back() == '/' || name.back() == '.')
+        return q + " cannot start or end with a slash, or end with a dot.";
+    size_t start = 0;
+    while (start <= name.size()) {
+        size_t slash = name.find('/', start);
+        if (slash == std::string::npos) slash = name.size();
+        const std::string part = name.substr(start, slash - start);
+        if (!part.empty() && part[0] == '.') return q + ": no part of it may start with a dot.";
+        if (part.size() >= 5 && part.compare(part.size() - 5, 5, ".lock") == 0)
+            return q + ": no part of it may end with .lock.";
+        start = slash + 1;
+    }
+    return "";
+}
+
+std::string createBranchLabel(const std::string& typed, const std::vector<BranchItem>& items,
+                              const Snapshot& s) {
+    const std::string name = newBranchName(typed);
+    if (name.empty()) return "";
+    for (const BranchItem& b : items)
+        if (!b.remote && b.name == name) return "";
+    std::string from = s.detached ? std::string("the detached HEAD")
+                                  : s.branch.empty() ? std::string("HEAD") : s.branch;
+    return "Create branch “" + name + "” from " + from;
+}
+
+std::vector<std::string> createBranchArgs(const std::string& name) {
+    return {"switch", "-c", name};
+}
+
+std::string switchedText(const std::string& branch, bool created) {
+    return created ? "Created " + branch + " and switched to it." : "Switched to " + branch + ".";
+}
+
 // ------------------------------------------------ pushing and pulling
 std::vector<std::string> remoteArgs() { return {"remote"}; }
 

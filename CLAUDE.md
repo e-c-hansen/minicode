@@ -1887,7 +1887,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 - **What runs**: status, diff, add, restore --staged, commit -m, rm --cached
   --force before the first commit, and for the graph for-each-ref, log,
   rev-list, show, rev-parse; `remote` with each status; on the Mac fetch, pull
-  and push (below). Never a shell string: `MCGitRunSync`
+  and push (below), Stage All (`add -A -- .`), Unstage All, `switch` and
+  Discard's `restore --worktree` (below). Never a shell string: `MCGitRunSync`
   `posix_spawn`s an argument vector in the top level. Paths after `--`; add,
   restore and rm get `--literal-pathspecs` (`sp*ecial.txt` never stages
   `spXecial.txt`). Status `--porcelain=v2 --branch -z --untracked-files=all`;
@@ -1901,7 +1902,9 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   `GIT_EDITOR=true`, stdin /dev/null, the wide PATH; stdout and stderr drained
   at once on their own queues.
 - **Time limits** (`Git::timeoutFor`, one table for the Mac and GTK): 30 s for
-  reads, 2 minutes for add, restore and rm (filters, index.lock), 10 for commit
+  reads, 2 minutes for add, restore, rm and switch (filters, hooks,
+  index.lock), 10 for commit
+
   (hooks, signing). git leads its own process group, which gets SIGTERM at the
   limit and SIGKILL 2 s later; the panel shows "git did not answer within 30
   seconds: <command on one line, 160 characters at most>" (`timeoutMessage`),
@@ -1926,6 +1929,25 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   180 s, per top level (process-wide map, main thread), never without a
   remote, backing off to an hour after failures. `autoFetchTickAt:` takes the
   time, so the GUI suite (`git_sync`) runs the waits without waiting.
+- **Stage All, Discard, the file menu, the branch picker** (Mac, 2026-11-07;
+  `GitUi::stageAllPlan`, `unstageAllPlan`, `discardPlan`, `branchItems`,
+  `switchArgs`, tested in `git-ui:stage-all`, `discard`, `switch`; GUI
+  `git_actions`). Like sync, each reads a fresh status, so View > Source
+  Control works with the panel hidden (messages then also go to the status
+  bar, `onNote`). **Discard always asks and is undoable**: the file goes to
+  the Trash first (`trashItemAtURL:`; a failure discards nothing), then
+  `restore --worktree` from the index, which is what the Changes row's diff
+  is against (not `--source=HEAD`, which would also throw away staged work);
+  a failed restore moves the copy back. Undo Discard (the panel's menu, the
+  menu bar) trashes what is there now and moves the copy back, last 20.
+  Refused: staged rows (as VS Code, unstage first), conflicts, `add -N`
+  files. git.clean from the menu bar acts on the panel's selected row only
+  while its list has the keyboard, else on the file on show. The picker is
+  the palette with an `MCPalettePick` (a caller's list, PalettePanel.h);
+  remote branches whose name a local branch has are left out, and a remote
+  one is switched to with `switch -c <name> --track <remote>/<name>`. Tests
+  swap `trashItemAtURL:` for a scratch folder, since the real Trash may be
+  the user's own whatever HOME says.
 - **Threads**: a serial queue per panel; results dropped if the root changed or
   a newer diff was asked. `refresh` coalesces 50 ms, only while in a window (on
   show, after actions, on window key, on the tree's FSEvents).
@@ -2406,8 +2428,8 @@ session has a display. Check first.
   `MC_GUI_KEEP=1` keeps the scratch folder, `MC_GUI_SAMPLE=file` samples the
   keystroke suite (`MC_GUI_FULL_PERF=1` runs foldperf on 100,000 lines, not
   20,000). Suites: control, agents, backups, find_bar, folding, foldperf,
-  format, git_panel, keymap, keystroke, lsp_fixes, palette, paste, previews,
-  problems, processes, replace_in_folder, run_file, symbols, terminal_links,
+  format, git_actions, git_panel, keymap, keystroke, lsp_fixes, palette,
+  paste, previews, problems, processes, replace_in_folder, run_file, symbols, terminal_links,
   terminal_reflow, tree, large_file (`MC_GUI_SAMPLE=<folder>` samples its
   open and typing steps), and in
   LooseEndsSuite.mm terminal_exec, terminal_keys, terminal_zoom,

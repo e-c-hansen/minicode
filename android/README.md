@@ -589,6 +589,14 @@ through Termux, the first 200 commits of the graph 300 ms after that, the
 next 200 (Show more) in 520 ms, and an unchanged refresh running no log at
 all.
 
+Not followed yet (2026-11-07): the Mac's Stage All, Unstage All, Discard
+Changes with Undo Discard, a file's menu, and the branch picker. Their rules
+are in the core's `GitModel` (`stageAllPlan`, `unstageAllPlan`,
+`discardPlan`, `branchItems`, `switchArgs`, `createBranchLabel`, see
+`linux/HANDOFF.md` item 10); here a long press could offer the file's
+commands, and Discard must keep a copy the user can get back (the Mac moves
+the file to the Trash first), since git cannot undo a restore.
+
 ## The Markdown preview
 
 The Mac's and the Linux preview, on a phone (`MarkdownPreview.kt`). The

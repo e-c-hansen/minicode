@@ -455,4 +455,172 @@ static void testGitModel() {
     CHECK(laneColor(0) == 0x59A4F9 && laneColor(7) == 0x59A4F9 && laneColor(-1) == 0x8FCB5A);
     CHECK(pillColor(Git::RefKind::Head) == 0xEA5C00 && pillColor(Git::RefKind::Tag) == 0xE2C08D);
     CHECK(pillColor(Git::RefKind::Remote) == 0xB180D7 && pillColor(Git::RefKind::Branch) == 0x59A4F9);
+
+    GROUP("git-ui:stage-all");
+    {
+        // s: 2 staged, 3 in Changes (one untracked).
+        ActionPlan p = stageAllPlan(s);
+        CHECK(p.args == std::vector<std::string>({"--literal-pathspecs", "add", "-A", "--", "."}));
+        CHECK(p.refusal.empty() && p.question.empty() && p.doneText == "Staged 3 files.");
+        CHECK(Git::timeoutFor(p.args) == 120);
+        CHECK(stageAllPlan(clean).args.empty() &&
+              stageAllPlan(clean).refusal == "There are no changes to stage.");
+        Snapshot outside;
+        CHECK(stageAllPlan(outside).refusal == "This folder is not in a git repository.");
+        CHECK(unstageAllPlan(outside).args.empty());
+        // A conflict asks first: staging it marks it resolved.
+        Snapshot conflict;
+        conflict.inRepository = true;
+        applyStatus(conflict, Git::parseStatus(nul({
+            "# branch.oid " + h40, "# branch.head main",
+            "u UU N... 100644 100644 100644 100644 " + h40 + " " + h40 + " " + h40 + " c.txt",
+            "1 .M N..." + modes + h40 + " " + h40 + " m.txt"})));
+        p = stageAllPlan(conflict);
+        CHECK(p.question == "Stage 1 file that still has conflicts?");
+        CHECK(p.detail.find("conflict markers") != std::string::npos && p.button == "Stage All");
+        CHECK(p.doneText == "Staged 2 files." && !p.args.empty());
+
+        ActionPlan u = unstageAllPlan(s);
+        CHECK(u.args == std::vector<std::string>(
+                            {"--literal-pathspecs", "restore", "--staged", "--", "."}));
+        CHECK(u.doneText == "Unstaged 2 files." && u.question.empty());
+        // Before the first commit there is no HEAD to restore from.
+        u = unstageAllPlan(empty);
+        CHECK(u.args == std::vector<std::string>({"--literal-pathspecs", "rm", "--cached", "-r",
+                                                  "--force", "-q", "--", "."}));
+        CHECK(u.doneText == "Unstaged 1 file.");
+        CHECK(unstageAllPlan(clean).refusal == "Nothing is staged.");
+        CHECK(unstageAllPlan(conflict).args.empty());   // a conflict is not staged
+    }
+
+    GROUP("git-ui:discard");
+    {
+        Snapshot d;
+        d.inRepository = true;
+        applyStatus(d, Git::parseStatus(nul({
+            "# branch.oid " + h40, "# branch.head main",
+            "1 .M N..." + modes + h40 + " " + h40 + " src/a b.txt",
+            "1 .D N..." + modes + h40 + " " + h40 + " gone.txt",
+            "1 .T N..." + modes + h40 + " " + h40 + " link",
+            "1 .A N... 000000 000000 100644 " + z40 + " " + z40 + " later.txt",
+            "1 M. N..." + modes + h40 + " " + h40 + " staged.txt",
+            "u UU N... 100644 100644 100644 100644 " + h40 + " " + h40 + " " + h40 + " c.txt",
+            "? -new.txt"})));
+        auto row = [&](const std::string& path, bool staged) -> const Row& {
+            for (const Row& x : d.rows)
+                if (!x.header && x.path == path && x.staged == staged) return x;
+            static Row none;
+            return none;
+        };
+        // Modified: the file goes to the Trash, then back from the index.
+        DiscardPlan m = discardPlan(row("src/a b.txt", false));
+        CHECK(m.trashFirst && m.refusal.empty());
+        CHECK(m.args == std::vector<std::string>(
+                            {"--literal-pathspecs", "restore", "--worktree", "--", "src/a b.txt"}));
+        CHECK(!hasArg(m.args, "--source=HEAD") && !hasArg(m.args, "--staged"));
+        CHECK(m.question == "Discard the changes to a b.txt?" && m.button == "Discard Changes");
+        CHECK(m.detail.find("Trash") != std::string::npos &&
+              m.detail.find("Undo Discard") != std::string::npos);
+        CHECK(m.doneText.find("Trash") != std::string::npos);
+        CHECK(Git::timeoutFor(m.args) == 120);
+        // A type change is restored the same way.
+        CHECK(discardPlan(row("link", false)).trashFirst &&
+              discardPlan(row("link", false)).args.back() == "link");
+        // Deleted: nothing on disk to keep; restored.
+        DiscardPlan g = discardPlan(row("gone.txt", false));
+        CHECK(!g.trashFirst && g.args.back() == "gone.txt" && hasArg(g.args, "--worktree"));
+        CHECK(g.question == "Restore gone.txt?" && g.button == "Restore");
+        CHECK(g.detail.find("deletes it again") != std::string::npos);
+        // Untracked: only the Trash; git runs nothing, so the leading dash
+        // never reaches a command line.
+        DiscardPlan u = discardPlan(row("-new.txt", false));
+        CHECK(u.trashFirst && u.args.empty() && u.refusal.empty());
+        CHECK(u.question == "Move -new.txt to the Trash?" && u.button == "Move to Trash");
+        CHECK(u.detail.find("not tracked") != std::string::npos);
+        // Refused: staged, a conflict, intent to add, a heading.
+        CHECK(discardPlan(row("staged.txt", true)).refusal.find("unstage it first") !=
+              std::string::npos);
+        CHECK(discardPlan(row("staged.txt", true)).args.empty());
+        CHECK(discardPlan(row("c.txt", false)).refusal.find("conflict") != std::string::npos);
+        CHECK(discardPlan(row("later.txt", false)).refusal.find("git add -N") !=
+              std::string::npos);
+        CHECK(discardPlan(row("later.txt", false)).args.empty());
+        CHECK(!discardPlan(d.rows[0]).refusal.empty() && discardPlan(d.rows[0]).args.empty());
+        // Every plan that runs git restores the work tree only.
+        for (const Row& x : d.rows) {
+            DiscardPlan p = discardPlan(x);
+            if (p.args.empty()) continue;
+            CHECK(p.args[1] == "restore" && hasArg(p.args, "--worktree") &&
+                  argAt(p.args, "--") == (int)p.args.size() - 2);
+        }
+        CHECK(undoDiscardTitle("src/a b.txt") == "Undo Discard of a b.txt");
+        CHECK(undoneDiscardText("x/y.txt").find("y.txt back") != std::string::npos);
+        // From the menu bar: the file on show's Changes row.
+        CHECK(changesRowFor(d.rows, "src/a b.txt") >= 0 &&
+              !d.rows[changesRowFor(d.rows, "src/a b.txt")].staged);
+        CHECK(changesRowFor(d.rows, "staged.txt") == -1);
+        CHECK(changesRowFor(d.rows, "nope") == -1);
+    }
+
+    GROUP("git-ui:switch");
+    {
+        auto line = [](const std::string& obj, const std::string& name, const std::string& sym) {
+            return obj + std::string("\0", 1) + std::string("\0", 1) + name +
+                   std::string("\0", 1) + sym + "\n";
+        };
+        const std::string a(40, 'a'), b(40, 'b'), c(40, 'c');
+        const std::string out = line(b, "refs/heads/feature", "") +
+                                line(a, "refs/heads/main", "") +
+                                line(c, "refs/remotes/origin/HEAD", "refs/remotes/origin/main") +
+                                line(c, "refs/remotes/origin/main", "") +
+                                line(c, "refs/remotes/origin/fix/login", "") +
+                                line(c, "refs/remotes/my/fork/topic", "") +
+                                line(c, "refs/heads/-x", "");
+        Snapshot bs;
+        bs.inRepository = true;
+        bs.branch = "main";
+        bs.remotes = {"origin", "my/fork"};
+        CHECK(hasArg(branchListArgs(), "--sort=-committerdate") &&
+              branchListArgs()[0] == "for-each-ref" && hasArg(branchListArgs(), "refs/heads") &&
+              hasArg(branchListArgs(), "refs/remotes") && !hasArg(branchListArgs(), "refs/tags"));
+        std::vector<BranchItem> items = branchItems(out, bs);
+        // The current branch first, then the other locals in git's order
+        // (newest first), then remote branches with no local one; origin/HEAD,
+        // origin/main (main is local) and a name like an option are left out.
+        CHECK(items.size() == 4);
+        CHECK(items[0].name == "main" && items[0].current && items[0].detail == "current · aaaaaaa");
+        CHECK(items[1].name == "feature" && !items[1].current && items[1].detail == "bbbbbbb");
+        CHECK(items[2].name == "origin/fix/login" && items[2].remote &&
+              items[2].detail == "remote · ccccccc");
+        CHECK(items[3].name == "my/fork/topic" && items[3].remote);
+        CHECK(switchArgs(items[0], bs).empty());
+        CHECK(switchArgs(items[1], bs) == std::vector<std::string>({"switch", "feature"}));
+        CHECK(switchArgs(items[2], bs) == std::vector<std::string>(
+                                              {"switch", "-c", "fix/login", "--track",
+                                               "origin/fix/login"}));
+        // The longest remote that fits names the branch.
+        CHECK(localNameFor("my/fork/topic", bs) == "topic");
+        CHECK(localNameFor("up/x", bs) == "x");   // remotes not known: up to the first slash
+        // Detached: no branch is current.
+        Snapshot det = bs;
+        det.detached = true;
+        det.branch.clear();
+        CHECK(!branchItems(out, det)[0].current && branchItems(out, det)[0].name == "feature");
+
+        CHECK(newBranchName("  my new  branch ") == "my-new--branch");
+        CHECK(branchNameProblem("feature/x").empty() && branchNameProblem("v1.2").empty());
+        CHECK(!branchNameProblem("").empty());
+        for (const char* bad : {"-f", "a..b", "a b", "a~1", "x^", "a:b", "a?", "a*", "a[b", "a\\b",
+                                "/a", "a/", "a.", "a//b", "a/.b", ".a", "a.lock", "x/y.lock/z",
+                                "a@{1}", "@", "HEAD"})
+            CHECK(!branchNameProblem(bad).empty());
+        CHECK(createBranchLabel("new thing", items, bs) == "Create branch “new-thing” from main");
+        CHECK(createBranchLabel("feature", items, bs).empty());     // a local branch already
+        CHECK(!createBranchLabel("fix/login", items, bs).empty());  // only a remote one has it
+        CHECK(createBranchLabel("  ", items, bs).empty());
+        CHECK(createBranchLabel("x", items, det) == "Create branch “x” from the detached HEAD");
+        CHECK(createBranchArgs("x") == std::vector<std::string>({"switch", "-c", "x"}));
+        CHECK(switchedText("x", false) == "Switched to x." &&
+              switchedText("x", true) == "Created x and switched to it.");
+    }
 }

@@ -6,8 +6,11 @@
 // Only commands that cannot lose work are ever run: status, diff, add,
 // restore --staged (rm --cached before the first commit, which also touches
 // only the index), and commit -m; for the graph, log, for-each-ref, rev-list
-// and show, which only read; and fetch, pull and push, never forced
-// (GitUi::syncPlan), with no terminal and no password prompt. Always
+// and show, which only read; fetch, pull and push, never forced
+// (GitUi::syncPlan), with no terminal and no password prompt; switch, which
+// git refuses when it would overwrite a change; and for Discard Changes,
+// restore --worktree, asked first and only after the file as it was has
+// gone to the Trash (GitUi::discardPlan), so it can be put back. Always
 // argument arrays, never a shell.
 #import <Cocoa/Cocoa.h>
 
@@ -54,6 +57,14 @@ NSAttributedString *MCGitDiffText(NSData *diff, NSFont *font);
 NSAttributedString *MCGitCommitText(NSData *show, NSFont *font);
 
 // ------------------------------------------------------------------- panel
+// The branch picker's rows (GitUi::branchItems), read by listBranches:.
+@interface MCGitBranches : NSObject
+@property(nonatomic, readonly, copy) NSArray<NSString *> *labels;    // "main", "origin/x"
+@property(nonatomic, readonly, copy) NSArray<NSString *> *details;   // "current · a1b2c3d"
+// The picker's last row for a typed name, or nil (GitUi::createBranchLabel).
+- (NSString *)createLabelFor:(NSString *)typed;
+@end
+
 @interface MCGitPanel : NSView
 - (instancetype)initWithRoot:(NSString *)root;
 @property(nonatomic, copy) NSString *root;   // the window's folder; refreshes
@@ -83,6 +94,39 @@ NSAttributedString *MCGitCommitText(NSData *show, NSFont *font);
 - (void)toggleStageAtRow:(NSInteger)row;
 - (void)showDiffAtRow:(NSInteger)row;
 - (void)commit;
+
+// Where the panel's alerts go, and its messages, while it is not shown:
+// the window it belongs to, and a note for the status bar.
+@property(nonatomic, weak) NSWindow *hostWindow;
+@property(nonatomic, copy) void (^onNote)(NSString *text);
+// A file row's menu: Open File and Reveal in File Tree (paths absolute).
+@property(nonatomic, copy) void (^onOpenFile)(NSString *path);
+@property(nonatomic, copy) void (^onRevealFile)(NSString *path);
+// The branch line was clicked: the controller opens the branch picker.
+@property(nonatomic, copy) void (^onChooseBranch)(void);
+
+// Stage All Changes and Unstage All Changes (git.stageAll,
+// git.unstageAll), from a status read just now, so they work while the
+// panel is hidden; Stage All asks first when a file has a conflict.
+- (void)stageAll;
+- (void)unstageAll;
+// Discard Changes (git.clean) on a row of the Changes list, or on the file
+// at an absolute path (the file on show), after a question naming it. The
+// file as it was goes to the Trash first (GitUi::discardPlan), and Undo
+// Discard puts the last one back; nil when there is nothing to undo.
+- (void)discardAtRow:(NSInteger)row;
+- (void)discardPath:(NSString *)path;
+- (void)undoDiscard;
+@property(nonatomic, readonly, copy) NSString *undoDiscardTitle;
+- (NSInteger)selectedFileRow;   // the list's selected file row, or -1
+- (NSMenu *)menuForRow:(NSInteger)row;   // a file row's right click
+
+// The branch picker: the branches (nil, with the reason shown, when there
+// are none to list), then switching to one or making one from a typed name.
+- (void)listBranches:(void (^)(MCGitBranches *branches))done;
+- (void)switchToBranchAtIndex:(NSInteger)index of:(MCGitBranches *)branches;
+- (void)createBranchNamed:(NSString *)typed of:(MCGitBranches *)branches;
+@property(nonatomic, copy) void (^onActionDone)(void);   // after each of these, for tests
 
 // The commit graph under the change lists.
 @property(nonatomic, readonly) NSTableView *graphList;
