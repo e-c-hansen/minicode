@@ -26,6 +26,7 @@
 #include "ChangeRequest.h"
 #include "LineDiff.h"
 #include "MultiCaret.h"
+#include "AutoClose.h"
 #include "CommandPalette.h"
 #include "Backups.h"
 #include "InlineAgent.h"
@@ -3777,8 +3778,8 @@ void testSettings() {
     // develop, git, control and agent keys (with markdown.mermaid and
     // agent.ide-link), terminal.activate-venv, search.use-ignore-files and
     // terminal.multiline-paste-warning, the tree's six git colors and
-    // editor.large-file-optimizations.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 96);
+    // editor.large-file-optimizations, and editor.auto-close.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 97);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4040,6 +4041,15 @@ void testSettings() {
         Settings ww = parseSettings("editor.word-wrap = bounded\n", &we);
         CHECK(we.size() == 1 && ww.wordWrap() &&
               we[0].message.find("on or off") != std::string::npos);
+        // Auto-closing pairs: on by default, as in VS Code.
+        CHECK(parseSettings("").autoClose());
+        CHECK(!parseSettings("editor.auto-close = off\n").autoClose());
+        CHECK(!parseSettings("editor.auto-close = false\n").autoClose());
+        CHECK(parseSettings("editor.auto-close = On\n").autoClose());
+        std::vector<SettingsError> ae;
+        Settings ac = parseSettings("editor.auto-close = brackets\n", &ae);
+        CHECK(ae.size() == 1 && ac.autoClose() &&
+              ae[0].message.find("on or off") != std::string::npos);
         // The font size: points, decimals allowed, 6 to 72.
         CHECK(parseSettings("editor.font-size = 15\n").editorFontSize() == 15);
         CHECK(parseSettings("editor.font-size = 12.5\n").editorFontSize() == 12.5);
@@ -10027,6 +10037,7 @@ static void testMultiCaretOccurrences() {
 #include "tree_tests.inc"
 #include "lsp_threading_tests.inc"
 #include "multiedit_tests.inc"
+#include "auto_close_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10132,6 +10143,7 @@ int main() {
     testTreeRefresh();
     testLspThreading();
     testMultiEdit();
+    testAutoClose();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -157,6 +157,13 @@ public:
     void lineTokens(const TextSource<Ch>& src, size_t first, size_t end,
                     std::vector<Token>& out);
 
+    // The style character c would get if it were inserted at pos: the line
+    // holding pos lexed from its stored start state with c put in (no state
+    // changes, nothing inserted). Plain on a line too long to lex. This is
+    // VS Code's getTokenTypeIfInsertingCharacter, which auto-closing asks
+    // to tell a quote that opens a string from one that closes it.
+    TokenStyle styleIfInserted(const TextSource<Ch>& src, size_t pos, Ch c);
+
     // The line holding offset pos (the last line for pos == length()).
     size_t lineOf(size_t pos) const;
     size_t lineCount() const { return starts_.size(); }

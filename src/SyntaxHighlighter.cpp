@@ -1564,6 +1564,26 @@ void IncrementalHighlighter<Ch>::lineTokens(const TextSource<Ch>& src, size_t fi
 }
 
 template <class Ch>
+TokenStyle IncrementalHighlighter<Ch>::styleIfInserted(const TextSource<Ch>& src, size_t pos,
+                                                       Ch c) {
+    if (pos > length_) return TokenStyle::Plain;
+    const size_t k = lineOf(pos);
+    const size_t a = starts_[k], len = lineEnd(k) - a;
+    if (len + 1 > kMaxTokenizationLineLength + breakReach<Ch>()) return TokenStyle::Plain;
+    buf_.resize(len + 1);
+    if (pos > a) src.read(a, pos - a, buf_.data());
+    buf_[pos - a] = c;
+    if (a + len > pos) src.read(pos, a + len - pos, buf_.data() + (pos - a) + 1);
+    std::vector<Token> tokens;
+    std::string word;
+    lexAnyLine(*def_, buf_.data(), len + 1, k == 0 ? LexState{} : states_[k - 1], a, tokens,
+               word);
+    for (const Token& t : tokens)
+        if (t.start <= pos && pos < t.start + t.length) return t.style;
+    return TokenStyle::Plain;
+}
+
+template <class Ch>
 size_t IncrementalHighlighter<Ch>::lineOf(size_t pos) const {
     return (size_t)(std::upper_bound(starts_.begin(), starts_.end(), pos) -
                     starts_.begin()) - 1;

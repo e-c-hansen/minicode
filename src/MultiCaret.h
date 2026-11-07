@@ -122,6 +122,9 @@ char16_t closerFor(char16_t c);
 // pressing another opener wraps again. Empty carets are left alone; the
 // editor only calls this when every caret has a selection.
 Edit surround(const std::vector<Caret>& carets, char16_t opener);
+// The same with a given closer (a language's surrounding pair, AutoClose);
+// a closer of 0 puts the opener alone before each selection.
+Edit surround(const std::vector<Caret>& carets, char16_t opener, char16_t closer);
 
 // Copy Line Down / Up: the whole lines each caret touches (a selection
 // ending at the start of a line leaves that line out) are inserted again
