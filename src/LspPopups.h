@@ -15,6 +15,11 @@
                select:(NSInteger)select atScreenRect:(NSRect)caret parent:(NSWindow *)parent;
 // The selected item's documentation beside the list; nil hides it.
 - (void)showDoc:(NSAttributedString *)doc;
+// Builds the windows ahead of the first showing, one piece a call (the
+// list's window, the documentation's, a first layout of each), so each
+// call is short; `prepared` once all are done.
+- (void)prepareStep;
+@property(nonatomic, readonly) BOOL prepared;
 - (void)close;
 - (void)moveSelection:(NSInteger)delta;
 - (NSInteger)selectedRow;
