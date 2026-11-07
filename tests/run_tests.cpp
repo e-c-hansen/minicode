@@ -37,6 +37,7 @@
 #include "ControlProtocol.h"
 #include "PageCheck.h"
 #include "SideBySide.h"
+#include "PreviewScroll.h"
 #include "AgentTranscript.h"
 #include "AgentIndex.h"
 #include "AgentEvidence.h"
@@ -10042,6 +10043,7 @@ static void testMultiCaretOccurrences() {
 #include "folder_search_tests.inc"
 #include "auto_close_tests.inc"
 #include "side_by_side_tests.inc"
+#include "preview_scroll_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10124,6 +10126,7 @@ int main() {
     testPageCheck();
     testSideBySide();
     testSideBySideReview();
+    testPreviewScroll();
     testAgentTranscript();
     testAgentIndex();
     testAgentEvidence();
