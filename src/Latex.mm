@@ -9,12 +9,19 @@
 //     that line, plus the word under the pointer, into a byte range.
 //   * An edit replaces exactly that range. The document is never regenerated
 //     from a model, so nothing the parser missed can be damaged.
+//   * Forward search runs the other way: SyncTeX's records for a source line
+//     give the lines of text on the page it reached (SyncTexIndex::
+//     boxesForLine), lit up for a moment.
+//   * A typeset that fails lists tectonic's problems (LatexLog.h) above its
+//     log, each a link to its line; the controller also dots those lines in
+//     the gutter while the source shows (problemsForPath:source:).
 #import "Latex.h"
 #import "EditorFont.h"
 #import "AppSettings.h"
 #import <Quartz/Quartz.h>
 #import <CommonCrypto/CommonDigest.h>
 #include "LatexDoc.h"
+#include "LatexLog.h"
 #include "LatexScratch.h"
 #include "SyncTex.h"
 #include <sys/stat.h>
@@ -217,6 +224,50 @@ void MCLatexRemoveStaleSiblings(void (^done)(NSUInteger removed)) {
     });
 }
 
+// ------------------------------------------------------------ the problems
+
+@implementation MCLatexProblem
+@end
+
+static NSString *const kProblemLink = @"minicode-latex-problem:";
+
+// tectonic's output as problems in the user's files: the hidden sibling's
+// lines are the document's. Any thread (it asks the disk what exists).
+static NSArray<MCLatexProblem *> *MCLatexProblemsFromLog(NSString *log, NSString *texPath,
+                                                         NSString *sibling) {
+    NSMutableArray<MCLatexProblem *> *out = [NSMutableArray array];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    auto exists = [fm](const std::string &p) {
+        BOOL dir = NO;
+        return [fm fileExistsAtPath:NsStr(p) isDirectory:&dir] && !dir;
+    };
+    for (const LatexLog::Problem &p : LatexLog::parse(Utf8(log ?: @""))) {
+        MCLatexProblem *m = [MCLatexProblem new];
+        const std::string path = LatexLog::sourcePath(p.file, Utf8(texPath ?: @""),
+                                                      Utf8(sibling ?: @""), exists);
+        m.path = path.empty() ? nil : NsStr(path);
+        m.line = m.path ? p.line : 0;
+        m.severity = (NSInteger)p.severity;
+        m.message = NsStr(p.message);
+        [out addObject:m];
+    }
+    return out;
+}
+
+// "Line 5: Undefined control sequence", naming the file when it is not the
+// document itself; `place` gets the part before the colon.
+static NSString *MCDescribeProblem(MCLatexProblem *p, NSString *texPath, NSString **place) {
+    NSString *where = @"";
+    if (p.path && ![p.path isEqualToString:texPath])
+        where = p.line > 0 ? [NSString stringWithFormat:@"%@, line %ld",
+                                 p.path.lastPathComponent, (long)p.line]
+                           : p.path.lastPathComponent;
+    else if (p.line > 0)
+        where = [NSString stringWithFormat:@"Line %ld", (long)p.line];
+    if (place) *place = where;
+    return where.length ? [NSString stringWithFormat:@"%@: %@", where, p.message] : p.message;
+}
+
 // ------------------------------------------------------------ the PDF view
 
 @interface MCPdfView : PDFView
@@ -258,7 +309,7 @@ void MCLatexRemoveStaleSiblings(void (^done)(NSUInteger removed)) {
 
 // ----------------------------------------------------------------- the panel
 
-@interface LatexView () <NSPopoverDelegate>
+@interface LatexView () <NSPopoverDelegate, NSTextViewDelegate>
 @property(nonatomic, strong) MCPdfView *pdf;
 @property(nonatomic, strong) NSView *statusBar;
 @property(nonatomic, strong) NSTextField *statusLabel;
@@ -274,6 +325,7 @@ void MCLatexRemoveStaleSiblings(void (^done)(NSUInteger removed)) {
 @property(nonatomic, assign) BOOL compileQueued;
 @property(nonatomic, assign) NSUInteger generation;
 @property(nonatomic, strong) NSTask *task;
+@property(nonatomic, strong, readwrite) NSArray<MCLatexProblem *> *problems;
 @end
 
 @implementation LatexView {
@@ -291,6 +343,10 @@ void MCLatexRemoveStaleSiblings(void (^done)(NSUInteger removed)) {
     std::string _pdfSrc;         // the source that PDF was typeset from
     NSMutableArray *_pdfWaiters; // pdfForPath: calls waiting on a typeset
     NSString *_folder;           // the output folder this view counts as using
+    std::string _problemsSrc;    // the source `problems` came from
+    NSInteger _forwardLine;      // a forward search waiting for its typeset
+    NSArray<PDFAnnotation *> *_forwardMarks;   // what it lit up, for a moment
+    PDFPage *_forwardPage;
 }
 
 // Enough history for a working session without holding a whole file's worth of
@@ -322,6 +378,7 @@ static const CGFloat kStatusHeight = 26;
     self.logScroll.drawsBackground = YES;
     self.logView = [[NSTextView alloc] initWithFrame:self.bounds];
     self.logView.editable = NO;
+    self.logView.delegate = self;   // the problems' links
     self.logView.font = MCMonoFont(12, NSFontWeightRegular);
     self.logView.textContainerInset = NSMakeSize(12, 12);
     self.logScroll.documentView = self.logView;
@@ -562,7 +619,8 @@ static const CGFloat kStatusHeight = 26;
     // for the Markdown preview's math.
     task.arguments = @[@"--synctex", @"--untrusted", @"--chatter", @"minimal",
                        @"--color", @"never", @"--outdir", outDir, scratch];
-    NSString *cwd = self.texPath.stringByDeletingLastPathComponent;
+    NSString *texPath = self.texPath;
+    NSString *cwd = texPath.stringByDeletingLastPathComponent;
     if (cwd.length) task.currentDirectoryURL = [NSURL fileURLWithPath:cwd];
     NSPipe *pipe = [NSPipe pipe];
     task.standardOutput = pipe;
@@ -602,6 +660,8 @@ static const CGFloat kStatusHeight = 26;
         NSString *log = output.length
             ? [[NSString alloc] initWithData:output encoding:NSUTF8StringEncoding]
             : (runErr.localizedDescription ?: @"");
+        NSArray<MCLatexProblem *> *problems =
+            status == 0 ? @[] : MCLatexProblemsFromLog(log, texPath, scratch);
         if (stopped) log = [stopped stringByAppendingString:log ?: @""];
         NSString *pdfPath = [outDir stringByAppendingPathComponent:
             [stem stringByAppendingPathExtension:@"pdf"]];
@@ -625,11 +685,13 @@ static const CGFloat kStatusHeight = 26;
             me.compiling = NO;
             me.task = nil;
             BOOL ok = status == 0 && doc;
+            [me setProblems:problems fromSource:compiledSrc];
             if (ok) {
-                [me showDocument:doc syncTex:sync];
                 [me keepPdf:pdfData source:compiledSrc];
+                [me showDocument:doc syncTex:sync];
             } else {
-                [me showFailure:log.length ? log : @"tectonic did not run."];
+                me->_forwardLine = 0;   // no page to show it on
+                [me showFailure:log.length ? log : @"tectonic did not run." problems:problems];
             }
             if (me.compileQueued) [me compileNow];
             else [me answerPdfWaiters:ok ? nil : @"The document did not typeset. "
@@ -666,6 +728,112 @@ static const CGFloat kStatusHeight = 26;
     [self setStatus:[NSString stringWithFormat:
         @"%@ · double-click text to edit it", pages] busy:NO];
     self.actionButton.title = @"Recompile";
+    if (_forwardLine > 0 && !self.compiling && _pdfSrc == _src) [self runForwardSearch];
+}
+
+// ---------------------------------------------------------- forward search
+
+- (void)revealSourceLine:(NSInteger)line {
+    _forwardLine = MAX(1, line);
+    // The page on show is the text's: go now. Otherwise the typeset under
+    // way, or the one the last edit scheduled, ends in showDocument.
+    if (!self.compiling && _pdfSrc == _src && self.pdf.document && !self.pdf.isHidden)
+        [self runForwardSearch];
+    else if (!self.compiling)
+        [self scheduleCompile];
+}
+
+- (void)clearForwardMarks {
+    for (PDFAnnotation *a in _forwardMarks) [_forwardPage removeAnnotation:a];
+    if (_forwardMarks.count) [self.pdf annotationsChangedOnPage:_forwardPage];
+    _forwardMarks = nil;
+    _forwardPage = nil;
+}
+
+- (void)runForwardSearch {
+    const NSInteger line = _forwardLine;
+    _forwardLine = 0;
+    if (line <= 0) return;
+    [self clearForwardMarks];
+    if (!_synctex.valid()) {
+        [self setStatus:@"No SyncTeX data, so the page for that line is not known" busy:NO];
+        return;
+    }
+    const int tag = _synctex.tagForPath(Utf8([self scratchTexPath]));
+    int found = 0;
+    const std::vector<SyncTexBox> boxes = _synctex.boxesForLine(tag, (int)line, &found);
+    PDFDocument *doc = self.pdf.document;
+    if (boxes.empty() || boxes[0].page < 1 || (NSUInteger)boxes[0].page > doc.pageCount) {
+        [self setStatus:[NSString stringWithFormat:@"Line %ld put nothing on the page",
+                                                   (long)line] busy:NO];
+        return;
+    }
+    PDFPage *page = [doc pageAtIndex:(NSUInteger)boxes[0].page - 1];
+    const NSRect media = [page boundsForBox:kPDFDisplayBoxMediaBox];
+    NSColor *tint = [NSColor colorWithSRGBRed:0x4E / 255.0 green:0xA1 / 255.0
+                                         blue:0xF7 / 255.0 alpha:0.3];
+    NSMutableArray<PDFAnnotation *> *marks = [NSMutableArray array];
+    NSRect all = NSZeroRect;
+    for (const SyncTexBox &b : boxes) {
+        // SyncTeX measures down from the top, PDF up from the bottom.
+        NSRect r = NSInsetRect(NSMakeRect(b.x, media.size.height - b.y - b.height,
+                                          b.width, b.height), -1.5, -1.5);
+        all = NSIsEmptyRect(all) ? r : NSUnionRect(all, r);
+        PDFAnnotation *a = [[PDFAnnotation alloc] initWithBounds:r
+                                                         forType:PDFAnnotationSubtypeSquare
+                                                  withProperties:nil];
+        PDFBorder *border = [PDFBorder new];
+        border.lineWidth = 0;
+        a.border = border;
+        a.color = tint;
+        a.interiorColor = tint;
+        [page addAnnotation:a];
+        [marks addObject:a];
+    }
+    _forwardMarks = marks;
+    _forwardPage = page;
+    [self.pdf annotationsChangedOnPage:page];
+    // A little of what is above it shows too, for context.
+    [self.pdf goToRect:NSInsetRect(all, 0, -24) onPage:page];
+    NSString *what = found == line
+        ? [NSString stringWithFormat:@"Line %ld is on page %d", (long)line, boxes[0].page]
+        : [NSString stringWithFormat:@"Line %ld put nothing on the page; line %d, on page %d, "
+                                     @"is the nearest that did", (long)line, found, boxes[0].page];
+    [self setStatus:what busy:NO];
+    __weak LatexView *weakSelf = self;
+    NSArray *shown = marks;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        LatexView *me = weakSelf;
+        if (me && me->_forwardMarks == shown) [me clearForwardMarks];
+    });
+}
+
+// --------------------------------------------------------------- problems
+
+- (void)setProblems:(NSArray<MCLatexProblem *> *)problems fromSource:(const std::string &)src {
+    const BOOL changed = !(problems.count == 0 && self.problems.count == 0);
+    self.problems = problems ?: @[];
+    _problemsSrc = src;
+    if (changed && self.onProblemsChanged) self.onProblemsChanged();
+}
+
+- (NSArray<MCLatexProblem *> *)problemsForPath:(NSString *)path source:(NSString *)source {
+    if (!path.length || self.problems.count == 0 || Utf8(source ?: @"") != _problemsSrc) return @[];
+    NSMutableArray *out = [NSMutableArray array];
+    for (MCLatexProblem *p in self.problems)
+        if (p.line > 0 && [p.path isEqualToString:path]) [out addObject:p];
+    return out;
+}
+
+- (BOOL)textView:(NSTextView *)textView clickedOnLink:(id)link atIndex:(NSUInteger)charIndex {
+    NSString *text = [link isKindOfClass:[NSURL class]] ? [link absoluteString] : link;
+    if (![text isKindOfClass:[NSString class]] || ![text hasPrefix:kProblemLink]) return NO;
+    const NSInteger k = [text substringFromIndex:kProblemLink.length].integerValue;
+    if (k < 0 || (NSUInteger)k >= self.problems.count) return YES;
+    MCLatexProblem *p = self.problems[(NSUInteger)k];
+    if (p.path && p.line > 0 && self.onOpenProblem) self.onOpenProblem(p.path, p.line);
+    return YES;
 }
 
 // ------------------------------------------------------------------ export
@@ -705,10 +873,44 @@ static const CGFloat kStatusHeight = 26;
 }
 
 - (void)showFailure:(NSString *)log {
-    self.logView.string = log;
+    [self showFailure:log problems:nil];
+}
+
+// The log, under the problems it holds: a row each, its place a link to the
+// line (onOpenProblem) when it has one.
+- (void)showFailure:(NSString *)log problems:(NSArray<MCLatexProblem *> *)problems {
+    AppSettings *cfg = [AppSettings shared];
+    NSColor *ink = [cfg text:Surface::Editor];
+    NSDictionary *plain = @{NSFontAttributeName: [NSFont systemFontOfSize:13],
+                            NSForegroundColorAttributeName: ink};
+    NSMutableAttributedString *page = [NSMutableAttributedString new];
+    NSString *texPath = self.texPath;
+    [problems enumerateObjectsUsingBlock:^(MCLatexProblem *p, NSUInteger i, BOOL *) {
+        NSString *place = nil;
+        NSString *row = MCDescribeProblem(p, texPath, &place);
+        NSMutableAttributedString *r =
+            [[NSMutableAttributedString alloc] initWithString:[row stringByAppendingString:@"\n"]
+                                                   attributes:plain];
+        if (p.path && p.line > 0 && place.length)
+            [r addAttribute:NSLinkAttributeName
+                      value:[kProblemLink stringByAppendingFormat:@"%lu", (unsigned long)i]
+                      range:NSMakeRange(0, place.length)];
+        [page appendAttributedString:r];
+    }];
+    if (problems.count)
+        [page appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"
+                                                                     attributes:plain]];
+    [page appendAttributedString:[[NSAttributedString alloc] initWithString:log ?: @""
+        attributes:@{NSFontAttributeName: MCMonoFont(12, NSFontWeightRegular),
+                     NSForegroundColorAttributeName: ink}]];
+    [self.logView.textStorage setAttributedString:page];
     self.logScroll.hidden = NO;
     self.pdf.hidden = YES;
-    [self setStatus:@"Did not typeset — see the log" busy:NO];
+    MCLatexProblem *first = problems.firstObject;
+    [self setStatus:first ? [@"Did not typeset: " stringByAppendingString:
+                                 MCDescribeProblem(first, texPath, nullptr)]
+                          : @"Did not typeset — see the log"
+               busy:NO];
     self.actionButton.title = @"Recompile";
 }
 

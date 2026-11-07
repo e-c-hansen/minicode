@@ -163,6 +163,8 @@
 @interface EditorController (Rendering)
 - (void)exportPDF:(id)sender;         // Shift+Cmd+S LaTeX: save the typeset PDF
 @property(nonatomic, readonly) BOOL canExportPDF;
+- (void)showLineInPDF:(id)sender;     // Option+Cmd+J LaTeX: the caret's line on the page
+@property(nonatomic, readonly) BOOL canShowLineInPDF;
 - (void)togglePlayback:(id)sender;     // Shift+Cmd+Space play or pause video/audio
 @property(nonatomic, readonly) BOOL canTogglePlayback;
 @end

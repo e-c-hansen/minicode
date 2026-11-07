@@ -33,6 +33,10 @@ NSColor *MCDiagnosticColor(NSInteger severity);
 
 @interface CodeTextView : NSTextView
 @property(nonatomic, copy) NSArray<MCDiagnosticMark *> *diagnostics;
+// Problems from a build rather than a language server (the LaTeX preview's
+// typeset): dots in the gutter only, kept on their text while it is edited
+// as the diagnostics are, and never touched by the server's session.
+@property(nonatomic, copy) NSArray<MCDiagnosticMark *> *buildMarks;
 // Cmd+click at a character index. Return NO to let the click through.
 @property(nonatomic, copy) BOOL (^onCommandClick)(NSUInteger index);
 // A double-click while the view is read-only (a rendered preview), with the

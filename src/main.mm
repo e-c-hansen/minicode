@@ -543,6 +543,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)clearRecentFolders:(id)sender { (void)sender; MCClearRecentFolders(); }
 - (void)togglePreview:(id)sender   { [[self current] togglePreview:sender]; }
 - (void)exportPDF:(id)sender       { [[self current] exportPDF:sender]; }
+- (void)showLineInPDF:(id)sender   { [[self current] showLineInPDF:sender]; }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (MCEditorOnlyAction(item.action)) return [self keyWindowIsEditor];
     if (item.action == @selector(toggleTreeColumn:)) {
@@ -553,6 +554,7 @@ static BOOL MCWindowTabAction(SEL a) {
     if (item.action == @selector(showContextMenu:))
         return (NSApp.keyWindow ?: NSApp.mainWindow) != nil;
     if (item.action == @selector(exportPDF:)) return [self current].canExportPDF;
+    if (item.action == @selector(showLineInPDF:)) return [self current].canShowLineInPDF;
     if (item.action == @selector(togglePlayback:))
         return [self current].canTogglePlayback;
     if (item.action == @selector(nextTourStop:) || item.action == @selector(previousTourStop:))
@@ -1137,6 +1139,14 @@ static void BuildMenu(void) {
     toggle.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:toggle];
+    // Option+Cmd+J, LaTeX Workshop's SyncTeX from Cursor (forward search).
+    NSMenuItem *lineInPDF =
+        [[NSMenuItem alloc] initWithTitle:@"Show Line in PDF"
+                                   action:@selector(showLineInPDF:)
+                            keyEquivalent:@"j"];
+    lineInPDF.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    [viewMenu addItem:lineInPDF];
 
     NSMenuItem *hints =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Shortcut Hints"

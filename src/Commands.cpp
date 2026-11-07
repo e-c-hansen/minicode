@@ -407,6 +407,9 @@ const std::vector<Command>& all() {
          "showCommandPalette:", 0, 0, nullptr},
         {"markdown.showPreview", "Toggle Preview", "View", "shift+cmd+v", A, "togglePreview:", 0,
          0, nullptr},
+        // LaTeX Workshop's latex-workshop.synctex (SyncTeX from Cursor).
+        {"latex-workshop.synctex", "Show Line in PDF", "View", "alt+cmd+j", A, "showLineInPDF:", 0,
+         0, nullptr},
         {"minicode.toggleShortcutHints", "Toggle Shortcut Hints", "View", "shift+cmd+h", A,
          "toggleHints:", 0, 0, nullptr},
         // In a web page or a PDF, Cmd+= and Cmd+- zoom that instead (Page

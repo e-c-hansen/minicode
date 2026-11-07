@@ -7,6 +7,40 @@
 @implementation MCDiagnosticMark
 @end
 
+// Marks after an edit of `ts`: those after it shift, those it touches
+// stretch over what replaced them.
+static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *> *marks,
+                                                    NSTextStorage *ts) {
+    NSRange er = ts.editedRange;
+    NSInteger delta = ts.changeInLength;
+    NSInteger s = (NSInteger)er.location;
+    NSInteger oldEnd = (NSInteger)NSMaxRange(er) - delta;
+    NSInteger newEnd = (NSInteger)NSMaxRange(er);
+    NSInteger length = (NSInteger)ts.length;
+    NSMutableArray *kept = [NSMutableArray array];
+    for (MCDiagnosticMark *m in marks) {
+        NSInteger a = (NSInteger)m.range.location, b = (NSInteger)NSMaxRange(m.range);
+        if (b <= s) {
+            // before the edit: unchanged
+        } else if (a >= oldEnd) {
+            a += delta; b += delta;
+        } else {
+            a = MIN(a, s);
+            b = MAX(newEnd, b + delta);
+        }
+        a = MAX(0, MIN(a, length));
+        b = MAX(a, MIN(b, length));
+        MCDiagnosticMark *n = [MCDiagnosticMark new];
+        n.range = NSMakeRange((NSUInteger)a, (NSUInteger)(b - a));
+        n.severity = m.severity;
+        n.message = m.message;
+        n.unnecessary = m.unnecessary;
+        n.deprecated = m.deprecated;
+        [kept addObject:n];
+    }
+    return kept;
+}
+
 @implementation CodeTextView {
     NSTrackingArea *_hoverArea;
     MCMultiCarets *_multi;
@@ -53,6 +87,12 @@
     self.enclosingScrollView.verticalRulerView.needsDisplay = YES;   // the gutter's dots
 }
 
+- (void)setBuildMarks:(NSArray<MCDiagnosticMark *> *)marks {
+    if (marks.count == 0 && _buildMarks.count == 0) return;
+    _buildMarks = [marks copy];
+    self.enclosingScrollView.verticalRulerView.needsDisplay = YES;
+}
+
 - (BOOL)resignFirstResponder {
     BOOL ok = [super resignFirstResponder];
     if (ok && _multi.active) self.needsDisplay = YES;   // carets dimmed
@@ -69,36 +109,12 @@
     // formatter, a tab switch) leaves them pointing at the wrong text.
     if ((ts.editedMask & NSTextStorageEditedCharacters) && _multi.active && !_multi.applying)
         [_multi clear];
-    if (!(ts.editedMask & NSTextStorageEditedCharacters) || _diagnostics.count == 0) return;
-    NSRange er = ts.editedRange;
-    NSInteger delta = ts.changeInLength;
-    NSInteger s = (NSInteger)er.location;
-    NSInteger oldEnd = (NSInteger)NSMaxRange(er) - delta;
-    NSInteger newEnd = (NSInteger)NSMaxRange(er);
-    NSInteger length = (NSInteger)ts.length;
-    NSMutableArray *kept = [NSMutableArray array];
-    for (MCDiagnosticMark *m in _diagnostics) {
-        NSInteger a = (NSInteger)m.range.location, b = (NSInteger)NSMaxRange(m.range);
-        if (b <= s) {
-            // before the edit: unchanged
-        } else if (a >= oldEnd) {
-            a += delta; b += delta;
-        } else {
-            a = MIN(a, s);
-            b = MAX(newEnd, b + delta);
-        }
-        a = MAX(0, MIN(a, length));
-        b = MAX(a, MIN(b, length));
-        MCDiagnosticMark *n = [MCDiagnosticMark new];
-        n.range = NSMakeRange((NSUInteger)a, (NSUInteger)(b - a));
-        n.severity = m.severity;
-        n.message = m.message;
-        n.unnecessary = m.unnecessary;
-        n.deprecated = m.deprecated;
-        [kept addObject:n];
+    if (!(ts.editedMask & NSTextStorageEditedCharacters)) return;
+    if (_diagnostics.count) {
+        _diagnostics = MCMarksAfterEdit(_diagnostics, ts);
+        self.needsDisplay = YES;
     }
-    _diagnostics = kept;
-    self.needsDisplay = YES;
+    if (_buildMarks.count) _buildMarks = MCMarksAfterEdit(_buildMarks, ts);
 }
 
 - (NSString *)diagnosticMessageAtIndex:(NSUInteger)index {
