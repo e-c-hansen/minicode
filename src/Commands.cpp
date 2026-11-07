@@ -248,6 +248,8 @@ const std::vector<Command>& all() {
          "restartLanguageServer:", 0, 0, nullptr},
         {"python.setInterpreter", "Select Python Interpreter…", "minicode", "", A,
          "selectPythonInterpreter:", 0, 0, nullptr},
+        {"minicode.forgetFolderToolsAnswer", "Ask Again About This Folder's Tools", "minicode",
+         "", A, "forgetFolderToolsAnswer:", 0, 0, nullptr},
         {"minicode.requestChange", "Request a Change to minicode…", "minicode", "shift+cmd+k", A,
          "requestChange:", 0, 0, nullptr},
         {"minicode.restart", "Restart minicode", "minicode", "", A, "restartMinicode:", 0, 0,
@@ -411,6 +413,9 @@ const std::vector<Command>& all() {
         // Control+Command and its second key, as the folding keys are.
         {"markdown.showPreviewToSide", "Open Preview to the Side", "View", "ctrl+cmd+v", E,
          "toggleSidePreview:", 0, 0, nullptr, "markdown"},
+        // LaTeX Workshop's latex-workshop.synctex (SyncTeX from Cursor).
+        {"latex-workshop.synctex", "Show Line in PDF", "View", "alt+cmd+j", A, "showLineInPDF:", 0,
+         0, nullptr},
         {"minicode.toggleShortcutHints", "Toggle Shortcut Hints", "View", "shift+cmd+h", A,
          "toggleHints:", 0, 0, nullptr},
         // In a web page or a PDF, Cmd+= and Cmd+- zoom that instead (Page

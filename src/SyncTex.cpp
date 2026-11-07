@@ -248,3 +248,92 @@ std::vector<SyncTexHit> SyncTexIndex::textHitsAtPoint(int page, double x,
     }
     return out;
 }
+
+std::vector<SyncTexBox> SyncTexIndex::boxesForLine(int tag, int line,
+                                                   int *foundLine) const {
+    if (foundLine) *foundLine = 0;
+    auto matches = [tag](const Record &r, int l) {
+        return r.line == l && (tag == 0 || r.tag == tag);
+    };
+    auto putSomething = [&](int l) {
+        for (const Record &r : records_)
+            if (matches(r, l)) return true;
+        return false;
+    };
+    // The line itself, else the nearest that put something on a page: a
+    // line below before one above at the same distance, since what follows
+    // a blank line or a comment is what the caret is about to reach.
+    const int kReach = 40;
+    int chosen = 0;
+    for (int d = 0; d <= kReach && !chosen; d++) {
+        if (line + d > 0 && putSomething(line + d)) chosen = line + d;
+        else if (d > 0 && line - d > 0 && putSomething(line - d)) chosen = line - d;
+    }
+    if (!chosen) return {};
+    if (foundLine) *foundLine = chosen;
+
+    // The first page it reached with something other than a vertical box
+    // (a page's own boxes carry the line that ended the page: a \newpage's).
+    auto vertical = [](const Record &r) { return r.type == '[' || r.type == 'v'; };
+    int page = 0, anyPage = 0;
+    for (const Record &r : records_) {
+        if (!matches(r, chosen)) continue;
+        if (!anyPage || r.page < anyPage) anyPage = r.page;
+        if (!vertical(r) && (!page || r.page < page)) page = r.page;
+    }
+    if (!page) page = anyPage;
+
+    auto sized = [](const Record &r) { return r.w > 0 && r.h + r.d > 0; };
+    // The innermost line of text (a sized horizontal box) around a point.
+    auto lineAround = [&](const Record &at) -> const Record * {
+        const Record *best = nullptr;
+        for (const Record &r : records_) {
+            if (r.page != page || r.type != '(' || &r == &at || !sized(r)) continue;
+            if (at.x < r.x - 0.5 || at.x > r.x + r.w + 0.5) continue;
+            if (at.y < r.y - r.h - 0.5 || at.y > r.y + r.d + 0.5) continue;
+            if (!best || r.w * (r.h + r.d) < best->w * (best->h + best->d)) best = &r;
+        }
+        return best;
+    };
+    std::vector<SyncTexBox> out;
+    auto push = [&out, page](const Record &r) {
+        SyncTexBox b;
+        b.page = page;
+        b.x = r.x;
+        b.y = r.y - r.h;
+        b.width = r.w;
+        b.height = r.h + r.d;
+        for (const SyncTexBox &k : out)
+            if (std::fabs(k.x - b.x) < 0.01 && std::fabs(k.y - b.y) < 0.01 &&
+                std::fabs(k.width - b.width) < 0.01 && std::fabs(k.height - b.height) < 0.01)
+                return;
+        out.push_back(b);
+    };
+    // The glue, kerns, math and void boxes the line set, each in its line
+    // of text. A line of text's own record is left out: it carries the
+    // line its paragraph ended on, so it would light up the paragraph's
+    // every line for its last.
+    for (const Record &r : records_) {
+        if (r.page != page || !matches(r, chosen) || r.type == '(' || vertical(r)) continue;
+        if (const Record *around = lineAround(r)) push(*around);
+        else if (sized(r)) push(r);
+    }
+    // Nothing set inside a line of text (a display, a picture): the boxes
+    // themselves, then the smallest vertical one rather than a whole page.
+    if (out.empty())
+        for (const Record &r : records_)
+            if (r.page == page && r.type == '(' && matches(r, chosen) && sized(r)) push(r);
+    if (out.empty()) {
+        const Record *small = nullptr;
+        for (const Record &r : records_)
+            if (r.page == page && vertical(r) && matches(r, chosen) && sized(r) &&
+                (!small || r.w * (r.h + r.d) < small->w * (small->h + small->d)))
+                small = &r;
+        if (small) push(*small);
+    }
+    std::stable_sort(out.begin(), out.end(), [](const SyncTexBox &a, const SyncTexBox &b) {
+        if (std::fabs(a.y - b.y) > 0.01) return a.y < b.y;
+        return a.x < b.x;
+    });
+    return out;
+}

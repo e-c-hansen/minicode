@@ -417,10 +417,13 @@ MC_GUI_SUITE(agent_autosave) {
         return agent.editPending;
     });
     MCGuiPause(0.8);
-    MCGuiStep(@"edited, unsaved, while Keep waits", ^{
-        GCHECK([Text(s.c).string hasPrefix:@"ALPHA\n"]);
+    MCGuiStep(@"proposed, not in the file, while Keep waits", ^{
+        MCAgentSession *agent = [s.c valueForKey:@"agentSession"];
+        GCHECK([agent.pendingText hasPrefix:@"ALPHA\n"]);
+        GCHECK([Text(s.c).string hasPrefix:@"alpha\n"]);
         GCHECK_EQ_STR(disk(), @"alpha\nbeta\n");
-        [(MCAgentSession *)[s.c valueForKey:@"agentSession"] keep];
+        [agent keep];
+        GCHECK([Text(s.c).string hasPrefix:@"ALPHA\n"]);
     });
     MCGuiWait(@"Keep: auto-saved", 3, ^BOOL { return [disk() isEqualToString:@"ALPHA\nbeta\n"]; });
     // Discard: the edit never reaches the disk, and the tab is clean again.
@@ -435,10 +438,12 @@ MC_GUI_SUITE(agent_autosave) {
         return ((MCAgentSession *)[s.c valueForKey:@"agentSession"]).editPending;
     });
     MCGuiPause(0.8);
-    MCGuiStep(@"unsaved; Discard", ^{
-        GCHECK([Text(s.c).string isEqualToString:@"ALPHA\nBETA\n"]);
+    MCGuiStep(@"proposed; Discard", ^{
+        MCAgentSession *agent = [s.c valueForKey:@"agentSession"];
+        GCHECK_EQ_STR(agent.pendingText, @"ALPHA\nBETA\n");
+        GCHECK([Text(s.c).string isEqualToString:@"ALPHA\nbeta\n"]);
         GCHECK_EQ_STR(disk(), @"ALPHA\nbeta\n");
-        [(MCAgentSession *)[s.c valueForKey:@"agentSession"] discard];
+        [agent discard];
         GCHECK([Text(s.c).string isEqualToString:@"ALPHA\nbeta\n"]);
     });
     MCGuiPause(0.6);

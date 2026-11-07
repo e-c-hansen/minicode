@@ -544,6 +544,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)togglePreview:(id)sender   { [[self current] togglePreview:sender]; }
 - (void)toggleSidePreview:(id)sender { [[self current] toggleSidePreview:sender]; }
 - (void)exportPDF:(id)sender       { [[self current] exportPDF:sender]; }
+- (void)showLineInPDF:(id)sender   { [[self current] showLineInPDF:sender]; }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (MCEditorOnlyAction(item.action)) return [self keyWindowIsEditor];
     if (item.action == @selector(toggleTreeColumn:)) {
@@ -554,6 +555,9 @@ static BOOL MCWindowTabAction(SEL a) {
     if (item.action == @selector(showContextMenu:))
         return (NSApp.keyWindow ?: NSApp.mainWindow) != nil;
     if (item.action == @selector(exportPDF:)) return [self current].canExportPDF;
+    if (item.action == @selector(forgetFolderToolsAnswer:))
+        return [self current].canForgetFolderToolsAnswer;
+    if (item.action == @selector(showLineInPDF:)) return [self current].canShowLineInPDF;
     if (item.action == @selector(togglePlayback:))
         return [self current].canTogglePlayback;
     if (item.action == @selector(nextTourStop:) || item.action == @selector(previousTourStop:))
@@ -726,6 +730,9 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)selectPythonInterpreter:(id)sender {
     [[self current] selectPythonInterpreter:sender];
 }
+- (void)forgetFolderToolsAnswer:(id)sender {
+    [[self current] forgetFolderToolsAnswer:sender];
+}
 
 @end
 
@@ -760,6 +767,11 @@ static void BuildMenu(void) {
                 keyEquivalent:@""];
     [appMenu addItemWithTitle:@"Select Python Interpreter…"
                        action:@selector(selectPythonInterpreter:)
+                keyEquivalent:@""];
+    // The folder's answer about running its own .venv and node_modules
+    // programs (the install bar's, Format Document's), taken back.
+    [appMenu addItemWithTitle:@"Ask Again About This Folder's Tools"
+                       action:@selector(forgetFolderToolsAnswer:)
                 keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
     // Hands a change to Claude Code in a terminal of minicode's own source
@@ -1147,6 +1159,14 @@ static void BuildMenu(void) {
     side.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagControl;
     [viewMenu addItem:side];
+    // Option+Cmd+J, LaTeX Workshop's SyncTeX from Cursor (forward search).
+    NSMenuItem *lineInPDF =
+        [[NSMenuItem alloc] initWithTitle:@"Show Line in PDF"
+                                   action:@selector(showLineInPDF:)
+                            keyEquivalent:@"j"];
+    lineInPDF.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    [viewMenu addItem:lineInPDF];
 
     NSMenuItem *hints =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Shortcut Hints"

@@ -281,4 +281,26 @@ static NSMutableSet<NSString *> *EnvironmentQuestionPutOff(void) {
     MCChoosePythonInterpreter(self.lsp, self.window);
 }
 
+// The folder has an answer about running its own tools to take back.
+- (BOOL)canForgetFolderToolsAnswer {
+    return self.rootPath.length && MCFolderToolsConsent(self.rootPath) != nil;
+}
+
+// Ask Again About This Folder's Tools: the answer the install bar or
+// Format Document stored goes. The servers stop using the folder's
+// environment (Lsp+Python.mm restarts them), the bar asks again over a
+// Python file (also when its question was put off with × this launch), and
+// so does the next format with a formatter from the folder.
+- (void)forgetFolderToolsAnswer:(id)sender {
+    (void)sender;
+    if (![self canForgetFolderToolsAnswer]) {
+        NSBeep();
+        return;
+    }
+    [EnvironmentQuestionPutOff() removeObject:self.lsp.root ?: @""];
+    MCForgetFolderToolsConsent(self.rootPath);
+    [self updateInstallBar];
+    [self showStatusNote:@"minicode will ask before running this folder's own tools again"];
+}
+
 @end
