@@ -226,6 +226,12 @@ $(TESTDIR)/%.cpp.o: src/%.cpp $(TESTDIR)/flags.txt
 ASANDIR   := build/test-asan
 ASANFLAGS := $(TESTFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined \
              -fno-sanitize-recover=undefined
+# GCC's -Wmaybe-uninitialized misfires under the sanitizers (in
+# libstdc++'s <regex>, for TextFind), as GCC's manual warns it may; clang
+# would warn about the option itself.
+ifeq ($(findstring clang,$(shell $(CXX) --version 2>/dev/null | head -1)),)
+  ASANFLAGS += -Wno-maybe-uninitialized
+endif
 ASAN_OBJ  := $(ASANDIR)/run_tests.cpp.o $(patsubst src/%,$(ASANDIR)/%.o,$(CORE_SRC))
 ASANCMD   := $(CXX) $(ASANFLAGS)
 ifneq ($(filter test-asan,$(MAKECMDGOALS)),)
