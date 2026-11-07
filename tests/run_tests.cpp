@@ -10027,6 +10027,7 @@ static void testMultiCaretOccurrences() {
 #include "tree_tests.inc"
 #include "lsp_threading_tests.inc"
 #include "multiedit_tests.inc"
+#include "side_by_side_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10107,6 +10108,7 @@ int main() {
     testProcs();
     testPageCheck();
     testSideBySide();
+    testSideBySideReview();
     testAgentTranscript();
     testAgentIndex();
     testAgentEvidence();
