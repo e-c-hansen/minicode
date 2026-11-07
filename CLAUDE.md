@@ -683,7 +683,24 @@ container (PanelHost, laid out by hand in layoutContainer)
   `sizeToFit` to learn its width (5.5 s for 25 MB, nine tenths of it there).
   Known: a keystroke in a 5,000,000-character line costs about 0.35 s, all
   of it TextKit typesetting the paragraph again; the highlighter reads 3
-  units of it.
+  units of it. Switching away from a large tab lays it all out once as the
+  line numbers hide (about 1.3 s at 25 MB). Open question: in the window
+  earlier suites had used, typing at the middle of the 25 MB file cost 16
+  to 48 ms a key, every sample in TextKit walking the laid-out line
+  fragments (`_recalculateUsageForTextContainerAtIndex:`), with the same
+  text laid out (`firstUnlaidCharacterIndex`) as in a fresh window, where
+  it cost 2.7 ms; the cause was not found, so large_file runs in a window
+  of its own.
+- **Trap: anything that lays out all of a large text stays.** Two did on
+  every open after a file with diagnostics or a preview: `needsDisplay =
+  YES` on the text view, which NSTextView answers by laying out every glyph
+  of its bounds (CodeTextView's `setNeedsDisplay:` now redraws only the
+  visible and prepared rects; clearing squiggles took 2.5 s at 25 MB), and
+  the gutter appearing after the text went in, which narrows the view and
+  lays out all of it for its height (`displaySourceEditable` shows the
+  gutter over an empty storage first for a text over 1 MB). Check with
+  `MC_GUI_SAMPLE` after another suite, not only alone (`SUITES="language
+  large_file"` caught both).
 
 ## Highlighting
 

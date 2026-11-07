@@ -11,6 +11,7 @@
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
+#import "ControlServer.h"
 #include <mach/mach_time.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -84,18 +85,28 @@ void SampleFor(NSString *tag, int seconds) {
 MC_GUI_SUITE(large_file) {
     __block EditorController *c = nil;
     __block CodeTextView *tv = nil;
-    NSString *big = MCGuiProjectFile(@"big25.py");
-    NSString *lines = MCGuiProjectFile(@"lines300k.py");
-    NSString *huge = MCGuiProjectFile(@"huge60.txt");
-    NSString *minified = MCGuiProjectFile(@"minified.js");
-    NSString *mac = MCGuiProjectFile(@"oldmac.py");
+    // A window of its own on a folder of its own: what earlier suites left
+    // open (tabs, servers, trees watching the project) does not time this
+    // suite's keystrokes, and 85 MB of files do not land in their folder.
+    NSString *dir = [MCGuiScratch() stringByAppendingPathComponent:@"large-files"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES
+                                               attributes:nil error:nil];
+    NSString *big = [dir stringByAppendingPathComponent:@"big25.py"];
+    NSString *lines = [dir stringByAppendingPathComponent:@"lines300k.py"];
+    NSString *huge = [dir stringByAppendingPathComponent:@"huge60.txt"];
+    NSString *minified = [dir stringByAppendingPathComponent:@"minified.js"];
+    NSString *mac = [dir stringByAppendingPathComponent:@"oldmac.py"];
 
     MCGuiStep(@"a 25 MB Python file opens in large-file mode", ^{
         NSMutableString *s = [NSMutableString stringWithCapacity:26 << 20];
         for (int i = 0; s.length < (25u << 20); i++)
             [s appendFormat:@"value_%d = [1, 2.5, 'three', None]  # note (%d)\n", i, i];
         MCGuiWriteFile(big, s);
-        c = MCGuiController();
+        [(id<MCControlAppHost>)NSApp.delegate controlOpenWindowAtPath:dir];
+        for (EditorController *w in MCGuiControllers())
+            if ([w.rootPath isEqualToString:dir]) c = w;
+        GCHECK(c != nil);
+        MCGuiSetKeyWindow(c.window);
         tv = Editor(c);
         [c focusEditor:nil];
         SampleFor(@"open25", 7);
@@ -235,7 +246,7 @@ MC_GUI_SUITE(large_file) {
         GCHECK(Active(c).largeFile && [c largeFileFeaturesOff]);
         MCTab *hugeTab = Active(c);
         // Under the limit nothing is asked, nor for a file with a tab.
-        NSString *small = MCGuiProjectFile(@"small.txt");
+        NSString *small = [dir stringByAppendingPathComponent:@"small.txt"];
         MCGuiWriteFile(small, @"small\n");
         GCHECK([c showFile:small]);
         GCHECK([c showFile:huge]);
@@ -301,5 +312,13 @@ MC_GUI_SUITE(large_file) {
         GCHECK(![ColorAt(ts, [str rangeOfString:@"def"].location) isEqual:ColorAt(ts, 0)]);
         [tv.undoManager undo];
         GCHECK([c closeTab:Active(c) prompt:NO]);
+    });
+
+    MCGuiStep(@"the suite's window closes, and its files go", ^{
+        [c.window close];
+        c = nil;
+        tv = nil;
+        MCGuiSetKeyWindow(nil);
+        [[NSFileManager defaultManager] removeItemAtPath:dir error:nil];
     });
 }

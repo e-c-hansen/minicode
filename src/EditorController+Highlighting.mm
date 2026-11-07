@@ -19,6 +19,15 @@
         [[NSMutableAttributedString alloc] initWithString:content attributes:base];
     _liveHighlight = NO;                        // applyHighlighting starts it again
     _sourceAttributes = base;
+    // Becoming editable shows the line numbers, which narrows the text view,
+    // and a narrower view lays out all of its text at once to learn its
+    // height: 3 s for 25 MB, after which every keystroke walked every line
+    // fragment (45 ms a key). For a long text the gutter comes first, over
+    // an empty storage.
+    if (!self.textView.editable && content.length > (1u << 20)) {
+        [self.textView.textStorage setAttributedString:[NSAttributedString new]];
+        self.textView.editable = YES;
+    }
     [self.textView.textStorage setAttributedString:attr];
     self.textView.typingAttributes = base;      // typed text stays monospaced
     self.textView.editable = YES;

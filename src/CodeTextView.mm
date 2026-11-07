@@ -36,6 +36,16 @@
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
+// needsDisplay = YES asks to redraw the whole view, and NSTextView lays out
+// every glyph in a rect it is asked to redraw: clearing a file's squiggles
+// laid out all of a 25 MB file (2.5 s), after which every keystroke walked
+// every line fragment. Only what shows, and what AppKit drew ahead of the
+// scroll (the prepared rect), can need redrawing.
+- (void)setNeedsDisplay:(BOOL)flag {
+    if (!flag) { [super setNeedsDisplay:NO]; return; }
+    [self setNeedsDisplayInRect:NSUnionRect(self.visibleRect, self.preparedContentRect)];
+}
+
 - (void)setDiagnostics:(NSArray<MCDiagnosticMark *> *)diagnostics {
     _diagnostics = [diagnostics copy];
     self.needsDisplay = YES;
