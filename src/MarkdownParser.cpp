@@ -1880,8 +1880,11 @@ Doc analyze(const std::string& md) {
         size_t end = e;
         if (end > a && md[end - 1] == '\r') end--;
         MdLine L;
-        L.lineStart = a;
-        L.lineEnd = end;
+        // The text is the whole line until a kind says otherwise, so a line
+        // no rule below touches (a table's separator row) still has its
+        // [start, end) inside the line, not at the top of the file.
+        L.lineStart = L.start = a;
+        L.lineEnd = L.end = end;
         d.lines.push_back(L);
         raw.push_back(md.substr(a, end - a));
         a = e + 1;

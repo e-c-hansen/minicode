@@ -64,6 +64,15 @@ typedef NS_ENUM(NSInteger, MCLineEdit) {
 // The program is in the middle of a synchronized frame and the view is
 // holding its last picture (for tests).
 @property(nonatomic, readonly) BOOL waitingForFrame;
+// Only what changed is redrawn: the rows the screen touched whose cells
+// differ from what the view last drew there, and the rows the cursor left
+// and reached (TerminalGridView.mm, "drawing", says when it is all).
+// For tests: decide now what the last screenChanged would have redrawn on
+// the next run-loop turn; and while recordsInvalidations is on, the rects
+// the view asked to have redrawn, handed over by takeRecordedInvalidations.
+- (void)flushScreenChanges;
+@property(nonatomic) BOOL recordsInvalidations;
+- (NSArray<NSValue *> *)takeRecordedInvalidations;
 // Resize the screen (which reflows it), keeping a scrolled-back view, the
 // selection and the current find match on their text. Call screenChanged
 // after.

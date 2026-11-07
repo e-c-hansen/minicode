@@ -2019,6 +2019,10 @@ static BOOL MCIsOtherShell(pid_t pid) {
     if (_flagsMonitor) [NSEvent removeMonitor:_flagsMonitor];
     [_hiddenTimer invalidate];
     [self stopShell];
+    // The grid can outlive this view (a queued redraw retains it), and its
+    // screen is our member: a redraw after this would read, and since the
+    // screen hands over its dirty rows, write, freed memory.
+    self.grid.screen = nullptr;
 }
 
 // ---------------------------------------------------------------- links
