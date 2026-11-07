@@ -9984,6 +9984,7 @@ static void testMultiCaretOccurrences() {
 #include "latex_safety_tests.inc"
 #include "markdown_gfm_tests.inc"
 #include "lsp_watch_tests.inc"
+#include "terminal_draw_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10009,6 +10010,7 @@ int main() {
     testTerminalHyperlinks();
     testTerminalPaste();
     testTerminalMarks();
+    testTerminalDraw();
     testSettings();
     testSettingsColorEditing();
     testLineComments();
