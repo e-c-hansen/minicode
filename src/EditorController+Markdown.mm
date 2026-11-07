@@ -3,6 +3,8 @@
 #import "EditorController+MarkdownIvars.h"
 #import "TextKit2.h"
 #import "MarkdownMermaid.h"
+#import "MarkdownSidePreview.h"
+#include "MarkdownTasks.h"
 #include "MermaidDiagram.h"
 #import <objc/runtime.h>
 
@@ -108,26 +110,11 @@
 // manager, and it never touches one under TextKit 2, where asking would
 // switch the view over.
 - (NSRect)textRectForCharacter:(NSUInteger)i {
-    NSTextView *tv = self.textView;
-    const NSUInteger n = tv.string.length;
-    if (MCUsesTextKit2(tv) || n == 0) return NSZeroRect;
-    NSLayoutManager *lm = tv.layoutManager;
-    if (i >= n) i = n - 1;
-    [lm ensureLayoutForCharacterRange:NSMakeRange(0, i + 1)];
-    NSRange glyphs = [lm glyphRangeForCharacterRange:NSMakeRange(i, 1)
-                                actualCharacterRange:NULL];
-    NSRect r = [lm boundingRectForGlyphRange:glyphs inTextContainer:tv.textContainer];
-    if (NSIsEmptyRect(r)) r.size = NSMakeSize(1, 1);   // a bare newline
-    NSPoint o = tv.textContainerOrigin;
-    return NSOffsetRect(r, o.x, o.y);
+    return MCTextViewRectForCharacter(self.textView, i);
 }
 
 - (void)scrollEditorToY:(CGFloat)y {
-    NSClipView *clip = self.editorScroll.contentView;
-    const CGFloat most = NSHeight(self.textView.frame) - NSHeight(clip.bounds);
-    y = MAX(0, MIN(y, MAX(0, most)));
-    [clip scrollToPoint:NSMakePoint(clip.bounds.origin.x, y)];
-    [self.editorScroll reflectScrolledClipView:clip];
+    MCScrollTextViewToY(self.editorScroll, self.textView, y);
 }
 
 - (NSInteger)lineOfCharacter:(NSUInteger)i inString:(NSString *)s {
@@ -356,14 +343,45 @@ static char kMarkdownMermaidKey;
         __weak EditorController *weakSelf = self;
         m.onArrived = ^{
             EditorController *s = weakSelf;
-            if (s && [s showsRenderedMarkdown]) [s renderMarkdownKeepingPlace];
+            [s renderShownMarkdownKeepingPlace];
         };
         objc_setAssociatedObject(self, &kMarkdownMermaidKey, m, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     return m;
 }
 
+// The full preview: the page in the editor's own text view, at its top.
 - (void)renderMarkdown:(NSString *)content {
+    NSTextContainer *box = self.textView.textContainer;
+    NSDictionary *anchors = nil;
+    NSAttributedString *page =
+        [self markdownPageFor:content width:box.size.width - 2 * box.lineFragmentPadding
+                      anchors:&anchors];
+    _markdownAnchors = anchors;
+    _liveHighlight = NO;   // rendered Markdown is not source
+    [self.textView.textStorage setAttributedString:page];
+    [self.textView scrollToBeginningOfDocument:nil];
+    [self finishMarkdownPage];
+}
+
+// Formulas the page just shown has not typeset yet go to tectonic in one
+// run, and its diagrams to mmdc; the page renders again as they come back
+// (markdownMathArrived:, markdownMermaid's onArrived).
+- (void)finishMarkdownPage {
+    if (_mathWanted.count) MCMathTypeset(_mathWanted);
+    _mathWanted = nil;
+    [[self markdownMermaid] endPage];
+}
+
+// Rendered Markdown for `content`, laid out for a text `width` points wide,
+// with its headings' and footnotes' places by anchor. What it waits for
+// (math, web pictures, diagrams) is noted for the page that shows it;
+// finishMarkdownPage then sends it off. Shared by the full preview and the
+// one beside the source, which never show at once.
+- (NSMutableAttributedString *)markdownPageFor:(NSString *)content
+                                         width:(CGFloat)width
+                                       anchors:(NSDictionary **)anchorsOut {
+    _markdownPageWidth = width;
     std::string md = content.UTF8String ? content.UTF8String : "";
     std::vector<MdRun> runs = MarkdownParser::parse(md);
     MCMarkdownMermaid *mermaid = [self markdownMermaid];   // ```mermaid blocks
@@ -474,15 +492,8 @@ static char kMarkdownMermaidKey;
         for (NSString *key in anchors.allKeys)
             anchors[key] = @(anchors[key].unsignedIntegerValue + note.length);
     }
-    _markdownAnchors = anchors;
-    _liveHighlight = NO;   // rendered Markdown is not source
-    [self.textView.textStorage setAttributedString:out];
-    [self.textView scrollToBeginningOfDocument:nil];
-    // Formulas not typeset yet go to tectonic in one run; the page renders
-    // again when they are back (markdownMathArrived:).
-    if (_mathWanted.count) MCMathTypeset(_mathWanted);
-    _mathWanted = nil;
-    [mermaid endPage];   // and diagrams to mmdc
+    if (anchorsOut) *anchorsOut = anchors;
+    return out;
 }
 
 // ------------------------------------------------------ math in the preview
@@ -582,20 +593,23 @@ static BOOL MCTectonicCacheIsEmpty(void) {
         EditorController *me = weakSelf;
         if (!me) return;
         me->_tectonicProblem = [problem copy];
-        if (me.isMarkdown && me.previewMode && [path isEqualToString:me.currentPath])
-            [me renderMarkdownKeepingPlace];
+        if (me.isMarkdown && [path isEqualToString:me.currentPath])
+            [me renderShownMarkdownKeepingPlace];
     });
-    [self renderMarkdownKeepingPlace];   // "Downloading..."
+    [self renderShownMarkdownKeepingPlace];   // "Downloading..."
 }
 
 // How long the line about tectonic at the top of the page is, or 0.
-- (NSUInteger)mathNoteLength {
-    NSTextStorage *st = self.textView.textStorage;
+static NSUInteger MCMathNoteLength(NSTextStorage *st) {
     NSRange r = NSMakeRange(0, 0);
     if (st.length && [st attribute:kMarkdownMathNote atIndex:0 longestEffectiveRange:&r
                                 inRange:NSMakeRange(0, st.length)])
         return r.length;
     return 0;
+}
+
+- (NSUInteger)mathNoteLength {
+    return MCMathNoteLength(self.textView.textStorage);
 }
 
 // The typeset formula for a math run, or nil when it is to show as TeX:
@@ -627,10 +641,10 @@ static BOOL MCTectonicCacheIsEmpty(void) {
 
 - (void)showArrivedMathForPath:(NSString *)path {
     _mathRenderQueued = NO;
-    if (!_awaitedMath || ![self showsRenderedMarkdown] || !path ||
+    if (!_awaitedMath || ![self showsMarkdownPage] || !path ||
         ![path isEqualToString:self.currentPath])
         return;
-    [self renderMarkdownKeepingPlace];
+    [self renderShownMarkdownKeepingPlace];
 }
 
 // A web picture finished. When the page on show waits for it, the page is
@@ -653,26 +667,40 @@ static BOOL MCTectonicCacheIsEmpty(void) {
 - (void)showArrivedWebImagesForPath:(NSString *)path {
     _webImageRenderQueued = NO;
     // Not after the window closed, another file was opened, or the source
-    // took the preview's place (the preview renders anew when it is back).
-    if (!_awaitedWebImages || ![self showsRenderedMarkdown] || !path ||
+    // took the preview's place (the preview renders anew when it is back),
+    // unless the page beside the source waits for it.
+    if (!_awaitedWebImages || ![self showsMarkdownPage] || !path ||
         ![path isEqualToString:self.currentPath])
         return;
-    [self renderMarkdownKeepingPlace];
+    [self renderShownMarkdownKeepingPlace];
 }
 
 // Render the preview again, keeping the text at the top of the pane where it
-// was. Each web picture that has arrived takes the place of its alt text, and
-// each typeset formula the place of its TeX, one character for many, and
-// moves what follows by the height it adds, so the text to keep is found
-// again by its character, counted past those replacements (and past the
-// line about tectonic, when it is going). A page at the very top stays at
+// was (keepPlaceIn:scroll:whileRendering:). A page at the very top stays at
 // the top, as a browser's does while its pictures load.
 - (void)renderMarkdownKeepingPlace {
-    NSTextView *tv = self.textView;
-    NSTextStorage *st = tv.textStorage;
     NSClipView *clip = self.editorScroll.contentView;
+    const BOOL unscrolled = NSEqualPoints(clip.bounds.origin, _previewEntryScroll);
+    __weak EditorController *weakSelf = self;
+    [self keepPlaceIn:self.textView scroll:self.editorScroll whileRendering:^{
+        EditorController *me = weakSelf;
+        [me renderMarkdown:[me markdownToRender]];
+    }];
+    if (unscrolled) _previewEntryScroll = clip.bounds.origin;
+}
+
+// `render` replaces the page in `tv` (scrolled by `scroll`): the text at the
+// top of the pane is put back where it was. Each web picture that has
+// arrived takes the place of its alt text, and each typeset formula or
+// drawn diagram the place of its source, one character for many, and moves
+// what follows by the height it adds, so the text to keep is found again by
+// its character, counted past those replacements (and past the line about
+// tectonic, when it comes or goes). A page at its top is left at its top.
+- (void)keepPlaceIn:(NSTextView *)tv scroll:(NSScrollView *)scroll
+     whileRendering:(void (^)(void))render {
+    NSTextStorage *st = tv.textStorage;
+    NSClipView *clip = scroll.contentView;
     const NSPoint origin = clip.bounds.origin;
-    const BOOL unscrolled = NSEqualPoints(origin, _previewEntryScroll);
     NSUInteger anchor = NSNotFound;
     CGFloat offset = 0;
     if (origin.y > 0 && st.length > 0) {
@@ -680,7 +708,7 @@ static BOOL MCTectonicCacheIsEmpty(void) {
         NSUInteger i = [tv characterIndexForInsertionAtPoint:
             NSMakePoint(NSMinX(visible) + 20, NSMinY(visible) + 1)];
         if (i >= st.length) i = st.length - 1;
-        const NSRect r = [self textRectForCharacter:i];
+        const NSRect r = MCTextViewRectForCharacter(tv, i);
         if (!NSIsEmptyRect(r)) {
             offset = NSMinY(r) - NSMinY(visible);
             // Stretches before the anchor that change length: where they
@@ -723,10 +751,10 @@ static BOOL MCTectonicCacheIsEmpty(void) {
             anchor = inside != NSNotFound ? inside : i - shift;
         }
     }
-    const NSUInteger noteBefore = [self mathNoteLength];
-    [self renderMarkdown:[self markdownToRender]];
+    const NSUInteger noteBefore = MCMathNoteLength(st);
+    render();
     // The line about tectonic at the top may have come or gone.
-    const NSUInteger noteAfter = [self mathNoteLength];
+    const NSUInteger noteAfter = MCMathNoteLength(st);
     if (anchor != NSNotFound) {
         if (anchor >= noteBefore) anchor = anchor - noteBefore + noteAfter;
         else anchor = 0;
@@ -734,10 +762,221 @@ static BOOL MCTectonicCacheIsEmpty(void) {
     if (anchor != NSNotFound && st.length > 0) {
         if (!MCUsesTextKit2(tv))   // TextKit 1, as the editor is: the full height
             [tv.layoutManager ensureLayoutForTextContainer:tv.textContainer];
-        const NSRect r = [self textRectForCharacter:MIN(anchor, st.length - 1)];
-        [self scrollEditorToY:NSIsEmptyRect(r) ? origin.y : NSMinY(r) - offset];
+        const NSRect r = MCTextViewRectForCharacter(tv, MIN(anchor, st.length - 1));
+        MCScrollTextViewToY(scroll, tv, NSIsEmptyRect(r) ? origin.y : NSMinY(r) - offset);
     }
-    if (unscrolled) _previewEntryScroll = clip.bounds.origin;
+}
+
+// ------------------------------------------------ the preview to the side
+// Control+Command+V (VS Code's Cmd+K V; minicode has no chords and gives
+// Cmd+K chords Control+Command and the chord's second key, as the folding
+// keys have): the tab's page beside its source, which stays on show and
+// keeps the keyboard. The pane is the window's (MarkdownSidePreview.h); a
+// tab wants it or not (MCTab sidePreview, kept in the session), and the
+// page is rendered by markdownPageFor: as the full preview's is, 0.3 s
+// after typing stops, keeping its place. While the tab shows its full
+// preview (Shift+Cmd+V) the pane steps aside, and comes back with the
+// source.
+
+static const NSTimeInterval kSidePreviewDelay = 0.3;
+
+// The active tab wants the pane and has its source on show.
+- (BOOL)sidePreviewWanted {
+    MCTab *t = _activeTab;
+    return t.sidePreview && t.isMarkdown && !t.previewMode && !t.showingMessage && !t.isDiff &&
+           t.viewerKind == MCViewerNone && t.currentPath != nil;
+}
+
+// The pane is on show with the active tab's page.
+- (BOOL)sidePreviewShowing {
+    return _sidePreview.shown && _sidePreviewTab && _sidePreviewTab == _activeTab &&
+           [self sidePreviewWanted];
+}
+
+- (BOOL)canToggleSidePreview {
+    return self.isMarkdown && _activeTab != nil && !self.showingMessage && !self.isDiff &&
+           self.currentPath != nil;
+}
+
+// A rendered page is on show: the full preview, or the one beside the source.
+- (BOOL)showsMarkdownPage {
+    return [self showsRenderedMarkdown] || [self sidePreviewShowing];
+}
+
+// Render whichever page is on show again, keeping its place (a formula, a
+// picture or a diagram arrived, the zoom changed).
+- (void)renderShownMarkdownKeepingPlace {
+    if ([self showsRenderedMarkdown]) [self renderMarkdownKeepingPlace];
+    else if ([self sidePreviewShowing]) [self renderSidePreviewKeepingPlace];
+}
+
+- (MCMarkdownSidePreview *)sidePreview {
+    if (_sidePreview) return _sidePreview;
+    _sidePreview = [[MCMarkdownSidePreview alloc] initInView:self.rightArea];
+    __weak EditorController *weakSelf = self;
+    _sidePreview.onRender = ^{
+        EditorController *me = weakSelf;
+        if ([me sidePreviewShowing]) [me renderSidePreviewKeepingPlace];
+    };
+    _sidePreview.onLink = ^BOOL(id link, NSUInteger index) {
+        (void)index;
+        return [weakSelf sidePreviewClickedLink:link];
+    };
+    _sidePreview.onDrag = ^(CGFloat x) { [weakSelf sidePreviewBarDraggedTo:x]; };
+    _sidePreview.onClose = ^{ [weakSelf closeSidePreview]; };
+    return _sidePreview;
+}
+
+// The divider between the source and the pane, for the right area's bars.
+- (NSView *)sidePreviewDivider { return _sidePreview.divider; }
+
+// relayoutRightArea: the source's slot, `rect`, split with the pane when
+// the tab wants it and its text is on show (`textShown`). Returns the
+// source's part. A page left from a tab no longer on show goes.
+- (NSRect)layoutSidePreviewIn:(NSRect)rect textShown:(BOOL)textShown {
+    const BOOL wanted = [self sidePreviewWanted];
+    if (_sidePreviewTab && (!wanted || _sidePreviewTab != _activeTab)) [self dropSidePreviewPage];
+    if (!_sidePreview && !(wanted && textShown)) return rect;
+    return [[self sidePreview] layoutInRect:rect shown:wanted && textShown];
+}
+
+- (void)dropSidePreviewPage {
+    [_sidePreview clear];
+    _sidePreviewTab = nil;
+}
+
+// The source is on show (refreshDisplay): the page beside it, the tab's
+// own where it was scrolled when it left, or this one's again where it is.
+- (void)refreshSidePreview {
+    if (![self sidePreviewWanted]) {
+        if (_sidePreviewTab) [self dropSidePreviewPage];
+        return;
+    }
+    [self sidePreview];
+    if (_sidePreviewTab == _activeTab && _sidePreview.textView.textStorage.length) {
+        [self renderSidePreviewKeepingPlace];
+        return;
+    }
+    _sidePreviewTab = _activeTab;
+    [self renderSidePreview];
+    if (_activeTab.sidePreviewY > 0) _sidePreview.scrollY = _activeTab.sidePreviewY;
+}
+
+// The active tab leaves the screen (stashActiveTab): where its page was.
+- (void)sidePreviewTabWillLeave:(MCTab *)t {
+    if (_sidePreviewTab != t) return;
+    t.sidePreviewY = _sidePreview.scrollY;
+    [self dropSidePreviewPage];
+}
+
+// The page for the buffer as it is now, at its top.
+- (void)renderSidePreview {
+    MCMarkdownSidePreview *side = [self sidePreview];
+    [side cancelRender];
+    NSDictionary *anchors = nil;
+    NSAttributedString *page = [self markdownPageFor:self.sourceText ?: @""
+                                               width:side.pageWidth anchors:&anchors];
+    side.anchors = anchors;
+    [side showPage:page];
+    [self finishMarkdownPage];
+}
+
+- (void)renderSidePreviewKeepingPlace {
+    if (!_sidePreview) return;
+    __weak EditorController *weakSelf = self;
+    [self keepPlaceIn:_sidePreview.textView scroll:_sidePreview.scrollView whileRendering:^{
+        [weakSelf renderSidePreview];
+    }];
+}
+
+// The buffer changed (textDidChange:): the page follows once typing pauses.
+- (void)sidePreviewSourceChanged {
+    if (_sidePreviewTab && _sidePreviewTab == _activeTab && [self sidePreviewWanted])
+        [_sidePreview scheduleRenderAfter:kSidePreviewDelay];
+}
+
+- (void)sidePreviewApplySettings {
+    if (!_sidePreview) return;
+    [_sidePreview applySettings];
+    if ([self sidePreviewShowing]) [self renderSidePreviewKeepingPlace];
+}
+
+- (void)toggleSidePreview:(id)sender {
+    (void)sender;
+    if (![self canToggleSidePreview]) {
+        NSBeep();
+        return;
+    }
+    MCTab *t = _activeTab;
+    if (t.sidePreview && [self sidePreviewWanted]) {
+        [self closeSidePreview];
+        return;
+    }
+    t.sidePreview = YES;
+    if (self.previewMode) {
+        // From the full preview: the source comes back, with the page beside it.
+        [self togglePreview:nil];
+    } else {
+        [self revealEditor];
+        [self relayoutRightArea];
+        [self refreshSidePreview];
+    }
+    [self saveSession];
+    if (self.hintsVisible) [self updateHints];
+}
+
+- (void)closeSidePreview {
+    MCTab *t = _activeTab;
+    if (!t.sidePreview) return;
+    t.sidePreview = NO;
+    t.sidePreviewY = 0;
+    const BOOL hadKeyboard = _sidePreview && self.window.firstResponder == _sidePreview.textView;
+    [self dropSidePreviewPage];
+    [self relayoutRightArea];
+    if (hadKeyboard) [self.window makeFirstResponder:self.textView];
+    [self saveSession];
+    if (self.hintsVisible) [self updateHints];
+}
+
+// Dragging the bar between the source and the pane; near the right edge
+// it closes the pane, as the browser's bar hides the browser.
+- (void)sidePreviewBarDraggedTo:(CGFloat)x {
+    if (![_sidePreview dragTo:x]) {
+        [self closeSidePreview];
+        return;
+    }
+    [self relayoutRightArea];
+}
+
+// A link clicked in the pane: a heading or a footnote scrolls the pane, a
+// task's box ticks the task in the source (one undo step, as a click in
+// the full preview is), and the rest open as from the full preview.
+- (BOOL)sidePreviewClickedLink:(id)link {
+    if (![link isKindOfClass:NSString.class]) return NO;
+    NSString *href = link;
+    if ([href hasPrefix:kTaskLinkPrefix]) {
+        const int line = [[href substringFromIndex:kTaskLinkPrefix.length] intValue];
+        const std::string src = Utf8String(self.sourceText ?: @"");
+        const std::string edited = MarkdownTasks::toggleBox(src, line);
+        if (edited == src || !self.textView.editable) {
+            NSBeep();
+            return YES;
+        }
+        [self replaceSourceWithText:[NSString stringWithUTF8String:edited.c_str()]
+                         actionName:@"Toggle Task"];
+        [self renderSidePreviewKeepingPlace];
+        return YES;
+    }
+    if ([href isEqualToString:kMathDownloadLink]) {
+        [self downloadTectonicForMath];
+        return YES;
+    }
+    if ([href hasPrefix:@"#"]) {
+        if (![_sidePreview scrollToAnchor:[href substringFromIndex:1]]) NSBeep();
+        return YES;
+    }
+    [self openMarkdownLink:href];
+    return YES;
 }
 
 @end

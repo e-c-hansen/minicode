@@ -407,6 +407,10 @@ const std::vector<Command>& all() {
          "showCommandPalette:", 0, 0, nullptr},
         {"markdown.showPreview", "Toggle Preview", "View", "shift+cmd+v", A, "togglePreview:", 0,
          0, nullptr},
+        // VS Code's Cmd+K V. minicode has no chords: a Cmd+K chord is
+        // Control+Command and its second key, as the folding keys are.
+        {"markdown.showPreviewToSide", "Open Preview to the Side", "View", "ctrl+cmd+v", E,
+         "toggleSidePreview:", 0, 0, nullptr, "markdown"},
         {"minicode.toggleShortcutHints", "Toggle Shortcut Hints", "View", "shift+cmd+h", A,
          "toggleHints:", 0, 0, nullptr},
         // In a web page or a PDF, Cmd+= and Cmd+- zoom that instead (Page

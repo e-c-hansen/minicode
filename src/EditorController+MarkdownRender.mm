@@ -502,10 +502,7 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
     static const CGFloat kCellChrome = 17;
     std::vector<CGFloat> widths;
     if (typesetMath)
-        widths = MCTableColumnWidths(contents, rows, cols,
-                                     self.textView.textContainer.size.width -
-                                         2 * self.textView.textContainer.lineFragmentPadding,
-                                     kCellChrome);
+        widths = MCTableColumnWidths(contents, rows, cols, _markdownPageWidth, kCellChrome);
 
     for (int row = 0; row < rows; row++) {
         for (int col = 0; col < cols; col++) {
