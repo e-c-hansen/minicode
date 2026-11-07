@@ -258,8 +258,8 @@ The same minicode command drives the copy that is running, which is how a coding
 
 ```
 minicode open src/main.mm:100              # a file at a line, by the usual open rules
-minicode open src/Lsp.mm:3090 --to 3185 --note "Applies rename edits to every file"
-minicode diff src/Lsp.mm                   # side by side against HEAD; --base REF, or two files
+minicode open src/Lsp+WorkspaceEdit.mm:88 --to 160 --note "Applies rename edits to every file"
+minicode diff src/Lsp.h                    # side by side against HEAD; --base REF, or two files
 minicode term --run "make test"            # a new terminal, the command typed and run in plain sight
 minicode term-output 3 --lines 50          # what a terminal shows, scrollback included
 minicode browse localhost:5173 --wait      # the agent page in the browser pane; prints the status

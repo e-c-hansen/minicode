@@ -1,4 +1,5 @@
-// LspShared.h — the small helpers the Lsp files (Lsp.mm, CodeTextView.mm,
+// LspShared.h — the small helpers the Lsp files (Lsp.mm and its
+// Lsp+<Concern>.mm categories, through Lsp+Private.h; CodeTextView.mm,
 // LspServer.mm, LspPopups.mm) share. Only they import it.
 #pragma once
 #import "Lsp.h"
