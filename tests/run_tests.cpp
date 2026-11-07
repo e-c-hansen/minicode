@@ -7514,6 +7514,7 @@ static void testGitStatus() {
     CHECK(timeoutFor(V{"--literal-pathspecs", "add", "--", "a.txt"}) == 120);
     CHECK(timeoutFor(V{"--literal-pathspecs", "restore", "--staged", "--", "a"}) == 120);
     CHECK(timeoutFor(V{"--literal-pathspecs", "rm", "--cached", "--force", "--", "a"}) == 120);
+    CHECK(timeoutFor(V{"switch", "-c", "x"}) == 120 && timeoutFor(V{"switch", "main"}) == 120);
     CHECK(timeoutFor(V{"commit", "-m", "x"}) == 600);
     CHECK(timeoutFor(V{"push"}) == 600 && timeoutFor(V{"push", "--set-upstream", "o", "b"}) == 600);
     CHECK(timeoutFor(V{"pull"}) == 300 && timeoutFor(V{"fetch", "origin"}) == 120);

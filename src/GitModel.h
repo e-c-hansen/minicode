@@ -115,6 +115,81 @@ std::vector<std::string> diffArgs(const Row& r);
 std::vector<std::string> showArgs(const std::string& hash);
 std::vector<std::string> commitArgs(const std::string& message);
 
+// ----------------------------------------- Stage All, Unstage All, Discard
+// A command that may want a question first: VS Code's git.stageAll,
+// git.unstageAll and git.clean. `args` empty and `refusal` set when there is
+// nothing to do; `question` empty when it runs without asking.
+struct ActionPlan {
+    std::vector<std::string> args;
+    std::string refusal;
+    std::string question, detail, button;   // the alert: message, text, first button
+    std::string doneText;                   // under the Commit button afterwards
+};
+
+// Stage All: `add -A -- .` from the top level (new, changed and deleted
+// files, as VS Code's with git.untrackedChanges mixed). Asks first only when
+// some files still have conflicts, since staging one marks it resolved.
+ActionPlan stageAllPlan(const Snapshot& s);
+// Unstage All: `restore --staged -- .`, or before the first commit, which
+// has no HEAD to restore from, `rm --cached -r --force -- .` (both touch
+// only the index). Never asks.
+ActionPlan unstageAllPlan(const Snapshot& s);
+
+// Discard Changes on a file of the Changes list (git.clean). Always asks,
+// naming the file. Undoable: the file as it is goes to the Trash first (an
+// untracked file only goes there; a deleted one has nothing to keep), then
+// a tracked one is restored from the index with `restore --worktree`,
+// which is what that list's diff is against (its staged version, else the
+// last commit's). Undo Discard puts the Trash's copy back (Put Back in the
+// Trash does too). Refused for a staged row (unstage it first, as in VS
+// Code, which offers no discard there), a conflict, and a file added with
+// `git add -N`, which restore would empty.
+struct DiscardPlan : ActionPlan {
+    bool trashFirst = false;   // move the file to the Trash before `args`
+};
+DiscardPlan discardPlan(const Row& r);
+// "Undo Discard of a.txt", for the menus; what is said once it is undone.
+std::string undoDiscardTitle(const std::string& path);
+std::string undoneDiscardText(const std::string& path);
+
+// The Changes row for a path relative to the top level, or -1: Discard
+// Changes from the menu bar acts on the file on show.
+int changesRowFor(const std::vector<Row>& rows, const std::string& path);
+
+// ------------------------------------------------------ the branch picker
+// VS Code's git.checkout: the local branches, most recently committed to
+// first, then the remote branches that have no local branch of their name;
+// choosing one switches to it (a remote one by making a local branch that
+// tracks it), and a name typed that is no branch makes one there.
+std::vector<std::string> branchListArgs();   // for-each-ref, newest first
+
+struct BranchItem {
+    std::string name;     // "main", "origin/feature"
+    std::string detail;   // "current · a1b2c3d", "remote · a1b2c3d"
+    bool remote = false;
+    bool current = false;
+};
+std::vector<BranchItem> branchItems(const std::string& refsOut, const Snapshot& s);
+
+// `switch <branch>`, or for a remote one `switch -c <name> --track
+// <remote>/<name>`; empty for the current branch (nothing to do).
+std::vector<std::string> switchArgs(const BranchItem& b, const Snapshot& s);
+// The local name a remote branch gets: "feature" for "origin/feature".
+std::string localNameFor(const std::string& remoteBranch, const Snapshot& s);
+
+// A typed name as a new branch's: trimmed, spaces made dashes (VS Code's
+// git.branchWhitespaceChar).
+std::string newBranchName(const std::string& typed);
+// Why git would refuse `name` as a branch (check-ref-format's rules), or "".
+std::string branchNameProblem(const std::string& name);
+// The picker's last row for what is typed: "Create branch “x” from main";
+// "" when nothing is typed or a local branch has that name.
+std::string createBranchLabel(const std::string& typed, const std::vector<BranchItem>& items,
+                              const Snapshot& s);
+std::vector<std::string> createBranchArgs(const std::string& name);   // switch -c
+// "Switched to feature.", "Created feature and switched to it."
+std::string switchedText(const std::string& branch, bool created);
+
 // ------------------------------------------------ pushing and pulling
 // The panel's Fetch, Pull, Push and Sync (pull, then push), as VS Code's
 // git.fetch, git.pull, git.push and git.sync do them, without asking first
