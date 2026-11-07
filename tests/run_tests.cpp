@@ -9964,6 +9964,7 @@ static void testMultiCaretOccurrences() {
 #include "gutter_tests.inc"
 #include "terminal_reflow_tests.inc"
 #include "terminal_fuzz.inc"
+#include "parser_fuzz.inc"
 #include "control_tests.inc"
 #include "gitmodel_tests.inc"
 #include "agent_index_tests.inc"
@@ -10009,6 +10010,7 @@ int main() {
     testTerminalMouse();
     testTerminalTrust();
     testTerminalFuzz();
+    testParserFuzz();
     testTerminalHyperlinks();
     testTerminalPaste();
     testTerminalMarks();

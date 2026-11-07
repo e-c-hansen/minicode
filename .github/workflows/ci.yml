@@ -78,6 +78,23 @@ jobs:
         working-directory: linux
         run: make test
 
+  # The core tests again, built with AddressSanitizer and
+  # UndefinedBehaviorSanitizer (`make test-asan`, g++ here), with the
+  # fuzz groups (tests/parser_fuzz.inc, tests/terminal_fuzz.inc) feeding
+  # the parsers random and damaged input. Undefined behaviour is built to
+  # stop the run at its first report, and leaks fail it at exit.
+  sanitizers:
+    name: Core tests under ASan and UBSan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Run core unit tests with sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1:strict_string_checks=1:detect_stack_use_after_return=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: make test-asan
+
   android:
     name: Android debug APK
     runs-on: ubuntu-latest

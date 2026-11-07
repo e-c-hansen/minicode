@@ -96,7 +96,7 @@ ifneq ($(if $(MAKECMDGOALS),$(filter-out clean,$(MAKECMDGOALS)),all),)
           printf '%s\n' '$(VARIANT)' > $(OBJDIR)/variant.txt)
 endif
 
-.PHONY: all app run test guitest fakelsp install dmg dist-zip clean demos membench icon
+.PHONY: all app run test test-asan guitest fakelsp install dmg dist-zip clean demos membench icon
 
 all: app
 
@@ -218,6 +218,44 @@ $(TESTDIR)/%.cpp.o: src/%.cpp $(TESTDIR)/flags.txt
 	@mkdir -p $(@D)
 	$(CXX) $(TESTFLAGS) -MMD -MP -c $< -o $@
 
+# The same tests under AddressSanitizer and UndefinedBehaviorSanitizer, in
+# build/test-asan (CI's Linux job runs it with g++). Undefined behaviour
+# stops the run at the first report instead of printing and going on, so a
+# report is a failure. The fuzz groups (tests/parser_fuzz.inc,
+# tests/terminal_fuzz.inc) are where most of what it finds comes from.
+ASANDIR   := build/test-asan
+ASANFLAGS := $(TESTFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined \
+             -fno-sanitize-recover=undefined
+# GCC's -Wmaybe-uninitialized misfires under the sanitizers (in
+# libstdc++'s <regex>, for TextFind), as GCC's manual warns it may; clang
+# would warn about the option itself.
+ifeq ($(findstring clang,$(shell $(CXX) --version 2>/dev/null | head -1)),)
+  ASANFLAGS += -Wno-maybe-uninitialized
+endif
+ASAN_OBJ  := $(ASANDIR)/run_tests.cpp.o $(patsubst src/%,$(ASANDIR)/%.o,$(CORE_SRC))
+ASANCMD   := $(CXX) $(ASANFLAGS)
+ifneq ($(filter test-asan,$(MAKECMDGOALS)),)
+  $(shell mkdir -p $(ASANDIR) && printf '%s\n' '$(ASANCMD)' | cmp -s - $(ASANDIR)/flags.txt || \
+          printf '%s\n' '$(ASANCMD)' > $(ASANDIR)/flags.txt)
+endif
+
+test-asan: $(ASANDIR)/run_tests
+	@./$(ASANDIR)/run_tests
+
+$(ASANDIR)/run_tests: $(ASAN_OBJ)
+	$(CXX) $(ASANFLAGS) $(ASAN_OBJ) -o $@
+
+$(ASANDIR)/flags.txt:
+	@mkdir -p $(@D) && printf '%s\n' '$(ASANCMD)' > $@
+
+$(ASANDIR)/run_tests.cpp.o: tests/run_tests.cpp $(ASANDIR)/flags.txt
+	@mkdir -p $(@D)
+	$(CXX) $(ASANFLAGS) -MMD -MP -c $< -o $@
+
+$(ASANDIR)/%.cpp.o: src/%.cpp $(ASANDIR)/flags.txt
+	@mkdir -p $(@D)
+	$(CXX) $(ASANFLAGS) -MMD -MP -c $< -o $@
+
 # GUI checks (tests/gui, see tests/gui/README.md): the whole app, main.mm
 # included as minicode_main, driven offscreen by a harness that never puts
 # a window on screen or activates the app. `make guitest SUITES=control`
@@ -313,4 +351,4 @@ build/procmem: tools/procmem.c
 membench: app build/procmem
 	./scripts/membench.sh
 
--include $(OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(CLI_OBJ:.o=.d) $(GUI_OBJ:.o=.d) $(FAKELSP_OBJ:.o=.d)
+-include $(OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(ASAN_OBJ:.o=.d) $(CLI_OBJ:.o=.d) $(GUI_OBJ:.o=.d) $(FAKELSP_OBJ:.o=.d)

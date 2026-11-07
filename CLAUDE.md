@@ -63,6 +63,14 @@ opening comment says what it does in more detail than the lines below.
   meson.build name the same core files, and Android's CMakeLists names every
   core file its own files include), and the `settings:*` count of keys in
   the default settings file.
+- `make test-asan` runs the same tests under ASan and UBSan in
+  `build/test-asan` (UB stops the run); CI's `sanitizers` job runs it with
+  g++ and leak detection. The `fuzz:*` groups (`tests/parser_fuzz.inc` for
+  Json, the LSP framing and Reader, the IDE link, Markdown and settings;
+  `tests/terminal_fuzz.inc`) are seeded and short; `MC_FUZZ_SCALE=40
+  ./build/test-asan/run_tests` runs forty times the rounds. A parser change
+  that breaks a fuzzer's property is a bug in the parser until shown
+  otherwise; the fuzzers use only public interfaces.
 - `make guitest [SUITES="control agents"]`: the offscreen GUI checks in
   `tests/gui` (see "Verification").
 - `make run [DIR=~/path]`, `make icon` (from `tools/makeicon.m`), `make demos
@@ -2254,7 +2262,8 @@ activation. Check each side's breakdown before quoting a number (a first run
 How much of the GUI you can check depends on the port and on whether the
 session has a display. Check first.
 
-- **Core**: `make test`, and `make test CXX=g++-16` for libstdc++.
+- **Core**: `make test`, `make test CXX=g++-16` for libstdc++, and `make
+  test-asan` (also with `CXX=g++-16`) for the sanitizers.
 - **The Mac, committed checks**: `make guitest [SUITES=...]` builds
   `build/guitest` (the whole app with main.mm's `main` renamed `minicode_main`,
   plus `tests/gui/*.mm`) and runs it offscreen; the macOS CI job runs it. The
