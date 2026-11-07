@@ -1597,6 +1597,19 @@ static void BuildMenu(void) {
                                                       keyEquivalent:f8];
     previousProblem.keyEquivalentModifierMask = NSEventModifierFlagShift;
     [navMenu addItem:previousProblem];
+    // F7 and Shift+F7 as in VS Code's diff editor: the compare view's next
+    // or previous run of changes, wrapping. The compare view answers them.
+    NSString *f7 = [NSString stringWithFormat:@"%C", (unichar)NSF7FunctionKey];
+    NSMenuItem *nextDiff = [[NSMenuItem alloc] initWithTitle:@"Next Difference"
+                                                      action:@selector(goToNextDifference:)
+                                               keyEquivalent:f7];
+    nextDiff.keyEquivalentModifierMask = 0;
+    [navMenu addItem:nextDiff];
+    NSMenuItem *prevDiff = [[NSMenuItem alloc] initWithTitle:@"Previous Difference"
+                                                      action:@selector(goToPreviousDifference:)
+                                               keyEquivalent:f7];
+    prevDiff.keyEquivalentModifierMask = NSEventModifierFlagShift;
+    [navMenu addItem:prevDiff];
     // An agent's tour (`minicode tour`): enabled only while one is on, and
     // the key monitor takes the keys only then, so Option+] still types ‘.
     [navMenu addItem:[NSMenuItem separatorItem]];

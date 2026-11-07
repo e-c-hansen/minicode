@@ -583,6 +583,11 @@ const std::vector<Command>& all() {
          nullptr},
         {"editor.action.marker.prev", "Previous Problem", "Navigate", "shift+f8", E,
          "previousProblem:", 0, 0, nullptr},
+        // The compare view's runs of changes, as in VS Code's diff editor.
+        {"editor.action.accessibleDiffViewer.next", "Next Difference", "Navigate", "f7", A,
+         "goToNextDifference:", 0, 0, nullptr},
+        {"editor.action.accessibleDiffViewer.prev", "Previous Difference", "Navigate", "shift+f7",
+         A, "goToPreviousDifference:", 0, 0, nullptr},
         // Only while a tour is on; otherwise Option+] types its character.
         {"minicode.tour.next", "Next Tour Stop", "Navigate", "alt+]", A, "nextTourStop:", 0,
          Global, nullptr},
