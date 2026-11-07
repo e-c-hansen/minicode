@@ -9036,15 +9036,19 @@ static bool mentionsIdent(const std::string &text, const std::string &name) {
     return false;
 }
 
-static void testEditorControllerIvars() {
-    GROUP("structure:ivars");
-    // EditorController's shared class extension (EditorController+Private.h)
-    // holds only the state more than one category uses; a variable of one
-    // category's goes in its own EditorController+<Category>Ivars.h, which
-    // EditorController.mm imports so the ivars are laid out. Every category
-    // sees the shared block, and every one rebuilds when it changes.
+// One class split into categories by concern, as EditorController and
+// LspSession are: its shared class extension (<prefix>Private.h, from
+// `extensionStart` to its closing brace) holds only the state more than one
+// category uses; a variable of one category's goes in its own
+// <prefix><Category>Ivars.h, which `coreFile` imports so the ivars are laid
+// out. Every category sees the shared block, and every one rebuilds when it
+// changes. Categories are the <prefix>*.mm files; the core file is not one
+// of them, and may touch any category's variables (its init does).
+static void checkCategoryIvars(const std::string &prefix, const std::string &coreFile,
+                               const std::string &extensionStart, size_t minShared,
+                               size_t minCategories, size_t minHeaders) {
     namespace fs = std::filesystem;
-    std::ifstream ph("src/EditorController+Private.h");
+    std::ifstream ph("src/" + prefix + "Private.h");
     if (!ph) {
         std::printf("  (src/ not found here; ivar checks skipped)\n");
         return;
@@ -9052,12 +9056,12 @@ static void testEditorControllerIvars() {
     std::stringstream ps;
     ps << ph.rdbuf();
     const std::string priv = ps.str();
-    size_t a = priv.find("@interface EditorController () <NSTextStorageDelegate> {");
+    size_t a = priv.find(extensionStart);
     size_t b = a == std::string::npos ? a : priv.find("\n}\n", a);
     CHECK(a != std::string::npos && b != std::string::npos);
     if (a == std::string::npos || b == std::string::npos) return;
     std::vector<std::string> shared = ivarNamesIn(priv.substr(a, b - a));
-    CHECK(shared.size() >= 10);
+    CHECK(shared.size() >= minShared);
 
     std::map<std::string, std::string> categories;   // file name -> text
     std::vector<std::string> ivarHeaders;
@@ -9067,28 +9071,30 @@ static void testEditorControllerIvars() {
         std::ifstream f(e.path());
         std::stringstream s;
         s << f.rdbuf();
-        if (name == "EditorController.mm") core = s.str();
-        else if (name.rfind("EditorController+", 0) == 0 && e.path().extension() == ".mm")
+        if (name == coreFile) core = s.str();
+        else if (name.rfind(prefix, 0) == 0 && e.path().extension() == ".mm")
             categories[name] = s.str();
-        else if (name.rfind("EditorController+", 0) == 0 && name.size() > 7 &&
+        else if (name.rfind(prefix, 0) == 0 && name.size() > 7 &&
                  name.compare(name.size() - 7, 7, "Ivars.h") == 0)
             ivarHeaders.push_back(name);
     }
-    CHECK(categories.size() >= 10);
+    CHECK(!core.empty());
+    CHECK(categories.size() >= minCategories);
     for (const std::string &v : shared) {
         int users = 0;
         for (const auto &[file, text] : categories) users += mentionsIdent(text, v);
         if (users < 2)
             std::printf("  %s is in the shared ivar block but %s; move it to that category's "
-                        "EditorController+<Category>Ivars.h\n",
-                        v.c_str(), users ? "only one category uses it" : "no category uses it");
+                        "%s<Category>Ivars.h\n",
+                        v.c_str(), users ? "only one category uses it" : "no category uses it",
+                        prefix.c_str());
         CHECK(users >= 2);
     }
-    CHECK(ivarHeaders.size() >= 5);
+    CHECK(ivarHeaders.size() >= minHeaders);
     for (const std::string &h : ivarHeaders) {
         const std::string imp = "#import \"" + h + "\"";
         bool laidOut = core.find(imp) != std::string::npos;
-        if (!laidOut) std::printf("  EditorController.mm does not import %s\n", h.c_str());
+        if (!laidOut) std::printf("  %s does not import %s\n", coreFile.c_str(), h.c_str());
         CHECK(laidOut);
         // No category the header is not imported by uses its variables (the
         // compiler says so too), and the shared block repeats none of them.
@@ -9104,6 +9110,14 @@ static void testEditorControllerIvars() {
                 }
         }
     }
+}
+
+static void testCategoryIvars() {
+    GROUP("structure:ivars");
+    checkCategoryIvars("EditorController+", "EditorController.mm",
+                       "@interface EditorController () <NSTextStorageDelegate> {", 10, 10, 5);
+    // LspSession (Lsp.mm and Lsp+<Concern>.mm), split the same way.
+    checkCategoryIvars("Lsp+", "Lsp.mm", "@interface LspSession () {", 8, 6, 4);
 }
 
 static void testLinuxBuildLists() {
@@ -10098,7 +10112,7 @@ int main() {
     testFormatConsent();
     testInstallHints();
     testLinuxBuildLists();
-    testEditorControllerIvars();
+    testCategoryIvars();
     testLineDiff();
     testAutoIndent();
     testKeepSorted();

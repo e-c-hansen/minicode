@@ -180,6 +180,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
         return self.canToggleSidePreview;
     }
     if (item.action == @selector(togglePlayback:)) return self.canTogglePlayback;
+    if (item.action == @selector(forgetFolderToolsAnswer:)) return self.canForgetFolderToolsAnswer;
     if (item.action == @selector(toggleProblems:)) {
         item.state = self.problemsVisible ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;

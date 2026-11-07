@@ -1,5 +1,5 @@
 // LspPicker.h — Objective-C++. Two small pieces of the language server UI
-// that LspSession (Lsp.mm) drives:
+// that LspSession (Lsp+Actions.mm) drives:
 //
 // MCPickerPopup, a list by the caret for Find All References (rows grouped
 // under a heading per file) and Quick Fixes. Like the completion list it is

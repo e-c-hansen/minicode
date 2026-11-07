@@ -554,6 +554,8 @@ static BOOL MCWindowTabAction(SEL a) {
     if (item.action == @selector(showContextMenu:))
         return (NSApp.keyWindow ?: NSApp.mainWindow) != nil;
     if (item.action == @selector(exportPDF:)) return [self current].canExportPDF;
+    if (item.action == @selector(forgetFolderToolsAnswer:))
+        return [self current].canForgetFolderToolsAnswer;
     if (item.action == @selector(togglePlayback:))
         return [self current].canTogglePlayback;
     if (item.action == @selector(nextTourStop:) || item.action == @selector(previousTourStop:))
@@ -726,6 +728,9 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)selectPythonInterpreter:(id)sender {
     [[self current] selectPythonInterpreter:sender];
 }
+- (void)forgetFolderToolsAnswer:(id)sender {
+    [[self current] forgetFolderToolsAnswer:sender];
+}
 
 @end
 
@@ -760,6 +765,11 @@ static void BuildMenu(void) {
                 keyEquivalent:@""];
     [appMenu addItemWithTitle:@"Select Python Interpreter…"
                        action:@selector(selectPythonInterpreter:)
+                keyEquivalent:@""];
+    // The folder's answer about running its own .venv and node_modules
+    // programs (the install bar's, Format Document's), taken back.
+    [appMenu addItemWithTitle:@"Ask Again About This Folder's Tools"
+                       action:@selector(forgetFolderToolsAnswer:)
                 keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
     // Hands a change to Claude Code in a terminal of minicode's own source

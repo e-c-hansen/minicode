@@ -210,7 +210,14 @@ extern NSNotificationName const MCPythonEnvironmentConsentDidChangeNotification;
 // Python servers of every window on the folder follow.
 NSString *MCFolderToolsConsent(NSString *root);
 void MCSetFolderToolsConsent(NSString *root, BOOL allow);
+// Ask Again About This Folder's Tools: the answer is forgotten (posting the
+// same notification), so the servers stop using the folder's environment
+// and the next use asks again.
+void MCForgetFolderToolsConsent(NSString *root);
 
+// One window's language servers and what the editor shows of them. The
+// class is split by concern, as EditorController is: each `@interface
+// LspSession (Concern)` below is implemented in Lsp+<Concern>.mm.
 @interface LspSession : NSObject
 - (instancetype)initWithTextView:(CodeTextView *)textView root:(NSString *)root;
 
@@ -240,7 +247,24 @@ void MCSetFolderToolsConsent(NSString *root, BOOL allow);
 // The diagnostics changed (published, a file closed, a server stopped):
 // called once for a burst, a moment after it.
 @property(nonatomic, copy) void (^onProblemsChanged)(void);
+// Every jump the session makes (definition, a reference, a problem, a
+// symbol) runs inside this, so the window's Go Back can record it.
+@property(nonatomic, copy) void (^aroundJump)(dispatch_block_t jump);
 
+@property(nonatomic, readonly, copy) NSString *root;
+// The open file's language key, or nil.
+@property(nonatomic, readonly, copy) NSString *currentLanguage;
+
+// Test hooks.
+@property(nonatomic, readonly) NSString *statusText;
+@property(nonatomic, readonly) NSColor *statusDot;
+@property(nonatomic, readonly) NSString *lastHoverText;
+// The last note sent to showNote.
+@property(nonatomic, readonly) NSString *lastNote;
+@end
+
+// ---- the documents the servers have open (Lsp+Sync.mm)
+@interface LspSession (Sync)
 // The file now in the text view, or nil when the view shows no editable
 // source (a message, a binary file, a preview). The previous one stays open
 // on its server while its tab does.
@@ -254,35 +278,46 @@ void MCSetFolderToolsConsent(NSString *root, BOOL allow);
 - (void)documentSavedAtPath:(NSString *)path text:(NSString *)text;
 // The folder changed: stop every server, they belong to the old root.
 - (void)setRoot:(NSString *)root;
-@property(nonatomic, readonly, copy) NSString *root;
 // The window is closing: close documents and shut the servers down.
 - (void)shutdown;
+// Test hooks. The folders watched for the servers'
+// workspace/didChangeWatchedFiles (none until a server registers a
+// watcher), and the batches of changes handed to the servers so far.
+@property(nonatomic, readonly) NSArray<NSString *> *watchedFolders;
+@property(nonatomic, readonly) NSUInteger watchedBatches;
+@end
 
-// Menu actions. Each beeps (and says why in the status bar) when the current
-// file has no server.
+// The menu actions below (triggerCompletion, goToDefinition, renameSymbol,
+// ...) each beep, and say why in the status bar, when the current file has
+// no server.
+
+// ---- completion and the signature hint (Lsp+Completion.mm)
+@interface LspSession (Completion)
 - (void)triggerCompletion;
+// Keys routed from the text view's doCommandBySelector: while the completion
+// list is open (arrows, Return, Tab, Esc), and complete: (Option+Esc).
+// Returns YES when handled.
+- (BOOL)handleCommand:(SEL)selector;
+// Test hooks.
+@property(nonatomic, readonly) BOOL completionVisible;
+@property(nonatomic, readonly) NSArray<NSString *> *completionLabels;
+@property(nonatomic, readonly) NSString *completionSelectedLabel;
+// The documentation panel beside the list: its text, or nil when hidden.
+@property(nonatomic, readonly) NSString *completionDocText;
+// The signature hint's text, or nil when hidden.
+@property(nonatomic, readonly) NSString *signatureText;
+@end
+
+// ---- definition, hover and Go to Symbol (Lsp+Navigation.mm)
+@interface LspSession (Navigation)
 - (void)goToDefinition;
 - (void)showHoverInfo;
-// F2: the name at the caret, through prepareRename when the server has it,
-// in a field under it; Return renames it everywhere the server says. Edits
-// to other files go into their tabs (opened when need be) as one undo step
-// each, unsaved.
-- (void)renameSymbol;
-// Edits to files open in tabs (Replace in Folder), made as rename makes
-// its: every file or none, each in its tab's buffer as one undo step,
-// unsaved. ranges[i] (UTF-16, ascending, not overlapping) and strings[i]
-// are paths[i]'s. Returns how many files changed, or -1 with *failure.
-- (NSInteger)applyEditsToPaths:(NSArray<NSString *> *)paths
-                        ranges:(NSArray<NSArray<NSValue *> *> *)ranges
-                       strings:(NSArray<NSArray<NSString *> *> *)strings
-                    actionName:(NSString *)name
-                       failure:(NSString **)failure;
-// ---- Go to Symbol (Shift+Cmd+O, Cmd+T)
-// The file on show's symbols, from its server when one answers
-// textDocument/documentSymbol, else from the built-in outline; `source`
-// names where they came from ("clangd", "outline"), and caretIndex is the
-// innermost symbol at the caret, or -1. Called once, on the main thread;
-// with nil items when there is no file to list.
+// Go to Symbol (Shift+Cmd+O, Cmd+T). The file on show's symbols, from its
+// server when one answers textDocument/documentSymbol, else from the
+// built-in outline; `source` names where they came from ("clangd",
+// "outline"), and caretIndex is the innermost symbol at the caret, or -1.
+// Called once, on the main thread; with nil items when there is no file to
+// list.
 - (void)documentSymbolsWithCompletion:(void (^)(NSArray<MCSymbolItem *> *items,
                                                 NSInteger caretIndex,
                                                 NSString *source))done;
@@ -297,10 +332,17 @@ void MCSetFolderToolsConsent(NSString *root, BOOL allow);
 - (void)cancelWorkspaceSymbols;
 // Open a workspace symbol's file and select it, as a reference opens.
 - (void)revealSymbol:(MCSymbolItem *)item;
-// Every jump the session makes (definition, a reference, a problem, a
-// symbol) runs inside this, so the window's Go Back can record it.
-@property(nonatomic, copy) void (^aroundJump)(dispatch_block_t jump);
+// Test hook.
+@property(nonatomic, readonly) BOOL hoverVisible;
+@end
 
+// ---- rename, references, quick fixes and Organize Imports (Lsp+Actions.mm)
+@interface LspSession (Actions)
+// F2: the name at the caret, through prepareRename when the server has it,
+// in a field under it; Return renames it everywhere the server says. Edits
+// to other files go into their tabs (opened when need be) as one undo step
+// each, unsaved.
+- (void)renameSymbol;
 // Shift+F12: every reference to the name at the caret, grouped by file, in
 // a list by the caret; Return or a click opens one.
 - (void)findReferences;
@@ -319,7 +361,34 @@ void MCSetFolderToolsConsent(NSString *root, BOOL allow);
 // organize or the action failed (said in the status bar), or after 5
 // seconds without an answer, so a save is never lost to a silent server.
 - (BOOL)organizeImportsBeforeSave:(void (^)(void))done;
-// ---- the Problems list (Shift+Cmd+M) and F8 / Shift+F8
+// Test hooks. The references or quick fix list: its rows as text, which
+// kind it is ("references", "fixes", or nil when hidden), the selected row,
+// its view.
+@property(nonatomic, readonly) NSArray<NSString *> *pickerRows;
+@property(nonatomic, readonly) NSString *pickerKind;
+@property(nonatomic, readonly) NSInteger pickerSelectedRow;
+@property(nonatomic, readonly) NSView *pickerView;
+- (void)acceptPickerRow:(NSInteger)row;
+// The rename field while it shows, else nil; and its popover's view.
+@property(nonatomic, readonly) NSTextField *renameField;
+@property(nonatomic, readonly) NSView *renameView;
+@end
+
+// ---- the workspace edit applier (Lsp+WorkspaceEdit.mm)
+@interface LspSession (WorkspaceEdit)
+// Edits to files open in tabs (Replace in Folder), made as rename makes
+// its: every file or none, each in its tab's buffer as one undo step,
+// unsaved. ranges[i] (UTF-16, ascending, not overlapping) and strings[i]
+// are paths[i]'s. Returns how many files changed, or -1 with *failure.
+- (NSInteger)applyEditsToPaths:(NSArray<NSString *> *)paths
+                        ranges:(NSArray<NSArray<NSValue *> *> *)ranges
+                       strings:(NSArray<NSArray<NSString *> *> *)strings
+                    actionName:(NSString *)name
+                       failure:(NSString **)failure;
+@end
+
+// ---- the Problems list (Shift+Cmd+M) and F8 / Shift+F8 (Lsp+Diagnostics.mm)
+@interface LspSession (Diagnostics)
 // Every diagnostic the window's servers have published: for the files open
 // in its tabs, and for any other file a server reports on (as the server
 // said, against the file on disk). Grouped by file (Lsp::problemRows).
@@ -334,18 +403,13 @@ void MCSetFolderToolsConsent(NSString *root, BOOL allow);
 // F8 / Shift+F8: the caret to the next or previous problem in the file on
 // show, wrapping, with its message in the hover box. Beeps when it has none.
 - (void)goToProblem:(BOOL)forward;
+@end
 
-// Keys routed from the text view's doCommandBySelector: while the completion
-// list is open (arrows, Return, Tab, Esc), and complete: (Option+Esc).
-// Returns YES when handled.
-- (BOOL)handleCommand:(SEL)selector;
-
-// ---- the servers, for the Language Servers popover
+// ---- the servers, for the Language Servers popover (Lsp+Servers.mm)
+@interface LspSession (Servers)
 // Every language MiniCode knows, the open file's first, each followed by its
 // second server when it has one (or the built-in rule would give it one).
 - (NSArray<MCLspServerInfo *> *)serverInfos;
-// The open file's language key, or nil.
-@property(nonatomic, readonly, copy) NSString *currentLanguage;
 // The open file's language key when its server is wanted (lsp.enabled on,
 // the language not off) but was not found; nil otherwise.
 @property(nonatomic, readonly, copy) NSString *missingServer;
@@ -363,8 +427,10 @@ void MCSetFolderToolsConsent(NSString *root, BOOL allow);
 - (void)startServer:(NSString *)key;
 // Restart Language Server: the open file's. Beeps when it has none.
 - (void)restartCurrentServer;
+@end
 
-// ---- the Python interpreter
+// ---- the Python interpreter (Lsp+Python.mm)
+@interface LspSession (Python)
 // The interpreter for the open file (nil: none found), and where the choice
 // came from: this folder's choice, python.interpreter, then the folder's own
 // environment (.venv), $VIRTUAL_ENV and $CONDA_PREFIX. For a run the user
@@ -401,36 +467,6 @@ void MCSetFolderToolsConsent(NSString *root, BOOL allow);
 // Store a choice for this folder (nil: none) and apply it.
 - (void)choosePythonInterpreter:(NSString *)path;
 - (NSArray<MCPythonCandidate *> *)pythonCandidates;
-
-// Test hooks.
-@property(nonatomic, readonly) BOOL completionVisible;
-@property(nonatomic, readonly) NSArray<NSString *> *completionLabels;
-@property(nonatomic, readonly) NSString *completionSelectedLabel;
-// The documentation panel beside the list: its text, or nil when hidden.
-@property(nonatomic, readonly) NSString *completionDocText;
-// The signature hint's text, or nil when hidden.
-@property(nonatomic, readonly) NSString *signatureText;
-@property(nonatomic, readonly) NSString *statusText;
-@property(nonatomic, readonly) NSColor *statusDot;
-@property(nonatomic, readonly) NSString *lastHoverText;
-@property(nonatomic, readonly) BOOL hoverVisible;
-// The references or quick fix list: its rows as text, which kind it is
-// ("references", "fixes", or nil when hidden), the selected row, its view.
-@property(nonatomic, readonly) NSArray<NSString *> *pickerRows;
-@property(nonatomic, readonly) NSString *pickerKind;
-@property(nonatomic, readonly) NSInteger pickerSelectedRow;
-@property(nonatomic, readonly) NSView *pickerView;
-- (void)acceptPickerRow:(NSInteger)row;
-// The rename field while it shows, else nil; and its popover's view.
-@property(nonatomic, readonly) NSTextField *renameField;
-@property(nonatomic, readonly) NSView *renameView;
-// The last note sent to showNote.
-@property(nonatomic, readonly) NSString *lastNote;
-// The folders watched for the servers' workspace/didChangeWatchedFiles
-// (none until a server registers a watcher), and the batches of changes
-// handed to the servers so far.
-@property(nonatomic, readonly) NSArray<NSString *> *watchedFolders;
-@property(nonatomic, readonly) NSUInteger watchedBatches;
 @end
 
 // Where tools are looked for: PATH, then the package managers' directories
