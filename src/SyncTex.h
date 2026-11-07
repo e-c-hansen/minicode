@@ -1,9 +1,10 @@
 // SyncTex.h — pure C++ reader for the .synctex file TeX writes beside a PDF.
 //
-// It answers one question: given a point on a page of the PDF, which lines of
-// which source file put something there? That is what lets a click in the
-// preview find the source it came from. The file itself is gzipped; callers
-// hand the decompressed text to parse().
+// It answers two questions: given a point on a page of the PDF, which lines
+// of which source file put something there (what lets a click in the preview
+// find the source it came from), and the other way round, where on the pages
+// did a source line go (forward search, from the caret to the page). The
+// file itself is gzipped; callers hand the decompressed text to parse().
 #pragma once
 #include <cstddef>
 #include <map>
@@ -16,6 +17,12 @@ struct SyncTexHit {
     double distance = 0;    // 0 when the point is inside the box, in points
     double area = 0;        // box area in points^2; smaller is more specific
     // The box, in PDF points measured from the top-left of the page.
+    double x = 0, y = 0, width = 0, height = 0;
+};
+
+// A box on a page, in PDF points from the page's top-left.
+struct SyncTexBox {
+    int page = 1;           // 1-based
     double x = 0, y = 0, width = 0, height = 0;
 };
 
@@ -42,6 +49,16 @@ public:
     // word), then the nearest to its left. The box hits follow.
     std::vector<SyncTexHit> textHitsAtPoint(int page, double x, double y,
                                             std::size_t maxHits = 8) const;
+
+    // Forward search: the lines of text on the page where `line` of input
+    // `tag` (0 = any input) put something, top to bottom, all on the first
+    // page it reached. A line that put nothing there (a blank line, a
+    // comment, a \usepackage) gives the nearest line that did, a line
+    // below first; `foundLine` says which (0 when none within 40). The
+    // boxes are the lines of text (TeX's horizontal boxes) holding the glue
+    // and kerns that line's words were set with, since a line's box itself
+    // carries the line its paragraph ended on.
+    std::vector<SyncTexBox> boxesForLine(int tag, int line, int *foundLine = nullptr) const;
 
 private:
     struct Record {
