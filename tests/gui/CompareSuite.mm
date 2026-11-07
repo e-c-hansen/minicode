@@ -99,8 +99,19 @@ MC_GUI_SUITE(compare) {
     __block EditorController *c = nil;
     __block MCCompareView *v = nil;
 
-    MCGuiStep(@"a comparison of a Python file, shown", ^{
+    // A window of its own, closed at the end, so the tabs left here never
+    // reach another suite's counts.
+    NSString *dir = [MCGuiScratch() stringByAppendingPathComponent:@"compare"];
+    MCGuiStep(@"a window on a folder of its own", ^{
+        MCGuiWriteFile([dir stringByAppendingPathComponent:@"README.md"], @"compare\n");
+        const NSUInteger before = MCGuiControllers().count;
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
+                                                      openURLs:@[[NSURL fileURLWithPath:dir]]];
+        GCHECK(MCGuiControllers().count == before + 1);
         c = MCGuiController();
+    });
+
+    MCGuiStep(@"a comparison of a Python file, shown", ^{
         [c showComparison:MakeComparison(@"review") preview:YES];
         v = CompareViewOf(c);
         GCHECK(v != nil && !v.hidden);
@@ -184,7 +195,7 @@ MC_GUI_SUITE(compare) {
         id target = [NSApp targetForAction:@selector(goToNextDifference:) to:nil from:item];
         GCHECK(target == v && [target validateMenuItem:item]);
         // In the editor nothing answers F7, and the key does not type.
-        NSString *py = MCGuiProjectFile(@"compare-plain.py");
+        NSString *py = [dir stringByAppendingPathComponent:@"compare-plain.py"];
         MCGuiWriteFile(py, @"x = 1\n");
         GCHECK([c showFile:py]);
         NSTextView *tv = [c valueForKey:@"textView"];
@@ -307,5 +318,13 @@ MC_GUI_SUITE(compare) {
         [c showComparison:cmp preview:YES];
         for (NSUInteger i = 0; i < 3; i++) [cmp decideHunk:i as:-1];
         GCHECK(n == 1 && !yes && cmp.decision == -1);
+    });
+
+    MCGuiStep(@"close the window", ^{ [c.window close]; });
+    MCGuiWait(@"the window gone", 5, ^BOOL { return ![MCGuiControllers() containsObject:c]; });
+    MCGuiStep(@"done with the window", ^{
+        c = nil;
+        v = nil;
+        MCGuiSetKeyWindow(nil);
     });
 }

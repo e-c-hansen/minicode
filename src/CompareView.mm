@@ -59,7 +59,21 @@ struct MCPane {
     std::vector<size_t> starts;            // each row's first character
     std::vector<SideBySide::Span> syntax;  // style: a TokenStyle
     std::vector<SideBySide::Span> words;   // the changed words of changed rows
+    size_t columns = 0;                    // the longest row, a tab as 8
 };
+
+// The panes' font, and the height every row is given (a paragraph style
+// holds it, so a line drawn in a fallback font, an emoji's, is no taller
+// and the panes stay level).
+static NSFont *MCCompareFont() { return MCMonoFont(12.5, NSFontWeightRegular); }
+static CGFloat MCCompareRowHeight() {
+    static CGFloat h;
+    if (!h) {
+        NSLayoutManager *lm = [NSLayoutManager new];
+        h = ceil([lm defaultLineHeightForFont:MCCompareFont()]);
+    }
+    return h;
+}
 
 @interface MCComparison ()
 - (const std::vector<SideBySide::Row> &)rows;
@@ -107,6 +121,13 @@ struct MCPane {
         p.text = SideBySide::paneText(text, _rows, left, &p.starts);
         p.syntax = SideBySide::spansOnPane(text, _rows, left, p.starts, MCSyntaxSpans(text, ext));
         p.words.clear();
+        p.columns = 0;
+        size_t col = 0;
+        for (char16_t ch : p.text) {
+            if (ch == u'\n') col = 0;
+            else col += ch == u'\t' ? 8 : 1;
+            p.columns = std::max(p.columns, col);
+        }
     }
     // The words that changed, row by row, in pane offsets. A line longer
     // than a screen is left to its tint, and past a few megabytes of
@@ -268,27 +289,16 @@ static const CGFloat kGutter = 52;
     return row < _starts.size() ? _starts[row] : self.string.length;
 }
 
+// Every row is one line of the same height, so its place is arithmetic:
+// nothing is laid out to find it.
 - (NSRect)rectOfRow:(size_t)row {
-    NSLayoutManager *lm = self.layoutManager;
-    const NSUInteger ch = [self startOfRow:row];
-    NSRect frag;
-    if (ch >= self.textStorage.length && !NSIsEmptyRect(lm.extraLineFragmentRect)) {
-        frag = lm.extraLineFragmentRect;
-    } else {
-        const NSUInteger g = [lm glyphIndexForCharacterAtIndex:MIN(ch, self.textStorage.length ? self.textStorage.length - 1 : 0)];
-        frag = [lm lineFragmentRectForGlyphAtIndex:g effectiveRange:NULL];
-    }
-    const NSPoint origin = self.textContainerOrigin;
-    return NSMakeRect(0, NSMinY(frag) + origin.y, NSWidth(self.bounds), NSHeight(frag));
+    const CGFloat h = MCCompareRowHeight();
+    return NSMakeRect(0, self.textContainerOrigin.y + (CGFloat)row * h, NSWidth(self.bounds), h);
 }
 
 - (void)drawViewBackgroundInRect:(NSRect)rect {
     [super drawViewBackgroundInRect:rect];
-    NSLayoutManager *lm = self.layoutManager;
-    if (!lm || _rows.empty()) return;
-    const NSPoint origin = self.textContainerOrigin;
-    NSRange glyphs = [lm glyphRangeForBoundingRect:NSOffsetRect(rect, -origin.x, -origin.y)
-                                   inTextContainer:self.textContainer];
+    if (_rows.empty()) return;
     NSDictionary *numAttrs = @{
         NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightRegular],
         NSForegroundColorAttributeName: self.numberColor ?: [NSColor grayColor]};
@@ -296,9 +306,8 @@ static const CGFloat kGutter = 52;
     NSColor *filler = [NSColor colorWithWhite:0.5 alpha:0.07];
     // A hunk the user rejected keeps only a trace of its tint.
     NSColor *dropped = [NSColor colorWithWhite:0.5 alpha:0.10];
-    const CGFloat W = NSWidth(self.bounds);
-    auto drawRow = [&](size_t r, NSRect frag) {
-        NSRect line = NSMakeRect(0, frag.origin.y + origin.y, W, frag.size.height);
+    auto drawRow = [&](size_t r) {
+        const NSRect line = [self rectOfRow:r];
         if (!NSIntersectsRect(line, rect)) return;
         const SideBySide::Row &row = _rows[r];
         const int number = self.leftSide ? row.left : row.right;
@@ -319,14 +328,12 @@ static const CGFloat kGutter = 52;
             withAttributes:numAttrs];
         }
     };
-    [lm enumerateLineFragmentsForGlyphRange:glyphs
-                                 usingBlock:^(NSRect frag, NSRect, NSTextContainer *, NSRange g, BOOL *) {
-        NSUInteger ch = [lm characterIndexForGlyphAtIndex:g.location];
-        drawRow([self rowAtCharacter:ch], frag);
-    }];
-    // The last row, when it is empty, has no line fragment of its own.
-    NSRect extra = lm.extraLineFragmentRect;
-    if (!NSIsEmptyRect(extra) && _rows.size() == _starts.size()) drawRow(_rows.size() - 1, extra);
+    // The rows the rect crosses, by arithmetic (rows are all one height),
+    // so nothing is laid out for the tints and numbers.
+    const CGFloat h = MCCompareRowHeight(), top = self.textContainerOrigin.y;
+    const long first = std::max(0L, (long)floor((NSMinY(rect) - top) / h));
+    const long last = std::min((long)_rows.size() - 1, (long)floor((NSMaxY(rect) - top) / h));
+    for (long r = first; r <= last; r++) drawRow((size_t)r);
 }
 @end
 
@@ -385,6 +392,7 @@ static const CGFloat kHunkGutterWidth = 46, kHunkButton = 17;
     NSTextContainer *tc = [[NSTextContainer alloc] initWithSize:NSMakeSize(FLT_MAX, FLT_MAX)];
     tc.widthTracksTextView = NO;
     [lm addTextContainer:tc];
+    lm.allowsNonContiguousLayout = YES;
     MCCompareTextView *tv = [[MCCompareTextView alloc] initWithFrame:NSMakeRect(0, 0, 400, 400)
                                                        textContainer:tc];
     tv.leftSide = left;
@@ -398,8 +406,9 @@ static const CGFloat kHunkGutterWidth = 46, kHunkButton = 17;
     tv.textContainerInset = NSMakeSize(kGutter, 6);
     tv.minSize = NSMakeSize(0, 0);
     tv.maxSize = NSMakeSize(FLT_MAX, FLT_MAX);
-    tv.verticallyResizable = YES;
-    tv.horizontallyResizable = YES;   // lines never wrap, so rows stay level
+    // Sized by fitTextViews alone; lines never wrap, so rows stay level.
+    tv.verticallyResizable = NO;
+    tv.horizontallyResizable = NO;
     tv.autoresizingMask = NSViewNotSizable;
     scroll.documentView = tv;
     scroll.contentView.postsBoundsChangedNotifications = YES;
@@ -608,14 +617,22 @@ static const CGFloat kHunkGutterWidth = 46, kHunkButton = 17;
     [self fitTextViews];
 }
 
-// Each text view as wide as its longest line or its pane, whichever is more.
+// Each text view as wide as its longest line or its pane, whichever is more,
+// and as tall as its rows: from the font's measures, never by laying the
+// text out (which took 1.5 s for two panes of 50,000 lines). Layout is
+// non-contiguous, so only what is drawn gets laid out.
 - (void)fitTextViews {
-    for (NSScrollView *scroll in @[_leftScroll, _rightScroll]) {
+    static const MCPane empty;
+    const CGFloat advance = [@"0" sizeWithAttributes:@{NSFontAttributeName: MCCompareFont()}].width;
+    const size_t rows = self.comparison ? [self.comparison rows].size() : 0;
+    for (int side = 0; side < 2; side++) {
+        NSScrollView *scroll = side == 0 ? _leftScroll : _rightScroll;
         NSTextView *tv = scroll.documentView;
-        [tv.layoutManager ensureLayoutForTextContainer:tv.textContainer];
-        NSRect used = [tv.layoutManager usedRectForTextContainer:tv.textContainer];
-        CGFloat w = MAX(NSWidth(scroll.contentView.bounds), NSWidth(used) + kGutter + 24);
-        CGFloat h = MAX(NSHeight(scroll.contentView.bounds), NSHeight(used) + 12);
+        const MCPane &pane = self.comparison ? [self.comparison pane:side == 0] : empty;
+        const CGFloat textW = ceil((CGFloat)pane.columns * advance) + 8;
+        const CGFloat textH = (CGFloat)MAX(rows, (size_t)1) * MCCompareRowHeight();
+        CGFloat w = MAX(NSWidth(scroll.contentView.bounds), textW + kGutter + 24);
+        CGFloat h = MAX(NSHeight(scroll.contentView.bounds), textH + 2 * tv.textContainerInset.height);
         [tv setFrameSize:NSMakeSize(w, h)];
     }
 }
@@ -666,9 +683,12 @@ static const CGFloat kHunkGutterWidth = 46, kHunkButton = 17;
 // One pane's text with its syntax colors and changed words.
 - (NSAttributedString *)paneString:(const MCPane &)pane left:(BOOL)left {
     AppSettings *cfg = [AppSettings shared];
+    NSMutableParagraphStyle *rows = [NSMutableParagraphStyle new];
+    rows.minimumLineHeight = rows.maximumLineHeight = MCCompareRowHeight();
     NSDictionary *attrs = @{
-        NSFontAttributeName: MCMonoFont(12.5, NSFontWeightRegular),
-        NSForegroundColorAttributeName: [cfg text:Surface::Editor]};
+        NSFontAttributeName: MCCompareFont(),
+        NSForegroundColorAttributeName: [cfg text:Surface::Editor],
+        NSParagraphStyleAttributeName: rows};
     NSMutableAttributedString *s =
         [[NSMutableAttributedString alloc] initWithString:NSFromU16(pane.text) attributes:attrs];
     const NSUInteger len = s.length;
@@ -742,15 +762,13 @@ static const CGFloat kHunkGutterWidth = 46, kHunkButton = 17;
 
 // ---------------------------------------------------- stepping (F7)
 - (NSUInteger)topRow {
-    NSLayoutManager *lm = _left.layoutManager;
-    if (!self.comparison || _left.textStorage.length == 0) return 0;
-    const NSRect visible = _leftScroll.contentView.bounds;
-    const NSPoint origin = _left.textContainerOrigin;
+    const size_t rows = self.comparison ? [self.comparison rows].size() : 0;
+    if (rows == 0) return 0;
     // The row whose line holds the top edge, or the next when only a sliver
     // of it shows.
-    NSPoint p = NSMakePoint(0, NSMinY(visible) - origin.y + 2);
-    const NSUInteger g = [lm glyphIndexForPoint:p inTextContainer:_left.textContainer];
-    return [_left rowAtCharacter:[lm characterIndexForGlyphAtIndex:g]];
+    const CGFloat y = NSMinY(_leftScroll.contentView.bounds) - _left.textContainerOrigin.y + 2;
+    const long row = (long)floor(y / MCCompareRowHeight());
+    return (NSUInteger)MAX(0L, MIN(row, (long)rows - 1));
 }
 
 // Whether any row of hunk `i` is on screen.

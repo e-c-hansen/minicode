@@ -443,7 +443,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   types); when two commands share a key in different places; and for keys a
   menu cannot show (keypad digits, the Menu key, Ctrl+Shift with punctuation);
   and for a `Tree` command (renameFile on F2, moveFileToTrash on Cmd+Delete)
-  while the tree has the keyboard. A `Tree` command's keys are never put on
+  while the tree has the keyboard; and for a function key whose `Any`
+  command something in the responder chain takes (F7 in the compare view's
+  panes, plain text views that would beep at it). A `Tree` command's keys are never put on
   its menu item, since a menu key acts from every pane (Cmd+Delete once
   trashed the tree's selection from the editor); no view hard-codes them.
   The grid's prompt line edits (Cmd+Left/Right/Delete, Option+Left/Right) and
@@ -1523,6 +1525,19 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
   diff is `CompareView` (`showComparison:preview:`, `MCComparison`, panes
   scrolling together); an `EditorPage` (`showPage:`) is a read-only view in a
   tab, reused by key (Evidence, a worktree's changes).
+- **The compare view** (2026-11-07, W16): `MCComparison prepare` (off the
+  main thread where callers can) works out each pane's text, syntax spans
+  (by `fileName` or `path`, plain past 2 MB a side) and changed words
+  (`SideBySide::wordChanges`, budgeted) in the core; F7 and Shift+F7 step
+  through `SideBySide::hunks` (VS Code's accessibleDiffViewer ids), the
+  compare view answering them. A comparison with a decision gets a ✓ and ✕
+  per hunk in a gutter between the panes (`rectForHunk:accept:`,
+  `pressHunkButtonAtPoint:`, for tests); `acceptedText` is
+  `SideBySide::assemble` of the accepted hunks (the right text when all).
+  Trap: laying both panes out to size them took 1.5 s on the main thread
+  for 50,000 lines a side; every row has one fixed height (a paragraph
+  style), so sizes and row rects are arithmetic and layout is
+  non-contiguous. Keep anything that would lay out the whole text out.
 
 ## The terminal
 
@@ -2154,7 +2169,8 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   `openTabForAgent:preview:quiet:` (beside the user while they type) and
   highlights startText..endText with an empty note; openDiff is a
   comparison tab (`showComparison:preview:NO quiet:YES`) with a decision bar
-  (`MCComparison decisionPrompt/onDecision`, CompareView); closing the tab
+  (`MCComparison decisionPrompt/onDecision`, CompareView) and Accept and
+  Reject per hunk, FILE_SAVED carrying `acceptedText`; closing the tab
   rejects (`closePageOf:` calls `tabClosed`); close_tab and closeAllDiffTabs
   close only comparisons the link offered. Not offered: saveDocument,
   executeCode. A client that goes leaves its diff saying so.
