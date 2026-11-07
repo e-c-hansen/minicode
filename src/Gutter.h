@@ -36,6 +36,10 @@ typedef NS_ENUM(NSInteger, MCLineNumbers) {
 @property(nonatomic, strong) NSColor *numberColor, *activeNumberColor, *backgroundColor;
 // The line a character is on (0-based), from the index.
 - (NSUInteger)lineOfCharacter:(NSUInteger)index;
+// Where a line starts, and how many there are (a text ending in a break has
+// an empty last line), from the same index.
+- (NSUInteger)startOfLine:(NSUInteger)line;
+@property(nonatomic, readonly) NSUInteger lineCount;
 // Whether it is showing now.
 @property(nonatomic, readonly) BOOL shown;
 @end

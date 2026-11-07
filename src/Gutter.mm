@@ -182,6 +182,12 @@ static const NSUInteger kMinDigits = 3;
     return _index.lineOf(index);
 }
 
+- (NSUInteger)startOfLine:(NSUInteger)line {
+    return line < _index.lineCount() ? _index.lineStart(line) : _index.length();
+}
+
+- (NSUInteger)lineCount { return _index.lineCount(); }
+
 // ---- drawing
 // The lines the carets are on: the end of each selection, as VS Code
 // highlights the cursor's line rather than the anchor's.

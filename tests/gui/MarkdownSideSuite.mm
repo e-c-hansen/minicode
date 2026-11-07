@@ -13,6 +13,9 @@
 #import "EditorController+Private.h"
 #import "EditorPanes.h"
 #import "MarkdownSidePreview.h"
+#import "MarkdownEditPanel.h"
+#import "Gutter.h"
+#include <mach/mach.h>
 
 namespace {
 
@@ -197,5 +200,260 @@ MC_GUI_SUITE(markdown_side) {
         for (MCTab *t in [(NSArray *)[c valueForKey:@"tabs"] copy])
             if ([t.currentPath isEqualToString:other] || [t.currentPath isEqualToString:md])
                 [c closeTab:t prompt:NO];
+    });
+}
+
+// ---------------------------------------------------------------------
+// `make guitest SUITES=markdown_side_sync`: the page and its source scroll
+// together, either one leading (VS Code's scrollPreviewWithEditor and
+// scrollEditorWithPreview), each landing the other within a line and
+// neither moving back the side the user scrolled; the block of the
+// source's caret line is marked in the page (markEditorSelection); a
+// double-click in the page opens the block editor, whose edit goes into
+// the source as one splice and one undo step; and following costs little
+// main-thread CPU time on a long page.
+
+namespace {
+
+// The source line `line` starts on, put at the source's top.
+void ScrollSourceToLine(EditorController *c, NSUInteger line) {
+    MCLineGutter *g = [c valueForKey:@"gutter"];
+    const NSRect r = MCTextViewRectForCharacter(Source(c), [g startOfLine:line]);
+    MCScrollTextViewToY(SourceScroll(c), Source(c), NSMinY(r));
+}
+
+// The source line at the source's top, from the editor's own index.
+NSUInteger SourceTop(EditorController *c) {
+    NSTextView *tv = Source(c);
+    const NSRect v = tv.visibleRect;
+    const NSUInteger i =
+        [tv characterIndexForInsertionAtPoint:NSMakePoint(NSMidX(v), NSMinY(v) + 2)];
+    return [(MCLineGutter *)[c valueForKey:@"gutter"] lineOfCharacter:i];
+}
+
+// The source line of the page's text at the page's top.
+NSInteger PageTop(EditorController *c) {
+    NSTextView *tv = Side(c).textView;
+    const NSRect v = tv.visibleRect;
+    NSUInteger i =
+        [tv characterIndexForInsertionAtPoint:NSMakePoint(NSMinX(v) + 30, NSMinY(v) + 2)];
+    NSTextStorage *st = tv.textStorage;
+    if (i >= st.length) i = st.length - 1;
+    NSNumber *line = [st attribute:kMarkdownSourceLine atIndex:i effectiveRange:NULL];
+    return line ? line.integerValue : -1;
+}
+
+NSUInteger PageAt(EditorController *c, NSString *text) {
+    return [Side(c).textView.string rangeOfString:text].location;
+}
+
+// The main thread's CPU time in ms (wall time varies with the machine's load).
+double CpuMs() {
+    thread_basic_info_data_t info;
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    const mach_port_t self = mach_thread_self();
+    const kern_return_t kr = thread_info(self, THREAD_BASIC_INFO, (thread_info_t)&info, &count);
+    mach_port_deallocate(mach_task_self(), self);
+    if (kr != KERN_SUCCESS) return 0;
+    return (info.user_time.seconds + info.system_time.seconds) * 1e3 +
+           (info.user_time.microseconds + info.system_time.microseconds) / 1e3;
+}
+
+// How the two strings differ: the one stretch of `a` that `b` replaces.
+NSRange Changed(NSString *a, NSString *b, NSString **with) {
+    NSUInteger p = 0, s = 0;
+    while (p < a.length && p < b.length && [a characterAtIndex:p] == [b characterAtIndex:p]) p++;
+    while (s < a.length - p && s < b.length - p &&
+           [a characterAtIndex:a.length - 1 - s] == [b characterAtIndex:b.length - 1 - s])
+        s++;
+    if (with) *with = [b substringWithRange:NSMakeRange(p, b.length - p - s)];
+    return NSMakeRange(p, a.length - p - s);
+}
+
+}  // namespace
+
+MC_GUI_SUITE(markdown_side_sync) {
+    __block EditorController *c = nil;
+    NSString *md = MCGuiProjectFile(@"sync.md");
+    // Ten lines a section: heading (10k), blank, a paragraph of two lines
+    // (10k+2, 10k+3), blank, a fence, two code lines (10k+6, 10k+7), the
+    // closing fence, blank.
+    NSMutableString *text = [NSMutableString string];
+    for (int k = 0; k < 120; k++)
+        [text appendFormat:@"## Section %d\n\nParagraph %d line one\ncontinues on line two of %d.\n\n"
+                           @"```\ncode %d a\ncode %d b\n```\n\n", k, k, k, k, k];
+
+    MCGuiStep(@"a long file with the page beside it", ^{
+        MCGuiWriteFile(md, text);
+        c = MCGuiController();
+        GCHECK([c showFile:md]);
+        if (c.previewMode) [c togglePreview:nil];
+        [c focusEditor:nil];
+        if (![c sidePreviewShowing]) [c toggleSidePreview:nil];
+        GCHECK([c sidePreviewShowing]);
+        GCHECK([Page(c) containsString:@"Section 119"]);
+        [Side(c).textView.layoutManager ensureLayoutForTextContainer:Side(c).textView.textContainer];
+        GCHECK(NSHeight(Side(c).textView.frame) > 4 * NSHeight(Side(c).scrollView.frame));
+    });
+
+    MCGuiStep(@"scrolling the source moves the page to the same line", ^{
+        for (NSUInteger line : {500u, 503u, 806u, 1000u}) {
+            ScrollSourceToLine(c, line);
+            const NSInteger page = PageTop(c);
+            MCGuiNote(@"source at %lu (top line %.2f): page at %ld (%.2f)",
+                      (unsigned long)SourceTop(c), Side(c).sourceTopLine, (long)page,
+                      Side(c).pageTopLine);
+            GCHECK(SourceTop(c) == line);
+            GCHECK(labs(page - (NSInteger)line) <= 1);
+            GCHECK(fabs(Side(c).pageTopLine - Side(c).sourceTopLine) < 1);
+            GCHECK(!Side(c).pageLeads);
+        }
+        // Back to the top: the page's top too.
+        MCScrollTextViewToY(SourceScroll(c), Source(c), 0);
+        GCHECK(Side(c).scrollY < 1);
+    });
+
+    MCGuiStep(@"scrolling the page moves the source, and the page stays where it was put", ^{
+        NSTextView *page = Side(c).textView;
+        for (NSString *at in @[@"code 80 b", @"Section 30", @"continues on line two of 95."]) {
+            const NSUInteger i = PageAt(c, at);
+            GCHECK(i != NSNotFound);
+            if (i == NSNotFound) continue;
+            const CGFloat y = NSMinY(MCTextViewRectForCharacter(page, i));
+            MCScrollTextViewToY(Side(c).scrollView, page, y);
+            const NSInteger want = [[page.textStorage attribute:kMarkdownSourceLine atIndex:i
+                                                 effectiveRange:NULL] integerValue];
+            MCGuiNote(@"page at %@ (line %ld, %.2f): source at %lu (%.2f)", at, (long)want,
+                      Side(c).pageTopLine, (unsigned long)SourceTop(c), Side(c).sourceTopLine);
+            GCHECK(labs((NSInteger)SourceTop(c) - want) <= 1);
+            GCHECK(fabs(Side(c).sourceTopLine - Side(c).pageTopLine) < 1);
+            GCHECK(fabs(Side(c).scrollY - y) < 0.5);   // the source following did not move it back
+            GCHECK(Side(c).pageLeads);
+        }
+        // The source scrolled again leads again.
+        ScrollSourceToLine(c, 300);
+        GCHECK(!Side(c).pageLeads && labs(PageTop(c) - 300) <= 1);
+    });
+
+    MCGuiStep(@"typing re-renders the page at the source's line", ^{
+        NSTextView *tv = Source(c);
+        MCLineGutter *g = [c valueForKey:@"gutter"];
+        ScrollSourceToLine(c, 600);
+        tv.selectedRange = NSMakeRange([g startOfLine:612], 0);
+        Type(tv, @"Typed ");
+        ScrollSourceToLine(c, 600);
+    });
+    MCGuiWait(@"the page to follow the typing", 3, ^BOOL {
+        return [Page(c) containsString:@"Typed Paragraph 61"];
+    });
+    MCGuiStep(@"the page is still at the source's line", ^{
+        MCGuiNote(@"source %lu, page %ld", (unsigned long)SourceTop(c), (long)PageTop(c));
+        GCHECK(SourceTop(c) == 600 && labs(PageTop(c) - 600) <= 1);
+    });
+
+    MCGuiStep(@"the caret's block is marked in the page", ^{
+        NSTextView *tv = Source(c);
+        MCLineGutter *g = [c valueForKey:@"gutter"];
+        NSString *page = Page(c);
+        NSString * (^marked)(void) = ^NSString * {
+            const NSRange r = Side(c).markedRange;
+            return r.location == NSNotFound ? @"" : [page substringWithRange:r];
+        };
+        // A paragraph's second line: the whole paragraph.
+        tv.selectedRange = NSMakeRange([g startOfLine:503] + 3, 0);
+        MCGuiNote(@"marked: \"%@\" at %@", marked(), NSStringFromRect(Side(c).markRect));
+        GCHECK([marked() containsString:@"Paragraph 50 line one"] &&
+               [marked() containsString:@"line two of 50."] &&
+               ![marked() containsString:@"Section"]);
+        const NSRect bar = Side(c).markRect;
+        const NSRect first =
+            MCTextViewRectForCharacter(Side(c).textView, PageAt(c, @"Paragraph 50 line one"));
+        const NSRect last =
+            MCTextViewRectForCharacter(Side(c).textView, PageAt(c, @"line two of 50."));
+        GCHECK(!NSIsEmptyRect(bar) && NSWidth(bar) == 3 && NSMaxX(bar) < NSMinX(first));
+        GCHECK(NSMinY(bar) <= NSMinY(first) + 1 && NSMaxY(bar) >= NSMaxY(last) - 1);
+        // A code block's line: the whole block.
+        tv.selectedRange = NSMakeRange([g startOfLine:806], 0);
+        GCHECK([marked() containsString:@"code 80 a"] && [marked() containsString:@"code 80 b"]);
+        // A blank line: the block above it.
+        tv.selectedRange = NSMakeRange([g startOfLine:801], 0);
+        MCGuiNote(@"on a blank line: \"%@\"", marked());
+        GCHECK([marked() containsString:@"Section 80"]);
+        // The heading itself.
+        tv.selectedRange = NSMakeRange([g startOfLine:900] + 4, 0);
+        GCHECK([marked() hasPrefix:@"Section 90"]);
+        tv.selectedRange = NSMakeRange([g startOfLine:903] + 4, 0);
+        ScrollSourceToLine(c, 896);
+        MCGuiSnapshot(c.window.contentView, @"markdown_side_mark");
+    });
+
+    MCGuiStep(@"a double-click in the page edits its block in the source: one splice, one undo step", ^{
+        NSTextView *page = Side(c).textView;
+        NSTextView *tv = Source(c);
+        const NSUInteger i = PageAt(c, @"Paragraph 70 line one");
+        GCHECK(i != NSNotFound);
+        if (i == NSNotFound) return;
+        const NSRect r = MCTextViewRectForCharacter(page, i + 3);
+        const NSPoint at = [page convertPoint:NSMakePoint(NSMidX(r), NSMidY(r)) toView:nil];
+        NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:at
+                                      modifierFlags:0 timestamp:0
+                                       windowNumber:c.window.windowNumber context:nil
+                                        eventNumber:0 clickCount:2 pressure:1];
+        [page mouseDown:down];
+        MCMarkdownEditPanel *panel = [c valueForKey:@"markdownEditPanel"];
+        NSTextView *editor = [panel valueForKey:@"_editor"];
+        GCHECK_EQ_STR(editor.string, @"Paragraph 70 line one\ncontinues on line two of 70.");
+        NSString *before = [tv.string copy];   // the view's string is its live storage
+        // The caret, on line 904 since the step before, after the edit.
+        const NSRange caret = tv.selectedRange;
+        GCHECK(caret.location > NSMaxRange([before rangeOfString:@"two of 70."]));
+        editor.string = @"Paragraph seventy, rewritten from the page.";
+        MCGuiUndoGroup(tv.undoManager, ^{
+            [panel performSelector:@selector(save:) withObject:nil];
+        });
+        NSString *with = nil;
+        const NSRange changed = Changed(before, tv.string, &with);
+        GCHECK_EQ_STR([before substringWithRange:changed], @"70 line one\ncontinues on line two of 70");
+        GCHECK_EQ_STR(with, @"seventy, rewritten from the page");
+        GCHECK([c.sourceText isEqualToString:tv.string]);
+        GCHECK(Active(c).dirty);
+        // The caret keeps its place in the text, moved by what the edit took out.
+        GCHECK(tv.selectedRange.location == caret.location - (changed.length - with.length));
+        GCHECK([Page(c) containsString:@"seventy, rewritten from the page."]);   // shown at once
+        GCHECK_EQ_STR(tv.undoManager.undoActionName, @"Preview Edit");
+        [tv.undoManager undo];
+        GCHECK([tv.string isEqualToString:before]);
+        [panel close];
+    });
+
+    MCGuiStep(@"following a long page costs little main-thread CPU time", ^{
+        // The map is made once a render (the render's last step, its
+        // page following the source); each scroll after it is a search of
+        // it and a few rects. The render alone, for scale:
+        double c0 = CpuMs();
+        [Side(c) holdFollowing:^{ [c renderSidePreview]; }];
+        const double render = CpuMs() - c0;
+        c0 = CpuMs();
+        [Side(c) pageRendered];   // the map made, the block marked, the page followed
+        const double first = CpuMs() - c0;
+        c0 = CpuMs();
+        for (int k = 0; k < 200; k++) ScrollSourceToLine(c, (NSUInteger)((k * 37) % 1190));
+        const double sourceLed = CpuMs() - c0;
+        NSTextView *page = Side(c).textView;
+        const CGFloat height = NSHeight(page.frame);
+        c0 = CpuMs();
+        for (int k = 0; k < 200; k++)
+            MCScrollTextViewToY(Side(c).scrollView, page, fmod(k * 997.0, height));
+        const double pageLed = CpuMs() - c0;
+        MCGuiNote(@"CPU: render %.1f ms; map %.1f ms; 200 source-led %.1f ms; 200 page-led %.1f ms",
+                  render, first, sourceLed, pageLed);
+        GCHECK(first < MAX(400, render));
+        GCHECK(sourceLed < 400 && pageLed < 400);
+    });
+
+    MCGuiStep(@"done", ^{
+        [Source(c).undoManager removeAllActions];
+        for (MCTab *t in [(NSArray *)[c valueForKey:@"tabs"] copy])
+            if ([t.currentPath isEqualToString:md]) [c closeTab:t prompt:NO];
     });
 }

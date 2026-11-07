@@ -1351,6 +1351,19 @@ view is disposed (on `unrealize`), or dispose loops forever.
   `_awaitedWebImages`, the Mermaid page); arrivals go through
   `renderShownMarkdownKeepingPlace`. Layout: `layoutSidePreviewIn:textShown:`
   splits the text's rect in `relayoutRightArea`.
+  **Scroll sync** (W25, 2026-11-07, VS Code's scrollPreviewWithEditor,
+  scrollEditorWithPreview and markEditorSelection, no settings): the pane
+  observes the editor's clip view, its own, and the editor's selection
+  (`followSource:...`, lines from the gutter's `LineIndex`). The map is
+  `PreviewScroll` (core, `previewscroll:*`): a mark per source line's first
+  run, interpolated top to next top both ways, so the two maps are
+  inverses. Only the user's moves lead: the pane's own (render, resize,
+  `scrollY`, following) go through `holdFollowing:`, and a bounds change
+  that leaves a side's y as last seen is ignored. After a render
+  `pageRendered` follows the source unless `pageLeads` (the user scrolled
+  the page last; typing in the source clears it). A double-click in the
+  pane is the block editor (`editMarkdownIn:atCharacter:point:`), its edit
+  one `replaceRanges:` splice in the source (`applySidePreviewEdit:`).
 - **Editing from the preview**: a double-click (`onPreviewDoubleClick`) reads
   the line (and `kMarkdownTableCell`), `MarkdownEdit::blockAt` finds the block
   (heading text, list item with continuations, paragraph or quote, code between

@@ -75,4 +75,55 @@ void MCScrollTextViewToY(NSScrollView *scroll, NSTextView *tv, CGFloat y);
 
 // The editor's background behind the page (settings, themes).
 - (void)applySettings;
+
+// ---- Following the source (VS Code's markdown.preview.scrollPreviewWithEditor,
+// scrollEditorWithPreview and markEditorSelection, all on there by default)
+//
+// Scrolling the source puts the page's text from the source's top line at
+// the page's top, and scrolling the page puts the line its top shows at
+// the source's top, fractions of lines included, by the map of
+// PreviewScroll.h over the page's runs (their `sourceLineKey`). Only the
+// user's scrolling leads: the pane's own moves (a render, a resize, the
+// other side being followed) are held, and a move that leaves a side where
+// it was is no move. The block holding the source's caret line gets a bar
+// at the page's left, as VS Code's preview marks it.
+//
+// The source's text view and scroll view (the editor's, which every tab
+// shares) and its lines: the line of a character, the start of a line and
+// the line count, from the editor's line index.
+- (void)followSource:(NSTextView *)source
+              scroll:(NSScrollView *)scroll
+     lineOfCharacter:(NSUInteger (^)(NSUInteger index))lineOf
+         startOfLine:(NSUInteger (^)(NSUInteger line))startOf
+           lineCount:(NSUInteger (^)(void))lineCount;
+// The attribute every rendered run carries its source line in.
+@property(nonatomic, copy) NSAttributedStringKey sourceLineKey;
+// Whether the page on show is the source's, so the two follow each other.
+@property(nonatomic, copy) BOOL (^following)(void);
+// The user last scrolled the page, not the source: a render keeps the
+// page's place rather than following the source.
+@property(nonatomic) BOOL pageLeads;
+// Runs `block` (a render, or putting the place back after one) without
+// the page's moves leading the source.
+- (void)holdFollowing:(void (^)(void))block;
+// A new page is on show: its map is made again, its block marked, and,
+// unless the page leads, it goes to the source's top line.
+- (void)pageRendered;
+// The source's top line (its fraction is how far down that line the
+// source's top is), and the line the page's top shows.
+@property(nonatomic, readonly) double sourceTopLine;
+@property(nonatomic, readonly) double pageTopLine;
+// Each to the other.
+- (void)scrollPageToSource;
+- (void)scrollSourceToPage;
+// The page's block marked for the source's caret line, and its bar (in
+// the page's text view's coordinates); empty for none.
+@property(nonatomic, readonly) NSRange markedRange;
+@property(nonatomic, readonly) NSRect markRect;
+// Marks the block of the source's caret line again (the caret moved).
+- (void)markCaretLine;
+
+// A double-click in the page (its character and point, in the text view's
+// coordinates); YES when handled, as the full preview's block editor does.
+@property(nonatomic, copy) BOOL (^onDoubleClick)(NSUInteger index, NSPoint point);
 @end

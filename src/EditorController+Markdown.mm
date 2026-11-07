@@ -180,12 +180,27 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
 // the buffer, which is then dirty until Cmd+S, as typing leaves it.
 - (BOOL)editMarkdownAtCharacter:(NSUInteger)index point:(NSPoint)point {
     if (!self.isMarkdown || !self.previewMode) return NO;
-    NSTextStorage *st = self.textView.textStorage;
+    return [self editMarkdownIn:self.textView atCharacter:index point:point];
+}
+
+// The same from the preview to the side: the block's new Markdown goes
+// into the source beside it as one replacement and one undo step, as
+// typing it there would (applySidePreviewEdit:).
+- (BOOL)editSidePreviewAtCharacter:(NSUInteger)index point:(NSPoint)point {
+    if (![self sidePreviewShowing] || !self.textView.editable) return NO;
+    return [self editMarkdownIn:_sidePreview.textView atCharacter:index point:point];
+}
+
+// The block editor over `page`: the full preview's text view (the
+// editor's) or the side preview's.
+- (BOOL)editMarkdownIn:(NSTextView *)page atCharacter:(NSUInteger)index point:(NSPoint)point {
+    const BOOL side = page != self.textView;
+    NSTextStorage *st = page.textStorage;
     if (st.length == 0) return NO;
     // The insertion point can fall just after the character clicked.
     if (index >= st.length) index = st.length - 1;
-    if (index > 0 && !NSPointInRect(point, [self textRectForCharacter:index]) &&
-        NSPointInRect(point, [self textRectForCharacter:index - 1]))
+    if (index > 0 && !NSPointInRect(point, MCTextViewRectForCharacter(page, index)) &&
+        NSPointInRect(point, MCTextViewRectForCharacter(page, index - 1)))
         index--;
     // A box was ticked by the first click; the second does nothing more.
     id link = [st attribute:NSLinkAttributeName atIndex:index effectiveRange:NULL];
@@ -212,7 +227,7 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
     NSString *text = [NSString stringWithUTF8String:
         src.substr(block.start, block.end - block.start).c_str()] ?: @"";
 
-    NSRect anchor = [self textRectForCharacter:index];
+    NSRect anchor = MCTextViewRectForCharacter(page, index);
     if (NSIsEmptyRect(anchor)) anchor = NSMakeRect(point.x, point.y, 1, 1);
     if (!self.markdownEditPanel) self.markdownEditPanel = [MCMarkdownEditPanel new];
     __weak EditorController *weakSelf = self;
@@ -227,10 +242,10 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
                 return;
             }
             std::string edited = MarkdownEdit::addItem(src, block, Utf8String(newText));
-            [me applyMarkdownSource:[NSString stringWithUTF8String:edited.c_str()]];
+            [me applyMarkdownEdit:[NSString stringWithUTF8String:edited.c_str()] side:side];
         };
     }
-    [self.markdownEditPanel showText:text title:title inView:self.textView rect:anchor
+    [self.markdownEditPanel showText:text title:title inView:page rect:anchor
         commit:^(NSString *newText) {
             EditorController *me = weakSelf;
             if (!me) return;
@@ -239,10 +254,46 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
                 return;
             }
             std::string edited = MarkdownEdit::replace(src, block, Utf8String(newText));
-            if (edited != src) [me applyMarkdownSource:[NSString stringWithUTF8String:edited.c_str()]];
+            if (edited != src)
+                [me applyMarkdownEdit:[NSString stringWithUTF8String:edited.c_str()] side:side];
         }
         addItem:addItem];
     return YES;
+}
+
+- (void)applyMarkdownEdit:(NSString *)source side:(BOOL)side {
+    if (side) [self applySidePreviewEdit:source];
+    else [self applyMarkdownSource:source];
+}
+
+// A block edited from the preview to the side: the one stretch that
+// differs goes into the source on show through the editor's own
+// replacement (CodeTextView replaceRanges:), so it is one undo step, the
+// highlighter, folds and server follow it, and the caret stays put; the
+// page is rendered again in its place.
+- (void)applySidePreviewEdit:(NSString *)source {
+    CodeTextView *tv = self.textView;
+    NSString *old = tv.string;
+    if (!source || [source isEqualToString:old]) return;
+    if (!tv.editable || ![self sidePreviewShowing]) {   // the full preview took the slot meanwhile
+        [self applyMarkdownSource:source];
+        return;
+    }
+    const NSUInteger a = old.length, b = source.length;
+    NSUInteger p = 0, s = 0;
+    while (p < a && p < b && [old characterAtIndex:p] == [source characterAtIndex:p]) p++;
+    while (s < a - p && s < b - p &&
+           [old characterAtIndex:a - 1 - s] == [source characterAtIndex:b - 1 - s])
+        s++;
+    // Whole UTF-16 pairs only.
+    if (p > 0 && CFStringIsSurrogateHighCharacter([old characterAtIndex:p - 1])) p--;
+    if (s > 0 && CFStringIsSurrogateLowCharacter([old characterAtIndex:a - s])) s--;
+    const NSRange range = NSMakeRange(p, a - p - s);
+    NSString *with = [source substringWithRange:NSMakeRange(p, b - p - s)];
+    if (![tv replaceRanges:@[[NSValue valueWithRange:range]] withStrings:@[with]
+                actionName:@"Preview Edit"])
+        return;
+    [self renderSidePreviewKeepingPlace];
 }
 
 // A new buffer from a preview edit: dirty, undoable with Cmd+Z, and shown
@@ -824,6 +875,19 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
     };
     _sidePreview.onDrag = ^(CGFloat x) { [weakSelf sidePreviewBarDraggedTo:x]; };
     _sidePreview.onClose = ^{ [weakSelf closeSidePreview]; };
+    _sidePreview.onDoubleClick = ^BOOL(NSUInteger index, NSPoint point) {
+        return [weakSelf editSidePreviewAtCharacter:index point:point];
+    };
+    // Scrolling with the source, and marking its caret's block, by the
+    // editor's line index (the gutter's, kept whether it shows or not).
+    _sidePreview.sourceLineKey = kMarkdownSourceLine;
+    _sidePreview.following = ^BOOL { return [weakSelf sidePreviewShowing]; };
+    __weak MCLineGutter *gutter = self.gutter;
+    [_sidePreview followSource:self.textView
+                        scroll:self.editorScroll
+               lineOfCharacter:^NSUInteger(NSUInteger i) { return [gutter lineOfCharacter:i]; }
+                   startOfLine:^NSUInteger(NSUInteger l) { return [gutter startOfLine:l]; }
+                     lineCount:^NSUInteger { return gutter.lineCount; }];
     return _sidePreview;
 }
 
@@ -859,13 +923,22 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
     }
     _sidePreviewTab = _activeTab;
     [self renderSidePreview];
-    if (_activeTab.sidePreviewY > 0) _sidePreview.scrollY = _activeTab.sidePreviewY;
+    // A page the user had scrolled is put back where it was (the source
+    // was following it, and comes back where it was too); otherwise the
+    // page follows the source, as VS Code opens a preview at the editor's
+    // top line.
+    if (_activeTab.sidePreviewY > 0) {
+        _sidePreview.scrollY = _activeTab.sidePreviewY;
+        _sidePreview.pageLeads = YES;
+    }
+    [_sidePreview pageRendered];
 }
 
-// The active tab leaves the screen (stashActiveTab): where its page was.
+// The active tab leaves the screen (stashActiveTab): where its page was,
+// when the user had scrolled it.
 - (void)sidePreviewTabWillLeave:(MCTab *)t {
     if (_sidePreviewTab != t) return;
-    t.sidePreviewY = _sidePreview.scrollY;
+    t.sidePreviewY = _sidePreview.pageLeads ? _sidePreview.scrollY : 0;
     [self dropSidePreviewPage];
 }
 
@@ -884,15 +957,27 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
 - (void)renderSidePreviewKeepingPlace {
     if (!_sidePreview) return;
     __weak EditorController *weakSelf = self;
-    [self keepPlaceIn:_sidePreview.textView scroll:_sidePreview.scrollView whileRendering:^{
-        [weakSelf renderSidePreview];
+    MCMarkdownSidePreview *side = _sidePreview;
+    // The page keeps its place while it is rendered (the source does not
+    // follow those moves), then follows the source unless the user had
+    // scrolled the page last.
+    [side holdFollowing:^{
+        EditorController *me = weakSelf;
+        [me keepPlaceIn:side.textView scroll:side.scrollView whileRendering:^{
+            [weakSelf renderSidePreview];
+        }];
     }];
+    [side pageRendered];
 }
 
 // The buffer changed (textDidChange:): the page follows once typing pauses.
+// Typed in the source, the source leads again; an edit made from the page
+// (a task box, the block editor) leaves the page where the user has it.
 - (void)sidePreviewSourceChanged {
-    if (_sidePreviewTab && _sidePreviewTab == _activeTab && [self sidePreviewWanted])
+    if (_sidePreviewTab && _sidePreviewTab == _activeTab && [self sidePreviewWanted]) {
+        if (self.window.firstResponder == self.textView) _sidePreview.pageLeads = NO;
         [_sidePreview scheduleRenderAfter:kSidePreviewDelay];
+    }
 }
 
 - (void)sidePreviewApplySettings {

@@ -766,6 +766,10 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSUInteger)markdownCharacterForSourceLine:(NSInteger)line;
 - (NSInteger)markdownSourceLineNear:(NSUInteger)i;
 - (BOOL)editMarkdownAtCharacter:(NSUInteger)index point:(NSPoint)point;
+- (BOOL)editSidePreviewAtCharacter:(NSUInteger)index point:(NSPoint)point;
+- (BOOL)editMarkdownIn:(NSTextView *)page atCharacter:(NSUInteger)index point:(NSPoint)point;
+- (void)applyMarkdownEdit:(NSString *)source side:(BOOL)side;
+- (void)applySidePreviewEdit:(NSString *)source;
 - (void)applyMarkdownSource:(NSString *)source;
 - (void)openMarkdownLink:(NSString *)href;
 - (BOOL)scrollToMarkdownAnchor:(NSString *)anchor;
