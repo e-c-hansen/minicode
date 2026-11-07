@@ -33,8 +33,10 @@
 #import "Appearance.h"
 #import "EditorFont.h"
 #import <Carbon/Carbon.h>   // kVK_* key codes, EnableSecureEventInput
+#import <CoreText/CoreText.h>
 #include <algorithm>
 #include <climits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #include "TerminalStream.h"   // termCharWidth
@@ -48,6 +50,53 @@ static const NSTimeInterval kSyncLimit = 0.15;
 static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e);
 // Grid views with secure keyboard entry on (see updateSecureInput).
 static NSInteger gSecureGrids;
+// Points a row's glyphs may reach into the rows above and below it (an
+// emoji is a little taller than the text): a row is redrawn with that much
+// of its neighbors, and they are drawn into it.
+static const CGFloat kOverflow = 3;
+
+// What a style takes to draw (see "colors" below).
+struct MCTermInk {
+    id fg;                  // CGColorRef
+    id bg;                  // CGColorRef; nil: none of its own
+    NSFont *font;
+    NSDictionary *attrs;    // the font, for Core Text
+    bool underline = false, strike = false;
+};
+
+// The settings the inks were made for: the terminal's text and background
+// colors and its font size.
+struct MCTermInkKey {
+    uint64_t text = 0, background = 0;
+    CGFloat fontSize = 0;
+    bool operator==(const MCTermInkKey &o) const {
+        return text == o.text && background == o.background && fontSize == o.fontSize;
+    }
+};
+
+// What a view row showed when it was last drawn whole: its line and cells.
+struct MCDrawnRow {
+    bool valid = false;
+    long long id = 0;
+    std::vector<TermCell> cells;
+};
+
+// The cursor as last asked to be drawn (a view row, -1 when not shown).
+struct MCCursorMark {
+    int row = -1, col = 0;
+    bool focused = false;
+    bool operator==(const MCCursorMark &o) const {
+        return row == o.row && (row < 0 || (col == o.col && focused == o.focused));
+    }
+};
+
+static bool MCSameCells(const std::vector<TermCell> &a, const std::vector<TermCell> &b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); i++)
+        if (a[i].width != b[i].width || a[i].style != b[i].style || a[i].ch != b[i].ch)
+            return false;
+    return true;
+}
 
 @implementation TerminalGridView {
     BOOL _selecting, _hasSelection;
@@ -99,6 +148,29 @@ static NSInteger gSecureGrids;
     // the selection takes whole lines from one boundary to the other.
     long long _commandId;
     long long _commandAnchorId;
+    // Drawing (see "drawing"): the inks and colors per style, the settings
+    // they were made for, and the font's metrics.
+    std::unordered_map<uint64_t, MCTermInk> _inks;
+    std::unordered_map<uint64_t, id> _colors;
+    MCTermInkKey _inkKey;
+    CGFloat _ascent, _underlineY, _underlineH, _strikeY;
+    NSSize _cs;                    // the cell and the margin, while drawing
+    CGFloat _pad;
+    // What each view row showed when last drawn, and what the view looked
+    // like when it last decided what to redraw.
+    std::vector<MCDrawnRow> _drawn;
+    int _invOffset, _invRows, _invCols;
+    MCTermInkKey _invInkKey;
+    MCCursorMark _invCursor;
+    BOOL _needsFull;
+    // Room for one run of text at a time.
+    std::vector<UniChar> _u16;
+    std::vector<int> _u16Col;
+    std::vector<CGGlyph> _glyphs;
+    std::vector<CGPoint> _positions, _ctPositions;
+    std::vector<CFIndex> _indices;
+    std::vector<TermCell> _scratch;
+    NSMutableArray<NSValue *> *_recorded;   // recordsInvalidations
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -159,6 +231,7 @@ static NSInteger gSecureGrids;
     [nc removeObserver:self name:NSWindowDidBecomeKeyNotification object:nil];
     [nc removeObserver:self name:NSWindowDidResignKeyNotification object:nil];
     [self updateSecureInput];   // out of a window: off
+    _needsFull = YES;
     if (!self.window) return;
     [nc addObserver:self selector:@selector(reportFocus)
                name:NSWindowDidBecomeKeyNotification object:self.window];
@@ -172,6 +245,7 @@ static NSInteger gSecureGrids;
 
 - (void)reportFocus {
     [self updateSecureInput];
+    [self invalidateCursor];   // a block while the window is key, an outline when not
     TerminalScreen *s = self.screen;
     BOOL focused = [self hasKeyboard];
     if (!s || !s->focusEvents()) { _focusKnown = NO; return; }
@@ -306,7 +380,7 @@ static NSInteger gSecureGrids;
         [NSObject cancelPreviousPerformRequestsWithTarget:self
                                                  selector:@selector(syncTimedOut) object:nil];
     }
-    [self setNeedsDisplay:YES];
+    [self invalidateChanged];
 }
 
 - (void)syncTimedOut {
@@ -317,7 +391,7 @@ static NSInteger gSecureGrids;
         _syncIgnored = YES;
         _syncIgnoredAt = s->synchronizedFramesEnded();
     }
-    [self setNeedsDisplay:YES];
+    [self invalidateChanged];
 }
 
 // Waiting on a frame (for tests and the host): the view holds its last
@@ -371,6 +445,8 @@ static NSInteger gSecureGrids;
 - (void)viewDidUnhide {
     [super viewDidUnhide];
     [self updateSecureInput];
+    _needsFull = YES;          // what changed while hidden was never compared
+    [self setNeedsDisplay:YES];
 }
 
 // The lock drawn in the top right corner while secure entry is on, in the
@@ -676,37 +752,89 @@ static NSInteger gSecureGrids;
 }
 
 // ---------------------------------------------------------------- colors
-struct CellColors {
-    NSColor *fg;
-    NSColor *bg;      // nil: the panel's own background shows through
-};
+// What a style takes to draw, made once per style and kept (the old
+// drawRect: made NSColors and a font lookup for every cell): its text
+// color, its background (nil where the panel's own background shows
+// through), its font, and the attributes Core Text lays a run out with.
+// Colors are interned by value, so equal backgrounds are one object and
+// merge into one rectangle (two meeting at a fraction of a pixel leave a
+// faint seam). Dropped when the terminal's colors or font size change.
+static uint64_t ColorKey(const TermColor &c) {
+    uint64_t v = c.kind == TermColor::Indexed ? c.index
+               : c.kind == TermColor::RGB ? ((uint64_t)c.r << 16 | (uint64_t)c.g << 8 | c.b) : 0;
+    return (uint64_t)c.kind << 24 | v;
+}
 
-static CellColors ColorsFor(const TermStyle &st) {
+// Everything of a style that changes how it looks (not its link).
+static uint64_t StyleKey(const TermStyle &st) {
+    return ColorKey(st.fg) | ColorKey(st.bg) << 26 |
+           (uint64_t)(st.bold | st.dim << 1 | st.italic << 2 | st.underline << 3 |
+                      st.inverse << 4 | st.strike << 5) << 52;
+}
+
+static uint64_t RgbaKey(const Rgba &c) {
+    return (uint64_t)c.rgb() << 8 | (uint64_t)lround(MAX(0.0, MIN(1.0, c.a)) * 255);
+}
+
+static MCTermInkKey CurrentInkKey() {
+    const Settings &cfg = [AppSettings shared].settings;
+    return {RgbaKey(cfg.text(Surface::Terminal)), RgbaKey(cfg.background(Surface::Terminal)),
+            MCTerminalFontSize()};
+}
+
+- (CGColorRef)cgColor:(const Rgba &)c {
+    const uint64_t key = RgbaKey(c);
+    auto it = _colors.find(key);
+    if (it == _colors.end()) {
+        // Held until the CGColor below is retained (it lives as long as this).
+        NSColor *color __attribute__((objc_precise_lifetime)) = MCColor(c);
+        id cg = (__bridge id)color.CGColor;
+        it = _colors.emplace(key, cg).first;
+    }
+    return (__bridge CGColorRef)it->second;
+}
+
+- (const MCTermInk &)inkFor:(const TermStyle &)st {
+    const uint64_t key = StyleKey(st);
+    auto it = _inks.find(key);
+    if (it != _inks.end()) return it->second;
     const Settings &cfg = [AppSettings shared].settings;
     bool defaultFg = st.fg.kind == TermColor::Default;
     bool hasBg = st.bg.kind != TermColor::Default;
     Rgba fg = defaultFg ? cfg.text(Surface::Terminal) : Rgba::hex(st.fg.rgb());
     // Inverse text gets a solid background even on a see-through panel.
-    Rgba bg = Rgba::hex(hasBg ? st.bg.rgb()
-                              : cfg.background(Surface::Terminal).rgb());
+    Rgba bg = Rgba::hex(hasBg ? st.bg.rgb() : cfg.background(Surface::Terminal).rgb());
     if (st.inverse) {
         std::swap(fg, bg);
         fg.a = 1.0;
         bg.a = 1.0;
         hasBg = true;
     }
-    NSColor *f = MCColor(fg);
-    if (st.dim) f = [f colorWithAlphaComponent:f.alphaComponent * 0.6];
-    return {f, hasBg ? MCColor(bg) : nil};
+    if (st.dim) fg.a *= 0.6;
+    MCTermInk ink;
+    ink.fg = (__bridge id)[self cgColor:fg];
+    ink.bg = hasBg ? (__bridge id)[self cgColor:bg] : nil;
+    ink.font = [TerminalGridView fontBold:st.bold italic:st.italic];
+    ink.attrs = @{(__bridge NSString *)kCTFontAttributeName: ink.font};
+    ink.underline = st.underline;
+    ink.strike = st.strike;
+    return _inks.emplace(key, ink).first->second;
 }
 
-- (NSDictionary *)attributesFor:(const TermStyle &)st fg:(NSColor *)fg {
-    NSMutableDictionary *a = [NSMutableDictionary dictionary];
-    a[NSFontAttributeName] = [TerminalGridView fontBold:st.bold italic:st.italic];
-    a[NSForegroundColorAttributeName] = fg;
-    if (st.underline) a[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle);
-    if (st.strike) a[NSStrikethroughStyleAttributeName] = @(NSUnderlineStyleSingle);
-    return a;
+// The caches follow the settings. YES when they were made again, since
+// the colors or the font changed (and everything must be drawn again).
+- (BOOL)refreshInks {
+    MCTermInkKey k = CurrentInkKey();
+    if (k == _inkKey && _ascent > 0) return NO;
+    _inkKey = k;
+    _inks.clear();
+    _colors.clear();
+    NSFont *f = [TerminalGridView cellFont];
+    _ascent = [[[NSLayoutManager alloc] init] defaultBaselineOffsetForFont:f];
+    _underlineY = MAX((CGFloat)1, -f.underlinePosition);
+    _underlineH = MAX((CGFloat)1, f.underlineThickness);
+    _strikeY = f.xHeight / 2;
+    return YES;
 }
 
 // ---------------------------------------------------------------- geometry
@@ -791,87 +919,358 @@ static CellColors ColorsFor(const TermStyle &st) {
     *id0 = a; *c0 = ca; *id1 = b; *c1 = cb;
 }
 
-- (BOOL)isSelectedLine:(long long)lineId col:(int)c {
+// The columns of a line that are selected, [*from, *to]; NO when none.
+- (BOOL)selectedColumnsOfLine:(long long)lineId from:(int *)from to:(int *)to {
     if (!_hasSelection) return NO;
     long long r0, r1;
     int c0, c1;
     [self selectionStart:&r0 col:&c0 end:&r1 col:&c1];
     if (lineId < r0 || lineId > r1) return NO;
-    if (lineId == r0 && c < c0) return NO;
-    if (lineId == r1 && c > c1) return NO;
+    *from = lineId == r0 ? c0 : 0;
+    *to = lineId == r1 ? c1 : INT_MAX;
     return YES;
 }
 
 // ---------------------------------------------------------------- drawing
-- (void)drawRect:(NSRect)dirty {
-    TerminalScreen *s = self.screen;
-    if (!s) return;
-    NSSize cs = [TerminalGridView cellSize];
-    CGFloat pad = [TerminalGridView padding];
-    int rows = s->rows(), cols = s->cols();
-    int firstRow = MAX(0, (int)floor((NSMinY(dirty) - pad) / cs.height));
-    int lastRow = MIN(rows - 1, (int)ceil((NSMaxY(dirty) - pad) / cs.height));
-    BOOL focused = self.window.isKeyWindow && self.window.firstResponder == self;
-    NSColor *selColor = [NSColor selectedTextBackgroundColor];
-    int top = [self topLine];
-    long long base = s->historyBase();
+// Drawing is proportional to change. After output (screenChanged, once per
+// run-loop turn) the screen says which rows it touched
+// (TerminalScreen::takeDirty), and of those only rows whose cells differ
+// from what the view last drew there are invalidated, with the rows the
+// cursor left and reached: Ink, Claude Code's renderer, erases and writes
+// its whole live region again every frame, and most of it comes back as it
+// was. Everything is drawn again when the lines move under the view (output
+// scrolled, the view was scrolled), the screen was resized, switched or
+// cleared, the marks changed (the failure bars), the colors or the font
+// changed, or something spanning rows shows (an outlined command, text
+// being composed); selection, find and links ask for it where they change.
+//
+// drawRect: draws only rows that touch the rects being drawn, from the
+// cells by reference, with the colors and fonts made once per style, and
+// the text of each run of cells in one style as one set of glyphs placed at
+// the cells' columns (Core Text shapes runs the font cannot show alone, an
+// emoji or a combining mark, and picks the fallback font), so a fallback
+// font's advance never pushes the rest of the row out of its columns.
 
-    for (int r = firstRow; r <= lastRow; r++) {
-        int line = top + r;
-        long long lineId = base + line;
-        // Backgrounds and the selection, merged into runs.
-        int c = 0;
-        while (c < cols) {
-            const TermCell &cell = s->lineCell(line, c);
-            NSColor *bg = [self isSelectedLine:lineId col:c] ? selColor
-                                                             : ColorsFor(cell.style).bg;
-            int start = c++;
-            while (c < cols) {
-                NSColor *next = [self isSelectedLine:lineId col:c] ? selColor
-                                    : ColorsFor(s->lineCell(line, c).style).bg;
-                if (next != bg && ![next isEqual:bg]) break;
-                c++;
-            }
-            if (bg) {
-                [bg setFill];
-                NSRectFillUsingOperation([self rectForRow:r col:start width:c - start],
-                                         NSCompositingOperationSourceOver);
-            }
+// A view row's strip, the margins included for the first and last rows.
+- (NSRect)bandForRow:(int)r rows:(int)rows {
+    const NSSize cs = [TerminalGridView cellSize];
+    const CGFloat pad = [TerminalGridView padding];
+    const CGFloat y0 = r == 0 ? 0 : pad + r * cs.height;
+    const CGFloat y1 = r >= rows - 1 ? MAX(NSHeight(self.bounds), pad + rows * cs.height)
+                                     : pad + (r + 1) * cs.height;
+    return NSMakeRect(0, y0, NSWidth(self.bounds), y1 - y0);
+}
+
+- (void)invalidateRow:(int)r rows:(int)rows {
+    [self setNeedsDisplayInRect:NSInsetRect([self bandForRow:r rows:rows], 0, -kOverflow)];
+}
+
+- (MCCursorMark)cursorMark {
+    MCCursorMark m;
+    TerminalScreen *s = self.screen;
+    if (!s || _marked.length || !s->cursorVisible()) return m;
+    const int row = s->cursorRow() + _offset;
+    if (row < 0 || row >= s->rows()) return m;
+    m.row = row;
+    m.col = s->cursorCol();
+    m.focused = self.window.isKeyWindow && self.window.firstResponder == self;
+    return m;
+}
+
+// The cursor moved, showed, hid, or the window's key state changed it.
+- (void)invalidateCursor {
+    MCCursorMark now = [self cursorMark];
+    if (now == _invCursor) return;
+    const int rows = self.screen ? self.screen->rows() : 0;
+    if (_invCursor.row >= 0 && _invCursor.row < rows) [self invalidateRow:_invCursor.row rows:rows];
+    if (now.row >= 0) [self invalidateRow:now.row rows:rows];
+    _invCursor = now;
+}
+
+- (void)invalidateChanged {
+    TerminalScreen *s = self.screen;
+    if (!s) { [self setNeedsDisplay:YES]; return; }
+    const TerminalScreen::Dirty d = s->takeDirty();
+    const int rows = s->rows();
+    const MCTermInkKey ink = CurrentInkKey();
+    const BOOL full = d.all || d.scrolled != 0 || d.marks || _needsFull ||
+                      _offset != _invOffset || rows != _invRows || s->cols() != _invCols ||
+                      !(ink == _invInkKey) || _marked.length || _commandId != kNoLine ||
+                      (int)_drawn.size() != rows;
+    _invOffset = _offset;
+    _invRows = rows;
+    _invCols = s->cols();
+    _invInkKey = ink;
+    _needsFull = NO;
+    if (full) {
+        [self setNeedsDisplay:YES];
+        _invCursor = [self cursorMark];
+        return;
+    }
+    const long long base = s->historyBase();
+    for (int r = 0; r < rows && r < (int)d.rows.size(); r++) {
+        if (!d.rows[r]) continue;
+        const int vr = r + _offset;
+        if (vr < 0 || vr >= rows) continue;
+        const MCDrawnRow &was = _drawn[vr];
+        if (was.valid && was.id == base + r && MCSameCells(was.cells, s->row(r))) continue;
+        [self invalidateRow:vr rows:rows];
+    }
+    [self invalidateCursor];
+}
+
+- (void)setNeedsDisplayInRect:(NSRect)rect {
+    if (_recorded) [_recorded addObject:[NSValue valueWithRect:rect]];
+    [super setNeedsDisplayInRect:rect];
+}
+
+- (void)setNeedsDisplay:(BOOL)needs {
+    if (needs && _recorded) [_recorded addObject:[NSValue valueWithRect:self.bounds]];
+    [super setNeedsDisplay:needs];
+}
+
+- (BOOL)recordsInvalidations { return _recorded != nil; }
+- (void)setRecordsInvalidations:(BOOL)on { _recorded = on ? [NSMutableArray array] : nil; }
+
+- (NSArray<NSValue *> *)takeRecordedInvalidations {
+    NSArray *out = [_recorded copy] ?: @[];
+    [_recorded removeAllObjects];
+    return out;
+}
+
+- (void)flushScreenChanges {
+    if (!_redrawQueued) return;
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(redrawQueued)
+                                               object:nil];
+    [self redrawQueued];
+}
+
+// UTF-8 to UTF-16, appended.
+static void AppendUtf16(const std::string &s, std::vector<UniChar> &out) {
+    size_t i = 0, n = s.size();
+    while (i < n) {
+        unsigned char b = (unsigned char)s[i];
+        uint32_t cp;
+        int len = b < 0x80 ? 1 : (b >> 5) == 6 ? 2 : (b >> 4) == 14 ? 3 : (b >> 3) == 30 ? 4 : 1;
+        if (i + len > n) len = 1;
+        if (len == 1) {
+            cp = b < 0x80 ? b : 0xFFFD;
+        } else {
+            cp = b & (0x7F >> len);
+            for (int k = 1; k < len; k++) cp = cp << 6 | ((unsigned char)s[i + k] & 0x3F);
         }
-        [self drawMatchesOnLine:lineId row:r];
-        // Text: runs of plain ASCII in one style, other characters one by one.
-        c = 0;
-        while (c < cols) {
-            const TermCell &cell = s->lineCell(line, c);
-            if (cell.width == 0) { c++; continue; }
-            bool ascii = cell.ch.size() == 1 && (unsigned char)cell.ch[0] < 0x80;
-            int start = c;
-            std::string text = cell.ch;
-            c += cell.width == 2 ? 2 : 1;
-            if (ascii) {
-                while (c < cols) {
-                    const TermCell &n = s->lineCell(line, c);
-                    if (n.width != 1 || n.ch.size() != 1 ||
-                        (unsigned char)n.ch[0] >= 0x80 || n.style != cell.style)
-                        break;
-                    text += n.ch;
-                    c++;
-                }
-            }
-            bool blank = text.find_first_not_of(' ') == std::string::npos;
-            if (blank && !cell.style.underline && !cell.style.strike) continue;
-            NSString *str = [[NSString alloc] initWithBytes:text.data()
-                                                     length:text.size()
-                                                   encoding:NSUTF8StringEncoding];
-            if (!str) continue;
-            NSDictionary *attrs = [self attributesFor:cell.style
-                                                   fg:ColorsFor(cell.style).fg];
-            [str drawAtPoint:NSMakePoint(pad + start * cs.width, pad + r * cs.height)
-              withAttributes:attrs];
+        i += len;
+        if (cp >= 0x10000) {
+            cp -= 0x10000;
+            out.push_back((UniChar)(0xD800 + (cp >> 10)));
+            out.push_back((UniChar)(0xDC00 + (cp & 0x3FF)));
+        } else {
+            out.push_back((UniChar)cp);
         }
     }
+}
 
-    [self drawCommandMarksFrom:firstRow to:lastRow];
+// The text of cells [c0, c1) of one style on view row r, in `color`, each
+// character at its cell's column. Runs of blanks draw nothing (unless
+// underlined or struck through).
+- (void)drawCells:(const std::vector<TermCell> &)cells from:(int)c0 to:(int)c1 row:(int)r
+              ink:(const MCTermInk &)ink color:(CGColorRef)color context:(CGContextRef)ctx {
+    const NSSize cs = _cs;
+    const CGFloat pad = _pad;
+    _u16.clear();
+    _u16Col.clear();
+    bool blank = true, simple = true;   // simple: one UTF-16 unit a cell
+    for (int c = c0; c < c1 && c < (int)cells.size(); c++) {
+        const std::string &ch = cells[c].ch;
+        if (cells[c].width == 0 || ch.empty()) continue;
+        if (ch.size() == 1) {
+            const unsigned char b = (unsigned char)ch[0];
+            if (b != ' ') blank = false;
+            _u16.push_back(b < 0x80 ? b : 0xFFFD);
+            _u16Col.push_back(c);
+            continue;
+        }
+        blank = false;
+        const size_t before = _u16.size();
+        AppendUtf16(ch, _u16);
+        if (_u16.size() - before != 1) simple = false;
+        for (size_t k = before; k < _u16.size(); k++) _u16Col.push_back(c);
+    }
+    if (blank && !ink.underline && !ink.strike) return;
+    const CGFloat baseline = pad + r * cs.height + _ascent;
+    CGContextSetFillColorWithColor(ctx, color);
+    const size_t n = _u16.size();
+    CTFontRef font = (__bridge CTFontRef)ink.font;
+    if (!blank && n) {
+        _glyphs.resize(n);
+        _positions.resize(n);
+        if (simple && CTFontGetGlyphsForCharacters(font, _u16.data(), _glyphs.data(), (CFIndex)n)) {
+            for (size_t i = 0; i < n; i++)
+                _positions[i] = CGPointMake(pad + _u16Col[i] * cs.width, -baseline);
+            CTFontDrawGlyphs(font, _glyphs.data(), _positions.data(), n, ctx);
+        } else {
+            [self drawShapedText:font attributes:ink.attrs baseline:baseline context:ctx];
+        }
+    }
+    const CGFloat x0 = pad + c0 * cs.width, w = (c1 - c0) * cs.width;
+    if (ink.underline)
+        CGContextFillRect(ctx, CGRectMake(x0, baseline + _underlineY - _underlineH / 2, w, _underlineH));
+    if (ink.strike)
+        CGContextFillRect(ctx, CGRectMake(x0, baseline - _strikeY - _underlineH / 2, w, _underlineH));
+}
+
+// The run in _u16 laid out by Core Text (fallback fonts, marks, emoji
+// sequences), each glyph moved to its character's cell; glyphs of one cell
+// keep their places relative to the cell's first.
+- (void)drawShapedText:(CTFontRef)font attributes:(NSDictionary *)attrs
+              baseline:(CGFloat)baseline context:(CGContextRef)ctx {
+    const NSSize cs = _cs;
+    const CGFloat pad = _pad;
+    CFStringRef str = CFStringCreateWithCharactersNoCopy(NULL, _u16.data(), (CFIndex)_u16.size(),
+                                                         kCFAllocatorNull);
+    CFAttributedStringRef as = CFAttributedStringCreate(NULL, str, (__bridge CFDictionaryRef)attrs);
+    CTLineRef line = CTLineCreateWithAttributedString(as);
+    CFArrayRef runs = CTLineGetGlyphRuns(line);
+    for (CFIndex k = 0; k < CFArrayGetCount(runs); k++) {
+        CTRunRef run = (CTRunRef)CFArrayGetValueAtIndex(runs, k);
+        const CFIndex n = CTRunGetGlyphCount(run);
+        if (n <= 0) continue;
+        CTFontRef runFont = (CTFontRef)CFDictionaryGetValue(CTRunGetAttributes(run),
+                                                            kCTFontAttributeName);
+        _glyphs.resize(n);
+        _ctPositions.resize(n);
+        _positions.resize(n);
+        _indices.resize(n);
+        CTRunGetGlyphs(run, CFRangeMake(0, n), _glyphs.data());
+        CTRunGetPositions(run, CFRangeMake(0, n), _ctPositions.data());
+        CTRunGetStringIndices(run, CFRangeMake(0, n), _indices.data());
+        int lastCol = INT_MIN;
+        CGFloat start = 0;
+        for (CFIndex g = 0; g < n; g++) {
+            const CFIndex i = MAX((CFIndex)0, MIN(_indices[g], (CFIndex)_u16Col.size() - 1));
+            const int col = _u16Col[i];
+            if (col != lastCol) {
+                lastCol = col;
+                start = _ctPositions[g].x;
+            }
+            _positions[g] = CGPointMake(pad + col * cs.width + (_ctPositions[g].x - start),
+                                        _ctPositions[g].y - baseline);
+        }
+        CTFontDrawGlyphs(runFont ?: font, _glyphs.data(), _positions.data(), (size_t)n, ctx);
+    }
+    CFRelease(line);
+    CFRelease(as);
+    CFRelease(str);
+}
+
+static BOOL RectsTouch(const NSRect *rects, NSInteger n, NSRect r) {
+    for (NSInteger i = 0; i < n; i++)
+        if (NSIntersectsRect(rects[i], r)) return YES;
+    return NO;
+}
+
+static BOOL RectsCover(const NSRect *rects, NSInteger n, NSRect r) {
+    for (NSInteger i = 0; i < n; i++)
+        if (NSContainsRect(rects[i], r)) return YES;
+    return NO;
+}
+
+// One view row: backgrounds (merged into runs) and the selection, the find
+// matches, then the text a style run at a time.
+- (void)drawRow:(int)r cells:(const std::vector<TermCell> &)cells lineId:(long long)lineId
+           cols:(int)cols selection:(CGColorRef)selColor context:(CGContextRef)ctx {
+    static const TermCell kBlank;
+    const int n = (int)cells.size();
+    int sel0 = INT_MAX, sel1 = -1;
+    if (![self selectedColumnsOfLine:lineId from:&sel0 to:&sel1]) sel0 = INT_MAX, sel1 = -1;
+    const TermStyle *lastStyle = nullptr;
+    const MCTermInk *lastInk = nullptr;
+    auto inkAt = [&](int c) -> const MCTermInk & {
+        const TermCell &cell = c < n ? cells[c] : kBlank;
+        if (!lastStyle || cell.style != *lastStyle) {
+            lastStyle = &cell.style;
+            lastInk = &[self inkFor:cell.style];
+        }
+        return *lastInk;
+    };
+    auto bgAt = [&](int c) -> CGColorRef {
+        if (c >= sel0 && c <= sel1) return selColor;
+        return (__bridge CGColorRef)inkAt(c).bg;
+    };
+    int c = 0;
+    while (c < cols) {
+        CGColorRef bg = bgAt(c);
+        const int start = c++;
+        while (c < cols && bgAt(c) == bg) c++;
+        if (bg) {
+            CGContextSetFillColorWithColor(ctx, bg);
+            CGContextFillRect(ctx, CGRectMake(_pad + start * _cs.width, _pad + r * _cs.height,
+                                              (c - start) * _cs.width, _cs.height));
+        }
+    }
+    [self drawMatchesOnLine:lineId row:r];
+    c = 0;
+    const int end = MIN(n, cols);
+    while (c < end) {
+        const TermCell &cell = cells[c];
+        if (cell.width == 0) { c++; continue; }
+        const int start = c;
+        c += cell.width == 2 ? 2 : 1;
+        while (c < end && cells[c].style == cell.style) c++;
+        const MCTermInk &ink = inkAt(start);
+        [self drawCells:cells from:start to:MIN(c, end) row:r ink:ink
+                  color:(__bridge CGColorRef)ink.fg context:ctx];
+    }
+}
+
+- (void)drawRect:(NSRect)dirty {
+    (void)dirty;
+    TerminalScreen *s = self.screen;
+    if (!s) return;
+    [self refreshInks];
+    _cs = [TerminalGridView cellSize];
+    _pad = [TerminalGridView padding];
+    CGContextRef ctx = NSGraphicsContext.currentContext.CGContext;
+    const NSRect *rects = NULL;
+    NSInteger nRects = 0;
+    [self getRectsBeingDrawn:&rects count:&nRects];
+    const int rows = s->rows(), cols = s->cols();
+    const BOOL focused = self.window.isKeyWindow && self.window.firstResponder == self;
+    // A CGColor lives only as long as the NSColor it came from: the color is
+    // held to the end (a temporary's CGColor was freed and then retained).
+    NSColor *selection __attribute__((objc_precise_lifetime)) =
+        [NSColor selectedTextBackgroundColor];
+    CGColorRef selColor = selection.CGColor;
+    const int top = [self topLine];
+    const long long base = s->historyBase();
+    if ((int)_drawn.size() != rows) _drawn.assign(rows, MCDrawnRow());
+    // Glyphs upright in the flipped view: text space runs y up, so glyph
+    // positions are given with y negated.
+    CGContextSaveGState(ctx);
+    CGContextSetTextMatrix(ctx, CGAffineTransformMakeScale(1, -1));
+
+    for (int r = 0; r < rows; r++) {
+        const NSRect band = [self bandForRow:r rows:rows];
+        if (!RectsTouch(rects, nRects, NSInsetRect(band, 0, -kOverflow))) continue;
+        const int line = top + r;
+        const long long lineId = base + line;
+        const std::vector<TermCell> &cells = s->lineCells(line, _scratch);
+        [self drawRow:r cells:cells lineId:lineId cols:cols selection:selColor context:ctx];
+        // Drawn whole: what it shows now, for invalidateChanged to compare.
+        MCDrawnRow &d = _drawn[r];
+        if (RectsCover(rects, nRects, band)) {
+            d.valid = true;
+            d.id = lineId;
+            d.cells.assign(cells.begin(), cells.end());
+        } else if (d.valid && (d.id != lineId || !MCSameCells(d.cells, cells))) {
+            // Part of it drawn from cells other than those recorded: the
+            // record no longer says what the row shows.
+            d.valid = false;
+        }
+    }
+    CGContextRestoreGState(ctx);
+
+    [self drawCommandMarksFrom:0 to:rows - 1];
 
     // The Cmd-hovered link, underlined in the text color, on each row it
     // covers.
@@ -880,7 +1279,7 @@ static CellColors ColorsFor(const TermStyle &st) {
         for (long long id = _linkId; id <= _linkEndId; id++) {
             int line = (int)(id - base);
             int linkRow = line - top;
-            if (linkRow < firstRow || linkRow > lastRow) continue;
+            if (linkRow < 0 || linkRow >= rows) continue;
             int c0 = id == _linkId ? _linkCol0 : 0;
             int c1 = id == _linkEndId ? _linkCol1 : s->lineTextWidth(line);
             if (c1 <= c0) continue;
@@ -894,8 +1293,10 @@ static CellColors ColorsFor(const TermStyle &st) {
     int cr = s->cursorRow() - top, cc = s->cursorCol();
     if (_marked.length && cr >= 0 && cr < rows) {
         [self drawMarkedTextAtRow:cr col:cc rows:rows cols:cols];
-    } else if (s->cursorVisible() && cr >= firstRow && cr <= lastRow) {
-        const TermCell &cell = s->cell(cr + top, cc);
+    } else if (s->cursorVisible() && cr >= 0 && cr < rows &&
+               RectsTouch(rects, nRects, [self bandForRow:cr rows:rows])) {
+        const std::vector<TermCell> &row = s->row(s->cursorRow());
+        const TermCell &cell = row[cc];
         int w = cell.width == 2 ? 2 : 1;
         NSRect rect = [self rectForRow:cr col:cc width:w];
         NSColor *cursor = [[AppSettings shared] text:Surface::Terminal];
@@ -903,13 +1304,13 @@ static CellColors ColorsFor(const TermStyle &st) {
             [[cursor colorWithAlphaComponent:1.0] setFill];
             NSRectFill(rect);
             if (!cell.ch.empty() && cell.ch != " ") {
-                NSColor *under = MCColor(Rgba::hex(
-                    [AppSettings shared].settings.background(Surface::Terminal).rgb()));
-                NSString *str = [[NSString alloc] initWithBytes:cell.ch.data()
-                                                         length:cell.ch.size()
-                                                       encoding:NSUTF8StringEncoding];
-                [str drawAtPoint:rect.origin
-                  withAttributes:[self attributesFor:cell.style fg:under]];
+                CGColorRef under = [self cgColor:Rgba::hex(
+                    [AppSettings shared].settings.background(Surface::Terminal).rgb())];
+                CGContextSaveGState(ctx);
+                CGContextSetTextMatrix(ctx, CGAffineTransformMakeScale(1, -1));
+                [self drawCells:row from:cc to:MIN(cc + w, cols) row:cr
+                            ink:[self inkFor:cell.style] color:under context:ctx];
+                CGContextRestoreGState(ctx);
             }
         } else {
             [[cursor colorWithAlphaComponent:0.8] setStroke];

@@ -1616,6 +1616,21 @@ for full-screen programs. Both can be open at once.
   paths and URLs). Typing goes through `interpretKeyEvents:`, so dead keys and
   input methods compose; marked text wraps onto the rows below
   (`drawMarkedTextAtRow:`), since dictation composes a whole sentence.
+  **Drawing is proportional to change** (2026-11-07): `screenChanged`
+  takes `TerminalScreen::takeDirty()` (rows touched, lines scrolled, marks
+  moved, or all) and invalidates only touched rows whose cells differ from
+  what the view last drew there (`_drawn`; Ink rewrites its whole region
+  every frame), plus the cursor's old and new rows; scrolling, resizes, the
+  marks, the colors or font, an outlined command or marked text draw it
+  all. Anything drawn from state other than the cells (selection, find,
+  links, the lock) must call `setNeedsDisplay:` itself. `drawRect:` reads
+  cells by reference (`row`, `lineCells`), keeps a CGColor and font per
+  style, and draws a style run as glyphs placed at their columns (Core Text
+  only for runs needing fallback or shaping). Trap: a CGColor taken from a
+  temporary NSColor can be freed before it is retained; hold the NSColor
+  with `objc_precise_lifetime` until then. `make guitest
+  SUITES=terminal_draw` replays `tests/fixtures/terminal` and bounds the
+  frame time.
 - **Paste and passwords** (2026-11-06): `encodePaste` shows every ESC
   inside the brackets as U+241B, as xterm.js does (stripping `ESC[201~`
   once let "ESC[20" + mark + "1~" close up into a new mark). The grid's
