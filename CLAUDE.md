@@ -1002,7 +1002,14 @@ view is disposed (on `unrealize`), or dispose loops forever.
   `bufferText` (every tab's text), `tabsChanged`, and
   `textView:doCommandBySelector:` to `handleCommand:`. The session observes the
   storage itself; didChange is debounced 0.3 s, every request flushes first,
-  and unchanged text is dropped.
+  and unchanged text is dropped. A server with `textDocumentSync.change` 2
+  gets ranges: `Lsp::ChangeTracker` (`_changes`) merges the storage's edits
+  (`editedRange`, `changeInLength`) into regions of the text as sent, and
+  `Lsp::rangedChanges` turns them into contentChanges, last region first,
+  only after checking the text outside them is the same in both; anything
+  that does not check out (an edit it missed, a boundary inside a character
+  or between \r and \n, over 256 regions, or ranges as big as the text)
+  sends the whole text, so the server's copy is always right.
 - **Every tab's file stays open** on its server (`syncOpenDocuments`: on show,
   server start, before rename and references, on `tabsChanged`); only a running
   server takes background tabs, so a tab never starts one. With only the file

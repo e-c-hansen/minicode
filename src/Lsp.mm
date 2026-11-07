@@ -468,6 +468,9 @@ void MCSetFolderToolsConsent(NSString *root, BOOL allow) {
     long _stepIndex;
     NSMutableDictionary<NSString *, MCLspDoc *> *_docs;   // by DocKey
     NSUInteger _edits;        // counts edits to the text on show
+    // The edits to the text on show since it was last sent, for servers
+    // that take ranged changes (incremental didChange).
+    Lsp::ChangeTracker _changes;
     NSString *_settingsSignature, *_pythonSetting;
 
     MCCompletionPopup *_popup;
@@ -1578,6 +1581,7 @@ static BOOL IsRunnable(NSString *path) {
     _servers = @[];
     _completionServer = nil;
     _uri = nil;
+    _changes.reset();
     [self dropPendingAccepts];
     _tv.diagnostics = @[];
 }
@@ -1685,6 +1689,9 @@ static BOOL IsRunnable(NSString *path) {
 // Files whose tabs have gone are closed. Cheap when nothing changed: an
 // unchanged text sends nothing (Client::didChange compares).
 - (void)syncOpenDocuments {
+    // The file on show's edits go first, as ranges where the server takes
+    // them; its didOpen below then has nothing left to send.
+    [self flushChanges];
     NSMutableDictionary<NSString *, MCLspDoc *> *wanted = [NSMutableDictionary dictionary];
     NSMutableDictionary<NSString *, NSString *> *texts = [NSMutableDictionary dictionary];
     NSMutableDictionary<NSString *, NSString *> *languageIds = [NSMutableDictionary dictionary];
@@ -1749,8 +1756,9 @@ static BOOL IsRunnable(NSString *path) {
 
 - (void)documentSaved {
     if (!_servers.count || !_uri) return;
-    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushChanges)
-                                               object:nil];
+    // What changed goes as a didChange of its own (ranges where the server
+    // takes them), so didSave's own sync finds nothing to send.
+    [self flushChanges];
     std::string text = Std(_tv.string);
     for (MCLspServer *server in _servers) server.client.didSave(Std(_uri), text);
 }
@@ -1860,14 +1868,17 @@ static BOOL IsRunnable(NSString *path) {
     [self stopAllServers];
 }
 
-// Full-document sync, a moment after typing pauses. Anything that asks the
-// server about the text flushes first.
+// didChange, a moment after typing pauses: the edits since the text was
+// last sent, as ranges, for servers that take them (and when they come to
+// less than the text), else the whole text. Anything that asks the server
+// about the text flushes first.
 - (void)flushChanges {
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushChanges)
                                                object:nil];
-    if (!_servers.count || !_uri) return;
+    if (!_servers.count || !_uri) { _changes.reset(); return; }
     std::string text = Std(_tv.string);
-    for (MCLspServer *server in _servers) server.client.didChange(Std(_uri), text);
+    for (MCLspServer *server in _servers) server.client.didChange(Std(_uri), text, _changes);
+    _changes.reset();
 }
 
 - (void)storageEdited:(NSNotification *)note {
@@ -1875,7 +1886,16 @@ static BOOL IsRunnable(NSString *path) {
     // Typing closes hover info and the lists; recoloring alone does not.
     if (ts.editedMask & NSTextStorageEditedCharacters) {
         _edits++;
-        [self noteEditForPendingAccepts:ts.editedRange.location];
+        // editedRange is the edit's text now; changeInLength says how much
+        // it replaced (several edits in one processEditing come as their
+        // union, which is one edit as far as the text outside it goes).
+        const NSRange er = ts.editedRange;
+        const NSInteger removed = (NSInteger)er.length - ts.changeInLength;
+        if (er.location != NSNotFound && removed >= 0)
+            _changes.edit(er.location, (size_t)removed, er.length);
+        else
+            _changes.invalidate();
+        [self noteEditForPendingAccepts:er.location];
         [self closeHover];
         [self closePicker];
     }
