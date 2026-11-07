@@ -728,7 +728,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)agentRunInTerminal:(NSString *)command;
 - (NSString *)agentPathFor:(NSString *)path;
 - (NSRect)agentLineRectAt:(NSUInteger)index;
-- (void)agentTintAgainst:(NSString *)original;
+- (void)agentTintAgainst:(NSString *)proposed;
 - (MCChangeSession *)changeSession;
 - (NSRect)layoutChangeBarIn:(NSRect)area;
 - (void)applyChangeBarColors;
