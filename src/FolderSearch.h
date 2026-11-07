@@ -24,8 +24,19 @@
 //   (Until 2026-11-06 every dotfile was skipped and no ignore file read.)
 // - Files over 1 MB are skipped, and so is any file that is not valid UTF-8,
 //   which is how binaries fall out (the Mac drops them the same way, when
-//   NSString refuses to decode them).
-// - Search stops at 2000 matches.
+//   NSString refuses to decode them). The result names the ones a reader
+//   would have expected searched: those larger than the limit and those
+//   not UTF-8, unless a NUL byte in their first 8 KB marks them binary
+//   (FileSniff's rule), since every picture and object file would be named.
+// - Search stops at 2000 lines by default (the GTK port and Android); the
+//   Mac asks for 20,000, as VS Code stops.
+// - Folders are listed and files read and matched on a few threads (one
+//   per core, at most 8, the calling thread among them), and the calling
+//   thread takes their results in the walk's order, so the matches, the
+//   limit and every count are what a search one file at a time gives. A line is matched only if it
+//   holds the text every match must hold (the query, or the literal run a
+//   regex requires, TextFind::requiredText), looked for in the whole file
+//   at once; for plain text that search is the match itself.
 // - The display text is the matched line with ANSI escape sequences and other
 //   control characters removed, trimmed, and cut to 200 characters.
 //
@@ -88,6 +99,15 @@ struct FolderSearchOptions {
     // folder, when the scope searched is a folder inside it. "" (or a
     // folder the scope is not inside) means the scope itself.
     std::string   ignoreTop;
+    // Threads listing folders and reading and matching files: 0 for one
+    // per core (at most 8), 1 to do everything on the calling thread.
+    unsigned      threads = 0;
+};
+
+// A file left out of a search that a reader would expect searched.
+struct FolderSearchSkip {
+    std::string relativePath;
+    bool tooLarge = false;   // over maxFileSize; else text that is not UTF-8
 };
 
 struct FolderSearchResult {
@@ -101,6 +121,12 @@ struct FolderSearchResult {
     // stopped there (TextFind::Query::tooSlow).
     bool tooSlow = false;
     std::string error;               // the regex did not compile: why
+    // Files skipped (FolderSearchSkip) among those the search reached:
+    // how many of each kind, and the first kMaxSkipsListed of them in
+    // search order.
+    std::size_t skippedTooLarge = 0;
+    std::size_t skippedNotUtf8 = 0;
+    std::vector<FolderSearchSkip> skipped;
 };
 
 // Replace in Folder's count before it asks: every match in every file the
@@ -126,6 +152,12 @@ namespace FolderSearch {
 
 // The shortest query, in characters, that is searched.
 constexpr std::size_t kMinQueryChars = 2;
+
+// How many skipped files a result lists by name (all are counted).
+constexpr std::size_t kMaxSkipsListed = 200;
+
+// The threads a search with FolderSearchOptions::threads 0 uses.
+unsigned defaultThreads();
 
 // The query as it will be searched: surrounding whitespace trimmed.
 std::string normalizeQuery(const std::string& query);
@@ -179,6 +211,9 @@ public:
     // The rules for a subfolder: these plus its own files. relDir is its
     // path from the top, '/' separated, no trailing '/'.
     Rules enter(const std::string& dirPath, const std::string& relDir) const;
+    // The same, reading only the files the folder's listing showed.
+    Rules enter(const std::string& dirPath, const std::string& relDir, bool hasGitignore,
+                bool hasIgnore) const;
     // The same with the files' text given ("" for one that is not there),
     // for tests and for callers that read them themselves.
     Rules with(const std::string& relDir, const std::string& gitignore,
