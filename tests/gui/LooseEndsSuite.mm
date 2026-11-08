@@ -16,6 +16,7 @@
 #import "TerminalGridView.h"
 #import "TerminalPanel.h"
 #import "AppSettings.h"
+#include <libproc.h>
 #include <sys/stat.h>
 
 namespace {
@@ -70,6 +71,24 @@ namespace {
 }
 
 [[maybe_unused]] inline int Cols(TerminalView *t) { return Grid(t).screen ? Grid(t).screen->cols() : 0; }
+
+// The terminal's shell process is named `name` (an exec keeps its pid).
+[[maybe_unused]] inline bool ShellNameIs(TerminalView *t, const char *name) {
+    char buf[PROC_PIDPATHINFO_MAXSIZE] = {0};
+    return t.shellPid > 0 && proc_name(t.shellPid, buf, sizeof buf) > 0 && strcmp(buf, name) == 0;
+}
+
+// A child of the terminal's shell is named `name` (it has started).
+[[maybe_unused]] inline bool ShellHasChild(TerminalView *t, const char *name) {
+    if (t.shellPid <= 0) return false;
+    pid_t kids[256];
+    const int n = proc_listchildpids(t.shellPid, kids, sizeof kids);
+    for (int i = 0; i < n && i < 256; i++) {
+        char buf[PROC_PIDPATHINFO_MAXSIZE] = {0};
+        if (proc_name(kids[i], buf, sizeof buf) > 0 && strcmp(buf, name) == 0) return true;
+    }
+    return false;
+}
 
 } // namespace
 
@@ -200,8 +219,7 @@ MC_GUI_SUITE(terminal_keys) {
     MCLooseState *s = [MCLooseState new];
     TerminalAtPrompt(s);
     MCGuiStep(@"cat -v reads the keys", ^{ [s.term runCommand:@"cat -v"]; });
-    MCGuiWait(@"cat runs", 10, ^BOOL { return s.term.busy; });
-    MCGuiPause(0.3);
+    MCGuiWait(@"cat runs", 10, ^BOOL { return s.term.busy && ShellHasChild(s.term, "cat"); });
     MCGuiStep(@"Ctrl+Shift+K reaches cat, not Delete Line", ^{
         GCHECK(s.c.window.firstResponder == Grid(s.term));
         s.sent.length = 0;
@@ -333,7 +351,11 @@ MC_GUI_SUITE(terminal_exec) {
     // the foreground.
     MCGuiStep(@"exec bash", ^{ [s.term runCommand:@"exec /bin/bash --norc --noprofile"]; });
     MCGuiWait(@"bash's prompt", 10, ^BOOL { return [[s.term recentText:2] containsString:@"bash-"]; });
-    MCGuiPause(1.0);
+    // The tab sees bash by polling the shell's name twice a second.
+    MCGuiWait(@"the tab takes bash for a shell", 10, ^BOOL {
+        return !s.term.busy && s.term.runningCommands.count == 0 &&
+               ![s.term.title containsString:@"exec"];
+    });
     MCGuiStep(@"the tab is not busy, and not titled exec", ^{
         GCHECK(!s.term.busy);
         GCHECK(s.term.runningCommands.count == 0);
@@ -360,7 +382,9 @@ MC_GUI_SUITE(terminal_exec) {
     // exec zsh from bash: zsh loads the integration but has no nonce, so
     // its marks are not believed; the tab goes on as a shell without them.
     MCGuiStep(@"exec zsh from bash", ^{ [s.term runCommand:@"exec zsh"]; });
-    MCGuiPause(1.0);
+    MCGuiWait(@"the shell is zsh, not busy", 10, ^BOOL {
+        return ShellNameIs(s.term, "zsh") && !s.term.busy;
+    });
     MCGuiStep(@"a command in that zsh", ^{
         GCHECK(!s.term.busy);
         [s.term runCommand:@"echo zsh-from-bash-$ZSH_VERSION"];
@@ -374,7 +398,9 @@ MC_GUI_SUITE(terminal_exec) {
     // exec sh, the same.
     MCGuiStep(@"exec sh", ^{ [s.term runCommand:@"exec /bin/sh"]; });
     MCGuiWait(@"sh's prompt", 10, ^BOOL { return [[s.term recentText:2] containsString:@"sh-"]; });
-    MCGuiPause(1.0);
+    MCGuiWait(@"the tab takes sh for a shell", 10, ^BOOL {
+        return !s.term.busy && s.term.runningCommands.count == 0;
+    });
     MCGuiStep(@"not busy in sh", ^{
         GCHECK(!s.term.busy && s.term.runningCommands.count == 0);
         [s.term runCommand:@"echo sh-at-last"];
@@ -416,6 +442,8 @@ MC_GUI_SUITE(agent_autosave) {
         MCAgentSession *agent = [s.c valueForKey:@"agentSession"];
         return agent.editPending;
     });
+    // A pause before a negative check: auto-save (200 ms) must not write
+    // the proposed edit in this time.
     MCGuiPause(0.8);
     MCGuiStep(@"proposed, not in the file, while Keep waits", ^{
         MCAgentSession *agent = [s.c valueForKey:@"agentSession"];
@@ -437,7 +465,7 @@ MC_GUI_SUITE(agent_autosave) {
     MCGuiWait(@"the second edit", 20, ^BOOL {
         return ((MCAgentSession *)[s.c valueForKey:@"agentSession"]).editPending;
     });
-    MCGuiPause(0.8);
+    MCGuiPause(0.8);   // negative, as above
     MCGuiStep(@"proposed; Discard", ^{
         MCAgentSession *agent = [s.c valueForKey:@"agentSession"];
         GCHECK_EQ_STR(agent.pendingText, @"ALPHA\nBETA\n");
@@ -446,7 +474,7 @@ MC_GUI_SUITE(agent_autosave) {
         [agent discard];
         GCHECK([Text(s.c).string isEqualToString:@"ALPHA\nbeta\n"]);
     });
-    MCGuiPause(0.6);
+    MCGuiPause(0.6);   // negative: no auto-save of the discarded edit
     MCGuiStep(@"the disk never had BETA", ^{
         GCHECK_EQ_STR(disk(), @"ALPHA\nbeta\n");
         GCHECK(![[s.c valueForKey:@"dirty"] boolValue]);

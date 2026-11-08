@@ -54,7 +54,7 @@ MC_GUI_SUITE(servers_by_extension) {
         MCGuiWriteFile(toml, @"[project]\nname = \"x\"\n");
         GCHECK([c showFile:toml]);
     });
-    MCGuiPause(0.5);
+    MCGuiPause(0.5);   // negative: no server, status or install bar comes
     MCGuiStep(@"TOML with no taplo: nothing at all", ^{
         if (taploHere) return;
         GCHECK(Session(c).currentLanguage == nil);
@@ -84,7 +84,7 @@ MC_GUI_SUITE(servers_by_extension) {
                [keys containsObject:@"markdown"]);
         MCGuiSetSettings([base stringByAppendingString:@"lsp.toml = off\n"]);
     });
-    MCGuiPause(0.5);
+    MCGuiPause(0.5);   // negative, as above
     MCGuiStep(@"lsp.toml = off: the file has no server and says nothing", ^{
         if (taploHere) return;
         [c showFile:yml];
@@ -97,5 +97,5 @@ MC_GUI_SUITE(servers_by_extension) {
         MCGuiSetSettings(@"lsp.enabled = false\n");
         [c closeAllTabs:nil];
     });
-    MCGuiPause(0.3);
+    MCGuiWait(@"the servers are gone", 10, ^BOOL { return !Session(c).hasServer; });
 }

@@ -389,9 +389,8 @@ MC_GUI_SUITE(zoomfit) {
         Key(c.window, kVK_ANSI_0, kCmd);
         GCHECK(Near(UserWeb(c).pageZoom, 1));
     });
-    MCGuiPause(1.7);
-    MCGuiStep(@"the percentage leaves the toolbar after a moment", ^{
-        GCHECK(c.browser.zoomLabel.hidden);
+    MCGuiWait(@"the percentage leaves the toolbar after a moment", 10, ^BOOL {
+        return c.browser.zoomLabel.hidden;
     });
     MCGuiStep(@"with the keyboard in the editor Cmd+= and Cmd+0 are the editor's", ^{
         [c.window makeFirstResponder:c.textView];

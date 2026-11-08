@@ -86,7 +86,7 @@ MC_GUI_SUITE(terminal_paste) {
         // Bracketed paste on: the lines are text, so nothing asked.
         GCHECK(MCGuiAlertsShown().count == s.alerts);
     });
-    MCGuiPause(1.0);
+    MCGuiPause(1.0);   // negative: the pasted line must not run
     MCGuiStep(@"nothing ran; the paste waits in the line editor", ^{
         NSString *recent = [s.term recentText:6];
         GCHECK(![recent containsString:@"INJECTED-42"]);

@@ -331,7 +331,9 @@ MC_GUI_SUITE(agentcommands) {
         GCHECK([tv.string hasPrefix:@"new 1\nnew 2\n"]);
         GCHECK(NSEqualRanges(notes.noteRange, LinesRange(tv.string, 2, 2)));
     });
-    MCGuiPause(2.0);   // the file system's event for the write comes and goes
+    // A pause before a negative check: the file system's event for the
+    // write comes and goes, and the reload it starts must not take the note.
+    MCGuiPause(2.0);
     MCGuiStep(@"the reload that followed left the note alone", ^{
         GCHECK(notes.noteShown && [notes.noteText isEqualToString:@"Added"]);
         GCHECK(NSEqualRanges(notes.noteRange, LinesRange(tv.string, 2, 2)));

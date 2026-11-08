@@ -147,7 +147,7 @@ MC_GUI_SUITE(organize_on_save) {
     MCGuiWait(@"auto-saved", 10, ^BOOL {
         return [Disk(file) isEqualToString:[kUnsorted stringByAppendingString:@"# more\n"]];
     });
-    MCGuiPause(0.5);
+    MCGuiPause(0.5);   // negative: no organize request follows the auto-save
     MCGuiStep(@"still no organize request", ^{
         GCHECK(OrganizeAsks(@"oruff") == 0);
         GCHECK_EQ_STR(Text(c).string, [kUnsorted stringByAppendingString:@"# more\n"]);
@@ -171,7 +171,9 @@ MC_GUI_SUITE(organize_on_save) {
         GCHECK(took >= 2.5 && took < 6);
         GCHECK([Disk(file) hasPrefix:@"import sys\nimport os\n"]);
     });
-    MCGuiPause(6.5);   // the slow answer arrives and is dropped
+    // Negative: the slow answer arrives and is dropped (the client shows
+    // no sign of it, so there is no condition to wait on).
+    MCGuiPause(6.5);
     MCGuiStep(@"the late answer changed nothing", ^{
         GCHECK([Text(c).string hasPrefix:@"import sys\nimport os\n"]);
         GCHECK(![[c valueForKey:@"dirty"] boolValue]);
@@ -186,5 +188,5 @@ MC_GUI_SUITE(organize_on_save) {
         [c closeAllTabs:nil];
         GCHECK(MCGuiAlertsShown().count == alerts);
     });
-    MCGuiPause(0.3);
+    MCGuiWait(@"the servers are gone", 10, ^BOOL { return !Lsp(c).hasServer; });
 }

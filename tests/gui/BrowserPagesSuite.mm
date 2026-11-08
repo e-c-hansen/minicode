@@ -311,7 +311,13 @@ MC_GUI_SUITE(browserpages) {
                [out containsString:@"Second paragraph"]);
         GCHECK(![out containsString:@"console.error"]);   // visible text, not the source
     });
-    MCGuiPause(0.3);   // the setTimeout's error
+    MCGuiWait(@"the setTimeout's error is in the record", 10, ^BOOL {
+        const PageCheck::ConsoleLog *log = [Pane(c).agentProbe consoleLog];
+        if (!log) return NO;
+        for (const PageCheck::ConsoleEntry &e : log->since(0))
+            if (e.uncaught) return YES;
+        return NO;
+    });
     CLI(@"page --console has console.error and the uncaught error, with source lines",
         @[@"page", @"--console"], ^(int s, NSString *out, NSString *) {
         GCHECK(s == 0);
@@ -574,6 +580,8 @@ MC_GUI_SUITE(browserpages) {
             });
         });
     }
+    // A moment for the last check's buffers to go before memory is read
+    // (a measurement, with no condition to wait on).
     MCGuiPause(1.0);
     MCGuiStep(@"memory after twenty checks grew by less than 50 MB", ^{
         const uint64_t memEnd = Footprint(getpid());

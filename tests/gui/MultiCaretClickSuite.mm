@@ -195,7 +195,9 @@ MC_GUI_SUITE(multicaretclick) {
                                                   keyCode:56]];
         }
     });
-    MCGuiPause(0.6);   // past the caret's blink, the bracket match, a hover
+    // Time itself is the condition: past the double-click interval, the
+    // caret's blink, the bracket match and a hover.
+    MCGuiPause(0.6);
     MCGuiStep(@"... still give the column", ^{
         Press(c.window, P(5, 5), cmdShift, 1, nil, NO);
         GCHECK_EQ_STR(Carets(tv), @"18 31 44 57");

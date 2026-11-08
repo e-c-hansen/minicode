@@ -189,7 +189,9 @@ MC_GUI_SUITE(tree) {
                RowColored(c, file(@"notes.txt"), text) &&
                RowColored(c, file(@"build"), GitColor(TreeGitColor::Ignored));
     });
-    MCGuiPause(2.0);   // the commit's last status runs out first
+    MCGuiWaitQuiet(@"the commit's last status runs out first", 1.0, 20, ^NSInteger {
+        return (NSInteger)[c treeGitRuns];
+    });
     MCGuiStep(@"a change only inside the ignored folder runs no status", ^{
         if (!git) return;
         mark = [c treeGitRuns];
@@ -252,6 +254,8 @@ MC_GUI_SUITE(tree) {
         MCGuiWriteFile(file(@"docs/guide.md"), @"g\n");
         MCGuiWriteFile(file(@"src/deep/e.txt"), @"e\n");
     });
+    // The scenario, not a wait: the events must arrive while the folders
+    // are closed, and the tree shows no sign of them until they open.
     MCGuiPause(1.0);
     MCGuiStep(@"opened again, they show what changed while closed", ^{
         [c.outline expandItem:ItemAt(c, docs)];
@@ -389,14 +393,18 @@ MC_GUI_SUITE(tree) {
     });
 
     // --- a burst of changes costs a few listings of the one folder
-    MCGuiPause(1.0);   // the drops' own changes arrive first
+    MCGuiWaitQuiet(@"the drops' own changes arrive first", 0.7, 20, ^NSInteger {
+        return (NSInteger)MCTreeListingCount();
+    });
     MCGuiStep(@"200 files written in src at once", ^{
         mark = MCTreeListingCount();
         for (int i = 0; i < 200; i++)
             MCGuiWriteFile(file([NSString stringWithFormat:@"src/burst/f%03d.txt", i]), @"x\n");
     });
     MCGuiWait(@"burst shows", 10, ^BOOL { return RowOf(c, file(@"src/burst")) >= 0; });
-    MCGuiPause(1.0);   // let the last batches arrive before counting them
+    MCGuiWaitQuiet(@"the last batches arrive before they are counted", 0.7, 20, ^NSInteger {
+        return (NSInteger)MCTreeListingCount();
+    });
     MCGuiStep(@"src (and the root's row) only, a few times", ^{
         NSArray<NSString *> *listed = ListedSince(mark, repo);
         MCGuiNote(@"burst listings: %@", [listed componentsJoinedByString:@", "]);

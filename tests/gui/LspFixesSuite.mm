@@ -138,6 +138,8 @@ MC_GUI_SUITE(lsp_fixes) {
     MCGuiWait(@"the edit reaches the server", 5, ^BOOL {
         return [ServerText(@"main", @"a.py") hasSuffix:@"helper()\nhelper()\n"];
     });
+    // A pause before a negative check: the publish for the old version,
+    // sent after the edit, must not be drawn.
     MCGuiPause(0.3);
     MCGuiStep(@"after the edit, still only the fresh ones", ^{
         NSArray *m = Messages(c);
@@ -334,7 +336,11 @@ MC_GUI_SUITE(lsp_fixes) {
     MCGuiWait(@"the server's edit arrives and is answered", 10, ^BOOL {
         return [Text(c).string hasPrefix:@"# fixed\n"];
     });
-    MCGuiPause(0.2);
+    MCGuiWait(@"applied: true reaches the server", 5, ^BOOL {
+        for (NSDictionary *m in MCGuiFakeLspReceived(@"ruff", nil))
+            if (!m[@"method"] && [[m valueForKeyPath:@"result.applied"] boolValue]) return YES;
+        return NO;
+    });
     MCGuiStep(@"applied: true went back; Organize Imports", ^{
         GCHECK(MCGuiFakeLspReceived(@"ruff", @"workspace/executeCommand").count == 1);
         BOOL answered = NO;
@@ -357,5 +363,5 @@ MC_GUI_SUITE(lsp_fixes) {
         MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);   // Don't Save
         [c closeAllTabs:nil];
     });
-    MCGuiPause(0.3);
+    MCGuiWait(@"the servers are gone", 10, ^BOOL { return !Lsp(c).hasServer; });
 }

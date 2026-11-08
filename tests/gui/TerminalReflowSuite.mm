@@ -278,7 +278,10 @@ MC_GUI_SUITE(terminal_reflow) {
         GCHECK(sent.length > before);
         GCHECK(grid.selectedText == nil);
     });
-    MCGuiPause(0.3);
+    MCGuiWait(@"vim's cursor is on the click", 5, ^BOOL {
+        TerminalScreen *s = Screen(term);
+        return s->cursorRow() == 4 && s->cursorCol() == 5;
+    });
     MCGuiStep(@"x", ^{ Send(grid, @"x"); });
     MCGuiWait(@"line 05 lost its 0", 5, ^BOOL {
         TerminalScreen *s = Screen(term);
@@ -317,6 +320,8 @@ MC_GUI_SUITE(terminal_reflow) {
                           "\\e]133;A;mc=0\\a\\e]133;B;mc=0\\a'; cat"];
     });
     MCGuiWait(@"cat runs", 10, ^BOOL { return term.busy && !term.atPrompt; });
+    // A pause before a negative check: the forged marks, printed before
+    // cat ran, must not move the tab to a prompt or to /forged.
     MCGuiPause(0.4);
     MCGuiStep(@"they are not believed, and a command waits", ^{
         GCHECK(!term.atPrompt && term.busy);
@@ -324,7 +329,7 @@ MC_GUI_SUITE(terminal_reflow) {
         [term runCommand:@"echo typed-after"];
         GCHECK_EQ_STR(term.pendingCommand, @"echo typed-after");
     });
-    MCGuiPause(0.5);
+    MCGuiPause(0.5);   // negative: nothing reaches cat in this time
     MCGuiStep(@"cat was given nothing", ^{
         GCHECK(![[term recentText:6] containsString:@"typed-after"]);
         Send(grid, @"\x03");
@@ -345,7 +350,7 @@ MC_GUI_SUITE(terminal_reflow) {
         [term runCommand:@"echo fg-waited"];
         GCHECK_EQ_STR(term.pendingCommand, @"echo fg-waited");
     });
-    MCGuiPause(0.5);
+    MCGuiPause(0.5);   // negative, as above
     MCGuiStep(@"cat was given nothing", ^{
         GCHECK(![[term recentText:6] containsString:@"fg-waited"]);
         Send(grid, @"\x03");
@@ -398,7 +403,9 @@ MC_GUI_SUITE(terminal_reflow) {
     MCGuiStep(@"typed, not run", ^{
         GCHECK([term typeCommand:@"echo strip\x03\x1b\x7fped"]);
     });
-    MCGuiPause(0.3);
+    MCGuiWait(@"the line is typed", 5, ^BOOL {
+        return [[term recentText:2] containsString:@"echo stripped"];
+    });
     MCGuiStep(@"Return", ^{ Send(grid, @"\r"); });
     MCGuiWait(@"one word came out", 10, ^BOOL { return term.atPrompt && hasLine(@"stripped"); });
     MCGuiStep(@"bracketed paste back", ^{

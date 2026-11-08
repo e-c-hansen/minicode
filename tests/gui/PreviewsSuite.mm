@@ -464,6 +464,7 @@ MC_GUI_SUITE(previews) {
         PressInTree(c, 49, @" ");
         GCHECK(![MCQuickLookPanel shared].shown);
     });
+    // Time itself is the condition: type-select's second is over.
     MCGuiPause(1.2);
     MCGuiStep(@"and a while later Space is Quick Look again", ^{
         EditorController *c = MCGuiController();

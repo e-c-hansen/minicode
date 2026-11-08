@@ -104,7 +104,7 @@ MC_GUI_SUITE(tools_consent) {
                          @"lsp.python.also = off\n");
         item = ItemWithAction(NSApp.mainMenu, @selector(forgetFolderToolsAnswer:));
     });
-    MCGuiPause(1.0);
+    MCGuiWait(@"no server of an earlier suite's runs", 10, ^BOOL { return !Session(c).hasServer; });
     MCGuiStep(@"the command is in the minicode menu, off while there is no answer", ^{
         // An earlier suite (language) may have put the question off with ×
         // for this folder; an answer taken back brings it back.
@@ -195,5 +195,5 @@ MC_GUI_SUITE(tools_consent) {
         [[NSFileManager defaultManager] removeItemAtPath:other error:nil];
         [MCAppDefaults() removeObjectForKey:@"MCPythonEnvironmentConsent"];
     });
-    MCGuiPause(1.0);
+    MCGuiWait(@"the servers are gone", 10, ^BOOL { return !Session(c).hasServer; });
 }

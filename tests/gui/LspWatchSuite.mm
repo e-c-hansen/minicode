@@ -174,7 +174,7 @@ MC_GUI_SUITE(lsp_watch) {
         MCGuiFakeLspClearLog(@"watch");
         MCGuiWriteFile(fresh, @"z = 3\n");
     });
-    MCGuiPause(1.0);
+    MCGuiPause(1.0);   // negative: no didChangeWatchedFiles may follow
     MCGuiStep(@"the new file went unreported", ^{
         GCHECK(Changes(@"watch").count == 0);
         MCGuiSetSettings(@"lsp.enabled = false\n");

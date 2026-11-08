@@ -115,7 +115,6 @@ NSRect RectOf(CodeTextView *tv, NSRange r) {
 }  // namespace
 
 MC_GUI_SUITE(language) {
-    NSString *settings = NSProcessInfo.processInfo.environment[@"MINICODE_SETTINGS"];
     NSString *mainPy = MCGuiProjectFile(@"lang/main.py");
     NSString *utilPy = MCGuiProjectFile(@"lang/util.py");
     NSString *notes = MCGuiProjectFile(@"lang/notes.md");
@@ -169,11 +168,10 @@ MC_GUI_SUITE(language) {
         });
     } else {
         MCGuiStep(@"the scripted server for Python files", ^{
-            MCGuiWriteFile(settings, [NSString stringWithFormat:
+            MCGuiSetSettings([NSString stringWithFormat:
                 @"lsp.enabled = true\nlsp.python = %@ %@ %@ %@\nlsp.python.also = off\n",
                 python, server, scriptPath, logPath]);
         });
-        MCGuiPause(1.0);
         MCGuiStep(@"open util.py, then main.py", ^{
             GCHECK([c showFile:utilPy]);
             GCHECK([c showFile:mainPy]);
@@ -403,7 +401,9 @@ MC_GUI_SUITE(language) {
         });
 
         // ------------------------------------- a server that stops reading
+        __block NSUInteger initsBefore = 0;
         MCGuiStep(@"a server that stops reading after it starts", ^{
+            initsBefore = LoggedMethod(logPath, @"initialized").count;
             script[@"stopReading"] = @YES;
             writeScript();
             MCLspSetMaxQueuedBytes(256 << 10);
@@ -415,7 +415,9 @@ MC_GUI_SUITE(language) {
                     return YES;
             return NO;
         });
-        MCGuiPause(0.5);
+        MCGuiWait(@"it has read initialized, and reads no more", 10, ^BOOL {
+            return LoggedMethod(logPath, @"initialized").count > initsBefore;
+        });
         MCGuiStep(@"half a megabyte for it to read", ^{
             NSMutableString *big = [NSMutableString string];
             for (int i = 0; i < 4000; i++) [big appendFormat:@"line_%d = %d  # padding padding\n", i, i];
@@ -432,9 +434,9 @@ MC_GUI_SUITE(language) {
         });
         MCGuiStep(@"the scripted server off", ^{
             MCLspSetMaxQueuedBytes(0);
-            MCGuiWriteFile(settings, @"lsp.enabled = false\n");
+            MCGuiSetSettings(@"lsp.enabled = false\n");
         });
-        MCGuiPause(1.0);
+        MCGuiWait(@"the scripted server is gone", 10, ^BOOL { return !Session(c).hasServer; });
     }
 
     // ------------------------------------------ the folder's own .venv
@@ -452,10 +454,9 @@ MC_GUI_SUITE(language) {
                                                        marker]);
         chmod(pyExe.fileSystemRepresentation, 0755);
         chmod(srv.fileSystemRepresentation, 0755);
-        MCGuiWriteFile(settings, @"lsp.enabled = true\nlsp.python = mc-venv-server\n"
-                                 @"lsp.python.also = off\n");
+        MCGuiSetSettings(@"lsp.enabled = true\nlsp.python = mc-venv-server\n"
+                         @"lsp.python.also = off\n");
     });
-    MCGuiPause(1.0);
     MCGuiStep(@"opening a Python file asks, and runs nothing from .venv", ^{
         GCHECK([c showFile:notes]);
         GCHECK([c showFile:mainPy]);
@@ -473,6 +474,8 @@ MC_GUI_SUITE(language) {
         GCHECK([[Session(c) pythonInterpreterWithSource:nil] hasSuffix:@".venv/bin/python"]);
         MCGuiSnapshot(c.installBar, @"language-consent-bar");
     });
+    // A pause before a negative check: nothing may start the server from
+    // .venv in this time, and no condition says "nothing will happen".
     MCGuiPause(1.0);
     MCGuiStep(@"nothing ran", ^{
         GCHECK(![[NSFileManager defaultManager] fileExistsAtPath:marker]);
@@ -492,6 +495,7 @@ MC_GUI_SUITE(language) {
         [Session(c) serverPythonInterpreterWithSource:&source];
         GCHECK([source containsString:@"not used"]);
     });
+    // A pause before a negative check, as above.
     MCGuiPause(1.0);
     MCGuiStep(@"still nothing ran; the answer is forgotten for the next check", ^{
         GCHECK(![[NSFileManager defaultManager] fileExistsAtPath:marker]);
@@ -514,17 +518,16 @@ MC_GUI_SUITE(language) {
         GCHECK([[Session(c) serverPythonInterpreterWithSource:nil] hasSuffix:@".venv/bin/python"]);
     });
     MCGuiStep(@"put off with ×: hidden for this launch, still not allowed", ^{
-        MCGuiWriteFile(settings, @"lsp.enabled = false\n");
+        MCGuiSetSettings(@"lsp.enabled = false\n");
         NSUserDefaults *d = [[NSUserDefaults alloc]
             initWithSuiteName:NSProcessInfo.processInfo.environment[@"MINICODE_DEFAULTS_SUITE"]];
         [d removeObjectForKey:@"MCPythonEnvironmentConsent"];
     });
-    MCGuiPause(1.0);
+    MCGuiWait(@"the .venv server is gone", 10, ^BOOL { return !Session(c).hasServer; });
     MCGuiStep(@"×", ^{
-        MCGuiWriteFile(settings, @"lsp.enabled = true\nlsp.python = mc-venv-server\n"
-                                 @"lsp.python.also = off\n");
+        MCGuiSetSettings(@"lsp.enabled = true\nlsp.python = mc-venv-server\n"
+                         @"lsp.python.also = off\n");
     });
-    MCGuiPause(1.0);
     MCGuiStep(@"the question once more, then ×", ^{
         GCHECK([c showFile:notes]);
         GCHECK([c showFile:mainPy]);
@@ -540,11 +543,11 @@ MC_GUI_SUITE(language) {
         GCHECK(!Session(c).folderEnvironmentAllowed);
     });
     MCGuiStep(@"tidy up: servers off, no .venv", ^{
-        MCGuiWriteFile(settings, @"lsp.enabled = false\n");
+        MCGuiSetSettings(@"lsp.enabled = false\n");
         [[NSFileManager defaultManager]
             removeItemAtPath:venvBin.stringByDeletingLastPathComponent error:nil];
     });
-    MCGuiPause(1.0);
+    MCGuiWait(@"no server runs", 10, ^BOOL { return !Session(c).hasServer; });
 
     // ----------------------- the review's own case, with basedpyright
     NSString *based = BasedPyright();
@@ -568,10 +571,9 @@ MC_GUI_SUITE(language) {
         @"    p = Pat\n";                  // 9
     MCGuiStep(@"basedpyright on, mod.py open, first() folded", ^{
         MCGuiWriteFile(mod, kMod);
-        MCGuiWriteFile(settings, [NSString stringWithFormat:
+        MCGuiSetSettings([NSString stringWithFormat:
             @"lsp.enabled = true\nlsp.python = %@ --stdio\nlsp.python.also = off\n", based]);
     });
-    MCGuiPause(1.0);
     MCGuiStep(@"open it", ^{ GCHECK([c showFile:mod]); });
     MCGuiWait(@"basedpyright runs", 60, ^BOOL {
         LspSession *lsp = Session(c);
@@ -618,9 +620,9 @@ MC_GUI_SUITE(language) {
         GCHECK_EQ_STR(tv.string, kMod);
     });
     MCGuiStep(@"language servers off again", ^{
-        MCGuiWriteFile(settings, @"lsp.enabled = false\n");
+        MCGuiSetSettings(@"lsp.enabled = false\n");
     });
-    MCGuiPause(0.5);
+    MCGuiWait(@"basedpyright is gone", 10, ^BOOL { return !Session(c).hasServer; });
     // The suite's edits were never saved: their tabs go without asking, so
     // the suites after it start with no unsaved tab of this one's (a dirty
     // tab made later suites' Close All and quit questions ask about it).
