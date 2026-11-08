@@ -805,6 +805,12 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSMutableAttributedString *)markdownPageFor:(NSString *)content
                                          width:(CGFloat)width
                                        anchors:(NSDictionary **)anchorsOut;
+- (void)beginMarkdownPageWidth:(CGFloat)width;
+- (NSMutableAttributedString *)markdownRuns:(const std::vector<MdRun> &)runs
+                                       from:(size_t)from
+                                         to:(size_t)to
+                                    anchors:(NSMutableArray<NSArray *> *)anchors;
+- (NSAttributedString *)markdownNoteForRuns:(const std::vector<MdRun> &)runs;
 - (void)keepPlaceIn:(NSTextView *)tv scroll:(NSScrollView *)scroll
      whileRendering:(void (^)(void))render;
 - (BOOL)showsMarkdownPage;
@@ -823,7 +829,10 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)sidePreviewApplySettings;
 - (void)closeSidePreview;
 - (void)sidePreviewBarDraggedTo:(CGFloat)x;
-- (BOOL)sidePreviewClickedLink:(id)link;
+- (BOOL)sidePreviewClickedLink:(id)link atIndex:(NSUInteger)index;
+- (BOOL)sidePageIsCurrent;
+- (BOOL)catchUpSidePage;
+- (void)renderSidePreviewAfterTyping;
 @end
 
 // EditorController+MarkdownRender.mm: turning Markdown runs into attributed text: paragraphs, runs, tables.

@@ -26,6 +26,21 @@ NSRect MCTextViewRectForCharacter(NSTextView *tv, NSUInteger i);
 // within the text.
 void MCScrollTextViewToY(NSScrollView *scroll, NSTextView *tv, CGFloat y);
 
+// A source line the pane's runs came from (their kMarkdownSourceLine): one
+// object for each line of a piece of the page (MarkdownPage.h), so that when
+// lines are added or taken out above a piece its numbers move without the
+// page's text being touched. It answers intValue and integerValue as the
+// full preview's NSNumbers do.
+@interface MCMarkdownLine : NSObject
+- (instancetype)initWithLine:(int)line;
+@property(nonatomic) int line;
+- (int)intValue;
+- (NSInteger)integerValue;
+@end
+// The source line a page's attribute value names (an NSNumber or an
+// MCMarkdownLine), or -1.
+int MCMarkdownLineOf(id value);
+
 @interface MCMarkdownSidePreview : NSObject <NSTextViewDelegate>
 // Its views go into `host` (hidden until laid out as shown); the divider
 // last, so it takes the clicks along the boundary.
@@ -54,6 +69,18 @@ void MCScrollTextViewToY(NSScrollView *scroll, NSTextView *tv, CGFloat y);
 
 // A new page: the text replaced, the view at its top.
 - (void)showPage:(NSAttributedString *)page;
+// The page was changed in place (pieces of it replaced): its map of source
+// lines is made again when next asked.
+- (void)pageChanged;
+// The text the page on show was rendered from (the source's NSString), so
+// a click on it can tell whether the page has caught up with the typing;
+// and what its renderer keeps of it to build the next one from (cleared
+// with the page).
+@property(nonatomic, strong) NSString *renderedSource;
+@property(nonatomic, strong) id pageState;
+// The main thread's CPU time the last render after a pause in typing took,
+// from the parsed text's arrival to the page following the source.
+@property(nonatomic) double lastRenderCpuMilliseconds;
 // Empties the page (the tab left, or the pane closed), and cancels a
 // pending render.
 - (void)clear;

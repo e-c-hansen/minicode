@@ -28,5 +28,6 @@
     // first use; the tabs say whether they want it.
     MCMarkdownSidePreview *_sidePreview;
     __weak MCTab *_sidePreviewTab;         // whose page it holds, nil for none
+    NSUInteger _sidePageGeneration;        // the pause in typing being rendered
 }
 @end

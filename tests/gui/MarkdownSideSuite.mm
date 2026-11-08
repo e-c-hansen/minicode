@@ -46,6 +46,14 @@ void Type(NSTextView *tv, NSString *text) {
     });
 }
 
+// `range` replaced by `text` as typing would (the delegate told, the
+// buffer following).
+void Replace(NSTextView *tv, NSRange range, NSString *text) {
+    MCGuiUndoGroup(tv.undoManager, ^{
+        [tv insertText:text replacementRange:range];
+    });
+}
+
 // The first character of the page carrying link `href`, or NSNotFound.
 NSUInteger LinkAt(NSTextView *tv, NSString *href) {
     NSTextStorage *st = tv.textStorage;
@@ -137,6 +145,62 @@ MC_GUI_SUITE(markdown_side) {
         GCHECK(Active(c).dirty);
         [Source(c).undoManager undo];
         GCHECK([Source(c).string isEqualToString:before]);
+    });
+
+    MCGuiStep(@"a click on a page behind the typing acts on nothing: the page catches up first", ^{
+        NSTextView *page = Side(c).textView;
+        [c renderSidePreviewKeepingPlace];   // after the undo
+        GCHECK([c sidePageIsCurrent]);
+        NSString *start = [Source(c).string copy];
+        // Lines typed above the task: the page still shows the old lines.
+        NSTextView *tv = Source(c);
+        tv.selectedRange = NSMakeRange(0, 0);
+        Type(tv, @"Two new lines\n\n");
+        GCHECK(Side(c).renderPending && ![c sidePageIsCurrent]);
+        NSString *before = [tv.string copy];
+        const NSUInteger box = LinkAt(page, @"minicode-task:4");   // the box, as the page has it
+        GCHECK(box != NSNotFound);
+        if (box == NSNotFound) return;
+        MCGuiUndoGroup(tv.undoManager, ^{
+            GCHECK([page.delegate textView:page clickedOnLink:@"minicode-task:4" atIndex:box]);
+        });
+        // Nothing ticked (line 4 is now the heading's blank line, the task on 6) ...
+        GCHECK([tv.string isEqualToString:before]);
+        // ... the page is up to date, and the status bar says why nothing happened.
+        GCHECK([c sidePageIsCurrent] && !Side(c).renderPending);
+        GCHECK([Page(c) containsString:@"Two new lines"]);
+        NSTextField *note = [c valueForKey:@"settingsLabel"];
+        GCHECK([note.stringValue containsString:@"behind your typing"]);
+        // The same for a double-click's block editor.
+        tv.selectedRange = NSMakeRange(0, 0);
+        Type(tv, @"x");
+        GCHECK(![c sidePageIsCurrent]);
+        const NSUInteger at = [Page(c) rangeOfString:@"A first paragraph"].location;
+        GCHECK(at != NSNotFound);
+        const NSRect r = MCTextViewRectForCharacter(page, at);
+        GCHECK([c editSidePreviewAtCharacter:at point:NSMakePoint(NSMidX(r), NSMidY(r))]);
+        GCHECK([c sidePageIsCurrent] && [Page(c) containsString:@"xTwo new lines"]);
+        // Now current: the box the page shows ticks its own line, the
+        // number in its link moved with it.
+        const NSUInteger moved = [Page(c) rangeOfString:@"a task to tick"].location;
+        GCHECK(moved != NSNotFound && moved > 2);
+        NSUInteger tick = NSNotFound;
+        for (NSUInteger k = moved; k > 0 && k + 3 > moved; k--)
+            if ([page.textStorage attribute:NSAttachmentAttributeName atIndex:k - 1 effectiveRange:NULL])
+                tick = k - 1;
+        GCHECK(tick != NSNotFound);
+        if (tick != NSNotFound) {
+            id link = [page.textStorage attribute:NSLinkAttributeName atIndex:tick effectiveRange:NULL];
+            MCGuiUndoGroup(tv.undoManager, ^{
+                GCHECK([page.delegate textView:page clickedOnLink:link atIndex:tick]);
+            });
+            GCHECK([tv.string containsString:@"- [x] a task to tick"]);
+            [tv.undoManager undo];
+        }
+        // Back as it was.
+        Replace(tv, NSMakeRange(0, [@"xTwo new lines\n\n" length]), @"");
+        GCHECK([tv.string isEqualToString:start]);
+        [c renderSidePreviewKeepingPlace];
     });
 
     MCGuiStep(@"another file: the pane steps aside; back: it returns with the tab", ^{
@@ -259,6 +323,12 @@ double CpuMs() {
            (info.user_time.microseconds + info.system_time.microseconds) / 1e3;
 }
 
+// The page's text as a whole render (the full preview's builder) makes it
+// for the source as it is now.
+NSString *WholePage(EditorController *c) {
+    return [c markdownPageFor:c.sourceText width:Side(c).pageWidth anchors:NULL].string;
+}
+
 // How the two strings differ: the one stretch of `a` that `b` replaces.
 NSRange Changed(NSString *a, NSString *b, NSString **with) {
     NSUInteger p = 0, s = 0;
@@ -349,6 +419,57 @@ MC_GUI_SUITE(markdown_side_sync) {
     MCGuiStep(@"the page is still at the source's line", ^{
         MCGuiNote(@"source %lu, page %ld", (unsigned long)SourceTop(c), (long)PageTop(c));
         GCHECK(SourceTop(c) == 600 && labs(PageTop(c) - 600) <= 1);
+        // Only the edited piece was built: the page is what a whole render
+        // makes, and it cost little of the main thread.
+        GCHECK_EQ_STR(Page(c), WholePage(c));
+        GCHECK_TIME(Side(c).lastRenderCpuMilliseconds, 10, @"a pause's render at 1,200 lines");
+    });
+
+    __block NSTextBlock *codeBox = nil;
+    __block NSUInteger codeAt = NSNotFound;
+    MCGuiStep(@"a line added at the top: the pieces below are kept, their lines moved", ^{
+        codeAt = PageAt(c, @"code 110 a");
+        GCHECK(codeAt != NSNotFound);
+        NSParagraphStyle *ps = [Side(c).textView.textStorage attribute:NSParagraphStyleAttributeName
+                                                               atIndex:codeAt effectiveRange:NULL];
+        codeBox = ps.textBlocks.lastObject;
+        GCHECK(codeBox.backgroundColor != nil);
+        NSTextView *tv = Source(c);
+        ScrollSourceToLine(c, 0);   // typing where it is on show, as the caret is
+        tv.selectedRange = NSMakeRange(0, 0);
+        Type(tv, @"A line on top.\n\n");
+    });
+    MCGuiWait(@"the page to show the new line", 3, ^BOOL {
+        return [Page(c) hasPrefix:@"A line on top."];
+    });
+    MCGuiStep(@"the lines below follow the source, the code box is the same object", ^{
+        GCHECK_EQ_STR(Page(c), WholePage(c));
+        const NSUInteger at = PageAt(c, @"code 110 a");
+        NSParagraphStyle *ps = [Side(c).textView.textStorage attribute:NSParagraphStyleAttributeName
+                                                               atIndex:at effectiveRange:NULL];
+        GCHECK(ps.textBlocks.lastObject == codeBox);   // kept, not built again
+        const NSInteger line = MCMarkdownLineOf([Side(c).textView.textStorage
+            attribute:kMarkdownSourceLine atIndex:at effectiveRange:NULL]);
+        const NSInteger want = (NSInteger)[[Source(c).string componentsSeparatedByString:@"\n"]
+            indexOfObject:@"code 110 a"];
+        MCGuiNote(@"code 110 a: page line %ld, source line %ld", (long)line, (long)want);
+        GCHECK(line == want && want == 1108);
+        // The anchors moved with the text.
+        const NSUInteger heading = [Side(c).anchors[@"section-110"] unsignedIntegerValue];
+        GCHECK([[Page(c) substringFromIndex:heading] hasPrefix:@"Section 110"]);
+        GCHECK_TIME(Side(c).lastRenderCpuMilliseconds, 10, @"a render after a line on top");
+        // Taken out again.
+        NSTextView *tv = Source(c);
+        Replace(tv, NSMakeRange(0, [@"A line on top.\n\n" length]), @"");
+    });
+    MCGuiWait(@"the page to lose it", 3, ^BOOL {
+        return [Page(c) hasPrefix:@"Section 0"];
+    });
+    MCGuiStep(@"and the lines go back", ^{
+        GCHECK_EQ_STR(Page(c), WholePage(c));
+        const NSUInteger at = PageAt(c, @"code 110 a");
+        GCHECK(MCMarkdownLineOf([Side(c).textView.textStorage attribute:kMarkdownSourceLine
+                                                                atIndex:at effectiveRange:NULL]) == 1106);
     });
 
     MCGuiStep(@"the caret's block is marked in the page", ^{
@@ -449,6 +570,60 @@ MC_GUI_SUITE(markdown_side_sync) {
                   render, first, sourceLed, pageLed);
         GCHECK(first < MAX(400, render));
         GCHECK(sourceLed < 400 && pageLed < 400);
+    });
+
+    // 20,000 lines: a pause in typing still costs only its own piece, and
+    // the page is laid out only as far as it is followed.
+    NSString *big = MCGuiProjectFile(@"big.md");
+    MCGuiStep(@"20,000 lines with the page beside them", ^{
+        NSMutableString *t = [NSMutableString string];
+        for (int k = 0; k < 2000; k++)
+            [t appendFormat:@"## Part %d\n\nParagraph %d line one\ncontinues on line two of %d.\n\n"
+                            @"```\ncode %d a\ncode %d b\n```\n\n", k, k, k, k, k];
+        MCGuiWriteFile(big, t);
+        double c0 = MCGuiThreadCpuMs();
+        GCHECK([c showFile:big]);
+        if (c.previewMode) [c togglePreview:nil];
+        [c focusEditor:nil];
+        if (![c sidePreviewShowing]) [c toggleSidePreview:nil];
+        const double opened = MCGuiThreadCpuMs() - c0;
+        GCHECK([c sidePreviewShowing] && [Page(c) containsString:@"Part 1999"]);
+        c0 = MCGuiThreadCpuMs();
+        ScrollSourceToLine(c, 10000);
+        MCGuiNote(@"CPU: opened with the page %.0f ms, followed to line 10,000 %.0f ms", opened,
+                  MCGuiThreadCpuMs() - c0);
+        GCHECK(labs(PageTop(c) - 10000) <= 1);
+        NSTextView *tv = Source(c);
+        MCLineGutter *g = [c valueForKey:@"gutter"];
+        tv.selectedRange = NSMakeRange([g startOfLine:10012], 0);
+        Type(tv, @"Typed ");
+        ScrollSourceToLine(c, 10000);
+    });
+    MCGuiWait(@"the long page to follow the typing", 10, ^BOOL {
+        return [Page(c) containsString:@"Typed Paragraph 1001"];
+    });
+    MCGuiStep(@"the pause cost under 30 ms of the main thread, and the page is right", ^{
+        GCHECK_TIME(Side(c).lastRenderCpuMilliseconds, 30, @"a pause's render at 20,000 lines");
+        // The page at the source's line (the source's view, its own height
+        // not yet back after the edit, may stop a few lines short of 10,000).
+        MCGuiNote(@"source %lu, page %ld", (unsigned long)SourceTop(c), (long)PageTop(c));
+        GCHECK(labs((NSInteger)SourceTop(c) - 10000) <= 8 &&
+               labs(PageTop(c) - (NSInteger)SourceTop(c)) <= 1 && !Side(c).pageLeads);
+        GCHECK_EQ_STR(Page(c), WholePage(c));
+        // Once more, at the very end of the page, which has been followed there.
+        ScrollSourceToLine(c, 19990);
+        NSTextView *tv = Source(c);
+        tv.selectedRange = NSMakeRange(tv.string.length, 0);
+        Type(tv, @"The last words.\n");
+    });
+    MCGuiWait(@"the end of the long page to follow", 10, ^BOOL {
+        return [Page(c) hasSuffix:@"The last words.\n"];
+    });
+    MCGuiStep(@"at the end too", ^{
+        GCHECK_TIME(Side(c).lastRenderCpuMilliseconds, 30, @"a render at the end of 20,000 lines");
+        [Source(c).undoManager removeAllActions];
+        for (MCTab *t in [(NSArray *)[c valueForKey:@"tabs"] copy])
+            if ([t.currentPath isEqualToString:big]) [c closeTab:t prompt:NO];
     });
 
     MCGuiStep(@"done", ^{

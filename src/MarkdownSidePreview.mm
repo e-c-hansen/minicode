@@ -5,7 +5,24 @@
 #import "EditorPanes.h"
 #import "TextKit2.h"
 #include "PreviewScroll.h"
+#include <algorithm>
 #include <cmath>
+
+@implementation MCMarkdownLine
+- (instancetype)initWithLine:(int)line {
+    if ((self = [super init])) _line = line;
+    return self;
+}
+- (int)intValue { return _line; }
+- (NSInteger)integerValue { return _line; }
+- (NSString *)description { return [NSString stringWithFormat:@"%d", _line]; }
+@end
+
+int MCMarkdownLineOf(id value) {
+    if ([value isKindOfClass:MCMarkdownLine.class]) return ((MCMarkdownLine *)value).line;
+    if ([value isKindOfClass:NSNumber.class]) return ((NSNumber *)value).intValue;
+    return -1;
+}
 
 NSRect MCTextViewRectForCharacter(NSTextView *tv, NSUInteger i) {
     const NSUInteger n = tv.string.length;
@@ -94,9 +111,14 @@ static NSColor *MCMarkColor(void) {
     NSUInteger (^_lineOf)(NSUInteger);
     NSUInteger (^_startOf)(NSUInteger);
     NSUInteger (^_lineCount)(void);
-    PreviewScroll::Page _map;   // the page's marks, made on first use after a change
+    // The page's marks: the first run of each source line, made on first
+    // use after a change; each one's top (NAN until asked) is found by
+    // laying the page out that far, so a long page is laid out only as far
+    // as it is followed (PreviewScroll::around).
+    std::vector<PreviewScroll::Mark> _marks;
+    double _bottom;             // where the page's text ends, NAN until asked
     BOOL _mapValid;
-    CGFloat _mapWidth;          // the text width it was made for
+    CGFloat _mapWidth;          // the text width the tops are for
     NSInteger _holding;         // the page's moves lead nothing while above 0
     BOOL _moving;               // one side is being moved to the other
     BOOL _observingPage;
@@ -214,6 +236,10 @@ static const CGFloat kSnapDistance = 16;   // the bar this close to the right ed
     [self setMarkedRange:NSMakeRange(NSNotFound, 0)];
 }
 
+- (void)pageChanged {
+    _mapValid = NO;
+}
+
 - (void)clear {
     [self cancelRender];
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(followAfterMove)
@@ -221,6 +247,8 @@ static const CGFloat kSnapDistance = 16;   // the bar this close to the right ed
     _anchors = nil;
     _mapValid = NO;
     _pageLeads = NO;
+    _renderedSource = nil;
+    _pageState = nil;
     [self setMarkedRange:NSMakeRange(NSNotFound, 0)];
     if (_textView.textStorage.length)
         [self holdFollowing:^{
@@ -241,11 +269,8 @@ static const CGFloat kSnapDistance = 16;   // the bar this close to the right ed
 - (CGFloat)scrollY { return _scrollView.contentView.bounds.origin.y; }
 
 - (void)setScrollY:(CGFloat)y {
-    [self holdFollowing:^{
-        if (!MCUsesTextKit2(self->_textView))   // the full height, or the scroll stops where layout did
-            [self->_textView.layoutManager ensureLayoutForTextContainer:self->_textView.textContainer];
-        MCScrollTextViewToY(self->_scrollView, self->_textView, y);
-    }];
+    // Laid out to the screenful there (MCScrollTextViewToY), not further.
+    [self holdFollowing:^{ MCScrollTextViewToY(self->_scrollView, self->_textView, y); }];
 }
 
 - (void)scheduleRenderAfter:(NSTimeInterval)delay {
@@ -273,7 +298,8 @@ static const CGFloat kSnapDistance = 16;   // the bar this close to the right ed
     _scrollView.panelColor = [[AppSettings shared] background:Surface::Editor];
     _textView.selectedTextAttributes =
         @{NSBackgroundColorAttributeName: [NSColor selectedTextBackgroundColor]};
-    if (!NSIsEmptyRect(_markRect)) [_textView setNeedsDisplayInRect:_markRect];   // its color
+    if (!NSIsEmptyRect(_markRect))   // its color
+        [_textView setNeedsDisplayInRect:_markRect avoidAdditionalLayout:YES];
 }
 
 // ------------------------------------------------ following the source
@@ -322,39 +348,111 @@ static const CGFloat kSnapDistance = 16;   // the bar this close to the right ed
     _pageY = _scrollView.contentView.bounds.origin.y;
 }
 
-// The page's marks: where each source line's text starts, for the text
-// width the page is laid out at now.
-- (const PreviewScroll::Page &)map {
+// The page's marks for the text width it is laid out at now: their lines
+// and characters from the page's runs; their tops, not yet.
+- (void)makeMarks {
     const CGFloat width = self.pageWidth;
-    if (!_mapValid || width != _mapWidth) {
-        _mapValid = YES;
-        _mapWidth = width;
-        _map = PreviewScroll::Page();
-        NSTextView *tv = _textView;
-        NSTextStorage *st = tv.textStorage;
-        if (_sourceLineKey && st.length && !MCUsesTextKit2(tv)) {
-            NSLayoutManager *lm = tv.layoutManager;
-            [self holdFollowing:^{   // the whole page, so every top is where it will stay
-                [lm ensureLayoutForTextContainer:tv.textContainer];
-            }];
-            std::vector<PreviewScroll::Mark> runs;
-            std::vector<PreviewScroll::Mark> *out = &runs;
-            [st enumerateAttribute:_sourceLineKey inRange:NSMakeRange(0, st.length) options:0
-                        usingBlock:^(NSNumber *v, NSRange r, BOOL *stop) {
-                (void)stop;
-                if (![v isKindOfClass:NSNumber.class]) return;
-                const int line = v.intValue;
-                if (!out->empty() && line <= out->back().line) return;   // no rect needed
-                const NSRect rect = MCTextViewRectForCharacter(tv, r.location);
-                out->push_back({line, NSMinY(rect), (long)r.location});
-            }];
-            _map.marks = PreviewScroll::marks(runs);
-            _map.bottom = NSMaxY([lm usedRectForTextContainer:tv.textContainer]) +
-                          tv.textContainerOrigin.y;
-        }
+    if (_mapValid && width == _mapWidth) return;
+    _mapWidth = width;
+    _bottom = NAN;
+    if (_mapValid) {   // the same page at another width: its places move, not its lines
+        for (PreviewScroll::Mark &m : _marks) m.top = NAN;
+        return;
     }
-    _map.lines = _lineCount ? (int)_lineCount() : 0;
-    return _map;
+    _mapValid = YES;
+    _marks.clear();
+    NSTextView *tv = _textView;
+    NSTextStorage *st = tv.textStorage;
+    if (!_sourceLineKey || !st.length || MCUsesTextKit2(tv)) return;
+    std::vector<PreviewScroll::Mark> runs;
+    std::vector<PreviewScroll::Mark> *out = &runs;
+    [st enumerateAttribute:_sourceLineKey inRange:NSMakeRange(0, st.length) options:0
+                usingBlock:^(id v, NSRange r, BOOL *stop) {
+        (void)stop;
+        const int line = MCMarkdownLineOf(v);
+        if (line < 0 || (!out->empty() && line <= out->back().line)) return;
+        out->push_back({line, 0, (long)r.location});
+    }];
+    _marks = PreviewScroll::marks(runs);   // the lines growing (the tops are all 0 here)
+    for (PreviewScroll::Mark &m : _marks) m.top = NAN;
+}
+
+// Mark k's top, the page laid out down to it for that.
+- (double)topOfMark:(size_t)k {
+    PreviewScroll::Mark &m = _marks[k];
+    if (std::isnan(m.top)) {
+        __block NSRect r = NSZeroRect;
+        const NSUInteger at = (NSUInteger)m.at;
+        [self holdFollowing:^{ r = MCTextViewRectForCharacter(self->_textView, at); }];
+        m.top = NSMinY(r);
+    }
+    return m.top;
+}
+
+// The bottom of the page's text: the whole page laid out for it, so asked
+// only past the last mark (the source's end on show).
+- (double)pageBottom {
+    if (std::isnan(_bottom)) {
+        NSTextView *tv = _textView;
+        NSLayoutManager *lm = tv.layoutManager;
+        [self holdFollowing:^{ [lm ensureLayoutForTextContainer:tv.textContainer]; }];
+        _bottom = NSMaxY([lm usedRectForTextContainer:tv.textContainer]) + tv.textContainerOrigin.y;
+    }
+    return _bottom;
+}
+
+// The last mark at or before source line `line`, -1 for none.
+- (int)markAtLine:(double)line {
+    auto it = std::upper_bound(_marks.begin(), _marks.end(), line,
+                               [](double l, const PreviewScroll::Mark &m) { return l < m.line; });
+    return (int)(it - _marks.begin()) - 1;
+}
+
+// The part of the map a question about mark i's stretch needs, its tops found.
+- (PreviewScroll::Page)pageAroundMark:(int)i {
+    const int lines = _lineCount ? (int)_lineCount() : 0;
+    const size_t n = _marks.size();
+    if (n == 0) {
+        PreviewScroll::Page none;
+        none.lines = lines;
+        return none;
+    }
+    if (i >= 0) [self topOfMark:(size_t)i];
+    if ((size_t)(i + 1) < n) [self topOfMark:(size_t)(i + 1)];
+    const BOOL last = i >= 0 && (size_t)(i + 1) >= n;
+    return PreviewScroll::around(_marks, i, last ? [self pageBottom] : 0, lines);
+}
+
+// The map for source line `line` (a fraction of a line included).
+- (PreviewScroll::Page)pageForLine:(double)line {
+    [self makeMarks];
+    return [self pageAroundMark:[self markAtLine:line]];
+}
+
+// The map for page y: the mark at or above it, found from the character
+// the layout puts there.
+- (PreviewScroll::Page)pageForY:(double)y {
+    [self makeMarks];
+    const size_t n = _marks.size();
+    int i = -1;
+    if (n) {
+        NSTextView *tv = _textView;
+        const NSPoint o = tv.textContainerOrigin;
+        __block NSUInteger c = 0;
+        [self holdFollowing:^{
+            NSLayoutManager *lm = tv.layoutManager;
+            const NSUInteger g = [lm glyphIndexForPoint:NSMakePoint(0, MAX(0, y - o.y))
+                                        inTextContainer:tv.textContainer
+                         fractionOfDistanceThroughGlyph:NULL];
+            c = [lm characterIndexForGlyphAtIndex:g];
+        }];
+        auto it = std::upper_bound(_marks.begin(), _marks.end(), (long)c,
+                                   [](long at, const PreviewScroll::Mark &m) { return at < m.at; });
+        i = (int)(it - _marks.begin()) - 1;
+        while ((size_t)(i + 1) < n && [self topOfMark:(size_t)(i + 1)] <= y) i++;
+        while (i >= 0 && [self topOfMark:(size_t)i] > y) i--;
+    }
+    return [self pageAroundMark:i];
 }
 
 // Where line `l` of the source starts, down its text view; past the last
@@ -392,12 +490,14 @@ static const CGFloat kSnapDistance = 16;   // the bar this close to the right ed
 }
 
 - (double)pageTopLine {
-    return PreviewScroll::lineForY([self map], NSMinY(_textView.visibleRect));
+    const double y = NSMinY(_textView.visibleRect);
+    return PreviewScroll::lineForY([self pageForY:y], y);
 }
 
 - (void)scrollPageToSource {
     if (![self isFollowing] || MCUsesTextKit2(_textView)) return;
-    const double y = PreviewScroll::yForLine([self map], self.sourceTopLine);
+    const double line = self.sourceTopLine;
+    const double y = PreviewScroll::yForLine([self pageForLine:line], line);
     _moving = YES;
     [self holdFollowing:^{ MCScrollTextViewToY(self->_scrollView, self->_textView, y); }];
     _moving = NO;
@@ -488,7 +588,7 @@ static id MCBlockOfParagraph(NSTextStorage *st, NSUInteger at) {
         return;
     }
     NSTextView *src = _source;
-    const PreviewScroll::Page &map = [self map];
+    [self makeMarks];
     const double line = (double)_lineOf(NSMaxRange(src.selectedRange));
     NSTextStorage *st = _textView.textStorage;
     NSString *page = st.string;
@@ -496,8 +596,8 @@ static id MCBlockOfParagraph(NSTextStorage *st, NSUInteger at) {
     NSRange mark = NSMakeRange(NSNotFound, 0);
     // The block holding the line, or before a blank line's gap the block
     // above it, as VS Code marks the element before the line.
-    for (int i = PreviewScroll::markAt(map, line); i >= 0; i--) {
-        const NSUInteger at = (NSUInteger)map.marks[(size_t)i].at;
+    for (int i = [self markAtLine:line]; i >= 0; i--) {
+        const NSUInteger at = (NSUInteger)_marks[(size_t)i].at;
         if (at >= page.length) continue;
         const NSRange p = [page paragraphRangeForRange:NSMakeRange(at, 0)];
         if ([page rangeOfCharacterFromSet:ink options:0 range:p].location != NSNotFound) {
@@ -533,7 +633,10 @@ static id MCBlockOfParagraph(NSTextStorage *st, NSUInteger at) {
         if (NSHeight(box) > 0) _markRect = NSMakeRect(x, NSMinY(box) + o.y, 3, NSHeight(box));
     }
     if (NSEqualRects(old, _markRect)) return;
-    if (!NSIsEmptyRect(old)) [tv setNeedsDisplayInRect:old];
-    if (!NSIsEmptyRect(_markRect)) [tv setNeedsDisplayInRect:_markRect];
+    // Without more layout: NSTextView would otherwise lay the page out to
+    // the old rect in small steps, each walking every laid-out line (the
+    // text blocks' slow path; seconds on a long page after a render).
+    if (!NSIsEmptyRect(old)) [tv setNeedsDisplayInRect:old avoidAdditionalLayout:YES];
+    if (!NSIsEmptyRect(_markRect)) [tv setNeedsDisplayInRect:_markRect avoidAdditionalLayout:YES];
 }
 @end

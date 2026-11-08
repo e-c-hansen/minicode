@@ -5,10 +5,98 @@
 #import "MarkdownMermaid.h"
 #import "MarkdownSidePreview.h"
 #include "MarkdownHtml.h"
+#include "MarkdownPage.h"
 #include "MarkdownTasks.h"
 #include "FolderSearch.h"
 #include "MermaidDiagram.h"
 #import <objc/runtime.h>
+#include <unordered_map>
+
+// ------------------------------------------- the side page, in pieces
+// The page beside the source is kept as pieces (MarkdownPage.h): for each,
+// the hashes of the runs it was built from, how long its text is, its
+// source line objects, the places links land on, and whether it may be
+// kept.
+
+@interface MCSidePiece : NSObject
+@property(nonatomic) NSUInteger length;
+@property(nonatomic) int base;
+@property(nonatomic, strong) NSArray<MCMarkdownLine *> *lines;
+@property(nonatomic, strong) NSArray<NSArray *> *anchors;
+@property(nonatomic) BOOL keep;
+- (void)moveToBase:(int)base;
+@end
+
+@implementation MCSidePiece
+// The same runs, now starting at line `base`: its lines move with it.
+- (void)moveToBase:(int)base {
+    const int delta = base - _base;
+    if (delta == 0) return;
+    for (MCMarkdownLine *l in _lines) l.line += delta;
+    _base = base;
+}
+@end
+
+@interface MCSidePage : NSObject {
+  @public
+    std::vector<MdRun> runs;   // until its pieces are built
+    std::vector<MarkdownPage::Piece> pieces;
+    // Its pieces paired with matchedTo's (MarkdownPage::match), when the
+    // queue that read it did that too.
+    std::vector<long> match;
+}
+@property(nonatomic, strong) MCSidePage *matchedTo;
+@property(nonatomic, copy) NSString *context;   // what its text depends on beside its runs
+@property(nonatomic, strong) NSArray<MCSidePiece *> *info;
+@property(nonatomic) NSUInteger noteLength;     // the line about math at its top
+@property(nonatomic) NSUInteger length;         // all of its text
+@end
+
+@implementation MCSidePage
+@end
+
+// The runs and pieces of `text`; any thread.
+static MCSidePage *MCSidePageParse(NSString *text) {
+    MCSidePage *page = [MCSidePage new];
+    const char *md = text.UTF8String;
+    page->runs = MarkdownParser::parse(md ? md : "");
+    page->pieces = MarkdownPage::split(page->runs);
+    return page;
+}
+
+// This thread's CPU time, in milliseconds (MarkdownSidePreview's
+// lastRenderCpuMilliseconds).
+static double MCThreadCpuMs(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+
+static dispatch_queue_t MCSidePageQueue(void) {
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        queue = dispatch_queue_create("MiniCode side preview", DISPATCH_QUEUE_SERIAL);
+    });
+    return queue;
+}
+
+// The character at the top of a page's view, and how far below the view's
+// top its line starts.
+static NSUInteger MCPageTopCharacter(NSTextView *tv, CGFloat *offset) {
+    NSTextStorage *st = tv.textStorage;
+    const NSRect visible = tv.visibleRect;
+    NSUInteger i = [tv characterIndexForInsertionAtPoint:NSMakePoint(NSMinX(visible) + 20,
+                                                                    NSMinY(visible) + 1)];
+    if (i >= st.length) i = st.length - 1;
+    const NSRect r = MCTextViewRectForCharacter(tv, i);
+    if (NSIsEmptyRect(r)) return NSNotFound;
+    *offset = NSMinY(r) - NSMinY(visible);
+    return i;
+}
+
+static void MCAddMarkdownAnchors(NSMutableDictionary<NSString *, NSNumber *> *anchors,
+                                 NSArray<NSArray *> *found, NSUInteger shift);
 
 @implementation EditorController (Markdown)
 
@@ -193,7 +281,25 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
 // typing it there would (applySidePreviewEdit:).
 - (BOOL)editSidePreviewAtCharacter:(NSUInteger)index point:(NSPoint)point {
     if (![self sidePreviewShowing] || !self.textView.editable) return NO;
+    if ([self catchUpSidePage]) return YES;
     return [self editMarkdownIn:_sidePreview.textView atCharacter:index point:point];
+}
+
+// Whether the page beside the source was rendered from the buffer as it is
+// now. It can be up to a pause and a render behind the typing, and a click
+// on it then names old source lines: such a click renders the page now and
+// says so, acting on nothing (YES); the next click lands on the page as it
+// is.
+- (BOOL)sidePageIsCurrent {
+    NSString *shown = _sidePreview.renderedSource, *now = self.sourceText ?: @"";
+    return shown == now || [shown isEqualToString:now];
+}
+
+- (BOOL)catchUpSidePage {
+    if ([self sidePageIsCurrent]) return NO;
+    [self renderSidePreviewKeepingPlace];
+    [self showStatusNote:@"The preview was behind your typing and has caught up: click again"];
+    return YES;
 }
 
 // The block editor over `page`: the full preview's text view (the
@@ -210,11 +316,12 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
     // A box was ticked by the first click; the second does nothing more.
     id link = [st attribute:NSLinkAttributeName atIndex:index effectiveRange:NULL];
     if ([link isKindOfClass:NSString.class] && [link hasPrefix:kTaskLinkPrefix]) return YES;
-    NSNumber *line = [st attribute:kMarkdownSourceLine atIndex:index effectiveRange:NULL];
-    if (!line) return NO;
+    const int lineOf = MCMarkdownLineOf([st attribute:kMarkdownSourceLine atIndex:index
+                                                   effectiveRange:NULL]);
+    if (lineOf < 0) return NO;
     NSArray<NSNumber *> *cell = [st attribute:kMarkdownTableCell atIndex:index
                                effectiveRange:NULL];
-    int sourceLine = line.intValue, column = -1;
+    int sourceLine = lineOf, column = -1;
     if (cell.count == 2) {
         const int row = cell[0].intValue;
         sourceLine += row + (row > 0 ? 1 : 0);   // the separator row follows the header
@@ -434,17 +541,32 @@ static char kMarkdownMermaidKey;
 // with its headings' and footnotes' places by anchor. What it waits for
 // (math, web pictures, diagrams) is noted for the page that shows it;
 // finishMarkdownPage then sends it off. Shared by the full preview and the
-// one beside the source, which never show at once.
+// one beside the source, which never show at once; the one beside the
+// source builds its page a piece at a time (renderSidePreviewFrom:) with the
+// same three steps: beginMarkdownPageWidth:, markdownRuns:from:to:anchors:
+// and markdownNoteForRuns:.
 - (NSMutableAttributedString *)markdownPageFor:(NSString *)content
                                          width:(CGFloat)width
                                        anchors:(NSDictionary **)anchorsOut {
-    _markdownPageWidth = width;
     std::string md = content.UTF8String ? content.UTF8String : "";
     std::vector<MdRun> runs = MarkdownParser::parse(md);
-    MCMarkdownMermaid *mermaid = [self markdownMermaid];   // ```mermaid blocks
-    [mermaid beginPageDark:[AppSettings shared].settings.isDark()];
-    NSString *mermaidComplaint = nil, *mermaidKey = nil;  // of the block being shown as code
-    size_t mermaidEnd = 0;
+    [self beginMarkdownPageWidth:width];
+    NSMutableArray<NSArray *> *found = [NSMutableArray array];
+    NSMutableAttributedString *out = [self markdownRuns:runs from:0 to:runs.size() anchors:found];
+    // A page whose math cannot be typeset says why in a line at its top.
+    NSAttributedString *note = [self markdownNoteForRuns:runs];
+    if (note) [out insertAttributedString:note atIndex:0];
+    NSMutableDictionary<NSString *, NSNumber *> *anchors = [NSMutableDictionary dictionary];
+    MCAddMarkdownAnchors(anchors, found, note.length);
+    if (anchorsOut) *anchorsOut = anchors;
+    return out;
+}
+
+// A new page: what its runs will note as they are built (formulas and
+// pictures to wait for, diagrams to draw) starts empty.
+- (void)beginMarkdownPageWidth:(CGFloat)width {
+    _markdownPageWidth = width;
+    [[self markdownMermaid] beginPageDark:[AppSettings shared].settings.isDark()];   // ```mermaid
     _awaitedWebImages = [NSMutableSet set];   // markdownRun: fills it
     _webImageMarks = 0;
     _awaitedMath = [NSMutableSet set];        // and these
@@ -452,9 +574,38 @@ static char kMarkdownMermaidKey;
     _mathMarks = 0;
     _mathOn = [self typesetsMath];            // asked once, not per formula
     _mathRunProblem = nil;                    // markdownRun: notes a failed run
+}
 
+// The places links land on, in page order: @[@YES, a heading's anchor,
+// offset] (GitHub numbers repeats: intro, intro-1, intro-2) or @[@NO, a
+// footnote's, offset] (the first wins), each `shift` further down.
+static void MCAddMarkdownAnchors(NSMutableDictionary<NSString *, NSNumber *> *anchors,
+                                 NSArray<NSArray *> *found, NSUInteger shift) {
+    for (NSArray *a in found) {
+        NSString *slug = a[1];
+        const NSUInteger at = [a[2] unsignedIntegerValue] + shift;
+        if ([a[0] boolValue]) {
+            NSString *key = slug;
+            for (int n = 1; anchors[key]; n++) key = [NSString stringWithFormat:@"%@-%d", slug, n];
+            if (key.length) anchors[key] = @(at);
+        } else if (slug.length && !anchors[slug]) {
+            anchors[slug] = @(at);
+        }
+    }
+}
+
+// Runs [from, to) as page text. They start a line with nothing carried
+// over from runs before them (a whole page, or a piece of one,
+// MarkdownPage.h). The places links land on go into `anchors` (see
+// MCAddMarkdownAnchors), at offsets into what is returned.
+- (NSMutableAttributedString *)markdownRuns:(const std::vector<MdRun> &)runs
+                                       from:(size_t)from
+                                         to:(size_t)to
+                                    anchors:(NSMutableArray<NSArray *> *)anchors {
+    MCMarkdownMermaid *mermaid = [self markdownMermaid];
+    NSString *mermaidComplaint = nil, *mermaidKey = nil;  // of the block being shown as code
+    size_t mermaidEnd = from;
     NSMutableAttributedString *out = [[NSMutableAttributedString alloc] init];
-    NSMutableDictionary<NSString *, NSNumber *> *anchors = [NSMutableDictionary dictionary];
     // A paragraph's look comes from its first run, and every run in it gets
     // that paragraph style; a quote's or a code block's paragraphs share one
     // text block, which draws the bar or the box around all of them.
@@ -463,11 +614,11 @@ static char kMarkdownMermaidKey;
     NSTextBlock *codeBox = nil;
     BOOL lineStart = YES;
     MCMarkdownCodeBlocks *codeColors = [MCMarkdownCodeBlocks new];   // ```python and the like
-    for (size_t i = 0; i < runs.size();) {
+    for (size_t i = from; i < to;) {
         const MdRun &r = runs[i];
         if (r.tableId > 0) {
             size_t end = i;
-            while (end < runs.size() && runs[end].tableId == r.tableId) end++;
+            while (end < to && runs[end].tableId == r.tableId) end++;
             [self appendMarkdownTable:runs from:i to:end into:out];
             i = end;
             lineStart = YES;
@@ -486,12 +637,12 @@ static char kMarkdownMermaidKey;
                 [out appendAttributedString:pic];
                 i = end;
                 [quoteBlocks removeAllObjects];
-            codeBox = nil;
+                codeBox = nil;
                 continue;
             }
             if (mermaidComplaint || mermaidKey) {
                 mermaidEnd = i;
-                while (mermaidEnd < runs.size() && MermaidDiagram::isMermaidRun(runs[mermaidEnd]))
+                while (mermaidEnd < to && MermaidDiagram::isMermaidRun(runs[mermaidEnd]))
                     mermaidEnd++;
             }
         }
@@ -499,24 +650,19 @@ static char kMarkdownMermaidKey;
             if (r.heading > 0) {
                 // A heading's text may be several runs (bold, code, links).
                 std::string title;
-                for (size_t k = i; k < runs.size() && runs[k].heading > 0 &&
-                                   runs[k].line == r.line; k++)
+                for (size_t k = i; k < to && runs[k].heading > 0 && runs[k].line == r.line; k++)
                     title += runs[k].text;
                 // The core's anchor, so links land where they do on Linux and Android.
                 const std::string anchor = MarkdownParser::anchor(title);
                 NSString *slug = [[NSString alloc] initWithBytes:anchor.data() length:anchor.size()
                                                         encoding:NSUTF8StringEncoding] ?: @"";
-                // GitHub numbers repeats: intro, intro-1, intro-2.
-                NSString *key = slug;
-                for (int n = 1; anchors[key]; n++)
-                    key = [NSString stringWithFormat:@"%@-%d", slug, n];
-                if (key.length) anchors[key] = @(out.length);
+                [anchors addObject:@[@YES, slug, @(out.length)]];
             }
             para = [self markdownParagraphFor:r quotes:quoteBlocks code:&codeBox];
         }
         if (!r.anchor.empty()) {   // a footnote, or a reference to one, that links land on
             NSString *key = [NSString stringWithUTF8String:r.anchor.c_str()];
-            if (key.length && !anchors[key]) anchors[key] = @(out.length);
+            if (key.length) [anchors addObject:@[@NO, key, @(out.length)]];
         }
         NSAttributedString *piece = [self markdownRun:r style:para inCell:NO];
         if (piece.length && i < mermaidEnd && (mermaidComplaint || mermaidKey)) {
@@ -534,23 +680,24 @@ static char kMarkdownMermaidKey;
         i++;
     }
     [codeColors colorPage:out];
-    // A page whose math cannot be typeset says why in a line at its top.
-    BOOL hasMath = NO;
-    for (const MdRun &r : runs) hasMath = hasMath || r.math;
-    NSAttributedString *note = !hasMath ? nil
-                             : self.mathNoteWanted ? [self mathNote]
-                             : _mathRunProblem ? [self mathNoteForProblem:_mathRunProblem]
-                             // Formulas still out with tectonic: say so, or the TeX
-                             // standing in looks like math that will never be typeset.
-                             : _awaitedMath.count ? [self mathNoteTypesetting:_awaitedMath.count]
-                             : nil;
-    if (note) {
-        [out insertAttributedString:note atIndex:0];
-        for (NSString *key in anchors.allKeys)
-            anchors[key] = @(anchors[key].unsignedIntegerValue + note.length);
-    }
-    if (anchorsOut) *anchorsOut = anchors;
     return out;
+}
+
+// The line at the top of a page with math, when it cannot be typeset or is
+// still being typeset (else the TeX standing in looks like math that will
+// never be), or nil. Asked once the page's runs are built.
+- (NSAttributedString *)markdownNoteForRuns:(const std::vector<MdRun> &)runs {
+    BOOL hasMath = NO;
+    for (const MdRun &r : runs)
+        if (r.math) {
+            hasMath = YES;
+            break;
+        }
+    return !hasMath ? nil
+         : self.mathNoteWanted ? [self mathNote]
+         : _mathRunProblem ? [self mathNoteForProblem:_mathRunProblem]
+         : _awaitedMath.count ? [self mathNoteTypesetting:_awaitedMath.count]
+         : nil;
 }
 
 // ------------------------------------------------------ math in the preview
@@ -871,13 +1018,9 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
     if (_sidePreview) return _sidePreview;
     _sidePreview = [[MCMarkdownSidePreview alloc] initInView:self.rightArea];
     __weak EditorController *weakSelf = self;
-    _sidePreview.onRender = ^{
-        EditorController *me = weakSelf;
-        if ([me sidePreviewShowing]) [me renderSidePreviewKeepingPlace];
-    };
+    _sidePreview.onRender = ^{ [weakSelf renderSidePreviewAfterTyping]; };
     _sidePreview.onLink = ^BOOL(id link, NSUInteger index) {
-        (void)index;
-        return [weakSelf sidePreviewClickedLink:link];
+        return [weakSelf sidePreviewClickedLink:link atIndex:index];
     };
     _sidePreview.onDrag = ^(CGFloat x) { [weakSelf sidePreviewBarDraggedTo:x]; };
     _sidePreview.onClose = ^{ [weakSelf closeSidePreview]; };
@@ -948,32 +1091,301 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
     [self dropSidePreviewPage];
 }
 
-// The page for the buffer as it is now, at its top.
+// The page for the buffer as it is now, built whole, at its top.
 - (void)renderSidePreview {
     MCMarkdownSidePreview *side = [self sidePreview];
     [side cancelRender];
-    NSDictionary *anchors = nil;
-    NSAttributedString *page = [self markdownPageFor:self.sourceText ?: @""
-                                               width:side.pageWidth anchors:&anchors];
-    side.anchors = anchors;
-    [side showPage:page];
-    [self finishMarkdownPage];
+    side.pageState = nil;
+    [self renderSidePreviewFrom:nil keepingPlace:NO];
 }
 
+// The same, keeping the page's place (a formula, a picture or a diagram
+// arrived, the zoom changed, an edit made from the page) and then following
+// the source unless the user had scrolled the page last; the pieces the
+// page has already are kept (renderSidePreviewFrom:keepingPlace:).
 - (void)renderSidePreviewKeepingPlace {
     if (!_sidePreview) return;
-    __weak EditorController *weakSelf = self;
     MCMarkdownSidePreview *side = _sidePreview;
-    // The page keeps its place while it is rendered (the source does not
-    // follow those moves), then follows the source unless the user had
-    // scrolled the page last.
-    [side holdFollowing:^{
-        EditorController *me = weakSelf;
-        [me keepPlaceIn:side.textView scroll:side.scrollView whileRendering:^{
-            [weakSelf renderSidePreview];
-        }];
-    }];
+    __weak EditorController *weakSelf = self;
+    [side holdFollowing:^{ [weakSelf renderSidePreviewFrom:nil keepingPlace:YES]; }];
     [side pageRendered];
+}
+
+// A pause in typing: the source is read on a queue of its own (the parse
+// and its pieces, MarkdownPage.h), and on the main thread only the pieces
+// that changed are built and put in. A render whose text is no longer the
+// buffer's is dropped; the change since has scheduled another.
+- (void)renderSidePreviewAfterTyping {
+    MCMarkdownSidePreview *side = _sidePreview;
+    if (!side || ![self sidePreviewShowing]) return;
+    NSString *text = self.sourceText ?: @"";
+    const NSUInteger generation = ++_sidePageGeneration;
+    // The page on show, to pair the new pieces with there too: its pieces do
+    // not change once made, and which may be kept is read here.
+    MCSidePage *old = [side.pageState isKindOfClass:MCSidePage.class] ? side.pageState : nil;
+    __block std::vector<bool> keep(old.info.count);
+    for (NSUInteger k = 0; k < old.info.count; k++) keep[k] = old.info[k].keep;
+    __weak EditorController *weakSelf = self;
+    dispatch_async(MCSidePageQueue(), ^{
+        MCSidePage *parsed = MCSidePageParse(text);
+        if (old) {
+            parsed->match = MarkdownPage::match(old->pieces, keep, parsed->pieces);
+            parsed.matchedTo = old;
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            EditorController *me = weakSelf;
+            if (!me || generation != me->_sidePageGeneration || me.sourceText != text ||
+                ![me sidePreviewShowing] || me->_sidePreview != side)
+                return;
+            const double c0 = MCThreadCpuMs();
+            [side holdFollowing:^{ [me renderSidePreviewFrom:parsed keepingPlace:YES]; }];
+            [side pageRendered];
+            side.lastRenderCpuMilliseconds = MCThreadCpuMs() - c0;
+        });
+    });
+}
+
+// What a piece's text depends on besides its runs: a page built for other
+// ones is built again whole.
+- (NSString *)sidePageContextFor:(MCMarkdownSidePreview *)side {
+    const Settings &cfg = [AppSettings shared].settings;
+    return [NSString stringWithFormat:@"%@|%.2f|%.3f|%d%d%d%d%d", self.currentPath ?: @"",
+                                      side.pageWidth, MCZoomScale(), cfg.isDark(),
+                                      [self typesetsMath], cfg.mermaid(), cfg.webImages(),
+                                      cfg.math()];
+}
+
+// Piece k of `page` as text, its source lines as MCMarkdownLine objects
+// (one a line), its anchors, and whether it may be kept as it is (it waits
+// for nothing: no picture on its way, no formula or diagram still out).
+- (MCSidePiece *)buildSidePiece:(MCSidePage *)page
+                          index:(size_t)k
+                           text:(NSMutableAttributedString **)textOut {
+    const MarkdownPage::Piece &piece = page->pieces[k];
+    MCSidePiece *info = [MCSidePiece new];
+    NSMutableArray<NSArray *> *anchors = [NSMutableArray array];
+    const NSUInteger pictures = _webImageMarks, formulas = _mathMarks;
+    NSMutableAttributedString *text = [self markdownRuns:page->runs from:piece.begin to:piece.end
+                                                 anchors:anchors];
+    BOOL keep = _webImageMarks == pictures && _mathMarks == formulas;
+    if (keep && _mathRunProblem)
+        for (size_t i = piece.begin; i < piece.end && keep; i++) keep = !page->runs[i].math;
+    // Each line's runs share one object, whose number a later render moves.
+    std::vector<std::pair<NSRange, int>> lined;
+    std::vector<std::pair<NSRange, int>> *out = &lined;
+    const NSRange all = NSMakeRange(0, text.length);
+    [text enumerateAttribute:kMarkdownSourceLine inRange:all options:0
+                  usingBlock:^(id v, NSRange r, BOOL *stop) {
+        (void)stop;
+        const int line = MCMarkdownLineOf(v);
+        if (line >= 0) out->push_back({r, line});
+    }];
+    NSMutableArray<MCMarkdownLine *> *lines = [NSMutableArray array];
+    std::unordered_map<int, MCMarkdownLine *> byLine;   // a long code block is one piece
+    for (const auto &l : lined) {
+        MCMarkdownLine *__strong &o = byLine[l.second];
+        if (!o) {
+            o = [[MCMarkdownLine alloc] initWithLine:l.second];
+            [lines addObject:o];
+        }
+        [text addAttribute:kMarkdownSourceLine value:o range:l.first];
+    }
+    if (keep) {
+        __block BOOL waiting = NO;
+        [text enumerateAttribute:MCMarkdownMermaidAttribute inRange:all options:0
+                      usingBlock:^(id v, NSRange r, BOOL *stop) {
+            (void)r;
+            if (v) waiting = *stop = YES;
+        }];
+        keep = !waiting;
+    }
+    info.length = text.length;
+    info.base = piece.base;
+    info.lines = lines;
+    info.anchors = anchors;
+    info.keep = keep;
+    *textOut = text;
+    return info;
+}
+
+// Puts the page for the buffer on show: `parsed` (from the queue) or the
+// buffer read now. A page of the same context keeps every piece that is
+// the same as before, its line numbers moved, and only the stretches
+// between kept pieces are replaced in the text, each a storage edit of its
+// own, so TextKit lays out again only from the first one and only as far as
+// it is asked; the place on show is kept by the character at the top,
+// moved by what the edits above it changed. Without such a page (the
+// first, another width, zoom, theme or settings) the page is built whole.
+- (void)renderSidePreviewFrom:(MCSidePage *)parsed keepingPlace:(BOOL)keepPlace {
+    MCMarkdownSidePreview *side = [self sidePreview];
+    [side cancelRender];
+    NSString *text = self.sourceText ?: @"";
+    if (!parsed) parsed = MCSidePageParse(text);
+    NSTextView *tv = side.textView;
+    NSTextStorage *st = tv.textStorage;
+    MCSidePage *previous = [side.pageState isKindOfClass:MCSidePage.class] ? side.pageState : nil;
+    MCSidePage *old = previous;
+    NSString *context = [self sidePageContextFor:side];
+    if (![old.context isEqualToString:context] || st.length != old.length) old = nil;
+    parsed.context = context;
+    [self beginMarkdownPageWidth:side.pageWidth];
+
+    const size_t n = parsed->pieces.size();
+    std::vector<long> match(n, -1);
+    if (old && parsed.matchedTo == old && parsed->match.size() == n) {
+        match = parsed->match;   // paired on the queue
+    } else if (old) {
+        std::vector<bool> keep(old.info.count);
+        for (NSUInteger k = 0; k < old.info.count; k++) keep[k] = old.info[k].keep;
+        match = MarkdownPage::match(old->pieces, keep, parsed->pieces);
+    }
+    NSMutableArray<MCSidePiece *> *info = [NSMutableArray arrayWithCapacity:n];
+    NSMutableArray *built = [NSMutableArray arrayWithCapacity:n];   // text, or NSNull when kept
+    for (size_t k = 0; k < n; k++) {
+        if (match[k] >= 0) {
+            MCSidePiece *p = old.info[(NSUInteger)match[k]];
+            [p moveToBase:parsed->pieces[k].base];
+            [info addObject:p];
+            [built addObject:NSNull.null];
+            continue;
+        }
+        NSMutableAttributedString *t = nil;
+        [info addObject:[self buildSidePiece:parsed index:k text:&t]];
+        [built addObject:t];
+    }
+    NSAttributedString *note = [self markdownNoteForRuns:parsed->runs] ?: [NSAttributedString new];
+    parsed.info = info;
+    parsed.noteLength = note.length;
+
+    if (!old || ![self spliceSidePage:side old:old note:note built:built match:match]) {
+        // Whole: where the page's top was, kept by its character.
+        NSUInteger anchor = NSNotFound;
+        CGFloat offset = 0;
+        if (keepPlace && side.pageLeads && side.scrollView.contentView.bounds.origin.y > 0 &&
+            st.length)
+            anchor = MCPageTopCharacter(tv, &offset);
+        const NSUInteger oldNote = previous ? previous.noteLength : 0;
+        NSMutableAttributedString *page = [note mutableCopy];
+        for (NSUInteger k = 0; k < n; k++) {
+            id t = built[k];
+            if (t == NSNull.null) {   // kept, but the page to keep it from did not add up
+                NSMutableAttributedString *fresh = nil;
+                info[k] = [self buildSidePiece:parsed index:k text:&fresh];
+                t = fresh;
+            }
+            [page appendAttributedString:t];
+        }
+        [side showPage:page];
+        if (anchor != NSNotFound && page.length) {
+            anchor = anchor >= oldNote ? anchor - oldNote + note.length : 0;
+            const NSRect r = MCTextViewRectForCharacter(tv, MIN(anchor, page.length - 1));
+            if (!NSIsEmptyRect(r)) MCScrollTextViewToY(side.scrollView, tv, NSMinY(r) - offset);
+        }
+    }
+    parsed.length = st.length;
+    // The places links land on, piece by piece down the page.
+    NSMutableDictionary<NSString *, NSNumber *> *anchors = [NSMutableDictionary dictionary];
+    NSUInteger at = note.length;
+    for (MCSidePiece *p in info) {
+        if (p.anchors.count) MCAddMarkdownAnchors(anchors, p.anchors, at);
+        at += p.length;
+    }
+    side.anchors = anchors;
+    parsed.matchedTo = nil;
+    side.pageState = parsed;
+    side.renderedSource = text;
+    [self finishMarkdownPage];
+    // The runs are needed no more (the pieces' hashes are what the next
+    // page is matched by): freed off the main thread, as the last page is
+    // (a long page's take milliseconds).
+    auto runs = std::make_shared<std::vector<MdRun>>(std::move(parsed->runs));
+    parsed->runs.clear();
+    dispatch_async(MCSidePageQueue(), ^{
+        (void)previous;
+        (void)runs;
+    });
+}
+
+// The page on show (built from `old`) brought to the new pieces: the note
+// at the top, then each stretch of new pieces between kept ones in place
+// of the old pieces between them. NO, changing nothing, if the old page's
+// lengths do not add up to what is on show.
+- (BOOL)spliceSidePage:(MCMarkdownSidePreview *)side
+                   old:(MCSidePage *)old
+                  note:(NSAttributedString *)note
+                 built:(NSArray *)built
+                 match:(const std::vector<long> &)match {
+    NSTextView *tv = side.textView;
+    NSTextStorage *st = tv.textStorage;
+    const NSUInteger count = old.info.count;
+    std::vector<NSUInteger> starts(count + 1);
+    starts[0] = old.noteLength;
+    for (NSUInteger k = 0; k < count; k++) starts[k + 1] = starts[k] + old.info[k].length;
+    if (starts[count] != st.length) return NO;
+
+    struct Edit {
+        NSRange range;
+        NSAttributedString *with;
+    };
+    std::vector<Edit> edits;
+    NSAttributedString *oldNote =
+        old.noteLength ? [st attributedSubstringFromRange:NSMakeRange(0, old.noteLength)] : nil;
+    if (!(oldNote ? [oldNote isEqualToAttributedString:note] : note.length == 0))
+        edits.push_back({NSMakeRange(0, old.noteLength), note});
+    NSMutableAttributedString *pending = nil;
+    long previous = -1;
+    auto flush = [&](long next) {
+        const NSUInteger from = starts[(size_t)(previous + 1)], to = starts[(size_t)next];
+        if (pending.length || to > from)
+            edits.push_back({NSMakeRange(from, to - from), pending ?: [NSAttributedString new]});
+        pending = nil;
+    };
+    for (size_t k = 0; k < match.size(); k++) {
+        if (match[k] < 0) {
+            if (!pending) pending = [NSMutableAttributedString new];
+            [pending appendAttributedString:built[k]];
+            continue;
+        }
+        if (pending || match[k] != previous + 1) flush(match[k]);
+        previous = match[k];
+    }
+    if (pending || (NSUInteger)(previous + 1) != count) flush((long)count);
+    if (edits.empty()) return YES;
+
+    // The character at the page's top, and where the edits above it move it
+    // (unless the page is to follow the source, which puts it elsewhere:
+    // keeping it here would lay the page out to where it was for nothing).
+    CGFloat offset = 0;
+    NSUInteger anchor = NSNotFound;
+    if (side.pageLeads && side.scrollView.contentView.bounds.origin.y > 0 && st.length)
+        anchor = MCPageTopCharacter(tv, &offset);
+    BOOL moves = NO;   // something above it changed, so its height may have
+    NSUInteger moved = anchor;
+    if (anchor != NSNotFound) {
+        long shift = 0;
+        for (const Edit &e : edits) {
+            if (anchor < e.range.location) break;
+            moves = YES;
+            if (e.range.length && anchor < NSMaxRange(e.range)) {
+                // In what is replaced: as far into its new text.
+                moved = (NSUInteger)((long)e.range.location + shift) +
+                        MIN(anchor - e.range.location, e.with.length ? e.with.length - 1 : 0);
+                shift = 0;
+                anchor = NSNotFound;
+                break;
+            }
+            shift += (long)e.with.length - (long)e.range.length;
+        }
+        if (anchor != NSNotFound) moved = (NSUInteger)((long)anchor + shift);
+    }
+    for (auto e = edits.rbegin(); e != edits.rend(); ++e)
+        [st replaceCharactersInRange:e->range withAttributedString:e->with];
+    [side pageChanged];
+    if (moves && st.length) {
+        const NSRect r = MCTextViewRectForCharacter(tv, MIN(moved, st.length - 1));
+        if (!NSIsEmptyRect(r)) MCScrollTextViewToY(side.scrollView, tv, NSMinY(r) - offset);
+    }
+    return YES;
 }
 
 // The buffer changed (textDidChange:): the page follows once typing pauses.
@@ -989,6 +1401,7 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
 - (void)sidePreviewApplySettings {
     if (!_sidePreview) return;
     [_sidePreview applySettings];
+    _sidePreview.pageState = nil;   // its colors are in every piece: built again whole
     if ([self sidePreviewShowing]) [self renderSidePreviewKeepingPlace];
 }
 
@@ -1039,14 +1452,24 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
     [self relayoutRightArea];
 }
 
-// A link clicked in the pane: a heading or a footnote scrolls the pane, a
-// task's box ticks the task in the source (one undo step, as a click in
-// the full preview is), and the rest open as from the full preview.
-- (BOOL)sidePreviewClickedLink:(id)link {
+// A link clicked in the pane (at character `index`): a heading or a
+// footnote scrolls the pane, a task's box ticks the task in the source (one
+// undo step, as a click in the full preview is), and the rest open as from
+// the full preview. The box's line is its run's (the number in the link is
+// the one it was built with, which a later render may have moved), and a
+// page behind the typing is brought up to date instead of ticking a line
+// that has moved.
+- (BOOL)sidePreviewClickedLink:(id)link atIndex:(NSUInteger)index {
     if (![link isKindOfClass:NSString.class]) return NO;
     NSString *href = link;
     if ([href hasPrefix:kTaskLinkPrefix]) {
-        const int line = [[href substringFromIndex:kTaskLinkPrefix.length] intValue];
+        if ([self catchUpSidePage]) return YES;
+        NSTextStorage *page = _sidePreview.textView.textStorage;
+        int line = index < page.length
+                       ? MCMarkdownLineOf([page attribute:kMarkdownSourceLine atIndex:index
+                                           effectiveRange:NULL])
+                       : -1;
+        if (line < 0) line = [[href substringFromIndex:kTaskLinkPrefix.length] intValue];
         const std::string src = Utf8String(self.sourceText ?: @"");
         const std::string edited = MarkdownTasks::toggleBox(src, line);
         if (edited == src || !self.textView.editable) {
