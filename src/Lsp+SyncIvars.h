@@ -10,6 +10,7 @@
     // The edits to the text on show since it was last sent, for servers
     // that take ranged changes (incremental didChange).
     Lsp::ChangeTracker _changes;
+    double _lastFlushCpuMs;   // the last flushChanges' main-thread CPU time
 
     // Files changed on disk, for the servers that registered watchers
     // (workspace/didChangeWatchedFiles): made with the first registration,

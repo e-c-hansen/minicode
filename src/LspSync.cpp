@@ -3,6 +3,7 @@
 // them, and watched files (globs, the servers' watchers, what FSEvents
 // reports turned into changes, coalescing, and what is never watched).
 #include "LspClient.h"
+#include <algorithm>
 #include <map>
 
 namespace Lsp {
@@ -157,6 +158,48 @@ std::u16string applyContentChanges(const std::u16string& text,
         out.replace(a, b - a, toUtf16(c.text));
     }
     return out;
+}
+
+SyncedText::SyncedText(std::u16string text) : text_(std::move(text)) {
+    starts_.push_back(0);
+    for (size_t i = 1; i <= text_.size(); i++)
+        if (startsLine(i)) starts_.push_back(i);
+}
+
+// A line starts after \n, and after a \r not followed by \n.
+bool SyncedText::startsLine(size_t at) const {
+    if (at == 0) return true;
+    if (at > text_.size()) return false;
+    const char16_t c = text_[at - 1];
+    if (c == u'\n') return true;
+    return c == u'\r' && (at == text_.size() || text_[at] != u'\n');
+}
+
+Position SyncedText::position(size_t offset) const {
+    offset = std::min(offset, text_.size());
+    auto it = std::upper_bound(starts_.begin(), starts_.end(), offset);
+    const size_t line = (size_t)(it - starts_.begin()) - 1;
+    return Position{(int)line, (int)(offset - starts_[line])};
+}
+
+void SyncedText::replace(size_t a, size_t b, const std::u16string& with) {
+    a = std::min(a, text_.size());
+    b = std::min(std::max(a, b), text_.size());
+    // Whether a line starts at s depends on the units at s - 1 and s, so
+    // only starts in [a, b] (old) can change, becoming ones in
+    // [a, a + with.size()] (new); the rest keep theirs, moved.
+    auto lo = std::lower_bound(starts_.begin(), starts_.end(), a);
+    auto hi = std::upper_bound(lo, starts_.end(), b);
+    const long delta = (long)with.size() - (long)(b - a);
+    for (auto it = hi; it != starts_.end(); ++it) *it = (size_t)((long)*it + delta);
+    const size_t at = (size_t)(lo - starts_.begin());
+    starts_.erase(lo, hi);
+    text_.replace(a, b - a, with);
+    std::vector<size_t> found;
+    const size_t end = std::min(a + with.size(), text_.size());
+    for (size_t s = a; s <= end; s++)
+        if (startsLine(s)) found.push_back(s);
+    starts_.insert(starts_.begin() + (long)at, found.begin(), found.end());
 }
 
 // ------------------------------------------------------- watched files

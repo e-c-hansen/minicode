@@ -615,6 +615,32 @@ bool rangedChanges(const std::string& before, const std::string& after,
 // Applies didChange's entries in order, as a server does (for tests).
 std::u16string applyContentChanges(const std::u16string& text,
                                    const std::vector<ContentChange>& changes);
+// The client's copy of a document as the server has it: UTF-16, with its
+// line starts kept as it is edited (lines end at \n, \r\n or \r, as
+// PositionIndex counts them), so a ranged change finds its positions and
+// goes in without reading or converting the rest of the text.
+class SyncedText {
+public:
+    SyncedText() : starts_{0} {}
+    explicit SyncedText(std::u16string text);
+    const std::u16string& text() const { return text_; }
+    size_t size() const { return text_.size(); }
+    size_t lines() const { return starts_.size(); }
+    // As PositionIndex::position.
+    Position position(size_t offset) const;
+    // [a, b) replaced by `with`; only the line starts from a on to the end
+    // of the new text are looked at again (the ones after move).
+    void replace(size_t a, size_t b, const std::u16string& with);
+    bool operator==(const std::u16string& s) const { return text_ == s; }
+
+private:
+    std::u16string text_;
+    std::vector<size_t> starts_;
+    bool startsLine(size_t at) const;
+};
+// Units [start, start + length) of the editor's text as it is now (the
+// caller keeps them within the text).
+using TextReader = std::function<std::u16string(size_t start, size_t length)>;
 // MarkupContent ({kind, value}) or a plain string. False for anything else.
 bool parseMarkup(const Json& j, std::string& text, bool& isMarkdown);
 SignatureHelp parseSignatureHelp(const Json& result);
@@ -938,9 +964,25 @@ public:
     // The same, sending only what changed when the server takes ranged
     // changes (textDocumentSync change 2) and `changes` (the editor's
     // edits since the text was last sent) account for every difference
-    // and are smaller than the text; else the whole text.
+    // (checked against the text given) and are smaller than the text;
+    // else the whole text.
     void didChange(const std::string& uri, const std::string& text,
                    const ChangeTracker& changes);
+    // The same, for an editor: the text now is `length` UTF-16 units read
+    // through `read` only where the regions say it changed (and one unit
+    // either side), so a pause in typing costs what was typed, not the
+    // file. The regions are trusted: what lies outside them is not
+    // compared (the whole-text overloads and didSave compare, and so does
+    // setCheckSync); a length that does not add up, a boundary between \r
+    // and \n or inside a surrogate pair, or no ranged sync, sends the whole
+    // text. With no regions and the same length, nothing is sent.
+    void didChange(const std::string& uri, size_t length, const ChangeTracker& changes,
+                   const TextReader& read);
+    // A check (for debugging and the tests): after each ranged change the
+    // whole text is read and compared with the client's copy, and a
+    // difference is counted and repaired by sending the whole text.
+    void setCheckSync(bool on) { checkSync_ = on; }
+    size_t syncRepairs() const { return syncRepairs_; }
     // textDocumentSync's change kind: 0 none, 1 full, 2 incremental.
     int syncKind() const;
     // How many didChange notifications went out with ranges, and whole.
@@ -952,11 +994,11 @@ public:
     int version(const std::string& uri) const;
     // Every open document's version, to compare with later (staleEditFile).
     DocVersions versions() const;
-    const std::string* openText(const std::string& uri) const;
+    const std::u16string* openText(const std::string& uri) const;
     // The text last sent for a document, found by its URI as given or, when
     // the server spells it another way, by the file it names. What the
     // positions in a server's answer about that document refer to.
-    const std::string* textFor(const std::string& uri) const;
+    const std::u16string* textFor(const std::string& uri) const;
     std::vector<std::string> openUris() const;
 
     // Requests. The handler runs when the response arrives (with a null
@@ -1119,7 +1161,11 @@ public:
     size_t queuedMessages() const { return queue_.size(); }
 
 private:
-    struct Doc { std::string languageId, text; int version = 0; };
+    struct Doc {
+        std::string languageId;
+        SyncedText text;
+        int version = 0;
+    };
 
     Sender send_;
     State state_ = State::Idle;
@@ -1147,6 +1193,9 @@ private:
     size_t watchedSent_ = 0;
     size_t staleDiagnostics_ = 0;
     size_t rangedSent_ = 0, fullSent_ = 0;
+    bool checkSync_ = false;
+    size_t syncRepairs_ = 0;
+    void sendWhole(Doc& d, const std::string& uri, std::u16string text);
     const Doc* findDoc(const std::string& uri) const;
     std::function<void()> shutdownDone_;
 

@@ -1257,11 +1257,21 @@ view is disposed (on `unrealize`), or dispose loops forever.
   and unchanged text is dropped. A server with `textDocumentSync.change` 2
   gets ranges: `Lsp::ChangeTracker` (`_changes`) merges the storage's edits
   (`editedRange`, `changeInLength`) into regions of the text as sent, and
-  `Lsp::rangedChanges` turns them into contentChanges, last region first,
-  only after checking the text outside them is the same in both; anything
-  that does not check out (an edit it missed, a boundary inside a character
-  or between \r and \n, over 256 regions, or ranges as big as the text)
-  sends the whole text, so the server's copy is always right.
+  the Mac's flush (2026-11-08) hands `Client::didChange` the length and a
+  `TextReader` over the storage: only each region's new text (and a unit
+  either side) is read, positions come from the client's copy, a
+  `SyncedText` (UTF-16 with line starts kept through edits), and
+  contentChanges go last region first. The regions are trusted, so a pause
+  costs what was typed, not the file (9 ms of main at 2.5 MB before);
+  lengths that do not add up, a boundary inside a surrogate pair or
+  between \r and \n, over 256 regions, or ranges as big as the text send
+  the whole text, and every save compares the whole text (didSave), which
+  repairs a copy an edit the tracker missed made wrong.
+  `MINICODE_LSP_SYNC_CHECK=1` compares after every flush (`setCheckSync`,
+  counted in `syncRepairs`), and `lsp:sync-oracle` checks the copy against
+  a server applying what it is sent. The UTF-8 overloads (GTK, tests) still
+  compare the outside text with `rangedChanges` first. `textFor` is the
+  copy as UTF-16.
 - **Every tab's file stays open** on its server (`syncOpenDocuments`: on show,
   server start, before rename and references, on `tabsChanged`); only a running
   server takes background tabs, so a tab never starts one. With only the file

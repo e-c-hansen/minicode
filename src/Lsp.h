@@ -302,6 +302,8 @@ void MCForgetFolderToolsConsent(NSString *root);
 // with `type` (1 created, 2 changed, 3 deleted), through the watcher's
 // queue; nothing without a watcher.
 - (void)injectWatchedPaths:(NSArray<NSString *> *)paths type:(int)type;
+// The last didChange flush's main-thread CPU time (ms).
+@property(nonatomic, readonly) double lastFlushCpuMs;
 @end
 
 // ---- inlay hints (Lsp+InlayHints.mm): the lines on show, asked of the

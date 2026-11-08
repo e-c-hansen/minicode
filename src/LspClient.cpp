@@ -190,9 +190,9 @@ int Client::version(const std::string& uri) const {
     return it == docs_.end() ? 0 : it->second.version;
 }
 
-const std::string* Client::openText(const std::string& uri) const {
+const std::u16string* Client::openText(const std::string& uri) const {
     auto it = docs_.find(uri);
-    return it == docs_.end() ? nullptr : &it->second.text;
+    return it == docs_.end() ? nullptr : &it->second.text.text();
 }
 
 const Client::Doc* Client::findDoc(const std::string& uri) const {
@@ -205,9 +205,9 @@ const Client::Doc* Client::findDoc(const std::string& uri) const {
     return nullptr;
 }
 
-const std::string* Client::textFor(const std::string& uri) const {
+const std::u16string* Client::textFor(const std::string& uri) const {
     const Doc* d = findDoc(uri);
-    return d ? &d->text : nullptr;
+    return d ? &d->text.text() : nullptr;
 }
 
 std::vector<std::string> Client::openUris() const {
@@ -222,7 +222,7 @@ void Client::didOpen(const std::string& uri, const std::string& languageId,
     if (docs_.count(uri)) { didChange(uri, text); return; }
     Doc& d = docs_[uri];
     d.languageId = languageId;
-    d.text = text;
+    d.text = SyncedText(toUtf16(text));
     d.version = ++lastVersion_[uri];
     notify("textDocument/didOpen",
            Json::object({{"textDocument",
@@ -230,18 +230,24 @@ void Client::didOpen(const std::string& uri, const std::string& languageId,
                                         {"version", d.version}, {"text", text}})}}));
 }
 
-void Client::didChange(const std::string& uri, const std::string& text) {
-    auto it = docs_.find(uri);
-    if (it == docs_.end() || it->second.text == text) return;
-    Doc& d = it->second;
-    d.text = text;
+void Client::sendWhole(Doc& d, const std::string& uri, std::u16string text) {
+    std::string utf8 = toUtf8(text);
+    d.text = SyncedText(std::move(text));
     d.version = ++lastVersion_[uri];
     fullSent_++;
     notify("textDocument/didChange",
            Json::object({
                {"textDocument", Json::object({{"uri", uri}, {"version", d.version}})},
-               {"contentChanges", Json::array().push(Json::object({{"text", text}}))},
+               {"contentChanges", Json::array().push(Json::object({{"text", std::move(utf8)}}))},
            }));
+}
+
+void Client::didChange(const std::string& uri, const std::string& text) {
+    auto it = docs_.find(uri);
+    if (it == docs_.end()) return;
+    std::u16string now = toUtf16(text);
+    if (it->second.text == now) return;
+    sendWhole(it->second, uri, std::move(now));
 }
 
 int Client::syncKind() const {
@@ -254,35 +260,131 @@ int Client::syncKind() const {
 void Client::didChange(const std::string& uri, const std::string& text,
                        const ChangeTracker& changes) {
     auto it = docs_.find(uri);
-    if (it == docs_.end() || it->second.text == text) return;
-    std::vector<ContentChange> ranged;
-    if (syncKind() != 2 || changes.overflowed() || changes.regions().empty() ||
-        !rangedChanges(it->second.text, text, changes.regions(), ranged)) {
+    if (it == docs_.end()) return;
+    // The whole text is here, so the regions are checked against it first:
+    // anything they do not account for sends the whole text.
+    std::vector<ContentChange> unused;
+    if (syncKind() == 2 && !changes.overflowed() &&
+        !rangedChanges(toUtf8(it->second.text.text()), text, changes.regions(), unused)) {
         didChange(uri, text);
         return;
+    }
+    const std::u16string now = toUtf16(text);
+    didChange(uri, now.size(), changes,
+              [&now](size_t a, size_t n) { return now.substr(a, n); });
+}
+
+namespace {
+bool isHigh(char16_t c) { return c >= 0xD800 && c <= 0xDBFF; }
+bool isLow(char16_t c) { return c >= 0xDC00 && c <= 0xDFFF; }
+// Whether a boundary between `before` and `after` splits \r\n or a pair.
+bool splits(char16_t before, char16_t after) {
+    return (before == u'\r' && after == u'\n') || (isHigh(before) && isLow(after));
+}
+}  // namespace
+
+void Client::didChange(const std::string& uri, size_t length, const ChangeTracker& changes,
+                       const TextReader& read) {
+    auto it = docs_.find(uri);
+    if (it == docs_.end()) return;
+    Doc& d = it->second;
+    const std::u16string& old = d.text.text();
+    auto whole = [&] {
+        std::u16string now = read(0, length);
+        if (d.text == now) return;
+        sendWhole(d, uri, std::move(now));
+    };
+    const std::vector<ChangeTracker::Region>& regions = changes.regions();
+    if (!changes.overflowed() && regions.empty()) {
+        if (length != old.size()) whole();   // an edit the tracker never heard of
+        return;
+    }
+    if (syncKind() != 2 || changes.overflowed()) {
+        whole();
+        return;
+    }
+    // The regions must add up: in order, apart, the text between them as
+    // long in both, and what follows the last as long too.
+    size_t lastOld = 0, lastNew = 0;
+    for (const ChangeTracker::Region& r : regions) {
+        if (r.oldEnd < r.oldStart || r.newEnd < r.newStart || r.oldStart < lastOld ||
+            r.newStart < lastNew || r.oldStart - lastOld != r.newStart - lastNew ||
+            r.oldEnd > old.size() || r.newEnd > length) {
+            whole();
+            return;
+        }
+        lastOld = r.oldEnd, lastNew = r.newEnd;
+    }
+    if (old.size() - lastOld != length - lastNew) {
+        whole();
+        return;
+    }
+    struct Placed {
+        Range range;
+        size_t oldA, oldB;
+        std::u16string text;
+    };
+    std::vector<Placed> placed;
+    placed.reserve(regions.size());
+    auto oldSplits = [&](size_t at) {
+        return at > 0 && at < old.size() && splits(old[at - 1], old[at]);
+    };
+    size_t bytes = 0;
+    for (const ChangeTracker::Region& r : regions) {
+        // The new text with a unit either side, for its boundaries.
+        const size_t from = r.newStart > 0 ? r.newStart - 1 : 0;
+        const size_t to = std::min(length, r.newEnd + 1);
+        const std::u16string around = read(from, to - from);
+        if (around.size() != to - from) {
+            whole();
+            return;
+        }
+        const size_t lead = r.newStart - from, n = r.newEnd - r.newStart;
+        // No boundary, old or new, between \r and \n or inside a pair.
+        const bool newStartSplits = lead == 1 && around.size() > 1 && splits(around[0], around[1]);
+        const bool newEndSplits = lead + n >= 1 && lead + n < around.size() &&
+                                  splits(around[lead + n - 1], around[lead + n]);
+        if (oldSplits(r.oldStart) || oldSplits(r.oldEnd) || newStartSplits || newEndSplits) {
+            whole();
+            return;
+        }
+        Placed p;
+        p.range = Range{d.text.position(r.oldStart), d.text.position(r.oldEnd)};
+        p.oldA = r.oldStart, p.oldB = r.oldEnd;
+        p.text = around.substr(lead, n);
+        bytes += p.text.size() + 96;
+        placed.push_back(std::move(p));
     }
     // Each entry costs its range besides its text: when they come to the
     // whole text's size, the whole text is as good and simpler to apply.
-    size_t bytes = 0;
-    for (const ContentChange& c : ranged) bytes += c.text.size() + 96;
-    if (bytes >= text.size()) {
-        didChange(uri, text);
+    if (bytes >= length) {
+        whole();
         return;
     }
-    Doc& d = it->second;
-    d.text = text;
+    // The last region first, so each range holds once the ones before it
+    // are applied; the copy takes them in the same order.
+    Json list = Json::array();
+    for (size_t k = placed.size(); k-- > 0;) {
+        Placed& p = placed[k];
+        list.push(Json::object({{"range", Json::object({{"start", positionJson(p.range.start)},
+                                                         {"end", positionJson(p.range.end)}})},
+                                {"text", toUtf8(p.text)}}));
+        d.text.replace(p.oldA, p.oldB, p.text);
+    }
     d.version = ++lastVersion_[uri];
     rangedSent_++;
-    Json list = Json::array();
-    for (ContentChange& c : ranged)
-        list.push(Json::object({{"range", Json::object({{"start", positionJson(c.range.start)},
-                                                         {"end", positionJson(c.range.end)}})},
-                                {"text", std::move(c.text)}}));
     notify("textDocument/didChange",
            Json::object({
                {"textDocument", Json::object({{"uri", uri}, {"version", d.version}})},
                {"contentChanges", std::move(list)},
            }));
+    if (checkSync_) {
+        std::u16string now = read(0, length);
+        if (!(d.text == now)) {
+            syncRepairs_++;
+            sendWhole(d, uri, std::move(now));
+        }
+    }
 }
 
 void Client::didSave(const std::string& uri, const std::string& text) {

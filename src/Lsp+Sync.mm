@@ -383,15 +383,31 @@ static double MCThreadCpuMs() {
 // didChange, a moment after typing pauses: the edits since the text was
 // last sent, as ranges, for servers that take them (and when they come to
 // less than the text), else the whole text. Anything that asks the server
-// about the text flushes first.
+// about the text flushes first, so with no edits this costs nothing. Only
+// the changed pieces of the text are read (Client::didChange's TextReader):
+// a pause in a 2.5 MB file cost 9 ms of the main thread when the whole
+// buffer was converted and compared each time.
 - (void)flushChanges {
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushChanges)
                                                object:nil];
     if (!_servers.count || !_uri) { _changes.reset(); return; }
-    std::string text = Std(_tv.string);
-    for (MCLspServer *server in _servers) server.client.didChange(Std(_uri), text, _changes);
+    const double c0 = MCThreadCpuMs();
+    NSString *text = _tv.string;
+    const size_t length = text.length;
+    Lsp::TextReader read = [text, length](size_t start, size_t n) {
+        start = std::min(start, length);
+        n = std::min(n, length - start);
+        std::u16string out(n, u'\0');
+        if (n) [text getCharacters:(unichar *)out.data() range:NSMakeRange(start, n)];
+        return out;
+    };
+    const std::string uri = Std(_uri);
+    for (MCLspServer *server in _servers) server.client.didChange(uri, length, _changes, read);
     _changes.reset();
+    _lastFlushCpuMs = MCThreadCpuMs() - c0;
 }
+
+- (double)lastFlushCpuMs { return _lastFlushCpuMs; }
 
 - (void)storageEdited:(NSNotification *)note {
     NSTextStorage *ts = note.object;

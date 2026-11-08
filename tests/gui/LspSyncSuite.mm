@@ -89,8 +89,10 @@ MC_GUI_SUITE(lsp_sync) {
                                             @"save": @{@"includeText": @NO}},
                      @"completionProvider": @{@"resolveProvider": @YES}},
                  @"rules": @[
-                     @{@"method": @"textDocument/didOpen", @"notify": @[publish]},
-                     @{@"method": @"textDocument/didChange", @"notify": @[publish]},
+                     @{@"method": @"textDocument/didOpen", @"when": @{@"uriEndsWith": @"main.py"},
+                       @"notify": @[publish]},
+                     @{@"method": @"textDocument/didChange", @"when": @{@"uriEndsWith": @"main.py"},
+                       @"notify": @[publish]},
                      @{@"method": @"textDocument/completion", @"result":
                          @{@"isIncomplete": @NO, @"items": @[pathItem]}},
                      @{@"method": @"completionItem/resolve", @"delayMs": @(resolveDelayMs),
@@ -146,6 +148,64 @@ MC_GUI_SUITE(lsp_sync) {
         NSArray *changes = MCGuiFakeLspReceived(@"sync", @"textDocument/didChange");
         GCHECK(Count(changes, YES) == 0);
         GCHECK_EQ_STR(Text(c).string, original);
+    });
+
+    // ------------------------------------------------ a pause in a 2.5 MB file
+    // The flush reads only what was typed (and finds its positions from the
+    // line starts the client keeps); converting the whole buffer to UTF-8,
+    // as it did, cost about 9 ms of the main thread here. The baseline is
+    // that conversion, timed on this thread in the same step.
+    NSString *big = MCGuiProjectFile(@"sync/big.py");
+    MCGuiStep(@"a 2.5 MB file", ^{
+        NSMutableString *s = [NSMutableString string];
+        while (s.length < 2500000)
+            [s appendFormat:@"def f_%lu(x):  # \U0001F600 café\r\n    return x\r\n",
+                            (unsigned long)s.length];
+        MCGuiWriteFile(big, s);
+        MCGuiFakeLspClearLog(@"sync");
+        GCHECK([c showFile:big]);
+    });
+    MCGuiWait(@"it is open on the server", 20, ^BOOL {
+        for (NSDictionary *m in MCGuiFakeLspReceived(@"sync", @"textDocument/didOpen"))
+            if ([m[@"params"][@"textDocument"][@"uri"] hasSuffix:@"big.py"]) return YES;
+        return NO;
+    });
+    MCGuiStep(@"typing at two places, then the pause", ^{
+        MCGuiFakeLspClearLog(@"sync");
+        NSTextView *tv = Text(c);
+        [c.window makeFirstResponder:tv];
+        NSRange mid = [tv.string rangeOfString:@"return x" options:0
+                                         range:NSMakeRange(tv.string.length / 2, 200)];
+        GCHECK(mid.location != NSNotFound);
+        TypeAt(c, mid.location, 0, @"zz");
+        TypeAt(c, 10, 0, @"q");
+        const double c0 = MCGuiThreadCpuMs();
+        const char *whole = tv.string.UTF8String;   // the old flush's first step
+        const double baseline = MCGuiThreadCpuMs() - c0;
+        GCHECK(strlen(whole) > 2500000);
+        [Session(c) performSelector:@selector(flushChanges)];
+        const double flush = Session(c).lastFlushCpuMs;
+        MCGuiNote(@"the flush: %.2f ms of the main thread's CPU (the buffer as UTF-8: %.2f ms)",
+                  flush, baseline);
+        // About 0.8 ms here, most of it moving the client's copy along
+        // (the text after each edit, and its line starts); room is left
+        // for an efficiency core, and the baseline ratio holds either way.
+        GCHECK_TIME(flush, 2, @"a pause's flush in a 2.5 MB file");
+        GCHECK(MCGuiTimingSkipped() || flush * 4 < baseline);
+    });
+    MCGuiWait(@"one ranged change with both edits", 10, ^BOOL {
+        return MCGuiFakeLspReceived(@"sync", @"textDocument/didChange").count > 0;
+    });
+    MCGuiStep(@"as ranges, with only what was typed", ^{
+        NSArray *changes = MCGuiFakeLspReceived(@"sync", @"textDocument/didChange");
+        GCHECK(changes.count == 1 && Count(changes, NO) == 0);
+        NSArray *texts = [changes.lastObject[@"params"][@"contentChanges"] valueForKey:@"text"];
+        NSArray *typed = @[@"zz", @"q"];
+        GCHECK([texts isEqualToArray:typed]);
+        GCHECK([c showFile:file]);
+    });
+    MCGuiWait(@"back on main.py, the server's copy is the editor's", 10, ^BOOL {
+        return [ServerCopy(c) isEqualToString:Text(c).string];
     });
 
     // ------------------------------------- the import after the word went in

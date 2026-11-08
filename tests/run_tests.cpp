@@ -6796,8 +6796,8 @@ void testLspCompletionEditsAndVersions() {
         std::string base;
         client.onDiagnostics = [&](const std::string &uri, const std::vector<Lsp::Diagnostic> &) {
             calls++;
-            const std::string *t = client.textFor(uri);
-            base = t ? *t : "(none)";
+            const std::u16string *t = client.textFor(uri);
+            base = t ? Lsp::toUtf8(*t) : "(none)";
         };
         auto publish = [&](const std::string &uri, const std::string &version) {
             client.receive(Lsp::Framer::frame(
@@ -10191,6 +10191,7 @@ static void testMultiCaretOccurrences() {
 #include "terminal_draw_tests.inc"
 #include "tree_tests.inc"
 #include "lsp_threading_tests.inc"
+#include "lsp_sync_tests.inc"
 #include "multiedit_tests.inc"
 #include "folder_search_tests.inc"
 #include "auto_close_tests.inc"
@@ -10310,6 +10311,7 @@ int main() {
     testLspWatchedFiles();
     testTreeRefresh();
     testLspThreading();
+    testLspSync();
     testMultiEdit();
     testFolderSearchParallel();
     testAutoClose();
