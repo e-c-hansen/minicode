@@ -1802,7 +1802,10 @@ for full-screen programs. Both can be open at once.
   `_master` before it is closed, and the shell is reaped by polling `waitpid`,
   SIGKILL 2 s after the hang-up. The child is prepared before `fork` (only
   async-signal-safe calls after). Traps: paste only once the tty is raw; check
-  reaping with `kill(pid, 0) == ESRCH`, not `waitpid`.
+  reaping with `kill(pid, 0) == ESRCH`, not `waitpid`. `make guitest
+  SUITES=terminal_pty` checks the teardown (sources finished, fd closed,
+  shell reaped; a shell ignoring SIGHUP; 1 MB into a program not reading;
+  closing during `yes`), reaching MCPty's state by KVC, no test hook.
 - **Output flow**: past 1 MB handed to the main thread the reader
   (`MCPtyReader`) suspends its source (the program blocks) until under 256 KB;
   the main thread parses in 16 KB pieces for about 12 ms a run-loop turn
