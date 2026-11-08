@@ -143,7 +143,7 @@ jobs:
       - name: Let ThreadSanitizer map its shadow memory
         run: |
           sudo sysctl -w vm.mmap_rnd_bits=28
-          sysctl vm.mmap_rnd_bits
+          sudo sysctl vm.mmap_rnd_bits
 
       # Each group's name goes to stderr as it starts (MC_PRINT_GROUPS), so
       # a run that dies says in which group.
