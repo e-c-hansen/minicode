@@ -130,6 +130,15 @@ $(BROWSER_HELPER): resources/minicode-browser.js
 	@cp $< $@
 	@chmod +x $@
 
+# The terminals' zsh integration (Terminal.mm, ShellIntegration.h), read
+# from the bundle's Resources, or from beside the executable for the GUI
+# checks.
+ZSH_INTEGRATION := build/minicode-zsh-integration.zsh
+
+$(ZSH_INTEGRATION): resources/minicode-zsh-integration.zsh
+	@mkdir -p $(@D)
+	@cp $< $@
+
 # After a `make clean` in the same run the folders and flags.txt are gone.
 $(OBJDIR)/flags.txt:
 	@mkdir -p $(@D) && printf '%s\n' '$(APPCMD)' > $@
@@ -159,7 +168,8 @@ SIGN_IDENTITY ?= $(shell security find-certificate -c "MiniCode Local Signing" >
 # fresh build).
 APP_STAMP := $(BUNDLE)/Contents/_CodeSignature/CodeResources
 APP_FILES := $(BIN) $(CLI) Info.plist resources/AppIcon.icns scripts/minicode-launcher \
-             skills/minicode/SKILL.md resources/minicode-browser.js
+             skills/minicode/SKILL.md resources/minicode-browser.js \
+             resources/minicode-zsh-integration.zsh
 
 app: $(APP_STAMP)
 
@@ -174,6 +184,7 @@ $(APP_STAMP): $(APP_FILES)
 	@chmod +x $(BUNDLE)/Contents/Resources/minicode
 	@cp resources/minicode-browser.js $(BUNDLE)/Contents/Resources/minicode-browser.js
 	@chmod +x $(BUNDLE)/Contents/Resources/minicode-browser.js
+	@cp resources/minicode-zsh-integration.zsh $(BUNDLE)/Contents/Resources/minicode-zsh-integration.zsh
 	@# The Claude Code skill, for `minicode install-skill` (a Homebrew copy
 	@# has no checkout to `make install` from).
 	@mkdir -p $(BUNDLE)/Contents/Resources/skills/minicode
@@ -337,7 +348,7 @@ $(FAKELSP): $(FAKELSP_OBJ)
 
 fakelsp: $(FAKELSP)
 
-guitest: build/guitest $(CLI) $(FAKELSP) $(BROWSER_HELPER)
+guitest: build/guitest $(CLI) $(FAKELSP) $(BROWSER_HELPER) $(ZSH_INTEGRATION)
 	@./build/guitest $(SUITES)
 
 # The agent skill (skills/minicode) for Claude Code, in ~/.claude/skills,

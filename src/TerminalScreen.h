@@ -306,17 +306,24 @@ public:
     // Whether a paste asks first: VS Code's
     // terminal.integrated.enableMultiLinePasteWarning, as
     // terminal.multiline-paste-warning ("auto", "always" or "never"; any
-    // other value is "auto"). Text without a line break never asks. "auto"
-    // does not ask when the program turned bracketed paste on (it takes
-    // the lines as text), and a command followed by one line break and
-    // nothing else is pasted without that break, so it does not run by
-    // itself. A lone CR counts as a line break here: the program gets it as
-    // Return.
+    // other value is "auto"). "auto" does not ask when the program turned
+    // bracketed paste on (it takes the lines as text), and a command
+    // followed by one line break and nothing else is pasted without that
+    // break, so it does not run by itself. A lone CR counts as a line break
+    // here: the program gets it as Return. Text of one line asks only when,
+    // unbracketed, it holds a control character other than Tab (C0 or DEL),
+    // which the program takes as a key (Ctrl+O runs the line in zsh,
+    // ESC starts a sequence), in "auto" and "always"; inside the brackets
+    // the program receives them as text.
     struct PasteCheck {
         bool ask = false;        // show the question before sending anything
+        bool controls = false;   // unbracketed, with control characters (above)
         std::string text;        // what to paste when not asking
         int lines = 1;           // the lines the text holds
-        std::string preview;     // its first three lines, each cut at 30 characters
+        // Its first three lines, each cut at 30 characters, control
+        // characters shown as their symbols (U+2400 + c, U+2421 for DEL),
+        // Tab as a space.
+        std::string preview;
     };
     static PasteCheck checkPaste(const std::string& text, bool bracketed,
                                  const std::string& mode);

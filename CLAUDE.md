@@ -162,7 +162,8 @@ goes here first, with tests; the GUI only displays it.
   registrations), `PythonEnvs` (interpreters found without running any).
 - Terminal: `TerminalStream` (bytes to lines and shell events; `TermParser`,
   `applySgr`, `termCharWidth`), `TerminalScreen` (the grid, scrollback, reflow,
-  find, mouse encoding), `TermLinks`.
+  find, mouse encoding), `TermLinks`, `ShellIntegration.h` (the zsh
+  integration's .zshenv stub and private keys, header only).
 - `FolderSearch` (Find and Replace in Folder, atomic writes, TODOs),
   `GitStatus` (status, diffs, git time limits), `GitGraph` (log, refs, lanes),
   `GitModel` (what every port's Source Control panel shows and runs),
@@ -1844,15 +1845,29 @@ for full-screen programs. Both can be open at once.
   `_master` before it is closed, and the shell is reaped by polling `waitpid`,
   SIGKILL 2 s after the hang-up. The child is prepared before `fork` (only
   async-signal-safe calls after). Traps: paste only once the tty is raw; check
-  reaping with `kill(pid, 0) == ESRCH`, not `waitpid`.
+  reaping with `kill(pid, 0) == ESRCH`, not `waitpid`. `make guitest
+  SUITES=terminal_pty` checks the teardown (sources finished, fd closed,
+  shell reaped; a shell ignoring SIGHUP; 1 MB into a program not reading;
+  closing during `yes`), reaching MCPty's state by KVC, no test hook.
 - **Output flow**: past 1 MB handed to the main thread the reader
   (`MCPtyReader`) suspends its source (the program blocks) until under 256 KB;
   the main thread parses in 16 KB pieces for about 12 ms a run-loop turn
   (`drainBacklog`, common modes; 36 ms when a turn ends mid-frame of
   synchronized output). A shell's last output is parsed before "[shell
   exited]".
+- **The integration is one script for both modes** (2026-11-08):
+  `resources/minicode-zsh-integration.zsh`, in the bundle's Resources and
+  `build/` (the GUI checks). Terminal.mm reads it once per process and
+  writes a copy beside a `.zshenv` stub (`ShellIntegration::zshenvStub`,
+  `src/ShellIntegration.h`: `__minicode_mode=grid|line`, then source the
+  copy) in each mode's ZDOTDIR folder, so a running app never sources a
+  newer bundle's script. The private ZLE keys live in ShellIntegration.h.
+  `make test`'s `zsh:*` groups (`tests/zsh_integration_tests.inc`) run it in
+  a real interactive zsh reading a pipe (precmd and preexec run there):
+  `zsh -n`, the marks of both modes, the nonce, OSC 7's encoding, and the
+  exec hook case by case; skipped without /bin/zsh (CI's Linux jobs).
 - **Grid mode's shell**: `zsh -l -i`, `ZDOTDIR` at
-  `NSTemporaryDirectory()/MiniCode-zsh-grid/.zshenv`, which hands ZDOTDIR back
+  `NSTemporaryDirectory()/MiniCode-zsh-grid/`, whose .zshenv hands ZDOTDIR back
   and at the first precmd (after .zshrc, so last in line) installs hooks that
   only print: precmd `133;D;status` (if preexec ran), OSC 7, `133;A`; a
   `zle-line-init` hook (`add-zle-hook-widget`) `133;B`; preexec
@@ -1884,7 +1899,10 @@ for full-screen programs. Both can be open at once.
   user's in `MINICODE_USER_ZDOTDIR`) with `MINICODE_EXEC=1`, and the nonce
   only when the program is zsh (2026-11-06: a bash, or `exec claude`, kept it
   in its environment for everything it ran, any of which could forge marks;
-  so a zsh exec'd from that bash no longer marks), so an exec'd zsh
+  so a zsh exec'd from that bash no longer marks), and only a zsh that
+  reads its startup files (`__minicode_reads_rcs`: not `-f` or a cluster
+  holding f, `--no-rcs`, `-o norcs`, `+o rcs`, unless a later option turns
+  them back on; 2026-11-08, `exec zsh -f` kept it), so an exec'd zsh
   loads the integration and reports the exec finished (133;D;0); the next
   precmd restores both if the exec failed. Line mode also `unsetopt ZLE` there.
   Exec into another shell (bash, sh, dash, fish, ksh, tcsh, csh, nu, elvish,
@@ -2017,7 +2035,10 @@ for full-screen programs. Both can be open at once.
   once let "ESC[20" + mark + "1~" close up into a new mark). The grid's
   `paste:` asks first per `TerminalScreen::checkPaste`
   (`terminal.multiline-paste-warning`, VS Code's auto/always/never; a lone
-  CR counts as a break). Secure keyboard entry: TerminalView polls termios
+  CR counts as a break). One line asks too when, unbracketed, it holds a
+  control character other than Tab (2026-11-08: "echo hi" + Ctrl+O ran
+  unasked), with Paste and Cancel only; the preview shows controls as
+  U+2400 symbols. Secure keyboard entry: TerminalView polls termios
   (after output, and four times a second while a command runs) and sets
   the grid's `hiddenInput` for ECHO off with ICANON on (ZLE and full-screen
   programs turn ICANON off); the grid calls Enable/DisableSecureEventInput

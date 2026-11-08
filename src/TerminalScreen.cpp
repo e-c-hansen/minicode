@@ -1934,12 +1934,18 @@ TerminalScreen::PasteCheck TerminalScreen::checkPaste(const std::string& text, b
     out.text = text;
     const std::vector<std::string> lines = pasteLines(text);
     out.lines = (int)lines.size();
-    if (lines.size() == 1 || mode == "never") return out;
+    if (!bracketed)
+        for (char c : text)
+            if (((unsigned char)c < 0x20 && c != '\t' && c != '\r' && c != '\n') || c == 0x7F) {
+                out.controls = true;
+                break;
+            }
+    if ((lines.size() == 1 && !out.controls) || mode == "never") return out;
     if (mode != "always") {
         if (bracketed) return out;
         // A command copied with its line break: pasted without it, so it
         // waits for Return (VS Code's clipboard-hijacking guard).
-        if (lines.size() == 2 && blankText(lines[1])) {
+        if (lines.size() == 2 && blankText(lines[1]) && !out.controls) {
             out.text = lines[0];
             out.lines = 1;
             return out;
@@ -1948,10 +1954,16 @@ TerminalScreen::PasteCheck TerminalScreen::checkPaste(const std::string& text, b
     out.ask = true;
     for (size_t i = 0; i < lines.size() && i < 3; i++) {
         bool cut = false;
-        // Control characters would draw oddly in the question.
+        // Control characters as their symbols (they would draw oddly, or
+        // not at all, in the question), Tab as a space.
         std::string line;
-        for (char c : firstChars(lines[i], 30, cut))
-            line += ((unsigned char)c < 0x20 || c == 0x7F) ? ' ' : c;
+        for (char c : firstChars(lines[i], 30, cut)) {
+            const unsigned char u = (unsigned char)c;
+            if (c == '\t') line += ' ';
+            else if (u < 0x20) line += utf8Encode(0x2400 + u);
+            else if (u == 0x7F) line += "\xE2\x90\xA1";   // U+2421 SYMBOL FOR DELETE
+            else line += c;
+        }
         if (i) out.preview += '\n';
         out.preview += line;
         if (cut) out.preview += "\xE2\x80\xA6";   // …
