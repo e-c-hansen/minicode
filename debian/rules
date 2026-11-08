@@ -24,8 +24,10 @@ override_dh_auto_configure:
 # The port's own tests (meson test), then the core suite the Mac build runs
 # (make test at the top level, which builds into build/). Neither needs a
 # display or the network.
+# Timing bounds are skipped: Launchpad's builders are shared, and a bound
+# measures the machine there, not the code (CI's jobs keep them).
 override_dh_auto_test:
 ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	dh_auto_test
-	$(MAKE) test
+	MC_SKIP_TIMING=1 $(MAKE) test
 endif
