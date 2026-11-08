@@ -60,7 +60,7 @@ Control backtick opens a terminal at the bottom. It runs one persistent zsh with
 
 ![The terminal panel running ls, git log and a Python script](docs/demos/terminal.gif)
 
-On the Mac you can have several terminals, each its own shell. Control Shift backtick opens another in a new tab, Command backslash splits the one you are in so two sit side by side, and Option Command ] and [ move between them. Tabs you are not looking at keep running. Each tab is titled with the command running in it or the folder it is in, and Control Shift W, or the × on its tab, closes a terminal; closing the last one hides the panel. A terminal with something still running in it, a server, vim, or Claude Code, asks before it closes, and so do closing the window and quitting. Holding Command W down closes one thing, not everything in turn.
+On the Mac you can have several terminals, each its own shell. Control Shift backtick opens another in a new tab, Command backslash splits the one you are in so two sit side by side, Split Terminal Down in the Terminal menu (or Option-clicking the ◫ button) puts a new one below it, and Option Command ] and [ move between them. The bars between split terminals drag to resize them, and so do Control Command Left, Right, Up, and Down for the terminal you are in, as in VS Code; Up and Down resize the whole panel when the terminal has none above or below it. No terminal gets narrower than 20 columns or shorter than 5 rows, and each program sees its own pane's size. Tabs you are not looking at keep running. Each tab is titled with the command running in it or the folder it is in, or with a name you give it with Rename Terminal… (in the Terminal menu or the tab's right click menu), which stays until you clear it with an empty name. Tabs drag to a new place along the strip, or move with Move Terminal Left and Right. Control Shift W, or the × on its tab, closes a terminal; closing the last one hides the panel. A terminal with something still running in it, a server, vim, or Claude Code, asks before it closes, and so do closing the window and quitting. Holding Command W down closes one thing, not everything in turn.
 
 Shift Command Return runs the open file in the terminal. It saves the file, then types the command into the terminal on show as if you had typed it, so it stays in the shell's history and Up brings it back. A Python file runs with the python in the project's .venv, venv or env folder when there is one, and python3 otherwise; shell scripts, Go, JavaScript and Ruby have commands too, and run.<language> in the settings changes them or adds others. If that terminal is busy with something else, the file runs in a new one instead, and run.terminal = new gives every run a terminal of its own. In a Python file, Shift Return sends the selected lines, or the line the cursor is on, to a Python REPL in a terminal tab of its own, and moves on to the next line.
 
@@ -456,10 +456,13 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Refresh the file tree | Command R |  |  |
 | Rename the name at the cursor wherever it is used, with a language server | F2 |  |  |
 | Rename the selected file or folder | F2, in the file tree | F2, in the file tree |  |
+| Rename the terminal, so its tab keeps the name over what the program running in it calls itself (an empty name gives that back) | Rename Terminal… in the Terminal menu or the tab's right click menu, or the command palette |  |  |
 | Reopen the tab closed last, where it was | Option Shift Command T |  |  |
+| Reorder the terminal tabs | Drag a tab along the strip, or Move Terminal Left and Move Terminal Right in the Terminal menu or the tab's right click menu |  |  |
 | Replace across the whole folder, after a count of what will change | Option Shift Command F |  |  |
 | Replace in the current file: the selected match and on to the next, or every match | Option Command F, then Return (or Shift Command 1) for one, Option Command Return for all |  |  |
 | Request a change to minicode itself, made by Claude Code in a terminal | Shift Command K |  |  |
+| Resize the terminal the keyboard is in, against its neighbor (Up and Down resize the panel when nothing is above or below it), or drag the bar between two terminals | Control Command Left, Control Command Right, Control Command Up, Control Command Down |  |  |
 | Restart minicode, keeping its windows, tabs, unsaved changes and browser pages | The ↻ in the status bar, or Restart minicode in the minicode menu |  |  |
 | Run the open file in the terminal | Shift Command Return |  |  |
 | Run the selected lines, or the cursor's line, in a Python REPL in a terminal tab of its own | Shift Return, in a Python file |  |  |
@@ -481,6 +484,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Show the language server's quick fixes for the cursor or the selection | Command period |  |  |
 | Show the type and documentation under the cursor | Option Command I | Ctrl I | K, or Ctrl K |
 | Split the terminal, with a new one beside it | Command backslash |  |  |
+| Split the terminal, with a new one below it | Split Terminal Down in the Terminal menu, or Option-click the ◫ button |  |  |
 | Sort every keep-sorted block in the file | Shift F9 | Shift F9 | Sort keep-sorted blocks in the ⋮ menu |
 | Sort the selected lines, or the keep-sorted block around the cursor | F9 (F9 may need fn on a laptop) | F9 | J, or Ctrl J |
 | Take the selected completion | Tab; Return too after Control Space, after a dot, or once the arrow keys have moved through the list |  |  |

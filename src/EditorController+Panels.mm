@@ -31,6 +31,9 @@
     };
     self.terminalPanel.onEmpty = ^{ [weakSelf terminalPanelEmptied]; };
     self.terminalPanel.onNote = ^(NSString *note) { [weakSelf showStatusNote:note]; };
+    self.terminalPanel.onResizeDock = ^BOOL(CGFloat delta) {
+        return [weakSelf resizeTerminalDockBy:delta];
+    };
     self.terminalPanel.hidden = YES;
     [self.rightArea addSubview:self.terminalPanel];
 
@@ -88,6 +91,46 @@
     [self showTerminalPanel];
     if (!fresh) [self.terminalPanel splitActive];
     [self.terminalPanel focusActive];
+}
+
+// Split Terminal Down: a new terminal below the active one, in its stack.
+- (void)splitTerminalDown:(id)sender {
+    BOOL fresh = self.terminalPanel == nil;
+    [self showTerminalPanel];
+    if (!fresh) [self.terminalPanel splitActiveDown];
+    [self.terminalPanel focusActive];
+}
+
+// Rename Terminal…: the dock's active terminal, wherever the keyboard is.
+- (void)renameTerminal:(id)sender {
+    if (!(self.terminalVisible && self.terminalPanel)) { NSBeep(); return; }
+    [self.terminalPanel renameTerminal:self.terminalPanel.activeTerminal];
+}
+
+// Move Terminal Left and Right: the shown tab, one place along the strip.
+- (void)moveTerminalLeft:(id)sender {
+    if (![self.terminalPanel moveSelectedTab:-1]) NSBeep();
+}
+- (void)moveTerminalRight:(id)sender {
+    if (![self.terminalPanel moveSelectedTab:1]) NSBeep();
+}
+
+- (BOOL)validateTerminalTabCommand:(NSMenuItem *)item {
+    if (!(self.terminalVisible && self.terminalPanel)) return NO;
+    if (item.action == @selector(moveTerminalLeft:)) return [self.terminalPanel canMoveSelectedTab:-1];
+    if (item.action == @selector(moveTerminalRight:)) return [self.terminalPanel canMoveSelectedTab:1];
+    return YES;
+}
+
+// Resize Terminal Pane Up or Down with a pane alone in its column: the dock
+// grows or shrinks, as dragging its bar would (relayoutRightArea keeps it
+// within its limits). NO when its height did not change.
+- (BOOL)resizeTerminalDockBy:(CGFloat)delta {
+    if (!(self.terminalVisible && self.terminalPanel) || self.editorHidden) return NO;
+    CGFloat before = self.terminalPanel.frame.size.height;
+    self.terminalHeight = MAX(80, before + delta);
+    [self relayoutRightArea];
+    return self.terminalPanel.frame.size.height != before;
 }
 
 // Option+Cmd+] and [: the next or previous terminal, across tabs.

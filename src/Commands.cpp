@@ -543,6 +543,10 @@ const std::vector<Command>& all() {
          "newTerminal:", 0, Global, nullptr},
         {"workbench.action.terminal.split", "Split Terminal", "Terminal", "cmd+\\", A,
          "splitTerminal:", 0, 0, nullptr},
+        // VS Code's terminal groups take one direction from the panel's
+        // place; here a column stacks. No key, as VS Code has none.
+        {"minicode.terminal.splitDown", "Split Terminal Down", "Terminal", "", A,
+         "splitTerminalDown:", 0, 0, nullptr},
         {"workbench.action.terminal.focusNext", "Next Terminal", "Terminal", "alt+cmd+]", A,
          "nextTerminal:", 0, 0, nullptr},
         {"workbench.action.terminal.focusPrevious", "Previous Terminal", "Terminal", "alt+cmd+[",
@@ -557,6 +561,22 @@ const std::vector<Command>& all() {
         // VS Code has no key for it either.
         {"workbench.action.terminal.copyLastCommandOutput", "Copy Last Command Output",
          "Terminal", "", T, "copyLastCommandOutput:", 0, 0, nullptr},
+        // VS Code has no Mac key for Rename; moving a tab is a drag there.
+        {"workbench.action.terminal.rename", "Rename Terminal…", "Terminal", "", A,
+         "renameTerminal:", 0, 0, nullptr},
+        {"minicode.terminal.moveLeft", "Move Terminal Left", "Terminal", "", A,
+         "moveTerminalLeft:", 0, 0, nullptr},
+        {"minicode.terminal.moveRight", "Move Terminal Right", "Terminal", "", A,
+         "moveTerminalRight:", 0, 0, nullptr},
+        // VS Code's Mac keys; the tag is the direction (MCPaneDirection).
+        {"workbench.action.terminal.resizePaneLeft", "Resize Terminal Pane Left", "Terminal",
+         "ctrl+cmd+left", T, "resizeTerminalPane:", 1, 0, nullptr},
+        {"workbench.action.terminal.resizePaneRight", "Resize Terminal Pane Right", "Terminal",
+         "ctrl+cmd+right", T, "resizeTerminalPane:", 2, 0, nullptr},
+        {"workbench.action.terminal.resizePaneUp", "Resize Terminal Pane Up", "Terminal",
+         "ctrl+cmd+up", T, "resizeTerminalPane:", 3, 0, nullptr},
+        {"workbench.action.terminal.resizePaneDown", "Resize Terminal Pane Down", "Terminal",
+         "ctrl+cmd+down", T, "resizeTerminalPane:", 4, 0, nullptr},
         {"minicode.runFile", "Run File", "Terminal", "shift+cmd+enter", A, "runCurrentFile:", 0, 0,
          nullptr},
         // The Python extension's Shift+Return: the selection, or the line,

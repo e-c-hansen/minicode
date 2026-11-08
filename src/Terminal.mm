@@ -1224,7 +1224,17 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     [self titleChanged];
 }
 
+// Rename Terminal… (V11): the user's name wins over a program's title and
+// `minicode term --title` until an empty name clears it.
+- (void)setUserTitle:(NSString *)title {
+    NSString *trimmed = [title stringByTrimmingCharactersInSet:
+                         [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    _userTitle = trimmed.length ? [trimmed copy] : nil;
+    [self titleChanged];
+}
+
 - (NSString *)title {
+    if (_userTitle) return _userTitle;       // Rename Terminal…
     if (_fixedTitle) return _fixedTitle;     // minicode term --title
     if (_programTitle.length) return _programTitle;
     if (_runningCommand.length) {

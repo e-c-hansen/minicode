@@ -116,4 +116,16 @@ std::vector<std::string> labels(const std::vector<std::string> &paths) {
     return out;
 }
 
+int dropIndex(const std::vector<double> &widths, int from, double x) {
+    const int n = (int)widths.size();
+    if (from < 0 || from >= n) return from;
+    int before = 0;
+    double left = 0;
+    for (int i = 0; i < n; i++) {
+        if (i != from && left + widths[(size_t)i] / 2 < x) before++;
+        left += widths[(size_t)i];
+    }
+    return before;
+}
+
 }  // namespace EditorTabs

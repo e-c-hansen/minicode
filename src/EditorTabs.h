@@ -48,4 +48,11 @@ Session restorable(const Session &saved,
 // "tests/main.cpp"). An empty path (a tab that holds no file) gets "".
 std::vector<std::string> labels(const std::vector<std::string> &paths);
 
+// Dragging tab `from` along a row of tabs `widths` wide, laid end to end
+// from 0: where it goes when let go with the pointer at `x` (the same
+// coordinates), as an index in the row after the move. Each other tab whose
+// middle is left of the pointer comes before it. `from` itself when out of
+// range.
+int dropIndex(const std::vector<double> &widths, int from, double x);
+
 }  // namespace EditorTabs
