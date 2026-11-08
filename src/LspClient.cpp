@@ -479,6 +479,7 @@ bool offers(const Json& caps, Feature f) {
     case Feature::DocumentSymbols: return provides(caps["documentSymbolProvider"]);
     case Feature::WorkspaceSymbols: return provides(caps["workspaceSymbolProvider"]);
     case Feature::FoldingRange: return provides(caps["foldingRangeProvider"]);
+    case Feature::SemanticTokens: return offersSemanticTokens(caps);
     }
     return false;
 }
@@ -1677,6 +1678,144 @@ std::vector<FoldingRange> parseFoldingRanges(const Json& result) {
     return out;
 }
 
+// ------------------------------------------------------------ semantic tokens
+SemanticStyle semanticStyle(const std::string& type, bool readonly) {
+    static const std::map<std::string, SemanticStyle> kStyles = {
+        {"namespace", SemanticStyle::Class},     {"type", SemanticStyle::Class},
+        {"class", SemanticStyle::Class},         {"enum", SemanticStyle::Class},
+        {"interface", SemanticStyle::Class},     {"struct", SemanticStyle::Class},
+        {"typeParameter", SemanticStyle::Class}, {"function", SemanticStyle::Function},
+        {"method", SemanticStyle::Function},     {"member", SemanticStyle::Function},
+        {"decorator", SemanticStyle::Function},  {"variable", SemanticStyle::Variable},
+        {"event", SemanticStyle::Variable},      {"parameter", SemanticStyle::Parameter},
+        {"property", SemanticStyle::Property},   {"enumMember", SemanticStyle::Constant},
+    };
+    auto it = kStyles.find(type);
+    if (it == kStyles.end()) return SemanticStyle::None;
+    // variable.readonly probes variable.other.constant, property.readonly
+    // variable.other.constant.property: the themes' constant color.
+    if (readonly && (it->second == SemanticStyle::Variable || it->second == SemanticStyle::Property))
+        return SemanticStyle::Constant;
+    return it->second;
+}
+
+SemanticLegend SemanticLegend::from(const Json& caps) {
+    SemanticLegend l;
+    const Json& legend = caps["semanticTokensProvider"]["legend"];
+    for (const Json& t : legend["tokenTypes"].elements()) l.types.push_back(t.asString());
+    for (const Json& m : legend["tokenModifiers"].elements()) l.modifiers.push_back(m.asString());
+    for (size_t i = 0; i < l.modifiers.size() && i < 32; i++)
+        if (l.modifiers[i] == "readonly") l.readonlyBit = 1u << i;
+    l.styles.reserve(l.types.size());
+    for (const std::string& t : l.types) l.styles.push_back(semanticStyle(t, false));
+    return l;
+}
+
+bool offersSemanticTokens(const Json& caps) {
+    const Json& p = caps["semanticTokensProvider"];
+    if (!p.isObject() || !p["legend"]["tokenTypes"].isArray()) return false;
+    return p["full"].isObject() || p["full"].asBool();
+}
+
+bool offersSemanticTokensDelta(const Json& caps) {
+    return offersSemanticTokens(caps) &&
+           caps["semanticTokensProvider"]["full"]["delta"].asBool();
+}
+
+namespace {
+// A JSON array of whole numbers from 0 to 2^32 - 1, or false.
+bool readUints(const Json& j, std::vector<uint32_t>& out) {
+    if (!j.isArray()) return false;
+    std::vector<uint32_t> got;
+    got.reserve(j.size());
+    for (const Json& n : j.elements()) {
+        if (!n.isNumber()) return false;
+        const double v = n.asNumber();
+        if (v < 0 || v > 4294967295.0 || v != (double)(uint32_t)v) return false;
+        got.push_back((uint32_t)v);
+    }
+    out.swap(got);
+    return true;
+}
+}  // namespace
+
+bool applySemanticEdits(std::vector<uint32_t>& data, const Json& edits) {
+    if (!edits.isArray()) return false;
+    struct Edit {
+        size_t start, deleteCount;
+        std::vector<uint32_t> insert;
+    };
+    std::vector<Edit> list;
+    for (const Json& e : edits.elements()) {
+        const double start = e["start"].asNumber(-1), count = e["deleteCount"].asNumber(-1);
+        if (start < 0 || count < 0 || start > 1e15 || count > 1e15 ||
+            start != (double)(size_t)start || count != (double)(size_t)count)
+            return false;
+        Edit one{(size_t)start, (size_t)count, {}};
+        if (e.has("data") && !readUints(e["data"], one.insert)) return false;
+        if (one.start > data.size() || one.deleteCount > data.size() - one.start) return false;
+        list.push_back(std::move(one));
+    }
+    std::stable_sort(list.begin(), list.end(),
+                     [](const Edit& a, const Edit& b) { return a.start < b.start; });
+    for (size_t i = 1; i < list.size(); i++)
+        if (list[i].start < list[i - 1].start + list[i - 1].deleteCount) return false;
+    // One pass from the front, copying the untouched stretches between.
+    std::vector<uint32_t> out;
+    out.reserve(data.size());
+    size_t at = 0;
+    for (const Edit& e : list) {
+        out.insert(out.end(), data.begin() + (ptrdiff_t)at, data.begin() + (ptrdiff_t)e.start);
+        out.insert(out.end(), e.insert.begin(), e.insert.end());
+        at = e.start + e.deleteCount;
+    }
+    out.insert(out.end(), data.begin() + (ptrdiff_t)at, data.end());
+    data.swap(out);
+    return true;
+}
+
+bool SemanticTokens::apply(const Json& result) {
+    bool ok = false;
+    if (result.isObject() && result.has("data")) ok = readUints(result["data"], data);
+    else if (result.isObject() && result.has("edits")) ok = applySemanticEdits(data, result["edits"]);
+    if (!ok || data.size() % 5 != 0) {
+        resultId.clear();
+        data.clear();
+        return false;
+    }
+    resultId = result["resultId"].asString();
+    return true;
+}
+
+std::vector<SemanticSpan> decodeSemanticTokens(const std::vector<uint32_t>& data,
+                                               const SemanticLegend& legend,
+                                               const PositionIndex& index) {
+    std::vector<SemanticSpan> out;
+    const size_t textLength = index.text().size();
+    const int64_t kMax = 0x7FFFFFFF;
+    int64_t line = 0, start = 0;
+    size_t lastEnd = 0;
+    for (size_t i = 0; i + 5 <= data.size(); i += 5) {
+        const uint32_t dLine = data[i], dStart = data[i + 1], length = data[i + 2];
+        const uint32_t type = data[i + 3], mods = data[i + 4];
+        line += dLine;
+        start = dLine ? (int64_t)dStart : start + dStart;
+        if (line >= (int64_t)index.lineCount() || line > kMax) break;
+        if (type >= legend.styles.size() || length == 0 || start > kMax) continue;
+        SemanticStyle st = legend.styles[type];
+        if (legend.readonlyBit && (mods & legend.readonlyBit))
+            st = semanticStyle(legend.types[type], true);
+        if (st == SemanticStyle::None) continue;
+        const size_t a = index.offset(Position{(int)line, (int)start});
+        const size_t b = index.offset(Position{(int)line, (int)std::min<int64_t>(start + length, kMax)});
+        if (b <= a || a >= textLength || b > 0xFFFFFFFFu) continue;
+        if (!out.empty() && a < lastEnd) continue;
+        out.push_back({(uint32_t)a, (uint32_t)(b - a), st});
+        lastEnd = b;
+    }
+    return out;
+}
+
 std::vector<Location> parseLocations(const Json& result) {
     std::vector<Location> out;
     auto one = [&](const Json& j) {
@@ -2271,6 +2410,33 @@ void Client::initialize(const std::string& rootPath, int processId,
         {"documentSymbol", Json::object({{"hierarchicalDocumentSymbolSupport", true},
                                          {"symbolKind", symbolKinds}})},
     });
+    // Semantic tokens: whole documents and their deltas, a token never
+    // over two lines, laid over the editor's own colors.
+    {
+        Json types = Json::array(), modifiers = Json::array();
+        for (const char* t : {"namespace", "type", "class", "enum", "interface", "struct",
+                              "typeParameter", "parameter", "variable", "property",
+                              "enumMember", "event", "function", "method", "macro", "keyword",
+                              "modifier", "comment", "string", "number", "regexp", "operator",
+                              "decorator", "label"})
+            types.push(t);
+        for (const char* m : {"declaration", "definition", "readonly", "static", "deprecated",
+                              "abstract", "async", "modification", "documentation",
+                              "defaultLibrary"})
+            modifiers.push(m);
+        textDocument.set("semanticTokens", Json::object({
+            {"dynamicRegistration", false},
+            {"requests", Json::object({{"range", false},
+                                       {"full", Json::object({{"delta", true}})}})},
+            {"tokenTypes", types},
+            {"tokenModifiers", modifiers},
+            {"formats", Json::array().push("relative")},
+            {"overlappingTokenSupport", false},
+            {"multilineTokenSupport", false},
+            {"serverCancelSupport", true},
+            {"augmentsSyntaxTokens", true},
+        }));
+    }
     Json workspace = Json::object({{"workspaceFolders", true},
                                   {"configuration", true},
                                   {"applyEdit", true},
@@ -2286,7 +2452,8 @@ void Client::initialize(const std::string& rootPath, int processId,
                                   {"symbol", Json::object({{"dynamicRegistration", false},
                                                            {"symbolKind", symbolKinds}})},
                                   {"didChangeConfiguration",
-                                   Json::object({{"dynamicRegistration", false}})}});
+                                   Json::object({{"dynamicRegistration", false}})},
+                                  {"semanticTokens", Json::object({{"refreshSupport", true}})}});
     // Files changed on disk, for the watchers a server registers, only
     // from an owner that sends them: a server told the client watches
     // stops watching for itself (rust-analyzer does).
@@ -2491,6 +2658,20 @@ int Client::references(const std::string& uri, Position p, bool includeDeclarati
 int Client::foldingRanges(const std::string& uri, ResultHandler h) {
     return request("textDocument/foldingRange",
                    Json::object({{"textDocument", Json::object({{"uri", uri}})}}), std::move(h));
+}
+
+int Client::semanticTokensFull(const std::string& uri, TakingHandler h) {
+    return requestTaking("textDocument/semanticTokens/full",
+                         Json::object({{"textDocument", Json::object({{"uri", uri}})}}),
+                         std::move(h));
+}
+
+int Client::semanticTokensDelta(const std::string& uri, const std::string& previousResultId,
+                                TakingHandler h) {
+    return requestTaking("textDocument/semanticTokens/full/delta",
+                         Json::object({{"textDocument", Json::object({{"uri", uri}})},
+                                       {"previousResultId", previousResultId}}),
+                         std::move(h));
 }
 
 int Client::prepareRename(const std::string& uri, Position p, ResultHandler h) {
@@ -2870,10 +3051,12 @@ void Client::handleServerRequest(const Json& msg) {
         }
         respond(id, Json());
         if (changed && onWatchersChanged) onWatchersChanged();
+    } else if (method == "workspace/semanticTokens/refresh") {
+        respond(id, Json());
+        if (onSemanticTokensRefresh) onSemanticTokensRefresh();
     } else if (method == "window/workDoneProgress/create" ||
                method == "window/showMessageRequest" ||
                method == "workspace/diagnostic/refresh" ||
-               method == "workspace/semanticTokens/refresh" ||
                method == "workspace/inlayHint/refresh" ||
                method == "workspace/codeLens/refresh") {
         respond(id, Json());
