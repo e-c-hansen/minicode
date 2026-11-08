@@ -251,26 +251,25 @@ void testTerminalMarks() {
         big.setMarkNonce("n0");
         for (int i = 0; i < 5000; i++) big.feed(session("c", "line one\r\nline two\r\n", i % 2));
         CHECK(big.commands().size() == 5000);
-        auto t0 = std::chrono::steady_clock::now();
+        double t0 = cpuMs();
         big.resize(50, 24);
         big.resize(80, 24);
-        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                              t0).count();
+        const double ms = cpuMs() - t0;
         CHECK(big.commands().size() == 5000);
         CHECK(big.commandOutput(big.commands()[10]) == "line one\nline two");
         std::printf("  screen:marks-reflow: 5,000 commands (15,000 lines) reflowed twice in "
                     "%.1f ms\n", ms);
-        CHECK(ms < 2000);
+        CHECK_TIME(ms, 500);
         // Output scrolling under them costs nothing per mark: each line feed
         // looks the rows below the screen up by halving.
         std::string lines;
         for (int i = 0; i < 1000; i++) lines += "output line\r\n";
-        t0 = std::chrono::steady_clock::now();
+        t0 = cpuMs();
         for (int i = 0; i < 100; i++) big.feed(lines);
-        double feedMs = std::chrono::duration<double, std::milli>(
-                            std::chrono::steady_clock::now() - t0).count();
+        const double feedMs = cpuMs() - t0;
         std::printf("  screen:marks: 100,000 lines scrolled under 5,000 marked commands in "
                     "%.0f ms\n", feedMs);
+        CHECK_TIME(feedMs, 5000);
         CHECK(big.commands().size() < 5000);   // the oldest left the scrollback
     }
 }

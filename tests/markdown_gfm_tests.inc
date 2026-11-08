@@ -220,12 +220,10 @@ static void testMarkdownGfm() {
         for (int k = 0; k < 3000; k++) quotes += "> " + std::string((size_t)(k % 40), ' ') + "- x\n";
         double worst = 0;
         for (const std::string *s : {&notes, &tags, &quotes}) {
-            auto t0 = std::chrono::steady_clock::now();
+            const double t0 = cpuMs();
             P::parse(*s);
-            worst = std::max(worst, std::chrono::duration<double, std::milli>(
-                                        std::chrono::steady_clock::now() - t0).count());
+            worst = std::max(worst, cpuMs() - t0);
         }
-        CHECK(worst < 1000);
-        if (worst >= 1000) std::printf("  md:gfm-speed: %.0f ms\n", worst);
+        CHECK_TIME(worst, 1000);
     }
 }

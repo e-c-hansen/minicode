@@ -294,19 +294,20 @@ static void testRegex() {
             Options o;
             o.regex = true;
             const Query q = Query::make(p, o);
-            const auto t0 = std::chrono::steady_clock::now();
+            const double t0 = cpuMs();
             const size_t n = findAll(t, q).size();
-            const double ms = std::chrono::duration<double, std::milli>(
-                                  std::chrono::steady_clock::now() - t0).count();
-            return std::make_pair(n, ms);
+            return std::make_pair(n, cpuMs() - t0);
         };
         const std::u16string as(30, u'a');
         auto r1 = ms(u"(a+)+b", as);
-        CHECK(r1.first == 0 && r1.second < 50);
+        CHECK(r1.first == 0);
+        CHECK_TIME(r1.second, 50);
         auto r2 = ms(u"(a|aa)*c", as + as + as);
-        CHECK(r2.first == 0 && r2.second < 50);
+        CHECK(r2.first == 0);
+        CHECK_TIME(r2.second, 50);
         auto r3 = ms(u"(x+x+)+y", std::u16string(5000, u'x'));
-        CHECK(r3.first == 0 && r3.second < 500);
+        CHECK(r3.first == 0);
+        CHECK_TIME(r3.second, 500);
         // Many lines, with and without matches, and a long line with
         // none: about a pass over the text each (std::regex took 311 ms to
         // scan 2.5 MB without a match).
@@ -316,7 +317,9 @@ static void testRegex() {
         auto r5 = ms(u"[a-z]+_nothere\\(", big);
         auto r6 = ms(u"a.*z", std::u16string(100000, u'a'));
         CHECK(r4.first == 20000 && r5.first == 0 && r6.first == 0);
-        CHECK(r4.second < 3000 && r5.second < 3000 && r6.second < 3000);
+        CHECK_TIME(r4.second, 3000);
+        CHECK_TIME(r5.second, 3000);
+        CHECK_TIME(r6.second, 3000);
         // A cancel stops a long line within it.
         std::atomic<bool> stop(true);
         bool cancelled = false;
@@ -386,11 +389,13 @@ static void testRegex() {
         const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
                              .count();
         CHECK(found.empty() && q.tooSlow() && s < 1);
-        t0 = std::chrono::steady_clock::now();
+        const double c0 = cpuMs();
         CHECK(findAll(u"aaz", q).empty());
         size_t col = 0, len = 0;
         CHECK(!findInLine("aaz", q, &col, &len));
-        CHECK(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 0.05);
+        // At once: no worker is asked, so this is this thread's own time
+        // (in wall time a loaded machine could take it past 0.05 s).
+        CHECK_TIME((cpuMs() - c0), 50);
         // A new query starts afresh; per line (Find in Folder) the limit is
         // the same.
         const Query again = Query::make(std::string("(a)(.*)\\1z"), o);

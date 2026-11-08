@@ -125,16 +125,15 @@ static void testTextFind() {
         // copy the rest of the line).
         std::u16string commas;
         for (int i = 0; i < 100000; i++) commas += u"a,";
-        auto t0 = std::chrono::steady_clock::now();
+        const double c0 = cpuMs();
         CHECK(findAll(commas, q16(u",", false, false, true)).size() == 100000);
-        const double manyMs = std::chrono::duration<double, std::milli>(
-                                  std::chrono::steady_clock::now() - t0).count();
-        CHECK(manyMs < 1000);
+        const double manyMs = cpuMs() - c0;
+        CHECK_TIME(manyMs, 1000);
         // A regex left to std::regex (a backreference) that backtracks over
         // a long line gives up on it after about a second (it ran for more
         // than eight before), and the next line is still searched.
         const std::u16string as(50000, u'a');
-        t0 = std::chrono::steady_clock::now();
+        auto t0 = std::chrono::steady_clock::now();
         const Query backref = q16(u"(a)(.*)\\1z", false, false, true);
         const auto slow = findAll(as + u"\naaz", backref);
         const double slowS = std::chrono::duration<double>(

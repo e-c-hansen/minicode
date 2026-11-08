@@ -314,15 +314,16 @@ static void testFolding() {
             c += u"int f" + u16(std::to_string(i)) + u"(int x) {\n  if (x) {\n    return '{';\n  }\n";
             if (i % 2) c += u"}\n"; else c += u"}\n";
         }
-        auto t0 = std::chrono::steady_clock::now();
+        const double t0 = cpuMs();
         std::vector<Fold::Range> a = Fold::compute(py, "big.py");
-        auto t1 = std::chrono::steady_clock::now();
+        const double t1 = cpuMs();
         std::vector<Fold::Range> b = Fold::compute(c, "big.c");
-        auto t2 = std::chrono::steady_clock::now();
+        const double t2 = cpuMs();
         CHECK(a.size() == 50000 && b.size() == 50000);
         std::printf("  folding 100,000 lines: Python %.1f ms, C %.1f ms (unoptimized)\n",
-                    std::chrono::duration<double, std::milli>(t1 - t0).count(),
-                    std::chrono::duration<double, std::milli>(t2 - t1).count());
+                    t1 - t0, t2 - t1);
+        CHECK_TIME(t1 - t0, 1500);
+        CHECK_TIME(t2 - t1, 1500);
     }
 
     GROUP("lsp:folding-parse");

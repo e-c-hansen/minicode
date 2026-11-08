@@ -57,7 +57,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -88,6 +90,34 @@ static const char *g_group = "";
             g_fail++;                                                          \
             std::printf("  FAIL [%s] %s:%d  %s\n", g_group, __FILE__,          \
                         __LINE__, #cond);                                      \
+        }                                                                      \
+    } while (0)
+
+// Timing bounds are on the CPU time of the thread doing the work, never on
+// wall time: with several agents building at once (load 40 to 100 on eight
+// cores) wall time ran three to ten times over and failed brackets:bounded,
+// procs:speed and find:regex-long-lines, while a real regression (quadratic
+// work, a pass over the whole text per call) costs CPU and is still caught.
+// Bounds are about three to ten times an unoptimized run's time on an M3.
+// MC_SKIP_TIMING=1 skips them (the numbers still print), for a runner too
+// slow even for that.
+static double cpuMs() {
+    timespec ts{};
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+static bool timingSkipped() {
+    const char *s = std::getenv("MC_SKIP_TIMING");
+    return s && *s && std::strcmp(s, "0") != 0;
+}
+#define CHECK_TIME(ms, bound)                                                  \
+    do {                                                                       \
+        const double mcMs_ = (ms), mcBound_ = (bound);                         \
+        if (timingSkipped() || mcMs_ < mcBound_) { g_pass++; }                 \
+        else {                                                                 \
+            g_fail++;                                                          \
+            std::printf("  FAIL [%s] %s:%d  %s = %.2f ms CPU, bound %.0f\n",  \
+                        g_group, __FILE__, __LINE__, #ms, mcMs_, mcBound_);    \
         }                                                                      \
     } while (0)
 
@@ -1109,14 +1139,16 @@ void testIncrementalHighlight() {
                 (double)stats.lineTotal / stats.edits);
 }
 
-// Timing on a big file: a full lex against one keystroke. Printed, not
-// checked, since machines differ; the edit-scope checks above are the
-// deterministic part.
+// Timing on a big file: a full lex against one keystroke, in this thread's
+// CPU time, bounded loosely (see CHECK_TIME); the edit-scope checks above
+// are the exact part. A keystroke that relexed the file would cost about a
+// full lex, ten times its bound.
 void benchIncrementalHighlight() {
-    using Clock = std::chrono::steady_clock;
-    auto ms = [](Clock::duration d) {
-        return std::chrono::duration<double, std::milli>(d).count();
+    GROUP("syntax:bench");
+    struct Clock {
+        static double now() { return cpuMs(); }
     };
+    auto ms = [](double d) { return d; };
     std::string unit = readFile("demo/sample.cpp");
     if (unit.empty()) return;
     std::u16string text;
@@ -1169,6 +1201,10 @@ void benchIncrementalHighlight() {
                 "one keystroke %.4f ms; typing /* at the top %.1f ms (%zu lines), "
                 "deleting it %.1f ms\n",
                 nLines, all.size(), full, perKey, openAll, openLines, closeAll);
+    CHECK_TIME(full, 1500);
+    CHECK_TIME(perKey, 10);
+    CHECK_TIME(openAll, 1500);
+    CHECK_TIME(closeAll, 1500);
 }
 
 // --------------------------------------------------------------- markdown
@@ -1890,10 +1926,9 @@ void testMarkdownCommonMark() {
             if (k % 5 == 4) big += "\n";
             if (k % 50 == 49) big += "- item\n- item\n\n";
         }
-        auto t0 = std::chrono::steady_clock::now();
+        double t0 = cpuMs();
         auto runs = P::parse(big);
-        double ms = std::chrono::duration<double, std::milli>(
-                        std::chrono::steady_clock::now() - t0).count();
+        double ms = cpuMs() - t0;
         CHECK(!runs.empty());
         // Inputs that make a naive parser quadratic.
         const std::string hard[] = {
@@ -1916,14 +1951,14 @@ void testMarkdownCommonMark() {
         };
         double worst = 0;
         for (const std::string &h : hard) {
-            auto t1 = std::chrono::steady_clock::now();
+            const double t1 = cpuMs();
             P::parse(h);
-            worst = std::max(worst, std::chrono::duration<double, std::milli>(
-                                        std::chrono::steady_clock::now() - t1).count());
+            worst = std::max(worst, cpuMs() - t1);
         }
-        CHECK(worst < 2000);
         std::printf("  markdown: 20000 lines parsed in %.1f ms; worst pathological input %.1f ms\n",
                     ms, worst);
+        CHECK_TIME(ms, 3000);
+        CHECK_TIME(worst, 2000);
     }
 }
 
@@ -2107,16 +2142,15 @@ void testMarkdownMath() {
             doubles += "$$a ";
             parens += "\\(a ";
         }
-        auto t0 = std::chrono::steady_clock::now();
+        const double t0 = cpuMs();
         auto r1 = P::parse(dollars);
         auto r2 = P::parse(doubles);
         auto r3 = P::parse(parens);
-        const double ms = std::chrono::duration<double, std::milli>(
-                              std::chrono::steady_clock::now() - t0).count();
+        const double ms = cpuMs() - t0;
         // Every $$ closes the one before it; the others close nothing.
         CHECK(maths(r1).empty() && maths(r2).size() == 10000 && maths(r3).empty());
-        CHECK(ms < 2000);
         std::printf("  markdown math: 60,000 openers, 40,000 closing nothing, in %.1f ms\n", ms);
+        CHECK_TIME(ms, 2000);
     }
 }
 
@@ -3409,12 +3443,12 @@ void testTerminalScreen() {
         for (int i = 0; i < 10000; i++)
             chunk += "line " + std::to_string(i) + " of the build output, warning here\r\n";
         big.feed(chunk);
-        auto t0 = std::chrono::steady_clock::now();
+        const double t0 = cpuMs();
         auto bm = big.find("WARNING", false);
-        double ms = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - t0).count();
+        const double ms = cpuMs() - t0;
         CHECK(bm.size() == 10000);
         std::printf("  screen:find  10,000 matches in 10,000 lines: %.1f ms\n", ms);
+        CHECK_TIME(ms, 500);
     }
 
     GROUP("screen:sync-output");
@@ -8070,12 +8104,12 @@ static void testGitGraph() {
             if (i > 10 && i % 10 == 0) ps.push_back("h" + std::to_string(i - 7));
             big.push_back(gc("h" + std::to_string(i), ps));
         }
-        auto t0 = std::chrono::steady_clock::now();
+        const double t0 = cpuMs();
         std::vector<GraphRow> g = layoutGraph(big);
-        double ms = std::chrono::duration<double, std::milli>(
-                        std::chrono::steady_clock::now() - t0).count();
+        const double ms = cpuMs() - t0;
         std::printf("  graph layout: %d commits in %.1f ms\n", N, ms);
         CHECK(g.size() == (size_t)N && graphConsistent(g));
+        CHECK_TIME(ms, 2000);
     }
 
     GROUP("git:show-parse");

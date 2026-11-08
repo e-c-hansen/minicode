@@ -60,24 +60,23 @@ static void testLspReviewFixes() {
             d.range = Lsp::Range{{line, 0}, {line, 5}};
             diags.push_back(d);
         }
-        auto t0 = std::chrono::steady_clock::now();
+        double t0 = cpuMs();
         std::vector<Lsp::DiagnosticSpan> spans = Lsp::diagnosticSpans(nullptr, u, diags);
         Lsp::PositionIndex index(u);
         bool placed = spans.size() == 3000;
         for (const Lsp::DiagnosticSpan &sp : spans)
             if (index.position(sp.start).line != diags[sp.index].range.start.line) placed = false;
-        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
-                        .count();
+        double ms = cpuMs() - t0;
         CHECK(placed);
-        CHECK(ms < 200);
+        CHECK_TIME(ms, 200);
         std::vector<Lsp::TextEdit> edits;
         for (int i = 0; i < 5000; i++)
             edits.push_back(Lsp::TextEdit{Lsp::Range{{i * 4, 0}, {i * 4, 5}}, "v"});
-        t0 = std::chrono::steady_clock::now();
+        t0 = cpuMs();
         std::vector<Lsp::OffsetEdit> oe = Lsp::offsetEdits(u, edits);
-        ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
-                 .count();
-        CHECK(oe.size() == 5000 && oe.back().start == 0 && ms < 200);
+        ms = cpuMs() - t0;
+        CHECK(oe.size() == 5000 && oe.back().start == 0);
+        CHECK_TIME(ms, 200);
     }
 
     GROUP("lsp:framing-limits");
@@ -244,11 +243,9 @@ static void testLspReviewFixes() {
         std::string text;
         for (int i = 0; i < 30000; i++) text += "x" + std::to_string(i) + "\n";
         text += "void f(int a,\n       int b)\n{\n}\n";
-        auto t0 = std::chrono::steady_clock::now();
+        const double t0 = cpuMs();
         std::vector<Lsp::Symbol> syms = Outline::outline("a.c", Lsp::toUtf16(text));
-        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
-                        .count();
-        CHECK(ms < 2000);
+        CHECK_TIME(cpuMs() - t0, 2000);
         CHECK(syms.size() == 1 && syms.size() == 1 && syms[0].name == "f");
         std::string go = "var (\n\ta = 1\n\tb = 2\n)\n\nfunc (s *Server) Handle(\n\tw http.ResponseWriter,\n"
                          "\tr *http.Request,\n) {\n}\n";

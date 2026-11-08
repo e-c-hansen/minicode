@@ -771,7 +771,7 @@ void testFuzzMarkdown() {
     }
     // Deep nesting and long runs of one delimiter stay quick.
     {
-        auto t0 = std::chrono::steady_clock::now();
+        const double t0 = cpuMs();
         (void)MarkdownParser::parse(std::string(20000, '>') + " x");
         (void)MarkdownParser::parse(std::string(20000, '['));
         (void)MarkdownParser::parse(std::string(20000, '*') + "x" + std::string(20000, '_'));
@@ -780,8 +780,7 @@ void testFuzzMarkdown() {
         (void)MarkdownParser::parse(lists);
         (void)MarkdownParser::parse(std::string(20000, '`'));
         (void)MarkdownParser::lines(std::string(20000, '\r'));
-        double ms = fuzzMs(t0);
-        CHECK(ms < 5000);
+        CHECK_TIME(cpuMs() - t0, 5000);
     }
     std::printf("  fuzz:markdown: %d documents in %.0f ms (slowest %.1f ms)\n", docs,
                 fuzzMs(started), slowest);

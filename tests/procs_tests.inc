@@ -394,11 +394,11 @@ static void testProcs() {
         for (int i = 0; i < 200; i++) f.add(1000 + i, i ? 1000 + i - 1 : 200, 100 + i, "w", folder);
         for (int i = 0; i < 1800; i++) f.add(5000 + i, 1, 500 + i, "x", "/Applications");
         Tracker t;
-        auto t0 = std::chrono::steady_clock::now();
+        const double t0 = cpuMs();
         for (int k = 0; k < 10; k++) t.sample(f, 1000 + k * 2, {{1, "zsh", 200, 1, ""}}, {folder}, self, 501);
-        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / 10;
+        const double ms = (cpuMs() - t0) / 10;
         CHECK(t.processes().size() == 200);
         std::printf("  procs: a sample of 2,000 processes (200 tracked): %.2f ms\n", ms);
-        CHECK(ms < 50);   // unoptimized, on a loaded CI machine
+        CHECK_TIME(ms, 50);   // unoptimized: about 11 ms on an M3
     }
 }

@@ -114,12 +114,12 @@ static void testMultiEdit() {
                     b += lines[i];
                 }
             }
-            const auto t0 = std::chrono::steady_clock::now();
+            const double t0 = cpuMs();
             const std::vector<LineDiff::Hunk> h = LineDiff::diff(a, b, 40000, 10.0);
-            const double ms = std::chrono::duration<double, std::milli>(
-                                  std::chrono::steady_clock::now() - t0).count();
+            const double ms = cpuMs() - t0;
             std::printf("  linediff: 100,000 lines, %zu changed: %zu hunks in %.1f ms\n", changed,
                         h.size(), ms);
+            CHECK_TIME(ms, 2000);
             CHECK(h.size() == changed);
             CHECK(LineDiff::apply(a, b, h) == b);
             bool ones = true;

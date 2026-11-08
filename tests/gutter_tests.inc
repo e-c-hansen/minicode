@@ -228,12 +228,11 @@ static void testBrackets() {
         CHECK(Brackets::partner(far.data(), far.size(), 0, {}, 30000) == npos);
         // A large unbalanced file answers quickly.
         std::u16string many(200000, u'(');
-        auto t0 = std::chrono::steady_clock::now();
+        const double t0 = cpuMs();
         for (int i = 0; i < 100; i++) matchAt(many, 100000);
-        double ms = std::chrono::duration<double, std::milli>(
-                        std::chrono::steady_clock::now() - t0).count() / 100;
+        const double ms = (cpuMs() - t0) / 100;
         std::printf("  bracket match: %.3f ms for a 20,000-unit scan\n", ms);
-        CHECK(ms < 50);
+        CHECK_TIME(ms, 50);
     }
 
     GROUP("brackets:jump");

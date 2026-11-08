@@ -53,7 +53,7 @@ std::string screenProblem(const TerminalScreen &s) {
 }
 
 void testTerminalFuzz() {
-    auto started = std::chrono::steady_clock::now();
+    const double started = cpuMs();
     GROUP("fuzz:terminal");
     {
         const char *pieces[] = {
@@ -147,9 +147,9 @@ void testTerminalFuzz() {
         CHECK(lost == 0);
         CHECK(cursorMoved == 0);
     }
-    std::printf("  fuzz:terminal: 360 random sessions and 400 shrinks in %.0f ms\n",
-                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                          started).count());
+    const double fuzzMs = cpuMs() - started;
+    std::printf("  fuzz:terminal: 360 random sessions and 400 shrinks in %.0f ms\n", fuzzMs);
+    CHECK_TIME(fuzzMs, 6000);   // about 600 ms on an M3
 }
 
 // The marks' nonce, the parser's limits and the rest of the terminal

@@ -80,12 +80,11 @@ static void testTreeRefresh() {
             evs.push_back({"/p/d" + std::to_string(i) + "/sub", false});
         }
         many.insert("/p");
-        const auto t0 = std::chrono::steady_clock::now();
+        const double t0 = cpuMs();
         pl = plan(evs, many, root);
-        const double ms = std::chrono::duration<double, std::milli>(
-                              std::chrono::steady_clock::now() - t0).count();
+        const double ms = cpuMs() - t0;
         CHECK(pl.list.empty() && pl.restat.size() == 10000);
-        CHECK(ms < 500);
+        CHECK_TIME(ms, 500);
     }
 
     GROUP("git:decorations");
@@ -173,13 +172,12 @@ static void testTreeRefresh() {
         std::string big;
         for (int i = 0; i < 100000; i++)
             big += rec("1 .M" + h + "dir" + std::to_string(i % 100) + "/sub/f" + std::to_string(i));
-        const auto t0 = std::chrono::steady_clock::now();
+        const double t0 = cpuMs();
         Git::Decorations bd = Git::Decorations::fromStatus(Git::parseStatus(big));
-        const double ms = std::chrono::duration<double, std::milli>(
-                              std::chrono::steady_clock::now() - t0).count();
+        const double ms = cpuMs() - t0;
         std::printf("  git:decorations: 100,000 changed files read in %.1f ms\n", ms);
         CHECK(bd.folder("dir7/sub") == Decoration::Modified && bd.file("dir7/sub/f7") == Decoration::Modified);
-        CHECK(ms < 5000);
+        CHECK_TIME(ms, 2000);
     }
 
     GROUP("settings:tree-git");

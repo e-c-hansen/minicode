@@ -277,10 +277,9 @@ void testTerminalReflow() {
         s.feed(chunk);
         auto before = logicalCells(s);
         auto time = [&](int cols, int rows) {
-            auto t0 = std::chrono::steady_clock::now();
+            const double t0 = cpuMs();
             s.resize(cols, rows);
-            return std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - t0).count();
+            return cpuMs() - t0;
         };
         double narrower = time(80, 40), wider = time(120, 40), taller = time(120, 50);
         double shorter = time(120, 40);
@@ -288,6 +287,8 @@ void testTerminalReflow() {
         CHECK(s.historySize() == 10000 || s.historySize() == 10001);
         std::printf("  screen:reflow  10,000 lines: 120 to 80 columns %.1f ms, back %.1f ms, "
                     "rows only %.1f / %.1f ms\n", narrower, wider, taller, shorter);
+        CHECK_TIME(narrower, 500);
+        CHECK_TIME(wider, 500);
     }
 
     GROUP("screen:find-wrapped");
