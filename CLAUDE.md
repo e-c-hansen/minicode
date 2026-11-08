@@ -146,7 +146,8 @@ goes here first, with tests; the GUI only displays it.
   find, mouse encoding), `TermLinks`.
 - `FolderSearch` (Find and Replace in Folder, atomic writes, TODOs),
   `GitStatus` (status, diffs, git time limits), `GitGraph` (log, refs, lanes),
-  `GitModel` (what every port's Source Control panel shows and runs).
+  `GitModel` (what every port's Source Control panel shows and runs),
+  `QuickDiff` (the editor's change bars against the index).
 - `CommandPalette` (matching, modes, Quick Open, symbol rows), `SymbolOutline`
   (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
@@ -188,7 +189,8 @@ goes here first, with tests; the GUI only displays it.
   `FileViewers`, `QuickLook`, `CsvTable`, `JsonOutlineView`, `SqliteView`,
   `CompareView`.
 - `Browser` (with `MCKeyboardWindow`), `TabStrip`, `Search` (Find in Folder and
-  TODOs window), `GitPanel`, `TreeDetails`, `FormatRunner`, `BackupStore`,
+  TODOs window), `GitPanel`, `GitGutter` (change bars), `TreeDetails`,
+  `FormatRunner`, `BackupStore`,
   `PalettePanel`, `Navigation`.
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
   `ControlServer`, `ControlCommands`, `IdeLinkServer` (Claude Code's /ide),
@@ -667,7 +669,10 @@ container (PanelHost, laid out by hand in layoutContainer)
   `drawViewBackgroundInRect:`, none while read-only.
 - **Line numbers** (`MCLineGutter`): a vertical NSRulerView; each logical line
   numbered on its first fragment, the carets' lines in the active color, a dot
-  for errors and warnings, the fold lane (`kFoldLane`). Only fragments on
+  for errors and warnings, the change lane (`kChangeLane`, while
+  `editor.git-gutter` is on: `GitGutter`'s bars, moved by `QuickDiff::shift`
+  in `storageEdited:` and cleared by a whole new text), the fold lane
+  (`kFoldLane`). Only fragments on
   screen are visited and numbers come from a `LineIndex` fed by storage edits
   (with the characters either side, since a line ends after '\n', U+2029 or
   a '\r' not before '\n', as in TextFind; the folds count lines the same way).
@@ -2030,10 +2035,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   `GIT_EDITOR=true`, stdin /dev/null, the wide PATH; stdout and stderr drained
   at once on their own queues.
 - **Time limits** (`Git::timeoutFor`, one table for the Mac and GTK): 30 s for
-  reads, 2 minutes for add, restore, rm and switch (filters, hooks,
-  index.lock), 10 for commit
-
-  (hooks, signing). git leads its own process group, which gets SIGTERM at the
+  reads, 2 minutes for add, restore, rm, switch, stash, hash-object and
+  update-index (filters, hooks, index.lock), 10 for commit (hooks, signing). git leads its own process group, which gets SIGTERM at the
   limit and SIGKILL 2 s later; the panel shows "git did not answer within 30
   seconds: <command on one line, 160 characters at most>" (`timeoutMessage`),
   or `heldOutputMessage` when git exited but something it started holds its
@@ -2113,6 +2116,31 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   at the right; the first parent continues the lane, others join a waiting lane
   or the first free one; free lanes close up, bending left in the same row. 12
   pt lanes, narrower past 40% of the panel.
+- **Submodules, several rows, the verbs** (Mac, 2026-11-07): `Row::submodule`
+  comes from status; `discardPlan` refuses a submodule (trashing it and
+  restoring the gitlink left an empty folder, the checkout in the Trash) and
+  the hunk planner refuses a gitlink diff (`Subproject commit <oid>` lines,
+  mode 160000); staging one still works. The change lists take several rows
+  (`allowsMultipleSelection`; Command or Shift click shows no diff): Space,
+  the row menu's Stage, Unstage and Discard act on all (`stageRowsArgs`,
+  `discardBatchPlan`: one question, refused whole if any row would be, each
+  file its own Undo Discard); they stay chosen across refreshes, by key, else
+  by path. Commit and Amend, Undo Last Commit (`reset --soft HEAD~1`, or
+  `update-ref -d HEAD` for a first commit; its message back in the box), Stash
+  (`--include-untracked`) and Pop Stash are `GitUi` plans run by `runVerb:`;
+  amend and undo ask when `headIsPushed`, undo asks for a merge.
+- **Change bars** (Mac, `GitGutter.mm`, core `QuickDiff`): the original is
+  the index entry, as VS Code's quick diff (`ls-files --stage`, then `cat-file
+  blob` of its object), read again only when the file or the index file's stat
+  changes; diffed off the main thread 0.3 s after typing pauses (one timer, not
+  one a key), with `LineDiff::diff(..., joinBlankGaps = false)`; dropped when
+  an edit came meanwhile. Lines are the editor's (a lone '\r' and U+2029 end
+  one; CRLF against LF is no change). Revert Change is a buffer edit through
+  `replaceRanges:withStrings:actionName:`; Stage Change is VS Code's
+  `hash-object -w --stdin --path` and `update-index --cacheinfo`, refused when
+  the entry no longer names the object the bars came from. The panel posts
+  `MCGitPanelDidRefreshNotification` so the bars look again. Option+F5 and
+  Shift+Option+F5 (`nextChange:`) are Editor commands the key monitor runs.
 - **Tool guard trap**: in a worktree-isolated agent session, git commands in
   compound or unusual forms are refused (even a filename containing "git"); use
   plain `cd x && git ...` lines or a script file.
