@@ -595,7 +595,9 @@ are in the core's `GitModel` (`stageAllPlan`, `unstageAllPlan`,
 `discardPlan`, `branchItems`, `switchArgs`, `createBranchLabel`, see
 `linux/HANDOFF.md` item 10); here a long press could offer the file's
 commands, and Discard must keep a copy the user can get back (the Mac moves
-the file to the Trash first), since git cannot undo a restore.
+the file to the Trash first), since git cannot undo a restore. Nor are the
+Mac's hunk and line actions in a diff (`GitUi::hunkPlan`,
+`diffTextWithActions`); they need git's stdin through the bash loop.
 
 ## The Markdown preview
 

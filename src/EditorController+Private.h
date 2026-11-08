@@ -613,6 +613,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)reselectCurrentFileInTree;
 - (void)refreshDisplay;
 - (void)showLatexPreview;
+- (void)makeLatexPreview;
+- (void)openLatexProblemAt:(NSString *)path line:(NSInteger)line;
+- (void)showLatexProblemMarks;
 - (BOOL)latexIsShowing;
 - (void)latexDidEditSource:(NSString *)newSource;
 - (void)setPlainMessage:(NSString *)msg;
@@ -732,7 +735,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)agentRunInTerminal:(NSString *)command;
 - (NSString *)agentPathFor:(NSString *)path;
 - (NSRect)agentLineRectAt:(NSUInteger)index;
-- (void)agentTintAgainst:(NSString *)original;
+- (void)agentTintAgainst:(NSString *)proposed;
 - (MCChangeSession *)changeSession;
 - (NSRect)layoutChangeBarIn:(NSRect)area;
 - (void)applyChangeBarColors;
@@ -769,6 +772,10 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSUInteger)markdownCharacterForSourceLine:(NSInteger)line;
 - (NSInteger)markdownSourceLineNear:(NSUInteger)i;
 - (BOOL)editMarkdownAtCharacter:(NSUInteger)index point:(NSPoint)point;
+- (BOOL)editSidePreviewAtCharacter:(NSUInteger)index point:(NSPoint)point;
+- (BOOL)editMarkdownIn:(NSTextView *)page atCharacter:(NSUInteger)index point:(NSPoint)point;
+- (void)applyMarkdownEdit:(NSString *)source side:(BOOL)side;
+- (void)applySidePreviewEdit:(NSString *)source;
 - (void)applyMarkdownSource:(NSString *)source;
 - (void)openMarkdownLink:(NSString *)href;
 - (BOOL)scrollToMarkdownAnchor:(NSString *)anchor;

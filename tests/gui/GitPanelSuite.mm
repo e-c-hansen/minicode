@@ -10,6 +10,7 @@
 #import "GitPanel.h"
 #import "PalettePanel.h"
 #include <objc/runtime.h>
+#include <vector>
 
 namespace {
 MCGitPanel *Git(EditorController *c) { return [c valueForKey:@"gitPanel"]; }
@@ -456,6 +457,184 @@ MC_GUI_SUITE(git_actions) {
     });
     MCGuiWait(@"still on new-topic", 10, ^BOOL {
         return [Git(c).branchText hasPrefix:@"new-topic"];
+    });
+    MCGuiStep(@"the window closes; the real Trash back", ^{
+        UseScratchTrash(NO);
+        [c.window close];
+    });
+    MCGuiWait(@"gone", 5, ^BOOL { return ![MCGuiControllers() containsObject:c]; });
+}
+
+// `make guitest SUITES=git_hunks`: the hunks of a diff on show (W26). A
+// file changed in two places shows Stage Hunk and Discard Hunk on each
+// hunk's header line; Stage Hunk on the second stages only it (git diff
+// --cached holds it alone) and the diff shows what is left; the staged
+// diff's menu unstages one selected line of the two it added; Discard Hunk
+// asks, puts the hunk back as git has it with a copy of the file in the
+// Trash, and Undo Discard brings it back; a diff gone stale since it was
+// shown is refused with a reason, and the diff is shown again.
+namespace {
+struct HunkLink { NSString *link; NSRange range; int op; NSUInteger line; };
+std::vector<HunkLink> HunkLinks(NSTextView *tv) {
+    __block std::vector<HunkLink> out;
+    NSTextStorage *ts = tv.textStorage;
+    [ts enumerateAttribute:NSLinkAttributeName inRange:NSMakeRange(0, ts.length) options:0
+                usingBlock:^(id v, NSRange r, BOOL *stop) {
+        (void)stop;
+        if (![v isKindOfClass:NSString.class] || ![v hasPrefix:@"minicode-hunk:"]) return;
+        NSArray<NSString *> *p = [v componentsSeparatedByString:@":"];
+        out.push_back({v, r, p[1].intValue, (NSUInteger)p[2].integerValue});
+    }];
+    return out;
+}
+NSString *GitText(NSString *repo, NSArray<NSString *> *args) {
+    MCGitResult *r = MCGitRunSync(repo, args);
+    return [[NSString alloc] initWithData:r.output encoding:NSUTF8StringEncoding] ?: @"";
+}
+}  // namespace
+
+MC_GUI_SUITE(git_hunks) {
+    __block EditorController *c = nil;
+    NSString *git = MCGitExecutable();
+    NSString *repo = [MCGuiScratch() stringByAppendingPathComponent:@"githunks"];
+    NSString *G = git ? [NSString stringWithFormat:@"'%@'", git] : @"git";
+    NSString *f = [repo stringByAppendingPathComponent:@"f.txt"];
+    __block NSInteger actions = 0;
+    __block NSUInteger alerts = 0;
+    if (!git) {
+        MCGuiStep(@"no git", ^{ MCGuiNote(@"no git here: the hunk checks are skipped"); });
+        return;
+    }
+    NSString *both = @"a\nB\nc\nd\ne\nf\ng\nh\ni\nj\nk\nk2\nk3\nl\nm\n";
+    NSTextView *(^diff)(void) = ^NSTextView * { return [c valueForKey:@"diffView"]; };
+    NSString *(^index)(void) = ^NSString * { return GitText(repo, @[@"show", @":f.txt"]); };
+
+    GitShell(@"a repository; f.txt changed near its top and near its end", [NSString
+        stringWithFormat:@"set -e; mkdir -p '%@'; cd '%@'; %@ init -q -b main; "
+                          "printf 'a\\nb\\nc\\nd\\ne\\nf\\ng\\nh\\ni\\nj\\nk\\nl\\nm\\n' > f.txt; "
+                          "%@ add -A; %@ commit -qm first; "
+                          "printf 'a\\nB\\nc\\nd\\ne\\nf\\ng\\nh\\ni\\nj\\nk\\nk2\\nk3\\nl\\nm\\n' > f.txt",
+                          repo, repo, G, G, G]);
+    MCGuiStep(@"a window on it; the panel; a Trash of our own", ^{
+        UseScratchTrash(YES);
+        NSUInteger before = MCGuiControllers().count;
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
+                                                      openURLs:@[[NSURL fileURLWithPath:repo]]];
+        GCHECK(MCGuiControllers().count == before + 1);
+        c = MCGuiController();
+        [c toggleSourceControl:nil];
+        Git(c).onActionDone = ^{ actions++; };
+    });
+    MCGuiWait(@"f.txt changed", 15, ^BOOL { return Rows(c, @[@"# Changes  1", @"W M f.txt"]); });
+    MCGuiStep(@"its diff", ^{ [Git(c) showDiffAtRow:RowOf(c, @"W M f.txt")]; });
+    MCGuiWait(@"two hunks, each with Stage Hunk and Discard Hunk", 10, ^BOOL {
+        return [[c valueForKey:@"isDiff"] boolValue] && HunkLinks(diff()).size() == 4;
+    });
+    MCGuiStep(@"the links read as they say; Stage Hunk on the second", ^{
+        NSTextView *tv = diff();
+        std::vector<HunkLink> links = HunkLinks(tv);
+        GCHECK(tv.delegate == Git(c).diffDelegate);
+        GCHECK_EQ_STR([tv.string substringWithRange:links[0].range], @"Stage Hunk");
+        GCHECK_EQ_STR([tv.string substringWithRange:links[3].range], @"Discard Hunk");
+        GCHECK(links[0].op == 0 && links[1].op == 2 && links[2].line > links[0].line);
+        // Still one line of text per line of the diff.
+        GCHECK([tv.string componentsSeparatedByString:@"\n"].count ==
+               [GitText(repo, @[@"diff", @"--", @"f.txt"]) componentsSeparatedByString:@"\n"].count);
+        actions = 0;
+        GCHECK([(id<NSTextViewDelegate>)tv.delegate textView:tv clickedOnLink:links[2].link
+                                                     atIndex:links[2].range.location]);
+    });
+    MCGuiWait(@"staged, and the diff shows the hunk left", 15, ^BOOL {
+        return actions == 1 && HunkLinks(diff()).size() == 2 &&
+               Rows(c, @[@"# Staged changes  1", @"S M f.txt", @"# Changes  1", @"W M f.txt"]);
+    });
+    MCGuiStep(@"only that hunk is in the index", ^{
+        GCHECK_EQ_STR(Git(c).errorLine, @"Staged a hunk of f.txt.");
+        NSString *cached = GitText(repo, @[@"diff", @"--cached"]);
+        GCHECK([cached containsString:@"+k2\n+k3\n"] && ![cached containsString:@"+B"]);
+        GCHECK_EQ_STR(index(), @"a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nk2\nk3\nl\nm\n");
+        GCHECK_EQ_STR(Read(f), both);
+        GCHECK(![diff().string containsString:@"+k2"] && [diff().string containsString:@"+B"]);
+        [Git(c) showDiffAtRow:RowOf(c, @"S M f.txt")];
+    });
+    MCGuiWait(@"the staged diff, with Unstage Hunk", 10, ^BOOL {
+        std::vector<HunkLink> l = HunkLinks(diff());
+        return l.size() == 1 && l[0].op == 1;
+    });
+    MCGuiStep(@"select +k2; the menu unstages the selected lines", ^{
+        NSTextView *tv = diff();
+        const NSRange k2 = [tv.string rangeOfString:@"+k2\n"];
+        GCHECK(k2.location != NSNotFound);
+        tv.selectedRange = k2;
+        NSEvent *right = [NSEvent mouseEventWithType:NSEventTypeRightMouseDown
+                                            location:NSZeroPoint modifierFlags:0 timestamp:0
+                                        windowNumber:c.window.windowNumber context:nil
+                                         eventNumber:0 clickCount:1 pressure:1];
+        NSMenu *menu = [(id<NSTextViewDelegate>)tv.delegate
+            textView:tv menu:[[NSMenu alloc] initWithTitle:@""] forEvent:right
+             atIndex:k2.location + 1];
+        NSArray *titles = MenuTitles(menu);
+        MCGuiNote(@"diff menu: %@", titles);
+        NSArray *want = @[@"Unstage Hunk", @"Unstage Selected Lines"];
+        GCHECK([titles isEqualToArray:want]);
+        actions = 0;
+        [menu performActionForItemAtIndex:1];
+    });
+    MCGuiWait(@"k2 unstaged, k3 still staged", 15, ^BOOL {
+        return actions == 1 && [index() isEqualToString:@"a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nk3\nl\nm\n"];
+    });
+    MCGuiStep(@"it says so; the work tree untouched; the changes' diff", ^{
+        GCHECK_EQ_STR(Git(c).errorLine, @"Unstaged the selected lines of f.txt.");
+        GCHECK_EQ_STR(Read(f), both);
+        [Git(c) showDiffAtRow:RowOf(c, @"W M f.txt")];
+    });
+    MCGuiWait(@"two hunks again (B, and k2)", 10, ^BOOL {
+        return HunkLinks(diff()).size() == 4 && [diff().string containsString:@"+k2"];
+    });
+    MCGuiStep(@"Discard Hunk on the first asks; yes", ^{
+        NSTextView *tv = diff();
+        std::vector<HunkLink> links = HunkLinks(tv);
+        alerts = MCGuiAlertsShown().count;
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
+        actions = 0;
+        [(id<NSTextViewDelegate>)tv.delegate textView:tv clickedOnLink:links[1].link
+                                              atIndex:links[1].range.location];
+        NSArray *shown = MCGuiAlertsShown();
+        GCHECK([[shown subarrayWithRange:NSMakeRange(alerts, shown.count - alerts)]
+            isEqualToArray:@[@"Discard this hunk of f.txt?"]]);
+    });
+    MCGuiWait(@"discarded", 15, ^BOOL { return actions == 1; });
+    MCGuiStep(@"b is back, k2 kept; the file as it was is in the Trash", ^{
+        MCGuiNote(@"after discard: %@", Git(c).errorLine);
+        GCHECK_EQ_STR(Read(f), @"a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nk2\nk3\nl\nm\n");
+        GCHECK([TrashedTexts() containsObject:both]);
+        GCHECK_EQ_STR(Git(c).undoDiscardTitle, @"Undo Discard of f.txt");
+        actions = 0;
+        [Git(c) undoDiscard];
+    });
+    MCGuiWait(@"undone", 15, ^BOOL { return actions == 1 && [Read(f) isEqualToString:both]; });
+    MCGuiStep(@"the diff on show is the one from before the undo", ^{
+        GCHECK(HunkLinks(diff()).size() == 2 && ![diff().string containsString:@"+B"]);
+    });
+    GitShell(@"f.txt staged from outside, so the diff on show is stale",
+             [NSString stringWithFormat:@"cd '%@' && %@ add f.txt", repo, G]);
+    MCGuiStep(@"Stage Hunk on the stale diff", ^{
+        NSTextView *tv = diff();
+        std::vector<HunkLink> links = HunkLinks(tv);
+        actions = 0;
+        [(id<NSTextViewDelegate>)tv.delegate textView:tv clickedOnLink:links[0].link
+                                              atIndex:links[0].range.location];
+    });
+    MCGuiWait(@"refused", 15, ^BOOL { return actions == 1; });
+    MCGuiStep(@"said why; nothing changed", ^{
+        MCGuiNote(@"stale: %@", Git(c).errorLine);
+        GCHECK([Git(c).errorLine hasPrefix:@"f.txt changed since this diff was shown"]);
+        GCHECK_EQ_STR(index(), both);
+        GCHECK_EQ_STR(Read(f), both);
+    });
+    MCGuiWait(@"and the diff shown again: nothing left to stage", 10, ^BOOL {
+        return HunkLinks(diff()).empty() &&
+               [diff().string containsString:@"No differences to show."];
     });
     MCGuiStep(@"the window closes; the real Trash back", ^{
         UseScratchTrash(NO);

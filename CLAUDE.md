@@ -120,8 +120,9 @@ goes here first, with tests; the GUI only displays it.
   (the block behind a preview click), `MarkdownTasks` (task lists), `MathTex`
   (the Markdown math batch), `MermaidDiagram` (```mermaid blocks for mmdc),
   `LatexDoc` (editable ranges of LaTeX source), `LatexScratch` (the
-  preview's output folders and sibling records),
-  `SyncTex` (page point to source lines), `Json`, `IdeLink` (the Claude Code
+  preview's output folders and sibling records), `LatexLog` (tectonic's
+  problems with their files and lines),
+  `SyncTex` (page point to source lines, and line to boxes), `Json`, `IdeLink` (the Claude Code
   IDE link: WebSocket, MCP, lock file).
 - `Settings` (the settings file, themes, every resolved color), `Commands` (the
   command registry and keys.conf), `EditorTabs` (tab rules), `Backups` (backups
@@ -1380,6 +1381,19 @@ view is disposed (on `unrealize`), or dispose loops forever.
   `_awaitedWebImages`, the Mermaid page); arrivals go through
   `renderShownMarkdownKeepingPlace`. Layout: `layoutSidePreviewIn:textShown:`
   splits the text's rect in `relayoutRightArea`.
+  **Scroll sync** (W25, 2026-11-07, VS Code's scrollPreviewWithEditor,
+  scrollEditorWithPreview and markEditorSelection, no settings): the pane
+  observes the editor's clip view, its own, and the editor's selection
+  (`followSource:...`, lines from the gutter's `LineIndex`). The map is
+  `PreviewScroll` (core, `previewscroll:*`): a mark per source line's first
+  run, interpolated top to next top both ways, so the two maps are
+  inverses. Only the user's moves lead: the pane's own (render, resize,
+  `scrollY`, following) go through `holdFollowing:`, and a bounds change
+  that leaves a side's y as last seen is ignored. After a render
+  `pageRendered` follows the source unless `pageLeads` (the user scrolled
+  the page last; typing in the source clears it). A double-click in the
+  pane is the block editor (`editMarkdownIn:atCharacter:point:`), its edit
+  one `replaceRanges:` splice in the source (`applySidePreviewEdit:`).
 - **Editing from the preview**: a double-click (`onPreviewDoubleClick`) reads
   the line (and `kMarkdownTableCell`), `MarkdownEdit::blockAt` finds the block
   (heading text, list item with continuations, paragraph or quote, code between
@@ -1553,6 +1567,21 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
   the buffer's. Trap: a synthetic `NSEvent` for Shift+Cmd+S with "s" matched
   Save and wrote the file, with "S" nothing; `CGEventCreateKeyboardEvent`
   behaves like hardware.
+- **Forward search** (Option+Cmd+J, `showLineInPDF:`, LaTeX Workshop's
+  `latex-workshop.synctex`): `SyncTexIndex::boxesForLine` lights the lines of
+  text holding the glue, kerns and void boxes the caret's line set (never a
+  line box's own record, which names the line its paragraph ended on), on
+  the first page it reached, else the nearest line below or above within
+  40; square annotations for 1.5 s. It waits for a typeset when the PDF is
+  not the buffer's (`_forwardLine`, run from `showDocument:`).
+- **Problems on lines**: `LatexLog` reads tectonic's `error: file:line:
+  message` summary (TeX's `! ...` blocks with `l.N` and the open-file
+  parentheses only when no summary placed anything); the sibling's name is
+  the document, an `\input` name is found as TeX finds it. The failure panel
+  lists them above the log, each place a `minicode-latex-problem:<n>` link
+  (`onOpenProblem`, goToLine); while the source shows and is still the text
+  that failed, they are `CodeTextView buildMarks`, gutter dots that follow
+  edits and that no language server's publish replaces.
 - tectonic's bundle is older than Overleaf's: a missing package (`twemojis`)
   goes in the document's folder, and since tectonic discards docstrip's output,
   a script keeping a `.dtx`'s code lines made the `.sty`. Spacing differs from
@@ -1944,8 +1973,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 - **What runs**: status, diff, add, restore --staged, commit -m, rm --cached
   --force before the first commit, and for the graph for-each-ref, log,
   rev-list, show, rev-parse; `remote` with each status; on the Mac fetch, pull
-  and push (below), Stage All (`add -A -- .`), Unstage All, `switch` and
-  Discard's `restore --worktree` (below). Never a shell string: `MCGitRunSync`
+  and push (below), Stage All (`add -A -- .`), Unstage All, `switch`,
+  Discard's `restore --worktree` and the hunks' `apply` (below). Never a shell string: `MCGitRunSync`
   `posix_spawn`s an argument vector in the top level. Paths after `--`; add,
   restore and rm get `--literal-pathspecs` (`sp*ecial.txt` never stages
   `spXecial.txt`). Status `--porcelain=v2 --branch -z --untracked-files=all`;
@@ -2005,6 +2034,22 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   one is switched to with `switch -c <name> --track <remote>/<name>`. Tests
   swap `trashItemAtURL:` for a scratch folder, since the real Trash may be
   the user's own whatever HOME says.
+- **Hunks and lines** (Mac, 2026-11-07; `GitUi::buildPatch`, `hunkPlan`,
+  `diffTextWithActions`, tested in `git-ui:hunk-patch`, `line-patch`; GUI
+  `git_hunks`). The panel's diff shows Stage Hunk and Discard Hunk (Unstage
+  Hunk in a staged diff) as links after each hunk header, on the same line,
+  so line i of the text stays line i of git's output (the menu maps a
+  selection to lines by counting newlines). The panel is the diff view's
+  delegate (links, and the hunk's and selected lines' items in its menu)
+  and styles only the diff it showed last (`_shownDiff`, by NSData
+  identity); commits get no delegate. The patch goes to `git apply
+  [--cached] [--reverse] --whitespace=nowarn -` on stdin
+  (`MCGitRunSyncWithInput`), built from the diff text with the applied-to
+  side's numbers kept and the other's recomputed; a stale diff fails in git
+  and is said so (`hunkFailureText`), then shown again. Discard Hunk asks,
+  and first puts a copy of the file in the Trash (by way of a temporary
+  folder, so the Trash names it as the file), which Undo Discard puts back.
+  New, deleted, binary and conflicted files are staged whole.
 - **Threads**: a serial queue per panel; results dropped if the root changed or
   a newer diff was asked. `refresh` coalesces 50 ms, only while in a window (on
   show, after actions, on window key, on the tree's FSEvents).
@@ -2104,15 +2149,29 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   task. Cmd+Return in the bar makes any request a task. `MCAgentContext`
   carries blocks, so the bar knows nothing of the views. `MCAgentRun` runs
   `/bin/zsh -l -c 'exec <agent.command> -p --tools Read,Grep,Glob
-  --no-session-persistence --output-format text'` in the folder, the prompt on
-  stdin (written off the main thread: a big buffer outgrows a pipe), five
-  minutes at most, exit 127 as not installed. The prompt
+  --no-session-persistence --output-format stream-json --verbose
+  --include-partial-messages'` in the folder, the prompt on stdin (written off
+  the main thread: a big buffer outgrows a pipe), five minutes at most, exit
+  127 as not installed. stdout is read as it comes into `InlineAgent::Stream`
+  on a serial queue of its own (text deltas, tool calls, the result line; no
+  JSON at all means plain text, as the GUI suites' stand-ins print), and a
+  `preview` of it reaches the bar at most every 80 ms. The prompt
   (`InlineAgent::editPrompt`) asks for SEARCH/REPLACE blocks or an answer;
-  `applyEdits` matches each SEARCH ever more loosely about whitespace, nearest
-  the cursor, all or nothing, so typing elsewhere meanwhile does no harm. The
-  edit goes in through `replaceSourceWithText:`, tinted; Return keeps; Esc
-  restores the text from before the bar's first edit if the buffer is as the
-  agent left it. Commands are typed, never run. Tasks write the prompt to
+  `applyEdits` matches each SEARCH ever more loosely about whitespace, all or
+  nothing, so typing elsewhere meanwhile does no harm; a SEARCH found in
+  several places is taken only where exactly one touches the selection (a
+  caret: holds it), else refused (D22, 2026-11-07), and after a match that
+  ignored indentation the REPLACE lines are re-indented to the file's. **The
+  edit is pending, not made**: the session keeps every request's blocks
+  (`_rounds`) and what they make of the buffer (`pendingText`), the bar shows
+  `InlineAgent::pendingDiff` (SideBySide's rows and word changes), the lines
+  it replaces are tinted red; Return (Keep) applies the rounds again to the
+  buffer as it is then and puts the result in through `replaceSourceWithText:`
+  as one undo step; Esc drops it, nothing to restore. A bar closed from
+  elsewhere with an edit waiting says in the status bar that it was not made.
+  Commands are typed, never run. `make guitest SUITES=agent_panel` streams
+  `tests/fixtures/claude/stream` (written to the SDK's message shapes, not
+  recorded) through a stand-in script; never run the real Claude Code there. Tasks write the prompt to
   `$TMPDIR/MiniCode-agent/` and run `cd <root> && <agent.command> "$(cat
   file)"` in a new terminal tab. Traps: `NSTextView string` is the live
   storage, so "the text before" must be a copy; the bar's place uses line
@@ -2320,7 +2379,8 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   cwd is elsewhere is read for 64 KB once. Not thread-safe: copy rows out.
   `AgentEvidence`: every Bash call, test commands recognised anywhere in a
   chain past env, time, timeout and assignments (pytest forms, make test and
-  check, ctest, npm/pnpm/yarn test, cargo test, go test), their summaries read
+  check, ctest, npm/pnpm/yarn test, cargo test, go test, python -m unittest,
+  tox, nox, jest and vitest, through npx, uvx and the like), their summaries read
   from the tail, no verdicts. Paths: `~/.claude/projects`
   (`$MINICODE_CLAUDE_PROJECTS`), the `/private/tmp/claude-<uid>` scratchpads
   (`$MINICODE_CLAUDE_TMP`). Fixtures: `tests/fixtures/claude`.

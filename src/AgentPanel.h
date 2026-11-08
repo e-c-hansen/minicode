@@ -5,9 +5,11 @@
 // for what has the keyboard and lays the bar out.
 //
 // - Edit (a file in the editor, or a Markdown file's preview): the bar opens
-//   under the cursor's line. Return asks; Claude's edit goes into the buffer
-//   as one undo step, its lines tinted, and Return keeps it or Esc puts the
-//   text back. Another request in the same bar builds on the last.
+//   under the cursor's line. Return asks; Claude's reply shows in the bar as
+//   it is written. Its edit is shown before it is made: the lines it would
+//   replace tinted in the editor, the diff in the bar. Return keeps it (one
+//   undo step), Esc discards it, and the file is untouched until then.
+//   Another request in the same bar builds on the edit waiting.
 // - Command (a terminal): the command Claude writes is typed at the prompt,
 //   never run.
 // - Task (anywhere else): the request, with where it was asked from, goes to
@@ -30,13 +32,13 @@ typedef NS_ENUM(NSInteger, MCAgentTarget) {
 @property(nonatomic, copy) NSString *path;       // the open file, as the prompt names it
 // Edit: the text now (nil once it is no longer on show), the selection when
 // Cmd+I was pressed (UTF-16), putting a new text in as one undo step (NO
-// when it could not), and tinting the lines that differ from `original`
-// (nil clears the tint).
+// when it could not), and tinting the lines of the text now that `proposed`
+// would replace (nil clears the tint).
 @property(nonatomic, copy) NSString *(^currentText)(void);
 @property(nonatomic) NSRange selection;
 @property(nonatomic, copy) NSRange (^currentSelection)(void);   // the editor's now
 @property(nonatomic, copy) BOOL (^applyText)(NSString *text, NSString *actionName);
-@property(nonatomic, copy) void (^tint)(NSString *original);
+@property(nonatomic, copy) void (^tint)(NSString *proposed);
 // Command: the shell's folder and screen, and typing a command at its prompt
 // (NO when the terminal cannot take it now).
 @property(nonatomic, copy) NSString *directory;
@@ -84,6 +86,9 @@ typedef NS_ENUM(NSInteger, MCAgentBarMode) {
 @property(nonatomic, copy) NSString *heading;           // "Agent", beside it the hint
 @property(nonatomic, copy) NSString *hint;
 @property(nonatomic, copy) NSString *message;           // the status or answer below the box
+// In place of message's plain text (the pending edit's diff); setting
+// message clears it.
+@property(nonatomic, copy) NSAttributedString *attributedMessage;
 @property(nonatomic) BOOL messageIsError;
 @property(nonatomic, copy) void (^onSend)(NSString *request);
 @property(nonatomic, copy) void (^onTask)(NSString *request);   // Cmd+Return
@@ -99,9 +104,15 @@ typedef NS_ENUM(NSInteger, MCAgentBarMode) {
 
 // Runs agent.command in print mode with a prompt on stdin, in a login shell
 // (so the user's PATH finds claude) with minicode's search folders added.
-// The completion runs on the main queue, never after cancel.
+// Its stream is read as it comes (InlineAgent::Stream): `progress` gets the
+// reply so far (InlineAgent::preview of it) and what Claude is doing, a few
+// times a second; `output` is the whole reply. Both run on the main queue,
+// never after cancel, and progress never after the completion.
 @interface MCAgentRun : NSObject
 + (instancetype)runPrompt:(NSString *)prompt inFolder:(NSString *)folder
+               completion:(void (^)(NSString *output, NSString *error))completion;
++ (instancetype)runPrompt:(NSString *)prompt inFolder:(NSString *)folder
+                 progress:(void (^)(NSString *text, NSString *activity))progress
                completion:(void (^)(NSString *output, NSString *error))completion;
 - (void)cancel;
 @end
@@ -112,12 +123,15 @@ typedef NS_ENUM(NSInteger, MCAgentBarMode) {
 @property(nonatomic, readonly) MCAgentBar *bar;
 @property(nonatomic, readonly) BOOL shown;
 @property(nonatomic, readonly) MCAgentContext *context;
-// An edit the agent made waits for Keep or Discard (the bar is open on it).
-// Auto-save leaves the tab alone meanwhile, so nothing reaches the disk
-// before the user has chosen.
+// An edit the agent proposed waits for Keep or Discard (the bar is open on
+// it); the buffer has not changed yet. Auto-save leaves the tab alone
+// meanwhile.
 @property(nonatomic, readonly) BOOL editPending;
+// The text the buffer would hold after Keep (nil with none waiting).
+@property(nonatomic, readonly) NSString *pendingText;
 // Cmd+I: the bar for `context`, or the open one focused when it is for the
-// same place. Anything else open is closed first (its edit kept).
+// same place. Anything else open is closed first (an edit waiting there is
+// not made, and the status bar says so).
 - (void)beginWithContext:(MCAgentContext *)context;
 // The request typed into the bar (also a test hook).
 - (void)send:(NSString *)request;
