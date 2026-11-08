@@ -992,7 +992,11 @@ container (PanelHost, laid out by hand in layoutContainer)
   node on a million random cases, and against std::regex in `regex:oracle`);
   a pattern it refuses (backreferences, lookaround, `[[:alpha:]]`, a lone
   `]`) goes to std::regex on a worker thread of the query's, left behind
-  after 2 s (`Query::tooSlow`, `FolderSearchResult::tooSlow`). Traps:
+  after 2 s (`Query::tooSlow`, `FolderSearchResult::tooSlow`). On a line
+  over 2,000 code points it is tried a start at a time and reads at most
+  8,192 past each (`setRegexReach`): libstdc++ 15 recurses per character
+  (GCC bug 86164) and a 50,000-character line overflowed the worker's
+  256 MB stack under TSan, a crash that would end the app. Traps:
   libc++ and libstdc++ each break JavaScript's repetition rules in places
   (groups unset per repetition, empty repetitions not counting), libc++
   finds no `\b` at a line's end once a search starts past 0, and libc++

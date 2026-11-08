@@ -88,6 +88,14 @@ using StdRegex = std::basic_regex<wchar_t, FoldTraits>;
 constexpr std::size_t kSteppedLine = 2000;
 constexpr double kRegexLineSeconds = 1.0;
 constexpr double kRegexSecondsPerChar = 0.5e-6;
+// How far past a start position std::regex reads on a stepped line: a
+// match is at most this long. libstdc++ before GCC 16 recurses at least
+// once per character it reads (GCC bug 86164), so the whole rest of a
+// long line could overflow even the worker's 256 MB stack (it did under
+// ThreadSanitizer on a 50,000-character line), and a thread overflowing
+// its stack ends the app. Past the window $ and \b do not match at its
+// end, which is not the line's.
+std::atomic<std::size_t> gRegexReach{8192};
 
 constexpr std::size_t npos = std::string::npos;
 
@@ -398,6 +406,7 @@ std::u32string requiredText(const Query& query) {
 bool Query::tooSlow() const { return impl_ && impl_->slow && impl_->slow->tooSlow.load(); }
 
 void setSlowPatternSeconds(double seconds) { gSlowSeconds = seconds; }
+std::size_t setRegexReach(std::size_t codePoints) { return gRegexReach.exchange(codePoints); }
 
 namespace {
 
@@ -522,6 +531,7 @@ bool matchBacktracking(const Options& opt, const StdRegex& re, const std::u32str
     const wchar_t* const b = subject.data();
     const wchar_t* const e = b + n;
     const bool stepped = n > kSteppedLine;
+    const std::size_t reach = std::max<std::size_t>(gRegexReach.load(), 1);
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                               std::chrono::duration<double>(kRegexLineSeconds +
@@ -566,7 +576,12 @@ bool matchBacktracking(const Options& opt, const StdRegex& re, const std::u32str
             }
             auto fl = flagsAt(p) | rc::match_continuous;
             if (p == from && notNull) fl |= rc::match_not_null;
-            if (std::regex_search(b + p, e, m, re, fl)) return true;
+            const wchar_t* end = e;
+            if (n - p > reach) {
+                end = b + p + reach;
+                fl |= rc::match_not_eol | rc::match_not_eow;
+            }
+            if (std::regex_search(b + p, end, m, re, fl)) return true;
         }
         return false;
     };

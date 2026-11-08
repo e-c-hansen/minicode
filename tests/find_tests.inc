@@ -141,6 +141,21 @@ static void testTextFind() {
         CHECK(!backref.linear() && !backref.tooSlow());
         CHECK(spans(slow) == (V{"50001+3"}));
         CHECK(slowS < 4);
+        // On a long line std::regex reads at most 8,192 characters past a
+        // start (libstdc++ 15 recursed once per character to the line's
+        // end): $ holds only at the line's real end, a short match is found
+        // anywhere.
+        const std::u16string longDashes(20000, u'-');
+        CHECK(spans(findAll(longDashes, q16(u"(-)\\1$", false, false, true))) ==
+              (V{"19998+2"}));
+        CHECK(spans(findAll(longDashes + u"bb" + longDashes,
+                            q16(u"(b)\\1", false, false, true))) == (V{"20000+2"}));
+        // Where the window ends short of the line's end, $ does not match
+        // (a reach of 100 here, so the check is cheap under sanitizers).
+        const std::size_t oldReach = setRegexReach(100);
+        CHECK(spans(findAll(std::u16string(3000, u'-'),
+                            q16(u"(-)\\1.{98}$", false, false, true))) == (V{"2900+100"}));
+        setRegexReach(oldReach);
         // A cancel stops it within the line.
         std::atomic<bool> cancel(false);
         bool cancelled = false;

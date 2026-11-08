@@ -127,6 +127,11 @@ char32_t foldCase(char32_t c);
 // (2 s; tests shorten it).
 void setSlowPatternSeconds(double seconds);
 
+// How far past a start position std::regex reads on a long line, which is
+// the longest match it finds there (8,192 code points; tests shorten it).
+// Returns the old value.
+std::size_t setRegexReach(std::size_t codePoints);
+
 // A word character for whole-word matching.
 bool isWordChar(char32_t c);
 

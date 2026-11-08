@@ -128,6 +128,10 @@ jobs:
   tsan:
     name: Core tests under ThreadSanitizer
     runs-on: ubuntu-latest
+    # A crash once left TSan's signal handler hanging until GitHub's six
+    # hours ran out; the steps below have limits of their own, so a hang
+    # fails and the backtrace step still runs.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
 
@@ -153,7 +157,7 @@ jobs:
           MC_PRINT_GROUPS: '1'
         run: |
           set -o pipefail
-          make test-tsan CXX=clang++-22 2>&1 | tee tsan.log
+          timeout 25m make test-tsan CXX=clang++-22 2>&1 | tee tsan.log
 
       # Only after a crash (a signal, not a race report): the same binary
       # again under gdb, for a backtrace and the library each frame is in.
@@ -161,10 +165,10 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          grep -q 'DEADLYSIGNAL\|SEGV' tsan.log || exit 0
+          grep -q 'DEADLYSIGNAL\|SEGV\|Terminated' tsan.log || exit 0
           MC_SKIP_TIMING=1 MC_PRINT_GROUPS=1 \
           TSAN_OPTIONS="halt_on_error=1 handle_segv=0 suppressions=$PWD/tests/tsan.supp" \
-            gdb -q -batch -ex 'handle SIGPIPE nostop noprint pass' \
+            timeout 12m gdb -q -batch -ex 'handle SIGPIPE nostop noprint pass' \
                 -ex run -ex 'bt 40' -ex 'info sharedlibrary' \
                 -ex 'x/6i $pc' build/test-tsan/run_tests
 
