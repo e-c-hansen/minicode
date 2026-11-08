@@ -182,9 +182,10 @@ MC_GUI_SUITE(lsp_progress) {
         MCGuiNote(@"three 6 MB notifications: longest main-thread gap %.1f ms (at most %.2f ms "
                   @"of its CPU) over %lu fires", meter.longest * 1000, meter.busiest,
                   (unsigned long)meter.fires);
-        // Under 10 ms of the main thread's CPU between two fires, the idle
-        // baseline's on top: a parse there took 50 ms of it.
-        GCHECK_TIME(meter.busiest, 10 + idleCpu, @"the main thread's busiest gap while they arrive");
+        // Under 25 ms of the main thread's CPU between two fires, the idle
+        // baseline's on top: a parse there took 50 ms of it. (CI's runner
+        // took 15 ms where this Mac takes under 5.)
+        GCHECK_TIME(meter.busiest, 25 + idleCpu, @"the main thread's busiest gap while they arrive");
         GCHECK_EQ_STR(Session(c).statusText, @"fakelsp: Indexing: 5/5 files 100%");
         NSTextView *tv = Text(c);
         tv.selectedRange = NSMakeRange(NSMaxRange([tv.string rangeOfString:@"x = na"]), 0);
