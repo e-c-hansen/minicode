@@ -256,10 +256,16 @@ MC_GUI_SUITE(snippets) {
         GCHECK(tv.selectedRange.location == end);
         GCHECK(!tv.multiCaretActive);
     });
-    MCGuiStep(@"close the file's session", ^{
+    // Left as it was found, for the suites after this one: the text back,
+    // no tabs, and the servers off (symbols reads a file's outline with no
+    // server, and a scripted one still running answered it with nothing).
+    MCGuiStep(@"servers off", ^{
         CodeTextView *tv = Text(c);
         while (tv.undoManager.canUndo && ![tv.string isEqualToString:kOriginal])
             [tv.undoManager undo];
         GCHECK_EQ_STR(tv.string, kOriginal);
+        MCGuiSetSettings(@"lsp.enabled = false\n");
+        [c closeAllTabs:nil];
     });
+    MCGuiWait(@"the server is gone", 10, ^BOOL { return !Session(c).hasServer; });
 }
