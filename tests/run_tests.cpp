@@ -82,7 +82,23 @@
 static int g_pass = 0, g_fail = 0;
 static const char *g_group = "";
 
-#define GROUP(name) g_group = name
+// MC_PRINT_GROUPS=1 names each group on stderr as it starts, with the
+// seconds since the first: a run that dies (a sanitizer's abort leaves a
+// piped stdout unflushed) then says where it was.
+static void mcSetGroup(const char *name) {
+    g_group = name;
+    static const bool print = [] {
+        const char *s = std::getenv("MC_PRINT_GROUPS");
+        return s && *s && std::strcmp(s, "0") != 0;
+    }();
+    if (!print) return;
+    using Clock = std::chrono::steady_clock;
+    static const Clock::time_point start = Clock::now();
+    const double s = std::chrono::duration<double>(Clock::now() - start).count();
+    std::fprintf(stderr, "[%7.1f s] %s\n", s, name);
+}
+
+#define GROUP(name) mcSetGroup(name)
 #define CHECK(cond)                                                            \
     do {                                                                       \
         if (cond) { g_pass++; }                                                \
