@@ -1,4 +1,4 @@
-// latex_safety_tests.inc — the `mathtex:refused` and `latex:scratch` groups
+// latex_safety_tests.inc — the `mathtex:refused` and `latex:scratch*` groups
 // of run_tests.cpp: what a Markdown formula may not hold (MathTex::check),
 // and the LaTeX preview's output folders and sibling records
 // (LatexScratch.h). Included there.
@@ -96,5 +96,53 @@ static void testLatexSafety() {
         Record mine = r;
         mine.sibling = "/a/paper.tex";   // never a file named as the user's are
         CHECK(decide(mine, false, true, r.size, sha) == Action::ForgetRecord);
+    }
+
+    GROUP("latex:scratch-two-views");
+    {
+        using namespace LatexScratch;
+        const std::string hex =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        // Two previews of one file in one process (two windows): a folder
+        // and a sibling each.
+        Owner one{4242, 1762400000, 1}, two{4242, 1762400000, 2};
+        CHECK(folderName(hex, one) == "0123456789abcdef-4242-1762400000-1");
+        CHECK(folderName(hex, one) != folderName(hex, two));
+        CHECK(siblingName("paper", one) == ".paper.4242-1.minicode.tex");
+        CHECK(siblingName("paper", one) != siblingName("paper", two));
+        CHECK(siblingName("paper", Owner{}) == ".paper.minicode.tex");
+        // Both are preview copies by name, so a crash's record of either can
+        // still be acted on, and nothing else is.
+        CHECK(isPreviewCopyName("/a/" + siblingName("paper", one)));
+        CHECK(isPreviewCopyName("/a/" + siblingName("my.notes", two)));
+        Record r;
+        r.sibling = "/a/" + siblingName("paper", one);
+        r.size = 3;
+        r.sha256 = std::string(64, 'c');
+        CHECK(decide(r, false, true, 3, r.sha256) == Action::RemoveSibling);
+        CHECK(decide(r, true, true, 3, r.sha256) == Action::Keep);
+        // Another view's copy is never this record's: the names differ.
+        CHECK(r.sibling != "/a/" + siblingName("paper", two));
+
+        // The owner reads back from the folder's name; other names have none.
+        Owner back;
+        CHECK(parseFolderName(folderName(hex, two), &back));
+        CHECK(back.pid == 4242 && back.start == 1762400000 && back.view == 2);
+        CHECK(parseFolderName(folderName("", one), &back) && back.view == 1);   // untitled
+        CHECK(!parseFolderName("0123456789abcdef", &back));          // an older minicode's
+        CHECK(!parseFolderName("0123456789abcdef-1-2", &back));
+        CHECK(!parseFolderName("0123456789abcdef-x-2-3", &back));
+        CHECK(!parseFolderName("0123456789abcdef-1-2-3-4", &back));
+        CHECK(!parseFolderName("0123456789abcdef-0-2-3", &back));    // no pid 0
+        CHECK(!parseFolderName("0123456789abcdef-1-2-0", &back));    // views count from 1
+        CHECK(!parseFolderName("0123456789abcdeg-1-2-3", &back));
+        CHECK(!parseFolderName("../../x-1-2-3", &back));
+        CHECK(!parseFolderName("", &back));
+
+        // Gone: no such process, or the pid now another process's.
+        CHECK(ownerGone(one, 0));
+        CHECK(!ownerGone(one, 1762400000.4));
+        CHECK(!ownerGone(one, 1762399999.6));
+        CHECK(ownerGone(one, 1762400100));
     }
 }
