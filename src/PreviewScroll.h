@@ -56,4 +56,13 @@ double lineForY(const Page& page, double y);
 // comes before every mark.
 int markAt(const Page& page, double line);
 
+// The two marks a question about mark `i`'s stretch needs: mark i and the
+// one after it (mark 0 alone for i < 0), and the page's bottom and line
+// count when there is no mark after it. yForLine for a line from mark i's
+// to the next one's, and lineForY for a y from mark i's top to the next
+// one's, answer from it as from the whole page, so a long page needs the
+// tops of only the marks asked about, and its layout made only that far.
+// A top above the one before it is taken as that one.
+Page around(const std::vector<Mark>& marks, int i, double bottom, int lines);
+
 }  // namespace PreviewScroll
