@@ -201,6 +201,7 @@ MC_GUI_SUITE(lsp_sync) {
         GCHECK(changes.count == 1 && Count(changes, NO) == 0);
         NSArray *texts = [changes.lastObject[@"params"][@"contentChanges"] valueForKey:@"text"];
         NSArray *typed = @[@"zz", @"q"];
+        if (![texts isEqualToArray:typed]) MCGuiNote(@"the change: %@", changes.lastObject);
         GCHECK([texts isEqualToArray:typed]);
         GCHECK([c showFile:file]);
     });
