@@ -30,6 +30,15 @@
 // without it; only layout sees it. The storage keeps the gaps on their
 // text through every edit itself (Lsp::inlayFollowEdit), at the moment of
 // the edit, so layout never meets a gap on the wrong character.
+//
+// Words: while the editor's text view is editable (source text), a
+// double-click selects and Option+Left, Option+Right and Option+Delete step
+// by the core's words (MultiCaret.h: VS Code's default
+// editor.wordSeparators, so arr.size is two words), the same words several
+// carets and Cmd+D use. NSTextView asks the storage for both
+// (doubleClickAtIndex:, at each end of a drag by words, and
+// nextWordFromIndex:forward:), and keeps the selection's anchor itself. A
+// read-only page (a Markdown preview) keeps AppKit's words, made for prose.
 #import <Cocoa/Cocoa.h>
 #include <cstdint>
 #include <vector>

@@ -172,10 +172,26 @@ Edit pasteLinesAbove(const Text& text, const std::vector<Caret>& carets,
 
 // ---- the selected text, found again (Cmd+D, Shift+Cmd+L, as in VS Code)
 
+// Words, here and for the word moves above, are by VS Code's default
+// editor.wordSeparators, in every language: the printable ASCII characters
+// but letters, digits and _ (`~!@#$%^&*()-=+[{]}\|;:'",.<>/?) separate,
+// space and tab are whitespace, and everything else, Unicode past ASCII
+// included, is a word character. So arr.size is two words and a $ in a
+// JavaScript name ends a word, as in VS Code.
+
 // The word at p: the run of word characters (letters, digits, _ and anything
 // past ASCII) holding p or touching it on either side, selected from its
 // start to its end. An empty caret at p when no word is there.
 Caret wordAt(const std::u16string& text, size_t p);
+
+// What a double-click at p selects, as VS Code's word selection does
+// (WordOperations.word, entering word selection): a run of word characters
+// holding p or touching it on either side; else a run of separators p is in
+// or starts ("==" in "a == b"); else what lies between the words before
+// and after p on its line (the whitespace a click landed in), up to the
+// line's ends. Never past the line, a CRLF counting as one break. A click
+// on a character gives its index as p.
+Caret wordSelection(const Text& text, size_t p);
 
 // Every place needle occurs, in order, case-sensitive and never overlapping
 // (each searched for after the previous one's end), selected from start to

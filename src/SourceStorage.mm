@@ -1,6 +1,7 @@
 // SourceStorage.mm — see SourceStorage.h.
 #import "SourceStorage.h"
 #include "InlayHints.h"
+#include "MultiCaret.h"
 #include <algorithm>
 
 namespace {
@@ -291,6 +292,35 @@ BOOL CoversAscii(NSFont *font) {
 - (void)removeAttribute:(NSAttributedStringKey)name range:(NSRange)range {
     [_store removeAttribute:name range:range];
     [self edited:NSTextStorageEditedAttributes range:range changeInLength:0];
+}
+
+// ---- words
+// Source text (the text view editable) goes by the core's word rule, VS
+// Code's editor.wordSeparators; a read-only page (a Markdown preview) by
+// AppKit's, which is made for prose.
+- (BOOL)usesCodeWords {
+    return self.layoutManagers.firstObject.firstTextView.isEditable;
+}
+
+- (MultiCaret::Text)wordText {
+    NSString *s = _store.string;
+    return MultiCaret::Text(s.length, [s](size_t start, size_t length, char16_t *out) {
+        [s getCharacters:(unichar *)out range:NSMakeRange(start, length)];
+    });
+}
+
+- (NSRange)doubleClickAtIndex:(NSUInteger)location {
+    if (![self usesCodeWords]) return [super doubleClickAtIndex:location];
+    const MultiCaret::Caret w = MultiCaret::wordSelection([self wordText], location);
+    return NSMakeRange(w.lo(), w.hi() - w.lo());
+}
+
+- (NSUInteger)nextWordFromIndex:(NSUInteger)location forward:(BOOL)forward {
+    if (![self usesCodeWords]) return [super nextWordFromIndex:location forward:forward];
+    const MultiCaret::Caret c{location, location};
+    return MultiCaret::move([self wordText], {c},
+                            forward ? MultiCaret::Move::WordRight : MultiCaret::Move::WordLeft,
+                            false)[0].head;
 }
 
 @end

@@ -980,6 +980,15 @@ container (PanelHost, laid out by hand in layoutContainer)
   keys from the find field and commit box. Cmd+Delete deletes to the line's
   start (the tree takes it as Move to Trash in its own `keyDown:`; as a menu
   key it trashed the tree's selection from the editor).
+- **Words** (2026-11-08; a double-click on `arr` in `arr.size` took both,
+  AppKit's UAX 29 words keeping a period between letters): in source text
+  every word rule is `MultiCaret`'s `charClass`, VS Code's default
+  editor.wordSeparators in every language. NSTextView asks the storage:
+  `MCSourceStorage doubleClickAtIndex:` (`MultiCaret::wordSelection`, VS
+  Code's WordOperations.word; asked at both ends of a drag by words) and
+  `nextWordFromIndex:forward:` (Option+arrows and Option+Delete, AppKit
+  keeping the anchor), the same words several carets' moves and Cmd+D use.
+  A read-only text view (a preview) keeps AppKit's words.
 - Up and Down with many carets walk the layout manager a line at a time (goal x
   by binary search over glyph starts; `glyphIndexForPoint:` was most of the
   time); before, carets on lines not laid out got empty rects and merged.

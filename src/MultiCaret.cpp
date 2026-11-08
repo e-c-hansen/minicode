@@ -2,6 +2,7 @@
 #include "MultiCaret.h"
 
 #include <algorithm>
+#include <cstring>
 
 namespace MultiCaret {
 
@@ -42,13 +43,17 @@ bool isBlank(char16_t c) { return c == u' ' || c == u'\t'; }
 bool isHigh(char16_t c) { return c >= 0xD800 && c <= 0xDBFF; }
 bool isLow(char16_t c) { return c >= 0xDC00 && c <= 0xDFFF; }
 
+// 0 whitespace, 1 a word character, 2 a separator, 3 a line break: VS
+// Code's default editor.wordSeparators (wordHelper.ts), every printable
+// ASCII character but letters, digits and _, so $ and - end a word too.
+// Anything else, control characters and all of Unicode past ASCII
+// included, is a word character, as in VS Code's WordCharacterClassifier.
 int charClass(char16_t c) {
     if (isBlank(c)) return 0;
     if (isBreak(c)) return 3;
-    if ((c >= u'0' && c <= u'9') || (c >= u'a' && c <= u'z') || (c >= u'A' && c <= u'Z') ||
-        c == u'_' || c >= 0x80)
-        return 1;
-    return 2;
+    static const char kSeparators[] = "`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?";
+    if (c < 0x80 && c != 0 && std::strchr(kSeparators, (char)c)) return 2;
+    return 1;
 }
 
 size_t lineStart(const Text& t, size_t p) {
@@ -502,6 +507,50 @@ Caret wordAt(const std::u16string& text, size_t p) {
     while (a > 0 && isWordChar(text[a - 1])) a--;
     while (b < n && isWordChar(text[b])) b++;
     return {a, b};
+}
+
+Caret wordSelection(const Text& t, size_t p) {
+    const size_t n = t.size();
+    if (p > n) p = n;
+    // Between the \r and \n of a CRLF is the end of the line.
+    if (p > 0 && p < n && t[p - 1] == u'\r' && t[p] == u'\n') p--;
+    struct Word {
+        bool found = false;
+        int type = 0;   // 1 a word, 2 separators
+        size_t start = 0, end = 0;
+    };
+    // A run of one class around i (a character of the line, not
+    // whitespace): what VS Code's _createWord makes of it. A line break is
+    // a class of its own, so no run crosses one; nothing here reads more
+    // of the line than the runs and whitespace next to p.
+    auto runAt = [&](size_t i) {
+        Word w;
+        w.found = true;
+        w.type = charClass(t[i]);
+        w.start = i;
+        while (w.start > 0 && charClass(t[w.start - 1]) == w.type) w.start--;
+        w.end = i + 1;
+        while (w.end < n && charClass(t[w.end]) == w.type) w.end++;
+        return w;
+    };
+    // The word before p (the nearest run ending at or before it, or the
+    // one p is inside), and the one after it, past whitespace.
+    Word prev, next;
+    size_t before = p;
+    while (before > 0 && charClass(t[before - 1]) == 0) before--;
+    if (before > 0 && !isBreak(t[before - 1])) prev = runAt(before - 1);
+    size_t after = p;
+    while (after < n && charClass(t[after]) == 0) after++;
+    if (after < n && !isBreak(t[after])) next = runAt(after);
+    // WordOperations.word, entering word selection: a word touching p on
+    // either side, separators only when p is inside them (not at their
+    // end), else what lies between the two words (whitespace, say).
+    if (prev.found && prev.type == 1 && prev.start <= p && p <= prev.end) return {prev.start, prev.end};
+    if (prev.found && prev.type == 2 && prev.start <= p && p < prev.end) return {prev.start, prev.end};
+    if (next.found && next.type == 1 && next.start <= p && p <= next.end) return {next.start, next.end};
+    if (next.found && next.type == 2 && next.start <= p && p < next.end) return {next.start, next.end};
+    // Without a word on a side, the whitespace runs to the line's edge.
+    return {prev.found ? prev.end : before, next.found ? next.start : after};
 }
 
 std::vector<Caret> occurrences(const std::u16string& text, const std::u16string& needle,

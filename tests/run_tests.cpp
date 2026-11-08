@@ -10196,6 +10196,74 @@ static void testMultiCaretOccurrences() {
         CHECK(wordAt(u"", 0) == (Caret{0, 0}));
         CHECK(wordAt(u"a  b", 2) == (Caret{2, 2}));
         CHECK(wordAt(u"x\ny", 1) == (Caret{0, 1}));
+        // VS Code's separators: $ and - end a word, control characters do not.
+        CHECK(wordAt(u"$el.x", 1) == (Caret{1, 3}));
+        CHECK(wordAt(u"a-b", 0) == (Caret{0, 1}));
+        CHECK(wordAt(u"a\x01" u"b", 0) == (Caret{0, 3}));
+    }
+
+    GROUP("multicaret:word-selection");
+    {
+        // The owner's case: a double-click on arr selects arr, not arr.size.
+        const std::u16string py = u"n = arr.size\n";
+        CHECK(wordSelection(py, 4) == (Caret{4, 7}));
+        CHECK(wordSelection(py, 6) == (Caret{4, 7}));
+        CHECK(wordSelection(py, 7) == (Caret{4, 7}));    // on the dot: the word before it
+        CHECK(wordSelection(py, 8) == (Caret{8, 12}));   // size
+        CHECK(wordSelection(py, 11) == (Caret{8, 12}));
+        CHECK(wordSelection(py, 12) == (Caret{8, 12}));  // the line's end: the word before
+        // Each separator in VS Code's default list ends a word, _ does not.
+        const char16_t* seps = u"`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?";
+        for (const char16_t* s = seps; *s; s++) {
+            std::u16string t = u"ab";
+            t += *s;
+            t += u"cd";
+            CHECK(wordSelection(t, 0) == (Caret{0, 2}));
+            CHECK(wordSelection(t, 4) == (Caret{3, 5}));
+            CHECK(wordAt(t, 0) == (Caret{0, 2}));
+        }
+        CHECK(wordSelection(u"foo_bar2 x", 3) == (Caret{0, 8}));
+        // JavaScript: $ is a separator in the default list, as in VS Code.
+        CHECK(wordSelection(u"$scope.x", 2) == (Caret{1, 6}));
+        CHECK(wordSelection(u"$scope.x", 0) == (Caret{0, 1}));
+        // Past ASCII is a word character: accents, Greek, CJK, an emoji's
+        // surrogate pair.
+        CHECK(wordSelection(u"x.héllo.y", 3) == (Caret{2, 7}));
+        CHECK(wordSelection(u"a αβγ b", 3) == (Caret{2, 5}));
+        CHECK(wordSelection(u"(漢字)", 1) == (Caret{1, 3}));
+        CHECK(wordSelection(u"a \U0001F600x b", 2) == (Caret{2, 5}));
+        // Digits.
+        CHECK(wordSelection(u"x = 1234.5", 5) == (Caret{4, 8}));
+        // A run of separators the click is in, or starts.
+        const std::u16string op = u"a === b";
+        CHECK(wordSelection(op, 2) == (Caret{2, 5}));
+        CHECK(wordSelection(op, 3) == (Caret{2, 5}));
+        CHECK(wordSelection(op, 4) == (Caret{2, 5}));
+        // Whitespace: what lies between the words.
+        CHECK(wordSelection(u"ab    cd", 3) == (Caret{2, 6}));
+        CHECK(wordSelection(u"   cd", 1) == (Caret{0, 3}));
+        CHECK(wordSelection(u"ab   ", 4) == (Caret{2, 5}));
+        // Never past the line, CRLF or LF, and an empty line selects nothing.
+        const std::u16string crlf = u"one.two\r\nthree\r\n\r\nx";
+        CHECK(wordSelection(crlf, 4) == (Caret{4, 7}));
+        CHECK(wordSelection(crlf, 7) == (Caret{4, 7}));  // on the \r
+        CHECK(wordSelection(crlf, 8) == (Caret{4, 7}));  // on the \n
+        CHECK(wordSelection(crlf, 9) == (Caret{9, 14}));
+        CHECK(wordSelection(crlf, 16) == (Caret{16, 16}));
+        CHECK(wordSelection(crlf, 18) == (Caret{18, 19}));
+        CHECK(wordSelection(u"a\nb", 1) == (Caret{0, 1}));
+        CHECK(wordSelection(u"", 0) == (Caret{0, 0}));
+        CHECK(wordSelection(u"abc", 99) == (Caret{0, 3}));
+        // A reader looks only near the click.
+        std::u16string big(200000, u'x');
+        big[100000] = u' ';
+        big[100004] = u'.';
+        big[100010] = u' ';
+        const MultiCaret::Text lazy(big.size(), [&](size_t s, size_t n, char16_t* out) {
+            std::copy(big.begin() + (long)s, big.begin() + (long)(s + n), out);
+        });
+        CHECK(wordSelection(lazy, 100002) == (Caret{100001, 100004}));
+        CHECK(lazy.charactersRead() < 5000);
     }
 
     GROUP("multicaret:occurrences");
