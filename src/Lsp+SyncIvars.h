@@ -16,6 +16,8 @@
     // remade when the folders wanted change, gone with the last.
     MCLspWatcher *_watcher;
     NSUInteger _watchedBatches;
+    double _watchedMainCpuMs;        // the last batch's main-thread CPU time
+    NSUInteger _watchedMatchedHere;  // servers matched on main, not the queue
     BOOL _stoppingAll;   // stopAllServers is going: the watcher just goes
 }
 @end

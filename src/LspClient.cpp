@@ -722,19 +722,28 @@ std::vector<std::string> Client::watchedBases() const {
 
 size_t Client::didChangeWatchedFiles(const std::vector<FileChange>& changes) {
     if (state_ != State::Ready || watchers_.empty()) return 0;
-    const std::vector<FileWatcher> all = fileWatchers();
-    Json list = Json::array();
-    size_t n = 0;
-    for (const FileChange& c : changes) {
-        bool wanted = false;
-        for (const FileWatcher& w : all)
-            if (watcherMatches(w, rootPath_, c)) { wanted = true; break; }
-        if (!wanted) continue;
-        list.push(Json::object({{"uri", uriFromPath(c.path)}, {"type", (int)c.type}}));
-        n++;
-    }
-    if (n) notify("workspace/didChangeWatchedFiles", Json::object({{"changes", list}}));
-    return n;
+    const std::vector<FileChange> wanted = matchWatched(watchTarget(), changes);
+    if (wanted.empty()) return 0;
+    send_(watchedFilesMessage(wanted));
+    watchedSent_ += wanted.size();
+    return wanted.size();
+}
+
+WatchTarget Client::watchTarget() const {
+    WatchTarget t;
+    t.generation = watchersGeneration_;
+    t.watchers = fileWatchers();
+    t.root = rootPath_;
+    return t;
+}
+
+bool Client::sendWatchedBatch(const WatchedBatch& batch) {
+    if (state_ != State::Ready || batch.generation != watchersGeneration_) return false;
+    if (watchers_.empty()) return batch.count == 0;
+    if (batch.count == 0 || batch.message.empty()) return true;
+    send_(batch.message);
+    watchedSent_ += batch.count;
+    return true;
 }
 
 void Client::handleServerRequest(const Json& msg) {
@@ -789,6 +798,7 @@ void Client::handleServerRequest(const Json& msg) {
                 if (watchers_.erase(r["id"].asString())) changed = true;
         }
         respond(id, Json());
+        if (changed) watchersGeneration_++;
         if (changed && onWatchersChanged) onWatchersChanged();
     } else if (method == "workspace/semanticTokens/refresh") {
         respond(id, Json());

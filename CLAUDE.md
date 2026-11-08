@@ -1281,7 +1281,14 @@ view is disposed (on `unrealize`), or dispose loops forever.
   the client watches, rust-analyzer stops watching itself, so the GTK port
   does not offer it. Trap: FSEvents keeps a file's created flag on its
   later events, so a path already reported is Changed whatever the flags
-  say (`Lsp::FileEventClassifier`).
+  say (`Lsp::FileEventClassifier`). Batches are matched on the watcher's
+  queue (2026-11-08): `updateFileWatcher` gives it each server's
+  `Client::watchTarget()` with the bases' resolved spellings
+  (`setTargets:`), `Lsp::prepareWatched` builds the framed notification
+  there, and main only writes it (`Client::sendWatchedBatch`, refused when
+  `watchersGeneration` moved on since the copy; then main matches as
+  before). 20,000 changes against 12 watchers took 47 ms of main; now
+  under 2 (`lsp_watch`).
 - **Lookup** (`MCFindProgram`): PATH plus Homebrew, Cargo, Go, ~/.local/bin,
   npm's prefixes, nvm and fnm (newest first), volta, pnpm, bun, pip --user,
   pyenv, MacPorts, /usr/bin and keg-only llvm, since a Finder-launched app has

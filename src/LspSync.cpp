@@ -383,6 +383,48 @@ std::vector<FileChange> coalesceFileChanges(const std::vector<FileChange>& chang
     return kept;
 }
 
+std::vector<FileChange> matchWatched(const WatchTarget& t, const std::vector<FileChange>& changes) {
+    std::vector<FileChange> out;
+    if (t.watchers.empty()) return out;
+    auto wanted = [&](const FileChange& c) {
+        for (const FileWatcher& w : t.watchers)
+            if (watcherMatches(w, t.root, c)) return true;
+        return false;
+    };
+    for (const FileChange& c : changes)
+        if (wanted(c)) out.push_back(c);
+    for (const auto& [real, base] : t.aliases) {
+        if (real.empty() || real == base) continue;
+        for (const FileChange& c : changes)
+            if (c.path.size() > real.size() && c.path.compare(0, real.size(), real) == 0 &&
+                c.path[real.size()] == '/') {
+                FileChange respelled{base + c.path.substr(real.size()), c.type};
+                if (wanted(respelled)) out.push_back(std::move(respelled));
+            }
+    }
+    return out;
+}
+
+std::string watchedFilesMessage(const std::vector<FileChange>& changes) {
+    Json list = Json::array();
+    for (const FileChange& c : changes)
+        list.push(Json::object({{"uri", uriFromPath(c.path)}, {"type", (int)c.type}}));
+    Json msg = Json::object({{"jsonrpc", "2.0"},
+                             {"method", "workspace/didChangeWatchedFiles"},
+                             {"params", Json::object({{"changes", std::move(list)}})}});
+    return Framer::frame(msg.dump());
+}
+
+WatchedBatch prepareWatched(const WatchTarget& t, const std::vector<FileChange>& changes) {
+    WatchedBatch b;
+    b.id = t.id;
+    b.generation = t.generation;
+    const std::vector<FileChange> wanted = matchWatched(t, changes);
+    b.count = wanted.size();
+    if (b.count) b.message = watchedFilesMessage(wanted);
+    return b;
+}
+
 bool watchExcluded(const std::string& path) {
     auto has = [&](const std::string& part) {
         // "/part/" anywhere, or the path ending in "/part" for a folder.

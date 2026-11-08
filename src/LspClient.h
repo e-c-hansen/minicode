@@ -848,6 +848,36 @@ std::vector<FileChange> coalesceFileChanges(const std::vector<FileChange>& chang
 // .hg/store, and node_modules' packages (node_modules/x/**).
 bool watchExcluded(const std::string& path);
 
+// Matching a batch off the client's thread (the watcher's queue): a
+// branch switch or a pip install sends tens of thousands of changes, and
+// matching each against every watcher took 47 ms of the main thread for
+// 20,000 against 12. The owner copies each client's watchers on its own
+// thread (Client::watchTarget), matches and builds the message on the
+// queue (prepareWatched), and hands the ready bytes back
+// (Client::sendWatchedBatch), which only checks and writes.
+struct WatchTarget {
+    std::string id;           // the owner's name for the server
+    uint64_t generation = 0;  // Client::watchersGeneration() when copied
+    std::vector<FileWatcher> watchers;
+    std::string root;
+    // Bases the server spelled other than the kernel does (through a
+    // link): {resolved, as the server spells it}. A change below the
+    // resolved one also goes under the server's spelling.
+    std::vector<std::pair<std::string, std::string>> aliases;
+};
+// The changes some watcher of `t` wants, as the server spells them, in
+// the batch's order (the aliases' respellings after the batch).
+std::vector<FileChange> matchWatched(const WatchTarget& t, const std::vector<FileChange>& changes);
+// workspace/didChangeWatchedFiles for `changes`, framed, ready to write.
+std::string watchedFilesMessage(const std::vector<FileChange>& changes);
+struct WatchedBatch {
+    std::string id;
+    uint64_t generation = 0;
+    size_t count = 0;         // changes in `message`; 0 and no message when none
+    std::string message;
+};
+WatchedBatch prepareWatched(const WatchTarget& t, const std::vector<FileChange>& changes);
+
 // ------------------------------------------------------- Python servers
 // Each Python server is told which interpreter to use in its own way:
 // pyright and basedpyright read python.pythonPath through
@@ -1067,6 +1097,18 @@ public:
     // Sends the changes some watcher wants, in one notification, and says
     // how many it sent. Nothing before Ready or without registrations.
     size_t didChangeWatchedFiles(const std::vector<FileChange>& changes);
+    // Counts every registration and unregistration of watchers.
+    uint64_t watchersGeneration() const { return watchersGeneration_; }
+    // The watchers and root as matchWatched wants them (id and aliases are
+    // the owner's to fill in).
+    WatchTarget watchTarget() const;
+    // A batch prepareWatched made elsewhere: written as it is, and its
+    // count added to watchedChangesSent. False, with nothing sent, before
+    // Ready or when the watchers changed since the batch's copy (then the
+    // owner matches again with didChangeWatchedFiles); true for an empty
+    // batch that is current.
+    bool sendWatchedBatch(const WatchedBatch& batch);
+    size_t watchedChangesSent() const { return watchedSent_; }
 
     // workspace/semanticTokens/refresh: the server's tokens for every
     // document may have changed (a file they depend on did); runs after
@@ -1101,6 +1143,8 @@ private:
     std::string serverName_;
     std::string rootPath_;
     std::map<std::string, std::vector<FileWatcher>> watchers_;   // by registration id
+    uint64_t watchersGeneration_ = 0;
+    size_t watchedSent_ = 0;
     size_t staleDiagnostics_ = 0;
     size_t rangedSent_ = 0, fullSent_ = 0;
     const Doc* findDoc(const std::string& uri) const;
