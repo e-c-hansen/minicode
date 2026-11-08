@@ -2946,8 +2946,9 @@ void testTerminalScreen() {
         CHECK(isIndexed(s.cell(2, 0).style.fg, 12));   // ~ in bright blue
         CHECK(s.cell(0, 0).style == TermStyle());
         CHECK(s.cursorRow() == 0 && s.cursorCol() == 5);
-        // vim asked where the cursor was (after an ambiguous-width probe).
-        CHECK(s.takeReplies() == "\033[2;2R\033[3;1R");
+        // vim asked where the cursor was (after an ambiguous-width probe),
+        // and which terminal this is (DA2, no version set here).
+        CHECK(s.takeReplies() == "\033[2;2R\033[3;1R\033[>1;0;0c");
         CHECK(s.takeReplies().empty());
         // "\e[0%m" and "\e[>4;2m" are not SGR: nothing turned bold or odd.
         CHECK(!s.cell(0, 0).style.bold && !s.cell(0, 0).style.underline);
@@ -3238,7 +3239,7 @@ void testTerminalScreen() {
         CHECK(s.cursorVisible() && !s.appCursorKeys() && !s.appKeypad() &&
               !s.bracketedPaste());
         s.feed("\033[3;7H\033[6n\033[5n\033[c\033[>c\033[\?6n");
-        CHECK(s.takeReplies() == "\033[3;7R\033[0n\033[\?1;2c");
+        CHECK(s.takeReplies() == "\033[3;7R\033[0n\033[\?62;22c\033[>1;0;0c");
         s.feed("\033]0;my title\007");
         CHECK(s.title() == "my title");
         // Shell integration, which Android's terminal reads from the grid:
@@ -3949,8 +3950,8 @@ void testSettings() {
     // editor.semantic-highlighting with its five syntax colors, the three
     // inlay hint keys, format.latex, editor.git-gutter with its three
     // colors, editor.bracket-pair-colorization with its four colors, and
-    // syntax.escape and syntax.self.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 118);
+    // syntax.escape and syntax.self, and terminal.cursor-style.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 119);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -10319,6 +10320,7 @@ static void testMultiCaretOccurrences() {
 #include "lexer_styles_tests.inc"
 #include "bracket_pairs_tests.inc"
 #include "terminal_layout_tests.inc"
+#include "terminal_vt_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10350,6 +10352,7 @@ int main() {
     testZshIntegration();
     testTerminalMarks();
     testTerminalDraw();
+    testTerminalVt();
     testSettings();
     testSettingsColorEditing();
     testLineComments();

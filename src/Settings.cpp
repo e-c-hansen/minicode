@@ -1075,6 +1075,14 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                }
                s.terminalPasteWarning_ = w;
                return true;),
+        MC_KEY("terminal.cursor-style", Word, false,
+               const std::string w = lower(v);
+               if (w != "block" && w != "bar" && w != "underline") {
+                   e = "'" + v + "' is not block, bar or underline";
+                   return false;
+               }
+               s.terminalCursorStyle_ = w;
+               return true;),
         MC_KEY("search.use-ignore-files", Word, false,
                return boolValue(v, s.searchUseIgnoreFiles_, e);),
         MC_KEY("lsp.enabled", Word, false, return boolValue(v, s.lspEnabled_, e);),
@@ -1618,6 +1626,9 @@ const char* Settings::defaultFileText() {
 # said it takes pasted lines as text (zsh's prompt does; cat and an older
 # REPL do not, and run each line as it arrives), always, or never.
 # terminal.multiline-paste-warning = auto
+# The cursor's shape in a grid terminal (block, bar or underline) until a
+# program asks for one of its own, as vim's insert mode asks for a bar.
+# terminal.cursor-style = block
 
 # Find in Folder, Replace in Folder, TODOs and Go to File leave out what the
 # folder's .gitignore and .ignore files ignore. Dotfiles are always included.

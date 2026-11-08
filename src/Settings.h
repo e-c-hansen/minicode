@@ -344,6 +344,10 @@ public:
     // never; when a paste of several lines asks first
     // (TerminalScreen::checkPaste, VS Code's enableMultiLinePasteWarning).
     const std::string& terminalPasteWarning() const { return terminalPasteWarning_; }
+    // terminal.cursor-style: block (the default), bar or underline, the grid
+    // terminal's cursor until a program asks for a shape of its own
+    // (DECSCUSR), as VS Code's terminal.integrated.cursorStyle.
+    const std::string& terminalCursorStyle() const { return terminalCursorStyle_; }
 
     // search.use-ignore-files: Find in Folder, Replace in Folder, the TODO
     // list and Quick Open leave out what the folder's .gitignore and .ignore
@@ -491,6 +495,7 @@ private:
     bool terminalOptionAsMeta_ = true;
     bool terminalActivateVenv_ = true;
     std::string terminalPasteWarning_ = "auto";
+    std::string terminalCursorStyle_ = "block";
     bool searchUseIgnoreFiles_ = true;
     std::map<std::string, std::string> lspCommands_;
     std::map<std::string, std::vector<std::string>> lspExtensions_;
