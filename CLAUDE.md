@@ -164,7 +164,9 @@ goes here first, with tests; the GUI only displays it.
 - Terminal: `TerminalStream` (bytes to lines and shell events; `TermParser`,
   `applySgr`, `termCharWidth`), `TerminalScreen` (the grid, scrollback, reflow,
   find, mouse encoding), `TermLinks`, `ShellIntegration.h` (the zsh
-  integration's .zshenv stub and private keys, header only).
+  integration's .zshenv stub and private keys, header only),
+  `TerminalLayout` (a terminal tab's columns and stacks: shares, splits,
+  bars, keyboard resizing, minimums).
 - `FolderSearch` (Find and Replace in Folder, atomic writes, TODOs),
   `GitStatus` (status, diffs, git time limits), `GitGraph` (log, refs, lanes),
   `GitModel` (what every port's Source Control panel shows and runs),
@@ -2143,13 +2145,30 @@ for full-screen programs. Both can be open at once.
   theme and doubled alpha).
 - **Several terminals** (`MCTerminalPanel`; `terminal` is a getter for the
   active one, so older code and demo KVC work): tabs on the editor's
-  `MCTabStrip`, panes side by side; hidden tabs keep their frames and run; the
-  active terminal follows the keyboard through KVO on `firstResponder` with a
-  weak window reference removed in `viewWillMoveToWindow:` (a strong one kept
-  closed windows and their shells alive). Ctrl+Shift+` new tab (keyCode 50:
-  Shift makes it ~), Cmd+\ split (refused under 20 columns a pane,
-  `kMinSplitColumns`), Option+Cmd+] and [, Ctrl+Shift+W. Every pane with room
-  for two cells gets its true pty size.
+  `MCTabStrip`; within a tab, columns side by side, each a stack (one level,
+  as VS Code's groups), sized by shares in `TerminalLayout` (core,
+  `termlayout:*`): a split halves the active pane, or evens all when a half
+  would be under 20 columns (5 rows stacked), else beeps; a closed pane's
+  share goes to its neighbour. A `DragBar` sits on every boundary (made once,
+  each knowing its place, so its block never changes mid-drag), above the
+  terminals, which are added at the back. Ctrl+Cmd+arrows
+  (`resizeTerminalPane:`, tag the direction, answered by the panel in the
+  responder chain) move a boundary 4 cells; Up and Down for a pane alone in
+  its column resize the dock (`onResizeDock`). Hidden tabs keep their frames
+  and run; the active terminal follows the keyboard through KVO on
+  `firstResponder` with a weak window reference removed in
+  `viewWillMoveToWindow:` (a strong one kept closed windows and their shells
+  alive). Ctrl+Shift+` new tab (keyCode 50: Shift makes it ~), Cmd+\ split,
+  Split Terminal Down, Option+Cmd+] and [, Ctrl+Shift+W. Rename Terminal… sets
+  `TerminalView userTitle`, which wins over OSC titles and `fixedTitle`; tabs
+  reorder by a drag in the strip (`MCTabStrip onMove`, `EditorTabs::dropIndex`;
+  the editor's strip sets none yet) or Move Terminal Left and Right. Every
+  pane with room for two cells gets its true pty size. **Trap**: the panel's
+  `closeTerminal:` and `renameTerminal:` share their selectors with the menu's
+  actions, so with the keyboard in a terminal the panel received Ctrl+Shift+W
+  as `closeTerminal:(NSMenuItem *)` and closed nothing (until 2026-11-08);
+  both take a non-terminal argument as "the active one". `make guitest
+  SUITES=terminal_splits`.
 - **Closing** (`TerminalView close`, `stopShell`, `_closed`): a terminal with
   `runningCommands` asks: a command since 133;C, a foreground process group
   other than the shell's (`tcgetpgrp`, `proc_name`), a `runCommand:` still
