@@ -74,9 +74,14 @@ opening comment says what it does in more detail than the lines below.
 - `make test-tsan` runs them under ThreadSanitizer in `build/test-tsan`
   (a report stops the run; timing bounds skipped, since instrumented code
   costs several times the CPU they allow); CI's `tsan` job runs it with
-  g++ after `sysctl vm.mmap_rnd_bits=28` (the runner's ASLR is too wide for
-  GCC's TSan). A known false positive goes in `tests/tsan.supp` by name,
-  with why; a real race is fixed. About 4.5 minutes on an M3 with clang.
+  `CXX=clang++-22` after `sysctl vm.mmap_rnd_bits=28`, never g++: the g++
+  15.2 build on ubuntu-26.04 died about 90 s in with a SEGV in a
+  shared library and a "nested bug" in TSan's handler, no report printed
+  (2026-11-07). `MC_PRINT_GROUPS=1` names each group on stderr as it
+  starts (the job sets it), and after a crash the job reruns the binary
+  under gdb for a backtrace. A known false positive goes in
+  `tests/tsan.supp` by name, with why; a real race is fixed. About 4.5
+  minutes on an M3 with clang.
 - CI (`.github/workflows/ci.yml`, six jobs: macOS, GTK4, sanitizers, tsan,
   Android debug plus Kotlin checks, Android release) is the gate: no merge
   to main while a job on main is red, except the fix for that red. The
@@ -2585,7 +2590,7 @@ session has a display. Check first.
 
 - **Core**: `make test`, `make test CXX=g++-16` for libstdc++, `make
   test-asan` (also with `CXX=g++-16`) for the sanitizers, and `make
-  test-tsan` (clang on the Mac; GCC's TSan is Linux only) for races.
+  test-tsan` (clang; CI uses clang++-22 on Linux) for races.
 - **The Mac, committed checks**: `make guitest [SUITES=...]` builds
   `build/guitest` (the whole app with main.mm's `main` renamed `minicode_main`,
   plus `tests/gui/*.mm`) and runs it offscreen; the macOS CI job runs it. The

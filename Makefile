@@ -259,10 +259,12 @@ $(ASANDIR)/%.cpp.o: src/%.cpp $(ASANDIR)/flags.txt
 	$(CXX) $(ASANFLAGS) -MMD -MP -c $< -o $@
 
 # The same tests under ThreadSanitizer, in build/test-tsan (CI runs it on
-# Linux with g++; clang on the Mac works too). The threaded parts of the
-# core are Find in Folder's parallel walk, TextFind's regex worker, the
-# language server's reader and the threading groups. A report stops the
-# run (halt_on_error); one that is a known false positive goes in
+# Linux with clang++-22: g++ 15's TSan build died there with a SEGV and no
+# report; clang on the Mac works too). MC_PRINT_GROUPS=1 names each group
+# on stderr as it starts, so a run that dies says where. The threaded
+# parts of the core are Find in Folder's parallel walk, TextFind's regex
+# worker, the language server's reader and the threading groups. A report
+# stops the run (halt_on_error); one that is a known false positive goes in
 # tests/tsan.supp, by name, with why. The timing bounds are skipped
 # (MC_SKIP_TIMING, unless given): instrumented code costs several times the
 # CPU the bounds were set for. The whole run took 4.5 minutes on an M3,
