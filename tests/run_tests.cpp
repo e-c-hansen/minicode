@@ -82,7 +82,23 @@
 static int g_pass = 0, g_fail = 0;
 static const char *g_group = "";
 
-#define GROUP(name) g_group = name
+// MC_PRINT_GROUPS=1 names each group on stderr as it starts, with the
+// seconds since the first: a run that dies (a sanitizer's abort leaves a
+// piped stdout unflushed) then says where it was.
+static void mcSetGroup(const char *name) {
+    g_group = name;
+    static const bool print = [] {
+        const char *s = std::getenv("MC_PRINT_GROUPS");
+        return s && *s && std::strcmp(s, "0") != 0;
+    }();
+    if (!print) return;
+    using Clock = std::chrono::steady_clock;
+    static const Clock::time_point start = Clock::now();
+    const double s = std::chrono::duration<double>(Clock::now() - start).count();
+    std::fprintf(stderr, "[%7.1f s] %s\n", s, name);
+}
+
+#define GROUP(name) mcSetGroup(name)
 #define CHECK(cond)                                                            \
     do {                                                                       \
         if (cond) { g_pass++; }                                                \
@@ -7406,22 +7422,31 @@ void testFolderSearch() {
         CHECK(!k.cancelled && k.matches.size() == r.matches.size());
     }
     {
-        // Cancelled from another thread while a large tree is being searched:
-        // it stops early and says so.
+        // Cancelled while a large tree is being searched: it stops early and
+        // says so. The flag goes up from inside the walk, once 20 files have
+        // been read, on whichever thread read the 20th. A canceller that
+        // slept 5 ms first lost to the parallel walk, and on efficiency
+        // cores (taskpolicy -b) woke after the search had finished.
         const fsys::path many = root / "many";
         for (int d = 0; d < 40; ++d)
             for (int f = 0; f < 25; ++f)
                 writeFile(many / ("d" + std::to_string(d)) / ("f" + std::to_string(f) + ".txt"),
                           std::string(20000, 'q') + "\nneedle\n");
-        std::atomic<bool> flag{false};
-        std::thread t([&] {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-            flag = true;
-        });
-        auto c = search(many.string(), "needle", &flag);
-        t.join();
-        CHECK(c.cancelled);
-        CHECK(c.matches.size() < 1000);
+        for (unsigned threads : {1u, 0u}) {   // on the calling thread, then on all
+            std::atomic<bool> flag{false};
+            std::atomic<int> read{0};
+            FolderSearchOptions o;
+            o.threads = threads;
+            o.onFileRead = [&] {
+                if (read.fetch_add(1) + 1 == 20) flag = true;
+            };
+            auto c = search(many.string(), "needle", &flag, o);
+            CHECK(c.cancelled);
+            // Files already being read when the flag went up may finish
+            // (at most one per thread); nothing is started after it.
+            CHECK(c.matches.size() < 20 + 8);
+            CHECK(read.load() < 20 + 8);
+        }
         auto whole = search(many.string(), "needle");
         CHECK(whole.matches.size() == 1000 && !whole.cancelled);
     }

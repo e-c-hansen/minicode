@@ -181,7 +181,7 @@ static void testFolderSearchParallel() {
         std::vector<std::string> texts;
         for (int f = 0; f < 40; ++f) {
             texts.push_back(randomText(rng, 1 + static_cast<int>(rng() % 40)));
-            char name[16];
+            char name[24];   // room for any int, so g++ sees no truncation
             std::snprintf(name, sizeof name, "n%02d.txt", f);
             writeFile(dir / name, texts.back());
         }
@@ -205,7 +205,7 @@ static void testFolderSearchParallel() {
                 const TextFind::Query tq = makeQuery(q, o);
                 std::vector<std::string> want;
                 for (int f = 0; f < 40; ++f) {
-                    char name[16];
+                    char name[24];
                     std::snprintf(name, sizeof name, "n%02d.txt", f);
                     for (int ln = 1;; ++ln) {
                         std::string line;

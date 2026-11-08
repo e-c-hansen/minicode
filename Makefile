@@ -98,7 +98,7 @@ ifneq ($(if $(MAKECMDGOALS),$(filter-out clean,$(MAKECMDGOALS)),all),)
           printf '%s\n' '$(VARIANT)' > $(OBJDIR)/variant.txt)
 endif
 
-.PHONY: all app run test test-asan guitest fakelsp install dmg dist-zip clean demos membench icon
+.PHONY: all app run test test-asan test-tsan guitest fakelsp install dmg dist-zip clean demos membench icon
 
 all: app
 
@@ -258,6 +258,48 @@ $(ASANDIR)/%.cpp.o: src/%.cpp $(ASANDIR)/flags.txt
 	@mkdir -p $(@D)
 	$(CXX) $(ASANFLAGS) -MMD -MP -c $< -o $@
 
+# The same tests under ThreadSanitizer, in build/test-tsan (CI runs it on
+# Linux with clang++-22: g++ 15's TSan build died there with a SEGV and no
+# report; clang on the Mac works too). MC_PRINT_GROUPS=1 names each group
+# on stderr as it starts, so a run that dies says where. The threaded
+# parts of the core are Find in Folder's parallel walk, TextFind's regex
+# worker, the language server's reader and the threading groups. A report
+# stops the run (halt_on_error); one that is a known false positive goes in
+# tests/tsan.supp, by name, with why. The timing bounds are skipped
+# (MC_SKIP_TIMING, unless given): instrumented code costs several times the
+# CPU the bounds were set for. The whole run took 4.5 minutes on an M3,
+# building included.
+TSANDIR   := build/test-tsan
+TSANFLAGS := $(TESTFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=thread
+ifeq ($(findstring clang,$(shell $(CXX) --version 2>/dev/null | head -1)),)
+  TSANFLAGS += -Wno-maybe-uninitialized
+endif
+TSAN_OBJ  := $(TSANDIR)/run_tests.cpp.o $(patsubst src/%,$(TSANDIR)/%.o,$(CORE_SRC))
+TSANCMD   := $(CXX) $(TSANFLAGS)
+ifneq ($(filter test-tsan,$(MAKECMDGOALS)),)
+  $(shell mkdir -p $(TSANDIR) && printf '%s\n' '$(TSANCMD)' | cmp -s - $(TSANDIR)/flags.txt || \
+          printf '%s\n' '$(TSANCMD)' > $(TSANDIR)/flags.txt)
+endif
+
+test-tsan: $(TSANDIR)/run_tests
+	@MC_SKIP_TIMING="$${MC_SKIP_TIMING:-1}" \
+	  TSAN_OPTIONS="halt_on_error=1 second_deadlock_stack=1 suppressions=$(CURDIR)/tests/tsan.supp $(TSAN_OPTIONS)" \
+	  ./$(TSANDIR)/run_tests
+
+$(TSANDIR)/run_tests: $(TSAN_OBJ)
+	$(CXX) $(TSANFLAGS) $(TSAN_OBJ) -o $@
+
+$(TSANDIR)/flags.txt:
+	@mkdir -p $(@D) && printf '%s\n' '$(TSANCMD)' > $@
+
+$(TSANDIR)/run_tests.cpp.o: tests/run_tests.cpp $(TSANDIR)/flags.txt
+	@mkdir -p $(@D)
+	$(CXX) $(TSANFLAGS) -MMD -MP -c $< -o $@
+
+$(TSANDIR)/%.cpp.o: src/%.cpp $(TSANDIR)/flags.txt
+	@mkdir -p $(@D)
+	$(CXX) $(TSANFLAGS) -MMD -MP -c $< -o $@
+
 # GUI checks (tests/gui, see tests/gui/README.md): the whole app, main.mm
 # included as minicode_main, driven offscreen by a harness that never puts
 # a window on screen or activates the app. `make guitest SUITES=control`
@@ -353,4 +395,4 @@ build/procmem: tools/procmem.c
 membench: app build/procmem
 	./scripts/membench.sh
 
--include $(OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(ASAN_OBJ:.o=.d) $(CLI_OBJ:.o=.d) $(GUI_OBJ:.o=.d) $(FAKELSP_OBJ:.o=.d)
+-include $(OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(ASAN_OBJ:.o=.d) $(TSAN_OBJ:.o=.d) $(CLI_OBJ:.o=.d) $(GUI_OBJ:.o=.d) $(FAKELSP_OBJ:.o=.d)

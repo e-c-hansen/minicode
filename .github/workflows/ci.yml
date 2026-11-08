@@ -31,6 +31,23 @@ jobs:
       - name: Run the GUI checks
         run: make guitest
 
+      # The release build, as scripts/release.sh makes it: no demo scenes
+      # or benchmark in the binary (main.mm gets their stubs), the zip
+      # holding the app, and the deployment target checked again on what
+      # would ship.
+      - name: Build the release zip
+        run: make dist-zip RELEASE=1
+
+      - name: Check the release build
+        run: |
+          if nm MiniCode.app/Contents/MacOS/MiniCode | grep -q 'MCDemoStart\|MCBenchStart'; then
+            echo "error: the release build still has the demo scenes or the benchmark in it" >&2
+            exit 1
+          fi
+          unzip -l MiniCode.zip | grep -q ' MiniCode.app/Contents/MacOS/MiniCode$'
+          unzip -l MiniCode.zip | grep -q ' MiniCode.app/Contents/MacOS/minicode-cli$'
+          scripts/check-minos.sh MiniCode.app
+
   linux:
     name: GTK4 port
     runs-on: ubuntu-latest
@@ -95,8 +112,64 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: make test-asan
 
+  # The core tests under ThreadSanitizer (`make test-tsan`, clang here):
+  # Find in Folder's parallel walk, TextFind's regex worker, the language
+  # server's reader and the threading groups run with every access between
+  # threads checked. A report stops the run; known false positives are
+  # suppressed by name in tests/tsan.supp.
+  #
+  # clang's TSan, not g++'s: with GCC 15.2's libtsan on this runner
+  # (ubuntu-26.04, kernel 7.0) the run died about 90 s after the link with
+  # a SEGV on the main thread at a pc in a shared library, not the test
+  # binary, then a second one in TSan's own signal handler ("nested bug"),
+  # printing no report and no stack, while the same
+  # suite is clean under clang's TSan on the Mac and under g++'s ASan and
+  # UBSan here. clang on Linux still runs the Linux code paths.
+  tsan:
+    name: Core tests under ThreadSanitizer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install clang and its sanitizer runtimes
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends clang-22 libclang-rt-22-dev gdb
+          clang++-22 --version
+
+      # A narrower mmap randomization than the runner's 32 bits, as TSan's
+      # shadow layout expects (newer runtimes re-exec without ASLR
+      # otherwise). Printed back, so the log shows it took.
+      - name: Let ThreadSanitizer map its shadow memory
+        run: |
+          sudo sysctl -w vm.mmap_rnd_bits=28
+          sysctl vm.mmap_rnd_bits
+
+      # Each group's name goes to stderr as it starts (MC_PRINT_GROUPS), so
+      # a run that dies says in which group.
+      - name: Run core unit tests with ThreadSanitizer
+        shell: bash
+        env:
+          MC_PRINT_GROUPS: '1'
+        run: |
+          set -o pipefail
+          make test-tsan CXX=clang++-22 2>&1 | tee tsan.log
+
+      # Only after a crash (a signal, not a race report): the same binary
+      # again under gdb, for a backtrace and the library each frame is in.
+      - name: Backtrace of a crash
+        if: failure()
+        shell: bash
+        run: |
+          grep -q 'DEADLYSIGNAL\|SEGV' tsan.log || exit 0
+          MC_SKIP_TIMING=1 MC_PRINT_GROUPS=1 \
+          TSAN_OPTIONS="halt_on_error=1 handle_segv=0 suppressions=$PWD/tests/tsan.supp" \
+            gdb -q -batch -ex 'handle SIGPIPE nostop noprint pass' \
+                -ex run -ex 'bt 40' -ex 'info sharedlibrary' \
+                -ex 'x/6i $pc' build/test-tsan/run_tests
+
   android:
-    name: Android debug APK
+    name: Android debug APK and Kotlin checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -117,3 +190,49 @@ jobs:
       - name: Build the debug APK
         working-directory: android
         run: ./gradlew --no-daemon assembleDebug
+
+      # The Kotlin checks (android/checks, app/src/test/kotlin): plain JVM
+      # code, no test library, comparing the app's constants with the C++
+      # it mirrors and checking its pure logic (the leader key's presses).
+      - name: Run the Kotlin checks
+        working-directory: android
+        run: ./gradlew --no-daemon kotlinChecks
+
+  # The release APK through the release Gradle path (R8, resource
+  # shrinking, signing), signed with a key made in this job and thrown away
+  # with the runner. The owner's release key never comes near CI: every
+  # update must carry its signature, so it stays on the release Mac.
+  android-release:
+    name: Android release APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Make a throwaway signing key
+        run: |
+          pass="$(openssl rand -hex 24)"
+          echo "::add-mask::$pass"
+          keytool -genkeypair -keystore "$RUNNER_TEMP/throwaway.keystore" \
+            -alias minicode -keyalg RSA -keysize 2048 -validity 2 \
+            -storepass "$pass" -keypass "$pass" -dname "CN=minicode CI throwaway"
+          echo "MINICODE_KEYSTORE=$RUNNER_TEMP/throwaway.keystore" >> "$GITHUB_ENV"
+          echo "MINICODE_KEYSTORE_PASSWORD=$pass" >> "$GITHUB_ENV"
+
+      - name: Build the release APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease
+
+      # Signed, and with the throwaway key: an unsigned APK (no key given)
+      # or one signed by anything else fails here.
+      - name: Check the APK's signature
+        run: |
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner"
+          "$apksigner" verify --print-certs android/app/build/outputs/apk/release/app-release.apk \
+            | tee "$RUNNER_TEMP/certs.txt"
+          grep -q 'CN=minicode CI throwaway' "$RUNNER_TEMP/certs.txt"
