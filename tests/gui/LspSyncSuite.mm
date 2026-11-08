@@ -193,7 +193,9 @@ MC_GUI_SUITE(lsp_sync) {
         // agents building), and the baseline ratio holds either way. The
         // old flush took 9 to 13 ms, so 6 still catches a return to it.
         GCHECK_TIME(flush, 6, @"a pause's flush in a 2.5 MB file");
-        GCHECK(MCGuiTimingSkipped() || flush * 4 < baseline);
+        // The ratio, for a slow machine; a flush that fast needs none (one
+        // loaded run's stalled sample failed it at a 15 to 1 norm).
+        GCHECK(MCGuiTimingSkipped() || flush < 1.5 || flush * 4 < baseline);
     });
     MCGuiWait(@"one ranged change with both edits", 10, ^BOOL {
         return MCGuiFakeLspReceived(@"sync", @"textDocument/didChange").count > 0;
