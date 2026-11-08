@@ -274,8 +274,16 @@ static void MCAddBlock(NSMutableArray<NSTextBlock *> *blocks, NSTextBlock *b) {
         ta[NSFontAttributeName] = font;
         ta[NSForegroundColorAttributeName] = color;
         ta[NSParagraphStyleAttributeName] = ps;
-        NSMutableAttributedString *m =
-            [[NSMutableAttributedString alloc] initWithString:@"\t" attributes:ta];
+        // In an ordered list the number stands before the box ("3. ☐").
+        NSString *number = @"";
+        if (r.ordered) {
+            NSString *t = [s stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+            const NSRange space = [t rangeOfString:@" "];
+            if (space.location != NSNotFound && space.location > 0)
+                number = [[t substringToIndex:space.location] stringByAppendingString:@" "];
+        }
+        NSMutableAttributedString *m = [[NSMutableAttributedString alloc]
+            initWithString:[@"\t" stringByAppendingString:number] attributes:ta];
         NSMutableAttributedString *pic = [[NSMutableAttributedString alloc]
             initWithAttributedString:[NSAttributedString attributedStringWithAttachment:att]];
         [pic addAttributes:ta range:NSMakeRange(0, pic.length)];

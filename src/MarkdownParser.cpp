@@ -1866,7 +1866,9 @@ const char* bulletFor(int depth) {
 }
 
 std::string markerText(const ListMarker& m, int depth) {
-    if (m.task) return m.checked ? "\xE2\x98\x91" : "\xE2\x98\x90";   // ☑ ☐
+    // A task's box (☑ or ☐), after its number in an ordered list ("3. ☐").
+    if (m.task) return (m.ordered ? m.written + " " : "") +
+                       (m.checked ? "\xE2\x98\x91" : "\xE2\x98\x90");
     return m.ordered ? m.written : bulletFor(depth);
 }
 
@@ -1902,6 +1904,7 @@ Doc analyze(const std::string& md) {
     size_t fenceLen = 0, fenceIndent = 0;
     int fenceBlock = -1;
     int codeBlock = -1;            // an indented code block being read
+    size_t codeIndent = 4;         // the columns its lines lose (8 in a footnote)
     std::vector<size_t> codeBlanks;
     int quoteGroup = -1, quoteEdit = -1;
     bool quoteFirst = false;
@@ -1995,7 +1998,7 @@ Doc analyze(const std::string& md) {
             continue;
         }
         if (codeBlock >= 0) {
-            if (cols >= 4) {
+            if (cols >= codeIndent) {
                 Block& b = d.blocks[(size_t)codeBlock];
                 for (size_t q : codeBlanks) {
                     b.code.push_back({"", (int)q});
@@ -2005,7 +2008,7 @@ Doc analyze(const std::string& md) {
                 }
                 codeBlanks.clear();
                 size_t strip = 0, c = 0;
-                while (strip < t.size() && c < 4) {
+                while (strip < t.size() && c < codeIndent) {
                     c = t[strip] == '\t' ? c + 4 - c % 4 : c + 1;
                     strip++;
                 }
@@ -2020,6 +2023,52 @@ Doc analyze(const std::string& md) {
             codeBlanks.clear();
         }
 
+        // A footnote's contents are indented four spaces past its
+        // definition, as a list item's are past its marker: a fence there
+        // opens a code block of the footnote's (which may interrupt its
+        // text, as a fence interrupts a paragraph), and after a blank line
+        // four spaces more are indented code.
+        if (noteBlock >= 0 && cols >= 4) {
+            size_t inner = 0, c = 0;   // the bytes of the four columns
+            while (inner < t.size() && c < 4) {
+                c = t[inner] == '\t' ? c + 4 - c % 4 : c + 1;
+                inner++;
+            }
+            const size_t innerCols = cols - 4;
+            std::string info;
+            const bool fence = innerCols < 4 && isFenceOpen(body, fenceChar, fenceLen, &info);
+            if (fence || (innerCols >= 4 && open < 0)) {
+                const int note = noteBlock;
+                quoteGroup = -1;
+                open = -1;
+                Block& f = newBlock(Block::Code, (int)i);
+                f.edit = editIds++;
+                f.note = note;
+                L.start = L.lineStart;
+                if (fence) {
+                    f.math = info == "math";
+                    f.lang = info;
+                    fenceBlock = (int)d.blocks.size() - 1;
+                    fenceIndent = cols;
+                    inFence = true;
+                    L.kind = MdLine::Fence;
+                } else {
+                    size_t strip = inner;
+                    c = 4;
+                    while (strip < t.size() && c < 8) {
+                        c = t[strip] == '\t' ? c + 4 - c % 4 : c + 1;
+                        strip++;
+                    }
+                    f.code.push_back({t.substr(strip), (int)i});
+                    codeBlock = (int)d.blocks.size() - 1;
+                    codeIndent = 8;
+                    L.kind = MdLine::Code;
+                    L.block = f.edit;
+                }
+                noteBlock = note;
+                continue;
+            }
+        }
         // A footnote's later paragraphs: indented four spaces, after a
         // blank line.
         if (noteBlock >= 0 && open < 0) {
@@ -2044,6 +2093,7 @@ Doc analyze(const std::string& md) {
             quoteGroup = -1;
             Block& b = newBlock(Block::Code, (int)i);
             b.edit = editIds++;
+            codeIndent = 4;
             size_t strip = 0, c = 0;
             while (strip < t.size() && c < 4) {
                 c = t[strip] == '\t' ? c + 4 - c % 4 : c + 1;

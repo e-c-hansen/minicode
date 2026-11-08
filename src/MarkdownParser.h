@@ -38,7 +38,8 @@ struct MdRun {
     bool ordered   = false;  // in an ordered list item
     // A list item's marker as text: two spaces per level, then the bullet
     // (•, ◦ or ▪ by level), the number as written ("3.") or a task's box
-    // (☐ or ☑), then a space. A GUI with real indents can trim the spaces.
+    // (☐ or ☑; "3. ☐" in an ordered list), then a space. A GUI with real
+    // indents can trim the spaces.
     bool marker    = false;
     // A task list item ("- [ ] x" or "- [x] x"): 1 open, 2 checked, on its
     // marker run and on the runs of the item's own text (not on items
