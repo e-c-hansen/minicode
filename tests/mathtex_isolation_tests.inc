@@ -49,6 +49,75 @@ static void testMathTexIsolation() {
                  "\\AtBeginDocument{x}",
                  "\\AtEndDocument{x}",
                  "\\SetSymbolFont{letters}{bold}{OML}{cmm}{b}{it}",
+                 // Page-level state (round-6 documents defect 1): the page
+                 // color fills every later page of the batch, and \special
+                 // in any form can do the same or read an image file.
+                 "\\pagecolor{red} x",
+                 "\\pagecolor[rgb]{1,0,0}x",
+                 "\\nopagecolor x",
+                 "\\special{background rgb 1 0 0}x",
+                 "\\special{pdf:image (/etc/x.png)}x",
+                 "\\specialx",
+                 "\\pdfliteral{0 g}x",
+                 "\\pdfximage{/etc/x.png}",
+                 "\\pdfpagewidth=1pt x",
+                 "\\pagegoal=1pt x",
+                 "\\thispagestyle{plain}x",
+                 "\\numberwithin{equation}{section}",
+                 "\\counterwithin{equation}{section}",
+                 "\\shipout\\hbox{x}",
+                 "\\output={}",
+                 // Reading files.
+                 "\\openin1=/etc/hosts",
+                 "\\read1 to\\x",
+                 "\\XeTeXpdffile \"/etc/x.pdf\"",
+                 "\\includegraphics{/etc/x.png}",
+                 "\\text{\\filedump length 5{/etc/hosts}}",
+                 "\\text{\\filesize{/etc/hosts}}",
+                 "\\text{\\filemoddate{/etc/hosts}}",
+                 "\\text{\\mdfivesum file{/etc/hosts}}",
+                 "\\font\\x=/etc/x.otf \\x a",
+                 "\\fontfamily{x}\\selectfont a",
+                 "\\fontencoding{T1}\\selectfont a",
+                 "\\usefont{T1}{x}{m}{n}a",
+                 "\\InputIfFileExists{/etc/hosts}{}{}",
+                 "\\IfFileExists{/etc/hosts}{a}{b}",
+                 "\\RequirePackage{x}",
+                 "\\LoadClass{article}",
+                 // The ways round: an environment's name is a control word
+                 // LaTeX builds with \csname (\begin{x} runs \x, \end{x}
+                 // runs \endx), so the name is checked as one, and must be
+                 // written out; and the words that build or change a
+                 // control word's letters.
+                 "\\begin{pagecolor}{red}x\\end{pagecolor}",
+                 "\\begin{special}{background rgb 1 0 0}x",
+                 "\\begin{input}{/etc/hosts}",
+                 "\\begin {input}{/etc/hosts}",
+                 "\\begin%\n{input}{/etc/hosts}",
+                 "\\begin{INPUT}{/etc/hosts}",
+                 "\\begin{Special}{x}",
+                 "\\begin{XeTeXpicfile}",
+                 "\\begin{mcship}",
+                 "\\begin{gdef}\\x{y}",
+                 "\\begin{global}\\let\\x\\y",
+                 "\\end{group}",
+                 "\\end{input}",
+                 "\\begin {document}",
+                 "\\end {document}",
+                 "\\begin\\x",
+                 "\\def\\x{input}\\begin{\\x}",
+                 "\\begin{in put}",
+                 "\\begin{}",
+                 "\\lowercase{\\begin{INPUT}}",
+                 "\\uppercase{x}",
+                 "\\lccode`\\I=`\\i",
+                 "\\MakeLowercase{\\begin{INPUT}}",
+                 "\\UseName{special}{x}",
+                 "\\ExpandArgs{c}\\let{q}{special}",
+                 "\\csname special\\endcsname{x}",
+                 "\\catcode`\\@=11",
+                 "\\scantokens{\\special{x}}",
+                 "\\^^73pecial{x}",
              }) {
             const std::string why = check(tex);
             CHECK(!why.empty());
@@ -63,8 +132,18 @@ static void testMathTexIsolation() {
                                 "\\mathcal{A}", "\\max_i x_i", "\\begin{aligned}a&=b\\end{aligned}",
                                 "\\egroupx", "\\globally", "\\text{mc}", "\\left( x \\right)",
                                 "\\boldsymbol{x}", "\\mu_c", "\\m", "\\textcolor{red}{x}",
-                                "\\nexists", "\\atop", "\\Re z"})
+                                "\\nexists", "\\atop", "\\Re z",
+                                "\\begin{pmatrix}1&0\\\\0&1\\end{pmatrix}",
+                                "\\begin {cases} a \\\\ b \\end {cases}",
+                                "\\begin{align*}a&=b\\end{align*}", "\\begin{array}{cc}a&b\\end{array}",
+                                "\\fontsize{12}{14}\\selectfont x", "\\pi", "\\partial", "\\phi",
+                                "\\text{special}", "\\mathrm{pdf}", "\\spadesuit"})
             CHECK(check(tex).empty());
+        // How a refusal reads.
+        CHECK(check("\\pagecolor{red}") == "\\pagecolor is not allowed in a formula");
+        CHECK(check("\\special{x}") == "\\special is not allowed in a formula");
+        CHECK(check("\\begin{special}{x}") == "\\begin{special} is not allowed in a formula");
+        CHECK(check("\\begin\\x") == "\\begin needs an environment's name in braces");
 
         // Every formula of tests/markdown/math.md still passes, unless for
         // a reason it had before.
@@ -142,6 +221,6 @@ static void testMathTexIsolation() {
         // Without the nonce the forged lines would have counted.
         CHECK(MathTex::readLog(log, 2)[1].measured);
 
-        CHECK(MathTex::kVersion == 3);   // pictures made by the old batch are not reused
+        CHECK(MathTex::kVersion == 4);   // pictures made by the old batch are not reused
     }
 }

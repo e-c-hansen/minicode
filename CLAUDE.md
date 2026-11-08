@@ -1709,7 +1709,17 @@ false`) a formula shows as its TeX in the code style.
   keys (2026-11-07): `\global`, `\gdef`, `\xdef`, `\globaldefs`, counters,
   `\aftergroup`, `\afterassignment`, the group words, `\fontdimen` and the
   other always-global assignments, and the prefixes `\mc`, `\XeTeX`,
-  `\Declare`, `\New`, `\Renew`, `\Provide`, `\AddTo`, `\AtBegin`, `\AtEnd`. A
+  `\Declare`, `\New`, `\Renew`, `\Provide`, `\AddTo`, `\AtBegin`, `\AtEnd`;
+  and (2026-11-08, `kVersion` 4) page-level state and file reads:
+  `\special` and `\pdf...` in every form, `\pagecolor` and the other
+  `\page...` words (its background special fills every later page),
+  XeTeX's `\filedump`/`\filesize`/`\mdfivesum`, `\font` and the font
+  selectors, `\IfFileExists`, `\RequirePackage`. **Trap**: `\begin{x}` runs
+  `\csname x\endcsname` and `\end{x}` `\csname endx\endcsname`, so
+  `\begin{pagecolor}` was `\pagecolor` past the word list; an environment's
+  name must be letters in braces and is checked as both words, ignoring
+  case, and `\lowercase`, `\uppercase`, `\Make...`, `\UseName` and
+  `\ExpandArgs` are refused as more ways to build a word. A
   formula that still closes its box early (`{$}`: TeX closes a brace for the
   `$`) has its rest gobbled unread to `\mcsentinel` by `\mcafter`; one that
   leaves a group open makes `\mcship` (built only from `\mc` copies of the
