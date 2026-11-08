@@ -46,8 +46,15 @@ ZshRun runZsh(const zfs::path &dir, const std::vector<std::string> &args,
     std::vector<std::string> envStore = env;
     for (auto &e : envStore) envp.push_back(&e[0]);
     envp.push_back(nullptr);
+    // A session of its own, so no controlling terminal: an interactive zsh
+    // with one reads /dev/tty, not the commands on stdin (the tests failed
+    // when run from a terminal rather than with output redirected).
+    posix_spawnattr_t sa;
+    posix_spawnattr_init(&sa);
+    posix_spawnattr_setflags(&sa, POSIX_SPAWN_SETSID);
     pid_t pid = -1;
-    const int rc = posix_spawn(&pid, "/bin/zsh", &fa, nullptr, argv.data(), envp.data());
+    const int rc = posix_spawn(&pid, "/bin/zsh", &fa, &sa, argv.data(), envp.data());
+    posix_spawnattr_destroy(&sa);
     posix_spawn_file_actions_destroy(&fa);
     if (rc != 0) return r;
     int status = 0;

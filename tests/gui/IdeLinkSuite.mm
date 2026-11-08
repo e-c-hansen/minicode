@@ -692,9 +692,17 @@ MC_GUI_SUITE(mermaid) {
         GCHECK([tv.string containsString:@"A --> B"]);
     });
 
-    MCGuiWait(@"the diagram arrives as a picture", 15, ^BOOL {
+    // Runs go one at a time: wait for the picture and for the broken
+    // diagram's complaint, which comes from the second run (under load the
+    // first could land well before it).
+    MCGuiWait(@"the diagram arrives as a picture, and the broken one's complaint", 15, ^BOOL {
         NSTextView *tv = [MCGuiController() valueForKey:@"textView"];
-        return ![tv.string containsString:@"A --> B"];
+        if ([tv.string containsString:@"A --> B"]) return NO;
+        NSRange broken = [tv.string rangeOfString:@"broken -->"];
+        if (broken.location == NSNotFound) return NO;
+        NSString *tip = [tv.textStorage attribute:NSToolTipAttributeName atIndex:broken.location
+                                   effectiveRange:nil];
+        return tip.length > 0;
     });
 
     MCGuiStep(@"a picture at its size in points, editable from its line; the broken one is code with mmdc's words", ^{
