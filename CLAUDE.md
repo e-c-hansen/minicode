@@ -2542,8 +2542,20 @@ session has a display. Check first.
   describes the script. basedpyright, where installed, runs as well in
   symbols, never instead. A suite named `_x` runs only when named, as a
   second app that `MCGuiRunChild` starts in the same world (backups SIGKILLs
-  one). Wait for a condition; never pause before a positive check. **New
-  user-visible behaviour gets a committed check here.**
+  one). Wait for a condition; never pause before a positive check
+  (`MCGuiPause` is for a negative check or where time is the condition, with
+  a comment saying which; `MCGuiWaitQuiet` waits for a count to stop
+  changing). **New user-visible behaviour gets a committed check here.**
+- **Timing bounds hold under load** (2026-11-07): with several agents
+  building, load 40 to 100 ran wall times three to ten times over and failed
+  brackets:bounded, procs:speed, keystroke, large_file, processes and
+  lsp_progress. Bound the CPU time of the thread doing the work: the core's
+  `CHECK_TIME(cpuMs() - t0, bound)` (run_tests.cpp), the GUI's
+  `GCHECK_TIME(MCGuiThreadCpuMs() - c0, bound, what)`; work on a queue
+  measures its own thread (`MCProcessMonitor lastSampleCpuMilliseconds`); a
+  main-thread stall is its CPU between two timer fires (lsp_progress), not
+  the gap. Wall time stays only for the product's own wall-clock limits (the
+  regex fallback's second). `MC_SKIP_TIMING=1` passes every bound.
 - **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the
   window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events
   through the window then the main menu (`MCGuiPerformMenuKey`, built from the
