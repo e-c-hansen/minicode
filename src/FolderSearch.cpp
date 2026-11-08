@@ -348,6 +348,7 @@ struct Matcher {
         if (stopping()) return;
         std::string content;
         o.kind = readForSearch(job.path, opt.maxFileSize, &content, &o.dev, &o.ino);
+        if (opt.onFileRead) opt.onFileRead();
         if (o.kind != FileKind::Searched) return;
         if (useNeedle && needle.never) return;   // no line can match
         const Needle* nd = useNeedle ? &needle : nullptr;
