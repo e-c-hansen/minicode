@@ -3,8 +3,13 @@
 // shown), and the commands that act on it whether it shows or not: pushing
 // and pulling (git.fetch, git.pull, git.push, git.sync), Stage All and
 // Unstage All, Discard Changes and Undo Discard, and the branch picker
-// (git.checkout), which is the palette with a list of branches.
+// (git.checkout), which is the palette with a list of branches; Commit and
+// Amend, Undo Last Commit, Stash and Pop Stash; and the editor's change
+// bars (GitGutter.h): their object, made with the panel's, and Next Change,
+// Previous Change, Revert Change and Stage Change.
 #import "EditorController+Private.h"
+#import "EditorController+GitIvars.h"
+#import "GitGutter.h"
 #import "GitPanel.h"
 #import "PalettePanel.h"
 
@@ -14,6 +19,14 @@
     if (self.gitPanel) return self.gitPanel;
     self.gitPanel = [[MCGitPanel alloc] initWithRoot:_root.path];
     __weak EditorController *weakSelf = self;
+    if (!_gitGutter && self.textView && self.gutter) {
+        _gitGutter = [[MCGitGutter alloc] initWithHost:self];
+        _gitGutter.onNote = ^(NSString *text) { [weakSelf showStatusNote:text]; };
+        [[NSNotificationCenter defaultCenter] addObserver:_gitGutter
+                                                 selector:@selector(refreshSoon)
+                                                     name:MCGitPanelDidRefreshNotification
+                                                   object:self.gitPanel];
+    }
     self.gitPanel.onShowDiff = ^(NSString *name, NSString *path, NSData *diff) {
         [weakSelf showDiffNamed:name path:path data:diff];
     };
@@ -54,6 +67,33 @@
     [self revealPath:[self gitPathInRoot:path] andOpen:NO];
     [self.window makeFirstResponder:self.outline];
 }
+
+// ------------------------------------------------- the change bars' host
+- (CodeTextView *)gitGutterTextView { return self.textView; }
+- (MCLineGutter *)gitGutterView { return self.gutter; }
+- (NSString *)gitGutterPath {
+    if (!self.currentPath || !self.textView.editable || self.previewMode || self.isDiff ||
+        [self largeFileFeaturesOff])
+        return nil;
+    return self.currentPath;
+}
+- (void)gitGutterChangedIndex { [self.gitPanel refresh]; }
+- (MCGitGutter *)gitGutter { return _gitGutter; }   // tests, by KVC
+
+// Option+F5 and Shift+Option+F5 (VS Code's workbench.action.editor.
+// nextChange and previousChange): the caret to the next or previous change
+// bar, wrapping.
+- (void)nextChange:(id)sender { (void)sender; [_gitGutter goToNextChange:YES]; }
+- (void)previousChange:(id)sender { (void)sender; [_gitGutter goToNextChange:NO]; }
+// The change on the caret's line (VS Code's revertChange and stageChange,
+// which its change widget offers).
+- (void)revertChange:(id)sender { (void)sender; [_gitGutter revertChange:[_gitGutter barAtCaret]]; }
+- (void)stageChange:(id)sender { (void)sender; [_gitGutter stageChange:[_gitGutter barAtCaret]]; }
+
+- (void)gitCommitAmend:(id)sender { (void)sender; [[self ensureGitPanel] commitAmend]; }
+- (void)gitUndoCommit:(id)sender { (void)sender; [[self ensureGitPanel] undoLastCommit]; }
+- (void)gitStash:(id)sender { (void)sender; [[self ensureGitPanel] stash]; }
+- (void)gitStashPop:(id)sender { (void)sender; [[self ensureGitPanel] popStash]; }
 
 - (void)gitFetch:(id)sender { (void)sender; [[self ensureGitPanel] fetch]; }
 - (void)gitPull:(id)sender { (void)sender; [[self ensureGitPanel] pull]; }
@@ -108,6 +148,14 @@
 // The menu bar's items: Undo Discard names the file and needs one to undo;
 // Discard Changes needs a file.
 - (BOOL)validateGitItem:(NSMenuItem *)item enabled:(BOOL *)enabled {
+    if (item.action == @selector(nextChange:) || item.action == @selector(previousChange:)) {
+        *enabled = _gitGutter.barCount > 0 && self.gitGutterPath != nil;
+        return YES;
+    }
+    if (item.action == @selector(revertChange:) || item.action == @selector(stageChange:)) {
+        *enabled = self.gitGutterPath != nil && [_gitGutter barAtCaret] >= 0;
+        return YES;
+    }
     if (item.action == @selector(gitUndoDiscard:)) {
         NSString *title = self.gitPanel.undoDiscardTitle;
         item.title = title ?: @"Undo Discard";

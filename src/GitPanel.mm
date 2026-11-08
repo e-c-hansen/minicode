@@ -7,6 +7,7 @@
 #include "GitStatus.h"
 #include "GitGraph.h"
 #include "GitModel.h"
+#include <algorithm>
 #include <fcntl.h>
 #include <signal.h>
 #include <spawn.h>
@@ -44,6 +45,8 @@ static std::string Bytes(NSData *d) {
 }
 
 // ------------------------------------------------------------- running git
+NSNotificationName const MCGitPanelDidRefreshNotification = @"MCGitPanelDidRefresh";
+
 @implementation MCGitResult
 - (BOOL)ok { return self.status == 0; }
 @end
@@ -731,17 +734,24 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
     NSInteger row = [self rowAtPoint:p];
     [super mouseDown:event];
-    if (row >= 0 && self.onClick && event.clickCount == 1) self.onClick(row);
+    // A Command or Shift click chooses rows (several at once) without
+    // showing a diff, as in VS Code.
+    const BOOL choosing = (event.modifierFlags &
+                           (NSEventModifierFlagCommand | NSEventModifierFlagShift)) != 0;
+    if (row >= 0 && self.onClick && event.clickCount == 1 && !choosing) self.onClick(row);
 }
 // A file row's menu (Open File, Stage, Discard, ...) above Adjust Settings,
-// the row selected as in VS Code; elsewhere only Adjust Settings.
+// the row selected as in VS Code (a row among several chosen keeps them
+// chosen, and the menu acts on all of them); elsewhere only Adjust Settings.
 - (NSMenu *)menuForEvent:(NSEvent *)event {
     NSInteger row = event ? [self rowAtPoint:[self convertPoint:event.locationInWindow
                                                        fromView:nil]]
                           : self.selectedRow;
+    if (row >= 0 && ![self.selectedRowIndexes containsIndex:row] &&
+        (!self.selectable || self.selectable(row)))
+        [self selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
     NSMenu *menu = row >= 0 && self.menuForRow ? self.menuForRow(row) : nil;
     if (!menu) return MCAdjustSettingsMenu(@"git", self);
-    [self selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
     MCAddAdjustSettingsItem(menu, @"git", self);
     return menu;
 }
@@ -761,6 +771,14 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
         (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption);
     NSString *ch = event.charactersIgnoringModifiers;
     unichar c = ch.length ? [ch characterAtIndex:0] : 0;
+    // Shift with an arrow chooses more rows (the table's own, which skips
+    // the headings through shouldSelectRow).
+    const BOOL shift = (event.modifierFlags & NSEventModifierFlagShift) != 0;
+    if (!m && shift && self.allowsMultipleSelection &&
+        (c == NSUpArrowFunctionKey || c == NSDownArrowFunctionKey)) {
+        [super keyDown:event];
+        return;
+    }
     if (!m) {
         if ((c == '\r' || c == 3) && self.onActivate) { self.onActivate(self.selectedRow); return; }
         if (c == ' ' && self.onToggle) { self.onToggle(self.selectedRow); return; }
@@ -1019,6 +1037,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _table.intercellSpacing = NSMakeSize(0, 0);
     _table.columnAutoresizingStyle = NSTableViewLastColumnOnlyAutoresizingStyle;
     _table.style = NSTableViewStylePlain;
+    _table.allowsMultipleSelection = YES;   // Stage, Unstage and Discard act on all of them
     _table.dataSource = self;
     _table.delegate = self;
     _table.onActivate = ^(NSInteger row) { [weakSelf showDiffAtRow:row]; };
@@ -1121,13 +1140,26 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
         [menu insertItem:it atIndex:at++];
     }
     [menu insertItem:[NSMenuItem separatorItem] atIndex:at++];
-    // Then the changes as a whole, and the branch.
-    NSArray *more = @[@[@"Stage All Changes", NSStringFromSelector(@selector(stageAllFromMenu:))],
+    // Then the changes as a whole, the last commit, the stash and the branch
+    // (VS Code's Commit, Changes and Stash submenus, flattened).
+    NSArray *more = @[@[@"Commit and Amend", NSStringFromSelector(@selector(amendFromMenu:))],
+                      @[@"Undo Last Commit", NSStringFromSelector(@selector(undoCommitFromMenu:))],
+                      @"-",
+                      @[@"Stage All Changes", NSStringFromSelector(@selector(stageAllFromMenu:))],
                       @[@"Unstage All Changes", NSStringFromSelector(@selector(unstageAllFromMenu:))],
                       @[[self undoDiscardTitle] ?: @"Undo Discard",
                         NSStringFromSelector(@selector(undoDiscardFromMenu:))],
+                      @"-",
+                      @[@"Stash", NSStringFromSelector(@selector(stashFromMenu:))],
+                      @[@"Pop Stash", NSStringFromSelector(@selector(popStashFromMenu:))],
+                      @"-",
                       @[@"Switch Branch…", NSStringFromSelector(@selector(branchClicked:))]];
-    for (NSArray *pair in more) {
+    for (id entry in more) {
+        if ([entry isKindOfClass:[NSString class]]) {
+            [menu insertItem:[NSMenuItem separatorItem] atIndex:at++];
+            continue;
+        }
+        NSArray *pair = entry;
         NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:pair[0]
                                                     action:NSSelectorFromString(pair[1])
                                              keyEquivalent:@""];
@@ -1148,12 +1180,20 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
                    fileExistsAtPath:[_topLevel stringByAppendingPathComponent:r.path]];
     }
     if (item.action == @selector(menuDiscard:)) {
-        MCGitRow *r = [self fileRow:item.tag];
-        return r && GitUi::discardPlan(r->model).refusal.empty();
+        const std::vector<GitUi::Row> rows = [self rowsActingWith:item.tag];
+        return !rows.empty() && GitUi::discardBatchPlan(rows).refusal.empty();
     }
+    if (item.action == @selector(amendFromMenu:) || item.action == @selector(undoCommitFromMenu:))
+        return _inRepository && !_initial;
+    if (item.action == @selector(stashFromMenu:)) return _inRepository && !_initial;
+    if (item.action == @selector(popStashFromMenu:)) return _inRepository;
     return YES;
 }
 
+- (void)amendFromMenu:(id)sender { (void)sender; [self commitAmend]; }
+- (void)undoCommitFromMenu:(id)sender { (void)sender; [self undoLastCommit]; }
+- (void)stashFromMenu:(id)sender { (void)sender; [self stash]; }
+- (void)popStashFromMenu:(id)sender { (void)sender; [self popStash]; }
 - (void)stageAllFromMenu:(id)sender { (void)sender; [self stageAll]; }
 - (void)unstageAllFromMenu:(id)sender { (void)sender; [self unstageAll]; }
 - (void)undoDiscardFromMenu:(id)sender { (void)sender; [self undoDiscard]; }
@@ -1506,6 +1546,14 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     // in the same list, so Space can be pressed down a list of files.
     NSInteger sel = _table.selectedRow;
     const std::vector<GitUi::Row> oldRows = ModelRows(_rows);
+    // Several rows chosen stay chosen while they are there: by file and
+    // list, else by file (Stage on them moves them all to the other list).
+    std::vector<std::string> chosen, chosenPaths;
+    if (_table.selectedRowIndexes.count > 1)
+        for (MCGitRow *r in [self selectedFileRows]) {
+            chosen.push_back(r->model.key());
+            chosenPaths.push_back(r->model.path);
+        }
 
     _inRepository = s.inRepository;
     _topLevel = [s.topLevel copy];
@@ -1538,8 +1586,20 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
         [_graphTable reloadData];
     }
 
+    NSMutableIndexSet *still = [NSMutableIndexSet indexSet];
+    for (int byPath = 0; byPath < 2 && still.count < 2 && !chosen.empty(); byPath++) {
+        [still removeAllIndexes];
+        const std::vector<std::string> &want = byPath ? chosenPaths : chosen;
+        for (NSUInteger i = 0; i < _rows.count; i++)
+            if (!_rows[i].header &&
+                std::find(want.begin(), want.end(),
+                          byPath ? _rows[i]->model.path : _rows[i]->model.key()) != want.end())
+                [still addIndex:i];
+    }
     NSInteger pick = GitUi::pickAfterRefresh(oldRows, (int)sel, ModelRows(_rows));
-    if (pick >= 0) {
+    if (still.count > 1) {
+        [_table selectRowIndexes:still byExtendingSelection:NO];
+    } else if (pick >= 0) {
         [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:pick] byExtendingSelection:NO];
         [_table scrollRowToVisible:pick];
     } else {
@@ -1547,6 +1607,8 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     }
     [self layoutPanel];
     if (self.onRefreshed) self.onRefreshed();
+    [[NSNotificationCenter defaultCenter] postNotificationName:MCGitPanelDidRefreshNotification
+                                                        object:self];
 }
 
 - (NSArray<NSString *> *)rowDescriptions {
@@ -1590,12 +1652,53 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     });
 }
 
+- (NSArray<MCGitRow *> *)selectedFileRows {
+    NSMutableArray *out = [NSMutableArray array];
+    [_table.selectedRowIndexes enumerateIndexesUsingBlock:^(NSUInteger i, BOOL *stop) {
+        (void)stop;
+        MCGitRow *r = [self fileRow:(NSInteger)i];
+        if (r) [out addObject:r];
+    }];
+    return out;
+}
+
+// The rows an action on `row` is for: every row chosen when `row` is one of
+// several chosen, else that row alone.
+- (std::vector<GitUi::Row>)rowsActingWith:(NSInteger)row {
+    std::vector<GitUi::Row> out;
+    MCGitRow *r = [self fileRow:row];
+    if (!r) return out;
+    if (_table.selectedRowIndexes.count > 1 && [_table.selectedRowIndexes containsIndex:row]) {
+        for (MCGitRow *x in [self selectedFileRows]) out.push_back(x->model);
+        return out;
+    }
+    out.push_back(r->model);
+    return out;
+}
+
 - (void)toggleStageAtRow:(NSInteger)row {
     MCGitRow *r = [self fileRow:row];
     if (!r) { NSBeep(); return; }
+    const std::vector<GitUi::Row> rows = [self rowsActingWith:row];
+    if (rows.size() > 1) {
+        // Several: the chosen Changes rows are staged and the chosen Staged
+        // rows unstaged, one git each.
+        const std::vector<std::string> stage = GitUi::stageRowsArgs(rows, _initial, true);
+        const std::vector<std::string> unstage = GitUi::stageRowsArgs(rows, _initial, false);
+        if (!stage.empty()) [self runAction:NSArgs(stage) done:nil];
+        if (!unstage.empty()) [self runAction:NSArgs(unstage) done:nil];
+        return;
+    }
     // add -A (a deletion staged as one); restore --staged, both halves of a
     // rename; rm --cached --force before the first commit, which has no HEAD.
     [self runAction:NSArgs(GitUi::stageArgs(r->model, _initial)) done:nil];
+}
+
+- (void)stageRow:(NSInteger)row stage:(BOOL)stage {
+    const std::vector<std::string> args =
+        GitUi::stageRowsArgs([self rowsActingWith:row], _initial, stage);
+    if (args.empty()) { NSBeep(); return; }
+    [self runAction:NSArgs(args) done:nil];
 }
 
 - (void)commit {
@@ -1679,6 +1782,110 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     });
 }
 
+// --------------------------- Commit and Amend, Undo Last Commit, Stash
+// Each reads the status now (and what else its plan needs) on the queue,
+// so it works with the panel hidden; asks when the plan asks; runs; says
+// what happened under the Commit button.
+typedef GitUi::ActionPlan (^MCGitVerbPlan)(MCGitSnapshot *snap);
+
+- (void)runVerb:(MCGitVerbPlan)plan after:(void (^)(MCGitResult *r, NSString *extra))after
+          extra:(NSArray<NSString *> *)extraArgs {
+    NSString *root = self.root;
+    if (!root) return;
+    dispatch_async(_queue, ^{
+        MCGitSnapshot *snap = [MCGitPanel snapshotAt:root];
+        const GitUi::ActionPlan p = plan(snap);
+        NSString *top = snap.topLevel;
+        // Read now, while what it reads is still there (the message of the
+        // commit about to be undone).
+        NSString *extra = nil;
+        if (extraArgs && !p.args.empty()) {
+            MCGitResult *x = MCGitRunSync(top, extraArgs);
+            if (x.ok) extra = NSFromBytes(Bytes(x.output));
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (![root isEqualToString:self.root]) return;
+            if (p.args.empty()) {
+                NSString *why = snap.inRepository ? NSFromBytes(p.refusal)
+                                                  : snap.notice ?: snap.errorText;
+                [self say:why info:NO];
+                NSBeep();
+                [self actionDone];
+                return;
+            }
+            NSArray *args = NSArgs(p.args);
+            NSString *done = NSFromBytes(p.doneText);
+            void (^go)(void) = ^{
+                [self runAction:args in:top done:^(MCGitResult *r) {
+                    if (r.ok) {
+                        [self say:done.length ? done : NSFromBytes(GitUi::firstLine(Bytes(r.output)))
+                             info:YES];
+                    }
+                    if (after) after(r, extra);
+                    [self actionDone];
+                }];
+            };
+            if (p.question.empty()) go();
+            else [self ask:p then:go];
+        });
+    });
+}
+
+- (void)commitAmend {
+    const std::string message = (_message.string ?: @"").UTF8String ?: "";
+    [self runVerb:^GitUi::ActionPlan(MCGitSnapshot *snap) {
+        return GitUi::amendPlan(snap->model, message);
+    } after:^(MCGitResult *r, NSString *extra) {
+        (void)extra;
+        if (!r.ok) return;
+        [self->_message setString:@""];
+        [self->_message setNeedsDisplay:YES];
+    } extra:nil];
+}
+
+- (void)undoLastCommit {
+    NSString *root = self.root;
+    if (!root) return;
+    // HEAD's parents first (a first commit, a merge), then the plan.
+    dispatch_async(_queue, ^{
+        MCGitResult *parents = MCGitRunSync(root, NSArgs(GitUi::headParentsArgs()));
+        const int n = parents.ok ? GitUi::parentCount(Bytes(parents.output)) : -1;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self runVerb:^GitUi::ActionPlan(MCGitSnapshot *snap) {
+                return GitUi::undoCommitPlan(snap->model, n);
+            } after:^(MCGitResult *r, NSString *message) {
+                // VS Code puts the undone commit's message back in the box.
+                if (!r.ok || !message.length) return;
+                NSString *m = [message stringByTrimmingCharactersInSet:
+                                  NSCharacterSet.whitespaceAndNewlineCharacterSet];
+                [self->_message setString:m];
+                [self->_message setNeedsDisplay:YES];
+            } extra:NSArgs(GitUi::headMessageArgs())];
+        });
+    });
+}
+
+- (void)stash {
+    const std::string message = (_message.string ?: @"").UTF8String ?: "";
+    [self runVerb:^GitUi::ActionPlan(MCGitSnapshot *snap) {
+        return GitUi::stashPlan(snap->model, message);
+    } after:nil extra:nil];
+}
+
+- (void)popStash {
+    NSString *root = self.root;
+    if (!root) return;
+    dispatch_async(_queue, ^{
+        MCGitResult *list = MCGitRunSync(root, NSArgs(GitUi::stashListArgs()));
+        const int n = list.ok ? (int)GitUi::countLines(Bytes(list.output)) : 0;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self runVerb:^GitUi::ActionPlan(MCGitSnapshot *snap) {
+                return GitUi::popStashPlan(snap->model, n);
+            } after:nil extra:nil];
+        });
+    });
+}
+
 - (NSInteger)selectedFileRow {
     return [self rowIsFile:_table.selectedRow] ? _table.selectedRow : -1;
 }
@@ -1686,7 +1893,26 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 - (void)discardAtRow:(NSInteger)row {
     MCGitRow *r = [self fileRow:row];
     if (!r || !_topLevel) { NSBeep(); return; }
-    [self discardRow:r->model top:_topLevel];
+    const std::vector<GitUi::Row> rows = [self rowsActingWith:row];
+    if (rows.size() > 1) [self discardRows:rows top:_topLevel];
+    else [self discardRow:r->model top:_topLevel];
+}
+
+// Several rows: one question naming the count, refused whole if any one
+// would be (GitUi::discardBatchPlan), then each discarded in turn, each its
+// own Undo Discard.
+- (void)discardRows:(const std::vector<GitUi::Row> &)rows top:(NSString *)top {
+    const GitUi::DiscardBatch batch = GitUi::discardBatchPlan(rows);
+    if (!batch.refusal.empty()) {
+        [self say:NSFromBytes(batch.refusal) info:NO];
+        NSBeep();
+        [self actionDone];
+        return;
+    }
+    const GitUi::DiscardBatch copy = batch;
+    [self ask:batch then:^{
+        [self runDiscards:copy.plans paths:copy.paths top:top done:NSFromBytes(copy.doneText)];
+    }];
 }
 
 // Discard Changes from the menu bar: the file on show, if it has changes
@@ -1747,44 +1973,62 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 // The file as it is goes to the Trash first, then git restores it; if git
 // fails, the Trash's copy comes back, so a refusal leaves the file alone.
 - (void)runDiscard:(const GitUi::DiscardPlan &)plan rel:(NSString *)rel top:(NSString *)top {
+    const std::vector<GitUi::DiscardPlan> plans(1, plan);
+    const std::vector<std::string> paths(1, rel.UTF8String ?: "");
+    [self runDiscards:plans paths:paths top:top done:NSFromBytes(plan.doneText)];
+}
+
+// Each in turn on the panel's queue; the first failure stops the rest,
+// and the ones done before it stay done (and undoable).
+- (void)runDiscards:(const std::vector<GitUi::DiscardPlan> &)plans
+              paths:(const std::vector<std::string> &)rels
+                top:(NSString *)top
+               done:(NSString *)doneText {
     NSString *root = self.root;
-    const GitUi::DiscardPlan p = plan;
+    const std::vector<GitUi::DiscardPlan> ps = plans;
+    const std::vector<std::string> paths = rels;
     dispatch_async(_queue, ^{
         NSFileManager *fm = [NSFileManager defaultManager];
-        NSString *path = [top stringByAppendingPathComponent:rel];
-        NSURL *trashed = nil;
+        NSMutableArray<MCGitDiscard *> *made = [NSMutableArray array];
         NSString *failure = nil;
-        if (p.trashFirst) {
-            NSError *error = nil;
-            NSURL *into = nil;
-            if ([fm trashItemAtURL:[NSURL fileURLWithPath:path] resultingItemURL:&into
-                             error:&error])
-                trashed = into;
-            else
-                failure = [NSString stringWithFormat:
-                    @"%@ could not be moved to the Trash (%@), so nothing was discarded.",
-                    rel.lastPathComponent, error.localizedDescription ?: @"no reason given"];
-        }
-        if (!failure && !p.args.empty()) {
-            MCGitResult *r = MCGitRunSync(top, NSArgs(p.args));
-            if (!r.ok) {
-                failure = MCGitFailureText(r);
-                if (trashed) [fm moveItemAtURL:trashed toURL:[NSURL fileURLWithPath:path] error:nil];
-                trashed = nil;
+        for (size_t i = 0; i < ps.size() && i < paths.size() && !failure; i++) {
+            const GitUi::DiscardPlan &p = ps[i];
+            NSString *rel = NSFromBytes(paths[i]);
+            NSString *path = [top stringByAppendingPathComponent:rel];
+            NSURL *trashed = nil;
+            if (p.trashFirst) {
+                NSError *error = nil;
+                NSURL *into = nil;
+                if ([fm trashItemAtURL:[NSURL fileURLWithPath:path] resultingItemURL:&into
+                                 error:&error])
+                    trashed = into;
+                else
+                    failure = [NSString stringWithFormat:
+                        @"%@ could not be moved to the Trash (%@), so nothing was discarded.",
+                        rel.lastPathComponent, error.localizedDescription ?: @"no reason given"];
             }
+            if (!failure && !p.args.empty()) {
+                MCGitResult *r = MCGitRunSync(top, NSArgs(p.args));
+                if (!r.ok) {
+                    failure = MCGitFailureText(r);
+                    if (trashed)
+                        [fm moveItemAtURL:trashed toURL:[NSURL fileURLWithPath:path] error:nil];
+                    trashed = nil;
+                }
+            }
+            if (failure) break;
+            MCGitDiscard *d = [MCGitDiscard new];
+            d.path = path;
+            d.rel = rel;
+            d.trashed = trashed;
+            [made addObject:d];
         }
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (!failure) {
-                MCGitDiscard *d = [MCGitDiscard new];
-                d.path = path;
-                d.rel = rel;
-                d.trashed = trashed;
-                if (!self->_discards) self->_discards = [NSMutableArray array];
-                [self->_discards addObject:d];
-                if (self->_discards.count > 20) [self->_discards removeObjectAtIndex:0];
-            }
+            if (!self->_discards) self->_discards = [NSMutableArray array];
+            [self->_discards addObjectsFromArray:made];
+            while (self->_discards.count > 20) [self->_discards removeObjectAtIndex:0];
             if ([root isEqualToString:self.root]) {
-                [self say:failure ?: NSFromBytes(p.doneText) info:failure == nil];
+                [self say:failure ?: doneText info:failure == nil];
                 [self runRefresh];
             }
             [self actionDone];
@@ -1846,6 +2090,28 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
         it.tag = row;
         return it;
     };
+    const std::vector<GitUi::Row> rows = [self rowsActingWith:row];
+    if (rows.size() > 1) {
+        // Several chosen: what acts on all of them, then the clicked file's own.
+        size_t changes = 0, staged = 0;
+        for (const GitUi::Row &x : rows) (x.staged ? staged : changes)++;
+        if (changes)
+            add([NSString stringWithFormat:@"Stage Changes (%zu Files)", changes],
+                @selector(menuStage:));
+        if (staged)
+            add([NSString stringWithFormat:@"Unstage Changes (%zu Files)", staged],
+                @selector(menuUnstage:));
+        NSMenuItem *it = add([NSString stringWithFormat:@"Discard Changes (%zu Files)…",
+                                                        rows.size()],
+                             @selector(menuDiscard:));
+        const std::string why = GitUi::discardBatchPlan(rows).refusal;
+        if (!why.empty()) it.toolTip = NSFromBytes(why);
+        [menu addItem:[NSMenuItem separatorItem]];
+        add(@"Open File", @selector(menuOpenFile:));
+        add(@"Open Changes", @selector(menuOpenChanges:));
+        add(@"Reveal in File Tree", @selector(menuReveal:));
+        return menu;
+    }
     add(@"Open File", @selector(menuOpenFile:));
     add(@"Open Changes", @selector(menuOpenChanges:));
     add(r.staged ? @"Unstage Changes" : @"Stage Changes", @selector(menuToggleStage:));
@@ -1870,6 +2136,8 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 }
 - (void)menuOpenChanges:(NSMenuItem *)item { [self showDiffAtRow:item.tag]; }
 - (void)menuToggleStage:(NSMenuItem *)item { [self toggleStageAtRow:item.tag]; }
+- (void)menuStage:(NSMenuItem *)item { [self stageRow:item.tag stage:YES]; }
+- (void)menuUnstage:(NSMenuItem *)item { [self stageRow:item.tag stage:NO]; }
 - (void)menuDiscard:(NSMenuItem *)item { [self discardAtRow:item.tag]; }
 - (void)menuReveal:(NSMenuItem *)item {
     NSString *path = [self pathOfRow:item.tag];

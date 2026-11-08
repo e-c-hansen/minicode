@@ -458,6 +458,56 @@ MC_GUI_SUITE(git_actions) {
     MCGuiWait(@"still on new-topic", 10, ^BOOL {
         return [Git(c).branchText hasPrefix:@"new-topic"];
     });
+
+    // A submodule with a change inside it: Discard used to trash its whole
+    // checkout and restore the gitlink, leaving an empty folder.
+    NSString *sub = [MCGuiScratch() stringByAppendingPathComponent:@"gitactions-sub"];
+    NSString *libX = [repo stringByAppendingPathComponent:@"lib/x.txt"];
+    GitShell(@"a submodule, lib, and a change inside it", [NSString stringWithFormat:
+        @"set -e; mkdir -p '%@'; cd '%@'; %@ init -q -b main; echo inner > x.txt; %@ add -A; "
+         "%@ commit -qm sub; cd '%@'; %@ -c protocol.file.allow=always submodule add -q '%@' lib; "
+         "%@ commit -qm 'add lib'; echo changed > lib/x.txt",
+        sub, sub, G, G, G, repo, G, sub, G]);
+    MCGuiStep(@"look again", ^{ [Git(c) refresh]; });
+    MCGuiWait(@"lib listed as changed", 15, ^BOOL { return RowOf(c, @"W M lib") != NSNotFound; });
+    MCGuiStep(@"Discard on lib is refused, with what to do instead", ^{
+        const NSInteger row = RowOf(c, @"W M lib");
+        NSMenu *menu = [Git(c) menuForRow:row];
+        NSMenuItem *discard = nil;
+        for (NSMenuItem *it in menu.itemArray)
+            if ([it.title hasPrefix:@"Discard"]) discard = it;
+        GCHECK(discard != nil && ![(id<NSMenuItemValidation>)Git(c) validateMenuItem:discard]);
+        MCGuiNote(@"its tooltip: %@", discard.toolTip);
+        GCHECK([discard.toolTip containsString:@"submodule"]);
+        actions = 0;
+        alerts = MCGuiAlertsShown().count;
+        [Git(c) discardAtRow:row];
+    });
+    MCGuiWait(@"refused", 10, ^BOOL { return actions == 1; });
+    MCGuiStep(@"nothing asked, the checkout untouched", ^{
+        MCGuiNote(@"refusal: %@", Git(c).errorLine);
+        GCHECK([Git(c).errorLine hasPrefix:@"lib is a submodule"]);
+        GCHECK(newAlerts().count == 0);
+        GCHECK_EQ_STR(Read(libX), @"changed\n");
+        GCHECK([[NSFileManager defaultManager]
+            fileExistsAtPath:[repo stringByAppendingPathComponent:@"lib/.git"]]);
+        GCHECK(![TrashedTexts() containsObject:@"changed\n"]);
+        // Its diff is one commit for another: no hunk links.
+        [Git(c) showDiffAtRow:RowOf(c, @"W M lib")];
+    });
+    MCGuiWait(@"its diff", 10, ^BOOL { return [[c valueForKey:@"isDiff"] boolValue]; });
+    MCGuiStep(@"no hunk links on a gitlink's diff; staging it still works", ^{
+        NSTextView *diff = [c valueForKey:@"diffView"];
+        MCGuiNote(@"lib's diff: %@", diff.string);
+        GCHECK([diff.string containsString:@"Subproject commit"]);
+        [Git(c) runHunkOp:2 fromLine:5 toLine:5 lines:NO];   // 2: Discard (GitUi::HunkOp)
+        GCHECK([Git(c).errorLine hasPrefix:@"lib is a submodule"]);
+        GCHECK_EQ_STR(Read(libX), @"changed\n");
+        [Git(c) toggleStageAtRow:RowOf(c, @"W M lib")];
+    });
+    MCGuiWait(@"add ran (a change inside a submodule stays one: nothing to stage)", 15, ^BOOL {
+        return Git(c).errorLine.length == 0 && RowOf(c, @"W M lib") != NSNotFound;
+    });
     MCGuiStep(@"the window closes; the real Trash back", ^{
         UseScratchTrash(NO);
         [c.window close];
@@ -637,6 +687,170 @@ MC_GUI_SUITE(git_hunks) {
                [diff().string containsString:@"No differences to show."];
     });
     MCGuiStep(@"the window closes; the real Trash back", ^{
+        UseScratchTrash(NO);
+        [c.window close];
+    });
+    MCGuiWait(@"gone", 5, ^BOOL { return ![MCGuiControllers() containsObject:c]; });
+}
+
+// `make guitest SUITES=git_verbs`: several rows at once, and the routine
+// verbs after them. Two rows chosen stage and unstage together, from Space
+// and from the row menu, which names the count; three chosen discard after
+// one question; Commit and Amend rewrites the last commit's message; Undo
+// Last Commit leaves its changes staged and its message in the box; Stash
+// takes every change (the untracked file too) and Pop Stash brings them
+// back; a second Pop is refused.
+MC_GUI_SUITE(git_verbs) {
+    __block EditorController *c = nil;
+    NSString *git = MCGitExecutable();
+    NSString *repo = [MCGuiScratch() stringByAppendingPathComponent:@"gitverbs"];
+    NSString *G = git ? [NSString stringWithFormat:@"'%@'", git] : @"git";
+    __block NSInteger actions = 0;
+    __block NSUInteger alerts = 0;
+    if (!git) {
+        MCGuiStep(@"no git", ^{ MCGuiNote(@"no git here: the verb checks are skipped"); });
+        return;
+    }
+    NSArray *changes3 = @[@"# Changes  3", @"W M a.txt", @"W M b.txt", @"W U n.txt"];
+    NSArray *(^newAlerts)(void) = ^NSArray * {
+        NSArray *all = MCGuiAlertsShown();
+        return [all subarrayWithRange:NSMakeRange(alerts, all.count - alerts)];
+    };
+    void (^choose)(NSArray<NSString *> *) = ^(NSArray<NSString *> *rows) {
+        NSMutableIndexSet *set = [NSMutableIndexSet indexSet];
+        for (NSString *r in rows) {
+            const NSInteger at = RowOf(c, r);
+            GCHECK(at != NSNotFound);
+            if (at != NSNotFound) [set addIndex:(NSUInteger)at];
+        }
+        [Git(c).list selectRowIndexes:set byExtendingSelection:NO];
+    };
+
+    GitShell(@"a repository: two files changed, one untracked", [NSString stringWithFormat:
+        @"set -e; mkdir -p '%@'; cd '%@'; %@ init -q -b main; echo one > a.txt; echo one > b.txt; "
+         "%@ add -A; %@ commit -qm first; echo two > a.txt; echo two > b.txt; echo n > n.txt",
+        repo, repo, G, G, G]);
+    MCGuiStep(@"a window on it; the panel; a Trash of our own", ^{
+        UseScratchTrash(YES);
+        NSUInteger before = MCGuiControllers().count;
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
+                                                      openURLs:@[[NSURL fileURLWithPath:repo]]];
+        GCHECK(MCGuiControllers().count == before + 1);
+        c = MCGuiController();
+        [c toggleSourceControl:nil];
+        Git(c).onActionDone = ^{ actions++; };
+    });
+    MCGuiWait(@"three changes", 15, ^BOOL { return Rows(c, changes3); });
+    MCGuiStep(@"a.txt and b.txt chosen; Space stages both", ^{
+        GCHECK(Git(c).list.allowsMultipleSelection);
+        choose(@[@"W M a.txt", @"W M b.txt"]);
+        GCHECK(Git(c).list.selectedRowIndexes.count == 2);
+        [Git(c) toggleStageAtRow:RowOf(c, @"W M a.txt")];
+    });
+    MCGuiWait(@"both staged", 15, ^BOOL {
+        return Rows(c, @[@"# Staged changes  2", @"S M a.txt", @"S M b.txt", @"# Changes  1",
+                         @"W U n.txt"]);
+    });
+    MCGuiStep(@"both still chosen; the row menu names them, and unstages both", ^{
+        GCHECK(Git(c).list.selectedRowIndexes.count == 2);
+        NSMenu *m = [Git(c) menuForRow:RowOf(c, @"S M b.txt")];
+        NSArray *titles = MenuTitles(m);
+        MCGuiNote(@"menu for two: %@", titles);
+        GCHECK([titles containsObject:@"Unstage Changes (2 Files)"]);
+        GCHECK([titles containsObject:@"Discard Changes (2 Files)…"]);
+        NSMenuItem *discard = [m itemWithTitle:@"Discard Changes (2 Files)…"];
+        GCHECK(![(id<NSMenuItemValidation>)Git(c) validateMenuItem:discard]);   // staged: unstage first
+        NSMenuItem *unstage = [m itemWithTitle:@"Unstage Changes (2 Files)"];
+        [NSApp sendAction:unstage.action to:unstage.target from:unstage];
+    });
+    MCGuiWait(@"both back in Changes", 15, ^BOOL { return Rows(c, changes3); });
+    MCGuiStep(@"all three chosen: Discard asks once, and Cancel does nothing", ^{
+        choose(@[@"W M a.txt", @"W M b.txt", @"W U n.txt"]);
+        alerts = MCGuiAlertsShown().count;
+        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);
+        [Git(c) discardAtRow:RowOf(c, @"W U n.txt")];
+        GCHECK([newAlerts() isEqualToArray:@[@"Discard the changes to 3 files?"]]);
+        GCHECK([[NSFileManager defaultManager]
+            fileExistsAtPath:[repo stringByAppendingPathComponent:@"n.txt"]]);
+    });
+    MCGuiStep(@"yes", ^{
+        choose(@[@"W M a.txt", @"W M b.txt", @"W U n.txt"]);
+        actions = 0;
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
+        [Git(c) discardAtRow:RowOf(c, @"W M a.txt")];
+    });
+    MCGuiWait(@"no changes left", 15, ^BOOL {
+        return actions == 1 && Git(c).inRepository && [Git(c) rowDescriptions].count == 0;
+    });
+    MCGuiStep(@"each is its own Undo Discard: the last, n.txt, first", ^{
+        GCHECK_EQ_STR(Read([repo stringByAppendingPathComponent:@"a.txt"]), @"one\n");
+        GCHECK([Git(c).errorLine containsString:@"3 files"]);
+        GCHECK_EQ_STR(Git(c).undoDiscardTitle, @"Undo Discard of n.txt");
+        actions = 0;
+        [Git(c) undoDiscard];
+    });
+    MCGuiWait(@"n.txt back", 15, ^BOOL { return actions == 1 && RowOf(c, @"W U n.txt") != NSNotFound; });
+
+    MCGuiStep(@"the panel's menu has the verbs", ^{
+        NSEvent *none = nil;
+        NSArray *titles = MenuTitles([Git(c) menuForEvent:none]);
+        for (NSString *t in @[@"Commit and Amend", @"Undo Last Commit", @"Stash", @"Pop Stash"])
+            GCHECK([titles containsObject:t]);
+        // A second commit to work on.
+        MCGuiWriteFile([repo stringByAppendingPathComponent:@"a.txt"], @"three\n");
+    });
+    GitShell(@"a.txt changed and committed as \"second\"",
+             [NSString stringWithFormat:@"cd '%@' && %@ commit -qam second", repo, G]);
+    MCGuiStep(@"Commit and Amend from the menu bar, with a new message", ^{
+        [Git(c) refresh];
+        Git(c).messageView.string = @"second, amended";
+        actions = 0;
+        GCHECK([NSApp sendAction:@selector(gitCommitAmend:) to:nil from:nil]);
+    });
+    MCGuiWait(@"amended", 15, ^BOOL { return actions == 1; });
+    MCGuiStep(@"the last commit has the new message; still two commits", ^{
+        MCGuiNote(@"after amend: %@", Git(c).errorLine);
+        GCHECK_EQ_STR(GitText(repo, @[@"log", @"-1", @"--format=%s"]), @"second, amended\n");
+        GCHECK_EQ_STR(GitText(repo, @[@"rev-list", @"--count", @"HEAD"]), @"2\n");
+        GCHECK(Git(c).messageView.string.length == 0);
+        actions = 0;
+        [Git(c) undoLastCommit];
+    });
+    MCGuiWait(@"undone", 15, ^BOOL { return actions == 1 && RowOf(c, @"S M a.txt") != NSNotFound; });
+    MCGuiStep(@"one commit; its change staged; its message back in the box", ^{
+        MCGuiNote(@"after undo: %@", Git(c).errorLine);
+        GCHECK_EQ_STR(GitText(repo, @[@"rev-list", @"--count", @"HEAD"]), @"1\n");
+        GCHECK_EQ_STR(Git(c).messageView.string, @"second, amended");
+        GCHECK_EQ_STR(Read([repo stringByAppendingPathComponent:@"a.txt"]), @"three\n");
+        Git(c).messageView.string = @"half done";
+        actions = 0;
+        GCHECK([NSApp sendAction:@selector(gitStash:) to:nil from:nil]);
+    });
+    MCGuiWait(@"stashed", 15, ^BOOL {
+        return actions == 1 && Git(c).inRepository && [Git(c) rowDescriptions].count == 0;
+    });
+    MCGuiStep(@"every change in the stash, the untracked file too", ^{
+        GCHECK_EQ_STR(Git(c).errorLine, @"Stashed the changes as “half done”.");
+        GCHECK([GitText(repo, @[@"stash", @"list"]) containsString:@"half done"]);
+        GCHECK(![[NSFileManager defaultManager]
+            fileExistsAtPath:[repo stringByAppendingPathComponent:@"n.txt"]]);
+        GCHECK_EQ_STR(Read([repo stringByAppendingPathComponent:@"a.txt"]), @"one\n");
+        actions = 0;
+        GCHECK([NSApp sendAction:@selector(gitStashPop:) to:nil from:nil]);
+    });
+    MCGuiWait(@"popped", 15, ^BOOL {
+        return actions == 1 && RowOf(c, @"W U n.txt") != NSNotFound &&
+               RowOf(c, @"W M a.txt") != NSNotFound;
+    });
+    MCGuiStep(@"back; a second pop is refused", ^{
+        GCHECK_EQ_STR(Git(c).errorLine, @"Popped the stash.");
+        GCHECK_EQ_STR(Read([repo stringByAppendingPathComponent:@"a.txt"]), @"three\n");
+        actions = 0;
+        [Git(c) popStash];
+    });
+    MCGuiWait(@"refused", 10, ^BOOL { return actions == 1; });
+    MCGuiStep(@"said why; the window closes", ^{
+        GCHECK_EQ_STR(Git(c).errorLine, @"There is no stash to pop.");
         UseScratchTrash(NO);
         [c.window close];
     });

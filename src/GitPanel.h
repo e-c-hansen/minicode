@@ -5,7 +5,11 @@
 //
 // Only commands that cannot lose work are ever run: status, diff, add,
 // restore --staged (rm --cached before the first commit, which also touches
-// only the index), and commit -m; for the graph, log, for-each-ref, rev-list
+// only the index), and commit -m; commit --amend, reset --soft (or
+// update-ref -d HEAD for a first commit), which leave every change staged,
+// and stash push --include-untracked and stash pop, which git keeps when a
+// pop conflicts; for the change bars, ls-files, cat-file, hash-object and
+// update-index of one file; for the graph, log, for-each-ref, rev-list
 // and show, which only read; fetch, pull and push, never forced
 // (GitUi::syncPlan), with no terminal and no password prompt; switch, which
 // git refuses when it would overwrite a change; and for Discard Changes,
@@ -70,6 +74,10 @@ NSAttributedString *MCGitCommitText(NSData *show, NSFont *font);
 - (NSString *)createLabelFor:(NSString *)typed;
 @end
 
+// Posted (object: the panel) after each status is applied, so the
+// editor's change bars look again (GitGutter.h).
+extern NSNotificationName const MCGitPanelDidRefreshNotification;
+
 @interface MCGitPanel : NSView
 - (instancetype)initWithRoot:(NSString *)root;
 @property(nonatomic, copy) NSString *root;   // the window's folder; refreshes
@@ -125,6 +133,20 @@ NSAttributedString *MCGitCommitText(NSData *show, NSFont *font);
 @property(nonatomic, readonly, copy) NSString *undoDiscardTitle;
 - (NSInteger)selectedFileRow;   // the list's selected file row, or -1
 - (NSMenu *)menuForRow:(NSInteger)row;   // a file row's right click
+// The change lists take several rows (Command and Shift clicks, Shift with
+// the arrows): Space, Stage, Unstage and Discard on one of them act on all
+// of them (GitUi::stageRowsArgs, GitUi::discardBatchPlan), Discard asking
+// once with the count; they stay chosen across refreshes while they last.
+
+// Commit and Amend (the message box's text, or the old message when it is
+// empty), Undo Last Commit (reset --soft, its message back in the box),
+// Stash (with untracked files, the box's text its message) and Pop Stash:
+// GitUi's plans, from a status read now, asking first where a plan asks.
+// In the panel's menu and View > Source Control.
+- (void)commitAmend;
+- (void)undoLastCommit;
+- (void)stash;
+- (void)popStash;
 
 // The branch picker: the branches (nil, with the reason shown, when there
 // are none to list), then switching to one or making one from a typed name.

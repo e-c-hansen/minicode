@@ -470,6 +470,8 @@ static BOOL MCEditorOnlyAction(SEL a) {
            a == @selector(toggleBold:) || a == @selector(toggleItalic:) ||
            a == @selector(runSelectionInTerminal:) ||
            a == @selector(nextProblem:) || a == @selector(previousProblem:) ||
+           a == @selector(nextChange:) || a == @selector(previousChange:) ||
+           a == @selector(revertChange:) || a == @selector(stageChange:) ||
            a == @selector(goToBracket:) || a == @selector(toggleSidePreview:);
 }
 // The File menu's tab commands and the tree's Sort By items, which the
@@ -606,6 +608,14 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)gitClean:(id)sender       { [[self current] gitClean:sender]; }
 - (void)gitUndoDiscard:(id)sender { [[self current] gitUndoDiscard:sender]; }
 - (void)gitCheckout:(id)sender    { [[self current] gitCheckout:sender]; }
+- (void)gitCommitAmend:(id)sender { [[self current] gitCommitAmend:sender]; }
+- (void)gitUndoCommit:(id)sender  { [[self current] gitUndoCommit:sender]; }
+- (void)gitStash:(id)sender       { [[self current] gitStash:sender]; }
+- (void)gitStashPop:(id)sender    { [[self current] gitStashPop:sender]; }
+- (void)revertChange:(id)sender   { [[self current] revertChange:sender]; }
+- (void)stageChange:(id)sender    { [[self current] stageChange:sender]; }
+- (void)nextChange:(id)sender     { [[self current] nextChange:sender]; }
+- (void)previousChange:(id)sender { [[self current] previousChange:sender]; }
 - (void)toggleAgents:(id)sender    { [[self current] toggleAgents:sender]; }
 - (void)toggleProcesses:(id)sender { [[self current] toggleProcesses:sender]; }
 - (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
@@ -1301,6 +1311,19 @@ static void BuildMenu(void) {
                 keyEquivalent:@""];
     [gitMenu addItem:[NSMenuItem separatorItem]];
     [gitMenu addItemWithTitle:@"Switch Branch…" action:@selector(gitCheckout:) keyEquivalent:@""];
+    // The last commit and the stash (git.commitAmend, git.undoCommit,
+    // git.stashIncludeUntracked, git.stashPop), and the change bar on the
+    // caret's line (git.revertChange, git.stageChange), with no keys.
+    [gitMenu addItem:[NSMenuItem separatorItem]];
+    [gitMenu addItemWithTitle:@"Commit and Amend" action:@selector(gitCommitAmend:)
+                keyEquivalent:@""];
+    [gitMenu addItemWithTitle:@"Undo Last Commit" action:@selector(gitUndoCommit:)
+                keyEquivalent:@""];
+    [gitMenu addItemWithTitle:@"Stash" action:@selector(gitStash:) keyEquivalent:@""];
+    [gitMenu addItemWithTitle:@"Pop Stash" action:@selector(gitStashPop:) keyEquivalent:@""];
+    [gitMenu addItem:[NSMenuItem separatorItem]];
+    [gitMenu addItemWithTitle:@"Revert Change" action:@selector(revertChange:) keyEquivalent:@""];
+    [gitMenu addItemWithTitle:@"Stage Change" action:@selector(stageChange:) keyEquivalent:@""];
 
     gitItem.submenu = gitMenu;
     [viewMenu addItem:gitItem];
@@ -1658,6 +1681,20 @@ static void BuildMenu(void) {
                                                keyEquivalent:f7];
     prevDiff.keyEquivalentModifierMask = NSEventModifierFlagShift;
     [navMenu addItem:prevDiff];
+    // Option+F5 and Shift+Option+F5 as in VS Code: the editor's next or
+    // previous change bar (GitGutter.h), wrapping. Caught by the key
+    // monitor too, as the editor has no Command key in them.
+    NSString *f5 = [NSString stringWithFormat:@"%C", (unichar)NSF5FunctionKey];
+    NSMenuItem *nextChange = [[NSMenuItem alloc] initWithTitle:@"Go to Next Change"
+                                                        action:@selector(nextChange:)
+                                                 keyEquivalent:f5];
+    nextChange.keyEquivalentModifierMask = NSEventModifierFlagOption;
+    [navMenu addItem:nextChange];
+    NSMenuItem *prevChange = [[NSMenuItem alloc] initWithTitle:@"Go to Previous Change"
+                                                        action:@selector(previousChange:)
+                                                 keyEquivalent:f5];
+    prevChange.keyEquivalentModifierMask = NSEventModifierFlagOption | NSEventModifierFlagShift;
+    [navMenu addItem:prevChange];
     // An agent's tour (`minicode tour`): enabled only while one is on, and
     // the key monitor takes the keys only then, so Option+] still types ‘.
     [navMenu addItem:[NSMenuItem separatorItem]];

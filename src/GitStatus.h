@@ -159,9 +159,9 @@ std::string subcommand(const std::vector<std::string>& args);
 // Seconds a command may take: 600 for commit (its hooks may run a test
 // suite, its signing may wait on a passphrase) and push (its pre-push hook
 // may too, and a slow network), 300 for pull, 120 for fetch, and for add,
-// restore, rm and switch (clean and smudge filters such as Git LFS, a
-// post-checkout hook, another process's index.lock), 30 for everything
-// else, which only reads.
+// restore, rm, switch, stash, hash-object and update-index (clean and
+// smudge filters such as Git LFS, a post-checkout hook, another process's
+// index.lock), 30 for everything else, which only reads.
 double timeoutFor(const std::vector<std::string>& args);
 
 // Does the command talk to a remote (fetch, pull, push, ls-remote)? The

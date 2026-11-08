@@ -29,6 +29,7 @@ struct Row {
     std::string origPath;     // a rename's source, or empty
     bool untracked = false;
     bool unmerged = false;
+    bool submodule = false;   // a gitlink: its change is a commit, or work inside it
     std::string key() const;  // the same file in the same list
 };
 
@@ -142,8 +143,10 @@ ActionPlan unstageAllPlan(const Snapshot& s);
 // which is what that list's diff is against (its staged version, else the
 // last commit's). Undo Discard puts the Trash's copy back (Put Back in the
 // Trash does too). Refused for a staged row (unstage it first, as in VS
-// Code, which offers no discard there), a conflict, and a file added with
-// `git add -N`, which restore would empty.
+// Code, which offers no discard there), a conflict, a file added with
+// `git add -N`, which restore would empty, and a submodule, whose folder is
+// another repository's checkout (trashing it and restoring the gitlink left
+// an empty folder).
 struct DiscardPlan : ActionPlan {
     bool trashFirst = false;   // move the file to the Trash before `args`
 };
@@ -151,6 +154,19 @@ DiscardPlan discardPlan(const Row& r);
 // "Undo Discard of a.txt", for the menus; what is said once it is undone.
 std::string undoDiscardTitle(const std::string& path);
 std::string undoneDiscardText(const std::string& path);
+
+// ------------------------------------------- several rows chosen at once
+// The change lists take several rows (Shift and Command clicks). Stage acts
+// on the chosen rows of Changes and Unstage on those of Staged, one command
+// for all of them (the files after "--"); empty when none of the rows is
+// in that list. Discard asks once, naming the count, and is refused whole
+// when any row would be refused alone, naming that file.
+std::vector<std::string> stageRowsArgs(const std::vector<Row>& rows, bool initial, bool stage);
+struct DiscardBatch : ActionPlan {
+    std::vector<DiscardPlan> plans;   // one per row, in order
+    std::vector<std::string> paths;   // their paths
+};
+DiscardBatch discardBatchPlan(const std::vector<Row>& rows);
 
 // The Changes row for a path relative to the top level, or -1: Discard
 // Changes from the menu bar acts on the file on show.
@@ -216,6 +232,62 @@ HunkPlan hunkPlan(const std::string& diff, DiffSide side, HunkOp op, size_t firs
 std::string hunkFailureText(int status, const std::string& out, const std::string& err,
                             const std::string& path);
 
+
+// ------------------------------------- amend, undo the last commit, stash
+// VS Code's git.commitAmend (Commit and Amend), git.undoCommit, git.stash
+// (with untracked files) and git.stashPop, in the panel's menu and the
+// palette, with no keys. Each is an ActionPlan: `args` empty with a
+// refusal, or the command with a question first when `question` is set.
+//
+// Whether HEAD's commit is already on its upstream: an upstream that
+// exists, and nothing ahead of it. Amending or undoing such a commit means
+// the next push needs a force, so both ask first.
+bool headIsPushed(const Snapshot& s);
+// Amend takes the message box's text as the new message, or keeps the old
+// one (--no-edit) when it is empty; what is staged joins the commit.
+ActionPlan amendPlan(const Snapshot& s, const std::string& message);
+// Undo Last Commit: `reset --soft HEAD~1`, so the commit's changes stay
+// staged, and the panel puts its message back in the box (VS Code does).
+// `parents` is HEAD's parent count (parentCount): 0 for a repository's
+// first commit, undone with `update-ref -d HEAD` (its files stay staged);
+// 2 or more for a merge, which asks first, saying where HEAD goes and that
+// the merged branch keeps its commits. Refused before the first commit and
+// on a detached HEAD.
+ActionPlan undoCommitPlan(const Snapshot& s, int parents);
+std::vector<std::string> headParentsArgs();          // rev-list --parents -n 1 HEAD --
+int parentCount(const std::string& revListOut);      // its output; -1 if unreadable
+std::vector<std::string> headMessageArgs();          // log -1 --format=%B HEAD --
+// Stash: `stash push --include-untracked`, with `-m` and the message box's
+// text when there is some. Refused with nothing to stash and before the
+// first commit (git cannot stash then).
+ActionPlan stashPlan(const Snapshot& s, const std::string& message);
+// Pop Stash: `stash pop` of the newest. `stashes` is how many there are
+// (stashListArgs prints one a line); refused with none. A pop that
+// conflicts keeps the stash and leaves the conflicts as rows.
+ActionPlan popStashPlan(const Snapshot& s, int stashes);
+std::vector<std::string> stashListArgs();   // stash list --format=%gd
+size_t countLines(const std::string& out);   // non-blank lines
+
+// --------------------------------------------- the editor's change bars
+// The gutter's original (QuickDiff.h) is the file's index entry, read as
+// `ls-files --stage` then `cat-file blob` of its object, so the text and
+// the object it came from are known together; Stage Change writes the new
+// text as an object (`hash-object -w --stdin --path`, so the file's clean
+// filters apply as on add) and points the entry at it (`update-index
+// --cacheinfo`), as VS Code's git extension stages selected ranges, after
+// checking that the entry still names the object the bars were made from.
+std::vector<std::string> indexEntryArgs(const std::string& rel);
+struct IndexEntry {
+    bool ok = false;      // one entry, stage 0, a regular file (not a link, a
+                          // submodule or a conflict)
+    std::string mode;     // "100644", "100755"
+    std::string object;   // its blob
+};
+IndexEntry parseIndexEntry(const std::string& lsFilesOut);
+std::vector<std::string> blobArgs(const std::string& object);
+std::vector<std::string> hashObjectArgs(const std::string& rel);
+std::vector<std::string> updateIndexArgs(const IndexEntry& e, const std::string& object,
+                                         const std::string& rel);
 
 // ------------------------------------------------------ the branch picker
 // VS Code's git.checkout: the local branches, most recently committed to

@@ -277,6 +277,13 @@ public:
     // editor.inlay-hint-background color them, VS Code's
     // editorInlayHint.foreground and .background unless set.
     bool inlayHints() const { return inlayHints_; }
+    // editor.git-gutter: change bars beside the line numbers of a file git
+    // tracks (QuickDiff.h; on, the default, as VS Code's scm.diffDecorations
+    // "all"). editor.git-added, editor.git-modified and editor.git-deleted
+    // (kind 0, 1, 2) color them, VS Code's editorGutter.*Background unless
+    // set, dark or light with the theme.
+    bool gitGutter() const { return gitGutter_; }
+    Rgba gitGutterColor(int kind) const;
     Rgba inlayHintColor() const;
     Rgba inlayHintBackground() const;
     // editor.semantic-highlighting: a language server that names what each
@@ -458,6 +465,8 @@ private:
     bool autoClose_ = true;
     bool inlayHints_ = true;
     std::optional<Rgba> inlayHintColor_, inlayHintBackground_;
+    bool gitGutter_ = true;
+    std::optional<Rgba> gitGutterColor_[3];
     bool largeFileOptimizations_ = true;
     bool semanticHighlighting_ = true;
     std::optional<Rgba> semantic_[kSemanticColorCount];
