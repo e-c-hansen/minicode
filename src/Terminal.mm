@@ -736,9 +736,21 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         _screen.setScrollbackLimit(cfg.settings.terminalScrollback());
         self.grid.optionAsMeta = cfg.settings.terminalOptionAsMeta();
     }
+    [self tellScreenTheme];
     [self.findBar applySettings];
     [self applyFontSize];
     [self.grid screenChanged];
+}
+
+// What the screen answers programs that ask (OSC 10, 11 and 12, XTVERSION,
+// DA2): the theme's text and background colors (the cursor is drawn in the
+// text's), and minicode's version.
+- (void)tellScreenTheme {
+    const Settings &cfg = [AppSettings shared].settings;
+    const uint32_t fg = cfg.text(Surface::Terminal).rgb();
+    _screen.setThemeColors(fg, cfg.background(Surface::Terminal).rgb(), fg);
+    NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+    _screen.setVersion(version.UTF8String ?: "");
 }
 
 // terminal.font-size plus the editor's zoom. On a change the input line,
@@ -1271,6 +1283,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     }
     if (!_screen.altScreen() && (_screen.mouseTracking() || _screen.focusEvents()))
         _screen.resetMouseModes();
+    if (!_screen.altScreen() && _screen.keyboardFlags())
+        _screen.resetKeyboardModes();   // kitty keys a killed program left on
     if (!_screen.altScreen() && _screen.synchronizedOutput())
         _screen.feed("\x1b[?2026l");    // a frame a killed program never ended
 }
@@ -2052,6 +2066,7 @@ static NSString *MCBrowserHelperPath(void) {
     // The screen keeps where this shell's marks came, for moving between
     // commands; another program's marks are not believed there either.
     _screen.setMarkNonce(nonce);
+    [self tellScreenTheme];
 
     // The terminal's modes, given to forkpty so the child starts with them:
     // the usual defaults plus IUTF8 (Backspace over a multi-byte character).
@@ -2418,8 +2433,22 @@ static NSString *MCBrowserHelperPath(void) {
     a[NSForegroundColorAttributeName] = fgColor;
     if (defaultFg) a[kDefaultFgAttribute] = @(st.dim);
     if (hasBg) a[NSBackgroundColorAttributeName] = MCColor(bg);
-    if (st.underline) a[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle);
+    if (st.underline) {
+        // The log has no curly line: curly, dotted and dashed as AppKit's
+        // nearest (a dotted pattern, a dashed one); double as double.
+        NSInteger style = NSUnderlineStyleSingle;
+        if (st.underline == TermUnderlineDouble) style = NSUnderlineStyleDouble;
+        else if (st.underline == TermUnderlineDotted || st.underline == TermUnderlineCurly)
+            style = NSUnderlineStyleSingle | NSUnderlinePatternDot;
+        else if (st.underline == TermUnderlineDashed)
+            style = NSUnderlineStyleSingle | NSUnderlinePatternDash;
+        a[NSUnderlineStyleAttributeName] = @(style);
+    }
     if (st.strike) a[NSStrikethroughStyleAttributeName] = @(NSUnderlineStyleSingle);
+    if (st.hidden) {                    // concealed, and kept so by applySettings
+        a[NSForegroundColorAttributeName] = [NSColor clearColor];
+        [a removeObjectForKey:kDefaultFgAttribute];
+    }
     return a;
 }
 

@@ -2045,6 +2045,32 @@ for full-screen programs. Both can be open at once.
   flag's second regional indicator, join the cell before (both models);
   VS16 after a pictograph, a ZWJ join or a flag widen a narrow cell to two
   in place (not at the right edge, not in insert mode).
+- **Mode 2027 and zsh's widths** (2026-11-08): clusters (above) except
+  on the main screen from a 133;A to the next 133;C, where each code point
+  takes `termCodepointWidth`, zsh's own count, so typing at the prompt
+  agrees with ZLE (`TerminalScreen::clusterWidths`). macOS's /bin/zsh never
+  calls libc's wcwidth (`nm -u /bin/zsh` has no `_wcwidth`): it is built
+  with zsh's Unicode 9 table, `Src/wcwidth9.h`, so a regional indicator is
+  2, U+2764 1 and U+093F 0. `tools/gen-zsh-width.py` writes the ranges
+  from that header (fetched, not kept); code points zsh has no width for
+  (non-printing, unassigned in Unicode 9: it shows them as <XXXX>) fall
+  back to `termCharWidth`. DECSET/DECRST 2027 choose clusters or code
+  points for good (RIS undoes it); DECRQM answers what is in effect. The
+  `terminal_vt` suite checks the table against zsh's `${(m)#x}` and Ctrl+A
+  at the prompt. Trap: the harness can run zsh; an agent's own shell may
+  be refused it by the worktree guard.
+- **VT conformance** (2026-11-08, `term:vt-conformance`): DA1 `?62;22c`,
+  DA2 `>1;<version as MMmmpp>;0c`, XTVERSION `DCS >|minicode <version> ST`
+  (the host's `setVersion`), OSC 4/10/11/12 `?` answered from
+  `setThemeColors` (Terminal.mm `tellScreenTheme`, on applySettings),
+  ended with BEL or ST as asked (`TermParser::oscEndedWithBel`); DECSCUSR
+  and mode 12 (the grid draws bar and underline shapes and blinks at 0.6 s
+  only with the keyboard; `terminal.cursor-style` when no program chose);
+  SGR 8/28, 4:0-4:5 and 21, 58/59 (underline colors as ids in the
+  screen's `TermColorTable`, freed by scanning cells when full), 53/55;
+  the kitty keyboard protocol with a stack per screen (16 deep, a fresh
+  alternate screen starts empty, the prompt's return clears both), flag 1
+  only, encoded by `encodeKey`/`encodeChar(..., keyboardFlags)`.
 - **Marks on the screen** (2026-11-06): `TerminalScreen` keeps OSC 133 A, C
   and D (nonce-checked, `setMarkNonce`, as the stream) where they came, as
   a line number from `historyBase` and a column in `marks_`, moved by
@@ -2176,9 +2202,10 @@ for full-screen programs. Both can be open at once.
   and puts the id in `TermStyle::link` of each printed cell, so links survive
   the scrollback and reflow; the open link is kept apart from SGR. 4096 ids at
   most; when full, ids no cell (screen, scrollback, `below_`) uses are freed,
-  else a new link prints plain. TermStyle's six flags are bit-fields so the
-  id keeps it at 16 bytes (a StyleRun per style change in the scrollback; the
-  scrollback-memory check caught 24). Cmd+click on a cell with an id opens its
+  else a new link prints plain. TermStyle's flags and underline style are
+  `uint16_t` bit-fields, and the link and underline color `uint16_t` ids,
+  so it stays 16 bytes (a StyleRun per style change in the scrollback; the
+  scrollback-memory check caught 24; `term:sgr-underline` checks the size). Cmd+click on a cell with an id opens its
   address (file:// only on this host and when the file exists, through
   `TermLinks::hyperlink`), the span is the cells with that id in the wrapped
   line, and the address is the view's tooltip while Cmd hovers.
