@@ -5,10 +5,22 @@
 
 NSNotificationName const MCEditorZoomDidChangeNotification = @"MCEditorZoomDidChange";
 
+NSNotificationName const MCTerminalZoomDidChangeNotification = @"MCTerminalZoomDidChange";
+
 static NSString *const kZoomKey = @"MCEditorZoom";
+// Kept even at 0, so that a missing value means "never set": the first
+// read then starts from the editor's zoom, which the terminals shared
+// until they had one of their own.
+static NSString *const kTerminalZoomKey = @"MCTerminalZoom";
 
 CGFloat MCEditorZoom(void) {
     return (CGFloat)[MCAppDefaults() doubleForKey:kZoomKey];
+}
+
+CGFloat MCTerminalZoom(void) {
+    NSUserDefaults *d = MCAppDefaults();
+    if (![d objectForKey:kTerminalZoomKey]) [d setDouble:MCEditorZoom() forKey:kTerminalZoomKey];
+    return (CGFloat)[d doubleForKey:kTerminalZoomKey];
 }
 
 NSFont *MCMonoFont(CGFloat size, NSFontWeight weight) {
@@ -29,7 +41,7 @@ NSFont *MCEditorFont(void) {
 }
 
 CGFloat MCTerminalFontSize(void) {
-    const CGFloat size = (CGFloat)[AppSettings shared].settings.terminalFontSize() + MCEditorZoom();
+    const CGFloat size = (CGFloat)[AppSettings shared].settings.terminalFontSize() + MCTerminalZoom();
     return MAX((CGFloat)Settings::kMinFontSize, MIN((CGFloat)Settings::kMaxFontSize, size));
 }
 
@@ -74,6 +86,18 @@ BOOL MCEditorZoomBy(CGFloat points) {
     return YES;
 }
 
+BOOL MCTerminalZoomBy(CGFloat points) {
+    const CGFloat base = (CGFloat)[AppSettings shared].settings.terminalFontSize();
+    const CGFloat old = MCTerminalZoom();
+    CGFloat zoom = points == 0 ? 0 : old + points;
+    zoom = MAX((CGFloat)Settings::kMinFontSize - base, MIN((CGFloat)Settings::kMaxFontSize - base, zoom));
+    if (zoom == old) return points == 0;
+    [MCAppDefaults() setDouble:zoom forKey:kTerminalZoomKey];
+    [[NSNotificationCenter defaultCenter] postNotificationName:MCTerminalZoomDidChangeNotification
+                                                        object:nil];
+    return YES;
+}
+
 NSNotificationName const MCEditorWrapDidChangeNotification = @"MCEditorWrapDidChange";
 
 static int gWrapOverride = -1;   // the toggle's choice, -1 for the setting's
@@ -106,5 +130,17 @@ void MCEditorToggleWordWrap(void) {
 - (IBAction)editorZoomReset:(id)sender {
     (void)sender;
     MCEditorZoomBy(0);
+}
+- (IBAction)terminalZoomIn:(id)sender {
+    (void)sender;
+    if (!MCTerminalZoomBy(1)) NSBeep();
+}
+- (IBAction)terminalZoomOut:(id)sender {
+    (void)sender;
+    if (!MCTerminalZoomBy(-1)) NSBeep();
+}
+- (IBAction)terminalZoomReset:(id)sender {
+    (void)sender;
+    MCTerminalZoomBy(0);
 }
 @end

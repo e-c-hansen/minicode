@@ -203,7 +203,7 @@ MC_GUI_SUITE(zoomfit) {
             @"copy:", @"paste:", @"selectAll:", @"performTextFinderAction:",
             @"selectNextTab:", @"selectPreviousTab:", @"terminate:",
             @"orderFrontStandardAboutPanel:", @"editorZoomIn:", @"editorZoomOut:",
-            @"editorZoomReset:"]];
+            @"editorZoomReset:", @"terminalZoomIn:", @"terminalZoomOut:", @"terminalZoomReset:"]];
         NSArray *answerers = @[[[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 10, 10)
                                     styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered
                                         defer:YES],

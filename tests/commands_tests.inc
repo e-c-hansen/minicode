@@ -70,6 +70,15 @@ static void testCommandKeys() {
     CHECK(appliesIn(When::NotPage, When::Editor) && appliesIn(When::NotPage, When::Any));
     CHECK(!appliesIn(When::NotPage, When::Page) && appliesIn(When::Any, When::Page));
     CHECK(appliesIn(When::Page, When::Page) && !appliesIn(When::Page, When::Editor));
+    // Neither a page nor the terminal: the editor's zoom.
+    const When npt = When::NotPageOrTerminal;
+    CHECK(!overlaps(npt, When::Page) && !overlaps(npt, When::Terminal));
+    CHECK(!overlaps(When::Terminal, npt) && !overlaps(When::Page, npt));
+    CHECK(overlaps(npt, When::Editor) && overlaps(npt, When::Tree) && overlaps(npt, When::Any));
+    CHECK(overlaps(npt, When::NotPage) && overlaps(When::NotPage, npt) && overlaps(npt, npt));
+    CHECK(appliesIn(npt, When::Editor) && appliesIn(npt, When::Tree) && appliesIn(npt, When::Any));
+    CHECK(!appliesIn(npt, When::Terminal) && !appliesIn(npt, When::Page));
+    CHECK(appliesIn(When::NotPage, When::Terminal) && !appliesIn(When::Editor, When::Any));
 }
 
 static void testCommandTable() {
@@ -155,21 +164,36 @@ static void testCommandTable() {
           find("minicode.terminal.deleteToLineStart"));
     CHECK(d.commandFor(K("alt+left"), When::Terminal) == find("minicode.terminal.wordLeft"));
     CHECK(d.commandFor(K("space"), When::Tree) == find("minicode.tree.quickLook"));
-    // Cmd+=, Cmd+- and Cmd+0 zoom a web page or a PDF in one, as in Safari,
-    // and are the editor's zoom and Focus File Tree everywhere else.
+    // Cmd+=, Cmd+- and Cmd+0 zoom a web page or a PDF in one, as in Safari;
+    // the zoom keys are the terminals' zoom in a terminal and the editor's
+    // everywhere else, and Cmd+0 is Focus File Tree outside a page.
     CHECK(d.commandFor(K("cmd+="), When::Page) == find("minicode.page.zoomIn"));
     CHECK(d.commandFor(K("shift+cmd+="), When::Page) == find("minicode.page.zoomIn"));
     CHECK(d.commandFor(K("cmd+-"), When::Page) == find("minicode.page.zoomOut"));
     CHECK(d.commandFor(K("cmd+0"), When::Page) == find("minicode.page.actualSize"));
-    for (When w : {When::Editor, When::Terminal, When::Tree, When::Any}) {
+    for (When w : {When::Editor, When::Tree, When::Any}) {
         CHECK(d.commandFor(K("cmd+="), w) == find("editor.action.fontZoomIn"));
+        CHECK(d.commandFor(K("shift+cmd+="), w) == find("editor.action.fontZoomIn"));
         CHECK(d.commandFor(K("cmd+-"), w) == find("editor.action.fontZoomOut"));
-        CHECK(d.commandFor(K("cmd+0"), w) == find("workbench.action.focusSideBar"));
+        CHECK(d.commandFor(K("alt+cmd+0"), w) == find("editor.action.fontZoomReset"));
+        CHECK(d.commandFor(K("cmd+numpad0"), w) == find("editor.action.fontZoomReset"));
     }
-    // Commands for anywhere still run in a page.
+    for (When w : {When::Editor, When::Terminal, When::Tree, When::Any})
+        CHECK(d.commandFor(K("cmd+0"), w) == find("workbench.action.focusSideBar"));
+    CHECK(d.commandFor(K("cmd+="), When::Terminal) == find("workbench.action.terminal.fontZoomIn"));
+    CHECK(d.commandFor(K("shift+cmd+="), When::Terminal) ==
+          find("workbench.action.terminal.fontZoomIn"));
+    CHECK(d.commandFor(K("cmd+-"), When::Terminal) == find("workbench.action.terminal.fontZoomOut"));
+    CHECK(d.commandFor(K("alt+cmd+0"), When::Terminal) ==
+          find("workbench.action.terminal.fontZoomReset"));
+    CHECK(d.commandFor(K("cmd+numpad0"), When::Terminal) ==
+          find("workbench.action.terminal.fontZoomReset"));
+    CHECK(d.commandsFor(K("cmd+=")).size() == 3);
+    // Commands for anywhere still run in a page; neither zoom's reset does
+    // (the page's own is Cmd+0).
     CHECK(d.commandFor(K("cmd+b"), When::Page) ==
           find("workbench.action.toggleSidebarVisibility"));
-    CHECK(d.commandFor(K("alt+cmd+0"), When::Page) == find("editor.action.fontZoomReset"));
+    CHECK(d.commandFor(K("alt+cmd+0"), When::Page) == nullptr);
     CHECK(d.commandFor(K("alt+z"), When::Editor) == find("editor.action.toggleWordWrap"));
     CHECK(d.commandFor(K("alt+z"), When::Terminal) == nullptr);
     CHECK(d.commandFor(K("ctrl+cmd+m"), When::Page) == find("minicode.toggleMaximizedPane"));
@@ -193,6 +217,29 @@ static void testCommandTable() {
                     &errs);
         CHECK(errs.size() == 1 && errs[0].line == 2 &&
               errs[0].message.find("in the file tree") != std::string::npos);
+        // The terminals' zoom and the editor's share keys without a
+        // conflict; one given a key keeps the other's.
+        errs.clear();
+        m = resolve("ctrl+alt+cmd+z = workbench.action.terminal.fontZoomIn\n"
+                    "ctrl+alt+cmd+z = editor.action.fontZoomIn\n", &errs);
+        CHECK(errs.empty());
+        m = resolve("ctrl+cmd+= = workbench.action.terminal.fontZoomIn\n", &errs);
+        CHECK(errs.empty());
+        CHECK(m.commandFor(K("ctrl+cmd+="), When::Terminal) ==
+              find("workbench.action.terminal.fontZoomIn"));
+        CHECK(m.commandFor(K("cmd+="), When::Terminal) == find("workbench.action.terminal.fontZoomIn"));
+        CHECK(m.commandFor(K("cmd+="), When::Editor) == find("editor.action.fontZoomIn"));
+        // Clear Terminal's Cmd+K given to the editor's zoom: no conflict
+        // (not where both apply), and an anywhere command against the
+        // editor's zoom is one, named as anywhere but a page or a terminal.
+        m = resolve("cmd+k = editor.action.fontZoomIn\n", &errs);
+        CHECK(errs.empty() && m.commandFor(K("cmd+k"), When::Terminal) ==
+                                  find("workbench.action.terminal.clear"));
+        m = resolve("ctrl+alt+cmd+z = editor.action.fontZoomIn\n"
+                    "ctrl+alt+cmd+z = minicode.toggleBrowser\n", &errs);
+        CHECK(errs.size() == 1 && errs[0].line == 2);
+        CHECK(defaultFileText().find("but not in a web page, a PDF, or the terminal") !=
+              std::string::npos);
     }
     {
         std::vector<Error> errs;

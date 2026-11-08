@@ -7,14 +7,22 @@
 // writing the settings file. What follows the size: the editor's text, the
 // line numbers, the ruler's column, the completion list and the hover,
 // signature and documentation boxes (scaled from their sizes at 13 points).
-// The terminal's size is terminal.font-size (12) plus the same zoom, as VS
-// Code's zoom scales the whole window, and the Markdown preview's sizes
-// are scaled by the zoom (MCZoomScale) as well.
+// The Markdown preview's sizes are scaled by the zoom (MCZoomScale) as well.
+//
+// The terminals have a zoom of their own, in the user defaults too
+// (MCTerminalZoom), which the same keys change while a terminal has the
+// keyboard (Terminal > Zoom In, Zoom Out, Reset Zoom): their size is
+// terminal.font-size (12) plus it, for every terminal in every window, so
+// shrinking the terminal leaves the editor alone and the other way round.
+// The first time it is read it starts at the editor's zoom, which the
+// terminals followed before they had their own.
 #import <Cocoa/Cocoa.h>
 
 // Posted (object nil) when the zoom changes; a change of editor.font-size
 // comes as MCSettingsDidChangeNotification instead.
 extern NSNotificationName const MCEditorZoomDidChangeNotification;
+// Posted (object nil) when the terminals' zoom changes.
+extern NSNotificationName const MCTerminalZoomDidChangeNotification;
 
 // +[NSFont monospacedSystemFontOfSize:weight:], never nil. AppKit returns
 // nil now and then when another thread is making fonts at the same time
@@ -37,7 +45,9 @@ CGFloat MCZoomScale(void);
 CGFloat MCZoomed(CGFloat points);
 // Points added to editor.font-size (0 when not zoomed).
 CGFloat MCEditorZoom(void);
-// terminal.font-size plus the zoom, within the same limits.
+// Points added to terminal.font-size (0 when not zoomed).
+CGFloat MCTerminalZoom(void);
+// terminal.font-size plus the terminals' zoom, within the same limits.
 CGFloat MCTerminalFontSize(void);
 // The terminal's monospaced font at that size, regular, bold, italic or
 // both; kept per size, so asking is cheap.
@@ -45,6 +55,8 @@ NSFont *MCTerminalFont(BOOL bold, BOOL italic);
 // Zoom in or out by `points` (0 resets), kept within 6 to 72 points in all.
 // NO, and nothing changes, at a limit.
 BOOL MCEditorZoomBy(CGFloat points);
+// The same for the terminals' zoom.
+BOOL MCTerminalZoomBy(CGFloat points);
 
 // Word wrap in the editor: editor.word-wrap (on by default), unless View >
 // Word Wrap (Option+Z) turned it over since, for every window, until the
@@ -59,4 +71,7 @@ void MCEditorToggleWordWrap(void);
 - (IBAction)editorZoomIn:(id)sender;
 - (IBAction)editorZoomOut:(id)sender;
 - (IBAction)editorZoomReset:(id)sender;
+- (IBAction)terminalZoomIn:(id)sender;
+- (IBAction)terminalZoomOut:(id)sender;
+- (IBAction)terminalZoomReset:(id)sender;
 @end

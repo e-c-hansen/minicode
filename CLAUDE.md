@@ -733,13 +733,21 @@ container (PanelHost, laid out by hand in layoutContainer)
   0; Cmd+0 stays Focus File Tree. `MCEditorFont()` is `editor.font-size` (13)
   plus `MCEditorZoom` (user defaults, every window, never in the settings
   file); `MCZoomScale` is (13 + zoom) / 13 for the Markdown preview
-  (re-rendered keeping its place) and the edit popovers; the terminal adds the
-  zoom to `terminal.font-size` (`MCEditorZoomDidChangeNotification`).
+  (re-rendered keeping its place) and the edit popovers. **The terminals
+  have their own zoom** (2026-11-08, the owner's report: shrinking one
+  shrank the other): `MCTerminalZoom` (defaults, every terminal in every
+  window; seeded once from the editor's zoom), added to
+  `terminal.font-size`, changed by the same keys while a terminal (grid or
+  line mode) has the keyboard: the registry's
+  `workbench.action.terminal.fontZoom*` rows are `When::Terminal` and the
+  editor's are `When::NotPageOrTerminal`, so neither overlaps; a Terminal
+  command's key another command also has stays off its menu item
+  (`MenuShows`), and the key monitor runs it (`MCTerminalZoomDidChange`).
   In a page (the browser pane, its toolbar, a PDFView, the LaTeX preview)
   Cmd+=, Cmd+- and Cmd+0 are Page Zoom instead (2026-11-06,
   `EditorController+ZoomFit.mm`, `PageZoom.{h,mm}`): the registry's
-  `When::Page` against `When::NotPage` (the editor's zoom and Focus File
-  Tree), which do not overlap; a page command's keys stay off its menu item
+  `When::Page` against `When::NotPage` (Focus File Tree) and
+  `NotPageOrTerminal` (the editor's zoom), which do not overlap; a page command's keys stay off its menu item
   like a tree command's, and the key monitor runs them while a page has the
   keyboard, or after a scroll or click landed in one with no key since
   (`MCPagePointedAt`). Safari's steps; the user's page keeps a zoom per site
@@ -2221,7 +2229,8 @@ for full-screen programs. Both can be open at once.
   (`terminal.option-as-meta`); Option+Left/Right send ESC b / ESC f.
   Shift+Return is ESC CR (Claude Code's new line). Shift+F10 is the context
   menu, not the program's.
-- **Font**: `terminal.font-size` (12) plus the zoom; the grid remeasures its
+- **Font**: `terminal.font-size` (12) plus the terminals' own zoom
+  (`MCTerminalZoom`, see "Zoom"; never the editor's); the grid remeasures its
   cell, the input line and log re-font (keeping weight and slant), the panel
   relays out and the pty gets the rows and columns that fit.
 - **Line mode**: `zsh -l -i +Z`, `ZDOTDIR` at

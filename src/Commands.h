@@ -37,17 +37,22 @@ namespace Commands {
 
 // Where a command applies, for conflicts and for a key two commands share.
 // Page is a web page in the browser pane (or its toolbar) or a PDF (the
-// LaTeX preview's too); NotPage is everywhere else, so Cmd+= can zoom a page
-// there and the editor's text anywhere else.
-enum class When { Any, Editor, Terminal, Tree, Page, NotPage };
+// LaTeX preview's too); NotPage is everywhere else, so Cmd+0 can be a
+// page's Actual Size there and Focus File Tree anywhere else.
+// NotPageOrTerminal is everywhere but a page and the terminal, so Cmd+= can
+// zoom a page in a page, the terminals in a terminal, and the editor's text
+// anywhere else.
+enum class When { Any, Editor, Terminal, Tree, Page, NotPage, NotPageOrTerminal };
 // "anywhere", "the editor", "the terminal", "the file tree", "a web page or
-// a PDF", "anywhere but a web page or a PDF"
+// a PDF", "anywhere but a web page or a PDF", "anywhere but a web page, a
+// PDF, or the terminal"
 const char* whenName(When w);
 // Can one key press be meant for both? Any meets everything, NotPage
-// everything but Page.
+// everything but Page, NotPageOrTerminal everything but Page and Terminal.
 bool overlaps(When a, When b);
 // Does a command for `w` apply where `where` has the keyboard? Any does
-// everywhere, NotPage everywhere but in a page.
+// everywhere, NotPage everywhere but in a page, NotPageOrTerminal
+// everywhere but in a page or the terminal.
 bool appliesIn(When w, When where);
 
 enum Mod : unsigned { Ctrl = 1, Alt = 2, Shift = 4, Cmd = 8 };

@@ -1,7 +1,7 @@
 // LooseEndsSuite.mm — smaller checks gathered in one file:
 //   make guitest SUITES=multicaret_rows   Up and Down with 50,000 carets
-//   make guitest SUITES=terminal_zoom     terminal.font-size, and the zoom
-//                                         scaling terminals and the preview
+//   make guitest SUITES=terminal_zoom     terminal.font-size, the terminals'
+//                                         zoom and the editor's, apart
 //   make guitest SUITES=terminal_keys     Ctrl+Shift keys of disabled items
 //                                         reaching the program
 //   make guitest SUITES=terminal_exec     exec bash, sh and zsh
@@ -16,6 +16,7 @@
 #import "TerminalGridView.h"
 #import "TerminalPanel.h"
 #import "AppSettings.h"
+#import "TreeDetails.h"
 #include <libproc.h>
 #include <sys/stat.h>
 
@@ -97,8 +98,27 @@ MC_GUI_SUITE(terminal_zoom) {
     MCLooseState *s = [MCLooseState new];
     NSString *md = MCGuiProjectFile(@"zoom.md");
     TerminalAtPrompt(s);
+    MCGuiStep(@"the terminals' zoom starts once from the editor's", ^{
+        [MCAppDefaults() removeObjectForKey:@"MCTerminalZoom"];
+        MCEditorZoomBy(2);
+        GCHECK(MCTerminalZoom() == 2);   // seeded, as the terminals had it
+        MCEditorZoomBy(0);
+        GCHECK(MCTerminalZoom() == 2);   // and its own from then on
+        MCTerminalZoomBy(0);
+        GCHECK(MCTerminalZoom() == 0 && [MCAppDefaults() objectForKey:@"MCTerminalZoom"]);
+        // Their menu items hold no key: the editor's do.
+        NSMenuItem *mine = nil, *editors = nil;
+        for (NSMenuItem *top in NSApp.mainMenu.itemArray)
+            for (NSMenuItem *it in top.submenu.itemArray) {
+                if (it.action == @selector(terminalZoomIn:)) mine = it;
+                if (it.action == @selector(editorZoomIn:) && !it.isHidden) editors = it;
+            }
+        GCHECK(mine != nil && mine.keyEquivalent.length == 0);
+        GCHECK_EQ_STR(editors.keyEquivalent, @"=");
+    });
     MCGuiStep(@"at 12 points with no zoom", ^{
         MCEditorZoomBy(0);
+        MCTerminalZoomBy(0);
         GCHECK(MCTerminalFontSize() == 12);
         GCHECK([TerminalGridView cellFont].pointSize == 12);
         NSTextField *input = [s.term valueForKey:@"input"];
@@ -108,12 +128,16 @@ MC_GUI_SUITE(terminal_zoom) {
         MCGuiNote(@"12 pt: cell %.2f x %.0f, %d columns", s.cell.width, s.cell.height, s.cols);
         GCHECK(s.cols > 20);
     });
-    MCGuiStep(@"Cmd+= twice through the menu", ^{
-        GCHECK(MCGuiPerformMenuKey(s.c.window, 24, NSEventModifierFlagCommand, @"=", @"="));
-        GCHECK(MCGuiPerformMenuKey(s.c.window, 24, NSEventModifierFlagCommand, nil, nil));
+    MCGuiStep(@"Cmd+= and Shift+Cmd+= with the grid's keyboard, through the key monitor", ^{
+        [s.c.window makeFirstResponder:Grid(s.term)];
+        MCGuiSendKeyToApp(s.c.window, 24, NSEventModifierFlagCommand, @"=", @"=");
+        MCGuiSendKeyToApp(s.c.window, 24, NSEventModifierFlagCommand | NSEventModifierFlagShift,
+                          @"+", @"+");
     });
-    MCGuiStep(@"the terminal is at 14 points, with fewer columns", ^{
-        GCHECK(MCEditorZoom() == 2);
+    MCGuiStep(@"the terminal is at 14 points, with fewer columns; the editor as it was", ^{
+        GCHECK(MCTerminalZoom() == 2);
+        GCHECK(MCEditorZoom() == 0);
+        GCHECK(MCEditorFontSize() == 13);
         GCHECK(MCTerminalFontSize() == 14);
         GCHECK([TerminalGridView cellFont].pointSize == 14);
         GCHECK(MCTerminalFont(YES, NO).pointSize == 14);
@@ -135,6 +159,21 @@ MC_GUI_SUITE(terminal_zoom) {
         [s.c focusEditor:nil];
         GCHECK([s.c showFile:md]);
     });
+    MCGuiStep(@"Cmd+= twice in the page zooms the editor, not the terminal", ^{
+        GCHECK([s.c.window.firstResponder isKindOfClass:CodeTextView.class]);
+        MCGuiSendKeyToApp(s.c.window, 24, NSEventModifierFlagCommand, @"=", @"=");
+        // The menu key works as well.
+        GCHECK(MCGuiPerformMenuKey(s.c.window, 24, NSEventModifierFlagCommand, nil, nil));
+        GCHECK(MCEditorZoom() == 2);
+        GCHECK(MCTerminalZoom() == 2 && [TerminalGridView cellFont].pointSize == 14);
+        // Cmd+- in the terminal leaves the editor at 2.
+        [s.c.window makeFirstResponder:Grid(s.term)];
+        MCGuiSendKeyToApp(s.c.window, 27, NSEventModifierFlagCommand, @"-", @"-");
+        GCHECK(MCTerminalZoom() == 1 && MCEditorZoom() == 2);
+        MCGuiSendKeyToApp(s.c.window, 24, NSEventModifierFlagCommand, @"=", @"=");
+        GCHECK(MCTerminalZoom() == 2);
+        [s.c focusEditor:nil];
+    });
     MCGuiStep(@"its text is 15 points scaled by the zoom", ^{
         NSTextView *tv = Text(s.c);
         NSRange r = [tv.string rangeOfString:@"Body text"];
@@ -149,10 +188,12 @@ MC_GUI_SUITE(terminal_zoom) {
         GCHECK(h.pointSize == MCZoomed(26));
         MCGuiNote(@"zoom 2: body %.1f pt, h1 %.1f pt", f.pointSize, h.pointSize);
     });
-    MCGuiStep(@"Option+Cmd+0 resets the editor, the page and the terminal", ^{
-        GCHECK(MCGuiPerformMenuKey(s.c.window, 29, NSEventModifierFlagCommand | NSEventModifierFlagOption,
-                                   nil, nil));
+    MCGuiStep(@"Option+Cmd+0 in the page resets the editor and the page, not the terminal", ^{
+        GCHECK([s.c.window.firstResponder isKindOfClass:CodeTextView.class]);
+        MCGuiSendKeyToApp(s.c.window, 29, NSEventModifierFlagCommand | NSEventModifierFlagOption,
+                          @"0", @"0");
         GCHECK(MCEditorZoom() == 0);
+        GCHECK(MCTerminalZoom() == 2 && [TerminalGridView cellFont].pointSize == 14);
         NSTextView *tv = Text(s.c);
         NSRange r = [tv.string rangeOfString:@"Body text"];
         GCHECK(r.location != NSNotFound);
@@ -161,6 +202,15 @@ MC_GUI_SUITE(terminal_zoom) {
                                    effectiveRange:NULL];
             GCHECK(f.pointSize == 15);
         }
+    });
+    MCGuiStep(@"Option+Cmd+0 in the terminal resets the terminals", ^{
+        [s.c.window makeFirstResponder:Grid(s.term)];
+        MCEditorZoomBy(1);
+        MCGuiSendKeyToApp(s.c.window, 29, NSEventModifierFlagCommand | NSEventModifierFlagOption,
+                          @"0", @"0");
+        GCHECK(MCTerminalZoom() == 0);
+        GCHECK(MCEditorZoom() == 1);
+        MCEditorZoomBy(0);
         GCHECK([TerminalGridView cellFont].pointSize == 12);
         GCHECK(Cols(s.term) == s.cols);
     });
@@ -190,7 +240,12 @@ MC_GUI_SUITE(terminal_zoom) {
                                      effectiveRange:NULL];
         GCHECK(before.pointSize == 16);
         const int cols = Cols(s.term);
-        MCEditorZoomBy(3);
+        // Cmd+= three times with the line-mode terminal's input line.
+        NSTextField *field = [s.term valueForKey:@"input"];
+        GCHECK([s.c.window makeFirstResponder:field]);
+        for (int i = 0; i < 3; i++)
+            MCGuiSendKeyToApp(s.c.window, 24, NSEventModifierFlagCommand, @"=", @"=");
+        GCHECK(MCTerminalZoom() == 3 && MCEditorZoom() == 0);
         NSFont *after = [out.textStorage attribute:NSFontAttributeName atIndex:r.location
                                     effectiveRange:NULL];
         GCHECK(after.pointSize == 19);
@@ -205,6 +260,7 @@ MC_GUI_SUITE(terminal_zoom) {
     });
     MCGuiStep(@"back to the defaults", ^{
         MCEditorZoomBy(0);
+        MCTerminalZoomBy(0);
         [(MCTerminalPanel *)[s.c valueForKey:@"terminalPanel"] closeTerminal:s.term];
         SetSettings(@"lsp.enabled = false\n");
         GCHECK(MCTerminalFontSize() == 12);

@@ -188,6 +188,10 @@ bool MenuShows(const Commands::Command *c, const Key &k, const Commands::Keymap 
     if (!EquivalentFor(k) || KeysOffMenu(c)) return false;
     if (c->language)
         return (k.mods & (Commands::Cmd | Commands::Ctrl)) && map.commandsFor(k).size() == 1;
+    // A terminal command's key that another command has elsewhere (Cmd+=,
+    // the terminals' zoom and the editor's) stays off its item, which would
+    // take the key from the other's; the key monitor runs it in a terminal.
+    if (c->when == Commands::When::Terminal) return map.commandsFor(k).size() == 1;
     return true;
 }
 

@@ -15,21 +15,45 @@ const char* whenName(When w) {
         case When::Tree: return "the file tree";
         case When::Page: return "a web page or a PDF";
         case When::NotPage: return "anywhere but a web page or a PDF";
+        case When::NotPageOrTerminal: return "anywhere but a web page, a PDF, or the terminal";
         case When::Any: break;
     }
     return "anywhere";
 }
 
-bool overlaps(When a, When b) {
-    if (a == When::Any || b == When::Any || a == b) return true;
-    if (a == When::NotPage) return b != When::Page;
-    if (b == When::NotPage) return a != When::Page;
-    return false;
+namespace {
+// The places a When stands for, as bits: the named places, and "other" for
+// what has the keyboard when it is none of them (the source control panel,
+// a viewer, a dialog's field).
+unsigned placesOf(When w) {
+    enum : unsigned { kOther = 1, kEditor = 2, kTerminal = 4, kTree = 8, kPage = 16 };
+    switch (w) {
+        case When::Editor: return kEditor;
+        case When::Terminal: return kTerminal;
+        case When::Tree: return kTree;
+        case When::Page: return kPage;
+        case When::NotPage: return kOther | kEditor | kTerminal | kTree;
+        case When::NotPageOrTerminal: return kOther | kEditor | kTree;
+        case When::Any: break;
+    }
+    return kOther | kEditor | kTerminal | kTree | kPage;
 }
+
+// How many places a When stands for: 1 for a named one.
+int placeCount(When w) {
+    int n = 0;
+    for (unsigned b = placesOf(w); b; b &= b - 1) n++;
+    return n;
+}
+}  // namespace
+
+bool overlaps(When a, When b) { return (placesOf(a) & placesOf(b)) != 0; }
 
 bool appliesIn(When w, When where) {
     if (w == When::Any || w == where) return true;
-    return w == When::NotPage && where != When::Page;
+    // `where` is what has the keyboard; Any there is "none of the others".
+    if (where == When::Any) return w == When::NotPage || w == When::NotPageOrTerminal;
+    return (placesOf(w) & placesOf(where)) == placesOf(where);
 }
 
 std::string languageOfPath(const std::string& path) {
@@ -231,7 +255,7 @@ enum {
 enum { kColumnSize = 1, kColumnSaved = 2, kColumnCreated = 4 };
 
 const When A = When::Any, E = When::Editor, T = When::Terminal, R = When::Tree,
-           P = When::Page, NP = When::NotPage;
+           P = When::Page, NP = When::NotPage, NPT = When::NotPageOrTerminal;
 
 const std::vector<Command>& all() {
     static const std::vector<Command> table = {
@@ -422,12 +446,12 @@ const std::vector<Command>& all() {
         {"minicode.toggleShortcutHints", "Toggle Shortcut Hints", "View", "shift+cmd+h", A,
          "toggleHints:", 0, 0, nullptr},
         // In a web page or a PDF, Cmd+= and Cmd+- zoom that instead (Page
-        // Zoom below).
-        {"editor.action.fontZoomIn", "Zoom In", "View", "cmd+= shift+cmd+=", NP, "editorZoomIn:",
+        // Zoom below), and in a terminal the terminals (Terminal > Zoom In).
+        {"editor.action.fontZoomIn", "Zoom In", "View", "cmd+= shift+cmd+=", NPT, "editorZoomIn:",
          0, 0, nullptr},
-        {"editor.action.fontZoomOut", "Zoom Out", "View", "cmd+-", NP, "editorZoomOut:", 0, 0,
+        {"editor.action.fontZoomOut", "Zoom Out", "View", "cmd+-", NPT, "editorZoomOut:", 0, 0,
          nullptr},
-        {"editor.action.fontZoomReset", "Reset Zoom", "View", "alt+cmd+0 cmd+numpad0", A,
+        {"editor.action.fontZoomReset", "Reset Zoom", "View", "alt+cmd+0 cmd+numpad0", NPT,
          "editorZoomReset:", 0, Global, nullptr},
         // The browser's page or a PDF, while it has the keyboard (or the
         // pointer was last there, scrolling or clicking): Safari's keys. As
@@ -561,6 +585,16 @@ const std::vector<Command>& all() {
         // VS Code has no key for it either.
         {"workbench.action.terminal.copyLastCommandOutput", "Copy Last Command Output",
          "Terminal", "", T, "copyLastCommandOutput:", 0, 0, nullptr},
+        // The terminals' own zoom, in every window, with the editor's keys
+        // while a terminal has the keyboard (VS Code has these without keys,
+        // its window zoom scaling both). The keys stay off the menu items,
+        // which would take them from the editor's; the key monitor runs them.
+        {"workbench.action.terminal.fontZoomIn", "Zoom In", "Terminal", "cmd+= shift+cmd+=", T,
+         "terminalZoomIn:", 0, 0, nullptr},
+        {"workbench.action.terminal.fontZoomOut", "Zoom Out", "Terminal", "cmd+-", T,
+         "terminalZoomOut:", 0, 0, nullptr},
+        {"workbench.action.terminal.fontZoomReset", "Reset Zoom", "Terminal",
+         "alt+cmd+0 cmd+numpad0", T, "terminalZoomReset:", 0, Global, nullptr},
         // VS Code has no Mac key for Rename; moving a tab is a drag there.
         {"workbench.action.terminal.rename", "Rename Terminal…", "Terminal", "", A,
          "renameTerminal:", 0, 0, nullptr},
@@ -896,12 +930,11 @@ Keymap resolve(const std::string& text, std::vector<Error>* errors) {
         for (const Given& g : given[ks]) {
             if (g.cmd == cmd) { again = true; break; }
             if (overlaps(g.cmd->when, cmd->when) && sameLanguage(*g.cmd, *cmd)) {
-                // The narrower of the two: Any, then NotPage, then a place.
-                const bool wider = cmd->when == When::Any ||
-                                   (cmd->when == When::NotPage && g.cmd->when != When::Any);
+                // The narrower of the two: Any, then NotPage, then
+                // NotPageOrTerminal, then a place.
+                const bool wider = placeCount(cmd->when) > placeCount(g.cmd->when);
                 const Command& narrower = wider ? *g.cmd : *cmd;
-                const bool everywhere =
-                    narrower.when == When::Any || narrower.when == When::NotPage;
+                const bool everywhere = placeCount(narrower.when) > 1;
                 err(lineNo, ks + " is already " + describe(*g.cmd) + ", from line " +
                                 std::to_string(g.line) + "; a key can run only one command" +
                                 (everywhere ? std::string()
@@ -976,9 +1009,11 @@ std::string defaultFileText() {
             menu = top;
             s += "\n# ---- " + menu + "\n";
         }
-        std::string where = c.when == When::Any       ? ""
+        std::string where = c.when == When::Any ? ""
                             : c.when == When::NotPage ? ", but not in a web page or a PDF"
-                                                      : std::string(", in ") + placeName(c);
+                            : c.when == When::NotPageOrTerminal
+                                ? ", but not in a web page, a PDF, or the terminal"
+                                : std::string(", in ") + placeName(c);
         std::string comment = std::string(c.menu) + " > " + c.title + where;
         std::vector<Key> keys = defaultKeys(c);
         if (keys.empty()) {

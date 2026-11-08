@@ -1199,7 +1199,9 @@ static void BuildMenu(void) {
     // Cmd+-, and reset on Option+Cmd+0, since Cmd+0 focuses the file tree
     // as VS Code's focuses its side bar (Cmd+keypad 0, VS Code's reset, is
     // caught by the key monitor above). Answered by NSApp (EditorFont.h).
-    NSMenuItem *zoomIn = [[NSMenuItem alloc] initWithTitle:@"Zoom In"
+    // With a terminal's keyboard the key monitor runs the same keys as the
+    // terminals' own zoom (Terminal > Zoom In) before the menu sees them.
+    NSMenuItem *zoomIn =[[NSMenuItem alloc] initWithTitle:@"Zoom In"
                                                     action:@selector(editorZoomIn:)
                                              keyEquivalent:@"="];
     zoomIn.keyEquivalentModifierMask = NSEventModifierFlagCommand;
@@ -1531,6 +1533,13 @@ static void BuildMenu(void) {
     // (TerminalView copyLastCommandOutput:); no key, as in VS Code.
     [termMenu addItemWithTitle:@"Copy Last Command Output"
                         action:@selector(copyLastCommandOutput:)
+                 keyEquivalent:@""];
+    // The terminals' own zoom (EditorFont.h). Its keys are the editor's,
+    // Cmd+=, Cmd+- and Option+Cmd+0, which the key monitor runs as these
+    // while a terminal has the keyboard, so none is on the items.
+    [termMenu addItemWithTitle:@"Zoom In" action:@selector(terminalZoomIn:) keyEquivalent:@""];
+    [termMenu addItemWithTitle:@"Zoom Out" action:@selector(terminalZoomOut:) keyEquivalent:@""];
+    [termMenu addItemWithTitle:@"Reset Zoom" action:@selector(terminalZoomReset:)
                  keyEquivalent:@""];
     [termMenu addItem:[NSMenuItem separatorItem]];
     // The shown tab's active terminal: a name of the user's that wins over

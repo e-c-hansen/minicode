@@ -206,7 +206,7 @@ static bool MCSameCells(const std::vector<TermCell> &a, const std::vector<TermCe
     return self;
 }
 
-// The fonts and the cell follow terminal.font-size and the editor's zoom
+// The fonts and the cell follow terminal.font-size and the terminals' zoom
 // (MCTerminalFont keeps the fonts per size); the cell is measured again
 // whenever the size has changed.
 + (NSFont *)cellFont { return MCTerminalFont(NO, NO); }

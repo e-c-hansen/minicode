@@ -593,7 +593,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
                    name:MCSettingsDidChangeNotification object:nil];
         [[NSNotificationCenter defaultCenter]
             addObserver:self selector:@selector(applyFontSize)
-                   name:MCEditorZoomDidChangeNotification object:nil];
+                   name:MCTerminalZoomDidChangeNotification object:nil];
         if (_lineMode)
             [self appendLine:@"MiniCode terminal — zsh on a pty. Ctrl+C interrupts, "
                               "`clear` resets the panel."
@@ -753,7 +753,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     _screen.setVersion(version.UTF8String ?: "");
 }
 
-// terminal.font-size plus the editor's zoom. On a change the input line,
+// terminal.font-size plus the terminals' zoom. On a change the input line,
 // the prompt and the log take the new size (each run keeps its weight and
 // slant), the panel is laid out again, and the pty gets the rows and
 // columns the new cell fits, which rewraps the grid's lines.

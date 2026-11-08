@@ -302,7 +302,7 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:[self hk:@"editor.action.outdentLines"] label2:@"Outdent lines (or ⇧⇥)" state:nil];
     [self appendHintsRow:s key:[self hk:@"editor.action.insertLineAfter"] label:@"Insert line below"
                     key2:[self hk:@"python.execSelectionInTerminal"] label2:@"Line to Python REPL" state:nil];
-    [self appendHintsRow:s key:[NSString stringWithFormat:@"%@ %@", [self hk:@"editor.action.fontZoomIn"], [self hk:@"editor.action.fontZoomOut"]] label:@"Zoom in, out"
+    [self appendHintsRow:s key:[NSString stringWithFormat:@"%@ %@", [self hk:@"editor.action.fontZoomIn"], [self hk:@"editor.action.fontZoomOut"]] label:@"Zoom the editor in, out"
                     key2:[self hk:@"editor.action.fontZoomReset"] label2:@"Reset zoom" state:nil];
     [self appendHintsRow:s key:[self hk:@"editor.action.toggleWordWrap"] label:@"Word wrap"
                     key2:nil label2:nil state:MCEditorWordWrap() ? @"on" : @"off"];
@@ -383,6 +383,13 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                         key2:nil label2:nil state:nil];
         [self appendHintsRow:s key:[self hk:@"actions.find"] label:@"Find in the terminal"
                         key2:[self hk:@"workbench.action.terminal.clear"] label2:@"Clear the terminal" state:nil];
+        [self appendHintsRow:s
+                         key:[NSString stringWithFormat:@"%@ %@",
+                              [self hk:@"workbench.action.terminal.fontZoomIn"],
+                              [self hk:@"workbench.action.terminal.fontZoomOut"]]
+                       label:@"Zoom the terminals (in one)"
+                        key2:[self hk:@"workbench.action.terminal.fontZoomReset"]
+                      label2:@"Reset their zoom" state:nil];
         if (!self.terminal.lineMode) {
             [self appendHintsRow:s key:@"⇧⇞" label:@"Scroll back"
                             key2:@"⌘↖" label2:@"Top of the scrollback" state:nil];
