@@ -156,9 +156,10 @@ goes here first, with tests; the GUI only displays it.
   UTF-8), `Regex` (its linear-time engine), `Formatter` (Format Document's
   plan), `InstallHints`, `LargeFile.h` (VS Code's large-file thresholds,
   header only).
-- Language servers: `LspClient` (protocol, results, WorkspaceEdits, diagnostics
-  with versions, completion edits, symbols, folding ranges, the second server's
-  routing and `DiagnosticStore`, the Problems rows, watched files' globs and
+- Language servers: `LspClient.h` over nine files (see "LSP": protocol,
+  results, WorkspaceEdits, diagnostics with versions, completion edits,
+  symbols, folding ranges, the second server's routing and
+  `DiagnosticStore`, the Problems rows, watched files' globs and
   registrations), `PythonEnvs` (interpreters found without running any).
 - Terminal: `TerminalStream` (bytes to lines and shell events; `TermParser`,
   `applySgr`, `termCharWidth`), `TerminalScreen` (the grid, scrollback, reflow,
@@ -1246,7 +1247,32 @@ container (PanelHost, laid out by hand in layoutContainer)
 
 ## LSP (read before touching it)
 
-The protocol is `LspClient.cpp`, tested against a scripted server; on the Mac
+The protocol is the core's `LspClient.h`, tested against a scripted server.
+Its code is split by concern (2026-11-08), each file's opening comment
+saying what it holds; a new request adds its parser to the file for its
+kind, its method and capability entry to `LspClient.cpp`:
+
+- `LspClient.cpp`: the `Client` class only (initialize and the
+  capabilities offered, document sync, requests, progress, registrations,
+  server requests, shutdown).
+- `LspProtocol.cpp`: framing, `Reader`, `progressText`.
+- `LspText.cpp`: positions, `PositionIndex`, UTF-8/UTF-16, URIs, `lineOf`.
+- `LspServers.cpp`: languages, commands, the second server, `offers`,
+  routing, the status line, Python servers, `configurationSection`.
+- `LspDiagnostics.cpp`: publishes, `diagnosticSpans`, `DiagnosticStore`,
+  Problems rows, `diagnosticsInRange`.
+- `LspCompletion.cpp`: completion (parse, resolve, filter, accept, late
+  edits) and signature help.
+- `LspFeatures.cpp`: hover, folding, semantic tokens, locations and
+  references, symbols.
+- `LspEdits.cpp`: WorkspaceEdits, formatting results, prepareRename, code
+  actions.
+- `LspSync.cpp`: `ChangeTracker`, ranged contentChanges, watched files.
+- `LspInternal.h`: `lower` and `trim`, for these files only.
+
+Every port's build list names all of them (`linux:build-lists` checks that a
+list naming `LspClient.cpp` names every file implementing `LspClient.h`). On
+the Mac
 `Lsp.mm` and its `Lsp+<Concern>.mm` categories (`LspSession`; "Layout of the
 code" lists them), `LspServer.mm`, `LspPopups.mm` and `CodeTextView.mm` own
 processes and UI; the GTK port has `linux/src/Lsp.cpp` over the same core.
@@ -1261,11 +1287,21 @@ view is disposed (on `unrealize`), or dispose loops forever.
   and unchanged text is dropped. A server with `textDocumentSync.change` 2
   gets ranges: `Lsp::ChangeTracker` (`_changes`) merges the storage's edits
   (`editedRange`, `changeInLength`) into regions of the text as sent, and
-  `Lsp::rangedChanges` turns them into contentChanges, last region first,
-  only after checking the text outside them is the same in both; anything
-  that does not check out (an edit it missed, a boundary inside a character
-  or between \r and \n, over 256 regions, or ranges as big as the text)
-  sends the whole text, so the server's copy is always right.
+  the Mac's flush (2026-11-08) hands `Client::didChange` the length and a
+  `TextReader` over the storage: only each region's new text (and a unit
+  either side) is read, positions come from the client's copy, a
+  `SyncedText` (UTF-16 with line starts kept through edits), and
+  contentChanges go last region first. The regions are trusted, so a pause
+  costs what was typed, not the file (9 ms of main at 2.5 MB before);
+  lengths that do not add up, a boundary inside a surrogate pair or
+  between \r and \n, over 256 regions, or ranges as big as the text send
+  the whole text, and every save compares the whole text (didSave), which
+  repairs a copy an edit the tracker missed made wrong.
+  `MINICODE_LSP_SYNC_CHECK=1` compares after every flush (`setCheckSync`,
+  counted in `syncRepairs`), and `lsp:sync-oracle` checks the copy against
+  a server applying what it is sent. The UTF-8 overloads (GTK, tests) still
+  compare the outside text with `rangedChanges` first. `textFor` is the
+  copy as UTF-16.
 - **Every tab's file stays open** on its server (`syncOpenDocuments`: on show,
   server start, before rename and references, on `tabsChanged`); only a running
   server takes background tabs, so a tab never starts one. With only the file
@@ -1285,7 +1321,14 @@ view is disposed (on `unrealize`), or dispose loops forever.
   the client watches, rust-analyzer stops watching itself, so the GTK port
   does not offer it. Trap: FSEvents keeps a file's created flag on its
   later events, so a path already reported is Changed whatever the flags
-  say (`Lsp::FileEventClassifier`).
+  say (`Lsp::FileEventClassifier`). Batches are matched on the watcher's
+  queue (2026-11-08): `updateFileWatcher` gives it each server's
+  `Client::watchTarget()` with the bases' resolved spellings
+  (`setTargets:`), `Lsp::prepareWatched` builds the framed notification
+  there, and main only writes it (`Client::sendWatchedBatch`, refused when
+  `watchersGeneration` moved on since the copy; then main matches as
+  before). 20,000 changes against 12 watchers took 47 ms of main; now
+  under 2 (`lsp_watch`).
 - **Lookup** (`MCFindProgram`): PATH plus Homebrew, Cargo, Go, ~/.local/bin,
   npm's prefixes, nvm and fnm (newest first), volta, pnpm, bun, pip --user,
   pyenv, MacPorts, /usr/bin and keg-only llvm, since a Finder-launched app has

@@ -251,4 +251,55 @@ static void testLspThreading() {
         Lsp::Client fresh([](const std::string &) {});
         CHECK(fresh.progress() == nullptr);
     }
+
+    GROUP("lsp:progress-stale");
+    {
+        // Work a server never ends stops counting after a minute without
+        // a report; a report brings it back, and a late end drops it.
+        FakeServer srv;
+        Lsp::Client client([&](const std::string &x) { srv.take(x); });
+        double t = 1000;
+        client.setClock([&] { return t; });
+        client.initialize("/w", 1);
+        client.receive(reply(1, "{\"capabilities\":{}}"));
+        auto progress = [&](const std::string &token, const std::string &value) {
+            client.receive(Lsp::Framer::frame(
+                "{\"jsonrpc\":\"2.0\",\"method\":\"$/progress\",\"params\":{\"token\":" + token +
+                ",\"value\":" + value + "}}"));
+        };
+        auto text = [&] {
+            const Lsp::Progress *p = client.progress();
+            return p ? Lsp::progressText(*p) : std::string("-");
+        };
+        progress("\"idx\"", "{\"kind\":\"begin\",\"title\":\"Indexing\"}");
+        CHECK(text() == "Indexing");
+        t += Lsp::Client::kProgressStale;   // exactly a minute: still shown
+        CHECK(text() == "Indexing");
+        t += 0.5;
+        CHECK(text() == "-" && client.progressCount() == 1);
+        progress("\"idx\"", "{\"kind\":\"report\",\"message\":\"3/10\"}");
+        CHECK(text() == "Indexing: 3/10");
+        // A newer token going stale shows the older one still heard from.
+        t += 30;
+        progress("\"other\"", "{\"kind\":\"begin\",\"title\":\"Analyzing\"}");
+        CHECK(text() == "Analyzing");
+        t += 40;   // idx last heard 70 s ago, other 40 s ago
+        CHECK(text() == "Analyzing");
+        progress("\"idx\"", "{\"kind\":\"report\",\"percentage\":50}");
+        t += 30;   // other 70 s, idx 30 s
+        CHECK(text() == "Indexing: 3/10 50%");
+        t += 100;  // both stale
+        CHECK(text() == "-" && client.progressCount() == 2);
+        progress("\"idx\"", "{\"kind\":\"end\"}");
+        progress("\"other\"", "{\"kind\":\"end\"}");
+        CHECK(text() == "-" && client.progressCount() == 0);
+        // The clock left alone: steady time, and fresh work counts.
+        Lsp::Client real([](const std::string &) {});
+        real.initialize("/w", 1);
+        real.receive(reply(1, "{\"capabilities\":{}}"));
+        real.receive(Lsp::Framer::frame(
+            "{\"jsonrpc\":\"2.0\",\"method\":\"$/progress\",\"params\":{\"token\":1,"
+            "\"value\":{\"kind\":\"begin\",\"title\":\"Now\"}}}"));
+        CHECK(real.progress() && real.progress()->title == "Now");
+    }
 }

@@ -102,6 +102,115 @@ static void testLspWatchedFiles() {
         CHECK(Lsp::watcherMatches(noChange, root, change("/w/a.py", FileChangeType::Created)) &&
               !Lsp::watcherMatches(noChange, root, change("/w/a.py", FileChangeType::Changed)) &&
               Lsp::watcherMatches(noChange, root, change("/w/a.py", FileChangeType::Deleted)));
+
+        // matchWatched, which runs on the watcher's queue, against what the
+        // main thread did before (every change against every watcher, the
+        // batch with each alias's respellings after it), on random batches.
+        auto oldMatch = [](const Lsp::WatchTarget &t, const std::vector<FileChange> &changes) {
+            std::vector<FileChange> mine = changes;
+            for (const auto &[real, base] : t.aliases) {
+                if (real.empty() || real == base) continue;
+                for (const FileChange &c : changes)
+                    if (c.path.size() > real.size() && c.path.compare(0, real.size(), real) == 0 &&
+                        c.path[real.size()] == '/')
+                        mine.push_back({base + c.path.substr(real.size()), c.type});
+            }
+            std::vector<FileChange> out;
+            for (const FileChange &c : mine)
+                for (const Lsp::FileWatcher &w : t.watchers)
+                    if (Lsp::watcherMatches(w, t.root, c)) { out.push_back(c); break; }
+            return out;
+        };
+        const std::vector<Lsp::FileWatcher> pool = {
+            {"**/*.py", "", 7},           {"**/*.pyi", "", 7},
+            {"**/pyrightconfig.json", "", 7}, {"**/pyproject.toml", "", 3},
+            {"ruff.toml", "", 7},         {"**", "/opt/site", 7},
+            {"**/*.{so,pyd}", "/opt/site", 5}, {"src/*.c", "", 7},
+            {"/w/abs/**/*.h", "", 7},     {"*.toml", "/w/", 2},
+            {"**/[a-c]*.txt", "", 7},     {"**/.venv/**", "", 4}};
+        const std::vector<std::string> dirs = {"/w", "/w/pkg", "/w/src", "/w/abs/x", "/opt/site",
+                                               "/opt/site/req", "/private/opt/site/req",
+                                               "/w/.venv/lib", "/v"};
+        const std::vector<std::string> names = {"a.py", "b.pyi", "ruff.toml", "pyproject.toml",
+                                                "m.c", "h.h", "lib.so", "apple.txt", "zed.txt",
+                                                "pyrightconfig.json", "notes.md"};
+        std::mt19937 rng(20261108);
+        size_t compared = 0, kept = 0;
+        for (int round = 0; round < 300; round++) {
+            Lsp::WatchTarget t;
+            t.root = "/w";
+            for (const Lsp::FileWatcher &w : pool)
+                if (rng() % 3) t.watchers.push_back(w);
+            if (rng() % 2) t.aliases.push_back({"/private/opt/site", "/opt/site"});
+            std::vector<FileChange> batch;
+            const int n = (int)(rng() % 40);
+            for (int i = 0; i < n; i++)
+                batch.push_back({dirs[rng() % dirs.size()] + "/" + names[rng() % names.size()],
+                                 (FileChangeType)(1 + rng() % 3)});
+            const std::vector<FileChange> want = oldMatch(t, batch);
+            const std::vector<FileChange> got = Lsp::matchWatched(t, batch);
+            bool same = want.size() == got.size();
+            for (size_t i = 0; same && i < want.size(); i++)
+                same = want[i].path == got[i].path && want[i].type == got[i].type;
+            CHECK(same);
+            compared++;
+            kept += got.size();
+        }
+        CHECK(compared == 300 && kept > 300);   // the batches matched something
+        // No watchers: nothing, whatever the batch.
+        CHECK(Lsp::matchWatched(Lsp::WatchTarget(), {change("/w/a.py", FileChangeType::Created)})
+                  .empty());
+    }
+
+    GROUP("lsp:watch-batch");
+    {
+        // A batch matched off the client's thread, written as it is when
+        // the watchers are still the ones it was matched against.
+        FakeServer srv;
+        Lsp::Client client([&](const std::string &b) { srv.take(b); });
+        client.setFileWatching(true);
+        client.initialize("/w", 1);
+        const std::vector<Lsp::FileChange> batch = {
+            {"/w/a.py", Lsp::FileChangeType::Created},
+            {"/w/notes.txt", Lsp::FileChangeType::Changed},
+            {"/w/my file.py", Lsp::FileChangeType::Deleted}};
+        Lsp::WatchedBatch early = Lsp::prepareWatched(client.watchTarget(), batch);
+        CHECK(early.count == 0 && !client.sendWatchedBatch(early));   // not Ready yet
+        client.receive(reply(1, "{\"capabilities\":{}}"));
+        const uint64_t g0 = client.watchersGeneration();
+        client.receive(Lsp::Framer::frame(
+            "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"client/registerCapability\","
+            "\"params\":{\"registrations\":[{\"id\":\"py\","
+            "\"method\":\"workspace/didChangeWatchedFiles\","
+            "\"registerOptions\":{\"watchers\":[{\"globPattern\":\"**/*.py\"}]}}]}}"));
+        CHECK(client.watchersGeneration() == g0 + 1);
+        // Matched on another thread from a copy, as the watcher's queue does.
+        Lsp::WatchTarget t = client.watchTarget();
+        t.id = "main";
+        Lsp::WatchedBatch b;
+        std::thread([&] { b = Lsp::prepareWatched(t, batch); }).join();
+        CHECK(b.id == "main" && b.count == 2 && !b.message.empty());
+        size_t before = srv.sent.size();
+        CHECK(client.sendWatchedBatch(b));
+        CHECK(srv.sent.size() == before + 1 && client.watchedChangesSent() == 2);
+        const Json prepared = srv.sent.back();
+        // The same message didChangeWatchedFiles would have sent.
+        CHECK(client.didChangeWatchedFiles(batch) == 2);
+        CHECK(srv.sent.back().dump() == prepared.dump());
+        CHECK(prepared["params"]["changes"][1]["uri"].asString() == "file:///w/my%20file.py" &&
+              prepared["params"]["changes"][1]["type"].asInt() == 3);
+        // Nothing wanted: true, nothing written.
+        Lsp::WatchedBatch none = Lsp::prepareWatched(t, {{"/w/x.txt", Lsp::FileChangeType::Changed}});
+        before = srv.sent.size();
+        CHECK(none.count == 0 && client.sendWatchedBatch(none) && srv.sent.size() == before);
+        // The watchers changed after the copy: refused, nothing written.
+        client.receive(Lsp::Framer::frame(
+            "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"client/unregisterCapability\","
+            "\"params\":{\"unregisterations\":[{\"id\":\"py\","
+            "\"method\":\"workspace/didChangeWatchedFiles\"}]}}"));
+        before = srv.sent.size();
+        CHECK(!client.sendWatchedBatch(b) && srv.sent.size() == before);
+        CHECK(client.watchedChangesSent() == 4);
     }
 
     GROUP("lsp:watch-events");

@@ -10,12 +10,15 @@
     // The edits to the text on show since it was last sent, for servers
     // that take ranged changes (incremental didChange).
     Lsp::ChangeTracker _changes;
+    double _lastFlushCpuMs;   // the last flushChanges' main-thread CPU time
 
     // Files changed on disk, for the servers that registered watchers
     // (workspace/didChangeWatchedFiles): made with the first registration,
     // remade when the folders wanted change, gone with the last.
     MCLspWatcher *_watcher;
     NSUInteger _watchedBatches;
+    double _watchedMainCpuMs;        // the last batch's main-thread CPU time
+    NSUInteger _watchedMatchedHere;  // servers matched on main, not the queue
     BOOL _stoppingAll;   // stopAllServers is going: the watcher just goes
 }
 @end

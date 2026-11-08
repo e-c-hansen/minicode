@@ -182,6 +182,62 @@ MC_GUI_SUITE(lsp_watch) {
     });
     MCGuiWait(@"the server is gone", 10, ^BOOL { return !Session(c).hasServer; });
 
+    // ------------------------------------------------ a branch switch's batch
+    // 20,000 changes against 12 watchers, as basedpyright registers about
+    // that many: matched and built on the watcher's queue, so the main
+    // thread only writes the message (it matched them itself before, 47 ms).
+    __block NSUInteger matchedHere = 0;
+    const int kBig = 20000;
+    MCGuiStep(@"a server with twelve watchers", ^{
+        NSMutableArray *list = [NSMutableArray array];
+        for (NSString *g in @[@"**/*.py", @"**/*.pyi", @"**/pyrightconfig.json",
+                              @"**/pyproject.toml", @"**/setup.cfg", @"**/setup.py",
+                              @"**/requirements*.txt", @"ruff.toml", @"**/.ruff.toml",
+                              @"**/*.ipynb"])
+            [list addObject:@{@"globPattern": g}];
+        for (NSString *g in @[@"**/*.so", @"**/*.pth"])
+            [list addObject:@{@"globPattern": @{@"baseUri": [@"file://" stringByAppendingString:rlib],
+                                                @"pattern": g}}];
+        NSDictionary *reg = @{@"registrations": @[
+            @{@"id": @"all", @"method": @"workspace/didChangeWatchedFiles",
+              @"registerOptions": @{@"watchers": list}}]};
+        NSString *cmd = MCGuiFakeLsp(@"watchbig", @{@"name": @"fakelsp", @"rules": @[
+            @{@"method": @"initialized",
+              @"request": @[@{@"method": @"client/registerCapability", @"params": reg}]}]},
+                                     nil, nil);
+        MCGuiSetSettings([NSString stringWithFormat:
+            @"lsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n", cmd]);
+        GCHECK([c showFile:a]);
+    });
+    MCGuiWait(@"its folders are watched", 20, ^BOOL {
+        return Session(c).hasServer && Session(c).watchedFolders.count == 2;
+    });
+    MCGuiStep(@"20,000 changes in one batch, half of them wanted", ^{
+        matchedHere = Session(c).watchedBatchesMatchedHere;
+        NSMutableArray *paths = [NSMutableArray arrayWithCapacity:kBig];
+        for (int i = 0; i < kBig / 2; i++) {
+            [paths addObject:[rd stringByAppendingFormat:@"/gen/d%d/m%d.py", i % 97, i]];
+            [paths addObject:[rd stringByAppendingFormat:@"/gen/d%d/m%d.dat", i % 97, i]];
+        }
+        [Session(c) injectWatchedPaths:paths type:2];
+    });
+    MCGuiWait(@"the server gets the 10,000 it wants", 30, ^BOOL {
+        NSUInteger n = 0;
+        for (NSDictionary *m in MCGuiFakeLspReceived(@"watchbig", @"workspace/didChangeWatchedFiles"))
+            n += [m[@"params"][@"changes"] count];
+        return n == (NSUInteger)kBig / 2;
+    });
+    MCGuiStep(@"matched off the main thread, which only wrote the message", ^{
+        GCHECK(Session(c).watchedBatchesMatchedHere == matchedHere);
+        MCGuiNote(@"20,000 changes against 12 watchers: %.2f ms of the main thread's CPU",
+                  Session(c).lastWatchedBatchCpuMs);
+        GCHECK_TIME(Session(c).lastWatchedBatchCpuMs, 2, @"the batch on the main thread");
+        GCHECK(!MentionsAny(@"watchbig", @".dat"));
+        MCGuiSetSettings(@"lsp.enabled = false\n");
+        [c closeAllTabs:nil];
+    });
+    MCGuiWait(@"that server is gone", 10, ^BOOL { return !Session(c).hasServer; });
+
     // ------------------------------------------------ the real servers
     NSString *bp = Installed(@"basedpyright-langserver"), *ruff = Installed(@"ruff");
     if (!bp || !ruff) {

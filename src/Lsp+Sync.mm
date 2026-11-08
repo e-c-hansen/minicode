@@ -8,6 +8,15 @@
 #import "Lsp+SyncIvars.h"
 #import "LspWatcher.h"
 
+#include <time.h>
+
+// This thread's CPU time in milliseconds, for the checks' bounds.
+static double MCThreadCpuMs() {
+    struct timespec ts;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
+
 @implementation LspSession (Sync)
 
 // ---- documents
@@ -273,15 +282,35 @@
 - (void)updateFileWatcher {
     if (_stoppingAll) return;
     NSArray<NSString *> *want = [self wantedWatchFolders];
-    if (_watcher && [want isEqualToArray:_watcher.paths]) return;
-    [_watcher stop];
-    _watcher = nil;
-    if (!want.count) return;
-    __weak LspSession *weakSelf = self;
-    _watcher = [[MCLspWatcher alloc] initWithPaths:want
-                                           handler:^(const std::vector<Lsp::FileChange> &changes) {
-        [weakSelf filesChangedOnDisk:changes];
-    }];
+    if (!_watcher || ![want isEqualToArray:_watcher.paths]) {
+        [_watcher stop];
+        _watcher = nil;
+        if (!want.count) return;
+        __weak LspSession *weakSelf = self;
+        _watcher = [[MCLspWatcher alloc] initWithPaths:want
+                                               handler:^(const std::vector<Lsp::FileChange> &changes,
+                                                         const std::vector<Lsp::WatchedBatch> &batches) {
+            [weakSelf filesChangedOnDisk:changes batches:batches];
+        }];
+    }
+    [_watcher setTargets:[self watchTargets]];
+}
+
+// What each watching server's watchers are, for the watcher's queue to
+// match batches against: copied here, with the bases a server spelled
+// through a link and their resolved spelling, as FSEvents reports it.
+- (std::vector<Lsp::WatchTarget>)watchTargets {
+    std::vector<Lsp::WatchTarget> out;
+    for (MCLspServer *s in [self watchingServers]) {
+        Lsp::WatchTarget t = s.client.watchTarget();
+        t.id = Std(s.serverId);
+        for (const std::string &base : s.client.watchedBases()) {
+            std::string real = Std(RealPath(NS(base)));
+            if (!real.empty() && real != base) t.aliases.push_back({real, base});
+        }
+        out.push_back(std::move(t));
+    }
+    return out;
 }
 
 // stopAllServers: every server stops without the watcher being remade for
@@ -295,26 +324,49 @@
 }
 
 // A batch from the watcher: each server gets the changes its watchers
-// want. A base a server spelled another way than FSEvents does (through a
-// link) gets the change under its own spelling too.
-- (void)filesChangedOnDisk:(const std::vector<Lsp::FileChange> &)changes {
+// want, matched on the watcher's queue against the copy -watchTargets
+// gave it, so here the ready message is only written. A server whose
+// watchers changed since that copy (or that had none in it) is matched
+// here, as before. A base a server spelled another way than FSEvents
+// does (through a link) gets the change under its own spelling too.
+- (void)filesChangedOnDisk:(const std::vector<Lsp::FileChange> &)changes
+                   batches:(const std::vector<Lsp::WatchedBatch> &)batches {
+    const double c0 = MCThreadCpuMs();
     _watchedBatches++;
     for (MCLspServer *s in [self watchingServers]) {
-        std::vector<Lsp::FileChange> mine = changes;
+        const std::string sid = Std(s.serverId);
+        const Lsp::WatchedBatch *mine = nullptr;
+        for (const Lsp::WatchedBatch &b : batches)
+            if (b.id == sid) { mine = &b; break; }
+        if (mine && s.client.sendWatchedBatch(*mine)) continue;
+        Lsp::WatchTarget t = s.client.watchTarget();
         for (const std::string &base : s.client.watchedBases()) {
             std::string real = Std(RealPath(NS(base)));
-            if (real.empty() || real == base) continue;
+            if (!real.empty() && real != base) t.aliases.push_back({real, base});
+        }
+        std::vector<Lsp::FileChange> respelled = changes;
+        for (const auto &[real, base] : t.aliases)
             for (const Lsp::FileChange &c : changes)
                 if (c.path.size() > real.size() && c.path.compare(0, real.size(), real) == 0 &&
                     c.path[real.size()] == '/')
-                    mine.push_back({base + c.path.substr(real.size()), c.type});
-        }
-        s.client.didChangeWatchedFiles(mine);
+                    respelled.push_back({base + c.path.substr(real.size()), c.type});
+        s.client.didChangeWatchedFiles(respelled);
+        _watchedMatchedHere++;
     }
+    _watchedMainCpuMs = MCThreadCpuMs() - c0;
 }
 
 - (NSArray<NSString *> *)watchedFolders { return _watcher.paths ?: @[]; }
 - (NSUInteger)watchedBatches { return _watchedBatches; }
+- (double)lastWatchedBatchCpuMs { return _watchedMainCpuMs; }
+- (NSUInteger)watchedBatchesMatchedHere { return _watchedMatchedHere; }
+
+- (void)injectWatchedPaths:(NSArray<NSString *> *)paths type:(int)type {
+    std::vector<Lsp::FileChange> changes;
+    changes.reserve(paths.count);
+    for (NSString *p in paths) changes.push_back({Std(p), (Lsp::FileChangeType)type});
+    [_watcher injectChanges:changes];
+}
 
 - (void)setRoot:(NSString *)root {
     [self closeDocument];
@@ -331,15 +383,31 @@
 // didChange, a moment after typing pauses: the edits since the text was
 // last sent, as ranges, for servers that take them (and when they come to
 // less than the text), else the whole text. Anything that asks the server
-// about the text flushes first.
+// about the text flushes first, so with no edits this costs nothing. Only
+// the changed pieces of the text are read (Client::didChange's TextReader):
+// a pause in a 2.5 MB file cost 9 ms of the main thread when the whole
+// buffer was converted and compared each time.
 - (void)flushChanges {
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushChanges)
                                                object:nil];
     if (!_servers.count || !_uri) { _changes.reset(); return; }
-    std::string text = Std(_tv.string);
-    for (MCLspServer *server in _servers) server.client.didChange(Std(_uri), text, _changes);
+    const double c0 = MCThreadCpuMs();
+    NSString *text = _tv.string;
+    const size_t length = text.length;
+    Lsp::TextReader read = [text, length](size_t start, size_t n) {
+        start = std::min(start, length);
+        n = std::min(n, length - start);
+        std::u16string out(n, u'\0');
+        if (n) [text getCharacters:(unichar *)out.data() range:NSMakeRange(start, n)];
+        return out;
+    };
+    const std::string uri = Std(_uri);
+    for (MCLspServer *server in _servers) server.client.didChange(uri, length, _changes, read);
     _changes.reset();
+    _lastFlushCpuMs = MCThreadCpuMs() - c0;
 }
+
+- (double)lastFlushCpuMs { return _lastFlushCpuMs; }
 
 - (void)storageEdited:(NSNotification *)note {
     NSTextStorage *ts = note.object;

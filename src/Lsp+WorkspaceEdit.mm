@@ -23,8 +23,8 @@
 // disk's.
 - (NSString *)serverTextOfPath:(NSString *)path uri:(const std::string &)uri {
     for (MCLspEntry *e in _entries.allValues) {
-        const std::string *t = e.server ? e.server.client.textFor(uri) : nullptr;
-        if (t) return NS(*t);
+        const std::u16string *t = e.server ? e.server.client.textFor(uri) : nullptr;
+        if (t) return [NSString stringWithCharacters:(const unichar *)t->data() length:t->size()];
     }
     return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
 }

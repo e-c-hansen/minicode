@@ -359,6 +359,10 @@ static NSString *StateText(MCLspState state) {
     // A server registered or dropped file watchers: the folders watched
     // follow, once the request it came in has been answered.
     c.setFileWatching(true);
+    // MINICODE_LSP_SYNC_CHECK=1: after every ranged didChange the whole
+    // buffer is compared with the copy the server was given (a debugging
+    // switch; the copy is otherwise trusted between saves).
+    if (getenv("MINICODE_LSP_SYNC_CHECK")) c.setCheckSync(true);
     c.onWatchersChanged = [weakSelf] {
         dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf updateFileWatcher]; });
     };
@@ -417,6 +421,29 @@ static NSString *StateText(MCLspState state) {
         if (!me) return;
         me->_progressPending = NO;
         [me changed];
+    });
+    [self redrawWhenProgressAges];
+}
+
+// Work a server stopped reporting on goes stale (Client::kProgressStale)
+// with no message to redraw for: one check a little after that, again
+// while any server still holds work.
+- (void)redrawWhenProgressAges {
+    if (_progressAgeing) return;
+    _progressAgeing = YES;
+    __weak LspSession *weakSelf = self;
+    const double after = Lsp::Client::kProgressStale + 1;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(after * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        LspSession *me = weakSelf;
+        if (!me) return;
+        me->_progressAgeing = NO;
+        [me changed];
+        for (MCLspEntry *e in me->_entries.allValues)
+            if (e.server && e.server.client.progressCount() > 0) {
+                [me redrawWhenProgressAges];
+                break;
+            }
     });
 }
 

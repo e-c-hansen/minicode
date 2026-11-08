@@ -231,7 +231,7 @@ NSHashTable<LspSession *> *MCLspAllSessions(void);
 - (BOOL)uri:(const std::string &)a isSameFileAs:(NSString *)b;
 - (void)diagnosticsArrived:(const std::string &)uri
                       list:(const std::vector<Lsp::Diagnostic> &)list
-                      base:(const std::string *)base
+                      base:(const std::u16string *)base
                     server:(MCLspServer *)server;
 - (void)problemsChanged;
 - (void)paintDiagnostics;

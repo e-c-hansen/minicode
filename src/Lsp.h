@@ -293,6 +293,17 @@ void MCForgetFolderToolsConsent(NSString *root);
 // watcher), and the batches of changes handed to the servers so far.
 @property(nonatomic, readonly) NSArray<NSString *> *watchedFolders;
 @property(nonatomic, readonly) NSUInteger watchedBatches;
+// The main thread's CPU time (ms) for the last batch, and how many times a
+// server's share was matched on the main thread (its watchers changed
+// after the watcher's queue copied them) rather than on the queue.
+@property(nonatomic, readonly) double lastWatchedBatchCpuMs;
+@property(nonatomic, readonly) NSUInteger watchedBatchesMatchedHere;
+// A batch as if FSEvents had reported `paths` (absolute, resolved), each
+// with `type` (1 created, 2 changed, 3 deleted), through the watcher's
+// queue; nothing without a watcher.
+- (void)injectWatchedPaths:(NSArray<NSString *> *)paths type:(int)type;
+// The last didChange flush's main-thread CPU time (ms).
+@property(nonatomic, readonly) double lastFlushCpuMs;
 @end
 
 // ---- inlay hints (Lsp+InlayHints.mm): the lines on show, asked of the

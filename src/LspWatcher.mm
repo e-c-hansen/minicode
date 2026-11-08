@@ -2,17 +2,22 @@
 #import "LspWatcher.h"
 #import <CoreServices/CoreServices.h>
 #include <atomic>
+#include <memory>
+#include <mutex>
 #include <sys/stat.h>
 
 // What the stream's callback holds (retained by the stream through its
 // context): the handler, whether the watcher still wants batches (a batch
 // already on its way to the main thread when -stop runs is dropped there),
-// and which paths it has reported as there (used on the stream's queue
-// only).
+// which paths it has reported as there (used on the stream's queue only),
+// and the servers' watchers to match against (set from the main thread,
+// read on the queue, under the lock).
 @interface MCLspWatchBox : NSObject {
 @public
     std::atomic<bool> active;
     Lsp::FileEventClassifier classifier;
+    std::mutex lock;
+    std::shared_ptr<const std::vector<Lsp::WatchTarget>> targets;
 }
 @property(nonatomic, copy) MCLspWatcherHandler handler;
 @property(nonatomic, weak) MCLspWatcher *owner;
@@ -23,6 +28,8 @@
 @interface MCLspWatcher ()
 - (void)delivered;
 @end
+
+static void MCLspWatchDeliver(MCLspWatchBox *box, std::vector<Lsp::FileChange> changes);
 
 static void MCLspWatchCallback(ConstFSEventStreamRef stream, void *info, size_t n,
                                void *eventPaths, const FSEventStreamEventFlags flags[],
@@ -55,12 +62,27 @@ static void MCLspWatchCallback(ConstFSEventStreamRef stream, void *info, size_t 
                              kFSEventStreamEventFlagItemRenamed)) != 0;
         changes.push_back({path, box->classifier.classify(path, exists, created)});
     }
+    MCLspWatchDeliver(box, std::move(changes));
+}
+
+// On the stream's queue: coalesce, match against every target, and hand
+// the batch and the ready messages to the main thread.
+static void MCLspWatchDeliver(MCLspWatchBox *box, std::vector<Lsp::FileChange> changes) {
     changes = Lsp::coalesceFileChanges(changes);
     if (changes.empty()) return;
+    std::shared_ptr<const std::vector<Lsp::WatchTarget>> targets;
+    {
+        std::lock_guard<std::mutex> hold(box->lock);
+        targets = box->targets;
+    }
+    auto batches = std::make_shared<std::vector<Lsp::WatchedBatch>>();
+    if (targets)
+        for (const Lsp::WatchTarget &t : *targets) batches->push_back(Lsp::prepareWatched(t, changes));
+    auto shared = std::make_shared<const std::vector<Lsp::FileChange>>(std::move(changes));
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!box->active.load()) return;
         [box.owner delivered];
-        if (box.handler) box.handler(changes);
+        if (box.handler) box.handler(*shared, *batches);
     });
 }
 
@@ -111,6 +133,20 @@ static void MCLspWatchCallback(ConstFSEventStreamRef stream, void *info, size_t 
 
 - (void)delivered {
     _batches++;
+}
+
+- (void)setTargets:(const std::vector<Lsp::WatchTarget> &)targets {
+    auto copy = std::make_shared<const std::vector<Lsp::WatchTarget>>(targets);
+    std::lock_guard<std::mutex> hold(_box->lock);
+    _box->targets = std::move(copy);
+}
+
+- (void)injectChanges:(const std::vector<Lsp::FileChange> &)changes {
+    MCLspWatchBox *box = _box;
+    std::vector<Lsp::FileChange> copy = changes;
+    dispatch_async(_queue, ^{
+        if (box->active.load()) MCLspWatchDeliver(box, copy);
+    });
 }
 
 - (void)stop {

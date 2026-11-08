@@ -36,7 +36,10 @@ LDFLAGS  := -framework Cocoa -framework WebKit -framework CoreServices \
 CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.cpp \
             src/TerminalScreen.cpp \
             src/Settings.cpp src/RunFile.cpp src/LineComments.cpp \
-            src/LatexDoc.cpp src/SyncTex.cpp src/Json.cpp src/LspClient.cpp src/InlayHints.cpp \
+            src/LatexDoc.cpp src/SyncTex.cpp src/Json.cpp src/InlayHints.cpp \
+            src/LspClient.cpp src/LspProtocol.cpp src/LspText.cpp src/LspServers.cpp \
+            src/LspDiagnostics.cpp src/LspCompletion.cpp src/LspSync.cpp src/LspFeatures.cpp \
+            src/LspEdits.cpp \
             src/TermLinks.cpp src/FolderSearch.cpp src/TextFind.cpp src/Regex.cpp \
             src/MarkdownEdit.cpp src/MarkdownTasks.cpp \
             src/GitStatus.cpp src/GitGraph.cpp src/GitModel.cpp src/MathTex.cpp src/EditorTabs.cpp \
@@ -337,7 +340,9 @@ build/guitest: $(GUI_OBJ)
 # installed (the CI runner). Plain C++ from the core's JSON and framing, built
 # with the tests' flags, so it builds on Linux too.
 FAKELSP     := build/fakelsp
-FAKELSP_OBJ := $(TESTDIR)/fakelsp/fakelsp.cpp.o $(TESTDIR)/Json.cpp.o $(TESTDIR)/LspClient.cpp.o
+LSP_CORE    := $(filter src/Lsp%,$(CORE_SRC))
+FAKELSP_OBJ := $(TESTDIR)/fakelsp/fakelsp.cpp.o $(TESTDIR)/Json.cpp.o \
+               $(patsubst src/%,$(TESTDIR)/%.o,$(LSP_CORE))
 
 $(TESTDIR)/fakelsp/%.cpp.o: tests/fakelsp/%.cpp $(TESTDIR)/flags.txt
 	@mkdir -p $(@D)
