@@ -180,6 +180,32 @@ MC_GUI_SUITE(markdown_math) {
             GCHECK(alone && !alone.failed && fabs(alone.size.width - widths[0].doubleValue) < 0.01);
             GCHECK([c closeTab:[c valueForKey:@"activeTab"] prompt:NO]);
         });
+        // Page-level state: the page color, by name or as an environment,
+        // would fill every later page of the batch. Both are refused
+        // before the run, with the reason on hover, and y is typeset.
+        NSString *page2 = Fixture(@"pagecolor.md");
+        MCGuiStep(@"with a real tectonic: a formula that sets the page color", ^{
+            MCGuiWriteFile(page2, @"A $\\pagecolor{red} p$ B $\\begin{pagecolor}{red}q\\end{pagecolor}$ "
+                                  @"C $y$ D\n");
+            GCHECK([c showFile:page2]);
+        });
+        MCGuiWait(@"tectonic typesets y", 240, ^BOOL { return Pictures(c).count >= 1; });
+        MCGuiStep(@"the page color is refused; y is typeset", ^{
+            NSArray<NSArray *> *pics = Pictures(c);
+            GCHECK(pics.count == 1);
+            for (NSString *tex in @[@"\\pagecolor{red} p", @"\\begin{pagecolor}"]) {
+                const NSRange r = [Text(c).string rangeOfString:tex];
+                GCHECK(r.location != NSNotFound);
+                if (r.location == NSNotFound) continue;
+                NSString *tip = [Text(c).textStorage attribute:NSToolTipAttributeName atIndex:r.location
+                                                effectiveRange:NULL];
+                MCGuiNote(@"%@: %@", tex, tip);
+                GCHECK([tip containsString:@"not allowed"]);
+            }
+            MCMathFormula *y = MCMathLookup(@"y", NO);
+            GCHECK(y && !y.failed);
+            GCHECK([c closeTab:[c valueForKey:@"activeTab"] prompt:NO]);
+        });
     }
 
     MCGuiStep(@"put everything back", ^{

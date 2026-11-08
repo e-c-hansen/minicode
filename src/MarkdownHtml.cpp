@@ -24,34 +24,123 @@ std::string escape(const std::string& text) {
 
 namespace {
 
+// Whether an address may go into the page is decided on the address as a
+// browser will read it, never on the bytes as written: a browser's URL
+// parser (WHATWG URL, the basic URL parser) strips leading and trailing C0
+// controls and spaces and removes every tab and line break, so "\tjava
+// script:x" is a javascript: link. Each reading below is taken for its
+// scheme, and every one must be on the allow list.
+
+// `url` as a browser's URL parser reads it.
+std::string browserForm(const std::string& url) {
+    size_t a = 0, b = url.size();
+    while (a < b && (unsigned char)url[a] <= 0x20) a++;
+    while (b > a && (unsigned char)url[b - 1] <= 0x20) b--;
+    std::string out;
+    out.reserve(b - a);
+    for (size_t k = a; k < b; k++)
+        if (url[k] != '\t' && url[k] != '\n' && url[k] != '\r') out += url[k];
+    return out;
+}
+
+// Stricter than any browser: every control, space and DEL removed.
+std::string squeezed(const std::string& url) {
+    std::string out;
+    out.reserve(url.size());
+    for (char c : url)
+        if ((unsigned char)c > 0x20 && (unsigned char)c != 0x7F) out += c;
+    return out;
+}
+
+// Character references decoded (&#9; &#x3A; &Tab; &NewLine; &colon; and
+// the like), in case one the parser leaves alone is decoded by whatever
+// reads the page next. The page itself escapes every '&', so a browser
+// sees the parser's text as it is; this is a second reading, not how the
+// page is written.
+std::string decodedReferences(const std::string& url) {
+    static const struct { const char* name; char c; } kNamed[] = {
+        {"tab", '\t'},   {"newline", '\n'}, {"colon", ':'}, {"nbsp", ' '},
+        {"sol", '/'},    {"num", '#'},      {"quest", '?'}, {"period", '.'},
+        {"plus", '+'},   {"hyphen", '-'},   {"dash", '-'},  {"amp", '&'},
+        {"lpar", '('},   {"rpar", ')'}};
+    std::string out;
+    out.reserve(url.size());
+    for (size_t i = 0; i < url.size();) {
+        const size_t semi = url[i] == '&' ? url.find(';', i + 1) : std::string::npos;
+        if (semi == std::string::npos || semi - i > 34) {
+            out += url[i++];
+            continue;
+        }
+        std::string ref = url.substr(i + 1, semi - i - 1);
+        for (char& ch : ref) ch = (char)std::tolower((unsigned char)ch);
+        long cp = -1;
+        if (ref.size() > 1 && ref[0] == '#') {
+            const bool hex = ref[1] == 'x';
+            const std::string digits = ref.substr(hex ? 2 : 1);
+            if (!digits.empty() && digits.size() <= 7 &&
+                digits.find_first_not_of(hex ? "0123456789abcdef" : "0123456789") ==
+                    std::string::npos)
+                cp = std::stol(digits, nullptr, hex ? 16 : 10);
+        } else {
+            for (const auto& n : kNamed)
+                if (ref == n.name) cp = (unsigned char)n.c;
+        }
+        if (cp < 0) {
+            out += url[i++];
+            continue;
+        }
+        // Only ASCII can change how a scheme reads; anything else stands as
+        // a control, which no scheme holds.
+        out += cp < 0x80 ? (char)cp : '\x01';
+        i = semi + 1;
+    }
+    return out;
+}
+
 // The scheme of an address ("https" for https://x), lowercased, or "" for a
-// relative one (no colon before the first / ? or #).
+// relative one, as a browser's URL parser decides it: an ASCII letter, then
+// letters, digits, + - and ., up to a colon; anything else before the
+// colon makes the address relative. A colon first is refused as before.
 std::string schemeOf(const std::string& url) {
-    for (size_t k = 0; k < url.size(); k++) {
+    if (!url.empty() && url[0] == ':') return "?";
+    if (url.empty() || !std::isalpha((unsigned char)url[0])) return "";
+    for (size_t k = 1; k < url.size(); k++) {
         const char c = url[k];
         if (c == ':') {
             std::string s = url.substr(0, k);
             for (char& ch : s) ch = (char)std::tolower((unsigned char)ch);
-            return s.empty() ? "?" : s;
+            return s;
         }
-        if (c == '/' || c == '?' || c == '#') return "";
         if (!std::isalnum((unsigned char)c) && c != '+' && c != '-' && c != '.') return "";
     }
     return "";
 }
 
+// Every reading of `url`: as a browser reads it, with nothing but its
+// visible characters, and both again with character references decoded.
+std::vector<std::string> readings(const std::string& url) {
+    const std::string decoded = decodedReferences(url);
+    return {browserForm(url), squeezed(url), browserForm(decoded), squeezed(decoded)};
+}
+
 bool linkAllowed(const std::string& url) {
-    const std::string s = schemeOf(url);
-    return s.empty() || s == "http" || s == "https" || s == "mailto";
+    for (const std::string& form : readings(url)) {
+        const std::string s = schemeOf(form);
+        if (!(s.empty() || s == "http" || s == "https" || s == "mailto")) return false;
+    }
+    return true;
 }
 
 bool pictureAllowed(const std::string& src) {
-    const std::string s = schemeOf(src);
-    if (s.empty() || s == "https") return true;
-    if (s != "data") return false;
-    std::string head = src.substr(0, std::min<size_t>(src.size(), 11));
-    for (char& ch : head) ch = (char)std::tolower((unsigned char)ch);
-    return head == "data:image/";
+    for (const std::string& form : readings(src)) {
+        const std::string s = schemeOf(form);
+        if (s.empty() || s == "https") continue;
+        if (s != "data") return false;
+        std::string head = form.substr(0, std::min<size_t>(form.size(), 11));
+        for (char& ch : head) ch = (char)std::tolower((unsigned char)ch);
+        if (head != "data:image/") return false;
+    }
+    return true;
 }
 
 // The end of a paragraph, heading, item or line of display math: a "\n"

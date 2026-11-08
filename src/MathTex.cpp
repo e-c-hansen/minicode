@@ -19,7 +19,7 @@
 
 namespace MathTex {
 
-const int kVersion = 3;
+const int kVersion = 4;
 
 namespace {
 
@@ -234,7 +234,10 @@ std::string spellUnicode(const std::string& s) {
 // a group open stops the run there (document()). Nor can a formula forge
 // the log's lines (\typeout{MC:...}): they carry the run's nonce. XeTeX's
 // own primitives (\XeTeXpicfile reads a file into the picture) have no
-// place in a formula.
+// place in a formula, nor has page-level state (\pagecolor, \special) or
+// anything else that reads a file (round-6 documents defect 1). An
+// environment's name is checked as the control word LaTeX makes of it
+// (environmentRefused).
 const char* const kRefused[] = {
     "\\input", "\\include", "\\endinput", "\\documentclass", "\\usepackage",
     "\\shipout", "\\output", "\\openout", "\\write", "\\immediate", "\\end{document}",
@@ -247,14 +250,93 @@ const char* const kRefused[] = {
     "\\bgroup", "\\fontdimen", "\\hyphenchar", "\\skewchar", "\\deadcycles",
     "\\insertpenalties", "\\interactionmode", "\\batchmode", "\\nonstopmode",
     "\\scrollmode", "\\errorstopmode", "\\SetSymbolFont", "\\SetMathAlphabet",
+    // Page-level state: xcolor's page color is a background special that
+    // fills every later page of the batch, so each later formula would be
+    // cached as a solid block under its own TeX.
+    "\\nopagecolor", "\\thispagestyle", "\\document", "\\enddocument", "\\numberwithin", "\\counterwithin",
+    "\\counterwithout",
+    // Reading files: XeTeX's file primitives put a file's bytes, size or
+    // hash into the picture; LaTeX's \IfFileExists family and package and
+    // class loading run \input themselves; \font and the font selection
+    // commands load a font or .fd file the formula names.
+    "\\filedump", "\\filesize", "\\filemoddate", "\\mdfivesum", "\\font", "\\fontencoding",
+    "\\fontfamily", "\\usefont", "\\includegraphics", "\\includeonly", "\\graphicspath",
+    "\\listfiles", "\\RequirePackage", "\\LoadClass",
+    // Ways to a control word the check never sees: \UseName and
+    // \ExpandArgs build one from letters as \csname does, and \lowercase
+    // and \uppercase (with \lccode and \uccode) turn letters into others,
+    // \begin{INPUT} into \begin{input}.
+    "\\UseName", "\\ExpandArgs", "\\lowercase", "\\uppercase", "\\lccode", "\\uccode",
 };
 
 // Control words refused by how they begin: the batch's own (\mcship,
-// \mcbox, ...), XeTeX's primitives, and LaTeX's declarations.
+// \mcbox, ...), XeTeX's primitives, LaTeX's declarations, \special in every
+// form (pdf:image reads any image file into the picture, background paints
+// every later page), the pdfTeX-style primitives and packages' \pdf...
+// commands (literal PDF, images, objects), \pagecolor and the page's other
+// settings, the case changers (\MakeLowercase), and LaTeX's file tests
+// (\InputIfFileExists, \IfFileExists).
 const char* const kRefusedPrefixes[] = {
     "\\mc", "\\XeTeX", "\\Declare", "\\New", "\\Renew", "\\Provide", "\\AddTo",
-    "\\RemoveFrom", "\\AtBegin", "\\AtEnd",
+    "\\RemoveFrom", "\\AtBegin", "\\AtEnd", "\\special", "\\pdf", "\\page", "\\Make",
+    "\\Input", "\\IfFile",
 };
+
+// Why the control word `word` (a backslash and letters) is refused, or "".
+// With `anyCase`, compared ignoring case.
+std::string refusedWord(const std::string& word, bool anyCase) {
+    auto same = [&](const std::string& a, const char* b, size_t n) {
+        if (a.size() < n) return false;
+        for (size_t k = 0; k < n; k++) {
+            const char x = anyCase ? (char)std::tolower((unsigned char)a[k]) : a[k];
+            const char y = anyCase ? (char)std::tolower((unsigned char)b[k]) : b[k];
+            if (x != y) return false;
+        }
+        return true;
+    };
+    for (const char* w : kRefused) {
+        if (std::strchr(w, '{')) continue;
+        const size_t n = std::strlen(w);
+        if (word.size() == n && same(word, w, n)) return std::string(w) + " is not allowed in a formula";
+    }
+    for (const char* p : kRefusedPrefixes)
+        if (same(word, p, std::strlen(p))) return word + " is not allowed in a formula";
+    return "";
+}
+
+// An environment's name after \begin or \end at `i` (just past the word):
+// LaTeX runs \csname <name>\endcsname for \begin and \csname end<name>
+// \endcsname for \end, so \begin{special} is \special and \end{group} is
+// \endgroup. The name must be written out in braces, letters and * only
+// (\begin\x would take its name from a macro); "" when it may run.
+std::string environmentRefused(const std::string& tex, size_t i, bool isEnd) {
+    while (i < tex.size()) {
+        if (tex[i] == ' ' || tex[i] == '\t' || tex[i] == '\n' || tex[i] == '\r') {
+            i++;
+        } else if (tex[i] == '%') {
+            while (i < tex.size() && tex[i] != '\n') i++;
+        } else {
+            break;
+        }
+    }
+    const char* what = isEnd ? "\\end" : "\\begin";
+    if (i >= tex.size() || tex[i] != '{')
+        return std::string(what) + " needs an environment's name in braces";
+    const size_t from = ++i;
+    while (i < tex.size() && (isLetter(tex[i]) || tex[i] == '*')) i++;
+    if (i >= tex.size() || tex[i] != '}' || i == from)
+        return std::string(what) + " needs an environment's name in braces";
+    std::string name = tex.substr(from, i - from);
+    while (!name.empty() && name.back() == '*') name.pop_back();
+    if (name.empty()) return std::string(what) + " needs an environment's name in braces";
+    // Case ignored: harmless for a math environment's name, and no case
+    // changer then turns one name into another.
+    for (const std::string& word : {"\\" + name, "\\end" + name}) {
+        const std::string why = refusedWord(word, true);
+        if (!why.empty()) return std::string(what) + "{" + tex.substr(from, i - from) + "} is not allowed in a formula";
+    }
+    return "";
+}
 
 }  // namespace
 
@@ -277,6 +359,12 @@ std::string check(const std::string& tex) {
                 size_t end = i + 1;
                 while (end < tex.size() && isLetter(tex[end])) end++;
                 return tex.substr(i, end - i) + " is not allowed in a formula";
+            }
+            for (const bool isEnd : {false, true}) {
+                const char* word = isEnd ? "\\end" : "\\begin";
+                if (!wordAt(tex, i, word)) continue;
+                const std::string why = environmentRefused(tex, i + std::strlen(word), isEnd);
+                if (!why.empty()) return why;
             }
             i++;   // the escaped character, or the control word's first letter
             continue;
