@@ -138,8 +138,24 @@ MC_GUI_SUITE(snippets) {
         Command(tv, @selector(insertTab:));
         GCHECK(tv.snippets.active && tv.snippets.currentStopIndex == 2);
         GCHECK_EQ_STR(Selected(tv), @"range(10)");
+        // Typed in the same editing session as an attribute change across
+        // the line (AppKit's font fixing does that), so the session's
+        // editedRange spans the whole line: the stops still follow the
+        // replacement itself (in a whole run the session used to end
+        // here). NSTextView puts the caret at the end of such an edited
+        // range; it goes back after the d, where typing leaves it.
+        NSTextStorage *ts = tv.textStorage;
+        const NSRange line = [tv.string lineRangeForRange:tv.selectedRange];
+        const NSUInteger at = tv.selectedRange.location;
+        [ts beginEditing];
+        [ts addAttribute:@"MCGuiProbe" value:@YES range:line];
         Type(tv, @"d");
+        [ts endEditing];
+        tv.selectedRange = NSMakeRange(at + 1, 0);
         GCHECK([tv.string containsString:@"    for key in d:\n"]);
+        GCHECK(tv.snippets.active && tv.snippets.currentStopIndex == 2);
+        GCHECK(tv.snippets.currentRanges.count == 1 &&
+               NSEqualRanges(tv.snippets.currentRanges[0].rangeValue, NSMakeRange(at, 1)));
     });
     MCGuiStep(@"Shift+Tab goes back to the first, Tab forward again", ^{
         CodeTextView *tv = Text(c);

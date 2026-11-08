@@ -141,6 +141,7 @@
 - (void)replaceCharactersInRange:(NSRange)range withString:(NSString *)str {
     [_store replaceCharactersInRange:range withString:str];
     [self moveGapsForEdit:range newLength:str.length];
+    if (_onReplaceCharacters) _onReplaceCharacters(range, str.length);
     [self edited:NSTextStorageEditedCharacters | NSTextStorageEditedAttributes range:range
         changeInLength:(NSInteger)str.length - (NSInteger)range.length];
 }
@@ -214,6 +215,7 @@
 - (void)replaceCharactersInRange:(NSRange)range withAttributedString:(NSAttributedString *)attr {
     [_store replaceCharactersInRange:range withAttributedString:attr];
     [self moveGapsForEdit:range newLength:attr.length];
+    if (_onReplaceCharacters) _onReplaceCharacters(range, attr.length);
     [self edited:NSTextStorageEditedCharacters | NSTextStorageEditedAttributes range:range
         changeInLength:(NSInteger)attr.length - (NSInteger)range.length];
 }

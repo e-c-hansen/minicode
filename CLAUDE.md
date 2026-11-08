@@ -1415,7 +1415,12 @@ view is disposed (on `unrealize`), or dispose loops forever.
   `Snippet::expand` (variables, mirrors, the line's indentation unless
   insertTextMode 1, the file's unit and line break) before
   `completionEdits`, so it stays one undo step; `MCSnippetSession`
-  (`CodeTextView snippets`) then follows the stops (`Snippet::Session`:
+  (`CodeTextView snippets`) then follows the stops, each replacement as
+  `MCSourceStorage onReplaceCharacters` reports it (trap: the editedRange
+  of NSTextStorageDidProcessEditing is the union of an editing session's
+  changes, attribute fixes included, so a letter typed over a stop could
+  read as the whole line replaced and end the session; seen only in a
+  whole `make guitest`) (`Snippet::Session`:
   the current stop and those around it grow at their edges, a nested stop
   typed over from around is skipped). Its Tab, Shift+Tab and Esc come first
   in CodeTextView's `doCommandBySelector:`, before the carets and

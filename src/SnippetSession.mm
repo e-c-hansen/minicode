@@ -2,6 +2,7 @@
 #import "SnippetSession.h"
 #import "Lsp.h"
 #import "MultiCaretView.h"
+#import "SourceStorage.h"
 #include <vector>
 
 @implementation MCSnippetSession {
@@ -16,8 +17,17 @@
     if ((self = [super init])) {
         _tv = tv;
         NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
-        [nc addObserver:self selector:@selector(storageEdited:)
-                   name:NSTextStorageDidProcessEditingNotification object:tv.textStorage];
+        // The editor's storage tells each replacement exactly; any other
+        // only the union of an editing session's changes, at its end.
+        if ([tv.textStorage isKindOfClass:[MCSourceStorage class]]) {
+            __weak MCSnippetSession *weakSelf = self;
+            ((MCSourceStorage *)tv.textStorage).onReplaceCharacters = ^(NSRange r, NSUInteger n) {
+                [weakSelf replaced:r length:n];
+            };
+        } else {
+            [nc addObserver:self selector:@selector(storageEdited:)
+                       name:NSTextStorageDidProcessEditingNotification object:tv.textStorage];
+        }
         [nc addObserver:self selector:@selector(selectionChanged:)
                    name:NSTextViewDidChangeSelectionNotification object:tv];
     }
@@ -152,25 +162,33 @@ static NSRange RangeOf(const Snippet::Range &r) { return NSMakeRange(r.start, r.
 
 // ---- following the text
 
-- (void)storageEdited:(NSNotification *)note {
+// One replacement, as it is made (MCSourceStorage onReplaceCharacters).
+- (void)replaced:(NSRange)range length:(NSUInteger)length {
     if (!_active) return;
-    NSTextStorage *ts = note.object;
-    if (!(ts.editedMask & NSTextStorageEditedCharacters)) return;
     NSUndoManager *um = _tv.undoManager;
     // Undo puts back text the stops knew nothing of.
     if (um.isUndoing || um.isRedoing) {
         [self end];
         return;
     }
+    _s.edited(range.location, range.length, length);
+    if (!_s.active()) _active = NO;
+    [self invalidate];
+}
+
+// The same from a storage that only says what an editing session changed
+// as a whole.
+- (void)storageEdited:(NSNotification *)note {
+    if (!_active) return;
+    NSTextStorage *ts = note.object;
+    if (!(ts.editedMask & NSTextStorageEditedCharacters)) return;
     const NSRange er = ts.editedRange;
     const NSInteger removed = (NSInteger)er.length - ts.changeInLength;
     if (er.location == NSNotFound || removed < 0) {
         [self end];
         return;
     }
-    _s.edited(er.location, (size_t)removed, er.length);
-    if (!_s.active()) _active = NO;
-    [self invalidate];
+    [self replaced:NSMakeRange(er.location, (NSUInteger)removed) length:er.length];
 }
 
 // A selection that leaves the current stop ends the session: looked at on
