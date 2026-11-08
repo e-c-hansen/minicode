@@ -313,6 +313,9 @@ MC_GUI_SUITE(terminal_splits) {
         TerminalView *t4 = [s.panel splitActiveDown];   // below t2, above t3
         GCHECK(t4 && [t4 hasFocus]);
         NSUInteger before = [s.panel terminalsInTab:(NSUInteger)s.tab].count;
+        // A nil terminal (one a caller lost) still closes nothing.
+        GCHECK([s.panel closeTerminal:nil]);
+        GCHECK([s.panel terminalsInTab:(NSUInteger)s.tab].count == before);
         // The panel answers Close Terminal's action itself (it has a method
         // of that name), so this once closed nothing.
         GCHECK(MCGuiPerformMenuKey(s.c.window, kVK_ANSI_W,
@@ -335,7 +338,8 @@ MC_GUI_SUITE(terminal_splits) {
             return @"  my server ";
         };
         [s.panel selectTerminal:s.t2];
-        [NSApp sendAction:@selector(renameTerminal:) to:nil from:nil];
+        [NSApp sendAction:@selector(renameTerminal:) to:nil
+                      from:[TerminalMenu() itemWithTitle:@"Rename Terminal…"]];
         GCHECK_EQ_STR(s.t2.title, @"my server");
         s.t2.fixedTitle = @"from the agent";
         GCHECK_EQ_STR(s.t2.title, @"my server");

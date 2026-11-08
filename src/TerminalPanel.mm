@@ -508,8 +508,9 @@ static NSString *MCAskTerminalName(TerminalView *t) {
 
 - (BOOL)renameTerminal:(TerminalView *)terminal {
     // Also the menu's action of that name, which reaches the panel first
-    // when the keyboard is in one of its terminals: the active one, then.
-    if (![terminal isKindOfClass:TerminalView.class]) terminal = self.activeTerminal;
+    // when the keyboard is in one of its terminals (its sender, a menu
+    // item): the active one, then. nil renames nothing.
+    if (terminal && ![terminal isKindOfClass:TerminalView.class]) terminal = self.activeTerminal;
     if (!terminal || ![self.terminals containsObject:terminal]) return NO;
     NSString *name = self.namePrompt ? self.namePrompt(terminal) : MCAskTerminalName(terminal);
     if (!name) return NO;
@@ -610,8 +611,9 @@ BOOL MCConfirmClosingRunning(NSArray<NSString *> *commands, NSString *question,
 - (BOOL)closeTerminal:(TerminalView *)terminal {
     // Also Close Terminal's action (Ctrl+Shift+W), which reaches the panel
     // before the window's controller when the keyboard is in a terminal,
-    // and closed nothing: the active one, as the controller's would.
-    if (![terminal isKindOfClass:TerminalView.class]) terminal = self.activeTerminal;
+    // and closed nothing: the active one, as the controller's would. nil
+    // is still nothing (callers pass a terminal they may have lost).
+    if (terminal && ![terminal isKindOfClass:TerminalView.class]) terminal = self.activeTerminal;
     for (NSUInteger i = 0; i < _tabs.count; i++) {
         MCTerminalTab *tab = _tabs[i];
         NSUInteger c = 0, r = 0;
