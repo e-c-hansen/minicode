@@ -479,6 +479,7 @@ bool offers(const Json& caps, Feature f) {
     case Feature::DocumentSymbols: return provides(caps["documentSymbolProvider"]);
     case Feature::WorkspaceSymbols: return provides(caps["workspaceSymbolProvider"]);
     case Feature::FoldingRange: return provides(caps["foldingRangeProvider"]);
+    case Feature::InlayHint: return provides(caps["inlayHintProvider"]);
     }
     return false;
 }
@@ -1524,6 +1525,12 @@ Json pythonSettings(PythonServer kind, const std::string& interpreter) {
             // and checks far more than pyright unless told otherwise; a
             // pyproject.toml or pyrightconfig.json still wins over this.
             analysis.set("typeCheckingMode", "standard");
+            // Its inlay hints, named here so an older basedpyright that
+            // kept them off shows them too; editor.inlay-hints = off asks
+            // for none.
+            analysis.set("inlayHints", Json::object({{"variableTypes", true},
+                                                     {"functionReturnTypes", true},
+                                                     {"callArgumentNames", true}}));
             out.set("python", python);
             out.set("basedpyright", Json::object({{"analysis", analysis}}));
         }
@@ -2270,6 +2277,8 @@ void Client::initialize(const std::string& rootPath, int processId,
         // Go to Symbol in File (Shift+Cmd+O) shows a tree's containers.
         {"documentSymbol", Json::object({{"hierarchicalDocumentSymbolSupport", true},
                                          {"symbolKind", symbolKinds}})},
+        // Inlay hints are drawn as they come; none is resolved.
+        {"inlayHint", Json::object({{"dynamicRegistration", false}})},
     });
     Json workspace = Json::object({{"workspaceFolders", true},
                                   {"configuration", true},
@@ -2286,7 +2295,8 @@ void Client::initialize(const std::string& rootPath, int processId,
                                   {"symbol", Json::object({{"dynamicRegistration", false},
                                                            {"symbolKind", symbolKinds}})},
                                   {"didChangeConfiguration",
-                                   Json::object({{"dynamicRegistration", false}})}});
+                                   Json::object({{"dynamicRegistration", false}})},
+                                  {"inlayHint", Json::object({{"refreshSupport", true}})}});
     // Files changed on disk, for the watchers a server registers, only
     // from an owner that sends them: a server told the client watches
     // stops watching for itself (rust-analyzer does).
@@ -2534,6 +2544,15 @@ int Client::documentSymbols(const std::string& uri, ResultHandler h) {
 
 int Client::workspaceSymbols(const std::string& query, ResultHandler h) {
     return request("workspace/symbol", Json::object({{"query", query}}), std::move(h));
+}
+
+int Client::inlayHints(const std::string& uri, Range range, ResultHandler h) {
+    Json params = Json::object({
+        {"textDocument", Json::object({{"uri", uri}})},
+        {"range", Json::object({{"start", positionJson(range.start)},
+                                {"end", positionJson(range.end)}})},
+    });
+    return request("textDocument/inlayHint", params, std::move(h));
 }
 
 int Client::executeCommand(const Json& command, ResultHandler h) {
@@ -2846,6 +2865,9 @@ void Client::handleServerRequest(const Json& msg) {
             if (!applied && !reason.empty()) result.set("failureReason", reason);
             respond(theId, result);
         });
+    } else if (method == "workspace/inlayHint/refresh") {
+        respond(id, Json());
+        if (onInlayHintRefresh) onInlayHintRefresh();
     } else if (method == "workspace/workspaceFolders") {
         std::string uri = uriFromPath(rootPath_);
         respond(id, Json::array().push(Json::object({{"uri", uri}, {"name", rootPath_}})));
@@ -2874,7 +2896,6 @@ void Client::handleServerRequest(const Json& msg) {
                method == "window/showMessageRequest" ||
                method == "workspace/diagnostic/refresh" ||
                method == "workspace/semanticTokens/refresh" ||
-               method == "workspace/inlayHint/refresh" ||
                method == "workspace/codeLens/refresh") {
         respond(id, Json());
     } else {

@@ -361,7 +361,7 @@ std::string programDisplayName(const std::string& program);
 // What a request is about, to choose which of a file's servers gets it.
 enum class Feature {
     Completion, SignatureHelp, Hover, Definition, References, Rename, CodeActions,
-    DocumentSymbols, WorkspaceSymbols, FoldingRange
+    DocumentSymbols, WorkspaceSymbols, FoldingRange, InlayHint
 };
 // Does a server whose `initialize` answered with these capabilities offer it?
 bool offers(const Json& capabilities, Feature f);
@@ -888,6 +888,9 @@ public:
     // textDocument/documentSymbol and workspace/symbol (the query as typed).
     int documentSymbols(const std::string& uri, ResultHandler h);
     int workspaceSymbols(const std::string& query, ResultHandler h);
+    // textDocument/inlayHint for a range of a document (InlayHints.h reads
+    // the answer).
+    int inlayHints(const std::string& uri, Range range, ResultHandler h);
     // Drop interest in a request (its handler will not run). Sends
     // $/cancelRequest if it was already sent.
     void cancel(int id);
@@ -940,6 +943,10 @@ public:
     std::function<void(const std::string& uri, const std::vector<Diagnostic>&)> onDiagnostics;
     size_t staleDiagnosticsDropped() const { return staleDiagnostics_; }
     std::function<void(int type, const std::string& message)> onShowMessage;
+    // workspace/inlayHint/refresh: the server's hints changed (a file it
+    // depends on was saved), so the open documents' should be asked again.
+    // Answered at once either way.
+    std::function<void()> onInlayHintRefresh;
     std::function<void(const std::string& problem)> onProtocolError;
     // workspace/applyEdit from the server (often while a command it was
     // asked to run is still going). The owner applies params["edit"] and
