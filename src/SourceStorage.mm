@@ -3,6 +3,47 @@
 #include "InlayHints.h"
 #include <algorithm>
 
+namespace {
+
+// Whether every character in `range` is printable ASCII, a tab or a line
+// break: characters every font the editor uses has, so font substitution
+// finds nothing to do in them.
+BOOL OnlyPlainAscii(NSString *string, NSRange range) {
+    unichar buf[4096];
+    for (NSUInteger at = range.location, end = NSMaxRange(range); at < end;) {
+        const NSUInteger n = MIN((NSUInteger)4096, end - at);
+        [string getCharacters:buf range:NSMakeRange(at, n)];
+        for (NSUInteger i = 0; i < n; i++) {
+            const unichar c = buf[i];
+            if ((c < 0x20 || c > 0x7E) && c != '\t' && c != '\n' && c != '\r') return NO;
+        }
+        at += n;
+    }
+    return YES;
+}
+
+// Whether a font has a glyph for every printable ASCII character (asked once
+// per font).
+BOOL CoversAscii(NSFont *font) {
+    static NSMapTable<NSFont *, NSNumber *> *known;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ known = [NSMapTable strongToStrongObjectsMapTable]; });
+    @synchronized(known) {
+        NSNumber *answer = [known objectForKey:font];
+        if (!answer) {
+            UniChar chars[0x7F - 0x20];
+            CGGlyph glyphs[0x7F - 0x20];
+            for (int i = 0; i < 0x7F - 0x20; i++) chars[i] = (UniChar)(0x20 + i);
+            answer = @(CTFontGetGlyphsForCharacters((__bridge CTFontRef)font, chars, glyphs,
+                                                    0x7F - 0x20));
+            [known setObject:answer forKey:font];
+        }
+        return answer.boolValue;
+    }
+}
+
+}  // namespace
+
 @implementation MCSourceStorage {
     NSMutableAttributedString *_store;
     std::vector<MCTextGap> _gaps;
@@ -204,9 +245,26 @@
         [super fixAttributesInRange:range];
         return;
     }
-    [self fixFontAttributeInRange:range];
+    // Font substitution reads every character of the range for one its
+    // font lacks: 1.2 s of putting a 25 MB file in, every time its tab is
+    // shown. Plain ASCII under fonts that have all of it needs none.
+    if (![self rangeNeedsNoFontFix:range]) [self fixFontAttributeInRange:range];
     [self fixParagraphStyleAttributeInRange:range];
     [self fixAttachmentAttributeInRange:range];
+}
+
+- (BOOL)rangeNeedsNoFontFix:(NSRange)range {
+    if (range.length == 0) return YES;
+    __block BOOL covered = YES;
+    __block NSFont *last = nil;
+    [_store enumerateAttribute:NSFontAttributeName inRange:range options:0
+                    usingBlock:^(NSFont *font, NSRange r, BOOL *stop) {
+        (void)r;
+        if (font == last) return;
+        if (!font || !CoversAscii(font)) { covered = NO; *stop = YES; }
+        last = font;
+    }];
+    return covered && OnlyPlainAscii(_store.string, range);
 }
 
 - (NSUInteger)length { return _store.length; }
