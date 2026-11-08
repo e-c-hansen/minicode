@@ -53,7 +53,10 @@ MC_GUI_SUITE(paste) {
         pastedAt = Now();
         const double took = pastedAt - t0;
         MCGuiNote(@"the paste returned in %.1f ms", took * 1000);
-        MCGuiCheck(took < 0.25, [NSString stringWithFormat:
+        // Wall time, since a blocked write costs no CPU: a write that
+        // waited for the program would take its whole two-second sleep, so
+        // a second's bound leaves a loaded machine room and still catches it.
+        MCGuiCheck(took < 1.0, [NSString stringWithFormat:
                        @"a 244 KB paste into a program not reading returns at once (%.3f s)", took],
                    __FILE__, __LINE__);
         const char eot = 0x04;   // after the paste, in order

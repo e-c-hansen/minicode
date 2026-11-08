@@ -221,11 +221,11 @@ MC_GUI_SUITE(control) {
                                  @"{\"v\":1,\"id\":2,\"cmd\":\"state\"}",
                                  @"{\"v\":1,\"id\":3,\"cmd\":\"selection\"}"]) {
             __block NSString *answer = nil;
-            NSDate *t0 = [NSDate date];
+            const double c0 = MCGuiThreadCpuMs();
             MCControlHandleLine(line, ^(NSString *a) { answer = a; });
-            NSTimeInterval took = -[t0 timeIntervalSinceNow];
+            const double took = MCGuiThreadCpuMs() - c0;
             GCHECK(answer != nil && [answer containsString:@"\"ok\":true"]);
-            GCHECK(took < 0.1);
+            GCHECK_TIME(took, 100, line);
         }
     });
 

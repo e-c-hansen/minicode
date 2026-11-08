@@ -28,16 +28,21 @@ NSArray<NSArray *> *ColorRuns(NSTextStorage *ts) {
     return out;
 }
 
-// Types `text` a character at a time, each its own undo group; returns ms.
-std::vector<double> TypeChars(NSTextView *tv, NSString *text) {
+// Types `text` a character at a time, each its own undo group; returns
+// each keystroke's main-thread CPU time in ms (its wall time into `wall`).
+// A keystroke's work is all on the main thread, so its CPU time is what
+// it costs; wall time on a loaded machine also counts the time the thread
+// waited for a core.
+std::vector<double> TypeChars(NSTextView *tv, NSString *text, std::vector<double> *wall = nullptr) {
     std::vector<double> times;
     for (NSUInteger i = 0; i < text.length; i++) {
         NSString *ch = [text substringWithRange:NSMakeRange(i, 1)];
-        const double t0 = Ms();
+        const double t0 = Ms(), c0 = MCGuiThreadCpuMs();
         MCGuiUndoGroup(tv.undoManager, ^{
             [tv insertText:ch replacementRange:tv.selectedRange];
         });
-        times.push_back(Ms() - t0);
+        times.push_back(MCGuiThreadCpuMs() - c0);
+        if (wall) wall->push_back(Ms() - t0);
     }
     return times;
 }
@@ -91,24 +96,24 @@ MC_GUI_SUITE(keystroke) {
             [NSThread sleepForTimeInterval:0.5];
             typed = [@"" stringByPaddingToLength:2000 withString:@"ab cd " startingAtIndex:0];
         }
-        std::vector<double> times = TypeChars(tv, typed);
+        std::vector<double> wall;
+        std::vector<double> times = TypeChars(tv, typed, &wall);
         const double med = Median(times);
         double total = 0;
         for (double t : times) total += t;
-        MCGuiNote(@"%lu keystrokes in a 100,000-line file: median %.2f ms, mean %.2f ms",
-                  (unsigned long)times.size(), med, total / times.size());
+        MCGuiNote(@"%lu keystrokes in a 100,000-line file: median %.2f ms of CPU, mean %.2f ms "
+                  @"(wall: median %.2f ms)",
+                  (unsigned long)times.size(), med, total / times.size(), Median(wall));
         GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"ab cd "]);
-        // Bounds loose enough for a busy CI runner (about 2.5 ms a key on
-        // an M3), tight enough to catch a keystroke that relays the file
-        // out or re-highlights it whole (tens to hundreds of ms each).
+        // Bounds on the main thread's CPU time (about 2.5 ms a key on an
+        // M3), tight enough to catch a keystroke that relays the file out
+        // or re-highlights it whole (a full pass here is hundreds of ms).
         std::vector<double> sorted = times;
         std::sort(sorted.begin(), sorted.end());
         const double p95 = sorted.empty() ? 0 : sorted[sorted.size() * 95 / 100];
         if (!sampling) {
-            MCGuiCheck(med < 20, [NSString stringWithFormat:@"median keystroke under 20 ms (%.2f)", med],
-                       __FILE__, __LINE__);
-            MCGuiCheck(p95 < 60, [NSString stringWithFormat:@"95th percentile under 60 ms (%.2f)", p95],
-                       __FILE__, __LINE__);
+            GCHECK_TIME(med, 20, @"the median keystroke");
+            GCHECK_TIME(p95, 60, @"the 95th percentile keystroke");
         }
     });
     MCGuiStep(@"the colors equal a full re-highlight", ^{
@@ -149,12 +154,11 @@ MC_GUI_SUITE(keystroke) {
         // Laid out first: the time is the keystroke's, not the layout of
         // the 25,000 lines between here and the last place laid out.
         [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(l3.location, 100)];
-        const double t0 = Ms();
+        const double t0 = Ms(), c0 = MCGuiThreadCpuMs();
         MCGuiUndoGroup(tv.undoManager, ^{ [ctv.multiCarets insertText:@"\""]; });
-        const double quote = Ms() - t0;
-        MCGuiNote(@"a quote at three carets: %.2f ms", quote);
-        MCGuiCheck(quote < 100, [NSString stringWithFormat:@"a quote at three carets under 100 ms (%.2f)",
-                                                           quote], __FILE__, __LINE__);
+        const double quote = MCGuiThreadCpuMs() - c0;
+        MCGuiNote(@"a quote at three carets: %.2f ms of CPU (%.2f ms wall)", quote, Ms() - t0);
+        GCHECK_TIME(quote, 100, @"a quote at three carets");
         GCHECK([[tv.string substringWithRange:NSMakeRange(l1.location, 7)] isEqualToString:@"\"return"]);
         NSArray *incremental = ColorRuns(tv.textStorage);
         [ctv.multiCarets clear];

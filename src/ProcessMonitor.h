@@ -40,9 +40,13 @@ extern NSNotificationName const MCProcessMonitorDidSampleNotification;
 // For the GUI checks: the last look's time off the main thread, the most
 // time a look took on the main thread (gathering terminals, taking the
 // result; the panels' redraw after it is their own), how many processes the
-// machine had, and how many looks so far.
+// machine had, and how many looks so far. Each time also as CPU time of the
+// thread doing it, which the checks bound (wall time on a loaded machine
+// counts the time the thread waited for a core).
 @property(nonatomic, readonly) double lastSampleMilliseconds;
 @property(nonatomic, readonly) double lastMainThreadMilliseconds;
+@property(nonatomic, readonly) double lastSampleCpuMilliseconds;
+@property(nonatomic, readonly) double lastMainThreadCpuMilliseconds;
 @property(nonatomic, readonly) NSUInteger lastListed;
 @property(nonatomic, readonly) NSUInteger samples;
 @end

@@ -149,7 +149,9 @@ MC_GUI_SUITE(lsp_sync) {
     });
 
     // ------------------------------------- the import after the word went in
-    __block CFTimeInterval acceptTook = 0;
+    // The accept's main-thread CPU time (ms): that it did not wait for the
+    // server is the import's absence right after it, not a wall time.
+    __block double acceptTook = 0;
     void (^askAtPa)(void) = ^{
         NSTextView *tv = Text(c);
         [c.window makeFirstResponder:tv];
@@ -159,18 +161,20 @@ MC_GUI_SUITE(lsp_sync) {
     void (^accept)(void) = ^{
         GCHECK([Session(c).completionLabels containsObject:@"Path"]);
         NSTextView *tv = Text(c);
-        CFTimeInterval t0 = CACurrentMediaTime();
+        const CFTimeInterval t0 = CACurrentMediaTime();
+        const double c0 = MCGuiThreadCpuMs();
         MCGuiUndoGroup(tv.undoManager, ^{
             GCHECK([Session(c) handleCommand:@selector(insertTab:)]);
         });
-        acceptTook = CACurrentMediaTime() - t0;
+        acceptTook = MCGuiThreadCpuMs() - c0;
+        MCGuiNote(@"accepting took %.1f ms (%.1f ms of CPU)", (CACurrentMediaTime() - t0) * 1000,
+                  acceptTook);
     };
     MCGuiStep(@"ask for completions at Pa", askAtPa);
     MCGuiWait(@"the list", 10, ^BOOL { return Session(c).completionVisible; });
     MCGuiStep(@"Tab: the word goes in at once, before the server's import", ^{
         accept();
-        MCGuiNote(@"accepting took %.1f ms", acceptTook * 1000);
-        GCHECK(acceptTook < 0.2);   // the server takes 300 ms
+        GCHECK_TIME(acceptTook, 200, @"accepting");   // the server takes 300 ms
         NSString *s = Text(c).string;
         GCHECK([s containsString:@"p = Path\r\n"]);
         GCHECK(![s containsString:@"pathlib"]);
@@ -200,7 +204,7 @@ MC_GUI_SUITE(lsp_sync) {
         [Text(c).undoManager undo];
         GCHECK_EQ_STR(Text(c).string, original);
     });
-    MCGuiPause(0.6);
+    MCGuiPause(0.6);   // negative: the late answer must add nothing
     MCGuiStep(@"the answer adds nothing", ^{ GCHECK_EQ_STR(Text(c).string, original); });
 
     MCGuiStep(@"again, typing right after the word", askAtPa);
@@ -246,18 +250,19 @@ MC_GUI_SUITE(lsp_sync) {
         // A server that takes longer than a second.
         MCGuiFakeLsp(@"sync", script(1600), nil, nil);
     });
-    MCGuiPause(0.3);   // the script is read again on the server's next message
+    // No wait: the server reads the script again (by its nanosecond mtime)
+    // on its next message.
     MCGuiStep(@"a slow server: ask once more", askAtPa);
     MCGuiWait(@"the list", 10, ^BOOL { return Session(c).completionVisible; });
     MCGuiStep(@"Tab", ^{
         accept();
-        GCHECK(acceptTook < 0.2);
+        GCHECK_TIME(acceptTook, 200, @"accepting");
         GCHECK([Text(c).string containsString:@"p = Path\r\n"]);
     });
     MCGuiWait(@"after a second, the status bar says the import may be missing", 5, ^BOOL {
         return [Session(c).lastNote containsString:@"within a second"];
     });
-    MCGuiPause(1.0);
+    MCGuiPause(1.0);   // negative, as above
     MCGuiStep(@"and the late answer adds nothing", ^{
         NSTextView *tv = Text(c);
         GCHECK(![tv.string containsString:@"pathlib"]);

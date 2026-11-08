@@ -6,12 +6,15 @@
 // The server makes a progress token once initialized and begins work when
 // the file opens ("Indexing: 2/5 files 40%"); the status item says so in
 // place of "no problems", and the popover's card too. Then, while a 1 ms
-// timer on the main thread records its longest gap, the server writes three
+// timer on the main thread records its longest gap and the most CPU time
+// the main thread spent within one gap, the server writes three
 // notifications of about 6 MB of JSON each (ones the client ignores, so
 // only their arrival costs anything) and a progress report after them:
 // framed and parsed on the server's read queue, they leave the main thread
-// alone (3 to 12 ms gaps on a loaded Mac, the same as idle; parsed on the
-// main thread they stalled it 50 ms). A completion list of 5,000 items is
+// alone (well under a millisecond of its CPU between two fires; parsed on
+// the main thread they took 50 ms of it). The bound is on that CPU time:
+// a gap in wall time on a loaded machine is mostly the thread waiting for
+// a core (at load 60 to 100 the gaps ran past 15 ms with nothing to do). A completion list of 5,000 items is
 // timed the same way, end to end, and noted: its items are parsed and
 // first filtered off the main thread too, and the list's windows are
 // built ahead, so what is left is the rows on show (8 to 11 ms on a loaded
@@ -46,6 +49,7 @@ void Append(EditorController *c, NSString *text) {
 // (in every mode), from start to stop.
 @interface MCStallMeter : NSObject
 @property(nonatomic, readonly) double longest;   // seconds
+@property(nonatomic, readonly) double busiest;   // ms of main-thread CPU between two fires
 @property(nonatomic, readonly) NSUInteger fires;
 - (void)start;
 - (void)stop;
@@ -54,11 +58,14 @@ void Append(EditorController *c, NSString *text) {
 @implementation MCStallMeter {
     NSTimer *_timer;
     CFTimeInterval _last;
+    double _lastCpu;
 }
 - (void)start {
     _longest = 0;
+    _busiest = 0;
     _fires = 0;
     _last = CACurrentMediaTime();
+    _lastCpu = MCGuiThreadCpuMs();
     _timer = [NSTimer timerWithTimeInterval:0.001 target:self selector:@selector(tick:)
                                    userInfo:nil repeats:YES];
     _timer.tolerance = 0;
@@ -67,8 +74,11 @@ void Append(EditorController *c, NSString *text) {
 - (void)tick:(NSTimer *)t {
     (void)t;
     CFTimeInterval now = CACurrentMediaTime();
+    const double cpu = MCGuiThreadCpuMs();
     if (now - _last > _longest) _longest = now - _last;
+    if (cpu - _lastCpu > _busiest) _busiest = cpu - _lastCpu;
     _last = now;
+    _lastCpu = cpu;
     _fires++;
 }
 - (void)stop {
@@ -81,7 +91,7 @@ void Append(EditorController *c, NSString *text) {
 MC_GUI_SUITE(lsp_progress) {
     __block EditorController *c = nil;
     __block MCStallMeter *meter = [MCStallMeter new];
-    __block double idle = 0;
+    __block double idle = 0, idleCpu = 0;
     NSString *file = MCGuiProjectFile(@"progress/app.py");
 
     // 5,000 items, as a big library's completions would come.
@@ -149,12 +159,15 @@ MC_GUI_SUITE(lsp_progress) {
         GCHECK([init[@"params"][@"capabilities"][@"window"][@"workDoneProgress"] isEqual:@YES]);
         [meter start];
     });
-    MCGuiPause(0.5);
+    // The idle baseline: a few hundred fires, however long a loaded
+    // machine takes to give them.
+    MCGuiWait(@"the meter's idle baseline", 20, ^BOOL { return meter.fires >= 300; });
     MCGuiStep(@"the meter, idle; then the server writes 18 MB", ^{
         [meter stop];
         idle = meter.longest;
-        MCGuiNote(@"idle: longest main-thread gap %.1f ms over %lu fires", idle * 1000,
-                  (unsigned long)meter.fires);
+        idleCpu = meter.busiest;
+        MCGuiNote(@"idle: longest main-thread gap %.1f ms (at most %.2f ms of its CPU) over %lu fires",
+                  idle * 1000, idleCpu, (unsigned long)meter.fires);
         [c.window makeFirstResponder:Text(c)];
         Append(c, @"# flood\n");   // sent 0.3 s later, with the timer running
         [meter start];
@@ -164,12 +177,12 @@ MC_GUI_SUITE(lsp_progress) {
     });
     MCGuiStep(@"the main thread never stalled for long while they arrived", ^{
         [meter stop];
-        MCGuiNote(@"three 6 MB notifications: longest main-thread gap %.1f ms over %lu fires",
-                  meter.longest * 1000, (unsigned long)meter.fires);
-        // Under 10 ms of its own; the machine's noise (the idle gap, and
-        // other cores busy with the parse) is allowed on top, well short of
-        // the 50 ms a parse on the main thread took.
-        GCHECK(meter.longest < 0.015 + idle);
+        MCGuiNote(@"three 6 MB notifications: longest main-thread gap %.1f ms (at most %.2f ms "
+                  @"of its CPU) over %lu fires", meter.longest * 1000, meter.busiest,
+                  (unsigned long)meter.fires);
+        // Under 10 ms of the main thread's CPU between two fires, the idle
+        // baseline's on top: a parse there took 50 ms of it.
+        GCHECK_TIME(meter.busiest, 10 + idleCpu, @"the main thread's busiest gap while they arrive");
         GCHECK_EQ_STR(Session(c).statusText, @"fakelsp: Indexing: 5/5 files 100%");
         NSTextView *tv = Text(c);
         tv.selectedRange = NSMakeRange(NSMaxRange([tv.string rangeOfString:@"x = na"]), 0);
@@ -181,8 +194,8 @@ MC_GUI_SUITE(lsp_progress) {
     });
     MCGuiStep(@"the list, end to end", ^{
         [meter stop];
-        MCGuiNote(@"5,000 completions shown: longest main-thread gap %.1f ms over %lu fires",
-                  meter.longest * 1000, (unsigned long)meter.fires);
+        MCGuiNote(@"5,000 completions shown: longest main-thread gap %.1f ms (%.2f ms of its CPU) "
+                  @"over %lu fires", meter.longest * 1000, meter.busiest, (unsigned long)meter.fires);
         GCHECK([Session(c).completionLabels containsObject:@"name_0042_of_a_module"]);
         // Showing the rows is what is left on the main thread. Printed, not
         // bounded: CI's runner took 70 ms for the rows and the first

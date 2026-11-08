@@ -72,7 +72,15 @@ void MCGuiStep(NSString *name, void (^block)(void));
 void MCGuiWait(NSString *what, NSTimeInterval timeout, BOOL (^until)(void));
 // A step that ends when `done` is called (a check fails after `timeout`).
 void MCGuiAsync(NSString *name, NSTimeInterval timeout, void (^block)(MCGuiDone done));
+// A fixed wait. Before a positive check use MCGuiWait on what the check
+// reads; a pause is for a negative check ("nothing happened in this time")
+// or where time itself is the condition (a double-click interval), and
+// says which.
 void MCGuiPause(NSTimeInterval seconds);
+// Waits until `value` has not changed for `quiet` seconds (events still
+// arriving, a count still growing), failing after `timeout`.
+void MCGuiWaitQuiet(NSString *what, NSTimeInterval quiet, NSTimeInterval timeout,
+                    NSInteger (^value)(void));
 
 // ---- checks
 BOOL MCGuiCheck(BOOL ok, NSString *what, const char *file, int line);
@@ -83,6 +91,21 @@ BOOL MCGuiCheck(BOOL ok, NSString *what, const char *file, int line);
                [NSString stringWithFormat:@"%s == %s (got \"%@\")", #a, #b, (a)], \
                __FILE__, __LINE__)
 void MCGuiNote(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
+
+// ---- timing bounds that hold on a loaded machine
+// Bound the CPU time of the thread doing the work (MCGuiThreadCpuMs), not
+// wall time: with several agents building at once (load 40 to 100) wall
+// time ran three to ten times over, while a regression (a pass over the
+// whole file per keystroke) costs CPU and is still caught. MCGuiNowMs is
+// wall time, for notes. A pause measured by wall time before a positive
+// check is a wait in disguise: wait on the condition instead (MCGuiWait).
+double MCGuiThreadCpuMs(void);
+double MCGuiNowMs(void);
+// MC_SKIP_TIMING=1 passes every timing check (the numbers are still noted).
+BOOL MCGuiTimingSkipped(void);
+// `ms` (CPU time) under `bound`, the value in the check's text either way.
+BOOL MCGuiCheckTime(double ms, double bound, NSString *what, const char *file, int line);
+#define GCHECK_TIME(ms, bound, what) MCGuiCheckTime((ms), (bound), (what), __FILE__, __LINE__)
 
 // ---- the world
 NSString *MCGuiScratch(void);               // the scratch root

@@ -2,6 +2,7 @@
 #import "Harness.h"
 #import "EditorController.h"
 #include <cstdio>
+#include <ctime>
 #include <mach-o/dyld.h>
 #include <objc/runtime.h>
 #include <string>
@@ -99,6 +100,26 @@ void MCGuiPause(NSTimeInterval seconds) {
     Enqueue(i);
 }
 
+void MCGuiWaitQuiet(NSString *what, NSTimeInterval quiet, NSTimeInterval timeout,
+                    NSInteger (^value)(void)) {
+    __block NSInteger last = 0;
+    __block NSDate *since = nil;
+    MCGuiItem *i = [MCGuiItem new];
+    i.kind = MCGuiKindWait;
+    i.name = what;
+    i.until = ^BOOL {
+        const NSInteger v = value();
+        if (!since || v != last) {
+            last = v;
+            since = [NSDate date];
+            return NO;
+        }
+        return -since.timeIntervalSinceNow >= quiet;
+    };
+    i.timeout = timeout;
+    Enqueue(i);
+}
+
 BOOL MCGuiCheck(BOOL ok, NSString *what, const char *file, int line) {
     if (ok) {
         gPass++;
@@ -121,6 +142,28 @@ void MCGuiNote(NSString *format, ...) {
     va_end(ap);
     std::printf("    %s\n", s.UTF8String);
     std::fflush(stdout);
+}
+
+double MCGuiThreadCpuMs(void) {
+    timespec ts{};
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+
+double MCGuiNowMs(void) {
+    timespec ts{};
+    clock_gettime(CLOCK_UPTIME_RAW, &ts);
+    return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+
+BOOL MCGuiTimingSkipped(void) {
+    NSString *s = NSProcessInfo.processInfo.environment[@"MC_SKIP_TIMING"];
+    return s.length && ![s isEqualToString:@"0"];
+}
+
+BOOL MCGuiCheckTime(double ms, double bound, NSString *what, const char *file, int line) {
+    NSString *text = [NSString stringWithFormat:@"%@ under %.0f ms of CPU (%.2f)", what, bound, ms];
+    return MCGuiCheck(MCGuiTimingSkipped() || ms < bound, text, file, line);
 }
 
 // ---------------------------------------------------------------- world

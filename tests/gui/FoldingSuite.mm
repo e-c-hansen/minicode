@@ -361,7 +361,12 @@ MC_GUI_SUITE(folding) {
 
 // Timings on 20,000 lines of Python: `make guitest SUITES=foldperf`, and
 // on 100,000 with MC_GUI_FULL_PERF=1 (half of a whole run's time went to
-// laying that file out, folded and not, for notes no check reads).
+// laying that file out, folded and not, for notes no check reads). Fold
+// All, Unfold All and a keystroke among the folds are bounded in the main
+// thread's CPU time: one region at a time, Fold All and Unfold All of
+// 50,000 took 6 and 18 s, which MC_GUI_FULL_PERF=1 (50,000 folds) catches;
+// at 10,000 the bounds catch only worse (Unfold All alone is 0.2 to 1 s,
+// more in a whole run than alone).
 MC_GUI_SUITE(foldperf) {
     __block EditorController *c = nil;
     __block CodeTextView *tv = nil;
@@ -388,8 +393,11 @@ MC_GUI_SUITE(foldperf) {
         MCGuiNote(@"regions arrived %.0f ms after the file showed", Ms(opened));
         NSLayoutManager *lm = tv.layoutManager;
         auto t = std::chrono::steady_clock::now();
+        double cpu = MCGuiThreadCpuMs();
         GCHECK([folds foldAll]);
-        MCGuiNote(@"Fold All (%d folds): %.0f ms", defs * 2, Ms(t));
+        cpu = MCGuiThreadCpuMs() - cpu;
+        MCGuiNote(@"Fold All (%d folds): %.0f ms (%.0f ms of CPU)", defs * 2, Ms(t), cpu);
+        GCHECK_TIME(cpu, defs > 5000 ? 3000 : 1000, @"Fold All");
         t = std::chrono::steady_clock::now();
         [lm ensureLayoutForCharacterRange:NSMakeRange(0, tv.string.length)];
         MCGuiNote(@"laying the whole file out folded: %.0f ms", Ms(t));
@@ -403,20 +411,26 @@ MC_GUI_SUITE(foldperf) {
         [tv displayIfNeeded];
         for (int k = 0; k < 3; k++) {
             t = std::chrono::steady_clock::now();
+            const double c0 = MCGuiThreadCpuMs();
             MCGuiUndoGroup(tv.undoManager, ^{ [tv insertText:@"z" replacementRange:tv.selectedRange]; });
-            const double typed = Ms(t);
+            const double typed = Ms(t), typedCpu = MCGuiThreadCpuMs() - c0;
             t = std::chrono::steady_clock::now();
             [tv displayIfNeeded];
-            MCGuiNote(@"a keystroke among %d folds: %.2f ms, drawing %.2f ms", defs * 2, typed, Ms(t));
+            MCGuiNote(@"a keystroke among %d folds: %.2f ms (%.2f ms of CPU), drawing %.2f ms",
+                      defs * 2, typed, typedCpu, Ms(t));
+            GCHECK_TIME(typedCpu, 50, @"a keystroke among the folds");
         }
         t = std::chrono::steady_clock::now();
         [tv scrollRangeToVisible:NSMakeRange(tv.string.length - 1, 0)];
         [tv displayIfNeeded];
         MCGuiNote(@"scrolling to the end and drawing: %.2f ms", Ms(t));
         t = std::chrono::steady_clock::now();
+        cpu = MCGuiThreadCpuMs();
         GCHECK([folds unfoldAll]);
+        cpu = MCGuiThreadCpuMs() - cpu;
         [lm ensureLayoutForCharacterRange:NSMakeRange(0, tv.string.length)];
-        MCGuiNote(@"Unfold All and laying the whole file out: %.0f ms", Ms(t));
+        MCGuiNote(@"Unfold All (%.0f ms of CPU) and laying the whole file out: %.0f ms", cpu, Ms(t));
+        GCHECK_TIME(cpu, defs > 5000 ? 6000 : 3000, @"Unfold All");
         GCHECK(NSHeight([lm usedRectForTextContainer:tv.textContainer]) > folded * 1.5);
         for (int k = 0; k < 3; k++) [tv.undoManager undo];
     });

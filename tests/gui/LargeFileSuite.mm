@@ -42,13 +42,14 @@ NSColor *ColorAt(NSTextStorage *ts, NSUInteger i) {
     return [ts attribute:NSForegroundColorAttributeName atIndex:i effectiveRange:NULL];
 }
 
+// Each keystroke's main-thread CPU time in ms (as KeystrokeSuite's).
 std::vector<double> TypeChars(NSTextView *tv, NSString *text) {
     std::vector<double> times;
     for (NSUInteger i = 0; i < text.length; i++) {
         NSString *ch = [text substringWithRange:NSMakeRange(i, 1)];
-        const double t0 = Ms();
+        const double c0 = MCGuiThreadCpuMs();
         MCGuiUndoGroup(tv.undoManager, ^{ [tv insertText:ch replacementRange:tv.selectedRange]; });
-        times.push_back(Ms() - t0);
+        times.push_back(MCGuiThreadCpuMs() - c0);
     }
     return times;
 }
@@ -59,12 +60,11 @@ void Bounds(const std::vector<double> &times, NSString *what, double medianBound
     std::sort(v.begin(), v.end());
     const double med = v.empty() ? 0 : v[v.size() / 2];
     const double p95 = v.empty() ? 0 : v[v.size() * 95 / 100];
-    MCGuiNote(@"%@: %lu keystrokes, median %.2f ms, 95th percentile %.2f ms", what,
+    MCGuiNote(@"%@: %lu keystrokes, median %.2f ms of CPU, 95th percentile %.2f ms", what,
               (unsigned long)v.size(), med, p95);
-    MCGuiCheck(med < medianBound, [NSString stringWithFormat:@"%@: median under %.0f ms (%.2f)",
-                                  what, medianBound, med], file, line);
-    MCGuiCheck(p95 < p95Bound, [NSString stringWithFormat:@"%@: 95th percentile under %.0f ms (%.2f)",
-                                what, p95Bound, p95], file, line);
+    MCGuiCheckTime(med, medianBound, [NSString stringWithFormat:@"%@: the median", what], file, line);
+    MCGuiCheckTime(p95, p95Bound, [NSString stringWithFormat:@"%@: the 95th percentile", what],
+                   file, line);
 }
 
 // MC_GUI_SAMPLE=<folder>: /usr/bin/sample on the process for the next
@@ -110,17 +110,23 @@ MC_GUI_SUITE(large_file) {
         tv = Editor(c);
         [c focusEditor:nil];
         SampleFor(@"open25", 7);
-        const double t0 = Ms();
+        const double t0 = Ms(), c0 = MCGuiThreadCpuMs();
         GCHECK([c showFile:big]);
         const double opened = Ms() - t0;
         [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, 4000)];
-        const double shown = Ms() - t0;
-        MCGuiNote(@"opening 25 MB (%lu lines): %.0f ms, its first screen laid out by %.0f ms",
-                  (unsigned long)[s componentsSeparatedByString:@"\n"].count - 1, opened, shown);
-        // Read, made a text storage and highlighted plain: far from the
-        // seconds a full lex and attribute pass of 580,000 lines would take.
-        MCGuiCheck(shown < 3000, [NSString stringWithFormat:@"a 25 MB file shows within 3 s (%.0f ms)",
-                                  shown], __FILE__, __LINE__);
+        const double shown = Ms() - t0, shownCpu = MCGuiThreadCpuMs() - c0;
+        MCGuiNote(@"opening 25 MB (%lu lines): %.0f ms, its first screen laid out by %.0f ms "
+                  @"(%.0f ms of main-thread CPU)",
+                  (unsigned long)[s componentsSeparatedByString:@"\n"].count - 1, opened, shown,
+                  shownCpu);
+        // Read, made a text storage and highlighted plain: about 0.55 s of
+        // the main thread's CPU on an M3, against 2.2 s with the mode off
+        // (a full lex and attribute pass of 470,000 lines; measured by
+        // turning the mode off in noteLargeFileText:). The open is on the
+        // main thread, so its CPU time is the bound, which a loaded machine
+        // inflates by at most about twice; the old 3 s of wall time let the
+        // mode off pass.
+        GCHECK_TIME(shownCpu, 1500, @"a 25 MB file shows");
         MCTab *t = Active(c);
         GCHECK(t.largeFile && !t.largeFileFeatures && [c largeFileFeaturesOff]);
         GCHECK(tv.string.length > (25u << 20) - 100);
@@ -148,10 +154,11 @@ MC_GUI_SUITE(large_file) {
         MCTab *t = Active(c);
         MCGuiSetSettings(@"lsp.enabled = false\neditor.large-file-optimizations = off\n");
         GCHECK([c closeTab:t prompt:NO]);
-        const double t0 = Ms();
+        const double t0 = Ms(), c0 = MCGuiThreadCpuMs();
         GCHECK([c showFile:big]);
         [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, 4000)];
-        MCGuiNote(@"opening 25 MB with large-file mode off: %.0f ms", Ms() - t0);
+        MCGuiNote(@"opening 25 MB with large-file mode off: %.0f ms (%.0f ms of main-thread CPU)",
+                  Ms() - t0, MCGuiThreadCpuMs() - c0);
         GCHECK(!Active(c).largeFile);
         NSRange mid = [tv.string rangeOfString:@"value_300000 = "];
         tv.selectedRange = NSMakeRange(mid.location + 6, 0);

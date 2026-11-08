@@ -278,9 +278,19 @@ NSMenuItem *MenuItem(NSMenu *menu, NSString *title) {
 }
 
 // The longest the main thread went without a turn while `until` was false.
+// The main thread's longest gap between two timer fires, and the most CPU
+// time it spent within one (ms): what the checks bound, since a gap on a
+// loaded machine is mostly the thread waiting for a core.
 struct Gaps {
     CFAbsoluteTime last = 0;
     double worst = 0;
+    double lastCpu = 0, worstCpu = 0;
+    void reset() {
+        last = CFAbsoluteTimeGetCurrent();
+        worst = 0;
+        lastCpu = MCGuiThreadCpuMs();
+        worstCpu = 0;
+    }
 };
 
 }  // namespace
@@ -444,22 +454,26 @@ MC_GUI_SUITE(agents) {
     });
 
     MCGuiStep(@"a 1.3 MB output opens without holding up the window", ^{
-        gaps->last = CFAbsoluteTimeGetCurrent();
-        gaps->worst = 0;
+        gaps->reset();
         Gaps *g = gaps;
         gapTimer = [NSTimer scheduledTimerWithTimeInterval:0.01 repeats:YES block:^(NSTimer *t) {
             (void)t;
             CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+            const double cpu = MCGuiThreadCpuMs();
             g->worst = MAX(g->worst, now - g->last);
+            g->worstCpu = MAX(g->worstCpu, cpu - g->lastCpu);
             g->last = now;
+            g->lastCpu = cpu;
         }];
         [[NSRunLoop currentRunLoop] addTimer:gapTimer forMode:NSRunLoopCommonModes];
         CFAbsoluteTime t0 = CFAbsoluteTimeGetCurrent();
+        const double c0 = MCGuiThreadCpuMs();
         [Agents(c) showEvidenceForTranscript:[gSessDir stringByAppendingPathComponent:@"sess-big.jsonl"]
                                         name:@"Count to a lot"];
-        double opened = CFAbsoluteTimeGetCurrent() - t0;
-        MCGuiNote(@"evidence page made in %.1f ms", opened * 1000);
-        GCHECK(opened < 0.25);
+        const double opened = MCGuiThreadCpuMs() - c0;
+        MCGuiNote(@"evidence page made in %.1f ms (%.1f ms of CPU)",
+                  (CFAbsoluteTimeGetCurrent() - t0) * 1000, opened);
+        GCHECK_TIME(opened, 250, @"the evidence page");
     });
     MCGuiWait(@"its ends are read", 15, ^BOOL {
         MCEvidencePage *e = ActivePage(c);
@@ -474,10 +488,10 @@ MC_GUI_SUITE(agents) {
         GCHECK([c0 containsString:@"number line 120000"]);
         GCHECK([c0 containsString:@"Show all"]);
         GCHECK(![c0 containsString:@"number line 30000\n"]);
-        MCGuiNote(@"longest main-thread gap while reading: %.0f ms", gaps->worst * 1000);
-        GCHECK(gaps->worst < 0.25);
-        gaps->worst = 0;
-        gaps->last = CFAbsoluteTimeGetCurrent();
+        MCGuiNote(@"longest main-thread gap while reading: %.0f ms (at most %.1f ms of its CPU)",
+                  gaps->worst * 1000, gaps->worstCpu);
+        GCHECK_TIME(gaps->worstCpu, 250, @"the main thread's busiest gap while reading");
+        gaps->reset();
         [e expandCommand:0];
     });
     MCGuiWait(@"Show all reads the whole output", 20, ^BOOL {
@@ -490,8 +504,9 @@ MC_GUI_SUITE(agents) {
         GCHECK([all containsString:@"number line 30000\n"]);
         GCHECK([all containsString:@"(cut at 1 MB)"]);
         GCHECK([all containsString:@"Show less"]);
-        MCGuiNote(@"longest main-thread gap while expanding: %.0f ms", gaps->worst * 1000);
-        GCHECK(gaps->worst < 1.0);
+        MCGuiNote(@"longest main-thread gap while expanding: %.0f ms (at most %.1f ms of its CPU)",
+                  gaps->worst * 1000, gaps->worstCpu);
+        GCHECK_TIME(gaps->worstCpu, 1000, @"the main thread's busiest gap while expanding");
         [gapTimer invalidate];
         gapTimer = nil;
         NSURL *less = [NSURL URLWithString:@"minicode-evidence://less/0"];
@@ -515,7 +530,7 @@ MC_GUI_SUITE(agents) {
     MCGuiWait(@"the command waits at the prompt", 60, ^BOOL {
         return [[term recentText:20] containsString:@"echo agents-typed-$((6*7))"];
     });
-    MCGuiPause(1.0);
+    MCGuiPause(1.0);   // negative: the typed command must not run by itself
     MCGuiStep(@"nothing ran, and the terminal is in the session's folder", ^{
         NSString *text = [term recentText:20];
         if (![text containsString:@"echo agents-typed-$((6*7))"])

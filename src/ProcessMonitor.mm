@@ -163,6 +163,13 @@ double Millis(uint64_t from, uint64_t to) {
     return (double)(to - from) * tb.numer / tb.denom / 1e6;
 }
 
+// The calling thread's CPU time, in ms.
+double ThreadCpuMillis() {
+    timespec ts{};
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+
 }  // namespace
 
 // ------------------------------------------------------------ the monitor
@@ -256,31 +263,38 @@ double Millis(uint64_t from, uint64_t to) {
 
 - (void)sampleNow:(void (^)(void))done {
     const uint64_t m0 = mach_absolute_time();
+    const double mc0 = ThreadCpuMillis();
     auto terms = std::make_shared<std::vector<Procs::Terminal>>();
     auto folders = std::make_shared<std::vector<std::string>>();
     [self gatherTerminals:*terms folders:*folders];
     const double gatherMs = Millis(m0, mach_absolute_time());
+    const double gatherCpu = ThreadCpuMillis() - mc0;
     _inFlight = YES;
     __weak MCProcessMonitor *weakSelf = self;
     dispatch_async(_queue, ^{
         MCProcessMonitor *s = weakSelf;
         if (!s) return;
         const uint64_t t0 = mach_absolute_time();
+        const double c0 = ThreadCpuMillis();
         Procs::SampleStats st = s->_tracker.sample(*s->_source, NSProcessInfo.processInfo.systemUptime,
                                                     *terms, *folders, getpid(), getuid());
         auto snap = std::make_shared<std::vector<Procs::Proc>>(s->_tracker.snapshot());
         const double ms = Millis(t0, mach_absolute_time());
+        const double cpu = ThreadCpuMillis() - c0;
         dispatch_async(dispatch_get_main_queue(), ^{
             MCProcessMonitor *m = weakSelf;
             if (!m) return;
             const uint64_t a = mach_absolute_time();
+            const double ac = ThreadCpuMillis();
             m->_procs = std::move(*snap);
             m->_terms = *terms;
             m->_inFlight = NO;
             m->_lastSampleMilliseconds = ms;
+            m->_lastSampleCpuMilliseconds = cpu;
             m->_lastListed = st.listed;
             m->_samples++;
             m->_lastMainThreadMilliseconds = gatherMs + Millis(a, mach_absolute_time());
+            m->_lastMainThreadCpuMilliseconds = gatherCpu + ThreadCpuMillis() - ac;
             // Panels on show redraw from this (ProcessesPanel reload).
             [NSNotificationCenter.defaultCenter postNotificationName:MCProcessMonitorDidSampleNotification
                                                               object:m];

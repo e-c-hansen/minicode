@@ -36,7 +36,8 @@
 @property(nonatomic) int serverPid, outsidePid, sleepPid;
 @property(nonatomic, strong) NSMutableArray<NSNumber *> *started;   // every pid to clean up
 @property(nonatomic, copy) NSString *openedURL;
-@property(nonatomic) double worstSample, worstMain;
+@property(nonatomic) double worstSample, worstMain, worstSampleCpu, worstMainCpu;
+@property(nonatomic) BOOL extraStarted;   // the sleeps outside the folder are up
 @property(nonatomic) NSUInteger listed;
 @property(nonatomic) NSUInteger alerts, windows;
 @end
@@ -305,6 +306,7 @@ MC_GUI_SUITE(processes) {
                     }
         GCHECK(s.sleepPid > 1);
         const NSUInteger listed = [MCProcessMonitor shared].lastListed;
+        s.extraStarted = listed >= 220;
         if (listed < 220) {
             // More, outside the folder, so the table has at least 200.
             NSString *script = [NSString stringWithFormat:
@@ -314,32 +316,39 @@ MC_GUI_SUITE(processes) {
                 (void)st;
                 for (NSString *l in [out componentsSeparatedByString:@"\n"])
                     if (l.intValue > 1) [s.started addObject:@(l.intValue)];
+                s.extraStarted = YES;
             });
         }
     });
-    MCGuiPause(1);
+    MCGuiWait(@"the sleeps outside the folder are started", 30, ^BOOL { return s.extraStarted; });
     for (int i = 0; i < 5; i++) {
         Sample([NSString stringWithFormat:@"a look (%d of 5)", i + 1]);
         MCGuiStep(@"how long it took", ^{
             MCProcessMonitor *m = [MCProcessMonitor shared];
             s.worstSample = MAX(s.worstSample, m.lastSampleMilliseconds);
             s.worstMain = MAX(s.worstMain, m.lastMainThreadMilliseconds);
+            s.worstSampleCpu = MAX(s.worstSampleCpu, m.lastSampleCpuMilliseconds);
+            s.worstMainCpu = MAX(s.worstMainCpu, m.lastMainThreadCpuMilliseconds);
             s.listed = MAX(s.listed, m.lastListed);
         });
     }
     MCGuiStep(@"the panel's own redraw", ^{
-        const double t0 = NSProcessInfo.processInfo.systemUptime;
+        const double t0 = MCGuiNowMs(), c0 = MCGuiThreadCpuMs();
         for (int i = 0; i < 10; i++) [s.panel reload];
-        const double ms = (NSProcessInfo.processInfo.systemUptime - t0) * 100;
-        MCGuiNote(@"the panel's redraw after a look: %.3f ms", ms);
-        GCHECK(ms < 20);
+        const double ms = (MCGuiThreadCpuMs() - c0) / 10;
+        MCGuiNote(@"the panel's redraw after a look: %.3f ms of CPU (%.3f ms wall)", ms,
+                  (MCGuiNowMs() - t0) / 10);
+        GCHECK_TIME(ms, 20, @"the panel's redraw");
     });
     MCGuiStep(@"under 20 ms off the main thread, and little on it", ^{
-        MCGuiNote(@"a look at %lu processes: %.2f ms off the main thread, %.3f ms on it",
-                  (unsigned long)s.listed, s.worstSample, s.worstMain);
+        MCGuiNote(@"a look at %lu processes: %.2f ms of CPU off the main thread (%.2f ms wall), "
+                  @"%.3f ms on it (%.3f ms wall)", (unsigned long)s.listed, s.worstSampleCpu,
+                  s.worstSample, s.worstMainCpu, s.worstMain);
         GCHECK(s.listed >= 200);
-        GCHECK(s.worstSample < 20);
-        GCHECK(s.worstMain < 5);
+        // CPU time of the threads doing it: in wall time a loaded machine
+        // (and CI's runner once) took the look past 20 ms.
+        GCHECK_TIME(s.worstSampleCpu, 20, @"a look off the main thread");
+        GCHECK_TIME(s.worstMainCpu, 5, @"a look's part on the main thread");
     });
     MCGuiStep(@"a picture of the panel", ^{
         [s.panel expandAll];
@@ -385,6 +394,8 @@ MC_GUI_SUITE(processes) {
         GCHECK(MCGuiAlertsShown().count == s.alerts + 1);
         GCHECK_EQ_STR(MCGuiAlertsShown().lastObject, @"Stop sleep?");
     });
+    // A pause before a negative check: the sleep must still be alive after
+    // Cancel, and no condition says "nothing will happen".
     MCGuiPause(0.5);
     MCGuiStep(@"still running; Stop again, answered Stop", ^{
         GCHECK(Alive(s.sleepPid));
