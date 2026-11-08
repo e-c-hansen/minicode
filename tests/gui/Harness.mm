@@ -720,16 +720,22 @@ int main(int argc, const char *argv[]) {
             [[NSUserDefaults standardUserDefaults]
                 setVolatileDomain:@{@"AppleShowScrollBars": @"Always"} forName:NSArgumentDomain];
         // The checks start once the app has opened its window, and the whole
-        // run has ten minutes.
+        // run has 25 minutes (MC_GUI_TOTAL_SECONDS), a backstop only: every
+        // wait has its own limit. Ten minutes was hit by full runs on a
+        // machine loaded by several builds (the run was about 5 minutes
+        // unloaded on 2026-11-08 and grows with every suite).
         [[NSNotificationCenter defaultCenter]
             addObserverForName:NSApplicationDidFinishLaunchingNotification object:nil
                          queue:nil usingBlock:^(NSNotification *) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{ [[MCGuiRunner shared] start]; });
         }];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(600 * NSEC_PER_SEC)),
+        const double total = Env(@"MC_GUI_TOTAL_SECONDS").doubleValue > 0
+                                 ? Env(@"MC_GUI_TOTAL_SECONDS").doubleValue : 1500;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(total * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
-            MCGuiCheck(NO, @"the whole run took over ten minutes", __FILE__, __LINE__);
+            MCGuiCheck(NO, [NSString stringWithFormat:@"the whole run took over %.0f s", total],
+                       __FILE__, __LINE__);
             [[MCGuiRunner shared] finish];
         });
     }
