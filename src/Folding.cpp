@@ -112,7 +112,7 @@ Lexed lex(const char16_t* text, size_t length, const std::string& ext) {
     return out;
 }
 
-bool notCode(TokenStyle s) { return s == TokenStyle::String || s == TokenStyle::Comment; }
+bool notCode(TokenStyle s) { return isStringStyle(s) || s == TokenStyle::Comment; }
 
 // ---- region markers: #region / #endregion and their spellings
 // 1 for a start marker, -1 for an end marker, 0 for neither.

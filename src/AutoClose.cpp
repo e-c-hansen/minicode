@@ -251,7 +251,7 @@ const Language& languageFor(const std::string& path) {
 namespace {
 
 Scope scopeOf(TokenStyle s) {
-    return s == TokenStyle::String ? Scope::String
+    return isStringStyle(s) ? Scope::String
          : s == TokenStyle::Comment ? Scope::Comment
                                     : Scope::Code;
 }

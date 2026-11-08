@@ -262,7 +262,7 @@ void Editor::ensureTags() {
     (void)table;
 
     // One tag per syntax style.
-    for (int i = 0; i <= (int)TokenStyle::Function; ++i) {
+    for (int i = 0; i < kTokenStyleCount; ++i) {
         TokenStyle s = (TokenStyle)i;
         hlTags_.push_back(gtk_text_buffer_create_tag(buffer_, TagNameForStyle(s),
                                                      "foreground", ColorForStyle(s),
@@ -1341,7 +1341,7 @@ void Editor::applySettings(const Settings& s) {
     const bool webBefore = settings_.webImages();
     settings_ = s;
     ensureTags();
-    for (int i = 0; i <= (int)TokenStyle::Function; ++i)
+    for (int i = 0; i < kTokenStyleCount; ++i)
         setTagColor(buffer_, TagNameForStyle((TokenStyle)i), "foreground-rgba",
                     s.syntax((TokenStyle)i));
     for (int lvl = 1; lvl <= 6; ++lvl) {
