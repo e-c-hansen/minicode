@@ -27,5 +27,10 @@
     NSMutableIndexSet *_semanticPainted;
     BOOL _semanticPaintScheduled, _semanticObserving;
     NSColor *_semanticColors[kSemanticColorCount];   // by SemanticColor
+
+    // A page with text blocks went into the editor's storage (a Markdown
+    // preview): displaySourceEditable resets the layout manager's block
+    // table before source goes in (layoutHeldTextBlocks).
+    BOOL _layoutHeldTextBlocks;
 }
 @end

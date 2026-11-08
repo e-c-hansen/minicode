@@ -380,7 +380,7 @@
     _sourceCaretOffset = t.sourceCaretOffset;
     _haveSourcePosition = t.haveSourcePosition;
     _previewEntryScroll = t.previewEntryScroll;
-    self.textView.editable = NO;
+    [self makeEditorReadOnly];   // a long text the tab that left kept goes first
     if (MCViewerKindWithoutText(t.viewerKind)) {
         if (![self showViewer:t.viewerKind]) [self loadActiveTab];
         return;

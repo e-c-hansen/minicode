@@ -45,6 +45,7 @@ static int SemanticStyleIndex(Lsp::SemanticStyle s) {
         [self.textView.textStorage setAttributedString:[NSAttributedString new]];
         self.textView.editable = YES;
     }
+    if (_layoutHeldTextBlocks) [self forgetTextBlockLayout];
     [self.textView.textStorage setAttributedString:attr];
     self.textView.typingAttributes = base;      // typed text stays monospaced
     self.textView.editable = YES;
@@ -55,6 +56,49 @@ static int SemanticStyleIndex(Lsp::SemanticStyle s) {
         [@"untitled." stringByAppendingString:self.currentExt ?: @"txt"];
     [self applyHighlighting];
     [self.textView scrollToBeginningOfDocument:nil];
+}
+
+// A page with text blocks laid out in the editor (a Markdown preview's
+// quotes, code boxes, h1 and h2 rules, tables) leaves the layout manager a
+// table of block runs that outlives the text. While it exists, TextKit
+// works out the container's used rect after every edit by visiting every
+// laid-out line fragment, where without it the first and last fragment
+// do (_recalculateUsageForTextContainerAtIndex:, from the edit's
+// _enableTextViewResizing): 1.5 ms a keystroke with 50,000 lines laid out
+// against 0.3 ms, and tens of ms in a 25 MB file. Nothing public empties
+// the table; taking the layout manager off the storage and putting it
+// back does, keeping the same object, its delegate (the folds) and its
+// settings. Done over an empty storage, before the source goes in.
+- (void)layoutHeldTextBlocks {
+    _layoutHeldTextBlocks = YES;
+}
+
+- (void)forgetTextBlockLayout {
+    _layoutHeldTextBlocks = NO;
+    NSTextStorage *storage = self.textView.textStorage;
+    NSLayoutManager *layout = self.textView.layoutManager;   // held while off the storage
+    if (!storage || !layout) return;
+    if (storage.length) [storage setAttributedString:[NSAttributedString new]];
+    [storage removeLayoutManager:layout];
+    [storage addLayoutManager:layout];
+}
+
+// The editor stops being editable (another tab, a viewer, a preview, a
+// file read afresh): the line numbers hide, which widens the text view,
+// and a wider view lays out all of its text to learn its height (1.3 to
+// 5 s for 25 MB, on the main thread). A long text goes first, as on the
+// way in (displaySourceEditable); whatever shows next puts its own text
+// in, and the tab keeps its own copy (stashActiveTab, sourceText). Every
+// way on from here tells the language server what shows next
+// (documentOpened:) in the same turn, which drops the emptying before it
+// is sent as an edit (detachDocument), as for any text replaced on show.
+- (void)makeEditorReadOnly {
+    NSTextView *tv = self.textView;
+    if (tv.editable && tv.textStorage.length > (1u << 20)) {
+        _liveHighlight = NO;
+        [tv.textStorage setAttributedString:[NSAttributedString new]];
+    }
+    tv.editable = NO;
 }
 
 // Recolor the whole text storage in place (preserves cursor/selection), and

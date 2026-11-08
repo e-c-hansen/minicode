@@ -413,6 +413,7 @@ static char kMarkdownMermaidKey;
                       anchors:&anchors];
     _markdownAnchors = anchors;
     _liveHighlight = NO;   // rendered Markdown is not source
+    [self layoutHeldTextBlocks];   // its quotes and code boxes (displaySourceEditable)
     [self.textView.textStorage setAttributedString:page];
     [self.textView scrollToBeginningOfDocument:nil];
     [self finishMarkdownPage];

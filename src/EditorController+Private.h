@@ -625,6 +625,13 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 // EditorController+Highlighting.mm: the source's syntax colors, kept up as it is edited.
 @interface EditorController (Highlighting)
 - (void)displaySourceEditable;
+// The editor's storage is about to hold text blocks (a Markdown page's
+// quotes, code boxes, headings and tables): the next source shown starts
+// the layout manager's block table afresh.
+- (void)layoutHeldTextBlocks;
+// Turn the editor read-only, letting go of a long text first, so the
+// line numbers hiding does not lay all of it out.
+- (void)makeEditorReadOnly;
 - (void)applyHighlighting;
 - (void)restyleRange:(NSRange)range tokens:(const std::vector<Token> &)tokens
            inStorage:(NSTextStorage *)storage;

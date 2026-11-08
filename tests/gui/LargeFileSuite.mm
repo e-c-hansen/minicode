@@ -85,6 +85,8 @@ void SampleFor(NSString *tag, int seconds) {
 MC_GUI_SUITE(large_file) {
     __block EditorController *c = nil;
     __block CodeTextView *tv = nil;
+    __block std::vector<double> freshKeys;   // the first typing's, to compare with later
+    __block NSUInteger typedAt = 0;
     // A window of its own on a folder of its own: what earlier suites left
     // open (tabs, servers, trees watching the project) does not time this
     // suite's keystrokes, and 85 MB of files do not land in their folder.
@@ -186,8 +188,6 @@ MC_GUI_SUITE(large_file) {
         MCGuiNote(@"typing in it with the mode off: median %.2f ms", times[times.size() / 2]);
         GCHECK([c closeTab:Active(c) prompt:NO]);
         MCGuiSetSettings(@"lsp.enabled = false\n");
-        GCHECK([c showFile:big]);
-        GCHECK(Active(c).largeFile);
     });
 
     MCGuiStep(@"typing in it stays under the keystroke suite's bounds", ^{
@@ -202,10 +202,126 @@ MC_GUI_SUITE(large_file) {
             TypeChars(tv, [@"" stringByPaddingToLength:200 withString:@"ab cd " startingAtIndex:0]);
         GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"ab cd "]);
         Bounds(times, @"a 25 MB file in large-file mode", 20, 60, __FILE__, __LINE__);
+        freshKeys = times;
         GCHECK(ColorRunCount(tv.textStorage, NSMakeRange(at - 100, 400)) == 1);   // still plain
         GCHECK(Active(c).dirty);
         [tv.undoManager undo];   // one group per character: undo a few, then close unsaved
+        typedAt = at;
+    });
+
+    // Leaving the tab hides the line numbers, which widens the text view;
+    // with the 25 MB still in the storage that laid all of it out (about
+    // 1.3 s). makeEditorReadOnly lets go of a long text first.
+    NSString *small = [dir stringByAppendingPathComponent:@"beside.py"];
+    NSString *page = [dir stringByAppendingPathComponent:@"page.md"];
+    MCGuiStep(@"switching away from it lays none of it out", ^{
+        MCTab *bigTab = Active(c);
+        MCGuiWriteFile(small, @"x = 1\n");
+        double c0 = MCGuiThreadCpuMs();
+        GCHECK([c showFile:small]);   // a new tab, read for the first time
+        const double toNew = MCGuiThreadCpuMs() - c0;
+        GCHECK(Active(c) != bigTab && [tv.string isEqualToString:@"x = 1\n"]);
+        SampleFor(@"back25", 5);
+        c0 = MCGuiThreadCpuMs();
+        GCHECK([c showFile:big]);
+        const double back = MCGuiThreadCpuMs() - c0;
+        GCHECK(Active(c) == bigTab && bigTab.dirty);
+        GCHECK([[tv.string substringWithRange:NSMakeRange(typedAt, 5)] isEqualToString:@"ab cd"]);
+        c0 = MCGuiThreadCpuMs();
+        GCHECK([c showFile:small]);   // a tab shown again
+        const double toShown = MCGuiThreadCpuMs() - c0;
+        MCGuiNote(@"from the 25 MB tab to a new tab: %.0f ms of CPU, back to it %.0f ms, "
+                  @"away again %.0f ms", toNew, back, toShown);
+        GCHECK_TIME(toNew, 250, @"switching from the 25 MB tab to a new tab");
+        GCHECK_TIME(toShown, 250, @"switching from the 25 MB tab to a tab shown before");
         GCHECK([c closeTab:Active(c) prompt:NO]);
+        GCHECK(Active(c) == bigTab);
+    });
+
+    // The same let-go with a language server: a 2 MB file is no large file,
+    // so it is open on its server, and the emptied storage must never reach
+    // the server as an edit of it (whatever shows next lets the session go
+    // of the document in the same turn, before the 0.3 s didChange).
+    NSString *served = [dir stringByAppendingPathComponent:@"served2.py"];
+    MCGuiStep(@"a 2 MB file open on a server, then a tab without one", ^{
+        NSMutableString *s = [NSMutableString stringWithCapacity:2200000];
+        for (int i = 0; s.length < 2100000; i++) [s appendFormat:@"value_%d = %d  # served\n", i, i];
+        MCGuiWriteFile(served, s);
+        NSString *cmd = MCGuiFakeLsp(@"letgo", @{@"name": @"fakelsp", @"capabilities": @{
+            @"textDocumentSync": @{@"openClose": @YES, @"change": @2}}, @"rules": @[]}, nil, nil);
+        MCGuiSetSettings([NSString stringWithFormat:
+            @"lsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n", cmd]);
+        GCHECK([c showFile:served]);
+        GCHECK(!Active(c).largeFile && tv.editable);
+    });
+    MCGuiWait(@"the server has the file", 20, ^BOOL {
+        return MCGuiFakeLspReceived(@"letgo", @"textDocument/didOpen").count > 0;
+    });
+    MCGuiStep(@"switching away and back sends it nothing", ^{
+        MCGuiFakeLspClearLog(@"letgo");
+        NSString *notes = [dir stringByAppendingPathComponent:@"notes.txt"];
+        MCGuiWriteFile(notes, @"plain text, no server\n");
+        GCHECK([c showFile:small]);    // a new tab (beside.py was closed): read afresh
+        GCHECK([c showFile:served]);
+        GCHECK([c showFile:notes]);    // a new tab with no server
+        GCHECK([c showFile:served]);
+        GCHECK([c showFile:small]);    // a tab shown before
+        GCHECK([c showFile:served]);
+        // A picture's tab shows no text: its own documentOpened:nil is what
+        // keeps the emptying from going out as an edit.
+        NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+            pixelsWide:4 pixelsHigh:4 bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO
+            colorSpaceName:NSDeviceRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+        NSString *picture = [dir stringByAppendingPathComponent:@"dot.png"];
+        GCHECK([[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
+                   writeToFile:picture atomically:YES]);
+        GCHECK([c showFile:picture]);
+        GCHECK(Active(c).isImage);
+    });
+    MCGuiPause(1.0);   // a negative check: a didChange would have gone 0.3 s after an edit
+    MCGuiStep(@"no didChange or didClose reached the server", ^{
+        NSArray *changes = MCGuiFakeLspReceived(@"letgo", @"textDocument/didChange");
+        NSArray *closes = MCGuiFakeLspReceived(@"letgo", @"textDocument/didClose");
+        MCGuiNote(@"%lu didChange, %lu didClose", (unsigned long)changes.count,
+                  (unsigned long)closes.count);
+        GCHECK(changes.count == 0 && closes.count == 0);
+        GCHECK([c showFile:served]);
+        GCHECK(tv.editable && [tv.string hasPrefix:@"value_0 = 0"]);
+        for (MCTab *t in [(NSArray *)[c valueForKey:@"tabs"] copy])
+            if (![t.currentPath isEqualToString:big]) GCHECK([c closeTab:t prompt:NO]);
+        MCGuiSetSettings(@"lsp.enabled = false\n");
+    });
+
+    // A Markdown page in the editor's view (its quotes, code boxes, h1 and
+    // h2 rules, and tables are text blocks) left TextKit recalculating the
+    // used rect over every laid-out line on each later keystroke: 16 to
+    // 48 ms a key here in the window earlier suites had used, 9 ms with the
+    // caret where this suite types (forgetTextBlockLayout).
+    MCGuiStep(@"after a Markdown page in the window, typing in it costs as much", ^{
+        MCGuiWriteFile(page, @"# Title\n\n> a quote\n\n```\ncode\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n");
+        GCHECK([c showFile:page]);
+        GCHECK(!tv.editable);   // the preview
+        [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, tv.string.length)];
+        GCHECK([c showFile:big]);
+        GCHECK(Active(c).largeFile);
+        tv.selectedRange = NSMakeRange(typedAt, 0);
+        [tv scrollRangeToVisible:tv.selectedRange];
+        [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(typedAt, 2000)];
+        SampleFor(@"type25used", 6);
+        std::vector<double> times =
+            TypeChars(tv, [@"" stringByPaddingToLength:200 withString:@"ab cd " startingAtIndex:0]);
+        // Against this run's fresh keystrokes, so the bound holds on any
+        // core: about the same cost, where the block table made the median
+        // four times as much.
+        std::vector<double> fresh = freshKeys;
+        std::sort(fresh.begin(), fresh.end());
+        const double freshMed = fresh.empty() ? 0 : fresh[fresh.size() / 2];
+        const double freshP95 = fresh.empty() ? 0 : fresh[fresh.size() * 95 / 100];
+        Bounds(times, @"a 25 MB file after a Markdown page", MAX(5, 2.5 * freshMed),
+               MAX(10, 3 * freshP95), __FILE__, __LINE__);
+        for (NSUInteger i = 0; i < times.size(); i++) [tv.undoManager undo];
+        GCHECK([c closeTab:Active(c) prompt:NO]);
+        GCHECK([c closeTab:Active(c) prompt:NO]);   // the page
     });
 
     MCGuiStep(@"300,001 short lines count as large; the note turns it all on", ^{
