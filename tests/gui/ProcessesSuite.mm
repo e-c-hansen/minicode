@@ -503,7 +503,11 @@ MC_GUI_SUITE(processes) {
         for (NSNumber *p in s.started)
             if (Alive(p.intValue)) kill(p.intValue, SIGKILL);   // only what this suite started
         MCTerminalPanel *tp = [s.c valueForKey:@"terminalPanel"];
-        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
-        if (s.termB && [tp.terminals containsObject:s.termB]) [tp closeTerminal:s.termB];
+        // An answer only for a question that will come: one left queued
+        // answered the next suite's (terminal_paste's Cancel became Paste).
+        if (s.termB && [tp.terminals containsObject:s.termB]) {
+            if (s.termB.runningCommands.count) MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
+            [tp closeTerminal:s.termB];
+        }
     });
 }
