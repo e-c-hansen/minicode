@@ -1989,7 +1989,10 @@ for full-screen programs. Both can be open at once.
   once let "ESC[20" + mark + "1~" close up into a new mark). The grid's
   `paste:` asks first per `TerminalScreen::checkPaste`
   (`terminal.multiline-paste-warning`, VS Code's auto/always/never; a lone
-  CR counts as a break). Secure keyboard entry: TerminalView polls termios
+  CR counts as a break). One line asks too when, unbracketed, it holds a
+  control character other than Tab (2026-11-08: "echo hi" + Ctrl+O ran
+  unasked), with Paste and Cancel only; the preview shows controls as
+  U+2400 symbols. Secure keyboard entry: TerminalView polls termios
   (after output, and four times a second while a command runs) and sets
   the grid's `hiddenInput` for ECHO off with ICANON on (ZLE and full-screen
   programs turn ICANON off); the grid calls Enable/DisableSecureEventInput

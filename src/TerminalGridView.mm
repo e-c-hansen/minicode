@@ -2071,24 +2071,35 @@ static BOOL IsWordCell(const TermCell &cell) {
 
 // VS Code's question (terminal.integrated.enableMultiLinePasteWarning):
 // Paste, Paste as One Line, or Cancel, with a preview of the first lines.
+// Text of one line asks only for its control characters (checkPaste), and
+// then offers Paste or Cancel; the answer comes back as Cancel's
+// (NSAlertThirdButtonReturn) either way, as for several lines.
 // "Do not ask again" writes terminal.multiline-paste-warning = never.
 - (NSModalResponse)askBeforePasting:(const TerminalScreen::PasteCheck &)check {
     NSAlert *alert = [[NSAlert alloc] init];
     alert.alertStyle = NSAlertStyleWarning;
-    alert.messageText = [NSString stringWithFormat:@"Paste %d lines into the terminal?", check.lines];
+    const BOOL oneLine = check.lines < 2;
+    alert.messageText = oneLine
+        ? @"Paste text that contains control characters into the terminal?"
+        : [NSString stringWithFormat:@"Paste %d lines into the terminal?", check.lines];
     NSString *preview = [[NSString alloc] initWithBytes:check.preview.data()
                                                  length:check.preview.size()
                                                encoding:NSUTF8StringEncoding] ?: @"";
-    NSString *why = self.screen && self.screen->bracketedPaste()
+    NSString *why = oneLine || (self.screen && self.screen->bracketedPaste())
         ? @""
         : @"The program running here may run each line as it arrives.\n\n";
+    if (check.controls)
+        why = [why stringByAppendingString:
+                       @"It contains control characters, shown as symbols below, which the "
+                       @"program takes as keys (Ctrl+O, for one, runs zsh's line).\n\n"];
     alert.informativeText = [NSString stringWithFormat:@"%@Preview:\n%@", why, preview];
     [alert addButtonWithTitle:@"Paste"];
-    [alert addButtonWithTitle:@"Paste as One Line"];
+    if (!oneLine) [alert addButtonWithTitle:@"Paste as One Line"];
     [alert addButtonWithTitle:@"Cancel"];
     alert.showsSuppressionButton = YES;
     alert.suppressionButton.title = @"Do not ask again";
     NSModalResponse r = [alert runModal];
+    if (oneLine && r == NSAlertSecondButtonReturn) r = NSAlertThirdButtonReturn;   // Cancel
     if ((r == NSAlertFirstButtonReturn || r == NSAlertSecondButtonReturn) &&
         alert.suppressionButton.state == NSControlStateValueOn)
         [[AppSettings shared] writeValue:@"never" forKey:@"terminal.multiline-paste-warning"];
