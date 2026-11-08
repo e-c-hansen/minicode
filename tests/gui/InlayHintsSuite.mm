@@ -216,10 +216,14 @@ MC_GUI_SUITE(inlay_hints) {
         GCHECK(OffsetOf(c, @": float") == line3 + 11);
         GCHECK(OffsetOf(c, @": int") == NSNotFound);
         GCHECK(Text(c).inlayHints.count == 4);
-        // Typed, the hint that follows a name moves along with it.
+        // Typed, the hint that follows a name moves along with it, and the
+        // typed character takes no kern from the gap it was typed at.
         CodeTextView *tv = Text(c);
+        tv.selectedRange = NSMakeRange(line3 + 11, 0);
+        GCHECK(tv.typingAttributes[NSKernAttributeName] == nil);
         TypeAt(tv, line3 + 11, 0, @"s");
         GCHECK(OffsetOf(c, @": float") == line3 + 12);
+        GCHECK(tv.typingAttributes[NSKernAttributeName] == nil);
         // A parameter's name stays before what is typed at it.
         const NSUInteger w = OffsetOf(c, @"width=");
         TypeAt(tv, w, 0, @"1");
@@ -267,7 +271,6 @@ MC_GUI_SUITE(inlay_hints) {
     // the main thread's CPU time against the same keystrokes with none.
     __block CodeTextView *big = nil;
     __block NSUInteger at = 0;
-    __block double plainMs = 0;
     NSString *bigFile = MCGuiProjectFile(@"inlay/big100k.py");
     MCGuiStep(@"a 100,000-line Python file", ^{
         NSMutableString *s = [NSMutableString string];
@@ -299,13 +302,6 @@ MC_GUI_SUITE(inlay_hints) {
         return CpuMs() - t0;
     };
     NSString *typed = [@"" stringByPaddingToLength:200 withString:@"ab cd " startingAtIndex:0];
-    MCGuiStep(@"200 keystrokes with no hints", ^{
-        [big.inlayHints clear];
-        big.selectedRange = NSMakeRange(at, 0);
-        plainMs = typeTimed(typed);
-        for (NSUInteger i = 0; i < typed.length; i++) [big.undoManager undo];
-        GCHECK([[big.string substringWithRange:NSMakeRange(at, 8)] isEqualToString:@"value_10"]);
-    });
     MCGuiStep(@"200 keystrokes on a hinted line, hints on every line on show", ^{
         // Hints as basedpyright gives them: a type after each value_N and
         // two parameter names in its call, for the 400 lines around.
@@ -349,18 +345,40 @@ MC_GUI_SUITE(inlay_hints) {
         MCGuiCheck(showMs < 150, [NSString stringWithFormat:
                        @"showing the hints of 400 lines takes under 150 ms of CPU (%.1f)", showMs],
                    __FILE__, __LINE__);
-        // The keystrokes go right after "value_10000", before its hint.
-        big.selectedRange = NSMakeRange(at + 11, 0);
-        const double hinted = typeTimed(typed);
-        const double extra = (hinted - plainMs) / typed.length;
+        // The keystrokes go right after "value_10000", at its hint (which
+        // moves along with them), then are undone; rounds with the gaps and
+        // without them take turns after one to warm up, and the fastest of
+        // each is compared, so what the window went through before (other
+        // suites) weighs on both alike.
+        MCSourceStorage *ts = (MCSourceStorage *)big.textStorage;
+        const std::vector<MCTextGap> saved = ts.gaps;
+        auto round = ^double(BOOL withGaps, NSString *keys) {
+            ts.gaps = withGaps ? saved : std::vector<MCTextGap>();
+            big.selectedRange = NSMakeRange(at + 11, 0);
+            const double ms = typeTimed(keys);
+            for (NSUInteger i = 0; i < keys.length; i++) [big.undoManager undo];
+            return ms;
+        };
+        round(YES, [typed substringToIndex:50]);
+        double hinted = 1e9, plain = 1e9;
+        for (int i = 0; i < 3; i++) {
+            hinted = MIN(hinted, round(YES, typed));
+            plain = MIN(plain, round(NO, typed));
+        }
+        ts.gaps = saved;
+        GCHECK([[big.string substringWithRange:NSMakeRange(at, 13)] isEqualToString:@"value_10000 ="]);
+        const double extra = (hinted - plain) / typed.length;
         MCGuiNote(@"200 keystrokes: %.1f ms of CPU with no hints, %.1f ms with them "
-                  @"(%.3f ms a keystroke more)", plainMs, hinted, extra);
+                  @"(%.3f ms a keystroke more)", plain, hinted, extra);
         // The plan's bound: a hint costs a keystroke under a millisecond.
         MCGuiCheck(extra < 1.0, [NSString stringWithFormat:
                        @"hints add under 1 ms of CPU a keystroke (%.3f)", extra],
                    __FILE__, __LINE__);
-        GCHECK(OffsetOf(c, @": float") != NSNotFound);
-        for (NSUInteger i = 0; i < typed.length; i++) [big.undoManager undo];
+        BOOL kept = NO;
+        for (NSDictionary *h in big.inlayHints.shownHints)
+            if ([h[@"offset"] unsignedIntegerValue] == at + 11 && [h[@"label"] isEqualToString:@": float"])
+                kept = YES;
+        GCHECK(kept);
         [big.inlayHints clear];
     });
 

@@ -557,6 +557,20 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
     [super doCommandBySelector:selector];
 }
 
+// NSTextView takes the typing attributes from the character before the
+// caret, as the storage answers it, so typing right after an inlay hint's
+// gap stored its kern in every character typed (the highlighter then set
+// their colors again on each keystroke, and plain text kept it). The
+// editor never kerns anything of its own.
+- (void)setTypingAttributes:(NSDictionary<NSAttributedStringKey, id> *)attrs {
+    if (attrs[NSKernAttributeName]) {
+        NSMutableDictionary *m = [attrs mutableCopy];
+        [m removeObjectForKey:NSKernAttributeName];
+        attrs = m;
+    }
+    [super setTypingAttributes:attrs];
+}
+
 // What goes to a pasteboard (a copy, a drag, a service) is the text with
 // its own attributes: the inlay hints' gaps are left out of the rich text.
 - (BOOL)writeSelectionToPasteboard:(NSPasteboard *)pboard types:(NSArray<NSPasteboardType> *)types {
