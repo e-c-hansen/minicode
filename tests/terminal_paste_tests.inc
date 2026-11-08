@@ -110,7 +110,8 @@ void testTerminalPaste() {
     }
     {
         // The preview: three lines, each cut at 30 characters (not bytes),
-        // then an ellipsis line; control characters blanked.
+        // then an ellipsis line; control characters as their symbols, Tab
+        // as a space.
         const std::string longLine(40, 'x');
         const std::string accents = "\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9"
                                     "\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9"
@@ -122,7 +123,7 @@ void testTerminalPaste() {
         CHECK(c.ask && c.lines == 5);
         std::string want = std::string(30, 'x') + "\xE2\x80\xA6\n";
         for (int i = 0; i < 30; i++) want += "\xC3\xA9";
-        want += "\xE2\x80\xA6\na b [1m\n\xE2\x80\xA6";
+        want += "\xE2\x80\xA6\na b\xE2\x90\x9B[1m\n\xE2\x80\xA6";
         CHECK(c.preview == want);
         if (c.preview != want) std::printf("    preview: %s\n", c.preview.c_str());
     }
@@ -130,5 +131,54 @@ void testTerminalPaste() {
         // Paste as One Line takes every break out, as VS Code does.
         CHECK(TerminalScreen::pasteAsOneLine("a\nb\r\nc\rd\n") == "abcd");
         CHECK(TerminalScreen::pasteAsOneLine("plain") == "plain");
+    }
+
+    GROUP("term:paste-controls");
+    {
+        // One line with a control character, unbracketed, asks in auto and
+        // always: the program takes it as a key (Ctrl+O runs zsh's line
+        // and fetches the next, ESC starts a sequence). The round-5 case:
+        // "echo hi" + Ctrl+O ran unasked.
+        for (const char* mode : {"auto", "always", "sometimes"}) {
+            PC c = TerminalScreen::checkPaste("echo hi\x0f", false, mode);
+            CHECK(c.ask && c.controls && c.lines == 1);
+            CHECK(c.preview == "echo hi\xE2\x90\x8F");   // U+240F
+        }
+        PC esc = TerminalScreen::checkPaste("\x1b", false, "auto");
+        CHECK(esc.ask && esc.controls && esc.preview == "\xE2\x90\x9B");
+        PC del = TerminalScreen::checkPaste("rm x\x7f", false, "auto");
+        CHECK(del.ask && del.controls && del.preview == "rm x\xE2\x90\xA1");   // U+2421
+        PC nul = TerminalScreen::checkPaste(std::string("a\0b", 3), false, "auto");
+        CHECK(nul.ask && nul.preview == "a\xE2\x90\x80" "b");
+        // never never asks, controls or not.
+        PC n = TerminalScreen::checkPaste("echo hi\x0f", false, "never");
+        CHECK(!n.ask && n.text == "echo hi\x0f");
+    }
+    {
+        // Tab is not one of them (completion is what a pasted Tab does, as
+        // typed), nor are line breaks, which have their own rules.
+        PC tab = TerminalScreen::checkPaste("a\tb", false, "auto");
+        CHECK(!tab.ask && !tab.controls && tab.text == "a\tb");
+        PC cr = TerminalScreen::checkPaste("make\n", false, "auto");
+        CHECK(!cr.ask && !cr.controls && cr.text == "make");
+        // A command with its line break and a control character: the break
+        // is not taken out quietly, the question comes.
+        PC both = TerminalScreen::checkPaste("ls\x0f\n", false, "auto");
+        CHECK(both.ask && both.controls && both.lines == 2);
+        // Several lines with one: the line count still leads the question.
+        PC lines = TerminalScreen::checkPaste("a\nb\x1b", false, "auto");
+        CHECK(lines.ask && lines.controls && lines.lines == 2 &&
+              lines.preview == "a\nb\xE2\x90\x9B");
+    }
+    {
+        // Bracketed: the program receives the bytes as text inside the
+        // brackets (encodePaste shows ESC as U+241B), so nothing asks and
+        // nothing counts as a control, in auto; always still asks only for
+        // several lines.
+        PC b = TerminalScreen::checkPaste("echo hi\x0f", true, "auto");
+        CHECK(!b.ask && !b.controls);
+        CHECK(!TerminalScreen::checkPaste("\x1b[201~", true, "auto").ask);
+        CHECK(!TerminalScreen::checkPaste("echo hi\x0f", true, "always").ask);
+        CHECK(TerminalScreen::checkPaste("a\x0f\nb", true, "always").ask);
     }
 }

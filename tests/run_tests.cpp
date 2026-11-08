@@ -10268,6 +10268,7 @@ static void testMultiCaretOccurrences() {
 #include "lsp_semantic_tests.inc"
 #include "preview_scroll_tests.inc"
 #include "quick_diff_tests.inc"
+#include "zsh_integration_tests.inc"
 #include "lexer_styles_tests.inc"
 #include "bracket_pairs_tests.inc"
 
@@ -10296,6 +10297,7 @@ int main() {
     testParserFuzz();
     testTerminalHyperlinks();
     testTerminalPaste();
+    testZshIntegration();
     testTerminalMarks();
     testTerminalDraw();
     testSettings();

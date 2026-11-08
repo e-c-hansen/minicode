@@ -7,7 +7,8 @@
 //     (cat) ask first, as VS Code does: Cancel sends nothing, Paste as One
 //     Line takes the breaks out, Paste sends them; a command with one
 //     trailing break goes in without it; terminal.multiline-paste-warning
-//     = never and always.
+//     = never and always. One line holding a control character (Ctrl+O,
+//     ESC) asks too, with Paste and Cancel only; a Tab does not.
 //   - Secure keyboard entry while `read -s` reads with echo off and the grid
 //     has the keyboard, off when the keyboard leaves and when echo returns.
 // The nonce after `exec bash` is checked in terminal_exec (LooseEndsSuite).
@@ -125,6 +126,36 @@ MC_GUI_SUITE(terminal_paste) {
         Clip(@"alpha\r\nbeta");
         Paste(s.term);
         GCHECK_EQ_STR(Str(s.sent), @"alpha\rbeta");
+    });
+    // One line with a control character asks too (Ctrl+O at zsh's prompt
+    // runs the line): Paste or Cancel, no Paste as One Line.
+    MCGuiStep(@"one line with Ctrl+O, Cancel (the second of two buttons): nothing sent", ^{
+        s.alerts = MCGuiAlertsShown().count;
+        [s.sent setLength:0];
+        Clip(@"echo hi\x0f");
+        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);
+        Paste(s.term);
+        GCHECK(MCGuiAlertsShown().count == s.alerts + 1);
+        GCHECK_EQ_STR(MCGuiAlertsShown().lastObject,
+                      @"Paste text that contains control characters into the terminal?");
+        GCHECK(s.sent.length == 0);
+    });
+    MCGuiStep(@"one line with ESC, Paste: sent as it was", ^{
+        [s.sent setLength:0];
+        Clip(@"x\x1b");
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
+        Paste(s.term);
+        GCHECK_EQ_STR(Str(s.sent), @"x\x1b");
+    });
+    MCGuiStep(@"one line with a Tab: unasked", ^{
+        s.alerts = MCGuiAlertsShown().count;
+        [s.sent setLength:0];
+        Clip(@"a\tb");
+        Paste(s.term);
+        GCHECK(MCGuiAlertsShown().count == s.alerts);
+        GCHECK_EQ_STR(Str(s.sent), @"a\tb");
+        const char nl = '\r';   // cat takes the line
+        Grid(s.term).onInput([NSData dataWithBytes:&nl length:1]);
     });
     MCGuiStep(@"a command with its line break goes in without it, unasked", ^{
         s.alerts = MCGuiAlertsShown().count;
