@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct TermColor {
@@ -35,25 +36,67 @@ struct TermColor {
     uint32_t rgb() const;
 };
 
+// Underline styles (SGR 4, 4:0 to 4:5, and 21 for double).
+enum TermUnderline : uint8_t {
+    TermUnderlineNone = 0, TermUnderlineSingle, TermUnderlineDouble,
+    TermUnderlineCurly, TermUnderlineDotted, TermUnderlineDashed,
+};
+
 struct TermStyle {
     TermColor fg, bg;
-    // One byte for all six, so the link below keeps the style at 16 bytes
-    // (the scrollback stores one per style run). C++17 has no default
-    // member initializers for bit-fields, hence the constructor.
-    bool bold : 1, dim : 1, italic : 1, underline : 1, inverse : 1, strike : 1;
+    // Two bytes for the flags and the underline style, so the link and the
+    // underline color below keep the style at 16 bytes (the scrollback
+    // stores one per style run). C++17 has no default member initializers
+    // for bit-fields, hence the constructor. `underline` is a
+    // TermUnderline, so it still reads as true when the text is
+    // underlined at all; `hidden` is SGR 8 (concealed), `overline` SGR 53.
+    uint16_t bold : 1, dim : 1, italic : 1, underline : 3, inverse : 1, strike : 1,
+             hidden : 1, overline : 1;
     // An OSC 8 hyperlink the text belongs to: an id in the TerminalScreen's
     // table (TerminalScreen::linkURI), 0 for none. Only the screen sets it,
     // on the cells it prints, keeping the open link apart from the SGR
     // state, so a reset (SGR 0) inside a link stays in the link.
-    uint32_t link = 0;
+    uint16_t link = 0;
+    // The underline's color (SGR 58): an id in a TermColorTable (the
+    // screen's, TerminalScreen::underlineColor), 0 for the text's color.
+    uint16_t underlineColor = 0;
     TermStyle()
-        : bold(false), dim(false), italic(false), underline(false), inverse(false), strike(false) {}
+        : bold(0), dim(0), italic(0), underline(0), inverse(0), strike(0), hidden(0),
+          overline(0) {}
     bool operator==(const TermStyle& o) const {
         return fg == o.fg && bg == o.bg && bold == o.bold && dim == o.dim &&
                italic == o.italic && underline == o.underline &&
-               inverse == o.inverse && strike == o.strike && link == o.link;
+               inverse == o.inverse && strike == o.strike && hidden == o.hidden &&
+               overline == o.overline && link == o.link &&
+               underlineColor == o.underlineColor;
     }
     bool operator!=(const TermStyle& o) const { return !(*this == o); }
+};
+
+// Colors given out as small ids, so a style can name one in two bytes (the
+// underline color). Id 0 is "none"; at most kMax ids are in use at once,
+// and with the table full intern() returns 0. Its owner frees ids nothing
+// uses any more with release() (the screen does, scanning its cells, when
+// full() and an SGR names a new color), as the OSC 8 link table does. Holds
+// no pointers, so a screen that owns one stays copyable.
+class TermColorTable {
+public:
+    static constexpr size_t kMax = 4095;
+    uint16_t intern(const TermColor& c);
+    // The color of an id; the default color for 0 or an unknown id.
+    TermColor color(uint16_t id) const {
+        return id && id <= colors_.size() ? colors_[id - 1] : TermColor();
+    }
+    size_t size() const { return ids_.size(); }
+    bool full() const { return free_.empty() && colors_.size() >= kMax; }
+    // Frees every id whose used[id] is false (used has kMax + 1 entries).
+    void release(const std::vector<bool>& used);
+
+private:
+    std::vector<TermColor> colors_;
+    std::vector<uint16_t> free_;
+    std::unordered_map<uint32_t, uint16_t> ids_;   // by key(), the ids in use
+    static uint32_t key(const TermColor& c);
 };
 
 // A stretch of text in one style.
@@ -67,9 +110,17 @@ struct TermRun {
 // combining and enclosing marks, format characters (the zero width joiner,
 // the bidi controls), the Hangul medial and final jamo, and the emoji skin
 // tone modifiers; 2 for East Asian wide and fullwidth characters and the
-// emoji shown wide; 1 for the rest. As wcwidth counts, so the cursor stays
-// where zsh's line editor thinks it is.
+// emoji shown wide; 1 for the rest. With grapheme clusters (termJoinsCluster,
+// VS16) this is how programs that follow Unicode (Claude Code's Ink) count.
 int termCharWidth(uint32_t cp);
+// Columns zsh's line editor gives a code point, one code point at a time:
+// macOS's /bin/zsh is built with zsh's own Unicode 9 table (wcwidth9.h,
+// ENABLE_UNICODE9; it never calls the C library's wcwidth), which gives
+// regional indicators 2 columns each, spacing marks such as U+093F none,
+// and U+2764 one. The ranges are written by tools/gen-zsh-width.py from
+// that header. Where zsh's table has no width (unassigned in Unicode 9,
+// non-printing: zsh shows those as <XXXX> itself) this is termCharWidth.
+int termCodepointWidth(uint32_t cp);
 // Extended_Pictographic: an emoji, or a symbol that may show as one. After a
 // zero width joiner such a character joins the emoji before it (a family,
 // a profession) instead of taking cells of its own.
@@ -96,7 +147,10 @@ bool termMarkAccepted(std::string& body, const std::string& nonce);
 std::string termOsc7Path(const std::string& body);
 
 // Apply an SGR parameter string (the body of "CSI ... m") to a style.
-void applySgr(TermStyle& style, const std::string& params);
+// Underline colors (SGR 58) are interned in `underlineColors`; without a
+// table they are ignored.
+void applySgr(TermStyle& style, const std::string& params,
+              TermColorTable* underlineColors = nullptr);
 
 // The most bytes a cell keeps: its character plus combining marks. Marks
 // past it are dropped, as xterm keeps only a few, since a program printing
@@ -148,6 +202,10 @@ public:
     // Empty values are -1 (meaning "default"). Other bytes are skipped.
     static std::vector<std::vector<int>> params(const std::string& s);
 
+    // Whether the OSC being handed to Handler::osc ended with BEL (else ST),
+    // so a reply can end the way the query did, as xterm's do.
+    bool oscEndedWithBel() const { return oscBel_; }
+
 private:
     enum class State { Ground, Escape, EscapeIntermediate, Csi, Osc, OscEscape,
                        String, StringEscape };
@@ -155,6 +213,7 @@ private:
     std::string osc_;            // body of the OSC sequence being read
     std::string seq_;            // CSI parameters, or ESC intermediates
     bool csiOverflow_ = false;
+    bool oscBel_ = false;
     size_t csiParams_ = 0;       // separators in seq_ so far, plus one
     std::string utf8_;           // bytes of a UTF-8 character in progress
     int utf8Need_ = 0;           // total bytes that character needs

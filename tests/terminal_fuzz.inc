@@ -74,7 +74,12 @@ void testTerminalFuzz() {
             // heart, a skin tone; and the shell integration's other marks.
             "\xE2\x80\x8D", "\xF0\x9F\x91\xA9", "\xF0\x9F\x87\xAF", "\xF0\x9F\x87\xB5",
             "\xEF\xB8\x8F", "\xE2\x9D\xA4", "\xF0\x9F\x8F\xBD", "\x1b]133;C\x07",
-            "\x1b]133;D;1\x07"};
+            "\x1b]133;D;1\x07",
+            // Mode 2027, the cursor's shape, the kitty keyboard flags,
+            // queries, and the newer SGR attributes.
+            "\x1b[?2027l", "\x1b[?2027h", "\xE0\xA4\xBF", "\x1b[5 q", "\x1b[>1u",
+            "\x1b[<u", "\x1b[=1;2u", "\x1b[?u", "\x1b]11;?\x07", "\x1b]4;1;?\x1b\\",
+            "\x1b[c", "\x1b[>c", "\x1b[>q", "\x1b[4:3;58;5;9;8;53m", "\x1b[59;28;55m"};
         const int kPieces = (int)(sizeof pieces / sizeof *pieces);
         int problems = 0, rounds = 0;
         std::string first;

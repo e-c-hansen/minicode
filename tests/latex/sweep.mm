@@ -4,6 +4,11 @@
 // which typesets the document the way the app does.
 //
 //   sweep <source.tex> <typeset-copy.tex> <out.pdf> <out.synctex.gz> [-v]
+//         [--bound <percent>]
+//
+// With --bound it exits 1 when any click was wrong or the hit rate is
+// below <percent> (sweep.sh --fixture, which CI runs, gives the last
+// run's rate on the committed fixture).
 //
 // Every word is double-clicked at its first, middle and last character, and
 // each click is judged against the word's own text, folded to plain lowercase
@@ -28,7 +33,9 @@
 #include "LatexDoc.h"
 #include "SyncTex.h"
 #include <zlib.h>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 static std::string Utf8(NSString *s) {
@@ -96,10 +103,18 @@ static NSString *FoldTex(const std::string &tex) {
 int main(int argc, char **argv) {
     @autoreleasepool {
         if (argc < 5) {
-            fprintf(stderr, "usage: sweep source.tex typeset.tex out.pdf out.synctex.gz [-v]\n");
+            fprintf(stderr, "usage: sweep source.tex typeset.tex out.pdf out.synctex.gz [-v] "
+                            "[--bound percent]\n");
             return 2;
         }
-        bool verbose = argc > 5 && std::string(argv[5]) == "-v";
+        bool verbose = false;
+        double bound = -1;
+        for (int a = 5; a < argc; a++) {
+            const std::string arg = argv[a];
+            if (arg == "-v") verbose = true;
+            else if (arg == "--bound" && a + 1 < argc) bound = atof(argv[++a]);
+            else { fprintf(stderr, "unknown argument %s\n", argv[a]); return 2; }
+        }
         NSString *srcPath = @(argv[1]);
         NSString *source = [NSString stringWithContentsOfFile:srcPath
                                                      encoding:NSUTF8StringEncoding
@@ -210,12 +225,21 @@ int main(int argc, char **argv) {
             }
         }
         int total = found + unsure + partial + refused + wrong;
+        const double rate = total ? 100.0 * (found + unsure + partial) / total : 0.0;
         printf("clicks %d: found %d (+%d not placed), partial %d, refused %d, "
                "wrong %d (hit rate %.1f%%); generated %d, single characters %d "
                "(%d offered a span)\n",
-               total, found, unsure, partial, refused, wrong,
-               total ? 100.0 * (found + unsure + partial) / total : 0.0,
+               total, found, unsure, partial, refused, wrong, rate,
                generated, shortWords, shortSpan);
+        if (bound >= 0) {
+            // The printed rate is rounded to a tenth; the bound is too.
+            const double shown = std::round(rate * 10) / 10;
+            if (wrong > 0 || total == 0 || shown < bound) {
+                printf("FAILED: wanted 0 wrong and a hit rate of at least %.1f%%\n", bound);
+                return 1;
+            }
+            printf("passed: 0 wrong, hit rate at least %.1f%%\n", bound);
+        }
         return 0;
     }
 }

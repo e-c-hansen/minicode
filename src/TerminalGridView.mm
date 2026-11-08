@@ -61,7 +61,23 @@ struct MCTermInk {
     id bg;                  // CGColorRef; nil: none of its own
     NSFont *font;
     NSDictionary *attrs;    // the font, for Core Text
-    bool underline = false, strike = false;
+    bool strike = false;
+    uint8_t underline = 0;  // a TermUnderline
+    bool overline = false;
+    bool hidden = false;    // SGR 8: the background only
+    id underlineColor;      // CGColorRef; nil: the text's
+};
+
+// What a style's ink is looked up by: its colors (the underline's resolved,
+// so an id given out again never finds an old ink), flags and underline.
+struct MCStyleKey {
+    uint64_t a = 0, b = 0;
+    bool operator==(const MCStyleKey &o) const { return a == o.a && b == o.b; }
+};
+struct MCStyleKeyHash {
+    size_t operator()(const MCStyleKey &k) const {
+        return (size_t)(k.a * 0x9E3779B97F4A7C15ull ^ (k.b + (k.a >> 7)));
+    }
 };
 
 // The settings the inks were made for: the terminal's text and background
@@ -85,8 +101,10 @@ struct MCDrawnRow {
 struct MCCursorMark {
     int row = -1, col = 0;
     bool focused = false;
+    int look = 0;           // its shape, and 1 while a blink hides it
     bool operator==(const MCCursorMark &o) const {
-        return row == o.row && (row < 0 || (col == o.col && focused == o.focused));
+        return row == o.row &&
+               (row < 0 || (col == o.col && focused == o.focused && look == o.look));
     }
 };
 
@@ -150,7 +168,7 @@ static bool MCSameCells(const std::vector<TermCell> &a, const std::vector<TermCe
     long long _commandAnchorId;
     // Drawing (see "drawing"): the inks and colors per style, the settings
     // they were made for, and the font's metrics.
-    std::unordered_map<uint64_t, MCTermInk> _inks;
+    std::unordered_map<MCStyleKey, MCTermInk, MCStyleKeyHash> _inks;
     std::unordered_map<uint64_t, id> _colors;
     MCTermInkKey _inkKey;
     CGFloat _ascent, _underlineY, _underlineH, _strikeY;
@@ -163,6 +181,10 @@ static bool MCSameCells(const std::vector<TermCell> &a, const std::vector<TermCe
     MCTermInkKey _invInkKey;
     MCCursorMark _invCursor;
     BOOL _needsFull;
+    // A blinking cursor (DECSCUSR 1, 3, 5): the timer while it blinks, and
+    // whether it is in its hidden half.
+    NSTimer *_blinkTimer;
+    BOOL _blinkOff;
     // Room for one run of text at a time.
     std::vector<UniChar> _u16;
     std::vector<int> _u16Col;
@@ -399,6 +421,7 @@ static bool MCSameCells(const std::vector<TermCell> &a, const std::vector<TermCe
 - (BOOL)waitingForFrame { return _syncSince != 0; }
 
 - (void)dealloc {
+    [_blinkTimer invalidate];
     [NSObject cancelPreviousPerformRequestsWithTarget:self];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     if (_secureOn) {
@@ -765,11 +788,15 @@ static uint64_t ColorKey(const TermColor &c) {
     return (uint64_t)c.kind << 24 | v;
 }
 
-// Everything of a style that changes how it looks (not its link).
-static uint64_t StyleKey(const TermStyle &st) {
-    return ColorKey(st.fg) | ColorKey(st.bg) << 26 |
-           (uint64_t)(st.bold | st.dim << 1 | st.italic << 2 | st.underline << 3 |
-                      st.inverse << 4 | st.strike << 5) << 52;
+// Everything of a style that changes how it looks (not its link), with its
+// underline color as `underline` resolved it.
+static MCStyleKey StyleKey(const TermStyle &st, const TermColor &underline) {
+    MCStyleKey k;
+    k.a = ColorKey(st.fg) | ColorKey(st.bg) << 26 |
+          (uint64_t)(st.bold | st.dim << 1 | st.italic << 2 | st.inverse << 3 |
+                     st.strike << 4 | st.hidden << 5 | st.overline << 6) << 52;
+    k.b = ColorKey(underline) | (uint64_t)st.underline << 26;
+    return k;
 }
 
 static uint64_t RgbaKey(const Rgba &c) {
@@ -795,7 +822,9 @@ static MCTermInkKey CurrentInkKey() {
 }
 
 - (const MCTermInk &)inkFor:(const TermStyle &)st {
-    const uint64_t key = StyleKey(st);
+    const TermColor underline =
+        st.underlineColor && self.screen ? self.screen->underlineColor(st.underlineColor) : TermColor();
+    const MCStyleKey key = StyleKey(st, underline);
     auto it = _inks.find(key);
     if (it != _inks.end()) return it->second;
     const Settings &cfg = [AppSettings shared].settings;
@@ -818,6 +847,13 @@ static MCTermInkKey CurrentInkKey() {
     ink.attrs = @{(__bridge NSString *)kCTFontAttributeName: ink.font};
     ink.underline = st.underline;
     ink.strike = st.strike;
+    ink.overline = st.overline;
+    ink.hidden = st.hidden;
+    if (underline.kind != TermColor::Default) {
+        Rgba u = Rgba::hex(underline.rgb());
+        if (st.dim) u.a *= 0.6;
+        ink.underlineColor = (__bridge id)[self cgColor:u];
+    }
     return _inks.emplace(key, ink).first->second;
 }
 
@@ -974,11 +1010,13 @@ static MCTermInkKey CurrentInkKey() {
     m.row = row;
     m.col = s->cursorCol();
     m.focused = self.window.isKeyWindow && self.window.firstResponder == self;
+    m.look = (int)[self cursorShape] * 2 + (_blinkOff ? 1 : 0);
     return m;
 }
 
 // The cursor moved, showed, hid, or the window's key state changed it.
 - (void)invalidateCursor {
+    [self updateBlink];
     MCCursorMark now = [self cursorMark];
     if (now == _invCursor) return;
     const int rows = self.screen ? self.screen->rows() : 0;
@@ -1004,6 +1042,7 @@ static MCTermInkKey CurrentInkKey() {
     _needsFull = NO;
     if (full) {
         [self setNeedsDisplay:YES];
+        [self updateBlink];
         _invCursor = [self cursorMark];
         return;
     }
@@ -1096,7 +1135,8 @@ static void AppendUtf16(const std::string &s, std::vector<UniChar> &out) {
         if (_u16.size() - before != 1) simple = false;
         for (size_t k = before; k < _u16.size(); k++) _u16Col.push_back(c);
     }
-    if (blank && !ink.underline && !ink.strike) return;
+    if (ink.hidden) return;                   // concealed: only its background shows
+    if (blank && !ink.underline && !ink.strike && !ink.overline) return;
     const CGFloat baseline = pad + r * cs.height + _ascent;
     CGContextSetFillColorWithColor(ctx, color);
     const size_t n = _u16.size();
@@ -1113,10 +1153,129 @@ static void AppendUtf16(const std::string &s, std::vector<UniChar> &out) {
         }
     }
     const CGFloat x0 = pad + c0 * cs.width, w = (c1 - c0) * cs.width;
-    if (ink.underline)
-        CGContextFillRect(ctx, CGRectMake(x0, baseline + _underlineY - _underlineH / 2, w, _underlineH));
+    if (ink.underline) {
+        CGColorRef u = ink.underlineColor ? (__bridge CGColorRef)ink.underlineColor : color;
+        [self drawUnderline:ink.underline x:x0 width:w row:r baseline:baseline color:u context:ctx];
+        CGContextSetFillColorWithColor(ctx, color);
+    }
     if (ink.strike)
         CGContextFillRect(ctx, CGRectMake(x0, baseline - _strikeY - _underlineH / 2, w, _underlineH));
+    if (ink.overline)
+        CGContextFillRect(ctx, CGRectMake(x0, pad + r * cs.height, w, _underlineH));
+}
+
+// An underline of a style (TermUnderline) under [x, x + width) of view row
+// r. Patterns are laid out from the row's left edge, not the run's, so a
+// curl or a dash carries on unbroken where one style run meets the next.
+- (void)drawUnderline:(int)style x:(CGFloat)x width:(CGFloat)width row:(int)r
+             baseline:(CGFloat)baseline color:(CGColorRef)color context:(CGContextRef)ctx {
+    const CGFloat h = _underlineH, pad = _pad;
+    const CGFloat bottom = pad + (r + 1) * _cs.height;   // the cell's lower edge
+    CGFloat y = baseline + _underlineY;                  // the line's middle
+    CGContextSaveGState(ctx);
+    CGContextSetFillColorWithColor(ctx, color);
+    CGContextSetStrokeColorWithColor(ctx, color);
+    switch (style) {
+    case TermUnderlineDouble: {
+        const CGFloat gap = MAX(1, h);
+        y = MIN(y, bottom - 2 * h - gap - h / 2);
+        CGContextFillRect(ctx, CGRectMake(x, y - h / 2, width, h));
+        CGContextFillRect(ctx, CGRectMake(x, y + h / 2 + gap, width, h));
+        break;
+    }
+    case TermUnderlineCurly: {
+        // A wave a cell wide per period, as kitty and iTerm2 draw it.
+        const CGFloat amp = MAX((CGFloat)1, MIN(h * 1.5, (bottom - y - h) / 1.5));
+        const CGFloat period = MAX((CGFloat)4, _cs.width);
+        CGContextClipToRect(ctx, CGRectMake(x, y - amp - h, width, 2 * (amp + h)));
+        CGMutablePathRef path = CGPathCreateMutable();
+        CGFloat px = pad + floor((x - pad) / period) * period;
+        CGPathMoveToPoint(path, NULL, px, y);
+        for (; px < x + width; px += period) {
+            CGPathAddQuadCurveToPoint(path, NULL, px + period / 4, y - 2 * amp, px + period / 2, y);
+            CGPathAddQuadCurveToPoint(path, NULL, px + 3 * period / 4, y + 2 * amp, px + period, y);
+        }
+        CGContextAddPath(ctx, path);
+        CGPathRelease(path);
+        CGContextSetLineWidth(ctx, h);
+        CGContextStrokePath(ctx);
+        break;
+    }
+    case TermUnderlineDotted:
+    case TermUnderlineDashed: {
+        const CGFloat on = style == TermUnderlineDotted ? h : MAX(3 * h, _cs.width / 2);
+        const CGFloat off = style == TermUnderlineDotted ? MAX(h, 1.5) : MAX(2 * h, _cs.width / 4);
+        const CGFloat lengths[2] = {on, off};
+        CGContextSetLineDash(ctx, fmod(x - pad, on + off), lengths, 2);
+        CGContextSetLineWidth(ctx, h);
+        CGContextMoveToPoint(ctx, x, y);
+        CGContextAddLineToPoint(ctx, x + width, y);
+        CGContextStrokePath(ctx);
+        break;
+    }
+    default:
+        CGContextFillRect(ctx, CGRectMake(x, y - h / 2, width, h));
+        break;
+    }
+    CGContextRestoreGState(ctx);
+}
+
+// ---------------------------------------------------------------- cursor
+// The cursor's shape: the program's (DECSCUSR), else terminal.cursor-style.
+- (TermCursorShape)cursorShape {
+    TerminalScreen *s = self.screen;
+    TermCursorShape shape = s ? s->cursorShape() : TermCursorShape::Default;
+    if (shape != TermCursorShape::Default) return shape;
+    const std::string &style = [AppSettings shared].settings.terminalCursorStyle();
+    return style == "bar" ? TermCursorShape::Bar
+         : style == "underline" ? TermCursorShape::Underline : TermCursorShape::Block;
+}
+
+// A program asked for a blinking cursor: it blinks while the terminal has
+// the keyboard (about every 0.6 s, as xterm.js), and stays on otherwise.
+- (void)updateBlink {
+    TerminalScreen *s = self.screen;
+    const BOOL blink = s && s->cursorBlinks() && s->cursorVisible() && [self hasKeyboard];
+    if (blink && !_blinkTimer) {
+        __weak TerminalGridView *weakSelf = self;
+        _blinkTimer = [NSTimer timerWithTimeInterval:0.6 repeats:YES block:^(NSTimer *t) {
+            (void)t;
+            [weakSelf blinkTick];
+        }];
+        [[NSRunLoop currentRunLoop] addTimer:_blinkTimer forMode:NSRunLoopCommonModes];
+    } else if (!blink && _blinkTimer) {
+        [_blinkTimer invalidate];
+        _blinkTimer = nil;
+        _blinkOff = NO;
+    }
+}
+
+- (void)blinkTick {
+    _blinkOff = !_blinkOff;
+    [self updateBlink];
+    [self invalidateCursor];
+}
+
+// Typing shows the cursor again and starts its blink over.
+- (void)restartBlink {
+    if (!_blinkTimer) return;
+    _blinkOff = NO;
+    [_blinkTimer setFireDate:[NSDate dateWithTimeIntervalSinceNow:0.6]];
+    [self invalidateCursor];
+}
+
+// The cursor's rectangle for its shape in a cell rect (a bar at its left,
+// an underline at its bottom).
+- (NSRect)cursorRect:(NSRect)cell shape:(TermCursorShape)shape {
+    const CGFloat scale = self.window.backingScaleFactor > 0 ? self.window.backingScaleFactor : 2;
+    if (shape == TermCursorShape::Bar)
+        return NSMakeRect(NSMinX(cell), NSMinY(cell),
+                          MAX(2.0, round(_cs.width * 0.15 * scale) / scale), NSHeight(cell));
+    if (shape == TermCursorShape::Underline) {
+        const CGFloat t = MAX(2.0, round(_cs.height * 0.1 * scale) / scale);
+        return NSMakeRect(NSMinX(cell), NSMaxY(cell) - t, NSWidth(cell), t);
+    }
+    return cell;
 }
 
 // The run in _u16 laid out by Core Text (fallback fonts, marks, emoji
@@ -1293,14 +1452,20 @@ static BOOL RectsCover(const NSRect *rects, NSInteger n, NSRect r) {
     int cr = s->cursorRow() - top, cc = s->cursorCol();
     if (_marked.length && cr >= 0 && cr < rows) {
         [self drawMarkedTextAtRow:cr col:cc rows:rows cols:cols];
-    } else if (s->cursorVisible() && cr >= 0 && cr < rows &&
+    } else if (s->cursorVisible() && !_blinkOff && cr >= 0 && cr < rows &&
                RectsTouch(rects, nRects, [self bandForRow:cr rows:rows])) {
         const std::vector<TermCell> &row = s->row(s->cursorRow());
         const TermCell &cell = row[cc];
         int w = cell.width == 2 ? 2 : 1;
         NSRect rect = [self rectForRow:cr col:cc width:w];
         NSColor *cursor = [[AppSettings shared] text:Surface::Terminal];
-        if (focused) {
+        const TermCursorShape shape = [self cursorShape];
+        if (shape != TermCursorShape::Block) {
+            // A bar or an underline, over the text, which stays as it is;
+            // fainter while the terminal does not have the keyboard.
+            [[cursor colorWithAlphaComponent:focused ? 1.0 : 0.6] setFill];
+            NSRectFill([self cursorRect:rect shape:shape]);
+        } else if (focused) {
             [[cursor colorWithAlphaComponent:1.0] setFill];
             NSRectFill(rect);
             if (!cell.ch.empty() && cell.ch != " ") {
@@ -1472,7 +1637,8 @@ static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e) {
 
     // Option+Left and Right move by words at the shell's prompt, as they do
     // in Terminal.app (zsh binds ESC b and ESC f, not xterm's Alt+arrows).
-    if (self.textInput && mods == TermModAlt && !s->altScreen() &&
+    [self restartBlink];
+    if (self.textInput && mods == TermModAlt && !s->altScreen() && !s->keyboardFlags() &&
         (e.keyCode == kVK_LeftArrow || e.keyCode == kVK_RightArrow)) {
         [self sendTyped:e.keyCode == kVK_LeftArrow ? "\x1b" "b" : "\x1b" "f"];
         return;
@@ -1496,7 +1662,7 @@ static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e) {
     for (const auto &k : keys) {
         if (k.code == e.keyCode) {
             [self sendTyped:TerminalScreen::encodeKey(k.key, keyMods, s->appCursorKeys(),
-                                                 s->appKeypad())];
+                                                 s->appKeypad(), s->keyboardFlags())];
             return;
         }
     }
@@ -1505,7 +1671,9 @@ static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e) {
     if ((mods & TermModCtrl) || meta) {
         // Control codes and Meta come from the key itself, not from what
         // Option would have typed (Option+b is ESC b, not ∫).
-        int charMods = (mods & TermModCtrl) | (meta ? TermModAlt : 0);
+        // The kitty protocol reports Shift too (Ctrl+Shift+A as 97 with 6).
+        int charMods = (mods & TermModCtrl) | (meta ? TermModAlt : 0) |
+                       (s->keyboardFlags() ? (mods & TermModShift) : 0);
         NSString *base = e.charactersIgnoringModifiers;
         std::string out;
         NSUInteger n = base.length;
@@ -1517,7 +1685,7 @@ static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e) {
                  encoding:NSUTF32LittleEndianStringEncoding options:0
                     range:NSMakeRange(0, one.length) remainingRange:NULL];
             if (cp >= 0xF700 && cp <= 0xF8FF) return;   // unmapped function key
-            out += TerminalScreen::encodeChar(cp, charMods);
+            out += TerminalScreen::encodeChar(cp, charMods, s->keyboardFlags());
             i = NSMaxRange(r);
         }
         [self sendTyped:out];
@@ -2014,11 +2182,13 @@ static BOOL IsWordCell(const TermCell &cell) {
     _scrollAccum += lines;
     std::string out;
     while (_scrollAccum >= 1) {
-        out += TerminalScreen::encodeKey(TermKey::Up, 0, s->appCursorKeys());
+        out += TerminalScreen::encodeKey(TermKey::Up, 0, s->appCursorKeys(), false,
+                                         s->keyboardFlags());
         _scrollAccum -= 1;
     }
     while (_scrollAccum <= -1) {
-        out += TerminalScreen::encodeKey(TermKey::Down, 0, s->appCursorKeys());
+        out += TerminalScreen::encodeKey(TermKey::Down, 0, s->appCursorKeys(), false,
+                                         s->keyboardFlags());
         _scrollAccum += 1;
     }
     [self send:out];

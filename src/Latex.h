@@ -19,9 +19,13 @@
 @interface LatexView : NSView <NSMenuItemValidation>
 - (instancetype)initWithPath:(NSString *)texPath source:(NSString *)source;
 
-// The problems the last typeset reported, in order (none once one works).
-// The failure panel lists them above tectonic's log, each with a place a
-// link that calls onOpenProblem; onProblemsChanged runs when they change.
+// The problems the last typeset reported: its errors, then its warnings
+// (undefined references and citations, labels defined twice, overfull
+// boxes, packages' warnings with a line), each once. The failure panel
+// lists them above tectonic's log, and a typeset that worked lists its
+// warnings behind the status bar's Warnings button, each row in its
+// severity's color with its place a link that calls onOpenProblem;
+// onProblemsChanged runs when they change.
 @property(nonatomic, readonly) NSArray<MCLatexProblem *> *problems;
 @property(nonatomic, copy) void (^onOpenProblem)(NSString *path, NSInteger line);
 @property(nonatomic, copy) void (^onProblemsChanged)(void);
@@ -34,6 +38,18 @@
 // document put there and light it up for a moment. Waits for the typeset
 // under way, or the one an edit scheduled, so the page matches the text.
 - (void)revealSourceLine:(NSInteger)line;
+// The same for a line of another file the document reads (\input,
+// \include), through that file's SyncTeX input tag.
+- (void)revealSourceLine:(NSInteger)line inFile:(NSString *)path;
+// Whether the last typeset read the file at `path` as an input of its own
+// (not the document itself), so a forward search from it lands here.
+- (BOOL)typesetReadFile:(NSString *)path;
+
+// This preview's own output folder and hidden sibling: each preview has
+// both to itself (LatexScratch::Owner), so two windows on one file never
+// share a copy or a PDF.
+@property(nonatomic, readonly) NSString *workFolder;
+@property(nonatomic, readonly) NSString *siblingPath;
 
 // Called when an edit in the preview changed the document.
 @property(nonatomic, copy) void (^onSourceEdited)(NSString *newSource);
@@ -50,6 +66,10 @@
 // The source was replaced from disk: the edits before it cannot be undone.
 - (void)forgetEdits;
 - (void)compileNow;
+// The window closes: a typeset under way is stopped, none starts again, and
+// the output folder goes (once that typeset has ended), whenever the view
+// itself is freed.
+- (void)stopPreview;
 // The PDF for `source`, exactly as tectonic wrote it. Handed over straight
 // away when the preview is already showing that source, otherwise after a
 // typeset of it; `error` is set instead when it does not typeset. The
@@ -71,16 +91,19 @@ void MCDownloadTectonic(void (^done)(NSString *problem));
 // Whether a download is under way.
 BOOL MCTectonicDownloading(void);
 
-// Where previews typeset: each document gets a folder of its own under
+// Where previews typeset: each preview gets a folder of its own under
 // MCLatexWorkRoot() (MiniCode-latex in the temporary folder, or
-// $MINICODE_LATEX_WORK), named for its resolved path, so two files of one
-// name never share a PDF. The folder goes when the last preview of it does.
+// $MINICODE_LATEX_WORK), named for the document's resolved path and the
+// preview (this process and the preview's number, `view`), so two files of
+// one name, or two previews of one file, never share a PDF. The folder goes
+// with its preview; one a crashed process left goes at the next launch.
 NSString *MCLatexWorkRoot(void);
-NSString *MCLatexWorkFolder(NSString *texPath);
+NSString *MCLatexWorkFolder(NSString *texPath, NSUInteger view);
 // Removes the hidden siblings that previews of crashed processes left next to
 // their documents (only a file with the preview copy's name and exactly the
-// bytes recorded), and their records. Runs off the main thread at the first
-// typeset of a launch; `done` (main thread) gets how many it removed.
+// bytes recorded), their records, and the output folders of processes that
+// have gone. Runs off the main thread at the first typeset of a launch;
+// `done` (main thread) gets how many siblings it removed.
 void MCLatexRemoveStaleSiblings(void (^done)(NSUInteger removed));
 
 #ifdef __cplusplus

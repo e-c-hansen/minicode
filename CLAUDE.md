@@ -1766,16 +1766,24 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
   as the Linux port's) before it is unpacked, and only its `tectonic` file
   moved into place (`MINICODE_TECTONIC_DOWNLOAD` points the GUI check at a
   file:// stand-in, held to the same hash).
-- **The buffer is typeset from a hidden sibling** `.<name>.minicode.tex` in the
-  document's folder, so relative paths resolve and the user's file is never
-  written; deleted when tectonic exits. Before it is written, a
-  `sibling.record` (pid, start time, size, SHA-256; `LatexScratch`) goes in the
-  output folder, so the first typeset of a launch removes a copy a crashed
-  process left, and only when it is still exactly those bytes. tectonic runs
-  `--untrusted`. Output in `NSTemporaryDirectory()/MiniCode-latex/<16 hex of
-  the resolved path's SHA-256>` (`MCLatexWorkFolder`; `$MINICODE_LATEX_WORK`
-  in the checks), so two paper.tex never share a PDF; the folder goes with the
-  last preview of it. `make guitest SUITES=latex` runs a stand-in tectonic.
+- **The buffer is typeset from a hidden sibling**
+  `.<name>.<pid>-<view>.minicode.tex` in the document's folder, so relative
+  paths resolve and the user's file is never written; deleted when tectonic
+  exits. Before it is written, a `sibling.record` (pid, start time, size,
+  SHA-256; `LatexScratch`) goes in the output folder, so the first typeset of
+  a launch removes a copy a crashed process left, and only when it is still
+  exactly those bytes. tectonic runs `--untrusted`. Output in
+  `NSTemporaryDirectory()/MiniCode-latex/<16 hex of the resolved path's
+  SHA-256>-<pid>-<start>-<view>` (`MCLatexWorkFolder`, `LatexView
+  workFolder`; `$MINICODE_LATEX_WORK` in the checks). **Each preview has its
+  own sibling and folder** (`LatexScratch::Owner`, 2026-11-08, DO-D5): two
+  windows on one file with different unsaved text once shared both, so one
+  typeset's end removed the other's sibling and they overwrote one PDF. The
+  folder goes with its preview (`stopPreview` on window close, dealloc on tab
+  close); a folder whose process has gone (`ownerGone`) is removed by the
+  first typeset of a launch; folders named by the hash alone (older
+  minicodes) are left to their own records. `make guitest SUITES=latex` runs
+  a stand-in tectonic.
 - Compiles are debounced (0.6 s) and generation-counted; a run has 5 minutes,
   then SIGTERM and SIGKILL, with a log line (a looping document spun a core and
   queued every later edit). Scroll and zoom are restored by page index and
@@ -1810,8 +1818,16 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
   double-clicks every word of every page and reports found, refused, wrong and
   not placed (scratch `TECTONIC_CACHE_DIR`). The bar is 0 wrong; the user's
   resume is at 100% and `tests/latex/torture.tex` at 98.7% (the rest rightly
-  refused). Trap: `characterBoundsAtIndex:` drifts from `page.string`'s indices
-  down a page; a one-character `selectionForRange:`'s bounds do not.
+  refused). `make latex-sweep` (`sweep.sh --fixture`, a step of CI's macOS
+  job) clicks the committed typeset of torture.tex (`tests/latex/fixtures`,
+  tectonic 0.17.0) with no tectonic, and fails on a wrong answer or a rate
+  under `tests/latex/sweep_bound.txt`; raise the bound when a change raises
+  the rate, and typeset the fixture again (`--synctex --untrusted`, the
+  sibling named `.torture.minicode.tex`, Input paths rewritten to
+  `/fixture`) only with the tectonic the app pins. `build/latex-sweep` links
+  the app's objects (the old one-line clang build had lost frameworks).
+  Trap: `characterBoundsAtIndex:` drifts from `page.string`'s indices down a
+  page; a one-character `selectionForRange:`'s bounds do not.
 - **Edits are byte splices** of the span's own LaTeX (nothing escaped or
   re-serialized), marked dirty, saved only by Cmd+S, undone through
   `LatexView`'s own snapshot stack (50) via `undo:`/`redo:`.
@@ -1826,15 +1842,30 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
   line box's own record, which names the line its paragraph ended on), on
   the first page it reached, else the nearest line below or above within
   40; square annotations for 1.5 s. It waits for a typeset when the PDF is
-  not the buffer's (`_forwardLine`, run from `showDocument:`).
+  not the buffer's (`_forwardLine`, run from `showDocument:`). From an
+  `\input` file (`revealSourceLine:inFile:`, `SyncTexIndex::tagForFile`,
+  realpath on both sides: tectonic writes absolute Input paths) the main
+  document is a `% !TEX root = ...` comment's (`LatexLog::rootComment`),
+  else, for a file with no `\documentclass`, the open tab whose preview's
+  typeset read it (`typesetReadFile:`); its tab is shown.
 - **Problems on lines**: `LatexLog` reads tectonic's `error: file:line:
   message` summary (TeX's `! ...` blocks with `l.N` and the open-file
   parentheses only when no summary placed anything); the sibling's name is
   the document, an `\input` name is found as TeX finds it. The failure panel
   lists them above the log, each place a `minicode-latex-problem:<n>` link
   (`onOpenProblem`, goToLine); while the source shows and is still the text
-  that failed, they are `CodeTextView buildMarks`, gutter dots that follow
-  edits and that no language server's publish replaces.
+  last typeset, they are `CodeTextView buildMarks`, gutter dots that follow
+  edits and that no language server's publish replaces. **Warnings** too,
+  from every typeset (2026-11-08): tectonic's own `warning:` lines (overfull
+  boxes, placed at a paragraph's first line; underfull ones left out, as
+  LaTeX Workshop's default) and TeX's transcript, kept with `--keep-logs`
+  and removed once read (`parseTranscriptWarnings`: undefined references
+  and citations, labels defined twice, package and class warnings with an
+  input line; lines wrapped at 79 joined; the open-file parentheses skip a
+  box's text, an error's quoted line and the warnings themselves). Errors
+  first (`collect`); rows in `MCDiagnosticColor`; a typeset that worked
+  lists them behind the status bar's Warnings button. Committed logs:
+  `tests/latex/logs` (warnings.txt and .log, with their source).
 - tectonic's bundle is older than Overleaf's: a missing package (`twemojis`)
   goes in the document's folder, and since tectonic discards docstrip's output,
   a script keeping a `.dtx`'s code lines made the `.sty`. Spacing differs from
@@ -2073,6 +2104,32 @@ for full-screen programs. Both can be open at once.
   flag's second regional indicator, join the cell before (both models);
   VS16 after a pictograph, a ZWJ join or a flag widen a narrow cell to two
   in place (not at the right edge, not in insert mode).
+- **Mode 2027 and zsh's widths** (2026-11-08): clusters (above) except
+  on the main screen from a 133;A to the next 133;C, where each code point
+  takes `termCodepointWidth`, zsh's own count, so typing at the prompt
+  agrees with ZLE (`TerminalScreen::clusterWidths`). macOS's /bin/zsh never
+  calls libc's wcwidth (`nm -u /bin/zsh` has no `_wcwidth`): it is built
+  with zsh's Unicode 9 table, `Src/wcwidth9.h`, so a regional indicator is
+  2, U+2764 1 and U+093F 0. `tools/gen-zsh-width.py` writes the ranges
+  from that header (fetched, not kept); code points zsh has no width for
+  (non-printing, unassigned in Unicode 9: it shows them as <XXXX>) fall
+  back to `termCharWidth`. DECSET/DECRST 2027 choose clusters or code
+  points for good (RIS undoes it); DECRQM answers what is in effect. The
+  `terminal_vt` suite checks the table against zsh's `${(m)#x}` and Ctrl+A
+  at the prompt. Trap: the harness can run zsh; an agent's own shell may
+  be refused it by the worktree guard.
+- **VT conformance** (2026-11-08, `term:vt-conformance`): DA1 `?62;22c`,
+  DA2 `>1;<version as MMmmpp>;0c`, XTVERSION `DCS >|minicode <version> ST`
+  (the host's `setVersion`), OSC 4/10/11/12 `?` answered from
+  `setThemeColors` (Terminal.mm `tellScreenTheme`, on applySettings),
+  ended with BEL or ST as asked (`TermParser::oscEndedWithBel`); DECSCUSR
+  and mode 12 (the grid draws bar and underline shapes and blinks at 0.6 s
+  only with the keyboard; `terminal.cursor-style` when no program chose);
+  SGR 8/28, 4:0-4:5 and 21, 58/59 (underline colors as ids in the
+  screen's `TermColorTable`, freed by scanning cells when full), 53/55;
+  the kitty keyboard protocol with a stack per screen (16 deep, a fresh
+  alternate screen starts empty, the prompt's return clears both), flag 1
+  only, encoded by `encodeKey`/`encodeChar(..., keyboardFlags)`.
 - **Marks on the screen** (2026-11-06): `TerminalScreen` keeps OSC 133 A, C
   and D (nonce-checked, `setMarkNonce`, as the stream) where they came, as
   a line number from `historyBase` and a column in `marks_`, moved by
@@ -2221,9 +2278,10 @@ for full-screen programs. Both can be open at once.
   and puts the id in `TermStyle::link` of each printed cell, so links survive
   the scrollback and reflow; the open link is kept apart from SGR. 4096 ids at
   most; when full, ids no cell (screen, scrollback, `below_`) uses are freed,
-  else a new link prints plain. TermStyle's six flags are bit-fields so the
-  id keeps it at 16 bytes (a StyleRun per style change in the scrollback; the
-  scrollback-memory check caught 24). Cmd+click on a cell with an id opens its
+  else a new link prints plain. TermStyle's flags and underline style are
+  `uint16_t` bit-fields, and the link and underline color `uint16_t` ids,
+  so it stays 16 bytes (a StyleRun per style change in the scrollback; the
+  scrollback-memory check caught 24; `term:sgr-underline` checks the size). Cmd+click on a cell with an id opens its
   address (file:// only on this host and when the file exists, through
   `TermLinks::hyperlink`), the span is the cells with that id in the wrapped
   line, and the address is the view's tooltip while Cmd hovers.

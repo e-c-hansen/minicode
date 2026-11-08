@@ -102,7 +102,7 @@ ifneq ($(if $(MAKECMDGOALS),$(filter-out clean,$(MAKECMDGOALS)),all),)
           printf '%s\n' '$(VARIANT)' > $(OBJDIR)/variant.txt)
 endif
 
-.PHONY: all app run test test-asan test-tsan guitest fakelsp install dmg dist-zip clean demos membench icon
+.PHONY: all app run test test-asan test-tsan guitest fakelsp latex-sweep install dmg dist-zip clean demos membench icon
 
 all: app
 
@@ -356,6 +356,23 @@ fakelsp: $(FAKELSP)
 guitest: build/guitest $(CLI) $(FAKELSP) $(BROWSER_HELPER) $(ZSH_INTEGRATION)
 	@./build/guitest $(SUITES)
 
+# The LaTeX preview's click-to-source sweep (tests/latex/sweep.mm): every
+# word of a typeset document double-clicked through the preview's own click
+# path, linked with the app's objects. `make latex-sweep` runs it on the
+# committed fixture (tests/latex/fixtures/torture.pdf and its SyncTeX), with
+# no tectonic, and fails on a wrong answer or a lower hit rate;
+# tests/latex/sweep.sh doc.tex typesets any document first.
+SWEEP_OBJ := build/sweep-obj/sweep.mm.o
+build/sweep-obj/sweep.mm.o: tests/latex/sweep.mm $(OBJDIR)/flags.txt
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
+
+build/latex-sweep: $(SWEEP_OBJ) $(filter-out $(OBJDIR)/main.mm.o,$(OBJ))
+	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@
+
+latex-sweep: build/latex-sweep
+	@tests/latex/sweep.sh --fixture
+
 # The agent skill (skills/minicode) for Claude Code, in ~/.claude/skills,
 # the same as `minicode install-skill` does from the app's bundle.
 install:
@@ -412,4 +429,4 @@ build/procmem: tools/procmem.c
 membench: app build/procmem
 	./scripts/membench.sh
 
--include $(OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(ASAN_OBJ:.o=.d) $(TSAN_OBJ:.o=.d) $(CLI_OBJ:.o=.d) $(GUI_OBJ:.o=.d) $(FAKELSP_OBJ:.o=.d)
+-include $(OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(ASAN_OBJ:.o=.d) $(TSAN_OBJ:.o=.d) $(CLI_OBJ:.o=.d) $(GUI_OBJ:.o=.d) $(FAKELSP_OBJ:.o=.d) $(SWEEP_OBJ:.o=.d)

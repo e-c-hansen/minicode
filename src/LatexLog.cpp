@@ -1,6 +1,7 @@
 // LatexLog.cpp — see LatexLog.h.
 #include "LatexLog.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 
@@ -46,6 +47,7 @@ std::string cleanMessage(std::string m) {
 // tectonic's own lines that say only that something failed.
 bool isChatter(const std::string &rest) {
     return startsWith(rest, "something bad happened inside XeTeX") ||
+           startsWith(rest, "warnings were issued by the TeX engine") ||
            startsWith(rest, "the XeTeX engine had an unrecoverable error") ||
            startsWith(rest, "halted on potentially-recoverable error") ||
            startsWith(rest, "halted after ");
@@ -75,11 +77,31 @@ void add(std::vector<Problem> &out, const Problem &p) {
     out.push_back(p);
 }
 
+// The files TeX has open, from the transcript's "(name" and ")" marks:
+// "(article.cls", "(size10.clo))", "(./child.tex". Text in a line can hold
+// parentheses too; the callers skip the lines that are not TeX's own.
+struct OpenFiles {
+    std::vector<std::string> stack;
+    void scan(const std::string &l) {
+        for (std::size_t k = 0; k < l.size(); k++) {
+            if (l[k] == ')') {
+                if (!stack.empty()) stack.pop_back();
+            } else if (l[k] == '(') {
+                std::size_t e = k + 1;
+                while (e < l.size() && l[e] != ' ' && l[e] != '(' && l[e] != ')') e++;
+                stack.push_back(l.substr(k + 1, e - k - 1));
+                k = e - 1;
+            }
+        }
+    }
+    std::string top() const { return stack.empty() ? std::string() : stack.back(); }
+};
+
 // The transcript's "! message" blocks, each with the "l.N" line that
 // follows within a few lines and the file TeX had open there.
 std::vector<Problem> transcriptProblems(const std::vector<std::string> &lines) {
     std::vector<Problem> out;
-    std::vector<std::string> files;   // the "(name" groups still open
+    OpenFiles files;   // the "(name" groups still open
     for (std::size_t i = 0; i < lines.size(); i++) {
         const std::string &l = lines[i];
         if (startsWith(l, "error:") || startsWith(l, "warning:") || startsWith(l, "caused by:"))
@@ -87,7 +109,7 @@ std::vector<Problem> transcriptProblems(const std::vector<std::string> &lines) {
         if (startsWith(l, "! ")) {
             Problem p;
             p.message = cleanMessage(l);
-            p.file = files.empty() ? std::string() : files.back();
+            p.file = files.top();
             for (std::size_t j = i + 1; j < lines.size() && j <= i + 12; j++) {
                 const std::string &c = lines[j];
                 if (startsWith(c, "! ")) break;
@@ -101,18 +123,91 @@ std::vector<Problem> transcriptProblems(const std::vector<std::string> &lines) {
             continue;
         }
         // Files opening and closing: "(article.cls", "(size10.clo))".
-        for (std::size_t k = 0; k < l.size(); k++) {
-            if (l[k] == ')') {
-                if (!files.empty()) files.pop_back();
-            } else if (l[k] == '(') {
-                std::size_t e = k + 1;
-                while (e < l.size() && l[e] != ' ' && l[e] != '(' && l[e] != ')') e++;
-                files.push_back(l.substr(k + 1, e - k - 1));
-                k = e - 1;
-            }
-        }
+        files.scan(l);
     }
     return out;
+}
+
+// "Overfull \hbox (12pt too wide) in paragraph at lines 13--17": 13, the
+// paragraph's first line; 0 when the message gives no range.
+int paragraphStart(const std::string &message) {
+    const std::string key = "in paragraph at lines ";
+    const std::size_t at = message.find(key);
+    if (at == std::string::npos) return 0;
+    const char *digits = message.c_str() + at + key.size();
+    return std::isdigit((unsigned char)*digits) ? std::atoi(digits) : 0;
+}
+
+std::size_t namedWarningPrefix(const std::string &l);
+bool isOtherLatexWarning(const std::string &l);
+
+// TeX wraps its transcript at 79 characters.
+const std::size_t kLogWidth = 79;
+
+// A warning's lines from `i`, joined: a line TeX wrapped is continued as it
+// is, a line the warning broke itself ("(mypkg)    over two lines") after a
+// space with the "(name)" padding gone. Stops at a blank line (TeX puts
+// one after each warning) or another warning; `end` gets the index after
+// the last line read.
+std::string joinWarning(const std::vector<std::string> &lines, std::size_t i, std::size_t *end) {
+    std::string text = lines[i];
+    std::size_t j = i + 1;
+    bool wrapped = lines[i].size() == kLogWidth;
+    for (; j < lines.size() && j < i + 12 && !lines[j].empty(); j++) {
+        std::string next = lines[j];
+        if (!wrapped && (startsWith(next, "LaTeX Warning: ") || namedWarningPrefix(next) ||
+                         isOtherLatexWarning(next) || startsWith(next, "! ")))
+            break;
+        if (wrapped) {
+            text += next;
+        } else {
+            if (next[0] == '(') {
+                const std::size_t close = next.find(')');
+                if (close != std::string::npos) next = next.substr(close + 1);
+            }
+            text += " " + trim(next);
+        }
+        wrapped = lines[j].size() == kLogWidth;
+    }
+    *end = j;
+    return text;
+}
+
+// "... on input line 16." -> 16, with the words and the full stop gone from
+// `message`; 0 when it names no line.
+int takeInputLine(std::string *message) {
+    std::string m = trim(*message);
+    if (!m.empty() && m.back() == '.') m.pop_back();
+    const std::string key = " on input line ";
+    const std::size_t at = m.rfind(key);
+    if (at == std::string::npos) return 0;
+    const std::string digits = m.substr(at + key.size());
+    if (digits.empty() || digits.size() > 9) return 0;
+    for (char c : digits)
+        if (!std::isdigit((unsigned char)c)) return 0;
+    *message = trim(m.substr(0, at));
+    return std::atoi(digits.c_str());
+}
+
+// "Package mypkg Warning: " or "Class foo Warning: ": the prefix's length,
+// or 0.
+std::size_t namedWarningPrefix(const std::string &l) {
+    for (const char *kind : {"Package ", "Class "}) {
+        if (!startsWith(l, kind)) continue;
+        const std::size_t name = std::char_traits<char>::length(kind);
+        const std::size_t space = l.find(' ', name);
+        if (space == std::string::npos || space == name) return 0;
+        if (l.compare(space, 10, " Warning: ") == 0) return space + 10;
+    }
+    return 0;
+}
+
+// "LaTeX Font Warning: " and its kind (a substitution, LaTeX's notes on
+// its own work): left out.
+bool isOtherLatexWarning(const std::string &l) {
+    if (!startsWith(l, "LaTeX ") || startsWith(l, "LaTeX Warning: ")) return false;
+    const std::size_t at = l.find(" Warning: ");
+    return at != std::string::npos && at < 30 && l.find(' ', 6) == at;
 }
 
 std::string folderOf(const std::string &path) {
@@ -156,7 +251,10 @@ std::vector<Problem> parse(const std::string &output) {
         std::string msg;
         if (splitPlace(rest, &p.file, &p.line, &msg)) {
             p.message = cleanMessage(msg);
-            anyLine = true;
+            if (severity == Severity::Warning && startsWith(p.message, "Underfull")) continue;
+            if (const int first = paragraphStart(p.message))
+                if (first < p.line) p.line = first;
+            if (severity == Severity::Error) anyLine = true;
         } else {
             p.file.clear();
             p.line = 0;
@@ -176,6 +274,117 @@ std::vector<Problem> parse(const std::string &output) {
         out = placed;
     }
     return out;
+}
+
+std::vector<Problem> parseTranscriptWarnings(const std::string &log) {
+    const std::vector<std::string> lines = splitLines(log);
+    std::vector<Problem> out;
+    OpenFiles files;
+    for (std::size_t i = 0; i < lines.size(); i++) {
+        const std::string &l = lines[i];
+        // A box's report is followed by the box's own text, which may hold
+        // any parentheses: up to the blank line, it is not TeX's marks.
+        if (startsWith(l, "Overfull \\") || startsWith(l, "Underfull \\") ||
+            startsWith(l, "Tight \\") || startsWith(l, "Loose \\")) {
+            while (i + 1 < lines.size() && !lines[i + 1].empty()) i++;
+            continue;
+        }
+        // An error's block, through the source line it quotes after "l.N".
+        if (startsWith(l, "! ")) {
+            for (std::size_t j = i + 1; j < lines.size() && j <= i + 12; j++) {
+                const std::string &c = lines[j];
+                if (c.size() > 2 && c[0] == 'l' && c[1] == '.' &&
+                    std::isdigit((unsigned char)c[2])) {
+                    i = j + 1 < lines.size() ? j + 1 : j;
+                    break;
+                }
+            }
+            continue;
+        }
+        const bool latex = startsWith(l, "LaTeX Warning: ");
+        const std::size_t prefix = latex ? 15 : namedWarningPrefix(l);
+        if (prefix == 0 && !isOtherLatexWarning(l)) {
+            files.scan(l);
+            continue;
+        }
+        std::size_t end = i;
+        std::string message = joinWarning(lines, i, &end);
+        i = end - 1;
+        if (prefix == 0) continue;   // a font substitution
+        const std::string body = message.substr(prefix);
+        Problem p;
+        p.severity = Severity::Warning;
+        p.line = takeInputLine(&message);
+        p.message = trim(message);
+        if (p.line > 0) {
+            p.file = files.top();
+        } else if (latex && startsWith(body, "Label `") &&
+                   body.find("' multiply defined") != std::string::npos) {
+            p.message = cleanMessage(message);   // about the document, at no line
+        } else {
+            continue;   // "There were undefined references", a package's note
+        }
+        add(out, p);
+    }
+    return out;
+}
+
+std::vector<Problem> collect(const std::string &output, const std::string &transcript) {
+    std::vector<Problem> all = parse(output);
+    for (const Problem &p : parseTranscriptWarnings(transcript)) add(all, p);
+    std::stable_partition(all.begin(), all.end(),
+                          [](const Problem &p) { return p.severity == Severity::Error; });
+    return all;
+}
+
+std::string rootComment(const std::string &text) {
+    for (const std::string &raw : splitLines(text)) {
+        std::size_t k = 0;
+        while (k < raw.size() && (raw[k] == ' ' || raw[k] == '\t')) k++;
+        if (k >= raw.size() || raw[k] != '%') continue;
+        k++;
+        while (k < raw.size() && raw[k] == ' ') k++;
+        if (k >= raw.size() || raw[k] != '!') continue;
+        k++;
+        while (k < raw.size() && raw[k] == ' ') k++;
+        if (raw.size() < k + 3) continue;
+        std::string word = raw.substr(k, 3);
+        for (char &c : word) c = (char)std::tolower((unsigned char)c);
+        if (word != "tex") continue;
+        k += 3;
+        if (k >= raw.size() || raw[k] != ' ') continue;
+        while (k < raw.size() && raw[k] == ' ') k++;
+        std::string key = raw.substr(k, 4);
+        for (char &c : key) c = (char)std::tolower((unsigned char)c);
+        if (key != "root") continue;
+        k += 4;
+        while (k < raw.size() && raw[k] == ' ') k++;
+        if (k >= raw.size() || raw[k] != '=') continue;
+        const std::string value = trim(raw.substr(k + 1));
+        if (!value.empty()) return value;
+    }
+    return std::string();
+}
+
+std::string resolveRoot(const std::string &partPath, const std::string &value) {
+    if (value.empty()) return std::string();
+    const std::string whole = value[0] == '/' ? value : folderOf(partPath) + "/" + value;
+    std::vector<std::string> parts;
+    std::size_t at = 0;
+    while (at <= whole.size()) {
+        std::size_t slash = whole.find('/', at);
+        if (slash == std::string::npos) slash = whole.size();
+        const std::string part = whole.substr(at, slash - at);
+        if (part == "..") {
+            if (!parts.empty()) parts.pop_back();
+        } else if (!part.empty() && part != ".") {
+            parts.push_back(part);
+        }
+        at = slash + 1;
+    }
+    std::string out;
+    for (const std::string &p : parts) out += "/" + p;
+    return out.empty() ? "/" : out;
 }
 
 std::string sourcePath(const std::string &file, const std::string &texPath,

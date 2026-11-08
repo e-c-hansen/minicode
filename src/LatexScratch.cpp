@@ -55,6 +55,47 @@ std::string folderName(const std::string& pathSha256Hex) {
     return lower(pathSha256Hex.substr(0, 16));
 }
 
+std::string folderName(const std::string& pathSha256Hex, const Owner& o) {
+    return folderName(pathSha256Hex) + "-" + std::to_string(o.pid) + "-" +
+           std::to_string(o.start) + "-" + std::to_string(o.view);
+}
+
+bool parseFolderName(const std::string& name, Owner* out) {
+    // 16 hex digits (or "untitled"), then three numbers each after a '-'.
+    const size_t first = name.find('-');
+    if (first == std::string::npos) return false;
+    const std::string head = name.substr(0, first);
+    if (head != "untitled" && (head.size() != 16 || !isHex(head))) return false;
+    std::string parts[3];
+    size_t at = first + 1;
+    for (int k = 0; k < 3; k++) {
+        const size_t dash = k < 2 ? name.find('-', at) : name.size();
+        if (dash == std::string::npos) return false;
+        parts[k] = name.substr(at, dash - at);
+        if (!allDigits(parts[k]) || parts[k].size() > 19) return false;
+        at = dash + 1;
+    }
+    Owner o;
+    o.pid = std::strtoll(parts[0].c_str(), nullptr, 10);
+    o.start = std::strtoll(parts[1].c_str(), nullptr, 10);
+    o.view = std::strtoull(parts[2].c_str(), nullptr, 10);
+    if (o.pid <= 0 || o.view == 0) return false;
+    *out = o;
+    return true;
+}
+
+std::string siblingName(const std::string& stem, const Owner& o) {
+    if (o.view == 0) return "." + stem + ".minicode.tex";
+    return "." + stem + "." + std::to_string(o.pid) + "-" + std::to_string(o.view) +
+           ".minicode.tex";
+}
+
+bool ownerGone(const Owner& o, double startNow) {
+    if (startNow <= 0) return true;
+    const double d = startNow - (double)o.start;
+    return d < -1.0 || d > 1.0;
+}
+
 std::string format(const Record& r) {
     char nums[96];
     std::snprintf(nums, sizeof nums, "%lld\n%.3f\n%llu\n", r.pid, r.start, r.size);

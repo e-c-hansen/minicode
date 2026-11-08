@@ -7,6 +7,7 @@
 // file itself is gzipped; callers hand the decompressed text to parse().
 #pragma once
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -35,6 +36,15 @@ public:
     std::string pathForTag(int tag) const;
     // The tag of the input whose path is `path`, or whose file name matches it.
     int tagForPath(const std::string &path) const;
+    // The tag of the input that is the file at `path` (absolute), for
+    // forward search from an \input or \include file: an input's path is
+    // read against `baseDir` (the folder TeX ran in) when relative, with
+    // "." and ".." steps taken, and both sides go through `canonical` when
+    // given (realpath, so /tmp and /private/tmp agree). When no path is the
+    // same, a file name only one input has will do. 0 when none is.
+    int tagForFile(const std::string &path, const std::string &baseDir,
+                   const std::function<std::string(const std::string &)> &canonical =
+                       nullptr) const;
 
     // Boxes covering (or nearest to) a point, best first, at most `maxHits`.
     // `page` is 1-based; x and y are in points from the page's top-left.

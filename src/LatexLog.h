@@ -11,6 +11,13 @@
 // transcript's "! message" blocks are read instead, with their "l.N" lines
 // and the file TeX had open (the innermost "(name" not yet closed).
 //
+// A typeset that works is read too, for its warnings: tectonic prints
+// TeX's overfull and underfull boxes as "warning: file:line: ..." lines,
+// and the transcript it keeps with --keep-logs (<stem>.log) holds LaTeX's
+// undefined references and citations, multiply defined labels, and package
+// warnings (parseTranscriptWarnings). Underfull boxes are left out, as
+// LaTeX Workshop's default filter leaves them.
+//
 // Pure C++, no I/O: the caller says which files exist.
 #pragma once
 #include <functional>
@@ -28,8 +35,26 @@ struct Problem {
     std::string message;  // one line, without TeX's leading "!"
 };
 
-// Every problem in tectonic's output, in order, each once.
+// Every problem in tectonic's output, in order, each once. An overfull
+// box "in paragraph at lines a--b" is placed at line a (tectonic's summary
+// names b, where the paragraph ended); underfull boxes and tectonic's own
+// "warnings were issued" line are left out.
 std::vector<Problem> parse(const std::string &output);
+
+// The warnings in TeX's transcript (the .log file), in order, each once:
+// "LaTeX Warning: Reference `x' on page 1 undefined on input line 4." and
+// the like for citations, a package's or class's warning that names an
+// input line, and "Label `x' multiply defined" (which names none). Each is
+// in the file TeX had open when it was written (the innermost "(name" not
+// yet closed; empty when it names no line). Lines TeX wrapped at 79
+// characters are joined first. LaTeX's closing summaries ("There were
+// undefined references"), font substitutions and Info lines are left out;
+// boxes come from tectonic's own lines (parse).
+std::vector<Problem> parseTranscriptWarnings(const std::string &log);
+
+// What the preview lists for one typeset: tectonic's output and the
+// transcript, errors first, then warnings, each once and in order.
+std::vector<Problem> collect(const std::string &output, const std::string &transcript);
 
 // The file a problem is about. `texPath` is the user's document and
 // `siblingPath` the hidden copy tectonic typeset in its place (same folder,
@@ -40,5 +65,13 @@ std::vector<Problem> parse(const std::string &output);
 std::string sourcePath(const std::string &file, const std::string &texPath,
                        const std::string &siblingPath,
                        const std::function<bool(const std::string &)> &exists);
+
+// The main document a part names in a magic comment, LaTeX Workshop's (and
+// TeXShop's) convention: a line "% !TEX root = ../main.tex" (any case of
+// TeX, spaces optional). The value as written; "" when there is none.
+std::string rootComment(const std::string &text);
+// That value read against the folder of `partPath` (absolute), with "."
+// and ".." steps taken.
+std::string resolveRoot(const std::string &partPath, const std::string &value);
 
 }  // namespace LatexLog

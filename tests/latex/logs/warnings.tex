@@ -1,0 +1,20 @@
+\documentclass{article}
+\begin{document}
+\section{Intro}\label{sec:intro}
+See section~\ref{sec:missing} and \cite{nobody}.
+\label{sec:intro}
+A reference whose label is long enough to wrap the log's line:
+\ref{a-label-long-enough-to-make-latex-wrap-the-warning-line-in-the-log}.
+
+\input{parts/chapter}
+
+\hbox to 1in{This line is much too wide for the box it is set in by far}
+
+Text with a long unbreakable word:
+Supercalifragilisticexpialidociousxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+end.
+\PackageWarning{mypkg}{Something odd here,\MessageBreak over two lines}
+
+\hbox to 3in{a b}
+{\fontshape{zz}\selectfont Font fallback.}
+\end{document}
