@@ -57,6 +57,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -102,6 +103,10 @@ struct FolderSearchOptions {
     // Threads listing folders and reading and matching files: 0 for one
     // per core (at most 8), 1 to do everything on the calling thread.
     unsigned      threads = 0;
+    // Called after each file is read, before it is matched, on the thread
+    // that read it (several at once). The tests raise the cancel flag from
+    // it, so a cancel lands mid-walk however fast the walk is.
+    std::function<void()> onFileRead;
 };
 
 // A file left out of a search that a reader would expect searched.
