@@ -3,7 +3,9 @@
 // (the cache and its invalidation, and measuring a scratch tree on disk).
 #include "FileDetails.h"
 
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <ctime>
 
 namespace {
 
@@ -283,6 +285,20 @@ static void testFileDetails() {
         CHECK(measure(R, cache, lim, nullptr, &t) && t.bytes == 3957);
         CHECK(stampOf(R + "/a", &st) && cache.lookup(R + "/a", st, &sub) && sub.bytes == 3507);
         // A new file changes its folder's date, which the cache sees itself.
+        // The folder is dated a minute back first: on a kernel with coarse
+        // timestamps (Launchpad's builders), a write a few milliseconds
+        // after the folder's last change leaves its date as it was, and the
+        // 1.5.13 package failed here.
+        {
+            Stamp before;
+            CHECK(stampOf(R + "/b", &before));
+            struct timespec back[2];
+            back[0].tv_sec = back[1].tv_sec = ::time(nullptr) - 60;
+            back[0].tv_nsec = back[1].tv_nsec = 0;
+            CHECK(::utimensat(AT_FDCWD, (R + "/b").c_str(), back, 0) == 0);
+            Total again;
+            CHECK(measure(R + "/b", cache, lim, nullptr, &again) && again.bytes == 300);
+        }
         fdWrite(R + "/b/four.bin", 4);
         CHECK(stampOf(R + "/b", &st) && !cache.lookup(R + "/b", st, &sub));
         CHECK(measure(R + "/b", cache, lim, nullptr, &t) && t.bytes == 304);
