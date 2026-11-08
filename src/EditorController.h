@@ -1,5 +1,6 @@
 // EditorController.h — Cocoa window: file tree (left) + editor/preview (right).
 #import <Cocoa/Cocoa.h>
+#import "GitGutter.h"   // MCGitGutterHost, which the Git category adopts
 
 @class BrowserView, MCAgentNotes, MCComparison, MCPaletteContext, TerminalView;
 
@@ -31,10 +32,19 @@
 
 // EditorController+Git.mm: pushing and pulling, staging everything,
 // discarding and the branch picker, on the Source Control panel's object
-// whether it shows or not (MCGitPanel).
+// whether it shows or not (MCGitPanel); the last commit and the stash; and
+// the editor's change bars (GitGutter.h), whose host it is.
 @class MCGitPanel;
-@interface EditorController (Git)
+@interface EditorController (Git) <MCGitGutterHost>
 - (MCGitPanel *)ensureGitPanel;   // made with the window, for autofetch
+- (void)gitCommitAmend:(id)sender;   // Commit and Amend
+- (void)gitUndoCommit:(id)sender;    // Undo Last Commit
+- (void)gitStash:(id)sender;         // Stash, with untracked files
+- (void)gitStashPop:(id)sender;      // Pop Stash
+- (void)nextChange:(id)sender;       // Option+F5: the next change bar
+- (void)previousChange:(id)sender;   // Shift+Option+F5
+- (void)revertChange:(id)sender;     // the change bar on the caret's line
+- (void)stageChange:(id)sender;
 - (void)gitFetch:(id)sender;
 - (void)gitPull:(id)sender;
 - (void)gitPush:(id)sender;

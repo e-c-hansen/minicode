@@ -290,6 +290,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:[self hk:@"editor.action.rename"] label2:@"Rename symbol" state:nil];
     [self appendHintsRow:s key:[self hk:@"editor.action.marker.next"] label:@"Next problem"
                     key2:[self hk:@"editor.action.marker.prev"] label2:@"Previous problem" state:nil];
+    [self appendHintsRow:s key:[self hk:@"workbench.action.editor.nextChange"] label:@"Next change (git)"
+                    key2:[self hk:@"workbench.action.editor.previousChange"] label2:@"Previous change" state:nil];
     [self appendHintsRow:s key:[self hk:@"editor.action.quickFix"] label:@"Quick fixes"
                     key2:[self hk:@"editor.action.organizeImports"] label2:@"Organize imports" state:nil];
     [self appendHintsRow:s key:[self hk:@"editor.action.formatDocument"] label:@"Format document"

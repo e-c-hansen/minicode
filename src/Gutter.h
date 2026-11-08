@@ -19,6 +19,8 @@
 // each line a region starts on while the pointer is over the gutter, and
 // always by a closed fold; a click there folds or unfolds.
 #import <Cocoa/Cocoa.h>
+#include "QuickDiff.h"
+#include <vector>
 
 @class CodeTextView;
 
@@ -43,4 +45,21 @@ typedef NS_ENUM(NSInteger, MCLineNumbers) {
 @property(nonatomic, readonly) NSUInteger lineCount;
 // Whether it is showing now.
 @property(nonatomic, readonly) BOOL shown;
+
+// The change bars (QuickDiff.h, the editor's git gutter): a lane of their
+// own between the dots and the numbers while changeLane is on, a 3-point
+// bar beside each added or changed line and a small triangle where lines
+// were deleted, in the three colors (added, modified, deleted). They move
+// with each edit to the text (QuickDiff::shift) until the next diff is set.
+// A click on one calls onChangeBar with its index and its rect in the
+// gutter's coordinates, instead of selecting lines.
+@property(nonatomic, assign) BOOL changeLane;
+- (void)setChangeBars:(const std::vector<QuickDiff::Bar> &)bars;
+- (const std::vector<QuickDiff::Bar> &)changeBars;
+- (void)setChangeColorsAdded:(NSColor *)added modified:(NSColor *)modified
+                     deleted:(NSColor *)deleted;
+@property(nonatomic, copy) void (^onChangeBar)(NSInteger index, NSRect rect);
+// The rect a bar is drawn in (or for a deletion, the boundary it marks),
+// in the gutter's coordinates; NSZeroRect when its lines are not laid out.
+- (NSRect)rectOfChangeBar:(NSInteger)index;
 @end

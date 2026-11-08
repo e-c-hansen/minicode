@@ -5,6 +5,7 @@
 #import "EditorFont.h"
 #import "FoldView.h"
 #include "LineIndex.h"
+#include <algorithm>
 #include <map>
 #include <set>
 #include <vector>
@@ -14,6 +15,9 @@
 // is over the gutter (as VS Code does), and always for a closed fold.
 static const CGFloat kDotLane = 12;
 static const CGFloat kFoldLane = 14;
+// The change bars' lane, between the dots and the numbers, while on.
+static const CGFloat kChangeLane = 5;
+static const CGFloat kChangeBarWidth = 3;
 static const NSUInteger kMinDigits = 3;
 
 @implementation MCLineGutter {
@@ -26,6 +30,8 @@ static const NSUInteger kMinDigits = 3;
     BOOL _thicknessQueued;
     BOOL _hovering;                 // the pointer is over the gutter
     NSTrackingArea *_tracking;
+    std::vector<QuickDiff::Bar> _bars;   // sorted by line
+    NSColor *_barColors[3];              // added, modified, deleted
 }
 
 - (instancetype)initWithTextView:(CodeTextView *)tv {
@@ -130,7 +136,8 @@ static const NSUInteger kMinDigits = 3;
     NSUInteger digits = 1;
     for (size_t n = _index.lineCount(); n >= 10; n /= 10) digits++;
     digits = MAX(digits, kMinDigits);
-    const CGFloat width = ceil(kDotLane + digits * _digitWidth + kFoldLane);
+    const CGFloat width =
+        ceil(kDotLane + (_changeLane ? kChangeLane : 0) + digits * _digitWidth + kFoldLane);
     if (digits == _digits && self.ruleThickness == width) return;
     _digits = digits;
     self.ruleThickness = width;   // NSRulerView asks its scroll view to tile
@@ -145,13 +152,27 @@ static const NSUInteger kMinDigits = 3;
     if (er.location + oldLen > _index.length() ||
         _index.length() + er.length - oldLen != ts.length) {
         [self reindex];   // out of step (never expected): start again
+        _bars.clear();
     } else {
+        // The change bars move with the lines (only when there are some);
+        // a whole new text (another tab) has none until its own diff.
+        if (er.location == 0 && oldLen == _index.length() && er.length == ts.length)
+            _bars.clear();
+        size_t firstLine = 0, removed = 0;
+        if (!_bars.empty()) {
+            firstLine = _index.lineOf(er.location);
+            removed = _index.lineOf(er.location + oldLen) - firstLine;
+        }
         std::vector<unichar> buf(er.length);
         NSString *s = ts.string;
         if (er.length) [s getCharacters:buf.data() range:er];
         _index.edit(er.location, oldLen, reinterpret_cast<const char16_t *>(buf.data()),
                     buf.size(), er.location ? [s characterAtIndex:er.location - 1] : 0,
                     NSMaxRange(er) < s.length ? [s characterAtIndex:NSMaxRange(er)] : 0);
+        if (!_bars.empty()) {
+            const size_t added = _index.lineOf(NSMaxRange(er)) - firstLine;
+            QuickDiff::shift(_bars, firstLine, removed, added);
+        }
     }
     [self updateThicknessLater];
     self.needsDisplay = YES;
@@ -187,6 +208,102 @@ static const NSUInteger kMinDigits = 3;
 }
 
 - (NSUInteger)lineCount { return _index.lineCount(); }
+
+// ---- the change bars
+- (void)setChangeLane:(BOOL)on {
+    if (_changeLane == on) return;
+    _changeLane = on;
+    [self updateThicknessLater];
+    self.needsDisplay = YES;
+}
+
+- (void)setChangeBars:(const std::vector<QuickDiff::Bar> &)bars {
+    if (bars == _bars) return;
+    _bars = bars;
+    self.needsDisplay = YES;
+}
+
+- (const std::vector<QuickDiff::Bar> &)changeBars { return _bars; }
+
+- (void)setChangeColorsAdded:(NSColor *)added modified:(NSColor *)modified
+                     deleted:(NSColor *)deleted {
+    _barColors[0] = added;
+    _barColors[1] = modified;
+    _barColors[2] = deleted;
+    if (!_bars.empty()) self.needsDisplay = YES;
+}
+
+- (NSColor *)colorOfBar:(const QuickDiff::Bar &)b {
+    const int k = b.kind == QuickDiff::Kind::Added ? 0 : b.kind == QuickDiff::Kind::Modified ? 1 : 2;
+    return _barColors[k] ?: (k == 0 ? NSColor.systemGreenColor
+                             : k == 1 ? NSColor.systemBlueColor : NSColor.systemRedColor);
+}
+
+// The bars' x, in the lane left of the numbers.
+- (CGFloat)changeBarX { return kDotLane; }
+
+// A line's rect in the gutter (its first fragment to its last), from the
+// layout manager; NSZeroRect when the line is past the text.
+- (NSRect)rectOfLines:(size_t)line count:(size_t)count {
+    CodeTextView *tv = _tv;
+    NSLayoutManager *lm = tv.layoutManager;
+    if (!lm || line >= _index.lineCount()) return NSZeroRect;
+    const NSPoint origin = tv.textContainerOrigin;
+    const size_t last = MIN(line + MAX(count, (size_t)1), _index.lineCount()) - 1;
+    const NSUInteger start = _index.lineStart(line);
+    const NSUInteger end = MAX(_index.lineEnd(last), start);
+    NSRect r = NSZeroRect;
+    if (start >= tv.textStorage.length) {
+        r = lm.extraLineFragmentRect;   // the empty line after a final break
+    } else {
+        const NSRange glyphs = [lm glyphRangeForCharacterRange:NSMakeRange(start, MAX(end - start, (NSUInteger)1))
+                                          actualCharacterRange:NULL];
+        NSRect first = [lm lineFragmentRectForGlyphAtIndex:glyphs.location effectiveRange:NULL];
+        NSRect lastR = [lm lineFragmentRectForGlyphAtIndex:NSMaxRange(glyphs) - 1 effectiveRange:NULL];
+        r = NSUnionRect(first, lastR);
+    }
+    if (NSHeight(r) <= 0) return NSZeroRect;
+    r.origin.y += origin.y;
+    r = [self convertRect:r fromView:tv];
+    return NSMakeRect(self.changeBarX, NSMinY(r), kChangeBarWidth, NSHeight(r));
+}
+
+- (NSRect)rectOfChangeBar:(NSInteger)index {
+    if (index < 0 || (size_t)index >= _bars.size()) return NSZeroRect;
+    const QuickDiff::Bar &b = _bars[(size_t)index];
+    if (b.kind != QuickDiff::Kind::Deleted) return [self rectOfLines:b.line count:b.lines];
+    // A deletion: the boundary below the line above it (or above line 0).
+    NSRect at = [self rectOfLines:QuickDiff::anchorLine(b) count:1];
+    if (NSIsEmptyRect(at)) return NSZeroRect;
+    const CGFloat y = b.line == 0 ? NSMinY(at) : NSMaxY(at);
+    return NSMakeRect(self.changeBarX, y - 4, 6, 8);
+}
+
+// Only the bars whose lines are among `lines` (the first and last line on
+// show) are drawn.
+- (void)drawChangeBarsFrom:(size_t)firstLine to:(size_t)lastLine {
+    if (_bars.empty() || !_changeLane) return;
+    auto from = std::lower_bound(_bars.begin(), _bars.end(), firstLine,
+        [](const QuickDiff::Bar &b, size_t line) {
+            return b.line + std::max<size_t>(b.lines, 1) <= line;
+        });
+    for (auto it = from; it != _bars.end() && QuickDiff::anchorLine(*it) <= lastLine; ++it) {
+        const NSRect r = [self rectOfChangeBar:(NSInteger)(it - _bars.begin())];
+        if (NSIsEmptyRect(r)) continue;
+        [[self colorOfBar:*it] set];
+        if (it->kind != QuickDiff::Kind::Deleted) {
+            NSRectFill(NSIntegralRectWithOptions(r, NSAlignAllEdgesNearest));
+            continue;
+        }
+        // VS Code's: a small triangle pointing into the text.
+        NSBezierPath *p = [NSBezierPath bezierPath];
+        [p moveToPoint:NSMakePoint(NSMinX(r), NSMinY(r))];
+        [p lineToPoint:NSMakePoint(NSMaxX(r), NSMidY(r))];
+        [p lineToPoint:NSMakePoint(NSMinX(r), NSMaxY(r))];
+        [p closePath];
+        [p fill];
+    }
+}
 
 // ---- drawing
 // The lines the carets are on: the end of each selection, as VS Code
@@ -273,6 +390,11 @@ static const NSUInteger kMinDigits = 3;
     // its own: it gets the one a line of text in the editor's font has.
     __block CGFloat textBaseline = [lm defaultBaselineOffsetForFont:_font];
     NSString *text = tv.textStorage.string;
+    if (!_bars.empty() && _changeLane) {
+        const size_t firstLine = _index.lineOf(chars.location);
+        const size_t lastLine = _index.lineOf(NSMaxRange(chars));
+        [self drawChangeBarsFrom:firstLine ? firstLine - 1 : 0 to:lastLine + 1];
+    }
     [lm enumerateLineFragmentsForGlyphRange:glyphs
                                  usingBlock:^(NSRect rect, NSRect used, NSTextContainer *c,
                                               NSRange range, BOOL *stop) {
@@ -356,6 +478,17 @@ static const NSUInteger kMinDigits = 3;
     if (!tv) return;
     [tv.window makeFirstResponder:tv];
     const NSUInteger line = [self lineAtEvent:event];
+    // The change lane: a click on a bar shows its change.
+    const NSPoint inGutter = [self convertPoint:event.locationInWindow fromView:nil];
+    if (_changeLane && !_bars.empty() && self.onChangeBar && inGutter.x >= kDotLane - 1 &&
+        inGutter.x < kDotLane + kChangeLane + 1) {
+        const int at = QuickDiff::barAt(_bars, line);
+        if (at >= 0) {
+            _dragAnchorLine = NSNotFound;
+            self.onChangeBar(at, [self rectOfChangeBar:at]);
+            return;
+        }
+    }
     // The fold lane: a click on a region's line folds or unfolds it.
     const NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
     if (p.x >= NSWidth(self.bounds) - kFoldLane - 2 && tv.editable &&

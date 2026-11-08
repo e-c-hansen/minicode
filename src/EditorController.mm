@@ -6,6 +6,7 @@
 #import "EditorController+EditCommandsIvars.h"
 #import "EditorController+EditorViewIvars.h"
 #import "EditorController+FormatIvars.h"
+#import "EditorController+GitIvars.h"
 #import "EditorController+HighlightingIvars.h"
 #import "EditorController+LanguageServersIvars.h"
 #import "EditorController+LargeFileIvars.h"
