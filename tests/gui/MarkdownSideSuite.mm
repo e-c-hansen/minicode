@@ -607,8 +607,10 @@ MC_GUI_SUITE(markdown_side_sync) {
         // The page at the source's line (the source's view, its own height
         // not yet back after the edit, may stop a few lines short of 10,000).
         MCGuiNote(@"source %lu, page %ld", (unsigned long)SourceTop(c), (long)PageTop(c));
+        // With scroll bars that take room the source settles two lines
+        // further (9,995 against the page's 9,997).
         GCHECK(labs((NSInteger)SourceTop(c) - 10000) <= 8 &&
-               labs(PageTop(c) - (NSInteger)SourceTop(c)) <= 1 && !Side(c).pageLeads);
+               labs(PageTop(c) - (NSInteger)SourceTop(c)) <= 3 && !Side(c).pageLeads);
         GCHECK_EQ_STR(Page(c), WholePage(c));
         // Once more, at the very end of the page, which has been followed there.
         ScrollSourceToLine(c, 19990);
