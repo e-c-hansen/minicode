@@ -558,6 +558,7 @@ const std::vector<AppearanceSurface>& Settings::appearanceSurfaces() {
          {"editor.background", "editor.opacity", "editor.text",
           "editor.gutter-background", "editor.line-number-color",
           "editor.line-number-active-color", "editor.bracket-match",
+          "editor.inlay-hint-color", "editor.inlay-hint-background",
           "syntax.keyword", "syntax.type", "syntax.string", "syntax.comment",
           "syntax.number", "syntax.preprocessor", "syntax.function",
           "syntax.class", "syntax.variable", "syntax.parameter", "syntax.property",
@@ -935,6 +936,21 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                }
                s.largeFileOptimizations_ = on;
                return true;),
+        MC_KEY("editor.inlay-hints", Word, false,
+               const std::string w = lower(v);
+               bool on = true;
+               if (w == "on") on = true;
+               else if (w == "off") on = false;
+               else if (!parseBool(w, on)) {
+                   e = "'" + v + "' is not on or off";
+                   return false;
+               }
+               s.inlayHints_ = on;
+               return true;),
+        MC_KEY("editor.inlay-hint-color", Word, true,
+               return colorValue(v, s.inlayHintColor_, e);),
+        MC_KEY("editor.inlay-hint-background", Word, true,
+               return colorValue(v, s.inlayHintBackground_, e);),
         MC_KEY("editor.semantic-highlighting", Word, false,
                const std::string w = lower(v);
                bool on = true;
@@ -1252,6 +1268,20 @@ Rgba Settings::treeGitColor(TreeGitColor c) const {
     return Rgba::hex(theme_->dark ? dark[i] : light[i]);
 }
 
+Rgba Settings::inlayHintColor() const {
+    return inlayHintColor_ ? *inlayHintColor_ : Rgba::hex(0x969696);
+}
+
+Rgba Settings::inlayHintBackground() const {
+    if (inlayHintBackground_) return *inlayHintBackground_;
+    // VS Code's: badge.background at a tenth, the Modern themes' own badge
+    // color, else its dark or light default.
+    const std::string id = theme_->id;
+    const uint32_t badge = id == "dark-modern" ? 0x616161 : id == "light-modern" ? 0xCCCCCC
+                         : theme_->dark ? 0x4D4D4D : 0xC4C4C4;
+    return Rgba::hex(badge, 0x1A / 255.0);
+}
+
 Rgba Settings::terminalInputText() const {
     return textIsSet(Surface::Terminal) ? text(Surface::Terminal)
                                         : Rgba::hex(theme_->terminalInput);
@@ -1441,6 +1471,14 @@ const char* Settings::defaultFileText() {
 # editor.line-number-active-color = #C6C6C6
 # The box around the bracket beside the caret and its partner.
 # editor.bracket-match = #888888
+# What a language server can say between the words, drawn in the text
+# without being part of it, as in VS Code: a variable's type after its name
+# (x: int), a function's return type, a parameter's name before an
+# argument. basedpyright, clangd and rust-analyzer send them (macOS). The
+# colors are VS Code's unless set; the background is mostly transparent.
+# editor.inlay-hints = on
+# editor.inlay-hint-color = #969696
+# editor.inlay-hint-background = #4D4D4D1A
 # Sort the lines between "keep-sorted start" and "keep-sorted end" comments
 # every time a file is saved, as Google's keep-sorted tool would.
 # editor.keep-sorted-on-save = false

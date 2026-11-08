@@ -173,12 +173,13 @@ goes here first, with tests; the GUI only displays it.
   (documents and watched files), `Lsp+Diagnostics`, `Lsp+Completion`,
   `Lsp+Navigation` (definition, hover, symbols), `Lsp+Actions` (rename,
   references, code actions), `Lsp+Semantic` (semantic tokens),
-  `Lsp+WorkspaceEdit`; `Lsp+Private.h` and the
+  `Lsp+WorkspaceEdit`, `Lsp+InlayHints`; `Lsp+Private.h` and the
   `Lsp+<Concern>Ivars.h` follow the rules below), `LspServer`
   (processes), `LspPopups` (completion, hover, signature), `LspShared.h` (only
   the Lsp files import it), `LspPanel` (status item, popover, interpreter
   sheet), `LspPicker` (references and fixes list, rename box), `LspWatcher`
-  (files changed on disk, for the servers), `ProblemsPanel`, `InstallPanel`.
+  (files changed on disk, for the servers), `LspInlayHints` (drawing inlay
+  hints in the storage's gaps), `ProblemsPanel`, `InstallPanel`.
 - `AppSettings`, `Appearance` (Adjust Settings, Theme menu, opacity popover),
   `Keymap`.
 - Terminal: `Terminal` (`TerminalView`, `MCPty`, the shell integration),
@@ -608,6 +609,16 @@ container (PanelHost, laid out by hand in layoutContainer)
   makes the view with `initWithFrame:textContainer:`. **Never
   `replaceTextStorage:` after the view exists**: CodeTextView, the carets and
   the folds subscribe to the storage at init and heard nothing on a new one.
+  **Gaps** (2026-11-07, inlay hints): the storage answers a kern on the
+  character before each `MCTextGap`, never stored, in `attributesAtIndex:`
+  and its longest-range form (the typesetter reads that one, and the kern by
+  name: answering only `attributesAtIndex:effectiveRange:` laid out
+  nothing), and moves the gaps itself in `replaceCharactersInRange:`
+  (`Lsp::inlayFollowEdit`). `attributedSubstringFromRange:` (copies, and
+  NSTextView's undo, which reinserts what it kept) and
+  `storedAttributesAtIndex:...` (the highlighter's compare, or every
+  restyle of a hinted line set its colors again) leave them out, and
+  CodeTextView hides them while writing to a pasteboard.
 - **Contiguous layout stays on**: everything that reads positions relies on
   exactness. Never call `numberOfGlyphs` on the editor; lay out only up to the
   character needed. `textDidChange:`'s copy into `sourceText` shares characters
@@ -1299,6 +1310,23 @@ view is disposed (on `unrealize`), or dispose loops forever.
   (`Client::versions`, `staleEditFile`) and are refused for a file that moved
   on. Files no tab has open are kept apart (`_otherDiags`) for
   Problems.
+- **Inlay hints** (2026-11-07, `Lsp+InlayHints.mm`, `LspInlayHints.mm`,
+  core `InlayHints.{h,cpp}`, `lsp:inlay-*`, `make guitest
+  SUITES=inlay_hints`): VS Code's editor.inlayHints. Asked for the lines on
+  show and 30 either side (the first line counted by `LineBreakCounter`
+  in pieces, no copy of the text before), when the file attaches or a
+  server becomes ready, 0.3 s after typing (the request out is cancelled
+  by any edit, and an answer for older text is dropped), when scrolling
+  leaves the window asked about, and on `workspace/inlayHint/refresh`.
+  Only a Ready server that offers them is asked. `shortenInlayLabels` is
+  VS Code's maximumLength 43 per line. A hint after a word follows it when
+  typing lands right at it; one before an argument stays put
+  (`followsBefore`). Hints at a line's start are left out (no character
+  to open a gap after). basedpyright gets its `inlayHints` settings named
+  (1.40 has them on by default anyway). `editor.inlay-hints`,
+  `editor.inlay-hint-color`, `editor.inlay-hint-background`. The label is
+  drawn after the text in `drawRect:`, at the glyph box's right edge minus
+  the gap (the box includes the kern); a null (folded) glyph gets none.
 - **Problems** (Shift+Cmd+M, `MCProblemsPanel`, above the terminal):
   `problemRows` (files with errors first, then severity, line, column),
   `countProblems`, `problemCountsText`, `problemOneLine`, `stepProblem` (F8 and

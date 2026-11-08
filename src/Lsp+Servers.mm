@@ -362,6 +362,11 @@ static NSString *StateText(MCLspState state) {
     c.onWatchersChanged = [weakSelf] {
         dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf updateFileWatcher]; });
     };
+    // The server's inlay hints changed (workspace/inlayHint/refresh): asked
+    // again once the request it came in has been answered.
+    c.onInlayHintRefresh = [weakSelf] {
+        dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf scheduleInlayHints:0]; });
+    };
     // workspace/semanticTokens/refresh: the file on show's tokens again.
     c.onSemanticTokensRefresh = [weakSelf, weakServer] {
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -397,6 +402,7 @@ static NSString *StateText(MCLspState state) {
     e.state = MCLspStateRunning;
     [self changed];
     [self serverMayComplete:server];
+    [self scheduleInlayHints:0];
     [self semanticServerReady:server];
 }
 

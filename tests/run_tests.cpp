@@ -3780,10 +3780,10 @@ void testSettings() {
     // develop, git, control and agent keys (with markdown.mermaid and
     // agent.ide-link), terminal.activate-venv, search.use-ignore-files and
     // terminal.multiline-paste-warning, the tree's six git colors and
-    // editor.large-file-optimizations, editor.auto-close, and
-    // editor.semantic-highlighting with its five syntax colors, and
-    // format.latex.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 104);
+    // editor.large-file-optimizations, editor.auto-close,
+    // editor.semantic-highlighting with its five syntax colors, the three
+    // inlay hint keys, and format.latex.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 107);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -10089,6 +10089,7 @@ static void testMultiCaretOccurrences() {
 #include "folder_search_tests.inc"
 #include "auto_close_tests.inc"
 #include "side_by_side_tests.inc"
+#include "lsp_inlay_tests.inc"
 #include "lsp_semantic_tests.inc"
 #include "preview_scroll_tests.inc"
 
@@ -10203,6 +10204,7 @@ int main() {
     testMultiEdit();
     testFolderSearchParallel();
     testAutoClose();
+    testLspInlayHints();
     testLspSemanticTokens();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

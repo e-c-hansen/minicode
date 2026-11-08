@@ -26,6 +26,7 @@
 
 @class MCMultiCarets;
 @class MCFolds;
+@class MCInlayHints;
 
 // The color a diagnostic's severity is drawn in (1 error ... 4 hint): the
 // squiggles, the hover box's messages and the gutter's dots.
@@ -72,6 +73,9 @@ NSColor *MCDiagnosticColor(NSInteger severity);
 // enabled while the view is editable. foldLevel: takes the level from the
 // sender's tag.
 @property(nonatomic, readonly) MCFolds *folds;
+// Inlay hints (LspInlayHints.h): labels drawn between characters, in gaps
+// the layout opens; LspSession (InlayHints) fills them in.
+@property(nonatomic, readonly) MCInlayHints *inlayHints;
 - (IBAction)foldRegion:(id)sender;
 - (IBAction)unfoldRegion:(id)sender;
 - (IBAction)toggleFold:(id)sender;
@@ -289,6 +293,15 @@ void MCForgetFolderToolsConsent(NSString *root);
 // watcher), and the batches of changes handed to the servers so far.
 @property(nonatomic, readonly) NSArray<NSString *> *watchedFolders;
 @property(nonatomic, readonly) NSUInteger watchedBatches;
+@end
+
+// ---- inlay hints (Lsp+InlayHints.mm): the lines on show, asked of the
+// server that offers them when a file opens, a moment after typing stops,
+// when scrolling leaves the lines asked about, and when the server says
+// they changed; drawn by the view's MCInlayHints (editor.inlay-hints).
+@interface LspSession (InlayHints)
+// Test hook: textDocument/inlayHint requests sent so far.
+@property(nonatomic, readonly) NSUInteger inlayHintRequests;
 @end
 
 // The menu actions below (triggerCompletion, goToDefinition, renameSymbol,
