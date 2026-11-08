@@ -342,8 +342,10 @@ MC_GUI_SUITE(inlay_hints) {
         MCGuiNote(@"%lu hints shown and laid out in %.1f ms of CPU", (unsigned long)placed.size(),
                   showMs);
         GCHECK(big.inlayHints.count == placed.size());
-        MCGuiCheck(showMs < 150, [NSString stringWithFormat:
-                       @"showing the hints of 400 lines takes under 150 ms of CPU (%.1f)", showMs],
+        // About 10 ms alone, over 100 after the other suites; laying out
+        // the whole file would take seconds.
+        MCGuiCheck(showMs < 400, [NSString stringWithFormat:
+                       @"showing the hints of 400 lines takes under 400 ms of CPU (%.1f)", showMs],
                    __FILE__, __LINE__);
         // The keystrokes go right after "value_10000", at its hint (which
         // moves along with them), then are undone; rounds with the gaps and
