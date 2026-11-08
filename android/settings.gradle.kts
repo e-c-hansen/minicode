@@ -9,3 +9,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "MiniCode"
 include(":app")
+// Kotlin checks on the JVM, no Android (checks/build.gradle.kts).
+include(":checks")

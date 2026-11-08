@@ -2264,7 +2264,7 @@ class MainActivity : AppCompatActivity() {
         // Swallow the release of a key whose press was a shortcut, or the
         // text field sees a stray key-up.
         if (event.action == KeyEvent.ACTION_UP) {
-            if (event.keyCode in LEADER_KEYS) leaderHeld = false
+            if (event.keyCode in LEADER_KEYS) leaderPresses.up()
             if (handled.remove(event.keyCode)) return true
         }
         return super.dispatchKeyEvent(event)
@@ -2284,8 +2284,7 @@ class MainActivity : AppCompatActivity() {
         applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
     }
     private val handled = mutableSetOf<Int>()
-    private var lastLeaderPress = 0L
-    private var leaderHeld = false
+    private val leaderPresses = LeaderPresses(LEADER_WINDOW)
     private var leaderArmed = false
     private var whenWindowCloses: Runnable? = null
 
@@ -2433,20 +2432,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleShortcut(event: KeyEvent): Boolean {
         if (event.keyCode in LEADER_KEYS) {
-            // One press of this key sends a burst of key-downs on a Titan 2
-            // (a hundred of them in the log). The release separates one
-            // press from the next, so a down while the key is still held is
-            // part of the same press, however fast the presses come.
-            if (!leaderHeld) {
-                leaderHeld = true
-                val now = event.eventTime
-                if (now - lastLeaderPress < LEADER_WINDOW) {
-                    cancelLeader()
-                    showMenu()
-                } else {
-                    arm()
-                }
-                lastLeaderPress = now
+            // One press of this key sends a burst of key-downs on a Titan 2;
+            // LeaderPresses tells the presses apart by their releases.
+            when (leaderPresses.down(event.eventTime)) {
+                LeaderPresses.Press.Menu -> { cancelLeader(); showMenu() }
+                LeaderPresses.Press.Arm -> arm()
+                LeaderPresses.Press.Repeat -> {}
             }
             handled.add(event.keyCode)
             return true
