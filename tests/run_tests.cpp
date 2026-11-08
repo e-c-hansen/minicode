@@ -98,7 +98,9 @@ static const char *g_group = "";
 // cores) wall time ran three to ten times over and failed brackets:bounded,
 // procs:speed and find:regex-long-lines, while a real regression (quadratic
 // work, a pass over the whole text per call) costs CPU and is still caught.
-// Bounds are about three to ten times an unoptimized run's time on an M3.
+// Bounds are about twice or more an unoptimized libstdc++ run's time on an M3's
+// efficiency cores (`taskpolicy -b ./build/run_tests`), where a loaded Mac
+// may put the thread: three to four times its time on the others.
 // MC_SKIP_TIMING=1 skips them (the numbers still print), for a runner too
 // slow even for that.
 static double cpuMs() {
@@ -1957,7 +1959,7 @@ void testMarkdownCommonMark() {
         }
         std::printf("  markdown: 20000 lines parsed in %.1f ms; worst pathological input %.1f ms\n",
                     ms, worst);
-        CHECK_TIME(ms, 3000);
+        CHECK_TIME(ms, 6000);
         CHECK_TIME(worst, 2000);
     }
 }

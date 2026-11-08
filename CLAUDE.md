@@ -2571,7 +2571,11 @@ session has a display. Check first.
   measures its own thread (`MCProcessMonitor lastSampleCpuMilliseconds`); a
   main-thread stall is its CPU between two timer fires (lsp_progress), not
   the gap. Wall time stays only for the product's own wall-clock limits (the
-  regex fallback's second). `MC_SKIP_TIMING=1` passes every bound.
+  regex fallback's second). CPU time is not machine-proof either: on a
+  loaded Mac a thread may run on an efficiency core (`taskpolicy -b`
+  reproduces it), several times slower, so leave room for that or compare
+  with a baseline taken on the same thread in the same step (large_file).
+  `MC_SKIP_TIMING=1` passes every bound.
 - **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the
   window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events
   through the window then the main menu (`MCGuiPerformMenuKey`, built from the

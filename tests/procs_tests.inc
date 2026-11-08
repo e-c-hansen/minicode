@@ -399,6 +399,6 @@ static void testProcs() {
         const double ms = (cpuMs() - t0) / 10;
         CHECK(t.processes().size() == 200);
         std::printf("  procs: a sample of 2,000 processes (200 tracked): %.2f ms\n", ms);
-        CHECK_TIME(ms, 50);   // unoptimized: about 11 ms on an M3
+        CHECK_TIME(ms, 150);   // unoptimized: about 10 ms on an M3, 30 on its efficiency cores
     }
 }

@@ -3,7 +3,9 @@
 // after it checked against a full re-highlight. Set MC_GUI_SAMPLE=<file>
 // to run /usr/bin/sample on the process while it types.
 #import "Harness.h"
+#import "ControlServer.h"
 #import "EditorController.h"
+#import "EditorController+Private.h"
 #import "Lsp.h"
 #import "MultiCaretView.h"
 #include <mach/mach_time.h>
@@ -59,7 +61,13 @@ MC_GUI_SUITE(keystroke) {
     __block EditorController *c = nil;
     __block NSTextView *tv = nil;
     __block NSUInteger at = 0;
-    NSString *path = MCGuiProjectFile(@"big100k.py");
+    // A window of its own on a folder of its own, as large_file's: in a
+    // whole run the shared window's state from earlier suites made each
+    // keystroke here cost 5 to 10 ms of CPU against 0.5 ms alone (after the
+    // folding suite every keystroke recalculated the layout manager's used
+    // rect over the laid-out lines, _enableTextViewResizing in a sample).
+    NSString *dir = [MCGuiScratch() stringByAppendingPathComponent:@"keystroke"];
+    NSString *path = [dir stringByAppendingPathComponent:@"big100k.py"];
     MCGuiStep(@"a 100,000-line Python file", ^{
         NSMutableString *s = [NSMutableString string];
         for (int i = 0; i < 100000 / 5; i++)
@@ -69,7 +77,11 @@ MC_GUI_SUITE(keystroke) {
                             @"\n"
                             @"value_%d = [1, 2.5, 'three', None]\n", i, i, i, i, i];
         MCGuiWriteFile(path, s);
-        c = MCGuiController();
+        [(id<MCControlAppHost>)NSApp.delegate controlOpenWindowAtPath:dir];
+        for (EditorController *w in MCGuiControllers())
+            if ([w.rootPath isEqualToString:dir]) c = w;
+        GCHECK(c != nil);
+        MCGuiSetKeyWindow(c.window);
         [c focusEditor:nil];
         double t0 = Ms();
         GCHECK([c showFile:path]);
@@ -201,6 +213,14 @@ MC_GUI_SUITE(keystroke) {
         GCHECK([emoji.fontName containsString:@"Emoji"]);
         for (int i = 0; i < 2; i++) [tv.undoManager undo];
         GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"ab cd "]);
+    });
+    MCGuiStep(@"the suite's window closes unasked, and its file goes", ^{
+        for (MCTab *t in [(NSArray *)[c valueForKey:@"tabs"] copy]) [c closeTab:t prompt:NO];
+        [c.window close];
+        c = nil;
+        tv = nil;
+        MCGuiSetKeyWindow(nil);
+        [[NSFileManager defaultManager] removeItemAtPath:dir error:nil];
     });
 }
 

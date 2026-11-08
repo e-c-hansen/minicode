@@ -232,7 +232,7 @@ static void testBrackets() {
         for (int i = 0; i < 100; i++) matchAt(many, 100000);
         const double ms = (cpuMs() - t0) / 100;
         std::printf("  bracket match: %.3f ms for a 20,000-unit scan\n", ms);
-        CHECK_TIME(ms, 50);
+        CHECK_TIME(ms, 150);
     }
 
     GROUP("brackets:jump");

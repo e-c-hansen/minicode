@@ -144,16 +144,18 @@ MC_GUI_SUITE(lsp_progress) {
     MCGuiWait(@"the status item says what the server is doing", 20, ^BOOL {
         return [Session(c).statusText containsString:@"Indexing"];
     });
-    MCGuiStep(@"in place of the counts, and on the popover's card", ^{
-        GCHECK_EQ_STR(Session(c).statusText, @"fakelsp: Indexing: 2/5 files 40%");
-        GCHECK_EQ_STR(PythonInfo(c).progress, @"Indexing: 2/5 files 40%");
-        // The token was made with a request, which was answered null.
-        BOOL answered = NO;
+    // The token was made with a request, which was answered null (the
+    // server may read the answer after it sent the progress).
+    MCGuiWait(@"the token's request is answered null", 10, ^BOOL {
         for (NSDictionary *m in MCGuiFakeLspReceived(@"progress", nil))
             if (!m[@"method"] && [m[@"id"] isEqual:@1000] && m[@"result"] == [NSNull null] &&
                 !m[@"error"])
-                answered = YES;
-        GCHECK(answered);
+                return YES;
+        return NO;
+    });
+    MCGuiStep(@"in place of the counts, and on the popover's card", ^{
+        GCHECK_EQ_STR(Session(c).statusText, @"fakelsp: Indexing: 2/5 files 40%");
+        GCHECK_EQ_STR(PythonInfo(c).progress, @"Indexing: 2/5 files 40%");
         // And the client said it takes progress.
         NSDictionary *init = MCGuiFakeLspReceived(@"progress", @"initialize").firstObject;
         GCHECK([init[@"params"][@"capabilities"][@"window"][@"workDoneProgress"] isEqual:@YES]);

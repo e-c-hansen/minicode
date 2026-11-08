@@ -177,7 +177,7 @@ static void testTreeRefresh() {
         const double ms = cpuMs() - t0;
         std::printf("  git:decorations: 100,000 changed files read in %.1f ms\n", ms);
         CHECK(bd.folder("dir7/sub") == Decoration::Modified && bd.file("dir7/sub/f7") == Decoration::Modified);
-        CHECK_TIME(ms, 2000);
+        CHECK_TIME(ms, 5000);
     }
 
     GROUP("settings:tree-git");

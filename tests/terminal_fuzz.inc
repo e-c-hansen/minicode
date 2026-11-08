@@ -149,7 +149,7 @@ void testTerminalFuzz() {
     }
     const double fuzzMs = cpuMs() - started;
     std::printf("  fuzz:terminal: 360 random sessions and 400 shrinks in %.0f ms\n", fuzzMs);
-    CHECK_TIME(fuzzMs, 6000);   // about 600 ms on an M3
+    CHECK_TIME(fuzzMs, 10000);   // 0.6 to 0.9 s on an M3, 3.8 s on its efficiency cores
 }
 
 // The marks' nonce, the parser's limits and the rest of the terminal

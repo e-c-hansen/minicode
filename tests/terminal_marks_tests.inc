@@ -269,7 +269,7 @@ void testTerminalMarks() {
         const double feedMs = cpuMs() - t0;
         std::printf("  screen:marks: 100,000 lines scrolled under 5,000 marked commands in "
                     "%.0f ms\n", feedMs);
-        CHECK_TIME(feedMs, 5000);
+        CHECK_TIME(feedMs, 15000);
         CHECK(big.commands().size() < 5000);   // the oldest left the scrollback
     }
 }

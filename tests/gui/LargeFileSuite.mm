@@ -109,6 +109,20 @@ MC_GUI_SUITE(large_file) {
         MCGuiSetKeyWindow(c.window);
         tv = Editor(c);
         [c focusEditor:nil];
+        // A baseline from this run: reading the file and making a plain
+        // text storage of it, the least an open does, on the same thread
+        // and so on the same kind of core.
+        double base = MCGuiThreadCpuMs();
+        @autoreleasepool {
+            NSString *read = [NSString stringWithContentsOfFile:big encoding:NSUTF8StringEncoding
+                                                          error:nil];
+            NSTextStorage *plain = [[NSTextStorage alloc] initWithString:read ?: @""
+                attributes:@{NSForegroundColorAttributeName: NSColor.textColor}];
+            __block NSUInteger n = 0;
+            [read enumerateLinesUsingBlock:^(NSString *l, BOOL *stop) { (void)l; (void)stop; n++; }];
+            GCHECK(plain.length == read.length && n > 0);
+        }
+        base = MCGuiThreadCpuMs() - base;
         SampleFor(@"open25", 7);
         const double t0 = Ms(), c0 = MCGuiThreadCpuMs();
         GCHECK([c showFile:big]);
@@ -116,17 +130,20 @@ MC_GUI_SUITE(large_file) {
         [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, 4000)];
         const double shown = Ms() - t0, shownCpu = MCGuiThreadCpuMs() - c0;
         MCGuiNote(@"opening 25 MB (%lu lines): %.0f ms, its first screen laid out by %.0f ms "
-                  @"(%.0f ms of main-thread CPU)",
+                  @"(%.0f ms of main-thread CPU; the baseline %.0f ms, %.1f times it)",
                   (unsigned long)[s componentsSeparatedByString:@"\n"].count - 1, opened, shown,
-                  shownCpu);
+                  shownCpu, base, shownCpu / MAX(base, 1));
         // Read, made a text storage and highlighted plain: about 0.55 s of
         // the main thread's CPU on an M3, against 2.2 s with the mode off
         // (a full lex and attribute pass of 470,000 lines; measured by
         // turning the mode off in noteLargeFileText:). The open is on the
-        // main thread, so its CPU time is the bound, which a loaded machine
-        // inflates by at most about twice; the old 3 s of wall time let the
-        // mode off pass.
-        GCHECK_TIME(shownCpu, 1500, @"a 25 MB file shows");
+        // main thread, so its CPU time is the bound; the old 3 s of wall
+        // time let the mode off pass. On a loaded Mac the thread may run on
+        // an efficiency core, several times slower in CPU time too, so the
+        // bound is 1.5 s or six times the baseline, whichever is more: the
+        // open is 2.4 to 2.9 times the baseline (0.18 s; 0.54 s on the
+        // efficiency cores), with the mode off about twelve.
+        GCHECK_TIME(shownCpu, MAX(1500, 6 * base), @"a 25 MB file shows");
         MCTab *t = Active(c);
         GCHECK(t.largeFile && !t.largeFileFeatures && [c largeFileFeaturesOff]);
         GCHECK(tv.string.length > (25u << 20) - 100);

@@ -587,8 +587,20 @@ MC_GUI_SUITE(language) {
         tv.selectedRange = NSMakeRange(NSMaxRange([tv.string rangeOfString:@"p = Pat"]), 0);
         [Session(c) triggerCompletion];
     });
-    MCGuiWait(@"Path is offered", 30, ^BOOL {
-        return [Session(c).completionLabels containsObject:@"Path"];
+    // basedpyright answers from what it has indexed so far, so a first
+    // list may lack Path while it still reads the project (in a whole run
+    // the project holds other suites' files): ask again every 3 s.
+    __block NSDate *asked = [NSDate date];
+    MCGuiWait(@"Path is offered", 45, ^BOOL {
+        if ([Session(c).completionLabels containsObject:@"Path"]) return YES;
+        if (-asked.timeIntervalSinceNow > 3) {
+            asked = [NSDate date];
+            [Session(c) handleCommand:@selector(cancelOperation:)];
+            [c.window makeFirstResponder:tv];
+            tv.selectedRange = NSMakeRange(NSMaxRange([tv.string rangeOfString:@"p = Pat"]), 0);
+            [Session(c) triggerCompletion];
+        }
+        return NO;
     });
     MCGuiStep(@"accepting Path adds its import at the top, and first() stays folded", ^{
         LspSession *lsp = Session(c);
