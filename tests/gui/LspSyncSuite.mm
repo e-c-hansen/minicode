@@ -189,8 +189,10 @@ MC_GUI_SUITE(lsp_sync) {
                   flush, baseline);
         // About 0.8 ms here, most of it moving the client's copy along
         // (the text after each edit, and its line starts); room is left
-        // for an efficiency core, and the baseline ratio holds either way.
-        GCHECK_TIME(flush, 2, @"a pause's flush in a 2.5 MB file");
+        // for an efficiency core (3.2 ms at load 100 to 125, with several
+        // agents building), and the baseline ratio holds either way. The
+        // old flush took 9 to 13 ms, so 6 still catches a return to it.
+        GCHECK_TIME(flush, 6, @"a pause's flush in a 2.5 MB file");
         GCHECK(MCGuiTimingSkipped() || flush * 4 < baseline);
     });
     MCGuiWait(@"one ranged change with both edits", 10, ^BOOL {
