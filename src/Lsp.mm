@@ -11,6 +11,7 @@
 // CodeTextView.mm, and the completion list, hover and signature popups in
 // LspPopups.mm.
 #import "Lsp+Private.h"
+#import "SnippetSession.h"
 // Every category's own instance variables, so this @implementation lays
 // them out (Lsp+Private.h).
 #import "Lsp+ActionsIvars.h"
@@ -105,6 +106,15 @@ NSHashTable<LspSession *> *MCLspAllSessions(void) {
         [s->_tv setSelectedRange:NSMakeRange(index, 0)];
         [s definitionAtIndex:index];
         return YES;
+    };
+    // A snippet's tab stops leave Tab and Esc to the lists while they show,
+    // and show a choice stop's options in the completion list.
+    textView.snippets.commandTakenFirst = ^BOOL(SEL sel) {
+        LspSession *s = weakSelf;
+        return s && [s snippetKeyTakenFirst:sel];
+    };
+    textView.snippets.onChoices = ^(NSArray<NSString *> *choices, NSRange range) {
+        [weakSelf showSnippetChoices:choices range:range];
     };
     [self startInlayHints];
     return self;

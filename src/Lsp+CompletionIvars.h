@@ -21,5 +21,7 @@
     MCLspServer *_resolveServer;
     MCLspServer *_completionServer;   // the one the list was asked of
     MCSignaturePopup *_signature;
+    BOOL _choiceMode;         // the list shows a snippet choice stop's options
+    NSRange _choiceRange;     // ...for the stop's text, selected when it opened
 }
 @end

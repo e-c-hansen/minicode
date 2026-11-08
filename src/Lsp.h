@@ -27,6 +27,7 @@
 @class MCMultiCarets;
 @class MCFolds;
 @class MCInlayHints;
+@class MCSnippetSession;
 
 // The color a diagnostic's severity is drawn in (1 error ... 4 hint): the
 // squiggles, the hover box's messages and the gutter's dots.
@@ -76,6 +77,9 @@ NSColor *MCDiagnosticColor(NSInteger severity);
 // Inlay hints (LspInlayHints.h): labels drawn between characters, in gaps
 // the layout opens; LspSession (InlayHints) fills them in.
 @property(nonatomic, readonly) MCInlayHints *inlayHints;
+// A snippet completion's tab stops (SnippetSession.h): while one runs, Tab,
+// Shift+Tab and Esc are its own, before the carets and AutoIndent.
+@property(nonatomic, readonly) MCSnippetSession *snippets;
 - (IBAction)foldRegion:(id)sender;
 - (IBAction)unfoldRegion:(id)sender;
 - (IBAction)toggleFold:(id)sender;
