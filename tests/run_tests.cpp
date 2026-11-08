@@ -22,6 +22,7 @@
 #include "GitStatus.h"
 #include "GitGraph.h"
 #include "EditorTabs.h"
+#include "TerminalLayout.h"
 #include "Formatter.h"
 #include "InstallHints.h"
 #include "ChangeRequest.h"
@@ -10317,6 +10318,7 @@ static void testMultiCaretOccurrences() {
 #include "zsh_integration_tests.inc"
 #include "lexer_styles_tests.inc"
 #include "bracket_pairs_tests.inc"
+#include "terminal_layout_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10374,6 +10376,7 @@ int main() {
     testQuickDiff();
     testLexerStyles();
     testBracketPairs();
+    testTerminalLayout();
     testEditorTabs();
     testFormatter();
     testFormatConsent();
