@@ -1501,10 +1501,10 @@ const char* Settings::defaultFileText() {
 # syntax.number = #B5CEA8
 # syntax.preprocessor = #C586C0
 # syntax.function = #DCDCAA
-# What a language server's semantic tokens color (editor.semantic-
-# highlighting): classes, types and namespaces; variables; parameters;
-# properties; and constants (enum members, read-only variables). A function
-# a server names takes syntax.function.
+# The names a language server says what they are (semantic tokens, with
+# editor.semantic-highlighting on): classes, types and namespaces;
+# variables; parameters; properties; and constants (enum members, read-only
+# variables). A function a server names takes syntax.function.
 # syntax.class = #4EC9B0
 # syntax.variable = #9CDCFE
 # syntax.parameter = #9CDCFE

@@ -158,6 +158,7 @@
         [weakSelf updateProblemCounts];
     };
     self.lsp.onProblemsChanged = ^{ [weakSelf updateProblems]; };
+    self.lsp.onSemanticTokens = ^(NSData *spans) { [weakSelf semanticTokensArrived:spans]; };
     self.lsp.openFile = ^BOOL(NSString *p) {
         EditorController *s = weakSelf;
         if ([p hasPrefix:[s.rootPath stringByAppendingString:@"/"]])
