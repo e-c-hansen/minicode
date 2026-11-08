@@ -120,20 +120,29 @@ MC_GUI_SUITE(semantic_tokens) {
               @"result": @{@"resultId": @"2",
                            @"edits": @[@{@"start": @16, @"deleteCount": @1,
                                          @"data": @[@12]}]}}]};
-    __block NSUInteger answers = 0, requestsBefore = 0;
+    __block NSUInteger answers = 0, requestsBefore = 0, answersBefore = 0;
 
     MCGuiStep(@"a server with semantic tokens", ^{
         c = MCGuiController();
-        // The shared window's session may have asked before, for a suite
-        // that ran earlier (after language, it had once): count from here.
+        // The shared window's session may have asked and been answered
+        // before, for a suite that ran earlier (language's basedpyright
+        // answers): count both from here. Waiting on answers > 0 passed at
+        // once after such a suite, and when this server answered later than
+        // the first poll (it is sent every open tab first: multiedit's
+        // 100,000-line files, 5 MB, when that suite ran before), the checks
+        // ran before its answer and the next wait took that answer for the
+        // delta's.
         requestsBefore = Session(c).semanticRequests;
+        answersBefore = Session(c).semanticAnswers;
         MCGuiWriteFile(file, original);
         NSString *cmd = MCGuiFakeLsp(@"semantic", script, nil, nil);
         MCGuiSetSettings([NSString stringWithFormat:
             @"lsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n%@", cmd, kSettings]);
         GCHECK([c showFile:file]);
     });
-    MCGuiWait(@"its first answer", 20, ^BOOL { return Session(c).semanticAnswers > 0; });
+    MCGuiWait(@"its first answer", 20, ^BOOL {
+        return Session(c).semanticAnswers > answersBefore;
+    });
     MCGuiStep(@"the parameters are parameters, the function a function", ^{
         NSString *s = Text(c).string;
         GCHECK_EQ_STR(ColorAt(c, Nth(s, @"width", 0)), kParameter);
