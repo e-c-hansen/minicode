@@ -1738,16 +1738,24 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
   as the Linux port's) before it is unpacked, and only its `tectonic` file
   moved into place (`MINICODE_TECTONIC_DOWNLOAD` points the GUI check at a
   file:// stand-in, held to the same hash).
-- **The buffer is typeset from a hidden sibling** `.<name>.minicode.tex` in the
-  document's folder, so relative paths resolve and the user's file is never
-  written; deleted when tectonic exits. Before it is written, a
-  `sibling.record` (pid, start time, size, SHA-256; `LatexScratch`) goes in the
-  output folder, so the first typeset of a launch removes a copy a crashed
-  process left, and only when it is still exactly those bytes. tectonic runs
-  `--untrusted`. Output in `NSTemporaryDirectory()/MiniCode-latex/<16 hex of
-  the resolved path's SHA-256>` (`MCLatexWorkFolder`; `$MINICODE_LATEX_WORK`
-  in the checks), so two paper.tex never share a PDF; the folder goes with the
-  last preview of it. `make guitest SUITES=latex` runs a stand-in tectonic.
+- **The buffer is typeset from a hidden sibling**
+  `.<name>.<pid>-<view>.minicode.tex` in the document's folder, so relative
+  paths resolve and the user's file is never written; deleted when tectonic
+  exits. Before it is written, a `sibling.record` (pid, start time, size,
+  SHA-256; `LatexScratch`) goes in the output folder, so the first typeset of
+  a launch removes a copy a crashed process left, and only when it is still
+  exactly those bytes. tectonic runs `--untrusted`. Output in
+  `NSTemporaryDirectory()/MiniCode-latex/<16 hex of the resolved path's
+  SHA-256>-<pid>-<start>-<view>` (`MCLatexWorkFolder`, `LatexView
+  workFolder`; `$MINICODE_LATEX_WORK` in the checks). **Each preview has its
+  own sibling and folder** (`LatexScratch::Owner`, 2026-11-08, DO-D5): two
+  windows on one file with different unsaved text once shared both, so one
+  typeset's end removed the other's sibling and they overwrote one PDF. The
+  folder goes with its preview (`stopPreview` on window close, dealloc on tab
+  close); a folder whose process has gone (`ownerGone`) is removed by the
+  first typeset of a launch; folders named by the hash alone (older
+  minicodes) are left to their own records. `make guitest SUITES=latex` runs
+  a stand-in tectonic.
 - Compiles are debounced (0.6 s) and generation-counted; a run has 5 minutes,
   then SIGTERM and SIGKILL, with a log line (a looping document spun a core and
   queued every later edit). Scroll and zoom are restored by page index and
@@ -1782,8 +1790,16 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
   double-clicks every word of every page and reports found, refused, wrong and
   not placed (scratch `TECTONIC_CACHE_DIR`). The bar is 0 wrong; the user's
   resume is at 100% and `tests/latex/torture.tex` at 98.7% (the rest rightly
-  refused). Trap: `characterBoundsAtIndex:` drifts from `page.string`'s indices
-  down a page; a one-character `selectionForRange:`'s bounds do not.
+  refused). `make latex-sweep` (`sweep.sh --fixture`, a step of CI's macOS
+  job) clicks the committed typeset of torture.tex (`tests/latex/fixtures`,
+  tectonic 0.17.0) with no tectonic, and fails on a wrong answer or a rate
+  under `tests/latex/sweep_bound.txt`; raise the bound when a change raises
+  the rate, and typeset the fixture again (`--synctex --untrusted`, the
+  sibling named `.torture.minicode.tex`, Input paths rewritten to
+  `/fixture`) only with the tectonic the app pins. `build/latex-sweep` links
+  the app's objects (the old one-line clang build had lost frameworks).
+  Trap: `characterBoundsAtIndex:` drifts from `page.string`'s indices down a
+  page; a one-character `selectionForRange:`'s bounds do not.
 - **Edits are byte splices** of the span's own LaTeX (nothing escaped or
   re-serialized), marked dirty, saved only by Cmd+S, undone through
   `LatexView`'s own snapshot stack (50) via `undo:`/`redo:`.
@@ -1798,15 +1814,30 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
   line box's own record, which names the line its paragraph ended on), on
   the first page it reached, else the nearest line below or above within
   40; square annotations for 1.5 s. It waits for a typeset when the PDF is
-  not the buffer's (`_forwardLine`, run from `showDocument:`).
+  not the buffer's (`_forwardLine`, run from `showDocument:`). From an
+  `\input` file (`revealSourceLine:inFile:`, `SyncTexIndex::tagForFile`,
+  realpath on both sides: tectonic writes absolute Input paths) the main
+  document is a `% !TEX root = ...` comment's (`LatexLog::rootComment`),
+  else, for a file with no `\documentclass`, the open tab whose preview's
+  typeset read it (`typesetReadFile:`); its tab is shown.
 - **Problems on lines**: `LatexLog` reads tectonic's `error: file:line:
   message` summary (TeX's `! ...` blocks with `l.N` and the open-file
   parentheses only when no summary placed anything); the sibling's name is
   the document, an `\input` name is found as TeX finds it. The failure panel
   lists them above the log, each place a `minicode-latex-problem:<n>` link
   (`onOpenProblem`, goToLine); while the source shows and is still the text
-  that failed, they are `CodeTextView buildMarks`, gutter dots that follow
-  edits and that no language server's publish replaces.
+  last typeset, they are `CodeTextView buildMarks`, gutter dots that follow
+  edits and that no language server's publish replaces. **Warnings** too,
+  from every typeset (2026-11-08): tectonic's own `warning:` lines (overfull
+  boxes, placed at a paragraph's first line; underfull ones left out, as
+  LaTeX Workshop's default) and TeX's transcript, kept with `--keep-logs`
+  and removed once read (`parseTranscriptWarnings`: undefined references
+  and citations, labels defined twice, package and class warnings with an
+  input line; lines wrapped at 79 joined; the open-file parentheses skip a
+  box's text, an error's quoted line and the warnings themselves). Errors
+  first (`collect`); rows in `MCDiagnosticColor`; a typeset that worked
+  lists them behind the status bar's Warnings button. Committed logs:
+  `tests/latex/logs` (warnings.txt and .log, with their source).
 - tectonic's bundle is older than Overleaf's: a missing package (`twemojis`)
   goes in the document's folder, and since tectonic discards docstrip's output,
   a script keeping a `.dtx`'s code lines made the `.sty`. Spacing differs from

@@ -13,11 +13,16 @@
 //     give the lines of text on the page it reached (SyncTexIndex::
 //     boxesForLine), lit up for a moment.
 //   * A typeset that fails lists tectonic's problems (LatexLog.h) above its
-//     log, each a link to its line; the controller also dots those lines in
-//     the gutter while the source shows (problemsForPath:source:).
+//     log, each a link to its line; one that works lists its warnings
+//     (TeX's transcript, kept with --keep-logs) behind the Warnings button.
+//     The controller also dots those lines in the gutter while the source
+//     shows (problemsForPath:source:).
+//   * Each preview typesets from a sibling and into a folder of its own
+//     (LatexScratch::Owner), so two windows on one file never collide.
 #import "Latex.h"
 #import "EditorFont.h"
 #import "AppSettings.h"
+#import "Lsp.h"   // MCDiagnosticColor
 #import <Quartz/Quartz.h>
 #import <CommonCrypto/CommonDigest.h>
 #include "LatexDoc.h"
@@ -160,7 +165,17 @@ NSString *MCLatexWorkRoot(void) {
     return [NSTemporaryDirectory() stringByAppendingPathComponent:@"MiniCode-latex"];
 }
 
-NSString *MCLatexWorkFolder(NSString *texPath) {
+// Preview `view` of this process, as its folder and sibling are named.
+static LatexScratch::Owner MCLatexOwner(NSUInteger view) {
+    static long long start = (long long)floor(ProcessStart(getpid()));
+    LatexScratch::Owner o;
+    o.pid = getpid();
+    o.start = start;
+    o.view = view;
+    return o;
+}
+
+NSString *MCLatexWorkFolder(NSString *texPath, NSUInteger view) {
     std::string hash;
     if (texPath.length) {
         char resolved[PATH_MAX];
@@ -169,7 +184,13 @@ NSString *MCLatexWorkFolder(NSString *texPath) {
         hash = Utf8(Sha256Hex(path.UTF8String, strlen(path.UTF8String)));
     }
     return [MCLatexWorkRoot() stringByAppendingPathComponent:
-        NsStr(LatexScratch::folderName(hash))];
+        NsStr(LatexScratch::folderName(hash, MCLatexOwner(view)))];
+}
+
+// A path as the kernel spells it (/tmp is /private/tmp), or as given.
+static std::string MCRealPath(const std::string &path) {
+    char resolved[PATH_MAX];
+    return realpath(path.c_str(), resolved) ? std::string(resolved) : path;
 }
 
 // The folders the live previews of this process use, counted, so one closing
@@ -216,9 +237,18 @@ void MCLatexRemoveStaleSiblings(void (^done)(NSUInteger removed)) {
         NSUInteger removed = 0;
         NSFileManager *fm = [NSFileManager defaultManager];
         for (NSString *name in [fm contentsOfDirectoryAtPath:root error:nil] ?: @[]) {
-            NSString *record = [[root stringByAppendingPathComponent:name]
-                stringByAppendingPathComponent:kSiblingRecordName];
+            NSString *folder = [root stringByAppendingPathComponent:name];
+            NSString *record = [folder stringByAppendingPathComponent:kSiblingRecordName];
             if (SweepSiblingRecord(record, YES)) removed++;
+            // A preview's folder outlives a crash of its process: it goes
+            // once that process has (a folder of a live one, or one named
+            // as an older minicode names them, stays).
+            LatexScratch::Owner owner;
+            if (!LatexScratch::parseFolderName(Utf8(name), &owner) || owner.pid == getpid())
+                continue;
+            if (LatexScratch::ownerGone(owner, ProcessStart((pid_t)owner.pid)) &&
+                ![fm fileExistsAtPath:record])
+                [fm removeItemAtPath:folder error:nil];
         }
         if (done) dispatch_async(dispatch_get_main_queue(), ^{ done(removed); });
     });
@@ -231,17 +261,19 @@ void MCLatexRemoveStaleSiblings(void (^done)(NSUInteger removed)) {
 
 static NSString *const kProblemLink = @"minicode-latex-problem:";
 
-// tectonic's output as problems in the user's files: the hidden sibling's
-// lines are the document's. Any thread (it asks the disk what exists).
-static NSArray<MCLatexProblem *> *MCLatexProblemsFromLog(NSString *log, NSString *texPath,
-                                                         NSString *sibling) {
+// tectonic's output and TeX's transcript as problems in the user's files:
+// the hidden sibling's lines are the document's. Any thread (it asks the
+// disk what exists).
+static NSArray<MCLatexProblem *> *MCLatexProblemsFromLog(NSString *log, NSString *transcript,
+                                                         NSString *texPath, NSString *sibling) {
     NSMutableArray<MCLatexProblem *> *out = [NSMutableArray array];
     NSFileManager *fm = [NSFileManager defaultManager];
     auto exists = [fm](const std::string &p) {
         BOOL dir = NO;
         return [fm fileExistsAtPath:NsStr(p) isDirectory:&dir] && !dir;
     };
-    for (const LatexLog::Problem &p : LatexLog::parse(Utf8(log ?: @""))) {
+    for (const LatexLog::Problem &p :
+         LatexLog::collect(Utf8(log ?: @""), Utf8(transcript ?: @""))) {
         MCLatexProblem *m = [MCLatexProblem new];
         const std::string path = LatexLog::sourcePath(p.file, Utf8(texPath ?: @""),
                                                       Utf8(sibling ?: @""), exists);
@@ -314,6 +346,7 @@ static NSString *MCDescribeProblem(MCLatexProblem *p, NSString *texPath, NSStrin
 @property(nonatomic, strong) NSView *statusBar;
 @property(nonatomic, strong) NSTextField *statusLabel;
 @property(nonatomic, strong) NSButton *actionButton;
+@property(nonatomic, strong) NSButton *warningsButton;
 @property(nonatomic, strong) NSScrollView *logScroll;
 @property(nonatomic, strong) NSTextView *logView;
 @property(nonatomic, strong) NSProgressIndicator *spinner;
@@ -345,6 +378,10 @@ static NSString *MCDescribeProblem(MCLatexProblem *p, NSString *texPath, NSStrin
     NSString *_folder;           // the output folder this view counts as using
     std::string _problemsSrc;    // the source `problems` came from
     NSInteger _forwardLine;      // a forward search waiting for its typeset
+    NSString *_forwardFile;      // and the \input file it is from (nil: the document)
+    BOOL _showingWarnings;       // the warnings list holds the page's place
+    BOOL _stopped;               // its window closed (stopPreview)
+    LatexScratch::Owner _owner;  // this preview's own sibling and folder
     NSArray<PDFAnnotation *> *_forwardMarks;   // what it lit up, for a moment
     PDFPage *_forwardPage;
 }
@@ -362,6 +399,8 @@ static const CGFloat kStatusHeight = 26;
     _src = Utf8(source ?: @"");
     _doc = LatexDoc::parse(_src);
     _editingItemIndex = -1;
+    static NSUInteger views = 0;
+    _owner = MCLatexOwner(++views);
 
     self.pdf = [[MCPdfView alloc] initWithFrame:self.bounds];
     self.pdf.autoScales = YES;
@@ -408,6 +447,16 @@ static const CGFloat kStatusHeight = 26;
     self.actionButton.controlSize = NSControlSizeSmall;
     [self.statusBar addSubview:self.actionButton];
 
+    // A typeset that worked with warnings: they are listed behind this.
+    self.warningsButton = [NSButton buttonWithTitle:@"Warnings"
+                                             target:self
+                                             action:@selector(toggleWarnings:)];
+    self.warningsButton.bezelStyle = NSBezelStyleRounded;
+    self.warningsButton.font = [NSFont systemFontOfSize:11];
+    self.warningsButton.controlSize = NSControlSizeSmall;
+    self.warningsButton.hidden = YES;
+    [self.statusBar addSubview:self.warningsButton];
+
     [self applySettings];
     [self relayout];
     [self compileNow];
@@ -434,10 +483,13 @@ static const CGFloat kStatusHeight = 26;
 
     CGFloat pad = 8;
     self.actionButton.frame = NSMakeRect(b.size.width - 96 - pad, 3, 96, 20);
+    const CGFloat warningsWidth = self.warningsButton.isHidden ? 0 : 112;
+    self.warningsButton.frame = NSMakeRect(b.size.width - 96 - pad - 4 - warningsWidth, 3,
+                                           warningsWidth, 20);
     self.spinner.frame = NSMakeRect(pad, 6, 14, 14);
     CGFloat labelX = pad + (self.spinner.isHidden ? 0 : 20);
     self.statusLabel.frame =
-        NSMakeRect(labelX, 5, MAX(0, b.size.width - labelX - 112), 16);
+        NSMakeRect(labelX, 5, MAX(0, b.size.width - labelX - 112 - warningsWidth), 16);
 }
 
 - (PDFView *)latexPDFView { return self.pdf; }
@@ -525,8 +577,11 @@ static const CGFloat kStatusHeight = 26;
 
 // This document's output folder, made if need be (0700, as the temporary
 // folder it is in), and counted as in use while this view has it.
+- (NSString *)workFolder { return MCLatexWorkFolder(self.texPath, (NSUInteger)_owner.view); }
+- (NSString *)siblingPath { return [self scratchTexPath]; }
+
 - (NSString *)workDir {
-    NSString *dir = MCLatexWorkFolder(self.texPath);
+    NSString *dir = self.workFolder;
     if (![dir isEqualToString:_folder]) {
         [self letGoOfFolder];
         if (!gLatexFoldersInUse) gLatexFoldersInUse = [NSCountedSet set];
@@ -552,13 +607,14 @@ static const CGFloat kStatusHeight = 26;
 
 // The hidden sibling we actually hand to tectonic, so relative paths in the
 // document still resolve while the user's own file stays untouched.
+// Named for this preview (".paper.<pid>-<view>.minicode.tex"), so another
+// window's preview of the same file has a copy of its own.
 - (NSString *)scratchTexPath {
     NSString *dir = self.texPath.stringByDeletingLastPathComponent;
     NSString *base = self.texPath.lastPathComponent.stringByDeletingPathExtension;
-    if (!dir.length || !base.length) return [MCLatexWorkFolder(self.texPath)
+    if (!dir.length || !base.length) return [self.workFolder
         stringByAppendingPathComponent:@"untitled.minicode.tex"];
-    return [dir stringByAppendingPathComponent:
-        [NSString stringWithFormat:@".%@.minicode.tex", base]];
+    return [dir stringByAppendingPathComponent:NsStr(LatexScratch::siblingName(Utf8(base), _owner))];
 }
 
 // Before the sibling is written, what it will hold and who wrote it, so a
@@ -579,10 +635,19 @@ static const CGFloat kStatusHeight = 26;
                                                               atomically:YES];
 }
 
+- (void)stopPreview {
+    _stopped = YES;
+    [NSObject cancelPreviousPerformRequestsWithTarget:self];
+    [self.task terminate];
+    [self.popover performClose:nil];
+    [self letGoOfFolder];
+}
+
 - (void)compileNow {
     [NSObject cancelPreviousPerformRequestsWithTarget:self
                                              selector:@selector(compileNow)
                                                object:nil];
+    if (_stopped) return;
     NSString *tool = MCTectonicPath();
     if (!tool) { [self showTectonicMissing]; return; }
     if (self.compiling) { self.compileQueued = YES; return; }
@@ -617,7 +682,8 @@ static const CGFloat kStatusHeight = 26;
     task.executableURL = [NSURL fileURLWithPath:tool];
     // --untrusted keeps shell escape off whatever the document asks for, as
     // for the Markdown preview's math.
-    task.arguments = @[@"--synctex", @"--untrusted", @"--chatter", @"minimal",
+    // --keep-logs leaves TeX's transcript, whose warnings are listed.
+    task.arguments = @[@"--synctex", @"--untrusted", @"--keep-logs", @"--chatter", @"minimal",
                        @"--color", @"never", @"--outdir", outDir, scratch];
     NSString *texPath = self.texPath;
     NSString *cwd = texPath.stringByDeletingLastPathComponent;
@@ -660,8 +726,19 @@ static const CGFloat kStatusHeight = 26;
         NSString *log = output.length
             ? [[NSString alloc] initWithData:output encoding:NSUTF8StringEncoding]
             : (runErr.localizedDescription ?: @"");
+        NSString *transcriptPath = [outDir stringByAppendingPathComponent:
+            [stem stringByAppendingPathExtension:@"log"]];
+        NSData *transcriptData = [NSData dataWithContentsOfFile:transcriptPath];
+        [[NSFileManager defaultManager] removeItemAtPath:transcriptPath error:nil];
+        // TeX writes its transcript in the document's encoding; Latin-1 reads
+        // any bytes, and the warnings' words are ASCII.
+        NSString *transcript = transcriptData.length
+            ? ([[NSString alloc] initWithData:transcriptData encoding:NSUTF8StringEncoding]
+                   ?: [[NSString alloc] initWithData:transcriptData
+                                            encoding:NSISOLatin1StringEncoding])
+            : @"";
         NSArray<MCLatexProblem *> *problems =
-            status == 0 ? @[] : MCLatexProblemsFromLog(log, texPath, scratch);
+            stopped ? @[] : MCLatexProblemsFromLog(log, transcript, texPath, scratch);
         if (stopped) log = [stopped stringByAppendingString:log ?: @""];
         NSString *pdfPath = [outDir stringByAppendingPathComponent:
             [stem stringByAppendingPathExtension:@"pdf"]];
@@ -677,11 +754,13 @@ static const CGFloat kStatusHeight = 26;
 
         dispatch_async(dispatch_get_main_queue(), ^{
             LatexView *me = weakSelf;
-            // The view went away while this ran: its folder goes now, unless
-            // another preview of the file has it.
-            if (!me && [gLatexFoldersInUse countForObject:outDir] == 0)
+            // The view went away (or its window closed) while this ran: its
+            // folder goes now, unless a preview still has it.
+            const BOOL gone = !me || me->_stopped;
+            if (gone) me.compiling = NO;
+            if (gone && [gLatexFoldersInUse countForObject:outDir] == 0)
                 [[NSFileManager defaultManager] removeItemAtPath:outDir error:nil];
-            if (!me || gen != me.generation) return;
+            if (gone || gen != me.generation) return;
             me.compiling = NO;
             me.task = nil;
             BOOL ok = status == 0 && doc;
@@ -721,20 +800,65 @@ static const CGFloat kStatusHeight = 26;
         else self.pdf.scaleFactor = scale;
         [self.pdf goToDestination:dest];
     }
-    self.logScroll.hidden = YES;
-    self.pdf.hidden = NO;
-    NSString *pages = doc.pageCount == 1 ? @"1 page"
-        : [NSString stringWithFormat:@"%lu pages", (unsigned long)doc.pageCount];
-    [self setStatus:[NSString stringWithFormat:
-        @"%@ · double-click text to edit it", pages] busy:NO];
+    if (_showingWarnings && self.problems.count) {
+        [self showWarningsList];
+    } else {
+        _showingWarnings = NO;
+        self.logScroll.hidden = YES;
+        self.pdf.hidden = NO;
+    }
+    [self showPagesStatus];
     self.actionButton.title = @"Recompile";
     if (_forwardLine > 0 && !self.compiling && _pdfSrc == _src) [self runForwardSearch];
+}
+
+// "2 pages · 3 warnings · double-click text to edit it", and the Warnings
+// button when there are any.
+- (void)showPagesStatus {
+    PDFDocument *doc = self.pdf.document;
+    NSString *pages = doc.pageCount == 1 ? @"1 page"
+        : [NSString stringWithFormat:@"%lu pages", (unsigned long)doc.pageCount];
+    const NSUInteger n = self.problems.count;
+    NSString *warnings = n == 0 ? @""
+        : [NSString stringWithFormat:n == 1 ? @" · %lu warning" : @" · %lu warnings",
+                                     (unsigned long)n];
+    [self setStatus:[NSString stringWithFormat:@"%@%@ · double-click text to edit it",
+                                               pages, warnings] busy:NO];
+    self.warningsButton.hidden = n == 0;
+    self.warningsButton.title = _showingWarnings ? @"Show Page"
+        : [NSString stringWithFormat:@"%lu Warning%@", (unsigned long)n, n == 1 ? @"" : @"s"];
+    [self relayout];
+}
+
+// The Warnings button: the list in the page's place, or the page again.
+- (void)toggleWarnings:(id)sender {
+    (void)sender;
+    _showingWarnings = !_showingWarnings && self.problems.count > 0;
+    if (_showingWarnings) {
+        [self showWarningsList];
+    } else {
+        self.logScroll.hidden = YES;
+        self.pdf.hidden = NO;
+    }
+    [self showPagesStatus];
+}
+
+- (void)showWarningsList {
+    [self.logView.textStorage setAttributedString:[self problemRows:self.problems]];
+    self.logScroll.hidden = NO;
+    self.pdf.hidden = YES;
 }
 
 // ---------------------------------------------------------- forward search
 
 - (void)revealSourceLine:(NSInteger)line {
+    [self revealSourceLine:line inFile:nil];
+}
+
+- (void)revealSourceLine:(NSInteger)line inFile:(NSString *)path {
     _forwardLine = MAX(1, line);
+    _forwardFile = [path isEqualToString:self.texPath] ? nil : [path copy];
+    if (_showingWarnings) [self toggleWarnings:nil];
     // The page on show is the text's: go now. Otherwise the typeset under
     // way, or the one the last edit scheduled, ends in showDocument.
     if (!self.compiling && _pdfSrc == _src && self.pdf.document && !self.pdf.isHidden)
@@ -759,13 +883,24 @@ static const CGFloat kStatusHeight = 26;
         [self setStatus:@"No SyncTeX data, so the page for that line is not known" busy:NO];
         return;
     }
-    const int tag = _synctex.tagForPath(Utf8([self scratchTexPath]));
+    NSString *file = _forwardFile;
+    _forwardFile = nil;
+    // The file's name before its lines, when it is not the document itself.
+    NSString *named = file ? [file.lastPathComponent stringByAppendingString:@", line"] : @"Line";
+    const int tag = file ? [self inputTagForFile:file] : _synctex.tagForPath(Utf8([self scratchTexPath]));
+    if (tag == 0) {
+        [self setStatus:[NSString stringWithFormat:@"%@ is not part of %@'s last typeset",
+                                                   file.lastPathComponent ?: @"That file",
+                                                   self.texPath.lastPathComponent]
+                   busy:NO];
+        return;
+    }
     int found = 0;
     const std::vector<SyncTexBox> boxes = _synctex.boxesForLine(tag, (int)line, &found);
     PDFDocument *doc = self.pdf.document;
     if (boxes.empty() || boxes[0].page < 1 || (NSUInteger)boxes[0].page > doc.pageCount) {
-        [self setStatus:[NSString stringWithFormat:@"Line %ld put nothing on the page",
-                                                   (long)line] busy:NO];
+        [self setStatus:[NSString stringWithFormat:@"%@ %ld put nothing on the page",
+                                                   named, (long)line] busy:NO];
         return;
     }
     PDFPage *page = [doc pageAtIndex:(NSUInteger)boxes[0].page - 1];
@@ -796,9 +931,10 @@ static const CGFloat kStatusHeight = 26;
     // A little of what is above it shows too, for context.
     [self.pdf goToRect:NSInsetRect(all, 0, -24) onPage:page];
     NSString *what = found == line
-        ? [NSString stringWithFormat:@"Line %ld is on page %d", (long)line, boxes[0].page]
-        : [NSString stringWithFormat:@"Line %ld put nothing on the page; line %d, on page %d, "
-                                     @"is the nearest that did", (long)line, found, boxes[0].page];
+        ? [NSString stringWithFormat:@"%@ %ld is on page %d", named, (long)line, boxes[0].page]
+        : [NSString stringWithFormat:@"%@ %ld put nothing on the page; line %d, on page %d, "
+                                     @"is the nearest that did", named, (long)line, found,
+                                     boxes[0].page];
     [self setStatus:what busy:NO];
     __weak LatexView *weakSelf = self;
     NSArray *shown = marks;
@@ -807,6 +943,20 @@ static const CGFloat kStatusHeight = 26;
         LatexView *me = weakSelf;
         if (me && me->_forwardMarks == shown) [me clearForwardMarks];
     });
+}
+
+// SyncTeX's input tag for an \input file of the document, read against
+// the document's folder (where tectonic ran), 0 for none or the document.
+- (int)inputTagForFile:(NSString *)path {
+    if (!path.length || !_synctex.valid()) return 0;
+    const int tag = _synctex.tagForFile(Utf8(path),
+                                        Utf8(self.texPath.stringByDeletingLastPathComponent),
+                                        MCRealPath);
+    return tag == _synctex.tagForPath(Utf8([self scratchTexPath])) ? 0 : tag;
+}
+
+- (BOOL)typesetReadFile:(NSString *)path {
+    return ![path isEqualToString:self.texPath] && [self inputTagForFile:path] != 0;
 }
 
 // --------------------------------------------------------------- problems
@@ -878,25 +1028,39 @@ static const CGFloat kStatusHeight = 26;
 
 // The log, under the problems it holds: a row each, its place a link to the
 // line (onOpenProblem) when it has one.
-- (void)showFailure:(NSString *)log problems:(NSArray<MCLatexProblem *> *)problems {
-    AppSettings *cfg = [AppSettings shared];
-    NSColor *ink = [cfg text:Surface::Editor];
-    NSDictionary *plain = @{NSFontAttributeName: [NSFont systemFontOfSize:13],
-                            NSForegroundColorAttributeName: ink};
+// A row per problem, in its severity's color (errors red, warnings
+// yellow), its place a link to the line (onOpenProblem) when it has one.
+// The link's number is the problem's index in `problems`, which must be
+// self.problems.
+- (NSMutableAttributedString *)problemRows:(NSArray<MCLatexProblem *> *)problems {
     NSMutableAttributedString *page = [NSMutableAttributedString new];
     NSString *texPath = self.texPath;
     [problems enumerateObjectsUsingBlock:^(MCLatexProblem *p, NSUInteger i, BOOL *) {
         NSString *place = nil;
         NSString *row = MCDescribeProblem(p, texPath, &place);
+        NSDictionary *attrs = @{NSFontAttributeName: [NSFont systemFontOfSize:13],
+                                NSForegroundColorAttributeName: MCDiagnosticColor(p.severity)};
         NSMutableAttributedString *r =
             [[NSMutableAttributedString alloc] initWithString:[row stringByAppendingString:@"\n"]
-                                                   attributes:plain];
+                                                   attributes:attrs];
         if (p.path && p.line > 0 && place.length)
             [r addAttribute:NSLinkAttributeName
                       value:[kProblemLink stringByAppendingFormat:@"%lu", (unsigned long)i]
                       range:NSMakeRange(0, place.length)];
         [page appendAttributedString:r];
     }];
+    return page;
+}
+
+- (void)showFailure:(NSString *)log problems:(NSArray<MCLatexProblem *> *)problems {
+    AppSettings *cfg = [AppSettings shared];
+    NSColor *ink = [cfg text:Surface::Editor];
+    NSDictionary *plain = @{NSFontAttributeName: [NSFont systemFontOfSize:13],
+                            NSForegroundColorAttributeName: ink};
+    NSString *texPath = self.texPath;
+    NSMutableAttributedString *page = [self problemRows:problems ?: @[]];
+    _showingWarnings = NO;
+    self.warningsButton.hidden = YES;
     if (problems.count)
         [page appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"
                                                                      attributes:plain]];
@@ -907,6 +1071,7 @@ static const CGFloat kStatusHeight = 26;
     self.logScroll.hidden = NO;
     self.pdf.hidden = YES;
     MCLatexProblem *first = problems.firstObject;
+    if (first.severity != 1) first = nil;   // a warning does not say why it failed
     [self setStatus:first ? [@"Did not typeset: " stringByAppendingString:
                                  MCDescribeProblem(first, texPath, nullptr)]
                           : @"Did not typeset — see the log"
@@ -915,6 +1080,8 @@ static const CGFloat kStatusHeight = 26;
 }
 
 - (void)showTectonicMissing {
+    _showingWarnings = NO;
+    self.warningsButton.hidden = YES;
     self.logView.string =
         @"The LaTeX preview needs tectonic, a single-binary TeX engine.\n\n"
         @"MiniCode uses whichever tectonic is already on your machine "
