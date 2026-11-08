@@ -135,7 +135,11 @@ static const CGFloat kSnapDistance = 16;   // the bar this close to the right ed
     _fraction = 0.5;
     _scrollView = [[PanelScrollView alloc] initWithFrame:NSZeroRect];
     _scrollView.hasVerticalScroller = YES;
-    _scrollView.autohidesScrollers = YES;
+    // The scroller stays: with scroll bars that take room (a Mac without a
+    // trackpad, CI's runners), one that hid while a pause's splice left
+    // the page short changed the text width, and the whole page was laid
+    // out again (641 ms at 20,000 lines against 28 ms).
+    _scrollView.autohidesScrollers = NO;
     _scrollView.automaticallyAdjustsContentInsets = NO;
     _scrollView.hidden = YES;
 
