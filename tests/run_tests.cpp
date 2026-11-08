@@ -62,6 +62,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <dirent.h>
 #include <map>
 #include <random>
 #include <set>
@@ -9323,6 +9324,46 @@ static void testLinuxBuildLists() {
             CHECK(listed);
         }
     }
+
+    // A header whose code is split over several files with no header of
+    // their own (LspClient.h over LspClient.cpp, LspSync.cpp, ...): naming
+    // one of them and not another links nowhere, and the include scan
+    // above cannot see it. Every list that names the header's own .cpp
+    // names them all.
+    std::map<std::string, std::vector<std::string>> splitParts;   // header -> parts
+    if (DIR *d = opendir("src")) {
+        while (dirent *e = readdir(d)) {
+            std::string f = e->d_name;
+            if (f.size() < 5 || f.compare(f.size() - 4, 4, ".cpp") != 0) continue;
+            const std::string name = f.substr(0, f.size() - 4);
+            if (exists("src/" + name + ".h")) continue;
+            std::string text;
+            if (!readFile("src/" + f, text)) continue;
+            const size_t at = text.find("#include \"");
+            if (at == std::string::npos) continue;
+            const size_t end = text.find('"', at + 10);
+            const std::string inc = text.substr(at + 10, end - at - 10);
+            if (inc.size() < 3 || inc.compare(inc.size() - 2, 2, ".h") != 0) continue;
+            const std::string owner = inc.substr(0, inc.size() - 2);
+            if (exists("src/" + owner + ".cpp")) splitParts[owner].push_back(name);
+        }
+        closedir(d);
+    }
+    CHECK(splitParts["LspClient"].size() >= 8);
+    auto partsListed = [&](const std::set<std::string> &list, const char *where) {
+        for (const auto &[owner, parts] : splitParts) {
+            if (!list.count(owner)) continue;
+            for (const std::string &p : parts) {
+                bool listed = list.count(p) > 0;
+                if (!listed)
+                    std::printf("  %s names %s.cpp but not %s.cpp, part of %s.h\n", where,
+                                owner.c_str(), p.c_str(), owner.c_str());
+                CHECK(listed);
+            }
+        }
+    };
+    partsListed(core, "Android's CMakeLists.txt");
+    partsListed(fromMake, "linux/Makefile");
 }
 
 static void testChangeRequest() {

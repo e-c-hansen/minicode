@@ -155,9 +155,10 @@ goes here first, with tests; the GUI only displays it.
   UTF-8), `Regex` (its linear-time engine), `Formatter` (Format Document's
   plan), `InstallHints`, `LargeFile.h` (VS Code's large-file thresholds,
   header only).
-- Language servers: `LspClient` (protocol, results, WorkspaceEdits, diagnostics
-  with versions, completion edits, symbols, folding ranges, the second server's
-  routing and `DiagnosticStore`, the Problems rows, watched files' globs and
+- Language servers: `LspClient.h` over nine files (see "LSP": protocol,
+  results, WorkspaceEdits, diagnostics with versions, completion edits,
+  symbols, folding ranges, the second server's routing and
+  `DiagnosticStore`, the Problems rows, watched files' globs and
   registrations), `PythonEnvs` (interpreters found without running any).
 - Terminal: `TerminalStream` (bytes to lines and shell events; `TermParser`,
   `applySgr`, `termCharWidth`), `TerminalScreen` (the grid, scrollback, reflow,
@@ -1216,7 +1217,32 @@ container (PanelHost, laid out by hand in layoutContainer)
 
 ## LSP (read before touching it)
 
-The protocol is `LspClient.cpp`, tested against a scripted server; on the Mac
+The protocol is the core's `LspClient.h`, tested against a scripted server.
+Its code is split by concern (2026-11-08), each file's opening comment
+saying what it holds; a new request adds its parser to the file for its
+kind, its method and capability entry to `LspClient.cpp`:
+
+- `LspClient.cpp`: the `Client` class only (initialize and the
+  capabilities offered, document sync, requests, progress, registrations,
+  server requests, shutdown).
+- `LspProtocol.cpp`: framing, `Reader`, `progressText`.
+- `LspText.cpp`: positions, `PositionIndex`, UTF-8/UTF-16, URIs, `lineOf`.
+- `LspServers.cpp`: languages, commands, the second server, `offers`,
+  routing, the status line, Python servers, `configurationSection`.
+- `LspDiagnostics.cpp`: publishes, `diagnosticSpans`, `DiagnosticStore`,
+  Problems rows, `diagnosticsInRange`.
+- `LspCompletion.cpp`: completion (parse, resolve, filter, accept, late
+  edits) and signature help.
+- `LspFeatures.cpp`: hover, folding, semantic tokens, locations and
+  references, symbols.
+- `LspEdits.cpp`: WorkspaceEdits, formatting results, prepareRename, code
+  actions.
+- `LspSync.cpp`: `ChangeTracker`, ranged contentChanges, watched files.
+- `LspInternal.h`: `lower` and `trim`, for these files only.
+
+Every port's build list names all of them (`linux:build-lists` checks that a
+list naming `LspClient.cpp` names every file implementing `LspClient.h`). On
+the Mac
 `Lsp.mm` and its `Lsp+<Concern>.mm` categories (`LspSession`; "Layout of the
 code" lists them), `LspServer.mm`, `LspPopups.mm` and `CodeTextView.mm` own
 processes and UI; the GTK port has `linux/src/Lsp.cpp` over the same core.

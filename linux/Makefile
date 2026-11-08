@@ -27,6 +27,9 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/AutoIndent.cpp ../src/KeepSorted.cpp ../src/FolderSearch.cpp ../src/TextFind.cpp \
         ../src/Regex.cpp ../src/LatexDoc.cpp ../src/SyncTex.cpp \
         ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp \
+        ../src/LspProtocol.cpp ../src/LspText.cpp ../src/LspServers.cpp \
+        ../src/LspDiagnostics.cpp ../src/LspCompletion.cpp ../src/LspSync.cpp \
+        ../src/LspFeatures.cpp ../src/LspEdits.cpp \
         ../src/GitStatus.cpp ../src/GitGraph.cpp ../src/GitModel.cpp
 
 # GUI sources. Terminal.cpp / Browser.cpp / PdfView.cpp and the LaTeX preview's

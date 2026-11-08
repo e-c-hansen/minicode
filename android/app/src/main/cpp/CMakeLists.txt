@@ -34,6 +34,14 @@ add_library(minicode SHARED
     ${CORE}/SyncTex.cpp
     ${CORE}/Json.cpp
     ${CORE}/LspClient.cpp
+    ${CORE}/LspProtocol.cpp
+    ${CORE}/LspText.cpp
+    ${CORE}/LspServers.cpp
+    ${CORE}/LspDiagnostics.cpp
+    ${CORE}/LspCompletion.cpp
+    ${CORE}/LspSync.cpp
+    ${CORE}/LspFeatures.cpp
+    ${CORE}/LspEdits.cpp
     ${CORE}/TermLinks.cpp
     ${CORE}/GitStatus.cpp
     ${CORE}/GitGraph.cpp
