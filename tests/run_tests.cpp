@@ -6041,8 +6041,9 @@ void testLspClient() {
     CHECK(init["params"]["processId"].asInt() == 1234);
     CHECK(init["params"]["rootUri"].asString() == "file:///Users/me/my%20proj");
     CHECK(init["params"]["workspaceFolders"][0]["name"].asString() == "my proj");
-    CHECK(!init["params"]["capabilities"]["textDocument"]["completion"]
-                ["completionItem"]["snippetSupport"].asBool(true));
+    // Snippets with tab stops are taken (Snippet.h).
+    CHECK(init["params"]["capabilities"]["textDocument"]["completion"]
+                ["completionItem"]["snippetSupport"].asBool(false));
 
     // Before the server answers, document traffic and requests wait.
     client.didOpen("file:///a.cpp", "cpp", "int x;");
@@ -6423,11 +6424,17 @@ void testLspFeatures() {
     CHECK(bs["basedpyright"]["analysis"]["typeCheckingMode"].asString() == "standard");
     CHECK(Lsp::pythonSettings(PythonServer::Pylsp, "/v/bin/python")["pylsp"]["plugins"]["jedi"]
               ["environment"].asString() == "/v/bin/python");
-    CHECK(Lsp::pythonSettings(PythonServer::Pylsp, "").isNull());
+    // Snippets are on, but Python's servers insert bare names: pylsp's
+    // parameters as tab stops and jedi-language-server's snippets are off.
+    CHECK(!Lsp::pythonSettings(PythonServer::Pylsp, "")["pylsp"]["plugins"].has("jedi"));
+    CHECK(!Lsp::pythonSettings(PythonServer::Pylsp, "")["pylsp"]["plugins"]["jedi_completion"]
+               ["include_params"].asBool(true));
     CHECK(Lsp::pythonSettings(PythonServer::Jedi, "/v/bin/python").isNull());
     CHECK(Lsp::pythonInitializationOptions(PythonServer::Jedi, "/v/bin/python")["workspace"]
               ["environmentPath"].asString() == "/v/bin/python");
-    CHECK(Lsp::pythonInitializationOptions(PythonServer::Jedi, "").isNull());
+    CHECK(!Lsp::pythonInitializationOptions(PythonServer::Jedi, "").has("workspace"));
+    CHECK(Lsp::pythonInitializationOptions(PythonServer::Jedi, "")["completion"]
+              ["disableSnippets"].asBool(false));
     CHECK(Lsp::pythonInitializationOptions(PythonServer::Pyright, "/v/bin/python").isNull());
     CHECK(Lsp::pythonInterpreterNeedsRestart(PythonServer::Jedi) &&
           Lsp::pythonInterpreterNeedsRestart(PythonServer::Other));
@@ -10317,6 +10324,7 @@ static void testMultiCaretOccurrences() {
 #include "zsh_integration_tests.inc"
 #include "lexer_styles_tests.inc"
 #include "bracket_pairs_tests.inc"
+#include "snippet_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10374,6 +10382,8 @@ int main() {
     testQuickDiff();
     testLexerStyles();
     testBracketPairs();
+    testSnippets();
+    testSnippetCompletionItems();
     testEditorTabs();
     testFormatter();
     testFormatConsent();

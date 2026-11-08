@@ -404,18 +404,26 @@ Json pythonSettings(PythonServer kind, const std::string& interpreter) {
         }
         return out;
     }
-    if (kind == PythonServer::Pylsp && !interpreter.empty()) {
-        return Json::object({{"pylsp", Json::object({{"plugins", Json::object({
-            {"jedi", Json::object({{"environment", interpreter}})}})}})}});
+    if (kind == PythonServer::Pylsp) {
+        // With snippets taken, pylsp completes a function with its
+        // parameters as tab stops; Python's servers insert the bare name
+        // here, as basedpyright does without completeFunctionParens.
+        Json plugins = Json::object({{"jedi_completion",
+                                      Json::object({{"include_params", false}})}});
+        if (!interpreter.empty())
+            plugins.set("jedi", Json::object({{"environment", interpreter}}));
+        return Json::object({{"pylsp", Json::object({{"plugins", plugins}})}});
     }
     return Json();
 }
 
 Json pythonInitializationOptions(PythonServer kind, const std::string& interpreter) {
-    if (kind == PythonServer::Jedi && !interpreter.empty())
-        return Json::object({{"workspace",
-                              Json::object({{"environmentPath", interpreter}})}});
-    return Json();
+    if (kind != PythonServer::Jedi) return Json();
+    // The bare name, as with the other Python servers (pythonSettings).
+    Json out = Json::object({{"completion", Json::object({{"disableSnippets", true}})}});
+    if (!interpreter.empty())
+        out.set("workspace", Json::object({{"environmentPath", interpreter}}));
+    return out;
 }
 
 bool pythonInterpreterNeedsRestart(PythonServer kind) {
