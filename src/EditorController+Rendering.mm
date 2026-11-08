@@ -24,9 +24,20 @@ static void *kMediaItemContext = &kMediaItemContext;
 
 // A file's diff in the editor's slot, read-only and colored, the way an
 // image or a PDF takes it. Opening any file puts the editor back.
+// The same file's diff again (after a hunk is staged or discarded) keeps
+// its place, so the next hunk is where the eye already is.
 - (void)showDiffNamed:(NSString *)name path:(NSString *)path data:(NSData *)diff {
     (void)path;
+    const BOOL again = self.isDiff && !self.diffIsCommit && !_activeTab.comparison &&
+                       !_activeTab.page && [self.diffName isEqualToString:name];
+    const NSPoint place = self.diffScroll.contentView.bounds.origin;
     [self showDiffTitled:name data:diff commit:NO];
+    if (!again || place.y <= 0) return;
+    NSRect want = self.diffScroll.contentView.bounds;
+    want.origin = place;
+    [self.diffView.layoutManager ensureLayoutForBoundingRect:NSInsetRect(want, 0, -want.size.height)
+                                             inTextContainer:self.diffView.textContainer];
+    [self.diffView scrollPoint:place];
 }
 
 // A commit from the graph, the same way: its header and message, then its
@@ -69,6 +80,8 @@ static void *kMediaItemContext = &kMediaItemContext;
         tv.horizontallyResizable = NO;   // long lines wrap, as in the editor
         tv.autoresizingMask = NSViewWidthSizable;
         tv.textContainer.widthTracksTextView = YES;
+        // The hunk actions are links that keep their own color.
+        tv.linkTextAttributes = @{NSCursorAttributeName: [NSCursor pointingHandCursor]};
         scroll.documentView = tv;
         [self.rightArea addSubview:scroll positioned:NSWindowBelow
                         relativeTo:self.termDivider];
@@ -96,9 +109,14 @@ static void *kMediaItemContext = &kMediaItemContext;
         return;
     }
     NSFont *mono = MCMonoFont(12.5, NSFontWeightRegular);
+    // The panel's own diff comes with its hunk actions, which the panel runs
+    // as the view's delegate.
+    NSAttributedString *withActions =
+        self.diffIsCommit ? nil : [self.gitPanel diffTextFor:self.diffData font:mono];
+    self.diffView.delegate = withActions ? self.gitPanel.diffDelegate : nil;
     [self.diffView.textStorage setAttributedString:
-        self.diffIsCommit ? MCGitCommitText(self.diffData, mono)
-                          : MCGitDiffText(self.diffData, mono)];
+        withActions ?: self.diffIsCommit ? MCGitCommitText(self.diffData, mono)
+                                         : MCGitDiffText(self.diffData, mono)];
 }
 
 // ------------------------------------------------------------ file rendering
@@ -607,6 +625,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
 // Decide what to show for the current file/mode.
 - (void)refreshDisplay {
     self.showingMessage = NO;
+    self.textView.buildMarks = nil;   // the LaTeX preview's, for the tab that had them
     if (self.isLatex && self.previewMode) {
         [self showLatexPreview];
         return;
@@ -632,6 +651,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
         [self renderMarkdown:[self markdownToRender]];
     } else {
         [self displaySourceEditable];
+        [self showLatexProblemMarks];
         [self refreshSidePreview];   // a Markdown tab's page beside it, if it wants one
         // A CSV's text on show: where its typing started (togglePreview:).
         if (MCViewerKindOverText(self.viewerKind) && !_activeTab.textSessionStart)
@@ -651,18 +671,88 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
 - (void)showLatexPreview {
     self.textView.editable = NO;
     if (!self.latex) {
-        self.latex = [[LatexView alloc] initWithPath:self.currentPath
-                                              source:self.sourceText ?: @""];
-        __weak EditorController *weakSelf = self;
-        self.latex.onSourceEdited = ^(NSString *newSource) {
-            [weakSelf latexDidEditSource:newSource];
-        };
-        [self.rightArea addSubview:self.latex];
+        [self makeLatexPreview];
     } else {
         [self.latex setPath:self.currentPath source:self.sourceText ?: @""];
     }
     [self relayoutRightArea];
     [self.window makeFirstResponder:self.latex];
+}
+
+// The active tab's preview, made: edits made in it come back as typing,
+// and its problems go to the gutter and, clicked, to their lines.
+- (void)makeLatexPreview {
+    LatexView *view = [[LatexView alloc] initWithPath:self.currentPath
+                                               source:self.sourceText ?: @""];
+    self.latex = view;
+    MCTab *tab = _activeTab;
+    __weak EditorController *weakSelf = self;
+    __weak MCTab *weakTab = tab;
+    view.onSourceEdited = ^(NSString *newSource) {
+        [weakSelf latexDidEditSource:newSource];
+    };
+    view.onProblemsChanged = ^{
+        EditorController *me = weakSelf;
+        if (me && me->_activeTab == weakTab && weakTab) [me showLatexProblemMarks];
+    };
+    view.onOpenProblem = ^(NSString *path, NSInteger line) {
+        [weakSelf openLatexProblemAt:path line:line];
+    };
+    [self.rightArea addSubview:view];
+}
+
+// A problem's row in the failure panel: its file at its line, the source
+// shown (goToLine: leaves the preview).
+- (void)openLatexProblemAt:(NSString *)path line:(NSInteger)line {
+    if (!path.length) return;
+    if (![path isEqualToString:self.currentPath]) {
+        [self openFileAtPath:path];
+        if (![self.currentPath isEqualToString:path]) return;   // refused
+    }
+    [self goToLine:(int)line column:0];
+}
+
+// The last typeset's problems as dots in the gutter, while the source on
+// show is the text that failed (they then follow its edits).
+- (void)showLatexProblemMarks {
+    if (!self.isLatex || self.previewMode || !self.latex) {
+        self.textView.buildMarks = nil;
+        return;
+    }
+    NSString *text = self.textView.string;
+    NSArray<MCLatexProblem *> *problems = [self.latex problemsForPath:self.currentPath
+                                                                source:text];
+    NSMutableArray<MCDiagnosticMark *> *marks = [NSMutableArray array];
+    for (MCLatexProblem *p in problems) {
+        const NSUInteger start = [self characterAtStartOfLine:p.line - 1 inString:text];
+        if ([self lineOfCharacter:start inString:text] != p.line - 1) continue;   // past the end
+        const NSRange line = [text lineRangeForRange:NSMakeRange(start, 0)];
+        MCDiagnosticMark *m = [MCDiagnosticMark new];
+        m.range = NSMakeRange(start, NSMaxRange(line) - start);
+        m.severity = p.severity;
+        m.message = p.message;
+        [marks addObject:m];
+    }
+    self.textView.buildMarks = marks;
+}
+
+// Option+Cmd+J, LaTeX Workshop's SyncTeX from Cursor: the preview, at what
+// the caret's line put on the page.
+- (BOOL)canShowLineInPDF {
+    return self.isLatex && self.currentPath != nil && !self.showingMessage;
+}
+
+- (void)showLineInPDF:(id)sender {
+    (void)sender;
+    if (!self.canShowLineInPDF) { NSBeep(); return; }
+    NSString *text = self.textView.string;
+    const NSInteger line = [self lineOfCharacter:self.textView.selectedRange.location
+                                        inString:text] + 1;
+    if (!self.previewMode) [self togglePreview:nil];
+    else [self revealEditor];
+    if (!self.latex) return;
+    [self.window makeFirstResponder:self.latex];
+    [self.latex revealSourceLine:line];
 }
 
 // Shift+Cmd+S: save the typeset PDF somewhere of the user's choosing. The
@@ -675,13 +765,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     if (!self.canExportPDF) { NSBeep(); return; }
     if (!self.latex) {
         // Opened straight into the source view: make the preview, hidden.
-        self.latex = [[LatexView alloc] initWithPath:self.currentPath
-                                              source:self.sourceText ?: @""];
-        __weak EditorController *weakSelf = self;
-        self.latex.onSourceEdited = ^(NSString *newSource) {
-            [weakSelf latexDidEditSource:newSource];
-        };
-        [self.rightArea addSubview:self.latex];
+        [self makeLatexPreview];
         [self relayoutRightArea];
     }
     NSString *texPath = self.currentPath;

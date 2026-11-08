@@ -11,7 +11,6 @@ static void testAgentEvidence() {
     CHECK(testCommand("pytest -x tests/test_a.py") == TestTool::Pytest);
     CHECK(testCommand(".venv/bin/python -m pytest -q") == TestTool::Pytest);
     CHECK(testCommand("python3 -m pytest") == TestTool::Pytest);
-    CHECK(testCommand("python -m unittest") == TestTool::None);
     CHECK(testCommand("python script.py pytest") == TestTool::None);
     CHECK(testCommand("uv run pytest -k foo") == TestTool::Pytest);
     CHECK(testCommand("uv run --with rich python -m pytest") == TestTool::Pytest);
@@ -82,6 +81,101 @@ static void testAgentEvidence() {
     s = parseSummary("2 passed, 1 failed\n...\n3 passed, 0 failed\n");
     CHECK(s.passed == 3 && s.failed == 0);
     CHECK(stripAnsi("\x1b[1;31mred\x1b[0m \x1b]0;title\x07x") == "red x");
+
+    GROUP("evidence:unittest");
+    CHECK(testCommand("python -m unittest") == TestTool::Unittest);
+    CHECK(testCommand("python3 -m unittest discover -s tests -v") == TestTool::Unittest);
+    CHECK(testCommand(".venv/bin/python -m unittest tests.test_a") == TestTool::Unittest);
+    CHECK(testCommand("uv run python -m unittest") == TestTool::Unittest);
+    CHECK(testCommand("cd pkg && python3 -m unittest 2>&1 | tail -5") == TestTool::Unittest);
+    CHECK(testCommand("python -m unittestish") == TestTool::None);
+    CHECK(std::string(testToolName(TestTool::Unittest)) == "unittest");
+    s = parseSummary("..s.\n----------------------------------------------------------------------\n"
+                     "Ran 4 tests in 0.004s\n\nOK (skipped=1)\n");
+    CHECK(s.found && s.format == "unittest" && s.passed == 3 && s.skipped == 1 && s.failed == 0);
+    CHECK(s.line == "Ran 4 tests in 0.004s; OK (skipped=1)");
+    s = parseSummary("F.E\n======\nFAIL: test_x (t.T)\n...\nRan 12 tests in 0.020s\n\n"
+                     "FAILED (failures=2, errors=1, expected failures=1)\n");
+    CHECK(s.found && s.passed == 8 && s.failed == 2 && s.errors == 1);
+    s = parseSummary("Ran 1 test in 0.000s\n\nOK\n");
+    CHECK(s.found && s.passed == 1);
+    s = parseSummary("\nRan 0 tests in 0.000s\n\nNO TESTS RAN\n");
+    CHECK(s.found && s.passed == 0 && s.failed == 0);
+    CHECK(!parseSummary("Ran 4 tests in 0.004s\n").found);         // no verdict yet
+    CHECK(!parseSummary("Ran 4 tests in 0.004s\n\nmaybe\n").found);
+    CHECK(!parseSummary("Ran 4 errands in town\n\nOK\n").found);
+
+    GROUP("evidence:jest");
+    CHECK(testCommand("jest") == TestTool::Jest);
+    CHECK(testCommand("npx jest --runInBand src/") == TestTool::Jest);
+    CHECK(testCommand("yarn jest") == TestTool::Jest);
+    CHECK(testCommand("pnpm exec jest -t parse") == TestTool::Jest);
+    CHECK(testCommand("node_modules/.bin/jest") == TestTool::Jest);
+    CHECK(testCommand("npx eslint .") == TestTool::None);
+    s = parseSummary("PASS src/a.test.js\nFAIL src/b.test.js\n\n"
+                     "Test Suites: 1 failed, 1 passed, 2 total\n"
+                     "Tests:       1 failed, 2 skipped, 10 passed, 13 total\n"
+                     "Snapshots:   0 total\nTime:        1.2 s\nRan all test suites.\n");
+    CHECK(s.found && s.format == "jest" && s.failed == 1 && s.skipped == 2 && s.passed == 10);
+    CHECK(s.line == "Tests:       1 failed, 2 skipped, 10 passed, 13 total");
+    s = parseSummary("Tests:       4 passed, 4 total\n", TestTool::Npm);   // npm test running jest
+    CHECK(s.found && s.passed == 4 && s.failed == 0);
+    s = parseSummary("Tests:       1 todo, 3 passed, 4 total\n");
+    CHECK(s.found && s.skipped == 1 && s.passed == 3);
+    CHECK(!parseSummary("Tests: see the docs\n").found);
+
+    GROUP("evidence:vitest");
+    CHECK(testCommand("vitest run") == TestTool::Vitest);
+    CHECK(testCommand("npx vitest run --reporter=dot") == TestTool::Vitest);
+    CHECK(testCommand("pnpm vitest") == TestTool::Vitest);
+    CHECK(testCommand("bunx vitest") == TestTool::Vitest);
+    s = parseSummary(" \x1b[32m\u2713\x1b[39m src/a.test.ts (3)\n\n"
+                     " Test Files  \x1b[1m\x1b[31m1 failed\x1b[39m\x1b[22m | \x1b[32m3 passed\x1b[39m (4)\n"
+                     "      Tests  \x1b[1m\x1b[31m1 failed\x1b[39m\x1b[22m | \x1b[32m10 passed\x1b[39m | 1 skipped (12)\n"
+                     "   Start at  10:00:00\n   Duration  1.20s\n");
+    CHECK(s.found && s.format == "vitest" && s.failed == 1 && s.passed == 10 && s.skipped == 1);
+    s = parseSummary("      Tests  7 passed (7)\n");
+    CHECK(s.found && s.passed == 7);
+    CHECK(!parseSummary(" Test Files  3 passed (3)\n").found);   // files, not tests
+
+    GROUP("evidence:tox");
+    CHECK(testCommand("tox") == TestTool::Tox);
+    CHECK(testCommand("tox -e py312 -- -x") == TestTool::Tox);
+    CHECK(testCommand("uvx tox -p") == TestTool::Tox);
+    CHECK(testCommand("python -m tox") == TestTool::Tox);
+    CHECK(testCommand("pipx run tox") == TestTool::Tox);
+    CHECK(testCommand("nox -s tests") == TestTool::Nox);
+    CHECK(testCommand("uvx nox") == TestTool::Nox);
+    CHECK(std::string(testToolName(TestTool::Nox)) == "nox");
+    // tox 4: environments counted, not the last environment's pytest line.
+    const std::string tox4 =
+        "py311: commands[0]> pytest\n===== 5 passed in 0.10s =====\n"
+        "py312: commands[0]> pytest\n===== 1 failed, 4 passed in 0.12s =====\n"
+        "  py311: OK (1.23=setup[0.50]+cmd[0.73] seconds)\n"
+        "  py312: FAIL code 1 (1.10=setup[0.40]+cmd[0.70] seconds)\n"
+        "  evaluation failed :( (2.40 seconds)\n";
+    s = parseSummary(tox4, TestTool::Tox);
+    CHECK(s.found && s.format == "tox" && s.passed == 1 && s.failed == 1);
+    CHECK(s.line == "py312: FAIL code 1 (1.10=setup[0.40]+cmd[0.70] seconds)");
+    // Without the hint the last runner's own line is what is found.
+    s = parseSummary(tox4);
+    CHECK(s.found && s.format == "pytest" && s.failed == 1);
+    // tox 3.
+    s = parseSummary("___ summary ___\n  py39: commands succeeded\nERROR:   py310: commands failed\n",
+                     TestTool::Tox);
+    CHECK(s.found && s.passed == 1 && s.failed == 1);
+    s = parseSummary("___ summary ___\n  py39: commands succeeded\n  congratulations :)\n",
+                     TestTool::Tox);
+    CHECK(s.found && s.passed == 1 && s.failed == 0);
+    // tox that printed no environment lines (cut off): what ran inside.
+    s = parseSummary("Ran 3 tests in 0.001s\n\nOK\n", TestTool::Tox);
+    CHECK(s.found && s.format == "unittest" && s.passed == 3);
+    // nox.
+    s = parseSummary("nox > Running session tests-3.11\nnox > Session tests-3.11 was successful in 2 seconds.\n"
+                     "nox > Session tests-3.12 failed.\nnox > Session lint skipped: no interpreter.\n"
+                     "nox > Ran multiple sessions:\nnox > * tests-3.11: success\nnox > * tests-3.12: failed\n",
+                     TestTool::Nox);
+    CHECK(s.found && s.format == "nox" && s.passed == 1 && s.failed == 1 && s.skipped == 1);
 
     std::ifstream probe("tests/fixtures/claude/projects/-Users-user-Code-public-minicode/"
                         "1e1f578c-45c6-4cb5-92e5-84e11a306454/subagents/agent-a1ad4e3e0a7ec7fd2.jsonl");

@@ -435,7 +435,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                         key2:nil label2:nil
                        state:self.previewMode ? @"typeset" : @"source"];
         [self appendHintsRow:s key:[self hk:@"minicode.latex.exportPDF"] label:@"Export PDF"
-                        key2:nil label2:nil state:nil];
+                        key2:[self hk:@"latex-workshop.synctex"] label2:@"Cursor's line in PDF"
+                       state:nil];
     }
     if (self.isMedia) {
         [self appendHintsRow:s key:[self hk:@"minicode.togglePlayback"] label:@"Play or pause"

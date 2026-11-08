@@ -45,13 +45,14 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/AutoIndent.cpp src/KeepSorted.cpp src/FileDetails.cpp \
             src/ChangeRequest.cpp src/MultiCaret.cpp src/AutoClose.cpp src/CommandPalette.cpp src/Backups.cpp \
             src/InlineAgent.cpp src/LineIndex.cpp src/BracketMatch.cpp \
-            src/ControlProtocol.cpp src/SideBySide.cpp \
+            src/ControlProtocol.cpp src/SideBySide.cpp src/PreviewScroll.cpp \
             src/AgentTranscript.cpp src/AgentIndex.cpp src/AgentEvidence.cpp src/AgentView.cpp \
             src/SymbolOutline.cpp src/NavHistory.cpp \
             src/Folding.cpp \
             src/FileSniff.cpp src/Csv.cpp src/JsonOutline.cpp src/Notebook.cpp \
             src/Commands.cpp src/ProcessTable.cpp src/ClaudeHooks.cpp src/AttentionBoard.cpp \
-            src/PageCheck.cpp src/IdeLink.cpp src/MermaidDiagram.cpp src/LatexScratch.cpp
+            src/PageCheck.cpp src/IdeLink.cpp src/MermaidDiagram.cpp src/LatexScratch.cpp \
+            src/LatexLog.cpp
 
 # Each source file compiles to its own object in build/obj (build/test-obj for
 # the tests), with a dependency file listing the headers it read, so touching

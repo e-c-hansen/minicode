@@ -14,6 +14,7 @@
 #include "LineComments.h"
 #include "LatexDoc.h"
 #include "SyncTex.h"
+#include "LatexLog.h"
 #include "Json.h"
 #include "LspClient.h"
 #include "PythonEnvs.h"
@@ -37,6 +38,7 @@
 #include "ControlProtocol.h"
 #include "PageCheck.h"
 #include "SideBySide.h"
+#include "PreviewScroll.h"
 #include "AgentTranscript.h"
 #include "AgentIndex.h"
 #include "AgentEvidence.h"
@@ -10047,6 +10049,7 @@ static void testMultiCaretOccurrences() {
 #include "terminal_paste_tests.inc"
 #include "terminal_marks_tests.inc"
 #include "latex_safety_tests.inc"
+#include "latex_tests.inc"
 #include "markdown_gfm_tests.inc"
 #include "lsp_watch_tests.inc"
 #include "large_file_tests.inc"
@@ -10058,6 +10061,7 @@ static void testMultiCaretOccurrences() {
 #include "auto_close_tests.inc"
 #include "side_by_side_tests.inc"
 #include "lsp_inlay_tests.inc"
+#include "preview_scroll_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10140,6 +10144,7 @@ int main() {
     testPageCheck();
     testSideBySide();
     testSideBySideReview();
+    testPreviewScroll();
     testAgentTranscript();
     testAgentIndex();
     testAgentEvidence();
@@ -10161,6 +10166,7 @@ int main() {
     testIdeLinkSettings();
     testMermaidDiagram();
     testLatexSafety();
+    testLatexForwardAndLog();
     testLspWatchedFiles();
     testTreeRefresh();
     testLspThreading();

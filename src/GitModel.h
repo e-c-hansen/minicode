@@ -156,6 +156,67 @@ std::string undoneDiscardText(const std::string& path);
 // Changes from the menu bar acts on the file on show.
 int changesRowFor(const std::vector<Row>& rows, const std::string& path);
 
+// ------------------------------------------------- hunks and lines of a diff
+// The diff a row shows (diffArgs) offers actions per hunk, as VS Code's
+// git.stageSelectedRanges, git.unstageSelectedRanges and
+// git.revertSelectedRanges do: a Changes diff (index to work tree) Stage
+// and Discard, a staged diff (HEAD to index) Unstage, an untracked file's
+// none (it is staged whole). Each is a patch made from the diff text and
+// given to `git apply` on stdin: Stage applies it to the index, Unstage
+// applies it reversed to the index, Discard reversed to the work tree. A
+// patch holds one hunk, or the changed lines a selection covers: the hunk
+// is rewritten so that only they change (VS Code's way), and its counts and
+// starts are made right again, so git applies it exactly where it was.
+enum class DiffSide { Changes, Staged, Untracked };
+enum class HunkOp { Stage, Unstage, Discard };
+DiffSide diffSideOf(const Row& r);
+std::vector<HunkOp> hunkOps(DiffSide side);
+// "Stage Hunk", "Discard Selected Lines", ...
+std::string hunkOpTitle(HunkOp op, bool lines);
+
+// `apply --cached -`, `apply --cached --reverse -`, `apply --reverse -`;
+// --whitespace=nowarn, since apply.whitespace=fix would change the lines
+// while staging them.
+std::vector<std::string> applyArgs(HunkOp op);
+
+// Where a hunk is in the diff's lines (line i is the i-th line of the text
+// diffText shows, which is the i-th line git printed): the header first.
+struct DiffHunk {
+    size_t file = 0, hunk = 0;    // the file in the diff, the hunk in the file
+    size_t firstLine = 0;         // the "@@" line
+    size_t lineCount = 0;         // with the header
+    // Each line's kind: '@' the header, ' ' context, '+', '-', and '\' for
+    // the "No newline at end of file" line.
+    std::string kinds;
+    bool changes(size_t line) const;   // `line` is one of its + or - lines
+};
+std::vector<DiffHunk> diffHunks(const std::string& diff);
+// The hunk holding `line` (its header or any of its lines), or -1.
+int hunkAt(const std::vector<DiffHunk>& hunks, size_t line);
+
+// The patch that does `op` to the changed lines among lines first..last of
+// the diff (all of one hunk when given its range). `refusal` says why there
+// is none: no changed line chosen, a new, deleted or binary file (staged or
+// unstaged whole), a conflict's combined diff, or lines at an end of file
+// with no newline that cannot change apart from the rest.
+std::string buildPatch(const std::string& diff, HunkOp op, size_t first, size_t last,
+                       std::string* refusal);
+
+struct HunkPlan : ActionPlan {
+    std::string patch;   // for apply's stdin
+    std::string path;    // the file, relative to the top level
+};
+// One hunk, the one holding `line`; or with `lines`, the changed lines
+// among first..last. Discard asks first, naming the file; the file as it
+// is goes to the Trash before (DiscardPlan's trashFirst, a copy here), so
+// Undo Discard puts it back.
+HunkPlan hunkPlan(const std::string& diff, DiffSide side, HunkOp op, size_t first, size_t last,
+                  bool lines);
+// What a failed apply means: the file changed since its diff was shown.
+std::string hunkFailureText(int status, const std::string& out, const std::string& err,
+                            const std::string& path);
+
+
 // ------------------------------------------------------ the branch picker
 // VS Code's git.checkout: the local branches, most recently committed to
 // first, then the remote branches that have no local branch of their name;
@@ -341,6 +402,18 @@ constexpr size_t kMaxDiffBytes = 4u << 20;
 // line end with a muted note. Empty output: "No differences to show."
 StyledText diffText(const std::string& bytes);
 void appendDiff(StyledText& out, const std::string& bytes);
+
+// diffText with the hunk actions on each hunk's header line, after the
+// "@@ ... @@": "Stage Hunk · Discard Hunk". `actions` gets where each
+// action's words are (in characters, as StyledText's runs), which hunk it
+// is for (by its header line) and what it does; a port makes them links.
+struct DiffAction {
+    size_t start = 0, length = 0;
+    HunkOp op = HunkOp::Stage;
+    size_t line = 0;
+};
+StyledText diffTextWithActions(const std::string& bytes, DiffSide side,
+                               std::vector<DiffAction>& actions);
 
 // `git show` output (showArgs): hash, parents, author, a different
 // committer, date with relative time, the message with its subject bold,
