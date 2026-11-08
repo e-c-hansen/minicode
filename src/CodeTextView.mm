@@ -3,6 +3,7 @@
 #import "LspShared.h"
 #import "LspInlayHints.h"
 #import "SourceStorage.h"
+#import "SnippetSession.h"
 #include <os/log.h>
 
 // -------------------------------------------------------- CodeTextView
@@ -48,12 +49,14 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
     MCMultiCarets *_multi;
     MCFolds *_folds;
     MCInlayHints *_inlays;
+    MCSnippetSession *_snippets;
     NSEvent *_keyEvent;   // the key being interpreted, during keyDown:
 }
 
 - (MCMultiCarets *)multiCarets { return _multi; }
 - (MCFolds *)folds { return _folds; }
 - (MCInlayHints *)inlayHints { return _inlays; }
+- (MCSnippetSession *)snippets { return _snippets; }
 - (BOOL)multiCaretActive { return _multi.active; }
 
 // The designated initializer (initWithFrame: comes through it too), so a
@@ -64,6 +67,7 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
         _multi = [[MCMultiCarets alloc] initWithTextView:self];
         _folds = [[MCFolds alloc] initWithTextView:self];
         _inlays = [[MCInlayHints alloc] initWithTextView:self];
+        _snippets = [[MCSnippetSession alloc] initWithTextView:self];
         [[NSNotificationCenter defaultCenter]
             addObserver:self selector:@selector(storageEdited:)
                    name:NSTextStorageDidProcessEditingNotification
@@ -540,6 +544,9 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
 }
 
 - (void)doCommandBySelector:(SEL)selector {
+    // A snippet's tab stops take Tab, Shift+Tab and Esc first (before the
+    // several carets its mirrors may be, and before AutoIndent's Tab).
+    if (self.editable && [_snippets doCommand:selector]) return;
     // Backspace just after a fold's placeholder, or Delete just before it,
     // opens the fold rather than deleting text nobody can see.
     if (_folds.hasFolds && self.editable && !_multi.active && self.selectedRange.length == 0) {
@@ -747,6 +754,7 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
     [super drawViewBackgroundInRect:rect];
     if (_drawBehindText) _drawBehindText(rect);
     if (self.editable) [self drawBracketBoxesInRect:rect];
+    if (self.editable) [_snippets drawInRect:rect];
     if (!self.editable || _rulerColumns.count == 0 || !_rulerColor) return;
     NSFont *font = self.typingAttributes[NSFontAttributeName];
     if (!font.fixedPitch) font = MCEditorFont();

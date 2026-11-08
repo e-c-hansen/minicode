@@ -41,7 +41,9 @@ void Client::initialize(const std::string& rootPath, int processId,
     if (slash != std::string::npos && slash + 1 < name.size()) name = name.substr(slash + 1);
 
     Json completionItem = Json::object({
-        {"snippetSupport", false},
+        // Tab stops and placeholders (Snippet.h, SnippetSession.mm).
+        {"snippetSupport", true},
+        {"insertTextModeSupport", Json::object({{"valueSet", Json::array().push(1).push(2)}})},
         {"insertReplaceSupport", false},
         {"documentationFormat", Json::array().push("markdown").push("plaintext")},
         {"resolveSupport", Json::object({{"properties",
@@ -59,7 +61,10 @@ void Client::initialize(const std::string& rootPath, int processId,
         {"synchronization", Json::object({{"didSave", true},
                                           {"dynamicRegistration", false}})},
         {"completion", Json::object({{"completionItem", completionItem},
-                                     {"contextSupport", true}})},
+                                     {"contextSupport", true},
+                                     {"completionList", Json::object({{"itemDefaults",
+                                          Json::array().push("insertTextFormat")
+                                              .push("insertTextMode")}})}})},
         {"signatureHelp", Json::object({{"signatureInformation", signatureInformation},
                                         {"contextSupport", true}})},
         // Markdown first: hover info is drawn with its code and emphasis.

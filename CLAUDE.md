@@ -151,7 +151,8 @@ goes here first, with tests; the GUI only displays it.
   1,000 edits, so a large reformat keeps a hunk per changed run; UTF-16,
   `mapOffset`), `LineComments`,
   `AutoIndent` (with `ScanCache`), `KeepSorted`, `MultiCaret` (carets and line
-  commands), `AutoClose` (auto-closing pairs), `LineIndex` (line starts, a gap
+  commands), `AutoClose` (auto-closing pairs), `Snippet` (LSP snippets:
+  parse, expand, the tab stops through edits), `LineIndex` (line starts, a gap
   buffer), `BracketMatch`, `Folding`, `TextFind` (find and replace, UTF-16 and
   UTF-8), `Regex` (its linear-time engine), `Formatter` (Format Document's
   plan), `InstallHints`, `LargeFile.h` (VS Code's large-file thresholds,
@@ -199,7 +200,8 @@ goes here first, with tests; the GUI only displays it.
   references, code actions), `Lsp+Semantic` (semantic tokens),
   `Lsp+WorkspaceEdit`, `Lsp+InlayHints`; `Lsp+Private.h` and the
   `Lsp+<Concern>Ivars.h` follow the rules below), `LspServer`
-  (processes), `LspPopups` (completion, hover, signature), `LspShared.h` (only
+  (processes), `LspPopups` (completion, hover, signature), `SnippetSession`
+  (a snippet's tab stops in the view), `LspShared.h` (only
   the Lsp files import it), `LspPanel` (status item, popover, interpreter
   sheet), `LspPicker` (references and fixes list, rename box), `LspWatcher`
   (files changed on disk, for the servers), `LspInlayHints` (drawing inlay
@@ -1420,7 +1422,31 @@ view is disposed (on `unrealize`), or dispose loops forever.
   typed word is a new line; Shift+Tab never takes. `filterCompletions` ranks
   exact, same-case prefix, any-case prefix, subsequence (sortText within) and
   reselects the first row unless the arrows chose an item still listed. Docs
-  show beside the list after `completionItem/resolve` (80 ms). Snippets off.
+  show beside the list after `completionItem/resolve` (80 ms).
+  **Snippets** (2026-11-08, `snippetSupport` on): an item with
+  insertTextFormat 2 (or the list's itemDefaults) is expanded by
+  `Snippet::expand` (variables, mirrors, the line's indentation unless
+  insertTextMode 1, the file's unit and line break) before
+  `completionEdits`, so it stays one undo step; `MCSnippetSession`
+  (`CodeTextView snippets`) then follows the stops, each replacement as
+  `MCSourceStorage onReplaceCharacters` reports it (trap: the editedRange
+  of NSTextStorageDidProcessEditing is the union of an editing session's
+  changes, attribute fixes included, so a letter typed over a stop could
+  read as the whole line replaced and end the session; seen only in a
+  whole `make guitest`) (`Snippet::Session`:
+  the current stop and those around it grow at their edges, a nested stop
+  typed over from around is skipped). Its Tab, Shift+Tab and Esc come first
+  in CodeTextView's `doCommandBySelector:`, before the carets and
+  AutoIndent, except that `commandTakenFirst` lets a showing list keep
+  them (a choice stop's options are the completion list in `_choiceMode`).
+  Mirrors are carets (`setCaretRanges:`). It ends at $0, on Esc, an undo or
+  redo, a selection outside the stop (checked a turn later), or a
+  replacement swallowing the stop. Python's servers are told to send bare
+  names (pylsp include_params and jedi's disableSnippets off;
+  basedpyright's completeFunctionParens stays off). Trap: the session's
+  boxes are invalidated a run-loop turn after a storage edit; asking the
+  layout manager for rects inside NSTextStorageDidProcessEditing left it
+  broken, and the next firstRectForCharacterRange threw.
   **Accepting** inserts the word and `additionalTextEdits` (imports,
   `#include`) as one multi-range replacement (`Lsp::completionEdits`), its
   undo step an `MCAcceptUndo` of its own. When the server sends the edits

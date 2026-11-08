@@ -196,6 +196,13 @@ struct CompletionItem {
     // may send it on completionItem/resolve instead.
     std::vector<TextEdit> additionalEdits;
     bool hasAdditionalEdits = false;
+    // insertTextFormat 2: textToInsert() is in the snippet syntax
+    // (Snippet.h), with tab stops ($1, ${1:name}) and $0. Its own field,
+    // else the list's itemDefaults.
+    bool isSnippet = false;
+    // insertTextMode 1 (asIs): the text's lines keep their own indentation;
+    // otherwise (2, adjustIndentation, the default) they take the line's.
+    bool insertAsIs = false;
     // What typing is matched against: filterText, else the label.
     const std::string& filterKey() const { return filterText.empty() ? label : filterText; }
     // What accepting inserts: the edit's text, then insertText, then the label.

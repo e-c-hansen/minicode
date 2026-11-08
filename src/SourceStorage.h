@@ -55,4 +55,13 @@ struct MCTextGap {
 - (NSDictionary<NSAttributedStringKey, id> *)storedAttributesAtIndex:(NSUInteger)location
                                                longestEffectiveRange:(NSRangePointer)range
                                                              inRange:(NSRange)limit;
+// Told of every replacement of characters as it is made: `range` of the
+// text as it was became `length` characters. Exact, where the editedRange
+// of NSTextStorageDidProcessEditing is the union of an editing session's
+// changes, attribute fixes included (a typed letter came as the rest of
+// its paragraph once fonts were fixed there), which is too wide for
+// marks that must tell a replaced range from one beside it (the snippet
+// tab stops, SnippetSession.mm). Called inside the edit: arithmetic only,
+// never layout.
+@property(nonatomic, copy) void (^onReplaceCharacters)(NSRange range, NSUInteger length);
 @end

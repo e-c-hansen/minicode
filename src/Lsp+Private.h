@@ -245,6 +245,10 @@ NSHashTable<LspSession *> *MCLspAllSessions(void);
 - (void)noteEditForPendingAccepts:(NSUInteger)location;
 - (void)closeCompletion;
 - (void)closeSignature;
+// A snippet's tab stops (SnippetSession): the keys the lists keep while
+// they show, and a choice stop's options in the completion list.
+- (BOOL)snippetKeyTakenFirst:(SEL)sel;
+- (void)showSnippetChoices:(NSArray<NSString *> *)choices range:(NSRange)range;
 @end
 
 @interface LspSession (Navigation)

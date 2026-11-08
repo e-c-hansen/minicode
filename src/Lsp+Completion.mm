@@ -7,6 +7,10 @@
 // signature hint.
 #import "Lsp+Private.h"
 #import "Lsp+CompletionIvars.h"
+#import "SnippetSession.h"
+#include "AutoIndent.h"
+#include "Snippet.h"
+#include <ctime>
 
 static BOOL Contains(const std::vector<std::string> &list, const std::string &s) {
     return std::find(list.begin(), list.end(), s) != list.end();
@@ -412,6 +416,7 @@ static void FreeOffMain(std::vector<Lsp::CompletionItem> &items) {
     _haveItems = NO;
     _incomplete = NO;
     _navigated = NO;
+    _choiceMode = NO;
     FreeOffMain(_items);
     FreeOffMain(_shown);
     [_popup close];
@@ -422,6 +427,7 @@ static void FreeOffMain(std::vector<Lsp::CompletionItem> &items) {
 static const NSTimeInterval kResolveAfterAccept = 1.0;
 
 - (void)acceptCompletion:(NSInteger)row {
+    if (_choiceMode) { [self acceptChoice:row]; return; }
     if (row < 0 || (size_t)row >= _shown.size()) { [self closeCompletion]; return; }
     Lsp::CompletionItem item = _shown[(size_t)row];
     MCLspServer *server = _completionServer;
@@ -441,11 +447,21 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
         size_t editStart = Lsp::offsetForPosition(text, item.editRange.start);
         if (editStart <= cursor) start = editStart;
     }
+    // A snippet goes in expanded (variables, mirrors, the line's
+    // indentation), and its tab stops follow (SnippetSession).
+    Snippet::Expansion expansion;
+    std::u16string insert;
+    if (item.isSnippet) {
+        expansion = Snippet::expand(item.textToInsert(),
+                                    [self snippetContextAt:start text:text asIs:item.insertAsIs]);
+        insert = expansion.text;
+    } else {
+        insert = Lsp::toUtf16(item.textToInsert());
+    }
     // The word, and the edits that go with it (an import at the top, an
     // #include), as one replacement: one undo step, one change for the
     // highlighter and the server.
-    Lsp::CompletionEdits ce = Lsp::completionEdits(text, start, cursor,
-                                                   Lsp::toUtf16(item.textToInsert()),
+    Lsp::CompletionEdits ce = Lsp::completionEdits(text, start, cursor, insert,
                                                    item.additionalEdits);
     NSMutableArray<NSValue *> *ranges = [NSMutableArray array];
     NSMutableArray<NSString *> *strings = [NSMutableArray array];
@@ -465,9 +481,115 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
         [um setActionName:@"Completion"];
         [um endUndoGrouping];
     }
-    if (ce.caret <= _tv.string.length) [_tv setSelectedRange:NSMakeRange(ce.caret, 0)];
+    const NSUInteger base = ce.caret - insert.size();   // where the inserted text starts
+    if (item.isSnippet && expansion.hasStops()) {
+        [_tv.snippets startWithExpansion:expansion base:base];
+    } else if (item.isSnippet) {
+        // Only a final stop ($0, maybe inside the text): the caret goes there.
+        [_tv.snippets end];
+        const Snippet::Range f = expansion.stops.back().ranges.front();
+        if (base + f.end <= _tv.string.length)
+            [_tv setSelectedRange:NSMakeRange(base + f.start, f.end - f.start)];
+    } else if (ce.caret <= _tv.string.length) {
+        [_tv setSelectedRange:NSMakeRange(ce.caret, 0)];
+    }
     [_tv scrollRangeToVisible:_tv.selectedRange];
     if (later) [self resolveAfterAccepting:item server:server undo:undo limit:start];
+}
+
+// What a snippet's variables and layout are, for one going in at `start`.
+- (Snippet::Context)snippetContextAt:(NSUInteger)start text:(const std::u16string &)text
+                                asIs:(BOOL)asIs {
+    Snippet::Context ctx;
+    if (_path) ctx.filePath = Std(_path);
+    if (_root) ctx.workspaceFolder = Std(_root);
+    NSString *s = _tv.string;
+    start = MIN(start, s.length);
+    const NSRange line = [s lineRangeForRange:NSMakeRange(start, 0)];
+    NSUInteger contentsEnd = 0;
+    [s getLineStart:NULL end:NULL contentsEnd:&contentsEnd forRange:line];
+    ctx.currentLine = Std([s substringWithRange:NSMakeRange(line.location,
+                                                            contentsEnd - line.location)]);
+    NSUInteger w0 = start, w1 = start;
+    while (w0 > line.location && IsIdentChar([s characterAtIndex:w0 - 1])) w0--;
+    while (w1 < contentsEnd && IsIdentChar([s characterAtIndex:w1])) w1++;
+    ctx.currentWord = Std([s substringWithRange:NSMakeRange(w0, w1 - w0)]);
+    long lineIndex = 0;
+    for (size_t i = 0; i < line.location && i < text.size(); i++)
+        if (text[i] == u'\n' || (text[i] == u'\r' && (i + 1 >= text.size() || text[i + 1] != u'\n')))
+            lineIndex++;
+    ctx.lineIndex = lineIndex;
+    NSString *clip = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
+    if (clip) ctx.clipboard = Std(clip);
+    Snippet::commentsFor(ctx.filePath, ctx.lineComment, ctx.blockCommentStart,
+                         ctx.blockCommentEnd);
+    const time_t now = time(nullptr);
+    localtime_r(&now, &ctx.time);
+    ctx.timezoneOffsetSeconds = ctx.time.tm_gmtoff;
+    ctx.unixSeconds = (int64_t)now;
+    ctx.random = [] { return arc4random(); };
+    // The line's leading blanks (up to where the snippet goes), the
+    // file's indentation unit, and its line break.
+    if (!asIs) {
+        for (size_t i = line.location; i < start && i < text.size(); i++) {
+            if (text[i] != u' ' && text[i] != u'\t') break;
+            ctx.indent += text[i];
+        }
+        ctx.unit = AutoIndent::detect(text, ctx.filePath).text();
+    }
+    const size_t nl = text.find(u'\n');
+    if (nl != std::u16string::npos) ctx.eol = nl > 0 && text[nl - 1] == u'\r' ? u"\r\n" : u"\n";
+    else if (text.find(u'\r') != std::u16string::npos) ctx.eol = u"\r";
+    return ctx;
+}
+
+// A choice stop's option, chosen: it replaces the stop's text at every
+// caret (its mirrors too), and the session goes on from there.
+- (void)acceptChoice:(NSInteger)row {
+    NSString *choice = row >= 0 && (size_t)row < _shown.size() ? NS(_shown[(size_t)row].label) : nil;
+    [self closeCompletion];
+    if (!choice) return;
+    if (_tv.multiCaretActive) {
+        [_tv.multiCarets insertText:choice];
+        return;
+    }
+    const NSRange sel = _tv.selectedRange;
+    if (NSMaxRange(sel) > _tv.string.length) return;
+    if ([_tv replaceRanges:@[[NSValue valueWithRange:sel]] withStrings:@[choice]
+                actionName:@"Typing"])
+        [_tv setSelectedRange:NSMakeRange(sel.location + choice.length, 0)];
+}
+
+- (void)showSnippetChoices:(NSArray<NSString *> *)choices range:(NSRange)range {
+    [self closeCompletion];
+    if (choices.count == 0) return;
+    std::vector<Lsp::CompletionItem> items;
+    NSMutableArray *details = [NSMutableArray array];
+    for (NSString *c in choices) {
+        Lsp::CompletionItem it;
+        it.label = Std(c);
+        it.insertText = it.label;
+        it.index = (int)items.size();
+        it.resolved = true;
+        items.push_back(it);
+        [details addObject:@""];
+    }
+    _shown = std::move(items);
+    _choiceMode = YES;
+    _choiceRange = range;
+    _origin = Lsp::CompletionOrigin::Explicit;
+    _navigated = NO;
+    NSRect caret = [_tv firstRectForCharacterRange:NSMakeRange(range.location, 0) actualRange:NULL];
+    [[self completionPopup] showLabels:choices details:details select:0 atScreenRect:caret
+                                parent:_tv.window];
+}
+
+// While a list shows, Tab, Shift+Tab and Esc are its own (the choices
+// list takes an option with Tab; Esc closes it, or the signature hint),
+// before the snippet's.
+- (BOOL)snippetKeyTakenFirst:(SEL)sel {
+    if (!_popup.visible && !_signature.visible) return NO;
+    return [self handleCommand:sel];
 }
 
 // Replacements (ascending and apart) made through replaceRanges: with
@@ -714,6 +836,14 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
 
 // The selection moved (selectionChanged: in Lsp+Sync.mm).
 - (void)popupsFollowSelection {
+    // A choice stop's options go once its text is no longer what is selected.
+    if (_choiceMode && _popup.visible && !_tv.multiCaretActive &&
+        !NSEqualRanges(_tv.selectedRange, _choiceRange))
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (self->_choiceMode && !self->_tv.multiCaretActive &&
+                !NSEqualRanges(self->_tv.selectedRange, self->_choiceRange))
+                [self closeCompletion];
+        });
     if (_completing)
         dispatch_async(dispatch_get_main_queue(), ^{ [self refilterCompletion]; });
     if (_signature.visible) {
@@ -751,9 +881,10 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
             // The word typed out exactly as some item (case and all) is a
             // new line, unless the arrows chose another item: "os.path"
             // used to become os.PathLike.
-            std::string typed = Std([self typedPrefix]);
-            BOOL exact = _shown[(size_t)row].textToInsert() == typed ||
-                         (!_navigated && Lsp::exactCompletion(_shown, typed) >= 0);
+            std::string typed = _choiceMode ? std::string() : Std([self typedPrefix]);
+            BOOL exact = !_choiceMode &&
+                         (_shown[(size_t)row].textToInsert() == typed ||
+                          (!_navigated && Lsp::exactCompletion(_shown, typed) >= 0));
             Lsp::CompletionKey key = ret ? Lsp::CompletionKey::Return
                                    : tab ? Lsp::CompletionKey::Tab
                                          : Lsp::CompletionKey::ShiftTab;

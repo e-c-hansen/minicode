@@ -40,9 +40,15 @@ std::vector<TextEdit> parseTextEdits(const Json& list) {
 std::vector<CompletionItem> parseCompletion(const Json& result, bool* incomplete) {
     if (incomplete) *incomplete = false;
     const Json* list = &result;
+    int defaultFormat = 1, defaultMode = 0;
     if (result.isObject()) {
         if (incomplete) *incomplete = result["isIncomplete"].asBool();
         list = &result["items"];
+        const Json& defaults = result["itemDefaults"];
+        if (defaults.isObject()) {
+            defaultFormat = (int)defaults["insertTextFormat"].asInt(1);
+            defaultMode = (int)defaults["insertTextMode"].asInt(0);
+        }
     }
     std::vector<CompletionItem> out;
     for (const Json& it : list->elements()) {
@@ -56,6 +62,10 @@ std::vector<CompletionItem> parseCompletion(const Json& result, bool* incomplete
         c.filterText = it["filterText"].asString();
         c.sortText = it["sortText"].asString();
         c.kind = (int)it["kind"].asInt();
+        c.isSnippet = (it.has("insertTextFormat") ? (int)it["insertTextFormat"].asInt(1)
+                                                  : defaultFormat) == 2;
+        c.insertAsIs = (it.has("insertTextMode") ? (int)it["insertTextMode"].asInt(0)
+                                                 : defaultMode) == 1;
         const Json& edit = it["textEdit"];
         if (edit.isObject()) {
             c.hasEdit = true;
