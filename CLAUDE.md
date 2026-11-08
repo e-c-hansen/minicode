@@ -819,10 +819,22 @@ container (PanelHost, laid out by hand in layoutContainer)
   done: Swift `#"..."#` and `\(...)`, Kotlin/Scala/Dart/C# templates, Groovy
   slashy strings, a block comment across lines inside a JS template field, a
   regex at line start continuing a division.
+- Styles past the first eight (2026-11-08): `Escape` (a string's `\n`,
+  `\x41`, `\u{...}`, split out by `pushText`; none in raw strings, a
+  shell's or YAML's '...', regexes; Python's raw prefix rides in the
+  state as `kRawPrefix`) and `Self` (self, cls, this, super by language);
+  a name after def/fn/func/function/fun is Function and after
+  class/struct/enum/union/interface/trait a Type (`wordBefore`, same line
+  only); a Python decorator is `@name.attr` in Function, its arguments
+  code. Anything asking "inside a string?" asks `isStringStyle` (Escape
+  counts); arrays by style are `kTokenStyleCount` long on every port.
 - Tests: `tests/LegacyHighlighter.h` is the frozen old lexer, an oracle under
   random edits; where it cannot apply (`newGrammar`, `mayHoldFString`,
   `mayHoldNewLiteral`, `hasOtherBreak`: it split at '\n' only) the edits
-  compare against a full lex.
+  compare against a full lex. Elsewhere `fullLex` holds the line lexer to it
+  through `legacyView` (escapes joined back into their strings, every name
+  classified by the old rules; Python text with an @ is `mayHoldDecorator`,
+  a full lex), and the incremental highlighter to the full lex.
 - The Mac (+Highlighting): `applyHighlighting` is the full pass (and
   `recolorEditor` on settings); `textStorage:willProcessEditing:` feeds edits
   to the highlighter and records lines; `textDidChange:` (or a zero-delay
@@ -842,13 +854,29 @@ container (PanelHost, laid out by hand in layoutContainer)
   unchanged. +Highlighting keeps them while the characters are unchanged
   (any character edit ends them, in `willProcessEditing`, before its
   `_liveHighlight` check) and paints only lines on screen
-  (`paintSemanticVisible`, from the clip view's bounds notification, a
+  (`paintVisibleLines`, from the clip view's bounds notification, a
   `_semanticPainted` index set), through `restyleChangedIn:` with the spans
   over the lexer's tokens (never over strings or comments): the same
   diff-only painting, so no new attribute traps. An edit's own lines get the
   lexer's colors at once; other lines keep painted colors, which move with
   their text, until the next answer. Theme colors (`Theme::semantic`) are
   VS Code's for the scopes each token type probes; font styles are left out.
+- **Bracket-pair colors** (Mac, 2026-11-08, `editor.bracket-pair-colorization`,
+  `BracketPairs.{h,cpp}`, `bracketpairs:*`, `make guitest
+  SUITES=bracket_pairs`): VS Code's, all kinds counted together, three
+  colors by depth and `syntax.bracket-unexpected` for a closer at depth 0
+  (a closer of the wrong kind is not unexpected here). Depth is never in
+  the lexer state: each line has a `LineSum` (net, floor; lines compose),
+  kept in `Depths` blocks of about 512 lines, updated in
+  `willProcessEditing` from the tokens `_hl->edit` re-lexed. Colors are
+  overlays in `restyleChangedIn:` like the semantic spans (never over a
+  string, escape or comment); `_bracketPainted` holds the characters
+  whose brackets are current. An edit that changes the depth below it
+  empties the set from the edit on; `paintVisibleLines` (the old
+  semantic painter, now both) repaints the lines on screen, for brackets
+  alone only their bracket characters (so the server's moved colors
+  stay), and the rest as they scroll in. Off with no highlighter (large
+  files, plain text) and in the settings file.
 - Linux retags in idle slices over a UTF-8 mirror; Android's `Highlighter.kt`
   uses the core over a native mirror.
 

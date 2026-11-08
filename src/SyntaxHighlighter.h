@@ -30,9 +30,18 @@ enum class TokenStyle {
     String,       // "..." '...' `...`
     Comment,      // // ... or # ... or /* ... */
     Number,       // 42, 3.14, 0xFF
-    Preprocessor, // #include, @decorator
-    Function,     // identifier immediately followed by '('
+    Preprocessor, // #include, #define
+    Function,     // a name called or defined (foo(, def foo, fn foo), @decorator
+    Escape,       // an escape inside a string: \n, \x41, \u{1F600}
+    Self,         // self, cls, this, super: VS Code's variable.language
 };
+constexpr int kTokenStyleCount = 10;
+
+// An escape is part of its string: anything asking whether a token is inside
+// a string (auto-closing, folding, bracket matching) asks this.
+inline bool isStringStyle(TokenStyle s) {
+    return s == TokenStyle::String || s == TokenStyle::Escape;
+}
 
 struct Token {
     size_t start;   // offset into the source, in code units (bytes for UTF-8)
@@ -107,6 +116,13 @@ public:
     virtual size_t length() const = 0;
     virtual void read(size_t pos, size_t len, Ch* out) const = 0;
 };
+
+// Whether the line [start, end) of src (its break included, as the
+// highlighter keeps lines) is short enough to be lexed: at most
+// kMaxTokenizationLineLength units with its break ('\n', "\r\n", a lone
+// '\r', or U+2029, three bytes in UTF-8) not counted.
+template <class Ch>
+bool lineIsLexed(const TextSource<Ch>& src, size_t start, size_t end);
 
 // A TextSource over a string the caller owns.
 template <class Ch>

@@ -5,6 +5,7 @@
 #pragma once
 #import "EditorController+Private.h"
 #include "LspClient.h"   // Lsp::SemanticSpan
+#include "BracketPairs.h"
 
 @interface EditorController () {
     // Edited, not yet recolored: [start, end) as distances from the end of
@@ -13,7 +14,7 @@
     std::vector<std::pair<NSUInteger, NSUInteger>> _pending;
     BOOL _flushScheduled;
     BOOL _highlightingSettingsFile;        // give color values swatches
-    NSColor *_styleColors[8];              // by TokenStyle, from the settings
+    NSColor *_styleColors[kTokenStyleCount];   // by TokenStyle, from the settings
     NSColor *_plainColor;
     NSArray<NSDictionary *> *_styleAttributes;   // attributesForStyle:, for _styleAttributesBase
     NSDictionary *_styleAttributesBase;
@@ -27,6 +28,17 @@
     NSMutableIndexSet *_semanticPainted;
     BOOL _semanticPaintScheduled, _semanticObserving;
     NSColor *_semanticColors[kSemanticColorCount];   // by SemanticColor
+
+    // Bracket-pair colors (BracketPairs.h): on for this text (the setting,
+    // and a highlighter), what each line does to the depth, kept edit by
+    // edit, and the characters whose brackets show their current colors
+    // (an edit that changes the depth below it takes the rest out; those
+    // on screen are painted again at once, the others as they scroll in).
+    BOOL _bracketsOn;
+    BracketPairs::Depths _bracketDepths;
+    NSMutableIndexSet *_bracketPainted;
+    NSColor *_bracketColors[4];
+    NSUInteger _bracketLinesPainted;   // lines repainted for their brackets alone (tests)
 
     // A page with text blocks went into the editor's storage (a Markdown
     // preview): displaySourceEditable resets the layout manager's block

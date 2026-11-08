@@ -38,8 +38,13 @@ struct SyntaxGrammar {
     bool digitQuote = false;                 // 1'000'000 is one number (C++14, C23)
     bool numUnderscore = false;              // 1_000_000 is one number
     bool longOpeners[128] = {};              // characters lexLongString may start at
+    std::string escapeDelims;                // strings opened by these have backslash
+                                             // escapes, colored Escape (pushText)
     std::unordered_set<std::string> keywords;
     std::unordered_set<std::string> types;
+    std::unordered_set<std::string> selfWords;  // self, this, ...: Self
+    std::unordered_set<std::string> defWords;   // the name after one is a Function
+    std::unordered_set<std::string> typeWords;  // the name after one is a Type
 };
 
 namespace {
@@ -144,11 +149,19 @@ SyntaxGrammar makeGrammar(const std::string& ext) {
         d.lineComments = {"#"}; d.stringDelims = "\"'"; d.tripleQuotes = true;
         d.decorators = true; d.fStrings = true; d.numUnderscore = true;
         d.keywords = kPy; d.types = kPyTypes;
+        d.escapeDelims = "\"'";
+        d.selfWords = {"self", "cls"};
+        d.defWords = {"def"};
+        d.typeWords = {"class"};
         break;
     case Family::Js:
         d.lineComments = {"//"}; d.blockStart = "/*"; d.blockEnd = "*/";
         d.stringDelims = "\"'`"; d.keywords = kJs; d.types = kCTypes;
         d.numUnderscore = true;
+        d.escapeDelims = "\"'`";
+        d.selfWords = {"this", "super"};
+        d.defWords = {"function"};
+        d.typeWords = {"class", "interface", "enum"};
         // The JSON family shares the grammar but has no regexes or templates.
         d.jsCode = ext == "js" || ext == "mjs" || ext == "cjs" || ext == "jsx" ||
                    ext == "ts" || ext == "mts" || ext == "cts" || ext == "tsx" ||
@@ -157,15 +170,18 @@ SyntaxGrammar makeGrammar(const std::string& ext) {
     case Family::Css:   // plain CSS has no line comments; a URL would end in one
         if (ext != "css") d.lineComments = {"//"};
         d.blockStart = "/*"; d.blockEnd = "*/"; d.stringDelims = "\"'";
+        d.escapeDelims = "\"'";
         break;
-    case Family::Hash:
+    case Family::Hash:   // a shell's or YAML's '...' has no escapes
         d.lineComments = {"#"}; d.stringDelims = "\"'";
+        d.escapeDelims = "\"";
         break;
     case Family::Ini:
         d.lineComments = {";", "#"}; d.stringDelims = "\"";
         break;
     case Family::Lisp:
         d.lineComments = {";"}; d.stringDelims = "\"";
+        d.escapeDelims = "\"";
         break;
     case Family::Dash:
         d.lineComments = {"--"}; d.blockStart = "/*"; d.blockEnd = "*/";
@@ -175,7 +191,22 @@ SyntaxGrammar makeGrammar(const std::string& ext) {
         d.lineComments = {"//"}; d.blockStart = "/*"; d.blockEnd = "*/";
         d.stringDelims = "\"'"; d.preprocHash = true;
         d.keywords = kCLike; d.types = kCTypes;
+        d.escapeDelims = "\"'";
+        d.selfWords = {"this"};
+        d.typeWords = {"class", "struct", "enum", "union"};
         if (it == families().end()) break;   // an unknown extension: plain C
+        // self and definitions beyond C++'s, as each language's VS Code
+        // grammar colors them (variable.language, entity.name.function and
+        // entity.name.type).
+        if (ext == "m" || ext == "mm" || ext == "swift" || ext == "rs")
+            d.selfWords.insert("self");
+        if (ext == "m" || ext == "mm" || ext == "swift" || ext == "rs" || ext == "java" ||
+            ext == "kt" || ext == "kts" || ext == "scala" || ext == "sc" || ext == "dart" ||
+            ext == "groovy" || ext == "gradle" || ext == "php")
+            d.selfWords.insert("super");
+        if (ext == "cs") d.selfWords.insert("base");
+        d.defWords = {"fn", "func", "fun", "def"};
+        d.typeWords.insert({"interface", "trait", "record", "protocol"});
         d.numUnderscore = true;
         d.rust = ext == "rs";
         d.digitQuote = !d.rust;
@@ -672,8 +703,26 @@ LexState lexTexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState st,
 }
 
 // ------------------------------------------------------------ code pieces
-// An identifier at s[i]: a keyword, a type (a known one, or capitalized), a
-// function (followed by '('), or plain, which gets no token. Returns its end.
+// The word before s[st] on its line, past spaces and tabs (at least one),
+// in *prev: def, class, ... decide what the name after them is. False when
+// there is none or it is too long to be one of those words.
+template <class Ch>
+bool wordBefore(const Ch* s, size_t st, std::string* prev) {
+    size_t j = st;
+    while (j > 0 && (s[j - 1] == Ch(' ') || s[j - 1] == Ch('\t'))) j--;
+    if (j == st) return false;
+    size_t k = j;
+    while (k > 0 && j - k <= 10 && isIdentChar(s[k - 1])) k--;
+    if (k == j || j - k > 10 || (k > 0 && isIdentChar(s[k - 1]))) return false;
+    prev->assign(j - k, ' ');   // short: no allocation
+    for (size_t m = k; m < j; ++m) (*prev)[m - k] = (char)code(s[m]);
+    return true;
+}
+
+// An identifier at s[i]: self or this (not after a '.'), a keyword, the
+// name a definition keyword introduces (def foo, fn foo, class foo), a type
+// (a known one, or capitalized), a function (followed by '('), or plain,
+// which gets no token. Returns its end.
 template <class Ch, class Push>
 size_t lexIdent(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i,
                 std::string& word, Push& push) {
@@ -682,7 +731,13 @@ size_t lexIdent(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i,
     word.assign(i - st, ' ');
     for (size_t k = st; k < i; ++k) word[k - st] = (char)code(s[k]);
     TokenStyle sty = TokenStyle::Plain;
-    if (d.keywords.count(word)) sty = TokenStyle::Keyword;
+    std::string prev;
+    if (d.selfWords.count(word) && !(st > 0 && s[st - 1] == Ch('.')))
+        sty = TokenStyle::Self;
+    else if (d.keywords.count(word)) sty = TokenStyle::Keyword;
+    else if ((!d.defWords.empty() || !d.typeWords.empty()) && wordBefore(s, st, &prev) &&
+             (d.defWords.count(prev) || d.typeWords.count(prev)))
+        sty = d.defWords.count(prev) ? TokenStyle::Function : TokenStyle::Type;
     else if (d.types.count(word)) sty = TokenStyle::Type;
     else if (std::isupper((unsigned char)word[0]))
         sty = TokenStyle::Type;
@@ -720,6 +775,77 @@ size_t lexNumber(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i, Push& 
     return i;
 }
 
+// ------------------------------------------------------------ escapes
+//
+// A string's escapes (\n, \x41, \u{1F600}) are colored Escape, as VS Code's
+// grammars scope them constant.character.escape, in the strings that have
+// them: not raw strings, a shell's '...', SQL's or a regex literal.
+
+template <class Ch> inline bool isHexDigit(Ch c) {
+    unsigned u = code(c);
+    return u < 128 && std::isxdigit((int)u);
+}
+
+// Where the escape at s[i] (a backslash) ends, within [i, to): \x41,
+// \u0041, \u{1F600}, \U0001F600, \N{name}, up to three octal digits, else
+// the one character after the backslash. 0 when it is none: a backslash
+// before a line break (a string continued on the next line) or before a
+// character beyond ASCII, so tokens still start and end at ASCII
+// characters and UTF-8 and UTF-16 agree.
+template <class Ch>
+size_t escapeEnd(const Ch* s, size_t to, size_t i) {
+    if (i + 1 >= to) return 0;
+    const unsigned c = code(s[i + 1]);
+    if (c == '\n' || c == '\r' || c >= 128) return 0;
+    size_t e = i + 2;
+    auto digits = [&](size_t max, bool octal) {
+        for (size_t k = 0; e < to && k < max; ++k, ++e) {
+            const unsigned u = code(s[e]);
+            if (octal ? !(u >= '0' && u <= '7') : !isHexDigit(s[e])) break;
+        }
+    };
+    if ((c == 'u' || c == 'N') && e < to && s[e] == Ch('{')) {
+        size_t k = e + 1;
+        while (k < to && k - e <= 64 && code(s[k]) < 128 && s[k] != Ch('}') &&
+               s[k] != Ch('\n'))
+            k++;
+        if (k < to && s[k] == Ch('}')) e = k + 1;
+    } else if (c == 'x') {
+        digits(2, false);
+    } else if (c == 'u') {
+        digits(4, false);
+    } else if (c == 'U') {
+        digits(8, false);
+    } else if (c >= '0' && c <= '7') {
+        digits(2, true);
+    }
+    return e;
+}
+
+// A string's text s[from, to) as String, its escapes as Escape when it has
+// them.
+template <class Ch, class Push>
+void pushText(const Ch* s, size_t from, size_t to, bool escapes, Push& push) {
+    if (escapes)
+        for (size_t i = from; i + 1 < to; ++i) {
+            if (s[i] != Ch('\\')) continue;
+            const size_t e = escapeEnd(s, to, i);
+            if (!e) { ++i; continue; }   // it still escapes the next unit
+            push(from, i - from, TokenStyle::String);
+            push(i, e - i, TokenStyle::Escape);
+            from = e;
+            i = e - 1;
+        }
+    push(from, to - from, TokenStyle::String);
+}
+
+// Whether strings opened by q have escapes.
+template <class Ch>
+bool hasEscapes(const SyntaxGrammar& d, Ch q) {
+    const unsigned u = code(q);
+    return u < 128 && u != 0 && d.escapeDelims.find((char)u) != std::string::npos;
+}
+
 // ------------------------------------------------------------ f-strings
 //
 // Python's f-strings (and 3.14's t-strings) hold code: f"total {n + 1:>8}".
@@ -732,6 +858,10 @@ size_t lexNumber(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i, Push& 
 // left open at a line's end is not carried (the next line is string again),
 // so a line's tokens still depend only on its text and the state above.
 const char16_t kFString = 0x100;
+// In a TripleString or StringCont state's quote: the string is raw (an r in
+// its prefix), so the next line's text has no escapes either.
+const char16_t kRawPrefix = 0x200;
+const char16_t kQuoteChar = 0xFF;   // the quote itself
 const int kMaxFDepth = 8;   // nested f-strings past this are plain strings
 
 // Is the quote at s[i] preceded by a string prefix holding f or t (f, rf,
@@ -748,6 +878,18 @@ bool fPrefixBefore(const Ch* s, size_t i) {
         f = f || c == 'f' || c == 't';
     }
     return f;
+}
+
+// Is the quote at s[i] preceded by a string prefix holding r (r, rb, Rf,
+// ...), so that backslashes in it are just text?
+template <class Ch>
+bool rawPrefixBefore(const Ch* s, size_t i) {
+    size_t j = i;
+    while (j > 0 && i - j < 3 && isAlpha(s[j - 1])) j--;
+    if (j == i || i - j > 2 || (j > 0 && isIdentChar(s[j - 1]))) return false;
+    for (size_t k = j; k < i; ++k)
+        if (code(s[k]) == 'r' || code(s[k]) == 'R') return true;
+    return false;
 }
 
 // Does the string opened by q (tripled or not) close at s[i]?
@@ -819,23 +961,24 @@ size_t lexField(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i, Ch q,
 // start). *open says whether it carries on to the next line.
 template <class Ch, class Push>
 size_t lexFBody(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i, size_t run,
-                Ch q, bool triple, int depth, std::string& word, Push& push, bool* open) {
+                Ch q, bool triple, bool escapes, int depth, std::string& word, Push& push,
+                bool* open) {
     *open = false;
     while (i < n) {
         Ch c = s[i];
         if (closesAt(s, n, i, q, triple)) {
             i += triple ? 3 : 1;
-            push(run, i - run, TokenStyle::String);
+            pushText(s, run, i, escapes, push);
             return i;
         }
         if (c == Ch('\n') && !triple) {   // unterminated: it ends with the line
-            push(run, i - run, TokenStyle::String);
+            pushText(s, run, i, escapes, push);
             return i;
         }
         if (c == Ch('\\') && i + 1 < n) { i += 2; continue; }
         if (c == Ch('{')) {
             if (i + 1 < n && s[i + 1] == Ch('{')) { i += 2; continue; }
-            push(run, i - run, TokenStyle::String);
+            pushText(s, run, i, escapes, push);
             push(i, 1, TokenStyle::Keyword);
             i = lexField(d, s, n, i + 1, q, triple, depth, word, push);
             run = i;
@@ -843,7 +986,7 @@ size_t lexFBody(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i, size_t 
         }
         i++;
     }
-    push(run, n - run, TokenStyle::String);
+    pushText(s, run, n, escapes, push);
     // Past the end: a triple string is still open; a single-quoted one only
     // when a backslash swallowed the '\n' (as scanString decides).
     *open = triple || (n > 0 && s[n - 1] == Ch('\n'));
@@ -860,24 +1003,28 @@ size_t lexStringAt(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i, int 
     const size_t st = i;
     const Ch q = s[i];
     const bool triple = d.tripleQuotes && i + 2 < n && s[i + 1] == q && s[i + 2] == q;
+    const bool raw = d.fStrings && rawPrefixBefore(s, i);   // Python's r"..."
+    const bool escapes = !raw && hasEscapes(d, q);
+    const char16_t rawBit = raw ? kRawPrefix : 0;
     if (d.fStrings && depth < kMaxFDepth && fPrefixBefore(s, i)) {
         bool open;
-        i = lexFBody(d, s, n, i + (triple ? 3 : 1), st, q, triple, depth, word, push, &open);
+        i = lexFBody(d, s, n, i + (triple ? 3 : 1), st, q, triple, escapes, depth, word, push,
+                     &open);
         if (open)
             *state = LexState{triple ? LexState::TripleString : LexState::StringCont,
-                              (char16_t)(code(q) | kFString)};
+                              (char16_t)(code(q) | kFString | rawBit)};
         return i;
     }
     if (triple) {
         bool closed;
         i = scanTriple(s, n, i + 3, q, &closed);
-        push(st, i - st, TokenStyle::String);
-        if (!closed) *state = LexState{LexState::TripleString, (char16_t)q};
+        pushText(s, st, i, escapes, push);
+        if (!closed) *state = LexState{LexState::TripleString, (char16_t)(code(q) | rawBit)};
     } else {
         bool continues;
         i = scanString(s, n, i + 1, q, &continues);
-        push(st, i - st, TokenStyle::String);
-        if (continues) *state = LexState{LexState::StringCont, (char16_t)q};
+        pushText(s, st, i, escapes, push);
+        if (continues) *state = LexState{LexState::StringCont, (char16_t)(code(q) | rawBit)};
     }
     return i;
 }
@@ -1017,7 +1164,7 @@ size_t lexLongString(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i,
                 while (k < n && isContinuation(s[k])) k++;
             }
             if (k < n && k > i + 1 && s[k] == Ch('\'')) {
-                push(i, k + 1 - i, TokenStyle::String);
+                pushText(s, i, k + 1, true, push);
                 return k + 1;
             }
             if (i + 1 < n && isIdentStart(s[i + 1])) {
@@ -1057,7 +1204,7 @@ size_t lexLongString(const SyntaxGrammar& d, const Ch* s, size_t n, size_t i,
     if (!body) return 0;
     bool closed;
     size_t e = scanRaw(s, n, body, close, escapes, &closed);
-    push(i, e - i, TokenStyle::String);
+    pushText(s, i, e, escapes, push);
     if (!closed) {
         char16_t id = stateTextId(close);
         if (id) *open = LexState{LexState::RawString, (char16_t)(id | (escapes ? kRawEscapes : 0))};
@@ -1141,7 +1288,7 @@ LexState lexJsLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
     case LexState::StringCont: {
         bool continues;
         i = scanString(s, n, 0, (Ch)in.quote, &continues);
-        push(0, i, TokenStyle::String);
+        pushText(s, 0, i, true, push);
         if (continues) return in;
         regexOk = false;
         break;
@@ -1161,7 +1308,7 @@ LexState lexJsLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
                 Ch c = s[i];
                 if (c == Ch('`')) {
                     i++;
-                    push(text, i - text, TokenStyle::String);
+                    pushText(s, text, i, true, push);
                     stack.pop_back();
                     regexOk = false;
                     left = true;
@@ -1169,7 +1316,7 @@ LexState lexJsLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
                     i += 2;
                 } else if (c == Ch('$') && i + 1 < n && s[i + 1] == Ch('{') &&
                            stack.size() < kMaxTemplateStack) {
-                    push(text, i - text, TokenStyle::String);
+                    pushText(s, text, i, true, push);
                     push(i, 2, TokenStyle::Keyword);
                     i += 2;
                     stack.push_back(1);
@@ -1179,7 +1326,7 @@ LexState lexJsLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
                     i++;
                 }
             }
-            if (!left) push(text, n - text, TokenStyle::String);
+            if (!left) pushText(s, text, n, true, push);
             continue;
         }
 
@@ -1213,7 +1360,7 @@ LexState lexJsLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
         if (c == Ch('"') || c == Ch('\'') || c == Ch('`')) {
             bool continues;
             size_t e = scanString(s, n, i + 1, c, &continues);
-            push(i, e - i, TokenStyle::String);
+            pushText(s, i, e, true, push);
             i = e;
             regexOk = false;
             if (continues && stack.empty() && c != Ch('`'))
@@ -1306,30 +1453,35 @@ LexState lexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
     case LexState::StringCont:
         if (in.quote & kFString) {
             bool open;
-            i = lexFBody(d, s, n, 0, 0, (Ch)(in.quote & 0xFF),
-                         in.kind == LexState::TripleString, 0, word, push, &open);
+            i = lexFBody(d, s, n, 0, 0, (Ch)(in.quote & kQuoteChar),
+                         in.kind == LexState::TripleString, !(in.quote & kRawPrefix), 0, word,
+                         push, &open);
             if (open) return in;
             atLineStart = false;
             break;
         }
-        if (in.kind == LexState::StringCont) {
-            bool continues;
-            i = scanString(s, n, 0, (Ch)in.quote, &continues);
-            push(0, i, TokenStyle::String);
-            if (continues) return in;
-        } else {
-            bool closed;
-            i = scanTriple(s, n, 0, (Ch)in.quote, &closed);
-            push(0, i, TokenStyle::String);
-            if (!closed) return in;
+        {
+            const Ch q = (Ch)(in.quote & kQuoteChar);
+            const bool escapes = !(in.quote & kRawPrefix) && hasEscapes(d, q);
+            if (in.kind == LexState::StringCont) {
+                bool continues;
+                i = scanString(s, n, 0, q, &continues);
+                pushText(s, 0, i, escapes, push);
+                if (continues) return in;
+            } else {
+                bool closed;
+                i = scanTriple(s, n, 0, q, &closed);
+                pushText(s, 0, i, escapes, push);
+                if (!closed) return in;
+            }
         }
         atLineStart = false;
         break;
     case LexState::RawString: {
         bool closed;
-        i = scanRaw(s, n, 0, stateText((char16_t)(in.quote & ~kRawEscapes)), (in.quote & kRawEscapes) != 0,
-                    &closed);
-        push(0, i, TokenStyle::String);
+        const bool escapes = (in.quote & kRawEscapes) != 0;
+        i = scanRaw(s, n, 0, stateText((char16_t)(in.quote & ~kRawEscapes)), escapes, &closed);
+        pushText(s, 0, i, escapes, push);
         if (!closed) return in;
         atLineStart = false;
         break;
@@ -1344,14 +1496,27 @@ LexState lexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
         if (c == Ch('\n')) { i++; atLineStart = true; continue; }
         if (c == Ch(' ') || c == Ch('\t') || c == Ch('\r')) { i++; continue; }
 
-        // Preprocessor / decorators at line start.
-        if (atLineStart && ((d.preprocHash && c == Ch('#')) ||
-                            (d.decorators && c == Ch('@')))) {
+        // Preprocessor lines.
+        if (atLineStart && d.preprocHash && c == Ch('#')) {
             size_t st = i;
             while (i < n && s[i] != Ch('\n')) i++;
             push(st, i - st, TokenStyle::Preprocessor);
             atLineStart = false;
             continue;
+        }
+        // A decorator, @name or @a.b, colored as a function the way VS Code's
+        // grammar scopes it (entity.name.function.decorator); its arguments
+        // are code. A lone @ (matrix multiplication) is not one.
+        if (atLineStart && d.decorators && c == Ch('@')) {
+            size_t e = i + 1;
+            while (e < n && (s[e] == Ch(' ') || s[e] == Ch('\t'))) e++;
+            if (e < n && isIdentStart(s[e])) {
+                while (e < n && (isIdentChar(s[e]) || s[e] == Ch('.'))) e++;
+                push(i, e - i, TokenStyle::Function);
+                i = e;
+                atLineStart = false;
+                continue;
+            }
         }
 
         // Line comments.
@@ -1670,3 +1835,19 @@ IncrementalHighlighter<Ch>::edit(const TextSource<Ch>& src, size_t pos,
 
 template class IncrementalHighlighter<char>;
 template class IncrementalHighlighter<char16_t>;
+
+template <class Ch>
+bool lineIsLexed(const TextSource<Ch>& src, size_t start, size_t end) {
+    if (end <= start) return true;
+    const size_t len = end - start;
+    if (len <= kMaxTokenizationLineLength) return true;
+    if (len > kMaxTokenizationLineLength + 3) return false;
+    Ch tail[3];
+    const size_t k = std::min<size_t>(3, len);
+    src.read(end - k, k, tail);
+    bool foreign;
+    return len - breakAtEnd(tail, k, &foreign) <= kMaxTokenizationLineLength;
+}
+
+template bool lineIsLexed<char>(const TextSource<char>&, size_t, size_t);
+template bool lineIsLexed<char16_t>(const TextSource<char16_t>&, size_t, size_t);

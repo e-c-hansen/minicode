@@ -204,6 +204,8 @@ object Core {
     const val NUMBER = 5
     const val PREPROCESSOR = 6
     const val FUNCTION = 7
+    const val ESCAPE = 8
+    const val SELF = 9
 }
 
 /** The dark palette the other two ports use (VS Code Dark+ values). */
@@ -232,5 +234,7 @@ object Palette {
         0xFFB5CEA8.toInt(),   // number
         0xFFC586C0.toInt(),   // preprocessor
         0xFFDCDCAA.toInt(),   // function
+        0xFFD7BA7D.toInt(),   // escape
+        0xFF569CD6.toInt(),   // self, this
     )
 }

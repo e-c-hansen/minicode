@@ -173,7 +173,7 @@
     _hl->lineTokens(NSStringSource(storage.string), _hl->lineOf(lo), _hl->lineOf(hi - 1) + 1,
                     tokens);
     for (const Token &t : tokens) {
-        if (t.style != TokenStyle::String && t.style != TokenStyle::Comment) continue;
+        if (!isStringStyle(t.style) && t.style != TokenStyle::Comment) continue;
         const size_t a = MAX((size_t)lo, t.start), b = MIN((size_t)hi, t.start + t.length);
         if (b <= a) continue;
         if (!spans.empty() && spans.back().end >= a - lo)

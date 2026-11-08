@@ -1,23 +1,38 @@
 // EditorController+Highlighting.mm — EditorController: the source's syntax colors, kept up as it is edited,
-// and a language server's semantic tokens laid over them.
+// a language server's semantic tokens laid over them, and bracket-pair colors.
 #import "EditorController+Private.h"
 #import "EditorController+HighlightingIvars.h"
 
+// attributesForStyle:'s indexes: the lexer's styles by TokenStyle, then
+// plain text, the semantic colors (SemanticColor order), and the bracket
+// colors (BracketPairs::colorIndex: depth 1, 2, 3 in turn, unexpected).
+static const int kPlainStyle = kTokenStyleCount;
+static const int kSemanticStyle = kPlainStyle + 1;
+static const int kBracketStyle = kSemanticStyle + kSemanticColorCount;
+static const int kStyleCount = kBracketStyle + 4;
+
 // attributesForStyle:'s index for a semantic token's style: a function
-// takes the lexer's function color, the rest come after plain text (8);
-// -1 for none.
+// takes the lexer's function color; -1 for none.
 static int SemanticStyleIndex(Lsp::SemanticStyle s) {
     switch (s) {
     case Lsp::SemanticStyle::Function: return (int)TokenStyle::Function;
-    case Lsp::SemanticStyle::Class: return 9 + (int)SemanticColor::Class;
-    case Lsp::SemanticStyle::Variable: return 9 + (int)SemanticColor::Variable;
-    case Lsp::SemanticStyle::Parameter: return 9 + (int)SemanticColor::Parameter;
-    case Lsp::SemanticStyle::Property: return 9 + (int)SemanticColor::Property;
-    case Lsp::SemanticStyle::Constant: return 9 + (int)SemanticColor::Constant;
+    case Lsp::SemanticStyle::Class: return kSemanticStyle + (int)SemanticColor::Class;
+    case Lsp::SemanticStyle::Variable: return kSemanticStyle + (int)SemanticColor::Variable;
+    case Lsp::SemanticStyle::Parameter: return kSemanticStyle + (int)SemanticColor::Parameter;
+    case Lsp::SemanticStyle::Property: return kSemanticStyle + (int)SemanticColor::Property;
+    case Lsp::SemanticStyle::Constant: return kSemanticStyle + (int)SemanticColor::Constant;
     case Lsp::SemanticStyle::None: break;
     }
     return -1;
 }
+
+// A color laid over the lexer's: a semantic token's or a bracket's,
+// [start, end) in the storage, by attributesForStyle: index. Never over a
+// string or a comment.
+struct MCOverlay {
+    NSUInteger start, end;
+    int style;
+};
 
 @implementation EditorController (Highlighting)
 
@@ -110,9 +125,10 @@ static int SemanticStyleIndex(Lsp::SemanticStyle s) {
     NSTextStorage *storage = self.textView.textStorage;
     AppSettings *cfg = [AppSettings shared];
     _plainColor = [cfg text:Surface::Editor];
-    for (int i = 0; i < 8; ++i) _styleColors[i] = ColorForStyle((TokenStyle)i);
+    for (int i = 0; i < kTokenStyleCount; ++i) _styleColors[i] = ColorForStyle((TokenStyle)i);
     for (int i = 0; i < kSemanticColorCount; ++i)
         _semanticColors[i] = MCColor(cfg.settings.semanticColor((SemanticColor)i));
+    for (int i = 0; i < 4; ++i) _bracketColors[i] = MCColor(cfg.settings.bracketColor(i));
     _highlightingSettingsFile = [self isSettingsFile];
     // Semantic colors turned off, or a file in large-file mode: none.
     if (!cfg.settings.semanticHighlighting() || [self largeFileFeaturesOff]) {
@@ -134,17 +150,65 @@ static int SemanticStyleIndex(Lsp::SemanticStyle s) {
     } else {
         _hl.reset();
     }
+    // Bracket-pair colors need the highlighter's tokens (none in large-file
+    // mode, which has no highlighter); a settings file keeps its swatches.
+    _bracketsOn = _hl && cfg.settings.bracketPairColorization() && !_highlightingSettingsFile;
+    _bracketDepths.assign({});
+    if (_bracketsOn)
+        _bracketDepths.assign(BracketPairs::summarizeLines(NSStringSource(storage.string), *_hl,
+                                                           0, _hl->lineCount(), tokens));
+    _bracketPainted = [NSMutableIndexSet indexSet];
     [storage beginEditing];
     [self restyleRange:NSMakeRange(0, storage.length) tokens:tokens inStorage:storage];
     [storage endEditing];
+    if (_bracketsOn) {
+        [_bracketPainted addIndexesInRange:NSMakeRange(0, storage.length)];
+        [self observeEditorScrolling];
+    }
     _pending.clear();   // all of it is fresh now
     _liveHighlight = YES;
     // New colors (a theme, the zoom) over the same text: the server's
     // tokens still hold, painted again where they show.
     if (_semanticCurrent) {
         _semanticPainted = [NSMutableIndexSet indexSet];
-        [self paintSemanticVisible];
+        [self paintVisibleLines];
     }
+}
+
+// Whether the bracket depths describe the storage as it is (they follow
+// every edit the highlighter follows).
+- (BOOL)bracketDepthsCurrent {
+    return _bracketsOn && _hl && _hl->length() == self.textView.textStorage.length &&
+           _bracketDepths.lineCount() == _hl->lineCount();
+}
+
+// The bracket colors of the whole lines of `range`, from their tokens, as
+// overlays (ascending).
+- (void)bracketOverlaysIn:(NSRange)range tokens:(const std::vector<Token> &)tokens
+                     into:(std::vector<MCOverlay> &)out {
+    if (![self bracketDepthsCurrent] || !range.length) return;
+    const size_t first = _hl->lineOf(range.location);
+    const size_t end = _hl->lineOf(NSMaxRange(range) - 1) + 1;
+    std::vector<BracketPairs::Bracket> brackets;
+    BracketPairs::colorLines(NSStringSource(self.textView.textStorage.string), *_hl, first, end,
+                             tokens, _bracketDepths.depthAt(first), &brackets);
+    out.reserve(out.size() + brackets.size());
+    for (const BracketPairs::Bracket &b : brackets)
+        out.push_back({b.at, b.at + 1, kBracketStyle + BracketPairs::colorIndex(b.depth)});
+}
+
+// Watch the editor scroll, to paint the lines coming into view: with the
+// server's tokens, and with bracket colors after an edit changed depths.
+- (void)observeEditorScrolling {
+    if (_semanticObserving) return;
+    NSClipView *clip = self.textView.enclosingScrollView.contentView;
+    if (!clip) return;
+    clip.postsBoundsChangedNotifications = YES;
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(semanticViewScrolled:)
+                                                 name:NSViewBoundsDidChangeNotification
+                                               object:clip];
+    _semanticObserving = YES;
 }
 
 // Paint `range` (whole lines) from scratch: the plain source attributes, then
@@ -158,12 +222,14 @@ static int SemanticStyleIndex(Lsp::SemanticStyle s) {
 - (void)restyleRange:(NSRange)range tokens:(const std::vector<Token> &)tokens
            inStorage:(NSTextStorage *)storage {
     if (range.length == 0) return;
+    std::vector<MCOverlay> brackets;
+    if (_bracketsOn) [self bracketOverlaysIn:range tokens:tokens into:brackets];
     // Without tokens (plain text, a line too long to lex) only what differs
     // is set, however long the range: setting a 5 MB line's attributes
     // again on each keystroke made TextKit lay it out again.
     if (_sourceAttributes && !_highlightingSettingsFile &&
         (range.length <= 65536 || tokens.empty())) {
-        [self restyleChangedIn:range tokens:tokens inStorage:storage];
+        [self restyleChangedIn:range tokens:tokens overlays:brackets inStorage:storage];
         return;
     }
     if (_sourceAttributes) {
@@ -173,7 +239,19 @@ static int SemanticStyleIndex(Lsp::SemanticStyle s) {
         [storage removeAttribute:NSBackgroundColorAttributeName range:range];
         [storage removeAttribute:NSLinkAttributeName range:range];
     }
+    // Tokens and bracket colors in order of place, so each attribute run
+    // splits off the end of what is done: a second pass over the brackets
+    // split runs in the middle, each moving all the runs after it (40 s to
+    // open a 100,000-line file).
     const NSUInteger limit = NSMaxRange(range);
+    size_t b = 0;
+    auto bracketsBefore = [&](NSUInteger at) {
+        for (; b < brackets.size() && brackets[b].start < at; ++b)
+            if (brackets[b].start >= range.location && brackets[b].end <= limit)
+                [storage addAttribute:NSForegroundColorAttributeName
+                                value:_bracketColors[brackets[b].style - kBracketStyle]
+                                range:NSMakeRange(brackets[b].start, 1)];
+    };
     for (size_t i = 0; i < tokens.size();) {
         size_t start = tokens[i].start, end = start + tokens[i].length;
         TokenStyle st = tokens[i].style;
@@ -184,34 +262,53 @@ static int SemanticStyleIndex(Lsp::SemanticStyle s) {
         }
         i = j;
         if (start < range.location || end > limit || end <= start) continue;
+        bracketsBefore(start);
         [storage addAttribute:NSForegroundColorAttributeName
-                        value:_styleColors[(int)st & 7]
+                        value:_styleColors[(int)st]
                         range:NSMakeRange(start, end - start)];
+        bracketsBefore(end);   // inside it (a preprocessor line's)
     }
+    bracketsBefore(limit);
     if (_highlightingSettingsFile) [self decorateColorsIn:storage range:range];
 }
 
 // The attributes a token of `style` gets: the source attributes with its
-// color (index 8 is plain text, 9 on the semantic colors in SemanticColor
-// order), made once per font and color scheme.
+// color (kPlainStyle is plain text, then the semantic and bracket colors),
+// made once per font and color scheme.
 - (NSDictionary *)attributesForStyle:(int)style {
     if (_styleAttributesBase != _sourceAttributes) {
-        NSMutableArray *all = [NSMutableArray arrayWithCapacity:9 + kSemanticColorCount];
-        for (int i = 0; i < 8; i++) {
+        NSMutableArray *all = [NSMutableArray arrayWithCapacity:kStyleCount];
+        auto add = ^(NSColor *color) {
             NSMutableDictionary *d = [_sourceAttributes mutableCopy];
-            d[NSForegroundColorAttributeName] = _styleColors[i];
+            d[NSForegroundColorAttributeName] = color ?: _plainColor;
             [all addObject:[d copy]];
-        }
+        };
+        for (int i = 0; i < kTokenStyleCount; i++) add(_styleColors[i]);
         [all addObject:_sourceAttributes];
-        for (int i = 0; i < kSemanticColorCount; i++) {
-            NSMutableDictionary *d = [_sourceAttributes mutableCopy];
-            d[NSForegroundColorAttributeName] = _semanticColors[i] ?: _plainColor;
-            [all addObject:[d copy]];
-        }
+        for (int i = 0; i < kSemanticColorCount; i++) add(_semanticColors[i]);
+        for (int i = 0; i < 4; i++) add(_bracketColors[i]);
         _styleAttributes = all;
         _styleAttributesBase = _sourceAttributes;
     }
     return _styleAttributes[(NSUInteger)style];
+}
+
+// Give [start, end) the attributes of `style`, unless it has them already.
+- (void)setStyle:(int)style from:(NSUInteger)start to:(NSUInteger)end
+       inStorage:(NSTextStorage *)storage {
+    if (end <= start) return;
+    NSDictionary *want = [self attributesForStyle:style];
+    NSRange run;
+    // As stored: an inlay hint's gap (SourceStorage.h) is no color to set.
+    NSDictionary *have = [storage isKindOfClass:[MCSourceStorage class]]
+        ? [(MCSourceStorage *)storage storedAttributesAtIndex:start longestEffectiveRange:&run
+                                                       inRange:NSMakeRange(start, end - start)]
+        : [storage attributesAtIndex:start longestEffectiveRange:&run
+                             inRange:NSMakeRange(start, end - start)];
+    if (run.location <= start && NSMaxRange(run) >= end &&
+        (have == want || [have isEqualToDictionary:want]))
+        return;
+    [storage setAttributes:want range:NSMakeRange(start, end - start)];
 }
 
 // restyleRange: for the few lines an edit touches: the same attributes, but
@@ -222,50 +319,40 @@ static int SemanticStyleIndex(Lsp::SemanticStyle s) {
 // good part of what was left of a keystroke there.
 - (void)restyleChangedIn:(NSRange)range tokens:(const std::vector<Token> &)tokens
                inStorage:(NSTextStorage *)storage {
-    [self restyleChangedIn:range tokens:tokens semantic:nullptr count:0 inStorage:storage];
+    [self restyleChangedIn:range
+                    tokens:tokens
+                  overlays:std::vector<MCOverlay>()
+                 inStorage:storage];
 }
 
-// The same, with semantic spans (ascending, from the first that ends past
-// range's start) laid over the tokens: a span takes its own color, except
-// over a string or a comment, which keep the lexer's.
+// The same, with overlays (ascending: semantic spans, brackets) laid over
+// the tokens: an overlay takes its own color, except over a string, an
+// escape or a comment, which keep the lexer's.
 - (void)restyleChangedIn:(NSRange)range tokens:(const std::vector<Token> &)tokens
-                semantic:(const Lsp::SemanticSpan *)spans
-                   count:(size_t)spanCount
+                overlays:(const std::vector<MCOverlay> &)overlays
                inStorage:(NSTextStorage *)storage {
     const NSUInteger limit = NSMaxRange(range);
-    MCSourceStorage *source = [storage isKindOfClass:[MCSourceStorage class]]
-                                  ? (MCSourceStorage *)storage : nil;
     auto set = ^(NSUInteger start, NSUInteger end, int style) {
-        if (end <= start) return;
-        NSDictionary *want = [self attributesForStyle:style];
-        NSRange run;
-        // As stored: an inlay hint's gap (SourceStorage.h) is no color to set.
-        NSDictionary *have = source
-            ? [source storedAttributesAtIndex:start longestEffectiveRange:&run
-                                      inRange:NSMakeRange(start, end - start)]
-            : [storage attributesAtIndex:start longestEffectiveRange:&run
-                                 inRange:NSMakeRange(start, end - start)];
-        if (run.location <= start && NSMaxRange(run) >= end &&
-            (have == want || [have isEqualToDictionary:want]))
-            return;
-        [storage setAttributes:want range:NSMakeRange(start, end - start)];
+        [self setStyle:style from:start to:end inStorage:storage];
     };
-    __block size_t next = 0;   // the first span that may reach past where painting is
+    const MCOverlay *spans = overlays.data();
+    const size_t spanCount = overlays.size();
+    __block size_t next = 0;   // the first overlay that may reach past where painting is
     auto paint = ^(NSUInteger start, NSUInteger end, int style) {
         if (end <= start) return;
-        if (style == (int)TokenStyle::String || style == (int)TokenStyle::Comment) {
+        if (style == (int)TokenStyle::String || style == (int)TokenStyle::Escape ||
+            style == (int)TokenStyle::Comment) {
             set(start, end, style);
             return;
         }
         NSUInteger at = start;
-        while (next < spanCount && spans[next].start + spans[next].length <= at) next++;
+        while (next < spanCount && spans[next].end <= at) next++;
         for (size_t k = next; k < spanCount && spans[k].start < end; k++) {
-            const NSUInteger a = MAX(at, (NSUInteger)spans[k].start);
-            const NSUInteger b = MIN(end, (NSUInteger)(spans[k].start + spans[k].length));
-            const int sem = SemanticStyleIndex(spans[k].style);
-            if (b <= a || sem < 0) continue;
+            const NSUInteger a = MAX(at, spans[k].start);
+            const NSUInteger b = MIN(end, spans[k].end);
+            if (b <= a) continue;
             set(at, a, style);
-            set(a, b, sem);
+            set(a, b, spans[k].style);
             at = b;
         }
         set(at, end, style);
@@ -281,11 +368,11 @@ static int SemanticStyleIndex(Lsp::SemanticStyle s) {
         }
         i = j;
         if (start < at || end > limit || end <= start) continue;
-        paint(at, start, 8);
-        paint(start, end, (int)st & 7);
+        paint(at, start, kPlainStyle);
+        paint(start, end, (int)st);
         at = end;
     }
-    paint(at, limit, 8);
+    paint(at, limit, kPlainStyle);
 }
 
 // The storage's characters changed (typing, paste, undo, a Cmd+/ toggle, a
@@ -315,10 +402,28 @@ static int SemanticStyleIndex(Lsp::SemanticStyle s) {
     NSUInteger oldLen = (NSUInteger)((NSInteger)edited.length - delta);
     NSRange range;
     if (_hl) {
-        std::vector<Token> unused;   // recomputed for the final text at flush time
-        auto r = _hl->edit(NSStringSource(storage.string), edited.location, oldLen,
-                           newLen, unused);
+        // The tokens are recomputed for the final text at flush time; the
+        // bracket depths take what each line does to them now, so they
+        // follow the text edit by edit.
+        std::vector<Token> relexed;
+        const size_t linesBefore = _hl->lineCount();
+        NSStringSource src(storage.string);
+        auto r = _hl->edit(src, edited.location, oldLen, newLen, relexed);
         range = NSMakeRange(r.start, r.end - r.start);
+        if (_bracketsOn) {
+            const size_t replaced = (r.endLine - r.firstLine) + linesBefore - _hl->lineCount();
+            const bool moved = _bracketDepths.replace(
+                r.firstLine, replaced,
+                BracketPairs::summarizeLines(src, *_hl, r.firstLine, r.endLine, relexed));
+            // What was painted with its bracket colors follows its text; the
+            // edited characters are not, and when the edit changed the depth
+            // the lines after it start at, nothing after it is.
+            [_bracketPainted removeIndexesInRange:NSMakeRange(edited.location, oldLen)];
+            [_bracketPainted shiftIndexesStartingAtIndex:edited.location + oldLen by:delta];
+            if (moved && storage.length > edited.location)
+                [_bracketPainted removeIndexesInRange:NSMakeRange(edited.location,
+                                                                  storage.length - edited.location)];
+        }
     } else {
         range = [storage.string lineRangeForRange:edited];
     }
@@ -398,8 +503,12 @@ static int SemanticStyleIndex(Lsp::SemanticStyle s) {
         [storage beginEditing];
         [self restyleRange:range tokens:tokens inStorage:storage];
         [storage endEditing];
+        if (_bracketsOn) [_bracketPainted addIndexesInRange:range];
         done = NSMaxRange(range);
     }
+    // An edit that changed the depth below it: the brackets on screen take
+    // their new colors now, the rest as they scroll into view.
+    if (_bracketsOn) [self paintVisibleLines];
 }
 
 // ---- semantic tokens
@@ -422,83 +531,112 @@ static int SemanticStyleIndex(Lsp::SemanticStyle s) {
         if ((NSUInteger)p[i].start + p[i].length <= total) _semantic.push_back(p[i]);
     _semanticCurrent = YES;
     _semanticPainted = [NSMutableIndexSet indexSet];
-    if (!_semanticObserving) {
-        NSClipView *clip = tv.enclosingScrollView.contentView;
-        if (clip) {
-            clip.postsBoundsChangedNotifications = YES;
-            [[NSNotificationCenter defaultCenter] addObserver:self
-                                                     selector:@selector(semanticViewScrolled:)
-                                                         name:NSViewBoundsDidChangeNotification
-                                                       object:clip];
-            _semanticObserving = YES;
-        }
-    }
-    [self paintSemanticVisible];
+    [self observeEditorScrolling];
+    [self paintVisibleLines];
 }
 
 - (void)semanticViewScrolled:(NSNotification *)note {
     (void)note;
-    if (!_semanticCurrent || _semanticPaintScheduled) return;
+    if ((!_semanticCurrent && !_bracketsOn) || _semanticPaintScheduled) return;
     _semanticPaintScheduled = YES;   // once a run-loop turn, however many scroll events
-    [self performSelector:@selector(paintSemanticVisible) withObject:nil afterDelay:0];
+    [self performSelector:@selector(paintVisibleLines) withObject:nil afterDelay:0];
 }
 
-// Paint the lines on screen not painted yet with the current tokens: each
-// line's lexer tokens with the spans over them, only the pieces whose
-// attributes differ (restyleChangedIn:), in one attribute edit. Lines too
-// long to lex keep their plain color, as the lexer leaves them.
-- (void)paintSemanticVisible {
+// Paint the lines on screen not painted yet: with the server's tokens
+// while they are current (each line's lexer tokens with the spans and the
+// bracket colors over them, only the pieces whose attributes differ, in one
+// attribute edit), and with bracket colors after an edit changed the depth
+// they are at (only the brackets, so the server's colors, which move with
+// their text, stay until its next answer). Lines too long to lex keep their
+// plain color, as the lexer leaves them.
+- (void)paintVisibleLines {
     _semanticPaintScheduled = NO;
     NSTextView *tv = self.textView;
-    if (!_semanticCurrent || !_liveHighlight || !tv.editable) return;
+    const BOOL sem = _semanticCurrent;
+    const BOOL br = [self bracketDepthsCurrent];
+    if ((!sem && !br) || !_liveHighlight || !tv.editable) return;
     NSTextStorage *storage = tv.textStorage;
     NSString *string = storage.string;
     const NSUInteger total = storage.length;
     if (!total) return;
+    // Typing that left the depths alone: every bracket is current (the
+    // usual case, decided without asking the layout what shows).
+    if (!sem && [_bracketPainted containsIndexesInRange:NSMakeRange(0, total)]) return;
     NSLayoutManager *lm = tv.layoutManager;
     const NSRange glyphs = [lm glyphRangeForBoundingRect:tv.visibleRect
                                          inTextContainer:tv.textContainer];
     NSRange visible = [lm characterRangeForGlyphRange:glyphs actualGlyphRange:NULL];
     if (visible.location >= total) return;
     visible.length = MIN(visible.length, total - visible.location);
-    if ([_semanticPainted containsIndexesInRange:visible] && visible.length) return;
+    if (visible.length && (!sem || [_semanticPainted containsIndexesInRange:visible]) &&
+        (!br || [_bracketPainted containsIndexesInRange:visible]))
+        return;
     BOOL editing = NO;
     NSUInteger at = visible.location;
     const NSUInteger end = NSMaxRange(visible);
+    int32_t depth = br ? _bracketDepths.depthAt(_hl->lineOf(at)) : 0;
+    NSStringSource src(string);
     do {
         NSRange line;
+        size_t ln = 0;
         if (_hl) {
-            const size_t first = _hl->lineOf(at);
-            const size_t to = first + 1 < _hl->lineCount() ? _hl->lineStart(first + 1) : _hl->length();
-            line = NSMakeRange(_hl->lineStart(first), to - _hl->lineStart(first));
+            ln = _hl->lineOf(at);
+            const size_t to = ln + 1 < _hl->lineCount() ? _hl->lineStart(ln + 1) : _hl->length();
+            line = NSMakeRange(_hl->lineStart(ln), to - _hl->lineStart(ln));
         } else {
             line = [string lineRangeForRange:NSMakeRange(at, 0)];
         }
         if (!line.length) break;
-        if (![_semanticPainted containsIndexesInRange:line]) {
-            [_semanticPainted addIndexesInRange:line];
-            if (line.length <= kMaxTokenizationLineLength + 2) {
-                std::vector<Token> tokens;
-                if (_hl) {
-                    const size_t ln = _hl->lineOf(line.location);
-                    _hl->lineTokens(NSStringSource(string), ln, ln + 1, tokens);
-                }
-                const Lsp::SemanticSpan key{(uint32_t)line.location, 0, Lsp::SemanticStyle::None};
-                auto it = std::lower_bound(
-                    _semantic.begin(), _semantic.end(), key,
-                    [](const Lsp::SemanticSpan &a, const Lsp::SemanticSpan &b) {
-                        return (uint64_t)a.start + a.length <= b.start;
-                    });
-                if (!editing) {
-                    [storage beginEditing];
-                    editing = YES;
-                }
-                [self restyleChangedIn:line
-                                tokens:tokens
-                              semantic:_semantic.data() + (it - _semantic.begin())
-                                 count:(size_t)(_semantic.end() - it)
-                             inStorage:storage];
+        const BOOL needSem = sem && ![_semanticPainted containsIndexesInRange:line];
+        const BOOL needBr = br && ![_bracketPainted containsIndexesInRange:line];
+        const int32_t depthHere = depth;
+        if (br) depth = _bracketDepths.line(ln).after(depth);
+        if (needSem || needBr) {
+            std::vector<Token> tokens;
+            if (_hl) _hl->lineTokens(src, ln, ln + 1, tokens);
+            std::vector<BracketPairs::Bracket> brackets;
+            if (br) BracketPairs::colorLines(src, *_hl, ln, ln + 1, tokens, depthHere, &brackets);
+            if (!editing) {
+                [storage beginEditing];
+                editing = YES;
             }
+            if (needSem) {
+                [_semanticPainted addIndexesInRange:line];
+                if (line.length <= kMaxTokenizationLineLength + 2) {
+                    // The line's spans and brackets, in order.
+                    const Lsp::SemanticSpan key{(uint32_t)line.location, 0,
+                                                Lsp::SemanticStyle::None};
+                    auto it = std::lower_bound(
+                        _semantic.begin(), _semantic.end(), key,
+                        [](const Lsp::SemanticSpan &a, const Lsp::SemanticSpan &b) {
+                            return (uint64_t)a.start + a.length <= b.start;
+                        });
+                    std::vector<MCOverlay> overlays;
+                    size_t b = 0;
+                    for (; it != _semantic.end() && it->start < NSMaxRange(line); ++it) {
+                        const int style = SemanticStyleIndex(it->style);
+                        if (style < 0) continue;
+                        for (; b < brackets.size() && brackets[b].at < it->start; ++b)
+                            overlays.push_back({brackets[b].at, brackets[b].at + 1,
+                                                kBracketStyle +
+                                                    BracketPairs::colorIndex(brackets[b].depth)});
+                        overlays.push_back({it->start, (NSUInteger)it->start + it->length, style});
+                    }
+                    for (; b < brackets.size(); ++b)
+                        overlays.push_back({brackets[b].at, brackets[b].at + 1,
+                                            kBracketStyle +
+                                                BracketPairs::colorIndex(brackets[b].depth)});
+                    [self restyleChangedIn:line tokens:tokens overlays:overlays inStorage:storage];
+                }
+            } else {
+                for (const BracketPairs::Bracket &b : brackets)
+                    [self setStyle:kBracketStyle + BracketPairs::colorIndex(b.depth)
+                              from:b.at
+                                to:b.at + 1
+                         inStorage:storage];
+                _bracketLinesPainted++;
+            }
+            if (br) [_bracketPainted addIndexesInRange:line];
         }
         at = NSMaxRange(line);
     } while (at < end);

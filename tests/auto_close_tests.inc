@@ -395,4 +395,34 @@ static void testAutoClose() {
         sim.type(u"(");
         CHECK(sim.last == Typed::Kind::None);
     }
+
+    GROUP("autoclose:crlf-limit");
+    {
+        // A line of exactly the limit is lexed whatever its break; one unit
+        // more is not (the highlighter's rule, its break not counted).
+        auto lexedAt = [](const std::u16string &text, size_t at) {
+            IncrementalHighlighter<char16_t> h("py");
+            h.reset(StringSource<char16_t>(text), nullptr);
+            AutoClose::HighlighterContext ctx(
+                h, std::make_unique<StringSource<char16_t>>(text));
+            return ctx.lexed(at);
+        };
+        const std::u16string line(kMaxTokenizationLineLength, u'a');
+        CHECK(lexedAt(line + u"\r\nx", 5));
+        CHECK(lexedAt(line + u"\nx", 5));
+        CHECK(lexedAt(line + u"\rx", 5));
+        CHECK(lexedAt(line, 5));
+        CHECK(!lexedAt(line + u"a\r\nx", 5));
+        CHECK(!lexedAt(line + u"a\nx", 5));
+        CHECK(!lexedAt(line + u"a", 5));
+        CHECK(lexedAt(line + u"a\r\nx", kMaxTokenizationLineLength + 3));   // the next line
+        // The highlighter agrees: the CRLF line has its tokens.
+        std::u16string py = u"s = '(' " + std::u16string(kMaxTokenizationLineLength - 8, u' ') +
+                            u"\r\nx";
+        IncrementalHighlighter<char16_t> h("py");
+        std::vector<Token> toks;
+        h.reset(StringSource<char16_t>(py), &toks);
+        CHECK(!toks.empty() && toks[0].style == TokenStyle::String);
+        CHECK(lineIsLexed(StringSource<char16_t>(py), 0, h.lineStart(1)));
+    }
 }

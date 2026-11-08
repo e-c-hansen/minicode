@@ -156,6 +156,22 @@ bool hasToken(const std::string &text, const std::string &ext,
     return false;
 }
 
+// Is `piece` exactly a run of string tokens, its escapes included (a
+// string with escapes comes in String and Escape pieces)?
+bool hasString(const std::string &text, const std::string &ext, const std::string &piece) {
+    std::vector<Token> runs;
+    for (const Token &t : SyntaxHighlighter::highlight(text, ext)) {
+        if (!isStringStyle(t.style)) continue;
+        if (!runs.empty() && runs.back().start + runs.back().length == t.start)
+            runs.back().length += t.length;
+        else
+            runs.push_back(t);
+    }
+    for (const Token &t : runs)
+        if (slice(text, t) == piece) return true;
+    return false;
+}
+
 // Is there any token with style `st`?
 bool hasStyle(const std::string &text, const std::string &ext, TokenStyle st) {
     for (const Token &t : SyntaxHighlighter::highlight(text, ext))
@@ -199,7 +215,7 @@ void testSyntax() {
         // The style at each byte, '-' where no token is.
         auto styles = [](const std::string &text) {
             std::string m(text.size(), '-');
-            const char *letters = "pktscnPf";   // TokenStyle order
+            const char *letters = "pktscnPfeS";   // TokenStyle order
             for (const Token &t : SyntaxHighlighter::highlight(text, "py"))
                 for (size_t k = t.start; k < t.start + t.length && k < m.size(); ++k)
                     m[k] = letters[(int)t.style];
@@ -251,7 +267,8 @@ void testSyntax() {
 
     GROUP("syntax:strings-escapes");
     // An escaped quote should not end the string early.
-    CHECK(hasToken("\"a\\\"b\"", "cpp", "\"a\\\"b\"", TokenStyle::String));
+    CHECK(hasString("\"a\\\"b\"", "cpp", "\"a\\\"b\""));
+    CHECK(hasToken("\"a\\\"b\"", "cpp", "\\\"", TokenStyle::Escape));
 
     GROUP("syntax:plain");
     // Plain text / unknown extension yields no styled tokens.
@@ -382,7 +399,7 @@ void testSyntaxLiterals() {
     // The style at each unit, '-' where no token is (TokenStyle order).
     auto styles = [](const std::string &text, const std::string &ext) {
         std::string m(text.size(), '-');
-        const char *letters = "pktscnPf";
+        const char *letters = "pktscnPfeS";
         for (const Token &t : SyntaxHighlighter::highlight(text, ext))
             for (size_t k = t.start; k < t.start + t.length && k < m.size(); ++k)
                 m[k] = letters[(int)t.style];
@@ -442,7 +459,7 @@ void testSyntaxLiterals() {
     CHECK(styles("f(`x ${ \"}\" } y`)", "js") == "f-ssskk-sss-ksss-");
     // Objects in a field; an escaped ${ is text.
     CHECK(styles("n = `\\${not} ${o({a: 1})}`", "js") ==
-          "----ssssssssskkf-----n--ks");
+          "----seesssssskkf-----n--ks");
     // Over lines, with fields on the later lines and code after the close.
     {
         std::string t = "s = `line1\n${x} line2\nend` + 1\nq";
@@ -518,9 +535,9 @@ void testSyntaxLiterals() {
         CHECK(hasToken(t, "rs", "'static", TokenStyle::Keyword));
         CHECK(hasToken(t, "rs", "'outer", TokenStyle::Keyword));
         CHECK(hasToken(t, "rs", "'x'", TokenStyle::String));
-        CHECK(hasToken(t, "rs", "'\\n'", TokenStyle::String));
-        CHECK(hasToken(t, "rs", "'\\u{1F600}'", TokenStyle::String));
-        CHECK(hasToken(t, "rs", "'\\''", TokenStyle::String));
+        CHECK(hasString(t, "rs", "'\\n'"));
+        CHECK(hasString(t, "rs", "'\\u{1F600}'"));
+        CHECK(hasString(t, "rs", "'\\''"));
         // No string runs on from a lifetime.
         CHECK(!hasToken(t, "rs", "'a>(x: &'", TokenStyle::String));
         CHECK(hasToken("let c = '\xC3\xA9';", "rs", "'\xC3\xA9'", TokenStyle::String));
@@ -532,7 +549,7 @@ void testSyntaxLiterals() {
     {
         // Rust's plain strings run over lines.
         std::string t = "let t = \"multi\nline \\\" still\nend\"; let u = 1_000u32;";
-        CHECK(hasToken(t, "rs", "\"multi\nline \\\" still\nend\"", TokenStyle::String));
+        CHECK(hasString(t, "rs", "\"multi\nline \\\" still\nend\""));
         CHECK(hasToken(t, "rs", "1_000u32", TokenStyle::Number));
         std::vector<LexState> st = endStates(t, "rs");
         CHECK(st[0].kind == LexState::RawString && st[2].kind == LexState::Normal);
@@ -552,8 +569,7 @@ void testSyntaxLiterals() {
     {
         // Java's text blocks: escapes, over lines.
         std::string t = "String s = \"\"\"\n    hello \"x\" \\\"\"\" still\n    \"\"\"; int y = 1;";
-        CHECK(hasToken(t, "java", "\"\"\"\n    hello \"x\" \\\"\"\" still\n    \"\"\"",
-                       TokenStyle::String));
+        CHECK(hasString(t, "java", "\"\"\"\n    hello \"x\" \\\"\"\" still\n    \"\"\""));
         CHECK(hasToken(t, "java", "1", TokenStyle::Number));
         CHECK(hasToken("let s = \"\"\"\na \"b\"\n\"\"\"\nlet x = 1", "swift", "1",
                        TokenStyle::Number));
@@ -758,11 +774,99 @@ bool mayHoldFString(const std::string &text, const std::string &ext) {
     }
     return false;
 }
+// The lexer's tokens as the frozen one would have given them, for the
+// comparison with it: escapes joined back into their strings, and every
+// name classified by the old rules alone (a keyword, a type, capitalized, or a function before a
+// '('), since what a name is now also depends on the word before it (def
+// foo, class foo, fn foo), and self and this have a style of their own
+// (2026-11-08). Everything else (strings, comments, numbers, preprocessor
+// lines) must be exactly the frozen lexer's.
+std::vector<Token> legacyView(const std::vector<Token> &toks, const std::string &text,
+                              const std::string &ext) {
+    std::vector<Token> kept;
+    bool afterEscape = false;
+    for (const Token &t : toks) {
+        const bool name = t.style == TokenStyle::Keyword || t.style == TokenStyle::Type ||
+                          t.style == TokenStyle::Function || t.style == TokenStyle::Self;
+        if (name) {
+            afterEscape = false;
+            continue;
+        }
+        const bool joins = !kept.empty() && kept.back().style == TokenStyle::String &&
+                           kept.back().start + kept.back().length == t.start;
+        if (t.style == TokenStyle::Escape) {
+            if (joins) kept.back().length += t.length;
+            else kept.push_back({t.start, t.length, TokenStyle::String});
+            afterEscape = true;
+            continue;
+        }
+        if (t.style == TokenStyle::String && afterEscape && joins) {
+            kept.back().length += t.length;
+            afterEscape = false;
+            continue;
+        }
+        afterEscape = false;
+        kept.push_back(t);
+    }
+    std::sort(kept.begin(), kept.end(),
+              [](const Token &a, const Token &b) { return a.start < b.start; });
+    // The names between the tokens kept, by the frozen lexer's rules.
+    legacy::LanguageDef def = legacy::makeDef(ext);
+    std::vector<Token> out;
+    size_t k = 0;
+    const size_t n = text.size();
+    for (size_t i = 0; i < n;) {
+        if (k < kept.size() && kept[k].start <= i) {
+            out.push_back(kept[k]);
+            i = std::max(i, kept[k].start + kept[k].length);
+            k++;
+            continue;
+        }
+        if (!legacy::isIdentStart(text[i]) || (i > 0 && legacy::isIdentChar(text[i - 1]))) {
+            i++;
+            continue;
+        }
+        size_t e = i;
+        while (e < n && legacy::isIdentChar(text[e])) e++;
+        const std::string word = text.substr(i, e - i);
+        TokenStyle st = TokenStyle::Plain;
+        if (def.keywords.count(word)) st = TokenStyle::Keyword;
+        else if (def.types.count(word)) st = TokenStyle::Type;
+        else if (std::isupper((unsigned char)word[0])) st = TokenStyle::Type;
+        else {
+            size_t j = e;
+            while (j < n && (text[j] == ' ' || text[j] == '\t')) j++;
+            if (j < n && text[j] == '(') st = TokenStyle::Function;
+        }
+        if (st != TokenStyle::Plain) out.push_back({i, e - i, st});
+        i = e;
+    }
+    return out;
+}
+
+// A full lex of the text, the reference the incremental highlighter is
+// held to. Where the frozen lexer applies, the lexer is held to it too
+// (through legacyView).
+// Python text with an @, which the frozen lexer read as a preprocessor line
+// to its end wherever a line started with it; a decorator's arguments are
+// code now (2026-11-08), strings that may run on to the next line too. Such
+// text is checked against a full lex.
+bool mayHoldDecorator(const std::string &text, const std::string &ext) {
+    return ext == "py" && text.find('@') != std::string::npos;
+}
+
 std::vector<Token> fullLex(const std::string &text, const std::string &ext) {
-    return newGrammar(ext) || mayHoldFString(text, ext) || mayHoldNewLiteral(text, ext) ||
-                   hasOtherBreak(text)
-               ? SyntaxHighlighter::highlight(text, ext)
-               : legacy::highlight(text, ext);
+    std::vector<Token> mine = SyntaxHighlighter::highlight(text, ext);
+    if (!newGrammar(ext) && !mayHoldFString(text, ext) && !mayHoldNewLiteral(text, ext) &&
+        !mayHoldDecorator(text, ext) && !hasOtherBreak(text) &&
+        legacyView(mine, text, ext) != legacy::highlight(text, ext)) {
+        static int told = 0;
+        if (told++ < 5)
+            std::printf("    the line lexer differs from the frozen one as %s on %s\n",
+                        ext.c_str(), text.substr(0, 60).c_str());
+        CHECK(!"the line lexer matches the frozen one");
+    }
+    return mine;
 }
 
 // The reference tokens for a document: the frozen whole-file lexer (or a full
@@ -1026,8 +1130,9 @@ void testIncrementalHighlight() {
     for (const Sample &s : samples)
         for (const char *e : exts)
             if (!mayHoldFString(s.text, e) && !mayHoldNewLiteral(s.text, e) &&
-                !hasOtherBreak(s.text) &&
-                SyntaxHighlighter::highlight(s.text, e) != legacy::highlight(s.text, e)) {
+                !mayHoldDecorator(s.text, e) && !hasOtherBreak(s.text) &&
+                legacyView(SyntaxHighlighter::highlight(s.text, e), s.text, e) !=
+                    legacy::highlight(s.text, e)) {
                 std::printf("    %s as %s differs from the old lexer\n", s.name.c_str(), e);
                 same = false;
             }
@@ -1042,8 +1147,9 @@ void testIncrementalHighlight() {
                 t += kFragments[rng() % (sizeof(kFragments) / sizeof(kFragments[0]))];
             for (const char *e : exts)
                 soup = soup && (mayHoldFString(t, e) || mayHoldNewLiteral(t, e) ||
-                                hasOtherBreak(t) ||
-                                SyntaxHighlighter::highlight(t, e) == legacy::highlight(t, e));
+                                mayHoldDecorator(t, e) || hasOtherBreak(t) ||
+                                legacyView(SyntaxHighlighter::highlight(t, e), t, e) ==
+                                    legacy::highlight(t, e));
         }
         CHECK(soup);
     }
@@ -3615,7 +3721,8 @@ std::string uncommentKeys(const std::string &text) {
         bool isKey = line.rfind("# ", 0) == 0 &&
                      (key.find('.') != std::string::npos || key == "theme");
         for (char ch : key)
-            if (!(ch == '.' || ch == '-' || (ch >= 'a' && ch <= 'z'))) isKey = false;
+            if (!(ch == '.' || ch == '-' || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')))
+                isKey = false;
         if (isKey) out += line.substr(2) + "\n";
         line.clear();
     }
@@ -3838,9 +3945,10 @@ void testSettings() {
     // terminal.multiline-paste-warning, the tree's six git colors and
     // editor.large-file-optimizations, editor.auto-close,
     // editor.semantic-highlighting with its five syntax colors, the three
-    // inlay hint keys, format.latex, and editor.git-gutter with its three
-    // colors.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 111);
+    // inlay hint keys, format.latex, editor.git-gutter with its three
+    // colors, editor.bracket-pair-colorization with its four colors, and
+    // syntax.escape and syntax.self.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 118);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -3878,11 +3986,13 @@ void testSettings() {
         CHECK(un.background(s) == d.background(s));
         CHECK(un.text(s) == d.text(s));
     }
-    for (int i = 1; i < 8; i++)
+    for (int i = 1; i < kTokenStyleCount; i++)
         CHECK(un.syntax((TokenStyle)i) == d.syntax((TokenStyle)i));
     for (int i = 0; i < kSemanticColorCount; i++)
         CHECK(un.semanticColor((SemanticColor)i) == d.semanticColor((SemanticColor)i));
     CHECK(un.semanticHighlighting() && d.semanticHighlighting());
+    for (int i = 0; i < 4; i++) CHECK(un.bracketColor(i) == d.bracketColor(i));
+    CHECK(un.bracketPairColorization() && d.bracketPairColorization());
     for (int i = 0; i < kMarkdownColorCount; i++)
         CHECK(un.markdown((MarkdownColor)i) == d.markdown((MarkdownColor)i));
     CHECK(un.material() == d.material() && un.blur() == d.blur());
@@ -10163,6 +10273,8 @@ static void testMultiCaretOccurrences() {
 #include "preview_scroll_tests.inc"
 #include "quick_diff_tests.inc"
 #include "zsh_integration_tests.inc"
+#include "lexer_styles_tests.inc"
+#include "bracket_pairs_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10218,6 +10330,8 @@ int main() {
     testGitGraph();
     testGitModel();
     testQuickDiff();
+    testLexerStyles();
+    testBracketPairs();
     testEditorTabs();
     testFormatter();
     testFormatConsent();
