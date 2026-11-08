@@ -94,13 +94,17 @@ Edit backspace(const Text& text, const std::vector<Caret>& carets);
 // Forward delete, the same way, never across the end of the line.
 Edit deleteForward(const Text& text, const std::vector<Caret>& carets);
 
-enum class Move { Left, Right, WordLeft, WordRight, LineStart, LineEnd };
+enum class Move { Left, Right, WordLeft, WordRight, LineStart, LineEnd, DocumentStart, DocumentEnd };
 
 // Every caret moved. Without extend a selection collapses: Left and Right
 // to its edge on that side, the others from its head. LineStart goes to the
 // first non-blank character, or to column 0 from there (as Home does in
 // most code editors). Moves never cross a line break, except Left at a
-// line's start and Right at its end.
+// line's start and Right at its end, and DocumentStart and DocumentEnd
+// (Cmd+Up and Cmd+Down, VS Code's cursorTop and cursorBottom), which take
+// every caret to the text's start or end: one caret is left, or with
+// extend one selection, from the farthest anchor to there, as VS Code's
+// merged selections end up.
 std::vector<Caret> move(const Text& text, const std::vector<Caret>& carets, Move m,
                         bool extend);
 

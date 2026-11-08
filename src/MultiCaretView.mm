@@ -729,10 +729,19 @@ static NSUInteger MCIndexAcross(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
         {@selector(moveToEndOfLine:), @selector(moveToEndOfLineAndModifySelection:), Move::LineEnd},
         {@selector(moveToRightEndOfLine:), @selector(moveToRightEndOfLineAndModifySelection:),
          Move::LineEnd},
+        // Cmd+Up and Cmd+Down (Cmd+Home and Cmd+End too): one caret, or
+        // one selection, as VS Code's cursorTop and cursorBottom leave.
+        {@selector(moveToBeginningOfDocument:),
+         @selector(moveToBeginningOfDocumentAndModifySelection:), Move::DocumentStart},
+        {@selector(moveToEndOfDocument:), @selector(moveToEndOfDocumentAndModifySelection:),
+         Move::DocumentEnd},
     };
     for (const auto &mv : moves) {
         if (sel == mv.a || sel == mv.b) {
             [self move:mv.m extend:sel == mv.b];
+            if (mv.m == Move::DocumentStart || mv.m == Move::DocumentEnd)
+                [_tv scrollRangeToVisible:NSMakeRange(mv.m == Move::DocumentStart
+                                                          ? 0 : _tv.string.length, 0)];
             return YES;
         }
     }

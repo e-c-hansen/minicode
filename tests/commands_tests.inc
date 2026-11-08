@@ -146,6 +146,26 @@ static void testCommandTable() {
     CHECK(d.commandFor(K("cmd+home"), When::Terminal) ==
           find("workbench.action.terminal.scrollToTop"));
     CHECK(d.commandFor(K("cmd+home"), When::Tree) == nullptr);
+    // VS Code's Mac keys in the editor: Cmd+Up/Down to the file's start and
+    // end, Shift selecting; Option moves lines, Shift+Option copies them.
+    // In the terminal Cmd+Up/Down stay between the commands.
+    CHECK(d.commandFor(K("cmd+up"), When::Editor) == find("cursorTop"));
+    CHECK(d.commandFor(K("cmd+down"), When::Editor) == find("cursorBottom"));
+    CHECK(d.commandFor(K("shift+cmd+up"), When::Editor) == find("cursorTopSelect"));
+    CHECK(d.commandFor(K("shift+cmd+down"), When::Editor) == find("cursorBottomSelect"));
+    CHECK(d.commandFor(K("alt+up"), When::Editor) == find("editor.action.moveLinesUpAction"));
+    CHECK(d.commandFor(K("alt+down"), When::Editor) == find("editor.action.moveLinesDownAction"));
+    CHECK(d.commandFor(K("alt+shift+up"), When::Editor) == find("editor.action.copyLinesUpAction"));
+    CHECK(d.commandFor(K("alt+shift+down"), When::Editor) ==
+          find("editor.action.copyLinesDownAction"));
+    CHECK(d.keysOf("editor.action.moveLinesUpAction").size() == 1);
+    CHECK(d.keysOf("editor.action.copyLinesDownAction").size() == 1);
+    CHECK(d.commandFor(K("cmd+up"), When::Terminal) ==
+          find("workbench.action.terminal.scrollToPreviousCommand"));
+    CHECK(d.commandFor(K("shift+cmd+down"), When::Terminal) ==
+          find("workbench.action.terminal.selectToNextCommand"));
+    for (const char* k : {"cmd+up", "cmd+down", "shift+cmd+up", "shift+cmd+down"})
+        CHECK(d.commandsFor(K(k)).size() == 2);
     CHECK(d.commandFor(K("cmd+k"), When::Terminal) == find("workbench.action.terminal.clear"));
     CHECK(d.commandFor(K("cmd+k"), When::Editor) == nullptr);
     CHECK(d.commandFor(K("shift+cmd+p"), When::Terminal) == find("workbench.action.showCommands"));
@@ -422,7 +442,7 @@ static void testKeymapFile() {
     CHECK(errs.size() == 10 && errs[8].message.find("Previous Command") != std::string::npos);
     CHECK(HasKey(m, "minicode.toggleBrowser", "f5"));
     CHECK(!HasKey(m, "minicode.toggleBrowser", "alt+down"));
-    CHECK(HasKey(m, "editor.action.moveLinesUpAction", "cmd+up"));
+    CHECK(HasKey(m, "cursorTop", "cmd+up"));
     CHECK(HasKey(m, "editor.action.moveLinesDownAction", "alt+down"));
     // A key the editor keeps for itself can still go to a terminal command.
     errs.clear();

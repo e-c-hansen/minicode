@@ -386,7 +386,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Comment or uncomment the selected lines | Command / | Ctrl / |  |
 | Complete the word at the cursor, with a language server | Control Space, or Option Escape | Ctrl Space | N, or Ctrl N |
 | Copy or cut the line the cursor is on when nothing is selected, and paste such a line above the cursor's line | Command C, Command X, then Command V |  |  |
-| Copy the line, or the selected lines, below or above | Shift Command Down, Shift Command Up (or Shift Option Down, Shift Option Up) |  |  |
+| Copy the line, or the selected lines, below or above | Shift Option Down, Shift Option Up |  |  |
 | Copy what the terminal's last command printed | Copy Last Command Output in the Terminal menu, or the command palette |  |  |
 | Delete the line, or every line the selection touches, at every cursor | Control Shift K |  |  |
 | Delete to the start of the line, at every cursor | Command Delete |  |  |
@@ -419,7 +419,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Go to the next or previous change in a side-by-side diff | F7, Shift F7 (F7 may need fn on a laptop) |  |  |
 | Go to the next or previous problem in the file, with its message at the cursor | F8, Shift F8 (F8 may need fn on a laptop) |  |  |
 | Go to the next or previous stop of an agent's tour (`minicode tour`) | Option ], Option [ |  |  |
-| Go to the start or end of the file, or select to it | Command Home, Command End, Shift Command Home, Shift Command End (fn Command Left, Right on a laptop) |  |  |
+| Go to the start or end of the file, or select to it (with several cursors, one is left) | Command Up, Command Down, Shift Command Up, Shift Command Down; or Command Home, Command End, Shift Command Home, Shift Command End (fn Command Left, Right on a laptop) |  |  |
 | Indent or outdent the selected lines, or the cursor's line | Tab, Shift Tab (the selected lines); Command ], Command [ | Tab, Shift Tab | Tab, Shift Tab |
 | Insert a line below the cursor's line, wherever the cursor is in it | Command Return (Insert Line Above is in the Edit menu) |  |  |
 | Jump to the previous file |  | Ctrl Tab |  |
@@ -429,7 +429,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | List the TODO comments and open Markdown tasks in the folder | Shift Command D | Ctrl Shift L | W, or Ctrl Shift L |
 | Make the selection, or the word at the cursor, bold or italic in Markdown, or plain again | Toggle Bold, Toggle Italic in the Edit menu (no key by default: Command B is the sidebar and Command I the inline agent, as in VS Code; keys.conf can give them one) |  |  |
 | Move a word left or right at the terminal's prompt | Option Left, Option Right |  |  |
-| Move the line, or the selected lines, down or up, at every cursor | Option Down, Option Up, or Command Down, Command Up |  |  |
+| Move the line, or the selected lines, down or up, at every cursor | Option Down, Option Up |  |  |
 | Move the selected file to the Trash | Command Delete or Command Forward Delete, in the file tree | Delete, in the file tree |  |
 | Move to the next or previous placeholder of a snippet completion, or leave the snippet | Tab, Shift Tab, or Escape |  |  |
 | Move to the next or previous terminal, across split panes and tabs | Option Command ], Option Command [ |  |  |

@@ -515,7 +515,8 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
 
 - (void)keyDown:(NSEvent *)event {
     // Cmd+Home / End (Fn+Cmd+Left / Right on a laptop) go to the start or
-    // end of the document, with Shift selecting: Cmd+Up / Down move lines.
+    // end of the document, with Shift selecting, as Cmd+Up / Down do
+    // (AppKit's own keys for those, VS Code's cursorTop and cursorBottom).
     const NSEventModifierFlags mods = event.modifierFlags &
         (NSEventModifierFlagCommand | NSEventModifierFlagShift | NSEventModifierFlagOption |
          NSEventModifierFlagControl);
@@ -554,26 +555,18 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
         if (selector == @selector(deleteBackward:) && [_folds openFoldEndingAt:at]) return;
         if (selector == @selector(deleteForward:) && [_folds openFoldStartingAt:at]) return;
     }
-    // Cmd+Shift+Up/Down (select to the top or end of the file in AppKit) and
-    // Shift+Option+Up/Down (select by paragraph) copy the lines instead, as
-    // in VS Code. Only from the arrow keys: Shift+Home and Shift+End send the
-    // same selectors and keep their meaning.
+    // Shift+Option+Up/Down (select by paragraph in AppKit) copy the lines
+    // instead, as in VS Code. Only from the arrow keys and only with Option:
+    // Shift+Cmd+Up/Down send AppKit's select to the start or end of the
+    // document, which they are in VS Code too (cursorTopSelect,
+    // cursorBottomSelect), and Option+Up/Down move the lines (keyDown:).
     NSEvent *ev = _keyEvent;
-    if (self.editable && ev &&
-        (ev.keyCode == 125 || ev.keyCode == 126) &&
-        (selector == @selector(moveToEndOfDocumentAndModifySelection:) ||
-         selector == @selector(moveToBeginningOfDocumentAndModifySelection:) ||
-         selector == @selector(moveParagraphForwardAndModifySelection:) ||
+    if (self.editable && ev && (ev.keyCode == 125 || ev.keyCode == 126) &&
+        (ev.modifierFlags & NSEventModifierFlagOption) &&
+        !(ev.modifierFlags & NSEventModifierFlagCommand) &&
+        (selector == @selector(moveParagraphForwardAndModifySelection:) ||
          selector == @selector(moveParagraphBackwardAndModifySelection:))) {
         [_multi duplicateLinesDown:ev.keyCode == 125];
-        return;
-    }
-    // Cmd+Down / Up move the lines, as the user expects; the system's move
-    // to the end or start of the document is Cmd+End / Home (keyDown:).
-    if (self.editable && ev && (ev.keyCode == 125 || ev.keyCode == 126) &&
-        (selector == @selector(moveToEndOfDocument:) ||
-         selector == @selector(moveToBeginningOfDocument:))) {
-        [_multi moveLinesDown:ev.keyCode == 125];
         return;
     }
     if ([_multi doCommand:selector]) return;

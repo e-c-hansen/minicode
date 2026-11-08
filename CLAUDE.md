@@ -970,13 +970,16 @@ container (PanelHost, laid out by hand in layoutContainer)
 - Cmd+D (word at an empty caret by `MultiCaret::wordAt`, then the next
   occurrence after the last added, wrapping, case-sensitive, whole-word only
   when begun at an empty caret), Shift+Cmd+L, Option+Cmd+Down/Up (a caret a
-  visual line away at `_goalX`). Shift+Cmd+Up/Down and Shift+Option+Up/Down
-  copy lines; Cmd+Up/Down and Option+Up/Down move lines (neighbouring carets as
-  one block; nothing moves at an edge); Cmd+Home/End go to the file's ends.
-  They are caught in CodeTextView by selector and arrow key code from the event
-  `keyDown:` recorded (`_keyEvent`; `NSApp.currentEvent` is unset for a direct
-  `keyDown:`), because Shift+Home and Shift+End send the same selectors;
-  Option+arrows by key code in `keyDown:`. Not menu items, which would take
+  visual line away at `_goalX`). VS Code's Mac keys (2026-11-08; until then
+  Cmd+Up/Down moved lines and Shift+Cmd+Up/Down copied them): Shift+Option+
+  Up/Down copy lines; Option+Up/Down move lines (neighbouring carets as one
+  block; nothing moves at an edge); Cmd+Up/Down and Cmd+Home/End go to the
+  file's ends, Shift selecting (AppKit's own selectors; with several carets
+  `Move::DocumentStart`/`DocumentEnd` leave one, or one selection from the
+  farthest anchor, as VS Code's merge does). Shift+Option+arrows are caught
+  in CodeTextView by selector and arrow key code from the event `keyDown:`
+  recorded (`_keyEvent`; `NSApp.currentEvent` is unset for a direct
+  `keyDown:`); Option+arrows by key code in `keyDown:`. Not menu items, which would take
   keys from the find field and commit box. Cmd+Delete deletes to the line's
   start (the tree takes it as Move to Trash in its own `keyDown:`; as a menu
   key it trashed the tree's selection from the editor).
@@ -2170,8 +2173,9 @@ for full-screen programs. Both can be open at once.
   or next command that ran (outlined, its prompt at the top), Shift to
   select whole lines from where the first press started; a red bar beside a
   failed command's prompt; Terminal > Copy Last Command Output. Fixed
-  `Terminal` rows in the registry, so the editor keeps Move Line and Copy
-  Line; the keys reach the grid's `keyDown:` (no menu item has them).
+  `Terminal` rows in the registry, so the editor keeps its own Cmd+Up/Down
+  (the file's start and end); the keys reach the grid's `keyDown:` (no menu
+  item has them).
 - **Mouse and focus**: modes 9, 1000, 1002, 1003, encodings 1005, 1006, 1015,
   and focus (1004) are tracked, answered by DECRQM and encoded by `encodeMouse`
   and `encodeFocus`. The view's `reportsMouse:` gate: the program asked, the

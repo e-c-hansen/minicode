@@ -225,6 +225,8 @@ std::vector<Caret> move(const Text& text, const std::vector<Caret>& carets, Move
             break;
         }
         case Move::LineEnd: p = lineEnd(text, p); break;
+        case Move::DocumentStart: p = 0; break;
+        case Move::DocumentEnd: p = text.size(); break;
         }
         out.push_back(extend ? Caret{c.anchor, p} : Caret{p, p});
     }

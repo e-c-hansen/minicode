@@ -689,22 +689,25 @@ const std::vector<Command>& all() {
          "previousTourStop:", 0, Global, nullptr},
 
         // ---- keys the views handle themselves (not remappable yet)
-        {"editor.action.moveLinesDownAction", "Move Line Down", "Editor", "alt+down cmd+down", E,
-         nullptr, 0, Fixed, "the editor's text view"},
-        {"editor.action.moveLinesUpAction", "Move Line Up", "Editor", "alt+up cmd+up", E, nullptr,
+        // VS Code's Mac keys: Option+Up/Down move lines, Shift+Option+Up/Down
+        // copy them, Cmd+Up/Down go to the file's start and end (Cmd+Home
+        // and Cmd+End as well), with Shift selecting.
+        {"editor.action.moveLinesDownAction", "Move Line Down", "Editor", "alt+down", E, nullptr,
          0, Fixed, "the editor's text view"},
-        {"editor.action.copyLinesDownAction", "Copy Line Down", "Editor",
-         "shift+cmd+down alt+shift+down", E, nullptr, 0, Fixed, "the editor's text view"},
-        {"editor.action.copyLinesUpAction", "Copy Line Up", "Editor", "shift+cmd+up alt+shift+up",
-         E, nullptr, 0, Fixed, "the editor's text view"},
-        {"cursorTop", "Go to the Start of the File", "Editor", "cmd+home", E, nullptr, 0, Fixed,
-         "the editor's text view"},
-        {"cursorTopSelect", "Select to the Start of the File", "Editor", "shift+cmd+home", E,
+        {"editor.action.moveLinesUpAction", "Move Line Up", "Editor", "alt+up", E, nullptr, 0,
+         Fixed, "the editor's text view"},
+        {"editor.action.copyLinesDownAction", "Copy Line Down", "Editor", "alt+shift+down", E,
          nullptr, 0, Fixed, "the editor's text view"},
-        {"cursorBottom", "Go to the End of the File", "Editor", "cmd+end", E, nullptr, 0, Fixed,
-         "the editor's text view"},
-        {"cursorBottomSelect", "Select to the End of the File", "Editor", "shift+cmd+end", E,
-         nullptr, 0, Fixed, "the editor's text view"},
+        {"editor.action.copyLinesUpAction", "Copy Line Up", "Editor", "alt+shift+up", E, nullptr,
+         0, Fixed, "the editor's text view"},
+        {"cursorTop", "Go to the Start of the File", "Editor", "cmd+up cmd+home", E, nullptr, 0,
+         Fixed, "the editor's text view"},
+        {"cursorTopSelect", "Select to the Start of the File", "Editor",
+         "shift+cmd+up shift+cmd+home", E, nullptr, 0, Fixed, "the editor's text view"},
+        {"cursorBottom", "Go to the End of the File", "Editor", "cmd+down cmd+end", E, nullptr, 0,
+         Fixed, "the editor's text view"},
+        {"cursorBottomSelect", "Select to the End of the File", "Editor",
+         "shift+cmd+down shift+cmd+end", E, nullptr, 0, Fixed, "the editor's text view"},
         {"deleteAllLeft", "Delete to the Start of the Line", "Editor", "cmd+backspace", E, nullptr,
          0, Fixed, "the editor's text view"},
         {"workbench.action.terminal.scrollUpPage", "Scroll Up a Page", "Terminal",
@@ -716,7 +719,7 @@ const std::vector<Command>& all() {
         {"workbench.action.terminal.scrollToBottom", "Scroll to the Bottom", "Terminal",
          "cmd+end", T, nullptr, 0, Fixed, "the terminal"},
         // VS Code's keys, between the commands the shell integration marked;
-        // in the editor they stay Move Line and Copy Line.
+        // in the editor they go to the file's start and end (cursorTop).
         {"workbench.action.terminal.scrollToPreviousCommand", "Scroll to the Previous Command",
          "Terminal", "cmd+up", T, nullptr, 0, Fixed, "the terminal"},
         {"workbench.action.terminal.scrollToNextCommand", "Scroll to the Next Command",

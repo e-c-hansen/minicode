@@ -9664,6 +9664,17 @@ static void testMultiCaret() {
         CHECK(heads(move(t, s, Move::Right, false)) == (std::vector<size_t>{11, 21}));
         // Carets that meet merge.
         CHECK(move(u"ab", carets({0, 1}), Move::Left, false).size() == 1);
+        // Cmd+Up and Cmd+Down: one caret at the text's start or end; with
+        // Shift one selection from the farthest anchor, as VS Code's merge.
+        std::vector<Caret> top = move(t, c, Move::DocumentStart, false);
+        CHECK(top.size() == 1 && top[0] == (Caret{0, 0}));
+        std::vector<Caret> bottom = move(t, c, Move::DocumentEnd, false);
+        CHECK(bottom.size() == 1 && bottom[0] == (Caret{t.size(), t.size()}));
+        std::vector<Caret> up = move(t, {{8, 8}, {16, 18}}, Move::DocumentStart, true);
+        CHECK(up.size() == 1 && up[0] == (Caret{16, 0}));
+        std::vector<Caret> down = move(t, {{9, 8}, {16, 16}}, Move::DocumentEnd, true);
+        CHECK(down.size() == 1 && down[0] == (Caret{9, t.size()}));
+        CHECK(move(t, carets({0}), Move::DocumentStart, true)[0] == (Caret{0, 0}));
     }
 
     GROUP("multicaret:surround");
