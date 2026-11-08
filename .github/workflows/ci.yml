@@ -23,6 +23,17 @@ jobs:
       - name: Check the deployment target
         run: scripts/check-minos.sh
 
+      # The LaTeX preview's click-to-source (tests/latex/sweep.sh): every
+      # word of the committed typeset of tests/latex/torture.tex
+      # double-clicked through the preview's own click path, failing on a
+      # wrong answer or a hit rate below tests/latex/sweep_bound.txt. The
+      # PDF and SyncTeX are committed, so no tectonic is needed. It links
+      # the objects `make app` built, so it takes seconds; the limit only
+      # stops a hang.
+      - name: Sweep the LaTeX preview's click-to-source
+        timeout-minutes: 10
+        run: make latex-sweep
+
       # The app driven offscreen (tests/gui/Harness.h): no window ever
       # reaches the screen, and the run has its own home, settings and
       # temporary folder. The language server checks talk to a scripted

@@ -16,6 +16,30 @@ namespace LatexScratch {
 // "untitled" when there is no hash to go by.
 std::string folderName(const std::string& pathSha256Hex);
 
+// Who a preview is: its process (with the time it started, against pid
+// reuse) and a number counted up for each preview that process makes. Two
+// previews of one file, in two windows with different unsaved text, each
+// typeset from a sibling and into a folder of their own, so one's typeset
+// never removes the other's copy or shows the other's PDF.
+struct Owner {
+    long long pid = 0;
+    long long start = 0;          // whole seconds
+    unsigned long long view = 0;  // 1, 2, ... within the process
+};
+// "<16 hex>-<pid>-<start>-<view>": the document's folder for one preview.
+std::string folderName(const std::string& pathSha256Hex, const Owner& owner);
+// The owner a folder's name gives, false for any other name (a folder of
+// an older minicode, named by the hash alone, has none).
+bool parseFolderName(const std::string& name, Owner* out);
+// The hidden sibling's file name for a document named `stem` (without
+// ".tex"): ".<stem>.<pid>-<view>.minicode.tex", or ".<stem>.minicode.tex"
+// when there is no owner (view 0).
+std::string siblingName(const std::string& stem, const Owner& owner);
+// Whether the process a folder names has gone: `startNow` is when the
+// process with that pid started (0 when there is none), so a pid reused
+// by a later process counts as gone too.
+bool ownerGone(const Owner& owner, double startNow);
+
 // What was written where, and by whom, just before tectonic ran.
 struct Record {
     std::string sibling;        // the hidden copy's full path

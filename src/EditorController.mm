@@ -92,6 +92,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     [_agent close];
     // Asked already (windowShouldClose:): what is still unsaved was let go.
     for (MCTab *t in _tabs) [self discardBackupOf:t];
+    for (MCTab *t in _tabs) [t.latex stopPreview];   // no typeset or output folder outlives it
     _closing = YES;
     // The shells go with the window (hung up and reaped), and the dock with
     // them, so nothing of the window outlives it.

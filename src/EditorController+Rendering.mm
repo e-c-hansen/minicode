@@ -2,6 +2,7 @@
 #import "EditorController+Private.h"
 #import "EditorFont.h"
 #import "PageZoom.h"
+#include "LatexLog.h"
 
 @implementation EditorController (Rendering)
 
@@ -748,11 +749,48 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     NSString *text = self.textView.string;
     const NSInteger line = [self lineOfCharacter:self.textView.selectedRange.location
                                         inString:text] + 1;
+    // A part of a larger document (\input, \include) shows the line in its
+    // main document's preview, in that document's tab.
+    NSString *part = self.currentPath;
+    NSString *main = self.previewMode ? nil : [self latexMainDocumentOf:part text:text];
+    if (main) {
+        if (![self showFile:main]) { NSBeep(); return; }
+    }
     if (!self.previewMode) [self togglePreview:nil];
     else [self revealEditor];
     if (!self.latex) return;
     [self.window makeFirstResponder:self.latex];
-    [self.latex revealSourceLine:line];
+    if (main) [self.latex revealSourceLine:line inFile:part];
+    else [self.latex revealSourceLine:line];
+}
+
+// The document a .tex file is part of, for forward search: the one a
+// "% !TEX root = main.tex" comment names (LaTeX Workshop's convention),
+// else, for a file that is no document of its own, the open preview whose
+// last typeset read it. nil when the file is its own document.
+- (NSString *)latexMainDocumentOf:(NSString *)path text:(NSString *)text {
+    if (!path.length) return nil;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    const std::string written = LatexLog::rootComment(text.UTF8String ?: "");
+    if (!written.empty()) {
+        NSString *root = @(LatexLog::resolveRoot(path.UTF8String, written).c_str());
+        BOOL dir = NO;
+        if (![fm fileExistsAtPath:root isDirectory:&dir] || dir) {
+            NSString *withTex = [root stringByAppendingPathExtension:@"tex"];
+            if ([fm fileExistsAtPath:withTex isDirectory:&dir] && !dir) root = withTex;
+        }
+        char a[PATH_MAX], b[PATH_MAX];
+        const BOOL same = realpath(root.fileSystemRepresentation, a) &&
+                          realpath(path.fileSystemRepresentation, b) && strcmp(a, b) == 0;
+        if (!same && [fm fileExistsAtPath:root isDirectory:&dir] && !dir) return root;
+    }
+    if ([text rangeOfString:@"\\documentclass"].location != NSNotFound ||
+        [text rangeOfString:@"\\begin{document}"].location != NSNotFound)
+        return nil;
+    for (MCTab *t in _tabs)
+        if (t != _activeTab && t.latex && t.currentPath && [t.latex typesetReadFile:path])
+            return t.currentPath;
+    return nil;
 }
 
 // Shift+Cmd+S: save the typeset PDF somewhere of the user's choosing. The

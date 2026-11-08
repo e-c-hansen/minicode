@@ -37,6 +37,33 @@ double valueAfter(const std::string &line, const char *key) {
     return std::atof(line.c_str() + std::string(key).size());
 }
 
+// `path` against `base` when relative, with "." and ".." steps taken and
+// doubled slashes dropped.
+std::string absolutePath(const std::string &path, const std::string &base) {
+    const std::string whole = (!path.empty() && path[0] == '/') ? path : base + "/" + path;
+    std::vector<std::string> parts;
+    std::size_t at = 0;
+    while (at <= whole.size()) {
+        std::size_t slash = whole.find('/', at);
+        if (slash == std::string::npos) slash = whole.size();
+        const std::string part = whole.substr(at, slash - at);
+        if (part == "..") {
+            if (!parts.empty()) parts.pop_back();
+        } else if (!part.empty() && part != ".") {
+            parts.push_back(part);
+        }
+        at = slash + 1;
+    }
+    std::string out;
+    for (const std::string &p : parts) out += "/" + p;
+    return out.empty() ? "/" : out;
+}
+
+std::string fileName(const std::string &path) {
+    const std::size_t slash = path.find_last_of('/');
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
 }  // namespace
 
 SyncTexIndex SyncTexIndex::parse(const std::string &text) {
@@ -141,6 +168,27 @@ int SyncTexIndex::tagForPath(const std::string &path) const {
         if (!name.empty() && other == name) return kv.first;
     }
     return 0;
+}
+
+int SyncTexIndex::tagForFile(const std::string &path, const std::string &baseDir,
+                             const std::function<std::string(const std::string &)> &canonical)
+    const {
+    if (path.empty()) return 0;
+    auto same = [&](std::string p) {
+        p = absolutePath(p, baseDir);
+        return canonical ? canonical(p) : p;
+    };
+    const std::string want = same(path);
+    const std::string name = fileName(path);
+    int byName = 0, named = 0;
+    for (const auto &kv : inputs_) {
+        if (same(kv.second) == want) return kv.first;
+        if (!name.empty() && fileName(kv.second) == name) {
+            byName = kv.first;
+            named++;
+        }
+    }
+    return named == 1 ? byName : 0;
 }
 
 std::vector<SyncTexHit> SyncTexIndex::hitsAtPoint(int page, double x, double y,

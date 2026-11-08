@@ -1,9 +1,10 @@
-// latex_tests.inc — the `synctex:forward` and `latexlog:*` groups of
-// run_tests.cpp: where a source line went on the typeset pages
+// latex_tests.inc — the `synctex:*`, `latex:root-comment` and `latexlog:*`
+// groups of run_tests.cpp: where a source line went on the typeset pages
 // (SyncTexIndex::boxesForLine, over tests/latex/forward.synctex, which
-// tectonic 0.17.0 wrote for tests/latex/forward.tex), and the problems in
-// tectonic's output (LatexLog.h, over the real logs in tests/latex/logs).
-// Included there.
+// tectonic 0.17.0 wrote for tests/latex/forward.tex), an \input file's
+// SyncTeX tag, the "% !TEX root" comment, and the problems and warnings in
+// tectonic's output and TeX's transcript (LatexLog.h, over the real logs in
+// tests/latex/logs). Included there.
 
 namespace {
 
@@ -83,6 +84,44 @@ static void testLatexForwardAndLog() {
         }
     }
     CHECK(SyncTexIndex::parse("").boxesForLine(0, 1).empty());
+
+    GROUP("synctex:child-tag");
+    {
+        // tectonic names every input by its absolute path; other engines
+        // write them as TeX opened them, relative to where it ran. Inputs
+        // 2 to 4 are a class and its options (no path), as tectonic leaves
+        // them.
+        SyncTexIndex idx = SyncTexIndex::parse(
+            "SyncTeX Version:1\n"
+            "Input:1:/private/tmp/doc/.main.4242-1.minicode.tex\n"
+            "Input:2:\nInput:3:\nInput:4:\n"
+            "Input:5:/private/tmp/doc/parts/intro.tex\n"
+            "Input:6:./parts/../chapters/two.tex\n"
+            "Input:7:/private/tmp/doc/other/intro.tex\n"
+            "Input:8:/private/tmp/doc/appendix.tex\n"
+            "Unit:1\nContent:\n{1\n(5,3:0,0:100,10,2\n)\n}1\n");
+        CHECK(idx.tagForFile("/private/tmp/doc/parts/intro.tex", "/private/tmp/doc") == 5);
+        CHECK(idx.tagForFile("/private/tmp/doc/other/intro.tex", "/private/tmp/doc") == 7);
+        CHECK(idx.tagForFile("/private/tmp/doc/chapters/two.tex", "/private/tmp/doc") == 6);
+        CHECK(idx.tagForFile("/private/tmp/doc/./parts//intro.tex", "/private/tmp/doc") == 5);
+        // The same file under another spelling, through `canonical`.
+        auto real = [](const std::string &p) {
+            return p.compare(0, 5, "/tmp/") == 0 ? "/private" + p : p;
+        };
+        CHECK(idx.tagForFile("/tmp/doc/parts/intro.tex", "/tmp/doc") == 0);   // two intro.tex
+        CHECK(idx.tagForFile("/tmp/doc/parts/intro.tex", "/tmp/doc", real) == 5);
+        CHECK(idx.tagForFile("/tmp/doc/chapters/two.tex", "/tmp/doc", real) == 6);
+        // A file name one input has stands in for a path that differs (a
+        // copy elsewhere); one two inputs have does not.
+        CHECK(idx.tagForFile("/elsewhere/appendix.tex", "/private/tmp/doc") == 8);
+        CHECK(idx.tagForFile("/elsewhere/intro.tex", "/private/tmp/doc") == 0);
+        // Not an input at all.
+        CHECK(idx.tagForFile("/private/tmp/doc/notes.tex", "/private/tmp/doc") == 0);
+        CHECK(idx.tagForFile("", "/private/tmp/doc") == 0);
+        // The child's lines on the page, through its own tag.
+        CHECK(idx.boxesForLine(5, 3).size() == 1);
+        CHECK(idx.boxesForLine(1, 3).empty());
+    }
     {
         // Only a vertical box carries the line: the smallest one stands.
         SyncTexIndex v = SyncTexIndex::parse(
@@ -183,6 +222,27 @@ static void testLatexForwardAndLog() {
         CHECK(ps.size() == 1);
     }
 
+    GROUP("latex:root-comment");
+    {
+        using LatexLog::rootComment;
+        using LatexLog::resolveRoot;
+        CHECK(rootComment("% !TEX root = main.tex\nText.\n") == "main.tex");
+        CHECK(rootComment("%!TeX root=../main.tex\n") == "../main.tex");
+        CHECK(rootComment("Text first.\n  % !tex root = paper.tex  \r\n") == "paper.tex");
+        CHECK(rootComment("% ! TEX root = my thesis.tex\n") == "my thesis.tex");
+        CHECK(rootComment("% !TEX program = xelatex\n% !TEX root = a.tex\n") == "a.tex");
+        CHECK(rootComment("").empty());
+        CHECK(rootComment("% TEX root = main.tex\n").empty());     // no bang
+        CHECK(rootComment("x % !TEX root = main.tex\n").empty());  // not a comment line
+        CHECK(rootComment("% !TEX root =\n").empty());
+        CHECK(rootComment("% !TEXroot = main.tex\n").empty());
+        CHECK(resolveRoot("/w/doc/parts/intro.tex", "../main.tex") == "/w/doc/main.tex");
+        CHECK(resolveRoot("/w/doc/intro.tex", "main.tex") == "/w/doc/main.tex");
+        CHECK(resolveRoot("/w/doc/intro.tex", "./sub/../main.tex") == "/w/doc/main.tex");
+        CHECK(resolveRoot("/w/doc/intro.tex", "/abs/main.tex") == "/abs/main.tex");
+        CHECK(resolveRoot("/w/doc/intro.tex", "").empty());
+    }
+
     GROUP("latexlog:source");
     {
         using LatexLog::sourcePath;
@@ -204,5 +264,106 @@ static void testLatexForwardAndLog() {
         CHECK(sourcePath("missing", tex, sib, exists).empty());
         // A sibling's name in another folder is that folder's file.
         CHECK(sourcePath("/other/.paper.minicode.tex", tex, sib, exists).empty());
+    }
+
+    // tests/latex/logs/warnings.txt and warnings.log: what tectonic 0.17.0
+    // printed and kept (--keep-logs) for a document that typesets with
+    // warnings: an undefined reference and citation on line 4, a label
+    // defined twice, a reference long enough that TeX wrapped its line, an
+    // \input{parts/chapter} with an undefined reference on its line 1 and
+    // an overfull box on its line 3, overfull boxes on line 11 and in the
+    // paragraph of lines 13 to 17, a package warning over two lines on line
+    // 16, an underfull box on line 18 and a font substitution on line 19.
+    GROUP("latexlog:warnings");
+    {
+        const std::string out = ReadFixture("tests/latex/logs/warnings.txt");
+        const std::string log = ReadFixture("tests/latex/logs/warnings.log");
+        if (out.empty() || log.empty()) {
+            std::printf("    (skipped: run from the repository root for tests/latex/logs)\n");
+        } else {
+            using LatexLog::Severity;
+            auto show = [](const std::vector<LatexLog::Problem> &ps) {
+                for (const LatexLog::Problem &p : ps)
+                    std::printf("    %d [%s] %d [%s]\n", (int)p.severity, p.file.c_str(), p.line,
+                                p.message.c_str());
+            };
+            // tectonic's own lines: the overfull boxes, each once (it prints
+            // each pass's), the paragraph's at its first line; the underfull
+            // box and "warnings were issued" left out.
+            std::vector<LatexLog::Problem> ps = LatexLog::parse(out);
+            CHECK(ps.size() == 3);
+            if (ps.size() == 3) {
+                CHECK(ps[0].severity == Severity::Warning && ps[0].file == "parts/chapter" &&
+                      ps[0].line == 3 &&
+                      ps[0].message == "Overfull \\hbox (86.74pt too wide) detected at line 3");
+                CHECK(ps[1].file == ".warnings.minicode.tex" && ps[1].line == 11);
+                CHECK(ps[2].file == ".warnings.minicode.tex" && ps[2].line == 13 &&
+                      ps[2].message.find("in paragraph at lines 13--17") != std::string::npos);
+            } else {
+                show(ps);
+            }
+            // The transcript's.
+            ps = LatexLog::parseTranscriptWarnings(log);
+            CHECK(ps.size() == 6);
+            if (ps.size() == 6) {
+                for (const LatexLog::Problem &p : ps) CHECK(p.severity == Severity::Warning);
+                CHECK(ps[0].file.empty() && ps[0].line == 0 &&
+                      ps[0].message == "LaTeX Warning: Label `sec:intro' multiply defined");
+                CHECK(ps[1].file == ".warnings.minicode.tex" && ps[1].line == 4 &&
+                      ps[1].message == "LaTeX Warning: Reference `sec:missing' on page 1 undefined");
+                CHECK(ps[2].file == ".warnings.minicode.tex" && ps[2].line == 4 &&
+                      ps[2].message == "LaTeX Warning: Citation `nobody' on page 1 undefined");
+                CHECK(ps[3].line == 7 &&
+                      ps[3].message == "LaTeX Warning: Reference `a-label-long-enough-to-make-"
+                                       "latex-wrap-the-warning-line-in-the-log' on page 1 undefined");
+                CHECK(ps[4].file == "parts/chapter" && ps[4].line == 1 &&
+                      ps[4].message == "LaTeX Warning: Reference `nowhere' on page 1 undefined");
+                CHECK(ps[5].file == ".warnings.minicode.tex" && ps[5].line == 16 &&
+                      ps[5].message == "Package mypkg Warning: Something odd here, over two lines");
+            } else {
+                show(ps);
+            }
+            // Both, for the preview: nine warnings, no errors.
+            ps = LatexLog::collect(out, log);
+            CHECK(ps.size() == 9);
+            // A failed run's errors come first, its warnings after.
+            ps = LatexLog::collect(
+                "warning: a.tex:2: Overfull \\hbox (3pt too wide) detected at line 2\n"
+                "error: a.tex:5: Undefined control sequence\n",
+                "(a.tex\n\nLaTeX Warning: Reference `x' on page 1 undefined on input line 3.\n\n)\n");
+            CHECK(ps.size() == 3);
+            CHECK(ps.size() == 3 && ps[0].severity == Severity::Error && ps[0].line == 5 &&
+                  ps[1].line == 2 && ps[2].line == 3 && ps[2].file == "a.tex");
+        }
+        // Parentheses in a box's own text and an error's quoted line do not
+        // move the file; one in a warning's text does not either.
+        std::vector<LatexLog::Problem> ps = LatexLog::parseTranscriptWarnings(
+            "(main.tex (child.tex\n"
+            "Overfull \\hbox (1pt too wide) in paragraph at lines 1--2\n"
+            "[]\\TU/lmr/m/n/10 text (with an open paren\n"
+            "\n"
+            "! Undefined control sequence.\n"
+            "l.3 \\foo (still open\n"
+            "                   more)\n"
+            "\n"
+            "Package hyperref Warning: Token not allowed (here) on input line 4.\n"
+            "\n"
+            "Class beamer Warning: A note without a line.\n"
+            "\n"
+            ")\n"
+            "LaTeX Warning: Citation `k' on page 2 undefined on input line 9.\n"
+            "\n"
+            "LaTeX Warning: There were undefined references.\n"
+            "LaTeX Font Warning: Font shape `x' undefined\n"
+            "(Font)              using `y' instead on input line 12.\n"
+            "\n");
+        CHECK(ps.size() == 2);
+        CHECK(ps.size() > 0 && ps[0].file == "child.tex" && ps[0].line == 4 &&
+              ps[0].message == "Package hyperref Warning: Token not allowed (here)");
+        CHECK(ps.size() > 1 && ps[1].file == "main.tex" && ps[1].line == 9);
+        CHECK(LatexLog::parseTranscriptWarnings("").empty());
+        // A log with a warning but no line to place it: left out.
+        CHECK(LatexLog::parseTranscriptWarnings(
+                  "LaTeX Warning: Rerun to get cross-references right.\n\n").empty());
     }
 }
