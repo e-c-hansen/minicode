@@ -22,8 +22,12 @@ double timeoutFor(const std::vector<std::string>& args) {
     if (cmd == "pull") return 300;
     if (cmd == "fetch") return 120;
     // switch writes the work tree: smudge filters (Git LFS) and a
-    // post-checkout hook run, as on add and restore.
-    if (cmd == "add" || cmd == "restore" || cmd == "rm" || cmd == "switch") return 120;
+    // post-checkout hook run, as on add and restore; stash push and pop
+    // write it too, and the change bars' Stage Change runs the clean
+    // filters (hash-object) and waits on index.lock (update-index).
+    if (cmd == "add" || cmd == "restore" || cmd == "rm" || cmd == "switch" ||
+        cmd == "stash" || cmd == "hash-object" || cmd == "update-index")
+        return 120;
     return 30;
 }
 

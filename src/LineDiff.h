@@ -34,9 +34,12 @@ struct Hunk {
 // A piece that cannot be split, or is reached after `budgetSeconds`, is
 // one hunk; when the texts differ in more than `maxEdits` lines (a line
 // replaced is two: 40,000 is 20,000 lines reformatted), the whole
-// middle is one hunk (still correct, just coarser).
+// middle is one hunk (still correct, just coarser). With `joinBlankGaps`
+// false the hunks are left as found, blank lines between them unchanged
+// (the gutter's change bars, QuickDiff.h, mark only changed lines).
 std::vector<Hunk> diff(const std::u16string& a, const std::u16string& b,
-                       size_t maxEdits = 40000, double budgetSeconds = 0.25);
+                       size_t maxEdits = 40000, double budgetSeconds = 0.25,
+                       bool joinBlankGaps = true);
 
 // Apply hunks to `a` (tests; the editor applies them one by one).
 std::u16string apply(const std::u16string& a, const std::u16string& b,

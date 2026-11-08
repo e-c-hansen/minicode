@@ -811,4 +811,230 @@ static void testGitModel() {
         CHECK(buildPatch(crlf, HunkOp::Stage, 3, 6, nullptr) ==
               "diff --git a/w b/w\n--- a/w\n+++ b/w\n@@ -1,2 +1,2 @@\n a\r\n-b\r\n+c\r\n");
     }
+
+    GROUP("git-ui:submodule-refused");
+    {
+        // A submodule with a change inside it, and one at another commit:
+        // Discard is refused (it trashed the checkout and left an empty
+        // folder), Stage still works (a gitlink stages as a commit).
+        Snapshot sm;
+        sm.inRepository = true;
+        applyStatus(sm, Git::parseStatus(nul({
+            "# branch.oid " + h40, "# branch.head main",
+            "1 .M S.M. 160000 160000 160000 " + h40 + " " + h40 + " lib",
+            "1 .M SC.. 160000 160000 160000 " + h40 + " " + h40 + " vendor/other",
+            "1 .M N..." + modes + h40 + " " + h40 + " plain.txt"})));
+        CHECK(sm.rows.size() == 4 && sm.rows[1].path == "lib" && sm.rows[1].submodule &&
+              sm.rows[2].submodule && !sm.rows[3].submodule);
+        DiscardPlan d = discardPlan(sm.rows[1]);
+        CHECK(d.args.empty() && !d.trashFirst);
+        CHECK(d.refusal == "lib is a submodule: discard inside it (open it as a folder) or run "
+                           "git submodule update.");
+        CHECK(!discardPlan(sm.rows[2]).refusal.empty() && discardPlan(sm.rows[3]).refusal.empty());
+        CHECK(stageArgs(sm.rows[1], false) ==
+              std::vector<std::string>({"--literal-pathspecs", "add", "-A", "--", "lib"}));
+        // Its diff is a commit a side: no hunk or line patches.
+        const std::string gitlink =
+            "diff --git a/lib b/lib\nindex 1111111..2222222 160000\n--- a/lib\n+++ b/lib\n"
+            "@@ -1 +1 @@\n-Subproject commit 1111111111111111111111111111111111111111\n"
+            "+Subproject commit 2222222222222222222222222222222222222222-dirty\n";
+        std::string why;
+        CHECK(buildPatch(gitlink, HunkOp::Stage, 4, 6, &why).empty());
+        CHECK(why == "lib is a submodule: stage or unstage it whole, and discard inside it "
+                     "(open it as a folder).");
+        HunkPlan hp = hunkPlan(gitlink, DiffSide::Changes, HunkOp::Discard, 5, 5, false);
+        CHECK(hp.patch.empty() && hp.refusal == why && hp.question.empty());
+        // Without the index line (a staged gitlink from --cached), the
+        // "Subproject commit" lines alone are enough.
+        const std::string bare =
+            "diff --git a/lib b/lib\n--- a/lib\n+++ b/lib\n@@ -1 +1 @@\n"
+            "-Subproject commit 1111111111111111111111111111111111111111\n"
+            "+Subproject commit 2222222222222222222222222222222222222222\n";
+        CHECK(hunkPlan(bare, DiffSide::Staged, HunkOp::Unstage, 3, 3, false).refusal == why);
+        // A file whose lines read "Subproject commit" without an object
+        // name after it is still a text file.
+        const std::string words = "diff --git a/n.txt b/n.txt\n--- a/n.txt\n+++ b/n.txt\n"
+                                  "@@ -1 +1 @@\n-Subproject commits\n+Subproject commit x\n";
+        CHECK(!hunkPlan(words, DiffSide::Changes, HunkOp::Stage, 3, 3, false).patch.empty());
+    }
+
+    GROUP("git-ui:multi-discard");
+    {
+        Snapshot d;
+        d.inRepository = true;
+        applyStatus(d, Git::parseStatus(nul({
+            "# branch.oid " + h40, "# branch.head main",
+            "1 .M N..." + modes + h40 + " " + h40 + " a.txt",
+            "1 .D N..." + modes + h40 + " " + h40 + " b.txt",
+            "1 M. N..." + modes + h40 + " " + h40 + " s.txt",
+            "2 R. N..." + modes + h40 + " " + h40 + " R100 new.txt", "old.txt",
+            "1 .M S.M. 160000 160000 160000 " + h40 + " " + h40 + " lib",
+            "? u.txt"})));
+        auto row = [&](const std::string& path, bool staged) {
+            for (const Row& x : d.rows)
+                if (!x.header && x.path == path && x.staged == staged) return x;
+            return Row();
+        };
+        const Row a = row("a.txt", false), b = row("b.txt", false), u = row("u.txt", false);
+        const Row st = row("s.txt", true), rn = row("new.txt", true), lib = row("lib", false);
+        // Three rows: one question naming the count, one plan a row.
+        DiscardBatch three = discardBatchPlan({a, b, u});
+        CHECK(three.refusal.empty() && three.plans.size() == 3);
+        CHECK(three.paths == std::vector<std::string>({"a.txt", "b.txt", "u.txt"}));
+        CHECK(three.question == "Discard the changes to 3 files?" &&
+              three.button == "Discard 3 Files");
+        CHECK(three.detail.find("1 file git does not track goes to the Trash") != std::string::npos);
+        CHECK(three.plans[0].trashFirst && three.plans[2].trashFirst && three.plans[2].args.empty());
+        CHECK(three.doneText.find("3 files") != std::string::npos);
+        // One row is the single discard, word for word.
+        DiscardBatch one = discardBatchPlan({a});
+        CHECK(one.question == "Discard the changes to a.txt?" && one.plans.size() == 1);
+        // Any refusal refuses all, naming the file.
+        DiscardBatch bad = discardBatchPlan({a, lib, b});
+        CHECK(bad.plans.empty() && bad.paths.empty() && bad.question.empty());
+        CHECK(bad.refusal == "Nothing was discarded: lib is a submodule: discard inside it "
+                             "(open it as a folder) or run git submodule update.");
+        CHECK(discardBatchPlan({a, st}).refusal.find("s.txt is staged") != std::string::npos);
+        CHECK(discardBatchPlan({}).refusal == "Choose a file to discard.");
+        // Stage the Changes rows of a selection, unstage its Staged rows (a
+        // rename by both names), one command each.
+        CHECK(stageRowsArgs({a, st, u}, false, true) ==
+              std::vector<std::string>({"--literal-pathspecs", "add", "-A", "--", "a.txt", "u.txt"}));
+        CHECK(stageRowsArgs({a, st, rn}, false, false) ==
+              std::vector<std::string>({"--literal-pathspecs", "restore", "--staged", "--", "s.txt",
+                                        "new.txt", "old.txt"}));
+        CHECK(stageRowsArgs({st}, true, false) ==
+              std::vector<std::string>({"--literal-pathspecs", "rm", "--cached", "--force", "-q",
+                                        "--", "s.txt"}));
+        CHECK(stageRowsArgs({a, u}, false, false).empty() && stageRowsArgs({st}, false, true).empty());
+    }
+
+    GROUP("git-ui:amend");
+    {
+        Snapshot h;   // a commit on main, ahead of origin/main by one
+        h.inRepository = true;
+        applyStatus(h, Git::parseStatus(nul({
+            "# branch.oid " + h40, "# branch.head main", "# branch.upstream origin/main",
+            "# branch.ab +1 -0", "1 M. N..." + modes + h40 + " " + h40 + " a.txt"})));
+        CHECK(!headIsPushed(h));
+        ActionPlan p = amendPlan(h, "New message\n\nbody");
+        CHECK(p.args == std::vector<std::string>({"commit", "--amend", "-m", "New message\n\nbody"}));
+        CHECK(p.question.empty() && p.refusal.empty() && Git::timeoutFor(p.args) == 600);
+        CHECK(amendPlan(h, "  \n").args ==
+              std::vector<std::string>({"commit", "--amend", "--no-edit"}));
+        // Pushed already: asks, and says why.
+        Snapshot pushed = h;
+        pushed.ahead = 0;
+        CHECK(headIsPushed(pushed));
+        p = amendPlan(pushed, "");
+        CHECK(p.question == "Amend a commit that is already pushed?" && p.button == "Amend" &&
+              p.detail.find("origin/main") != std::string::npos &&
+              p.detail.find("force") != std::string::npos);
+        // No upstream, a gone one, detached: nothing to ask.
+        Snapshot local = h;
+        local.upstream.clear();
+        local.ahead = 0;
+        CHECK(!headIsPushed(local) && amendPlan(local, "").question.empty());
+        Snapshot gone = pushed;
+        gone.hasAheadBehind = false;
+        CHECK(!headIsPushed(gone));
+        // Before the first commit, and outside a repository: refused.
+        Snapshot first;
+        first.inRepository = true;
+        applyStatus(first, Git::parseStatus(nul({"# branch.oid (initial)", "# branch.head main"})));
+        CHECK(amendPlan(first, "x").args.empty() &&
+              amendPlan(first, "x").refusal == "There is no commit to amend yet: commit first.");
+        CHECK(amendPlan(Snapshot(), "x").refusal == "This folder is not in a git repository.");
+
+        // Undo Last Commit.
+        ActionPlan u = undoCommitPlan(h, 1);
+        CHECK(u.args == std::vector<std::string>({"reset", "--soft", "HEAD~1"}));
+        CHECK(u.question.empty() && u.doneText.find("staged") != std::string::npos);
+        CHECK(Git::timeoutFor(u.args) == 30);
+        u = undoCommitPlan(h, 0);   // the first commit: no HEAD~1
+        CHECK(u.args == std::vector<std::string>({"update-ref", "-d", "HEAD"}) && u.question.empty());
+        u = undoCommitPlan(h, 2);   // a merge
+        CHECK(u.question == "Undo the merge commit?" && u.button == "Undo Merge Commit");
+        CHECK(u.detail.find("first parent") != std::string::npos &&
+              u.detail.find("merged branch keeps its own commits") != std::string::npos);
+        CHECK(u.args == std::vector<std::string>({"reset", "--soft", "HEAD~1"}));
+        u = undoCommitPlan(pushed, 1);
+        CHECK(u.question == "Undo a commit that is already pushed?" &&
+              u.detail.find("force") != std::string::npos);
+        CHECK(undoCommitPlan(first, 0).refusal == "There is no commit to undo yet.");
+        CHECK(undoCommitPlan(h, -1).args.empty() && !undoCommitPlan(h, -1).refusal.empty());
+        Snapshot det = h;
+        det.detached = true;
+        det.branch.clear();
+        CHECK(undoCommitPlan(det, 1).refusal.find("detached") != std::string::npos);
+        // What rev-list --parents prints: the commit, then its parents.
+        CHECK(headParentsArgs() ==
+              std::vector<std::string>({"rev-list", "--parents", "-n", "1", "HEAD", "--"}));
+        CHECK(parentCount(h40 + "\n") == 0 && parentCount(h40 + " " + z40 + "\n") == 1 &&
+              parentCount(h40 + " " + z40 + " " + h40) == 2);
+        CHECK(parentCount("") == -1 && parentCount("fatal: bad\n") == -1 &&
+              parentCount(h40 + "\n" + h40 + "\n") == -1);
+        CHECK(headMessageArgs()[0] == "log" && hasArg(headMessageArgs(), "--format=%B"));
+    }
+
+    GROUP("git-ui:stash");
+    {
+        Snapshot h;
+        h.inRepository = true;
+        applyStatus(h, Git::parseStatus(nul({
+            "# branch.oid " + h40, "# branch.head main",
+            "1 .M N..." + modes + h40 + " " + h40 + " a.txt", "? new.txt"})));
+        ActionPlan p = stashPlan(h, "");
+        CHECK(p.args == std::vector<std::string>({"stash", "push", "--include-untracked"}));
+        CHECK(p.doneText == "Stashed the changes." && p.question.empty());
+        CHECK(Git::timeoutFor(p.args) == 120);
+        p = stashPlan(h, "  half done \n");
+        CHECK(p.args == std::vector<std::string>({"stash", "push", "--include-untracked", "-m",
+                                                  "half done"}));
+        CHECK(p.doneText == "Stashed the changes as “half done”.");
+        Snapshot clean;
+        clean.inRepository = true;
+        applyStatus(clean, Git::parseStatus(nul({"# branch.oid " + h40, "# branch.head main"})));
+        CHECK(stashPlan(clean, "").refusal == "There are no changes to stash.");
+        Snapshot first;
+        first.inRepository = true;
+        applyStatus(first, Git::parseStatus(nul({"# branch.oid (initial)", "# branch.head main",
+                                                 "? new.txt"})));
+        CHECK(stashPlan(first, "").args.empty() &&
+              stashPlan(first, "").refusal.find("before the first commit") != std::string::npos);
+        // Pop: the newest; none to pop is refused.
+        CHECK(popStashPlan(clean, 0).refusal == "There is no stash to pop.");
+        ActionPlan pop = popStashPlan(clean, 1);
+        CHECK(pop.args == std::vector<std::string>({"stash", "pop"}) &&
+              pop.doneText == "Popped the stash." && Git::timeoutFor(pop.args) == 120);
+        CHECK(popStashPlan(clean, 3).doneText == "Popped the newest stash; 2 stashes are left.");
+        CHECK(popStashPlan(clean, 2).doneText == "Popped the newest stash; 1 stash is left.");
+        CHECK(stashListArgs() == std::vector<std::string>({"stash", "list", "--format=%gd"}));
+        CHECK(countLines("stash@{0}\nstash@{1}\n") == 2 && countLines("") == 0 &&
+              countLines("\n\n") == 0);
+    }
+
+    GROUP("git-ui:index-entry");
+    {
+        CHECK(indexEntryArgs("a b.txt") == std::vector<std::string>(
+                  {"--literal-pathspecs", "ls-files", "--stage", "-z", "--", "a b.txt"}));
+        IndexEntry e = parseIndexEntry("100644 " + h40 + " 0\ta b.txt" + std::string(1, '\0'));
+        CHECK(e.ok && e.mode == "100644" && e.object == h40);
+        CHECK(parseIndexEntry("100755 " + h40 + " 0\tx" + std::string(1, '\0')).ok);
+        // Not tracked, a conflict (three stages), a link, a submodule: no bars.
+        CHECK(!parseIndexEntry("").ok);
+        CHECK(!parseIndexEntry(nul({"100644 " + h40 + " 1\tc", "100644 " + h40 + " 2\tc",
+                                    "100644 " + h40 + " 3\tc"})).ok);
+        CHECK(!parseIndexEntry("120000 " + h40 + " 0\tlink" + std::string(1, '\0')).ok);
+        CHECK(!parseIndexEntry("160000 " + h40 + " 0\tlib" + std::string(1, '\0')).ok);
+        CHECK(!parseIndexEntry("100644 nothex 0\tx" + std::string(1, '\0')).ok);
+        CHECK(blobArgs(h40) == std::vector<std::string>({"cat-file", "blob", h40}));
+        CHECK(Git::timeoutFor(blobArgs(h40)) == 30);
+        CHECK(hashObjectArgs("d/f.txt") ==
+              std::vector<std::string>({"hash-object", "-w", "--stdin", "--path", "d/f.txt"}));
+        CHECK(updateIndexArgs(e, z40 + "\n", "a,b.txt") ==
+              std::vector<std::string>({"update-index", "--cacheinfo", "100644," + z40 + ",a,b.txt"}));
+        CHECK(Git::timeoutFor(hashObjectArgs("x")) == 120 &&
+              Git::timeoutFor(updateIndexArgs(e, z40, "x")) == 120);
+    }
 }

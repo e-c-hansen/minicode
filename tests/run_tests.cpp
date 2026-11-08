@@ -3818,8 +3818,9 @@ void testSettings() {
     // terminal.multiline-paste-warning, the tree's six git colors and
     // editor.large-file-optimizations, editor.auto-close,
     // editor.semantic-highlighting with its five syntax colors, the three
-    // inlay hint keys, and format.latex.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 107);
+    // inlay hint keys, format.latex, and editor.git-gutter with its three
+    // colors.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 111);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -10128,6 +10129,7 @@ static void testMultiCaretOccurrences() {
 #include "lsp_inlay_tests.inc"
 #include "lsp_semantic_tests.inc"
 #include "preview_scroll_tests.inc"
+#include "quick_diff_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10179,6 +10181,7 @@ int main() {
     testGitDiff();
     testGitGraph();
     testGitModel();
+    testQuickDiff();
     testEditorTabs();
     testFormatter();
     testFormatConsent();

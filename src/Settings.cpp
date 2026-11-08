@@ -559,6 +559,7 @@ const std::vector<AppearanceSurface>& Settings::appearanceSurfaces() {
           "editor.gutter-background", "editor.line-number-color",
           "editor.line-number-active-color", "editor.bracket-match",
           "editor.inlay-hint-color", "editor.inlay-hint-background",
+          "editor.git-added", "editor.git-modified", "editor.git-deleted",
           "syntax.keyword", "syntax.type", "syntax.string", "syntax.comment",
           "syntax.number", "syntax.preprocessor", "syntax.function",
           "syntax.class", "syntax.variable", "syntax.parameter", "syntax.property",
@@ -947,6 +948,23 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                }
                s.inlayHints_ = on;
                return true;),
+        MC_KEY("editor.git-gutter", Word, false,
+               const std::string w = lower(v);
+               bool on = true;
+               if (w == "on") on = true;
+               else if (w == "off") on = false;
+               else if (!parseBool(w, on)) {
+                   e = "'" + v + "' is not on or off";
+                   return false;
+               }
+               s.gitGutter_ = on;
+               return true;),
+        MC_KEY("editor.git-added", Word, true,
+               return colorValue(v, s.gitGutterColor_[0], e);),
+        MC_KEY("editor.git-modified", Word, true,
+               return colorValue(v, s.gitGutterColor_[1], e);),
+        MC_KEY("editor.git-deleted", Word, true,
+               return colorValue(v, s.gitGutterColor_[2], e);),
         MC_KEY("editor.inlay-hint-color", Word, true,
                return colorValue(v, s.inlayHintColor_, e);),
         MC_KEY("editor.inlay-hint-background", Word, true,
@@ -1272,6 +1290,16 @@ Rgba Settings::inlayHintColor() const {
     return inlayHintColor_ ? *inlayHintColor_ : Rgba::hex(0x969696);
 }
 
+Rgba Settings::gitGutterColor(int kind) const {
+    if (kind < 0 || kind > 2) kind = 1;
+    if (gitGutterColor_[kind]) return *gitGutterColor_[kind];
+    // workbench/contrib/scm/common/quickDiff.ts: editorGutter.addedBackground,
+    // modifiedBackground, and deletedBackground (editorError.foreground).
+    static const uint32_t dark[3] = {0x487E02, 0x1B81A8, 0xF14C4C};
+    static const uint32_t light[3] = {0x48985D, 0x2090D3, 0xE51400};
+    return Rgba::hex(theme_->dark ? dark[kind] : light[kind]);
+}
+
 Rgba Settings::inlayHintBackground() const {
     if (inlayHintBackground_) return *inlayHintBackground_;
     // VS Code's: badge.background at a tenth, the Modern themes' own badge
@@ -1493,6 +1521,16 @@ const char* Settings::defaultFileText() {
 # saving it by hand asks what to do.
 # editor.auto-save = off
 # editor.auto-save-delay = 1000
+# Change bars beside the line numbers for a file git tracks (macOS), as VS
+# Code's: lines added, lines changed, and where lines were deleted, against
+# the version git has staged for it (else the last commit's). A click on one
+# shows the old lines with Revert Change and Stage Change; Option+F5 and
+# Shift+Option+F5 go to the next and previous change. The colors are VS
+# Code's unless set.
+# editor.git-gutter = on
+# editor.git-added = #487E02
+# editor.git-modified = #1B81A8
+# editor.git-deleted = #F14C4C
 
 # The terminal panel.
 # terminal.background = #181818

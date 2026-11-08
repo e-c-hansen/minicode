@@ -170,7 +170,7 @@ struct Aligner {
 }  // namespace
 
 std::vector<Hunk> diff(const std::u16string& a, const std::u16string& b,
-                       size_t maxEdits, double budgetSeconds) {
+                       size_t maxEdits, double budgetSeconds, bool joinBlankGaps) {
     std::vector<Hunk> hunks;
     if (a == b) return hunks;
     std::unordered_map<std::u16string, int> ids;
@@ -212,6 +212,7 @@ std::vector<Hunk> diff(const std::u16string& a, const std::u16string& b,
         bi = mt.second + 1;
     }
 
+    if (!joinBlankGaps) return hunks;
     // Join hunks that only blank lines keep apart. A blank line matches any
     // other, so the diff may pair one the formatter kept with one it added
     // elsewhere, leaving "def h(x,y):" in one hunk and "def h(x, y):" in the

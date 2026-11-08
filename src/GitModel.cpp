@@ -2,6 +2,7 @@
 #include "GitModel.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <ctime>
 #include <string>
@@ -59,6 +60,7 @@ void applyStatus(Snapshot& s, const Git::Status& st) {
             r.letter = Git::stagedLetter(e);
             r.path = e.path;
             r.origPath = e.origPath;
+            r.submodule = e.submodule;
             staged.push_back(r);
         }
         if (Git::hasUnstaged(e)) {
@@ -67,6 +69,7 @@ void applyStatus(Snapshot& s, const Git::Status& st) {
             r.path = e.path;
             r.untracked = e.untracked;
             r.unmerged = e.unmerged;
+            r.submodule = e.submodule;
             changes.push_back(r);
         }
     }
@@ -321,6 +324,11 @@ DiscardPlan discardPlan(const Row& r) {
                     "(git checkout --ours or --theirs), rather than discard it.";
         return p;
     }
+    if (r.submodule) {
+        p.refusal = name + " is a submodule: discard inside it (open it as a folder) or run "
+                    "git submodule update.";
+        return p;
+    }
     const std::string undo = "Undo Discard in this panel's menu, or Put Back in the Trash, "
                              "brings it back.";
     if (r.untracked) {
@@ -365,6 +373,227 @@ int changesRowFor(const std::vector<Row>& rows, const std::string& path) {
     for (size_t i = 0; i < rows.size(); ++i)
         if (!rows[i].header && !rows[i].staged && rows[i].path == path) return (int)i;
     return -1;
+}
+
+// ------------------------------------------- several rows chosen at once
+std::vector<std::string> stageRowsArgs(const std::vector<Row>& rows, bool initial, bool stage) {
+    std::vector<std::string> paths;
+    for (const Row& r : rows) {
+        if (r.header || r.path.empty() || r.staged == stage) continue;
+        paths.push_back(r.path);
+        if (!stage && !initial && !r.origPath.empty()) paths.push_back(r.origPath);
+    }
+    if (paths.empty()) return {};
+    std::vector<std::string> a;
+    if (stage) a = {"--literal-pathspecs", "add", "-A", "--"};
+    else if (initial) a = {"--literal-pathspecs", "rm", "--cached", "--force", "-q", "--"};
+    else a = {"--literal-pathspecs", "restore", "--staged", "--"};
+    a.insert(a.end(), paths.begin(), paths.end());
+    return a;
+}
+
+DiscardBatch discardBatchPlan(const std::vector<Row>& rows) {
+    DiscardBatch b;
+    for (const Row& r : rows) {
+        if (r.header) continue;
+        DiscardPlan p = discardPlan(r);
+        if (!p.refusal.empty()) {
+            b.plans.clear();
+            b.paths.clear();
+            b.refusal = rows.size() > 1 ? "Nothing was discarded: " + p.refusal : p.refusal;
+            return b;
+        }
+        b.plans.push_back(p);
+        b.paths.push_back(r.path);
+    }
+    if (b.plans.empty()) { b.refusal = "Choose a file to discard."; return b; }
+    if (b.plans.size() == 1) {
+        static_cast<ActionPlan&>(b) = b.plans[0];
+        return b;
+    }
+    size_t untracked = 0;
+    for (const Row& r : rows)
+        if (!r.header && r.untracked) untracked++;
+    const std::string n = std::to_string(b.plans.size());
+    b.question = "Discard the changes to " + n + " files?";
+    b.detail = "Each goes back to the version git has for it (staged, or else in the last "
+               "commit)";
+    if (untracked) b.detail += ", and " + plural(untracked, "file git does not track",
+                                                 "files git does not track") + " go" +
+                               (untracked == 1 ? "es" : "") + " to the Trash";
+    b.detail += ". The changed copies go to the Trash first: Undo Discard in this panel's "
+                "menu brings them back, one file at a time.";
+    b.button = "Discard " + n + " Files";
+    b.doneText = "Discarded the changes to " + n + " files; the changed copies are in the Trash.";
+    return b;
+}
+
+// ------------------------------------- amend, undo the last commit, stash
+bool headIsPushed(const Snapshot& s) {
+    return !s.detached && !s.upstream.empty() && s.hasAheadBehind && s.ahead == 0;
+}
+
+namespace {
+bool anyChange(const Snapshot& s) {
+    for (const Row& r : s.rows)
+        if (!r.header) return true;
+    return false;
+}
+const char* kNoRepo = "This folder is not in a git repository.";
+}  // namespace
+
+ActionPlan amendPlan(const Snapshot& s, const std::string& message) {
+    ActionPlan p;
+    if (!s.inRepository) { p.refusal = kNoRepo; return p; }
+    if (s.initial || s.headOid.empty()) {
+        p.refusal = "There is no commit to amend yet: commit first.";
+        return p;
+    }
+    const std::string m = trim(message);
+    if (m.empty()) p.args = {"commit", "--amend", "--no-edit"};
+    else p.args = {"commit", "--amend", "-m", message};
+    if (headIsPushed(s)) {
+        p.question = "Amend a commit that is already pushed?";
+        p.detail = "The last commit is on " + s.upstream + ". After amending it, pushing "
+                   "needs a force, and anyone who has the old commit has to rebase onto the "
+                   "new one.";
+        p.button = "Amend";
+    }
+    // doneText stays empty: the panel says what commit printed, as for a
+    // commit ("[main 1a2b3c4] Subject").
+    return p;
+}
+
+ActionPlan undoCommitPlan(const Snapshot& s, int parents) {
+    ActionPlan p;
+    if (!s.inRepository) { p.refusal = kNoRepo; return p; }
+    if (s.initial || s.headOid.empty()) {
+        p.refusal = "There is no commit to undo yet.";
+        return p;
+    }
+    if (s.detached) {
+        p.refusal = "HEAD is detached: switch to a branch to undo its last commit.";
+        return p;
+    }
+    if (parents < 0) {
+        p.refusal = "The last commit could not be read, so nothing was undone.";
+        return p;
+    }
+    if (parents == 0) {
+        // The repository's first commit: HEAD~1 does not exist. Deleting
+        // the branch's ref leaves the index, so its files stay staged.
+        p.args = {"update-ref", "-d", "HEAD"};
+    } else {
+        p.args = {"reset", "--soft", "HEAD~1"};
+    }
+    const std::string onUpstream = headIsPushed(s)
+        ? " It is already on " + s.upstream + ", so the next push needs a force." : "";
+    if (parents >= 2) {
+        p.question = "Undo the merge commit?";
+        p.detail = "The last commit is a merge. Undoing it moves " +
+                   (s.branch.empty() ? std::string("the branch") : s.branch) +
+                   " back to its first parent and leaves the merge's changes staged; the "
+                   "merged branch keeps its own commits." + onUpstream;
+        p.button = "Undo Merge Commit";
+    } else if (!onUpstream.empty()) {
+        p.question = "Undo a commit that is already pushed?";
+        p.detail = "Its changes stay staged and its message goes back in the box." + onUpstream;
+        p.button = "Undo Last Commit";
+    }
+    p.doneText = parents == 0
+        ? "Undid the first commit; its files are staged, as before it."
+        : "Undid the last commit; its changes are staged and its message is in the box.";
+    return p;
+}
+
+std::vector<std::string> headParentsArgs() {
+    return {"rev-list", "--parents", "-n", "1", "HEAD", "--"};
+}
+
+int parentCount(const std::string& out) {
+    const std::string line = trim(out);
+    if (line.empty() || line.find('\n') != std::string::npos) return -1;
+    int words = 0;
+    bool in = false;
+    for (char c : line) {
+        if (c == ' ') { in = false; continue; }
+        if (!std::isxdigit((unsigned char)c)) return -1;
+        if (!in) { words++; in = true; }
+    }
+    return words - 1;
+}
+
+std::vector<std::string> headMessageArgs() {
+    return {"log", "-1", "--no-color", "--format=%B", "HEAD", "--"};
+}
+
+ActionPlan stashPlan(const Snapshot& s, const std::string& message) {
+    ActionPlan p;
+    if (!s.inRepository) { p.refusal = kNoRepo; return p; }
+    if (s.initial || s.headOid.empty()) {
+        p.refusal = "git cannot stash before the first commit: commit first.";
+        return p;
+    }
+    if (!anyChange(s)) { p.refusal = "There are no changes to stash."; return p; }
+    p.args = {"stash", "push", "--include-untracked"};
+    const std::string m = trim(message);
+    if (!m.empty()) { p.args.push_back("-m"); p.args.push_back(m); }
+    p.doneText = "Stashed the changes" + (m.empty() ? std::string() : " as “" + m + "”") + ".";
+    return p;
+}
+
+ActionPlan popStashPlan(const Snapshot& s, int stashes) {
+    ActionPlan p;
+    if (!s.inRepository) { p.refusal = kNoRepo; return p; }
+    if (stashes <= 0) { p.refusal = "There is no stash to pop."; return p; }
+    p.args = {"stash", "pop"};
+    p.doneText = stashes == 1 ? "Popped the stash." : "Popped the newest stash; " +
+                 plural((size_t)stashes - 1, "stash is", "stashes are") + " left.";
+    return p;
+}
+
+std::vector<std::string> stashListArgs() { return {"stash", "list", "--format=%gd"}; }
+
+size_t countLines(const std::string& out) { return nonBlankLines(out).size(); }
+
+// --------------------------------------------- the editor's change bars
+std::vector<std::string> indexEntryArgs(const std::string& rel) {
+    return {"--literal-pathspecs", "ls-files", "--stage", "-z", "--", rel};
+}
+
+IndexEntry parseIndexEntry(const std::string& out) {
+    // "<mode> <object> <stage>\t<path>\0", one record a stage.
+    IndexEntry e;
+    const size_t end = out.find('\0');
+    if (end == std::string::npos || end + 1 != out.size()) return e;   // none, or a conflict
+    const std::string rec = out.substr(0, end);
+    const size_t s1 = rec.find(' '), s2 = rec.find(' ', s1 + 1), tab = rec.find('\t');
+    if (s1 == std::string::npos || s2 == std::string::npos || tab == std::string::npos ||
+        !(s1 < s2 && s2 < tab))
+        return e;
+    const std::string mode = rec.substr(0, s1), object = rec.substr(s1 + 1, s2 - s1 - 1),
+                      stage = rec.substr(s2 + 1, tab - s2 - 1);
+    if (stage != "0" || (mode != "100644" && mode != "100755")) return e;
+    if (object.size() < 40) return e;
+    for (char c : object)
+        if (!std::isxdigit((unsigned char)c)) return e;
+    e.ok = true;
+    e.mode = mode;
+    e.object = object;
+    return e;
+}
+
+std::vector<std::string> blobArgs(const std::string& object) {
+    return {"cat-file", "blob", object};
+}
+
+std::vector<std::string> hashObjectArgs(const std::string& rel) {
+    return {"hash-object", "-w", "--stdin", "--path", rel};
+}
+
+std::vector<std::string> updateIndexArgs(const IndexEntry& e, const std::string& object,
+                                         const std::string& rel) {
+    return {"update-index", "--cacheinfo", e.mode + "," + trim(object) + "," + rel};
 }
 
 // ------------------------------------------------- hunks and lines of a diff
@@ -493,6 +722,31 @@ std::string hunkRefusal(const Git::FileDiff& f) {
     if (f.header.empty() || !startsWith(f.header[0].text, "diff --git "))
         return name + " has a conflict: resolve it in the file, then stage it whole.";
     if (f.binary) return name + " is a binary file: stage or discard it whole.";
+    // A submodule's diff is one "Subproject commit" line a side (mode
+    // 160000): there is no text to take apart, and reversing it onto the
+    // work tree would do nothing to the checkout.
+    bool gitlink = false;
+    for (const Git::DiffLine& l : f.header)
+        if (startsWith(l.text, "index ") && l.text.size() >= 7 &&
+            l.text.compare(l.text.size() - 7, 7, " 160000") == 0)
+            gitlink = true;
+    auto isGitlinkLine = [](const std::string& t) {
+        // "+Subproject commit <object name>", "-dirty" after it when the
+        // checkout has changes of its own.
+        if (t.size() < 19 + 40 || t.compare(1, 18, "Subproject commit ") != 0) return false;
+        size_t i = 19;
+        while (i < t.size() && std::isxdigit((unsigned char)t[i])) i++;
+        return i - 19 >= 40 && (i == t.size() || t.compare(i, std::string::npos, "-dirty") == 0);
+    };
+    for (const Git::Hunk& h : f.hunks)
+        for (const Git::DiffLine& l : h.lines)
+            if ((l.kind == Git::LineKind::Added || l.kind == Git::LineKind::Removed ||
+                 l.kind == Git::LineKind::Context) &&
+                isGitlinkLine(l.text))
+                gitlink = true;
+    if (gitlink)
+        return name + " is a submodule: stage or unstage it whole, and discard inside it "
+                      "(open it as a folder).";
     if (f.isNew) return name + " is a new file: stage or unstage it whole.";
     if (f.isDeleted) return name + " was deleted: stage or unstage the deletion whole.";
     return "";
