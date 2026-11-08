@@ -1,6 +1,23 @@
-// EditorController+Highlighting.mm — EditorController: the source's syntax colors, kept up as it is edited.
+// EditorController+Highlighting.mm — EditorController: the source's syntax colors, kept up as it is edited,
+// and a language server's semantic tokens laid over them.
 #import "EditorController+Private.h"
 #import "EditorController+HighlightingIvars.h"
+
+// attributesForStyle:'s index for a semantic token's style: a function
+// takes the lexer's function color, the rest come after plain text (8);
+// -1 for none.
+static int SemanticStyleIndex(Lsp::SemanticStyle s) {
+    switch (s) {
+    case Lsp::SemanticStyle::Function: return (int)TokenStyle::Function;
+    case Lsp::SemanticStyle::Class: return 9 + (int)SemanticColor::Class;
+    case Lsp::SemanticStyle::Variable: return 9 + (int)SemanticColor::Variable;
+    case Lsp::SemanticStyle::Parameter: return 9 + (int)SemanticColor::Parameter;
+    case Lsp::SemanticStyle::Property: return 9 + (int)SemanticColor::Property;
+    case Lsp::SemanticStyle::Constant: return 9 + (int)SemanticColor::Constant;
+    case Lsp::SemanticStyle::None: break;
+    }
+    return -1;
+}
 
 @implementation EditorController (Highlighting)
 
@@ -50,7 +67,14 @@
     AppSettings *cfg = [AppSettings shared];
     _plainColor = [cfg text:Surface::Editor];
     for (int i = 0; i < 8; ++i) _styleColors[i] = ColorForStyle((TokenStyle)i);
+    for (int i = 0; i < kSemanticColorCount; ++i)
+        _semanticColors[i] = MCColor(cfg.settings.semanticColor((SemanticColor)i));
     _highlightingSettingsFile = [self isSettingsFile];
+    // Semantic colors turned off, or a file in large-file mode: none.
+    if (!cfg.settings.semanticHighlighting() || [self largeFileFeaturesOff]) {
+        _semanticCurrent = NO;
+        _semantic.clear();
+    }
     if (_sourceAttributes) {
         NSMutableDictionary *base = [_sourceAttributes mutableCopy];
         base[NSForegroundColorAttributeName] = _plainColor;
@@ -71,6 +95,12 @@
     [storage endEditing];
     _pending.clear();   // all of it is fresh now
     _liveHighlight = YES;
+    // New colors (a theme, the zoom) over the same text: the server's
+    // tokens still hold, painted again where they show.
+    if (_semanticCurrent) {
+        _semanticPainted = [NSMutableIndexSet indexSet];
+        [self paintSemanticVisible];
+    }
 }
 
 // Paint `range` (whole lines) from scratch: the plain source attributes, then
@@ -118,16 +148,22 @@
 }
 
 // The attributes a token of `style` gets: the source attributes with its
-// color (index 8 is plain text), made once per font and color scheme.
+// color (index 8 is plain text, 9 on the semantic colors in SemanticColor
+// order), made once per font and color scheme.
 - (NSDictionary *)attributesForStyle:(int)style {
     if (_styleAttributesBase != _sourceAttributes) {
-        NSMutableArray *all = [NSMutableArray arrayWithCapacity:9];
+        NSMutableArray *all = [NSMutableArray arrayWithCapacity:9 + kSemanticColorCount];
         for (int i = 0; i < 8; i++) {
             NSMutableDictionary *d = [_sourceAttributes mutableCopy];
             d[NSForegroundColorAttributeName] = _styleColors[i];
             [all addObject:[d copy]];
         }
         [all addObject:_sourceAttributes];
+        for (int i = 0; i < kSemanticColorCount; i++) {
+            NSMutableDictionary *d = [_sourceAttributes mutableCopy];
+            d[NSForegroundColorAttributeName] = _semanticColors[i] ?: _plainColor;
+            [all addObject:[d copy]];
+        }
         _styleAttributes = all;
         _styleAttributesBase = _sourceAttributes;
     }
@@ -142,8 +178,18 @@
 // good part of what was left of a keystroke there.
 - (void)restyleChangedIn:(NSRange)range tokens:(const std::vector<Token> &)tokens
                inStorage:(NSTextStorage *)storage {
+    [self restyleChangedIn:range tokens:tokens semantic:nullptr count:0 inStorage:storage];
+}
+
+// The same, with semantic spans (ascending, from the first that ends past
+// range's start) laid over the tokens: a span takes its own color, except
+// over a string or a comment, which keep the lexer's.
+- (void)restyleChangedIn:(NSRange)range tokens:(const std::vector<Token> &)tokens
+                semantic:(const Lsp::SemanticSpan *)spans
+                   count:(size_t)spanCount
+               inStorage:(NSTextStorage *)storage {
     const NSUInteger limit = NSMaxRange(range);
-    auto paint = ^(NSUInteger start, NSUInteger end, int style) {
+    auto set = ^(NSUInteger start, NSUInteger end, int style) {
         if (end <= start) return;
         NSDictionary *want = [self attributesForStyle:style];
         NSRange run;
@@ -153,6 +199,26 @@
             (have == want || [have isEqualToDictionary:want]))
             return;
         [storage setAttributes:want range:NSMakeRange(start, end - start)];
+    };
+    __block size_t next = 0;   // the first span that may reach past where painting is
+    auto paint = ^(NSUInteger start, NSUInteger end, int style) {
+        if (end <= start) return;
+        if (style == (int)TokenStyle::String || style == (int)TokenStyle::Comment) {
+            set(start, end, style);
+            return;
+        }
+        NSUInteger at = start;
+        while (next < spanCount && spans[next].start + spans[next].length <= at) next++;
+        for (size_t k = next; k < spanCount && spans[k].start < end; k++) {
+            const NSUInteger a = MAX(at, (NSUInteger)spans[k].start);
+            const NSUInteger b = MIN(end, (NSUInteger)(spans[k].start + spans[k].length));
+            const int sem = SemanticStyleIndex(spans[k].style);
+            if (b <= a || sem < 0) continue;
+            set(at, a, style);
+            set(a, b, sem);
+            at = b;
+        }
+        set(at, end, style);
     };
     NSUInteger at = range.location;
     for (size_t i = 0; i < tokens.size();) {
@@ -184,6 +250,15 @@
     willProcessEditing:(NSTextStorageEditActions)actions
                  range:(NSRange)edited
         changeInLength:(NSInteger)delta {
+    // The server's tokens were for the text before this edit. The lines it
+    // touches are painted with the lexer's colors alone (flushHighlighting);
+    // the rest keep theirs, which move with their text, until the next
+    // answer.
+    if ((actions & NSTextStorageEditedCharacters) && storage == self.textView.textStorage &&
+        _semanticCurrent) {
+        _semanticCurrent = NO;
+        _semantic.clear();
+    }
     if (!_liveHighlight || !(actions & NSTextStorageEditedCharacters)) return;
     if (storage != self.textView.textStorage) return;
     NSUInteger newLen = edited.length;
@@ -275,6 +350,109 @@
         [storage endEditing];
         done = NSMaxRange(range);
     }
+}
+
+// ---- semantic tokens
+// The session's answer for the text the storage holds now
+// (LspSession.onSemanticTokens): kept, and painted over the lines on
+// screen; other lines are painted as they scroll into view, until an edit
+// ends them.
+- (void)semanticTokensArrived:(NSData *)data {
+    NSTextView *tv = self.textView;
+    if (!_liveHighlight || !tv.editable || [self largeFileFeaturesOff] ||
+        ![AppSettings shared].settings.semanticHighlighting())
+        return;
+    [self flushHighlighting];   // nothing waits to be lexed under them
+    const size_t n = data.length / sizeof(Lsp::SemanticSpan);
+    const auto *p = (const Lsp::SemanticSpan *)data.bytes;
+    const NSUInteger total = tv.textStorage.length;
+    _semantic.clear();
+    _semantic.reserve(n);
+    for (size_t i = 0; i < n; i++)
+        if ((NSUInteger)p[i].start + p[i].length <= total) _semantic.push_back(p[i]);
+    _semanticCurrent = YES;
+    _semanticPainted = [NSMutableIndexSet indexSet];
+    if (!_semanticObserving) {
+        NSClipView *clip = tv.enclosingScrollView.contentView;
+        if (clip) {
+            clip.postsBoundsChangedNotifications = YES;
+            [[NSNotificationCenter defaultCenter] addObserver:self
+                                                     selector:@selector(semanticViewScrolled:)
+                                                         name:NSViewBoundsDidChangeNotification
+                                                       object:clip];
+            _semanticObserving = YES;
+        }
+    }
+    [self paintSemanticVisible];
+}
+
+- (void)semanticViewScrolled:(NSNotification *)note {
+    (void)note;
+    if (!_semanticCurrent || _semanticPaintScheduled) return;
+    _semanticPaintScheduled = YES;   // once a run-loop turn, however many scroll events
+    [self performSelector:@selector(paintSemanticVisible) withObject:nil afterDelay:0];
+}
+
+// Paint the lines on screen not painted yet with the current tokens: each
+// line's lexer tokens with the spans over them, only the pieces whose
+// attributes differ (restyleChangedIn:), in one attribute edit. Lines too
+// long to lex keep their plain color, as the lexer leaves them.
+- (void)paintSemanticVisible {
+    _semanticPaintScheduled = NO;
+    NSTextView *tv = self.textView;
+    if (!_semanticCurrent || !_liveHighlight || !tv.editable) return;
+    NSTextStorage *storage = tv.textStorage;
+    NSString *string = storage.string;
+    const NSUInteger total = storage.length;
+    if (!total) return;
+    NSLayoutManager *lm = tv.layoutManager;
+    const NSRange glyphs = [lm glyphRangeForBoundingRect:tv.visibleRect
+                                         inTextContainer:tv.textContainer];
+    NSRange visible = [lm characterRangeForGlyphRange:glyphs actualGlyphRange:NULL];
+    if (visible.location >= total) return;
+    visible.length = MIN(visible.length, total - visible.location);
+    if ([_semanticPainted containsIndexesInRange:visible] && visible.length) return;
+    BOOL editing = NO;
+    NSUInteger at = visible.location;
+    const NSUInteger end = NSMaxRange(visible);
+    do {
+        NSRange line;
+        if (_hl) {
+            const size_t first = _hl->lineOf(at);
+            const size_t to = first + 1 < _hl->lineCount() ? _hl->lineStart(first + 1) : _hl->length();
+            line = NSMakeRange(_hl->lineStart(first), to - _hl->lineStart(first));
+        } else {
+            line = [string lineRangeForRange:NSMakeRange(at, 0)];
+        }
+        if (!line.length) break;
+        if (![_semanticPainted containsIndexesInRange:line]) {
+            [_semanticPainted addIndexesInRange:line];
+            if (line.length <= kMaxTokenizationLineLength + 2) {
+                std::vector<Token> tokens;
+                if (_hl) {
+                    const size_t ln = _hl->lineOf(line.location);
+                    _hl->lineTokens(NSStringSource(string), ln, ln + 1, tokens);
+                }
+                const Lsp::SemanticSpan key{(uint32_t)line.location, 0, Lsp::SemanticStyle::None};
+                auto it = std::lower_bound(
+                    _semantic.begin(), _semantic.end(), key,
+                    [](const Lsp::SemanticSpan &a, const Lsp::SemanticSpan &b) {
+                        return (uint64_t)a.start + a.length <= b.start;
+                    });
+                if (!editing) {
+                    [storage beginEditing];
+                    editing = YES;
+                }
+                [self restyleChangedIn:line
+                                tokens:tokens
+                              semantic:_semantic.data() + (it - _semantic.begin())
+                                 count:(size_t)(_semantic.end() - it)
+                             inStorage:storage];
+            }
+        }
+        at = NSMaxRange(line);
+    } while (at < end);
+    if (editing) [storage endEditing];
 }
 
 @end

@@ -362,6 +362,13 @@ static NSString *StateText(MCLspState state) {
     c.onWatchersChanged = [weakSelf] {
         dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf updateFileWatcher]; });
     };
+    // workspace/semanticTokens/refresh: the file on show's tokens again.
+    c.onSemanticTokensRefresh = [weakSelf, weakServer] {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            MCLspServer *s = weakServer;
+            if (s && !s.stopping) [weakSelf semanticTokensRefreshedBy:s];
+        });
+    };
     // $/progress: the status bar and the popover say what it is doing.
     c.onProgress = [weakSelf, weakServer] {
         MCLspServer *s = weakServer;
@@ -390,6 +397,7 @@ static NSString *StateText(MCLspState state) {
     e.state = MCLspStateRunning;
     [self changed];
     [self serverMayComplete:server];
+    [self semanticServerReady:server];
 }
 
 // A server began, reported or ended work. Coalesced to one redraw a
@@ -674,6 +682,7 @@ static NSString *StateText(MCLspState state) {
         _pythonSetting = python;
         [self applyPythonInterpreter];
     }
+    [self semanticSettingsChanged];
 }
 
 @end

@@ -409,6 +409,20 @@ void MCForgetFolderToolsConsent(NSString *root);
 - (void)goToProblem:(BOOL)forward;
 @end
 
+// ---- semantic tokens (Lsp+Semantic.mm)
+@interface LspSession (Semantic)
+// The server's semantic tokens for the file on show, as an array of
+// Lsp::SemanticSpan (LspClient.h) over the text exactly as the view holds
+// it when this is called: asked for when the file is shown and a moment
+// after typing stops (editor.semantic-highlighting on), and given only
+// while the text is still what the server answered for. Nothing comes for
+// a file whose servers offer none.
+@property(nonatomic, copy) void (^onSemanticTokens)(NSData *spans);
+// Test hooks: answers handed to onSemanticTokens, and the requests sent
+// (full and delta).
+@property(nonatomic, readonly) NSUInteger semanticAnswers, semanticRequests;
+@end
+
 // ---- the servers, for the Language Servers popover (Lsp+Servers.mm)
 @interface LspSession (Servers)
 // Every language MiniCode knows, the open file's first, each followed by its

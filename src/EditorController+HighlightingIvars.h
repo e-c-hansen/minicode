@@ -4,6 +4,7 @@
 // block in EditorController+Private.h.
 #pragma once
 #import "EditorController+Private.h"
+#include "LspClient.h"   // Lsp::SemanticSpan
 
 @interface EditorController () {
     // Edited, not yet recolored: [start, end) as distances from the end of
@@ -16,5 +17,15 @@
     NSColor *_plainColor;
     NSArray<NSDictionary *> *_styleAttributes;   // attributesForStyle:, for _styleAttributesBase
     NSDictionary *_styleAttributesBase;
+
+    // Semantic tokens (LspSession (Semantic)): the server's spans, current
+    // while the storage's characters are what they were computed on (an
+    // edit ends that until the next answer), and the characters painted
+    // with them so far (the lines on screen, as they come into view).
+    std::vector<Lsp::SemanticSpan> _semantic;
+    BOOL _semanticCurrent;
+    NSMutableIndexSet *_semanticPainted;
+    BOOL _semanticPaintScheduled, _semanticObserving;
+    NSColor *_semanticColors[kSemanticColorCount];   // by SemanticColor
 }
 @end

@@ -48,6 +48,12 @@ constexpr int kMarkdownColorCount = 5;
 enum class TreeGitColor { Modified, Added, Untracked, Deleted, Ignored, Conflict };
 constexpr int kTreeGitColorCount = 6;
 
+// The colors a language server's semantic tokens add to the lexer's
+// (syntax.class and the rest, in this order; a function takes
+// syntax.function). Lsp::SemanticStyle says which token gets which.
+enum class SemanticColor { Class, Variable, Parameter, Property, Constant };
+constexpr int kSemanticColorCount = 5;
+
 // A color value on one line of the settings file, in UTF-16 offsets.
 struct ColorSpan {
     size_t start, length;
@@ -87,6 +93,10 @@ struct Theme {
     uint32_t markdown[kMarkdownColorCount];
     uint32_t codeBackground, ruler, terminalInput;
     uint32_t lineNumber, lineNumberActive, bracketMatch;
+    // What VS Code's semantic token map gives the theme's classes,
+    // variables, parameters, properties and constants (SemanticColor
+    // order), read off the scopes each type probes.
+    uint32_t semantic[kSemanticColorCount];
 };
 
 // A value on one line of the settings file, in UTF-16 offsets.
@@ -186,6 +196,9 @@ public:
     bool textIsSet(Surface s) const;
 
     Rgba syntax(TokenStyle s) const;          // Plain is the editor's text color
+    // syntax.class, .variable, .parameter, .property and .constant: the
+    // colors of names a language server's semantic tokens say what they are.
+    Rgba semanticColor(SemanticColor c) const;
     Rgba markdown(MarkdownColor c) const;
     Rgba markdownCodeBackground() const;      // follows the editor's opacity
     // The terminal's input line draws no background of its own (it is part of
@@ -257,6 +270,11 @@ public:
     // folding, bracket matching or a language server (on, the default, as
     // VS Code's editor.largeFileOptimizations).
     bool largeFileOptimizations() const { return largeFileOptimizations_; }
+    // editor.semantic-highlighting: a language server that names what each
+    // word is (semantic tokens) colors it so, over the lexer's colors (on,
+    // the default, as VS Code's editor.semanticHighlighting.enabled with a
+    // built-in theme).
+    bool semanticHighlighting() const { return semanticHighlighting_; }
     // The gutter's background: editor.gutter-background, else the editor's
     // own; editor.opacity applies to either.
     Rgba gutterBackground() const;
@@ -430,6 +448,8 @@ private:
     bool wordWrap_ = true;
     bool autoClose_ = true;
     bool largeFileOptimizations_ = true;
+    bool semanticHighlighting_ = true;
+    std::optional<Rgba> semantic_[kSemanticColorCount];
     std::optional<Rgba> gutterBackground_, lineNumberColor_, lineNumberActiveColor_,
         bracketMatchColor_;
     std::optional<Rgba> treeGit_[kTreeGitColorCount];
